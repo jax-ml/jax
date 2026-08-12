@@ -119,7 +119,6 @@ def register_call_primitive_rules(
     transpose_rule=None,
 ) -> None:
   """Registers standard call transformation rules onto a Primitive."""
-  prim.multiple_results = True
   prim.def_impl(eval_jaxpr_p.impl)
   prim.def_effectful_abstract_eval(eval_jaxpr_p.abstract_eval)
   core.custom_typechecks[prim] = core.custom_typechecks[eval_jaxpr_p]

@@ -37,20 +37,20 @@ def add_jaxvals(x: ArrayLike, y: ArrayLike) -> Array:
   if isinstance(ty, HiType):
     return ty.vspace_add(x, y)
   x, y = core.auto_insert_reshard(x, y)
-  return add_jaxvals_p.bind(x, y)
+  return add_jaxvals_p.bind1(x, y)
 
 add_jaxvals_p = Primitive('add_any')
 add_any_p = add_jaxvals_p
 
 @add_jaxvals_p.def_impl
 def add_impl(x, y):
-  return raw_jaxval_adders[type(x)](x, y)
+  return [raw_jaxval_adders[type(x)](x, y)]
 raw_jaxval_adders = {}
 
 @add_jaxvals_p.def_abstract_eval
 def add_abstract(x, y):
   assert core.typematch(x, y), (x, y)
-  return x
+  return [x]
 
 def zeros_like_aval(aval: core.AbstractValue) -> Array:
   from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
@@ -96,15 +96,15 @@ def a2tz(primal_aval):
   return Zero(primal_aval.to_tangent_aval())
 
 
-def _stop_gradient_impl(x: T) -> T:
+def _stop_gradient_impl(x):
   if not core.valid_jaxtype(x):
     raise TypeError("stop_gradient only works on valid JAX arrays, but "
                     f"input argument is: {x}")
-  return x
+  return [x]
 
 stop_gradient_p : Primitive = Primitive('stop_gradient')
 stop_gradient_p.def_impl(_stop_gradient_impl)
-stop_gradient_p.def_abstract_eval(lambda x: x)
+stop_gradient_p.def_abstract_eval(lambda x: [x])
 
 
 # User-facing version of `Zero`

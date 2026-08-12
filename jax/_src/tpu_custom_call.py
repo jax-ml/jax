@@ -81,7 +81,6 @@ def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
 
 
 tpu_custom_call_p = core.Primitive("tpu_custom_call")
-tpu_custom_call_p.multiple_results = True
 dispatch.simple_impl(tpu_custom_call_p)
 
 

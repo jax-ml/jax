@@ -108,7 +108,6 @@ def _compute_on(f, *, compute_type, out_memory_spaces, compiler_options):
   return wrapped
 
 compute_on_p = core.Primitive('compute_on')
-compute_on_p.multiple_results = True
 dispatch.simple_impl(compute_on_p)
 
 

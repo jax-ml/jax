@@ -1330,8 +1330,6 @@ def _interpret_jaxpr(
         token, out = _interpret_jaxpr(
             impl_jaxpr, *impl_jaxpr.consts, *invals, ctx=ctx, token=token
         )
-        if not prim.multiple_results:
-          out = out[0]
 
       elif prim is primitives.load_p:
         (ref, transforms, mask, _) = jax.tree.unflatten(
@@ -1699,13 +1697,11 @@ def _interpret_jaxpr(
           #  `out` below only relies on the shape and dtype (for writing
           # `Placeholder`s).
           out = [ovar.aval for ovar in eqn.outvars]
-          if not prim.multiple_results:
-            out = out[0]
         else:
           bind_params = eqn.primitive.get_bind_params(eqn.params)
           out = prim.bind(*deferred_invals(), **bind_params)
 
-      out = out if prim.multiple_results else [out]
+      out = list(out) if isinstance(out, (list, tuple)) else [out]
       env.write_many(eqn.outvars, out)
 
   return token, env.read_many(jaxpr.outvars)
@@ -1837,13 +1833,13 @@ def _remove_memory_space_abstract_eval(x):
       not isinstance(x.memory_space, jax_core.MemorySpace)):
     if (x.memory_space is None or x.memory_space is pallas_core.MemorySpace.ANY
         or x.memory_space is mosaic_core.MemorySpace.HBM):
-      return jax_core.ShapedArray(x.shape, x.dtype)
+      return [jax_core.ShapedArray(x.shape, x.dtype)]
     raise NotImplementedError(f'Unsupported memory space: {x.memory_space}')
-  return x
+  return [x]
 
 @remove_memory_space_p.def_impl
 def _remove_memory_space_impl(x):
-  return x
+  return [x]
 
 def _remove_memory_space_lowering(_, x):
   return [x]
@@ -1917,7 +1913,7 @@ def interpret_pallas_call(
     if mesh.num_cores > 1:
       mosaic_params = mosaic_params.replace(dimension_semantics=('parallel',))
 
-  args = [remove_memory_space_p.bind(a) for a in args]
+  args = [remove_memory_space_p.bind1(a) for a in args]
   # args contains: *dynamic_grid_sizes, *index, *inputs.  (No consts?)
   dynamic_grid_args, scalars, input_args = split_list(
       args,

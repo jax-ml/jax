@@ -1609,14 +1609,16 @@ def _gamma_batching_rule(batched_args, batch_dims, *, log_space):
       t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
   k = batching.bdim_at_front(k, bk, size)
   a = batching.bdim_at_front(a, ba, size)
-  return random_gamma_p.bind(k, a, log_space=log_space), 0
+  return random_gamma_p.bind(k, a, log_space=log_space), [0]
 
 random_gamma_p = core.Primitive('random_gamma')
-random_gamma_p.def_impl(_gamma_impl)
+# Note: _gamma_impl is single-valued because it is also used via mlir.lower_fun
+# with multiple_results=False below; wrap its result for the impl rule.
+random_gamma_p.def_impl(lambda *args, **kwargs: [_gamma_impl(*args, **kwargs)])
 
 def _random_gamma_abstract_eval(key, a, **_):
   core.standard_vma_rule('random_gamma', key, a)
-  return a
+  return [a]
 random_gamma_p.def_abstract_eval(_random_gamma_abstract_eval)
 
 ad.defjvp2(
@@ -1776,7 +1778,7 @@ def _gamma(key, a, shape, dtype, log_space=False) -> Array:
   if np.shape(a) != shape:
     a = jnp.broadcast_to(a, shape)
   key, (a,) = random_insert_pvary('gamma', key, a)
-  return random_gamma_p.bind(key, a, log_space=log_space)
+  return random_gamma_p.bind1(key, a, log_space=log_space)
 
 
 # Coefficients of the chi-square quantile series used by `_gamma_approx` (see
@@ -3679,7 +3681,7 @@ def binomial(
 # Functions related to key reuse checking
 random_clone_p = core.Primitive("random_clone")
 dispatch.simple_impl(random_clone_p)
-random_clone_p.def_abstract_eval(lambda x: x)
+random_clone_p.def_abstract_eval(lambda x: [x])
 batching.defvectorized(random_clone_p)
 mlir.register_lowering(random_clone_p, lambda _, k: [k])
 
@@ -3759,7 +3761,7 @@ def clone(key):
     >>> same_data = jax.random.uniform(cloned_key)
     >>> assert data == same_data
   """
-  return random_clone_p.bind(key)
+  return random_clone_p.bind1(key)
 
 
 def random_insert_pvary(name, key, *args):

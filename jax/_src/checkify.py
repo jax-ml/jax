@@ -415,10 +415,7 @@ def checkify_jaxpr_flat(jaxpr: core.Jaxpr, consts: Sequence[core.Value],
           eqn.ctx.manager):
       error, outvals = checkify_rule(error, enabled_errors,
                                      *invals, **eqn.params)
-    if eqn.primitive.multiple_results:
-      foreach(write_env, eqn.outvars, outvals)
-    else:
-      write_env(eqn.outvars[0], outvals)
+    foreach(write_env, eqn.outvars, outvals)
     core.clean_up_dead_vars(eqn, env, last_used)
 
   return error, map(read_env, jaxpr.outvars)
@@ -453,8 +450,7 @@ def _reduce_any_error(error: Error):
 ## check_p primitive
 
 check_p = core.Primitive('check')
-check_p.is_effectful = lambda _: True
-check_p.multiple_results = True  # zero results
+check_p.is_effectful = lambda _: True  # zero results
 
 
 def _pp_check(eqn, context, settings) -> core.pp.Doc:
@@ -575,8 +571,7 @@ def check_nans(prim, error, enabled_errors, out):
       return False
     return jnp.any(jnp.isnan(x))
 
-  any_nans = (jnp.any(jnp.array([isnan(x) for x in out]))
-              if prim.multiple_results else isnan(out))
+  any_nans = jnp.any(jnp.array([isnan(x) for x in out]))
   return assert_func(error, any_nans, NaNError(get_traceback(), prim.name))
 
 

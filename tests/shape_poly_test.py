@@ -2613,7 +2613,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 polymorphic_shapes=["b, ..."]),
     [
         PolyHarness("fft", f"{fft_type=}_{nr_fft_lengths=}",
-            lambda x, fft_type, nr_fft_lengths: lax.fft_p.bind(
+            lambda x, fft_type, nr_fft_lengths: lax.fft_p.bind1(
                 x, fft_type=fft_type,
                 fft_lengths=tuple(
                     x.shape[-nr_fft_lengths:] if fft_type != lax.FftType.IRFFT else

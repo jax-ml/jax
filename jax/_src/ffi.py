@@ -760,7 +760,6 @@ def ffi_batching_rule(
 
 
 ffi_call_p = core.Primitive("ffi_call")
-ffi_call_p.multiple_results = True
 dispatch.simple_impl(ffi_call_p)
 ffi_call_p.def_effectful_abstract_eval(ffi_call_abstract_eval)
 ad.primitive_jvps[ffi_call_p] = ffi_call_jvp

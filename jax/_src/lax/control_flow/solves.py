@@ -499,7 +499,6 @@ def _linear_solve_batching_rule(axis_data, args, dims, const_lengths, jaxprs):
 
 
 linear_solve_p = core.Primitive('custom_linear_solve')
-linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
 linear_solve_p.def_effectful_abstract_eval(_linear_solve_abstract_eval)
 ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp

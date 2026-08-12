@@ -71,7 +71,7 @@ def bitcast(x: jax.Array, ty: DTypeLike) -> jax.Array:
         "Not implemented: the 2nd minor dim can not be perfectly packed or"
         " unpacked"
     )
-  return bitcast_p.bind(x, ty=ty)
+  return bitcast_p.bind1(x, ty=ty)
 
 
 @bitcast_p.def_abstract_eval
@@ -80,7 +80,7 @@ def _bitcast_abstract_eval(x, *, ty):
   src_bitwidth = dtypes.itemsize_bits(x.dtype)
   dst_bitwidth = dtypes.itemsize_bits(ty)
   shape[-2] = shape[-2] * src_bitwidth // dst_bitwidth
-  return jax_core.ShapedArray(shape, ty)
+  return [jax_core.ShapedArray(shape, ty)]
 
 
 def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
@@ -106,7 +106,7 @@ mlir.register_lowering(bitcast_p, _bitcast_lowering_rule)
 
 
 def _bitcast_batch_rule(batched_args, batch_axes, *, ty):
-  return bitcast(*batched_args, ty=ty), batch_axes[0]
+  return [bitcast(*batched_args, ty=ty)], [batch_axes[0]]
 
 batching.primitive_batchers[bitcast_p] = _bitcast_batch_rule
 
@@ -135,7 +135,7 @@ def roll(
       raise ValueError("stride_axis is out of range")
     if axis == stride_axis:
       raise ValueError("expected axis and stride_axis are different.")
-  return roll_p.bind(
+  return roll_p.bind1(
       x, shift, axis=axis, stride=stride, stride_axis=stride_axis
   )
 
@@ -143,7 +143,7 @@ def roll(
 @roll_p.def_abstract_eval
 def _roll_abstract_eval(x, shift, **_):
   del shift
-  return x
+  return [x]
 
 
 def _roll_lowering_rule(
@@ -307,7 +307,6 @@ def _get_dma_effects(
 
 
 dma_start_p = jax_core.Primitive('dma_start')
-dma_start_p.multiple_results = True
 
 def _dma_is_high(*avals, **params):
   return any(aval.is_high for aval in avals)
@@ -562,7 +561,6 @@ state_discharge.register_discharge_rule(dma_start_p)(dma_start_discharge_rule)
 
 
 dma_wait_p = jax_core.Primitive('dma_wait')
-dma_wait_p.multiple_results = True
 
 dma_wait_p.is_high = _dma_is_high
 
@@ -788,10 +786,10 @@ get_barrier_semaphore_p = jax_core.Primitive('get_barrier_semaphore')
 
 @get_barrier_semaphore_p.def_abstract_eval
 def _get_barrier_semaphore_abstract_eval():
-  return state.AbstractRef(
+  return [state.AbstractRef(
       jax_core.ShapedArray((), pl_core.BarrierSemaphore()),
       tpu_core.MemorySpace.SEMAPHORE,
-  )
+  )]
 
 def get_barrier_semaphore():
   """Returns a barrier semaphore.
@@ -814,12 +812,11 @@ def get_barrier_semaphore():
   Note that reusing the same collective_id doesn't guarantee that the same
   semaphore is provided by XLA.
   """
-  return get_barrier_semaphore_p.bind()
+  return get_barrier_semaphore_p.bind1()
 
 
 # RNG Ops
 prng_seed_p = jax_core.Primitive("prng_seed")
-prng_seed_p.multiple_results = True
 
 
 class PRNGEffect(effects.Effect):
@@ -849,18 +846,17 @@ prng_random_bits_p = jax_core.Primitive(
 
 @prng_random_bits_p.def_abstract_eval
 def _prng_random_bits_abstract_eval(*, shape):
-  return jax_core.ShapedArray(shape, jnp.dtype("int32"))
+  return [jax_core.ShapedArray(shape, jnp.dtype("int32"))]
 
 
 def prng_random_bits(shape):
-  return prng_random_bits_p.bind(shape=shape)
+  return prng_random_bits_p.bind1(shape=shape)
 
 # PRNG wrap/unwrap ops.
 # We cannot use JAX's key_data and wrap_key_data because they return
 # vectors, and Pallas keys are represented as lists of scalars.
 
 split_key_p = jax_core.Primitive("prng_split")
-split_key_p.multiple_results = True
 
 
 @split_key_p.def_abstract_eval
@@ -888,20 +884,20 @@ def _join_key_scalar_abstract_eval(*seeds, impl):
         f"Number of seeds must match key shape, got {len(seeds)}"
         f" != {impl.key_shape[1]}."
     )
-  return jax_core.ShapedArray((), dtype=jax_prng.KeyTy(impl))
+  return [jax_core.ShapedArray((), dtype=jax_prng.KeyTy(impl))]
 
 
 def wrap_pallas_seed(*seeds, impl):
   """Joins scalar into a single PRNG key."""
   impl = jax_random.resolve_prng_impl(impl)
-  return join_key_p.bind(*seeds, impl=impl)
+  return join_key_p.bind1(*seeds, impl=impl)
 
 
 stochastic_round_p = jax_core.Primitive("stochastic_round")
 
 
 def stochastic_round(x, random_bits, *, target_dtype):
-  return stochastic_round_p.bind(x, random_bits, target_dtype=target_dtype)
+  return stochastic_round_p.bind1(x, random_bits, target_dtype=target_dtype)
 
 
 @stochastic_round_p.def_abstract_eval
@@ -916,7 +912,7 @@ def _stochastic_round_abstract_eval(x, random_bits, *, target_dtype):
         "The dtype of `random_bits` must be uint32 for stochastic_round, "
         f"but got {random_bits.dtype}"
     )
-  return jax_core.ShapedArray(x.shape, target_dtype)
+  return [jax_core.ShapedArray(x.shape, target_dtype)]
 
 
 def _get_elementwise_packing_factor(unpacked_dtype, packed_dtype):
@@ -954,7 +950,7 @@ def pack_elementwise(xs, *, packed_dtype):
   Returns:
     The packed array.
   """
-  return pack_elementwise_p.bind(*xs, packed_dtype=packed_dtype)
+  return pack_elementwise_p.bind1(*xs, packed_dtype=packed_dtype)
 
 
 @pack_elementwise_p.def_abstract_eval
@@ -981,7 +977,7 @@ def _pack_elementwise_abstract_eval(*xs, packed_dtype):
         f"({packing_factor}), got {len(xs)}"
     )
   out_dtype = jnp.dtype(f"uint{dtypes.itemsize_bits(first.dtype)}")
-  return jax_core.ShapedArray(first.shape, out_dtype)
+  return [jax_core.ShapedArray(first.shape, out_dtype)]
 
 
 unpack_elementwise_p = jax_core.Primitive("unpack_elementwise")
@@ -1024,7 +1020,7 @@ def unpack_elementwise(x, *, index, packed_dtype, unpacked_dtype):
   Returns:
     The unpacked array in `unpacked_dtype`.
   """
-  return unpack_elementwise_p.bind(
+  return unpack_elementwise_p.bind1(
       x, index=index, packed_dtype=packed_dtype, unpacked_dtype=unpacked_dtype
   )
 
@@ -1042,7 +1038,7 @@ def _unpack_elementwise_abstract_eval(
   if index < 0 or index >= packing_factor:
     raise ValueError(
         f"Index {index} is out of bounds for packing factor {packing_factor}")
-  return jax_core.ShapedArray(x.shape, unpacked_dtype)
+  return [jax_core.ShapedArray(x.shape, unpacked_dtype)]
 
 
 def with_memory_space_constraint(
@@ -1076,7 +1072,7 @@ def with_memory_space_constraint(
     raise NotImplementedError(
         "with_memory_space_constraint only supports HBM, VMEM, SMEM, and HOST."
     )
-  return pl_core.with_memory_space_constraint_p.bind(
+  return pl_core.with_memory_space_constraint_p.bind1(
       x, memory_space=memory_space)
 
 
@@ -1111,7 +1107,6 @@ def store(ref: Ref, val: jax.Array, *, mask: jax.Array | None = None) -> None:
 
 
 touch_p = jax_core.Primitive("add_dependency")
-touch_p.multiple_results = True
 
 
 def touch(ref: jax.Array | state.TransformedRef) -> None:
@@ -1138,7 +1133,6 @@ batching.primitive_batchers[touch_p] = _touch_batch_rule
 
 
 trace_value_p = jax_core.Primitive("trace_value")
-trace_value_p.multiple_results = True
 
 
 def trace_value(label: str, value: jax.Array) -> None:
@@ -1188,7 +1182,6 @@ pl_core.kernel_local_effects.add_type(MXUEffect)
 
 
 matmul_push_rhs_p = jax_core.Primitive("matmul_push_rhs")
-matmul_push_rhs_p.multiple_results = True
 
 
 def matmul_push_rhs(
@@ -1233,7 +1226,6 @@ def _matmul_push_rhs_abstract_eval(ref: jax.Array, **_):
 
 
 matmul_acc_lhs_p = jax_core.Primitive("matmul_acc_lhs")
-matmul_acc_lhs_p.multiple_results = True
 
 
 def matmul_acc_lhs(
@@ -1320,7 +1312,7 @@ def matmul_pop(acc: Ref) -> jax.Array:
   flat_acc_transforms, acc_transforms_treedef = tree_util.tree_flatten(
       acc_transforms
   )
-  return matmul_pop_p.bind(
+  return matmul_pop_p.bind1(
       acc_ref,
       *flat_acc_transforms,
       acc_transforms_tree=acc_transforms_treedef
@@ -1337,13 +1329,12 @@ def _matmul_pop_abstract_eval(acc: state.AbstractRef, *flat_acc_transforms, acc_
   result_aval = state.transform_type(acc_transforms, acc.inner_aval)
   assert isinstance(result_aval, jax_core.ShapedArray)
   return (
-      jax_core.ShapedArray(result_aval.shape, result_aval.dtype),
+      [jax_core.ShapedArray(result_aval.shape, result_aval.dtype)],
       {mxu_effect, state.ReadEffect(0), state.WriteEffect(0)}
   )
 
 
 matmul_lhs_fifo_p = jax_core.Primitive("matmul_lhs_fifo")
-matmul_lhs_fifo_p.multiple_results = True
 
 
 def matmul_lhs_fifo(
@@ -1413,7 +1404,7 @@ def matmul_pop_fifo(
     dtype: The dtype of the result.
     mxu_index: The MXU to use.
   """
-  return matmul_pop_fifo_p.bind(
+  return matmul_pop_fifo_p.bind1(
       shape=shape,
       mxu_index=mxu_index,
       dtype=jnp.dtype(dtype),
@@ -1426,4 +1417,4 @@ def _matmul_pop_fifo_abstract_eval(*, shape, dtype, **_):
     raise ValueError(
         f"Only float32 and int32 results are supported, got {dtype}"
     )
-  return jax_core.ShapedArray(shape, dtype), {mxu_effect}
+  return [jax_core.ShapedArray(shape, dtype)], {mxu_effect}

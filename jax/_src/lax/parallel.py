@@ -187,8 +187,8 @@ def _psum(x, axis_name, *, axis_index_groups, is_async):
                                       is_async=is_async)
                   for leaf in leaves]
     else:
-      out_flat = [psum_p.bind(leaf, axes=tuple(axis_name),
-                              axis_index_groups=axis_index_groups)
+      out_flat = [psum_p.bind1(leaf, axes=tuple(axis_name),
+                               axis_index_groups=axis_index_groups)
                   for leaf in leaves]
   return tree_util.tree_unflatten(treedef, out_flat)
 
@@ -270,7 +270,7 @@ def pmax(x, axis_name, *, axis_index_groups=None):
       return unreduced_pmax(leaf, axis_name)
     else:
       leaf = insert_collective_pvary(axis_name, leaf)
-      return pmax_p.bind(leaf, axes=axis_name, axis_index_groups=axis_index_groups)
+      return pmax_p.bind1(leaf, axes=axis_name, axis_index_groups=axis_index_groups)
   return tree_util.tree_map(bind, x)
 
 
@@ -310,7 +310,7 @@ def pmin(x, axis_name, *, axis_index_groups=None):
       return unreduced_pmin(leaf, axis_name)
     else:
       leaf = insert_collective_pvary(axis_name, leaf)
-      return pmin_p.bind(leaf, axes=axis_name, axis_index_groups=axis_index_groups)
+      return pmin_p.bind1(leaf, axes=axis_name, axis_index_groups=axis_index_groups)
   return tree_util.tree_map(bind, x)
 
 # TODO(mattjj): add a pargmin_p, or add named axis support to lax.argmin_p
@@ -372,7 +372,7 @@ def pbroadcast(x, axis_name, source):
     Array(s) with ``x`` being copied from the ``source`` index slice of ``axis_name``.
   """
   return tree_util.tree_map(
-      partial(pbroadcast_p.bind, axis_name=axis_name, source=source), x)
+      partial(pbroadcast_p.bind1, axis_name=axis_name, source=source), x)
 
 
 def ppermute(x, axis_name, perm):
@@ -412,7 +412,7 @@ def _ppermute_is_async(x, axis_name, perm, is_async=False):
   def bind(leaf):
     leaf = insert_collective_pvary(axis_name, leaf)
     prim = ppermute_start_p if is_async else ppermute_p
-    return prim.bind(leaf, axis_name=axis_name, perm=tuple(map(tuple, perm)))
+    return prim.bind1(leaf, axis_name=axis_name, perm=tuple(map(tuple, perm)))
   return tree_util.tree_map(bind, x)
 
 
@@ -446,7 +446,7 @@ def psend(x, axis_name, perm):
 
   def bind(leaf):
     leaf = insert_collective_pvary(axis_name, leaf)
-    return psend_p.bind(leaf, axis_name=axis_name, perm=tuple(map(tuple, perm)))
+    return psend_p.bind1(leaf, axis_name=axis_name, perm=tuple(map(tuple, perm)))
 
   return tree_util.tree_map(bind, x)
 
@@ -479,7 +479,7 @@ def precv(token, out_shape, axis_name, perm):
   """
   axis_name = tuple(axis_name) if isinstance(axis_name, (list, tuple)) else (axis_name,)
 
-  return precv_p.bind(
+  return precv_p.bind1(
       token,
       out_shape=core.ShapedArray(
           out_shape.shape, out_shape.dtype
@@ -618,10 +618,10 @@ def _all_to_all_is_async(x, axis_name, split_axis, concat_axis, *,
         split_axis += 1   # we have a new axis before split_axis now
     x = insert_collective_pvary(axis_name, x)
     prim = all_to_all_start_p if is_async else all_to_all_p
-    result = prim.bind(x, split_axis=split_axis, concat_axis=concat_axis,
-                               axis_name=axis_name,
-                               axis_index_groups=axis_index_groups,
-                               tiled=tiled)
+    result = prim.bind1(x, split_axis=split_axis, concat_axis=concat_axis,
+                        axis_name=axis_name,
+                        axis_index_groups=axis_index_groups,
+                        tiled=tiled)
     if not tiled and split_axis != concat_axis:
       result = lax.squeeze(result, (split_axis,))
     return result
@@ -780,10 +780,10 @@ def ragged_all_to_all(
     axis_name = (axis_name,)
 
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
-  return ragged_all_to_all_p.bind(operand, output, input_offsets, send_sizes,
-                                  output_offsets, recv_sizes,
-                                  axis_name=axis_name,
-                                  axis_index_groups=axis_index_groups)
+  return ragged_all_to_all_p.bind1(operand, output, input_offsets, send_sizes,
+                                   output_offsets, recv_sizes,
+                                   axis_name=axis_name,
+                                   axis_index_groups=axis_index_groups)
 
 
 def axis_index(axis_name: AxisName) -> Array:
@@ -817,7 +817,7 @@ def axis_index(axis_name: AxisName) -> Array:
          [6, 7]], dtype=int32)
   """
   if not isinstance(axis_name, (tuple, list)):
-    return axis_index_p.bind(axis_name=axis_name)
+    return axis_index_p.bind1(axis_name=axis_name)
   else:
     inner_size = 1
     index = lax.asarray(0)
@@ -873,15 +873,15 @@ def _constant_reduction(prim, axis_data, arg, axes, axis_index_groups):
   if axis_index_groups: raise NotImplementedError
   new_axes = tuple(n for n in axes if n != axis_data.name)
   if new_axes:
-    arg = (prim.bind(arg, axes=new_axes) if prim is psum_invariant_p else
-           prim.bind(arg, axes=new_axes, axis_index_groups=axis_index_groups))
+    arg = (prim.bind1(arg, axes=new_axes) if prim is psum_invariant_p else
+           prim.bind1(arg, axes=new_axes, axis_index_groups=axis_index_groups))
   if prim is psum_p:
     out = lax._const(arg, axis_data.size) * arg
   elif prim in (pmin_p, pmax_p):
     out = arg
   else:
     raise Exception(f"Unrecognized reducer: {prim}")
-  return out, None
+  return [out], [None]
 
 def _reduction_with_positional_batcher(
     prim, v, d, axis_index_groups, transform_unmapped, transform_mapped):
@@ -891,21 +891,20 @@ def _reduction_with_positional_batcher(
   v = v if d is None or d == 0 else _moveaxis(d, 0, v)
   if d is None:
     unmapped_axes, unmapped_vals_in = transform_unmapped(0, v)
-    return (prim.bind(unmapped_vals_in, axes=unmapped_axes)
+    return (prim.bind1(unmapped_vals_in, axes=unmapped_axes)
             if prim is psum_invariant_p else
-            prim.bind(unmapped_vals_in, axes=unmapped_axes, axis_index_groups=None))
+            prim.bind1(unmapped_vals_in, axes=unmapped_axes, axis_index_groups=None))
 
   mapped_axes, mapped_vals_in = transform_mapped(0, v)
-  return (prim.bind(mapped_vals_in, axes=mapped_axes)
+  return (prim.bind1(mapped_vals_in, axes=mapped_axes)
           if prim is psum_invariant_p else
-          prim.bind(mapped_vals_in, axes=mapped_axes, axis_index_groups=None))
+          prim.bind1(mapped_vals_in, axes=mapped_axes, axis_index_groups=None))
 
 def _reduction_batcher(prim, v, d, *, axes, axis_index_groups):
-  assert not prim.multiple_results
   if not any(isinstance(axis, int) for axis in axes):
-    out = (prim.bind(v, axes=axes) if prim is psum_invariant_p else
-           prim.bind(v, axes=axes, axis_index_groups=axis_index_groups))
-    return out, d
+    out = (prim.bind1(v, axes=axes) if prim is psum_invariant_p else
+           prim.bind1(v, axes=axes, axis_index_groups=axis_index_groups))
+    return [out], [d]
   val_out = _reduction_with_positional_batcher(
       prim, v, d, axis_index_groups,
       lambda d, v: (axes, v),
@@ -913,11 +912,10 @@ def _reduction_batcher(prim, v, d, *, axes, axis_index_groups):
                           for axis in axes),
                     v))
   # _reduction_with_positional_batcher moves all map dims to 0
-  return val_out, d if d is None else 0
+  return [val_out], [d if d is None else 0]
 
 def _batched_reduction_collective(prim, if_unmapped, axis_data, vals_in,
                                   dims_in, axes, axis_index_groups):
-  assert not prim.multiple_results
   (v,), (d,) = vals_in, dims_in
   del vals_in, dims_in
 
@@ -925,9 +923,9 @@ def _batched_reduction_collective(prim, if_unmapped, axis_data, vals_in,
     if axis_data.name in axes:
       return _constant_reduction(prim, axis_data, v, axes, axis_index_groups)
     else:
-      out = (prim.bind(v, axes=axes) if prim is psum_invariant_p else
-             prim.bind(v, axes=axes, axis_index_groups=axis_index_groups))
-      return out, d
+      out = (prim.bind1(v, axes=axes) if prim is psum_invariant_p else
+             prim.bind1(v, axes=axes, axis_index_groups=axis_index_groups))
+      return [out], [d]
 
   if axis_data.name not in axes:
     return _reduction_batcher(
@@ -946,7 +944,7 @@ def _batched_reduction_collective(prim, if_unmapped, axis_data, vals_in,
       lambda d, v: (tuple(axis + (axis >= d) if isinstance(axis, int) else axis
                           if axis != axis_data.name else d for axis in axes),
                     v))
-  return val_out, None
+  return [val_out], [None]
 
 def _replica_groups(axis_ctx, axis_name, axis_index_groups):
   replica_groups = pxla.axis_groups(axis_ctx, axis_name)
@@ -1001,7 +999,7 @@ def _allreduce_impl(prim, pos_reducer, arg, *, axes, axis_index_groups):
      return dispatch.apply_primitive(prim, arg, axes=axes,
                                      axis_index_groups=axis_index_groups)
   assert all(isinstance(axis, int) for axis in axes)
-  return pos_reducer(arg, axes)
+  return [pos_reducer(arg, axes)]
 
 def _allreduce_effectful_abstract_eval(aval, *, axes, axis_index_groups):
   _check_axis_names(axes, 'psum')
@@ -1016,7 +1014,7 @@ def _allreduce_effectful_abstract_eval(aval, *, axes, axis_index_groups):
   out_aval = ShapedArray(
       lax._reduce_op_shape_rule(aval, axes=pos_axes), aval.dtype,
       sharding=lax._reduce_op_sharding_rule(aval, axes=pos_axes))
-  return out_aval, {core.NamedAxisEffect(axis) for axis in named_axes}
+  return [out_aval], {core.NamedAxisEffect(axis) for axis in named_axes}
 
 # TODO(yashkatariya): Replace this with _psum_invariant_abstract_eval
 def _pmin_pmax_abstract_eval(name, aval, *, axes, axis_index_groups):
@@ -1036,7 +1034,7 @@ def _check_axis_names(axes, api_name):
 
 def _lower_reducer_into_block(ctx, prim, scalar_aval, block):
   with ir.InsertionPoint(block):
-    lower_reducer = mlir.lower_fun(prim.bind, multiple_results=False)
+    lower_reducer = mlir.lower_fun(prim.bind1, multiple_results=False)
     reducer_ctx = ctx.replace(
         primitive=None, avals_in=[scalar_aval] * 2, avals_out=[scalar_aval]
     )
@@ -1120,6 +1118,7 @@ def _all_reduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups,
 
 
 def _psum_transpose_rule(cts, arg, *, axes, axis_index_groups):
+  ct, = cts
   named_axes, pos_axes = axes_partition = [], []
   for axis in axes:
     axes_partition[isinstance(axis, int)].append(axis)
@@ -1128,14 +1127,14 @@ def _psum_transpose_rule(cts, arg, *, axes, axis_index_groups):
     def broadcast_positional(ct, arg):
       assert ad.is_undefined_primal(arg)
       if type(ct) is ad.Zero: return ad.Zero(arg.aval)
-      return lax._reduce_sum_transpose_rule(ct, arg, axes=pos_axes,
+      return lax._reduce_sum_transpose_rule([ct], arg, axes=pos_axes,
                                             out_sharding=None)[0]
-    cts = broadcast_positional(cts, arg)
+    ct = broadcast_positional(ct, arg)
 
   # We treat psum as psum + pbroadcast, which is why the transpose reduces
   # over the named axes again (unlike for positional axes).
-  return (psum_p.bind(cts, axes=tuple(named_axes),
-                      axis_index_groups=axis_index_groups),)
+  return (psum_p.bind1(ct, axes=tuple(named_axes),
+                       axis_index_groups=axis_index_groups),)
 
 psum_p = core.Primitive('psum')
 psum_p.def_impl(partial(_allreduce_impl, psum_p, lax.reduce_sum))
@@ -1212,7 +1211,8 @@ def _ppermute_lowering(ctx, x, *, axis_name, perm, is_async=False):
         {"permutation": full_perm.tolist(), **other_args})
 
 
-def _ppermute_transpose_rule(t, x, perm, axis_name):
+def _ppermute_transpose_rule(cts, x, perm, axis_name):
+  t, = cts
   srcs, dsts = unzip2(perm)
   inverse_perm = list(zip(dsts, srcs))
   return [ppermute(t, axis_name=axis_name, perm=inverse_perm)]
@@ -1223,26 +1223,26 @@ def _ppermute_batcher(axis_data, vals_in, dims_in, axis_name, perm):
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
   if d is None and axis_data.name not in axis_name:
-    return ppermute_p.bind(v, perm=perm, axis_name=axis_name), None
+    return [ppermute_p.bind1(v, perm=perm, axis_name=axis_name)], [None]
   if axis_data.name not in axis_name:
-    return ppermute_p.bind(v, perm=perm, axis_name=axis_name), d
+    return [ppermute_p.bind1(v, perm=perm, axis_name=axis_name)], [d]
   remaining_axes = tuple(axis for axis in axis_name if axis != frame_name)
   if remaining_axes:
-    return ppermute_p.bind(v, perm=perm, axis_name=remaining_axes), d
+    return [ppermute_p.bind1(v, perm=perm, axis_name=remaining_axes)], [d]
   assert axis_name[0] == frame_name, "ppermute batcher called with a wrong axis!"
   assert len(perm) == axis_size, "Permutation doesn't match the axis size!"
   if d is None:
-    return v, d
+    return [v], [d]
   perm_indices = np.zeros(axis_size, dtype=int)
   for src, dst in perm:
     perm_indices[dst] = src
-  return v.take(perm_indices, d), d
+  return [v.take(perm_indices, d)], [d]
 
 def _raise_to_shaped_abstract_eval(x, *, axis_name, **params):
   _check_axis_names(axis_name, 'ppermute')
   collective_vma_rule('ppermute', axis_name, x)
   check_unreduced_args([x], axis_name, 'ppermute')
-  return x
+  return [x]
 
 ppermute_p = core.Primitive('ppermute')
 ppermute_p.def_abstract_eval(_raise_to_shaped_abstract_eval)
@@ -1290,7 +1290,7 @@ effects_lib.lowerable_effects.add_type(SingleSideCollectiveEffect)
 
 def _psend_abstract_eval(x, *, axis_name, **params):
   _check_axis_names(axis_name, 'psend')
-  return abstract_token, {
+  return [abstract_token], {
       *map(core.NamedAxisEffect, axis_name),
       single_side_collective_effect,
   }
@@ -1332,8 +1332,8 @@ def _precv_lowering_gpu(ctx, token, *, out_shape, axis_name, perm):
 def _precv_abstract_eval(
     token, *, out_shape, axis_name, **params
 ):
-  return out_shape, {*map(core.NamedAxisEffect, axis_name),
-                     single_side_collective_effect}
+  return [out_shape], {*map(core.NamedAxisEffect, axis_name),
+                       single_side_collective_effect}
 
 precv_p = core.Primitive("precv")
 precv_p.def_effectful_abstract_eval(_precv_abstract_eval)
@@ -1345,7 +1345,8 @@ mlir.register_lowering(precv_p, _precv_lowering)
 
 batching.fancy_primitive_batchers[precv_p] = _ppermute_batcher
 
-def _pbroadcast_transpose_rule(t, x, source, axis_name):
+def _pbroadcast_transpose_rule(cts, x, source, axis_name):
+  t, = cts
   is_source = axis_index(axis_name) == source
   tsum = psum(t, axis_name)
   return [lax.select(is_source, lax.full_like(t, tsum), lax.full_like(t, 0))]
@@ -1356,19 +1357,19 @@ def _pbroadcast_batcher(axis_data, vals_in, dims_in, axis_name, source):
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
   if d is None and axis_data.name not in axis_name:
-    return pbroadcast_p.bind(v, axis_name=axis_name, source=source), None
+    return [pbroadcast_p.bind1(v, axis_name=axis_name, source=source)], [None]
   if axis_data.name not in axis_name:
-    return pbroadcast_p.bind(v, axis_name=axis_name, source=source), d
+    return [pbroadcast_p.bind1(v, axis_name=axis_name, source=source)], [d]
   remaining_axes = tuple(axis for axis in axis_name if axis != axis_data.name)
   if remaining_axes:
     raise NotImplementedError("pbroadcast batcher only supports a single axis")
   assert axis_name[0] == axis_data.name, "pbroadcast batcher called with a wrong axis!"
   assert source >= 0 and source < axis_size, "collective broadcast doesn't fit in the axis size!"
   if axis_size == 1 and remaining_axes:
-    return pbroadcast_p.bind(v, source=source, axis_name=remaining_axes), d
+    return [pbroadcast_p.bind1(v, source=source, axis_name=remaining_axes)], [d]
   if d is None:
-    return v, d
-  return v.take([source] * axis_size, d), d
+    return [v], [d]
+  return [v.take([source] * axis_size, d)], [d]
 
 def _pbroadcast_lowering(ctx, x, *, axis_name, source):
   replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name, None)
@@ -1473,8 +1474,9 @@ def _all_to_all_lowering(
 def _all_to_all_transpose_rule(
     cts, x, axis_name, split_axis, concat_axis, axis_index_groups, tiled
 ):
+  ct, = cts
   return (all_to_all(
-      cts,
+      ct,
       axis_name=axis_name,
       split_axis=concat_axis,
       concat_axis=split_axis,
@@ -1485,7 +1487,7 @@ def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis,
                         tiled):
   x, = vals_in
   d, = dims_in
-  result = all_to_all_p.bind(
+  result = all_to_all_p.bind1(
       x,
       axis_name=axis_name,
       split_axis=split_axis + (d <= split_axis),
@@ -1493,7 +1495,7 @@ def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis,
       axis_index_groups=axis_index_groups,
       tiled=tiled,
   )
-  return result, d
+  return [result], [d]
 
 def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
                                    axis_name, split_axis, concat_axis,
@@ -1505,10 +1507,10 @@ def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
   axis_size, frame_name = axis_data.size, axis_data.name
   axes_names = axis_name if isinstance(axis_name, (list, tuple)) else [axis_name]
   if d is None and frame_name not in axes_names:
-    out = all_to_all_p.bind(
+    out = all_to_all_p.bind1(
         x, axis_name=axis_name, split_axis=split_axis, concat_axis=concat_axis,
         axis_index_groups=axis_index_groups, tiled=tiled)
-    return out, None
+    return [out], [None]
   if frame_name not in axes_names:
     return _all_to_all_batcher(
       vals_in, dims_in, axis_name=axis_name, split_axis=split_axis,
@@ -1532,20 +1534,20 @@ def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
       d_pre_split = d
       x = _splitaxis(axis, axis_size, x)
       d += (axis <= d)
-      return _foldaxis(axis, moveaxis(x, (d, axis), (axis, d))), d_pre_split
+      return [_foldaxis(axis, moveaxis(x, (d, axis), (axis, d)))], [d_pre_split]
     else:
       x_concat = _foldaxis(concat_axis, _moveaxis(d, concat_axis, x))
-      return _splitaxis(split_axis, axis_size, x_concat), split_axis
+      return [_splitaxis(split_axis, axis_size, x_concat)], [split_axis]
   # Here we have to handle either the major or the minor dimensions
   # We will be accumulating chunks into the three leading dims: [Major, Current, Minor, ...]
   x, d = lax.expand_dims(_moveaxis(d, 0, x), (0, 2)), 1
   split_axis += 3; concat_axis += 3  # Offset by extra three leading dims
 
   if major_axes:
-    x = all_to_all_p.bind(x, axis_name=major_axes,
-                          split_axis=split_axis, concat_axis=0,
-                          axis_index_groups=axis_index_groups,
-                          tiled=tiled)
+    x = all_to_all_p.bind1(x, axis_name=major_axes,
+                           split_axis=split_axis, concat_axis=0,
+                           axis_index_groups=axis_index_groups,
+                           tiled=tiled)
   # Split out the local part into axis new_d (NOTE: d is already in axis 1)
   assert d == 1
   x = _splitaxis(split_axis, axis_size, x)
@@ -1553,10 +1555,10 @@ def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
   concat_axis += (split_axis <= concat_axis)  # Offset the existing axes by the new batch axis
   split_axis += 1
   if minor_axes:
-    x = all_to_all_p.bind(x, axis_name=minor_axes,
-                          split_axis=split_axis, concat_axis=2,
-                          axis_index_groups=axis_index_groups,
-                          tiled=tiled)
+    x = all_to_all_p.bind1(x, axis_name=minor_axes,
+                           split_axis=split_axis, concat_axis=2,
+                           axis_index_groups=axis_index_groups,
+                           tiled=tiled)
 
   # Fold the chunk axes into a single one
   x = _foldaxis(0, _foldaxis(0, x))
@@ -1564,7 +1566,7 @@ def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
   # Fold gathered axes into concat_axis
   x = _foldaxis(concat_axis - 1, _moveaxis(0, concat_axis - 1, x))
   new_d -= 1  # We've removed 0th dimension, so new_d needs to be adjusted
-  return x, new_d
+  return [x], [new_d]
 
 
 def _all_to_all_effectful_abstract_eval(
@@ -1591,7 +1593,7 @@ def _all_to_all_effectful_abstract_eval(
     shape=tuple(shape), weak_type=False,
     manual_axis_type=input_aval.mat.update(varying=vma))
   effects = {*map(core.NamedAxisEffect, axis_name)}
-  return out_aval, effects
+  return [out_aval], effects
 
 def _all_to_all_impl(*args, **kwargs):
   raise RuntimeError("all_to_all must be used within a mapped context"
@@ -1673,25 +1675,26 @@ def _ragged_all_to_all_effectful_abstract_eval(
   _check_axis_names(axis_name, 'ragged_all_to_all')
   out_aval = output.update(shape=output.shape, weak_type=False)
   effects = {*map(core.NamedAxisEffect, axis_name)}
-  return out_aval, effects
+  return [out_aval], effects
 
 def _ragged_all_to_all_jvp(primals, tangents, **params):
   operand, output, *sizes_and_offsets = primals
   operand_dot, output_dot, *_ = tangents
-  result = ragged_all_to_all_p.bind(
+  result = ragged_all_to_all_p.bind1(
       operand, output, *sizes_and_offsets, **params)
   if type(operand_dot) is type(output_dot) is ad.Zero:
     result_dot = ad.p2tz(result)
   else:
     operand_dot = ad.instantiate_zeros(operand_dot)
     output_dot = ad.instantiate_zeros(output_dot)
-    result_dot = ragged_all_to_all_p.bind(
+    result_dot = ragged_all_to_all_p.bind1(
         operand_dot, output_dot, *sizes_and_offsets, **params)
-  return result, result_dot
+  return [result], [result_dot]
 
 def _ragged_all_to_all_transpose(
-    t, operand, output, input_offsets, send_sizes, output_offsets, recv_sizes,
+    cts, operand, output, input_offsets, send_sizes, output_offsets, recv_sizes,
     *, axis_name, axis_index_groups):
+  t, = cts
   if type(t) is ad.Zero:
     operand_t = ad.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
     output_t = ad.Zero(output.aval) if ad.is_undefined_primal(output) else None
@@ -1699,7 +1702,7 @@ def _ragged_all_to_all_transpose(
     zero = ad.zeros_like_aval(operand.aval)
     output_offsets_ = all_to_all(output_offsets, axis_name, 0, 0, tiled=True)
     input_offsets_ = all_to_all(input_offsets, axis_name, 0, 0, tiled=True)
-    operand_t = ragged_all_to_all_p.bind(
+    operand_t = ragged_all_to_all_p.bind1(
         t, zero, output_offsets_, recv_sizes, input_offsets_, send_sizes,
         axis_name=axis_name, axis_index_groups=axis_index_groups)
     mask = control_flow.cumsum(
@@ -1713,9 +1716,9 @@ def _ragged_all_to_all_transpose(
 def _ragged_all_to_all_batched_collective(axis_data, vals_in, dims_in,
                                           axis_name, axis_index_groups):
   if all(bdim is None for bdim in dims_in) and axis_data.name not in axis_name:
-    out = ragged_all_to_all_p.bind(*vals_in, axis_name=axis_name,
-                                   axis_index_groups=axis_index_groups)
-    return out, None
+    out = ragged_all_to_all_p.bind1(*vals_in, axis_name=axis_name,
+                                    axis_index_groups=axis_index_groups)
+    return [out], [None]
   if axis_data.name in axis_name:
     raise NotImplementedError("Please open a feature request!")
   if axis_index_groups:
@@ -1737,7 +1740,7 @@ def _ragged_all_to_all_batched_collective(axis_data, vals_in, dims_in,
   output_offsets += lax.iota(output_offsets.dtype, size)[None, :] * M
   vals_in = operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
   result = split(ragged_all_to_all(*map(merge, vals_in), axis_name=axis_name))
-  return result, 0
+  return [result], [0]
 
 def _ragged_all_to_all_impl(*args, **kwargs):
   raise RuntimeError("ragged_all_to_all must be used within a mapped context"
@@ -1864,7 +1867,7 @@ def _all_gather(x, axis_name, *, axis_index_groups, axis, tiled, is_async):
   def bind(leaf):
     leaf = insert_collective_pvary(axis_name, leaf)
     prim = all_gather_start_p if is_async else all_gather_p
-    return prim.bind(
+    return prim.bind1(
         leaf,
         all_gather_dimension=canonicalize_axis(
             axis, np.ndim(leaf) if tiled else np.ndim(leaf) + 1),
@@ -1947,13 +1950,14 @@ def _all_gather_effectful_abstract_eval(
   else:
     new_shape.insert(all_gather_dimension, axis_size)
   out_vma = collective_vma_rule('all_gather', axis_name, x_aval)
-  return (x_aval.update(shape=new_shape,
-                        manual_axis_type=x_aval.mat.update(varying=out_vma)),
+  return ([x_aval.update(shape=new_shape,
+                         manual_axis_type=x_aval.mat.update(varying=out_vma))],
           {*map(core.NamedAxisEffect, axis_name)})
 
 def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name,
                                axis_index_groups, axis_size, tiled):
-  return (psum_scatter(cts, axis_name=axis_name,
+  ct, = cts
+  return (psum_scatter(ct, axis_name=axis_name,
                        scatter_dimension=all_gather_dimension,
                        axis_index_groups=axis_index_groups,
                        tiled=tiled),)
@@ -1967,17 +1971,17 @@ def _all_gather_batcher(prim, vals_in, dims_in, *, all_gather_dimension, axis_na
     elif not tiled:  # Tiled all-gather doesn't modify the set of dimensions
       d += 1
   if prim is all_gather_p:
-    result = all_gather_p.bind(
+    result = all_gather_p.bind1(
         x, all_gather_dimension=all_gather_dimension, axis_name=axis_name,
         axis_index_groups=axis_index_groups, axis_size=axis_size,
         tiled=tiled)
-    return result, d
+    return [result], [d]
   else:
     assert prim is all_gather_invariant_p
-    result = all_gather_invariant_p.bind(
+    result = all_gather_invariant_p.bind1(
         x, all_gather_dimension=all_gather_dimension, axis_name=axis_name,
         axis_size=axis_size, tiled=tiled)
-    return result, d
+    return [result], [d]
 
 def _all_gather_batched_collective(prim, axis_data, vals_in, dims_in,
                                    all_gather_dimension, axis_name,
@@ -1989,9 +1993,9 @@ def _all_gather_batched_collective(prim, axis_data, vals_in, dims_in,
   if d is None and axis_data.name not in axis_name:
     kwargs = dict(all_gather_dimension=all_gather_dimension, axis_name=axis_name,
                   axis_size=axis_size, tiled=tiled)
-    out = (prim.bind(x, axis_index_groups=axis_index_groups, **kwargs)
-           if prim is all_gather_p else prim.bind(x, **kwargs))
-    return out, None
+    out = (prim.bind1(x, axis_index_groups=axis_index_groups, **kwargs)
+           if prim is all_gather_p else prim.bind1(x, **kwargs))
+    return [out], [None]
   if frame_name not in axis_name:
     return _all_gather_batcher(
         prim, vals_in, dims_in, all_gather_dimension=all_gather_dimension,
@@ -2012,7 +2016,7 @@ def _all_gather_batched_collective(prim, axis_data, vals_in, dims_in,
     y = _moveaxis(d, all_gather_dimension, x)
   if tiled:
     y = _foldaxis(all_gather_dimension, y)
-  return y, None
+  return [y], [None]
 
 all_gather_p = core.Primitive('all_gather')
 all_gather_p.def_effectful_abstract_eval(_all_gather_effectful_abstract_eval)
@@ -2054,7 +2058,7 @@ def all_gather_invariant(x, axis_name, *, axis: int = 0, tiled: bool = False):
     in_vma = core.typeof(leaf).mat.varying
     if config.auto_pcast.value and (vary_names := axes_ - in_vma):
       leaf = pvary(leaf, tuple(vary_names))
-    return all_gather_invariant_p.bind(
+    return all_gather_invariant_p.bind1(
         leaf,
         all_gather_dimension=canonicalize_axis(axis, np.ndim(leaf) if tiled else
                                                np.ndim(leaf) + 1),
@@ -2074,8 +2078,8 @@ def _all_gather_invariant_effectful_abstract_eval(
   else:
     new_shape.insert(all_gather_dimension, axis_size)
   out_vma = frozenset(v for v in x_aval.mat.varying if v not in axis_name)
-  return (x_aval.update(shape=new_shape,
-                        manual_axis_type=x_aval.mat.update(varying=out_vma)),
+  return ([x_aval.update(shape=new_shape,
+                         manual_axis_type=x_aval.mat.update(varying=out_vma))],
           {*map(core.NamedAxisEffect, axis_name)})
 
 all_gather_invariant_p.def_effectful_abstract_eval(
@@ -2102,11 +2106,12 @@ for p in ("cuda", "rocm", "tpu"):
 
 def _all_gather_invariant_transpose_rule(
     cts, x, *, all_gather_dimension, axis_name, axis_size, tiled):
-  slice_size, rem = divmod(cts.shape[all_gather_dimension], axis_size)
+  ct, = cts
+  slice_size, rem = divmod(ct.shape[all_gather_dimension], axis_size)
   assert not rem
   idx = axis_index(axis_name) * slice_size
   out = slicing.dynamic_slice_in_dim(
-      cts, idx, slice_size=slice_size, axis=all_gather_dimension)
+      ct, idx, slice_size=slice_size, axis=all_gather_dimension)
   return (out,) if tiled else (lax.squeeze(out, [all_gather_dimension]),)
 ad.deflinear2(all_gather_invariant_p, _all_gather_invariant_transpose_rule)
 
@@ -2195,14 +2200,15 @@ def _reduce_scatter_effectful_abstract_eval(
                        f"{axis_size}")
     del new_shape[scatter_dimension]
   vma = collective_vma_rule('reduce_scatter', axis_name, x_aval)
-  return (x_aval.update(shape=new_shape,
-                        manual_axis_type=x_aval.mat.update(varying=vma)),
+  return ([x_aval.update(shape=new_shape,
+                         manual_axis_type=x_aval.mat.update(varying=vma))],
           {*map(core.NamedAxisEffect, axis_name)})
 
 
 def _reduce_scatter_transpose_rule(cts, x, *, axis_name, scatter_dimension,
                                    axis_index_groups, axis_size, tiled):
-  return (all_gather(cts, axis_name=axis_name,
+  ct, = cts
+  return (all_gather(ct, axis_name=axis_name,
                      axis_index_groups=axis_index_groups,
                      axis=scatter_dimension, tiled=tiled),)
 
@@ -2214,14 +2220,14 @@ def _reduce_scatter_batcher(vals_in, dims_in, *, scatter_dimension, axis_name,
     scatter_dimension += 1
   elif not tiled:  # Tiled all-scatter doesn't change the rank
     d += 1
-  result = reduce_scatter_p.bind(
+  result = reduce_scatter_p.bind1(
       x,
       scatter_dimension=scatter_dimension,
       axis_name=axis_name,
       axis_index_groups=axis_index_groups,
       axis_size=axis_size,
       tiled=tiled)
-  return result, d
+  return [result], [d]
 
 def _reduce_scatter_collective(axis_data, vals_in, dims_in,
                                scatter_dimension, axis_name,
@@ -2231,11 +2237,11 @@ def _reduce_scatter_collective(axis_data, vals_in, dims_in,
     axis_name = (axis_name,)
   (x,), (d,) = vals_in, dims_in
   if d is None and frame_name not in axis_name:
-    out = reduce_scatter_p.bind(
+    out = reduce_scatter_p.bind1(
         x, scatter_dimension=scatter_dimension, axis_name=axis_name,
         axis_index_groups=axis_index_groups, axis_size=axis_size,
         tiled=tiled)
-    return out, None
+    return [out], [None]
 
   if frame_name not in axis_name:
     return _reduce_scatter_batcher(
@@ -2254,7 +2260,7 @@ def _reduce_scatter_collective(axis_data, vals_in, dims_in,
     y, dy = lax.reduce(x, 0., lax.add, (d,)), scatter_dimension
   if tiled:
     y = _splitaxis(dy, axis_size, y)
-  return y, dy
+  return [y], [dy]
 
 
 reduce_scatter_p = core.Primitive("reduce_scatter")
@@ -2382,7 +2388,7 @@ def _psum_scatter(x, axis_name, *, scatter_dimension, axis_index_groups, tiled,
     prim = reduce_scatter_start_p if is_async else reduce_scatter_p
     if is_async and not tiled:
       raise NotImplementedError
-    return prim.bind(
+    return prim.bind1(
         leaf, axis_name=axis_name,
         scatter_dimension=canonicalize_axis(scatter_dimension, np.ndim(leaf)),
         axis_index_groups=axis_index_groups, axis_size=axis_size, tiled=tiled)
@@ -2418,7 +2424,7 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_ctx):
     if axis_sizes[axis_pos] == 1:
       return hlo.constant(ir.DenseElementsAttr.get(np.asarray(0, dtype=np.int32)))
     def f():
-      return axis_index_p.bind(axis_name=axis_name)
+      return axis_index_p.bind1(axis_name=axis_name)
     return mlir.lower_fun(lambda: [shard_map(f, check_vma=False, in_specs=(),
                                              out_specs=P())()]
                           )(ctx)[0]
@@ -2453,13 +2459,13 @@ def _axis_index_effectful_abstract_eval(*, axis_name):
          if config._check_vma.value else frozenset())
   out_mat = core.ManualAxisType(varying=vma)
   out_aval = ShapedArray((), np.int32, sharding=sharding, manual_axis_type=out_mat)
-  return out_aval, effect
+  return [out_aval], effect
 
 def _axis_index_batcher(axis_data, vals_in, dims_in, *, axis_name):
   axes = tuple(axis_name) if isinstance(axis_name, (tuple, list)) else (axis_name,)
   if axis_data.name not in axes:
-    return axis_index_p.bind(axis_name=axis_name), None
-  return lax.iota(np.int32, axis_data.size), 0
+    return [axis_index_p.bind1(axis_name=axis_name)], [None]
+  return [lax.iota(np.int32, axis_data.size)], [0]
 
 axis_index_p = core.Primitive('axis_index')
 axis_index_p.def_impl(partial(dispatch.apply_primitive, axis_index_p))
@@ -2476,7 +2482,7 @@ def bind_psum_invariant(leaf, *, axes, axis_index_groups, is_async):
       (names := set(axes) - core.typeof(leaf).mat.varying)):
     leaf = pvary(leaf, tuple(names))
   prim = psum_invariant_start_p if is_async else psum_invariant_p
-  return prim.bind(leaf, axes=axes)
+  return prim.bind1(leaf, axes=axes)
 
 psum_invariant_p = core.Primitive('psum_invariant')
 
@@ -2502,7 +2508,7 @@ def _psum_invariant_abstract_eval(name, aval, *, axes):
   check_unreduced_args([aval], axes, name)
   vma = frozenset(a for a in aval.mat.varying if a not in named_axes)
   out_aval = aval.update(manual_axis_type=aval.mat.update(varying=vma))
-  return out_aval, {core.NamedAxisEffect(axis) for axis in named_axes}
+  return [out_aval], {core.NamedAxisEffect(axis) for axis in named_axes}
 psum_invariant_p.def_effectful_abstract_eval(
     partial(_psum_invariant_abstract_eval, psum_invariant_p.name))
 
@@ -2518,8 +2524,9 @@ def _psum_invariant_batching_rule(axis_data, vals_in, dims_in, axes):
 batching.fancy_primitive_batchers[psum_invariant_p] = _psum_invariant_batching_rule
 
 def _psum_invariant_transpose_rule(cts, arg, *, axes):
+  ct, = cts
   assert ad.is_undefined_primal(arg)
-  return (core.pvary(cts, axis_name=axes),)
+  return (core.pvary(ct, axis_name=axes),)
 ad.deflinear2(psum_invariant_p, _psum_invariant_transpose_rule)
 
 ########################### pvary ##################################
@@ -2541,21 +2548,22 @@ def _pvary_abstract_eval(aval, *, axes):
         f" `jax.typeof(inp).mat.varying`. Got axes={axes} and"
         f" jax.typeof(inp)={aval}")
   out_vma = aval.mat.varying.union(frozenset(axes))
-  return aval.update(sharding=aval.sharding.update(mesh=get_abstract_mesh()),
-                     manual_axis_type=aval.mat.update(varying=out_vma))
+  return [aval.update(sharding=aval.sharding.update(mesh=get_abstract_mesh()),
+                      manual_axis_type=aval.mat.update(varying=out_vma))]
 core.pvary_p.def_abstract_eval(_pvary_abstract_eval)
 
 def _pvary_transpose_rule(cts, arg, *, axes):
+  ct, = cts
   assert ad.is_undefined_primal(arg)
-  return (psum_invariant_p.bind(cts, axes=axes),)
+  return (psum_invariant_p.bind1(ct, axes=axes),)
 ad.deflinear2(core.pvary_p, _pvary_transpose_rule)
 
 def _pvary_batcher(vals_in, dims_in, *, axes):
   if any(type(axis) is int for axis in axes):
     raise NotImplementedError
   (x,), (d,) = vals_in, dims_in
-  y = core.pvary_p.bind(x, axes=axes)
-  return y, d
+  y = core.pvary_p.bind1(x, axes=axes)
+  return [y], [d]
 batching.primitive_batchers[core.pvary_p] = _pvary_batcher
 
 ####################### all_gather_reduced ###########################
@@ -2570,7 +2578,7 @@ def all_gather_reduced(x, axis_name, *, axis: int = 0, tiled: bool = False,
   axis_size = _axis_size(axis_name, None)
   def bind(leaf):
     prim = all_gather_reduced_start_p if is_async else all_gather_reduced_p
-    return prim.bind(
+    return prim.bind1(
         leaf,
         all_gather_dimension=canonicalize_axis(
             axis, np.ndim(leaf) if tiled else np.ndim(leaf) + 1),
@@ -2608,7 +2616,7 @@ def _all_gather_reduced_effectful_abstract_eval(
   new_reduced = x_aval.mat.reduced | frozenset(axis_name)
   out_vma = frozenset(v for v in x_aval.mat.varying if v not in axis_name)
   out_mat = x_aval.mat.update(varying=out_vma, reduced=new_reduced)
-  return (x_aval.update(shape=new_shape, manual_axis_type=out_mat),
+  return ([x_aval.update(shape=new_shape, manual_axis_type=out_mat)],
           {*map(core.NamedAxisEffect, axis_name)})
 all_gather_reduced_p.def_effectful_abstract_eval(
     _all_gather_reduced_effectful_abstract_eval)
@@ -2636,7 +2644,8 @@ for p in ("cuda", "rocm", "tpu"):
 
 def _all_gather_reduced_transpose_rule(
     cts, x, *, all_gather_dimension, axis_name, axis_size, tiled):
-  return (unreduced_psum_scatter(cts, axis_name=axis_name,
+  ct, = cts
+  return (unreduced_psum_scatter(ct, axis_name=axis_name,
                                  scatter_dimension=all_gather_dimension,
                                  tiled=tiled),)
 ad.deflinear2(all_gather_reduced_p, _all_gather_reduced_transpose_rule)
@@ -2658,7 +2667,7 @@ def unreduced_psum_scatter(x, axis_name, *, scatter_dimension=0, tiled=False):
     return x
   axis_size = _axis_size(axis_name, None)
   def bind(leaf):
-    return unreduced_reduce_scatter_p.bind(
+    return unreduced_reduce_scatter_p.bind1(
         leaf, axis_name=axis_name, scatter_dimension=scatter_dimension,
         axis_size=axis_size, tiled=tiled)
   return tree_util.tree_map(bind, x)
@@ -2707,7 +2716,7 @@ def _unreduced_reduce_scatter_effectful_abstract_eval(
   kind = UnreducedKind.sum if out_unreduced else None
   out_mat = x_aval.mat.update(varying=out_vma, unreduced=out_unreduced,
                               unreduced_kind=kind)
-  return (x_aval.update(shape=new_shape, manual_axis_type=out_mat),
+  return ([x_aval.update(shape=new_shape, manual_axis_type=out_mat)],
           {*map(core.NamedAxisEffect, axis_name)})
 unreduced_reduce_scatter_p.def_effectful_abstract_eval(
     _unreduced_reduce_scatter_effectful_abstract_eval)
@@ -2720,7 +2729,8 @@ unreduced_reduce_scatter_p.def_impl(_unreduced_reduce_scatter_impl)
 
 def _unreduced_reduce_scatter_transpose_rule(
     cts, x, *, axis_name, scatter_dimension, axis_size, tiled):
-  return (all_gather_reduced(cts, axis_name=axis_name, axis=scatter_dimension,
+  ct, = cts
+  return (all_gather_reduced(ct, axis_name=axis_name, axis=scatter_dimension,
                              tiled=tiled),)
 ad.deflinear2(unreduced_reduce_scatter_p, _unreduced_reduce_scatter_transpose_rule)
 
@@ -2748,7 +2758,7 @@ def unreduced_psum(x, axis_name):
   if not axis_name:
     return x
   return tree_util.tree_map(
-      lambda leaf: unreduced_psum_p.bind(leaf, axes=tuple(axis_name)), x)
+      lambda leaf: unreduced_psum_p.bind1(leaf, axes=tuple(axis_name)), x)
 
 unreduced_psum_p = core.Primitive('unreduced_psum')
 
@@ -2779,7 +2789,7 @@ def _unreduced_psum_pmax_pmin_abstract_eval(name, out_u_kind, aval, *, axes):
   kind = aval.mat.unreduced_kind if out_u else None
   out_mat = aval.mat.update(unreduced=out_u, unreduced_kind=kind)
   out_aval = aval.update(manual_axis_type=out_mat)
-  return out_aval, {core.NamedAxisEffect(axis) for axis in axes}
+  return [out_aval], {core.NamedAxisEffect(axis) for axis in axes}
 
 def _unreduced_psum_abstract_eval(aval, *, axes):
   return _unreduced_psum_pmax_pmin_abstract_eval(
@@ -2796,8 +2806,9 @@ def _unreduced_psum_batcher(axis_data, vals_in, dims_in, axes):
 batching.fancy_primitive_batchers[unreduced_psum_p] = _unreduced_psum_batcher
 
 def _unreduced_psum_transpose_rule(cts, arg, *, axes):
+  ct, = cts
   assert ad.is_undefined_primal(arg)
-  return (preduced(cts, axis_name=axes),)
+  return (preduced(ct, axis_name=axes),)
 ad.deflinear2(unreduced_psum_p, _unreduced_psum_transpose_rule)
 
 ############################## unreduced_pmax #################################
@@ -2809,7 +2820,7 @@ def unreduced_pmax(x, axis_name):
   if not axis_name:
     return x
   return tree_util.tree_map(
-      lambda leaf: unreduced_pmax_p.bind(leaf, axes=axis_name), x)
+      lambda leaf: unreduced_pmax_p.bind1(leaf, axes=axis_name), x)
 
 unreduced_pmax_p = core.Primitive('unreduced_pmax')
 
@@ -2836,7 +2847,7 @@ def unreduced_pmin(x, axis_name):
   if not axis_name:
     return x
   return tree_util.tree_map(
-      lambda leaf: unreduced_pmin_p.bind(leaf, axes=axis_name), x)
+      lambda leaf: unreduced_pmin_p.bind1(leaf, axes=axis_name), x)
 
 unreduced_pmin_p = core.Primitive('unreduced_pmin')
 
@@ -2867,7 +2878,7 @@ def preduced(x, axis_name):
   new_axes = axes if cur_mesh.empty else core.order_wrt_mesh(cur_mesh, axes)
   assert set(new_axes) == set(axes)
   del axes
-  return tree_util.tree_map(lambda l: preduced_p.bind(l, axes=new_axes), x)
+  return tree_util.tree_map(lambda l: preduced_p.bind1(l, axes=new_axes), x)
 
 preduced_p = core.Primitive('preduced')
 preduced_p.def_impl(partial(_raise_valueerror, 'preduced'))
@@ -2888,13 +2899,14 @@ def _preduced_abstract_eval(aval, *, axes):
         f" provided. Got x={aval.str_short(True)} and axis_name={axes}")
   if aval.mat.unreduced:
     check_unreduced_kind('preduced', aval.mat, UnreducedKind.sum)
-  return aval.update(manual_axis_type=aval.mat.update(
-      reduced=aval.mat.reduced | frozenset(axes)))
+  return [aval.update(manual_axis_type=aval.mat.update(
+      reduced=aval.mat.reduced | frozenset(axes)))]
 preduced_p.def_abstract_eval(_preduced_abstract_eval)
 
 def _preduced_transpose_rule(cts, arg, *, axes):
+  ct, = cts
   assert ad.is_undefined_primal(arg)
-  return (unreduced_psum(cts, axis_name=axes),)
+  return (unreduced_psum(ct, axis_name=axes),)
 ad.deflinear2(preduced_p, _preduced_transpose_rule)
 
 def _preduced_batcher(vals_in, dims_in, *, axes):
@@ -2915,7 +2927,7 @@ def vary_unreduced_cast(x, axis_name):
   assert set(new_axes) == set(axes)
   del axes
   return tree_util.tree_map(
-      lambda leaf: vary_unreduced_cast_p.bind(leaf, axes=new_axes), x)
+      lambda leaf: vary_unreduced_cast_p.bind1(leaf, axes=new_axes), x)
 
 vary_unreduced_cast_p = core.Primitive('vary_unreduced_cast_p')
 vary_unreduced_cast_p.def_impl(partial(_raise_valueerror, 'vary_unreduced_cast'))
@@ -2943,13 +2955,14 @@ def _vary_unreduced_cast_abstract_eval(aval, *, axes):
 
   new_unreduced = aval.mat.unreduced | frozenset(axes)
   out_vma = frozenset(i for i in aval.mat.varying if i not in axes)
-  return aval.update(manual_axis_type=aval.mat.update(
-    varying=out_vma, unreduced=new_unreduced))
+  return [aval.update(manual_axis_type=aval.mat.update(
+    varying=out_vma, unreduced=new_unreduced))]
 vary_unreduced_cast_p.def_abstract_eval(_vary_unreduced_cast_abstract_eval)
 
 def _vary_unreduced_cast_transpose_rule(cts, x, *, axes):
+  ct, = cts
   assert ad.is_undefined_primal(x)
-  return (core.reduced_vary_cast(cts, axis_name=axes),)
+  return (core.reduced_vary_cast(ct, axis_name=axes),)
 ad.deflinear2(vary_unreduced_cast_p, _vary_unreduced_cast_transpose_rule)
 
 def _vary_unreduced_cast_batcher(vals_in, dims_in, *, axes):
@@ -2987,13 +3000,14 @@ def _reduced_vary_cast_abstract_eval(aval, *, axes):
 
   new_reduced = frozenset(i for i in aval.mat.reduced if i not in axes)
   out_vma = aval.mat.varying | frozenset(axes)
-  return aval.update(manual_axis_type=aval.mat.update(
-    varying=out_vma, reduced=new_reduced))
+  return [aval.update(manual_axis_type=aval.mat.update(
+    varying=out_vma, reduced=new_reduced))]
 core.reduced_vary_cast_p.def_abstract_eval(_reduced_vary_cast_abstract_eval)
 
 def _reduced_vary_cast_transpose_rule(cts, x, *, axes):
+  ct, = cts
   assert ad.is_undefined_primal(x)
-  return (vary_unreduced_cast(cts, axis_name=axes),)
+  return (vary_unreduced_cast(ct, axis_name=axes),)
 ad.deflinear2(core.reduced_vary_cast_p, _reduced_vary_cast_transpose_rule)
 
 def _reduced_vary_cast_batcher(vals_in, dims_in, *, axes):
@@ -3131,8 +3145,9 @@ def ppermute_start(*args, **kwargs):
 
 # Asynchronous start abstract eval.
 def _async_start_abstract_eval(sync_prim, done_fun, *args, **kwargs):
-  aval, effs = sync_prim.abstract_eval(*args, **kwargs)
-  return core.AbstractFuture(aval, done_fun), effs
+  avals, effs = sync_prim.abstract_eval(*args, **kwargs)
+  aval, = avals
+  return [core.AbstractFuture(aval, done_fun)], effs
 
 for async_prim, sync_prim, done_p in [
     (all_gather_start_p, all_gather_p, all_gather_done_p),
@@ -3143,12 +3158,12 @@ for async_prim, sync_prim, done_p in [
     (ppermute_start_p, ppermute_p, ppermute_done_p),
 ]:
   async_prim.def_effectful_abstract_eval(
-      partial(_async_start_abstract_eval, sync_prim, done_p.bind))
+      partial(_async_start_abstract_eval, sync_prim, done_p.bind1))
 
 def _async_done_abstract_eval(aval):
   if not isinstance(aval, core.AbstractFuture):
     raise TypeError(f"async done op got {aval}, want core.AbstractFuture")
-  return aval.inner_aval
+  return [aval.inner_aval]
 
 for p, target in [
     (all_gather_done_p, "all-gather-done"),

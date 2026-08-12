@@ -718,7 +718,6 @@ class JaxprInterpreter:
         allocation_key_as_array,
         eqn.source_info,
     )
-    assert eqn.primitive.multiple_results
     return token, []
 
   def _interpret_barrier_wait_p(
@@ -736,7 +735,6 @@ class JaxprInterpreter:
         allocation_key_as_array,
         eqn.source_info,
     )
-    assert eqn.primitive.multiple_results
     return token, []
 
   def _interpret_arithmetic_primitive(
@@ -749,10 +747,7 @@ class JaxprInterpreter:
       # floating-point values. It is safe to populate `out` with avals
       # since mapping `env.write_many` over `out` (in `self.interpret`) below
       # only relies on the shape and dtype (for writing `Placeholder`s).
-      out = [ovar.aval for ovar in eqn.outvars]
-      if not eqn.primitive.multiple_results:
-        out = out[0]
-      return out
+      return [ovar.aval for ovar in eqn.outvars]
     else:
       bind_params = eqn.primitive.get_bind_params(eqn.params)
       return eqn.primitive.bind(*get_invals(), **bind_params)
@@ -1211,7 +1206,7 @@ class JaxprInterpreter:
         # "If pl.run_state has accumulator operands, it implicitly awaits all
         # outstanding WGMMA operations before returning the final values."
 
-        out = out if eqn.primitive.multiple_results else [out]
+        out = list(out) if isinstance(out, (list, tuple)) else [out]
         env.write_many(eqn.outvars, out)
 
     return token, env.read_many(jaxpr.outvars)

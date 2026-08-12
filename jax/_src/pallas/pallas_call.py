@@ -70,7 +70,6 @@ CompilerParams = pallas_core.CompilerParams
 
 # See the docstring for GridMapping for the calling convention
 pallas_call_p = hijax.HiPrimitive('pallas_call')
-pallas_call_p.multiple_results = True
 
 
 def _pallas_call_impl(*args, **params):

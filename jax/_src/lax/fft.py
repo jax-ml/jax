@@ -83,7 +83,7 @@ def fft(x, fft_type: FftType | str, fft_lengths: Sequence[int]):
     # XLA FFT doesn't support 0-rank.
     return x
   fft_lengths = tuple(fft_lengths)
-  return fft_p.bind(x, fft_type=typ, fft_lengths=fft_lengths)
+  return fft_p.bind1(x, fft_type=typ, fft_lengths=fft_lengths)
 
 def _fft_impl(x, fft_type, fft_lengths):
   return dispatch.apply_primitive(fft_p, x, fft_type=fft_type, fft_lengths=fft_lengths)
@@ -125,7 +125,7 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
     dtype = x.dtype
   if x.mat.unreduced or x.mat.reduced:
     raise NotImplementedError
-  return x.update(shape=shape, dtype=dtype)
+  return [x.update(shape=shape, dtype=dtype)]
 
 def _fft_lowering(ctx, x, *, fft_type, fft_lengths):
   if not is_constant_shape(fft_lengths):
@@ -227,7 +227,8 @@ def _irfft_transpose(t, fft_lengths):
   # https://github.com/jax-ml/jax/issues/6223#issuecomment-807740707
   return lax.conj(out)
 
-def _fft_transpose_rule(t, operand, fft_type, fft_lengths):
+def _fft_transpose_rule(cts, operand, fft_type, fft_lengths):
+  t, = cts
   if fft_type == FftType.RFFT:
     result = _rfft_transpose(t, fft_lengths)
   elif fft_type == FftType.IRFFT:
@@ -240,7 +241,7 @@ def _fft_batching_rule(batched_args, batch_dims, fft_type, fft_lengths):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
-  return fft(x, fft_type, fft_lengths), 0
+  return [fft(x, fft_type, fft_lengths)], [0]
 
 fft_p = Primitive('fft')
 fft_p.def_impl(_fft_impl)

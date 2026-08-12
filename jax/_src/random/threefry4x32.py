@@ -156,7 +156,6 @@ def _threefry4x32_abstract_eval(*args):
 
 
 threefry4x32_p = core.Primitive("threefry4x32")
-threefry4x32_p.multiple_results = True
 threefry4x32_p.def_impl(
     functools.partial(dispatch.apply_primitive, threefry4x32_p)
 )

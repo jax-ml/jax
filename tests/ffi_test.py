@@ -67,8 +67,8 @@ class FfiTest(jtu.JaxTestCase):
       return jax.ffi.ffi_lowering("test_ffi", operand_layouts=[layout_spec],
                                   result_layouts=[layout_spec])(ctx, x)
     prim = core.Primitive("test_ffi")
-    prim.def_impl(lambda x: x)
-    prim.def_abstract_eval(lambda x: x)
+    prim.def_impl(lambda x: [x])
+    prim.def_abstract_eval(lambda x: [x])
     mlir.register_lowering(prim, lowering_rule)
 
     x = jnp.ones((3,) * len(expected_layout))
@@ -397,13 +397,12 @@ def batch_partitionable_ffi_call(x):
 
 
 batch_partitionable_p = core.Primitive("batch_partitionable")
-batch_partitionable_p.multiple_results = True
 dispatch.simple_impl(batch_partitionable_p)
 
 
 @batch_partitionable_p.def_abstract_eval
 def _batch_partitionable_abstract_eval(x):
-  return x, core.ShapedArray(x.shape[:-1], x.dtype)
+  return [x, core.ShapedArray(x.shape[:-1], x.dtype)]
 
 
 def _batch_partitionable_lowering(target_name, ctx, x):

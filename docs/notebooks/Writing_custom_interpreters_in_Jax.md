@@ -201,11 +201,8 @@ def eval_jaxpr(jaxpr, consts, *args):
   for eqn in jaxpr.eqns:
     # Read inputs to equation from environment
     invals = safe_map(read, eqn.invars)
-    # `bind` is how a primitive is called
+    # `bind` is how a primitive is called; it returns a list of outputs
     outvals = eqn.primitive.bind(*invals, **eqn.params)
-    # Primitives may return multiple outputs or not
-    if not eqn.primitive.multiple_results:
-      outvals = [outvals]
     # Write the results of the primitive into the environment
     safe_map(write, eqn.outvars, outvals)
   # Read the final result of the Jaxpr from the environment

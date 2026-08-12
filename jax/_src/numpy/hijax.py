@@ -326,8 +326,6 @@ class Einsum(VJPHiPrimitive):
     precision: Specify the precision of the computation.
     preferred_element_type: Specify the accumulator and result dtype.
   """
-  multiple_results = False
-
   subscripts: str
   optimize: str | bool | tuple[tuple[int, ...], ...]
   precision: lax.PrecisionLike

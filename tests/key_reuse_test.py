@@ -58,10 +58,10 @@ primitives_with_static_signatures = {
 
 # Primitive that is unknown to the key reuse machinery
 unknown_p = core.Primitive("unknown")
-unknown_p.def_abstract_eval(lambda x: x)
-unknown_p.def_impl(lambda x: x)
+unknown_p.def_abstract_eval(lambda x: [x])
+unknown_p.def_impl(lambda x: [x])
 def apply_unknown_primitive(key):
-  return unknown_p.bind(key)
+  return unknown_p.bind1(key)
 
 
 @jtu.with_config(

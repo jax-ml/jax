@@ -503,7 +503,7 @@ def _make_convert_element_type_harness(name,
   define(
       "convert_element_type",
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_olddtype={jtu.dtype_str(dtype)}_newdtype={jtu.dtype_str(new_dtype)}",
-      lambda arg: (lax.convert_element_type_p.bind(
+      lambda arg: (lax.convert_element_type_p.bind1(
           arg, new_dtype=np.dtype(new_dtype), weak_type=False, sharding=None)),
       [RandArg(shape, dtype)],
       shape=shape,
@@ -677,7 +677,7 @@ def _make_bitcast_convert_type_harness(name,
   define(
       "bitcast_convert_type",
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_newdtype={np.dtype(new_dtype).name}",
-      lambda x: lax.bitcast_convert_type_p.bind(x,
+      lambda x: lax.bitcast_convert_type_p.bind1(x,
                                                 new_dtype=np.dtype(new_dtype)),
       [RandArg(shape, dtype)],
       shape=shape,
@@ -867,7 +867,7 @@ def _make_iota_harness(name, *, shape=(2, 3), dtype=np.float32, dimension=0):
       lax.iota_p,
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_{dimension=}",
       lambda dtype, shape, dim:
-      (lax.iota_p.bind(dtype=np.dtype(dtype), shape=shape, dimension=dim,
+      (lax.iota_p.bind1(dtype=np.dtype(dtype), shape=shape, dimension=dim,
                        sharding=None)),
       [StaticArg(dtype),
        StaticArg(shape),
@@ -1057,7 +1057,7 @@ def _make_broadcast_in_dim_harness(name,
   define(
       lax.broadcast_in_dim_p,
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_{outshape=}_broadcastdimensions={broadcast_dimensions}",
-      lambda operand: lax.broadcast_in_dim_p.bind(
+      lambda operand: lax.broadcast_in_dim_p.bind1(
           operand, shape=outshape, broadcast_dimensions=broadcast_dimensions,
           sharding=None),
       [RandArg(shape, dtype)],
@@ -1549,7 +1549,7 @@ def _make_transpose_harness(name,
       lax.transpose_p,
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_{permutation=}"
       .replace(" ", ""),
-      lambda x: lax.transpose_p.bind(x, permutation=permutation),
+      lambda x: lax.transpose_p.bind1(x, permutation=permutation),
       [RandArg(shape, dtype)],
       shape=shape,
       dtype=dtype,
@@ -1746,7 +1746,7 @@ for dtype in jtu.dtypes.inexact:
     define(
         lax.linalg.cholesky_p,
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        lambda *args: lax.linalg.cholesky_p.bind(*args),
+        lambda *args: lax.linalg.cholesky_p.bind1(*args),
         [CustomArg(partial(_make_cholesky_arg, shape, dtype))],
         jax_unimplemented=[
             Limitation(
@@ -1794,7 +1794,7 @@ def _make_fft_harness(name,
   define(
       lax.fft_p,
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
-      lambda *args: lax.fft_p.bind(
+      lambda *args: lax.fft_p.bind1(
           args[0], fft_type=args[1], fft_lengths=args[2]),
       [RandArg(shape, dtype),
        StaticArg(fft_type),
@@ -1972,7 +1972,7 @@ def _make_triangular_solve_harness(name,
                                    unit_diagonal=False):
   a_shape, b_shape = ab_shapes
   f_lax = lambda a, b: (
-      lax.linalg.triangular_solve_p.bind(
+      lax.linalg.triangular_solve_p.bind1(
           a,
           b,
           left_side=left_side,
@@ -2174,7 +2174,7 @@ def _make_conj_harness(name, *, shape=(3, 4), dtype=np.float32, **kwargs):
       lax.conj_p,
       f"{name}_operand={jtu.format_shape_dtype_string(shape, dtype)}_{kwargs=}"
       .replace(" ", ""),
-      lambda x: lax.conj_p.bind(x, **kwargs), [RandArg(shape, dtype)],
+      lambda x: lax.conj_p.bind1(x, **kwargs), [RandArg(shape, dtype)],
       shape=shape,
       dtype=dtype,
       **kwargs)
@@ -3000,7 +3000,7 @@ def _make_concatenate_harness(name,
   define(
       lax.concatenate_p,
       f"{name}_shapes={shapes_str}_{dimension=}",
-      lambda *args: lax.concatenate_p.bind(*args, dimension=dimension),
+      lambda *args: lax.concatenate_p.bind1(*args, dimension=dimension),
       [RandArg(shape, dtype) for shape in shapes],
       shapes=shapes,
       dtype=dtype,

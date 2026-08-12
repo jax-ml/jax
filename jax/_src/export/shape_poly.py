@@ -1275,7 +1275,6 @@ def _einsum_contract_path(*operands, **kwargs):
 #                           error_message="...{0}...{1}")
 # where "{0}" refers to error_message_inputs[0], etc.
 shape_assertion_p = core.Primitive("shape_assertion")
-shape_assertion_p.multiple_results = True
 shape_assertion_p.def_effectful_abstract_eval(
   lambda *_, **__: ((), {shape_assertion_effect}))
 
@@ -1329,7 +1328,7 @@ def shape_assertion(assert_what: typing.Array,
 # that is a DimExpr. The value of the primitive is the value of the dimension,
 # using int64 in x64 mode or int32 otherwise (core.dim_value_dtype())
 dim_as_value_p = core.Primitive("dim_as_value")
-dim_as_value_p.def_abstract_eval(lambda dim: core.dim_value_aval())
+dim_as_value_p.def_abstract_eval(lambda dim: [core.dim_value_aval()])
 
 def dim_as_value_impl(dim: DimSize):
   raise NotImplementedError(
@@ -1338,7 +1337,7 @@ def dim_as_value_impl(dim: DimSize):
 
 dim_as_value_p.def_impl(dim_as_value_impl)
 def _dim_as_value(dim: DimSize):
-  return dim_as_value_p.bind(dim=dim)
+  return dim_as_value_p.bind1(dim=dim)
 
 def _dim_as_value_lowering(ctx: mlir.LoweringRuleContext, *,
                            dim):
@@ -1727,13 +1726,13 @@ def _evaluate_multiply(v1, v2):
 # dimension_size(operand, dimension=i) get the operand.shape[i] as a
 # value of type shape_poly.dim_as_value_dtype().
 dimension_size_p = core.Primitive("dimension_size")
-def _dimension_size_abstract_eval(aval: core.AbstractValue, **_) -> core.AbstractValue:
-  return core.dim_value_aval()
+def _dimension_size_abstract_eval(aval: core.AbstractValue, **_) -> list[core.AbstractValue]:
+  return [core.dim_value_aval()]
 
 dimension_size_p.def_abstract_eval(_dimension_size_abstract_eval)
 
 def _dimension_size_impl(arg, *, dimension):
-  return core.dim_constant(arg.shape[dimension])
+  return [core.dim_constant(arg.shape[dimension])]
 dimension_size_p.def_impl(_dimension_size_impl)
 
 def _dimension_size_lowering_rule(ctx, arg, *, dimension):
@@ -2026,7 +2025,7 @@ def compute_dim_vars_from_arg_shapes(
 
   # Replace the synthetic vars with the dynamic shape of the actual arg
   synthetic_env: DimVarEnv = {
-      vname: dimension_size_p.bind(actual_args[arg_idx], dimension=dim_idx)
+      vname: dimension_size_p.bind1(actual_args[arg_idx], dimension=dim_idx)
       for (vname, arg_idx, dim_idx) in synth_dim_vars
   }
   synthetic_eval = ShapeEvaluator(synthetic_env)

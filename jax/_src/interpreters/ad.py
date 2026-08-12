@@ -336,7 +336,6 @@ def backward_pass3(
       params = eqn.primitive.get_bind_params(eqn.params)
       with eqn.ctx.manager, _name_stack_ctx(eqn.source_info):
         ans = eqn.primitive.bind(*map(read, eqn.invars), **params)
-      ans = ans if eqn.primitive.multiple_results else [ans]
       foreach(env.setdefault, eqn.outvars, ans)
 
   ctx = (source_info_util.transform_name_stack('transpose') if transform_stack
@@ -357,8 +356,6 @@ def backward_pass3(
             acc.accum(ct)
         else:
           cts_in = [env.pop(v).freeze() for v in eqn.outvars]
-          if not eqn.primitive.multiple_results:
-            cts_in, = cts_in
           if eqn.primitive in fancy_transposes:
             rule = fancy_transposes[eqn.primitive]
             eqn_logs = rule(cts_in, *map(read, eqn.invars), **eqn.params)
@@ -549,10 +546,7 @@ class JVPTrace(Trace):
     with core.set_current_trace(self.parent_trace):
       primal_out, tangent_out = jvp(primals_in, tangents_in, **params)
 
-    if primitive.multiple_results:
-      return [maybe_jvp_tracer(self, x, t) for x, t in zip(primal_out, tangent_out)]
-    else:
-      return maybe_jvp_tracer(self, primal_out, tangent_out)
+    return [maybe_jvp_tracer(self, x, t) for x, t in zip(primal_out, tangent_out)]
 
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *, symbolic_zeros):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
@@ -725,11 +719,8 @@ class LinearizeTrace(Trace):
     with (core.set_current_trace(self.tangent_trace),
           source_info_util.set_name_stack(self._name_stack_suffix())):
       tangent_out = linearized(residuals, structured_res_binders, *tangents_in)
-    if primitive.multiple_results:
-      return [maybe_linearize_tracer(self, x, nz, t)
-              for x, nz, t in zip(primal_out, tangent_nzs_out, tangent_out)]
-    else:
-      return maybe_linearize_tracer(self, primal_out, tangent_nzs_out, tangent_out)
+    return [maybe_linearize_tracer(self, x, nz, t)
+            for x, nz, t in zip(primal_out, tangent_nzs_out, tangent_out)]
 
   def process_custom_jvp_call(self, primitive, fun: lu.WrappedFun,
                               jvp: lu.WrappedFun, tracers, /, *,
@@ -751,7 +742,7 @@ class LinearizeTrace(Trace):
       instantiate_zeros = not symbolic_zeros
       nonzeros_in = [type(t) is not Zero for t in tangents_in]
       primals_out, tangent_nzs_out, residuals, structured_residuals, linearized = \
-          linearize_from_jvp(_f_jvp, True, nonzeros_in, symbolic_zeros,
+          linearize_from_jvp(_f_jvp, nonzeros_in, symbolic_zeros,
                              instantiate_zeros, primals_in, {})
 
     with core.set_current_trace(self.tangent_trace):
@@ -810,11 +801,9 @@ def fallback_linearize_rule(_prim: core.Primitive,
     raise NotImplementedError(msg)
   debug_jvp = debug_info("linearize_prim_jvp", jvp, primals, params)
   return linearize_from_jvp(lu.wrap_init(jvp, debug_info=debug_jvp),
-                            _prim.multiple_results, _nonzeros, False, False,
-                            primals, params)
+                            _nonzeros, False, False, primals, params)
 
 def linearize_from_jvp(jvp: lu.WrappedFun,
-                       multiple_results: bool,
                        nonzeros: Sequence[bool],
                        user_facing_symbolic_zeros: bool, instantiate_input_zeros: bool,
                        primals, params):
@@ -846,10 +835,6 @@ def linearize_from_jvp(jvp: lu.WrappedFun,
       out_primals, out_tangents = jvp.call_wrapped(
           tuple(primals), tuple(tangent_args), **params)
 
-    if not multiple_results:
-      out_primals = [out_primals]
-      out_tangents = [out_tangents]
-
     out_primals = [trace.to_jaxpr_tracer(p).pval.get_known() for p in out_primals]
     if any(p is None for p in out_primals):
       raise ValueError(
@@ -874,18 +859,9 @@ def linearize_from_jvp(jvp: lu.WrappedFun,
       nz_tangents_out_iter = iter(nz_tangents_out)
       all_out_tangents = [next(nz_tangents_out_iter) if nz else Zero(aval)
                           for (aval, nz) in zip(out_tangent_avals, out_nzs)]
-      if multiple_results:
-        return all_out_tangents
-      else:
-        out_tangent, = all_out_tangents
-        return out_tangent
+      return all_out_tangents
 
-  if multiple_results:
-    return out_primals, out_nzs, out_consts, None, linearized
-  else:
-    out_primal, = out_primals
-    out_nz, = out_nzs
-    return out_primal, out_nz, out_consts, None, linearized
+  return out_primals, out_nzs, out_consts, None, linearized
 
 class LinearizeTracer(Tracer[LinearizeTrace]):
   __slots__ = ['primal', 'tangent']
@@ -928,56 +904,55 @@ def deflinear(primitive, transpose_rule):
 def linear_jvp(primitive, primals, tangents, **params):
   val_out = primitive.bind(*primals, **params)
   if all(type(tangent) is Zero for tangent in tangents):
-    if primitive.multiple_results:
-      return val_out, map(p2tz, val_out)
-    return val_out, p2tz(val_out)
+    return val_out, map(p2tz, val_out)
   else:
     tangents = map(instantiate_zeros, tangents)
     return val_out, primitive.bind(*tangents, **params)
 
-def linear_transpose(transpose_rule, cotangent, *args, **kwargs):
-  if type(cotangent) is Zero:
+def linear_transpose(transpose_rule, cotangents, *args, **kwargs):
+  if all(type(ct) is Zero for ct in cotangents):
     return [Zero(x.aval.to_tangent_aval()) if isinstance(x, UndefinedPrimal)
             else None for x in args]
   else:
-    return transpose_rule(cotangent, **kwargs)
+    return transpose_rule(cotangents, **kwargs)
 
 
 def deflinear2(primitive, transpose_rule):
   primitive_jvps[primitive] = partial(linear_jvp, primitive)
   primitive_transposes[primitive] = partial(linear_transpose2, transpose_rule)
 
-def linear_transpose2(transpose_rule, cotangent, *args, **kwargs):
-  if type(cotangent) is Zero:
+def linear_transpose2(transpose_rule, cotangents, *args, **kwargs):
+  if all(type(ct) is Zero for ct in cotangents):
     return [Zero(x.aval.to_ct_aval()) if isinstance(x, UndefinedPrimal)
             else None for x in args]
   else:
-    return transpose_rule(cotangent, *args, **kwargs)
+    return transpose_rule(cotangents, *args, **kwargs)
 
 
 def defjvp(primitive, *jvprules):
+  # The jvprules are per-argument tangent rules for a single-output primitive,
+  # each returning the (single) output tangent.
   assert isinstance(primitive, Primitive)
-  assert not primitive.multiple_results
   primitive_jvps[primitive] = partial(standard_jvp, jvprules, primitive)
 
 
 def standard_jvp(jvprules, primitive, primals, tangents, **params):
-  val_out = primitive.bind(*primals, **params)
+  val_out = primitive.bind1(*primals, **params)
   tangents_out = [rule(t, *primals, **params) for rule, t in zip(jvprules, tangents)
                   if rule is not None and type(t) is not Zero]
-  return val_out, functools.reduce(add_tangents, tangents_out, p2tz(val_out))
+  return [val_out], [functools.reduce(add_tangents, tangents_out, p2tz(val_out))]
 
 def defjvp2(primitive, *jvprules):
+  # Like defjvp, but the per-argument rules also receive the primal output.
   assert isinstance(primitive, Primitive)
-  assert not primitive.multiple_results
   primitive_jvps[primitive] = partial(standard_jvp2, jvprules, primitive)
 
 def standard_jvp2(jvprules, primitive, primals, tangents, **params):
-  val_out = primitive.bind(*primals, **params)
+  val_out = primitive.bind1(*primals, **params)
   tangents_out = (rule(t, val_out, *primals, **params) for rule, t in zip(jvprules, tangents)
                   if rule is not None and type(t) is not Zero)
   tangents_out = list(tangents_out)
-  return val_out, functools.reduce(add_tangents, tangents_out, p2tz(val_out))
+  return [val_out], [functools.reduce(add_tangents, tangents_out, p2tz(val_out))]
 
 def add_tangents(x, y):
   if type(x) is Zero:
@@ -989,14 +964,15 @@ def add_tangents(x, y):
 
 def defbilinear(prim, lhs_rule, rhs_rule):
   assert isinstance(prim, Primitive)
-  lhs_jvp = lambda g, x, y, **kwargs: prim.bind(g, y, **kwargs)
-  rhs_jvp = lambda g, x, y, **kwargs: prim.bind(x, g, **kwargs)
+  lhs_jvp = lambda g, x, y, **kwargs: prim.bind1(g, y, **kwargs)
+  rhs_jvp = lambda g, x, y, **kwargs: prim.bind1(x, g, **kwargs)
   defjvp(prim, lhs_jvp, rhs_jvp)
   fancy_transposes[prim] = partial(fancy_bilinear_transpose, lhs_rule, rhs_rule)
   # TODO(mattjj,yashkatariya): remove next line if downstream doesnt need it
   primitive_transposes[prim] = partial(bilinear_transpose, lhs_rule, rhs_rule)
 
-def fancy_bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
+def fancy_bilinear_transpose(lhs_rule, rhs_rule, cotangents, x, y, **kwargs):
+  cotangent, = cotangents
   assert isinstance(x, GradAccum) ^ isinstance(y, GradAccum), (x, y)
   if isinstance(x, GradAccum):
     if type(cotangent) is not Zero and not isinstance(x, NullAccum):
@@ -1005,7 +981,8 @@ def fancy_bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
     if type(cotangent) is not Zero and not isinstance(y, NullAccum):
       y.accum(rhs_rule(cotangent, x, y, **kwargs))
 
-def bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
+def bilinear_transpose(lhs_rule, rhs_rule, cotangents, x, y, **kwargs):
+  cotangent, = cotangents
   assert is_undefined_primal(x) ^ is_undefined_primal(y)
   if is_undefined_primal(x):
     if type(cotangent) is Zero:
@@ -1025,10 +1002,10 @@ def defjvp_zero(primitive):
   primitive_jvps[primitive] = partial(zero_jvp, primitive)
 
 def zero_jvp(primitive, primals, tangents, **params):
-  r = primitive.bind(*primals, **params)
-  return r, p2tz(r)
+  rs = primitive.bind(*primals, **params)
+  return rs, map(p2tz, rs)
 
-deflinear2(add_jaxvals_p, lambda t, *args: (t, t))
+deflinear2(add_jaxvals_p, lambda cts, *args: (cts[0], cts[0]))
 
 
 def instantiate_zeros(tangent):
@@ -1111,7 +1088,6 @@ def _interleave(xs, ys):
 
 custom_lin_p: core.Primitive = core.Primitive('custom_lin')
 custom_lin_p.def_abstract_eval(lambda *_, out_avals, **__: out_avals)
-custom_lin_p.multiple_results = True
 
 def raise_custom_vjp_error_on_jvp(*_, **__):
   raise TypeError("can't apply forward-mode autodiff (jvp) to a custom_vjp "

@@ -92,7 +92,6 @@ def _check_ref(
 
 
 print_layout_p = jax_core.Primitive("print_layout")
-print_layout_p.multiple_results = True
 
 
 @print_layout_p.def_effectful_abstract_eval
@@ -181,7 +180,6 @@ def print_layout(fmt: str, x: jax.typing.ArrayLike | _Ref) -> None:
 
 
 copy_smem_to_gmem_p = jax_core.Primitive("copy_smem_to_gmem")
-copy_smem_to_gmem_p.multiple_results = True
 
 
 @copy_smem_to_gmem_p.def_effectful_abstract_eval
@@ -532,7 +530,6 @@ def copy_smem_to_gmem(
 
 
 async_store_smem_p = jax_core.Primitive("async_store_smem")
-async_store_smem_p.multiple_results = True
 
 
 @async_store_smem_p.def_effectful_abstract_eval
@@ -739,7 +736,6 @@ def async_store_smem(
 
 
 copy_gmem_to_smem_p = jax_core.Primitive("copy_gmem_to_smem")
-copy_gmem_to_smem_p.multiple_results = True
 
 
 @copy_gmem_to_smem_p.def_effectful_abstract_eval
@@ -1298,7 +1294,6 @@ def copy_gmem_to_smem(
 
 
 wait_gmem_to_smem_p = jax_core.Primitive("wait_gmem_to_smem")
-wait_gmem_to_smem_p.multiple_results = True
 
 
 @wait_gmem_to_smem_p.def_effectful_abstract_eval
@@ -1339,7 +1334,6 @@ def wait_gmem_to_smem(n: int) -> None:
 
 
 async_prefetch_p = jax_core.Primitive("async_prefetch")
-async_prefetch_p.multiple_results = True
 
 @async_prefetch_p.def_effectful_abstract_eval
 def _async_prefetch_abstract_eval(ref, *args, **params):
@@ -1491,7 +1485,6 @@ def _get_barrier_base_index(aval, transforms) -> ir.Value | None:
 
 
 barrier_arrive_p = jax_core.Primitive("barrier_arrive")
-barrier_arrive_p.multiple_results = True
 
 
 @barrier_arrive_p.def_effectful_abstract_eval
@@ -1580,14 +1573,13 @@ def barrier_arrive(barrier: state.AbstractRef) -> None:
 
 
 barrier_test_p = jax_core.Primitive("barrier_test")
-barrier_test_p.multiple_results = False
 
 
 @barrier_test_p.def_effectful_abstract_eval
 def _barrier_test_abstract_eval(barrier, *args, **params):
   _check_ref(barrier, "barrier", gpu_core.SMEM)
   del args, params  # Unused.
-  return jax_core.ShapedArray((), bool), {gpu_core._memory_effect}
+  return [jax_core.ShapedArray((), bool)], {gpu_core._memory_effect}
 
 
 def _barrier_test_pp_eqn(
@@ -1656,13 +1648,12 @@ def barrier_test(barrier: state.AbstractRef) -> jax.Array:
       barrier, None, "barrier_test"
   )
   flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
-  return barrier_test_p.bind(
+  return barrier_test_p.bind1(
       barrier, *flat_transforms, transforms_treedef=transforms_treedef,
   )
 
 
 barrier_wait_p = jax_core.Primitive("barrier_wait")
-barrier_wait_p.multiple_results = True
 
 
 @barrier_wait_p.def_effectful_abstract_eval
@@ -1728,7 +1719,6 @@ def barrier_wait(barrier: state.AbstractRef) -> None:
 
 
 wait_smem_to_gmem_p = jax_core.Primitive("wait_smem_to_gmem")
-wait_smem_to_gmem_p.multiple_results = True
 
 
 @wait_smem_to_gmem_p.def_effectful_abstract_eval
@@ -1772,7 +1762,6 @@ def wait_smem_to_gmem(n: int, wait_read_only: bool = False) -> None:
 
 
 commit_group_p = jax_core.Primitive("commit_group")
-commit_group_p.multiple_results = True
 
 
 @commit_group_p.def_effectful_abstract_eval
@@ -1799,7 +1788,6 @@ def commit_smem_to_gmem_group() -> None:
 
 # WGMMA on an accumulator reference
 wgmma_ref_p = jax_core.Primitive("wgmma_ref")
-wgmma_ref_p.multiple_results = True
 
 
 def wgmma(acc: gpu_core.WGMMAAbstractAccumulatorRef, a, b) -> None:
@@ -1920,7 +1908,7 @@ jax_core.pp_eqn_rules[wgmma_ref_p] = _wgmma_ref_pp_eqn
 @discharge.register_discharge_rule(wgmma_ref_p)
 def _wgmma_ref_discharge(ctx, *args, **kwargs):
   del ctx
-  return (wgmma_p.bind(*args, **kwargs), *([None] * (len(args) - 1))), []
+  return (wgmma_p.bind1(*args, **kwargs), *([None] * (len(args) - 1))), []
 
 
 # Functional WGMMA, returns a shaped array. Internal.
@@ -2156,7 +2144,7 @@ def _wgmma_warpgroup_lowering(
 @wgmma_p.def_effectful_abstract_eval
 def _wgmma_effectful_abstract_eval(acc, lhs_ref, *args, **kwargs):
   del args, kwargs
-  return acc, {
+  return [acc], {
       gpu_core._wgmma_pipeline_effect,
       state.ReadEffect(2),
       *([state.ReadEffect(1)] if isinstance(lhs_ref, state.AbstractRef) else [])
@@ -2165,7 +2153,7 @@ def _wgmma_effectful_abstract_eval(acc, lhs_ref, *args, **kwargs):
 
 def mma(acc: jax.Array, a: jax.Array, b: jax.Array, /) -> jax.Array:
   """Computes ``acc + a @ b`` synchronously using Ampere MMA instructions."""
-  return mma_p.bind(acc, a, b)
+  return mma_p.bind1(acc, a, b)
 
 
 mma_p = jax_core.Primitive("mma")
@@ -2197,7 +2185,7 @@ def _mma_abstract_eval(acc, a, b):
       )
   else:
     raise NotImplementedError(f"Unsupported operand type: {a.dtype}")
-  return acc
+  return [acc]
 
 
 @lowering.register_lowering_rule(mma_p, mgpu.LoweringSemantics.Lane)
@@ -2213,7 +2201,6 @@ def _mma_warpgroup_lowering(ctx: lowering.LoweringRuleContext, acc, a, b):
 
 
 wgmma_wait_p = jax_core.Primitive("wgmma_wait")
-wgmma_wait_p.multiple_results = True
 
 
 def wgmma_wait(n: int):
@@ -2250,7 +2237,7 @@ def wgmma_accumulator_load(acc, *, wait_n: int | None = 0):
   if not isinstance(acc.aval, gpu_core.WGMMAAbstractAccumulatorRef):
     raise TypeError(f"acc must be a WGMMAAccumulatorAbstractRef, got {acc.aval=}")
 
-  return wgmma_accumulator_deref_p.bind(acc, wait_n=wait_n)
+  return wgmma_accumulator_deref_p.bind1(acc, wait_n=wait_n)
 
 
 @wgmma_accumulator_deref_p.def_effectful_abstract_eval
@@ -2258,13 +2245,13 @@ def _wgmma_accumulator_deref_abstract_eval(acc, **_):
   # Dereferencing implies flushing so we have a wgmma pipeline effect.
   ret = acc.inner_aval if isinstance(acc, state.AbstractRef) else acc
   assert isinstance(ret, jax_core.ShapedArray), acc
-  return ret, {gpu_core._wgmma_pipeline_effect}
+  return [ret], {gpu_core._wgmma_pipeline_effect}
 
 
 @discharge.register_discharge_rule(wgmma_accumulator_deref_p)
 def _wgmma_accumulator_deref_discharge(ctx, acc, *, wait_n):
   del ctx
-  return (None,), wgmma_accumulator_deref_p.bind(acc, wait_n=wait_n)
+  return (None,), [wgmma_accumulator_deref_p.bind1(acc, wait_n=wait_n)]
 
 
 @lowering.register_lowering_rule(
@@ -2296,7 +2283,7 @@ wgmma_accumulator_store_p = jax_core.Primitive("wgmma_accumulator_store_p")
 def wgmma_accumulator_store(acc_ref, val):
   if not isinstance(acc_ref.aval, gpu_core.WGMMAAbstractAccumulatorRef):
     raise TypeError(f"acc must be a WGMMAAccumulatorAbstractRef, got {acc_ref.aval=}")
-  wgmma_accumulator_store_p.bind(acc_ref, val)
+  wgmma_accumulator_store_p.bind1(acc_ref, val)
 
 
 @wgmma_accumulator_store_p.def_effectful_abstract_eval
@@ -2321,13 +2308,14 @@ def _wgmma_accumulator_store_abstract_eval(acc, val):
   effects: set[jax_core.Effect] = {gpu_core._wgmma_pipeline_effect}
   if isinstance(acc, gpu_core.WGMMAAbstractAccumulatorRef):
     effects.add(state.WriteEffect(0))
-  return inner, effects
+  return [inner], effects
 
 
 @discharge.register_discharge_rule(wgmma_accumulator_store_p)
 def _wgmma_accumulator_store_discharge(ctx, acc, val):
   del ctx
-  return (wgmma_accumulator_store_p.bind(acc, val), None), []
+  new_acc = wgmma_accumulator_store_p.bind1(acc, val)
+  return (new_acc, None), [new_acc]
 
 
 @lowering.register_lowering_rule(
@@ -2353,7 +2341,6 @@ def _wgmma_accumulator_store_warpgroup_lowering(
 
 # MMA for TensorCore gen 5.
 tcgen05_mma_p = jax_core.Primitive("tcgen05_mma")
-tcgen05_mma_p.multiple_results = True
 
 def tcgen05_mma(acc: _Ref,
                 a: _Ref,
@@ -3024,7 +3011,6 @@ def _tcgen05_mma_lowering_wg(
 
 
 tcgen05_commit_arrive_p = jax_core.Primitive("tcgen05_commit_arrive")
-tcgen05_commit_arrive_p.multiple_results = True
 
 
 def tcgen05_commit_arrive(barrier: _Ref,
@@ -3166,7 +3152,6 @@ def _collective_mma_predicate(ctx: lowering.LoweringRuleContext,
 
 
 commit_tmem_p = jax_core.Primitive("commit_tmem")
-commit_tmem_p.multiple_results = True
 
 
 @commit_tmem_p.def_effectful_abstract_eval
@@ -3194,7 +3179,6 @@ def commit_tmem():
 
 
 set_max_registers_p = jax_core.Primitive("set_max_registers_p")
-set_max_registers_p.multiple_results = True
 
 
 @set_max_registers_p.def_effectful_abstract_eval
@@ -3226,7 +3210,6 @@ def set_max_registers(n: int, *, action: Literal["increase", "decrease"]):
 
 
 commit_smem_p = jax_core.Primitive("commit_smem")
-commit_smem_p.multiple_results = True
 
 
 @commit_smem_p.def_effectful_abstract_eval
@@ -3284,7 +3267,6 @@ class ShapeDtypeStruct:
 
 
 griddepcontrol_wait_p = jax_core.Primitive("griddepcontrol_wait")
-griddepcontrol_wait_p.multiple_results = True
 
 
 @griddepcontrol_wait_p.def_effectful_abstract_eval
@@ -3321,7 +3303,6 @@ def griddepcontrol_wait():
 griddepcontrol_launch_dependents_p = jax_core.Primitive(
     "griddepcontrol_launch_dependents"
 )
-griddepcontrol_launch_dependents_p.multiple_results = True
 
 
 @griddepcontrol_launch_dependents_p.def_effectful_abstract_eval
@@ -3358,7 +3339,6 @@ def griddepcontrol_launch_dependents():
 
 
 inline_mgpu_p = jax_core.Primitive("inline_mgpu_p")
-inline_mgpu_p.multiple_results = True
 
 
 @dataclasses.dataclass(frozen=True)
@@ -3893,7 +3873,7 @@ def _load_abstract_eval(src, *avals_flat, tree, optimized):
     transforms.append(indexing.NDIndexer.make_trivial_indexer(tref_aval.shape))
   out_ty = state.transform_type(transforms, src)
   assert isinstance(out_ty, state_types.AbstractRef)
-  return out_ty.inner_aval, {state.ReadEffect(0)}
+  return [out_ty.inner_aval], {state.ReadEffect(0)}
 
 
 lowering.register_lowering_rule(load_p, mgpu.LoweringSemantics.Lane)(
@@ -3942,7 +3922,7 @@ def load(
   flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
       src_transforms
   )
-  result = load_p.bind(
+  result = load_p.bind1(
       src,
       *flat_src_transforms,
       tree=src_transforms_treedef,
@@ -3954,7 +3934,6 @@ def load(
 
 
 async_load_tmem_p = jax_core.Primitive("async_load")
-async_load_tmem_p.multiple_results = True
 
 
 @overload
@@ -4034,7 +4013,7 @@ def _async_load_tmem_abstract_eval(
 ):
   if src.memory_space != gpu_core.MemorySpace.TMEM:
     raise ValueError("Async load only supports TMEM refs")
-  val_aval, effects = state_primitives._get_abstract_eval(
+  (val_aval,), effects = state_primitives._get_abstract_eval(
       src, *avals_flat, tree=tree
   )
   if reduce is None:
@@ -4132,7 +4111,6 @@ def _async_load_tmem_lowering_rule_wg(
 
 
 wait_load_tmem_p = jax_core.Primitive("wait_load_tmem")
-wait_load_tmem_p.multiple_results = True
 
 def wait_load_tmem():
   """Awaits all previously asynchronous TMEM loads issued by the calling thread.
@@ -4158,7 +4136,6 @@ def _wait_load_tmem_lowering(_):
 
 
 async_store_tmem_p = jax_core.Primitive("async_store_tmem")
-async_store_tmem_p.multiple_results = True
 
 def async_store_tmem(ref: _Ref, value):
   """Stores the value to TMEM.
@@ -4284,7 +4261,6 @@ def _async_store_tmem_lowering_rule_wg(
 
 
 async_copy_scales_to_tmem_p = jax_core.Primitive("async_copy_scales_to_tmem")
-async_copy_scales_to_tmem_p.multiple_results = True
 
 
 def async_copy_scales_to_tmem(
@@ -4318,7 +4294,6 @@ def async_copy_scales_to_tmem(
 
 
 async_copy_sparse_metadata_to_tmem_p = jax_core.Primitive("async_copy_sparse_metadata_to_tmem")
-async_copy_sparse_metadata_to_tmem_p.multiple_results = True
 
 
 def async_copy_sparse_metadata_to_tmem(
@@ -4466,7 +4441,6 @@ def _async_copy_sparse_metadata_to_tmem_lowering_rule_wg(*args, **kwargs):
 
 
 async_copy_smem_to_tmem_p = jax_core.Primitive("async_copy_smem_to_tmem")
-async_copy_smem_to_tmem_p.multiple_results = True
 
 
 def async_copy_smem_to_tmem(
@@ -4665,7 +4639,6 @@ def _async_copy_smem_to_tmem_lowering_rule_wg(
 
 
 semaphore_signal_parallel_p = jax_core.Primitive('semaphore_signal_parallel')
-semaphore_signal_parallel_p.multiple_results = True
 
 
 @dataclasses.dataclass(frozen=True)
@@ -4784,7 +4757,6 @@ def _semaphore_signal_lowering_rule(
   return ()
 
 try_cluster_cancel_p = jax_core.Primitive('try_cluster_cancel')
-try_cluster_cancel_p.multiple_results = True
 
 @try_cluster_cancel_p.def_effectful_abstract_eval
 def _try_cluster_cancel_abstract_eval(*args, **params):
@@ -4926,7 +4898,6 @@ def try_cluster_cancel(result_ref: _Ref, barrier: _Ref) -> None:
 
 
 query_cluster_cancel_p = jax_core.Primitive("query_cluster_cancel")
-query_cluster_cancel_p.multiple_results = True
 
 @query_cluster_cancel_p.def_effectful_abstract_eval
 def _query_cluster_cancel_abstract_eval(try_cancel_buffer,
@@ -5053,7 +5024,6 @@ def _atomic_op_type_to_int(atomic_type: AtomicOpType) -> int:
 
 
 atomic_store_p = jax_core.Primitive("mgpu_atomic_store")
-atomic_store_p.multiple_results = True
 
 
 @atomic_store_p.def_effectful_abstract_eval
@@ -5280,7 +5250,6 @@ def atomic_xor(ref: _Ref, val) -> None:
 
 
 multimem_store_p = jax_core.Primitive("multimem_store")
-multimem_store_p.multiple_results = True
 
 
 def multimem_store(source: jax.Array, ref: _Ref, collective_axes: Hashable | tuple[Hashable, ...]):
@@ -5388,7 +5357,7 @@ def _multimem_load_reduce_abstract_eval(ref, *avals_flat, tree, collective_axes,
     transforms = jax.tree.unflatten(tree, avals_flat)
     out_ref = state.transform_type(transforms, ref)
   assert isinstance(out_ref, state_types.AbstractRef)
-  return out_ref.inner_aval, {pallas_core.comms_effect}
+  return [out_ref.inner_aval], {pallas_core.comms_effect}
 
 @lowering.register_lowering_rule(multimem_load_reduce_p, mgpu.LoweringSemantics.Lane)
 def _multimem_load_reduce_lowering_rule(
@@ -5517,7 +5486,7 @@ def multimem_load_reduce(
   flat_ref_transforms, ref_transforms_treedef = tree_util.tree_flatten(
       ref_transforms
   )
-  return multimem_load_reduce_p.bind(
+  return multimem_load_reduce_p.bind1(
       ref,
       *flat_ref_transforms,
       tree=ref_transforms_treedef,
@@ -5526,7 +5495,6 @@ def multimem_load_reduce(
   )
 
 semaphore_signal_multicast_p = jax_core.Primitive("semaphore_signal_multicast")
-semaphore_signal_multicast_p.multiple_results = True
 
 def semaphore_signal_multicast(
     semaphore,
@@ -5621,7 +5589,6 @@ def _semaphore_signal_multicast_lowering(
   return ()
 
 semaphore_signal_p = jax_core.Primitive("semaphore_signal")
-semaphore_signal_p.multiple_results = True
 
 
 def semaphore_signal(
@@ -5734,7 +5701,6 @@ def _semaphore_signal_lowering_rule(
 
 
 semaphore_wait_p = jax_core.Primitive("semaphore_wait")
-semaphore_wait_p.multiple_results = True
 
 
 def semaphore_wait(

@@ -65,10 +65,10 @@ traceback_util.register_exclusion(__file__)
 ## get/swap/addupdate implementations
 
 # `get` reads a value from a `Ref` type, a.k.a.:
-# a = get_p.bind(x)
+# a = get_p.bind1(x)
 # or we can read using indices:
-# a = get_p.bind(x, 0, 1)
-# Staging out `a = get_p.bind(x)` where the aval of `x` is
+# a = get_p.bind1(x, 0, 1)
+# Staging out `a = get_p.bind1(x)` where the aval of `x` is
 # `Ref((3,), np.dtype('float32'))` leads to a jaxpr eqn printed like
 #   a:f32[3] <- x[]
 get_p = core.Primitive("get")
@@ -82,8 +82,8 @@ def _get_to_lojax(ref, *idx, tree):
   if transforms:
     ref = TransformedRef(ref, transforms[:-1])
     idx = transforms[-1]
-    return val_ty.ref_get_to_lojax(ref, idx)
-  return val_ty.raise_val(*map(ref_get, val_ty.lower_val(ref._refs)))
+    return [val_ty.ref_get_to_lojax(ref, idx)]
+  return [val_ty.raise_val(*map(ref_get, val_ty.lower_val(ref._refs)))]
 get_p.to_lojax = _get_to_lojax
 
 Indexer = Union[int, slice, Array, types.EllipsisType]
@@ -159,21 +159,21 @@ def ref_get(
     )
   ref, transforms = get_ref_and_transforms(ref, idx, "ref_get")
   flat_transforms, tree = tree_util.tree_flatten(transforms)
-  return get_p.bind(ref, *flat_transforms, tree=tree)
+  return get_p.bind1(ref, *flat_transforms, tree=tree)
 
 
 # `swap` mutates a `Ref`, setting its value and returns its previous value.
-# b = swap_p.bind(x, a)
+# b = swap_p.bind1(x, a)
 # It generalizes the setting operation for a `Ref` as we can ignore the return
 # value:
-# _ = swap_p.bind(x, a)
+# _ = swap_p.bind1(x, a)
 # `swap_p` also takes in index arguments following the value, i.e.:
-# _ = swap_p.bind(x, a, 0, 1)
-# Staging out `b = swap_p.bind(x, a)` where the aval of `x` is
+# _ = swap_p.bind1(x, a, 0, 1)
+# Staging out `b = swap_p.bind1(x, a)` where the aval of `x` is
 # `Ref((3,), np.dtype('float32'))` and the aval of `a` is
 # `ShapedArray((3,), np.dtype('float32'))` leads to a jaxpr eqn printed like
 #   b:f32[3], x:Ref{f32[3]} <- x, a
-# Staging out `_ = swap_p.bind(x, a, i, j)` where the aval of `x` is
+# Staging out `_ = swap_p.bind1(x, a, i, j)` where the aval of `x` is
 # `Ref((3,), np.dtype('float32'))` , the aval of `a` is
 # `ShapedArray((3,), np.dtype('float32'))`, and the avals of both `i` and `j`
 # are `ShapedArray((), np.dtype('int32'))` leads to a jaxpr eqn printed like
@@ -190,12 +190,12 @@ def _swap_to_lojax(ref, val, *idx, tree):
   if transforms:
     ref = TransformedRef(ref, transforms[:-1])
     idx = transforms[-1]
-    return ref_val_ty.ref_swap_to_lojax(ref, val, idx)
+    return [ref_val_ty.ref_swap_to_lojax(ref, val, idx)]
   lo_refs = ref_val_ty.lower_val(ref._refs)
   lo_vals = val_ty.lower_val(val)
   outs = [ref_swap(lo_ref, idx, lo_val) for lo_ref, lo_val
           in zip(lo_refs, lo_vals)]
-  return val_ty.raise_val(*outs)
+  return [val_ty.raise_val(*outs)]
 swap_p.to_lojax = _swap_to_lojax
 
 
@@ -257,7 +257,7 @@ def ref_swap(
     value = _maybe_implicit_cast(ref.dtype, value)
   ref, transforms = get_ref_and_transforms(ref, idx, _function_name)
   flat_transforms, tree = tree_util.tree_flatten(transforms)
-  return swap_p.bind(ref, value, *flat_transforms, tree=tree)
+  return swap_p.bind1(ref, value, *flat_transforms, tree=tree)
 
 # TODO(slebedev,mattjj): replace with special handling of Python numeric types:
 # if (isinstance(value, (int, float, complex)) and
@@ -335,7 +335,6 @@ def ref_set(
 # ```
 addupdate_p = core.Primitive('addupdate')
 addupdate_p.is_effectful = lambda params: True
-addupdate_p.multiple_results = True
 addupdate_p.def_impl(partial(dispatch.apply_primitive, addupdate_p))
 
 
@@ -398,7 +397,8 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
   transforms = tree_util.tree_unflatten(tree, args)
   if transforms and ref_aval.inner_aval.is_high:
     # TODO(mattjj): aval.is_high does not imply the existence of ref_get_abstract_aval.
-    return ref_aval.inner_aval.ref_get_abstract_eval(ref_aval, *args, tree=tree)  # pyrefly: ignore[missing-attribute]
+    out_aval, effects = ref_aval.inner_aval.ref_get_abstract_eval(ref_aval, *args, tree=tree)  # pyrefly: ignore[missing-attribute]
+    return [out_aval], effects
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`get` must be called on `Ref` types: {ref_aval}.")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
@@ -407,7 +407,7 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
     if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")
     out_aval = ref_aval.inner_aval
-  return (out_aval, {ReadEffect(0)})
+  return ([out_aval], {ReadEffect(0)})
 get_p.def_effectful_abstract_eval(_get_abstract_eval)
 
 def _swap_abstract_eval(ref_aval: AbstractRef,
@@ -416,8 +416,9 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
   transforms = tree_util.tree_unflatten(tree, args)
   if transforms and ref_aval.inner_aval.is_high:
     # TODO(mattjj): aval.is_high does not imply the existence of ref_swap_abstract_aval.
-    return ref_aval.inner_aval.ref_swap_abstract_eval(  # pyrefly: ignore[missing-attribute]
+    out_aval, effects = ref_aval.inner_aval.ref_swap_abstract_eval(  # pyrefly: ignore[missing-attribute]
         ref_aval, val_aval, *args, tree=tree)
+    return [out_aval], effects
   out_aval: core.AbstractValue
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`swap` must be called on `Ref` types: {ref_aval}.")
@@ -445,7 +446,7 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
     if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")
     out_aval = ref_aval.inner_aval
-  return (out_aval, {WriteEffect(0)})
+  return ([out_aval], {WriteEffect(0)})
 swap_p.def_effectful_abstract_eval(_swap_abstract_eval)
 
 
@@ -578,18 +579,18 @@ core.pp_eqn_rules[addupdate_p] = _addupdate_pp_rule
 def _get_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, *idx = primals
   ref_tangent, *_ = tangents
-  out_primal = get_p.bind(ref_primal, *idx, **params)
+  out_primal = get_p.bind1(ref_primal, *idx, **params)
   if isinstance(ref_tangent, ad_util.Zero):
     out_tangent = ad_util.Zero(core.typeof(out_primal).to_tangent_aval())
   else:
-    out_tangent = get_p.bind(ref_tangent, *idx, **params)
-  return out_primal, out_tangent
+    out_tangent = get_p.bind1(ref_tangent, *idx, **params)
+  return [out_primal], [out_tangent]
 ad.primitive_jvps[get_p] = _get_jvp
 
 def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, x_primal, *idx = primals
   ref_tangent, x_tangent, *_ = tangents
-  out_primal = swap_p.bind(ref_primal, x_primal, *idx, **params)
+  out_primal = swap_p.bind1(ref_primal, x_primal, *idx, **params)
   if isinstance(ref_tangent, ad_util.Zero) and isinstance(x_tangent, ad_util.Zero):
     out_tangent = ad_util.Zero(core.typeof(out_primal).to_tangent_aval())
   elif ref_tangent.aval.kind == "no_grad_no_remat":
@@ -601,8 +602,8 @@ def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
                       f"{core.typeof(ref_primal)}. Move the array reference "
                       "to be an argument of the differentiated function?")
     x_tangent = ad_util.instantiate(x_tangent)
-    out_tangent = swap_p.bind(ref_tangent, x_tangent, *idx, **params)
-  return out_primal, out_tangent
+    out_tangent = swap_p.bind1(ref_tangent, x_tangent, *idx, **params)
+  return [out_primal], [out_tangent]
 ad.primitive_jvps[swap_p] = _swap_jvp
 
 def addupdate_jvp_rule(primals: list[Any], tangents: list[Any], **params: Any):
@@ -617,7 +618,8 @@ ad.primitive_jvps[addupdate_p] = addupdate_jvp_rule
 
 ##  get/swap/addupdate transpose rules
 
-def _get_transpose_fancy(g, ref_, *idx, tree):
+def _get_transpose_fancy(cts, ref_, *idx, tree):
+  g, = cts
   transforms = tree_util.tree_unflatten(tree, idx)
   if transforms and type(g) is not ad_util.Zero:
     addupdate_p.bind(ref_.inst().ref, g, *idx, tree=tree)
@@ -625,20 +627,21 @@ def _get_transpose_fancy(g, ref_, *idx, tree):
     ref_.accum(g)
 ad.fancy_transposes[get_p] = _get_transpose_fancy
 
-def _swap_transpose_fancy(g, ref_, x, *idx, **params):
+def _swap_transpose_fancy(cts, ref_, x, *idx, **params):
+  g, = cts
   if ref_.ref is None and type(g) is ad_util.Zero:
     return
   elif ref_.ref is None:
-    swap_p.bind(ref_.inst().ref, ad_util.instantiate(g), *idx, **params)
+    swap_p.bind1(ref_.inst().ref, ad_util.instantiate(g), *idx, **params)
   else:
-    x_bar = swap_p.bind(ref_.inst().ref, ad_util.instantiate(g), *idx, **params)
+    x_bar = swap_p.bind1(ref_.inst().ref, ad_util.instantiate(g), *idx, **params)
     if isinstance(x, ad.GradAccum):
       x.accum(x_bar)  # if x is a constant, drop x_bar, but still zero the ref ct
 ad.fancy_transposes[swap_p] = _swap_transpose_fancy
 
 def addupdate_transpose_fancy(cts_in, ref_, x, *idx, **params):
   if ref_.ref is not None and isinstance(x, ad.GradAccum):
-    x_bar = get_p.bind(ref_.ref, *idx, **params)
+    x_bar = get_p.bind1(ref_.ref, *idx, **params)
     x.accum(x_bar)
 ad.fancy_transposes[addupdate_p] = addupdate_transpose_fancy
 
@@ -664,16 +667,16 @@ def _array_ref_batched(axis_data, vals_in, dims_in, memory_space, kind, pin):
     val2 = batching.broadcast(val, axis_data.size, 0,
                               axis_data.explicit_mesh_axis)
     return core.ref_p.bind(val2, memory_space=memory_space, kind=kind,
-                           pin=pin), 0
+                           pin=pin), [0]
   else:
     return core.ref_p.bind(val, memory_space=memory_space, kind=kind,
-                           pin=pin), dim
+                           pin=pin), [dim]
 batching.fancy_primitive_batchers[core.ref_p] = _array_ref_batched
 
 def _freeze_batched(axis_data, vals_in, dims_in):
   ref, = vals_in
   dim, = dims_in
-  return core.freeze_p.bind(ref), dim
+  return core.freeze_p.bind(ref), [dim]
 batching.fancy_primitive_batchers[core.freeze_p] = _freeze_batched
 
 def _state_partial_eval_custom(saveable, unks_in, inst_in, eqn):
@@ -839,7 +842,7 @@ def _get_vmap(batched_args, batched_dims, *, tree):
   ref_dim, *flat_idx_dims = batched_dims
   indexers = tree_util.tree_unflatten(tree, flat_idxs)
   if not indexers:
-    return get_p.bind(ref, *flat_idxs, tree=tree), ref_dim
+    return get_p.bind(ref, *flat_idxs, tree=tree), [ref_dim]
   indexers_dims = tree_util.tree_unflatten(tree, flat_idx_dims)
 
   idx_is_batched = any(i_dim is not None
@@ -866,7 +869,7 @@ def _get_vmap(batched_args, batched_dims, *, tree):
       np.all(np.diff(np.where(is_new_int_indexing)[0]) == 1)
   )
 
-  out = get_p.bind(ref, *flat_indexers, tree=tree)
+  out = get_p.bind1(ref, *flat_indexers, tree=tree)
   should_transpose = (int_indexers_contiguous and
                       not new_int_indexers_contiguous)
   if will_add_int_batcher and should_transpose:
@@ -901,7 +904,7 @@ def _get_vmap(batched_args, batched_dims, *, tree):
       out_bdim = 0
       if new_int_indexers_contiguous:
         out_bdim = is_new_int_indexing.index(True)
-  return out, out_bdim
+  return [out], [out_bdim]
 batching.primitive_batchers[get_p] = _get_vmap
 
 def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
@@ -926,7 +929,7 @@ def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
                                axis_data.explicit_mesh_axis)
     else:
       val = batching.moveaxis(val, val_dim, ref_dim)
-    return swap_p.bind(ref, val, *flat_idxs, tree=tree), ref_dim
+    return swap_p.bind(ref, val, *flat_idxs, tree=tree), [ref_dim]
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
   # TODO(sharadmv): handle vmap of multiple indexers
@@ -986,7 +989,7 @@ def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
     val = val.transpose(transpose_order)
     transpose_order_inversed = np.argsort(transpose_order)
 
-  out = swap_p.bind(ref, val, *flat_indexers, tree=tree)
+  out = swap_p.bind1(ref, val, *flat_indexers, tree=tree)
 
   # `val` should not be transposed, but we needed to transpose it to match
   # `swap_p`. As a result, the output of `swap_p` is also transposed. Now we
@@ -994,7 +997,7 @@ def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
   if transpose_order_inversed is not None:
     out = out.transpose(transpose_order_inversed)
 
-  return out, batched_dim_in_result
+  return [out], [batched_dim_in_result]
 batching.fancy_primitive_batchers[swap_p] = _swap_vmap
 
 def _addupdate_vmap(axis_data, batched_args, batched_dims, *, tree):
@@ -1104,87 +1107,87 @@ def broadcast_to(a: Array, shape: tuple[int, ...]) -> Array:
   a = jnp.asarray(a)
   if a.shape == shape:
     return a
-  return broadcast_to_p.bind(a, shape=shape)
+  return broadcast_to_p.bind1(a, shape=shape)
 
 @broadcast_to_p.def_impl
 def _broadcast_to_impl(a, *, shape):
   import jax.numpy as jnp  # pyrefly: ignore[missing-import]
-  return jnp.broadcast_to(a, shape)
+  return [jnp.broadcast_to(a, shape)]
 
 @broadcast_to_p.def_abstract_eval
 def _broadcast_to_abstract_eval(aval, *, shape):
-  return core.ShapedArray(shape, aval.dtype)
+  return [core.ShapedArray(shape, aval.dtype)]
 
 mlir.register_lowering(
-    broadcast_to_p, mlir.lower_fun(_broadcast_to_impl, False)
+    broadcast_to_p, mlir.lower_fun(_broadcast_to_impl, True)
 )
 
 # === AD rules for mutable arrays ===
 
 def _ref_jvp(primals, tangents, *, memory_space, kind, pin):
   (init_val,), (init_dot,) = primals, tangents
-  primal_out = core.ref_p.bind(init_val, memory_space=memory_space, kind=kind,
-                               pin=pin)
+  primal_out = core.ref_p.bind1(init_val, memory_space=memory_space, kind=kind,
+                                pin=pin)
   if type(init_dot) is ad_util.Zero:
     zero = ad_util.zeros_like_aval(init_dot.aval)
-    tangent_out = core.ref_p.bind(zero, memory_space=memory_space, kind=kind,
-                                  pin=pin)
+    tangent_out = core.ref_p.bind1(zero, memory_space=memory_space, kind=kind,
+                                   pin=pin)
   else:
-    tangent_out = core.ref_p.bind(init_dot, memory_space=memory_space,
-                                  kind=kind, pin=pin)
-  return primal_out, tangent_out
+    tangent_out = core.ref_p.bind1(init_dot, memory_space=memory_space,
+                                   kind=kind, pin=pin)
+  return [primal_out], [tangent_out]
 
 def _ref_lin(_is_vjp, nzs, x, *, memory_space, kind, pin):
   nz, = nzs
-  x_ref = core.ref_p.bind(x, memory_space=memory_space, kind=kind, pin=pin)
+  x_ref = core.ref_p.bind1(x, memory_space=memory_space, kind=kind, pin=pin)
   def mut_lin(_, __, x_dot):
     if kind == 'no_grad_no_remat':
       aval = x_dot.aval if type(x_dot) is ad.Zero else core.typeof(x_dot)
-      return ad.Zero(AbstractRef(aval))
+      return [ad.Zero(AbstractRef(aval))]
     zero = ad_util.instantiate(x_dot)
     return core.ref_p.bind(zero, memory_space=memory_space, kind=kind, pin=pin)
-  return x_ref, kind != 'no_grad_no_remat', None, None, mut_lin
+  return [x_ref], [kind != 'no_grad_no_remat'], None, None, mut_lin
 
 ad.primitive_jvps[core.ref_p] = _ref_jvp
 ad.primitive_linearizations[core.ref_p] = _ref_lin
 # TODO(mattjj): lin rule for freeze and accum_grad_in_ref?
 ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))
-ad.defjvp(core.accum_grad_in_ref_p, lambda g, _: core.accum_grad_in_ref_p.bind(g))
+ad.defjvp(core.accum_grad_in_ref_p, lambda g, _: core.accum_grad_in_ref_p.bind1(g))
 
 
 def _empty_ref_jvp(primals, tangents, *, ty, memory_space, pin):
-  primal_ref = core.empty_ref_p.bind(ty=ty, memory_space=memory_space, pin=pin)
-  tangent_ref = core.empty_ref_p.bind(ty=ty.to_tangent_aval(),
-                                      memory_space=memory_space, pin=pin)
-  return primal_ref, tangent_ref
+  primal_ref = core.empty_ref_p.bind1(ty=ty, memory_space=memory_space, pin=pin)
+  tangent_ref = core.empty_ref_p.bind1(ty=ty.to_tangent_aval(),
+                                       memory_space=memory_space, pin=pin)
+  return [primal_ref], [tangent_ref]
 ad.primitive_jvps[core.empty_ref_p] = _empty_ref_jvp
 
 def _empty_ref_lin(_is_vjp, nzs_in, *, ty, memory_space, pin):
-  primal_ref = core.empty_ref_p.bind(ty=ty, memory_space=memory_space, pin=pin)
+  primal_ref = core.empty_ref_p.bind1(ty=ty, memory_space=memory_space, pin=pin)
   def lin(_, __):
     return core.empty_ref_p.bind(ty=ty.to_tangent_aval(),
                                  memory_space=memory_space, pin=pin)
-  return primal_ref, True, None, None, lin
+  return [primal_ref], [True], None, None, lin
 ad.primitive_linearizations[core.empty_ref_p] = _empty_ref_lin
 
 def _free_ref_jvp(primals, tangents):
   [primal_ref], [tangent_ref] = primals, tangents
   core.free_ref(primal_ref)
   core.free_ref(tangent_ref)
-  return (), ()
+  return [], []
 
 ad.primitive_jvps[core.free_ref_p] = _free_ref_jvp
 
 # === pinned, chained LinearVals ===
 
 def create_linear(ty, memory_space=None):
-  return create_linear_p.bind(ty=ty, memory_space=memory_space)
+  return create_linear_p.bind1(ty=ty, memory_space=memory_space)
 create_linear_p = core.Primitive('create_linear')
 
 @create_linear_p.def_abstract_eval
 def _create_linear_abstract_eval(*, ty, memory_space):
   if not isinstance(ty, core.ShapedArray): raise NotImplementedError(ty)
-  return AbstractLinVal(ty, memory_space)
+  return [AbstractLinVal(ty, memory_space)]
 
 def _lower_create_linear(ctx, *, ty, memory_space):
   del ty, memory_space
@@ -1199,14 +1202,14 @@ mlir.register_lowering(create_linear_p, _lower_create_linear)
 
 
 def pin(x, *, to=None):
-  return pin_p.bind(x, to=to)
+  return pin_p.bind1(x, to=to)
 pin_p = core.Primitive('pin')
 
 @pin_p.def_abstract_eval
 def _pin_abstract_eval(aval, *, to):
   if to not in (None, 'hbm', 'vmem'): raise ValueError
   if not isinstance(aval, core.ShapedArray): raise NotImplementedError(aval)
-  return AbstractLinVal(aval, to)
+  return [AbstractLinVal(aval, to)]
 
 def _lower_pin(ctx, x_op, *, to):
   color = {'vmem': 1, 'hbm': 0, None: None}[to]
@@ -1237,13 +1240,13 @@ mlir.register_lowering(pin_p, _lower_pin)
 
 
 def unpin(x):
-  return unpin_p.bind(x)
+  return unpin_p.bind1(x)
 unpin_p = core.Primitive('unpin')
 
 @unpin_p.def_abstract_eval
 def _unpin_abstract_eval(aval):
   if not isinstance(aval, AbstractLinVal): raise TypeError(aval)
-  return aval.inner_aval
+  return [aval.inner_aval]
 
 def _lower_unpin(ctx, x_op):
   out_aval, = ctx.avals_out

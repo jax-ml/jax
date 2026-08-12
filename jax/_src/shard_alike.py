@@ -52,7 +52,6 @@ def shard_alike(x, y):
 
 
 shard_alike_p = core.Primitive('shard_alike')
-shard_alike_p.multiple_results = True
 shard_alike_p.def_impl(partial(apply_primitive, shard_alike_p))
 shard_alike_p.def_abstract_eval(lambda x, y: (x, y))
 

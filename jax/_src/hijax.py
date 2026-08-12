@@ -383,7 +383,6 @@ def unmap_zero(axis_data, d, ct):
 
 
 call_hi_primitive_p = core.Primitive("call_hi_primitive")
-call_hi_primitive_p.multiple_results = True
 call_hi_primitive_p.is_high = lambda *args, _prim: True
 call_hi_primitive_p.is_effectful = lambda params: bool(params['_prim'].effects)
 @call_hi_primitive_p.def_effectful_abstract_eval
@@ -485,7 +484,6 @@ def flatten_user_linearized(prim, residuals, sres, *tangents_flat):
   return flat_vals
 
 call_hi_primitive_linearized_p = core.Primitive("call_hi_primitive_linearized")
-call_hi_primitive_linearized_p.multiple_results = True
 call_hi_primitive_linearized_p.is_high = lambda *args, _prim, **_: True
 @call_hi_primitive_linearized_p.def_abstract_eval
 def _call_hi_primitive_linearized_abstract_eval(
@@ -611,7 +609,7 @@ def _lin_from_jvp(self, nzs_in, *primals):
 
   dbg = debug_info('linearize_from_jvp', self.jvp, (primals, primals), {})
   out_primals_flat, nzs_out_flat, consts, _, linearized = ad.linearize_from_jvp(
-      lu.wrap_init(jvp_flat, debug_info=dbg), True, nzs_in_flat,
+      lu.wrap_init(jvp_flat, debug_info=dbg), nzs_in_flat,
       False, False, primals_flat, {})
   out_primals = tree_unflatten(self.out_tree, out_primals_flat)
   nzs_out = tree_unflatten(self.out_tree, list(nzs_out_flat))

@@ -532,7 +532,7 @@ def _spsolve_abstract_eval(data, indices, indptr, b, *, tol, reorder):
   if reorder not in [0, 1, 2, 3]:
     raise ValueError(f"{reorder=} not valid, must be one of [1, 2, 3, 4]")
   tol = float(tol)
-  return b
+  return [b]
 
 
 def _spsolve_gpu_lowering(ctx, data, indices, indptr, b, *, tol, reorder):
@@ -557,9 +557,9 @@ def _spsolve_cpu_lowering(ctx, data, indices, indptr, b, tol, reorder):
 def _spsolve_jvp_lhs(data_dot, data, indices, indptr, b, **kwds):
     # d/dM M^-1 b = M^-1 M_dot M^-1 b
     p = spsolve(data, indices, indptr, b, **kwds)
-    q = sparse.csr_matvec_p.bind(data_dot, indices, indptr, p,
-                                 shape=(indptr.size - 1, len(b)),
-                                 transpose=False)
+    q = sparse.csr_matvec_p.bind1(data_dot, indices, indptr, p,
+                                  shape=(indptr.size - 1, len(b)),
+                                  transpose=False)
     return -spsolve(data, indices, indptr, q, **kwds)
 
 
@@ -578,7 +578,8 @@ def _csr_transpose(data, indices, indptr):
   return data_T, indices_T, indptr_T
 
 
-def _spsolve_transpose(ct, data, indices, indptr, b, **kwds):
+def _spsolve_transpose(cts, data, indices, indptr, b, **kwds):
+  ct, = cts
   assert not ad.is_undefined_primal(indices)
   assert not ad.is_undefined_primal(indptr)
   if ad.is_undefined_primal(b):
@@ -622,4 +623,4 @@ def spsolve(data, indices, indptr, b, tol=1e-6, reorder=1):
     An array with the same dtype and size as b representing the solution to
     the sparse linear system.
   """
-  return spsolve_p.bind(data, indices, indptr, b, tol=tol, reorder=reorder)
+  return spsolve_p.bind1(data, indices, indptr, b, tol=tol, reorder=reorder)

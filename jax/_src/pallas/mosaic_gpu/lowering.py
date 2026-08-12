@@ -1344,7 +1344,7 @@ def lower_jaxpr_to_mosaic_gpu(
             f"Exception while lowering eqn:\n  {eqn}\nWith context:\n "
             f" {rule_ctx}\nWith inval types={inval_types}\nIn jaxpr:\n{jaxpr}"
         ) from e
-      if eqn.primitive.multiple_results:
+      if isinstance(outvals, (list, tuple)):
         foreach(write_env, eqn.outvars, outvals)
       else:
         write_env(eqn.outvars[0], outvals)
@@ -3115,12 +3115,12 @@ _copysign_p = jax_core.Primitive("_copysign")
 
 
 def _copysign(x1: jax.typing.ArrayLike, x2: jax.typing.ArrayLike) -> jax.Array:
-  return _copysign_p.bind(x1, x2)
+  return _copysign_p.bind1(x1, x2)
 
 
 @_copysign_p.def_abstract_eval
 def _copysign_abstract_eval(x1, x2):
-  return jax_core.ShapedArray(x2.shape, x2.dtype)
+  return [jax_core.ShapedArray(x2.shape, x2.dtype)]
 
 
 @register_lowering_rule(_copysign_p, mgpu.LoweringSemantics.Lane)

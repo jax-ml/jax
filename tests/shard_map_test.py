@@ -1157,7 +1157,6 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
 
     prim = core.Primitive('prim')  # no rep rule here!
-    prim.multiple_results = True
     prim.def_impl(lambda: [])
     prim.def_abstract_eval(lambda: [])
 

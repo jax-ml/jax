@@ -37,7 +37,8 @@ _deprecations = {
   # TODO(jakevdp) remove in v0.12.0
   "CallPrimitive": (
     "jax.core.CallPrimitive was deprecated in JAX v0.10.0 and removed in JAX"
-    " v0.11.0. Use jax.extend.core.CallPrimitive.",
+    " v0.11.0, along with final-style call primitives in general. To create a"
+    " call-like primitive, use jax.extend.core.create_call_primitive.",
     None,
   ),
   "DebugInfo": (

@@ -101,7 +101,7 @@ for effect in _testing_effects.values():
 # and just doubles its argument.
 testing_primitive_with_effect_p = core.Primitive("testing_primitive_with_effect")
 testing_primitive_with_effect_p.def_effectful_abstract_eval(
-  lambda aval, *x, effect_class_name: (aval, {_testing_effects[effect_class_name]}))
+  lambda aval, *x, effect_class_name: ([aval], {_testing_effects[effect_class_name]}))
 
 def lowering_testing_primitive_with_effect(ctx, a, *, effect_class_name: str):
   if "Ordered" in effect_class_name:
@@ -122,7 +122,7 @@ def _testing_multi_platform_func(x, *,
     if effect_class_name is None:
       return 2. * _testing_multi_platform_to_add[platform]
     else:
-      return testing_primitive_with_effect_p.bind(
+      return testing_primitive_with_effect_p.bind1(
         _testing_multi_platform_to_add[platform],
         effect_class_name=effect_class_name)
 
@@ -600,7 +600,7 @@ class JaxExportTest(jtu.JaxTestCase):
     # If we use hlo.custom_call we detect invalid custom call targets.
     # Set up a primitive with custom lowering rules
     test_primitive = core.Primitive("_test_primitive_disallowed_custom_call")
-    test_primitive.def_abstract_eval(lambda in_aval: in_aval)
+    test_primitive.def_abstract_eval(lambda in_aval: [in_aval])
     def test_primitive_lowering(ctx, arg):
       op = dict(stablehlo=hlo.CustomCallOp)[dialect]
       return op([arg.type], [arg], "disallowed_call_target").results
@@ -611,18 +611,18 @@ class JaxExportTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError,
         "Cannot serialize code with custom calls whose targets .*"):
       get_exported(
-        jax.jit(lambda a: a + test_primitive.bind(a))
+        jax.jit(lambda a: a + test_primitive.bind1(a))
       )(a)
 
     # Now try again with the safety check disabled
     exp_explicit = get_exported(
-      jax.jit(lambda a: a + test_primitive.bind(a)),
+      jax.jit(lambda a: a + test_primitive.bind1(a)),
       disabled_checks=[export.DisabledSafetyCheck.custom_call("disallowed_call_target")]
     )(a)
     self.assertIn("disallowed_call_target", exp_explicit.mlir_module())
 
     exp_all = get_exported(
-      jax.jit(lambda a: a + test_primitive.bind(a)),
+      jax.jit(lambda a: a + test_primitive.bind1(a)),
       disabled_checks=[export.DisabledSafetyCheck.custom_call("ALL")]
     )(a)
     self.assertIn("disallowed_call_target", exp_all.mlir_module())
@@ -630,7 +630,7 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_lowering_parameters_for_export(self):
     # Test that we propagate properly the LoweringParameters.for_export
     test_primitive = core.Primitive("_test_primitive_for_export")
-    test_primitive.def_abstract_eval(lambda in_aval: in_aval)
+    test_primitive.def_abstract_eval(lambda in_aval: [in_aval])
     # Store here the context for lowering
     context = {}
     def test_primitive_lowering(ctx, arg):
@@ -644,11 +644,11 @@ class JaxExportTest(jtu.JaxTestCase):
                                               test_primitive))
     self.addCleanup(lambda: mlir.register_lowering(test_primitive, None))
 
-    f = jax.jit(test_primitive.bind)
+    f = jax.jit(test_primitive.bind1)
     a = np.arange(3, dtype=np.float32)
     context.clear()
 
-    res = test_primitive.bind(a)  # eager mode
+    res = test_primitive.bind1(a)  # eager mode
     self.assertAllClose(res, a + a)
     self.assertEqual(context,
                      dict(for_export=False,
@@ -1966,14 +1966,14 @@ class JaxExportTest(jtu.JaxTestCase):
       return [res]
 
     times_2 = core.Primitive("__testing_times_2")  # x2 for cpu
-    times_2.def_abstract_eval(lambda x: x)
+    times_2.def_abstract_eval(lambda x: [x])
     # Define lowering rules only for the relevant platforms, ensure there
     # is no error about missing lowering rules
     mlir.register_lowering(times_2, functools.partial(times_n_lowering, 2),
                            "cpu")
 
     times_3 = core.Primitive("__testing_times_3")  # x3 for cuda and rocm
-    times_3.def_abstract_eval(lambda x: x)
+    times_3.def_abstract_eval(lambda x: [x])
 
     mlir.register_lowering(times_3, functools.partial(times_n_lowering, 3),
                            "rocm")
@@ -1981,39 +1981,39 @@ class JaxExportTest(jtu.JaxTestCase):
                            "cuda")
 
     times_4 = core.Primitive("__testing_times_4")  # x4 for tpu
-    times_4.def_abstract_eval(lambda x: x)
+    times_4.def_abstract_eval(lambda x: [x])
     mlir.register_lowering(times_4, functools.partial(times_n_lowering, 4),
                            "tpu")
 
     times_2_or_3 = core.Primitive("__testing_times_2_or_3")  # x2 for cpu, x3 for cuda and rocm
-    times_2_or_3.def_abstract_eval(lambda x: x)
+    times_2_or_3.def_abstract_eval(lambda x: [x])
     mlir.register_lowering(times_2_or_3,
-                           mlir.lower_fun(times_2.bind,
+                           mlir.lower_fun(times_2.bind1,
                                           multiple_results=False), "cpu")
 
     mlir.register_lowering(times_2_or_3,
-                           mlir.lower_fun(times_3.bind,
+                           mlir.lower_fun(times_3.bind1,
                                           multiple_results=False), "rocm")
     mlir.register_lowering(times_2_or_3,
-                           mlir.lower_fun(times_3.bind,
+                           mlir.lower_fun(times_3.bind1,
                                           multiple_results=False), "cuda")
 
     times_2_or_3_or_4 = core.Primitive("__testing_times_2_or_3_or_4")  # x2 for cpu, x3 for cuda and rocm, x4 for tpu
-    times_2_or_3_or_4.def_abstract_eval(lambda x: x)
-    times_2_or_3_or_4_lowering_cpu_gpu = mlir.lower_fun(times_2_or_3.bind,
+    times_2_or_3_or_4.def_abstract_eval(lambda x: [x])
+    times_2_or_3_or_4_lowering_cpu_gpu = mlir.lower_fun(times_2_or_3.bind1,
                                                          multiple_results=False)
 
     for platform in ["cpu", "cuda", "rocm"]:
       mlir.register_lowering(times_2_or_3_or_4,
                              times_2_or_3_or_4_lowering_cpu_gpu,
                              platform)
-    mlir.register_lowering(times_2_or_3_or_4, mlir.lower_fun(times_4.bind,
+    mlir.register_lowering(times_2_or_3_or_4, mlir.lower_fun(times_4.bind1,
                                                              multiple_results=False),
                            "tpu")
 
     @jax.jit
     def f(x):
-      return times_2_or_3_or_4.bind(x)
+      return times_2_or_3_or_4.bind1(x)
     x = np.float32(42.)
     exp = export.export(f, platforms=["cpu", "cuda", "rocm", "tpu"])(x)
     expected = x * np.float32(dict(cpu=2, gpu=3, tpu=4)[jtu.device_under_test()])
@@ -2116,13 +2116,13 @@ class JaxExportTest(jtu.JaxTestCase):
         # Test also the calling convention for inner functions
         def f_jax_inner(x):
           return (
-            testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingOrderedEffect2") +
-            testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingUnorderedEffect1"))
+            testing_primitive_with_effect_p.bind1(x, effect_class_name="ForTestingOrderedEffect2") +
+            testing_primitive_with_effect_p.bind1(x, effect_class_name="ForTestingUnorderedEffect1"))
         return (
           10. +
           jax.jit(f_jax_inner)(x) +
-          testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingOrderedEffect1") +
-          testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingOrderedEffect2")
+          testing_primitive_with_effect_p.bind1(x, effect_class_name="ForTestingOrderedEffect1") +
+          testing_primitive_with_effect_p.bind1(x, effect_class_name="ForTestingOrderedEffect2")
         )
 
       exp = get_exported(jax.jit(f_jax))(x)
@@ -2161,9 +2161,9 @@ class JaxExportTest(jtu.JaxTestCase):
       # Now call the exported from a function that uses its own effects
       def f_outer(x):
         return (
-          testing_primitive_with_effect_p.bind(
+          testing_primitive_with_effect_p.bind1(
             x, effect_class_name="ForTestingOrderedEffect2") +
-          testing_primitive_with_effect_p.bind(
+          testing_primitive_with_effect_p.bind1(
             x, effect_class_name="ForTestingUnorderedEffect1") +
           exp.call(x))
 
@@ -2191,7 +2191,7 @@ class JaxExportTest(jtu.JaxTestCase):
           config.jax_export_calling_convention_version.value)
       x = np.arange(12, dtype=np.float32).reshape((3, 4))
       def f_jax(x):  # x: f32[b1, b2]
-        return 10. + testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingOrderedEffect1")
+        return 10. + testing_primitive_with_effect_p.bind1(x, effect_class_name="ForTestingOrderedEffect1")
       exp = get_exported(jax.jit(f_jax))(jax.ShapeDtypeStruct(
           export.symbolic_shape("b2, b1"), x.dtype))
       mlir_module_str = str(exp.mlir_module())
@@ -2275,7 +2275,7 @@ class JaxExportTest(jtu.JaxTestCase):
       x = np.arange(3, dtype=np.float32)
 
       def f_jax(x):
-        return testing_primitive_with_effect_p.bind(
+        return testing_primitive_with_effect_p.bind1(
             x, effect_class_name="ForTestingOrderedEffect1"
         )
 

@@ -334,9 +334,8 @@ class SparseTrace(core.Trace):
       args = tuple(self.spenv.data(spvalue) for spvalue in spvalues)
       avals = tuple(core.typeof(x) for x in args)
       out_bufs = primitive.bind_with_trace(self.parent_trace, args, avals, params)
-      out_spvalues = arrays_to_spvalues(self.spenv, out_bufs if primitive.multiple_results else [out_bufs])
-    out_tracers = tuple(SparseTracer(self, spvalue=spvalue) for spvalue in out_spvalues)
-    return out_tracers if primitive.multiple_results else out_tracers[0]
+      out_spvalues = arrays_to_spvalues(self.spenv, out_bufs)
+    return [SparseTracer(self, spvalue=spvalue) for spvalue in out_spvalues]
 
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *, symbolic_zeros):
     # TODO(jakevdp): handle the jvp here
@@ -425,7 +424,6 @@ def eval_sparse(
       out = sparse_rules_bcoo[prim](spenv, *invals, **eqn.params)
     else:
       out_bufs = prim.bind(*(spenv.data(val) for val in invals), **eqn.params)
-      out_bufs = out_bufs if prim.multiple_results else [out_bufs]
       out = []
       for buf, outvar in safe_zip(out_bufs, eqn.outvars):
         if isinstance(outvar, core.DropVar):
@@ -516,7 +514,7 @@ def _zero_preserving_unary_op(prim, linear):
       # indices are unique before applying the operator elementwise.
       spvalue = _ensure_unique_indices(spenv, spvalue)
     buf = spenv.data(spvalue)
-    buf_out = prim.bind(buf, **kwargs)
+    buf_out = prim.bind1(buf, **kwargs)
     if spvalues[0].is_sparse():
       out_spvalue = spenv.sparse(spvalue.shape, buf_out,
                                  indices_ref=spvalue.indices_ref,
@@ -536,9 +534,12 @@ for _prim in _zero_preserving_linear_unary_primitives:
   sparse_rules_bcsr[_prim] = _zero_preserving_unary_op(_prim, linear=True)
 
 def _standard_sparse_rule(prim, sparse_op):
+  # Note: all primitives registered via this rule are single-result, and
+  # sparse_op returns a single (sparse) array.
+  del prim  # unused
   def _sparse_rule(spenv, *spvalues, **kwds):
     result = sparse_op(*spvalues_to_arrays(spenv, spvalues), **kwds)
-    return arrays_to_spvalues(spenv, result if prim.multiple_results else [result])
+    return arrays_to_spvalues(spenv, [result])
   return _sparse_rule
 
 _BCOO_STANDARD_PRIMITIVES = {

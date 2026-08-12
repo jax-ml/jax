@@ -57,24 +57,24 @@ from jax._src.typing import Array, DTypeLike
 # todense – function to convert sparse matrices to dense while letting
 #           dense matrices pass through.
 todense_p = core.Primitive('todense')
-todense_p.multiple_results = False
 
 def todense(arr: JAXSparse | Array) -> Array:
   """Convert input to a dense matrix. If input is already dense, pass through."""
   bufs, tree = tree_util.tree_flatten(arr)
-  return todense_p.bind(*bufs, tree=tree)
+  return todense_p.bind1(*bufs, tree=tree)
 
-@todense_p.def_impl
 def _todense_impl(*bufs, tree):
   arr = tree_util.tree_unflatten(tree, bufs)
   return arr.todense() if isinstance(arr, JAXSparse) else arr
+
+todense_p.def_impl(lambda *bufs, tree: [_todense_impl(*bufs, tree=tree)])
 
 @todense_p.def_abstract_eval
 def _todense_abstract_eval(*bufs, tree):
   arr = tree_util.tree_unflatten(tree, bufs)
   if isinstance(arr, core.ShapedArray):
-    return arr
-  return core.ShapedArray(arr.shape, arr.dtype, weak_type=dtypes.is_weakly_typed(arr.data))
+    return [arr]
+  return [core.ShapedArray(arr.shape, arr.dtype, weak_type=dtypes.is_weakly_typed(arr.data))]
 
 def _todense_jvp(primals, tangents, *, tree):
   assert not isinstance(tangents[0], ad.Zero)
@@ -83,7 +83,8 @@ def _todense_jvp(primals, tangents, *, tree):
   tangents_out = todense_p.bind(tangents[0], *primals[1:], tree=tree)
   return primals_out, tangents_out
 
-def _todense_transpose(ct, *bufs, tree):
+def _todense_transpose(cts, *bufs, tree):
+  ct, = cts
   assert ad.is_undefined_primal(bufs[0])
   assert not any(ad.is_undefined_primal(buf) for buf in bufs[1:])
 
@@ -107,7 +108,7 @@ def _todense_transpose(ct, *bufs, tree):
     raise NotImplementedError(f"todense_transpose for {type(obj)}")
 
 def _todense_batching_rule(batched_args, batch_dims, *, tree):
-  return jax.vmap(partial(_todense_impl, tree=tree), batch_dims)(*batched_args), 0
+  return [jax.vmap(partial(_todense_impl, tree=tree), batch_dims)(*batched_args)], [0]
 
 ad.primitive_jvps[todense_p] = _todense_jvp
 ad.primitive_transposes[todense_p] = _todense_transpose

@@ -112,7 +112,6 @@ def elementwise_inline_asm(
 
 
 elementwise_inline_asm_p = jax_core.Primitive("elementwise_inline_asm_p")
-elementwise_inline_asm_p.multiple_results = True
 
 
 @elementwise_inline_asm_p.def_abstract_eval
@@ -226,7 +225,6 @@ effects.control_flow_allowed_effects.add_type(BarrierEffect)
 
 
 debug_barrier_p = jax_core.Primitive("debug_barrier_p")
-debug_barrier_p.multiple_results = True
 
 
 @debug_barrier_p.def_effectful_abstract_eval
@@ -347,7 +345,7 @@ def _atomic_rmw_discharge_rule(
     x_new = ref.at[idx.indices].set(monoid(out, val))
   else:
     raise NotImplementedError
-  return (x_new,) + (None,) * (len(ctx.in_avals) - 1), out
+  return (x_new,) + (None,) * (len(ctx.in_avals) - 1), [out]
 
 
 state_discharge.register_discharge_rule(atomic_rmw_p)(
@@ -384,7 +382,7 @@ def _atomic_rmw(
       x_ref_or_view, idx, "atomic_rmw"
   )
   args_flat, args_tree = tree_util.tree_flatten((x_ref, transforms, val, mask))
-  return atomic_rmw_p.bind(
+  return atomic_rmw_p.bind1(
       *args_flat, args_tree=args_tree, atomic_type=atomic_type
   )
 
@@ -625,7 +623,7 @@ def _atomic_cas_abstract_eval(ref_aval, cmp_aval, val_aval):
     raise ValueError("cmp must be scalar.")
   if val_aval.shape:
     raise ValueError("val must be scalar.")
-  return jax_core.ShapedArray(val_aval.shape, val_aval.dtype), {
+  return [jax_core.ShapedArray(val_aval.shape, val_aval.dtype)], {
       state.WriteEffect(0)
   }
 
@@ -643,14 +641,14 @@ def atomic_cas(ref, cmp, val):
   Returns:
     The value at the given index prior to the atomic operation.
   """
-  return atomic_cas_p.bind(ref, cmp, val)
+  return atomic_cas_p.bind1(ref, cmp, val)
 
 
 @state_discharge.register_discharge_rule(atomic_cas_p)
 def _atomic_cas_discharge_rule(ctx, ref, cmp, val):
   del ctx
   new_val = jnp.where(ref == cmp, val, ref)
-  return (new_val, None, None), ref
+  return (new_val, None, None), [ref]
 
 
 @lowering.register_lowering(atomic_cas_p)
@@ -676,7 +674,7 @@ def _atomic_cas_lowering_rule(ctx: lowering.LoweringRuleContext, ptr, cmp, val):
 
 max_contiguous_p = jax_core.Primitive("max_contiguous")
 
-max_contiguous_p.def_impl(lambda x, **_: x)
+max_contiguous_p.def_impl(lambda x, **_: [x])
 mlir.register_lowering(max_contiguous_p, lambda _, x, **__: [x])
 
 
@@ -684,12 +682,12 @@ def max_contiguous(x, values):
   """A compiler hint that asserts the ``values`` first values of ``x`` are contiguous."""
   if not isinstance(values, (list, tuple)):
     values = (values,)
-  return max_contiguous_p.bind(x, values=tuple(values))
+  return max_contiguous_p.bind1(x, values=tuple(values))
 
 
 @max_contiguous_p.def_abstract_eval
 def _max_contiguous_abstract_eval(aval, **_):
-  return aval
+  return [aval]
 
 
 @lowering.register_lowering(max_contiguous_p)

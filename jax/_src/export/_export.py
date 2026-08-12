@@ -1431,7 +1431,6 @@ call_exported = call
 
 # A JAX primitive for invoking a serialized JAX function.
 call_exported_p = core.Primitive("call_exported")
-call_exported_p.multiple_results = True
 
 
 @util.cache()

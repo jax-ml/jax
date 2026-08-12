@@ -205,14 +205,14 @@ def _coo_todense(data: Array, row: Array, col: Array, *, spinfo: COOInfo) -> Arr
   Returns:
     mat : array with specified shape and dtype matching ``data``
   """
-  return coo_todense_p.bind(data, row, col, spinfo=spinfo)
+  return coo_todense_p.bind1(data, row, col, spinfo=spinfo)
 
 def _coo_todense_impl(data, row, col, *, spinfo):
   return jnp.zeros(spinfo.shape, data.dtype).at[row, col].add(data)
 
 @coo_todense_p.def_abstract_eval
 def _coo_todense_abstract_eval(data, row, col, *, spinfo):
-  return core.ShapedArray(spinfo.shape, data.dtype)
+  return [core.ShapedArray(spinfo.shape, data.dtype)]
 
 _coo_todense_lowering = mlir.lower_fun(
     _coo_todense_impl, multiple_results=False)
@@ -253,7 +253,8 @@ def _coo_todense_gpu_lowering(ctx, data, row, col, *, spinfo, target_name_prefix
 def _coo_todense_jvp(data_dot, data, row, col, *, spinfo):
   return _coo_todense(data_dot, row, col, spinfo=spinfo)
 
-def _coo_todense_transpose(ct, data, row, col, *, spinfo):
+def _coo_todense_transpose(cts, data, row, col, *, spinfo):
+  ct, = cts
   # Note: we assume that transpose has the same sparsity pattern.
   # Can we check this?
   assert ad.is_undefined_primal(data)
@@ -282,7 +283,6 @@ mlir.register_lowering(
 # coo_fromdense
 
 coo_fromdense_p = core.Primitive('coo_fromdense')
-coo_fromdense_p.multiple_results = True
 
 def coo_fromdense(mat: Array, *, nse: int | None = None, index_dtype: DTypeLike = jnp.int32) -> COO:
   """Create a COO-format sparse matrix from a dense matrix.
@@ -366,14 +366,14 @@ def _coo_fromdense_jvp(primals, tangents, *, nse, index_dtype):
 
   return primals_out, tangents_out
 
-def _coo_fromdense_transpose(ct, M, *, nse, index_dtype):
-  data, row, col = ct
+def _coo_fromdense_transpose(cts, M, *, nse, index_dtype):
+  data, row, col = cts
   assert len(data) == nse
   assert row.dtype == col.dtype == index_dtype
   if isinstance(row, ad.Zero) or isinstance(col, ad.Zero):
     raise ValueError("Cannot transpose with respect to sparse indices")
   assert ad.is_undefined_primal(M)
-  return _coo_todense(data, row, col, spinfo=COOInfo(shape=M.aval.shape))
+  return [_coo_todense(data, row, col, spinfo=COOInfo(shape=M.aval.shape))]
 
 ad.primitive_jvps[coo_fromdense_p] = _coo_fromdense_jvp
 ad.primitive_transposes[coo_fromdense_p] = _coo_fromdense_transpose
@@ -428,7 +428,7 @@ def _coo_matvec(data: Array, row: Array, col: Array, v: Array, *, spinfo: COOInf
     y : array of shape ``(shape[1] if transpose else shape[0],)`` representing
       the matrix vector product.
   """
-  return coo_matvec_p.bind(data, row, col, v, spinfo=spinfo, transpose=transpose)
+  return coo_matvec_p.bind1(data, row, col, v, spinfo=spinfo, transpose=transpose)
 
 def _coo_matvec_impl(data, row, col, v, *, spinfo, transpose):
   v = jnp.asarray(v)
@@ -447,7 +447,7 @@ def _coo_matvec_abstract_eval(data, row, col, v, *, spinfo, transpose):
   assert v.ndim == 1
   assert v.shape[0] == (spinfo.shape[0] if transpose else spinfo.shape[1])
   out_shape = spinfo.shape[1] if transpose else spinfo.shape[0]
-  return core.ShapedArray((out_shape,), data.dtype)
+  return [core.ShapedArray((out_shape,), data.dtype)]
 
 _coo_matvec_lowering = mlir.lower_fun(
     _coo_matvec_impl, multiple_results=False)
@@ -485,7 +485,8 @@ def _coo_matvec_jvp_mat(data_dot, data, row, col, v, *, spinfo, transpose):
 def _coo_matvec_jvp_vec(v_dot, data, row, col, v, *, spinfo, transpose):
   return _coo_matvec(data, row, col, v_dot, spinfo=spinfo, transpose=transpose)
 
-def _coo_matvec_transpose(ct, data, row, col, v, *, spinfo, transpose):
+def _coo_matvec_transpose(cts, data, row, col, v, *, spinfo, transpose):
+  ct, = cts
   assert not ad.is_undefined_primal(row)
   assert not ad.is_undefined_primal(col)
 
@@ -551,7 +552,7 @@ def _coo_matmat(data: Array, row: Array, col: Array, B: Array, *, spinfo: COOInf
     C : array of shape ``(shape[1] if transpose else shape[0], cols)``
       representing the matrix vector product.
   """
-  return coo_matmat_p.bind(data, row, col, B, spinfo=spinfo, transpose=transpose)
+  return coo_matmat_p.bind1(data, row, col, B, spinfo=spinfo, transpose=transpose)
 
 def _coo_matmat_impl(data, row, col, B, *, spinfo, transpose):
   B = jnp.asarray(B)
@@ -569,7 +570,7 @@ def _coo_matmat_abstract_eval(data, row, col, B, *, spinfo, transpose):
   assert len(spinfo.shape) == 2
   assert B.shape[0] == (spinfo.shape[0] if transpose else spinfo.shape[1])
   out_shape = spinfo.shape[1] if transpose else spinfo.shape[0]
-  return core.ShapedArray((out_shape, B.shape[1]), data.dtype)
+  return [core.ShapedArray((out_shape, B.shape[1]), data.dtype)]
 
 _coo_matmat_lowering = mlir.lower_fun(_coo_matmat_impl, multiple_results=False)
 
@@ -606,7 +607,8 @@ def _coo_matmat_jvp_left(data_dot, data, row, col, B, *, spinfo, transpose):
 def _coo_matmat_jvp_right(B_dot, data, row, col, B, *, spinfo, transpose):
   return _coo_matmat(data, row, col, B_dot, spinfo=spinfo, transpose=transpose)
 
-def _coo_matmat_transpose(ct, data, row, col, B, *, spinfo, transpose):
+def _coo_matmat_transpose(cts, data, row, col, B, *, spinfo, transpose):
+  ct, = cts
   assert not ad.is_undefined_primal(row)
   assert not ad.is_undefined_primal(col)
   if ad.is_undefined_primal(B):

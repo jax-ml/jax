@@ -180,9 +180,10 @@ def multiply_add_prim(x, y, z):
   """The JAX-traceable way to use the JAX primitive.
 
   Note that the traced arguments must be passed as positional arguments
-  to `bind`.
+  to `bind`. `bind` returns the list of the primitive's outputs; since
+  `multiply_add` has a single output, we use `bind1`, which unpacks it.
   """
-  return multiply_add_p.bind(x, y, z)
+  return multiply_add_p.bind1(x, y, z)
 
 @trace("square_add_prim")
 def square_add_prim(a, b):
@@ -213,10 +214,11 @@ def multiply_add_impl(x, y, z):
       concrete values.
 
   Returns:
-    the concrete result of the primitive.
+    a list with the concrete result of the primitive. Implementation rules
+    always return a list of outputs, one for each output of the primitive.
   """
   # Note: you can use the ordinary (non-JAX) NumPy, which is not JAX-traceable.
-  return np.add(np.multiply(x, y), z)
+  return [np.add(np.multiply(x, y), z)]
 
 # Now, register the primal implementation with JAX:
 multiply_add_p.def_impl(multiply_add_impl)
@@ -260,11 +262,12 @@ def multiply_add_abstract_eval(xs, ys, zs):
     xs, ys, zs: Abstractions of the arguments.
 
   Result:
-    a ShapedArray for the result of the primitive.
+    a list with the ShapedArray for the result of the primitive. Like
+    implementation rules, abstract evaluation rules return a list of results.
   """
   assert xs.shape == ys.shape
   assert xs.shape == zs.shape
-  return core.ShapedArray(xs.shape, xs.dtype)
+  return [core.ShapedArray(xs.shape, xs.dtype)]
 
 # Now, register the abstract evaluation with JAX:
 multiply_add_p.def_abstract_eval(multiply_add_abstract_eval)
@@ -355,7 +358,7 @@ def multiply_add_value_and_jvp(arg_values, arg_tangents):
       special value `ad.Zero` to specify a zero tangent
 
   Returns:
-     A pair of the primal output and the tangent.
+     A pair of lists: the primal outputs and the tangents of the outputs.
   """
   x, y, z = arg_values
   xt, yt, zt = arg_tangents
@@ -377,7 +380,7 @@ def multiply_add_value_and_jvp(arg_values, arg_tangents):
     return lax.full_like(x, 0) if type(tan) is ad.Zero else tan
 
   output_tangent = multiply_add_prim(make_zero(xt), y, multiply_add_prim(x, make_zero(yt), make_zero(zt)))
-  return (primal_out, output_tangent)
+  return ([primal_out], [output_tangent])
 
 # Register the forward differentiation rule with JAX:
 ad.primitive_jvps[multiply_add_p] = multiply_add_value_and_jvp
@@ -477,7 +480,7 @@ In particular:
 
 ```{code-cell}
 @trace("multiply_add_transpose")
-def multiply_add_transpose(ct, x, y, z):
+def multiply_add_transpose(cts, x, y, z):
   """Evaluates the transpose of a linear primitive.
 
   This method is only used when computing the backward gradient following
@@ -493,7 +496,7 @@ def multiply_add_transpose(ct, x, y, z):
   Always one of the first two multiplicative arguments is a constant.
 
   Args:
-      ct: The cotangent of the output of the primitive.
+      cts: The list of cotangents of the outputs of the primitive.
       x, y, z: The values of the arguments. The arguments that are used linearly
         get an ad.UndefinedPrimal value. The other arguments get a constant
         value.
@@ -502,6 +505,7 @@ def multiply_add_transpose(ct, x, y, z):
       A tuple with the cotangent of the inputs, with the value None
       corresponding to the constant arguments.
   """
+  ct, = cts
   if not ad.is_undefined_primal(x):
     # This use of multiply_add is with a constant "x".
     assert ad.is_undefined_primal(y)
@@ -569,13 +573,14 @@ def multiply_add_batch(vector_arg_values, batch_axes):
     batch_axes: The axes that are being batched. See vmap documentation.
 
   Returns:
-    A tuple of the result, and the result axis that was batched.
+    A pair of lists: the results, and the axes along which each result
+    is batched.
   """
   assert batch_axes[0] == batch_axes[1]
   assert batch_axes[0] == batch_axes[2]
   _trace("Using multiply_add to compute the batch:")
   res = multiply_add_prim(*vector_arg_values)
-  return res, batch_axes[0]
+  return [res], [batch_axes[0]]
 
 
 batching.primitive_batchers[multiply_add_p] = multiply_add_batch

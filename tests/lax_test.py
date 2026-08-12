@@ -4163,27 +4163,27 @@ bake_p = core.Primitive('bake')
 take_p = core.Primitive('take')
 jake_p = core.Primitive('jake')
 
-def make(shape): return make_p.bind(shape=tuple(shape))
-def bake(k):     return bake_p.bind(k)
-def take(k):     return take_p.bind(k)
-def jake(k):     return jake_p.bind(k)
+def make(shape): return make_p.bind1(shape=tuple(shape))
+def bake(k):     return bake_p.bind1(k)
+def take(k):     return take_p.bind1(k)
+def jake(k):     return jake_p.bind1(k)
 
 @make_p.def_abstract_eval
 def make_abstract_eval(*, shape):
-  return core.ShapedArray(shape, FooTy())
+  return [core.ShapedArray(shape, FooTy())]
 
 @bake_p.def_abstract_eval
 def bake_abstract_eval(x):
   if type(x.dtype) != FooTy: raise TypeError
-  return core.ShapedArray(tuple(reversed(x.shape)), FooTy())
+  return [core.ShapedArray(tuple(reversed(x.shape)), FooTy())]
 
 @take_p.def_abstract_eval
 def take_abstract_eval(x):
-  return core.ShapedArray(x.shape, jnp.dtype('float32'))
+  return [core.ShapedArray(x.shape, jnp.dtype('float32'))]
 
 @jake_p.def_abstract_eval
 def jake_abstract_eval(x):
-  return x
+  return [x]
 
 # runtime ('outside jit') data types
 
@@ -4237,7 +4237,7 @@ def bake_vmap(batched_args, batch_dims):
   ys = bake(xs)
   perm = list(reversed(range(xs.ndim)))
   bdim_out = perm[bdim_in]
-  return ys, bdim_out
+  return [ys], [bdim_out]
 
 
 # All tests in this test class are thread-hostile because they add and remove

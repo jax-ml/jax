@@ -234,10 +234,7 @@ def compute_usage(jaxpr: core.Jaxpr, jaxpr_out_usages):
           avals_in=tuple(v.aval for v in eqn.invars),
           avals_out=tuple(v.aval for v in eqn.outvars),
       )
-      if eqn.primitive.multiple_results:
-        in_usages = rule(usage_rule_ctx, out_usages, **eqn.params)
-      else:
-        in_usages = rule(usage_rule_ctx, out_usages[0], **eqn.params)
+      in_usages = rule(usage_rule_ctx, out_usages, **eqn.params)
     else:
       # Usages are forwarded
       all_usages = set.union(*out_usages)
@@ -522,10 +519,7 @@ def _pull_block_transform(
         strict_mode=strict_mode,
         invars=tuple(eqn.invars),
     )
-    if eqn.primitive.multiple_results:
-      in_block_transforms = rule(ctx, eqn_out_block_transforms, **eqn.params)
-    else:
-      in_block_transforms = rule(ctx, eqn_out_block_transforms[0], **eqn.params)
+    in_block_transforms = rule(ctx, eqn_out_block_transforms, **eqn.params)
 
     eqn_invar_usages = [
         read_usage_env(v) if not isinstance(v, core.Literal) else set()
@@ -750,8 +744,10 @@ def make_kernel_function(
             out_usages=out_usages,
         )
         outs = eval_rule(eval_ctx, *in_vals, **eqn.params)
-        if not eqn.primitive.multiple_results:
-          outs = [outs]
+        # Eval rules keep per-primitive return conventions: rules for
+        # single-result primitives may return a bare value, so normalize
+        # structurally to a list.
+        outs = list(outs) if isinstance(outs, (list, tuple)) else [outs]
         util.safe_map(write_env, eqn.outvars, outs)
     out = util.safe_map(read_env, jaxpr.outvars)
     return tree_util.tree_unflatten(out_tree, out)
@@ -858,7 +854,7 @@ class UsageRuleFn(Protocol):
   def __call__(
       self,
       ctx: UsageRuleContext,
-      used_outs: Sequence[set[Usage]] | set[Usage],
+      used_outs: Sequence[set[Usage]],
       **params: Any,
   ) -> Sequence[set[Usage]]:
     ...
@@ -917,7 +913,7 @@ class PullBlockSpecRuleFn(Protocol):
   def __call__(
       self,
       ctx: PullRuleContext,
-      block_spec: BlockIndexTransform | tuple[BlockIndexTransform, ...],
+      block_specs: tuple[BlockIndexTransform, ...],
       **params: Any,
   ) -> Sequence[BlockIndexTransform]:
     ...
@@ -947,17 +943,22 @@ def _eltwise_eval_rule(prim, ctx, x, **params):
 def _eltwise_pull_rule(
     prim: core.Primitive,
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     **params,
 ) -> Sequence[BlockIndexTransform]:
   del prim, ctx, params
+  block_transform, = block_transforms
   return [block_transform]
 
 
 def _eltwise_usage_rule(
-    prim: core.Primitive, ctx: UsageRuleContext, used_out: set[Usage], **params
+    prim: core.Primitive,
+    ctx: UsageRuleContext,
+    used_outs: Sequence[set[Usage]],
+    **params,
 ) -> Sequence[set[Usage]]:
   del ctx, prim, params
+  used_out, = used_outs
   return [used_out]
 
 
@@ -1003,9 +1004,10 @@ def _push_bcast_block_spec(
   return pallas_core.BlockSpec(new_block_shape, block_spec.index_map)
 
 
-def _binop_usage_rule(prim, ctx, used_out: set[Usage], **params):
+def _binop_usage_rule(prim, ctx, used_outs: Sequence[set[Usage]], **params):
   del prim
   del params  # unused
+  used_out, = used_outs
   if used_out == {Usage.SCALAR_PREFETCH}:
     return [{Usage.SCALAR_PREFETCH}, {Usage.SCALAR_PREFETCH}]
   elif used_out == {Usage.REGULAR}:
@@ -1020,9 +1022,10 @@ def _binop_eval_rule(prim, ctx, x, y, **params):
   return prim.bind(x, y, **params)
 
 
-def _binop_pull_rule(prim, ctx: PullRuleContext, block_transform, **params):
+def _binop_pull_rule(prim, ctx: PullRuleContext, block_transforms, **params):
   del prim
   del params  # unused
+  block_transform, = block_transforms
   l_block_transform = block_transform
   r_block_transform = block_transform
   left_aval, right_aval = ctx.avals_in
@@ -1088,8 +1091,9 @@ def _select_n_eval_rule(ctx: KernelEvalContext, *args):
 
 @register_pull_block_spec_rule(lax.select_n_p)
 def _select_n_pull_block_spec_rule(
-    ctx: PullRuleContext, block_transform: BlockIndexTransform,
+    ctx: PullRuleContext, block_transforms: Sequence[BlockIndexTransform],
 ) -> Sequence[BlockIndexTransform]:
+  block_transform, = block_transforms
   in_aval = ctx.avals_in[0]
   assert isinstance(in_aval, core.ShapedArray)
   if in_aval.shape:
@@ -1106,8 +1110,9 @@ def _clamp_eval_rule(
 
 @register_pull_block_spec_rule(lax.clamp_p)
 def _clamp_pull_block_spec_rule(
-    ctx: PullRuleContext, block_transform: BlockIndexTransform,
+    ctx: PullRuleContext, block_transforms: Sequence[BlockIndexTransform],
 ) -> Sequence[BlockIndexTransform]:
+  block_transform, = block_transforms
   min_aval, _, max_aval = ctx.avals_in
   assert hasattr(min_aval, 'shape')
   assert hasattr(max_aval, 'shape')
@@ -1129,11 +1134,12 @@ def _squeeze_eval_rule(ctx: KernelEvalContext, x: jax.Array, **params: Any):
 @register_pull_block_spec_rule(lax.squeeze_p)
 def _squeeze_block_spec(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     *,
     dimensions: tuple[int, ...],
 ) -> Sequence[BlockIndexTransform]:
   del ctx
+  block_transform, = block_transforms
   if block_transform is no_block_index_transform:
     return [no_block_index_transform]
 
@@ -1229,13 +1235,14 @@ def _maybe_static_check(pred: bool, msg: str):
 @register_pull_block_spec_rule(lax.slice_p)
 def _slice_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     *,
     start_indices: tuple[int, ...],
     limit_indices: tuple[int, ...],
     strides: tuple[int, ...] | None,
 ):
   del ctx
+  block_transform, = block_transforms
   if strides is not None and not all(stride == 1 for stride in strides):
     raise NotImplementedError('strides are not supported yet')
   slice_sizes = tuple(
@@ -1285,8 +1292,9 @@ def _slice_rule(
 
 
 @register_usage_rule(lax.dynamic_slice_p)
-def _dynamic_slice_usage_rule(ctx, used_out: set[Usage], **params):
+def _dynamic_slice_usage_rule(ctx, used_outs: Sequence[set[Usage]], **params):
   del params
+  used_out, = used_outs
   if used_out == {Usage.SCALAR_PREFETCH}:
     raise NotImplementedError('scalar prefetch not supported yet')
   elif used_out == {Usage.REGULAR}:
@@ -1305,10 +1313,11 @@ def _dynamic_slice_eval_rule(ctx, x, *args, **params):
 @register_pull_block_spec_rule(lax.dynamic_slice_p)
 def _dynamic_slice_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     *,
     slice_sizes: tuple[int, ...],
 ):
+  block_transform, = block_transforms
   operand_aval = ctx.avals_in[0]
   operand_shape = operand_aval.shape
 
@@ -1381,11 +1390,12 @@ def _dynamic_slice_rule(
 @register_pull_block_spec_rule(lax.dot_general_p)
 def _dot_general_pull_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     *,
     dimension_numbers,
     **_,
 ) -> Sequence[BlockIndexTransform]:
+  block_transform, = block_transforms
   if block_transform is no_block_index_transform:
     return [no_block_index_transform, no_block_index_transform]
 
@@ -1435,9 +1445,10 @@ def _dot_general_pull_rule(
 
 @register_usage_rule(lax.dot_general_p)
 def _dot_general_usage_rule(
-    ctx: UsageRuleContext, used_out: set[Usage], **params
+    ctx: UsageRuleContext, used_outs: Sequence[set[Usage]], **params
 ):
   del ctx, params
+  used_out, = used_outs
   if Usage.REGULAR in used_out:
     return [{Usage.REGULAR}, {Usage.REGULAR}]
   return [set(), set()]
@@ -1452,10 +1463,11 @@ def _dot_general_eval_rule(ctx: KernelEvalContext, x, y, **params):
 @register_pull_block_spec_rule(state_primitives.swap_p)
 def _swap_pull_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     **kwargs,
 ):
   del ctx, kwargs
+  block_transform, = block_transforms
   # The output and val block spec are the same.
   return [block_transform, block_transform]
 
@@ -1504,8 +1516,12 @@ def _swap_eval_rule(ctx: KernelEvalContext, ref, val, *idx, tree):
 
 @register_pull_block_spec_rule(state_primitives.get_p)
 def _get_pull_rule(
-    ctx: PullRuleContext, block_transform: BlockIndexTransform, *, tree
+    ctx: PullRuleContext,
+    block_transforms: Sequence[BlockIndexTransform],
+    *,
+    tree,
 ):
+  block_transform, = block_transforms
   if block_transform.block_shape is None:
     return [block_transform] + [no_block_index_transform] * (
         len(ctx.avals_in) - 1
@@ -1688,10 +1704,11 @@ def _unstack_eval_rule(ctx: KernelEvalContext, x, *, axis):
 @register_pull_block_spec_rule(lax.concatenate_p)
 def _concatenate_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     *,
     dimension: int,
 ):
+  block_transform, = block_transforms
   block_shape = block_transform.block_shape
   is_element_block = [isinstance(bd, pallas_core.Element) for bd in block_shape]
   if any(is_element_block):
@@ -1754,10 +1771,11 @@ def _concatenate_rule(
 @register_pull_block_spec_rule(lax.stack_p)
 def _stack_pull_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     *,
     axis: int,
 ):
+  block_transform, = block_transforms
   block_shape = block_transform.block_shape
   is_element_block = [isinstance(bd, pallas_core.Element) for bd in block_shape]
   if any(is_element_block):
@@ -1867,8 +1885,9 @@ def _split_pull_rule(
 
 
 @register_usage_rule(lax.broadcast_in_dim_p)
-def _broadcast_in_dim_usage_rule(ctx, used_out: set[Usage], **params):
+def _broadcast_in_dim_usage_rule(ctx, used_outs: Sequence[set[Usage]], **params):
   del params
+  used_out, = used_outs
   if used_out == {Usage.SCALAR_PREFETCH}:
     raise NotImplementedError('scalar prefetch not supported yet')
   elif used_out == {Usage.REGULAR}:
@@ -1903,13 +1922,14 @@ def _broadcast_in_dim_eval_rule(
 @register_pull_block_spec_rule(lax.broadcast_in_dim_p)
 def _broadcast_in_dim_pull_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     *,
     shape: tuple[int, ...],
     broadcast_dimensions: tuple[int, ...],
     sharding: jax.sharding.Sharding,
 ):
   del shape, sharding
+  block_transform, = block_transforms
 
   shape = ctx.avals_in[0].shape
   if not shape:
@@ -1958,11 +1978,11 @@ def _transpose_eval_rule(
 @register_pull_block_spec_rule(lax.transpose_p)
 def _transpose_pull_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     *,
     permutation: tuple[int, ...],
 ):
-
+  block_transform, = block_transforms
   block_shape = block_transform.block_shape
   new_shape = tuple(block_shape[i] for i in permutation)
   aval_in = ctx.avals_in[0]
@@ -2018,11 +2038,12 @@ def _tile_eval_rule(
 @register_pull_block_spec_rule(lax.tile_p)
 def _tile_pull_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     *,
     reps: tuple[int, ...],
 ):
   del reps
+  block_transform, = block_transforms
   block_shape = block_transform.block_shape
   aval_in = ctx.avals_in[0]
   assert isinstance(aval_in, core.ShapedArray)
@@ -2075,13 +2096,14 @@ def _convert_element_type_eval_rule(
 @register_pull_block_spec_rule(lax.convert_element_type_p)
 def _convert_element_type_pull_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     *,
     new_dtype: jnp.dtype,
     weak_type: bool,
     sharding: jax.sharding.Sharding,
 ):
   del ctx, new_dtype, weak_type, sharding
+  block_transform, = block_transforms
   return [block_transform]
 
 
@@ -2094,10 +2116,11 @@ def _bitcast_convert_type_eval_rule(eval_ctx: KernelEvalContext, x, new_dtype):
 @register_pull_block_spec_rule(lax.bitcast_convert_type_p)
 def _bitcast_convert_type_pull_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     *,
     new_dtype: jnp.dtype,
 ):
+  block_transform, = block_transforms
   old_dtype = ctx.avals_in[0].dtype
   if old_dtype.itemsize != new_dtype.itemsize:
     raise NotImplementedError(
@@ -2123,10 +2146,10 @@ def _random_bits_eval_rule(eval_ctx: KernelEvalContext, key, bit_width, shape):
 @register_pull_block_spec_rule(prng.random_bits_p)
 def _random_bits_pull_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     **_,
 ):
-  del ctx, block_transform
+  del ctx, block_transforms
   key_block_transform = BlockIndexTransform(
       block_shape=None,
       memory_space=pallas_core.MemorySpace.KEY)
@@ -2141,9 +2164,12 @@ def _random_wrap_eval_rule(eval_ctx: KernelEvalContext, arr, *, impl):
 
 @register_pull_block_spec_rule(prng.random_wrap_p)
 def _random_wrap_pull_rule(
-    ctx: PullRuleContext, block_transform: BlockIndexTransform, *, impl
+    ctx: PullRuleContext,
+    block_transforms: Sequence[BlockIndexTransform],
+    *,
+    impl,
 ):
-  del ctx, block_transform, impl
+  del ctx, block_transforms, impl
   return [BlockIndexTransform(block_shape=None)]
 
 
@@ -2156,10 +2182,10 @@ def _random_fold_in_eval_rule(eval_ctx: KernelEvalContext, key, msg):
 @register_pull_block_spec_rule(prng.random_fold_in_p)
 def _random_fold_in_pull_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     **_,
 ):
-  del ctx, block_transform
+  del ctx, block_transforms
   key_block_transform = BlockIndexTransform(
       block_shape=None, memory_space=pallas_core.MemorySpace.KEY
   )
@@ -2189,7 +2215,7 @@ def _iota_eval_rule(
 @register_pull_block_spec_rule(lax.iota_p)
 def _iota_pull_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     *,
     dtype: jnp.dtype,
     dimension: int,
@@ -2197,6 +2223,7 @@ def _iota_pull_rule(
     sharding: jax.sharding.Sharding,
 ):
   del ctx, sharding, dtype, shape
+  block_transform, = block_transforms
   if block_transform.block_shape[dimension] is None:
     raise ValueError(
         f'Cannot pull iota along dimension {dimension} with None block size.'
@@ -2225,13 +2252,14 @@ def _pattern_match_lanes_to_sublanes_reshape(
 @register_pull_block_spec_rule(lax.reshape_p)
 def _reshape_pull_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     *,
     dimensions: tuple[int, ...] | None,
     new_sizes: tuple[int, ...],
     sharding: jax.sharding.Sharding,
 ):
   del sharding, new_sizes
+  block_transform, = block_transforms
   if dimensions is not None:
     raise NotImplementedError('reshape with None dimensions not supported yet')
   aval_in = ctx.avals_in[0]
@@ -2383,12 +2411,13 @@ def _reshape_eval_rule(
 @register_pull_block_spec_rule(lax.reduce_sum_p)
 def _reduce_sum_pull_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transforms: Sequence[BlockIndexTransform],
     *,
     axes: tuple[int, ...],
     out_sharding,
 ):
   del out_sharding
+  block_transform, = block_transforms
   aval_in = ctx.avals_in[0]
   assert isinstance(aval_in, core.ShapedArray)
   new_block_shape = []
@@ -2726,10 +2755,10 @@ def _push_block_spec_jaxpr(
         avals_in=tuple(v.aval for v in eqn.invars),
         avals_out=tuple(v.aval for v in eqn.outvars),
     )
-    if eqn.primitive.multiple_results:
-      out_block_specs = rule(ctx, *in_block_specs, **eqn.params)
-    else:
-      out_block_specs = [rule(ctx, *in_block_specs, **eqn.params)]
+    ans = rule(ctx, *in_block_specs, **eqn.params)
+    # Push rules keep per-primitive return conventions: rules for single-result
+    # primitives return a bare BlockSpec, so normalize structurally to a list.
+    out_block_specs = list(ans) if isinstance(ans, (list, tuple)) else [ans]
 
     util.safe_map(_write_block_spec, eqn.outvars, out_block_specs)
   out_block_specs = tuple(util.safe_map(_read_block_spec, jaxpr.outvars))

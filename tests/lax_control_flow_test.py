@@ -116,7 +116,7 @@ ignore_jit_of_pmap_warning = partial(
 
 # A JAX primitive whose lowering is a custom call to a non-existent function.
 prim_non_existent_custom_call = core.Primitive("__testing_non_existent_custom_call")
-prim_non_existent_custom_call.def_abstract_eval(lambda x_aval: x_aval)
+prim_non_existent_custom_call.def_abstract_eval(lambda x_aval: [x_aval])
 mlir.register_lowering(
     prim_non_existent_custom_call,
     lambda ctx, x: mlir.hlo.custom_call(
@@ -124,11 +124,11 @@ mlir.register_lowering(
         call_target_name=mlir.ir.StringAttr.get("__testing_non_existent_custom_call")))
 batching.primitive_batchers[prim_non_existent_custom_call] = (
     lambda batched_args, batch_dims: (prim_non_existent_custom_call.bind(batched_args[0]),
-                                      batch_dims[0]))
+                                      [batch_dims[0]]))
 
 # A JAX primitive that triggers error when lowering on unintended platforms
 prim_with_lowering_error = core.Primitive("__testing_prim_with_lowering_error")
-prim_with_lowering_error.def_abstract_eval(lambda x_aval, **_: x_aval)
+prim_with_lowering_error.def_abstract_eval(lambda x_aval, **_: [x_aval])
 def prim_with_lowering_error_lowering(platform: str,
                                       ctx: mlir.LoweringRuleContext, x, *,
                                       only_on: str):
@@ -138,7 +138,7 @@ def prim_with_lowering_error_lowering(platform: str,
 def prim_with_lowering_error_batch_rule(batched_args, batch_dims, **params):
   xs, = batched_args
   xs_bdim, = batch_dims
-  return prim_with_lowering_error.bind(xs, **params), xs_bdim
+  return prim_with_lowering_error.bind(xs, **params), [xs_bdim]
 
 batching.primitive_batchers[prim_with_lowering_error] = prim_with_lowering_error_batch_rule
 
@@ -2950,14 +2950,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       # One use with the bad custom call on a different platform branch
       x1 = lax.platform_dependent(x,
                                   cpu=jnp.sin,
-                                  other=prim_non_existent_custom_call.bind)
+                                  other=prim_non_existent_custom_call.bind1)
       # and with the bad custom call in the default branch
       x2 = lax.platform_dependent(x,
                                   cpu=jnp.sin,
-                                  default=prim_non_existent_custom_call.bind)
+                                  default=prim_non_existent_custom_call.bind1)
       # and one use where the current platform is the default
       x3 = lax.platform_dependent(x,
-                                  other=prim_non_existent_custom_call.bind,
+                                  other=prim_non_existent_custom_call.bind1,
                                   default=jnp.sin)
       return x1 + x2 + x3
 
@@ -2987,8 +2987,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return lax.platform_dependent(
           x,
           # Check that we only lower on the intended platform
-          cpu=lambda x: prim_with_lowering_error.bind(x, only_on="cpu"),
-          tpu=lambda x: prim_with_lowering_error.bind(x, only_on="tpu"))
+          cpu=lambda x: prim_with_lowering_error.bind1(x, only_on="cpu"),
+          tpu=lambda x: prim_with_lowering_error.bind1(x, only_on="tpu"))
 
     self.assertAllClose(np.sin(1.), f(1.))  # Eager
     self.assertAllClose(np.sin(1.), jax.jit(f)(1.))

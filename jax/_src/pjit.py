@@ -873,7 +873,6 @@ def check_aval_layout_compatibility(
 
 jit_p = core.Primitive("jit")
 jit_p.is_effectful = lambda params: bool(params['jaxpr'].effects)
-jit_p.multiple_results = True
 jit_p.skip_canonicalization = True
 
 def _is_high(*_, jaxpr, **__) -> bool:
@@ -2105,7 +2104,7 @@ def with_sharding_constraint(x, shardings):
       outs.append(xf)
     else:
       check_shardings_are_auto(s)
-      outs.append(sharding_constraint_p.bind(
+      outs.append(sharding_constraint_p.bind1(
           xf, sharding=s, layout=l, context_mesh=context_mesh,
           unconstrained_dims=ud))
   return tree_unflatten(tree, outs)
@@ -2148,22 +2147,22 @@ def _sharding_constraint_impl(x, sharding, layout, context_mesh,
           sharding_constraint_p, x,  sharding=sharding, layout=layout,
           context_mesh=context_mesh, unconstrained_dims=unconstrained_dims)
     else:
-      return api.jit(_identity_fn, out_shardings=sharding)(x)
+      return [api.jit(_identity_fn, out_shardings=sharding)(x)]
   else:
-    return api.jit(_identity_fn, out_shardings=Format(layout, sharding))(x)
+    return [api.jit(_identity_fn, out_shardings=Format(layout, sharding))(x)]
 
 
 sharding_constraint_p = core.Primitive("sharding_constraint")
 sharding_constraint_p.def_impl(_sharding_constraint_impl)
 ad.deflinear2(sharding_constraint_p,
-              lambda ct, _, **params: (sharding_constraint_p.bind(ct, **params),))
+              lambda cts, _, **params: (sharding_constraint_p.bind1(cts[0], **params),))
 
 def _sharding_constraint_abstract_eval(
     x_aval, *, sharding, layout, context_mesh, unconstrained_dims):
   if isinstance(sharding, NamedSharding):
-    return x_aval.update(
-        sharding=x_aval.sharding.update(mesh=sharding.mesh.abstract_mesh))
-  return x_aval.update(sharding=None)
+    return [x_aval.update(
+        sharding=x_aval.sharding.update(mesh=sharding.mesh.abstract_mesh))]
+  return [x_aval.update(sharding=None)]
 sharding_constraint_p.def_abstract_eval(_sharding_constraint_abstract_eval)
 
 def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding, layout,
@@ -2215,10 +2214,10 @@ def _sharding_constraint_batcher(
   x, = vals_in
   d, = dims_in
   if d is None:
-    out = sharding_constraint_p.bind(
+    out = sharding_constraint_p.bind1(
         x, sharding=sharding, layout=layout, context_mesh=context_mesh,
         unconstrained_dims=unconstrained_dims)
-    return out, None
+    return [out], [None]
 
   if axis_data.spmd_name is not None and isinstance(sharding, NamedSharding):
     used = {n for ns in sharding.spec
@@ -2244,13 +2243,13 @@ def _sharding_constraint_batcher(
   vmapped_layout = (get_layout_for_vmap(d, layout) if layout is not None else
                     layout)
 
-  y = sharding_constraint_p.bind(
+  y = sharding_constraint_p.bind1(
       x,
       sharding=vmapped_sharding,
       layout=vmapped_layout,
       context_mesh=context_mesh,
       unconstrained_dims=frozenset(unconstrained_dims))
-  return y, d
+  return [y], [d]
 batching.fancy_primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
 
 # -------------------- reshard ------------------------------------
@@ -2271,7 +2270,7 @@ def reshard(xs, out_shardings):
     cmesh = (s.mesh if (isinstance(s, NamedSharding) and
                         isinstance(s.mesh, mesh_lib.Mesh))
              else None)
-    out_flat.append(reshard_p.bind(x, dst_sharding=ds, concrete_mesh=cmesh))
+    out_flat.append(reshard_p.bind1(x, dst_sharding=ds, concrete_mesh=cmesh))
   return tree_unflatten(treedef, out_flat)
 
 reshard_p = core.Primitive('reshard')
@@ -2299,8 +2298,8 @@ def _reshard_abstract_eval(aval, *, dst_sharding, concrete_mesh):
   assert isinstance(aval, core.ShapedArray)
   _check_unreduced_reshard(aval, dst_sharding)
   if aval.sharding == dst_sharding:
-    return aval
-  return aval.update(sharding=dst_sharding)
+    return [aval]
+  return [aval.update(sharding=dst_sharding)]
 reshard_p.def_abstract_eval(_reshard_abstract_eval)
 
 def _reshard_impl(x, *, dst_sharding, concrete_mesh):
@@ -2315,37 +2314,38 @@ reshard_p.def_impl(_reshard_impl)
 
 def _reshard_jvp_rule(primals, tangents, *, dst_sharding, concrete_mesh):
   (p,), (t,) = primals, tangents
-  primal_out = reshard_p.bind(p, dst_sharding=dst_sharding,
-                              concrete_mesh=concrete_mesh)
+  primal_out = reshard_p.bind1(p, dst_sharding=dst_sharding,
+                               concrete_mesh=concrete_mesh)
   if type(t) is ad.Zero:
-    return primal_out, ad.p2tz(primal_out)
+    return [primal_out], [ad.p2tz(primal_out)]
   else:
-    tangent_out = reshard_p.bind(t, dst_sharding=dst_sharding,
-                                 concrete_mesh=concrete_mesh)
-    return primal_out, tangent_out
+    tangent_out = reshard_p.bind1(t, dst_sharding=dst_sharding,
+                                  concrete_mesh=concrete_mesh)
+    return [primal_out], [tangent_out]
 ad.primitive_jvps[reshard_p] = _reshard_jvp_rule
 
 def _reshard_linearize(is_vjp, nzs, x, *, dst_sharding, concrete_mesh):
   (nz,) = nzs
-  primal_out = reshard_p.bind(x, dst_sharding=dst_sharding,
-                              concrete_mesh=concrete_mesh)
+  primal_out = reshard_p.bind1(x, dst_sharding=dst_sharding,
+                               concrete_mesh=concrete_mesh)
 
   def linearized(residuals, _, tangent):
     assert not residuals
-    return (reshard_p.bind(tangent, dst_sharding=dst_sharding,
-                           concrete_mesh=concrete_mesh)
-            if nz else ad.p2tz(tangent))
-  return primal_out, nz, (), None, linearized
+    return [reshard_p.bind1(tangent, dst_sharding=dst_sharding,
+                            concrete_mesh=concrete_mesh)
+            if nz else ad.p2tz(tangent)]
+  return [primal_out], [nz], (), None, linearized
 ad.primitive_linearizations[reshard_p] = _reshard_linearize
 
-def _reshard_transpose_fancy(ct, x, *, dst_sharding, concrete_mesh):
+def _reshard_transpose_fancy(cts, x, *, dst_sharding, concrete_mesh):
+  ct, = cts
   assert isinstance(x, ad.GradAccum)
   if type(ct) is ad.Zero or isinstance(x, ad.NullAccum):
     return
   out_sharding = x.aval.sharding  # pyrefly: ignore[missing-attribute]
   with mesh_lib.use_abstract_mesh(out_sharding.mesh):
-    x_bar = reshard_p.bind(ct, dst_sharding=out_sharding,
-                           concrete_mesh=concrete_mesh)
+    x_bar = reshard_p.bind1(ct, dst_sharding=out_sharding,
+                            concrete_mesh=concrete_mesh)
     x.accum(x_bar)
 ad.fancy_transposes[reshard_p] = _reshard_transpose_fancy
 
@@ -2358,14 +2358,14 @@ def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding, concrete_mesh):
   x, = vals_in
   d, = dims_in
   if d is None:
-    out = reshard_p.bind(x, dst_sharding=dst_sharding,
-                         concrete_mesh=concrete_mesh)
-    return out, None
+    out = reshard_p.bind1(x, dst_sharding=dst_sharding,
+                          concrete_mesh=concrete_mesh)
+    return [out], [None]
   vmapped_dst_sharding = batching.get_sharding_for_vmap(
       axis_data, dst_sharding, d)
-  y = reshard_p.bind(x, dst_sharding=vmapped_dst_sharding,
-                     concrete_mesh=concrete_mesh)
-  return y, d
+  y = reshard_p.bind1(x, dst_sharding=vmapped_dst_sharding,
+                      concrete_mesh=concrete_mesh)
+  return [y], [d]
 batching.fancy_primitive_batchers[reshard_p] = _reshard_batcher
 
 def _pp_reshard(eqn, ctx, settings):
@@ -2500,14 +2500,14 @@ def with_layout_constraint(x, layouts):
   check_aval_layout_compatibility(
       layouts_flat, x_avals_flat, ("",) * len(layouts_flat),
       "with_layout_constraint arguments")
-  outs = [layout_constraint_p.bind(xf, layout=l)
+  outs = [layout_constraint_p.bind1(xf, layout=l)
           for xf, l in zip(x_flat, layouts_flat)]
   return tree_unflatten(tree, outs)
 
 layout_constraint_p = core.Primitive('layout_constraint')
-layout_constraint_p.def_abstract_eval(lambda x, **_: x)
+layout_constraint_p.def_abstract_eval(lambda x, **_: [x])
 ad.deflinear2(layout_constraint_p,
-              lambda ct, _, **params: (layout_constraint_p.bind(ct, **params),))
+              lambda cts, _, **params: (layout_constraint_p.bind1(cts[0], **params),))
 
 def _layout_constraint_impl(x, *, layout):
   if not isinstance(x, xc.ArrayImpl):
@@ -2515,8 +2515,8 @@ def _layout_constraint_impl(x, *, layout):
         'with_layout_constraint in eager mode can only be applied to'
         f' jax.Arrays. Got {type(x)}')
   if x.format.layout == layout:
-    return x
-  return api.jit(_identity_fn, out_shardings=Format(layout, x.sharding))(x)
+    return [x]
+  return [api.jit(_identity_fn, out_shardings=Format(layout, x.sharding))(x)]
 layout_constraint_p.def_impl(_layout_constraint_impl)
 
 def _layout_constraint_hlo_lowering(ctx, x_node, *, layout):
@@ -2531,10 +2531,10 @@ def _layout_constraint_batcher(axis_data, vals_in, dims_in, layout):
   x, = vals_in
   d, = dims_in
   if d is None:
-    return layout_constraint_p.bind(x, layout=layout), None
+    return [layout_constraint_p.bind1(x, layout=layout)], [None]
   vmapped_layout = get_layout_for_vmap(d, layout)
-  y = layout_constraint_p.bind(x, layout=vmapped_layout)
-  return y, d
+  y = layout_constraint_p.bind1(x, layout=vmapped_layout)
+  return [y], [d]
 batching.fancy_primitive_batchers[layout_constraint_p] = _layout_constraint_batcher
 
 # ------------------------- program_order --------------------------------------
@@ -2585,10 +2585,7 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
       token, cur_inps = optimization_barrier((token, cur_inps))
       ans = eqn.primitive.bind(*cur_inps, **bind_params)
     token, ans = optimization_barrier((token, ans))
-    if eqn.primitive.multiple_results:
-      foreach(write, eqn.outvars, ans)
-    else:
-      write(eqn.outvars[0], ans)
+    foreach(write, eqn.outvars, ans)
     core.clean_up_dead_vars(eqn, env, last_used)
   outvals = map(read, jaxpr.outvars)
   _, outvals = optimization_barrier((token, outvals))

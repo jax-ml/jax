@@ -177,7 +177,6 @@ def manual_rule(prim, vma_rule, ur_rule, multi_out, *avals, **kwargs):
 def standard_abstract_eval(
     prim, shape_rule, dtype_rule, weak_type_rule, sharding_rule, vma_rule,
     ur_rule, memory_space_rule, *avals, **kwargs):
-  assert not prim.multiple_results
   for a in avals:
     if isinstance(a, state.AbstractRef):
       raise ValueError(f'Attempting to pass a Ref {a} to a primitive: '
@@ -200,14 +199,13 @@ def standard_abstract_eval(
         out_shape, out_dtype, weak_type=weak_type, sharding=out_sharding,
         manual_axis_type=out_mat, memory_space=out_mem_space)
     core.check_avals_context_mesh([out_aval], prim.name)
-    return out_aval
+    return [out_aval]
   else:
     raise TypeError(avals, least_specialized)
 
 def standard_multi_result_abstract_eval(
     prim, shape_rule, dtype_rule, weak_type_rule, sharding_rule, vma_rule,
     ur_rule, *avals, **kwargs):
-  assert prim.multiple_results
   assert all(isinstance(aval, core.ShapedArray) for aval in avals), avals
   least_specialized = max(map(type, avals), key=_get_array_abstraction_level)
   weak_types = weak_type_rule(*avals, **kwargs)

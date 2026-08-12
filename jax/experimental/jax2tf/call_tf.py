@@ -337,7 +337,6 @@ def check_tf_result(idx: int, r_tf: TfVal, r_aval: core.ShapedArray | None) -> T
 
 
 call_tf_p = core.Primitive("call_tf")
-call_tf_p.multiple_results = True
 
 # The impl will be used in op-by-op mode and calls callable_tf in TF eager mode.
 def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):

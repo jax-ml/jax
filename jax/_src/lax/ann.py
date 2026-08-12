@@ -406,7 +406,6 @@ def _approx_top_k_jvp(primals, tangents, *, k, reduction_dimension,
 
 
 approx_top_k_p = core.Primitive('approx_top_k')
-approx_top_k_p.multiple_results = True
 approx_top_k_p.def_impl(partial(dispatch.apply_primitive, approx_top_k_p))
 approx_top_k_p.def_abstract_eval(_approx_top_k_abstract_eval)
 mlir.register_lowering(approx_top_k_p,

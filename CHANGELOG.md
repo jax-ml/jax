@@ -28,6 +28,15 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     in NumPy v2.6.0 ({jax-issue}`#39729`)
 
 * Breaking changes
+  * The `multiple_results` attribute of `Primitive` has been removed: every
+    primitive now behaves as if `multiple_results=True`. `Primitive.bind`
+    always returns a list of outputs (use the new `Primitive.bind1` to bind a
+    single-output primitive and unpack its one result), and all rules follow
+    sequence conventions: impl and abstract-eval rules return a list of
+    outputs/avals, JVP rules return a pair of lists, transpose rules receive a
+    list of output cotangents, and batching rules return a list of outputs and
+    a list of output batch dimensions. Rules registered via helpers like
+    `ad.defjvp` and `batching.defvectorized` are unaffected.
   * JAX does not support anymore deserialization of Exported modules from
   before January 15th, 2026 because they are beyond the backwards compatibility
   window. On that date we added support to serialize shardings as NamedSharding,

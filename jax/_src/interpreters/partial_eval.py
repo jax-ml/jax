@@ -189,23 +189,14 @@ class JaxprTrace(Trace):
     out_aval, effs = primitive.abstract_eval(*avals, **params)
     name_stack = self._current_truncated_name_stack()
     source = source_info_util.current().replace(name_stack=name_stack)
-    if primitive.multiple_results:
-      out_tracers = [JaxprTracer(self, PartialVal.unknown(aval), None)
-                     for aval in out_aval]
-      eqn = new_eqn_recipe(self, tracers, out_tracers, primitive, params, effs,
-                           source)
-      if effects.partial_eval_kept_effects.filter_in(effs):
-        self.effect_handles.append(EffectHandle(tracers, eqn))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
-      for t in out_tracers: t.recipe = eqn
-      return out_tracers
-    else:
-      out_tracer = JaxprTracer(self, PartialVal.unknown(out_aval), None)
-      eqn = new_eqn_recipe(self, tracers, [out_tracer], primitive,
-                           params, effs, source)
-      if effects.partial_eval_kept_effects.filter_in(effs):
-        self.effect_handles.append(EffectHandle(tracers, eqn))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
-      out_tracer.recipe = eqn
-      return out_tracer
+    out_tracers = [JaxprTracer(self, PartialVal.unknown(aval), None)
+                   for aval in out_aval]
+    eqn = new_eqn_recipe(self, tracers, out_tracers, primitive, params, effs,
+                         source)
+    if effects.partial_eval_kept_effects.filter_in(effs):
+      self.effect_handles.append(EffectHandle(tracers, eqn))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+    for t in out_tracers: t.recipe = eqn
+    return out_tracers
 
   def _current_truncated_name_stack(self):
     return source_info_util.current_name_stack()[len(self.name_stack):]
@@ -1765,10 +1756,9 @@ class DynamicJaxprTrace(core.Trace):
         _verify_params_are_hashable(primitive, params)
         raise
 
-    if isinstance(out_avals, (tuple, list)) != primitive.multiple_results:
+    if not isinstance(out_avals, (tuple, list)):
       raise ValueError(f"{primitive}.abstract_eval() method should return "
-                       f"a tuple or a list iff {primitive}.multiple_results.")
-    out_avals = [out_avals] if not primitive.multiple_results else out_avals
+                       f"a tuple or a list of avals, got {out_avals}.")
     source_info = source_info or source_info_util.current()
 
     maybe_consts_out = try_constant_folding(primitive, tracers, params, out_avals)
@@ -1789,7 +1779,7 @@ class DynamicJaxprTrace(core.Trace):
 
     if eqn is not None:
       self.frame.add_eqn(eqn)  # pyrefly: ignore[bad-argument-type]
-    return out_tracers if primitive.multiple_results else out_tracers.pop()
+    return out_tracers
 
   def process_custom_jvp_call(self, prim, fun: lu.WrappedFun,
                               jvp: lu.WrappedFun, tracers, /, *,
@@ -2335,7 +2325,7 @@ def lower_jaxpr(hi_jaxpr: Jaxpr, lo_avals) -> tuple[Jaxpr, ft.FlatTree]:
           with (source_info_util.user_context(eqn.source_info.traceback, name_stack=name_stack),
                 eqn.ctx.manager):
             outs = eqn.primitive.to_lojax(*invals, **eqn.params)
-          foreach(write, eqn.outvars, outs if eqn.primitive.multiple_results else [outs])
+          foreach(write, eqn.outvars, outs)
 
     tracer = partial(trace.to_jaxpr_tracer, source_info=src)
     out_tracers = [dtypes.canonicalize_value(read(src, x)) for x in hi_jaxpr.outvars]

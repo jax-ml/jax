@@ -167,7 +167,6 @@ def _scaled_matmul_abstract(a, b, a_scale, b_scale, *, preferred_element_type):
 
 
 _scaled_matmul_p = core.Primitive("scaled_matmul")
-_scaled_matmul_p.multiple_results = True
 dispatch.simple_impl(_scaled_matmul_p)
 _scaled_matmul_p.def_abstract_eval(_scaled_matmul_abstract)
 
@@ -194,7 +193,6 @@ mlir.register_lowering(
 )
 
 _scaled_matmul_p_wrapper = core.Primitive("scaled_matmul_wrapper")
-_scaled_matmul_p_wrapper.multiple_results = True
 _scaled_matmul_p_wrapper.def_impl(_scaled_matmul_impl)
 _scaled_matmul_p_wrapper.def_abstract_eval(_scaled_matmul_abstract)
 

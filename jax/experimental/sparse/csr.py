@@ -248,7 +248,7 @@ def _csr_todense(data: Array, indices: Array, indptr: Array, *, shape: Shape) ->
   Returns:
     mat : array with specified shape and dtype matching ``data``
   """
-  return csr_todense_p.bind(data, indices, indptr, shape=shape)
+  return csr_todense_p.bind1(data, indices, indptr, shape=shape)
 
 def _csr_todense_impl(data, indices, indptr, *, shape):
   row, col = _csr_to_coo(indices, indptr)
@@ -260,7 +260,7 @@ def _csr_todense_abstract_eval(data, indices, indptr, *, shape):
   assert indices.dtype == indptr.dtype
   assert data.shape == indices.shape
   assert indptr.shape[0] == shape[0] + 1
-  return core.ShapedArray(shape, data.dtype)
+  return [core.ShapedArray(shape, data.dtype)]
 
 _csr_todense_lowering = mlir.lower_fun(
     _csr_todense_impl, multiple_results=False)
@@ -280,7 +280,8 @@ def _csr_todense_gpu_lowering(ctx, data, indices, indptr, *, shape, target_name_
 def _csr_todense_jvp(data_dot, data, indices, indptr, *, shape):
   return _csr_todense(data_dot, indices, indptr, shape=shape)
 
-def _csr_todense_transpose(ct, data, indices, indptr, *, shape):
+def _csr_todense_transpose(cts, data, indices, indptr, *, shape):
+  ct, = cts
   # Note: we assume that transpose has the same sparsity pattern.
   # Can we check this?
   assert ad.is_undefined_primal(data)
@@ -310,7 +311,6 @@ mlir.register_lowering(
 # csr_fromdense
 
 csr_fromdense_p = core.Primitive('csr_fromdense')
-csr_fromdense_p.multiple_results = True
 
 def csr_fromdense(mat: Array, *, nse: int | None = None, index_dtype: DTypeLike = np.int32) -> CSR:
   """Create a CSR-format sparse matrix from a dense matrix.
@@ -400,14 +400,14 @@ def _csr_fromdense_jvp(primals, tangents, *, nse, index_dtype):
 
   return primals_out, tangents_out
 
-def _csr_fromdense_transpose(ct, M, *, nse, index_dtype):
-  data, indices, indptr = ct
+def _csr_fromdense_transpose(cts, M, *, nse, index_dtype):
+  data, indices, indptr = cts
   assert len(data) == nse
   assert indices.dtype == indptr.dtype == index_dtype
   if isinstance(indices, ad.Zero) or isinstance(indptr, ad.Zero):
     raise ValueError("Cannot transpose with respect to sparse indices")
   assert ad.is_undefined_primal(M)
-  return _csr_todense(data, indices, indptr, shape=M.aval.shape)
+  return [_csr_todense(data, indices, indptr, shape=M.aval.shape)]
 
 ad.primitive_jvps[csr_fromdense_p] = _csr_fromdense_jvp
 ad.primitive_transposes[csr_fromdense_p] = _csr_fromdense_transpose
@@ -462,7 +462,7 @@ def _csr_matvec(data, indices, indptr, v, *, shape, transpose=False):
     y : array of shape ``(shape[1] if transpose else shape[0],)`` representing
       the matrix vector product.
   """
-  return csr_matvec_p.bind(data, indices, indptr, v, shape=shape, transpose=transpose)
+  return csr_matvec_p.bind1(data, indices, indptr, v, shape=shape, transpose=transpose)
 
 def _csr_matvec_impl(data, indices, indptr, v, *, shape, transpose):
   row, col = _csr_to_coo(indices, indptr)
@@ -478,7 +478,7 @@ def _csr_matvec_abstract_eval(data, indices, indptr, v, *, shape, transpose):
   assert indptr.shape[0] == shape[0] + 1
   out_shape = shape[1] if transpose else shape[0]
   assert v.shape[0] == (shape[0] if transpose else shape[1])
-  return core.ShapedArray((out_shape,), data.dtype)
+  return [core.ShapedArray((out_shape,), data.dtype)]
 
 _csr_matvec_lowering = mlir.lower_fun(_csr_matvec_impl, multiple_results=False)
 
@@ -501,7 +501,8 @@ def _csr_matvec_jvp_mat(data_dot, data, indices, indptr, v, *, shape, transpose)
 def _csr_matvec_jvp_vec(v_dot, data, indices, indptr, v, *, shape, transpose):
   return _csr_matvec(data, indices, indptr, v_dot, shape=shape, transpose=transpose)
 
-def _csr_matvec_transpose(ct, data, indices, indptr, v, *, shape, transpose):
+def _csr_matvec_transpose(cts, data, indices, indptr, v, *, shape, transpose):
+  ct, = cts
   assert not ad.is_undefined_primal(indices)
   assert not ad.is_undefined_primal(indptr)
 
@@ -569,7 +570,7 @@ def _csr_matmat(data: Array, indices: Array, indptr: Array, B: Array,
     C : array of shape ``(shape[1] if transpose else shape[0], cols)``
       representing the matrix-matrix product.
   """
-  return csr_matmat_p.bind(data, indices, indptr, B, shape=shape, transpose=transpose)
+  return csr_matmat_p.bind1(data, indices, indptr, B, shape=shape, transpose=transpose)
 
 def _csr_matmat_impl(data, indices, indptr, B, *, shape, transpose):
   row, col = _csr_to_coo(indices, indptr)
@@ -586,7 +587,7 @@ def _csr_matmat_abstract_eval(data, indices, indptr, B, *, shape, transpose):
   assert indptr.shape[0] == shape[0] + 1
   out_shape = shape[1] if transpose else shape[0]
   assert B.shape[0] == (shape[0] if transpose else shape[1])
-  return core.ShapedArray((out_shape, B.shape[1]), data.dtype)
+  return [core.ShapedArray((out_shape, B.shape[1]), data.dtype)]
 
 _csr_matmat_lowering = mlir.lower_fun(_csr_matmat_impl, multiple_results=False)
 
@@ -609,7 +610,8 @@ def _csr_matmat_jvp_left(data_dot, data, indices, indptr, B, *, shape, transpose
 def _csr_matmat_jvp_right(B_dot, data, indices, indptr, B, *, shape, transpose):
   return _csr_matmat(data, indices, indptr, B_dot, shape=shape, transpose=transpose)
 
-def _csr_matmat_transpose(ct, data, indices, indptr, B, *, shape, transpose):
+def _csr_matmat_transpose(cts, data, indices, indptr, B, *, shape, transpose):
+  ct, = cts
   assert not ad.is_undefined_primal(indices)
   assert not ad.is_undefined_primal(indptr)
 
