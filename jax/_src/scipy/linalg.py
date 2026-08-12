@@ -363,18 +363,18 @@ def det(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> A
     Determinant of a small 2D array:
 
     >>> x = jnp.array([[1., 2.],
-    ...                [3., 4.]])
+    ...                [2., 3.]])
     >>> jax.scipy.linalg.det(x)
-    Array(-2., dtype=float32)
+    Array(-1., dtype=float32)
 
     Batch-wise determinant of multiple 2D arrays:
 
     >>> x = jnp.array([[[1., 2.],
-    ...                 [3., 4.]],
-    ...                [[8., 5.],
-    ...                 [7., 9.]]])
+    ...                 [2., 3.]],
+    ...                [[8., 4.],
+    ...                 [2., 5.]]])
     >>> jax.scipy.linalg.det(x)
-    Array([-2., 37.], dtype=float32)
+    Array([-1., 32.], dtype=float32)
   """
   del overwrite_a, check_finite  # unused
   return jnp_linalg.det(a)

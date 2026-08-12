@@ -232,6 +232,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                   [ 18, -21,   9]], dtype=jnp.float32)
     jtu.check_grads(jnp.linalg.det, (b,), 1, atol=1e-1, rtol=1e-1, eps=1e-1)
 
+  def testDet3x3NumericalStabilityIssue39905(self):
+    a = jnp.array([[41932.215, 41927.867, 41927.867],
+                   [41927.867, 41932.215, 41927.867],
+                   [41927.867, 41927.867, 41932.215]], dtype=np.float32)
+    expected = np.linalg.det(np.asarray(a, dtype=np.float64))
+    self.assertAllClose(jnp.linalg.det(a), expected, rtol=1e-3, check_dtypes=False)
+
   @jtu.sample_product(
     m=[1, 5, 7, 23],
     nq=zip([2, 4, 6, 36], [(1, 2), (2, 2), (1, 2, 3), (3, 3, 1, 4)]),

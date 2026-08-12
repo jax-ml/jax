@@ -730,20 +730,6 @@ def _cofactor_solve(a: ArrayLike, b: ArrayLike) -> tuple[Array, Array]:
   return partial_det[..., -1], x
 
 
-def _det_2x2(a: Array) -> Array:
-  return (a[..., 0, 0] * a[..., 1, 1] -
-           a[..., 0, 1] * a[..., 1, 0])
-
-
-def _det_3x3(a: Array) -> Array:
-  return (a[..., 0, 0] * a[..., 1, 1] * a[..., 2, 2] +
-          a[..., 0, 1] * a[..., 1, 2] * a[..., 2, 0] +
-          a[..., 0, 2] * a[..., 1, 0] * a[..., 2, 1] -
-          a[..., 0, 2] * a[..., 1, 1] * a[..., 2, 0] -
-          a[..., 0, 0] * a[..., 1, 2] * a[..., 2, 1] -
-          a[..., 0, 1] * a[..., 1, 0] * a[..., 2, 2])
-
-
 @custom_jvp
 def _det(a):
   sign, logdet = slogdet(a)
@@ -756,6 +742,63 @@ def _det_jvp(primals, tangents):
   g, = tangents
   y, z = _cofactor_solve(x, g)
   return y, jnp.trace(z, axis1=-1, axis2=-2)
+
+
+@custom_jvp
+def _det_2x2(a: Array) -> Array:
+  # Closed-form 2x2 LU with row pivoting (PA = LU).
+  # Direct a00*a11 - a01*a10 loses precision in float32 when a00*a11 ~ a01*a10.
+  # Swapping rows so |r0[0]| >= |r1[0]| keeps multiplier |l10| <= 1.
+  swap = ufuncs.abs(a[..., 1, 0]) > ufuncs.abs(a[..., 0, 0])
+  r0 = jnp.where(swap[..., None], a[..., 1, :], a[..., 0, :])
+  r1 = jnp.where(swap[..., None], a[..., 0, :], a[..., 1, :])
+
+  safe_r00 = jnp.where(r0[..., 0] == 0, 1, r0[..., 0])
+  l10 = jnp.where(r0[..., 0] == 0, 0, r1[..., 0] / safe_r00)
+  u11 = r1[..., 1] - l10 * r0[..., 1]
+
+  return jnp.where(swap, -1, 1) * r0[..., 0] * u11
+
+
+_det_2x2.defjvp(_det_jvp)
+
+
+@custom_jvp
+def _det_3x3(a: Array) -> Array:
+  # Closed-form 3x3 LU with row pivoting (PA = LU).
+  # Eliminates column by column while keeping row swap multipliers <= 1.
+
+  # Step 1: Pivot column 0 so row 0 gets the largest magnitude element.
+  s01 = ufuncs.abs(a[..., 1, 0]) > ufuncs.abs(a[..., 0, 0])
+  r0 = jnp.where(s01[..., None], a[..., 1, :], a[..., 0, :])
+  r1 = jnp.where(s01[..., None], a[..., 0, :], a[..., 1, :])
+  r2 = a[..., 2, :]
+  sign = jnp.where(s01, -1, 1)
+
+  s02 = ufuncs.abs(r2[..., 0]) > ufuncs.abs(r0[..., 0])
+  r0, r2 = jnp.where(s02[..., None], r2, r0), jnp.where(s02[..., None], r0, r2)
+  sign = jnp.where(s02, -sign, sign)
+
+  # Eliminate column 0 entries in rows 1 and 2.
+  safe_r00 = jnp.where(r0[..., 0] == 0, 1, r0[..., 0])
+  l10 = jnp.where(r0[..., 0] == 0, 0, r1[..., 0] / safe_r00)
+  l20 = jnp.where(r0[..., 0] == 0, 0, r2[..., 0] / safe_r00)
+  r1 = r1 - l10[..., None] * r0
+  r2 = r2 - l20[..., None] * r0
+
+  # Step 2: Pivot column 1 across rows 1 and 2, then eliminate row 2.
+  s12 = ufuncs.abs(r2[..., 1]) > ufuncs.abs(r1[..., 1])
+  r1, r2 = jnp.where(s12[..., None], r2, r1), jnp.where(s12[..., None], r1, r2)
+  sign = jnp.where(s12, -sign, sign)
+
+  safe_r11 = jnp.where(r1[..., 1] == 0, 1, r1[..., 1])
+  l21 = jnp.where(r1[..., 1] == 0, 0, r2[..., 1] / safe_r11)
+  u22 = r2[..., 2] - l21 * r1[..., 2]
+
+  return sign * r0[..., 0] * r1[..., 1] * u22
+
+
+_det_3x3.defjvp(_det_jvp)
 
 
 @export
@@ -777,9 +820,9 @@ def det(a: ArrayLike) -> Array:
 
   Examples:
     >>> a = jnp.array([[1, 2],
-    ...                [3, 4]])
+    ...                [2, 3]])
     >>> jnp.linalg.det(a)
-    Array(-2., dtype=float32)
+    Array(-1., dtype=float32)
   """
   a = ensure_arraylike("jnp.linalg.det", a)
   a, = promote_dtypes_inexact(a)
