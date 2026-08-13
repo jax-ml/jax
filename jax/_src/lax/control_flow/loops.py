@@ -20,7 +20,7 @@ from functools import partial
 import inspect
 import itertools as it
 import operator
-from typing import Any
+from typing import Any, TypeVar
 import weakref
 
 from jax._src import ad_checkpoint
@@ -79,6 +79,7 @@ import numpy as np
 _map = safe_map
 zip = safe_zip
 
+T = TypeVar('T')
 BooleanNumeric = Any  # A bool, or a Boolean array.
 
 ### Helper functions
@@ -96,6 +97,10 @@ def _promote_weak_typed_input(
     return in_val, False
 
 ### scan
+
+Carry = TypeVar('Carry')
+X = TypeVar('X')
+Y = TypeVar('Y')
 
 class Scan3(hijax.VJPHiPrimitive):
 
@@ -159,12 +164,11 @@ def keep(keeps, xs):
   return [x for x, k in zip(xs, keeps) if k]
 
 @partial(api_boundary, repro_api_name="jax.lax.scan")
-def scan_nocarry[X, Y](
-    f: Callable[[X], Y],
-    xs: X | None = None,
-    length: int | None = None,
-    reverse: bool = False,
-    unroll: int | bool = 1) -> Y:
+def scan_nocarry(f: Callable[[Carry, X], tuple[Carry, Y]],
+         xs: X | None = None,
+         length: int | None = None,
+         reverse: bool = False,
+         unroll: int | bool = 1) -> tuple[Carry, Y]:
   dbg_body = api_util.debug_info("scan", f, (xs,), {})
   xs_flat = ft.flatten(xs)
   check_no_transformed_refs_args(lambda: dbg_body, list(xs_flat))
@@ -208,14 +212,13 @@ def scan_nocarry[X, Y](
   return y_avals.update(out).unflatten()
 
 @partial(api_boundary, repro_api_name="jax.lax.scan")
-def scan3[Carry, X, Y](
-    f: Callable[[Carry, X], tuple[Carry, Y]],
-    init: Carry,
-    xs: X | None = None,
-    length: int | None = None,
-    reverse: bool = False,
-    unroll: int | bool = 1,
-    _split_transpose: bool = False) -> tuple[Carry, Y]:
+def scan3(f: Callable[[Carry, X], tuple[Carry, Y]],
+         init: Carry,
+         xs: X | None = None,
+         length: int | None = None,
+         reverse: bool = False,
+         unroll: int | bool = 1,
+         _split_transpose: bool = False) -> tuple[Carry, Y]:
   init_flat = ft.flatten(init)
   carry_avals = init_flat.map(typeof)
   carry_refs = [core.new_ref(x) for x in init_flat]
@@ -229,7 +232,7 @@ def scan3[Carry, X, Y](
     for ref, c in zip(carry_refs, carry_flat):
       ref[...] = c
 
-  def body_no_carry(x: X) -> Y:
+  def body_no_carry(x):
     carry, y = f(read_carry(), x)
     write_carry(carry)
     return y
@@ -241,14 +244,13 @@ def scan3[Carry, X, Y](
 
 
 @partial(api_boundary, repro_api_name="jax.lax.scan")
-def scan[Carry, X, Y](
-    f: Callable[[Carry, X], tuple[Carry, Y]],
-    init: Carry,
-    xs: X | None = None,
-    length: int | None = None,
-    reverse: bool = False,
-    unroll: int | bool = 1,
-    _split_transpose: bool = False) -> tuple[Carry, Y]:
+def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
+         init: Carry,
+         xs: X | None = None,
+         length: int | None = None,
+         reverse: bool = False,
+         unroll: int | bool = 1,
+         _split_transpose: bool = False) -> tuple[Carry, Y]:
   """Scan a function over leading array axes while carrying along state.
 
   The `Haskell-like type signature`_ in brief is
@@ -1604,9 +1606,9 @@ scan_p.to_lojax = _scan_to_lojax
 ### while_loop
 
 @partial(api_boundary, repro_api_name="jax.lax.while_loop")
-def while_loop[T](cond_fun: Callable[[T], BooleanNumeric],
-                  body_fun: Callable[[T], T],
-                  init_val: T) -> T:
+def while_loop(cond_fun: Callable[[T], BooleanNumeric],
+               body_fun: Callable[[T], T],
+               init_val: T) -> T:
   """Call ``body_fun`` repeatedly in a loop while ``cond_fun`` is True.
 
   The `Haskell-like type signature`_ in brief is
@@ -2220,7 +2222,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
           dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering,
           outer_traceback=ctx.traceback)
       new_z = _map(
-          partial(_pred_bcast_select_hlo, ctx, pred_aval, body_pred), new_z, z,  # pyrefly: ignore[bad-argument-type]
+          partial(_pred_bcast_select_hlo, ctx, pred_aval, body_pred), new_z, z,
           body_jaxpr.out_avals)
 
     flat_out, _ = mlir.ir_tree_registry.flatten([out_tokens, x, y, new_z])

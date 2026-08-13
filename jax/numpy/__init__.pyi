@@ -4,7 +4,7 @@ from __future__ import annotations
 import builtins
 from collections.abc import Callable, Sequence
 import os
-from typing import Any, IO, Literal, NamedTuple, Protocol, Union, overload
+from typing import Any, IO, Literal, NamedTuple, Protocol, TypeVar, Union, overload
 
 from jax._src import core as _core
 from jax._src import dtypes as _dtypes
@@ -21,6 +21,8 @@ from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax.numpy import fft as fft, linalg as linalg
 from jax.sharding import Sharding as _Sharding
 import numpy as _np
+
+_T = TypeVar('_T')
 
 _Axis = Union[None, int, Sequence[int]]
 
@@ -767,7 +769,7 @@ def packbits(
     a: ArrayLike, axis: int | None = ..., bitorder: str = ...
 ) -> Array: ...
 
-type PadValueLike[T] = Union[T, Sequence[T], Sequence[Sequence[T]]]
+PadValueLike = Union[_T, Sequence[_T], Sequence[Sequence[_T]]]
 def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | _np.ndarray],
         mode: str | Callable[..., Any] = ..., **kwargs) -> Array: ...
 

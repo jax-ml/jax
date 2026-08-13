@@ -23,7 +23,7 @@ from functools import partial
 import itertools
 import math
 import operator
-from typing import Any, NamedTuple, Never, Union, cast as type_cast, overload
+from typing import Any, NamedTuple, Never, TypeVar, Union, cast as type_cast, overload
 import warnings
 
 import numpy as np
@@ -79,6 +79,8 @@ from jax._src.util import (cache, canonicalize_axis, safe_map, safe_zip,
 _max = builtins.max
 _min = builtins.min
 _reduce = functools.reduce
+
+T = TypeVar("T")
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -3728,7 +3730,7 @@ def _stop_gradient(x):
   else:
     return ad_util.stop_gradient_p.bind(x)
 
-def stop_gradient[T](x: T) -> T:
+def stop_gradient(x: T) -> T:
   """Stops gradient computation.
 
   Operationally ``stop_gradient`` is the identity function, that is, it returns

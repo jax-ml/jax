@@ -15,9 +15,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 import dataclasses
-from typing import Any, TYPE_CHECKING
+from typing import Any, TypeVar, TYPE_CHECKING
 
 from jax._src import tree_util
+
+T = TypeVar("T")
 
 
 def all(tree: Any, *, is_leaf: Callable[[Any], bool] | None = None) -> bool:
@@ -154,10 +156,10 @@ def map(f: Callable[..., Any],
   return tree_util.tree_map(f, tree, *rest, is_leaf=is_leaf)
 
 
-def reduce[T](function: Callable[[T, Any], T],
-              tree: Any,
-              initializer: T | tree_util.Unspecified = tree_util.Unspecified(),
-              is_leaf: Callable[[Any], bool] | None = None) -> T:
+def reduce(function: Callable[[T, Any], T],
+           tree: Any,
+           initializer: T | tree_util.Unspecified = tree_util.Unspecified(),
+           is_leaf: Callable[[Any], bool] | None = None) -> T:
   """Call reduce() over the leaves of a tree.
 
   Args:
@@ -191,7 +193,7 @@ def reduce[T](function: Callable[[T, Any], T],
   return tree_util.tree_reduce(function, tree, initializer, is_leaf=is_leaf)
 
 
-def reduce_associative[T](
+def reduce_associative(
     operation: Callable[[T, T], T],
     tree: Any,
     *,

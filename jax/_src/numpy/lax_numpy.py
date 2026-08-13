@@ -30,7 +30,7 @@ from functools import partial
 import math
 import operator
 import os
-from typing import (Any, IO, Literal, Protocol, Union, cast, overload,
+from typing import (Any, IO, Literal, Protocol, TypeVar, Union, cast, overload,
                     TypedDict)
 
 import numpy as np
@@ -74,6 +74,8 @@ from jax._src.pjit import auto_axes
 from jax._src.tree_util import tree_map
 
 export = set_module('jax.numpy')
+
+T = TypeVar('T')
 
 # Wrappers for NumPy printoptions
 
@@ -3877,8 +3879,8 @@ def unwrap(p: ArrayLike, discont: ArrayLike | None = None,
 
 ### Padding
 
-type PadValueLike[T] = Union[T, Sequence[T], Sequence[Sequence[T]]]
-type PadValue[T] = tuple[tuple[T, T], ...]
+PadValueLike = Union[T, Sequence[T], Sequence[Sequence[T]]]
+PadValue = tuple[tuple[T, T], ...]
 
 class PadStatFunc(Protocol):
   def __call__(self, array: ArrayLike, /, *,
@@ -3886,7 +3888,7 @@ class PadStatFunc(Protocol):
                keepdims: bool = False) -> Array: ...
 
 
-def _broadcast_to_pairs(nvals: PadValueLike[Any], nd: int, name: str) -> PadValue[Any]:
+def _broadcast_to_pairs(nvals: PadValueLike, nd: int, name: str) -> PadValue:
   try:
     nvals = np.asarray(tree_map(
       lambda x: core.concrete_or_error(None, x, context=f"{name} argument of jnp.pad"),
