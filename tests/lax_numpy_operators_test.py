@@ -732,6 +732,43 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.heaviside, jnp.heaviside, args_maker)
     self._CompileAndCheck(jnp.heaviside, args_maker)
 
+  @jtu.sample_product(dtype=[
+      dtypes.bfloat16,
+      dtypes.float8_e4m3b11fnuz,
+      dtypes.float8_e4m3fn,
+      dtypes.float8_e4m3fnuz,
+      dtypes.float8_e5m2,
+      dtypes.float8_e5m2fnuz,
+      dtypes.float8_e3m4,
+      dtypes.float8_e4m3,
+      dtypes.float8_e8m0fnu,
+      dtypes.float4_e2m1fn,
+  ])
+  def testIsinfNonstandardDtypes(self, dtype):
+    # Regression test for https://github.com/jax-ml/ml_dtypes/issues/381
+    info = dtypes.finfo(dtype)
+
+    # By convention, "fn" in the dtype name means "finite", i.e. inf not representable.
+    lacks_inf = "fn" in dtype.__name__
+
+    # When inf is not representable, it will be converted to min, max or NaN.
+    values = [jnp.nan, info.min, 0, info.max, -jnp.inf, jnp.inf]
+    arr = jnp.array(values, dtype=dtype)
+
+    if lacks_inf:
+      expected_inf = expected_neginf = expected_posinf = np.array([False] * len(values))
+    else:
+      expected_inf = np.isinf(values)
+      expected_neginf = np.isneginf(values)
+      expected_posinf = np.isposinf(values)
+
+    self.assertArraysEqual(jnp.isinf(arr), expected_inf,
+                           err_msg=f"isinf check failed for {dtype}")
+    self.assertArraysEqual(jnp.isposinf(arr), expected_posinf,
+                           err_msg=f"isposinf check failed for {dtype}")
+    self.assertArraysEqual(jnp.isneginf(arr), expected_neginf,
+                           err_msg=f"isneginf check failed for {dtype}")
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
