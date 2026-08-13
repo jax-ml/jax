@@ -23,7 +23,7 @@ import warnings
 from jax._src import clusters
 from jax._src import config
 from jax._src import xla_bridge
-from jax._src.lib import _jax
+from jax._src.lib import _jax, jaxlib_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,40 @@ _ENABLE_PREEMPTION_SERVICE = config.bool_state(
     ),
 )
 
+def _get_mtls_kwargs(
+    mtls_cert_file: str | None,
+    mtls_key_file: str | None,
+    mtls_ca_file: str | None,
+    mtls_peer_uri_prefix: str | None,
+    verify_secure_credentials: bool | None,
+) -> dict[str, Any]:
+  """Returns the mTLS kwargs, falling back to the config options."""
+  def value_or_config(value, option):
+    return value if value is not None else option.value
+
+  kwargs: dict[str, Any] = dict(
+      mtls_cert_file=value_or_config(
+          mtls_cert_file, config.mtls_cert_file),
+      mtls_key_file=value_or_config(
+          mtls_key_file, config.mtls_key_file),
+      mtls_ca_file=value_or_config(
+          mtls_ca_file, config.mtls_ca_file),
+      mtls_peer_uri_prefix=value_or_config(
+          mtls_peer_uri_prefix, config.mtls_peer_uri_prefix),
+      verify_secure_credentials=value_or_config(
+          verify_secure_credentials,
+          config.distributed_verify_secure_credentials),
+  )
+  if jaxlib_extension_version < 483:
+    verify_secure_credentials = kwargs.pop('verify_secure_credentials')
+    if (verify_secure_credentials
+        or any(v is not None for v in kwargs.values())):
+      raise RuntimeError('mTLS for the JAX distributed service requires '
+                         'jaxlib 0.11.2 or newer.')
+    return {}
+  return kwargs
+
+
 class State:
   process_id: int = 0
   num_processes: int = 1
@@ -72,7 +106,12 @@ class State:
                  coordinator_bind_address: str | None = None,
                  heartbeat_timeout_seconds: int = 100,
                  shutdown_timeout_seconds: int = 300,
-                 partition_index: int | None = None):
+                 partition_index: int | None = None,
+                 mtls_cert_file: str | None = None,
+                 mtls_key_file: str | None = None,
+                 mtls_ca_file: str | None = None,
+                 mtls_peer_uri_prefix: str | None = None,
+                 verify_secure_credentials: bool | None = None):
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS'))
     if isinstance(local_device_ids, int):
@@ -143,6 +182,10 @@ class State:
       )
       logger.warning(warning)
 
+    mtls_kwargs = _get_mtls_kwargs(
+        mtls_cert_file, mtls_key_file, mtls_ca_file, mtls_peer_uri_prefix,
+        verify_secure_credentials)
+
     if process_id == 0:
       if self.service is not None:
         raise RuntimeError('distributed.initialize should only be called once.')
@@ -155,6 +198,7 @@ class State:
           heartbeat_timeout=heartbeat_timeout_seconds,
           shutdown_timeout=shutdown_timeout_seconds,
           recoverable=_ENABLE_RECOVERABILITY.value,
+          **mtls_kwargs,
       )
 
     self.num_processes = num_processes
@@ -168,6 +212,7 @@ class State:
         init_timeout=initialization_timeout,
         use_compression=True,
         heartbeat_timeout=heartbeat_timeout_seconds,
+        **mtls_kwargs,
     )
     logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
@@ -229,7 +274,12 @@ def initialize(coordinator_address: str | None = None,
                shutdown_timeout_seconds: int = 300,
                coordinator_bind_address: str | None = None,
                slice_index: int | None = None,
-               partition_index: int | None = None):
+               partition_index: int | None = None,
+               mtls_cert_file: str | None = None,
+               mtls_key_file: str | None = None,
+               mtls_ca_file: str | None = None,
+               mtls_peer_uri_prefix: str | None = None,
+               verify_secure_credentials: bool | None = None):
   """Initializes the JAX distributed system.
 
   Calling :func:`~jax.distributed.initialize` prepares JAX for execution on
@@ -298,6 +348,34 @@ def initialize(coordinator_address: str | None = None,
     slice_index: DEPRECATED: Use ``partition_index`` instead.
     partition_index: The partition index assigned to this process' local devices. If any process sets ``partition_index``,
       then all processes must do so. If ``None`` the partition indices will be chosen automatically.
+    mtls_cert_file: Path to this process' PEM-encoded certificate chain. When
+      set (together with ``mtls_key_file`` and ``mtls_ca_file``), the
+      coordination service and its clients authenticate each other with
+      mutual TLS; see :ref:`coordination-service-mtls` for what this does
+      and does not protect. The files are re-read periodically, so rotated
+      certificates are picked up without a restart. If ``None``, falls
+      back to the ``jax_mtls_cert_file`` config.
+    mtls_key_file: Path to the PEM-encoded private key for
+      ``mtls_cert_file``. Falls back to the
+      ``jax_mtls_key_file`` config.
+    mtls_ca_file: Path to the PEM-encoded CA bundle used to verify the peer's
+      certificate. Falls back to the ``jax_mtls_ca_file``
+      config.
+    mtls_peer_uri_prefix: Optional URI SAN prefix required of the peer's
+      (already chain-verified) certificate. By default, clients perform
+      standard gRPC host name verification of the coordinator's certificate
+      against ``coordinator_address``. If set, both the coordinator and the
+      clients instead accept the peer iff any URI SAN of its certificate
+      starts with this prefix, e.g. ``'spiffe://example.org/'`` (the prefix
+      must end with ``'/'`` so that ``'spiffe://example.org.evil/'`` is not
+      accepted). This is needed for certificates that carry only URI SANs
+      (e.g. SPIFFE identities) or when ``coordinator_address`` is an IP
+      address not named in the certificate, since host name verification
+      fails in those cases. Falls back to
+      ``jax_mtls_peer_uri_prefix``.
+    verify_secure_credentials: If ``True``, crash instead of using insecure
+      credentials (i.e. if no mTLS args or configs are provided). Falls back to
+      ``jax_distributed_verify_secure_credentials`` (default False).
 
   Raises:
     RuntimeError: If :func:`~jax.distributed.initialize` is called more than once
@@ -334,7 +412,12 @@ def initialize(coordinator_address: str | None = None,
                           initialization_timeout, coordinator_bind_address,
                           heartbeat_timeout_seconds=heartbeat_timeout_seconds,
                           shutdown_timeout_seconds=shutdown_timeout_seconds,
-                          partition_index=partition_index)
+                          partition_index=partition_index,
+                          mtls_cert_file=mtls_cert_file,
+                          mtls_key_file=mtls_key_file,
+                          mtls_ca_file=mtls_ca_file,
+                          mtls_peer_uri_prefix=mtls_peer_uri_prefix,
+                          verify_secure_credentials=verify_secure_credentials)
 
 
 def is_initialized() -> bool:

@@ -19,6 +19,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * New features
   * Added {func}`jax.export.symbolic_dim_bounds` for querying conservative
     bounds on symbolic dimension expressions ({jax-issue}`#40006`).
+  * {func}`jax.distributed.initialize` can now secure the coordination service
+    with mutual TLS via the new `mtls_cert_file`, `mtls_key_file`,
+    `mtls_ca_file`, `mtls_peer_uri_prefix` and `verify_secure_credentials`
+    arguments (or the `JAX_MTLS_CERT_FILE`, `JAX_MTLS_KEY_FILE`,
+    `JAX_MTLS_CA_FILE`, `JAX_MTLS_PEER_URI_PREFIX` and
+    `JAX_DISTRIBUTED_VERIFY_SECURE_CREDENTIALS` environment variables).
 
 * Changes
   * JAX now uses Bazel 8.7.0 to build from source.

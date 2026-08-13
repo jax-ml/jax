@@ -225,6 +225,10 @@ jax_multiplatform_test(
 jax_py_test(
     name = "distributed_initialize_test",
     srcs = ["distributed_initialize_test.py"],
+    data = [
+        "testdata/mtls_cert.pem",
+        "testdata/mtls_key.pem",
+    ],
     deps = [
         "//jax",
         "//jax/_src:test_util",

@@ -59,6 +59,7 @@ limitations under the License.
 #include "xla/pjrt/cpu/cpu_client.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/distributed.h"
+#include "xla/pjrt/distributed/mtls.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/distributed/service.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -278,6 +279,33 @@ void translate_xla_runtime_error(const std::exception_ptr& p, void*) {
       py_err.restore();
     }
   }
+}
+
+// Returns an mTLS configuration for the coordination service if any of the
+// mtls_* arguments is set, or std::nullopt (insecure credentials) otherwise.
+std::optional<xla::MtlsConfig> BuildCoordinationMtlsConfig(
+    const std::optional<std::string>& mtls_cert_file,
+    const std::optional<std::string>& mtls_key_file,
+    const std::optional<std::string>& mtls_ca_file,
+    const std::optional<std::string>& mtls_peer_uri_prefix) {
+  if (!mtls_cert_file.has_value() && !mtls_key_file.has_value() &&
+      !mtls_ca_file.has_value() && !mtls_peer_uri_prefix.has_value()) {
+    return std::nullopt;
+  }
+  xla::MtlsConfig config;
+  if (mtls_cert_file.has_value()) {
+    config.cert_file = *mtls_cert_file;
+  }
+  if (mtls_key_file.has_value()) {
+    config.key_file = *mtls_key_file;
+  }
+  if (mtls_ca_file.has_value()) {
+    config.ca_file = *mtls_ca_file;
+  }
+  if (mtls_peer_uri_prefix.has_value()) {
+    config.peer_uri_prefix = *mtls_peer_uri_prefix;
+  }
+  return config;
 }
 
 }  // namespace
@@ -909,7 +937,12 @@ NB_MODULE(_jax, m) {
       [](std::string address, int num_nodes,
          std::optional<int> heartbeat_timeout,
          std::optional<int> cluster_register_timeout,
-         std::optional<int> shutdown_timeout, std::optional<bool> recoverable)
+         std::optional<int> shutdown_timeout, std::optional<bool> recoverable,
+         std::optional<std::string> mtls_cert_file,
+         std::optional<std::string> mtls_key_file,
+         std::optional<std::string> mtls_ca_file,
+         std::optional<std::string> mtls_peer_uri_prefix,
+         std::optional<bool> verify_secure_credentials)
           -> std::unique_ptr<xla::DistributedRuntimeService> {
         xla::CoordinationServiceImpl::Options options;
         options.num_nodes = num_nodes;
@@ -926,6 +959,16 @@ NB_MODULE(_jax, m) {
         if (recoverable.has_value()) {
           options.recoverable = *recoverable;
         }
+        std::optional<xla::MtlsConfig> mtls_config =
+            BuildCoordinationMtlsConfig(mtls_cert_file, mtls_key_file,
+                                        mtls_ca_file, mtls_peer_uri_prefix);
+        if (mtls_config.has_value()) {
+          options.credentials =
+              xla::ValueOrThrow(xla::GetMtlsServerCredentials(*mtls_config));
+        }
+        if (verify_secure_credentials.has_value()) {
+          options.verify_secure_credentials = *verify_secure_credentials;
+        }
         std::unique_ptr<xla::DistributedRuntimeService> service =
             xla::ValueOrThrow(GetDistributedRuntimeService(address, options));
         return service;
@@ -934,7 +977,12 @@ NB_MODULE(_jax, m) {
       nb::arg("heartbeat_timeout").none() = std::nullopt,
       nb::arg("cluster_register_timeout").none() = std::nullopt,
       nb::arg("shutdown_timeout").none() = std::nullopt,
-      nb::arg("recoverable").none() = std::nullopt);
+      nb::arg("recoverable").none() = std::nullopt,
+      nb::arg("mtls_cert_file").none() = std::nullopt,
+      nb::arg("mtls_key_file").none() = std::nullopt,
+      nb::arg("mtls_ca_file").none() = std::nullopt,
+      nb::arg("mtls_peer_uri_prefix").none() = std::nullopt,
+      nb::arg("verify_secure_credentials").none() = std::nullopt);
 
   m.def(
       "get_distributed_runtime_client",
@@ -943,7 +991,12 @@ NB_MODULE(_jax, m) {
          std::optional<int> heartbeat_timeout,
          std::optional<nb::callable> missed_heartbeat_callback,
          std::optional<bool> shutdown_on_destruction,
-         std::optional<bool> use_compression)
+         std::optional<bool> use_compression,
+         std::optional<std::string> mtls_cert_file,
+         std::optional<std::string> mtls_key_file,
+         std::optional<std::string> mtls_ca_file,
+         std::optional<std::string> mtls_peer_uri_prefix,
+         std::optional<bool> verify_secure_credentials)
           -> std::shared_ptr<xla::DistributedRuntimeClient> {
         bool compression = use_compression.value_or(false);
         xla::DistributedRuntimeClient::Options options;
@@ -968,6 +1021,16 @@ NB_MODULE(_jax, m) {
         if (shutdown_on_destruction.has_value()) {
           options.shutdown_on_destruction = *shutdown_on_destruction;
         }
+        std::optional<xla::MtlsConfig> mtls_config =
+            BuildCoordinationMtlsConfig(mtls_cert_file, mtls_key_file,
+                                        mtls_ca_file, mtls_peer_uri_prefix);
+        if (mtls_config.has_value()) {
+          options.credentials =
+              xla::ValueOrThrow(xla::GetMtlsClientCredentials(*mtls_config));
+        }
+        if (verify_secure_credentials.has_value()) {
+          options.verify_secure_credentials = *verify_secure_credentials;
+        }
         return GetDistributedRuntimeClient(address, options, compression);
       },
       nb::arg("address"), nb::arg("node_id"),
@@ -977,7 +1040,12 @@ NB_MODULE(_jax, m) {
       nb::arg("heartbeat_timeout").none() = std::nullopt,
       nb::arg("missed_heartbeat_callback").none() = std::nullopt,
       nb::arg("shutdown_on_destruction").none() = std::nullopt,
-      nb::arg("use_compression").none() = std::nullopt);
+      nb::arg("use_compression").none() = std::nullopt,
+      nb::arg("mtls_cert_file").none() = std::nullopt,
+      nb::arg("mtls_key_file").none() = std::nullopt,
+      nb::arg("mtls_ca_file").none() = std::nullopt,
+      nb::arg("mtls_peer_uri_prefix").none() = std::nullopt,
+      nb::arg("verify_secure_credentials").none() = std::nullopt);
 
   m.def("collect_garbage", []() { GlobalPyRefManager()->CollectGarbage(); });
 

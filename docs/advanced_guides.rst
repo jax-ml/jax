@@ -16,6 +16,7 @@ operations.
    notebooks/host-offloading
    multi_process
    fault_tolerance
+   security
    distributed_data_loading
    notebooks/colocated-python
 

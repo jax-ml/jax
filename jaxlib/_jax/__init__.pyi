@@ -1323,6 +1323,11 @@ def get_distributed_runtime_service(
     cluster_register_timeout: int | None = ...,
     shutdown_timeout: int | None = ...,
     recoverable: bool | None = ...,
+    mtls_cert_file: str | None = ...,
+    mtls_key_file: str | None = ...,
+    mtls_ca_file: str | None = ...,
+    mtls_peer_uri_prefix: str | None = ...,
+    verify_secure_credentials: bool | None = ...,
 ) -> DistributedRuntimeService: ...
 def get_distributed_runtime_client(
     address: str,
@@ -1334,6 +1339,11 @@ def get_distributed_runtime_client(
     missed_heartbeat_callback: Callable | None = ...,
     shutdown_on_destruction: bool | None = ...,
     use_compression: bool | None = ...,
+    mtls_cert_file: str | None = ...,
+    mtls_key_file: str | None = ...,
+    mtls_ca_file: str | None = ...,
+    mtls_peer_uri_prefix: str | None = ...,
+    verify_secure_credentials: bool | None = ...,
 ) -> DistributedRuntimeClient: ...
 def collect_garbage() -> None: ...
 def is_optimized_build() -> bool: ...

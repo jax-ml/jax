@@ -463,6 +463,7 @@ nanobind_pywrap_extension(
         "@xla//xla/pjrt/distributed",
         "@xla//xla/pjrt/distributed:client",
         "@xla//xla/pjrt/distributed:key_value_store_interface",
+        "@xla//xla/pjrt/distributed:mtls",
         "@xla//xla/pjrt/distributed:protocol_proto_cc",
         "@xla//xla/pjrt/distributed:service",
         "@xla//xla/pjrt/distributed/preemption:preemption_sync_manager",
