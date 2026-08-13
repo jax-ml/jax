@@ -1447,7 +1447,7 @@ def _lower_fun(
         static_argnames=tuple(params.keys()),
     )
     debug_info = api_util.debug_info(
-        "mosaic_gpu lower_fun", fun, args, {},
+        "mosaic_gpu lower_fun", fun, unflat_avals, params,
         static_argnames=tuple(params.keys()),
     )
     closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
