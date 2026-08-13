@@ -61,7 +61,10 @@ from . import tcgen05
 from . import utils
 
 # Point Mosaic GPU tools (like nvdisasm) to the CUDA path
-cuda_root = lib.cuda_path or "/usr/local/cuda"
+if lib.cuda_path and (pathlib.Path(lib.cuda_path) / "bin" / "nvdisasm").exists():
+  cuda_root = lib.cuda_path
+else:
+  cuda_root = "/usr/local/cuda"
 os.environ["MOSAIC_GPU_CUDA_ROOT"] = cuda_root
 PYTHON_RUNFILES = os.environ.get("PYTHON_RUNFILES")
 BAZEL_TEST = os.environ.get("BAZEL_TEST", "0")
