@@ -14,6 +14,18 @@
 
 """Multihost test for JAX2TF."""
 
+import os
+import sys
+
+# Work around Windows MAX_PATH limit when loading C-extension DLLs (e.g. ml_dtypes)
+if os.name == "nt":
+  sys.path = [
+      f"\\\\?\\{os.path.abspath(p)}"
+      if os.path.isabs(p) and not p.startswith("\\\\?\\")
+      else p
+      for p in sys.path
+  ]
+
 import jax
 from jax import numpy as jnp
 from jax._src import pjit
