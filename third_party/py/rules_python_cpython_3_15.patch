@@ -1,0 +1,137 @@
+# Patch for rules_python 2.2.0 to add support for CPython 3.15.0rc1 toolchains.
+#
+# Changes:
+# 1. python/versions.bzl:
+#    - Maps minor version "3.15" to "3.15.0rc1" (replacing the outdated 3.15.0a8 alpha entry).
+#
+# 2. python/private/runtimes_manifest.txt & runtimes_manifest_workspace.bzl:
+#    - Adds verified SHA256 checksums and URLs for CPython 3.15.0rc1 standalone builds
+#      (release 20260804 from github.com/astral-sh/python-build-standalone) across all supported
+#      platforms, including both standard and free-threaded (GIL-disabled) builds.
+
+diff --git a/python/private/runtimes_manifest.txt b/python/private/runtimes_manifest.txt
+index df02a304..aad38efc 100755
+--- a/python/private/runtimes_manifest.txt
++++ b/python/private/runtimes_manifest.txt
+@@ -599,23 +599,31 @@ a6797ad05c7d7f74a2cea28bf012f9199f4d6c1ed6d09f7adfeb9b3c538c6258  20260414/cpyth
+ c1a845a79da56265dc49628bc3b9e20d34f04674fd2d637ee40cbe259d2b1b95  20260414/cpython-3.14.4+20260414-x86_64-unknown-linux-gnu-freethreaded-install_only.tar.gz
+ e17275eaf95ceb5877aa6816e209b7733f41fee401d39c3921b88fb73fc4a4ba  20260414/cpython-3.14.4+20260414-x86_64-unknown-linux-gnu-install_only.tar.gz
+ 12687a989a2384665577e1ef9864f33d4c074a1e69b38a8bac8d656531aefa3e  20260414/cpython-3.14.4+20260414-x86_64-unknown-linux-musl-install_only.tar.gz
+-5791a69a73b76b908f5bdf96da1928de8db696ab198f4ced04b77b22fe712ce0  20260414/cpython-3.15.0a8+20260414-aarch64-apple-darwin-freethreaded-install_only.tar.gz
+-780d46b3da0e58e15c620d9e7dfd29b54c8359c195f625858f85df9c2c7ecc32  20260414/cpython-3.15.0a8+20260414-aarch64-apple-darwin-install_only.tar.gz
+-95ddfe7dd52185f7e5d55524eafb48e54d1eab0b0cf013966f144a411f3ddd0f  20260414/cpython-3.15.0a8+20260414-aarch64-pc-windows-msvc-freethreaded-install_only.tar.gz
+-10fb470e900e65df4e37f8deaf1726397c914861ffc37b43ae3743a7eee88377  20260414/cpython-3.15.0a8+20260414-aarch64-pc-windows-msvc-install_only.tar.gz
+-b72908bce86036a0a1ba98ca9917ea0b99dc1e6c5d715d3d463c4f330880c09b  20260414/cpython-3.15.0a8+20260414-aarch64-unknown-linux-gnu-freethreaded-install_only.tar.gz
+-8f6dda4d8ff44976f1aa6a94674a09a503dc50b015297e1b62c8cdc591c90f4f  20260414/cpython-3.15.0a8+20260414-aarch64-unknown-linux-gnu-install_only.tar.gz
+-b3c8210674140a4c5beefa2d4afd752979222638a0fb68de672c60300b4a6642  20260414/cpython-3.15.0a8+20260414-ppc64le-unknown-linux-gnu-freethreaded-install_only.tar.gz
+-09f076c63fadbf675143674aa3b23229482b9a44840b8b1808a216def2a9af15  20260414/cpython-3.15.0a8+20260414-ppc64le-unknown-linux-gnu-install_only.tar.gz
+-1a4984207974563c6aea7dc934579d058dbac7436642081113e86011114b9fdf  20260414/cpython-3.15.0a8+20260414-riscv64-unknown-linux-gnu-freethreaded-install_only.tar.gz
+-9d41ce752e8b731872f0f5c9c48199e63c789d24ce3ae9e91d6c8008f36e7c51  20260414/cpython-3.15.0a8+20260414-riscv64-unknown-linux-gnu-install_only.tar.gz
+-f525a6244d73450e0c0a7ba125b5934894ab25ee171f7099c239d4eb7ce2f5f2  20260414/cpython-3.15.0a8+20260414-s390x-unknown-linux-gnu-freethreaded-install_only.tar.gz
+-1de2593c40cce2d8ea883f8c8580223bfa1478cbd9d0191ba3640aed083c2202  20260414/cpython-3.15.0a8+20260414-s390x-unknown-linux-gnu-install_only.tar.gz
+-3dcee23c21e4a3518947e988e115c1d824f07540f4326d93d4ea2028918e0193  20260414/cpython-3.15.0a8+20260414-x86_64-apple-darwin-freethreaded-install_only.tar.gz
+-a7744d34148969a2ec010da6f0a46ddeceda7c02e5cdfa2b4e1811487381491a  20260414/cpython-3.15.0a8+20260414-x86_64-apple-darwin-install_only.tar.gz
+-6e69670347e3a6ac1d0cd89b9506d825bd2f2690cc51ead5dec61aec6857d08d  20260414/cpython-3.15.0a8+20260414-x86_64-pc-windows-msvc-freethreaded-install_only.tar.gz
+-3ded476f676fdf260d56a5e49aa083d5ffd218fc3390e4480ed42bee1acfb3fb  20260414/cpython-3.15.0a8+20260414-x86_64-pc-windows-msvc-install_only.tar.gz
+-2d06d97e230b7f74de0fe4f661918a0ee827b08127b9372e0890e167de52a8c6  20260414/cpython-3.15.0a8+20260414-x86_64-unknown-linux-gnu-freethreaded-install_only.tar.gz
+-c93f4b15287ac48d7e3a475b245cb59cc51079382747e3e6213d6406c158969d  20260414/cpython-3.15.0a8+20260414-x86_64-unknown-linux-gnu-install_only.tar.gz
+-0568e953f837f09689eb4dd1af0043ba5e2ebae0c6395b8b9f8344a53b1f1da5  20260414/cpython-3.15.0a8+20260414-x86_64-unknown-linux-musl-freethreaded-install_only.tar.gz
+-9fbd6f243a424d4ae973e72aa0075122a7cfe05ac8f6cfde986e7b00d0dbc0bf  20260414/cpython-3.15.0a8+20260414-x86_64-unknown-linux-musl-install_only.tar.gz
++117ba8cb8456b14274af0b420fdb4e6465e92c03bec8ed1692541f3bac2aa3da  20260804/cpython-3.15.0rc1+20260804-aarch64-apple-darwin-freethreaded-install_only.tar.gz
++b56356d31a65227bbddba69244361e086cb25db054825212ae83b5395264aabc  20260804/cpython-3.15.0rc1+20260804-aarch64-apple-darwin-install_only.tar.gz
++f3fe666b7399ad79fd9d461c6f7f352f8f484107c92fd78f5458f5042ebf0e45  20260804/cpython-3.15.0rc1+20260804-aarch64-pc-windows-msvc-freethreaded-install_only.tar.gz
++a8d9c57eeed9a45fb2633b3b45cee3e190f64258b9ed051a9bac460638e130eb  20260804/cpython-3.15.0rc1+20260804-aarch64-pc-windows-msvc-install_only.tar.gz
++557f717fd027d253d14f708f01c7c989429d31f6f2278b843b8a6906d960ddb0  20260804/cpython-3.15.0rc1+20260804-aarch64-unknown-linux-gnu-freethreaded-install_only.tar.gz
++7b57faa2f351190bc63eb9f3368cb957414b316f9d1643b57d5417170a5df014  20260804/cpython-3.15.0rc1+20260804-aarch64-unknown-linux-gnu-install_only.tar.gz
++60c605329e3737d795d9c9257fa64d5d980aff96932a61e578271294a250df8a  20260804/cpython-3.15.0rc1+20260804-aarch64-unknown-linux-musl-freethreaded-install_only.tar.gz
++32ea44dfb83cc0154fb515be9f3d195bb5147af7b2290894a9cbce78c6037afd  20260804/cpython-3.15.0rc1+20260804-aarch64-unknown-linux-musl-install_only.tar.gz
++ac635eca9ef3b7ef08dbf3a1bb291b500c26772bf224ab0e3e6aaf573b2be020  20260804/cpython-3.15.0rc1+20260804-armv7-unknown-linux-gnueabi-freethreaded-install_only.tar.gz
++1c779a522f83707402f0763fb6b5ff7357353c2c240bf4e5dd9855494ed4980d  20260804/cpython-3.15.0rc1+20260804-armv7-unknown-linux-gnueabi-install_only.tar.gz
++c6f7a8f4451880d2a1750de18bd058738565edd55eb617d2f30a0074940b6fc4  20260804/cpython-3.15.0rc1+20260804-armv7-unknown-linux-gnueabihf-freethreaded-install_only.tar.gz
++27af8332de9fe674c56707e3ee46297af92b2032ce17b57da932932a18eddc93  20260804/cpython-3.15.0rc1+20260804-armv7-unknown-linux-gnueabihf-install_only.tar.gz
++333a2e2d1dca7bd20728b9a2c66c84ea4bf92df80e50cd0381eecd8d93f9ad82  20260804/cpython-3.15.0rc1+20260804-i686-pc-windows-msvc-freethreaded-install_only.tar.gz
++76b4c2d4f3fb4b6ae2152217c8d4cc90fc82b14311f3e49cbac72e4ce8e9c1af  20260804/cpython-3.15.0rc1+20260804-i686-pc-windows-msvc-install_only.tar.gz
++27137012919d6fe5ff994a47326b1832f57477f72cfe8b19558d897e54d40601  20260804/cpython-3.15.0rc1+20260804-ppc64le-unknown-linux-gnu-freethreaded-install_only.tar.gz
++15a7c73519c58ab7d843c9ef2383a6b146504e3b38076c362c5efd8138a1f41c  20260804/cpython-3.15.0rc1+20260804-ppc64le-unknown-linux-gnu-install_only.tar.gz
++c041860d46ef79529ebbb238da06d2368e1e30087fb4aa42c7637dbf4125b6c3  20260804/cpython-3.15.0rc1+20260804-riscv64-unknown-linux-gnu-freethreaded-install_only.tar.gz
++a4e99b060bffc91ba6205c8683bab06bed09bb6d4adb8577ea50abd89b01f26a  20260804/cpython-3.15.0rc1+20260804-riscv64-unknown-linux-gnu-install_only.tar.gz
++c8c9cefe215f94f6fe0087131d839aff46be7a5c2bdcf544ba8165dddc686411  20260804/cpython-3.15.0rc1+20260804-s390x-unknown-linux-gnu-freethreaded-install_only.tar.gz
++2d2e8c891937bdbe0d9aa4e489c27656d7fe3087dd4f1e13b2f626fc2140ec28  20260804/cpython-3.15.0rc1+20260804-s390x-unknown-linux-gnu-install_only.tar.gz
++494f53a8fc0bffea199f16bf1c18a6ac187532db97ff68c2512f88ce971d61c6  20260804/cpython-3.15.0rc1+20260804-x86_64-apple-darwin-freethreaded-install_only.tar.gz
++e9fa3fb6532f9d0c67a79fc4d529a4ab148fe3af4d4e2c0d10d03613f4dfd4aa  20260804/cpython-3.15.0rc1+20260804-x86_64-apple-darwin-install_only.tar.gz
++b57ebc21dc3b8f62b451abd1928f32fc85e1b80ca09f521884f25c61e431b0cf  20260804/cpython-3.15.0rc1+20260804-x86_64-pc-windows-msvc-freethreaded-install_only.tar.gz
++432e8a054f9eb0338a905f22165e9e19a22446887af745bd756d12633f501404  20260804/cpython-3.15.0rc1+20260804-x86_64-pc-windows-msvc-install_only.tar.gz
++974305be0fe81e08f2f96c353855bd21e1cd50acd957f0bdfc7ea07f31f73b03  20260804/cpython-3.15.0rc1+20260804-x86_64-unknown-linux-gnu-freethreaded-install_only.tar.gz
++0c56bcd9a9ed031e6715c1214261e0c716de1689ddf242b3f3c14840b97deca0  20260804/cpython-3.15.0rc1+20260804-x86_64-unknown-linux-gnu-install_only.tar.gz
++8501e096a178203d919ec201d33afcc30c0afe5bc7bdb03d5909040ab153ea31  20260804/cpython-3.15.0rc1+20260804-x86_64-unknown-linux-musl-freethreaded-install_only.tar.gz
++23231f3635a8436322c4ea4c2d37a9982a3aeba3ae37924ce03cf0cd9216827e  20260804/cpython-3.15.0rc1+20260804-x86_64-unknown-linux-musl-install_only.tar.gz
+diff --git a/python/private/runtimes_manifest_workspace.bzl b/python/private/runtimes_manifest_workspace.bzl
+index c2da00ac..0000ae77 100644
+--- a/python/private/runtimes_manifest_workspace.bzl
++++ b/python/private/runtimes_manifest_workspace.bzl
+@@ -610,24 +610,32 @@ a6797ad05c7d7f74a2cea28bf012f9199f4d6c1ed6d09f7adfeb9b3c538c6258  20260414/cpyth
+ c1a845a79da56265dc49628bc3b9e20d34f04674fd2d637ee40cbe259d2b1b95  20260414/cpython-3.14.4+20260414-x86_64-unknown-linux-gnu-freethreaded-install_only.tar.gz
+ e17275eaf95ceb5877aa6816e209b7733f41fee401d39c3921b88fb73fc4a4ba  20260414/cpython-3.14.4+20260414-x86_64-unknown-linux-gnu-install_only.tar.gz
+ 12687a989a2384665577e1ef9864f33d4c074a1e69b38a8bac8d656531aefa3e  20260414/cpython-3.14.4+20260414-x86_64-unknown-linux-musl-install_only.tar.gz
+-5791a69a73b76b908f5bdf96da1928de8db696ab198f4ced04b77b22fe712ce0  20260414/cpython-3.15.0a8+20260414-aarch64-apple-darwin-freethreaded-install_only.tar.gz
+-780d46b3da0e58e15c620d9e7dfd29b54c8359c195f625858f85df9c2c7ecc32  20260414/cpython-3.15.0a8+20260414-aarch64-apple-darwin-install_only.tar.gz
+-95ddfe7dd52185f7e5d55524eafb48e54d1eab0b0cf013966f144a411f3ddd0f  20260414/cpython-3.15.0a8+20260414-aarch64-pc-windows-msvc-freethreaded-install_only.tar.gz
+-10fb470e900e65df4e37f8deaf1726397c914861ffc37b43ae3743a7eee88377  20260414/cpython-3.15.0a8+20260414-aarch64-pc-windows-msvc-install_only.tar.gz
+-b72908bce86036a0a1ba98ca9917ea0b99dc1e6c5d715d3d463c4f330880c09b  20260414/cpython-3.15.0a8+20260414-aarch64-unknown-linux-gnu-freethreaded-install_only.tar.gz
+-8f6dda4d8ff44976f1aa6a94674a09a503dc50b015297e1b62c8cdc591c90f4f  20260414/cpython-3.15.0a8+20260414-aarch64-unknown-linux-gnu-install_only.tar.gz
+-b3c8210674140a4c5beefa2d4afd752979222638a0fb68de672c60300b4a6642  20260414/cpython-3.15.0a8+20260414-ppc64le-unknown-linux-gnu-freethreaded-install_only.tar.gz
+-09f076c63fadbf675143674aa3b23229482b9a44840b8b1808a216def2a9af15  20260414/cpython-3.15.0a8+20260414-ppc64le-unknown-linux-gnu-install_only.tar.gz
+-1a4984207974563c6aea7dc934579d058dbac7436642081113e86011114b9fdf  20260414/cpython-3.15.0a8+20260414-riscv64-unknown-linux-gnu-freethreaded-install_only.tar.gz
+-9d41ce752e8b731872f0f5c9c48199e63c789d24ce3ae9e91d6c8008f36e7c51  20260414/cpython-3.15.0a8+20260414-riscv64-unknown-linux-gnu-install_only.tar.gz
+-f525a6244d73450e0c0a7ba125b5934894ab25ee171f7099c239d4eb7ce2f5f2  20260414/cpython-3.15.0a8+20260414-s390x-unknown-linux-gnu-freethreaded-install_only.tar.gz
+-1de2593c40cce2d8ea883f8c8580223bfa1478cbd9d0191ba3640aed083c2202  20260414/cpython-3.15.0a8+20260414-s390x-unknown-linux-gnu-install_only.tar.gz
+-3dcee23c21e4a3518947e988e115c1d824f07540f4326d93d4ea2028918e0193  20260414/cpython-3.15.0a8+20260414-x86_64-apple-darwin-freethreaded-install_only.tar.gz
+-a7744d34148969a2ec010da6f0a46ddeceda7c02e5cdfa2b4e1811487381491a  20260414/cpython-3.15.0a8+20260414-x86_64-apple-darwin-install_only.tar.gz
+-6e69670347e3a6ac1d0cd89b9506d825bd2f2690cc51ead5dec61aec6857d08d  20260414/cpython-3.15.0a8+20260414-x86_64-pc-windows-msvc-freethreaded-install_only.tar.gz
+-3ded476f676fdf260d56a5e49aa083d5ffd218fc3390e4480ed42bee1acfb3fb  20260414/cpython-3.15.0a8+20260414-x86_64-pc-windows-msvc-install_only.tar.gz
+-2d06d97e230b7f74de0fe4f661918a0ee827b08127b9372e0890e167de52a8c6  20260414/cpython-3.15.0a8+20260414-x86_64-unknown-linux-gnu-freethreaded-install_only.tar.gz
+-c93f4b15287ac48d7e3a475b245cb59cc51079382747e3e6213d6406c158969d  20260414/cpython-3.15.0a8+20260414-x86_64-unknown-linux-gnu-install_only.tar.gz
+-0568e953f837f09689eb4dd1af0043ba5e2ebae0c6395b8b9f8344a53b1f1da5  20260414/cpython-3.15.0a8+20260414-x86_64-unknown-linux-musl-freethreaded-install_only.tar.gz
+-9fbd6f243a424d4ae973e72aa0075122a7cfe05ac8f6cfde986e7b00d0dbc0bf  20260414/cpython-3.15.0a8+20260414-x86_64-unknown-linux-musl-install_only.tar.gz
++117ba8cb8456b14274af0b420fdb4e6465e92c03bec8ed1692541f3bac2aa3da  20260804/cpython-3.15.0rc1+20260804-aarch64-apple-darwin-freethreaded-install_only.tar.gz
++b56356d31a65227bbddba69244361e086cb25db054825212ae83b5395264aabc  20260804/cpython-3.15.0rc1+20260804-aarch64-apple-darwin-install_only.tar.gz
++f3fe666b7399ad79fd9d461c6f7f352f8f484107c92fd78f5458f5042ebf0e45  20260804/cpython-3.15.0rc1+20260804-aarch64-pc-windows-msvc-freethreaded-install_only.tar.gz
++a8d9c57eeed9a45fb2633b3b45cee3e190f64258b9ed051a9bac460638e130eb  20260804/cpython-3.15.0rc1+20260804-aarch64-pc-windows-msvc-install_only.tar.gz
++557f717fd027d253d14f708f01c7c989429d31f6f2278b843b8a6906d960ddb0  20260804/cpython-3.15.0rc1+20260804-aarch64-unknown-linux-gnu-freethreaded-install_only.tar.gz
++7b57faa2f351190bc63eb9f3368cb957414b316f9d1643b57d5417170a5df014  20260804/cpython-3.15.0rc1+20260804-aarch64-unknown-linux-gnu-install_only.tar.gz
++60c605329e3737d795d9c9257fa64d5d980aff96932a61e578271294a250df8a  20260804/cpython-3.15.0rc1+20260804-aarch64-unknown-linux-musl-freethreaded-install_only.tar.gz
++32ea44dfb83cc0154fb515be9f3d195bb5147af7b2290894a9cbce78c6037afd  20260804/cpython-3.15.0rc1+20260804-aarch64-unknown-linux-musl-install_only.tar.gz
++ac635eca9ef3b7ef08dbf3a1bb291b500c26772bf224ab0e3e6aaf573b2be020  20260804/cpython-3.15.0rc1+20260804-armv7-unknown-linux-gnueabi-freethreaded-install_only.tar.gz
++1c779a522f83707402f0763fb6b5ff7357353c2c240bf4e5dd9855494ed4980d  20260804/cpython-3.15.0rc1+20260804-armv7-unknown-linux-gnueabi-install_only.tar.gz
++c6f7a8f4451880d2a1750de18bd058738565edd55eb617d2f30a0074940b6fc4  20260804/cpython-3.15.0rc1+20260804-armv7-unknown-linux-gnueabihf-freethreaded-install_only.tar.gz
++27af8332de9fe674c56707e3ee46297af92b2032ce17b57da932932a18eddc93  20260804/cpython-3.15.0rc1+20260804-armv7-unknown-linux-gnueabihf-install_only.tar.gz
++333a2e2d1dca7bd20728b9a2c66c84ea4bf92df80e50cd0381eecd8d93f9ad82  20260804/cpython-3.15.0rc1+20260804-i686-pc-windows-msvc-freethreaded-install_only.tar.gz
++76b4c2d4f3fb4b6ae2152217c8d4cc90fc82b14311f3e49cbac72e4ce8e9c1af  20260804/cpython-3.15.0rc1+20260804-i686-pc-windows-msvc-install_only.tar.gz
++27137012919d6fe5ff994a47326b1832f57477f72cfe8b19558d897e54d40601  20260804/cpython-3.15.0rc1+20260804-ppc64le-unknown-linux-gnu-freethreaded-install_only.tar.gz
++15a7c73519c58ab7d843c9ef2383a6b146504e3b38076c362c5efd8138a1f41c  20260804/cpython-3.15.0rc1+20260804-ppc64le-unknown-linux-gnu-install_only.tar.gz
++c041860d46ef79529ebbb238da06d2368e1e30087fb4aa42c7637dbf4125b6c3  20260804/cpython-3.15.0rc1+20260804-riscv64-unknown-linux-gnu-freethreaded-install_only.tar.gz
++a4e99b060bffc91ba6205c8683bab06bed09bb6d4adb8577ea50abd89b01f26a  20260804/cpython-3.15.0rc1+20260804-riscv64-unknown-linux-gnu-install_only.tar.gz
++c8c9cefe215f94f6fe0087131d839aff46be7a5c2bdcf544ba8165dddc686411  20260804/cpython-3.15.0rc1+20260804-s390x-unknown-linux-gnu-freethreaded-install_only.tar.gz
++2d2e8c891937bdbe0d9aa4e489c27656d7fe3087dd4f1e13b2f626fc2140ec28  20260804/cpython-3.15.0rc1+20260804-s390x-unknown-linux-gnu-install_only.tar.gz
++494f53a8fc0bffea199f16bf1c18a6ac187532db97ff68c2512f88ce971d61c6  20260804/cpython-3.15.0rc1+20260804-x86_64-apple-darwin-freethreaded-install_only.tar.gz
++e9fa3fb6532f9d0c67a79fc4d529a4ab148fe3af4d4e2c0d10d03613f4dfd4aa  20260804/cpython-3.15.0rc1+20260804-x86_64-apple-darwin-install_only.tar.gz
++b57ebc21dc3b8f62b451abd1928f32fc85e1b80ca09f521884f25c61e431b0cf  20260804/cpython-3.15.0rc1+20260804-x86_64-pc-windows-msvc-freethreaded-install_only.tar.gz
++432e8a054f9eb0338a905f22165e9e19a22446887af745bd756d12633f501404  20260804/cpython-3.15.0rc1+20260804-x86_64-pc-windows-msvc-install_only.tar.gz
++974305be0fe81e08f2f96c353855bd21e1cd50acd957f0bdfc7ea07f31f73b03  20260804/cpython-3.15.0rc1+20260804-x86_64-unknown-linux-gnu-freethreaded-install_only.tar.gz
++0c56bcd9a9ed031e6715c1214261e0c716de1689ddf242b3f3c14840b97deca0  20260804/cpython-3.15.0rc1+20260804-x86_64-unknown-linux-gnu-install_only.tar.gz
++8501e096a178203d919ec201d33afcc30c0afe5bc7bdb03d5909040ab153ea31  20260804/cpython-3.15.0rc1+20260804-x86_64-unknown-linux-musl-freethreaded-install_only.tar.gz
++23231f3635a8436322c4ea4c2d37a9982a3aeba3ae37924ce03cf0cd9216827e  20260804/cpython-3.15.0rc1+20260804-x86_64-unknown-linux-musl-install_only.tar.gz
+ """
+diff --git a/python/versions.bzl b/python/versions.bzl
+index 6e3efb34..60fe35b0 100644
+--- a/python/versions.bzl
++++ b/python/versions.bzl
+@@ -49,7 +49,7 @@ MINOR_MAPPING = {
+     "3.12": "3.12.13",
+     "3.13": "3.13.13",
+     "3.14": "3.14.4",
+-    "3.15": "3.15.0a8",
++    "3.15": "3.15.0rc1",
+ }
+ 
+ def _generate_platforms():

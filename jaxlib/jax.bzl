@@ -76,7 +76,7 @@ PLATFORM_TAGS_DICT = {
     ("Windows", "AMD64"): ("win", "amd64"),
 }
 
-def get_optional_dep(package, excluded_py_versions = ["3.14", "3.14-ft"]):
+def get_optional_dep(package, excluded_py_versions):
     py_ver = HERMETIC_PYTHON_VERSION
     if HERMETIC_PYTHON_VERSION_KIND == "ft":
         py_ver += "-ft"
@@ -96,22 +96,22 @@ _py_deps = {
     "flatbuffers": ["@pypi//flatbuffers"],
     "hypothesis": ["@pypi//hypothesis"],
     "magma": [],
-    "matplotlib": ["@pypi//matplotlib"],
+    "matplotlib": get_optional_dep("@pypi//matplotlib", ["3.15", "3.15-ft"]),
     "mpmath": ["@pypi//mpmath"],
     "opt_einsum": ["@pypi//opt_einsum"],
     "pil": ["@pypi//pillow"],
-    "portpicker": ["@pypi//portpicker"],
+    "portpicker": get_optional_dep("@pypi//portpicker", ["3.15-ft"]),
     "ml_dtypes": ["@pypi//ml_dtypes"],
     "numpy": ["@pypi//numpy"],
     "scipy": ["@pypi//scipy"],
     "tensorflow_core": [],
-    "tensorstore": ["@pypi//tensorstore"],
+    "tensorstore": get_optional_dep("@pypi//tensorstore", ["3.15", "3.15-ft"]),
     "torch": [],
-    "tensorflow": get_optional_dep("@pypi//tensorflow", ["3.14", "3.14-ft"]),
+    "tensorflow": get_optional_dep("@pypi//tensorflow", ["3.14", "3.14-ft", "3.15", "3.15-ft"]),
     "tpu_ops": [],
     # We're never going to need zstandard for 3.14+ because zstandard is now
     # in the Python stdlib.
-    "zstandard": get_optional_dep("@pypi//zstandard", ["3.14", "3.14-ft"]),
+    "zstandard": get_optional_dep("@pypi//zstandard", ["3.14", "3.14-ft", "3.15", "3.15-ft"]),
 }
 
 def all_py_deps(excluded = []):

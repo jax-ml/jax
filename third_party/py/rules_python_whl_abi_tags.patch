@@ -1,0 +1,142 @@
+# Patch for rules_python to fix pure-Python wheel resolution on Bzlmod target platforms.
+#
+# Changes:
+# 1. python/private/pypi/extension.bzl:
+#    - Adds "none" to `whl_abi_tags` for all platform configurations (both standard and free-threaded)
+#      so pure-Python (py3-none-any) wheels can be matched by select_whl.
+#
+# 2. python/private/pypi/hub_builder.bzl:
+#    - Ensures "none" is always in `whl_abi_tags` and "any" is in `whl_platform_tags` when constructing
+#      target platform descriptors.
+#
+# 3. python/private/pypi/requirements_files_by_platform.bzl:
+#    - Uses `_default_platforms` for all platform filter specifiers and parses prerelease versions
+#      consistently in `_platform`.
+
+diff --git a/python/private/pypi/extension.bzl b/python/private/pypi/extension.bzl
+index 094cac7f..2e9498ca 100644
+--- a/python/private/pypi/extension.bzl
++++ b/python/private/pypi/extension.bzl
+@@ -91,7 +91,11 @@ def default_platforms():
+                 "marker": "python_version >= '3.13'" if freethreaded else "",
+                 "name": platform_name,
+                 "os_name": "linux",
+-                "whl_abi_tags": ["cp{major}{minor}t"] if freethreaded else [
++                "whl_abi_tags": [
++                    "none",
++                    "cp{major}{minor}t",
++                ] if freethreaded else [
++                    "none",
+                     "abi3",
+                     "cp{major}{minor}",
+                 ],
+@@ -121,7 +125,11 @@ def default_platforms():
+                 "marker": "python_version >= '3.13'" if freethreaded else "",
+                 "name": platform_name,
+                 "os_name": "osx",
+-                "whl_abi_tags": ["cp{major}{minor}t"] if freethreaded else [
++                "whl_abi_tags": [
++                    "none",
++                    "cp{major}{minor}t",
++                ] if freethreaded else [
++                    "none",
+                     "abi3",
+                     "cp{major}{minor}",
+                 ],
+@@ -147,7 +155,11 @@ def default_platforms():
+             "marker": "python_version >= '3.13'" if freethreaded else "",
+             "name": platform_name,
+             "os_name": "windows",
+-            "whl_abi_tags": ["cp{major}{minor}t"] if freethreaded else [
++            "whl_abi_tags": [
++                "none",
++                "cp{major}{minor}t",
++            ] if freethreaded else [
++                "none",
+                 "abi3",
+                 "cp{major}{minor}",
+             ],
+@@ -170,7 +182,11 @@ def default_platforms():
+             "marker": "python_version >= '3.13'" if freethreaded else "python_version >= '3.11'",
+             "name": platform_name,
+             "os_name": "windows",
+-            "whl_abi_tags": ["cp{major}{minor}t"] if freethreaded else [
++            "whl_abi_tags": [
++                "none",
++                "cp{major}{minor}t",
++            ] if freethreaded else [
++                "none",
+                 "abi3",
+                 "cp{major}{minor}",
+             ],
+diff --git a/python/private/pypi/hub_builder.bzl b/python/private/pypi/hub_builder.bzl
+index 7717f367..18fb7f8c 100644
+--- a/python/private/pypi/hub_builder.bzl
++++ b/python/private/pypi/hub_builder.bzl
+@@ -457,17 +457,25 @@ def _platforms(module_ctx, *, python_version, config, target_platforms):
+         if values.marker and not evaluate(values.marker, env = env_):
+             continue
+ 
++        whl_abi_tags = [
++            v.format(
++                major = python_version.release[0],
++                minor = python_version.release[1],
++            )
++            for v in values.whl_abi_tags
++        ]
++        if "none" not in whl_abi_tags:
++            whl_abi_tags = ["none"] + whl_abi_tags
++
++        whl_platform_tags = list(values.whl_platform_tags)
++        if "any" not in whl_platform_tags:
++            whl_platform_tags = ["any"] + whl_platform_tags
++
+         platforms[key] = struct(
+             env = env_,
+             triple = "{}_{}_{}".format(abi, values.os_name, values.arch_name),
+-            whl_abi_tags = [
+-                v.format(
+-                    major = python_version.release[0],
+-                    minor = python_version.release[1],
+-                )
+-                for v in values.whl_abi_tags
+-            ],
+-            whl_platform_tags = values.whl_platform_tags,
++            whl_abi_tags = whl_abi_tags,
++            whl_platform_tags = whl_platform_tags,
+         )
+     return platforms
+ 
+diff --git a/python/private/pypi/requirements_files_by_platform.bzl b/python/private/pypi/requirements_files_by_platform.bzl
+index dcdb6128..c76599d2 100644
+--- a/python/private/pypi/requirements_files_by_platform.bzl
++++ b/python/private/pypi/requirements_files_by_platform.bzl
+@@ -14,6 +14,7 @@
+ 
+ """Get the requirement files by platform."""
+ 
++load("//python/private:version.bzl", "version")
+ load(":argparse.bzl", "argparse")
+ load(":whl_target_platforms.bzl", "whl_target_platforms")
+ 
+@@ -62,6 +63,10 @@ def _platform(platform_string, python_version = None):
+     if not python_version or platform_string.startswith("cp"):
+         return platform_string
+ 
++    py_ver = version.parse(python_version) if "." in python_version else None
++    if py_ver and len(py_ver.release) >= 3:
++        return "cp{}{}.{}_{}".format(py_ver.release[0], py_ver.release[1], py_ver.release[2], platform_string)
++
+     major, _, tail = python_version.partition(".")
+ 
+     return "cp{}{}_{}".format(major, tail, platform_string)
+@@ -153,8 +158,7 @@ def requirements_files_by_platform(
+             file: [
+                 platform
+                 for filter_or_platform in specifier.split(",")
+-                for platform in (_default_platforms(filter = filter_or_platform, platforms = platforms) if filter_or_platform.endswith("*") else [filter_or_platform])
+-                if _platform(platform, python_version) in default_platforms
++                for platform in _default_platforms(filter = filter_or_platform, platforms = platforms)
+             ]
+             for file, specifier in requirements_by_platform.items()
+         }.items()
