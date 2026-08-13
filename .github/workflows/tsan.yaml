@@ -31,7 +31,7 @@ jobs:
       run:
         shell: bash -l {0}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: jax
           persist-credentials: false
@@ -41,7 +41,7 @@ jobs:
           NUMPY_VER=$(grep -m1 -E '^numpy==' jax/build/requirements_lock_3_14.txt | cut -d'=' -f3 | cut -d' ' -f1 | tr -d ' \n\r')
           echo "version=v${NUMPY_VER}" >> "$GITHUB_OUTPUT"
           echo "Targeting NumPy release tag: v${NUMPY_VER}"
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: numpy/numpy
           ref: ${{ steps.numpy-version.outputs.version }}
