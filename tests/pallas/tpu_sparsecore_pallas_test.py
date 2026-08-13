@@ -21,6 +21,7 @@ import math
 from unittest import mock
 
 from absl.testing import absltest
+from absl.testing import flagsaver
 from absl.testing import parameterized
 import hypothesis as hp
 import hypothesis.strategies as hps
@@ -3084,6 +3085,7 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
     o = jax.block_until_ready(foo(x))
     np.testing.assert_array_equal(o, x)
 
+  @flagsaver.flagsaver(xla_tpu_mosaic_sc_disable_pipeline=False)
   def test_memory_space_annotations_aliased_input_core_map(self):
     @jax.jit
     def f(x, y):
