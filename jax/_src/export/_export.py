@@ -596,28 +596,6 @@ def export(
       >>> rehydrated.call(np.array([.1, .2, .3, .4], dtype=np.float32))
       Array([0.09983342, 0.19866933, 0.29552022, 0.38941833], dtype=float32)
   """
-  return _export_internal(fun_jit, platforms=platforms,
-                          disabled_checks=disabled_checks,
-                          override_lowering_rules=_override_lowering_rules)
-
-
-# TODO(necula): remove this once we improve the integration with jax2tf.
-def _export_internal(
-    fun_jit: stages.Wrapped,
-    *,
-    platforms: Sequence[str] | None = None,
-    disabled_checks: Sequence[DisabledSafetyCheck] = (),
-    _device_assignment_for_internal_jax2tf_use_only=None,
-    override_lowering_rules=None,
-    ) -> Callable[..., Exported]:
-  """Exports native serialization for a JAX function.
-
-  Note: this function exists only for internal usage by jax2tf. Use
-    :mod:`jax.export` instead.
-    See https://docs.jax.dev/en/latest/export/export.html
-
-  See docstring of ``export`` for more details.
-  """
   if not isinstance(fun_jit, stages.Wrapped):
     raise ValueError(
         f"Function to be exported must be the result of `jit` but is: {fun_jit}")
@@ -635,14 +613,13 @@ def _export_internal(
     lowered = traced.lower(
         lowering_platforms=actual_lowering_platforms,
         _private_parameters=mlir.LoweringParameters(
-            override_lowering_rules=override_lowering_rules,
+            override_lowering_rules=_override_lowering_rules,  # type: ignore
             for_export=True,
             hoist_constants_as_args=False,
             export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value))
     return _export_lowered(
         lowered, traced.jaxpr, traced.fun_name,
-        disabled_checks=disabled_checks,
-        _device_assignment_for_internal_jax2tf_use_only=_device_assignment_for_internal_jax2tf_use_only)
+        disabled_checks=disabled_checks)
   return do_export
 
 
@@ -720,7 +697,6 @@ def _export_lowered(
     jaxpr: core.Jaxpr,
     fun_name: str,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
-    _device_assignment_for_internal_jax2tf_use_only=None,
   ) -> Exported:
   version = config.jax_export_calling_convention_version.value
   if (version < minimum_supported_calling_convention_version or
@@ -821,10 +797,6 @@ def _export_lowered(
     to_named_sharding_with_abstract_mesh(s, aval, cur_mesh)
     for s, aval in zip(lowering.compile_args["out_shardings"], out_avals_flat))
 
-  device_assignment = lowering._device_list  # pyrefly: ignore[missing-attribute]
-  if _device_assignment_for_internal_jax2tf_use_only is not None:
-    _device_assignment_for_internal_jax2tf_use_only[0] = device_assignment
-
   def _get_exported_vjp(exp_primal: Exported) -> Exported:
     # Turn the primal jaxpr into a function, in preparation for exporting
     # the VJP. Note that jaxpr_as_fun produces a function with flat arguments
@@ -865,6 +837,7 @@ def _export_lowered(
       uses_global_constants=shape_poly_state.uses_dim_vars,
       calling_convention_version=version,
       _get_vjp=_get_exported_vjp)
+
 
 def _module_to_bytecode(module: ir.Module) -> bytes:
   # `target_version` is used to manage situations when a StableHLO producer
@@ -1336,8 +1309,6 @@ def _get_vjp_fun(
   # here with flattened functions.
   # apply_jit=False is only used for backwards compatibility with the graph
   # graph serialization.
-  # flat_primal_fun=False is used only from jax2tf, and it means that the
-  # `primal_fun` takes PyTree `*args` and `**kwargs`.
   def fun_vjp_jax(*args_and_out_cts_flat_jax):
     # Takes a flat list of primals and output cotangents
     def flattened_primal_fun_jax(*args_flat):

@@ -366,15 +366,11 @@ class NativeSerializationImpl:
       _thread_local_state.call_tf_concrete_function_list = _prev_func_list
 
     self._restore_context = _restore_context
-    _exported_device_assignment = [None]
-    self.exported = _export._export_internal(
+    self.exported = _export.export(
         self.fun_jax,
         platforms=self.native_serialization_platforms,
         disabled_checks=self.native_serialization_disabled_checks,
-        _device_assignment_for_internal_jax2tf_use_only=_exported_device_assignment,
     )(*self.args_specs, **self.kwargs_specs)
-    assert(_exported_device_assignment[0] is not None)
-    self.device_assignment = _exported_device_assignment[0]
 
   def after_conversion(self):
     self._restore_context()
