@@ -507,6 +507,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "gpu_pallas_distributed_test",
     srcs = ["gpu_pallas_distributed_test.py"],
+    config_tags_overrides = {
+        "gpu_b200x2": {"ondemand": False},
+    },
     enable_backends = [],
     enable_configs = [
         # Need to use 2 physical GPUs since test checks P2P memory access unavailable with MIG
