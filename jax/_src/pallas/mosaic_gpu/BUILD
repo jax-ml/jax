@@ -148,6 +148,7 @@ pytype_strict_library(
     type_checking = "pyrefly",
     deps = [
         ":core",
+        ":helpers",
         ":primitives",
         "//jax",
         "//jax/_src:core",
@@ -167,16 +168,14 @@ pytype_strict_library(
     type_checking = "pyrefly",
     deps = [
         ":core",
-        ":pipeline",
         ":primitives",
         "//jax",
         "//jax/_src:dtypes",
-        "//jax/_src:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
-        "//jax/experimental:mosaic_gpu",
         "//jaxlib/mlir:ir",
         "//jaxlib/mlir:llvm_dialect",
+        "//jaxlib/mlir:nvvm_dialect",
     ] + py_deps("numpy"),
 )
 

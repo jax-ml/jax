@@ -17,7 +17,7 @@
 from collections.abc import Callable, Hashable, Sequence
 import dataclasses
 import functools
-from typing import overload
+from typing import Literal, overload
 
 import jax
 from jax import lax
@@ -30,6 +30,7 @@ from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import llvm
+from jaxlib.mlir.dialects import nvvm
 import numpy as np
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -436,6 +437,24 @@ def dynamic_scheduling_loop(
         collective_axes=thread_axis,
     )
   return decorator
+
+
+def fence_proxy(kind: Literal["async_shared::cta", "async_shared::cluster"]):
+  """Inserts a fence proxy instruction."""
+  if kind == "async_shared::cta":
+    proxy_kind = nvvm.ProxyKind.async_shared
+    space = nvvm.SharedSpace.shared_cta
+  elif kind == "async_shared::cluster":
+    proxy_kind = nvvm.ProxyKind.async_shared
+    space = nvvm.SharedSpace.shared_cluster
+  else:
+    raise ValueError(f"Unknown proxy kind: {kind}")
+
+  @gpu_primitives.inline_mgpu()
+  def insert_fence_proxy(_):
+    nvvm.fence_proxy(proxy_kind, space=space)
+
+  insert_fence_proxy()
 
 
 _FENCE_PROXY_ASYNC_GENERIC_ACQUIRE_SHARED_CLUSTER = (
