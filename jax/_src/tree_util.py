@@ -20,7 +20,7 @@ import difflib
 import functools
 import operator as op
 import textwrap
-from typing import Any, TypeVar
+from typing import Any
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
@@ -31,10 +31,6 @@ from jax._src.util import unzip2
 export = set_module('jax.tree_util')
 
 traceback_util.register_exclusion(__file__)
-
-T = TypeVar("T")
-Typ = TypeVar("Typ", bound=type[Any])
-H = TypeVar("H", bound=Hashable)
 
 Leaf = Any
 PyTree = Any
@@ -245,21 +241,19 @@ def is_tree_node(typ: type) -> bool:
   return default_registry.is_node(typ)
 
 
-_Children = TypeVar("_Children", bound=Iterable[Any])
-_AuxData = TypeVar("_AuxData", bound=Hashable)
-KeyEntry = TypeVar("KeyEntry", bound=Any)
-KeyLeafPair = tuple[KeyEntry, Any]
-KeyLeafPairs = Iterable[KeyLeafPair]
-KeyPath = tuple[KeyEntry, ...]
+type KeyEntry = Any
+type KeyLeafPair = tuple[KeyEntry, Any]
+type KeyLeafPairs = Iterable[KeyLeafPair]
+type KeyPath = tuple[KeyEntry, ...]
 
 
 @export
-def register_pytree_node(
+def register_pytree_node[T, Children: Iterable[Any], AuxData: Hashable](
     nodetype: type[T],
-    flatten_func: Callable[[T], tuple[_Children, _AuxData]],
-    unflatten_func: Callable[[_AuxData, _Children], T],
+    flatten_func: Callable[[T], tuple[Children, AuxData]],
+    unflatten_func: Callable[[AuxData, Children], T],
     flatten_with_keys_func: (
-        Callable[[T], tuple[KeyLeafPairs, _AuxData]] | None
+        Callable[[T], tuple[KeyLeafPairs, AuxData]] | None
     ) = None,
 ) -> None:
   """Extends the set of types that are considered internal nodes in pytrees.
@@ -334,7 +328,7 @@ def register_pytree_node(
 
 
 @export
-def register_pytree_node_class(cls: Typ) -> Typ:
+def register_pytree_node_class[Typ: type[Any]](cls: Typ) -> Typ:
   """Extends the set of types that are considered internal nodes in pytrees.
 
   This function is a thin wrapper around ``register_pytree_node``, and provides
@@ -439,10 +433,10 @@ class Unspecified:
 
 
 @export
-def tree_reduce(function: Callable[[T, Any], T],
-                tree: Any,
-                initializer: T | Unspecified = Unspecified(),
-                is_leaf: Callable[[Any], bool] | None = None) -> T:
+def tree_reduce[T](function: Callable[[T, Any], T],
+                   tree: Any,
+                   initializer: T | Unspecified = Unspecified(),
+                   is_leaf: Callable[[Any], bool] | None = None) -> T:
   """Alias of :func:`jax.tree.reduce`."""
   if isinstance(initializer, Unspecified):
     return functools.reduce(function, tree_leaves(tree, is_leaf=is_leaf))
@@ -450,7 +444,7 @@ def tree_reduce(function: Callable[[T, Any], T],
     return functools.reduce(function, tree_leaves(tree, is_leaf=is_leaf), initializer)
 
 
-def _parallel_reduce(
+def _parallel_reduce[T](
     sequence: list[T],
     operation: Callable[[T, T], T],
     identity: T | Unspecified = Unspecified(),
@@ -470,7 +464,7 @@ def _parallel_reduce(
 
 
 @export
-def tree_reduce_associative(
+def tree_reduce_associative[T](
     operation: Callable[[T, T], T],
     tree: Any,
     *,
@@ -864,7 +858,7 @@ def keystr(keys: KeyPath, *, simple: bool = False, separator: str = '') -> str:
   return separator.join(map(str_fn, keys))
 
 
-def _simple_entrystr(key: KeyEntry) -> str:
+def _simple_entrystr(key: Any) -> str:
   match key:
     case (
         SequenceKey(idx=key)
@@ -878,11 +872,11 @@ def _simple_entrystr(key: KeyEntry) -> str:
 
 
 @export
-def register_pytree_with_keys(
+def register_pytree_with_keys[T, AuxData: Hashable](
     nodetype: type[T],
-    flatten_with_keys: Callable[[T], tuple[Iterable[KeyLeafPair], _AuxData]],
-    unflatten_func: Callable[[_AuxData, Iterable[Any]], T],
-    flatten_func: None | (Callable[[T], tuple[Iterable[Any], _AuxData]]) = None,
+    flatten_with_keys: Callable[[T], tuple[Iterable[KeyLeafPair], AuxData]],
+    unflatten_func: Callable[[AuxData, Iterable[Any]], T],
+    flatten_func: None | (Callable[[T], tuple[Iterable[Any], AuxData]]) = None,
 ):
   """Extends the set of types that are considered internal nodes in pytrees.
 
@@ -949,7 +943,7 @@ def register_pytree_with_keys(
 
 
 @export
-def register_pytree_with_keys_class(cls: Typ) -> Typ:
+def register_pytree_with_keys_class[Typ: type[Any]](cls: Typ) -> Typ:
   """Extends the set of types that are considered internal nodes in pytrees.
 
   This function is similar to ``register_pytree_node_class``, but requires a
@@ -998,7 +992,7 @@ def register_pytree_with_keys_class(cls: Typ) -> Typ:
 
 
 @export
-def register_dataclass(
+def register_dataclass[Typ: type[Any]](
     nodetype: Typ,
     data_fields: Sequence[str] | None = None,
     meta_fields: Sequence[str] | None = None,
@@ -1189,7 +1183,7 @@ register_pytree_with_keys(
 
 
 @export
-def register_static(cls: type[H]) -> type[H]:
+def register_static[H: Hashable](cls: type[H]) -> type[H]:
   """Registers `cls` as a pytree with no leaves.
 
   Instances are treated as static by :func:`jax.jit`, :func:`jax.pmap`, etc. This can
