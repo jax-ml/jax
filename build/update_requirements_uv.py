@@ -28,6 +28,7 @@ PYTHON_VERSIONS = {
     "3.12": "build/requirements_lock_3_12.txt",
     "3.13": "build/requirements_lock_3_13.txt",
     "3.14": "build/requirements_lock_3_14.txt",
+    "3.15": "build/requirements_lock_3_15.txt",
 }
 
 COMMON_SRCS = [
@@ -123,6 +124,11 @@ def main():
         action="store_true",
         help="Print the command that would be run without executing it.",
     )
+    parser.add_argument(
+        "--python_version",
+        type=str,
+        help="Specific Python version to update (e.g. 3.15, 3.15-ft). If not specified, updates all.",
+    )
     parser.set_defaults(upgrade=True)
 
     args = parser.parse_args()
@@ -142,7 +148,13 @@ def main():
         )
         sys.exit(1)
 
-    versions_to_update = list(PYTHON_VERSIONS.keys())
+    if args.python_version:
+        if args.python_version not in PYTHON_VERSIONS:
+            print(f"Error: Unsupported Python version {args.python_version}")
+            sys.exit(1)
+        versions_to_update = [args.python_version]
+    else:
+        versions_to_update = list(PYTHON_VERSIONS.keys())
 
     for ver in versions_to_update:
         print(f"\n--- Updating Python {ver} ---")
@@ -155,10 +167,16 @@ def main():
         )
 
     if not args.dry_run:
-        shutil.copyfile(
-            "build/requirements_lock_3_14.txt",
-            "build/requirements_lock_3_14_ft.txt",
-        )
+        if os.path.exists("build/requirements_lock_3_14.txt"):
+            shutil.copyfile(
+                "build/requirements_lock_3_14.txt",
+                "build/requirements_lock_3_14_ft.txt",
+            )
+        if os.path.exists("build/requirements_lock_3_15.txt"):
+            shutil.copyfile(
+                "build/requirements_lock_3_15.txt",
+                "build/requirements_lock_3_15_ft.txt",
+            )
 
 if __name__ == "__main__":
     main()

@@ -17,6 +17,7 @@ zstandard; python_version<"3.14"
 tensorstore
 
 # For jax2tf_test
+# TODO(phawkins): re-enable on Python 3.14+ once TensorFlow supports Python 3.14+
 tensorflow; python_version<"3.14"
 
 # Needed to build wheels
@@ -28,15 +29,18 @@ wheel
 # bazel test without building jaxlib and without manually updating the
 # the requirements files.
 jax
-jaxlib
+# TODO(phawkins): update to include Python 3.15 once jaxlib 3.15 wheels are published
+jaxlib; python_version<="3.14"
 
-jax-cuda12-plugin; sys_platform == "linux"
-jax-cuda13-plugin
-jax-cuda12-pjrt; sys_platform == "linux"
-jax-cuda13-pjrt
+# TODO(phawkins): update to include Python 3.15 once CUDA plugin wheels are published for 3.15
+jax-cuda12-plugin; sys_platform == "linux" and python_version<="3.14"
+jax-cuda13-plugin; python_version<="3.14"
+jax-cuda12-pjrt; sys_platform == "linux" and python_version<="3.14"
+jax-cuda13-pjrt; python_version<="3.14"
 
 # TPU dependencies
-libtpu; sys_platform == "linux" and platform_machine == "x86_64"
+# TODO(phawkins): update to include Python 3.15 once libtpu wheels are published for 3.15
+libtpu; sys_platform == "linux" and platform_machine == "x86_64" and python_version<="3.14"
 
 # Colorama is only needed on windows. Pip-compile ignores platform-specific
 # requirements therefore we include it unconditionally here so that the lockfile
