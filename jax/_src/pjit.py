@@ -68,7 +68,8 @@ from jax._src.sharding_impls import (
     make_single_device_sharding, UNSPECIFIED, UnspecifiedValue,
     prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
     _internal_use_concrete_mesh)
-from jax._src.layout import Format, Layout, AutoLayoutSingleton, get_layout_for_vmap
+from jax._src.layout import (Format, Layout, AutoLayoutSingleton,
+                             get_layout_for_vmap, AutoLayout)
 from jax._src.state.types import RefEffect
 from jax._src.traceback_util import api_boundary
 from jax._src import flattree as ft
@@ -2600,7 +2601,53 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
   outvals = map(read, jaxpr.outvars)
   return outvals
 
-# -------------------- helpers --------------------
+# ----------------------------- explicit layout --------------------------------
+
+def explicit_layout(f=None, /, *, in_layouts=None):
+  kwargs = dict(in_layouts=in_layouts)
+  if f is None:
+    return lambda g: _explicit_layout(g, **kwargs)
+  return _explicit_layout(f, **kwargs)
+
+def _explicit_layout(fun, *, in_layouts):
+  def decorator(*args, **kwargs):
+    if in_layouts is None:
+      if "in_layouts" in kwargs:
+        _in_layouts = kwargs.pop("in_layouts")
+      else:
+        raise TypeError("Missing required keyword argument: 'in_layouts'")
+    else:
+      _in_layouts = in_layouts
+    args = relayout(args, _in_layouts)
+    out = fun(*args)
+    return relayout(out, AutoLayout)
+  return decorator
+
+
+def relayout(xs, out_layouts):
+  x_flat, treedef = tree_flatten(xs)
+  layouts_flat = flatten_axis_resources(
+      "relayout out_layouts", treedef, out_layouts, tupled_args=True)
+  out_flat = [relayout_p.bind(x, dst_layout=l)
+              for x, l in zip(x_flat, layouts_flat)]
+  return tree_unflatten(treedef, out_flat)
+
+relayout_p = core.Primitive('relayout')
+
+def _relayout_abstract_eval(aval, *, dst_layout):
+  assert isinstance(aval, core.ShapedArray)
+  return aval.update(layout=dst_layout)
+relayout_p.def_abstract_eval(_relayout_abstract_eval)
+
+def _relayout_impl(x, *, dst_layout):
+  raise NotImplementedError
+relayout_p.def_impl(_relayout_impl)
+
+def _relayout_hlo_lowering(ctx, x_node, *, dst_layout):
+  raise NotImplementedError
+mlir.register_lowering(relayout_p, _relayout_hlo_lowering)
+
+# ------------------------------- helpers --------------------------------------
 
 def get_unconstrained_dims(sharding: NamedSharding):
   assert sharding.spec is not None

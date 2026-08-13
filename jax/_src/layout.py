@@ -24,12 +24,12 @@ from jax._src.lib import xla_client as xc
 
 Shape = tuple[int, ...]
 
+
 class AutoLayoutSingleton:
-
   def __repr__(self):
-    return "AUTO"
-
+    return "AutoLayout"
 AutoLayout = AutoLayoutSingleton()
+
 
 class Layout:
   major_to_minor: tuple[int, ...]

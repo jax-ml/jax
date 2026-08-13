@@ -60,7 +60,7 @@ import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding, get_replicated_axes
 from jax._src import named_sharding as ns
 from jax._src.sharding import Sharding
-from jax._src.layout import Format, AutoLayoutSingleton
+from jax._src.layout import Format, AutoLayout, AutoLayoutSingleton
 from jax._src.lib import _jax
 from jax._src import traceback_util
 from jax._src.typing import Array, ArrayLike, DimSize, Shape
@@ -2439,7 +2439,7 @@ def _empty_sharding(ndim):
 class ShapedArray(AbstractValue):
   # inherits slots from parent
   __slots__ = ['shape', 'dtype', 'weak_type', 'sharding', 'manual_axis_type',
-               'memory_space', '_stripped_weak_type', '__weakref__']
+               'memory_space', 'layout', '_stripped_weak_type', '__weakref__']
   array_abstraction_level = 2
 
   shape: Any
@@ -2448,12 +2448,13 @@ class ShapedArray(AbstractValue):
   sharding: Any
   manual_axis_type: Any
   memory_space: Any
+  layout: Any
   _stripped_weak_type: Any
 
   @staticmethod
   @weak_value_interner
   def _create(shape, dtype, weak_type, sharding, manual_axis_type,
-              memory_space):
+              memory_space, layout):
     obj = object.__new__(ShapedArray)
     object.__setattr__(obj, 'shape', shape)
     object.__setattr__(obj, 'dtype', dtype)
@@ -2461,12 +2462,14 @@ class ShapedArray(AbstractValue):
     object.__setattr__(obj, 'sharding', sharding)
     object.__setattr__(obj, 'manual_axis_type', manual_axis_type)
     object.__setattr__(obj, 'memory_space', memory_space)
+    object.__setattr__(obj, 'layout', layout)
     object.__setattr__(obj, '_stripped_weak_type', None)
     return obj
 
   def __new__(cls, shape, dtype, weak_type=False, *, sharding=None,
               manual_axis_type: ManualAxisType = empty_mat,
-              memory_space: MemorySpace = MemorySpace.Device):
+              memory_space: MemorySpace = MemorySpace.Device,
+              layout=AutoLayout):
     shape = canonicalize_shape(shape)
     dtype = _dtype_object(dtype)
     if sharding is None:
@@ -2479,7 +2482,7 @@ class ShapedArray(AbstractValue):
     # See description of https://github.com/jax-ml/jax/pull/30556
     memory_space = get_memory_space(memory_space)
     return cls._create(shape, dtype, weak_type, sharding, manual_axis_type,
-                       memory_space)
+                       memory_space, layout)
 
   # Interned types don't need __eq__ or __hash__.
 
@@ -2500,6 +2503,8 @@ class ShapedArray(AbstractValue):
       kwargs['manual_axis_type'] = self.manual_axis_type
     if 'memory_space' not in kwargs:
       kwargs['memory_space'] = self.memory_space
+    if 'layout' not in kwargs:
+      kwargs['layout'] = self.layout
     return ShapedArray(shape, dtype, weak_type, **kwargs)
 
   ndim = property(lambda self: len(self.shape))
@@ -2516,8 +2521,14 @@ class ShapedArray(AbstractValue):
     return (self.shape, self.dtype, self.weak_type), {
         'sharding': self.sharding,
         'manual_axis_type': self.manual_axis_type,
-        'memory_space': self.memory_space
+        'memory_space': self.memory_space,
+        'layout': self.layout,
     }
+
+  def str_short(self, short_dtypes=False, mesh_axis_types=False):
+    return str_short_aval(
+        self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,
+        self.mat, self.memory_space, short_dtypes, mesh_axis_types)
 
   def __repr__(self):
     wt_str = ", weak_type=True" if self.weak_type else ""
@@ -2530,19 +2541,16 @@ class ShapedArray(AbstractValue):
   def to_tangent_aval(self):
     return ShapedArray._create(
         self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-        self.weak_type, self.sharding, self.mat, self.memory_space)
+        self.weak_type, self.sharding, self.mat, self.memory_space,
+        self.layout)
 
   def to_ct_aval(self):
     dtype = primal_dtype_to_tangent_dtype(self.dtype)
     sharding = primal_sharding_to_cotangent_sharding(self.sharding)
     ct_mat = self.mat.to_ct_mat()
     return ShapedArray._create(
-        self.shape, dtype, self.weak_type, sharding, ct_mat, self.memory_space)
-
-  def str_short(self, short_dtypes=False, mesh_axis_types=False):
-    return str_short_aval(
-        self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,
-        self.mat, self.memory_space, short_dtypes, mesh_axis_types)
+        self.shape, dtype, self.weak_type, sharding, ct_mat, self.memory_space,
+        self.layout)
 
   def _len(self, ignored_tracer):
     try:
@@ -2555,13 +2563,15 @@ class ShapedArray(AbstractValue):
     if mat is self.manual_axis_type:
       return self
     return ShapedArray._create(self.shape, self.dtype, self.weak_type,
-                               self.sharding, mat, self.memory_space)
+                               self.sharding, mat, self.memory_space,
+                               self.layout)
 
   def update_weak_type(self, weak_type):
     if weak_type == self.weak_type:
       return self
     return ShapedArray._create(self.shape, self.dtype, weak_type, self.sharding,
-                               self.manual_axis_type, self.memory_space)
+                               self.manual_axis_type, self.memory_space,
+                               self.layout)
 
   def strip_weak_type(self) -> AbstractValue:
     if not self.weak_type:
