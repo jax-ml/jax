@@ -35,7 +35,7 @@ jobs:
       JAXCI_PYTHON: "python3.12"
       JAXCI_ENABLE_X64: 0
       JAX_NUM_GENERATED_CASES: 5
-      NUMPY_VERSION: "2.1.0"
+      NUMPY_VERSION: "2.2.0"
       SCIPY_VERSION: "1.15.0"
 
     steps:
