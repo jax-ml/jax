@@ -48,7 +48,7 @@ bazel_output_base=""
 if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
   os="windows"
   arch="amd64"
-  bazel_output_base="--output_base=C:\actions-runner\_work\bazel_output_base"
+  bazel_output_base="--output_base=C:\_b"
 fi
 
 if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-ft || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-nogil ]]; then
