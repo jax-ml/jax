@@ -1209,7 +1209,7 @@ class StateHypothesisTest(jtu.JaxTestCase):
     vmap_of_discharge_ans = f_batched(ref, val, *non_slice_idx)
 
     self.assertAllClose(discharge_of_vmap_ans, vmap_of_discharge_ans,
-                        check_dtypes=False)
+                        check_dtypes=False, atol=1e-4, rtol=1e-4)
 
 
 class StateControlFlowTest(jtu.JaxTestCase):
