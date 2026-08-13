@@ -24,7 +24,7 @@ import io
 import itertools
 import math
 import platform
-from typing import Union, cast
+from typing import cast
 import unittest
 from unittest import SkipTest
 
@@ -4648,7 +4648,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     [dict(shape=shape, axis=axis)
       for shape in [(3,), (3, 4), (3, 4, 5)]
       for axis in itertools.chain(range(-len(shape), len(shape)),
-                                  [cast(Union[int, None], None)])
+                                  [cast(int | None, None)])
     ],
     index_shape=scalar_shapes + [(3,), (2, 1, 3)],
     dtype=all_dtypes,
@@ -4700,7 +4700,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         filter(_shapes_are_broadcast_compatible,
                itertools.combinations_with_replacement(nonempty_nonscalar_array_shapes, 2)))
       for axis in itertools.chain(range(len(x_shape)), [-1],
-                                  [cast(Union[int, None], None)])
+                                  [cast(int | None, None)])
     ],
     dtype=default_dtypes,
     index_dtype=int_dtypes,

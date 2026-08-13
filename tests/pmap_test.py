@@ -21,7 +21,7 @@ import math
 from random import shuffle
 import re
 import gc
-from typing import Union, cast
+from typing import cast
 import unittest
 from unittest import SkipTest
 
@@ -53,7 +53,7 @@ jtu.request_cpu_devices(8)
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
 def all_bdims(*shapes):
-  bdims = (it.chain([cast(Union[int, None], None)], range(len(shape) + 1))
+  bdims = (it.chain([cast(int | None, None)], range(len(shape) + 1))
            for shape in shapes)
   return (t for t in it.product(*bdims) if not all(e is None for e in t))
 

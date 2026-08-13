@@ -20,7 +20,7 @@ import itertools as it
 import math
 import operator as op
 from types import SimpleNamespace
-from typing import Any, NamedTuple, TypeVar
+from typing import Any, NamedTuple
 import unittest
 
 from absl.testing import absltest
@@ -5834,15 +5834,14 @@ def make_out_spec(
 
 # Combinatorial helper functions
 
-T = TypeVar('T')
-def partitions(s: Sequence[T], k: int) -> Iterator[list[list[T]]]:
+def partitions[T](s: Sequence[T], k: int) -> Iterator[list[list[T]]]:
   for indices in it.product(range(k), repeat=len(s)):
     outs: list[list[T]] = [[] for _ in range(k)]
     for i, elt in zip(indices, s):
       outs[i].append(elt)
     yield outs
 
-def powerset(s: Iterable[T]) -> Iterator[Sequence[T]]:
+def powerset[T](s: Iterable[T]) -> Iterator[Sequence[T]]:
   s = list(s)
   return it.chain.from_iterable(it.combinations(s, r) for r in range(len(s)+1))
 

@@ -18,7 +18,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from functools import partial
 import itertools as it
-from typing import Any, TypeVar, Union
+from typing import Any
 
 import numpy as np
 from absl.testing import absltest
@@ -1260,7 +1260,7 @@ class BatchingTest(jtu.JaxTestCase):
 
 Array = Any
 ArrayElt = Any
-Int = Union[int, core.Tracer]
+Int = int | core.Tracer
 
 # Can't used NamedTuple here b/c those are pytrees
 class NamedArray:
@@ -1323,13 +1323,11 @@ def temporarily_register_named_array_vmappable():
   finally:
     batching.unregister_vmappable(NamedArray)
 
-a = TypeVar('a')
-
-def list_pop(lst: list[a], idx: int) -> a:
+def list_pop[T](lst: list[T], idx: int) -> T:
   lst = list(lst)
   return lst, lst.pop(idx)
 
-def list_insert(lst: list[a], idx: int, val: a) -> list[a]:
+def list_insert[T](lst: list[T], idx: int, val: T) -> list[T]:
   lst = list(lst)
   lst.insert(idx, val)
   return lst
