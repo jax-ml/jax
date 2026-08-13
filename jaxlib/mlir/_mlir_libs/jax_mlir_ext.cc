@@ -47,12 +47,14 @@ limitations under the License.
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Shape/IR/Shape.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/AsmState.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Visitors.h"
+#include "mlir/Parser/Parser.h"
 #include "mlir/Support/LLVM.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
@@ -69,6 +71,7 @@ using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyInsertionPoint;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyLocation;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyMlirContext;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyMlirContextRef;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyModule;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyOperation;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyOperationRef;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyThreadContextEntry;
@@ -368,6 +371,36 @@ NB_MODULE(_jax_mlir_ext, m) {
                 "mlir.ir.Location | None = ...) -> list[mlir.ir.Value]"),
         "Makes an inlined call to a function containing a single block with a "
         "single return op.");
+
+  m.def(
+      "clone_module",
+      [](PyModule& module) -> nb::object {
+        MlirOperation op = mlirModuleGetOperation(module.get());
+        MlirModule cloned = mlirModuleFromOperation(mlirOperationClone(op));
+        return PyModule::forModule(cloned).releaseObject();
+      },
+      nb::arg("module"),
+      nb::sig("def clone_module(module: mlir.ir.Module, /) -> mlir.ir.Module"),
+      "Clones an MLIR module in memory.");
+
+  m.def(
+      "parse_module_bytecode",
+      [](nb::bytes bytecode, PyMlirContext& context,
+         bool verify = false) -> nb::object {
+        llvm::StringRef source_str(bytecode.c_str(), bytecode.size());
+        mlir::ParserConfig config(unwrap(context.get()), verify);
+        mlir::OwningOpRef<mlir::ModuleOp> module =
+            mlir::parseSourceString<mlir::ModuleOp>(source_str, config);
+        if (!module) {
+          throw std::runtime_error("Failed to parse MLIR bytecode");
+        }
+        MlirModule c_module = wrap(module.release());
+        return PyModule::forModule(c_module).releaseObject();
+      },
+      nb::arg("bytecode"), nb::arg("context"), nb::arg("verify") = false,
+      nb::sig("def parse_module_bytecode(bytecode: bytes, context: "
+              "mlir.ir.Context, verify: bool = False) -> mlir.ir.Module"),
+      "Parses MLIR bytecode into a module, optionally bypassing the verifier.");
 
   m.def("arith_constant", &ArithConstant, nb::arg("value"), nb::arg("type"),
         nb::sig("def arith_constant(value: int | float | bool, type: "

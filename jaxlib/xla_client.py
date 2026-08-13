@@ -45,7 +45,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 479  # Triton device-side TMA global scratch buffer
+_version = 480  # clone_module and parse_module_bytecode in jax_mlir_ext
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.

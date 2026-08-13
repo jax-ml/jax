@@ -1481,6 +1481,7 @@ def lower_jaxpr_to_module(
     if config.use_shardy_partitioner.value:
       pipeline = passmanager.PassManager.parse(
           'builtin.module(sdy-lift-inlined-meshes)')
+      pipeline.enable_verifier(bool(config.enable_checks.value))
       pipeline.run(ctx.module.operation)
 
   util.test_event("mlir.collect_lowered_jaxprs", jaxpr, ctx.module)
@@ -3401,10 +3402,11 @@ def custom_call(
       has_side_effect=ir.BoolAttr.get(has_side_effect),
       backend_config=backend_config_attr,
       api_version=i32_attr(api_version),
-      called_computations=ir.ArrayAttr.get(
-          [ir.FlatSymbolRefAttr.get(name) for name in called_computations]
-      ),
   )
+  if called_computations:
+    attributes["called_computations"] = ir.ArrayAttr.get(
+        [ir.FlatSymbolRefAttr.get(name) for name in called_computations]
+    )
   if operand_output_aliases is not None:
     attributes["output_operand_aliases"] = ir.ArrayAttr.get([
       hlo.OutputOperandAlias.get(

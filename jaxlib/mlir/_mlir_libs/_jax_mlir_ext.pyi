@@ -32,6 +32,14 @@ def inlined_func_call(
 ) -> list[ir.Value]:
   """Makes an inlined call to a function containing a single block with a single return op."""
 
+def clone_module(module: ir.Module, /) -> ir.Module:
+  """Clones an MLIR module in memory."""
+
+def parse_module_bytecode(
+    bytecode: bytes, context: ir.Context, verify: bool = False
+) -> ir.Module:
+  """Parses MLIR bytecode into a module, optionally bypassing the verifier."""
+
 def arith_constant(value: int | float | bool, type: ir.Type, /) -> ir.Value:
   """Creates an arith.constant operation."""
 
