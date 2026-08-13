@@ -400,9 +400,10 @@ core.custom_typechecks[call_hi_primitive_p] = _call_hi_primitive_typecheck
 
 def _call_hi_primitive_staging(trace, source_info, *args_flat, _prim):
   trace.frame.is_high = True
-  args = tree_unflatten(_prim.in_tree, args_flat)
-  ans = _prim.staging(trace, source_info, *args)
-  return tree_leaves_checked(_prim.out_tree, ans)
+  with core.set_current_trace(trace):  # user pytree hooks may ask for the trace
+    args = tree_unflatten(_prim.in_tree, args_flat)
+    ans = _prim.staging(trace, source_info, *args)
+    return tree_leaves_checked(_prim.out_tree, ans)
 pe.custom_staging_rules[call_hi_primitive_p] = _call_hi_primitive_staging
 
 def _call_hi_primitive_to_lojax(*args_flat, _prim):
