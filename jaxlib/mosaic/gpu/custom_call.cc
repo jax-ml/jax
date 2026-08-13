@@ -969,8 +969,6 @@ struct DeviceState {
   // Serialized collective kernel metadata.
   // Structure has the following layout:
   // [CollectiveKernelMetadata][param_to_peers][multimem_addresses]
-  // multimem_addresses are set only for parameters that use multimem
-  // instructions.
   // Note: the collective metadata param to peers and multimem addresses are
   // pointing to the nullptr and should not be used during the lowering.
   std::vector<std::byte> metadata_bytes;
@@ -1210,33 +1208,6 @@ absl::StatusOr<std::vector<bool>> ParseCollectiveMemoryParameters(
   return result;
 }
 
-// Returns the vector of booleans indicating whether the corresponding buffer
-// is used with multimem instructions.
-absl::StatusOr<std::vector<bool>> ParseMultimemParameters(
-    xla::ffi::Dictionary attributes, size_t num_buffers,
-    bool is_multimem_used = true) {
-  if (!is_multimem_used) {
-    return std::vector<bool>(num_buffers, false);
-  }
-  std::string_view attribute_value =
-      attributes.get<std::string_view>("multimem_parameters").value_or("");
-  if (attribute_value.empty()) {
-    return std::vector<bool>(num_buffers, false);
-  }
-  ASSIGN_OR_RETURN(std::vector<int64_t> multimem_parameters,
-                   ParseInts(attribute_value));
-  std::vector<bool> result(num_buffers, false);
-  for (int64_t param_idx : multimem_parameters) {
-    if (param_idx < 0 || param_idx >= static_cast<int64_t>(num_buffers)) {
-      return absl::InvalidArgumentError(
-          absl::StrFormat("Invalid multimem parameter index %d for %d buffers",
-                          param_idx, num_buffers));
-    }
-    result[param_idx] = true;
-  }
-  return result;
-}
-
 absl::StatusOr<xla::gpu::GpuCliqueKey> GetCliqueKey(
     const xla::gpu::CollectiveParams& collective_params,
     const xla::ffi::Dictionary& attributes) {
@@ -1424,11 +1395,6 @@ absl::Status MosaicGpuInitialize(
   std::vector<void*> param_to_peers(buffers.size() * clique_key.num_devices());
   ASSIGN_OR_RETURN(std::vector<bool> collective_memory_parameters,
                    ParseCollectiveMemoryParameters(attributes, buffers.size()));
-  bool is_multimem_used =
-      resources->kernel != nullptr && resources->kernel->is_multimem_used;
-  ASSIGN_OR_RETURN(
-      std::vector<bool> multimem_parameters,
-      ParseMultimemParameters(attributes, buffers.size(), is_multimem_used));
 
   const bool all_parameters_in_collective_memory = absl::c_all_of(
       collective_memory_parameters,
@@ -1464,18 +1430,16 @@ absl::Status MosaicGpuInitialize(
             clique_key.ToString()));
       }
 
-      if (multimem_parameters[i]) {
-        ASSIGN_OR_RETURN(se::DeviceAddressBase multimem_address,
-                         symmetric_memory->multimem_addr());
+      ASSIGN_OR_RETURN(se::DeviceAddressBase multimem_address,
+                       symmetric_memory->multimem_addr());
 
-        XLA_VLOG_DEVICE(6, device_ordinal)
-            << "MosaicGpuInitialize buffer: " << i << " device_address: ("
-            << device_address.opaque() << ", size: " << device_address.size()
-            << ") found multimem_address: (" << multimem_address.opaque()
-            << ", offset: " << offset << ")";
+      XLA_VLOG_DEVICE(6, device_ordinal)
+          << "MosaicGpuInitialize buffer: " << i << " device_address: ("
+          << device_address.opaque() << ", size: " << device_address.size()
+          << ") found multimem_address: (" << multimem_address.opaque()
+          << ", offset: " << offset << ")";
 
-        parameter_multimem_addresses[i] = multimem_address.opaque();
-      }
+      parameter_multimem_addresses[i] = multimem_address.opaque();
 
       // Use the allocated memory allocation instead to correctly calculate
       // the offset of the multimem parameter.
