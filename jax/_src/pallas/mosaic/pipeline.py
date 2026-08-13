@@ -1409,6 +1409,8 @@ def _normalize_specs(specs: Any) -> tuple[pallas_core.BlockSpec, ...]:
     specs = (specs,)
   if isinstance(specs, list):
     specs = tuple(specs)
+  specs = jax.tree.map(lambda s: pallas_core.BlockSpec()
+                       if s is pallas_core.no_block_spec else s, specs)
   return specs
 
 
