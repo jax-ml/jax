@@ -4760,6 +4760,45 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     )(x)
     np.testing.assert_array_equal(out, x.reshape([m * n]))
 
+  # (m, n) -> (m * n, 1) and (m * n) -> (m, n, 1) where n % 128 == 0
+  @parameterized.parameters(
+      (m, n, dtype, reshape_mode)
+      for (m, n), dtype, reshape_mode in itertools.product(
+          [
+              (5, 512),
+              (9, 256),
+              (11, 128),
+          ],
+          [jnp.float32, jnp.bfloat16, jnp.int8],
+          ['R2_to_R2', 'R1_to_R3'],
+      )
+  )
+  def test_reshape_with_singleton_minor_dim(self, m, n, dtype, reshape_mode):
+    if not jtu.is_libtpu_at_least('0.0.46'):
+      self.skipTest('Needs a newer libtpu')
+    if dtype in (jnp.bfloat16, jnp.int8) and not jtu.is_device_tpu_at_least(6):
+      self.skipTest(
+          'Insert singleton minor-most dimension for packed types is only'
+          ' supported on TPU v6+.'
+      )
+
+    if reshape_mode == 'R2_to_R2':
+      in_shape = (m, n)
+      out_shape = (m * n, 1)
+    else:  # reshape_mode == 'R1_to_R3'
+      in_shape = (m * n,)
+      out_shape = (m, n, 1)
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...].reshape(out_shape)
+
+    x = np.arange(m * n, dtype=dtype).reshape(in_shape)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x.reshape(out_shape))
+
   # (q, m, n) -> (q, m * n) where n % 128 == 0
   @parameterized.parameters(
       (q, m, n, dtype)
