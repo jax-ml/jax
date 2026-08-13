@@ -1476,7 +1476,7 @@ jax_multiplatform_test(
                 "--xla_tpu_enable_mlir_verifier=ALL",
                 "--xla_sc_assert_level=san",
             ],
-        ),
+        ) + ["--xla_tpu_mosaic_sc_disable_pipeline=false"],
         "tpu_8i_grm": [
             "--xla_tpu_enable_mlir_verifier=ALL",
             "--xla_sc_assert_level=san",
@@ -1505,6 +1505,7 @@ jax_multiplatform_test(
         "//jax/experimental:pallas_tpu_sc",
     ] + py_deps([
         "absl/testing",
+        "absl/testing:flagsaver",
         "hypothesis",
         "numpy",
     ]),
