@@ -648,7 +648,7 @@ def emit_pipeline_warp_specialized(
     wg_axis: str,
     num_compute_wgs: int,
     pipeline_state: jax.Array | PipelinePipeline | None = None,
-    manual_ready_barriers: bool = False,
+    manual_produced_barriers: bool = False,
     manual_consumed_barriers: bool = False,
     compute_context: ComputeContext | None = None,
     memory_thread_idx: int | None = None,
@@ -682,9 +682,9 @@ def emit_pipeline_warp_specialized(
       active concurrently. Defaults to 2.
     wg_axis: The axis name for the warp group axis.
     num_compute_wgs: The number of compute warpgroups
-    manual_ready_barriers: If True, ready barriers will be passed into the body
-      function after the output refs. There will be one barrier per input and
-      will be passed in the same order.
+    manual_produced_barriers: If True, produced barriers will be passed into the
+      body function after the output refs. There will be one barrier per input
+      and will be passed in the same order.
     manual_consumed_barriers: If True, consumed barriers will be
       passed into the body function after the output refs. There will be one
       barrier per input and will be passed in the same order.
@@ -828,13 +828,13 @@ def emit_pipeline_warp_specialized(
       )
     flat_in_smem_refs, flat_out_smem_refs = util.split_list(
         smem_allocs, [len(flat_in_specs)])
-    if manual_ready_barriers:
-      flat_ready_barriers = [
+    if manual_produced_barriers:
+      flat_produced_barriers = [
           gpu_core.Barrier(num_barriers=max_concurrent_steps)
           for _ in flat_in_specs
       ]
     else:
-      flat_ready_barriers = [
+      flat_produced_barriers = [
           gpu_core.Barrier(
               num_arrivals=len(flat_in_specs), num_barriers=max_concurrent_steps
           )
@@ -869,7 +869,7 @@ def emit_pipeline_warp_specialized(
     return dict(
         flat_in_smem_refs=flat_in_smem_refs,
         flat_out_smem_refs=flat_out_smem_refs,
-        flat_ready_barrier_refs=flat_ready_barriers,
+        flat_produced_barrier_refs=flat_produced_barriers,
         flat_consumed_barrier_refs=flat_consumed_barriers,
     )
 
@@ -927,7 +927,7 @@ def emit_pipeline_warp_specialized(
       flat_out_gmem_refs,
       flat_in_smem_refs,
       flat_out_smem_refs,
-      flat_ready_barrier_refs,
+      flat_produced_barrier_refs,
       flat_consumed_barrier_refs,
   ):
     flat_in_brefs: Sequence[BufferedRef] = [
@@ -972,9 +972,9 @@ def emit_pipeline_warp_specialized(
         indices, last_store_indices, prev_body_carry = carry
         slot = lax.rem(step, max_concurrent_steps)
         consumed_slot = lax.rem(step - delay_release, max_concurrent_steps)
-        if not manual_ready_barriers:
+        if not manual_produced_barriers:
           # Wait for the current GMEM->SMEM copies to complete.
-          [barrier] = flat_ready_barrier_refs
+          [barrier] = flat_produced_barrier_refs
           gpu_primitives.barrier_wait(barrier.at[_get_slot(slot, True)])
 
         # Wait for the previous output SMEM->GMEM copy to complete.
@@ -993,10 +993,10 @@ def emit_pipeline_warp_specialized(
             all_brefs,
         )
 
-        if manual_ready_barriers:
+        if manual_produced_barriers:
           barriers = jax.tree.unflatten(
               in_specs_treedef,
-              [barrier.at[slot] for barrier in flat_ready_barrier_refs],
+              [barrier.at[slot] for barrier in flat_produced_barrier_refs],
           )
           body_args = (*body_args, *barriers)
         if manual_consumed_barriers:
@@ -1130,15 +1130,15 @@ def emit_pipeline_warp_specialized(
         else:
           prologue_steps = jnp.where(pipeline_state == PipelinePipeline.START, prologue_steps, 0)
 
-      if manual_ready_barriers:
-        ready_barriers_refs = flat_ready_barrier_refs
+      if manual_produced_barriers:
+        produced_barriers_refs = flat_produced_barrier_refs
       else:
-        [ready_barrier] = flat_ready_barrier_refs
-        ready_barriers_refs = [ready_barrier] * len(flat_in_brefs)
+        [produced_barrier] = flat_produced_barrier_refs
+        produced_barriers_refs = [produced_barrier] * len(flat_in_brefs)
 
       # Begin initial copies.
       def _init_step(step, indices):
-        for bref, barrier in zip(flat_in_brefs, ready_barriers_refs):
+        for bref, barrier in zip(flat_in_brefs, produced_barriers_refs):
           buf_slot = _get_slot(step, not bref.is_index_invariant)
           barrier_slot = _get_slot(step, True)
           bref.copy_in(buf_slot, indices, barrier, barrier_slot)
@@ -1163,7 +1163,7 @@ def emit_pipeline_warp_specialized(
           consumed_barriers_refs = [None] * len(flat_in_brefs)
 
         for bref, barrier, consumed_barrier in zip(
-            flat_in_brefs, ready_barriers_refs, consumed_barriers_refs
+            flat_in_brefs, produced_barriers_refs, consumed_barriers_refs
         ):
           if manual_consumed_barriers:
             assert consumed_barrier is not None
