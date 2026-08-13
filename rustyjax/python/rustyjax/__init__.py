@@ -10,7 +10,15 @@ from types import SimpleNamespace
 import numpy as np
 
 from . import _core
-from ._core import Jaxpr, TraceCtx, Tracer, int_type
+from ._core import Jaxpr, TraceCtx, Tracer, Type, int_type
+
+
+def f32(*shape):
+    return Type(list(shape), "f32")
+
+
+def i32(*shape):
+    return Type(list(shape), "i32")
 
 _active = contextvars.ContextVar("rustyjax_trace", default=None)
 
@@ -61,14 +69,16 @@ class Compiled:
                 return xc.HloSharding.replicate()
 
         dev = _cpu_client().local_devices()[0]
-        aval = SimpleNamespace(shape=(), dtype=np.dtype(np.int64), weak_type=False)
-        bufs = [
-            xc.batched_device_put(aval, _Sharding(dev), [np.asarray(a, np.int64)],
-                                  [dev], enable_x64=True)
-            for a in args
-        ]
+        bufs = []
+        for a in args:
+            a = np.asarray(a)
+            aval = SimpleNamespace(shape=a.shape, dtype=a.dtype, weak_type=False)
+            bufs.append(xc.batched_device_put(aval, _Sharding(dev), [a], [dev],
+                                              enable_x64=True))
         [out] = self.exe.execute(bufs)
-        return int(np.asarray(out))
+        out = np.asarray(out)
+        # plain int for scalar integer results (the original mini-language API)
+        return int(out) if out.ndim == 0 and out.dtype.kind == "i" else out
 
 
 def trace(f, in_types):
@@ -85,9 +95,32 @@ def eval(traced, args):
     return _core.eval(traced.jaxpr, args)
 
 
-def add(x, y):
-    return _core.add(_active.get(), x, y)
+def _op(name):
+    f = getattr(_core, name)
+
+    def wrapper(*args):
+        return f(_active.get(), *args)
+
+    wrapper.__name__ = name
+    return wrapper
 
 
-def mul(x, y):
-    return _core.mul(_active.get(), x, y)
+add = _op("add")
+sub = _op("sub")
+mul = _op("mul")
+div = _op("div")
+matmul = _op("matmul")
+take = _op("take")
+exp = _op("exp")
+tanh = _op("tanh")
+sqrt = _op("sqrt")
+reshape = _op("reshape")
+transpose = _op("transpose")
+
+
+def reduce_sum(x, axis=-1, keepdims=False):
+    return _core.reduce_sum(_active.get(), x, axis, keepdims)
+
+
+def reduce_max(x, axis=-1, keepdims=False):
+    return _core.reduce_max(_active.get(), x, axis, keepdims)

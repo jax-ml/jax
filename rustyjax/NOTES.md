@@ -137,3 +137,77 @@ reinstall after editing the shim too (or use `uv pip install -e .`).
 
 Verified: original test (12), two-arg fn, constant-output jaxpr, and Rust
 interpreter agreement with XLA on the same jaxpr.
+
+### 2026-08-10 (later still) — Python-JAX trace-time baseline
+
+`trace-benchmark.py` (repo root): decoder-only transformer fwd pass in plain
+jnp (no flax; hand-written layernorm/softmax so rustyjax can mirror it
+op-for-op). 8 layers, d_model=512, seq=128 → 648-eqn jaxpr. On this machine
+(M-series mac, CPU), jax@main:
+
+- true trace (caches cleared): **~12.5 ms = ~52k eqns/sec = ~19 µs/eqn** ← the
+  number rustyjax has to beat
+- warm "trace": 0.39 ms — but that's jax's jaxpr cache hitting, not tracing
+  (30x gap; found by accident, worth knowing that modern jax memoizes whole
+  jaxprs keyed on fn identity + avals)
+- repo's own benchmarks/tracing_benchmark.py exists but is pallas/TPU-focused
+  + needs google_benchmark; borrowed its clear_caches methodology instead.
+
+To run the same model through rustyjax we need ~15 more primitives (dot_general
+or matmul, reshape, transpose, gather/take, reduce_{sum,max}, exp, rsqrt, sub,
+div, where/select, broadcast, tanh for gelu) + shaped f32 avals — that's the
+real next milestone, and it forces the Aval::Int → ShapedArray generalization
+anyway.
+
+### 2026-08-10 (evening) — transformer traces through rustyjax; 110x
+
+Extended the core: `Aval = {shape: Vec<i64>, dtype}` (f32/i32/i64), 13 prims
+(elementwise +-*/ with numpy broadcasting, exp/tanh/sqrt, matmul 2D+batched-3D,
+take, reshape/transpose/reduce with params in the enum variants — the
+"operands flat, params structured" design finally exercised), scalar literals
+made dtype-polymorphic (adopt the var operand's dtype). Lowering handles
+broadcast insertion, dot_general/gather/reduce in StableHLO text. Old
+interpreter demoted to scalar-i64-only reference. `trace-benchmark-rusty.py`
+mirrors the transformer op-for-op in prefix style.
+
+**Results** (same machine, identical model after the mask/softmax/gelu tweaks,
+8 layers / d_model 512 / seq 128):
+
+- python jax true trace: 616 eqns, 10.8 ms (17.5 us/eqn)
+- python jax jaxpr-cache hit: 0.38 ms (not really tracing)
+- **rustyjax: 487 eqns, 0.11 ms (0.23 us/eqn) — ~98x vs true trace, ~3x vs
+  jax's cache hit**
+
+2026-08-13: merged the two benchmark scripts into one `trace_benchmark.py`
+(Dougal: divergence risk). Model written once against a 13-op backend
+namespace; per-system code is just the op table (jnp lambdas vs rj functions)
++ trace/execute entry points. Numbers unchanged (jax 595 eqns / 11.1 ms /
+18.7 us/eqn — slightly fewer eqns now that jax also traces the explicit mean
+formula; rustyjax 487 eqns / 0.12 ms / 0.24 us/eqn; numerics still 2.6e-8).
+Benchmark-methodology gotcha caught in review: first version rebuilt the 102
+rj.Type objects inside the timed region (+0.13 ms, 2x on rustyjax's number!) —
+at these speeds the harness is as easy to get wrong as the code under test.
+- numerics: both executed via XLA CPU on same inputs, max|diff| 2.6e-8 on
+  scale-0.05 outputs → same computation. (Eqn counts differ because jnp emits
+  convert/broadcast/integer_pow bookkeeping; numeric equivalence through XLA is
+  the meaningful check, not HLO text diff.)
+- hand-rolled StableHLO emission (dot_general/gather/reduce generic+pretty
+  syntax) parsed and compiled by jaxlib's bundled MLIR on the first try.
+
+Fairness caveats for the report: rustyjax's 0.11 ms still includes Python-side
+per-op dispatch (shim fn + contextvar.get). But rustyjax also does less than
+jax's tracing (no pytrees, no weak types, no jit-dispatch layers, no source
+info tracking) — so 110x is "prototype vs product", not like-for-like. Still:
+the per-eqn budget (0.23 us incl. a Python call) says the Rust core itself is
+nearly free; Python call overhead is now the floor.
+
+Decisions made unilaterally (flagged to Dougal):
+
+- causal mask + tokens are *arguments*, not closed-over constants → no array
+  constants in the IR yet (needs a const pool eventually).
+- no pytrees: trace takes a flat list of types; the twin flattens by hand.
+  Pytree flattening is Python-shim policy when it comes.
+- no operator overloading on Tracer yet (needs ctx access from dunder methods —
+  design-B wrinkle); model written in prefix style.
+- dtype rules: strict equality, no promotion; scalar lits adopt var dtype.
+- matmul: 2D and batch-1 3D only. take: 2D table, 1D int indices only.
