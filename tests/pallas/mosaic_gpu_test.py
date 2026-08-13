@@ -40,6 +40,7 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import util
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
@@ -3927,6 +3928,32 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     src = jnp.arange(128, dtype=jnp.float32).reshape((1, 128))
     dst = lax.broadcast_in_dim(src, (2, 4, 128), (1, 2))
     np.testing.assert_array_equal(kernel(src), dst)
+
+  @parameterized.parameters("col", "row")
+  def test_broadcast_in_dim_with_expanded_dimension(self, mode):
+    # TODO: Remove when the minimum jaxlib version is 0.11.1
+    if jaxlib_extension_version < 480:
+      self.skipTest("Requires jaxlib with BroadcastInDim canonicalizer")
+    if not self.is_wg_semantics():
+      self.skipTest("Layout inference is only enabled under WG semantics.")
+
+    shape = (64, 64)
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct(shape, jnp.float32))
+    def kernel(mask_ref, acc_ref, o_ref):
+      mask = plgpu.load(mask_ref, optimized=False)
+      acc = plgpu.load(acc_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+      if mode == "col":
+        o_ref[...] = acc * mask[:, None]
+      elif mode == "row":
+        o_ref[...] = acc * mask[None, :]
+      else:
+        raise ValueError(f"Unknown mode: {mode}")
+
+    mask = jnp.arange(64, dtype=jnp.float32)
+    acc = jnp.arange(64 * 64, dtype=jnp.float32).reshape(shape)
+    expected = acc * (mask[:, None] if mode == "col" else mask[None, :])
+    np.testing.assert_array_equal(kernel(mask, acc), expected)
 
   @parameterized.named_parameters((l.name.lower(), l) for l in plgpu.Layout)
   def test_copy_layout(self, layout):

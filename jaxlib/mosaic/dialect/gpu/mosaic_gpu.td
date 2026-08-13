@@ -692,7 +692,7 @@ def MosaicGPU_TmemLayoutCastOp : Op<MosaicGPU_Dialect, "tmem_layout_cast",
 }
 
 
-def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", []> {
+def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", [Pure]> {
   let summary = "Broadcasts a vector to a new shape.";
   let description = [{
     The `operand` is broadcast to the shape described by the result type.
@@ -717,6 +717,7 @@ def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", []> {
     `(` $operand `:` type($operand) `)` attr-dict `->` type(results)
   }];
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 }
 
 def MosaicGPU_VectorConcatOp : Op<MosaicGPU_Dialect, "vector_concat",

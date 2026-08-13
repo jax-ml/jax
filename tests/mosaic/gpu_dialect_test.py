@@ -24,6 +24,7 @@ from jax._src import config
 from jax._src import hypothesis_test_util as htu
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import builtin
@@ -2089,6 +2090,62 @@ ir.MLIRError,
 
     [reinterpret_cast_op] = self.find_ops(mgpu.dialect.ReinterpretCastOp)
     self.assertEqual(reinterpret_cast_op.result.type, ty2)
+
+  def test_broadcast_in_dim_canonicalization(self):
+    # TODO: Remove when the minimum jaxlib version is 0.11.1
+    if jaxlib_extension_version < 480:
+      self.skipTest("Requires jaxlib with BroadcastInDim canonicalizer")
+
+    ty0 = ir.VectorType.get((64,), ir.F32Type.get())
+    ty1 = ir.VectorType.get((64, 1), ir.F32Type.get())
+    ty2 = ir.VectorType.get((64, 64), ir.F32Type.get())
+
+    with ir.InsertionPoint(self.module.body):
+      func_type = ir.FunctionType.get(inputs=[ty0], results=[ty2])
+      f = func.FuncOp("test_func", func_type)
+      block = f.add_entry_block()
+      with ir.InsertionPoint(block):
+        bcast1 = mgpu.dialect.broadcast_in_dim(ty1, block.arguments[0], [0])
+        bcast2 = mgpu.dialect.broadcast_in_dim(ty2, bcast1, [0, 1])
+        func.ReturnOp([bcast2])
+
+    pm = mlir_interpreter.passmanager.PassManager.parse(
+        "builtin.module(canonicalize)", self.module.context
+    )
+    pm.run(self.module.operation)
+
+    [bcast_op] = self.find_ops(mgpu.dialect.BroadcastInDimOp)
+    self.assertEqual(bcast_op.result.type, ty2)
+    self.assertEqual(list(bcast_op.broadcast_dimensions), [0])
+    self.assertEqual(bcast_op.operand, block.arguments[0])
+
+  def test_broadcast_in_dim_canonicalization_higher_rank(self):
+    # TODO: Remove when the minimum jaxlib version is 0.11.1
+    if jaxlib_extension_version < 480:
+      self.skipTest("Requires jaxlib with BroadcastInDim canonicalizer")
+
+    ty0 = ir.VectorType.get((64,), ir.F32Type.get())
+    ty1 = ir.VectorType.get((148, 64, 18), ir.F32Type.get())
+    ty2 = ir.VectorType.get((256, 148, 147, 64, 16, 18), ir.F32Type.get())
+
+    with ir.InsertionPoint(self.module.body):
+      func_type = ir.FunctionType.get(inputs=[ty0], results=[ty2])
+      f = func.FuncOp("test_func", func_type)
+      block = f.add_entry_block()
+      with ir.InsertionPoint(block):
+        bcast1 = mgpu.dialect.broadcast_in_dim(ty1, block.arguments[0], [1])
+        bcast2 = mgpu.dialect.broadcast_in_dim(ty2, bcast1, [1, 3, 5])
+        func.ReturnOp([bcast2])
+
+    pm = mlir_interpreter.passmanager.PassManager.parse(
+        "builtin.module(canonicalize)", self.module.context
+    )
+    pm.run(self.module.operation)
+
+    [bcast_op] = self.find_ops(mgpu.dialect.BroadcastInDimOp)
+    self.assertEqual(bcast_op.result.type, ty2)
+    self.assertEqual(list(bcast_op.broadcast_dimensions), [3])
+    self.assertEqual(bcast_op.operand, block.arguments[0])
 
 
 class DialectLoweringTest(MosaicGpuTest):
