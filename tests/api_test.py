@@ -4284,6 +4284,16 @@ class APITest(jtu.JaxTestCase):
 
     self.assertIn('is referred to by', scope())  # doesn't crash
 
+  def test_traced_closure_convert(self):
+    x = jnp.float32(2.)
+    traced = jit(lambda y: y ** 2 * x).trace(jnp.float32(3.))
+    consts, fun = traced.closure_convert()
+    self.assertAllClose(fun(consts, jnp.float32(3.)), jnp.float32(18.))
+    self.assertAllClose(fun([jnp.float32(10.)], jnp.float32(3.)),
+                        jnp.float32(90.))
+    consts2, traced2 = traced.with_consts_as_arg()
+    self.assertAllClose(traced2(consts2, jnp.float32(3.)), jnp.float32(18.))
+
   def test_default_backend(self):
     first_local_device = jax.local_devices()[0]
     self.assertEqual(first_local_device.platform, jax.default_backend())
@@ -9303,7 +9313,7 @@ class TracebackTest(jtu.JaxTestCase):
   def test_custom_vjp_traceback(self):
     # TODO(dougalm): improve this
     expected_depth_f = 7 if config.custom_vjp3.value else 9
-    expected_depth_f_fwd = 16
+    expected_depth_f_fwd = 17 if config.custom_vjp3.value else 16
     expected_depth_f_rev = 12
     init_depth = self.cur_depth()
     @jax.custom_vjp
