@@ -1,7 +1,7 @@
 #
 # runtime deps
 #
-numpy~=2.1.0; python_version<="3.13"
+numpy~=2.2.0; python_version<="3.13"
 numpy>=2.3.2; python_version>="3.14"
 scipy>=1.15.0; python_version<="3.12"
 scipy>=1.15.2; python_version>="3.13"
