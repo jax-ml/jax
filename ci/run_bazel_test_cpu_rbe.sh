@@ -78,6 +78,10 @@ else
   IGNORE_TESTS="-//tests/multiprocess:array_test_cpu"
 fi
 
+if [[ $os == "windows" ]]; then
+  IGNORE_TESTS="$IGNORE_TESTS -//jax/experimental/jax2tf/tests/multiprocess:jax2tf_multiprocess_test_cpu"
+fi
+
 if [[ "$JAXCI_BAZEL_CPU_RBE_MODE" == 'build' ]]; then
     echo "Building RBE CPU tests..."
 else
