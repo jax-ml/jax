@@ -28,7 +28,7 @@ import io
 import copy
 import operator as op
 import tokenize
-from typing import Any, SupportsIndex, TypeAlias, TypeGuard, Union, overload
+from typing import Any, SupportsIndex, TypeAlias, TypeGuard, overload
 import warnings
 
 import numpy as np
@@ -46,7 +46,6 @@ from jax._src import typing
 from jax._src import util
 
 
-DimSize: TypeAlias = Union["_DimExpr", int]
 TfVal = Any
 DimVarEnv = dict[str, typing.Array]
 DType = Any
@@ -975,6 +974,9 @@ def cmp_sequence(s1, s2, elem_cmp) -> int:
     if c := elem_cmp(e1, s2[i]): return c
   if len(s1) < l2: return -1
   return 0
+
+
+DimSize: TypeAlias = _DimExpr | int
 
 
 class SymbolicScope:

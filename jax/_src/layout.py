@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from typing import Union
 
 import numpy as np
 from jax._src.dtypes import iinfo, issubdtype
@@ -101,8 +100,8 @@ class Layout:
           f' Got major_to_minor={self.major_to_minor} and shape={aval_shape}')
 
 
-LayoutOptions = Union[Layout, None, AutoLayoutSingleton]
-ShardingOptions = Union[Sharding, None]
+LayoutOptions = Layout | None | AutoLayoutSingleton
+ShardingOptions = Sharding | None
 
 
 class Format:

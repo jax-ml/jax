@@ -14,16 +14,17 @@
 
 """Layout & transform inference convenience utils."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from functools import partial
-from typing import Union
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 
 from . import utils
 
-MlirOperation = Union[ir.Operation, ir.OpView]
+MlirOperation = ir.Operation | ir.OpView
 
 
 def in_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:

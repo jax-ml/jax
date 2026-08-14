@@ -23,7 +23,7 @@ import functools
 import itertools
 import json
 import re
-from typing import Any, Protocol, TypeVar, Union, cast
+from typing import Any, Protocol, TypeVar, cast
 
 import logging
 import numpy as np
@@ -66,7 +66,7 @@ zip = util.safe_zip
 DType = Any
 Shape = core.Shape
 # The values of input and output sharding from the lowering.
-LoweringSharding = Union[sharding.Sharding, pxla.UnspecifiedValue]
+LoweringSharding = sharding.Sharding | pxla.UnspecifiedValue
 NamedSharding = sharding_impls.NamedSharding
 HloSharding = xla_client.HloSharding
 

@@ -25,7 +25,7 @@ import enum
 import functools
 import itertools
 import threading
-from typing import Any, ClassVar, Protocol, Union, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from jax._src import api_util
 from jax._src import checkify
@@ -77,7 +77,7 @@ GridName = Hashable
 GridNames = tuple[Hashable, ...] | None
 NamedGrid = tuple[tuple[GridName, int], ...]
 TupleGrid = tuple[GridElement, ...]
-Grid = Union[NamedGrid, TupleGrid]
+Grid = NamedGrid | TupleGrid
 StaticGrid = tuple[int, ...]
 GridMappingGrid = tuple[int | DynamicGridDim, ...]
 OriginStr = str  # The origin of a block spec, e.g. input[2]["field"]
@@ -1208,9 +1208,9 @@ class ScratchShape(Protocol):
     ...
 
 
-ScratchShapeTree = (
-    Sequence[Union[ScratchShape, "ScratchShapeTree", None]]
-    | Mapping[str, Union[ScratchShape, "ScratchShapeTree"]]
+type ScratchShapeTree = (
+    Sequence[ScratchShape | ScratchShapeTree | None]
+    | Mapping[str, ScratchShape | ScratchShapeTree]
 )
 
 

@@ -24,7 +24,7 @@ import enum
 import functools
 import itertools as it
 import math
-from typing import Any, ClassVar, Literal, Union
+from typing import Any, ClassVar, Literal
 
 import jax
 from jax._src import api
@@ -709,7 +709,7 @@ class RefUnion(GPUMemoryRef):
                             memory_space=self.memory_space)
 
 
-Index = Union[mgpu.DynamicSlice, slice, int, ir.Value]
+Index = mgpu.DynamicSlice | slice | int | ir.Value
 
 
 @dataclasses.dataclass(frozen=True)

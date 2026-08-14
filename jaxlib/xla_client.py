@@ -23,7 +23,7 @@ import enum
 import logging
 import os
 import threading
-from typing import Any, Protocol, Union
+from typing import Any, Protocol
 
 from jaxlib import _jax as _xla
 
@@ -60,7 +60,7 @@ xla_platform_names = {
 
 logger = logging.getLogger(__name__)
 
-_NameValueMapping = Mapping[str, Union[str, int, list[int], float, bool]]
+_NameValueMapping = Mapping[str, str | int | list[int] | float | bool]
 
 
 def make_cpu_client(

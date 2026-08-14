@@ -19,7 +19,6 @@ from functools import partial
 import math
 from operator import index
 import typing
-from typing import Union
 import warnings
 
 import numpy as np
@@ -181,8 +180,8 @@ class PRNGSpec:
 
 # TODO(frostig,vanderplas): remove PRNGImpl from this union when it's
 # no longer in the public API because `default_prng_impl` is gone
-PRNGSpecDesc = Union[str, PRNGSpec, PRNGImpl, Hashable]
-KeyDTypeLike = Union[str, prng.KeyTy]
+PRNGSpecDesc = str | PRNGSpec | PRNGImpl | Hashable
+KeyDTypeLike = str | prng.KeyTy
 
 
 def resolve_prng_impl(

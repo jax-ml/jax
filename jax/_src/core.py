@@ -31,7 +31,7 @@ import sys
 import threading
 import types
 from typing import (Any, ClassVar, NamedTuple, final, overload,
-                    Union, TYPE_CHECKING, Literal as Literal_)
+                    TYPE_CHECKING, Literal as Literal_)
 import warnings
 import weakref
 
@@ -654,7 +654,7 @@ def eqn_params_const_args(params) -> list[tuple[ArrayLike, AbstractValue]]:
     )
   return list(consts_by_id.values())
 
-Atom = Union[Var, Literal]
+Atom = Var | Literal
 
 class Primitive:
   name: str
@@ -2814,7 +2814,7 @@ class bint(dtypes.ExtendedDType):
   def __str__(self) -> str:
     return self.name
 
-AxisSize = Union[int, Tracer, Var]
+AxisSize = int | Tracer | Var
 
 
 class RefMeta(type):

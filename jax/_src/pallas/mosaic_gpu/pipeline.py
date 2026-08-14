@@ -22,7 +22,7 @@ import enum
 import functools
 import itertools as it
 import math
-from typing import Any, Protocol, Union
+from typing import Any, Protocol
 
 import jax
 from jax import api_util
@@ -49,10 +49,8 @@ class PipelineCallback[T](Protocol):
   """A callback that returns the same type as the input."""
   def __call__(self, arg: T, /) -> T: ...
 
-type BlockSpecPytree = Sequence[Union[pl.BlockSpec, "BlockSpecPytree"]]
-type AbstractRefPytree = Sequence[
-    Union[state.AbstractRef, "AbstractRefPytree"]
-]
+type BlockSpecPytree = Sequence[pl.BlockSpec | BlockSpecPytree]
+type AbstractRefPytree = Sequence[state.AbstractRef | AbstractRefPytree]
 
 
 def _get_block_size(bd: pl.BlockDim | int | None) -> int:

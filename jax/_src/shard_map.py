@@ -20,7 +20,7 @@ import inspect
 from math import prod
 import itertools as it
 import operator as op
-from typing import Any, TypeVar, Union, cast, overload
+from typing import Any, TypeVar, cast, overload
 
 import numpy as np
 
@@ -709,7 +709,7 @@ class Tup:
 # Primitive
 
 JaxType = Any
-MaybeTracer = Union[JaxType, Tracer]
+MaybeTracer = JaxType | Tracer
 
 class ShardMapPrimitive(core.Primitive):
   multiple_results = True

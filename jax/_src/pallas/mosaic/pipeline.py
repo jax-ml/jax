@@ -23,7 +23,7 @@ import enum
 import functools
 import itertools
 import math
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 import jax
 from jax import core as jax_core
@@ -80,13 +80,13 @@ PARALLEL = tpu_core.PARALLEL
 ARBITRARY = tpu_core.ARBITRARY
 SemaphoreType = tpu_core.SemaphoreType
 SemaphoreTuple = jax.Array
-ArrayRef = Union[REF, jax.Array]
+ArrayRef = REF | jax.Array
 Tiling = tpu_info.Tiling
 
 GridIndices = tuple[jax.Array, ...]
-CondVal = Union[jax.Array, bool]
-PipelineBlockSpecs = Union[Sequence[pallas_core.BlockSpec], Any]
-PipelineRefs = Union[Sequence[REF], Any]
+CondVal = jax.Array | bool
+PipelineBlockSpecs = Sequence[pallas_core.BlockSpec] | Any
+PipelineRefs = Sequence[REF] | Any
 
 is_transformed_ref = lambda x: isinstance(x, state.TransformedRef)
 

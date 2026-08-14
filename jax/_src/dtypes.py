@@ -26,7 +26,7 @@ from collections.abc import Callable
 import dataclasses
 import functools
 import types
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, cast, overload
 import warnings
 
 import ml_dtypes
@@ -557,7 +557,7 @@ def _issubdtype_cached(a: type | np.dtype | ExtendedDType,
 
 can_cast = np.can_cast
 
-JAXType = Union[type, DType]
+JAXType = type | DType
 
 # Enumeration of all valid JAX types in order.
 _weak_types: list[JAXType] = [int, float, complex]

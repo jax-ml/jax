@@ -35,7 +35,7 @@ import dataclasses
 from dataclasses import dataclass
 import enum
 import itertools as it
-from typing import Any, NamedTuple, Protocol, Union, runtime_checkable
+from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 from jax._src import config
 from jax._src import core
@@ -64,7 +64,7 @@ traceback_util.register_exclusion(__file__)
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
-CompilerOptions = dict[str, Union[str, bool]]
+CompilerOptions = dict[str, str | bool]
 
 
 # -- Internal types

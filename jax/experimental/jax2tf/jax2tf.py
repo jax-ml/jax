@@ -23,7 +23,7 @@ import math
 import os
 import threading
 import dataclasses
-from typing import Any, Union
+from typing import Any
 import warnings
 
 import numpy as np
@@ -783,7 +783,7 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
     return tf_val, jax_dtype
 
 
-PartitionsOrReplicated = Union[tuple[int, ...], None]
+PartitionsOrReplicated = tuple[int, ...] | None
 
 def split_to_logical_devices(tensor: TfVal,
                              partition_dimensions: PartitionsOrReplicated):

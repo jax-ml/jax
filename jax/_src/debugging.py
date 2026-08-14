@@ -22,7 +22,7 @@ import importlib.util
 import logging
 import string
 import sys
-from typing import Any, Union, overload
+from typing import Any, overload
 
 import numpy as np
 
@@ -784,7 +784,7 @@ def _raise_to_slice(slc: slice | int):
     return slice(slc, slc + 1)
   return slc
 
-Color = Union[tuple[float, float, float], str]
+Color = tuple[float, float, float] | str
 ColorMap = Callable[[float], tuple[float, float, float, float]]
 
 def _canonicalize_color(color: Color) -> str:

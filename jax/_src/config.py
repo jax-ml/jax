@@ -23,7 +23,7 @@ import itertools
 import logging
 import os
 import sys
-from typing import Any, NoReturn, Optional, Protocol, TypeVar, cast
+from typing import Any, NoReturn, Protocol, TypeVar, cast
 from typing import TYPE_CHECKING
 
 from jax._src import logging_config
@@ -317,7 +317,7 @@ class StateContextManager[FuncType: Callable[..., Any]]:
       if self.prev is config_ext.unset:
         self.state._update_thread_local_hook(None)
       else:
-        self.state._update_thread_local_hook(cast(Optional[Any], self.prev))
+        self.state._update_thread_local_hook(cast(Any | None, self.prev))
 
   def __call__(self, func: FuncType) -> FuncType:
     @functools.wraps(func)

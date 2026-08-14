@@ -31,7 +31,7 @@ import os
 import pkgutil
 import platform as py_platform
 import threading
-from typing import Any, Union
+from typing import Any
 from collections.abc import Sequence
 import warnings
 
@@ -170,7 +170,7 @@ _at_fork_handler_installed = False
 
 # Backends
 
-_NameValueMapping = Mapping[str, Union[str, int, list[int], float, bool]]
+_NameValueMapping = Mapping[str, str | int | list[int] | float | bool]
 
 def _make_transfer_server_factory(
 ) -> _jax.TransferServerInterfaceFactory | None:
@@ -247,8 +247,8 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
 # example, there could be multiple backends that provide the same kind of
 # device.
 
-BackendFactory = Callable[[], Union[xla_client.Client, None]]
-TopologyFactory = Callable[..., Union[xla_client.DeviceTopology, None]]
+BackendFactory = Callable[[], xla_client.Client | None]
+TopologyFactory = Callable[..., xla_client.DeviceTopology | None]
 
 @dataclasses.dataclass(slots=True)
 class BackendRegistration:
