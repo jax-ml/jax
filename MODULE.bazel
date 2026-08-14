@@ -99,6 +99,7 @@ single_version_override(
         # Upstreamed at https://github.com/bazel-contrib/rules_python/pull/3768
         "//third_party/py:rules_python_local_wheel.patch",
         "//third_party/py:rules_python_cpython_3_15.patch",
+        "//third_party/py:rules_python_windows_long_paths.patch",
     ],
     version = "2.2.0",
 )
