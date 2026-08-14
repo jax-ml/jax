@@ -357,7 +357,10 @@ class PallasMGPUTest(PallasTest):
 
   def pallas_call(self, *args, **kwargs):
     assert "compiler_params" not in kwargs
-    return super().pallas_call(
+    if self.INTERPRET:
+      raise self.skipTest("Mosaic GPU does not support interpret mode.")
+    from jax._src.pallas.mosaic_gpu import pallas_call
+    return pallas_call.pallas_call(
         *args, compiler_params=plmgpu.CompilerParams(), **kwargs
     )
 

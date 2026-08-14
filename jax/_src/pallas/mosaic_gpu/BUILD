@@ -167,6 +167,7 @@ pytype_strict_library(
     type_checking = "pyrefly",
     deps = [
         ":core",
+        ":pipeline",
         ":primitives",
         "//jax",
         "//jax/_src:dtypes",
@@ -190,4 +191,17 @@ pytype_strict_library(
         "//jax/_src/lib",
         "//jax/experimental:mosaic_gpu",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "pallas_call",
+    srcs = ["pallas_call.py"],
+    type_checking = "pyrefly",
+    deps = [
+        ":core",
+        ":pipeline",
+        "//jax",
+        "//jax/_src:util",
+        "//jax/_src/pallas",
+    ],
 )

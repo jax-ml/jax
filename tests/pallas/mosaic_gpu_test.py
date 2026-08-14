@@ -25,7 +25,7 @@ import sys
 import tempfile
 import traceback
 import types
-from typing import Any, ClassVar, TYPE_CHECKING
+from typing import ClassVar, TYPE_CHECKING
 from unittest import mock
 import warnings
 
@@ -39,13 +39,11 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import test_util as jtu
-from jax._src import util
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
-from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
@@ -203,7 +201,7 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
 
   def pallas_call(
       self,
-      kernel_fn=None,
+      fn,
       *,
       out_shape,
       grid=(),
@@ -216,97 +214,17 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
         compiler_params,
         lowering_semantics=self.LOWERING_SEMANTICS,
     )
-    if isinstance(grid, int):
-      grid = (grid,)
-
-    dimension_semantics = compiler_params.dimension_semantics
-    if dimension_semantics is None:
-      dimension_semantics = ("parallel",) * len(grid)
-    which_parallel = [ds == "parallel" for ds in dimension_semantics]
-    sequential_grid, parallel_grid = util.partition_list(which_parallel, grid)
-
-    def _make_pipeline_spec(spec):
-      if spec.index_map is None:
-        return spec
-      parallel_indices = [
-          lax.axis_index(f"d{i}") for i, _ in enumerate(parallel_grid)
-      ]
-      return dataclasses.replace(
-          spec,
-          index_map=lambda *indices: spec.index_map(
-              *util.merge_lists(
-                  which_parallel,
-                  indices[: len(sequential_grid)],
-                  parallel_indices,
-              )
-          ),
-      )
-
-    def _normalize_specs(specs, default_count):
-      if not specs:
-        return [pl.BlockSpec()] * default_count
-      if not isinstance(specs, (list, tuple)):
-        return [specs]
-      return list(specs)
-
-    def decorator(fn):
-      @jax.jit
-      @self.kernel(
-          out_type=out_shape,
-          scratch_types=scratch_shapes,
-          compiler_params=dataclasses.replace(
-              compiler_params, dimension_semantics=None
-          ),
-          grid=parallel_grid,
-          grid_names=tuple(f"d{i}" for i, _ in enumerate(parallel_grid)),
-      )
-      def wrapper(*args_gmem):
-        gmem_refs, scratch_refs = util.split_list(
-            args_gmem, [len(args_gmem) - len(scratch_shapes)]
-        )
-
-        num_inputs = len(gmem_refs) - len(jax.tree.leaves(out_shape))
-        num_outputs = len(jax.tree.leaves(out_shape))
-
-        @functools.partial(
-            plgpu.emit_pipeline,
-            grid=sequential_grid,
-            in_specs=[
-                _make_pipeline_spec(s)
-                for s in _normalize_specs(in_specs, num_inputs)
-            ],
-            out_specs=[
-                _make_pipeline_spec(s)
-                for s in _normalize_specs(out_specs, num_outputs)
-            ],
-            max_concurrent_steps=compiler_params.max_concurrent_steps,
-        )
-        def pipeline(indices, *args):
-          grid_env = util.merge_lists(
-              which_parallel,
-              [*map(pallas_core.GridAxis, indices, sequential_grid)],
-              parallel_grid_env,
-          )
-          with pallas_core.grid_env(grid_env):
-            fn(*args, *scratch_refs)
-
-        parallel_grid_env = [
-            pallas_core.GridAxis(
-                lax.axis_index(f"d{i}"), lax.axis_size(f"d{i}")
-            )
-            for i, _ in enumerate(parallel_grid)
-        ]
-        grid_env: list[Any] = util.merge_lists(
-            which_parallel, [None] * len(sequential_grid), parallel_grid_env
-        )
-        with pallas_core.grid_env(grid_env):
-          pipeline(*gmem_refs)
-
-      return wrapper
-
-    if kernel_fn is not None:
-      return decorator(kernel_fn)
-    return decorator
+    from jax._src.pallas.mosaic_gpu import pallas_call
+    return pallas_call.pallas_call(
+        fn,
+        out_shape=out_shape,
+        grid=grid,
+        in_specs=in_specs,
+        out_specs=out_specs,
+        scratch_shapes=scratch_shapes,
+        compiler_params=compiler_params,
+        kernel_fn=self.kernel,
+    )
 
   @contextlib.contextmanager
   def capture_stdout(self):

@@ -21,7 +21,6 @@ import subprocess
 import sys
 import unittest
 from typing import Any
-import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -311,20 +310,48 @@ UNARY_FUNCTIONS = [
 
 class PallasBaseTest(ptu.PallasTest):
 
-  @classmethod
-  def pallas_call(cls, *args, **kwargs):
-    # Node-level skip: only triggers if a test actually tries to use pallas_call
-    # while Mosaic backend is selected on ROCm.
-    if jtu.test_device_matches(["rocm"]) and use_mosaic_gpu:
-      raise unittest.SkipTest("Mosaic GPU is not supported on ROCm.")
-    if jtu.test_device_matches(["cuda"]) and use_mosaic_gpu:
-      assert plgpu_mgpu is not None
-      compiler_params = plgpu_mgpu.CompilerParams(
-          lowering_semantics=plgpu_mgpu.LoweringSemantics.Warpgroup
-      )
-      kwargs["compiler_params"] = compiler_params
+  if use_mosaic_gpu:
+    @classmethod
+    def pallas_call(
+        cls,
+        fn,
+        out_shape,
+        grid=(),
+        in_specs=(),
+        out_specs=(),
+        **kwargs,
+    ):
+      if cls.INTERPRET:
+        raise unittest.SkipTest("Mosaic GPU does not support interpret mode.")
 
-    return pl.pallas_call(*args, interpret=cls.INTERPRET, **kwargs)
+      # Node-level skip: only triggers if a test actually tries to use pallas_call
+      # while Mosaic backend is selected on ROCm.
+      if jtu.test_device_matches(["rocm"]):
+        raise unittest.SkipTest("Mosaic GPU is not supported on ROCm.")
+      if jtu.test_device_matches(["cuda"]):
+        assert plgpu_mgpu is not None
+        compiler_params = plgpu_mgpu.CompilerParams(
+            lowering_semantics=plgpu_mgpu.LoweringSemantics.Warpgroup
+        )
+      else:
+        compiler_params = None
+
+      from jax._src.pallas.mosaic_gpu import pallas_call
+      return pallas_call.pallas_call(
+          fn,
+          out_shape=out_shape,
+          grid=grid,
+          in_specs=in_specs,
+          out_specs=out_specs,
+          compiler_params=compiler_params,
+          **kwargs,
+      )
+
+  else:
+
+    @classmethod
+    def pallas_call(cls, *args, **kwargs):
+      return pl.pallas_call(*args, interpret=cls.INTERPRET, **kwargs)
 
   def skip_if_mosaic_gpu(self):
     if jtu.test_device_matches(["gpu"]) and use_mosaic_gpu:
@@ -335,19 +362,6 @@ class PallasBaseTest(ptu.PallasTest):
 
 @jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class OpsTest(PallasBaseTest):
-
-  def setUp(self):
-    if jtu.test_device_matches(["gpu"]) and use_mosaic_gpu:
-      self.enter_context(warnings.catch_warnings())
-      warnings.filterwarnings(
-          "ignore",
-          category=DeprecationWarning,
-          message=(
-              "Using ``pl.pallas_call`` for Mosaic GPU kernels is deprecated"
-          ),
-      )
-
-    super().setUp()
 
   @parameterized.named_parameters(
       (fn.__name__, fn, dtype) for fn, dtype in [
@@ -960,19 +974,16 @@ class OpsTest(PallasBaseTest):
         result.append(jnp.full((1, 128), i, jnp.float32))
       out[:] = jnp.stack(result, axis=axis).reshape(num_arrays, 128)
 
-    def run(interpret=False):
-      if jtu.test_device_matches(["rocm"]) and use_mosaic_gpu:
-        raise unittest.SkipTest("Mosaic GPU is not supported on ROCm.")
-      return pl.pallas_call(
-          kernel,
-          out_shape=jax.ShapeDtypeStruct((num_arrays, 128), jnp.float32),
-          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
-          interpret=interpret,
-      )()
-    expected = run(True)
-    if not self.INTERPRET:
-      actual = run(False)
-      self.assertAllClose(actual, expected)
+    actual = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((num_arrays, 128), jnp.float32),
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+    )()
+    expected = jnp.stack(
+        [jnp.full((1, 128), i, jnp.float32) for i in range(num_arrays)],
+        axis=axis,
+    ).reshape(num_arrays, 128)
+    self.assertAllClose(actual, expected)
 
   @parameterized.named_parameters(
       (f"{dtype.__name__}_{value}", dtype, value)
@@ -2876,6 +2887,8 @@ class OpsTest(PallasBaseTest):
           out_shape=out_shape,
       )(x)
       np.testing.assert_array_equal(out, jnp.pad(x, padding, mode=pad_type))
+    except unittest.SkipTest:
+      raise
     except Exception as e:
       self.assertLess(
           jtu.get_tpu_version(), 4, "only TPU older than v4 may fail"
@@ -3032,7 +3045,7 @@ class OpsTest(PallasBaseTest):
 
     if jtu.test_device_matches(["rocm"]) and use_mosaic_gpu:
       self.skipTest("Mosaic GPU is not supported on ROCm.")
-    deq_call = pl.pallas_call(
+    deq_call = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct(data.shape, dtype),
         grid=(batch_size,),
@@ -3059,9 +3072,8 @@ class OpsTest(PallasBaseTest):
       pl.delay(100_000)
       o_ref[...] = x_ref[...]
     x = jax.random.normal(jax.random.key(0), (128,), dtype=jnp.float32)
-    result = pl.pallas_call(
-        kernel, out_shape=x,
-        interpret=self.INTERPRET)(x)
+    result = self.pallas_call(
+        kernel, out_shape=x)(x)
     np.testing.assert_array_equal(result, x)
 
 

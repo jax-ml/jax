@@ -71,6 +71,7 @@ jax_multiplatform_test(
     },
     deps = [
         "//jax/_src/pallas:pallas_test_util",
+        "//jax/_src/pallas/mosaic_gpu:pallas_call",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_gpu_ops",
         "//jax/experimental:pallas_mosaic_gpu",
@@ -216,6 +217,7 @@ jax_multiplatform_test(
     deps = [
         "//jax/_src:hypothesis_test_util",
         "//jax/_src/pallas:pallas_test_util",
+        "//jax/_src/pallas/mosaic_gpu:pallas_call",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax/experimental:pallas_tpu",
@@ -298,6 +300,7 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
+        "//jax/_src/pallas/mosaic_gpu:pallas_call",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_mosaic_gpu",  # build_cleaner: keep
     ] + py_deps([
