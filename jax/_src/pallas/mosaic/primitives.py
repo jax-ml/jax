@@ -15,6 +15,7 @@
 """Module for Pallas:TPU-specific JAX primitives and functions."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 import dataclasses
 import logging
 from typing import Any
@@ -23,18 +24,20 @@ import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import flattree as ft
 from jax._src import pretty_printer as pp
-from jax._src.random import prng as jax_prng
 from jax._src import random as jax_random
 from jax._src import state
-from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.lax import convolution
+from jax._src.lax import lax
 from jax._src.pallas import core as pl_core
 from jax._src.pallas import primitives
 from jax._src.pallas.mosaic import core as tpu_core
+from jax._src.random import prng as jax_prng
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
@@ -1427,3 +1430,145 @@ def _matmul_pop_fifo_abstract_eval(*, shape, dtype, **_):
         f"Only float32 and int32 results are supported, got {dtype}"
     )
   return jax_core.ShapedArray(shape, dtype), {mxu_effect}
+
+
+conv_p = jax_core.Primitive("conv")
+
+
+def conv(
+    lhs: jax.Array,
+    rhs: jax.Array,
+    acc: jax.Array | None = None,
+    *,
+    dimension_numbers: tuple[str, str, str] | convolution.ConvDimensionNumbers,
+    window_strides: Sequence[int] | None = None,
+    padding: str | Sequence[tuple[int, int]] | None = None,
+    lhs_dilation: Sequence[int] | None = None,
+    rhs_dilation: Sequence[int] | None = None,
+    window_reversal: Sequence[bool] | None = None,
+    feature_group_count: int = 1,
+    batch_group_count: int = 1,
+    precision: lax.PrecisionLike = None,
+    preferred_element_type: DTypeLike | None = None,
+) -> jax.Array:
+  """General N-D convolution operator for TPU Mosaic Pallas kernels.
+
+  Args:
+    lhs: Input activation array with batch, feature, and spatial dimensions.
+    rhs: Kernel/filter weight array with input-feature, output-feature, and
+      spatial dimensions.
+    acc: Optional initial accumulator array whose shape and dtype match the
+      convolution output. If None, an all-zero accumulator is allocated.
+    dimension_numbers: Either a tuple of 3 strings (e.g. `("NHWC", "HWIO",
+      "NHWC")`) or a `ConvDimensionNumbers` object specifying the dimension
+      roles for `lhs`, `rhs`, and output.
+    window_strides: Strides for the spatial dimensions. Defaults to 1 for all
+      spatial dimensions.
+    padding: Either a padding string (`"SAME"`, `"VALID"`) or a sequence of
+      `(low_pad, high_pad)` pairs for each spatial dimension. Defaults to 0.
+    lhs_dilation: Dilation rate applied to the input activations. Defaults to 1.
+    rhs_dilation: Dilation rate applied to the kernel weights (atrous rate).
+      Defaults to 1.
+    window_reversal: Boolean sequence indicating whether to reverse the kernel
+      window along each spatial dimension.
+    feature_group_count: Number of feature groups for grouped convolution.
+      Defaults to 1.
+    batch_group_count: Number of batch groups for grouped convolution. Defaults
+      to 1.
+    precision: Computation precision level (e.g. `Precision.DEFAULT`,
+      `Precision.HIGH`, `Precision.HIGHEST`).
+    preferred_element_type: Optional preferred element type for intermediate
+      accumulation and output.
+
+  Returns:
+    Result of the convolution operation as a jax.Array.
+  """
+  if isinstance(dimension_numbers, tuple):
+    dimension_numbers = convolution.conv_dimension_numbers(
+        lhs.shape, rhs.shape, dimension_numbers
+    )
+  num_spatial = len(dimension_numbers.lhs_spec) - 2
+  if window_strides is None:
+    window_strides = (1,) * num_spatial
+  if lhs_dilation is None:
+    lhs_dilation = (1,) * num_spatial
+  if rhs_dilation is None:
+    rhs_dilation = (1,) * num_spatial
+  if isinstance(padding, str):
+    lhs_perm, rhs_perm, _ = dimension_numbers
+    rhs_shape = [rhs.shape[i] for i in rhs_perm[2:]]
+    effective_rhs_shape = [
+        jax_core.dilate_dim(k, r) for k, r in zip(rhs_shape, rhs_dilation)
+    ]
+    lhs_spatial = [lhs.shape[i] for i in lhs_perm[2:]]
+    padding = tuple(
+        lax.padtype_to_pads(
+            lhs_spatial, effective_rhs_shape, window_strides, padding
+        )
+    )
+  elif padding is None:
+    padding = ((0, 0),) * num_spatial
+  else:
+    padding = tuple(padding)
+
+  args = (lhs, rhs) if acc is None else (lhs, rhs, acc)
+  return conv_p.bind(
+      *args,
+      dimension_numbers=dimension_numbers,
+      window_strides=window_strides,
+      padding=padding,
+      lhs_dilation=lhs_dilation,
+      rhs_dilation=rhs_dilation,
+      window_reversal=window_reversal,
+      feature_group_count=feature_group_count,
+      batch_group_count=batch_group_count,
+      precision=precision,
+      preferred_element_type=preferred_element_type,
+  )
+
+
+@conv_p.def_abstract_eval
+def _conv_abstract_eval(
+    *args,
+    dimension_numbers,
+    window_strides=None,
+    padding=None,
+    lhs_dilation=None,
+    rhs_dilation=None,
+    window_reversal=None,
+    feature_group_count: int = 1,
+    batch_group_count: int = 1,
+    precision=None,
+    preferred_element_type=None,
+):
+  lhs, rhs = args[0], args[1]
+  acc = args[2] if len(args) > 2 else None
+  if acc is not None:
+    return jax_core.ShapedArray(acc.shape, acc.dtype)
+
+  if isinstance(dimension_numbers, tuple):
+    dimension_numbers = convolution.conv_dimension_numbers(
+        lhs.shape, rhs.shape, dimension_numbers
+    )
+  num_spatial = len(dimension_numbers.lhs_spec) - 2
+  if window_strides is None:
+    window_strides = (1,) * num_spatial
+  if padding is None:
+    padding = ((0, 0),) * num_spatial
+  if lhs_dilation is None:
+    lhs_dilation = (1,) * num_spatial
+  if rhs_dilation is None:
+    rhs_dilation = (1,) * num_spatial
+  out_shape = convolution._conv_general_dilated_shape_rule(
+      lhs,
+      rhs,
+      window_strides=window_strides,
+      padding=padding,
+      lhs_dilation=lhs_dilation,
+      rhs_dilation=rhs_dilation,
+      dimension_numbers=dimension_numbers,
+      feature_group_count=feature_group_count,
+      batch_group_count=batch_group_count,
+  )
+  out_dtype = preferred_element_type or lhs.dtype
+  return jax_core.ShapedArray(out_shape, out_dtype)
