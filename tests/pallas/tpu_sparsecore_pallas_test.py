@@ -1694,6 +1694,38 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x)
 
+  def test_scratch_tc_vmem(self):
+    x = jnp.arange(self.num_lanes, dtype=jnp.int32)
+    tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+    tec_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+        num_cores=1,
+        num_subcores=1,
+    )
+
+    @pl.kernel(
+        mesh=tec_mesh,
+        out_type=x,
+        scratch_types=[pltpu.VMEM(x.shape, x.dtype) @ tc_mesh],
+    )
+    def kernel(x_ref, o_ref, scratch_ref):
+      pltpu.sync_copy(x_ref, scratch_ref)
+      pltpu.sync_copy(scratch_ref, o_ref)
+
+    # TC VMEM scratch on SparseCore is only supported on TPU v8i.
+    if jtu.is_device_tpu(8, "i"):
+      out = jax.jit(kernel)(x)
+      np.testing.assert_array_equal(out, x)
+    else:
+      with self.assertRaisesRegex(
+          jax.errors.JaxRuntimeError,
+          r"(RESOURCE_EXHAUSTED|exceeds the legitimate user allocatable"
+          r" offset|Ran out of memory|exceed memory|Targeting VMEM on MegaCore"
+          r" targets is ambiguous)",
+      ):
+        jax.jit(kernel)(x)
+
   def test_pl_kernel_in_shmap_explicit_mesh(self):
     num_subcores = self.sc_info.num_subcores
     mesh = jax.make_mesh((jax.device_count(), 1), ('x', 'y'))
