@@ -95,28 +95,28 @@ _ENABLE_MEGASCALE = absl.flags.DEFINE_bool(
 
 _HEARTBEAT_TIMEOUT = absl.flags.DEFINE_integer(
     "heartbeat_timeout",
-    5,
+    30,
     "Timeout in seconds for heartbeat checks. Set to a higher number when"
     " running under sanitizers.",
 )
 
 _SHUTDOWN_TIMEOUT = absl.flags.DEFINE_integer(
     "shutdown_timeout",
-    15,
+    30,
     "JAX shutdown timeout duration in seconds for each subprocess worker. If "
     "your test is timing out, try increasing this value.",
 )
 
 _BARRIER_TIMEOUT = absl.flags.DEFINE_integer(
     "barrier_timeout",
-    60,
+    120,
     "Barrier timeout in seconds. Set to a higher number when running under"
     " sanitizers.",
 )
 
 _INITIALIZATION_TIMEOUT = absl.flags.DEFINE_integer(
     "initialization_timeout",
-    10,
+    60,
     "Coordination service initialization timeout in seconds. Set to a higher"
     " number when running under sanitizers.",
 )
