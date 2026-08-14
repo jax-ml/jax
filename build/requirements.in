@@ -39,8 +39,7 @@ jax-cuda12-pjrt; sys_platform == "linux" and python_version<="3.14"
 jax-cuda13-pjrt; python_version<="3.14"
 
 # TPU dependencies
-# TODO(phawkins): update to include Python 3.15 once libtpu wheels are published for 3.15
-libtpu; sys_platform == "linux" and platform_machine == "x86_64" and python_version<="3.14"
+libtpu; sys_platform == "linux" and platform_machine == "x86_64"
 
 # Colorama is only needed on windows. Pip-compile ignores platform-specific
 # requirements therefore we include it unconditionally here so that the lockfile

@@ -4774,7 +4774,7 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_with_singleton_minor_dim(self, m, n, dtype, reshape_mode):
-    if not jtu.is_libtpu_at_least('0.0.46'):
+    if not jtu.is_libtpu_at_least('0.0.47'):
       self.skipTest('Needs a newer libtpu')
     if dtype in (jnp.bfloat16, jnp.int8) and not jtu.is_device_tpu_at_least(6):
       self.skipTest(
