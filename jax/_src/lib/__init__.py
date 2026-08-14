@@ -189,16 +189,18 @@ def _cuda_path() -> str | None:
     python_runfiles = os.environ.get('PYTHON_RUNFILES')
     if not python_runfiles:
       return None
-    cuda_nvcc_root = os.path.join(python_runfiles, 'cuda_nvcc')
-    if os.path.exists(cuda_nvcc_root):
-      return cuda_nvcc_root
+    for p in pathlib.Path(python_runfiles).glob('*cuda_nvcc*'):
+      if p.is_dir() and (
+          (p / 'bin' / 'ptxas').exists() or (p / 'bin' / 'nvdisasm').exists()
+      ):
+        return str(p)
     return None
 
   if (path := _try_cuda_root_environment_variable()) is not None:
     return path
-  elif (path := _try_cuda_nvcc_import()) is not None:
-    return path
   elif (path := _try_bazel_runfiles()) is not None:
+    return path
+  elif (path := _try_cuda_nvcc_import()) is not None:
     return path
 
   return None
