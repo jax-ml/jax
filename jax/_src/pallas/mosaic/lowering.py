@@ -3042,6 +3042,11 @@ def _conv_lowering_rule(
     precision=None,
     **_,
 ):
+  if not ctx.is_libtpu_at_least("0.1.0"):
+    # When removing this, also remove the pyrefly ignore annotation for ConvOp
+    # below.
+    raise NotImplementedError("Requires libtpu >= 0.1.0")
+
   if feature_group_count != 1 or batch_group_count != 1:
     raise NotImplementedError(
         "Grouped convolutions are not supported on Pallas Mosaic TPU backend"
@@ -3095,7 +3100,7 @@ def _conv_lowering_rule(
 
   padding_flat = [int(p) for pair in padding for p in pair]
 
-  return tpu.ConvOp(
+  return tpu.ConvOp(  # pyrefly: ignore[missing-attribute]
       out_type,
       lhs,
       rhs,
