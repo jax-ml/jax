@@ -37,7 +37,6 @@ from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
 from jax._src.util import (safe_zip, split_list)
-from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 
 
@@ -87,7 +86,7 @@ def _raise_if_unsupported_memory_space(
 
 
 def _raise_if_unsupported_collective_axes(
-    mesh: plgpu.Mesh | None,
+    mesh: mosaic_gpu_core.Mesh | None,
     is_collective_by_thread_cluster_axis: tuple[bool, ...],
 ):
   if not mesh or not mesh.thread_name:
@@ -225,9 +224,9 @@ class JaxprInterpreter:
 
   cluster_dims: tuple[int, ...]
 
-  mesh: plgpu.Mesh | None
+  mesh: mosaic_gpu_core.Mesh | None
   # Only present if this interpreter is created by a core_map with a WarpMesh.
-  warp_mesh: plgpu.WarpMesh | None = dataclasses.field(default=None)
+  warp_mesh: mosaic_gpu_core.WarpMesh | None = dataclasses.field(default=None)
   device_info: DeviceInfo
   compiler_params: Mapping[str, Any]
   interpret_params: InterpretGPUParams
@@ -549,7 +548,7 @@ class JaxprInterpreter:
   ):
     assert eqn.primitive is pallas_core.core_map_p
     mesh = eqn.params["mesh"]
-    if not isinstance(mesh, plgpu.WarpMesh):
+    if not isinstance(mesh, mosaic_gpu_core.WarpMesh):
       raise ValueError(
           "Only core_map over WarpMesh is supported in an MGPU kernel."
       )
@@ -580,7 +579,7 @@ class JaxprInterpreter:
         token=token,
         warpgroup=self.thread,
     )
-    token = thread_map.thread_map(f, plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
+    token = thread_map.thread_map(f, mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
 
     token = callback.io_callback(
         gpu_callbacks.sync_warpgroup_with_warps,
@@ -603,7 +602,7 @@ class JaxprInterpreter:
       )
     mesh = meshes[0]
     jaxpr = jaxprs[0]
-    if not isinstance(mesh, plgpu.WarpMesh):
+    if not isinstance(mesh, mosaic_gpu_core.WarpMesh):
       raise ValueError(
           "Only mpmd_map over WarpMesh is supported in an MGPU kernel."
       )
@@ -632,7 +631,7 @@ class JaxprInterpreter:
         token=token,
         warpgroup=self.thread,
     )
-    token = thread_map.thread_map(f, plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
+    token = thread_map.thread_map(f, mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
 
     token = callback.io_callback(
         gpu_callbacks.sync_warpgroup_with_warps,
