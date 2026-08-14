@@ -202,7 +202,7 @@ def _construct_output_fusions(
   partial_flat = jax.tree.structure(output_fusion_prefix).flatten_up_to(
       unflat_fusible_outvars
   )
-  if len(partial_flat) > 1:
+  if len([x for x in partial_flat if jax.tree.leaves(x)]) > 1:
     if any(isinstance(e, (state_types.WriteEffect, state_types.AccumEffect))
            for e in jaxpr_out.effects):
       raise ValueError("Multiple output fusions are not currently supported "

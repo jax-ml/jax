@@ -1340,6 +1340,8 @@ def _get_clamped_slice_starts(
 ) -> tuple[Any, ...]:
   static_clamped_starts = None
 
+  # TODO(rdyro): Constant fold the static indices to skip scalar prefetch.
+  # Ref-write discharge `convert_element_type` makes start indices dynamic.
   if ctx.scalar_prefetch_fn is not None:
     slice_starts = ctx.scalar_prefetch_fn()
     return tuple(
