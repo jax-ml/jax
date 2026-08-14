@@ -322,6 +322,7 @@ jax_multiplatform_test(
     deps = [
         "//jax/_src:internal_export_back_compat_test_data",
         "//jax/_src:internal_export_back_compat_test_util",
+        "//jax/_src/pallas/mosaic_gpu:pallas_call",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax/experimental:pallas_tpu_ops",  # build_cleaner: keep
