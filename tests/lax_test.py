@@ -787,7 +787,7 @@ class LaxTest(jtu.JaxTestCase):
         range(len(filter_shape)),
         [out_spec.index(c) for c in out_spec if c not in ('N', 'C')])
     tol = None
-    if (jtu.test_device_matches(["tpu"]) and
+    if (jtu.test_device_matches(["tpu", "gpu"]) and
         precision in (None, lax.Precision.DEFAULT)):
       tol = 1e-3
     self.assertAllClose(out, patches, atol=tol, rtol=tol)

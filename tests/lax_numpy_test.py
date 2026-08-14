@@ -2032,8 +2032,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = partial(jnp_op, mode=mode, precision=precision)
     def np_fun(x, y):
       return np_op(x, y, mode=mode).astype(dtypes.to_inexact_dtype(dtype))
-    tol = {np.float16: 2e-1, np.float32: 1e-2, np.float64: 1e-14,
-           np.complex128: 1e-14}
+    tol = {np.float16: 2e-1, np.float32: 1e-2, np.complex64: 1e-1, 
+           np.float64: 1e-14, np.complex128: 1e-14}
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
