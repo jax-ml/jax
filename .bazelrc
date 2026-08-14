@@ -102,6 +102,9 @@ common:macos --config=clang_local
 common:macos --apple_crosstool_top=@local_config_apple_cc//:toolchain
 common:macos --crosstool_top=@local_config_apple_cc//:toolchain
 common:macos --host_crosstool_top=@local_config_apple_cc//:toolchain
+# Disable apple_support's default layering check because dependencies (e.g. absl)
+# have layering check violations.
+common:macos --repo_env=APPLE_SUPPORT_LAYERING_CHECK_BETA=0
 
 common:windows --config=clang_local
 
