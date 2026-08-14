@@ -87,8 +87,6 @@ class MpmdAsyncTest(jtu.JaxTestCase):
   def setUp(self):
     if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
       self.skipTest("SparseCore only supported on TPU v5p+")
-    if jtu.is_cloud_tpu():
-      self.skipTest("Not yet supported on Cloud TPU.")
     super().setUp()
 
   @parameterized.parameters([SCS, SCV])
