@@ -1161,8 +1161,10 @@ def _mgpu_async_load_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncLoadOp
 ) -> Sequence[ir.Value]:
   assert ctx.launch_context is not None
-  assert load_op.barrier is not None
-  barrier = utils.DialectBarrierRef.from_barrier_memref(load_op.barrier)
+  if is_cp_async := load_op.barrier is None:
+    barrier = None
+  else:
+    barrier = utils.DialectBarrierRef.from_barrier_memref(load_op.barrier)
 
   [transforms_attr] = inference_utils.in_transforms(load_op)
   swizzle = swizzle_from_transforms_attr(transforms_attr)
@@ -1213,16 +1215,21 @@ def _mgpu_async_load_op_lowering_rule(
       src_ref=load_op.source,
       dst_ref=unwrapped_dst,
       gmem_slice=gmem_slice,
-      barrier=barrier.barrier_ref,
+      barrier=barrier.barrier_ref if barrier is not None else None,
       collective=collective,
       arrive=False,
       swizzle=swizzle,
       gmem_transform=transforms,
       leader_tracked=leader_tracked,
       oob_mode=oob_mode,
+      implementation=(
+          lc.AsyncCopyImplementation.CP_ASYNC
+          if is_cp_async
+          else lc.AsyncCopyImplementation.TMA
+      ),
       # TODO(bchetioui): Clean up once jaxlib 0.11.1 is the minimum version.
       gmem_peer_id=load_op.gmem_peer_id if hasattr(load_op, "gmem_peer_id") else None,
-      **predicate,  # pyrefly: ignore[bad-argument-type]
+      **{}  if is_cp_async else predicate,  # pyrefly: ignore[bad-argument-type]
   )
   return []
 

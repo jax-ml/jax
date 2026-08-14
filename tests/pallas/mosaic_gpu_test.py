@@ -1087,9 +1087,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   @run_on_sm80
   def test_copy_gmem_to_smem(self, indexer):
     needs_barrier = jtu.is_cuda_compute_capability_at_least("9.0")
-    if not needs_barrier:
-      # cp.async copies are not supported under WG semantics.
-      self.skip_if_wg_semantics()
 
     @self.kernel(
         out_type=jax.ShapeDtypeStruct([256], jnp.float32),
@@ -1118,9 +1115,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   @run_on_sm80
   def test_copy_gmem_to_smem_dynamic_slice(self):
     needs_barrier = jtu.is_cuda_compute_capability_at_least("9.0")
-    if not needs_barrier:
-      # cp.async copies are not supported under WG semantics.
-      self.skip_if_wg_semantics()
 
     @self.kernel(
         out_type=jax.ShapeDtypeStruct([256], jnp.float32),
@@ -1154,9 +1148,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   @run_on_sm80
   def test_copy_gmem_to_smem_squeeze(self):
     needs_barrier = jtu.is_cuda_compute_capability_at_least("9.0")
-    if not needs_barrier:
-      # cp.async copies are not supported under WG semantics.
-      self.skip_if_wg_semantics()
 
     @self.kernel(
         out_type=jax.ShapeDtypeStruct([4, 8, 32], jnp.float32),
@@ -7842,10 +7833,6 @@ class PipelineTest(PallasTest):
   )
   @run_on_sm80
   def test_emit_in_specs_only(self, max_concurrent_steps, oob_fill_mode):
-    # TODO(slebedev): Remove the skip once cp.async is supported under WG
-    # semantics.
-    self.skip_if_wg_semantics()
-
     m, n = 16, 128
     dtype = jnp.float32
 
@@ -7877,10 +7864,6 @@ class PipelineTest(PallasTest):
 
   @run_on_sm80
   def test_emit_in_specs_only_requires_in_bounds(self):
-    # TODO(slebedev): Remove the skip once cp.async is supported under WG
-    # semantics.
-    self.skip_if_wg_semantics()
-
     if jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("cp.async OOB constraint is pre-Hopper only")
 

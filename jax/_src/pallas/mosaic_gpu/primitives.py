@@ -1001,6 +1001,10 @@ def _copy_gmem_to_smem_lowering(
           "The cp.async implementation only supports "
           "oob_mode=OOBFillMode.PROMISE_IN_BOUNDS"
       )
+    if has_user_predicate:
+      raise NotImplementedError(
+          "The cp.async implementation does not support user-defined predicates"
+      )
   else:
     if oob_mode is None:
       oob_mode = OOBFillMode.ZEROS
@@ -1102,15 +1106,6 @@ def _copy_gmem_to_smem_lowering(
         **predicate_kwarg,  # pyrefly: ignore[bad-argument-type]
     )
     return ()
-  if is_cp_async:
-    raise NotImplementedError(
-        "cp_async implementation is not supported with Warpgroup lowering"
-    )
-  # TODO: Remove when the minimum jaxlib version is 0.11.1
-  if has_user_predicate and not hasattr(mgpu.dialect, "arrive_dyn_expect_tx_supported"):
-    raise NotImplementedError(
-        "predicate is not supported with Warpgroup lowering in jaxlib < 0.11.1"
-    )
   if "gmem_slice" not in copy_params or not copy_params["gmem_slice"]:
     slice_lengths = ir.MemRefType(src.type).shape
     indices = [mgpu.utils.c(0, i32)] * len(slice_lengths)
@@ -1118,6 +1113,25 @@ def _copy_gmem_to_smem_lowering(
     indices, slice_lengths = _split_gmem_slice(copy_params["gmem_slice"])
   assert copy_params.get("swizzle") is None
   assert not copy_params.get("gmem_transform")
+
+  if is_cp_async:
+    mgpu.dialect.async_load(
+        src,
+        dst,
+        barrier=None,  # pyrefly: ignore[bad-argument-type]
+        indices=indices,
+        slice_lengths=slice_lengths,
+        collective=ir.ArrayAttr.get([]),
+        predicate=predicate,
+        oob_fill_mode=ir.IntegerAttr.get(i32, oob_mode.value),
+    )
+    return ()
+
+  # TODO: Remove when the minimum jaxlib version is 0.11.1
+  if has_user_predicate and not hasattr(mgpu.dialect, "arrive_dyn_expect_tx_supported"):
+    raise NotImplementedError(
+        "predicate is not supported with Warpgroup lowering in jaxlib < 0.11.1"
+    )
   match leader_tracked:
     case CopyPartition.REPLICATED:
       leader_tracked_attr = mgpu.dialect.CopyReplicatedAttr.get()

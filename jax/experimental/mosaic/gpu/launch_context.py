@@ -1389,7 +1389,10 @@ class LaunchContext:
         gmem_strides = [gmem_strides[i] for i in sliced_dims]
 
       if not gmem_transform:
-        if swizzle is not None:
+        if (
+            swizzle is not None
+            and swizzle != mgpu_dialect.SwizzlingMode.kNoSwizzle
+        ):
           raise NotImplementedError(
               "Swizzle is not supported for untiled CP_ASYNC copies"
           )
