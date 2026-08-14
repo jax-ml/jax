@@ -28,6 +28,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     in NumPy v2.6.0 ({jax-issue}`#39729`)
 
 * Breaking changes
+  * The `exec_time_optimization_effort` and `memory_fitting_effort` flags have been
+    removed in favor of the `EffortLevel` enum.
   * JAX does not support anymore deserialization of Exported modules from
   before January 15th, 2026 because they are beyond the backwards compatibility
   window. On that date we added support to serialize shardings as NamedSharding,
