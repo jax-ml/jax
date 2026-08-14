@@ -165,6 +165,7 @@ def prepare_rocm_plugin_wheel(
         src_files=[
           f"{source_file_prefix}jax_plugins/rocm/pyproject.toml",
           f"{source_file_prefix}jax_plugins/rocm/setup.py",
+          f"{source_file_prefix}jax_plugins/rocm/rocm_version.py",
       ],
   )
   build_utils.update_setup_with_rocm_version(wheel_sources_path, rocm_version)

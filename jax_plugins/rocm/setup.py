@@ -16,18 +16,22 @@
 
 import importlib
 import os
+import sys
 from setuptools import setup, find_namespace_packages
+
+# The PEP 517 backend does not put the source root on sys.path.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rocm_version import DEFAULT_ROCM_PATH, detect_rocm_version
 
 __version__ = None
 rocm_version = 0  # placeholder
 project_name = f"jax-rocm{rocm_version}-pjrt"
 package_name = f"jax_plugins.xla_rocm{rocm_version}"
 
-# Extract ROCm version from the `ROCM_PATH` environment variable.
-default_rocm_path = "/opt/rocm"
-rocm_path = os.getenv("ROCM_PATH", default_rocm_path)
-rocm_detected_version = rocm_path.split('-')[-1] if '-' in rocm_path else "unknown"
+# Hermetic wheel actions expose WHEEL_VERSION_SUFFIX, but not ROCM_PATH.
+rocm_path = os.getenv("ROCM_PATH", DEFAULT_ROCM_PATH)
 rocm_tag = os.getenv("ROCM_VERSION_EXTRA")
+rocm_detected_version = detect_rocm_version(rocm_path, rocm_tag)
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -54,8 +58,8 @@ setup(
     description=f"JAX XLA PJRT Plugin for AMD GPUs (ROCm:{rocm_detected_version})",
     long_description="",
     long_description_content_type="text/markdown",
-    author="Ruturaj4",
-    author_email="Ruturaj.Vaidya@amd.com",
+    author="ROCm JAX Devs",
+    author_email="dl.dl-JAX@amd.com",
     packages=packages,
     install_requires=[],
     url="https://github.com/jax-ml/jax",

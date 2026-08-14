@@ -31,6 +31,7 @@ exports_files([
     "plugin_pyproject.toml",
     "plugin_setup.py",
     "pyproject.toml",
+    "rocm_version.py",
     "setup.py",
 ])
 
