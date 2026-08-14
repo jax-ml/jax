@@ -72,6 +72,8 @@ def pallas_call(
       specs = [specs] * len(shapes)
     result = []
     for spec, shape in zip(specs, shapes):
+      if spec is pallas_core.no_block_spec:
+        spec = pallas_core.BlockSpec()
       if spec.block_shape is None and spec.index_map is not None:
         spec = dataclasses.replace(spec, block_shape=shape)
       result.append(spec)

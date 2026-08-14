@@ -310,48 +310,53 @@ UNARY_FUNCTIONS = [
 
 class PallasBaseTest(ptu.PallasTest):
 
-  if use_mosaic_gpu:
-    @classmethod
-    def pallas_call(
-        cls,
-        fn,
-        out_shape,
-        grid=(),
-        in_specs=(),
-        out_specs=(),
-        **kwargs,
-    ):
-      if cls.INTERPRET:
-        raise unittest.SkipTest("Mosaic GPU does not support interpret mode.")
-
-      # Node-level skip: only triggers if a test actually tries to use pallas_call
-      # while Mosaic backend is selected on ROCm.
-      if jtu.test_device_matches(["rocm"]):
-        raise unittest.SkipTest("Mosaic GPU is not supported on ROCm.")
-      if jtu.test_device_matches(["cuda"]):
-        assert plgpu_mgpu is not None
-        compiler_params = plgpu_mgpu.CompilerParams(
-            lowering_semantics=plgpu_mgpu.LoweringSemantics.Warpgroup
-        )
-      else:
-        compiler_params = None
-
-      from jax._src.pallas.mosaic_gpu import pallas_call
-      return pallas_call.pallas_call(
+  @classmethod
+  def pallas_call(
+      cls,
+      fn,
+      out_shape,
+      grid=(),
+      in_specs=pl.no_block_spec,
+      out_specs=pl.no_block_spec,
+      **kwargs,
+  ):
+    if not (jtu.test_device_matches(["gpu"]) and use_mosaic_gpu):
+      return pl.pallas_call(
           fn,
           out_shape=out_shape,
           grid=grid,
           in_specs=in_specs,
           out_specs=out_specs,
-          compiler_params=compiler_params,
+          interpret=cls.INTERPRET,
           **kwargs,
       )
 
-  else:
+    if cls.INTERPRET:
+      raise unittest.SkipTest("Mosaic GPU does not support interpret mode.")
 
-    @classmethod
-    def pallas_call(cls, *args, **kwargs):
-      return pl.pallas_call(*args, interpret=cls.INTERPRET, **kwargs)
+    # Node-level skip: only triggers if a test actually tries to use pallas_call
+    # while Mosaic backend is selected on ROCm.
+    if jtu.test_device_matches(["rocm"]):
+      raise unittest.SkipTest("Mosaic GPU is not supported on ROCm.")
+    if jtu.test_device_matches(["cuda"]):
+      assert plgpu_mgpu is not None
+      compiler_params = plgpu_mgpu.CompilerParams(
+          lowering_semantics=plgpu_mgpu.LoweringSemantics.Warpgroup
+      )
+    else:
+      compiler_params = None
+
+    from jax._src.pallas.mosaic_gpu import pallas_call
+
+    return pallas_call.pallas_call(
+        fn,
+        out_shape=out_shape,
+        grid=grid,
+        in_specs=in_specs,
+        out_specs=out_specs,
+        compiler_params=compiler_params,
+        **kwargs,
+    )
 
   def skip_if_mosaic_gpu(self):
     if jtu.test_device_matches(["gpu"]) and use_mosaic_gpu:
