@@ -1193,7 +1193,7 @@ def _solve(a: ArrayLike, b: ArrayLike, assume_a: str, lower: bool) -> Array:
   custom_solve = partial(
       lax.custom_linear_solve,
       lambda x: lax_linalg._broadcasted_matvec(a, x),
-      solve=lambda _, x: cho_solve(factors, x),
+      solve=lambda _, x: cho_solve(factors, x[..., None]).squeeze(-1),
       symmetric=True)
   if a.ndim == b.ndim + 1:
     # b.shape == [..., m]
