@@ -1227,6 +1227,32 @@ def is_symbolic_dim(p: DimSize) -> TypeGuard[_DimExpr]:
   """
   return isinstance(p, _DimExpr)
 
+
+def symbolic_dim_bounds(
+    dimension: DimSize | SupportsIndex,
+) -> tuple[float, float]:
+  """Returns inclusive bounds that JAX can prove for a dimension expression.
+
+  The returned bounds are conservative and may not be tight. Infinite bounds
+  mean that JAX could not establish a finite bound; they do not prove that the
+  dimension is unbounded.
+
+  Args:
+    dimension: An integer or symbolic dimension expression.
+
+  Returns:
+    A ``(lower_bound, upper_bound)`` pair. A lower bound of ``-inf`` or an
+    upper bound of ``inf`` means that JAX did not establish a finite bound.
+
+  Raises:
+    TypeError: If ``dimension`` is not an integer or symbolic dimension.
+    jax.errors.InconclusiveDimensionOperation: If the bounds cannot be computed
+      because JAX cannot prove that an operation in the expression is defined.
+  """
+  resolved_dimension: DimSize = core.concrete_dim_or_error(
+      dimension, "argument `dimension` of `symbolic_dim_bounds`")
+  return _bounds_decision(resolved_dimension, BoundsPrecision.BEST)
+
 dtypes.python_scalar_types.add(_DimExpr)
 dtypes.python_scalar_types_to_dtypes[_DimExpr] = dtypes.python_scalar_types_to_dtypes[int]
 dtypes.register_canonicalize_value_handler(_DimExpr, None)
