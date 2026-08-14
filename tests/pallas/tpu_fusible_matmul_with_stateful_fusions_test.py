@@ -265,9 +265,7 @@ def _fusible_matmul(
         pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
 
         def block_spec_with_prefetch(bs):
-          if bs is pl.no_block_spec:
-            return pl.BlockSpec()
-          if bs.index_map is None:
+          if bs is pl.no_block_spec or bs.index_map is None:
             return bs
           return bs.replace(
             index_map=lambda *args: bs.index_map(
@@ -325,9 +323,7 @@ def _fusible_matmul(
       pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
 
       def block_spec_with_prefetch(bs):
-        if bs is pl.no_block_spec:
-          return pl.BlockSpec()
-        if bs.index_map is None:
+        if bs is pl.no_block_spec or bs.index_map is None:
           return bs
         return bs.replace(
           index_map=lambda *args: bs.index_map(
@@ -665,6 +661,29 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         out1[OFFSET:OFFSET + SIZE, :], jnp.tanh(ref), atol=1e-4, rtol=1e-4)
     self.assertArraysAllClose(
         out2[OFFSET:OFFSET + SIZE, :], jnp.sin(ref), atol=1e-4, rtol=1e-4)
+
+  @parameterized.parameters(KernelImpl)
+  def test_matmul_with_write_only_aliased_ref(self, impl):
+    # A write-only aliased ref is never read in-kernel, so its block spec stays
+    # `pl.no_block_spec`, exercising `NoBlockSpec` handling in `emit_pipeline`.
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, (4096, 4096), jnp.float32)
+    y = jax.random.normal(k1, (4096, 4096), jnp.float32)
+
+    _fusible_matmul = functools.partial(fusible_matmul, impl=impl)
+
+    @jax.jit
+    def run_matmul(x, y):
+      out_ref = jax.new_ref(jax.lax.empty((x.shape[0], y.shape[1]), x.dtype))
+
+      @fuser.fuse
+      def matmul(x, y):
+        out_ref[...] = _fusible_matmul(x, y)
+
+      matmul(x, y)
+      return jax.freeze(out_ref)
+
+    self.assertArraysAllClose(run_matmul(x, y), x @ y, atol=1e-4, rtol=1e-4)
 
 
 if __name__ == '__main__':
