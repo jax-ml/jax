@@ -168,7 +168,21 @@ class PallasSCTest(jtu.JaxTestCase):
 
     return decorator
 
+  def _is_supported_on_tpu_version(self, kernel_kwargs):
+    if jtu.is_device_tpu(8, "i"):
+      mesh = kernel_kwargs.get("mesh", None)
+      if isinstance(mesh, plsc.ScalarSubcoreMesh):
+        return False
+      scratch_types = kernel_kwargs.get("scratch_types", None)
+      for scratch_type in jax.tree.leaves(scratch_types):
+        if scratch_type.memory_space == pltpu.VMEM_SHARED:
+          return False
+    return True
+
   def kernel(self, compiler_params=pltpu.CompilerParams(), **kwargs):
+    if not self._is_supported_on_tpu_version(kwargs):
+      self.skipTest(f"Test is not supported on TPU v{jtu.get_tpu_version()}.")
+
     return functools.partial(
         pl.kernel,
         compiler_params=compiler_params.replace(
@@ -254,6 +268,8 @@ class DebugPrintTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_vector_subcore(self, dtype):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("TODO(b/535267274): Fix logger.")
     x = jnp.arange(self.num_lanes, dtype=dtype)
     debug_int = 1234552
     debug_float = 12344.625
@@ -357,6 +373,8 @@ class DebugPrintTest(PallasSCTest):
     self.assertIn("No values", get_output())
 
   def test_mpmd_print(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("Scalar subcore mesh is not supported on TPU v8i.")
     v_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core",
         subcore_axis_name="subcore",
@@ -398,6 +416,8 @@ class DebugPrintTest(PallasSCTest):
 
   @parameterized.parameters(1, 2, 4)
   def test_subcore_parallel_logging(self, num_subcores):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("TODO(b/535267274): Fix logger.")
     nl = self.num_lanes
     x = jnp.arange(num_subcores * nl, dtype=jnp.int32).reshape(-1, nl)
 
@@ -611,6 +631,8 @@ class VectorSubcoreTest(PallasSCTest):
       shape_type=["vector", "2vector", "matrix", "2matrix", "3d"]
   )
   def test_scatter_major(self, shape_type):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     nl = self.num_lanes
     shape = {
         "vector": (nl,),
@@ -637,6 +659,8 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_scatter_1d_array(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(self.num_lanes))
 
@@ -673,6 +697,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(), jnp.ones(shape, dtype))
 
   def test_scatter_1d_array_from_transformed_src(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     x = jnp.arange(2 * self.num_lanes).reshape(2, -1)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(self.num_lanes))
 
@@ -688,6 +714,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(kind=["ref", "array"])
   def test_gather_1d(self, kind):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(jax.random.key(42), x)
 
@@ -705,6 +733,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices), x[indices])
 
   def test_gather_1d_with_filter(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(jax.random.key(42), x)
 
@@ -726,6 +756,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(kind=["ref", "array"])
   def test_gather_1d_to_transformed_dst(self, kind):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(jax.random.key(42), x)
 
@@ -745,6 +777,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices)[0], x[indices])
 
   def test_large_gather_1d(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
 
     x = jnp.arange(1024)
     indices = jax.random.permutation(jax.random.key(42), x)
@@ -762,6 +796,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices), x[indices])
 
   def test_gather_1d_with_indexing(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     self.skip_if_tc_tiling("Small 1d gather does not work on TC tiling.")
     x = jnp.arange(4 * 4 * self.num_lanes).reshape(4, 4, self.num_lanes)
     indices = jax.random.permutation(
@@ -816,6 +852,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices), x[indices, 128:1152])
 
   def test_gather_1d_with_indexed_ref(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     x = jnp.arange(16)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(16))
 
@@ -834,6 +872,8 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_gather_1d_with_dynamically_sized_ref(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     self.skip_if_tc_tiling()
     x = jnp.arange(16)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(16))
@@ -859,6 +899,8 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_gather_1d_with_dynamically_sized_2d_ref(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     self.skip_if_tc_tiling()
 
     x = jnp.arange(16)
@@ -1324,6 +1366,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(jnp.int32, jnp.float32)
   def test_scan_count(self, dtype):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("scan is not supported on TPU v8i.")
     shape = [self.num_lanes]
 
     @self.vector_subcore_kernel(
@@ -1866,6 +1910,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_cumsum(self, dtype):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("scan is not supported on TPU v8i.")
     x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
 
     @self.vector_subcore_kernel(
@@ -1880,6 +1926,8 @@ class VectorSubcoreTest(PallasSCTest):
   @parameterized.product(dtype=[jnp.uint32, jnp.int32, jnp.float32],
                          op=[jnp.sum, jnp.max, jnp.min])
   def test_reductions(self, dtype, op):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("scan is not supported on TPU v8i.")
     x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
     @self.vector_subcore_kernel(
         out_shape=x,
@@ -1895,6 +1943,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.bool], op=[jnp.all, jnp.any])
   def test_binary_reductions(self, dtype, op):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("scan is not supported on TPU v8i.")
     x = jnp.ones(self.sc_info.num_lanes, dtype=dtype)
     @self.vector_subcore_kernel(
         out_shape=x.astype(jnp.int32),
@@ -1922,6 +1972,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_masked_cumsum(self, dtype):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("scan is not supported on TPU v8i.")
     x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
 
     @self.vector_subcore_kernel(
@@ -1935,6 +1987,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_masked_cummax(self, dtype):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("scan is not supported on TPU v8i.")
     x = np.arange(self.sc_info.num_lanes, dtype=dtype)
     np.random.shuffle(x)
 
@@ -1955,6 +2009,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(lax.sqrt, lax.rsqrt, lax.tanh, lax.log)
   def test_unary_math_ops(self, op):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("math ops not supported on TPU v8i.")
     x = jnp.arange(1, 1 + self.num_lanes, dtype=jnp.float32)   # positive domain
 
     @self.vector_subcore_kernel(out_shape=x)
@@ -2064,6 +2120,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x + 1)
 
   def test_barrier(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("TODO(b/535737855): Enable when fixed.")
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
@@ -2240,6 +2298,8 @@ class VectorSubcoreTest(PallasSCTest):
       ("exp", jnp.exp), ("neg", lambda x: -x), ("abs", jnp.abs)
   )
   def test_unary_ops(self, op):
+    if jtu.is_device_tpu(8, "i") and op == jnp.exp:
+      self.skipTest("exp is not supported on TPU v8i.")
     x = jnp.arange(self.num_lanes, dtype=jnp.float32)
 
     @self.vector_subcore_kernel(out_shape=x)
@@ -2289,6 +2349,8 @@ class VectorSubcoreTest(PallasSCTest):
       descending=[False, True],
   )
   def test_sort_key_val(self, keys_dtype, values_dtype, use_mask, descending):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("sort is not supported on TPU v8i.")
     vec_dim = self.sc_info.num_lanes
     keys = (np.arange(vec_dim) - vec_dim // 2).astype(keys_dtype)
     np.random.shuffle(keys)
@@ -2338,6 +2400,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[np.int32, np.float32])
   def test_rev_and_sort_desc(self, dtype):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("sort is not supported on TPU v8i.")
     vec_dim = self.sc_info.num_lanes
     keys = np.arange(vec_dim, dtype=dtype)
     np.random.shuffle(keys)
@@ -2360,6 +2424,8 @@ class VectorSubcoreTest(PallasSCTest):
       values_dtypes=[(), (np.int32,), (np.float32, np.int32)],
   )
   def test_sort(self, keys_dtype, values_dtypes):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("sort is not supported on TPU v8i.")
     vec_dim = self.sc_info.num_lanes
     keys = np.arange(vec_dim, dtype=keys_dtype)
     np.random.shuffle(keys)
@@ -2537,6 +2603,11 @@ class VectorSubcoreTestWithTCTiling(VectorSubcoreTest):
 
 
 class ScalarSubcoreTest(PallasSCTest):
+
+  def setUp(self):
+    super().setUp()
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("Scalar subcore mesh is not supported on TPU v8i.")
 
   def test_copy(self):
     x = jnp.arange(self.num_lanes)
@@ -2785,6 +2856,8 @@ class PipelineTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x + 1)
 
   def test_gather_with_emit(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("TODO(b/537940379): Enable when fixed.")
     self.skip_if_tc_tiling()
     sc_mesh = sc_core.VectorSubcoreMesh(
         core_axis_name="core",
@@ -2832,6 +2905,9 @@ class PipelineTest(PallasSCTest):
   @parameterized.product(kind=["ref", "array"])
   def test_gather_via_indirect(self, kind):
     self.skip_if_tc_tiling()
+    if plsc.get_sparse_core_info().num_cores < 2:
+      self.skipTest("Test requires at least 2 SparseCores, but got "
+                    f"{plsc.get_sparse_core_info().num_cores}.")
 
     sc_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=2
@@ -2950,6 +3026,9 @@ class PipelineTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x + 1)
 
   def test_manual(self):
+    if plsc.get_sparse_core_info().num_cores < 2:
+      self.skipTest("Test requires at least 2 SparseCores, but got "
+                    f"{plsc.get_sparse_core_info().num_cores}.")
     num_subcores = 16
     sc_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=2
@@ -3085,6 +3164,8 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
     np.testing.assert_array_equal(o, x)
 
   def test_memory_space_annotations_aliased_input_core_map(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("Scalar subcore mesh is not supported on TPU v8i.")
     @jax.jit
     def f(x, y):
       mesh =  plsc.ScalarSubcoreMesh(axis_name='core', num_cores=1)

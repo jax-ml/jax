@@ -1442,16 +1442,24 @@ jax_multiplatform_test(
                 "--xla_sc_assert_level=san",
             ],
         ),
+        "tpu_8i_grm": [
+            "--xla_tpu_enable_mlir_verifier=ALL",
+            "--xla_sc_assert_level=san",
+        ],
     },
     enable_backends = [],
     enable_configs = [
         "tpu_v5p",
         "tpu_v6e",
         "tpu_7x",
+        "tpu_8i_grm",
         "cpu",
     ],
     shard_count = 10,
-    tags = ["sparsecore_test"],
+    tags = [
+        "cpu:4",
+        "sparsecore_test",
+    ],
     deps = [
         "//jax/_src:hypothesis_test_util",
         "//jax/_src:mesh",
