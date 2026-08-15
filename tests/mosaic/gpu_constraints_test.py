@@ -116,6 +116,16 @@ class ConstraintSystemTest(parameterized.TestCase):
           mgpu.WGStridedFragLayout((128, 128), vec_size=1),
           True,
       ),
+      (
+          mgpu.WGSplatFragLayout((4, 8)),
+          mgpu.WGMMA_LAYOUT.reduce([0]),
+          True,
+      ),
+      (
+          mgpu.WGSplatFragLayout((8, 4)),
+          mgpu.WGMMA_LAYOUT.reduce([0]),
+          False,
+      ),
   )
   def test_strict_relayout_constraint_holds(self, src, tgt, holds):
     self.assertEqual(
