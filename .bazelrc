@@ -509,7 +509,7 @@ common:rbe_windows_amd64 --enable_runfiles
 common:rbe_windows_amd64 --define=override_eigen_strong_inline=true
 
 # Don't build the python zip archive in the RBE build.
-common:rbe_windows_amd64 --nobuild_python_zip
+# common:rbe_windows_amd64 --nobuild_python_zip
 
 common:rbe_windows_amd64 --config=ci_windows_amd64
 

@@ -45,7 +45,16 @@ jobs:
             # Runner OS and Python values need to match the matrix stategy in the CPU tests job
             runner: ["linux-x86-n4-16", "linux-arm64-c4a-16", "windows-x86-n2-16"]
             artifact: ["jaxlib"]
-            python: ["3.14"]
+            python: ["3.14", "3.14t", "3.15t"]
+            exclude:
+              - runner: "linux-x86-n4-16"
+                python: "3.14t"
+              - runner: "linux-x86-n4-16"
+                python: "3.15t"
+              - runner: "linux-arm64-c4a-16"
+                python: "3.14t"
+              - runner: "linux-arm64-c4a-16"
+                python: "3.15t"
     # Note: For reasons unknown, Github actions groups jobs with the same top-level name in the
     # dashboard only if we use an expression in the "name" field. Otherwise, it appends the matrix
     # values to the name and creates a separate entry for each matrix combination.
@@ -62,8 +71,9 @@ jobs:
     uses: ./.github/workflows/bazel_cpu.yml
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:
+      fail-fast: false # don't cancel all jobs on failure
       matrix:
-        python: ["3.12", "3.14"]
+        python: ["3.12", "3.14", "3.14t", "3.15t"]
         runner: ["linux-x86-n4-16", "linux-arm64-c4a-16", "windows-x86-n2-16"]
         enable-x64: [1, 0]
         enable-bzlmod: [1, 0]
@@ -81,6 +91,24 @@ jobs:
               runner: "windows-x86-n2-16"
             # TODO: Just test against Python 3.12 without Bzlmod to avoid adding too much CI load.
             - python: "3.14"
+              enable-bzlmod: 0
+            # Exclude 3.14t on non-Windows runners and non-default flags
+            - python: "3.14t"
+              runner: "linux-x86-n4-16"
+            - python: "3.14t"
+              runner: "linux-arm64-c4a-16"
+            - python: "3.14t"
+              enable-x64: 0
+            - python: "3.14t"
+              enable-bzlmod: 0
+            # Exclude 3.15t on non-Windows runners and non-default flags
+            - python: "3.15t"
+              runner: "linux-x86-n4-16"
+            - python: "3.15t"
+              runner: "linux-arm64-c4a-16"
+            - python: "3.15t"
+              enable-x64: 0
+            - python: "3.15t"
               enable-bzlmod: 0
     name: "${{ (contains(matrix.runner, 'linux-x86') && 'Test' || 'Build') }}"
 # End Presubmit Naming Check github-cpu-presubmits

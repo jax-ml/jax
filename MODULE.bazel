@@ -100,6 +100,7 @@ single_version_override(
         "//third_party/py:rules_python_local_wheel.patch",
         "//third_party/py:rules_python_cpython_3_15.patch",
         "//third_party/py:rules_python_windows_long_paths.patch",
+        "//third_party/py:rules_python_freethreaded_windows.patch",
     ],
     version = "2.2.0",
 )

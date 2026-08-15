@@ -112,6 +112,7 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     $BZLMOD_CONFIG \
     --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --build_runfile_links=false \
+    --keep_going \
     --config=$rbe_config \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \

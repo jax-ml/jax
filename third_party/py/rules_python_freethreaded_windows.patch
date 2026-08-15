@@ -1,0 +1,15 @@
+diff --git a/python/private/hermetic_runtime_repo_setup.bzl b/python/private/hermetic_runtime_repo_setup.bzl
+index b33ea71..1bc3ebc 100644
+--- a/python/private/hermetic_runtime_repo_setup.bzl
++++ b/python/private/hermetic_runtime_repo_setup.bzl
+@@ -118,6 +118,10 @@ def define_hermetic_runtime_toolchain_impl(
+             "//conditions:default": None,
+         }),
+         hdrs = [":includes"],
++        defines = select({
++            _IS_FREETHREADED_YES: ["Py_GIL_DISABLED=1"],
++            "//conditions:default": [],
++        }),
+         includes = [
+             "include",
+         ] + select({
