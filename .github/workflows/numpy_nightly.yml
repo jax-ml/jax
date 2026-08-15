@@ -37,8 +37,7 @@ jobs:
     strategy:
       matrix:
             python: ["3.13",]
-    # zizmor: ignore[unpinned-uses] - Using the latest ml-build container is intentional for this test.
-    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"  # zizmor: ignore[unpinned-images]
     name: "CI - jaxlib head with NumPy nightly"
 
     env:

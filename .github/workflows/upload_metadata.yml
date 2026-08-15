@@ -3,6 +3,7 @@
 name: Upload Workflow Metadata
 
 on:
+  # zizmor: ignore[dangerous-triggers]
   workflow_run:
     workflows:
       - "CI - Wheel Tests (Continuous)"
@@ -36,8 +37,7 @@ jobs:
     if: github.repository_owner == 'jax-ml'
     name: "Upload Workflow Metadata"
     runs-on: linux-x86-n4-4
-    # zizmor: ignore[unpinned-uses] - Using the latest ml-build container is intentional for this test.
-    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
+    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest  # zizmor: ignore[unpinned-images]
     defaults:
       run:
         shell: bash
