@@ -24,6 +24,7 @@ from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import partial_eval as pe
+from jax._src.pallas import core as pallas_core
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
 
@@ -237,3 +238,28 @@ def jaxpr_all_prims(jaxpr: core.Jaxpr) -> set[core.Primitive]:
   for subjaxpr in core.subjaxprs(jaxpr):
     prims |= jaxpr_all_prims(subjaxpr)
   return prims
+
+
+def filter_no_block_specs(values, block_specs):
+  """Filters out values and block specs that have no_block_spec by replacing them with None."""
+  filtered_values = tree_util.tree_map(
+      lambda v, bs: v if bs is not pallas_core.no_block_spec else None,
+      values,
+      block_specs,
+  )
+  filtered_specs = tree_util.tree_map(
+      lambda bs: bs if bs is not pallas_core.no_block_spec else None,
+      block_specs,
+  )
+  return filtered_values, filtered_specs
+
+
+def block_spec_with_prefetch(block_specs, scalar_prefetch_smem_refs):
+  """Appends scalar prefetch refs to index maps of block specs in a PyTree."""
+  def _wrap_one(bs):
+    if bs is pallas_core.no_block_spec or bs is None or bs.index_map is None:
+      return bs
+    return bs.replace(
+        index_map=lambda *args: bs.index_map(*args, *scalar_prefetch_smem_refs)
+    )
+  return tree_util.tree_map(_wrap_one, block_specs)

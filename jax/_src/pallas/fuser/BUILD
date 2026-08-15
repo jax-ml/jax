@@ -36,6 +36,7 @@ pytype_strict_library(
         ":block_spec",
         ":custom_evaluate",
         ":custom_fusion",
+        ":fuser_utils",
         ":fusible",
         ":fusion",
         ":jaxpr_fusion",
@@ -208,5 +209,6 @@ pytype_strict_library(
         "//jax/_src:partial_eval",
         "//jax/_src:tree_util",
         "//jax/_src:util",
+        "//jax/_src/pallas",
     ] + py_deps("numpy"),
 )

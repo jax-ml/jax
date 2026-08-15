@@ -1184,7 +1184,7 @@ def _convert_block_spec_to_block_mapping(
     debug: bool = False,
 ) -> BlockMapping:
   if block_spec is no_block_spec:
-    block_spec = BlockSpec(None, None)
+    block_spec = BlockSpec(memory_space=MemorySpace.ANY)
   return block_spec.to_block_mapping(
       origin,
       array_aval,
@@ -1329,7 +1329,7 @@ def get_grid_mapping(
 
   def _with_default_memory_space(bs: BlockSpec):
     if bs is no_block_spec:
-      return BlockSpec(memory_space=MemorySpace.DEFAULT)
+      return BlockSpec(memory_space=MemorySpace.ANY)
     elif bs.memory_space is None:
       return bs.replace(memory_space=MemorySpace.DEFAULT)
     else:

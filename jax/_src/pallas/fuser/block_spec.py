@@ -55,6 +55,7 @@ import jax.numpy as jnp
 import numpy as np
 
 
+safe_zip = util.safe_zip
 pull_block_spec_rules: dict[core.Primitive, PullBlockSpecRuleFn] = {}
 stateful_primitives: set[core.Primitive] = {
     lax.dynamic_update_slice_p,
@@ -704,7 +705,7 @@ def make_kernel_function(
 
   in_block_avals = [
       _get_block_aval(bs, aval)
-      for aval, bs in zip(in_avals, in_block_specs, strict=True)
+      for aval, bs in safe_zip(in_avals, in_block_specs)
   ]
   unflat_in_block_arg_avals, unflat_in_block_kwarg_avals = (
       tree_util.tree_unflatten(in_tree, in_block_avals)
@@ -718,8 +719,12 @@ def make_kernel_function(
     return bs_env.get(atom, pallas_core.no_block_spec)
 
   def kernel_fn(program_ids, scalar_prefetch, *args, **kwargs):
-    flat_args, in_tree_ = tree_util.tree_flatten((args, kwargs))
-    if in_tree_ != tree_util.tree_structure(kernel_in_type):
+    flat_args, in_tree_ = tree_util.tree_flatten(
+        (args, kwargs), is_leaf=lambda x: x is None
+    )
+    if in_tree_ != tree_util.tree_structure(
+        kernel_in_type, is_leaf=lambda x: x is None
+    ):
       raise ValueError(f'Expected {kernel_in_type} PyTree, got {in_tree_}')
     env = {}
 
@@ -733,9 +738,9 @@ def make_kernel_function(
     def write_env(var, val):
       env[var] = val
 
-    for const, constvar in zip(consts, jaxpr.constvars):
+    for const, constvar in safe_zip(consts, jaxpr.constvars):
       env[constvar] = const
-    for invar, arg, usage in zip(jaxpr.invars, flat_args, invar_usages):
+    for invar, arg, usage in safe_zip(jaxpr.invars, flat_args, invar_usages):
       if Usage.REGULAR in usage:
         env[invar] = arg
     for i, eqn in enumerate(jaxpr.eqns):
@@ -846,7 +851,7 @@ def _get_fusion_values(
   if discharge_refs:
     jaxpr, used_consts, output_input_aliases = fuser_utils.discharge_state(
         jaxpr, allow_additional_outputs=allow_additional_outputs, dce=True)
-    values = [v for used, v in zip(used_consts, values) if used]
+    values = [v for used, v in safe_zip(used_consts, values) if used]
 
   out_usages = tuple({Usage.REGULAR} for _ in jaxpr.outvars)
   read_usage_env = compute_usage(jaxpr, out_usages)
@@ -1449,7 +1454,7 @@ def _dynamic_update_slice_usage_rule(ctx, used_out: set[Usage], **params):
   if used_out == {Usage.SCALAR_PREFETCH}:
     raise NotImplementedError('scalar prefetch not supported yet')
   elif used_out == {Usage.REGULAR}:
-    usage = [used_out, used_out] + [{Usage.SCALAR_PREFETCH}] * (
+    usage = [set(), used_out] + [{Usage.SCALAR_PREFETCH}] * (
         len(ctx.avals_in) - 2
     )
     return usage
@@ -1466,6 +1471,8 @@ def _dynamic_update_slice_eval_rule(
     raise NotImplementedError(
         f'dynamic_update_slice with params={params} not supported yet.'
     )
+  # TODO(rdyro): Dynamic update slice supports a tile-aligned overwrite only.
+  # Potentially support masked write with partial tile-misaligned update.
   return update
 
 
@@ -1504,7 +1511,7 @@ def _dynamic_update_slice_rule(
   update_block_transform = block_transform.replace(
       block_index_transform=new_block_index_transform,
   )
-  return [block_transform, update_block_transform] + [
+  return [no_block_index_transform, update_block_transform] + [
       no_block_index_transform
   ] * (len(ctx.avals_in) - 2)
 

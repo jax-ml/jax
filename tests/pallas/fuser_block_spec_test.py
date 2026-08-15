@@ -652,9 +652,8 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     scalar_prefetch = jax.tree.map(lambda x: x[None], scalar_prefetch)
     self.assertLen(value_block_specs, 2)
     op_bs, up_bs = value_block_specs
-    self.assertEqual(op_bs.block_shape, (1, 1, 128, 128))
+    self.assertEqual(op_bs, pl.no_block_spec)
     self.assertEqual(up_bs.block_shape, (1, 1, 128, 128))
-    self.assertEqual(op_bs.index_map(2, 2, 2, *scalar_prefetch), (2, 2, 2, 0))
     self.assertEqual(up_bs.index_map(2, 2, 2, *scalar_prefetch), (1, 0, 1, 0))
 
     op_tile = np.zeros((1, 1, 128, 128), dtype=np.float32)
@@ -687,7 +686,8 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     scalar_prefetch = jax.tree.map(lambda x: x[None], scalar_prefetch)
-    up_bs = value_block_specs[1]
+    op_bs, up_bs = value_block_specs
+    self.assertEqual(op_bs, pl.no_block_spec)
     # For output block (2, 2), corresponding update block is:
     # (2 - 2, 2 - 2) = (0, 0).
     self.assertEqual(up_bs.index_map(2, 2, *scalar_prefetch), (0, 0))
