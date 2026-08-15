@@ -91,6 +91,8 @@ class MpmdAsyncTest(jtu.JaxTestCase):
 
   @parameterized.parameters([SCS, SCV])
   def test_async_sc_tc_prefetch_vmem(self, sc_core_type):
+    if not jtu.is_libtpu_at_least("0.0.47"):
+      self.skipTest("Requires libtpu >= 0.0.47")
     mesh = from_core_type(sc_core_type)
     tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
 
