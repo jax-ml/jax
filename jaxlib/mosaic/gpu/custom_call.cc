@@ -969,6 +969,8 @@ struct DeviceState {
   // Serialized collective kernel metadata.
   // Structure has the following layout:
   // [CollectiveKernelMetadata][param_to_peers][multimem_addresses]
+  // multimem_addresses are set only for modules that use multimem
+  // instructions.
   // Note: the collective metadata param to peers and multimem addresses are
   // pointing to the nullptr and should not be used during the lowering.
   std::vector<std::byte> metadata_bytes;
@@ -1395,6 +1397,8 @@ absl::Status MosaicGpuInitialize(
   std::vector<void*> param_to_peers(buffers.size() * clique_key.num_devices());
   ASSIGN_OR_RETURN(std::vector<bool> collective_memory_parameters,
                    ParseCollectiveMemoryParameters(attributes, buffers.size()));
+  bool is_multimem_used =
+      resources->kernel != nullptr && resources->kernel->is_multimem_used;
 
   const bool all_parameters_in_collective_memory = absl::c_all_of(
       collective_memory_parameters,
@@ -1430,16 +1434,18 @@ absl::Status MosaicGpuInitialize(
             clique_key.ToString()));
       }
 
-      ASSIGN_OR_RETURN(se::DeviceAddressBase multimem_address,
-                       symmetric_memory->multimem_addr());
+      if (is_multimem_used) {
+        ASSIGN_OR_RETURN(se::DeviceAddressBase multimem_address,
+                         symmetric_memory->multimem_addr());
 
-      XLA_VLOG_DEVICE(6, device_ordinal)
-          << "MosaicGpuInitialize buffer: " << i << " device_address: ("
-          << device_address.opaque() << ", size: " << device_address.size()
-          << ") found multimem_address: (" << multimem_address.opaque()
-          << ", offset: " << offset << ")";
+        XLA_VLOG_DEVICE(6, device_ordinal)
+            << "MosaicGpuInitialize buffer: " << i << " device_address: ("
+            << device_address.opaque() << ", size: " << device_address.size()
+            << ") found multimem_address: (" << multimem_address.opaque()
+            << ", offset: " << offset << ")";
 
-      parameter_multimem_addresses[i] = multimem_address.opaque();
+        parameter_multimem_addresses[i] = multimem_address.opaque();
+      }
 
       // Use the allocated memory allocation instead to correctly calculate
       // the offset of the multimem parameter.
