@@ -82,6 +82,8 @@ SemaphoreType = tpu_core.SemaphoreType
 SemaphoreTuple = jax.Array
 ArrayRef = REF | jax.Array
 Tiling = tpu_info.Tiling
+no_block_spec = pallas_core.no_block_spec
+NoBlockSpec = pallas_core.NoBlockSpec
 
 GridIndices = tuple[jax.Array, ...]
 CondVal = jax.Array | bool
@@ -187,9 +189,7 @@ def _tuple_all_binop(binop, xs, ys):
 _tuple_lt = functools.partial(_tuple_all_binop, lambda x, y: x < y)
 
 def _spec_has_trivial_windowing(spec, grid, full_shape):
-  if spec is None:
-    return True
-  if spec.block_shape is None:
+  if spec is None or spec is no_block_spec or spec.block_shape is None:
     return True
   for bs, fs in jax_util.safe_zip(spec.block_shape, full_shape):
     if bs is None:
@@ -249,7 +249,9 @@ class BufferType(enum.Enum):
     ]
 
 
-def _get_block_shape(spec: pallas_core.BlockSpec) -> tuple[int, ...]:
+def _get_block_shape(
+    spec: pallas_core.BlockSpec | NoBlockSpec
+) -> tuple[int, ...]:
   """Get the block shape for a given block spec."""
   def _get_dim_size(bd):
     match bd:
@@ -276,7 +278,7 @@ class BufferedRefBase:
   """Abstract interface for BufferedRefs."""
 
   @property
-  def spec(self) -> pallas_core.BlockSpec:
+  def spec(self) -> pallas_core.BlockSpec | NoBlockSpec:
     raise NotImplementedError()
 
   @property
@@ -444,6 +446,98 @@ class BufferedRefBase:
     raise NotImplementedError()
 
 
+class NullValue:
+  def __repr__(self):
+    return "NullValue"
+
+null_value = NullValue()
+
+class NullRef:
+  """Placeholder Ref for NoBlockSpec operands in `emit_pipeline`.
+
+  Passed to the kernel body so that leaf inspection and tree unflattening in
+  kernel dispatch preserve argument arity without accessing uninitialized buffers.
+  """
+
+  def get(self):
+    return null_value
+
+  def __getitem__(self, _):
+    return null_value
+
+  def set(self, _):
+    raise ValueError("Cannot set value in NullRef")
+
+  def __setitem__(self, _, __):
+    raise ValueError("Cannot set value in NullRef")
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class NullBufferedRef(BufferedRefBase):
+  """BufferedRef representing a NoBlockSpec (dead / unread / unwindowed).
+
+  Bypasses VMEM scratch allocations, double buffering, and DMAs entirely
+  (`has_allocated_buffer=False`, `is_trivial_windowing=True`).
+  """
+
+  _spec: NoBlockSpec = dataclasses.field(metadata=dict(static=True))
+  _buffer_type: BufferType = dataclasses.field(metadata=dict(static=True))
+  window_ref: None = None
+
+  @property
+  def spec(self) -> NoBlockSpec:
+    return self._spec
+
+  @property
+  def buffer_type(self) -> BufferType:
+    return self._buffer_type
+
+  @property
+  def current_ref(self):
+    return NullRef()
+
+  @property
+  def has_allocated_buffer(self) -> bool:
+    return False
+
+  @property
+  def is_trivial_windowing(self) -> bool:
+    return True
+
+  @property
+  def block_shape(self):
+    return None
+
+  @property
+  def compute_index(self):
+    return None
+
+  def initialize_slots(self) -> NullBufferedRef:
+    return self
+
+  def advance_copy_in_slot(self, predicate: bool = True) -> NullBufferedRef:
+    return self
+
+  def advance_wait_in_slot(self, predicate: bool = True) -> NullBufferedRef:
+    return self
+
+  def advance_copy_out_slot(self, predicate: bool = True) -> NullBufferedRef:
+    return self
+
+  def advance_wait_out_slot(self, predicate: bool = True) -> NullBufferedRef:
+    return self
+
+  def with_spec(self, spec) -> NullBufferedRef:
+    return self
+
+  def bind_existing_ref(self, *args, **kwargs) -> NullBufferedRef:
+    return self
+
+  def unbind_refs(self) -> NullBufferedRef:
+    return self
+
+
 def _ref_to_value_aval(ref):
   """Return the inner of a ref, or a ShapedArray for TransformedRefs."""
   return (
@@ -478,7 +572,9 @@ class BufferedRef(BufferedRefBase):
     has_allocated_buffer: Whether the reference has an allocated buffer
       due to being in a different memory space than the source ref.
   """
-  _spec: pallas_core.BlockSpec = dataclasses.field(metadata=dict(static=True))
+  _spec: pallas_core.BlockSpec | NoBlockSpec = dataclasses.field(
+      metadata=dict(static=True)
+  )
   _buffer_type: BufferType = dataclasses.field(metadata=dict(static=True))
   _buffer_count: int = dataclasses.field(metadata=dict(static=True))
   _grid_rank: int | None = dataclasses.field(metadata=dict(static=True))
@@ -540,7 +636,7 @@ class BufferedRef(BufferedRefBase):
   @classmethod
   def create(
       cls,
-      spec: pallas_core.BlockSpec,
+      spec: pallas_core.BlockSpec | NoBlockSpec,
       dtype_or_type,
       buffer_type,
       buffer_count,
@@ -550,7 +646,7 @@ class BufferedRef(BufferedRefBase):
       tiling: Tiling | None = None,
       is_trivial_windowing: bool = False,
       prefetched_count: int = 0,
-  ) -> BufferedRef:
+  ) -> BufferedRefBase:
     """Create a BufferedRef.
 
     Args:
@@ -568,6 +664,8 @@ class BufferedRef(BufferedRefBase):
     Returns:
       Initialized BufferedRef
     """
+    if spec is no_block_spec:
+      return NullBufferedRef(spec, buffer_type)
 
     # (123, 456) is a dummy shape since we never use ty without
     # calling .update(shape=...) first.
@@ -1404,11 +1502,14 @@ class Scheduler:
 # Main pipeline methods
 
 
-def _normalize_specs(specs: Any) -> tuple[pallas_core.BlockSpec, ...]:
+def _normalize_specs(
+    specs: Any,
+) -> tuple[pallas_core.BlockSpec | NoBlockSpec, ...]:
   if not isinstance(specs, (list, tuple)):
     specs = (specs,)
   if isinstance(specs, list):
     specs = tuple(specs)
+
   return specs
 
 
@@ -1721,8 +1822,12 @@ def _emit_pipeline(
   num_steps = math.prod(grid)
   in_specs = _normalize_specs(in_specs)
   out_specs = _normalize_specs(out_specs)
-  get_buffer_count = lambda spec: (spec.pipeline_mode.buffer_count if
-    (spec is not None and spec.pipeline_mode is not None) else 2)
+
+  def get_buffer_count(spec):
+    if spec is not None and spec.pipeline_mode is not None:
+      return spec.pipeline_mode.buffer_count
+    return 2 if isinstance(spec, pallas_core.BlockSpec) or spec is None else 0
+
   flattened_specs = jax.tree.leaves((in_specs, out_specs))
   max_buffer_count = max((2, *map(get_buffer_count, flattened_specs)))
 
@@ -2341,6 +2446,10 @@ def _emit_pipeline_lowering_rule(
           for i, idx in enumerate(ps.index)
           if i not in grid_mapping.vmapped_dims)
       ps = dataclasses.replace(ps, index=original_indices)
+      args = tuple(
+          refs_flat[i] if isinstance(a, NullRef) else a
+          for i, a in enumerate(args)
+      )
       indices_consts_args = (ps, all_args.body_consts, args)
       args_flat, args_tree = tracing_registry.flatten(indices_consts_args)
       return pipeline_body_p.bind(

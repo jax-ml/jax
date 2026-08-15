@@ -166,6 +166,53 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     x = jnp.arange(8 * 512).reshape(8, 512)
     np.testing.assert_allclose(kernel(x), x)
 
+  def test_emit_pipeline_no_block_spec(self):
+    def pipeline_body(x_ref, unused_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.0
+
+    shape = (8192, 8192)  # large enough to exhaust VMEM if fully loaded
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct(shape, jnp.float32),
+        mesh=pltpu.TensorCoreMesh(axis_name='core'),
+    )
+    def kernel(x_hbm_ref, unused_hbm_ref, o_hbm_ref):
+      pltpu.emit_pipeline(
+          pipeline_body,
+          grid=(4096 // 128, 4096 // 128),
+          in_specs=[
+              pl.BlockSpec((128, 128), lambda i, j: (i, j)),
+              pl.no_block_spec,
+          ],
+          out_specs=pl.BlockSpec((128, 128), lambda i, j: (i, j)),
+      )(x_hbm_ref, unused_hbm_ref, o_hbm_ref)
+
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, shape, jnp.float32)
+    unused = jax.random.normal(k1, shape, jnp.float32)
+    out = kernel(x, unused)
+    np.testing.assert_allclose(out, x + 1.0)
+
+  def test_pallas_call_no_block_spec(self):
+    def kernel(x_ref, unused_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.0
+
+    shape = (4096, 4096)
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, shape, jnp.float32)
+    unused = jax.random.normal(k1, shape, jnp.float32)
+    out = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+        grid=(shape[0] // 128, shape[1] // 128),
+        in_specs=[
+            pl.BlockSpec((128, 128), lambda i, j: (i, j)),
+            pl.no_block_spec,
+        ],
+        out_specs=pl.BlockSpec((128, 128), lambda i, j: (i, j)),
+    )(x, unused)
+    np.testing.assert_allclose(out, x + 1.0)
+
   def test_emit_pipeline_input_hbm_memory_space(self):
     def pipeline_body(x_ref, y_ref, z_ref, o_ref, scratch_ref):
       pltpu.sync_copy(y_ref, o_ref)

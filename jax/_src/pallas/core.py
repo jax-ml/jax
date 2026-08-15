@@ -728,6 +728,11 @@ class BlockSpec:
 
 
 class NoBlockSpec:
+  block_shape: None = None
+  index_map: None = None
+  memory_space: None = None
+  pipeline_mode: None = None
+
   def __repr__(self):
     return "NoBlockSpec"
 no_block_spec = NoBlockSpec()
@@ -850,7 +855,9 @@ class BlockMapping:
         return False
     return True
 
-  def to_block_spec(self) -> BlockSpec:
+  def to_block_spec(self) -> BlockSpec | NoBlockSpec:
+    if self.block_aval.memory_space is MemorySpace.ANY and self.has_trivial_window():
+      return no_block_spec
     def index_map(*args):
       flat_args = tree_util.tree_leaves(args)
       flat_out = jax_core.jaxpr_as_fun(self.index_map_jaxpr)(*flat_args)
@@ -1185,7 +1192,7 @@ def _convert_block_spec_to_block_mapping(
     debug: bool = False,
 ) -> BlockMapping:
   if block_spec is no_block_spec:
-    block_spec = BlockSpec(None, None)
+    block_spec = BlockSpec(memory_space=MemorySpace.ANY)
   return block_spec.to_block_mapping(
       origin,
       array_aval,
@@ -1330,7 +1337,7 @@ def get_grid_mapping(
 
   def _with_default_memory_space(bs: BlockSpec):
     if bs is no_block_spec:
-      return BlockSpec(memory_space=MemorySpace.DEFAULT)
+      return BlockSpec(memory_space=MemorySpace.ANY)
     elif bs.memory_space is None:
       return bs.replace(memory_space=MemorySpace.DEFAULT)
     else:
