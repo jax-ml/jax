@@ -1501,6 +1501,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         ((1, 1), (1, 1)),
         ((4, 4), (4,)),
         ((8, 8), (8, 4)),
+        ((3, 4, 4), (3, 4, 4)),
       ]
     ],
     [dict(assume_a=assume_a, lower=lower)
@@ -1513,6 +1514,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     dtype=float_types + complex_types,
   )
   def testSolve(self, lhs_shape, rhs_shape, dtype, assume_a, lower):
+    if scipy_version < (1, 17, 0) and len(lhs_shape) > 2:
+      self.skipTest("scipy 1.17 or newer required for batched solve.")
     rng = jtu.rand_default(self.rng())
     osp_fun = lambda lhs, rhs: osp.linalg.solve(lhs, rhs, assume_a=assume_a, lower=lower)
     jsp_fun = lambda lhs, rhs: jsp.linalg.solve(lhs, rhs, assume_a=assume_a, lower=lower)
