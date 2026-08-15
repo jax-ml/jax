@@ -54,6 +54,7 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"
 #include "jaxlib/py_executable.h"
+#include "jaxlib/py_host_callback.h"
 #include "jaxlib/py_mpmd_loaded_executable.h"
 #include "jaxlib/py_user_context.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -153,9 +154,10 @@ absl::StatusOr<xla::ifrt::DeviceListRef> MakeDeviceListFromPyDevices(
 // `PyMpmdLoadedExecutable` for the compiled MPMD program.
 //
 // Requires GIL.
-absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>> CompileMpmd(
-    nb::object backend_py, PyModule& c_module, nb::sequence devices_py,
-    const std::vector<nb::object> out_avals,
+absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>>
+CompileMpmdWithLoadedHostCallbacks(
+    jax::nb_class_ptr<jax::PyClient> backend, PyModule& c_module,
+    nb::sequence devices_py, const std::vector<nb::object> out_avals,
     std::optional<const std::vector<nb::object>> out_shardings,
     std::optional<const absl::flat_hash_map<std::string, nb::object>>&
         xla_compile_options,
@@ -163,8 +165,9 @@ absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>> CompileMpmd(
         std::string, std::variant<std::string, bool, int64_t, double>>>&
         ifrt_ir_compile_options,
     const std::optional<absl::flat_hash_map<std::string, nb::handle>>&
-        loaded_executable_bindings) {
-  auto backend = nb::cast<jax::nb_class_ptr<jax::PyClient>>(backend_py);
+        loaded_executable_bindings,
+    std::vector<tsl::RCReference<xla::ifrt::LoadedHostCallback>>
+        ifrt_loaded_host_callbacks) {
   auto devices =
       nb::cast<std::vector<jax::nb_class_ptr<jax::PyDevice>>>(devices_py);
 
@@ -184,7 +187,8 @@ absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>> CompileMpmd(
           nb::cast<const xla::CompileOptions*>(atom_program_compile_options_py);
       compile_options->emplace(compile_key,
                                std::make_unique<xla::ifrt::XlaCompileOptions>(
-                                   *atom_program_compile_options, device_list));
+                                   *atom_program_compile_options, device_list,
+                                   ifrt_loaded_host_callbacks));
     }
   }
   absl::flat_hash_map<std::string, xla::ifrt::LoadedExecutableRef>
@@ -244,6 +248,71 @@ absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>> CompileMpmd(
             std::move(loaded_executable)),
         out_avals, out_shardings_py);
   }
+}
+
+// Calls `Compiler::CompileMpmdWithLoadedHostCallbacks()` and returns
+// `PyMpmdLoadedExecutable` for the compiled MPMD program.
+//
+// Requires GIL.
+absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>>
+CompileMpmdWithCapsuleHostCallbacks(
+    nb::object backend_py, PyModule& c_module, nb::sequence devices_py,
+    const std::vector<nb::object> out_avals,
+    std::optional<const std::vector<nb::object>> out_shardings,
+    std::optional<const absl::flat_hash_map<std::string, nb::object>>&
+        xla_compile_options,
+    const std::optional<absl::flat_hash_map<
+        std::string, std::variant<std::string, bool, int64_t, double>>>&
+        ifrt_ir_compile_options,
+    const std::optional<absl::flat_hash_map<std::string, nb::handle>>&
+        loaded_executable_bindings,
+    std::vector<nb::capsule> host_callbacks) {
+  auto backend = nb::cast<jax::nb_class_ptr<jax::PyClient>>(backend_py);
+  std::vector<tsl::RCReference<xla::ifrt::LoadedHostCallback>>
+      ifrt_loaded_host_callbacks;
+  ifrt_loaded_host_callbacks.reserve(host_callbacks.size());
+  for (auto& host_callback : host_callbacks) {
+    ifrt_loaded_host_callbacks.push_back(tsl::FormRef(
+        static_cast<xla::ifrt::LoadedHostCallback*>(host_callback.data())));
+  }
+  return CompileMpmdWithLoadedHostCallbacks(
+    backend, c_module, devices_py, out_avals, out_shardings,
+      xla_compile_options, ifrt_ir_compile_options,
+      loaded_executable_bindings, std::move(ifrt_loaded_host_callbacks)
+  );
+}
+
+// Calls `Compiler::CompileMpmdWithLoadedHostCallbacks()` and returns
+// `PyMpmdLoadedExecutable` for the compiled MPMD program.
+//
+// Requires GIL.
+absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>>
+CompileMpmdWithCallableHostCallbacks(
+    nb::object backend_py, PyModule& c_module, nb::sequence devices_py,
+    const std::vector<nb::object> out_avals,
+    std::optional<const std::vector<nb::object>> out_shardings,
+    std::optional<const absl::flat_hash_map<std::string, nb::object>>&
+        xla_compile_options,
+    const std::optional<absl::flat_hash_map<
+        std::string, std::variant<std::string, bool, int64_t, double>>>&
+        ifrt_ir_compile_options,
+    const std::optional<absl::flat_hash_map<std::string, nb::handle>>&
+        loaded_executable_bindings,
+    std::vector<nb::callable> host_callbacks) {
+  auto backend = nb::cast<jax::nb_class_ptr<jax::PyClient>>(backend_py);
+  std::vector<tsl::RCReference<xla::ifrt::LoadedHostCallback>>
+      ifrt_loaded_host_callbacks;
+  ifrt_loaded_host_callbacks.reserve(host_callbacks.size());
+  for (auto& host_callback : host_callbacks) {
+    ifrt_loaded_host_callbacks.push_back(
+        tsl::MakeRef<::jax::PyFfiLoadedHostCallback>(
+            backend->ifrt_client(), std::move(host_callback)));
+  }
+  return CompileMpmdWithLoadedHostCallbacks(
+    backend, c_module, devices_py, out_avals, out_shardings,
+      xla_compile_options, ifrt_ir_compile_options,
+      loaded_executable_bindings, std::move(ifrt_loaded_host_callbacks)
+  );
 }
 
 NB_MODULE(_sdy_mpmd, m) {
@@ -455,21 +524,47 @@ NB_MODULE(_sdy_mpmd, m) {
           "collections.abc.Mapping[str, collections.abc.Sequence[tuple[str, "
           "str | bool | int | float]]], /) -> dict"));
 
-  m.def("compile_mpmd", xla::ValueOrThrowWrapper(CompileMpmd),
-        nb::arg("backend"), nb::arg("ifrt_mlir_module"), nb::arg("devices"),
-        nb::arg("out_avals"), nb::arg("out_shardings"),
-        nb::arg("xla_compile_options").none() = std::nullopt,
-        nb::arg("ifrt_ir_compile_options").none() = std::nullopt,
-        nb::arg("loaded_executable_bindings").none() = std::nullopt,
-        nb::sig("def compile_mpmd(backend: object, ifrt_mlir_module: "
-                "mlir.ir.Module, devices: collections.abc.Sequence, out_avals: "
-                "collections.abc.Sequence[object], out_shardings: "
-                "collections.abc.Sequence[object] | None, xla_compile_options: "
-                "collections.abc.Mapping[str, object] | None = ..., "
-                "ifrt_ir_compile_options: collections.abc.Mapping[str, str | "
-                "bool | int | float] | None = ..., loaded_executable_bindings: "
-                "collections.abc.Mapping[str, object] | None = ...) -> "
-                "MpmdLoadedExecutable"));
+  m.def(
+      "compile_mpmd",
+      xla::ValueOrThrowWrapper(CompileMpmdWithCapsuleHostCallbacks),
+      nb::arg("backend"), nb::arg("ifrt_mlir_module"), nb::arg("devices"),
+      nb::arg("out_avals"), nb::arg("out_shardings"),
+      nb::arg("xla_compile_options").none() = std::nullopt,
+      nb::arg("ifrt_ir_compile_options").none() = std::nullopt,
+      nb::arg("loaded_executable_bindings").none() = std::nullopt,
+      nb::arg("host_callbacks") = std::vector<nb::capsule>(),
+      nb::sig("def compile_mpmd(backend: object, ifrt_mlir_module: "
+              "mlir.ir.Module, devices: collections.abc.Sequence, out_avals: "
+              "collections.abc.Sequence[object], out_shardings: "
+              "collections.abc.Sequence[object] | None, xla_compile_options: "
+              "collections.abc.Mapping[str, object] | None = ..., "
+              "ifrt_ir_compile_options: collections.abc.Mapping[str, str | "
+              "bool | int | float] | None = ..., loaded_executable_bindings: "
+              "collections.abc.Mapping[str, object] | None = ..., "
+              "host_callbacks: collections.abc.Sequence["
+              "    types.CapsuleType] = ...) -> "
+              "MpmdLoadedExecutable"));
+
+  m.def(
+      "compile_mpmd",
+      xla::ValueOrThrowWrapper(CompileMpmdWithCallableHostCallbacks),
+      nb::arg("backend"), nb::arg("ifrt_mlir_module"), nb::arg("devices"),
+      nb::arg("out_avals"), nb::arg("out_shardings"),
+      nb::arg("xla_compile_options").none() = std::nullopt,
+      nb::arg("ifrt_ir_compile_options").none() = std::nullopt,
+      nb::arg("loaded_executable_bindings").none() = std::nullopt,
+      nb::arg("host_callbacks") = std::vector<nb::callable>(),
+      nb::sig("def compile_mpmd(backend: object, ifrt_mlir_module: "
+              "mlir.ir.Module, devices: collections.abc.Sequence, out_avals: "
+              "collections.abc.Sequence[object], out_shardings: "
+              "collections.abc.Sequence[object] | None, xla_compile_options: "
+              "collections.abc.Mapping[str, object] | None = ..., "
+              "ifrt_ir_compile_options: collections.abc.Mapping[str, str | "
+              "bool | int | float] | None = ..., loaded_executable_bindings: "
+              "collections.abc.Mapping[str, object] | None = ..., "
+              "host_callbacks: collections.abc.Sequence["
+              "    collections.abc.Callable] = ...) -> "
+              "MpmdLoadedExecutable"));
 
   nb::class_<xla::ifrt::IfrtIrProgramMemoryStats>(m, "IfrtIrProgramMemoryStats")
       .def_ro("argument_size_in_bytes",

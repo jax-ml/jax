@@ -1435,6 +1435,7 @@ nanobind_pywrap_extension(
         ":ifrt_rtti",
         ":nb_class_ptr",
         ":py_client",
+        ":py_host_callback",
         ":py_mpmd_loaded_executable",
         ":py_user_context",
         "@com_google_absl//absl/container:flat_hash_map",
