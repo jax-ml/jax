@@ -931,6 +931,7 @@ class LaunchContext:
       collective: Sequence[gpu.Dimension] | None,
       leader_tracked: CopyPartition | None,
       implementation: AsyncCopyImplementation,
+      oob_mode: OOBFillMode = OOBFillMode.PROMISE_IN_BOUNDS,
   ):
     """Performs setup common to TMA and CP_ASYNC implementations."""
     index = ir.IndexType.get()
@@ -970,8 +971,13 @@ class LaunchContext:
     base_indices, slice_shape, is_squeezed = utils.parse_indices(
         gmem_slice,
         ir.MemRefType(gmem_ref.type).shape,
-        # NOTE: TMA supports OOB indices, so we skip the check.
-        check_oob=implementation != AsyncCopyImplementation.TMA,
+        # NOTE: TMA supports OOB indices, and so does cp.async once it is
+        # allowed to bound its transfers. Only a promise of in-bounds access
+        # makes a statically out-of-bounds slice an error.
+        check_oob=(
+            implementation != AsyncCopyImplementation.TMA
+            and oob_mode == OOBFillMode.PROMISE_IN_BOUNDS
+        ),
     )
     if gather_indices is not None:
       slice_shape = [gather_indices.shape[0], *slice_shape[1:]]
@@ -1313,6 +1319,7 @@ class LaunchContext:
         collective,
         leader_tracked,
         implementation,
+        oob_mode,
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
 
@@ -1354,6 +1361,10 @@ class LaunchContext:
         gep_type = element_type
 
       gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
+      # The number of addressable units (of ``gep_type``) in the whole GMEM
+      # ref. Captured before the squeeze below narrows ``gmem_ref``, because
+      # ``gmem_offset`` is relative to the base of the full ref and so is this.
+      gmem_size = math.prod(gmem_ref_ty.shape) // offset_scale
       transformed_strides = gmem_strides
       for t in gmem_transform:
         transformed_strides = t.transform_strides(transformed_strides)
@@ -1406,12 +1417,12 @@ class LaunchContext:
           raise ValueError(
               "CP_ASYNC requires at least 4 bytes per transfer"
           )
-        gmem_base_ptr = utils.memref_ptr(gmem_ref)
-        gmem_base_ptr = llvm.addrspacecast(
-            llvm.PointerType.get(address_space=1), gmem_base_ptr
+        gmem_ref_ptr = utils.memref_ptr(gmem_ref)
+        gmem_ref_ptr = llvm.addrspacecast(
+            llvm.PointerType.get(address_space=1), gmem_ref_ptr
         )
         gmem_base_ptr = utils.getelementptr(
-            gmem_base_ptr, [gmem_offset], gep_type
+            gmem_ref_ptr, [gmem_offset], gep_type
         )
         smem_base_ptr = utils.memref_ptr(smem_ref)
         bytes_per_transfer = layout.vec_size * element_bitwidth // 8
@@ -1420,17 +1431,59 @@ class LaunchContext:
             if bytes_per_transfer == 16
             else nvvm.LoadCacheModifierKind.CA
         )
+        # ``cp.async`` takes an optional ``src-size`` operand: when it is
+        # smaller than the transfer size, the hardware zero-fills the
+        # remaining bytes in SMEM. That is exactly ``OOBFillMode.ZEROS``, and a
+        # valid refinement of ``UNDEFINED``, so bounding a transfer costs some
+        # arithmetic and no branch. The untiled slice is contiguous, so a
+        # single linear bound covers it.
+        #
+        # Branching instead would be wrong here, not just slower: callers wait
+        # on these copies with ``cp.async.wait_group N`` for a compile-time
+        # ``N`` (see ``emit_pipeline``), so the number of committed copies has
+        # to stay the same on every path.
+        bound_transfers = oob_mode != OOBFillMode.PROMISE_IN_BOUNDS
+        gep_bytes = element_bitwidth * offset_scale // 8
         for linear_idx in layout.linear_thread_idxs():
           idx = arith.index_castui(i32, linear_idx)
           if offset_scale > 1:
             idx = arith.divui(idx, c(offset_scale, i32))
           smem_ptr = utils.getelementptr(smem_base_ptr, [idx], gep_type)
-          gmem_ptr = utils.getelementptr(gmem_base_ptr, [idx], gep_type)
+          if not bound_transfers:
+            gmem_ptr = utils.getelementptr(gmem_base_ptr, [idx], gep_type)
+            nvvm.cp_async_shared_global(
+                smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier
+            )
+            continue
+          # The offset can't look beyond gmem_size
+          offset = arith.addi(gmem_offset, arith.extui(i64, idx))
+          valid_offset = arith.minui(offset, c(gmem_size, i64))
+          remaining_bytes = arith.muli(
+              arith.subi(c(gmem_size, i64), valid_offset), c(gep_bytes, i64)
+          )
+          src_size = arith.trunci(
+              i32, arith.minui(remaining_bytes, c(bytes_per_transfer, i64))
+          )
+          gmem_ptr = utils.getelementptr(gmem_ref_ptr, [valid_offset], gep_type)
           nvvm.cp_async_shared_global(
-              smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier
+              smem_ptr,
+              gmem_ptr,
+              bytes_per_transfer,
+              cache_modifier,
+              cp_size=src_size,
           )
       else:
         assert swizzle is not None
+        if oob_mode != OOBFillMode.PROMISE_IN_BOUNDS:
+          # Unlike the untiled path above, a single linear bound is not enough
+          # here: each transfer's lane and warp indices are reduced to one flat
+          # stride offset below, and the major and minor dimensions have
+          # different bounds. Predicating this needs those indices kept
+          # unflattened so each dimension can be checked separately.
+          raise NotImplementedError(
+              "Out-of-bounds handling is not implemented for tiled CP_ASYNC"
+              " copies; pass oob_mode=OOBFillMode.PROMISE_IN_BOUNDS"
+          )
         swizzle_elems = 8 * swizzle // element_bitwidth
         tiling = (8, swizzle_elems)
         if gmem_transform != (TileTransform(tiling),):
