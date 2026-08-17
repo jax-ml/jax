@@ -1055,8 +1055,7 @@ class Tracer[TraceType: Trace](TracerBase, metaclass=TracerMeta):
     # Raising a ConcretizationTypeError would make sense, but for backward compatibility
     # we raise an AttributeError so that hasattr() and getattr() work as expected.
     raise AttributeError(
-        f"The 'sharding' attribute is not available on {self._error_repr()}."
-        f"{self._origin_msg()}")
+        f"The 'sharding' attribute is not available on {self._error_repr()}.")
 
   @property
   def committed(self):
@@ -1071,8 +1070,7 @@ class Tracer[TraceType: Trace](TracerBase, metaclass=TracerMeta):
     # Raising a ConcretizationTypeError would make sense, but for backward compatibility
     # we raise an AttributeError so that hasattr() and getattr() work as expected.
     raise AttributeError(
-      f"The 'device' attribute is not available on {self._error_repr()}."
-      f"{self._origin_msg()}")
+      f"The 'device' attribute is not available on {self._error_repr()}.")
 
   @property
   def addressable_shards(self):
