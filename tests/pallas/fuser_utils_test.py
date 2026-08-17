@@ -17,6 +17,7 @@ import jax
 from jax import shard_map
 from jax._src import config
 from jax._src import test_util as jtu
+from jax.experimental import pallas as pl
 from jax._src.pallas.fuser import fuser_utils
 import jax.numpy as jnp
 from jax.sharding import Mesh
@@ -367,6 +368,35 @@ class FuserUtilsTest(jtu.JaxTestCase):
     jaxpr1 = jax.make_jaxpr(func1)(1.0, 1.0)
     jaxpr2 = jax.make_jaxpr(func2)(1.0, 1.0)
     self.assertFalse(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
+
+  def test_filter_no_block_specs(self):
+    bs1 = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    bs2 = pl.no_block_spec
+    v1 = np.ones((128, 128), dtype=np.float32)
+    v2 = np.ones((128, 128), dtype=np.float32)
+
+    (filtered_v, filtered_bs) = fuser_utils.filter_no_block_specs(
+        (v1, v2), (bs1, bs2)
+    )
+    self.assertIs(filtered_v[0], v1)
+    self.assertIsNone(filtered_v[1])
+    self.assertEqual(filtered_bs[0], bs1)
+    self.assertIsNone(filtered_bs[1])
+
+  def test_block_spec_with_prefetch(self):
+    bs = pl.BlockSpec((128, 128), lambda i, j, sp: (i + sp, j))
+    sp_ref = 10
+    wrapped_bs = fuser_utils.block_spec_with_prefetch(bs, (sp_ref,))
+    self.assertEqual(wrapped_bs.index_map(2, 3), (12, 3))
+
+    # Handles no_block_spec and None gracefully
+    self.assertIs(
+        fuser_utils.block_spec_with_prefetch(pl.no_block_spec, (sp_ref,)),
+        pl.no_block_spec,
+    )
+    self.assertIsNone(
+        fuser_utils.block_spec_with_prefetch(None, (sp_ref,))
+    )
 
 
 if __name__ == '__main__':

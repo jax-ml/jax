@@ -264,34 +264,39 @@ def _fusible_matmul(
       def _f(acc_ref, scalar_prefetch_smem_refs):
         pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
 
-        def block_spec_with_prefetch(bs):
-          if bs is pl.no_block_spec:
-            return pl.BlockSpec()
-          if bs.index_map is None:
-            return bs
-          return bs.replace(
-            index_map=lambda *args: bs.index_map(
-                *args, *scalar_prefetch_smem_refs))
+        # Filtering out arguments that fuser concluded are not needed inside the
+        # kernel (pl.no_block_spec) to hide them from `emit_pipeline` to avoid
+        # unnecessary copies.
+        in_x_values_refs, in_x_value_block_specs = fuser.filter_no_block_specs(
+            x_values_refs, x_value_block_specs)
+        in_y_values_refs, in_y_value_block_specs = fuser.filter_no_block_specs(
+            y_values_refs, y_value_block_specs)
+        in_z_values_refs, in_z_value_block_specs = fuser.filter_no_block_specs(
+            z_values_refs, z_value_block_specs)
+        in_specs = (in_x_value_block_specs, in_y_value_block_specs,
+                    in_z_value_block_specs)
 
-        in_specs_ = jax.tree.map(block_spec_with_prefetch, (
-            x_value_block_specs, y_value_block_specs, z_value_block_specs))
-        z_out_block_spec_ = jax.tree.map(
-            block_spec_with_prefetch, z_out_block_spec)
+        in_specs = fuser.block_spec_with_prefetch(
+            in_specs, scalar_prefetch_smem_refs)
+        z_out_block_spec_ = fuser.block_spec_with_prefetch(
+            z_out_block_spec, scalar_prefetch_smem_refs)
+
         pltpu.emit_pipeline(
             functools.partial(
-                    matmul_kernel,
-                    *scalar_prefetch_smem_refs,
-                    acc_ref=acc_ref,
-                    x_fn=x_fn,
-                    y_fn=y_fn,
-                    z_fn=z_fn,
-                    out_dtype=out_dtype),
+                matmul_kernel,
+                *scalar_prefetch_smem_refs,
+                acc_ref=acc_ref,
+                x_fn=x_fn,
+                y_fn=y_fn,
+                z_fn=z_fn,
+                out_dtype=out_dtype,
+            ),
             grid=grid,
-            in_specs=in_specs_,
+            in_specs=in_specs,
             out_specs=[z_out_block_spec_],
             core_axis_name='core',
             dimension_semantics=dimension_semantics,
-        )(x_values_refs, y_values_refs, z_values_refs, out_ref)
+        )(in_x_values_refs, in_y_values_refs, in_z_values_refs, out_ref)
       pl.run_scoped(_f,
                     pltpu.VMEM((bm, bn), jnp.float32),
                     jax.tree.map(pltpu.SMEM.like, scalar_prefetch))
@@ -324,19 +329,23 @@ def _fusible_matmul(
     def body(scalar_prefetch_refs, acc_vmem_ref, scalar_prefetch_smem_refs):
       pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
 
-      def block_spec_with_prefetch(bs):
-        if bs is pl.no_block_spec:
-          return pl.BlockSpec()
-        if bs.index_map is None:
-          return bs
-        return bs.replace(
-          index_map=lambda *args: bs.index_map(
-              *args, *scalar_prefetch_smem_refs))
+      # Filtering out arguments that fuser concluded are not needed inside the
+      # kernel (pl.no_block_spec) to hide them from `emit_pipeline` to avoid
+      # unnecessary copies.
+      in_x_values_refs, in_x_value_block_specs = fuser.filter_no_block_specs(
+          x_values_refs, x_value_block_specs)
+      in_y_values_refs, in_y_value_block_specs = fuser.filter_no_block_specs(
+          y_values_refs, y_value_block_specs)
+      in_z_values_refs, in_z_value_block_specs = fuser.filter_no_block_specs(
+          z_values_refs, z_value_block_specs)
 
-      in_specs_ = jax.tree.map(block_spec_with_prefetch, (
-          x_value_block_specs, y_value_block_specs, z_value_block_specs))
-      z_out_block_spec_ = jax.tree.map(
-          block_spec_with_prefetch, z_out_block_spec)
+      in_specs = (in_x_value_block_specs, in_y_value_block_specs,
+                  in_z_value_block_specs)
+      in_specs = fuser.block_spec_with_prefetch(
+          in_specs, scalar_prefetch_smem_refs)
+      z_out_block_spec_ = fuser.block_spec_with_prefetch(
+          z_out_block_spec, scalar_prefetch_smem_refs)
+
       pltpu.emit_pipeline(
           functools.partial(
               matmul_kernel,
@@ -345,13 +354,14 @@ def _fusible_matmul(
               x_fn=x_fn,
               y_fn=y_fn,
               z_fn=z_fn,
-              out_dtype=out_dtype),
+              out_dtype=out_dtype,
+          ),
           grid=grid,
-          in_specs=in_specs_,
+          in_specs=in_specs,
           out_specs=[z_out_block_spec_],
           core_axis_name='core',
-          dimension_semantics=dimension_semantics
-      )(x_values_refs, y_values_refs, z_values_refs, out_ref)
+          dimension_semantics=dimension_semantics,
+      )(in_x_values_refs, in_y_values_refs, in_z_values_refs, out_ref)
 
     pl.kernel(
         body,
@@ -665,6 +675,30 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         out1[OFFSET:OFFSET + SIZE, :], jnp.tanh(ref), atol=1e-4, rtol=1e-4)
     self.assertArraysAllClose(
         out2[OFFSET:OFFSET + SIZE, :], jnp.sin(ref), atol=1e-4, rtol=1e-4)
+
+  @parameterized.parameters(KernelImpl)
+  def test_matmul_with_write_only_aliased_ref(self, impl):
+    # Use a large shape (8192, 8192) so that if the write-only aliased ref's
+    # `no_block_spec` is not properly filtered out and an un-windowed allocation
+    # is attempted in VMEM, it exceeds the TPU VMEM capacity and fails.
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, (8192, 8192), jnp.float32)
+    y = jax.random.normal(k1, (8192, 8192), jnp.float32)
+
+    _fusible_matmul = functools.partial(fusible_matmul, impl=impl)
+
+    @jax.jit
+    def run_matmul(x, y):
+      out_ref = jax.new_ref(jax.lax.empty((x.shape[0], y.shape[1]), x.dtype))
+
+      @fuser.fuse
+      def matmul(x, y):
+        out_ref[...] = _fusible_matmul(x, y)
+
+      matmul(x, y)
+      return jax.freeze(out_ref)
+
+    self.assertArraysAllClose(run_matmul(x, y), x @ y, atol=1e-4, rtol=1e-4)
 
 
 if __name__ == '__main__':

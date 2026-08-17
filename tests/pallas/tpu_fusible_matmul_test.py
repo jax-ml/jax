@@ -207,19 +207,13 @@ def _fusible_matmul(
       def _f(acc_ref, scalar_prefetch_smem_refs):
         pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
 
-        def block_spec_with_prefetch(bs):
-          if bs is pl.no_block_spec:
-            return pl.BlockSpec()
-          if bs.index_map is None:
-            return bs
-          return bs.replace(
-            index_map=lambda *args: bs.index_map(
-                *args, *scalar_prefetch_smem_refs))
-
-        in_specs_ = jax.tree.map(block_spec_with_prefetch, (
-            x_value_block_specs, y_value_block_specs, z_value_block_specs))
-        z_out_block_spec_ = jax.tree.map(
-            block_spec_with_prefetch, z_out_block_spec)
+        in_specs_ = fuser.block_spec_with_prefetch(
+            (x_value_block_specs, y_value_block_specs, z_value_block_specs),
+            scalar_prefetch_smem_refs,
+        )
+        z_out_block_spec_ = fuser.block_spec_with_prefetch(
+            z_out_block_spec, scalar_prefetch_smem_refs
+        )
         pltpu.emit_pipeline(
             functools.partial(
                     matmul_kernel,
@@ -246,19 +240,13 @@ def _fusible_matmul(
              out_ref, acc_vmem_ref, scalar_prefetch_smem_refs):
       pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
 
-      def block_spec_with_prefetch(bs):
-        if bs is pl.no_block_spec:
-          return pl.BlockSpec()
-        if bs.index_map is None:
-          return bs
-        return bs.replace(
-          index_map=lambda *args: bs.index_map(
-              *args, *scalar_prefetch_smem_refs))
-
-      in_specs_ = jax.tree.map(block_spec_with_prefetch, (
-          x_value_block_specs, y_value_block_specs, z_value_block_specs))
-      z_out_block_spec_ = jax.tree.map(
-          block_spec_with_prefetch, z_out_block_spec)
+      in_specs_ = fuser.block_spec_with_prefetch(
+          (x_value_block_specs, y_value_block_specs, z_value_block_specs),
+          scalar_prefetch_smem_refs,
+      )
+      z_out_block_spec_ = fuser.block_spec_with_prefetch(
+          z_out_block_spec, scalar_prefetch_smem_refs
+      )
       pltpu.emit_pipeline(
           functools.partial(
                   matmul_kernel,

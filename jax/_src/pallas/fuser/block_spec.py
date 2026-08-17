@@ -718,8 +718,12 @@ def make_kernel_function(
     return bs_env.get(atom, pallas_core.no_block_spec)
 
   def kernel_fn(program_ids, scalar_prefetch, *args, **kwargs):
-    flat_args, in_tree_ = tree_util.tree_flatten((args, kwargs))
-    if in_tree_ != tree_util.tree_structure(kernel_in_type):
+    flat_args, in_tree_ = tree_util.tree_flatten(
+        (args, kwargs), is_leaf=lambda x: x is None
+    )
+    if in_tree_ != tree_util.tree_structure(
+        kernel_in_type, is_leaf=lambda x: x is None
+    ):
       raise ValueError(f'Expected {kernel_in_type} PyTree, got {in_tree_}')
     env = {}
 
@@ -733,9 +737,11 @@ def make_kernel_function(
     def write_env(var, val):
       env[var] = val
 
-    for const, constvar in zip(consts, jaxpr.constvars):
+    for const, constvar in zip(consts, jaxpr.constvars, strict=True):
       env[constvar] = const
-    for invar, arg, usage in zip(jaxpr.invars, flat_args, invar_usages):
+    for invar, arg, usage in zip(
+        jaxpr.invars, flat_args, invar_usages, strict=True
+    ):
       if Usage.REGULAR in usage:
         env[invar] = arg
     for i, eqn in enumerate(jaxpr.eqns):
@@ -846,7 +852,7 @@ def _get_fusion_values(
   if discharge_refs:
     jaxpr, used_consts, output_input_aliases = fuser_utils.discharge_state(
         jaxpr, allow_additional_outputs=allow_additional_outputs, dce=True)
-    values = [v for used, v in zip(used_consts, values) if used]
+    values = [v for used, v in zip(used_consts, values, strict=True) if used]
 
   out_usages = tuple({Usage.REGULAR} for _ in jaxpr.outvars)
   read_usage_env = compute_usage(jaxpr, out_usages)
