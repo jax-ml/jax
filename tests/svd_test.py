@@ -95,7 +95,7 @@ class SvdTest(jtu.JaxTestCase):
       args_maker = lambda: [a]
 
       with self.subTest('Test JIT compatibility'):
-        self._CompileAndCheck(svd_fn, args_maker)
+        self._CompileAndCheck(svd_fn, args_maker, rtol=_SVD_RTOL)
 
       with self.subTest('Test unitary u.'):
         self.assertAllClose(np.eye(unitary_u_size), unitary_u, rtol=_SVD_RTOL,
@@ -197,7 +197,7 @@ class SvdTest(jtu.JaxTestCase):
       args_maker = lambda: [a]
 
       with self.subTest('Test JIT compatibility'):
-        self._CompileAndCheck(svd_fn, args_maker)
+        self._CompileAndCheck(svd_fn, args_maker, rtol=_SVD_RTOL)
 
       with self.subTest('Test s.'):
         self.assertAllClose(expected_s, actual_s, rtol=_SVD_RTOL, atol=1E-6)

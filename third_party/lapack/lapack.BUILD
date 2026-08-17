@@ -2115,7 +2115,7 @@ fortran_library(
     deps = [
         ":no_opt_single",
         ":sclaux",
-        "@blas//:single",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -2127,7 +2127,7 @@ fortran_library(
         ":single",  # Mixed precision routines need single precision (spotrf, sgetrf, etc.)
         ":dzlaux",
         ":no_opt_double",
-        "@blas//:double",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -2139,7 +2139,7 @@ fortran_library(
         ":single",  # Complex routines call single precision (slarmm_, sbdsvdx_, etc.)
         ":no_opt_complex",
         ":sclaux",
-        "@blas//:complex",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -2152,7 +2152,7 @@ fortran_library(
         ":double",  # Complex16 routines call double precision (dlarmm_, dbdsvdx_, etc.)
         ":dzlaux",
         ":no_opt_complex16",
-        "@blas//:complex16",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -2295,7 +2295,7 @@ fortran_library(
     deps = [
         ":single",
         ":tmg_noopt_single",
-        "@blas//:single",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -2306,7 +2306,7 @@ fortran_library(
     deps = [
         ":double",
         ":tmg_noopt_double",
-        "@blas//:double",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -2317,7 +2317,7 @@ fortran_library(
     deps = [
         ":complex",
         ":tmg_noopt_single",
-        "@blas//:complex",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -2328,7 +2328,7 @@ fortran_library(
     deps = [
         ":complex16",
         ":tmg_noopt_double",
-        "@blas//:complex16",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3081,7 +3081,7 @@ fortran_binary(
         ":lin_aux",
         ":single",
         ":tmg_single",
-        "@blas//:single",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3094,7 +3094,7 @@ fortran_binary(
         ":lin_aux",
         ":double",
         ":tmg_double",
-        "@blas//:double",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3108,7 +3108,7 @@ fortran_binary(
         ":complex",
         ":single",  # Complex calls single precision routines (slarmm_)
         ":tmg_complex",
-        "@blas//:complex",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3122,7 +3122,7 @@ fortran_binary(
         ":complex16",
         ":double",  # Complex16 calls double precision routines (dlarmm_)
         ":tmg_complex16",
-        "@blas//:complex16",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3541,7 +3541,7 @@ fortran_binary(
         ":eig_aux",
         ":single",
         ":tmg_single",
-        "@blas//:single",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3554,7 +3554,7 @@ fortran_binary(
         ":eig_aux",
         ":double",
         ":tmg_double",
-        "@blas//:double",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3568,7 +3568,7 @@ fortran_binary(
         ":complex",
         ":single",  # Complex calls single precision routines
         ":tmg_complex",
-        "@blas//:complex",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3582,7 +3582,7 @@ fortran_binary(
         ":complex16",
         ":double",  # Complex16 calls double precision routines
         ":tmg_complex16",
-        "@blas//:complex16",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3595,7 +3595,7 @@ fortran_binary(
     deps = [
         ":single",
         ":tmg_single",
-        "@blas//:single",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3607,7 +3607,7 @@ fortran_binary(
     deps = [
         ":double",
         ":tmg_double",
-        "@blas//:double",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3620,7 +3620,7 @@ fortran_binary(
         ":complex",
         ":single",
         ":tmg_complex",
-        "@blas//:complex",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3633,7 +3633,7 @@ fortran_binary(
         ":complex16",
         ":double",
         ":tmg_complex16",
-        "@blas//:complex16",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3693,7 +3693,7 @@ fortran_binary(
         ":double",
         ":single",
         ":tmg_double",
-        "@blas//:double",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3708,7 +3708,7 @@ fortran_binary(
         ":double",
         ":single",
         ":tmg_complex16",
-        "@blas//:complex16",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3821,7 +3821,7 @@ fortran_binary(
     deps = [
         ":single",
         ":tmg_single",
-        "@blas//:single",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3833,7 +3833,7 @@ fortran_binary(
     deps = [
         ":double",
         ":tmg_double",
-        "@blas//:double",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3846,7 +3846,7 @@ fortran_binary(
         ":complex",
         ":single",
         ":tmg_complex",
-        "@blas//:complex",
+        "@eigen_archive//:blas",
     ],
 )
 
@@ -3859,7 +3859,7 @@ fortran_binary(
         ":complex16",
         ":double",
         ":tmg_complex16",
-        "@blas//:complex16",
+        "@eigen_archive//:blas",
     ],
 )
 
