@@ -379,19 +379,6 @@ def _run_state_rule(ctx: Context, *args, jaxpr, which_linear, is_initialized):
 _physicalize_rules[state_discharge.run_state_p] = _run_state_rule
 
 
-def _core_map_rule(ctx: Context, *args, jaxpr, **params):
-  _assert_no_fusion_types(ctx.avals_in)
-  _assert_no_fusion_types(ctx.avals_out)
-  assert not jaxpr.invars
-  with core.extend_axis_env_nd(params["mesh"].shape.items()):
-    jaxpr = physicalize_jaxpr(jaxpr).with_consts(list(args))
-  assert not jaxpr.invars
-  return pallas_core.core_map_p.bind(*args, jaxpr=jaxpr, **params)
-
-
-_physicalize_rules[pallas_core.core_map_p] = _core_map_rule
-
-
 def _mpmd_map_rule(ctx: Context, *args, jaxprs, meshes, external_meshes, **params):
   _assert_no_fusion_types(ctx.avals_in)
   _assert_no_fusion_types(ctx.avals_out)

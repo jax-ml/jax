@@ -112,56 +112,6 @@ class ScalarSubcoreMesh(pallas_core.Mesh):
     yield
 
 
-def _scalar_subcore_mesh_discharge_rule(
-    ctx,
-    *args,
-    mesh,
-    jaxpr,
-    compiler_params,
-    interpret,
-    debug,
-    cost_estimate,
-    name,
-    metadata,
-):
-  if not isinstance(mesh, ScalarSubcoreMesh):
-    raise TypeError(f"Mesh must be a ScalarSubcoreMesh, got {type(mesh)}")
-  assert len(mesh.shape) == 1
-  if compiler_params is None:
-    compiler_params = tpu_core.CompilerParams()
-  if compiler_params.dimension_semantics is not None:
-    raise ValueError("ScalarSubcoreMesh does not support dimension_semantics=")
-  jaxpr, in_avals, out_avals, args, is_scalar_const = tpu_core.pass_scalars_as_refs(
-      jaxpr, args, ctx.in_avals, ctx.out_avals, mesh,
-      # TODO(sharadmv): Delete this once we can pass into SMEM directly on
-      # SparseCore.
-      copy_to_smem=True,
-  )
-  new_ctx = ctx.replace(in_avals=in_avals, out_avals=out_avals)
-  refs_out, out = pallas_core.default_mesh_discharge_rule(
-      new_ctx,
-      *args,
-      mesh=mesh,
-      jaxpr=jaxpr,
-      compiler_params=compiler_params,
-      interpret=interpret,
-      debug=debug,
-      cost_estimate=cost_estimate,
-      name=name,
-      metadata=metadata,
-  )
-  refs_out = [
-      a if not is_scalar else None
-      for is_scalar, a in zip(is_scalar_const, refs_out)
-  ]
-  return refs_out, out
-
-
-pallas_core._core_map_mesh_rules[ScalarSubcoreMesh] = (
-    _scalar_subcore_mesh_discharge_rule
-)
-
-
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class VectorSubcoreMesh(pallas_core.Mesh):
   core_axis_name: str
@@ -251,43 +201,6 @@ class VectorSubcoreMesh(pallas_core.Mesh):
   @contextlib.contextmanager
   def tracing_context(self):
     yield
-
-def _vector_subcore_mesh_discharge_rule(
-    ctx,
-    *args,
-    mesh,
-    jaxpr,
-    compiler_params,
-    interpret,
-    debug,
-    cost_estimate,
-    name,
-    metadata,
-):
-  if not isinstance(mesh, VectorSubcoreMesh):
-    raise TypeError(f"Mesh must be a VectorSubcoreMesh, got {type(mesh)}")
-  assert len(mesh.shape) == 2
-  if compiler_params is None:
-    compiler_params = tpu_core.CompilerParams()
-  if compiler_params.dimension_semantics is not None:
-    raise ValueError("VectorSubcoreMesh does not support dimension_semantics=")
-  return pallas_core.default_mesh_discharge_rule(
-      ctx,
-      *args,
-      mesh=mesh,
-      jaxpr=jaxpr,
-      compiler_params=compiler_params,
-      interpret=interpret,
-      debug=debug,
-      cost_estimate=cost_estimate,
-      name=name,
-      metadata=metadata,
-  )
-
-
-pallas_core._core_map_mesh_rules[VectorSubcoreMesh] = (
-    _vector_subcore_mesh_discharge_rule
-)
 
 
 def supported_shapes(dtype: jax.typing.DTypeLike) -> Sequence[tuple[int, ...]]:
