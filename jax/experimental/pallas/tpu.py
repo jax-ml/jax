@@ -76,6 +76,7 @@ from jax._src.pallas.mosaic.tpu_info import get_tpu_info_for_chip as get_tpu_inf
 from jax._src.pallas.mosaic.tpu_info import is_tpu_device as is_tpu_device
 from jax._src.pallas.mosaic.tpu_info import Tiling as Tiling
 from jax._src.pallas.mosaic.tpu_info import TpuInfo as TpuInfo
+from jax._src.pallas.primitives import reciprocal as reciprocal
 
 
 PARALLEL = GridDimensionSemantics.PARALLEL

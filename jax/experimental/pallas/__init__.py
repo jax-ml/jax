@@ -62,7 +62,7 @@ from jax._src.pallas.primitives import get_global as get_global
 from jax._src.pallas.primitives import multiple_of as multiple_of
 from jax._src.pallas.primitives import num_programs as num_programs
 from jax._src.pallas.primitives import program_id as program_id
-from jax._src.pallas.primitives import reciprocal as reciprocal
+from jax._src.pallas.primitives import reciprocal as _deprecated_reciprocal
 from jax._src.pallas.primitives import run_scoped as run_scoped
 from jax._src.pallas.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
@@ -82,7 +82,16 @@ ANY = MemorySpace.ANY
 HOST = _jax_core.MemorySpace.Host
 
 _deprecations = {
-    # Added August 11th, 2026
+    # Added August 17, 2026
+    "reciprocal": (
+        (
+            "jax.experimental.pallas.reciprocal was moved to"
+            " jax.experimental.pallas.tpu. Accessing it via"
+            " jax.experimental.pallas is deprecated."
+        ),
+        _deprecated_reciprocal,
+    ),
+    # Added August 11, 2026
     "core_map": (
         (
             "jax.experimental.pallas.core_map is deprecated, use"
@@ -116,6 +125,7 @@ if typing.TYPE_CHECKING:
   core_map = _deprecated_core_map
   debug_checks_enabled = _deprecated_debug_checks_enabled
   dot = _deprecated_dot
+  reciprocal = _deprecated_reciprocal
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

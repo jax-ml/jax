@@ -3161,39 +3161,6 @@ class PallasPrimitivesTest(PallasBaseTest):
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
 
-  @parameterized.product(approx=[False, True], full_range=[False, True], dtype=[jnp.bfloat16, jnp.float32])
-  def test_reciprocal(self, approx, full_range, dtype):
-    if not jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not implemented on non-TPU devices")
-    if dtype == jnp.bfloat16:
-      if not jtu.is_libtpu_at_least("0.0.46"):
-        self.skipTest("BF16 reciprocal requires libtpu >= 0.0.46.")
-      if not jtu.is_device_tpu_at_least(6):
-        self.skipTest("BF16 reciprocal not supported before v6e.")
-      if approx:
-        self.skipTest("BF16 reciprocal does not support approx=True.")
-      if not full_range:
-        self.skipTest("BF16 reciprocal does not support full_range=False.")
-
-    shape = (32, 256)
-    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    if not full_range:
-      x = jnp.where(x == 0, -1.0, x)
-
-    def kernel(x_ref, o_ref):
-      o_ref[...] = pl.reciprocal(
-          x_ref[...], approx=approx, full_range=full_range
-      )
-
-    out = self.pallas_call(
-        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
-    )(x)
-    kwargs = {}
-    if approx:
-      kwargs.update(dict(atol=2e-5, rtol=2e-5))
-    np.testing.assert_allclose(out, jax.lax.reciprocal(x), **kwargs)
-
-
 class PallasPrimitivesInterpretTest(PallasPrimitivesTest):
   INTERPRET = True
 

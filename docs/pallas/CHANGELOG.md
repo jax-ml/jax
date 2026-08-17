@@ -21,6 +21,8 @@ Remember to align the itemized text with the first line of an item within a list
     `tokamax.dot_product_attention`.
   * {func}`jax.experimental.pallas.core_map` is deprecated. Please migrate to
     {func}`jax.experimental.pallas.kernel`.
+  * `pl.reciprocal` was moved into {mod}`jax.experimental.pallas.tpu`.
+    Accessing it via {mod}`jax.experimental.pallas` is deprecated.
 
 ### Mosaic GPU
 
