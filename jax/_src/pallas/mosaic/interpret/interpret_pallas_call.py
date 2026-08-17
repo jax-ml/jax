@@ -31,10 +31,12 @@ from jax._src import frozen_dict
 from jax._src import pjit
 from jax._src import source_info_util
 from jax._src import state
+from jax._src import tree_util
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src.pallas.mosaic import core as mosaic_core
+from jax._src.pallas.mosaic import pipeline as mosaic_pipeline
 from jax._src.pallas.mosaic import primitives as mosaic_primitives
 from jax._src.pallas.mosaic import tpu_info
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
@@ -1341,6 +1343,8 @@ def _interpret_jaxpr(
         memory_space = _get_memory_space_and_raise_if_hbm(
             eqn.invars[0].aval, 'load_p'
         )
+        ref, ref_transforms = mosaic_primitives._get_ref_and_transforms(ref)
+        transforms = (*ref_transforms, *transforms)
         token, out = callback.io_callback(
             functools.partial(get, source_info=eqn.source_info),
             (TOKEN_SHAPE_DTYPE, eqn.outvars[0].aval),
@@ -1358,6 +1362,8 @@ def _interpret_jaxpr(
         memory_space = _get_memory_space_and_raise_if_hbm(
             eqn.invars[0].aval, 'swap_p'
         )
+        ref, ref_transforms = mosaic_primitives._get_ref_and_transforms(ref)
+        transforms = (*ref_transforms, *transforms)
         token, out = callback.io_callback(
             functools.partial(swap, source_info=eqn.source_info),
             (TOKEN_SHAPE_DTYPE, eqn.outvars[0].aval),
@@ -1530,6 +1536,13 @@ def _interpret_jaxpr(
             eqn.invars[0].aval, 'get_p'
         )
         invals = deferred_invals()
+        ref, ref_transforms = mosaic_primitives._get_ref_and_transforms(
+            invals[0]
+        )
+        transforms = (
+            *ref_transforms,
+            *jax.tree.unflatten(eqn.params['tree'], invals[1:]),
+        )
         token, out = callback.io_callback(
             functools.partial(get, source_info=eqn.source_info),
             (TOKEN_SHAPE_DTYPE, eqn.outvars[0].aval),
@@ -1537,8 +1550,8 @@ def _interpret_jaxpr(
             ctx.device_id,
             ctx.local_core_id,
             TPU_MEMORY_SPACE_IDXS[memory_space],
-            invals[0],
-            jax.tree.unflatten(eqn.params['tree'], invals[1:]),
+            ref,
+            transforms,
         )
 
       elif prim is state_primitives.swap_p:
@@ -1546,6 +1559,13 @@ def _interpret_jaxpr(
             eqn.invars[0].aval, 'swap_p'
         )
         invals = deferred_invals()
+        ref, ref_transforms = mosaic_primitives._get_ref_and_transforms(
+            invals[0]
+        )
+        transforms = (
+            *ref_transforms,
+            *jax.tree.unflatten(eqn.params['tree'], invals[2:]),
+        )
         token, out = callback.io_callback(
             functools.partial(swap, source_info=eqn.source_info),
             (TOKEN_SHAPE_DTYPE, eqn.outvars[0].aval),
@@ -1553,11 +1573,43 @@ def _interpret_jaxpr(
             ctx.device_id,
             ctx.local_core_id,
             TPU_MEMORY_SPACE_IDXS[memory_space],
-            invals[0],
-            jax.tree.unflatten(eqn.params['tree'], invals[2:]),
+            ref,
+            transforms,
             invals[1],
             None,
         )
+
+      elif prim is mosaic_pipeline.emit_pipeline_p:
+        invals = deferred_invals()
+        avals_in = [v.aval for v in eqn.invars]
+        jaxpr = mosaic_pipeline.emit_pipeline_to_jaxpr(
+            avals_in, ctx, **eqn.params, _interpret=True
+        )
+        token, _ = _interpret(
+            jaxpr.jaxpr, *jaxpr.consts, *invals, token=token
+        )
+        out = []
+
+      elif prim is mosaic_pipeline.pipeline_body_p:
+        invals = deferred_invals()
+        all_args = eqn.params['in_tree'].unflatten(invals)
+        ps, body_consts, refs = all_args
+        ps_flat, _ = tree_util.tree_flatten(ps)
+        if eqn.params.get('_explicit_indices', False):
+          body_invals = (*body_consts, *ps_flat, *refs)
+        else:
+          body_invals = (*body_consts, *refs)
+        cur_env = pallas_core.current_grid_env() or ()
+        body_grid_env = tuple(
+            pallas_core.GridAxis(
+                idx,
+                cur_env[i].size if i < len(cur_env) else 0,
+            )
+            for i, idx in enumerate(ps.index)
+        ) + tuple(cur_env[len(ps.index) :])
+        with pallas_core.grid_env(body_grid_env):
+          token, _ = _interpret(eqn.params['jaxpr'], *body_invals, token=token)
+        out = []
 
       elif prim is mosaic_primitives.dma_start_p:
         src, dst, dst_sem, src_sem, target_device_id = jax.tree.unflatten(

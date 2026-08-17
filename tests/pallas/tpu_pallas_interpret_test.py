@@ -26,6 +26,7 @@ from typing import Any
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_interpret
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
@@ -1693,6 +1694,74 @@ class InterpretTest(jtu.JaxTestCase):
     self.assertEqual(
         interpret_utils.is_range_out_of_bounds_for_shape(rnge, shape), expected
     )
+
+  def test_emit_pipeline_in_kernel(self):
+    if jax.config.jax_enable_x64:
+      self.skipTest(
+          'emit_pipeline has a pre-existing int32/int64 while_loop carry'
+          ' mismatch when x64 is enabled'
+      )
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (),
+        abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu'),
+    )
+    with config.use_emit_pipeline_primitive(True):
+      with jax.sharding.use_abstract_mesh(abstract_mesh):
+        def pipeline_body(x_ref, o_ref):
+          o_ref[...] = x_ref[...] + 1.0
+
+        @pl.kernel(
+            out_type=jax.ShapeDtypeStruct((4 * 8, 128), jnp.float32),
+            mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+            interpret=pltpu.InterpretParams(),
+        )
+        def kernel(x_hbm_ref, o_hbm_ref):
+          pltpu.emit_pipeline(
+              pipeline_body,
+              grid=(4,),
+              in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+          )(x_hbm_ref, o_hbm_ref)
+
+        x = jnp.arange(4 * 8 * 128, dtype=jnp.float32).reshape(4 * 8, 128)
+        out = kernel(x)
+        np.testing.assert_array_equal(out, x + 1)
+
+  def test_emit_pipeline_in_kernel_with_program_id(self):
+    if jax.config.jax_enable_x64:
+      self.skipTest(
+          'emit_pipeline has a pre-existing int32/int64 while_loop carry'
+          ' mismatch when x64 is enabled'
+      )
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (),
+        abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu'),
+    )
+    with config.use_emit_pipeline_primitive(True):
+      with jax.sharding.use_abstract_mesh(abstract_mesh):
+        def pipeline_body(x_ref, o_ref):
+          i = pl.program_id(0)
+          o_ref[...] = x_ref[...] + i
+
+        @pl.kernel(
+            out_type=jax.ShapeDtypeStruct((4 * 8, 128), jnp.int32),
+            mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+            interpret=pltpu.InterpretParams(),
+        )
+        def kernel(x_hbm_ref, o_hbm_ref):
+          pltpu.emit_pipeline(
+              pipeline_body,
+              grid=(4,),
+              in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+          )(x_hbm_ref, o_hbm_ref)
+
+        x = jnp.zeros((4 * 8, 128), dtype=jnp.int32)
+        out = kernel(x)
+        expected = np.zeros((4 * 8, 128), dtype=np.int32)
+        for i in range(4):
+          expected[i * 8 : (i + 1) * 8, :] = i
+        np.testing.assert_array_equal(out, expected)
 
 
 if __name__ == '__main__':

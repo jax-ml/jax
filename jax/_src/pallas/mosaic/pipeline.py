@@ -2303,11 +2303,22 @@ def _pipeline_body_lowering_rule(
     return jaxpr_subcomp(
         lowering_context, jaxpr, *body_consts, *resolved_refs)
 
-@register_lowering_rule(emit_pipeline_p, kernel_types=[*tpu_core.CoreType])
-def _emit_pipeline_lowering_rule(
-    ctx, *args_flat, grid_mapping, body_jaxpr, args_tree, refs_tree, num_cores,
-    dimension_semantics, core_axis, core_axis_name, _explicit_indices, **params
-):
+def emit_pipeline_to_jaxpr(
+    avals_in,
+    ctx,
+    *,
+    grid_mapping,
+    body_jaxpr,
+    args_tree,
+    refs_tree,
+    num_cores,
+    dimension_semantics,
+    core_axis=None,
+    core_axis_name=None,
+    _explicit_indices=False,
+    _interpret=False,  # for interpret mode only
+    **params,
+) -> core.ClosedJaxpr:
   del core_axis, core_axis_name
   index_map_consts_counts = tuple(
       len(bm.index_map_jaxpr.consts) for bm in grid_mapping.block_mappings)
@@ -2357,8 +2368,12 @@ def _emit_pipeline_lowering_rule(
                           if i not in grid_mapping.vmapped_dims)
 
     # re-create the pallas core grid env
-    grid_names = ctx.lowering_context.grid_names
-    grid_sizes = ctx.lowering_context.grid_sizes
+    if not _interpret:
+      grid_names = ctx.lowering_context.grid_names
+      grid_sizes = ctx.lowering_context.grid_sizes
+    else:
+      grid_names = ctx.grid_mapping.grid_names
+      grid_sizes = ctx.grid_mapping.grid
     if grid_names is None:
       grid_names = (None,) * len(grid_sizes)
     axis_env_ctx = core.extend_axis_env_nd(
@@ -2376,13 +2391,34 @@ def _emit_pipeline_lowering_rule(
       pipeline_fun(*refs_flat)
     return ()
 
-  all_args = args_tree.unflatten(args_flat)
   dbg = api_util.debug_info(
-      "emit_pipeline_lowering", wrapped_pipeline_fun, ctx.avals_in, {}
+      "emit_pipeline_lowering", wrapped_pipeline_fun, avals_in, {}
   )
-  in_avals_ft = ft.flatten_args(*ctx.avals_in)
+  in_avals_ft = ft.flatten_args(*avals_in)
   closed_jaxpr, _ = pe.trace_to_jaxpr_nocache(
       wrapped_pipeline_fun, in_avals_ft, debug_info=dbg
+  )
+  return closed_jaxpr
+
+
+@register_lowering_rule(emit_pipeline_p, kernel_types=[*tpu_core.CoreType])
+def _emit_pipeline_lowering_rule(
+    ctx, *args_flat, grid_mapping, body_jaxpr, args_tree, refs_tree, num_cores,
+    dimension_semantics, core_axis, core_axis_name, _explicit_indices, **params
+):
+  closed_jaxpr = emit_pipeline_to_jaxpr(
+      ctx.avals_in,
+      ctx,
+      grid_mapping=grid_mapping,
+      body_jaxpr=body_jaxpr,
+      args_tree=args_tree,
+      refs_tree=refs_tree,
+      num_cores=num_cores,
+      dimension_semantics=dimension_semantics,
+      core_axis=core_axis,
+      core_axis_name=core_axis_name,
+      _explicit_indices=_explicit_indices,
+      **params,
   )
   jaxpr = closed_jaxpr
   consts = closed_jaxpr.consts
@@ -2392,6 +2428,7 @@ def _emit_pipeline_lowering_rule(
   )
   jaxpr = pe.convert_constvars_jaxpr(jaxpr)
 
+  all_args = args_tree.unflatten(args_flat)
   grid_val_iter = iter(all_args.dynamic_grid_spec)
   grid_indices = tuple(next(grid_val_iter) if pallas_core.is_dynamic_dim(d)
                        else ir_constant(d) for d in grid_mapping.grid)

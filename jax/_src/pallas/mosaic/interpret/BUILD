@@ -63,6 +63,7 @@ pytype_strict_library(
         "//jax/_src:util",
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",
+        "//jax/_src/pallas/mosaic:pipeline",
         "//jax/_src/pallas/mosaic:primitives",
         "//jax/_src/pallas/mosaic:tpu_info",
     ] + py_deps("numpy"),
