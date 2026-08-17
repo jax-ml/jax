@@ -83,6 +83,7 @@ def _raise_if_unsupported_memory_space(
       mosaic_gpu_core.MemorySpace.SMEM,
       mosaic_gpu_core.MemorySpace.TMEM,
       mosaic_gpu_core.MemorySpace.REGS,
+      mosaic_gpu_core.MemorySpace.CTA_BARRIER,
   ]:
     raise NotImplementedError(f"Unsupported memory space: {space}")
 
@@ -567,11 +568,14 @@ class JaxprInterpreter:
             inner = apply_layout_transforms(transforms, inner)
           match inner:
             case jax_core.ShapedArray(shape=shape, dtype=dtype):
-              if isinstance(dtype, mosaic_gpu_core.BarrierType):
+              is_barrier = isinstance(dtype, mosaic_gpu_core.BarrierType)
+              is_cta_barrier = isinstance(dtype, mosaic_gpu_core.CtaBarrierType)
+              if is_barrier or is_cta_barrier:
                 # A barrier is shared between the threads in a block. Hence its
                 # ref count, when computed based on the collective axes, should
                 # equal the number of threads in a block.
                 assert ref_count == self.num_threads_per_block
+                orders_tc = getattr(dtype, "orders_tensor_core", False)
                 # TODO(nrink): Simplify the interface to
                 # `call_allocate_barriers`. Consider making it similar to
                 # `call_allocate_buffer`, see below.
@@ -580,7 +584,7 @@ class JaxprInterpreter:
                     mesh_location=self.mesh_location,
                     thread=self.thread,
                     num_arrivals=jnp.int32(dtype.num_arrivals),
-                    orders_tensor_core=dtype.orders_tensor_core,
+                    orders_tensor_core=orders_tc,
                     flat_num_barriers=math.prod(shape),
                     ref_count=jnp.int32(ref_count),
                     source_info=eqn.source_info,
@@ -642,7 +646,8 @@ class JaxprInterpreter:
               is_cluster_barrier = isinstance(
                   dtype, mosaic_gpu_core.ClusterBarrierType
               )
-              if is_barrier or is_cluster_barrier:
+              is_cta_barrier = isinstance(dtype, mosaic_gpu_core.CtaBarrierType)
+              if is_barrier or is_cluster_barrier or is_cta_barrier:
                 return gpu_callbacks.call_deallocate_barrier(
                     token=token,
                     mesh_location=self.mesh_location,
