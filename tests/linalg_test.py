@@ -2088,7 +2088,13 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
-    self._CheckAgainstNumpy(osp.linalg.schur, jsp.linalg.schur, args_maker)
+    args = args_maker()[0]
+    T, Z = jsp.linalg.schur(args)
+    eps = np.finfo(dtype).eps
+    self.assertAllClose(args, Z @ T @ jnp.conj(Z.T), atol=600 * eps)
+    self.assertAllClose(
+        np.eye(*shape, dtype=dtype), Z @ jnp.conj(Z.T), atol=100 * eps
+    )
     self._CompileAndCheck(jsp.linalg.schur, args_maker)
 
   @jtu.sample_product(
