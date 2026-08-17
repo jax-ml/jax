@@ -1523,22 +1523,39 @@ def async_prefetch(
 def _get_barrier_base_index(aval, transforms) -> ir.Value | None:
   if not transforms:
     return None
+  shape = list(aval.shape)
   strides = list(pallas_utils.strides_from_shape(aval.shape))
   base_index: ir.Value | None = None
   while transforms:
     match transforms:
       case [indexing.NDIndexer() as indexer, *transforms]:
         num_int_idxs = 0
-        for i, (idx, stride) in enumerate(zip(indexer.indices, strides[:])):
+        for i, (idx, size, stride) in enumerate(
+            zip(indexer.indices, shape[:], strides[:])
+        ):
           if isinstance(idx, indexing.Slice):
             if idx.stride != 1:
               raise NotImplementedError(
                   "Barrier does not support slice with `stride != 1`"
               )
+            if isinstance(idx.start, int) and (
+                idx.start < 0 or idx.start + idx.size > size
+            ):
+              raise IndexError(
+                  f"Barrier slice {idx} is out of bounds for axis of size"
+                  f" {size}"
+              )
+            shape[i - num_int_idxs] = idx.size
             idx = idx.start
           else:
+            if isinstance(idx, int) and (idx < 0 or idx >= size):
+              raise IndexError(
+                  f"Barrier index {idx} is out of bounds for axis of size"
+                  f" {size}"
+              )
             # This dimension is absent for any corresponding `NDIndexer`s, so
-            # we remove the corresponding stride.
+            # we remove the corresponding size and stride.
+            shape.pop(i - num_int_idxs)
             strides.pop(i - num_int_idxs)
             num_int_idxs += 1
 
@@ -1559,7 +1576,23 @@ def _get_barrier_base_index(aval, transforms) -> ir.Value | None:
             base_index = arith_dialect.addi(base_index, idx)
       case _:
         raise ValueError("Barrier does not support arbitrary transforms")
+  if (num_barriers := math.prod(shape)) != 1:
+    raise ValueError(
+        "Operation is only valid for a single barrier, but barrier ref"
+        f" contains {num_barriers}. Individual barriers can be accessed"
+        " by indexing into the ref."
+    )
   return base_index
+
+
+def _check_barrier_ref(barrier: object) -> None:
+  if (
+      isinstance(barrier, state_types.AbstractRef)
+      and isinstance(barrier.dtype, gpu_core.CtaBarrierType)
+  ):
+    _check_ref(barrier, "barrier", gpu_core.CTA_BARRIER)
+  else:
+    _check_ref(barrier, "barrier", gpu_core.SMEM)
 
 
 barrier_arrive_p = jax_core.Primitive("barrier_arrive")
@@ -1569,7 +1602,7 @@ barrier_arrive_p.multiple_results = True
 @barrier_arrive_p.def_effectful_abstract_eval
 def _barrier_arrive_abstract_eval(barrier, *args, **params):
   del args, params  # Unused.
-  _check_ref(barrier, "barrier", gpu_core.SMEM)
+  _check_barrier_ref(barrier)
   return (), {gpu_core._memory_effect}
 
 
@@ -1619,7 +1652,16 @@ def _barrier_arrive_lowering(
   base_index = _get_barrier_base_index(barrier_aval, transforms)
   if base_index is not None:
     barrier = barrier[base_index]
-  sem_dtype = barrier_aval.inner_aval.dtype  # pyrefly: ignore[missing-attribute]
+
+  if isinstance(barrier, mgpu.CtaBarrierRef):
+    if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+      raise NotImplementedError(
+          "Arriving on a CTA barrier is not supported in a warp context"
+      )
+    barrier.arrive(predicate=predicate)
+    return ()
+
+  sem_dtype = barrier_aval.dtype
   orders_tensor_core = getattr(sem_dtype, "orders_tensor_core", False)
 
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
@@ -1677,7 +1719,7 @@ barrier_arrive_and_wait_p.multiple_results = True
 @barrier_arrive_and_wait_p.def_effectful_abstract_eval
 def _barrier_arrive_and_wait_abstract_eval(barrier, *args, **params):
   del args, params  # Unused.
-  _check_ref(barrier, "barrier", gpu_core.SMEM)
+  _check_barrier_ref(barrier)
   return (), {gpu_core._memory_effect}
 
 
@@ -1720,12 +1762,26 @@ def _barrier_arrive_and_wait_lowering(
     *flat_transforms,
     transforms_treedef,
 ):
-  _barrier_arrive_lowering(
-      ctx, barrier, *flat_transforms, transforms_treedef=transforms_treedef
-  )
-  _barrier_wait_lowering(
-      ctx, barrier, *flat_transforms, transforms_treedef=transforms_treedef
-  )
+  if not isinstance(barrier, mgpu.CtaBarrierRef):
+    _barrier_arrive_lowering(
+        ctx, barrier, *flat_transforms, transforms_treedef=transforms_treedef
+    )
+    _barrier_wait_lowering(
+        ctx, barrier, *flat_transforms, transforms_treedef=transforms_treedef
+    )
+    return ()
+
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    raise NotImplementedError(
+        "Waiting on a CTA barrier is not supported in a warp context"
+    )
+  transforms = transforms_treedef.unflatten(flat_transforms)
+  barrier_aval = ctx.avals_in[0]
+  assert isinstance(barrier_aval, state_types.AbstractRef)
+  base_index = _get_barrier_base_index(barrier_aval, transforms)
+  if base_index is not None:
+    barrier = barrier[base_index]
+  barrier.arrive_and_wait()
   return ()
 
 
@@ -1746,6 +1802,11 @@ barrier_test_p.multiple_results = False
 
 @barrier_test_p.def_effectful_abstract_eval
 def _barrier_test_abstract_eval(barrier, *args, **params):
+  if (
+      isinstance(barrier, state_types.AbstractRef)
+      and isinstance(barrier.dtype, gpu_core.CtaBarrierType)
+  ):
+    raise ValueError("CTA barriers do not support barrier_test")
   _check_ref(barrier, "barrier", gpu_core.SMEM)
   del args, params  # Unused.
   return jax_core.ShapedArray((), bool), {gpu_core._memory_effect}
@@ -1786,7 +1847,7 @@ def _barrier_test_lowering(
   assert isinstance(barrier_aval, state_types.AbstractRef)
   transforms = transforms_treedef.unflatten(flat_transforms)
   orders_tensor_core = getattr(
-      barrier_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
+      barrier_aval.dtype, "orders_tensor_core", False
   )
 
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
@@ -1828,6 +1889,11 @@ barrier_wait_p.multiple_results = True
 
 @barrier_wait_p.def_effectful_abstract_eval
 def _barrier_wait_abstract_eval(barrier, *args, **params):
+  if (
+      isinstance(barrier, state_types.AbstractRef)
+      and isinstance(barrier.dtype, gpu_core.CtaBarrierType)
+  ):
+    raise ValueError("CTA barriers do not support waiting without arriving")
   _check_ref(barrier, "barrier", gpu_core.SMEM)
   del args, params  # Unused.
   return (), {gpu_core._memory_effect}
