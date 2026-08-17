@@ -32,6 +32,12 @@ Remember to align the itemized text with the first line of an item within a list
     When omitted, the completion of the copy must be awaited via
     {func}`jax.experimental.pallas.mosaic_gpu.wait_gmem_to_smem`.
 
+* Removals
+
+  * Removed {func}`jax.experimental.pallas.mosaic_gpu.transform_ref`. It is
+    only marginally useful in the presence of transform inference. If you find
+    that transform inference is insufficient, please file a bug.
+
 ## Released with JAX 0.11.0 (July 16, 2026)
 
 * Changes
