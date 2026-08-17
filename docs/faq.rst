@@ -83,19 +83,19 @@ Other times, XLA's optimizations may lead to even more drastic differences.
 Consider the following example:
 
 >>> def f(x):
-...   return jnp.log(jnp.exp(x))
+...   return jnp.exp(x) / jnp.exp(x)
 >>> x = 100.0
 >>> print(f(x))
-inf
+nan
 
 >>> print(jit(f)(x))
-100.0
+1.0
 
-In non-JIT-compiled op-by-op mode, the result is ``inf`` because ``jnp.exp(x)``
-overflows and returns ``inf``. Under JIT, however, XLA recognizes that ``log`` is
-the inverse of ``exp``, and removes the operations from the compiled function,
-simply returning the input. In this case, JIT compilation produces a more accurate
-floating point approximation of the real result.
+In non-JIT-compiled op-by-op mode, the result is ``nan`` because ``jnp.exp(x)``
+overflows and returns ``inf``, resulting in ``inf / inf = nan``. Under JIT,
+however, XLA simplifies the expression to ``exp(x - x)`` and computes the
+result ``1.0`` without the intermediate overflow. In this case, JIT compilation
+produces a more accurate floating point approximation of the real result.
 
 Unfortunately the full list of XLA's algebraic simplifications is not well
 documented, but if you're familiar with C++ and curious about what types of

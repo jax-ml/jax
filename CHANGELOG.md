@@ -16,6 +16,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.11.1 (August 17, 2026)
+
 * New features
   * Added an error check for trying to deserialize JAX exports that are older
     than the backwards compatibility window. Without this check the
@@ -25,23 +27,23 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     temporarily bypass the error check.
     See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees.
   * Added {func}`jax.numpy.top_k`, which implements {func}`numpy.top_k`, added in
-    in NumPy v2.6.0 ({jax-issue}`#39729`)
+    in NumPy v2.6.0 ({jax-issue}`#39729`).
 
 * Breaking changes
   * The `exec_time_optimization_effort` and `memory_fitting_effort` flags have been
     removed in favor of the `EffortLevel` enum.
   * JAX does not support anymore deserialization of Exported modules from
-  before January 15th, 2026 because they are beyond the backwards compatibility
-  window. On that date we added support to serialize shardings as NamedSharding,
-  and now that is the only sharding serialization that is supported.
+    before January 15th, 2026 because they are beyond the backwards compatibility
+    window. On that date we added support to serialize shardings as NamedSharding,
+    and now that is the only sharding serialization that is supported.
   * jnp.take_along_axis now always defaults wrap_negative_indices to True.
     It used to default to False for mode=promise_in_bounds and True otherwise.
     (This also means None is no longer a valid value for wrap_negative_indices.)
 
 * Deprecations
   * The fields `in_shardings_hlo` and `out_shardings_hlo` of
-  `jax.export.Exported` have been deprecated for a while. Now accessing them
-   raises a warning. Use `in_shardings_jax` and `out_shardings_jax` instead.
+    `jax.export.Exported` have been deprecated for a while. Now accessing them
+    raises a warning. Use `in_shardings_jax` and `out_shardings_jax` instead.
 
 * Changes
   * The cuDNN fused attention backward pass (used by
@@ -54,8 +56,22 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.numpy.broadcast_arrays` now return tuples rather than lists
     in order to align with NumPy>2.0 and the Array API specification.
     ({jax-issue}`#39783`, {jax-issue}`#39789`, {jax-issue}`#39802`)
+  * When {func}`jax.grad` or {func}`jax.value_and_grad` rejects a function with
+    a non-scalar output, the error message now suggests reducing the output
+    to a scalar (e.g. with `output.sum()`), using {func}`jax.jacobian`, or
+    reshaping size-1 outputs ({jax-issue}`#2303`).
+  * When indexing with non-static or traced slice indices, the error message
+    now suggests using {func}`jax.lax.dynamic_slice`,
+    {func}`jax.lax.dynamic_update_slice`, or `jax.ds`, and shows tracer
+    provenance ({jax-issue}`#7222`).
+  * PyTree metadata equality comparison failures now report the specific
+    registered pytree type that caused the error ({jax-issue}`#13027`).
 
 * Bug fixes
+  * {func}`jax.numpy.linalg.det` and {func}`jax.numpy.linalg.slogdet` now use a
+    closed-form LU decomposition with row pivoting for 2x2 and 3x3 matrices
+    instead of closed-form polynomial expansions to avoid numerical instability
+    and catastrophic cancellation ({jax-issue}`#39905`).
   * The batching rules of the cuDNN fused attention primitives (used by
     {func}`jax.nn.dot_product_attention` with `implementation='cudnn'`) now
     support operands that do not carry the vmap axis, including a shared
@@ -79,6 +95,15 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     ({jax-issue}`#6599`). Out-of-bound indices are now clipped to the axis
     bounds and produce empty sections, also matching NumPy, instead of raising
     `ValueError: Sizes passed to split must be nonnegative`.
+  * Fixed abstract evaluation in {func}`jax.lax.scan` to only check `.mat`
+    equivalency when the abstract value is a `ShapedArray`
+    ({jax-issue}`#39700`).
+  * Fixed propagation of singleton sharded dimensions in {func}`jax.lax.reshape`
+    when reshaping arrays with sharding constraints ({jax-issue}`#39309`).
+  * Fixed {func}`jax.tree_util.flatten_one_level_with_keys` for `namedtuple`
+    instances ({jax-issue}`#39297`).
+  * Fixed `_get_prime_factors` in `jax.experimental.mesh_utils`
+    ({jax-issue}`#38286`).
 
 ## JAX 0.11.0 (July 16, 2026)
 
