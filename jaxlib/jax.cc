@@ -1173,6 +1173,13 @@ NB_MODULE(_jax, m) {
     xla::ThrowIfError(PyArray::BatchedBlockUntilReady(std::move(xs)));
   });
 
+  m.def(
+      "batched_copy_to_host_async",
+      [](nanobind::sequence py_arrays) {
+        xla::ThrowIfError(PyArray::BatchedCopyToHostAsync(py_arrays));
+      },
+      nb::arg("arrays"));
+
   m.def("check_and_canonicalize_memory_kind", &CheckAndCanonicalizeMemoryKind,
         nb::arg("memory_kind").none(), nb::arg("device_list"));
 
