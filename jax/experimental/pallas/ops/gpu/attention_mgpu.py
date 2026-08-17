@@ -165,7 +165,7 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
 
         # QK
         def compute_qk(acc_ref):
-          plgpu.wgmma(acc_ref, qo_smem, plgpu.transpose_ref(k_smem.at[slot], (1, 0)))
+          plgpu.wgmma(acc_ref, qo_smem, k_smem.at[slot].transpose((1, 0)))
           perform_schedule_barrier()
           return acc_ref[...]
         qk = pl.run_scoped(compute_qk, plgpu.ACC((block_q, block_kv), jnp.float32))
@@ -433,7 +433,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       (dq_acc, lse, delta) = carry
 
       def compute_s(acc_ref):
-        plgpu.wgmma(acc_ref, q_smem, plgpu.transpose_ref(k_smem, (1, 0)))
+        plgpu.wgmma(acc_ref, q_smem, k_smem.transpose((1, 0)))
         return acc_ref[...]
 
       s = pl.run_scoped(compute_s, plgpu.ACC((block_q, block_kv), jnp.float32))
@@ -442,7 +442,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
 
       # dP
       def compute_dp(acc_ref):
-        plgpu.wgmma(acc_ref, do_smem, plgpu.transpose_ref(v_smem, (1, 0)))
+        plgpu.wgmma(acc_ref, do_smem, v_smem.transpose((1, 0)))
         return acc_ref[...]
 
       dp = pl.run_scoped(compute_dp, plgpu.ACC((block_q, block_kv), jnp.float32))
@@ -532,7 +532,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       dk_acc, dv_acc = carry
 
       def _compute_sT(acc_ref):
-        plgpu.wgmma(acc_ref, k_smem, plgpu.transpose_ref(q_smem, (1, 0)))
+        plgpu.wgmma(acc_ref, k_smem, q_smem.transpose((1, 0)))
         return acc_ref[...]
       sT = pl.run_scoped(_compute_sT, plgpu.ACC((block_kv, block_q), jnp.float32))
       sT *= math.log2(math.e)
@@ -546,7 +546,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
         # synchronization from two `wgmma.wait_group` calls.
         dv_acc_ref, dpT_acc_ref = refs
         plgpu.wgmma(dv_acc_ref, pT.astype(dtype), do_smem)  # dV
-        plgpu.wgmma(dpT_acc_ref, v_smem, plgpu.transpose_ref(do_smem, (1, 0)))  # dpT
+        plgpu.wgmma(dpT_acc_ref, v_smem, do_smem.transpose((1, 0)))  # dpT
 
       zeros = plgpu.layout_cast(
           jnp.full((block_kv, block_q), 0, dtype=jnp.float32), plgpu.Layout.WGMMA,
@@ -730,7 +730,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
       acc, m_i, l_i = carry
       qo_smem = qo_smem2.at[wg_idx]
       def compute_qk(acc_ref):
-        plgpu.wgmma(acc_ref, qo_smem, plgpu.transpose_ref(k_smem, (1, 0)))
+        plgpu.wgmma(acc_ref, qo_smem, k_smem.transpose((1, 0)))
         perform_schedule_barrier()
         return acc_ref[...]
       qk = pl.run_scoped(compute_qk, plgpu.ACC((block_q, block_kv), jnp.float32))

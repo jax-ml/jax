@@ -34,6 +34,11 @@ Remember to align the itemized text with the first line of an item within a list
     When omitted, the completion of the copy must be awaited via
     {func}`jax.experimental.pallas.mosaic_gpu.wait_gmem_to_smem`.
 
+* Deprecations
+
+  * {func}`jax.experimental.pallas.mosaic_gpu.transpose_ref` is
+    deprecated. Use ``ref.transpose(...)` directly instead.
+
 * Removals
 
   * Removed {func}`jax.experimental.pallas.mosaic_gpu.transform_ref`. It is

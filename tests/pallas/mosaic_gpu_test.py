@@ -1697,7 +1697,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   def test_copy_with_transforms_and_indexing(self):
     def kernel(x_ref, o_ref, scratch_ref, barrier_ref):
-      transposed_scratch = plgpu.transpose_ref(scratch_ref, (1, 0, 2, 3))
+      transposed_scratch = scratch_ref.transpose((1, 0, 2, 3))
       for i in range(2):
         plgpu.copy_gmem_to_smem(x_ref, transposed_scratch.at[:, i], barrier_ref)
         plgpu.barrier_wait(barrier_ref)
@@ -1787,11 +1787,11 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     @self.kernel(out_type=jax.ShapeDtypeStruct(shape, dtype))
     def kernel(src_ref, dst_ref):
       if src_transposed:
-        src_ref = plgpu.transpose_ref(src_ref, permutation)
+        src_ref = src_ref.transpose(permutation)
         src_layout = plgpu.Layout.WGMMA_TRANSPOSED
         dst_layout = plgpu.Layout.WGMMA
       else:
-        dst_ref = plgpu.transpose_ref(dst_ref, permutation)
+        dst_ref = dst_ref.transpose(permutation)
         src_layout = plgpu.Layout.WGMMA
         dst_layout = plgpu.Layout.WGMMA_TRANSPOSED
       src = plgpu.load(src_ref, layout=src_layout, optimized=False)
@@ -1817,7 +1817,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     def kernel(x_ref, o_ref, smem_ref, barrier):
       plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier)
       plgpu.barrier_wait(barrier)
-      smem_ref_t = plgpu.transpose_ref(smem_ref, (1, 0))
+      smem_ref_t = smem_ref.transpose((1, 0))
       # TODO(b/540761884): If we skip the layout, we end up inferring WGStrided
       # and emitting vector.load along a non-contiguous dimension and failing
       # the MLIR verifier
@@ -1840,7 +1840,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     )
     def kernel(x_ref, o_ref, smem_ref):
       x = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
-      plgpu.transpose_ref(smem_ref, (1, 0))[...] = x
+      smem_ref.transpose((1, 0))[...] = x
       o_ref[...] = smem_ref[...]
 
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
@@ -1879,7 +1879,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         ],
     )
     def kernel(src_ref, dst_ref, smem_ref, barrier_ref):
-      smem_ref = plgpu.transpose_ref(smem_ref, (1, 0, 2))
+      smem_ref = smem_ref.transpose((1, 0, 2))
       plgpu.copy_gmem_to_smem(src_ref, smem_ref, barrier_ref)
       plgpu.barrier_wait(barrier_ref)
       plgpu.copy_smem_to_gmem(smem_ref, dst_ref)
@@ -1891,7 +1891,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     def kernel(x_ref, o_ref, barrier_ref):
       for i in range(2):
         plgpu.copy_gmem_to_smem(
-            x_ref, plgpu.transpose_ref(o_ref.at[i], (1, 0, 2)), barrier_ref
+            x_ref, o_ref.at[i].transpose((1, 0, 2)), barrier_ref
         )
         plgpu.barrier_wait(barrier_ref)
 
@@ -1918,7 +1918,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         ],
     )
     def kernel(x_ref, o_ref, smem_ref, barrier_ref):
-      smem_transposed = plgpu.transpose_ref(smem_ref, (1, 0, 2, 3))
+      smem_transposed = smem_ref.transpose((1, 0, 2, 3))
       for i in range(2):
         plgpu.copy_gmem_to_smem(x_ref, smem_transposed.at[:, i], barrier_ref)
         plgpu.barrier_wait(barrier_ref)
@@ -2866,7 +2866,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       iota = plgpu.broadcasted_iota(dtype, shape, 0, layout=layout)
       iota *= shape[1]
       iota += plgpu.broadcasted_iota(dtype, shape, 1, layout=layout)
-      o_ref_t = plgpu.transpose_ref(o_ref, (1, 0))
+      o_ref_t = o_ref.transpose((1, 0))
       o_ref_t[...] = plgpu.layout_cast(iota, transposed_layout)
 
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape).T
@@ -4772,7 +4772,7 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
       def _(warp_id):
         @pl.when(warp_id == 0)
         def _():
-          t = plgpu.transpose_ref(smem, (1, 0, 2))
+          t = smem.transpose((1, 0, 2))
           plgpu.copy_smem_to_gmem(t, out_ref)
           plgpu.wait_smem_to_gmem(0)
 
@@ -4893,10 +4893,10 @@ class PallasCallSm90ATest(PallasSm90ATest):
     def kernel(a_ref, b_ref, o_ref, acc_ref):
       # Make sure tiling does not alter the shape of references
       if lhs_transpose:
-        a_ref = plgpu.transpose_ref(a_ref, (1, 0))
+        a_ref = a_ref.transpose((1, 0))
       assert a_ref.shape == (tile_m, tile_k)
       if rhs_transpose:
-        b_ref = plgpu.transpose_ref(b_ref, (1, 0))
+        b_ref = b_ref.transpose((1, 0))
       assert b_ref.shape == (tile_k, tile_n)
       assert o_ref.shape == acc_ref.shape == (tile_m, tile_n)
       plgpu.wgmma(acc_ref, a_ref, b_ref)
@@ -4998,7 +4998,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     rhs_transpose = jnp.dtype(dtype).itemsize != 2
     def kernel(a_ref, b_ref, o_ref):
       if rhs_transpose:
-        b_ref = plgpu.transpose_ref(b_ref, (1, 0))
+        b_ref = b_ref.transpose((1, 0))
       def scope(acc_ref):
         plgpu.wgmma(acc_ref, a_ref, b_ref)
         return acc_ref[...]
@@ -5045,7 +5045,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     def kernel(a_ref, b_ref, o_ref):
 
       def scope(acc_ref):
-        plgpu.wgmma(acc_ref, a_ref, plgpu.transpose_ref(b_ref, (1, 0)))
+        plgpu.wgmma(acc_ref, a_ref, b_ref.transpose((1, 0)))
         return acc_ref[...]
 
       o_ref[...] = pl.run_scoped(scope, plgpu.ACC((m, n), acc_type))
@@ -5091,7 +5091,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     def kernel(a_ref, b_ref, o_ref):
 
       def scope(acc_ref):
-        plgpu.wgmma(acc_ref, a_ref, plgpu.transpose_ref(b_ref, (1, 0)))
+        plgpu.wgmma(acc_ref, a_ref, b_ref.transpose((1, 0)))
         return acc_ref[...]
 
       o_ref[...] = pl.run_scoped(scope, plgpu.ACC((m, n), jnp.float32))
@@ -5185,7 +5185,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     def kernel(a_ref, b_ref, o_ref):
       def scope(acc_ref):
         a_regs = plgpu.load(a_ref, layout=plgpu.Layout.WGMMA_8BIT)
-        plgpu.wgmma(acc_ref, a_regs, plgpu.transpose_ref(b_ref, (1, 0)))
+        plgpu.wgmma(acc_ref, a_regs, b_ref.transpose((1, 0)))
         return acc_ref[...]
       o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 192), out_dtype))
 
@@ -5665,14 +5665,19 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
   def test_transposed_tmem_ref_raises(self):
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([], jnp.float32),
-        scratch_shapes=[plgpu.TMEM((128, 128), jnp.float32)],
+        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.float32),
+        scratch_shapes=[
+            plgpu.TMEM((128, 128), jnp.float32),
+            plgpu.SMEM((128, 128), jnp.float32),
+        ],
     )
-    def kernel(out, tmem_ref):
+    def kernel(out, tmem_ref, smem_ref):
       del out
-      plgpu.transpose_ref(tmem_ref, (1, 0))
+      smem_ref[...] = plgpu.async_load_tmem(tmem_ref.transpose((1, 0)))
 
-    with self.assertRaisesRegex(ValueError, "Can't transpose a TMEM reference"):
+    with self.assertRaisesRegex(
+        NotImplementedError, "Unimplemented transforms for TMEM refs"
+    ):
       kernel()
 
   @parameterized.parameters((False,), (True,))
@@ -6104,9 +6109,9 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
 
     def kernel(a_smem, b_smem, out_ref, acc_tmem, barrier_ref, a_tmem_ref):
       if transpose_lhs:
-        a_smem = plgpu.transpose_ref(a_smem, (1, 0))
+        a_smem = a_smem.transpose((1, 0))
       if transpose_rhs:
-        b_smem = plgpu.transpose_ref(b_smem, (1, 0))
+        b_smem = b_smem.transpose((1, 0))
       if lhs_tmem:
         lhs_ref = a_tmem_ref
         layout = plgpu.Layout.TCGEN05_TMEM_NATIVE(32 // jnp.finfo(a_type).bits)
@@ -6226,7 +6231,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       # We don't have to await the copy because it's only used by the MMA.
       plgpu.tcgen05_mma(acc_tmem,
                         a_smem,
-                        plgpu.transpose_ref(b_smem, (1, 0)),
+                        b_smem.transpose((1, 0)),
                         a_scale=a_scale_tmem,
                         b_scale=b_scale_tmem,
                         accumulate=False)
@@ -6382,7 +6387,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
         plgpu.tcgen05_mma(
             acc_tmem,
             lhs_smem,
-            plgpu.transpose_ref(rhs_smem, (1, 0)),
+            rhs_smem.transpose((1, 0)),
             mma_barrier,
             a_scale=lhs_scales_tmem,
             b_scale=rhs_scales_tmem,
@@ -6503,7 +6508,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
         plgpu.tcgen05_mma(
             acc_tmem,
             lhs_smem,
-            plgpu.transpose_ref(rhs_smem, (1, 0)),
+            rhs_smem.transpose((1, 0)),
             mma_barrier,
             a_scale=lhs_scales_tmem,
             b_scale=rhs_scales_tmem,
@@ -6617,7 +6622,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       # We don't have to await the copy because it's only used by the MMA.
       plgpu.tcgen05_mma(acc_tmem,
                         a_smem,
-                        plgpu.transpose_ref(b_smem, (1, 0)),
+                        b_smem.transpose((1, 0)),
                         a_sparse_metadata=a_sparse_tmem,
                         accumulate=False)
       plgpu.tcgen05_commit_arrive(barrier_ref)
@@ -6678,7 +6683,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       plgpu.async_copy_scales_to_tmem(b_scale_smem, b_scale_tmem)
       plgpu.tcgen05_mma(acc_tmem,
                         a_smem,
-                        plgpu.transpose_ref(b_smem, (1, 0)),
+                        b_smem.transpose((1, 0)),
                         a_scale=a_scale_tmem,
                         b_scale=b_scale_tmem,
                         a_sparse_metadata=a_sparse_tmem,
@@ -7025,7 +7030,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       plgpu.tcgen05_mma(
           acc_tmem,
           a_smem,
-          plgpu.transpose_ref(b_smem, (1, 0)),
+          b_smem.transpose((1, 0)),
           mma_barrier,
           a_sparse_metadata=a_sparse_tmem,
           accumulate=False,
@@ -7230,7 +7235,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
 
       # Do 128x128 @ 128x128 matmul
       plgpu.tcgen05_mma(acc_tmem,
-                        plgpu.transpose_ref(a_smem_128, (1, 0)),
+                        a_smem_128.transpose((1, 0)),
                         b_smem_128,
                         mma_barrier,
                         accumulate=False)
@@ -7240,7 +7245,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       # Do 128x64 @ 64x128 matmul
       plgpu.wait_load_tmem()  # Make sure the loads are complete
       plgpu.tcgen05_mma(acc_tmem,
-                        plgpu.transpose_ref(a_smem_64, (1, 0)),
+                        a_smem_64.transpose((1, 0)),
                         b_smem_64,
                         mma_barrier,
                         accumulate=False)

@@ -359,7 +359,7 @@ input data. For example, the `A` reference is allowed to be of shape `(K, M)`, b
 has to be transposed before passing it into the mma function. For example:
 ```python
 assert acc_ref.shape == (M, N) and a_ref.shape == (K, M) and b_ref.shape == (K, N)
-a_ref_t = plgpu.transpose_ref(a_ref, (1, 0))
+a_ref_t = a_ref.transpose((1, 0))
 assert a_ref_t.shape == (M, K)  # The shape expected by plgpu.wgmma
 plgpu.wgmma(acc, a_ref_t, b_ref)
 ```
