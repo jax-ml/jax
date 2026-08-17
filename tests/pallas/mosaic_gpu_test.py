@@ -5349,6 +5349,31 @@ class PallasCallSm90ATest(PallasSm90ATest):
           out_type=jax.ShapeDtypeStruct((128, 128), jnp.float16),
       )()
 
+  def test_wgmma_no_valid_tiling_raises(self):
+    if not self.is_wg_semantics():
+      self.skipTest("This test is only for WG semantics.")
+
+    @self.kernel(
+        scratch_types=[
+            plgpu.SMEM((64, 12), jnp.float16),
+            plgpu.SMEM((12, 64), jnp.float16),
+        ],
+        out_type=jax.ShapeDtypeStruct((64, 64), jnp.float32),
+    )
+    def kernel(out, a_smem, b_smem):
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref, a_smem, b_smem)
+        return acc_ref[...]
+
+      out[...] = pl.run_scoped(scope, plgpu.ACC((64, 64), jnp.float32))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "No valid tiling found for SMEM reference. \\(12, 64\\) not divisible"
+        " by candidate tiling \\(8, 16\\)",
+    ):
+      jax.jit(kernel).lower()
+
   def test_wgmma_reshaped_rhs_unit_tiling(self):
     def kernel(lhs_ref, rhs_ref, out_ref, lhs_smem, rhs_smem, barrier_ref):
       plgpu.copy_gmem_to_smem(lhs_ref, lhs_smem, barrier_ref)

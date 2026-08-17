@@ -876,44 +876,6 @@ class MinorDimDivisibleBy(_BaseConstraint):
     return f"{self.expr}.tiling[-1] % {self.divisor} == 0"
 
 
-@dataclasses.dataclass(frozen=True)
-class IsValidMmaTiling(_BaseConstraint):
-  """States that the `expr` SMEM tiling must be compatible with MMA requirements.
-
-  For both tcgen05.mma and wgmma, tiling is valid if it is of the form
-  (8, swizzle_elems), with
-      swizzle_elems in {s * 8 // dtype_bitwidth for s in [32, 64, 128]},
-  as support for unswizzled tilings is not yet supported.
-
-  If `allow_unswizzled` is True, then we additionally accept
-  (8, 16 * 8 // dtype_bitwidth) as a valid tiling.
-  """
-  expr: Expression
-  bitwidth: int
-  allow_unswizzled: bool = False
-
-  @property
-  def _is_constant(self) -> bool:
-    return isinstance(self.expr, Constant)
-
-  def _constant_holds(self) -> bool:
-    assert isinstance(self.expr, Constant)
-    match self.expr:
-      case SMEMTransforms(tiling=None):
-        return False
-      case SMEMTransforms(tiling=lc.TileTransform(tiling=t), swizzle=None):
-        no_swizzle = 16
-        return self.allow_unswizzled and t == (8, no_swizzle * 8 // self.bitwidth)
-      case SMEMTransforms(tiling=lc.TileTransform(tiling=t), swizzle=swizzle):
-        assert swizzle is not None  # satisfy the type checker
-        return t == (8, swizzle * 8 // self.bitwidth)
-      case RegisterLayout() | TMEMLayout() | SMEMTransforms():
-        raise ValueError(f"Unexpected value {self.expr} in IsValidMmaTiling constraint")
-      case _ as never:
-        assert_never(never)
-
-  def __str__(self):
-    return f"IsValidMMATiling({self.expr}, {self.bitwidth}, allow_unswizzled={self.allow_unswizzled})"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -985,7 +947,6 @@ Constraint = (
     | Relayout
     | NotOfType
     | IsTransferable
-    | IsValidMmaTiling
     | Divides
     | IsSupportedBroadcast
     | MinorDimDivisibleBy
@@ -1033,11 +994,6 @@ def reduce_constraint(
       if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
         return Unsatisfiable()
       return dataclasses.replace(transfer, source=source_red, target=target_red)
-    case IsValidMmaTiling(expr=expr) as is_valid_mma_tiling:
-      expr_red = reduce_expression(expr, assignments)
-      if isinstance(expr_red, Unsatisfiable):
-        return Unsatisfiable()
-      return dataclasses.replace(is_valid_mma_tiling, expr=expr_red)
     case Divides(expr=expr, tiling_multiple=tiling_multiple):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
@@ -1116,8 +1072,6 @@ class ConstraintSystem:
         case IsTransferable(source=source, target=target):
           extract_variables(source)
           extract_variables(target)
-        case IsValidMmaTiling(expr=expr):
-          extract_variables(expr)
         case Divides(expr=expr):
           extract_variables(expr)
         case MinorDimDivisibleBy(expr=expr):
