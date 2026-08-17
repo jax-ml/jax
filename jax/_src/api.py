@@ -32,7 +32,7 @@ import dataclasses
 import enum
 from functools import partial
 import inspect
-from typing import Any, Literal, TypeVar, overload, cast, TYPE_CHECKING
+from typing import Any, Literal, overload, cast, TYPE_CHECKING
 import weakref
 
 import numpy as np
@@ -91,12 +91,6 @@ _dtype = dtypes.dtype
 AxisName = Hashable
 
 Device = xc.Device
-
-# These TypeVars are used below to express the fact that function types
-# (i.e. call signatures) are invariant under the vmap transformation.
-F = TypeVar("F", bound=Callable)
-T = TypeVar("T")
-U = TypeVar("U")
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -1006,14 +1000,15 @@ def _split(x, indices, axis):
 
 
 @partial(api_boundary, repro_api_name="jax.vmap")
-def vmap(fun: F,
-         in_axes: int | None | Sequence[Any] = 0,
-         out_axes: Any = 0,
-         axis_name: AxisName | None = None,
-         axis_size: int | None = None,
-         spmd_axis_name: AxisName | tuple[AxisName, ...] | None = None,
-         sum_match: bool = False
-         ) -> F:
+def vmap[F: Callable](
+    fun: F,
+    in_axes: int | None | Sequence[Any] = 0,
+    out_axes: Any = 0,
+    axis_name: AxisName | None = None,
+    axis_size: int | None = None,
+    spmd_axis_name: AxisName | tuple[AxisName, ...] | None = None,
+    sum_match: bool = False
+    ) -> F:
   """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 
   Args:
@@ -1624,20 +1619,20 @@ def _temporary_dtype_exception(a, a_) -> bool:
   return False
 
 @overload
-def vjp(fun: Callable[..., T],
-        *primals: Any,
-        has_aux: Literal[False] = False,
-        reduce_axes: Sequence[AxisName] = (),
-        saveable_args: Any = True,
-        in_nzs: Any = None) -> tuple[T, Callable]:
+def vjp[T](fun: Callable[..., T],
+           *primals: Any,
+           has_aux: Literal[False] = False,
+           reduce_axes: Sequence[AxisName] = (),
+           saveable_args: Any = True,
+           in_nzs: Any = None) -> tuple[T, Callable]:
   ...
 
 @overload
-def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
-        has_aux: Literal[True],
-        reduce_axes: Sequence[AxisName] = (),
-        saveable_args: Any = True,
-        in_nzs: Any = None) -> tuple[T, Callable, U]:
+def vjp[T, U](fun: Callable[..., tuple[T, U]], *primals: Any,
+              has_aux: Literal[True],
+              reduce_axes: Sequence[AxisName] = (),
+              saveable_args: Any = True,
+              in_nzs: Any = None) -> tuple[T, Callable, U]:
   ...
 
 @partial(api_boundary, repro_api_name="jax.vjp")
@@ -2664,7 +2659,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
 
 
 @partial(api_boundary, repro_api_name="jax.named_call")
-def named_call(
+def named_call[F: Callable](
     fun: F,
     *,
     name: str | None = None,
