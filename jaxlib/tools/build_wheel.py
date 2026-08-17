@@ -221,6 +221,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/_profiler.{pyext}",
           f"{source_file_prefix}jaxlib/_profile_data.{pyext}",
           f"{source_file_prefix}jaxlib/_xla.{pyext}",
+          f"{source_file_prefix}jaxlib/_gpu_spec.{pyext}",
       ],
   )
   # This file is required by PEP-561. It marks jaxlib as package containing

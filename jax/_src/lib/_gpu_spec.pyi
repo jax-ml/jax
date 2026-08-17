@@ -1,0 +1,49 @@
+class GpuDeviceInfo:
+  device_vendor: str
+  platform_version: str
+  pci_bus_id: str
+  name: str
+  model_str: str
+  threads_per_block_limit: int
+  threads_per_warp: int
+  shared_memory_per_block: int
+  shared_memory_per_core: int
+  threads_per_core_limit: int
+  core_count: int
+  fpus_per_core: int
+  block_dim_limit_x: int
+  block_dim_limit_y: int
+  block_dim_limit_z: int
+  memory_bandwidth: int
+  l2_cache_size: int
+  clock_rate_ghz: float
+  device_memory_size: int
+  shared_memory_per_block_optin: int
+  registers_per_core_limit: int
+  registers_per_block_limit: int
+  driver_version: str
+  kernel_mode_driver_version: str
+  runtime_version: str
+  compile_time_toolkit_version: str
+  dnn_version: str
+  cub_version: str
+  numa_node: int
+  thread_dim_limit_x: int
+  thread_dim_limit_y: int
+  thread_dim_limit_z: int
+  device_address_bits: int
+  pcie_bandwidth: int
+  ecc_enabled: bool
+  mem_clock_ghz: float
+  reserved_shared_memory_per_block: int
+  max_blocks_per_multiprocessor: int
+  collective_memory_granularity: int
+
+class GpuTargetConfig:
+  gpu_device_info: GpuDeviceInfo
+  platform_name: str
+  device_description_str: str
+  arch_name: str
+  compute_capability: int
+
+def get_gpu_spec(device_kind: str) -> GpuTargetConfig: ...

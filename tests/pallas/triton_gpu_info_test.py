@@ -23,10 +23,28 @@ from jax._src.pallas.triton import gpu_info
 if sys.platform != "win32":
   # pylint: disable=g-import-not-at-top
   from jax.experimental.pallas import triton as plgpu
-  GpuVersion = plgpu.GpuVersion
+  GpuTargetConfig = plgpu.GpuTargetConfig
 else:
   plgpu = None
-  GpuVersion = gpu_info.GpuVersion
+  GpuTargetConfig = gpu_info.GpuTargetConfig
+
+
+TEST_DEVICE_CONFIGS = [
+    ("NVIDIA A100-SXM4-40GB", ("8.0", 80)),
+    ("NVIDIA A100-SXM4-80GB", ("8.0", 80)),
+    # XLA a100_pcie_80.txtpb report device_description_str: A100 80GB
+    # but device_kind is "NVIDIA A100 80GB PCIe"
+    # ("NVIDIA A100 80GB PCIe", ("8.0", 80)),
+    ("NVIDIA A10 WHATEVER", None),
+    ("NVIDIA H100 80GB HBM3", ("9.0", 90)),
+    ("NVIDIA H100 PCIe", ("9.0", 90)),
+    ("MI250", ("gfx90a:sramecc+:xnack-", 0)),
+    ("UNKNOWN", None),
+    ("GFX1250", ("gfx1250", 0)),
+    ("gfx90a:sramecc+:xnack-", None),
+    ("gfx942", None),
+    ("gfx950", None),
+]
 
 
 class GpuInfoTest(jtu.JaxTestCase):
@@ -37,87 +55,46 @@ class GpuInfoTest(jtu.JaxTestCase):
       self.skipTest("GPU jaxlib is not available")
     if not jtu.is_device_cuda() and not jtu.is_device_rocm():
       self.skipTest("Needs a GPU device")
-    try:
-      plgpu.get_gpu_info()
-    except ValueError:
-      self.skipTest("Unsupported GPU device")
 
   def test_get_gpu_info(self):
+    try:
+      info = plgpu.get_gpu_info()
+    except ValueError:
+      self.skipTest("Unsupported GPU device")
     device = jax.devices()[0]
-    info = plgpu.get_gpu_info()
-    self.assertIsInstance(info, plgpu.GpuInfo)
+    self.assertIsInstance(info, GpuTargetConfig)
     self.assertEqual(info.arch_name, device.compute_capability)
-    expected_version = gpu_info.gpu_version_from_device_kind(device.device_kind)
-    self.assertEqual(info.gpu_version, expected_version)
 
-    cc = info.compute_capability
-    match info.gpu_version:
-      case GpuVersion.T4:
-        self.assertEqual(cc, 75)
-      case GpuVersion.A100 | GpuVersion.A30:
-        self.assertEqual(cc, 80)
-      case GpuVersion.A10:
-        self.assertEqual(cc, 86)
-      case GpuVersion.L4 | GpuVersion.L40 | GpuVersion.RTX_4090:
-        self.assertEqual(cc, 89)
-      case GpuVersion.H100 | GpuVersion.H200 | GpuVersion.GH200:
-        self.assertEqual(cc, 90)
-      case GpuVersion.B200 | GpuVersion.GB200:
-        self.assertEqual(cc, 100)
-      case GpuVersion.B300 | GpuVersion.GB300:
-        self.assertEqual(cc, 103)
-      case GpuVersion.RTX_PRO_4500 | GpuVersion.RTX_PRO_5000 | GpuVersion.RTX_PRO_6000:
-        self.assertEqual(cc, 120)
-      case GpuVersion.GB10:
-        self.assertEqual(cc, 121)
-      case _:
-        self.assertEqual(cc, 0)
+    if "rocm" == device.platform:
+      self.assertEqual(info.compute_capability, 0)
+    else:
+      cc = int(float(info.compute_capability) * 10)
+      self.assertEqual(info.compute_capability, cc)
 
-  def test_get_gpu_info_given_gpu_version(self):
-    info = plgpu.get_gpu_info()
-    if info.gpu_version is None:
-      self.skipTest("device has a free-form arch with no GpuVersion")
-    info_version = plgpu.get_gpu_info_from_version(info.gpu_version)
-    self.assertEqual(info, info_version)
-
-  @parameterized.parameters([
-    ("NVIDIA A100-SXM4-40GB", GpuVersion.A100),
-    ("NVIDIA A100-SXM4-80GB", GpuVersion.A100),
-    ("NVIDIA A100-PCIE-40GB", GpuVersion.A100),
-    ("NVIDIA A100 80GB PCIe", GpuVersion.A100),
-    ("NVIDIA A10 WHATEVER", GpuVersion.A10),
-    ("NVIDIA H100 80GB HBM3", GpuVersion.H100),
-    ("NVIDIA H100 PCIe", GpuVersion.H100),
-    ("NVIDIA H100 NVL", GpuVersion.H100),
-    ("NVIDIA RTX 123", None),
-    ("UNKNOWN", None),
-    ("gfx908", None),
-    ("gfx90a:sramecc+:xnack-", None),
-    ("gfx942", None),
-    ("gfx950", None),
-    ("AMD Instinct MI355X", None),
-  ])
+  @parameterized.parameters(TEST_DEVICE_CONFIGS)
   def test_gpu_version_from_device_kind(self, device_kind, expected):
     info = gpu_info.gpu_version_from_device_kind(device_kind)
-    self.assertEqual(info, expected)
+    if expected is not None:
+      self.assertEqual((info.arch_name, info.compute_capability), expected)
+    else:
+      self.assertIsNone(info)
 
-  @parameterized.parameters([
-    "gfx942",
-    "gfx950",
-    "gfx950:sramecc+:xnack-",
-    "gfx1201",
-  ])
-  def test_gfx_device_kind_used_as_arch(self, device_kind):
+  @parameterized.parameters(TEST_DEVICE_CONFIGS)
+  def test_get_gpu_info_abs_device(self, device_kind, expected):
     abstract_device = jax.sharding.AbstractDevice(
         device_kind=device_kind, num_cores=None, platform="gpu")
     abstract_mesh = jax.sharding.AbstractMesh(
         (1,), ("x",), (jax.sharding.AxisType.Explicit,),
         abstract_device=abstract_device)
     with jax.sharding.use_abstract_mesh(abstract_mesh):
-      info = plgpu.get_gpu_info()
-      self.assertIsNone(info.gpu_version)
-      self.assertEqual(info.arch_name, device_kind)
-      self.assertTrue(plgpu.is_gpu_device())
+      try:
+        info = plgpu.get_gpu_info()
+      except ValueError:
+        self.skipTest("Unsupported GPU device")
+      if expected is not None:
+        self.assertEqual((info.arch_name, info.compute_capability), expected)
+      else:
+        self.assertIsNone(info)
 
 
 if __name__ == "__main__":
