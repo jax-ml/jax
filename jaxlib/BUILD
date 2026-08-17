@@ -455,6 +455,7 @@ nanobind_pywrap_extension(
         "@xla//xla/pjrt:pjrt_compiler",
         "@xla//xla/pjrt:pjrt_executable",
         "@xla//xla/pjrt:pjrt_layout",
+        "@xla//xla/pjrt:pjrt_topology_description_registry",
         "@xla//xla/pjrt:status_casters",
         "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_raw_buffer_external",

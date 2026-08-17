@@ -25,8 +25,19 @@ Device = _jax.Device
 
 
 class TopologyDescription:
+
   def __init__(self, devices: list[Device]):
     self.devices: list[Device] = devices
+
+  def serialize(self) -> bytes:
+    """Serializes the topology of the contained devices to protobuf bytes."""
+    return _jax.get_topology_for_devices(self.devices).serialize()
+
+  @classmethod
+  def deserialize(cls, serialized: bytes) -> TopologyDescription:
+    """Deserializes a PJRT C API topology from a protobuf byte string."""
+    device_topology = _jax.DeviceTopology.deserialize(serialized)
+    return cls(device_topology._make_compile_only_devices())
 
 
 def get_attached_topology(platform=None) -> TopologyDescription:

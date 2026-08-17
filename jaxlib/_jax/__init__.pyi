@@ -1271,6 +1271,13 @@ class CompileOnlyPyClient(Client):
 
 class DeviceTopology:
   def _make_compile_only_devices(self) -> list[Device]: ...
+  def serialize(self) -> bytes:
+    """Serializes the DeviceTopology to a PjRtTopologyDescriptionProto bytes payload."""
+
+  @staticmethod
+  def deserialize(serialized: bytes) -> DeviceTopology:
+    """Deserializes a DeviceTopology from a PjRtTopologyDescriptionProto bytes payload."""
+
   @property
   def platform(self) -> str: ...
   @property
