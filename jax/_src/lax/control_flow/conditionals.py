@@ -21,7 +21,7 @@ import functools
 from functools import partial
 import itertools
 import operator
-from typing import Any, TypeVar
+from typing import Any
 
 from jax._src import flattree as ft
 from jax._src.tree_util import (
@@ -1177,10 +1177,9 @@ def _cond_state_discharge_rule(ctx, index, *args,
   return new_invals, out_vals
 
 
-_T = TypeVar("_T")
-def platform_dependent(*args: Any,
-                       default: Callable[..., _T] | None = None,
-                       **per_platform: Callable[..., _T]):
+def platform_dependent[T](*args: Any,
+                          default: Callable[..., T] | None = None,
+                          **per_platform: Callable[..., T]):
   """Stages out platform-specific code.
 
   In JAX the actual platform on which a computation is run is determined
