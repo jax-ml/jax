@@ -245,3 +245,59 @@ index ea4cd32c..526b30c4 100644
          return url
      stripped = "/".join([p for p in rest.split("/") if p])
      if url.endswith("/"):
+diff --git a/python/private/pypi/whl_installer/wheel_installer.py b/python/private/pypi/whl_installer/wheel_installer.py
+index a5b1ce5..09c2a3e 100644
+--- a/python/private/pypi/whl_installer/wheel_installer.py
++++ b/python/private/pypi/whl_installer/wheel_installer.py
+@@ -61,31 +61,49 @@ def main() -> None:
++    req_target = args.requirement.split("@")[-1].strip()
++    is_local = (
++        "file://" in args.requirement
++        or req_target.startswith("/")
++        or req_target.startswith(".")
++    )
++    use_download = args.download_only and not is_local
++
+     pip_args = (
+         [sys.executable, "-m", "pip"]
+         + (["--isolated"] if args.isolated else [])
+-        + (["download", "--only-binary=:all:"] if args.download_only else ["wheel"])
++        + (["download", "--only-binary=:all:"] if use_download else ["wheel"])
+         + ["--no-deps"]
+         + deserialized_args["extra_pip_args"]
+     )
+ 
+     requirement_file = NamedTemporaryFile(mode="wb", delete=False)
+     try:
+         requirement_file.write(args.requirement.encode("utf-8"))
+         requirement_file.flush()
+         # Close the file so pip is allowed to read it when running on Windows.
+         # For more information, see: https://bugs.python.org/issue14243
+         requirement_file.close()
+         # Requirement specific args like --hash can only be passed in a requirements file,
+         # so write our single requirement into a temp file in case it has any of those flags.
+         pip_args.extend(["-r", requirement_file.name])
+ 
+         env = os.environ.copy()
+         env.update(deserialized_args["environment"])
+         # Assumes any errors are logged by pip so do nothing. This command will fail if pip fails
+         subprocess.run(pip_args, check=True, env=env)
++        whls = glob.glob("*.whl")
++        if not whls and use_download:
++            fallback_args = (
++                [sys.executable, "-m", "pip"]
++                + (["--isolated"] if args.isolated else [])
++                + ["wheel", "--no-deps"]
++                + deserialized_args["extra_pip_args"]
++                + ["-r", requirement_file.name]
++            )
++            subprocess.run(fallback_args, check=True, env=env)
+     finally:
+         try:
+             os.unlink(requirement_file.name)
+         except OSError as e:
+             if e.errno != errno.ENOENT:
+                 raise
+ 
+     whl = Path(next(iter(glob.glob("*.whl"))))
+
