@@ -4759,6 +4759,70 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     )(x)
     np.testing.assert_array_equal(out, x.reshape([m * n]))
 
+  # (*src_major, src_minor) <-> (*dst_major, dst_minor), where
+  # max(src_minor, dst_minor) <= 128 and one divides the other (row merging and splitting).
+  @parameterized.product(
+      shapes=[
+          # 2D <-> 2D
+          ((12, 10), (4, 30)),
+          ((8, 16), (2, 64)),
+          ((16, 8), (1, 128)),
+          ((24, 5), (2, 60)),
+          ((768, 32), (256, 96)),
+          # 3D <-> 2D
+          ((2, 3, 20), (3, 40)),
+          ((3, 5, 20), (5, 60)),
+          ((2, 6, 20), (3, 80)),
+          ((4, 3, 32), (6, 64)),
+          ((4, 3, 16), (12, 16)),
+          # 2D <-> 3D
+          ((18, 15), (2, 3, 45)),
+          ((24, 12), (3, 4, 24)),
+          ((24, 20), (2, 12, 20)),
+          ((16, 25), (2, 2, 100)),
+          # 3D <-> 3D
+          ((2, 6, 16), (3, 2, 32)),
+          ((4, 9, 20), (3, 6, 40)),
+          ((2, 12, 10), (4, 2, 30)),
+          ((2, 6, 32), (3, 4, 32)),
+          # 4D <-> 2D / 2D <-> 4D / 4D <-> 3D
+          ((2, 4, 3, 16), (4, 96)),
+          ((12, 20), (2, 2, 1, 60)),
+          ((2, 3, 8, 15), (6, 2, 60)),
+          ((2, 3, 4, 10), (24, 10)),
+          ((2, 2, 6, 8), (4, 6, 8)),
+      ],
+      dtype=[
+          jnp.float32,
+          jnp.bfloat16,
+          jnp.int8,
+      ],
+  )
+  def test_reshape_row_merging_splitting_with_small_minor_dim(
+      self, shapes, dtype
+  ):
+    if not jtu.is_libtpu_at_least('0.0.47'):
+      self.skipTest('Needs a newer libtpu')
+
+    input_shape, output_shape = shapes
+    for in_shape, out_shape in [
+        (input_shape, output_shape),
+        (output_shape, input_shape),
+    ]:
+
+      def kernel(x_ref, y_ref):
+        y_ref[...] = x_ref[...].reshape(out_shape)
+
+      key = jax.random.key(42)
+      x = jax.random.uniform(
+          key, shape=in_shape, minval=-10.0, maxval=10.0
+      ).astype(dtype)
+      out = self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
+      )(x)
+      np.testing.assert_array_equal(out, x.reshape(out_shape))
+
   # (m, n) -> (m * n, 1) and (m * n) -> (m, n, 1) where n % 128 == 0
   @parameterized.parameters(
       (m, n, dtype, reshape_mode)
