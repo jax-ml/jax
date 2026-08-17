@@ -16,6 +16,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.11.1 (August 17, 2026)
+
 * New features
   * Added an error check for trying to deserialize JAX exports that are older
     than the backwards compatibility window. Without this check the
