@@ -12,4 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-exports_files(["eigen_archive.patch"])
+"""Module extension for LAPACK and BLAS dependencies."""
+
+load("//third_party/lapack:workspace.bzl", lapack_repo = "repo")
+
+def _lapack_ext_impl(mctx):  # @unused
+    lapack_repo()
+
+lapack_ext = module_extension(
+    implementation = _lapack_ext_impl,
+)
