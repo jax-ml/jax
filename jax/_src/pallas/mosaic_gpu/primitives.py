@@ -1534,6 +1534,16 @@ def _get_barrier_base_index(aval, transforms) -> ir.Value | None:
   return base_index
 
 
+def _check_barrier_ref(barrier: object) -> None:
+  if (
+      isinstance(barrier, state_types.AbstractRef)
+      and isinstance(barrier.dtype, gpu_core.CtaBarrierType)
+  ):
+    _check_ref(barrier, "barrier", gpu_core.CTA_BARRIER)
+  else:
+    _check_ref(barrier, "barrier", gpu_core.SMEM)
+
+
 barrier_arrive_p = jax_core.Primitive("barrier_arrive")
 barrier_arrive_p.multiple_results = True
 
@@ -1541,7 +1551,7 @@ barrier_arrive_p.multiple_results = True
 @barrier_arrive_p.def_effectful_abstract_eval
 def _barrier_arrive_abstract_eval(barrier, *args, **params):
   del args, params  # Unused.
-  _check_ref(barrier, "barrier", gpu_core.SMEM)
+  _check_barrier_ref(barrier)
   return (), {gpu_core._memory_effect}
 
 
@@ -1591,7 +1601,12 @@ def _barrier_arrive_lowering(
   base_index = _get_barrier_base_index(barrier_aval, transforms)
   if base_index is not None:
     barrier = barrier[base_index]
-  sem_dtype = barrier_aval.inner_aval.dtype  # pyrefly: ignore[missing-attribute]
+
+  if isinstance(barrier, lowering.CtaBarrierRef):
+    barrier.arrive(ctx, predicate=predicate)
+    return ()
+
+  sem_dtype = barrier_aval.dtype
   orders_tensor_core = getattr(sem_dtype, "orders_tensor_core", False)
 
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
@@ -1642,6 +1657,83 @@ def barrier_arrive(
   )
 
 
+barrier_arrive_and_wait_p = jax_core.Primitive("barrier_arrive_and_wait")
+barrier_arrive_and_wait_p.multiple_results = True
+
+
+@barrier_arrive_and_wait_p.def_effectful_abstract_eval
+def _barrier_arrive_and_wait_abstract_eval(barrier, *args, **params):
+  del args, params  # Unused.
+  _check_barrier_ref(barrier)
+  return (), {gpu_core._memory_effect}
+
+
+def _barrier_arrive_and_wait_pp_eqn(
+    eqn: jax_core.JaxprEqn,
+    context: jax_core.JaxprPpContext,
+    settings: jax_core.JaxprPpSettings,
+):
+  del settings
+  barrier, *flat_transforms = eqn.invars
+  transforms_treedef = eqn.params["transforms_treedef"]
+  transforms = transforms_treedef.unflatten(flat_transforms)
+  return pp.concat([
+      pp.text("barrier_arrive_and_wait"),
+      pp.text(" "),
+      state_primitives.pp_ref_transforms(context, barrier, transforms),
+  ])
+
+
+jax_core.pp_eqn_rules[barrier_arrive_and_wait_p] = (
+    _barrier_arrive_and_wait_pp_eqn
+)
+
+
+@lowering.register_lowering_rule(
+    barrier_arrive_and_wait_p, mgpu.LoweringSemantics.Lane
+)
+@lowering.register_lowering_rule(
+    barrier_arrive_and_wait_p, *gpu_core.LANExWARP_SEMANTICS
+)
+@lowering.register_lowering_rule(
+    barrier_arrive_and_wait_p, mgpu.LoweringSemantics.Warpgroup
+)
+@lowering.register_lowering_rule(
+    barrier_arrive_and_wait_p, *gpu_core.WGxWARP_SEMANTICS
+)
+def _barrier_arrive_and_wait_lowering(
+    ctx: lowering.LoweringRuleContext,
+    barrier,
+    *flat_transforms,
+    transforms_treedef,
+):
+  transforms = transforms_treedef.unflatten(flat_transforms)
+  barrier_aval = ctx.avals_in[0]
+  assert isinstance(barrier_aval, state_types.AbstractRef)
+  base_index = _get_barrier_base_index(barrier_aval, transforms)
+  if base_index is not None:
+    barrier = barrier[base_index]
+
+  if isinstance(barrier, lowering.CtaBarrierRef):
+    barrier.arrive_and_wait(ctx)
+  else:
+    orders_tensor_core = getattr(barrier_aval.dtype, "orders_tensor_core", False)
+    barrier.arrive(orders_tensor_core=orders_tensor_core)
+    barrier.wait(orders_tensor_core=orders_tensor_core)
+  return ()
+
+
+def barrier_arrive_and_wait(barrier: state.AbstractRef) -> None:
+  """Arrives at and waits on the given barrier."""
+  barrier, transforms = state_primitives.get_ref_and_transforms(
+      barrier, None, "barrier_arrive_and_wait"
+  )
+  flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
+  barrier_arrive_and_wait_p.bind(
+      barrier, *flat_transforms, transforms_treedef=transforms_treedef
+  )
+
+
 barrier_test_p = jax_core.Primitive("barrier_test")
 barrier_test_p.multiple_results = False
 
@@ -1688,7 +1780,7 @@ def _barrier_test_lowering(
   assert isinstance(barrier_aval, state_types.AbstractRef)
   transforms = transforms_treedef.unflatten(flat_transforms)
   orders_tensor_core = getattr(
-      barrier_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
+      barrier_aval.dtype, "orders_tensor_core", False
   )
 
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
