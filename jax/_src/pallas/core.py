@@ -236,18 +236,8 @@ class Buffered:
   prefetched_count: int = 0
 
 
-@runtime_checkable
-class MemoryRefBase(Protocol):
-
-  def get_array_aval(self) -> jax_core.ShapedArray:
-    ...
-
-  def get_ref_aval(self) -> TransformedRef | state.AbstractRef:
-    ...
-
-
 @dataclasses.dataclass(frozen=True)
-class MemoryRef(MemoryRefBase):
+class MemoryRef:
   """Like jax.ShapeDtypeStruct but with memory spaces."""
   inner_aval: jax_core.AbstractValue
   # TODO(b/368122763): Unify memory space types across backends
