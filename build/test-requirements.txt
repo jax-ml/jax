@@ -13,3 +13,5 @@ rich
 matplotlib; python_version<"3.15"
 auditwheel
 scipy-stubs
+# TODO(vfdev-5): re-enable once torch wheels are available for Python 3.15
+torch; python_version<"3.15"

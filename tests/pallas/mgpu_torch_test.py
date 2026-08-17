@@ -48,23 +48,42 @@ class TorchTest(jtu.JaxTestCase):
       self.skipTest("Mosaic GPU is not supported on ROCm.")
     if torch is None:
       self.skipTest("Test requires PyTorch")
+    if not torch.cuda.is_available():
+      self.skipTest("Test requires torch with CUDA support")
     if attention_mgpu is None:
       self.skipTest("Mosaic GPU not available.")
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("Only works on GPU with capability sm90a+")
 
-  def test_simple_pallas_call(self):
+  def test_simple_pl_kernel_pipeline(self):
+    size = 1024
+    tile = 128
+    k = size // tile
+
     @plgpu.as_torch_kernel
-    @functools.partial(
-        pl.pallas_call, out_shape=jax.ShapeDtypeStruct([128], jnp.int32)
+    @plgpu.kernel(
+        out_type=(jax.ShapeDtypeStruct((size,), jnp.int32)),
     )
     def kernel(x_ref, y_ref, o_ref):
-      o_ref[...] = x_ref[...] + y_ref[0]
+      def do_sum(indices, x_smem, y_smem, o_smem):
+        o_smem[...] = x_smem[...] + y_smem[...]
 
-    x = torch.arange(128, dtype=torch.int32, device="cuda")
-    y = torch.arange(128, dtype=torch.int32, device="cuda")
-    np.testing.assert_array_equal(kernel(x, y).cpu(), (x + y[0]).cpu())
+      plgpu.emit_pipeline(
+        do_sum,
+        grid=(k,),
+        in_specs=[
+            plgpu.BlockSpec((tile, ), lambda ki: (ki,)),
+            plgpu.BlockSpec((tile,), lambda ki: (ki,)),
+        ],
+        out_specs=[
+            plgpu.BlockSpec((tile, ), lambda ki: (ki,)),
+        ]
+      )(x_ref, y_ref, o_ref)
+
+    x = torch.arange(size, dtype=torch.int32, device="cuda")
+    y = torch.arange(size, dtype=torch.int32, device="cuda")
+    np.testing.assert_array_equal(kernel(x, y).cpu(), (x + y).cpu())
 
   def test_simple_plgpu_kernel(self):
     @plgpu.as_torch_kernel
@@ -80,7 +99,10 @@ class TorchTest(jtu.JaxTestCase):
 
   def test_flip(self):
     @functools.partial(
-        pl.pallas_call, out_shape=(jax.ShapeDtypeStruct([128], jnp.int32),) * 2
+        pl.kernel,
+        mesh=plgpu.Mesh(),
+        out_type=(jax.ShapeDtypeStruct([128], jnp.int32),) * 2,
+        compiler_params=plgpu.CompilerParams(),
     )
     def kernel(x_ref, y_ref, x_o_ref, y_o_ref):
       x_o_ref[...] = x_ref[...]
@@ -94,7 +116,8 @@ class TorchTest(jtu.JaxTestCase):
 
   def test_not_all_returned(self):
     @functools.partial(
-        pl.pallas_call, out_shape=(jax.ShapeDtypeStruct([128], jnp.int32),) * 2
+        plgpu.kernel,
+        out_type=(jax.ShapeDtypeStruct([128], jnp.int32),) * 2,
     )
     def kernel(x_ref, y_ref, x_o_ref, y_o_ref):
       x_o_ref[...] = x_ref[...]
@@ -107,7 +130,8 @@ class TorchTest(jtu.JaxTestCase):
 
   def test_invalid(self):
     @functools.partial(
-        pl.pallas_call, out_shape=(jax.ShapeDtypeStruct([128], jnp.int32),) * 2
+        plgpu.kernel,
+        out_type=(jax.ShapeDtypeStruct([128], jnp.int32),) * 2,
     )
     def kernel(x_ref, y_ref, x_o_ref, y_o_ref):
       x_o_ref[...] = x_ref[...]
