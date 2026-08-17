@@ -1158,6 +1158,7 @@ cc_library(
         "@xla//xla/python:nb_helpers",
         "@xla//xla/python:nb_numpy",
         "@xla//xla/python:safe_static_init",
+        "@xla//xla/python:strides",
         "@xla//xla/python:types",
         "@xla//xla/python:version",
         "@xla//xla/python/compile_only_ifrt:client",
