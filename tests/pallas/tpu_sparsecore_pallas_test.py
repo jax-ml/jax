@@ -251,6 +251,14 @@ class NamedLocationsTest(PallasSCTest):
     jax.jit(kernel).lower(jax.ShapeDtypeStruct((8, 128), dtype)).compile()
 
 
+def _sc_log_recorder_options() -> dict[str, str]:
+  # On new libtpu the log recorder is enabled automatically when a kernel emits
+  # log ops, so the flag is only needed for backwards compatibility.
+  if jtu.is_libtpu_at_least("0.0.46"):
+    return {}
+  return {"xla_tpu_enable_sc_log_recorder": "true"}
+
+
 @jtu.skip_under_pytest(
     "Requires pytest -s (no capture) to pass, which is not enabled in CI"
 )
@@ -288,9 +296,7 @@ class DebugPrintTest(PallasSCTest):
 
     compiled_kernel = jax.jit(
         kernel,
-        compiler_options={
-            "xla_tpu_enable_sc_log_recorder": "true",
-        },
+        compiler_options=_sc_log_recorder_options(),
     )
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(x))
@@ -345,9 +351,9 @@ class DebugPrintTest(PallasSCTest):
     compiled_kernel = jax.jit(
         kernel,
         compiler_options={
-            "xla_tpu_enable_sc_log_recorder": "true",
             # TODO(slebedev): This should not be necessary.
             "xla_sc_force_aligned_buffers": "false",
+            **_sc_log_recorder_options(),
         },
     )
     with jtu.capture_stderr() as get_output:
@@ -401,9 +407,7 @@ class DebugPrintTest(PallasSCTest):
 
     compiled_kernel = jax.jit(
         kernel,
-        compiler_options={
-            "xla_tpu_enable_sc_log_recorder": "true",
-        },
+        compiler_options=_sc_log_recorder_options(),
     )
 
     with jtu.capture_stderr() as get_output:
@@ -421,9 +425,7 @@ class DebugPrintTest(PallasSCTest):
 
     @functools.partial(
         jax.jit,
-        compiler_options={
-            "xla_tpu_enable_sc_log_recorder": "true",
-        },
+        compiler_options=_sc_log_recorder_options(),
     )
     @self.vector_subcore_kernel(
         out_shape=x,
