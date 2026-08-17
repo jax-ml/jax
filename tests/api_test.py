@@ -2792,6 +2792,53 @@ class APITest(jtu.JaxTestCase):
     self.assertIs(y, x)
     self.assertEqual(np.asarray(y), 1.)
 
+  def test_copy_to_host_async_pytree(self):
+    # Test jax.copy_to_host_async() called with multiple arrays.
+    x = device_put(np.arange(10.0))
+    y = device_put(np.ones((4, 4), dtype=np.float32))
+    z = device_put(42)
+    pytree = {"a": x, "b": [y, z], "c": "non_array_data"}
+    res_async = jax.copy_to_host_async(pytree)
+    self.assertIs(res_async, pytree)
+    self.assertArraysEqual(np.asarray(res_async["a"]), np.arange(10.0))
+    self.assertArraysEqual(
+        np.asarray(res_async["b"][0]), np.ones((4, 4), dtype=np.float32)
+    )
+    self.assertEqual(np.asarray(res_async["b"][1]), 42)
+
+  def test_copy_to_host_async_string_and_numeric_arrays(self):
+    cpu_devices = jax.devices("cpu")
+    if len(cpu_devices) < 4:
+      self.skipTest(f"Need at least 4 CPU devices, got {len(cpu_devices)}")
+    global_mesh = jax.sharding.Mesh(
+        np.array(cpu_devices[:4]).reshape((2, 2)), ("x", "y")
+    )
+    sharding = jax.sharding.NamedSharding(
+        global_mesh, jax.sharding.PartitionSpec("x", "y")
+    )
+    np_strings = np.array(
+        [["hello", "world"], ["jax", "array"]], dtype=np.dtypes.StringDType()
+    )
+    np_numeric = np.arange(4, dtype=np.float32).reshape((2, 2))
+    str_arr = device_put(np_strings, sharding)
+    num_arr = device_put(np_numeric, sharding)
+
+    res_async = jax.copy_to_host_async((str_arr, num_arr))
+    self.assertIs(res_async[0], str_arr)
+    self.assertIs(res_async[1], num_arr)
+    self.assertEqual(str_arr.dtype, np.dtypes.StringDType())
+    np.testing.assert_array_equal(np_strings, np.asarray(str_arr))
+    np.testing.assert_array_equal(np_numeric, np.asarray(num_arr))
+
+  def test_copy_to_host_async_pytree_deleted_array(self):
+    # Test jax.copy_to_host_async() called with multiple arrays, one of which
+    # has been deleted.
+    x = device_put(np.arange(5.0))
+    y = device_put(np.arange(5.0))
+    x.delete()
+    with self.assertRaisesRegex(Exception, "Array has been deleted"):
+      jax.copy_to_host_async([x, y])
+
   def test_copy_to_host_async_non_array(self):
     # Just tests that we don't error...
     o = object()
@@ -5045,7 +5092,9 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_first_miss(self):
     @jax.jit
-    def f(x): return x
+    def f(x):
+      return x
+
     x = jnp.float32(1.)
 
     expected_log_len = 1 if not is_persistent_cache_enabled() else 3
@@ -5063,7 +5112,8 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_in_tree(self):
     @jax.jit
-    def f(*args, **kwargs): return args[0]
+    def f(*args, **kwargs):
+      return args[0]
 
     f(0., 1., y=(2., 2.1))
 
@@ -5080,7 +5130,8 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_arg_passed_as_kwarg(self):
     @jax.jit
-    def f(x, y): return jnp.sin(x) + y
+    def f(x, y):
+      return jnp.sin(x) + y
 
     f(0., 1.)
 
@@ -5135,7 +5186,9 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_dtype(self):
     @jax.jit
-    def f(x, y): return x
+    def f(x, y):
+      return x
+
     f(np.float32(0), np.float32(1))
 
     with config.explain_cache_misses(True):
@@ -5150,7 +5203,8 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_weak_type(self):
     @jax.jit
-    def f(x, y): return jnp.sin(x) + y
+    def f(x, y):
+      return jnp.sin(x) + y
 
     y = jnp.arange(4, dtype="float32")
     f(jnp.float32(0.), y)
@@ -5171,7 +5225,9 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_shape(self):
     @jax.jit
-    def f(x, y): return jnp.sin(x) + y
+    def f(x, y):
+      return jnp.sin(x) + y
+
     f(np.float32(0), np.arange(1, dtype=np.float32))
 
     with config.explain_cache_misses(True):
@@ -5188,10 +5244,12 @@ class APITest(jtu.JaxTestCase):
   def test_cache_miss_explanations_custom_vmap(self):
     # https://github.com/jax-ml/jax/issues/40110
     @jax.custom_batching.custom_vmap
-    def f(a): return jnp.sin(a)
+    def f(a):
+      return jnp.sin(a)
 
     @f.def_vmap
-    def f_vmap(axis_size, in_batched, a): return jnp.sin(a), in_batched[0]
+    def f_vmap(axis_size, in_batched, a):
+      return jnp.sin(a), in_batched[0]
 
     f(jnp.ones(3, 'float32'))
     with config.explain_cache_misses(True):
@@ -5207,7 +5265,8 @@ class APITest(jtu.JaxTestCase):
     from jax.experimental.custom_partitioning import custom_partitioning
 
     @custom_partitioning
-    def f(x): return jnp.sin(x)
+    def f(x):
+      return jnp.sin(x)
 
     def partition(mesh, arg_shapes, result_shape):
       raise NotImplementedError
@@ -5277,7 +5336,8 @@ class APITest(jtu.JaxTestCase):
 
     @compute_on(compute_type='device_host',
                 out_memory_spaces=jax.memory.Space.Device)
-    def f(x): return jnp.sin(x)
+    def f(x):
+      return jnp.sin(x)
 
     f(jnp.ones(3, 'float32'))
     with config.explain_cache_misses(True):
@@ -5320,7 +5380,9 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_shape_explain_closest(self):
     @jax.jit
-    def f(x): return x
+    def f(x):
+      return x
+
     f(np.ones((1, 2), dtype=np.float32))
     f(np.ones((10, 20, 30), dtype=np.float32))
     f(np.ones((1, 2, 3), dtype=np.float32))
@@ -5338,7 +5400,8 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_tracing_config(self):
     @jax.jit
-    def f(x, y): return jnp.sin(x) + y
+    def f(x, y):
+      return jnp.sin(x) + y
 
     f(0., 1.)
     # tracing config change
@@ -5358,7 +5421,8 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_multiple_changes(self):
     @jax.jit
-    def f(x): return jnp.sin(x)
+    def f(x):
+      return jnp.sin(x)
 
     f(np.arange(4, dtype=np.float32))
     with jax.numpy_rank_promotion("warn"):
