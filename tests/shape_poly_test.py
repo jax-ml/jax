@@ -409,6 +409,29 @@ class DimExprTest(jtu.JaxTestCase):
     # Higher order polynomial
     self.assertEqual(_bounds(a*a + b - 2), (0, np.inf))
     self.assertEqual(_bounds(-2*a*b - b - 2), (-np.inf, -5))
+    sign_crossing_factor = core.min_dim(a - 5, 5)
+    self.assertEqual(_bounds(sign_crossing_factor**2), (0, 25))
+    self.assertEqual(_bounds(sign_crossing_factor**2 * b), (0, np.inf))
+    with self.assertRaises(core.InconclusiveDimensionOperation):
+      _ = sign_crossing_factor**2 >= 1
+
+  def test_bounds_product(self):
+    a, _ = shape_poly.symbolic_shape("a, b")
+
+    # Interval [-2, 1] squared (even power) should have bounds [0, 4].
+    x = core.max_dim(-2, core.min_dim(1, a - 5))
+    self.assertEqual((0, 4), _bounds(x * x))
+
+    # Interval [-2, 1] cubed (odd power) should have bounds [-8, 1].
+    self.assertEqual((-8, 1), _bounds(x * x * x))
+
+    # Product of (-inf, -1] and [0, inf) should have bounds (-inf, 0].
+    u = (a // -2) * core.max_dim(0, a - 5)
+    self.assertEqual((-np.inf, 0), _bounds(u))
+
+    # Product of [-1, 1] and [1, inf) should have unbounded bounds.
+    z = core.max_dim(-1, core.min_dim(1, a - 5))
+    self.assertEqual((-np.inf, np.inf), _bounds(z * a))
 
   def test_bounds_mod(self):
     a, b = shape_poly.symbolic_shape("a, b")

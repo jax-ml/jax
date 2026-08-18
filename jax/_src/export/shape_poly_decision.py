@@ -374,10 +374,18 @@ class _DecisionByElimination:
         self.add_implicit_constraints_term(f1_t)
         a1_l, a1_u = self.bounds(f1_e, BoundsPrecision.BEST)
         assert a1_l <= a1_u
-        bounds.append((a1_l ** f1_exp, a1_u ** f1_exp))
+        factor_bound_candidates = [a1_l ** f1_exp, a1_u ** f1_exp]
+        if f1_exp % 2 == 0 and a1_l <= 0 <= a1_u:
+          factor_bound_candidates.append(0)
+        bounds.append((min(factor_bound_candidates),
+                       max(factor_bound_candidates)))
 
-      candidate_bounds = [math.prod(factor_bounds)
-                          for factor_bounds in itertools.product(*bounds)]
+      # Infinities represent open bounds, so a zero factor still makes the
+      # product zero rather than NaN.
+      candidate_bounds = [
+          0 if 0 in factor_bounds else math.prod(factor_bounds)
+          for factor_bounds in itertools.product(*bounds)
+      ]
       m_l = min(*candidate_bounds)
       m_u = max(*candidate_bounds)
       self.combine_and_add_constraint(Comparator.GEQ, t_e, m_l)
