@@ -520,7 +520,7 @@ jax_multiplatform_test(
         # partitioning.
         "gpu_h100x2_full",
         "gpu_b200x2",
-        "gpu_gb300x2",
+        # "gpu_gb300x2",  # TODO(b/548528820): Re-enable this.
     ],
     tags = [
         "mosaic_gpu_test",
