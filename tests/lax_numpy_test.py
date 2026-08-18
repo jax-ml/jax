@@ -3199,6 +3199,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @jtu.sample_product(bins=[1, 3, 10])
+  def testHistogramEmptyInput(self, bins):
+    # The range cannot be inferred from an empty array; NumPy falls back to
+    # (0, 1) rather than failing inside min/max.
+    np_fun = lambda a: np.histogram(a, bins=bins)
+    jnp_fun = lambda a: jnp.histogram(a, bins=bins)
+    args_maker = lambda: [jnp.array([], dtype='float32')]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(bins=[1, 3, 10])
+  def testHistogramBinEdgesEmptyInput(self, bins):
+    np_fun = lambda a: np.histogram_bin_edges(a, bins=bins)
+    jnp_fun = lambda a: jnp.histogram_bin_edges(a, bins=bins)
+    args_maker = lambda: [jnp.array([], dtype='float32')]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   @jtu.sample_product(
     shape=[(5,), (12,)],
     dtype=int_dtypes,
