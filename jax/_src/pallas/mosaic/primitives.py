@@ -1240,23 +1240,23 @@ matmul_acc_lhs_p.multiple_results = True
 
 
 def matmul_acc_lhs(
-    acc_addr: int,
+    acc: Ref,
     lhs: jax.Array,
-    mxu_index: int,
     load_staged_rhs: int | None = None,
 ) -> None:
-  """Performs a matrix multiplication in the chosen MXU.
+  """Performs a matrix multiplication in a specific MXU.
 
   If `load_staged_rhs` is not None, the previously pushed RHS will be loaded
   from the given staging register _before_ the matrix multiplication begins.
   The results of the multiplication are accumulated into the specified
   accumulator slice.
 
+  The MXU index is deduced from the provided accumulator.
+
   Args:
-    acc_addr: The base address of the accumulator slice used for results.
+    acc: The accumulator slice used for results.
     lhs: The left-hand side operand. Must be M x 256. For M divisible by the
       number of sublanes multiplied by datatype packing.
-    mxu_index: The MXU to use.
     load_staged_rhs: The staging register to load the RHS from. If None, the RHS
       is not loaded from staging and the matmul will reuse the existing one.
   """
@@ -1265,30 +1265,48 @@ def matmul_acc_lhs(
   # probably not what you intended.
   if isinstance(load_staged_rhs, bool):
     raise TypeError("load_staged_rhs must be an integer or None.")
+  acc_ref, acc_transforms = sp.get_ref_and_transforms(acc, None, "matmul_acc_lhs")
+  flat_acc_transforms, acc_transforms_treedef = tree_util.tree_flatten(
+      acc_transforms
+  )
   matmul_acc_lhs_p.bind(
+      acc_ref,
       lhs,
-      acc_addr=acc_addr,
-      mxu_index=mxu_index,
+      *flat_acc_transforms,
+      acc_transforms_tree=acc_transforms_treedef,
       load_staged_rhs=load_staged_rhs,
   )
 
 
 @matmul_acc_lhs_p.def_effectful_abstract_eval
-def _matmul_acc_lhs_abstract_eval(lhs: jax.Array, **_):
-  del lhs  # Unused.
-  return [], {mxu_effect}
+def _matmul_acc_lhs_abstract_eval(
+    acc: state.AbstractRef, lhs, *flat_acc_transforms, acc_transforms_tree, load_staged_rhs
+):
+  del load_staged_rhs,  # Unused.
+  transforms = tree_util.tree_unflatten(acc_transforms_tree, flat_acc_transforms)
+  if not isinstance(acc.memory_space, tpu_core.AccMemorySpace):
+    raise ValueError(f"Expected an accumulator ref, got {acc}")
+  transformed_acc = state.transform_type(transforms, acc)
+  assert isinstance(transformed_acc, state.AbstractRef)
+  acc_shape: tuple[int, ...] = transformed_acc.shape
+  if len(acc_shape) != 2:
+    raise ValueError(
+        f"The shape of the accumulator {acc_shape} is not 2-dimensional."
+    )
+  m, _ = acc_shape
+  if m != lhs.shape[0]:
+    raise ValueError(
+        f"The shape of the accumulator {acc_shape} does not "
+        f"match the shape of the lhs {lhs.shape}."
+    )
+  return [], {mxu_effect, state.ReadEffect(0), state.WriteEffect(0)}
 
 
 matmul_pop_p = jax_core.Primitive("matmul_pop")
 
 
-def matmul_pop(
-    acc_addr: int,
-    shape: tuple[int, int],
-    dtype: jax.typing.DTypeLike,
-    mxu_index: int,
-):
-  """Returns the result of a matrix multiplication from the chosen MXU and zeroes the accumulator.
+def matmul_pop(acc: Ref) -> jax.Array:
+  """Returns the result of a matrix multiplication from a specific MXU and zeroes the accumulator.
 
   If the result is not ready yet (the MXU is still busy), the operation blocks.
 
@@ -1296,27 +1314,35 @@ def matmul_pop(
   The kernel must not leave any data in the accumulator upon exit.
   ```
 
+  The MXU index is deduced from the provided accumulator.
+
   Args:
-    acc_addr: The base address of the popped accumulator slice.
-    shape: The shape of the result.
-    dtype: The dtype of the result.
-    mxu_index: The MXU to use.
+    acc: The accumulator to pop.
   """
+  acc_ref, acc_transforms = sp.get_ref_and_transforms(acc, None, "matmul_pop")
+  flat_acc_transforms, acc_transforms_treedef = tree_util.tree_flatten(
+      acc_transforms
+  )
   return matmul_pop_p.bind(
-      acc_addr=acc_addr,
-      shape=shape,
-      mxu_index=mxu_index,
-      dtype=jnp.dtype(dtype),
+      acc_ref,
+      *flat_acc_transforms,
+      acc_transforms_tree=acc_transforms_treedef
   )
 
 
 @matmul_pop_p.def_effectful_abstract_eval
-def _matmul_pop_abstract_eval(*, shape, dtype, **_):
-  if dtype not in map(jnp.dtype, [jnp.float32, jnp.int32]):
-    raise ValueError(
-        f"Only float32 and int32 accumulators are supported, got {dtype}"
-    )
-  return jax_core.ShapedArray(shape, dtype), {mxu_effect}
+def _matmul_pop_abstract_eval(acc: state.AbstractRef, *flat_acc_transforms, acc_transforms_tree):
+  if not isinstance(acc.memory_space, tpu_core.AccMemorySpace):
+    raise ValueError(f"Expected an accumulator ref, got {acc}")
+  acc_transforms = tree_util.tree_unflatten(
+      acc_transforms_tree, flat_acc_transforms
+  )
+  result_aval = state.transform_type(acc_transforms, acc.inner_aval)
+  assert isinstance(result_aval, jax_core.ShapedArray)
+  return (
+      jax_core.ShapedArray(result_aval.shape, result_aval.dtype),
+      {mxu_effect, state.ReadEffect(0), state.WriteEffect(0)}
+  )
 
 
 matmul_lhs_fifo_p = jax_core.Primitive("matmul_lhs_fifo")
