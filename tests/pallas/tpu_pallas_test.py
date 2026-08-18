@@ -1311,6 +1311,29 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(y1, x1)
     np.testing.assert_array_equal(y2, x2)
 
+  def test_async_copy_with_delay(self):
+    def kernel(x, y, scratch, sem):
+      copy = pltpu.async_copy(x, scratch, sem, delay=100)
+      copy.wait()
+      copy_back = pltpu.make_async_copy(scratch, y, sem, delay=50)
+      copy_back.start()
+      copy_back.wait()
+
+    shape = (8, 128)
+    dtype = jnp.int32
+    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    y = self.pallas_call(
+        kernel,
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+            scratch_shapes=[pltpu.VMEM(shape, dtype), pltpu.SemaphoreType.DMA],
+            out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        ),
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )(x)
+    np.testing.assert_array_equal(y, x)
+
   def test_hbm_hbm_dma(self):
     def kernel(x_hbm_ref, y_hbm_ref):
       pltpu.sync_copy(x_hbm_ref.at[:8, :], y_hbm_ref.at[:, :128])

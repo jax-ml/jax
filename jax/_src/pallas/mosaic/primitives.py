@@ -175,6 +175,7 @@ class AsyncCopyDescriptor:
   src_sem: Any | None
   device_id: MultiDimDeviceId | IntDeviceId | None
   device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH
+  delay: int | None = None
   _used: bool = dataclasses.field(
       default=False, init=False, compare=False, hash=False
   )
@@ -212,8 +213,16 @@ class AsyncCopyDescriptor:
           self.src_ref, self.dst_ref, self.dst_sem, self.src_sem, device_id
       )
 
-  def start(self, priority: int = 0, *, add: bool = False):
+  def start(
+      self,
+      priority: int = 0,
+      *,
+      add: bool = False,
+      delay: int | None = None,
+  ):
     self._used = True
+    if delay is None:
+      delay = self.delay
     flat_args, tree = self._get_args_and_tree()
     dma_start_p.bind(
         *flat_args,
@@ -221,6 +230,7 @@ class AsyncCopyDescriptor:
         device_id_type=self.device_id_type,
         priority=priority,
         add=add,
+        delay=delay,
     )
 
   def wait(self):
@@ -317,7 +327,8 @@ def _dma_is_high(*avals, **params):
 
 dma_start_p.is_high = _dma_is_high
 
-def _dma_start_to_lojax(*args, tree, device_id_type, priority, add):
+
+def _dma_start_to_lojax(*args, tree, device_id_type, priority, add, delay=None):
   src_ref, dst_ref, dst_sem, src_sem, device_id = _dma_unflatten(tree, args)
   src_ref_aval = jax_core.typeof(_get_ref(src_ref))
   dst_ref_aval = jax_core.typeof(_get_ref(dst_ref))
@@ -340,12 +351,19 @@ def _dma_start_to_lojax(*args, tree, device_id_type, priority, add):
       add=add,
   )
   return []
+
+
 dma_start_p.to_lojax = _dma_start_to_lojax
 
+
 @dma_start_p.def_effectful_abstract_eval
-def _dma_start_abstract_eval(*args, tree, device_id_type, priority, add):
+def _dma_start_abstract_eval(
+    *args, tree, device_id_type, priority, add, delay=None
+):
   if priority < 0:
     raise ValueError(f"DMA start priority must be non-negative: {priority}")
+  if delay is not None and delay < 0:
+    raise ValueError(f"DMA delay must be non-negative: {delay}")
   src_ref_aval, dst_ref_aval, dst_sem_aval, src_sem_aval, device_id_aval = (
       _dma_unflatten(tree, args)
   )
@@ -377,6 +395,7 @@ def _dma_start_abstract_eval(*args, tree, device_id_type, priority, add):
       device_id_type,
   )
 
+
 def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
                       context: jax_core.JaxprPpContext,
                       settings: jax_core.JaxprPpSettings):
@@ -384,12 +403,14 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
   tree = eqn.params["tree"]
   priority = eqn.params["priority"]
   add = eqn.params["add"]
+  delay = eqn.params.get("delay", None)
   src_ref, dst_ref, dst_sem, src_sem, device_id = _dma_unflatten(tree, invars)
   # TODO(sharadmv): pretty print source semaphores and device id
   if src_sem or device_id:
     return jax_core._pp_eqn(eqn, context, settings)
+  delay_str = f", delay={delay}" if delay is not None else ""
   return pp.concat([
-      pp.text(f"dma_start(p{priority}{', add' if add else ''})"),
+      pp.text(f"dma_start(p{priority}{', add' if add else ''}{delay_str})"),
       pp.text(" "),
       sp.pp_ref_transforms(context, src_ref),
       pp.text(" -> "),
@@ -402,11 +423,10 @@ jax_core.pp_eqn_rules[dma_start_p] = _dma_start_pp_eqn
 
 
 def dma_start_discharge_rule(
-    ctx, *args, tree, device_id_type,
-    priority, add
+    ctx, *args, tree, device_id_type, priority, add, delay=None
 ):
-  # Note: we ignore the DMA priority in discharge rules.
-  del priority
+  # Note: we ignore the DMA priority and delay in discharge rules.
+  del priority, delay
   if add:
     raise NotImplementedError(
         "DMA partial discharge add=True not yet implemented.")
@@ -699,13 +719,16 @@ def _get_ref(ref):
   return _get_ref_and_transforms(ref)[0]
 
 
-def make_async_copy(src_ref, dst_ref, sem) -> AsyncCopyDescriptor:
+def make_async_copy(
+    src_ref, dst_ref, sem, *, delay: int | None = None
+) -> AsyncCopyDescriptor:
   """Creates a description of an asynchronous copy operation.
 
   Args:
     src_ref: The source Reference.
     dst_ref: The destination Reference.
     sem: The semaphore used to track completion of the copy.
+    delay: Optional delay in nanoseconds for DMA operations into SMEM or VMEM.
 
   Returns:
     An AsyncCopyDescriptor.
@@ -717,15 +740,22 @@ def make_async_copy(src_ref, dst_ref, sem) -> AsyncCopyDescriptor:
       None,
       None,
       primitives.DeviceIdType.MESH,
+      delay=delay,
   )
 
 
 def async_copy(
-    src_ref, dst_ref, sem, *, priority: int = 0, add: bool = False,
+    src_ref,
+    dst_ref,
+    sem,
+    *,
+    priority: int = 0,
+    add: bool = False,
+    delay: int | None = None,
 ) -> AsyncCopyDescriptor:
   """Issues a DMA copying from src_ref to dst_ref."""
-  copy_descriptor = make_async_copy(src_ref, dst_ref, sem)
-  copy_descriptor.start(priority=priority, add=add)
+  copy_descriptor = make_async_copy(src_ref, dst_ref, sem, delay=delay)
+  copy_descriptor.start(priority=priority, add=add, delay=delay)
   return copy_descriptor
 
 
@@ -736,6 +766,8 @@ def make_async_remote_copy(
     recv_sem,
     device_id: MultiDimDeviceId | IntDeviceId | None,
     device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH,
+    *,
+    delay: int | None = None,
 ) -> AsyncCopyDescriptor:
   """Creates a description of a remote copy operation.
 
@@ -753,6 +785,7 @@ def make_async_remote_copy(
     device_id: The device id of the destination device. It could be a tuple, or
       a dictionary specifying the communication axis and destination index.
     device_id_type: The type of the device id.
+    delay: Optional delay in nanoseconds for DMA operations into SMEM or VMEM.
 
   Returns:
     An AsyncCopyDescriptor.
@@ -769,6 +802,7 @@ def make_async_remote_copy(
       send_sem,
       device_id,
       device_id_type=device_id_type,
+      delay=delay,
   )
 
 
@@ -779,11 +813,20 @@ def async_remote_copy(
     recv_sem,
     device_id,
     device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH,
+    *,
+    delay: int | None = None,
 ) -> AsyncCopyDescriptor:
   """Issues a remote DMA copying from src_ref to dst_ref."""
-  copy_descriptor = make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem,
-                                           device_id, device_id_type)
-  copy_descriptor.start()
+  copy_descriptor = make_async_remote_copy(
+      src_ref,
+      dst_ref,
+      send_sem,
+      recv_sem,
+      device_id,
+      device_id_type,
+      delay=delay,
+  )
+  copy_descriptor.start(delay=delay)
   return copy_descriptor
 
 
