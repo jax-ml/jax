@@ -552,14 +552,6 @@ def _dma_wait_lowering_rule(
     device_id, core_id, subcore_id = tc_lowering._device_id_to_logical(
         ctx, device_id, device_id_type, device_id_aval, dest_mesh
     )
-    if core_id:
-      raise NotImplementedError(
-          "Core index must be None when waiting on a local DMA."
-      )
-    if subcore_id:
-      raise NotImplementedError(
-          "Subcore index must be None when waiting on a local DMA."
-      )
 
   # If not ``None``, we lower to an indirect DMA instead of a regular DMA.
   if indirect_offsets is None:
