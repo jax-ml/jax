@@ -362,7 +362,7 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
       default=os.environ.get("JAXCI_XLA_GIT_DIR", ""),
       help="""
         Path to local XLA repository to use. If not set, Bazel uses the XLA at
-        the pinned version in workspace.bzl.
+        the pinned version in MODULE.bazel.
         """,
   )
 

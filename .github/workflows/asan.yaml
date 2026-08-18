@@ -173,9 +173,6 @@ jobs:
           # to be used as part of the hermetic toolchain.
           bazel_args+=(
             --repo_env=HERMETIC_PYTHON_VERSION="${PYTHON_VERSION}"
-            --repo_env=HERMETIC_PYTHON_URL="${CPYTHON_URL}"
-            --repo_env=HERMETIC_PYTHON_SHA256="${CPYTHON_SHA256}"
-            --repo_env=HERMETIC_PYTHON_PREFIX="${CPYTHON_PREFIX}/"
           )
 
           # Test runtime behavior/polish.

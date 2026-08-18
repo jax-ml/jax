@@ -52,22 +52,12 @@ if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
 fi
 
 if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-ft || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-nogil ]]; then
-  if [[ "${JAXCI_ENABLE_BZLMOD:-1}" == "1" ]]; then
-    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}
-    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-ft}
-    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}
-  else
-    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
-    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
-  fi
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-ft}
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}
   FREETHREADED_FLAG_VALUE="yes"
 else
   FREETHREADED_FLAG_VALUE="no"
-fi
-
-BZLMOD_CONFIG="--config=no_bzlmod"
-if [[ "${JAXCI_ENABLE_BZLMOD:-1}" == "1" ]]; then
-  BZLMOD_CONFIG="--config=bzlmod"
 fi
 
  # TODO(b/446172564): Remove this condition when the test is fixed on all
@@ -109,7 +99,6 @@ INVOCATION_ID=$(python3 ci/utilities/generate_invocation_id.py)
 
 bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     --invocation_id="$INVOCATION_ID" \
-    $BZLMOD_CONFIG \
     --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --build_runfile_links=false \
     --config=$rbe_config \
