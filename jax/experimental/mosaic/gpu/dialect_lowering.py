@@ -895,8 +895,14 @@ def _vector_multi_dim_reduction_op_lowering_rule(
 
   if not isinstance(src.layout, fa.TiledLayout):
     raise NotImplementedError(f"Unsupported layout: {src.layout}")
-  reduced_dim = src.layout.tiling.tile_dimension(op.reduction_dims[0])
-  if any(reduced_dim[d] for d in src.layout.partitioned_warp_dims):
+  untiled_rank = len(op.source.type.shape) - len(src.layout.base_tile_shape)
+  reduced_axis = op.reduction_dims[0] - untiled_rank
+  reduced_dim = (
+      src.layout.tiling.tile_dimension(reduced_axis)
+      if reduced_axis >= 0
+      else None
+  )
+  if reduced_dim is not None and any(reduced_dim[d] for d in src.layout.partitioned_warp_dims):
     # cross-warp reductions require scratch space.
     dtype = op.source.type.element_type
     allocation_size = ir.IntegerAttr(op.attributes["scratch_size"]).value * 8 // utils.bitwidth(dtype)
