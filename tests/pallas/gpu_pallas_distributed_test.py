@@ -704,6 +704,10 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
   def test_semaphore_signal_collective_axes(self):
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.process_index() > 2:
       self.monkey_patched_api_was_used = True
       return  # Only 2 processes needed.
@@ -744,6 +748,10 @@ class PallasCallRemoteDMATest(TestCase):
         raise
 
   def test_semaphore_signal_multicast_collective_axes_warp_level(self):
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.process_index() > 2:
       self.monkey_patched_api_was_used = True
       return  # Only 2 processes needed.
@@ -929,6 +937,11 @@ class PallasCallRemoteDMATest(TestCase):
 class PallasCallMultimemTest(TestCase):
   def setUp(self):
     super().setUp()
+    # TODO: b/541298091 - Skip when NCCL_NVLS_ENABLE='0' until b/541298091 is resolved.
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
     if any(
@@ -1195,6 +1208,11 @@ class PallasCallMultimemThreadUnsafeTest(TestCase):
 
   def setUp(self):
     super().setUp()
+    # TODO: b/541298091 - Skip when NCCL_NVLS_ENABLE='0' until b/541298091 is resolved.
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
     if any(
