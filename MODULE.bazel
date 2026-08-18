@@ -126,8 +126,6 @@ single_version_override(
 
 ### Toolchains
 
-# TODO: Support HERMETIC_PYTHON_URL, etc to allow specifying a custom built
-# python version.
 # Keep in sync with jax/version.py (_version) and python.defaults below.
 DEFAULT_PYTHON_VERSION = "3.12"
 
