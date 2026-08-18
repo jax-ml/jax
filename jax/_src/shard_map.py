@@ -20,7 +20,7 @@ import inspect
 from math import prod
 import itertools as it
 import operator as op
-from typing import Any, TypeVar, cast, overload
+from typing import Any, cast, overload
 
 import numpy as np
 
@@ -86,32 +86,31 @@ def _get_default_infer():
   return Infer
 
 
-F = TypeVar("F", bound=Callable)
-G = TypeVar("G", bound=Callable)
-
-
 @overload
-def shard_map(f: F, /, *, out_specs: Specs,
-              in_specs: Specs | None | InferFromArgs = ...,
-              mesh: Mesh | AbstractMesh | None = ...,
-              axis_names: Set[AxisName] = ..., check_vma: bool = ...) -> F:
+def shard_map[F: Callable](
+    f: F, /, *, out_specs: Specs,
+    in_specs: Specs | None | InferFromArgs = ...,
+    mesh: Mesh | AbstractMesh | None = ...,
+    axis_names: Set[AxisName] = ..., check_vma: bool = ...) -> F:
   ...
 
 @overload
-def shard_map(f: None = None, /, *, out_specs: Specs,
-              in_specs: Specs | None | InferFromArgs = ...,
-              mesh: Mesh | AbstractMesh | None = ...,
-              axis_names: Set[AxisName] = ..., check_vma: bool = ...
-              ) -> Callable[[G], G]:
+def shard_map[G: Callable](
+    f: None = None, /, *, out_specs: Specs,
+    in_specs: Specs | None | InferFromArgs = ...,
+    mesh: Mesh | AbstractMesh | None = ...,
+    axis_names: Set[AxisName] = ..., check_vma: bool = ...
+    ) -> Callable[[G], G]:
   ...
 
 # See https://github.com/jax-ml/jax/pull/30753 to understand why `in_specs`
 # defaults to `Infer`.
-def shard_map(f: F | None = None, /, *, out_specs: Specs,
-              in_specs: Specs | None | InferFromArgs = Infer,
-              mesh: Mesh | AbstractMesh | None = None,
-              axis_names: Set[AxisName] = frozenset(), check_vma: bool = True
-              ) -> F | Callable[[G], G]:
+def shard_map[F: Callable, G: Callable](
+    f: F | None = None, /, *, out_specs: Specs,
+    in_specs: Specs | None | InferFromArgs = Infer,
+    mesh: Mesh | AbstractMesh | None = None,
+    axis_names: Set[AxisName] = frozenset(), check_vma: bool = True
+    ) -> F | Callable[[G], G]:
   """Map a function over shards of data using a mesh of devices.
 
   See the docs at https://docs.jax.dev/en/latest/notebooks/shard_map.html.
@@ -167,22 +166,25 @@ def shard_map(f: F | None = None, /, *, out_specs: Specs,
 
 
 @overload
-def smap(f: F, /, *,
-         in_axes: int | None | InferFromArgs | tuple[Any, ...] = ...,
-         out_axes: Any, axis_name: AxisName) -> F:
+def smap[F: Callable](
+    f: F, /, *,
+    in_axes: int | None | InferFromArgs | tuple[Any, ...] = ...,
+    out_axes: Any, axis_name: AxisName) -> F:
   ...
 
 @overload
-def smap(f: None = None, /, *,
-         in_axes: int | None | InferFromArgs | tuple[Any, ...] = ...,
-         out_axes: Any, axis_name: AxisName
-         ) -> Callable[[G], G]:
+def smap[G: Callable](
+    f: None = None, /, *,
+    in_axes: int | None | InferFromArgs | tuple[Any, ...] = ...,
+    out_axes: Any, axis_name: AxisName
+    ) -> Callable[[G], G]:
   ...
 
-def smap(f: F | None = None, /, *,
-         in_axes: int | None | InferFromArgs | tuple[Any, ...] = Infer,
-         out_axes: Any, axis_name: AxisName
-         ) -> F | Callable[[G], G]:
+def smap[F: Callable, G: Callable](
+    f: F | None = None, /, *,
+    in_axes: int | None | InferFromArgs | tuple[Any, ...] = Infer,
+    out_axes: Any, axis_name: AxisName
+    ) -> F | Callable[[G], G]:
   """Single axis shard_map that maps a function `f` one axis at a time.
 
   Args:
@@ -213,8 +215,9 @@ def smap(f: F | None = None, /, *,
     return lambda g: _smap(g, **kwargs)
   return _smap(f, **kwargs)
 
-def _smap(f: F, *, in_axes: int | None | InferFromArgs | tuple[Any, ...],
-          out_axes: Any, axis_name: AxisName) -> F:
+def _smap[F: Callable](
+    f: F, *, in_axes: int | None | InferFromArgs | tuple[Any, ...],
+    out_axes: Any, axis_name: AxisName) -> F:
   if isinstance(axis_name, (list, tuple)):
     raise TypeError(
         f"smap axis_name should be a `str` or a `Hashable`, but got {axis_name}")
@@ -243,9 +246,10 @@ def _smap(f: F, *, in_axes: int | None | InferFromArgs | tuple[Any, ...],
 
 
 @partial(traceback_util.api_boundary, repro_api_name="jax.shard_map")
-def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
-               in_specs: Specs, out_specs: Specs, axis_names: Set[AxisName],
-               check_vma: bool, _smap: bool = False) -> F:
+def _shard_map[F: Callable](
+    f: F, *, mesh: Mesh | AbstractMesh | None,
+    in_specs: Specs, out_specs: Specs, axis_names: Set[AxisName],
+    check_vma: bool, _smap: bool = False) -> F:
   if not callable(f):
     raise TypeError("shard_map requires a callable for its first argument, "
                     f"but got {f} of type {type(f)}.")
@@ -691,9 +695,8 @@ def _try_infer_args(f, tree):
   except (TypeError, ValueError):
     return None
 
-T = TypeVar('T')
-def _iter_paths(tree: PyTreeDef, specs: Specs, fails: list[T | NoFail]
-                ) -> list[tuple[tuple[KeyPath, P], tuple[KeyPath, T]]]:
+def _iter_paths[T](tree: PyTreeDef, specs: Specs, fails: list[T | NoFail]
+                   ) -> list[tuple[tuple[KeyPath, P], tuple[KeyPath, T]]]:
   failures = tree_unflatten(tree, fails)
   failures_aug = generate_key_paths(failures)
   specs_ = tree_unflatten(tree_structure(specs), map(Tup, generate_key_paths(specs)))
