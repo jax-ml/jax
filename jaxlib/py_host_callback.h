@@ -47,6 +47,7 @@ class PyFfiLoadedHostCallback final
       : xla::ifrt::RTTIExtends<PyFfiLoadedHostCallback,
                                xla::ifrt::PjRtFfiLoadedHostCallback>(
             ifrt_client, callable.ptr()),
+        ifrt_client_(ifrt_client),
         callable_(std::move(callable)) {}
   ~PyFfiLoadedHostCallback() override;
 
