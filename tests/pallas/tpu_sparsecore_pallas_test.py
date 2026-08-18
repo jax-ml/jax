@@ -2663,6 +2663,41 @@ class ScalarSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), jnp.cumsum(x))
 
+  def test_async_copy_with_delay_scalar_subcore(self):
+    x = jnp.arange(self.num_lanes)
+
+    # Test delay for DMA into SMEM
+    @self.kernel(
+        out_type=x, mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
+    )
+    def kernel_smem(x_ref, o_ref):
+      @functools.partial(
+          pl.run_scoped,
+          tmp_smem=pltpu.SMEM(x.shape, x.dtype),
+          sem=pltpu.SemaphoreType.DMA,
+      )
+      def _(tmp_smem, sem):
+        pltpu.async_copy(x_ref, tmp_smem, sem, delay=50).wait()
+        pltpu.async_copy(tmp_smem, o_ref, sem, delay=50).wait()
+
+    np.testing.assert_array_equal(kernel_smem(x), x)
+
+    # Test delay for DMA into VMEM
+    @self.kernel(
+        out_type=x, mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
+    )
+    def kernel_vmem(x_ref, o_ref):
+      @functools.partial(
+          pl.run_scoped,
+          tmp_vmem=pltpu.VMEM_SHARED(x.shape, x.dtype),
+          sem=pltpu.SemaphoreType.DMA,
+      )
+      def _(tmp_vmem, sem):
+        pltpu.async_copy(x_ref, tmp_vmem, sem, delay=50).wait()
+        pltpu.async_copy(tmp_vmem, o_ref, sem, delay=50).wait()
+
+    np.testing.assert_array_equal(kernel_vmem(x), x)
+
   @parameterized.product(
       first_parallel=[False, True], second_parallel=[False, True]
   )

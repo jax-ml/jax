@@ -432,6 +432,7 @@ def _dma_start_lowering_rule(
     device_id_type: pallas_primitives.DeviceIdType,
     priority: int,
     add: bool,
+    delay: int | None = None,
 ):
   src_ref, dst_ref, sem, src_sem, device_id = _dma_unflatten(
       tree, args
@@ -467,6 +468,23 @@ def _dma_start_lowering_rule(
         ctx, device_id, device_id_type, device_id_aval, dest_mesh
     )
 
+  def _emit_delay_if_needed():
+    if delay is not None and delay > 0:
+      dst_raw_aval = tpu_primitives._get_ref(dst_aval)
+      dst_mem_space = getattr(dst_raw_aval, "memory_space", None)
+      if isinstance(dst_mem_space, pallas_core.CoreMemorySpace):
+        dst_mem_space = dst_mem_space.memory_space
+      if dst_mem_space in (
+          tpu_core.MemorySpace.VMEM,
+          tpu_core.MemorySpace.VMEM_SHARED,
+          tpu_core.MemorySpace.SMEM,
+          tpu_core.MemorySpace.CMEM,
+      ):
+        delay_val = tc_lowering._ensure_mlir_value(
+            delay, jax_core.ShapedArray((), jnp.int32)
+        )
+        tpu.delay(delay_val)
+
   # If not ``None``, we lower to an indirect DMA instead.
   if indirect_offsets is None:
     def _dma_start(src_ref, dst_ref, sem, src_sem):
@@ -480,6 +498,7 @@ def _dma_start_lowering_rule(
           core_id=core_index,
           subcore_id=subcore_index,
       )
+      _emit_delay_if_needed()
       return []
 
     return tc_lowering.lower_with_transformed_refs(
@@ -510,6 +529,7 @@ def _dma_start_lowering_rule(
       add=add,
       offset_filter=offset_filter,
   )
+  _emit_delay_if_needed()
   return []
 
 

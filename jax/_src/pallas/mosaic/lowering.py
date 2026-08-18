@@ -5100,6 +5100,7 @@ def _dma_start_lowering_rule(
     device_id_type: primitives.DeviceIdType,
     priority: int,
     add: bool,
+    delay: int | None = None,
 ):
   if add:
     raise NotImplementedError("DMA with add=True is not supported.")
@@ -5136,6 +5137,21 @@ def _dma_start_lowering_rule(
         subcore_id=subcore_id,
         priority=priority,
     )
+    if delay is not None and delay > 0:
+      dst_raw_aval = tpu_primitives._get_ref(dst_ref_aval)
+      dst_mem_space = getattr(dst_raw_aval, "memory_space", None)
+      if isinstance(dst_mem_space, pallas_core.CoreMemorySpace):
+        dst_mem_space = dst_mem_space.memory_space
+      if dst_mem_space in (
+          tpu_core.MemorySpace.VMEM,
+          tpu_core.MemorySpace.VMEM_SHARED,
+          tpu_core.MemorySpace.SMEM,
+          tpu_core.MemorySpace.CMEM,
+      ):
+        delay_val = _ensure_mlir_value(
+            delay, jax_core.ShapedArray((), jnp.int32)
+        )
+        tpu.delay(delay_val)
     return []
 
   return lower_with_transformed_refs(
