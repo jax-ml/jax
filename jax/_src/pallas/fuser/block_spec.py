@@ -687,7 +687,9 @@ def make_kernel_function(
     return bs_env.get(atom, pallas_core.no_block_spec)
 
   def kernel_fn(program_ids, scalar_prefetch, *args, **kwargs):
-    flat_args = in_tree.flatten_up_to((args, kwargs))
+    flat_args, in_tree_ = tree_util.tree_flatten((args, kwargs))
+    if in_tree_ != in_tree:
+      raise ValueError(f'Expected {in_tree} PyTree, got {in_tree_}')
     env = {}
 
     def read_env(atom):
