@@ -39,7 +39,6 @@ from jax._src import custom_derivatives
 from jax._src import hijax
 from jax._src import pjit
 from jax._src.random import prng
-from jax._src import state
 from jax._src import tree_util
 from jax._src import typing
 from jax._src import util
@@ -420,7 +419,6 @@ def pull_block_spec(
         in_tree,
         out_tree,
         read_usage_env,
-        in_block_specs,
         env,
         scalar_prefetch_handler,
         grid_len,
@@ -676,41 +674,12 @@ def make_kernel_function(
     in_tree,
     out_tree,
     read_usage_env,
-    in_block_specs,
     block_spec_env,
     scalar_prefetch_handler,
     grid_len,
 ):
-  in_avals = [v.aval for v in jaxpr.invars]
   invar_usages = util.safe_map(read_usage_env, jaxpr.invars)
   bs_env, scalar_prefetch_fn_env = block_spec_env
-
-  def _remove_nones(
-      shape: tuple[pallas_core.BlockDim | int | None, ...] | None,
-  ) -> tuple[int, ...]:
-    new_shape = tuple(_block_size(s) for s in shape)
-    return tuple(s for s in new_shape if s is not None)
-
-  _no_aval = object()
-
-  def _get_block_aval(bs, aval):
-    if isinstance(aval, state.AbstractRef):
-      return aval
-    if bs is pallas_core.no_block_spec or bs is None:
-      return _no_aval
-    if bs.block_shape is None:
-      return aval
-    return aval.update(shape=_remove_nones(bs.block_shape))
-
-  in_block_avals = [
-      _get_block_aval(bs, aval)
-      for aval, bs in zip(in_avals, in_block_specs, strict=True)
-  ]
-  unflat_in_block_arg_avals, unflat_in_block_kwarg_avals = (
-      tree_util.tree_unflatten(in_tree, in_block_avals)
-  )
-
-  kernel_in_type = (unflat_in_block_arg_avals, unflat_in_block_kwarg_avals)
 
   def _read_block_spec(atom: core.Atom) -> pallas_core.BlockSpec | Any:
     if isinstance(atom, core.Literal):
@@ -718,13 +687,7 @@ def make_kernel_function(
     return bs_env.get(atom, pallas_core.no_block_spec)
 
   def kernel_fn(program_ids, scalar_prefetch, *args, **kwargs):
-    flat_args, in_tree_ = tree_util.tree_flatten(
-        (args, kwargs), is_leaf=lambda x: x is None
-    )
-    if in_tree_ != tree_util.tree_structure(
-        kernel_in_type, is_leaf=lambda x: x is None
-    ):
-      raise ValueError(f'Expected {kernel_in_type} PyTree, got {in_tree_}')
+    flat_args = in_tree.flatten_up_to((args, kwargs))
     env = {}
 
     def read_env(atom):
@@ -2614,7 +2577,6 @@ def _jit_eval_rule(ctx: KernelEvalContext, *args, jaxpr, **kwargs):
       in_tree,
       out_tree,
       read_usage_env,
-      ctx.in_block_specs,
       env,
       ctx.scalar_prefetch_handler,
       ctx.grid_len,
@@ -2681,7 +2643,6 @@ def _custom_jvp_call_eval_rule(
       in_tree,
       out_tree,
       read_usage_env,
-      ctx.in_block_specs,
       env,
       ctx.scalar_prefetch_handler,
       ctx.grid_len,
@@ -2748,7 +2709,6 @@ def _custom_vjp_call_eval_rule(
       in_tree,
       out_tree,
       read_usage_env,
-      ctx.in_block_specs,
       env,
       ctx.scalar_prefetch_handler,
       ctx.grid_len,

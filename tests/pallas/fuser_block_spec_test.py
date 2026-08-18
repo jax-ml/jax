@@ -72,6 +72,30 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         x,
     )
 
+  def test_pull_block_spec_with_none_in_pytree(self):
+    def f(vals, g):
+      x, none_val = vals
+      assert none_val is None
+      return g + x
+
+    in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    out_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    kernel_fn, (in_specs, g_spec), _ = block_spec_lib.pull_block_spec(
+        f,
+        out_spec,
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )((in_type, None), in_type)
+
+    self.assertEqual(in_specs[0].block_shape, (128, 128))
+    self.assertIsNone(in_specs[1])
+    self.assertEqual(g_spec.block_shape, (128, 128))
+
+    x = np.ones((128, 128), dtype=np.float32)
+    g = 2.0 * np.ones((128, 128), dtype=np.float32)
+    out = kernel_fn((0, 0), (), (x, None), g)
+    np.testing.assert_array_equal(out, x + g)
+
   @parameterized.named_parameters(
       ('transpose', 'ab->ba', (32, 32), (16, 16), {}, (16, 16)),
       (
