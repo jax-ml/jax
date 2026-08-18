@@ -198,6 +198,7 @@ def _mosaic_gpu_lowering_rule(
     inout_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
     use_custom_barrier: bool = False,
+    skip_cross_device_sync: bool = False,
 ):
   axis_context = ctx.module_context.axis_context
   replica_ids = []
@@ -260,6 +261,7 @@ def _mosaic_gpu_lowering_rule(
       kernel_hash=ir.StringAttr.get(kernel_id),
       module=ir.StringAttr.get(module_asm),
       use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
+      skip_cross_device_sync=ir.BoolAttr.get(skip_cross_device_sync),
       uses_xla_collective_metadata=ir.BoolAttr.get(
           launch_context.uses_collective_metadata(module)
       ),
@@ -612,6 +614,8 @@ def _launch(
     maybe_prof_buffer: ir.Value | None = None,
     num_peers: int = 0,
     num_params: int = 0,
+    *,
+    multi_host_kernel: bool = False,
 ):
   if (profiler_spec is None) != (maybe_prof_buffer is None):
     raise ValueError(
@@ -714,6 +718,7 @@ def _launch(
         num_peers=num_peers,
         num_params=num_params,
         num_processes=jax.process_count(),
+        multi_host_kernel=multi_host_kernel,
     )
     with ctx.named_region("Init"):
       tmem_allocs: list[_TMEMAlloc | _TMEMDialectAlloc] = []
@@ -822,6 +827,8 @@ def _lower_as_gpu_kernel(
     jax_mesh: mesh_lib.Mesh | None = None,
     base_loc: ir.Location | None = None,
     uses_pdl: bool = False,
+    *,
+    multi_host_kernel: bool = False,
 ):
   ptr_ty = llvm.PointerType.get()
   token_ty = gpu.AsyncTokenType.get()
@@ -913,6 +920,7 @@ def _lower_as_gpu_kernel(
           prof_buffer,
           num_peers,
           num_params,
+          multi_host_kernel=multi_host_kernel,
       ) as (_launch_ctx, smem_refs):
         launch_ctx = _launch_ctx
         body(launch_ctx, *arg_refs, smem_refs)
@@ -1032,6 +1040,8 @@ def _kernel_to_module(
     kernel_name: str | None = None,
     thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
     inout_shape = (),
+    *,
+    multi_host_kernel: bool = False,
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
@@ -1053,7 +1063,7 @@ def _kernel_to_module(
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, inout_shape,
           smem_scratch_shape, thread_semantics, module_name, kernel_name,
-          prof_spec, jax_mesh=jax_mesh
+          prof_spec, jax_mesh=jax_mesh, multi_host_kernel=multi_host_kernel,
       )
   )
 
@@ -1083,10 +1093,13 @@ def as_gpu_kernel(
     ir_version: int | None = None,
     thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
     inout_shape = (),
+    *,
+    multi_host_kernel: bool = False,
 ):
   module, in_shape, inout_shape, out_shape, unwrap_output_tuple, is_device_collective = _kernel_to_module(
       body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec,
-      cluster, module_name, kernel_name, thread_semantics, inout_shape
+      cluster, module_name, kernel_name, thread_semantics, inout_shape,
+      multi_host_kernel=multi_host_kernel,
   )
 
   expected_arg_tys, expected_arg_treedef = jax.tree.flatten((*in_shape, *inout_shape))

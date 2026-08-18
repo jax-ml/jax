@@ -766,6 +766,8 @@ def lower_pipelined_jaxpr_to_module(
     params: gpu_core.CompilerParams,
     cost_estimate: pallas_core.CostEstimate | None,
     outer_traceback: xc.Traceback | None = None,
+    *,
+    multi_host_kernel: bool = False,
 ) -> LoweringResult:
   del cost_estimate  # Unused.
 
@@ -896,6 +898,7 @@ def lower_pipelined_jaxpr_to_module(
         params,
         new_jaxpr.consts,
         outer_traceback=outer_traceback,
+        multi_host_kernel=multi_host_kernel,
     )
 
 
@@ -952,6 +955,8 @@ def lower_jaxpr_to_module(
     params: gpu_core.CompilerParams,
     consts=(),
     outer_traceback: xc.Traceback | None = None,
+    *,
+    multi_host_kernel: bool = False,
 ) -> LoweringResult:
   debug_info = jaxpr.debug_info
   approx_math = params.approx_math
@@ -1173,6 +1178,7 @@ def lower_jaxpr_to_module(
       jax_mesh=jax_mesh,
       base_loc=base_loc,
       uses_pdl=uses_pdl,
+      multi_host_kernel=multi_host_kernel,
   )
 
   mgpu_core.lower_mgpu_module(

@@ -702,6 +702,7 @@ class LaunchContext:
       ir.Value,
   ] = dataclasses.field(default_factory=dict, init=False)
   is_device_collective: bool = False
+  multi_host_kernel: bool = False
 
   @contextlib.contextmanager
   def named_region(self, *args, **kwargs):
@@ -2081,7 +2082,7 @@ class LaunchContext:
 
   def _mark_parameters_if_multiprocess(self):
     # All multi-process parameters should be allocated in collective memory.
-    if self.num_processes > 1:
+    if self.num_processes > 1 or self.multi_host_kernel:
       parameter_uses_multimem = np.ones(self.num_params, dtype=np.bool)
 
       self.module.operation.attributes[MULTIMEM_ARGS_ATTR] = (
@@ -2204,7 +2205,7 @@ class LaunchContext:
     # memory.
     module_attributes = self.module.operation.attributes
     self._mark_parameters_if_multiprocess()
-    if self.num_processes == 1:
+    if self.num_processes == 1 and not self.multi_host_kernel:
       if MULTIMEM_ARGS_ATTR in module_attributes:
         parameter_uses_multimem = np.array(module_attributes[MULTIMEM_ARGS_ATTR])
       else:

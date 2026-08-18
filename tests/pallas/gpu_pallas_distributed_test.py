@@ -138,6 +138,15 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
     self.monkey_patched_api_was_used = True
     return result
 
+  def pallas_call(self, *args, **kwargs):
+    compiler_params = dataclasses.replace(
+        kwargs.pop("compiler_params", plgpu.CompilerParams()),
+        lowering_semantics=self.LOWERING_SEMANTICS,
+    )
+    result = pl.pallas_call(*args, compiler_params=compiler_params, **kwargs)
+    self.monkey_patched_api_was_used = True
+    return result
+
   def skipTest(self, msg):
     # Setting `monkey_patched_api_was_used` to true for skipped tests to prevent
     # the assertion failure on teardown.
@@ -196,6 +205,128 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
+    expected = x[8:] if jax.process_index() == 0 else x[:8]
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
+  @parameterized.named_parameters(
+      ("dict_bool_true", {"skip_cross_device_sync": True}, True),
+      ("dict_str_true", {"skip_cross_device_sync": "true"}, True),
+      ("dict_bool_false", {"skip_cross_device_sync": False}, False),
+      ("none", None, False),
+  )
+  def test_skip_cross_device_sync(self, metadata, expected_skip):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    def kernel(x_ref, y_ref, ready_sem, recv_sem):
+      other_dev_id = 1 - lax.axis_index("x")
+      y_ref[...] = x_ref[...]
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(recv_sem, device_id=other_dev_id)
+      pl.semaphore_wait(recv_sem)
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+
+    def body(x):
+      return self.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+          out_specs=pl.BlockSpec(
+              memory_space=plgpu.GMEM,
+              block_shape=(8, 128),
+          ),
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          scratch_shapes=[
+              plgpu.SemaphoreType.REGULAR,
+              plgpu.SemaphoreType.REGULAR,
+          ],
+          metadata=metadata,
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    sharded_fn = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    hlo = sharded_fn.lower(x).compile().as_text()
+    if expected_skip:
+      self.assertIn("skip_cross_device_sync = true", hlo)
+    else:
+      self.assertIn("skip_cross_device_sync = false", hlo)
+
+    y = sharded_fn(x)
+    expected = x[8:] if jax.process_index() == 0 else x[:8]
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
+  @parameterized.named_parameters(
+      ("dict_bool_true", {"multi_host_kernel": True}, True),
+      ("dict_str_true", {"multi_host_kernel": "true"}, True),
+      ("dict_bool_false", {"multi_host_kernel": False}, False),
+      ("none", None, False),
+  )
+  def test_multi_host_kernel(self, metadata, expected_multi_host):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    def kernel(x_ref, y_ref, ready_sem, recv_sem):
+      other_dev_id = 1 - lax.axis_index("x")
+      y_ref[...] = x_ref[...]
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(recv_sem, device_id=other_dev_id)
+      pl.semaphore_wait(recv_sem)
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+
+    def body(x):
+      return self.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+          out_specs=pl.BlockSpec(
+              memory_space=plgpu.GMEM,
+              block_shape=(8, 128),
+          ),
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          scratch_shapes=[
+              plgpu.SemaphoreType.REGULAR,
+              plgpu.SemaphoreType.REGULAR,
+          ],
+          metadata=metadata,
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    sharded_fn = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    hlo = sharded_fn.lower(x).compile().as_text()
+    if expected_multi_host:
+      self.assertIn('"multimem_parameters" = "1,1,1,1"', hlo)
+    else:
+      self.assertIn('"multimem_parameters" = "0,1,0,0"', hlo)
+
+    y = sharded_fn(x)
     expected = x[8:] if jax.process_index() == 0 else x[:8]
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 

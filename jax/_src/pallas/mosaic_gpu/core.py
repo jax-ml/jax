@@ -258,6 +258,7 @@ def kernel(
     scratch_types: ScratchShapeTree | api.NotSpecified = api.NotSpecified(),
     scratch_shapes: ScratchShapeTree | api.NotSpecified = api.NotSpecified(),
     compiler_params: pallas_core.CompilerParams | None = None,
+    metadata: dict[str, Any] | None = None,
     # Mesh kwargs
     grid: tuple[int, ...] = (),
     grid_names: tuple[str, ...] = (),
@@ -285,6 +286,7 @@ def kernel(
       PyTree of ``jax.ShapeDtypeStruct`` or JAX types.
     compiler_params: Additional compiler options. See the `CompilerParams`
       dataclass for more details.
+    metadata: Optional dictionary of information about the kernel.
     grid: A tuple of integers specifying the size of the kernel grid.
     grid_names: The axis names of the grid. Must be the same length as `grid`.
     cluster: A tuple of integers specifying the size of the kernel cluster.
@@ -313,6 +315,7 @@ def kernel(
         scratch_shapes=scratch_shapes,
         scratch_types=scratch_types,
         compiler_params=compiler_params,
+        metadata=metadata,
         grid=grid,
         grid_names=grid_names,
         cluster=cluster,
@@ -398,6 +401,7 @@ def kernel(
           interpret=interpret,
           name=name,
           debug=debug,
+          metadata=metadata,
       )(*operands)
     return outs[0] if unwrap_out else outs
 
@@ -422,6 +426,7 @@ def kernel(
         out_type=tree_util.tree_map(add_batch_dim, out_type_),
         scratch_types=scratch_types,
         compiler_params=compiler_params,
+        metadata=metadata,
         grid=(axis_size,) + grid,
         grid_names=(axis_name,) + grid_names,  # pyrefly: ignore[bad-argument-type]
         cluster=cluster,
