@@ -540,6 +540,10 @@ class CudaArchSpecificTest:
     if not is_cuda_compute_capability_equal("9.0"):
       self.skipTest("Only works on GPU with capability sm90a")
 
+  def skip_unless_sm120_sm121(self):
+    if not any(map(is_cuda_compute_capability_equal, ("12.0", "12.1"))):
+      self.skipTest("Only works on GPU with capability sm120 or sm121")
+
   def skip_unless_tcgen05(self):
     if not is_device_cuda():
       self.skipTest("Only works on GPU")
