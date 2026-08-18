@@ -793,7 +793,7 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
   bins_int = core.concrete_or_error(operator.index, bins,
                                     "bins argument of histogram_bin_edges")
   if range is None:
-    range = [arr.min(), arr.max()]
+    range = [0, 1] if arr.size == 0 else [arr.min(), arr.max()]
   range = asarray(range, dtype=dtype)
   if np.shape(range) != (2,):
     raise ValueError(f"`range` must be either None or a sequence of scalars, got {range}")
