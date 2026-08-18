@@ -271,6 +271,20 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     self.assertEqual(ref.inner_aval.dtype, jnp.float32)
     self.assertEqual(ref.memory_space, gpu_core.MemorySpace.GMEM)
 
+  def test_io_aliasing(self):
+    @jax.jit
+    def f():
+      x = jnp.arange(128, dtype=jnp.float32)
+      x_ref = jax.new_ref(x)
+      @self.kernel()
+      def kernel():
+        x_ref[...] += 1.0
+      kernel()
+      return jax.freeze(x_ref)
+    self.assertIn("output_to_operand_aliasing={{}: (0, {})}",
+                  f.lower().as_text("hlo"))
+    np.testing.assert_array_equal(f(), jnp.arange(128, dtype=jnp.float32) + 1)
+
   def test_multiple_of(self):
     shape = (128, 64)
     out_shape = (64, 64)
