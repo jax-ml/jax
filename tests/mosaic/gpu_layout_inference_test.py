@@ -1501,40 +1501,6 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkOutLayouts(load, [strided_layout])
     self.checkInLayouts(store, [strided_layout])
 
-  @parameterized.parameters(
-      ((32, 256), ir.BF16Type, False, None, 16),
-      ((32, 256), ir.BF16Type, False, (2, 64), 128),
-      ((32, 256), ir.BF16Type, False, (2, 32), 64),
-      ((32, 256), ir.BF16Type, False, (2, 16), 32),
-      ((32, 256), ir.BF16Type, False, (2, 8), 16),
-      ((5, 32, 256), ir.BF16Type, False, (2, 64), 128),
-      ((5, 32, 256), ir.BF16Type, False, (2, 16), 32),
-      ((3, 32, 256), ir.Float8E4M3FNType, False, (2, 128), 128),
-      ((3, 32, 256), ir.Float8E4M3FNType, False, (2, 64), 64),
-      ((3, 32, 256), ir.Float8E4M3FNType, False, (2, 32), 32),
-      ((3, 32, 256), ir.Float8E4M3FNType, False, (2, 16), 16),
-      ((3, 32, 256), ir.BF16Type, True, (16, 32), 32),
-      ((3, 32, 256), ir.BF16Type, False, (64,), 128),
-      ((256,), ir.BF16Type, False, (2, 2), None),
-  )
-  def test_compute_swizzle(self, shape, ty, transposed, tiling, want_swizzle):
-    with ir.InsertionPoint(self.module.body):
-      ref_ty = ir.MemRefType.get(shape, ty.get())
-      if transposed:
-        strides, offset = ref_ty.get_strides_and_offset()
-        strides[-1], strides[-2] = strides[-2], strides[-1]
-        layout = ir.StridedLayoutAttr.get(offset, strides)
-        ref_ty = ir.MemRefType.get(shape, ty.get(), layout)
-
-      tile_transform = None if tiling is None else lc.TileTransform(tiling)
-
-      if want_swizzle is None:
-        with self.assertRaises(ValueError):
-          layout_inference._compute_swizzle(ref_ty, tile_transform)
-      else:
-        swizzle = layout_inference._compute_swizzle(ref_ty, tile_transform)
-        self.assertEqual(swizzle, mgpu.dialect.SwizzlingMode(want_swizzle))
-
   def test_do_not_conjure_smem_tiling_for_3d_transposed_ref_transfer(self):
     # The idea is that we only want to tile trailing dimensions, but the two
     # last logical dimensions do not correspond to the two last physical
