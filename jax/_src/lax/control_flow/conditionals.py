@@ -1232,7 +1232,8 @@ def platform_dependent[T](*args: Any,
       raise TypeError(f"lax.platform_dependent: the '{pname}' branch must "
                       "be a callable.")
     if pname == "gpu":
-      raise ValueError("Use 'cuda' or 'rocm' for lax.platform_dependent.")
+      raise ValueError(
+          "Use 'cuda', 'rocm', or 'oneapi' for lax.platform_dependent.")
     for ps, b in branches_platforms_list:
       if b == pbranch:
         ps.append(pname)
