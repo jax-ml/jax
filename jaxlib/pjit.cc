@@ -1185,13 +1185,11 @@ int PjitFunction_tp_traverse(PyObject* self, visitproc visit, void* arg) {
 
 int PjitFunction_tp_clear(PyObject* self) {
   PjitFunctionObject* o = reinterpret_cast<PjitFunctionObject*>(self);
-#if PY_VERSION_HEX < 0x030C0000
-  Py_CLEAR(o->dict);
-#elif PY_VERSION_HEX < 0x030D0000
+#if PY_VERSION_HEX < 0x030D0000
   _PyObject_ClearManagedDict(self);
 #else
   PyObject_ClearManagedDict(self);
-#endif  // PY_VERSION_HEX < 0x030C0000
+#endif
   o->fun.ClearPythonReferences();
   return 0;
 }
@@ -1283,14 +1281,6 @@ PyMemberDef PjitFunction_members[] = {
     {"__vectorcalloffset__", T_PYSSIZET,
      static_cast<Py_ssize_t>(offsetof(PjitFunctionObject, vectorcall)),
      READONLY, nullptr},
-#if PY_VERSION_HEX < 0x030C0000
-    {"__dictoffset__", T_PYSSIZET,
-     static_cast<Py_ssize_t>(offsetof(PjitFunctionObject, dict)), READONLY,
-     nullptr},
-    {"__weaklistoffset__", T_PYSSIZET,
-     static_cast<Py_ssize_t>(offsetof(PjitFunctionObject, weakrefs)), READONLY,
-     nullptr},
-#endif  // PY_VERSION_HEX < 0x030C0000
     {nullptr, 0, 0, 0, nullptr},
 };
 
@@ -1617,14 +1607,9 @@ void BuildPjitSubmodule(nb::module_& m) {
       /*.name=*/name.c_str(),
       /*.basicsize=*/static_cast<int>(sizeof(PjitFunctionObject)),
       /*.itemsize=*/0,
-#if PY_VERSION_HEX < 0x030C0000
-      /*.flags=*/Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
-          Py_TPFLAGS_HAVE_VECTORCALL,
-#else   // PY_VERSION_HEX < 0x030C0000
       /*.flags=*/Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
           Py_TPFLAGS_HAVE_VECTORCALL | Py_TPFLAGS_MANAGED_DICT |
           Py_TPFLAGS_MANAGED_WEAKREF,
-#endif  // PY_VERSION_HEX < 0x030C0000
       /*.slots=*/PjitFunction_slots,
   };
   PjitFunction_Type = PyType_FromSpec(&PjitFunction_spec);

@@ -350,20 +350,11 @@ extern "C" void PyArray_tp_finalize(PyObject* self) {
       if (guard_level == GarbageCollectionGuardLevel::kFatal) {
         Py_FatalError(error_msg.c_str());
       } else {
-#if PY_VERSION_HEX < 0x030C0000
-        PyObject *err_type, *err_value, *err_traceback;
-        PyErr_Fetch(&err_type, &err_value, &err_traceback);
-#else
         PyObject* exc = PyErr_GetRaisedException();
-#endif
         PyErr_SetString(PyExc_RuntimeError, error_msg.c_str());
         PyErr_Print();
         PyErr_Clear();
-#if PY_VERSION_HEX < 0x030C0000
-        PyErr_Restore(err_type, err_value, err_traceback);
-#else
         PyErr_SetRaisedException(exc);
-#endif
       }
       break;
     }
@@ -372,14 +363,11 @@ extern "C" void PyArray_tp_finalize(PyObject* self) {
 
 // dynamic_attr: Allow the GC to clear the dictionary.
 extern "C" int PyArray_tp_clear(PyObject* self) {
-#if PY_VERSION_HEX < 0x030C0000
-  PyObject*& dict = *_PyObject_GetDictPtr(self);
-  Py_CLEAR(dict);
-#elif PY_VERSION_HEX < 0x030D0000
+#if PY_VERSION_HEX < 0x030D0000
   _PyObject_ClearManagedDict(self);
 #else
   PyObject_ClearManagedDict(self);
-#endif  // PY_VERSION_HEX < 0x030C0000
+#endif
   return 0;
 }
 
@@ -2074,22 +2062,10 @@ PyGetSetDef array_impl_tp_getset[] = {
     {nullptr, nullptr, nullptr, nullptr, nullptr},
 };
 
-PyMemberDef array_impl_members[] = {
-#if PY_VERSION_HEX < 0x030C0000
-    {"__weaklistoffset__", T_PYSSIZET,
-     static_cast<Py_ssize_t>(offsetof(PyArrayObject, weakrefs)), READONLY,
-     nullptr},
-    {"__dictoffset__", T_PYSSIZET,
-     static_cast<Py_ssize_t>(offsetof(PyArrayObject, dict)), READONLY, nullptr},
-#endif  // PY_VERSION_HEX < 0x030C0000
-    {nullptr, 0, 0, 0, nullptr},
-};  // namespace jax
-
 PyType_Slot array_impl_slots[] = {
     {Py_tp_new, reinterpret_cast<void*>(PyArray_tp_new)},
     {Py_tp_finalize, reinterpret_cast<void*>(PyArray_tp_finalize)},
     {Py_tp_dealloc, reinterpret_cast<void*>(PyArray_tp_dealloc)},
-    {Py_tp_members, reinterpret_cast<void*>(array_impl_members)},
     {Py_tp_traverse, reinterpret_cast<void*>(PyArray_tp_traverse)},
     {Py_tp_clear, reinterpret_cast<void*>(PyArray_tp_clear)},
     {Py_tp_getset, reinterpret_cast<void*>(array_impl_tp_getset)},
@@ -2097,65 +2073,6 @@ PyType_Slot array_impl_slots[] = {
     {Py_bf_releasebuffer, reinterpret_cast<void*>(PyArray_bf_releasebuffer)},
     {0, nullptr},
 };
-
-// TODO(phawkins): remove this code when we drop support for Python < 3.12
-PyObject* MakeArrayTypeFromMetaclass(PyTypeObject* meta, PyObject* module,
-                                     PyType_Spec* spec) {
-#if PY_VERSION_HEX >= 0x030C0000
-  return PyType_FromMetaclass(meta, module, spec, nullptr);
-#else
-  nb::str name = nb::steal<nb::str>(PyUnicode_InternFromString(spec->name));
-  const char* name_cstr = PyUnicode_AsUTF8AndSize(name.ptr(), nullptr);
-  if (!name_cstr) {
-    return nullptr;
-  }
-
-  PyHeapTypeObject* ht =
-      reinterpret_cast<PyHeapTypeObject*>(PyType_GenericAlloc(meta, 0));
-  if (!ht) {
-    return nullptr;
-  }
-  ht->ht_name = name.inc_ref().ptr();
-  ht->ht_qualname = name.inc_ref().ptr();
-  Py_INCREF(module);
-  ht->ht_module = module;
-
-  PyTypeObject* tp = &ht->ht_type;
-  tp->tp_name = name_cstr;
-  tp->tp_basicsize = spec->basicsize;
-  tp->tp_itemsize = spec->itemsize;
-  tp->tp_flags = spec->flags | Py_TPFLAGS_HEAPTYPE;
-  tp->tp_as_async = &ht->as_async;
-  tp->tp_as_number = &ht->as_number;
-  tp->tp_as_sequence = &ht->as_sequence;
-  tp->tp_as_mapping = &ht->as_mapping;
-  tp->tp_as_buffer = &ht->as_buffer;
-
-  for (PyType_Slot* slot = spec->slots; slot->slot; slot++) {
-    switch (slot->slot) {
-      case Py_tp_dealloc:
-        tp->tp_dealloc = reinterpret_cast<destructor>(slot->pfunc);
-        break;
-      case Py_tp_traverse:
-        tp->tp_traverse = reinterpret_cast<traverseproc>(slot->pfunc);
-        break;
-      case Py_tp_hash:
-        tp->tp_hash = reinterpret_cast<hashfunc>(slot->pfunc);
-        break;
-      default:
-        // TODO(phawkins): support other slots as needed.
-        LOG(FATAL) << "Unsupported slot: " << slot->slot;
-    }
-  }
-
-  if (PyType_Ready(tp) != 0) {
-    Py_DECREF(tp);
-    return nullptr;
-  }
-
-  return reinterpret_cast<PyObject*>(tp);
-#endif
-}
 
 }  // namespace
 
@@ -2185,9 +2102,9 @@ absl::Status PyArray::Register(nb::module_& m) {
       /*.itemsize=*/0,
       /*.flags=*/Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
       /*.slots=*/array_slots};
-  nb::object base_type = nb::steal<nb::object>(MakeArrayTypeFromMetaclass(
+  nb::object base_type = nb::steal<nb::object>(PyType_FromMetaclass(
       reinterpret_cast<PyTypeObject*>(array_meta_type.ptr()), m.ptr(),
-      &array_spec));
+      &array_spec, nullptr));
   if (!base_type) {
     throw nb::python_error();
   }
@@ -2228,12 +2145,8 @@ absl::Status PyArray::Register(nb::module_& m) {
       /*.name=*/name.c_str(),
       /*.basicsize=*/static_cast<int>(sizeof(PyArrayObject)),
       /*.itemsize=*/0,
-#if PY_VERSION_HEX < 0x030C0000
-      /*.flags=*/Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-#else   // PY_VERSION_HEX >= 0x030C0000
       /*.flags=*/Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
           Py_TPFLAGS_MANAGED_DICT | Py_TPFLAGS_MANAGED_WEAKREF,
-#endif  // PY_VERSION_HEX >= 0x030C0000
       /*.slots=*/array_impl_slots,
   };
 
