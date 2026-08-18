@@ -1258,6 +1258,17 @@ def _check_module(mod: ir.Module, *,
            "See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees-for-custom-calls. "
            "Examples are:\n"
            f"{disallowed_custom_call_ops_str}.\n")
+    targets_with_disabled_check = (
+        allowed_custom_call_targets - _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
+    if targets_with_disabled_check:
+      msg += ("The custom call safety check was disabled for the following "
+              "targets via disabled_checks: "
+              f"{', '.join(sorted(targets_with_disabled_check))}.\n")
+    else:
+      msg += ("The custom call safety check was not disabled for any target. "
+              "You can disable it for a target by adding "
+              "jax.export.DisabledSafetyCheck.custom_call('<target>') to "
+              "disabled_checks.\n")
     raise ValueError(msg)
   return module_uses_non_replicated_sharding
 

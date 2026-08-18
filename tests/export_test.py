@@ -609,9 +609,22 @@ class JaxExportTest(jtu.JaxTestCase):
 
     a = np.arange(3, dtype=np.float32)
     with self.assertRaisesRegex(ValueError,
-        "Cannot serialize code with custom calls whose targets .*"):
+        r"Cannot serialize code with custom calls whose targets [\s\S]*"
+        r"safety check was not disabled for any target[\s\S]*"
+        r"DisabledSafetyCheck.custom_call"):
       get_exported(
         jax.jit(lambda a: a + test_primitive.bind(a))
+      )(a)
+
+    # If the safety check was disabled for a *different* target, the error
+    # should list the targets it was disabled for.
+    with self.assertRaisesRegex(ValueError,
+        r"Cannot serialize code with custom calls whose targets [\s\S]*"
+        r"safety check was disabled for the following targets [\s\S]*"
+        r"wrong_target"):
+      get_exported(
+        jax.jit(lambda a: a + test_primitive.bind(a)),
+        disabled_checks=[export.DisabledSafetyCheck.custom_call("wrong_target")]
       )(a)
 
     # Now try again with the safety check disabled
