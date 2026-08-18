@@ -148,7 +148,7 @@ def get_contiguous_strides(xs):
 
 
 def c(val: int | float, ty):
-  if isinstance(ty, ir.IntegerType) or isinstance(ty, ir.IndexType):
+  if isinstance(ty, (ir.IntegerType, ir.IndexType)):
     if not isinstance(val, (int, np.integer)):
       raise TypeError(type(val))
     attr = ir.IntegerAttr.get(ty, val)
@@ -175,7 +175,7 @@ def _debug_scalar_ty_format(arg):
         ir.IntegerType.get_signless(32),
         arith.bitcast(ir.IntegerType.get_signless(8), arg),
     )
-  if isinstance(arg.type, ir.BF16Type) or isinstance(arg.type, ir.F16Type):
+  if isinstance(arg.type, (ir.BF16Type, ir.F16Type)):
     arg = arith.extf(ir.F32Type.get(), arg)
     return "%f", arg
   raise NotImplementedError(f"Can't print the type {arg.type}")

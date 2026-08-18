@@ -1028,9 +1028,7 @@ def dynamic_gcd(a: int, b: ir.Value) -> int:
     # We don't actually know the values of the vector elements, so we pick 1
     # as the only safe value.
     return 1
-  if not isinstance(b.type, ir.IntegerType) and not isinstance(
-      b.type, ir.IndexType
-  ):
+  if not isinstance(b.type, (ir.IntegerType, ir.IndexType)):
     raise ValueError(f"Expected an integer dynamic value, got a {b.type}")
   if isinstance(b.owner, arith.ConstantOp):
     assert isinstance(b.owner.literal_value, int)
