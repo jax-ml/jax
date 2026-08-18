@@ -23,7 +23,7 @@ import functools
 import itertools
 import json
 import re
-from typing import Any, Protocol, TypeVar, cast
+from typing import Any, Protocol, cast
 
 import logging
 import numpy as np
@@ -341,7 +341,6 @@ def deserialize(blob: bytearray) -> Exported:
   return deserialize(blob)
 
 
-T = TypeVar("T")
 PyTreeAuxData = Any  # alias for tree_util._AuxData
 
 
@@ -384,7 +383,7 @@ def _is_namedtuple(nodetype: type) -> bool:
           isinstance(nodetype._fields, Sequence) and
           all(isinstance(f, str) for f in nodetype._fields))
 
-def register_pytree_node_serialization(
+def register_pytree_node_serialization[T](
     nodetype: type[T],
     *,
     serialized_name: str,
@@ -454,7 +453,7 @@ def register_pytree_node_serialization(
   return nodetype
 
 
-def register_namedtuple_serialization(
+def register_namedtuple_serialization[T](
     nodetype: type[T],
     *,
     serialized_name: str) -> type[T]:
