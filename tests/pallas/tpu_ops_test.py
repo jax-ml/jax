@@ -438,8 +438,6 @@ class OpsTest(ptu.PallasTPUTest):
       ],
   )
   def test_bf16_input_reduce_index(self, in_shape, axis, reduce_func):
-    if not jtu.is_libtpu_at_least("0.0.46"):
-      self.skipTest("Requires libtpu >= 0.0.46")
     if not jtu.is_device_tpu_at_least(6):
       self.skipTest("Requires TPUv6+")
     if axis >= len(in_shape):
@@ -613,8 +611,6 @@ class OpsTest(ptu.PallasTPUTest):
     ):
       self.skipTest("Requires TPUv5+ for axis=-2 and TPUv4+ for axis=-1")
     if dtype != jnp.int32:
-      if not jtu.is_libtpu_at_least("0.0.46"):
-        self.skipTest("Requires libtpu >= 0.0.46")
       if wrap_negative_indices:
         self.skipTest(
             "With wrap_negative_indices=True, jnp.take_along_axis will cast"
@@ -1254,8 +1250,6 @@ class OpsTest(ptu.PallasTPUTest):
   @parameterized.product(approx=[False, True], full_range=[False, True], dtype=[jnp.bfloat16, jnp.float32])
   def test_reciprocal(self, approx, full_range, dtype):
     if dtype == jnp.bfloat16:
-      if not jtu.is_libtpu_at_least("0.0.46"):
-        self.skipTest("BF16 reciprocal requires libtpu >= 0.0.46.")
       if not jtu.is_device_tpu_at_least(6):
         self.skipTest("BF16 reciprocal not supported before v6e.")
       if approx:

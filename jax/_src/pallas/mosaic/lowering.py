@@ -1047,10 +1047,10 @@ def lower_jaxpr_into_pipelined_module(
 ) -> None:
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
-  if not is_libtpu_at_least("0.0.44"):
+  if not is_libtpu_at_least("0.0.46"):
     platform_version = xla_bridge.get_backend().platform_version
     raise RuntimeError(
-        "Pallas TPU requires a recent libtpu version (at least 0.0.44). Found"
+        "Pallas TPU requires a recent libtpu version (at least 0.0.46). Found"
         f" version string:\n{platform_version}"
     )
   debug_info = jaxpr.debug_info
@@ -1419,10 +1419,10 @@ def lower_jaxpr_into_unpipelined_module(
     )
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
-  if not is_libtpu_at_least("0.0.44"):
+  if not is_libtpu_at_least("0.0.46"):
     platform_version = xla_bridge.get_backend().platform_version
     raise RuntimeError(
-        "Pallas TPU requires a recent libtpu version (at least 0.0.44). Found"
+        "Pallas TPU requires a recent libtpu version (at least 0.0.46). Found"
         f" version string:\n{platform_version}"
     )
   sym_tab = ir.SymbolTable(module.operation)
@@ -4128,9 +4128,7 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
       raise ValueError(
         "Cannot fully unroll loop with dynamic number of steps (unroll=0)")
 
-  supports_late_unroll = (
-      not ctx.forward_compatible and ctx.is_libtpu_at_least("0.0.45")
-  )
+  supports_late_unroll = not ctx.forward_compatible
   # TODO(apaszke): Remove forward_compatible check and associated code after 20.08.2026
   if unroll > 1 and not supports_late_unroll:
     const_types = [val.type for val in consts]

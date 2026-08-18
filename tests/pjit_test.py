@@ -66,7 +66,7 @@ from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType, get_abstract_mesh
 from jax._src.interpreters import pxla
-from jax._src.lib import xla_client as xc, ifrt_version
+from jax._src.lib import xla_client as xc
 from jax._src.util import curry, unzip2
 from jax._src import tree_util
 
@@ -9528,14 +9528,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     step(ws, xs)  # doesn't crash
 
     compiled_text = step.lower(ws, xs).compile().as_text()
-    if jtu.test_device_matches(['gpu']):
-      if ifrt_version >= 66:
-        self.assertEqual(compiled_text.count('all-reduce('), 1)
-      else:
-        self.assertEqual(compiled_text.count('all-reduce-start('), 1)
-        self.assertEqual(compiled_text.count('all-reduce-done('), 1)
-    else:
-      self.assertEqual(compiled_text.count('all-reduce('), 1)
+    self.assertEqual(compiled_text.count('all-reduce('), 1)
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_vmap_mapped_input_sharding_error(self, mesh):
@@ -9619,14 +9612,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     step(stacked_ws, xs)  # doesn't crash
 
     compiled_text = step.lower(stacked_ws, xs).compile().as_text()
-    if jtu.test_device_matches(['gpu']):
-      if ifrt_version >= 66:
-        self.assertEqual(compiled_text.count('all-reduce('), 1)
-      else:
-        self.assertEqual(compiled_text.count('all-reduce-start('), 1)
-        self.assertEqual(compiled_text.count('all-reduce-done('), 1)
-    else:
-      self.assertEqual(compiled_text.count('all-reduce('), 1)
+    self.assertEqual(compiled_text.count('all-reduce('), 1)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_jacrev_sharded_broadcast(self, mesh):
@@ -11531,11 +11517,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2,), 'x')
   def test_reduce_max_min_unreduced_basic(self, lax_op, jnp_op, p_op, u_kind,
                                           unreduced_vals, mesh):
-    if ifrt_version < 60:
-      self.skipTest('Requires ifrt_version >= 60')
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest("Requires libtpu 0.0.45 or newer.")
-
     np_inp = np.arange(8.).reshape(4, 2)
     arr = jax.device_put(np_inp, P('x', None))
     out_spec = P(None, unreduced={'x'}, unreduced_kind=u_kind)
@@ -11584,11 +11565,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   ])
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_max_min_unreduced_complex(self, lax_op, jnp_op, u_kind, mesh):
-    if ifrt_version < 60:
-      self.skipTest('Requires ifrt_version >= 60')
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest("Requires libtpu 0.0.45 or newer.")
-
     np_inp = np.arange(16).reshape(4, 2, 2)
     arr = jax.device_put(np_inp, P('x', 'y', None))
     out_spec = P(None, unreduced={'x'}, unreduced_kind=u_kind)
@@ -11609,11 +11585,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_max_unreduced_partial_reduction(self, mesh):
-    if ifrt_version < 60:
-      self.skipTest('Requires ifrt_version >= 60')
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest("Requires libtpu 0.0.45 or newer.")
-
     arr = jax.device_put(np.arange(8).reshape(4, 2), P('x', 'y'))
 
     @jax.jit
@@ -11690,11 +11661,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_reduce_max_unreduced_reduce_scatter(self, mesh):
-    if ifrt_version < 60:
-      self.skipTest('Requires ifrt_version >= 60')
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest("Requires libtpu 0.0.45 or newer.")
-
     arr = jax.device_put(np.arange(8).reshape(4, 2), P('x'))
 
     @jax.jit

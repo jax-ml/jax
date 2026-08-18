@@ -49,7 +49,6 @@ limitations under the License.
 #include "shardy/dialect/mpmd/ir/utils.h"
 #include "shardy/dialect/mpmd/transforms/import/mesh_assignment_map.h"
 #include "shardy/integrations/python/jax/mpmd/jaxlib/mpmd_program.h"
-#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"
@@ -66,6 +65,7 @@ limitations under the License.
 #include "xla/python/ifrt/ir/ifrt_ir_program.h"
 #include "xla/python/ifrt/ir/program_memory_tracer.h"
 #include "xla/python/ifrt/mpmd_executable.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/pjrt_ifrt/xla_compiler.h"

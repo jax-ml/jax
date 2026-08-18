@@ -21,8 +21,8 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
-#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/traceback.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/ifrt/user_context.h"
 
 namespace jax {

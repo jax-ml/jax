@@ -28,7 +28,6 @@ from jax._src.mesh import AxisType
 from jax._src.partition_spec import PartitionSpec, UnreducedKind
 from jax._src import sharding as jsharding
 import numpy as np
-from jax._src.lib import ifrt_version, jaxlib_extension_version
 
 Shape = tuple[int, ...]
 Device = xc.Device
@@ -472,10 +471,9 @@ def named_sharding_to_xla_hlo_sharding(
         .reshape(dims).reshape(reshape_dims).transpose(mesh_permutation)
         .reshape(dims), subgroup_types=last_tile_dims)
 
-  if jaxlib_extension_version >= 478 and ifrt_version >= 61:
-    reduction_op = uk_map.get(spec.unreduced_kind, None)
-    if reduction_op is not None:
-      hlo_s.set_reduction_op(reduction_op.value)  # type: ignore[attr-defined]
+  reduction_op = uk_map.get(spec.unreduced_kind, None)
+  if reduction_op is not None:
+    hlo_s.set_reduction_op(reduction_op.value)  # type: ignore[attr-defined]
   return hlo_s
 
 uk_map = {UnreducedKind.sum: sdy.ReductionOp.SUM,

@@ -412,7 +412,6 @@ nanobind_pywrap_extension(
         ":ffi",
         ":guard_lib",
         ":hash_util",
-        ":ifrt_rtti",
         ":jax_jit",
         ":mlir",
         ":nb_class_ptr",
@@ -479,6 +478,7 @@ nanobind_pywrap_extension(
         "@xla//xla/python/ifrt:attribute_map",
         "@xla//xla/python/ifrt:plugin_program",
         "@xla//xla/python/ifrt:plugin_program_serdes",
+        "@xla//xla/python/ifrt:rtti",
         "@xla//xla/python/pjrt_ifrt",
         "@xla//xla/python/pjrt_ifrt:pjrt_attribute_map_util",
         "@xla//xla/python/pjrt_ifrt:transfer_server_interface",
@@ -689,7 +689,6 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        ":ifrt_rtti",
         ":nb_class_ptr",
         ":py_client",
         ":py_user_context",
@@ -715,6 +714,7 @@ cc_library(
         "@xla//xla/python:dlpack_types",
         "@xla//xla/python:types",
         "@xla//xla/python/ifrt",
+        "@xla//xla/python/ifrt:rtti",
         "@xla//xla/python/pjrt_ifrt",
         "@xla//xla/tsl/platform:errors",
         "@xla//xla/tsl/platform:statusor",
@@ -1055,7 +1055,6 @@ cc_library(
         ":config",
         ":guard_lib",
         ":hash_util",
-        ":ifrt_rtti",
         ":nb_class_ptr",
         ":pprof_profile_builder",
         ":py_client_cpu",
@@ -1123,6 +1122,7 @@ cc_library(
         "@xla//xla/python/ifrt:custom_call_program",
         "@xla//xla/python/ifrt:plugin_program",
         "@xla//xla/python/ifrt:plugin_program_serdes",
+        "@xla//xla/python/ifrt:rtti",
         "@xla//xla/python/ifrt:sharding_serdes",
         "@xla//xla/python/ifrt:user_context",
         "@xla//xla/python/ifrt:user_context_status_util",
@@ -1192,7 +1192,6 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":callback",
-        ":ifrt_rtti",
         ":py_host_callback_cc_proto",
         ":python_ref_manager",
         "@com_google_absl//absl/algorithm:container",
@@ -1209,6 +1208,7 @@ cc_library(
         "@xla//xla/pjrt:host_callback",
         "@xla//xla/python:types",
         "@xla//xla/python/ifrt",
+        "@xla//xla/python/ifrt:rtti",
         "@xla//xla/python/pjrt_ifrt",
         "@xla//xla/python/pjrt_ifrt:xla_host_callback_proto_cc",
         "@xla//xla/tsl/concurrency:ref_count",
@@ -1237,7 +1237,6 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        ":ifrt_rtti",
         ":jax_jit",
         ":nb_class_ptr",
         ":py_client",
@@ -1266,6 +1265,7 @@ cc_library(
         "@xla//xla/python/ifrt",
         "@xla//xla/python/ifrt:attribute_map",
         "@xla//xla/python/ifrt:mpmd_executable",
+        "@xla//xla/python/ifrt:rtti",
         "@xla//xla/python/ifrt:user_context",
         "@xla//xla/python/ifrt/ir:ifrt_ir_loaded_executable",
         "@xla//xla/python/ifrt/ir:program_memory_tracer",
@@ -1285,7 +1285,6 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        ":ifrt_rtti",
         ":nb_class_ptr",
         ":py_client",
         ":py_user_context",
@@ -1306,6 +1305,7 @@ cc_library(
         "@xla//xla/python:nb_numpy",
         "@xla//xla/python:types",
         "@xla//xla/python/ifrt",
+        "@xla//xla/python/ifrt:rtti",
         "@xla//xla/python/pjrt_ifrt",
         "@xla//xla/python/pjrt_ifrt:pjrt_dtype",
         "@xla//xla/python/pjrt_ifrt:transfer_server_interface",
@@ -1332,7 +1332,6 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = jax_visibility("jaxlib/py_user_context"),
     deps = [
-        ":ifrt_rtti",
         ":python_ref_manager",
         ":traceback",
         "@com_google_absl//absl/base:core_headers",
@@ -1343,6 +1342,7 @@ cc_library(
         "@nanobind",
         "@tsl//tsl/platform:random",
         "@xla//third_party/python_runtime:headers",
+        "@xla//xla/python/ifrt:rtti",
         "@xla//xla/python/ifrt:user_context",
         "@xla//xla/service:slow_operation_alarm",
         "@xla//xla/tsl/concurrency:ref_count",
@@ -1433,7 +1433,6 @@ nanobind_pywrap_extension(
     },
     visibility = ["//jax:internal"] + jax_visibility("jaxlib/_sdy_mpmd"),
     deps = [
-        ":ifrt_rtti",
         ":nb_class_ptr",
         ":py_client",
         ":py_host_callback",
@@ -1464,6 +1463,7 @@ nanobind_pywrap_extension(
         "@xla//xla/python:version",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/ifrt:mpmd_executable",
+        "@xla//xla/python/ifrt:rtti",
         "@xla//xla/python/ifrt:user_context",
         "@xla//xla/python/ifrt/ir:ifrt_ir_program",
         "@xla//xla/python/ifrt/ir:program_memory_tracer",
@@ -1702,14 +1702,4 @@ py_test(
         "absl/testing",
         "numpy",
     ]),
-)
-
-cc_library(
-    name = "ifrt_rtti",
-    hdrs = ["ifrt_rtti.h"],
-    deps = [
-        "@llvm-project//llvm:Support",  # buildcleaner: keep (for JAX_IFRT_VERSION_NUMBER < 64)
-        "@xla//xla/python:version",
-        "@xla//xla/python/ifrt",  # buildcleaner: keep (for JAX_IFRT_VERSION_NUMBER >= 64; use a transitive dep to `ifrt/rtti.h` without breaking older versions)
-    ],
 )

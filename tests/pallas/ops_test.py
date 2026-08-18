@@ -2421,10 +2421,6 @@ class OpsTest(PallasBaseTest):
     self.skip_if_mosaic_gpu()
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Not supported on this hardware")
-    if jtu.jaxlib_version() < (0, 11, 1):
-      self.skipTest("Test requires JAX v0.11.1 or newer.")
-    if not jtu.is_libtpu_at_least("0.0.46"):
-      self.skipTest("Test requires libtpu 0.0.46 or newer.")
 
     lhs_shape, rhs_shape, dim_nums = shapes_and_dim_nums
     lhs_key, rhs_key = random.split(random.key(0))
@@ -2488,10 +2484,6 @@ class OpsTest(PallasBaseTest):
     self.skip_if_mosaic_gpu()
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Not supported on this hardware")
-    if jtu.jaxlib_version() < (0, 11, 1):
-      self.skipTest("Test requires JAX v0.11.1 or newer.")
-    if not jtu.is_libtpu_at_least("0.0.46"):
-      self.skipTest("Test requires libtpu 0.0.46 or newer.")
 
     lhs_shape, rhs_shape, dim_nums = shapes_and_dim_nums
     lhs_key, rhs_key = random.split(random.key(0))

@@ -23,7 +23,6 @@ from jax._src.lax import parallel
 from jax._src.compute_on import compute_on
 from jax.experimental.overlap import program_order
 from jax.sharding import PartitionSpec as P
-from jax._src.lib import ifrt_version
 
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -270,11 +269,6 @@ class OverlapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((8,), ('x',))
   def test_unrolled_fsdp_pipeline_grad_program_order_async_decomp(self, mesh):
-    if ifrt_version < 63:
-      self.skipTest("Requires ifrt_version >= 63")
-    if not jtu.is_libtpu_at_least("0.0.46"):
-      self.skipTest("Requires libtpu 0.0.46+")
-
     if not jtu.is_device_tpu_at_least(6):
       self.skipTest("Requires TPU >= 6")
 
@@ -369,12 +363,6 @@ class OverlapTest(jtu.JaxTestCase):
 
 
 class AsyncCollectivesTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    if ifrt_version < 63:
-      self.skipTest("Requires ifrt_version >= 63")
-    if not jtu.is_libtpu_at_least("0.0.46"):
-      self.skipTest("Requires libtpu 0.0.46+")
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_lower_async_all_gather(self, mesh):

@@ -39,7 +39,6 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
@@ -1087,9 +1086,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   @run_on_sm80
   def test_copy_gmem_to_smem(self, indexer):
     needs_barrier = jtu.is_cuda_compute_capability_at_least("9.0")
-    # TODO(bchetioui): Remove the skip once minimum jaxlib version is 0.11.1.
-    if not needs_barrier and jaxlib_extension_version < 480:
-      self.skip_if_wg_semantics()
 
     @self.kernel(
         out_type=jax.ShapeDtypeStruct([256], jnp.float32),
@@ -1118,9 +1114,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   @run_on_sm80
   def test_copy_gmem_to_smem_dynamic_slice(self):
     needs_barrier = jtu.is_cuda_compute_capability_at_least("9.0")
-    # TODO(bchetioui): Remove the skip once minimum jaxlib version is 0.11.1.
-    if not needs_barrier and jaxlib_extension_version < 480:
-      self.skip_if_wg_semantics()
 
     @self.kernel(
         out_type=jax.ShapeDtypeStruct([256], jnp.float32),
@@ -1154,9 +1147,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   @run_on_sm80
   def test_copy_gmem_to_smem_squeeze(self):
     needs_barrier = jtu.is_cuda_compute_capability_at_least("9.0")
-    # TODO(bchetioui): Remove the skip once minimum jaxlib version is 0.11.1.
-    if not needs_barrier and jaxlib_extension_version < 480:
-      self.skip_if_wg_semantics()
 
     @self.kernel(
         out_type=jax.ShapeDtypeStruct([4, 8, 32], jnp.float32),
@@ -3849,9 +3839,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   @parameterized.parameters("col", "row")
   def test_broadcast_in_dim_with_expanded_dimension(self, mode):
-    # TODO: Remove when the minimum jaxlib version is 0.11.1
-    if jaxlib_extension_version < 480:
-      self.skipTest("Requires jaxlib with BroadcastInDim canonicalizer")
     if not self.is_wg_semantics():
       self.skipTest("Layout inference is only enabled under WG semantics.")
 
@@ -5870,9 +5857,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       self.skipTest("Requires compute capability between 10.1 or 12.0")
     if not jtu.is_cuda_version_at_least(13, 0):
       self.skipTest("Requires CUDA version 13.0 or higher")
-    # TODO(apaszke): Remove this once minimum jaxlib version is 0.11.1.
-    if jtu.jaxlib_version() < (0, 11, 1):
-      self.skipTest("Requires jaxlib version 0.11.1 or higher")
     shape = (128, 128)
     if "abs" in reduction and dtype == jnp.int32:
       reduction = reduction[-3:]
@@ -7872,9 +7856,6 @@ class PipelineTest(PallasTest):
   )
   @run_on_sm80
   def test_emit_in_specs_only(self, max_concurrent_steps, oob_fill_mode):
-    # TODO(bchetioui): Remove the skip once minimum jaxlib version is 0.11.1.
-    if not jtu.is_cuda_compute_capability_at_least("9.0") and jaxlib_extension_version < 480:
-      self.skip_if_wg_semantics()
     m, n = 16, 128
     dtype = jnp.float32
 
@@ -7908,9 +7889,6 @@ class PipelineTest(PallasTest):
   def test_emit_in_specs_only_requires_in_bounds(self):
     if jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("cp.async OOB constraint is pre-Hopper only")
-    # TODO(bchetioui): Remove the skip once minimum jaxlib version is 0.11.1.
-    if jaxlib_extension_version < 480:
-      self.skip_if_wg_semantics()
 
     n = 128
 

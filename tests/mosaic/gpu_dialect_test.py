@@ -24,7 +24,6 @@ from jax._src import config
 from jax._src import hypothesis_test_util as htu
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import builtin
@@ -694,9 +693,6 @@ class DialectTest(MosaicGpuTest):
       self.module.operation.verify()
 
   def test_wgmma_mixed_fp8_operands_are_allowed(self):
-    if jtu.jaxlib_version() < (0, 11, 0):
-      self.skipTest("Mixed FP8 wgmma operands require a newer jaxlib verifier")
-
     e4m3 = ir.Float8E4M3FNType.get()
     e5m2 = ir.Float8E5M2Type.get()
     with ir.InsertionPoint(self.module.body):
@@ -2092,10 +2088,6 @@ ir.MLIRError,
     self.assertEqual(reinterpret_cast_op.result.type, ty2)
 
   def test_broadcast_in_dim_canonicalization(self):
-    # TODO: Remove when the minimum jaxlib version is 0.11.1
-    if jaxlib_extension_version < 480:
-      self.skipTest("Requires jaxlib with BroadcastInDim canonicalizer")
-
     ty0 = ir.VectorType.get((64,), ir.F32Type.get())
     ty1 = ir.VectorType.get((64, 1), ir.F32Type.get())
     ty2 = ir.VectorType.get((64, 64), ir.F32Type.get())
@@ -2120,10 +2112,6 @@ ir.MLIRError,
     self.assertEqual(bcast_op.operand, block.arguments[0])
 
   def test_broadcast_in_dim_canonicalization_higher_rank(self):
-    # TODO: Remove when the minimum jaxlib version is 0.11.1
-    if jaxlib_extension_version < 480:
-      self.skipTest("Requires jaxlib with BroadcastInDim canonicalizer")
-
     ty0 = ir.VectorType.get((64,), ir.F32Type.get())
     ty1 = ir.VectorType.get((148, 64, 18), ir.F32Type.get())
     ty2 = ir.VectorType.get((256, 148, 147, 64, 16, 18), ir.F32Type.get())

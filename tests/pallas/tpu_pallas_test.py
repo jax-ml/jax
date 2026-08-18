@@ -1627,8 +1627,6 @@ class PallasCallDMATest(ptu.PallasTPUTest):
   def test_unrolled_dma_with_regular_semaphore_raises(self):
     if not jtu.is_device_tpu_at_least(6):
       self.skipTest('Regular semaphores in DMAs require TPU v6+')
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest('Regular semaphores in DMAs require libtpu >= 0.0.45')
 
     def kernel(x_hbm_ref, y_hbm_ref):
       def body(x_ref, sem):
@@ -2064,9 +2062,6 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(y[:, :128], x[:, :128])
 
   def test_single_element_input_output_dma(self):
-    if not jtu.is_libtpu_at_least('0.0.46'):
-      self.skipTest('Needs a newer libtpu')
-
     # Reproducer from https://github.com/jax-ml/jax/issues/39505.
     shape = (1, 1)
 
@@ -2579,10 +2574,6 @@ class PallasCallTest(ptu.PallasTPUTest):
       dtype=[jnp.int4, jnp.uint4],
   )
   def test_int4_cmpi_pallas_kernel(self, op, dtype):
-    if not jtu.is_libtpu_at_least('0.0.46'):
-      self.skipTest(
-          '4-bit integer boolean mask comparisons require libtpu >= 0.0.46'
-      )
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('i4 is not supported on TPU generations < 4')
 
@@ -5334,8 +5325,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       shape=[(11, 200), (32, 256)],
   )
   def test_packed_shifts(self, dtype, shift_amount, shape):
-    if not jtu.is_libtpu_at_least('0.0.45'):
-      self.skipTest('Requires libtpu 0.0.45 or newer')
     if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
       self.skipTest('Requires TPU >= 4')
     if shift_amount < 0 and dtype in (jnp.uint8, jnp.uint16):
@@ -5607,9 +5596,6 @@ class PallasHloNamesTest(ptu.PallasTPUTest):
     self.assertRegex(hlo, r'%add[.\d]*\.x_ref[.\d]* = .* add')
 
   def test_parameter_names_pytree(self):
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest('Requires libtpu 0.0.45 or newer')
-
     class Foo(NamedTuple):
       bar: dict[str, Any]
 
@@ -5739,11 +5725,6 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       ('int8_transpose', jnp.int8, True),
   )
   def test_fifo(self, dtype, transpose):
-    if jtu.jaxlib_version() < (0, 11, 0):
-      self.skipTest('Test requires JAX v0.11.0 or newer.')
-    if not jtu.is_libtpu_at_least("0.0.46"):
-      self.skipTest('Test requires libtpu 0.0.46 or newer.')
-
     if jtu.is_device_tpu_at_least(7):
       if jnp.issubdtype(dtype, jnp.integer):
         self.skipTest('Test not relevant for TPU v7 and above.')
@@ -5830,9 +5811,6 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       np.testing.assert_allclose(out, out_ref, atol=1e-3, rtol=1e-3)
 
   def test_fifo_underflow(self):
-    if jtu.jaxlib_version() < (0, 11, 0):
-      self.skipTest('Test requires JAX v0.11.0 or newer.')
-
     if jtu.is_device_tpu_at_least(7):
       self.skipTest('Test not relevant for TPU v7 and above.')
 
@@ -5892,9 +5870,6 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       matmul(x, y).block_until_ready()
 
   def test_fifo_overflow(self):
-    if jtu.jaxlib_version() < (0, 11, 0):
-      self.skipTest('Test requires JAX v0.11.0 or newer.')
-
     if jtu.is_device_tpu_at_least(7):
       self.skipTest('Test not relevant for TPU v7 and above.')
 

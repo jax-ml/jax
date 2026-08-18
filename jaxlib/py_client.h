@@ -33,7 +33,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "nanobind/nanobind.h"
-#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -44,6 +43,7 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/program.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/shape.h"
 

@@ -29,9 +29,9 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
-#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/traceback.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/service/slow_operation_alarm.h"
 #include "xla/tsl/concurrency/ref_count.h"

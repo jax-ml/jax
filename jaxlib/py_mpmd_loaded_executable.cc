@@ -41,7 +41,6 @@ limitations under the License.
 #include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
-#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/jax_jit.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
@@ -58,6 +57,7 @@ limitations under the License.
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/ir/ifrt_ir_loaded_executable.h"
 #include "xla/python/ifrt/ir/program_memory_tracer.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/nb_numpy.h"

@@ -18,7 +18,6 @@ import dataclasses
 import functools
 import pickle
 import re
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -31,8 +30,6 @@ from jax._src.tree_util import (
     prefix_errors, broadcast_flattened_prefix_with_treedef,
     default_registry, dispatch_registry)
 import jax.numpy as jnp
-
-jaxlib_version = jtu.jaxlib_version()
 
 # Easier to read.
 SequenceKey = tree_util.SequenceKey
@@ -1008,11 +1005,10 @@ class TreeTest(jtu.JaxTestCase):
                                        (SequenceKey(1), tree1["sub"][1])])
     self.assertIsNone(meta)
 
-    if jaxlib_version >= (0, 11, 1):
-      children, meta = tree_util.flatten_one_level_with_keys(tree1["sub"][1])
-      self.assertEqual(list(children), [(GetAttrKey("foo"), ()),
-                                        (GetAttrKey("bar"), [None])])
-      self.assertEqual(meta, ATuple)
+    children, meta = tree_util.flatten_one_level_with_keys(tree1["sub"][1])
+    self.assertEqual(list(children), [(GetAttrKey("foo"), ()),
+                                      (GetAttrKey("bar"), [None])])
+    self.assertEqual(meta, ATuple)
 
     # Custom object with keys
     children, meta = tree_util.flatten_one_level_with_keys(tree1["obj"])
@@ -1184,8 +1180,6 @@ class TreeKeyTest(absltest.TestCase):
     with self.assertRaisesRegex(ValueError, msg):
       f(Tree(jnp.arange(4)))
 
-  @unittest.skipIf(jaxlib_version < (0, 11, 1),
-                    "Test requires jaxlib v0.11.1 or newer.")
   def testEqualityErrorNamesOffendingType(self):
     # Regression test for https://github.com/jax-ml/jax/issues/13027
     a = ArrayMetadataBox(jnp.arange(3))
