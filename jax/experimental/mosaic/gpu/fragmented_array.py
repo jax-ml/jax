@@ -3501,13 +3501,16 @@ class FragmentedArray:
       )
     if not isinstance(self.layout, TiledLayout) or not isinstance(layout, TiledLayout):
       raise NotImplementedError(self.layout, layout)
-    if len(layout.base_tile_shape) != len(shape):
+    untiled_rank = len(shape) - len(layout.base_tile_shape)
+    if untiled_rank < 0:
       raise NotImplementedError(
-          "Tiling rank different than broadcast result rank, "
+          "Tiling rank exceeds broadcast result rank, "
           f"{layout.base_tile_shape} vs {shape}"
       )
     new_dimensions = sorted(set(range(len(shape))) - set(source_dimensions))
-    expected_layout = layout.reduce(new_dimensions)
+    expected_layout = layout.reduce(
+        [d - untiled_rank for d in new_dimensions if d >= untiled_rank]
+    )
     if expected_layout != self.layout:
       raise ValueError(
           "Source and destination layouts aren't compatible for a broadcast"
@@ -3515,9 +3518,13 @@ class FragmentedArray:
     new_registers_shape = layout.registers_shape(shape)
     pre_broadcast_registers_shape = list(new_registers_shape)
     for new_dim in new_dimensions:
-      for i, is_new in enumerate(layout.tiling.tile_dimension(new_dim)):
+      if new_dim < untiled_rank:
+        pre_broadcast_registers_shape[new_dim] = 1
+        continue
+      tile_dims = layout.tiling.tile_dimension(new_dim - untiled_rank)
+      for i, is_new in enumerate(tile_dims):
         if is_new:
-          pre_broadcast_registers_shape[i] = 1
+          pre_broadcast_registers_shape[untiled_rank + i] = 1
     # The broadcast for all dims but the vector_dim amounts to repeating the
     # registers along the new dimensions. Along the vector_dim, we actually need
     # to extend the vector length to change the type of the registers.
