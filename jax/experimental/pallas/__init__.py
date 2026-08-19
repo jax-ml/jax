@@ -74,6 +74,7 @@ from jax._src.pallas.utils import strides_from_shape as strides_from_shape
 from jax._src.state.discharge import run_state as run_state
 from jax._src.state.indexing import ds as ds
 from jax._src.state.indexing import dslice as dslice
+from jax._src.state.indexing import NDIndexer as NDIndexer
 from jax._src.state.indexing import Slice as Slice
 from jax._src.state.primitives import broadcast_to as broadcast_to
 
