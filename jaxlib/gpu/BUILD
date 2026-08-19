@@ -22,6 +22,7 @@ load(
     "//jaxlib:jax.bzl",
     "cc_proto_library",
     "jax_visibility",
+    "proto_library",
     "xla_py_proto_library",
 )
 

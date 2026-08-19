@@ -14,6 +14,7 @@
 
 licenses(["notice"])
 
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load(
   "//jaxlib:jax.bzl",
   "py_library_providing_imports_info",

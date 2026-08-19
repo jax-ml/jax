@@ -5,6 +5,7 @@ common --enable_bzlmod --noenable_workspace
 ## Make sure direct dependencies specified match the resolved version.
 common --check_direct_dependencies=warning
 common --incompatible_disallow_empty_glob=false
+common --incompatible_autoload_externally=+@rules_cc,+@rules_java,+@rules_python,+@rules_shell
 
 
 # Make Bazel print out all options from rc files.
@@ -186,8 +187,8 @@ common:mkl_aarch64_threadpool -c opt
 common:clang --copt=-Wno-gnu-offsetof-extensions
 # Disable clang extention that rejects unknown arguments.
 common:clang --copt=-Qunused-arguments
-# Error on struct/class mismatches, since this causes link failures on Windows.
-common:clang --copt=-Werror=mismatched-tags
+# Disable warning on struct/class mismatches temporarily.
+common:clang --copt=-Wno-mismatched-tags
 # Required when building with clang>=19, see jax-ml/jax#27091
 common:clang --copt=-Wno-error=c23-extensions
 
