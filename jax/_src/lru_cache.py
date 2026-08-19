@@ -185,7 +185,13 @@ class LRUCache(CacheInterface):
 
       key = cache_path.name.removesuffix(_CACHE_SUFFIX)
       atime_path = self.path / f"{key}{_ATIME_SUFFIX}"
-      file_atime = int.from_bytes(atime_path.read_bytes(), "little")
+      if atime_path.exists():
+        file_atime = int.from_bytes(atime_path.read_bytes(), "little")
+      else:
+        # A process may have exited after writing the cache file but before
+        # writing its atime file. Treat such incomplete entries as the least
+        # recently used instead of failing the entire eviction pass.
+        file_atime = 0
 
       dir_size += file_size
       heapq.heappush(h, (file_atime, key, file_size))
@@ -203,6 +209,7 @@ class LRUCache(CacheInterface):
       atime_path = self.path / f"{key}{_ATIME_SUFFIX}"
 
       cache_path.unlink()
-      atime_path.unlink()
+      if atime_path.exists():
+        atime_path.unlink()
 
       dir_size -= file_size
