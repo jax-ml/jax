@@ -1919,7 +1919,7 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
 ) -> tuple[T, state_types.AbstractRef, Sequence[state_types.Transform]]:
   # Before we handle other transforms, we resolve any possible leading
   # aliasing transform.
-  ref, ref_aval, transform_avals, transforms = _extract_aliased_ref(  # pyrefly: ignore[no-matching-overload]
+  ref, ref_aval, transform_avals, transforms = _extract_aliased_ref(  # pyrefly: ignore[bad-assignment,no-matching-overload]
       ref,
       ref_aval,
       transform_avals,

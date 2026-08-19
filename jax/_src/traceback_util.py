@@ -146,7 +146,7 @@ def _running_under_ipython() -> bool:
 def _ipython_supports_tracebackhide() -> bool:
   """Returns true if the IPython version supports __tracebackhide__."""
   import IPython  # pyrefly: ignore[missing-import]
-  return IPython.version_info[:2] >= (7, 17)
+  return IPython.version_info[:2] >= (7, 17)  # pyrefly: ignore[unsupported-operation] # pyrefly#896
 
 def _filtering_mode() -> str:
   mode = config.traceback_filtering.value

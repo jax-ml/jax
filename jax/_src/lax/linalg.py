@@ -1069,7 +1069,7 @@ def _unpack_conjugate_pairs(w: Array, vr: Array) -> Array:
   vr_shifted_left = lax.pad(vr, lax._zero(vr), pads)
   pads[-1] = (1, -1, 0)
   vr_shifted_right = lax.pad(vr, lax._zero(vr), pads)
-  dims = list(np.delete(np.arange(len(vr.shape), dtype=np.int32), -2))
+  dims = np.delete(np.arange(len(vr.shape), dtype=np.int32), -2).tolist()
   is_real = lax.broadcast_in_dim(is_real, vr.shape, broadcast_dimensions=dims)
   conj_pair_start = lax.broadcast_in_dim(conj_pair_start, vr.shape,
                                          broadcast_dimensions=dims)
