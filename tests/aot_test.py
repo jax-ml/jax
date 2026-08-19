@@ -442,6 +442,20 @@ class JaxAotTest(jtu.JaxTestCase):
     ):
       topologies.TopologyDescription.deserialize(b"invalid_proto_bytes")
 
+  def test_get_executable_version(self):
+    """Tests LoadedExecutable.get_executable_version() returns non-empty version bytes."""
+    if jaxlib_extension_version < 482:
+      raise unittest.SkipTest(
+          "Requires jaxlib_extension_version >= 482"
+          " (LoadedExecutable.get_executable_version)"
+      )
+    x = jnp.ones((2, 2), dtype=jnp.float32)
+    compiled = jax.jit(lambda x: x + 1).lower(x).compile()
+    py_exec = compiled.runtime_executable()
+    version_bytes = py_exec.get_executable_version()
+    self.assertIsInstance(version_bytes, bytes)
+    self.assertNotEmpty(version_bytes)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

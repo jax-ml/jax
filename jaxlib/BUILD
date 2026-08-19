@@ -1123,6 +1123,7 @@ cc_library(
         "@xla//xla/python/ifrt:plugin_program",
         "@xla//xla/python/ifrt:plugin_program_serdes",
         "@xla//xla/python/ifrt:rtti",
+        "@xla//xla/python/ifrt:serdes",
         "@xla//xla/python/ifrt:sharding_serdes",
         "@xla//xla/python/ifrt:user_context",
         "@xla//xla/python/ifrt:user_context_status_util",
