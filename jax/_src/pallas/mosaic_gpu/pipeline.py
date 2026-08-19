@@ -840,7 +840,7 @@ def emit_pipeline_warp_specialized(
 
     if collective_axes:
       consumed_barrier_type = functools.partial(
-          gpu_core.ClusterBarrier, collective_axes=collective_axes
+          gpu_core.ClusterBarrier, collective_axes=collective_axes  # pyrefly: ignore[bad-argument-type]
       )
     else:
       consumed_barrier_type = gpu_core.Barrier

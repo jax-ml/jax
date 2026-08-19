@@ -945,7 +945,7 @@ class UserPytreeAPITest(UserAPITestCase):
   def test_register_as_decorator(self):
     @partial(register_pytree_node_serialization,
                        serialized_name='CustomDNode',
-                       serialize_auxdata=json.dumps,
+                       serialize_auxdata=json.dumps,  # pyrefly: ignore[bad-argument-type]
                        deserialize_auxdata=json.loads)
     @partial(jax.tree_util.register_dataclass, data_fields=['a', 'b'],
                       meta_fields=[])

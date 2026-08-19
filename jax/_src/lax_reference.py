@@ -314,7 +314,7 @@ def ragged_dot(
   assert lhs.dtype == rhs.dtype
 
   out = np.zeros((m, n), dtype=lhs.dtype)
-  result_iota = np.expand_dims(np.arange(out.shape[0]), list(range(1, out.ndim)))
+  result_iota = np.expand_dims(np.arange(out.shape[0]), tuple(range(1, out.ndim)))
   result_iota = result_iota.astype(group_sizes.dtype)
   start = np.asarray(0, dtype=group_sizes.dtype)
   for i, size in enumerate(group_sizes):

@@ -269,7 +269,8 @@ def gmm(
   with api.named_scope("pallas_triton_ragged_dot"):
     out = pl.pallas_call(
       partial(
-        _gpu_ragged_dot_kernel, size=size, block=block_sizes, **other_kws
+        _gpu_ragged_dot_kernel, size=size, block=block_sizes,
+        **other_kws  # pyrefly: ignore[bad-argument-type]
       ),
       out_shape=out_shape,
       grid=grid,
@@ -395,7 +396,7 @@ def tgmm(
   with api.named_scope("tgmm_ragged_dot"):
     out = pl.pallas_call(
       partial(_tgmm_ragged_dot_kernel, size=size, block=block_sizes,
-              **dtype_spec),
+              **dtype_spec),  # pyrefly: ignore[bad-argument-type]
       out_shape=out_shape,
       grid=grid,
       in_specs=in_specs,

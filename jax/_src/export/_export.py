@@ -811,7 +811,7 @@ def _export_lowered(
         apply_jit=True,
         flat_primal_fun=True,
         mesh=cur_mesh)
-    return export(fun_vjp_jax,
+    return export(fun_vjp_jax,  # pyrefly: ignore[bad-argument-type]
                   platforms=exp_primal.platforms,
                   disabled_checks=exp_primal.disabled_safety_checks)(*vjp_in_avals)
 
