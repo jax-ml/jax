@@ -134,9 +134,9 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
       options: --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --shm-size 64G --env-file /etc/podinfo/gha-gpu-isolation-settings
-    name: "${{ (contains(inputs.runner, 'gfx950.1') && 'gfx950.1') ||
-        (contains(inputs.runner, 'gfx950.4') && 'gfx950.4') ||
-        (contains(inputs.runner, 'gfx950.8') && 'gfx950.8') }}, ROCm ${{ inputs.rocm-version }}, py${{ inputs.python }}"
+    name: "${{ (contains(inputs.runner, 'gfx950.1') && 'gfx950 1-GPU') ||
+        (contains(inputs.runner, 'gfx950.4') && 'gfx950 4-GPU') ||
+        (contains(inputs.runner, 'gfx950.8') && 'gfx950 8-GPU') }}, ROCm ${{ inputs.rocm-release-version || inputs.rocm-version }}, py${{ inputs.python }}"
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"

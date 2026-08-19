@@ -135,7 +135,7 @@ jobs:
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
       JAXCI_OUTPUT_DIR: "${{ github.workspace }}/dist"
 
-    name: "${{ inputs.artifact }}, py ${{ inputs.python }}, ROCm ${{ inputs.rocm-version }}"
+    name: "${{ inputs.artifact }}, py ${{ inputs.python }}, ROCm ${{ inputs.rocm-release-version || inputs.rocm-version }}"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
