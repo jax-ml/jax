@@ -1362,8 +1362,7 @@ class LaunchContext:
 
       gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
       # The number of addressable units (of ``gep_type``) in the whole GMEM
-      # ref. Captured before the squeeze below narrows ``gmem_ref``, because
-      # ``gmem_offset`` is relative to the base of the full ref and so is this.
+      # ref. Captured before the squeeze below narrows ``gmem_ref``.
       gmem_size = math.prod(gmem_ref_ty.shape) // offset_scale
       transformed_strides = gmem_strides
       for t in gmem_transform:
@@ -1444,17 +1443,6 @@ class LaunchContext:
             if bytes_per_transfer == 16
             else nvvm.LoadCacheModifierKind.CA
         )
-        # ``cp.async`` takes an optional ``src-size`` operand: when it is
-        # smaller than the transfer size, the hardware zero-fills the
-        # remaining bytes in SMEM. That is exactly ``OOBFillMode.ZEROS``, and a
-        # valid refinement of ``UNDEFINED``, so bounding a transfer costs some
-        # arithmetic and no branch. The untiled slice is contiguous, so a
-        # single linear bound covers it.
-        #
-        # Branching instead would be wrong here, not just slower: callers wait
-        # on these copies with ``cp.async.wait_group N`` for a compile-time
-        # ``N`` (see ``emit_pipeline``), so the number of committed copies has
-        # to stay the same on every path.
         bound_transfers = oob_mode != OOBFillMode.PROMISE_IN_BOUNDS
         gep_bytes = element_bitwidth * offset_scale // 8
         for linear_idx in layout.linear_thread_idxs():

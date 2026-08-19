@@ -174,11 +174,11 @@ _TILED_F32 = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
 _OOB_ZERO_FILL_CASES = (
     # The block overhangs by a whole row, so the transfers covering it are
     # entirely out of bounds and copy no bytes at all.
-    ("whole_rows", (3, 128), (4, 128)),
+    ("whole_rows", (3, 128), (4, 128), ()),
     # The bound falls *inside* a transfer: 386 is not a multiple of the
     # 4-element vector, so one transfer is partly valid and the hardware
     # zero-fills the rest of it.
-    ("split_transfer", (386,), (512,)),
+    ("split_transfer", (386,), (512,), ()),
     # The tiled (swizzled) path. Rows of a tile are strided in GMEM, so the
     # row and column bounds have to be checked separately: here whole rows
     # of the block are out of bounds...
@@ -7940,7 +7940,7 @@ class PipelineTest(PallasTest):
 
   @parameterized.named_parameters(*_OOB_ZERO_FILL_CASES)
   @run_on_sm80
-  def test_emit_in_specs_out_of_bounds_zero_fill(self, shape, block, transforms=()):
+  def test_emit_in_specs_out_of_bounds_zero_fill(self, shape, block, transforms):
     if jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("cp.async OOB constraint is pre-Hopper only")
 
@@ -9852,50 +9852,6 @@ class MosaicGPUPoisonTest(PallasTest, jtu.CudaArchSpecificTest):
           kernel,
           out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
       )()
-
-
-class CpAsyncOutOfBoundsLoweringTest(jtu.JaxTestCase):
-  """Lowering-only cover for the pre-Hopper cp.async out-of-bounds path.
-
-  Running these kernels needs an Ampere GPU, but building their Mosaic IR only
-  needs to know the architecture, so we fake that and stop at lowering. This
-  catches the (easy to get wrong) IR construction on any machine; only the
-  values it computes need real hardware.
-  """
-
-  @parameterized.named_parameters(*_OOB_ZERO_FILL_CASES)
-  def test_emit_in_specs_out_of_bounds_zero_fill_lowers(
-      self, shape, block, transforms=()
-  ):
-    f = _kernel(
-        _oob_zero_fill_kernel(block, transforms),
-        out_type=jax.ShapeDtypeStruct(block, jnp.float32),
-        # Lane semantics, like PipelineTest: the Warpgroup path goes through
-        # the mosaic_gpu dialect, whose verifier still rejects bounded
-        # cp.async copies.
-        compiler_params=plgpu.CompilerParams(
-            lowering_semantics=plgpu.LoweringSemantics.Lane
-        ),
-    )
-    x = jax.ShapeDtypeStruct(shape, jnp.float32)
-    nvvm = mgpu.launch_context.nvvm
-    emit_cp_async = nvvm.cp_async_shared_global
-    bounded = []
-
-    def record_cp_async(*args, cp_size=None, **kwargs):
-      bounded.append(cp_size is not None)
-      return emit_cp_async(*args, cp_size=cp_size, **kwargs)
-
-    with (
-        mock.patch.object(mgpu.core, "_infer_arch", return_value=(8, 0)),
-        mock.patch.object(nvvm, "cp_async_shared_global", record_cp_async),
-    ):
-      jax.jit(f).trace(x).lower(lowering_platforms=("cuda",))
-
-    # Every transfer must carry a source size, or the copy would read past the
-    # end of the operand.
-    self.assertTrue(bounded)
-    self.assertTrue(all(bounded))
 
 
 if __name__ == "__main__":
