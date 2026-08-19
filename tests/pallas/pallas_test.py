@@ -1390,8 +1390,8 @@ class PallasCallInputOutputAliasingTest(ptu.PallasTest):
   def test_vector_input_output_aliasing(self):
     # Input needs to be big so it doesn't fit in VMEM
     size = 1024
-    if jtu.is_device_cuda():
-      # Reduce the size on CUDA to avoid OOM.
+    if jtu.is_device_cuda() or jtu.is_device_rocm():
+      # Reduce the size on GPU to avoid OOM.
       size = 256
     x = jnp.ones((32, size, size))
     expected = x + 1
