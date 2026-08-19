@@ -249,6 +249,11 @@ cc_library(
 )
 
 cc_library(
+    name = "launch_config",
+    hdrs = ["launch_config.h"],
+)
+
+cc_library(
     name = "runtime",
     srcs = ["runtime.cc"],
     # Linker may prune these symbols if they are not explicitly exported.
@@ -263,7 +268,10 @@ cc_library(
         "-Wl,--export-dynamic-symbol='nvshmemx_init_status'",
         "-Wl,--export-dynamic-symbol='nvshmemx_mc_ptr'",
     ],
-    deps = ["@local_config_cuda//cuda:cuda_headers"],
+    deps = [
+        ":launch_config",
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
     alwayslink = True,
 )
 
@@ -291,6 +299,7 @@ cc_library(
     ],
     deps = [
         ":dump",
+        ":launch_config",
         ":mosaic_gpu_cc_proto",
         ":nvshmem",
         ":passes",
@@ -306,6 +315,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/functional:overload",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -419,6 +429,7 @@ cc_test(
         "@xla//xla/stream_executor/cuda:all_runtime",
         "@xla//xla/stream_executor/cuda:cuda_platform",
         "@xla//xla/tsl/platform:env",
+        "@xla//xla/tsl/platform:resource_loader",
     ],
 )
 
@@ -452,6 +463,7 @@ cc_binary(
         "notap",
     ],
     deps = [
+        ":launch_config",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/tsl/cuda:cudart",
     ],

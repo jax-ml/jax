@@ -32,6 +32,7 @@ limitations under the License.
 #include <string_view>
 #include <system_error>  // NOLINT
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -42,6 +43,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
+#include "absl/functional/overload.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -132,6 +134,7 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/assembly_to_binary.h"
 #include "jaxlib/mosaic/gpu/dump.h"
 #include "jaxlib/mosaic/gpu/gpu_module_to_assembly.h"
+#include "jaxlib/mosaic/gpu/launch_config.h"
 #include "jaxlib/mosaic/gpu/launch_lowering.h"
 #include "jaxlib/mosaic/gpu/mosaic_gpu.pb.h"
 #include "jaxlib/mosaic/gpu/nvshmem.h"
@@ -169,10 +172,10 @@ namespace {
 
 using ::mosaic::gpu::NvshmemApi;
 
+namespace se = ::stream_executor;
 namespace ffi = xla::ffi;
-namespace se = stream_executor;
-
-using MosaicHostFunc = int32_t(CUfunction, void*, void**);
+// Emitted host function that fills/builds the kernel spec but does not launch.
+using MosaicHostFunc = void(mosaic::gpu::MosaicKernelSpec*, void**);
 using KernelHash = std::array<uint64_t, 4>;
 
 // Returns the latest PTX ISA version supported by both LLVM and the underlying
@@ -449,15 +452,64 @@ absl::StatusOr<std::string> GetHostFuncName(mlir::ModuleOp module_op) {
   return names[0];
 }
 
+CUresult MosaicGpuLaunchKernel(CUfunction function, CUstream stream,
+                               mosaic::gpu::MosaicKernelSpec* cfg) {
+  CUlaunchConfig config{
+      .gridDimX = cfg->grid.x,
+      .gridDimY = cfg->grid.y,
+      .gridDimZ = cfg->grid.z,
+      .blockDimX = cfg->block.x,
+      .blockDimY = cfg->block.y,
+      .blockDimZ = cfg->block.z,
+      .sharedMemBytes = cfg->smem_bytes,
+      .hStream = stream,
+      .attrs = nullptr,
+      .numAttrs = 0,
+  };
+  CUlaunchAttribute attrs[2];
+  int num_attrs = 0;
+  if (cfg->cluster.x != 0) {
+    attrs[num_attrs].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
+    attrs[num_attrs].value.clusterDim = {
+        .x = cfg->cluster.x,
+        .y = cfg->cluster.y,
+        .z = cfg->cluster.z,
+    };
+    num_attrs++;
+  }
+  if (cfg->uses_pdl) {
+    attrs[num_attrs].id = CU_LAUNCH_ATTRIBUTE_PROGRAMMATIC_STREAM_SERIALIZATION;
+    attrs[num_attrs].value.programmaticStreamSerializationAllowed = 1;
+    num_attrs++;
+  }
+  if (num_attrs > 0) {
+    config.attrs = attrs;
+    config.numAttrs = num_attrs;
+  }
+  CUresult result =
+      cuLaunchKernelEx(&config, function, cfg->kernel_params().data(), nullptr);
+  if (result == CUDA_ERROR_INVALID_CLUSTER_SIZE) {
+    int max_cluster_size;
+    if (cuOccupancyMaxPotentialClusterSize(&max_cluster_size, function,
+                                           &config) == CUDA_SUCCESS) {
+      fprintf(stderr,
+              "cuLaunchKernel failed with invalid cluster size (%d, %d, %d)"
+              ": maximum is %d\n",
+              cfg->cluster.x, cfg->cluster.y, cfg->cluster.z, max_cluster_size);
+    }
+  }
+  return result;
+}
+
 struct CompiledKernel {
   CompiledKernel(std::unique_ptr<llvm::orc::LLJIT> lljit,
-                 MosaicHostFunc* host_launch, bool is_nvshmem_used,
+                 MosaicHostFunc* host_func, bool is_nvshmem_used,
                  bool is_multimem_used, std::string object_file,
                  std::string host_func_name, std::string gpu_binary,
                  std::string kernel_name, int32_t smem_bytes,
                  int32_t cluster_size)
       : lljit(std::move(lljit)),
-        host_launch(host_launch),
+        host_func(host_func),
         is_nvshmem_used(is_nvshmem_used),
         is_multimem_used(is_multimem_used),
         gpu_binary(std::move(gpu_binary)),
@@ -473,7 +525,7 @@ struct CompiledKernel {
   CompiledKernel(CompiledKernel&& other) = delete;
 
   std::unique_ptr<llvm::orc::LLJIT> lljit;
-  MosaicHostFunc* host_launch = nullptr;
+  const MosaicHostFunc* host_func;
   bool is_nvshmem_used = false;
   bool is_multimem_used = false;
   std::string gpu_binary;
@@ -698,9 +750,10 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
   }
 
   VLOG(5) << "Successfully JIT-linked Mosaic GPU kernel";
+  MosaicHostFunc* host_func = host_sym->toPtr<MosaicHostFunc*>();
   return std::make_unique<CompiledKernel>(
-      std::move(lljit), host_sym->toPtr<MosaicHostFunc*>(), is_nvshmem_used,
-      is_multimem_used, std::move(object_file_str), std::move(host_func_name),
+      std::move(lljit), host_func, is_nvshmem_used, is_multimem_used,
+      std::move(object_file_str), std::move(host_func_name),
       std::move(gpu_binary), std::move(kernel_name), smem_bytes, cluster_size);
 }
 
@@ -1632,8 +1685,18 @@ absl::Status MosaicGpuExecute(
   }
 
   void** buffers_data = buffer_ptrs.data();
-  int32_t launch_result = kernel->host_launch(
-      device_state.kernel_handle->function(), cuda_stream, buffers_data);
+  mosaic::gpu::MosaicKernelSpec cfg;
+  kernel->host_func(&cfg, buffers_data);
+  XLA_VLOG_DEVICE(5, device_ordinal)
+      << "MosaicGpuExecute launching kernel with name: " << kernel->kernel_name
+      << " uses_pdl: " << cfg.uses_pdl << " grid: " << cfg.grid.x << ", "
+      << cfg.grid.y << ", " << cfg.grid.z << " cluster: " << cfg.cluster.x
+      << ", " << cfg.cluster.y << ", " << cfg.cluster.z
+      << " block: " << cfg.block.x << ", " << cfg.block.y << ", " << cfg.block.z
+      << " smem_bytes: " << cfg.smem_bytes;
+  int32_t launch_result = MosaicGpuLaunchKernel(
+      device_state.kernel_handle->function(), cuda_stream, &cfg);
+
   if (launch_result != CUDA_SUCCESS) {
     const char* error_name = nullptr;
     const char* error_str = nullptr;
@@ -1731,6 +1794,17 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "mosaic_gpu_v2", "CUDA",
 
 extern "C" {
 
+// C-Wrapper that both populates the kernel spec and launches using it.
+__attribute__((visibility("default"))) void MosaicGpuLaunch(void* kernel,
+                                                            CUfunction function,
+                                                            void* stream,
+                                                            void** buffers) {
+  auto* k = reinterpret_cast<CompiledKernel*>(kernel);
+  mosaic::gpu::MosaicKernelSpec cfg;
+  k->host_func(&cfg, buffers);
+  MosaicGpuLaunchKernel(function, reinterpret_cast<CUstream>(stream), &cfg);
+}
+
 __attribute__((visibility("default"))) void** MosaicGpuCompile(
     const char* module, int num_module_bytes) {
   // We should make sure that NVPTX target is initialized before
@@ -1752,7 +1826,7 @@ __attribute__((visibility("default"))) void** MosaicGpuCompile(
   }
   auto tuple_ptr = new void*[3];
   tuple_ptr[0] = init_res->function;
-  tuple_ptr[1] = reinterpret_cast<void*>((*kernel)->host_launch);
+  tuple_ptr[1] = reinterpret_cast<void*>(&MosaicGpuLaunch);
   tuple_ptr[2] = (*kernel).release();
   return tuple_ptr;
 }
