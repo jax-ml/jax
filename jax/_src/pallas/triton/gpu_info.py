@@ -52,12 +52,20 @@ class GpuVersion(enum.Enum):
     return self.value
 
 
-_GPU_VERSION_RE = re.compile(r"\b(" + "|".join(e.value for e in GpuVersion) + r")\b")
+# Longer names first so e.g. "NVIDIA A100" wins over "NVIDIA A10".
+_GPU_VERSION_RE = re.compile(
+    r"\b("
+    + "|".join(
+        re.escape(e.value)
+        for e in sorted(GpuVersion, key=lambda e: len(e.value), reverse=True)
+    )
+    + r")\b"
+)
 
 
 def gpu_version_from_device_kind(device_kind: str) -> GpuVersion | None:
-  if m := _GPU_VERSION_RE.match(device_kind):
-    return GpuVersion(m.group())
+  if m := _GPU_VERSION_RE.search(device_kind):
+    return GpuVersion(m.group(1))
   return None
 
 
