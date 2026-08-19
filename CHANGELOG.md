@@ -16,6 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Changes
+  * JAX now uses Bazel 8.7.0 to build from source.
+  * JAX now uses Bzlmod for its Bazel builds instead of WORKSPACE.
+
 ## JAX 0.11.1 (August 17, 2026)
 
 * New features

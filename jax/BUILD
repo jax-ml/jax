@@ -145,7 +145,6 @@ py_library_providing_imports_info(
             "numpy/**/*.py",
             "ops/**/*.py",
             "scipy/**/*.py",
-            "third_party/**/*.py",
         ],
         exclude = [
             "*_test.py",

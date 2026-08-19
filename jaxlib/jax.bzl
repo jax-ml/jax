@@ -189,10 +189,13 @@ def nanobind_extension(
         **kwargs):
     module_name_suffix = module_name or name
     if pytype_srcs == None:
-        pytype_srcs = native.glob([
-            module_name_suffix + ".pyi",
-            module_name_suffix + "/**/*.pyi",
-        ])
+        pytype_srcs = native.glob(
+            [
+                module_name_suffix + ".pyi",
+                module_name_suffix + "/**/*.pyi",
+            ],
+            allow_empty = True,
+        )
     _pybind_extension(name = name, module_name = module_name, data = data + pytype_srcs, **kwargs)
 
 def py_extension(name, srcs, copts, deps, linkopts = []):
