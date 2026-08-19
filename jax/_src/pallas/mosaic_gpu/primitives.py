@@ -1245,10 +1245,7 @@ def copy_gmem_to_smem(
       and newer).
     oob_mode: The optional out-of-bounds fill mode. Can be
       ``OOBFillMode.UNDEFINED``, ``OOBFillMode.PROMISE_IN_BOUNDS`` or
-      ``OOBFillMode.ZEROS``. Defaults to ``OOBFillMode.ZEROS``. The
-      ``cp.async`` implementation only supports the non-promising modes for
-      untransformed copies; a tiled copy still requires
-      ``OOBFillMode.PROMISE_IN_BOUNDS``.
+      ``OOBFillMode.ZEROS``. Defaults to ``OOBFillMode.ZEROS``.
     predicate: A boolean indicating whether the copy should be performed. If
       ``None``, the copy is always performed.
 

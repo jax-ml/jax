@@ -165,6 +165,59 @@ def run_on_sm80(method):
   return method
 
 
+# The transforms that put a float32 copy on the tiled (swizzled) cp.async path.
+_TILED_F32 = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
+
+# (name, operand shape, block shape, transforms) for the pre-Hopper cp.async
+# out-of-bounds tests. In each case the block overhangs the operand, so the
+# copy has to be bounded rather than promised in bounds.
+_OOB_ZERO_FILL_CASES = (
+    # The block overhangs by a whole row, so the transfers covering it are
+    # entirely out of bounds and copy no bytes at all.
+    ("whole_rows", (3, 128), (4, 128)),
+    # The bound falls *inside* a transfer: 386 is not a multiple of the
+    # 4-element vector, so one transfer is partly valid and the hardware
+    # zero-fills the rest of it.
+    ("split_transfer", (386,), (512,)),
+    # The tiled (swizzled) path. Rows of a tile are strided in GMEM, so the
+    # row and column bounds have to be checked separately: here whole rows
+    # of the block are out of bounds...
+    ("tiled_whole_rows", (60, 64), (64, 64), _TILED_F32),
+    # ...and here the single row is short, with 34 not a multiple of the
+    # 4-element vector, so one transfer straddles the column bound. Only a
+    # single row can be short: cp.async needs 16-byte aligned addresses, so the
+    # row stride of a multi-row tiled copy has to be a multiple of 4 float32s
+    # anyway.
+    ("tiled_split_transfer", (1, 34), (64, 64), _TILED_F32),
+)
+
+
+def _oob_zero_fill_kernel(block, transforms):
+  """A pipelined kernel whose only OOB access is the GMEM->SMEM input copy.
+
+  The output covers the whole (overhanging) block, so nothing but the pipelined
+  input copy can go out of bounds.
+  """
+  def kernel(x_gmem, o_gmem):
+    def body(_, x_smem):
+      o_gmem[...] = x_smem[...] * 2.0
+
+    plgpu.emit_pipeline(
+        body,
+        in_specs=[
+            plgpu.BlockSpec(
+                block,
+                lambda i: (0,) * len(block),
+                oob_fill_mode=plgpu.OOBFillMode.ZEROS,
+                transforms=transforms,
+            )
+        ],
+        grid=(1,),
+    )(x_gmem)
+
+  return kernel
+
+
 class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
   LOWERING_SEMANTICS: ClassVar[plgpu.LoweringSemantics]
 
@@ -7885,41 +7938,17 @@ class PipelineTest(PallasTest):
     x = jax.random.uniform(jax.random.key(0), (m, n)).astype(dtype)
     np.testing.assert_allclose(kernel(x), x.sum(0, keepdims=True), rtol=1e-6)
 
-  @parameterized.named_parameters(
-      # The block overhangs by a whole row, so the transfers covering it are
-      # entirely out of bounds and copy no bytes at all.
-      ("whole_rows", (3, 128), (4, 128)),
-      # The bound falls *inside* a transfer: 386 is not a multiple of the
-      # 4-element vector, so one transfer is partly valid and the hardware
-      # zero-fills the rest of it.
-      ("split_transfer", (386,), (512,)),
-  )
+  @parameterized.named_parameters(*_OOB_ZERO_FILL_CASES)
   @run_on_sm80
-  def test_emit_in_specs_out_of_bounds_zero_fill(self, shape, block):
+  def test_emit_in_specs_out_of_bounds_zero_fill(self, shape, block, transforms=()):
     if jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("cp.async OOB constraint is pre-Hopper only")
 
-    # The block overhangs the operand, so the copy has to be bounded rather
-    # than promised in bounds. The output covers the whole block, which leaves
-    # the pipelined input copy as the only out-of-bounds access.
-    def kernel(x_gmem, o_gmem):
-      def body(_, x_smem):
-        o_gmem[...] = x_smem[...] * 2.0
-
-      plgpu.emit_pipeline(
-          body,
-          in_specs=[
-              plgpu.BlockSpec(
-                  block,
-                  lambda i: (0,) * len(block),
-                  oob_fill_mode=plgpu.OOBFillMode.ZEROS,
-              )
-          ],
-          grid=(1,),
-      )(x_gmem)
-
     x = jax.random.uniform(jax.random.key(0), shape, dtype=jnp.float32)
-    f = self.kernel(kernel, out_type=jax.ShapeDtypeStruct(block, jnp.float32))
+    f = self.kernel(
+        _oob_zero_fill_kernel(block, transforms),
+        out_type=jax.ShapeDtypeStruct(block, jnp.float32),
+    )
     expected = np.zeros(block, np.float32)
     expected[tuple(slice(s) for s in shape)] = np.asarray(x) * 2.0
     np.testing.assert_array_equal(f(x), expected)
@@ -9823,6 +9852,50 @@ class MosaicGPUPoisonTest(PallasTest, jtu.CudaArchSpecificTest):
           kernel,
           out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
       )()
+
+
+class CpAsyncOutOfBoundsLoweringTest(jtu.JaxTestCase):
+  """Lowering-only cover for the pre-Hopper cp.async out-of-bounds path.
+
+  Running these kernels needs an Ampere GPU, but building their Mosaic IR only
+  needs to know the architecture, so we fake that and stop at lowering. This
+  catches the (easy to get wrong) IR construction on any machine; only the
+  values it computes need real hardware.
+  """
+
+  @parameterized.named_parameters(*_OOB_ZERO_FILL_CASES)
+  def test_emit_in_specs_out_of_bounds_zero_fill_lowers(
+      self, shape, block, transforms=()
+  ):
+    f = _kernel(
+        _oob_zero_fill_kernel(block, transforms),
+        out_type=jax.ShapeDtypeStruct(block, jnp.float32),
+        # Lane semantics, like PipelineTest: the Warpgroup path goes through
+        # the mosaic_gpu dialect, whose verifier still rejects bounded
+        # cp.async copies.
+        compiler_params=plgpu.CompilerParams(
+            lowering_semantics=plgpu.LoweringSemantics.Lane
+        ),
+    )
+    x = jax.ShapeDtypeStruct(shape, jnp.float32)
+    nvvm = mgpu.launch_context.nvvm
+    emit_cp_async = nvvm.cp_async_shared_global
+    bounded = []
+
+    def record_cp_async(*args, cp_size=None, **kwargs):
+      bounded.append(cp_size is not None)
+      return emit_cp_async(*args, cp_size=cp_size, **kwargs)
+
+    with (
+        mock.patch.object(mgpu.core, "_infer_arch", return_value=(8, 0)),
+        mock.patch.object(nvvm, "cp_async_shared_global", record_cp_async),
+    ):
+      jax.jit(f).trace(x).lower(lowering_platforms=("cuda",))
+
+    # Every transfer must carry a source size, or the copy would read past the
+    # end of the operand.
+    self.assertTrue(bounded)
+    self.assertTrue(all(bounded))
 
 
 if __name__ == "__main__":
