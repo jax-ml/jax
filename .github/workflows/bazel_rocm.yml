@@ -115,7 +115,7 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     container:
-      image: ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}:latest  # zizmor: ignore[unpinned-images]
+      image: ghcr.io/rocm/jax-base-ubu24.${{ inputs.rocm-tag }}:latest  # zizmor: ignore[unpinned-images]
       volumes:
         - /data:/data
       options: >-
@@ -185,8 +185,8 @@ jobs:
         env:
           ROCM_TAG: ${{ inputs.rocm-tag }}
         run: |
-          IMAGE="ghcr.io/rocm/jax-dev-ubu24.${ROCM_TAG}"
-          REPO="rocm/jax-dev-ubu24.${ROCM_TAG}"
+          IMAGE="ghcr.io/rocm/jax-base-ubu24.${ROCM_TAG}"
+          REPO="rocm/jax-base-ubu24.${ROCM_TAG}"
           TOKEN=$(curl -sf "https://ghcr.io/token?service=ghcr.io&scope=repository:${REPO}:pull" | \
             python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
           echo "::add-mask::${TOKEN}"
