@@ -566,6 +566,67 @@ def min(a: ArrayLike, axis: Axis = None, out: None = None,
   return _reduce_min(a, axis=_ensure_optional_axes(axis), out=out,
                      keepdims=keepdims, initial=initial, where=where)
 
+@api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+def _reduce_minmax(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+                   out: None = None, keepdims: bool = False,
+                   init_min: ArrayLike | None = None, init_max: ArrayLike | None = None,
+                   where: ArrayLike | None = None
+                   ) -> tuple[Array, Array]:
+  # TODO(jakevdp): optimize this by lowering to a single ReduceOp with two outputs.
+  return (_reduce_min(a, axis=axis, out=out, keepdims=keepdims, initial=init_min, where=where),
+          _reduce_max(a, axis=axis, out=out, keepdims=keepdims, initial=init_max, where=where))
+
+@export
+def minmax(a: ArrayLike, axis: Axis = None, out: None = None,
+           keepdims: bool = False,
+           initial: ArrayLike | tuple[ArrayLike, ArrayLike] | None = None,
+           where: ArrayLike | None = None) -> Array:
+  r"""Return the minimum and maximum of array elements along a given axis.
+
+  JAX implementation of :func:`numpy.minmax`.
+
+  Args:
+    a: Input array.
+    axis: int or array, default=None. Axis along which the minimum to be computed.
+      If None, the minimum is computed along all the axes.
+    keepdims: bool, default=False. If true, reduced axes are left in the result
+      with size 1.
+    initial: int or array, or tuple of ints. Default=None. Initial value for the minimum
+      and maximum. If given as a tuple, the first entry is the maximum value for the
+      minimum result, and the second entry is the minimum value for the maximum result.
+    where: int or array, default=None. The elements to be used in the minimum.
+      Array should be broadcast compatible to the input. ``initial`` must be
+      specified when ``where`` is used.
+    out: Unused by JAX.
+
+  Returns:
+    A tuple of arrays ``(a_min, a_max)` containing the arrays of minimum and
+    maximum values along the given axis.
+
+  See also:
+    - :func:`jax.numpy.min`: Compute the maximum of array elements along a given
+      axis.
+    - :func:`jax.numpy.max`: Compute the maximum of array elements along a given
+      axis.
+
+  Examples:
+    By default, the minimum is computed along all the axes.
+
+    >>> x = jnp.array([[2, 5, 1, 6],
+    ...                [3, -7, -2, 4],
+    ...                [8, -4, 1, -3]])
+    >>> jnp.minmax(x)
+    (Array(-7, dtype=int32), Array(8, dtype='int32')
+  """
+  if isinstance(initial, tuple):
+    init_min, init_max = initial
+  else:
+    init_min = init_max = initial
+  return _reduce_minmax(a, axis=_ensure_optional_axes(axis), out=out,
+                        keepdims=keepdims, init_min=init_min, init_max=init_max,
+                        where=where)
+
+
 @api.jit(static_argnames=('axis', 'keepdims'), inline=True)
 def _reduce_all(a: ArrayLike, axis: Axis = None, out: None = None,
                 keepdims: bool = False, *, where: ArrayLike | None = None) -> Array:
