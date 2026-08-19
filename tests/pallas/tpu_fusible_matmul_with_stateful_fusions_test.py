@@ -678,9 +678,9 @@ class FusibleMatmulTest(jtu.JaxTestCase):
 
   @parameterized.parameters(KernelImpl)
   def test_matmul_with_write_only_aliased_ref(self, impl):
-    # Use a large shape (8192, 8192) so that if the write-only aliased ref's
-    # `no_block_spec` is not properly filtered out and an un-windowed allocation
-    # is attempted in VMEM, it exceeds the TPU VMEM capacity and fails.
+    # Uses a large (8192, 8192) shape to verify that unread write-only aliased
+    # refs (`pl.no_block_spec`) are filtered out from `emit_pipeline` rather
+    # than allocated un-windowed in VMEM (which would OOM).
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (8192, 8192), jnp.float32)
     y = jax.random.normal(k1, (8192, 8192), jnp.float32)
@@ -699,7 +699,6 @@ class FusibleMatmulTest(jtu.JaxTestCase):
       return jax.freeze(out_ref)
 
     self.assertArraysAllClose(run_matmul(x, y), x @ y, atol=1e-4, rtol=1e-4)
-
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

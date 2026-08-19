@@ -1956,6 +1956,19 @@ def _zip_grid(dynamic_grid_spec, static_grid_spec):
   return tuple(next(dynamic_it) if pallas_core.is_dynamic_dim(d) else d
               for d in static_grid_spec)
 
+def _check_no_block_specs(*specs: Any) -> None:
+  for spec in jax.tree.leaves(specs):
+    if spec is pallas_core.no_block_spec or isinstance(
+        spec, pallas_core.NoBlockSpec
+    ):
+      raise ValueError(
+          "`no_block_spec` is not supported in `emit_pipeline` and passing it"
+          " likely indicates an error. If you're using fuser, you might need"
+          " to filter out `no_block_spec` arguments using"
+          " `fuser.filter_no_block_specs`."
+      )
+
+
 def emit_pipeline(
     body,
     *,
@@ -1970,6 +1983,8 @@ def emit_pipeline(
     no_pipelining: bool = False,
     _explicit_indices: bool = False,
 ):
+  _check_no_block_specs(in_specs, out_specs)
+
   if any(g <= 0 for g in grid if isinstance(g, int)):
     raise ValueError(
         f"All elements in the grid must be strictly positive, but got {grid=}"

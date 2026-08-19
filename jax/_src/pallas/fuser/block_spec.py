@@ -1418,7 +1418,7 @@ def _dynamic_update_slice_usage_rule(ctx, used_out: set[Usage], **params):
   if used_out == {Usage.SCALAR_PREFETCH}:
     raise NotImplementedError('scalar prefetch not supported yet')
   elif used_out == {Usage.REGULAR}:
-    usage = [used_out, used_out] + [{Usage.SCALAR_PREFETCH}] * (
+    usage = [set(), used_out] + [{Usage.SCALAR_PREFETCH}] * (
         len(ctx.avals_in) - 2
     )
     return usage
@@ -1435,6 +1435,8 @@ def _dynamic_update_slice_eval_rule(
     raise NotImplementedError(
         f'dynamic_update_slice with params={params} not supported yet.'
     )
+  # TODO(rdyro): Dynamic update slice supports a tile-aligned overwrite only.
+  # Potentially support masked write with partial tile-misaligned update.
   return update
 
 
@@ -1473,7 +1475,7 @@ def _dynamic_update_slice_rule(
   update_block_transform = block_transform.replace(
       block_index_transform=new_block_index_transform,
   )
-  return [block_transform, update_block_transform] + [
+  return [no_block_index_transform, update_block_transform] + [
       no_block_index_transform
   ] * (len(ctx.avals_in) - 2)
 
