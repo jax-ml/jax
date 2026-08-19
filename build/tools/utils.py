@@ -29,44 +29,44 @@ import urllib.request
 
 logger = logging.getLogger(__name__)
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/7.7.1/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/8.7.0/"
 BazelPackage = collections.namedtuple(
     "BazelPackage", ["base_uri", "file", "sha256"]
 )
 bazel_packages = {
     ("Linux", "x86_64"): BazelPackage(
         base_uri=None,
-        file="bazel-7.7.1-linux-x86_64",
+        file="bazel-8.7.0-linux-x86_64",
         sha256=(
-            "115a1b62be95f29e5821d4dddffba1b058905a48019b499919c285e7f708d5e2"
+            "d7606e679b78067c811096fb3d6cf135225b528835ca396e3a4dddf957859544"
         ),
     ),
     ("Linux", "aarch64"): BazelPackage(
         base_uri=None,
-        file="bazel-7.7.1-linux-arm64",
+        file="bazel-8.7.0-linux-arm64",
         sha256=(
-            "71df04ec724f1b577f1f47ec9a6b81d13f39683f6c3215cacf45fdaf40b2c5c1"
+            "bfe9558bd8a2ecfe4841ec46c0dbccb4b469fe22d81f2f859de0de222b3e7ce3"
         ),
     ),
     ("Darwin", "x86_64"): BazelPackage(
         base_uri=None,
-        file="bazel-7.7.1-darwin-x86_64",
+        file="bazel-8.7.0-darwin-x86_64",
         sha256=(
-            "8582aea5ee2d8d0448bbda10fd7034734db1a21cbe4ea351a10012b969aa5d31"
+            "76f3eb05782098e9f9ddd8247ec969b085195a3ae2978c81721a2235052ccf26"
         ),
     ),
     ("Darwin", "arm64"): BazelPackage(
         base_uri=None,
-        file="bazel-7.7.1-darwin-arm64",
+        file="bazel-8.7.0-darwin-arm64",
         sha256=(
-            "fe8a1ee9064e94afae075c0dd4efb453db9c1373b9df12fecbff8479d408eb08"
+            "575f20fb23955e02f73519befd180df635b4ed0960c60f0e70fcc8d74014a713"
         ),
     ),
     ("Windows", "AMD64"): BazelPackage(
         base_uri=None,
-        file="bazel-7.7.1-windows-x86_64.exe",
+        file="bazel-8.7.0-windows-x86_64.exe",
         sha256=(
-            "6d9fb21e806cf4f4e61bfa2bc865df4900ffdc1e9ea90ca1016ba70367ef0de4"
+            "29f1796f57379933340afa135f02703ffa21dd30135754bea695f8fd15103420"
         ),
     ),
 }
@@ -138,7 +138,7 @@ def get_bazel_paths(bazel_path_flag):
 def get_bazel_path(bazel_path_flag):
   """Returns the path to a Bazel binary, downloading Bazel if not found.
 
-  Also, checks Bazel's version is at least newer than 7.7.1
+  Also, checks Bazel's version is at least newer than 8.7.0
 
   A manual version check is needed only for really old bazel versions.
   Newer bazel releases perform their own version check against .bazelversion
@@ -152,7 +152,7 @@ def get_bazel_path(bazel_path_flag):
 
   print(
       "Cannot find or download a suitable version of bazel."
-      "Please install bazel >= 7.7.1."
+      "Please install bazel >= 8.7.0."
   )
   sys.exit(-1)
 
