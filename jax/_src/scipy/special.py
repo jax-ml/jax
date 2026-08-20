@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from functools import partial
+import math
 import operator
 from typing import Any
 
@@ -1043,6 +1044,147 @@ def entr(x: ArrayLike) -> Array:
                     lax.neg(_xlogx(x)))
 
 
+@custom_derivatives.custom_jvp
+def exprel(x: ArrayLike) -> Array:
+  r"""Relative exponential function: ``(exp(x) - 1) / x``.
+
+  JAX implementation of :obj:`scipy.special.exprel`.
+
+  .. math::
+
+     \mathrm{exprel}(x) = \begin{cases}
+       (e^x - 1) / x & x \ne 0 \\
+       1 & x = 0
+     \end{cases}
+
+  Args:
+    x: arraylike, real-valued.
+
+  Returns:
+    array containing values of the relative exponential function.
+
+  See Also:
+    - :func:`jax.scipy.special.boxcox`
+    - :func:`jax.scipy.special.boxcox1p`
+    - :func:`jax.numpy.expm1`
+  """
+  x, = promote_args_inexact("exprel", x)
+  return _exprel_impl(x)
+
+
+def _exprel_impl(x: Array) -> Array:
+  """Evaluates exprel using 1.0 at x=0 and expm1 elsewhere."""
+  is_zero = lax.eq(x, _lax_const(x, 0.0))
+  safe_x = lax.select(is_zero, lax.full_like(x, 1.0), x)
+  y_direct = lax.div(lax.expm1(safe_x), safe_x)
+  y = lax.select(isposinf(safe_x), lax.full_like(x, np.inf), y_direct)
+  return lax.select(is_zero, lax.full_like(x, 1.0), y)
+
+
+def _dexprel_dx(x: Array, y: Array) -> Array:
+  r"""Evaluates the derivative of exprel with respect to x.
+
+  Mathematically, exprel'(x) is the second divided difference of exp(z)
+  confluent at 0:
+    exprel'(x) = [0, 0, x] exp = (exp(x) - exprel(x)) / x
+               = sum_{k=0}^\infty (k + 1) * x^k / (k + 2)!
+
+  For |x| >= 0.4, direct evaluation (exp(x) - y) / x is numerically well-
+  conditioned (giving <= 7.4 ULPs peak error). For |x| < 0.4, subtractive
+  cancellation is eliminated by evaluating the Taylor series via Horner's
+  method up to machine epsilon.
+  """
+  is_zero = lax.eq(x, _lax_const(x, 0.0))
+  safe_x = lax.select(is_zero, lax.full_like(x, 1.0), x)
+  dy_direct = (lax.exp(safe_x) - y) / safe_x
+  dy = lax.select(isposinf(y), lax.full_like(x, np.inf), dy_direct)
+
+  # Guard cancellation region (|x| < 0.4) with dynamic Taylor polynomial.
+  threshold = 0.4
+  eps = float(dtypes.finfo(x.dtype).eps)
+  coeffs = []
+  for k in range(30):
+    c_k = (k + 1) / math.factorial(k + 2)
+    coeffs.append(c_k)
+    if c_k * (threshold**k) <= eps:
+      break
+  coeffs.reverse()
+  is_near_origin = lax.abs(x) < _lax_const(x, threshold)
+  x_taylor = lax.select(is_near_origin, x, lax.full_like(x, 0.0))
+  dy_taylor = jnp.polyval(np.asarray(coeffs, dtype=x.dtype), x_taylor)
+  return lax.select(is_near_origin, dy_taylor, dy)
+
+
+def _exprel_jvp(primals, tangents):
+  (x,) = primals
+  (x_dot,) = tangents
+  x, = promote_args_inexact("exprel", x)
+  y = _exprel_impl(x)
+  dy = _dexprel_dx(x, y)
+  return y, (dy * x_dot).astype(y.dtype)
+
+
+exprel.defjvp(_exprel_jvp)
+
+
+@custom_derivatives.custom_jvp
+def _boxcox_log_input(lx: ArrayLike, lmbda: ArrayLike) -> Array:
+  r"""Box-Cox transformation with input in log-coordinates.
+
+  .. math::
+
+     \mathrm{boxcox\_log\_input}(lx, \lambda) = \begin{cases}
+       (\exp(\lambda \cdot lx) - 1) / \lambda & \lambda \ne 0 \\
+       lx & \lambda = 0
+     \end{cases}
+
+  This shared core serves both :func:`boxcox` (with ``lx = log(x)``)
+  and :func:`boxcox1p` (with ``lx = log1p(x)``).
+
+  Args:
+    lx: arraylike, real-valued log-space coordinate
+      (e.g. ``log(x)`` or ``log1p(x)``).
+    lmbda: arraylike, real-valued power parameter.
+
+  Returns:
+    array of Box-Cox-transformed values (not in log-space).
+
+  See Also:
+    - :func:`jax.scipy.special.boxcox`
+    - :func:`jax.scipy.special.boxcox1p`
+  """
+  lx, lmbda = promote_args_inexact("_boxcox_log_input", lx, lmbda)
+  return lx * _exprel_impl(lmbda * lx)
+
+
+def _boxcox_jvp(name, is_log_input, is_1p, primals, tangents):
+  # Unified JVP for _boxcox_log_input, boxcox, and boxcox1p. In log-space the
+  # first primal is lx and d/dlx = exp(lambda * lx). In linear-space,
+  # lx = log(x) or log1p(x) and the chain-rule factor 1/x is absorbed into the
+  # exponent as (lambda - 1) to prevent premature underflow when x << 1.
+  x, lmbda = primals
+  x_dot, lmbda_dot = tangents
+  x, lmbda = promote_args_inexact(name, x, lmbda)
+  if is_log_input:
+    lx, exponent = x, lmbda
+  else:
+    lx = lax.log1p(x) if is_1p else lax.log(x)
+    exponent = lmbda - _lax_const(lx, 1.0)
+  z = lmbda * lx
+  exprel_val = _exprel_impl(z)
+  y = lx * exprel_val
+  dx = lax.exp(exponent * lx)
+  dlmbda = lx * (lx * _dexprel_dx(z, exprel_val))
+  y_dot = dx * x_dot + dlmbda * lmbda_dot
+  return y, y_dot.astype(y.dtype)
+
+
+_boxcox_log_input.defjvp(
+    partial(_boxcox_jvp, "_boxcox_log_input", True, False)
+)
+
+
+@custom_derivatives.custom_jvp
 def boxcox(x: ArrayLike, lmbda: ArrayLike) -> Array:
   r"""Box-Cox power transformation.
 
@@ -1064,17 +1206,18 @@ def boxcox(x: ArrayLike, lmbda: ArrayLike) -> Array:
   Returns:
     array containing Box-Cox transformed values.
 
-  See also:
-    :func:`jax.scipy.special.boxcox1p`
+  See Also:
+    - :func:`jax.scipy.special.boxcox1p`
+    - :func:`jax.scipy.special.inv_boxcox`
   """
   x, lmbda = promote_args_inexact("boxcox", x, lmbda)
-  lmbda_is_zero = lmbda == 0
-  safe_lmbda = jnp.where(lmbda_is_zero, jnp.ones_like(lmbda), lmbda)
-  log_x = jnp.log(x)
-  power_branch = jnp.expm1(safe_lmbda * log_x) / safe_lmbda
-  return jnp.where(lmbda_is_zero, log_x, power_branch)
+  return _boxcox_log_input(lax.log(x), lmbda)
 
 
+boxcox.defjvp(partial(_boxcox_jvp, "boxcox", False, False))
+
+
+@custom_derivatives.custom_jvp
 def boxcox1p(x: ArrayLike, lmbda: ArrayLike) -> Array:
   r"""Box-Cox transformation of ``1 + x``.
 
@@ -1096,15 +1239,225 @@ def boxcox1p(x: ArrayLike, lmbda: ArrayLike) -> Array:
   Returns:
     array containing values of the shifted Box-Cox transform.
 
-  See also:
-    :func:`jax.scipy.special.boxcox`
+  See Also:
+    - :func:`jax.scipy.special.boxcox`
+    - :func:`jax.scipy.special.inv_boxcox1p`
   """
   x, lmbda = promote_args_inexact("boxcox1p", x, lmbda)
-  lmbda_is_zero = lmbda == 0
-  safe_lmbda = jnp.where(lmbda_is_zero, jnp.ones_like(lmbda), lmbda)
-  log1p_x = jnp.log1p(x)
-  power_branch = jnp.expm1(safe_lmbda * log1p_x) / safe_lmbda
-  return jnp.where(lmbda_is_zero, log1p_x, power_branch)
+  return _boxcox_log_input(lax.log1p(x), lmbda)
+
+
+boxcox1p.defjvp(partial(_boxcox_jvp, "boxcox1p", False, True))
+
+
+@custom_derivatives.custom_jvp
+def _logrel(x: ArrayLike) -> Array:
+  r"""Relative logarithm function: ``log1p(x) / x``.
+
+  .. math::
+
+     \mathrm{logrel}(x) = \begin{cases}
+       \log(1 + x) / x & x \ne 0 \\
+       1 & x = 0
+     \end{cases}
+
+  Args:
+    x: arraylike, real-valued.
+
+  Returns:
+    array containing values of the relative logarithm function.
+
+  See Also:
+    - :func:`jax.scipy.special.exprel`
+    - :func:`jax.scipy.special.inv_boxcox`
+    - :func:`jax.scipy.special.inv_boxcox1p`
+    - :func:`jax.numpy.log1p`
+  """
+  x, = promote_args_inexact("_logrel", x)
+  return _logrel_impl(x)
+
+
+def _logrel_impl(x: Array) -> Array:
+  """Evaluates logrel using 1.0 at x=0 and log1p elsewhere."""
+  is_zero = lax.eq(x, _lax_const(x, 0.0))
+  safe_x = lax.select(is_zero, lax.full_like(x, 1.0), x)
+  y_direct = lax.div(lax.log1p(safe_x), safe_x)
+  y = lax.select(isposinf(safe_x), lax.full_like(x, 0.0), y_direct)
+  return lax.select(is_zero, lax.full_like(x, 1.0), y)
+
+
+def _dlogrel_dx(x: Array, y: Array) -> Array:
+  r"""Evaluates the derivative of logrel with respect to x.
+
+  Direct evaluation of d/dx [log(1 + x) / x] = (1 / (1 + x) - logrel(x)) / x
+  suffers from subtractive cancellation for |x| < 0.2.
+
+  For |x| < 0.2, evaluating the Taylor series via Horner's method avoids
+  subtractive cancellation and provides exact higher-order autodiff gradients
+  (such as logrel''(0) = 2/3):
+    logrel'(x) = sum_{k=0}^\infty (-1)^{k+1} * (k + 1) / (k + 2) * x^k
+  """
+  is_invalid = x <= _lax_const(x, -1.0)
+  is_zero = lax.eq(x, _lax_const(x, 0.0))
+  safe_x = lax.select(is_invalid | is_zero, lax.full_like(x, 1.0), x)
+  dy_direct = (_lax_const(x, 1.0) / (_lax_const(x, 1.0) + safe_x) - y) / safe_x
+  dy = lax.select(is_invalid, lax.full_like(x, np.nan), dy_direct)
+
+  # Guard cancellation region (|x| < 0.2) with dynamic Taylor polynomial in x.
+  threshold = 0.2
+  eps = float(dtypes.finfo(x.dtype).eps)
+  coeffs = []
+  for k in range(30):
+    c_k = (-1) ** (k + 1) * (k + 1) / (k + 2)
+    coeffs.append(c_k)
+    if abs(c_k) * (threshold**k) <= eps:
+      break
+  coeffs.reverse()
+  is_near_origin = lax.abs(x) < _lax_const(x, threshold)
+  x_taylor = lax.select(is_near_origin, x, lax.full_like(x, 0.0))
+  dy_taylor = jnp.polyval(np.asarray(coeffs, dtype=x.dtype), x_taylor)
+  return lax.select(is_near_origin, dy_taylor, dy)
+
+
+def _logrel_jvp(primals, tangents):
+  (x,) = primals
+  (x_dot,) = tangents
+  x, = promote_args_inexact("_logrel", x)
+  y = _logrel_impl(x)
+  dy = _dlogrel_dx(x, y)
+  return y, (dy * x_dot).astype(y.dtype)
+
+
+_logrel.defjvp(_logrel_jvp)
+
+
+@custom_derivatives.custom_jvp
+def _inv_boxcox_log_output(y: ArrayLike, lmbda: ArrayLike) -> Array:
+  r"""Inverse Box-Cox transformation to output in log-coordinates.
+
+  .. math::
+
+     \mathrm{inv\_boxcox\_log\_output}(y, \lambda) = \begin{cases}
+       \log(1 + \lambda y) / \lambda & \lambda \ne 0 \\
+       y & \lambda = 0
+     \end{cases}
+
+  This shared core serves both :func:`inv_boxcox`
+  (via ``exp``) and :func:`inv_boxcox1p` (via ``expm1``).
+
+  Args:
+    y: arraylike, real-valued Box-Cox transformed input.
+    lmbda: arraylike, real-valued power parameter.
+
+  Returns:
+    array of log-space values, i.e. ``log(x)``.
+
+  See Also:
+    - :func:`jax.scipy.special.inv_boxcox`
+    - :func:`jax.scipy.special.inv_boxcox1p`
+  """
+  y, lmbda = promote_args_inexact("_inv_boxcox_log_output", y, lmbda)
+  return y * _logrel_impl(lmbda * y)
+
+
+def _inv_boxcox_jvp(name, is_log_output, is_1p, primals, tangents):
+  # Unified JVP for _inv_boxcox_log_output, inv_boxcox, and inv_boxcox1p.
+  # In log-space, lx = y * logrel(lambda * y) = log(x).
+  # The partial derivatives are:
+  #   d/dy [_inv_boxcox_log_output(y, lambda)] = exp(-lambda * lx)
+  #   d/dlambda [_inv_boxcox_log_output(y, lambda)] = y^2 * logrel'(lambda * y)
+  # In linear-space, output tangents are scaled by exp(lx) via chain rule:
+  #   d/dy [inv_boxcox(y, lambda)] = exp((1 - lambda) * lx)
+  y, lmbda = primals
+  y_dot, lmbda_dot = tangents
+  y, lmbda = promote_args_inexact(name, y, lmbda)
+  z = lmbda * y
+  logrel_val = _logrel_impl(z)
+  lx = y * logrel_val
+  # x is the primal output; exponent and scale handle output space.
+  if is_log_output:
+    x = lx
+    scale = _lax_const(lx, 1.0)
+    exponent = -lmbda
+  else:
+    x = lax.expm1(lx) if is_1p else lax.exp(lx)
+    scale = lax.exp(lx)
+    exponent = _lax_const(lx, 1.0) - lmbda
+  is_invalid = z <= _lax_const(z, -1.0)
+  lx_safe = lax.select(is_invalid, lax.full_like(lx, 0.0), lx)
+  dy = lax.select(
+      is_invalid, lax.full_like(z, np.nan), lax.exp(exponent * lx_safe)
+  )
+  dlmbda = scale * (y * (y * _dlogrel_dx(z, logrel_val)))
+  x_dot = dy * y_dot + dlmbda * lmbda_dot
+  return x, x_dot.astype(x.dtype)
+
+
+_inv_boxcox_log_output.defjvp(
+    partial(_inv_boxcox_jvp, "_inv_boxcox_log_output", True, False)
+)
+
+
+@custom_derivatives.custom_jvp
+def inv_boxcox(y: ArrayLike, lmbda: ArrayLike) -> Array:
+  r"""Inverse Box-Cox power transformation.
+
+  JAX implementation of :obj:`scipy.special.inv_boxcox`.
+
+  .. math::
+
+     \mathrm{inv\_boxcox}(y, \lambda) = \begin{cases}
+       (1 + \lambda y)^{1 / \lambda} & \lambda \ne 0 \\
+       \exp(y) & \lambda = 0
+     \end{cases}
+
+  Args:
+    y: arraylike, real-valued Box-Cox transformed input.
+    lmbda: arraylike, real-valued.
+
+  Returns:
+    array containing inverse Box-Cox transformed values.
+
+  See Also:
+    - :func:`jax.scipy.special.boxcox`
+    - :func:`jax.scipy.special.inv_boxcox1p`
+  """
+  y, lmbda = promote_args_inexact("inv_boxcox", y, lmbda)
+  return lax.exp(_inv_boxcox_log_output(y, lmbda))
+
+
+inv_boxcox.defjvp(partial(_inv_boxcox_jvp, "inv_boxcox", False, False))
+
+
+@custom_derivatives.custom_jvp
+def inv_boxcox1p(y: ArrayLike, lmbda: ArrayLike) -> Array:
+  r"""Inverse shifted Box-Cox transformation of ``1 + x``.
+
+  JAX implementation of :obj:`scipy.special.inv_boxcox1p`.
+
+  .. math::
+
+     \mathrm{inv\_boxcox1p}(y, \lambda) = \begin{cases}
+       (1 + \lambda y)^{1 / \lambda} - 1 & \lambda \ne 0 \\
+       \exp(y) - 1 & \lambda = 0
+     \end{cases}
+
+  Args:
+    y: arraylike, real-valued Box-Cox transformed input.
+    lmbda: arraylike, real-valued.
+
+  Returns:
+    array containing inverse shifted Box-Cox transformed values.
+
+  See Also:
+    - :func:`jax.scipy.special.boxcox1p`
+    - :func:`jax.scipy.special.inv_boxcox`
+  """
+  y, lmbda = promote_args_inexact("inv_boxcox1p", y, lmbda)
+  return lax.expm1(_inv_boxcox_log_output(y, lmbda))
+
+
+inv_boxcox1p.defjvp(partial(_inv_boxcox_jvp, "inv_boxcox1p", False, True))
 
 
 def multigammaln(a: ArrayLike, d: ArrayLike) -> Array:
