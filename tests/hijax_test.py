@@ -31,6 +31,8 @@ from jax import typeof
 from jax._src import config
 from jax._src import core
 from jax._src import state
+from jax._src.ad_checkpoint import saved_residuals
+from jax.ad_checkpoint import checkpoint_name
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.custom_derivatives import custom_jvp_call_p
@@ -2851,6 +2853,74 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     hlo = jax.jit(f).lower(x).compile().as_text()
     self.assertIn("dce_sink", hlo)
     self.assertIn("custom_call", hlo)
+
+
+@jtu.with_config(jax_remat3=True, jax_custom_vjp3=True)
+class CustomVJPRemat3Test(jtu.JaxTestCase):
+
+  def _saved_sin(self):
+    @jax.custom_vjp
+    def f(y):
+      return jnp.sin(y)
+    def f_fwd(y):
+      return checkpoint_name(jnp.sin(y), 'saved'), (jnp.cos(y),)
+    def f_bwd(res, g):
+      c, = res
+      return (g * c,)
+    f.defvjp(f_fwd, f_bwd)
+    return f, jax.checkpoint_policies.save_only_these_names('saved')
+
+  def test_remat_of_jit_of_custom_vjp(self):
+    f, policy = self._saved_sin()
+    loss = lambda x: jax.remat(jax.jit(f), policy=policy)(x).sum()
+    x = jnp.arange(3.)
+    jax.jit(jax.grad(loss)).lower(x)
+    self.assertArraysAllClose(jax.grad(loss)(x), jnp.cos(x))
+
+  def test_remat_of_shard_map_of_custom_vjp(self):
+    f, policy = self._saved_sin()
+    mesh = jax.make_mesh((1,), ('i',))
+    P = jax.sharding.PartitionSpec
+    block = jax.jit(jax.shard_map(f, mesh=mesh, in_specs=P(), out_specs=P()))
+    loss = lambda x: jax.remat(block, policy=policy)(x).sum()
+    x = jnp.arange(3.)
+    jax.jit(jax.grad(loss)).lower(x)
+    self.assertArraysAllClose(jax.grad(loss)(x), jnp.cos(x))
+
+  def test_nested_remat_of_custom_vjp(self):
+    f, policy = self._saved_sin()
+    block = jax.jit(f)
+    loss = lambda x: jax.remat(jax.remat(block, policy=policy),
+                               policy=policy)(x).sum()
+    x = jnp.arange(3.)
+    self.assertArraysAllClose(jax.grad(loss)(x), jnp.cos(x))
+
+  def test_vmap_of_grad_of_remat_of_custom_vjp(self):
+    f, policy = self._saved_sin()
+    block = jax.jit(f)
+    loss = lambda x: jax.remat(block, policy=policy)(x[None]).sum()
+    x = jnp.arange(4.)
+    self.assertArraysAllClose(jax.vmap(jax.grad(loss))(x), jnp.cos(x))
+
+  def test_saved_residuals_names_value_in_custom_vjp_fwd(self):
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x) * 2.0
+    def f_fwd(x):
+      return checkpoint_name(jnp.sin(x) * 2.0, 'saved'), (x,)
+    def f_bwd(res, g):
+      x, = res
+      return (g * 2.0 * jnp.cos(x),)
+    f.defvjp(f_fwd, f_bwd)
+
+    def layer(x):
+      y = f(x)
+      return jnp.sum(y * y)
+
+    policy = jax.checkpoint_policies.save_only_these_names('saved')
+    res = saved_residuals(jax.remat(layer, policy=policy), jnp.arange(4.))
+    self.assertTrue(any("named 'saved'" in s for _, s in res),
+                    msg=f'saved residuals: {[s for _, s in res]}')
 
 
 if __name__ == '__main__':
