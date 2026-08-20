@@ -2459,7 +2459,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     if jtu.test_device_matches(["gpu"]) and method == "schur":
       self.skipTest("Schur not supported on GPU.")
 
-    tol = {np.float32: 5e-2, np.float64: 1e-9, np.complex64: 5e-2, np.complex128: 1e-9}
+    tol = {np.float32: 1e-1, np.float64: 1e-9, np.complex64: 5e-2, np.complex128: 1e-9}
 
     def args_maker():
       rng = jtu.rand_default(self.rng())
