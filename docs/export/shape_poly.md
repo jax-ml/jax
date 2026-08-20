@@ -257,7 +257,7 @@ as follows:
     `a >= b`, `a - b >= 0` are inconclusive and result in an exception.
 
 In cases where a comparison operation cannot be resolved to a boolean,
-we raise {class}`InconclusiveDimensionOperation`. E.g.,
+we raise {class}`~jax.errors.InconclusiveDimensionOperation`. E.g.,
 
 ```python
 import jax

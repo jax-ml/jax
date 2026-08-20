@@ -406,7 +406,7 @@ class _DimExpr:
   to the free integer coefficient of the expression.
 
   We overload integer operations, but we do that soundly, raising
-  :class:`InconclusiveDimensionOperation` when the result is not
+  :class:`~jax.errors.InconclusiveDimensionOperation` when the result is not
   representable as a _DimExpr.
   """
   __array_priority__ = 1000   # Same as tracer, for __radd__ and others on ndarray
@@ -1246,7 +1246,7 @@ def symbolic_dim_bounds(
 
   Raises:
     TypeError: If ``dimension`` is not an integer or symbolic dimension.
-    InconclusiveDimensionOperation: If the bounds cannot be computed because
+    jax.errors.InconclusiveDimensionOperation: If the bounds cannot be computed because
       JAX cannot prove that an operation in the expression is defined.
   """
   resolved_dimension: DimSize = core.concrete_dim_or_error(
