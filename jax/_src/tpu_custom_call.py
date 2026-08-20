@@ -31,6 +31,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import sharding_impls
+from jax._src.cloud_tpu_init import is_libtpu_at_least
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -73,7 +74,11 @@ ir_version_override: Callable[[], int | None] | None = None
 _FWD_COMPAT_VERSION = 15
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
-  if ctx.is_forward_compat() or backend is None:
+  if (
+      ctx.is_forward_compat()
+      or backend is None
+      or not is_libtpu_at_least("0.0.47")
+  ):
     return _FWD_COMPAT_VERSION
   if ir_version_override is not None:
     return ir_version_override()
