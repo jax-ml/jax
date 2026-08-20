@@ -3942,7 +3942,10 @@ def _erf_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   return mlir_math.erf(x)
 
 
-@register_lowering_rule(lax.round_p)
+@register_lowering_rule(
+    lax.round_p,
+    kernel_types=(tpu_core.CoreType.TC, tpu_core.CoreType.SC_VECTOR_SUBCORE),
+)
 def _round_lowering_rule(ctx: LoweringRuleContext, x, *, rounding_method):
   if rounding_method == 0:
     return mlir_math.round(x)

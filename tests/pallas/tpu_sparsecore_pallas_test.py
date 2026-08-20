@@ -1999,7 +1999,7 @@ class VectorSubcoreTest(PallasSCTest):
     expected = np.where(has_valid_value_so_far, expected, x)
     np.testing.assert_array_equal(kernel(x), expected)
 
-  @parameterized.parameters(lax.sqrt, lax.rsqrt, lax.tanh, lax.log)
+  @parameterized.parameters(lax.sqrt, lax.rsqrt, lax.tanh, lax.log, lax.round)
   def test_unary_math_ops(self, op):
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("math ops not supported on TPU v8i.")
