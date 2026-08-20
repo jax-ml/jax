@@ -1583,7 +1583,10 @@ def _interpret_jaxpr(
         invals = deferred_invals()
         avals_in = [v.aval for v in eqn.invars]
         jaxpr = mosaic_pipeline.emit_pipeline_to_jaxpr(
-            avals_in, ctx, **eqn.params, _interpret=True
+            avals_in,
+            grid_names=ctx.grid_mapping.grid_names,
+            grid_sizes=ctx.grid_mapping.grid,
+            **eqn.params,
         )
         token, _ = _interpret(
             jaxpr.jaxpr, *jaxpr.consts, *invals, token=token

@@ -39,6 +39,7 @@ from jax._src import api_util
 from jax._src.tree_util import tracing_registry
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import helpers
+from jax._src.pallas import hlo_interpreter
 from jax._src.pallas import primitives
 from jax._src.pallas import utils
 from jax._src.pallas.mosaic import core as tpu_core
@@ -50,6 +51,7 @@ from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import tpu_info
 from jax._src import effects
 from jax._src.state import WriteEffect, ReadEffect
+from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.interpreters import batching
 from jax._src.pallas.pallas_call import _batch_block_mapping
@@ -2318,11 +2320,95 @@ def _pipeline_body_lowering_rule(
     return jaxpr_subcomp(
         lowering_context, jaxpr, *body_consts, *resolved_refs)
 
+
+def _pipeline_body_is_high(*avals, jaxpr, **_):
+  del avals
+  return jaxpr.is_high
+
+
+pipeline_body_p.is_high = _pipeline_body_is_high
+
+
+def pipeline_body_discharge_rule(
+    ctx: state_discharge.DischargeContext,
+    *invals,
+    jaxpr: core.Jaxpr,
+    in_tree,
+    _explicit_indices: bool = False,
+    **params,
+):
+  del params
+  ps, body_consts, refs = in_tree.unflatten(invals)
+  _, _, refs_should = in_tree.unflatten(ctx.should_discharge)
+
+  ps_flat, _ = tree_util.tree_flatten(ps)
+  body_in_args = list(ps_flat) if _explicit_indices else []
+  body_should_discharge = [False] * len(body_in_args)
+
+  for ref, ref_sh in zip(refs, refs_should):
+    base, transforms = tpu_primitives._get_ref_and_transforms(ref)
+    should_discharge = tpu_primitives._get_ref(ref_sh)
+    body_should_discharge.append(should_discharge)
+    if should_discharge:
+      body_in_args.append(state_discharge.transform_array(base, transforms))
+    else:
+      body_in_args.append(ref)
+
+  # Add program ID info into the grid
+  cur_env = pallas_core.current_grid_env() or ()
+  body_grid_env = tuple(
+      pallas_core.GridAxis(
+          idx,
+          cur_env[i].size if i < len(cur_env) else 0,
+      )
+      for i, idx in enumerate(ps.index)
+  ) + tuple(cur_env[len(ps.index) :])
+
+  body_closed_jaxpr = jaxpr.with_consts(body_consts)
+  with pallas_core.grid_env(body_grid_env):
+    discharged_body_closed = state_discharge.discharge_state(
+        body_closed_jaxpr,
+        should_discharge=tuple(body_should_discharge),
+        strip_memory_space=ctx.strip_memory_space,
+    )
+    out = core.eval_jaxpr(
+        discharged_body_closed.jaxpr,
+        discharged_body_closed.consts,
+        *body_in_args,
+    )
+
+  num_outvars = len(body_closed_jaxpr.jaxpr.outvars)
+  ans = out[:num_outvars]
+  updated_slices = iter(out[num_outvars:])
+
+  new_bases = []
+  for ref, ref_sh in zip(refs, refs_should):
+    if tpu_primitives._get_ref(ref_sh):
+      base, transforms = tpu_primitives._get_ref_and_transforms(ref)
+      _, new_base = state_discharge.transform_swap_array(
+          base, transforms, next(updated_slices)
+      )
+      new_bases.append(new_base)
+
+  new_bases_iter = iter(new_bases)
+  new_invals = [
+      next(new_bases_iter) if should else None
+      for should in ctx.should_discharge
+  ]
+  return new_invals, ans
+
+
+state_discharge.register_discharge_rule(pipeline_body_p)(
+    pipeline_body_discharge_rule
+)
+
+
 def emit_pipeline_to_jaxpr(
     avals_in,
-    ctx,
     *,
     grid_mapping,
+    grid_names,
+    grid_sizes,
     body_jaxpr,
     args_tree,
     refs_tree,
@@ -2331,7 +2417,6 @@ def emit_pipeline_to_jaxpr(
     core_axis=None,
     core_axis_name=None,
     _explicit_indices=False,
-    _interpret=False,  # for interpret mode only
     **params,
 ) -> core.ClosedJaxpr:
   del core_axis, core_axis_name
@@ -2383,16 +2468,9 @@ def emit_pipeline_to_jaxpr(
                           if i not in grid_mapping.vmapped_dims)
 
     # re-create the pallas core grid env
-    if not _interpret:
-      grid_names = ctx.lowering_context.grid_names
-      grid_sizes = ctx.lowering_context.grid_sizes
-    else:
-      grid_names = ctx.grid_mapping.grid_names
-      grid_sizes = ctx.grid_mapping.grid
-    if grid_names is None:
-      grid_names = (None,) * len(grid_sizes)
+    names = (None,) * len(grid_sizes) if grid_names is None else grid_names
     axis_env_ctx = core.extend_axis_env_nd(
-        [(name, size) for name, size in zip(grid_names, grid_sizes)
+        [(name, size) for name, size in zip(names, grid_sizes)
         if name is not None and isinstance(size, int)]
     )
 
@@ -2423,8 +2501,9 @@ def _emit_pipeline_lowering_rule(
 ):
   closed_jaxpr = emit_pipeline_to_jaxpr(
       ctx.avals_in,
-      ctx,
       grid_mapping=grid_mapping,
+      grid_names=ctx.lowering_context.grid_names,
+      grid_sizes=ctx.lowering_context.grid_sizes,
       body_jaxpr=body_jaxpr,
       args_tree=args_tree,
       refs_tree=refs_tree,
@@ -2580,3 +2659,38 @@ def _emit_pipeline_batching_rule(
 
 batching.fancy_primitive_batchers[emit_pipeline_p] = (
     _emit_pipeline_batching_rule)
+
+
+def _emit_pipeline_discharge_rule(
+    ctx: state_discharge.DischargeContext,
+    *args_flat,
+    grid_mapping,
+    **params,
+):
+  closed_jaxpr = emit_pipeline_to_jaxpr(
+      ctx.in_avals,
+      grid_mapping=grid_mapping,
+      grid_names=grid_mapping.grid_names,
+      grid_sizes=grid_mapping.grid,
+      **params,
+  )
+  phys_jaxpr, phys_consts = hlo_interpreter.resolve_physical_types(
+      closed_jaxpr.jaxpr, closed_jaxpr.consts
+  )
+  discharged = state_discharge.discharge_state(
+      phys_jaxpr.with_consts(phys_consts),
+      should_discharge=tuple(ctx.should_discharge),
+      strip_memory_space=ctx.strip_memory_space,
+  )
+  ref_vals = iter(
+      core.eval_jaxpr(discharged.jaxpr, discharged.consts, *args_flat)
+  )
+  new_invals = [
+      next(ref_vals) if should else None for should in ctx.should_discharge
+  ]
+  return new_invals, ()
+
+
+state_discharge.register_discharge_rule(emit_pipeline_p)(
+    _emit_pipeline_discharge_rule
+)

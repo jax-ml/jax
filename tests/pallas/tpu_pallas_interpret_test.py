@@ -1695,7 +1695,11 @@ class InterpretTest(jtu.JaxTestCase):
         interpret_utils.is_range_out_of_bounds_for_shape(rnge, shape), expected
     )
 
-  def test_emit_pipeline_in_kernel(self):
+  @parameterized.named_parameters(
+      ('interpret_params', pltpu.InterpretParams()),
+      ('interpret_true', True),
+  )
+  def test_emit_pipeline_in_kernel(self, interpret):
     if jax.config.jax_enable_x64:
       self.skipTest(
           'emit_pipeline has a pre-existing int32/int64 while_loop carry'
@@ -1713,7 +1717,7 @@ class InterpretTest(jtu.JaxTestCase):
         @pl.kernel(
             out_type=jax.ShapeDtypeStruct((4 * 8, 128), jnp.float32),
             mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
-            interpret=pltpu.InterpretParams(),
+            interpret=interpret,
         )
         def kernel(x_hbm_ref, o_hbm_ref):
           pltpu.emit_pipeline(
@@ -1727,7 +1731,11 @@ class InterpretTest(jtu.JaxTestCase):
         out = kernel(x)
         np.testing.assert_array_equal(out, x + 1)
 
-  def test_emit_pipeline_in_kernel_with_program_id(self):
+  @parameterized.named_parameters(
+      ('interpret_params', pltpu.InterpretParams()),
+      ('interpret_true', True),
+  )
+  def test_emit_pipeline_in_kernel_with_program_id(self, interpret):
     if jax.config.jax_enable_x64:
       self.skipTest(
           'emit_pipeline has a pre-existing int32/int64 while_loop carry'
@@ -1746,7 +1754,7 @@ class InterpretTest(jtu.JaxTestCase):
         @pl.kernel(
             out_type=jax.ShapeDtypeStruct((4 * 8, 128), jnp.int32),
             mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
-            interpret=pltpu.InterpretParams(),
+            interpret=interpret,
         )
         def kernel(x_hbm_ref, o_hbm_ref):
           pltpu.emit_pipeline(
@@ -1762,6 +1770,43 @@ class InterpretTest(jtu.JaxTestCase):
         for i in range(4):
           expected[i * 8 : (i + 1) * 8, :] = i
         np.testing.assert_array_equal(out, expected)
+
+  @parameterized.named_parameters(
+      ('interpret_params', pltpu.InterpretParams()),
+      ('interpret_true', True),
+  )
+  def test_vmap_emit_pipeline(self, interpret):
+    if jax.config.jax_enable_x64:
+      # TODO(ivyzheng, rdyro): Fix this.
+      self.skipTest(
+          'emit_pipeline has a pre-existing int32/int64 while_loop carry'
+          ' mismatch when x64 is enabled'
+      )
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (),
+        abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu'),
+    )
+    with config.use_emit_pipeline_primitive(True):
+      with jax.sharding.use_abstract_mesh(abstract_mesh):
+        def pipeline_body(x_ref, o_ref):
+          o_ref[...] = x_ref[...] + 1.0
+
+        @pl.kernel(
+            out_type=jax.ShapeDtypeStruct((4 * 8, 128), jnp.float32),
+            mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+            interpret=interpret,
+        )
+        def kernel(x_hbm_ref, o_hbm_ref):
+          pltpu.emit_pipeline(
+              pipeline_body,
+              grid=(4,),
+              in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+          )(x_hbm_ref, o_hbm_ref)
+
+        x = jnp.arange(1 * 4 * 8 * 128, dtype=jnp.float32).reshape(1, 4 * 8, 128)
+        out = jax.vmap(kernel)(x)
+        np.testing.assert_array_equal(out, x + 1)
 
 
 if __name__ == '__main__':
