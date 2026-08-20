@@ -334,6 +334,21 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertRaises(UnexpectedTracerError, lambda: api.jvp(f, (3.,), (1.,)))
     self.assertRaises(UnexpectedTracerError, lambda: api.grad(f)(3.))
 
+  def test_closed_over_jit_tracer_leak_error(self):
+    @jit
+    def g(x, w):
+      @jax.custom_jvp
+      def f(y):
+        return y * w
+      def f_jvp(primals, tangents):
+        (y,), (t,) = primals, tangents
+        return y * w, t * w
+      f.defjvp(f_jvp)
+      return f(x)
+
+    with self.assertRaises(UnexpectedTracerError):
+      api.grad(lambda x: g(x, 3.))(2.)
+
   def test_nondiff_argnums(self):
     @partial(jax.custom_jvp, nondiff_argnums=(0,))
     def app(f, x):
@@ -1963,6 +1978,25 @@ class CustomVJPTest(jtu.JaxTestCase):
       _ = g(2., 3.)
     with self.assertRaisesRegex(UnexpectedTracerError, "custom_vjp"):
       _ = api.grad(g, 1)(2., 3.)
+
+  def test_closed_over_jit_tracer_leak_error(self):
+    @jit
+    def g(x, w):
+      @jax.custom_vjp
+      def f(y):
+        return y * w
+      def f_fwd(y):
+        return f(y), (y, w)
+      def f_bwd(res, ct):
+        y, w_ = res
+        return (ct * w_,)
+      f.defvjp(f_fwd, f_bwd)
+      return f(x)
+
+    with self.assertRaises(UnexpectedTracerError) as cm:
+      api.grad(lambda x: g(x, 3.))(2.)
+    self.assertTrue(any('custom_vjp' in note for note in
+                        getattr(cm.exception, '__notes__', [])))
 
   def test_vmap_axes(self):
     raise unittest.SkipTest("TODO")  # TODO(mattjj): write test
