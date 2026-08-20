@@ -694,6 +694,30 @@ def _apply_mask_and_soft_cap(
   return qk
 
 
+def _has_segment_overlap(
+    q_segment_ids_ref,
+    kv_segment_ids_ref,
+    *,
+    bq: int,
+    bkv: int,
+    k_in_lanes: bool = True,
+) -> jax.Array:
+  """Checks if query and key/value blocks share at least one segment ID."""
+  if q_segment_ids_ref is None or kv_segment_ids_ref is None:
+    return jnp.array(True)
+  if k_in_lanes:
+    q_min = q_segment_ids_ref[0, 0]
+    q_max = q_segment_ids_ref[bq - 1, 0]
+    kv_min = kv_segment_ids_ref[0, 0]
+    kv_max = kv_segment_ids_ref[0, bkv - 1]
+  else:
+    q_min = q_segment_ids_ref[0, 0]
+    q_max = q_segment_ids_ref[0, bq - 1]
+    kv_min = kv_segment_ids_ref[0, 0]
+    kv_max = kv_segment_ids_ref[bkv - 1, 0]
+  return jnp.logical_and(kv_max >= q_min, kv_min <= q_max)
+
+
 def flash_attention_kernel(
     # Prefetched inputs
     data_next_ref,
@@ -753,6 +777,16 @@ def flash_attention_kernel(
       block_mask_ref,
       mask_next_ref,
   )
+
+  if q_segment_ids_ref is not None:
+    has_segment_overlap = _has_segment_overlap(
+        q_segment_ids_ref,
+        kv_segment_ids_ref,
+        bq=bq,
+        bkv=bkv,
+        k_in_lanes=True,
+    )
+    should_run = jnp.logical_and(should_run, has_segment_overlap)
 
   def body(kv_compute_index, _):
     slice_k = pl.ds(kv_compute_index * bkv_compute, bkv_compute)
@@ -1354,6 +1388,16 @@ def _flash_attention_dq_kernel(
   global_kv_index, _, should_run, should_not_mask = _next_nonzero(
       h, i, j, data_next_ref, block_mask_ref, mask_next_ref
   )
+  if q_segment_ids_ref is not None:
+    has_segment_overlap = _has_segment_overlap(
+        q_segment_ids_ref,
+        kv_segment_ids_ref,
+        bq=bq,
+        bkv=bkv,
+        k_in_lanes=True,
+    )
+    should_run = jnp.logical_and(should_run, has_segment_overlap)
+
   @pl.when(should_run)
   def run():
     q = q_ref[...] if q_layout == HEAD_DIM_MINOR else q_ref[...].T
@@ -1760,6 +1804,15 @@ def _flash_attention_dkv_kernel(
       mask_next_ref,
       next_i=True,
   )
+  if q_segment_ids_ref is not None:
+    has_segment_overlap = _has_segment_overlap(
+        q_segment_ids_ref,
+        kv_segment_ids_ref,
+        bq=bq,
+        bkv=bkv,
+        k_in_lanes=False,
+    )
+    should_run = jnp.logical_and(should_run, has_segment_overlap)
 
   def body(i, _):
 
