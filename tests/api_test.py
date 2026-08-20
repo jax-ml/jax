@@ -5133,6 +5133,138 @@ class APITest(jtu.JaxTestCase):
     self.assertIn("at y, now f32[2] and before f32[1]", msg)
     self.assertNotIn("explanation unavailable!", msg)
 
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_custom_vmap(self):
+    # https://github.com/jax-ml/jax/issues/40110
+    @jax.custom_batching.custom_vmap
+    def f(a): return jnp.sin(a)
+
+    @f.def_vmap
+    def f_vmap(axis_size, in_batched, a): return jnp.sin(a), in_batched[0]
+
+    f(jnp.ones(3, 'float32'))
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        f(jnp.ones(7, 'float32'))
+    self.assertTrue(any("different input types" in msg for msg in cm.output))
+    self.assertTrue(any("at a, now f32[7] and before f32[3]" in msg
+                        for msg in cm.output))
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_custom_partitioning(self):
+    # https://github.com/jax-ml/jax/issues/40110
+    from jax.experimental.custom_partitioning import custom_partitioning
+
+    @custom_partitioning
+    def f(x): return jnp.sin(x)
+
+    def partition(mesh, arg_shapes, result_shape):
+      raise NotImplementedError
+
+    def infer_sharding_from_operands(mesh, arg_shapes, result_shape):
+      raise NotImplementedError
+
+    f.def_partition(partition=partition,
+                    infer_sharding_from_operands=infer_sharding_from_operands,
+                    sharding_rule='i -> i')
+
+    f(jnp.ones(3, 'float32'))
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        f(jnp.ones(7, 'float32'))
+    self.assertTrue(any("at x, now f32[7] and before f32[3]" in msg
+                        for msg in cm.output))
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_custom_gradient(self):
+    # https://github.com/jax-ml/jax/issues/40110
+    # The bwd rule must be a stable function (not a per-call closure) so that
+    # the second trace of it finds the first trace's cache entry to diff.
+    def rule(g): return (g,)
+
+    @jax.custom_gradient
+    def f(x):
+      return jnp.sin(x), rule
+
+    jax.vjp(f, jnp.ones(3, 'float32'))
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        jax.vjp(f, jnp.ones(7, 'float32'))
+    self.assertTrue(any("at g, now f32[7] and before f32[3]" in msg
+                        for msg in cm.output))
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_closure_convert(self):
+    # https://github.com/jax-ml/jax/issues/40110
+    def fn(x): return x * 2.
+
+    jax.closure_convert(fn, jnp.ones(3, 'float32'))
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        jax.closure_convert(fn, jnp.ones(7, 'float32'))
+    self.assertTrue(any("at x, now f32[7] and before f32[3]" in msg
+                        for msg in cm.output))
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_linear_call(self):
+    # https://github.com/jax-ml/jax/issues/40110
+    def mul(r, x): return r * x
+    def mul_t(r, ct): return r * ct
+
+    jax.custom_derivatives.linear_call(mul, mul_t, jnp.ones(3, 'float32'), jnp.ones(3, 'float32'))
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        jax.custom_derivatives.linear_call(mul, mul_t, jnp.ones(7, 'float32'),
+                                           jnp.ones(7, 'float32'))
+    self.assertTrue(any("now f32[7] and before f32[3]" in msg
+                        for msg in cm.output))
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_compute_on(self):
+    # https://github.com/jax-ml/jax/issues/40110
+    from jax.experimental.compute_on import compute_on
+
+    @compute_on(compute_type='device_host',
+                out_memory_spaces=jax.memory.Space.Device)
+    def f(x): return jnp.sin(x)
+
+    f(jnp.ones(3, 'float32'))
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        f(jnp.ones(7, 'float32'))
+    self.assertTrue(any("at x, now f32[7] and before f32[3]" in msg
+                        for msg in cm.output))
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_run_state(self):
+    # https://github.com/jax-ml/jax/issues/40110
+    from jax._src.state.discharge import run_state
+
+    def body(refs):
+      a, b = refs
+      a[...] = a[...] + b[...]
+
+    run_state(body)((jnp.ones(3), jnp.ones(3)))
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        run_state(body)((jnp.ones(7), jnp.ones(7)))
+    self.assertTrue(any("different input types" in msg for msg in cm.output))
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_run_state_reference(self):
+    # https://github.com/jax-ml/jax/issues/40110
+    from jax._src.state.discharge import run_state_reference
+
+    def body(refs):
+      a, b = refs
+      a[...] = a[...] + b[...]
+
+    run_state_reference(body)((jnp.ones(3), jnp.ones(3)))
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        run_state_reference(body)((jnp.ones(7), jnp.ones(7)))
+    self.assertTrue(any("different input types" in msg for msg in cm.output))
+
   @unittest.skip('TODO(mattjj): re-enable after updating cache miss explainer')
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_shape_explain_closest(self):

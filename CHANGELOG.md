@@ -86,6 +86,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     closed-form LU decomposition with row pivoting for 2x2 and 3x3 matrices
     instead of closed-form polynomial expansions to avoid numerical instability
     and catastrophic cancellation ({jax-issue}`#39905`).
+  * Fixed a crash when `jax_explain_cache_misses` is enabled and a
+    `jax.custom_batching.custom_vmap`-decorated function (or
+    `custom_partitioning`, `custom_gradient`, `closure_convert`,
+    `linear_call`, or `run_state`) is retraced with different-shaped
+    arguments ({jax-issue}`#40110`).
   * The batching rules of the cuDNN fused attention primitives (used by
     {func}`jax.nn.dot_product_attention` with `implementation='cudnn'`) now
     support operands that do not carry the vmap axis, including a shared

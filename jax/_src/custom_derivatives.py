@@ -42,7 +42,8 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_map, treedef_is_leaf, treedef_tuple,
     register_pytree_node_class, tree_leaves, tree_flatten_with_path,
-    tree_leaves_with_path, keystr, treedef_children, tree_structure, PyTreeDef)
+    tree_leaves_with_path, keystr, treedef_children, tree_structure, PyTreeDef,
+    tracing_registry)
 from jax._src.util import (cache, safe_zip, safe_map, split_list, unzip2,
                            weakref_lru_cache)
 
@@ -1266,7 +1267,7 @@ def custom_gradient(fun=None, *, with_logs: bool = False):
     ans, rule = fun(*args, **kwargs)
     if with_logs:
       rule = _custom_gradient_logs_rule(rule)
-    ans_flat, out_tree = tree_flatten(((ans,), {}))
+    ans_flat, out_tree = tracing_registry.flatten(((ans,), {}))
     debug_fwd = debug_info("custom_gradient fwd", rule, (ans,), {})
     ans_avals = [core.typeof(x).to_ct_aval() for x in ans_flat]
     closed_jaxpr, rule_out = pe.trace_to_jaxpr(
@@ -1393,7 +1394,7 @@ def closure_convert(fun: Callable, *example_args) -> tuple[Callable, list[Any]]:
     values hoisted from its closure, and (ii) a list of values hoisted
     from the closure.
   """
-  flat_args, in_tree = tree_flatten((example_args, {}))
+  flat_args, in_tree = tracing_registry.flatten((example_args, {}))
   in_avals = tuple(map(core.typeof, flat_args))
   debug = debug_info("closure_convert", fun, example_args, {})
   if config.check_tracer_leaks.value:
@@ -1547,8 +1548,8 @@ def linear_call(fun: Callable,
 
   .. _Haskell-like type signatures: https://wiki.haskell.org/Type_signature
   """
-  operands_res, res_tree = tree_flatten(residual_args)
-  operands_lin, lin_tree = tree_flatten(linear_args)
+  operands_res, res_tree = tracing_registry.flatten(residual_args)
+  operands_lin, lin_tree = tracing_registry.flatten(linear_args)
 
   res_avals = map(core.typeof, operands_res)
   lin_avals = map(core.typeof, operands_lin)
