@@ -523,7 +523,7 @@ class custom_partitioning:
     else:
       static_args = ()
       f_, dyn_args = self.fun, args
-    args_flat, in_tree = tree_util.tree_flatten(dyn_args)
+    args_flat, in_tree = tree_util.tracing_registry.flatten(dyn_args)
     in_avals = [core.typeof(x) for x in args_flat]
     mesh = mesh_lib.thread_resources.env.physical_mesh
     with core.extend_axis_env_nd(mesh.shape.items()):

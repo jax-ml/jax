@@ -840,7 +840,7 @@ T = TypeVar('T')
 def run_state(f: Callable[..., None]) -> Callable[[T], T]:
   def wrapped(args):
     dbg = api_util.debug_info("run_state", f, (args,), {})
-    flat_args, in_tree = tree_util.tree_flatten(args)
+    flat_args, in_tree = tree_util.tracing_registry.flatten(args)
     ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
     # There may be some uninitialized values here in ref_args.
     jaxpr_ = initial_style_jaxpr(f, in_tree, ref_avals, dbg)
@@ -861,7 +861,7 @@ def run_state(f: Callable[..., None]) -> Callable[[T], T]:
 def run_state_reference(f: Callable[..., None]):
   def wrapped(args):
     dbg = api_util.debug_info("run_state", f, (args,), {})
-    flat_args, in_tree = tree_util.tree_flatten(args)
+    flat_args, in_tree = tree_util.tracing_registry.flatten(args)
     ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
     jaxpr_ = initial_style_jaxpr(f, in_tree, ref_avals, dbg)
     consts = jaxpr_.consts

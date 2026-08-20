@@ -43,7 +43,10 @@ jax_multiplatform_test(
         "gpu": 5,
         "tpu": 5,
     },
-    deps = py_deps([
+    deps = [
+        "//jax/experimental:compute_on",
+        "//jax/experimental:custom_partitioning",
+    ] + py_deps([
         "absl/testing",
         "numpy",
     ]),

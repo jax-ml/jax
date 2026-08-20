@@ -26,7 +26,8 @@ from jax._src import effects as effects_lib
 from jax._src import source_info_util
 from jax._src.interpreters import ad, batching, mlir, partial_eval as pe
 from jax._src import flattree as ft
-from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
+from jax._src.tree_util import (tree_flatten, tree_leaves, tree_unflatten,
+                                tracing_registry)
 from jax._src.util import (safe_map, safe_zip, weakref_lru_cache, unzip2,
                            split_list, subs_list, merge_lists)
 from jax._src.api_util import debug_info, flatten_axes
@@ -76,7 +77,7 @@ def _compute_on(f, *, compute_type, out_memory_spaces, compiler_options):
   def wrapped(*args, **kwargs):
     nonlocal compiler_options
     dbg = debug_info('compute_on', f, args, kwargs)
-    args_flat, in_tree = tree_flatten((args, kwargs))
+    args_flat, in_tree = tracing_registry.flatten((args, kwargs))
     in_avals = tuple(core.shaped_abstractify(x) for x in args_flat)
     with extend_compute_type(compute_type):
       jaxpr, out_avals = pe.trace_to_jaxpr(
