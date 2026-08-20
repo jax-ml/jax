@@ -28,6 +28,7 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.layout import Layout as DLL, Format
 from jax._src import config
+from jax._src.callback import io_callback
 from jax.ad_checkpoint import checkpoint_name, Recompute
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
@@ -35,7 +36,6 @@ from jax._src.sharding_impls import (
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.xla_metadata import set_xla_metadata
 from jax._src.shard_map import shard_map
-from jax.experimental import io_callback
 from jax.experimental.compute_on import compute_on
 import jax.numpy as jnp
 import numpy as np
