@@ -903,7 +903,7 @@ def escaped_tracer_error(tracer, detail=None):
     msg += ('\nThe function being traced when the value leaked was '
             f'{dbg.func_src_info} traced for {dbg.traced_for}.')
   line_info = getattr(tracer, '_line_info', None)
-  if line_info is not None:
+  if line_info is not None and source_info_util.summarize(line_info):
     divider = '\n' + '-'*30 + '\n'
     msg += divider
     msg += ('The leaked intermediate value was created on line '
@@ -914,6 +914,9 @@ def escaped_tracer_error(tracer, detail=None):
               'frames (most recent last) excluding JAX-internal frames were:')
       msg += divider + source_info_util.summarize(
           line_info, num_frames=num_frames) + divider
+  elif dbg is not None:
+    msg += ('\nThe leaked value has no associated source line; it may be an '
+            f'argument of {dbg.func_src_info}.')
   msg += ('\nTo catch the leak earlier, try setting the environment variable '
           'JAX_CHECK_TRACER_LEAKS or using the `jax.checking_leaks` context '
           'manager.')
