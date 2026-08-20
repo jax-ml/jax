@@ -433,6 +433,32 @@ class DimExprTest(jtu.JaxTestCase):
     z = core.max_dim(-1, core.min_dim(1, a - 5))
     self.assertEqual((-np.inf, np.inf), _bounds(z * a))
 
+  def test_symbolic_dim_bounds(self):
+    m, n, free1, free2 = export.symbolic_shape(
+        "m, n, free1, free2",
+        constraints=("m >= 2", "m <= 8", "n >= 3", "n <= 10"),
+    )
+
+    self.assertEqual(export.symbolic_dim_bounds(np.int32(7)), (7, 7))
+    self.assertEqual(export.symbolic_dim_bounds(m), (2, 8))
+    self.assertEqual(export.symbolic_dim_bounds(m * n + 1), (7, 81))
+    self.assertEqual(export.symbolic_dim_bounds(free1), (1, np.inf))
+    self.assertEqual(
+        export.symbolic_dim_bounds(5 - free1), (-np.inf, 4))
+    self.assertEqual(
+        export.symbolic_dim_bounds(free1 - free2), (-np.inf, np.inf))
+
+    with self.assertRaises(TypeError):
+      export.symbolic_dim_bounds(1.5)
+
+  def test_symbolic_dim_bounds_propagates_inconclusive_operation(self):
+    a, b = export.symbolic_shape("a, b")
+    with self.assertRaisesRegex(
+        jax.errors.InconclusiveDimensionOperation,
+        "Possible division by 0",
+    ):
+      export.symbolic_dim_bounds(a // (b - 1))
+
   def test_bounds_mod(self):
     a, b = shape_poly.symbolic_shape("a, b")
 

@@ -16,6 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New features
+  * Added {func}`jax.export.symbolic_dim_bounds` for querying conservative
+    bounds on symbolic dimension expressions ({jax-issue}`#40006`).
+
 * Changes
   * JAX now uses Bazel 8.7.0 to build from source.
   * JAX now uses Bzlmod for its Bazel builds instead of WORKSPACE.
