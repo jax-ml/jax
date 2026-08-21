@@ -386,16 +386,7 @@ class JaxAotTest(jtu.JaxTestCase):
     self.assertIsInstance(serialized_topo, bytes)
     self.assertNotEmpty(serialized_topo)
 
-    try:
-      restored_topo = topologies.TopologyDescription.deserialize(
-          serialized_topo
-      )
-    except jax.errors.JaxRuntimeError as e:
-      if "UNIMPLEMENTED" in str(e):
-        raise unittest.SkipTest(
-            f"Deserialization not yet implemented in C-API plugin: {e}"
-        ) from e
-      raise
+    restored_topo = topologies.TopologyDescription.deserialize(serialized_topo)
     self.assertLen(restored_topo.devices, len(orig_topo.devices))
     self.assertEqual(
         restored_topo.devices[0].client.runtime_type, "compile_only_runtime"
