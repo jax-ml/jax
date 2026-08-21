@@ -63,7 +63,7 @@
 #
 # ### TL;DR
 #
-# Subclass `VJPHiPrimitive`, declare the input and output types, and define an
+# Subclass `HiPrim`, declare the input and output types, and define an
 # `expand` method giving the implementation. Then attach the derivative rules
 # you need: `vjp_fwd`/`vjp_bwd_retval` for reverse mode, `jvp` for forward
 # mode:
@@ -71,9 +71,9 @@
 # +
 import jax
 import jax.numpy as jnp
-from jax.experimental.hijax import VJPHiPrimitive
+from jax.experimental.hijax import HiPrim
 
-class SinTimesY(VJPHiPrimitive):
+class SinTimesY(HiPrim):
   def __init__(self, x_aval, y_aval):
     self.in_avals = (x_aval, y_aval)  # input types
     self.out_aval = x_aval            # output type
@@ -123,7 +123,7 @@ print(grad(f)(2., 3.))
 #
 # To get an idea of what problems hijax custom derivatives are meant to solve,
 # let's go over a few examples. A more thorough introduction to the
-# `VJPHiPrimitive` API is in the next section.
+# `HiPrim` API is in the next section.
 #
 # ### Example: Numerical stability
 #
@@ -186,7 +186,7 @@ jit(grad(log1pexp)).trace(100.).jaxpr
 # Here's a solution using a hijax primitive:
 
 # +
-class Log1pExp(VJPHiPrimitive):
+class Log1pExp(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -268,7 +268,7 @@ print(grad(f)(0.))
 # 1)^2}$ on $\mathbb{R}_+$:
 
 # +
-class FOnRPlus(VJPHiPrimitive):
+class FOnRPlus(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -307,7 +307,7 @@ print(grad(f)(0.))
 # and the backward rule returns `None` for their cotangents:
 
 # +
-class ClipGradient(VJPHiPrimitive):
+class ClipGradient(HiPrim):
   def __init__(self, lo_aval, hi_aval, x_aval):
     self.in_avals = (lo_aval, hi_aval, x_aval)
     self.out_aval = x_aval
@@ -372,7 +372,7 @@ plt.plot(vmap(grad(clip_sin))(t))
 # +
 import pdb
 
-class Debug(VJPHiPrimitive):
+class Debug(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -520,7 +520,7 @@ print(jit(vmap(newton_sqrt))(jnp.array([1., 2., 3., 4.])))
 from functools import partial
 from jax import vjp
 
-class FixedPoint(VJPHiPrimitive):
+class FixedPoint(HiPrim):
   def __init__(self, a_aval, x_aval, *, f):
     self.in_avals = (a_aval, x_aval)
     self.out_aval = x_aval
@@ -587,11 +587,11 @@ print(grad(grad(jnp.sqrt))(2.))
 # low-level primitive `lax.custom_root`, which allows for derivatives in
 # closed-over variables with custom root-finding functions.
 #
-# ## Basic usage of `VJPHiPrimitive`
+# ## Basic usage of `HiPrim`
 #
 # ### Anatomy of a hijax primitive
 #
-# A hijax primitive is a subclass of `VJPHiPrimitive`. Its `__init__` must set
+# A hijax primitive is a subclass of `HiPrim`. Its `__init__` must set
 # three attributes before calling `super().__init__()`:
 #
 # * `in_avals`, a tuple with one entry per positional argument, giving each
@@ -607,7 +607,7 @@ print(grad(grad(jnp.sqrt))(2.))
 # using `jax.typeof`, and immediately applies it:
 
 # +
-class Square(VJPHiPrimitive):
+class Square(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -672,7 +672,7 @@ print(square(3.))
 # with one entry per primal input.
 
 # +
-class Mul(VJPHiPrimitive):
+class Mul(HiPrim):
   def __init__(self, x_aval, y_aval):
     self.in_avals = (x_aval, y_aval)
     self.out_aval = x_aval
@@ -706,7 +706,7 @@ print(grad(mul, 1)(2., 3.))
 # some cases; see the symbolic zeros section below.)
 
 # +
-class Sin(VJPHiPrimitive):
+class Sin(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -796,7 +796,7 @@ jit(mul).trace(2., 3.).jaxpr
 # side effects, though harmless ones like `print` can be instructive):
 
 # +
-class Noisy(VJPHiPrimitive):
+class Noisy(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -822,7 +822,7 @@ print(jit(noisy)(3.))  # tracing is cached: no more 'called expand!'
 # rules then see concrete values:
 
 # +
-class G(VJPHiPrimitive):
+class G(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -894,7 +894,7 @@ Point = namedtuple("Point", ["x", "y"])
 
 from jax.experimental.hijax import Zero, instantiate_zeros
 
-class FPt(VJPHiPrimitive):
+class FPt(HiPrim):
   def __init__(self, pt_aval):
     self.in_avals = (pt_aval,)
     self.out_aval = {'a': pt_aval.x, 'b': (pt_aval.x, pt_aval.y)}
@@ -951,7 +951,7 @@ print(grad(fun)(pt))
 # residuals:
 
 # +
-class Mul2(VJPHiPrimitive):
+class Mul2(HiPrim):
   def __init__(self, x_aval, y_aval):
     self.in_avals = (x_aval, y_aval)
     self.out_aval = x_aval
@@ -997,7 +997,7 @@ print(grad(mul2, 1)(2., 3.))  # nzs_in == (False, True), saves only x
 # `.accum(...)`:
 
 # +
-class Mul3(VJPHiPrimitive):
+class Mul3(HiPrim):
   def __init__(self, x_aval, y_aval):
     self.in_avals = (x_aval, y_aval)
     self.out_aval = x_aval

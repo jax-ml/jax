@@ -126,7 +126,7 @@ class PallasCostEstimateTest(jtu.JaxTestCase):
     self.assertEqual(cost.bytes_accessed / 2, 3 * 4 * 100)
 
   def test_call_hi_primitive(self):
-    class DummyHiPrim(hijax.VJPHiPrimitive):
+    class DummyHiPrim(hijax.HiPrim):
 
       def __init__(self, x_aval, y_aval):
         self.in_avals = (x_aval, y_aval)

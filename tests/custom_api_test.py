@@ -3860,7 +3860,7 @@ class CustomVJP3Test(CustomVJPTest):
         return PairTy(self.ty.to_tangent_aval())
     hijax.register_hitype(Pair, lambda p: PairTy(core.typeof(p.a)))
 
-    class PairProd(hijax.VJPHiPrimitive):
+    class PairProd(hijax.HiPrim):
       def __init__(self, pair_aval):
         self.in_avals = (pair_aval,)
         self.out_aval = pair_aval.ty
@@ -3870,7 +3870,7 @@ class CustomVJP3Test(CustomVJPTest):
       def expand(self, p):
         return p.a * p.b
 
-    class PairSwapScale(hijax.VJPHiPrimitive):
+    class PairSwapScale(hijax.HiPrim):
       def __init__(self, pair_aval, s_aval):
         self.in_avals = (pair_aval, s_aval)
         self.out_aval = pair_aval
@@ -4649,9 +4649,9 @@ class CustomJVP3Test(CustomJVPTest):
       jax.jvp(jax.vmap(f), (jnp.arange(3.),), (jnp.ones(3),))
 
   def test_overbatched_rule_remedy(self):
-    # the remedy the error in test_hard_stuff2 recommends: a VJPHiPrimitive
+    # the remedy the error in test_hard_stuff2 recommends: a HiPrim
     # with a batch_dim_rule that declares the joined batchedness
-    class ZerosButTangent(hijax.VJPHiPrimitive):
+    class ZerosButTangent(hijax.HiPrim):
       def __init__(self, in_aval):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval

@@ -69,7 +69,7 @@ use cases, use `jax.custom_jvp` and `jax.custom_vjp`, described in
 
 ### TL;DR
 
-Subclass `VJPHiPrimitive`, declare the input and output types, and define an
+Subclass `HiPrim`, declare the input and output types, and define an
 `expand` method giving the implementation. Then attach the derivative rules
 you need: `vjp_fwd`/`vjp_bwd_retval` for reverse mode, `jvp` for forward
 mode:
@@ -77,9 +77,9 @@ mode:
 ```{code-cell}
 import jax
 import jax.numpy as jnp
-from jax.experimental.hijax import VJPHiPrimitive
+from jax.experimental.hijax import HiPrim
 
-class SinTimesY(VJPHiPrimitive):
+class SinTimesY(HiPrim):
   def __init__(self, x_aval, y_aval):
     self.in_avals = (x_aval, y_aval)  # input types
     self.out_aval = x_aval            # output type
@@ -127,7 +127,7 @@ reverse-mode rules.
 
 To get an idea of what problems hijax custom derivatives are meant to solve,
 let's go over a few examples. A more thorough introduction to the
-`VJPHiPrimitive` API is in the next section.
+`HiPrim` API is in the next section.
 
 ### Example: Numerical stability
 
@@ -193,7 +193,7 @@ as a unit, and thus arrange those exponentials better.
 Here's a solution using a hijax primitive:
 
 ```{code-cell}
-class Log1pExp(VJPHiPrimitive):
+class Log1pExp(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -280,7 +280,7 @@ terms of the derivative function $x \mapsto \frac{\sqrt{x} + 2}{2(\sqrt{x} +
 1)^2}$ on $\mathbb{R}_+$:
 
 ```{code-cell}
-class FOnRPlus(VJPHiPrimitive):
+class FOnRPlus(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -318,7 +318,7 @@ could even be `jit` tracers), so the forward rule saves them as residuals
 and the backward rule returns `None` for their cotangents:
 
 ```{code-cell}
-class ClipGradient(VJPHiPrimitive):
+class ClipGradient(HiPrim):
   def __init__(self, lo_aval, hi_aval, x_aval):
     self.in_avals = (lo_aval, hi_aval, x_aval)
     self.out_aval = x_aval
@@ -381,7 +381,7 @@ to a specific point in the primal computation:
 ```{code-cell}
 import pdb
 
-class Debug(VJPHiPrimitive):
+class Debug(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -530,7 +530,7 @@ traced inputs:
 from functools import partial
 from jax import vjp
 
-class FixedPoint(VJPHiPrimitive):
+class FixedPoint(HiPrim):
   def __init__(self, a_aval, x_aval, *, f):
     self.in_avals = (a_aval, x_aval)
     self.out_aval = x_aval
@@ -600,11 +600,11 @@ in the argument list of `fixed_point`. For this use case, consider using the
 low-level primitive `lax.custom_root`, which allows for derivatives in
 closed-over variables with custom root-finding functions.
 
-## Basic usage of `VJPHiPrimitive`
+## Basic usage of `HiPrim`
 
 ### Anatomy of a hijax primitive
 
-A hijax primitive is a subclass of `VJPHiPrimitive`. Its `__init__` must set
+A hijax primitive is a subclass of `HiPrim`. Its `__init__` must set
 three attributes before calling `super().__init__()`:
 
 * `in_avals`, a tuple with one entry per positional argument, giving each
@@ -620,7 +620,7 @@ function that builds the primitive instance from the types of the arguments,
 using `jax.typeof`, and immediately applies it:
 
 ```{code-cell}
-class Square(VJPHiPrimitive):
+class Square(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -683,7 +683,7 @@ residuals and the cotangent of the output, and returns a tuple of cotangents
 with one entry per primal input.
 
 ```{code-cell}
-class Mul(VJPHiPrimitive):
+class Mul(HiPrim):
   def __init__(self, x_aval, y_aval):
     self.in_avals = (x_aval, y_aval)
     self.out_aval = x_aval
@@ -715,7 +715,7 @@ output and the tangent output. (The input tangents can be symbolic zeros in
 some cases; see the symbolic zeros section below.)
 
 ```{code-cell}
-class Sin(VJPHiPrimitive):
+class Sin(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -806,7 +806,7 @@ traced and inlined. In an eager context, each call to the primitive calls
 side effects, though harmless ones like `print` can be instructive):
 
 ```{code-cell}
-class Noisy(VJPHiPrimitive):
+class Noisy(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -833,7 +833,7 @@ rules, as long as the primitive is used eagerly (outside of `jit`), since the
 rules then see concrete values:
 
 ```{code-cell}
-class G(VJPHiPrimitive):
+class G(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -903,7 +903,7 @@ Point = namedtuple("Point", ["x", "y"])
 
 from jax.experimental.hijax import Zero, instantiate_zeros
 
-class FPt(VJPHiPrimitive):
+class FPt(HiPrim):
   def __init__(self, pt_aval):
     self.in_avals = (pt_aval,)
     self.out_aval = {'a': pt_aval.x, 'b': (pt_aval.x, pt_aval.y)}
@@ -958,7 +958,7 @@ cotangent for it will be used. A rule can use that to avoid saving unneeded
 residuals:
 
 ```{code-cell}
-class Mul2(VJPHiPrimitive):
+class Mul2(HiPrim):
   def __init__(self, x_aval, y_aval):
     self.in_avals = (x_aval, y_aval)
     self.out_aval = x_aval
@@ -1002,7 +1002,7 @@ per primal input and adds each cotangent contribution in-place by calling
 `.accum(...)`:
 
 ```{code-cell}
-class Mul3(VJPHiPrimitive):
+class Mul3(HiPrim):
   def __init__(self, x_aval, y_aval):
     self.in_avals = (x_aval, y_aval)
     self.out_aval = x_aval

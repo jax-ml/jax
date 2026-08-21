@@ -298,7 +298,7 @@ np.testing.assert_allclose(rms_norm(x), rms_norm_ref(x), rtol=1e-5)
 # As far as JAX is concerned, an {func}`~jax.ffi.ffi_call` is an opaque black box: JAX can't look inside it to work out how it should behave under {func}`~jax.vmap`, or how to differentiate it.
 # So, for example, trying to differentiate `rms_norm` as defined above would fail.
 #
-# To teach JAX how to transform our foreign function, we wrap it in a _HiJAX primitive_: a custom JAX operation defined by subclassing `VJPHiPrimitive` from the experimental `jax.experimental.hijax` module.
+# To teach JAX how to transform our foreign function, we wrap it in a _HiJAX primitive_: a custom JAX operation defined by subclassing `HiPrim` from the experimental `jax.experimental.hijax` module.
 # On the primitive, we define a handful of methods:
 #
 # * `expand` implements the operation in terms of other ("lojax") JAX operations. Here, that's just a call to {func}`~jax.ffi.ffi_call`, and it is what runs when the primitive isn't being transformed.
@@ -321,7 +321,7 @@ np.testing.assert_allclose(rms_norm(x), rms_norm_ref(x), rtol=1e-5)
 # We'll access these two FFI targets through small helper functions, `rms_norm_fwd` and `rms_norm_bwd`, and call those from the primitive's AD rules:
 
 # +
-from jax.experimental.hijax import VJPHiPrimitive
+from jax.experimental.hijax import HiPrim
 
 jax.ffi.register_ffi_target(
   "rms_norm_fwd", jax.ffi.pycapsule(rms_norm_lib.RmsNormFwd), platform="cpu")
@@ -341,7 +341,7 @@ def rms_norm_bwd(res, x, ct):
   return jax.ffi.ffi_call("rms_norm_bwd", jax.typeof(x))(res, x, ct)
 
 
-class RMSNorm(VJPHiPrimitive):
+class RMSNorm(HiPrim):
   def __init__(self, aval, eps):
     if aval.dtype != jnp.float32:
       raise ValueError("Only the float32 dtype is implemented by rms_norm")
@@ -422,7 +422,7 @@ np.testing.assert_allclose(jax.vmap(rms_norm)(xs), jax.vmap(rms_norm_ref)(xs), r
 # Because `RMSNorm`'s rules already call the `rms_norm_fwd` and `rms_norm_bwd` helpers by name, we only need to replace those two helpers; `RMSNorm` itself doesn't change:
 
 # +
-class RMSNormFwd(VJPHiPrimitive):
+class RMSNormFwd(HiPrim):
   def __init__(self, aval, eps):
     self.in_avals = (aval,)
     self.out_aval = (aval, aval.update(shape=aval.shape[:-1]))  # y, res
@@ -442,7 +442,7 @@ def rms_norm_fwd(x, eps):
   return RMSNormFwd(jax.typeof(x), eps)(x)
 
 
-class RMSNormBwd(VJPHiPrimitive):
+class RMSNormBwd(HiPrim):
   def __init__(self, res_aval, x_aval, ct_aval):
     self.in_avals = (res_aval, x_aval, ct_aval)
     self.out_aval = x_aval
@@ -509,7 +509,7 @@ jax.set_mesh(jax.make_mesh((4,), ("x",)))
 # To keep the example focused on sharding we only show the forward pass here, but the same `shard_map` wrapping can be applied to the `vjp_fwd` and `vjp_bwd_retval` rules above to make the differentiated program partition well too.
 
 # +
-class RMSNorm(VJPHiPrimitive):
+class RMSNorm(HiPrim):
   def __init__(self, aval, eps):
     if aval.dtype != jnp.float32:
       raise ValueError("Only the float32 dtype is implemented by rms_norm")
@@ -591,7 +591,7 @@ assert "all-" not in hlo
 # In explicit sharding mode the active mesh carries an abstract description of the target device, whose `platform` we can query to pick the right target name. Note that this returns the lowercase XLA platform name (such as `"cuda"`), while the `platform` argument to {func}`~jax.ffi.register_ffi_target` is case-insensitive, so the `"CUDA"` registration above matches the `"cuda"` lookup here:
 
 # +
-class RMSNorm(VJPHiPrimitive):
+class RMSNorm(HiPrim):
   def __init__(self, aval, eps):
     if aval.dtype != jnp.float32:
       raise ValueError("Only the float32 dtype is implemented by rms_norm")

@@ -66,7 +66,7 @@
 # * Subclass `HiType` and implement `lo_ty`, `lower_val`, and `raise_val` to
 #   say how the type and its values lower to ordinary ("lojax") arrays, then
 #   call `register_hitype` to associate your value class with your type.
-# * Write `VJPHiPrimitive` subclasses whose `in_avals`/`out_aval` mention the
+# * Write `HiPrim` subclasses whose `in_avals`/`out_aval` mention the
 #   new type; these are the only way values of the type get produced and
 #   consumed.
 # * For autodiff, implement `to_tangent_aval` on the type, and VJP/JVP rules
@@ -204,14 +204,14 @@ register_hitype(QArray, lambda q: QArrayTy(q.qvalue.shape,
 # if every primitive preserves them, they always hold.
 #
 # Our two primitives are `quantize` and `dequantize`, written with the
-# `VJPHiPrimitive` API from {ref}`hijax-custom-derivatives`. Each declares
+# `HiPrim` API from {ref}`hijax-custom-derivatives`. Each declares
 # its input and output types, gives its implementation in `expand`, and
 # (looking ahead to autodiff) carries a straight-through-estimator VJP rule:
 
 # +
-from jax.experimental.hijax import VJPHiPrimitive
+from jax.experimental.hijax import HiPrim
 
-class Quantize(VJPHiPrimitive):
+class Quantize(HiPrim):
   def __init__(self, x_aval):
     if x_aval.dtype != jnp.dtype('float32'): raise TypeError(x_aval.dtype)
     self.in_avals = (x_aval,)
@@ -231,7 +231,7 @@ class Quantize(VJPHiPrimitive):
   def vjp_bwd_retval(self, _res, g):
     return (g,)
 
-class Dequantize(VJPHiPrimitive):
+class Dequantize(HiPrim):
   def __init__(self, q_aval):
     self.in_avals = (q_aval,)
     self.out_aval = ShapedArray(q_aval.shape, jnp.dtype('float32'),
@@ -332,7 +332,7 @@ except TypeError as e:
 # ordinary dense `f32` array and the weights are quantized:
 
 # +
-class MatmulQ(VJPHiPrimitive):
+class MatmulQ(HiPrim):
   def __init__(self, x_aval, q_aval):
     if not (isinstance(q_aval, QArrayTy) and len(x_aval.shape) == 2 and
             len(q_aval.shape) == 2 and x_aval.shape[1] == q_aval.shape[0]):
@@ -921,7 +921,7 @@ register_hitype(Rank1, typeof_rank1)
 # can get at the factors without touching container attributes:
 
 # +
-class Outer(VJPHiPrimitive):
+class Outer(HiPrim):
   def __init__(self, col_aval, row_aval):
     if not (len(col_aval.shape) == 1 and len(row_aval.shape) == 1):
       raise TypeError(f'bad outer factor types: {col_aval}, {row_aval}')
@@ -942,7 +942,7 @@ class Outer(VJPHiPrimitive):
     col, row = res
     return g @ row, col @ g
 
-class Factors(VJPHiPrimitive):
+class Factors(HiPrim):
   def __init__(self, r1_aval):
     self.in_avals = (r1_aval,)
     self.out_aval = tuple(r1_aval.lo_ty())  # the factor types are the lo types
@@ -952,7 +952,7 @@ class Factors(VJPHiPrimitive):
   def expand(self, r1):
     return (r1.col, r1.row)
 
-class MatmulR1(VJPHiPrimitive):
+class MatmulR1(HiPrim):
   def __init__(self, x_aval, r1_aval):
     if not (isinstance(r1_aval, Rank1Ty) and len(x_aval.shape) == 2 and
             x_aval.shape[1] == r1_aval.shape[0]):
@@ -1109,7 +1109,7 @@ def tup_inc_rank(self, size, spec):
 TupTy.dec_rank = tup_dec_rank
 TupTy.inc_rank = tup_inc_rank
 
-class MakeTup(VJPHiPrimitive):
+class MakeTup(HiPrim):
   def __init__(self, elt_avals):
     self.in_avals = tuple(elt_avals)
     self.out_aval = TupTy(tuple(elt_avals))
@@ -1122,7 +1122,7 @@ class MakeTup(VJPHiPrimitive):
   def batch(self, axis_data, args, in_dims):
     return make_tup(*args), TupSpec(tuple(in_dims))
 
-class GetTupElt(VJPHiPrimitive):
+class GetTupElt(HiPrim):
   def __init__(self, tup_aval, idx):
     self.in_avals = (tup_aval,)
     self.out_aval = tup_aval.tys[idx]

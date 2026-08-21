@@ -133,7 +133,7 @@ def hijax_method(f):
 
 # === new-style hijax primitive implementation ===
 
-class VJPHiPrimitive:
+class HiPrim:
   in_avals: tuple[PyTreeOfAvals, ...]
   out_aval: PyTreeOfAvals
   params: dict[str, Hashable]
@@ -146,8 +146,8 @@ class VJPHiPrimitive:
       raise AttributeError("subclass __init__ should set `self.out_aval`")
     if not hasattr(self, 'params'):
       raise AttributeError("subclass __init__ should set `self.params`")
-    if (type(self).vjp_bwd is not VJPHiPrimitive.vjp_bwd and
-        type(self).vjp_bwd_retval is not VJPHiPrimitive.vjp_bwd_retval):
+    if (type(self).vjp_bwd is not HiPrim.vjp_bwd and
+        type(self).vjp_bwd_retval is not HiPrim.vjp_bwd_retval):
       raise AttributeError(f"subclass {type(self)} should not override both "
                            "`vjp_bwd` and `vjp_bwd_retval`")
     self.in_avals_flat, self.in_tree = tracing_registry.flatten(self.in_avals)
@@ -252,7 +252,9 @@ class VJPHiPrimitive:
     return (type(self) is type(other) and self.params == other.params
             and self.effects == other.effects)
 
-class VmapOf(VJPHiPrimitive):
+VJPHiPrimitive = HiPrim
+
+class VmapOf(HiPrim):
   prim: core.Primitive
   axis_data: batching.AxisData
   in_dims: Any
@@ -339,7 +341,7 @@ def _explain_overbatched_member(prim, member_name):
         "but a rule may produce more-batched outputs (e.g. if a tangent "
         "depends on a batched input that the primal output does not use). "
         "To support that, define the operation as a "
-        "jax.experimental.hijax.VJPHiPrimitive and override its "
+        "jax.experimental.hijax.HiPrim and override its "
         "`batch_dim_rule` (or `batch`) method to declare the batched "
         "outputs.") from e
 
@@ -420,7 +422,7 @@ def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
   nzs_out = rest[0] if rest else True
   sres = rest[1] if len(rest) > 1 else None
   if (sres is not None and is_vjp and
-      type(_prim).vjp_bwd is VJPHiPrimitive.vjp_bwd):
+      type(_prim).vjp_bwd is HiPrim.vjp_bwd):
     raise TypeError(
         f"{type(_prim).__name__} returned structured residuals from `vjp_fwd`, "
         "which requires overriding `vjp_bwd(res, sres, outgrad, *arg_accums)`")
@@ -683,7 +685,7 @@ vjp_from_jvp = _VJPFromJVP(_vjp_fwd_from_jvp, _transpose_jvp)
 vjp_from_lin = _VJPFromLin(_vjp_fwd_from_lin, _transpose_linearized)
 
 
-class CustomVJPTraced(VJPHiPrimitive):
+class CustomVJPTraced(HiPrim):
   traced: Any
   fwd: Any
   bwd: Any
@@ -942,7 +944,7 @@ class custom_vjp3:
   def def_vmap(self, rule, /): return self.f.def_vmap(rule)
   def def_transpose(self, rule, /): return self.f.def_transpose(rule)
 
-class OptRemat(VJPHiPrimitive):
+class OptRemat(HiPrim):
   orig: CustomVJPTraced
   traced_fwd: Any
 
@@ -980,7 +982,7 @@ class Static:
   val: Any
 
 
-class CustomJVPTraced(VJPHiPrimitive):
+class CustomJVPTraced(HiPrim):
   traced: Any
   jvp_fun: Any  # named to avoid shadowing the jvp method via params
   symbolic_zeros: Any

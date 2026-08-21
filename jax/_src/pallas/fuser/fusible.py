@@ -38,7 +38,7 @@ def _positional_effects(jaxpr: jax_core.Jaxpr) -> frozenset[effects.Effect]:
   return frozenset(jax_core.subst_input_effects(jaxpr.effects, idx))
 
 
-class Fusible(hijax.VJPHiPrimitive):
+class Fusible(hijax.HiPrim):
   output_fusion_prefix: Any
   func: Callable
   jaxpr: jax_core.Jaxpr

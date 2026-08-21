@@ -33,7 +33,7 @@ from jax._src import tree_util
 from jax._src.hijax import (
     linearize_from_jvp,
     vjp_from_jvp,
-    VJPHiPrimitive,
+    HiPrim,
 )
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.interpreters import ad
@@ -44,7 +44,7 @@ from jax._src.numpy.einsum import _einsum as einsum_impl, Unoptimized
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
 
-class SearchSorted(VJPHiPrimitive):
+class SearchSorted(HiPrim):
   """HiJAX primitive for binary search."""
   valid_methods = ("compare_all", "scan", "scan_unrolled", "sort")
 
@@ -179,7 +179,7 @@ class SearchSorted(VJPHiPrimitive):
   lin, linearized = linearize_from_jvp
 
 
-class Nonzero(VJPHiPrimitive):
+class Nonzero(HiPrim):
   """HiJAX primitive for nonzero."""
 
   size: int
@@ -315,7 +315,7 @@ class Nonzero(VJPHiPrimitive):
   lin, linearized = linearize_from_jvp
 
 
-class Einsum(VJPHiPrimitive):
+class Einsum(HiPrim):
   """HiJAX primitive for einstein summation.
 
   Parameters:

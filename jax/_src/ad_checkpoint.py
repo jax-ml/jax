@@ -38,7 +38,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.remat import remat_transform
-from jax._src.hijax import VJPHiPrimitive, call_hi_primitive_p, Static
+from jax._src.hijax import HiPrim, call_hi_primitive_p, Static
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
 from jax._src.lib.mlir.dialects import hlo
@@ -1074,7 +1074,7 @@ def _dced(jaxpr, in_fwd, take, out_tree, policy, res, *args):
   return tree_unflatten(out_tree, subs_list(in_fwd, ins, outs))
 
 
-class RematTraced(VJPHiPrimitive):
+class RematTraced(HiPrim):
   jaxpr: core.Jaxpr
   policy: Any
   prevent_cse: bool | tuple[bool, ...]
@@ -1208,7 +1208,7 @@ class RematTraced(VJPHiPrimitive):
     return (tuple(used_ins), tuple(used_outs_flat),
             RematTraced(new_jaxpr, self.policy, prevent_cse))
 
-class CheckpointName(VJPHiPrimitive):
+class CheckpointName(HiPrim):
   name: str
 
   def __init__(self, name, aval):
@@ -1265,7 +1265,7 @@ class CheckpointName(VJPHiPrimitive):
   def batch_dim_rule(self, axis_data, dims, /):
     return dims[0]
 
-class PrimalLeftTangentRight(VJPHiPrimitive):
+class PrimalLeftTangentRight(HiPrim):
   def __init__(self, aval_x, aval__x):
     self.in_avals = aval_x, aval__x
     self.out_aval = aval_x
@@ -1346,7 +1346,7 @@ def custom_remat(f, f_fwd, f_rem, f_bwd, *, static_argnums=(),
     return out_avals_ft.update(out_flat).unflatten()
   return call
 
-class CustomRemat(VJPHiPrimitive):
+class CustomRemat(HiPrim):
   jaxpr: core.Jaxpr
   f1: Callable
   f2_fbwd: Callable

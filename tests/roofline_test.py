@@ -91,7 +91,7 @@ def fake_jax_primitive_function(x):
   return fake_jax_primitive_p.bind(x)
 
 
-class DummyDotHiPrimitive(hijax.VJPHiPrimitive):
+class DummyDotHiPrimitive(hijax.HiPrim):
   def __init__(self, x_aval, y_aval):
     self.in_avals = (x_aval, y_aval)
     self.out_aval = core.ShapedArray((x_aval.shape[0], y_aval.shape[1]), x_aval.dtype)

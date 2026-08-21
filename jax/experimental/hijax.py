@@ -35,6 +35,7 @@ from jax._src.effects import (
     control_flow_allowed_effects as control_flow_allowed_effects,
 )
 from jax._src.hijax import (
+    HiPrim as HiPrim,
     HiPspec as HiPspec,
     HiType as HiType,
     MappingSpec as MappingSpec,

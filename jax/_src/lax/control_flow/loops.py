@@ -97,7 +97,7 @@ def _promote_weak_typed_input(
 
 ### scan
 
-class Scan3(hijax.VJPHiPrimitive):
+class Scan3(hijax.HiPrim):
 
   extensives : list[bool]
   length : int

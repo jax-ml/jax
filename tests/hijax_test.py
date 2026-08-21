@@ -45,7 +45,7 @@ from jax._src.hijax import (
     HiType, register_hitype, ShapedArray, Ty, MappingSpec,
     HiPspec)
 from jax.experimental.hijax import (
-    VJPHiPrimitive, Zero, instantiate_zeros, jvp_from_lin, linearize_from_jvp,
+    HiPrim, Zero, instantiate_zeros, jvp_from_lin, linearize_from_jvp,
     vjp_from_jvp, vjp_from_lin)
 
 jtu.request_cpu_devices(8)
@@ -133,7 +133,7 @@ class QArrayTy(HiType):
 
 register_hitype(QArray, lambda q: QArrayTy(q.arr.shape))
 
-class ToQ(VJPHiPrimitive):
+class ToQ(HiPrim):
   def __init__(self, lo_aval):
     self.in_avals = (lo_aval,)
     self.out_aval = QArrayTy(lo_aval.shape)
@@ -157,7 +157,7 @@ class ToQ(VJPHiPrimitive):
       accum.accum(from_qarray(out_bar))
 
 
-class FromQ(VJPHiPrimitive):
+class FromQ(HiPrim):
   def __init__(self, hi_aval):
     self.in_avals = (hi_aval,)
     self.out_aval = ShapedArray(hi_aval.shape, jnp.dtype('float32'))
@@ -259,7 +259,7 @@ class TupP(HiPspec):
   def to_lo(self) -> tuple[jax.PartitionSpec, ...]:
     return self.val
 
-class MakeTup(VJPHiPrimitive):
+class MakeTup(HiPrim):
   def __init__(self, in_avals):
     in_avals = tuple(in_avals)
     self.in_avals = in_avals
@@ -285,7 +285,7 @@ class MakeTup(VJPHiPrimitive):
   def batch(self, _axis_data, args, in_dims):
     return make_tup(*args), TupSpec(in_dims)
 
-class GetTupElt(VJPHiPrimitive):
+class GetTupElt(HiPrim):
   def __init__(self, in_aval, idx):
     self.in_avals = in_aval,
     self.out_aval = in_aval.tys[idx]
@@ -424,7 +424,7 @@ def _unmap_immutbox_ty(size: int, axis: int | None, explicit_mesh_axis,
 
 core.aval_mapping_handlers[ImmutBoxTy] = (_map_immutbox_ty, _unmap_immutbox_ty)
 
-class ImmutBoxNew(VJPHiPrimitive):
+class ImmutBoxNew(HiPrim):
   def __init__(self, leaf_avals, treedef):
     self.in_avals = tuple(leaf_avals)
     self.out_aval = ImmutBoxTy(tuple(leaf_avals), treedef)
@@ -462,7 +462,7 @@ def immutbox_new(val):
   return ImmutBoxNew(leaf_avals, treedef)(*leaves)
 
 
-class ImmutBoxGet(VJPHiPrimitive):
+class ImmutBoxGet(HiPrim):
   def __init__(self, box_aval):
     self.in_avals = (box_aval,)
     self.out_aval = jax.tree.unflatten(box_aval.treedef, box_aval.leaf_avals)
@@ -494,7 +494,7 @@ def immutbox_get(box):
 register_hitype(ImmutBox, immutbox_to_aval)
 
 
-class Square(VJPHiPrimitive):
+class Square(HiPrim):
   """Simple parameterless hijax primitive for use in tests."""
   _jvp_execution_count = 0
 
@@ -530,7 +530,7 @@ def square(x):
   return Square(jax.typeof(x))(x)
 
 
-class NonDiffPrim(VJPHiPrimitive):
+class NonDiffPrim(HiPrim):
   def __init__(self, in_aval):
     self.in_avals = (in_aval,)
     self.out_aval = in_aval
@@ -697,7 +697,7 @@ class HijaxTest(jtu.JaxTestCase):
         return add(x, y)
     register_hitype(MyArray, lambda _: MyTy())
 
-    class ToMy(VJPHiPrimitive):
+    class ToMy(HiPrim):
       def __init__(self, lo_aval):
         self.in_avals = (lo_aval,)
         self.out_aval = MyTy()
@@ -717,7 +717,7 @@ class HijaxTest(jtu.JaxTestCase):
         if isinstance(accum, ad.GradAccum):
           accum.accum(from_(out_bar))
 
-    class FromMy(VJPHiPrimitive):
+    class FromMy(HiPrim):
       def __init__(self, hi_aval):
         self.in_avals = (hi_aval,)
         self.out_aval = hi_aval.lo_ty()[0]
@@ -744,7 +744,7 @@ class HijaxTest(jtu.JaxTestCase):
     def mul(x, y): return MyMul(core.typeof(x), core.typeof(y))(x, y)
     def add(x, y): return MyAdd(core.typeof(x), core.typeof(y))(x, y)
 
-    class MyMul(VJPHiPrimitive):
+    class MyMul(HiPrim):
       def __init__(self, hi_x, hi_y):
         if hi_x != hi_y: raise Exception
         self.in_avals = (hi_x, hi_y)
@@ -771,7 +771,7 @@ class HijaxTest(jtu.JaxTestCase):
         else:
           y.accum(mul(x, out_bar))
 
-    class MyAdd(VJPHiPrimitive):
+    class MyAdd(HiPrim):
       def __init__(self, hi_x, hi_y):
         if hi_x != hi_y: raise Exception
         self.in_avals = (hi_x, hi_y)
@@ -846,13 +846,13 @@ class HijaxTest(jtu.JaxTestCase):
 
     register_hitype(Box, lambda b: BoxTy(b.a.shape))
 
-    class Wrap(VJPHiPrimitive):
+    class Wrap(HiPrim):
       def __init__(self, av):
         self.in_avals, self.out_aval, self.params = (av,), BoxTy(av.shape), {}
         super().__init__()
       def expand(self, a): return Box(a)
 
-    class Scale(VJPHiPrimitive):
+    class Scale(HiPrim):
       def __init__(self, av):
         self.in_avals, self.out_aval, self.params = (av,), av, {}
         super().__init__()
@@ -1158,7 +1158,7 @@ class HijaxTest(jtu.JaxTestCase):
   @parameterized.parameters([False, True])
   def test_newstyle_hiprimitive(self, jit):
 
-    class RaiseToStaticPower(VJPHiPrimitive):
+    class RaiseToStaticPower(HiPrim):
       def __init__(self, in_aval, *, power):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -1206,7 +1206,7 @@ class HijaxTest(jtu.JaxTestCase):
   @parameterized.parameters([False, True])
   def test_newstyle_hiprimitive_retval(self, jit):
 
-    class RaiseToStaticPower(VJPHiPrimitive):
+    class RaiseToStaticPower(HiPrim):
       def __init__(self, in_aval, *, power):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -1244,7 +1244,7 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertEqual(jax.grad(f)(2.0), 12.0)
 
   def test_newstyle_hiprimitive_defines_both_types_of_vjp_error(self):
-    class RaiseToStaticPower(VJPHiPrimitive):
+    class RaiseToStaticPower(HiPrim):
       def __init__(self, in_aval, *, power):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -1282,7 +1282,7 @@ class HijaxTest(jtu.JaxTestCase):
 
   def test_newstyle_hiprimitive_vmap(self):
 
-    class Mul(VJPHiPrimitive):
+    class Mul(HiPrim):
 
       def __init__(self, aval):
         self.in_avals = (aval, aval)
@@ -1312,7 +1312,7 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(f(x, y), x * y[None, :, None])
 
   def test_newstyle_hiprimitive_nested_vmap_unmapped_axis(self):
-    class Id(VJPHiPrimitive):
+    class Id(HiPrim):
       def __init__(self, aval):
         self.in_avals = aval,
         self.out_aval = aval
@@ -1336,7 +1336,7 @@ class HijaxTest(jtu.JaxTestCase):
 
     # multiple args and a tuple output, so that None dims appear inside the
     # in_dims/out_dim pytrees (mixed with ints) at each level of nesting
-    class AddSnd(VJPHiPrimitive):
+    class AddSnd(HiPrim):
       def __init__(self, x_aval, y_aval):
         self.in_avals = (x_aval, y_aval)
         self.out_aval = (x_aval, y_aval)
@@ -1376,7 +1376,7 @@ class HijaxTest(jtu.JaxTestCase):
 
   def test_newstyle_hiprimitive_vmap_jvp_symbolic_zero_tangent(self):
 
-    class Mul(VJPHiPrimitive):
+    class Mul(HiPrim):
 
       def __init__(self, aval):
         self.in_avals = (aval, aval)
@@ -1439,7 +1439,7 @@ class HijaxTest(jtu.JaxTestCase):
     def dq(qx):
       return DQ(jax.typeof(qx))(qx)
 
-    class Q(VJPHiPrimitive):
+    class Q(HiPrim):
       def __init__(self, unquantized_aval):
         if unquantized_aval.dtype != jnp.dtype('float32'): raise TypeError
         quantized_aval = QArrayTy(unquantized_aval.shape)
@@ -1459,7 +1459,7 @@ class HijaxTest(jtu.JaxTestCase):
       def vjp_bwd_retval(self, _, g):
         return g,
 
-    class DQ(VJPHiPrimitive):
+    class DQ(HiPrim):
       def __init__(self, quantized_aval):
         unquantized_aval = ShapedArray(quantized_aval.shape, jnp.dtype('float32'))
         self.in_avals = (quantized_aval,)
@@ -1484,7 +1484,7 @@ class HijaxTest(jtu.JaxTestCase):
 
   def test_symbolic_zeros(self):
 
-    class Mul(VJPHiPrimitive):
+    class Mul(HiPrim):
       def __init__(self, aval):
         self.in_avals = (aval, aval)
         self.out_aval = aval
@@ -1517,7 +1517,7 @@ class HijaxTest(jtu.JaxTestCase):
 
   def test_symbolic_zeros_retval(self):
 
-    class Mul(VJPHiPrimitive):
+    class Mul(HiPrim):
       def __init__(self, aval):
         self.in_avals = (aval, aval)
         self.out_aval = aval
@@ -1580,7 +1580,7 @@ class HijaxTest(jtu.JaxTestCase):
 
   @parameterized.parameters([False, True])
   def test_linearize_rule(self, jit):
-    class RaiseToStaticPower(VJPHiPrimitive):
+    class RaiseToStaticPower(HiPrim):
       def __init__(self, in_aval, *, power):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -1613,7 +1613,7 @@ class HijaxTest(jtu.JaxTestCase):
 
   @parameterized.parameters([False, True])
   def test_rules_derived_from_jvp(self, jit):
-    class Sin(VJPHiPrimitive):
+    class Sin(HiPrim):
       def __init__(self, x_aval):
         self.in_avals = (x_aval,)
         self.out_aval = x_aval
@@ -1656,7 +1656,7 @@ class HijaxTest(jtu.JaxTestCase):
   def test_rules_derived_from_jvp_multiple_args(self):
     zero_tangents_seen = []
 
-    class Mul(VJPHiPrimitive):
+    class Mul(HiPrim):
       def __init__(self, x_aval, y_aval):
         self.in_avals = (x_aval, y_aval)
         self.out_aval = x_aval
@@ -1695,7 +1695,7 @@ class HijaxTest(jtu.JaxTestCase):
 
   @parameterized.parameters([False, True])
   def test_vjp_derived_from_user_lin(self, jit):
-    class RaiseToStaticPower(VJPHiPrimitive):
+    class RaiseToStaticPower(HiPrim):
       def __init__(self, in_aval, *, power):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -1729,7 +1729,7 @@ class HijaxTest(jtu.JaxTestCase):
 
   def test_vjp_derived_from_derived_lin(self):
     # the whole chain: jvp -> derived lin -> derived vjp
-    class Sin(VJPHiPrimitive):
+    class Sin(HiPrim):
       def __init__(self, x_aval):
         self.in_avals = (x_aval,)
         self.out_aval = x_aval
@@ -1757,7 +1757,7 @@ class HijaxTest(jtu.JaxTestCase):
     # `lin` and `vjp_fwd` may return a fourth element, structured residuals,
     # in which case `linearized` and `vjp_bwd` receive them as an extra
     # argument after the (unstructured) residuals.
-    class Square(VJPHiPrimitive):
+    class Square(HiPrim):
       def __init__(self, in_aval):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -1803,7 +1803,7 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertLen(fwd_eqn.outvars, 1)
 
   def test_structured_residuals_require_vjp_bwd_override(self):
-    class Bad(VJPHiPrimitive):
+    class Bad(HiPrim):
       def __init__(self, in_aval):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -1826,7 +1826,7 @@ class HijaxTest(jtu.JaxTestCase):
     # A vjp_bwd rule can return a dict of pytrees to log out of the backward
     # pass; f_vjp.with_logs(out_ct) returns (arg_cts, logs), where logs merges
     # the rules' dicts with clobber semantics. Plain f_vjp(out_ct) drops them.
-    class Square(VJPHiPrimitive):
+    class Square(HiPrim):
       def __init__(self, in_aval, tag):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -1896,7 +1896,7 @@ class HijaxTest(jtu.JaxTestCase):
     # branch doesn't log the key). Branches needn't agree on keys or types.
     from jax._src.lax.control_flow.conditionals import CondSum
 
-    class Square(VJPHiPrimitive):
+    class Square(HiPrim):
       def __init__(self, in_aval, tag):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -1982,7 +1982,7 @@ class HijaxTest(jtu.JaxTestCase):
   def test_backward_pass_logging_shard_map(self):
     # Logs from inside a transposed shard_map come out mesh-stacked along
     # their leading axis (per-shard scalars come out with shape (num_shards,)).
-    class Square(VJPHiPrimitive):
+    class Square(HiPrim):
       def __init__(self, in_aval):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -2018,7 +2018,7 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(jax.grad(f)(xs), 4.0 * xs)
 
   def test_backward_pass_logging_bad_return(self):
-    class Bad(VJPHiPrimitive):
+    class Bad(HiPrim):
       def __init__(self, in_aval):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -2053,7 +2053,7 @@ class HijaxTest(jtu.JaxTestCase):
       jax.vjp(lambda x: bad_id_p.bind(x) * 2., 3.0)[1](1.0)
 
   def test_backward_pass_logging_with_refs(self):
-    class Square(VJPHiPrimitive):
+    class Square(HiPrim):
       def __init__(self, in_aval):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -2109,7 +2109,7 @@ class HijaxTest(jtu.JaxTestCase):
     from jax.experimental.fused import fused
     from jax.experimental.scheduling_groups import scheduling_group
 
-    class Square(VJPHiPrimitive):
+    class Square(HiPrim):
       def __init__(self, in_aval):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -2206,7 +2206,7 @@ class HijaxTest(jtu.JaxTestCase):
   def test_backward_pass_logging_remat3(self):
     # Under remat3, a vjp_bwd rule's logs flow out of a rematted computation's
     # backward pass.
-    class Square(VJPHiPrimitive):
+    class Square(HiPrim):
       def __init__(self, in_aval, tag):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -2302,7 +2302,7 @@ class HijaxTest(jtu.JaxTestCase):
       self.assertAllClose(logsn, {'canary': 2.0}, check_dtypes=False)
 
   def test_jvp_derived_from_lin(self):
-    class RaiseToStaticPower(VJPHiPrimitive):
+    class RaiseToStaticPower(HiPrim):
       def __init__(self, in_aval, *, power):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -2335,7 +2335,7 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertEqual(jax.hessian(f)(2.0), 12.0)
 
   def test_jvp_from_lin_circular_error(self):
-    class Sin(VJPHiPrimitive):
+    class Sin(HiPrim):
       def __init__(self, x_aval):
         self.in_avals = (x_aval,)
         self.out_aval = x_aval
@@ -2355,7 +2355,7 @@ class HijaxTest(jtu.JaxTestCase):
       jax.jvp(sin, (2.0,), (1.0,))
 
   def test_derived_rules_with_static_params(self):
-    class ApplyAndScale(VJPHiPrimitive):
+    class ApplyAndScale(HiPrim):
       def __init__(self, x_aval, *, f, scale):
         self.in_avals = (x_aval,)
         self.out_aval = x_aval
@@ -2383,7 +2383,7 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(jax.linearize(f, 2.0)[1](1.0), 2 * jnp.cos(2.0))
 
   def test_rules_derived_from_jvp_error_messages(self):
-    class Sin(VJPHiPrimitive):
+    class Sin(HiPrim):
       def __init__(self, x_aval):
         self.in_avals = (x_aval,)
         self.out_aval = x_aval
@@ -2422,7 +2422,7 @@ class HijaxTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_shmap_grad_hitype(self, mesh):
-    class Mul(VJPHiPrimitive):
+    class Mul(HiPrim):
       def __init__(self, aval):
         self.in_avals = (aval, aval)
         self.out_aval = aval
@@ -2484,7 +2484,7 @@ class HijaxTest(jtu.JaxTestCase):
 
     register_hitype(MulH, lambda m: MulTy(jax.typeof(m.val)))
 
-    class MulHZero(VJPHiPrimitive):
+    class MulHZero(HiPrim):
       def __init__(self, mul_ty):
         self.in_avals = ()
         self.out_aval = mul_ty
@@ -2528,7 +2528,7 @@ class HijaxTest(jtu.JaxTestCase):
 
   @parameterized.parameters([False, True])
   def test_ref_prim(self, jit):
-    class Square(VJPHiPrimitive):
+    class Square(HiPrim):
       def __init__(self, ref_aval):
         self.in_avals = (ref_aval,)
         self.out_aval = None

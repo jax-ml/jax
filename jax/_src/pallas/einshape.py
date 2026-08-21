@@ -365,7 +365,7 @@ mlir.register_lowering(einshape_lo_p, _einshape_lo_lowering)
 dispatch.simple_impl(einshape_lo_p)
 
 
-class Einshape(hijax.VJPHiPrimitive):
+class Einshape(hijax.HiPrim):
   """Einshape primitive."""
 
   def __init__(
