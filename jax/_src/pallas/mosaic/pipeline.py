@@ -1400,6 +1400,16 @@ class Scheduler:
 # Main pipeline methods
 
 
+def _filter_specs_and_refs(specs: Any, refs: Any):
+  """Replaces unwindowed block specs and their corresponding refs with None."""
+  is_no_spec = lambda s: s is pallas_core.no_block_spec
+  filt_specs = jax.tree.map(lambda s, r: None if is_no_spec(s) else s,
+                            specs, refs)
+  filt_refs = jax.tree.map(lambda s, r: None if is_no_spec(s) else r,
+                           specs, refs)
+  return filt_specs, filt_refs
+
+
 def _normalize_specs(specs: Any) -> tuple[pallas_core.BlockSpec, ...]:
   if not isinstance(specs, (list, tuple)):
     specs = (specs,)
@@ -1434,8 +1444,8 @@ def _make_pipeline_allocations(
   num_in_specs = len(in_specs)
   in_specs = _normalize_specs(in_specs)
   out_specs = _normalize_specs(out_specs)
-  in_refs = refs[:num_in_specs]
-  out_refs = refs[num_in_specs:]
+  in_specs, in_refs = _filter_specs_and_refs(in_specs, refs[:num_in_specs])
+  out_specs, out_refs = _filter_specs_and_refs(out_specs, refs[num_in_specs:])
   def make_input_bref(in_spec, in_ref):
     in_aval = _ref_to_value_aval(in_ref)
     buffer_count = 2
@@ -1953,19 +1963,6 @@ def _zip_grid(dynamic_grid_spec, static_grid_spec):
   return tuple(next(dynamic_it) if pallas_core.is_dynamic_dim(d) else d
               for d in static_grid_spec)
 
-def _check_no_block_specs(*specs: Any) -> None:
-  for spec in jax.tree.leaves(specs):
-    if spec is pallas_core.no_block_spec or isinstance(
-        spec, pallas_core.NoBlockSpec
-    ):
-      raise ValueError(
-          "`no_block_spec` is not supported in `emit_pipeline` and passing it"
-          " likely indicates an error. If you're using fuser, you might need"
-          " to filter out `no_block_spec` arguments using"
-          " `fuser.filter_no_block_specs`."
-      )
-
-
 def emit_pipeline(
     body,
     *,
@@ -1980,7 +1977,8 @@ def emit_pipeline(
     no_pipelining: bool = False,
     _explicit_indices: bool = False,
 ):
-  _check_no_block_specs(in_specs, out_specs)
+  in_specs = _normalize_specs(in_specs)
+  out_specs = _normalize_specs(out_specs)
 
   if any(g <= 0 for g in grid if isinstance(g, int)):
     raise ValueError(
@@ -1993,69 +1991,83 @@ def emit_pipeline(
   if dimension_semantics is None:
     dimension_semantics = (ARBITRARY,) * len(grid)
 
-  if not config.use_emit_pipeline_primitive.value:
+  num_in_specs = len(in_specs)
+
+  def wrapped(*args, allocations=None, **kwargs):
     num_cores, core_id = _resolve_core_info(core_axis_)
-    return _emit_pipeline(
-        body,
-        grid=grid,
-        in_specs=in_specs,
-        out_specs=out_specs,
-        tiling=tiling,
-        dimension_semantics=dimension_semantics,
-        trace_scopes=trace_scopes,
-        no_pipelining=no_pipelining,
-        _explicit_indices=_explicit_indices,
-        num_cores=num_cores,
-        core_id=core_id,
-    )
 
-  in_specs = _normalize_specs(in_specs)
-  out_specs = _normalize_specs(out_specs)
-  in_specs_flat, _ = tree_util.tree_flatten(in_specs)
-  out_specs_flat, _ = tree_util.tree_flatten(out_specs)
-
-  def wrapped(*args, allocations=None):
-    refs_flat, refs_tree = tracing_registry.flatten(args, is_transformed_ref)
-    local_in_specs, local_out_specs = in_specs_flat, out_specs_flat
-    if allocations is not None:
-      flat_allocs = jax.tree.leaves(
-          allocations, is_leaf=lambda x: isinstance(x, BufferedRefBase)
+    if allocations is not None and not in_specs and not out_specs:
+      flat_allocs = [
+          b for b in allocations if isinstance(b, BufferedRefBase) or b is None
+      ]
+      in_specs_ = tuple(
+          b.spec if isinstance(b, BufferedRefBase) else None
+          for b in flat_allocs if b is None or b.buffer_type == BufferType.INPUT
       )
-      local_in_specs = local_in_specs or [
-          b.spec for b in flat_allocs if b.buffer_type == BufferType.INPUT
-      ]
-      local_out_specs = local_out_specs or [
-          b.spec for b in flat_allocs if b.buffer_type != BufferType.INPUT
-      ]
+      out_specs_ = tuple(
+          b.spec if isinstance(b, BufferedRefBase) else None
+          for b in flat_allocs
+          if b is not None and b.buffer_type != BufferType.INPUT
+      )
+      num_in_specs_alloc = sum(
+          1 for b in flat_allocs
+          if b is None or b.buffer_type == BufferType.INPUT
+      )
+      in_refs = args[:num_in_specs_alloc]
+      out_refs = args[num_in_specs_alloc:]
+      in_specs_, in_refs = _filter_specs_and_refs(in_specs_, in_refs)
+      out_specs_, out_refs = _filter_specs_and_refs(out_specs_, out_refs)
+    else:
+      in_specs_, in_refs = _filter_specs_and_refs(
+          in_specs, args[:num_in_specs])
+      out_specs_, out_refs = _filter_specs_and_refs(
+          out_specs, args[num_in_specs:])
 
-    num_inputs = len(local_in_specs)
-    in_refs, out_refs = refs_flat[:num_inputs], refs_flat[num_inputs:]
+    if not config.use_emit_pipeline_primitive.value:
+      return _emit_pipeline(
+          body,
+          grid=grid,
+          in_specs=in_specs_,
+          out_specs=out_specs_,
+          tiling=tiling,
+          dimension_semantics=dimension_semantics,
+          trace_scopes=trace_scopes,
+          no_pipelining=no_pipelining,
+          _explicit_indices=_explicit_indices,
+          num_cores=num_cores,
+          core_id=core_id,
+      )(*in_refs, *out_refs, allocations=allocations, **kwargs)
+
+    in_specs_flat, _ = tree_util.tree_flatten(in_specs_)
+    out_specs_flat, _ = tree_util.tree_flatten(out_specs_)
+    in_refs_flat, _ = tracing_registry.flatten(in_refs, is_transformed_ref)
+    out_refs_flat, _ = tracing_registry.flatten(out_refs, is_transformed_ref)
 
     # Split the grid into static and dynamic parts the latter passed as args.
-    in_avals = [_ref_to_value_aval(r) for r in in_refs]
-    out_avals = [_ref_to_value_aval(r) for r in out_refs]
+    in_avals = [_ref_to_value_aval(r) for r in in_refs_flat]
+    out_avals = [_ref_to_value_aval(r) for r in out_refs_flat]
 
-    num_cores, core_id = _resolve_core_info(core_axis_)
     grid_spec = pallas_core.GridSpec(
-        grid=grid, in_specs=local_in_specs, out_specs=local_out_specs
-    )
+        grid=grid, in_specs=in_specs_flat, out_specs=out_specs_flat)
     static_grid_spec, dynamic_grid_specs = (
         pallas_core.unzip_dynamic_grid_bounds(grid_spec))
 
     # TODO(rdyro): Move this method to pallas_core or vendor it here.
-    _, in_tree = tracing_registry.flatten(tuple(in_refs), is_transformed_ref)
-    _, out_tree = tracing_registry.flatten(tuple(out_refs), is_transformed_ref)
     kernel_args, grid_mapping = pallas_core.get_grid_mapping(
         static_grid_spec,
         in_avals,
-        in_tree,
+        tree_util.tree_structure(tuple(in_refs_flat)),
         [""] * len(in_avals),
         out_avals,
-        out_tree,
+        tree_util.tree_structure(tuple(out_refs_flat)),
         [""] * len(out_avals),
         allow_captured_consts=True,
     )
     # Trace the kernel body to a jaxpr.
+    filtered_args = (*in_refs, *out_refs)
+    _, refs_tree = tracing_registry.flatten(
+        filtered_args, is_transformed_ref
+    )
     kernel_args = refs_tree.unflatten(kernel_args)
     flat_kernel_args, _ = tracing_registry.flatten(
         kernel_args, is_transformed_ref)
@@ -2093,7 +2105,7 @@ def emit_pipeline(
     all_index_map_consts = tuple(itertools.chain.from_iterable(
         bm.index_map_jaxpr.consts for bm in grid_mapping.block_mappings))
 
-    refs_flat, refs_tree = tracing_registry.flatten(args)
+    refs_flat, refs_tree = tracing_registry.flatten(filtered_args)
     prim_args = EmitPipelinePrimitiveArgs(
         all_index_map_consts=all_index_map_consts,
         dynamic_grid_spec=dynamic_grid_specs,
@@ -2485,13 +2497,18 @@ def emit_pipeline_to_jaxpr(
     )
 
     # run the actual pipeline function
+    allocations = (
+        tuple(jax.tree.leaves(all_args.allocations,
+                              is_leaf=lambda x: isinstance(x, BufferedRefBase)))
+        if all_args.allocations is not None else None
+    )
     with (axis_env_ctx, pallas_core.tracing_grid_env(pipeline_grid, ())):
       pipeline_fun = _emit_pipeline(
           new_body, grid=grid, in_specs=in_specs, out_specs=out_specs,
           num_cores=num_cores, core_id=all_args.core_id,
           dimension_semantics=dimension_semantics, _explicit_indices=True,
           **params)
-      pipeline_fun(*refs_flat, allocations=all_args.allocations)
+      pipeline_fun(*refs_flat, allocations=allocations)
     return ()
 
   dbg = api_util.debug_info(
