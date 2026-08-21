@@ -56,7 +56,7 @@ J=$((NB_TPUS * JOBS_PER_ACC))
 
 # TODO(ybaturina): Bazel cache shouldn't be invalidated when
 # `VBAR_CONTROL_SERVICE_URL` changes.
-COMMON_TPU_TEST_ENV_VARS="--test_env=JAX_PORTSERVER_ADDRESS=@unittest-portserver \
+COMMON_TPU_TEST_ENV_VARS="--test_env=PORTSERVER_ADDRESS=@unittest-portserver \
  --test_env=TPU_SKIP_MDS_QUERY=true \
  --test_env=TPU_TOPOLOGY \
  --test_env=TPU_WORKER_ID \

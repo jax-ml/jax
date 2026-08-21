@@ -238,7 +238,7 @@ def _main(argv, shard_main):
   if portpicker is None:
     slicebuilder_ports = [10000 + i for i in range(num_processes)]
   else:
-    portserver_address = os.environ.get("JAX_PORTSERVER_ADDRESS")
+    portserver_address = os.environ.get("PORTSERVER_ADDRESS")
     slicebuilder_ports = [
         portpicker.pick_unused_port(portserver_address=portserver_address)
         for _ in range(num_processes)
@@ -266,7 +266,7 @@ def _main(argv, shard_main):
   else:
     # TODO(emilyaf): Use a port server if there are flaky port collisions due
     # to pick_unused_port() racing among tests.
-    portserver_address = os.environ.get("JAX_PORTSERVER_ADDRESS")
+    portserver_address = os.environ.get("PORTSERVER_ADDRESS")
     jax_port = portpicker.pick_unused_port(portserver_address=portserver_address)
   subprocesses = []
   output_filenames = []
@@ -325,7 +325,7 @@ def _main(argv, shard_main):
       if portpicker is None:
         megascale_port = 9877
       else:
-        portserver_address = os.environ.get("JAX_PORTSERVER_ADDRESS")
+        portserver_address = os.environ.get("PORTSERVER_ADDRESS")
         megascale_port = portpicker.pick_unused_port(
             portserver_address=portserver_address
         )

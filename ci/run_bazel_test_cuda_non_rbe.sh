@@ -102,7 +102,7 @@ common_bazel_test_args=(
   "--repo_env=HERMETIC_CUDA_UMD_VERSION=13.1.1"
   "--//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB"
   "--//jax:build_jax=$JAXCI_BUILD_JAX"
-  "--test_env=JAX_PORTSERVER_ADDRESS=@unittest-portserver"
+  "--test_env=PORTSERVER_ADDRESS=@unittest-portserver"
   "--test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform"
   "--test_env=TF_CPP_MIN_LOG_LEVEL=0"
   "--test_env=JAX_SKIP_SLOW_TESTS=true"
