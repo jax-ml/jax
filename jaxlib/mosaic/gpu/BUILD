@@ -15,9 +15,7 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
-# Placeholder: load proto_library
-
-load("//jaxlib:jax.bzl", "cc_proto_library", "if_oss", "nanobind_extension", "py_library")
+load("//jaxlib:jax.bzl", "cc_proto_library", "if_oss", "nanobind_extension", "proto_library", "py_library")
 
 package(
     default_applicable_licenses = [],

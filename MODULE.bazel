@@ -6,16 +6,18 @@ module(name = "jax")
 
 bazel_dep(name = "abseil-cpp", version = "20260526.0", repo_name = "com_google_absl")
 bazel_dep(name = "apple_support", version = "2.8.0")
+bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")
 bazel_dep(name = "bazel_features", version = "1.50.0")
 bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
 bazel_dep(name = "googletest", version = "1.17.0.bcr.2", repo_name = "com_google_googletest")
-bazel_dep(name = "grpc", version = "1.78.0", repo_name = "com_github_grpc_grpc")
+bazel_dep(name = "grpc", version = "1.83.0", repo_name = "com_github_grpc_grpc")
 bazel_dep(name = "platforms", version = "1.1.0")
-bazel_dep(name = "protobuf", version = "32.1", repo_name = "com_google_protobuf")
+bazel_dep(name = "protobuf", version = "35.1", repo_name = "com_google_protobuf")
 bazel_dep(name = "pybind11_bazel", version = "3.0.0")
 bazel_dep(name = "rules_cc", version = "0.2.20")
 bazel_dep(name = "rules_python", version = "2.2.0")
+bazel_dep(name = "rules_shell", version = "0.8.0")
 bazel_dep(name = "zlib", version = "1.3.2")
 
 # TODO: use a released version when available
@@ -36,12 +38,18 @@ archive_override(
     urls = ["https://github.com/openxla/xla/archive/3abee12b628f5ba4fcb8d8f849e3dda68b801ecf.tar.gz"],
 )
 
+# flatbuffers transitively depends on aspect_rules_esbuild 0.21.0, which is incompatible with Bazel 9.
+single_version_override(
+    module_name = "aspect_rules_esbuild",
+    version = "0.26.0",
+)
+
 # TODO: upstream, otherwise we have to duplicate the patches in jax
 single_version_override(
     module_name = "grpc",
     patch_strip = 1,
     patches = ["//third_party/grpc:grpc.patch"],  # upstreaming in cl/822016400
-    version = "1.81.0",
+    version = "1.83.0",
 )
 
 ##############################################################
@@ -109,9 +117,8 @@ single_version_override(
     patch_strip = 1,
     patches = [
         "//third_party/protobuf:protobuf_arena.patch",
-        "//third_party/protobuf:fix_message_lite_incomplete_type.patch",
     ],
-    version = "32.1",
+    version = "35.1",
 )
 
 single_version_override(

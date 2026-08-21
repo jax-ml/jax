@@ -5,6 +5,7 @@ common --enable_bzlmod --noenable_workspace
 ## Make sure direct dependencies specified match the resolved version.
 common --check_direct_dependencies=warning
 common --incompatible_disallow_empty_glob=false
+common --incompatible_autoload_externally=+@rules_cc,+@rules_java,+@rules_python,+@rules_shell
 
 
 # Make Bazel print out all options from rc files.
@@ -186,8 +187,6 @@ common:mkl_aarch64_threadpool -c opt
 common:clang --copt=-Wno-gnu-offsetof-extensions
 # Disable clang extention that rejects unknown arguments.
 common:clang --copt=-Qunused-arguments
-# Error on struct/class mismatches, since this causes link failures on Windows.
-common:clang --copt=-Werror=mismatched-tags
 # Required when building with clang>=19, see jax-ml/jax#27091
 common:clang --copt=-Wno-error=c23-extensions
 
@@ -251,6 +250,8 @@ common:win_clang --config=clang_local
 common:win_clang --extra_toolchains=@local_config_cc//:cc-toolchain-x64_windows-clang-cl
 common:win_clang --extra_execution_platforms=//jax/tools/toolchains:x64_windows-clang-cl
 common:win_clang --compiler=clang-cl
+# Error on struct/class mismatches, since this causes link failures on Windows.
+common:win_clang --copt=-Werror=mismatched-tags
 
 # Sanitizers (work only for Linux x86_64)
 # ASan common config
@@ -393,6 +394,8 @@ common:ci_darwin_arm64 --color=yes
 common:ci_windows_amd64 --config=clang_local
 common:ci_windows_amd64 --config=avx_windows
 common:ci_windows_amd64 --compiler=clang-cl --config=clang --verbose_failures=true
+# Error on struct/class mismatches, since this causes link failures on Windows.
+common:ci_windows_amd64 --copt=-Werror=mismatched-tags
 common:ci_windows_amd64 --crosstool_top="@xla//tools/toolchains/win2022/20241118:toolchain"
 common:ci_windows_amd64 --extra_toolchains="@xla//tools/toolchains/win2022/20241118:cc-toolchain-x64_windows-clang-cl"
 common:ci_windows_amd64 --host_linkopt=/FORCE:MULTIPLE --linkopt=/FORCE:MULTIPLE
