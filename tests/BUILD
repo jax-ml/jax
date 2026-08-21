@@ -730,6 +730,7 @@ jax_multiplatform_test(
     srcs = ["lax_numpy_hijax_test.py"],
     backend_tags = {
         "cpu": ["noasan"],
+        "gpu": ["noasan"],
         "tpu": ["noasan"],  # Times out.
     },
     deps = py_deps([
