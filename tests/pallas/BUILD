@@ -544,6 +544,9 @@ jax_multiplatform_test(
     ],
     enable_backends = ["tpu"],
     shard_count = 8,
+    tags = [
+        "noasan",
+    ],
     deps = [
         "//jax/_src:hypothesis_test_util",
         "//jax/_src/pallas:pallas_test_util",
