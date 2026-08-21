@@ -144,6 +144,17 @@ def _mpmd_map_abstract_eval(
         "mpmd_map requires all mesh axes to be Manual, got"
         f" {get_abstract_mesh().axis_types}"
     )
+  if any(
+      isinstance(a, state.AbstractRef)
+      and isinstance(a.inner_aval, jax_core.ShapedArray)
+      and not a.manual_axis_type.empty
+      for a in in_avals
+  ):
+    raise ValueError(
+        "mpmd_map does not support Refs with varying manual axis types:"
+        f" {in_avals=}:"
+        f" {[None if not isinstance(a, state.AbstractRef) else a.manual_axis_type for a in in_avals]}"
+    )
 
   # TODO(slebedev): Handle pinned buffers as in ``pallas_call``.
   outin_aliases = {
