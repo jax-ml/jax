@@ -293,6 +293,7 @@ class CoreTest(jtu.JaxTestCase):
   def test_reference_cycles(self):
     if jtu.TEST_NUM_THREADS.value > 1:
       self.skipTest("Test does not work with multiple threads")
+    jax.clear_caches()
     gc.collect()
 
     def f(x):
@@ -308,11 +309,13 @@ class CoreTest(jtu.JaxTestCase):
       self.assertEqual(gc.collect(), 0, msg=str(gc.garbage))
     finally:
       gc.set_debug(debug)
+      gc.garbage.clear()
 
   @jtu.thread_unsafe_test()  # gc isn't predictable when threaded
   def test_reference_cycles_jit(self):
     if jtu.TEST_NUM_THREADS.value > 1:
       self.skipTest("Test does not work with multiple threads")
+    jax.clear_caches()
     gc.collect()
 
     def f(x):
@@ -328,6 +331,7 @@ class CoreTest(jtu.JaxTestCase):
       self.assertEqual(gc.collect(), 0, msg=str(gc.garbage))
     finally:
       gc.set_debug(debug)
+      gc.garbage.clear()
 
   def test_invalid_shape_error_with_jit_tracer_passed(self):
     @jax.jit
