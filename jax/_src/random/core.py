@@ -3058,7 +3058,7 @@ def _orthogonal(key, n, _m, shape, dtype):
 
 def generalized_normal(
   key: ArrayLike,
-  p: float,
+  p: RealArray,
   shape: Shape = (),
   dtype: DTypeLikeFloat | None = None,
   *,
@@ -3076,7 +3076,8 @@ def generalized_normal(
 
   Args:
     key: a PRNG key used as the random key.
-    p: a float representing the shape parameter.
+    p: a float or array of floats broadcast-compatible with ``shape``
+      representing the shape parameter.
     shape: optional, the batch dimensions of the result. Default ().
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
