@@ -1937,6 +1937,7 @@ class EmitPipelinePrimitiveArgs:
   core_id: jax.Array | None
   body_consts: tuple[jax.Array, ...]
   refs_flat: tuple[jax.Array | state.TransformedRef | state.AbstractRef, ...]
+  allocations: Any | None = None
 
   @property
   def body_offset(self) -> int:
@@ -2021,12 +2022,17 @@ def emit_pipeline(
 
   def wrapped(*args, allocations=None):
     refs_flat, refs_tree = tracing_registry.flatten(args, is_transformed_ref)
+    local_in_specs, local_out_specs = in_specs_flat, out_specs_flat
     if allocations is not None:
-      # TODO(rdyro): Add support for allocations.
-      raise NotImplementedError("`allocations` are not yet supported.")
-    else:
-      local_in_specs = in_specs_flat
-      local_out_specs = out_specs_flat
+      flat_allocs = jax.tree.leaves(
+          allocations, is_leaf=lambda x: isinstance(x, BufferedRefBase)
+      )
+      local_in_specs = local_in_specs or [
+          b.spec for b in flat_allocs if b.buffer_type == BufferType.INPUT
+      ]
+      local_out_specs = local_out_specs or [
+          b.spec for b in flat_allocs if b.buffer_type != BufferType.INPUT
+      ]
 
     num_inputs = len(local_in_specs)
     in_refs, out_refs = refs_flat[:num_inputs], refs_flat[num_inputs:]
@@ -2037,7 +2043,8 @@ def emit_pipeline(
 
     num_cores, core_id = _resolve_core_info(core_axis_)
     grid_spec = pallas_core.GridSpec(
-        grid=grid, in_specs=local_in_specs, out_specs=local_out_specs)
+        grid=grid, in_specs=local_in_specs, out_specs=local_out_specs
+    )
     static_grid_spec, dynamic_grid_specs = (
         pallas_core.unzip_dynamic_grid_bounds(grid_spec))
 
@@ -2099,6 +2106,7 @@ def emit_pipeline(
         core_id=core_id,
         body_consts=tuple(body_jaxpr.consts),
         refs_flat=tuple(refs_flat),
+        allocations=allocations,
     )
     args_flat, args_tree = tracing_registry.flatten(prim_args)
     return emit_pipeline_p.bind(
@@ -2133,7 +2141,8 @@ def _emit_pipeline_effectful_abstract_eval(
   # arguments are flattened Refs and transforms, we unflatten the positional
   # indices to be able to identify the index of an n-th Ref from a positional
   # index.
-  indices_flat = list(range(all_args.refs_offset, len(avals)))
+  indices_flat = list(range(all_args.refs_offset,
+                            all_args.refs_offset + len(all_args.refs_flat)))
   flat_refs_idx, _ = tracing_registry.flatten(
       refs_tree.unflatten(indices_flat), is_transformed_ref)
   # Helper to resolve the underlying AbstractRef index in `avals` for any leaf.
@@ -2147,6 +2156,12 @@ def _emit_pipeline_effectful_abstract_eval(
     if isinstance(avals[ref_idx], state.AbstractRef):
       out_effects.add(ReadEffect(ref_idx)
                       if i < num_inputs else WriteEffect(ref_idx))
+
+  allocations_offset = all_args.refs_offset + len(all_args.refs_flat)
+  for ref_idx in range(allocations_offset, len(avals)):
+    if isinstance(avals[ref_idx], state.AbstractRef):
+      out_effects.add(ReadEffect(ref_idx))
+      out_effects.add(WriteEffect(ref_idx))
 
   num_ps_leaves = (
       len(body_jaxpr.invars) - len(flat_refs_idx)
@@ -2257,6 +2272,7 @@ def _emit_pipeline_physicalize_rule(
       core_id=all_args.core_id,
       body_consts=tuple(new_closed.consts),
       refs_flat=all_args.refs_flat,
+      allocations=all_args.allocations,
   )
   new_args_flat, new_args_tree = tracing_registry.flatten(new_args)
   return emit_pipeline_p.bind(*new_args_flat,
@@ -2481,16 +2497,17 @@ def emit_pipeline_to_jaxpr(
           num_cores=num_cores, core_id=all_args.core_id,
           dimension_semantics=dimension_semantics, _explicit_indices=True,
           **params)
-      pipeline_fun(*refs_flat)
+      pipeline_fun(*refs_flat, allocations=all_args.allocations)
     return ()
 
   dbg = api_util.debug_info(
       "emit_pipeline_lowering", wrapped_pipeline_fun, avals_in, {}
   )
   in_avals_ft = ft.flatten_args(*avals_in)
-  closed_jaxpr, _ = pe.trace_to_jaxpr_nocache(
-      wrapped_pipeline_fun, in_avals_ft, debug_info=dbg
-  )
+  with config.mutable_array_checks(False):
+    closed_jaxpr, _ = pe.trace_to_jaxpr_nocache(
+        wrapped_pipeline_fun, in_avals_ft, debug_info=dbg
+    )
   return closed_jaxpr
 
 
@@ -2594,6 +2611,7 @@ def _emit_pipeline_to_lojax(
       core_id=all_args.core_id,
       body_consts=tuple(closed_lo_jaxpr.consts),
       refs_flat=tuple(lo_flat_refs),
+      allocations=all_args.allocations,
   )
   new_args_flat, new_args_tree = tracing_registry.flatten(new_prim_args)
   return emit_pipeline_p.bind(
@@ -2615,11 +2633,17 @@ def _emit_pipeline_batching_rule(
   dimension_semantics = (PARALLEL,) + dimension_semantics
   all_args: EmitPipelinePrimitiveArgs = args_tree.unflatten(args_flat)
 
-  _, dynamic_dims, _, _, flat_ref_dims = jax_util.split_list(dims, [
+  _, dynamic_dims, _, _, flat_ref_dims, alloc_dims = jax_util.split_list(dims, [
       len(all_args.all_index_map_consts),
       len(all_args.dynamic_grid_spec),
       int(all_args.has_core_id),
-      len(all_args.body_consts)])
+      len(all_args.body_consts),
+      len(all_args.refs_flat)])
+
+  if any(d is not None for d in alloc_dims):
+    raise NotImplementedError(
+        "Batching over custom allocations is not supported yet."
+    )
 
   batch_size = axis_data.size
 

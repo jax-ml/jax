@@ -684,11 +684,6 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
       vmem_shape,
       vmem_slice_type,
   ):
-    if config.use_emit_pipeline_primitive.value:
-      self.skipTest(
-          'allocations are not yet supported by the emit_pipeline primitive.'
-      )
-
     def pipeline_body(x_ref, o_ref):
       o_ref[...] = x_ref[...]
 
@@ -784,11 +779,6 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     np.testing.assert_allclose(out, x)
 
   def test_prefetched_input_unbound_error(self):
-    if config.use_emit_pipeline_primitive.value:
-      self.skipTest(
-          'allocations are not yet supported by the emit_pipeline primitive.'
-      )
-
     def pipeline_body(x_ref, o_ref):
       o_ref[...] = x_ref[...]
 
@@ -1140,10 +1130,6 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
     np.testing.assert_allclose(result, expected)
 
   def test_matmul_with_input_output(self):
-    if config.use_emit_pipeline_primitive.value:
-      self.skipTest(
-          'allocations are not yet supported by the emit_pipeline primitive.')
-
     M, N, K = 512, 512, 512
     blk_m, blk_n, blk_k = 128, 128, 128
     nm, nn, nk = M // blk_m, N // blk_n, K // blk_k
@@ -2683,12 +2669,6 @@ class EmitPipelineVmapTest(jtu.JaxTestCase):
 
   @parameterized.product(dynamic_grid=[True, False])
   def test_copy_with_allocations(self, dynamic_grid):
-    if not jax.config.jax_use_emit_pipeline_primitive:
-      self.skipTest('vmap requires jax_use_emit_pipeline_primitive == True.')
-    if jax.config.jax_use_emit_pipeline_primitive:
-      # TODO(rdyro): Add support for this.
-      self.skipTest('allocations require jax_use_emit_pipeline_primitive'
-                    ' == False.')
     out_type = jax.ShapeDtypeStruct((512,), jnp.float32)
 
     def body(x_ref, o_ref):
@@ -2703,7 +2683,10 @@ class EmitPipelineVmapTest(jtu.JaxTestCase):
           out_specs=[pl.BlockSpec((256,), lambda i: (i,))],
       )
       allocations = make_allocations(x_ref, o_ref)
-      pipeline_func(x_ref, o_ref, allocations=allocations)
+
+      @functools.partial(pl.run_scoped, allocs=allocations)
+      def _(allocs):
+        pipeline_func(x_ref, o_ref, allocations=allocs)
 
     x = jnp.arange(512, dtype=jnp.float32)
     out = run_kernel(x)
