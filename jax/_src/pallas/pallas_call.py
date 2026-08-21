@@ -28,7 +28,6 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import deprecations
 from jax._src import effects
-from jax._src import hijax
 from jax._src import numpy as jnp
 from jax._src import state
 from jax._src import flattree as ft
@@ -69,7 +68,7 @@ CostEstimate = pallas_core.CostEstimate
 CompilerParams = pallas_core.CompilerParams
 
 # See the docstring for GridMapping for the calling convention
-pallas_call_p = hijax.HiPrimitive('pallas_call')
+pallas_call_p = jax_core.Primitive('pallas_call')
 pallas_call_p.multiple_results = True
 
 

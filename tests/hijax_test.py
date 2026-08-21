@@ -42,7 +42,7 @@ from jax._src.util import safe_zip, safe_map
 from jax._src.state.discharge import run_state
 
 from jax._src.hijax import (
-    HiPrimitive, HiType, register_hitype, ShapedArray, Ty, MappingSpec,
+    HiType, register_hitype, ShapedArray, Ty, MappingSpec,
     HiPspec)
 from jax.experimental.hijax import (
     VJPHiPrimitive, Zero, instantiate_zeros, jvp_from_lin, linearize_from_jvp,
@@ -133,43 +133,56 @@ class QArrayTy(HiType):
 
 register_hitype(QArray, lambda q: QArrayTy(q.arr.shape))
 
-def to_qarray(x):
-  return to_qarray_p.bind(x)
+class ToQ(VJPHiPrimitive):
+  def __init__(self, lo_aval):
+    self.in_avals = (lo_aval,)
+    self.out_aval = QArrayTy(lo_aval.shape)
+    self.params = {}
+    super().__init__()
 
-def from_qarray(x):
-  return from_qarray_p.bind(x)
-
-class ToQ(HiPrimitive):
-  def abstract_eval(_, lo_aval):
-    return QArrayTy(lo_aval.shape), set()
-
-  def to_lojax(_, lo_val):
+  def expand(self, lo_val):
     m, _ = lo_val.shape
     scale = lo_val.max(1) / 32.
     return QArray((lo_val / scale[:, None]).astype('int8'), scale)
 
-  def jvp(_, primals, tangents):
+  def jvp(self, primals, tangents):
     (x,), (xdot,) = primals, tangents
+    xdot = ad.instantiate_zeros(xdot)
     return to_qarray(x), to_qarray(xdot)
 
-  def transpose(_, out_bar, __):
-    return [from_qarray(out_bar)]
-to_qarray_p = ToQ('to_q')
+  vjp_fwd, vjp_bwd_retval = vjp_from_jvp
 
-class FromQ(HiPrimitive):
-  def abstract_eval(_, hi_aval):
-    return ShapedArray(hi_aval.shape, jnp.dtype('float32')), set()
+  def transpose(self, out_bar, accum):
+    if isinstance(accum, ad.GradAccum):
+      accum.accum(from_qarray(out_bar))
 
-  def to_lojax(_, hi_val):
+
+class FromQ(VJPHiPrimitive):
+  def __init__(self, hi_aval):
+    self.in_avals = (hi_aval,)
+    self.out_aval = ShapedArray(hi_aval.shape, jnp.dtype('float32'))
+    self.params = {}
+    super().__init__()
+
+  def expand(self, hi_val):
     return hi_val.arr.astype('float32') * hi_val.scale[:, None]
 
-  def jvp(_, primals, tangents):
+  def jvp(self, primals, tangents):
     (x,), (xdot,) = primals, tangents
     return from_qarray(x), from_qarray(xdot)
 
-  def transpose(_, out_bar, __):
-    return [to_qarray(out_bar)]
-from_qarray_p = FromQ('from_q')
+  vjp_fwd, vjp_bwd_retval = vjp_from_jvp
+
+  def transpose(self, out_bar, accum):
+    if isinstance(accum, ad.GradAccum):
+      accum.accum(to_qarray(out_bar))
+
+
+def to_qarray(x):
+  return ToQ(core.typeof(x))(x)
+
+def from_qarray(x):
+  return FromQ(core.typeof(x))(x)
 
 
 @dataclass
@@ -381,6 +394,16 @@ class ImmutBoxTy(HiType):
     tangent_leaf_avals = tuple(aval.to_tangent_aval() for aval in self.leaf_avals)
     return ImmutBoxTy(tangent_leaf_avals, self.treedef)
 
+  def vspace_zero(self):
+    zero_leaves = [ad.zeros_like_aval(a) for a in self.leaf_avals]
+    return immutbox_new(jax.tree.unflatten(self.treedef, zero_leaves))
+
+  def vspace_add(self, x, y):
+    x_leaves = jax.tree.leaves(immutbox_get(x))
+    y_leaves = jax.tree.leaves(immutbox_get(y))
+    add_leaves = [a.vspace_add(i, j) for a, i, j in zip(self.leaf_avals, x_leaves, y_leaves)]
+    return immutbox_new(jax.tree.unflatten(self.treedef, add_leaves))
+
 def _map_immutbox_ty(size: int, axis: int | None, aval: ImmutBoxTy) -> ImmutBoxTy:
   if axis is None:
     return aval
@@ -401,64 +424,72 @@ def _unmap_immutbox_ty(size: int, axis: int | None, explicit_mesh_axis,
 
 core.aval_mapping_handlers[ImmutBoxTy] = (_map_immutbox_ty, _unmap_immutbox_ty)
 
-class ImmutBoxNew(HiPrimitive):
-  def is_high(self, *leaves, leaf_avals, treedef) -> bool:
-    return True
+class ImmutBoxNew(VJPHiPrimitive):
+  def __init__(self, leaf_avals, treedef):
+    self.in_avals = tuple(leaf_avals)
+    self.out_aval = ImmutBoxTy(tuple(leaf_avals), treedef)
+    self.params = dict(leaf_avals=tuple(leaf_avals), treedef=treedef)
+    super().__init__()
 
-  def abstract_eval(self, *leaves, leaf_avals, treedef):
-    return ImmutBoxTy(leaf_avals, treedef), set()
-
-  def to_lojax(self, *leaves, leaf_avals, treedef):
-    val = jax.tree.unflatten(treedef, leaves)
+  def expand(self, *leaves):
+    val = jax.tree.unflatten(self.treedef, leaves)
     return ImmutBox(val)
 
-  def jvp(self, primals, tangents, *, leaf_avals, treedef):
-    return (immutbox_new_p.bind(*primals, leaf_avals=leaf_avals, treedef=treedef),
-            immutbox_new_p.bind(*tangents, leaf_avals=leaf_avals, treedef=treedef))
+  def jvp(self, primals, tangents):
+    tangents = [ad.instantiate_zeros(t) for t in tangents]
+    prim = ImmutBoxNew(self.leaf_avals, self.treedef)
+    return prim(*primals), prim(*tangents)
 
-  def transpose(self, out_bar, *leaves, leaf_avals, treedef):
+  def vjp_fwd(self, nzs_in, *leaves):
+    return self(*leaves), None
+
+  def vjp_bwd_retval(self, _res, g):
+    leaves, _ = jax.tree.flatten(immutbox_get(g), is_leaf=_is_zero)
+    return tuple(leaves)
+
+  def transpose(self, out_bar, *accums):
     val = out_bar._val
     leaves, _ = jax.tree.flatten(val, is_leaf=_is_zero)
-    return leaves
+    for leaf, accum in zip(leaves, accums):
+      if isinstance(accum, ad.GradAccum):
+        accum.accum(leaf)
 
-immutbox_new_p = ImmutBoxNew('immutbox_new')
 
 def immutbox_new(val):
   leaves, treedef = jax.tree.flatten(val, is_leaf=_is_zero)
   leaf_avals = tuple(map(_get_aval, leaves))
   leaves = [ad.instantiate_zeros(leaf) for leaf in leaves]
-  return immutbox_new_p.bind(*leaves, leaf_avals=leaf_avals, treedef=treedef)
+  return ImmutBoxNew(leaf_avals, treedef)(*leaves)
 
-class ImmutBoxGet(HiPrimitive):
-  multiple_results = True
 
-  def is_high(self, box_aval) -> bool:
-    return True
+class ImmutBoxGet(VJPHiPrimitive):
+  def __init__(self, box_aval):
+    self.in_avals = (box_aval,)
+    self.out_aval = jax.tree.unflatten(box_aval.treedef, box_aval.leaf_avals)
+    self.params = dict(box_aval=box_aval)
+    super().__init__()
 
-  def abstract_eval(self, box_aval):
-    leaf_avals = box_aval.leaf_avals
-    return list(leaf_avals), set()
-
-  def to_lojax(self, box):
-    leaves, _ = jax.tree.flatten(box._val, is_leaf=_is_zero)
-    return tuple(leaves)
+  def expand(self, box):
+    return box._val
 
   def jvp(self, primals, tangents):
     (box,), (box_dot,) = primals, tangents
+    box_dot = ad.instantiate_zeros(box_dot)
     return immutbox_get(box), immutbox_get(box_dot)
 
-  def transpose(self, out_bars, box):
-    box_aval = core.typeof(box) if not ad.is_undefined_primal(box) else box.aval
-    treedef = box_aval.treedef
-    reconstructed_cotangent = jax.tree.unflatten(treedef, out_bars)
-    return (immutbox_new(reconstructed_cotangent),)
+  def vjp_fwd(self, nzs_in, box):
+    return self(box), None
 
-immutbox_get_p = ImmutBoxGet('immutbox_get')
+  def vjp_bwd_retval(self, _res, g):
+    return (immutbox_new(g),)
+
+  def transpose(self, out_bar_tree, box_accum):
+    if isinstance(box_accum, ad.GradAccum):
+      box_accum.accum(immutbox_new(out_bar_tree))
+
 
 def immutbox_get(box):
-  leaves = immutbox_get_p.bind(box)
-  box_ty = core.typeof(box)
-  return jax.tree.unflatten(box_ty.treedef, leaves)
+  return ImmutBoxGet(core.typeof(box))(box)
 
 register_hitype(ImmutBox, immutbox_to_aval)
 
@@ -666,86 +697,99 @@ class HijaxTest(jtu.JaxTestCase):
         return add(x, y)
     register_hitype(MyArray, lambda _: MyTy())
 
-    class ToMy(HiPrimitive):
-      def is_high(self, _): return True
+    class ToMy(VJPHiPrimitive):
+      def __init__(self, lo_aval):
+        self.in_avals = (lo_aval,)
+        self.out_aval = MyTy()
+        self.params = {}
+        super().__init__()
 
-      def abstract_eval(_, lo_aval):
-        return MyTy(), set()
-
-      def to_lojax(_, lo):
+      def expand(self, lo):
         return MyArray(lo)
 
-      def jvp(_, primals, tangents):
-        x, x_dot = *primals, *tangents
+      def jvp(self, primals, tangents):
+        (x,), (x_dot,) = primals, tangents
         return to(x), to(x_dot)
 
-      def transpose(self, out_bar, _):
-        return from_(out_bar),
+      vjp_fwd, vjp_bwd_retval = vjp_from_jvp
 
-    class FromMy(HiPrimitive):
-      def is_high(self, _): return True
+      def transpose(self, out_bar, accum):
+        if isinstance(accum, ad.GradAccum):
+          accum.accum(from_(out_bar))
 
-      def abstract_eval(_, hi_aval):
-        return hi_aval.lo_ty()[0], set()
+    class FromMy(VJPHiPrimitive):
+      def __init__(self, hi_aval):
+        self.in_avals = (hi_aval,)
+        self.out_aval = hi_aval.lo_ty()[0]
+        self.params = {}
+        super().__init__()
 
-      def to_lojax(_, hi):
+      def expand(self, hi):
         return hi.arr
 
-      def jvp(_, primals, tangents):
-        x, x_dot = *primals, *tangents
+      def jvp(self, primals, tangents):
+        (x,), (x_dot,) = primals, tangents
         return from_(x), from_(x_dot)
 
-      def transpose(self, out_bar, _):
-        return to(out_bar),
+      vjp_fwd, vjp_bwd_retval = vjp_from_jvp
 
-    def to(x): return to_p.bind(x)
-    to_p = ToMy('to_my')
+      def transpose(self, out_bar, accum):
+        if isinstance(accum, ad.GradAccum):
+          accum.accum(to(out_bar))
 
-    def from_(x): return from_p.bind(x)
-    from_p = FromMy('from_my')
+    def to(x): return ToMy(core.typeof(x))(x)
 
-    def mul(x, y): return mul_p.bind(x, y)
-    def add(x, y): return add_p.bind(x, y)
+    def from_(x): return FromMy(core.typeof(x))(x)
 
-    class MyMul(HiPrimitive):
-      def is_high(self, *_): return True
+    def mul(x, y): return MyMul(core.typeof(x), core.typeof(y))(x, y)
+    def add(x, y): return MyAdd(core.typeof(x), core.typeof(y))(x, y)
 
-      def abstract_eval(_, hi_x, hi_y):
+    class MyMul(VJPHiPrimitive):
+      def __init__(self, hi_x, hi_y):
         if hi_x != hi_y: raise Exception
-        return hi_x, set()
+        self.in_avals = (hi_x, hi_y)
+        self.out_aval = hi_x
+        self.params = {}
+        super().__init__()
 
-      def to_lojax(_, hi_x, hi_y):
+      def expand(self, hi_x, hi_y):
         return MyArray(hi_x.arr * hi_y.arr)
 
-      def jvp(_, primals, tangents):
+      def jvp(self, primals, tangents):
         (x, y), (x_dot, y_dot) = primals, tangents
+        x_dot, y_dot = ad.instantiate_zeros(x_dot), ad.instantiate_zeros(y_dot)
         return mul(x, y), add(mul(x, y_dot), mul(x_dot, y))
 
+      vjp_fwd, vjp_bwd_retval = vjp_from_jvp
+
       def transpose(self, out_bar, x, y):
-        assert ad.is_undefined_primal(x) ^ ad.is_undefined_primal(y)
-        if ad.is_undefined_primal(x):
-          return mul(out_bar, y), None
+        x_is_accum = isinstance(x, ad.GradAccum)
+        y_is_accum = isinstance(y, ad.GradAccum)
+        assert x_is_accum ^ y_is_accum
+        if x_is_accum:
+          x.accum(mul(out_bar, y))
         else:
-          return None, mul(x, out_bar)
+          y.accum(mul(x, out_bar))
 
-    class MyAdd(HiPrimitive):
-      def is_high(self, *_): return True
-
-      def abstract_eval(_, hi_x, hi_y):
+    class MyAdd(VJPHiPrimitive):
+      def __init__(self, hi_x, hi_y):
         if hi_x != hi_y: raise Exception
-        return hi_x, set()
+        self.in_avals = (hi_x, hi_y)
+        self.out_aval = hi_x
+        self.params = {}
+        super().__init__()
 
-      def to_lojax(_, hi_x, hi_y):
+      def expand(self, hi_x, hi_y):
         return MyArray(hi_x.arr + hi_y.arr)
 
-      def jvp(_, primals, tangents):
+      def jvp(self, primals, tangents):
         assert False  # TODO
 
-      def transpose(self, out_bar, x, y):
-        return out_bar, out_bar
+      vjp_fwd, vjp_bwd_retval = vjp_from_jvp
 
-    mul_p = MyMul('my_mul')
-    add_p = MyAdd('my_add')
+      def transpose(self, out_bar, x_accum, y_accum):
+        if isinstance(x_accum, ad.GradAccum): x_accum.accum(out_bar)
+        if isinstance(y_accum, ad.GradAccum): y_accum.accum(out_bar)
 
     @jax.jit
     def f(x):

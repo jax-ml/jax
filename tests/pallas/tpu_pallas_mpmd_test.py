@@ -1074,14 +1074,14 @@ hijax.register_hitype(
     WeirdTuple, lambda t: WeirdTupleTy(jax.typeof(t.x0), jax.typeof(t.x1))
 )
 
-unpack_p = hijax.HiPrimitive("unpack")
+unpack_p = jax_core.Primitive("unpack")
 unpack = unpack_p.bind
 unpack_p.multiple_results = True
 unpack_p.is_high = lambda *_: True
 unpack_p.def_abstract_eval(lambda x: [x.x0_aval, x.x1_aval])
 unpack_p.to_lojax = lambda x: [x.x0, x.x1]
 
-pack_p = hijax.HiPrimitive("pack")
+pack_p = jax_core.Primitive("pack")
 pack = pack_p.bind
 pack_p.is_high = lambda *_: True
 pack_p.def_abstract_eval(lambda x0, x1: WeirdTupleTy(x0, x1))

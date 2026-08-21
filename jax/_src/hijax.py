@@ -65,33 +65,6 @@ Ty = core.AbstractValue
 LoType = core.AbstractValue
 ShapedArray = core.ShapedArray
 
-class HiPrimitive(core.Primitive):
-  def __init__(self, name):
-    self.name = name
-    ad.primitive_jvps[self] = self.jvp
-    ad.primitive_transposes[self] = self.transpose
-
-  def is_high(self, *avals, **params) -> bool:
-    return True
-
-  def is_effectful(self, params) -> bool:  # pyrefly: ignore[bad-override]
-    return False  # default immutable
-
-  # type checking and forward type propagation
-  def abstract_eval(self, *arg_avals, **params):
-    assert False, "must override"
-
-  # lowering implements the primitive in terms of lojax inputs/outputs/ops
-  def to_lojax(self, *lotypes_wrapped_in_hitypes, **params):
-    assert False, f"must override for {self}"
-
-  # autodiff interface
-  def jvp(self, primals, tangents, **params):
-    assert False, "must override"
-  # transposition is only required if the primitive is linear in some inputs
-  def transpose(self, *args, **params):
-    assert False, "must override"
-
 AxisName = Any
 
 def _must_override(ty, method: str, needed_for: str) -> NoReturn:

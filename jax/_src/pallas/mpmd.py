@@ -28,7 +28,6 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import effects
-from jax._src import hijax
 from jax._src import numpy as jnp
 from jax._src import state
 from jax._src import flattree as ft
@@ -75,7 +74,7 @@ def mpmd_map_tracing_context(
     yield
 
 
-mpmd_map_p = hijax.HiPrimitive("mpmd_map")
+mpmd_map_p = jax_core.Primitive("mpmd_map")
 mpmd_map_p.multiple_results = True
 
 
