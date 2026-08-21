@@ -437,6 +437,10 @@ class Traced(Stage):
   def out_avals(self):
     return tree_unflatten(self.out_tree, self.jaxpr.out_avals)
 
+  @property
+  def effects(self) -> frozenset[core.Effect]:
+    return frozenset(core.positional_effects(self.jaxpr))
+
   def __call__(self, *args, **kwargs):
     args_flat = tree_util.tree_leaves_checked(self.in_tree, (args, kwargs))
     out_flat = core.eval_jaxpr_p.bind(*args_flat, call_jaxpr=self.jaxpr)

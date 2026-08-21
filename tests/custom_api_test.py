@@ -3877,6 +3877,26 @@ class CustomVJP3Test(CustomVJPTest):
       self.assertIs(type(aval), PairTy, msg=where)
       self.assertTrue(issubclass(ty, core.Tracer), msg=f'{where}: {ty}')
 
+  def test_effects_preserved(self):
+    @jax.custom_vjp
+    def f(x):
+      r = jax.new_ref(x)
+      return r[...] * 2.0
+
+    def f_fwd(x):
+      r = jax.new_ref(x)
+      return r[...] * 2.0, (x,)
+
+    def f_bwd(res, g):
+      (x,) = res
+      return (g * 2.0,)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    jaxpr = jax.make_jaxpr(f)(1.0)
+    self.assertIn(core.internal_mutable_array_effect, jaxpr.effects)
+    self.assertAllClose(jax.jit(f)(2.0), 4.0, check_dtypes=False)
+
 class CustomVmapTest(jtu.JaxTestCase):
 
   def test_basic(self):

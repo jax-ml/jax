@@ -299,13 +299,14 @@ def _xla_metadata_call(fun, metadata, ad_metadata):
 
 xla_metadata_call_p = core.Primitive('xla_metadata_call')
 xla_metadata_call_p.multiple_results = True
+xla_metadata_call_p.is_effectful = lambda params: bool(params['jaxpr'].effects)
 dispatch.simple_impl(xla_metadata_call_p)
 
 
 def _xla_metadata_call_abstract_eval(*in_avals, jaxpr, xla_metadata,
                                      ad_metadata):
-  return jaxpr.out_avals
-xla_metadata_call_p.def_abstract_eval(_xla_metadata_call_abstract_eval)
+  return jaxpr.out_avals, core.positional_effects(jaxpr)
+xla_metadata_call_p.def_effectful_abstract_eval(_xla_metadata_call_abstract_eval)
 
 
 def _resolve_ad_metadata(xla_metadata, ad_metadata):

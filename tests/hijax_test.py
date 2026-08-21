@@ -2553,6 +2553,29 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertEqual(traced_jaxpr.effects,
                      {state.WriteEffect(traced_jaxpr.invars[1])})
 
+  def test_custom_vjp_ref_effects(self):
+    @jax.custom_vjp
+    def f(x_ref):
+      x_ref[...] = x_ref[...] * 2.0
+
+    def f_fwd(x_ref):
+      f(x_ref)
+      return (), ()
+
+    def f_bwd(res, g):
+      return (None,)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    x_ref = jax.new_ref(3.0)
+    f(x_ref)
+    self.assertAllClose(x_ref[...], 6.0, check_dtypes=False)
+
+    traced_jaxpr = jax.jit(f).trace(x_ref).jaxpr
+    self.assertEqual(traced_jaxpr.effects,
+                     {state.ReadEffect(traced_jaxpr.invars[0]),
+                      state.WriteEffect(traced_jaxpr.invars[0])})
+
   def test_lower_preserves_arg_names_for_shaped_arrays(self):
     x = jnp.array(1.0)
     lowered = jax.jit(square).lower(x)

@@ -2378,7 +2378,7 @@ def raise_lo_outs(hi_avals, lo_outs):
 
 
 eval_jaxpr_p = core.eval_jaxpr_p
-
+eval_jaxpr_p.skip_canonicalization = True
 dce_rules[eval_jaxpr_p] = dce_jaxpr_closed_call_rule
 dce_jaxpr_call_rule = dce_jaxpr_closed_call_rule  # alias for downstream users
 

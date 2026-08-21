@@ -53,6 +53,7 @@ from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
+from jax._src import state
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -4293,6 +4294,26 @@ class APITest(jtu.JaxTestCase):
                         jnp.float32(90.))
     consts2, traced2 = traced.with_consts_as_arg()
     self.assertAllClose(traced2(consts2, jnp.float32(3.)), jnp.float32(18.))
+
+  def test_traced_effects(self):
+    traced_pure = jit(lambda x: x * 2.0).trace(jnp.float32(3.0))
+    self.assertEqual(traced_pure.effects, frozenset())
+    self.assertIsInstance(traced_pure.effects, frozenset)
+
+    def f_ref(x):
+      r = jax.new_ref(x)
+      return r[...] * 2.0
+    traced_ref = jit(f_ref).trace(jnp.float32(3.0))
+    self.assertIn(core.internal_mutable_array_effect, traced_ref.effects)
+    self.assertIsInstance(traced_ref.effects, frozenset)
+
+    def f_mut(r):
+      r[...] = r[...] * 2.0
+    ref = jax.new_ref(3.0)
+    traced_mut = jit(f_mut).trace(ref)
+    self.assertEqual(traced_mut.effects,
+                     frozenset({state.ReadEffect(0), state.WriteEffect(0)}))
+    self.assertIsInstance(traced_mut.effects, frozenset)
 
   def test_default_backend(self):
     first_local_device = jax.local_devices()[0]

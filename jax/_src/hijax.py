@@ -359,6 +359,7 @@ def unmap_zero(axis_data, d, ct):
 
 call_hi_primitive_p = core.Primitive("call_hi_primitive")
 call_hi_primitive_p.multiple_results = True
+call_hi_primitive_p.skip_canonicalization = True
 call_hi_primitive_p.is_high = lambda *args, _prim: True
 call_hi_primitive_p.is_effectful = lambda params: bool(params['_prim'].effects)
 @call_hi_primitive_p.def_effectful_abstract_eval
@@ -699,6 +700,7 @@ class CustomVJPTraced(HiPrim):
     self.vjp_bwd_retval_logs = with_logs
     self.in_avals = in_avals
     self.out_aval = traced.out_avals
+    self.effects = traced.effects
     self.params = dict(traced=traced, fwd=fwd, bwd=bwd, symbolic_zeros=sym_zeros,
                        static_argnums=static_argnums, opt_remat=opt_remat,
                        with_logs=with_logs)
@@ -947,6 +949,7 @@ class OptRemat(HiPrim):
   def __init__(self, orig, traced_fwd):
     self.in_avals = orig.in_avals
     self.out_aval = traced_fwd.out_avals
+    self.effects = traced_fwd.effects
     self.params = dict(orig=orig, traced_fwd=traced_fwd)
     super().__init__()
 
@@ -987,6 +990,7 @@ class CustomJVPTraced(HiPrim):
   def __init__(self, traced, jvp_fun, in_avals, sym_zeros, static_argnums):
     self.in_avals = in_avals
     self.out_aval = traced.out_avals
+    self.effects = traced.effects
     self.params = dict(traced=traced, jvp_fun=jvp_fun, symbolic_zeros=sym_zeros,
                        static_argnums=static_argnums)
     super().__init__()

@@ -129,26 +129,17 @@ def register_call_primitive_rules(
   ad.fancy_transposes[prim] = transpose_rule or partial(_eval_jaxpr_transpose, prim)
   batching.fancy_primitive_batchers[prim] = partial(_eval_jaxpr_batch, prim)
   pe.custom_partial_eval_rules[prim] = partial(pe._eval_jaxpr_partial_eval, prim)
-  pe.partial_eval_jaxpr_custom_rules[prim] = (
+  pe.partial_eval_jaxpr_custom_rules[prim] = \
       pe.partial_eval_jaxpr_custom_rules[eval_jaxpr_p]
-  )
   pe.dce_rules[prim] = pe.dce_rules[eval_jaxpr_p]
-  discharge.register_discharge_rule(prim)(
-      partial(discharge._eval_jaxpr_discharge_rule, prim)
-  )
+  discharge.register_discharge_rule(prim)(partial(discharge._eval_jaxpr_discharge_rule, prim))
   if name is not None:
-    mlir.register_lowering(
-        prim,
-        partial(mlir.core_call_lowering, name=name),
-        cacheable=False,
-    )
-
+    mlir.register_lowering(prim, partial(mlir.core_call_lowering, name=name),
+                           cacheable=False)
 
 def create_call_primitive(name: str) -> core.Primitive:
-  """Creates a JAX Primitive with standard call rules registered."""
   prim = core.Primitive(name)
   register_call_primitive_rules(prim, name=name)
   return prim
 
-
-register_call_primitive_rules(eval_jaxpr_p, name="eval_jaxpr")
+register_call_primitive_rules(eval_jaxpr_p, name='eval_jaxpr')
