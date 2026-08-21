@@ -1640,7 +1640,7 @@ class DynamicJaxprTrace(core.Trace):
 
   def invalidate(self):
     # TODO(mattjj): exposed existing tracer leaks; fix them and re-enable!
-    super().invalidate()
+    # super().invalidate()
 
     # avoid cyclic refs
     self.frame.tracing_eqns = []  # thunk -> eqn -> in_tracers -> trace ->
@@ -1819,12 +1819,8 @@ class DynamicJaxprTrace(core.Trace):
       nz_tangent_avals, zero_avals = partition_list(in_zeros, in_tangent_avals)
       jvp_, out_zeros = _jvp_jaxpr_zeros(jvp, in_zeros, tuple(zero_avals))
       in_avals_ = (*in_avals, *nz_tangent_avals)
-      try:
-        jaxpr, _, out_consts = trace_to_jaxpr_dynamic(jvp_.with_unknown_names(),
-                                                      in_avals_, lower=self.requires_low)
-      except core.UnexpectedTracerError as e:
-        e.add_note(custom_rule_leak_note('custom_jvp', 'jvp'))
-        raise
+      jaxpr, _, out_consts = trace_to_jaxpr_dynamic(jvp_.with_unknown_names(),
+                                                    in_avals_, lower=self.requires_low)
       return jaxpr, out_consts, out_zeros()
 
     const_tracers = map(to_jaxpr_tracer, consts)
@@ -1866,11 +1862,7 @@ class DynamicJaxprTrace(core.Trace):
     def fwd_jaxpr_from_zeros(*zeros):
       for store in fwd.stores: store and store.reset()
       fwd_ = _interleave_fun(fwd.with_unknown_names(), zeros)
-      try:
-        jaxpr, _, consts = trace_to_jaxpr_dynamic(fwd_, in_avals, lower=self.requires_low)
-      except core.UnexpectedTracerError as e:
-        e.add_note(custom_rule_leak_note('custom_vjp', 'fwd'))
-        raise
+      jaxpr, _, consts = trace_to_jaxpr_dynamic(fwd_, in_avals, lower=self.requires_low)
       return jaxpr, consts
 
     def out_trees_():
@@ -1893,17 +1885,6 @@ class DynamicJaxprTrace(core.Trace):
                debug_info: core.DebugInfo, source_info: SourceInfo):
     return self.frame.to_jaxpr(self, out_tracers, debug_info, source_info)
 
-
-def custom_rule_leak_note(api_name: str, rule_name: str) -> str:
-  return (
-      f"This error arose while running the {rule_name} rule of a {api_name} "
-      "function for differentiation, which can happen after the trace in "
-      f"which the {api_name} function was defined has completed. If the rule "
-      "closes over values traced by an enclosing jit (or other "
-      "transformation), those values become invalid at that point. To fix, "
-      f"define {api_name}-decorated functions, and especially their rules, "
-      "at the top level of your module (i.e. fully dedented), passing any "
-      "values they need as explicit arguments.")
 
 custom_staging_rules: dict[Primitive, Callable] = {}
 

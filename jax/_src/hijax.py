@@ -730,11 +730,7 @@ class CustomVJPTraced(HiPrim):
     if self.symbolic_zeros:
       args = tree_map(CustomVJPPrimal, args, in_nzs)  # tree_map skips Statics
     args_ = tuple(x.val if isinstance(x, Static) else x for x in args)
-    try:
-      out, res = self.fwd(*args_)
-    except UnexpectedTracerError as e:
-      e.add_note(pe.custom_rule_leak_note('custom_vjp', 'fwd'))
-      raise
+    out, res = self.fwd(*args_)
     if config.mutable_array_checks.value:
       _check_for_returned_refs(self.fwd, (out, res), "fwd", tree_leaves(args),
                                self.out_tree.num_leaves)
@@ -1010,11 +1006,7 @@ class CustomJVPTraced(HiPrim):
                            is_leaf=zero)
     else:
       tangents_ = tree_map(ad_util.instantiate, tangents_, is_leaf=zero)
-    try:
-      pair_out = self.jvp_fun(*static_args, primals_, tangents_)
-    except UnexpectedTracerError as e:
-      e.add_note(pe.custom_rule_leak_note('custom_jvp', 'jvp'))
-      raise
+    pair_out = self.jvp_fun(*static_args, primals_, tangents_)
     jvp_name = getattr(self.jvp_fun, '__name__', str(self.jvp_fun))
     if not isinstance(pair_out, (list, tuple)) or len(pair_out) != 2:
       raise TypeError(
