@@ -252,7 +252,6 @@ class HiPrim:
     return (type(self) is type(other) and self.params == other.params
             and self.effects == other.effects)
 
-VJPHiPrimitive = HiPrim
 
 class VmapOf(HiPrim):
   prim: core.Primitive
