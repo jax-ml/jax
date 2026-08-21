@@ -1463,7 +1463,7 @@ def _make_pipeline_allocations(
         buffer_count,
         grid_rank=len(grid),
         use_lookahead=use_lookahead,
-        source_memory_space=in_ref.memory_space,
+        source_memory_space=jax.typeof(in_ref).memory_space,
         tiling=tiling,
         is_trivial_windowing=is_trivial,
         prefetched_count=prefetched_count,
