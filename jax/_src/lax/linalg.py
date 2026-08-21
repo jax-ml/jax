@@ -2663,6 +2663,9 @@ mlir.register_lowering(
     partial(_symmetric_product_gpu_lowering, "cu"), platform="cuda")
 mlir.register_lowering(
     symmetric_product_p,
+    partial(_symmetric_product_gpu_lowering, "oneapi"), platform="oneapi")
+mlir.register_lowering(
+    symmetric_product_p,
     mlir.lower_fun(_symmetric_product_jax_fn, multiple_results=False))
 
 
@@ -2890,7 +2893,9 @@ def _tridiagonal_cpu_gpu_lowering(ctx, a, *, lower, target_name_prefix):
 tridiagonal_p = linalg_primitive(
     _tridiagonal_dtype_rule, (_float | _complex,), (2,),
     _tridiagonal_shape_rule, "tridiagonal", multiple_results=True)
-register_cpu_gpu_lowering(tridiagonal_p, _tridiagonal_cpu_gpu_lowering)
+register_cpu_gpu_lowering(
+    tridiagonal_p, _tridiagonal_cpu_gpu_lowering,
+    ("cpu", "cuda", "rocm", "oneapi"))
 
 
 # Tridiagonal solve

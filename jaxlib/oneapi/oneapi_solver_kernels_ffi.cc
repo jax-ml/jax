@@ -16,8 +16,8 @@ limitations under the License.
 // OneAPI solver FFI kernels.
 //
 // This file owns all solver dispatch + implementation for the OneAPI backend.
-// It should be compiled ONLY for OneAPI (via jaxlib/oneapi/BUILD) and replaces
-// jaxlib/gpu/solver_kernels_ffi.cc in the OneAPI build.
+// It should be compiled ONLY for OneAPI (via jaxlib/oneapi/BUILD.bazel) and
+// replaces jaxlib/gpu/solver_kernels_ffi.cc in the OneAPI build.
 
 #include <oneapi/mkl/blas.hpp>
 #include <oneapi/mkl/lapack.hpp>
@@ -55,6 +55,21 @@ namespace ffi = ::xla::ffi;
 template <typename T>
 inline constexpr bool kIsComplex =
     std::is_same_v<T, gpuComplex> || std::is_same_v<T, gpuDoubleComplex>;
+
+// Maps an element type to its real scalar: complex<T> -> T, real -> itself.
+// Used by sytrd/hetrd whose d/e outputs are always real.
+template <typename T>
+struct RealType {
+  using value = T;
+};
+template <>
+struct RealType<gpuComplex> {
+  using value = float;
+};
+template <>
+struct RealType<gpuDoubleComplex> {
+  using value = double;
+};
 
 #define SOLVER_DISPATCH_IMPL(impl, ...)           \
   switch (dataType) {                             \
@@ -106,7 +121,6 @@ ffi::Error GeqrfImpl(int64_t batch, int64_t rows, int64_t cols,
   int64_t stride_a = m * n;
   int64_t stride_tau = tau_len;
 
-  // Contain any throw from the scratchpad-size query at the FFI boundary.
   int64_t scratchpad_size = 0;
   JAX_FFI_RETURN_IF_GPU_ERROR(TryCatchToStatus([&] {
     scratchpad_size = ::oneapi::mkl::lapack::geqrf_batch_scratchpad_size<T>(
@@ -128,8 +142,7 @@ ffi::Error GeqrfImpl(int64_t batch, int64_t rows, int64_t cols,
         *stream, m, n, out_data, lda, stride_a, tau_data, stride_tau, batch,
         scratchpad, scratchpad_size);
   } catch (std::exception const& e) {
-    // geqrf has no info output buffer, and it cannot report singularity, so
-    // any failure is fatal.
+    // No info output buffer; any failure is fatal.
     return ffi::Error::Internal(e.what());
   } catch (...) {
     return ffi::Error::Internal("geqrf: unknown exception");
@@ -181,7 +194,6 @@ ffi::Error OrgqrImpl(int64_t batch, int64_t rows, int64_t cols, int64_t size,
   int64_t stride_a = m * n;
   int64_t stride_tau = k;
 
-  // Contain any throw from the scratchpad-size query at the FFI boundary.
   int64_t scratchpad_size = 0;
   JAX_FFI_RETURN_IF_GPU_ERROR(TryCatchToStatus([&] {
     if constexpr (kIsComplex<T>) {
@@ -285,7 +297,6 @@ ffi::Error OrmqrImpl(int64_t batch, int64_t c_rows, int64_t c_cols, int64_t k,
     trans = ::oneapi::mkl::transpose::trans;
   }
 
-  // Contain any throw from the scratchpad-size query at the FFI boundary.
   int64_t scratchpad_size = 0;
   JAX_FFI_RETURN_IF_GPU_ERROR(TryCatchToStatus([&] {
     if constexpr (kIsComplex<T>) {
@@ -386,8 +397,6 @@ ffi::Error PotrfImpl(int64_t batch, int64_t n, gpuStream_t stream,
 
   int64_t lda = n;
   int64_t stride_a = n * n;
-  // oneMKL strided-batch Cholesky: one async submission for the whole batch.
-  // Contain any throw from the scratchpad-size query at the FFI boundary.
   int64_t scratchpad_size = 0;
   JAX_FFI_RETURN_IF_GPU_ERROR(TryCatchToStatus([&] {
     scratchpad_size = ::oneapi::mkl::lapack::potrf_batch_scratchpad_size<T>(
@@ -405,7 +414,6 @@ ffi::Error PotrfImpl(int64_t batch, int64_t n, gpuStream_t stream,
     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
         out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
   }
-  // Contain any SYCL/oneMKL exception so none escapes the FFI boundary.
   try {
     JAX_FFI_RETURN_IF_GPU_ERROR(
         SyclMemsetAsync(info_data, 0, batch * sizeof(int32_t), stream));
@@ -507,14 +515,84 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(SyevdFfi, SyevdDispatch,
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
 
-// Symmetric rank-k update: syrk (BLAS) (stub)
+// Symmetric rank-k update: syrk (BLAS)
+
+template <typename T>
+ffi::Error SyrkImpl(gpuStream_t stream, bool transpose, ffi::AnyBuffer a,
+                    ffi::AnyBuffer c_in, ffi::AnyBuffer alpha,
+                    ffi::AnyBuffer beta, ffi::Result<ffi::AnyBuffer> c_out) {
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(a.dimensions()));
+  if (alpha.element_count() != 1 || beta.element_count() != 1) {
+    return ffi::Error::InvalidArgument(
+        "The alpha and beta inputs to syrk must be scalars");
+  }
+  int64_t size = transpose ? cols : rows;
+  FFI_RETURN_IF_ERROR(
+      CheckShape(c_in.dimensions(), {batch, size, size}, "c_in", "syrk"));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(c_out->dimensions(), {batch, size, size}, "c_out", "syrk"));
+
+  int64_t n = transpose ? cols : rows;
+  int64_t k = transpose ? rows : cols;
+  auto uplo = ::oneapi::mkl::uplo::upper;
+  // Matches the CUDA reference: non-transpose path multiplies A^T, transpose
+  // path multiplies A.
+  auto trans = transpose ? ::oneapi::mkl::transpose::nontrans
+                         : ::oneapi::mkl::transpose::trans;
+
+  const T* a_data = static_cast<const T*>(a.untyped_data());
+  T* c_data = static_cast<T*>(c_in.untyped_data());
+  T* c_out_data = static_cast<T*>(c_out->untyped_data());
+
+  // The FFI passes alpha/beta as 1-element device buffers. oneMKL's
+  // value_or_pointer<T> would accept those pointers, but it silently falls back
+  // to a host dereference when they are not recognized as USM in the queue's
+  // context, so copy to host explicitly.
+  T host_alpha;
+  T host_beta;
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(&host_alpha, alpha.untyped_data(),
+                                             sizeof(T), gpuMemcpyDeviceToHost,
+                                             stream));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(&host_beta, beta.untyped_data(),
+                                             sizeof(T), gpuMemcpyDeviceToHost,
+                                             stream));
+  // The copies are async; block before reading the host scalars.
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpuStreamSynchronize(stream));
+
+  if (c_data != c_out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(
+        gpuMemcpyAsync(c_out_data, c_data, c_in.size_bytes(),
+                       gpuMemcpyDeviceToDevice, stream));
+  }
+
+  // lda matches the CUDA reference: nontrans (transpose==true) uses n, else k.
+  int64_t lda = transpose ? n : k;
+  int64_t ldc = n;
+  try {
+    // Invalid arguments throw synchronously from the call. A failure detected
+    // on the device afterwards goes to the queue's async handler, which XLA
+    // only logs, so it cannot surface here.
+    ::oneapi::mkl::blas::column_major::syrk_batch(
+        *stream, uplo, trans, n, k, host_alpha, a_data, lda, k * n, host_beta,
+        c_out_data, ldc, n * n, batch);
+  } catch (std::exception const& e) {
+    return ffi::Error::Internal(e.what());
+  } catch (...) {
+    return ffi::Error::Internal("syrk: unknown exception");
+  }
+  return ffi::Error::Success();
+}
 
 ffi::Error SyrkDispatch(gpuStream_t stream, bool transpose, ffi::AnyBuffer a,
                         ffi::AnyBuffer c_in, ffi::AnyBuffer alpha,
                         ffi::AnyBuffer beta,
                         ffi::Result<ffi::AnyBuffer> c_out) {
-  return ffi::Error(ffi::ErrorCode::kUnimplemented,
-                    "syrk: not yet implemented for OneAPI");
+  auto dataType = a.element_type();
+  SOLVER_DISPATCH_IMPL(SyrkImpl, stream, transpose, a, c_in, alpha, beta,
+                       c_out);
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in syrk", absl::FormatStreamed(dataType)));
 }
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(SyrkFfi, SyrkDispatch,
@@ -583,8 +661,78 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdjFfi, GesvdjDispatch,
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
 
-// Symmetric/Hermitian Tridiagonal Reduction:
-// sytrd (real) / hetrd (complex) (stub)
+// Symmetric/Hermitian Tridiagonal Reduction: sytrd (real) / hetrd (complex)
+
+template <typename T>
+ffi::Error SytrdImpl(int64_t batch, int64_t size, gpuStream_t stream,
+                     ffi::ScratchAllocator& scratch, bool lower,
+                     ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
+                     ffi::Result<ffi::AnyBuffer> d,
+                     ffi::Result<ffi::AnyBuffer> e,
+                     ffi::Result<ffi::AnyBuffer> tau,
+                     ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  using Real = typename RealType<T>::value;
+  int64_t n = size;
+  int64_t lda = n;
+  auto uplo = lower ? ::oneapi::mkl::uplo::lower : ::oneapi::mkl::uplo::upper;
+
+  int64_t scratchpad_size = 0;
+  JAX_FFI_RETURN_IF_GPU_ERROR(TryCatchToStatus([&] {
+    if constexpr (kIsComplex<T>) {
+      scratchpad_size = ::oneapi::mkl::lapack::hetrd_scratchpad_size<T>(
+          *stream, uplo, n, lda);
+    } else {
+      scratchpad_size = ::oneapi::mkl::lapack::sytrd_scratchpad_size<T>(
+          *stream, uplo, n, lda);
+    }
+  }));
+  // One scratchpad serves the whole batch: XLA SYCL queues are in-order, so
+  // iteration i + 1 cannot start before iteration i has finished with it.
+  FFI_ASSIGN_OR_RETURN(auto scratchpad,
+                       AllocateWorkspace<T>(scratch, scratchpad_size, "sytrd"));
+
+  auto* a_data = static_cast<T*>(a.untyped_data());
+  auto* out_data = static_cast<T*>(out->untyped_data());
+  auto* d_data = static_cast<Real*>(d->untyped_data());
+  auto* e_data = static_cast<Real*>(e->untyped_data());
+  auto* tau_data = static_cast<T*>(tau->untyped_data());
+  auto* info_data = info->typed_data();
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+  // sytrd/hetrd report failure by throwing, not via an info code, but JAX still
+  // reads an info buffer; zero it (0 == success) and treat any throw as fatal
+  // (a reduction only fails on an illegal argument).
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      SyclMemsetAsync(info_data, 0, batch * sizeof(int32_t), stream));
+
+  int64_t out_step = n * n;
+  // oneMKL has no strided sytrd_batch/hetrd_batch, so the uniform batch stays a
+  // loop here.
+  try {
+    for (int64_t i = 0; i < batch; ++i) {
+      if constexpr (kIsComplex<T>) {
+        ::oneapi::mkl::lapack::hetrd(*stream, uplo, n, out_data, lda, d_data,
+                                     e_data, tau_data, scratchpad,
+                                     scratchpad_size);
+      } else {
+        ::oneapi::mkl::lapack::sytrd(*stream, uplo, n, out_data, lda, d_data,
+                                     e_data, tau_data, scratchpad,
+                                     scratchpad_size);
+      }
+      out_data += out_step;
+      d_data += n;
+      e_data += n - 1;
+      tau_data += n - 1;
+    }
+  } catch (std::exception const& ex) {
+    return ffi::Error::Internal(ex.what());
+  } catch (...) {
+    return ffi::Error::Internal("sytrd: unknown exception");
+  }
+  return ffi::Error::Success();
+}
 
 ffi::Error SytrdDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
                          bool lower, ffi::AnyBuffer a,
@@ -593,8 +741,33 @@ ffi::Error SytrdDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
                          ffi::Result<ffi::AnyBuffer> e,
                          ffi::Result<ffi::AnyBuffer> tau,
                          ffi::Result<ffi::Buffer<ffi::S32>> info) {
-  return ffi::Error(ffi::ErrorCode::kUnimplemented,
-                    "sytrd: not yet implemented for OneAPI");
+  auto dataType = a.element_type();
+  if (out->element_type() != dataType ||
+      d->element_type() != ffi::ToReal(dataType) ||
+      e->element_type() != ffi::ToReal(dataType) ||
+      tau->element_type() != dataType) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to sytrd must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(a.dimensions()));
+  if (rows != cols) {
+    return ffi::Error::InvalidArgument(
+        "The input matrix to sytrd must be square");
+  }
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, rows, cols}, "out", "sytrd"));
+  FFI_RETURN_IF_ERROR(CheckShape(d->dimensions(), {batch, cols}, "d", "sytrd"));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(e->dimensions(), {batch, cols - 1}, "e", "sytrd"));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(tau->dimensions(), {batch, cols - 1}, "tau", "sytrd"));
+  FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "sytrd"));
+
+  SOLVER_DISPATCH_IMPL(SytrdImpl, batch, rows, stream, scratch, lower, a, out,
+                       d, e, tau, info);
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in sytrd", absl::FormatStreamed(dataType)));
 }
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(SytrdFfi, SytrdDispatch,
