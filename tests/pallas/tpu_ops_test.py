@@ -466,6 +466,41 @@ class OpsTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(result, reduce_func(x, axis))
 
   @parameterized.product(
+      k=[1, 2, 4, 8],
+      in_shape=[(13, 32, 512), (10, 16, 128)],
+      axis=[0, 1, 2, -1, -2, -3],
+      dtype=[jnp.float32],
+  )
+  def test_top_k(self, k, in_shape, axis, dtype):
+    if not jtu.is_libtpu_at_least("0.0.47"):
+      self.skipTest("Requires libtpu >= 0.0.47")
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Requires TPUv4+")
+
+    out_val_shape = list(in_shape)
+    out_val_shape[axis] = k
+
+    def kernel(x_ref, val_ref, idx_ref):
+      val_ref[...], idx_ref[...] = jax.lax.top_k(
+          x_ref[...], k=k, axis=axis, is_stable=False
+      )
+
+    # Ensure unique values in x so that no ties need to be broken.
+    x = jax.random.permutation(
+        jax.random.key(42), jnp.arange(np.prod(in_shape), dtype=dtype)
+    ).reshape(in_shape)
+    res_v, res_i = self.pallas_call(
+        kernel,
+        out_shape=[
+            jax.ShapeDtypeStruct(out_val_shape, dtype),
+            jax.ShapeDtypeStruct(out_val_shape, jnp.int32),
+        ],
+    )(x)
+    exp_v, exp_i = jax.lax.top_k(x, k=k, axis=axis, is_stable=False)
+    np.testing.assert_array_equal(res_v, exp_v)
+    np.testing.assert_array_equal(res_i, exp_i)
+
+  @parameterized.product(
       shape=[(129, 129), (1, 129), (2, 129), (4, 129)],
       msk_dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
       dtype=[jnp.float32, jnp.bfloat16],

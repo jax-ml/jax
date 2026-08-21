@@ -3614,6 +3614,51 @@ def _argmin_lowering_rule(ctx: LoweringRuleContext, x, axes, index_dtype):
       ir.Attribute.parse("#tpu.reduction_kind<arg_min>")
   )
 
+
+@register_lowering_rule(lax.top_k_p, ensure_mlir_values=False)
+def _top_k_lowering_rule(
+    ctx: LoweringRuleContext,
+    x,
+    *,
+    k: int,
+    axis: int,
+    is_stable: bool,
+):
+  if tpu_info.get_tpu_info().generation < 4:
+    raise NotImplementedError("top_k is not supported on TPUv3 or older")
+  if is_stable:
+    raise NotImplementedError(
+        "is_stable=True is not supported in Pallas top_k. For efficiency, only"
+        " is_stable=False is supported"
+    )
+  if ctx.avals_in[0].dtype != jnp.float32:
+    raise NotImplementedError(
+        f"Pallas top_k only supports float32, got {ctx.avals_in[0].dtype}"
+    )
+
+  def _top_k_impl(operand, *, k: int, axis: int = -1):
+    axis = axis % operand.ndim
+    iota = jax.lax.broadcasted_iota(jnp.int32, operand.shape, axis)
+    min_val = jnp.finfo(operand.dtype).min
+    vals = []
+    idxs = []
+    curr = operand
+    for _ in range(k):
+      idx = jnp.argmax(curr, axis=axis)
+      val = jnp.max(curr, axis=axis)
+      vals.append(val)
+      idxs.append(idx)
+      mask = iota == jnp.expand_dims(idx, axis)
+      curr = jnp.where(mask, min_val, curr)
+
+    vals_stacked = jnp.stack(vals, axis=axis)
+    idxs_stacked = jnp.stack(idxs, axis=axis)
+
+    return vals_stacked, idxs_stacked
+
+  return lower_fun(_top_k_impl)(ctx, x, k=k, axis=axis)
+
+
 @register_lowering_rule(
     lax.sub_p, kernel_types=[*tpu_core.CoreType], ensure_mlir_values=False
 )
@@ -3868,7 +3913,6 @@ def _logistic_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
     denom = arith.addf(one, exp_neg_x)
     return arith.divf(one, denom)
   return tpu.logistic(x)  # pyrefly: ignore[missing-attribute]
-
 
 
 @register_lowering_rule(lax.sin_p)
