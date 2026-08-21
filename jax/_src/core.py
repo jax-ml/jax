@@ -1065,6 +1065,14 @@ class Tracer[TraceType: Trace](TracerBase, metaclass=TracerMeta):
         f"The 'sharding' attribute is not available on {self._error_repr()}.")
 
   @property
+  def memory_space(self):
+    # This attribute is part of the jax.Array API, but only defined on concrete arrays.
+    # Raising a ConcretizationTypeError would make sense, but for backward compatibility
+    # we raise an AttributeError so that hasattr() and getattr() work as expected.
+    raise AttributeError(
+        f"The 'memory_space' attribute is not available on {self._error_repr()}.")
+
+  @property
   def committed(self):
     raise ConcretizationTypeError(
         self,
@@ -1174,6 +1182,10 @@ class Tracer[TraceType: Trace](TracerBase, metaclass=TracerMeta):
       raise AttributeError(
         f"The 'sharding' attribute is not available on {self._error_repr()}. "
         "To query sharding information on tracers, use `jax.typeof(x)`.")
+    if name == 'memory_space':
+      raise AttributeError(
+        f"The 'memory_space' attribute is not available on {self._error_repr()}. "
+        "To query memory_space information on tracers, use `jax.typeof(x)`.")
 
     try:
       attr = getattr(self.aval, name)
