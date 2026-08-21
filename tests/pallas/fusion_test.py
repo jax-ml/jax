@@ -15,6 +15,7 @@ import dataclasses
 import functools
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import core as jax_core
@@ -721,6 +722,32 @@ class FusionTest(jtu.JaxTestCase):
 
     lowered = jax.jit(f).lower(x)
     self.assertIsNotNone(lowered)
+
+  @parameterized.parameters(
+      {"static_argnums": 1},
+      {"static_argnames": "mode"},
+  )
+  def test_fuse_static_args(self, **kwargs):
+    @fuser.fusible
+    def f(x_fn, y_fn):
+      x = x_fn()
+      if y_fn is None:
+        y_fn = lambda x: x
+      return y_fn(x)
+
+    @fuser.fuse(**kwargs)
+    def g(x, mode="identity"):
+      if mode == "double":
+        return f(x * 2)
+      elif mode == "negate":
+        return f(-x)
+      else:
+        return f(x)
+
+    x = jax.random.normal(jax.random.key(0), (4, 4), dtype=jnp.float32)
+    np.testing.assert_array_equal(g(x, mode="double"), x * 2)
+    np.testing.assert_array_equal(g(x, "negate"), -x)
+    np.testing.assert_array_equal(g(x), x)
 
 
 @dataclasses.dataclass(frozen=True)

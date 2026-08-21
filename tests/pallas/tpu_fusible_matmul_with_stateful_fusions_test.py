@@ -700,5 +700,44 @@ class FusibleMatmulTest(jtu.JaxTestCase):
 
     self.assertArraysAllClose(run_matmul(x, y), x @ y, atol=1e-4, rtol=1e-4)
 
+  @parameterized.product(
+      impl=list(KernelImpl),
+      static_kwargs=[{"static_argnums": (2,)}, {"static_argnames": ("op",)}],
+  )
+  def test_matmul_with_static_args(self, impl, static_kwargs):
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, (512, 512), jnp.float32)
+    y = jax.random.normal(k1, (512, 512), jnp.float32)
+
+    _fusible_matmul = functools.partial(fusible_matmul, impl=impl)
+
+    @functools.partial(jax.jit, **static_kwargs)
+    def run_matmul(x, y, op):
+      out_ref = jax.new_ref(jax.lax.empty((x.shape[0], y.shape[1]), x.dtype))
+
+      @fuser.fuse(**static_kwargs)
+      def matmul(x, y, op):
+        out = _fusible_matmul(x, y)
+        if op == "relu":
+          out_ref[...] = jax.nn.relu(out)
+        elif op == "gelu":
+          out_ref[...] = jax.nn.gelu(out)
+        else:
+          out_ref[...] = out
+
+      matmul(x, y, op)
+      return jax.freeze(out_ref)
+
+    ref = x @ y
+    self.assertArraysAllClose(
+        run_matmul(x, y, "relu"), jax.nn.relu(ref), atol=1e-4, rtol=1e-4
+    )
+    self.assertArraysAllClose(
+        run_matmul(x, y, op="gelu"), jax.nn.gelu(ref), atol=1e-4, rtol=1e-4
+    )
+    self.assertArraysAllClose(
+        run_matmul(x, y, "identity"), ref, atol=1e-4, rtol=1e-4
+    )
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

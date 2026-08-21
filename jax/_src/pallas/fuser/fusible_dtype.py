@@ -15,7 +15,7 @@
 """Custom fusible dtypes."""
 
 import abc
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 import functools
 import itertools as it
@@ -132,14 +132,35 @@ class FusionDType(dtypes.ExtendedDType, util.StrictABC):
     raise NotImplementedError()
 
 
-def physicalize(f):
+def physicalize(
+    f,
+    *,
+    static_argnums: int | Sequence[int] | None = None,
+    static_argnames: str | Iterable[str] | None = None,
+):
   """Runs a function that contains fusible extended dtypes."""
+  sig = api_util.fun_signature(f)
+  _, _, static_argnums_, static_argnames_ = api_util.resolve_argnums(
+      f,
+      sig,
+      donate_argnums=None,
+      donate_argnames=None,
+      static_argnums=static_argnums,
+      static_argnames=static_argnames,
+  )
 
   def wrapper(*args, **kwargs):
-    if kwargs:
-      raise NotImplementedError()
-    debug_info = api_util.debug_info("physicalize", f, args, kwargs)
-    args_ft = ft.flatten((args, kwargs))
+    debug_info = api_util.debug_info(
+        "physicalize",
+        f,
+        args,
+        kwargs,
+        static_argnums=static_argnums_,
+        static_argnames=static_argnames_,
+    )
+    args_ft = ft.flatten_static_argnums_argnames(
+        args, kwargs, static_argnums_, static_argnames_
+    )
     in_avals_ft = args_ft.map(core.typeof)
     closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
         f, in_avals_ft, debug_info
