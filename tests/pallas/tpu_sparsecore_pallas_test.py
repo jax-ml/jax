@@ -395,7 +395,7 @@ class DebugPrintTest(PallasSCTest):
       pl.debug_print("From SCS")
 
     def kernel(x):
-      return mpmd.mpmd_map(
+      return mpmd.pallas_kernel(
           [(v_mesh, vector_subcore_fn), (s_mesh, scalar_subcore_fn)],
           out_types=jax.ShapeDtypeStruct.like(x),
       )(x)
@@ -3267,10 +3267,10 @@ class PallasTpuSparseCoreLoweringErrorTest(jtu.JaxTestCase):
       ):
         kernel.lower().compile()
 
-  def test_mpmd_map_sparsecore_availability_check(self):
+  def test_pallas_kernel_sparsecore_availability_check(self):
     @jax.jit
     def run_mpmd(x):
-      return mpmd.mpmd_map(
+      return mpmd.pallas_kernel(
           [(self.mock_sc_scalar_subcore_mesh(), lambda *_: None)],
           out_types=jax.ShapeDtypeStruct.like(x),
       )(x)

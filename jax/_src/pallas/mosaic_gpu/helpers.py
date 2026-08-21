@@ -484,4 +484,4 @@ def inline_ptx(asm: str):
 def warp_map(f: Callable[[jax.Array], None], /) -> None:
   """Runs a function with single warp semantics, passing it the warp ID."""
   mesh = gpu_core.WarpMesh(axis_name=object())
-  mpmd.mpmd_map([(mesh, lambda: f(lax.axis_index(mesh.axis_name)))])()
+  mpmd.pallas_kernel([(mesh, lambda: f(lax.axis_index(mesh.axis_name)))])()

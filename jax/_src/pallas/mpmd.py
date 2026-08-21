@@ -61,7 +61,7 @@ def get_super_mesh_shape(
 
 
 @contextlib.contextmanager
-def mpmd_map_tracing_context(
+def pallas_kernel_tracing_context(
   mesh: pallas_core.Mesh,
   other_meshes: tuple[pallas_core.Mesh, ...],
 ) -> Generator[None]:
@@ -75,19 +75,19 @@ def mpmd_map_tracing_context(
     yield
 
 
-mpmd_map_p = jax_core.Primitive("mpmd_map")
-mpmd_map_p.multiple_results = True
+pallas_kernel_p = jax_core.Primitive("pallas_kernel")
+pallas_kernel_p.multiple_results = True
 
 
-@mpmd_map_p.def_impl
-def _mpmd_map_impl(*args, **params):
-  jit_impl = api.jit(functools.partial(mpmd_map_p.bind, **params))
+@pallas_kernel_p.def_impl
+def _pallas_kernel_impl(*args, **params):
+  jit_impl = api.jit(functools.partial(pallas_kernel_p.bind, **params))
   with config.disable_jit(False):
     return jit_impl(*args)
 
 
-@mpmd_map_p.def_effectful_abstract_eval
-def _mpmd_map_abstract_eval(
+@pallas_kernel_p.def_effectful_abstract_eval
+def _pallas_kernel_abstract_eval(
     *in_avals,
     jaxprs,
     out_avals,
@@ -132,7 +132,7 @@ def _mpmd_map_abstract_eval(
   # if not (all(a.sharding.mesh.are_all_axes_manual for a in in_avals) and
   #         all(a.sharding.mesh.are_all_axes_manual for a in out_avals) and
   #         get_abstract_mesh().are_all_axes_manual):
-  #   raise ValueError("mpmd_map requires all mesh axes to be Manual, "
+  #   raise ValueError("pallas_kernel requires all mesh axes to be Manual, "
   #                    f"got {get_abstract_mesh().axis_types}")
 
   # NOTE(mattjj,yashkatariya): this doesn't catch auto-mode non-manual axes
@@ -141,7 +141,7 @@ def _mpmd_map_abstract_eval(
           all(p is None for a in out_avals if isinstance(a, jax_core.ShapedArray)
               for p in a.sharding.spec)):
     raise ValueError(
-        "mpmd_map requires all mesh axes to be Manual, got"
+        "pallas_kernel requires all mesh axes to be Manual, got"
         f" {get_abstract_mesh().axis_types}"
     )
   if any(
@@ -151,7 +151,7 @@ def _mpmd_map_abstract_eval(
       for a in in_avals
   ):
     raise ValueError(
-        "mpmd_map does not support Refs with varying manual axis types:"
+        "pallas_kernel does not support Refs with varying manual axis types:"
         f" {in_avals=}:"
         f" {[None if not isinstance(a, state.AbstractRef) else a.manual_axis_type for a in in_avals]}"
     )
@@ -176,16 +176,16 @@ def _mpmd_map_abstract_eval(
   return out_avals, effs
 
 
-def _mpmd_map_typecheck_rule(
+def _pallas_kernel_typecheck_rule(
     ctx_factory, *in_atoms, **params
 ):
   del ctx_factory  # Unused.
-  return _mpmd_map_abstract_eval(
+  return _pallas_kernel_abstract_eval(
       *(x.aval for x in in_atoms), **params
   )
 
 
-jax_core.custom_typechecks[mpmd_map_p] = _mpmd_map_typecheck_rule
+jax_core.custom_typechecks[pallas_kernel_p] = _pallas_kernel_typecheck_rule
 
 
 def _default_memory_space(meshes: Sequence[pallas_core.Mesh]):
@@ -198,7 +198,7 @@ def _default_memory_space(meshes: Sequence[pallas_core.Mesh]):
   return defaults.pop()
 
 
-def _mpmd_map_discharge_rule(
+def _pallas_kernel_discharge_rule(
     ctx,
     *args: Any,
     jaxprs,
@@ -275,7 +275,7 @@ def _mpmd_map_discharge_rule(
     )
 
     debug_info = api_util.debug_info(
-        "mpmd_map_discharge", new_body, tracing_avals, {},
+        "pallas_kernel_discharge", new_body, tracing_avals, {},
         sourceinfo=jaxpr.debug_info.func_src_info,
     )
     closed_jaxpr, _ = pe.trace_to_jaxpr(
@@ -283,7 +283,7 @@ def _mpmd_map_discharge_rule(
     return closed_jaxpr
 
   for mesh, jaxpr in zip(meshes, jaxprs):
-    with mpmd_map_tracing_context(mesh, all_meshes):
+    with pallas_kernel_tracing_context(mesh, all_meshes):
       new_jaxprs.append(_rewrite_to_include_new_outputs(jaxpr))
 
   new_out_avals = [
@@ -300,7 +300,7 @@ def _mpmd_map_discharge_rule(
   for out_idx, in_idx in enumerate(write_indices):
     new_aliases[in_idx] = num_out_orig + out_idx
 
-  res = mpmd_map_p.bind(
+  res = pallas_kernel_p.bind(
       *args,
       jaxprs=tuple(new_jaxprs),
       meshes=meshes,
@@ -324,18 +324,20 @@ def _mpmd_map_discharge_rule(
   return new_invals, ans
 
 
-state_discharge.register_discharge_rule(mpmd_map_p)(_mpmd_map_discharge_rule)
+state_discharge.register_discharge_rule(pallas_kernel_p)(
+    _pallas_kernel_discharge_rule
+)
 
 
-def _mpmd_map_dce_rule(
+def _pallas_kernel_dce_rule(
     used_outs: list[bool], eqn: pe.JaxprEqn
 ) -> tuple[list[bool], pe.JaxprEqn | None]:
   return [True] * len(eqn.invars), eqn
 
-pe.dce_rules[mpmd_map_p] = _mpmd_map_dce_rule
+pe.dce_rules[pallas_kernel_p] = _pallas_kernel_dce_rule
 
 
-def _mpmd_map_partial_eval_custom(saveable, unks_in, inst_in, eqn):
+def _pallas_kernel_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   new_inst = [
       x
       for x, inst in zip(eqn.invars, inst_in)
@@ -347,8 +349,8 @@ def _mpmd_map_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     return None, eqn, [True] * num_outs, [True] * num_outs, new_inst
 
   if any(isinstance(v.aval, state.AbstractRef) for v in eqn.invars):
-    # Force ``mpmd_map`` to run in both forward and backward passes.
-    # Otherwise, partial eval only places the ``mpmd_map`` in the forward
+    # Force ``pallas_kernel`` to run in both forward and backward passes.
+    # Otherwise, partial eval only places the ``pallas_kernel`` in the forward
     # pass, leaving the backward pass to read newly-allocated but *unchanged*
     # refs.
     return eqn, eqn, [False] * num_outs, [True] * num_outs, new_inst
@@ -362,10 +364,12 @@ def _mpmd_map_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     return eqn, None, [False] * num_outs, [False] * num_outs, []
 
 
-pe.partial_eval_jaxpr_custom_rules[mpmd_map_p] = _mpmd_map_partial_eval_custom
+pe.partial_eval_jaxpr_custom_rules[pallas_kernel_p] = (
+    _pallas_kernel_partial_eval_custom
+)
 
 
-def _mpmd_map_batching_rule(
+def _pallas_kernel_batching_rule(
     axis_data,
     args,
     dims,
@@ -377,7 +381,7 @@ def _mpmd_map_batching_rule(
     **params,
 ):
   if all(d is None for d in dims):
-    out = mpmd_map_p.bind(
+    out = pallas_kernel_p.bind(
         *args,
         jaxprs=jaxprs,
         meshes=meshes,
@@ -411,7 +415,7 @@ def _mpmd_map_batching_rule(
         # the underlying array like we do below.
         #
         # TODO(slebedev): Add first class support for ``TransformedRef``s to
-        # ``mpmd_map`` and get rid of this.
+        # ``pallas_kernel`` and get rid of this.
         squeezed_args.append(
             jax_core.new_ref(
                 jnp.squeeze(arg[...], dim),
@@ -421,7 +425,7 @@ def _mpmd_map_batching_rule(
       else:
         squeezed_args.append(jnp.squeeze(arg, dim))
 
-    outs = mpmd_map_p.bind(
+    outs = pallas_kernel_p.bind(
         *squeezed_args,
         jaxprs=jaxprs,
         meshes=meshes,
@@ -453,7 +457,7 @@ def _mpmd_map_batching_rule(
         + (0,) * num_out
         + (None,) * (len(jaxpr.invars) - num_in - num_out)
     )
-    with mpmd_map_tracing_context(mesh, all_meshes):
+    with pallas_kernel_tracing_context(mesh, all_meshes):
       batched_jaxpr, _ = batching.batch_jaxpr2(jaxpr, axis_data, in_axes)
     batched_jaxprs.append(batched_jaxpr)
 
@@ -461,7 +465,7 @@ def _mpmd_map_batching_rule(
   out_avals = tree_util.tree_map(
       lambda a: a.update(shape=(axis_data.size, *a.shape)), out_avals)
 
-  outs = mpmd_map_p.bind(
+  outs = pallas_kernel_p.bind(
       *moved_args,
       jaxprs=tuple(batched_jaxprs),
       meshes=meshes,
@@ -473,18 +477,20 @@ def _mpmd_map_batching_rule(
   return outs, (0,) * len(outs)
 
 
-batching.fancy_primitive_batchers[mpmd_map_p] = _mpmd_map_batching_rule
+batching.fancy_primitive_batchers[pallas_kernel_p] = (
+    _pallas_kernel_batching_rule
+)
 
 
-def _mpmd_map_is_high(*args, jaxprs, **params):
+def _pallas_kernel_is_high(*args, jaxprs, **params):
   del args, params
   return any(jaxpr.is_high for jaxpr in jaxprs)
 
 
-mpmd_map_p.is_high = _mpmd_map_is_high
+pallas_kernel_p.is_high = _pallas_kernel_is_high
 
 
-def _mpmd_map_to_lojax(
+def _pallas_kernel_to_lojax(
     *hi_args,
     meshes,
     jaxprs,
@@ -511,7 +517,7 @@ def _mpmd_map_to_lojax(
   all_meshes = (*meshes, *external_meshes)
   lo_jaxprs = []
   for mesh, jaxpr in zip(meshes, jaxprs):
-    with mpmd_map_tracing_context(mesh, all_meshes):
+    with pallas_kernel_tracing_context(mesh, all_meshes):
       closed_jaxpr = jaxpr
       closed_lo_jaxpr = pe.lower_jaxpr2(closed_jaxpr)
       assert not closed_lo_jaxpr.consts
@@ -526,7 +532,7 @@ def _mpmd_map_to_lojax(
     for i_lo, o_lo in zip(input_index_mapping[i], output_index_mapping[o]):
       new_input_output_aliases[i_lo] = o_lo
 
-  lo_outs = mpmd_map_p.bind(
+  lo_outs = pallas_kernel_p.bind(
       *lo_args,
       meshes=meshes,
       jaxprs=tuple(lo_jaxprs),
@@ -544,10 +550,10 @@ def _mpmd_map_to_lojax(
   return pe.raise_lo_outs(out_avals, lo_outs)
 
 
-mpmd_map_p.to_lojax = _mpmd_map_to_lojax
+pallas_kernel_p.to_lojax = _pallas_kernel_to_lojax
 
 
-def _mpmd_map_tpu_lowering(
+def _pallas_kernel_tpu_lowering(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
     jaxprs,
@@ -567,7 +573,7 @@ def _mpmd_map_tpu_lowering(
   except ImportError:
     raise pallas_call._unsupported_lowering_error("tpu")
   num_scratch = len(jaxprs[0].invars) - len(in_nodes) - len(ctx.avals_out)
-  return pallas_call_registration.mpmd_map_tpu_lowering_rule(
+  return pallas_call_registration.pallas_kernel_tpu_lowering_rule(
       ctx,
       *in_nodes,
       jaxprs=jaxprs,
@@ -585,7 +591,7 @@ def _mpmd_map_tpu_lowering(
   )
 
 
-def _mpmd_map_fallback_lowering(
+def _pallas_kernel_fallback_lowering(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
     meshes,
@@ -687,36 +693,38 @@ def _mpmd_map_fallback_lowering(
   )
 
 
-def _mpmd_map_mgpu_lowering(ctx: mlir.LoweringRuleContext, *in_nodes, **params):
+def _pallas_kernel_mgpu_lowering(
+    ctx: mlir.LoweringRuleContext, *in_nodes, **params
+):
   try:
     from jax._src.pallas.mosaic_gpu import pallas_call_registration  # pyrefly: ignore[missing-import]
   except ImportError:
     raise pallas_call._unsupported_lowering_error("cuda")
-  return pallas_call_registration.mpmd_map_mgpu_lowering_rule(
+  return pallas_call_registration.pallas_kernel_mgpu_lowering_rule(
       ctx, *in_nodes, **params
   )
 
 
-@functools.partial(mlir.register_lowering, mpmd_map_p)
-def _mpmd_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes, **params):
+@functools.partial(mlir.register_lowering, pallas_kernel_p)
+def _pallas_kernel_lowering(ctx: mlir.LoweringRuleContext, *in_nodes, **params):
   platforms = ctx.module_context.platforms
   if len(platforms) != 1:
     raise NotImplementedError(
-        "mpmd_map does not support multi-platform lowering"
+        "pallas_kernel does not support multi-platform lowering"
     )
   [platform] = platforms
   match platform:
     case "cuda" if config.jax_pallas_use_mosaic_gpu.value:
-      return _mpmd_map_mgpu_lowering(ctx, *in_nodes, **params)
+      return _pallas_kernel_mgpu_lowering(ctx, *in_nodes, **params)
     case "cpu" | "cuda" | "rocm":
-      return _mpmd_map_fallback_lowering(ctx, *in_nodes, **params)
+      return _pallas_kernel_fallback_lowering(ctx, *in_nodes, **params)
     case "tpu":
-      return _mpmd_map_tpu_lowering(ctx, *in_nodes, **params)
+      return _pallas_kernel_tpu_lowering(ctx, *in_nodes, **params)
     case _:
       raise ValueError(f"Unsupported platform: {platform}")
 
 
-def mpmd_map(
+def pallas_kernel(
     meshes_and_fns: Sequence[tuple[pallas_core.Mesh, Callable[..., None]]],
     /,
     out_types: tree_util.PyTree = (),
@@ -732,7 +740,7 @@ def mpmd_map(
   interpret = (
       config.pallas_tpu_interpret_mode_context_manager.value or interpret
   )
-  return _mpmd_map(
+  return _pallas_kernel(
       meshes_and_fns,
       out_types,
       input_output_aliases={},
@@ -786,7 +794,7 @@ def _error_if_non_ref_consts(consts, debug_info):
         jax_core.pp_aval(aval, ctx) for aval in non_scalar_consts_avals
     )
     raise ValueError(
-        "The kernel function in mpmd_map"
+        "The kernel function in pallas_kernel"
         f" {debug_info.func_src_info} captures non-scalar array constants"
         f" [{pp_consts_avals}]. You can only close over scalars and Refs;"
         " arrays must be passed as explicit inputs."
@@ -868,12 +876,12 @@ def _dedup_consts_and_unify_jaxpr_signatures(
   )
   for mesh, jaxpr, consts in zip(meshes, jaxprs, consts_per_fn):
     debug_info = api_util.debug_info(
-        "mpmd_map_closed_over",
+        "pallas_kernel_closed_over",
         make_rewritten_body(jaxpr, consts), tracing_avals, {},
         sourceinfo=jaxpr.debug_info.func_src_info,
     )
     fun_to_trace = make_rewritten_body(jaxpr, consts)
-    with mpmd_map_tracing_context(mesh, all_meshes):
+    with pallas_kernel_tracing_context(mesh, all_meshes):
       jaxpr, _ = pe.trace_to_jaxpr(
           fun_to_trace, ft.flatten_args(*tracing_avals),
           debug_info)
@@ -882,7 +890,7 @@ def _dedup_consts_and_unify_jaxpr_signatures(
   return new_jaxprs, unique_consts
 
 
-def _mpmd_map(
+def _pallas_kernel(
     meshes_and_fns: Sequence[tuple[pallas_core.Mesh, Callable[..., None]]],
     /,
     out_types: tree_util.PyTree = (),
@@ -896,7 +904,7 @@ def _mpmd_map(
     name: str | None = None,
     metadata: dict[str, str] | None = None,
 ) -> Callable[..., Any]:
-  """Like ``pallas_call``, but MPMD and without pipelining."""
+  """Like ``pallas_call``, but without pipelining."""
   if not meshes_and_fns:
     raise ValueError("At least one mesh/function pair is required")
 
@@ -921,7 +929,7 @@ def _mpmd_map(
       if isinstance(arg, jax_core.Ref):
         if id(arg) in seen_ref_ids:
           raise NotImplementedError(
-              "Cannot pass the same ref into a mpmd map multiple times"
+              "Cannot pass the same ref into a pallas kernel multiple times"
           )
         seen_ref_ids.add(id(arg))
     # TODO(sharadmv): Use in_paths for debugging info.
@@ -998,8 +1006,12 @@ def _mpmd_map(
 
     jaxprs: list[jax_core.Jaxpr] = []
     consts_per_fn = []
-    debug_infos = [api_util.debug_info("mpmd_map", fn, kernel_arg_avals, kernel_kwarg_avals)
-                   for _, fn in meshes_and_fns]
+    debug_infos = [
+        api_util.debug_info(
+            "pallas_kernel", fn, kernel_arg_avals, kernel_kwarg_avals
+        )
+        for _, fn in meshes_and_fns
+    ]
     if name is not None:
       debug_infos = [di.replace_func_name(name) for di in debug_infos]
     # If names are non-distinct (e.g. because user passed multiple functions
@@ -1009,14 +1021,14 @@ def _mpmd_map(
       debug_infos = [di.replace_func_name(f"{di.func_name}__{mesh.core_type}")
                      for di, mesh in zip(debug_infos, meshes)]
     for (mesh, fn), debug_info in zip(meshes_and_fns, debug_infos):
-      with mpmd_map_tracing_context(mesh, all_meshes):
+      with pallas_kernel_tracing_context(mesh, all_meshes):
         jaxpr, out_avals = pe.trace_to_jaxpr(
             fn, in_avals_ft, debug_info
         )
       fun_out_tree = out_avals.tree
       if fun_out_tree != tree_util.tree_structure(None):
         raise ValueError(
-            f"The kernel function in mpmd_map {debug_info.func_src_info}"
+            f"The kernel function in pallas_kernel {debug_info.func_src_info}"
             f" should return None. It returns a PyTree: {fun_out_tree}."
         )
       if jaxpr.consts:
@@ -1050,7 +1062,7 @@ def _mpmd_map(
         api.named_scope(name) if name is not None else contextlib.nullcontext()
     )
     with ctx:
-      flat_outs = mpmd_map_p.bind(
+      flat_outs = pallas_kernel_p.bind(
           *flat_args,
           *consts,
           meshes=tuple(meshes),

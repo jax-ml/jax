@@ -1647,7 +1647,8 @@ class InterpretTest(jtu.JaxTestCase):
           out_ref[...] = 42
 
     with self.assertRaisesRegex(
-        Exception, r'Cannot mpmd_map over WarpMesh while already mpmd_mapped'
+        Exception,
+        r'Cannot pallas_kernel over WarpMesh while already in a pallas_kernel',
     ):
       _kernel()
 
@@ -1839,7 +1840,7 @@ class InterpretTest(jtu.JaxTestCase):
         def _():
           out_ref[4] = in_ref[4]
 
-      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+      mpmd.pallas_kernel([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
 
     x = jnp.arange(5, dtype=jnp.int32)
     expected = x.at[4].set(0)
@@ -1870,12 +1871,12 @@ class InterpretTest(jtu.JaxTestCase):
           plgpu.barrier_wait(barrier)
           out_ref[...] = smem_ref[...]
 
-      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+      mpmd.pallas_kernel([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
 
     out = _kernel()
     self.assertEqual(out, 1)
 
-  def test_cant_mpmd_map_twice(self):
+  def test_cant_pallas_kernel_twice(self):
     @functools.partial(
         plgpu.kernel,
         out_type=jax.ShapeDtypeStruct((), jnp.int32),
@@ -1886,12 +1887,13 @@ class InterpretTest(jtu.JaxTestCase):
         def _():
           out_ref[...] = 42
 
-        mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp1'), _)])()
+        mpmd.pallas_kernel([(plgpu.WarpMesh(axis_name='warp1'), _)])()
 
-      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp0'), _per_warp)])()
+      mpmd.pallas_kernel([(plgpu.WarpMesh(axis_name='warp0'), _per_warp)])()
 
     with self.assertRaisesRegex(
-        Exception, r'Cannot mpmd_map over WarpMesh while already mpmd_mapped'
+        Exception,
+        r'Cannot pallas_kernel over WarpMesh while already in a pallas_kernel',
     ):
       _kernel()
 
@@ -1913,7 +1915,7 @@ class InterpretTest(jtu.JaxTestCase):
         def _():
           plgpu.barrier_wait(barrier)
 
-      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+      mpmd.pallas_kernel([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
 
       # now the whole warpgroup waits on the barrier
       plgpu.barrier_wait(barrier)
@@ -1941,7 +1943,7 @@ class InterpretTest(jtu.JaxTestCase):
         def _():
           plgpu.barrier_wait(barrier)
 
-      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+      mpmd.pallas_kernel([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
 
       plgpu.barrier_arrive(barrier)
       def _per_warp():
@@ -1949,7 +1951,7 @@ class InterpretTest(jtu.JaxTestCase):
         def _():
           plgpu.barrier_wait(barrier)
 
-      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+      mpmd.pallas_kernel([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
 
     with self.assertRaisesRegex(
         Exception,
@@ -1974,7 +1976,7 @@ class InterpretTest(jtu.JaxTestCase):
       def _per_warp():
         plgpu.barrier_wait(barrier)
 
-      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+      mpmd.pallas_kernel([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
 
       plgpu.barrier_arrive(barrier)
 
@@ -1984,7 +1986,7 @@ class InterpretTest(jtu.JaxTestCase):
         def _():
           plgpu.barrier_wait(barrier)
 
-      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+      mpmd.pallas_kernel([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
 
       # now the whole warpgroup waits on the barrier
       plgpu.barrier_wait(barrier)
@@ -2015,7 +2017,7 @@ class InterpretTest(jtu.JaxTestCase):
       def _per_warp():
         plgpu.barrier_wait(barrier)
 
-      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+      mpmd.pallas_kernel([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
 
       out_ref[...] = 42
 
@@ -2037,14 +2039,14 @@ class InterpretTest(jtu.JaxTestCase):
       def _per_warp():
         plgpu.barrier_wait(barrier)
 
-      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+      mpmd.pallas_kernel([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
 
       plgpu.barrier_arrive(barrier)
 
       def _per_warp():
         plgpu.barrier_wait(barrier)
 
-      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+      mpmd.pallas_kernel([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
 
       # warpgroup can wait, since its consituent warps observed prior phases
       plgpu.barrier_arrive(barrier)

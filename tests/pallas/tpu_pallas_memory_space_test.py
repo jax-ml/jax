@@ -295,7 +295,7 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
 
     x = jnp.arange(1024, dtype=jnp.float32).reshape((8, 128))
     num_cores = jax.devices()[0].num_cores
-    # TODO(slebedev): Make sure mpmd_map also fails here.
+    # TODO(slebedev): Make sure pallas_kernel also fails here.
     if num_cores > 1 and memory_space is pltpu.VMEM:
       with self.assertRaisesRegex(
           NotImplementedError,

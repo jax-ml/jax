@@ -165,7 +165,7 @@ def kernel(
 ):
   r"""Entry point for creating a Pallas kernel.
 
-  This is a convenience wrapper around ``mpmd_map`` for executing a kernel
+  This is a convenience wrapper around ``pallas_kernel`` for executing a kernel
   over a mesh.
 
   If ``body`` is provided, this function behaves as a decorator:
@@ -224,7 +224,7 @@ def kernel(
   # Note we default out_shape to None to allow `body` to come before it
   # in the function signature, but `body` itself is optional.
   make_kernel = functools.partial(
-      mpmd.mpmd_map,
+      mpmd.pallas_kernel,
       out_types=out_type,
       scratch_types=scratch_types,
       compiler_params=compiler_params,

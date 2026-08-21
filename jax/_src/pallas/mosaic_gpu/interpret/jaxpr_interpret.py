@@ -542,25 +542,26 @@ class JaxprInterpreter:
 
     return token, out
 
-  def _interpret_mpmd_map_p(
+  def _interpret_pallas_kernel_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
-    assert eqn.primitive is mpmd.mpmd_map_p
+    assert eqn.primitive is mpmd.pallas_kernel_p
     meshes = eqn.params["meshes"]
     jaxprs = eqn.params["jaxprs"]
     if len(jaxprs) > 1:
       raise NotImplementedError(
-          "mpmd_map with multiple meshes is not supported in an MGPU kernel."
+          "pallas_kernel with multiple meshes is not supported in an MGPU"
+          " kernel."
       )
     mesh = meshes[0]
     jaxpr = jaxprs[0]
     if not isinstance(mesh, mosaic_gpu_core.WarpMesh):
       raise ValueError(
-          "Only mpmd_map over WarpMesh is supported in an MGPU kernel."
+          "Only pallas_kernel over WarpMesh is supported in an MGPU kernel."
       )
     if isinstance(self.thread, memory.Warp):
       raise ValueError(
-          "Cannot mpmd_map over WarpMesh while already mpmd_mapped."
+          "Cannot pallas_kernel over WarpMesh while already in a pallas_kernel."
       )
 
     def f(i: int, token: jax.Array):
@@ -1098,8 +1099,9 @@ class JaxprInterpreter:
           case primitives.run_scoped_p:
             token, out = self._interpret_run_scoped_p(
                 eqn, token, deferred_invals)
-          case mpmd.mpmd_map_p:
-            token, out = self._interpret_mpmd_map_p(eqn, token, deferred_invals)
+          case mpmd.pallas_kernel_p:
+            token, out = self._interpret_pallas_kernel_p(
+                eqn, token, deferred_invals)
           case lax.cond_p:
             token, out = self._interpret_cond_p(eqn, token, deferred_invals)
           case lax.scan_p:

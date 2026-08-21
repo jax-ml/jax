@@ -563,7 +563,7 @@ class MpmdTest(PallasSCTest):
 
     with self.assertRaisesRegex(
         NotImplementedError,
-        "Cannot pass the same ref into a mpmd map multiple times",
+        "Cannot pass the same ref into a pallas kernel multiple times",
     ):
       f(x)
 
@@ -740,8 +740,8 @@ class MpmdTest(PallasSCTest):
         out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )
 
-    # NOTE: ``mpmd_map`` does not yet have a general purpose jvp rule, so we
-    # need to use ``custom_vjp`` to define one.
+    # NOTE: ``pallas_kernel`` does not yet have a general purpose jvp rule,
+    # so we need to use ``custom_vjp`` to define one.
     @jax.custom_vjp
     def kernel(x):
       return kernel_impl(x)
@@ -840,7 +840,7 @@ class MpmdTest(PallasSCTest):
       if signalling_direction in ("tec_to_scs", "both"):
         pl.semaphore_wait(scs_sem, jax.lax.axis_size("subcore"))
 
-    def test_mpmd_map():
+    def test_pallas_kernel():
       jax.jit(
           pl.kernel(
               body=[vector_subcore_fn, scalar_subcore_fn],
@@ -858,7 +858,7 @@ class MpmdTest(PallasSCTest):
           )
       )()
 
-    jax.block_until_ready(test_mpmd_map())
+    jax.block_until_ready(test_pallas_kernel())
 
   def test_copy_with_cross_core_signaling(self):
     v_mesh = plsc.VectorSubcoreMesh(
@@ -1025,7 +1025,7 @@ class MpmdTest(PallasSCTest):
     device_mesh = jax.make_mesh((jax.device_count(),), axis_names=("x",))
 
     @functools.partial(jax.shard_map, out_specs=None, check_vma=False)
-    def test_mpmd_map():
+    def test_pallas_kernel():
       pl.kernel(
           body=[vector_subcore_fn, scalar_subcore_fn],
           mesh=[v_mesh, s_mesh],
@@ -1042,9 +1042,9 @@ class MpmdTest(PallasSCTest):
         ),
     ):
       with jax.sharding.set_mesh(device_mesh):
-        test_mpmd_map()
+        test_pallas_kernel()
 
-  def test_mpmd_map_semaphore_mesh_enforcement(self):
+  def test_pallas_kernel_semaphore_mesh_enforcement(self):
     v_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="s_core", subcore_axis_name="subcore", num_cores=1,
         num_subcores=1)
@@ -1175,7 +1175,7 @@ class MpmdHijaxTest(jtu.JaxTestCase):
       self.skipTest("Only works on TPU.")
     super().setUp()
 
-  def test_pass_weird_tuple_into_mpmd_map(self):
+  def test_pass_weird_tuple_into_pallas_kernel(self):
     xt = WeirdTuple(
         x0=jnp.ones((8, 8), dtype=jnp.int32),
         x1=jnp.zeros((8,), dtype=jnp.int32),
@@ -1201,7 +1201,7 @@ class MpmdHijaxTest(jtu.JaxTestCase):
     self.assertArraysEqual(ot.x0, xt.x0)
     self.assertArraysEqual(ot.x1, xt.x1)
 
-  def test_mpmd_map_hijax_input_output_aliasing(self):
+  def test_pallas_kernel_hijax_input_output_aliasing(self):
     xt = WeirdTuple(
         x0=jnp.ones((8, 8), dtype=jnp.int32),
         x1=jnp.zeros((8,), dtype=jnp.int32),
@@ -1309,7 +1309,7 @@ class MpmdPhysicalizeTest(jtu.JaxTestCase):
       self.skipTest("Only works on TPU.")
     super().setUp()
 
-  def test_mpmd_map_physicalize(self):
+  def test_pallas_kernel_physicalize(self):
 
     @dataclasses.dataclass(frozen=True)
     class SimpleFusionDType(fusible_dtype.FusionDType):
@@ -1355,7 +1355,7 @@ class MpmdPhysicalizeTest(jtu.JaxTestCase):
       pltpu.sync_copy(out_vmem, out_ref)
 
     @fuser.fusible
-    def mpmd_f(x_fn, y_fn, z_fn):
+    def pallas_kernel_f(x_fn, y_fn, z_fn):
       x = x_fn()
       y = y_fn()
       out = pl.kernel(
@@ -1375,7 +1375,7 @@ class MpmdPhysicalizeTest(jtu.JaxTestCase):
     x = jnp.ones((8, 8), dtype=jnp.float32)
     y = jnp.ones((8, 8), dtype=jnp.float32)
 
-    physicalized_f = fusible_dtype.physicalize(mpmd_f)
+    physicalized_f = fusible_dtype.physicalize(pallas_kernel_f)
     res = physicalized_f(x, y)
     np.testing.assert_allclose(res, x + y)
 

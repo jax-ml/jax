@@ -4492,7 +4492,7 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
                           jnp.ones((128,), jnp.int32) * 3), axis=0)
     np.testing.assert_array_equal(result, expected)
 
-  def test_axis_index_mpmd_map(self):
+  def test_axis_index_pallas_kernel(self):
     @self.kernel(out_type=jax.ShapeDtypeStruct((2, 128), jnp.int32))
     def kernel(y_ref):
       def scope(ones_smem_ref, threes_smem_ref):

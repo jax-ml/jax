@@ -371,7 +371,8 @@ def kernel(
       **mesh_kwargs,
   )
 
-  # TODO(slebedev): Use mesh-specific batching rules in ``mpmd_map`` instead.
+  # TODO(slebedev): Use mesh-specific batching rules in ``pallas_kernel``
+  # instead.
   @custom_batching.custom_vmap
   def wrapper(*operands):
     thread_name = mesh.thread_name if mesh.thread_name is not None else ()
@@ -379,7 +380,7 @@ def kernel(
     def kernel_body(*refs):
       # NOTE: We cannot use the ``scratch_types=`` argument of ``pl.kernel``
       # for these, because some scratch types return ``TransformedRef``s in
-      # ``get_ref_aval``, which is not yet supported by ``mpmd_map``.
+      # ``get_ref_aval``, which is not yet supported by ``pallas_kernel``.
       pallas_primitives.run_scoped(
           functools.partial(body, *refs),
           *scratch_types if isinstance(scratch_types, Sequence) else (),

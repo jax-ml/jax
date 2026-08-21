@@ -317,15 +317,16 @@ def _pjit_resource_estimator(
   return _estimate_resources(ctx, jaxpr)
 
 
-@_register_resource_estimator(mpmd.mpmd_map_p)
-def _mpmd_map_resource_estimator(
+@_register_resource_estimator(mpmd.pallas_kernel_p)
+def _pallas_kernel_resource_estimator(
     ctx: ResourceEstimatorContext, *args, jaxprs: tuple[jax_core.Jaxpr, ...],
     **params
 ) -> Resources:
   del args, params  # Unused.
   if len(jaxprs) > 1:
     raise NotImplementedError(
-        "MPMD map with multiple jaxprs not supported for resource estimation."
+        "pallas_kernel with multiple jaxprs not supported for resource"
+        " estimation."
     )
   return _estimate_resources(ctx, jaxprs[0])
 
@@ -914,7 +915,7 @@ def lower_unpipelined_jaxpr_to_module(
 
   Unlike ``lower_pipelined_jaxpr_to_module``, the ``jaxpr`` is expected to take
   the GMEM refs for all inputs and outputs directly, without any block-level
-  pipelining. This is used by ``mpmd_map``, whose kernels perform their own
+  pipelining. This is used by ``pallas_kernel``, whose kernels perform their own
   memory transfers.
   """
   assert len(jaxpr.outvars) == 0
@@ -4261,9 +4262,9 @@ def _isolate_from_above(
   return new_op
 
 
-@register_lowering_rule(mpmd.mpmd_map_p, mgpu.LoweringSemantics.Lane)
-@register_lowering_rule(mpmd.mpmd_map_p, mgpu.LoweringSemantics.Warpgroup)
-def _mpmd_map_lowering_rule(
+@register_lowering_rule(mpmd.pallas_kernel_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(mpmd.pallas_kernel_p, mgpu.LoweringSemantics.Warpgroup)
+def _pallas_kernel_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
     jaxprs,
@@ -4272,19 +4273,20 @@ def _mpmd_map_lowering_rule(
 ):
   if len(jaxprs) > 1:
     raise NotImplementedError(
-        "MPMD map with multiple jaxprs not implemented."
+        "pallas_kernel with multiple jaxprs not implemented."
     )
   mesh = meshes[0]
   jaxpr = jaxprs[0]
   if not isinstance(mesh, gpu_core.WarpMesh):
     raise NotImplementedError(f"Unsupported mesh: {mesh}")
-  # A mpmd_map over a WarpMesh represents a fork/join over individual
+  # A pallas_kernel over a WarpMesh represents a fork/join over individual
   # warps in a warpgroup.
   if (ctx.module_ctx.warp_axis_name or
       ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp):
     raise LoweringError(
-        "Cannot nest mpmd_maps. Already under mpmd_map with warp_axis_name "
-        f"{ctx.module_ctx.warp_axis_name}.")
+        "Cannot nest pallas_kernels. Already under pallas_kernel with"
+        f" warp_axis_name {ctx.module_ctx.warp_axis_name}."
+    )
   module_ctx = dataclasses.replace(
       ctx.module_ctx,
       warp_axis_name=mesh.axis_name,
@@ -4293,8 +4295,8 @@ def _mpmd_map_lowering_rule(
   for aval_in in ctx.avals_in:
     if isinstance(aval_in, jax_core.ShapedArray) and aval_in.shape:
       raise LoweringError(
-        "Can only close over scalars and Refs when using mpmd_map with "
-        f"WarpMesh. Found array of shape {aval_in}."
+          "Can only close over scalars and Refs when using pallas_kernel with "
+          f"WarpMesh. Found array of shape {aval_in}."
       )
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     # We allow the warps to schedule async copies without synchronizing with
