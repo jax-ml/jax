@@ -69,7 +69,8 @@ from jax._src.sharding_impls import (
     prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
     _internal_use_concrete_mesh)
 from jax._src.layout import (Format, Layout, AutoLayoutSingleton,
-                             get_layout_for_vmap, AutoLayout)
+                             get_layout_for_vmap, AutoLayout, use_layout_mode,
+                             LayoutMode)
 from jax._src.state.types import RefEffect
 from jax._src.traceback_util import api_boundary
 from jax._src import flattree as ft
@@ -2603,6 +2604,22 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
 
 # ----------------------------- explicit layout --------------------------------
 
+def get_layout_mode_from_args(args):
+  layouts = [core.typeof(a).layout for a in args]
+  if not all(type(l) is type(layouts[0]) for l in layouts):
+    raise TypeError(
+        'All args passed to `explicit_layout` must have the same type of'
+        f' layout. Got {layouts=}')
+  l = layouts[0]
+  if isinstance(l, Layout):
+    return LayoutMode.JAX
+  # TODO(yashkatariya): Replace this with `isinstance(l, ArrayLayout)`.
+  elif type(l).__name__ == 'ArrayLayout':
+    return LayoutMode.PALLAS_TPU
+  else:
+    return LayoutMode.AUTO
+
+
 def explicit_layout(f=None, /, *, in_layouts=None):
   kwargs = dict(in_layouts=in_layouts)
   if f is None:
@@ -2619,7 +2636,9 @@ def _explicit_layout(fun, *, in_layouts):
     else:
       _in_layouts = in_layouts
     args = relayout(args, _in_layouts)
-    out = fun(*args)
+    mode = get_layout_mode_from_args(args)
+    with use_layout_mode(mode):
+      out = fun(*args)
     return relayout(out, AutoLayout)
   return decorator
 

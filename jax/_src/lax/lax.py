@@ -7525,7 +7525,7 @@ unstack_p.multiple_results = True
 unstack_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, unstack_p, _unstack_shape_rule,
             _unstack_dtype_rule, _unstack_weak_type_rule, _unstack_sharding_rule,
-            _unstack_vma_rule, _unstack_ur_rule))
+            _unstack_vma_rule, _unstack_ur_rule, None))
 unstack_p.def_impl(partial(dispatch.apply_primitive, unstack_p))
 ad.deflinear2(unstack_p, _unstack_transpose_rule)
 mlir.register_lowering(unstack_p, _unstack_lower)
@@ -7608,7 +7608,7 @@ split_p.multiple_results = True
 split_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, split_p, _split_shape_rule,
             _split_dtype_rule, _split_weak_type_rule, _split_sharding_rule,
-            _split_vma_rule, _split_ur_rule))
+            _split_vma_rule, _split_ur_rule, None))
 split_p.def_impl(partial(dispatch.apply_primitive, split_p))
 ad.deflinear2(split_p, _split_transpose_rule)
 batching.primitive_batchers[split_p] = _split_batch_rule
@@ -8476,7 +8476,7 @@ reduce_p.def_impl(partial(dispatch.apply_primitive, reduce_p))
 reduce_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, reduce_p, _reduce_shape_rule,
             _reduce_dtype_rule, _reduce_weak_type_rule, _reduce_sharding_rule,
-            _reduce_vma_rule, None))
+            _reduce_vma_rule, None, None))
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
 
@@ -9351,7 +9351,7 @@ rng_bit_generator_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, rng_bit_generator_p,
             _rng_bit_generator_shape_rule, _rng_bit_generator_dtype_rule,
             _rng_bit_generator_weak_type_rule, _rng_bit_generator_sharding_rule,
-            _rng_bit_generator_vma_rule, None))
+            _rng_bit_generator_vma_rule, None, None))
 mlir.register_lowering(rng_bit_generator_p,
                        _rng_bit_generator_lowering)
 

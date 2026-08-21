@@ -1403,6 +1403,7 @@ pytype_strict_library(
     srcs = ["layout.py"],
     type_checking = "pyrefly",
     deps = [
+        ":config",
         ":dtypes",
         ":named_sharding",
         ":sharding",

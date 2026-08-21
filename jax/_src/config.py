@@ -1016,6 +1016,12 @@ pallas_tpu_interpret_mode_context_manager = config_ext.Config(
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
+layout_tracing_mode = config_ext.Config(
+    'layout_tracing_mode',
+    None,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
 
 
 class UserContext:
