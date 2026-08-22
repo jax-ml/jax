@@ -14,6 +14,8 @@
 # ==============================================================================
 
 import itertools
+from jax._src import dtypes
+from jax._src import typing
 from jax.experimental.mosaic.gpu import fragmented_array as fa
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import llvm
@@ -30,11 +32,15 @@ class MMALayouts:
   layouts for MMA operands based on warp configuration.
   """
 
-  def __init__(self, element_type: ir.Type, *, m_warps: int = 4):
+  def __init__(self, element_type: ir.Type | typing.DTypeLike, *, m_warps: int = 4):
     if m_warps not in (1, 2, 4):
       raise ValueError(f"m_warps must be 1, 2, or 4, but got {m_warps=}")
     n_warps = 4 // m_warps
-    elems_per_reg = 32 // utils.bitwidth(element_type)
+    if isinstance(element_type, ir.Type):
+      bitwidth = utils.bitwidth(element_type)
+    else:
+      bitwidth = dtypes.itemsize_bits(element_type)
+    elems_per_reg = 32 // bitwidth
     k = 8 * elems_per_reg
     sub_k = 4 * elems_per_reg
     self.lhs = fa.TiledLayout(

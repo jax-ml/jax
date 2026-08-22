@@ -1933,16 +1933,13 @@ class Layout(SomeLayout, enum.Enum):
         return mgpu.TMA_INDICES_LAYOUT
       case Layout.MMA_LHS:
         (dtype,) = args
-        element_type = mgpu_utils.dtype_to_ir_type(dtype)
-        return mgpu.MMALayouts(element_type).lhs
+        return mgpu.MMALayouts(dtype).lhs
       case Layout.MMA_RHS:
         (dtype,) = args
-        element_type = mgpu_utils.dtype_to_ir_type(dtype)
-        return mgpu.MMALayouts(element_type).rhs
+        return mgpu.MMALayouts(dtype).rhs
       case Layout.MMA_ACC:
         (dtype,) = args
-        element_type = mgpu_utils.dtype_to_ir_type(dtype)
-        return mgpu.MMALayouts(element_type).acc
+        return mgpu.MMALayouts(dtype).acc
       case Layout.TMA_INDICES_4:
         return mgpu.TMA_INDICES_4_LAYOUT
 
