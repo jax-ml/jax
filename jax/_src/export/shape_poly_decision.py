@@ -72,6 +72,9 @@ class _DecisionByElimination:
     # The other fields are for keeping an efficient representation of
     # the explicit constraints.
     self._term_bounds: dict[_DimTerm, tuple[float, float]] = {}
+    # Known residues: t -> (d, r) with d >= 2 means "t ≡ r (mod d)", derived
+    # from equality constraints. See _tighten_term_bounds_with_residues.
+    self._term_residues: dict[_DimTerm, tuple[int, int]] = {}
     # The _expr_constraints represents a set of constraints that are not
     # just simple terms. The set is represented as a mapping from a
     # term "t" to tuples (cmp, k, c) where "c >= 0" (if cmp is GEQ else "c == 0")
@@ -113,6 +116,7 @@ class _DecisionByElimination:
     c = _DecisionByElimination(scope)
     c._processed_for_internal_constraints = d._processed_for_internal_constraints.copy()
     c._term_bounds = d._term_bounds.copy()
+    c._term_residues = d._term_residues.copy()
     c._expr_constraints = {
         lead_t: lead_t_constraints.copy()
         for lead_t, lead_t_constraints in d._expr_constraints.items()}
@@ -177,6 +181,89 @@ class _DecisionByElimination:
       lead_t_constraints = set()
       self._expr_constraints[lead_t] = lead_t_constraints
     lead_t_constraints.add((cmp, lead_t_k, e))
+    if cmp == Comparator.EQ:
+      self._tighten_term_bounds_with_residues(e, debug_str)
+
+  def _add_term_residue(self, t: _DimTerm, d: int, r: int,
+                        debug_str: str | None):
+    """Records `t ≡ r (mod d)`, merging with any known residue.
+
+    Compatible facts merge by CRT; incompatible facts are unsatisfiable.
+    """
+    assert d >= 2
+    r = r % d
+    prev = self._term_residues.get(t)
+    if prev is not None:
+      d1, r1 = prev
+      g = math.gcd(d1, d)
+      if (r - r1) % g:
+        raise ValueError(
+            f"Unsatisfiable constraint: {debug_str or str(t)} "
+            f"(mod {d1} residue {r1} vs mod {d} residue {r})")
+      if d1 % d == 0:
+        return  # The known fact is at least as strong.
+      if d % d1 == 0:
+        self._term_residues[t] = (d, r)  # The new fact is strictly stronger.
+        return
+      lcm = d1 * d // g
+      # CRT: x ≡ r1 (mod d1) and x ≡ r (mod d) -> x ≡ merged (mod lcm)
+      merged = (r1 + d1 * (((r - r1) // g) * pow(d1 // g, -1, d // g))) % lcm
+      d, r = lcm, merged
+    self._term_residues[t] = (d, r)
+
+  def _tighten_term_bounds_with_residues(self,
+                                          e: _DimExpr,
+                                          debug_str: str | None):
+    """Derives and applies residue facts from equality `e == 0`.
+
+    For target `t` with `abs(t_k) == 1`, write
+    `e == t*t_k + sum(o_k * o) + c`.
+    Treat pinned terms as constants; for other terms, use known
+    `o ≡ r_o (mod d_o)` (or `d_o == 1, r_o == 0`).
+    Let `g = gcd(abs(o_k) * d_o for other terms o)`. Then
+    `t ≡ -t_k * (c + sum(o_k * r_o)) (mod g)`.
+    The fact is recorded and may pin `t` when its bounds admit one value.
+    Propagation is forward-only: prior equalities are not revisited, so
+    precision may depend on constraint order.
+    """
+    const = 0
+    non_const_terms: list[tuple[_DimTerm, int]] = []
+    for t, t_k in e._sorted_terms:
+      if t.is_constant:
+        const = t_k
+      else:
+        non_const_terms.append((t, t_k))
+    if len(non_const_terms) < 2: return
+    for idx, (t, t_k) in enumerate(non_const_terms):
+      if abs(t_k) != 1: continue
+      lb, ub = self._term_bounds.get(t, (- np.inf, np.inf))
+      if lb == ub: continue  # already pinned
+      # The modulus in which the equality constrains t, and the sum of the
+      # known residues of the other terms (times their coefficients).
+      g = 0
+      others_residue = const
+      for o_idx, (o, o_k) in enumerate(non_const_terms):
+        if o_idx == idx: continue
+        o_lb, o_ub = self._term_bounds.get(o, (- np.inf, np.inf))
+        if o_lb == o_ub:  # pinned term: just a constant
+          others_residue += o_k * int(o_lb)
+          continue
+        o_d, o_r = self._term_residues.get(o, (1, 0))
+        g = math.gcd(g, abs(o_k) * o_d)
+        if g == 1: break  # The gcd cannot recover; no fact for this target.
+        others_residue += o_k * o_r
+      if g < 2: continue
+      residue = (- t_k * others_residue) % g
+      self._add_term_residue(t, g, residue, debug_str)
+      if np.isinf(lb) or np.isinf(ub): continue
+      # Smallest member of the residue class that is >= lb.
+      t_val = int(lb) + (residue - int(lb)) % g
+      if t_val > ub:
+        raise ValueError(f"Unsatisfiable constraint: {debug_str or str(e) + ' == 0'}")
+      if t_val + g <= ub: continue  # More than one candidate; no pin.
+      self._term_bounds[t] = (t_val, t_val)
+      # The newly pinned term may make previously cached bounds imprecise.
+      self.scope._bounds_cache.clear()
 
   def combine_term_with_existing(self, t: _DimTerm, t_k: int, *,
                                  scope: shape_poly.SymbolicScope,
@@ -407,6 +494,12 @@ class _DecisionByElimination:
         self.combine_and_add_constraint(Comparator.GEQ, t_e, 0)  # m >= 0
         self.combine_and_add_constraint(Comparator.GEQ, op2 - 1, t_e)  # m <= op2 - 1
         self.combine_and_add_constraint(Comparator.GEQ, op2_b_u - 1, t_e)
+        # FLOORDIV constraints add
+        # `op1 == op2 * floordiv(op1, op2) + mod(op1, op2)`.
+        fd_e = _DimExpr._from_operation(_DimFactor.FLOORDIV, op1, op2,
+                                        scope=self.scope)
+        if isinstance(fd_e, _DimExpr):
+          self.add_implicit_constraints_expr(fd_e)
       elif op2_b_u < 0:  # negative divisor
         self.combine_and_add_constraint(Comparator.GEQ, t_e, op2 + 1)  # m >= op2 + 1
         self.combine_and_add_constraint(Comparator.GEQ, t_e, op2_b_l + 1)
