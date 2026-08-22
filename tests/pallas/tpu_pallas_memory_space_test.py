@@ -22,6 +22,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import core as jax_core
 from jax._src import test_util as jtu
+from jax._src.pallas import core as pallas_core
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
@@ -116,6 +117,34 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
               }],
           ),
       )
+
+  @parameterized.parameters(pltpu.VMEM, pltpu.SMEM)
+  def test_vmap_input_memory_space_constraint(self, memory_space):
+    def kernel(x_ref, y_ref):
+      pltpu.sync_copy(x_ref, y_ref)
+
+    def f(x):
+      x = pltpu.with_memory_space_constraint(x, memory_space=memory_space)
+      self.assertEqual(jax.typeof(x).memory_space, memory_space)
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          in_specs=[pl.BlockSpec(memory_space=memory_space)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+      )(x)
+
+    x = jnp.arange(4 * 8 * 128, dtype=jnp.float32).reshape((4, 8, 128))
+    np.testing.assert_array_equal(jax.jit(jax.vmap(f))(x), x)
+
+    jaxpr = jax.make_jaxpr(jax.vmap(f))(x)
+    (eqn,) = [
+        eqn
+        for eqn in jaxpr.jaxpr.eqns
+        if eqn.primitive is pallas_core.with_memory_space_constraint_p
+    ]
+    (outvar,) = eqn.outvars
+    self.assertEqual(outvar.aval.shape, x.shape)
+    self.assertEqual(outvar.aval.memory_space, memory_space)
 
   @parameterized.parameters(
       (pltpu.VMEM, 1),

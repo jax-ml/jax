@@ -42,6 +42,7 @@ from jax._src import typing as jax_typing
 from jax._src import util
 from jax._src.api import jit
 from jax._src.export._export import export
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
@@ -1629,6 +1630,20 @@ def with_memory_space_constraint_lowering_rule(ctx, x, *, memory_space):
   return [x]
 mlir.register_lowering(
     with_memory_space_constraint_p, with_memory_space_constraint_lowering_rule
+)
+
+
+def with_memory_space_constraint_batching_rule(
+    axis_data, batched_args, batch_dims, *, memory_space
+):
+  del axis_data  # Unused; the constraint does not depend on the mapped axis.
+  (x,), (bdim,) = batched_args, batch_dims
+  out = with_memory_space_constraint_p.bind(x, memory_space=memory_space)
+  return out, bdim  # the computed value and where the batch axis ended up in it
+
+
+batching.fancy_primitive_batchers[with_memory_space_constraint_p] = (
+    with_memory_space_constraint_batching_rule
 )
 
 
