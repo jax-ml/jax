@@ -274,15 +274,17 @@ def _mosaic_gpu_lowering_rule(
         ",".join(map(str, replica_ids))
     )
 
-    if launch_context.MULTIMEM_ARGS_ATTR in module.operation.attributes:
-      multimem_args = np.array(
+    if launch_context.SYMMETRIC_MEMORY_ARGS_ATTR in module.operation.attributes:
+      symmetric_memory_args = np.array(
           ir.DenseIntElementsAttr(
-              module.operation.attributes[launch_context.MULTIMEM_ARGS_ATTR]
+              module.operation.attributes[
+                  launch_context.SYMMETRIC_MEMORY_ARGS_ATTR
+              ]
           ),
           dtype=bool,
       )
-      backend_config["multimem_parameters"] = ir.StringAttr.get(
-          ",".join(map(str, map(int, multimem_args)))
+      backend_config["symmetric_memory_parameters"] = ir.StringAttr.get(
+          ",".join(map(str, map(int, symmetric_memory_args)))
       )
 
   result_types, _ = mlir.ir_tree_registry.flatten([

@@ -74,7 +74,9 @@ DEVICE_ID_ATTR = "mosaic_gpu.device_id_load"
 USES_MULTIMEM_ATTR = "mosaic_gpu.multimem_used"
 # Module attribute used to identify which kernel arguments are used with
 # multimem or used accross several processes.
-MULTIMEM_ARGS_ATTR = "mosaic_gpu.multimem_args"
+# Parameter is used as a bitset where the i-th bit is set if the i-th argument
+# must be allocated in symmetric memory space.
+SYMMETRIC_MEMORY_ARGS_ATTR = "mosaic_gpu.symmetric_memory_args"
 
 
 def uses_collective_metadata(module):
@@ -2084,7 +2086,7 @@ class LaunchContext:
     if self.num_processes > 1:
       parameter_uses_multimem = np.ones(self.num_params, dtype=np.bool)
 
-      self.module.operation.attributes[MULTIMEM_ARGS_ATTR] = (
+      self.module.operation.attributes[SYMMETRIC_MEMORY_ARGS_ATTR] = (
           ir.DenseIntElementsAttr.get(parameter_uses_multimem)
       )
 
@@ -2205,14 +2207,16 @@ class LaunchContext:
     module_attributes = self.module.operation.attributes
     self._mark_parameters_if_multiprocess()
     if self.num_processes == 1:
-      if MULTIMEM_ARGS_ATTR in module_attributes:
-        parameter_uses_multimem = np.array(module_attributes[MULTIMEM_ARGS_ATTR])
+      if SYMMETRIC_MEMORY_ARGS_ATTR in module_attributes:
+        symmetric_memory_parameters = np.array(
+            module_attributes[SYMMETRIC_MEMORY_ARGS_ATTR]
+        )
       else:
-        parameter_uses_multimem = np.zeros(self.num_params, dtype=np.bool)
-      parameter_uses_multimem[parameter_id] = True
+        symmetric_memory_parameters = np.zeros(self.num_params, dtype=np.bool)
+      symmetric_memory_parameters[parameter_id] = True
 
-      module_attributes[MULTIMEM_ARGS_ATTR] = ir.DenseIntElementsAttr.get(
-          parameter_uses_multimem
+      module_attributes[SYMMETRIC_MEMORY_ARGS_ATTR] = (
+          ir.DenseIntElementsAttr.get(symmetric_memory_parameters)
       )
 
     current_device = self.device_id(on_host)

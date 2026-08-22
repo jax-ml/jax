@@ -1180,9 +1180,17 @@ absl::StatusOr<std::vector<int64_t>> GetReplicaIds(
 absl::StatusOr<std::vector<bool>> ParseCollectiveMemoryParameters(
     xla::ffi::Dictionary attributes, size_t num_buffers) {
   std::string_view attribute_value =
-      attributes.get<std::string_view>("multimem_parameters").value_or("");
+      attributes.get<std::string_view>("symmetric_memory_parameters")
+          .value_or("");
   if (attribute_value.empty()) {
-    return std::vector<bool>(num_buffers, false);
+    // TODO(b/546817872): Remove multimem_parameters check once backward
+    // compatibility period is over (should be after 01-FEB-2027).
+    attribute_value =
+        attributes.get<std::string_view>("multimem_parameters").value_or("");
+
+    if (attribute_value.empty()) {
+      return std::vector<bool>(num_buffers, false);
+    }
   }
   ASSIGN_OR_RETURN(std::vector<int64_t> collective_memory_parameters,
                    ParseInts(attribute_value));
