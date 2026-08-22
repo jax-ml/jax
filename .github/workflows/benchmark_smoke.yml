@@ -1,0 +1,72 @@
+name: Benchmark smoke test
+
+# Executes every benchmarks/*_benchmark.py file for a single iteration on
+# CPU (benchmarks needing more devices skip themselves). The "Bazel
+# nobuild" workflow only checks that //benchmarks/... resolves in the
+# build graph; actually running the files is what catches runtime rot
+# (renamed or moved internal APIs).
+#
+# Pull requests are checked only when they touch benchmarks/ or this
+# workflow; breakage introduced from elsewhere (e.g. a rename in jax/_src)
+# is caught by the nightly run.
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'benchmarks/**'
+      - '.github/workflows/benchmark_smoke.yml'
+  schedule:
+    - cron: '0 3 * * *'  # nightly, after the regular test cycles
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'main' }}
+
+jobs:
+  benchmark-smoke:
+    if: github.repository == 'jax-ml/jax'
+    name: Benchmark smoke test (CPU, one iteration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      JAX_PLATFORMS: cpu
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install JAX (CPU) and benchmark dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[ci]' google-benchmark absl-py
+      - name: Run each benchmark for one iteration
+        run: |
+          set -uo pipefail
+          failed=0
+          for f in benchmarks/*_benchmark.py; do
+            echo "::group::$f"
+            # A file that silently registers no benchmarks would otherwise
+            # "pass" while testing nothing; require at least one.
+            if ! names="$(python "$f" --benchmark_list_tests=true)"; then
+              echo "FAILED to list benchmarks: $f"
+              failed=1
+            elif [ -z "$names" ]; then
+              echo "NO benchmarks registered: $f"
+              failed=1
+            elif ! python "$f" --benchmark_min_time=1x; then
+              echo "FAILED: $f"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
