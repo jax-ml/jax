@@ -17,7 +17,7 @@ kernelspec:
 
 <!--* freshness: { reviewed: '2024-05-03' } *-->
 
-Jaxprs are JAX’s internal intermediate representation (IR) of programs. They are explicitly typed, functional, first-order, and in algebraic normal form (ANF).
+JAXprs are JAX’s internal intermediate representation (IR) of programs. They are explicitly typed, functional, first-order, and in algebraic normal form (ANF).
 
 Conceptually, one can think of JAX transformations, such as {func}`jax.jit` or {func}`jax.grad`, as first trace-specializing the Python function to be transformed into a small and well-behaved intermediate form that is then interpreted with transformation-specific interpretation rules.
 
@@ -146,7 +146,7 @@ Some values in jaxprs are constants, in that their value does not depend on the 
 
 ## Higher-order JAX primitives
 
-Jaxpr includes several higher-order JAX primitives. They are more complicated because they include sub-jaxprs.
+JAXpr includes several higher-order JAX primitives. They are more complicated because they include sub-jaxprs.
 
 
 ### `cond` primitive (conditionals)
