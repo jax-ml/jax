@@ -1883,7 +1883,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     dnums = jax.lax.GatherDimensionNumbers(
         offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)
     )
-    slice_sizes = (1, 3)
+    slice_sizes = (1, 5)
 
     @compute_on(compute_type="tpu_sparsecore",
                  out_memory_spaces=jax.memory.Space.Device)
