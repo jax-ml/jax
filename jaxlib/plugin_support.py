@@ -13,9 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Sequence
-import functools
 import importlib
-import pkgutil
 import re
 from types import ModuleType
 import warnings
@@ -25,30 +23,14 @@ from .version import __version__ as jaxlib_version
 
 _PLUGIN_MODULE_NAMES = {
     "cuda": ["jax_cuda13_plugin", "jax_cuda12_plugin"],
+    # ROCm plugin wheels are named jax_rocm<major>_plugin. jaxlib only tries
+    # the names listed here; it does not scan for others. A new ROCm major
+    # needs its name added in a jaxlib release. Using a plugin wheel whose
+    # major is not listed (e.g. jax_rocmXX_plugin on jaxlib that only lists
+    # rocm10/7/60) is unsupported: GPU kernel modules will not load.
     "rocm": ["jax_rocm10_plugin", "jax_rocm7_plugin", "jax_rocm60_plugin"],
     "oneapi": ["jax_oneapi_plugin"],
 }
-
-# ROCm plugin packages embed the ROCm major version in their name, so each new
-# ROCm major introduces a name this jaxlib cannot already know.
-_ROCM_PLUGIN_MODULE_RE = re.compile(r"jax_rocm(\d+)_plugin")
-
-
-@functools.cache
-def _discovered_rocm_plugin_module_names() -> tuple[str, ...]:
-  """Finds installed ROCm plugin packages not listed above, newest major first.
-
-  This is what lets a ROCm major released after this jaxlib work. Enumeration
-  only sees sys.path, so the list above stays the backstop.
-  """
-  majors = [
-      int(match.group(1))
-      for module in pkgutil.iter_modules()
-      if (match := _ROCM_PLUGIN_MODULE_RE.fullmatch(module.name))
-  ]
-  known = _PLUGIN_MODULE_NAMES["rocm"]
-  names = (f"jax_rocm{major}_plugin" for major in sorted(majors, reverse=True))
-  return tuple(name for name in names if name not in known)
 
 
 def import_from_plugin(
@@ -58,7 +40,9 @@ def import_from_plugin(
 
   Args:
     plugin_name: The name of the plugin. The supported values are "cuda" or
-      "rocm".
+      "rocm". For ROCm, only plugin packages named in
+      _PLUGIN_MODULE_NAMES["rocm"] are loaded. Installing a plugin for an
+      unlisted ROCm major is unsupported.
     submodule_name: The name of the submodule to import, e.g. "_triton".
     check_version: Whether to check that the plugin version is compatible with
       the jaxlib version. If the plugin is installed but the versions are not
@@ -70,11 +54,8 @@ def import_from_plugin(
   """
   if plugin_name not in _PLUGIN_MODULE_NAMES:
     raise ValueError(f"Unknown plugin: {plugin_name}")
-  module_names = _PLUGIN_MODULE_NAMES[plugin_name]
-  if plugin_name == "rocm":
-    module_names = [*_discovered_rocm_plugin_module_names(), *module_names]
   return maybe_import_plugin_submodule(
-      [f".{plugin_name}"] + module_names,
+      [f".{plugin_name}"] + _PLUGIN_MODULE_NAMES[plugin_name],
       submodule_name,
       check_version=check_version,
   )
@@ -96,7 +77,11 @@ def check_plugin_version(
   # ROCm plugins skip runtime version checks. Version compatibility is managed
   # via pip dependency constraints in setup.py instead. This allows ROCm plugins
   # to be released on their own schedule without strict jaxlib version coupling.
-  if _ROCM_PLUGIN_MODULE_RE.search(plugin_name) is not None:
+  is_rocm_plugin = any(
+      rocm_name in plugin_name
+      for rocm_name in _PLUGIN_MODULE_NAMES.get("rocm", [])
+  )
+  if is_rocm_plugin:
     return True
 
   # Regex to match a dotted version prefix 0.1.23.456.789 of a PEP440 version.
