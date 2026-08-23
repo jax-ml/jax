@@ -29,6 +29,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Changes
   * JAX now uses Bazel 8.7.0 to build from source.
   * JAX now uses Bzlmod for its Bazel builds instead of WORKSPACE.
+  * On GPU, multi-dimensional inverse real FFTs ({func}`jax.numpy.fft.irfftn`,
+    {func}`jax.numpy.fft.irfft2` and {func}`jax.lax.fft` with `FftType.IRFFT`)
+    are again lowered to a single C2R transform, as before JAX 0.10.0, instead
+    of an IFFT over the outer axes and a 1-D IRFFT with two transposes. The
+    input is first made Hermitian-symmetric along the outer axes, which does
+    not change the result under NumPy's convention (only the last axis is
+    assumed symmetric), so results are unchanged while the transform is
+    ~1.4x faster at typical sizes.
 
 ## JAX 0.11.1 (August 17, 2026)
 
