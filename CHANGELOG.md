@@ -30,6 +30,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * JAX now uses Bazel 8.7.0 to build from source.
   * JAX now uses Bzlmod for its Bazel builds instead of WORKSPACE.
 
+* Bug fixes
+  * {func}`jax.scipy.stats.multinomial.logpmf` and
+    {func}`jax.scipy.stats.multinomial.pmf` now perform their support check
+    over the last axis of ``x`` only, so batched inputs containing rows whose
+    counts do not sum to ``n`` return correct values for the valid rows
+    instead of ``-inf`` everywhere.
+
 ## JAX 0.11.1 (August 17, 2026)
 
 * New features
