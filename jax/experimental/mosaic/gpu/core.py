@@ -599,6 +599,34 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
   return size
 
 
+def _is_known_multihost_mesh(
+    mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh | None,
+) -> bool:
+  """Returns whether the given mesh is a known multihost mesh.
+
+  Mesh devices should have either slice_index, logical_task_id, or process_index
+  attributes. Without these attributes we can't reliably determine if the mesh
+  is multihost.
+
+  Args:
+    mesh: The mesh to check.
+
+  Returns:
+    True if the mesh is a known multihost mesh, False otherwise.
+  """
+  if mesh is None or mesh.empty or not isinstance(mesh, mesh_lib.Mesh):
+    return False
+  tasks = {
+      (
+          getattr(d, "slice_index", 0),
+          getattr(d, "logical_task_id", 0),
+          getattr(d, "process_index", 0),
+      )
+      for d in mesh.devices.flat
+  }
+  return len(tasks) > 1
+
+
 # TODO(apaszke): Inline this
 @contextlib.contextmanager
 def _launch(
@@ -614,6 +642,7 @@ def _launch(
     maybe_prof_buffer: ir.Value | None = None,
     num_peers: int = 0,
     num_params: int = 0,
+    jax_mesh: mesh_lib.Mesh | None = None,
 ):
   if (profiler_spec is None) != (maybe_prof_buffer is None):
     raise ValueError(
@@ -715,7 +744,7 @@ def _launch(
         prof,
         num_peers=num_peers,
         num_params=num_params,
-        num_processes=jax.process_count(),
+        multihost_kernel=_is_known_multihost_mesh(jax_mesh),
     )
     with ctx.named_region("Init"):
       tmem_allocs: list[_TMEMAlloc | _TMEMDialectAlloc] = []
@@ -915,6 +944,7 @@ def _lower_as_gpu_kernel(
           prof_buffer,
           num_peers,
           num_params,
+          jax_mesh,
       ) as (_launch_ctx, smem_refs):
         launch_ctx = _launch_ctx
         body(launch_ctx, *arg_refs, smem_refs)

@@ -698,12 +698,12 @@ class LaunchContext:
   profiler: OnDeviceProfiler | None = None
   num_peers: int = 0
   num_params: int = 0
-  num_processes: int = 1
   tma_descriptors: dict[
       tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...], Any, int],
       ir.Value,
   ] = dataclasses.field(default_factory=dict, init=False)
   is_device_collective: bool = False
+  multihost_kernel: bool = False
 
   @contextlib.contextmanager
   def named_region(self, *args, **kwargs):
@@ -2083,11 +2083,11 @@ class LaunchContext:
 
   def _mark_parameters_if_multiprocess(self):
     # All multi-process parameters should be allocated in collective memory.
-    if self.num_processes > 1:
-      parameter_uses_multimem = np.ones(self.num_params, dtype=np.bool)
+    if self.multihost_kernel:
+      symmetric_memory_parameters = np.ones(self.num_params, dtype=np.bool)
 
       self.module.operation.attributes[SYMMETRIC_MEMORY_ARGS_ATTR] = (
-          ir.DenseIntElementsAttr.get(parameter_uses_multimem)
+          ir.DenseIntElementsAttr.get(symmetric_memory_parameters)
       )
 
   def to_remote(
@@ -2206,7 +2206,7 @@ class LaunchContext:
     # memory.
     module_attributes = self.module.operation.attributes
     self._mark_parameters_if_multiprocess()
-    if self.num_processes == 1:
+    if not self.multihost_kernel:
       if SYMMETRIC_MEMORY_ARGS_ATTR in module_attributes:
         symmetric_memory_parameters = np.array(
             module_attributes[SYMMETRIC_MEMORY_ARGS_ATTR]
