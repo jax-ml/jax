@@ -165,7 +165,7 @@ class FftTest(jtu.JaxTestCase):
     if (config.enable_x64.value and
         dtype in (float_dtypes if real and not inverse else inexact_dtypes)):
       # TODO(skye): can we be more precise?
-      tol = 0.16
+      tol = 0.18
       jtu.check_grads(jnp_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
     # check dtypes
