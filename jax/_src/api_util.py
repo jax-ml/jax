@@ -687,10 +687,12 @@ _fun_name_re = re.compile(r"(?:<built-in function (\S+)>)")
 
 # TODO(mattjj): make this function internal to this module
 def fun_sourceinfo(fun: Callable) -> str:
-  # See DebugInfo.fun_src_info
-  while isinstance(fun, partial):
-    fun = fun.func
+  # See DebugInfo.func_src_info
+
+  # inspect.unwrap unwraps through multiple wrapped functions
   fun = inspect.unwrap(fun)
+  while isinstance(fun, partial):
+    fun = inspect.unwrap(fun.func)
   try:
     filename = fun.__code__.co_filename
     lineno = fun.__code__.co_firstlineno
