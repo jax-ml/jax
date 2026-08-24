@@ -480,10 +480,10 @@ class BufferedRef(BufferedRefBase):
     has_allocated_buffer: Whether the reference has an allocated buffer
       due to being in a different memory space than the source ref.
   """
-  _spec: pallas_core.BlockSpec = dataclasses.field(metadata=dict(static=True))
-  _buffer_type: BufferType = dataclasses.field(metadata=dict(static=True))
-  _buffer_count: int = dataclasses.field(metadata=dict(static=True))
-  _grid_rank: int | None = dataclasses.field(metadata=dict(static=True))
+  _spec: pallas_core.BlockSpec = jax.tree.static()
+  _buffer_type: BufferType = jax.tree.static()
+  _buffer_count: int = jax.tree.static()
+  _grid_rank: int | None = jax.tree.static()
   window_ref: ArrayRef | None
   copy_in_slot: int | jax.Array | None
   wait_in_slot: int | jax.Array | None
@@ -492,16 +492,10 @@ class BufferedRef(BufferedRefBase):
   next_fetch: Sequence[jax.Array | int] | None
   sem_recvs: SemaphoreTuple | None
   sem_sends: SemaphoreTuple | None
-  tiling: Tiling | None = dataclasses.field(metadata=dict(static=True))
-  is_trivial_windowing: bool = dataclasses.field(
-      default=False, metadata=dict(static=True)
-  )
-  has_allocated_buffer: bool = dataclasses.field(
-      default=False, metadata=dict(static=True)
-  )
-  prefetched_count: int = dataclasses.field(
-      default=0, metadata=dict(static=True)
-  )
+  tiling: Tiling | None = jax.tree.static()
+  is_trivial_windowing: bool = jax.tree.static(default=False)
+  has_allocated_buffer: bool = jax.tree.static(default=False)
+  prefetched_count: int = jax.tree.static(default=0)
 
   def __post_init__(self):
     if self.is_buffered and self.buffer_count < 1:

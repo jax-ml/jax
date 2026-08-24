@@ -28,6 +28,7 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import pretty_printer as pp
 from jax._src import traceback_util
+from jax._src import tree
 from jax._src import tree_util
 from jax._src.tree_util import tracing_registry, _registry, _RegistryEntry
 from jax._src.typing import Array
@@ -114,7 +115,7 @@ class MultiRefTransform(Transform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
 class BitcastTransform(Transform):
-  dtype: dtypes.DType = dataclasses.field(metadata=dict(static=True))
+  dtype: dtypes.DType = tree.static()
 
   def transform_type(self, x):
     match x:
@@ -164,7 +165,7 @@ def _canonicalize_reshape(
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
 class ReshapeTransform(Transform):
-  shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  shape: tuple[int, ...] = tree.static()
 
   def _validate_shape(self, input_shape: tuple[int, ...]):
     if np.prod(self.shape) != np.prod(input_shape):
@@ -203,7 +204,7 @@ def _perm_inverse(permutation: tuple[int, ...]) -> tuple[int, ...]:
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
 class TransposeTransform(Transform):
-  permutation: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  permutation: tuple[int, ...] = tree.static()
 
   def undo(self, x: core.AbstractValue) -> Transform:
     return TransposeTransform(_perm_inverse(self.permutation))
@@ -234,7 +235,7 @@ class TransposeTransform(Transform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
 class SelectTransform(MultiRefTransform):
-  idx: Array | int = dataclasses.field(metadata=dict(static=False))
+  idx: Array | int
 
   def transform_types(self, xs):
     def _type(ref):

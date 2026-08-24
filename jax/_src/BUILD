@@ -1545,6 +1545,7 @@ pytype_strict_library(
         ":indexing",
         ":pretty_printer",
         ":traceback_util",
+        ":tree",
         ":tree_util",
         ":typing",
         ":util",

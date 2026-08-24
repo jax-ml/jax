@@ -117,8 +117,8 @@ map_brefs = functools.partial(
 @jax.tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class BufferedRef:
-  spec: pallas_core.BlockSpec = dataclasses.field(metadata={"static": True})
-  is_index_invariant: bool = dataclasses.field(metadata={"static": True})
+  spec: pallas_core.BlockSpec = jax.tree.static()
+  is_index_invariant: bool = jax.tree.static()
   gmem_ref: state.AbstractRef
   # ``None`` if the ref is pinned to GMEM; otherwise, has shape
   # [num_slots, *spec.block_shape].

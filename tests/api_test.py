@@ -5786,7 +5786,7 @@ class APITest(jtu.JaxTestCase):
     @jax.tree_util.register_dataclass
     @dataclasses.dataclass
     class TestClass3:
-      test_enum_field: TestEnum = dataclasses.field(metadata=dict(static=True))
+      test_enum_field: TestEnum = jax.tree.static()
       test_data_field: int
 
     def test_jax_function(test_class: TestClass3) -> TestEnum:

@@ -1770,7 +1770,7 @@ class RegistrationTest(jtu.JaxTestCase):
     @dataclasses.dataclass
     class Foo:
       x: int
-      y: int = dataclasses.field(metadata=dict(static=True))
+      y: int = jax.tree.static()
 
     f = Foo(2, 3)
     self.assertLen(jax.tree.leaves(f), 1)

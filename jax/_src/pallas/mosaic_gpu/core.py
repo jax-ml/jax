@@ -745,7 +745,7 @@ class TilingTransform(state_types.Transform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class UntilingTransform(state_types.Transform):
-  tiling: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  tiling: tuple[int, ...] = jax.tree.static()
 
   def transform_type(self, x):
     match x:
@@ -1008,9 +1008,7 @@ def commute_transpose_indexer(
 @dataclasses.dataclass
 class PeerMemRef(state_types.Transform):
   device_id: Any
-  device_id_type: pallas_primitives.DeviceIdType = dataclasses.field(
-      metadata=dict(static=True)
-  )
+  device_id_type: pallas_primitives.DeviceIdType = jax.tree.static()
 
   def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
     raise NotImplementedError()
@@ -1027,9 +1025,7 @@ class PeerMemRef(state_types.Transform):
 @tree_util.register_dataclass
 @dataclasses.dataclass
 class MulticastRef(state_types.Transform):
-  collective_axes: tuple[Hashable, ...] = dataclasses.field(
-      metadata=dict(static=True)
-  )
+  collective_axes: tuple[Hashable, ...] = jax.tree.static()
 
   def transform_type(self, x):
     return x
@@ -1063,9 +1059,7 @@ def remote_ref(
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class ClusterRefTransform(state_types.Transform):
-  dims: tuple[jax_core.AxisName, ...] = dataclasses.field(
-      metadata=dict(static=True)
-  )
+  dims: tuple[jax_core.AxisName, ...] = jax.tree.static()
   idxs: tuple[Any, ...]
 
   def __post_init__(self):
@@ -1137,17 +1131,15 @@ def transpose_ref(
 @dataclasses.dataclass(frozen=True)
 class ExtractAliasedRef(state_types.Transform):
   """Bitcasts the underlying ref at the given offset to the given shape and dtype."""
-  dtype: dtypes.DType = dataclasses.field(metadata=dict(static=True))
-  shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
-  offset: int = dataclasses.field(metadata=dict(static=True))
+  dtype: dtypes.DType = jax.tree.static()
+  shape: tuple[int, ...] = jax.tree.static()
+  offset: int = jax.tree.static()
 
   # The index of the group of this aliased ref within the input RefUnion.
-  alias_group_idx: int = dataclasses.field(metadata=dict(static=True))
+  alias_group_idx: int = jax.tree.static()
 
   # TMEM-specific params
-  layout: tcgen05.TMEMLayout | None = dataclasses.field(
-      metadata=dict(static=True)
-  )
+  layout: tcgen05.TMEMLayout | None = jax.tree.static()
 
   @classmethod
   def from_transformed_ref(
@@ -1204,7 +1196,7 @@ class SwizzleTransform(state_types.Transform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class UnswizzleRef(state_types.Transform):
-  swizzle: int = dataclasses.field(metadata=dict(static=True))
+  swizzle: int = jax.tree.static()
 
   def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
     # Swizzling preserves the type
@@ -1310,7 +1302,7 @@ class ExpandLeadingBatchDimensionsTransform(state_types.Transform):
   n)`.
   """
 
-  batch_shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  batch_shape: tuple[int, ...] = jax.tree.static()
 
   def transform_type(
       self, x: jax_core.AbstractValue

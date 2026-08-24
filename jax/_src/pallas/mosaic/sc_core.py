@@ -227,9 +227,7 @@ class Indices:
   """
 
   values: Any
-  ignored_value: int | None = dataclasses.field(
-      default=None, metadata=dict(static=True)
-  )
+  ignored_value: int | None = jax.tree.static(default=None)
 
   def pretty_print(
       self, context: jax_core.JaxprPpContext, *, print_dtype: bool = True
