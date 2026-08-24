@@ -247,6 +247,7 @@ def prepare_wheel_oneapi(
   copy_files(
       dst_dir=plugin_dir,
       src_files=[
+          f"{source_file_prefix}jaxlib/oneapi/_hybrid.{pyext}",
           f"{source_file_prefix}jaxlib/oneapi/_prng.{pyext}",
           f"{source_file_prefix}jaxlib/oneapi/_solver.{pyext}",
           f"{source_file_prefix}jaxlib/oneapi/oneapi_plugin_extension.{pyext}",

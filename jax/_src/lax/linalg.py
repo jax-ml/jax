@@ -1258,7 +1258,7 @@ eig_p = linalg_primitive(
     multiple_results=True)
 ad.primitive_jvps[eig_p] = eig_jvp_rule
 mlir.register_lowering(eig_p, _eig_cpu_lowering, platform="cpu")
-register_cpu_gpu_lowering(eig_p, _eig_gpu_lowering, ("cuda", "rocm"))
+register_cpu_gpu_lowering(eig_p, _eig_gpu_lowering, ("cuda", "rocm", "oneapi"))
 
 
 # Symmetric/Hermitian eigendecomposition
@@ -2056,7 +2056,8 @@ def _geqp3_cpu_gpu_lowering(ctx, a, jpvt, *, use_magma, target_name_prefix):
 geqp3_p = linalg_primitive(
     _geqp3_dtype_rule, (_float | _complex, _int), (2, 1),
     _geqp3_shape_rule, "geqp3", multiple_results=True, require_same=False)
-register_cpu_gpu_lowering(geqp3_p, _geqp3_cpu_gpu_lowering)
+register_cpu_gpu_lowering(geqp3_p, _geqp3_cpu_gpu_lowering,
+                          ("cpu", "cuda", "rocm", "oneapi"))
 
 
 def _qr_shape_rule(shape, *, pivoting, full_matrices, **_):
