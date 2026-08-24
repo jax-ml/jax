@@ -17,7 +17,7 @@ from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import itertools as it
-from typing import TypeVar, Any
+from typing import Any
 
 import numpy as np
 
@@ -74,7 +74,6 @@ Int = int | Array
 ErrorCategory = type['JaxException']
 Payload = list[np.ndarray | Array]
 PyTreeDef = jtu.PyTreeDef
-Out = TypeVar('Out')
 
 # Concrete errors
 
@@ -1175,9 +1174,9 @@ automatic_checks = float_checks | index_checks
 all_checks = automatic_checks | user_checks
 
 
-def checkify(f: Callable[..., Out],
-             errors: frozenset[ErrorCategory] = user_checks
-             ) -> Callable[..., tuple[Error, Out]]:
+def checkify[T](f: Callable[..., T],
+                errors: frozenset[ErrorCategory] = user_checks
+                ) -> Callable[..., tuple[Error, T]]:
   """Functionalize `check` calls in `fun`, and optionally add run-time error checks.
 
   Run-time errors are either user-added :func:`~check` assertions, or

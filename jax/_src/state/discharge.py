@@ -19,7 +19,7 @@ import dataclasses
 from functools import partial
 import math
 import operator
-from typing import Any, Protocol, TypeVar
+from typing import Any, Protocol
 
 from jax._src import ad_util
 from jax._src import api_util
@@ -836,8 +836,7 @@ def _initial_style_jaxpr(fun: Callable,
   return jaxpr
 
 
-T = TypeVar('T')
-def run_state(f: Callable[..., None]) -> Callable[[T], T]:
+def run_state[T](f: Callable[..., None]) -> Callable[[T], T]:
   def wrapped(args):
     dbg = api_util.debug_info("run_state", f, (args,), {})
     flat_args, in_tree = tree_util.tracing_registry.flatten(args)

@@ -26,7 +26,6 @@ import itertools
 import operator
 import re
 import types
-import typing
 from typing import Any, NamedTuple, Protocol, cast as type_cast
 import warnings
 
@@ -66,8 +65,6 @@ import numpy as np
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
-
-T = typing.TypeVar("T")
 
 Value = ir.Value
 
