@@ -469,13 +469,15 @@ class OpsTest(ptu.PallasTPUTest):
       k=[1, 2, 4, 8],
       in_shape=[(13, 32, 512), (10, 16, 128)],
       axis=[0, 1, 2, -1, -2, -3],
-      dtype=[jnp.float32],
+      dtype=[jnp.float32, jnp.bfloat16],
   )
   def test_top_k(self, k, in_shape, axis, dtype):
     if not jtu.is_libtpu_at_least("0.0.47"):
       self.skipTest("Requires libtpu >= 0.0.47")
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Requires TPUv4+")
+    if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires TPUv6+ for bfloat16")
 
     out_val_shape = list(in_shape)
     out_val_shape[axis] = k
@@ -486,9 +488,11 @@ class OpsTest(ptu.PallasTPUTest):
       )
 
     # Ensure unique values in x so that no ties need to be broken.
-    x = jax.random.permutation(
-        jax.random.key(42), jnp.arange(np.prod(in_shape), dtype=dtype)
-    ).reshape(in_shape)
+    idx = jnp.argsort(
+        jax.random.normal(jax.random.key(42), shape=in_shape), axis=axis
+    ).astype(jnp.float32)
+    x = (jnp.exp2(idx // 128.0) * (1.0 + (idx % 128.0) / 128.0)).astype(dtype)
+
     res_v, res_i = self.pallas_call(
         kernel,
         out_shape=[
@@ -496,7 +500,7 @@ class OpsTest(ptu.PallasTPUTest):
             jax.ShapeDtypeStruct(out_val_shape, jnp.int32),
         ],
     )(x)
-    exp_v, exp_i = jax.lax.top_k(x, k=k, axis=axis, is_stable=False)
+    exp_v, exp_i = jax.lax.top_k(x, k=k, axis=axis)
     np.testing.assert_array_equal(res_v, exp_v)
     np.testing.assert_array_equal(res_i, exp_i)
 

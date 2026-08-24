@@ -3624,27 +3624,36 @@ def _top_k_lowering_rule(
     axis: int,
     is_stable: bool,
 ):
-  if tpu_info.get_tpu_info().generation < 4:
-    raise NotImplementedError("top_k is not supported on TPUv3 or older")
+  input_dtype = ctx.avals_in[0].dtype
+  if input_dtype not in (jnp.float32, jnp.bfloat16):
+    raise NotImplementedError(
+        f"Pallas top_k only supports float32 and bfloat16, got {input_dtype}"
+    )
+  tpu_gen = tpu_info.get_tpu_info().generation
+  if input_dtype == jnp.float32 and tpu_gen < 4:
+    raise NotImplementedError(
+        "float32 top_k is not supported on TPUv3 or older"
+    )
+  if input_dtype == jnp.bfloat16 and tpu_gen < 6:
+    raise NotImplementedError(
+        "bfloat16 top_k is not supported on TPUv5 or older"
+    )
   if is_stable:
     raise NotImplementedError(
         "is_stable=True is not supported in Pallas top_k. For efficiency, only"
         " is_stable=False is supported"
     )
-  if ctx.avals_in[0].dtype != jnp.float32:
-    raise NotImplementedError(
-        f"Pallas top_k only supports float32, got {ctx.avals_in[0].dtype}"
-    )
 
   def _top_k_impl(operand, *, k: int, axis: int = -1):
     axis = axis % operand.ndim
-    iota = jax.lax.broadcasted_iota(jnp.int32, operand.shape, axis)
+    index_dtype = jnp.int16 if operand.dtype == jnp.bfloat16 else jnp.int32
+    iota = lax.broadcasted_iota(index_dtype, operand.shape, axis)
     min_val = jnp.finfo(operand.dtype).min
     vals = []
     idxs = []
     curr = operand
     for _ in range(k):
-      idx = jnp.argmax(curr, axis=axis)
+      idx = lax.argmax(curr, axis=axis, index_dtype=index_dtype)
       val = jnp.max(curr, axis=axis)
       vals.append(val)
       idxs.append(idx)
@@ -3653,6 +3662,8 @@ def _top_k_lowering_rule(
 
     vals_stacked = jnp.stack(vals, axis=axis)
     idxs_stacked = jnp.stack(idxs, axis=axis)
+    if index_dtype != jnp.int32:
+      idxs_stacked = idxs_stacked.astype(jnp.int32)
 
     return vals_stacked, idxs_stacked
 
