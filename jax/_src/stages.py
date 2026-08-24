@@ -64,7 +64,7 @@ traceback_util.register_exclusion(__file__)
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
-CompilerOptions = dict[str, str | bool]
+CompilerOptions = dict[str, str | bool | tuple[int, ...]]
 
 
 # -- Internal types
