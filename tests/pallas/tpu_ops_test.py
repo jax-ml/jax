@@ -1374,6 +1374,34 @@ class ConvTest(ptu.PallasTPUTest):
     )
     self.assertAllClose(out, expected, rtol=1e-5, atol=1e-5)
 
+  def test_conv_with_strides(self):
+    x = jax.random.normal(jax.random.key(4), (1, 10, 10, 8), dtype=jnp.float32)
+    kernel = jax.random.normal(
+        jax.random.key(5), (2, 2, 8, 4), dtype=jnp.float32
+    )
+
+    def conv_kernel(x_ref, k_ref, o_ref):
+      o_ref[...] = pltpu.conv(
+          x_ref[...],
+          k_ref[...],
+          window_strides=(2, 2),
+          padding=((0, 0), (0, 0)),
+          dimension_numbers=("NHWC", "HWIO", "NHWC"),
+      )
+
+    out = pl.pallas_call(
+        conv_kernel,
+        out_shape=jax.ShapeDtypeStruct((1, 5, 5, 4), jnp.float32),
+    )(x, kernel)
+    expected = lax.conv_general_dilated(
+        x,
+        kernel,
+        window_strides=(2, 2),
+        padding="VALID",
+        dimension_numbers=("NHWC", "HWIO", "NHWC"),
+    )
+    self.assertAllClose(out, expected, rtol=1e-5, atol=1e-5)
+
   def test_conv_with_preferred_element_type(self):
     x, kernel = self._conv_operands(
         (1, 8, 8, 8), (3, 3, 8, 4), jnp.bfloat16, seed=6
@@ -1435,6 +1463,44 @@ class ConvTest(ptu.PallasTPUTest):
           rhs_shape=(3, 3, 128, 128),
           window_strides=(1, 1),
           padding=((0, 0), (0, 0)),
+      ),
+      dict(
+          testcase_name="_3x3_strided",
+          lhs_shape=(1, 16, 16, 128),
+          rhs_shape=(3, 3, 128, 128),
+          window_strides=(2, 2),
+          padding=((1, 1), (1, 1)),
+      ),
+      dict(
+          testcase_name="_2x2_atrous",
+          lhs_shape=(1, 8, 8, 128),
+          rhs_shape=(2, 2, 128, 128),
+          window_strides=(1, 1),
+          padding=((0, 0), (0, 0)),
+          rhs_dilation=(2, 2),
+      ),
+      dict(
+          testcase_name="_2x2_transposed",
+          lhs_shape=(1, 4, 4, 128),
+          rhs_shape=(2, 2, 128, 128),
+          window_strides=(1, 1),
+          padding=((1, 1), (1, 1)),
+          lhs_dilation=(2, 2),
+      ),
+      dict(
+          testcase_name="_3x5_transposed",
+          lhs_shape=(1, 4, 4, 128),
+          rhs_shape=(3, 3, 128, 128),
+          window_strides=(1, 1),
+          padding=((1, 1), (1, 1)),
+          lhs_dilation=(3, 5),
+      ),
+      dict(
+          testcase_name="_3x3_negative_padding",
+          lhs_shape=(1, 12, 12, 128),
+          rhs_shape=(3, 3, 128, 128),
+          window_strides=(1, 1),
+          padding=((-1, -1), (-1, 2)),
       ),
       dict(
           testcase_name="_batched",
@@ -1519,8 +1585,9 @@ class ConvTest(ptu.PallasTPUTest):
       self.skipTest("Test requires TPUv4+")
     conv = functools.partial(
         jax.lax.conv_general_dilated,
-        window_strides=(1,),
+        window_strides=(2,),
         padding=((1, 1),),
+        rhs_dilation=(2,),
         dimension_numbers=("NWC", "WIO", "NWC"),
     )
 
