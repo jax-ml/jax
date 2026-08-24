@@ -1216,7 +1216,12 @@ def matmul_push_rhs(
   ```
 
   Args:
-    rhs: The right-hand side operand. Must be 256x256.
+    rhs: The right-hand side operand. Must be K x K where K is equal to
+      :data:`jax.experimental.pallas.tpu.TPUInfo.mxu_column_size` for the target
+      TPU (obtained from `get_tpu_info`). If the matmul datatype is sub-byte,
+      then the shape must be 2K x K if `transpose=False`, or K x 2K if
+      `transpose=True`. Note that the matmul data type is determined by the LHS
+      operand used in `matmul_acc_lhs` and not the type passed here.
     staging_register: The staging register to use.
     mxu_index: The MXU to use.
     transpose: Whether to transpose the RHS.
@@ -1370,9 +1375,10 @@ def matmul_lhs_fifo(
 
   Args:
     lhs: The left-hand side operand. Must be M x K for M divisible by the number
-      of sublanes multiplied by datatype packing and K divisible by
+      of sublanes multiplied by datatype packing and K equal to
       :data:`jax.experimental.pallas.tpu.TPUInfo.mxu_column_size` for the target
-      TPU (obtained from `get_tpu_info`).
+      TPU (obtained from `get_tpu_info`). If the matmul datatype is sub-byte,
+      then the shape must be M x 2K.
     mxu_index: The MXU to use.
     load_staged_rhs: The index of the staging register to load the RHS from. If
       None, the RHS is not loaded from staging and the matmul will reuse the

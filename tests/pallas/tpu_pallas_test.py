@@ -5776,11 +5776,15 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       ('bf16', jnp.bfloat16, False),
       ('f8_e5m2', jnp.float8_e5m2, False),
       ('int8', jnp.int8, False),
+      ('int4', jnp.int4, False),
       ('bf16_transpose', jnp.bfloat16, True),
       ('f32_transpose', jnp.float32, True),
       ('int8_transpose', jnp.int8, True),
+      ('int4_transpose', jnp.int4, True),
   )
   def test_fifo(self, dtype, transpose):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest('Test requires libtpu 0.0.48 or newer.')
     if jtu.is_device_tpu_at_least(7):
       if jnp.issubdtype(dtype, jnp.integer):
         self.skipTest('Test not relevant for TPU v7 and above.')
@@ -5795,8 +5799,13 @@ class ExplicitMXUTest(jtu.JaxTestCase):
     w_m, w_n = 128, 256
     m1 = m2 = pltpu.get_tpu_info().mxu_column_size
     sublanes = pltpu.get_tpu_info().num_sublanes
-    packing = 32 // jax.dtypes.itemsize_bits(dtype)
+    dtype_bitwidth = jax.dtypes.itemsize_bits(dtype)
+    packing = 32 // dtype_bitwidth
     num_rows = sublanes * packing
+    if dtype_bitwidth < 8:
+      k *= 2
+      m1 *= 2
+      num_rows //= 2
     k_iters = k // m1
     n_iters = w_n // m2
 
