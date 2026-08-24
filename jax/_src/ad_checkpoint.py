@@ -505,7 +505,11 @@ def _saved_residuals(jaxpr: core.Jaxpr,
   # don't count reduce_precision_p as the producer, look through it instead
   subst = {e.outvars[0]: e.invars[0] for e in jaxpr.eqns
            if e.primitive is lax_internal.reduce_precision_p}
-  res_vars = {subst.get(v, v) for v in res_vars}
+  def look_through(v):
+    while v in subst:
+      v = subst[v]
+    return v
+  res_vars = {look_through(v) for v in res_vars}
 
   results = []
 
