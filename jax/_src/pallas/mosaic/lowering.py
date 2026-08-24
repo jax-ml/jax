@@ -5002,15 +5002,6 @@ def _device_id_to_logical(
     dest_kernel_type = dest_mesh.core_type
     core_axis_names = set(dest_mesh.shape.keys())
 
-  if (
-      ctx.forward_compatible
-      and dest_kernel_type != kernel_type
-  ):
-    raise NotImplementedError(
-        "Cannot export MPMD kernels to a different core type when forward"
-        f" compatibility is enabled: {kernel_type} -> {dest_kernel_type}"
-    )
-
   spmd_core_axis_names = set(ctx.lowering_context.grid_names or ())
   mpmd_core_axis_names = core_axis_names - spmd_core_axis_names
 
