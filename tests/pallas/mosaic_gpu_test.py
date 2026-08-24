@@ -9560,21 +9560,22 @@ class ExamplesSm90AWGTest(
 class HelpersTest(PallasTest):
 
   @parameterized.product(
-      m=[4, 16],
-      n=[4, 16],
+      m=[16],
+      n=[7, 16],
       minor_dim=[0, 1],
-      tile_width=[1, 2, 4],
+      tile_width=[1, 3, 4],
       dynamic_shape=(False, True),
   )
   def test_planar_snake(self, m, n, minor_dim, tile_width, dynamic_shape):
     reference = np.full((m, n), -1)
     counter = itertools.count()
     minor_size, major_size = (m, n) if minor_dim == 0 else (n, m)
-    for minor_tile in range(minor_size // tile_width):
+    for minor_tile in range(pl.cdiv(minor_size, tile_width)):
       for major in range(major_size):
         major = major if minor_tile % 2 == 0 else major_size - 1 - major
-        for minor_in_tile in range(tile_width):
-          minor = minor_tile * tile_width + minor_in_tile
+        minor_offset = minor_tile * tile_width
+        for minor_in_tile in range(min(tile_width, minor_size - minor_offset)):
+          minor = minor_offset + minor_in_tile
           idx = (minor, major) if minor_dim == 0 else (major, minor)
           reference[idx] = next(counter)
     results = np.full((m, n), -1)
