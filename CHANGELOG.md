@@ -53,6 +53,15 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     ``size=0``, which previously raised a ValueError; they now return empty
     arrays of the natural result dtype.
 
+* Bug fixes
+  * Exactly-zero floating-point results of {func}`jax.numpy.remainder`,
+    {func}`jax.numpy.mod`, {func}`jax.numpy.floor_divide`,
+    {func}`jax.numpy.divmod` and the corresponding `%`, `//` and `divmod`
+    operators now have the same sign as in NumPy and Python (the divisor's
+    sign for the remainder, the true quotient's sign for the floored
+    quotient); previously the sign of a zero result followed the dividend or
+    was lost ({jax-issue}`#40028`).
+
 ## JAX 0.11.1 (August 17, 2026)
 
 * New features

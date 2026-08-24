@@ -2590,12 +2590,19 @@ def _float_divmod(x1: ArrayLike, x2: ArrayLike) -> tuple[Array, Array]:
   # see float_divmod in floatobject.c of CPython
   mod = lax.rem(x1, x2)
   x1_corrected = _where(x2 == 0, x1, lax.sub(x1, mod))
+  # give exactly-zero results CPython's sign; copysign needs signbit, which
+  # only supports 16-bit and wider floats
+  fix_zero_sign = dtypes.finfo(dtypes.dtype(x1)).bits >= 16
+  if fix_zero_sign:
+    x1_corrected = copysign(x1_corrected, x1)
   div = lax.div(x1_corrected, x2)
 
   ind = lax.bitwise_and(mod != 0, lax.sign(x2) != lax.sign(mod))
   mod = lax.select(ind, mod + x2, mod)
   div = lax.select(ind, div - 1.0, div)
 
+  if fix_zero_sign:
+    mod = copysign(mod, x2)
   return lax.round(div), mod
 
 
@@ -3136,6 +3143,11 @@ def remainder(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   do_plus = lax.bitwise_and(
       lax.ne(lax.lt(trunc_mod, zero), lax.lt(x2, zero)), trunc_mod_not_zero)
   out = lax.select(do_plus, lax.add(trunc_mod, x2), trunc_mod)
+  if (dtypes.issubdtype(x1.dtype, np.floating)
+      and dtypes.finfo(x1.dtype).bits >= 16):
+    # give exactly-zero results the divisor's sign, matching NumPy; skipped
+    # for sub-16-bit floats, which copysign/signbit do not support
+    out = copysign(out, x2)
   jnp_error._set_error_if_nan(out)
   return out
 
