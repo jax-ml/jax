@@ -8,8 +8,8 @@ nosearch: true
 
 <!--* freshness: { reviewed: '2026-07-09' } *-->
 
-JAX's `jax.jit` transformation returns a function that, when called,
-compiles a computation and runs it on accelerators (or the CPU). As
+JAX's `jax.jit` transformation ({doc}`jit`) returns a function that, when
+called, compiles a computation and runs it on accelerators (or the CPU). As
 the JIT acronym indicates, all compilation happens _just-in-time_ for
 execution.
 
@@ -26,7 +26,7 @@ are arrays, JAX does the following in order:
 1. **Stage out** a specialized version of the original Python callable
    `F` to an internal representation. The specialization reflects a
    restriction of `F` to input types inferred from properties of the
-   arguments `x` and `y` (usually their shape and element type). JAX
+   arguments `x` and `y` (usually their shape and dtype). JAX
    carries out this specialization by a process that we call
    _tracing_. During tracing, JAX stages the specialization of `F` to
    a jaxpr, a function in JAX's intermediate language (see
@@ -45,6 +45,8 @@ some other features along the way. An example:
 
 ```python
 >>> import jax
+>>> import jax.numpy as jnp
+>>> import numpy as np
 
 >>> def f(x, y): return 2 * x + y
 >>> x, y = 3, 4
@@ -83,9 +85,6 @@ Array(10, dtype=int32, weak_type=True)
 
 ```
 
-Note that the lowered objects can be used only in the same process
-in which they were lowered. For exporting use cases, see the {ref}`jax-501-export` APIs.
-
 See the {mod}`jax.stages` documentation for more details on what functionality
 the lowering and compiled functions provide.
 
@@ -95,7 +94,7 @@ The `compile` step accepts the same `compiler_options` dictionary as
 
 Alongside `cost_analysis`, compiled executables can also report a memory
 breakdown before you ever run them — useful for checking whether a program
-fits in device memory without paying to find out:
+fits in device memory:
 
 ```python
 >>> stats = compiled.memory_analysis()
@@ -117,7 +116,7 @@ ShapeDtypeStruct(shape=(), dtype=int32)
 
 (The same is available for un-jitted functions as {func}`jax.eval_shape`.)
 
-All optional arguments to `jit`---such as `static_argnums`---are respected in
+All optional arguments to `jit` — such as `static_argnums` — are respected in
 the corresponding tracing, lowering, compilation, and execution.
 
 In the example above, we can replace the arguments to `trace` with any objects
@@ -195,7 +194,7 @@ this case, its multiplication by 2 is simplified, resulting in the constant 14.
 
 Although the second argument to `trace` above can be replaced by a hollow
 shape/dtype structure, it is necessary that the static first argument be a
-concrete value. Otherwise, tracing errs:
+concrete value. Otherwise, tracing raises an error:
 
 ```python
 >>> jax.jit(f, static_argnums=0).trace(i32_scalar, i32_scalar)  # doctest: +SKIP
@@ -212,12 +211,12 @@ in a different process. See {ref}`jax-501-export` for additional APIs for this p
 
 ## AOT-compiled functions cannot be transformed
 
-Compiled functions are specialized to a particular set of argument "types," such
-as arrays with a specific shape and element type in our running example. From
-JAX's internal point of view, transformations such as {func}`jax.vmap` alter the
-type signature of functions in a way that invalidates the compiled-for type
-signature. As a policy, JAX simply disallows compiled functions to be involved
-in transformations. Example:
+Compiled functions are specialized to a particular set of argument JAX types,
+such as arrays with a specific shape and dtype in our running example.
+From JAX's internal point of view, transformations such as {func}`jax.vmap`
+alter the type signature of functions in a way that invalidates the
+compiled-for type signature. As a policy, JAX simply disallows compiled
+functions to be involved in transformations. Example:
 
 ```python
 >>> def g(x):
@@ -275,9 +274,17 @@ platform, and runtime. This makes for two important caveats:
 
 2. If some functionality is available, there are still very limited guarantees
    on what the corresponding method provides. The return value is not required
-   to be consistent---in type, structure, or value---across JAX configurations,
+   to be consistent — in type, structure, or value — across JAX configurations,
    backends/platforms, versions, or even invocations of the method. JAX cannot
    guarantee that the output of `compiled.cost_analysis()` on one day will
    remain the same on the following day.
 
 When in doubt, see the package API documentation for {mod}`jax.stages`.
+
+## Next steps
+
+This page covered the stages underneath `jax.jit`; the main
+thread of the performance docs resumes with {doc}`control-flow`, on
+expressing conditionals and loops that live *inside* compiled code. And when
+lowering ahead of time isn't enough — you want to serialize the result and
+use it from another process — that's the export story: {ref}`jax-501-export`.

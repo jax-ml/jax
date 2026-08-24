@@ -589,7 +589,7 @@ about.**
 
 ### The unambiguous part: JVPs and VJPs
 
-The key move is to remember what $\mathbb{C}$ is: $\mathbb{R}^2$ with some
+The key is to remember what $\mathbb{C}$ is: $\mathbb{R}^2$ with some
 extra (multiplicative) structure. Any function $f : \mathbb{C} \to
 \mathbb{C}$ determines an ordinary real function $F : \mathbb{R}^2 \to
 \mathbb{R}^2$ by
@@ -632,9 +632,8 @@ derivative, in complex packaging. (If $f$ happens to be holomorphic, the
 Cauchy–Riemann equations make $J$ the rotate-and-scale matrix of complex
 multiplication by $f'(z)$, and the JVP becomes $t \mapsto f'(z)\, t$.)
 
-The **VJP** is just as unambiguous, but seeing why takes one more idea —
-and that idea is also where `grad`'s conjugation convention will come from,
-so it's worth spelling out.
+The **VJP** is just as unambiguous, but seeing why takes one more idea,
+which is also the source of `grad`'s conjugation convention.
 
 What a VJP fundamentally is, is the *dual map* (or pullback) of the
 derivative: cotangents are linear functionals on tangents, and the
@@ -699,7 +698,7 @@ print(jnp.allclose(jnp.real(jnp.conj(w) * t_out),
                    jnp.real(jnp.conj(w_out) * t)))                  # False!
 ```
 
-The second `print` shows the fork in the road: the sesquilinear version of
+The second `print` shows where the conventions diverge: the sesquilinear version of
 the same identity is *false* for JAX's `vjp` — it's the identity the other
 convention would satisfy instead. In coordinates, JAX's VJP works out to
 $w \mapsto \overline{J^\mathsf{T} \bar{w}}$ — but the conjugations are
@@ -735,7 +734,7 @@ calls — say with tangents (or cotangents) $1$ and $i$ — reveal everything,
 exactly as for an $\mathbb{R}^2 \to \mathbb{R}^2$ function. And for
 functions with a real side, one call is a full summary: a single `jvp`
 reveals everything about an $\mathbb{R} \to \mathbb{C}$ scalar function, and
-a single `vjp` (or `grad` — read on) reveals everything about a
+a single `vjp` (or `grad`, below) reveals everything about a
 $\mathbb{C} \to \mathbb{R}$ function. When in doubt about what a complex
 derivative "means", drop down to `jvp` and `vjp`: they never lie and never
 raise.

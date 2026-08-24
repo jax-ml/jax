@@ -121,7 +121,7 @@ x = jnp.arange(5.0)
 f(x)
 ```
 
-Because `pure_callback` can be elided or duplicated, it is compatible out-of-the-box with transformations like `jit` as well as higher-order primitives like `scan` and `while_loop`:"
+Because `pure_callback` can be elided or duplicated, it is compatible as-is with transformations like `jit` as well as higher-order primitives like `scan` and `while_loop`:
 
 ```{code-cell}
 jax.jit(f)(x)

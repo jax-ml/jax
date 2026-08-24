@@ -84,8 +84,8 @@ print(jax.jit(jax.grad(loss)).trace(w, x).jaxpr)
 ```
 
 The final two equations compute `dw`: a `dot_general` of two values sharded
-along `@X` producing a replicated (unsharded) result, then a transpose. Hold
-that thought — we'll come back to what that dot costs.
+along `@X` producing a replicated (unsharded) result, then a transpose.
+We'll come back to what that dot costs.
 
 There are two reasons JAX insists that cotangent shardings are determined by
 primal shardings:
@@ -193,7 +193,7 @@ for shard in c.addressable_shards:
   print(f'device {shard.device.id}:\n{shard.data}')
 ```
 
-An unreduced array is a reduction waiting to happen. To cash it in, reshard
+An unreduced array is a reduction waiting to happen. To perform it, reshard
 to an ordinary sharding — this is where the deferred AllReduce runs:
 
 ```{code-cell}
@@ -201,7 +201,7 @@ print(jax.reshard(c, jax.P(None, None)))
 ```
 
 Why defer? Because you might want to do more work first, and pay for fewer,
-bigger collectives. The catch is that only *linear* operations make sense on
+bigger collectives. Only *linear* operations make sense on
 unreduced arrays. Adding two arrays unreduced along the same axes is fine —
 sums of partial sums are partial sums of sums:
 
@@ -272,7 +272,7 @@ cotangent map is:
 Use `Replicated` and you get replicated gradients; use `Reduced` and you get
 unreduced gradients. That's the only difference between them.
 
-Here's the payoff. The reshard-to-reduced above is a communication-free cast
+The reshard-to-reduced above is a communication-free cast
 in the forward pass, and under transposition it becomes a
 reshard-from-unreduced in the backward pass — which is precisely the
 AllReduce. **A free cast in your forward code pins down where the collective

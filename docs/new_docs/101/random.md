@@ -135,8 +135,7 @@ for step in range(3):
 ```
 
 Note the shape of this pattern: every `step_key` is derived directly from one
-parent key, not from its predecessor. That's deliberate, and worth dwelling
-on.
+parent key, not from its predecessor. That's deliberate.
 
 ### Keep the key tree wide, not deep
 
@@ -219,9 +218,9 @@ story.
 
 ## Design and implementations
 
-In one line: JAX's PRNG is a counter-based Threefry hash combined with a
-functional splitting model, chosen so that generation has no sequencing
-constraints at all. See the [PRNG design
+JAX's PRNG is a counter-based Threefry hash combined with a functional
+splitting model, chosen so that generation has no sequencing constraints at
+all. See the [PRNG design
 JEP](https://docs.jax.dev/en/latest/jep/263-prng.html) for the design
 rationale.
 

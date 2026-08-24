@@ -83,7 +83,7 @@ Read further for more details.
 
 ### Many Eager Op-by-Op Compilations
 
-If your log exhibits a massive barrage of compilations for tiny
+If your log exhibits a flood of compilations for tiny
 primitive operations before your main computation starts:
 
 ```text
@@ -131,7 +131,7 @@ I0610 23:33:59.678832 deepsea_compiler_base.cc:984] END_TO_END stage duration: 1
   target-independent HLO graph. `BACKEND_PASSES` and `CODE_GENERATION` handle
   device-specific scheduling and assembly.
 * **Action:** If `HLO_PASSES` is exceptionally slow, the graph likely
-  contains massive unrolled loops. Inspect the `eqn_count_pprof` dump.
+  contains large unrolled loops. Inspect the `eqn_count_pprof` dump.
 
 ---
 
@@ -163,7 +163,7 @@ def top_function(...):
   Python `id()` of the function object.
   Because `custom_einsum` is allocated freshly on every call to `top_function`,
   its `id` changes every time.
-  JAX treats it as a brand new function and retraces it perpetually.
+  JAX treats it as a brand new function and retraces it on every call.
 
 When `JAX_EXPLAIN_CACHE_MISSES` is enabled,
 JAX specifically detects this pattern and logs a warning indicating
@@ -252,10 +252,10 @@ params = jax.jit(lambda p: jax.tree.map(quantize, p))(params)
 
 ### Gotcha: Python Control Flow (Loop Unrolling in JIT)
 
-If your `@jax.jit` decorated function takes tens of seconds (or more!) to
+If your `@jax.jit` decorated function takes tens of seconds (or more) to
 trace or compile the first time you call it,
 but executes quickly when called again, calling your function likely generates
-a massive amount of code in JAX's internal representation (Jaxpr).
+a large amount of code in JAX's internal representation (Jaxpr).
 
 This typically happens because the function makes heavy use of Python control
 flow such as `for` loops.

@@ -141,7 +141,7 @@ But there's a numerical stability problem lurking here:
 print(grad(log1pexp)(100.))
 ```
 
-That doesn't seem right! After all, the derivative of $x \mapsto \log (1 + e^x)$ is $x \mapsto \frac{e^x}{1 + e^x}$, and so for large values of $x$ we'd expect the value to be about 1.
+That doesn't seem right: after all, the derivative of $x \mapsto \log (1 + e^x)$ is $x \mapsto \frac{e^x}{1 + e^x}$, and so for large values of $x$ we'd expect the value to be about 1.
 
 We can get a bit more insight into what's going on by looking at the jaxpr for the gradient computation:
 
@@ -755,7 +755,7 @@ print(app(lambda x: x ** 3, 3.))
 print(grad(app, 1)(lambda x: x ** 3, 3.))
 ```
 
-Notice the gotcha here: no matter where in the argument list these parameters appear, they're placed at the *start* of the signature of the corresponding JVP rule. Here's another example:
+One gotcha: no matter where in the argument list these parameters appear, they're placed at the *start* of the signature of the corresponding JVP rule. Here's another example:
 
 ```{code-cell}
 @partial(custom_jvp, nondiff_argnums=(0, 2))

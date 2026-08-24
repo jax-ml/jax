@@ -182,11 +182,11 @@ When representing the input data as a single {class}`jax.Array`, the Array conta
 
 Applying this framework, you may conclude that process `0` should get the first quarter (2 out of 8) of the global batch, while process `1` should get the second, and so on.
 
-But how can you know what the first quarter is? And how do you make sure process `0` gets the first quarter? Luckily, there's a very important trick about data parallelism that means you don't have to answer these questions and makes the whole setup simpler.
+But how can you know what the first quarter is? And how do you make sure process `0` gets the first quarter? Fortunately, a property of data parallelism means you don't have to answer these questions, and makes the whole setup simpler.
 
-## Important trick about data parallelism
+## A key property of data parallelism
 
-The trick is you don't need to care which per-replica batch lands on which replica. Therefore, it doesn't matter which process loads a batch. The reason is that since each device corresponds to a model replica performing the same thing, it doesn't matter which device gets which per-replica batch within the global batch.
+You don't need to care which per-replica batch lands on which replica. Therefore, it doesn't matter which process loads a batch. The reason is that since each device corresponds to a model replica performing the same thing, it doesn't matter which device gets which per-replica batch within the global batch.
 
 What this means is that you are free to rearrange the per-replica batches within the global batch. In other words, you are free to randomize which data shard each device gets.
 
@@ -198,7 +198,7 @@ For example:
 
 </center>
 
-Usually, rearranging the data shards of a {class}`jax.Array`, as demonstrated above, is not a good idea – you're effectively permuting the value of the {class}`jax.Array`! However, for data parallelism, the global batch order isn't meaningful, and you are free to rearrange the per-replica batches in the global batch, as already mentioned before.
+Usually, rearranging the data shards of a {class}`jax.Array`, as demonstrated above, is not a good idea – you're effectively permuting the value of the {class}`jax.Array`. However, for data parallelism, the global batch order isn't meaningful, and you are free to rearrange the per-replica batches in the global batch, as already mentioned before.
 
 This simplifies data loading because it means each device just needs an independent stream of per-replica batches, which can be easily implemented in most data loaders by creating an independent pipeline per process and chunking the resulting per-process batch into per-replica batches.
 

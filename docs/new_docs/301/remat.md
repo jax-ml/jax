@@ -104,7 +104,7 @@ f4 = jax.checkpoint(f4, policy=jax.checkpoint_policies.save_only_these_names('a'
 print_saved_residuals(f4, W1, W2, W3, x)
 ```
 
-When playing around with these toy examples, you can get a closer look at
+When experimenting with these toy examples, you can get a closer look at
 what's going on using a custom `print_fwd_bwd` utility defined here:
 
 ```{code-cell}
@@ -224,12 +224,12 @@ def f_vjp_checkpoint(x):
   return z, f_bwd2
 ```
 
-Using words, this alternative implementation doesn't compute `g_vjp`, or the
+In words, this alternative implementation doesn't compute `g_vjp`, or the
 residual values in its closure, on the forward pass. Instead, it only
 computes them in the backward pass `f_bwd2`. That means `f_vjp_checkpoint`
 requires less memory: if `g` and `h` each required similar amounts of memory
 for their residuals, each much larger than `x`, then the function produced by
-`f_vjp_checkpoint(x)` requires half the memory as that of `f_vjp(x)`!
+`f_vjp_checkpoint(x)` requires half the memory of `f_vjp(x)`.
 
 The cost you pay is redundant work: in `f_bwd2` you must re-evaluate `g(x)`
 as part of `jax.vjp(g, x)` just to discard its value (in the underscore

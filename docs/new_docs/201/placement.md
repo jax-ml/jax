@@ -27,17 +27,17 @@ nosearch: true
 <!--* freshness: { reviewed: '2026-07-10' } *-->
 
 Every array lives somewhere: in the memory of one device, or spread across
-the memories of many. The unit of placement in JAX is the **mesh** — a set of
+the memories of many. The unit of placement in JAX is the **mesh**, a set of
 devices arranged in a grid with named axes. A large program might place
-different arrays on different meshes and move data between them; the humble
+different arrays on different meshes and move data between them; the
 everyday case, an array sitting on one device, is just placement on a
 single-device mesh. This page covers how placement is decided by default, how
 to control it with {func}`jax.device_put`, what it means for an array to be
 *committed* to a mesh, and how to move data between meshes.
 
-(The full story of how data is laid out *across* a mesh's devices — shardings,
+The full story of how data is laid out *across* a mesh's devices — shardings,
 partition specs, and parallelism — is the next page, {doc}`sharding`. Here we
-only need the idea of a mesh itself.)
+only need the idea of a mesh itself.
 
 We'll simulate eight devices on CPU:
 
@@ -73,7 +73,7 @@ m1 = jax.make_mesh((1,), ('x',), devices=full.devices[1:2])
 ## Default placement, and commitment
 
 When you create an array without saying where it should go, JAX places it
-somewhere sensible — and leaves it *uncommitted*:
+somewhere sensible and leaves it *uncommitted*:
 
 ```{code-cell}
 x = jnp.arange(4.0)
@@ -85,19 +85,18 @@ Uncommitted means the array isn't attached to its location: it's free to
 follow. If it's used in a computation together with data that *is* committed
 somewhere, JAX will move it there implicitly.
 
-To place an array deliberately, use {func}`jax.device_put` with a sharding —
-a mesh plus a description of how the array is laid out over it:
+To place an array deliberately, use {func}`jax.device_put` with a sharding,
+which is a mesh plus a description of how the array is laid out over it:
 
 ```{code-cell}
 data = np.arange(8.0)
 xa = jax.device_put(data, NamedSharding(mesh_a, jax.P('x')))
 print(xa.committed)
-print(jax.typeof(xa))
+print(xa.sharding.mesh == mesh_a)
 ```
 
-Now the array is **committed** to `mesh_a` — placement is part of its JAX
-type (the `@x` in `float32[8@x]`), and it stays put. Computations follow
-their data: an operation on `xa` runs on `mesh_a`'s devices.
+Now the array is **committed** to `mesh_a` and it stays put. Computations
+follow their data: an operation on `xa` runs on `mesh_a`'s devices.
 
 Commitment is a promise JAX enforces. Combining arrays committed to
 *different* meshes in one operation is an error, not an implicit transfer:
@@ -120,9 +119,9 @@ c = jnp.float32(3.0)   # uncommitted
 print((a + c).sharding)  # runs on m0, where `a` is committed
 ```
 
-(In older code you'll see `jax.device_put(x, some_device)`, committing an
+In older code you'll see `jax.device_put(x, some_device)`, committing an
 array to a single device. That's this same model: think of it as committing
-to a single-device mesh.)
+to a single-device mesh.
 
 ## Moving data between meshes
 
@@ -137,18 +136,19 @@ print(xb.sharding.mesh == mesh_b)
 
 Two related operations are worth distinguishing:
 
-- **Changing layout within a mesh** — same devices, different partitioning —
+- **Changing layout within a mesh** (same devices, different partitioning)
   is *resharding*, covered in {doc}`sharding` (see `jax.reshard`, and
   `device_put` with a new spec on the same mesh).
-- **Changing meshes** — moving data to a different set of devices — is this
-  page's operation, and `jax.device_put` is the tool.
+- **Changing meshes**, meaning moving data to a different set of devices, is this
+  page's focus, and `jax.device_put` is the tool.
 
 One subtle case worth calling out: a mesh isn't just a *set* of devices, it's
 an *arrangement* of them. So keeping an array's data on the same overall set
 of devices but changing the device *order* in the sharding is also a change
-of mesh — which makes it a `device_put`, not a reshard. And that's not
-bureaucracy: the same partition spec over differently-ordered meshes assigns
-different data to each device, so real data movement is required.
+of mesh, which makes it a `device_put` and not a reshard. That distinction
+has real consequences: the same partition spec over differently-ordered
+meshes assigns different data to each device, so real data movement is
+required.
 
 ```{code-cell}
 mesh_rev = jax.make_mesh((8,), ('x',), devices=full.devices[::-1])
@@ -164,17 +164,17 @@ print(data_by_device(x))  # what each of devices 0, 1, ..., 7 holds
 print(data_by_device(y))
 ```
 
-As mathematical values, `x` and `y` are identical — but every element has
+As mathematical values, `x` and `y` are identical, but every element has
 moved: device 0 held `0.0` before and holds `7.0` after. (And since `x` and
 `y` are committed to different meshes, combining them in one operation would
 be an error, exactly as above.)
 
 **Mesh changes are runtime-level operations.** Everything in this section
-happens at the top level of your program — and only there. A compiled
-computation belongs to one fixed mesh: under `jax.jit` (or inside any
-staged-out control flow like `jax.lax.scan`), you can change an array's
-*layout* on the mesh, but you cannot move data to a *different* mesh.
-Attempting a cross-mesh `device_put` inside `jit` is an error:
+happens at the top level of your program. A compiled computation belongs to
+one fixed mesh: under `jax.jit` (or inside any staged-out control flow like
+`jax.lax.scan`), you can change an array's *layout* on the mesh, but you cannot
+move data to a *different* mesh. Attempting a cross-mesh `device_put` inside
+`jit` is an error:
 
 ```{code-cell}
 :tags: [raises-exception]
@@ -187,17 +187,17 @@ f(xa)  # error: can't move to a different mesh inside jit!
 ```
 
 Moving between meshes is the runtime's job, done from Python between compiled
-computations — which is why the pipeline example below drives each
+computations, which is why the pipeline example below drives each
 stage-to-stage transfer from the top level.
 
 Like everything else in JAX's runtime, `device_put` is asynchronous
 ({ref}`jax-201-async-dispatch`): it returns immediately, and the transfer
-proceeds concurrently with whatever Python does next. This has a powerful
-consequence: computations and transfers on *different* meshes run in
-parallel whenever their inputs are ready, because each device works through
-its own queue independently. That's enough to express pipeline parallelism
-at the runtime level, with no compiler involvement — stages committed to
-disjoint meshes, `device_put` moving each microbatch from stage to stage:
+proceeds concurrently with whatever Python does next. As a consequence,
+computations and transfers on *different* meshes run in parallel whenever their
+inputs are ready, because each device works through its own queue
+independently. That's enough to express pipeline parallelism at the runtime
+level, with no compiler involvement: stages committed to disjoint meshes,
+`device_put` moving each microbatch from stage to stage:
 
 ```{code-cell}
 stage_meshes = [jax.make_mesh((2,), ('x',), devices=full.devices[2*i:2*i+2])
@@ -227,9 +227,9 @@ example in {ref}`jax-301-refs`.)
 
 Everything on this page generalizes to multiple processes: meshes can span
 hosts, can cover just a subset of the devices in a cluster, and
-`jax.device_put` can transfer between meshes across processes over
-high-speed interconnects. That story belongs to the multi-process systems
-docs; see {ref}`jax-501-multiprocess`.
+`jax.device_put` can transfer between meshes across processes over high-speed
+interconnects. That story is in the multi-process systems docs; see
+{ref}`jax-501-multiprocess`.
 
 ## Notes
 

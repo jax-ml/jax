@@ -40,7 +40,7 @@ via PCI to a board of four TPU chips (blue). The TPUs chips themselves are
 connected via high-speed inter-chip interconnects (ICI). JAX Python code runs on
 each host, e.g. via ssh. The JAX processes on each host are aware of each other,
 allowing you to orchestrate computation across the entire pods' worth of chips.
-The principle is the same for GPU, CPU, and other platforms with JAX support!
+The principle is the same for GPU, CPU, and other platforms with JAX support.
 ```
 
 ## Toy example
@@ -211,7 +211,7 @@ toy example, which is run from a single host machine. We usually launch each
 process on a separate host, or have multiple hosts with multiple processes each.
 We can do that directly using `ssh`, or with a cluster manager like Slurm or
 Kubernetes. In any case, **you must manually run your JAX program on each
-host!** JAX doesn’t automatically start multiple processes from a single program
+host.** JAX doesn’t automatically start multiple processes from a single program
 invocation.
 
 However they're launched, the Python processes need to run
@@ -397,7 +397,7 @@ are meant to be run on all processes simultaneously, after running
 ## Meshes can span processes and hosts
 
 Programming multiple processes from JAX usually looks just like programming a
-single process, just with more devices! The main exceptions to this are around
+single process, just with more devices. The main exceptions to this are around
 data coming in or out of JAX, e.g. when loading from external data sources.
 We'll first go over the basics of multi-process computations here, which largely
 look the same as their single-process counterparts. We'll go over some data

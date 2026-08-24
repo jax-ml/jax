@@ -91,7 +91,7 @@ a trace, and NVIDIA's Nsight tools for GPU-specific analysis.
 ### XProf (TensorBoard profiling)
 
 [XProf](https://openxla.org/xprof)
-can be used to profile JAX programs. XProf is a great way to acquire and
+can be used to profile JAX programs. XProf can acquire and
 visualize performance traces and profiles of your program, including activity
 on GPU and TPU. The end result looks something like this:
 
@@ -120,7 +120,7 @@ pip install tb-nightly xprof-nightly
 
 #### XProf and TensorBoard
 
-XProf is the underlying tool that powers the profiling and trace capturing
+XProf is the underlying tool behind the profiling and trace capturing
 functionality in TensorBoard. As long as `xprof` is installed, a "Profile" tab
 will be present within TensorBoard. Using this is identical to launching XProf
 independently, as long as it is launched pointing to the same log directory.
