@@ -160,7 +160,6 @@ py_library_providing_imports_info(
             "numpy/*.pyi",
         ],
     ),
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         ":version",
@@ -251,5 +250,4 @@ py_library_providing_imports_info(
 pytype_strict_library(
     name = "version",
     srcs = ["version.py"],
-    type_checking = "pyrefly",
 )
