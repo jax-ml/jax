@@ -1251,13 +1251,15 @@ def _compile_as_torch_gpu_kernel(module_asm: bytes):
   compiled = compile_func(ctypes.c_char_p(module_asm), ctypes.c_int(len(module_asm)))
   if not compiled:
     raise RuntimeError("Failed to compile the module")
-  function, launch_ptr = compiled[0], compiled[1]
+  function, launch_ptr, kernel = compiled[0], compiled[1], compiled[2]
   launch_c = ctypes.CFUNCTYPE(
-      None, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+      None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+      ctypes.POINTER(ctypes.c_void_p),
   )(launch_ptr)
 
   def launch(arg_ptrs, device):
     launch_c(
+        kernel,
         function,
         torch.cuda.default_stream(device)._as_parameter_,
         arg_ptrs,

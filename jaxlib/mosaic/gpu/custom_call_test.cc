@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/resource_loader.h"
 
 namespace {
 
@@ -491,6 +492,21 @@ TEST_F(CustomCallTest, GPUModuleIsRecompiledAfterExpiration) {
     log.StartCapturingLogs();
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
   }
+}
+
+// Serialized XLA executable containing a version-2 (legacy self-launch ABI).
+// Can be deleted after September 2027 (AOT support window).
+TEST_F(CustomCallTest, LoadsLegacyV2SerializedExecutable) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+  std::string path = tsl::GetDataDependencyFilepath(
+      "py/jax/jaxlib/mosaic/gpu/testdata/legacy_v2_serialized_executable.bin");
+  std::string serialized;
+  ASSERT_OK(tsl::ReadFileToString(tsl::Env::Default(), path, &serialized));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      client->LoadSerializedExecutable(serialized, std::nullopt, {}));
+  EXPECT_OK(ExecuteSync(executable.get()));
 }
 
 }  // namespace

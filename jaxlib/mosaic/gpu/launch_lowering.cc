@@ -102,16 +102,56 @@ mlir::Value packKernelArgs(mlir::OpBuilder& builder,
   return kernel_args_array;
 }
 
+// Emits an llvm array of i32s, initialized to the byte size of each kernel
+// operand, 0 for device pointers and byte size for host arguments.
+// This assumes that pointer arguments are device pointers and all else is
+// host argument to be passed by value.
+mlir::Value emitArgBytes(mlir::OpBuilder& builder,
+                         mlir::gpu::LaunchFuncOp launch,
+                         const mlir::DataLayout& data_layout) {
+  const auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
+  const auto i32 = builder.getI32Type();
+  const mlir::Value c1 = mlir::LLVM::ConstantOp::create(
+      builder, launch.getLoc(), i32, builder.getI32IntegerAttr(1));
+  const auto arr_type =
+      mlir::LLVM::LLVMArrayType::get(i32, launch.getNumKernelOperands());
+  mlir::Value arr = mlir::LLVM::AllocaOp::create(builder, launch.getLoc(),
+                                                 ptr_type, arr_type, c1);
+  for (auto [i, operand] : llvm::enumerate(launch.getKernelOperands())) {
+    mlir::Type type = operand.getType();
+    int32_t bytes = mlir::isa<mlir::LLVM::LLVMPointerType>(type)
+                        ? 0
+                        : static_cast<int32_t>(
+                              data_layout.getTypeSize(type).getFixedValue());
+    mlir::Value bytes_val = mlir::LLVM::ConstantOp::create(
+        builder, launch.getLoc(), i32, builder.getI32IntegerAttr(bytes));
+    mlir::Value slot = mlir::LLVM::GEPOp::create(
+        builder, launch.getLoc(), ptr_type, i32, arr, mlir::LLVM::GEPArg(i));
+    mlir::LLVM::StoreOp::create(builder, launch.getLoc(), bytes_val, slot);
+  }
+  return arr;
+}
+
 void emitRuntimeDecls(mlir::ModuleOp module) {
   auto ptr_ty = mlir::LLVM::LLVMPointerType::get(module.getContext());
   auto i32 = mlir::IntegerType::get(module.getContext(), 32);
   auto decl_builder = mlir::OpBuilder::atBlockBegin(module.getBody());
+
   mlir::func::FuncOp::create(
       decl_builder, module.getLoc(),
-      decl_builder.getStringAttr("mosaic_gpu_launch_kernel"),
+      decl_builder.getStringAttr("mosaic_gpu_build_kernel_spec"),
       mlir::FunctionType::get(module.getContext(),
-                              {ptr_ty, i32, i32, i32, i32, i32, i32, i32, i32,
-                               i32, i32, i32, ptr_ty, ptr_ty},
+                              {
+                                  ptr_ty,         // MosaicKernelSpec*
+                                  i32, i32, i32,  // grid
+                                  i32, i32, i32,  // cluster
+                                  i32, i32, i32,  // block
+                                  i32,            // smem_bytes
+                                  i32,            // uses_pdl
+                                  i32,            // num_args
+                                  ptr_ty,         // arg_ptrs
+                                  ptr_ty          // arg_bytes
+                              },
                               {}),
       decl_builder.getStringAttr("private"), /*arg_attr=*/nullptr,
       /*res_attrs=*/nullptr);
@@ -143,19 +183,25 @@ int32_t getDynamicSmemSize(mlir::gpu::LaunchFuncOp launch) {
   return 0;
 }
 
-mlir::LogicalResult launchPreloadedKernel(mlir::func::FuncOp func,
-                                          mlir::gpu::LaunchFuncOp launch,
-                                          mlir::Value kernel_handle,
-                                          bool uses_pdl) {
-  // Lower gpu.launch_func to a call to mgpuLaunchKernel.
-  mlir::OpBuilder builder(launch);
-  mlir::Value dynamic_smem = launch.getDynamicSharedMemorySize();
-  if (!dynamic_smem) {
-    dynamic_smem = mlir::LLVM::ConstantOp::create(builder, launch.getLoc(),
-                                                  builder.getI32Type(),
-                                                  builder.getI32IntegerAttr(0));
+// Result for prepare launch inputs below.
+struct LaunchInputs {
+  mlir::gpu::KernelDim3 grid, block, cluster;
+  mlir::Value dynamic_smem;
+  mlir::Value arg_ptr_array;
+  mlir::Value uses_pdl_val;
+};
+
+LaunchInputs prepareLaunchInputs(mlir::OpBuilder& builder,
+                                 mlir::gpu::LaunchFuncOp launch,
+                                 bool uses_pdl) {
+  LaunchInputs launch_inputs;
+  launch_inputs.dynamic_smem = launch.getDynamicSharedMemorySize();
+  if (!launch_inputs.dynamic_smem) {
+    launch_inputs.dynamic_smem = mlir::LLVM::ConstantOp::create(
+        builder, launch.getLoc(), builder.getI32Type(),
+        builder.getI32IntegerAttr(0));
   }
-  mlir::Value arg_ptr_array = packKernelArgs(builder, launch);
+  launch_inputs.arg_ptr_array = packKernelArgs(builder, launch);
   auto as_32bit = [&](mlir::gpu::KernelDim3 dim) {
     dim.x = mlir::LLVM::TruncOp::create(builder, launch.getLoc(),
                                         builder.getI32Type(), dim.x);
@@ -165,25 +211,43 @@ mlir::LogicalResult launchPreloadedKernel(mlir::func::FuncOp func,
                                         builder.getI32Type(), dim.z);
     return dim;
   };
-  mlir::gpu::KernelDim3 grid = as_32bit(launch.getGridSizeOperandValues());
-  mlir::gpu::KernelDim3 block = as_32bit(launch.getBlockSizeOperandValues());
-  mlir::gpu::KernelDim3 cluster;
+  launch_inputs.grid = as_32bit(launch.getGridSizeOperandValues());
+  launch_inputs.block = as_32bit(launch.getBlockSizeOperandValues());
   if (launch.hasClusterSize()) {
-    cluster = as_32bit(launch.getClusterSizeOperandValues());
+    launch_inputs.cluster = as_32bit(launch.getClusterSizeOperandValues());
   } else {
-    cluster.x = cluster.y = cluster.z = mlir::LLVM::ConstantOp::create(
-        builder, launch.getLoc(), builder.getI32Type(),
-        builder.getI32IntegerAttr(0));
+    launch_inputs.cluster.x = launch_inputs.cluster.y =
+        launch_inputs.cluster.z = mlir::LLVM::ConstantOp::create(
+            builder, launch.getLoc(), builder.getI32Type(),
+            builder.getI32IntegerAttr(0));
   }
-  mlir::Value uses_pdl_val = mlir::LLVM::ConstantOp::create(
+  launch_inputs.uses_pdl_val = mlir::LLVM::ConstantOp::create(
       builder, launch.getLoc(), builder.getI32Type(),
       builder.getI32IntegerAttr(uses_pdl ? 1 : 0));
-  mlir::Value stream = launch.getAsyncObject();
+  return launch_inputs;
+}
+
+// Emits a call to mosaic_gpu_build_kernel_spec. cfg is the MosaicKernelSpec*
+// out-param.
+mlir::LogicalResult emitBuildKernelSpec(mlir::gpu::LaunchFuncOp launch,
+                                        mlir::Value cfg, bool uses_pdl,
+                                        const mlir::DataLayout& data_layout) {
+  mlir::OpBuilder builder(launch);
+  LaunchInputs launch_inputs = prepareLaunchInputs(builder, launch, uses_pdl);
+  mlir::Value arg_bytes = emitArgBytes(builder, launch, data_layout);
+  mlir::Value num_args = mlir::LLVM::ConstantOp::create(
+      builder, launch.getLoc(), builder.getI32Type(),
+      builder.getI32IntegerAttr(launch.getNumKernelOperands()));
   mlir::func::CallOp::create(
-      builder, launch.getLoc(), "mosaic_gpu_launch_kernel", mlir::TypeRange{},
-      mlir::ValueRange{kernel_handle, grid.x, grid.y, grid.z, cluster.x,
-                       cluster.y, cluster.z, block.x, block.y, block.z,
-                       dynamic_smem, uses_pdl_val, stream, arg_ptr_array});
+      builder, launch.getLoc(), "mosaic_gpu_build_kernel_spec",
+      mlir::TypeRange{},
+      mlir::ValueRange{cfg, launch_inputs.grid.x, launch_inputs.grid.y,
+                       launch_inputs.grid.z, launch_inputs.cluster.x,
+                       launch_inputs.cluster.y, launch_inputs.cluster.z,
+                       launch_inputs.block.x, launch_inputs.block.y,
+                       launch_inputs.block.z, launch_inputs.dynamic_smem,
+                       launch_inputs.uses_pdl_val, num_args,
+                       launch_inputs.arg_ptr_array, arg_bytes});
   return mlir::success();
 }
 
@@ -197,9 +261,9 @@ class GpuLaunchLoweringPass
 
   void runOnOperation() override {
     mlir::ModuleOp module = getOperation();
-    auto ptr_ty = mlir::LLVM::LLVMPointerType::get(module.getContext());
     emitRuntimeDecls(module);
     bool uses_pdl = module->hasAttr("mosaic_gpu.uses_pdl");
+    mlir::DataLayout data_layout(module);
     for (mlir::Operation& op : *module.getBody()) {
       if (auto func = mlir::dyn_cast<mlir::func::FuncOp>(&op)) {
         if (func.isDeclaration() ||
@@ -247,16 +311,10 @@ class GpuLaunchLoweringPass
           module->setAttr("mosaic_gpu.cluster_size",
                           builder.getI32IntegerAttr(cluster_size));
 
-          // Add a new function argument for the kernel handle.
-          if (func.insertArgument(
-                  0, ptr_ty, mlir::DictionaryAttr::get(func.getContext()),
-                  mlir::UnknownLoc::get(func.getContext()))
-                  .failed()) {
-            return mlir::WalkResult::interrupt();
-          }
-          mlir::Value kernel_handle = func.getArgument(0);
-          if (launchPreloadedKernel(func, launch, kernel_handle, uses_pdl)
-                  .failed()) {
+          mlir::Value kernel_spec = func.getArgument(0);
+          mlir::LogicalResult lowered =
+              emitBuildKernelSpec(launch, kernel_spec, uses_pdl, data_layout);
+          if (lowered.failed()) {
             return mlir::WalkResult::interrupt();
           }
           launch.erase();

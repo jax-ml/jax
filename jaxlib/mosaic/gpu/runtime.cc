@@ -16,9 +16,13 @@ limitations under the License.
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <numeric>
 #include <utility>
+#include <vector>
 
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "jaxlib/mosaic/gpu/launch_config.h"
 
 namespace {
 template <typename... Args>
@@ -186,6 +190,8 @@ void mosaic_gpu_init_tma_desc(CUtensorMap* tma_desc, void* base_addr,
       "cuTensorMapEncodeTiled failed: %s\n");
 }
 
+// Fold this one back into mosaic_gpu_launch_kernel_v2 after March 2027.
+// (AOT backwards compatibility)
 void mosaic_gpu_launch_kernel(CUfunction function, uint32_t grid_x,
                               uint32_t grid_y, uint32_t grid_z,
                               uint32_t cluster_x, uint32_t cluster_y,
@@ -238,6 +244,52 @@ void mosaic_gpu_launch_kernel(CUfunction function, uint32_t grid_x,
     abort();
   } else {
     abort_on_error(result, "cuLaunchKernelEx: %s\n");
+  }
+}
+
+void mosaic_gpu_launch_kernel_v2(CUfunction function, CUstream stream,
+                                 mosaic::gpu::MosaicKernelSpec* cfg) {
+  return mosaic_gpu_launch_kernel(
+      function, cfg->grid.x, cfg->grid.y, cfg->grid.z, cfg->cluster.x,
+      cfg->cluster.y, cfg->cluster.z, cfg->block.x, cfg->block.y, cfg->block.z,
+      cfg->smem_bytes, cfg->uses_pdl, stream, cfg->kernel_params().data());
+}
+
+// Fills `cfg` with the kernel spec.
+// Called by the JIT'd host function.
+// arg_ptrs[i] points at the i-th kernel argument value slot.
+// arg_bytes[i] == 0 => device pointer argument.
+// `arg_bytes[i] > 0` => host (byval) argument.
+// Pre: arg_ptrs.size() == arg_bytes.size() == num_args.
+void mosaic_gpu_build_kernel_spec(mosaic::gpu::MosaicKernelSpec* cfg,
+                                  uint32_t grid_x, uint32_t grid_y,
+                                  uint32_t grid_z, uint32_t cluster_x,
+                                  uint32_t cluster_y, uint32_t cluster_z,
+                                  uint32_t block_x, uint32_t block_y,
+                                  uint32_t block_z, uint32_t smem_bytes,
+                                  int32_t uses_pdl, int32_t num_args,
+                                  void** arg_ptrs, const int32_t* arg_bytes) {
+  cfg->grid = {grid_x, grid_y, grid_z};
+  cfg->block = {block_x, block_y, block_z};
+  cfg->cluster = {cluster_x, cluster_y, cluster_z};
+  cfg->smem_bytes = smem_bytes;
+  cfg->uses_pdl = uses_pdl;
+
+  const size_t total_host =
+      std::accumulate(arg_bytes, arg_bytes + num_args, size_t{0});
+  cfg->host_bytes.resize(total_host);
+  cfg->args.clear();
+  cfg->args.reserve(num_args);
+
+  size_t off = 0;
+  for (int32_t i = 0; i < num_args; ++i) {
+    if (arg_bytes[i] > 0) {  // Host (byval) argument: copy the blob.
+      std::memcpy(cfg->host_bytes.data() + off, arg_ptrs[i], arg_bytes[i]);
+      cfg->args.push_back({cfg->host_bytes.data() + off, arg_bytes[i], true});
+      off += arg_bytes[i];
+    } else {  // Device pointer argument: the slot holds the pointer value.
+      cfg->args.push_back({*reinterpret_cast<void**>(arg_ptrs[i]), 0, false});
+    }
   }
 }
 }
