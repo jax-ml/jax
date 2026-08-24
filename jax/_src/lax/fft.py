@@ -140,43 +140,62 @@ def _fft_lowering(ctx, x, *, fft_type, fft_lengths):
   ]
 
 
+def _symmetrize_irfft_input(x, *, fft_lengths):
+  """Makes the input of a multi-dimensional IRFFT a valid Hermitian half-spectrum.
+
+  An array in RFFT layout is the RFFT of some real array iff its slices at
+  index 0 and, for an even last length n, at index n // 2 along the last FFT
+  axis are themselves Hermitian-symmetric along the outer FFT axes; the
+  other entries are unconstrained. NumPy's irfftn (an IFFT over the outer axes
+  followed by a 1-D IRFFT, which reads only the real part of the DC and
+  Nyquist bins) depends on those two slices only through their
+  Hermitian-symmetric part, so replacing each by that part leaves the result
+  under NumPy's convention unchanged, and yields an input on which a
+  multi-dimensional C2R transform that assumes Hermitian symmetry on every
+  axis computes the same result.
+  """
+  ndim = x.ndim
+  n, m = fft_lengths[-1], x.shape[-1]
+  outer_axes = range(ndim - len(fft_lengths), ndim - 1)
+
+  def hermitian_part(k):
+    s = slicing.slice_in_dim(x, k, k + 1, axis=ndim - 1)
+    r = s
+    for ax in outer_axes:
+      # r[..., i, ...] = s[..., -i mod size, ...]
+      size = x.shape[ax]
+      if size > 1:
+        r = lax.concatenate(
+            [slicing.slice_in_dim(r, 0, 1, axis=ax),
+             lax.rev(slicing.slice_in_dim(r, 1, size, axis=ax), (ax,))], ax)
+    return 0.5 * (s + lax.conj(r))
+
+  # A single concatenate lowers to one fusion over the input, which is cheaper
+  # than updating the slices in place (XLA copies the operand to do so).
+  nyquist = n // 2 if n % 2 == 0 and 0 < n // 2 < m else None
+  parts = [hermitian_part(0)]
+  if nyquist is None:
+    parts.append(slicing.slice_in_dim(x, 1, m, axis=ndim - 1))
+  else:
+    parts.extend([slicing.slice_in_dim(x, 1, nyquist, axis=ndim - 1),
+                  hermitian_part(nyquist),
+                  slicing.slice_in_dim(x, nyquist + 1, m, axis=ndim - 1)])
+  return lax.concatenate(parts, ndim - 1)
+
+
 def _fft_lowering_gpu(ctx, x, *, fft_type, fft_lengths):
-  # Decompose multi-dimensional IRFFT into a sequence of transforms.
-  # cuFFT assumes Hermitian symmetry on all dimensions of a multi-dimensional
-  # C2R transform, whereas our other implementations and NumPy only require
-  # symmetry on the final dimension.
-  if fft_type == FftType.IRFFT and len(fft_lengths) > 1:
-    rank = len(ctx.avals_in[0].shape)
-
-    # Move the final C2R axis (at index -1) to the start of the FFT block.
-    target_pos = rank - len(fft_lengths)
-
-    perm_out = list(range(rank))
-    perm_out.insert(target_pos, perm_out.pop(-1))
-    x = hlo.transpose(x, mlir.dense_int_array(perm_out))
-
-    # Apply multi-dimensional IFFT on the outer axes (which are now at the end).
-    outer_lengths = fft_lengths[:-1]
-    x = hlo.fft(
-        x,
-        hlo.FftTypeAttr.get(FftType.IFFT.name),
-        mlir.dense_int_array(outer_lengths),
-    )
-
-    # Move the C2R axis back to the end.
-    perm_in = list(range(rank))
-    perm_in.append(perm_in.pop(target_pos))
-    x = hlo.transpose(x, mlir.dense_int_array(perm_in))
-
-    # Apply 1D IRFFT on the last axis.
-    x = hlo.fft(
-        x,
-        hlo.FftTypeAttr.get(FftType.IRFFT.name),
-        mlir.dense_int_array((fft_lengths[-1],)),
-    )
-
-    return [x]
-
+  # cuFFT and hipFFT assume Hermitian symmetry on all dimensions of a
+  # multi-dimensional C2R transform, whereas our other implementations and
+  # NumPy only require symmetry on the final dimension. Rather than
+  # decomposing the transform into an IFFT over the outer axes and a 1-D IRFFT
+  # (two FFT launches plus two transposes, measured at ~1.7x the cost of a
+  # single multi-dimensional C2R transform), make the input satisfy the
+  # stronger assumption, which does not change its IRFFT under NumPy's
+  # convention (see _symmetrize_irfft_input), and emit one C2R transform.
+  if (fft_type == FftType.IRFFT and len(fft_lengths) > 1
+      and is_constant_shape(fft_lengths)):
+    x, = mlir.lower_fun(_symmetrize_irfft_input, multiple_results=False)(
+        ctx, x, fft_lengths=fft_lengths)
   return _fft_lowering(ctx, x, fft_type=fft_type, fft_lengths=fft_lengths)
 
 
