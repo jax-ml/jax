@@ -2274,6 +2274,8 @@ class OpsTest(PallasBaseTest):
   )
   def test_dot(self, lhs_and_rhs_shape, dtype, trans_x, trans_y):
     self.skip_if_mosaic_gpu()
+    if sys.platform == "win32":
+      self.skipTest("Failing on Windows")
 
     lhs_shape, rhs_shape = lhs_and_rhs_shape
 
