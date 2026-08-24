@@ -2553,7 +2553,7 @@ def _program_order(fun, *, enforce):
   @wraps(fun)
   def wrapped(*args):
     if not enforce:
-      return api.jit(fun)(*args)
+      return api.jit(fun, inline=api.Inline.JAX_LATE)(*args)
     traced = api.jit(fun).trace(*args)
     jaxpr = traced.jaxpr
     args_flat, _ = tree_flatten(args)
