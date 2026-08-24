@@ -1315,7 +1315,7 @@ class PjitLoweringResult:
 def _pjit_lower_jaxpr_to_fun(
     ctx: mlir.LoweringRuleContext, name: str, jaxpr: core.Jaxpr,
     in_shardings, out_shardings,
-    in_layouts, out_layouts) -> PjitLoweringResult:
+    in_layouts, out_layouts, *, detached: bool = False) -> PjitLoweringResult:
   effects = tuple(effects_lib.ordered_effects.filter_in(jaxpr.effects))
   const_args_and_avals = core.jaxpr_const_args(jaxpr)
   const_args, const_arg_avals = util.unzip2(const_args_and_avals)
@@ -1343,7 +1343,8 @@ def _pjit_lower_jaxpr_to_fun(
       out_avals=jaxpr.out_avals,
       arg_shardings=arg_shardings, result_shardings=result_shardings,
       use_sharding_annotations=False,
-      arg_layouts=in_layouts_expanded, result_layouts=out_layouts)
+      arg_layouts=in_layouts_expanded, result_layouts=out_layouts,
+      detached=detached)
   output_types = [mlir.aval_to_ir_types(mod_ctx, a) for a in ctx.avals_out]
   output_types = [mlir.token_type()] * len(effects) + output_types
   flat_output_types, output_treedef = mlir.ir_tree_registry.flatten(output_types)
@@ -1363,16 +1364,17 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
     num_devices = axis_ctx.num_devices
   elif isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
     num_devices = axis_ctx.mesh.size
+  is_jax_late = inline is api.Inline.JAX_LATE
   key = (jit_p, name, jaxpr, num_devices,
          pxla.SemanticallyEqualShardings(in_shardings, jaxpr.in_avals),
          pxla.SemanticallyEqualShardings(out_shardings, jaxpr.out_avals),
-         in_layouts, out_layouts)
+         in_layouts, out_layouts, is_jax_late)
 
   result = mod_ctx.cached_primitive_lowerings.get(key, None)
   if result is None:
     result = _pjit_lower_jaxpr_to_fun(
         ctx, name, jaxpr, in_shardings, out_shardings,
-        in_layouts, out_layouts)
+        in_layouts, out_layouts, detached=is_jax_late)
     mod_ctx.cached_primitive_lowerings[key] = result
 
   effects = result.effects

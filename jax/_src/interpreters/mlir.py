@@ -1672,6 +1672,7 @@ def lower_jaxpr_to_fun(
     arg_layouts: Sequence[Layout | None | AutoLayoutSingleton] | None = None,
     result_layouts: Sequence[Layout | None | AutoLayoutSingleton] | None = None,
     propagated_out_mem_kinds: tuple[None | str, ...] | None = None,
+    detached: bool = False,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -1705,6 +1706,11 @@ def lower_jaxpr_to_fun(
     input_output_aliases: optional sequence that maps argument numbers to the
       corresponding output that should alias them.
     xla_donated_args: optional sequence of args to set donation annotations.
+    detached: if True, emits a detached function (`ip=False`) that is not
+      inserted into the module's symbol table. This is used for functions that
+      are intended to be inlined into a caller during lowering (e.g., when
+      `inline=jax.Inline.JAX_LATE`), avoiding dead private functions in the
+      MLIR module that would otherwise require symbol dead-code elimination.
   Returns:
     MLIR func op
   """
@@ -1780,10 +1786,13 @@ def lower_jaxpr_to_fun(
   flat_output_types, _ = ir_tree_registry.flatten(output_types)
   ftype = ir.FunctionType.get(flat_input_types, flat_output_types)
   func_name = "main" if main_function else name
-  func_op = func_dialect.FuncOp(func_name, ftype, ip=ctx.ip)
-  func_op.attributes["sym_visibility"] = ir.StringAttr.get(
-      "public" if main_function else "private")
-  ctx.symbol_table.insert(func_op)
+  if detached:
+    func_op = func_dialect.FuncOp(func_name, ftype, ip=False)
+  else:
+    func_op = func_dialect.FuncOp(func_name, ftype, ip=ctx.ip)
+    func_op.attributes["sym_visibility"] = ir.StringAttr.get(
+        "public" if main_function else "private")
+    ctx.symbol_table.insert(func_op)
 
   ir_arg_shardings = None
   if arg_shardings is not None:

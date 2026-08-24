@@ -4642,9 +4642,12 @@ class APITest(jtu.JaxTestCase):
         lambda x: api.jit(sub, inline=inline_mode)(x) + 1.0
     ).lower(1.0).as_text()
 
-    # For jax_late, we expect it to be inlined during MLIR lowering.
-    self.assertNotIn("call ", get_mlir(jax.Inline.JAX_LATE))
-    self.assertNotIn("call @", get_mlir(jax.Inline.JAX_LATE))
+    # For jax_late, we expect it to be inlined during MLIR lowering, without
+    # adding the inlined function to the MLIR module.
+    mlir_jax_late = get_mlir(jax.Inline.JAX_LATE)
+    self.assertNotIn("call ", mlir_jax_late)
+    self.assertNotIn("func.func private", mlir_jax_late)
+    self.assertNotIn("sub", mlir_jax_late)
 
     get_hlo = lambda inline_mode: api.jit(
         lambda x: api.jit(sub, inline=inline_mode)(x) + 1.0
