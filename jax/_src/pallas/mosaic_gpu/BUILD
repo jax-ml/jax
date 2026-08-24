@@ -116,7 +116,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "layout_rules",
     srcs = ["layout_rules.py"],
-    type_checking = "pyrefly",
     deps = [
         ":core",
         ":lowering",
