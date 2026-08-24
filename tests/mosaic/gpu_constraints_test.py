@@ -750,6 +750,89 @@ class ConstraintSystemTest(parameterized.TestCase):
     ]
     self.assertEqual(got.constraints, want)
 
+  def test_saturate_one_of_for_two_equal_vars(self):
+    v0, v1 = cs.Variable(0), cs.Variable(1)
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    s = cs.ConstraintSystem(
+        constraints=[
+            cs.Equals(v0, v1),
+            cs.OneOf(v0, (layout1, layout2)),
+        ],
+    )
+    got = cs.saturate_one_of_constraints_for_equal_vars(s)
+    want = [
+        cs.Equals(v0, v1),
+        cs.OneOf(v0, (layout1, layout2)),
+        cs.OneOf(v1, (layout1, layout2)),
+    ]
+    self.assertEqual(got.constraints, want)
+
+  def test_saturate_one_of_for_multiple_transitively_equal_vars(self):
+    v0, v1, v2, v3, v4, v5 = (cs.Variable(i) for i in range(6))
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    layout3 = RL(mgpu.WGMMA_COL_LAYOUT)
+    s = cs.ConstraintSystem(
+        constraints=[
+            cs.Equals(v0, v1),
+            cs.Equals(v2, v3),
+            cs.Equals(v2, v4),
+            cs.Equals(v1, v4),
+            cs.OneOf(v0, (layout1, layout2)),
+            cs.OneOf(v5, (layout3,)),
+        ],
+    )
+    got = cs.saturate_one_of_constraints_for_equal_vars(s)
+    want = [
+        cs.Equals(v0, v1),
+        cs.Equals(v2, v3),
+        cs.Equals(v2, v4),
+        cs.Equals(v1, v4),
+        cs.OneOf(v0, (layout1, layout2)),
+        cs.OneOf(v1, (layout1, layout2)),
+        cs.OneOf(v2, (layout1, layout2)),
+        cs.OneOf(v3, (layout1, layout2)),
+        cs.OneOf(v4, (layout1, layout2)),
+        cs.OneOf(v5, (layout3,)),
+    ]
+    self.assertEqual(got.constraints, want)
+
+  def test_saturate_one_of_intersects_allowed_constants_for_equal_vars(self):
+    v0, v1 = cs.Variable(0), cs.Variable(1)
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    layout3 = RL(mgpu.WGMMA_COL_LAYOUT)
+    s = cs.ConstraintSystem(
+        constraints=[
+            cs.Equals(v0, v1),
+            cs.OneOf(v0, (layout1, layout2, layout3)),
+            cs.OneOf(v1, (layout2, layout3)),
+        ],
+    )
+    got = cs.saturate_one_of_constraints_for_equal_vars(s)
+    want = [
+        cs.Equals(v0, v1),
+        cs.OneOf(v0, (layout2, layout3)),
+        cs.OneOf(v1, (layout2, layout3)),
+    ]
+    self.assertEqual(got.constraints, want)
+
+  def test_saturate_one_of_returns_unsatisfiable_on_empty_intersection(self):
+    v0, v1 = cs.Variable(0), cs.Variable(1)
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    s = cs.ConstraintSystem(
+        constraints=[
+            cs.Equals(v0, v1),
+            cs.OneOf(v0, (layout1,)),
+            cs.OneOf(v1, (layout2,)),
+        ],
+    )
+    self.assertIsInstance(
+        cs.saturate_one_of_constraints_for_equal_vars(s), cs.Unsatisfiable
+    )
+
   @parameterized.parameters(
     (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, 8),
     (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, 8),

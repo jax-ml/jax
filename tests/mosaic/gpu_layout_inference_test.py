@@ -421,6 +421,54 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
+  def test_unsatisfiable_dynamic_index_with_subview_and_wgmma_suggests_multiple_of(
+      self,
+  ):
+    shape = (64, 64)
+    buffer_shape = (2, *shape)
+    elt_ty = ir.BF16Type.get()
+    i32 = ir.IntegerType.get_signless(32)
+
+    with ir.InsertionPoint(self.module.body):
+      gmem_ty = ir.MemRefType.get(shape, elt_ty)
+      smem_ty = ir.MemRefType.get(
+          buffer_shape, elt_ty, memory_space=mgpu.utils.smem()
+      )
+      barrier_ty = mgpu.dialect.BarrierType.get()
+      gmem_ref, smem_ref, barrier, idx = undefs(
+          gmem_ty, smem_ty, barrier_ty, i32
+      )
+
+      zero = arith.constant(i32, 0)
+      mgpu.dialect.AsyncLoadOp(
+          source=gmem_ref,
+          destination=smem_ref,
+          barrier=barrier,
+          indices=[zero, idx, zero],
+          slice_lengths=(1, *shape),
+          collective=ir.ArrayAttr.get([]),
+      )
+
+      # SubViewOp layout inference creates an equality constraint between the
+      # input and output memref variables. Slicing the smem_ref and passing the
+      # resulting subview to WGMMAOp requires saturating OneOf constraints
+      # across equal variables so that the divisibility check on smem_ref can
+      # discover the candidate layouts conjured by WGMMAOp.
+      subview = mgpu.utils.memref_slice(smem_ref, 0)
+
+      acc_ty = ir.VectorType.get(shape, elt_ty)
+      acc, lhs = undefs(
+          acc_ty, ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+      )
+      mgpu.dialect.WGMMAOp(acc, lhs, subview)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Failed to infer a possible set of layouts. You need to prove the"
+        " divisibility of index 1 using pl.multiple_of.",
+    ):
+      mgpu.infer_layout(self.module)
+
   def test_infer_vector_concat_layout(self):
     shape1, shape2 = (64, 32), (128, 32)
     layout = mgpu.WGMMA_LAYOUT

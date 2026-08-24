@@ -2606,11 +2606,6 @@ def _check_unsatisfiable_divisibility_constraints(
   # are exhaustive. Semantically it allows us to raise an error message saying
   # there's a problem with the kernel, and not the layout inference system
   # itself.
-  # TODO(olechwierowicz): We might need to saturate `cs.OneOf` for equal
-  # variables to handle cases like:
-  #   async_load(gmem, smem)
-  #   ...
-  #   wgmma(acc, smem.at[0], ...)
   for constraint in system.constraints:
     match constraint:
       case cs.OneOf(expr=cs.Variable() as var, allowed=allowed):
@@ -2784,7 +2779,18 @@ def infer_layout(
     # At this point we know the system is unsatisfiable. We attempt to find
     # contradictions in the `cs.ConstraintSystem`, and raise a meaningful error
     # message.
-    _check_unsatisfiable_divisibility_constraints(ctx, global_constraint_system)
+    # We saturate `cs.OneOf` constraints across equal variables to propagate
+    # layout candidates (e.g. from ops like WGMMA) to equal variables/subviews
+    # (e.g. created by slicing), allowing
+    # `_check_unsatisfiable_divisibility_constraints` to inspect all relevant
+    # candidate layouts for each variable when constructing error messages.
+    global_constraint_system = cs.saturate_one_of_constraints_for_equal_vars(
+        global_constraint_system
+    )
+    if not isinstance(global_constraint_system, cs.Unsatisfiable):
+      _check_unsatisfiable_divisibility_constraints(
+          ctx, global_constraint_system
+      )
 
     raise ValueError(
         "Failed to infer a possible set of layouts. This should only happen if "
