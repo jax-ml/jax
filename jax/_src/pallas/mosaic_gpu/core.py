@@ -1932,14 +1932,17 @@ class Layout(SomeLayout, enum.Enum):
       case Layout.TMA_INDICES:
         return mgpu.TMA_INDICES_LAYOUT
       case Layout.MMA_LHS:
-        (dtype,) = args
-        return mgpu.MMALayouts(dtype).lhs
+        normalize_args = lambda dtype, *, m_warps=4: (dtype, m_warps)
+        dtype, m_warps = normalize_args(*args, **kwargs)
+        return mgpu.MMALayouts(dtype, m_warps=m_warps).lhs
       case Layout.MMA_RHS:
-        (dtype,) = args
-        return mgpu.MMALayouts(dtype).rhs
+        normalize_args = lambda dtype, *, m_warps=4: (dtype, m_warps)
+        dtype, m_warps = normalize_args(*args, **kwargs)
+        return mgpu.MMALayouts(dtype, m_warps=m_warps).rhs
       case Layout.MMA_ACC:
-        (dtype,) = args
-        return mgpu.MMALayouts(dtype).acc
+        normalize_args = lambda dtype, *, m_warps=4: (dtype, m_warps)
+        dtype, m_warps = normalize_args(*args, **kwargs)
+        return mgpu.MMALayouts(dtype, m_warps=m_warps).acc
       case Layout.TMA_INDICES_4:
         return mgpu.TMA_INDICES_4_LAYOUT
 
