@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 import itertools as it
+
 from absl.testing import absltest
 from absl.testing import parameterized
+
 import jax
 from jax._src import api_util
 from jax import numpy as jnp
@@ -123,6 +126,25 @@ class ApiUtilTest(jtu.JaxTestCase):
     shardings = {"a": [None, None], "b": (None, None)}
     with self.assertRaisesRegex(ValueError, r"Mismatch details \(2 found\)"):
       api_util.flatten_axis_resources("test_spec", tree, shardings, False)
+
+  def test_fun_sourceinfo(self):
+    fsi = api_util.fun_sourceinfo
+
+    def f(): return None
+
+    expected = "f at .*/api_util_test.py:[0-9]+"
+
+    self.assertRegex(fsi(f), expected)
+    self.assertRegex(fsi(partial(f)), expected)
+    self.assertRegex(fsi(jax.jit(f)), expected)
+    self.assertRegex(fsi(partial(partial(jax.jit(partial(jax.jit(jax.jit((f)))))))),
+                     expected)
+
+    # Thwart CPython's collapsing of nested partials
+    g = partial(f)
+    g.foo = "bar"
+    self.assertNotEqual(partial(g).func, g.func)
+    self.assertRegex(fsi(partial(g)), expected)
 
 
 if __name__ == "__main__":
