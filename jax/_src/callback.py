@@ -21,6 +21,7 @@ import logging
 from typing import Any, cast
 
 from jax._src import api
+from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -71,6 +72,12 @@ class _FlatCallback:
     return tree_util.tree_leaves(self.callback_func(*args, **kwargs))
 
 
+def _is_local_unsharded_cpu_array(x: Any) -> bool:
+  return (isinstance(x, array.ArrayImpl)
+          and x.is_fully_addressable and x.sharding.num_devices == 1
+          and next(iter(x.devices())).platform == "cpu")
+
+
 def pure_callback_impl(
     *args,
     result_avals,
@@ -87,7 +94,10 @@ def pure_callback_impl(
         " inputs on. Make sure \"cpu\" is listed in --jax_platforms or the"
         " JAX_PLATFORMS environment variable."
     ) from e
-  args = api.device_put(args, cpu_device)
+  args = tree_util.tree_map(
+      lambda x: (x if _is_local_unsharded_cpu_array(x)
+                 else api.device_put(x, cpu_device)),
+      args)
   with config.default_device(cpu_device):
     try:
       return tree_util.tree_map(np.asarray, callback(*args))
@@ -431,7 +441,10 @@ def io_callback_impl(
         " inputs on. Make sure \"cpu\" is listed in --jax_platforms or the"
         " JAX_PLATFORMS environment variable."
     ) from e
-  args = api.device_put(args, cpu_device)
+  args = tree_util.tree_map(
+      lambda x: (x if _is_local_unsharded_cpu_array(x)
+                 else api.device_put(x, cpu_device)),
+      args)
   with config.default_device(cpu_device):
     try:
       return tree_util.tree_map(np.asarray, callback(*args))
