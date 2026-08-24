@@ -1061,9 +1061,9 @@ def register_dataclass(
     >>> m
     MyStruct(x=Array([1., 1., 1.], dtype=float32), y=Array([0, 1, 2], dtype=int32), op='add')
 
-    Starting in JAX v0.4.36, the ``data_fields`` and ``meta_fields`` arguments are optional
-    for :func:`~dataclasses.dataclass` inputs, with fields defaulting to ``data_fields``
-    unless marked as static using `static` metadata in :func:`dataclasses.field`.
+    Since JAX v0.9.0, the ``data_fields`` and ``meta_fields`` arguments can be left
+    out, and all fields will be considered ``data_fields`` unless marked by
+    :func:`jax.tree.static`:
 
     >>> import jax
     >>> from dataclasses import dataclass, field
@@ -1073,7 +1073,7 @@ def register_dataclass(
     ... class MyStruct:
     ...   x: jax.Array  # defaults to non-static data field
     ...   y: jax.Array  # defaults to non-static data field
-    ...   op: str = field(metadata=dict(static=True))  # marked as static meta field.
+    ...   op: str = jax.tree.static()  # marked as static meta field.
     ...
     >>> m = MyStruct(x=jnp.ones(3), y=jnp.arange(3), op='add')
     >>> m
