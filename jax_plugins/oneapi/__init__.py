@@ -112,6 +112,8 @@ def _load_oneapi_libraries():
       'libmkl_sycl_rng.so*',
       'libmkl_sycl_sparse.so*',
       'libmkl_sycl_stats.so*',
+      'libmkl_avx512.so*',
+      'libmkl_def.so*',
   ]
 
   loaded = set()
