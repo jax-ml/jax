@@ -290,6 +290,23 @@ class EighTest(jtu.JaxTestCase):
     jtu.assert_dot_precision(
         lax.Precision.HIGHEST, partial(jvp, jnp.linalg.eigh), (a,), (a,))
 
+  def testEighGradLargeEigenvalues(self):
+    # At 2**24, float32 can no longer represent every consecutive integer.
+    a = jnp.diag(
+        jnp.array(
+            [2**24, 2**24 + 2, 2**24 + 4],
+            dtype=jnp.float32,
+        )
+    )
+
+    def eigenvectors(x):
+      return jnp.linalg.eigh(x)[1]
+
+    for jacobian in (jax.jacfwd, jax.jacrev):
+      with self.subTest(jacobian=jacobian.__name__):
+        jac = jacobian(eigenvectors)(a)
+        self.assertTrue(np.isfinite(np.asarray(jac)).all())
+
   def testEighGradRankPromotion(self):
     rng = jtu.rand_default(self.rng())
     a = rng((10, 3, 3), np.float32)
