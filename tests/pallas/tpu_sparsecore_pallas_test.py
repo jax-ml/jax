@@ -1864,23 +1864,43 @@ class VectorSubcoreTest(PallasSCTest):
     chunk_size = self.num_lanes
 
     @self.kernel(
-        out_type=(),
-        mesh=plsc.VectorSubcoreMesh(
-            core_axis_name="core", subcore_axis_name="subcore", num_cores=1
-        ),
-        scratch_types=(pltpu.VMEM((chunk_size,), jnp.uint32),) * 3,
+        mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
+        out_type=jax.ShapeDtypeStruct((chunk_size,), jnp.uint32),
+        scratch_types=(pltpu.SMEM((chunk_size,), jnp.uint32),),
     )
-    def _kernel(a_ref, b_ref, c_ref):
-      @pl.loop(0, 4)
-      def outer(i):
-        const = jnp.array(0, jnp.uint32)
+    def kernel(o_ref, scratch_vmem):
+      @plsc.parallel_loop(0, chunk_size)
+      def body(i):
+        scratch_vmem[i] = i.astype(jnp.uint32)
 
+      pltpu.sync_copy(scratch_vmem, o_ref)
+
+    out = kernel()
+    np.testing.assert_array_equal(out, jnp.arange(chunk_size, dtype=jnp.uint32))
+
+  def test_parallel_loop_effects_closed_over_ref(self):
+    chunk_size = self.num_lanes
+
+    @jax.jit
+    def f():
+      o_ref = jax.empty_ref(jax.core.ShapedArray((chunk_size,), jnp.uint32))
+
+      @self.kernel(
+          mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
+          scratch_types=(pltpu.SMEM((chunk_size,), jnp.uint32),),
+      )
+      def kernel(scratch_vmem):
         @plsc.parallel_loop(0, chunk_size)
-        def body(_):
-          x = a_ref[...] >> i.astype(jnp.uint32)
-          plsc.store_compressed(c_ref.at[...], b_ref[...], mask=x > const)
+        def body(i):
+          scratch_vmem[i] = i.astype(jnp.uint32)
 
-    _kernel()
+        pltpu.sync_copy(scratch_vmem, o_ref)
+
+      kernel()
+      return jax.freeze(o_ref)
+
+    out = f()
+    np.testing.assert_array_equal(out, jnp.arange(chunk_size, dtype=jnp.uint32))
 
   @parameterized.parameters(
       ((8, 80), (4, 160), jnp.float32),

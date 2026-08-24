@@ -981,8 +981,9 @@ def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
       raise NotImplementedError(
           f"Effects not supported in parallel_loop: {disallowed_effects}"
       )
+    jaxpr, consts = pe.separate_consts(jaxpr)
     flat_args, tree = jax.tree.flatten(
-        (lower, upper, step, jaxpr.consts, flat_carries)
+        (lower, upper, step, consts, flat_carries)
     )
     flat_result = parallel_loop_p.bind(
         *flat_args, tree=tree, unroll=unroll, jaxpr=jaxpr
