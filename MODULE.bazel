@@ -22,9 +22,9 @@ bazel_dep(name = "zlib", version = "1.3.2")
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-dcy3xNxpk0PwLQLwtbqm2sCcAT1GuStg8YVjRI6lnnc=",
-    strip_prefix = "rules_ml_toolchain-73cb731fed3ccf7551beac710bf1c5dbeb8be298",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/73cb731fed3ccf7551beac710bf1c5dbeb8be298.tar.gz"],
+    integrity = "sha256-eZ/bmN/ZmqOj21StfgQmr4mQsyYdJNRvE1wKi7rQENc=",
+    strip_prefix = "rules_ml_toolchain-6c655d4106fbabfa0d630bbfa4298d859b982131",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/6c655d4106fbabfa0d630bbfa4298d859b982131.tar.gz"],
 )
 
 # TODO: use a released version when available
