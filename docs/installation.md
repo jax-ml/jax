@@ -149,20 +149,20 @@ JAX currently ships two CUDA wheel variants: CUDA 12 and CUDA 13:
 
 The CUDA 12 wheel is:
 
-| Built with | Compatible with    |
-|------------|--------------------|
-| CUDA 12.3  | CUDA >=12.1        |
-| CUDNN 9.8  | CUDNN >=9.8, <10.0 |
-| NCCL 2.19  | NCCL >=2.18        |
+| Built with | Compatible with       |
+|------------|-----------------------|
+| CUDA 12.3  | CUDA >=12.1           |
+| CUDNN 9.10 | CUDNN >=9.10.2, <10.0 |
+| NCCL 2.19  | NCCL >=2.18           |
 
 
 The CUDA 13 wheel is:
 
-| Built with | Compatible with    |
-|------------|--------------------|
-| CUDA 13.0  | CUDA >=13.0        |
-| CUDNN 9.8  | CUDNN >=9.8, <10.0 |
-| NCCL 2.19  | NCCL >=2.18        |
+| Built with | Compatible with |
+|------------|-----------------|
+| CUDA 13.0  | CUDA >=13.0     |
+| CUDNN 9.12 | CUDNN >=9.12    |
+| NCCL 2.19  | NCCL >=2.18     |
 
 
 JAX checks the versions of your libraries, and will report an error if they are
@@ -180,11 +180,11 @@ To install, run:
 pip install --upgrade pip
 
 
-# Installs the wheel compatible with NVIDIA CUDA 13 and cuDNN 9.8 or newer.
+# Installs the wheel compatible with NVIDIA CUDA 13 and cuDNN 9.12 or newer.
 # Note: wheels only available on linux.
 pip install --upgrade "jax[cuda13-local]"
 
-# Installs the wheel compatible with NVIDIA CUDA 12 and cuDNN 9.8 or newer.
+# Installs the wheel compatible with NVIDIA CUDA 12 and cuDNN 9.10 or newer.
 # Note: wheels only available on linux.
 # pip install --upgrade "jax[cuda12-local]"
 ```
