@@ -173,6 +173,27 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "localization",
+    srcs = ["localization.py"],
+    type_checking = "pyrefly",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//jax/_src:localization",
+    ],
+)
+
+pytype_strict_library(
+    name = "control_deps",
+    srcs = ["control_deps.py"],
+    type_checking = "pyrefly",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//jax/_src:api",
+        "//jax/_src:ffi",
+    ],
+)
+
+pytype_strict_library(
     name = "custom_partitioning",
     srcs = ["custom_partitioning.py"],
     type_checking = "pyrefly",
@@ -789,6 +810,7 @@ filegroup(
     ]) + [
         "checkify.py",
         "fused.py",
+        "localization.py",
         "multihost_utils.py",
         "pjit.py",
         "scheduling_groups.py",

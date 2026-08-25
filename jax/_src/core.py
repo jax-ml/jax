@@ -822,7 +822,10 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
 def check_avals_context_mesh(avals, prim_name):
   cur_mesh = mesh_lib.get_abstract_mesh()
   for a in avals:
-    if not isinstance(a.memory_space, MemorySpace):
+    if (
+        not isinstance(a.memory_space, MemorySpace)
+        and not hasattr(a.memory_space, "memory_kind")
+    ):
       raise TypeError(
           f"Primitive {prim_name} got aval {a} with unknown memory_space type:"
           f" {type(a.memory_space)}")
@@ -1914,9 +1917,13 @@ def valid_jaxtype(x) -> bool:
       return True
 
 
-def mem_kind_to_space(mem_kind: str | None) -> MemorySpace:
+def mem_kind_to_space(mem_kind: str | None) -> Any:
   if mem_kind == 'pinned_host':
     return MemorySpace.Host
+  if mem_kind is not None and mem_kind.startswith("locality_domain:"):
+    # Import lazily to keep core independent from the experimental public API.
+    from jax._src import localization  # pylint: disable=g-import-not-at-top
+    return localization._parse_locality_domain_memory_kind(mem_kind)
   return MemorySpace.Device
 
 
@@ -2634,8 +2641,12 @@ def str_short_aval(shape, dtype, mesh, spec, mat, memory_space,
   mesh_axes = f'({_axis_types_dict(mesh)})' if mesh_axis_types else ''
   vma_ur = _vma_ur_str(mat, spec.unreduced, spec.reduced, spec.unreduced_kind,
                        mesh)
-  ms_str = ("" if memory_space == MemorySpace.Device else
-            f"<{memory_space.name.lower()}>")
+  if memory_space == MemorySpace.Device:
+    ms_str = ""
+  elif isinstance(memory_space, MemorySpace):
+    ms_str = f"<{memory_space.name.lower()}>"
+  else:
+    ms_str = f"<{mem_space_to_kind(memory_space)}>"
   return f'{dt_str}{ms_str}[{shapestr}]{vma_ur}{mesh_axes}'
 
 def _create_str(x, prefix):
