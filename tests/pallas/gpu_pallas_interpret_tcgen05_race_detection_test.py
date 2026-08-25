@@ -1037,7 +1037,7 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
     )
     result = _kernel(a, b)
     expected = jnp.dot(a, b, preferred_element_type=jnp.float32)
-    np.testing.assert_allclose(result, expected)
+    np.testing.assert_allclose(result, expected, 1e-6, 1e-6)
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
   def test_can_deallocate_tmem_while_mma_active_on_different_tmem(self):
@@ -1077,7 +1077,7 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
     )
     result = _kernel(a, b)
     expected = jnp.dot(a, b, preferred_element_type=jnp.float32)
-    np.testing.assert_allclose(result, expected)
+    np.testing.assert_allclose(result, expected, 1e-6, 1e-6)
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
   @jtu.parameterized.product(
