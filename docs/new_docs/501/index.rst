@@ -19,13 +19,16 @@ that created them, and the machinery that keeps it all fast and safe.
 3. :doc:`fault-tolerance` — fault-tolerant distributed JAX: surviving
    machine failures with ``jax.live_devices``, barrier semantics, and
    recovery, with worked training examples.
-4. :doc:`export` — exporting and serializing staged-out computations for
+4. :doc:`security` — securing JAX's network services: mTLS for the
+   coordination service and the TPU runtime's internal services, and which
+   connections remain unprotected.
+5. :doc:`export` — exporting and serializing staged-out computations for
    later or cross-platform execution, and :doc:`shape-polymorphism` —
    exporting with symbolic shapes so one artifact serves many input sizes.
-5. :doc:`compilation-cache` — the persistent compilation cache: skipping
+6. :doc:`compilation-cache` — the persistent compilation cache: skipping
    recompilation across process restarts and sharing compiled artifacts
    across nodes.
-6. :doc:`transfer-guard` — logging or disallowing unintended host-device
+7. :doc:`transfer-guard` — logging or disallowing unintended host-device
    transfers.
 
 Smaller notes
@@ -70,6 +73,7 @@ general API stability rules are described in the
    multiprocess
    data-loading
    fault-tolerance
+   security
    export
    shape-polymorphism
    compilation-cache
