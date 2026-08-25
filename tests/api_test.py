@@ -76,6 +76,7 @@ from jax.interpreters import batching
 import jax.numpy as jnp
 from jax.sharding import (PartitionSpec as P, AbstractMesh, AbstractDevice,
                           AxisType)
+from jax.experimental.layout import Format
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -520,6 +521,11 @@ class JitTest(jtu.BufferDonationTestCase):
                          make_single_device_sharding(jax.devices()[0]),
                          may_alias=False, donate=False)
     self.assertNotEqual(id(arr), id(out))
+
+    out = jax.device_put(
+        arr, memory_space=jax.memory.Space.Device, may_alias=True
+    )
+    self.assertIs(arr, out)
 
   def test_device_put_aliasing_with_diff_compatible_sharding(self):
     if jax.device_count() < 2:
@@ -2077,6 +2083,60 @@ class APITest(jtu.JaxTestCase):
         ValueError, r"(?s)Mismatch details \(2 found\)"
     ):
       jax.device_put(x, device={"a": [None, None], "b": (None, None)})
+
+  def test_device_put_memory_space_tree_mismatch(self):
+    x = {"a": jnp.arange(2), "b": jnp.arange(3)}
+    with self.assertRaisesRegex(
+        ValueError,
+        r"(?s)device_put memory_space specification must be a tree prefix.*"
+        r"Mismatch details.*different types",
+    ):
+      jax.device_put(
+          x,
+          memory_space={
+              "a": jax.memory.Space.Device,
+              "b": (jax.memory.Space.Device, jax.memory.Space.Device),
+          },
+      )
+
+  def test_device_put_memory_space_rejects_invalid_values(self):
+    with self.assertRaisesRegex(
+        ValueError, "memory_space must be `jax.memory.Space`"
+    ):
+      jax.device_put(np.arange(4), memory_space=object())
+
+    with self.assertRaisesRegex(
+        ValueError, "`jax.memory.Space.Any` is not a concrete memory space"
+    ):
+      jax.device_put(np.arange(4), memory_space=jax.memory.Space.Any)
+
+    with self.assertRaisesRegex(
+        ValueError, "memory_space cannot be combined with a `Format`"
+    ):
+      jax.device_put(
+          np.arange(4),
+          device=Format(None, make_single_device_sharding(jax.devices()[0])),
+          memory_space=jax.memory.Space.Device,
+      )
+
+    with self.assertRaisesRegex(
+        ValueError, "cannot be specified through both device and memory_space"
+    ):
+      jax.device_put(
+          np.arange(4),
+          device=jax.memory.Space.Device,
+          memory_space=jax.memory.Space.Device,
+      )
+
+  def test_device_put_memory_space_keyword_matches_positional_space(self):
+    values = np.arange(4)
+    positional = jax.device_put(values, jax.memory.Space.Device)
+    keyword = jax.device_put(values, memory_space=jax.memory.Space.Device)
+
+    self.assertArraysEqual(positional, values)
+    self.assertArraysEqual(keyword, values)
+    self.assertEqual(keyword.sharding, positional.sharding)
+    self.assertTrue(keyword.committed)
 
   def test_internal_device_put_with_device(self):
     # Hitting the cache for a single-device jitted execution while using a numpy
