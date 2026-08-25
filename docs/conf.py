@@ -403,6 +403,7 @@ def linkcode_resolve(domain, info):
 
 # Generate redirects from deleted files to new sources
 rediraffe_redirects = {
+  "custom_pytrees.md": "101/pytrees.md",
   "jax-primitives.md": "601/jax-primitives.md",
   "jaxpr.md": "601/jaxpr.md",
   "jax-101/01-jax-basics.md": "key-concepts.md",
@@ -526,7 +527,6 @@ _superseded_pages = {
     'debugging/slow_tracing_compilation': '201/slow-compilation',
     'debugging/xla_metadata': '201/controlling-xla',
     'transfer_guard': '501/transfer-guard',
-    'custom_pytrees': '101/pytrees',
     'persistent_compilation_cache': '501/compilation-cache',
     'buffer_donation': '201/jit',
     'benchmarking': '201/profiling',

@@ -82,7 +82,9 @@ print(jax.tree.unflatten(treedef, leaves))
 
 This flatten/unflatten decomposition is exactly how JAX transformations support
 pytrees: internally they operate on the flat list of arrays, then reassemble
-your structure around the results.
+your structure around the results. Pytrees are tree-like, rather than DAG-like
+or graph-like, in that we handle them assuming referential transparency and
+that they can't contain reference cycles.
 
 ## Common pytree functions
 
@@ -302,6 +304,31 @@ gradients:
 jax.grad(lambda s: s.x ** 2 + s.y)(RegisteredSpecial(3.0, 4.0))
 ```
 
+Alternatively, you can define appropriate `tree_flatten` and `tree_unflatten`
+methods on your class and decorate it with
+{func}`~jax.tree_util.register_pytree_node_class`:
+
+```{code-cell}
+from jax.tree_util import register_pytree_node_class
+
+@register_pytree_node_class
+class RegisteredSpecial2(Special):
+  def __repr__(self):
+    return f"RegisteredSpecial2(x={self.x}, y={self.y})"
+
+  def tree_flatten(self):
+    children = (self.x, self.y)
+    aux_data = None
+    return (children, aux_data)
+
+  @classmethod
+  def tree_unflatten(cls, aux_data, children):
+    return cls(*children)
+
+jax.tree.map(lambda x: x + 1,
+             [RegisteredSpecial2(0, 1), RegisteredSpecial2(2, 4)])
+```
+
 Some standard Python containers come pre-registered. A `NamedTuple` subclass,
 for example, works with no registration at all. But *every* field becomes a
 child, including ones you may have meant as metadata:
@@ -352,12 +379,84 @@ The `name` field doesn't appear among the leaves: as a `meta_field`, it's
 carried in the treedef, like `aux_data` above (and so it must be hashable).
 This distinction pays off again with `jax.jit`, where meta fields are
 automatically treated as static arguments — see {ref}`jax-201-jit-static-arguments`.
+Instances of `MyDataclassContainer` can be passed into JIT-ed functions, and
+`name` will be treated as static:
+
+```{code-cell}
+@jax.jit
+def f(x: MyDataclassContainer | MyOtherContainer):
+  return x.a + x.b
+
+# Works fine! `mdc.name` is static.
+mdc = MyDataclassContainer('mdc', 1, 2)
+y = f(mdc)
+```
+
+Contrast this with `MyOtherContainer`, the `NamedTuple` subclass. Since the
+`name` field is a pytree leaf, JIT expects it to be convertible to
+{class}`jax.Array`, and the following raises an error:
+
+```{code-cell}
+:tags: [raises-exception]
+
+moc = MyOtherContainer('moc', 1, 2)
+y = f(moc)
+```
+
+### Initialization with unexpected values
 
 One caution when writing custom pytree nodes: JAX transformations sometimes
 build instances of your type with placeholder objects standing in for the
 real contents, so `__init__` and your unflatten function should avoid input
-validation or array conversion. (There's also a method-based registration
-API, {func}`jax.tree_util.register_pytree_node_class`.)
+validation or array conversion. For example:
+
+```{code-cell}
+:tags: [raises-exception]
+
+class MyTree:
+  def __init__(self, a):
+    self.a = jnp.asarray(a)
+
+register_pytree_node(MyTree, lambda tree: ((tree.a,), None),
+    lambda _, args: MyTree(*args))
+
+tree = MyTree(jnp.arange(5.0))
+
+jax.jacobian(lambda x: x)(tree)  # Error: a placeholder is passed to `MyTree`.
+```
+
+Here the Jacobian of a function mapping a tree to a tree is defined as a tree
+of trees, and JAX's internals build that structure by calling the unflattening
+recipe with placeholder values, which reach `MyTree.__init__`.
+
+**Potential solution 1:**
+
+- The `__init__` and `__new__` methods of custom pytree classes should
+  generally avoid doing any array conversion or other input validation, or
+  else anticipate and handle these special cases. For example:
+
+```{code-cell}
+class MyTree:
+  def __init__(self, a):
+    if not (type(a) is object or a is None or isinstance(a, MyTree)):
+      a = jnp.asarray(a)
+    self.a = a
+```
+
+**Potential solution 2:**
+
+- Structure your custom `tree_unflatten` function so that it avoids calling
+  `__init__`. If you choose this route, make sure that your `tree_unflatten`
+  function stays in sync with `__init__` if and when the code is updated.
+  Example:
+
+```{code-cell}
+def tree_unflatten(aux_data, children):
+  del aux_data  # Unused in this class.
+  obj = object.__new__(MyTree)
+  obj.a = children[0]
+  return obj
+```
 
 ## Common pytree gotchas
 

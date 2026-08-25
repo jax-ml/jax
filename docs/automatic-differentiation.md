@@ -181,7 +181,7 @@ def loss2(params_dict):
 print(grad(loss2)({'W': W, 'b': b}))
 ```
 
-You can create {ref}`pytrees-custom-pytree-nodes` to work with not just {func}`jax.grad` but other JAX transformations ({func}`jax.jit`, {func}`jax.vmap`, and so on).
+You can create {ref}`jax-101-custom-pytrees` to work with not just {func}`jax.grad` but other JAX transformations ({func}`jax.jit`, {func}`jax.vmap`, and so on).
 
 
 (automatic-differentiation-evaluating-using-jax-value_and_grad)=
