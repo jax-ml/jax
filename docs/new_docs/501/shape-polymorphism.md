@@ -416,9 +416,29 @@ Just like the implicit constraints, the explicit
 symbolic constraints are checked at compile time,
 using the same mechanism as explained [below](#shape-assertion-errors).
 
+#### Inspecting symbolic dimension bounds
+
+You can inspect the inclusive bounds that JAX can prove for a symbolic
+dimension or an expression derived from symbolic dimensions. The bounds are
+conservative and may not be tight. An infinite bound means that JAX could not
+establish a finite bound; it does not prove that the dimension is
+mathematically unbounded.
+
+```python
+>>> batch, free = export.symbolic_shape(
+...     "batch, free", constraints=("batch >= 128", "batch <= 1024"))
+>>> export.symbolic_dim_bounds(batch)
+(128, 1024)
+>>> export.symbolic_dim_bounds(2 * batch + 1)
+(257, 2049)
+>>> export.symbolic_dim_bounds(free)
+(1, inf)
+
+```
+
 #### Symbolic dimension scopes
 
-The symbolic constraints are stored in αn
+The symbolic constraints are stored in an
 {class}`jax.export.SymbolicScope` object, which is created implicitly
 for each call to {func}`jax.export.symbolic_shapes`. You must be careful
 to not mix symbolic expressions that use different scopes.

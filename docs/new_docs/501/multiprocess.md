@@ -220,6 +220,10 @@ TPU deployment, we can run {func}`jax.distributed.initialize` with no arguments
 as they're automatically populated. Initializing the system means we can run
 {func}`jax.devices()` to report all devices across all processes.
 
+By default, connections to the coordination service that
+{func}`jax.distributed.initialize` starts are neither encrypted nor
+authenticated; to secure them with mTLS, see {doc}`security`.
+
 ```{warning}
 {func}`jax.distributed.initialize` must be called before running
 {func}`jax.devices()`, {func}`jax.local_devices()`, or running any computations
