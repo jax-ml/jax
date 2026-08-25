@@ -24,13 +24,19 @@ in JAX. They're meant to be read in order:
    functions of key values, with no hidden generator state.
 5. :doc:`state` — stateful computations: threading state through pure
    functions, and in-place mutation with refs, JAX's mutable array type.
+
+**Reference pages** are there for when you need them, in any order:
+
 6. :doc:`errors` — common JAX errors, explained: most arise from expressing
    something in a way that's incompatible with tracing, so the tracing model
    from :doc:`transformations` is the key to fixing them.
+7. :doc:`convolutions` — batched N-dimensional convolutions with
+   :func:`jax.lax.conv_general_dilated`: dimension numbers, strides,
+   dilation, and transposed convolutions.
 
-The second half of the story is making these computations fast: compilation
-with :func:`jax.jit`, sharded arrays and parallelism, and profiling. Those are
-the subject of the performance and scaling docs: :doc:`/201/index`.
+How do we make these computations fast? Compilation with :func:`jax.jit`,
+sharded arrays and parallelism, and profiling. Those are the subject of the
+performance and scaling docs: :doc:`/201/index`.
 
 .. toctree::
    :hidden:
@@ -42,3 +48,4 @@ the subject of the performance and scaling docs: :doc:`/201/index`.
    random
    state
    errors
+   convolutions
