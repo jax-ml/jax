@@ -270,7 +270,6 @@ nb_execution_excludepatterns = [
     'pallas/tpu/core_map.*',
     'pallas/tpu/sparsecore.*',
     'distributed_data_loading.*',
-    'notebooks/host-offloading.*',
     'notebooks/cute_dsl_jax.*',
     '401/cute-dsl.*',
 ]
@@ -401,6 +400,11 @@ def linkcode_resolve(domain, info):
 
 # Generate redirects from deleted files to new sources
 rediraffe_redirects = {
+  "rank_promotion_warning.rst": "101/rank_promotion_warning.rst",
+  "notes.rst": "index.rst",
+  "type_promotion.rst": "101/type_promotion.rst",
+  "default_dtypes.md": "101/default_dtypes.md",
+  "notebooks/host-offloading.ipynb": "201/memory-spaces.md",
   "notebooks/convolutions.ipynb": "101/convolutions.md",
   "custom_pytrees.md": "101/pytrees.md",
   "jax-primitives.md": "601/jax-primitives.md",

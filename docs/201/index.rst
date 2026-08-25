@@ -46,9 +46,11 @@ order:
     attaching metadata to operations.
 13. :doc:`gpu-memory` — how the allocator works, and what to do about
     out-of-memory failures.
+14. :doc:`memory-spaces` — host offloading: parking parameters, activations,
+    and optimizer state in host memory to save device memory.
 
-A couple of performance topics — computation/communication overlap and
-memory spaces — will be added here as those parts of JAX stabilize.
+One more performance topic — computation/communication overlap — will be
+added here as that part of JAX stabilizes.
 
 .. toctree::
    :hidden:
@@ -67,3 +69,4 @@ memory spaces — will be added here as those parts of JAX stabilize.
    precision
    controlling-xla
    gpu-memory
+   memory-spaces

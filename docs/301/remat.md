@@ -415,6 +415,7 @@ more than a name, the function author can use `custom_remat`, described
 below.
 ```
 
+(jax-301-remat-offload)=
 ### Offloading instead of recomputing
 
 Recomputation isn't the only alternative to keeping a residual in

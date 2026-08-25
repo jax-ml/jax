@@ -33,6 +33,12 @@ in JAX. They're meant to be read in order:
 7. :doc:`convolutions` — batched N-dimensional convolutions with
    :func:`jax.lax.conv_general_dilated`: dimension numbers, strides,
    dilation, and transposed convolutions.
+8. :doc:`default_dtypes` — how JAX chooses default dtypes, and the X64
+   flag.
+9. :doc:`type_promotion` — the full type promotion semantics: the result
+   of combining every pair of types.
+10. :doc:`rank_promotion_warning` — configuring :mod:`jax.numpy` to warn or
+    error on implicit rank promotion.
 
 How do we make these computations fast? Compilation with :func:`jax.jit`,
 sharded arrays and parallelism, and profiling. Those are the subject of the
@@ -49,3 +55,6 @@ performance and scaling docs: :doc:`/201/index`.
    state
    errors
    convolutions
+   default_dtypes
+   type_promotion
+   rank_promotion_warning
