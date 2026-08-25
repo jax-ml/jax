@@ -184,9 +184,9 @@ CuTe DSL lowers Python kernels to CUDA/CUTLASS code and compiles them just-in-ti
 
 **Note:** CuTe DSL relies on Python source inspection `inspect.getsourcelines()` to parse kernel definitions. In many environments (including this notebook), defining `@cute.kernel` / `@cute.jit` functions directly in notebook cells works correctly. However, this is not consistently reliable across all interactive environments (e.g. plain Python REPL), where source inspection may fail with errors like `OSError: could not get source code`.
 
-We show the executable kernel definitions inline in the notebook. At the same time, for robustness and reproducibility, we keep equivalent definitions in a separate .py module ([cute_dsl_jax_kernels.py](../notebooks/cute_dsl_jax/cute_dsl_jax_kernels.py)).
+We show the executable kernel definitions inline in the notebook. At the same time, for robustness and reproducibility, we keep equivalent definitions in a separate .py module ([cute_dsl_jax_kernels.py](cute_dsl_jax/cute_dsl_jax_kernels.py)).
 
-Here, we import the pre-written kernel launch functions from [cute_dsl_jax_kernels.py](../notebooks/cute_dsl_jax/cute_dsl_jax_kernels.py).
+Here, we import the pre-written kernel launch functions from [cute_dsl_jax_kernels.py](cute_dsl_jax/cute_dsl_jax_kernels.py).
 
 ```{code-cell}
 # Optional, if you execute the equivalent kernel definitions further in the notebook
