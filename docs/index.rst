@@ -84,6 +84,9 @@ or jump to the level that matches what you're trying to do:
   across many hosts, distributed data loading, fault tolerance, exporting
   and serialization, the persistent compilation cache, and transfer guards.
 
+* :doc:`JAX 601 <601/index>` — **internals**: the jaxpr language,
+  primitives, and Autodidax, which builds JAX's core from scratch.
+
 Already know JAX? See :doc:`whats-new` for the features these docs cover
 for the first time.
 
@@ -166,6 +169,7 @@ maintains an up-to-date list.
    301/index
    401/index
    501/index
+   601/index
 
 .. toctree::
    :hidden:

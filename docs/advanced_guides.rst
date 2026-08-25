@@ -30,5 +30,3 @@ documentation levels (:ref:`101 <jax-101>` through :doc:`501 <501/index>`).
    :maxdepth: 1
 
    notebooks/convolutions
-   jax-primitives
-   jaxpr
