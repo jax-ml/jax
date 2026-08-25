@@ -534,7 +534,10 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
   This is the moral equivalent of `jax.tree.leaves` for aliased references.
   """
   flat_refs = []
-  if ref_union.memory_space == SMEM:
+  ref_union_mem_space = (ref_union.memory_space
+                         if isinstance(ref_union, AbstractRefUnion) else
+                         jax_core.typeof(ref_union).memory_space)
+  if ref_union_mem_space == SMEM:
     union_bytes = 0
     for group_idx, ref_group in enumerate(ref_union.refs):
       byte_offset = 0
@@ -567,7 +570,7 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
       flat_refs.append(jax.tree.map(unflatten, ref_group))
       union_bytes = max(union_bytes, byte_offset)
     assert union_bytes == ref_union.shape[0]
-  elif ref_union.memory_space == TMEM:
+  elif ref_union_mem_space == TMEM:
     union_cols = 0
     for group_idx, ref_group in enumerate(ref_union.refs):
       col_offset = 0

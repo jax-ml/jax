@@ -1451,13 +1451,15 @@ def _make_pipeline_allocations(
     if not has_buffering and is_trivial:
       buffer_count = 1
 
+    sms = (in_ref.memory_space if isinstance(in_ref, state.TransformedRef) else
+           core.typeof(in_ref).memory_space)
     return BufferedRef.input(
         in_spec,
         in_aval,
         buffer_count,
         grid_rank=len(grid),
         use_lookahead=use_lookahead,
-        source_memory_space=in_ref.memory_space,
+        source_memory_space=sms,
         tiling=tiling,
         is_trivial_windowing=is_trivial,
         prefetched_count=prefetched_count,
@@ -1474,11 +1476,13 @@ def _make_pipeline_allocations(
     if not has_buffering and is_trivial:
       buffer_count = 1
 
+    sms = (out_ref.memory_space if isinstance(out_ref, state.TransformedRef)
+           else core.typeof(out_ref).memory_space)
     return BufferedRef.output(
         out_spec,
         out_aval,
         buffer_count,
-        source_memory_space=out_ref.memory_space,
+        source_memory_space=sms,
         tiling=tiling,
         is_trivial_windowing=is_trivial,
     )

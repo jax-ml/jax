@@ -1517,6 +1517,53 @@ class StateControlFlowTest(jtu.JaxTestCase):
       jax.tree.map(assert_fn, x_ref_view)
     fn()
 
+  def test_transformed_ref_memory_space(self):
+    @jax.jit
+    def fn(i):
+      x_ref = jax.new_ref(jnp.zeros((7, 8)), memory_space=core.MemorySpace.Device)
+      self.assertEqual(x_ref.at[1:6].memory_space, core.MemorySpace.Device)
+      self.assertEqual(x_ref.at[i].memory_space, core.MemorySpace.Device)
+      self.assertEqual(x_ref.at[i, 0].memory_space, core.MemorySpace.Device)
+    fn(0)
+
+  def test_tracer_memory_space_raises_value_error(self):
+    @jax.jit
+    def f(x):
+      return x.memory_space
+
+    with self.assertRaisesRegex(
+        ValueError, "The 'memory_space' attribute is not available on"
+    ):
+      f(jnp.zeros((2, 3)))
+
+  def test_transformed_multiref_memory_space(self):
+    @jax.jit
+    def fn(idx):
+      x_ref = jax.new_ref(jnp.zeros((7, 8)), memory_space=core.MemorySpace.Device)
+      y_ref = jax.new_ref(jnp.zeros((7, 8)), memory_space=core.MemorySpace.Device)
+      multi_ref = state_types.TransformedRef(
+          ref=(x_ref, y_ref),
+          transforms=(state_types.SelectTransform(idx),),
+      )
+      self.assertEqual(multi_ref.memory_space, core.MemorySpace.Device)
+    fn(0)
+
+  def test_transformed_multiref_inconsistent_memory_space_error(self):
+    @jax.jit
+    def fn(idx):
+      x_ref = jax.new_ref(jnp.zeros((7, 8)), memory_space=core.MemorySpace.Device)
+      y_ref = jax.new_ref(jnp.zeros((7, 8)), memory_space=None)
+      multi_ref = state_types.TransformedRef(
+          ref=(x_ref, y_ref),
+          transforms=(state_types.SelectTransform(idx),),
+      )
+      with self.assertRaisesRegex(
+          ValueError, "Found inconsistent memory spaces in multiref"
+      ):
+        _ = multi_ref.memory_space
+    fn(0)
+
+
   @parameterized.named_parameters(
     ("scan", "scan"), ("while_loop", "while_loop"))
   def test_transformed_ref_in(self, transform):

@@ -392,6 +392,23 @@ class TransformedRef:
     from jax._src.state.primitives import ref_get  # pyrefly: ignore[missing-import]
     return ref_get(self, idx)
 
+  @property
+  def memory_space(self):
+    def _mem_space(ref):
+      if isinstance(ref, TransformedRef):
+        return ref.memory_space
+      return core.typeof(ref).memory_space if hasattr(ref, "aval") else ref.memory_space
+
+    if self.multiref:
+      ms, *rest = tuple(_mem_space(r) for r in self.ref)
+      if not all(m == ms for m in rest):
+        raise ValueError(
+            f"Found inconsistent memory spaces in multiref: {self.ref}"
+        )
+      return ms
+
+    return _mem_space(self.ref)
+
   def __getattr__(self, name):
     if self.multiref:
       return cast(MultiRefTransform, self.transforms[0]).getattr(name, self.ref)

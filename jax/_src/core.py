@@ -1065,6 +1065,15 @@ class Tracer[TraceType: Trace](TracerBase, metaclass=TracerMeta):
         f"The 'sharding' attribute is not available on {self._error_repr()}.")
 
   @property
+  def memory_space(self):
+    # we raise ValueError instead of AttributeError to avoid silent bugs due
+    # to hasattr/getattr returning False instead of showing the error with the
+    # correct way to access the memory space.
+    raise ValueError(
+        "The 'memory_space' attribute is not available on "
+        f"{self._error_repr()}. Use `jax.typeof(x).memory_space` instead.")
+
+  @property
   def committed(self):
     raise ConcretizationTypeError(
         self,
