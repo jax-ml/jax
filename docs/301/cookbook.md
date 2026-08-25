@@ -574,6 +574,7 @@ use to split the forward and backward passes into separately compiled
 functions, schedule them yourself, and control what gets saved. That's the
 subject of {doc}`vjp-objects`.
 
+(jax-301-complex)=
 ## Complex numbers and differentiation
 
 Complex differentiation has a reputation for confusion: must the function be

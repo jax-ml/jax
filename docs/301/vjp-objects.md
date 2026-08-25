@@ -132,6 +132,7 @@ can also deduplicate what's saved, storing a value that appears
 under several names just once (an optimization, not a guarantee). For typical programs it's empty; populating it is up to hijax
 primitives' rules, covered in {ref}`jax-301-structured-residuals`.
 
+(jax-301-saveable-args)=
 ## Marking arguments not saveable: `saveable_args`
 
 The `saveable_args` argument to `jax.vjp` is a tuple-tree of bools (nested

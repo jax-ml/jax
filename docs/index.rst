@@ -84,6 +84,9 @@ or jump to the level that matches what you're trying to do:
   across many hosts, distributed data loading, fault tolerance, exporting
   and serialization, the persistent compilation cache, and transfer guards.
 
+Already know JAX? See :doc:`whats-new` for the features these docs cover
+for the first time.
+
 Ecosystem
 ---------
 JAX itself is narrowly-scoped and focuses on efficient array operations & program
@@ -157,6 +160,7 @@ maintains an up-to-date list.
    :maxdepth: 1
    :caption: Documentation
 
+   whats-new
    101/index
    201/index
    301/index
