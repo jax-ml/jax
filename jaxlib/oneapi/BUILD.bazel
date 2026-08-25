@@ -169,11 +169,59 @@ nanobind_extension(
     ],
 )
 
+cc_library(
+    name = "oneapi_hybrid_kernels",
+    srcs = ["//jaxlib/gpu:hybrid_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:hybrid_kernels.h"],
+    features = ["-use_header_modules"],
+    deps = [
+        ":oneapi_gpu_kernel_helpers",
+        ":oneapi_vendor",
+        ":oneapi_gpu_runtime",
+        "//jaxlib:ffi_helpers",
+        "//jaxlib/cpu:lapack_kernels",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+nanobind_extension(
+    name = "_hybrid",
+    srcs = ["//jaxlib/gpu:hybrid.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    linkopts = ["-link_stage"],
+    module_name = "_hybrid",
+    deps = [
+        ":oneapi_gpu_kernel_helpers",
+        ":oneapi_hybrid_kernels",
+        ":oneapi_vendor",
+        "//jaxlib:kernel_nanobind_helpers",
+        "//jaxlib/cpu:lapack_kernels",
+        "@com_google_absl//absl/base",
+        "@oneapi//:headers",
+        "@nanobind",
+        "@xla//xla/ffi/api:ffi",
+        "@xla//xla/python:safe_static_init",
+    ],
+)
+
 py_library(
     name = "oneapi_gpu_support",
     deps = [
         ":_prng",
         ":_solver",
+        ":_hybrid",
     ],
 )
 
