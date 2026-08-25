@@ -34,8 +34,9 @@ MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Triton, triton,
                                       mlir::triton::TritonDialect);
 
 MlirType mlirTritonPointerTypeGet(MlirType pointeeType, int addressSpace) {
-  return wrap(
-      mlir::triton::PointerType::get(unwrap(pointeeType), addressSpace));
+  return wrap(mlir::triton::PointerType::get(
+      unwrap(pointeeType),
+      static_cast<mlir::triton::PtrAddrSpace>(addressSpace)));
 }
 
 bool mlirTritonIsAPointer(MlirType type) {
@@ -48,8 +49,9 @@ MlirType mlirTritonPointerTypeGetPointeeType(MlirType pointerType) {
 }
 
 int mlirTritonPointerTypeGetAddressSpace(MlirType pointerType) {
-  return llvm::cast<mlir::triton::PointerType>(unwrap(pointerType))
-      .getAddressSpace();
+  return static_cast<int>(
+      llvm::cast<mlir::triton::PointerType>(unwrap(pointerType))
+          .getAddressSpace());
 }
 
 MlirAttribute mlirTritonInferReduceOpEncoding(MlirAttribute operandEncoding,
