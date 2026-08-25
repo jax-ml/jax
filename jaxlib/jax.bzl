@@ -34,6 +34,7 @@ load("@test_shard_count//:test_shard_count.bzl", "USE_MINIMAL_SHARD_COUNT")
 load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
 load("@xla//xla/tsl:tsl.bzl", "transitive_hdrs", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
 load("@xla//xla/tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
+load("//jaxlib/rocm:rocm_version.bzl", "ROCM_FULL_VERSION")
 
 # Explicitly re-exports names to avoid "unused variable" warnings from .bzl
 # lint tools.
@@ -513,6 +514,9 @@ def _jax_wheel_impl(ctx):
         if ctx.attr.platform_version == "":
             fail("platform_version must be set to a valid rocm version for rocm wheels")
         args.add("--platform_version", ctx.attr.platform_version)  # required for gpu wheels
+
+        # platform_version is major-only; wheel metadata needs the full version.
+        env["ROCM_VERSION"] = ROCM_FULL_VERSION
     if ctx.attr.enable_oneapi:
         args.add("--enable-oneapi", "True")
         if ctx.attr.platform_version == "":
