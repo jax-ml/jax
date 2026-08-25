@@ -170,12 +170,8 @@ maintains an up-to-date list.
    401/index
    501/index
    601/index
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
-
    notebooks/Common_Gotchas_in_JAX
+   pallas/index
 
 .. toctree::
    :hidden:
@@ -184,7 +180,6 @@ maintains an up-to-date list.
 
    advanced_guides
    jax
-   pallas/index
    contributor_guide
    extensions
    notes
