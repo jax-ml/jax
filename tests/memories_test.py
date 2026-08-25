@@ -1891,7 +1891,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
       return jax.lax.gather(operand, indices, dnums, slice_sizes)
 
     inputs = (
-        np.linspace(0, 1, 10 * 5).reshape(10, 5),
+        np.linspace(0, 1, 10 * 5, dtype=np.float16).reshape(10, 5),
         np.array([[4, 2], [3, 2]]),
     )
 
