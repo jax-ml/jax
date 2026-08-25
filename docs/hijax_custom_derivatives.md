@@ -3,11 +3,13 @@ jupytext:
   cell_metadata_filter: -all
   formats: ipynb,md:myst,py:light
   main_language: python
+  notebook_metadata_filter: nosearch
   text_representation:
     extension: .md
     format_name: myst
     format_version: 0.13
     jupytext_version: 1.16.4
+nosearch: true
 ---
 
 ```{raw-cell}

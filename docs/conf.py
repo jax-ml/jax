@@ -274,7 +274,7 @@ nb_execution_excludepatterns = [
     'distributed_data_loading.*',
     'notebooks/host-offloading.*',
     'notebooks/cute_dsl_jax.*',
-    'new_docs/401/cute-dsl.*',
+    '401/cute-dsl.*',
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------
@@ -426,6 +426,50 @@ rediraffe_redirects = {
   "notebooks/Distributed_arrays_and_automatic_parallelization.md": "parallel.md",
   "notebooks/explicit-sharding.md": "parallel.md",
   "sharded-computation.md": "parallel.md",
+  "new_docs/101/arrays.md": "101/arrays.md",
+  "new_docs/101/errors.rst": "101/errors.rst",
+  "new_docs/101/index.rst": "101/index.rst",
+  "new_docs/101/pytrees.md": "101/pytrees.md",
+  "new_docs/101/random.md": "101/random.md",
+  "new_docs/101/state.md": "101/state.md",
+  "new_docs/101/transformations.md": "101/transformations.md",
+  "new_docs/201/aot.md": "201/aot.md",
+  "new_docs/201/callbacks.md": "201/callbacks.md",
+  "new_docs/201/control-flow.md": "201/control-flow.md",
+  "new_docs/201/controlling-xla.md": "201/controlling-xla.md",
+  "new_docs/201/debugging.md": "201/debugging.md",
+  "new_docs/201/gpu-memory.md": "201/gpu-memory.md",
+  "new_docs/201/index.rst": "201/index.rst",
+  "new_docs/201/jit.md": "201/jit.md",
+  "new_docs/201/placement.md": "201/placement.md",
+  "new_docs/201/precision.md": "201/precision.md",
+  "new_docs/201/profiling.md": "201/profiling.md",
+  "new_docs/201/shard-map.md": "201/shard-map.md",
+  "new_docs/201/sharding.md": "201/sharding.md",
+  "new_docs/201/slow-compilation.md": "201/slow-compilation.md",
+  "new_docs/301/cookbook.md": "301/cookbook.md",
+  "new_docs/301/custom-derivatives.md": "301/custom-derivatives.md",
+  "new_docs/301/custom-jvp-vjp.md": "301/custom-jvp-vjp.md",
+  "new_docs/301/hijax-types.md": "301/hijax-types.md",
+  "new_docs/301/index.rst": "301/index.rst",
+  "new_docs/301/refs.md": "301/refs.md",
+  "new_docs/301/remat.md": "301/remat.md",
+  "new_docs/301/sharding-ad.md": "301/sharding-ad.md",
+  "new_docs/301/vjp-objects.md": "301/vjp-objects.md",
+  "new_docs/401/cute-dsl.md": "401/cute-dsl.md",
+  "new_docs/401/ffi.md": "401/ffi.md",
+  "new_docs/401/index.rst": "401/index.rst",
+  "new_docs/401/pallas.md": "401/pallas.md",
+  "new_docs/501/compilation-cache.md": "501/compilation-cache.md",
+  "new_docs/501/data-loading.md": "501/data-loading.md",
+  "new_docs/501/export.md": "501/export.md",
+  "new_docs/501/fault-tolerance.rst": "501/fault-tolerance.rst",
+  "new_docs/501/index.rst": "501/index.rst",
+  "new_docs/501/multiprocess.md": "501/multiprocess.md",
+  "new_docs/501/security.md": "501/security.md",
+  "new_docs/501/shape-polymorphism.md": "501/shape-polymorphism.md",
+  "new_docs/501/transfer-guard.rst": "501/transfer-guard.rst",
+  "new_docs/index.rst": "index.rst",
 }
 
 from jupyter_client.provisioning import KernelProvisionerFactory
@@ -437,3 +481,82 @@ KernelProvisionerFactory.provisioners["portpicker-provisioner"] = EntryPoint(
     group="jupyter_client.kernel_provisioners"
 )
 KernelProvisionerFactory.default_provisioner_name = "portpicker-provisioner"
+
+
+# -- Superseded-page banner ---------------------------------------------------
+# Pages replaced by the leveled docs (101-501) stay at their original URLs but
+# carry a banner pointing at their replacement. Keys are docnames; values are
+# the replacement docname (linked in the banner).
+_superseded_pages = {
+    'jax-101': '101/index',
+    'key-concepts': '101/index',
+    'notebooks/thinking_in_jax': '101/index',
+    'beginner_guide': '101/index',
+    'jit-compilation': '201/jit',
+    'automatic-vectorization': '101/transformations',
+    'automatic-differentiation': '101/transformations',
+    'pytrees': '101/pytrees',
+    'random-numbers': '101/random',
+    'parallel': '201/sharding',
+    'control-flow': '201/control-flow',
+    'tracing': '101/transformations',
+    'stateful-computations': '101/state',
+    'notebooks/shard_map': '201/shard-map',
+    'notebooks/layout': '201/sharding',
+    'multi_process': '501/multiprocess',
+    'fault_tolerance': '501/fault-tolerance',
+    'security': '501/security',
+    'distributed_data_loading': '501/data-loading',
+    'notebooks/autodiff_cookbook': '301/cookbook',
+    'notebooks/autodiff_remat': '301/remat',
+    'advanced_autodiff': '301/index',
+    'higher-order': '301/cookbook',
+    'jacobian-vector-products': '301/cookbook',
+    'complex-differentiation': '301/cookbook',
+    'notebooks/Custom_derivative_rules_for_Python_code': '301/custom-jvp-vjp',
+    'hijax_custom_derivatives': '301/custom-derivatives',
+    'hijax_types': '301/hijax-types',
+    'debugging': '201/debugging',
+    'debugging/index': '201/debugging',
+    'debugging/checkify_guide': '201/debugging',
+    'debugging/flags': '201/debugging',
+    'debugging/print_breakpoint': '201/debugging',
+    'debugging/slow_tracing_compilation': '201/slow-compilation',
+    'debugging/xla_metadata': '201/controlling-xla',
+    'transfer_guard': '501/transfer-guard',
+    'custom_pytrees': '101/pytrees',
+    'persistent_compilation_cache': '501/compilation-cache',
+    'buffer_donation': '201/jit',
+    'benchmarking': '201/profiling',
+    'profiling': '201/profiling',
+    'device_memory_profiling': '201/profiling',
+    'array_refs': '101/state',
+    'external-callbacks': '201/callbacks',
+    'ffi': '401/ffi',
+    'notebooks/cute_dsl_jax': '401/cute-dsl',
+    'gradient-checkpointing': '301/remat',
+    'aot': '201/aot',
+    'export/index': '501/export',
+    'export/export': '501/export',
+    'export/shape_poly': '501/shape-polymorphism',
+    'xla_flags': '201/controlling-xla',
+    'async_dispatch': '201/jit',
+    'concurrency': '501/index',
+    'gpu_memory_allocation': '201/gpu-memory',
+    'errors': '101/errors',
+    'export/jax2tf': '501/export',
+    'notebooks/neural_network_with_tfds_data': '101/index',
+    'notebooks/Neural_Network_and_Data_Loading': '101/index',
+    'notebooks/vmapped_log_probs': '101/transformations',
+}
+
+
+def _superseded_banner(app, pagename, templatename, context, doctree):
+    target = _superseded_pages.get(pagename)
+    if target is not None:
+        depth = pagename.count('/')
+        context['superseded_target'] = '../' * depth + target + '.html'
+
+
+def setup(app):
+    app.connect('html-page-context', _superseded_banner)

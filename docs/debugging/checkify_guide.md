@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 # The `checkify` transformation
 
 <!--* freshness: { reviewed: '2023-02-28' } *-->

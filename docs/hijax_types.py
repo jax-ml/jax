@@ -17,11 +17,13 @@
 #   jupytext:
 #     cell_metadata_filter: -all
 #     formats: ipynb,md:myst,py:light
+#     notebook_metadata_filter: nosearch
 #     text_representation:
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
 #       jupytext_version: 1.16.4
+#   nosearch: true
 # ---
 
 # (hijax-types)=

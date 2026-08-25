@@ -1,3 +1,5 @@
+:nosearch:
+
 GPU memory allocation
 =====================
 

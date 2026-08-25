@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 # Security considerations
 
 <!--* freshness: { reviewed: '2026-08-17' } *-->

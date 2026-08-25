@@ -1,6 +1,7 @@
 ---
 jupytext:
   formats: ipynb,md:myst
+  notebook_metadata_filter: nosearch
   text_representation:
     extension: .md
     format_name: myst
@@ -10,6 +11,7 @@ kernelspec:
   display_name: Python 3 (ipykernel)
   language: python
   name: python3
+nosearch: true
 ---
 
 <!--* freshness: { reviewed: "2026-04-28" } *-->

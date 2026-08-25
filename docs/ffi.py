@@ -16,6 +16,7 @@
 # jupyter:
 #   jupytext:
 #     formats: ipynb,py:light,md:myst
+#     notebook_metadata_filter: nosearch
 #     text_representation:
 #       extension: .py
 #       format_name: light
@@ -25,6 +26,7 @@
 #     display_name: Python 3 (ipykernel)
 #     language: python
 #     name: python3
+#   nosearch: true
 # ---
 
 # (ffi-tutorial)=
