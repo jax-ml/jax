@@ -26,7 +26,6 @@ package(
 pytype_strict_library(
     name = "params",
     srcs = ["params.py"],
-    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:callback",
@@ -42,7 +41,6 @@ pytype_strict_library(
         "__init__.py",
         "interpret_pallas_call.py",
     ],
-    type_checking = "pyrefly",
     deps = [
         ":gpu_callbacks",
         ":jaxpr_interpret",
@@ -64,7 +62,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "gpu_callbacks",
     srcs = ["gpu_callbacks.py"],
-    type_checking = "pyrefly",
     deps = [
         ":params",
         ":shared_memory",
@@ -87,7 +84,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "jaxpr_interpret",
     srcs = ["jaxpr_interpret.py"],
-    type_checking = "pyrefly",
     deps = [
         ":gpu_callbacks",
         ":params",
@@ -109,7 +105,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "shared_memory",
     srcs = ["shared_memory.py"],
-    type_checking = "pyrefly",
     deps = [
         ":params",
         "//jax",

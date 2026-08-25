@@ -120,7 +120,6 @@ pytype_library(
         "xla_client.py",
         ":version",
     ],
-    type_checking = "pyrefly",
     deps = [
         ":_jax",
         "//jaxlib/cpu:_lapack",
@@ -1588,7 +1587,6 @@ cc_library(
 pytype_strict_library(
     name = "xla_client",
     srcs = ["xla_client.py"],
-    type_checking = "pyrefly",
     visibility = [":xla_python"],
     deps = py_deps([
         "numpy",
