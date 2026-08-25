@@ -46,7 +46,9 @@ namespace nb = ::nanobind;
 // Gets `xla::HloSharding` from a JAX Sharding.
 xla::HloSharding GetXlaHloSharding(nb::handle sharding,
                                    int64_t num_dimensions) {
-  if (sharding.type().is(nb::handle(GSPMDSharding::type().ptr()))) {
+  if (sharding.type().is(SingleDeviceSharding::type())) {
+    return xla::HloSharding::Replicate();
+  } else if (sharding.type().is(nb::handle(GSPMDSharding::type().ptr()))) {
     return nb::cast<GSPMDSharding*>(nb::handle(sharding.ptr()))->hlo_sharding();
   } else {
     return nb::cast<xla::HloSharding>(
