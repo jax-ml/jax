@@ -29,7 +29,6 @@ the current documentation.
    debugging
    debugging/index
    transfer_guard
-   custom_pytrees
    persistent_compilation_cache
    buffer_donation
    benchmarking
