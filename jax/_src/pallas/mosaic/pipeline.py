@@ -176,10 +176,24 @@ def _make_block_slice(
       raise ValueError(f"Unsupported block dimension type: {block_size}")
 
 
+def _or(a, b):
+  if a is True or b is True:
+    return True
+  if a is False:
+    return b
+  if b is False:
+    return a
+  return a | b
+
+
 def _tuples_differ(xs, ys):
   """Dynamic index-tuple comparison calculation."""
-  differences = jax.tree.leaves(jax.tree.map(lambda x, y: x != y, xs, ys))
-  return functools.reduce(lambda x, y: x | y, differences, False)
+  diffs = (
+      x is not y and x != y
+      for x, y in zip(jax.tree.leaves(xs), jax.tree.leaves(ys), strict=True)
+  )
+  return functools.reduce(_or, diffs, False)
+
 
 def _tuple_all_binop(binop, xs, ys):
   """Dynamic reduce_all calculation with a user-provided comparison op."""
