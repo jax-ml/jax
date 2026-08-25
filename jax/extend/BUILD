@@ -129,6 +129,10 @@ pytype_strict_library(
     name = "ifrt_programs",
     srcs = ["ifrt_programs.py"],
     type_checking = "pyrefly",
+    visibility = [
+        "//jax:jax_extend_users",
+        "//third_party/py/paxml/lib/orbax/checkpoint/_src/serialization:__pkg__",
+    ],
     deps = ["//jax/_src/lib"],
 )
 
