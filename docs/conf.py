@@ -403,6 +403,8 @@ def linkcode_resolve(domain, info):
 
 # Generate redirects from deleted files to new sources
 rediraffe_redirects = {
+  "jax-primitives.md": "601/jax-primitives.md",
+  "jaxpr.md": "601/jaxpr.md",
   "jax-101/01-jax-basics.md": "key-concepts.md",
   "jax-101/02-jitting.md": "jit-compilation.md",
   "jax-101/03-vectorization.md": "automatic-vectorization.md",
@@ -415,7 +417,7 @@ rediraffe_redirects = {
   "jax-101/index.rst": "jax-101.rst",
   "tutorials.rst": "jax-101.rst",
   "notebooks/external_callbacks.md": "external-callbacks.md",
-  "notebooks/How_JAX_primitives_work.md": "jax-primitives.md",
+  "notebooks/How_JAX_primitives_work.md": "601/jax-primitives.md",
   "jax.extend.ffi.rst": "jax.ffi.rst",
   "Custom_Operation_for_GPUs.md": "ffi.md",
   "notebooks/quickstart.md": "quickstart.md",

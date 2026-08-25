@@ -13,7 +13,7 @@ kernelspec:
 ---
 
 (jax-internals-jaxpr)=
-# JAX internals: The jaxpr language
+# The jaxpr language
 
 <!--* freshness: { reviewed: '2024-05-03' } *-->
 

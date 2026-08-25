@@ -13,7 +13,7 @@ kernelspec:
 ---
 
 (jax-internals-jax-primitives)=
-# JAX Internals: primitives
+# Primitives
 
 <!--* freshness: { reviewed: '2024-05-03' } *-->
 
