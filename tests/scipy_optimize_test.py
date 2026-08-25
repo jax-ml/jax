@@ -238,6 +238,92 @@ class TestLBFGS(jtu.JaxTestCase):
     jax_res = min_op(init)
     self.assertAllClose(jax_res, expect, atol=2e-5)
 
+  def test_ftol_termination_is_converged(self):
+    # A run stopped by the ftol criterion must report success=True, matching
+    # scipy L-BFGS-B which treats a small function reduction as convergence.
+    func = rosenbrock(jnp)
+
+    @jit
+    def min_op(x0):
+      return jax.scipy.optimize.minimize(
+          func,
+          x0,
+          method='l-bfgs-experimental-do-not-rely-on-this',
+          options=dict(ftol=0.5),
+      )
+
+    result = min_op(jnp.zeros(4))
+    self.assertTrue(result.success)
+    self.assertEqual(int(result.status), 0)
+    self.assertLess(int(result.nit), 10)
+    self.assertGreater(int(result.nit), 0)
+
+  def test_default_termination_unaffected(self):
+    func = rosenbrock(jnp)
+    result = jax.scipy.optimize.minimize(
+        func,
+        jnp.zeros(4),
+        method='l-bfgs-experimental-do-not-rely-on-this',
+    )
+    self.assertTrue(result.success)
+    self.assertEqual(int(result.status), 0)
+    self.assertGreater(int(result.nit), 1)
+    self.assertLess(int(result.nit), 200)
+    self.assertAllClose(result.fun, 0., atol=1e-6)
+
+  def test_gtol_convergence_still_success(self):
+    func = rosenbrock(jnp)
+    result = jax.scipy.optimize.minimize(
+        func,
+        jnp.zeros(4),
+        method='l-bfgs-experimental-do-not-rely-on-this',
+        options=dict(gtol=1e-7, ftol=0.),
+    )
+    self.assertTrue(result.success)
+    self.assertEqual(int(result.status), 0)
+    # The gradient criterion itself is met, so this stop is gtol-driven.
+    self.assertLess(float(np.linalg.norm(np.asarray(result.jac))), 1e-7)
+    self.assertAllClose(result.fun, 0., atol=1e-6)
+
+  def test_ftol_not_reported_when_line_search_fails(self):
+    # On this scaled Rosenbrock float32 L-BFGS fails its first line search.
+    # The failed search returns a far-away point whose spurious decrease
+    # satisfies the ftol test, so an ungated check reports success=True at
+    # garbage coordinates. A failed line search must never count as
+    # convergence via ftol.
+    def func(x):
+      return 1e8 * jnp.sum(
+          100. * (x[1:] - x[:-1] ** 2) ** 2 + (1. - x[:-1]) ** 2)
+
+    @jit
+    def min_op(x0):
+      return jax.scipy.optimize.minimize(
+          func,
+          x0,
+          method='l-bfgs-experimental-do-not-rely-on-this',
+      )
+
+    result = min_op(jnp.array([1.5, 1.5]))
+    self.assertFalse(result.success)
+    self.assertEqual(int(result.status), 5)
+    result_again = min_op(jnp.array([1.5, 1.5]))
+    self.assertArraysEqual(result.x, result_again.x)
+
+  def test_ftol_takes_precedence_over_maxiter(self):
+    # When the ftol criterion and the maxiter cap fire on the same
+    # iteration, the run is reported as converged, matching scipy where
+    # convergence is checked before the iteration limit.
+    func = rosenbrock(jnp)
+    result = jax.scipy.optimize.minimize(
+        func,
+        jnp.zeros(4),
+        method='l-bfgs-experimental-do-not-rely-on-this',
+        options=dict(maxiter=1, ftol=0.5),
+    )
+    self.assertTrue(result.success)
+    self.assertEqual(int(result.status), 0)
+    self.assertEqual(int(result.nit), 1)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
