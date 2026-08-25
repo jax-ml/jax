@@ -860,7 +860,10 @@ class BufferedRef(BufferedRefBase):
 
   def _advance_slot(self, reg_slot, slot_kwarg, predicate) -> BufferedRef:
     assert reg_slot is not None
-    new_current_slot = lax.select(predicate, reg_slot + 1, reg_slot)
+    if isinstance(predicate, bool):
+      new_current_slot = reg_slot + 1 if predicate else reg_slot
+    else:
+      new_current_slot = lax.select(predicate, reg_slot + 1, reg_slot)
     return self.with_slot_index(**{slot_kwarg: new_current_slot})
 
   def advance_copy_in_slot(
