@@ -176,13 +176,14 @@ maintains an up-to-date list.
 .. toctree::
    :hidden:
    :maxdepth: 2
-   :caption: Resources, guides, and references
+   :caption: Resources
 
    advanced_guides
    jax
+   api_compatibility
+   deprecation
    contributor_guide
    extensions
-   notes
    about
 
 

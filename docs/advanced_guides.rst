@@ -10,7 +10,6 @@ documentation levels (:ref:`101 <jax-101>` through :doc:`501 <501/index>`).
    :caption: Parallel computation
    :maxdepth: 1
 
-   notebooks/host-offloading
    notebooks/colocated-python
 
 .. toctree::

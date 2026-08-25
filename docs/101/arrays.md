@@ -149,6 +149,9 @@ import jax
 jax.config.update("jax_enable_x64", True)
 ```
 
+For the full story, including how to control default dtypes more finely, see
+{doc}`default_dtypes`.
+
 When operations mix dtypes, JAX applies type promotion rules that are similar
 to NumPy's but not identical. In particular they're designed to avoid
 accidentally promoting everything to 64-bit:
@@ -156,6 +159,8 @@ accidentally promoting everything to 64-bit:
 ```{code-cell}
 (jnp.arange(3) + 1.5).dtype
 ```
+
+See {doc}`type_promotion` for the precise promotion semantics.
 
 ## Indexing differences
 

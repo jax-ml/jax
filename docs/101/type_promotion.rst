@@ -8,7 +8,7 @@ For some background on the considerations that went into the design of what is d
 
 JAX's type promotion behavior is determined via the following type promotion lattice:
 
-.. image:: _static/type_lattice.svg
+.. image:: ../_static/type_lattice.svg
 
 .. The graphic above was generated with the following code:
     import networkx as nx
