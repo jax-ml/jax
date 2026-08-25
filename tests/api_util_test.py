@@ -132,7 +132,7 @@ class ApiUtilTest(jtu.JaxTestCase):
 
     def f(): return None
 
-    expected = "f at .*/api_util_test.py:[0-9]+"
+    expected = "f at .*api_util_test.py:[0-9]+"
 
     self.assertRegex(fsi(f), expected)
     self.assertRegex(fsi(partial(f)), expected)
