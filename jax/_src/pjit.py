@@ -2618,6 +2618,8 @@ def get_layout_mode_from_args(args):
   # TODO(yashkatariya): Replace this with `isinstance(l, ArrayLayout)`.
   elif type(l).__name__ == 'ArrayLayout':
     return LayoutMode.PALLAS_TPU
+  elif type(l).__name__ == 'GPUTiledLayout':
+    return LayoutMode.PALLAS_GPU
   else:
     return LayoutMode.AUTO
 

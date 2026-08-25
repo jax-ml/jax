@@ -68,6 +68,7 @@ pytype_strict_library(
         "//jax/_src:dtypes",
         "//jax/_src:flattree",
         "//jax/_src:lax",
+        "//jax/_src:layout",
         "//jax/_src:literals",
         "//jax/_src:mesh",
         "//jax/_src:mlir",
@@ -113,6 +114,24 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "layout_rules",
+    srcs = ["layout_rules.py"],
+    type_checking = "pyrefly",
+    deps = [
+        ":core",
+        ":lowering",
+        "//jax",
+        "//jax/_src:core",
+        "//jax/_src:mlir",
+        "//jax/_src:source_info_util",
+        "//jax/_src/lib",
+        "//jax/experimental:mosaic_gpu",
+        "//jaxlib/mlir:ir",
+        "//jaxlib/mlir:vector_dialect",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
     name = "primitives",
     srcs = ["primitives.py"],
     deps = [
@@ -125,6 +144,7 @@ pytype_strict_library(
         "//jax/_src:deprecations",
         "//jax/_src:dtypes",
         "//jax/_src:lax",
+        "//jax/_src:layout",
         "//jax/_src:literals",
         "//jax/_src:partial_eval",
         "//jax/_src:pretty_printer",

@@ -310,6 +310,35 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "mgpu_layout_rules_test",
+    srcs = [
+        "mgpu_layout_rules_test.py",
+    ],
+    enable_backends = [],
+    enable_configs = [
+        "cpu",
+        "cpu_x32",
+        "gpu_a100",
+        "gpu_a100_x32",
+        "gpu_h100_x32",
+        "gpu_h100",
+        "gpu_b200",
+    ],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
+    tags = [
+        "mosaic_gpu_test",
+    ],
+    deps = [
+        "//jax/_src/pallas/mosaic_gpu:pallas_call",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_mosaic_gpu",  # build_cleaner: keep
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "export_back_compat_pallas_test",
     srcs = ["export_back_compat_pallas_test.py"],
     enable_backends = ["cpu"],

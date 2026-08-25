@@ -35,6 +35,7 @@ from jax._src import core as jax_core
 from jax._src import debugging
 from jax._src import dtypes
 from jax._src import flattree as ft
+from jax._src import layout as jax_layout
 from jax._src import literals as jax_literals
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
@@ -68,6 +69,7 @@ from jax._src.state.types import TransposeTransform
 from jax._src.util import foreach
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
+from jax.experimental.mosaic.gpu import fragmented_array as fa
 from jax.experimental.mosaic.gpu import profiler as mgpu_profiler
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
@@ -4623,6 +4625,38 @@ def _check_lowering_rule(ctx: LoweringRuleContext, *err_args, err_tree, debug):
   not_pred = arith_dialect.xori(pred, minus_one)
   cf_dialect.assert_(not_pred, exception.fmt_string)
   return []
+
+
+@register_lowering_rule(pjit.relayout_p, mgpu.LoweringSemantics.Lane)
+def _relayout_lowering_lane(
+    ctx: LoweringRuleContext, x, *, dst_layout
+):
+  del ctx, x, dst_layout
+  raise NotImplementedError(
+      "relayout_p is not supported with Lane semantics."
+  )
+
+
+@register_lowering_rule(pjit.relayout_p, mgpu.LoweringSemantics.Warpgroup)
+def _relayout_lowering_wg(
+    ctx: LoweringRuleContext, x, *, dst_layout
+):
+  if dst_layout is jax_layout.AutoLayout:
+    return x
+  layout = fa.TiledLayout(
+      dst_layout.tiling,
+      dst_layout.warp_dims,
+      dst_layout.lane_dims,
+      dst_layout.vector_dim,
+  )
+  if ctx.avals_in[0].ndim == 0:  # scalar case
+    if layout != mgpu.WGSplatFragLayout():
+      raise ValueError(
+          "Only plgpu.Layout.WG_SPLAT is supported for scalar values."
+      )
+    return x
+  return mgpu.dialect.layout_cast(x, mgpu.to_layout_attr(layout))
+
 
 @register_lowering_rule(gpu_core.layout_cast_p, mgpu.LoweringSemantics.Lane)
 def _layout_cast_lowering(ctx: LoweringRuleContext, x, *, new_layout):

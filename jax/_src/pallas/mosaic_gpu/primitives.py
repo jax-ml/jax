@@ -38,6 +38,8 @@ from jax._src import state
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lax import utils as lax_utils
+from jax._src.layout import get_layout_mode, LayoutMode
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import builtin as builtin_dialect
@@ -88,6 +90,15 @@ def _check_ref(
   if aval_memory_space is not memory_space:
     raise ValueError(
         f"{name} must be a {memory_space.name.upper()} reference, got {aval}"
+    )
+
+
+def _check_layout_mode():
+  layout_mode = get_layout_mode()
+  if layout_mode not in (LayoutMode.PALLAS_GPU, LayoutMode.AUTO):
+    raise ValueError(
+        "Layout mode must be PALLAS_GPU or AUTO, when tracing a Pallas/Mosaic "
+        f"GPU kernel, but got {layout_mode}"
     )
 
 
@@ -2212,6 +2223,17 @@ def _mma_abstract_eval(acc, a, b):
       )
   else:
     raise NotImplementedError(f"Unsupported operand type: {a.dtype}")
+
+  _check_layout_mode()
+  if get_layout_mode() == LayoutMode.PALLAS_GPU:
+    out_layout = lax_utils.call_layout_rule(
+        mma_p, in_avals=(acc, a, b), out_avals=acc, layout_rule=None
+    )
+    if out_layout != acc.layout:
+      raise ValueError(
+          f"Accumulator was provided with layout {acc.layout} but expected "
+          f"layout {out_layout}"
+      )
   return acc
 
 

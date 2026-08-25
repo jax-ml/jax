@@ -428,6 +428,7 @@ pytype_strict_library(
         "//jax/_src:lax",
         "//jax/_src/pallas/mosaic_gpu:core",
         "//jax/_src/pallas/mosaic_gpu:helpers",
+        "//jax/_src/pallas/mosaic_gpu:layout_rules",
         "//jax/_src/pallas/mosaic_gpu:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic_gpu:pipeline",
         "//jax/_src/pallas/mosaic_gpu:primitives",

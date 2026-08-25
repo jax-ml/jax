@@ -2670,6 +2670,53 @@ def _check_unsatisfiable_divisibility_constraints(
           raise _construct_value_error_with_op_stacktrace(msg, idx)
 
 
+def _is_expensive_relayout(
+    layout1: fa.FragmentedLayout, layout2: fa.FragmentedLayout
+) -> bool:
+  # TODO(bchetioui): handle TMEM_NATIVE relayouts, which can be free.
+  return layout1 != layout2 and not isinstance(layout1, fa.WGSplatFragLayout)
+
+
+def check_for_expensive_relayout(module: ir.Module):
+  """Returns whether the given module has an expensive relayout."""
+  layout_for_variable: dict[ir.Value, fa.FragmentedLayout] = {}
+
+  def _check_for_expensive_relayout(op: ir.OpView):
+    if not inference_utils.should_have_layout(op):
+      return
+    if inference_utils.has_in_layouts_set(op):
+      in_layouts = iter(layouts_lib.from_layout_attr(l)
+                        for l in cast(ir.ArrayAttr, op.attributes["in_layouts"]))
+      for operand in op.operands:
+        assert isinstance(operand, ir.Value)
+        if not isinstance(operand.type, ir.VectorType):
+          continue
+        if operand not in layout_for_variable:
+          raise ValueError(
+              f"Inferred layout not found for operand {operand}."
+          )
+        operand_layout = next(in_layouts)
+        # TODO(bchetioui): refine to figure out whether it's a cheap relayout.
+        if _is_expensive_relayout(layout_for_variable[operand], operand_layout):
+          raise ValueError(
+              f"Inferred layout {operand_layout} for operand {operand} does "
+              f"not match the layout in layout_for_variable "
+              f"{layout_for_variable[operand]}."
+          )
+    if inference_utils.has_out_layouts_set(op):
+      out_layouts = iter(layouts_lib.from_layout_attr(l)
+                         for l in cast(ir.ArrayAttr, op.attributes["out_layouts"]))
+      for result in op.results:
+        assert isinstance(result, ir.Value)
+        if not isinstance(result.type, ir.VectorType):
+          continue
+        assert result not in layout_for_variable
+        layout_for_variable[result] = next(out_layouts)
+
+  for op in module.body:
+    traverse_op(op, _check_for_expensive_relayout)
+
+
 def infer_layout(
     module: ir.Module, *, fuel: int = _DEFAULT_LAYOUT_INFERENCE_FUEL,
     arch: tuple[int, int] = (9, 0)

@@ -36,6 +36,7 @@ class LayoutMode(enum.Enum):
   AUTO = enum.auto()
   JAX = enum.auto()
   PALLAS_TPU = enum.auto()
+  PALLAS_GPU = enum.auto()
 
 def get_layout_mode():
   val = jax_config.layout_tracing_mode.value

@@ -1780,6 +1780,8 @@ _pdl_effect = PdlEffect()
 
 # We define the layout_cast primitive here, because it needs to be available in
 # the lowering code (to provide layout hints to the rules).
+#
+# TODO(bchetioui): unify layout_cast_p with relayout_p
 layout_cast_p = jax_core.Primitive("layout_cast")
 
 
