@@ -189,6 +189,19 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def_rw("argument_layouts", &CompileOptions::argument_layouts)
       .def_rw("parameter_is_tupled_arguments",
               &CompileOptions::parameter_is_tupled_arguments)
+      .def_prop_rw(
+          "individually_defined_output_indices",
+          [](const CompileOptions& options) {
+            std::vector<int> indices(
+                options.individually_defined_output_indices.begin(),
+                options.individually_defined_output_indices.end());
+            return indices;
+          },
+          [](CompileOptions& options, std::vector<int> indices) {
+            options.individually_defined_output_indices.clear();
+            options.individually_defined_output_indices.insert(indices.begin(),
+                                                               indices.end());
+          })
       .def_rw("compile_portable_executable",
               &CompileOptions::compile_portable_executable)
       .def_ro("executable_build_options",
