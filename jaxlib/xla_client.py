@@ -192,6 +192,11 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
   collective_memory_size = os.getenv(
       'XLA_PYTHON_CLIENT_COLLECTIVE_MEM_SIZE_MB', ''
   )
+  # Per-domain size of the preallocated locality-domain BFC pools. Unset or 0
+  # leaves the "locality_domain:<id>" memory kinds unavailable.
+  locality_domain_memory_size = os.getenv(
+      'XLA_PYTHON_CLIENT_LOCALITY_DOMAIN_MEM_SIZE_MB', ''
+  )
   allowed_allocators = (
       'default',
       'platform',
@@ -212,6 +217,11 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
     options['preallocate'] = preallocate not in ('false', 'False', '0')
   if collective_memory_size:
     options['collective_memory_size'] = int(collective_memory_size) * (1 << 20)
+  # Only sent when set: plugins without the option reject unknown names.
+  if locality_domain_memory_size:
+    options['locality_domain_memory_size'] = (
+        int(locality_domain_memory_size) * (1 << 20)
+    )
   abort = os.getenv('XLA_PYTHON_CLIENT_ABORT_COLLECTIVES_ON_FAILURE', '0')
   options['abort_collectives_on_failure'] = bool(int(abort))
   use_trft_gpu_client = os.getenv('XLA_PYTHON_CLIENT_USE_TFRT_GPU_CLIENT', '0')

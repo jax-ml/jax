@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from functools import partial
 from collections.abc import Sequence
 import json
+import operator
 
 from jax._src import config
 from jax._src.lib import _jax
@@ -52,16 +53,137 @@ def extend_compute_type(c_type: str | None):
     config.compute_on_context_manager.set_local(prev)
 
 
+def _is_locality_domain_compute_type(compute_type: str) -> bool:
+  return compute_type.startswith("gpu_stream:locality_domain:")
+
+
+def _device_memory_aval(aval):
+  return (
+      aval.update(memory_space=core.MemorySpace.Device)
+      if isinstance(aval, core.ShapedArray)
+      else aval
+  )
+
+
 def _check_valid(c_type: str):
   if (c_type not in {'device_host', 'device', 'tpu_sparsecore'}
       and not c_type.startswith("gpu_stream:")):
     raise ValueError(
         f'Invalid compute type {c_type}. Current supported values '
         'are `device_host`, `device`, `tpu_sparsecore`, and `gpu_stream:#`.')
+  if c_type.startswith("gpu_stream:"):
+    stream_annotation = c_type.split(":", 1)[1]
+    if stream_annotation.startswith("locality_domain"):
+      prefix = "locality_domain:"
+      if not stream_annotation.startswith(prefix):
+        raise ValueError(
+            "Invalid locality-domain stream annotation: expected "
+            f"`gpu_stream:{prefix}<d>`, got `{c_type}`.")
+      domain_id = stream_annotation[len(prefix):]
+      if not domain_id or any(c < "0" or c > "9" for c in domain_id):
+        raise ValueError(
+            "Invalid locality-domain stream annotation: domain id must be a "
+            f"nonempty unsigned decimal integer, got `{domain_id}`.")
+      normalized_domain_id = domain_id.lstrip("0") or "0"
+      max_uint64 = "18446744073709551615"
+      if (len(normalized_domain_id) > len(max_uint64)
+          or (len(normalized_domain_id) == len(max_uint64)
+              and normalized_domain_id > max_uint64)):
+        raise ValueError(
+            "Invalid locality-domain stream annotation: domain id is out of "
+            f"uint64 range, got `{domain_id}`.")
+
+
+def _normalize_gpu_stream_compute_type(compute_type, compiler_options):
+  selector_keys = ("locality_domain", "stream_id")
+  selectors = (
+      [key for key in selector_keys if key in compiler_options]
+      if isinstance(compiler_options, dict)
+      else []
+  )
+  localize_workspaces_specified = (
+      isinstance(compiler_options, dict)
+      and "localize_workspaces" in compiler_options
+  )
+
+  if compute_type != "gpu_stream":
+    if selectors or localize_workspaces_specified:
+      option = selectors[0] if selectors else "localize_workspaces"
+      raise ValueError(
+          f"`{option}` can only be specified in compiler_options when "
+          "compute_type is `gpu_stream`; do not combine it with a legacy "
+          "`gpu_stream:<annotation>` compute type."
+      )
+    return compute_type, compiler_options
+
+  if not isinstance(compiler_options, dict):
+    raise ValueError(
+        "`compute_type='gpu_stream'` requires compiler_options containing "
+        "exactly one of `stream_id` or `locality_domain`."
+    )
+  if len(selectors) != 1:
+    raise ValueError(
+        "`compute_type='gpu_stream'` requires compiler_options containing "
+        "exactly one of `stream_id` or `locality_domain`."
+    )
+
+  selector = selectors[0]
+  value = compiler_options[selector]
+  localize_workspaces = False
+  if localize_workspaces_specified:
+    localize_workspaces = compiler_options["localize_workspaces"]
+    if not isinstance(localize_workspaces, bool):
+      raise TypeError(
+          "`compiler_options['localize_workspaces']` must be a bool, got "
+          f"{localize_workspaces!r}."
+      )
+    if selector != "locality_domain":
+      raise ValueError(
+          "`localize_workspaces` can only be specified with the "
+          "`locality_domain` compiler option."
+      )
+  if isinstance(value, bool):
+    raise TypeError(
+        f"`compiler_options[{selector!r}]` must be an integer, got {value!r}."
+    )
+  try:
+    stream_id = operator.index(value)
+  except TypeError as err:
+    raise TypeError(
+        f"`compiler_options[{selector!r}]` must be an integer, got {value!r}."
+    ) from err
+  if not 0 <= stream_id <= (1 << 64) - 1:
+    raise ValueError(
+        f"`compiler_options[{selector!r}]` must be between 0 and "
+        f"{(1 << 64) - 1}, got {stream_id}."
+    )
+  if (localize_workspaces
+      and stream_id > ((1 << 63) - 1) - 16):
+    raise ValueError(
+        "`localize_workspaces` requires a locality domain id encodable as an "
+        f"XLA memory space, got {stream_id}."
+    )
+
+  options = dict(compiler_options)
+  del options[selector]
+  annotation = (
+      f"locality_domain:{stream_id}" if selector == "locality_domain"
+      else str(stream_id)
+  )
+  return f"gpu_stream:{annotation}", options or None
 
 
 def compute_on(f=None, *, compute_type, out_memory_spaces,
                 compiler_options=None):
+  """Runs a function using the requested compute and output memory types.
+
+  A GPU stream can be selected with ``compute_type="gpu_stream"`` and exactly
+  one of ``compiler_options={"stream_id": n}`` or
+  ``compiler_options={"locality_domain": n}``. The legacy
+  ``gpu_stream:<annotation>`` compute types remain supported. A locality-domain
+  stream can additionally request XLA-managed library workspace placement with
+  ``compiler_options={"locality_domain": n, "localize_workspaces": True}``.
+  """
   kwargs = dict(compute_type=compute_type, out_memory_spaces=out_memory_spaces,
                 compiler_options=compiler_options)
   if f is None:
@@ -72,6 +194,9 @@ def compute_on(f=None, *, compute_type, out_memory_spaces,
 def _compute_on(f, *, compute_type, out_memory_spaces, compiler_options):
   if not isinstance(compute_type, str):
     raise TypeError("`compute_on`'s compute_type argument must be a string.")
+  compute_type, compiler_options = _normalize_gpu_stream_compute_type(
+      compute_type, compiler_options
+  )
   _check_valid(compute_type)
 
   def wrapped(*args, **kwargs):
@@ -79,9 +204,19 @@ def _compute_on(f, *, compute_type, out_memory_spaces, compiler_options):
     dbg = debug_info('compute_on', f, args, kwargs)
     args_flat, in_tree = tracing_registry.flatten((args, kwargs))
     in_avals = tuple(core.shaped_abstractify(x) for x in args_flat)
-    with extend_compute_type(compute_type):
+    # Locality-domain execution is represented by the non-inlineable call
+    # boundary emitted below. Propagating the annotation into the body would
+    # create nested locality annotations, which XLA currently rejects.
+    is_locality_domain = _is_locality_domain_compute_type(compute_type)
+    body_compute_type = None if is_locality_domain else compute_type
+    if is_locality_domain:
+      body_in_avals = tuple(_device_memory_aval(aval) for aval in in_avals)
+    else:
+      body_in_avals = in_avals
+
+    with extend_compute_type(body_compute_type):
       jaxpr, out_avals = pe.trace_to_jaxpr(
-          f, ft.treedef_args_to_ft(in_tree, in_avals), dbg)
+          f, ft.treedef_args_to_ft(in_tree, body_in_avals), dbg)
       out_tree = out_avals.tree
       if any(isinstance(c, core.Tracer) for c in jaxpr.consts):
         jaxpr, consts = pe.separate_consts(jaxpr)
@@ -147,15 +282,25 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
 
   if compute_type.startswith("gpu_stream:"):
     dict_attr = {
-        "_xla_stream_annotation": ir.StringAttr.get(compute_type.split(":")[1]),
+        "_xla_stream_annotation": ir.StringAttr.get(
+            compute_type.split(":", 1)[1]
+        ),
         "inlineable": ir.StringAttr.get("false"),
     }
   else:
     ctype = mlir.map_compute_type(compute_type)
     dict_attr = {"_xla_compute_type": ir.StringAttr.get(ctype)}
 
-  if compiler_options_json is not None:
-    dict_attr |= {'backend_config': ir.StringAttr.get(compiler_options_json)}
+  compiler_options = (
+      {} if compiler_options_json is None else json.loads(compiler_options_json)
+  )
+  localize_workspaces = compiler_options.pop("localize_workspaces", False)
+  if localize_workspaces:
+    dict_attr["_xla_localize_workspaces"] = ir.StringAttr.get("true")
+  if compiler_options:
+    dict_attr["backend_config"] = ir.StringAttr.get(
+        json.dumps(compiler_options)
+    )
   elif compute_type in {'device', 'tpu_sparsecore'}:
     dict_attr |= {'backend_config': ir.StringAttr.get('{}')}
 
@@ -361,9 +506,37 @@ def _transpose_jaxpr(jaxpr, in_tree, in_avals, specs):
 
 def _compute_on_transpose(cts_in, *args, jaxpr, compute_type,
                           out_memory_spaces, compiler_options_json):
+  is_locality_domain = _is_locality_domain_compute_type(compute_type)
+  if is_locality_domain:
+    # The outlined locality computation uses generic device avals internally,
+    # while its outputs can live in a locality-domain memory space.
+    # Normalize incoming cotangents back to the inner computation's device
+    # memory type before transposing the body Jaxpr.
+    cts_in = tuple(
+        ct
+        if isinstance(ct, ad.Zero)
+        or core.typeof(ct).memory_space == core.MemorySpace.Device
+        else dispatch.device_put_p.bind(
+            ct,
+            devices=(core.MemorySpace.Device,),
+            srcs=(None,),
+            copy_semantics=(dispatch.ArrayCopySemantics.REUSE_INPUT,),
+        )[0]
+        for ct in cts_in
+    )
   primals_ctrefs, specs = ad.project_accums(args)
+  if is_locality_domain:
+    # Inner backward rules produce generic-device cotangents. Use matching
+    # temporary accumulator types, then let the outer compute_on_p result
+    # memory spaces below restore each argument's locality placement.
+    specs = tuple(
+        (accum_type, _device_memory_aval(aval))
+        for accum_type, aval in specs
+    )
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
   in_avals = tuple(core.typeof(x) for x in in_flat)
+  if is_locality_domain:
+    in_avals = tuple(_device_memory_aval(aval) for aval in in_avals)
   trans_jaxpr, out_tree = _transpose_jaxpr(jaxpr, in_tree, in_avals, specs)
   cts_out_, logs_ = tree_unflatten(out_tree, trans_jaxpr.out_avals)
   arg_spaces = [x.aval.memory_space if isinstance(x, ad.GradAccum)  # type: ignore
