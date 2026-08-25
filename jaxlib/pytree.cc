@@ -533,7 +533,7 @@ bool SequenceKey::Equals(const nb::object& other) {
 }
 
 bool DictKey::Equals(const nb::object& other) {
-  DictKey other_key(nb::none());
+  DictKey other_key{nb::none()};
   if (!nb::try_cast<DictKey>(other, other_key)) return false;
   return key_.equal(other_key.key());
 }
