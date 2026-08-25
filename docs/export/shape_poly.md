@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 (shape_poly)=
 
 # Shape polymorphism

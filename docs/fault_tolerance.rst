@@ -1,3 +1,5 @@
+:nosearch:
+
 .. raw:: html
 
     <link href="_static/fault_tolerance/fault_tolerance.css" rel="stylesheet" />

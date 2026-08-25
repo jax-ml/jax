@@ -16,6 +16,7 @@
 # jupyter:
 #   jupytext:
 #     formats: ipynb,md:myst,py:light
+#     notebook_metadata_filter: nosearch
 #     text_representation:
 #       extension: .py
 #       format_name: light
@@ -24,6 +25,7 @@
 #   kernelspec:
 #     display_name: Python 3
 #     name: python3
+#   nosearch: true
 # ---
 
 # [![Open in

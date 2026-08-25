@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 # Profiling device memory
 
 <!--* freshness: { reviewed: '2024-03-08' } *-->

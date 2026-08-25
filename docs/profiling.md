@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 # Profiling computation
 
 <!--* freshness: { reviewed: '2026-04-30' } *-->
