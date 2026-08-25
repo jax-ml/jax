@@ -259,8 +259,6 @@ nb_execution_excludepatterns = [
     'notebooks/autodiff_remat.*',
     # Example only gives the specific output demonstrated on some platforms
     'notebooks/layout.*',
-    # Fails on readthedocs with Kernel Died
-    'notebooks/convolutions.ipynb',
     # Requires accelerators
     'pallas/quickstart.*',
     'pallas/pipelining.*',
@@ -403,6 +401,7 @@ def linkcode_resolve(domain, info):
 
 # Generate redirects from deleted files to new sources
 rediraffe_redirects = {
+  "notebooks/convolutions.ipynb": "101/convolutions.md",
   "custom_pytrees.md": "101/pytrees.md",
   "jax-primitives.md": "601/jax-primitives.md",
   "jaxpr.md": "601/jaxpr.md",
