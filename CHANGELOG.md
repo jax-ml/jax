@@ -38,6 +38,17 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     assumed symmetric), so results are unchanged while the transform is
     ~1.4x faster at typical sizes.
 
+* Bug fixes
+  * Fixed spurious line search failures in {func}`jax.scipy.optimize.minimize`
+    for `method='BFGS'` and
+    `method='l-bfgs-experimental-do-not-rely-on-this'` (for example on the
+    Rosenbrock function started away from the origin). The zoom stage of the
+    Wolfe line search declared failure from a signed bracket width comparison,
+    so any zoom entered with `a_hi < a_lo` was reported as failed even when it
+    found a valid step. The width is now compared in absolute terms against a
+    floating-point subdivision floor, and the zoom iteration cap was raised
+    so wide dynamic range searches do not run out of iterations.
+
 ## JAX 0.11.1 (August 17, 2026)
 
 * New features

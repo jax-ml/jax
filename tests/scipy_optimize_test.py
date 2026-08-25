@@ -64,6 +64,14 @@ def zakharovFromIndices(x, ii):
   return answer
 
 
+def classical_rosenbrock(np):
+  # The true Rosenbrock curved valley; rosenbrock() above squares plain diffs.
+  def func(x):
+    return np.sum(100. * (x[1:] - x[:-1] ** 2) ** 2 + (1. - x[:-1]) ** 2)
+
+  return func
+
+
 class TestBFGS(jtu.JaxTestCase):
 
   @jtu.sample_product(
@@ -116,6 +124,39 @@ class TestBFGS(jtu.JaxTestCase):
     eval_func = jax.jit(zakharov_fn)
     jax_res = jax.scipy.optimize.minimize(fun=eval_func, x0=x0, method='BFGS')
     self.assertLess(jax_res.fun, 1e-6)
+
+  @jtu.sample_product(
+    x0=[np.array([-1.2, 1.0], dtype='float32'), np.zeros(2, dtype='float32')],
+  )
+  def test_minimize_rosenbrock_curved_valley(self, x0):
+    func = classical_rosenbrock(jnp)
+
+    @jit
+    def min_op(x0):
+      return jax.scipy.optimize.minimize(func, x0, method='BFGS')
+
+    result = min_op(x0)
+    self.assertTrue(bool(result.success))
+    self.assertAllClose(result.x, np.ones(2), atol=2e-3, rtol=2e-3,
+                        check_dtypes=False)
+
+  @jtu.skip_on_flag('jax_enable_x64', False)
+  def test_minimize_rosenbrock_curved_valley_x64(self):
+    func = classical_rosenbrock(jnp)
+    for x0 in [np.array([-1.2, 1.0]), np.zeros(2), np.full(5, 0.5)]:
+      result = jax.scipy.optimize.minimize(func, x0, method='BFGS')
+      self.assertTrue(bool(result.success))
+      self.assertAllClose(result.x, np.ones_like(x0), atol=1e-4, rtol=1e-4)
+
+  @jtu.skip_on_flag('jax_enable_x64', False)
+  def test_minimize_steep_quadratic_x64(self):
+    def steep_quadratic(x):
+      return jnp.sum((1e6 * (x - 1.)) ** 2)
+
+    result = jax.scipy.optimize.minimize(
+        steep_quadratic, jnp.zeros(3), method='BFGS')
+    self.assertTrue(bool(result.success))
+    self.assertAllClose(result.x, np.ones(3), atol=1e-3, rtol=1e-3)
 
   @jtu.ignore_warning(category=RuntimeWarning, message='divide by zero')
   def test_minimize_bad_initial_values(self):
@@ -237,6 +278,17 @@ class TestLBFGS(jtu.JaxTestCase):
 
     jax_res = min_op(init)
     self.assertAllClose(jax_res, expect, atol=2e-5)
+
+  @jtu.skip_on_flag('jax_enable_x64', False)
+  def test_minimize_steep_quadratic_x64(self):
+    def steep_quadratic(x):
+      return jnp.sum((1e6 * (x - 1.)) ** 2)
+
+    result = jax.scipy.optimize.minimize(
+        steep_quadratic, jnp.zeros(3),
+        method='l-bfgs-experimental-do-not-rely-on-this')
+    self.assertTrue(bool(result.success))
+    self.assertAllClose(result.x, np.ones(3), atol=1e-3, rtol=1e-3)
 
 
 if __name__ == "__main__":
