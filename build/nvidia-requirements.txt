@@ -5,7 +5,7 @@ nvidia-cuda-runtime-cu12>=12.1.105 ; sys_platform == "linux"
 # The upper bound is set for the CUDNN API compatibility.
 # See
 # https://docs.nvidia.com/deeplearning/cudnn/backend/latest/developer/forward-compatibility.html#cudnn-api-compatibility
-nvidia-cudnn-cu12>=9.10.2.21,<10.0 ; sys_platform == "linux"
+nvidia-cudnn-cu12>=9.8,<10.0 ; sys_platform == "linux"
 nvidia-cufft-cu12>=11.0.2.54 ; sys_platform == "linux"
 nvidia-cusolver-cu12>=11.4.5.107 ; sys_platform == "linux"
 nvidia-cusparse-cu12>=12.1.0.106 ; sys_platform == "linux"
