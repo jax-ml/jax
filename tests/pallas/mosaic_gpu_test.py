@@ -2186,6 +2186,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       plgpu.copy_gmem_to_smem(x_ref, scratch_ref, barrier_ref)
       plgpu.barrier_wait(barrier_ref)
       scratch_ref[...] = scratch_ref[...] * 2
+      plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(scratch_ref, o_ref)
       plgpu.wait_smem_to_gmem(0)
 
@@ -2216,6 +2217,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       else:
         tmp = plgpu.load(scratch_ref, layout=plgpu.Layout.WGMMA)
         scratch_ref[...] = tmp * 2
+      plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(scratch_ref, o_ref)
       plgpu.wait_smem_to_gmem(0)
 
