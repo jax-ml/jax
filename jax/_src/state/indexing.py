@@ -148,7 +148,8 @@ class NDIndexer(state_types.Transform):
 
   @property
   def is_dynamic_size(self):
-    return any(isinstance(i, Slice) and i.is_dynamic_size for i in self.indices)
+    return (any(isinstance(i, Slice) and i.is_dynamic_size for i in self.indices)
+            or any(not isinstance(i, int) for i in self.get_indexer_shape()))
 
   def tree_flatten(self):
     flat_idx, idx_tree = tree_util.tree_flatten(self.indices)
@@ -364,24 +365,24 @@ class NDIndexer(state_types.Transform):
     ])
 
 
-class DShapedArray:
+class DShapedArray(core.AbstractValue):
   def __init__(self, shape, dtype, weak_type=False):
     self.shape = shape
     self.dtype = core._dtype_object(dtype)
     self.weak_type = weak_type
 
   def lower_val(self, val): return [val]
-  def raise_val(self, val): return val
+  def raise_val(self, *vals): return vals
   def lo_ty(self): return [self]
 
-  def update(self, shape=None, dtype=None, weak_type=None):
+  def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:
       shape = self.shape
     if dtype is None:
       dtype = self.dtype
     if weak_type is None:
       weak_type = self.weak_type
-    return DShapedArray(shape, dtype, weak_type)
+    return DShapedArray(shape, dtype, weak_type, **kwargs)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self:
@@ -412,7 +413,7 @@ class DShapedArray:
     wt_str = "~" if self.weak_type else ""
     return f'{wt_str}{self.str_short()}'
 
-  def str_short(self):
+  def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return (f"DShapedArray(shape={self.shape}, dtype={self.dtype},"
             f" weak_type={self.weak_type})")
 
