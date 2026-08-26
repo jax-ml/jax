@@ -80,11 +80,39 @@ jobs:
           python: ${{ inputs.python }}
           skip-download-jaxlib-from-gcs: ${{ inputs.skip-download-jaxlib-from-gcs }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
+      # TODO(belitskiy): Remove once Python 3.15 is released.
+      # This step only exists to allow building matplotlib and its deps for Python 3.15 pre-release.
+      - name: Set up MSVC environment variables for Python 3.15 pre-release dep building on Windows
+        if: runner.os == 'Windows' && startsWith(inputs.python, '3.15')
+        shell: pwsh
+        run: |
+          $vsDevCmd = 'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat'
+          $vsCommand = "call `"$vsDevCmd`" -no_logo -arch=x64 -host_arch=x64 && set"
+          $vsEnvironment = & cmd.exe /d /s /c $vsCommand
+
+          foreach ($name in 'INCLUDE', 'LIB', 'LIBPATH') {
+            $prefix = "$name="
+            $line = $vsEnvironment |
+              Where-Object {
+                $_.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+              } |
+              Select-Object -First 1
+
+            $line | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+
+          'C:\tools\LLVM-19.1.7\bin' |
+            Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install Python dependencies
         run: |
           $JAXCI_PYTHON -m pip install uv~=0.12.3
 
-          $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
+          # TODO(belitskiy): Remove --config-settings-package flags once matplotlib for
+          #  Python 3.15 is released.
+          $JAXCI_PYTHON -m uv pip install \
+            --config-settings-package=matplotlib:setup-args=-Dc_link_args=-fuse-ld=lld \
+            --config-settings-package=matplotlib:setup-args=-Dcpp_link_args=-fuse-ld=lld \
+            -r build/test-requirements.txt
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
