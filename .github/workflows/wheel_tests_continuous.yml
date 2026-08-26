@@ -504,7 +504,7 @@ jobs:
           artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
           python: ["3.12", "3.13", "3.14"]
           rocm: [
-            {label: "TheRock 7.14.0", wheel-version: "7", release-version: "7.14.0", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-7.14:latest" },
+            {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-10.0:latest" },
           ]
           exclude:
             - artifact: "jax-rocm-pjrt"
@@ -545,7 +545,7 @@ jobs:
           runner: ["amd-do-linux.jax.gpu.gfx950.1", "amd-do-linux.jax.gpu.gfx950.4", "amd-do-linux.jax.gpu.gfx950.8"]
           python: ["3.12"]
           rocm: [
-            {label: "TheRock 7.14.0", wheel-version: "7", release-version: "7.14.0", tag: "therock-7.14"},
+            {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", tag: "therock-10.0"},
           ]
     name: "Pytest ROCm ${{ matrix.rocm.label }}"
     with:
@@ -580,7 +580,7 @@ jobs:
           runner: ["amd-do-linux.jax.gpu.gfx950.4"]
           python: ["3.12"]
           rocm: [
-            {label: "TheRock 7.14.0", wheel-version: "7", release-version: "7.14.0", tag: "therock-7.14"},
+            {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", tag: "therock-10.0"},
           ]
           enable-x64: [0]
     name: "Bazel ROCm ${{ matrix.rocm.label }}"
