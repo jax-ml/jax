@@ -1459,12 +1459,9 @@ class NumpyHandler : public ShardArgsHandler {
     auto index_domains = std::move(*index_domains_or);
 
     xla::ifrt::Client::MakeArraysFromHostBufferShardsSpec spec = {
-        .array_spec = {
-            .dtype = ifrt_dtype,
-            .shape = ifrt_shape,
-            .sharding = std::move(ifrt_sharding),
-            .layout = nullptr,
-        }};
+        .array_spec = xla::ifrt::ArraySpec(ifrt_dtype, ifrt_shape,
+                                           std::move(ifrt_sharding), nullptr),
+    };
 
     absl::flat_hash_map<xla::ifrt::IndexDomain, size_t> shards;
     for (int i = 0; i < index_domains.size(); ++i) {

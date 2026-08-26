@@ -248,11 +248,9 @@ absl::StatusOr<nb::list> ExperimentalReshardArrays(nb::sequence py_arrays,
     Shape ifrt_shape(array.shape());
     TF_ASSIGN_OR_RETURN(ShardingRef ifrt_sharding,
                         GetIfrtHloSharding(out_shardings[i], ifrt_shape));
-    ifrt_specs.push_back(ArraySpec{
-        /*dtype=*/std::move(ifrt_dtype),
-        /*shape=*/std::move(ifrt_shape),
-        /*sharding=*/std::move(ifrt_sharding),
-    });
+    ifrt_specs.push_back(ArraySpec(std::move(ifrt_dtype), std::move(ifrt_shape),
+                                   std::move(ifrt_sharding),
+                                   /*layout=*/nullptr));
   }
 
   const ArrayCopySemantics copy_semantics =
@@ -345,9 +343,9 @@ ExperimentalSplitByMeshAxis(
                                   array_idx);
     }
 
-    input_specs.push_back(ArraySpec{/*dtype=*/array->dtype(),
-                                    /*shape=*/array->shape(),
-                                    /*sharding=*/array->shared_ptr_sharding()});
+    input_specs.push_back(ArraySpec(array->dtype(), array->shape(),
+                                    array->shared_ptr_sharding(),
+                                    /*layout=*/nullptr));
 
     for (int submesh_idx = 0; submesh_idx < num_submeshes; ++submesh_idx) {
       auto& mapping = mappings.emplace_back();
@@ -372,20 +370,18 @@ ExperimentalSplitByMeshAxis(
             ShardingRef ifrt_submesh_sharding,
             GetIfrtHloSharding(submesh_shardings[array_idx][submesh_idx],
                                subshape));
-        output_specs.push_back(
-            ArraySpec{/*dtype=*/array->dtype(),
-                      /*shape=*/std::move(subshape),
-                      /*sharding=*/std::move(ifrt_submesh_sharding)});
+        output_specs.push_back(ArraySpec(array->dtype(), std::move(subshape),
+                                         std::move(ifrt_submesh_sharding),
+                                         /*layout=*/nullptr));
       } else {
         // The arrays is replicated, so its shape does not change.
         TF_ASSIGN_OR_RETURN(
             ShardingRef ifrt_submesh_sharding,
             GetIfrtHloSharding(submesh_shardings[array_idx][submesh_idx],
                                array->shape()));
-        output_specs.push_back(
-            ArraySpec{/*dtype=*/array->dtype(),
-                      /*shape=*/array->shape(),
-                      /*sharding=*/std::move(ifrt_submesh_sharding)});
+        output_specs.push_back(ArraySpec(array->dtype(), array->shape(),
+                                         std::move(ifrt_submesh_sharding),
+                                         /*layout=*/nullptr));
       }
     }
 
@@ -536,10 +532,9 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
             offset_to_array, offset_to_array + num_contiguous_shards, 1});
         offset_from_array += num_contiguous_shards;
       }
-      input_specs.push_back(
-          ArraySpec{.dtype = array->dtype(),
-                    .shape = array->shape(),
-                    .sharding = array->shared_ptr_sharding()});
+      input_specs.push_back(ArraySpec(array->dtype(), array->shape(),
+                                      array->shared_ptr_sharding(),
+                                      /*layout=*/nullptr));
       input_ifrt_arrays.push_back(tsl::FormRef(array));
     }
 
@@ -548,9 +543,9 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
       TF_ASSIGN_OR_RETURN(
           ShardingRef ifrt_sharding,
           GetIfrtHloSharding(out_shardings[array_idx], first_array->shape()));
-      output_specs.push_back(ArraySpec{.dtype = first_array->dtype(),
-                                       .shape = first_array->shape(),
-                                       .sharding = std::move(ifrt_sharding)});
+      output_specs.push_back(ArraySpec(
+          first_array->dtype(), first_array->shape(), std::move(ifrt_sharding),
+          /*layout=*/nullptr));
     } else {
       std::vector<int64_t> concatenated_dims(
           first_array->shape().dims().begin(),
@@ -561,9 +556,10 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
       TF_ASSIGN_OR_RETURN(
           ShardingRef ifrt_sharding,
           GetIfrtHloSharding(out_shardings[array_idx], concatenated_shape));
-      output_specs.push_back(ArraySpec{.dtype = first_array->dtype(),
-                                       .shape = std::move(concatenated_shape),
-                                       .sharding = std::move(ifrt_sharding)});
+      output_specs.push_back(ArraySpec(first_array->dtype(),
+                                       std::move(concatenated_shape),
+                                       std::move(ifrt_sharding),
+                                       /*layout=*/nullptr));
     }
   }
 

@@ -278,7 +278,8 @@ absl::StatusOr<xla::ifrt::ArraySpec> ArraySpecFromShapeDtypeStruct(
       xla::ifrt::Shape::Dimensions(shape_dims.begin(), shape_dims.end()));
   TF_ASSIGN_OR_RETURN(auto sharding,
                       jax::GetIfrtHloSharding(aval.attr("sharding"), shape));
-  return xla::ifrt::ArraySpec{dtype, std::move(shape), std::move(sharding)};
+  return xla::ifrt::ArraySpec(dtype, std::move(shape), std::move(sharding),
+                              /*layout=*/nullptr);
 }
 
 struct BufferSource {
@@ -332,9 +333,9 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
             for (auto& aval : avals) {
               std::vector<std::pair<int, int>> buf_list;
               auto prim_type =
-                  xla::ValueOrThrow(xla::ifrt::ToPrimitiveType(aval.dtype));
-              auto shards = xla::ValueOrThrow(aval.sharding->Disassemble(
-                  aval.shape,
+                  xla::ValueOrThrow(xla::ifrt::ToPrimitiveType(aval.dtype()));
+              auto shards = xla::ValueOrThrow(aval.sharding()->Disassemble(
+                  aval.shape(),
                   xla::ifrt::SingleDeviceShardSemantics::kAddressableShards));
               buf_list.reserve(shards.size());
               for (auto& shard : shards) {
@@ -399,8 +400,8 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
                 buffers.push_back(atms[v.first]->RetrieveBuffer(v.second));
               }
               auto arr = xla::ValueOrThrow(xla::ifrt::PjRtArray::Create(
-                  ifrt_client, avals[i].dtype, avals[i].shape,
-                  avals[i].sharding, std::move(buffers), avals[i].layout));
+                  ifrt_client, avals[i].dtype(), avals[i].shape(),
+                  avals[i].sharding(), std::move(buffers), avals[i].layout()));
               out.push_back(jax::PyArray::MakeFromIfrtArrayAndSharding(
                   py_client, std::move(arr), shardings[i], false, true,
                   /*skip_checks=*/false));
@@ -516,9 +517,11 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
     jax::PyUserContextScope user_context_scope;
     auto aval = xla::ValueOrThrow(ArraySpecFromShapeDtypeStruct(py_aval));
     xla::ifrt::PjRtArray::PjRtBuffers buffers;
-    auto prim_type = xla::ValueOrThrow(xla::ifrt::ToPrimitiveType(aval.dtype));
-    auto shards = xla::ValueOrThrow(aval.sharding->Disassemble(
-        aval.shape, xla::ifrt::SingleDeviceShardSemantics::kAddressableShards));
+    auto prim_type =
+        xla::ValueOrThrow(xla::ifrt::ToPrimitiveType(aval.dtype()));
+    auto shards = xla::ValueOrThrow(aval.sharding()->Disassemble(
+        aval.shape(),
+        xla::ifrt::SingleDeviceShardSemantics::kAddressableShards));
     buffers.reserve(shards.size());
     for (auto& shard : shards) {
       auto* mem_space =
@@ -534,8 +537,8 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
       buffers.push_back(atm->RetrieveBuffer(0));
     }
     auto arr = xla::ValueOrThrow(xla::ifrt::PjRtArray::Create(
-        ifrt_client, aval.dtype, aval.shape, aval.sharding, std::move(buffers),
-        aval.layout));
+        ifrt_client, aval.dtype(), aval.shape(), aval.sharding(),
+        std::move(buffers), aval.layout()));
     return jax::PyArray::MakeFromIfrtArrayAndSharding(
         py_client, std::move(arr), py_aval.attr("sharding"), false, true,
         /*skip_checks=*/false);

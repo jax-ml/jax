@@ -323,10 +323,8 @@ absl::StatusOr<ifrt::ArrayRef> MakeIfrtArrayFromShardsInBatch(
   std::vector<ifrt::Client::MakeArraysFromHostBufferShardsSpec> specs;
   specs.push_back(ifrt::Client::MakeArraysFromHostBufferShardsSpec{
       std::move(host_buffers),
-      ifrt::ArraySpec{/*dtype=*/ifrt_dtype,
-                      /*shape=*/std::move(ifrt_shape),
-                      /*sharding=*/std::move(ifrt_sharding),
-                      /*layout=*/nullptr}});
+      ifrt::ArraySpec(ifrt_dtype, std::move(ifrt_shape),
+                      std::move(ifrt_sharding), /*layout=*/nullptr)});
   TF_ASSIGN_OR_RETURN(auto arrays,
                       ifrt_client->MakeArraysFromHostBufferShards(
                           absl::MakeSpan(specs), safe_host_semantics));

@@ -105,8 +105,9 @@ absl::StatusOr<std::vector<ifrt::ArraySpec>> GetIfrtArraySpecs(
         DtypeToIfRtDType(nb::cast<xla::nb_dtype>(aval.attr("dtype"))));
     TF_ASSIGN_OR_RETURN(auto ifrt_sharding,
                         GetIfrtHloSharding(aval.attr("sharding"), ifrt_shape));
-    ifrt_array_specs.push_back(ifrt::ArraySpec{
-        ifrt_dtype, std::move(ifrt_shape), std::move(ifrt_sharding)});
+    ifrt_array_specs.push_back(ifrt::ArraySpec(
+        ifrt_dtype, std::move(ifrt_shape), std::move(ifrt_sharding),
+        /*layout=*/nullptr));
   }
   return ifrt_array_specs;
 }

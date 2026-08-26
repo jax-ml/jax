@@ -1501,13 +1501,14 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
     }
 
     xla::ifrt::RemapPlan plan(
-        /*input_specs=*/{xla::ifrt::ArraySpec{
-            /*dtype=*/ifrt_array_ptr->dtype(),
-            /*shape=*/ifrt_array_ptr->shape(),
-            /*sharding=*/ifrt_array_ptr->shared_ptr_sharding()}},
-        {xla::ifrt::ArraySpec{/*dtype=*/ifrt_array_ptr->dtype(),
-                              /*shape=*/ifrt_array_ptr->shape(),
-                              /*sharding=*/std::move(dst_ifrt_sharding)}},
+        /*input_specs=*/{xla::ifrt::ArraySpec(
+            ifrt_array_ptr->dtype(), ifrt_array_ptr->shape(),
+            ifrt_array_ptr->shared_ptr_sharding(),
+            /*layout=*/nullptr)},
+        /*output_specs=*/
+        {xla::ifrt::ArraySpec(ifrt_array_ptr->dtype(), ifrt_array_ptr->shape(),
+                              std::move(dst_ifrt_sharding),
+                              /*layout=*/nullptr)},
         /*mappings=*/std::move(mappings));
     DCHECK_OK(plan.Validate());
     std::vector<xla::ifrt::ArrayRef> input;
