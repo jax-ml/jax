@@ -28,6 +28,7 @@ from jax._src import effects
 from jax._src import flattree as ft
 from jax._src.api_util import check_no_transformed_refs_args
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lib import ifrt_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
@@ -592,9 +593,21 @@ def _masked_cumop_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask,
     sign_bit_vec = vector.broadcast(
         x.type, arith.constant(i32, ir.IntegerAttr.get(i32, 0x80000000)))
     x = arith.xori(x, sign_bit_vec)
-  result = tpu.scan(
-      x.type, x, ir.Attribute.parse(f"#tpu.reduction_kind<{reduction_kind}>"),
-      mask=mask)
+  if ifrt_version < 67:
+    result = tpu.scan(  # pyrefly: ignore[missing-argument]
+        x.type,
+        x,
+        ir.Attribute.parse(f"#tpu.reduction_kind<{reduction_kind}>"),
+        mask=mask,
+    )
+  else:
+    result = tpu.scan(
+        x.type,
+        x,
+        ir.Attribute.parse(f"#tpu.reduction_kind<{reduction_kind}>"),
+        mask=mask,
+        dimension=x.type.rank - 1,  # pyrefly: ignore[unexpected-keyword]
+    )
   if sign_bit_vec is not None:  # Flip the sign bit back
     return arith.xori(result, sign_bit_vec)
   return result
@@ -686,8 +699,21 @@ def _cumsum_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axis,
   i1t = ir.IntegerType.get_signless(1)
   c1 = arith.constant(i1t, ir.IntegerAttr.get(i1t, 1))
   c1v = vector.broadcast(ir.VectorType.get(x.type.shape, c1.type), c1)
-  return tpu.scan(
-      x.type, x, ir.Attribute.parse("#tpu.reduction_kind<sum>"), mask=c1v)
+  if ifrt_version < 67:
+    return tpu.scan(  # pyrefly: ignore[missing-argument]
+        x.type,
+        x,
+        ir.Attribute.parse("#tpu.reduction_kind<sum>"),
+        mask=c1v,
+    )
+  else:
+    return tpu.scan(
+        x.type,
+        x,
+        ir.Attribute.parse("#tpu.reduction_kind<sum>"),
+        mask=c1v,
+        dimension=x.type.rank - 1,  # pyrefly: ignore[unexpected-keyword]
+    )
 
 
 def cumsum(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
