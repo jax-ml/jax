@@ -16,12 +16,11 @@
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
-# Placeholder: load proto_library
-
 load(
     "//jaxlib:jax.bzl",
     "cc_proto_library",
     "jax_visibility",
+    "proto_library",
     "xla_py_proto_library",
 )
 

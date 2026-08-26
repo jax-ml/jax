@@ -14,6 +14,7 @@
 
 # INTEL ONEAPI plugin extension and GPU kernels
 load("@local_config_sycl//sycl:build_defs.bzl", "sycl_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
@@ -144,8 +145,8 @@ nanobind_extension(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
-        "@oneapi//:headers",
         "@nanobind",
+        "@oneapi//:headers",
         "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
@@ -157,8 +158,8 @@ nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
-    linkopts = ["-link_stage"],
     features = ["-use_header_modules"],
+    linkopts = ["-link_stage"],
     module_name = "_prng",
     deps = [
         ":oneapi_gpu_kernel_helpers",
@@ -275,7 +276,7 @@ nanobind_extension(
         "//jaxlib/gpu:gpu_plugin_extension",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
-        "@oneapi//:headers",
         "@nanobind",
+        "@oneapi//:headers",
     ],
 )

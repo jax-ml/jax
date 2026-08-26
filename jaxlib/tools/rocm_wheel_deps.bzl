@@ -14,6 +14,8 @@
 
 """Build rules for aggregating rocm runtime dependecies into a single target."""
 
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
 def _collect_rocm_data_files_impl(ctx):
     rocm_repo = ctx.attr.rocm_repo.label.repo_name
 
@@ -45,4 +47,4 @@ _collect_rocm_data_files = rule(
 
 def collect_rocm_data_files(name, roots):
     _collect_rocm_data_files(name = name + "_gather", roots = roots)
-    native.cc_library(name = name, data = [":" + name + "_gather"])
+    cc_library(name = name, data = [":" + name + "_gather"])

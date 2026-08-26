@@ -27,7 +27,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `JAX_DISTRIBUTED_VERIFY_SECURE_CREDENTIALS` environment variables).
 
 * Changes
-  * JAX now uses Bazel 8.7.0 to build from source.
+  * JAX now uses Bazel 9.2.0 to build from source.
   * JAX now uses Bzlmod for its Bazel builds instead of WORKSPACE.
   * On GPU, multi-dimensional inverse real FFTs ({func}`jax.numpy.fft.irfftn`,
     {func}`jax.numpy.fft.irfft2` and {func}`jax.lax.fft` with `FftType.IRFFT`)
