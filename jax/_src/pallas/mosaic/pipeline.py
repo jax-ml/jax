@@ -1204,6 +1204,17 @@ class Scheduler:
             i + j
             for i, j in zip(fetch_indices, grid_offsets, strict=True)
       ))
+    self._compute_index_cache = {}
+
+  def _compute_index(self, buffered_ref, *indices):
+    _key = lambda x: (True, id(x)) if isinstance(x, core.Tracer) else (False, x)
+    key = (id(buffered_ref.spec.index_map), tuple(map(_key, indices)))
+    if key in self._compute_index_cache:
+      res, _, _ = self._compute_index_cache[key]
+      return res
+    res = buffered_ref.compute_index(*indices)
+    self._compute_index_cache[key] = (res, indices, buffered_ref.spec.index_map)
+    return res
 
   @contextmanager
   def _named_scope(self, name):
@@ -1232,8 +1243,8 @@ class Scheduler:
       return False
     if buffered_ref.has_indirect:
       return True
-    indices = buffered_ref.compute_index(*self.indices)
-    prev_indices = buffered_ref.compute_index(*self.prev_indices)
+    indices = self._compute_index(buffered_ref, *self.indices)
+    prev_indices = self._compute_index(buffered_ref, *self.prev_indices)
     return _tuples_differ(indices, prev_indices)
 
   def will_change_current(self, buffered_ref):
@@ -1241,8 +1252,8 @@ class Scheduler:
       return False
     if buffered_ref.has_indirect:
       return True
-    indices = buffered_ref.compute_index(*self.indices)
-    next_indices = buffered_ref.compute_index(*self.next_indices)
+    indices = self._compute_index(buffered_ref, *self.indices)
+    next_indices = self._compute_index(buffered_ref, *self.next_indices)
     return _tuples_differ(indices, next_indices)
 
   def will_change_fetch(self, buffered_ref):
@@ -1252,10 +1263,10 @@ class Scheduler:
       return True
     if buffered_ref.buffer_count < 2:
       return self.has_changed(buffered_ref)
-    indices = buffered_ref.compute_index(
-        *self.fetch_indices[buffered_ref.buffer_count-2])
-    next_indices = buffered_ref.compute_index(
-        *self.fetch_indices[buffered_ref.buffer_count-1])
+    indices = self._compute_index(
+        buffered_ref, *self.fetch_indices[buffered_ref.buffer_count-2])
+    next_indices = self._compute_index(
+        buffered_ref, *self.fetch_indices[buffered_ref.buffer_count-1])
     return _tuples_differ(indices, next_indices)
 
   def alias_local_refs(self, buffered_ref, ref):
@@ -1311,8 +1322,10 @@ class Scheduler:
         else:
           fetch_indices = self.fetch_indices[step]
           prev_grid_indices = self.fetch_indices[step - 1]
-          block_indices = buffered_ref.compute_index(*fetch_indices)
-          prev_block_indices = buffered_ref.compute_index(*prev_grid_indices)
+          block_indices = self._compute_index(buffered_ref, *fetch_indices)
+          prev_block_indices = self._compute_index(
+              buffered_ref, *prev_grid_indices
+          )
           block_changed = _tuples_differ(block_indices, prev_block_indices)
           predicate = self.first_step & block_changed
         @when(predicate)
