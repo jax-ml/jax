@@ -36,6 +36,11 @@ Features documented for the first time. See also the
   with their own tangent types, batching behaviors, and sharding. Consume
   with your own hijax primitives.
 
+- **{ref}`FFI with hijax <jax-401-ffi>`.** The foreign function interface
+  docs are rewritten around hijax primitives, so foreign calls can carry
+  their own rules for batching, differentiation, and sharding — composing
+  with `vmap`, `grad`, and partitioned inputs.
+
 - **{doc}`Fault tolerance <501/fault-tolerance>`.** Surviving machine
   failures in multi-host jobs with `jax.live_devices`.
 
