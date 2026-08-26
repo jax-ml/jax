@@ -710,6 +710,7 @@ class LinearizeTrace(Trace):
     tangent_nzs = [type(t) is not Zero for t in tangents_in]
     if (all(type(t) is Zero for t in tangents_in) and
         primitive is not core.ref_p and primitive is not core.empty_ref_p and
+        type(params.get('_prim')).__name__ != 'PrimalLeftTangentRight' and
         not any(isinstance(typeof(x), AbstractRef) for x in primals_in)):
       avals = tuple(core.typeof(x) for x in primals_in)
       return primitive.bind_with_trace(self.parent_trace, primals_in, avals, params)

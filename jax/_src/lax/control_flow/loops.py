@@ -1533,7 +1533,7 @@ def _scan_remat(trace, *args, jaxpr, ft_in, ft_out, **params):
   # TODO(mattjj): allow forwarding for ys outputs; carry outputs can't be
   # forwarded since residuals ride in the stacked ys position.
   jaxpr_fwd, jaxpr_rem_, fwds = remat.remat_jaxpr(
-      jaxpr, trace.policy, trace.custom_vjp_rules, allow_fwds=False)
+      jaxpr, trace.policy, allow_fwds=False)
   # Residuals ride along as extra ys (fwd scan) / extra xs (remnant scan).
   res_g = ft.nones(len(fwds))
   carry_out_g, ys_g = ft_out.unpack()

@@ -985,18 +985,14 @@ def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=(),
            prevent_cse=True):
   """Rematerialization decorator (new implementation, ``jax_remat3``).
 
-  Note on interaction with :func:`jax.custom_vjp`: when differentiating
-  rematted code, a custom_vjp application that appears *inside another
-  custom_vjp's fwd rule* is rematerialized as an opaque unit. For the
-  conventional idiom of a fwd rule calling its own custom_vjp-decorated
-  function to compute the primal output, that is exactly the intended
-  semantics. Values and gradients are unaffected at every order of
-  differentiation. The one observable consequence arises only under
-  higher-order AD: differentiating a second time runs the inner application's
-  own fwd rule (at first order it never runs, since the outer bwd rule
-  discharges the derivative), and values inside it (e.g.
-  ``checkpoint_name``-tagged intermediates) cannot be marked saveable by the
-  checkpoint ``policy`` there; they are always recomputed.
+  Note on interaction with :func:`jax.custom_vjp`: custom_vjp applications
+  are rematerialized as opaque units. Values and gradients are unaffected,
+  and a custom_vjp's fwd rule is re-run on the backward pass, but the
+  checkpoint ``policy`` does not reach inside custom_vjp rules: values there
+  (e.g. ``checkpoint_name``-tagged intermediates) cannot be marked saveable
+  by it. To control what gets saved inside custom-differentiated code, use
+  :func:`jax.experimental.custom_remat`, whose fwd rule receives the ambient
+  policy explicitly.
   """
   kwargs = dict(policy=policy, static_argnums=static_argnums,
                 static_argnames=static_argnames, prevent_cse=prevent_cse)
@@ -1052,22 +1048,22 @@ def _static_argnums(f, argnums, argnames) -> frozenset[int]:
   return frozenset(argnums)
 
 def dce(traced, policy):
-  in_fwd = pe._jaxpr_forwarding(traced.jaxpr)
-  jaxpr = pe.prune_jaxpr_outputs(traced.jaxpr, [f is None for f in in_fwd])
+  jaxpr_, attached = pe.separate_consts(traced.jaxpr)
+  in_fwd = pe._jaxpr_forwarding(jaxpr_)
+  jaxpr = pe.prune_jaxpr_outputs(jaxpr_, [f is None for f in in_fwd])
   for v in jaxpr.outvars:
     if isinstance(v.aval, AbstractRef):
       raise ValueError(
           "the rematted computation's closure contains a mutable array "
           f"reference of type {v.aval.str_short()} that is not one of the "
           "rematted function's inputs, but such refs cannot be saved")
-  # dce_jaxpr preserves attached consts (constvars are never pruned).
   jaxpr, used = pe.dce_jaxpr(jaxpr, True)
   keep = [u or i in {*in_fwd} for i, u in enumerate(used)]
   kept_idx = {i: p for p, i in enumerate(i for i, k in enumerate(keep) if k)}
   in_fwd = tuple(kept_idx[f] if f is not None else None for f in in_fwd)
   take = tuple(kept_idx[i] for i, u in enumerate(used) if u)
-  keep_res, keep_primals = split_list(keep, [traced._num_consts])
-  res = [r for r, u in zip(traced._consts, keep_res) if u]
+  keep_res, keep_primals = split_list(keep, [len(attached) + traced._num_consts])
+  res = [r for r, u in zip([*attached, *traced._consts], keep_res) if u]
   return keep_primals, Partial(
       partial(_dced, jaxpr, in_fwd, take, traced.out_tree, policy), res)
 
@@ -1107,8 +1103,7 @@ class RematTraced(HiPrim):
     # TODO eval_jaxpr_p trace time
     self._check_differentiable()
     traced = core.jaxpr_as_fun(self.jaxpr)
-    primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
-                                        custom_vjp_rules=True)
+    primals_out, fwd2 = remat_transform(self.policy, traced, *primals)
     in_nzs = tuple(tree_leaves(nzs_in))
     out_nzs_cell = []
     def make_vjp(*xs):
@@ -1156,8 +1151,7 @@ class RematTraced(HiPrim):
   def lin(self, nzs_in, *primals):
     self._check_differentiable()
     traced = core.jaxpr_as_fun(self.jaxpr)
-    primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
-                                        custom_vjp_rules=True)
+    primals_out, fwd2 = remat_transform(self.policy, traced, *primals)
     in_nzs = tuple(tree_leaves(nzs_in))
     out_nzs_cell = []
     def make_lin(*xs):
@@ -1189,12 +1183,11 @@ class RematTraced(HiPrim):
 
   def remat(self, trace, *args):  # pyrefly: ignore[bad-param-name-override]
     traced = core.jaxpr_as_fun(self.jaxpr)
-    out, rem_ = remat_transform(self.policy, traced, *args,
-                                custom_vjp_rules=trace.custom_vjp_rules)
+    out, rem_ = remat_transform(trace.policy, traced, *args)
     (jaxpr, in_tree, out_tree), (res,) = rem_.func.args, rem_.args
     def rem(*args_):
       args_flat = tree_leaves_checked(in_tree, args_)
-      out_flat = RematTraced(jaxpr, self.policy)(*res, *args_flat)
+      out_flat = RematTraced(jaxpr, trace.policy)(*res, *args_flat)
       return tree_unflatten(out_tree, out_flat)
     return out, rem
 
@@ -1227,26 +1220,19 @@ class CheckpointName(HiPrim):
   def remat(self, trace, x):  # pyrefly: ignore[bad-override]
     policy = trace.policy
     x = CheckpointName(self.name, self.in_avals[0])(x)
-    if isinstance(policy, (SaveOnlyTheseNames, SaveAnyNamesButThese)):
-      saveable = (self.name not in policy.names if isinstance(policy, SaveAnyNamesButThese)
-                  else self.name in policy.saveable_names)
-      rem = partial(primal_left_tangent_right, x) if saveable else lambda x: x
-      return x, rem
-    elif isinstance(policy, SaveAndOffloadOnlyTheseNames):
-      if self.name in policy.names_which_can_be_saved:
-        return x, partial(primal_left_tangent_right, x)
-      elif self.name in policy.names_which_can_be_offloaded:
-        x_host = api.device_put(x, core.mem_kind_to_space(policy.offload_dst),
-                                may_alias=False)
-        src_space = core.mem_kind_to_space(policy.offload_src)
-        def rem(x_rem):
-          x_dev = api.device_put(x_host, src_space, may_alias=False)
-          return primal_left_tangent_right(x_dev, x_rem)
-        return x, rem
-      else:
-        return x, lambda x: x  # full remat
-    elif policy is everything_saveable:
+    if policy is None:
+      return x, lambda x: x  # full remat
+    case = pe.ensure_enum(policy(name_p, name=self.name))
+    if isinstance(case, pe.SaveableType):
       return x, partial(primal_left_tangent_right, x)
+    elif isinstance(case, pe.Offloadable):
+      x_host = api.device_put(x, core.mem_kind_to_space(case.dst),
+                              may_alias=False)
+      src_space = core.mem_kind_to_space(case.src)
+      def rem(x_rem):
+        x_dev = api.device_put(x_host, src_space, may_alias=False)
+        return primal_left_tangent_right(x_dev, x_rem)
+      return x, rem
     else:
       return x, lambda x: x  # full remat
 
@@ -1280,13 +1266,13 @@ class PrimalLeftTangentRight(HiPrim):
     return x
 
   def lin(self, nzs_in, x, _x):  # type: ignore
-    return x, None
+    return x, None, nzs_in[1]
 
   def linearized(self, _, xdot, _xdot):  # type: ignore
     return _xdot
 
   def vjp_fwd(self, nzs_in, x, _x):  # type: ignore
-    return x, None
+    return x, None, nzs_in[1]
 
   def vjp_bwd_retval(self, _, g):
     return None, g

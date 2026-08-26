@@ -432,6 +432,8 @@ def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
 ad.primitive_linearizations[call_hi_primitive_p] = _call_hi_primitive_linearize
 
 def fake_linear_op(prim, nz_in_flat, nz_out_flat, rs, sres, *tangents):
+  if not any(nz_out_flat):
+    return [ad_util.Zero(a.to_tangent_aval()) for a in prim.out_avals_flat]
   rs = rs if sres is None else (rs, sres)  # unpacked in the transpose rule
   residuals_flat, residuals_tree = tree_flatten(rs)
   assert nz_in_flat == [not isinstance(t, ad_util.Zero) for t in tangents]
@@ -686,20 +688,6 @@ vjp_from_lin = _VJPFromLin(_vjp_fwd_from_lin, _transpose_linearized)
 
 
 class CustomVJPTraced(HiPrim):
-  """Applications take ``(consts, fwd_consts, *args)``.
-
-  The two leading arguments are synthetic, and both get zero cotangents:
-  ``consts`` is the primal function's closure environment promoted to an
-  argument (see ``Traced.with_consts_as_arg``), and ``fwd_consts`` is extra
-  inputs consumed only by the fwd rule and ignored by the primal (ordinarily
-  ``()``; the ``remat`` rule uses it to pass replay residuals to the helper
-  primitive it builds). Any value a rule needs beyond the primal arguments
-  must arrive through these slots as an explicit input, never by closure: the
-  rules are re-invoked by transformations after the trace of application time
-  is gone, so closed-over tracers go stale. The primal ``traced`` takes
-  ``(consts, *args)``; ``drop_fwd_consts`` maps the application signature
-  onto it.
-  """
   traced: Any
   fwd: Any
   bwd: Any
@@ -707,11 +695,6 @@ class CustomVJPTraced(HiPrim):
   static_argnums: Any
   opt_remat: bool
   with_logs: bool
-
-  @staticmethod
-  def drop_fwd_consts(consts, fwd_consts, *args):
-    del fwd_consts
-    return (consts, *args)
 
   def __init__(self, traced, fwd, bwd, in_avals, sym_zeros, static_argnums,
                opt_remat, with_logs=False):
@@ -725,8 +708,8 @@ class CustomVJPTraced(HiPrim):
     super().__init__()
 
   def expand(self, *args):
-    args = self.drop_fwd_consts(*args)
-    return self.traced(*[x for x in args if not isinstance(x, Static)])
+    args = [x for x in args if not isinstance(x, Static)]
+    return self.traced(*args)
 
   def lin(self, nzs_in, *primals):
     out, res, *rest = self.vjp_fwd(nzs_in, *primals)
@@ -796,7 +779,7 @@ class CustomVJPTraced(HiPrim):
     if not isinstance(in_cts, tuple):
       raise TypeError(f"Custom VJP bwd rule {self.bwd} must produce a tuple "
                       f"but got {type(in_cts)}.")
-    in_cts = (None, None, *in_cts)  # zero cts for the consts and fwd_consts args
+    in_cts = (None, *in_cts)  # zero cotangent for the promoted-consts argument
     if len(in_cts) != len(self.in_tree.children()) - len(self.static_argnums):
       raise ValueError(f"Custom VJP bwd rule {self.bwd} must produce a tuple "
                        "of length equal to the primal args tuple, but got "
@@ -804,7 +787,7 @@ class CustomVJPTraced(HiPrim):
     in_cts = broadcast_prefix(in_cts, in_avals_, is_leaf=lambda x: x is None)
     in_cts = tree_unflatten(self.in_tree, map(_replace_none, self.in_avals_flat, in_cts))
     tree_map_with_path(partial(_vjp_bwd_aval_mismatch_err, self.traced._fun_sourceinfo),
-                               self.in_avals[2:], in_cts[2:])
+                               self.in_avals[1:], in_cts[1:])
     if self.symbolic_zeros:
       in_cts = tree_map(ad_util.replace_rule_output_symbolic_zeros, in_cts)
     return (in_cts, logs) if self.with_logs else in_cts
@@ -829,8 +812,7 @@ class CustomVJPTraced(HiPrim):
     return primals_out, tangents_out
 
   def batch_dim_rule(self, axis_data, in_dims):
-    _, primal_in_tree = tracing_registry.flatten(self.drop_fwd_consts(*self.in_avals))
-    in_dims_flat = primal_in_tree.flatten_up_to(self.drop_fwd_consts(*in_dims))
+    in_dims_flat = self.in_tree.flatten_up_to(in_dims)
     _, out_dims = batching.batch_jaxpr2(self.traced.jaxpr, axis_data, tuple(in_dims_flat))
     return tree_unflatten(self.out_tree, out_dims)
 
@@ -839,35 +821,6 @@ class CustomVJPTraced(HiPrim):
     disallowed = effects.custom_derivatives_allowed_effects.filter_not_in(effs)
     if disallowed:
       raise NotImplementedError(f'Effects not supported in `custom_jvp`: {disallowed}')
-
-  def remat(self, trace, *args):  # type: ignore
-    if self.opt_remat:
-      return self(*args), self
-    if not trace.custom_vjp_rules:
-      return self(*args), self  # see https://github.com/jax-ml/jax/pull/38914
-    if not self.static_argnums:
-      fwd, dyn_args = self.fwd, args
-    else:
-      which_static = [i in self.static_argnums for i in range(len(args))]
-      dyn_args, static_args = partition_list(which_static, args)
-      static_args = [x.val for x in static_args]
-      fwd = lambda *dyn_args: self.fwd(*merge_lists(which_static, list(dyn_args), static_args))
-    # custom_vjp_rules=False so that custom_vjp applications inside fwd hit
-    # the early return above rather than recursively tracing their fwds.
-    (out, _), rem_ = remat.remat_transform(trace.policy, fwd, *dyn_args,
-                                           custom_vjp_rules=False)
-    res = tuple(rem_.args[0])
-    replay, statics = rem_.func, self.static_argnums
-    def fwd2(consts, fc_res, *rest):
-      fc, res = fc_res
-      args_ = (consts, fc, *rest)
-      return replay(res, *[x for i, x in enumerate(args_) if i not in statics])
-    in_avals = (self.in_avals[0],
-                (self.in_avals[1], tuple(map(typeof, res))),
-                *self.in_avals[2:])
-    helper = CustomVJPTraced(self.traced, fwd2, self.bwd, in_avals,
-                             False, self.static_argnums, False, self.with_logs)
-    return out, lambda consts, fc, *rest: helper(consts, (fc, res), *rest)
 
 
 def _vjp_primal_fwd_tree_mismatch_err(self, tree):
@@ -960,12 +913,12 @@ class custom_vjp3:
       traced = api.jit(f).trace(*dyn_args)
     args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
     consts, traced = traced.with_consts_as_arg()
-    fwd_ = update_wrapper(lambda _, __, *args: self.fwd(*args), self.fwd)
-    static_argnums = frozenset(i + 2 for i in self.static_argnums)
-    in_avals = tree_map(typeof, (consts, (), *args))
+    fwd_ = update_wrapper(lambda _, *args: self.fwd(*args), self.fwd)
+    static_argnums = frozenset(i + 1 for i in self.static_argnums)
+    in_avals = tree_map(typeof, (consts, *args))
     prim = CustomVJPTraced(traced, fwd_, self.bwd, in_avals, self.symz,
                            static_argnums, self.opt_remat, self.with_logs)
-    return prim(consts, (), *args)
+    return prim(consts, *args)
 
   def def_vmap(self, rule, /): return self.f.def_vmap(rule)
   def def_transpose(self, rule, /): return self.f.def_transpose(rule)
