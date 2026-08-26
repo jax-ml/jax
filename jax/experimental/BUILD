@@ -582,6 +582,15 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "shard_alike",
+    srcs = ["shard_alike.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//jax/_src:shard_alike",
+    ],
+)
+
+pytype_strict_library(
     # jax.experimental.shard_map is a legacy API and should not
     # be used in new code. Use jax.shard_map instead.
     name = "shard_map",

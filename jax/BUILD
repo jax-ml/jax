@@ -227,6 +227,7 @@ py_library_providing_imports_info(
         "//jax/_src:random",
         "//jax/_src:ref",
         "//jax/_src:scipy",
+        "//jax/_src:shard_alike",
         "//jax/_src:shard_map",
         "//jax/_src:sharding",
         "//jax/_src:sharding_impls",

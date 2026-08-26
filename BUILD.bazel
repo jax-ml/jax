@@ -59,6 +59,7 @@ wheel_sources(
         "//jax/experimental:rnn",
         "//jax/experimental:scheduling_groups",
         "//jax/experimental:serialize_executable",
+        "//jax/experimental:shard_alike",
         "//jax/experimental:shard_map",
         "//jax/experimental:source_mapper",
         "//jax/experimental:sparse_test_util",

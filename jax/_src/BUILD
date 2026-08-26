@@ -1173,6 +1173,24 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "shard_alike",
+    srcs = [
+        "shard_alike.py",
+    ],
+    deps = [
+        ":ad",
+        ":api",
+        ":batching",
+        ":config",
+        ":core",
+        ":mlir",
+        ":tree_util",
+        ":util",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
     name = "shard_map",
     srcs = ["shard_map.py"],
     deps = [
