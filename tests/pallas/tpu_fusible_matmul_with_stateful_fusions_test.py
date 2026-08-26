@@ -264,18 +264,8 @@ def _fusible_matmul(
       def _f(acc_ref, scalar_prefetch_smem_refs):
         pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
 
-        # Filtering out arguments that fuser concluded are not needed inside the
-        # kernel (pl.no_block_spec) to hide them from `emit_pipeline` to avoid
-        # unnecessary copies.
-        in_x_values_refs, in_x_value_block_specs = fuser.filter_no_block_specs(
-            x_values_refs, x_value_block_specs)
-        in_y_values_refs, in_y_value_block_specs = fuser.filter_no_block_specs(
-            y_values_refs, y_value_block_specs)
-        in_z_values_refs, in_z_value_block_specs = fuser.filter_no_block_specs(
-            z_values_refs, z_value_block_specs)
-        in_specs = (in_x_value_block_specs, in_y_value_block_specs,
-                    in_z_value_block_specs)
-
+        in_specs = (x_value_block_specs, y_value_block_specs,
+                    z_value_block_specs)
         in_specs = fuser.block_spec_with_prefetch(
             in_specs, scalar_prefetch_smem_refs)
         z_out_block_spec_ = fuser.block_spec_with_prefetch(
@@ -296,7 +286,7 @@ def _fusible_matmul(
             out_specs=[z_out_block_spec_],
             core_axis_name='core',
             dimension_semantics=dimension_semantics,
-        )(in_x_values_refs, in_y_values_refs, in_z_values_refs, out_ref)
+        )(x_values_refs, y_values_refs, z_values_refs, out_ref)
       pl.run_scoped(_f,
                     pltpu.VMEM((bm, bn), jnp.float32),
                     jax.tree.map(pltpu.SMEM.like, scalar_prefetch))
@@ -329,18 +319,8 @@ def _fusible_matmul(
     def body(scalar_prefetch_refs, acc_vmem_ref, scalar_prefetch_smem_refs):
       pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
 
-      # Filtering out arguments that fuser concluded are not needed inside the
-      # kernel (pl.no_block_spec) to hide them from `emit_pipeline` to avoid
-      # unnecessary copies.
-      in_x_values_refs, in_x_value_block_specs = fuser.filter_no_block_specs(
-          x_values_refs, x_value_block_specs)
-      in_y_values_refs, in_y_value_block_specs = fuser.filter_no_block_specs(
-          y_values_refs, y_value_block_specs)
-      in_z_values_refs, in_z_value_block_specs = fuser.filter_no_block_specs(
-          z_values_refs, z_value_block_specs)
-
-      in_specs = (in_x_value_block_specs, in_y_value_block_specs,
-                  in_z_value_block_specs)
+      in_specs = (x_value_block_specs, y_value_block_specs,
+                  z_value_block_specs)
       in_specs = fuser.block_spec_with_prefetch(
           in_specs, scalar_prefetch_smem_refs)
       z_out_block_spec_ = fuser.block_spec_with_prefetch(
@@ -361,7 +341,7 @@ def _fusible_matmul(
           out_specs=[z_out_block_spec_],
           core_axis_name='core',
           dimension_semantics=dimension_semantics,
-      )(in_x_values_refs, in_y_values_refs, in_z_values_refs, out_ref)
+      )(x_values_refs, y_values_refs, z_values_refs, out_ref)
 
     pl.kernel(
         body,

@@ -197,6 +197,66 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     out = kernel(x, y, z)
     np.testing.assert_allclose(out, x + y + 2 * z.reshape((8 * 8, 128)))
 
+  def test_emit_pipeline_filter_no_block_spec(self):
+    test_self = self
+    def pipeline_body(x_ref, y_ref, o_ref):
+      test_self.assertIsNone(y_ref)
+      o_ref[...] = x_ref[...] + 1
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 512), jnp.int32),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM),
+                  pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_hbm_ref, y_hbm_ref, o_hbm_ref):
+      pltpu.emit_pipeline(
+          pipeline_body,
+          grid=(4,),
+          in_specs=[pl.BlockSpec((8, 128), lambda i: (0, i)),
+                    pl.no_block_spec],
+          out_specs=pl.BlockSpec((8, 128), lambda i: (0, i)),
+      )(x_hbm_ref, y_hbm_ref, o_hbm_ref)
+
+    x = jnp.arange(8 * 512, dtype=jnp.int32).reshape(8, 512)
+    y = jnp.zeros_like(x)
+    out = kernel(x, y)
+    np.testing.assert_allclose(out, x + 1)
+
+  def test_emit_pipeline_with_allocations_filter_no_block_spec(self):
+    test_self = self
+    def pipeline_body(x_ref, y_ref, o_ref):
+      test_self.assertIsNone(y_ref)
+      o_ref[...] = x_ref[...] + 2
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 512), jnp.int32),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM),
+                  pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_hbm_ref, y_hbm_ref, o_hbm_ref):
+      pipeline, make_allocs = pltpu.emit_pipeline_with_allocations(
+          pipeline_body,
+          grid=(4,),
+          in_specs=[pl.BlockSpec((8, 128), lambda i: (0, i)),
+                    pl.no_block_spec],
+          out_specs=pl.BlockSpec((8, 128), lambda i: (0, i)),
+      )
+      @functools.partial(
+          pl.run_scoped, allocs=make_allocs(x_hbm_ref, y_hbm_ref, o_hbm_ref)
+      )
+      def _(allocs):
+        test_self.assertIsNone(allocs[1])
+        return pipeline(x_hbm_ref, y_hbm_ref, o_hbm_ref, allocations=allocs)
+
+    x = jnp.arange(8 * 512, dtype=jnp.int32).reshape(8, 512)
+    y = jnp.zeros_like(x)
+    out = kernel(x, y)
+    np.testing.assert_allclose(out, x + 2)
+
   def test_emit_pipeline_correct_dma_effects(self):
     def pipeline_body(x_ref, y_ref, o_ref, scratch_ref):
       # make_async_remote_copy with src=x_ref (in_spec) and dst=scratch_ref.
@@ -2901,6 +2961,26 @@ class PallasCallPipelineEffectsTest(jtu.JaxTestCase):
     x, y, o = jaxpr.invars
     expected_effects = {state.ReadEffect(x), state.ReadEffect(y),
                         state.WriteEffect(o)}
+    self.assertSetEqual(jaxpr.effects, expected_effects)
+
+  def test_no_block_spec_pipeline_effects(self):
+    def body(x, y, o):
+      o[...] = x[...]
+
+    def kernel(x_ref, y_ref, o_ref):
+      pltpu.emit_pipeline(
+          body, grid=(2,),
+          in_specs=[pl.BlockSpec((256,), lambda i: (i,)), pl.no_block_spec],
+          out_specs=[pl.BlockSpec((256,), lambda i: (i,))],
+      )(x_ref, y_ref, o_ref)
+
+    jaxpr = jax.make_jaxpr(kernel)(
+        state.shaped_array_ref((512,), jnp.float32),
+        state.shaped_array_ref((512,), jnp.float32),
+        state.shaped_array_ref((512,), jnp.float32),
+    )
+    x, y, o = jaxpr.invars
+    expected_effects = {state.ReadEffect(x), state.WriteEffect(o)}
     self.assertSetEqual(jaxpr.effects, expected_effects)
 
   def test_dynamic_grid_and_consts_effects(self):
