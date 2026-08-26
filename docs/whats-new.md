@@ -50,3 +50,6 @@ Features documented for the first time. See also the
 - **{ref}`Complex numbers and differentiation <jax-301-complex>`.** A better
   explanation of what JVPs and VJPs mean over $\mathbb{C}$, and where
   `grad`'s conjugation convention comes from.
+
+  **{ref}`Matrix multiplication precision control <jax-201-precision>`.** How
+  to control matrix multiplication algorithms, on each operation and globally.
