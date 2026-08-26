@@ -503,18 +503,6 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "shard_alike_test",
-    srcs = ["shard_alike_test.py"],
-    tags = ["multiaccelerator"],
-    deps = [
-        "//jax/experimental:shard_alike",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
     name = "pgle_test",
     srcs = ["pgle_test.py"],
     backend_tags = {
