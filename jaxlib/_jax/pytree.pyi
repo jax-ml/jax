@@ -17,21 +17,9 @@
 """Python tree library"""
 
 from collections.abc import Callable, Hashable, Iterable, Sequence
-from typing import Any, Final, TypeVar
+from typing import Any, Final
 
 version: int = ...
-
-_T = TypeVar("_T")
-
-_Children = TypeVar("_Children", bound=Iterable[Any])
-
-_KeyLeafPair = TypeVar("_KeyLeafPair", bound=tuple[Any, Any])
-
-_KeyLeafPairs = TypeVar("_KeyLeafPairs", bound=Iterable[tuple[Any, Any]])
-
-_KeyPath = TypeVar("_KeyPath", bound=tuple[Any, ...])
-
-_AuxData = TypeVar("_AuxData", bound=Hashable)
 
 class PyTreeRegistry:
   def __init__(
@@ -50,21 +38,26 @@ class PyTreeRegistry:
   def flatten_one_level(
       self, tree: object | None
   ) -> tuple[Iterable[Any], Any] | None: ...
-  def flatten_one_level_with_keys(
+  def flatten_one_level_with_keys[KeyLeafPair: tuple[Any, Any]](
       self, tree: object | None
-  ) -> tuple[Iterable[_KeyLeafPair], Any] | None: ...
-  def flatten_with_path(
+  ) -> tuple[Iterable[KeyLeafPair], Any] | None: ...
+  def flatten_with_path[KeyPath: tuple[Any, ...]](
       self,
       tree: object | None,
       leaf_predicate: Callable[[Any, Any], bool] | None = None,
-  ) -> tuple[list[tuple[_KeyPath, Any]], PyTreeDef]: ...
-  def register_node(
+  ) -> tuple[list[tuple[KeyPath, Any]], PyTreeDef]: ...
+  def register_node[
+      T,
+      Children: Iterable[Any],
+      AuxData: Hashable,
+      KeyLeafPairs: Iterable[tuple[Any, Any]],
+  ](
       self,
-      type: type[_T],
-      to_iterable: Callable[[_T], tuple[_Children, _AuxData]],
-      from_iterable: Callable[[_AuxData, _Children], _T],
+      type: type[T],
+      to_iterable: Callable[[T], tuple[Children, AuxData]],
+      from_iterable: Callable[[AuxData, Children], T],
       to_iterable_with_keys: (
-          Callable[[_T], tuple[_KeyLeafPairs, _AuxData]] | None
+          Callable[[T], tuple[KeyLeafPairs, AuxData]] | None
       ) = None,
   ) -> Any: ...
   def register_dataclass_node(
@@ -89,10 +82,10 @@ class PyTreeDef:
   def unflatten(self, arg: Iterable[Any], /) -> Any: ...
   def flatten_up_to(self, tree: object | None) -> list: ...
   def compose(self, arg: PyTreeDef, /) -> PyTreeDef: ...
-  def walk(
+  def walk[T](
       self,
       __f_node: Callable[[Any, Any], Any],
-      __f_leaf: Callable[[_T], Any] | None,
+      __f_leaf: Callable[[T], Any] | None,
       leaves: Iterable[Any],
       /,
   ) -> Any:
