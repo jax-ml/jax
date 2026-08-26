@@ -503,217 +503,6 @@ class GenericSharedMemory[
       # why arrays are not getting freed without this.
       gc.collect()
 
-  def get_buffer_content(
-      self,
-      key: MemKey,
-      rnge: tuple[slice | int, ...],
-      thread: ThreadKey | None,
-      increment_clock: bool = True,
-      logging_info: interpret_utils.LoggingInfo | None = None,
-  ) -> tuple[np.ndarray | None, ShapeAndDtype, VectorClock | None]:
-    """Reads contents of a memory buffer.
-
-    Args:
-      key: The key of the buffer to read.
-      rnge: The range to read within the buffer.
-      thread: The thread reading the buffer.
-      increment_clock: Whether to increment the given thread's vector clock
-      logging_info: Information about the source of the read.
-
-    Returns:
-      - The contents of the read range of the buffer, or None if reading
-        entirely out of bounds.
-      - The shape and dtype of the full content array of the buffer.
-      - The incremented vector clock for the given thread.
-        None if race detection is not enabled or if `increment_clock` is False.
-    """
-    clock = None
-    with self.lock:
-      if self.detect_races and increment_clock and thread is not None:
-        clock = self.incr_clock(thread, take_lock=False)
-
-      buff = self.mem[key]
-      if not isinstance(buff, Buffer):
-        raise ValueError(
-            f"Attempting to get contents of allocation with key `{key}` that is"
-            " not a `Buffer`."
-        )
-      shape_and_dtype = ShapeAndDtype(buff.logical_shape, buff.dtype)
-
-      try:
-        result = buff[rnge].copy()
-      except IndexError:
-        # `buf` was accessed with `rnge` entirely out of bounds.
-        result = None
-
-      if self.enable_logging and logging_info is not None:
-        self._log(
-            logging_info.format(
-                f"{key=}, {rnge=},"
-                f" in_bounds={result is not None}.\n"
-                f"logical_shape={buff.logical_shape},"
-                f" content_shape={buff.shape},"
-                f" {f'{result.shape=}' if result is not None else ''}.",
-                line_prefix="`get_buffer_content`",
-            )
-        )
-
-    return result, shape_and_dtype, clock
-
-  def store_buffer_content(
-      self,
-      key: MemKey,
-      rnge: tuple[slice | int, ...],
-      value: np.ndarray,
-      thread: ThreadKey,
-      increment_clock: bool = True,
-      logging_info: interpret_utils.LoggingInfo | None = None,
-  ) -> tuple[bool, ShapeAndDtype, VectorClock | None]:
-    """Stores contents into a memory buffer.
-
-    Args:
-      key: The key of the buffer to store into.
-      rnge: The range within the buffer contents that `value` is written to.
-      value: The array to store into the buffer.
-      thread: The thread writing into the buffer.
-      increment_clock: Whether to increment the given thread's vector clock.
-      logging_info: Information about the source of the store.
-
-    Returns:
-      - True if the store was entirely in bounds, False otherwise (i.e. if the
-        store was at least partially out of bounds).
-      - The shape and dtype of the full content array of the buffer.
-      - The incremented vector clock for the given thread.
-        None if race detection is not enabled or if `increment_clock` is False.
-    """
-    clock = None
-    with self.lock:
-      if self.detect_races and increment_clock:
-        clock = self.incr_clock(thread, take_lock=False)
-
-      buff = self.mem[key]
-      if not isinstance(buff, Buffer):
-        raise ValueError(
-            f"Attempting to store into allocation with key `{key}` that is not"
-            " a `Buffer`."
-        )
-      shape_and_dtype = ShapeAndDtype(buff.logical_shape, buff.dtype)
-
-      assert buff.dtype == value.dtype  # TODO(jburnim): Catch this statically.
-
-      try:
-        buff[rnge] = value
-        is_in_bounds = True
-      except IndexError:
-        # `buf` was accessed with `rnge` at least partially out of bounds.
-        is_in_bounds = False
-
-      if self.enable_logging and logging_info is not None:
-        self._log(
-            logging_info.format(
-                f"{key=}, {rnge=},"
-                f" in_bounds={is_in_bounds}.\n"
-                f"logical_shape={buff.logical_shape},"
-                f" content_shape={buff.shape}, {value.shape=}.",
-                line_prefix="`store_buffer_content`",
-            )
-        )
-
-      return is_in_bounds, shape_and_dtype, clock
-
-  def swap_buffer_content(
-      self,
-      key: MemKey,
-      rnge: tuple[slice | int, ...],
-      value: np.ndarray,
-      mask: np.ndarray | None,
-      thread: ThreadKey,
-      increment_clock: bool = True,
-      logging_info: interpret_utils.LoggingInfo | None = None,
-  ) -> tuple[np.ndarray | None, ShapeAndDtype, VectorClock | None]:
-    """Swaps contents of a memory buffer.
-
-    Args:
-      key: The key of the buffer to swap into.
-      rnge: The range within the buffer contents that `value` is swapped into.
-      value: The array to be written into the buffer.
-      mask: The mask to apply to the swap operation.
-      increment_clock: Whether to increment the given thread's vector clock.
-      thread: The thread that's writing into the buffer.
-      logging_info: Information about the source of the swap.
-
-    Returns:
-      - The contents of the range of the buffer (prior to the swap), or None if
-        accessing buffer contents bounds.
-      - The shape and dtype of the full content array of the buffer.
-      - The incremented vector clock for the given thread.
-        None if race detection is not enabled or if `increment_clock` is False.
-    """
-    clock = None
-    with self.lock:
-      if self.detect_races and increment_clock:
-        clock = self.incr_clock(thread, take_lock=False)
-
-      buff = self.mem[key]
-      if not isinstance(buff, Buffer):
-        raise ValueError(
-            f"Attempting to swap into allocation with `key` {key} that is not a"
-            " `Buffer`."
-        )
-
-      shape_and_dtype = ShapeAndDtype(buff.logical_shape, buff.dtype)
-
-      assert buff.dtype == value.dtype  # TODO(jburnim): Catch this statically.
-      # TODO(jburnim): Better error message if this raises?
-
-      try:
-        result = buff[rnge].copy()
-      except IndexError:
-        # `buf` was accessed with `rnge` entirely out of bounds.
-        result = None
-
-      if result is not None:
-        in_bounds_shape = result.shape
-
-        if mask is None:
-          assert in_bounds_shape == value.shape
-          buff[rnge] = value
-        else:
-          in_bounds_mask = np.full(mask.shape, True)
-          for i in range(len(in_bounds_shape)):
-            in_bounds_mask[in_bounds_shape[i] :] = False
-          if (~in_bounds_mask & mask).any():
-            result = None
-          else:
-            in_bounds_idx = tuple(slice(i) for i in in_bounds_shape)
-            raw_result = result
-            result = value.copy()
-            result[in_bounds_idx] = np.where(
-                mask[in_bounds_idx], raw_result, value[in_bounds_idx]
-            )
-            buff.set_in_bounds_portion(
-                rnge,
-                np.where(mask[in_bounds_idx], value[in_bounds_idx], raw_result),
-            )
-            # Assert that `np.where` is not a view, and hence, in particular,
-            # does not share underlying memory with `buff.content`.
-            assert result.base is None
-
-      if self.enable_logging and logging_info is not None:
-        self._log(
-            logging_info.format(
-                f"{key=}, {rnge=},"
-                f" in_bounds={result is not None}.\n"
-                f"logical_shape={buff.logical_shape},"
-                f" content_shape={buff.shape},"
-                f" {f'{result.shape=}' if result is not None else ''},"
-                f" {value.shape=}.",
-                line_prefix="`swap_buffer_content`",
-            )
-        )
-
-      return result, shape_and_dtype, clock
-
   def update_clocks(self, threads: Sequence[ThreadKey]):
     """Synchronizes the vector clocks for all of the given threads."""
     # Despite only updating the vector clocks for some threads, we still need to
@@ -1024,3 +813,215 @@ class SharedMemory(
     """Synchronizes the vector clocks for the cores on the given device."""
     threads = [(device_id, core_id) for core_id in range(self.num_cores_per_device)]
     self.update_clocks(threads)
+
+  def get_buffer_content(
+      self,
+      key: MemKey,
+      rnge: tuple[slice | int, ...],
+      thread: ThreadKey | None,
+      increment_clock: bool = True,
+      logging_info: interpret_utils.LoggingInfo | None = None,
+  ) -> tuple[np.ndarray | None, ShapeAndDtype, VectorClock | None]:
+    """Reads contents of a memory buffer.
+
+    Args:
+      key: The key of the buffer to read.
+      rnge: The range to read within the buffer.
+      thread: The thread reading the buffer.
+      increment_clock: Whether to increment the given thread's vector clock
+      logging_info: Information about the source of the read.
+
+    Returns:
+      - The contents of the read range of the buffer, or None if reading
+        entirely out of bounds.
+      - The shape and dtype of the full content array of the buffer.
+      - The incremented vector clock for the given thread.
+        None if race detection is not enabled or if `increment_clock` is False.
+    """
+    clock = None
+    with self.lock:
+      if self.detect_races and increment_clock and thread is not None:
+        clock = self.incr_clock(thread, take_lock=False)
+
+      buff = self.mem[key]
+      if not isinstance(buff, Buffer):
+        raise ValueError(
+            f"Attempting to get contents of allocation with key `{key}` that is"
+            " not a `Buffer`."
+        )
+      shape_and_dtype = ShapeAndDtype(buff.logical_shape, buff.dtype)
+
+      try:
+        result = buff[rnge].copy()
+      except IndexError:
+        # `buf` was accessed with `rnge` entirely out of bounds.
+        result = None
+
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                f"{key=}, {rnge=},"
+                f" in_bounds={result is not None}.\n"
+                f"logical_shape={buff.logical_shape},"
+                f" content_shape={buff.shape},"
+                f" {f'{result.shape=}' if result is not None else ''}.",
+                line_prefix="`get_buffer_content`",
+            )
+        )
+
+    return result, shape_and_dtype, clock
+
+  def store_buffer_content(
+      self,
+      key: MemKey,
+      rnge: tuple[slice | int, ...],
+      value: np.ndarray,
+      thread: ThreadKey,
+      increment_clock: bool = True,
+      logging_info: interpret_utils.LoggingInfo | None = None,
+  ) -> tuple[bool, ShapeAndDtype, VectorClock | None]:
+    """Stores contents into a memory buffer.
+
+    Args:
+      key: The key of the buffer to store into.
+      rnge: The range within the buffer contents that `value` is written to.
+      value: The array to store into the buffer.
+      thread: The thread writing into the buffer.
+      increment_clock: Whether to increment the given thread's vector clock.
+      logging_info: Information about the source of the store.
+
+    Returns:
+      - True if the store was entirely in bounds, False otherwise (i.e. if the
+        store was at least partially out of bounds).
+      - The shape and dtype of the full content array of the buffer.
+      - The incremented vector clock for the given thread.
+        None if race detection is not enabled or if `increment_clock` is False.
+    """
+    clock = None
+    with self.lock:
+      if self.detect_races and increment_clock:
+        clock = self.incr_clock(thread, take_lock=False)
+
+      buff = self.mem[key]
+      if not isinstance(buff, Buffer):
+        raise ValueError(
+            f"Attempting to store into allocation with key `{key}` that is not"
+            " a `Buffer`."
+        )
+      shape_and_dtype = ShapeAndDtype(buff.logical_shape, buff.dtype)
+
+      assert buff.dtype == value.dtype  # TODO(jburnim): Catch this statically.
+
+      try:
+        buff[rnge] = value
+        is_in_bounds = True
+      except IndexError:
+        # `buf` was accessed with `rnge` at least partially out of bounds.
+        is_in_bounds = False
+
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                f"{key=}, {rnge=},"
+                f" in_bounds={is_in_bounds}.\n"
+                f"logical_shape={buff.logical_shape},"
+                f" content_shape={buff.shape}, {value.shape=}.",
+                line_prefix="`store_buffer_content`",
+            )
+        )
+
+      return is_in_bounds, shape_and_dtype, clock
+
+  def swap_buffer_content(
+      self,
+      key: MemKey,
+      rnge: tuple[slice | int, ...],
+      value: np.ndarray,
+      mask: np.ndarray | None,
+      thread: ThreadKey,
+      increment_clock: bool = True,
+      logging_info: interpret_utils.LoggingInfo | None = None,
+  ) -> tuple[np.ndarray | None, ShapeAndDtype, VectorClock | None]:
+    """Swaps contents of a memory buffer.
+
+    Args:
+      key: The key of the buffer to swap into.
+      rnge: The range within the buffer contents that `value` is swapped into.
+      value: The array to be written into the buffer.
+      mask: The mask to apply to the swap operation.
+      increment_clock: Whether to increment the given thread's vector clock.
+      thread: The thread that's writing into the buffer.
+      logging_info: Information about the source of the swap.
+
+    Returns:
+      - The contents of the range of the buffer (prior to the swap), or None if
+        accessing buffer contents bounds.
+      - The shape and dtype of the full content array of the buffer.
+      - The incremented vector clock for the given thread.
+        None if race detection is not enabled or if `increment_clock` is False.
+    """
+    clock = None
+    with self.lock:
+      if self.detect_races and increment_clock:
+        clock = self.incr_clock(thread, take_lock=False)
+
+      buff = self.mem[key]
+      if not isinstance(buff, Buffer):
+        raise ValueError(
+            f"Attempting to swap into allocation with `key` {key} that is not a"
+            " `Buffer`."
+        )
+
+      shape_and_dtype = ShapeAndDtype(buff.logical_shape, buff.dtype)
+
+      assert buff.dtype == value.dtype  # TODO(jburnim): Catch this statically.
+      # TODO(jburnim): Better error message if this raises?
+
+      try:
+        result = buff[rnge].copy()
+      except IndexError:
+        # `buf` was accessed with `rnge` entirely out of bounds.
+        result = None
+
+      if result is not None:
+        in_bounds_shape = result.shape
+
+        if mask is None:
+          assert in_bounds_shape == value.shape
+          buff[rnge] = value
+        else:
+          in_bounds_mask = np.full(mask.shape, True)
+          for i in range(len(in_bounds_shape)):
+            in_bounds_mask[in_bounds_shape[i] :] = False
+          if (~in_bounds_mask & mask).any():
+            result = None
+          else:
+            in_bounds_idx = tuple(slice(i) for i in in_bounds_shape)
+            raw_result = result
+            result = value.copy()
+            result[in_bounds_idx] = np.where(
+                mask[in_bounds_idx], raw_result, value[in_bounds_idx]
+            )
+            buff.set_in_bounds_portion(
+                rnge,
+                np.where(mask[in_bounds_idx], value[in_bounds_idx], raw_result),
+            )
+            # Assert that `np.where` is not a view, and hence, in particular,
+            # does not share underlying memory with `buff.content`.
+            assert result.base is None
+
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                f"{key=}, {rnge=},"
+                f" in_bounds={result is not None}.\n"
+                f"logical_shape={buff.logical_shape},"
+                f" content_shape={buff.shape},"
+                f" {f'{result.shape=}' if result is not None else ''},"
+                f" {value.shape=}.",
+                line_prefix="`swap_buffer_content`",
+            )
+        )
+
+      return result, shape_and_dtype, clock
+

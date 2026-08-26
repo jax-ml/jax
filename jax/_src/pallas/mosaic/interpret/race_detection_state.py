@@ -15,10 +15,13 @@
 import collections
 import dataclasses
 import itertools
+import math
 import threading
+from typing import Any
 
 from jax._src import source_info_util
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
+import numpy as np
 
 
 def _is_empty_slice(slice_or_idx: slice | int):
@@ -58,13 +61,73 @@ def _slices_overlap(slice_or_idx1: slice | int, slice_or_idx2: slice | int):
   )
 
 
+def _shaped_ranges_overlap(range1: Any, range2: Any) -> bool:
+  if getattr(range1, "layout", None) is not None or getattr(range2, "layout", None) is not None:
+    cols1 = range1.shape[1] if len(range1.shape) > 1 else range1.shape[0]
+    cols2 = range2.shape[1] if len(range2.shape) > 1 else range2.shape[0]
+    extent = max(range1.offset + cols1, range2.offset + cols2)
+    r1 = np.zeros((128, extent), dtype=np.int8)
+    if range1.indices:
+      r1[:, range1.offset : range1.offset + cols1][range1.indices] += 1
+    else:
+      r1[:, range1.offset : range1.offset + cols1] += 1
+
+    r2 = np.zeros((128, extent), dtype=np.int8)
+    if range2.indices:
+      r2[:, range2.offset : range2.offset + cols2][range2.indices] += 1
+    else:
+      r2[:, range2.offset : range2.offset + cols2] += 1
+
+    return bool(np.any((r1 + r2) == 2))
+
+  # range1
+  range1_itemsize = np.dtype(range1.dtype).itemsize
+  range1_byte_len = math.prod(range1.shape) * range1_itemsize
+  range1_byte_slice = slice(range1.offset, range1.offset + range1_byte_len, 1)
+  range1_word = np.ones((range1_itemsize,), dtype=np.int8).view(range1.dtype).item()
+
+  range2_itemsize = np.dtype(range2.dtype).itemsize
+  range2_byte_len = math.prod(range2.shape) * range2_itemsize
+  range2_byte_slice = slice(range2.offset, range2.offset + range2_byte_len, 1)
+  range2_word = np.ones((range2_itemsize,), dtype=np.int8).view(range2.dtype).item()
+
+  extent = max(range1_byte_slice.stop, range2_byte_slice.stop)
+
+  r1 = np.zeros((extent,), dtype=np.int8)
+  a = np.full(range1.shape, range1_word)
+  a_view_of_r = r1[range1_byte_slice].view(range1.dtype).reshape(range1.shape, copy=False)
+  if range1.indices:
+    a_view_of_r[range1.indices] = a_view_of_r[range1.indices] + a[range1.indices]
+  else:
+    a_view_of_r[:] = a_view_of_r + a
+
+  r2 = np.zeros((extent,), dtype=np.int8)
+  b = np.full(range2.shape, range2_word)
+  b_view_of_r = r2[range2_byte_slice].view(range2.dtype).reshape(range2.shape, copy=False)
+  if range2.indices:
+    b_view_of_r[range2.indices] = b_view_of_r[range2.indices] + b[range2.indices]
+  else:
+    b_view_of_r[:] = b_view_of_r + b
+
+  r = r1 + r2
+
+  if np.any(r == 2):
+    return True
+  return False
+
+
 def _ranges_overlap(
-    range1: tuple[slice | int, ...], range2: tuple[slice | int, ...]
+    range1: Any | tuple[slice | int, ...], range2: Any | tuple[slice | int, ...]
 ) -> bool:
-  return all(
-      _slices_overlap(r1, r2)
-      for r1, r2 in itertools.zip_longest(range1, range2, fillvalue=slice(None))
-  )
+  if isinstance(range1, tuple) and isinstance(range2, tuple):
+    return all(
+        _slices_overlap(r1, r2)
+        for r1, r2 in itertools.zip_longest(range1, range2, fillvalue=slice(None))
+    )
+  elif not isinstance(range1, tuple) and not isinstance(range2, tuple):
+    return _shaped_ranges_overlap(range1, range2)
+  else:
+    raise ValueError(f'Either both allocations should be refunion or neither: {range1}, {range2}')
 
 
 @dataclasses.dataclass
@@ -94,6 +157,7 @@ class RaceDetectionState[ThreadKey]:
       rnge,
       source_info=None,
   ):
+
     if source_info is not None:
       user_frame = source_info_util.summarize(source_info)
     else:
@@ -137,6 +201,7 @@ class RaceDetectionState[ThreadKey]:
       rnge,
       source_info=None,
   ):
+
     if source_info is not None:
       user_frame = source_info_util.summarize(source_info)
     else:

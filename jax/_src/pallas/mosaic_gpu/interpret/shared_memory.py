@@ -21,18 +21,22 @@ import itertools
 import logging
 import math
 import threading
+import traceback
 import types
-from typing import Literal, Protocol, Self
+from typing import Literal, Protocol, Self, Any, Union
 
 import jax
 from jax import numpy as jnp
 from jax._src import source_info_util
+from jax._src import core as jax_core
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret import vector_clock
 from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
 from jax._src.pallas.mosaic_gpu.interpret import params as params
+from jax._src.state import indexing
+from jax._src.state import types as state_types
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -314,7 +318,7 @@ class HostAllocationRequest:
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class HostAllocationKey(HostAllocationRequest):
-  """Key for an allocation in shared memory."""
+  """Key for an allocation in shared memory. """
 
   buffer_id: int
 
@@ -426,6 +430,214 @@ class GpuClockBundle(vector_clock.VectorClockProto):
 
   def commit_smem(self) -> None:
     self.async_smem_clock.update(self.generic_clock)
+
+
+# Transforms `to_range` can ignore, because they change neither which elements
+# an access touches nor the order it yields them in:
+# * layout transforms, since a buffer is stored in its logical shape
+# * reshapes of a ref's leading dimensions, since indexes are written against logical shape
+DROPPED_TRANSFORMS = (
+    mosaic_gpu_core.UnswizzleRef,
+    mosaic_gpu_core.SwizzleTransform,
+    mosaic_gpu_core.UntilingTransform,
+    mosaic_gpu_core.TilingTransform,
+    mosaic_gpu_core.CollapseLeadingBatchDimensionsTransform,
+    mosaic_gpu_core.ExpandLeadingBatchDimensionsTransform,
+)
+
+def _is_dynamic(indexer: indexing.NDIndexer) -> bool:
+  return any(
+      isinstance(idx, indexing.Slice)
+      and (idx.is_dynamic_start or idx.is_dynamic_size)
+      for idx in indexer.indices
+  )
+
+
+def bake_transforms(transforms: tuple[Any, ...]):
+  """A stack of transforms converted to be handleable by interpret mode.
+
+  Interpret mode ignores some Pallas transforms and modifies others, so rather
+  than using an allocation's transforms directly, they should be used to
+  construct an instance of this class."""
+  print(f"Baking transforms:")
+  for t in transforms:
+    print(f"  {t}")
+
+  transpose_seen = False
+  target_range = ()
+  for t in transforms:
+    if isinstance(t, indexing.NDIndexer):
+      if _is_dynamic(t):
+        raise ValueError("Dynamic indexing not supported in GPU interpret mode")
+      if transpose_seen:
+        # `to_range` computes the accessed range in the ref's own coordinates,
+        # so an index applied after `transpose_ref` addresses different
+        # elements than it appears to. For now, error.
+        raise NotImplementedError(
+            "GPU interpret mode does not support indexing a ref after"
+            f" transposing it. Transforms: {transforms}"
+        )
+      target_range = interpret_utils._compose_slice_or_index(
+          target_range, tuple(interpret_utils._transform_slice_or_index(i) for i in t.indices)
+      )
+    elif isinstance(t, state_types.TransposeTransform):
+      transpose_seen = True
+    elif isinstance(t, mosaic_gpu_core.ExtractAliasedRef):
+      if t.layout is not None:
+        raise ValueError(
+            "GPU interpret mode does not support aliasing with a layout"
+        )
+      # Compute byte range of this aliased ref within the backing byte buffer:
+      itemsize = np.dtype(t.dtype).itemsize
+      byte_len = math.prod(t.shape) * itemsize
+      byte_slice = slice(t.offset, t.offset + byte_len, 1)
+      target_range = interpret_utils._compose_slice_or_index(
+          target_range, (byte_slice,)
+      )
+    elif isinstance(t, DROPPED_TRANSFORMS):
+      pass
+    else:
+      raise ValueError(f"Unsupported transform: {t}")
+
+  def apply_transforms(value: np.ndarray, invert: bool = False) -> np.ndarray:
+    """Applies the transforms to the given value.
+
+    When applied to a just loaded value, transforms should be applied normally.
+    When applied to an about-to-store value, transforms should be applied inverted
+    """
+    for t in reversed(transforms) if invert else transforms:
+      if isinstance(t, indexing.NDIndexer):
+        pass
+      elif isinstance(t, state_types.TransposeTransform):
+        perm = np.argsort(t.permutation) if invert else t.permutation
+        value = np.transpose(value, perm)
+      elif isinstance(t, mosaic_gpu_core.ExtractAliasedRef):
+        if invert:
+          # When writing back to shared byte buffer, flatten to bytes (int8)
+          # TODO(paublbib): Can we find this int8 constant somewhere instead of
+          # hardcoding?
+          value = value.reshape(-1).view(dtype=jnp.int8)
+        else:
+          # When reading from byte buffer slice, bitcast and reshape to target shape
+          value = value.view(dtype=t.dtype).reshape(t.shape)
+      elif isinstance(t, DROPPED_TRANSFORMS):
+        pass
+      else:
+        raise ValueError(f"Unsupported transform: {t}")
+    return value
+  return target_range, apply_transforms
+
+
+PlainRange = tuple[slice | int, ...]
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class ShapedRange():
+  offset: int
+  dtype: np.dtype
+  shape: tuple[int, ...]
+  indices: tuple[slice | int, ...]
+  transpose_indices: tuple[int, ...] | None = None
+  is_aliased: bool = False
+  layout: Any = None
+
+  def _get_view(self, target: np.ndarray) -> np.ndarray:
+    if self.is_aliased:
+      if self.layout is None:
+        itemsize = np.dtype(self.dtype).itemsize
+        byte_len = math.prod(self.shape) * itemsize
+        raw_bytes = target.reshape(-1).view(np.uint8)[
+            self.offset : self.offset + byte_len
+        ]
+        return raw_bytes.view(self.dtype).reshape(self.shape)
+      else:
+        ncols = (math.prod(self.shape) * np.dtype(self.dtype).itemsize) // (
+            target.shape[0] * np.dtype(target.dtype).itemsize
+        )
+        return (
+            target[:, self.offset : self.offset + ncols]
+            .view(self.dtype)
+            .reshape(self.shape)
+        )
+    else:
+      return target
+
+  def read(self, target: np.ndarray) -> np.ndarray:
+    view = self._get_view(target)
+    if self.indices:
+      result = view[self.indices]
+    else:
+      result = view
+    if self.transpose_indices is not None:
+      result = np.transpose(result, self.transpose_indices)
+    return result
+
+  def swap(self, target: np.ndarray, value: np.ndarray) -> np.ndarray:
+    view = self._get_view(target)
+    if self.indices:
+      result = view[self.indices].copy() if hasattr(view[self.indices], "copy") else view[self.indices]
+    else:
+      result = view.copy() if hasattr(view, "copy") else view
+      view[...] = value
+    if self.transpose_indices is not None:
+      result = np.transpose(result, self.transpose_indices)
+      value = np.transpose(value, np.argsort(self.transpose_indices))
+    if self.indices:
+      view[self.indices] = value
+    else:
+      view[...] = value
+    return result
+
+
+InterpRange = Union[PlainRange, ShapedRange]
+
+
+def execute_transforms(transforms: tuple[Any, ...], value: np.ndarray) -> ShapedRange:
+  allowable_transforms = (mosaic_gpu_core.ExtractAliasedRef, indexing.NDIndexer, state_types.TransposeTransform)
+  rnge = ShapedRange(
+      offset=0,
+      dtype=value.dtype,
+      shape=value.shape,
+      indices=(),
+      is_aliased=False,
+      layout=None,
+  )
+
+  for t in transforms:
+    if isinstance(t, DROPPED_TRANSFORMS):
+      continue
+    if isinstance(t, allowable_transforms):
+      if isinstance(t, mosaic_gpu_core.ExtractAliasedRef):
+        aval = jax_core.ShapedArray(t.shape, t.dtype)
+        for dt in transforms:
+          if isinstance(dt, DROPPED_TRANSFORMS):
+            aval = dt.transform_type(aval)
+        assert isinstance(aval, jax_core.ShapedArray)
+        rnge = ShapedRange(
+            offset=t.offset,
+            dtype=t.dtype,
+            shape=aval.shape,
+            indices=(),
+            is_aliased=True,
+            layout=t.layout,
+        )
+
+        allowable_transforms = (indexing.NDIndexer, state_types.TransposeTransform)
+      if isinstance(t, indexing.NDIndexer):
+        indices = tuple(interpret_utils._transform_slice_or_index(i) for i in t.indices)
+        rnge = dataclasses.replace(
+            rnge,
+            indices=interpret_utils._compose_slice_or_index(rnge.indices, indices))
+
+        allowable_transforms = (state_types.TransposeTransform, indexing.NDIndexer)
+      if isinstance(t, state_types.TransposeTransform):
+        rnge = dataclasses.replace(
+            rnge,
+            transpose_indices=t.permutation,
+        )
+        allowable_transforms = tuple()
+    else:
+      raise ValueError(f"Unsupported transform: {t} in {transforms}")
+  return rnge
 
 
 class GPUSharedMemory(
@@ -581,6 +793,45 @@ class GPUSharedMemory(
       )
       self.pending_tmem_stores = {}
       self.pending_tmem_loads = {}
+      for alloc in self.mem.values():
+        if isinstance(alloc, (Barrier, ClusterBarrier)):
+          alloc.reset()
+
+  def set_failed(
+      self,
+      exception: Exception,
+      device_id: int | None = None,
+      thread: ThreadKey | None = None,
+      top_level: bool = True,
+  ):
+    with self.lock:
+      if self._failure is None:
+        self._failure = exception
+        if thread is not None:
+          self._failed_thread = thread
+        elif device_id is not None:
+          self._failed_thread = Device(device_id)  # pyrefly: ignore[bad-assignment]
+
+    self.barrier.abort()
+    for alloc in self.mem.values():
+      if isinstance(alloc, Barrier):
+        alloc.abort()
+
+    if top_level:
+      self.clean_up_barrier.wait()
+
+  def check_failed(self):
+    with self.lock:
+      if self._failure is not None:
+        failure_str = "".join(traceback.format_exception(self._failure))
+        failed_info = (
+            f" on {self._failed_thread}"
+            if self._failed_thread is not None
+            else ""
+        )
+        raise RuntimeError(
+            f"Computation failed{failed_info} with exception:\n\n{failure_str}"
+        ) from None
 
   def thread_to_vc_position(self, thread: ThreadKey) -> int:
     return self.all_concurrent_threads[thread]
@@ -652,6 +903,199 @@ class GPUSharedMemory(
       )
 
     return barrier, clock
+
+  def get_buffer_content(
+      self,
+      key: MemKey,
+      transforms: tuple[Any, ...],
+      thread: ThreadKey | None,
+      increment_clock: bool = True,
+      logging_info: interpret_utils.LoggingInfo | None = None,
+  ) -> tuple[np.ndarray | None, InterpRange, memory.ShapeAndDtype, VectorClock | None]:
+    """Reads contents of a memory buffer. """
+    clock = None
+    with self.lock:
+      if self.detect_races and increment_clock and thread is not None:
+        clock = self.incr_clock(thread, take_lock=False)
+
+      buff = self.mem[key]
+      if not isinstance(buff, memory.Buffer):
+        raise ValueError(
+            f"Attempting to get contents of allocation with key `{key}` that is"
+            " not a `Buffer`."
+        )
+      shape_and_dtype = memory.ShapeAndDtype(buff.logical_shape, buff.dtype)
+
+      rnge = execute_transforms(transforms, buff.content)
+      result = rnge.read(buff.content).copy()
+
+      # TODO(paulbib): OOB handling
+      is_in_bounds = True
+      # try:
+      #   result = buff[rnge].copy()
+      # except IndexError:
+      #   # `buf` was accessed with `rnge` entirely out of bounds.
+      #   result = None
+
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                f"{key=}, {rnge=},"
+                f" in_bounds={result is not None}.\n"
+                f"logical_shape={buff.logical_shape},"
+                f" content_shape={buff.shape},"
+                f" {f'{result.shape=}' if result is not None else ''}.",
+                line_prefix="`get_buffer_content`",
+            )
+        )
+    if not any(isinstance(x, mosaic_gpu_core.ExtractAliasedRef) for x in transforms):
+      rnge = rnge.indices
+
+    return result, rnge, shape_and_dtype, clock
+
+  def store_buffer_content(
+      self,
+      key: MemKey,
+      transforms: tuple[Any, ...],
+      value: np.ndarray,
+      thread: ThreadKey,
+      increment_clock: bool = True,
+      logging_info: interpret_utils.LoggingInfo | None = None,
+  ) -> tuple[bool, InterpRange, memory.ShapeAndDtype, VectorClock | None]:
+    """Stores contents into a memory buffer.
+
+    Args:
+      key: The key of the buffer to store into.
+      rnge: The range within the buffer contents that `value` is written to.
+      value: The array to store into the buffer.
+      thread: The thread writing into the buffer.
+      increment_clock: Whether to increment the given thread's vector clock.
+      logging_info: Information about the source of the store.
+
+    Returns:
+      - True if the store was entirely in bounds, False otherwise (i.e. if the
+        store was at least partially out of bounds).
+      - The shape and dtype of the full content array of the buffer.
+      - The incremented vector clock for the given thread.
+        None if race detection is not enabled or if `increment_clock` is False.
+    """
+    clock = None
+    with self.lock:
+      if self.detect_races and increment_clock:
+        clock = self.incr_clock(thread, take_lock=False)
+
+      buff = self.mem[key]
+      if not isinstance(buff, memory.Buffer):
+        raise ValueError(
+            f"Attempting to store into allocation with key `{key}` that is not"
+            " a `Buffer`."
+        )
+      shape_and_dtype = memory.ShapeAndDtype(buff.logical_shape, buff.dtype)
+
+      #assert buff.dtype == value.dtype  # TODO(jburnim): Catch this statically.
+
+      rnge = execute_transforms(transforms, buff.content)
+      rnge.swap(buff.content, value)
+
+      # TODO(paulbib): OOB handling
+      is_in_bounds = True
+      # try:
+      #   buff[rnge] = apply_transforms(value, invert=True)
+      #   is_in_bounds = True
+      # except IndexError:
+      #   # `buf` was accessed with `rnge` at least partially out of bounds.
+      #   is_in_bounds = False
+
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                f"{key=}, {rnge=},"
+                f" in_bounds={is_in_bounds}.\n"
+                f"logical_shape={buff.logical_shape},"
+                f" content_shape={buff.shape}, {value.shape=}.",
+                line_prefix="`store_buffer_content`",
+            )
+        )
+
+      if not any(isinstance(x, mosaic_gpu_core.ExtractAliasedRef) for x in transforms):
+        rnge = rnge.indices
+
+      return is_in_bounds, rnge, shape_and_dtype, clock
+
+  def swap_buffer_content(
+      self,
+      key: MemKey,
+      transforms: tuple[Any, ...],
+      value: np.ndarray,
+      mask: np.ndarray | None,
+      thread: ThreadKey,
+      increment_clock: bool = True,
+      logging_info: interpret_utils.LoggingInfo | None = None,
+  ) -> tuple[np.ndarray | None, Any, memory.ShapeAndDtype, VectorClock | None]:
+    """Swaps contents of a memory buffer.
+
+    Args:
+      key: The key of the buffer to swap into.
+      rnge: The range within the buffer contents that `value` is swapped into.
+      value: The array to be written into the buffer.
+      mask: The mask to apply to the swap operation.
+      increment_clock: Whether to increment the given thread's vector clock.
+      thread: The thread that's writing into the buffer.
+      logging_info: Information about the source of the swap.
+
+    Returns:
+      - The contents of the range of the buffer (prior to the swap), or None if
+        accessing buffer contents bounds.
+      - The shape and dtype of the full content array of the buffer.
+      - The incremented vector clock for the given thread.
+        None if race detection is not enabled or if `increment_clock` is False.
+    """
+    clock = None
+    with self.lock:
+      if self.detect_races and increment_clock:
+        clock = self.incr_clock(thread, take_lock=False)
+
+      assert mask is None, "Mosaic GPU does not generate masked swaps."
+
+      buff = self.mem[key]
+      if not isinstance(buff, memory.Buffer):
+        raise ValueError(
+            f"Attempting to swap into allocation with `key` {key} that is not a"
+            " `Buffer`."
+        )
+
+      shape_and_dtype = memory.ShapeAndDtype(buff.logical_shape, buff.dtype)
+
+      rnge = execute_transforms(transforms, buff.content)
+      result = rnge.swap(buff.content, value)
+
+      # TODO(paulbib): OOB handling
+      # try:
+      #   result = buff[rnge].copy()
+      #   result = apply_transforms(result)
+      # except IndexError:
+      #   # `buf` was accessed with `rnge` entirely out of bounds.
+      #   result = None
+      # if result is not None:
+      #   assert result.shape == value.shape
+
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                f"{key=}, {rnge=},"
+                f" in_bounds={result is not None}.\n"
+                f"logical_shape={buff.logical_shape},"
+                f" content_shape={buff.shape},"
+                f" {f'{result.shape=}' if result is not None else ''},"
+                f" {value.shape=}.",
+                line_prefix="`swap_buffer_content`",
+            )
+        )
+
+      if not any(isinstance(x, mosaic_gpu_core.ExtractAliasedRef) for x in transforms):
+        rnge = rnge.indices
+
+      return result, rnge, shape_and_dtype, clock
 
   def get_barrier(self, key: MemKey) -> Barrier:
     with self.lock:
@@ -1088,6 +1532,21 @@ class Barrier(memory.Allocation):
               f" up to phase {self.phase - 1}."
           )
 
+  def reset(self):
+    """Resets the mutable state of the barrier between cluster runs."""
+    with self.cv:
+      self.arrivals_count = 0
+      self.phase = 0
+      self.last_observed_phase_by_thread = {}
+      self.pipelineable_async_tasks = set()
+      if self.detect_races:
+        self.clock = None
+
+  def abort(self):
+    """Aborts the `Barrier`."""
+    with self.cv:
+      self.cv.notify_all()
+
   def arrive(
       self,
       thread: Thread | None,
@@ -1223,6 +1682,7 @@ class Barrier(memory.Allocation):
                 )
             )
           self.cv.wait()
+          self.shared_memory.check_failed()
 
         if self.enable_logging and logging_info is not None:
           self._log(
@@ -1363,6 +1823,18 @@ class ClusterBarrier(memory.Allocation):
   def has_zero_ref_count(self) -> bool:
     with self.lock:
       return self.ref_count == 0
+
+  def reset(self):
+    """Resets the mutable state of the cluster barrier between cluster runs."""
+    with self.lock:
+      for barrier in self.barriers:
+        barrier.reset()
+
+  def abort(self):
+    """Aborts the `ClusterBarrier`."""
+    with self.lock:
+      for barrier in self.barriers:
+        barrier.abort()
 
   def arrive(
       self,

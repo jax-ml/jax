@@ -37,6 +37,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     not change the result under NumPy's convention (only the last axis is
     assumed symmetric), so results are unchanged while the transform is
     ~1.4x faster at typical sizes.
+  * {func}`jax.numpy.tri` now returns an array with the default float dtype
+    when the `dtype` argument is not specified. Previously it always returned
+    `float32` ({jax-issue}`#40242`).
 
 ## JAX 0.11.1 (August 17, 2026)
 
