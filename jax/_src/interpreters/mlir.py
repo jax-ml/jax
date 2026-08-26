@@ -617,7 +617,7 @@ class JaxIrContext(ir.Context):
     # context. We want to ensure that only the dialects we need are loaded.
     super(ir.Context, self).__init__(*args, **kwargs)
 
-_thread_local_context = _jax.config.Config(
+_thread_local_context = _jax.config.Config[Any](
     'mlir_thread_local_context',
     None,
     include_in_jit_key=False,

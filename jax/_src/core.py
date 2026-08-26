@@ -1413,17 +1413,17 @@ eval_trace = EvalTrace()
 top_axis_env = AxisEnv(FrozenDict({}), frozenset(), frozenset())
 
 # Weak reference to the trace state. This is included in, e.g., the jit key.
-trace_state = config_ext.Config(
+trace_state = config_ext.Config[Any](
     'trace_state', eval_trace._weakref, include_in_jit_key=True)
 
 # A strong reference to the trace state. This should not be included in any
 # jit or cache keys, but we need a thread-local strong reference to ensure it
 # remains alive.
-trace_state_strong_ref = config_ext.Config(
+trace_state_strong_ref = config_ext.Config[Any](
   'trace_state_strong_ref', eval_trace, include_in_jit_key=False,
   include_in_trace_context=False)
 
-axis_env_state = config_ext.Config(
+axis_env_state = config_ext.Config[Any](
     'axis_env_state',
     top_axis_env,
     include_in_jit_key=True,

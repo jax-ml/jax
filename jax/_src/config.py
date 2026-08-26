@@ -983,40 +983,40 @@ def enum_flag(name, default, *args, **kwargs) -> Flag[str]:
 
 already_configured_with_absl = False
 
-mesh_context_manager = config_ext.Config(
+mesh_context_manager = config_ext.Config[Any](
     'mesh_context_manager',
     (),
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
-abstract_mesh_context_manager = config_ext.Config(
+abstract_mesh_context_manager = config_ext.Config[Any](
     'abstract_mesh_context_manager',
     None,
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
-device_context = config_ext.Config(
+device_context = config_ext.Config[Any](
     'device_context', None, include_in_jit_key=True
 )
-compute_on_context_manager = config_ext.Config(
+compute_on_context_manager = config_ext.Config[Any](
     'compute_on_context_manager',
     None,
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
-xla_metadata_context_manager = config_ext.Config(
+xla_metadata_context_manager = config_ext.Config[Any](
     'xla_metadata_context_manager',
     None,
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
-pallas_tpu_interpret_mode_context_manager = config_ext.Config(
+pallas_tpu_interpret_mode_context_manager = config_ext.Config[Any](
     'pallas_tpu_interpret_mode_context_manager',
     None,
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
-layout_tracing_mode = config_ext.Config(
+layout_tracing_mode = config_ext.Config[Any](
     'layout_tracing_mode',
     None,
     include_in_jit_key=True,
