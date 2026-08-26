@@ -3,15 +3,15 @@
 
 <!--* freshness: { reviewed: '2026-07-09' } *-->
 
-On accelerators, matrix multiplication is the workhorse operation — and the
-hardware typically offers several ways to run it, trading accuracy for speed:
-true `float32` arithmetic, TensorFloat32 on NVIDIA tensor cores, one or
-several `bfloat16` passes on TPU, various `float8` modes, and so on. By
-default, JAX leans toward speed: `float32` dot products may be computed with
+Accelerator hardware offers several ways to compute matrix multiplication,
+trading accuracy for speed: true `float32` arithmetic, TensorFloat32 on NVIDIA
+tensor cores, one or several `bfloat16` passes on TPU, various `float8` modes,
+and so on.
+
+By default, JAX leans toward speed: `float32` dot products may be computed with
 reduced-precision arithmetic internally (`bfloat16` on TPU, TF32 on recent
-GPUs). That default is right for most neural-network workloads and surprising
-for everything else, so JAX gives you explicit control at every level: per
-operation, and globally.
+GPUs). But that's just a default, and you can take explicit control, per
+operation and globally.
 
 The `precision` argument — accepted by {func}`jax.lax.dot_general`,
 {func}`jax.lax.dot`, and the `jax.numpy` functions built on them
