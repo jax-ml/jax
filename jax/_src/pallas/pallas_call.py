@@ -1007,7 +1007,7 @@ jax_core.custom_typechecks[pallas_call_p] = _pallas_call_typecheck_rule
 
 @state_discharge.register_discharge_rule(pallas_call_p)
 def _pallas_call_state_discharge_rule(
-    ctx,
+    ctx: state_discharge.DischargeContext,
     *args,
     jaxpr: jax_core.Jaxpr,
     input_output_aliases: tuple[tuple[int, int], ...],
@@ -1025,15 +1025,17 @@ def _pallas_call_state_discharge_rule(
   num_refs = len(jaxpr.constvars)
   ref_avals, rest_in_avals = split_list(ctx.in_avals, [num_refs])
   assert all(isinstance(ref_aval, state.AbstractRef) for ref_aval in ref_avals)
-  ref_avals = [
-      state.AbstractRef(
-          ref_aval.inner_aval, pallas_core.MemorySpace.ANY
-      )
-      for ref_aval in ref_avals
-  ]
+  ref_avals = cast(list[state.AbstractRef], ref_avals)
+  in_memory_spaces = [aval.memory_space for aval in ref_avals]
+  # Preserve each ref's declared memory space so (a) the rewritten kernel body
+  # type-checks against the original jaxpr constvars and (b) the buffer stays in
+  # the requested space. Refs without an explicit space use ANY.
   ref_block_specs = [
-      pallas_core.BlockSpec(memory_space=pallas_core.MemorySpace.ANY)
-  ] * num_refs
+      pallas_core.BlockSpec(
+          memory_space=ms if ms is not None else pallas_core.MemorySpace.ANY
+      )
+      for ms in in_memory_spaces
+  ]
   ref_block_mappings = [
       block_spec.to_block_mapping(
           origin="",  # TODO(sharadmv): enable origins for refs
@@ -1074,6 +1076,10 @@ def _pallas_call_state_discharge_rule(
           grid_mapping.num_index_operands,
       ],
   )
+  ref_args = [
+      state_discharge.constrain(arg, ms, ctx.strip_memory_space)
+      for arg, ms in zip(ref_args, in_memory_spaces)
+  ]
   def _rewritten_body(*args):
     index_args, in_args, out_args, rest_args = split_list(
         args, [new_grid_mapping.num_index_operands, new_grid_mapping.num_inputs,
@@ -1127,6 +1133,16 @@ def _pallas_call_state_discharge_rule(
       name=name,
   )
   refs_out, rest = split_list(out_flat, [num_refs])
+  # constrain aliased outputs
+  for i, o in input_output_aliases:
+    in_aval = rest_in_avals[i]
+    ms = getattr(in_aval, 'memory_space', None)
+    rest[o] = state_discharge.constrain(rest[o], ms, ctx.strip_memory_space)
+  # constrain refs
+  refs_out = [
+      state_discharge.constrain(ref_out, ms, ctx.strip_memory_space)
+      for ref_out, ms in zip(refs_out, in_memory_spaces)
+  ]
   updated_vals_in = refs_out + [None] * len(rest_in_avals)
   return updated_vals_in, rest
 

@@ -295,6 +295,8 @@ class MemorySpace(enum.Enum):
   def __str__(self) -> str:
     return self.value
 
+state_discharge.register_neutral_memory_space(MemorySpace.ANY)
+state_discharge.register_neutral_memory_space(MemorySpace.DEFAULT)
 
 @dataclasses.dataclass(frozen=True)
 class CoreMemorySpace:
@@ -812,7 +814,7 @@ class BlockMapping:
     return TransformedRef(self.transformed_block_aval, reverse_transforms)
 
   def compute_start_indices_interpret(self, loop_idx, *args):
-    jaxpr = state_discharge.discharge_state(self.index_map_jaxpr)
+    jaxpr = state_discharge.discharge_state(self.index_map_jaxpr, strip_memory_space=True)
     block_indices_and_rest = jax_core.jaxpr_as_fun(jaxpr)(*loop_idx, *args)
     # Since we're passing in `Ref`s potentially, we need to split out their
     # updated values since we only care about the return values.
@@ -1609,28 +1611,7 @@ class Mesh(Protocol):
     yield
 
 
-with_memory_space_constraint_p = jax_core.Primitive(
-    'with_memory_space_constraint')
-
-@with_memory_space_constraint_p.def_impl
-def with_memory_space_constraint_impl(x, *, memory_space):
-  del x, memory_space
-  raise ValueError("Cannot eagerly run with_memory_space_constraint.")
-
-
-@with_memory_space_constraint_p.def_abstract_eval
-def with_memory_space_constraint_abstract_eval(x, *, memory_space):
-  if not isinstance(x, jax_core.ShapedArray):
-    raise NotImplementedError("with_memory_space_constraint only supports "
-                              "arrays.")
-  return x.update(memory_space=memory_space)
-
-def with_memory_space_constraint_lowering_rule(ctx, x, *, memory_space):
-  del ctx, memory_space
-  return [x]
-mlir.register_lowering(
-    with_memory_space_constraint_p, with_memory_space_constraint_lowering_rule
-)
+with_memory_space_constraint_p = jax_core.with_memory_space_constraint_p
 
 
 def with_memory_space_constraint_batching_rule(

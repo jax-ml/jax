@@ -3081,6 +3081,12 @@ register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 
 register_lowering(ad_util.stop_gradient_p, lambda ctx, x: [x])
 
+def with_memory_space_constraint_lowering_rule(ctx, x, *, memory_space):
+  del ctx, memory_space
+  return [x]
+register_lowering(
+    core.with_memory_space_constraint_p, with_memory_space_constraint_lowering_rule
+)
 
 def compare_hlo(x, y, direction: str, comparison_type: str | None = None):
   """Creates CompareOp."""

@@ -198,7 +198,7 @@ def _default_memory_space(meshes: Sequence[pallas_core.Mesh]):
 
 
 def _mpmd_map_discharge_rule(
-    ctx,
+    ctx: state_discharge.DischargeContext,
     *args: Any,
     jaxprs,
     meshes,
@@ -227,17 +227,17 @@ def _mpmd_map_discharge_rule(
 
   default_memory_space = _default_memory_space(meshes)
   in_memory_spaces = [
-      pallas_core.get_memory_space_aval(aval) for aval in ctx.in_avals
+      aval.memory_space if isinstance(aval, state.AbstractRef) else None
+      for aval in ctx.in_avals
   ]
   in_memory_spaces = [
       default_memory_space if m is None else m for m in in_memory_spaces
   ]
   args = tuple(
-      pallas_core.with_memory_space_constraint_p.bind(
-          arg, memory_space=memory_space
+      state_discharge.constrain(
+          arg, memory_space, ctx.strip_memory_space,
+          neutral_ms=(default_memory_space,),
       )
-      if memory_space is not default_memory_space
-      else arg
       for arg, memory_space in zip(args, in_memory_spaces)
   )
 
@@ -289,7 +289,7 @@ def _mpmd_map_discharge_rule(
       state_discharge.discharged_aval(
           ctx.in_avals[i],
           discharge=True,
-          strip_memory_space=True,
+          strip_memory_space=ctx.strip_memory_space,
       )
       for i in write_indices
   ]
@@ -318,7 +318,18 @@ def _mpmd_map_discharge_rule(
   ans, updated_refs = util.split_list(res, [num_out_orig])
   new_invals = [None] * len(ctx.in_avals)
   for out_idx, in_idx in enumerate(write_indices):
-    new_invals[in_idx] = updated_refs[out_idx]
+    ms = in_memory_spaces[in_idx]
+    new_invals[in_idx] = state_discharge.constrain(
+        updated_refs[out_idx], ms, ctx.strip_memory_space,
+        neutral_ms=(default_memory_space,),
+    )
+  # constraint aliased outputs
+  for in_idx, out_idx in input_output_aliases.items():
+    ms = in_memory_spaces[in_idx]
+    ans[out_idx] = state_discharge.constrain(
+        ans[out_idx], ms, ctx.strip_memory_space,
+        neutral_ms=(default_memory_space,),
+    )
 
   return new_invals, ans
 

@@ -70,21 +70,10 @@ def discharged_aval(
       `core.MemorySpace.Device`. Has no effect on `AbstractRef`s if
       `discharge=False`.
   """
-  if not isinstance(aval, AbstractRef):
-    if (
-        strip_memory_space
-        and isinstance(aval, core.ShapedArray)
-        and getattr(aval, "memory_space", None) is not None
-    ):
-      return aval.update(memory_space=core.MemorySpace.Device)
+  if not isinstance(aval, AbstractRef) or not discharge:
     return aval
 
-  if not discharge:
-    return aval
-
-  inner = discharged_aval(
-      aval.inner_aval, discharge=False, strip_memory_space=strip_memory_space
-  )
+  inner = aval.inner_aval
   if isinstance(inner, core.ShapedArray) and aval.memory_space is not None:
     if strip_memory_space:
       return inner.update(memory_space=core.MemorySpace.Device)
@@ -97,7 +86,7 @@ def discharge_state(
     *,
     should_discharge: bool | Sequence[bool] = True,
     lower: bool = True,
-    strip_memory_space: bool = True,
+    strip_memory_space: bool = False,
 ) -> core.Jaxpr:
   """Converts a stateful jaxpr into a pure one.
 
@@ -210,6 +199,33 @@ def register_discharge_rule(prim: core.Primitive):
   return register
 
 
+_neutral_memory_spaces: set[Any] = {
+    None,
+    core.MemorySpace.Device,
+    core.MemorySpace.Any,
+}
+
+def register_neutral_memory_space(ms):
+  _neutral_memory_spaces.add(ms)
+
+def unconstrain(
+    x, ms, strip: bool, *, neutral_ms: Sequence[Any] = ()
+):
+  if not isinstance(core.typeof(x), core.ShapedArray):
+    return x
+  if strip or ms in _neutral_memory_spaces or ms in neutral_ms:
+    return x
+  return core.with_memory_space_constraint(x, core.MemorySpace.Device)
+
+def constrain(
+    x, ms, strip: bool, *, neutral_ms: Sequence[Any] = ()
+):
+  if not isinstance(core.typeof(x), core.ShapedArray):
+    return x
+  if strip or ms in _neutral_memory_spaces or ms in neutral_ms:
+    return x
+  return core.with_memory_space_constraint(x, ms)
+
 def _eval_jaxpr_discharge_state(
     jaxpr: core.Jaxpr, should_discharge: Sequence[bool], consts: Sequence[Any],
     strip_memory_space: bool, *args: Any):
@@ -234,6 +250,9 @@ def _eval_jaxpr_discharge_state(
         ans = env.read(invar)
         if eqn.params['pin']:
           ans = pin(ans)
+        else:
+          ms = getattr(outvar.aval, "memory_space", None)
+          ans = constrain(ans, ms, strip_memory_space)
         refs_to_discharge.add(id(outvar.aval))
       elif eqn.primitive is core.empty_ref_p:
         [], [outvar] = eqn.invars, eqn.outvars
@@ -246,6 +265,9 @@ def _eval_jaxpr_discharge_state(
           # TODO(mattjj,yashkatariya): switch to create_linear once the
           # CreateBuffer custom call is implemented in the runtime
           ans = pin(ans)
+        else:
+          ms = getattr(outvar.aval, "memory_space", None)
+          ans = constrain(ans, ms, strip_memory_space)
         refs_to_discharge.add(id(outvar.aval))
       elif eqn.primitive is core.free_ref_p:
         [invar], [] = eqn.invars, eqn.outvars
@@ -262,6 +284,9 @@ def _eval_jaxpr_discharge_state(
         # unpinned.
         if isinstance(core.typeof(ans), AbstractLinVal):
           ans = unpin(ans)
+        else:
+          ms = getattr(invar.aval, "memory_space", None)
+          ans = unconstrain(ans, ms, strip_memory_space)
         refs_to_discharge.remove(id(invar.aval))
       elif any(should_discharge) or core.internal_mutable_array_effect in eqn.effects:
         if eqn.primitive in _discharge_rules:
@@ -275,8 +300,7 @@ def _eval_jaxpr_discharge_state(
         ctx = DischargeContext(
             in_avals, out_avals, should_discharge, strip_memory_space
         )
-        new_invals, ans = rule(
-            ctx, *invals, **eqn.params)
+        new_invals, ans = rule(ctx, *invals, **eqn.params)
         for invar, should, new_inval in zip(eqn.invars, should_discharge, new_invals):
           if new_inval is not None:
             if not should:
@@ -470,7 +494,8 @@ def _convert_to_gather_arrays(indexer: indexing.NDIndexer) -> tuple[Array, ...]:
 def _get_discharge_rule(
     ctx: DischargeContext, x, *idx,
     tree):
-  del ctx
+  ms = getattr(ctx.in_avals[0], 'memory_space', None)
+  x = unconstrain(x, ms, ctx.strip_memory_space)
   y = _get_discharge(x, idx, tree)
   return (None,) * (len(idx) + 1), y
 
@@ -601,8 +626,10 @@ def _get_discharge(x, idx, tree):
 def _swap_discharge_rule(
     ctx: DischargeContext, x, val, *idx,
     tree):
-  del ctx
+  ms = getattr(ctx.in_avals[0], 'memory_space', None)
+  x = unconstrain(x, ms, ctx.strip_memory_space)
   z, x_new = _swap_discharge(x, val, idx, tree)
+  x_new = constrain(x_new, ms, ctx.strip_memory_space)
   return (x_new, None) + (None,) * len(idx), z
 
 def _swap_discharge(x, val, idx, tree):
@@ -613,8 +640,10 @@ def _swap_discharge(x, val, idx, tree):
 def _addupdate_discharge_rule(
     ctx: DischargeContext, x, val, *idx,
     tree):
-  del ctx
+  ms = getattr(ctx.in_avals[0], 'memory_space', None)
+  x = unconstrain(x, ms, ctx.strip_memory_space)
   ans = _addupdate_discharge(x, val, idx, tree)
+  ans = constrain(ans, ms, ctx.strip_memory_space)
   return (ans, None) + (None,) * len(idx), []
 
 @register_discharge_rule(lax.optimization_barrier_p)

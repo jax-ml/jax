@@ -2913,6 +2913,46 @@ array_ref_effect = internal_mutable_array_effect = InternalMutableArrayEffect()
 effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
 effects.remat_allowed_effects.add_type(InternalMutableArrayEffect)
 
+with_memory_space_constraint_p = Primitive(
+    'with_memory_space_constraint')
+
+@with_memory_space_constraint_p.def_impl
+def with_memory_space_constraint_impl(x, *, memory_space):
+  del x, memory_space
+  raise ValueError("Cannot eagerly run with_memory_space_constraint.")
+
+
+@with_memory_space_constraint_p.def_abstract_eval
+def with_memory_space_constraint_abstract_eval(x, *, memory_space):
+  if not isinstance(x, ShapedArray):
+    raise NotImplementedError("with_memory_space_constraint only supports "
+                              "arrays.")
+  return x.update(memory_space=memory_space)
+
+def with_memory_space_constraint(
+    x: Array, memory_space: Any
+) -> Array:
+  """Constrains the memory space of an array.
+
+  This primitive does not change the value of ``x``, but it constrains the
+  memory space where it should be allocated. This is useful to force
+  Pallas to allocate an array in a specific memory space.
+
+  As of now, this only operates on the inputs pallas_calls, as in you can
+  apply this to the arguments of a pallas_call and it will constrain them, but
+  other operations will not respect this constraint.
+
+  Args:
+    x: The array to constrain.
+    memory_space: The memory space to constrain to.
+
+  Returns:
+    The array ``x`` with the memory space constraint.
+  """
+  if memory_space in (None, MemorySpace.Any):
+    return x
+  return with_memory_space_constraint_p.bind(
+      x, memory_space=memory_space)
 
 def new_ref(init_val: Any, *, memory_space: Any = None, kind: Any = None,
             pin: bool = False):
