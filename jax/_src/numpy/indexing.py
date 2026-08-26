@@ -67,6 +67,8 @@ class IndexType(enum.Enum):
   @classmethod
   def from_index(cls, idx: Index) -> IndexType:
     """Create an IndexType enum from a supported JAX array index."""
+    from jax._src.state import types as state_types
+
     if idx is None:
       return cls.NONE
     elif idx is Ellipsis:
@@ -79,7 +81,7 @@ class IndexType(enum.Enum):
       return cls.INTEGER
     elif _is_boolean_index(idx):
       return cls.BOOLEAN
-    elif isinstance(idx, (Array, np.ndarray)):
+    elif isinstance(idx, (Array, np.ndarray, core.Ref, state_types.TransformedRef)):
       if dtypes.issubdtype(idx.dtype, np.integer):
         return cls.ARRAY
       else:
@@ -1527,11 +1529,15 @@ def eliminate_deprecated_list_indexing(idx):
   return idx
 
 def _is_boolean_index(i):
+  from jax._src.state import types as state_types
+  if isinstance(i, state_types.TransformedRef):
+    return dtypes.issubdtype(i.dtype, np.bool_)
   try:
     abstract_i = core.typeof(i)
   except TypeError:
     abstract_i = None
-  return (isinstance(abstract_i, core.ShapedArray) and dtypes.issubdtype(abstract_i.dtype, np.bool_)
+  return (isinstance(abstract_i, core.ShapedArray | state_types.AbstractRef)
+          and dtypes.issubdtype(abstract_i.dtype, np.bool_)
           or isinstance(i, list) and i and all(_is_scalar(e)
           and dtypes.issubdtype(dtypes.dtype(e), np.bool_) for e in i))
 

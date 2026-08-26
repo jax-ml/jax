@@ -552,11 +552,11 @@ def dma_start_discharge_rule(
   # If we didn't discharge everything we could we should keep writes
   # to the references that are left over.
   if not dst_discharge:
-    sp.ref_set(dst_ref, None, do_discharge_dst(dst_ref=dst_ref[...]))
+    sp.ref_set(dst_ref, (), do_discharge_dst(dst_ref=dst_ref[...]))
   if not dst_sem_discharge:
-    sp.ref_set(dst_sem, None, do_discharge_dst_sem(dst_sem=dst_sem[...]))
+    sp.ref_set(dst_sem, (), do_discharge_dst_sem(dst_sem=dst_sem[...]))
   if is_remote and not src_sem_discharge:
-    sp.ref_set(src_sem, None, do_discharge_src_sem(src_sem=src_sem[...]))
+    sp.ref_set(src_sem, (), do_discharge_src_sem(src_sem=src_sem[...]))
 
   return new_vals, []
 
@@ -1096,7 +1096,7 @@ def load(ref: Ref, *, mask: jax.Array | None = None) -> jax.Array:
   Returns:
     The loaded array.
   """
-  return primitives.load(ref, None, mask=mask)
+  return primitives.load(ref, (), mask=mask)
 
 
 def store(ref: Ref, val: jax.Array, *, mask: jax.Array | None = None) -> None:
@@ -1110,7 +1110,7 @@ def store(ref: Ref, val: jax.Array, *, mask: jax.Array | None = None) -> None:
     val: The value to store.
     mask: An optional boolean mask specifying which indices to store.
   """
-  return primitives.store(ref, None, val, mask=mask)
+  return primitives.store(ref, (), val, mask=mask)
 
 
 touch_p = jax_core.Primitive("add_dependency")

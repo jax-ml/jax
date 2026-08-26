@@ -364,6 +364,104 @@ class NDIndexer(state_types.Transform):
     ])
 
 
+def get_transforms_from_indices(
+    indices: Any, shape: tuple[int, ...]
+) -> tuple[state_types.Transform, ...]:
+  if isinstance(indices, NDIndexer):
+    return (indices,)
+  if (isinstance(indices, tuple) and len(indices) == 1
+      and isinstance(indices[0], NDIndexer)):
+    return (indices[0],)
+
+  from jax._src.numpy import indexing as numpy_indexing  # pyrefly: ignore[missing-import]
+
+  numpy_indexer = (
+      numpy_indexing.NDIndexer.from_raw_indices(indices, shape)
+      .expand_ellipses()
+      .expand_bool_indices()
+      .convert_sequences_to_arrays()
+  )
+
+  physical_indices = tuple(
+      pidx.index
+      for pidx in numpy_indexer.indices
+      if pidx.typ not in (
+          numpy_indexing.IndexType.NONE, numpy_indexing.IndexType.BOOLEAN)
+  )
+
+  nd_indexer = NDIndexer.from_indices_shape(physical_indices, shape)
+  if len(physical_indices) == len(numpy_indexer.indices):
+    return (nd_indexer,)
+
+  int_types = (
+      numpy_indexing.IndexType.INTEGER,
+      numpy_indexing.IndexType.ARRAY,
+  )
+  raw_int_positions = [
+      i for i, p in enumerate(numpy_indexer.indices) if p.typ in int_types
+  ]
+  if len(raw_int_positions) > 1:
+    first_int, last_int = raw_int_positions[0], raw_int_positions[-1]
+    has_none_between = any(
+        p.typ in (numpy_indexing.IndexType.NONE,
+                  numpy_indexing.IndexType.BOOLEAN)
+        for p in numpy_indexer.indices[first_int : last_int + 1]
+    )
+    has_preceding_slice = any(
+        p.typ in (
+            numpy_indexing.IndexType.SLICE,
+            numpy_indexing.IndexType.DYNAMIC_SLICE,
+        )
+        for p in numpy_indexer.indices[:first_int]
+    )
+    if has_none_between and has_preceding_slice:
+      raise NotImplementedError(
+          "Advanced indexing separated by newaxis after sliced dimensions"
+          " requires transposition and is currently unsupported on Ref."
+      )
+
+  physical_shape = nd_indexer.get_indexer_shape()
+  is_int_indexing, _, _ = unpack_ndindexer(nd_indexer)
+  int_dims = [i for i, is_int in enumerate(is_int_indexing) if is_int]
+  int_indexers_contiguous = not int_dims or (
+      int_dims[-1] - int_dims[0] == len(int_dims) - 1
+  )
+
+  target_shape = []
+  if not int_indexers_contiguous:
+    int_rank = len(nd_indexer.int_indexer_shape)
+    target_shape.extend(physical_shape[:int_rank])
+    phys_iter = iter(physical_shape[int_rank:])
+  else:
+    phys_iter = iter(physical_shape)
+
+  seen_int = False
+  for pidx in numpy_indexer.indices:
+    if pidx.typ == numpy_indexing.IndexType.NONE:
+      target_shape.append(1)
+    elif pidx.typ == numpy_indexing.IndexType.BOOLEAN:
+      if not pidx.index:
+        raise IndexError("Indexing Ref with `False` is not supported.")
+      target_shape.append(1)
+    elif pidx.typ in (
+        numpy_indexing.IndexType.SLICE,
+        numpy_indexing.IndexType.DYNAMIC_SLICE,
+    ):
+      target_shape.append(next(phys_iter))
+    elif pidx.typ in (
+        numpy_indexing.IndexType.INTEGER,
+        numpy_indexing.IndexType.ARRAY,
+    ):
+      if int_indexers_contiguous and not seen_int:
+        seen_int = True
+        target_shape.extend(
+            next(phys_iter) for _ in range(len(nd_indexer.int_indexer_shape))
+        )
+  target_shape.extend(phys_iter)
+
+  return nd_indexer, state_types.ReshapeTransform(tuple(target_shape))
+
+
 class DShapedArray:
   def __init__(self, shape, dtype, weak_type=False):
     self.shape = shape
