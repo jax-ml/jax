@@ -320,7 +320,7 @@ class JaxprInterpreter:
   def _interpret_get_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
-    assert eqn.primitive is state_primitives.get_p
+    assert eqn.primitive is state_primitives.get_p or gpu_primitives.load_p
     assert isinstance(eqn.outvars[0].aval, jax_core.ShapedArray)
     invals = get_invals()
     return gpu_callbacks.call_get(
@@ -1082,7 +1082,7 @@ class JaxprInterpreter:
             # Currently we only support grids and clusters with a single device.
             # Hence, zero is the only valid program id.
             out = jnp.int32(0)
-          case state_primitives.get_p:
+          case state_primitives.get_p | gpu_primitives.load_p:
             token, out = self._interpret_get_p(eqn, token, deferred_invals)
           case primitives.load_p:
             raise NotImplementedError("load_p is not supported on GPU yet")
@@ -1150,6 +1150,10 @@ class JaxprInterpreter:
           case gpu_primitives.set_max_registers_p:
             # This primitive is a no-op in GPU Interpret Mode.
             out = []
+          case mosaic_gpu_core.layout_cast_p:
+            # Interpret mode only considers layouts when interacting with a ref.
+            # Values are just stored in their logical layout, so this is a no-op
+            out = deferred_invals()[0]
           case gpu_primitives.commit_smem_p:
             token, out = self._interpret_commit_smem_p(eqn, token, deferred_invals)
           case _:

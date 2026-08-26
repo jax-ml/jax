@@ -157,6 +157,57 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_equal(jax.jit(_kernel)(), np.arange(num_threads))
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
+  def test_layout_cast(self):
+    # the layout_cast is a no-op in interpret mode
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128, 64), jnp.float32),
+        interpret=InterpretParams(),
+    )
+    def _kernel(x_ref, o_ref):
+      o_ref[...] = plgpu.layout_cast(x_ref[...], plgpu.Layout.WGMMA)
+
+    x = jnp.arange(128 * 64, dtype=jnp.float32).reshape(128, 64)
+    np.testing.assert_array_equal(_kernel(x), x)
+
+  def test_load(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128, 64), jnp.float32),
+        scratch_types=dict(smem=plgpu.SMEM((128, 64), jnp.float32)),
+        interpret=InterpretParams(),
+    )
+    def _kernel(x_ref, o_ref, smem):
+      smem[...] = plgpu.load(x_ref)
+      o_ref[...] = plgpu.load(smem) * 2
+
+    x = jnp.arange(128 * 64, dtype=jnp.float32).reshape(128, 64)
+    np.testing.assert_array_equal(_kernel(x), x * 2)
+
+  def test_load_participates_in_race_detection(self):
+    def _kernel(x_ref, o_ref, smem):
+      thread_idx = jax.lax.axis_index('t')
+
+      @pl.when(thread_idx == 0)
+      def _():
+        smem[...] = x_ref[...]
+
+      @pl.when(thread_idx == 1)
+      def _():
+        o_ref[...] = plgpu.load(smem)
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_type=jax.ShapeDtypeStruct((8,), jnp.int32),
+        scratch_types=dict(smem=plgpu.SMEM((8,), jnp.int32)),
+        num_threads=2,
+        thread_name='t',
+        interpret=InterpretParams(detect_races=True),
+    )
+
+    kernel(jnp.arange(8, dtype=jnp.int32))
+    self.assertTrue(mosaic_interpret.get_races().races_found)
+
   def test_tiling_and_swizzle_transforms(self):
 
     @jax.jit
