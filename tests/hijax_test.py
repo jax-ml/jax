@@ -2858,8 +2858,6 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
 @jtu.with_config(jax_remat3=True, jax_custom_vjp3=True)
 class CustomVJPRemat3Test(jtu.JaxTestCase):
 
-  @unittest.skip("custom_vjp applications are opaque to remat3 policies; "
-                 "use custom_remat for policy-controlled saving")
   def test_saved_residuals_names_value_in_custom_vjp_fwd(self):
     @jax.custom_vjp
     def f(x):

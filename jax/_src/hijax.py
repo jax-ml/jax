@@ -687,6 +687,8 @@ vjp_from_jvp = _VJPFromJVP(_vjp_fwd_from_jvp, _transpose_jvp)
 vjp_from_lin = _VJPFromLin(_vjp_fwd_from_lin, _transpose_linearized)
 
 
+custom_vjp_saveable_from_policy = lambda policy: None  # set by ad_checkpoint
+
 class CustomVJPTraced(HiPrim):
   traced: Any
   fwd: Any
@@ -815,6 +817,60 @@ class CustomVJPTraced(HiPrim):
     in_dims_flat = self.in_tree.flatten_up_to(in_dims)
     _, out_dims = batching.batch_jaxpr2(self.traced.jaxpr, axis_data, tuple(in_dims_flat))
     return tree_unflatten(self.out_tree, out_dims)
+
+  def remat(self, trace, *args):  # pyrefly: ignore[bad-param-name-override]
+    saveable = custom_vjp_saveable_from_policy(trace.policy)
+    if saveable is None:
+      return self(*args), self
+    args_flat = tree_leaves_checked(self.in_tree, args)
+    def fwd_flat(*leaves):
+      args_ = tree_unflatten(self.in_tree, leaves)
+      if self.symbolic_zeros:
+        args_ = tree_map(lambda x: CustomVJPPrimal(x, True), args_)
+      out, res = self.fwd(*(x.val if isinstance(x, Static) else x for x in args_))
+      if self.symbolic_zeros:
+        out = tree_map(lambda p: p.value if isinstance(p, CustomVJPPrimal) else p, out)
+      return out, res
+    fc, fwd_traced = api.jit(fwd_flat).trace(*args_flat).with_consts_as_arg()
+    jaxpr = fwd_traced.jaxpr
+    known, staged, _, _, num_res = pe.partial_eval_jaxpr_custom(
+        jaxpr, (False,) * len(jaxpr.invars), True, True, True, saveable)
+    if not num_res:
+      return self(*args), self
+    if self.symbolic_zeros or self.with_logs:
+      feature = 'symbolic_zeros' if self.symbolic_zeros else 'defvjp_with_logs'
+      raise NotImplementedError(
+          "under jax.remat, a checkpoint policy matched values marked with "
+          "checkpoint_name inside a custom_vjp fwd rule, but the custom_vjp "
+          f"was defined with {feature}, which does not support policy-driven "
+          "saving of fwd rule values; adjust the policy or the names so that "
+          f"nothing in this fwd rule is saveable, avoid {feature}, or use "
+          "jax.experimental.custom_remat to control saving explicitly")
+    known, _ = pe.dce_jaxpr(known, True, instantiate=True)
+    fc_flat, _ = tracing_registry.flatten(fc)
+    saved = core.eval_jaxpr(known, known.consts, *fc_flat, *args_flat)
+    which_static = [isinstance(x, Static) for x in self.in_avals]
+    statics = [x for x in self.in_avals if isinstance(x, Static)]
+    merge = lambda dyn: tuple(merge_lists(which_static, list(dyn), statics))
+
+    def helper_fun(_, __, *dyn):
+      return self.expand(*merge(dyn))
+    def helper_fwd(fc_, cs_, *dyn):
+      fc_flat_, _ = tracing_registry.flatten(fc_)
+      leaves = tree_leaves_checked(self.in_tree, merge(dyn))
+      out_res_flat = core.eval_jaxpr(staged, staged.consts, *cs_, *fc_flat_,
+                                     *leaves)
+      return tree_unflatten(fwd_traced.out_tree, out_res_flat)
+    static_vals = tuple(x.val for x in statics)
+    def helper_bwd(res, ct):
+      return (None, None, None, *self.bwd(*static_vals, res, ct))
+    helper = custom_vjp3(helper_fun)
+    helper.defvjp(helper_fwd, helper_bwd)
+
+    def rem(*args2):
+      dyn2 = tuple(x for x in args2 if not isinstance(x, Static))
+      return helper(fc, tuple(saved), *dyn2)
+    return self(*args), rem
 
   def check(self, *_):
     effs = self.traced.jaxpr.effects

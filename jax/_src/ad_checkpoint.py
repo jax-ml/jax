@@ -38,6 +38,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.remat import remat_transform
+from jax._src import hijax
 from jax._src.hijax import HiPrim, call_hi_primitive_p, Static
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
@@ -985,14 +986,17 @@ def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=(),
            prevent_cse=True):
   """Rematerialization decorator (new implementation, ``jax_remat3``).
 
-  Note on interaction with :func:`jax.custom_vjp`: custom_vjp applications
-  are rematerialized as opaque units. Values and gradients are unaffected,
-  and a custom_vjp's fwd rule is re-run on the backward pass, but the
-  checkpoint ``policy`` does not reach inside custom_vjp rules: values there
-  (e.g. ``checkpoint_name``-tagged intermediates) cannot be marked saveable
-  by it. To control what gets saved inside custom-differentiated code, use
-  :func:`jax.experimental.custom_remat`, whose fwd rule receives the ambient
-  policy explicitly.
+  Note on interaction with :func:`jax.custom_vjp`: values marked with
+  :func:`checkpoint_name` inside a custom_vjp fwd rule can be made saveable
+  by the checkpoint ``policy``. Without a policy, custom_vjp applications
+  are rematerialized as opaque units: the fwd rule contributes nothing to
+  the forward pass and is re-run on the backward pass. Values and gradients
+  are unaffected either way. Policy-driven saving inside fwd rules is not
+  supported for custom_vjps defined with ``symbolic_zeros`` or
+  ``defvjp_with_logs`` (an error is raised if the policy matches a name in
+  such a fwd rule); for explicit control over saving inside
+  custom-differentiated code, see :func:`jax.experimental.custom_remat`,
+  whose fwd rule receives the ambient policy explicitly.
   """
   kwargs = dict(policy=policy, static_argnums=static_argnums,
                 static_argnames=static_argnames, prevent_cse=prevent_cse)
@@ -1285,6 +1289,16 @@ class PrimalLeftTangentRight(HiPrim):
 
 def primal_left_tangent_right(x, _x):
   return PrimalLeftTangentRight(typeof(x), typeof(_x))(x, _x)
+
+def fwd_rule_saveable(policy):
+  if policy is None or policy is nothing_saveable:
+    return None
+  def saveable(prim, *_, **params):
+    return (prim is call_hi_primitive_p and
+            isinstance(p := params.get('_prim'), CheckpointName) and
+            policy(name_p, name=p.name))
+  return saveable
+hijax.custom_vjp_saveable_from_policy = fwd_rule_saveable
 
 
 def custom_remat(f, f_fwd, f_rem, f_bwd, *, static_argnums=(),
