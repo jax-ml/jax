@@ -550,6 +550,7 @@ def interpret_pallas_call(
         token,
         grid_coords,
         use_ordered_callback=True,
+        on_exception=gpu_callbacks.fail,
     )
     token = callback.io_callback(
         functools.partial(gpu_callbacks.cluster_finished),

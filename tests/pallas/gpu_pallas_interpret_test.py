@@ -20,6 +20,7 @@ from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
 from jax._src.pallas import mpmd
+from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_interpret
 from jax._src.pallas.mosaic_gpu.interpret.params import force_gpu_interpret_mode
 from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams as InterpretParams
@@ -208,6 +209,79 @@ class InterpretTest(jtu.JaxTestCase):
     kernel(jnp.arange(8, dtype=jnp.int32))
     self.assertTrue(mosaic_interpret.get_races().races_found)
 
+  @jtu.parameterized.product(synchronized=[False, True])
+  def test_ref_union_groups_alias(self, synchronized):
+    # The two alias groups of a `RefUnion` share storage, so one thread
+    # writing through group 1 conflicts with another still reading group 0 --
+    # unless they synchronize.
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_types=dict(
+            union=plgpu.RefUnion(
+                plgpu.SMEM((128,), jnp.float32),
+                plgpu.SMEM((128,), jnp.float32),
+            ),
+            done=plgpu.Barrier(num_arrivals=1),
+        ),
+        num_threads=2,
+        thread_name='t',
+        interpret=InterpretParams(detect_races=True),
+    )
+    def _kernel(o_ref, union, done):
+      first, second = union
+      tid = jax.lax.axis_index('t')
+
+      @pl.when(tid == 0)
+      def _():
+        first[...] = jnp.arange(128, dtype=jnp.float32)
+        o_ref[...] = first[...]
+        if synchronized:
+          plgpu.barrier_arrive(done)
+
+      @pl.when(tid == 1)
+      def _():
+        if synchronized:
+          plgpu.barrier_wait(done)
+        second[...] = jnp.zeros((128,), jnp.float32)
+
+    jax.jit(_kernel)()
+    self.assertEqual(
+        mosaic_interpret.get_races().races_found, not synchronized
+    )
+
+  def test_ref_union_disjoint_members_do_not_race(self):
+    # Two refs in the *same* alias group are laid out disjointly, so writing
+    # both concurrently is not a race.
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_types=dict(
+            union=plgpu.RefUnion(
+                (plgpu.SMEM((128,), jnp.float32),
+                 plgpu.SMEM((128,), jnp.float32)),
+            ),
+        ),
+        num_threads=2,
+        thread_name='t',
+        interpret=InterpretParams(detect_races=True),
+    )
+    def _kernel(o_ref, union):
+      a, b = union[0]
+      tid = jax.lax.axis_index('t')
+
+      @pl.when(tid == 0)
+      def _():
+        a[...] = jnp.zeros((128,), jnp.float32)
+        o_ref[...] = a[...]
+
+      @pl.when(tid == 1)
+      def _():
+        b[...] = jnp.ones((128,), jnp.float32)
+
+    jax.jit(_kernel)()
+    self.assertFalse(mosaic_interpret.get_races().races_found)
+
   def test_tiling_and_swizzle_transforms(self):
 
     @jax.jit
@@ -275,6 +349,57 @@ class InterpretTest(jtu.JaxTestCase):
       )()
 
     np.testing.assert_equal(run(), np.full((128, 128), 45.0, jnp.float16))
+
+  def test_transpose_ref(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128, 64), jnp.float32),
+        scratch_types=dict(smem=plgpu.SMEM((128, 64), jnp.float32)),
+        interpret=InterpretParams(),
+    )
+    def _kernel(x_ref, o_ref, smem):
+      # Write through the transposed view, read back through the plain ref.
+      plgpu.transpose_ref(smem, (1, 0))[...] = x_ref[...].T
+      o_ref[...] = smem[...]
+
+    x = jnp.arange(128 * 64, dtype=jnp.float32).reshape(128, 64)
+    np.testing.assert_array_equal(_kernel(x), x)
+
+  def test_indexing_a_transposed_ref_is_unsupported(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_types=dict(smem=plgpu.SMEM((128, 64), jnp.float32)),
+        interpret=InterpretParams(),
+    )
+    def _kernel(x_ref, o_ref, smem):
+      smem[...] = x_ref[...]
+      o_ref[...] = plgpu.transpose_ref(smem, (1, 0))[0, :]
+
+    x = jnp.arange(128 * 64, dtype=jnp.float32).reshape(128, 64)
+    with self.assertRaisesRegex(
+        Exception, r'Unsupported transform'
+    ):
+      _kernel(x)
+
+  def test_tmem_ref_with_leading_batch_dimensions(self):
+    # A TMEM ref of rank > 2 has an implicit collapse transform of its leading
+    # dimensions.
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128, 64), jnp.float32),
+        scratch_types=dict(tmem=plgpu.TMEM((2, 128, 64), jnp.float32)),
+        interpret=InterpretParams(),
+    )
+    def _kernel(o_ref, tmem):
+      plgpu.async_store_tmem(tmem.at[0], jnp.full((128, 64), 1.0, jnp.float32))
+      plgpu.async_store_tmem(tmem.at[1], jnp.full((128, 64), 3.0, jnp.float32))
+      plgpu.commit_tmem()
+      o_ref[...] = plgpu.async_load_tmem(tmem.at[1])
+
+    np.testing.assert_array_equal(
+        _kernel(), np.full((128, 64), 3.0, np.float32)
+    )
 
   def test_skip_floating_point_ops(self):
     def matmul_kernel(x_ref, y_ref, z_ref):
@@ -1455,6 +1580,57 @@ class InterpretTest(jtu.JaxTestCase):
       self.assertFalse(mosaic_interpret.get_races().races_found)
       np.testing.assert_array_equal(z, x + y)
 
+  @jtu.parameterized.named_parameters(
+      # `copy_gmem_to_smem` resolves `None` to `ZEROS` on the TMA
+      # implementation, which is the one interpret mode models.
+      ('default', None),
+      ('zeros', plgpu.OOBFillMode.ZEROS),
+      ('undefined', plgpu.OOBFillMode.UNDEFINED),
+      ('promise_in_bounds', plgpu.OOBFillMode.PROMISE_IN_BOUNDS),
+  )
+  def test_copy_gmem_to_smem_out_of_bounds(self, oob_mode):
+    x = jnp.arange(6, dtype=jnp.int32).reshape((3, 2))
+
+    def _kernel(in_gmem, out_gmem, barrier, smem):
+      plgpu.copy_gmem_to_smem(
+          in_gmem.at[pl.ds(0, 4)], smem, barrier, oob_mode=oob_mode
+      )
+      plgpu.barrier_wait(barrier)
+      out_gmem[...] = smem[...]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_type=jax.ShapeDtypeStruct((4, 2), jnp.int32),
+        interpret=InterpretParams(uninitialized_memory='nan'),
+        scratch_types=dict(
+            barrier=plgpu.Barrier(), smem=plgpu.SMEM((4, 2), jnp.int32)
+        ),
+    )
+
+    if oob_mode == plgpu.OOBFillMode.PROMISE_IN_BOUNDS:
+      with self.assertRaisesRegex(
+          Exception, r'but the copy promised to stay in bounds'
+      ):
+        kernel(x)
+      return
+
+    y = np.asarray(kernel(x))
+    np.testing.assert_array_equal(y[:3], x)
+    if oob_mode == plgpu.OOBFillMode.UNDEFINED:
+      # The hardware leaves these elements unspecified, so the interpreter
+      # supplies its pattern for uninitialized memory.
+      np.testing.assert_array_equal(
+          y[3],
+          np.full(
+              (2,),
+              interpret_utils.get_uninitialized_value(np.dtype(np.int32),
+                                                      'nan'),
+              np.int32,
+          ),
+      )
+    else:
+      np.testing.assert_array_equal(y[3], np.zeros((2,), np.int32))
+
   def test_copy_smem_to_gmem(self):
     def _kernel(out_gmem, smem_ref):
       tid = jax.lax.axis_index('t')
@@ -1485,6 +1661,29 @@ class InterpretTest(jtu.JaxTestCase):
 
     expected = jnp.arange((2*32*128), dtype=jnp.int32).reshape((2, 32, 128))
     np.testing.assert_array_equal(y, expected)
+
+  def test_copy_smem_to_gmem_out_of_bounds(self):
+    self.skipTest("TODO")
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((4, 4), jnp.int32),
+        interpret=InterpretParams(),
+        scratch_types=dict(
+            smem_ref=plgpu.SMEM((2, 2), jnp.int32)
+        ),
+    )
+    def _kernel(out_gmem, smem_ref):
+      plgpu.copy_smem_to_gmem(
+          smem_ref[pl.ds(0, 3)],
+          out_gmem[pl.ds(0, 4)],
+      )
+
+    with self.assertRaisesRegex(
+        IndexError,
+        r'Out-of-bounds copy from HostAllocationKey\(.+\) to'
+        r' HostAllocationKey\(.+\)'
+    ):
+      _kernel()
 
   @jtu.parameterized.product(
       grid_dict=[
@@ -2101,6 +2300,72 @@ class InterpretTest(jtu.JaxTestCase):
     output = kernel(a)
     self.assertArraysEqual(output, a)
 
+  def test_async_store_load_tmem_sliced(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128, 256), jnp.float32),
+        scratch_types=dict(
+            tmem_ref=plgpu.TMEM((128, 256), jnp.float32),
+        ),
+        interpret=InterpretParams(detect_races=True),
+    )
+    def kernel(in_ref, out_ref, tmem_ref):
+      tile_d = 128
+      ds0 = pl.ds(0, tile_d)
+      ds1 = pl.ds(tile_d, tile_d)
+      plgpu.async_store_tmem(tmem_ref.at[:, ds0], in_ref[:, ds0])
+      plgpu.async_store_tmem(tmem_ref.at[:, ds1], in_ref[:, ds1] * 2.0)
+      plgpu.commit_tmem()
+      out_ref[:, ds0] = plgpu.async_load_tmem(tmem_ref.at[:, ds0])
+      out_ref[:, ds1] = plgpu.async_load_tmem(tmem_ref.at[:, ds1])
+
+    a = jnp.arange(128 * 256, dtype=jnp.float32).reshape((128, 256))
+    output = kernel(a)
+    expected = jnp.concatenate([a[:, :128], a[:, 128:] * 2.0], axis=1)
+    self.assertArraysEqual(output, expected)
+    self.assertFalse(mosaic_interpret.get_races().races_found)
+
+  @jtu.parameterized.product(synchronized=[False, True])
+  def test_ref_union_tmem_groups_alias(self, synchronized):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128, 64), jnp.float32),
+        scratch_types=dict(
+            union=plgpu.RefUnion(
+                plgpu.TMEM((128, 64), jnp.float32),
+                plgpu.TMEM((128, 64), jnp.float32),
+            ),
+            done=plgpu.Barrier(num_arrivals=1),
+        ),
+        num_threads=2,
+        thread_name='t',
+        interpret=InterpretParams(detect_races=True),
+    )
+    def _kernel(o_ref, union, done):
+      first, second = union
+      tid = jax.lax.axis_index('t')
+
+      @pl.when(tid == 0)
+      def _():
+        plgpu.async_store_tmem(first, jnp.ones((128, 64), dtype=jnp.float32))
+        plgpu.commit_tmem()
+        o_ref[...] = plgpu.async_load_tmem(first)
+        if synchronized:
+          plgpu.barrier_arrive(done)
+
+      @pl.when(tid == 1)
+      def _():
+        if synchronized:
+          plgpu.barrier_wait(done)
+        plgpu.async_store_tmem(second, jnp.zeros((128, 64), dtype=jnp.float32))
+        plgpu.commit_tmem()
+
+    jax.jit(_kernel)()
+    self.assertEqual(
+        mosaic_interpret.get_races().races_found, not synchronized
+    )
+
+
 
 @dataclasses.dataclass(frozen=True)
 class TuningConfig:
@@ -2550,6 +2815,105 @@ class BlackwellExampleMatmulTest(jtu.JaxTestCase):
     expected = jnp.dot(a, b, preferred_element_type=jnp.float32)
     np.testing.assert_allclose(res, expected, rtol=1e-3)
 
+  def test_transform_and_compose_slice_or_index_types(self):
+    from jax._src.state import indexing
+    # Slices
+    s = indexing.Slice(0, 10, 1)
+    self.assertEqual(interpret_utils._transform_slice_or_index(s), slice(0, 10, 1))
+
+    # Python int
+    self.assertEqual(interpret_utils._transform_slice_or_index(5), 5)
+
+    # NumPy / JAX scalar integers
+    for int_val in [np.int32(3), np.int64(4), jnp.int32(5)]:
+      transformed = interpret_utils._transform_slice_or_index(int_val)
+      self.assertEqual(transformed, int(int_val))
+      self.assertIsInstance(transformed, int)
+
+    # Composing slice and integer indexers
+    idx1 = (np.int32(1), slice(0, 128, 1), 0)
+    transformed1 = tuple(interpret_utils._transform_slice_or_index(i) for i in idx1)
+    idx2 = (slice(0, 64, 1), np.int32(2))
+    transformed2 = tuple(interpret_utils._transform_slice_or_index(i) for i in idx2)
+    composed = interpret_utils._compose_slice_or_index(transformed1, transformed2)
+    self.assertEqual(composed, (1, slice(0, 64, 1), 2))
+
+  @jtu.parameterized.parameters(
+      dict(vmap_in_axes=((0,),)),
+      dict(vmap_in_axes=((None,),)),
+      dict(vmap_in_axes=((0,), (0,))),
+      dict(vmap_in_axes=((None,), (None,))),
+      dict(vmap_in_axes=((None,), (0,))),
+  )
+  def test_vmap_interpret_kernel(self, vmap_in_axes):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128, 64), jnp.float32),
+        scratch_types=dict(smem=plgpu.SMEM((128, 32), jnp.float32)),
+        interpret=InterpretParams(),
+    )
+    def _kernel(x_ref, o_ref, smem):
+      tile_d = 32
+      ds0 = pl.ds(0, tile_d)
+      ds1 = pl.ds(tile_d, tile_d)
+      smem[...] = x_ref[:, ds0]
+      plgpu.copy_smem_to_gmem(smem, o_ref.at[:, ds0])
+      smem[...] = x_ref[:, ds1] * 2.0
+      plgpu.copy_smem_to_gmem(smem, o_ref.at[:, ds1])
+
+    f = _kernel
+    base_shape = (128, 64)
+    x_shape = list(base_shape)
+    for in_axes in reversed(vmap_in_axes):
+      (axis,) = in_axes
+      if axis is not None:
+        x_shape.insert(0, 2)
+      f = jax.vmap(f, in_axes=in_axes)
+
+    x = jnp.arange(math.prod(x_shape), dtype=jnp.float32).reshape(x_shape)
+    res = f(x)
+
+    def ref_fn(x):
+      return jnp.concatenate([x[..., :32], x[..., 32:] * 2.0], axis=-1)
+
+    expected = ref_fn(x)
+    np.testing.assert_allclose(res, expected)
+
+  def test_vmap_unbatched_and_batched_inputs(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128, 64), jnp.float32),
+        scratch_types=dict(
+            smem_x=plgpu.SMEM((128, 32), jnp.float32),
+            smem_y=plgpu.SMEM((128, 32), jnp.float32),
+        ),
+        interpret=InterpretParams(),
+    )
+    def _kernel(x_ref, y_ref, o_ref, smem_x, smem_y):
+      tile_d = 32
+      ds0 = pl.ds(0, tile_d)
+      ds1 = pl.ds(tile_d, tile_d)
+      smem_x[...] = x_ref[:, ds0]
+      smem_y[...] = y_ref[:, ds0]
+      plgpu.copy_smem_to_gmem(smem_x + smem_y, o_ref.at[:, ds0])
+      smem_x[...] = x_ref[:, ds1]
+      smem_y[...] = y_ref[:, ds1]
+      plgpu.copy_smem_to_gmem(smem_x * smem_y, o_ref.at[:, ds1])
+
+    vmapped_fn = jax.vmap(jax.vmap(_kernel, in_axes=(None, 0)), in_axes=(None, 0))
+    x = jnp.arange(128 * 64, dtype=jnp.float32).reshape((128, 64))
+    y = jnp.arange(2 * 3 * 128 * 64, dtype=jnp.float32).reshape((2, 3, 128, 64))
+    res = vmapped_fn(x, y)
+
+    def ref_fn(x, y):
+      part0 = x[..., :32] + y[..., :32]
+      part1 = x[..., 32:] * y[..., 32:]
+      return jnp.concatenate([part0, part1], axis=-1)
+
+    expected = ref_fn(x, y)
+    np.testing.assert_allclose(res, expected)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
+

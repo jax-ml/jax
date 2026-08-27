@@ -15,6 +15,7 @@
 import abc
 from collections.abc import Sequence
 import dataclasses
+import itertools
 import math
 import threading
 from typing import Any, Literal
@@ -23,6 +24,7 @@ from jax import lax
 from jax._src import core as jax_core
 from jax._src import source_info_util
 from jax._src.pallas import primitives
+from jax._src.state import indexing
 from jax._src.util import safe_map
 import jax.numpy as jnp
 import numpy as np
@@ -282,13 +284,13 @@ class JaxprEnv:
 
 
 def _transform_slice_or_index(slice_or_idx):
-  if isinstance(slice_or_idx, int):
-    return slice_or_idx
-  else:
+  if isinstance(slice_or_idx, indexing.Slice):
     start = int(slice_or_idx.start)
     size = int(slice_or_idx.size)
     stride = int(slice_or_idx.stride)
     return slice(start, start + size * stride, stride)
+  else:
+    return int(slice_or_idx)
 
 
 def _compose_slice_or_index(slice_or_idx1, slice_or_idx2):
@@ -323,6 +325,35 @@ def _compose_slice_or_index(slice_or_idx1, slice_or_idx2):
       )
       i += 1
       j += 1
+
+
+def window_shape(
+    rnge: tuple[slice | int, ...], shape: Sequence[int]
+) -> tuple[int, ...]:
+  """Returns the shape of the window `rnge` selects from an array of `shape`.
+
+  A range may be shorter than the array's rank, in which case the trailing
+  dimensions are taken in full. Integer entries index a dimension away, so
+  they do not contribute; slice entries contribute their length. The result
+  describes the window that was *asked for*, which for a TMA copy may extend
+  past the end of the array.
+  """
+  window = []
+  for dim, idx in itertools.zip_longest(shape, rnge, fillvalue=None):
+    if dim is None:
+      raise ValueError(
+          f"Cannot index a buffer with shape {shape} with range {rnge}"
+      )
+    elif idx is None:  # Dimension not indexed, so take in full.
+      window.append(dim)
+    elif isinstance(idx, (int, np.integer)):
+      continue
+    else:
+      start = 0 if idx.start is None else int(idx.start)
+      step = 1 if idx.step is None else int(idx.step)
+      stop = dim if idx.stop is None else int(idx.stop)
+      window.append((stop - start + step - 1) // step)
+  return tuple(window)
 
 
 def to_range(transforms) -> tuple[slice | int, ...]:
