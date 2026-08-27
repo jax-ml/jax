@@ -115,7 +115,7 @@ struct PyArray_Storage {
   // To which shard of the client does this array belong?
   const uint8_t thread_id_bucket;
 
-  bool committed = false;
+  const bool committed = false;
   bool weak_type = false;
   nanobind::object aval;
   const xla::nb_dtype dtype;
