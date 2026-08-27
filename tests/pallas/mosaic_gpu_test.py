@@ -4397,14 +4397,14 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     import re
     # kernel_a (producer) need not enable PDL (uses_pdl should be i32 0)
     kernel_a_pattern = (
-        r"define void @kernel_a_mosaic_gpu\(.*?{.*?call void"
+        r"define i32 @kernel_a_mosaic_gpu\(.*?{.*?call i32"
         r" @mosaic_gpu_launch_kernel\(.*?, i32 0, i32 0, ptr %\w+, ptr %\w+\)"
     )
     self.assertRegex(ptx_output, re.compile(kernel_a_pattern, re.DOTALL))
 
     # kernel_b (consumer) MUST enable PDL (uses_pdl should be i32 1)
     kernel_b_pattern = (
-        r"define void @kernel_b_mosaic_gpu\(.*?{.*?call void"
+        r"define i32 @kernel_b_mosaic_gpu\(.*?{.*?call i32"
         r" @mosaic_gpu_launch_kernel\(.*?, i32 0, i32 1, ptr %\w+, ptr %\w+\)"
     )
     self.assertRegex(ptx_output, re.compile(kernel_b_pattern, re.DOTALL))

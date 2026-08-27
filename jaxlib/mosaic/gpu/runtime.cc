@@ -186,13 +186,13 @@ void mosaic_gpu_init_tma_desc(CUtensorMap* tma_desc, void* base_addr,
       "cuTensorMapEncodeTiled failed: %s\n");
 }
 
-void mosaic_gpu_launch_kernel(CUfunction function, uint32_t grid_x,
-                              uint32_t grid_y, uint32_t grid_z,
-                              uint32_t cluster_x, uint32_t cluster_y,
-                              uint32_t cluster_z, uint32_t block_x,
-                              uint32_t block_y, uint32_t block_z,
-                              uint32_t smem_bytes, int32_t uses_pdl,
-                              CUstream stream, void** params) {
+CUresult mosaic_gpu_launch_kernel(CUfunction function, uint32_t grid_x,
+                                  uint32_t grid_y, uint32_t grid_z,
+                                  uint32_t cluster_x, uint32_t cluster_y,
+                                  uint32_t cluster_z, uint32_t block_x,
+                                  uint32_t block_y, uint32_t block_z,
+                                  uint32_t smem_bytes, int32_t uses_pdl,
+                                  CUstream stream, void** params) {
   CUlaunchConfig config{
       .gridDimX = grid_x,
       .gridDimY = grid_y,
@@ -228,16 +228,14 @@ void mosaic_gpu_launch_kernel(CUfunction function, uint32_t grid_x,
   CUresult result = cuLaunchKernelEx(&config, function, params, nullptr);
   if (result == CUDA_ERROR_INVALID_CLUSTER_SIZE) {
     int max_cluster_size;
-    abort_on_error(cuOccupancyMaxPotentialClusterSize(&max_cluster_size,
-                                                      function, &config),
-                   "cuOccupancyMaxPotentialClusterSize failed: %s\n");
-    fprintf(stderr,
-            "cuLaunchKernel failed with invalid cluster size (%d, %d, %d)"
-            ": maximum is %d\n",
-            cluster_x, cluster_y, cluster_z, max_cluster_size);
-    abort();
-  } else {
-    abort_on_error(result, "cuLaunchKernelEx: %s\n");
+    if (cuOccupancyMaxPotentialClusterSize(&max_cluster_size, function,
+                                           &config) == CUDA_SUCCESS) {
+      fprintf(stderr,
+              "cuLaunchKernel failed with invalid cluster size (%d, %d, %d)"
+              ": maximum is %d\n",
+              cluster_x, cluster_y, cluster_z, max_cluster_size);
+    }
   }
+  return result;
 }
 }

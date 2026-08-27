@@ -112,7 +112,7 @@ void emitRuntimeDecls(mlir::ModuleOp module) {
       mlir::FunctionType::get(module.getContext(),
                               {ptr_ty, i32, i32, i32, i32, i32, i32, i32, i32,
                                i32, i32, i32, ptr_ty, ptr_ty},
-                              {}),
+                              {i32}),
       decl_builder.getStringAttr("private"), /*arg_attr=*/nullptr,
       /*res_attrs=*/nullptr);
 }
@@ -179,11 +179,18 @@ mlir::LogicalResult launchPreloadedKernel(mlir::func::FuncOp func,
       builder, launch.getLoc(), builder.getI32Type(),
       builder.getI32IntegerAttr(uses_pdl ? 1 : 0));
   mlir::Value stream = launch.getAsyncObject();
-  mlir::func::CallOp::create(
-      builder, launch.getLoc(), "mosaic_gpu_launch_kernel", mlir::TypeRange{},
+  auto call = mlir::func::CallOp::create(
+      builder, launch.getLoc(), "mosaic_gpu_launch_kernel",
+      mlir::TypeRange{builder.getI32Type()},
       mlir::ValueRange{kernel_handle, grid.x, grid.y, grid.z, cluster.x,
                        cluster.y, cluster.z, block.x, block.y, block.z,
                        dynamic_smem, uses_pdl_val, stream, arg_ptr_array});
+  func.setType(mlir::FunctionType::get(
+      func.getContext(), func.getArgumentTypes(), {builder.getI32Type()}));
+  for (auto return_op :
+       llvm::make_early_inc_range(func.getOps<mlir::func::ReturnOp>())) {
+    return_op->setOperands(call.getResult(0));
+  }
   return mlir::success();
 }
 

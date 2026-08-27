@@ -171,7 +171,7 @@ using ::mosaic::gpu::NvshmemApi;
 namespace ffi = xla::ffi;
 namespace se = stream_executor;
 
-using MosaicHostFunc = void(CUfunction, void*, void**);
+using MosaicHostFunc = int32_t(CUfunction, void*, void**);
 using KernelHash = std::array<uint64_t, 4>;
 
 // Returns the latest PTX ISA version supported by both LLVM and the underlying
@@ -1009,7 +1009,7 @@ absl::StatusOr<std::string> CustomCallResources::Serialize(
     return absl::InternalError(
         "Failed to serialize CustomCallResources: CompiledKernel is null");
   }
-  kernel_proto.set_version(2);
+  kernel_proto.set_version(3);
   kernel_proto.set_object_file(kernel->object_file);
   kernel_proto.set_is_nvshmem_used(kernel->is_nvshmem_used);
   kernel_proto.set_is_multimem_used(kernel->is_multimem_used);
@@ -1038,7 +1038,7 @@ CustomCallResources::Deserialize(absl::string_view data) {
   std::memcpy(resources->hash.data(), kernel_proto.kernel_hash().data(),
               sizeof(KernelHash));
 
-  if (kernel_proto.version() != 2) {
+  if (kernel_proto.version() != 3) {
     return absl::InternalError(absl::StrCat(
         "Unsupported Mosaic GPU kernel version: ", kernel_proto.version()));
   }
@@ -1601,8 +1601,21 @@ absl::Status MosaicGpuExecute(
   }
 
   void** buffers_data = buffer_ptrs.data();
-  kernel->host_launch(device_state.kernel_handle->function(), cuda_stream,
-                      buffers_data);
+  int32_t launch_result = kernel->host_launch(
+      device_state.kernel_handle->function(), cuda_stream, buffers_data);
+  if (launch_result != CUDA_SUCCESS) {
+    const char* error_name = nullptr;
+    const char* error_str = nullptr;
+    cuGetErrorName(static_cast<CUresult>(launch_result), &error_name);
+    cuGetErrorString(static_cast<CUresult>(launch_result), &error_str);
+    return absl::InternalError(absl::StrFormat(
+        "Mosaic GPU kernel '%s' (host func: '%s', device: %d, smem: %d bytes, "
+        "cluster: %d) launch failed: %s [%s] (CUDA error %d)",
+        kernel->kernel_name, kernel->host_func_name, device_ordinal,
+        kernel->smem_bytes, kernel->cluster_size,
+        error_name ? error_name : "UNKNOWN_ERROR",
+        error_str ? error_str : "unknown", launch_result));
+  }
   XLA_VLOG_DEVICE(5, device_ordinal) << "MosaicGpuExecute finished";
   return absl::OkStatus();
 }
