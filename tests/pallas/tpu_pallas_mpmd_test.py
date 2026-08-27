@@ -21,6 +21,7 @@ import re
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import hijax
 from jax._src import test_util as jtu
@@ -652,6 +653,82 @@ class MpmdTest(PallasSCTest):
     x = jnp.arange(self.sc_info.num_lanes, dtype=jnp.int32)
     out = jax.vmap(run_kernel)(x[jnp.newaxis])
     np.testing.assert_array_equal(out, x[jnp.newaxis] + 1)
+
+  def test_vmap_emit_pipeline(self):
+    with config.use_emit_pipeline_primitive(True):
+      def pipeline_body(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + 1
+
+      @pl.kernel(
+          out_type=jax.ShapeDtypeStruct((16 * 8, 128), jnp.int32),
+          mesh=from_core_type(SCV),
+      )
+      def kernel(x_hbm_ref, o_hbm_ref):
+        pltpu.emit_pipeline(
+            pipeline_body,
+            grid=(16,),
+            in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+            out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+        )(x_hbm_ref, o_hbm_ref)
+
+      x = jnp.arange(8 * 16 * 8 * 128, dtype=jnp.int32).reshape(8, 16 * 8, 128)
+      out = jax.vmap(kernel)(x)
+      np.testing.assert_array_equal(out, x + 1)
+
+  def test_vmap_emit_pipeline_with_scratch(self):
+    with config.use_emit_pipeline_primitive(True):
+      @pl.kernel(
+          out_type=jax.ShapeDtypeStruct((16 * 8, 128), jnp.int32),
+          scratch_types=(pltpu.VMEM((8, 128), jnp.int32),),
+          mesh=from_core_type(SCV),
+      )
+      def kernel(x_hbm_ref, o_hbm_ref, scratch_ref):
+        assert x_hbm_ref.shape == (16 * 8, 128)
+        assert scratch_ref.shape == (8, 128)  # used inside pipeline
+        def pipeline_body(x_ref, o_ref):
+          scratch_ref[...] = x_ref[...] + 1
+          o_ref[...] = scratch_ref[...]
+        pltpu.emit_pipeline(
+            pipeline_body,
+            grid=(16,),
+            in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+            out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+        )(x_hbm_ref, o_hbm_ref)
+
+      x = jnp.arange(8 * 16 * 8 * 128, dtype=jnp.int32).reshape(8, 16 * 8, 128)
+      out = jax.vmap(kernel)(x)
+      np.testing.assert_array_equal(out, x + 1)
+
+  def test_vmap_emit_pipeline_scalar_prefetch(self):
+    with config.use_emit_pipeline_primitive(True):
+      def pipeline_body(x_ref, o_ref):
+        o_ref[...] = x_ref[...]
+
+      s = jnp.array([4, 3, 2, 5, 3, 5, 2, 7], jnp.int32)
+      s_hbm_ref = jax.new_ref(s)
+      x = jnp.arange(2 * 8 * 8 * 128, dtype=jnp.int32).reshape((2, 8 * 8, 128))
+
+      @pl.kernel(
+          out_type=jax.ShapeDtypeStruct((8 * 8, 128), jnp.int32),
+          scratch_types=(
+              pltpu.SMEM(s.shape, s.dtype),
+              pltpu.SemaphoreType.DMA(()),
+          ),
+          mesh=from_core_type(TC),
+      )
+      def kernel(x_hbm_ref, o_hbm_ref, s_smem_ref, dma_sem):
+        pltpu.async_copy(s_hbm_ref, s_smem_ref, dma_sem).wait()
+        pltpu.emit_pipeline(
+            pipeline_body,
+            grid=(8,),
+            in_specs=pl.BlockSpec((8, 128), lambda i: (s_smem_ref[i], 0)),
+            out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+        )(x_hbm_ref, o_hbm_ref)
+
+      out = jax.vmap(kernel)(x)
+      np.testing.assert_allclose(
+          out, x.reshape((2, 8, 8, -1))[:, s].reshape(x.shape)
+      )
 
   def test_remat_with_checkpoint(self):
     mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
