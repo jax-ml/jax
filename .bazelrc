@@ -193,7 +193,7 @@ common:clang --copt=-Wno-error=c23-extensions
 
 # Configs for CUDA
 common:cuda_v12 --repo_env=HERMETIC_CUDA_VERSION="12.9.1"
-common:cuda_v12 --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"
+common:cuda_v12 --repo_env=HERMETIC_CUDNN_VERSION="9.10.2"
 common:cuda_v12 --repo_env=HERMETIC_NVSHMEM_VERSION="3.3.9"
 common:cuda_v12 --repo_env=HERMETIC_NCCL_VERSION="2.29.7"
 # "sm" means we emit only cubin, which is forward compatible within a GPU generation.
