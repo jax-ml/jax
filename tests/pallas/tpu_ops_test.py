@@ -1513,6 +1513,37 @@ class ConvTest(ptu.PallasTPUTest):
           window_strides=(1, 1),
           padding=((1, 1), (1, 1)),
       ),
+      dict(
+          testcase_name="_large_window_5x5",
+          lhs_shape=(1, 10, 10, 128),
+          rhs_shape=(5, 5, 128, 128),
+          window_strides=(1, 1),
+          padding=((0, 0), (0, 0)),
+      ),
+      dict(
+          testcase_name="_large_window_dilated",
+          lhs_shape=(1, 16, 16, 128),
+          rhs_shape=(5, 5, 128, 128),
+          window_strides=(1, 1),
+          padding=((0, 0), (0, 0)),
+          rhs_dilation=(2, 2),
+      ),
+      dict(
+          testcase_name="_large_window_1d",
+          lhs_shape=(1, 20, 128),
+          rhs_shape=(5, 128, 128),
+          window_strides=(1,),
+          padding=((0, 0),),
+          dimension_numbers=("NWC", "WIO", "NWC"),
+      ),
+      dict(
+          testcase_name="_large_window_3d",
+          lhs_shape=(1, 6, 6, 6, 32),
+          rhs_shape=(3, 3, 3, 32, 32),
+          window_strides=(1, 1, 1),
+          padding=((0, 0), (0, 0), (0, 0)),
+          dimension_numbers=("NDHWC", "DHWIO", "NDHWC"),
+      ),
   )
   def test_conv_general_dilated(
       self,
@@ -1525,10 +1556,10 @@ class ConvTest(ptu.PallasTPUTest):
       rhs_dilation=None,
       feature_group_count=1,
       batch_group_count=1,
+      dimension_numbers=("NHWC", "HWIO", "NHWC"),
   ):
     if not jtu.is_device_tpu_at_least(version=4):
       self.skipTest("Test requires TPUv4+")
-    dimension_numbers = ("NHWC", "HWIO", "NHWC")
     conv = functools.partial(
         jax.lax.conv_general_dilated,
         window_strides=window_strides,
