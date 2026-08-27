@@ -586,8 +586,9 @@ def _unique_sorted_mask(ar: Array, axis: int, equal_nan: bool) -> tuple[Array, A
     aux = where(isnan(aux), lax._const(aux, np.nan), aux)
   size, *out_shape = aux.shape
   if math.prod(out_shape) == 0:
-    size = 1
-    perm = zeros(1, dtype=int)
+    # Empty slices are vacuously equal as in numpy, so keep at most one.
+    size = min(size, 1)
+    perm = zeros(size, dtype=int)
   else:
     perm = lexsort(aux.reshape(size, math.prod(out_shape)).T[::-1])
   aux = aux[perm]
