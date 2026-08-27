@@ -23,8 +23,12 @@ import numpy as np
 
 from jax._src import api
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import numpy as jnp
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
 from jax._src.lax import lax
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.util import canonicalize_axis
@@ -410,20 +414,10 @@ def _resize_nearest(x, output_shape: core.Shape):
   return x
 
 
-@api.jit(static_argnums=(1, 2, 3, 4))
-def _resize(image, shape: core.Shape, method: str | ResizeMethod,
-            antialias: bool, precision):
-  if len(shape) != image.ndim:
-    msg = ('shape must have length equal to the number of dimensions of x; '
-           f' {shape} vs {image.shape}')
-    raise ValueError(msg)
-  if isinstance(method, str):
-    method = ResizeMethod.from_string(method)
+def _resize_impl(image, *, shape: core.Shape, method: ResizeMethod,
+                 antialias: bool, precision):
   if method == ResizeMethod.NEAREST:
     return _resize_nearest(image, shape)
-  assert isinstance(method, ResizeMethod)
-
-  image, = promote_dtypes_inexact(image)
   # Skip dimensions that have scale=1 and translation=0, this is only possible
   # since all of the current resize methods (kernels) are interpolating, so the
   # output = input under an identity warp.
@@ -439,6 +433,64 @@ def _resize(image, shape: core.Shape, method: str | ResizeMethod,
                               [0.] * len(spatial_dims), kernel, antialias,
                               precision, edge_padding=edge_padding,
                               radius=radius)
+
+
+def _resize_abstract_eval(image, *, shape, method, **_):
+  partitions = tuple(
+      partition if core.definitely_equal(input_size, output_size) else None
+      for input_size, output_size, partition in zip(
+          image.shape, shape, image.sharding.spec.partitions))
+  spec = image.sharding.spec.update(partitions=partitions)
+  return image.update(
+      shape=shape, sharding=image.sharding.update(spec=spec),
+      weak_type=image.weak_type if method == ResizeMethod.NEAREST else False)
+
+
+def _resize_transpose_rule(ct, image, **params):
+  assert ad.is_undefined_primal(image)
+  return api.linear_transpose(
+      lambda x: _resize_impl(x, **params), image.aval)(ct)
+
+
+def _resize_batching_rule(batched_args, batch_dims, *, shape, method,
+                          antialias, precision):
+  image, = batched_args
+  batch_dim, = batch_dims
+  shape = list(shape)
+  shape.insert(batch_dim, image.shape[batch_dim])
+  return resize_p.bind(
+      image, shape=tuple(shape), method=method, antialias=antialias,
+      precision=precision), batch_dim
+
+
+resize_p = core.Primitive('image_resize')
+dispatch.simple_impl(resize_p)
+resize_p.def_abstract_eval(_resize_abstract_eval)
+ad.deflinear2(resize_p, _resize_transpose_rule)
+batching.primitive_batchers[resize_p] = _resize_batching_rule
+mlir.register_lowering(
+    resize_p, mlir.lower_fun(_resize_impl, multiple_results=False))
+
+
+def _resize(image, shape: core.Shape, method: str | ResizeMethod,
+            antialias: bool, precision):
+  if np.isscalar(image):
+    image = jnp.asarray(image)
+  if len(shape) != image.ndim:
+    msg = ('shape must have length equal to the number of dimensions of x; '
+           f' {shape} vs {image.shape}')
+    raise ValueError(msg)
+  if isinstance(method, str):
+    method = ResizeMethod.from_string(method)
+  assert isinstance(method, ResizeMethod)
+  if method != ResizeMethod.NEAREST:
+    image, = promote_dtypes_inexact(image)
+  if all(core.definitely_equal(input_size, output_size)
+         for input_size, output_size in zip(image.shape, shape)):
+    return jnp.asarray(image)
+  return resize_p.bind(
+      image, shape=shape, method=method, antialias=antialias,
+      precision=precision)
 
 
 def resize(image, shape: core.Shape, method: str | ResizeMethod,

@@ -42,6 +42,7 @@ from jax._src import traceback_util
 from jax._src import tree_util as jtu
 from jax._src.ad_util import SymbolicZero
 from jax._src.hijax import call_hi_primitive_p
+from jax._src.image import scale as image_scale
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -598,6 +599,14 @@ nan_primitives = [lax.acos_p, lax.acosh_p, lax.add_p, lax.asin_p, lax.asinh_p,
 
 for _prim in nan_primitives:
   error_checks[_prim] = functools.partial(nan_error_check, _prim)
+
+
+def image_resize_error_check(error, enabled_errors, image, **params):
+  if params['method'] == image_scale.ResizeMethod.NEAREST:
+    return error, image_scale.resize_p.bind(image, **params)
+  return nan_error_check(
+      image_scale.resize_p, error, enabled_errors, image, **params)
+error_checks[image_scale.resize_p] = image_resize_error_check
 
 
 def dynamic_slice_error_check(error, enabled_errors, operand, *start_indices, slice_sizes):

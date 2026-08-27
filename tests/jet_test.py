@@ -327,6 +327,9 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_copy(self):       self.unary_check(jnp.array)
 
+  def test_resize(self):
+    self.unary_check(
+        partial(jax.image.resize, shape=(4, 5), method="linear"))
 
   @jtu.skip_on_devices("tpu")
   def test_div(self):         self.binary_check(lambda x, y: x / y, lims=[0.8, 4.0])

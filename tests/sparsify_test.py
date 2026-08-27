@@ -70,6 +70,16 @@ class SparsifyTest(jtu.JaxTestCase):
       self.assertNotIsInstance(x, SparseTracer)
     f(jnp.arange(5))
 
+  def testImageResize(self):
+    x = jnp.array([[0., 1., 0.], [2., 0., 3.]])
+    x_sparse = BCOO.fromdense(x)
+    for method in ("nearest", "linear"):
+      with self.subTest(method=method):
+        resize = partial(jax.image.resize, shape=(4, 5), method=method)
+        actual = self.sparsify(resize)(x_sparse)
+        self.assertEqual(isinstance(actual, BCOO), method == "nearest")
+        self.assertAllClose(todense(actual), resize(x))
+
   def assertBcooIdentical(self, x, y):
     self.assertIsInstance(x, BCOO)
     self.assertIsInstance(y, BCOO)

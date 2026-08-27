@@ -49,6 +49,33 @@ class ImageTest(jtu.JaxTestCase):
 
   _TF_SHAPES = [[2, 3, 2, 4], [2, 6, 4, 4], [2, 33, 17, 4], [2, 50, 38, 4]]
 
+  def testResizePrimitiveBatching(self):
+    resize = partial(image.resize, shape=(5, 6), method="linear")
+
+    x = jax.ShapeDtypeStruct((3, 4), np.float32, weak_type=True)
+    jaxpr = jax.make_jaxpr(resize)(x).jaxpr
+    self.assertIn("image_resize", [eqn.primitive.name for eqn in jaxpr.eqns])
+    self.assertFalse(jaxpr.outvars[0].aval.weak_type)
+
+    x = jnp.arange(24., dtype=jnp.float32).reshape(3, 2, 4)
+    actual = jax.vmap(resize, in_axes=1, out_axes=1)(x)
+    expected = jnp.stack([resize(x[:, i, :]) for i in range(x.shape[1])],
+                         axis=1)
+    self.assertAllClose(actual, expected)
+
+  def testResizePrimitiveSharding(self):
+    mesh = jax.sharding.AbstractMesh(
+        (2, 2), ("x", "y"), (jax.sharding.AxisType.Explicit,) * 2)
+    sharding = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec("x", "y"))
+    x = jax.ShapeDtypeStruct((2, 4), np.float32, sharding=sharding)
+    with jax.sharding.use_abstract_mesh(mesh):
+      actual = jax.eval_shape(
+          partial(image.resize, shape=(3, 4), method="linear"), x)
+    self.assertEqual(
+        actual.sharding,
+        sharding.update(spec=jax.sharding.PartitionSpec(None, "y")))
+
   @jtu.sample_product(
     dtype=float_dtypes,
     target_shape=_TF_SHAPES,
@@ -456,6 +483,7 @@ class ImageTest(jtu.JaxTestCase):
     self.assertAllClose(output, expected, atol=1e-3)
 
   def testResizeWithUnusualShapes(self):
+    self.assertEqual((), jax.image.resize(1., (), "nearest").shape)
     x = jnp.ones((3, 4))
     # Array shapes are accepted
     self.assertEqual((10, 17),

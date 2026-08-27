@@ -60,6 +60,7 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src.custom_derivatives import lift_jvp
+from jax._src.image import scale as image_scale
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import sharding_impls
@@ -498,6 +499,14 @@ def sparsify(f, use_tracer=False):
 
 # ------------------------------------------------------------------------------
 # Sparse rules for various primitives
+
+def _resize_sparse(spenv, image, **params):
+  result, _ = sparsify_raw(image_scale._resize_impl)(
+      spenv, image, **params)
+  return result
+
+sparse_rules_bcoo[image_scale.resize_p] = _resize_sparse
+
 
 def _ensure_unique_indices(spenv, spvalue):
   """Return an spvalue representation with deduplicated indices."""

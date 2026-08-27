@@ -446,6 +446,14 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(KeyReuseError, self.random_bits_error):
       self.check_key_reuse(f)
 
+  def test_resize(self):
+    def f(keys):
+      resized = jax.image.resize(keys, (4, 4), "nearest")
+      return jax.random.bits(resized[0, 0])
+
+    keys = jax.random.split(jax.random.key(0), 4).reshape(2, 2)
+    self.check_key_reuse(f, keys)
+
   def test_reuse_after_squeeze(self):
     def f():
       key = jax.random.split(jax.random.key(0), 1)
