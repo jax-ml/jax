@@ -49,9 +49,7 @@ class ProfilerSessionTest(jtu.JaxTestCase):
       options.session_id = session_id
 
     with jax.profiler.trace(tmpdir, profiler_options=options):
-      jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(
-          jnp.ones(jax.local_device_count())
-      ).block_until_ready()
+      jax.jit(lambda x: x + 1)(jnp.ones((10, 10))).block_until_ready()
 
     profile_plugin_dir = tmpdir / 'plugins' / 'profile'
     self.assertTrue(profile_plugin_dir.exists(), f'Not found at {profile_plugin_dir}')
@@ -70,6 +68,156 @@ class ProfilerSessionTest(jtu.JaxTestCase):
     session_dir = profile_plugin_dir / target_dir
     pb_files = list(session_dir.glob('*.xplane.pb'))
     self.assertNotEmpty(pb_files, f'No .xplane.pb files found in {session_dir}')
+
+  def test_trace_returns_profile_session_with_log_dir(self):
+    tmpdir = pathlib.Path(self.create_tempdir())
+    with jax.profiler.trace(tmpdir) as session:
+      self.assertIsInstance(session, jax.profiler.ProfileSession)
+      self.assertTrue(session.is_running)
+      self.assertIsNone(session.profile_data)
+      jax.jit(lambda x: x + 1)(jnp.ones((10, 10))).block_until_ready()
+
+    self.assertFalse(session.is_running)
+    self.assertIsNotNone(session.profile_data)
+    self.assertIsInstance(session.profile_data, jax.profiler.ProfileData)
+    plane_names = [plane.name for plane in session.profile_data.planes]
+    self.assertIn('/host:CPU', plane_names)
+    cpu_plane = session.profile_data.find_plane_with_name('/host:CPU')
+    self.assertIsNotNone(cpu_plane)
+    self.assertEqual(cpu_plane.name, '/host:CPU')
+
+  def test_trace_in_memory_without_log_dir(self):
+    with jax.profiler.trace() as session:
+      self.assertIsInstance(session, jax.profiler.ProfileSession)
+      self.assertTrue(session.is_running)
+      self.assertIsNone(session.profile_data)
+      jax.jit(lambda x: x + 1)(jnp.ones((10, 10))).block_until_ready()
+
+    self.assertFalse(session.is_running)
+    self.assertIsNotNone(session.profile_data)
+    plane_names = [plane.name for plane in session.profile_data.planes]
+    self.assertIn('/host:CPU', plane_names)
+    cpu_plane = session.profile_data.find_plane_with_name('/host:CPU')
+    self.assertIsNotNone(cpu_plane)
+    lines = list(cpu_plane.lines)
+    self.assertNotEmpty(lines)
+
+  def test_profile_session_explicit_start_stop(self):
+    session = jax.profiler.ProfileSession()
+    session.start()
+    self.assertTrue(session.is_running)
+    jax.jit(lambda x: x + 1)(jnp.ones((10, 10))).block_until_ready()
+    profile_data = session.stop()
+    self.assertFalse(session.is_running)
+    self.assertIsNotNone(profile_data)
+    self.assertIs(profile_data, session.profile_data)
+    self.assertIsNotNone(session.profile_data.find_plane_with_name('/host:CPU'))
+
+  def test_start_and_stop_trace_return_values(self):
+    tmpdir = pathlib.Path(self.create_tempdir())
+    session = jax.profiler.start_trace(tmpdir)
+    self.assertIsInstance(session, jax.profiler.ProfileSession)
+    self.assertTrue(session.is_running)
+    jax.jit(lambda x: x + 1)(jnp.ones((10, 10))).block_until_ready()
+    profile_data = jax.profiler.stop_trace()
+    self.assertIsNotNone(profile_data)
+    self.assertIsInstance(profile_data, jax.profiler.ProfileData)
+    self.assertIs(profile_data, session.profile_data)
+    self.assertFalse(session.is_running)
+    cpu_plane = profile_data.find_plane_with_name('/host:CPU')
+    self.assertIsNotNone(cpu_plane)
+    self.assertNotEmpty(list(cpu_plane.lines))
+
+  def test_start_and_stop_trace_with_log_dir(self):
+    tmpdir = pathlib.Path(self.create_tempdir())
+    # Ensure start_trace + stop_trace preserves custom
+    # ProfileOptions.session_id rather than exporting to a timestamp directory.
+    options = jax.profiler.ProfileOptions()
+    options.session_id = _TEST_SESSION_ID
+    session = jax.profiler.start_trace(tmpdir, profiler_options=options)
+    self.assertIsInstance(session, jax.profiler.ProfileSession)
+    self.assertTrue(session.is_running)
+    jax.jit(lambda x: x + 1)(jnp.ones((10, 10))).block_until_ready()
+    profile_data = jax.profiler.stop_trace()
+    self.assertIsNotNone(profile_data)
+    self.assertIsInstance(profile_data, jax.profiler.ProfileData)
+    self.assertIs(profile_data, session.profile_data)
+    self.assertFalse(session.is_running)
+    cpu_plane = profile_data.find_plane_with_name('/host:CPU')
+    self.assertIsNotNone(cpu_plane)
+    self.assertNotEmpty(list(cpu_plane.lines))
+    session_dir = tmpdir / 'plugins' / 'profile' / _TEST_SESSION_ID
+    self.assertTrue(session_dir.exists())
+    pb_files = list(session_dir.glob('*.xplane.pb'))
+    self.assertNotEmpty(pb_files)
+
+  def test_start_trace_stopped_via_session_stop(self):
+    tmpdir = pathlib.Path(self.create_tempdir())
+    options = jax.profiler.ProfileOptions()
+    options.session_id = _TEST_SESSION_ID
+    session = jax.profiler.start_trace(tmpdir, profiler_options=options)
+    self.assertIsNotNone(session)
+    self.assertEqual(session.log_dir, str(tmpdir))
+    jax.jit(lambda x: x + 1)(jnp.ones((10, 10))).block_until_ready()
+    profile_data = session.stop()
+    self.assertIsNotNone(profile_data)
+    self.assertFalse(session.is_running)
+    session_dir = tmpdir / 'plugins' / 'profile' / _TEST_SESSION_ID
+    self.assertTrue(session_dir.exists())
+    pb_files = list(session_dir.glob('*.xplane.pb'))
+    self.assertNotEmpty(pb_files)
+
+  def test_profile_session_explicit_export(self):
+    tmpdir = pathlib.Path(self.create_tempdir())
+    session = jax.profiler.ProfileSession()
+    with self.assertRaises(RuntimeError):
+      session.export_profile_data(tmpdir)
+
+    session.start()
+    with self.assertRaises(RuntimeError):
+      session.export_profile_data(tmpdir)
+
+    jax.jit(lambda x: x + 1)(jnp.ones((10, 10))).block_until_ready()
+    session.stop()
+
+    session.export_profile_data(tmpdir)
+    profile_plugin_dir = tmpdir / 'plugins' / 'profile'
+    self.assertTrue(profile_plugin_dir.exists())
+    pb_files = list(profile_plugin_dir.rglob('*.xplane.pb'))
+    self.assertNotEmpty(pb_files)
+
+  def test_jax_profiler_export_function(self):
+    tmpdir1 = pathlib.Path(self.create_tempdir())
+    tmpdir2 = pathlib.Path(self.create_tempdir())
+
+    # Ensure exporting either ProfileSession or ProfileData directly
+    # preserves custom ProfileOptions.session_id.
+    options = jax.profiler.ProfileOptions()
+    options.session_id = _TEST_SESSION_ID
+    with jax.profiler.trace(profiler_options=options) as session:
+      jax.jit(lambda x: x + 1)(jnp.ones((10, 10))).block_until_ready()
+
+    # Export using ProfileSession
+    jax.profiler.export_profile_data(session, tmpdir1)
+    pb_files1 = list(
+        (tmpdir1 / 'plugins' / 'profile' / _TEST_SESSION_ID).glob('*.xplane.pb')
+    )
+    self.assertNotEmpty(pb_files1)
+
+    # Export using ProfileData directly
+    jax.profiler.export_profile_data(session.profile_data, tmpdir2)
+    pb_files2 = list(
+        (tmpdir2 / 'plugins' / 'profile' / _TEST_SESSION_ID).glob('*.xplane.pb')
+    )
+    self.assertNotEmpty(pb_files2)
+
+  def test_trace_early_stop_and_get_fdo_profile(self):
+    tmpdir = pathlib.Path(self.create_tempdir())
+    with jax.profiler.trace(tmpdir) as session:
+      jax.jit(lambda x: x + 1)(jnp.ones((10, 10))).block_until_ready()
+      fdo_profile = jax._src.profiler.stop_and_get_fdo_profile()
+    self.assertIsNotNone(fdo_profile)
+    self.assertIsNone(session.profile_data)
 
 
 if __name__ == '__main__':
