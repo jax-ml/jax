@@ -1468,7 +1468,8 @@ householder_product_p = standard_linalg_primitive(
     _householder_product_shape_rule, "householder_product")
 mlir.register_lowering(householder_product_p, _householder_product_lowering)
 register_cpu_gpu_lowering(
-    householder_product_p, _householder_product_cpu_gpu_lowering)
+    householder_product_p, _householder_product_cpu_gpu_lowering,
+    supported_platforms=("cpu", "cuda", "rocm", "oneapi"))
 
 
 # Orthogonal QR multiply
@@ -1600,7 +1601,8 @@ ormqr_p = standard_linalg_primitive(
     _ormqr_shape_rule, "ormqr")
 mlir.register_lowering(ormqr_p, mlir.lower_fun(
     _ormqr_lowering, multiple_results=False))
-register_cpu_gpu_lowering(ormqr_p, _ormqr_cpu_gpu_lowering)
+register_cpu_gpu_lowering(ormqr_p, _ormqr_cpu_gpu_lowering,
+                          supported_platforms=("cpu", "cuda", "rocm", "oneapi"))
 
 
 # LU decomposition
@@ -2008,7 +2010,8 @@ geqrf_p = linalg_primitive(
     _geqrf_dtype_rule, (_float | _complex,), (2,), _geqrf_shape_rule, "geqrf",
     multiple_results=True)
 mlir.register_lowering(geqrf_p, _geqrf_lowering_rule)
-register_cpu_gpu_lowering(geqrf_p, _geqrf_cpu_gpu_lowering)
+register_cpu_gpu_lowering(geqrf_p, _geqrf_cpu_gpu_lowering,
+                          supported_platforms=("cpu", "cuda", "rocm", "oneapi"))
 
 
 def geqp3(a: ArrayLike, jpvt: ArrayLike, *,

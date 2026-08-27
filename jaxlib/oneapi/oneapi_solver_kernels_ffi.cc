@@ -23,9 +23,12 @@ limitations under the License.
 #include <oneapi/mkl/lapack.hpp>
 #include <sycl/sycl.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <exception>
 #include <tuple>
+#include <type_traits>
+#include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -46,6 +49,12 @@ namespace jax {
 namespace oneapi {
 
 namespace ffi = ::xla::ffi;
+
+// Picks the real (orgqr/ormqr) vs complex (ungqr/unmqr) oneMKL routine at
+// compile time inside one templated Impl.
+template <typename T>
+inline constexpr bool kIsComplex =
+    std::is_same_v<T, gpuComplex> || std::is_same_v<T, gpuDoubleComplex>;
 
 #define SOLVER_DISPATCH_IMPL(impl, ...)           \
   switch (dataType) {                             \
@@ -81,13 +90,72 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GetrfFfi, GetrfDispatch,
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
 
-// QR Decomposition: geqrf (stub)
+// QR Decomposition: geqrf
+
+template <typename T>
+ffi::Error GeqrfImpl(int64_t batch, int64_t rows, int64_t cols,
+                     gpuStream_t stream, ffi::ScratchAllocator& scratch,
+                     ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
+                     ffi::Result<ffi::AnyBuffer> tau) {
+  int64_t m = rows;
+  int64_t n = cols;
+  // JAX lowers linalg FFI calls column-major, so the leading dimension is the
+  // row count (see _linalg_ffi_lowering in jax/_src/lax/linalg.py).
+  int64_t lda = m;
+  int64_t tau_len = std::min(m, n);
+  int64_t stride_a = m * n;
+  int64_t stride_tau = tau_len;
+
+  // Contain any throw from the scratchpad-size query at the FFI boundary.
+  int64_t scratchpad_size = 0;
+  JAX_FFI_RETURN_IF_GPU_ERROR(TryCatchToStatus([&] {
+    scratchpad_size = ::oneapi::mkl::lapack::geqrf_batch_scratchpad_size<T>(
+        *stream, m, n, lda, stride_a, stride_tau, batch);
+  }));
+  FFI_ASSIGN_OR_RETURN(auto scratchpad,
+                       AllocateWorkspace<T>(scratch, scratchpad_size, "geqrf"));
+
+  auto* a_data = static_cast<T*>(a.untyped_data());
+  auto* out_data = static_cast<T*>(out->untyped_data());
+  auto* tau_data = static_cast<T*>(tau->untyped_data());
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  try {
+    ::oneapi::mkl::lapack::geqrf_batch(
+        *stream, m, n, out_data, lda, stride_a, tau_data, stride_tau, batch,
+        scratchpad, scratchpad_size);
+  } catch (std::exception const& e) {
+    // geqrf has no info output buffer, and it cannot report singularity, so
+    // any failure is fatal.
+    return ffi::Error::Internal(e.what());
+  } catch (...) {
+    return ffi::Error::Internal("geqrf: unknown exception");
+  }
+  return ffi::Error::Success();
+}
 
 ffi::Error GeqrfDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
                          ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
                          ffi::Result<ffi::AnyBuffer> tau) {
-  return ffi::Error(ffi::ErrorCode::kUnimplemented,
-                    "geqrf: not yet implemented for OneAPI");
+  auto dataType = a.element_type();
+  if (dataType != out->element_type() || dataType != tau->element_type()) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to geqrf must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(a.dimensions()));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, rows, cols}, "out", "geqrf"));
+  FFI_RETURN_IF_ERROR(CheckShape(
+      tau->dimensions(), {batch, std::min(rows, cols)}, "tau", "geqrf"));
+
+  SOLVER_DISPATCH_IMPL(GeqrfImpl, batch, rows, cols, stream, scratch, a, out,
+                       tau);
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in geqrf", absl::FormatStreamed(dataType)));
 }
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(GeqrfFfi, GeqrfDispatch,
@@ -99,13 +167,89 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GeqrfFfi, GeqrfDispatch,
                                   .Ret<ffi::AnyBuffer>()  // tau
 );
 
-// Householder reconstruction: orgqr (real) / ungqr (complex) (stub)
+// Householder reconstruction: orgqr (real) / ungqr (complex)
+
+template <typename T>
+ffi::Error OrgqrImpl(int64_t batch, int64_t rows, int64_t cols, int64_t size,
+                     gpuStream_t stream, ffi::ScratchAllocator& scratch,
+                     ffi::AnyBuffer a, ffi::AnyBuffer tau,
+                     ffi::Result<ffi::AnyBuffer> out) {
+  int64_t m = rows;
+  int64_t n = cols;
+  int64_t k = size;
+  int64_t lda = m;
+  int64_t stride_a = m * n;
+  int64_t stride_tau = k;
+
+  // Contain any throw from the scratchpad-size query at the FFI boundary.
+  int64_t scratchpad_size = 0;
+  JAX_FFI_RETURN_IF_GPU_ERROR(TryCatchToStatus([&] {
+    if constexpr (kIsComplex<T>) {
+      scratchpad_size = ::oneapi::mkl::lapack::ungqr_batch_scratchpad_size<T>(
+          *stream, m, n, k, lda, stride_a, stride_tau, batch);
+    } else {
+      scratchpad_size = ::oneapi::mkl::lapack::orgqr_batch_scratchpad_size<T>(
+          *stream, m, n, k, lda, stride_a, stride_tau, batch);
+    }
+  }));
+  FFI_ASSIGN_OR_RETURN(auto scratchpad,
+                       AllocateWorkspace<T>(scratch, scratchpad_size, "orgqr"));
+
+  auto* a_data = static_cast<T*>(a.untyped_data());
+  auto* tau_data = static_cast<T*>(tau.untyped_data());
+  auto* out_data = static_cast<T*>(out->untyped_data());
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  try {
+    if constexpr (kIsComplex<T>) {
+      ::oneapi::mkl::lapack::ungqr_batch(
+          *stream, m, n, k, out_data, lda, stride_a, tau_data, stride_tau,
+          batch, scratchpad, scratchpad_size);
+    } else {
+      ::oneapi::mkl::lapack::orgqr_batch(
+          *stream, m, n, k, out_data, lda, stride_a, tau_data, stride_tau,
+          batch, scratchpad, scratchpad_size);
+    }
+  } catch (std::exception const& e) {
+    // No info output buffer; any failure is fatal.
+    return ffi::Error::Internal(e.what());
+  } catch (...) {
+    return ffi::Error::Internal("orgqr: unknown exception");
+  }
+  return ffi::Error::Success();
+}
 
 ffi::Error OrgqrDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
                          ffi::AnyBuffer a, ffi::AnyBuffer tau,
                          ffi::Result<ffi::AnyBuffer> out) {
-  return ffi::Error(ffi::ErrorCode::kUnimplemented,
-                    "orgqr: not yet implemented for OneAPI");
+  auto dataType = a.element_type();
+  if (dataType != tau.element_type() || dataType != out->element_type()) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to orgqr must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(a.dimensions()));
+  FFI_ASSIGN_OR_RETURN((auto [tau_batch, size]),
+                       SplitBatch1D(tau.dimensions()));
+  if (tau_batch != batch) {
+    return ffi::Error::InvalidArgument(
+        "The batch dimensions of the inputs to orgqr must match");
+  }
+  if (size > cols) {
+    return ffi::Error::InvalidArgument(
+        "The trailing dimension of the tau input to orgqr must be less than or "
+        "equal to the number of columns of the input matrix");
+  }
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, rows, cols}, "out", "orgqr"));
+
+  SOLVER_DISPATCH_IMPL(OrgqrImpl, batch, rows, cols, size, stream, scratch, a,
+                       tau, out);
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in orgqr", absl::FormatStreamed(dataType)));
 }
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(OrgqrFfi, OrgqrDispatch,
@@ -117,14 +261,106 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(OrgqrFfi, OrgqrDispatch,
                                   .Ret<ffi::AnyBuffer>()  // out
 );
 
-// Householder multiply: ormqr (real) / unmqr (complex) (stub)
+// Householder multiply: ormqr (real) / unmqr (complex)
+
+template <typename T>
+ffi::Error OrmqrImpl(int64_t batch, int64_t c_rows, int64_t c_cols, int64_t k,
+                     int64_t a_rows, int64_t a_cols, bool left, bool transpose,
+                     gpuStream_t stream, ffi::ScratchAllocator& scratch,
+                     ffi::AnyBuffer a, ffi::AnyBuffer tau, ffi::AnyBuffer c,
+                     ffi::Result<ffi::AnyBuffer> out) {
+  int64_t m = c_rows;
+  int64_t n = c_cols;
+  int64_t lda = a_rows;
+  int64_t ldc = m;
+
+  auto side = left ? ::oneapi::mkl::side::left : ::oneapi::mkl::side::right;
+  // Real ormqr accepts trans; complex unmqr requires conjtrans.
+  ::oneapi::mkl::transpose trans;
+  if (!transpose) {
+    trans = ::oneapi::mkl::transpose::nontrans;
+  } else if constexpr (kIsComplex<T>) {
+    trans = ::oneapi::mkl::transpose::conjtrans;
+  } else {
+    trans = ::oneapi::mkl::transpose::trans;
+  }
+
+  // Contain any throw from the scratchpad-size query at the FFI boundary.
+  int64_t scratchpad_size = 0;
+  JAX_FFI_RETURN_IF_GPU_ERROR(TryCatchToStatus([&] {
+    if constexpr (kIsComplex<T>) {
+      scratchpad_size = ::oneapi::mkl::lapack::unmqr_scratchpad_size<T>(
+          *stream, side, trans, m, n, k, lda, ldc);
+    } else {
+      scratchpad_size = ::oneapi::mkl::lapack::ormqr_scratchpad_size<T>(
+          *stream, side, trans, m, n, k, lda, ldc);
+    }
+  }));
+  FFI_ASSIGN_OR_RETURN(auto scratchpad,
+                       AllocateWorkspace<T>(scratch, scratchpad_size, "ormqr"));
+
+  auto* a_data = static_cast<T*>(a.untyped_data());
+  auto* tau_data = static_cast<T*>(tau.untyped_data());
+  auto* c_data = static_cast<T*>(c.untyped_data());
+  auto* out_data = static_cast<T*>(out->untyped_data());
+  if (c_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, c_data, c.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  int64_t a_step = a_rows * a_cols;
+  // oneMKL offers ormqr/unmqr only in the group form (arrays of per-matrix
+  // pointers and parameters), so the uniform batch is implemented as a loop.
+  for (int64_t i = 0; i < batch; ++i) {
+    try {
+      if constexpr (kIsComplex<T>) {
+        ::oneapi::mkl::lapack::unmqr(*stream, side, trans, m, n, k, a_data,
+                                     lda, tau_data, out_data, ldc,
+                                     scratchpad, scratchpad_size);
+      } else {
+        ::oneapi::mkl::lapack::ormqr(*stream, side, trans, m, n, k, a_data,
+                                     lda, tau_data, out_data, ldc,
+                                     scratchpad, scratchpad_size);
+      }
+    } catch (std::exception const& e) {
+      // No info output buffer; any failure is fatal.
+      return ffi::Error::Internal(e.what());
+    } catch (...) {
+      return ffi::Error::Internal("ormqr: unknown exception");
+    }
+    out_data += m * n;
+    a_data += a_step;
+    tau_data += k;
+  }
+  return ffi::Error::Success();
+}
 
 ffi::Error OrmqrDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
                          bool left, bool transpose, ffi::AnyBuffer a,
                          ffi::AnyBuffer tau, ffi::AnyBuffer c,
                          ffi::Result<ffi::AnyBuffer> out) {
-  return ffi::Error(ffi::ErrorCode::kUnimplemented,
-                    "ormqr: not yet implemented for OneAPI");
+  auto dataType = a.element_type();
+  if (dataType != tau.element_type() || dataType != c.element_type() ||
+      dataType != out->element_type()) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to ormqr must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, a_rows, a_cols]),
+                       SplitBatch2D(a.dimensions()));
+  FFI_ASSIGN_OR_RETURN((auto [tau_batch, k]), SplitBatch1D(tau.dimensions()));
+  FFI_ASSIGN_OR_RETURN((auto [c_batch, c_rows, c_cols]),
+                       SplitBatch2D(c.dimensions()));
+  if (tau_batch != batch || c_batch != batch) {
+    return ffi::Error::InvalidArgument(
+        "The batch dimensions of the inputs to ormqr must match");
+  }
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, c_rows, c_cols}, "out", "ormqr"));
+
+  SOLVER_DISPATCH_IMPL(OrmqrImpl, batch, c_rows, c_cols, k, a_rows, a_cols,
+                       left, transpose, stream, scratch, a, tau, c, out);
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in ormqr", absl::FormatStreamed(dataType)));
 }
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(OrmqrFfi, OrmqrDispatch,
@@ -175,39 +411,37 @@ ffi::Error PotrfImpl(int64_t batch, int64_t n, gpuStream_t stream,
         SyclMemsetAsync(info_data, 0, batch * sizeof(int32_t), stream));
 
     try {
-      sycl::event ev = ::oneapi::mkl::lapack::potrf_batch(
+      ::oneapi::mkl::lapack::potrf_batch(
           *stream, uplo, n, out_data, lda, stride_a, batch, scratchpad,
           scratchpad_size);
-      ev.wait_and_throw();
     } catch (::oneapi::mkl::lapack::batch_error const& be) {
       // oneMKL throws on non-positive-definite input. Recover each failing
       // matrix's info code and write it to info_data (info > 0 => JAX
       // NaN-fills).
       auto const& ids = be.ids();
       auto const& exceptions = be.exceptions();
+      std::vector<int32_t> host_info(batch, 0);
       for (std::size_t ei = 0; ei < ids.size(); ++ei) {
         try {
           std::rethrow_exception(exceptions[ei]);
-        } catch (::oneapi::mkl::lapack::invalid_argument const& e) {
-          // Insufficient scratchpad (detail() reports the required minimum)
-          // or an otherwise-invalid argument -- not a numerical failure of
-          // the factorization, so surface it as an error, not an info code.
-          return ffi::Error::Internal(absl::StrFormat(
-              "potrf_batch: scratchpad too small: allocated %d, need at "
-              "least %d",
-              scratchpad_size, e.detail()));
         } catch (::oneapi::mkl::lapack::exception const& e) {
+          // Only computation_error is packed per matrix; argument errors are a
+          // whole-call property, thrown directly, so they never reach here.
           if (e.info() < 0) {
             return ffi::Error::Internal(e.what());
           }
-          JAX_FFI_RETURN_IF_GPU_ERROR(SyclMemfillAsync(
-              &info_data[ids[ei]], static_cast<int32_t>(e.info()), 1, stream));
+          host_info[ids[ei]] = static_cast<int32_t>(e.info());
         }
       }
+      JAX_FFI_RETURN_IF_GPU_ERROR(
+          gpuMemcpyAsync(info_data, host_info.data(), batch * sizeof(int32_t),
+                         gpuMemcpyHostToDevice, stream));
+      // host_info is a stack local, so block until the async copy reads it.
+      JAX_FFI_RETURN_IF_GPU_ERROR(gpuStreamSynchronize(stream));
     }
   } catch (std::exception const& e) {
     // Covers both synchronous and asynchronous sycl::exception (both derive
-    // from std::exception) and every oneMKL error surfaced by wait_and_throw().
+    // from std::exception) and every oneMKL error.
     return ffi::Error::Internal(e.what());
   } catch (...) {
     return ffi::Error::Internal("potrf_batch: unknown exception");
@@ -322,7 +556,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdFfi, GesvdDispatch,
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
 
-// Jacobi SVD: gesvdj (stub — no oneMKL equivalent)
+// Jacobi SVD: gesvdj (stub, no oneMKL equivalent)
 
 ffi::Error GesvdjDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
                           bool full_matrices, bool compute_uv, ffi::AnyBuffer a,
