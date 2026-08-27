@@ -54,13 +54,6 @@ from jax._src.typing import Array
 from jax._src.util import (split_list, safe_map, safe_zip, unzip3,
                            weakref_lru_cache, HashableWrapper, foreach)
 
-# Backward compatibility: some downstream users implicitly rely on this import,
-# and reference jax.experimental.shard_map without an explicit import.
-# TODO(yashkatariya): remove this once users are migrated to jax.shard_map.
-try:
-  import jax.experimental.shard_map as _  # pyrefly: ignore[missing-import]  # noqa: F401
-except ImportError:
-  pass
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
