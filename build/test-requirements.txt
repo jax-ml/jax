@@ -9,6 +9,7 @@ portpicker
 pytest
 pytest-xdist
 rich
-matplotlib
+# TODO(phawkins): re-enable once matplotlib wheels are available for Python 3.15
+matplotlib; python_version<"3.15"
 auditwheel
 scipy-stubs
