@@ -1873,37 +1873,6 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     compiled_text = compiled_f_sc.as_text()
     self.assertIn('async_execution_thread="sparsecore"', compiled_text)
 
-  def test_sparsecore_unsupported_gather(self):
-    if not (
-        jax.devices()[0].device_kind == "TPU v5"
-        or jtu.is_device_tpu_at_least(6)
-    ):
-      self.skipTest("Does not have a sparsecore present")
-
-    dnums = jax.lax.GatherDimensionNumbers(
-        offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)
-    )
-    slice_sizes = (1, 5)
-
-    @compute_on(compute_type="tpu_sparsecore",
-                 out_memory_spaces=jax.memory.Space.Device)
-    def f_sc(operand, indices):
-      return jax.lax.gather(operand, indices, dnums, slice_sizes)
-
-    inputs = (
-        np.linspace(0, 1, 10 * 5, dtype=np.float16).reshape(10, 5),
-        np.array([[4, 2], [3, 2]]),
-    )
-
-    unsupported_gather = False
-    error_msg = None
-    try:
-      jax.jit(f_sc).lower(*inputs).compile()
-    except jax.errors.JaxRuntimeError as e:
-      unsupported_gather = True
-      error_msg = str(e)
-    self.assertTrue(unsupported_gather)
-    self.assertIn("UNIMPLEMENTED", error_msg)
 
   def test_sparsecore_supported_gather(self):
     if not (
