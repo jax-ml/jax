@@ -4988,6 +4988,30 @@ def _unpack_elementwise_lowering_rule(
       out_type, x, source_type=_dtype_to_ir_type(packed_dtype), index=index)
 
 
+@register_lowering_rule(tpu_primitives.unpack_and_join_p)
+def _unpack_and_join_lowering_rule(
+    ctx: LoweringRuleContext,
+    lower,
+    upper,
+    *,
+    sublane_group_id: int,
+    in_bitwidth: int,
+):
+  in_aval = ctx.avals_in[0]
+  out_aval = ctx.avals_out[0]
+  out_type = ir.VectorType.get(
+      ctx.lowering_context.dynamic_shape_replacement_fn(in_aval.shape),
+      _dtype_to_ir_type(out_aval.dtype),
+  )
+  return tpu.unpack_and_join(
+      out_type,
+      lower,
+      upper,
+      sublane_group_id=sublane_group_id,
+      in_bitwidth=in_bitwidth,
+  )
+
+
 @register_lowering_rule(tpu_primitives.bitcast_p)
 def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
   del ty

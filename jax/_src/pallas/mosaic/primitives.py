@@ -1048,6 +1048,67 @@ def _unpack_elementwise_abstract_eval(
   return jax_core.ShapedArray(x.shape, unpacked_dtype)
 
 
+unpack_and_join_p = jax_core.Primitive("unpack_and_join")
+
+
+def unpack_and_join(
+    lower: jax.Array,
+    upper: jax.Array,
+    *,
+    sublane_group_id: int,
+    in_bitwidth: int,
+) -> jax.Array:
+  """Unpacks sublanes from two compressed arrays and joins them bitwise.
+
+  Corresponds to the following TPU assembly instructions:
+    - `vdst = vunpack.c.join.l.b2.b4 vx, vy` (in_bitwidth=2, sublane_group_id=0)
+    - `vdst = vunpack.c.join.u.b2.b4 vx, vy` (in_bitwidth=2, sublane_group_id=1)
+    - `vdst = vunpack.c.join.l.b4.b8 vx, vy` (in_bitwidth=4, sublane_group_id=0)
+    - `vdst = vunpack.c.join.u.b4.b8 vx, vy` (in_bitwidth=4, sublane_group_id=1)
+
+  Supported starting from TPU 7x+.
+
+  Args:
+    lower: The array providing the lower bits of each element.
+    upper: The array providing the upper bits of each element.
+    sublane_group_id: 0 for lower sublanes (.l), 1 for upper sublanes (.u).
+    in_bitwidth: Bitwidth of source elements to unpack: - 2 for `b2.b4` (unpacks
+      2-bit values and joins them into 4-bit values) - 4 for `b4.b8` (unpacks
+      4-bit values and joins them into 8-bit values)
+
+  Returns:
+    The joined array.
+  """
+  return unpack_and_join_p.bind(
+      lower, upper, sublane_group_id=sublane_group_id, in_bitwidth=in_bitwidth
+  )
+
+
+@unpack_and_join_p.def_abstract_eval
+def _unpack_and_join_abstract_eval(
+    lower: jax_core.ShapedArray,
+    upper: jax_core.ShapedArray,
+    *,
+    sublane_group_id: int,
+    in_bitwidth: int,
+) -> jax_core.ShapedArray:
+  if lower.shape != upper.shape:
+    raise ValueError(
+        f"Shapes of lower and upper must match, got {lower.shape} and"
+        f" {upper.shape}"
+    )
+  if lower.dtype != upper.dtype:
+    raise ValueError(
+        f"Dtypes of lower and upper must match, got {lower.dtype} and"
+        f" {upper.dtype}"
+    )
+  if sublane_group_id not in (0, 1):
+    raise ValueError(f"sublane_group_id must be 0 or 1, got {sublane_group_id}")
+  if in_bitwidth not in (2, 4):
+    raise ValueError(f"in_bitwidth must be 2 or 4, got {in_bitwidth}")
+  return jax_core.ShapedArray(lower.shape, lower.dtype)
+
+
 def with_memory_space_constraint(
     x: jax.Array, memory_space: Any
 ) -> jax.Array:
