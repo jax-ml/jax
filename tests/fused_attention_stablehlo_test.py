@@ -623,8 +623,8 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
     except RuntimeError as e:
       self.skipTest(str(e))
       return
-    if self.cudnn_version == 91000:
-      self.skipTest("cuDNN 9.10.0 does not support SDPA FP8")
+    if 91000 <= self.cudnn_version < 91100:
+      self.skipTest("cuDNN 9.10.x does not support SDPA FP8")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Requires at least Hopper arch")
     if jtu.is_cuda_compute_capability_equal("12.0"):
