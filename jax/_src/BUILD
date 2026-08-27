@@ -389,6 +389,7 @@ pytype_strict_library(
         ":effects",
         ":flattree",
         ":hijax",
+        ":image",
         ":lax",
         ":mesh",
         ":mlir",
@@ -874,10 +875,13 @@ pytype_strict_library(
     ]),
     visibility = ["//jax:internal"] + jax_visibility("image"),  # buildifier: disable=visibility-as-string-list
     deps = [
+        ":ad",
         ":api",
+        ":batching",
         ":core",
         ":dtypes",
         ":lax",
+        ":mlir",
         ":numpy",
         ":util",
     ] + py_deps("numpy"),

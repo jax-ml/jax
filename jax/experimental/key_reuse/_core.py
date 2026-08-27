@@ -37,6 +37,7 @@ from jax._src.ad_checkpoint import remat_p
 from jax._src.debugging import debug_callback_p
 from jax._src.effects import Effect
 from jax._src.hashable_array import HashableArray
+from jax._src.image import scale as image_scale
 from jax._src.interpreters import partial_eval as pe
 from jax._src.util import weakref_lru_cache
 
@@ -304,6 +305,7 @@ key_reuse_signatures[lax.squeeze_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[pjit.layout_constraint_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[pjit.sharding_constraint_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[pjit.reshard_p] = KeyReuseSignature(Forward(0, 0))
+key_reuse_signatures[image_scale.resize_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[prng.random_wrap_p] = KeyReuseSignature(Source(0))
 # TODO(jakevdp): should unwrap sink its input key?
 key_reuse_signatures[prng.random_unwrap_p] = KeyReuseSignature()
