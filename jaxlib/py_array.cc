@@ -477,19 +477,20 @@ PyArray_Storage::PyArray_Storage(nb::object aval, bool weak_type,
                                  nb_class_ptr<PyClient> py_client,
                                  ifrt::ArrayRef ifrt_array,
                                  xla::Future<> result_status)
-    : aval(std::move(aval)),
+    : py_client(std::move(py_client)),
+      thread_id_bucket(
+          std::hash<std::thread::id>()(std::this_thread::get_id()) %
+          PyClient::kNumArraysShards),
+      committed(committed),
       weak_type(weak_type),
+      aval(std::move(aval)),
       dtype(std::move(dtype)),
       shape(std::move(shape)),
       sharding(std::move(sharding)),
-      committed(committed),
-      py_client(std::move(py_client)),
       ifrt_array(std::move(ifrt_array)),
       result_status(std::move(result_status)) {
   static_assert(PyClient::kNumArraysShards <
                 std::numeric_limits<uint8_t>::max());
-  thread_id_bucket = std::hash<std::thread::id>()(std::this_thread::get_id()) %
-                     PyClient::kNumArraysShards;
 
   PyClient::ArraysShard& shard = this->py_client->arrays_[thread_id_bucket];
   nanobind::ft_lock_guard lock(shard.mutex);
@@ -1592,13 +1593,22 @@ absl::Status PyArray::ReplaceWithAlias(PyArray o) {
   auto& o_storage = o.GetStorage();
   if (storage.py_client.get() != o_storage.py_client.get()) {
     return absl::InvalidArgumentError(
-        "Unable to replace a PyArray with a PyArray from a different client.");
+        "Unable to replace an Array with an Array from a different client.");
+  }
+  if (!storage.dtype.equal(o_storage.dtype)) {
+    return absl::InvalidArgumentError(
+        "Unable to replace an Array with an Array of different dtype.");
+  }
+  if (storage.shape != o_storage.shape) {
+    return absl::InvalidArgumentError(
+        "Unable to replace an Array with an Array of different shape.");
+  }
+  if (!storage.sharding.equal(o_storage.sharding)) {
+    return absl::InvalidArgumentError(
+        "Unable to replace an Array with an Array of different sharding.");
   }
   storage.aval = o_storage.aval;
   storage.weak_type = o_storage.weak_type;
-  storage.dtype = o_storage.dtype;
-  storage.shape = o_storage.shape;
-  storage.sharding = o_storage.sharding;
   storage.npy_value = o_storage.npy_value;
   storage.committed = o_storage.committed;
   storage.ifrt_array = o_storage.ifrt_array;
@@ -2250,9 +2260,10 @@ absl::Status PyArray::Register(nb::module_& m) {
       xla::nb_property(&PyArray::npy_value, &PyArray::set_npy_value);
   type.attr("_committed") = xla::nb_property_readonly(&PyArray::committed);
   nb::class_<xla::PjRtRawBufferRef>(m, "RawBuffer")
-      .def_prop_ro("ptr", [](const xla::PjRtRawBufferRef& self) {
-        return reinterpret_cast<std::uintptr_t>(self.get());
-      })
+      .def_prop_ro("ptr",
+                   [](const xla::PjRtRawBufferRef& self) {
+                     return reinterpret_cast<std::uintptr_t>(self.get());
+                   })
       .def("__repr__", [](const xla::PjRtRawBufferRef& self) {
         return absl::StrFormat("<RawBuffer 0x%x>",
                                reinterpret_cast<std::uintptr_t>(self.get()));

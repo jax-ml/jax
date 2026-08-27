@@ -104,16 +104,26 @@ struct PyArray_Storage {
   ~PyArray_Storage();
   nanobind::handle AsHandle();
 
-  nanobind::object aval;
-  bool weak_type = false;
-  xla::nb_dtype dtype;
-  std::vector<int64_t> shape;
+  const nb_class_ptr<PyClient> py_client;
 
-  nanobind::object sharding;
-  nanobind::object npy_value = nanobind::none();
+  // Doubly-linked list of all PyArrays known to the client. Protected by the
+  // GIL or by a sharded mutex in the client. Since multiple PyArrays may share
+  // the same PjRtBuffer, there may be duplicate PjRtBuffers in this list.
+  PyArray_Storage* next = nullptr;
+  PyArray_Storage* prev = nullptr;
+
+  // To which shard of the client does this array belong?
+  const uint8_t thread_id_bucket;
+
   bool committed = false;
+  bool weak_type = false;
+  nanobind::object aval;
+  const xla::nb_dtype dtype;
+  const std::vector<int64_t> shape;
 
-  nb_class_ptr<PyClient> py_client;
+  const nanobind::object sharding;
+  nanobind::object npy_value = nanobind::none();
+
   xla::ifrt::ArrayRef ifrt_array;
   nanobind::object fully_replicated_array = nanobind::none();
 
@@ -125,14 +135,6 @@ struct PyArray_Storage {
   // This is the result status of the XLA computation that generated this
   // array.
   xla::Future<> result_status;
-
-  // Doubly-linked list of all PyArrays known to the client. Protected by the
-  // GIL. Since multiple PyArrays may share the same PjRtBuffer, there may be
-  // duplicate PjRtBuffers in this list.
-  PyArray_Storage* next;
-  PyArray_Storage* prev;
-
-  uint8_t thread_id_bucket;
 };
 
 // The C++ implementation of jax.Array. A few key methods and data members are

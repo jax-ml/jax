@@ -26,6 +26,7 @@ from jax._src import core
 from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
 from jax._src.mesh import AxisType, AbstractMesh, Mesh
@@ -1678,6 +1679,52 @@ class RngShardingTest(jtu.JaxTestCase):
     abstract_mesh2 = jax.sharding.AbstractMesh((), ())
     self.assertTrue(abstract_mesh2.empty)
     self.assertEqual(abstract_mesh2.size, 0)
+
+  @unittest.skipIf(
+      jaxlib_extension_version < 485,
+      "Requires jaxlib_extension_version >= 485",
+  )
+  def test_replace_with(self):
+    a = jnp.array([1, 2, 3])
+    b = jnp.array([4, 5, 6])
+    a._replace_with(b)
+    self.assertArraysEqual(a, [4, 5, 6])
+
+    # weak_type can differ: weak_type array replaced by non-weak_type array
+    w1 = jnp.array(1.0)
+    w2 = jnp.array(1.0, dtype=w1.dtype)
+    self.assertTrue(w1.weak_type)
+    self.assertFalse(w2.weak_type)
+    self.assertEqual(w1.dtype, w2.dtype)
+    w1._replace_with(w2)
+    self.assertFalse(w1.weak_type)
+
+    # dtype mismatch
+    c = jnp.array([1.0, 2.0, 3.0], dtype=np.float32)
+    with self.assertRaisesRegex(RuntimeError, "different dtype"):
+      a._replace_with(c)
+
+    # shape mismatch
+    d = jnp.array([1, 2])
+    with self.assertRaisesRegex(RuntimeError, "different shape"):
+      a._replace_with(d)
+
+    # committed can differ: uncommitted array replaced by committed array
+    committed_arr = jax.device_put(jnp.array([1, 2, 3]), jax.devices()[0])
+    uncommitted_arr = jnp.array([1, 2, 3])
+    self.assertFalse(uncommitted_arr._committed)
+    self.assertTrue(committed_arr._committed)
+    uncommitted_arr._replace_with(committed_arr)
+    self.assertTrue(uncommitted_arr._committed)
+
+    # sharding mismatch
+    mesh = jax.sharding.Mesh(np.array(jax.devices()[:1]), ("x",))
+    s1 = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
+    s2 = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    x1 = jax.device_put(jnp.array([1, 2, 3]), s1)
+    x2 = jax.device_put(jnp.array([1, 2, 3]), s2)
+    with self.assertRaisesRegex(RuntimeError, "different sharding"):
+      x1._replace_with(x2)
 
 
 if __name__ == '__main__':
