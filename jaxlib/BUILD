@@ -1013,6 +1013,24 @@ cc_library(
 )
 
 cc_library(
+    name = "numpy",
+    srcs = ["numpy.cc"],
+    hdrs = ["numpy.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@nanobind",
+        "@xla//third_party/python_runtime:headers",
+        "@xla//xla/python:nb_numpy",
+        "@xla//xla/python:safe_static_init",
+        "@xla//xla/tsl/python/lib/core:numpy",
+    ],
+)
+
+cc_library(
     name = "py_client",
     srcs = [
         "partition_spec.cc",
@@ -1056,6 +1074,7 @@ cc_library(
         ":guard_lib",
         ":hash_util",
         ":nb_class_ptr",
+        ":numpy",
         ":pprof_profile_builder",
         ":py_client_cpu",
         ":py_host_callback",
@@ -1068,6 +1087,7 @@ cc_library(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",

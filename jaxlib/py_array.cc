@@ -38,6 +38,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -60,6 +61,7 @@ limitations under the License.
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/guard_lib.h"
 #include "jaxlib/nb_class_ptr.h"
+#include "jaxlib/numpy.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"
 #include "jaxlib/py_device_list.h"
@@ -1914,33 +1916,33 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
 
 absl::Status PyHostValue::ConvertStringArrayContentsToNumpyArray(
     ifrt::Array* ifrt_array) {
-#ifdef NPY_2_0_API_VERSION
-  if (PyArray_RUNTIME_VERSION < NPY_2_0_API_VERSION) {
-    return absl::FailedPreconditionError(
-        absl::StrCat("String arrays are not supported in NumPy version: ",
-                     PyArray_RUNTIME_VERSION));
-  }
-  auto numpy_dtype = nb::steal<xla::nb_dtype>(
-      reinterpret_cast<PyObject*>(PyArray_DescrFromType(NPY_VSTRING)));
-  value_ = xla::nb_numpy_ndarray(numpy_dtype, ifrt_array->shape().dims(),
+  value_ = xla::nb_numpy_ndarray(NumpyTypes::Get().string_dtype,
+                                 ifrt_array->shape().dims(),
                                  /*strides=*/std::nullopt);
 
-  auto dst_py_array_obj = reinterpret_cast<::PyArrayObject*>(value_.ptr());
-  auto iter =
-      nb::steal(PyArray_IterNew(reinterpret_cast<PyObject*>(dst_py_array_obj)));
+  auto* dst_py_array_obj = reinterpret_cast<::PyArrayObject*>(value_.ptr());
+  auto* descr = reinterpret_cast<PyArray_StringDTypeObject*>(
+      PyArray_DESCR(dst_py_array_obj));
+
+  npy_string_allocator* allocator = NpyString_acquire_allocator(descr);
+  if (allocator == nullptr) {
+    return absl::InternalError("NpyString_acquire_allocator returned null");
+  }
+  absl::Cleanup release_allocator = [allocator] {
+    NpyString_release_allocator(allocator);
+  };
+
+  char* dst = PyArray_BYTES(dst_py_array_obj);
+  const npy_intp itemsize = PyArray_ITEMSIZE(dst_py_array_obj);
+
   for (auto& cord : *string_array_contents_) {
     std::string_view input_str_view = cord.Flatten();
-    auto py_unicode = nb::steal(PyUnicode_FromStringAndSize(
-        input_str_view.data(), input_str_view.size()));
-    if (py_unicode.ptr() == nullptr) {
-      return absl::InternalError("PyUnicode_FromStringAndSize failed");
+    auto* packed_entry = reinterpret_cast<npy_packed_static_string*>(dst);
+    if (NpyString_pack(allocator, packed_entry, input_str_view.data(),
+                       input_str_view.size()) < 0) {
+      return absl::InternalError("NpyString_pack failed");
     }
-    if (PyArray_SETITEM(dst_py_array_obj,
-                        static_cast<char*>(PyArray_ITER_DATA(iter.ptr())),
-                        py_unicode.ptr()) != 0) {
-      return absl::InternalError("PyArray_SETITEM failed");
-    }
-    PyArray_ITER_NEXT(iter.ptr());
+    dst += itemsize;
   }
 
   value_.attr("flags").attr("writeable") = nb::bool_(false);
@@ -1948,10 +1950,6 @@ absl::Status PyHostValue::ConvertStringArrayContentsToNumpyArray(
   string_array_contents_.reset();
 
   return absl::OkStatus();
-#else
-  return absl::FailedPreconditionError(
-      "String arrays are not supported in this NumPy version.");
-#endif
 }
 
 absl::Status PyHostValue::CopyStringArrayToHostAsync(

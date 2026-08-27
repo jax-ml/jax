@@ -52,6 +52,7 @@ limitations under the License.
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "jaxlib/config.h"
 #include "jaxlib/nb_class_ptr.h"
+#include "jaxlib/numpy.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/sharding.h"
@@ -97,34 +98,6 @@ nb::object& typed_complex_type = *new nb::object();
 nb::object& typed_ndarray_type = *new nb::object();
 nb::object& invalid_input_exception = *new nb::object();
 nb::object& valid_dtypes = *new nb::object();
-
-struct StaticValues {
-  xla::nb_dtype int32;
-  xla::nb_dtype int64;
-  xla::nb_dtype uint32;
-  xla::nb_dtype float32;
-  xla::nb_dtype float64;
-  xla::nb_dtype complex64;
-  xla::nb_dtype complex128;
-  nb::object numpy_generic;
-};
-
-const StaticValues& GetStatic() {
-  static xla::SafeStatic<StaticValues> dtypes_init;
-  return dtypes_init.Get([] {
-    auto d = std::make_unique<StaticValues>();
-    nb::module_ numpy = nb::module_::import_("numpy");
-    d->int32 = xla::nb_dtype::from_args(numpy.attr("int32"));
-    d->int64 = xla::nb_dtype::from_args(numpy.attr("int64"));
-    d->uint32 = xla::nb_dtype::from_args(numpy.attr("uint32"));
-    d->float32 = xla::nb_dtype::from_args(numpy.attr("float32"));
-    d->float64 = xla::nb_dtype::from_args(numpy.attr("float64"));
-    d->complex64 = xla::nb_dtype::from_args(numpy.attr("complex64"));
-    d->complex128 = xla::nb_dtype::from_args(numpy.attr("complex128"));
-    d->numpy_generic = nb::object(numpy.attr("generic"));
-    return d;
-  });
-}
 
 using CanonicalizeValueHandler = std::function<nb::object(nb::handle)>;
 
@@ -921,13 +894,13 @@ xla::nb_dtype CanonicalizeDtype(xla::nb_dtype dtype) {
   char kind = dtype.kind();
   ssize_t itemsize = dtype.itemsize();
   if (kind == 'i' && itemsize == 8) {
-    return GetStatic().int32;
+    return NumpyTypes::Get().int32_dtype;
   } else if (kind == 'u' && itemsize == 8) {
-    return GetStatic().uint32;
+    return NumpyTypes::Get().uint32_dtype;
   } else if (kind == 'f' && itemsize == 8) {
-    return GetStatic().float32;
+    return NumpyTypes::Get().float32_dtype;
   } else if (kind == 'c' && itemsize == 16) {
-    return GetStatic().complex64;
+    return NumpyTypes::Get().complex64_dtype;
   }
   return dtype;
 }
@@ -941,7 +914,7 @@ nb::object CanonicalizeInt(nb::handle x) {
                                              " too large to convert to int64")
                                     .c_str());
     }
-    return typed_int_type(x, GetStatic().int64);
+    return typed_int_type(x, NumpyTypes::Get().int64_dtype);
   } else {
     int32_t val;
     if (!nb::try_cast<int32_t>(x, val)) {
@@ -950,19 +923,20 @@ nb::object CanonicalizeInt(nb::handle x) {
                                              " too large to convert to int32")
                                     .c_str());
     }
-    return typed_int_type(x, GetStatic().int32);
+    return typed_int_type(x, NumpyTypes::Get().int32_dtype);
   }
 }
 
 nb::object CanonicalizeFloat(nb::handle x) {
-  const StaticValues& dtypes = GetStatic();
-  return typed_float_type(x, GetEnableX64() ? dtypes.float64 : dtypes.float32);
+  const NumpyTypes& dtypes = NumpyTypes::Get();
+  return typed_float_type(
+      x, GetEnableX64() ? dtypes.float64_dtype : dtypes.float32_dtype);
 }
 
 nb::object CanonicalizeComplex(nb::handle x) {
-  const StaticValues& dtypes = GetStatic();
+  const NumpyTypes& dtypes = NumpyTypes::Get();
   return typed_complex_type(
-      x, GetEnableX64() ? dtypes.complex128 : dtypes.complex64);
+      x, GetEnableX64() ? dtypes.complex128_dtype : dtypes.complex64_dtype);
 }
 
 void CheckValidDtype(nb::handle dtype) {
@@ -1068,7 +1042,7 @@ void SetTypedNdArrayType(nb::object t) {
                                      return cache->Call(cache.ptr(), x);
                                    });
   RegisterCanonicalizeValueHandler(t.ptr(), IdentityHandler);
-  RegisterCanonicalizeValueHandler(GetStatic().numpy_generic.ptr(),
+  RegisterCanonicalizeValueHandler(NumpyTypes::Get().numpy_generic.ptr(),
                                    CanonicalizeNumpyScalar);
 }
 
