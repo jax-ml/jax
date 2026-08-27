@@ -42,6 +42,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     when the `dtype` argument is not specified. Previously it always returned
     `float32` ({jax-issue}`#40242`).
 
+* Bug fixes
+  * Fixed a bug where {func}`jax.numpy.linalg.cond` returned NaN instead of
+    infinity for singular matrices when `p` is `None` or `2`, matching NumPy
+    and the other norms.
+
 ## JAX 0.11.1 (August 17, 2026)
 
 * New features
