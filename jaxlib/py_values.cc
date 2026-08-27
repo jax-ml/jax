@@ -739,11 +739,17 @@ absl::StatusOr<ShardFn> HandlePyArray(nb::handle obj, ifrt::Client* client,
                             to_memory_kind, options);
   }
 
+#if JAX_IFRT_VERSION_NUMBER >= 64
+  if (ifrt_array->sharding().devices()->devices().front() == to_device &&
+      options.allow_zero_copy &&
+      ifrt_array->sharding().memory_kind() == to_memory_kind) {
+#else
   if (ifrt_array->sharding().devices()->devices().front() == to_device &&
       options.allow_zero_copy &&
       (!to_memory_kind.memory_kind().has_value() ||
        !ifrt_array->sharding().memory_kind().memory_kind().has_value() ||
        ifrt_array->sharding().memory_kind() == to_memory_kind)) {
+#endif
     Shard result(tsl::FormRef(ifrt_array), py_array.weak_type());
     return [result = std::move(result)]() mutable { return std::move(result); };
   } else {

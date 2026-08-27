@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/util.h"
 
 namespace jax {
@@ -398,6 +399,17 @@ void PyDeviceList::PopulateMemoryKindInfo() {
     memory_kind_info_ = default_memory.status();
     return;
   }
+#if JAX_IFRT_VERSION_NUMBER >= 64
+  info.default_memory_kind = nb::cast((*default_memory)->Kind().value());
+  nb::tuple memory_kinds =
+      nb::steal<nb::tuple>(PyTuple_New(device->Memories().size()));
+  for (size_t i = 0; i < device->Memories().size(); ++i) {
+    auto* memory = device->Memories()[i];
+    nb::str s =
+        nb::str(memory->Kind().value().data(), memory->Kind().value().size());
+    PyTuple_SET_ITEM(memory_kinds.ptr(), i, s.release().ptr());
+  }
+#else
   info.default_memory_kind = nb::cast(*(*default_memory)->Kind().memory_kind());
   nb::tuple memory_kinds =
       nb::steal<nb::tuple>(PyTuple_New(device->Memories().size()));
@@ -407,6 +419,7 @@ void PyDeviceList::PopulateMemoryKindInfo() {
                         memory->Kind().memory_kind()->size());
     PyTuple_SET_ITEM(memory_kinds.ptr(), i, s.release().ptr());
   }
+#endif
   info.memory_kinds = std::move(memory_kinds);
   memory_kind_info_ = std::move(info);
 }
