@@ -1029,6 +1029,26 @@ def warp_barrier():
   nvvm.bar_warp_sync(c(0xFFFFFFFF, ir.IntegerType.get_signless(32)))
 
 
+def prefetch_tensormap(
+    desc_ptr: ir.Value[llvm.PointerType],
+    predicate: ir.Value[ir.IntegerType] | None = None,
+) -> None:
+  """Prefetches a TMA descriptor into the cache using PTX `prefetch.tensormap`.
+
+  Args:
+    desc_ptr: A pointer to the 128-byte aligned TMA descriptor.
+    predicate: An optional i1 predicate value.
+  """
+  pred = "" if predicate is None else "@$1 "
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [desc_ptr] if predicate is None else [desc_ptr, predicate],
+      f"{pred}prefetch.tensormap [$0];",
+      "l" if predicate is None else "l,b",
+      has_side_effects=True,
+  )
+
+
 @dataclasses.dataclass(frozen=True)
 class BarrierRef:
   base_address: ir.Value

@@ -472,6 +472,7 @@ class Scratch:
   def __init__(self, gpu_launch_op: _gpu_ops_gen.LaunchOp):
     self.next_offset: int = 0
     self.host_init: list[Callable[[ir.Value], None]] = []
+    self.descriptor_offsets: list[int] = []
     self._ops_created = False
 
     # Ideally, we would store the gpu.launch op directly. However, it gets
@@ -527,7 +528,7 @@ class Scratch:
 
   def _find_alloc_load_and_device_ptr(
       self,
-  ) -> tuple[llvm.AllocaOp, llvm.LoadOp, ir.Value]:
+  ) -> tuple[llvm.AllocaOp, llvm.LoadOp, ir.OpResult[llvm.PointerType]]:
     if not self._ops_created:
       self._create_ops()
 
@@ -555,9 +556,10 @@ class Scratch:
     """
     if self.next_offset == 0:
       return
-    alloc_op, load_op, _ = self._find_alloc_load_and_device_ptr()
+    alloc_op, load_op, device_ptr = self._find_alloc_load_and_device_ptr()
 
     i8 = ir.IntegerType.get_signless(8)
+    ptr_ty = llvm.PointerType.get()
 
     with ir.InsertionPoint(load_op):
       gmem_scratch_bytes = self.next_offset
@@ -566,6 +568,14 @@ class Scratch:
       load_op.result.set_type(scratch_arr_ty)
       for init_callback in self.host_init:
         init_callback(alloc_op.result)
+
+    with ir.InsertionPoint.after(device_ptr.owner):
+      predicate = utils.single_thread_predicate(utils.ThreadSubset.BLOCK)
+      for offset in self.descriptor_offsets:
+        desc_ptr = llvm.getelementptr(
+            ptr_ty, device_ptr, [], [offset], i8, llvm.GEPNoWrapFlags.none
+        )
+        utils.prefetch_tensormap(desc_ptr, predicate=predicate)
 
 
 class _DefaultPredicate:
@@ -743,7 +753,6 @@ class LaunchContext:
       size: int,
       alignment: int | None = None,
       host_init: Callable[[ir.Value], None] = lambda _: None,
-      device_init: Callable[[ir.Value], Any] = lambda x: x,
   ) -> ir.Value:
     """Allocates a GMEM scratch buffer.
 
@@ -766,13 +775,14 @@ class LaunchContext:
       )
 
     self.scratch.host_init.append(host_init_wrapped)
+    self.scratch.descriptor_offsets.append(alloc_base)
     # with ir.InsertionPoint(self.gmem_scratch_ptr.owner):
     # There is no way to create an insertion point after an operation...
     gep = llvm.GEPOp(
         ptr_ty, self.scratch.device_ptr(), [], [alloc_base], i8, llvm.GEPNoWrapFlags.none
     )
     gep.move_after(self.scratch.device_ptr().owner)  # pyrefly: ignore[bad-argument-type]
-    return device_init(gep.result)
+    return gep.result
 
   def _recompute_peer_id(
       self,
@@ -912,15 +922,10 @@ class LaunchContext:
         ]
         func.call([], "mosaic_gpu_init_tma_desc", args)
 
-      def cast_tma_desc(device_ptr):
-        # TODO(apaszke): Investigate why prefetching can cause launch failures
-        # nvvm.prefetch_tensormap(device_ptr)
-        return device_ptr
       tma_desc = self._alloc_scratch(
           TMA_DESCRIPTOR_BYTES,
           alignment=TMA_DESCRIPTOR_ALIGNMENT,
           host_init=init_tma_desc,
-          device_init=cast_tma_desc,
       )
       self.tma_descriptors[tma_desc_key] = tma_desc
     return tma_desc
