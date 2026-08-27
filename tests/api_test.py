@@ -4685,6 +4685,21 @@ class APITest(jtu.JaxTestCase):
     else:
       self.assertIn("call(", get_hlo(jax.Inline.XLA_LATE))
 
+  def test_inline_jax_late_closed_over_constant(self):
+    if config.use_simplified_jaxpr_constants.value:
+      self.skipTest("closed-over constants are passed as module arguments")
+    const = np.arange(16, dtype=np.float32)
+    sub = api.jit(lambda x: x + const, inline=jax.Inline.JAX_LATE)
+
+    mlir = api.jit(lambda x: sub(x) + sub(2.0 * x)).lower(1.0).as_text()
+    # The closed-over constant is passed to the inlined function as an
+    # argument, so it is emitted once rather than once per call site.
+    self.assertLen(
+        re.findall(r"stablehlo\.constant dense<[^>]*> : tensor<16xf32>", mlir),
+        1,
+        mlir,
+    )
+
   # Repro for https://github.com/jax-ml/jax/issues/7229.
   def test_compute_with_large_transfer(self):
     def f(x, delta):

@@ -1267,7 +1267,20 @@ def pjit_staging_rule(trace, source_info, *args, **params):
     return [trace.to_jaxpr_tracer(x, source_info) for x in out]
 
   jaxpr = params['jaxpr']
-  if any(isinstance(c, core.Ref) for c in jaxpr.consts):
+  if params['inline'] is api.Inline.JAX_LATE and jaxpr.consts:
+    # The callee's body is copied into every call site when lowering, so pass
+    # closed-over constants in as arguments instead of materializing them in
+    # each copy.
+    jaxpr, consts = pe.separate_consts(jaxpr)
+    consts = [trace.new_const(c, source_info) for c in consts]
+    in_shardings = (UNSPECIFIED,) * len(consts) + (*params['in_shardings'],)
+    in_layouts = (None,) * len(consts) + (*params['in_layouts'],)
+    donated_invars = (False,) * len(consts) + (*params['donated_invars'],)
+    new_params = dict(params, jaxpr=jaxpr, in_shardings=in_shardings,
+                      in_layouts=in_layouts, donated_invars=donated_invars)
+    out_tracers = trace.default_process_primitive(
+        jit_p, (*consts, *args), new_params, source_info=source_info)
+  elif any(isinstance(c, core.Ref) for c in jaxpr.consts):
     jaxpr, consts = pxla._move_mutable_consts(jaxpr)
     consts = [trace.new_const(c, source_info) for c in consts]
     in_shardings = (*params['in_shardings'],) + (UNSPECIFIED,) * len(consts)
