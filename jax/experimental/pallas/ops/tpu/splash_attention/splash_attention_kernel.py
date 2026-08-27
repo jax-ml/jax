@@ -2445,6 +2445,166 @@ def _splash_attention(
   )
 
 
+@partial(
+    jax.jit,
+    static_argnames=[
+        "is_mqa",
+        "block_sizes",
+        "save_residuals",
+        "mask_value",
+        "attn_logits_soft_cap",
+        "residual_checkpoint_name",
+        "mask_function",
+        "interpret",
+    ],
+)
+def _splash_attention_manual_fwd(
+    fwd_mask_info: mask_info_lib.MaskInfo,
+    dq_mask_info: mask_info_lib.MaskInfo | None,
+    dkv_mask_info: mask_info_lib.MaskInfo | None,
+    q: jax.Array,
+    k: jax.Array,
+    v: jax.Array,
+    segment_ids: SegmentIds | None = None,
+    sinks: jax.Array | None = None,
+    *,
+    is_mqa: bool,
+    block_sizes: BlockSizes | None,
+    save_residuals: bool = True,
+    mask_value: float = DEFAULT_MASK_VALUE,
+    attn_logits_soft_cap: float | None = None,
+    residual_checkpoint_name: str | None = None,
+    mask_function: MaskFunctionType | None = None,
+    interpret: bool = False,
+) -> tuple[jax.Array, jax.Array]:
+  """Returns both the attention output and logsumexp.
+
+  This is useful when manually controlling remat in the backward pass, as both
+  can be returned as residuals from the forward pass.
+  """
+
+  def _collapse_partial_mask_blocks(
+      mask_info: mask_info_lib.MaskInfo | None,
+  ) -> mask_info_lib.MaskInfo | None:
+    if mask_info is None or mask_info.partial_mask_blocks is None:
+      return mask_info
+
+    return mask_info._replace(
+        partial_mask_blocks=mask_info.partial_mask_blocks.reshape(
+            -1, *mask_info.partial_mask_blocks.shape[-2:]
+        )
+    )
+
+  del dq_mask_info, dkv_mask_info
+  collapsed_fwd_mask_info = _collapse_partial_mask_blocks(fwd_mask_info)
+  assert collapsed_fwd_mask_info is not None
+  if block_sizes is None:
+    block_sizes = BlockSizes.get_default()
+
+  out, (logsumexp,) = _splash_attention_forward(
+      collapsed_fwd_mask_info,
+      q,
+      k,
+      v,
+      segment_ids,
+      sinks=sinks,
+      mask_value=mask_value,
+      is_mqa=is_mqa,
+      block_sizes=block_sizes,
+      residual_checkpoint_name=residual_checkpoint_name,
+      save_residuals=True,
+      mask_function=mask_function,
+      attn_logits_soft_cap=attn_logits_soft_cap,
+      interpret=interpret,
+  )
+  return out, logsumexp
+
+
+@partial(
+    jax.jit,
+    static_argnames=[
+        "is_mqa",
+        "block_sizes",
+        "save_residuals",
+        "mask_value",
+        "attn_logits_soft_cap",
+        "residual_checkpoint_name",
+        "mask_function",
+        "interpret",
+    ],
+)
+def _splash_attention_manual_bwd(
+    fwd_mask_info: mask_info_lib.MaskInfo,
+    dq_mask_info: mask_info_lib.MaskInfo | None,
+    dkv_mask_info: mask_info_lib.MaskInfo | None,
+    q: jax.Array,
+    k: jax.Array,
+    v: jax.Array,
+    out: jax.Array,
+    logsumexp: jax.Array,
+    do: jax.Array,
+    segment_ids: SegmentIds | None = None,
+    sinks: jax.Array | None = None,
+    *,
+    is_mqa: bool,
+    block_sizes: BlockSizes | None,
+    save_residuals: bool = False,
+    mask_value: float = DEFAULT_MASK_VALUE,
+    attn_logits_soft_cap: float | None = None,
+    residual_checkpoint_name: str | None = None,
+    mask_function: MaskFunctionType | None = None,
+    interpret: bool = False,
+) -> (
+    tuple[jax.Array, jax.Array, jax.Array]
+    | tuple[jax.Array, jax.Array, jax.Array, jax.Array | None]
+):
+  """Transpose of _splash_attention_manual_fwd that uses attention output and logsumexp."""
+
+  def _collapse_partial_mask_blocks(
+      mask_info: mask_info_lib.MaskInfo | None,
+  ) -> mask_info_lib.MaskInfo | None:
+    if mask_info is None or mask_info.partial_mask_blocks is None:
+      return mask_info
+
+    return mask_info._replace(
+        partial_mask_blocks=mask_info.partial_mask_blocks.reshape(
+            -1, *mask_info.partial_mask_blocks.shape[-2:]
+        )
+    )
+
+  dq_mask_info = _collapse_partial_mask_blocks(dq_mask_info)
+  dkv_mask_info = _collapse_partial_mask_blocks(dkv_mask_info)
+  del fwd_mask_info
+  if block_sizes is None:
+    block_sizes = BlockSizes.get_default()
+  res = (
+      q,
+      k,
+      v,
+      segment_ids,
+      sinks,
+      out,
+      logsumexp,
+      dq_mask_info,
+      dkv_mask_info,
+  )
+  _, _, _, dq, dk, dv, _, dsinks = _splash_attention_bwd(
+      save_residuals=save_residuals,
+      mask_value=mask_value,
+      is_mqa=is_mqa,
+      block_sizes=block_sizes,
+      residual_checkpoint_name=residual_checkpoint_name,
+      mask_function=mask_function,
+      attn_logits_soft_cap=attn_logits_soft_cap,
+      interpret=interpret,
+      res=res,
+      do=do,
+  )
+  if sinks is not None:
+    return dq, dk, dv, dsinks
+  return dq, dk, dv
+
+
 @jax.tree_util.register_pytree_node_class
 class SplashAttentionKernel:
 
@@ -2475,6 +2635,26 @@ class SplashAttentionKernel:
           **kwargs,
           **self.kwargs,
       )
+
+  def manual_fwd(self, *args, **kwargs) -> tuple[jax.Array, jax.Array]:
+    return _splash_attention_manual_fwd(
+        self.fwd_mask_info,
+        self.dq_mask_info,
+        self.dkv_mask_info,
+        *args,
+        **kwargs,
+        **self.kwargs,
+    )
+
+  def manual_bwd(self, *args, **kwargs):
+    return _splash_attention_manual_bwd(
+        self.fwd_mask_info,
+        self.dq_mask_info,
+        self.dkv_mask_info,
+        *args,
+        **kwargs,
+        **self.kwargs,
+    )
 
   def manual_sharding_spec(self, sharding: jax.sharding.NamedSharding):
     """Returns a value that can be used as a shard_map partition spec for the kernel."""
