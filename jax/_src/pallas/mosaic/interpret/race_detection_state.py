@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import collections
 import dataclasses
 import itertools
@@ -19,6 +21,7 @@ import threading
 
 from jax._src import source_info_util
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
+import numpy as np
 
 
 def _is_empty_slice(slice_or_idx: slice | int):
@@ -58,12 +61,80 @@ def _slices_overlap(slice_or_idx1: slice | int, slice_or_idx2: slice | int):
   )
 
 
+@dataclasses.dataclass(frozen=True)
+class Footprint:
+  """The bytes of an allocation touched by a tensor access."""
+
+  # The byte offset of the first touched element
+  offset: int
+  # The shape of the view of the underlying region
+  shape: tuple[int, ...]
+  # The strides of the view of the underlying region
+  strides: tuple[int, ...]
+  # The size in bytes of an element
+  itemsize: int
+
+  @classmethod
+  def of(cls, view: np.ndarray, base: np.ndarray) -> Footprint:
+    """The footprint of `view`, a numpy view of the allocation `base`."""
+    if view.size == 0:
+      return cls(0, (0,), (0,), view.dtype.itemsize)
+    return cls(
+        view.ctypes.data - base.ctypes.data,
+        view.shape,
+        view.strides,
+        view.dtype.itemsize,
+    )
+
+  def byte_span(self) -> tuple[int, int]:
+    """The bounding interval of the access (half-open, in bytes)."""
+    if 0 in self.shape:
+      return (0, 0)
+    lo = self.offset + sum(min(0, s) * (n - 1) for n, s in zip(self.shape, self.strides))
+    hi = self.offset + sum(max(0, s) * (n - 1) for n, s in zip(self.shape, self.strides))
+    return lo, hi + self.itemsize
+
+  def _as_view(self, buf: np.ndarray) -> np.ndarray:
+    return np.ndarray(
+        self.shape,
+        np.dtype(f'V{self.itemsize}'),
+        buffer=buf,
+        offset=self.offset,
+        strides=self.strides,
+    )
+
+  def overlaps(self, other: Footprint) -> bool:
+    a_lo, a_hi = self.byte_span()
+    b_lo, b_hi = other.byte_span()
+    if a_hi <= b_lo or b_hi <= a_lo:
+      return False
+    # Rebuild both accesses as views of one scratch buffer and let numpy solve
+    # the (exact) strided-overlap problem.
+    buf = np.zeros(max(a_hi, b_hi), dtype=np.uint8)
+    return bool(np.shares_memory(self._as_view(buf), other._as_view(buf)))
+
+  def __str__(self) -> str:
+    lo, hi = self.byte_span()
+    return (
+        f'bytes[{lo}:{hi}] shape={self.shape} strides={self.strides}'
+        f' itemsize={self.itemsize}'
+    )
+
+
 def _ranges_overlap(
-    range1: tuple[slice | int, ...], range2: tuple[slice | int, ...]
+    range1: Footprint | tuple[slice | int, ...],
+    range2: Footprint | tuple[slice | int, ...],
 ) -> bool:
-  return all(
-      _slices_overlap(r1, r2)
-      for r1, r2 in itertools.zip_longest(range1, range2, fillvalue=slice(None))
+  if isinstance(range1, Footprint) and isinstance(range2, Footprint):
+    return range1.overlaps(range2)
+  if isinstance(range1, tuple) and isinstance(range2, tuple):
+    return all(
+        _slices_overlap(r1, r2)
+        for r1, r2 in itertools.zip_longest(range1, range2, fillvalue=slice(None))
+    )
+  raise TypeError(
+      'Cannot compare accesses recorded as different kinds of ranges:'
+      f' {range1!r} vs {range2!r}'
   )
 
 
@@ -94,6 +165,7 @@ class RaceDetectionState[ThreadKey]:
       rnge,
       source_info=None,
   ):
+
     if source_info is not None:
       user_frame = source_info_util.summarize(source_info)
     else:
@@ -137,6 +209,7 @@ class RaceDetectionState[ThreadKey]:
       rnge,
       source_info=None,
   ):
+
     if source_info is not None:
       user_frame = source_info_util.summarize(source_info)
     else:

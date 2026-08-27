@@ -22,17 +22,22 @@ import logging
 import math
 import threading
 import types
-from typing import Literal, Protocol, Self
+from collections.abc import Sequence
+from typing import Any, Literal, Protocol, Self
 
 import jax
 from jax import numpy as jnp
 from jax._src import source_info_util
+from jax._src import core as jax_core
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
+from jax._src.pallas.mosaic.interpret import race_detection_state
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret import vector_clock
 from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
 from jax._src.pallas.mosaic_gpu.interpret import params as params
+from jax._src.state import indexing
+from jax._src.state import types as state_types
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -314,7 +319,7 @@ class HostAllocationRequest:
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class HostAllocationKey(HostAllocationRequest):
-  """Key for an allocation in shared memory."""
+  """Key for an allocation in shared memory. """
 
   buffer_id: int
 
@@ -426,6 +431,217 @@ class GpuClockBundle(vector_clock.VectorClockProto):
 
   def commit_smem(self) -> None:
     self.async_smem_clock.update(self.generic_clock)
+
+
+# Transforms that describe how an allocation is laid out in memory. The
+# interpreter stores every buffer in its *logical* shape, so on a plain
+# allocation they are identities on the view. Inside a `RefUnion` member they
+# are not: the member's view starts out in its physical shape (e.g. tiled for
+# SMEM) and these transforms turn it into the logical one.
+LAYOUT_TRANSFORMS = (
+    mosaic_gpu_core.UnswizzleRef,
+    mosaic_gpu_core.SwizzleTransform,
+    mosaic_gpu_core.UntilingTransform,
+    mosaic_gpu_core.TilingTransform,
+    mosaic_gpu_core.CollapseLeadingBatchDimensionsTransform,
+    mosaic_gpu_core.ExpandLeadingBatchDimensionsTransform,
+)
+
+
+Footprint = race_detection_state.Footprint
+
+
+@dataclasses.dataclass(frozen=True)
+class AccessInfo:
+  # The bytes the access touches, clipped to the allocation
+  footprint: Footprint
+  # The shape the access asked for
+  requested_shape: tuple[int, ...]
+  # The dtype the access sees (may be different from the buffers underlying
+  # dtype e.g. in the case of `RefUnion`s). Useful for OOB-filling.
+  dtype: np.dtype
+
+  def __str__(self) -> str:
+    return f"{self.footprint} as {np.dtype(self.dtype).name}"
+
+
+def _as_int(x) -> int:
+  """Converts a concrete (possibly 0-d array) index to a Python int."""
+  arr = np.asarray(x)
+  if arr.ndim:
+    raise NotImplementedError(
+        f"Array indexers are not supported in GPU interpret mode: {x!r}"
+    )
+  return int(arr)
+
+
+def _index_view(
+    view: np.ndarray, indexer: indexing.NDIndexer, requested_shape: tuple[int, ...]
+) -> tuple[np.ndarray, tuple[int, ...]]:
+  """Applies `indexer` to `view`.
+
+  `requested` is the shape the access asked for so far (`view.shape` unless an
+  earlier indexer already ran past the end of the allocation). Returns the
+  indexed view and the shape the indexer asked for. Like numpy, a slice that
+  runs past the end of a dimension is clipped, so the two can differ.
+  """
+  if indexer.int_indexer_shape:
+    raise NotImplementedError(
+        "Array indexers are not supported in GPU interpret mode:"
+        f" {indexer}"
+    )
+  if len(indexer.indices) > view.ndim:
+    raise IndexError(
+        f"Too many indices ({len(indexer.indices)}) for a ref of shape"
+        f" {view.shape}."
+    )
+  slicer = []
+  new_requested = []
+  # Integer-indexed dimensions, dropped from the result.
+  int_axes = []
+  for axis, (dim, req_shape, idx) in enumerate(
+      itertools.zip_longest(view.shape, requested_shape, indexer.indices)
+  ):
+    if idx is None:
+      slicer.append(slice(None))
+      new_requested.append(req_shape)
+    elif isinstance(idx, indexing.Slice):
+      start, size, stride = map(_as_int, (idx.start, idx.size, idx.stride))
+      new_requested.append(size)
+      if stride <= 0:
+        raise NotImplementedError(f"Unsupported slice stride: {stride}")
+      slicer.append(slice(start, start + size * stride, stride))
+    else:
+      # integer index case
+      i = _as_int(idx)
+      if i < 0 or i >= dim:
+        raise IndexError(
+            f"Index {i} is out of bounds for axis {axis} of size {dim}."
+        )
+      int_axes.append(axis)
+      # Index with a unit slice and drop the dimension afterwards, so the
+      # result stays a view even when every dimension is integer-indexed
+      # (plain integer indexing would produce a numpy scalar).
+      slicer.append(slice(i, i + 1))
+  sliced = view[tuple(slicer)]
+  return np.squeeze(sliced, axis=tuple(int_axes)), tuple(new_requested)
+
+
+def _extract_aliased_view(
+    content: np.ndarray, t: mosaic_gpu_core.ExtractAliasedRef
+) -> np.ndarray:
+  """One members view of a `RefUnion`'s storage
+
+  For SMEM the union is a byte array and `t.offset` is a byte offset. For TMEM
+  the union is a `(rows, cols)` array of 32-bit cells, `t.offset` is a column
+  offset, and the member spans as many columns as its bytes fill.
+  """
+  dtype = np.dtype(t.dtype)
+  if t.layout is None:
+    # SMEM case
+    nbytes = math.prod(t.shape) * dtype.itemsize
+    raw = content.reshape(-1).view(np.uint8)
+    if t.offset + nbytes > raw.size:
+      raise IndexError(
+          f"RefUnion member {dtype.name}{t.shape} at byte offset {t.offset}"
+          f" does not fit in a {raw.size}-byte union."
+      )
+    return raw[t.offset : t.offset + nbytes].view(dtype).reshape(t.shape)
+  else:
+    # TMEM case
+    if content.ndim != 2:
+      raise ValueError(
+          f"Expected a (rows, cols) TMEM union, got shape {content.shape}."
+      )
+
+    rows, total_cols = content.shape
+    ncols = (math.prod(t.shape) * dtype.itemsize) // (rows * content.dtype.itemsize)
+    if t.offset + ncols > total_cols:
+      raise IndexError(
+          f"TMEM RefUnion member {dtype.name}{t.shape} at column {t.offset}"
+          f" spans {ncols} columns but the union has {total_cols}."
+      )
+    cells = content[:, t.offset : t.offset + ncols]
+    return cells.view(dtype).reshape(t.shape, copy=False)
+
+
+def _member_layout_view(
+    view: np.ndarray, t: Any, shape: tuple[int, ...]
+) -> np.ndarray:
+  """Applies the layout transform `t` to a `RefUnion` member's view.
+
+  In practice, this is just a reshape, where `shape` is the shape `t` gives the
+  member's type.
+  """
+  # A layout transform that changes the member's type is a reshape of its
+  # storage (e.g. untiling an SMEM member).
+  try:
+    return view.reshape(shape, copy=False)
+  except ValueError:
+    raise ValueError(
+        f"Layout transform {t} gives a RefUnion member the shape {shape}, but"
+        f" the interpreter's view of it has incompatible shape {view.shape}"
+    )
+
+
+def apply_transforms(
+    content: np.ndarray, transforms: Sequence[Any]
+) -> tuple[np.ndarray, AccessInfo]:
+  """Applies a transform stack onto a numpy view of `content`.
+
+  In general, we would like to store refs in their logical shape so we don't
+  have to think about transforms. The thing that makes this hard is `RefUnion`s.
+  Acces to RefUnions start with a physical shape that must then be transformed
+  to get a logical shape, necessitating this machinery.
+  """
+  view = content
+  # The asked-for shape until an OOB access, at which point the view is clipped.
+  requested_shape = view.shape
+  member_type: jax_core.ShapedArray | None = None
+
+  for t in transforms:
+    if isinstance(t, mosaic_gpu_core.ExtractAliasedRef):
+      # RefUnion case, start a new view
+      view = _extract_aliased_view(content, t)
+      requested_shape = view.shape
+      member_type = jax_core.ShapedArray(tuple(t.shape), np.dtype(t.dtype))
+    elif isinstance(t, LAYOUT_TRANSFORMS):
+      # Layout transforms are a no-op if we didn't have a RefUnion.
+      if member_type is None:
+        continue
+      # If we did have a RefUnion, we need to actually apply the transform since
+      # we have a physical (not logical) shape.
+      try:
+        new_type = t.transform_type(member_type)
+      except Exception as e:  # noqa
+        raise ValueError(
+            f"Transform {t} does not apply to a RefUnion member of type"
+            f" {member_type.str_short()} (transforms: {tuple(transforms)})."
+        ) from e
+      assert isinstance(new_type, jax_core.ShapedArray)
+      member_type = new_type
+      shape = tuple(int(d) for d in member_type.shape)
+      if shape != view.shape:
+        view = _member_layout_view(view, t, shape)
+        requested_shape = view.shape
+    elif isinstance(t, indexing.NDIndexer):
+      view, requested_shape = _index_view(view, t, requested_shape)
+    elif isinstance(t, state_types.TransposeTransform):
+      perm = tuple(int(p) for p in t.permutation)
+      view = np.transpose(view, perm)
+      requested_shape = tuple(requested_shape[p] for p in perm)
+    else:
+      raise NotImplementedError(
+          f"Unsupported transform {t} in GPU interpret mode"
+          f" (transforms: {tuple(transforms)})."
+      )
+
+  info = AccessInfo(
+      footprint=Footprint.of(view, content),
+      requested_shape=requested_shape,
+      dtype=view.dtype,
+  )
+  return view, info
 
 
 class GPUSharedMemory(
@@ -581,6 +797,16 @@ class GPUSharedMemory(
       )
       self.pending_tmem_stores = {}
       self.pending_tmem_loads = {}
+      for alloc in self.mem.values():
+        if isinstance(alloc, (Barrier, ClusterBarrier)):
+          alloc.reset()
+
+  def _abort_waiters(self):
+    # Called by `set_failed` while `self.lock` is held. Acquiring a barrier's
+    # `cv` lock while holding `self.lock` is allowed (see `Barrier.__init__`).
+    for alloc in self.mem.values():
+      if isinstance(alloc, (Barrier, ClusterBarrier)):
+        alloc.abort()
 
   def thread_to_vc_position(self, thread: ThreadKey) -> int:
     return self.all_concurrent_threads[thread]
@@ -652,6 +878,167 @@ class GPUSharedMemory(
       )
 
     return barrier, clock
+
+  def _apply_transforms_to_key(
+      self, key: MemKey, transforms: tuple[Any, ...]
+  ) -> tuple[memory.Buffer, np.ndarray, AccessInfo]:
+    buff = self.mem[key]
+    if not isinstance(buff, memory.Buffer):
+      raise ValueError(
+          f"Attempting to use allocation with key `{key}` that is not a Buffer"
+      )
+    return buff, *apply_transforms(buff.content, transforms)
+
+  def access_info(self, key: MemKey, transforms: tuple[Any, ...]) -> AccessInfo:
+    """Describes the access `transforms` makes to `key` without performing it."""
+    with self.lock:
+      _, _, info = self._apply_transforms_to_key(key, transforms)
+    return info
+
+  def get_buffer_content(
+      self,
+      key: MemKey,
+      transforms: tuple[Any, ...],
+      thread: ThreadKey | None,
+      increment_clock: bool = True,
+      logging_info: interpret_utils.LoggingInfo | None = None,
+  ) -> tuple[np.ndarray | None, AccessInfo, memory.ShapeAndDtype, VectorClock | None]:
+    """Reads the part of a memory buffer that `transforms` selects.
+
+    Returns:
+      - The contents the access selects. Like numpy, a slice that runs past
+        the end of the buffer is clipped, so the array can be smaller than
+        `info.requested`.
+      - An `AccessInfo` describing the access (its footprint, for race
+        detection, and the shape it asked for).
+      - The shape and dtype of the full content array of the buffer.
+      - The incremented vector clock for the given thread.
+        None if race detection is not enabled or if `increment_clock` is False.
+    """
+    clock = None
+    with self.lock:
+      if self.detect_races and increment_clock and thread is not None:
+        clock = self.incr_clock(thread, take_lock=False)
+
+      buff, view, info = self._apply_transforms_to_key(key, transforms)
+      shape_and_dtype = memory.ShapeAndDtype(buff.logical_shape, buff.dtype)
+      result = view.copy()
+
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                f"{key=}, access={info}.\n"
+                f"logical_shape={buff.logical_shape},"
+                f" content_shape={buff.shape},"
+                f" {f'{result.shape=}' if result is not None else ''}.",
+                line_prefix="`get_buffer_content`",
+            )
+        )
+
+    return result, info, shape_and_dtype, clock
+
+  @staticmethod
+  def _check_store_value(
+      view: np.ndarray, info: AccessInfo, value: np.ndarray
+  ):
+    if tuple(value.shape) != tuple(view.shape):
+      raise ValueError(
+          f"Cannot swap/store a value of shape {value.shape} into a ref view of"
+          f" shape {view.shape} (access: {info})."
+      )
+    if np.dtype(value.dtype) != np.dtype(view.dtype):
+      raise ValueError(
+          f"Cannot swap/store a value of dtype {np.dtype(value.dtype).name} into a"
+          f" ref view of dtype {np.dtype(view.dtype).name} (access: {info})."
+      )
+
+  def store_buffer_content(
+      self,
+      key: MemKey,
+      transforms: tuple[Any, ...],
+      value: np.ndarray,
+      thread: ThreadKey,
+      increment_clock: bool = True,
+      logging_info: interpret_utils.LoggingInfo | None = None,
+  ) -> tuple[AccessInfo, memory.ShapeAndDtype, VectorClock | None]:
+    """Stores `value` into the part of a memory buffer that `transforms` selects.
+
+    Returns:
+      - An `AccessInfo` describing the access.
+      - The shape and dtype of the full content array of the buffer.
+      - The incremented vector clock for the given thread.
+        None if race detection is not enabled or if `increment_clock` is False.
+    """
+    clock = None
+    with self.lock:
+      if self.detect_races and increment_clock:
+        clock = self.incr_clock(thread, take_lock=False)
+
+      buff, view, info = self._apply_transforms_to_key(key, transforms)
+      shape_and_dtype = memory.ShapeAndDtype(buff.logical_shape, buff.dtype)
+      value = np.asarray(value)
+      self._check_store_value(view, info, value)
+      view[...] = value
+
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                f"{key=}, access={info}.\n"
+                f"logical_shape={buff.logical_shape},"
+                f" content_shape={buff.shape}, {value.shape=}.",
+                line_prefix="`store_buffer_content`",
+            )
+        )
+
+      return info, shape_and_dtype, clock
+
+  def swap_buffer_content(
+      self,
+      key: MemKey,
+      transforms: tuple[Any, ...],
+      value: np.ndarray,
+      mask: np.ndarray | None,
+      thread: ThreadKey,
+      increment_clock: bool = True,
+      logging_info: interpret_utils.LoggingInfo | None = None,
+  ) -> tuple[np.ndarray | None, AccessInfo, memory.ShapeAndDtype, VectorClock | None]:
+    """Swaps `value` into the part of a memory buffer that `transforms` selects.
+
+    Returns:
+      - The previous contents of the accessed part of the buffer.
+      - An `AccessInfo` describing the access.
+      - The shape and dtype of the full content array of the buffer.
+      - The incremented vector clock for the given thread.
+        None if race detection is not enabled or if `increment_clock` is False.
+    """
+    clock = None
+    with self.lock:
+      if self.detect_races and increment_clock:
+        clock = self.incr_clock(thread, take_lock=False)
+
+      assert mask is None, "Mosaic GPU does not generate masked swaps."
+
+      buff, view, info = self._apply_transforms_to_key(key, transforms)
+      shape_and_dtype = memory.ShapeAndDtype(buff.logical_shape, buff.dtype)
+      value = np.asarray(value)
+      self._check_store_value(view, info, value)
+      result = view.copy()
+      view[...] = value
+
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                f"{key=}, access={info},"
+                f" in_bounds={result is not None}.\n"
+                f"logical_shape={buff.logical_shape},"
+                f" content_shape={buff.shape},"
+                f" {f'{result.shape=}' if result is not None else ''},"
+                f" {value.shape=}.",
+                line_prefix="`swap_buffer_content`",
+            )
+        )
+
+      return result, info, shape_and_dtype, clock
 
   def get_barrier(self, key: MemKey) -> Barrier:
     with self.lock:
@@ -951,6 +1338,10 @@ class GPUSharedMemory(
       self.clocks[dest].update(self.clocks[source])
 
 
+class _BarrierAborted(Exception):
+  pass
+
+
 class Barrier(memory.Allocation):
 
   VectorClock = GPUSharedMemory.VectorClock
@@ -1012,6 +1403,10 @@ class Barrier(memory.Allocation):
     # 1. A thread that waits on any phase must wait on all phases.
     # 2. At least one thread must observe each barrier completion.
     self.phase: int = 0  # Protected by `self.cv`'s lock.
+    # Set once the interpreted kernel has failed. Threads waiting on the barrier
+    # check this flag (instead of `shared_memory.check_failed`, which requires
+    # `shared_memory.lock`) and, if it is set, raise instead of waiting.
+    self.aborted: bool = False  # Protected by `self.cv`'s lock.
     # Last observed phase by each thread. Note that not every thread has to
     # participate in the barrier, and we don't know ahead of time which ones
     # will, so we lazily initialize this dict the first time a thread waits on
@@ -1088,6 +1483,23 @@ class Barrier(memory.Allocation):
               f" up to phase {self.phase - 1}."
           )
 
+  def reset(self):
+    """Resets the mutable state of the barrier between cluster runs."""
+    with self.cv:
+      self.arrivals_count = 0
+      self.phase = 0
+      self.last_observed_phase_by_thread = {}
+      self.pipelineable_async_tasks = set()
+      if self.detect_races:
+        self.clock = None
+
+  def abort(self):
+    """Aborts the `Barrier`, waking up and failing all current waiters."""
+    with self.cv:
+      self.aborted = True
+      # just notifying is enough since the waiters will check the aborted flag
+      self.cv.notify_all()
+
   def arrive(
       self,
       thread: Thread | None,
@@ -1146,7 +1558,23 @@ class Barrier(memory.Allocation):
       thread: Thread,
       logging_info: GPULoggingInfo | None = None,
   ):
+    # Fail early if the kernel has already failed. This cannot be done while
+    # holding the lock on `self.cv`, so the below loop checks `self.aborted`
+    # and we only call `check_failed` again once `self.cv` has been released.
+    self.shared_memory.check_failed()
+    try:
+      self._wait(thread, logging_info)
+    except _BarrierAborted:
+      self.shared_memory.check_failed()
+      raise RuntimeError(
+          f"Barrier {id(self)} was aborted, but no failure was recorded."
+      ) from None
 
+  def _wait(
+      self,
+      thread: Thread,
+      logging_info: GPULoggingInfo | None = None,
+  ):
     with self.cv:
       last_observed_phase = self.last_observed_phase_by_thread.get(
           thread, None
@@ -1214,6 +1642,9 @@ class Barrier(memory.Allocation):
         # Case 3: we're attempting to observe phase `p+1`, which has not completed yet.
         # We must wait.
         while last_observed_phase == self.phase:
+          if self.aborted:
+            # Raise after releasing the lock on `self.cv`, see `wait`.
+            raise _BarrierAborted()
           if self.enable_logging and logging_info is not None:
             self._log(
                 logging_info.format(
@@ -1363,6 +1794,18 @@ class ClusterBarrier(memory.Allocation):
   def has_zero_ref_count(self) -> bool:
     with self.lock:
       return self.ref_count == 0
+
+  def reset(self):
+    """Resets the mutable state of the cluster barrier between cluster runs."""
+    with self.lock:
+      for barrier in self.barriers:
+        barrier.reset()
+
+  def abort(self):
+    """Aborts the `ClusterBarrier`."""
+    with self.lock:
+      for barrier in self.barriers:
+        barrier.abort()
 
   def arrive(
       self,

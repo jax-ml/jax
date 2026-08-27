@@ -18,7 +18,7 @@ from collections.abc import Sequence
 import contextlib
 import dataclasses
 import functools
-import itertools
+import inspect
 import threading
 from typing import Any
 
@@ -26,6 +26,7 @@ import jax
 from jax import numpy as jnp
 from jax._src import callback
 from jax._src import source_info_util
+from jax._src.pallas.mosaic.interpret import thread_map
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
 from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
@@ -33,7 +34,6 @@ from jax._src.pallas.mosaic_gpu.interpret import shared_memory as memory
 from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
 from jax._src.pallas.mosaic_gpu.interpret.shared_memory import HostAllocationKey
 from jax._src.pallas.mosaic_gpu.interpret.shared_memory import HostAllocationRequest
-from jax._src.state import indexing
 from jax.experimental.mosaic import gpu as mgpu
 import numpy as np
 
@@ -44,7 +44,7 @@ def is_gmem_memory_space(space: mosaic_gpu_core.MemorySpace | None) -> bool:
 
 _shared_memory: memory.GPUSharedMemory | None = None
 _shared_memory_init_lock = threading.Lock()
-_races: RaceDetectionState[memory.GPUSharedMemory.ThreadKey] | None = None
+_races: RaceDetectionState | None = None
 
 
 def _get_shared_memory() -> memory.GPUSharedMemory:
@@ -58,7 +58,7 @@ def _clear_shared_memory():
     _shared_memory = None
 
 
-def get_races() -> RaceDetectionState[memory.GPUSharedMemory.ThreadKey]:
+def get_races() -> RaceDetectionState:
   assert _races is not None
   return _races
 
@@ -70,10 +70,11 @@ def reset_gpu_interpret_mode_state():
   for race detection, etc., when interpreting a kernel. Normally, this shared
   state is cleaned up after a kernel is interpreted.
 
-  But if an exception is thrown while interpreting a kernel, the shared state
-  is not cleaned up, allowing the simulated GPU state to be examined for
-  debugging purposes. In this case, the shared state must be reset before
-  any further kernels are interpreted.
+  If an exception is thrown while interpreting a kernel, the shared memory is
+  also cleaned up (once all threads interpreting the kernel have observed the
+  failure), but the race detection state of the failed kernel is kept. If the
+  clean-up did not run (e.g. because interpreting the kernel was interrupted),
+  the shared state must be reset before any further kernels are interpreted.
   """
   global _shared_memory, _races
   with _shared_memory_init_lock:
@@ -82,6 +83,54 @@ def reset_gpu_interpret_mode_state():
 
 
 TOKEN_SHAPE_DTYPE = jax.ShapeDtypeStruct((), jnp.int32)
+
+
+def fail(e: Exception, token, device_id: int | None = None):
+  failed_thread = memory.Device(device_id) if device_id is not None else None
+  shared_memory = _get_shared_memory()
+  shared_memory.set_failed(
+      e, failed_thread, top_level=int(token) == thread_map.TOP_LEVEL_TOKEN_VALUE
+  )
+
+
+# Names of parameters (of the callbacks decorated with `fail_on_exception`)
+# that identify the thread or device on which the callback is running.
+_COMPUTE_UNIT_PARAM_NAMES = ("thread", "warpgroup", "compute_unit", "device")
+
+
+def fail_on_exception(func):
+  @functools.wraps(func)
+  def wrapper(*args, **kwargs):
+    shared_memory = _get_shared_memory()
+
+    try:
+      shared_memory.check_failed()
+      return func(*args, **kwargs)
+    except Exception as e:
+      try:
+        arguments = inspect.signature(func).bind(*args, **kwargs).arguments
+      except TypeError:
+        # `func` was called with invalid arguments.
+        arguments = {}
+
+      token = arguments.get("token")
+      is_top_level = token is not None and int(token) == thread_map.TOP_LEVEL_TOKEN_VALUE
+
+      compute_unit = None
+      for name in _COMPUTE_UNIT_PARAM_NAMES:
+        compute_unit = arguments.get(name)
+        if isinstance(arguments.get(name), (memory.Warpgroup, memory.Warp, memory.Device)):
+          compute_unit = arguments.get(name)
+          break
+
+      shared_memory.set_failed(
+          e,
+          compute_unit,
+          top_level=is_top_level,
+      )
+      raise
+
+  return wrapper
 
 
 def ordering_barrier(token):
@@ -168,6 +217,7 @@ def call_initialize_shared_memory(
   )
 
 
+@fail_on_exception
 def _clean_up_shared_memory(token):
   shared_memory = _get_shared_memory()
   shared_memory.clean_up_barrier.wait()
@@ -180,6 +230,7 @@ def call_clean_up_shared_memory(token):
   )
 
 
+@fail_on_exception
 def _update_clocks_for_device_barrier(token, device: memory.Device):
   shared_memory = _get_shared_memory()
   shared_memory.update_clocks_for_device_barrier(device)
@@ -195,6 +246,7 @@ def call_update_clocks_for_device_barrier(token, device: memory.Device):
   )
 
 
+@fail_on_exception
 def _make_allocation_request_array(
     *,
     token: jax.Array,
@@ -237,6 +289,7 @@ def call_make_allocation_request_array(
   )
 
 
+@fail_on_exception
 def _allocate_buffer_for_all_threads(
     token: jax.Array,
     mesh_location: memory.MeshLocation | None,
@@ -337,6 +390,7 @@ def call_allocate_buffer_for_all_threads(
   )
 
 
+@fail_on_exception
 def _allocate_buffer(
     token: jax.Array,
     mesh_location: memory.MeshLocation,
@@ -411,6 +465,7 @@ def call_allocate_buffer(
   )
 
 
+@fail_on_exception
 def _deallocate_buffer(
     token: jax.Array,
     mesh_location: memory.MeshLocation,
@@ -497,26 +552,7 @@ def _handle_out_of_bounds_read(
     return uninit_array
 
 
-def _is_dynamic(indexer: indexing.NDIndexer) -> bool:
-  return any(
-      isinstance(idx, indexing.Slice)
-      and (idx.is_dynamic_start or idx.is_dynamic_size)
-      for idx in indexer.indices
-  )
-
-
-def _validate_transforms(transforms):
-  for transform in transforms:
-    match transform:
-      case indexing.NDIndexer():
-        if _is_dynamic(transform):
-          raise ValueError(
-              "Dynamic indexing not supported in GPU interpret mode"
-          )
-      case _:
-        raise ValueError(f"Unsupported transform: {transform}")
-
-
+@fail_on_exception
 def _get(
     token: jax.Array,
     mesh_location: memory.MeshLocation,
@@ -534,10 +570,6 @@ def _get(
   allocation_key = HostAllocationKey.from_array(allocation_key_as_array)
   del allocation_key_as_array
 
-  transforms = _remove_noop_transforms(transforms)
-  _validate_transforms(transforms)
-  transforms = jax.tree.map(int, transforms)
-
   if input_name is not None:
     # NOTE: input_name, block_indices, and grid_loop_idx are set only if this
     # function is being called to read a block from a pallas_call input (at the
@@ -549,51 +581,33 @@ def _get(
 
   shared_memory = _get_shared_memory()
 
-  read_range = interpret_utils.to_range(transforms)
-  ret, (shape, dtype), clock_ = shared_memory.get_buffer_content(
+  ret, access, (shape, _), clock_ = shared_memory.get_buffer_content(
       allocation_key,
-      read_range,
+      transforms,
       thread,
       increment_clock=increment_clock,
       logging_info=memory.GPULoggingInfo(mesh_location, thread, source_info),
   )
   clock = clock if clock is not None else clock_
 
-  # Compute the shape of the read value, assuming the read is fully in-bounds.
-  # TODO(jburnim): We already know this shape in the Jaxpr where we insert a
-  # callback to `get`.  Should we just pass the shape to `get`?
-  # TODO(jburnim): Move to a helper function?
-  new_full_read_shape: list[int] = []
-  assert len(read_range) <= len(shape)
-  for dim_size, idx_or_slice in itertools.zip_longest(
-      shape, read_range, fillvalue=None
-  ):
-    assert isinstance(dim_size, int)
-    if idx_or_slice is None:
-      new_full_read_shape.append(dim_size)
-    elif isinstance(idx_or_slice, int):
-      continue
-    else:
-      dim_size = (idx_or_slice.stop - idx_or_slice.start) // idx_or_slice.step
-      assert isinstance(dim_size, int)
-      new_full_read_shape.append(dim_size)
-  full_read_shape = tuple(new_full_read_shape)
-  del new_full_read_shape
+  assert ret is not None
 
-  if (ret is None) or (full_read_shape != ret.shape):
-    ret = _handle_out_of_bounds_read(
-        ret,
-        full_read_shape,
-        shape,
-        dtype,
-        allocation_key,
-        read_range,
-        shared_memory,
-        source_info,
-        input_name,
-        block_indices,
-        grid_loop_idx,
-    )
+  # TODO(paulbib): Re-enable this check once we add OOB handling
+
+  # if ret.shape != access.requested:
+  #   ret = _handle_out_of_bounds_read(
+  #       ret,
+  #       access.requested,
+  #       shape,
+  #       access.dtype,
+  #       allocation_key,
+  #       access,
+  #       shared_memory,
+  #       source_info,
+  #       input_name,
+  #       block_indices,
+  #       grid_loop_idx,
+  #   )
 
   if shared_memory.detect_races and thread is not None:
     assert clock is not None
@@ -601,7 +615,7 @@ def _get(
         thread,
         clock.generic_clock,
         allocation_key,
-        read_range,
+        access.footprint,
         source_info=source_info,
     )
   return token, ret
@@ -634,12 +648,13 @@ def call_get(
       clock,
   )
 
+@fail_on_exception
 def _swap(
     token: jax.Array,
     mesh_location: memory.MeshLocation,
     thread: memory.Thread,
     allocation_key_as_array: jax.Array,
-    transforms,
+    transforms: tuple[Any, ...],
     val: np.ndarray,
     mask: jax.Array | None,
     *,
@@ -651,41 +666,22 @@ def _swap(
   allocation_key = HostAllocationKey.from_array(allocation_key_as_array)
   del allocation_key_as_array
 
-  transforms = _remove_noop_transforms(transforms)
-  _validate_transforms(transforms)
-  transforms = jax.tree.map(int, transforms)
-
-  if mask is not None:
-    assert mask.shape == val.shape
+  assert mask is None, "MGPU does not generate masked swaps."
 
   shared_memory = _get_shared_memory()
 
-  read_write_range = interpret_utils.to_range(transforms)
-  ret, (shape, _), clock_ = shared_memory.swap_buffer_content(
+  ret, access, _, clock_ = shared_memory.swap_buffer_content(
       allocation_key,
-      read_write_range,
-      np.array(val),
-      np.array(mask) if mask is not None else None,
+      transforms,
+      val,
+      None,
       thread,
       increment_clock=increment_clock,
       logging_info=memory.GPULoggingInfo(mesh_location, thread, source_info),
   )
   clock = clock if clock is not None else clock_
 
-  if ret is None:
-    if mask is None:
-      raise ValueError(
-          f"Out-of-bounds swap of {allocation_key}:"
-          f" swapping [{read_write_range}] but buffer has shape"
-          f" {shape} ."
-      )
-    else:
-      # TODO(jburnim): Include indices of out-of-bounds locations where mask
-      # is True.
-      raise ValueError(
-          f"Out-of-bounds masked swap of {allocation_key}: swapping"
-          f" [{read_write_range}] but buffer has shape {shape} . "
-      )
+  assert ret is not None
 
   if shared_memory.detect_races:
     assert clock is not None
@@ -693,7 +689,7 @@ def _swap(
         thread,
         clock.generic_clock,
         allocation_key,
-        read_write_range,
+        access.footprint,
         source_info=source_info,
     )
   return token, ret
@@ -726,6 +722,7 @@ def call_swap(
   )
 
 
+@fail_on_exception
 def _allocate_barriers(
     *,
     token: jax.Array,
@@ -810,6 +807,7 @@ def call_allocate_barriers(
   )
 
 
+@fail_on_exception
 def _deallocate_barrier(
     token: jax.Array,
     mesh_location: memory.MeshLocation,
@@ -870,6 +868,7 @@ def call_deallocate_barrier(
   )
 
 
+@fail_on_exception
 def _barrier_wait(
     token: jax.Array,
     mesh_location: memory.MeshLocation,
@@ -910,6 +909,7 @@ def call_barrier_wait(
   )
 
 
+@fail_on_exception
 def _barrier_arrive(
     token: jax.Array,
     mesh_location: memory.MeshLocation,
@@ -961,6 +961,7 @@ def call_barrier_arrive(
   )
 
 
+@fail_on_exception
 def _assert_no_barriers_allocated(token):
   _get_shared_memory().assert_no_barriers_allocated()
   return token
@@ -972,6 +973,7 @@ def call_assert_no_barriers_allocated(token):
   )
 
 
+@fail_on_exception
 def _allocate_cluster_barriers(
     *,
     token: jax.Array,
@@ -1082,11 +1084,11 @@ class AsyncCopyTask:
   # The pseudo-thread being used to execute the memory transfer.
   tma_thread_id: int
 
-  # Allocation key and transforms for the source buffer.
+  # Allocation key and validated transforms for the source buffer.
   src_allocation_key: HostAllocationKey
   src_transforms: tuple[Any, ...]
 
-  # Allocation key and transforms for the destination buffer.
+  # Allocation key and validated transforms for the destination buffer.
   dst_allocation_key: HostAllocationKey
   dst_transforms: tuple[Any, ...]
 
@@ -1119,35 +1121,43 @@ class AsyncCopyTask:
   def __call__(self, tma_thread_id: int):
     shared_memory = _get_shared_memory()
 
-    self.pre_read(tma_thread_id, shared_memory)
-
-    val, _, _ = shared_memory.get_buffer_content(
+    val, src_access, (src_shape, _), _ = shared_memory.get_buffer_content(
         self.src_allocation_key,
-        interpret_utils.to_range(self.src_transforms),
+        self.src_transforms,
         self.thread,
         logging_info=self.logging_info,
     )
+    val = self.fill_out_of_bounds(val, src_access, src_shape, shared_memory)
     assert val is not None
 
-    self.post_read(tma_thread_id, shared_memory)
+    self.post_read(src_access.footprint, tma_thread_id, shared_memory)
 
-    shared_memory.store_buffer_content(
+    dst_access, _, _ = shared_memory.store_buffer_content(
         self.dst_allocation_key,
-        interpret_utils.to_range(self.dst_transforms),
+        self.dst_transforms,
         val,
         self.thread,
         logging_info=self.logging_info,
     )
 
-    self.post_write(tma_thread_id, shared_memory)
+    self.post_write(dst_access.footprint, tma_thread_id, shared_memory)
 
-  def pre_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+  def fill_out_of_bounds(
+      self,
+      val: np.ndarray | None,
+      src_access: memory.AccessInfo,
+      src_shape: Sequence[int],
+      shared_memory: memory.GPUSharedMemory,
+  ) -> np.ndarray | None:
+    """Pads a copy that reads past the end of its source."""
+    # TODO(paulbib): OOB handling for non-TMA copies.
+    del src_access, src_shape, shared_memory
+    return val
+
+  def post_read(self, read_range, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     pass
 
-  def post_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
-    pass
-
-  def post_write(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+  def post_write(self, write_range, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     pass
 
 
@@ -1158,18 +1168,20 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
 
   barrier: memory.Barrier
   clock: VectorClock | None = None
+  oob_mode: mgpu.OOBFillMode | None = None
 
   def __init__(
       self,
-        mesh_location: memory.MeshLocation,
-        thread: memory.Thread,
-        src_allocation_key: HostAllocationKey,
-        src_transforms: tuple[Any, ...],
-        dst_allocation_key: HostAllocationKey,
-        dst_transforms: tuple[Any, ...],
-        barrier_allocation_key: HostAllocationKey,
-        source_info: source_info_util.SourceInfo | None,
-        clock: VectorClock | None = None,
+      mesh_location: memory.MeshLocation,
+      thread: memory.Thread,
+      src_allocation_key: HostAllocationKey,
+      src_transforms: tuple[Any, ...],
+      dst_allocation_key: HostAllocationKey,
+      dst_transforms: tuple[Any, ...],
+      barrier_allocation_key: HostAllocationKey,
+      source_info: source_info_util.SourceInfo | None,
+      clock: VectorClock | None = None,
+      oob_mode: mgpu.OOBFillMode | None = None,
   ):
     super().__init__(
         mesh_location=mesh_location,
@@ -1182,8 +1194,48 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
     shared_memory = _get_shared_memory()
     self.barrier = shared_memory.get_barrier(barrier_allocation_key)
     self.clock = clock
+    self.oob_mode = oob_mode
 
-  def pre_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+  def fill_out_of_bounds(self, val, src_access, src_shape, shared_memory):
+    """Fills the part of the window that lies past the end of the GMEM array."""
+    # Note that this is allowed behavior for TMA copies and the user specifies
+    # what they want the extra data padded with. This is separate from interpret
+    # mode filling uninitialized memory with a fixed value to detect bugs.
+    window_shape = tuple(src_access.requested_shape)
+    if val is not None and val.shape == window_shape:
+      return val
+
+    # match default behavior of plgpu.copy_gmem_to_smem
+    oob_mode = (
+        mgpu.OOBFillMode.ZEROS if self.oob_mode is None else self.oob_mode
+    )
+    if oob_mode == mgpu.OOBFillMode.PROMISE_IN_BOUNDS:
+      raise IndexError(
+          f"Out-of-bounds copy from {self.src_allocation_key}: reading"
+          f" [{src_access}] of a buffer with shape {tuple(src_shape)}, but the"
+          " copy promised to stay in bounds"
+          " (`oob_mode=OOBFillMode.PROMISE_IN_BOUNDS`)."
+      )
+    src_dtype = np.dtype(src_access.dtype)
+    if oob_mode == mgpu.OOBFillMode.ZEROS:
+      fill = np.zeros(window_shape, dtype=src_dtype)
+    else:
+      # `OOBFillMode.UNDEFINED`: the hardware leaves these elements
+      # unspecified, so use the interpret mode uninit memory value
+      fill = np.full(
+          window_shape,
+          interpret_utils.get_uninitialized_value(
+              src_dtype, shared_memory.uninitialized_memory
+          ),
+          dtype=src_dtype,
+      )
+    if val is not None:
+      # `val` and the window are both in the orientation the ref was accessed
+      # in, so the in-bounds part is a leading sub-block of the window.
+      fill[tuple(slice(s) for s in val.shape)] = val
+    return fill
+
+  def post_read(self, read_range, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     # TODO(paulbib): GMEM updates are only visible to the async proxy (TMA)
     # after a device-level proxy fence. However, no such functionality
     # is exposed in Pallas. When it is, we should use a `commit_gmem` clock here
@@ -1194,11 +1246,11 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
           self.thread,
           self.clock.generic_clock.copy(),
           self.src_allocation_key,
-          interpret_utils.to_range(self.src_transforms),
+          read_range,
           source_info=self.source_info,
       )
 
-  def post_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+  def post_write(self, write_range, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     if shared_memory.detect_races:
       assert self.clock is not None
       self.clock.inc(tma_thread_id)
@@ -1207,11 +1259,9 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
           self.thread,
           self.clock.async_smem_clock.copy(),
           self.dst_allocation_key,
-          interpret_utils.to_range(self.dst_transforms),
+          write_range,
           source_info=self.source_info,
       )
-
-  def post_write(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     self.barrier.arrive(
         self.thread,
         self.clock.copy() if self.clock is not None else None,
@@ -1249,7 +1299,7 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
         source_info=source_info)
     self.clock = clock
 
-  def pre_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+  def post_read(self, read_range, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     if shared_memory.detect_races:
       assert self.clock is not None
       self.clock.inc(tma_thread_id)
@@ -1258,11 +1308,11 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
           self.thread,
           self.clock.async_smem_clock.copy(),
           self.src_allocation_key,
-          interpret_utils.to_range(self.src_transforms),
+          read_range,
           source_info=self.source_info,
       )
 
-  def post_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+  def post_write(self, write_range, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     if shared_memory.detect_races:
       assert self.clock is not None
       self.clock.inc(tma_thread_id)
@@ -1271,12 +1321,9 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
           self.thread,
           self.clock.async_smem_clock.copy(),
           self.dst_allocation_key,
-          interpret_utils.to_range(self.dst_transforms),
+          write_range,
           source_info=self.source_info,
       )
-
-  def post_write(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
-    if shared_memory.detect_races:
       assert self.read_clock is not None
       assert self.write_clock is not None
       shared_memory.add_copy_smem_to_gmem_clocks(
@@ -1285,21 +1332,7 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
           self.write_clock,
       )
 
-
-NOOP_TRANSFORMS = (
-    mosaic_gpu_core.UnswizzleRef,
-    mosaic_gpu_core.UntilingTransform,
-)
-
-
-def _remove_noop_transforms(transforms: tuple[Any, ...]) -> tuple[Any, ...]:
-  # TODO(jburnim): Instead of just filtering out these transforms, should we
-  # check that every access of a buffer uses untiling and/or unswizzling
-  # transforms that match how the buffer was allocated?
-  return tuple(itertools.dropwhile(lambda t: isinstance(t, NOOP_TRANSFORMS),
-                                   transforms))
-
-
+@fail_on_exception
 def wgmma(
     *,
     token: jax.Array,
@@ -1320,40 +1353,37 @@ def wgmma(
   acc_allocation_key = HostAllocationKey.from_array(acc_allocation_key_as_array)
   a_allocation_key = HostAllocationKey.from_array(a_allocation_key_as_array)
   b_allocation_key = HostAllocationKey.from_array(b_allocation_key_as_array)
-  a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))
-  b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))
-  acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))
 
   shared_memory = _get_shared_memory()
 
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
-  a, _, _ = shared_memory.get_buffer_content(
+  a, _, _, _ = shared_memory.get_buffer_content(
       a_allocation_key,
-      interpret_utils.to_range(a_transforms),
-      thread,
-      logging_info=logging_info,
-  )
-  b, _, _ = shared_memory.get_buffer_content(
-      b_allocation_key,
-      interpret_utils.to_range(b_transforms),
+      a_transforms,
       thread,
       logging_info=logging_info,
   )
   assert a is not None
-  assert b is not None
-  acc_range = interpret_utils.to_range(acc_transforms)
-  acc, _, _ = shared_memory.get_buffer_content(
-      acc_allocation_key,
-      acc_range,
+  b, _, _, _ = shared_memory.get_buffer_content(
+      b_allocation_key,
+      b_transforms,
       thread,
       logging_info=logging_info,
   )
+  assert b is not None
+  acc, _, _, _ = shared_memory.get_buffer_content(
+      acc_allocation_key,
+      acc_transforms,
+      thread,
+      logging_info=logging_info,
+  )
+  assert acc is not None
 
   res = acc + np.matmul(a, b, dtype=acc_dtype)
 
   shared_memory.store_buffer_content(
       acc_allocation_key,
-      acc_range,
+      acc_transforms,
       res,
       thread,
       logging_info=logging_info,
@@ -1362,6 +1392,7 @@ def wgmma(
   return token
 
 
+@fail_on_exception
 def wgmma_accumulator_deref(
     *,
     token: jax.Array,
@@ -1379,12 +1410,13 @@ def wgmma_accumulator_deref(
   shared_memory = _get_shared_memory()
 
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
-  acc, _, _ = shared_memory.get_buffer_content(
+  acc, _, _, _ = shared_memory.get_buffer_content(
       acc_allocation_key, (), thread, logging_info=logging_info
   )
   return token, acc
 
 
+@fail_on_exception
 def copy_smem_to_gmem(
     *,
     token: jax.Array,
@@ -1402,9 +1434,7 @@ def copy_smem_to_gmem(
   # TODO(jburnim,paulbib): Implement commit_group.
   del commit_group
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
 
   if predicate is not None:
     raise NotImplementedError("predicate not supported")
@@ -1434,6 +1464,7 @@ def copy_smem_to_gmem(
   return token
 
 
+@fail_on_exception
 def wait_smem_to_gmem(
     *,
     token: jax.Array,
@@ -1449,6 +1480,7 @@ def wait_smem_to_gmem(
   return token
 
 
+@fail_on_exception
 def copy_gmem_to_smem(
     *,
     token: jax.Array,
@@ -1460,10 +1492,9 @@ def copy_gmem_to_smem(
     dst_transforms: tuple[Any, ...],
     barrier_allocation_key_as_array: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
+    oob_mode: mgpu.OOBFillMode | None = None,
 ):
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
   barrier_allocation_key = HostAllocationKey.from_array(
       barrier_allocation_key_as_array
@@ -1485,6 +1516,7 @@ def copy_gmem_to_smem(
       barrier_allocation_key=barrier_allocation_key,
       source_info=source_info,
       clock=clock,
+      oob_mode=oob_mode,
   )
 
   shared_memory = _get_shared_memory()
@@ -1493,6 +1525,7 @@ def copy_gmem_to_smem(
   return token
 
 
+@fail_on_exception
 def commit_smem(
     *,
     token: jax.Array,
@@ -1513,6 +1546,9 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
   thread: memory.Thread
   acc_key: HostAllocationKey
   acc_transforms: tuple[Any, ...]
+  # The bytes of `acc_key` the accumulator occupies; two MMAs pipeline when
+  # they accumulate into the same bytes, however their refs were written.
+  acc_footprint: memory.Footprint
   acc_dtype: jnp.dtype
   a_key: HostAllocationKey
   a_transforms: tuple[Any, ...]
@@ -1535,8 +1571,7 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
       # count, and dtype must match
       return (
           parent.acc_key == self.acc_key
-          and interpret_utils.to_range(parent.acc_transforms)
-          == interpret_utils.to_range(self.acc_transforms)
+          and parent.acc_footprint == self.acc_footprint
           and parent.acc_dtype == self.acc_dtype
           and parent.collective_axis == self.collective_axis
       )
@@ -1560,19 +1595,19 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
     logging_info = memory.GPULoggingInfo(
         self.mesh_location, self.thread, self.source_info
     )
-    a, _, _ = shared_memory.get_buffer_content(
+    a, a_access, _, _ = shared_memory.get_buffer_content(
         self.a_key,
-        interpret_utils.to_range(self.a_transforms),
-        self.thread,
-        logging_info=logging_info,
-    )
-    b, _, _ = shared_memory.get_buffer_content(
-        self.b_key,
-        interpret_utils.to_range(self.b_transforms),
+        self.a_transforms,
         self.thread,
         logging_info=logging_info,
     )
     assert a is not None
+    b, b_access, _, _ = shared_memory.get_buffer_content(
+        self.b_key,
+        self.b_transforms,
+        self.thread,
+        logging_info=logging_info,
+    )
     assert b is not None
 
     clock = None
@@ -1596,23 +1631,23 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
           self.thread,
           a_clock,
           self.a_key,
-          interpret_utils.to_range(self.a_transforms),
+          a_access.footprint,
           source_info=self.source_info,
       )
       get_races().check_read(
           self.thread,
           clock.async_smem_clock,
           self.b_key,
-          interpret_utils.to_range(self.b_transforms),
+          b_access.footprint,
           source_info=self.source_info,
       )
 
-    acc_range = interpret_utils.to_range(self.acc_transforms)
-
     if self.accumulate:
-      acc, _, _ = shared_memory.get_buffer_content(
+      # TODO(paulbib): do we need to do race-checking for the read, or will the
+      # write always catch any races?
+      acc, _, _, _ = shared_memory.get_buffer_content(
           self.acc_key,
-          acc_range,
+          self.acc_transforms,
           None,
           logging_info=logging_info,
       )
@@ -1621,9 +1656,9 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
     else:
       res = np.matmul(a, b, dtype=self.acc_dtype)
 
-    shared_memory.store_buffer_content(
+    acc_access, _, _ = shared_memory.store_buffer_content(
         self.acc_key,
-        acc_range,
+        self.acc_transforms,
         res,
         self.thread,
         increment_clock=False,
@@ -1636,7 +1671,7 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
           self.thread,
           clock.generic_clock,
           self.acc_key,
-          acc_range,
+          acc_access.footprint,
           source_info=self.source_info,
       )
 
@@ -1658,6 +1693,7 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
     return clock.copy() if clock is not None else None
 
 
+@fail_on_exception
 def tcgen05_mma(
     *,
     token: jax.Array,
@@ -1694,21 +1730,6 @@ def tcgen05_mma(
       a_sparse_metadata_allocation_key_as_array
   )
 
-  acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))
-  a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))
-  b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))
-  if a_scale_transforms is not None:
-    a_scale_transforms = jax.tree.map(
-        int, _remove_noop_transforms(a_scale_transforms)
-    )
-  if b_scale_transforms is not None:
-    b_scale_transforms = jax.tree.map(
-        int, _remove_noop_transforms(b_scale_transforms)
-    )
-  if a_sparse_metadata_transforms is not None:
-    a_sparse_metadata_transforms = jax.tree.map(
-        int, _remove_noop_transforms(a_sparse_metadata_transforms)
-    )
   accumulate: bool = bool(accumulate)  # pyrefly: ignore[redefinition]
 
   barrier_key = _maybe_key(barrier_allocation_key_as_array)
@@ -1723,6 +1744,9 @@ def tcgen05_mma(
           thread=thread,
           acc_key=acc_allocation_key,
           acc_transforms=acc_transforms,
+          acc_footprint=shared_memory.access_info(
+              acc_allocation_key, acc_transforms
+          ).footprint,
           acc_dtype=acc_dtype,
           a_key=a_allocation_key,
           a_transforms=a_transforms,
@@ -1773,9 +1797,9 @@ class TcGen05Copy(memory.PipelineableAsyncTask):
     logging_info = memory.GPULoggingInfo(
         self.mesh_location, self.thread, self.source_info
     )
-    smem, _, _ = shared_memory.get_buffer_content(
+    smem, smem_access, _, _ = shared_memory.get_buffer_content(
         self.smem_key,
-        interpret_utils.to_range(self.smem_transforms),
+        self.smem_transforms,
         self.thread,
         logging_info=logging_info,
     )
@@ -1794,15 +1818,13 @@ class TcGen05Copy(memory.PipelineableAsyncTask):
           self.thread,
           clock.async_smem_clock,
           self.smem_key,
-          interpret_utils.to_range(self.smem_transforms),
+          smem_access.footprint,
           source_info=self.source_info,
       )
 
-    tmem_range = interpret_utils.to_range(self.tmem_transforms)
-
-    shared_memory.store_buffer_content(
+    tmem_access, _, _ = shared_memory.store_buffer_content(
         self.tmem_key,
-        tmem_range,
+        self.tmem_transforms,
         smem,
         self.thread,
         increment_clock=False,
@@ -1815,13 +1837,14 @@ class TcGen05Copy(memory.PipelineableAsyncTask):
           self.thread,
           clock.generic_clock,
           self.tmem_key,
-          tmem_range,
+          tmem_access.footprint,
           source_info=self.source_info,
       )
 
     return clock.copy() if clock is not None else None
 
 
+@fail_on_exception
 def async_copy_smem_to_tmem(
     *,
     token: jax.Array,
@@ -1840,8 +1863,6 @@ def async_copy_smem_to_tmem(
   tmem_allocation_key = HostAllocationKey.from_array(
       tmem_allocation_key_as_array
   )
-  smem_transforms = jax.tree.map(int, _remove_noop_transforms(smem_transforms))
-  tmem_transforms = jax.tree.map(int, _remove_noop_transforms(tmem_transforms))
 
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
@@ -1863,6 +1884,7 @@ def async_copy_smem_to_tmem(
   return token
 
 
+@fail_on_exception
 def tcgen05_commit_arrive(
     *,
     token: jax.Array,
@@ -1911,6 +1933,7 @@ def tcgen05_commit_arrive(
   return token
 
 
+@fail_on_exception
 def async_store_tmem(
     *,
     token: jax.Array,
@@ -1922,14 +1945,13 @@ def async_store_tmem(
     source_info: source_info_util.SourceInfo | None = None,
 ):
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
 
   def f(tma_thread_id: int):
     shared_memory = _get_shared_memory()
-    shared_memory.store_buffer_content(
+    dst_access, _, _ = shared_memory.store_buffer_content(
         dst_allocation_key,
-        interpret_utils.to_range(dst_transforms),
+        dst_transforms,
         vals,
         thread,
         increment_clock=False,
@@ -1943,7 +1965,7 @@ def async_store_tmem(
           thread,
           clock.generic_clock,
           dst_allocation_key,
-          interpret_utils.to_range(dst_transforms),
+          dst_access.footprint,
           source_info=source_info,
       )
       shared_memory.add_store_tmem_clock(thread, clock)
@@ -1953,6 +1975,7 @@ def async_store_tmem(
   return token
 
 
+@fail_on_exception
 def async_load_tmem(
     *,
     token: jax.Array,
@@ -1963,18 +1986,18 @@ def async_load_tmem(
     source_info: source_info_util.SourceInfo | None = None,
 ):
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
 
   def f(tma_thread_id: int):
     shared_memory = _get_shared_memory()
 
-    val, _, _ = shared_memory.get_buffer_content(
+    val, src_access, _, _ = shared_memory.get_buffer_content(
         src_allocation_key,
-        interpret_utils.to_range(src_transforms),
+        src_transforms,
         None,
         logging_info=logging_info,
     )
+    assert val is not None
 
     if shared_memory.detect_races:
       clock = shared_memory.get_clock(thread)
@@ -1984,7 +2007,7 @@ def async_load_tmem(
           thread,
           clock.generic_clock,
           src_allocation_key,
-          interpret_utils.to_range(src_transforms),
+          src_access.footprint,
           source_info=source_info,
       )
       shared_memory.add_load_tmem_clock(thread, clock)
@@ -1995,6 +2018,7 @@ def async_load_tmem(
   return token, result
 
 
+@fail_on_exception
 def commit_tmem(
     *,
     token: jax.Array,
@@ -2008,6 +2032,7 @@ def commit_tmem(
   return token
 
 
+@fail_on_exception
 def wait_load_tmem(
     *,
     token: jax.Array,
@@ -2021,6 +2046,7 @@ def wait_load_tmem(
   return token
 
 
+@fail_on_exception
 def sync_warps_with_warpgroup(
     *,
     token: jax.Array,
@@ -2034,6 +2060,7 @@ def sync_warps_with_warpgroup(
   return token
 
 
+@fail_on_exception
 def sync_warpgroup_with_warps(
     *,
     token: jax.Array,
@@ -2047,6 +2074,7 @@ def sync_warpgroup_with_warps(
   return token
 
 
+@fail_on_exception
 def kernel_thread_finished(
     *,
     token: jax.Array,
@@ -2059,6 +2087,7 @@ def kernel_thread_finished(
   return token
 
 
+@fail_on_exception
 def cluster_finished(
     *,
     token: jax.Array,

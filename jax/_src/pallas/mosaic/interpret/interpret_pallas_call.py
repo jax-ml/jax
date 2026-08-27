@@ -17,7 +17,6 @@ import contextlib
 import dataclasses
 import enum
 import functools
-import itertools
 import math
 import threading
 from typing import Any, Literal
@@ -42,6 +41,7 @@ from jax._src.pallas.mosaic import tpu_info
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
 from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
 from jax._src.pallas.mosaic.interpret.thread_map import thread_map
+from jax._src.pallas.mosaic.interpret.thread_map import TOP_LEVEL_TOKEN_VALUE
 import jax._src.pallas.mosaic.interpret.utils as interpret_utils
 from jax._src.pallas.mosaic.interpret.params import InterpretParams
 from jax._src.state import discharge as state_discharge
@@ -61,12 +61,13 @@ Token = np.ndarray
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
-TOP_LEVEL_TOKEN_VALUE = 42
 
-
-def fail(e: Exception, device_id: int | None):
+def fail(e: Exception, token=None, device_id: int | None = None):
+  del device_id  # A failed thread is only recorded if the core is also known.
   shared_memory = _get_shared_memory()
-  shared_memory.set_failed(e, device_id=device_id, top_level=True)
+  shared_memory.set_failed(
+      e, top_level=token is None or int(token) == TOP_LEVEL_TOKEN_VALUE
+  )
 
 
 def fail_on_exception(func):
@@ -97,8 +98,11 @@ def fail_on_exception(func):
           local_core_id = int(args[2])
         except:
           pass
+      failed_thread = None
+      if device_id is not None and local_core_id is not None:
+        failed_thread = (device_id, local_core_id)
       shared_memory.set_failed(
-          e, device_id=device_id, local_core_id=local_core_id,
+          e, failed_thread=failed_thread,
           # NOTE: To avoid having to pass around a separate value to track
           # whether or not this callback is running at the "top level" (vs.
           # inside of a thread_map), we set the token to a specific value for
@@ -641,24 +645,7 @@ def get(
   )
   clock = clock if clock is not None else clock_
 
-  # Compute the shape of the read value, assuming the read is fully in-bounds.
-  # TODO(jburnim): We already know this shape in the Jaxpr where we insert a
-  # callback to `get`.  Should we just pass the shape to `get`?
-  # TODO(jburnim): Move to a helper function?
-  full_read_shape: list[int] = []
-  assert len(read_range) <= len(shape)
-  for dim_size, idx_or_slice in itertools.zip_longest(
-      shape, read_range, fillvalue=None
-  ):
-    assert isinstance(dim_size, int)
-    if idx_or_slice is None:
-      full_read_shape.append(dim_size)
-    elif isinstance(idx_or_slice, int):
-      continue
-    else:
-      dim_size = (idx_or_slice.stop - idx_or_slice.start) // idx_or_slice.step
-      assert isinstance(dim_size, int)
-      full_read_shape.append(dim_size)
+  full_read_shape = interpret_utils.window_shape(read_range, shape)
 
   if (ret is None) or (tuple(full_read_shape) != ret.shape):
     if shared_memory.out_of_bounds_reads == 'raise':

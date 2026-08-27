@@ -190,9 +190,9 @@ def apply_unswizzle_and_untile(
     transforms: tuple[state_types.Transform, ...],
     aval: jax_core.AbstractValue,
 ) -> jax_core.AbstractValue:
-  if not all(isinstance(t, (mosaic_gpu_core.UnswizzleRef,
-                            mosaic_gpu_core.UntilingTransform))
-             for t in transforms):
+  if not all(
+      isinstance(t, memory.LAYOUT_TRANSFORMS) for t in transforms
+  ):
     raise ValueError("Unsupported transforms:", transforms)
   return state_types.TransformedRef(aval, transforms).type
 
@@ -320,7 +320,7 @@ class JaxprInterpreter:
   def _interpret_get_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
-    assert eqn.primitive is state_primitives.get_p or gpu_primitives.load_p
+    assert eqn.primitive in (state_primitives.get_p, gpu_primitives.load_p)
     assert isinstance(eqn.outvars[0].aval, jax_core.ShapedArray)
     invals = get_invals()
     return gpu_callbacks.call_get(
@@ -583,7 +583,12 @@ class JaxprInterpreter:
         token=token,
         warpgroup=self.thread,
     )
-    token = thread_map.thread_map(f, mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
+    token = thread_map.thread_map(
+        f,
+        mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP,
+        token,
+        on_exception= gpu_callbacks.fail,
+    )
 
     token = callback.io_callback(
         gpu_callbacks.sync_warpgroup_with_warps,
@@ -735,8 +740,11 @@ class JaxprInterpreter:
         barrier_transforms_flat)
 
     return callback.io_callback(
-        functools.partial(gpu_callbacks.copy_gmem_to_smem,
-                          source_info=eqn.source_info),
+        functools.partial(
+            gpu_callbacks.copy_gmem_to_smem,
+            source_info=eqn.source_info,
+            oob_mode=eqn.params["oob_mode"],
+        ),
         gpu_callbacks.TOKEN_SHAPE_DTYPE,
         token=token,
         mesh_location=self.mesh_location,

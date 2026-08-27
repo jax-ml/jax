@@ -408,7 +408,10 @@ class GenericSharedMemory[
   )
 
   _failure: Exception | None = None
-  _failed_thread: ThreadKey | None = None
+  # The thread on which `_failure` occurred, if known. Only used in error
+  # messages, so subclasses may record any object with an informative `repr`
+  # (e.g. a device, if the thread is not known).
+  _failed_thread: Any = None
 
   @property
   def enable_logging(self) -> bool:
@@ -443,6 +446,67 @@ class GenericSharedMemory[
       buffer_id = self.next_buffer_id[key]
       self.next_buffer_id[key] = buffer_id + 1
       return buffer_id
+
+  def set_failed(
+      self,
+      exception: Exception,
+      failed_thread: Any = None,
+      top_level: bool = True,
+  ):
+    with self.lock:
+      if self._failure is None:
+        self._failure = exception
+        self._failed_thread = failed_thread
+      # Abort while still holding lock, so no new waiters can appear between
+      # recording the failure and aborting existing waiters.
+      self._abort_waiters()
+
+    self.barrier.abort()
+
+    # If we are interpreting a kernel over N devices, we must wait N times
+    # on the clean-up barrier.  As the computation on this device has failed
+    # and will soon raise an exception, this device will not reach its final
+    # call to `_clean_up_shared_memory` (which waits on the clean-up barrier).
+    # So, we wait on the barrier here.
+    #
+    # Unless we are running inside a thread_map (i.e., top_level=False) -- in
+    # which case we are one of the num_cores_per_device computations running for
+    # one of the N devices.  In this case, do not wait on the barrier here.
+    # The thread_map will detect that one or more of its threads failed and,
+    # once all of its threads have completed (successfully or with an error),
+    # it will call `set_failed` with `top_level=True`.
+    if top_level:
+      self.clean_up_barrier.wait()
+
+  def _abort_waiters(self):
+    """Wakes up all threads that are waiting on other threads.
+
+    Lock should be held when called.
+    """
+    pass
+
+  def check_failed(self):
+    with self.lock:
+      if self._failure is not None:
+        # __cause__ information is lost when an exception from a callback goes
+        # through XLA and back to Python, so we stuff the information into the
+        # exception message.
+        #
+        # TODO(jburnim): The top-level exception (that the user sees) will not
+        # always contain the original exception info/message.  It currently
+        # depends on which raise (the raise here or the raise in the thread
+        # that calls `set_failed`) happens first. (And maybe some other details
+        # in XLA.)  We should figure out how to reliably propagate the
+        # original exception.
+        failure_str = "".join(traceback.format_exception(self._failure))
+        failed_info = (
+            f" on {self._failed_thread}"
+            if self._failed_thread is not None
+            else ""
+        )
+        raise RuntimeError(
+            f"Computation failed{failed_info} with exception:\n\n{failure_str}"
+        ) from None
 
   def allocate_buffer(
       self,
@@ -502,6 +566,269 @@ class GenericSharedMemory[
       # Periodic garbage collection here prevents OOMs -- although it's not clear
       # why arrays are not getting freed without this.
       gc.collect()
+
+  def update_clocks(self, threads: Sequence[ThreadKey]):
+    """Synchronizes the vector clocks for all of the given threads."""
+    # Despite only updating the vector clocks for some threads, we still need to
+    # hold the global lock to ensure that no other devices are concurrently
+    # accessing the same vector clocks.
+    assert len(threads) > 0
+    init_thread = threads[0]
+    with self.lock:
+      for thread in threads[1:]:
+        self.clocks[init_thread].update(self.clocks[thread])
+      for thread in threads[1:]:
+        self.clocks[thread].update(self.clocks[init_thread])
+
+
+@dataclasses.dataclass
+class SharedMemory(
+    GenericSharedMemory[
+        tuple[str, int, int, int], tuple[int, int], vector_clock.NpVectorClock
+    ]
+):
+  """The shared state of memory for TPU interpret mode."""
+
+  # (memory_space, buffer_id, device_id, local_core_id)
+  MemKey = tuple[str, int, int, int]
+  # (device_id, local_core_id)
+  ThreadKey = tuple[int, int]
+  VectorClock = vector_clock.NpVectorClock
+
+  num_cores_per_device: int
+
+  # semaphore_id -> Semaphore
+  sem: dict[int, Semaphore]
+
+  # global_core_id -> next semaphore ID
+  next_semaphore_id: dict[int, int]
+
+  # semaphore_id -> Semaphore, where the semaphore_id is user-specified.
+  fixed_id_sem: dict[int, Semaphore]
+
+  def __init__(
+      self,
+      *,
+      num_devices: int,
+      out_of_bounds_reads: Literal["raise", "uninitialized"],
+      dma_execution_mode: str,
+      uninitialized_memory: Literal["nan", "zero"],
+      detect_races: bool,
+      vector_clock_size: int,
+      barrier: threading.Barrier,
+      clean_up_barrier: threading.Barrier,
+      buffer_bounds: Literal["logical", "padded"] | None = None,
+      logging_mode: params.LoggingMode | None = None,
+      num_cores_per_device: int,
+  ):
+    clocks = {
+        (device_id, core_id): self.VectorClock(vector_clock_size)
+        for device_id in range(num_devices)
+        for core_id in range(num_cores_per_device)
+    }
+    super().__init__(
+        num_devices=num_devices,
+        out_of_bounds_reads=out_of_bounds_reads,
+        dma_execution_mode=dma_execution_mode,
+        uninitialized_memory=uninitialized_memory,
+        detect_races=detect_races,
+        vector_clock_size=vector_clock_size,
+        clocks=clocks,
+        barrier=barrier,
+        clean_up_barrier=clean_up_barrier,
+        buffer_bounds=buffer_bounds,
+        logging_mode=logging_mode,
+    )
+    self.num_cores_per_device = num_cores_per_device
+    self.sem = {}
+    self.next_semaphore_id = collections.defaultdict(lambda: 2000)
+    self.fixed_id_sem = {}
+
+  @property
+  def num_cores(self) -> int:
+    return self.num_devices * self.num_cores_per_device
+
+  def get_global_core_id(self, device_id: int, local_core_id: int) -> int:
+    """Computes the global core ID from the given device and local core ID."""
+    return device_id * self.num_cores_per_device + local_core_id
+
+  def get_global_core_ids(self, device_id: int) -> Sequence[int]:
+    """Computes the global core IDs for all cores in the given device."""
+    return tuple(
+        self.get_global_core_id(device_id, core_id)
+        for core_id in range(self.num_cores_per_device)
+    )
+
+  def thread_to_vc_position(self, thread: ThreadKey) -> int:
+    return self.get_global_core_id(*thread)
+
+  def global_core_id_to_thread(self, global_core_id: int) -> ThreadKey:
+    device_id = global_core_id // self.num_cores_per_device
+    local_core_id = global_core_id % self.num_cores_per_device
+    return (device_id, local_core_id)
+
+  def print(self, device_id: int):
+    device_id = int(device_id)
+    if device_id == 0:
+      with self.lock:
+        print(self.mem)
+
+  def _unsafe_get_semaphore(self, sem_id: int) -> Semaphore:
+    """Returns the semaphore with the given ID. `self.lock` must be held."""
+
+    if sem_id in self.fixed_id_sem:
+      if sem_id in self.sem:
+        # TODO(nrink): For now we make it the responsibility of the client to
+        # ensure that fixed-ID semaphores do not collide with internal
+        # semaphore IDs.
+        raise ValueError(
+            f'Semaphore {sem_id} occurs as both fixed-id and internal.'
+        )
+      return self.fixed_id_sem[sem_id]
+    else:
+      return self.sem[sem_id]
+
+  def append_semaphore_task(
+      self,
+      semaphore_id: int,
+      global_core_id: int,
+      task: SemaphoreTask,
+  ):
+    """Appends a task to be executed if the semaphore with the given sempahore ID is waiting to be signalled on the core with the given global core ID."""
+    with self.lock:
+      sem = self._unsafe_get_semaphore(semaphore_id)
+    sem.enqueue_task(task, global_core_id)
+
+  def get_random_virtual_device_id(self) -> int:
+    # Virtual device IDs are needed for DMAs. Conceptually, each DMA runs on its
+    # own, independent device. Representing this precisely would require vector
+    # clocks to have sizes linear in the number of DMAs.
+    #
+    # Instead, we use approximate vector clocks of fixed size. We assign each
+    # DMA a virtual core ID in the range
+    #
+    #   [num_cores, self.vector_clock_size - 1],
+    #
+    # and each operation of a DMA increments the corresponding coordinate in its
+    # vector clock. (So the "virtual" part of a vector clock is effectively
+    # counting, for each virtual core, the number of DMAs that happened-before
+    # the vector clock and were assigned to that virtual core.)
+    #
+    # If two approximate clocks are unordered, then their corresponding events
+    # are not ordered by the happens-before relation. So this approximation will
+    # not introduce any false positives in detecting data races. But we may fail
+    # to detect some true data races because there can be cases where two
+    # approximate clocks are ordered, and we will treat the corresponding events
+    # as ordered by the happens-before relation, but the corresponding events
+    # are not actually ordered.
+    return np.random.randint(self.num_cores, self.vector_clock_size)
+
+  def get_semaphores_and_increment_clock(
+      self, sem_ids: Sequence[int | None], global_core_id: int
+  ) -> tuple[list[Semaphore | None], VectorClock | None]:
+    """Returns the semaphores with the given `sem_ids` and increments the vector clock for the core with `global_core_id`.
+
+    If race detection is enabled, this method increments the vector clock for
+    the core with the given `global_core_id` (while holding the lock on `self`).
+    We do this so that we can associate a (vector clock) time with the shared
+    memory operation of looking up the semaphores, which in turn can be used as
+    a proxy for the time when the returned semaphores are used by the client of
+    the `SharedMemory` class without acquiring the lock on `self`. (For the
+    purpose of encapsulation, we prefer to think of `self.lock` as a private
+    attribute of the `SharedMemory` class; hence clients of the class should not
+    attempt to acquire this lock explicitly.)
+
+    Args:
+      sem_ids: The IDs of the semaphores to return or None.
+      global_core_id: The ID of the core whose vector clock should be
+        incremented (if race detection is enabled).
+
+    Returns:
+      - The semaphores with the given `sem_ids` or None if the corresponding
+        entry in `sem_ids` is None.
+      - The incremented vector clock for the core with the given
+        `global_core_id`, or None if race detection is not enabled.
+    """
+    thread = self.global_core_id_to_thread(global_core_id)
+    clock = None
+    with self.lock:
+      if self.detect_races:
+        clock = self.incr_clock(thread, take_lock=False)
+
+      sems = []
+      for sem_id in sem_ids:
+        if sem_id is None:
+          sem = None
+        else:
+          sem = self._unsafe_get_semaphore(sem_id)
+        sems.append(sem)
+
+    return sems, clock
+
+  def get_sempahores_with_nonzero_count(
+      self, device_id: int
+  ) -> list[tuple[Semaphore, int]]:
+    """Returns tuples (semaphore, global_core_id) for all semaphores with a nonzero count for the core with `global_core_id`."""
+    result = []
+    with self.lock:
+      sems = self.sem.items() | self.fixed_id_sem.items()
+    for _, sem in sems:
+      with sem.cv:
+        for gci in self.get_global_core_ids(device_id):
+          if sem.count_by_core[gci] != 0:
+            result.append((sem, gci))
+    return result
+
+  def allocate_semaphores(self, key: Any, num_semaphores: int) -> int:
+    """Returns the next semaphore ID and ensures that the next `num_semaphores` are allocated."""
+    with self.lock:
+      semaphore_id = self.next_semaphore_id[key]
+      self.next_semaphore_id[key] = semaphore_id + num_semaphores
+
+      for i in range(semaphore_id, semaphore_id + num_semaphores):
+        if i not in self.sem:
+          self.sem[i] = Semaphore(
+              shared_memory=self,
+              semaphore_id=i,
+              enable_logging=(
+                  self.logging_mode is not None
+                  and params.LoggingMode.SEMAPHORE in self.logging_mode
+              ),
+          )
+
+    return semaphore_id
+
+  def guarantee_semaphore_with_fixed_id(self, semaphore_id: int):
+    """Ensures that a semaphore with the given `semaphore_id` exists.
+
+    If the semaphore with the given ID does not exist, it is allocated. Note
+    that semaphores that are allocated with this method live in their own
+    address space (internally, they are mapped in a separate dictionary) from
+    the sempahores allocated with the `allocate_sempahores` method above.
+
+    This methods is intended to be used for barrier semaphores, where the
+    _collective_ semaphore ID is specified by the interpreter (i.e. by the
+    client of the `SharedMemory` class). This simulates sempahores that exist
+    prior to any Pallas kernels being run.
+
+    Args:
+      semaphore_id: The ID of the semaphore to ensure exists, i.e. is allocated.
+    """
+    with self.lock:
+      if semaphore_id not in self.fixed_id_sem:
+        self.fixed_id_sem[semaphore_id] = Semaphore(
+            semaphore_id=semaphore_id,
+            shared_memory=self,
+            enable_logging=(
+                self.logging_mode is not None
+                and params.LoggingMode.SEMAPHORE in self.logging_mode
+            ),
+        )
+
+  def update_clocks_for_device_barrier(self, device_id: int):
+    """Synchronizes the vector clocks for the cores on the given device."""
+    threads = [(device_id, core_id) for core_id in range(self.num_cores_per_device)]
+    self.update_clocks(threads)
 
   def get_buffer_content(
       self,
@@ -713,314 +1040,3 @@ class GenericSharedMemory[
         )
 
       return result, shape_and_dtype, clock
-
-  def update_clocks(self, threads: Sequence[ThreadKey]):
-    """Synchronizes the vector clocks for all of the given threads."""
-    # Despite only updating the vector clocks for some threads, we still need to
-    # hold the global lock to ensure that no other devices are concurrently
-    # accessing the same vector clocks.
-    assert len(threads) > 0
-    init_thread = threads[0]
-    with self.lock:
-      for thread in threads[1:]:
-        self.clocks[init_thread].update(self.clocks[thread])
-      for thread in threads[1:]:
-        self.clocks[thread].update(self.clocks[init_thread])
-
-
-@dataclasses.dataclass
-class SharedMemory(
-    GenericSharedMemory[
-        tuple[str, int, int, int], tuple[int, int], vector_clock.NpVectorClock
-    ]
-):
-  """The shared state of memory for TPU interpret mode."""
-
-  # (memory_space, buffer_id, device_id, local_core_id)
-  MemKey = tuple[str, int, int, int]
-  # (device_id, local_core_id)
-  ThreadKey = tuple[int, int]
-  VectorClock = vector_clock.NpVectorClock
-
-  num_cores_per_device: int
-
-  # semaphore_id -> Semaphore
-  sem: dict[int, Semaphore]
-
-  # global_core_id -> next semaphore ID
-  next_semaphore_id: dict[int, int]
-
-  # semaphore_id -> Semaphore, where the semaphore_id is user-specified.
-  fixed_id_sem: dict[int, Semaphore]
-
-  def __init__(
-      self,
-      *,
-      num_devices: int,
-      out_of_bounds_reads: Literal["raise", "uninitialized"],
-      dma_execution_mode: str,
-      uninitialized_memory: Literal["nan", "zero"],
-      detect_races: bool,
-      vector_clock_size: int,
-      barrier: threading.Barrier,
-      clean_up_barrier: threading.Barrier,
-      buffer_bounds: Literal["logical", "padded"] | None = None,
-      logging_mode: params.LoggingMode | None = None,
-      num_cores_per_device: int,
-  ):
-    clocks = {
-        (device_id, core_id): self.VectorClock(vector_clock_size)
-        for device_id in range(num_devices)
-        for core_id in range(num_cores_per_device)
-    }
-    super().__init__(
-        num_devices=num_devices,
-        out_of_bounds_reads=out_of_bounds_reads,
-        dma_execution_mode=dma_execution_mode,
-        uninitialized_memory=uninitialized_memory,
-        detect_races=detect_races,
-        vector_clock_size=vector_clock_size,
-        clocks=clocks,
-        barrier=barrier,
-        clean_up_barrier=clean_up_barrier,
-        buffer_bounds=buffer_bounds,
-        logging_mode=logging_mode,
-    )
-    self.num_cores_per_device = num_cores_per_device
-    self.sem = {}
-    self.next_semaphore_id = collections.defaultdict(lambda: 2000)
-    self.fixed_id_sem = {}
-
-  @property
-  def num_cores(self) -> int:
-    return self.num_devices * self.num_cores_per_device
-
-  def get_global_core_id(self, device_id: int, local_core_id: int) -> int:
-    """Computes the global core ID from the given device and local core ID."""
-    return device_id * self.num_cores_per_device + local_core_id
-
-  def get_global_core_ids(self, device_id: int) -> Sequence[int]:
-    """Computes the global core IDs for all cores in the given device."""
-    return tuple(
-        self.get_global_core_id(device_id, core_id)
-        for core_id in range(self.num_cores_per_device)
-    )
-
-  def thread_to_vc_position(self, thread: ThreadKey) -> int:
-    return self.get_global_core_id(*thread)
-
-  def global_core_id_to_thread(self, global_core_id: int) -> ThreadKey:
-    device_id = global_core_id // self.num_cores_per_device
-    local_core_id = global_core_id % self.num_cores_per_device
-    return (device_id, local_core_id)
-
-  def print(self, device_id: int):
-    device_id = int(device_id)
-    if device_id == 0:
-      with self.lock:
-        print(self.mem)
-
-  def _unsafe_get_semaphore(self, sem_id: int) -> Semaphore:
-    """Returns the semaphore with the given ID. `self.lock` must be held."""
-
-    if sem_id in self.fixed_id_sem:
-      if sem_id in self.sem:
-        # TODO(nrink): For now we make it the responsibility of the client to
-        # ensure that fixed-ID semaphores do not collide with internal
-        # semaphore IDs.
-        raise ValueError(
-            f'Semaphore {sem_id} occurs as both fixed-id and internal.'
-        )
-      return self.fixed_id_sem[sem_id]
-    else:
-      return self.sem[sem_id]
-
-  def set_failed(
-      self,
-      exception: Exception,
-      device_id: int | None = None,
-      local_core_id: int | None = None,
-      top_level: bool = True,
-  ):
-    with self.lock:
-      if self._failure is None:
-        self._failure = exception
-        if device_id is not None and local_core_id is not None:
-          self._failed_thread = (device_id, local_core_id)
-
-    self.barrier.abort()
-
-    # If we are interpreting a kernel over N devices, we must wait N times
-    # on the clean-up barrier.  As the computation on this device has failed
-    # and will soon raise an exception, this device will not reach its final
-    # call to `_clean_up_shared_memory` (which waits on the clean-up barrier).
-    # So, we wait on the barrier here.
-    #
-    # Unless we are running inside a thread_map (i.e., top_level=False) -- in
-    # which case we are one of the num_cores_per_device computations running for
-    # one of the N devices.  In this case, do not wait on the barrier here.
-    # The thread_map will detect that one or more of its threads failed and,
-    # once all of its threads have completed (successfully or with an error),
-    # it will call `set_failed` with `top_level=True`.
-    if top_level:
-      self.clean_up_barrier.wait()
-
-  def check_failed(self):
-    with self.lock:
-      if self._failure is not None:
-        # __cause__ information is lost when an exception from a callback goes
-        # through XLA and back to Python, so we stuff the information into the
-        # exception message.
-        #
-        # TODO(jburnim): The top-level exception (that the user sees) will not
-        # always contain the original exception info/message.  It currently
-        # depends on which raise (the raise here or the raise in the thread
-        # that calls `set_failed`) happens first. (And maybe some other details
-        # in XLA.)  We should figure out how to reliably propagate the
-        # original exception.
-        failure_str = "".join(traceback.format_exception(self._failure))
-        raise RuntimeError(
-            f"Computation failed on {self._failed_thread} with exception:\n\n{failure_str}"
-        ) from None
-
-  def append_semaphore_task(
-      self,
-      semaphore_id: int,
-      global_core_id: int,
-      task: SemaphoreTask,
-  ):
-    """Appends a task to be executed if the semaphore with the given sempahore ID is waiting to be signalled on the core with the given global core ID."""
-    with self.lock:
-      sem = self._unsafe_get_semaphore(semaphore_id)
-    sem.enqueue_task(task, global_core_id)
-
-  def get_random_virtual_device_id(self) -> int:
-    # Virtual device IDs are needed for DMAs. Conceptually, each DMA runs on its
-    # own, independent device. Representing this precisely would require vector
-    # clocks to have sizes linear in the number of DMAs.
-    #
-    # Instead, we use approximate vector clocks of fixed size. We assign each
-    # DMA a virtual core ID in the range
-    #
-    #   [num_cores, self.vector_clock_size - 1],
-    #
-    # and each operation of a DMA increments the corresponding coordinate in its
-    # vector clock. (So the "virtual" part of a vector clock is effectively
-    # counting, for each virtual core, the number of DMAs that happened-before
-    # the vector clock and were assigned to that virtual core.)
-    #
-    # If two approximate clocks are unordered, then their corresponding events
-    # are not ordered by the happens-before relation. So this approximation will
-    # not introduce any false positives in detecting data races. But we may fail
-    # to detect some true data races because there can be cases where two
-    # approximate clocks are ordered, and we will treat the corresponding events
-    # as ordered by the happens-before relation, but the corresponding events
-    # are not actually ordered.
-    return np.random.randint(self.num_cores, self.vector_clock_size)
-
-  def get_semaphores_and_increment_clock(
-      self, sem_ids: Sequence[int | None], global_core_id: int
-  ) -> tuple[list[Semaphore | None], VectorClock | None]:
-    """Returns the semaphores with the given `sem_ids` and increments the vector clock for the core with `global_core_id`.
-
-    If race detection is enabled, this method increments the vector clock for
-    the core with the given `global_core_id` (while holding the lock on `self`).
-    We do this so that we can associate a (vector clock) time with the shared
-    memory operation of looking up the semaphores, which in turn can be used as
-    a proxy for the time when the returned semaphores are used by the client of
-    the `SharedMemory` class without acquiring the lock on `self`. (For the
-    purpose of encapsulation, we prefer to think of `self.lock` as a private
-    attribute of the `SharedMemory` class; hence clients of the class should not
-    attempt to acquire this lock explicitly.)
-
-    Args:
-      sem_ids: The IDs of the semaphores to return or None.
-      global_core_id: The ID of the core whose vector clock should be
-        incremented (if race detection is enabled).
-
-    Returns:
-      - The semaphores with the given `sem_ids` or None if the corresponding
-        entry in `sem_ids` is None.
-      - The incremented vector clock for the core with the given
-        `global_core_id`, or None if race detection is not enabled.
-    """
-    thread = self.global_core_id_to_thread(global_core_id)
-    clock = None
-    with self.lock:
-      if self.detect_races:
-        clock = self.incr_clock(thread, take_lock=False)
-
-      sems = []
-      for sem_id in sem_ids:
-        if sem_id is None:
-          sem = None
-        else:
-          sem = self._unsafe_get_semaphore(sem_id)
-        sems.append(sem)
-
-    return sems, clock
-
-  def get_sempahores_with_nonzero_count(
-      self, device_id: int
-  ) -> list[tuple[Semaphore, int]]:
-    """Returns tuples (semaphore, global_core_id) for all semaphores with a nonzero count for the core with `global_core_id`."""
-    result = []
-    with self.lock:
-      sems = self.sem.items() | self.fixed_id_sem.items()
-    for _, sem in sems:
-      with sem.cv:
-        for gci in self.get_global_core_ids(device_id):
-          if sem.count_by_core[gci] != 0:
-            result.append((sem, gci))
-    return result
-
-  def allocate_semaphores(self, key: Any, num_semaphores: int) -> int:
-    """Returns the next semaphore ID and ensures that the next `num_semaphores` are allocated."""
-    with self.lock:
-      semaphore_id = self.next_semaphore_id[key]
-      self.next_semaphore_id[key] = semaphore_id + num_semaphores
-
-      for i in range(semaphore_id, semaphore_id + num_semaphores):
-        if i not in self.sem:
-          self.sem[i] = Semaphore(
-              shared_memory=self,
-              semaphore_id=i,
-              enable_logging=(
-                  self.logging_mode is not None
-                  and params.LoggingMode.SEMAPHORE in self.logging_mode
-              ),
-          )
-
-    return semaphore_id
-
-  def guarantee_semaphore_with_fixed_id(self, semaphore_id: int):
-    """Ensures that a semaphore with the given `semaphore_id` exists.
-
-    If the semaphore with the given ID does not exist, it is allocated. Note
-    that semaphores that are allocated with this method live in their own
-    address space (internally, they are mapped in a separate dictionary) from
-    the sempahores allocated with the `allocate_sempahores` method above.
-
-    This methods is intended to be used for barrier semaphores, where the
-    _collective_ semaphore ID is specified by the interpreter (i.e. by the
-    client of the `SharedMemory` class). This simulates sempahores that exist
-    prior to any Pallas kernels being run.
-
-    Args:
-      semaphore_id: The ID of the semaphore to ensure exists, i.e. is allocated.
-    """
-    with self.lock:
-      if semaphore_id not in self.fixed_id_sem:
-        self.fixed_id_sem[semaphore_id] = Semaphore(
-            semaphore_id=semaphore_id,
-            shared_memory=self,
-            enable_logging=(
-                self.logging_mode is not None
-                and params.LoggingMode.SEMAPHORE in self.logging_mode
-            ),
-        )
-
-  def update_clocks_for_device_barrier(self, device_id: int):
-    """Synchronizes the vector clocks for the cores on the given device."""
-    threads = [(device_id, core_id) for core_id in range(self.num_cores_per_device)]
-    self.update_clocks(threads)
