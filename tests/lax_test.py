@@ -88,6 +88,39 @@ def _reduce_custom_max(x, y):
   return jnp.maximum(x, y)
 
 
+def _eigh_givens(n, p, q, theta):
+  """Orthogonal matrix rotating the (p, q) plane by ``theta``."""
+  g = np.eye(n)
+  c, s = np.cos(theta), np.sin(theta)
+  g[p, p], g[p, q], g[q, p], g[q, q] = c, s, -s, c
+  return g
+
+
+def _eigh_real_dtype(dtype):
+  """The floating-point dtype underlying a float or complex dtype."""
+  if np.dtype(dtype).kind == "c":
+    return np.float32 if np.dtype(dtype).itemsize == 8 else np.float64
+  return np.dtype(dtype)
+
+
+def _eigh_jvp_reference(u, w, tangent):
+  """Analytic eigenvector JVP reference for ``A = U diag(w) U^T``.
+
+  For distinct eigenvalues the eigenvector derivative is ``dV = U (F . T)``
+  with ``F[i, j] = 1 / (w[j] - w[i])`` for ``i != j`` and ``0`` on the
+  diagonal, where ``T = U^T dA U`` is the tangent in the eigenbasis. The
+  result is exact up to the (unobservable) column sign or phase convention
+  of the eigenvectors, so callers compare absolute values.
+  """
+  n = u.shape[0]
+  f = np.zeros((n, n))
+  for i in range(n):
+    for j in range(n):
+      if i != j:
+        f[i, j] = 1.0 / (w[j] - w[i])
+  return u @ (f * tangent)
+
+
 class LaxTest(jtu.JaxTestCase):
   """Numerical tests for LAX operations."""
 
@@ -3927,6 +3960,71 @@ class LaxTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(f)(np.arange(3.))
     primitives = [eqn.primitive for eqn in jaxpr.eqns]
     self.assertIn(lax_internal.unstack_p, primitives)
+
+  @jtu.sample_product(
+    dtype=[np.float32, np.float64, np.complex64, np.complex128],
+  )
+  def testEighJvpFiniteLargeEigenvalues(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/40141.
+    # The eigh JVP inverts the eigenvalue-gap matrix; its diagonal guard is
+    # only exact if the difference is computed before the guard: once
+    # |w| >= 2^p (p = mantissa bits), `1 + w` rounds back to `w`, so the
+    # guarded diagonal collapses to zero and the reciprocal is infinite,
+    # NaNs the whole JVP.
+    real_dtype = _eigh_real_dtype(dtype)
+    if real_dtype == np.float64 and not config.enable_x64.value:
+      self.skipTest("Requires JAX_ENABLE_X64")
+    base = 2 ** (np.finfo(real_dtype).nmant + 1)
+    # base, base+2 and base+4 are exactly representable at the 2^p cliff.
+    a = jnp.diag(jnp.array([base, base + 2, base + 4], dtype=dtype))
+
+    def eigenvectors(x):
+      return lax.linalg.eigh(x)[0]
+
+    _, tangent_out = jvp(eigenvectors, (a,), (a,))
+    self.assertTrue(np.isfinite(np.asarray(tangent_out)).all())
+    if np.dtype(dtype).kind == "f":
+      for jacobian in (jax.jacfwd, jax.jacrev):
+        with self.subTest(jacobian=jacobian.__name__):
+          jac = jacobian(eigenvectors)(a)
+          self.assertTrue(np.isfinite(np.asarray(jac)).all())
+    else:
+      jac = jax.jacrev(eigenvectors, holomorphic=True)(a)
+      self.assertTrue(np.isfinite(np.asarray(jac)).all())
+
+  @jtu.sample_product(
+    dtype=[np.float32, np.float64, np.complex64, np.complex128],
+  )
+  def testEighJvpLargeEigenvaluesAccuracy(self, dtype):
+    # With well-separated eigenvalues at the 2^p cliff the eigenvectors are
+    # numerically stable, so the JVP must match the closed-form
+    # perturbation-theory derivative.
+    real_dtype = _eigh_real_dtype(dtype)
+    if real_dtype == np.float64 and not config.enable_x64.value:
+      self.skipTest("Requires JAX_ENABLE_X64")
+    n = 3
+    base = 2 ** (np.finfo(real_dtype).nmant + 1)
+    gap = 2 ** (np.finfo(real_dtype).nmant - 3)
+    w = np.array([base, base + gap, base + 2 * gap], dtype=np.float64)
+    u = _eigh_givens(n, 0, 1, 0.3) @ _eigh_givens(n, 1, 2, 0.5)
+    tangent = np.zeros((n, n))
+    tangent[0, 1] = tangent[1, 0] = 0.5
+    tangent[1, 2] = tangent[2, 1] = 0.3
+    tangent[0, 2] = tangent[2, 0] = 0.1
+    a = jnp.asarray(u @ np.diag(w) @ u.T, dtype=dtype)
+    d_a = jnp.asarray(u @ tangent @ u.T, dtype=dtype)
+
+    def eigenvectors(x):
+      return lax.linalg.eigh(x)[0]
+
+    _, tangent_out = jvp(eigenvectors, (a,), (d_a,))
+    ref = _eigh_jvp_reference(u, w, tangent)
+    err = np.max(np.abs(np.abs(np.asarray(tangent_out)) - np.abs(ref)))
+    self.assertTrue(np.isfinite(np.asarray(tangent_out)).all())
+    if real_dtype == np.float64:
+      self.assertLess(err, 1e-12)
+    else:
+      self.assertLess(err, 1e-6)
 
 
 class LazyConstantTest(jtu.JaxTestCase):

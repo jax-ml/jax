@@ -1355,10 +1355,19 @@ def _eigh_jvp_rule(
   # for complex numbers we need eigenvalues to be full dtype of v, a:
   w = w_real.astype(a.dtype)
   eye_n = lax._eye(a.dtype, (n, n))
-  # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
+  # Carefully build the reciprocal delta-eigenvalue matrix, avoiding NaNs.
+  # The difference must be computed before any guard is applied: once
+  # |w| >= 2^p (p = number of mantissa bits), `1 + w` rounds back to `w` in
+  # IEEE-754, so the previous `eye + w[..., None, :] - w[..., None]` had zero
+  # (rather than one) on the diagonal and an infinite reciprocal (see #40141).
+  # Zero eigenvalue differences -- the diagonal, and exactly degenerate
+  # off-diagonal pairs -- are instead replaced by one before inverting, which
+  # keeps the reciprocal finite; the `- eye` then removes the arbitrary guard
+  # value from the diagonal.
   with config.numpy_rank_promotion("allow"):
     delta_w = w[..., np.newaxis, :] - w[..., np.newaxis]
-    Fmat = lax.integer_pow(delta_w + eye_n, -1) - eye_n
+    delta_w = lax.select(delta_w == 0, lax.full_like(delta_w, 1), delta_w)
+    Fmat = lax.integer_pow(delta_w, -1) - eye_n
   # eigh impl doesn't support batch dims, but future-proof the grad.
   dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
                 precision=lax.Precision.HIGHEST)
