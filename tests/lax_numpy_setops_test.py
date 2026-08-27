@@ -30,7 +30,7 @@ config.parse_flags_with_absl()
 
 
 nonempty_array_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
-empty_array_shapes = [(0,), (0, 4), (3, 0),]
+empty_array_shapes = [(0,), (0, 4), (3, 0), (0, 0)]
 
 scalar_shapes = [jtu.NUMPY_SCALAR_SHAPE, jtu.PYTHON_SCALAR_SHAPE]
 array_shapes = nonempty_array_shapes + empty_array_shapes

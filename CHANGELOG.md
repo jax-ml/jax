@@ -41,6 +41,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.numpy.tri` now returns an array with the default float dtype
     when the `dtype` argument is not specified. Previously it always returned
     `float32` ({jax-issue}`#40242`).
+  * {func}`jax.numpy.unique` with `axis` specified now matches NumPy's output
+    shape for arrays that are empty along the given axis, instead of
+    fabricating a phantom slice for fully-empty inputs.
 
 * Bug fixes
   * Fixed a bug where {func}`jax.numpy.linalg.cond` returned NaN instead of
