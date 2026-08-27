@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from functools import wraps
 import gzip
@@ -39,6 +39,7 @@ from jax._src.lib import version as version_lib
 
 ProfileData = _profile_data.ProfileData
 ProfileEvent = _profile_data.ProfileEvent
+ProfileLine = _profile_data.ProfileLine
 ProfilePlane = _profile_data.ProfilePlane
 
 _profiler_server: _profiler.ProfilerServer | None = None
@@ -121,13 +122,15 @@ def register_subprocess(pid: int, port: int) -> Callable[[], None]:
 class _ProfileState:
   def __init__(self):
     self.profile_session = None
+    self.active_session: ProfileSession | None = None
     self.log_dir: str | None = None
     self.create_perfetto_link = False
     self.create_perfetto_trace = False
-    self.lock = threading.Lock()
+    self.lock = threading.RLock()
 
   def reset(self):
     self.profile_session = None
+    self.active_session = None
     self.create_perfetto_link = False
     self.create_perfetto_trace = False
     self.log_dir = None
@@ -148,18 +151,118 @@ def clear_metadata() -> None:
     return _profiler.clear_metadata()
 
 
+class ProfileSession:
+  """Represents a JAX profiling session.
+
+  Can be used as a context manager (via :func:`trace` or direct instantiation)
+  or programmatically via :meth:`start` and :meth:`stop`.
+  Upon stopping, the captured :class:`ProfileData` and its :class:`ProfilePlane`s
+  become accessible in memory, and can be explicitly written to disk using
+  :meth:`export`.
+  """
+
+  def __init__(
+      self,
+      profiler_options: ProfileOptions | None = None,
+  ):
+    self.profiler_options: ProfileOptions | None = profiler_options
+    self._raw_session: _profiler.ProfilerSession | None = None
+    self._profile_data: ProfileData | None = None
+    self._is_running: bool = False
+
+  def start(self) -> ProfileSession:
+    """Starts the profiling session."""
+    with _profile_state.lock:
+      if _profile_state.profile_session is not None or self._is_running:
+        raise RuntimeError(
+            "Profile has already been started. Only one profile may be run at"
+            " a time."
+        )
+      clear_metadata()
+      # Make sure backends are initialized before creating a profiler
+      # session. Otherwise on Cloud TPU, libtpu may not be initialized before
+      # creating the tracer, which will cause the TPU tracer initialization to
+      # fail and no TPU operations will be included in the profile.
+      xla_bridge.get_backend()
+
+      options = self.profiler_options
+      if options is None:
+        options = ProfileOptions()
+      set_metadata("jax_version", jax_version_module.__version__)
+      jaxlib_version_str = ".".join(map(str, version_lib))
+      set_metadata("jaxlib_version", jaxlib_version_str)
+      for backend_name in xla_bridge.backends():
+        try:
+          backend = xla_bridge.get_backend(backend_name)
+          set_metadata(f"{backend.platform}_version", backend.platform_version)
+        except RuntimeError:
+          pass
+
+      self._raw_session = _profiler.ProfilerSession(options)
+      self._is_running = True
+      self._profile_data = None
+      _profile_state.profile_session = self._raw_session
+      _profile_state.active_session = self
+    return self
+
+  def stop(self) -> ProfileData:
+    """Stops the profiling session and returns the captured ProfileData."""
+    with _profile_state.lock:
+      if not self._is_running or self._raw_session is None:
+        raise RuntimeError("No profile started")
+
+      self._profile_data = self._raw_session.stop_and_get_profile_data()
+      self._is_running = False
+      self._raw_session = None
+      _profile_state.reset()
+      clear_metadata()
+
+    return self._profile_data
+
+  def export_profile_data(
+      self,
+      log_dir: os.PathLike | str,
+      create_perfetto_link: bool = False,
+      create_perfetto_trace: bool = False,
+      session_id: str | None = None,
+  ) -> None:
+    """Exports the captured profile data to the specified directory."""
+    export_profile_data(
+        self,
+        log_dir=log_dir,
+        create_perfetto_link=create_perfetto_link,
+        create_perfetto_trace=create_perfetto_trace,
+        session_id=session_id,
+    )
+
+  @property
+  def is_running(self) -> bool:
+    return self._is_running
+
+  @property
+  def profile_data(self) -> ProfileData | None:
+    """Returns the captured ProfileData after the session has stopped."""
+    return self._profile_data
+
+  def __enter__(self) -> ProfileSession:
+    self.start()
+    return self
+
+  def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    self.stop()
+
+
 def start_trace(
-    log_dir: os.PathLike | str,
+    log_dir: os.PathLike | str | None = None,
     create_perfetto_link: bool = False,
     create_perfetto_trace: bool = False,
     profiler_options: ProfileOptions | None = None,
-) -> None:
+) -> ProfileSession:
   """Starts a profiler trace.
 
   The trace will capture CPU, GPU, and/or TPU activity, including Python
   functions and JAX on-device operations. Use :func:`stop_trace` to end the
-  trace
-  and save the results to ``log_dir``.
+  trace and save the results to ``log_dir`` (if provided).
 
   The resulting trace can be viewed with TensorBoard. Note that TensorBoard
   doesn't need to be running when collecting the trace.
@@ -168,8 +271,8 @@ def start_trace(
   :func:`start_trace` is called while another trace is running.
 
   Args:
-    log_dir: The directory to save the profiler trace to (usually the
-      TensorBoard log directory).
+    log_dir: Optional directory to save the profiler trace to (usually the
+      TensorBoard log directory). If None, the trace is kept in memory.
     create_perfetto_link: A boolean which, if true, creates and prints link to
       the Perfetto trace viewer UI (https://ui.perfetto.dev). The program will
       block until the link is opened and Perfetto loads the trace.
@@ -179,35 +282,24 @@ def start_trace(
       generated if ``create_perfetto_link`` is true. This could be useful if you
       want to generate a Perfetto-compatible trace without blocking the process.
     profiler_options: Profiler options to configure the profiler for collection.
+
+  Returns:
+    The active :class:`ProfileSession`.
   """
   with _profile_state.lock:
     if _profile_state.profile_session is not None:
-      raise RuntimeError("Profile has already been started. "
-                         "Only one profile may be run at a time.")
-    clear_metadata()
-    # Make sure backends are initialized before creating a profiler
-    # session. Otherwise on Cloud TPU, libtpu may not be initialized before
-    # creating the tracer, which will cause the TPU tracer initialization to
-    # fail and no TPU operations will be included in the profile.
-    xla_bridge.get_backend()
-
-    options = profiler_options
-    if options is None:
-      options = ProfileOptions()
-    set_metadata("jax_version", jax_version_module.__version__)
-    jaxlib_version_str = ".".join(map(str, version_lib))
-    set_metadata("jaxlib_version", jaxlib_version_str)
-    for backend_name in xla_bridge.backends():
-      try:
-        backend = xla_bridge.get_backend(backend_name)
-        set_metadata(f"{backend.platform}_version", backend.platform_version)
-      except RuntimeError:
-        pass
-    _profile_state.profile_session = _profiler.ProfilerSession(options)
+      raise RuntimeError(
+          "Profile has already been started. Only one profile may be run at"
+          " a time."
+      )
+    _profile_state.log_dir = str(log_dir) if log_dir is not None else None
     _profile_state.create_perfetto_link = create_perfetto_link
     _profile_state.create_perfetto_trace = (
-        create_perfetto_trace or create_perfetto_link)
-    _profile_state.log_dir = str(log_dir)
+        create_perfetto_trace or create_perfetto_link
+    )
+    session = ProfileSession(profiler_options=profiler_options)
+    session.start()
+    return session
 
 
 def _write_perfetto_trace_file(log_dir: os.PathLike | str):
@@ -268,23 +360,91 @@ def _host_perfetto_trace_file(path: os.PathLike | str):
   finally:
     os.chdir(orig_directory)
 
-def stop_trace():
+def export_profile_data(
+    profile_data: ProfileData | ProfileSession,
+    log_dir: os.PathLike | str,
+    create_perfetto_link: bool = False,
+    create_perfetto_trace: bool = False,
+    session_id: str | None = None,
+) -> None:
+  """Exports captured profile data to the specified directory.
+
+  Args:
+    profile_data: The :class:`ProfileData` or completed :class:`ProfileSession`
+      to export.
+    log_dir: The directory to save the profiler trace to (usually the
+      TensorBoard log directory).
+    create_perfetto_link: A boolean which, if true, creates and prints link to
+      the Perfetto trace viewer UI (https://ui.perfetto.dev). The program will
+      block until the link is opened and Perfetto loads the trace.
+    create_perfetto_trace: A boolean which, if true, additionally dumps a
+      ``perfetto_trace.json.gz`` file that is compatible for upload with the
+      Perfetto trace viewer UI (https://ui.perfetto.dev).
+    session_id: Optional session ID string for the export folder.
+  """
+  if isinstance(profile_data, ProfileSession):
+    if profile_data.is_running:
+      raise RuntimeError(
+          "Cannot export a ProfileSession while it is running. Call stop()"
+          " first."
+      )
+    if profile_data.profile_data is None:
+      raise RuntimeError(
+          "No profile data to export. Ensure the session has completed."
+      )
+    data = profile_data.profile_data
+    if session_id is None and profile_data.profiler_options is not None:
+      session_id = profile_data.profiler_options.session_id
+  elif isinstance(profile_data, ProfileData):
+    data = profile_data
+  else:
+    raise TypeError(
+        "Expected ProfileData or ProfileSession, got"
+        f" {type(profile_data).__name__}"
+    )
+
+  _profiler.export_to_tensorboard(
+      data, str(log_dir), session_id=session_id or ""
+  )
+  if create_perfetto_trace or create_perfetto_link:
+    abs_filename = _write_perfetto_trace_file(str(log_dir))
+    if create_perfetto_link:
+      _host_perfetto_trace_file(abs_filename)
+
+
+def stop_trace() -> ProfileData | None:
   """Stops the currently-running profiler trace.
 
   The trace will be saved to the ``log_dir`` passed to the corresponding
-  :func:`start_trace` call. Raises a RuntimeError if a trace hasn't been started.
+  :func:`start_trace` call (if provided). Raises a RuntimeError if a trace
+  hasn't been started.
+
+  Returns:
+    The captured :class:`ProfileData`.
   """
   with _profile_state.lock:
+    active_session = _profile_state.active_session
     profile_session = _profile_state.profile_session
-    if profile_session is None:
+    log_dir = _profile_state.log_dir
+    create_perfetto_link = _profile_state.create_perfetto_link
+    create_perfetto_trace = _profile_state.create_perfetto_trace
+
+    if active_session is not None:
+      return active_session.stop()
+    elif profile_session is not None:
+      profile_data = profile_session.stop_and_get_profile_data()
+      _profile_state.reset()
+      clear_metadata()
+      if log_dir is not None:
+        export_profile_data(
+            profile_data,
+            log_dir=log_dir,
+            create_perfetto_link=create_perfetto_link,
+            create_perfetto_trace=create_perfetto_trace,
+        )
+      return profile_data
+    else:
       raise RuntimeError("No profile started")
-    profile_session.stop_and_export(str(_profile_state.log_dir))
-    if _profile_state.create_perfetto_trace:
-      abs_filename = _write_perfetto_trace_file(str(_profile_state.log_dir))
-      if _profile_state.create_perfetto_link:
-        _host_perfetto_trace_file(abs_filename)
-    _profile_state.reset()
-    clear_metadata()
 
 
 def stop_and_get_fdo_profile() -> bytes | str:
@@ -306,42 +466,51 @@ def stop_and_get_fdo_profile() -> bytes | str:
 
 @contextmanager
 def trace(
-    log_dir: os.PathLike | str,
-    create_perfetto_link=False,
-    create_perfetto_trace=False,
+    log_dir: os.PathLike | str | None = None,
+    create_perfetto_link: bool = False,
+    create_perfetto_trace: bool = False,
     profiler_options: ProfileOptions | None = None,
-):
+) -> Iterator[ProfileSession]:
   """Context manager to take a profiler trace.
 
   The trace will capture CPU, GPU, and/or TPU activity, including Python
   functions and JAX on-device operations.
 
-  The resulting trace can be viewed with TensorBoard. Note that TensorBoard
-  doesn't need to be running when collecting the trace.
+  The yielded :class:`ProfileSession` object provides in-memory access to
+  the :class:`ProfileData` and :class:`ProfilePlane`s upon exiting the context.
+  If ``log_dir`` is specified, the trace is also exported to ``log_dir``
+  for viewing in TensorBoard.
 
   Only one trace may be collected at a time. A RuntimeError will be raised if a
   trace is started while another trace is running.
 
   Args:
-    log_dir: The directory to save the profiler trace to (usually the
-      TensorBoard log directory).
+    log_dir: Optional directory to save the profiler trace to (usually the
+      TensorBoard log directory). If None, the trace is kept in memory only.
     create_perfetto_link: A boolean which, if true, creates and prints link to
       the Perfetto trace viewer UI (https://ui.perfetto.dev). The program will
       block until the link is opened and Perfetto loads the trace.
     create_perfetto_trace: A boolean which, if true, additionally dumps a
       ``perfetto_trace.json.gz`` file that is compatible for upload with the
-      Perfetto trace viewer UI (https://ui.perfetto.dev). The file will also be
-      generated if ``create_perfetto_link`` is true. This could be useful if you
-      want to generate a Perfetto-compatible trace without blocking the process.
+      Perfetto trace viewer UI (https://ui.perfetto.dev).
     profiler_options: Profiler options to configure the profiler for collection.
+
+  Yields:
+    A :class:`ProfileSession` object that gives access to the profile data
+    and XPlanes after exiting the context.
   """
-  start_trace(
-      log_dir, create_perfetto_link, create_perfetto_trace, profiler_options
-  )
+  session = ProfileSession(profiler_options=profiler_options)
+  session.start()
   try:
-    yield
+    yield session
   finally:
-    stop_trace()
+    session.stop()
+    if log_dir is not None:
+      session.export_profile_data(
+          log_dir,
+          create_perfetto_link=create_perfetto_link,
+          create_perfetto_trace=create_perfetto_trace,
+      )
 
 
 class TraceAnnotation(_profiler.TraceMe):
