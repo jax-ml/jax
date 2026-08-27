@@ -749,6 +749,66 @@ class FusionTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(g(x, "negate"), -x)
     np.testing.assert_array_equal(g(x), x)
 
+  def test_fusible_jvp_symbolic_zeros_jacfwd(self):
+    @fuser.fusible
+    def add_scaled(x_fn, y_fn, out_fn):
+      x, y = x_fn(), y_fn()
+      if out_fn is None:
+        out_fn = lambda v: v
+      return out_fn(x * 2.0 + y)
+
+    x = jnp.ones((4, 4))
+    y = jnp.ones((4, 4))
+
+    # Partial forward-mode differentiation: differentiating w.r.t. x leaves y
+    # with a symbolic zero tangent during JVP.
+    jac_x = jax.jacfwd(add_scaled, argnums=0)(x, y)
+    expected_jac = jnp.zeros((4, 4, 4, 4), dtype=x.dtype)
+    for i in range(4):
+      for j in range(4):
+        expected_jac = expected_jac.at[i, j, i, j].set(2.0)
+    np.testing.assert_allclose(jac_x, expected_jac)
+
+  def test_fusible_jvp_symbolic_zeros_scan(self):
+    @fuser.fusible
+    def add_scaled(x_fn, y_fn, out_fn):
+      x, y = x_fn(), y_fn()
+      if out_fn is None:
+        out_fn = lambda v: v
+      return out_fn(x * 2.0 + y)
+
+    x = jnp.ones((4, 4))
+    y = jnp.ones((4, 4))
+
+    # Forward-mode differentiation through jax.lax.scan:
+    # scan pushes tangents through the body using JVP, passing ad.Zero for
+    # constants like y.
+    def scan_body(carry, _):
+      return add_scaled(carry, y), None
+
+    def scan_loss(init_x):
+      final_carry, _ = jax.lax.scan(scan_body, init_x, None, length=2)
+      return jnp.sum(final_carry)
+
+    jac_x = jax.jacfwd(scan_loss)(x)
+    np.testing.assert_allclose(jac_x, jnp.full_like(x, 4.0))
+
+  def test_fusible_vjp_unused_output(self):
+    @fuser.fusible
+    def multi_out(x_fn, out_fn):
+      x = x_fn()
+      if out_fn is None:
+        out_fn = lambda a, b: (a, b)
+      return out_fn(x * 2.0, x * 3.0)
+
+    def loss(x):
+      y1, _ = multi_out(x)
+      return jnp.sum(y1)
+
+    x = jnp.ones((4, 4))
+    grad_x = jax.grad(loss)(x)
+    np.testing.assert_allclose(grad_x, jnp.full_like(x, 2.0))
+
 
 @dataclasses.dataclass(frozen=True)
 class ArrayTuple:

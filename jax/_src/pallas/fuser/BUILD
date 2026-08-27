@@ -101,6 +101,7 @@ pytype_strict_library(
         ":fusible_dtype",
         ":fusion",
         "//jax",
+        "//jax/_src:ad",
         "//jax/_src:api_util",
         "//jax/_src:batching",
         "//jax/_src:core",

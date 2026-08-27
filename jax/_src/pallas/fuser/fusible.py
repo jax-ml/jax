@@ -24,6 +24,7 @@ from jax._src import flattree as ft
 from jax._src import hijax
 from jax._src import tree_util
 from jax._src import util
+from jax._src.interpreters import ad
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.control_flow.loops import eval_jaxpr_p
 from jax._src.pallas.fuser import fusible_dtype
@@ -95,7 +96,12 @@ class Fusible(hijax.HiPrim):
     return vjp_fun(outgrad)
 
   def jvp(self, primals, tangents):
-    return jax.jvp(self.expand, primals, tangents)
+    ps_ft = ft.flatten(primals)
+    ts_ft = ft.flatten(tangents, is_leaf=lambda x: isinstance(x, ad.Zero))
+    out_primals, out_tangents = ad.jvp(
+        self.expand, ps_ft, ts_ft, instantiate=False
+    )
+    return out_primals.unflatten(), out_tangents.unflatten()
 
   def batch(self, axis_data, args, dims):
     if axis_data.size != 1:
