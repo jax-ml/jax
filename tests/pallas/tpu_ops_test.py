@@ -505,6 +505,59 @@ class OpsTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(res_i, exp_i)
 
   @parameterized.product(
+      k=[1, 2, 4, 8],
+      in_shape=[(13, 32, 512), (10, 16, 1024), (9, 11, 300)],
+      axis=[0, 1, 2, -1, -2, -3],
+      dtype=[jnp.float32, jnp.bfloat16],
+      recall_target=[0.95, 0.99, 1.0],
+  )
+  def test_approx_max_k(self, k, in_shape, axis, dtype, recall_target):
+    if not jtu.is_libtpu_at_least("0.0.47"):
+      self.skipTest("Requires libtpu >= 0.0.47")
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Requires TPUv4+")
+    if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires TPUv6+ for bfloat16")
+
+    out_val_shape = list(in_shape)
+    out_val_shape[axis] = k
+
+    def kernel(x_ref, val_ref, idx_ref):
+      val_ref[...], idx_ref[...] = jax.lax.approx_max_k(
+          x_ref[...], k=k, reduction_dimension=axis, recall_target=recall_target
+      )
+
+    # Ensure unique values in x so that no ties need to be broken.
+    idx = jnp.argsort(
+        jax.random.normal(jax.random.key(42), shape=in_shape), axis=axis
+    ).astype(jnp.float32)
+    x = (jnp.exp2(idx // 128.0) * (1.0 + (idx % 128.0) / 128.0)).astype(dtype)
+
+    res_v, res_i = self.pallas_call(
+        kernel,
+        out_shape=[
+            jax.ShapeDtypeStruct(out_val_shape, dtype),
+            jax.ShapeDtypeStruct(out_val_shape, jnp.int32),
+        ],
+    )(x)
+
+    # Gather consistency: returned values must match elements at returned indices
+    gathered_v = np.take_along_axis(np.asarray(x), np.asarray(res_i), axis=axis)
+    np.testing.assert_array_equal(res_v, gathered_v)
+
+    # Descending sorted order
+    sorted_v = np.flip(np.sort(np.asarray(res_v), axis=axis), axis=axis)
+    np.testing.assert_array_equal(res_v, sorted_v)
+
+    # Statistical Recall check vs ground-truth exact top-k
+    _, gt_i = jax.lax.top_k(x, k=k, axis=axis)
+    res_i_flat = np.moveaxis(np.asarray(res_i), axis, -1).reshape(-1, k)
+    gt_i_flat = np.moveaxis(np.asarray(gt_i), axis, -1).reshape(-1, k)
+    hits = sum(len(set(r) & set(g)) for r, g in zip(res_i_flat, gt_i_flat))
+    recall = hits / gt_i_flat.size
+    self.assertGreaterEqual(recall, recall_target)
+
+  @parameterized.product(
       shape=[(129, 129), (1, 129), (2, 129), (4, 129)],
       msk_dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
       dtype=[jnp.float32, jnp.bfloat16],

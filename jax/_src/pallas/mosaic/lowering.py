@@ -38,8 +38,6 @@ from jax._src import flattree as ft
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
-from jax._src.random import prng
-from jax._src.random import threefry2x32
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import traceback_util
@@ -49,6 +47,7 @@ from jax._src.export import shape_poly
 from jax._src.export._export import export
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lax import ann
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
@@ -71,6 +70,8 @@ from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import random as pl_random
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import tpu_info
+from jax._src.random import prng
+from jax._src.random import threefry2x32
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
@@ -3615,6 +3616,41 @@ def _argmin_lowering_rule(ctx: LoweringRuleContext, x, axes, index_dtype):
   )
 
 
+def _top_k_impl(operand, *, k: int, axis: int = -1, carried_idx=None):
+  # Note: This iterative argmax implementation assumes the input has at least k
+  # values distinct from -inf. If the input contains fewer than k values
+  # distinct from -inf, all remaining elements will be tied at -inf after
+  # masking, which may cause repeated indices in the output. We keep this
+  # behavior to avoid adding expensive defensive masking logic.
+  axis = axis % operand.ndim
+  index_dtype = jnp.int16 if operand.dtype == jnp.bfloat16 else jnp.int32
+  iota = lax.broadcasted_iota(index_dtype, operand.shape, axis)
+  min_val = jnp.array(-jnp.inf, dtype=operand.dtype)
+  vals = []
+  idxs = []
+  curr = operand
+  for _ in range(k):
+    idx = lax.argmax(curr, axis=axis, index_dtype=index_dtype)
+    val = jnp.max(curr, axis=axis)
+    mask = iota == jnp.expand_dims(idx, axis)
+    if carried_idx is not None:
+      global_idx = jnp.max(
+          jnp.where(mask, carried_idx.astype(jnp.int32), -1), axis=axis
+      )
+      idxs.append(global_idx)
+    else:
+      idxs.append(idx)
+    vals.append(val)
+    curr = jnp.where(mask, min_val, curr)
+
+  vals_stacked = jnp.stack(vals, axis=axis)
+  idxs_stacked = jnp.stack(idxs, axis=axis)
+  if idxs_stacked.dtype != jnp.int32:
+    idxs_stacked = idxs_stacked.astype(jnp.int32)
+
+  return vals_stacked, idxs_stacked
+
+
 @register_lowering_rule(lax.top_k_p, ensure_mlir_values=False)
 def _top_k_lowering_rule(
     ctx: LoweringRuleContext,
@@ -3644,30 +3680,113 @@ def _top_k_lowering_rule(
         " is_stable=False is supported"
     )
 
-  def _top_k_impl(operand, *, k: int, axis: int = -1):
-    axis = axis % operand.ndim
-    index_dtype = jnp.int16 if operand.dtype == jnp.bfloat16 else jnp.int32
-    iota = lax.broadcasted_iota(index_dtype, operand.shape, axis)
-    min_val = jnp.finfo(operand.dtype).min
-    vals = []
-    idxs = []
-    curr = operand
-    for _ in range(k):
-      idx = lax.argmax(curr, axis=axis, index_dtype=index_dtype)
-      val = jnp.max(curr, axis=axis)
-      vals.append(val)
-      idxs.append(idx)
-      mask = iota == jnp.expand_dims(idx, axis)
-      curr = jnp.where(mask, min_val, curr)
-
-    vals_stacked = jnp.stack(vals, axis=axis)
-    idxs_stacked = jnp.stack(idxs, axis=axis)
-    if index_dtype != jnp.int32:
-      idxs_stacked = idxs_stacked.astype(jnp.int32)
-
-    return vals_stacked, idxs_stacked
-
   return lower_fun(_top_k_impl)(ctx, x, k=k, axis=axis)
+
+
+@register_lowering_rule(ann.approx_top_k_p, ensure_mlir_values=False)
+def _approx_top_k_lowering_rule(
+    ctx: LoweringRuleContext,
+    x,
+    *,
+    k: int,
+    reduction_dimension: int,
+    recall_target: float,
+    is_max_k: bool,
+    reduction_input_size_override: int,
+    aggregate_to_topk: bool,
+):
+  input_dtype = ctx.avals_in[0].dtype
+  if input_dtype not in (jnp.float32, jnp.bfloat16):
+    raise NotImplementedError(
+        "Pallas approx_top_k only supports float32 and bfloat16, got"
+        f" {input_dtype}"
+    )
+  tpu_gen = tpu_info.get_tpu_info().generation
+  if input_dtype == jnp.float32 and tpu_gen < 4:
+    raise NotImplementedError(
+        "float32 approx_top_k is not supported on TPUv3 or older"
+    )
+  if input_dtype == jnp.bfloat16 and tpu_gen < 6:
+    raise NotImplementedError(
+        "bfloat16 approx_top_k is not supported on TPUv5 or older"
+    )
+  if not is_max_k:
+    raise NotImplementedError(
+        "is_max_k=False (approx_min_k) is not supported in Pallas"
+    )
+  if not aggregate_to_topk:
+    raise NotImplementedError(
+        "aggregate_to_topk=False is not supported in Pallas approx_top_k"
+    )
+
+  def _approx_max_k_impl(
+      operand,
+      k: int,
+      reduction_dimension: int = -1,
+      recall_target: float = 0.95,
+      reduction_input_size_override: int = -1,
+      aggregate_to_topk: bool = True,
+  ):
+    del reduction_input_size_override, aggregate_to_topk
+    if not 0.0 < recall_target <= 1.0:
+      raise ValueError(f"recall_target must be in (0, 1], got {recall_target}")
+    axis = reduction_dimension % operand.ndim
+    n = operand.shape[axis]
+    if k <= 1:
+      num_bins = 1
+    elif recall_target == 1.0:
+      num_bins = n
+    else:
+      num_bins = math.ceil((k - 1) / (1.0 - recall_target))
+    if axis == operand.ndim - 1:
+      num_bins = ((num_bins + 128 - 1) // 128) * 128
+    num_bins = min(num_bins, n)
+
+    if num_bins == n:
+      return _top_k_impl(operand, k=k, axis=axis)
+
+    num_full_slices = n // num_bins
+    remainder = n - num_full_slices * num_bins
+
+    iota_shape = [1] * operand.ndim
+    iota_shape[axis] = num_bins
+    iota_1d = jnp.arange(num_bins, dtype=jnp.int32).reshape(iota_shape)
+
+    # Initialize directly from the first full slice (i = 0).
+    best_val = lax.slice_in_dim(operand, 0, num_bins, axis=axis)
+    best_idx = jnp.broadcast_to(iota_1d, best_val.shape)
+
+    for i in range(1, num_full_slices):
+      seg = lax.slice_in_dim(
+          operand, i * num_bins, (i + 1) * num_bins, axis=axis
+      )
+      gidx = i * num_bins + iota_1d
+      take = seg > best_val
+      best_val = jnp.where(take, seg, best_val)
+      best_idx = jnp.where(take, gidx, best_idx)
+
+    if remainder > 0:
+      min_val = jnp.array(-jnp.inf, dtype=operand.dtype)
+      tail = lax.slice_in_dim(operand, num_full_slices * num_bins, n, axis=axis)
+      pad_config = [(0, 0, 0)] * operand.ndim
+      pad_config[axis] = (0, num_bins - remainder, 0)
+      seg = lax.pad(tail, min_val, pad_config)
+      gidx = num_full_slices * num_bins + iota_1d
+      take = seg > best_val
+      best_val = jnp.where(take, seg, best_val)
+      best_idx = jnp.where(take, gidx, best_idx)
+
+    return _top_k_impl(best_val, k=k, axis=axis, carried_idx=best_idx)
+
+  return lower_fun(_approx_max_k_impl)(
+      ctx,
+      x,
+      k=k,
+      reduction_dimension=reduction_dimension,
+      recall_target=recall_target,
+      reduction_input_size_override=reduction_input_size_override,
+      aggregate_to_topk=aggregate_to_topk,
+  )
 
 
 @register_lowering_rule(
