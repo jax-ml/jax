@@ -103,7 +103,6 @@ single_version_override(
         "//third_party/py:rules_python_whl_abi_tags.patch",
         # Upstreamed at https://github.com/bazel-contrib/rules_python/pull/3768
         "//third_party/py:rules_python_local_wheel.patch",
-        "//third_party/py:rules_python_cpython_3_15.patch",
         # Upstreamed: https://github.com/bazel-contrib/rules_python/pull/4071
         "//third_party/py:rules_python_windows_long_paths.patch",
     ],
@@ -138,6 +137,12 @@ DEFAULT_PYTHON_VERSION = "3.12"
 JAXLIB_VERSION = "0.9.2"
 
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.override(
+    add_runtime_manifest_files = ["//third_party/py:rules_python_cpython_3_15.txt"],
+    minor_mapping = {
+        "3.15": "3.15.0rc1",
+    },
+)
 python.defaults(
     # The environment variable takes precedence if set.
     python_version = DEFAULT_PYTHON_VERSION,
