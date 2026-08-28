@@ -377,6 +377,37 @@ class OverlapTest(jtu.JaxTestCase):
     x = jax.random.normal(jax.random.key(123), [16, 256], dtype=jnp.bfloat16)
     f(x, quant_dtype=jnp.int2)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_program_order_exclude_args(self, mesh):
+    x = jax.device_put(jnp.arange(8.0), P('x'))
+    w = jax.device_put(jnp.arange(8.0) * 2.0, P('x'))
+
+    @jax.jit
+    @program_order(enforce=True)
+    def f(x, w):
+      @program_order(enforce=False)
+      def op1(x):
+        return x + 1.0
+      y = op1(x)
+
+      @program_order(enforce=False, exclude_argnames='w')
+      def op2(w):
+        return y * w
+      return op2(w)
+
+    jaxpr = f.trace(x, w).jaxpr
+    self.assertIn('program_order', str(jaxpr))
+    lowered_text = f.lower(x, w).as_text()
+    self.assertNotIn('program_order', lowered_text)
+    out = f(x, w)
+    self.assertArraysEqual(out, (x + 1.0) * w)
+
+    with self.assertRaisesRegex(
+        ValueError, 'exclude_argnames cannot be used with enforce=True'):
+      @program_order(enforce=True, exclude_argnames=('x',))
+      def _(x):
+        return x
+
 
 class AsyncCollectivesTest(jtu.JaxTestCase):
 

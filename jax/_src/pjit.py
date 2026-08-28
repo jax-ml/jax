@@ -81,7 +81,7 @@ from jax._src.typing import Array, ArrayLike
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps, distributed_debug_log,
     split_list, split_list_checked, weakref_lru_cache, merge_lists, subs_list,
-    fun_name, foreach)
+    fun_name, foreach, partition_list)
 from jax._src.lib import jax_jit
 
 map, unsafe_map = safe_map, map
@@ -1391,7 +1391,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   with mlir.source_info_to_location(
       ctx.module_context, None,
       ctx.name_stack.extend(result.wrapped_name), ctx.traceback):
-    if inline is api.Inline.JAX_LATE:
+    if is_jax_late:
       results = jax_mlir_ext.inlined_func_call(result.func.operation, flat_args)
     else:
       call = func_dialect.CallOp(
@@ -2543,46 +2543,63 @@ batching.fancy_primitive_batchers[layout_constraint_p] = _layout_constraint_batc
 
 # ------------------------- program_order --------------------------------------
 
-def program_order(f=None, *, enforce: bool):
-  kwargs = dict(enforce=enforce)
+program_order_p = core.Primitive("program_order")
+program_order_p.multiple_results = True
+program_order_p.skip_canonicalization = True
+
+def program_order(f=None, *, enforce: bool,
+                  exclude_argnames: str | Sequence[str] | None = None):
+  if enforce and exclude_argnames is not None:
+    raise ValueError("exclude_argnames cannot be used with enforce=True.")
+  kwargs = dict(enforce=enforce, exclude_argnames=exclude_argnames)
   if f is None:
     return lambda g: _program_order(g, **kwargs)
   return _program_order(f, **kwargs)
 
-def _program_order(fun, *, enforce):
+
+def _program_order(fun, *, enforce, exclude_argnames):
   @wraps(fun)
-  def wrapped(*args):
+  def wrapped(*args, **kwargs):
     if not enforce:
-      return api.jit(fun, inline=api.Inline.JAX_LATE)(*args)
-    traced = api.jit(fun).trace(*args)
-    jaxpr = traced.jaxpr
-    args_flat, _ = tree_flatten(args)
-    flat_outputs = eval_jaxpr_program_order(
-        jaxpr, jaxpr.consts, *traced._consts, *args_flat)
-    return tree_util.tree_unflatten(traced.out_tree, flat_outputs)
+      if exclude_argnames is None:
+        return api.jit(fun, inline=api.Inline.JAX_LATE)(*args, **kwargs)
+      args_flat, in_tree = tree_flatten((args, kwargs))
+      fun_signature = inspect.signature(fun)
+      ex_argnums, ex_argnames, _, _ = resolve_argnums(
+          fun, fun_signature, None, exclude_argnames, None, None)
+      arg_exclude_mask = donation_vector(ex_argnums, ex_argnames, in_tree)
+      traced = api.jit(fun).trace(*args, **kwargs)
+      assert in_tree == traced.in_tree
+      exclude_mask = (False,) * len(traced._consts) + arg_exclude_mask
+      out_flat = program_order_p.bind(
+          *traced._consts, *args_flat, call_jaxpr=traced.jaxpr,
+          exclude_mask=exclude_mask)
+      return tree_util.tree_unflatten(traced.out_tree, out_flat)
+    else:
+      traced = api.jit(fun).trace(*args, **kwargs)
+      jaxpr = traced.jaxpr
+      args_flat, _ = tree_flatten(args)
+      flat_outputs = eval_jaxpr_program_order(
+          jaxpr, jaxpr.consts, *traced._consts, *args_flat)
+      return tree_util.tree_unflatten(traced.out_tree, flat_outputs)
   return wrapped
 
 
 def insert_opt_barrier(prev_outvars, prev_outs, cur_invars, cur_inps):
   from jax._src.lax.lax import optimization_barrier  # type: ignore
 
-  barrier_invars, barrier_cinps = zip(*[
-      (v, i) for v, i in zip(cur_invars, cur_inps)
-      if not isinstance(v, core.Literal)
-  ])
-  biv_set = set(barrier_invars)
-  barrier_pouts = [o for v, o in zip(prev_outvars, prev_outs)
-                   if v not in biv_set]
+  is_literal = [isinstance(i, core.Literal) for i in cur_invars]
+  barrier_invars_set = set(partition_list(is_literal, cur_invars)[0])
+  barrier_cinps, excluded_cinps = partition_list(is_literal, cur_inps)
+
+  in_cur_invars = [v in barrier_invars_set for v in prev_outvars]
+  barrier_pouts, excluded_outs = partition_list(in_cur_invars, prev_outs)
+
   barrier_pouts, barrier_cinps = optimization_barrier(
       (barrier_pouts, barrier_cinps))
-  barrier_pouts_iter = iter(barrier_pouts)
-  prev_outs = [next(barrier_pouts_iter) if v not in biv_set else o
-               for v, o in zip(prev_outvars, prev_outs)]
-  assert next(barrier_pouts_iter, None) is None
-  barrier_cinps_iter = iter(barrier_cinps)
-  cur_inps = [i if isinstance(v, core.Literal) else next(barrier_cinps_iter)
-              for v, i in zip(cur_invars, cur_inps)]
-  assert next(barrier_cinps_iter, None) is None
+
+  prev_outs = merge_lists(in_cur_invars, barrier_pouts, excluded_outs)
+  cur_inps = merge_lists(is_literal, barrier_cinps, excluded_cinps)
   return prev_outs, cur_inps
 
 
@@ -2617,8 +2634,17 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
       cur_inps = map(read, eqn.invars)
       if prev_eqn is not None:
         prev_outs = map(read, prev_eqn.outvars)
-        prev_outs, cur_inps = insert_opt_barrier(
-            prev_eqn.outvars, prev_outs, eqn.invars, cur_inps)
+        if eqn.primitive is program_order_p and eqn.params['exclude_mask']:
+          exclude_mask = eqn.params['exclude_mask']
+          barrier_inps, excluded_inps = partition_list(exclude_mask, cur_inps)
+          if barrier_inps:
+            barrier_invars, _ = partition_list(exclude_mask, eqn.invars)
+            prev_outs, barrier_inps = insert_opt_barrier(
+                prev_eqn.outvars, prev_outs, barrier_invars, barrier_inps)
+            cur_inps = merge_lists(exclude_mask, barrier_inps, excluded_inps)
+        else:
+          prev_outs, cur_inps = insert_opt_barrier(
+              prev_eqn.outvars, prev_outs, eqn.invars, cur_inps)
         eqn_write(prev_eqn, prev_outs)
       ans = eqn.primitive.bind(*cur_inps, **bind_params)
     eqn_write(eqn, ans)
