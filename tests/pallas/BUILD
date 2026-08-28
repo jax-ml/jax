@@ -575,6 +575,8 @@ jax_multiplatform_test(
     shard_count = 8,
     tags = [
         "noasan",
+        "nomsan",
+        "notsan",
     ],
     deps = [
         "//jax/_src:hypothesis_test_util",
