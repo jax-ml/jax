@@ -1681,8 +1681,8 @@ class RngShardingTest(jtu.JaxTestCase):
     self.assertEqual(abstract_mesh2.size, 0)
 
   @unittest.skipIf(
-      jaxlib_extension_version < 485,
-      "Requires jaxlib_extension_version >= 485",
+      jaxlib_extension_version < 486,
+      "Requires jaxlib_extension_version >= 486",
   )
   def test_replace_with(self):
     a = jnp.array([1, 2, 3])
@@ -1709,13 +1709,17 @@ class RngShardingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(RuntimeError, "different shape"):
       a._replace_with(d)
 
-    # committed can differ: uncommitted array replaced by committed array
+    # committed mismatch
     committed_arr = jax.device_put(jnp.array([1, 2, 3]), jax.devices()[0])
     uncommitted_arr = jnp.array([1, 2, 3])
-    self.assertFalse(uncommitted_arr._committed)
     self.assertTrue(committed_arr._committed)
-    uncommitted_arr._replace_with(committed_arr)
-    self.assertTrue(uncommitted_arr._committed)
+    self.assertFalse(uncommitted_arr._committed)
+    with self.assertRaisesRegex(RuntimeError, "different committed"):
+      committed_arr._replace_with(uncommitted_arr)
+
+    # new_ref buffer is committed
+    ref = jax.new_ref(jnp.zeros(3))
+    self.assertTrue(ref._refs._buf._committed)
 
     # sharding mismatch
     mesh = jax.sharding.Mesh(np.array(jax.devices()[:1]), ("x",))
