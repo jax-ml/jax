@@ -17,52 +17,56 @@ diff --git a/python/private/pypi/extension.bzl b/python/private/pypi/extension.b
 index 094cac7f..2e9498ca 100644
 --- a/python/private/pypi/extension.bzl
 +++ b/python/private/pypi/extension.bzl
-@@ -91,7 +91,11 @@ def default_platforms():
+@@ -91,7 +91,12 @@ def default_platforms():
                  "marker": "python_version >= '3.13'" if freethreaded else "",
                  "name": platform_name,
                  "os_name": "linux",
 -                "whl_abi_tags": ["cp{major}{minor}t"] if freethreaded else [
 +                "whl_abi_tags": [
 +                    "none",
++                    "abi3t",
 +                    "cp{major}{minor}t",
 +                ] if freethreaded else [
 +                    "none",
                      "abi3",
                      "cp{major}{minor}",
                  ],
-@@ -121,7 +125,11 @@ def default_platforms():
+@@ -121,7 +126,12 @@ def default_platforms():
                  "marker": "python_version >= '3.13'" if freethreaded else "",
                  "name": platform_name,
                  "os_name": "osx",
 -                "whl_abi_tags": ["cp{major}{minor}t"] if freethreaded else [
 +                "whl_abi_tags": [
 +                    "none",
++                    "abi3t",
 +                    "cp{major}{minor}t",
 +                ] if freethreaded else [
 +                    "none",
                      "abi3",
                      "cp{major}{minor}",
                  ],
-@@ -147,7 +155,11 @@ def default_platforms():
+@@ -147,7 +157,12 @@ def default_platforms():
              "marker": "python_version >= '3.13'" if freethreaded else "",
              "name": platform_name,
              "os_name": "windows",
 -            "whl_abi_tags": ["cp{major}{minor}t"] if freethreaded else [
 +            "whl_abi_tags": [
 +                "none",
++                "abi3t",
 +                "cp{major}{minor}t",
 +            ] if freethreaded else [
 +                "none",
                  "abi3",
                  "cp{major}{minor}",
              ],
-@@ -170,7 +182,11 @@ def default_platforms():
+@@ -170,7 +185,12 @@ def default_platforms():
              "marker": "python_version >= '3.13'" if freethreaded else "python_version >= '3.11'",
              "name": platform_name,
              "os_name": "windows",
 -            "whl_abi_tags": ["cp{major}{minor}t"] if freethreaded else [
 +            "whl_abi_tags": [
 +                "none",
++                "abi3t",
 +                "cp{major}{minor}t",
 +            ] if freethreaded else [
 +                "none",
@@ -124,8 +128,8 @@ index dcdb6128..c76599d2 100644
          return platform_string
  
 +    py_ver = version.parse(python_version) if "." in python_version else None
-+    if py_ver and len(py_ver.release) >= 3:
-+        return "cp{}{}.{}_{}".format(py_ver.release[0], py_ver.release[1], py_ver.release[2], platform_string)
++    if py_ver and len(py_ver.release) >= 2:
++        return "cp{}{}_{}".format(py_ver.release[0], py_ver.release[1], platform_string)
 +
      major, _, tail = python_version.partition(".")
  

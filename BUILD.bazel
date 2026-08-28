@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@rules_python//python:py_binary.bzl", "py_binary")
+load("@rules_python//python:py_library.bzl", "py_library")
 load(
     "@xla//third_party/py:py_import.bzl",
     "py_import",
@@ -192,4 +194,85 @@ pytype_test(
         "manual",
         "notap",
     ],
+)
+
+py_library(
+    name = "empty",
+    visibility = ["//:__subpackages__"],
+)
+
+selects.config_setting_group(
+    name = "is_python_3_14_or_3_15",
+    match_any = [
+        "@rules_python//python/config_settings:is_python_3.14",
+        "@rules_python//python/config_settings:is_python_3.15",
+    ],
+)
+
+selects.config_setting_group(
+    name = "is_python_3_14_freethreaded",
+    match_all = [
+        "@rules_python//python/config_settings:is_python_3.14",
+        "@rules_python//python/config_settings:is_py_freethreaded",
+    ],
+)
+
+selects.config_setting_group(
+    name = "is_python_3_15_freethreaded",
+    match_all = [
+        "@rules_python//python/config_settings:is_python_3.15",
+        "@rules_python//python/config_settings:is_py_freethreaded",
+    ],
+)
+
+# portpicker depends on psutil, which does not currently provide wheels for
+# free-threaded Python 3.15.
+alias(
+    name = "pypi_optional_portpicker",
+    actual = select({
+        ":is_python_3_15_freethreaded": ":empty",
+        "//conditions:default": "@pypi//portpicker",
+    }),
+    visibility = ["//:__subpackages__"],
+)
+
+# matplotlib does not yet provide wheels for Python 3.15.
+alias(
+    name = "pypi_optional_matplotlib",
+    actual = select({
+        "@rules_python//python/config_settings:is_python_3.15": ":empty",
+        "//conditions:default": "@pypi//matplotlib",
+    }),
+    visibility = ["//:__subpackages__"],
+)
+
+# tensorstore does not yet provide wheels for Python 3.15.
+alias(
+    name = "pypi_optional_tensorstore",
+    actual = select({
+        "@rules_python//python/config_settings:is_python_3.15": ":empty",
+        "//conditions:default": "@pypi//tensorstore",
+    }),
+    visibility = ["//:__subpackages__"],
+)
+
+# tensorflow does not provide wheels for Python 3.14 or 3.15.
+alias(
+    name = "pypi_optional_tensorflow",
+    actual = select({
+        ":is_python_3_14_or_3_15": ":empty",
+        "//conditions:default": "@pypi//tensorflow",
+    }),
+    visibility = ["//:__subpackages__"],
+)
+
+# zstandard is included in the Python standard library in Python 3.14+, so the
+# external PyPI package is not needed or available on Python 3.14+.
+alias(
+    name = "pypi_optional_zstandard",
+    actual = select({
+        ":is_python_3_14_or_3_15": ":empty",
+        "//conditions:default": "@pypi//zstandard",
+    }),
+    visibility = ["//:__subpackages__"],
 )
