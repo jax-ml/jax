@@ -3679,6 +3679,7 @@ def _run_scoped_lowering_rule(
         discharged_closed_jaxpr = discharge.discharge_state(
             no_const_jaxpr,
             should_discharge=should_discharge,
+            strip_memory_space=True,
         )
         discharged_jaxpr, _ = discharged_closed_jaxpr, discharged_closed_jaxpr.consts
       new_input_vals = (*consts, *input_refs)
@@ -3780,7 +3781,8 @@ def _run_state_lowering_rule(
 
   with config._check_vma(False):
     discharged_closed_jaxpr = discharge.discharge_state(
-        jaxpr, should_discharge=should_discharge
+        jaxpr, should_discharge=should_discharge,
+        strip_memory_space=True
     )
     discharged_jaxpr, new_consts = discharged_closed_jaxpr, discharged_closed_jaxpr.consts
   assert not new_consts

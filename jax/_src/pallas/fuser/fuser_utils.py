@@ -180,6 +180,7 @@ def discharge_state(
       jaxpr_no_consts,
       should_discharge=should_discharge,
       lower=False,
+      strip_memory_space=True,
   )
   assert not closed_discharged_jaxpr.consts, (
       closed_discharged_jaxpr, closed_discharged_jaxpr.consts)
