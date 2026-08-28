@@ -1607,13 +1607,10 @@ absl::Status PyArray::ReplaceWithAlias(PyArray o) {
     return absl::InvalidArgumentError(
         "Unable to replace an Array with an Array of different sharding.");
   }
-  if (storage.committed != o_storage.committed) {
-    return absl::InvalidArgumentError(
-        "Unable to replace an Array with an Array of different committed.");
-  }
   storage.aval = o_storage.aval;
   storage.weak_type = o_storage.weak_type;
   storage.npy_value = o_storage.npy_value;
+  storage.committed = o_storage.committed;
   storage.ifrt_array = o_storage.ifrt_array;
   storage.fully_replicated_array = o_storage.fully_replicated_array;
   storage.py_arrays = o_storage.py_arrays;
