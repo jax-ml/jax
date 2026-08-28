@@ -300,6 +300,20 @@ class PallasTest(ptu.PallasTest):
     self.assertEqual(o_ref_shape, (128,))
     self.assertAllClose(pids, jnp.zeros(o_ref_shape, dtype=np.int32))
 
+  def test_store_reshaped_ref(self):
+    shape1, shape2 = (4, 3), (2, 6)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape1, jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref.reshape(shape2)[...] = x_ref.reshape(shape2)[...]
+
+    x = jnp.arange(12, dtype=jnp.float32).reshape(shape1)
+    y = kernel(x)
+    np.testing.assert_array_equal(y, x)
+
 
 class PallasTritonTest(PallasTest):
 
@@ -315,6 +329,12 @@ class PallasTritonTest(PallasTest):
     return super().pallas_call(
         *args, compiler_params=pltriton.CompilerParams(), **kwargs
     )
+
+  def test_store_reshaped_ref(self):
+    with self.assertRaisesRegex(
+        AttributeError, "object has no attribute 'get_indexer_shape_static'"
+    ):
+      super().test_store_reshaped_ref()
 
   def test_array_indexing(self):
     x = jnp.arange(128, dtype=floatx)
@@ -342,6 +362,11 @@ class PallasTPUTest(PallasTest):
       self.skipTest("Pallas TPU is not available")
     super().setUp()
 
+  def test_store_reshaped_ref(self):
+    if not self.INTERPRET:
+      self.skipTest("Requires TPU sublane tiling (tested in tpu_pallas_test.py)")
+    super().test_store_reshaped_ref()
+
 
 class PallasMGPUTest(PallasTest):
 
@@ -367,6 +392,10 @@ class PallasMGPUTest(PallasTest):
   def skip_if_x64(self):
     if floatx == jnp.float64:
       self.skipTest("Mosaic GPU does not support float64.")
+
+  def test_store_reshaped_ref(self):
+    self.skip_if_x64()
+    super().test_store_reshaped_ref()
 
   def test_add_one(self):
     self.skip_if_x64()

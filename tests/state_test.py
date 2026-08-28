@@ -2135,5 +2135,142 @@ class WithMemorySpaceConstraintTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(grad, 2.0 * x)
 
 
+class RefTransformTest(jtu.JaxTestCase):
+
+  def test_swap_reshape(self):
+    @jax.jit
+    def f():
+      x = jnp.arange(12, dtype=jnp.float32).reshape((4, 3))
+      ref = jax.new_ref(x)
+      old_val = ref.reshape(6, 2).swap(jnp.zeros((6, 2), dtype=jnp.float32))
+      return old_val, ref[...]
+    old_val, new_val = f()
+    self.assertEqual(old_val.shape, (6, 2))
+    self.assertAllClose(old_val, jnp.arange(12, dtype=jnp.float32).reshape((6, 2)))
+    self.assertEqual(new_val.shape, (4, 3))
+    self.assertAllClose(new_val, jnp.zeros((4, 3), dtype=jnp.float32))
+
+  def test_set_reshape(self):
+    @jax.jit
+    def f():
+      x = jnp.zeros((4, 3))
+      ref = jax.new_ref(x)
+      ref.reshape(2, 6)[...] = jnp.ones((2, 6))
+      return ref[...]
+    self.assertAllClose(f(), jnp.ones((4, 3)))
+
+  def test_bitcast_swap_and_set(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.array([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32))
+      old_val = ref.bitcast(jnp.int32).swap(jnp.zeros((2, 2), dtype=jnp.int32))
+      ref.bitcast(jnp.int32)[...] = jnp.ones((2, 2), dtype=jnp.int32)
+      return old_val, ref[...]
+    old_val, new_val = f()
+    self.assertEqual(old_val.dtype, jnp.int32)
+    self.assertArraysEqual(
+        old_val,
+        lax.bitcast_convert_type(
+            jnp.array([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32), jnp.int32
+        ),
+    )
+    self.assertEqual(new_val.dtype, jnp.float32)
+    self.assertArraysEqual(
+        new_val,
+        lax.bitcast_convert_type(jnp.ones((2, 2), dtype=jnp.int32), jnp.float32),
+    )
+
+  def test_set_reshaped_slice(self):
+    @jax.jit
+    def f():
+      x = jnp.zeros((4, 3), dtype=jnp.float32)
+      ref = jax.new_ref(x)
+      ref.reshape(2, 6)[0, :3] = jnp.ones(3, dtype=jnp.float32)
+      return ref[...]
+    expected = jnp.array([[1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], dtype=jnp.float32)
+    self.assertAllClose(f(), expected)
+
+  def test_swap_reshaped_slice(self):
+    @jax.jit
+    def f():
+      x = jnp.arange(12, dtype=jnp.float32).reshape((4, 3))
+      ref = jax.new_ref(x)
+      old_val = ref.reshape(2, 6).at[0, :3].swap(jnp.zeros(3, dtype=jnp.float32))
+      return old_val, ref[...]
+    old_val, new_val = f()
+    self.assertEqual(old_val.shape, (3,))
+    self.assertAllClose(old_val, jnp.arange(3, dtype=jnp.float32))
+    expected = jnp.arange(12, dtype=jnp.float32).reshape((4, 3))
+    expected = expected.reshape(2, 6).at[0, :3].set(0.0).reshape(4, 3)
+    self.assertAllClose(new_val, expected)
+
+  def test_bitcast_slice_set(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.array([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32))
+      ref.bitcast(jnp.int32)[0, :] = jnp.zeros(2, dtype=jnp.int32)
+      return ref[...]
+    expected = jnp.array([[0.0, 0.0], [3.0, 4.0]], dtype=jnp.float32)
+    self.assertArraysEqual(f(), expected)
+
+  def test_addupdate_on_reshaped_view(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 3)))
+      ref_addupdate(ref.reshape(2, 6), (), jnp.ones((2, 6)))
+      return ref[...]
+
+    expected = jnp.ones((4, 3))
+    self.assertAllClose(f(), expected)
+
+  def test_addupdate_on_reshaped_slice_raises_error(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 3), dtype=jnp.float32))
+      ref_addupdate(ref.reshape(2, 6), (0, slice(0, 3)), jnp.ones(3, dtype=jnp.float32))
+      return ref[...]
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "does not support combining an indexer"
+    ):
+      f()
+
+  def test_addupdate_on_bitcast_raises_error(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((2, 2), dtype=jnp.float32))
+      ref_addupdate(ref.bitcast(jnp.int32), (), jnp.ones((2, 2), dtype=jnp.int32))
+      return ref[...]
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "not supported on bitcast views"
+    ):
+      f()
+
+  def test_addupdate_on_unsupported_transform_raises_error(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((2, 3), dtype=jnp.float32))
+      view = state_types.TransformedRef(
+          ref, (state_types.TransposeTransform((1, 0)),)
+      )
+      ref_addupdate(view, (), jnp.ones((3, 2), dtype=jnp.float32))
+      return ref[...]
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "Unsupported transform for `addupdate`"
+    ):
+      f()
+
+  def test_scalar_ref_reshape(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.array(5.0))
+      return ref.reshape(1)[...]
+
+    self.assertEqual(f().shape, (1,))
+    self.assertAllClose(f(), jnp.array([5.0]))
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

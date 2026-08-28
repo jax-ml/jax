@@ -511,12 +511,14 @@ def transform_array(x, transforms):
       case BitcastTransform():
         result = bitcast(result, transform.dtype)
       case ReshapeTransform():
-        result = result.reshape(transform.shape)
+        result = lax.reshape(result, transform.shape)
       case _:
         raise NotImplementedError(f"Unsupported transform: {transform}")
   return result
 
 def transform_swap_array(x, transforms, val):
+  from jax._src.numpy import lax_numpy  # pyrefly: ignore[missing-import]
+
   if transforms is None:
     transforms = []
 
@@ -555,9 +557,11 @@ def transform_swap_array(x, transforms, val):
           # was indexed into.
         intermediates.append(new_val)
       case BitcastTransform():
-        intermediates.append(bitcast(new_val, transform.dtype))
+        new_val = bitcast(new_val, transform.dtype)
+        intermediates.append(new_val)
       case ReshapeTransform():
-        intermediates.append(new_val.reshape(transform.shape))
+        new_val = lax.reshape(new_val, transform.shape)
+        intermediates.append(new_val)
       case _:
         raise NotImplementedError(f"Unsupported transform: {transform}")
 
@@ -583,10 +587,17 @@ def transform_swap_array(x, transforms, val):
               intermediate, indexer, transpose_order
           )
         arrays = _convert_to_gather_arrays(indexer)
-        new_x = intermediate.at[arrays].set(new_x)
+        # `asarray` ensures `intermediate` has an `.at` attribute; it may be a
+        # plain value (e.g. after a reshape/bitcast reverse) rather than a
+        # jax array.
+        new_x = lax_numpy.asarray(intermediate).at[arrays].set(new_x)
         if transpose_order is not None:
           transpose_order_inversed = np.argsort(transpose_order)
           new_x = new_x.transpose(transpose_order_inversed)
+    elif isinstance(transform, ReshapeTransform):
+      new_x = lax.reshape(new_x, np.shape(intermediate))
+    elif isinstance(transform, BitcastTransform):
+      new_x = bitcast(new_x, intermediate.dtype)
     else:
       raise NotImplementedError(f"Unsupported transform: {transform}")
 
@@ -628,12 +639,38 @@ def _optimization_barrier_discharge_rule(
   return new_invals, [o for o, r in zip(outs, is_ref) if not r]
 
 def _addupdate_discharge(x, val, idx, tree):
-  transforms = tree_util.tree_unflatten(tree, idx)
+  from jax._src.numpy import lax_numpy  # pyrefly: ignore[missing-import]
+
+  transforms = list(tree_util.tree_unflatten(tree, idx))
+  if any(isinstance(t, BitcastTransform) for t in transforms):
+    raise NotImplementedError(
+        "`addupdate` (`+=`) is not supported on bitcast views. Use explicit"
+        " read-modify-write (`ref.bitcast(...)[...] = ...`) or `.swap(...)`"
+        " instead."
+    )
+
+  if transforms and isinstance(transforms[-1], ReshapeTransform):
+    broadcast_shape = transforms[-1].shape
+    while transforms and isinstance(transforms[-1], ReshapeTransform):
+      transforms.pop()
+    target_shape = (
+        transforms[-1].get_indexer_shape()
+        if transforms and isinstance(transforms[-1], indexing.NDIndexer)
+        else x.shape
+    )
+    val = lax_numpy.broadcast_to(val, broadcast_shape).reshape(target_shape)
   if not transforms:
     return x + val
   if len(transforms) > 1:
-    raise NotImplementedError("Only single indexer is supported.")
+    raise NotImplementedError(
+        "`addupdate` does not support combining an indexer with other"
+        f" transforms (e.g. indexed reshape views); got {transforms}."
+    )
   indexer = transforms[0]
+  if not isinstance(indexer, indexing.NDIndexer):
+    raise NotImplementedError(
+        f"Unsupported transform for `addupdate`: {indexer}"
+    )
 
   if _is_trivial_indexer(indexer):
     return x + val
@@ -652,7 +689,9 @@ def _addupdate_discharge(x, val, idx, tree):
   if transpose_order is not None:
     x, indexer = _perform_transpose_before_gather(x, indexer, transpose_order)
   arrays = _convert_to_gather_arrays(indexer)
-  x = x.at[arrays].add(val)
+  # `asarray` ensures `x` has an `.at` attribute; it may be a plain value
+  # rather than a jax array.
+  x = lax_numpy.asarray(x).at[arrays].add(val)
   if transpose_order is not None:
     transpose_order_inversed = np.argsort(transpose_order)
     x = x.transpose(transpose_order_inversed)
