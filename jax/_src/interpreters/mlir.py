@@ -2706,7 +2706,7 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
 def _lower_jaxpr_to_fun_cached(
     ctx: ModuleContext, fn_name, call_jaxpr: core.Jaxpr,
     num_const_args: int, effects, in_avals, out_avals, arg_names=None,
-    result_names=None):
+    result_names=None, detached=False):
   assert num_const_args + len(call_jaxpr.in_avals) == len(in_avals)
   if not call_jaxpr.consts and arg_names is result_names is None:
     # Cacheable.
@@ -2717,13 +2717,13 @@ def _lower_jaxpr_to_fun_cached(
       func_op = lower_jaxpr_to_fun(
           ctx, fn_name, call_jaxpr, effects, num_const_args=num_const_args,
           in_avals=in_avals, out_avals=out_avals, arg_names=arg_names,
-          result_names=result_names)
+          result_names=result_names, detached=detached)
       ctx.cached_primitive_lowerings[key] = func_op
   else:
     func_op = lower_jaxpr_to_fun(
         ctx, fn_name, call_jaxpr, effects,
         num_const_args=num_const_args, in_avals=in_avals, out_avals=out_avals,
-        arg_names=arg_names, result_names=result_names)
+        arg_names=arg_names, result_names=result_names, detached=detached)
   return func_op
 
 
@@ -2747,7 +2747,7 @@ def check_backend_matches(inner_backend: str | None,
 def lower_called_computation(
     fn_name, call_jaxpr: core.Jaxpr, ctx: ModuleContext,
     num_const_args: int, in_avals, out_avals, tokens_in, backend=None,
-    arg_names=None, result_names=None):
+    arg_names=None, result_names=None, detached=False):
   assert isinstance(call_jaxpr, core.Jaxpr), type(call_jaxpr)
   check_backend_matches(backend, ctx.platforms)
   effects = list(tokens_in.effects())
@@ -2755,7 +2755,8 @@ def lower_called_computation(
   output_types = [token_type()] * len(effects) + output_types
   func_op = _lower_jaxpr_to_fun_cached(
       ctx, fn_name, call_jaxpr, num_const_args, effects, in_avals=in_avals,
-      out_avals=out_avals, arg_names=arg_names, result_names=result_names)
+      out_avals=out_avals, arg_names=arg_names, result_names=result_names,
+      detached=detached)
   return func_op, output_types, effects
 
 
@@ -2765,7 +2766,8 @@ def call_lowering(fn_name, call_jaxpr: core.Jaxpr, backend,
                   dim_var_values: Sequence[ir.Value],
                   const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
                   arg_names=None, result_names=None,
-                  attributes: None | dict[str, Any] = None):
+                  attributes: None | dict[str, Any] = None,
+                  inline_jax_late: bool = False):
   assert isinstance(call_jaxpr, core.Jaxpr), type(call_jaxpr)
   const_args_and_avals = core.jaxpr_const_args(call_jaxpr)
   const_args, const_avals = util.unzip2(const_args_and_avals)
@@ -2778,32 +2780,37 @@ def call_lowering(fn_name, call_jaxpr: core.Jaxpr, backend,
 
   func_op, output_types, effects = lower_called_computation(
       fn_name, call_jaxpr, mod_ctx, len(const_args), in_avals, out_avals,
-      tokens_in, backend=backend, arg_names=arg_names, result_names=result_names)
+      tokens_in, backend=backend, arg_names=arg_names, result_names=result_names,
+      detached=inline_jax_late)
   symbol_name = func_op.name.value
   flat_output_types, treedef = ir_tree_registry.flatten(output_types)
   tokens = [tokens_in.get(eff) for eff in effects]
   args = (*dim_var_values, *tokens, *args)
   flat_args, _ = ir_tree_registry.flatten(args)
-  call = func_dialect.CallOp(flat_output_types,
-                             ir.FlatSymbolRefAttr.get(symbol_name),
-                             flat_args)
-  if attributes:
-    call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(attributes)
-  out_nodes = treedef.unflatten(call.results)
+  if inline_jax_late:
+    results = jax_mlir_ext.inlined_func_call(func_op.operation, flat_args)
+  else:
+    call = func_dialect.CallOp(
+        flat_output_types, ir.FlatSymbolRefAttr.get(symbol_name), flat_args)
+    if attributes:
+      call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(attributes)
+    results = call.results
+  out_nodes = treedef.unflatten(results)
   tokens, out_nodes = util.split_list(out_nodes, [len(effects)])
   tokens_out = tokens_in.update_tokens(TokenSet(dict(zip(effects, tokens))))
   return out_nodes, tokens_out
 
 def core_call_lowering(
-    ctx: LoweringRuleContext, *args, name, backend=None, call_jaxpr: core.Jaxpr,
-    **_):
+    ctx: LoweringRuleContext, *args, name, backend=None, inline_jax_late=False,
+    call_jaxpr: core.Jaxpr, **params):
   effects = list(effects_lib.ordered_effects.filter_in(call_jaxpr.effects))
   tokens_in = ctx.tokens_in.subset(effects)
   out_nodes, tokens = call_lowering(
       name, call_jaxpr, backend, ctx.module_context,
       ctx.avals_in, ctx.avals_out, tokens_in, *args,
       dim_var_values=ctx.dim_var_values,
-      const_lowering=ctx.const_lowering)
+      const_lowering=ctx.const_lowering,
+      inline_jax_late=inline_jax_late)
   ctx.set_tokens_out(ctx.tokens_in.update_tokens(tokens))
   return [lower_with_sharding_in_types(ctx, o, a)
           for o, a in zip(out_nodes, ctx.avals_out)]

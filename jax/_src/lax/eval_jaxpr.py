@@ -28,6 +28,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.partial_eval import eval_jaxpr_p
 from jax._src.state import discharge
+from jax._src.pjit import program_order_p
 from jax._src.tree_util import tree_leaves, tree_flatten, tree_unflatten
 from jax._src.util import safe_map, safe_zip, split_list, subs_list, weakref_lru_cache
 
@@ -114,11 +115,8 @@ eval_jaxpr_transpose = _eval_jaxpr_transpose
 
 
 def register_call_primitive_rules(
-    prim: core.Primitive,
-    name: str | None = None,
-    transpose_rule=None,
-) -> None:
-  """Registers standard call transformation rules onto a Primitive."""
+    prim: core.Primitive, name: str | None = None, transpose_rule=None,
+    inline_jax_late: bool = False):
   prim.multiple_results = True
   prim.def_impl(eval_jaxpr_p.impl)
   prim.def_effectful_abstract_eval(eval_jaxpr_p.abstract_eval)
@@ -134,8 +132,9 @@ def register_call_primitive_rules(
   pe.dce_rules[prim] = pe.dce_rules[eval_jaxpr_p]
   discharge.register_discharge_rule(prim)(partial(discharge._eval_jaxpr_discharge_rule, prim))
   if name is not None:
-    mlir.register_lowering(prim, partial(mlir.core_call_lowering, name=name),
-                           cacheable=False)
+    lowering_rule = partial(
+        mlir.core_call_lowering, name=name, inline_jax_late=inline_jax_late)
+    mlir.register_lowering(prim, lowering_rule, cacheable=False)
 
 def create_call_primitive(name: str) -> core.Primitive:
   prim = core.Primitive(name)
@@ -143,3 +142,5 @@ def create_call_primitive(name: str) -> core.Primitive:
   return prim
 
 register_call_primitive_rules(eval_jaxpr_p, name='eval_jaxpr')
+register_call_primitive_rules(program_order_p, name='program_order',
+                              inline_jax_late=True)
