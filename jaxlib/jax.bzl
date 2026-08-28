@@ -26,7 +26,7 @@ load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_roc
 # TODO(Intel-tf): Update `sycl` with `oneapi` when xla changes to use `oneapi`.
 load("@local_config_sycl//sycl:build_defs.bzl", _if_oneapi_is_configured = "if_sycl_is_configured", _oneapi_library = "sycl_library")
 load("@nvidia_wheel_versions//:versions.bzl", "NVIDIA_WHEEL_VERSIONS")
-load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION", "HERMETIC_PYTHON_VERSION_KIND")
+load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
 load("@rocm_external_test_deps//:external_deps.bzl", "EXTERNAL_DEPS")
 load("@rocm_prebuilt_test_deps//:external_deps.bzl", PREBUILT_EXTERNAL_DEPS = "EXTERNAL_DEPS")
 load("@rules_python//python:defs.bzl", _py_binary = "py_binary", _py_library = "py_library", _py_test = "py_test")
@@ -77,14 +77,6 @@ PLATFORM_TAGS_DICT = {
     ("Windows", "AMD64"): ("win", "amd64"),
 }
 
-def get_optional_dep(package, excluded_py_versions):
-    py_ver = HERMETIC_PYTHON_VERSION
-    if HERMETIC_PYTHON_VERSION_KIND == "ft":
-        py_ver += "-ft"
-    if py_ver in excluded_py_versions:
-        return []
-    return [package]
-
 _py_deps = {
     "absl-all": ["@pypi//absl_py"],
     "absl/logging": ["@pypi//absl_py"],
@@ -97,22 +89,22 @@ _py_deps = {
     "flatbuffers": ["@pypi//flatbuffers"],
     "hypothesis": ["@pypi//hypothesis"],
     "magma": [],
-    "matplotlib": get_optional_dep("@pypi//matplotlib", ["3.15", "3.15-ft"]),
+    "matplotlib": ["//:pypi_optional_matplotlib"],
     "mpmath": ["@pypi//mpmath"],
     "opt_einsum": ["@pypi//opt_einsum"],
     "pil": ["@pypi//pillow"],
-    "portpicker": get_optional_dep("@pypi//portpicker", ["3.15-ft"]),
+    "portpicker": ["//:pypi_optional_portpicker"],
     "ml_dtypes": ["@pypi//ml_dtypes"],
     "numpy": ["@pypi//numpy"],
     "scipy": ["@pypi//scipy"],
     "tensorflow_core": [],
-    "tensorstore": get_optional_dep("@pypi//tensorstore", ["3.15", "3.15-ft"]),
+    "tensorstore": ["//:pypi_optional_tensorstore"],
     "torch": [],
-    "tensorflow": get_optional_dep("@pypi//tensorflow", ["3.14", "3.14-ft", "3.15", "3.15-ft"]),
+    "tensorflow": ["//:pypi_optional_tensorflow"],
     "tpu_ops": [],
     # We're never going to need zstandard for 3.14+ because zstandard is now
     # in the Python stdlib.
-    "zstandard": get_optional_dep("@pypi//zstandard", ["3.14", "3.14-ft", "3.15", "3.15-ft"]),
+    "zstandard": ["//:pypi_optional_zstandard"],
 }
 
 def all_py_deps(excluded = []):
@@ -260,12 +252,12 @@ def _get_jax_test_deps(deps):
       If --//jax:build_jax=false, returns jax pypi wheel dep and transitive pypi test deps.
       If --//jax:build_jax=wheel, returns jax py_import dep and transitive pypi test deps.
     """
-    non_pypi_deps = [d for d in deps if not d.startswith("@pypi//")]
+    non_pypi_deps = [d for d in deps if not (d.startswith("@pypi//") or d.startswith("//:pypi_optional_"))]
 
     # A lot of tests don't have explicit dependencies on scipy, ml_dtypes, etc. But the tests
     # transitively depends on them via //jax. So we need to make sure that these dependencies are
     # included in the test when JAX is built from source.
-    pypi_deps = depset([d for d in deps if d.startswith("@pypi//")])
+    pypi_deps = depset([d for d in deps if d.startswith("@pypi//") or d.startswith("//:pypi_optional_")])
     pypi_deps = depset(py_deps([
         "ml_dtypes",
         "scipy",
