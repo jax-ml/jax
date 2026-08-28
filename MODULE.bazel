@@ -44,6 +44,9 @@ single_version_override(
     version = "1.81.0",
 )
 
+# Fix transitive dependency graph error breaking `bazel mod show_repo --all_repos`
+bazel_dep(name = "envoy_api", version = "0.0.0-20260130-84e8436")
+
 ##############################################################
 # Dependencies defined in XLA via module extensions
 ##############################################################
