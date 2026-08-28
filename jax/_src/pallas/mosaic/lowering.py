@@ -5293,8 +5293,6 @@ def _dma_start_lowering_rule(
   src_ref_aval, dst_ref_aval, sem_aval, src_sem_aval, device_id_aval = (
       _dma_unflatten(tree, ctx.avals_in)
   )
-  if any(r.dtype == jnp.bool_ for r in _dma_tree_leaves(src_ref_aval)):
-    raise NotImplementedError("DMAs with bool dtypes are not supported.")
   block_shapes = _dma_unflatten(tree, ctx.block_shapes)
   kernel_type = ctx.lowering_context.kernel_type
   if isinstance(sem_aval.memory_space, pallas_core.CoreMemorySpace):

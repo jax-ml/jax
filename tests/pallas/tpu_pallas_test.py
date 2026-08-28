@@ -3751,7 +3751,7 @@ class PallasCallTraceTest(ptu.PallasTPUTest):
     self.assertEqual(num_stop, 2)
 
 
-class PallasCallTPUBooleanTest(ptu.PallasTPUTest):
+class TPUBooleanTest(ptu.PallasTPUTest):
   """Tests for loading/storing from bool memrefs on TPUs.
 
   We specifically test bools because they have special handling.
@@ -3829,52 +3829,30 @@ class PallasCallTPUBooleanTest(ptu.PallasTPUTest):
     expected = jnp.where(mask, values_1, values_2)
     np.testing.assert_array_equal(result, expected)
 
-  def test_bool_dma_not_implemented(self):
+  def test_bool_dma(self):
     if self.INTERPRET:
       self.skipTest('Test only applies to non-interpret mode.')
-    num_devices = jax.local_device_count()
-    def kernel(x_ref, o_ref, send_sem, recv_sem):
-      index = lax.axis_index('x')
-      neighbor = lax.rem(index + 1, num_devices)
-      copy = pltpu.make_async_remote_copy(x_ref,
-                                   o_ref,
-                                   send_sem,
-                                   recv_sem,
-                                   device_id=(0, neighbor))
-      copy.start()
-      copy.wait()
-    input_arr = jnp.ones((8, 128), dtype=jnp.bool_)
-    output_shape = jax.ShapeDtypeStruct((8, 128), jnp.bool_)
-    grid_spec = pltpu.PrefetchScalarGridSpec(
-      num_scalar_prefetch=0,
-      in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
-      out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
-      grid=(1,),
-      scratch_shapes=[pltpu.SemaphoreType.DMA] * 2,
+    x = jax.random.normal(jax.random.key(0), (8, 128))
+    mask = jax.random.bernoulli(jax.random.key(0), p=0.5, shape=(8, 128))
+
+    @partial(
+        pl.kernel,
+        mesh=pltpu.TensorCoreMesh(axis_name='core'),
+        out_type=jax.typeof(x),
+        scratch_types=[pltpu.VMEM(x.shape, x.dtype),
+            pltpu.VMEM((8, 128), jnp.bool_), pltpu.SemaphoreType.DMA],
     )
-    test_fn = self.pallas_call(
-          kernel,
-          grid_spec=grid_spec,
-          out_shape=output_shape,
-      )
-    with self.assertRaisesRegex(
-        Exception, 'DMAs with bool dtypes are not supported.'):
-      devices = mesh_utils.create_device_mesh((num_devices,))
-      mesh = jax.sharding.Mesh(devices, ('x',))
-      sharding = jax.sharding.NamedSharding(mesh, P(None, 'x'))
-      input_arr = jax.device_put(input_arr, sharding)
-      jax.jit(
-            shard_map.shard_map(
-                test_fn,
-                mesh=mesh,
-                in_specs=P(None, 'x'),
-                out_specs=P(None, 'x'),
-                check_vma=False
-            )
-      )(input_arr)
+    def kernel(x_ref, mask_ref, o_ref, scratch_x, scratch_mask, sem):
+      pltpu.async_copy(x_ref, scratch_x, sem).wait()
+      pltpu.async_copy(mask_ref, scratch_mask, sem).wait()
+      scratch_x[...] = jnp.where(scratch_mask[...], scratch_x[...], 0.0)
+      pltpu.async_copy(scratch_x, o_ref, sem).wait()
+
+    result = jax.jit(kernel)(x, mask)
+    np.testing.assert_array_equal(result, jnp.where(mask, x, 0.0))
 
 
-class PallasCallTPUBooleanInterpretTest(PallasCallTPUBooleanTest):
+class TPUBooleanInterpretTest(TPUBooleanTest):
   INTERPRET: bool = True
 
 
