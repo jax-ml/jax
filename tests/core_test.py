@@ -294,7 +294,12 @@ class CoreTest(jtu.JaxTestCase):
     if jtu.TEST_NUM_THREADS.value > 1:
       self.skipTest("Test does not work with multiple threads")
     jax.clear_caches()
-    gc.collect()
+    # Weak reference callbacks or outer finalizers triggered during garbage
+    # collection can drop the last external reference to other cyclic garbage,
+    # requiring multiple collection passes to drain the heap before testing.
+    for _ in range(10):
+      if not gc.collect():
+        break
 
     def f(x):
       return x.sum()
@@ -316,7 +321,12 @@ class CoreTest(jtu.JaxTestCase):
     if jtu.TEST_NUM_THREADS.value > 1:
       self.skipTest("Test does not work with multiple threads")
     jax.clear_caches()
-    gc.collect()
+    # Weak reference callbacks or outer finalizers triggered during garbage
+    # collection can drop the last external reference to other cyclic garbage,
+    # requiring multiple collection passes to drain the heap before testing.
+    for _ in range(10):
+      if not gc.collect():
+        break
 
     def f(x):
       return x.sum()
