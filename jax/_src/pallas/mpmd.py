@@ -30,6 +30,7 @@ from jax._src import core as jax_core
 from jax._src import effects
 from jax._src import numpy as jnp
 from jax._src import state
+from jax._src.state import primitives as state_primitives
 from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src import util
@@ -233,7 +234,7 @@ def _mpmd_map_discharge_rule(
       default_memory_space if m is None else m for m in in_memory_spaces
   ]
   args = tuple(
-      pallas_core.with_memory_space_constraint_p.bind(
+      state_primitives.with_memory_space_constraint_p.bind(
           arg, memory_space=memory_space
       )
       if memory_space is not default_memory_space

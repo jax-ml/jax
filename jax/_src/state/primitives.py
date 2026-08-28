@@ -1263,3 +1263,64 @@ def _linval_to_mlir_type(a):
   return mlir.ir.MemRefType.get(a.shape, mlir.dtype_to_ir_type(a.dtype),
                                 memory_space=space)
 mlir.ir_type_handlers[AbstractLinVal] = _linval_to_mlir_type
+
+
+with_memory_space_constraint_p = core.Primitive(
+    'with_memory_space_constraint'
+)
+
+
+@with_memory_space_constraint_p.def_impl
+def _with_memory_space_constraint_impl(x, *, memory_space):
+  del memory_space
+  return x
+
+
+@with_memory_space_constraint_p.def_abstract_eval
+def _with_memory_space_constraint_abstract_eval(x, *, memory_space):
+  if not isinstance(x, core.ShapedArray):
+    raise NotImplementedError(
+        "with_memory_space_constraint only supports arrays."
+    )
+  return x.update(memory_space=memory_space)
+
+
+def _with_memory_space_constraint_lowering_rule(ctx, x, *, memory_space):
+  del ctx, memory_space
+  return [x]
+
+
+mlir.register_lowering(
+    with_memory_space_constraint_p, _with_memory_space_constraint_lowering_rule
+)
+batching.defvectorized(with_memory_space_constraint_p)
+ad.deflinear2(
+    with_memory_space_constraint_p,
+    lambda ct, _, **params: (
+        with_memory_space_constraint_p.bind(ct, **params),
+    ),
+)
+
+
+def with_memory_space_constraint(
+    x: Array, memory_space: Any
+) -> Array:
+  """Constrains the memory space of an array.
+
+  This primitive does not change the value of ``x``, but it constrains the
+  memory space where it should be allocated. This is useful to force
+  Pallas to allocate an array in a specific memory space.
+
+  As of now, this only operates on the inputs pallas_calls, as in you can
+  apply this to the arguments of a pallas_call and it will constrain them, but
+  not on intermediate values inside a pallas_call or values after a pallas_call.
+
+  Args:
+    x: An array.
+    memory_space: The memory space to constrain ``x`` to.
+
+  Returns:
+    An array with the same value as ``x``, but with the memory space
+    constrained.
+  """
+  return with_memory_space_constraint_p.bind(x, memory_space=memory_space)

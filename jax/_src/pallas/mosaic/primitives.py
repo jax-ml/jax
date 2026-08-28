@@ -1079,8 +1079,7 @@ def with_memory_space_constraint(
     raise NotImplementedError(
         "with_memory_space_constraint only supports HBM, VMEM, SMEM, and HOST."
     )
-  return pl_core.with_memory_space_constraint_p.bind(
-      x, memory_space=memory_space)
+  return sp.with_memory_space_constraint(x, memory_space)
 
 
 def load(ref: Ref, *, mask: jax.Array | None = None) -> jax.Array:

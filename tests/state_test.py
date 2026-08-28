@@ -41,7 +41,8 @@ from jax._src.state.discharge import (
                                       discharge_state,run_state, run_state_reference)
 from jax._src.state.primitives import ( addupdate_p,get_p, pin,
                                        ref_addupdate, ref_get, ref_set,
-                                       ref_swap, swap_p, unpin)
+                                       ref_swap, swap_p, unpin,
+                                       with_memory_space_constraint)
 from jax._src.state.types import ( AbstractRef,
                                   AccumEffect, ReadEffect, WriteEffect,shaped_array_ref)
 from jax._src.util import tuple_insert
@@ -2106,6 +2107,32 @@ class PinnedBuffersTest(jtu.JaxTestCase):
   def test_new_ref_pinned_eager_error(self):
     with self.assertRaises(NotImplementedError):
       jax.new_ref(jnp.arange(3.), pin=True)
+
+
+class WithMemorySpaceConstraintTest(jtu.JaxTestCase):
+
+  def test_basic_and_jaxpr(self):
+    x = jnp.ones((2, 3), jnp.float32)
+    def f(x):
+      return with_memory_space_constraint(x, core.MemorySpace.Device)
+    jaxpr = jax.make_jaxpr(f)(x)
+    self.assertEqual(jaxpr.out_avals[0].memory_space, core.MemorySpace.Device)
+    np.testing.assert_array_equal(jax.jit(f)(x), x)
+
+  def test_vmap(self):
+    x = jnp.ones((4, 2, 3), jnp.float32)
+    def f(x):
+      return with_memory_space_constraint(x, core.MemorySpace.Device)
+    out = jax.vmap(f)(x)
+    np.testing.assert_array_equal(out, x)
+
+  def test_grad(self):
+    def f(x):
+      y = with_memory_space_constraint(x, core.MemorySpace.Device)
+      return jnp.sum(y ** 2)
+    x = jnp.array([2.0, 3.0], jnp.float32)
+    grad = jax.grad(f)(x)
+    np.testing.assert_array_equal(grad, 2.0 * x)
 
 
 if __name__ == '__main__':

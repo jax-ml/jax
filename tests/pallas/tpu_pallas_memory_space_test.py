@@ -21,8 +21,8 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import core as jax_core
+from jax._src.state import primitives as state_primitives
 from jax._src import test_util as jtu
-from jax._src.pallas import core as pallas_core
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
@@ -140,7 +140,7 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
     (eqn,) = [
         eqn
         for eqn in jaxpr.jaxpr.eqns
-        if eqn.primitive is pallas_core.with_memory_space_constraint_p
+        if eqn.primitive is state_primitives.with_memory_space_constraint_p
     ]
     (outvar,) = eqn.outvars
     self.assertEqual(outvar.aval.shape, x.shape)

@@ -2912,8 +2912,6 @@ class InternalMutableArrayEffect(effects.Effect):
 array_ref_effect = internal_mutable_array_effect = InternalMutableArrayEffect()
 effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
 effects.remat_allowed_effects.add_type(InternalMutableArrayEffect)
-
-
 def new_ref(init_val: Any, *, memory_space: Any = None, kind: Any = None,
             pin: bool = False):
   """Create a mutable array reference with initial value ``init_val``.
