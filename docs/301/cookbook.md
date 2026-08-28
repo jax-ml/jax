@@ -577,35 +577,31 @@ subject of {doc}`vjp-objects`.
 (jax-301-complex)=
 ## Complex numbers and differentiation
 
-Complex differentiation has a reputation for confusion: must the function be
-holomorphic? Where do the conjugates go? What does `grad` even mean at a
-complex input? In JAX, one organizing principle dissolves nearly all of it:
-
-**JVPs and VJPs are unambiguous, for any function, holomorphic or not. The
-only subtlety lives in the convenience wrapper `grad`, which must pick a
-packaging convention — and JAX's choice involves a conjugate you should know
-about.**
+In JAX, differentiation of complex-valued functions is defined in terms of
+the underlying real derivatives. Jacobian-vector products (JVPs) and
+vector-Jacobian products (VJPs) operate on real-linear maps without requiring
+holomorphy. The only convention choice occurs in `grad`, where covectors are
+identified with vectors via a bilinear pairing rather than a sesquilinear
+one, producing a complex conjugate relative to the gradient vector.
 
 ### The unambiguous part: JVPs and VJPs
 
-The key is to remember what $\mathbb{C}$ is: $\mathbb{R}^2$ with some
-extra (multiplicative) structure. Any function $f : \mathbb{C} \to
-\mathbb{C}$ determines an ordinary real function $F : \mathbb{R}^2 \to
-\mathbb{R}^2$ by
+Under the identification $\mathbb{C} \cong \mathbb{R}^2$, any function $f :
+\mathbb{C} \to \mathbb{C}$ corresponds to a real function $F : \mathbb{R}^2
+\to \mathbb{R}^2$ defined by
 
 $\qquad f(x + y i) = u(x, y) + v(x, y) i
-\quad\leftrightarrow\quad F(x, y) = (u(x, y), v(x, y)),$
+\quad\leftrightarrow\quad F(x, y) = (u(x, y), v(x, y)).$
 
-and $F$ has an ordinary real Jacobian at each point — a $2 \times 2$ matrix
-with four independent real entries, no holomorphy required:
+The derivative of $F$ at a point is the real $2 \times 2$ Jacobian matrix
 
 $\qquad J = \begin{bmatrix} \partial_0 u & \partial_1 u \\ \partial_0 v & \partial_1 v \end{bmatrix}.$
 
-The **JVP** of $f$ is nothing more than this real linear map applied to the
-tangent pair, with complex numbers serving as containers for pairs of reals:
-for a tangent $t = t_1 + t_2 i$, the output tangent is $J (t_1, t_2)$,
-repackaged as a complex number. Here's a check, on a decidedly
-non-holomorphic function:
+The **JVP** of $f$ is the pushforward defined by this real linear map applied
+to tangent vectors, with complex numbers serving as representations for pairs
+of reals: for a tangent $t = t_1 + t_2 i$, the output tangent is the complex
+representation of $J (t_1, t_2)$. This definition applies to all
+differentiable functions regardless of holomorphy:
 
 ```{code-cell}
 def u(x, y): return x**2 + jnp.sin(y)
@@ -626,65 +622,56 @@ t_pair = J @ jnp.array([jnp.real(t), jnp.imag(t)])
 print(jnp.allclose(t_out, t_pair[0] + t_pair[1] * 1j))
 ```
 
-No ambiguity, and no conjugates: the JVP is the pushforward by the real
-derivative, in complex packaging. (If $f$ happens to be holomorphic, the
-Cauchy–Riemann equations make $J$ the rotate-and-scale matrix of complex
-multiplication by $f'(z)$, and the JVP becomes $t \mapsto f'(z)\, t$.)
+When $f$ is holomorphic, the Cauchy–Riemann equations imply that $J$ is a
+scaled rotation corresponding to complex multiplication by $f'(z)$, and the
+JVP reduces to $t \mapsto f'(z)\, t$.
 
-The **VJP** is just as unambiguous, but seeing why takes one more idea,
-which is also the source of `grad`'s conjugation convention.
+The **VJP** is the pullback (dual map) of the derivative. The derivative's
+dual map sends an output linear functional $\varphi$ to an input linear
+functional by composition, $\varphi \mapsto \varphi \circ \partial F(x)$.
+Because $f$ is in general only $\mathbb{R}$-differentiable, its tangent and
+cotangent spaces are vector spaces over $\mathbb{R}$, and cotangents are
+$\mathbb{R}$-linear functionals into $\mathbb{R}$ — not complex numbers.
 
-What a VJP fundamentally is, is the *dual map* (or pullback) of the
-derivative: cotangents are linear functionals on tangents, and the
-derivative's dual map carries output functionals to input functionals by
-composition, $\varphi \mapsto \varphi \circ \partial F(x)$. That definition
-involves no choices at all. The familiar matrix transpose is what the dual
-map looks like *after* you identify each space with its dual — and the
-identification is where a choice enters. A nondegenerate pairing
-$\langle\cdot,\cdot\rangle$ is exactly such an identification (it matches
-the vector $w$ with the functional $\langle w, \cdot\rangle$), and relative
-to pairings on the two spaces, the transpose of a linear map $A$ is
-characterized by
+JAX's `vjp` nonetheless returns cotangents with the same type as the primal
+values, so covectors must be *represented* as complex numbers, and that
+requires identifying each functional with a number. A nondegenerate
+real-valued pairing $\langle \cdot, \cdot \rangle$ is exactly such an
+identification: it matches the number $w$ with the functional
+$\langle w, \cdot \rangle$. Relative to chosen
+pairings on the domain and codomain, the transpose $A^\mathsf{T}$ of an
+$\mathbb{R}$-linear map $A$ is characterized by
 
 $\qquad \langle w, A t \rangle = \langle A^\mathsf{T} w, t \rangle
 \quad \text{for all } t, w.$
 
-For $\mathbb{R}^n$ with the standard dot product this recovers
-swap-the-matrix-indices transposition, but change the pairing and "the
-transpose" changes with it.
+On $\mathbb{C} \cong \mathbb{R}^2$, there are two standard choices of
+real-valued pairing:
 
-Now, JAX's `vjp` hands you cotangents as complex numbers — the same type as
-the primal values — so somewhere an identification of covectors with
-vectors has been made. And note what the scalar field is in this whole
-story: it's $\mathbb{R}$, not $\mathbb{C}$. Since $f$ needn't be
-holomorphic, its derivative is only guaranteed to be $\mathbb{R}$-linear,
-so we must treat $\mathbb{C}$ and its (co)tangent spaces as vector spaces
-*over the reals*. Linear functionals are accordingly $\mathbb{R}$-valued —
-which is why the pairings below produce real numbers, not complex ones.
-(A real-linear map on $\mathbb{C}$ is complex-linear exactly when its
-matrix is a rotate-and-scale — that is, exactly when $f$ is holomorphic.
-Holomorphy is precisely the special case in which the scalar field could
-be upgraded to $\mathbb{C}$.)
+* the **bilinear** pairing $\langle w, t \rangle = \operatorname{Re}(w t) =
+  w_1 t_1 - w_2 t_2$;
+* the **sesquilinear** pairing $\langle w, t \rangle =
+  \operatorname{Re}(\bar{w} t) = w_1 t_1 + w_2 t_2$, which is the standard
+  Euclidean inner product on $\mathbb{R}^2$.
 
-On complex numbers viewed as packed pairs of reals, there are two natural
-real-valued pairings to make the identification with:
+These pairings differ by a conjugation in the first argument, so the
+transposes they induce differ by an elementwise conjugation. **JAX adopts the
+bilinear pairing**.
 
-* the **bilinear** pairing $\langle w, t \rangle = \operatorname{Re}(w t)$,
-  which in real coordinates is $w_1 t_1 - w_2 t_2$; and
-* the **sesquilinear** pairing
-  $\langle w, t \rangle = \operatorname{Re}(\bar{w} t) = w_1 t_1 + w_2 t_2$
-  — the real part of the standard complex inner product, i.e. the ordinary
-  dot product on $\mathbb{R}^2$.
+To unpack the functional from the number: a cotangent $w = w_1 + w_2 i$
+returned by `vjp` encodes the $\mathbb{R}$-linear functional
+$t \mapsto \operatorname{Re}(w t)$, which acts on the real pair
+$(t_1, t_2)$ as $w_1 t_1 - w_2 t_2$. Its components against the standard
+dual basis are therefore $(w_1, -w_2)$ — the components of $\bar{w}$. This
+is the conjugation that resurfaces in `grad` below.
 
-They differ by conjugating one slot, so the two transposes they define
-differ by an elementwise conjugation. A convention is required, and **JAX
-uses the bilinear one**: its `vjp` is the unique map satisfying
+Under this convention, `vjp` is characterized by
 
 $\qquad \operatorname{Re}(w \cdot \texttt{jvp}(t)) \; = \;
 \operatorname{Re}(\texttt{vjp}(w) \cdot t)
 \qquad \text{for all } t, w,$
 
-with plain products and no conjugations in sight:
+using standard complex products without explicit conjugation:
 
 ```{code-cell}
 w = -0.2 + 1.1j
@@ -697,20 +684,8 @@ print(jnp.allclose(jnp.real(jnp.conj(w) * t_out),
                    jnp.real(jnp.conj(w_out) * t)))                  # False!
 ```
 
-The second `print` shows where the conventions diverge: the sesquilinear version of
-the same identity is *false* for JAX's `vjp` — it's the identity the other
-convention would satisfy instead. In coordinates, JAX's VJP works out to
-$w \mapsto \overline{J^\mathsf{T} \bar{w}}$ — but the conjugations are
-packaging artifacts, not extra derivative content. Writing $\eta =
-\operatorname{diag}(1, -1)$, conjugation of a packed pair *is* $\eta$, and
-$\operatorname{Re}(w t) = w^\mathsf{T} \eta\, t$, so
-$\overline{J^\mathsf{T} \bar{w}} = \eta J^\mathsf{T} \eta\, w$: precisely
-the transpose of $J$ relative to the bilinear pairing. Equivalently, the
-underlying operation is plain $J^\mathsf{T}$ on pairs of reals, with
-covectors *encoded* as complex numbers via the conjugated identification.
-
-One payoff of this convention: for a *holomorphic* $f$, both maps become the
-same plain complex multiplication, with no conjugate in sight:
+Furthermore, if $f$ is holomorphic, both the JVP and the VJP simplify to
+complex multiplication:
 
 $\qquad \texttt{jvp}(t) = f'(z)\,t, \qquad \texttt{vjp}(w) = f'(z)\,w.$
 
@@ -722,42 +697,38 @@ print(jnp.allclose(t_out, jnp.cos(z) * t))
 print(jnp.allclose(w_out, jnp.cos(z) * w))
 ```
 
-Under the sesquilinear convention, the VJP of a holomorphic function would
-instead be multiplication by $\overline{f'(z)}$. That's why we chose the
-bilinear one.
+Under the sesquilinear pairing, the VJP of a holomorphic function would
+evaluate to $w \mapsto \overline{f'(z)}\, w$.
 
-A general (non-holomorphic) $\mathbb{C} \to \mathbb{C}$ function has four
-real degrees of freedom in its derivative, so no single complex number can
-summarize it. A single JVP or VJP call reveals a two-real-number slice; two
-calls — say with tangents (or cotangents) $1$ and $i$ — reveal everything,
-exactly as for an $\mathbb{R}^2 \to \mathbb{R}^2$ function. And for
-functions with a real side, one call is a full summary: a single `jvp`
-reveals everything about an $\mathbb{R} \to \mathbb{C}$ scalar function, and
-a single `vjp` (or `grad`, below) reveals everything about a
-$\mathbb{C} \to \mathbb{R}$ function. When in doubt about what a complex
-derivative "means", drop down to `jvp` and `vjp`: they never lie and never
-raise.
+A general $\mathbb{R}$-differentiable map $\mathbb{C} \to \mathbb{C}$ has
+four real degrees of freedom in its derivative. A single JVP or VJP computes
+a two-dimensional projection; two evaluations on linearly independent
+tangents (such as $1$ and $i$) recover the full Jacobian. For functions with
+a real domain or codomain, a single evaluation suffices: one `jvp` determines
+the derivative of an $\mathbb{R} \to \mathbb{C}$ function, and one `vjp` (or
+`grad`) determines the derivative of a $\mathbb{C} \to \mathbb{R}$ function.
+When in doubt about what a complex derivative means, use `jvp` and `vjp`
+directly: they are always well-defined, for any function.
 
 ### `grad` at complex inputs: mind the conjugate
 
-`grad(f)(x)` is defined as `vjp(f, x)[1](1.0)`. For a function $f :
-\mathbb{C} \to \mathbb{R}$, writing $f(x + yi) = u(x, y)$, this works with
-no flags, and by the transpose formula above it evaluates to
+For a scalar function $f : \mathbb{C} \to \mathbb{R}$ with $f(x + yi) = u(x,
+y)$, JAX defines `grad(f)(x)` as `vjp(f, x)[1](1.0)`. Applying the bilinear
+transpose formula gives
 
 $\qquad \texttt{grad}(f)(z) = \partial_0 u(x, y) - \partial_1 u(x, y)\, i.$
 
-Note the minus sign: this is the *conjugate* of the vector
-$(\partial_0 u, \partial_1 u)$, which is the direction of steepest ascent in
-the plane. Under JAX's convention, directional derivatives use the plain
-product with no conjugation,
+This is the complex conjugate of the gradient vector $(\partial_0 u,
+\partial_1 u)$ in $\mathbb{R}^2$. Under the bilinear convention, directional
+derivatives are given directly by the real part of the product:
 
 $\qquad \lim_{\epsilon \to 0} \tfrac{1}{\epsilon}(f(z + \epsilon t) - f(z))
-= \operatorname{Re}(\texttt{grad}(f)(z) \cdot t),$
+= \operatorname{Re}(\texttt{grad}(f)(z) \cdot t).$
 
-and the flip side of that tidiness is that **for optimization you must
-conjugate the gradient**: the steepest-descent step is $z \leftarrow z -
-\eta\, \overline{\texttt{grad}(f)(z)}$. Using the unconjugated gradient
-flips the sign of the update's imaginary part — it isn't descent at all:
+Consequently, the direction of steepest ascent in the complex plane is
+$\overline{\texttt{grad}(f)(z)}$, and gradient descent updates take the form
+$z \leftarrow z - \eta\, \overline{\texttt{grad}(f)(z)}$. Updating along the
+unconjugated gradient negates the imaginary component of the descent step:
 
 ```{code-cell}
 def f(z):
@@ -779,32 +750,74 @@ for _ in range(100):
 print(f(z))
 ```
 
-This is a convention, not a law of nature: defining `grad` via the
-sesquilinear pairing instead would build the conjugate in, at the cost of
-breaking the plain-product identities above (and, for holomorphic functions,
-making `grad` return $\overline{f'(z)}$ rather than $f'(z)$). The practical
-takeaways under JAX's convention:
+Under JAX's convention:
 
-1. To optimize a real-valued loss of complex parameters, step along the
-   *conjugate* of `grad` — and audit any optimizer library you use on
-   complex parameters for exactly this, since an optimizer written with real
-   parameters in mind won't conjugate.
-2. Directional derivatives and first-order Taylor expansions use the plain
-   product: $f(z + t) \approx f(z) + \operatorname{Re}(\texttt{grad}(f)(z) \cdot t)$.
+1. Optimization of a real-valued loss over complex parameters requires
+  stepping along the conjugate of `grad`, $\overline{\texttt{grad}(f)(z)}$.
+  Optimizer libraries written with real parameters in mind do not apply this
+  conjugation, so audit any optimizer you use on complex parameters.
+2. First-order Taylor approximations and directional derivatives use the
+  unconjugated product: $f(z + t) \approx f(z) +
+  \operatorname{Re}(\texttt{grad}(f)(z) \cdot t)$.
+
+### Why the bilinear convention?
+
+The two pairings differ by an involution, so they carry the same
+information; choosing between them decides only where conjugations appear.
+The choice is a tradeoff.
+
+What the bilinear pairing provides:
+
+1. **Holomorphic functions require no conjugation.** Both the JVP and the VJP are
+   plain multiplication by $f'(z)$, and `grad(f, holomorphic=True)` returns
+   $f'(z)$ itself rather than its conjugate.
+2. **Plain-product identities.** The characterization identity above and
+   the first-order Taylor expansion
+   $f(z + t) \approx f(z) + \operatorname{Re}(\texttt{grad}(f)(z) \cdot t)$
+   use ordinary complex products, with no conjugations.
+3. **Derivative rules work unchanged from their real implementations.**
+   Since $\operatorname{Re}((cw)t) = \operatorname{Re}(w(ct))$,
+   multiplication by $c$ transposes to multiplication by $c$. So for a
+   holomorphic primitive, the VJP is just the regular complex derivative
+   multiplied by the incoming cotangent $w$ — the same expression as the
+   real-case rule — and most simple math primitives don't need their
+   derivative rules changed from their real implementations. (For example,
+   the VJP rule for `sin` is $w \mapsto w \cos(z)$ in the real and complex
+   cases alike.) This holds whether VJP rules are written directly, as in
+   Autograd, or derived by transposing linearized computations, as in JAX;
+   under the sesquilinear convention, every such rule would need a
+   conjugation added.
+
+What the sesquilinear pairing would provide instead:
+
+1. **`grad` is steepest ascent directly.** The sesquilinear pairing is the
+   Euclidean inner product on $\mathbb{R}^2$, so its identification of
+   covectors with vectors is the Riesz representation: `grad` would return
+   the gradient vector itself, and optimizers written for real parameters
+   would step correctly with no conjugation. This is the convention PyTorch
+   and TensorFlow adopt (see the Wirtinger discussion below).
+2. **Familiar metric duality.** Transposes relative to it are the conjugate
+   transposes of ordinary linear algebra, and
+   $\langle w, w \rangle = |w|^2 \geq 0$.
+
+In summary: the bilinear convention puts the conjugation into optimizer
+steps, while the sesquilinear convention puts it into holomorphic
+derivatives and into every transpose rule. The former is algebraic duality
+(identifying $\mathbb{C}$ with its complex-linear dual), the latter metric
+duality (Riesz representation).
 
 ### Relation to Wirtinger derivatives
 
-If you've seen complex autodiff described elsewhere — for example in
-PyTorch's documentation — you may have met *Wirtinger derivatives*:
+Wirtinger derivatives provide an alternative coordinate representation of the
+real Jacobian:
 
 $\qquad \frac{\partial}{\partial z} = \tfrac{1}{2}\left(\frac{\partial}{\partial x} - i \frac{\partial}{\partial y}\right), \qquad
-\frac{\partial}{\partial \bar z} = \tfrac{1}{2}\left(\frac{\partial}{\partial x} + i \frac{\partial}{\partial y}\right).$
+\frac{\partial}{\partial \bar z} = \tfrac{1}{2}\left(\frac{\partial}{\partial
+x} + i \frac{\partial}{\partial y}\right).$
 
-These are nothing exotic: they're a change of coordinates on the same real
-$2 \times 2$ Jacobian we've been using all along. Instead of four real
-numbers, the derivative of a $\mathbb{C} \to \mathbb{C}$ function is
-encoded as two complex ones, $\partial f/\partial z$ and $\partial
-f/\partial \bar z$, and the JVP takes the tidy form
+The four real partial derivatives of a function $f : \mathbb{C} \to
+\mathbb{C}$ are parameterized by the two complex quantities $\partial
+f/\partial z$ and $\partial f/\partial \bar z$, and the JVP is expressed as
 
 $\qquad \texttt{jvp}(t) = \frac{\partial f}{\partial z}\, t + \frac{\partial f}{\partial \bar z}\, \bar{t}.$
 
@@ -820,43 +833,39 @@ _, t_out = jvp(fun, (z,), (t,))
 print(jnp.allclose(t_out, dfdz * t + dfdzbar * jnp.conj(t)))
 ```
 
-In this vocabulary: a function is holomorphic exactly when $\partial
-f/\partial \bar z = 0$ (that *is* the Cauchy–Riemann equations), in which
-case $\partial f/\partial z = f'(z)$. And for a real-valued $f$, JAX's
-convention gives $\texttt{grad}(f)(z) = 2\, \partial f/\partial z$, while
-the steepest-ascent vector is its conjugate, $2\, \partial f/\partial \bar
-z$. PyTorch and TensorFlow adopt that other convention: PyTorch's autograd
-notes define the gradient of a real-valued loss as $\partial L/\partial
-z^*$, the steepest-descent-ready choice, so their optimizers step without
-an explicit conjugate — whereas JAX computes $\partial L/\partial z$, and
-you conjugate when stepping, as above. It's the same real derivative
-underneath; the conventions differ only in which complex packaging of it
-the convenience wrapper hands you.
+A function is holomorphic if and only if $\partial f/\partial \bar z = 0$
+(the Cauchy–Riemann equations), in which case $\partial f/\partial z =
+f'(z)$. For a real-valued function $f$, JAX's `grad` computes
+$\texttt{grad}(f)(z) = 2\, \partial f/\partial z$, whereas the
+steepest-ascent vector is $2\, \partial f/\partial \bar z =
+\overline{\texttt{grad}(f)(z)}$. Other frameworks, including PyTorch and
+TensorFlow, define the gradient of a real-valued loss as $\partial L/\partial
+z^* = 2\, \partial L/\partial \bar z$, incorporating the conjugation into the
+returned derivative. Both approaches represent the same underlying real
+derivative under different identification conventions.
 
 ### Holomorphic functions and `grad(f, holomorphic=True)`
 
-For a $\mathbb{C} \to \mathbb{C}$ function, `grad` raises an error on the
-complex output — in general four real numbers of derivative information
-can't be summarized in one complex number, and the error message suggests
-the fix: use `jax.vjp` (or `jax.jvp`) directly.
+For a function $f : \mathbb{C} \to \mathbb{C}$ with a complex output, `grad`
+raises an error because the four real derivative components cannot be
+uniquely represented by a single complex scalar. In general, `jax.vjp` or
+`jax.jvp` should be used directly.
 
-But a holomorphic function is precisely a $\mathbb{C} \to \mathbb{C}$
-function whose derivative *is* a single complex number, $f'(z)$: the
-Cauchy–Riemann equations force the $2\times2$ Jacobian to be a
-rotate-and-scale, the action of one complex number under multiplication. By
-passing `holomorphic=True` you promise JAX that's the case, and `grad`
-returns exactly $f'(z)$ (it's `vjp`'s $w \mapsto f'(z) w$ applied to $w =
-1.0$):
+When $f$ is holomorphic, the derivative is completely characterized by the
+single complex number $f'(z)$, as the Cauchy–Riemann equations restrict the
+Jacobian to a scaled rotation. Setting `holomorphic=True` indicates that this
+condition holds, causing `grad` to evaluate the VJP at cotangent $1.0$ and
+return $f'(z)$:
 
 ```{code-cell}
 print(grad(jnp.sin, holomorphic=True)(3. + 4j))
 print(jnp.cos(3. + 4j))
 ```
 
-The `holomorphic=True` promise does nothing but disable the
-complex-output error. If the function isn't actually holomorphic, you'll
-silently get the wrong-looking answer: the gradient of the function with the
-imaginary part of its output discarded:
+The `holomorphic=True` parameter disables the error check for complex outputs
+without verifying holomorphy. If applied to a non-holomorphic function, it
+returns the derivative of the real component of the output, discarding the
+imaginary component:
 
 ```{code-cell}
 def f(z):
@@ -865,8 +874,8 @@ def f(z):
 grad(f, holomorphic=True)(3. + 4j)
 ```
 
-You should expect complex numbers to work everywhere in JAX. Here's
-differentiating through a Cholesky decomposition of a complex matrix:
+Complex numbers are supported across JAX transformations and linear algebra
+operations, including matrix factorizations:
 
 ```{code-cell}
 A = jnp.array([[5.,    2.+3j,    5j],
