@@ -37,6 +37,11 @@ on:
         required: false
         default: 'no'
         type: string
+      git_commit:
+        description: "Commit SHA to check out for running tests"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -74,6 +79,7 @@ jobs:
       # TODO(b/456203132): Increase to more than 16 processes if this works
       #  (56 prior to this).
       max-processes: ${{ contains(matrix.runner, 'windows-x86') && '16' || '' }}
+      git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-cpu:
     if: github.repository_owner == 'jax-ml'
@@ -96,6 +102,7 @@ jobs:
       build_jaxlib: ${{ 'false' }}
       build_jax: ${{ 'false' }}
       clone_main_xla: 0
+      git_commit: ${{ inputs.git_commit }}
 
   run-pytest-cuda:
     if: github.repository_owner == 'jax-ml'
@@ -148,6 +155,7 @@ jobs:
       skip-download-jaxlib-and-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
+      git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-cuda:
     if: github.repository_owner == 'jax-ml'
@@ -176,6 +184,7 @@ jobs:
       run_tests_with_rbe: ${{ 'false' }}
       build_artifacts_with_rbe: ${{ 'false' }}
       clone_main_xla: 0
+      git_commit: ${{ inputs.git_commit }}
 
   build-rocm-artifacts:
     if: github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm'
@@ -210,6 +219,7 @@ jobs:
       clone_main_xla: 0
       upload_artifacts_to_s3: true
       s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-nightly/${{ github.run_number }}/${{ github.run_attempt }}'
+      git_commit: ${{ inputs.git_commit }}
 
   run-pytest-rocm:
     if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
@@ -239,6 +249,7 @@ jobs:
       skip-download-jaxlib-and-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-nightly/${{ github.run_number }}/${{ github.run_attempt }}'
+      git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-rocm:
     if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
@@ -274,6 +285,7 @@ jobs:
       write_to_bazel_remote_cache: 1
       run_multiaccelerator_tests: ${{ 'true' }}
       clone_main_xla: 0
+      git_commit: ${{ inputs.git_commit }}
 
   run-pytest-tpu:
     if: github.repository_owner == 'jax-ml'
@@ -337,6 +349,7 @@ jobs:
       skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
+      git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-tpu:
     if: github.repository_owner == 'jax-ml'
@@ -410,6 +423,7 @@ jobs:
       build_jax: ${{ 'false' }}
       jaxlib-version: "head"
       clone_main_xla: 0
+      git_commit: ${{ inputs.git_commit }}
 
   verify-release-wheels-install:
     if: ${{ startsWith(github.ref_name, 'release/') && github.repository_owner == 'jax-ml' }}

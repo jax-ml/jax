@@ -104,6 +104,11 @@ on:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
         default: 'no'
+      git_commit:
+        description: "Commit SHA to check out for building artifacts"
+        required: false
+        default: ""
+        type: string
     outputs:
       s3_upload_uri:
         description: "S3 location prefix to where the artifacts were uploaded"
@@ -140,6 +145,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.git_commit }}
           persist-credentials: false
       - name: Install Bazelisk
         run: |
