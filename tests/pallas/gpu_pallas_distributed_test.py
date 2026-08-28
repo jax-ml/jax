@@ -36,6 +36,7 @@ from jax._src.config import config
 from jax._src.lib import cuda_versions
 from jax.experimental import multihost_utils
 from jax.experimental import pallas as pl
+from jax.experimental.mosaic.gpu import launch_context as mgpu_launch_context
 from jax.experimental.pallas import mosaic_gpu as _plgpu
 from jax.experimental.pallas.ops.gpu.all_gather_mgpu import all_gather
 from jax.experimental.pallas.ops.gpu.reduce_scatter_mgpu import reduce_scatter
@@ -363,6 +364,97 @@ class PallasCallRemoteDMATest(TestCase):
 
     self.assert_arrays_equal_per_shard(
         y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+    )
+
+  def test_remote_tma_dynamic_peer_id(self):
+    if jax.process_index() >= 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+    # Block `i` of device 0 writes `iota + i` to device `i`, so a wrong entry
+    # in the dynamic descriptor table shows up as a wrong shard.
+    def kernel(y_ref, scratch_ref, sem):
+      dev_id = lax.axis_index("x")
+      peer_id = lax.axis_index("peer_id")
+      @pl.when(dev_id == 0)
+      def _store():
+        output = plgpu.layout_cast(
+            lax.broadcasted_iota(jnp.int32, (128, 128), 1), plgpu.Layout.WGMMA
+        )
+        scratch_ref[...] = output + peer_id
+        plgpu.copy_smem_to_gmem(
+            scratch_ref, plgpu.remote_ref(y_ref, {"x": peer_id})
+        )
+        plgpu.wait_smem_to_gmem(0)
+      pl.semaphore_signal(sem, device_id=1 - dev_id)
+      pl.semaphore_wait(sem)
+    transforms = self.default_transforms(dtype=jnp.int32)
+    def body():
+      return self.kernel(
+          kernel,
+          grid=(2,),
+          grid_names=("peer_id",),
+          out_type=jax.ShapeDtypeStruct((128, 128), jnp.int32),
+          scratch_types=[
+              plgpu.SMEM((128, 128), jnp.int32, transforms=transforms),
+              plgpu.SemaphoreType.REGULAR,
+          ],
+      )()
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    y = jax.jit(
+        jax.shard_map(
+            body, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False
+        )
+    )()
+    expected = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
+    self.assert_arrays_equal_per_shard(y, lambda dev_idx: expected + dev_idx)
+
+  @jtu.thread_unsafe_test()  # Monkey-patches LaunchContext._alloc_scratch.
+  def test_recomputable_peer_id_does_not_allocate_dynamic_table(self):
+    mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
+    def scratch_sizes(get_peer_id, **kernel_kwargs):
+      """Lowers a remote TMA store and returns its GMEM scratch sizes."""
+      def kernel(y_ref, scratch_ref):
+        remote_y = plgpu.remote_ref(y_ref, {"x": get_peer_id()})
+        plgpu.copy_smem_to_gmem(scratch_ref, remote_y)
+        plgpu.wait_smem_to_gmem(0)
+      transforms = self.default_transforms(dtype=jnp.int32)
+      kernel_call = self.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((128, 128), jnp.int32),
+          scratch_types=[
+              plgpu.SMEM((128, 128), jnp.int32, transforms=transforms)
+          ],
+          **kernel_kwargs,
+      )
+      sharded_call = jax.shard_map(
+          kernel_call, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False
+      )
+      sizes = []
+      alloc_scratch = mgpu_launch_context.LaunchContext._alloc_scratch
+
+      def recording_alloc_scratch(launch_ctx, size, *args, **kwargs):
+        sizes.append(size)
+        return alloc_scratch(launch_ctx, size, *args, **kwargs)
+
+      with mock.patch.object(
+          mgpu_launch_context.LaunchContext,
+          "_alloc_scratch",
+          recording_alloc_scratch,
+      ):
+        jax.jit(sharded_call).lower()
+      return sizes
+    desc_bytes = mgpu_launch_context.TMA_DESCRIPTOR_BYTES
+    # `1 - device_id` can be recomputed on the host: a single descriptor.
+    self.assertEqual(
+        scratch_sizes(lambda: 1 - lax.axis_index("x")), [desc_bytes]
+    )
+    # A grid-derived peer id can't: a table with one descriptor per peer.
+    self.assertEqual(
+        scratch_sizes(
+            lambda: lax.axis_index("peer_id"), grid=(2,), grid_names=("peer_id",)
+        ),
+        [desc_bytes * mesh.size],
     )
 
   def test_remote_dma_dynamic_other_device_id(self):
