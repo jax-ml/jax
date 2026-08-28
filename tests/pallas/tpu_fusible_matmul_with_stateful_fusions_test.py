@@ -103,10 +103,9 @@ def _fusible_matmul(
   if k != k_:
     raise ValueError(f'X and Y shapes must be compatible. Got {k} != {k_}')
 
-  assert m % bm == 0
   assert k % bk == 0
   assert n % bn == 0
-  grid = (m // bm, n // bn, k // bk)
+  grid = (pl.cdiv(m, bm), n // bn, k // bk)
 
   def x_index_map(i, j, k, *_):
     del j
@@ -588,6 +587,57 @@ class FusibleMatmulTest(jtu.JaxTestCase):
 
     out = run_matmul(x, y)[OFFSET:OFFSET + SIZE, :]
     out_ref = x[OFFSET:OFFSET + SIZE, :] @ y
+    self.assertArraysAllClose(out, out_ref, atol=1e-5, rtol=1e-5)
+
+  @parameterized.parameters(KernelImpl)
+  def test_matmul_with_non_block_aligned_slice(self, impl):
+    m, k, n = 12, 128, 128
+    bm, bk, bn = 8, 128, 128
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, (m, k), jnp.float32)
+    y = jax.random.normal(k1, (k, n), jnp.float32)
+    _fusible_matmul = functools.partial(
+        fusible_matmul, impl=impl, bm=bm, bk=bk, bn=bn
+    )
+
+    @jax.jit
+    def run_matmul(x_3d, y):
+      @fuser.fuse
+      def matmul(x_3d, y):
+        return _fusible_matmul(x_3d[0, ...], y)
+
+      return matmul(x_3d, y)
+
+    x_3d = jnp.broadcast_to(x, (1,) + x.shape)
+    out = run_matmul(x_3d, y)
+    out_ref = x @ y
+    self.assertArraysAllClose(out, out_ref, atol=1e-5, rtol=1e-5)
+
+  @parameterized.parameters(KernelImpl)
+  def test_matmul_with_non_block_aligned_dynamic_update_slice(self, impl):
+    m, k, n = 12, 128, 128
+    bm, bk, bn = 8, 128, 128
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, (m, k), jnp.float32)
+    y = jax.random.normal(k1, (k, n), jnp.float32)
+    _fusible_matmul = functools.partial(
+        fusible_matmul, impl=impl, bm=bm, bk=bk, bn=bn
+    )
+
+    @jax.jit
+    def run_matmul(x, y):
+      o_ref = jax.new_ref(jnp.empty((1, m, n), dtype=jnp.float32))
+
+      @fuser.fuse
+      def matmul(x, y):
+        z = _fusible_matmul(x, y)
+        o_ref[0] = z
+
+      matmul(x, y)
+      return jax.ref.freeze(o_ref)
+
+    out = run_matmul(x, y)[0]
+    out_ref = x @ y
     self.assertArraysAllClose(out, out_ref, atol=1e-5, rtol=1e-5)
 
   @parameterized.parameters(KernelImpl)
