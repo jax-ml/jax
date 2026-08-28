@@ -1118,13 +1118,29 @@ class BarrierRef:
   def test_parity(
       self,
       parity,
+      *,
       orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
-    ) -> ir.Value:
+  ) -> ir.Value:
     i1 = ir.IntegerType.get_signless(1)
     i32 = ir.IntegerType.get_signless(32)
     parity = arith.extui(i32, parity)
-    wait_complete = nvvm.mbarrier_test_wait(self.get_ptr(), parity)
+    if predicate is None:
+      wait_complete = nvvm.mbarrier_test_wait(self.get_ptr(), parity)
+    else:
+      if get_arch().major < 9:
+        sem_scope = ".shared"
+      else:
+        sem_scope = ".acquire.cta.shared::cta"
+      wait_complete = llvm.inline_asm(
+          i1,
+          [c(0, i1), self.get_ptr(), parity, predicate],
+          f"@$3 mbarrier.test_wait.parity{sem_scope}.b64 $0, [$1], $2;",
+          "+b,r,r,b",
+          has_side_effects=True,
+      )
+      wait_complete = cast(ir.OpResult[ir.IntegerType], wait_complete)
 
     if scope == ThreadSubset.WARPGROUP:
       wait_complete = llvm.inline_asm(
@@ -1147,17 +1163,30 @@ class BarrierRef:
 
   def test(
       self,
+      *,
       orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
   ) -> ir.Value:
     parities = memref.load(self.phases, [])
     parity, new_parities = self.update_parities(parities)
-    wait_complete = self.test_parity(parity, orders_tensor_core, scope)
+    wait_complete = self.test_parity(
+        parity,
+        orders_tensor_core=orders_tensor_core,
+        predicate=predicate,
+        scope=scope,
+    )
     with when(wait_complete):
       memref.store(new_parities, self.phases, [])
     return wait_complete
 
-  def wait_parity(self, parity, orders_tensor_core: bool = False):
+  def wait_parity(
+      self,
+      parity,
+      *,
+      orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
+  ):
     if self._ptx_scope != "cta":
       raise ValueError("Can only await on CTA-local barriers")
     i32 = ir.IntegerType.get_signless(32)
@@ -1168,7 +1197,16 @@ class BarrierRef:
       while_op = scf.WhileOp([], [])
       before_block = while_op.before.blocks.append()
       with ir.InsertionPoint.at_block_begin(before_block):
-        wait_complete = nvvm.mbarrier_test_wait(self.get_ptr(), parity)
+        if predicate is None:
+          wait_complete = nvvm.mbarrier_test_wait(self.get_ptr(), parity)
+        else:
+          wait_complete = llvm.inline_asm(
+              i1,
+              [c(1, i1), self.get_ptr(), parity, predicate],
+              "@$3 mbarrier.test_wait.parity.shared.b64 $0, [$1], $2;",
+              "+b,r,r,b",
+              has_side_effects=True,
+          )
         wait_incomplete = arith.xori(wait_complete, c(1, i1))
         scf.condition(wait_incomplete, [])
       after_block = while_op.after.blocks.append()
@@ -1176,15 +1214,33 @@ class BarrierRef:
         scf.yield_([])
     else:
       ticks = arith.constant(i32, 10000000)
-      nvvm.mbarrier_try_wait_parity(self.get_ptr(), parity, ticks)
+      if predicate is None:
+        nvvm.mbarrier_try_wait_parity(self.get_ptr(), parity, ticks)
+      else:
+        llvm.inline_asm(
+            ir.Type.parse("!llvm.void"),
+            [self.get_ptr(), parity, ticks, predicate],
+            "@$3 mbarrier.try_wait.parity.acquire.cta.shared::cta.b64 [$0], $1, $2;",
+            "r,r,r,b",
+            has_side_effects=True,
+        )
     if orders_tensor_core:
       nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.AFTER_THREAD_SYNC)
 
-  def wait(self, orders_tensor_core: bool = False):
+  def wait(
+      self,
+      *,
+      orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
+  ):
     parities = memref.load(self.phases, [])
     parity, new_parities = self.update_parities(parities)
+    if predicate is not None:
+      new_parities = arith.select(predicate, new_parities, parities)
     memref.store(new_parities, self.phases, [])
-    self.wait_parity(parity, orders_tensor_core)
+    self.wait_parity(
+        parity, orders_tensor_core=orders_tensor_core, predicate=predicate
+    )
 
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     i32 = ir.IntegerType.get_signless(32)
@@ -1344,36 +1400,68 @@ class DialectBarrierRef:
   def test_parity(
       self,
       parity,
+      *,
       orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
   ) -> ir.Value:
     assert self.orders_tensor_core == orders_tensor_core
-    return self.barrier_ref.test_parity(parity, orders_tensor_core, scope=scope)
+    return self.barrier_ref.test_parity(
+        parity,
+        orders_tensor_core=orders_tensor_core,
+        predicate=predicate,
+        scope=scope,
+    )
 
   def test(
       self,
+      *,
       orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
   ) -> ir.Value:
     assert self.orders_tensor_core == orders_tensor_core
     assert self.barrier_ref.phases is not None
-    return self.barrier_ref.test(orders_tensor_core, scope=scope)
+    return self.barrier_ref.test(
+        orders_tensor_core=orders_tensor_core, predicate=predicate, scope=scope
+    )
 
-  def wait_parity(self, parity, orders_tensor_core: bool = False):
+  def wait_parity(
+      self,
+      parity,
+      *,
+      orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
+  ):
     assert self.orders_tensor_core == orders_tensor_core
-    self.barrier_ref.wait_parity(parity, orders_tensor_core)
+    self.barrier_ref.wait_parity(
+        parity, orders_tensor_core=orders_tensor_core, predicate=predicate
+    )
 
-  def wait(self, orders_tensor_core: bool = False):
+  def wait(
+      self,
+      *,
+      orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
+  ):
     assert self.orders_tensor_core == orders_tensor_core
     assert self.barrier_ref.phases is not None
-    self.barrier_ref.wait(orders_tensor_core)
+    self.barrier_ref.wait(
+        orders_tensor_core=orders_tensor_core, predicate=predicate
+    )
 
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     return self.barrier_ref.update_parities(parities)
 
-  def arrive(self, orders_tensor_core: bool = False):
+  def arrive(
+      self,
+      *,
+      orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
+  ):
     assert self.orders_tensor_core == orders_tensor_core
-    dialect.ArriveOp(self.as_barrier_memref(), orders_tensor_core)
+    with contextlib.nullcontext() if predicate is None else when(predicate):
+      dialect.ArriveOp(self.as_barrier_memref(), orders_tensor_core)
 
   def arrive_expect_tx(self, bytes: int | ir.Value):
     # TODO: Remove when the minimum jaxlib version is 0.11.1
@@ -1488,7 +1576,12 @@ class CollectiveBarrierRef:
         self.barrier[offset], self.cluster_mask, self.leader_tracked
     )
 
-  def arrive(self, orders_tensor_core: bool = False):
+  def arrive(
+      self,
+      *,
+      orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
+  ):
     """Arrives on a barrier in one or several blocks in a cluster.
 
     Specifically,
@@ -1504,9 +1597,11 @@ class CollectiveBarrierRef:
       raise ValueError("Can only arrive on a single barrier")
 
     if self.cluster_mask is None:
+      pred = single_thread_predicate(ThreadSubset.WARPGROUP)
+      if predicate is not None:
+        pred = arith.andi(predicate, pred)
       return self.barrier.arrive(
-          predicate=single_thread_predicate(ThreadSubset.WARPGROUP),
-          orders_tensor_core=orders_tensor_core,
+          predicate=pred, orders_tensor_core=orders_tensor_core
       )
 
     if orders_tensor_core:
@@ -1531,6 +1626,8 @@ class CollectiveBarrierRef:
         c(0, i32),
     )
     should_arrive = arith.andi(is_collective_block, is_signaling_thread)
+    if predicate is not None:
+      should_arrive = arith.andi(predicate, should_arrive)
     llvm.inline_asm(
         ir.Type.parse("!llvm.void"),
         [should_arrive, self.barrier.get_ptr(), signaled_block],
