@@ -2562,8 +2562,31 @@ def _program_order(fun, *, enforce):
     return tree_util.tree_unflatten(traced.out_tree, flat_outputs)
   return wrapped
 
-def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
+
+def insert_opt_barrier(prev_outvars, prev_outs, cur_invars, cur_inps):
   from jax._src.lax.lax import optimization_barrier  # type: ignore
+
+  barrier_invars, barrier_cinps = zip(*[
+      (v, i) for v, i in zip(cur_invars, cur_inps)
+      if not isinstance(v, core.Literal)
+  ])
+  biv_set = set(barrier_invars)
+  barrier_pouts = [o for v, o in zip(prev_outvars, prev_outs)
+                   if v not in biv_set]
+  barrier_pouts, barrier_cinps = optimization_barrier(
+      (barrier_pouts, barrier_cinps))
+  barrier_pouts_iter = iter(barrier_pouts)
+  prev_outs = [next(barrier_pouts_iter) if v not in biv_set else o
+               for v, o in zip(prev_outvars, prev_outs)]
+  assert next(barrier_pouts_iter, None) is None
+  barrier_cinps_iter = iter(barrier_cinps)
+  cur_inps = [i if isinstance(v, core.Literal) else next(barrier_cinps_iter)
+              for v, i in zip(cur_invars, cur_inps)]
+  assert next(barrier_cinps_iter, None) is None
+  return prev_outs, cur_inps
+
+
+def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
 
   def read(v) -> Any:
     return v.val if isinstance(v, core.Literal) else env[v]
@@ -2594,8 +2617,8 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
       cur_inps = map(read, eqn.invars)
       if prev_eqn is not None:
         prev_outs = map(read, prev_eqn.outvars)
-        # TODO(yashkatariya): Maybe dedup prev_outs and cur_inps.
-        prev_outs, cur_inps = optimization_barrier((prev_outs, cur_inps))
+        prev_outs, cur_inps = insert_opt_barrier(
+            prev_eqn.outvars, prev_outs, eqn.invars, cur_inps)
         eqn_write(prev_eqn, prev_outs)
       ans = eqn.primitive.bind(*cur_inps, **bind_params)
     eqn_write(eqn, ans)

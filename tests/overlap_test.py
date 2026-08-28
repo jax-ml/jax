@@ -361,6 +361,22 @@ class OverlapTest(jtu.JaxTestCase):
 
     f(x, y)  # doesn't crash
 
+  @config.numpy_dtype_promotion('standard')
+  def test_avoid_excess_precision(self):
+    @jax.jit(static_argnames=('quant_dtype',))
+    def f(x, quant_dtype):
+      @program_order(enforce=True)
+      def g(x):
+        amax = jnp.abs(x).max(axis=-1, keepdims=True).astype(jnp.float32)
+        scale = amax / jnp.iinfo(quant_dtype).max
+        q = jnp.rint(x / scale).astype(quant_dtype)
+        r = q.astype(jnp.float32) * scale
+        return jnp.linalg.norm(r.astype(x.dtype) - x, ord=2, axis=-1)
+      return g(x)
+
+    x = jax.random.normal(jax.random.key(123), [16, 256], dtype=jnp.bfloat16)
+    f(x, quant_dtype=jnp.int2)
+
 
 class AsyncCollectivesTest(jtu.JaxTestCase):
 
