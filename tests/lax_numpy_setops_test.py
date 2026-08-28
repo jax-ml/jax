@@ -213,6 +213,11 @@ class LaxNumpySetopsTest(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match([dtype1, dtype2]):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
+  def testSetxor1dSizeZero(self):
+    ar1 = np.array([1, 3, 5])
+    ar2 = np.array([2, 3, 4])
+    self.assertEqual(jnp.setxor1d(ar1, ar2, size=0).shape, (0,))
+
   @jtu.sample_product(
     dtype1=[s for s in default_dtypes if s != jnp.bfloat16],
     dtype2=[s for s in default_dtypes if s != jnp.bfloat16],
@@ -252,6 +257,11 @@ class LaxNumpySetopsTest(jtu.JaxTestCase):
 
     with jtu.strict_promotion_if_dtypes_match([dtype1, dtype2]):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+
+  def testIntersect1dSizeZero(self):
+    ar1 = np.array([1, 2, 3, 4])
+    ar2 = np.array([3, 4, 5])
+    self.assertEqual(jnp.intersect1d(ar1, ar2, size=0).shape, (0,))
 
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
