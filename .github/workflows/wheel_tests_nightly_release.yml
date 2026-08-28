@@ -61,6 +61,8 @@ jobs:
           exclude:
             - runner: "windows-x86-n2-64"
               python: "3.14t"
+            - runner: "windows-x86-n2-64"
+              python: "3.15t"
     name: "Pytest CPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.runner }}
