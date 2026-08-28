@@ -52,6 +52,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Fixed {func}`jax.numpy.intersect1d` and {func}`jax.numpy.setxor1d` with
     ``size=0``, which previously raised a ValueError; they now return empty
     arrays of the natural result dtype.
+  * Fixed {func}`jax.numpy.setdiff1d` raising an `IndexError` when called with
+    ``size=0`` on non-empty inputs; it now returns an empty array.
 
 ## JAX 0.11.1 (August 17, 2026)
 
