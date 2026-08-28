@@ -3428,8 +3428,20 @@ call_p = closed_call_p = eval_jaxpr_p
 
 
 # ------------------- Map -------------------
+@dataclass(frozen=True)
+class _StackedAxis:
+  """A mapped axis nested underneath one stacked leading axis."""
+  stack_size: AxisSize
+  axis: Any
 
 def mapped_aval(size: AxisSize, axis, aval: AbstractValue) -> AbstractValue:
+  if isinstance(axis, _StackedAxis):
+    # Strip the stacked leading axis, map the inner value, then put the
+    # stacked axis back.
+    aval = mapped_leading_aval(axis.stack_size, aval)
+    aval = mapped_aval(size, axis.axis, aval)
+    return unmapped_leading_aval(axis.stack_size, aval)
+
   from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
   if isinstance(aval, HiType):
     return aval.dec_rank(size, axis)  # pyrefly: ignore[bad-argument-type]
@@ -3443,8 +3455,15 @@ def mapped_leading_aval(size, aval) -> AbstractValue:
   return mapped_aval(size, aval.leading_axis_spec(), aval)
 
 # TODO(yashkatariya): take axis data
-def unmapped_aval(size: AxisSize, axis: int | None,
+def unmapped_aval(size: AxisSize, axis,
                   aval: AbstractValue, explicit_mesh_axis=None) -> AbstractValue:
+  if isinstance(axis, _StackedAxis):
+    # Inverse of the _StackedAxis case in mapped_aval.
+    aval = mapped_leading_aval(axis.stack_size, aval)
+    aval = unmapped_aval(
+        size, axis.axis, aval, explicit_mesh_axis)
+    return unmapped_leading_aval(axis.stack_size, aval)
+
   from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
   if isinstance(aval, HiType):
     return aval.inc_rank(size, axis)  # pyrefly: ignore[bad-argument-type]
