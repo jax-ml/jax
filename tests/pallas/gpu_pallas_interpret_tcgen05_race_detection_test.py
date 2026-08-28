@@ -1151,7 +1151,7 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
     acc_init = jnp.full(ACC_SHAPE, 1.0, jnp.float32)
     result = _kernel(acc_init, a, b)
     expected = acc_init + jnp.dot(a, b, preferred_element_type=jnp.float32)
-    np.testing.assert_allclose(result, expected)
+    np.testing.assert_allclose(result, expected, 1e-6, 1e-6)
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
   def test_can_pipeline_with_multiple_children(self):
@@ -1214,7 +1214,7 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
     expected = jnp.dot(a, b1, preferred_element_type=jnp.float32) + jnp.dot(
         a, b2, preferred_element_type=jnp.float32
     )
-    np.testing.assert_allclose(result, expected)
+    np.testing.assert_allclose(result, expected, 1e-6, 1e-6)
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
 

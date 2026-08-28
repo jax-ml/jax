@@ -2080,7 +2080,7 @@ class InterpretTest(jtu.JaxTestCase):
     a = jax.random.uniform(jax.random.key(0), (128, 128), jnp.float16)
     b = jax.random.uniform(jax.random.key(1), (128, 128), jnp.float16)
     output = kernel(a, b)
-    expected = jnp.matmul(a, b, preferred_element_type=jnp.float32)
+    expected = np.matmul(np.asarray(a), np.asarray(b), dtype=np.float32)
     self.assertArraysEqual(output, expected)
 
   def test_async_store_load_tmem(self):
