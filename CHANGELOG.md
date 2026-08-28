@@ -49,6 +49,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Fixed a bug where {func}`jax.numpy.linalg.cond` returned NaN instead of
     infinity for singular matrices when `p` is `None` or `2`, matching NumPy
     and the other norms.
+  * Fixed {func}`jax.numpy.intersect1d` and {func}`jax.numpy.setxor1d` with
+    ``size=0``, which previously raised a ValueError; they now return empty
+    arrays of the natural result dtype.
 
 ## JAX 0.11.1 (August 17, 2026)
 

@@ -277,7 +277,12 @@ def _setxor1d_size(arr1: Array, arr2: Array, fill_value: ArrayLike | None, *,
     vals = aux.at[indices].get(mode='fill', fill_value=0)
   else:
     vals = zeros(size, aux.dtype)
-  if fill_value is None:
+  if vals.size == 0:
+    # fill values are irrelevant in an empty array.
+    return vals
+  elif fill_value is None:
+    # launder the zero-filled padding through max() before taking the min,
+    # so unfilled slots are padded with the smallest real result.
     vals = where(arange(len(vals)) < num_results, vals, vals.max())
     return where(arange(len(vals)) < num_results, vals, vals.min())
   else:
@@ -404,7 +409,11 @@ def _intersect1d_size(arr1: Array, arr2: Array, fill_value: ArrayLike | None, as
   else:
     val_indices = arange(0)
     vals = zeros(size, aux.dtype)
-  if fill_value is None:
+  if vals.size == 0:
+    pass  # fill values are irrelevant in an empty array.
+  elif fill_value is None:
+    # launder the zero-filled padding through max() before taking the min,
+    # so unfilled slots are padded with the smallest real result.
     vals = where(arange(len(vals)) < num_results, vals, vals.max())
     vals = where(arange(len(vals)) < num_results, vals, vals.min())
   else:
