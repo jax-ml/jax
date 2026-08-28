@@ -2002,12 +2002,18 @@ jax_xla_profile_version = int_state(
 def explicit_device_put_scope() -> Generator[None]:
   """Indicates that the current context is an explicit device_put*() call."""
   state = guard_lib.thread_local_state()
-  prev = state.explicit_device_put
+  prev_put = state.explicit_device_put
+  prev_get = state.explicit_device_get
+  # Explicitness is call-scoped: any transfer made while servicing an explicit
+  # device_put*() call is explicit. A cross-client device_put (e.g. GPU -> the
+  # CPU client) fetches the value to host first, so set the get flag too.
   state.explicit_device_put = True
+  state.explicit_device_get = True
   try:
     yield
   finally:
-    state.explicit_device_put = prev
+    state.explicit_device_put = prev_put
+    state.explicit_device_get = prev_get
 
 @contextlib.contextmanager
 def explicit_device_get_scope() -> Generator[None]:
