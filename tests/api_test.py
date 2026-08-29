@@ -8995,6 +8995,76 @@ class DCETest(jtu.JaxTestCase):
     # use only one output, so we can prune eqns but not inputs
     self.assert_dce_result(jaxpr, [True, False], [True, True], 5)
 
+  def test_dce_jaxpr_noop_returns_input_jaxpr(self):
+    # No-op DCE must return the very same jaxpr object: lowering dedups
+    # subcomputations by jaxpr identity (see #40312).
+    def f(x, y):
+      return jnp.sin(x) * y, x + y
+    jaxpr = jax.make_jaxpr(f)(1., 2.).jaxpr
+    jaxpr_dce, used_inputs = pe.dce_jaxpr(jaxpr, [True, True])
+    self.assertIs(jaxpr_dce, jaxpr)
+    self.assertEqual(used_inputs, [True, True])
+
+  def test_dce_caches_do_not_pin_jaxpr(self):
+    # The no-op DCE result must not give a weakref cache a strong reference
+    # to its own key, which would keep the entry (and jaxpr) alive forever.
+    def g(x):
+      return jax.jit(lambda x: jnp.sin(x))(x) + 1.
+    jaxpr = jax.make_jaxpr(g)(1.).jaxpr
+    (eqn,) = [e for e in jaxpr.eqns if 'jaxpr' in e.params]
+    inner = eqn.params['jaxpr']
+    pe.dce_jaxpr(jaxpr, [True])  # no-op DCE, populates the layered DCE caches
+    ref = weakref.ref(inner)
+    del g, jaxpr, eqn, inner
+    gc.collect()
+    self.assertIsNone(ref())
+    # Same for the closed-call DCE cache.
+    def h(x):
+      return jnp.cos(x) * 2.
+    closed = jax.make_jaxpr(h)(1.)
+    dced, _ = pe._cached_closed_call_dce(closed.jaxpr, (True,))
+    self.assertIs(dced, closed.jaxpr)
+    ref = weakref.ref(closed.jaxpr)
+    del h, closed, dced
+    gc.collect()
+    self.assertIsNone(ref())
+
+  def test_lowering_independent_of_dce_cache_state(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40312: a stale
+    # outer DCE cache entry plus evicted inner entries used to break the
+    # identity-based function dedup in lowering.
+    x_spec = jax.ShapeDtypeStruct((4, 8), jnp.float32)
+    y_spec = jax.ShapeDtypeStruct((4,), jnp.int32)
+
+    @jax.jit
+    def foo(y):
+      def body(i, carry):
+        arr, acc = carry
+        return arr.at[i].set(acc), acc + y[i]
+      return jax.lax.fori_loop(0, y.shape[0], body,
+                               (jnp.zeros_like(y), jnp.int32(0)))
+
+    @jax.jit
+    def bar(x, y):
+      arr, acc = foo(y)
+      return x * arr.astype(jnp.float32)[:, None], acc.astype(jnp.float32)
+
+    def f(x, y):
+      baz, acc = bar(x, y)   # both outputs used
+      baz, _ = bar(baz + acc, y)   # one output used: DCE'd variant
+      return baz * 5.0
+
+    def g(x, y):
+      baz, acc = bar(x, y)
+      return baz - acc
+
+    jax.jit(g).lower(x_spec, y_spec)  # warms the outer (pjit) DCE cache
+    pe._dce_jaxpr.cache_clear()       # evicts the inner entries it was built on
+    with_history = jax.jit(f).lower(x_spec, y_spec).as_text()
+    jax.clear_caches()
+    fresh = jax.jit(f).lower(x_spec, y_spec).as_text()
+    self.assertEqual(with_history, fresh)
+
 
 class BufferDonationTest(jtu.BufferDonationTestCase):
 

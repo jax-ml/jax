@@ -1925,11 +1925,20 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs):
 ad.fancy_transposes[jit_p] = _pjit_transpose_fancy
 
 @weakref_lru_cache
+def _dce_jaxpr_pjit_cached(
+    jaxpr: core.Jaxpr, used_outputs: tuple[bool, ...]
+) -> tuple[core.Jaxpr | None, list[bool]]:
+  # dce_jaxpr preserves attached consts (constvars are never pruned).
+  new_jaxpr, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs)
+  # None on no-op DCE: the key jaxpr as the value would pin this cache entry.
+  return (None if new_jaxpr is jaxpr else new_jaxpr), used_inputs
+
+
 def _dce_jaxpr_pjit(
     jaxpr: core.Jaxpr, used_outputs: tuple[bool, ...]
 ) -> tuple[core.Jaxpr, list[bool]]:
-  # dce_jaxpr preserves attached consts (constvars are never pruned).
-  return pe.dce_jaxpr(jaxpr, used_outputs)
+  new_jaxpr, used_inputs = _dce_jaxpr_pjit_cached(jaxpr, used_outputs)
+  return (jaxpr if new_jaxpr is None else new_jaxpr), used_inputs
 
 
 def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
