@@ -111,19 +111,27 @@ def _cg_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
   def cond_fun(value):
     _, r, gamma, _, k = value
     rs = gamma.real if M is _identity else _vdot_real_tree(r, r)
-    return (rs > atol2) & (k < maxiter)
+    # k < 0 signals breakdown detected in body_fun
+    return (rs > atol2) & (k < maxiter) & (k >= 0)
 
   def body_fun(value):
     x, r, gamma, p, k = value
     Ap = A(p)
-    alpha = gamma / _vdot_real_tree(p, Ap).astype(dtype)
+    pAp = _vdot_real_tree(p, Ap).astype(dtype)
+    # Both are positive for SPD A and M but can underflow to zero in low
+    # precision; keep the previous iterate and exit instead of dividing by 0.
+    breakdown = (pAp.real <= 0) | (gamma.real <= 0)
+    safe = lambda d: jnp.where(breakdown, jnp.ones_like(d), d)
+    alpha = gamma / safe(pAp)
     x_ = _add(x, _mul(alpha, p))
     r_ = _sub(r, _mul(alpha, Ap))
     z_ = M(r_)
     gamma_ = _vdot_real_tree(r_, z_).astype(dtype)
-    beta_ = gamma_ / gamma
+    beta_ = gamma_ / safe(gamma)
     p_ = _add(z_, _mul(beta_, p))
-    return x_, r_, gamma_, p_, k + 1
+    keep_old = partial(tree_map, partial(jnp.where, breakdown))
+    return (keep_old(x, x_), keep_old(r, r_), jnp.where(breakdown, gamma, gamma_),
+            keep_old(p, p_), jnp.where(breakdown, -1, k + 1))
 
   r0 = _sub(b, A(x0))
   p0 = z0 = M(r0)
@@ -218,13 +226,28 @@ def _isolve(_isolve_solve, A, b, x0=None, *, tol=1e-5, atol=0.0,
   isolve_solve = partial(
       _isolve_solve, x0=x0, tol=tol, atol=atol, maxiter=maxiter, M=M)
 
+  def scale_tree(scale, tree):
+    return tree_map(lambda leaf: leaf * scale.astype(leaf.dtype), tree)
+
+  def transpose_solve(vecmat, b):
+    # The rhs is the incoming cotangent, which can be arbitrarily small; solve
+    # at unit rhs norm to keep the inner products in floating-point range.
+    nrm = jnp.sqrt(_vdot_real_tree(b, b))
+    inv = 1 / nrm
+    # fall back to the unscaled solve when the norm is 0, inf, or nan
+    scale = jnp.where(jnp.isfinite(inv) & (inv > 0), inv, 1.0)
+    x = _isolve_solve(vecmat, scale_tree(scale, b),
+                      x0=scale_tree(scale, x0), tol=tol, atol=atol * scale,
+                      maxiter=maxiter, M=M)
+    return scale_tree(1 / scale, x)
+
   # real-valued positive-definite linear operators are symmetric
   def real_valued(x):
     return not issubclass(x.dtype.type, np.complexfloating)
   symmetric = all(map(real_valued, tree_leaves(b))) \
     if check_symmetric else False
   x = lax.custom_linear_solve(
-      A, b, solve=isolve_solve, transpose_solve=isolve_solve,
+      A, b, solve=isolve_solve, transpose_solve=transpose_solve,
       symmetric=symmetric)
   info = None
   return x, info
