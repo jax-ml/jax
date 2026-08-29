@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import base64
 import collections.abc
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 import dataclasses
 import enum
+import hashlib
 import io
 import json
 import logging
@@ -31,6 +32,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import sharding_impls
+from jax._src import tree_util
 from jax._src.cloud_tpu_init import is_libtpu_at_least
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import batching
@@ -47,6 +49,13 @@ except ImportError:
 
 _AUTO_COLLECTIVE_ID_LIMIT = 25
 _AUTO_COLLECTIVE_BASE_ID = 7000
+
+
+def _deterministic_hash(val: Any) -> int:
+  """Computes a deterministic 64-bit signed integer hash using SHA-256."""
+  leaves, treedef = tree_util.tree_flatten(val)
+  encoded = repr((treedef, tuple(leaves))).encode("utf-8")
+  return int.from_bytes(hashlib.sha256(encoded).digest()[:8], "big", signed=True)
 
 _extra_dialect_loaders: list[Callable[[ir.Context], None]] = []
 
@@ -642,7 +651,7 @@ def _lower_to_custom_call_config(
     flags: dict[str, bool | int | float] | None,
     allow_input_fusion: Sequence[bool] | None,
     internal_scratch_in_bytes: int | None,
-    collective_id: int | None,
+    collective_id: int | Hashable | None,
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     ir_version: int | None = None,
@@ -707,7 +716,7 @@ def _lowered_to_custom_call_config(
     flags: dict[str, bool | int | float] | None,
     allow_input_fusion: Sequence[bool] | None,
     internal_scratch_in_bytes: int | None,
-    collective_id: int | None,
+    collective_id: int | Hashable | None,
     serialization_format: int | None,
     has_custom_barrier: bool,
     has_communication: bool,
@@ -727,65 +736,75 @@ def _lowered_to_custom_call_config(
     kernel_name: str | None = None,
     ctx: mlir.LoweringRuleContext | None = None,
 ):
-  auto_assign_collective_id = (
-      config.jax_pallas_auto_assign_collective_ids.value in ("yes", "override"))
-  if auto_assign_collective_id:
-    if (config.jax_pallas_auto_assign_collective_ids.value == "yes"
-        and collective_id is not None):
+  config_mode = config.jax_pallas_auto_assign_collective_ids.value
+
+  # Potentially create an auto-key for the collective id.
+  auto_key = None
+  if collective_id is not None and not isinstance(collective_id, int):
+    # collective_id must a hashable type.
+    auto_key = ("tag", _deterministic_hash(collective_id))
+  elif config_mode == "yes":
+    if isinstance(collective_id, int):
+      # collective id is an integer.
       logging.warning(
           f"{collective_id=} in {kernel_name=} should be None when"
           " auto-assigning collective ids."
       )
-    else:  # override mode
-      collective_id = None
-  if has_custom_barrier:
-    if (auto_assign_collective_id and ctx is not None
-        and ctx.module_context.pallas_collective_id_mapping is not None):
-      key = FrozenDict(dict(lowered_module_hash=hash(lowered_module_asm),
-                            skip_device_barrier=skip_device_barrier))
-      if collective_id is None:
-        if key in ctx.module_context.pallas_collective_id_mapping.auto:
-          collective_id = (
-              ctx.module_context.pallas_collective_id_mapping.auto[key]
-          )
-        else:
-          auto_num = len(
-              ctx.module_context.pallas_collective_id_mapping.auto.values())
-          existing_ids = ctx.module_context.pallas_collective_id_mapping.all_ids
-          proposed_ids = range(
-              _AUTO_COLLECTIVE_BASE_ID + auto_num,
-              _AUTO_COLLECTIVE_BASE_ID + auto_num + len(existing_ids) + 1)
-          new_id = next(id for id in proposed_ids if id not in existing_ids)
-          ctx.module_context.pallas_collective_id_mapping.auto[key] = new_id
-          ctx.module_context.pallas_collective_id_mapping.all_ids.add(new_id)
-          collective_id = new_id
-          if (len(ctx.module_context.pallas_collective_id_mapping.auto)
-              > _AUTO_COLLECTIVE_ID_LIMIT):
-            logging.warning(
-                "The number of auto-assigned collective ids for pallas kernels"
-                " is very large, consider manually annotating the kernels with"
-                " collective ids:"
-                f" {ctx.module_context.pallas_collective_id_mapping}"
-            )
-      else:  # Manually assigned collective ID.
-        # We need to check for a conflict between the manual collective id
-        # and the auto-assigned collective ids so far.
-        if (collective_id
-            in ctx.module_context.pallas_collective_id_mapping.auto.values()):
-          raise ValueError(
-              f"The manually assigned {collective_id=} in {kernel_name=}"
-              " conflicts with an existing auto-assigned collective id."
-              " Auto-assignment uses a base collective id of"
-              f" {_AUTO_COLLECTIVE_BASE_ID}. Please use values away from this"
-              " offset."
-          )
-        ctx.module_context.pallas_collective_id_mapping.manual[key] = (
-            collective_id
-        )
-        ctx.module_context.pallas_collective_id_mapping.all_ids.add(
-            collective_id
-        )
+    else:
+      # collective id is missing, so auto-assign one based on the module hash.
+      auto_key = (
+          "module",
+          _deterministic_hash(lowered_module_asm),
+          skip_device_barrier,
+      )
+  elif config_mode == "override":
+    # Override collective_id and auto-assign one based on the module hash.
+    collective_id = None
+    auto_key = (
+        "module",
+        _deterministic_hash(lowered_module_asm),
+        skip_device_barrier,
+    )
 
+  # Now check if the collective_id is specified or auto_key is set.
+  if (
+      (has_custom_barrier or collective_id is not None or auto_key is not None)
+      and ctx is not None
+      and ctx.module_context.pallas_collective_id_mapping is not None
+  ):
+    mapping = ctx.module_context.pallas_collective_id_mapping
+    if auto_key is not None:
+      collective_id, is_new = mapping.get_or_allocate_id(
+          auto_key, base_id=_AUTO_COLLECTIVE_BASE_ID
+      )
+      if is_new and len(mapping.auto) > _AUTO_COLLECTIVE_ID_LIMIT:
+        logging.warning(
+            "The number of auto-assigned collective ids for pallas kernels"
+            " is very large, consider manually annotating the kernels with"
+            " collective ids:"
+            f" {mapping}"
+        )
+    elif isinstance(collective_id, int):
+      manual_key = (
+          "module",
+          _deterministic_hash(lowered_module_asm),
+          skip_device_barrier,
+      )
+      mapping.register_manual_id(
+          manual_key,
+          collective_id,
+          kernel_name=kernel_name,
+          base_id=_AUTO_COLLECTIVE_BASE_ID,
+      )
+
+  # If we didn't resolve the collective_id to an integer by now, raise an error.
+  if not (collective_id is None or isinstance(collective_id, int)):
+    raise ValueError(
+        f"collective_id={collective_id!r} could not be resolved to an integer"
+        f" in {kernel_name=}."
+    )
+
+  if has_custom_barrier:
     if collective_id is None:
       raise ValueError(
           "collective_id has to be specified when using a custom barrier "
@@ -847,8 +866,8 @@ def lower_module_to_custom_call(
     allow_input_fusion: Sequence[bool] | None,
     input_output_aliases: tuple[tuple[int, int], ...],
     internal_scratch_in_bytes: int | None,
-    collective_id: int | None,
-    has_side_effects: bool | TpuSideEffectType,
+    collective_id: int | Hashable | None = None,
+    has_side_effects: bool | TpuSideEffectType = False,
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None,
     disable_bounds_checks: bool = False,
@@ -913,7 +932,7 @@ def as_tpu_kernel(
     allow_input_fusion: Sequence[bool] | None = None,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
     internal_scratch_in_bytes: int | None = None,
-    collective_id: int | None = None,
+    collective_id: int | Hashable | None = None,
     has_side_effects: TpuSideEffectType = TpuSideEffectType.PURE,
     serialization_format: int | None = 1,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
@@ -961,7 +980,7 @@ def lowered_as_tpu_kernel(
     lowered_module: ir.Module,
     out_type: Any,
     *,
-    collective_id: int | None = None,
+    collective_id: int | Hashable | None = None,
     cost_estimate: CostEstimate | None = None,
     needs_hlo_passes: bool = False,
     needs_layout_passes: bool = False,

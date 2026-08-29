@@ -782,11 +782,49 @@ class LoweringCacheKey:
         f"platforms={self.platforms})"
     )
 
+
 @dataclasses.dataclass(frozen=True)
 class CollectiveIdMapping:
   auto: dict[Any, int] = dataclasses.field(default_factory=dict)
   manual: dict[Any, int] = dataclasses.field(default_factory=dict)
   all_ids: set[int] = dataclasses.field(default_factory=set)
+
+  def get_or_allocate_id(self, key: Any, base_id: int) -> tuple[int, bool]:
+    """Retrieves an existing auto-assigned ID or allocates a new one.
+
+    Returns:
+      A tuple of (collective_id, is_new).
+    """
+    if key in self.auto:
+      return self.auto[key], False
+    auto_num = len(self.auto)
+    proposed_ids = range(
+        base_id + auto_num,
+        base_id + auto_num + len(self.all_ids) + 1,
+    )
+    new_id = next(id_ for id_ in proposed_ids if id_ not in self.all_ids)
+    self.auto[key] = new_id
+    self.all_ids.add(new_id)
+    return new_id, True
+
+  def register_manual_id(
+      self,
+      key: Any,
+      collective_id: int,
+      *,
+      kernel_name: str | None = None,
+      base_id: int,
+  ) -> None:
+    """Registers a manually assigned collective_id, verifying no conflict."""
+    if collective_id in self.auto.values():
+      raise ValueError(
+          f"The manually assigned {collective_id=} in {kernel_name=}"
+          " conflicts with an existing auto-assigned collective id."
+          f" Auto-assignment uses a base collective id of {base_id}. Please use"
+          " values away from this offset."
+      )
+    self.manual[key] = collective_id
+    self.all_ids.add(collective_id)
 
 @dataclasses.dataclass(frozen=True)
 class LoweringCacheValue:

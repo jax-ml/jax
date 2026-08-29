@@ -120,10 +120,14 @@ using Triton, switch to the official Triton bindings and `jax_triton`.
 
 * New features
 
-  * Added `jax_pallas_auto_assign_collective_ids` config flag to allow two new
+  * Added `jax_pallas_auto_assign_collective_ids` config flag to allow
     custom semaphore barrier collective IDs modes: ('yes') assigning missing
-    collective IDs automatically or ('override') overridding all collective IDs
-    and assigning them automatically, both based on the serialized kernel hash.
+    collective IDs automatically based on tag or kernel hash, or ('override')
+    overriding collective IDs and assigning them automatically.
+  * {class}`jax.experimental.pallas.tpu.CompilerParams` now accepts any hashable
+    tag in ``collective_id`` (e.g. strings, tuples) in addition to integers,
+    allowing automatic mapping to barrier semaphores without manual integer ID
+    allocation.
 
 * Changes
 
