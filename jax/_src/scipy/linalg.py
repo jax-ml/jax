@@ -2300,10 +2300,7 @@ def companion(a: ArrayLike) -> Array:
     raise ValueError(f"Expected array of length >= 2, got length {a.shape[0]}")
   n = a.shape[0] - 1
   first_row = -a[1:] / a[0]
-  result = jnp.zeros((n, n), dtype=a.dtype)
-  result = result.at[0, :].set(first_row)
-  result = result.at[jnp.arange(1, n), jnp.arange(0, n - 1)].set(1)
-  return result
+  return jnp.eye(n, k=-1, dtype=a.dtype).at[0, :].set(first_row)
 
 
 @jit(static_argnames=("n", "scale",))
@@ -2460,11 +2457,7 @@ def leslie(f: ArrayLike, s: ArrayLike) -> Array:
     raise ValueError(
       f"Expected s to have length {f.shape[0] - 1} (len(f) - 1), "
       f"got length {s.shape[0]}")
-  n = f.shape[0]
-  result = jnp.zeros((n, n), dtype=f.dtype)
-  result = result.at[0, :].set(f)
-  result = result.at[jnp.arange(1, n), jnp.arange(0, n - 1)].set(s)
-  return result
+  return jnp.diag(s, k=-1).at[0, :].set(f)
 
 
 def _solve_sylvester_triangular_scan(R: Array, S: Array, F: Array) -> Array:
