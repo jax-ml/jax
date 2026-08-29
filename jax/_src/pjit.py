@@ -2561,13 +2561,14 @@ def _program_order(fun, *, enforce, exclude_argnames):
   @wraps(fun)
   def wrapped(*args, **kwargs):
     if not enforce:
-      if exclude_argnames is None:
-        return api.jit(fun, inline=api.Inline.JAX_LATE)(*args, **kwargs)
       args_flat, in_tree = tree_flatten((args, kwargs))
-      fun_signature = inspect.signature(fun)
-      ex_argnums, ex_argnames, _, _ = resolve_argnums(
-          fun, fun_signature, None, exclude_argnames, None, None)
-      arg_exclude_mask = donation_vector(ex_argnums, ex_argnames, in_tree)
+      if exclude_argnames is None:
+        arg_exclude_mask = ()
+      else:
+        fun_signature = inspect.signature(fun)
+        ex_argnums, ex_argnames, _, _ = resolve_argnums(
+            fun, fun_signature, None, exclude_argnames, None, None)
+        arg_exclude_mask = donation_vector(ex_argnums, ex_argnames, in_tree)
       traced = api.jit(fun).trace(*args, **kwargs)
       assert in_tree == traced.in_tree
       exclude_mask = (False,) * len(traced._consts) + arg_exclude_mask
@@ -2634,7 +2635,7 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
       cur_inps = map(read, eqn.invars)
       if prev_eqn is not None:
         prev_outs = map(read, prev_eqn.outvars)
-        if eqn.primitive is program_order_p and eqn.params['exclude_mask']:
+        if eqn.primitive is program_order_p and any(eqn.params['exclude_mask']):
           exclude_mask = eqn.params['exclude_mask']
           barrier_inps, excluded_inps = partition_list(exclude_mask, cur_inps)
           if barrier_inps:
