@@ -607,6 +607,21 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     ans = jax.grad(jax.jit(lambda x, n: x ** n))(0., 0)
     self.assertAllClose(ans, 0., check_dtypes=False)
 
+  def testTanhSaturatedSecondReverseDerivative(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40315: with
+    # tanh(u) rounded to exactly -1, outer-reverse second derivatives were -0.0.
+    c = 1e4
+    def f(v):
+      u = -c * v
+      return lax.tanh(u) * u * u
+    expected = -2 * c * c  # f''(v) = 2*c*c*tanh(-c*v) at the saturated point
+    for second_deriv in [jax.grad(jax.grad(f)), jax.grad(jax.jacfwd(f)),
+                         jax.jacfwd(jax.jacfwd(f))]:
+      self.assertAllClose(float(second_deriv(1.0)), expected,
+                          check_dtypes=False)
+      self.assertAllClose(float(jax.jit(second_deriv)(1.0)), expected,
+                          check_dtypes=False)
+
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
   def testPowIntPowerAtZero2(self):
     # https://github.com/jax-ml/jax/issues/17995

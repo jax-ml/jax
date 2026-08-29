@@ -52,6 +52,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Fixed {func}`jax.numpy.intersect1d` and {func}`jax.numpy.setxor1d` with
     ``size=0``, which previously raised a ValueError; they now return empty
     arrays of the natural result dtype.
+  * Fixed a bug where second derivatives of `tanh` with reverse mode as the
+    outermost transformation (e.g. `jax.grad(jax.grad(f))`) could return zero
+    instead of the correct value when `tanh` saturates (its output rounded to
+    exactly -1): the default tanh JVP rule now applies the tangent as a
+    single multiplication, whose transpose no longer loses the surviving
+    terms to rounding. First derivatives of `tanh` may shift in the last bit
+    and no longer have unbounded relative error deep in the negative
+    saturation tail ({jax-issue}`#40315`).
 
 ## JAX 0.11.1 (August 17, 2026)
 
