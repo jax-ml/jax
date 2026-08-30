@@ -3519,7 +3519,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     atol = 2e-2 if out_jax_dtype == jnp.float16 else 5e-6
     np.testing.assert_allclose(z, ref, atol=atol)
 
-  @parameterized.product(cluster=((2, 2, 1), (4, 1, 1), (2, 1, 2)))
+  @parameterized.product(cluster=((2, 2, 1), (2, 1, 2)))
   def test_mma_collective_multidim_cluster(self, cluster):
     in_jax_dtype = jnp.float16
     out_jax_dtype = jnp.float32
@@ -3604,7 +3604,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     ref = x.astype(np.float32) @ y.astype(np.float32)
     np.testing.assert_allclose(z, ref, atol=5e-6)
 
-  def test_raises_error_if_collective_arrival_with_odd_cluster_x_dim(self):
+  def test_raises_error_if_collective_arrival_minormost_cluster_dim_not_2(self):
     def kernel(ctx, out, barrier):
       del out
       tcgen05.commit_arrive(barrier, collective=True, ctx=ctx)
@@ -3612,8 +3612,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     out_shape = jax.ShapeDtypeStruct((128,), jnp.int32)
     with self.assertRaisesRegex(
         ValueError,
-        "Collective arrivals require an even cluster size along the x"
-        " dimension",
+        "Collective arrivals require the minormost cluster dimension to have"
+        " size 2",
     ):
       mgpu.as_gpu_kernel(
           kernel, (1, 2, 1), (128, 1, 1), (), out_shape, mgpu.Barrier(1), cluster=(1, 2, 1)

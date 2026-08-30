@@ -7207,6 +7207,77 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     atol, rtol = (1e-2, 1e-2) if is_fp8 else (0, 4e-3)
     np.testing.assert_allclose(result, expected, atol=atol, rtol=rtol)
 
+  @parameterized.product(
+      cluster=(((2, 2), ("y", "x")), ((2, 1, 2), ("z", "y", "x")))
+  )
+  def test_collective_matmul_multidim_cluster(self, cluster):
+    cluster_shape, cluster_names = cluster
+    m, n, k = 128, 128, 128
+    swizzle = 128
+    dtype = jnp.float16
+    block_lhs_shape = (m // 2, k)
+    block_rhs_shape = (k, n // 2)
+    block_acc_shape = (m // 2, n)
+    a_transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
+    b_transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
+    pair_axis = cluster_names[0]
+
+    def kernel(a_gmem, b_gmem, out_gmem, a_smem, b_smem, acc_tmem,
+               tma_barrier, mma_barrier, cluster_barrier):
+      pair_idx = lax.axis_index(pair_axis)
+      cluster_idx = lax.axis_index("x")
+      slice_lhs = pl.ds(cluster_idx * block_lhs_shape[0], block_lhs_shape[0])
+      slice_rhs = pl.ds(cluster_idx * block_rhs_shape[1], block_rhs_shape[1])
+
+      plgpu.copy_gmem_to_smem(
+          a_gmem.at[pair_idx, slice_lhs, :], a_smem, tma_barrier
+      )
+      plgpu.barrier_wait(tma_barrier)
+      plgpu.copy_gmem_to_smem(
+          b_gmem.at[pair_idx, :, slice_rhs], b_smem, tma_barrier
+      )
+      plgpu.barrier_wait(tma_barrier)
+
+      plgpu.barrier_arrive(cluster_barrier)
+      plgpu.barrier_wait(cluster_barrier)
+
+      plgpu.tcgen05_mma(
+          acc_tmem,
+          a_smem,
+          b_smem,
+          mma_barrier,
+          accumulate=False,
+          collective_axis="x",
+      )
+      plgpu.barrier_wait(mma_barrier)
+      out_gmem[pair_idx, slice_lhs, :] = plgpu.async_load_tmem(
+          acc_tmem, layout=plgpu.Layout.TCGEN05_M64_COLLECTIVE(n)
+      ).astype(dtype)
+
+    scratch_types = [
+        plgpu.SMEM(block_lhs_shape, dtype, transforms=a_transforms),
+        plgpu.SMEM(block_rhs_shape, dtype, transforms=b_transforms),
+        plgpu.TMEM(block_acc_shape, jnp.float32, collective=True),
+        plgpu.Barrier(),
+        plgpu.Barrier(orders_tensor_core=True),
+        plgpu.ClusterBarrier(collective_axes=("x",)),
+    ]
+    f = self.kernel(
+        kernel,
+        out_type=jax.ShapeDtypeStruct((2, m, n), dtype),
+        cluster=cluster_shape,
+        cluster_names=cluster_names,
+        scratch_types=scratch_types,
+    )
+    # The two pairs compute GEMMs on different data, so an MMA that reads SMEM
+    # from a CTA outside its own pair, or a commit that signals another pair's
+    # barriers, fails the output comparison instead of passing by accident.
+    x = jax.random.uniform(jax.random.key(0), shape=(2, m, k), dtype=dtype)
+    y = jax.random.uniform(jax.random.key(1), shape=(2, k, n), dtype=dtype)
+    result = f(x, y)
+    expected = x.astype(jnp.float32) @ y.astype(jnp.float32)
+    np.testing.assert_allclose(result, expected, atol=0, rtol=4e-3)
+
   @parameterized.parameters(
       (128, jnp.float16)
   )

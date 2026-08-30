@@ -854,10 +854,10 @@ def commit_arrive(
   if collective:
     if ctx is None:
       raise ValueError("ctx must be provided for collective barriers")
-    if ctx.cluster_size[0] % 2:
+    if ctx.cluster_size[0] != 2:
       raise ValueError(
-          "Collective arrivals require an even cluster size along the x"
-          f" dimension, got: {ctx.cluster_size}"
+          "Collective arrivals require the minormost cluster dimension to"
+          f" have size 2, got: {ctx.cluster_size}"
       )
     i16 = ir.IntegerType.get_signless(16)
     block_idx = arith.index_castui(i16, utils.cluster_idx())
