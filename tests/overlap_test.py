@@ -408,6 +408,65 @@ class OverlapTest(jtu.JaxTestCase):
       def _(x):
         return x
 
+  def test_program_order_exclude_argnames_none(self):
+    x = jnp.arange(8.)
+    c = jnp.arange(8.)
+
+    @jax.jit
+    @program_order(enforce=True)
+    def g(x):
+      @program_order(enforce=False)
+      def op1(x):
+        return x + c
+
+      @program_order(enforce=False)
+      def op2(y):
+        return y * c
+
+      y = op1(x)
+      return op2(y)
+
+    out = g(x)
+    self.assertArraysEqual(out, (x + c) * c)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_program_order_true_false_true_nest(self, mesh):
+    x = jax.device_put(jnp.arange(8.0), P('x'))
+    w = jax.device_put(jnp.arange(8.0) * 2.0, P('x'))
+
+    @jax.jit
+    @program_order(enforce=True)
+    def f(x, w):
+      x = jnp.exp(x)
+      w = jnp.exp(w)
+
+      @program_order(enforce=False)
+      def op1(x):
+        x = jnp.sin(x)
+        x = jnp.cos(x)
+        @program_order(enforce=True)
+        def inner1(x):
+          x1 = x + 1.0
+          return x1 * 2.0
+        return inner1(x)
+      y = op1(x)
+
+      @program_order(enforce=False, exclude_argnames='w')
+      def op2(w):
+        @program_order(enforce=True)
+        def inner2(w):
+          y1 = y * w
+          return y1 + 3.0
+        return inner2(w)
+      return op2(w)
+
+    jaxpr = f.trace(x, w).jaxpr
+    self.assertIn('program_order', str(jaxpr))
+    lowered_text = f.lower(x, w).as_text()
+    self.assertNotIn('program_order', lowered_text)
+
+    f(x, w)  # doesn't crash
+
 
 class AsyncCollectivesTest(jtu.JaxTestCase):
 

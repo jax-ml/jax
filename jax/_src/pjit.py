@@ -2563,12 +2563,13 @@ def _program_order(fun, *, enforce, exclude_argnames):
     if not enforce:
       args_flat, in_tree = tree_flatten((args, kwargs))
       if exclude_argnames is None:
-        arg_exclude_mask = ()
+        arg_exclude_mask = (False,) * len(args_flat)
       else:
         fun_signature = inspect.signature(fun)
         ex_argnums, ex_argnames, _, _ = resolve_argnums(
             fun, fun_signature, None, exclude_argnames, None, None)
         arg_exclude_mask = donation_vector(ex_argnums, ex_argnames, in_tree)
+      assert len(args_flat) == len(arg_exclude_mask)
       traced = api.jit(fun).trace(*args, **kwargs)
       assert in_tree == traced.in_tree
       exclude_mask = (False,) * len(traced._consts) + arg_exclude_mask
@@ -2635,7 +2636,7 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
       cur_inps = map(read, eqn.invars)
       if prev_eqn is not None:
         prev_outs = map(read, prev_eqn.outvars)
-        if eqn.primitive is program_order_p and any(eqn.params['exclude_mask']):
+        if eqn.primitive is program_order_p:
           exclude_mask = eqn.params['exclude_mask']
           barrier_inps, excluded_inps = partition_list(exclude_mask, cur_inps)
           if barrier_inps:
