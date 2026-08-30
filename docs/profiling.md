@@ -258,7 +258,7 @@ You can also use the following tools:
 - [Memory Profile](https://openxla.org/xprof/memory_profile)
 - [Memory Viewer](https://openxla.org/xprof/memory_viewer)
 - [HLO Op Profile](https://openxla.org/xprof/hlo_op_profile)
-- [Roofline Model](https://openxla.org/xprof/roofline_analysis)<br /><br />
+- [Roofline Model](https://openxla.org/xprof/roofline_model)<br /><br />
 
 ### Adding custom trace events
 
