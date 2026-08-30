@@ -878,7 +878,10 @@ class DeviceIdType(enum.Enum):
 
 
 def check_sem_avals(
-    sem_aval, sem_transforms_avals, name, allowed_semaphore_types=None
+    sem_aval: jax_core.AbstractValue,
+    sem_transforms_avals: Sequence[state_types.Transform],
+    name: str,
+    allowed_semaphore_types=None,
 ):
   if allowed_semaphore_types is None:
     allowed_semaphore_types = {
@@ -889,12 +892,16 @@ def check_sem_avals(
     }
   if not isinstance(sem_aval, state.AbstractRef):
     raise ValueError(f"Cannot {name} on a non-semaphore Ref: {sem_aval}")
-  sem_shape = sem_aval.shape
-  if sem_transforms_avals:
-    sem_shape = sem_transforms_avals[-1].get_indexer_shape()
-  if sem_shape:
-    raise ValueError(f"Cannot {name} on a non-()-shaped semaphore: {sem_shape}")
-  sem_dtype = sem_aval.dtype
+  # Transform the ref aval to the effective aval in case we have cast
+  # the semaphore from a u32/i32 array.
+  effective_aval = state_types.transform_type(sem_transforms_avals, sem_aval)
+  if not isinstance(effective_aval, (state.AbstractRef, jax_core.ShapedArray)):
+    raise ValueError(f"Cannot {name} on a non-array/ref: {effective_aval}")
+  if effective_aval.shape:
+    raise ValueError(
+        f"Cannot {name} on a non-()-shaped semaphore: {effective_aval.shape}"
+    )
+  sem_dtype = effective_aval.dtype
   if not any(
       jnp.issubdtype(sem_dtype, sem_type)
       for sem_type in allowed_semaphore_types
