@@ -4289,6 +4289,80 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     expected = np.concatenate(rolled_splits, axis=0)
     np.testing.assert_array_equal(out, expected)
 
+  def _test_strided_load(self, shape, slice_sizes, strides, dtype, starts=None):
+    if starts is None:
+      starts = (0,) * len(slice_sizes)
+    if self.INTERPRET and 0 in strides:
+      self.skipTest('Interpret mode does not support stride 0.')
+    if dtype != jnp.float32 and not jtu.is_libtpu_at_least('0.0.48'):
+      self.skipTest('Needs a newer libtpu')
+    for start, sz, st, dim in zip(starts, slice_sizes, strides, shape[:-1]):
+      max_idx = start + (sz - 1) * st if st > 0 else start
+      if max_idx >= dim:
+        self.skipTest('Out-of-bounds stride/offset for slice size')
+
+    x = jax.random.randint(jax.random.key(0), shape, -128, 127).astype(dtype)
+
+    def kernel(x_ref, o_ref):
+      idx = tuple(
+          pl.ds(start, sz, stride=st)
+          for start, sz, st in zip(starts, slice_sizes, strides)
+      ) + (slice(None),)
+      o_ref[...] = x_ref[idx]
+
+    out_shape = (*slice_sizes, shape[-1])
+    f = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(out_shape, dtype)
+    )
+    out = jax.jit(f)(x)
+    np_indices = tuple(
+        start + np.arange(sz) * st
+        for start, sz, st in zip(starts, slice_sizes, strides)
+    ) + (np.arange(shape[-1]),)
+    expected = x[np.ix_(*np_indices)]
+    np.testing.assert_array_equal(out, expected)
+
+  @parameterized.product(
+      shape=((24, 128), (64, 128)),
+      slice_size=(4, 8, 16),
+      start=(0, 1, 2, 3),
+      stride=(0, 1, 2, 3, 4, 5, 6, 7, 8),
+      dtype=(jnp.float32, jnp.bfloat16, jnp.int8),
+  )
+  def test_strided_load_2d(self, shape, slice_size, start, stride, dtype):
+    self._test_strided_load(
+        shape,
+        slice_sizes=(slice_size,),
+        strides=(stride,),
+        dtype=dtype,
+        starts=(start,),
+    )
+
+  @parameterized.product(
+      shape=((6, 64, 128),),
+      slice_size=(4, 8, 16),
+      starts=((0, 0), (1, 2), (2, 3)),
+      strides=(
+          (0, 0),
+          (0, 2),
+          (1, 0),
+          (1, 2),
+          (2, 0),
+          (2, 1),
+          (2, 3),
+          (3, 2),
+      ),
+      dtype=(jnp.float32, jnp.bfloat16, jnp.int8),
+  )
+  def test_strided_load_3d(self, shape, slice_size, starts, strides, dtype):
+    self._test_strided_load(
+        shape,
+        slice_sizes=(2, slice_size),
+        strides=strides,
+        dtype=dtype,
+        starts=starts,
+    )
+
   def test_retiling1(self):
     x = np.arange(1024, dtype=jnp.bfloat16).reshape(1024)
 
