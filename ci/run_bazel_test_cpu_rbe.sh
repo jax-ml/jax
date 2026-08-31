@@ -75,6 +75,7 @@ else
 fi
 
 test_strategy=""
+run_tests_locally=0
 # When running on Mac or Linux Aarch64, we only build the test targets and
 # not run them. These platforms do not have native RBE support so we
 # RBE cross-compile them on remote Linux x86 machines. As the tests still
@@ -85,9 +86,16 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
     rbe_config=rbe_cross_compile_${os}_${arch}
     if [[ "$JAXCI_BAZEL_CPU_RBE_MODE" == 'test' ]]; then
         test_strategy="--strategy=TestRunner=local"
+        run_tests_locally=1
     fi
 else
     rbe_config=rbe_${os}_${arch}
+fi
+
+portserver_test_env=""
+if [[ "$run_tests_locally" == 1 ]]; then
+  PYTHON_BIN="$JAXCI_PYTHON" source ci/utilities/setup_portserver.sh
+  portserver_test_env="--test_env=PORTSERVER_ADDRESS=@unittest-portserver"
 fi
 
 TEST_ARTIFACTS_DIR="test-artifacts"
@@ -108,6 +116,7 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAX \
     $test_strategy \
+    $portserver_test_env \
     --test_env=JAX_NUM_GENERATED_CASES=25 \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
     --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \

@@ -19,6 +19,7 @@ import os
 import pathlib
 import re
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -131,6 +132,40 @@ _DUMP_HLO = absl.flags.DEFINE_bool(
 expect_failures_with_regex = None
 
 
+def _get_port_from_port_server(portserver_address):
+  """Requests a port from a portserver without requiring portpicker."""
+  if portserver_address.startswith("@"):
+    portserver_address = "\0" + portserver_address[1:]
+
+  with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+    sock.connect(portserver_address)
+    sock.sendall(f"{os.getpid()}\n".encode("ascii"))
+    response = sock.recv(32)
+
+  try:
+    port = int(response.splitlines()[0])
+  except (IndexError, ValueError) as err:
+    raise RuntimeError("Portserver returned an invalid response") from err
+  if port == 0:
+    raise RuntimeError("Portserver could not allocate a port")
+  return port
+
+
+def _pick_unused_port():
+  """Returns a port reserved for this process when a portserver is available."""
+  portserver_address = os.environ.get("PORTSERVER_ADDRESS")
+  if portpicker is not None:
+    return portpicker.pick_unused_port(portserver_address=portserver_address)
+  if portserver_address:
+    return _get_port_from_port_server(portserver_address)
+
+  # There is a small race between closing this socket and the caller binding
+  # the port. CI uses a portserver to avoid that race when tests run locally.
+  with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("localhost", 0))
+    return sock.getsockname()[1]
+
+
 def main(shard_main=None):
   config.config_with_absl()
   app.run(functools.partial(_main, shard_main=shard_main))
@@ -235,14 +270,7 @@ def _main(argv, shard_main):
   else:
     raise ValueError(f"Invalid number of TPU chips {num_tpu_chips}")
 
-  if portpicker is None:
-    slicebuilder_ports = [10000 + i for i in range(num_processes)]
-  else:
-    portserver_address = os.environ.get("PORTSERVER_ADDRESS")
-    slicebuilder_ports = [
-        portpicker.pick_unused_port(portserver_address=portserver_address)
-        for _ in range(num_processes)
-    ]
+  slicebuilder_ports = [_pick_unused_port() for _ in range(num_processes)]
   slicebuilder_addresses = ",".join(
       f"localhost:{port}" for port in slicebuilder_ports
   )
@@ -261,13 +289,7 @@ def _main(argv, shard_main):
         )
         num_processes = local_device_count // gpus_per_process
 
-  if portpicker is None:
-    jax_port = 9876
-  else:
-    # TODO(emilyaf): Use a port server if there are flaky port collisions due
-    # to pick_unused_port() racing among tests.
-    portserver_address = os.environ.get("PORTSERVER_ADDRESS")
-    jax_port = portpicker.pick_unused_port(portserver_address=portserver_address)
+  jax_port = _pick_unused_port()
   subprocesses = []
   output_filenames = []
   output_files = []
@@ -322,13 +344,7 @@ def _main(argv, shard_main):
       )
 
     if _ENABLE_MEGASCALE.value or cpu_collectives_impl == "megascale":
-      if portpicker is None:
-        megascale_port = 9877
-      else:
-        portserver_address = os.environ.get("PORTSERVER_ADDRESS")
-        megascale_port = portpicker.pick_unused_port(
-            portserver_address=portserver_address
-        )
+      megascale_port = _pick_unused_port()
       if megascale_coordinator_port is None:
         megascale_coordinator_port = megascale_port
       args += [
