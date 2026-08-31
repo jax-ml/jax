@@ -225,6 +225,47 @@ class TransferGuardTest(jtu.JaxTestCase):
           # will occur.
           func()
 
+  @parameterized.named_parameters(
+      ("device_to_host", jax.transfer_guard_device_to_host),
+      ("all", jax.transfer_guard),
+  )
+  def test_disallow_allows_explicit_cross_client_device_put(
+      self, jax_transfer_guard):
+    # Regression test for https://github.com/jax-ml/jax/issues/40285: the
+    # device-to-host fetch inside a cross-client device_put (e.g. GPU -> the
+    # CPU client) must count as part of the explicit transfer.
+    if jax.default_backend() == "cpu":
+      self.skipTest("Test requires a non-CPU backend and the CPU client.")
+    cpu_device = jax.devices("cpu")[0]
+    with jax.transfer_guard_host_to_device("allow"):
+      # Must stay cold: a cached host value would make the put incur no
+      # transfer.
+      x = jnp.arange(8, dtype=jnp.float32)
+    with jax_transfer_guard("disallow"):
+      with self.assertAllows("explicit cross-client device_put"):
+        y = jax.device_put(x, device=cpu_device)
+        y.block_until_ready()
+    self.assertEqual(list(y.devices()), [cpu_device])
+    self.assertArraysEqual(y, np.arange(8, dtype=np.float32))
+
+  @parameterized.named_parameters(
+      ("device_to_host", jax.transfer_guard_device_to_host),
+      ("all", jax.transfer_guard),
+  )
+  def test_disallow_explicit_rejects_cross_client_device_put(
+      self, jax_transfer_guard):
+    # "disallow_explicit" must keep rejecting the cross-client put. Only the
+    # device_to_host parameterization reaches the device-to-host leg; the
+    # blanket guard rejects at the device-to-device check first.
+    if jax.default_backend() == "cpu":
+      self.skipTest("Test requires a non-CPU backend and the CPU client.")
+    cpu_device = jax.devices("cpu")[0]
+    with jax.transfer_guard_host_to_device("allow"):
+      x = jnp.arange(8, dtype=jnp.float32)
+    with jax_transfer_guard("disallow_explicit"):
+      with self.assertRaisesRegex(Exception, "Disallowed"):
+        jax.device_put(x, device=cpu_device)
+
   @parameterized.named_parameters(*_COMMON_TEST_PARAMETERS)
   def test_log_explicit(self, func_generator, jax_transfer_guard):
     for func_name, _, func in func_generator():

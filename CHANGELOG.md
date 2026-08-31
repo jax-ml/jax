@@ -52,6 +52,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Fixed {func}`jax.numpy.intersect1d` and {func}`jax.numpy.setxor1d` with
     ``size=0``, which previously raised a ValueError; they now return empty
     arrays of the natural result dtype.
+  * Fixed a bug where an explicit {func}`jax.device_put` onto a device of
+    another client (e.g. from GPU onto a device of the CPU client) was
+    rejected under `jax.transfer_guard("disallow")` unless the array's value
+    was already cached on the host: the device-to-host leg of the
+    cross-client copy was misclassified as an implicit transfer
+    ({jax-issue}`#40285`).
 
 ## JAX 0.11.1 (August 17, 2026)
 
