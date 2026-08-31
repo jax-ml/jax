@@ -1779,45 +1779,19 @@ class FragmentedArray:
 
   def max(self, other) -> FragmentedArray:
     if isinstance(self.mlir_dtype, ir.FloatType):
-      maximumf = arith.maximumf
-      if isinstance(self.mlir_dtype, ir.F32Type):
-        maximumf = self._lift_fast_instr("max.NaN.f32")
-      elif isinstance(self.mlir_dtype, ir.F16Type):
-        maximumf = self._lift_fast_packed_instr("max.NaN.f16x2", "max.NaN.f16")
-      elif isinstance(self.mlir_dtype, ir.BF16Type):
-        maximumf = self._lift_fast_packed_instr("max.NaN.bf16x2", "max.NaN.bf16")
-      return self._pointwise(maximumf, other)
+      return self._pointwise(arith.maximumf, other)
     elif isinstance(self.mlir_dtype, ir.IntegerType):
-      width = utils.bitwidth(self.mlir_dtype)
-      if width == 16:
-        sign = "s" if self.is_signed else "u"
-        instr = self._lift_fast_packed_instr(f"max.{sign}16x2", f"max.{sign}16")
-        return self._pointwise(instr, other)
-      return self._pointwise(
-          arith.maxsi if self.is_signed else arith.maxui, other
-      )
+      op = arith.maxsi if self.is_signed else arith.maxui
+      return self._pointwise(op, other)
     else:
       raise NotImplementedError
 
   def min(self, other) -> FragmentedArray:
     if isinstance(self.mlir_dtype, ir.FloatType):
-      minimumf = arith.minimumf
-      if isinstance(self.mlir_dtype, ir.F32Type):
-        minimumf = self._lift_fast_instr("min.NaN.f32")
-      elif isinstance(self.mlir_dtype, ir.F16Type):
-        minimumf = self._lift_fast_packed_instr("min.NaN.f16x2", "min.NaN.f16")
-      elif isinstance(self.mlir_dtype, ir.BF16Type):
-        minimumf = self._lift_fast_packed_instr("min.NaN.bf16x2", "min.NaN.bf16")
-      return self._pointwise(minimumf, other)
+      return self._pointwise(arith.minimumf, other)
     elif isinstance(self.mlir_dtype, ir.IntegerType):
-      width = utils.bitwidth(self.mlir_dtype)
-      if width == 16:
-        sign = "s" if self.is_signed else "u"
-        instr = self._lift_fast_packed_instr(f"min.{sign}16x2", f"min.{sign}16")
-        return self._pointwise(instr, other)
-      return self._pointwise(
-          arith.minsi if self.is_signed else arith.minui, other
-      )
+      op = arith.minsi if self.is_signed else arith.minui
+      return self._pointwise(op, other)
     else:
       raise NotImplementedError
 
@@ -2919,6 +2893,7 @@ class FragmentedArray:
     # TODO(apaszke): For associative reductions that reduce both inside and
     # across warps, we could just have everyone use SMEM atomics instead of
     # performing an explicit warp reduction in registers.
+    is_sm100 = lambda: utils.get_arch().major == 10
     if isinstance(op, str):
       match op:
         case "add":
@@ -2935,16 +2910,10 @@ class FragmentedArray:
           else:
             raise NotImplementedError(self.mlir_dtype)
         case "max":
-          if isinstance(self.mlir_dtype, ir.F32Type):
-            op = self._lift_fast_instr("max.NaN.f32")
-            if utils.get_arch().major == 10:
-              redux_op = functools.partial(utils.redux, kind=ReductionKind.FMAX)
-          elif isinstance(self.mlir_dtype, ir.F16Type):
-            op = self._lift_fast_packed_instr("max.NaN.f16x2", "max.NaN.f16")
-          elif isinstance(self.mlir_dtype, ir.BF16Type):
-            op = self._lift_fast_packed_instr("max.NaN.bf16x2", "max.NaN.bf16")
-          elif isinstance(self.mlir_dtype, ir.FloatType):
+          if isinstance(self.mlir_dtype, ir.FloatType):
             op = arith.maximumf
+            if isinstance(self.mlir_dtype, ir.F32Type) and is_sm100():
+              redux_op = functools.partial(utils.redux, kind=ReductionKind.FMAX)
           elif isinstance(self.mlir_dtype, ir.IntegerType):
             op = arith.maxsi if self.is_signed else arith.maxui
             if utils.bitwidth(self.mlir_dtype) == 32:
@@ -2954,16 +2923,10 @@ class FragmentedArray:
             raise NotImplementedError(self.mlir_dtype)
           splat_op = lambda x: x
         case "min":
-          if isinstance(self.mlir_dtype, ir.F32Type):
-            op = self._lift_fast_instr("min.NaN.f32")
-            if utils.get_arch().major == 10:
-              redux_op = functools.partial(utils.redux, kind=ReductionKind.FMIN)
-          elif isinstance(self.mlir_dtype, ir.F16Type):
-            op = self._lift_fast_packed_instr("min.NaN.f16x2", "min.NaN.f16")
-          elif isinstance(self.mlir_dtype, ir.BF16Type):
-            op = self._lift_fast_packed_instr("min.NaN.bf16x2", "min.NaN.bf16")
-          elif isinstance(self.mlir_dtype, ir.FloatType):
+          if isinstance(self.mlir_dtype, ir.FloatType):
             op = arith.minimumf
+            if isinstance(self.mlir_dtype, ir.F32Type) and is_sm100():
+              redux_op = functools.partial(utils.redux, kind=ReductionKind.FMIN)
           elif isinstance(self.mlir_dtype, ir.IntegerType):
             op = arith.minsi if self.is_signed else arith.minui
           else:
