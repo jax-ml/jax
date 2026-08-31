@@ -213,6 +213,39 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     x, _ = jax.scipy.sparse.linalg.bicgstab(lambda x: x, 1.0)
     self.assertTrue(dtypes.is_weakly_typed(x))
 
+  def _small_scale_cg_system(self):
+    # SPD system at 1e12 scale with a Jacobi preconditioner: a rhs of norm
+    # ~1e-18 underflows the preconditioned float32 inner products to zero.
+    n = 8
+    base = 2.0 * np.eye(n) + 0.25 * (np.eye(n, k=1) + np.eye(n, k=-1))
+    a64 = 1e12 * base
+    A = jnp.asarray(a64.astype(np.float32))
+    inv_diag = jnp.asarray((1.0 / np.diag(a64)).astype(np.float32))
+    return a64, A, lambda r: inv_diag * r
+
+  def test_cg_breakdown_returns_finite(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40254: an
+    # underflowing solve must return the last iterate, not NaN from 0/0.
+    _, A, M = self._small_scale_cg_system()
+    b = jnp.full((A.shape[0],), 1e-18, dtype=jnp.float32)
+    x, _ = jax.scipy.sparse.linalg.cg(A, b, M=M, maxiter=100)
+    self.assertTrue(jnp.isfinite(x).all())
+
+  def test_cg_grad_small_cotangent(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40254: the
+    # transpose solve runs at unit rhs norm so tiny cotangents stay finite.
+    a64, A, M = self._small_scale_cg_system()
+    b = jnp.ones((A.shape[0],), dtype=jnp.float32)
+
+    def loss(b):
+      sol, _ = jax.scipy.sparse.linalg.cg(A, b, M=M, maxiter=100)
+      return jnp.float32(1e-18) * jnp.sum(sol)
+
+    actual = jax.jit(jax.grad(loss))(b)
+    expected = 1e-18 * np.linalg.solve(a64.T, np.ones(a64.shape[0]))
+    self.assertTrue(jnp.isfinite(actual).all())
+    self.assertAllClose(np.asarray(actual, np.float64), expected, rtol=1e-4)
+
   # BICGSTAB
   @jtu.sample_product(
     shape=[(5, 5)],

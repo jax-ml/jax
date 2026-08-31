@@ -52,6 +52,16 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Fixed {func}`jax.numpy.intersect1d` and {func}`jax.numpy.setxor1d` with
     ``size=0``, which previously raised a ValueError; they now return empty
     arrays of the natural result dtype.
+  * Fixed a bug where reverse-mode derivatives of
+    {func}`jax.scipy.sparse.linalg.cg` and
+    {func}`jax.scipy.sparse.linalg.bicgstab` could silently return all-NaN
+    results when the incoming cotangent's norm is many orders of magnitude
+    below the primal right-hand side: the transpose solve is now performed at
+    unit right-hand-side norm, and CG exits with the last iterate reached
+    instead of dividing by an inner product that underflowed to zero
+    ({jax-issue}`#40254`). As part of this, CG now stops early if an inner
+    product that is positive for symmetric positive definite inputs turns out
+    non-positive.
 
 ## JAX 0.11.1 (August 17, 2026)
 
