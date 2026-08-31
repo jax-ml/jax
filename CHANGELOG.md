@@ -52,6 +52,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Fixed {func}`jax.numpy.intersect1d` and {func}`jax.numpy.setxor1d` with
     ``size=0``, which previously raised a ValueError; they now return empty
     arrays of the natural result dtype.
+  * Fixed a bug where lowering the same jitted function could emit different
+    StableHLO depending on the process's earlier trace history: dead code
+    elimination now returns the input jaxpr unchanged when it eliminates
+    nothing, so the lowering-time deduplication of identical subcomputations
+    (which is keyed on jaxpr object identity) no longer depends on internal
+    cache eviction state for subcomputations that DCE leaves unchanged
+    ({jax-issue}`#40312`). Subcomputations that DCE genuinely rewrites can
+    still deduplicate differently depending on cache state.
 
 ## JAX 0.11.1 (August 17, 2026)
 
