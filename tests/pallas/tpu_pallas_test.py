@@ -6390,5 +6390,225 @@ class PallasTPUCollectiveIdTest(ptu.PallasTPUTest):
     self.assertEqual(int(matches[0]), 7000)
     self.assertEqual(int(matches[1]), 7001)
 
+  def test_sequential_collectives_auto_allocated_ids_same_tag_different_kernels(
+      self,
+  ):
+    if self.INTERPRET:
+      self.skipTest('Compilation-only test')
+
+    mesh = pltpu.TensorCoreMesh(axis_name='tc', num_cores=1)
+
+    def kernel1(x_ref, y_ref):
+      sem = pltpu.get_barrier_semaphore()
+      pl.semaphore_signal(sem)
+      pltpu.sync_copy(x_ref, y_ref)
+
+    def kernel2(x_ref, y_ref):
+      sem = pltpu.get_barrier_semaphore()
+      pl.semaphore_signal(sem)
+      pl.delay(10)
+      pltpu.sync_copy(x_ref, y_ref)
+
+    @jax.jit
+    def run_sequential_collectives(x):
+      out1 = pl.kernel(
+          kernel1,
+          mesh=mesh,
+          out_type=pltpu.VMEM(x.shape, x.dtype),
+          compiler_params=pltpu.CompilerParams(collective_id='shared_barrier'),
+      )(x)
+      out2 = pl.kernel(
+          kernel2,
+          mesh=mesh,
+          out_type=pltpu.VMEM(x.shape, x.dtype),
+          compiler_params=pltpu.CompilerParams(collective_id='shared_barrier'),
+      )(x)
+      return out1, out2
+
+    lowered = run_sequential_collectives.lower(
+        jnp.zeros((8, 128), jnp.float32)
+    )
+    mlir_str = str(lowered.compiler_ir())
+
+    matches = re.findall(
+        r'(?:\\22|\\\"|\")collective_id(?:\\22|\\\"|\"):\s*(\d+)', mlir_str
+    )
+    self.assertLen(matches, 2)
+    self.assertEqual(int(matches[0]), 7000)
+    self.assertEqual(int(matches[1]), 7000)
+
+  def test_sequential_collectives_auto_allocated_ids_different_tags(self):
+    if self.INTERPRET:
+      self.skipTest('Compilation-only test')
+
+    mesh = pltpu.TensorCoreMesh(axis_name='tc', num_cores=1)
+
+    def kernel(x_ref, y_ref):
+      sem = pltpu.get_barrier_semaphore()
+      pl.semaphore_signal(sem)
+      pltpu.sync_copy(x_ref, y_ref)
+
+    @jax.jit
+    def run_sequential_collectives(x):
+      out1 = pl.kernel(
+          kernel,
+          mesh=mesh,
+          out_type=pltpu.VMEM(x.shape, x.dtype),
+          compiler_params=pltpu.CompilerParams(
+              collective_id=('dense_a2a', 'x', 0)
+          ),
+      )(x)
+      out2 = pl.kernel(
+          kernel,
+          mesh=mesh,
+          out_type=pltpu.VMEM(x.shape, x.dtype),
+          compiler_params=pltpu.CompilerParams(
+              collective_id=('dense_a2a', 'y', 1)
+          ),
+      )(x)
+      return out1, out2
+
+    lowered = run_sequential_collectives.lower(
+        jnp.zeros((8, 128), jnp.float32)
+    )
+    mlir_str = str(lowered.compiler_ir())
+
+    matches = re.findall(
+        r'(?:\\22|\\\"|\")collective_id(?:\\22|\\\"|\"):\s*(\d+)', mlir_str
+    )
+    self.assertLen(matches, 2)
+    self.assertEqual(int(matches[0]), 7000)
+    self.assertEqual(int(matches[1]), 7001)
+
+  def test_collective_id_hashable_tag(self):
+    if self.INTERPRET:
+      self.skipTest('Compilation-only test')
+
+    mesh = pltpu.TensorCoreMesh(axis_name='tc', num_cores=1)
+    params = pltpu.CompilerParams(collective_id=('dense_a2a', 0))
+    self.assertEqual(params.collective_id, ('dense_a2a', 0))
+
+    def kernel(x_ref, y_ref):
+      sem = pltpu.get_barrier_semaphore()
+      pl.semaphore_signal(sem)
+      pltpu.sync_copy(x_ref, y_ref)
+
+    @jax.jit
+    def run_kernel(x):
+      return pl.kernel(
+          kernel,
+          mesh=mesh,
+          out_type=pltpu.VMEM(x.shape, x.dtype),
+          compiler_params=params,
+      )(x)
+
+    lowered = run_kernel.lower(jnp.zeros((8, 128), jnp.float32))
+    mlir_str = str(lowered.compiler_ir())
+
+    matches = re.findall(
+        r'(?:\\22|\\\"|\")collective_id(?:\\22|\\\"|\"):\s*(\d+)', mlir_str
+    )
+    self.assertLen(matches, 1)
+    self.assertEqual(int(matches[0]), 7000)
+
+  def test_manual_id_conflict_with_tag(self):
+    if self.INTERPRET:
+      self.skipTest('Compilation-only test')
+
+    mesh = pltpu.TensorCoreMesh(axis_name='tc', num_cores=1)
+
+    def kernel1(x_ref, y_ref):
+      sem = pltpu.get_barrier_semaphore()
+      pl.semaphore_signal(sem)
+      pltpu.sync_copy(x_ref, y_ref)
+
+    def kernel2(x_ref, y_ref):
+      sem = pltpu.get_barrier_semaphore()
+      pl.semaphore_signal(sem)
+      pl.delay(10)
+      pltpu.sync_copy(x_ref, y_ref)
+
+    @jax.jit
+    def run_conflicting_collectives(x):
+      out1 = pl.kernel(
+          kernel1,
+          mesh=mesh,
+          out_type=pltpu.VMEM(x.shape, x.dtype),
+          compiler_params=pltpu.CompilerParams(collective_id='tag_1'),
+      )(x)
+      # 7000 will conflict with the auto-allocated ID for 'tag_1'.
+      out2 = pl.kernel(
+          kernel2,
+          mesh=mesh,
+          out_type=pltpu.VMEM(x.shape, x.dtype),
+          compiler_params=pltpu.CompilerParams(collective_id=7000),
+      )(x)
+      return out1, out2
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r'The manually assigned collective_id=7000.*conflicts with an existing'
+        ' auto-assigned collective id',
+    ):
+      run_conflicting_collectives.lower(jnp.zeros((8, 128), jnp.float32))
+
+
+@jtu.with_config(jax_pallas_auto_assign_collective_ids='no')
+class PallasTPUNoAutoCollectiveIdTest(ptu.PallasTPUTest):
+
+  def test_hashable_collective_id_works_when_auto_assign_disabled(self):
+    if self.INTERPRET:
+      self.skipTest('Compilation-only test')
+
+    mesh = pltpu.TensorCoreMesh(axis_name='tc', num_cores=1)
+
+    def kernel(x_ref, y_ref):
+      sem = pltpu.get_barrier_semaphore()
+      pl.semaphore_signal(sem)
+      pltpu.sync_copy(x_ref, y_ref)
+
+    @jax.jit
+    def run_kernel(x):
+      return pl.kernel(
+          kernel,
+          mesh=mesh,
+          out_type=pltpu.VMEM(x.shape, x.dtype),
+          compiler_params=pltpu.CompilerParams(collective_id='my_tag'),
+      )(x)
+
+    lowered = run_kernel.lower(jnp.zeros((8, 128), jnp.float32))
+    mlir_str = str(lowered.compiler_ir())
+    matches = re.findall(
+        r'(?:\\22|\\\"|\")collective_id(?:\\22|\\\"|\"):\s*(\d+)', mlir_str
+    )
+    self.assertLen(matches, 1)
+    self.assertEqual(int(matches[0]), 7000)
+
+  def test_unassigned_collective_id_raises_when_auto_assign_disabled(self):
+    if self.INTERPRET:
+      self.skipTest('Compilation-only test')
+
+    mesh = pltpu.TensorCoreMesh(axis_name='tc', num_cores=1)
+
+    def kernel(x_ref, y_ref):
+      sem = pltpu.get_barrier_semaphore()
+      pl.semaphore_signal(sem)
+      pltpu.sync_copy(x_ref, y_ref)
+
+    @jax.jit
+    def run_kernel(x):
+      return pl.kernel(
+          kernel,
+          mesh=mesh,
+          out_type=pltpu.VMEM(x.shape, x.dtype),
+      )(x)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'collective_id has to be specified when using a custom barrier',
+    ):
+      run_kernel.lower(jnp.zeros((8, 128), jnp.float32))
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

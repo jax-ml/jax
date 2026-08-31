@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Mapping, Sequence
+from collections.abc import Hashable, Mapping, Sequence
 import contextlib
 import dataclasses
 import enum
@@ -95,9 +95,12 @@ class CompilerParams:
     vmem_limit_bytes: Overrides the default VMEM limit for a kernel. Note that
       this must be used in conjunction with the
       --xla_tpu_scoped_vmem_limit_kib=N flag with N*1kib > vmem_limit_bytes.
-    collective_id: Indicates which barrier semaphore to use for the kernel. Note
-      that using the same collective_id does not guarantee that the same barrier
-      semaphore will be allocated between kernels.
+    collective_id: Indicates which barrier semaphore to use for the kernel. Can
+      be an integer for explicit manual ID assignment, or any hashable object
+      (such as a string or tuple) to serve as a tag for auto-assignment when
+      jax_pallas_auto_assign_collective_ids is enabled. Note that using the same
+      collective_id does not guarantee that the same barrier semaphore will be
+      allocated between kernels.
     has_side_effects: Set to True to prevent kernel being CSEd by XLA.
     flags: A dictionary of command line flags for the kernel.
     internal_scratch_in_bytes: The size of the internal scratch space used by
@@ -128,7 +131,7 @@ class CompilerParams:
   dimension_semantics: tuple[DimensionSemantics, ...] | None = None
   allow_input_fusion: tuple[bool, ...] | None = None
   vmem_limit_bytes: int | None = None
-  collective_id: int | None = None
+  collective_id: int | Hashable | None = None
   has_side_effects: bool | SideEffectType = False
   flags: dict[str, Any] | None = None
   internal_scratch_in_bytes: int | None = None
@@ -148,7 +151,7 @@ class CompilerParams:
       dimension_semantics: Sequence[DimensionSemantics] | None = None,
       allow_input_fusion: Sequence[bool] | None = None,
       vmem_limit_bytes: int | None = None,
-      collective_id: int | None = None,
+      collective_id: int | Hashable | None = None,
       has_side_effects: bool | SideEffectType = False,
       flags: Mapping[str, Any] | None = None,
       internal_scratch_in_bytes: int | None = None,

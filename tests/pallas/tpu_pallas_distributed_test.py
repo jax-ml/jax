@@ -910,6 +910,68 @@ class PallasBarrierCollectiveIdsTest(jtu.JaxTestCase, parameterized.TestCase):
     # Output is on device 1.
     np.testing.assert_allclose(np.array(y)[1, ...], np.full(y.shape[1:], 5.0))
 
+  def test_tag_assigned_barrier_semaphores_decoupled_handshake(self):
+    if jax.device_count() < 2:
+      self.skipTest('Requires at least 2 devices.')
+
+    # Producer kernel: signals barrier semaphore on peer
+    def kernel_signal(x_ref, y_ref, scratch):
+      my_id = lax.axis_index('x')
+      barrier_sem = pltpu.get_barrier_semaphore()
+      @pl.when(my_id == 0)
+      def _():
+        pl.semaphore_signal(barrier_sem, device_id={'x': 1})
+      pltpu.sync_copy(x_ref, scratch)
+      pltpu.sync_copy(scratch, y_ref)
+
+    # Consumer kernel: waits on barrier semaphore from peer
+    def kernel_wait(x_ref, y_ref, scratch):
+      my_id = lax.axis_index('x')
+      barrier_sem = pltpu.get_barrier_semaphore()
+      @pl.when(my_id == 1)
+      def _():
+        pl.semaphore_wait(barrier_sem)
+      pltpu.sync_copy(x_ref, scratch)
+      pltpu.sync_copy(scratch, y_ref)
+
+    @jax.jit
+    @partial(shard_map.shard_map, out_specs=P('x'), check_vma=True)
+    def body(x):
+      mesh = pltpu.TensorCoreMesh(num_cores=1, axis_name=('x',))
+      # Both kernels have different ASM, but share the same collective_id tag.
+      x = pl.kernel(
+          kernel_signal,
+          mesh=mesh,
+          out_type=jax.typeof(x),
+          scratch_types=[pltpu.VMEM(x.shape, x.dtype)],
+          compiler_params=pltpu.CompilerParams(
+              collective_id='decoupled_barrier'
+          ),
+      )(x)
+      return pl.kernel(
+          kernel_wait,
+          mesh=mesh,
+          out_type=jax.typeof(x),
+          scratch_types=[pltpu.VMEM(x.shape, x.dtype)],
+          compiler_params=pltpu.CompilerParams(
+              collective_id='decoupled_barrier'
+          ),
+      )(x)
+
+    mesh = jax.make_mesh((jax.device_count(),), ('x',))
+    with jax.sharding.set_mesh(mesh):
+      x_shape = (jax.device_count(), 8, 128)
+      x = jnp.ones(x_shape, dtype=jnp.float32, out_sharding=P('x'))
+      y = body(x)
+      hlo = body.lower(x).compile().as_text()
+    semaphores = list(
+        re.findall(r'{"barrier_type":"CUSTOM","id":"(\d+)"}', hlo)
+    )
+    self.assertGreaterEqual(len(semaphores), 2)
+    # Both kernels must share the same collective id despite different ASM.
+    self.assertEqual(semaphores[0], semaphores[1])
+    np.testing.assert_allclose(np.array(y), np.ones(x_shape, dtype=jnp.float32))
+
 
 class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
 

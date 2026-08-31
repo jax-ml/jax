@@ -1531,6 +1531,7 @@ pytype_strict_library(
         ":frozen_dict",
         ":mlir",
         ":sharding_impls",
+        ":tree_util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
     ] + if_building_jaxlib([
