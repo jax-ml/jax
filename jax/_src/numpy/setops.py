@@ -165,7 +165,7 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
     size = core.concrete_or_error(operator.index, size, "The error arose in setdiff1d()")
   fill_value = full_like(arr1, fill_value=(0 if fill_value is None else fill_value),
                          shape=())
-  if arr1.size == 0:
+  if arr1.size == 0 or size == 0:
     return full_like(arr1, fill_value, shape=size or 0)
   if not assume_unique:
     arr1 = cast(Array, unique(arr1, size=size and arr1.size))
