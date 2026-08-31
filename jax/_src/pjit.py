@@ -2560,7 +2560,14 @@ def program_order(f=None, *, enforce: bool,
 def _program_order(fun, *, enforce, exclude_argnames):
   @wraps(fun)
   def wrapped(*args, **kwargs):
-    if not enforce:
+    if enforce:
+      traced = api.jit(fun).trace(*args, **kwargs)
+      jaxpr = traced.jaxpr
+      args_flat, _ = tree_flatten(args)
+      flat_outputs = eval_jaxpr_program_order(
+          jaxpr, jaxpr.consts, *traced._consts, *args_flat)
+      return tree_util.tree_unflatten(traced.out_tree, flat_outputs)
+    else:
       args_flat, in_tree = tree_flatten((args, kwargs))
       if exclude_argnames is None:
         arg_exclude_mask = (False,) * len(args_flat)
@@ -2577,14 +2584,19 @@ def _program_order(fun, *, enforce, exclude_argnames):
           *traced._consts, *args_flat, call_jaxpr=traced.jaxpr,
           exclude_mask=exclude_mask)
       return tree_util.tree_unflatten(traced.out_tree, out_flat)
-    else:
-      traced = api.jit(fun).trace(*args, **kwargs)
-      jaxpr = traced.jaxpr
-      args_flat, _ = tree_flatten(args)
-      flat_outputs = eval_jaxpr_program_order(
-          jaxpr, jaxpr.consts, *traced._consts, *args_flat)
-      return tree_util.tree_unflatten(traced.out_tree, flat_outputs)
   return wrapped
+
+
+def looped_opt_barrier(prev_outs, cur_inps):
+  from jax._src.lax.lax import optimization_barrier, create_token  # type: ignore
+
+  token = create_token()
+  # TODO(yashkatariya): There's duplication of opt_barriers here. Figure out
+  # a way to resolve that. See jaxpr in test_program_order_true_false_true_nest
+  token, prev_outs = optimization_barrier((token, prev_outs))
+  # Tokens are not DCEd by opt_barrier even if they are unused.
+  cur_inps = [optimization_barrier((token, cinp))[1] for cinp in cur_inps]
+  return prev_outs, cur_inps
 
 
 def insert_opt_barrier(prev_outvars, prev_outs, cur_invars, cur_inps):
@@ -2627,31 +2639,29 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
   foreach(write, jaxpr.invars, args)
   last_used = core.last_used(jaxpr)
   prev_eqn = None
-  for eqn in jaxpr.eqns:
-    bind_params = eqn.primitive.get_bind_params(eqn.params)
-    name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
-    traceback = eqn.source_info.traceback
+  for cur_eqn in jaxpr.eqns:
+    bind_params = cur_eqn.primitive.get_bind_params(cur_eqn.params)
+    name_stack = source_info_util.current_name_stack() + cur_eqn.source_info.name_stack
+    traceback = cur_eqn.source_info.traceback
     with (source_info_util.user_context(traceback, name_stack=name_stack),
-          eqn.ctx.manager):
-      cur_inps = map(read, eqn.invars)
+          cur_eqn.ctx.manager):
+      cur_inps = map(read, cur_eqn.invars)
       if prev_eqn is not None:
         prev_outs = map(read, prev_eqn.outvars)
-        if eqn.primitive is program_order_p:
-          exclude_mask = eqn.params['exclude_mask']
+        if cur_eqn.primitive is program_order_p:
+          exclude_mask = cur_eqn.params['exclude_mask']
           barrier_inps, excluded_inps = partition_list(exclude_mask, cur_inps)
           if barrier_inps:
-            barrier_invars, _ = partition_list(exclude_mask, eqn.invars)
-            prev_outs, barrier_inps = insert_opt_barrier(
-                prev_eqn.outvars, prev_outs, barrier_invars, barrier_inps)
+            prev_outs, barrier_inps = looped_opt_barrier(prev_outs, barrier_inps)
             cur_inps = merge_lists(exclude_mask, barrier_inps, excluded_inps)
         else:
           prev_outs, cur_inps = insert_opt_barrier(
-              prev_eqn.outvars, prev_outs, eqn.invars, cur_inps)
+              prev_eqn.outvars, prev_outs, cur_eqn.invars, cur_inps)
         eqn_write(prev_eqn, prev_outs)
-      ans = eqn.primitive.bind(*cur_inps, **bind_params)
-    eqn_write(eqn, ans)
-    prev_eqn = eqn
-    core.clean_up_dead_vars(eqn, env, last_used)
+      ans = cur_eqn.primitive.bind(*cur_inps, **bind_params)
+    eqn_write(cur_eqn, ans)
+    prev_eqn = cur_eqn
+    core.clean_up_dead_vars(cur_eqn, env, last_used)
   outvals = map(read, jaxpr.outvars)
   return outvals
 
