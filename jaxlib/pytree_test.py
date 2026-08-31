@@ -80,6 +80,23 @@ class PyTreeTest(parameterized.TestCase):
     with self.assertRaises(ValueError):
       self.roundtrip_proto({"a": ExampleType2(field0=o, field1=o)})
 
+  def testFlattenUpToWithCorruptedNumLeavesRejects(self):
+    # Regression test for a malformed cached leaf count from __setstate__.
+    int_min = -(2**31)
+    poisoned_state = (
+        registry,
+        [
+            (0, 0, None, None, 1, 1),  # leaf
+            (0, 0, None, None, 1, 1),  # leaf
+            (0, 0, None, None, 1, 1),  # leaf
+            (4, 3, None, None, int_min, 4),  # list with num_leaves = INT_MIN
+        ],
+    )
+    td = pytree.PyTreeDef.__new__(pytree.PyTreeDef)
+    td.__setstate__(poisoned_state)
+    with self.assertRaisesRegex(ValueError, "is negative"):
+      td.flatten_up_to([1, 2, 3])
+
   def roundtrip_node_data(self, example):
     original = registry.flatten(example)[1]
     restored = pytree.PyTreeDef.from_node_data_and_children(
