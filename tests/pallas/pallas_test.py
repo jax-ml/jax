@@ -394,6 +394,9 @@ class PallasMGPUTest(PallasTest):
       self.skipTest("Mosaic GPU does not support float64.")
 
   def test_store_reshaped_ref(self):
+    self.skipTest(
+      "Mosaic GPU layout inference does not support this reshape."
+    )
     self.skip_if_x64()
     super().test_store_reshaped_ref()
 
