@@ -146,6 +146,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     instances ({jax-issue}`#39297`).
   * Fixed `_get_prime_factors` in `jax.experimental.mesh_utils`
     ({jax-issue}`#38286`).
+  * `jax.no_tracing` no longer raises a spurious "re-tracing" error on warm
+    calls that miss the C++ dispatch fastpath without actually re-tracing,
+    such as every call of a jitted function containing a host callback
+    ({jax-issue}`#39289`). Relatedly, transformations of an already-traced
+    jitted function (e.g. a first `jax.grad` call) may now derive and compile
+    new executables under `no_tracing` without raising, since no Python code
+    is re-traced; previously any such call raised.
 
 ## JAX 0.11.0 (July 16, 2026)
 
