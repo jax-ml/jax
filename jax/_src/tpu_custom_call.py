@@ -77,7 +77,7 @@ def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   if (
       ctx.is_forward_compat()
       or backend is None
-      or not is_libtpu_at_least("0.0.47")
+      or not is_libtpu_at_least("0.0.48")
   ):
     return _FWD_COMPAT_VERSION
   if ir_version_override is not None:
