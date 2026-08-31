@@ -582,6 +582,13 @@ class GPUSharedMemory(
       self.pending_tmem_stores = {}
       self.pending_tmem_loads = {}
 
+  def _abort_waiters(self):
+    # Called by `set_failed` while `self.lock` is held. Acquiring a barrier's
+    # `cv` lock while holding `self.lock` is allowed (see `Barrier.__init__`).
+    for alloc in self.mem.values():
+      if isinstance(alloc, (Barrier, ClusterBarrier)):
+        alloc.abort()
+
   def thread_to_vc_position(self, thread: ThreadKey) -> int:
     return self.all_concurrent_threads[thread]
 
@@ -951,6 +958,10 @@ class GPUSharedMemory(
       self.clocks[dest].update(self.clocks[source])
 
 
+class _BarrierAborted(Exception):
+  pass
+
+
 class Barrier(memory.Allocation):
 
   VectorClock = GPUSharedMemory.VectorClock
@@ -1012,6 +1023,10 @@ class Barrier(memory.Allocation):
     # 1. A thread that waits on any phase must wait on all phases.
     # 2. At least one thread must observe each barrier completion.
     self.phase: int = 0  # Protected by `self.cv`'s lock.
+    # Set once the interpreted kernel has failed. Threads waiting on the barrier
+    # check this flag (instead of `shared_memory.check_failed`, which requires
+    # `shared_memory.lock`) and, if it is set, raise instead of waiting.
+    self.aborted: bool = False  # Protected by `self.cv`'s lock.
     # Last observed phase by each thread. Note that not every thread has to
     # participate in the barrier, and we don't know ahead of time which ones
     # will, so we lazily initialize this dict the first time a thread waits on
@@ -1088,6 +1103,13 @@ class Barrier(memory.Allocation):
               f" up to phase {self.phase - 1}."
           )
 
+  def abort(self):
+    """Aborts the `Barrier`, waking up and failing all current waiters."""
+    with self.cv:
+      self.aborted = True
+      # just notifying is enough since the waiters will check the aborted flag
+      self.cv.notify_all()
+
   def arrive(
       self,
       thread: Thread | None,
@@ -1146,7 +1168,23 @@ class Barrier(memory.Allocation):
       thread: Thread,
       logging_info: GPULoggingInfo | None = None,
   ):
+    # Fail early if the kernel has already failed. This cannot be done while
+    # holding the lock on `self.cv`, so the below loop checks `self.aborted`
+    # and we only call `check_failed` again once `self.cv` has been released.
+    self.shared_memory.check_failed()
+    try:
+      self._wait(thread, logging_info)
+    except _BarrierAborted:
+      self.shared_memory.check_failed()
+      raise RuntimeError(
+          f"Barrier {id(self)} was aborted, but no failure was recorded."
+      ) from None
 
+  def _wait(
+      self,
+      thread: Thread,
+      logging_info: GPULoggingInfo | None = None,
+  ):
     with self.cv:
       last_observed_phase = self.last_observed_phase_by_thread.get(
           thread, None
@@ -1214,6 +1252,9 @@ class Barrier(memory.Allocation):
         # Case 3: we're attempting to observe phase `p+1`, which has not completed yet.
         # We must wait.
         while last_observed_phase == self.phase:
+          if self.aborted:
+            # Raise after releasing the lock on `self.cv`, see `wait`.
+            raise _BarrierAborted()
           if self.enable_logging and logging_info is not None:
             self._log(
                 logging_info.format(
@@ -1363,6 +1404,12 @@ class ClusterBarrier(memory.Allocation):
   def has_zero_ref_count(self) -> bool:
     with self.lock:
       return self.ref_count == 0
+
+  def abort(self):
+    """Aborts the `ClusterBarrier`."""
+    with self.lock:
+      for barrier in self.barriers:
+        barrier.abort()
 
   def arrive(
       self,
