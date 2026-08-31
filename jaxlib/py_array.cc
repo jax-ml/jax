@@ -1613,8 +1613,11 @@ absl::Status PyArray::ReplaceWithAlias(PyArray o) {
     return absl::InvalidArgumentError(
         "Unable to replace an Array with an Array of different committed.");
   }
+  if (storage.weak_type != o_storage.weak_type) {
+    return absl::InvalidArgumentError(
+        "Unable to replace an Array with an Array of different weak_type.");
+  }
   storage.aval = o_storage.aval;
-  storage.weak_type = o_storage.weak_type;
   storage.npy_value = o_storage.npy_value;
   storage.ifrt_array = o_storage.ifrt_array;
   storage.fully_replicated_array = o_storage.fully_replicated_array;

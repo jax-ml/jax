@@ -62,7 +62,7 @@ class StatefulPRNG:
   >>> rng = random.stateful_rng(42)
   >>> rng
   StatefulPRNG(_base_key=Array((), dtype=key<fry>) overlaying:
-  [ 0 42], _counter=Ref(0, dtype=int32, weak_type=True))
+  [ 0 42], _counter=Ref(0, dtype=int32))
   """
   _base_key: Array
   _counter: core.Ref
