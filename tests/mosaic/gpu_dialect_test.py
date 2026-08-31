@@ -202,8 +202,11 @@ class DialectTest(MosaicGpuTest):
 
   def test_initialize_barrier_op_arrival_count_must_be_strictly_positive(self):
     with ir.InsertionPoint(self.module.body):
+      (barrier,) = undefs(
+          ir.MemRefType.get((2,), mgpu.dialect.BarrierType.get())
+      )
       mgpu.dialect.initialize_barrier(
-          llvm.UndefOp(workgroup_ptr_ty()),
+          barrier,
           arrival_count=0,
           num_barriers=2,
           orders_tensor_core=False,
@@ -211,21 +214,27 @@ class DialectTest(MosaicGpuTest):
     with self.assertRaisesRegex(ir.MLIRError, "value is positive"):
       self.module.operation.verify()
 
-  def test_initialize_barrier_op_with_a_non_shared_base_pointer_fails(self):
+  def test_initialize_barrier_op_with_a_non_barrier_fails(self):
     with ir.InsertionPoint(self.module.body):
+      (i32_memref,) = undefs(
+          ir.MemRefType.get((2,), ir.IntegerType.get_signless(32))
+      )
       mgpu.dialect.initialize_barrier(
-          llvm.UndefOp(llvm.PointerType.get(address_space=0)),
+          i32_memref,
           arrival_count=1,
           num_barriers=2,
           orders_tensor_core=False,
       )
-    with self.assertRaisesRegex(ir.MLIRError, "pointer in address space 3"):
+    with self.assertRaisesRegex(ir.MLIRError, "must be 1D memref of A barrier"):
       self.module.operation.verify()
 
   def test_initialize_barrier_op_with_a_positive_arrival_count_passes(self):
     with ir.InsertionPoint(self.module.body):
+      (barrier,) = undefs(
+          ir.MemRefType.get((2,), mgpu.dialect.BarrierType.get())
+      )
       mgpu.dialect.initialize_barrier(
-          llvm.UndefOp(workgroup_ptr_ty()),
+          barrier,
           arrival_count=1,
           num_barriers=2,
           orders_tensor_core=False,
@@ -2140,8 +2149,11 @@ class DialectLoweringTest(MosaicGpuTest):
 
   def test_lowering_removes_mosaic_gpu_ops(self):
     with ir.InsertionPoint(self.module.body):
+      (barrier,) = undefs(
+          ir.MemRefType.get((2,), mgpu.dialect.BarrierType.get())
+      )
       mgpu.dialect.initialize_barrier(
-          llvm.UndefOp(workgroup_ptr_ty()),
+          barrier,
           arrival_count=1,
           num_barriers=2,
           orders_tensor_core=False,
@@ -2158,8 +2170,11 @@ class DialectLoweringTest(MosaicGpuTest):
       cst_true = arith.constant(bool_type, ir.IntegerAttr.get(bool_type, 1))
       if_op = scf.IfOp(cst_true)
       with ir.InsertionPoint(if_op.then_block):
+        (barrier,) = undefs(
+            ir.MemRefType.get((2,), mgpu.dialect.BarrierType.get())
+        )
         mgpu.dialect.initialize_barrier(
-            llvm.UndefOp(workgroup_ptr_ty()),
+            barrier,
             arrival_count=1,
             num_barriers=2,
             orders_tensor_core=False,
@@ -2176,8 +2191,11 @@ class DialectLoweringTest(MosaicGpuTest):
     arrival_count = 1337
 
     with ir.InsertionPoint(self.module.body):
+      (barrier,) = undefs(
+          ir.MemRefType.get((num_barriers,), mgpu.dialect.BarrierType.get())
+      )
       mgpu.dialect.initialize_barrier(
-          llvm.UndefOp(workgroup_ptr_ty()),
+          barrier,
           arrival_count=arrival_count,
           num_barriers=num_barriers,
           orders_tensor_core=False,

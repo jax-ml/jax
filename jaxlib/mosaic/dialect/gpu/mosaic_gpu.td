@@ -71,11 +71,11 @@ def MosaicGPU_InitializeBarrierOp : Op<MosaicGPU_Dialect, "initialize_barrier",
     Initializes `num_barriers` barriers each meant to synchronize exactly
     `arrival_count` threads.
 
-    `base_pointer` must be a pointer to a shared memory location.
+    `barrier` must be a 1D memref of barriers in shared memory.
   }];
 
   let arguments = (ins
-    LLVM_PointerShared:$base_pointer,
+    MemRefRankOf<[MosaicGPU_Barrier], [1]>:$barrier,
     ConfinedAttr<I64Attr, [IntPositive]>:$arrival_count,
     ConfinedAttr<I32Attr, [IntPositive]>:$num_barriers,
     BoolAttr:$orders_tensor_core

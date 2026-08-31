@@ -280,9 +280,10 @@ def _initialize_barrier_op_lowering_rule(
   arrival_count = op.arrival_count.value * (
       utils.WARPGROUP_SIZE if not op.orders_tensor_core.value else 1
   )
+  base_ptr = utils.memref_ptr(op.barrier)
   for i in range(op.num_barriers.value):
     nvvm.mbarrier_init(
-        utils.getelementptr(op.base_pointer, [i], _lowered_barrier_type()),
+        utils.getelementptr(base_ptr, [i], _lowered_barrier_type()),
         utils.c(arrival_count, i32),
         predicate=ctx.single_thread_per_block_predicate,
     )

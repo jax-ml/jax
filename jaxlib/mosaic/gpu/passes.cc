@@ -27,9 +27,14 @@ limitations under the License.
 #include "mlir/Conversion/GPUCommon/GPUCommonPass.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/SCF/Transforms/Patterns.h"
+#include "mlir/Dialect/SCF/Transforms/Transforms.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -44,6 +49,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/RegionUtils.h"
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 #include "jaxlib/mosaic/pass_boilerplate.h"
 
 namespace mosaic {
@@ -346,6 +352,188 @@ class MosaicGpuSinkMemRefDescriptorsPass
   }
 };
 
+class BarrierTypeConverter : public mlir::TypeConverter {
+ public:
+  explicit BarrierTypeConverter(mlir::MLIRContext* ctx) {
+    addConversion([](mlir::Type type) { return type; });
+    addConversion([ctx](mosaic_gpu::BarrierType barrier_type) -> mlir::Type {
+      return mlir::IntegerType::get(ctx, 64);
+    });
+    addConversion(
+        [this](mlir::MemRefType memref_type) -> std::optional<mlir::Type> {
+          auto elem_type = convertType(memref_type.getElementType());
+          if (!elem_type) return std::nullopt;
+          return mlir::MemRefType::get(memref_type.getShape(), elem_type,
+                                       memref_type.getLayout(),
+                                       memref_type.getMemorySpace());
+        });
+    addConversion(
+        [this](mlir::FunctionType func_type) -> std::optional<mlir::Type> {
+          llvm::SmallVector<mlir::Type> inputs, results;
+          if (failed(convertTypes(func_type.getInputs(), inputs)) ||
+              failed(convertTypes(func_type.getResults(), results))) {
+            return std::nullopt;
+          }
+          return mlir::FunctionType::get(func_type.getContext(), inputs,
+                                         results);
+        });
+    addSourceMaterialization([](mlir::OpBuilder& builder, mlir::Type type,
+                                mlir::ValueRange inputs,
+                                mlir::Location loc) -> mlir::Value {
+      return mlir::UnrealizedConversionCastOp::create(builder, loc, type,
+                                                      inputs)
+          .getResult(0);
+    });
+    addTargetMaterialization([](mlir::OpBuilder& builder, mlir::Type type,
+                                mlir::ValueRange inputs,
+                                mlir::Location loc) -> mlir::Value {
+      return mlir::UnrealizedConversionCastOp::create(builder, loc, type,
+                                                      inputs)
+          .getResult(0);
+    });
+  }
+};
+
+struct ConvertSubViewOpPattern
+    : public mlir::OpConversionPattern<mlir::memref::SubViewOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      mlir::memref::SubViewOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter& rewriter) const override {
+    auto new_result_ty = getTypeConverter()->convertType(op.getType());
+    if (!new_result_ty || new_result_ty == op.getType()) {
+      return mlir::failure();
+    }
+    rewriter.replaceOpWithNewOp<mlir::memref::SubViewOp>(
+        op, llvm::cast<mlir::MemRefType>(new_result_ty), adaptor.getSource(),
+        op.getMixedOffsets(), op.getMixedSizes(), op.getMixedStrides());
+    return mlir::success();
+  }
+};
+
+struct ConvertViewOpPattern
+    : public mlir::OpConversionPattern<mlir::memref::ViewOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      mlir::memref::ViewOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter& rewriter) const override {
+    auto new_result_ty = getTypeConverter()->convertType(op.getType());
+    if (!new_result_ty || new_result_ty == op.getType()) {
+      return mlir::failure();
+    }
+    rewriter.replaceOpWithNewOp<mlir::memref::ViewOp>(
+        op, llvm::cast<mlir::MemRefType>(new_result_ty), adaptor.getSource(),
+        adaptor.getByteShift(), adaptor.getSizes());
+    return mlir::success();
+  }
+};
+
+struct ConvertAllocaOpPattern
+    : public mlir::OpConversionPattern<mlir::memref::AllocaOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      mlir::memref::AllocaOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter& rewriter) const override {
+    auto new_result_ty = getTypeConverter()->convertType(op.getType());
+    if (!new_result_ty || new_result_ty == op.getType()) {
+      return mlir::failure();
+    }
+    rewriter.replaceOpWithNewOp<mlir::memref::AllocaOp>(
+        op, llvm::cast<mlir::MemRefType>(new_result_ty),
+        adaptor.getDynamicSizes(), adaptor.getSymbolOperands(),
+        op.getAlignmentAttr());
+    return mlir::success();
+  }
+};
+
+struct ConvertExtractAlignedPointerAsIndexOpPattern
+    : public mlir::OpConversionPattern<
+          mlir::memref::ExtractAlignedPointerAsIndexOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      mlir::memref::ExtractAlignedPointerAsIndexOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter& rewriter) const override {
+    if (adaptor.getSource().getType() == op.getSource().getType()) {
+      return mlir::failure();
+    }
+    rewriter.replaceOpWithNewOp<mlir::memref::ExtractAlignedPointerAsIndexOp>(
+        op, adaptor.getSource());
+    return mlir::success();
+  }
+};
+
+struct ConvertExtractStridedMetadataOpPattern
+    : public mlir::OpConversionPattern<mlir::memref::ExtractStridedMetadataOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      mlir::memref::ExtractStridedMetadataOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter& rewriter) const override {
+    if (adaptor.getSource().getType() == op.getSource().getType()) {
+      return mlir::failure();
+    }
+    rewriter.replaceOpWithNewOp<mlir::memref::ExtractStridedMetadataOp>(
+        op, adaptor.getSource());
+    return mlir::success();
+  }
+};
+
+struct ConvertCastOpPattern
+    : public mlir::OpConversionPattern<mlir::memref::CastOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      mlir::memref::CastOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter& rewriter) const override {
+    auto new_result_ty = getTypeConverter()->convertType(op.getType());
+    if (!new_result_ty || new_result_ty == op.getType()) {
+      return mlir::failure();
+    }
+    rewriter.replaceOpWithNewOp<mlir::memref::CastOp>(op, new_result_ty,
+                                                      adaptor.getSource());
+    return mlir::success();
+  }
+};
+
+class LowerMosaicGPUBarriersPass
+    : public jaxlib::mlir::Pass<LowerMosaicGPUBarriersPass, mlir::ModuleOp> {
+ public:
+  using jaxlib::mlir::Pass<LowerMosaicGPUBarriersPass, mlir::ModuleOp>::Pass;
+  static constexpr llvm::StringLiteral kArgumentName =
+      "mosaic-gpu-lower-barriers";
+  static constexpr llvm::StringLiteral kPassName = "LowerMosaicGPUBarriersPass";
+
+  void runOnOperation() override {
+    mlir::ModuleOp module = getOperation();
+    mlir::MLIRContext* ctx = module.getContext();
+
+    BarrierTypeConverter type_converter(ctx);
+    mlir::RewritePatternSet patterns(ctx);
+    mlir::ConversionTarget target(*ctx);
+
+    target.addLegalOp<mlir::UnrealizedConversionCastOp>();
+    target.addDynamicallyLegalOp<mlir::func::FuncOp>(
+        [&](mlir::func::FuncOp op) {
+          return type_converter.isSignatureLegal(op.getFunctionType());
+        });
+    target.markUnknownOpDynamicallyLegal(
+        [&](mlir::Operation* op) { return type_converter.isLegal(op); });
+
+    mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
+        patterns, type_converter);
+    mlir::scf::populateSCFStructuralTypeConversionsAndLegality(
+        type_converter, patterns, target);
+    patterns.add<ConvertSubViewOpPattern, ConvertViewOpPattern,
+                 ConvertAllocaOpPattern,
+                 ConvertExtractAlignedPointerAsIndexOpPattern,
+                 ConvertExtractStridedMetadataOpPattern, ConvertCastOpPattern>(
+        type_converter, ctx);
+
+    if (mlir::applyPartialConversion(module, target, std::move(patterns))
+            .failed()) {
+      signalPassFailure();
+    }
+  }
+};
+
 }  // namespace
 
 void registerConvertGpuToLLVMPass() {
@@ -375,6 +563,12 @@ void registerResolveTrivialLocationsPass() {
 void registerGpuSinkMemRefDescriptorsPass() {
   ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
     return std::make_unique<MosaicGpuSinkMemRefDescriptorsPass>();
+  });
+}
+
+void registerLowerMosaicGPUBarriersPass() {
+  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
+    return std::make_unique<LowerMosaicGPUBarriersPass>();
   });
 }
 
