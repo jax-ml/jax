@@ -4610,7 +4610,9 @@ ad.defjvp2(
         ),
     )
     if accuracy is AccuracyMode.HIGHEST
-    else mul(add(g, mul(g, ans)), sub(_one(x), ans)),
+    # Keep g outside the factored product: distributing it inside makes the
+    # transpose cancel the exact (1 + ans) zero too late (#40315).
+    else mul(g, mul(sub(_one(x), ans), add(_one(x), ans))),
 )
 mlir.register_lowering(tanh_p, partial(_nary_lower_hlo, hlo.tanh))
 core.pp_eqn_rules[tanh_p] = _unary_with_accuracy_pp_rule
