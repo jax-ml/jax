@@ -997,10 +997,13 @@ def lowered_as_tpu_kernel(
     # only used by some internal tests that don't need serialization, but we do
     # need a concrete version on the module.
     current_ir_version = 17
+    serde_options = ["serialize=true", f"target-version={current_ir_version}"]
+    if not needs_layout_passes:
+      serde_options.append("allow-compiler-internal-ops=true")
+    serde_options_str = " ".join(serde_options)
     try:
       pipeline = PassManager.parse(
-          "builtin.module(mosaic-serde{serialize=true"
-          f" target-version={current_ir_version}}})"
+          f"builtin.module(mosaic-serde{{{serde_options_str}}})"
       )
       pipeline.enable_verifier(bool(config.enable_checks.value))
       pipeline.run(module_op)
