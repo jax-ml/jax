@@ -55,6 +55,40 @@ class Custom:
 registry.register_dataclass_node(Custom, ["a"], ["b"])
 
 
+# Hand-built PyTreeDefProto payloads, for structures the serializer itself
+# cannot produce. See jaxlib/pytree.proto for the field numbers.
+_LEAF, _LIST, _DICT = 1, 2, 5  # PyTreeNodeType values
+
+
+def _varint(value):
+  out = bytearray()
+  while True:
+    byte = value & 0x7F
+    value >>= 7
+    out.append(byte | (0x80 if value else 0))
+    if not value:
+      return bytes(out)
+
+
+def _proto_node(arity, kind, dict_key_ids=None):
+  body = b"\x08" + _varint(arity) + b"\x10" + _varint(kind)
+  if dict_key_ids is not None:
+    packed = b"".join(_varint(i) for i in dict_key_ids)
+    keys = b"\x0a" + _varint(len(packed)) + packed
+    body += b"\x1a" + _varint(len(keys)) + keys
+  return b"\x0a" + _varint(len(body)) + body
+
+
+def _proto_treedef(nodes, interned_strings=()):
+  out = b"".join(nodes)
+  for s in interned_strings:
+    out += b"\x12" + _varint(len(s)) + s.encode()
+  return out
+
+
+_LEAF_NODE = _proto_node(0, _LEAF)
+
+
 class PyTreeTest(parameterized.TestCase):
 
   def roundtrip_proto(self, example):
@@ -79,6 +113,57 @@ class PyTreeTest(parameterized.TestCase):
     o = object()
     with self.assertRaises(ValueError):
       self.roundtrip_proto({"a": ExampleType2(field0=o, field1=o)})
+
+  def testDeserializeHandBuiltProto(self):
+    # Control for the malformed payloads below: same construction, valid data.
+    o = object()
+    self.assertEqual(
+        pytree.PyTreeDef.deserialize_using_proto(
+            registry,
+            _proto_treedef([_LEAF_NODE, _LEAF_NODE, _proto_node(2, _LIST)]),
+        ),
+        registry.flatten([o, o])[1],
+    )
+
+  @parameterized.named_parameters(
+      ("root_arity_1", [_proto_node(1, _LIST)]),
+      ("root_arity_2", [_proto_node(2, _LIST)]),
+      (
+          "arity_exceeds_subtrees",
+          [_LEAF_NODE, _LEAF_NODE, _proto_node(3, _LIST)],
+      ),
+      ("arity_int_min", [_proto_node(0x80000000, _LIST)]),
+      ("arity_uint32_max", [_proto_node(0xFFFFFFFF, _LIST)]),
+  )
+  def testDeserializeProtoRejectsBadArity(self, nodes):
+    with self.assertRaisesRegex(ValueError, "Malformed PyTreeDef"):
+      pytree.PyTreeDef.deserialize_using_proto(registry, _proto_treedef(nodes))
+
+  @parameterized.named_parameters(
+      (
+          "arity_exceeds_keys",
+          [_LEAF_NODE, _LEAF_NODE, _proto_node(2, _DICT, [0])],
+          ["a"],
+      ),
+      (
+          "keys_exceed_arity",
+          [_LEAF_NODE, _proto_node(1, _DICT, [0, 1])],
+          ["a", "b"],
+      ),
+  )
+  def testDeserializeProtoRejectsDictKeyMismatch(self, nodes, interned_strings):
+    with self.assertRaisesRegex(ValueError, "dict node"):
+      pytree.PyTreeDef.deserialize_using_proto(
+          registry, _proto_treedef(nodes, interned_strings)
+      )
+
+  def testComposeRejectsBadArity(self):
+    # compose() recomputes the cached counts, so it must reject a traversal
+    # restored from a pickle whose root claims children it does not have.
+    with self.assertRaisesRegex(ValueError, "Malformed PyTreeDef"):
+      poisoned = pytree.PyTreeDef.__new__(pytree.PyTreeDef)
+      poisoned.__setstate__((registry, [(4, 1, None, None, 1, 1)]))
+      poisoned.compose(registry.flatten(0)[1])
 
   def roundtrip_node_data(self, example):
     original = registry.flatten(example)[1]
