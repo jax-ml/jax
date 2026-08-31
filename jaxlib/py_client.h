@@ -27,12 +27,14 @@ limitations under the License.
 #include <string_view>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "nanobind/nanobind.h"
+#include "jaxlib/ft_mutex.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -256,9 +258,9 @@ class PyClient {
   // to iterate over all known objects when heap profiling. The list structure
   // is protected by the GIL.
 
-  nanobind::ft_mutex executables_mutex_;
-  // List guarded by executables_mutex_.
-  PyLoadedExecutable* executables_ = nullptr;
+  ft_mutex executables_mutex_;
+  PyLoadedExecutable* executables_ ABSL_GUARDED_BY(executables_mutex_) =
+      nullptr;
 
 #ifdef NB_FREE_THREADED
   static constexpr size_t kNumArraysShards = 16;
@@ -266,8 +268,8 @@ class PyClient {
   static constexpr size_t kNumArraysShards = 1;
 #endif
   struct ArraysShard {
-    mutable nanobind::ft_mutex mutex;
-    PyArray_Storage* arrays;
+    mutable ft_mutex mutex;
+    PyArray_Storage* arrays ABSL_GUARDED_BY(mutex);
   };
   std::array<ArraysShard, kNumArraysShards> arrays_;
 

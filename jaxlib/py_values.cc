@@ -34,6 +34,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/no_destructor.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -51,6 +52,7 @@ limitations under the License.
 #include "nanobind/stl/complex.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "jaxlib/config.h"
+#include "jaxlib/ft_mutex.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/numpy.h"
 #include "jaxlib/py_array.h"
@@ -101,11 +103,12 @@ nb::object& valid_dtypes = *new nb::object();
 
 using CanonicalizeValueHandler = std::function<nb::object(nb::handle)>;
 
-static nb::ft_mutex canonicalize_value_handlers_mutex;
+static ft_mutex canonicalize_value_handlers_mutex;
 
 static absl::NoDestructor<
     absl::flat_hash_map<PyObject*, CanonicalizeValueHandler>>
-    canonicalize_value_handlers;
+    canonicalize_value_handlers
+        ABSL_GUARDED_BY(canonicalize_value_handlers_mutex);
 
 // For xla::S64/U64/F64/C128 types, returns the largest 32-bit equivalent.
 xla::PrimitiveType Squash64BitType(xla::PrimitiveType type) {
@@ -1420,7 +1423,7 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
 
 void RegisterCanonicalizeValueHandler(
     PyObject* type, std::function<nb::object(nb::handle)> handler) {
-  nb::ft_lock_guard lock(canonicalize_value_handlers_mutex);
+  ft_lock_guard lock(canonicalize_value_handlers_mutex);
   auto& handlers = *canonicalize_value_handlers;
   handlers[type] = std::move(handler);
 }
@@ -1433,7 +1436,7 @@ nb::object CanonicalizeValue(nb::handle x) {
   CanonicalizeValueHandler handler;
   PyObject* typ = reinterpret_cast<PyObject*>(x.type().ptr());
   {
-    nb::ft_lock_guard lock(canonicalize_value_handlers_mutex);
+    ft_lock_guard lock(canonicalize_value_handlers_mutex);
     auto& handlers = *canonicalize_value_handlers;
 
     // 1. Direct lookup

@@ -47,6 +47,7 @@ limitations under the License.
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/call_location.h"
+#include "jaxlib/ft_mutex.h"
 #include "jaxlib/guard_lib.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
@@ -381,7 +382,7 @@ PyLoadedExecutable::PyLoadedExecutable(
     VLOG(1) << "Fingerprint for executable " << ifrt_loaded_executable_->name()
             << ": " << *fingerprint_;
   }
-  nb::ft_lock_guard lock(client_->executables_mutex_);
+  ft_lock_guard lock(client_->executables_mutex_);
   next_ = client_->executables_;
   client_->executables_ = this;
   prev_ = nullptr;
@@ -399,7 +400,7 @@ PyLoadedExecutable::~PyLoadedExecutable() {
   ifrt_loaded_executable_->SetDeleteOptions(options);
 
   CHECK(PyGILState_Check());
-  nb::ft_lock_guard lock(client_->executables_mutex_);
+  ft_lock_guard lock(client_->executables_mutex_);
   if (client_->executables_ == this) {
     client_->executables_ = next_;
   }
