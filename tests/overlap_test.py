@@ -492,9 +492,9 @@ class OverlapTest(jtu.JaxTestCase):
     jaxpr = f.trace(x, a, b).jaxpr
     jaxpr_str = str(jaxpr)
     self.assertIn('create_token', jaxpr_str)
-    # sin -> op1: 1 token barrier + 1 per-input barrier = 2
-    # op1 -> op2: 1 token barrier + 3 per-input barriers = 4
-    self.assertEqual(jaxpr_str.count('optimization_barrier'), 6)
+    # sin -> op1: 1 token barrier + 0 per-input barrier = 1
+    # op1 -> op2: 1 token barrier + 2 per-input barriers = 3
+    self.assertEqual(jaxpr_str.count('optimization_barrier'), 4)
 
     f(x, a, b)  # doesn't crash
 

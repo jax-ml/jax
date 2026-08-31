@@ -2587,15 +2587,16 @@ def _program_order(fun, *, enforce, exclude_argnames):
   return wrapped
 
 
-def looped_opt_barrier(prev_outs, cur_inps):
+def looped_opt_barrier(prev_outvars, prev_outs, cur_invars, cur_inps):
   from jax._src.lax.lax import optimization_barrier, create_token  # type: ignore
 
   token = create_token()
-  # TODO(yashkatariya): There's duplication of opt_barriers here. Figure out
-  # a way to resolve that. See jaxpr in test_program_order_true_false_true_nest
   token, prev_outs = optimization_barrier((token, prev_outs))
+  prev_out_map = dict(zip(prev_outvars, prev_outs))
   # Tokens are not DCEd by opt_barrier even if they are unused.
-  cur_inps = [optimization_barrier((token, cinp))[1] for cinp in cur_inps]
+  cur_inps = [prev_out_map[v] if isinstance(v, core.Var) and v in prev_out_map
+              else optimization_barrier((token, cinp))[1]
+              for v, cinp in safe_zip(cur_invars, cur_inps)]
   return prev_outs, cur_inps
 
 
@@ -2652,7 +2653,9 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
           exclude_mask = cur_eqn.params['exclude_mask']
           barrier_inps, excluded_inps = partition_list(exclude_mask, cur_inps)
           if barrier_inps:
-            prev_outs, barrier_inps = looped_opt_barrier(prev_outs, barrier_inps)
+            barrier_invars, _ = partition_list(exclude_mask, cur_eqn.invars)
+            prev_outs, barrier_inps = looped_opt_barrier(
+                prev_eqn.outvars, prev_outs, barrier_invars, barrier_inps)
             cur_inps = merge_lists(exclude_mask, barrier_inps, excluded_inps)
         else:
           prev_outs, cur_inps = insert_opt_barrier(
