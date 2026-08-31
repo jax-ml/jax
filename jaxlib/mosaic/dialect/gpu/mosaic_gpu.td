@@ -717,7 +717,7 @@ def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", [Pure
     `(` $operand `:` type($operand) `)` attr-dict `->` type(results)
   }];
   let hasVerifier = 1;
-  let hasCanonicalizer = 1;
+  let hasFolder = 1;
 }
 
 def MosaicGPU_VectorConcatOp : Op<MosaicGPU_Dialect, "vector_concat",
