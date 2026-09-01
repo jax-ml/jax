@@ -447,10 +447,9 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
       }
     }
     std::vector<ifrt::ArrayRef> arg_arrays(args.size());
-    absl::c_transform(args, arg_arrays.begin(),
-                      [&](const PyArray& arg) mutable {
-                        return tsl::FormRef(arg.ifrt_array());
-                      });
+    absl::c_transform(
+        args, arg_arrays.begin(),
+        [&](const PyArray& arg) mutable { return arg.ifrt_array_ref(); });
     TF_ASSIGN_OR_RETURN(auto result, ifrt_loaded_executable->Execute(
                                          absl::MakeSpan(arg_arrays), options,
                                          /*devices=*/std::nullopt));

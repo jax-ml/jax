@@ -472,7 +472,7 @@ void CallShardArgFallback(nb::handle arg, nb::handle sharding,
   tsl::profiler::TraceMe traceme("cpp_pjit_shard_arg_fallback");
   auto py_array_or_bufs = fallback(arg, sharding, layout);
   auto py_array = nb::cast<PyArray>(py_array_or_bufs);
-  num_args_arrays.push_back(tsl::FormRef(py_array.ifrt_array()));
+  num_args_arrays.push_back(py_array.ifrt_array_ref());
   keep_alive_objects.push_back(std::move(py_array_or_bufs));
 }
 
@@ -558,7 +558,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
            (!py_array.committed() && sharding_num_devices == 1));
 
     if (!in_device_local_layout.is_none()) {
-      xla::ifrt::Array* ifrt_array = py_array.ifrt_array();
+      xla::ifrt::ArrayRef ifrt_array = py_array.ifrt_array_ref();
       TF_ASSIGN_OR_RETURN(auto arr_layout, ifrt_array->pjrt_layout());
       if (arr_layout == nullptr) {
         TF_ASSIGN_OR_RETURN(
@@ -588,7 +588,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
       continue;
     }
 
-    xla::ifrt::Array* ifrt_array = py_array.ifrt_array();
+    xla::ifrt::ArrayRef ifrt_array = py_array.ifrt_array_ref();
     // PyArray inputs should have already been checked in
     // `PyArgSignatureOfValue()` called by
     // `PjitFunction::ComputeCallSignature()`.
@@ -601,10 +601,10 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
           ifrt_sharding.devices()->devices().front(),
           ifrt_sharding.memory_kind(), GetMemoryKind(in_shardings[dce_index]))];
       copy_group.indices.push_back(num_args_arrays.size());
-      copy_group.arrays.push_back(tsl::FormRef(ifrt_array));
+      copy_group.arrays.push_back(ifrt_array);
       num_args_arrays.push_back({});
     } else {
-      num_args_arrays.push_back(tsl::FormRef(ifrt_array));
+      num_args_arrays.push_back(ifrt_array);
     }
 
     keep_alive_objects.push_back(arg);

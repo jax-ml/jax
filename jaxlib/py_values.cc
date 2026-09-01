@@ -704,7 +704,7 @@ absl::StatusOr<ShardFn> HandlePyArray(nb::handle obj, ifrt::Client* client,
         py_array.num_shards());
   }
 
-  ifrt::Array* ifrt_array = py_array.ifrt_array();
+  xla::ifrt::ArrayRef ifrt_array = py_array.ifrt_array_ref();
   if (ifrt_array == nullptr) {
     return xla::InvalidArgument("Array has been deleted.");
   }
@@ -726,10 +726,12 @@ absl::StatusOr<ShardFn> HandlePyArray(nb::handle obj, ifrt::Client* client,
        !ifrt_array->sharding().memory_kind().memory_kind().has_value() ||
        ifrt_array->sharding().memory_kind() == to_memory_kind)) {
 #endif
-    Shard result(tsl::FormRef(ifrt_array), py_array.weak_type());
-    return [result = std::move(result)]() mutable { return std::move(result); };
+    Shard result(ifrt_array, py_array.weak_type());
+    return [result = std::move(result)]() mutable -> absl::StatusOr<Shard> {
+      return std::move(result);
+    };
   } else {
-    return [ifrt_array = tsl::FormRef(ifrt_array), to_device, to_memory_kind,
+    return [ifrt_array, to_device, to_memory_kind,
             weak_type = py_array.weak_type(),
             allow_zero_copy =
                 options.allow_zero_copy]() mutable -> absl::StatusOr<Shard> {
@@ -1261,7 +1263,7 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
 
   if (arg.type().ptr() == PyArray::type().ptr()) {
     auto array = nb::borrow<PyArray>(arg);
-    ifrt::Array* ifrt_array = array.ifrt_array();
+    xla::ifrt::ArrayRef ifrt_array = array.ifrt_array_ref();
     if (ifrt_array == nullptr) {
       return xla::InvalidArgument("Array has been deleted.");
     }

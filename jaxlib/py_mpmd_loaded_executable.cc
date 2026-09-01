@@ -79,11 +79,11 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> UnwrapArrays(
   result.reserve(nb::len(args));
   for (nb::handle arg : args) {
     jax::PyArray array = nb::cast<jax::PyArray>(arg);
-    xla::ifrt::Array* ifrt_array = array.ifrt_array();
+    xla::ifrt::ArrayRef ifrt_array = array.ifrt_array_ref();
     if (ifrt_array == nullptr) {
       return xla::InvalidArgument("Array deleted or donated");
     }
-    result.push_back(tsl::FormRef(ifrt_array));
+    result.push_back(std::move(ifrt_array));
   }
   return result;
 }

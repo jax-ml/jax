@@ -206,7 +206,7 @@ class PyArray : public nanobind::object {
   const nanobind::object& sharding() const { return GetStorage().sharding; }
 
   absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> layout() {
-    xla::ifrt::Array* ifrt_array_ptr = ifrt_array();
+    xla::ifrt::ArrayRef ifrt_array_ptr = ifrt_array_ref();
     TF_ASSIGN_OR_RETURN(std::shared_ptr<const xla::PjRtLayout> layout,
                         ifrt_array_ptr->pjrt_layout());
     if (layout == nullptr) {
@@ -242,7 +242,7 @@ class PyArray : public nanobind::object {
   }
 
   std::optional<Traceback> traceback() const {
-    xla::ifrt::Array* ifrt_array_ptr = ifrt_array();
+    xla::ifrt::ArrayRef ifrt_array_ptr = ifrt_array_ref();
     if (ifrt_array_ptr == nullptr) {
       return std::nullopt;
     }
@@ -252,7 +252,7 @@ class PyArray : public nanobind::object {
   // Returns xla::InvalidArgument if the buffer has been deleted.
   // See `Future` for the semantics of `IsReady` and `IsKnownReady`.
   absl::StatusOr<bool> IsReady() {
-    xla::ifrt::Array* ifrt_array_ptr = ifrt_array();
+    xla::ifrt::ArrayRef ifrt_array_ptr = ifrt_array_ref();
     if (ifrt_array_ptr->IsDeleted()) {
       return xla::InvalidArgument("Array has been deleted.");
     }
@@ -268,14 +268,15 @@ class PyArray : public nanobind::object {
   }
 
   xla::ifrt::Array* ifrt_array() const { return GetStorage().ifrt_array.get(); }
+  xla::ifrt::ArrayRef ifrt_array_ref() const { return GetStorage().ifrt_array; }
 
   int num_addressable_shards() const {
-    xla::ifrt::Array* ifrt_array_ptr = ifrt_array();
+    xla::ifrt::ArrayRef ifrt_array_ptr = ifrt_array_ref();
     if (ifrt_array_ptr == nullptr) {
       return 0;
     }
     auto* arr = xla::ifrt::dyn_cast_or_null<xla::ifrt::PjRtCompatibleArray>(
-        ifrt_array_ptr);
+        ifrt_array_ptr.get());
     if (arr == nullptr) {
       // TODO(hyeontaek): Add num_addressable_shards to ifrt.
       return num_shards();
@@ -294,7 +295,7 @@ class PyArray : public nanobind::object {
   absl::StatusOr<PyArray> FullyReplicatedShard();
 
   int num_shards() const {
-    xla::ifrt::Array* ifrt_array_ptr = ifrt_array();
+    xla::ifrt::ArrayRef ifrt_array_ptr = ifrt_array_ref();
     if (ifrt_array_ptr == nullptr) {
       return 0;
     }

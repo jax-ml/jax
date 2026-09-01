@@ -243,11 +243,12 @@ absl::Status PyClient::Defragment() {
     // TODO(hyeontaek): Re-construct ifrt::Array with new xla::PjRtBuffer so
     // that std::shared_ptr<xla::PjRtBuffer> does not need to be updated
     // in-place.
-    if (array.ifrt_array() == nullptr) {
+    if (array.ifrt_array_ref() == nullptr) {
       continue;
     }
-    auto* arr = xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(
-        array.ifrt_array());
+    tsl::RCReference<ifrt::PjRtCompatibleArray> arr =
+        xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(
+            array.ifrt_array_ref());
     if (arr == nullptr) {
       throw xla::XlaRuntimeError(
           "This operation is implemented for a PjRt-compatible backend "
@@ -672,8 +673,9 @@ absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
 
   std::vector<PyArray> arrays = LiveArrays();
   for (const PyArray& array : arrays) {
-    if (ifrt::Array* ifrt_array = array.ifrt_array()) {
-      TF_RETURN_IF_ERROR(add_array_to_profile(ifrt_array, array.traceback()));
+    if (xla::ifrt::ArrayRef ifrt_array = array.ifrt_array_ref()) {
+      TF_RETURN_IF_ERROR(
+          add_array_to_profile(ifrt_array.get(), array.traceback()));
     }
   }
 

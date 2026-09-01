@@ -236,15 +236,14 @@ absl::StatusOr<nb::list> ExperimentalReshardArrays(nb::sequence py_arrays,
 
   for (int i = 0; i < num_arrays; ++i) {
     PyArray array = nb::cast<PyArray>(py_arrays[i]);
-    if (array.ifrt_array() == nullptr) {
+    if (array.ifrt_array_ref() == nullptr) {
       return absl::InvalidArgumentError(
           absl::StrCat("Input array ", i, " has been donated or deleted."));
     }
     TF_RETURN_IF_ERROR(PyClientFromPyArray(array, backend));
-    ifrt_arrays.push_back(tsl::FormRef(array.ifrt_array()));
+    ifrt_arrays.push_back(array.ifrt_array_ref());
 
-    TF_ASSIGN_OR_RETURN(DType ifrt_dtype,
-                        xla::DtypeToIfRtDType(array.dtype()));
+    TF_ASSIGN_OR_RETURN(DType ifrt_dtype, xla::DtypeToIfRtDType(array.dtype()));
     Shape ifrt_shape(array.shape());
     TF_ASSIGN_OR_RETURN(ShardingRef ifrt_sharding,
                         GetIfrtHloSharding(out_shardings[i], ifrt_shape));
@@ -339,7 +338,7 @@ ExperimentalSplitByMeshAxis(
   input_ifrt_arrays.reserve(py_arrays.size());
   for (int array_idx = 0; array_idx < py_arrays.size(); ++array_idx) {
     TF_RETURN_IF_ERROR(PyClientFromPyArray(py_arrays[array_idx], backend));
-    Array* array = py_arrays[array_idx].ifrt_array();
+    xla::ifrt::ArrayRef array = py_arrays[array_idx].ifrt_array_ref();
     if (array == nullptr) {
       return xla::InvalidArgument("Input array #%d has been donated or deleted",
                                   array_idx);
@@ -389,7 +388,7 @@ ExperimentalSplitByMeshAxis(
       }
     }
 
-    input_ifrt_arrays.push_back(FormRef(array));
+    input_ifrt_arrays.push_back(array);
   }
 
   RemapPlan remap_plan(std::move(input_specs), std::move(output_specs),
@@ -504,7 +503,7 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
     for (int input_idx = 0; input_idx < num_input_arrays_per_output;
          ++input_idx) {
       const PyArray& py_array = py_arrays[input_idx];
-      Array* array = py_array.ifrt_array();
+      xla::ifrt::ArrayRef array = py_array.ifrt_array_ref();
       if (array == nullptr) {
         return xla::InvalidArgument(
             "Input array #%d for output #%d has been donated or deleted",
@@ -540,10 +539,10 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
           ArraySpec{.dtype = array->dtype(),
                     .shape = array->shape(),
                     .sharding = array->shared_ptr_sharding()});
-      input_ifrt_arrays.push_back(tsl::FormRef(array));
+      input_ifrt_arrays.push_back(array);
     }
 
-    Array* first_array = py_arrays[0].ifrt_array();
+    xla::ifrt::ArrayRef first_array = py_arrays[0].ifrt_array_ref();
     if (sharded_dim_idxs[array_idx] < 0) {
       TF_ASSIGN_OR_RETURN(
           ShardingRef ifrt_sharding,

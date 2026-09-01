@@ -272,13 +272,14 @@ MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
 
 absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
     nb::handle py_buffer, std::optional<std::intptr_t> stream) {
-  ifrt::Array* ifrt_array = nb::cast<PyArray>(py_buffer).ifrt_array();
+  xla::ifrt::ArrayRef ifrt_array =
+      nb::cast<PyArray>(py_buffer).ifrt_array_ref();
   if (ifrt_array == nullptr) {
     return xla::Unimplemented(
         "BufferToDLPackManagedTensor called on deleted array.");
   }
   auto* arr =
-      xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(ifrt_array);
+      xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(ifrt_array.get());
   if (arr == nullptr) {
     throw xla::XlaRuntimeError(
         "This operation is implemented for a PjRt-compatible backend only.");
@@ -306,8 +307,9 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
       TF_RETURN_IF_ERROR(
           pack->external_reference->WaitUntilBufferReadyOnStream(*stream));
     } else {
+      xla::ifrt::Array* ifrt_array_ptr = ifrt_array.get();
       TF_RETURN_IF_ERROR(
-          AwaitBuffersReady(absl::MakeConstSpan(&ifrt_array, 1)));
+          AwaitBuffersReady(absl::MakeConstSpan(&ifrt_array_ptr, 1)));
     }
   }
   pack->buffer_reference = nb::borrow<nb::object>(py_buffer);

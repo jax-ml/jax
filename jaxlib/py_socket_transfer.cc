@@ -452,7 +452,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
             for (const jax::PyArray& dest : dests) {
               arrs.push_back(tsl::FormRef(
                   tensorflow::down_cast<xla::ifrt::PjRtCompatibleArray*>(
-                      dest.ifrt_array())));
+                      dest.ifrt_array_ref().get())));
             }
             uint64_t uuid_cpp;
             try {
@@ -512,7 +512,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
             std::vector<xla::ifrt::ArrayRef> arrs;
             arrs.reserve(inputs.size());
             for (const jax::PyArray& input : inputs) {
-              arrs.push_back(tsl::FormRef(input.ifrt_array()));
+              arrs.push_back(input.ifrt_array_ref());
             }
             uint64_t uuid_cpp;
             try {
