@@ -66,25 +66,13 @@ def discharged_aval(
     discharge: Whether to discharge `AbstractRef`s into their inner array
       values. Has no effect on `ShapedArray`s.
     strip_memory_space: Whether to strip non-default memory spaces on
-      `ShapedArray`s (and inner arrays of discharged `AbstractRef`s) to
-      `core.MemorySpace.Device`. Has no effect on `AbstractRef`s if
-      `discharge=False`.
+      inner arrays of discharged `AbstractRef`s to `core.MemorySpace.Device`.
+      Has no effect on `AbstractRef`s if `discharge=False`.
   """
-  if not isinstance(aval, AbstractRef):
-    if (
-        strip_memory_space
-        and isinstance(aval, core.ShapedArray)
-        and getattr(aval, "memory_space", None) is not None
-    ):
-      return aval.update(memory_space=core.MemorySpace.Device)
+  if not isinstance(aval, AbstractRef) or not discharge:
     return aval
 
-  if not discharge:
-    return aval
-
-  inner = discharged_aval(
-      aval.inner_aval, discharge=False, strip_memory_space=strip_memory_space
-  )
+  inner = aval.inner_aval
   if isinstance(inner, core.ShapedArray) and aval.memory_space is not None:
     if strip_memory_space:
       return inner.update(memory_space=core.MemorySpace.Device)
