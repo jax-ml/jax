@@ -75,6 +75,7 @@ PLATFORM_TAGS_DICT = {
     ("Darwin", "x86_64"): ("macosx_11_0", "x86_64"),
     ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
     ("Windows", "AMD64"): ("win", "amd64"),
+    ("Windows", "ARM64"): ("win", "arm64"),
 }
 
 _py_deps = {
@@ -628,6 +629,7 @@ def jax_wheel(
             Label("//jaxlib/tools:macos_arm64"): "arm64",
             Label("//jaxlib/tools:macos_x86_64"): "x86_64",
             Label("//jaxlib/tools:win_amd64"): "AMD64",
+            Label("//jaxlib/tools:win_arm64"): "ARM64", 
             Label("//jaxlib/tools:linux_aarch64"): "aarch64",
             Label("//jaxlib/tools:linux_x86_64"): "x86_64",
         }),

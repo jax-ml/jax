@@ -32,6 +32,15 @@ bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
     integrity = "sha256-VCMTU5VJ4XUjcNnGPgFDSry9Kv4JOiaSNfHW5NHGH7o=",
+    patch_strip = 1,
+    patches = [
+        "//third_party/xla:cpu_compiler_aarch64.patch",
+        "//third_party/xla:cpu_info_windows_arm64.patch",
+        "//third_party/xla:filewrapper_windows_align.patch",
+        "//third_party/xla:onednn_async_aarch64.patch",
+        "//third_party/xla:onednn_gemm_bfloat16.patch",
+        "//third_party/xla:llvm_windows_arm64_native_triple.patch",
+    ],
     strip_prefix = "xla-0644417f95ad247b511558a92bc48b765730dc5a",
     urls = ["https://github.com/openxla/xla/archive/0644417f95ad247b511558a92bc48b765730dc5a.tar.gz"],
 )
@@ -105,6 +114,9 @@ single_version_override(
         "//third_party/py:rules_python_local_wheel.patch",
         # Upstreamed: https://github.com/bazel-contrib/rules_python/pull/4071
         "//third_party/py:rules_python_windows_long_paths.patch",
+        "//third_party/py:rules_python_pip_parse_windows_aarch64.patch",
+        # Skip pip hubs for Python versions not available for Windows ARM64(Python 3.9 & 3.10)
+        "//third_party/py:rules_python_skip_missing_interpreter.patch",
     ],
     version = "2.2.0",
 )
@@ -189,6 +201,7 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_depen
         "{os}_aarch64",
         "{os}_x86_64_freethreaded",
         "{os}_aarch64_freethreaded",
+        "windows_aarch64",
     ],
     whl_modifications = {
         "//build:numpy.json": "numpy",  # @pypi_mods is defined in XLA's MODULE.bazel
@@ -284,6 +297,11 @@ use_repo(
 )
 
 register_toolchains("@local_config_apple_cc_toolchains//:all")
+
+# Introduce @local_config_cc for Windows clang-cl builds.
+# See https://bazel.build/configure/windows#clang
+cc_configure = use_extension("@rules_cc//cc:extensions.bzl", "cc_configure_extension")
+use_repo(cc_configure, "local_config_cc")
 
 ##############################################################
 # Other dependencies via use_repo_rule

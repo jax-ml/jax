@@ -1,0 +1,46 @@
+diff --git a/xla/service/cpu/cpu_compiler.cc b/xla/service/cpu/cpu_compiler.cc
+--- a/xla/service/cpu/cpu_compiler.cc
++++ b/xla/service/cpu/cpu_compiler.cc
+@@ -377,9 +377,24 @@
+ }
+ 
+ /* static */ void CpuCompiler::InitializeLLVMTarget() {
+-  // Initialize LLVM's MC layer for the native target.
+-  llvm::InitializeNativeTarget();
+-  llvm::InitializeNativeTargetAsmPrinter();
++  // Initialize LLVM's MC layer for the native target(s). We initialize
++  // both the AArch64 and X86 backends (when available/linked in) rather
++  // than relying on llvm::InitializeNativeTarget(), which resolves based
++  // on the LLVM build's native target and can otherwise reference
++  // Initialize*Target() symbols for a backend that was never linked in
++  // (e.g. calling into the X86 backend on Windows ARM64).
++#if defined(XLA_LLVM_AARCH64_AVAILABLE)
++  LLVMInitializeAArch64Target();
++  LLVMInitializeAArch64TargetInfo();
++  LLVMInitializeAArch64TargetMC();
++  LLVMInitializeAArch64AsmPrinter();
++#endif
++#if defined(XLA_LLVM_X86_AVAILABLE)
++  LLVMInitializeX86Target();
++  LLVMInitializeX86TargetInfo();
++  LLVMInitializeX86TargetMC();
++  LLVMInitializeX86AsmPrinter();
++#endif
+ }
+ 
+ namespace {
+diff --git a/xla/service/cpu/BUILD b/xla/service/cpu/BUILD
+--- a/xla/service/cpu/BUILD
++++ b/xla/service/cpu/BUILD
+@@ -144,6 +144,11 @@
+     hdrs = [
+         "cpu_compiler.h",
+     ],
++    defines = if_llvm_aarch64_available([
++        "XLA_LLVM_AARCH64_AVAILABLE=1",
++    ]) + if_llvm_x86_available([
++        "XLA_LLVM_X86_AVAILABLE=1",
++    ]),
+     copts = tsl_copts(),
+     deps = [
+         ":conv_canonicalization",
