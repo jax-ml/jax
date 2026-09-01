@@ -22,9 +22,21 @@ import copy
 import enum
 from functools import partial
 import logging
+import sys
+import threading
 import time
 from typing import Any
 import warnings
+
+# TODO(b/549113774): Remove this Python-level compilation lock once the
+# upstream C++ PJRT/XLA compilation deadlock under free-threading is resolved.
+_compilation_lock = threading.Lock()
+
+
+def _is_free_threaded() -> bool:
+  """Returns True if running under Python free-threading (GIL disabled)."""
+  return not getattr(sys, '_is_gil_enabled', lambda: True)()
+
 
 from jax._src import compilation_cache
 from jax._src import config as config
@@ -333,6 +345,24 @@ def get_compile_options(
 
 @profiler.annotate_function
 def backend_compile_and_load(
+    backend: xc.Client,
+    module: ir.Module,
+    executable_devices: xc.DeviceList,
+    options: xc.CompileOptions,
+    host_callbacks: Sequence[Any],
+) -> xc.LoadedExecutable:
+  if _is_free_threaded():
+    with _compilation_lock:
+      return _backend_compile_and_load_impl(
+          backend, module, executable_devices, options, host_callbacks
+      )
+  return _backend_compile_and_load_impl(
+      backend, module, executable_devices, options, host_callbacks
+  )
+
+
+
+def _backend_compile_and_load_impl(
     backend: xc.Client,
     module: ir.Module,
     executable_devices: xc.DeviceList,
