@@ -75,10 +75,57 @@ jobs:
       MAX_PROCESSES: ${{ inputs.max-processes }}
 
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout JAX
+        id: checkout
+        continue-on-error: ${{ contains(inputs.runner, 'windows-x86') }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.git_commit }}
           persist-credentials: false
+      - name: Diagnose failed Windows SHA checkout
+        if: ${{ contains(inputs.runner, 'windows-x86') && steps.checkout.outcome == 'failure' }}
+        env:
+          CHECKOUT_COMMIT: ${{ inputs.git_commit || github.sha }}
+        run: |
+          set +e
+          git rev-parse --verify --quiet "${CHECKOUT_COMMIT}^{object}"
+          sha_status=$?
+          git rev-parse --verify --quiet 'FETCH_HEAD^{object}'
+          fetch_head_status=$?
+          git cat-file -e "${CHECKOUT_COMMIT}^{commit}"
+          cat_file_status=$?
+          set -e
+
+          echo "SHA lookup exit code: ${sha_status}"
+          echo "FETCH_HEAD lookup exit code: ${fetch_head_status}"
+          echo "Commit object lookup exit code: ${cat_file_status}"
+          git rev-parse --show-object-format
+          git show-ref || true
+      - name: Checkout Windows SHA through a named ref
+        if: ${{ contains(inputs.runner, 'windows-x86') && steps.checkout.outcome == 'failure' }}
+        env:
+          CHECKOUT_COMMIT: ${{ inputs.git_commit || github.sha }}
+          CHECKOUT_REF: refs/remotes/origin/jaxci-wheel-build
+        run: |
+          if [[ ! "${CHECKOUT_COMMIT}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "Expected a full SHA-1 commit, got ${CHECKOUT_COMMIT}" >&2
+            exit 1
+          fi
+
+          git -c protocol.version=2 fetch \
+            --no-tags \
+            --prune \
+            --no-recurse-submodules \
+            --depth=1 \
+            origin \
+            "+${CHECKOUT_COMMIT}:${CHECKOUT_REF}"
+          git checkout --force --detach "${CHECKOUT_REF}"
+
+          actual_commit="$(git rev-parse HEAD)"
+          if [[ "${actual_commit}" != "${CHECKOUT_COMMIT}" ]]; then
+            echo "Expected commit ${CHECKOUT_COMMIT}, got ${actual_commit}" >&2
+            exit 1
+          fi
       - name: Download JAX CPU wheels
         uses: ./.github/actions/download-jax-cpu-wheels
         with:
