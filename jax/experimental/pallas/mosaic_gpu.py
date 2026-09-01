@@ -76,6 +76,7 @@ from jax._src.pallas.mosaic_gpu.primitives import commit_smem_to_gmem_group as c
 from jax._src.pallas.mosaic_gpu.primitives import commit_tmem as commit_tmem
 from jax._src.pallas.mosaic_gpu.primitives import copy_gmem_to_smem as copy_gmem_to_smem
 from jax._src.pallas.mosaic_gpu.primitives import copy_smem_to_gmem as copy_smem_to_gmem
+from jax._src.pallas.mosaic_gpu.primitives import get_barrier_semaphore as get_barrier_semaphore
 from jax._src.pallas.mosaic_gpu.primitives import griddepcontrol_launch_dependents as griddepcontrol_launch_dependents
 from jax._src.pallas.mosaic_gpu.primitives import griddepcontrol_wait as griddepcontrol_wait
 from jax._src.pallas.mosaic_gpu.primitives import inline_mgpu as inline_mgpu

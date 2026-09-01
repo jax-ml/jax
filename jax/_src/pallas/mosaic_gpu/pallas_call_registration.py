@@ -131,13 +131,14 @@ def _emit_mosaic_gpu_custom_call(
     )(ctx.replace(avals_in=()))
   outs = mgpu.core._mosaic_gpu_lowering_rule(
       ctx.replace(avals_in=new_avals_in, avals_out=new_avals_out),
-      *args, *scratch_args,
+      *args,
+      *scratch_args,
       module=module,
       out_types=lowering_result.new_out_shapes,
       inout_types=(),
       input_output_aliases=input_output_aliases,
-      # False until we add get_barrier_semaphore() feature.
-      use_custom_barrier=False,
+      use_custom_barrier=lowering_result.uses_barrier_semaphore,
+      clique_semaphores_count=lowering_result.barrier_semaphores_count,
   )
   if (prof_spec := lowering_result.profiler_spec) is not None:
     *outs, prof_buffer = outs
