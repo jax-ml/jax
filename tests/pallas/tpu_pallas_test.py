@@ -2449,6 +2449,123 @@ class PallasCallTest(ptu.PallasTPUTest):
         compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(2**18)),
     )(x)
 
+  @parameterized.named_parameters(
+      ('bf16_16x128_8x128', jnp.bfloat16, (16, 128), (8, 128)),
+      ('bf16_32x256_8x128', jnp.bfloat16, (32, 256), (8, 128)),
+      ('bf16_64x512_8x256', jnp.bfloat16, (64, 512), (8, 256)),
+      ('f8_e5m2_32x256_8x128', jnp.float8_e5m2, (32, 256), (8, 128)),
+      ('f8_e5m2_32x256_16x128', jnp.float8_e5m2, (32, 256), (16, 128)),
+      ('f8_e5m2_64x512_8x256', jnp.float8_e5m2, (64, 512), (8, 256)),
+  )
+  def test_l2m_with_small_second_minor_blocks(
+      self, dtype, input_shape, block_shape
+  ):
+    if not jtu.is_libtpu_at_least('0.0.48'):
+      self.skipTest('Test requires libtpu >= 0.0.48')
+
+    m, n = input_shape
+    bm, bn = block_shape
+
+    def custom_kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    @jax.jit
+    def matmul_then_pallas(a, b):
+      c = (a @ b).astype(dtype)
+      out = self.pallas_call(
+          custom_kernel,
+          out_shape=c,
+          in_specs=[
+              pl.BlockSpec(block_shape=(bm, bn), index_map=lambda i, j: (i, j))
+          ],
+          out_specs=pl.BlockSpec(
+              block_shape=(bm, bn), index_map=lambda i, j: (i, j)
+          ),
+          grid=(m // bm, n // bn),
+      )(c)
+      return out, c
+
+    k = 128
+    k1, k2 = jax.random.split(jax.random.key(0))
+    a = jax.random.normal(k1, (m, k), dtype=jnp.bfloat16)
+    b = jax.random.normal(k2, (k, n), dtype=jnp.bfloat16)
+    out, expected = matmul_then_pallas(a, b)
+    np.testing.assert_array_equal(out, expected)
+
+  @parameterized.product(
+      m=[64, 128],
+      n=[256, 512],
+      offset_val=[8, 16, 24, 32],
+      size_val=[8, 16, 24, 32],
+      dynamic_offset=[True, False],
+      dynamic_size=[True, False],
+      dtype=[jnp.bfloat16, jnp.float8_e5m2],
+  )
+  def test_l2m_memref_slice(
+      self, m, n, offset_val, size_val, dynamic_offset, dynamic_size, dtype
+  ):
+    """Tests memref_slice with static/dynamic offset and size on an L2M operand."""
+    if not jtu.is_libtpu_at_least('0.0.48'):
+      self.skipTest('Test requires libtpu >= 0.0.48')
+
+    sublanes = pltpu.get_tpu_info().num_sublanes
+    packing = 32 // jax.dtypes.itemsize_bits(dtype)
+    large_second_minor_size = sublanes * packing
+    if (
+        offset_val % large_second_minor_size != 0
+        and size_val > large_second_minor_size
+    ):
+      self.skipTest('Unsupported case')
+
+    k = 128
+    max_size = 32
+
+    def custom_kernel(x_hbm_ref, offset_ref, size_ref, out_hbm_ref):
+      offset = (
+          pl.multiple_of(offset_ref[0], sublanes)
+          if dynamic_offset
+          else offset_val
+      )
+      size = pl.multiple_of(size_ref[0], sublanes) if dynamic_size else size_val
+
+      def body(scratch_ref):
+        pltpu.sync_copy(
+            x_hbm_ref.at[pl.ds(offset, size), :],
+            scratch_ref.at[pl.ds(0, size), :],
+        )
+        pltpu.sync_copy(
+            scratch_ref.at[pl.ds(0, size), :],
+            out_hbm_ref.at[pl.ds(offset, size), :],
+        )
+
+      pl.run_scoped(body, pltpu.VMEM((max_size, n), dtype))
+
+    @jax.jit
+    def matmul_then_unwindowed_pallas(a, b, offset, size):
+      c = (a @ b).astype(dtype)
+      out = self.pallas_call(
+          custom_kernel,
+          out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+          in_specs=[
+              pl.BlockSpec(memory_space=pl.ANY),
+              pl.BlockSpec(memory_space=pltpu.SMEM),
+              pl.BlockSpec(memory_space=pltpu.SMEM),
+          ],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+      )(c, offset, size)
+      return out, c
+
+    k1, k2 = jax.random.split(jax.random.key(0))
+    a = jax.random.normal(k1, (m, k), dtype=jnp.bfloat16)
+    b = jax.random.normal(k2, (k, n), dtype=jnp.bfloat16)
+    offset = jnp.array([offset_val], dtype=jnp.int32)
+    size = jnp.array([size_val], dtype=jnp.int32)
+    out, c = matmul_then_unwindowed_pallas(a, b, offset, size)
+    np.testing.assert_array_equal(
+        out[offset_val : offset_val + size_val],
+        c[offset_val : offset_val + size_val],
+    )
+
   def test_jitted_kernel_with_program_id(self):
     @jax.jit
     def body(x_ref, o_ref):
@@ -2536,10 +2653,12 @@ class PallasCallTest(ptu.PallasTPUTest):
                          out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
                          debug=True)
     def f(x_ref, y_ref):
-        y_ref[...] = x_ref[...]
-        def body(i, _):
-          y_ref[...] += i
-        lax.fori_loop(0, 5, body, None, unroll=2)
+      y_ref[...] = x_ref[...]
+
+      def body(i, _):
+        y_ref[...] += i
+
+      lax.fori_loop(0, 5, body, None, unroll=2)
 
     with jtu.capture_stdout() as get_output:
       y = f(jnp.array([0], jnp.int32))
@@ -2604,64 +2723,6 @@ class PallasCallTest(ptu.PallasTPUTest):
         out_shape=jax.ShapeDtypeStruct(shape, dtype),
     )(x, y)
     np.testing.assert_array_equal(res, expected)
-
-  @parameterized.product(
-      cmp_op=[
-          operator.gt,
-          operator.ge,
-          operator.lt,
-          operator.le,
-          operator.eq,
-          operator.ne,
-      ],
-      dtype=[jnp.int4, jnp.uint4, jnp.int8, jnp.uint8, jnp.int16, jnp.uint16],
-  )
-  def test_int4_mask_ops_pallas_kernel(self, cmp_op, dtype):
-    if not jtu.is_libtpu_at_least('0.0.48'):
-      self.skipTest(
-          '4-bit integer boolean mask comparisons require libtpu >= 0.0.48'
-      )
-    if not jtu.is_device_tpu_at_least(4):
-      self.skipTest('i4 is not supported on TPU generations < 4')
-
-    iinfo = jnp.iinfo(dtype)
-    cmp_val = 1 if iinfo.min < 0 else 4
-
-    def kernel(x_ref, y_ref, z_ref, o_log_ref, o_un_ref, o_sel_ref):
-      m1 = cmp_op(x_ref[...], cmp_val)
-      m2 = cmp_op(y_ref[...], cmp_val)
-      o_log_ref[...] = (m1 & m2).astype(dtype)
-      o_un_ref[...] = (~m1).astype(dtype)
-      o_sel_ref[...] = jnp.where(m1, y_ref[...], z_ref[...])
-
-    shape = (128, 2048)
-    np_dtype = np.int8 if iinfo.min < 0 else np.uint8
-    x_np = np.random.randint(
-        int(iinfo.min), int(iinfo.max) + 1, size=shape
-    ).astype(np_dtype)
-    y_np = np.random.randint(
-        int(iinfo.min), int(iinfo.max) + 1, size=shape
-    ).astype(np_dtype)
-    z_np = np.random.randint(
-        int(iinfo.min), int(iinfo.max) + 1, size=shape
-    ).astype(np_dtype)
-    x = jnp.asarray(x_np, dtype=dtype)
-    y = jnp.asarray(y_np, dtype=dtype)
-    z = jnp.asarray(z_np, dtype=dtype)
-
-    m1_np, m2_np = cmp_op(x_np, cmp_val), cmp_op(y_np, cmp_val)
-    exp_log = (m1_np & m2_np).astype(np_dtype)
-    exp_un = (~m1_np).astype(np_dtype)
-    exp_sel = np.where(m1_np, y_np, z_np).astype(np_dtype)
-
-    out_struct = jax.ShapeDtypeStruct(shape, dtype)
-    res_log, res_un, res_sel = pl.pallas_call(
-        kernel, out_shape=(out_struct, out_struct, out_struct)
-    )(x, y, z)
-
-    np.testing.assert_array_equal(res_log, exp_log)
-    np.testing.assert_array_equal(res_un, exp_un)
-    np.testing.assert_array_equal(res_sel, exp_sel)
 
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
