@@ -28,6 +28,7 @@ from typing import Any, Literal, cast, overload
 import jax
 from jax import numpy as jnp
 from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
+from jax.extend import backend as jex_backend
 from jax.interpreters import mlir
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -2450,12 +2451,35 @@ class Arch:
   minor: int
 
 
-def get_arch() -> Arch:
-  ip = ir.InsertionPoint.current
-  if ip is None:
+def _infer_arch() -> tuple[int, int]:
+  device: Any = jax.sharding.get_abstract_mesh().abstract_device
+  default_device = jex_backend.get_default_device()
+  if device is None:
+    device = default_device
+  elif (
+      hasattr(default_device, "compute_capability")
+      and device.device_kind == default_device.device_kind
+  ):
+    device = default_device
+  if not hasattr(device, "compute_capability"):
+    return (9, 0)  # TODO(apaszke): Remove this once we figure out the export story.
+  arch_name = device.compute_capability
+  # Handle ROCm devices that return architecture strings like "gfxXXX".
+  if arch_name.startswith("gfx"):
     raise ValueError(
-        "Cannot retrieve the architecture without an insertion point"
+        f"Mosaic GPU does not yet support AMD ROCm devices. "
+        f"Got compute_capability: {arch_name}"
     )
+  return tuple(map(int, arch_name.split(".")))  # pyrefly: ignore[bad-return]
+
+
+def get_arch() -> Arch:
+  try:
+    ip = ir.InsertionPoint.current
+  except ValueError:
+    # Infer the architecture; this is needed when architecture-sensitive code
+    # is called from test setup code and there is no active module.
+    return Arch(*_infer_arch())
   block = ip.block
   op = block.owner
   while op is not None:

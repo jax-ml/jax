@@ -112,6 +112,24 @@ def create_instr_descriptor(
   return arith.constant(ir.IntegerType.get_signless(32), desc)
 
 
+def _mxf4_sparsity_version() -> int:
+  """Sparsity version for .kind::mxf4{,nvf4}.
+
+  This needs to be set in the descriptor and encodes the sparsity granularity.
+  """
+  arch = utils.get_arch()
+  assert arch.major in {10, 11}, arch
+  return int(arch.major == 10 and arch.minor >= 7)
+
+
+def sparse_group_elems(element_type: ir.Type) -> int:
+  """The number of A elements described by one pair of metadata entries."""
+  assert utils.bitwidth(element_type) != 32, "tf32 support not implemented"
+  if utils.bitwidth(element_type) != 4:
+    return 4
+  return 4 if _mxf4_sparsity_version() == 1 else 8
+
+
 def _create_scaled_instr_descriptor(
     get_input_encoding: Callable[[ir.Type], int],
     m: int,
@@ -125,15 +143,23 @@ def _create_scaled_instr_descriptor(
     scale_type: ir.Type,
     sparse: bool = False,
 ) -> ir.Value:
+  # Use .kind::mxf4 and .kind::mxf4nvf4 encoding for 4-bit types
+  is_fp4 = utils.bitwidth(a_type) == 4 and utils.bitwidth(b_type) == 4
   desc = 0
-  # Bits 0, 1 are reserved
+  # Bits 0, 1 are reserved and must be 0
   desc |= sparse << 2  # Sparsity, bit 2
-  # Bit 3 is reserved
+  # Bit 3 is the upper bit of the encoded K dimension .kind::mxf4 and
+  # .kind::mxf4nvf4
   assert 0 <= b_scale_idx < 4
   desc |= b_scale_idx << 4  # B scale factor data ID, bits 4-5
   # Bit 6 is reserved
   desc |= get_input_encoding(a_type) << 7  # A dtype, bits 7-9
-  desc |= get_input_encoding(b_type) << 10  # B dtype, bits 10-12
+  desc |= get_input_encoding(b_type) << 10  # B dtype, bits 10-12 or 10-11
+  assert not is_fp4 or (desc >> 11) == 0
+  if is_fp4 and sparse:
+    sparsity_version = _mxf4_sparsity_version()
+    assert sparsity_version in {0, 1}
+    desc |= sparsity_version << 12  # Sparsity version, bit 12
   # We ignore negate bits 13-14
   desc |= transpose_a << 15  # Transpose A
   desc |= transpose_b << 16  # Transpose B
@@ -152,12 +178,19 @@ def _create_scaled_instr_descriptor(
     raise ValueError(f"M must be a multiple of 16 and <= 256, got: {m}")
   desc |= (m >> 7) << 27  # M >> 7, bits 27-28
   desc |= a_scale_idx << 29  # A scale factor data ID, bits 29-30
-  # Bit 31 is reserved
+  # Bit 31 is the lowest bit of the encoded K dimension for .kind::mxf4,
+  # .kind::mxf4nvf4, and .kind::mxf8f6f4. Zero means Dense K=64 / Sparse
+  # K=128 for .kind::mxf4 and .kind::mxf4nvf4 and Dense K=32 / Sparse K=64
+  # for .kind::mxf8f6f4.
   return arith.constant(ir.IntegerType.get_signless(32), desc)
 
 
 def create_scaled_f8f6f4_instr_descriptor(*args, **kwargs) -> ir.Value:
   def get_input_encoding(ty):
+    # The instruction descriptor encoding logic implemented above assumes
+    # that 4-bit types come through .kind::mxf4 or .kind::mxf4nvf4.
+    if utils.bitwidth(ty) == 4:
+      raise NotImplementedError(f"4-bit type {ty} not supported via f8f6f4")
     if ty == ir.Float8E4M3FNType.get():
       return 0
     elif ty == ir.Float8E5M2Type.get():
@@ -494,9 +527,8 @@ def mma(
           f" got {b_scale.shape}"
       )
   if is_sparse:
-    sparse_group_elems = 8 if utils.bitwidth(a_element_type) == 4 else 4
     # Each sparse group has 2 entries.
-    expected_meta_k = k // sparse_group_elems * 2
+    expected_meta_k = k // sparse_group_elems(a_element_type) * 2
     if a_sparse_metadata.shape != (m, expected_meta_k):
       raise ValueError(
           f"A sparse metadata shape mismatch: expected {(m, expected_meta_k)},"
@@ -588,9 +620,8 @@ def mma(
     if a_sparse_addr_base is not None:
       if n_groups != 1 or m_groups != 1:
         raise NotImplementedError("A sparse metadata address calculation for multiple tiles")
-      sparse_group_elems = 8 if utils.bitwidth(mma_a_element_type) == 4 else 4
       # Each sparse group has 2 entries, each TMEM column holds 16 i2 entries.
-      cols_per_k_group = k_group_elems // sparse_group_elems * 2 // 16
+      cols_per_k_group = k_group_elems // sparse_group_elems(mma_a_element_type) * 2 // 16
       a_sparse_addr = arith.addi(a_sparse_addr_base, utils.c(ki * cols_per_k_group, i32))
     else:
       a_sparse_addr = None
@@ -683,6 +714,7 @@ def _do_mma(
   is_scaled = a_scale_addr is not None
   is_sparse = a_sparse_addr is not None
   elem_bitwidth = utils.bitwidth(a_element_type)
+  # TODO: support larger K values on newer hardware
   instr_k = (1 + is_sparse) * 8 * 32 // elem_bitwidth
   packing = 8 * 4 // elem_bitwidth
 
@@ -765,16 +797,17 @@ def _do_mma(
   for k_step in range(k // instr_k):
     if is_sparse:
       assert a_sparse_addr is not None
-      sparse_group_elems = 8 if elem_bitwidth == 4 else 4
-      # Each sparse group has 2 entries, each TMEM column holds 16 i2 entries.
-      meta_cols_per_instr = instr_k // sparse_group_elems * 2 // 16
-      instrs_per_col_pair = 2 // meta_cols_per_instr
-      sp_selector = k_step % instrs_per_col_pair
-      sparse_addr = (
-          arith.addi(
-              a_sparse_addr, utils.c(k_step // instrs_per_col_pair * 2, i32)
-          ),
-      )
+      # Sparse metadata is organised as 32-row columns of 32-bit cells in TMEM; 4 bits
+      # of metadata map to 2 (1:2 sparsity), 4 (2:4 sparsity) or 8 (4:8 sparsity)
+      # of the `instr_k` columns in A consumed by each tcgen05.mma.sp instruction.
+      meta_cols_per_instr = instr_k // sparse_group_elems(a_element_type) * 2 // 16
+      # The metadata operand always names a column pair, and the descriptor's
+      # sparsity selector picks which half of that pair to read if needed. This
+      # selector is only non-zero for wider types (smaller instr_k) that only
+      # have one metadata column per instruction (e.g. .kind::f16).
+      meta_col = k_step * meta_cols_per_instr
+      sp_selector = meta_col % 2
+      sparse_addr = (arith.addi(a_sparse_addr, utils.c(meta_col // 2 * 2, i32)),)
     if is_scaled:
       assert scale_steps is not None
       scale_vec_width = 4 // scale_steps
