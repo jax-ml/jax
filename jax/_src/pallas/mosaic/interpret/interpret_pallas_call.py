@@ -42,6 +42,7 @@ from jax._src.pallas.mosaic import tpu_info
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
 from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
 from jax._src.pallas.mosaic.interpret.thread_map import thread_map
+from jax._src.pallas.mosaic.interpret.thread_map import TOP_LEVEL_TOKEN_VALUE
 import jax._src.pallas.mosaic.interpret.utils as interpret_utils
 from jax._src.pallas.mosaic.interpret.params import InterpretParams
 from jax._src.state import discharge as state_discharge
@@ -61,12 +62,13 @@ Token = np.ndarray
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
-TOP_LEVEL_TOKEN_VALUE = 42
 
-
-def fail(e: Exception, device_id: int | None):
+def fail(e: Exception, token, device_id: int | None = None):
+  del device_id  # A failed thread is only recorded if the core is also known.
   shared_memory = _get_shared_memory()
-  shared_memory.set_failed(e, device_id=device_id, top_level=True)
+  shared_memory.set_failed(
+      e, top_level=int(token) == TOP_LEVEL_TOKEN_VALUE
+  )
 
 
 def fail_on_exception(func):
@@ -97,8 +99,11 @@ def fail_on_exception(func):
           local_core_id = int(args[2])
         except:
           pass
+      failed_thread = None
+      if device_id is not None and local_core_id is not None:
+        failed_thread = (device_id, local_core_id)
       shared_memory.set_failed(
-          e, device_id=device_id, local_core_id=local_core_id,
+          e, failed_thread=failed_thread,
           # NOTE: To avoid having to pass around a separate value to track
           # whether or not this callback is running at the "top level" (vs.
           # inside of a thread_map), we set the token to a specific value for
@@ -1702,6 +1707,7 @@ def _interpret_jaxpr(
         out = []
 
       elif prim is mosaic_primitives.get_barrier_semaphore_p:
+        # TODO(rdyro): Support barrier semaphore tags in interpret mode.
         token, out = callback.io_callback(
             get_barrier_semaphore,
             (TOKEN_SHAPE_DTYPE, jax.ShapeDtypeStruct((), jnp.int16)),

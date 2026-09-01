@@ -55,6 +55,7 @@ limitations under the License.
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/call_location.h"
 #include "jaxlib/config.h"
+#include "jaxlib/ft_mutex.h"
 #include "jaxlib/guard_lib.h"
 #include "jaxlib/jax_jit.h"
 #include "jaxlib/nb_class_ptr.h"
@@ -1044,7 +1045,7 @@ struct PjitFunctionObject {
 class PjitFunctionStore {
  public:
   void Insert(PjitFunctionObject* o) {
-    nb::ft_lock_guard lock(mu_);
+    ft_lock_guard lock(mu_);
     o->next = compiled_functions_;
     o->prev = nullptr;
     if (o->next) {
@@ -1054,7 +1055,7 @@ class PjitFunctionStore {
   }
 
   void Remove(PjitFunctionObject* o) {
-    nb::ft_lock_guard lock(mu_);
+    ft_lock_guard lock(mu_);
     if (o->next) {
       o->next->prev = o->prev;
     }
@@ -1070,7 +1071,7 @@ class PjitFunctionStore {
         std::pair<nb::object, std::shared_ptr<PjitFunctionCache::Cache>>>
         caches;
     {
-      nb::ft_lock_guard lock(mu_);
+      ft_lock_guard lock(mu_);
       for (PjitFunctionObject* fn = compiled_functions_; fn != nullptr;
            fn = fn->next) {
         caches.emplace_back(fn->fun.cache(), fn->fun.executables());
@@ -1083,9 +1084,8 @@ class PjitFunctionStore {
   };
 
  private:
-  // Protected by the GIL in GIL mode, and by mu_ in freethreading mode.
-  nb::ft_mutex mu_;
-  PjitFunctionObject* compiled_functions_;
+  ft_mutex mu_;
+  PjitFunctionObject* compiled_functions_ ABSL_GUARDED_BY(mu_);
 };
 
 PjitFunctionStore pjit_function_store;

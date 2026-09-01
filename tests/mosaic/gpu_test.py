@@ -2064,7 +2064,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         jax.ShapeDtypeStruct(lhs_smem_shape, in_jax_dtype),
         jax.ShapeDtypeStruct(rhs_smem_shape, in_jax_dtype),
         mgpu.TMABarrier(2),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), out_jax_dtype),
     ]
     z = mgpu.as_gpu_kernel(
@@ -2150,7 +2150,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
         mgpu.TMABarrier(),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((128, n), out_jax_dtype),
         mgpu.TMEM((128, k), in_jax_dtype, packing=4 // bytewidth(in_mlir_dtype)),
     ]
@@ -2167,13 +2167,13 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     dtype = jnp.float8_e8m0fnu
 
     def kernel(ctx, src, out, scratch):
-      smem, barrier, tmem = scratch
+      smem, barrier, tc_barrier, tmem = scratch
       ctx.async_copy(src_ref=src, dst_ref=smem, barrier=barrier)
       barrier.wait()
       with mgpu.single_thread():
         tcgen05.async_copy_scales_smem_to_tmem(smem, tmem)
-        tcgen05.commit_arrive(barrier)
-      barrier.wait(orders_tensor_core=True)
+        tcgen05.commit_arrive(tc_barrier)
+      tc_barrier.wait(orders_tensor_core=True)
       # We print as i32, because i8 seems to overflow the CUDA printf buffer and
       # produce a truncated output.
       tcgen05.TMEMRef(
@@ -2191,6 +2191,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     scratch_shape = [
         x,
         mgpu.TMABarrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((128, 4), dtype, layout=tcgen05.scales_layout()),
     ]
     with self.capture_stdout() as stdout:
@@ -2248,7 +2249,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     scratch_shape = [
         jax.ShapeDtypeStruct(smem_shape, jax_dtype),
         mgpu.TMABarrier(),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), jax_dtype, packing=packing),
     ]
     z = mgpu.as_gpu_kernel(
@@ -2307,7 +2308,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     scratch_shape = [
         jax.ShapeDtypeStruct(smem_shape, jax_dtype),
         mgpu.TMABarrier(),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
         mgpu.TMEM((m_block, n), jax_dtype, packing=packing, collective=True),
     ]
@@ -2435,7 +2436,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
             ((n + 127) // 128, k // (block_size * 4), 32, 16), scale_jax_dtype
         ),
         mgpu.TMABarrier(4),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), out_jax_dtype),
         mgpu.TMEM(
             (m, k // block_size),
@@ -2606,7 +2607,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
             (1, k // (scale_block * 4), 64, 16), scale_jax_dtype
         ),
         mgpu.TMABarrier(4),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m_block, n), out_jax_dtype, collective=True),
         mgpu.TMEM(
             (128, k // scale_block),
@@ -2760,7 +2761,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
             ((n + 127) // 128, k // (scale_block * 4), 32, 16), scale_jax_dtype
         ),
         mgpu.TMABarrier(4),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m_block, n), out_jax_dtype, collective=True),
         mgpu.TMEM(
             (m_block, k // scale_block),
@@ -2897,7 +2898,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), b_dtype),
         jax.ShapeDtypeStruct((m // 128, k // 128, 128, 64), sparse_meta_dtype),
         mgpu.TMABarrier(3),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), out_jax_dtype),
         mgpu.TMEM((m, k // 2), sparse_meta_dtype, layout=tcgen05.sparse_meta_layout()),
     ]
@@ -3014,7 +3015,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
         jax.ShapeDtypeStruct((m // 128, k // 128, 128, 64), sparse_meta_dtype),
         mgpu.TMABarrier(2),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), out_jax_dtype),
         mgpu.TMEM((m, k // 2), in_jax_dtype, packing=2),
         mgpu.TMEM(
@@ -3137,7 +3138,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         jax.ShapeDtypeStruct(tile_shape((k, n_block), rhs_tiling), in_jax_dtype),
         jax.ShapeDtypeStruct((m_block // 128, k // 128, 128, 64), sparse_meta_dtype),
         mgpu.TMABarrier(3),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m_block, n), out_jax_dtype, collective=True),
         mgpu.TMEM((m_block, k // 2), sparse_meta_dtype, layout=tcgen05.sparse_meta_layout(), collective=True),
     ]
@@ -3245,7 +3246,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         jax.ShapeDtypeStruct((m // 128, k // (block_size * 4), 32, 16), scale_jax_dtype),
         jax.ShapeDtypeStruct((n // 128, k // (block_size * 4), 32, 16), scale_jax_dtype),
         mgpu.TMABarrier(5),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), out_jax_dtype),
         mgpu.TMEM((m, k // 2), sparse_meta_dtype, layout=tcgen05.sparse_meta_layout()),
         mgpu.TMEM((m, k // block_size), scale_jax_dtype, layout=tcgen05.scales_layout()),
@@ -3365,7 +3366,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         jax.ShapeDtypeStruct((m // 128, k // (block_size * 4), 32, 16), scale_jax_dtype),
         jax.ShapeDtypeStruct((n // 128, k // (block_size * 4), 32, 16), scale_jax_dtype),
         mgpu.TMABarrier(5),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), out_jax_dtype),
         mgpu.TMEM((m, meta_k), sparse_meta_dtype, layout=tcgen05.sparse_meta_layout()),
         mgpu.TMEM((m, k // block_size), scale_jax_dtype, layout=tcgen05.scales_layout()),
@@ -3508,7 +3509,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         jax.ShapeDtypeStruct(tile_shape(x_block_shape, tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_block_shape, tiling), in_jax_dtype),
         mgpu.TMABarrier(2),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m_block_tile, n), out_jax_dtype, collective=True),
     ]
     z = mgpu.as_gpu_kernel(
@@ -3629,7 +3630,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         jax.ShapeDtypeStruct(tile_shape(x_block_shape, tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_block_shape, tiling), in_jax_dtype),
         mgpu.TMABarrier(2),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
         mgpu.TMEM((128, n), out_jax_dtype, collective=True),
         mgpu.TMEM((128, k), in_jax_dtype, collective=True, packing=2),

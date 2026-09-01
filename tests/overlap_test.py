@@ -467,6 +467,37 @@ class OverlapTest(jtu.JaxTestCase):
 
     f(x, w)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_program_order_per_input_barrier(self, mesh):
+    x = jax.device_put(jnp.arange(8.0), P('x'))
+    a = jax.device_put(jnp.arange(8.0) * 2.0, P('x'))
+    b = jax.device_put(jnp.arange(8.0) * 3.0, P('x'))
+
+    @jax.jit
+    @program_order(enforce=True)
+    def f(x, a, b):
+      x = jnp.sin(x)
+
+      @program_order(enforce=False)
+      def op1(x):
+        return x + 1.0
+      y = op1(x)
+
+      @program_order(enforce=False)
+      def op2(y, a, b):
+        return y * a + b
+      z = op2(y, a, b)
+      return z
+
+    jaxpr = f.trace(x, a, b).jaxpr
+    jaxpr_str = str(jaxpr)
+    self.assertIn('create_token', jaxpr_str)
+    # sin -> op1: 1 token barrier + 0 per-input barrier = 1
+    # op1 -> op2: 1 token barrier + 2 per-input barriers = 3
+    self.assertEqual(jaxpr_str.count('optimization_barrier'), 4)
+
+    f(x, a, b)  # doesn't crash
+
 
 class AsyncCollectivesTest(jtu.JaxTestCase):
 

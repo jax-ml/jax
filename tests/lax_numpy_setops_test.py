@@ -132,6 +132,12 @@ class LaxNumpySetopsTest(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
       self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testSetdiff1dSizeZero(self):
+    # regression test for zero-sized result raising IndexError
+    ar1 = np.arange(3)
+    ar2 = np.array([2])
+    self.assertEqual(jnp.setdiff1d(ar1, ar2, size=0).shape, (0,))
+
   @jtu.sample_product(
       shape1=all_shapes,
       shape2=all_shapes,

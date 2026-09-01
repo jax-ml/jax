@@ -51,6 +51,7 @@ limitations under the License.
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/ft_mutex.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pprof_profile_builder.h"
 #include "jaxlib/py_array.h"
@@ -197,7 +198,7 @@ absl::StatusOr<nb_class_ptr<PyDevice>> PyClient::DeviceFromLocalHardwareId(
 
 nb::typed<nb::list, PyLoadedExecutable> PyClient::LiveExecutables() {
   CHECK(PyGILState_Check());
-  nb::ft_lock_guard lock(executables_mutex_);
+  ft_lock_guard lock(executables_mutex_);
   nb::list executables;
   for (PyLoadedExecutable* exec = executables_; exec; exec = exec->next_) {
     executables.append(nb::find(exec));
@@ -676,12 +677,15 @@ absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
     }
   }
 
-  for (PyLoadedExecutable* executable = executables_; executable;
-       executable = executable->next_) {
-    HeapProfileKey key{executable->traceback(),
-                       executable->SizeOfGeneratedCodeInBytes(),
-                       /*device=*/nullptr};
-    ++entries[key];
+  {
+    ft_lock_guard lock(executables_mutex_);
+    for (PyLoadedExecutable* executable = executables_; executable;
+         executable = executable->next_) {
+      HeapProfileKey key{executable->traceback(),
+                         executable->SizeOfGeneratedCodeInBytes(),
+                         /*device=*/nullptr};
+      ++entries[key];
+    }
   }
 
   xla::PprofProfileBuilder builder;

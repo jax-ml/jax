@@ -320,7 +320,7 @@ class JaxprInterpreter:
   def _interpret_get_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
-    assert eqn.primitive is state_primitives.get_p or gpu_primitives.load_p
+    assert eqn.primitive in (state_primitives.get_p, gpu_primitives.load_p)
     assert isinstance(eqn.outvars[0].aval, jax_core.ShapedArray)
     invals = get_invals()
     return gpu_callbacks.call_get(
@@ -583,7 +583,12 @@ class JaxprInterpreter:
         token=token,
         warpgroup=self.thread,
     )
-    token = thread_map.thread_map(f, mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
+    token = thread_map.thread_map(
+        f,
+        mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP,
+        token,
+        on_exception= gpu_callbacks.fail,
+    )
 
     token = callback.io_callback(
         gpu_callbacks.sync_warpgroup_with_warps,

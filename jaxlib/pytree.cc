@@ -34,6 +34,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
@@ -52,6 +53,7 @@ limitations under the License.
 #include "nanobind/stl/tuple.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "nanobind/typing.h"
+#include "jaxlib/ft_mutex.h"
 #include "jaxlib/hash_util.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.pb.h"
@@ -67,14 +69,17 @@ constexpr int kFlattenedIndexKeyHashSalt = 42;
 PyTreeRegistry::PyTreeRegistry(bool enable_none, bool enable_tuple,
                                bool enable_namedtuple, bool enable_list,
                                bool enable_dict) {
-  auto add_builtin_type = [&](PyTypeObject* type_obj, PyTreeKind kind) {
-    nb::object type =
-        nb::borrow<nb::object>(reinterpret_cast<PyObject*>(type_obj));
-    auto registration = std::make_unique<Registration>();
-    registration->kind = kind;
-    registration->type = type;
-    CHECK(registrations_.emplace(type, std::move(registration)).second);
-  };
+  ft_lock_guard lock(mu_);
+  auto add_builtin_type =
+      [&](PyTypeObject* type_obj, PyTreeKind kind)
+          ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+            nb::object type =
+                nb::borrow<nb::object>(reinterpret_cast<PyObject*>(type_obj));
+            auto registration = std::make_unique<Registration>();
+            registration->kind = kind;
+            registration->type = type;
+            CHECK(registrations_.emplace(type, std::move(registration)).second);
+          };
   if (enable_none) {
     add_builtin_type(Py_TYPE(Py_None), PyTreeKind::kNone);
   }
@@ -99,7 +104,7 @@ void PyTreeRegistry::Register(
   registration->to_iterable = std::move(to_iterable);
   registration->from_iterable = std::move(from_iterable);
   registration->to_iterable_with_keys = std::move(to_iterable_with_keys);
-  nb::ft_lock_guard lock(mu_);
+  ft_lock_guard lock(mu_);
   auto it = registrations_.emplace(type, std::move(registration));
   if (!it.second) {
     throw std::invalid_argument(
@@ -116,7 +121,7 @@ void PyTreeRegistry::RegisterDataclass(nb::object type,
   registration->type = type;
   registration->data_fields = std::move(data_fields);
   registration->meta_fields = std::move(meta_fields);
-  nb::ft_lock_guard lock(mu_);
+  ft_lock_guard lock(mu_);
   auto it = registrations_.emplace(type, std::move(registration));
   if (!it.second) {
     throw std::invalid_argument(absl::StrFormat(
@@ -227,7 +232,7 @@ PyTreeKind PyTreeRegistry::KindOfObject(
 
 /*static*/ const PyTreeRegistry::Registration* PyTreeRegistry::Lookup(
     nb::handle type) const {
-  nb::ft_lock_guard lock(mu_);
+  ft_lock_guard lock(mu_);
   auto it = registrations_.find(type);
   return it == registrations_.end() ? nullptr : it->second.get();
 }
@@ -454,7 +459,7 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
     return 0;
   }
   PyTreeRegistry* registry = nb::inst_ptr<PyTreeRegistry>(self);
-  nb::ft_lock_guard lock(registry->mu_);
+  ft_lock_guard lock(registry->mu_);
   for (const auto& [key, value] : registry->registrations_) {
     Py_VISIT(key.ptr());
     int rval = value->tp_traverse(visit, arg);
@@ -467,7 +472,7 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
 
 /* static */ int PyTreeRegistry::tp_clear(PyObject* self) {
   PyTreeRegistry* registry = nb::inst_ptr<PyTreeRegistry>(self);
-  nb::ft_lock_guard lock(registry->mu_);
+  ft_lock_guard lock(registry->mu_);
   registry->registrations_.clear();
   return 0;
 }
@@ -1465,6 +1470,19 @@ void PyTreeDef::SetNumLeavesAndNumNodes() {
     if (traversal_[i].arity == 0) {
       starts.push_back(start);
     } else {
+      // A node absorbs `arity` subtrees, so that many must precede it; the
+      // resize and back() below read out of bounds otherwise.
+      if (traversal_[i].arity < 0) {
+        throw std::invalid_argument(absl::StrFormat(
+            "Malformed PyTreeDef: node %d has negative arity (%d).", i,
+            traversal_[i].arity));
+      }
+      if (static_cast<size_t>(traversal_[i].arity) > starts.size()) {
+        throw std::invalid_argument(absl::StrFormat(
+            "Malformed PyTreeDef: node %d has arity %d, exceeding the number "
+            "of subtrees preceding it (%d).",
+            i, traversal_[i].arity, starts.size()));
+      }
       starts.resize(starts.size() - (traversal_[i].arity - 1));
     }
     traversal_[i].num_leaves = num_leaves - starts.back().first;
@@ -1555,6 +1573,15 @@ nb_class_ptr<PyTreeDef> PyTreeDef::DeserializeFrom(
                 "Malformed pytree proto (dict_key out of range).");
           }
           node.sorted_dict_keys.push_back(interned_strings.at(str_id));
+        }
+        // MakeNode indexes sorted_dict_keys by [0, arity) without bounds
+        // checks; the proto carries the two fields independently.
+        if (node.arity < 0 || node.sorted_dict_keys.size() !=
+                                  static_cast<size_t>(node.arity)) {
+          throw std::invalid_argument(absl::StrFormat(
+              "Malformed pytree proto (dict node has arity %d, which does not "
+              "match its number of keys %d).",
+              node.arity, node.sorted_dict_keys.size()));
         }
         break;
       default:

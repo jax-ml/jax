@@ -116,7 +116,7 @@ struct PyArray_Storage {
   const uint8_t thread_id_bucket;
 
   const bool committed = false;
-  bool weak_type = false;
+  const bool weak_type = false;
   nanobind::object aval;
   const xla::nb_dtype dtype;
   const std::vector<int64_t> shape;

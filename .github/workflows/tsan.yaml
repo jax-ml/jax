@@ -117,6 +117,7 @@ jobs:
           find "${GITHUB_WORKSPACE}/wheelhouse/numpy" -maxdepth 1 -name "*.whl" | grep -q . || exit 1
           find "${GITHUB_WORKSPACE}/wheelhouse/numpy" -maxdepth 1 -name "*.whl" -exec cp -v {} dist/ \;
 
+          sed -i '/python\.override(/,/^)/d' MODULE.bazel
           cat << 'EOF' >> MODULE.bazel
           python.override(minor_mapping = {"3.14": "3.14.3"})
           python.single_version_platform_override(

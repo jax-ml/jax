@@ -2101,6 +2101,109 @@ class InterpretTest(jtu.JaxTestCase):
     output = kernel(a)
     self.assertArraysEqual(output, a)
 
+  def test_exception_in_kernel_is_reported(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((1,), jnp.float32),
+        interpret=InterpretParams(out_of_bounds_reads='raise'),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[0] = x_ref[100]
+
+    with self.assertRaisesRegex(Exception, r'Out-of-bounds read'):
+      kernel(jnp.ones((4,), jnp.float32)).block_until_ready()
+
+    # The failed kernel must not leave any state behind that would break
+    # interpreting subsequent kernels.
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((4,), jnp.int32),
+        interpret=InterpretParams(),
+    )
+    def _ok_kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1
+
+    x = jnp.arange(4, dtype=jnp.int32)
+    np.testing.assert_array_equal(_ok_kernel(x), x + 1)
+
+  def test_exception_wakes_up_thread_waiting_on_barrier(self):
+    # Thread 0 waits on a barrier that thread 1 never arrives at, because
+    # thread 1 fails first. The failure must wake up thread 0 (instead of
+    # hanging forever) and be reported.
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((4,), jnp.int32),
+        scratch_types=dict(barrier=plgpu.Barrier(num_arrivals=1)),
+        num_threads=2,
+        thread_name='t',
+        interpret=InterpretParams(out_of_bounds_reads='raise'),
+    )
+    def _kernel(x_ref, o_ref, barrier):
+      t = jax.lax.axis_index('t')
+
+      @pl.when(t == 0)
+      def _():
+        plgpu.barrier_wait(barrier)
+        o_ref[0] = x_ref[0]
+
+      @pl.when(t == 1)
+      def _():
+        o_ref[1] = x_ref[100]
+        plgpu.barrier_arrive(barrier)
+
+    with self.assertRaisesRegex(Exception, r'Out-of-bounds read') as cm:
+      _kernel(jnp.arange(4, dtype=jnp.int32)).block_until_ready()
+    self.assertRegex(str(cm.exception), r'Computation failed on Warpgroup\(')
+    self.assertIn('warpgroup_id=1', str(cm.exception))
+
+  def test_exception_wakes_up_thread_waiting_on_cluster_barrier(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((4,), jnp.int32),
+        scratch_types=dict(
+            barrier=plgpu.ClusterBarrier(collective_axes=('c',), num_arrivals=1)
+        ),
+        cluster=(2,),
+        cluster_names=('c',),
+        interpret=InterpretParams(out_of_bounds_reads='raise'),
+    )
+    def _kernel(x_ref, o_ref, barrier):
+      c = jax.lax.axis_index('c')
+
+      @pl.when(c == 0)
+      def _():
+        plgpu.barrier_wait(barrier)
+        o_ref[0] = x_ref[0]
+
+      @pl.when(c == 1)
+      def _():
+        o_ref[1] = x_ref[100]
+        plgpu.barrier_arrive(barrier)
+
+    with self.assertRaisesRegex(Exception, r'Out-of-bounds read'):
+      _kernel(jnp.arange(4, dtype=jnp.int32)).block_until_ready()
+
+  @jtu.parameterized.product(
+      num_threads=[1, 2]
+  )
+  def test_exception_in_warp_map_is_reported(self, num_threads):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((4,), jnp.int32),
+        num_threads=num_threads,
+        thread_name='t',
+        interpret=InterpretParams(out_of_bounds_reads='raise'),
+    )
+    def _kernel(x_ref, o_ref):
+      @plgpu.warp_map
+      def _per_warp(warp_id):
+        @pl.when((warp_id == 1) & (jax.lax.axis_index('t') == 0))
+        def _():
+          o_ref[0] = x_ref[100]
+
+    with self.assertRaisesRegex(Exception, r'Out-of-bounds read'):
+      _kernel(jnp.arange(4, dtype=jnp.int32)).block_until_ready()
+
 
 @dataclasses.dataclass(frozen=True)
 class TuningConfig:

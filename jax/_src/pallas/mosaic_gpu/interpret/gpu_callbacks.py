@@ -18,6 +18,7 @@ from collections.abc import Sequence
 import contextlib
 import dataclasses
 import functools
+import inspect
 import itertools
 import threading
 from typing import Any
@@ -26,6 +27,7 @@ import jax
 from jax import numpy as jnp
 from jax._src import callback
 from jax._src import source_info_util
+from jax._src.pallas.mosaic.interpret import thread_map
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
 from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
@@ -70,10 +72,11 @@ def reset_gpu_interpret_mode_state():
   for race detection, etc., when interpreting a kernel. Normally, this shared
   state is cleaned up after a kernel is interpreted.
 
-  But if an exception is thrown while interpreting a kernel, the shared state
-  is not cleaned up, allowing the simulated GPU state to be examined for
-  debugging purposes. In this case, the shared state must be reset before
-  any further kernels are interpreted.
+  If an exception is thrown while interpreting a kernel, the shared memory is
+  also cleaned up (once all threads interpreting the kernel have observed the
+  failure), but the race detection state of the failed kernel is kept. If the
+  clean-up did not run (e.g. because interpreting the kernel was interrupted),
+  the shared state must be reset before any further kernels are interpreted.
   """
   global _shared_memory, _races
   with _shared_memory_init_lock:
@@ -82,6 +85,54 @@ def reset_gpu_interpret_mode_state():
 
 
 TOKEN_SHAPE_DTYPE = jax.ShapeDtypeStruct((), jnp.int32)
+
+
+def fail(e: Exception, token, device_id: int | None = None):
+  failed_thread = memory.Device(device_id) if device_id is not None else None
+  shared_memory = _get_shared_memory()
+  shared_memory.set_failed(
+      e, failed_thread, top_level=int(token) == thread_map.TOP_LEVEL_TOKEN_VALUE
+  )
+
+
+# Names of parameters (of the callbacks decorated with `fail_on_exception`)
+# that identify the thread or device on which the callback is running.
+_COMPUTE_UNIT_PARAM_NAMES = ("thread", "warpgroup", "compute_unit", "device")
+
+
+def fail_on_exception(func):
+  @functools.wraps(func)
+  def wrapper(*args, **kwargs):
+    shared_memory = _get_shared_memory()
+
+    try:
+      shared_memory.check_failed()
+      return func(*args, **kwargs)
+    except Exception as e:
+      try:
+        arguments = inspect.signature(func).bind(*args, **kwargs).arguments
+      except TypeError:
+        # `func` was called with invalid arguments.
+        arguments = {}
+
+      token = arguments.get("token")
+      is_top_level = token is not None and int(token) == thread_map.TOP_LEVEL_TOKEN_VALUE
+
+      compute_unit = None
+      for name in _COMPUTE_UNIT_PARAM_NAMES:
+        compute_unit = arguments.get(name)
+        if isinstance(arguments.get(name), (memory.Warpgroup, memory.Warp, memory.Device)):
+          compute_unit = arguments.get(name)
+          break
+
+      shared_memory.set_failed(
+          e,
+          compute_unit,
+          top_level=is_top_level,
+      )
+      raise
+
+  return wrapper
 
 
 def ordering_barrier(token):
@@ -168,6 +219,7 @@ def call_initialize_shared_memory(
   )
 
 
+@fail_on_exception
 def _clean_up_shared_memory(token):
   shared_memory = _get_shared_memory()
   shared_memory.clean_up_barrier.wait()
@@ -180,6 +232,7 @@ def call_clean_up_shared_memory(token):
   )
 
 
+@fail_on_exception
 def _update_clocks_for_device_barrier(token, device: memory.Device):
   shared_memory = _get_shared_memory()
   shared_memory.update_clocks_for_device_barrier(device)
@@ -195,6 +248,7 @@ def call_update_clocks_for_device_barrier(token, device: memory.Device):
   )
 
 
+@fail_on_exception
 def _make_allocation_request_array(
     *,
     token: jax.Array,
@@ -237,6 +291,7 @@ def call_make_allocation_request_array(
   )
 
 
+@fail_on_exception
 def _allocate_buffer_for_all_threads(
     token: jax.Array,
     mesh_location: memory.MeshLocation | None,
@@ -337,6 +392,7 @@ def call_allocate_buffer_for_all_threads(
   )
 
 
+@fail_on_exception
 def _allocate_buffer(
     token: jax.Array,
     mesh_location: memory.MeshLocation,
@@ -411,6 +467,7 @@ def call_allocate_buffer(
   )
 
 
+@fail_on_exception
 def _deallocate_buffer(
     token: jax.Array,
     mesh_location: memory.MeshLocation,
@@ -517,6 +574,7 @@ def _validate_transforms(transforms):
         raise ValueError(f"Unsupported transform: {transform}")
 
 
+@fail_on_exception
 def _get(
     token: jax.Array,
     mesh_location: memory.MeshLocation,
@@ -634,6 +692,7 @@ def call_get(
       clock,
   )
 
+@fail_on_exception
 def _swap(
     token: jax.Array,
     mesh_location: memory.MeshLocation,
@@ -726,6 +785,7 @@ def call_swap(
   )
 
 
+@fail_on_exception
 def _allocate_barriers(
     *,
     token: jax.Array,
@@ -810,6 +870,7 @@ def call_allocate_barriers(
   )
 
 
+@fail_on_exception
 def _deallocate_barrier(
     token: jax.Array,
     mesh_location: memory.MeshLocation,
@@ -870,6 +931,7 @@ def call_deallocate_barrier(
   )
 
 
+@fail_on_exception
 def _barrier_wait(
     token: jax.Array,
     mesh_location: memory.MeshLocation,
@@ -910,6 +972,7 @@ def call_barrier_wait(
   )
 
 
+@fail_on_exception
 def _barrier_arrive(
     token: jax.Array,
     mesh_location: memory.MeshLocation,
@@ -961,6 +1024,7 @@ def call_barrier_arrive(
   )
 
 
+@fail_on_exception
 def _assert_no_barriers_allocated(token):
   _get_shared_memory().assert_no_barriers_allocated()
   return token
@@ -972,6 +1036,7 @@ def call_assert_no_barriers_allocated(token):
   )
 
 
+@fail_on_exception
 def _allocate_cluster_barriers(
     *,
     token: jax.Array,
@@ -1300,6 +1365,7 @@ def _remove_noop_transforms(transforms: tuple[Any, ...]) -> tuple[Any, ...]:
                                    transforms))
 
 
+@fail_on_exception
 def wgmma(
     *,
     token: jax.Array,
@@ -1362,6 +1428,7 @@ def wgmma(
   return token
 
 
+@fail_on_exception
 def wgmma_accumulator_deref(
     *,
     token: jax.Array,
@@ -1385,6 +1452,7 @@ def wgmma_accumulator_deref(
   return token, acc
 
 
+@fail_on_exception
 def copy_smem_to_gmem(
     *,
     token: jax.Array,
@@ -1434,6 +1502,7 @@ def copy_smem_to_gmem(
   return token
 
 
+@fail_on_exception
 def wait_smem_to_gmem(
     *,
     token: jax.Array,
@@ -1449,6 +1518,7 @@ def wait_smem_to_gmem(
   return token
 
 
+@fail_on_exception
 def copy_gmem_to_smem(
     *,
     token: jax.Array,
@@ -1493,6 +1563,7 @@ def copy_gmem_to_smem(
   return token
 
 
+@fail_on_exception
 def commit_smem(
     *,
     token: jax.Array,
@@ -1658,6 +1729,7 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
     return clock.copy() if clock is not None else None
 
 
+@fail_on_exception
 def tcgen05_mma(
     *,
     token: jax.Array,
@@ -1822,6 +1894,7 @@ class TcGen05Copy(memory.PipelineableAsyncTask):
     return clock.copy() if clock is not None else None
 
 
+@fail_on_exception
 def async_copy_smem_to_tmem(
     *,
     token: jax.Array,
@@ -1863,6 +1936,7 @@ def async_copy_smem_to_tmem(
   return token
 
 
+@fail_on_exception
 def tcgen05_commit_arrive(
     *,
     token: jax.Array,
@@ -1911,6 +1985,7 @@ def tcgen05_commit_arrive(
   return token
 
 
+@fail_on_exception
 def async_store_tmem(
     *,
     token: jax.Array,
@@ -1953,6 +2028,7 @@ def async_store_tmem(
   return token
 
 
+@fail_on_exception
 def async_load_tmem(
     *,
     token: jax.Array,
@@ -1995,6 +2071,7 @@ def async_load_tmem(
   return token, result
 
 
+@fail_on_exception
 def commit_tmem(
     *,
     token: jax.Array,
@@ -2008,6 +2085,7 @@ def commit_tmem(
   return token
 
 
+@fail_on_exception
 def wait_load_tmem(
     *,
     token: jax.Array,
@@ -2021,6 +2099,7 @@ def wait_load_tmem(
   return token
 
 
+@fail_on_exception
 def sync_warps_with_warpgroup(
     *,
     token: jax.Array,
@@ -2034,6 +2113,7 @@ def sync_warps_with_warpgroup(
   return token
 
 
+@fail_on_exception
 def sync_warpgroup_with_warps(
     *,
     token: jax.Array,
@@ -2047,6 +2127,7 @@ def sync_warpgroup_with_warps(
   return token
 
 
+@fail_on_exception
 def kernel_thread_finished(
     *,
     token: jax.Array,
@@ -2059,6 +2140,7 @@ def kernel_thread_finished(
   return token
 
 
+@fail_on_exception
 def cluster_finished(
     *,
     token: jax.Array,

@@ -45,6 +45,17 @@ Remember to align the itemized text with the first line of an item within a list
     only marginally useful in the presence of transform inference. If you find
     that transform inference is insufficient, please file a bug.
 
+### TPU
+
+* New features
+
+  * Added `jax_pallas_auto_assign_collective_ids_base_id` and
+    `jax_pallas_auto_assign_collective_ids_limit` config flags to allow
+    configuring the base collective ID and the limit for auto-assigned collective IDs.
+  * {func}`jax.experimental.pallas.tpu.get_barrier_semaphore` now accepts an
+    optional hashable `tag` argument, assigning barrier semaphores automatically
+    to kernels sharing the same tag.
+
 ## Released with JAX 0.11.0 (July 16, 2026)
 
 * Changes

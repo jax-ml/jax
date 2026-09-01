@@ -38,6 +38,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -59,6 +60,7 @@ limitations under the License.
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/ft_mutex.h"
 #include "jaxlib/guard_lib.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/numpy.h"
@@ -404,9 +406,9 @@ struct ShapedArrayCacheKey {
 nb::object MakeShapedArrayCached(const ShapedArrayCacheKey& key) {
   using CacheT = xla::LRUCache<ShapedArrayCacheKey,
                                std::shared_ptr<std::optional<nb::object>>>;
-  static nb::ft_mutex mu;
+  static ft_mutex mu;
   static auto* lru_list = new CacheT::LRUList(4096);
-  static auto* cache = new CacheT(lru_list);
+  static auto* cache ABSL_GUARDED_BY(mu) = new CacheT(lru_list);
 
   static xla::SafeStatic<nb::object> shaped_array_init;
   const nb::object& shaped_array = shaped_array_init.Get([]() {
@@ -422,7 +424,7 @@ nb::object MakeShapedArrayCached(const ShapedArrayCacheKey& key) {
     return nb::none();
   }
 
-  nb::ft_lock_guard lock(mu);
+  ft_lock_guard lock(mu);
   auto value =
       cache->GetOrCreateIfAbsent(key, [](const ShapedArrayCacheKey& key) {
         return std::make_shared<std::optional<nb::object>>();
@@ -493,7 +495,7 @@ PyArray_Storage::PyArray_Storage(nb::object aval, bool weak_type,
                 std::numeric_limits<uint8_t>::max());
 
   PyClient::ArraysShard& shard = this->py_client->arrays_[thread_id_bucket];
-  nanobind::ft_lock_guard lock(shard.mutex);
+  ft_lock_guard lock(shard.mutex);
   next = shard.arrays;
   shard.arrays = this;
   if (next) {
@@ -1224,7 +1226,7 @@ PyArray::Storage::~PyArray_Storage() {
   CHECK(PyGILState_Check());
   if (py_client) {
     PyClient::ArraysShard& shard = py_client->arrays_[thread_id_bucket];
-    nanobind::ft_lock_guard lock(shard.mutex);
+    ft_lock_guard lock(shard.mutex);
     if (shard.arrays == this) {
       shard.arrays = next;
     }
@@ -1611,8 +1613,11 @@ absl::Status PyArray::ReplaceWithAlias(PyArray o) {
     return absl::InvalidArgumentError(
         "Unable to replace an Array with an Array of different committed.");
   }
+  if (storage.weak_type != o_storage.weak_type) {
+    return absl::InvalidArgumentError(
+        "Unable to replace an Array with an Array of different weak_type.");
+  }
   storage.aval = o_storage.aval;
-  storage.weak_type = o_storage.weak_type;
   storage.npy_value = o_storage.npy_value;
   storage.ifrt_array = o_storage.ifrt_array;
   storage.fully_replicated_array = o_storage.fully_replicated_array;
@@ -1627,7 +1632,7 @@ absl::Status PyArray::ReplaceWithAlias(PyArray o) {
 std::vector<PyArray> PyClient::LiveArrays() const {
   std::vector<PyArray> result;
   for (auto& shard : arrays_) {
-    nb::ft_lock_guard lock(shard.mutex);
+    ft_lock_guard lock(shard.mutex);
     for (PyArray::Storage* array = shard.arrays; array; array = array->next) {
       bool all_deleted =
           (array->ifrt_array == nullptr || array->ifrt_array->IsDeleted());

@@ -394,7 +394,7 @@ def interpret_pallas_call(
   # We pass our `token` through an ordered IO callback at the start and end of
   # the interpreted kernel, to ensure that execution of this interpreted kernel
   # cannot overlap with the interpretation of any other kernel.
-  token = jnp.int32(42)
+  token = jnp.int32(thread_map.TOP_LEVEL_TOKEN_VALUE)
   token = callback.io_callback(
       gpu_callbacks.ordering_barrier,
       gpu_callbacks.TOKEN_SHAPE_DTYPE,
@@ -550,6 +550,7 @@ def interpret_pallas_call(
         token,
         grid_coords,
         use_ordered_callback=True,
+        on_exception=gpu_callbacks.fail,
     )
     token = callback.io_callback(
         functools.partial(gpu_callbacks.cluster_finished),

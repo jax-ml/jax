@@ -408,7 +408,10 @@ class GenericSharedMemory[
   )
 
   _failure: Exception | None = None
-  _failed_thread: ThreadKey | None = None
+  # The thread on which `_failure` occurred, if known. Only used in error
+  # messages, so subclasses may record any object with an informative `repr`
+  # (e.g. a device, if the thread is not known).
+  _failed_thread: Any = None
 
   @property
   def enable_logging(self) -> bool:
@@ -443,6 +446,67 @@ class GenericSharedMemory[
       buffer_id = self.next_buffer_id[key]
       self.next_buffer_id[key] = buffer_id + 1
       return buffer_id
+
+  def set_failed(
+      self,
+      exception: Exception,
+      failed_thread: Any = None,
+      top_level: bool = True,
+  ):
+    with self.lock:
+      if self._failure is None:
+        self._failure = exception
+        self._failed_thread = failed_thread
+      # Abort while still holding lock, so no new waiters can appear between
+      # recording the failure and aborting existing waiters.
+      self._abort_waiters()
+
+    self.barrier.abort()
+
+    # If we are interpreting a kernel over N devices, we must wait N times
+    # on the clean-up barrier.  As the computation on this device has failed
+    # and will soon raise an exception, this device will not reach its final
+    # call to `_clean_up_shared_memory` (which waits on the clean-up barrier).
+    # So, we wait on the barrier here.
+    #
+    # Unless we are running inside a thread_map (i.e., top_level=False) -- in
+    # which case we are one of the num_cores_per_device computations running for
+    # one of the N devices.  In this case, do not wait on the barrier here.
+    # The thread_map will detect that one or more of its threads failed and,
+    # once all of its threads have completed (successfully or with an error),
+    # it will call `set_failed` with `top_level=True`.
+    if top_level:
+      self.clean_up_barrier.wait()
+
+  def _abort_waiters(self):
+    """Wakes up all threads that are waiting on other threads.
+
+    Lock should be held when called.
+    """
+    pass
+
+  def check_failed(self):
+    with self.lock:
+      if self._failure is not None:
+        # __cause__ information is lost when an exception from a callback goes
+        # through XLA and back to Python, so we stuff the information into the
+        # exception message.
+        #
+        # TODO(jburnim): The top-level exception (that the user sees) will not
+        # always contain the original exception info/message.  It currently
+        # depends on which raise (the raise here or the raise in the thread
+        # that calls `set_failed`) happens first. (And maybe some other details
+        # in XLA.)  We should figure out how to reliably propagate the
+        # original exception.
+        failure_str = "".join(traceback.format_exception(self._failure))
+        failed_info = (
+            f" on {self._failed_thread}"
+            if self._failed_thread is not None
+            else ""
+        )
+        raise RuntimeError(
+            f"Computation failed{failed_info} with exception:\n\n{failure_str}"
+        ) from None
 
   def allocate_buffer(
       self,
@@ -834,54 +898,6 @@ class SharedMemory(
       return self.fixed_id_sem[sem_id]
     else:
       return self.sem[sem_id]
-
-  def set_failed(
-      self,
-      exception: Exception,
-      device_id: int | None = None,
-      local_core_id: int | None = None,
-      top_level: bool = True,
-  ):
-    with self.lock:
-      if self._failure is None:
-        self._failure = exception
-        if device_id is not None and local_core_id is not None:
-          self._failed_thread = (device_id, local_core_id)
-
-    self.barrier.abort()
-
-    # If we are interpreting a kernel over N devices, we must wait N times
-    # on the clean-up barrier.  As the computation on this device has failed
-    # and will soon raise an exception, this device will not reach its final
-    # call to `_clean_up_shared_memory` (which waits on the clean-up barrier).
-    # So, we wait on the barrier here.
-    #
-    # Unless we are running inside a thread_map (i.e., top_level=False) -- in
-    # which case we are one of the num_cores_per_device computations running for
-    # one of the N devices.  In this case, do not wait on the barrier here.
-    # The thread_map will detect that one or more of its threads failed and,
-    # once all of its threads have completed (successfully or with an error),
-    # it will call `set_failed` with `top_level=True`.
-    if top_level:
-      self.clean_up_barrier.wait()
-
-  def check_failed(self):
-    with self.lock:
-      if self._failure is not None:
-        # __cause__ information is lost when an exception from a callback goes
-        # through XLA and back to Python, so we stuff the information into the
-        # exception message.
-        #
-        # TODO(jburnim): The top-level exception (that the user sees) will not
-        # always contain the original exception info/message.  It currently
-        # depends on which raise (the raise here or the raise in the thread
-        # that calls `set_failed`) happens first. (And maybe some other details
-        # in XLA.)  We should figure out how to reliably propagate the
-        # original exception.
-        failure_str = "".join(traceback.format_exception(self._failure))
-        raise RuntimeError(
-            f"Computation failed on {self._failed_thread} with exception:\n\n{failure_str}"
-        ) from None
 
   def append_semaphore_task(
       self,

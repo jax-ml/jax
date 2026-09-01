@@ -1681,8 +1681,8 @@ class RngShardingTest(jtu.JaxTestCase):
     self.assertEqual(abstract_mesh2.size, 0)
 
   @unittest.skipIf(
-      jaxlib_extension_version < 486,
-      "Requires jaxlib_extension_version >= 486",
+      jaxlib_extension_version < 487,
+      "Requires jaxlib_extension_version >= 487",
   )
   def test_replace_with(self):
     a = jnp.array([1, 2, 3])
@@ -1690,14 +1690,14 @@ class RngShardingTest(jtu.JaxTestCase):
     a._replace_with(b)
     self.assertArraysEqual(a, [4, 5, 6])
 
-    # weak_type can differ: weak_type array replaced by non-weak_type array
+    # weak_type mismatch
     w1 = jnp.array(1.0)
     w2 = jnp.array(1.0, dtype=w1.dtype)
     self.assertTrue(w1.weak_type)
     self.assertFalse(w2.weak_type)
     self.assertEqual(w1.dtype, w2.dtype)
-    w1._replace_with(w2)
-    self.assertFalse(w1.weak_type)
+    with self.assertRaisesRegex(RuntimeError, "different weak_type"):
+      w1._replace_with(w2)
 
     # dtype mismatch
     c = jnp.array([1.0, 2.0, 3.0], dtype=np.float32)

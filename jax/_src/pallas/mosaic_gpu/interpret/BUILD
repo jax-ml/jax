@@ -72,6 +72,7 @@ pytype_strict_library(
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic/interpret:params",
         "//jax/_src/pallas/mosaic/interpret:race_detection_state",
+        "//jax/_src/pallas/mosaic/interpret:thread_map",
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic/interpret:vector_clock",
         "//jax/_src/pallas/mosaic_gpu:core",
