@@ -606,12 +606,11 @@ PyArray PyArray::MakeFromIfrtArrayAndSharding(nb_class_ptr<PyClient> py_client,
 }
 
 PyArrayResultHandler::PyArrayResultHandler(
-    nb::object aval, nb::object sharding, bool committed, bool skip_checks,
+    nb::object aval, nb::object sharding, bool committed,
     std::vector<nanobind::callable> wrappers)
     : aval_(std::move(aval)),
       sharding_(std::move(sharding)),
       committed_(committed),
-      skip_checks_(skip_checks),
       wrappers_(std::move(wrappers)) {
   weak_type_ = nb::cast<bool>(aval_.attr("weak_type"));
   dtype_ = nb::cast<xla::nb_dtype>(aval_.attr("dtype"));
@@ -640,7 +639,7 @@ nanobind::object PyArrayResultHandler::Call(nb_class_ptr<PyClient> py_client,
   nanobind::object result =
       PyArray(aval_, weak_type_, dtype_, shape_, sharding_,
               std::move(py_client), std::move(ifrt_array), committed_,
-              skip_checks_, std::move(result_status));
+              /*skip_checks=*/true, std::move(result_status));
   for (auto& cb : wrappers_) {
     result = cb(std::move(result));
   }
@@ -2390,13 +2389,12 @@ absl::Status PyArray::Register(nb::module_& m) {
             arrays, device_lists, shardings, array_copy_semantics));
       });
   m.attr("array_result_handler") = nb::cpp_function(
-      [](nb::object aval, nb::object sharding, bool committed,
-         bool skip_checks) -> nb_class_ptr<PyArrayResultHandler> {
+      [](nb::object aval, nb::object sharding,
+         bool committed) -> nb_class_ptr<PyArrayResultHandler> {
         return make_nb_class<PyArrayResultHandler>(
-            std::move(aval), std::move(sharding), committed, skip_checks);
+            std::move(aval), std::move(sharding), committed);
       },
-      nb::arg("aval"), nb::arg("sharding"), nb::arg("committed"),
-      nb::arg("_skip_checks") = false);
+      nb::arg("aval"), nb::arg("sharding"), nb::arg("committed"));
 
   nb::class_<PyArrayResultHandler>(m, "ResultHandler")
       .def(
@@ -2423,7 +2421,7 @@ absl::Status PyArray::Register(nb::module_& m) {
              wrappers.push_back(std::move(wrapper));
              return make_nb_class<PyArrayResultHandler>(
                  self.aval(), self.sharding(), self.committed(),
-                 self.skip_checks(), std::move(wrappers));
+                 std::move(wrappers));
            })
       .def("pre_wrap",
            [](const PyArrayResultHandler& self, nb::callable wrapper) {
@@ -2431,7 +2429,7 @@ absl::Status PyArray::Register(nb::module_& m) {
              wrappers.insert(wrappers.begin(), std::move(wrapper));
              return make_nb_class<PyArrayResultHandler>(
                  self.aval(), self.sharding(), self.committed(),
-                 self.skip_checks(), std::move(wrappers));
+                 std::move(wrappers));
            });
 
   return absl::OkStatus();

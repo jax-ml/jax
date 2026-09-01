@@ -369,7 +369,7 @@ class PyArray : public nanobind::object {
 class PyArrayResultHandler {
  public:
   PyArrayResultHandler(nanobind::object aval, nanobind::object sharding,
-                       bool committed, bool skip_checks,
+                       bool committed,
                        std::vector<nanobind::callable> wrappers = {});
 
   nanobind::object Call(absl::Span<const PyArray> py_arrays) const;
@@ -384,14 +384,12 @@ class PyArrayResultHandler {
   nanobind::object aval() const { return aval_; }
   nanobind::object sharding() const { return sharding_; }
   bool committed() const { return committed_; }
-  bool skip_checks() const { return skip_checks_; }
 
  private:
   nanobind::object aval_;
   nanobind::object sharding_;
   bool weak_type_;
   bool committed_;
-  bool skip_checks_;
 
   xla::nb_dtype dtype_;
   std::vector<int64_t> shape_;
