@@ -1,0 +1,46 @@
+diff --git a/third_party/llvm/windows_arm64_native_triple.patch b/third_party/llvm/windows_arm64_native_triple.patch
+new file mode 100644
+--- /dev/null
++++ b/third_party/llvm/windows_arm64_native_triple.patch
+@@ -0,0 +1,30 @@
++diff --git a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
++--- a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
+++++ b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
++@@ -110,6 +110,15 @@
++     name = "linux_aarch64",
++     constraint_values = [
++         "@platforms//os:linux",
+++        "@platforms//cpu:aarch64",
+++    ],
+++    visibility = ["//visibility:public"],
+++)
+++
+++config_setting(
+++    name = "windows_aarch64",
+++    constraint_values = [
+++        "@platforms//os:windows",
++         "@platforms//cpu:aarch64",
++     ],
++     visibility = ["//visibility:public"],
++diff --git a/utils/bazel/llvm-project-overlay/llvm/config.bzl b/utils/bazel/llvm-project-overlay/llvm/config.bzl
++--- a/utils/bazel/llvm-project-overlay/llvm/config.bzl
+++++ b/utils/bazel/llvm-project-overlay/llvm/config.bzl
++@@ -141,6 +141,7 @@
++     Label("//llvm:linux_riscv64"): native_arch_defines("RISCV", "riscv64-unknown-linux-gnu"),
++     Label("//llvm:linux_s390x"): native_arch_defines("SystemZ", "systemz-unknown-linux_gnu"),
++     "@platforms//os:emscripten": native_arch_defines("WebAssembly", "wasm32-unknown-emscripten"),
+++    Label("//llvm:windows_aarch64"): native_arch_defines("AArch64", "aarch64-pc-windows-msvc"),
++     "@platforms//os:windows": native_arch_defines("X86", "x86_64-pc-win32"),
++     "//conditions:default": native_arch_defines("X86", "x86_64-unknown-linux-gnu"),
++ }) + [
+diff --git a/third_party/llvm/workspace.bzl b/third_party/llvm/workspace.bzl
+--- a/third_party/llvm/workspace.bzl
++++ b/third_party/llvm/workspace.bzl
+@@ -38,6 +38,7 @@
+             "//third_party/llvm:toolchains.patch",
+             "//third_party/llvm:lit_test.patch",
+             "//third_party/llvm:run_lit.patch",
++            "//third_party/llvm:windows_arm64_native_triple.patch",
+         ],
+         link_files = {"//third_party/llvm:run_lit.sh": "mlir/run_lit.sh"},
+     )
