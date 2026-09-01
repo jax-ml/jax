@@ -1566,6 +1566,38 @@ class ConvTest(ptu.PallasTPUTest):
           window_strides=(1, 1),
           padding=((1, 1), (1, 1)),
       ),
+      dict(
+          testcase_name="_feature_grouped_2x",
+          lhs_shape=(1, 8, 8, 128),
+          rhs_shape=(3, 3, 64, 128),
+          window_strides=(1, 1),
+          padding=((1, 1), (1, 1)),
+          feature_group_count=2,
+      ),
+      dict(
+          testcase_name="_feature_grouped_4x",
+          lhs_shape=(1, 8, 8, 128),
+          rhs_shape=(3, 3, 32, 128),
+          window_strides=(1, 1),
+          padding=((1, 1), (1, 1)),
+          feature_group_count=4,
+      ),
+      dict(
+          testcase_name="_depthwise",
+          lhs_shape=(1, 8, 8, 16),
+          rhs_shape=(3, 3, 1, 16),
+          window_strides=(1, 1),
+          padding=((1, 1), (1, 1)),
+          feature_group_count=16,
+      ),
+      dict(
+          testcase_name="_batch_grouped_2x",
+          lhs_shape=(4, 8, 8, 128),
+          rhs_shape=(3, 3, 128, 64),
+          window_strides=(1, 1),
+          padding=((1, 1), (1, 1)),
+          batch_group_count=2,
+      ),
   )
   def test_conv_general_dilated(
       self,

@@ -3011,11 +3011,6 @@ def _conv_general_dilated_lowering_rule(
     preferred_element_type=None,
     **_,
 ):
-  if feature_group_count != 1 or batch_group_count != 1:
-    raise NotImplementedError(
-        "Grouped convolutions are not supported on Pallas Mosaic TPU backend"
-        " yet."
-    )
   return _conv_lowering_rule(
       ctx,
       lhs,
@@ -3025,6 +3020,8 @@ def _conv_general_dilated_lowering_rule(
       padding=padding,
       lhs_dilation=lhs_dilation,
       rhs_dilation=rhs_dilation,
+      feature_group_count=feature_group_count,
+      batch_group_count=batch_group_count,
       precision=precision,
   )
 
@@ -3049,11 +3046,6 @@ def _conv_lowering_rule(
     # below.
     raise NotImplementedError("Requires libtpu >= 0.1.0")
 
-  if feature_group_count != 1 or batch_group_count != 1:
-    raise NotImplementedError(
-        "Grouped convolutions are not supported on Pallas Mosaic TPU backend"
-        " yet."
-    )
   for aval in ctx.avals_in[:2]:
     if jnp.issubdtype(aval.dtype, jnp.unsignedinteger):
       raise NotImplementedError(
@@ -3112,6 +3104,8 @@ def _conv_lowering_rule(
       lhs_dilation=[int(d) for d in lhs_dilation],
       rhs_dilation=[int(d) for d in rhs_dilation],
       window_reversal=[bool(r) for r in window_reversal],
+      feature_group_count=feature_group_count,
+      batch_group_count=batch_group_count,
       precision=precision_attr,
       dimension_numbers=tpu_conv_dims,
   ).result
