@@ -835,9 +835,12 @@ absl::Status PyArray::set_arrays(nb::object obj) {
 }
 
 absl::StatusOr<PyArray> PyArray::FullyReplicatedShard() {
-  auto& cached = GetStorage().fully_replicated_array;
-  if (!cached.is_none()) {
-    return nb::cast<PyArray>(cached);
+  Storage& storage = GetStorage();
+  {
+    ft_lock_guard lock(storage.mu);
+    if (!storage.fully_replicated_array.is_none()) {
+      return nb::cast<PyArray>(storage.fully_replicated_array);
+    }
   }
 
   if (ifrt_array() == nullptr) {
@@ -853,8 +856,13 @@ absl::StatusOr<PyArray> PyArray::FullyReplicatedShard() {
   auto array = MakeFromSingleDeviceArray(
       py_client(), std::move(fully_replicated_ifrt_shard), weak_type(),
       committed(), result_status());
-  cached = array;
-  return nb::cast<PyArray>(cached);
+  {
+    ft_lock_guard lock(storage.mu);
+    if (storage.fully_replicated_array.is_none()) {
+      storage.fully_replicated_array = array;
+    }
+    return nb::cast<PyArray>(storage.fully_replicated_array);
+  }
 }
 
 absl::Status PyArray::BlockUntilReady() const {
@@ -902,7 +910,7 @@ absl::StatusOr<size_t> PyArray::GetOnDeviceSizeInBytes() {
 }
 
 absl::Status PyArray::BlockUntilResultStatusIsReady() {
-  auto& result_status = GetStorage().result_status;
+  xla::Future<> result_status = this->result_status();
   // If the result_status future is not valid, this result did not come directly
   // from a computation that returns tokens, so we don't wait for the status.
   if (!result_status.IsValid()) {
@@ -1590,9 +1598,14 @@ absl::Status PyArray::BatchedBlockUntilReady(std::vector<nb::object> objs) {
   return xla::ifrt::ExpandUserContexts(std::move(status));
 }
 
-absl::Status PyArray::ReplaceWithAlias(PyArray o) {
+absl::Status PyArray::ReplaceWithAlias(PyArray o)
+    ABSL_NO_THREAD_SAFETY_ANALYSIS {
   auto& storage = GetStorage();
   auto& o_storage = o.GetStorage();
+  if (&storage == &o_storage) {
+    return absl::InvalidArgumentError(
+        "Unable to replace an Array with itself.");
+  }
   if (storage.py_client.get() != o_storage.py_client.get()) {
     return absl::InvalidArgumentError(
         "Unable to replace an Array with an Array from a different client.");
@@ -1617,9 +1630,23 @@ absl::Status PyArray::ReplaceWithAlias(PyArray o) {
     return absl::InvalidArgumentError(
         "Unable to replace an Array with an Array of different weak_type.");
   }
+  auto* mu1 = &storage.mu;
+  auto* mu2 = &o_storage.mu;
+  if (mu1 > mu2) {
+    std::swap(mu1, mu2);
+  }
+  nanobind::object old_aval;
+  nanobind::object old_npy_value;
+  nanobind::object old_fully_replicated_array;
+  ft_lock_guard lock1(*mu1);
+  ft_lock_guard lock2(*mu2);
+
+  old_aval = std::move(storage.aval);
   storage.aval = o_storage.aval;
+  old_npy_value = std::move(storage.npy_value);
   storage.npy_value = o_storage.npy_value;
   storage.ifrt_array = o_storage.ifrt_array;
+  old_fully_replicated_array = std::move(storage.fully_replicated_array);
   storage.fully_replicated_array = o_storage.fully_replicated_array;
   storage.py_arrays = o_storage.py_arrays;
   storage.host_value.Clear();
