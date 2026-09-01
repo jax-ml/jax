@@ -432,6 +432,8 @@ def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
 ad.primitive_linearizations[call_hi_primitive_p] = _call_hi_primitive_linearize
 
 def fake_linear_op(prim, nz_in_flat, nz_out_flat, rs, sres, *tangents):
+  if not any(nz_out_flat):
+    return [ad_util.Zero(a.to_tangent_aval()) for a in prim.out_avals_flat]
   rs = rs if sres is None else (rs, sres)  # unpacked in the transpose rule
   residuals_flat, residuals_tree = tree_flatten(rs)
   assert nz_in_flat == [not isinstance(t, ad_util.Zero) for t in tangents]
