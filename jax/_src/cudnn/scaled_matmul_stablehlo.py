@@ -193,6 +193,14 @@ mlir.register_lowering(
     platform="rocm",
 )
 
+# OneAPI reuses the ROCm composite lowering, which XLA expands to standard HLO
+# until OneAPI `scaled-dot` optimization support is added.
+mlir.register_lowering(
+    _scaled_matmul_p,
+    _scaled_matmul_rocm_lowering,
+    platform="oneapi",
+)
+
 _scaled_matmul_p_wrapper = core.Primitive("scaled_matmul_wrapper")
 _scaled_matmul_p_wrapper.multiple_results = True
 _scaled_matmul_p_wrapper.def_impl(_scaled_matmul_impl)
