@@ -566,6 +566,16 @@ py_import(
     deps = [":rocm_pjrt_libs"],
 )
 
+py_import(
+    name = "jax_oneapi_plugin_py_import",
+    wheel = ":jax_oneapi_plugin_wheel",
+)
+
+py_import(
+    name = "jax_oneapi_pjrt_py_import",
+    wheel = ":jax_oneapi_pjrt_wheel",
+)
+
 # The targets below are used for GPU tests with `--//jax:build_jaxlib=false`.
 py_import(
     name = "pypi_jax_cuda_plugin_with_cuda_deps",
