@@ -6420,10 +6420,9 @@ class PallasTPUCollectiveIdTest(ptu.PallasTPUTest):
     matches = re.findall(
         r'(?:\\22|\\\"|\")collective_id(?:\\22|\\\"|\"):\s*(\d+)', mlir_str
     )
-    base_id = jax.config.jax_pallas_auto_assign_collective_ids_base_id
     self.assertLen(matches, 2)
-    self.assertEqual(int(matches[0]), base_id)
-    self.assertEqual(int(matches[1]), base_id)
+    self.assertEqual(int(matches[0]), 0)
+    self.assertEqual(int(matches[1]), 0)
 
   def test_sequential_collectives_auto_allocated_ids_different_kernels(self):
     if self.INTERPRET:
@@ -6462,10 +6461,9 @@ class PallasTPUCollectiveIdTest(ptu.PallasTPUTest):
     matches = re.findall(
         r'(?:\\22|\\\"|\")collective_id(?:\\22|\\\"|\"):\s*(\d+)', mlir_str
     )
-    base_id = jax.config.jax_pallas_auto_assign_collective_ids_base_id
     self.assertLen(matches, 2)
-    self.assertEqual(int(matches[0]), base_id)
-    self.assertEqual(int(matches[1]), base_id + 1)
+    self.assertEqual(int(matches[0]), 0)
+    self.assertEqual(int(matches[1]), 1)
 
   def test_sequential_collectives_auto_allocated_ids_same_tag_different_kernels(
       self,
@@ -6508,10 +6506,9 @@ class PallasTPUCollectiveIdTest(ptu.PallasTPUTest):
     matches = re.findall(
         r'(?:\\22|\\\"|\")collective_id(?:\\22|\\\"|\"):\s*(\d+)', mlir_str
     )
-    base_id = jax.config.jax_pallas_auto_assign_collective_ids_base_id
     self.assertLen(matches, 2)
     self.assertEqual(matches[0], matches[1])
-    self.assertEqual(int(matches[0]), base_id)
+    self.assertEqual(int(matches[0]), 0)
 
   def test_sequential_collectives_auto_allocated_ids_different_tags(self):
     if self.INTERPRET:
@@ -6551,11 +6548,10 @@ class PallasTPUCollectiveIdTest(ptu.PallasTPUTest):
     matches = re.findall(
         r'(?:\\22|\\\"|\")collective_id(?:\\22|\\\"|\"):\s*(\d+)', mlir_str
     )
-    base_id = jax.config.jax_pallas_auto_assign_collective_ids_base_id
     self.assertLen(matches, 2)
     self.assertNotEqual(matches[0], matches[1])
-    self.assertEqual(int(matches[0]), base_id)
-    self.assertEqual(int(matches[1]), base_id + 1)
+    self.assertEqual(int(matches[0]), 0)
+    self.assertEqual(int(matches[1]), 1)
 
   def test_get_barrier_semaphore_clash_raises(self):
     if self.INTERPRET:
@@ -6648,9 +6644,7 @@ class PallasTPUNoAutoCollectiveIdTest(ptu.PallasTPUTest):
         r'(?:\\22|\\\"|\")collective_id(?:\\22|\\\"|\"):\s*(\d+)', mlir_str
     )
     self.assertLen(matches, 1)
-    self.assertEqual(
-        int(matches[0]), jax.config.jax_pallas_auto_assign_collective_ids_base_id
-    )
+    self.assertEqual(int(matches[0]), 0)
 
   def test_unassigned_collective_id_raises_when_auto_assign_disabled(self):
     if self.INTERPRET:
@@ -6678,38 +6672,90 @@ class PallasTPUNoAutoCollectiveIdTest(ptu.PallasTPUTest):
       run_kernel.lower(jnp.zeros((8, 128), jnp.float32))
 
 
-@jtu.with_config(
-    jax_pallas_auto_assign_collective_ids_base_id=10,
-    jax_pallas_auto_assign_collective_ids_limit=50,
-)
-class PallasTPUCustomBaseIdTest(ptu.PallasTPUTest):
+@jtu.with_config(jax_pallas_auto_assign_collective_ids_limit=50)
+class PallasTPUManualAndAutoCollectiveIdTest(ptu.PallasTPUTest):
 
-  def test_custom_collective_base_id(self):
+  def test_auto_skips_manually_assigned_collective_id(self):
     if self.INTERPRET:
       self.skipTest('Compilation-only test')
 
     mesh = pltpu.TensorCoreMesh(axis_name='tc', num_cores=1)
 
-    def kernel(x_ref, y_ref):
+    def manual_kernel(x_ref, y_ref):
+      sem = pltpu.get_barrier_semaphore()
+      pl.semaphore_signal(sem)
+      pltpu.sync_copy(x_ref, y_ref)
+
+    def auto_kernel(x_ref, y_ref):
       sem = pltpu.get_barrier_semaphore('tag_a')
       pl.semaphore_signal(sem)
       pltpu.sync_copy(x_ref, y_ref)
 
     @jax.jit
-    def run_kernel(x):
-      return pl.kernel(
-          kernel,
+    def run_kernels(x):
+      out1 = pl.kernel(
+          manual_kernel,
+          mesh=mesh,
+          out_type=pltpu.VMEM(x.shape, x.dtype),
+          compiler_params=pltpu.CompilerParams(collective_id=0),
+      )(x)
+      out2 = pl.kernel(
+          auto_kernel,
           mesh=mesh,
           out_type=pltpu.VMEM(x.shape, x.dtype),
       )(x)
+      return out1, out2
 
-    lowered = run_kernel.lower(jnp.zeros((8, 128), jnp.float32))
+    lowered = run_kernels.lower(jnp.zeros((8, 128), jnp.float32))
     mlir_str = str(lowered.compiler_ir())
     matches = re.findall(
         r'(?:\\22|\\\"|\")collective_id(?:\\22|\\\"|\"):\s*(\d+)', mlir_str
     )
-    self.assertLen(matches, 1)
-    self.assertEqual(int(matches[0]), 10)
+    self.assertLen(matches, 2)
+    self.assertEqual(int(matches[0]), 0)
+    self.assertEqual(int(matches[1]), 1)
+
+  def test_auto_before_manual_skips_pre_scanned_ids(self):
+    if self.INTERPRET:
+      self.skipTest('Compilation-only test')
+
+    mesh = pltpu.TensorCoreMesh(axis_name='tc', num_cores=1)
+
+    def auto_kernel(x_ref, y_ref):
+      sem = pltpu.get_barrier_semaphore('tag_a')
+      pl.semaphore_signal(sem)
+      pltpu.sync_copy(x_ref, y_ref)
+
+    def manual_kernel(x_ref, y_ref):
+      sem = pltpu.get_barrier_semaphore()
+      pl.semaphore_signal(sem)
+      pltpu.sync_copy(x_ref, y_ref)
+
+    @jax.jit
+    def run_kernels(x):
+      # Auto-assigned kernel appears first, manual kernel with collective_id=0 appears second.
+      out1 = pl.kernel(
+          auto_kernel,
+          mesh=mesh,
+          out_type=pltpu.VMEM(x.shape, x.dtype),
+      )(x)
+      out2 = pl.kernel(
+          manual_kernel,
+          mesh=mesh,
+          out_type=pltpu.VMEM(x.shape, x.dtype),
+          compiler_params=pltpu.CompilerParams(collective_id=0),
+      )(x)
+      return out1, out2
+
+    lowered = run_kernels.lower(jnp.zeros((8, 128), jnp.float32))
+    mlir_str = str(lowered.compiler_ir())
+    matches = re.findall(
+        r'(?:\\22|\\\"|\")collective_id(?:\\22|\\\"|\"):\s*(\d+)', mlir_str
+    )
+    self.assertLen(matches, 2)
+    # auto_kernel lowered first gets 1 because 0 was pre-scanned from manual_kernel.
+    self.assertEqual(int(matches[0]), 1)
+    self.assertEqual(int(matches[1]), 0)
 
 
 @jtu.with_config(jax_pallas_auto_assign_collective_ids='override')
@@ -6764,13 +6810,12 @@ class PallasTPUOverrideCollectiveIdTest(ptu.PallasTPUTest):
     matches = re.findall(
         r'(?:\\22|\\\"|\")collective_id(?:\\22|\\\"|\"):\s*(\d+)', mlir_str
     )
-    base_id = jax.config.jax_pallas_auto_assign_collective_ids_base_id
     self.assertLen(matches, 3)
     # kernel1 and kernel2 share the tag despite different bytecode and manual collective_ids.
-    self.assertEqual(int(matches[0]), base_id)
-    self.assertEqual(int(matches[1]), base_id)
-    # kernel3 has a different tag, so gets base_id + 1.
-    self.assertEqual(int(matches[2]), base_id + 1)
+    self.assertEqual(int(matches[0]), 0)
+    self.assertEqual(int(matches[1]), 0)
+    # kernel3 has a different tag, so gets 1.
+    self.assertEqual(int(matches[2]), 1)
 
 
 @jtu.with_config(
