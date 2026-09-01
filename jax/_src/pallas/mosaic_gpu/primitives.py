@@ -1578,16 +1578,15 @@ def _barrier_arrive_lowering(
   elif ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
     barrier.arrive(orders_tensor_core)
   else:
-    if scope == mgpu_utils.ThreadSubset.WARP and not orders_tensor_core:
+    if scope == mgpu_utils.ThreadSubset.WARP:
       arrival_count = 4
     else:
       arrival_count = 1
 
-    pred = ctx.module_ctx.single_lane_predicate if orders_tensor_core else None
     barrier.arrive(
         arrival_count=arrival_count,
         orders_tensor_core=orders_tensor_core,
-        predicate=pred,
+        predicate=None,
         scope=scope,
     )
   return ()

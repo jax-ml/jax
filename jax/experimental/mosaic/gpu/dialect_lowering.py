@@ -276,7 +276,7 @@ def _initialize_barrier_op_lowering_rule(
 ) -> Sequence[ir.Value]:
   i32 = ir.IntegerType.get_signless(32)
   arrival_count = op.arrival_count.value * (
-      utils.WARPGROUP_SIZE if not op.orders_tensor_core.value else 1
+      utils.WARPGROUP_SIZE #if not op.orders_tensor_core.value else 1
   )
   for i in range(op.num_barriers.value):
     bar_ptr = utils.getelementptr(op.base_pointer, [i], _lowered_barrier_type())
@@ -1728,7 +1728,7 @@ def _mgpu_arrive_op_lowering_rule(
   if orders_tc:
     # Barrier expects a single thread arrival.
     predicate = ctx.single_lane_predicate
-    arrival_count = 1
+    arrival_count = 128
   elif ctx.thread_semantics == utils.ThreadSubset.WARP:
     # In warp-level lowering, we arrive on each CUDA thread in a warp, but the
     # barrier still expects a full 128 arrivals so we arrive 4 times on each
