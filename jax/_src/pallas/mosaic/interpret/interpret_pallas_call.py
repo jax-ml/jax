@@ -1707,6 +1707,7 @@ def _interpret_jaxpr(
         out = []
 
       elif prim is mosaic_primitives.get_barrier_semaphore_p:
+        # TODO(rdyro): Support barrier semaphore tags in interpret mode.
         token, out = callback.io_callback(
             get_barrier_semaphore,
             (TOKEN_SHAPE_DTYPE, jax.ShapeDtypeStruct((), jnp.int16)),

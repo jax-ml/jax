@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import base64
 import collections.abc
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 import dataclasses
 import enum
 import io
@@ -643,6 +643,7 @@ def _lower_to_custom_call_config(
     allow_input_fusion: Sequence[bool] | None,
     internal_scratch_in_bytes: int | None,
     collective_id: int | None,
+    collective_id_tag: Hashable | None = None,
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     ir_version: int | None = None,
@@ -678,6 +679,7 @@ def _lower_to_custom_call_config(
       allow_input_fusion=allow_input_fusion,
       internal_scratch_in_bytes=internal_scratch_in_bytes,
       collective_id=collective_id,
+      collective_id_tag=collective_id_tag,
       device_type=device_type,
       serialization_format=serialization_format,
       has_custom_barrier=has_custom_barrier,
@@ -708,6 +710,7 @@ def _lowered_to_custom_call_config(
     allow_input_fusion: Sequence[bool] | None,
     internal_scratch_in_bytes: int | None,
     collective_id: int | None,
+    collective_id_tag: Hashable | None = None,
     serialization_format: int | None,
     has_custom_barrier: bool,
     has_communication: bool,
@@ -727,65 +730,69 @@ def _lowered_to_custom_call_config(
     kernel_name: str | None = None,
     ctx: mlir.LoweringRuleContext | None = None,
 ):
-  auto_assign_collective_id = (
-      config.jax_pallas_auto_assign_collective_ids.value in ("yes", "override"))
-  if auto_assign_collective_id:
-    if (config.jax_pallas_auto_assign_collective_ids.value == "yes"
-        and collective_id is not None):
-      logging.warning(
-          f"{collective_id=} in {kernel_name=} should be None when"
-          " auto-assigning collective ids."
-      )
-    else:  # override mode
-      collective_id = None
-  if has_custom_barrier:
-    if (auto_assign_collective_id and ctx is not None
-        and ctx.module_context.pallas_collective_id_mapping is not None):
-      key = FrozenDict(dict(lowered_module_hash=hash(lowered_module_asm),
-                            skip_device_barrier=skip_device_barrier))
-      if collective_id is None:
-        if key in ctx.module_context.pallas_collective_id_mapping.auto:
-          collective_id = (
-              ctx.module_context.pallas_collective_id_mapping.auto[key]
-          )
-        else:
-          auto_num = len(
-              ctx.module_context.pallas_collective_id_mapping.auto.values())
-          existing_ids = ctx.module_context.pallas_collective_id_mapping.all_ids
-          proposed_ids = range(
-              _AUTO_COLLECTIVE_BASE_ID + auto_num,
-              _AUTO_COLLECTIVE_BASE_ID + auto_num + len(existing_ids) + 1)
-          new_id = next(id for id in proposed_ids if id not in existing_ids)
-          ctx.module_context.pallas_collective_id_mapping.auto[key] = new_id
-          ctx.module_context.pallas_collective_id_mapping.all_ids.add(new_id)
-          collective_id = new_id
-          if (len(ctx.module_context.pallas_collective_id_mapping.auto)
-              > _AUTO_COLLECTIVE_ID_LIMIT):
-            logging.warning(
-                "The number of auto-assigned collective ids for pallas kernels"
-                " is very large, consider manually annotating the kernels with"
-                " collective ids:"
-                f" {ctx.module_context.pallas_collective_id_mapping}"
-            )
-      else:  # Manually assigned collective ID.
-        # We need to check for a conflict between the manual collective id
-        # and the auto-assigned collective ids so far.
-        if (collective_id
-            in ctx.module_context.pallas_collective_id_mapping.auto.values()):
-          raise ValueError(
-              f"The manually assigned {collective_id=} in {kernel_name=}"
-              " conflicts with an existing auto-assigned collective id."
-              " Auto-assignment uses a base collective id of"
-              f" {_AUTO_COLLECTIVE_BASE_ID}. Please use values away from this"
-              " offset."
-          )
-        ctx.module_context.pallas_collective_id_mapping.manual[key] = (
-            collective_id
-        )
-        ctx.module_context.pallas_collective_id_mapping.all_ids.add(
-            collective_id
-        )
+  config_mode = config.jax_pallas_auto_assign_collective_ids.value
+  base_id = config.jax_pallas_auto_assign_collective_ids_base_id.value
+  id_limit = config.jax_pallas_auto_assign_collective_ids_limit.value
 
+  # When not in override mode, collective id and tag cannot both be specified.
+  if (config_mode != "override"
+      and collective_id is not None and collective_id_tag is not None):
+    raise ValueError(
+        "Conflicting collective_id specified: CompilerParams has"
+        f" {collective_id!r} but get_barrier_semaphore has"
+        f" {collective_id_tag!r}. Specify only one or switch to "
+        " jax_pallas_auto_assign_collective_ids='override'."
+    )
+
+  # Potentially create an auto-key for the collective id.
+  auto_key = None
+  collective_id = None if config_mode == "override" else collective_id
+  if collective_id is not None and config_mode == "yes":
+    # collective id is an int, but we're supposed to be auto-assigning one.
+    logging.warning(
+        f"{collective_id=} in {kernel_name=} should be None when"
+        " auto-assigning collective ids."
+    )
+  elif collective_id is None:
+    # Auto-assign a collective id key based on the tag or the module hash.
+    if collective_id_tag is not None:
+      auto_key = ("tag", collective_id_tag, skip_device_barrier)
+    elif config_mode in ("yes", "override"):
+      auto_key = (
+          "module", hash(lowered_module_asm), skip_device_barrier
+      )
+
+  # Now check if the collective_id is specified or auto_key is set.
+  if (
+      (has_custom_barrier or collective_id is not None or auto_key is not None)
+      and ctx is not None
+      and ctx.module_context.pallas_collective_id_mapping is not None
+  ):
+    mapping = ctx.module_context.pallas_collective_id_mapping
+    if auto_key is not None:
+      collective_id, is_new = mapping.get_or_allocate_id(
+          auto_key, base_id=base_id
+      )
+      if is_new and len(mapping.auto) > id_limit:
+        raise ValueError(
+            "The number of auto-assigned collective ids for pallas kernels"
+            f" exceeded the limit of {id_limit}. Consider manually annotating"
+            f" the kernels with collective ids: {mapping}"
+        )
+    elif isinstance(collective_id, int):
+      manual_key = ("module", hash(lowered_module_asm), skip_device_barrier)
+      mapping.register_manual_id(
+          manual_key, collective_id, kernel_name=kernel_name, base_id=base_id
+      )
+
+  # If we didn't resolve the collective_id to an integer by now, raise an error.
+  if not (collective_id is None or isinstance(collective_id, int)):
+    raise ValueError(
+        f"collective_id={collective_id!r} could not be resolved to an integer"
+        f" in {kernel_name=}."
+    )
+
+  if has_custom_barrier:
     if collective_id is None:
       raise ValueError(
           "collective_id has to be specified when using a custom barrier "
@@ -847,8 +854,9 @@ def lower_module_to_custom_call(
     allow_input_fusion: Sequence[bool] | None,
     input_output_aliases: tuple[tuple[int, int], ...],
     internal_scratch_in_bytes: int | None,
-    collective_id: int | None,
-    has_side_effects: bool | TpuSideEffectType,
+    collective_id: int | None = None,
+    collective_id_tag: Hashable | None = None,
+    has_side_effects: bool | TpuSideEffectType = False,
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None,
     disable_bounds_checks: bool = False,
@@ -876,6 +884,7 @@ def lower_module_to_custom_call(
       allow_input_fusion=allow_input_fusion,
       internal_scratch_in_bytes=internal_scratch_in_bytes,
       collective_id=collective_id,
+      collective_id_tag=collective_id_tag,
       serialization_format=serialization_format,
       output_memory_spaces=output_memory_spaces,
       ir_version=get_ir_version(ctx),

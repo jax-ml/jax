@@ -5469,7 +5469,8 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
 @register_lowering_rule(
     tpu_primitives.get_barrier_semaphore_p, kernel_types=[*tpu_core.CoreType]
 )
-def _get_barrier_semaphore_rule(ctx: LoweringRuleContext):
+def _get_barrier_semaphore_rule(ctx: LoweringRuleContext, *, tag: Any = None):
+  del tag
   memref_type = ctx.aval_to_ir_type(ctx.avals_out[0])
   return tpu.sem_barrier(memref_type)
 

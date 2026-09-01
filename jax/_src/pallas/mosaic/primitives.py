@@ -15,7 +15,7 @@
 """Module for Pallas:TPU-specific JAX primitives and functions."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 import dataclasses
 import logging
 from typing import Any
@@ -790,17 +790,24 @@ def async_remote_copy(
 get_barrier_semaphore_p = jax_core.Primitive('get_barrier_semaphore')
 
 @get_barrier_semaphore_p.def_abstract_eval
-def _get_barrier_semaphore_abstract_eval():
+def _get_barrier_semaphore_abstract_eval(*, tag: Hashable | None = None):
+  del tag
   return state.AbstractRef(
       jax_core.ShapedArray((), pl_core.BarrierSemaphore()),
       tpu_core.MemorySpace.SEMAPHORE,
   )
 
-def get_barrier_semaphore():
+
+def get_barrier_semaphore(tag: Hashable | None = None):
   """Returns a barrier semaphore.
 
   This function returns a barrier semaphore based on the collective_id of the
-  current pallas kernel.
+  current pallas kernel or the optional tag provided.
+
+  Args:
+    tag: An optional collective ID or hashable tag (e.g. string or tuple)
+      identifying the barrier semaphore. When provided, kernels sharing the same
+      tag will be assigned the same barrier semaphore by XLA.
 
   It's very important that the semaphore is wait-ed back down to 0, or else the
   semaphores will become corrupted.
@@ -817,7 +824,7 @@ def get_barrier_semaphore():
   Note that reusing the same collective_id doesn't guarantee that the same
   semaphore is provided by XLA.
   """
-  return get_barrier_semaphore_p.bind()
+  return get_barrier_semaphore_p.bind(tag=tag)
 
 
 # RNG Ops
