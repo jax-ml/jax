@@ -31,7 +31,6 @@ archive_override(
 bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
-    integrity = "sha256-VCMTU5VJ4XUjcNnGPgFDSry9Kv4JOiaSNfHW5NHGH7o=",
     patch_strip = 1,
     patches = [
         "//third_party/xla:cpu_compiler_aarch64.patch",
@@ -41,8 +40,9 @@ archive_override(
         "//third_party/xla:onednn_gemm_bfloat16.patch",
         "//third_party/xla:llvm_windows_arm64_native_triple.patch",
     ],
-    strip_prefix = "xla-0644417f95ad247b511558a92bc48b765730dc5a",
-    urls = ["https://github.com/openxla/xla/archive/0644417f95ad247b511558a92bc48b765730dc5a.tar.gz"],
+    integrity = "sha256-wjMz0nHoWQfiXkCbAhqNIWm3lnG6v4ThNON6oIB6bcg=",
+    strip_prefix = "xla-8c69bb65c645eaf6809182ff274e33328a284af2",
+    urls = ["https://github.com/openxla/xla/archive/8c69bb65c645eaf6809182ff274e33328a284af2.tar.gz"],
 )
 
 # TODO: upstream, otherwise we have to duplicate the patches in jax
