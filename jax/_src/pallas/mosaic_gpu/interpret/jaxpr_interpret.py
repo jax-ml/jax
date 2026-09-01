@@ -190,9 +190,9 @@ def apply_unswizzle_and_untile(
     transforms: tuple[state_types.Transform, ...],
     aval: jax_core.AbstractValue,
 ) -> jax_core.AbstractValue:
-  if not all(isinstance(t, (mosaic_gpu_core.UnswizzleRef,
-                            mosaic_gpu_core.UntilingTransform))
-             for t in transforms):
+  if not all(
+      isinstance(t, memory.LAYOUT_TRANSFORMS) for t in transforms
+  ):
     raise ValueError("Unsupported transforms:", transforms)
   return state_types.TransformedRef(aval, transforms).type
 
@@ -740,8 +740,11 @@ class JaxprInterpreter:
         barrier_transforms_flat)
 
     return callback.io_callback(
-        functools.partial(gpu_callbacks.copy_gmem_to_smem,
-                          source_info=eqn.source_info),
+        functools.partial(
+            gpu_callbacks.copy_gmem_to_smem,
+            source_info=eqn.source_info,
+            oob_mode=eqn.params["oob_mode"],
+        ),
         gpu_callbacks.TOKEN_SHAPE_DTYPE,
         token=token,
         mesh_location=self.mesh_location,

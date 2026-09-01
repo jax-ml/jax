@@ -17,7 +17,6 @@ import contextlib
 import dataclasses
 import enum
 import functools
-import itertools
 import math
 import threading
 from typing import Any, Literal
@@ -646,24 +645,7 @@ def get(
   )
   clock = clock if clock is not None else clock_
 
-  # Compute the shape of the read value, assuming the read is fully in-bounds.
-  # TODO(jburnim): We already know this shape in the Jaxpr where we insert a
-  # callback to `get`.  Should we just pass the shape to `get`?
-  # TODO(jburnim): Move to a helper function?
-  full_read_shape: list[int] = []
-  assert len(read_range) <= len(shape)
-  for dim_size, idx_or_slice in itertools.zip_longest(
-      shape, read_range, fillvalue=None
-  ):
-    assert isinstance(dim_size, int)
-    if idx_or_slice is None:
-      full_read_shape.append(dim_size)
-    elif isinstance(idx_or_slice, int):
-      continue
-    else:
-      dim_size = (idx_or_slice.stop - idx_or_slice.start) // idx_or_slice.step
-      assert isinstance(dim_size, int)
-      full_read_shape.append(dim_size)
+  full_read_shape = interpret_utils.window_shape(read_range, shape)
 
   if (ret is None) or (tuple(full_read_shape) != ret.shape):
     if shared_memory.out_of_bounds_reads == 'raise':
