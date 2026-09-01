@@ -1683,6 +1683,9 @@ cc_test(
     srcs = ["reentrant_hash_test.cc"],
     copts = ["-fexceptions"],
     features = ["-use_header_modules"],
+    # With -fvisibility=hidden (.bazelrc, posix) the dynamic-mode .so deps
+    # export no symbols, so the default linkstatic = 0 fails to link.
+    linkstatic = True,
     deps = [
         ":reentrant_hash_map",
         ":reentrant_hash_set",
@@ -1700,6 +1703,7 @@ cc_test(
 cc_test(
     name = "reentrant_hash_benchmark",
     srcs = ["reentrant_hash_benchmark.cc"],
+    linkstatic = True,  # See reentrant_hash_test.
     deps = [
         ":reentrant_hash_map",
         ":reentrant_hash_set",

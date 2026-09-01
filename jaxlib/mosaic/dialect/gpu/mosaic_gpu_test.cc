@@ -25,6 +25,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Conversion/LLVMCommon/MemRefBuilder.h"
@@ -51,7 +52,7 @@ namespace {
 
 using ::testing::HasSubstr;
 using ::testing::UnorderedElementsAre;
-using ::testing::status::StatusIs;
+using ::absl_testing::StatusIs;
 
 template <typename T1, typename T2, typename... Ts>
 absl::StatusOr<mlir::func::FuncOp> FromCppFunc(
