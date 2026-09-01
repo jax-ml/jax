@@ -146,14 +146,16 @@ cc_library(
     hdrs = ["serde.h"],
     deps = [
         "//jaxlib/mosaic:pass_boilerplate",
-        "//jaxlib/mosaic:serde",
+        "@com_google_absl//absl/log:check",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AsmParser",
         "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:NVVMDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:VectorDialect",
+        "@xla//xla/mosaic:serde",
     ],
 )
 

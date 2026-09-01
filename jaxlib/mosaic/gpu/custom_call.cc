@@ -111,6 +111,7 @@ limitations under the License.
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OperationSupport.h"
@@ -333,9 +334,7 @@ void InitContext(mlir::MLIRContext* context) {
                   mlir::func::FuncDialect, mlir::math::MathDialect,
                   mlir::memref::MemRefDialect, mlir::scf::SCFDialect,
                   mlir::vector::VectorDialect, mlir::gpu::GPUDialect,
-                  mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect,
                   mlir::LLVM::LLVMDialect, mosaic_gpu::MosaicGPUDialect>();
-  mlir::registerConvertNVVMToLLVMInterface(registry);
   mlir::registerConvertComplexToLLVMInterface(registry);
   mlir::registerConvertMemRefToLLVMInterface(registry);
   mlir::registerConvertMathToLLVMInterface(registry);
@@ -347,10 +346,20 @@ void InitContext(mlir::MLIRContext* context) {
   mlir::arith::registerConvertArithToLLVMInterface(registry);
   mlir::registerConvertMemRefToLLVMInterface(registry);
   mlir::gpu::registerOffloadingLLVMTranslationInterfaceExternalModels(registry);
-  mlir::NVVM::registerNVVMTargetInterfaceExternalModels(registry);
   mlir::registerBuiltinDialectTranslation(registry);
   mlir::registerGPUDialectTranslation(registry);
   mlir::registerLLVMDialectTranslation(registry);
+  context->appendDialectRegistry(registry);
+  context->loadAllAvailableDialects();
+}
+
+void LoadNvDialects(mlir::MLIRContext* context) {
+  mlir::DialectRegistry registry;
+  // NVGPUDialect depends on NVVMDialect, so both must be loaded here after
+  // parsing to prevent NVVM from eagerly parsing legacy bytecode attributes.
+  registry.insert<mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect>();
+  mlir::registerConvertNVVMToLLVMInterface(registry);
+  mlir::NVVM::registerNVVMTargetInterfaceExternalModels(registry);
   mlir::registerNVVMDialectTranslation(registry);
   context->appendDialectRegistry(registry);
   context->loadAllAvailableDialects();
@@ -708,6 +717,13 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   if (!module) {
     return absl::InternalError("Failed to parse Mosaic GPU module");
   }
+  // NVVM is loaded after `InitContext` because `mlir::parseSourceString`
+  // chokes on parsing NVVM attributes after
+  // https://github.com/llvm/llvm-project/pull/196289 otherwise.
+  //
+  // TODO(bchetioui): remove dependency on NVVM to lighten the maintenance
+  // burden.
+  LoadNvDialects(&context);
   auto manager = mlir::PassManager::on<mlir::ModuleOp>(module->getContext());
   manager.addPass(mosaic::gpu::createSerdePass(
       mosaic::gpu::SerdePassOptions{.serialize = false}));
