@@ -3894,7 +3894,7 @@ class PrettyPrintingTest(ptu.PallasTPUTest):
 
     jaxpr, _ = trace_to_jaxpr(
         body,
-        state.shaped_array_ref((2, 8, 128), jnp.int32),
+        state.shaped_array_ref((2, 8, 128), jnp.float32),
         jax.core.ShapedArray((), jnp.int32),
     )
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
