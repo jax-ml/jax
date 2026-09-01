@@ -3104,8 +3104,8 @@ def _conv_lowering_rule(
       lhs_dilation=[int(d) for d in lhs_dilation],
       rhs_dilation=[int(d) for d in rhs_dilation],
       window_reversal=[bool(r) for r in window_reversal],
-      feature_group_count=feature_group_count,
-      batch_group_count=batch_group_count,
+      feature_group_count=feature_group_count,  # pyrefly: ignore[unexpected-keyword]
+      batch_group_count=batch_group_count,  # pyrefly: ignore[unexpected-keyword]
       precision=precision_attr,
       dimension_numbers=tpu_conv_dims,
   ).result
