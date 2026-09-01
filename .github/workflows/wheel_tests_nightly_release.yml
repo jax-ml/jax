@@ -198,7 +198,7 @@ jobs:
         matrix:
           runner: ["amd-do-linux.jax.cpu"]
           artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
-          python: ["3.12", "3.13", "3.14"]
+          python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
             {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-10.0:latest" },
             {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-latest:latest"},
@@ -208,6 +208,8 @@ jobs:
               python: "3.13"
             - artifact: "jax-rocm-pjrt"
               python: "3.14"
+            - artifact: "jax-rocm-pjrt"
+              python: "3.15"
     name: "Build ROCm artifacts ${{ matrix.rocm.label }}"
     with:
       runner: ${{ matrix.runner }}
@@ -233,7 +235,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           runner: ["amd-do-linux.jax.gpu.gfx950.1", "amd-do-linux.jax.gpu.gfx950.4", "amd-do-linux.jax.gpu.gfx950.8"]
-          python: ["3.12", "3.13", "3.14"]
+          python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
             {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", tag: "therock-10.0"},
             {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
@@ -262,7 +264,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           runner: ["amd-do-linux.jax.gpu.gfx950.1"]
-          python: ["3.12", "3.13", "3.14"]
+          python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
             {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", tag: "therock-10.0"},
             {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
