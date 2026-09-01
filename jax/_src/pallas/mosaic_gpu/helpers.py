@@ -286,7 +286,7 @@ def planar_snake(
       isinstance(shape[1 - minor_dim], int)
       and shape[1 - minor_dim] & (shape[1 - minor_dim] - 1) == 0
   )
-  tile_width = jnp.int32(tile_width)
+  tile_width = jnp.int32(tile_width)  # pyrefly: ignore[bad-assignment]
   major_size = jnp.int32(shape[1 - minor_dim])
   minor_size = jnp.int32(shape[minor_dim])
   tile_size = tile_width * major_size

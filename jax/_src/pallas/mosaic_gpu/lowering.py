@@ -4351,7 +4351,7 @@ def _bcast(
   return x, y
 
 
-def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
+def _ensure_fa(x: object, dtype: jax.typing.DTypeLike) -> mgpu.FragmentedArray:
   if isinstance(x, mgpu.FragmentedArray):
     assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
     return x
@@ -4402,20 +4402,20 @@ def _bcast_wg(
   return x, y
 
 
-def _ensure_ir_value(x: Any, dtype: jnp.dtype) -> ir.Value:
+def _ensure_ir_value(x: Any, dtype: jax.typing.DTypeLike) -> ir.Value:
+  mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
   if isinstance(x, ir.Value):
-    mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
     if isinstance(x.type, ir.VectorType):
       assert ir.VectorType(x.type).element_type == mlir_dtype
     else:
       assert x.type == mlir_dtype, (x.type, mlir_dtype)
     return x
   elif isinstance(x, mgpu.FragmentedArray):
-    assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
+    assert x.mlir_dtype == mlir_dtype
     if isinstance(x.layout, mgpu.WGSplatFragLayout):
       return x.registers.item()
     raise NotImplementedError(f"Unsupported layout: {x.layout}")
-  return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
+  return _ir_constant(x, mlir_dtype)
 
 
 def _device_id_to_logical(

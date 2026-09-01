@@ -1548,7 +1548,7 @@ class ClusterBarrier:
 @dataclasses.dataclass(frozen=True)
 class WGMMAAccumulatorRef:
   shape: tuple[int, int]
-  dtype: jnp.dtype = jnp.float32
+  dtype: jax.typing.DTypeLike = jnp.float32
   _init: Any = state_types.uninitialized
 
   def get_ref_aval(self) -> state.AbstractRef:
