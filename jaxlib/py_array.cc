@@ -46,6 +46,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -147,8 +148,8 @@ absl::StatusOr<const xla::Shape*> XlaDynamicShape(
     if (pjrt_buffer->has_dynamic_dimensions()) {
       {
         nb::gil_scoped_release gil_release;
-        TF_ASSIGN_OR_RETURN(std::vector<int64_t> logical_dims,
-                            pjrt_buffer->logical_dimensions());
+        ABSL_ASSIGN_OR_RETURN(std::vector<int64_t> logical_dims,
+                              pjrt_buffer->logical_dimensions());
         logical_dims_storage.emplace(std::move(logical_dims));
       }
       dims = *logical_dims_storage;
@@ -823,9 +824,9 @@ absl::Status PyArray::set_arrays(nb::object obj) {
     }
   }
 
-  TF_ASSIGN_OR_RETURN(auto ifrt_sharding,
-                      GetIfrtHloSharding(sharding(), ifrt::Shape(shape())));
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(auto ifrt_sharding,
+                        GetIfrtHloSharding(sharding(), ifrt::Shape(shape())));
+  ABSL_ASSIGN_OR_RETURN(
       auto array,
       py_client()->ifrt_client()->AssembleArrayFromSingleDeviceArrays(
           ifrt_arrays[0]->dtype(), ifrt::Shape(shape()),
@@ -853,9 +854,9 @@ absl::StatusOr<PyArray> PyArray::FullyReplicatedShard() {
   // Use the user context of this array.
   xla::ifrt::UserContextScope user_context_scope(
       ifrt_array_ref()->user_context());
-  TF_ASSIGN_OR_RETURN(auto fully_replicated_ifrt_shard,
-                      ifrt_array_ref()->FullyReplicatedShard(
-                          ifrt::ArrayCopySemantics::kReuseInput));
+  ABSL_ASSIGN_OR_RETURN(auto fully_replicated_ifrt_shard,
+                        ifrt_array_ref()->FullyReplicatedShard(
+                            ifrt::ArrayCopySemantics::kReuseInput));
   auto array = MakeFromSingleDeviceArray(
       py_client(), std::move(fully_replicated_ifrt_shard), weak_type(),
       committed(), result_status());
@@ -903,7 +904,8 @@ absl::StatusOr<size_t> PyArray::GetOnDeviceSizeInBytes() {
         "GetOnDeviceSizeInBytes() is not yet supported for arrays with no "
         "addressable devices");
   }
-  TF_ASSIGN_OR_RETURN(std::optional<int64_t> byte_size, ifrt_array->ByteSize());
+  ABSL_ASSIGN_OR_RETURN(std::optional<int64_t> byte_size,
+                        ifrt_array->ByteSize());
   if (!byte_size.has_value()) {
     return xla::Unimplemented(
         "GetOnDeviceSizeInBytes() is not supported for arrays with no defined "
@@ -939,7 +941,7 @@ absl::Status PyArray::BlockUntilResultStatusIsReady() {
 
 absl::StatusOr<std::pair<nb::object, bool>>
 PyArray::SingleDeviceArrayToNumpyArrayDidCopy() {
-  TF_ASSIGN_OR_RETURN(auto arr, FullyReplicatedShard());
+  ABSL_ASSIGN_OR_RETURN(auto arr, FullyReplicatedShard());
   auto result = arr.GetStorage().host_value.AsNumPyArray(
       arr.GetStorage().dynamic_shape, arr.ifrt_array_ref().get());
   TF_RETURN_IF_ERROR(arr.BlockUntilResultStatusIsReady());
@@ -947,12 +949,12 @@ PyArray::SingleDeviceArrayToNumpyArrayDidCopy() {
 }
 
 absl::StatusOr<nb::object> PyArray::SingleDeviceArrayToNumpyArray() {
-  TF_ASSIGN_OR_RETURN(auto result, SingleDeviceArrayToNumpyArrayDidCopy());
+  ABSL_ASSIGN_OR_RETURN(auto result, SingleDeviceArrayToNumpyArrayDidCopy());
   return result.first;
 }
 
 absl::Status PyArray::CopySingleDeviceArrayToHostAsync() {
-  TF_ASSIGN_OR_RETURN(auto arr, FullyReplicatedShard());
+  ABSL_ASSIGN_OR_RETURN(auto arr, FullyReplicatedShard());
   return arr.GetStorage().host_value.CopyToHostAsync(
       arr.GetStorage().dynamic_shape, arr.ifrt_array_ref().get());
 }
@@ -976,7 +978,7 @@ absl::StatusOr<PyArray> PyArray::AssertUnsharded(std::string_view api) {
 }
 
 absl::StatusOr<std::uintptr_t> PyArray::UnsafeBufferPointer() {
-  TF_ASSIGN_OR_RETURN(auto arr, AssertUnsharded("UnsafeBufferPointer"));
+  ABSL_ASSIGN_OR_RETURN(auto arr, AssertUnsharded("UnsafeBufferPointer"));
 
   return py_client()->pjrt_client()->UnsafeBufferPointer(
       GetPjrtBuffer(arr.ifrt_array_ref().get()));
@@ -1091,7 +1093,7 @@ absl::StatusOr<nb::object> CudaArrayInterfaceToBuffer(
         "dimensions) are inconsistent");
   }
   auto ndim = dimensions.size();
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       xla::PrimitiveType element_type,
       DtypeToPrimitiveType(xla::nb_dtype::from_args(cai["typestr"])));
 
@@ -1099,12 +1101,12 @@ absl::StatusOr<nb::object> CudaArrayInterfaceToBuffer(
     throw xla::XlaRuntimeError(
         "This operation requires CUDA support from jaxlib or jax cuda plugin.");
   }
-  TF_ASSIGN_OR_RETURN(auto device,
-                      client->DeviceFromLocalHardwareId(*device_id));
+  ABSL_ASSIGN_OR_RETURN(auto device,
+                        client->DeviceFromLocalHardwareId(*device_id));
   bool is_default_stream =
       data_value == 0 || version == 2 ||
       (version == 3 && (!cai.contains("stream") || cai["stream"].is_none()));
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       std::intptr_t stream,
       ([is_default_stream, cai, device]() -> absl::StatusOr<std::intptr_t> {
         if (is_default_stream) {
@@ -1161,7 +1163,7 @@ absl::StatusOr<nb::object> CudaArrayInterfaceToBuffer(
         "This operation is implemented for a PjRt-compatible backend only.");
   }
   TF_RET_CHECK(pjrt_device->IsAddressable());
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto pjrt_buffer,
       device->client()->pjrt_client()->CreateViewOfDeviceBuffer(
           static_cast<char*>(data_ptr), shape,
@@ -1175,7 +1177,7 @@ absl::StatusOr<nb::object> CudaArrayInterfaceToBuffer(
         "This operation is implemented for a PjRt-compatible backend only.");
   }
   PyUserContextScope user_context_scope;
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto ifrt_array,
       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer), has_custom_layout));
   return PyArray::MakeFromSingleDeviceArray(std::move(client),
@@ -1353,7 +1355,7 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
     tsl::profiler::TraceMe copy_traceme(
         "BatchedCopyToDeviceWithSharding: dispatch");
     for (auto& [key, batch] : batches) {
-      TF_ASSIGN_OR_RETURN(
+      ABSL_ASSIGN_OR_RETURN(
           auto copied,
           client->CopyArrays(
               absl::MakeSpan(batch.ifrt_arrays),
@@ -1370,8 +1372,8 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
   tsl::profiler::TraceMe results_traceme(
       "BatchedCopyToDeviceWithSharding create results");
   for (auto& [i, ifrt_array] : ifrt_arrays) {
-    TF_ASSIGN_OR_RETURN(nb_class_ptr<PyDeviceList> dst_device_list,
-                        GetPyDeviceList(dst_shardings[i]));
+    ABSL_ASSIGN_OR_RETURN(nb_class_ptr<PyDeviceList> dst_device_list,
+                          GetPyDeviceList(dst_shardings[i]));
     nb_class_ptr<PyClient> py_client = dst_device_list->py_client();
     const auto& py_array = py_arrays[i];
     absl::Span<const int64_t> shape_span = py_array.shape();
@@ -1435,8 +1437,8 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
   auto weak_type = nb::cast<bool>(aval.attr("weak_type"));
   auto dtype = aval.attr("dtype");
   auto shape = nb::cast<std::vector<int64_t>>(aval.attr("shape"));
-  TF_ASSIGN_OR_RETURN(nb_class_ptr<PyDeviceList> py_device_list,
-                      GetPyDeviceList(sharding));
+  ABSL_ASSIGN_OR_RETURN(nb_class_ptr<PyDeviceList> py_device_list,
+                        GetPyDeviceList(sharding));
 
   std::vector<xla::ifrt::Device*> ifrt_devices;
   ifrt_devices.reserve(dst_devices.size());
@@ -1444,11 +1446,12 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
     ifrt_devices.push_back(device->device());
   }
   ifrt::Client* ifrt_client = py_device_list->py_client()->ifrt_client();
-  TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef ifrt_device_list,
-                      ifrt_client->MakeDeviceList(ifrt_devices));
-  TF_ASSIGN_OR_RETURN(DevicePutResult device_put_result,
-                      DevicePutWithSharding(args, ifrt_device_list, ifrt_client,
-                                            dtype, shape, sharding, options));
+  ABSL_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef ifrt_device_list,
+                        ifrt_client->MakeDeviceList(ifrt_devices));
+  ABSL_ASSIGN_OR_RETURN(
+      DevicePutResult device_put_result,
+      DevicePutWithSharding(args, ifrt_device_list, ifrt_client, dtype, shape,
+                            sharding, options));
 
   return PyArray(aval, weak_type, dtype, std::move(shape), std::move(sharding),
                  py_device_list->py_client(),
@@ -1468,7 +1471,7 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
   ifrt::Client* const client = ifrt_array_ptr->client();
 
   const auto& device_list = ifrt_array_ptr->sharding().devices();
-  TF_ASSIGN_OR_RETURN(auto dst_device_list, GetIfrtDeviceList(dst_sharding));
+  ABSL_ASSIGN_OR_RETURN(auto dst_device_list, GetIfrtDeviceList(dst_sharding));
   if (device_list->AddressableDeviceList()->size() !=
       dst_device_list->AddressableDeviceList()->size()) {
     return absl::InvalidArgumentError(absl::StrCat(
@@ -1478,7 +1481,7 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
         device_list->AddressableDeviceList()->size(), " addressable shards"));
   }
 
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       xla::ifrt::ShardingRef dst_ifrt_sharding,
       GetIfrtConcreteEvenSharding(dst_sharding, ifrt_array_ptr->dtype(),
                                   ifrt_array_ptr->shape()));
@@ -1551,7 +1554,7 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
     DCHECK_OK(plan.Validate());
     std::vector<xla::ifrt::ArrayRef> input;
     input.push_back(ifrt_array_ptr);
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         auto remapped,
         client->RemapArrays(plan, absl::MakeSpan(input), array_copy_semantics));
 
@@ -1766,8 +1769,8 @@ int PyArray_bf_getbuffer(PyObject* exporter, Py_buffer* view, int flags) {
       if ((flags & PyBUF_WRITEABLE) == PyBUF_WRITEABLE) {
         return xla::InvalidArgument("XLA buffers are read-only.");
       }
-      TF_ASSIGN_OR_RETURN(external_reference_hold,
-                          buffer.AcquireExternalReference());
+      ABSL_ASSIGN_OR_RETURN(external_reference_hold,
+                            buffer.AcquireExternalReference());
       if (buffer.IsDeleted()) {
         return xla::InvalidArgument("Deleted buffer used in buffer protocol.");
       }
@@ -1806,7 +1809,7 @@ int PyArray_bf_getbuffer(PyObject* exporter, Py_buffer* view, int flags) {
         buffers.front(), std::move(external_reference_hold));
     view->itemsize =
         xla::ShapeUtil::ByteSizeOfPrimitiveType(buffer.element_type());
-    TF_ASSIGN_OR_RETURN(view->len, buffer.GetOnDeviceSizeInBytes());
+    ABSL_ASSIGN_OR_RETURN(view->len, buffer.GetOnDeviceSizeInBytes());
     view->readonly = 1;
     if ((flags & PyBUF_FORMAT) == PyBUF_FORMAT) {
       view->format = const_cast<char*>(format);
@@ -1907,10 +1910,10 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
     // On CPU for values >= 8 bits, we can return the value in a zero-copy way.
     // For sub-byte values, we must copy in order to unpack the array.
     if (IsZeroCopyableCpuBuffer(pjrt_buffer)) {
-      TF_ASSIGN_OR_RETURN(const auto* shape,
-                          XlaDynamicShape(ifrt_array, dynamic_shape_holder));
-      TF_ASSIGN_OR_RETURN(xla::nb_dtype dtype,
-                          PrimitiveTypeToNbDtype(shape->element_type()));
+      ABSL_ASSIGN_OR_RETURN(const auto* shape,
+                            XlaDynamicShape(ifrt_array, dynamic_shape_holder));
+      ABSL_ASSIGN_OR_RETURN(xla::nb_dtype dtype,
+                            PrimitiveTypeToNbDtype(shape->element_type()));
       // Objects that must be kept alive while the array is alive.
       struct Hold {
         ifrt::ArrayRef buffer;
@@ -1925,8 +1928,8 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
       {
         // Release the GIL as `AcquireExternalReference` may block.
         nb::gil_scoped_release gil;
-        TF_ASSIGN_OR_RETURN(hold_ptr->external_reference_hold,
-                            pjrt_buffer->AcquireExternalReference());
+        ABSL_ASSIGN_OR_RETURN(hold_ptr->external_reference_hold,
+                              pjrt_buffer->AcquireExternalReference());
         auto fut = ifrt_array->GetReadyFuture();
         BlockUntilReadyWithCancel(fut);
         TF_RETURN_IF_ERROR(fut.Await());
@@ -2014,8 +2017,8 @@ absl::Status PyHostValue::CopyStringArrayToHostAsync(
   TF_RETURN_IF_ERROR(
       ApplyTransferGuardToDeviceToHost(transfer_guard_formatter));
 
-  TF_ASSIGN_OR_RETURN(xla::nb_dtype dtype,
-                      xla::IfrtDtypeToNbDtype(ifrt_array->dtype()));
+  ABSL_ASSIGN_OR_RETURN(xla::nb_dtype dtype,
+                        xla::IfrtDtypeToNbDtype(ifrt_array->dtype()));
   auto shape = ifrt_array->shape();
 
   // Allocate a vector of cords to hold the contents of the array until
@@ -2068,12 +2071,12 @@ absl::Status PyHostValue::CopyToHostAsync(
   const xla::Shape* dynamic_shape;
   std::optional<xla::Shape> shape_holder;
   if (xla::ifrt::isa<ifrt::PjRtCompatibleArray>(ifrt_array)) {
-    TF_ASSIGN_OR_RETURN(dynamic_shape,
-                        XlaDynamicShape(ifrt_array, dynamic_shape_holder));
+    ABSL_ASSIGN_OR_RETURN(dynamic_shape,
+                          XlaDynamicShape(ifrt_array, dynamic_shape_holder));
   } else {
     // Skip querying the dynamic shape for a non-PjRt Array.
-    TF_ASSIGN_OR_RETURN(xla::PrimitiveType type,
-                        ifrt::ToPrimitiveType(ifrt_array->dtype()));
+    ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType type,
+                          ifrt::ToPrimitiveType(ifrt_array->dtype()));
     shape_holder = xla::ShapeUtil::MakeShapeWithDescendingLayout(
         type, ifrt_array->shape().dims());
     dynamic_shape = &*shape_holder;
@@ -2083,8 +2086,8 @@ absl::Status PyHostValue::CopyToHostAsync(
       xla::ShapeUtil::DeviceShapeToHostShape(*dynamic_shape);
 
   auto strides = ByteStridesOrDefaultForShapeInt64(host_shape);
-  TF_ASSIGN_OR_RETURN(xla::nb_dtype dtype,
-                      PrimitiveTypeToNbDtype(host_shape.element_type()));
+  ABSL_ASSIGN_OR_RETURN(xla::nb_dtype dtype,
+                        PrimitiveTypeToNbDtype(host_shape.element_type()));
   value_ = xla::nb_numpy_ndarray(dtype, host_shape.dimensions(), strides);
   // TODO(hyeontaek): Several PjRt runtimes assume that the host buffer uses
   // the same transposition as the device buffer. This is different from

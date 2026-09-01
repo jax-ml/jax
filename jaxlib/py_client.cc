@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/str_cat.h"
@@ -191,8 +192,9 @@ std::vector<nb_class_ptr<PyDevice>> PyClient::GetAllDevices() {
 
 absl::StatusOr<nb_class_ptr<PyDevice>> PyClient::DeviceFromLocalHardwareId(
     int local_hardware_id) {
-  TF_ASSIGN_OR_RETURN(ifrt::Device * device,
-                      ifrt_client_->LookupAddressableDevice(local_hardware_id));
+  ABSL_ASSIGN_OR_RETURN(
+      ifrt::Device * device,
+      ifrt_client_->LookupAddressableDevice(local_hardware_id));
   return GetPyDevice(device);
 }
 
@@ -254,7 +256,7 @@ absl::Status PyClient::Defragment() {
           "This operation is implemented for a PjRt-compatible backend "
           "only.");
     }
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         absl::Span<std::shared_ptr<xla::PjRtBuffer>> pjrt_buffers,
         arr->mutable_pjrt_buffers());
     for (int i = 0; i < pjrt_buffers.size(); ++i) {
@@ -265,8 +267,8 @@ absl::Status PyClient::Defragment() {
       auto [iter, inserted] =
           pjrt_buf_to_tmp_buffer.insert({pjrt_buf_ptr.get(), TmpBuffer()});
       if (inserted) {
-        TF_ASSIGN_OR_RETURN(iter->second.host_copy,
-                            pjrt_buf_ptr->ToLiteral().Await());
+        ABSL_ASSIGN_OR_RETURN(iter->second.host_copy,
+                              pjrt_buf_ptr->ToLiteral().Await());
       }
       iter->second.pjrt_buffer_ptrs.push_back(&pjrt_buf_ptr);
     }
@@ -415,10 +417,10 @@ PyClient::CompileAndLoadIfrtProgram(
             std::move(ifrt_program), std::move(ifrt_options));
     auto ready_future = ifrt_loaded_executable_fut.GetReadyFuture();
     BlockUntilReadyWithCancel(ready_future);
-    TF_ASSIGN_OR_RETURN(ifrt_loaded_executable,
-                        std::move(ifrt_loaded_executable_fut).Await());
+    ABSL_ASSIGN_OR_RETURN(ifrt_loaded_executable,
+                          std::move(ifrt_loaded_executable_fut).Await());
     if (compile_status.ok()) {
-      TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
+      ABSL_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
     }
   }
   if (!compile_status.ok()) {
@@ -444,7 +446,7 @@ static absl::StatusOr<nb_class_ptr<PyExecutable>> CompileWithTopology(
   {
     auto xla_options =
         std::make_unique<ifrt::XlaCompileOptions>(options, std::move(devices));
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         ifrt_executable,
         client->ifrt_client()
             ->GetDefaultCompiler()
@@ -458,7 +460,7 @@ static absl::StatusOr<nb_class_ptr<PyExecutable>> CompileWithTopology(
 absl::StatusOr<nb_class_ptr<PyExecutable>> PyClient::Compile(
     nb_class_ptr<PyClient> client, mlir::ModuleOp module,
     ifrt::DeviceListRef executable_devices, xla::CompileOptions options) {
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto topology,
       client->ifrt_client()->GetTopologyForDevices(executable_devices));
   return CompileWithTopology(std::move(client), module, *topology,
@@ -529,8 +531,8 @@ PyClient::CompileAndLoad(nb_class_ptr<PyClient> client, mlir::ModuleOp module,
 
 absl::StatusOr<nb::bytes> PyClient::SerializeExecutable(
     const PyLoadedExecutable& executable) const {
-  TF_ASSIGN_OR_RETURN(auto serialized,
-                      executable.ifrt_loaded_executable()->Serialize());
+  ABSL_ASSIGN_OR_RETURN(auto serialized,
+                        executable.ifrt_loaded_executable()->Serialize());
   return nb::bytes(serialized.data(), serialized.size());
 }
 
@@ -553,14 +555,14 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
   PyUserContextScope user_context_scope;
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         ifrt_loaded_executable,
         client->ifrt_client_->GetDefaultCompiler()
             ->DeserializeLoadedExecutable(std::move(cord),
                                           std::move(ifrt_deserialize_options))
             .Await());
   }
-  TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
+  ABSL_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   return make_nb_class<PyLoadedExecutable>(std::move(client),
                                            std::move(ifrt_loaded_executable),
                                            std::move(fingerprint));
@@ -585,14 +587,14 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
   PyUserContextScope user_context_scope;
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         ifrt_loaded_executable,
         client->ifrt_client_->GetDefaultCompiler()
             ->DeserializeLoadedExecutable(std::move(cord),
                                           std::move(ifrt_deserialize_options))
             .Await());
   }
-  TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
+  ABSL_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   return make_nb_class<PyLoadedExecutable>(std::move(client),
                                            std::move(ifrt_loaded_executable),
                                            std::move(fingerprint));
@@ -643,7 +645,7 @@ absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
     }
     const xla::ifrt::DeviceList* addressable_devices =
         array->sharding().devices()->AddressableDeviceList();
-    TF_ASSIGN_OR_RETURN(std::optional<int64_t> byte_size, array->ByteSize());
+    ABSL_ASSIGN_OR_RETURN(std::optional<int64_t> byte_size, array->ByteSize());
     if (!byte_size.has_value()) {
       return absl::OkStatus();
     }
@@ -733,7 +735,7 @@ absl::StatusOr<nb::object> PyClient::MakePythonCallbackUsingHostSendAndRecv(
     absl::Span<xla::Shape const> result_shapes,
     absl::Span<uint16_t const> send_channel_ids,
     absl::Span<uint16_t const> recv_channel_ids, nb::callable serializer) {
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto loaded_host_callback,
       PyHostSendAndRecvLoadedHostCallback::Create(
           ifrt_client(), std::move(callable), operand_shapes, result_shapes,

@@ -26,6 +26,7 @@ limitations under the License.
 #include <variant>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
@@ -150,7 +151,7 @@ absl::StatusOr<nb_class_ptr<PyMemorySpace>> PyDevice::Memory(
 }
 
 absl::StatusOr<nb_class_ptr<PyMemorySpace>> PyDevice::DefaultMemory() const {
-  TF_ASSIGN_OR_RETURN(auto* memory_space, device_->DefaultMemory());
+  ABSL_ASSIGN_OR_RETURN(auto* memory_space, device_->DefaultMemory());
   return client_->GetPyMemorySpace(memory_space);
 }
 

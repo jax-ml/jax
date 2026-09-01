@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
@@ -108,8 +109,8 @@ MpmdExecutableFastpathCache::GetOrInsertIfAbsent(
 }
 
 absl::StatusOr<nb::list> PyMpmdLoadedExecutable::Execute(nb::sequence args) {
-  TF_ASSIGN_OR_RETURN(std::vector<xla::ifrt::ArrayRef> ifrt_args,
-                      UnwrapArrays(args));
+  ABSL_ASSIGN_OR_RETURN(std::vector<xla::ifrt::ArrayRef> ifrt_args,
+                        UnwrapArrays(args));
   xla::ifrt::ExecuteOptions execute_options;
   execute_options.execution_stream_id = GetExecutionStreamId();
 
@@ -117,7 +118,7 @@ absl::StatusOr<nb::list> PyMpmdLoadedExecutable::Execute(nb::sequence args) {
   xla::ifrt::LoadedExecutable::ExecuteResult result;
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         result, ifrt_loaded_executable_->Execute(absl::MakeSpan(ifrt_args),
                                                  std::move(execute_options),
                                                  /*devices=*/std::nullopt));
@@ -201,8 +202,8 @@ absl::StatusOr<nb::object> PyMpmdLoadedExecutable::ExecuteFastpath(
     }
   }
 
-  TF_ASSIGN_OR_RETURN(nb::list result,
-                      Execute(nb::cast<nb::sequence>(kept_args)));
+  ABSL_ASSIGN_OR_RETURN(nb::list result,
+                        Execute(nb::cast<nb::sequence>(kept_args)));
   std::vector<nb::object> result_list;
   result_list.reserve(result.size());
   for (nb::handle result_item : result) {
@@ -347,8 +348,8 @@ absl::Status PyMpmdLoadedExecutable::ComputeCallSignature(
   dynamic_arg_layouts.reserve(flat_args.size());
 
   for (nb::handle arg : flat_args) {
-    TF_ASSIGN_OR_RETURN(jax::PyArgSignature arg_signature,
-                        jax::PyArgSignatureOfValue(arg, jax_enable_x64));
+    ABSL_ASSIGN_OR_RETURN(jax::PyArgSignature arg_signature,
+                          jax::PyArgSignatureOfValue(arg, jax_enable_x64));
     call_signature.dynamic_arg_signatures.push_back(std::move(arg_signature));
 
     jax::PyArray py_array = nb::borrow<jax::PyArray>(arg);

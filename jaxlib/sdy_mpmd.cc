@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/IRCore.h"
@@ -173,8 +174,9 @@ CompileMpmdWithLoadedHostCallbacks(
 
   // Get IFRT client and construct an IFRT device list.
   xla::ifrt::Client* client = backend->ifrt_client();
-  TF_ASSIGN_OR_RETURN(const xla::ifrt::DeviceListRef device_list,
-                      MakeDeviceListFromPyDevices(backend, std::move(devices)));
+  ABSL_ASSIGN_OR_RETURN(
+      const xla::ifrt::DeviceListRef device_list,
+      MakeDeviceListFromPyDevices(backend, std::move(devices)));
 
   xla::ifrt::UserContextScope user_context_scope(jax::PyUserContext::Create());
   xla::ifrt::LoadedExecutableRef loaded_executable;
@@ -214,7 +216,7 @@ CompileMpmdWithLoadedHostCallbacks(
 
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         loaded_executable,
         client->GetDefaultCompiler()
             ->CompileAndLoad(std::make_unique<xla::ifrt::IfrtIRProgram>(

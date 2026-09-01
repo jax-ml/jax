@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/base/const_init.h"
 #include "absl/base/no_destructor.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "nanobind/nanobind.h"
@@ -65,7 +66,7 @@ xla::HloSharding GetXlaHloSharding(nb::handle sharding,
 // Gets `xla::ifrt::DeviceList` from a JAX Sharding.
 absl::StatusOr<xla::ifrt::DeviceListRef> GetIfrtDeviceList(
     nb::handle sharding_py) {
-  TF_ASSIGN_OR_RETURN(auto py_device_list, GetPyDeviceList(sharding_py));
+  ABSL_ASSIGN_OR_RETURN(auto py_device_list, GetPyDeviceList(sharding_py));
   return py_device_list->ifrt_device_list();
 }
 
@@ -105,8 +106,8 @@ absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtHloSharding(
   static absl::NoDestructor<CacheT::LRUList> lru_list(4096);
   static absl::NoDestructor<CacheT> cache(lru_list.get());
 
-  TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
-                      GetIfrtDeviceList(sharding));
+  ABSL_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
+                        GetIfrtDeviceList(sharding));
   xla::ifrt::MemoryKind memory_kind = GetMemoryKind(sharding.ptr());
 
   xla::HloSharding hlo_sharding =
@@ -130,11 +131,11 @@ absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtHloSharding(
 absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtConcreteEvenSharding(
     nb::handle sharding, xla::ifrt::DType dtype,
     const xla::ifrt::Shape& shape) {
-  TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
-                      GetIfrtDeviceList(sharding));
+  ABSL_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
+                        GetIfrtDeviceList(sharding));
   xla::ifrt::MemoryKind memory_kind = GetMemoryKind(sharding.ptr());
-  TF_ASSIGN_OR_RETURN(xla::PrimitiveType xla_primitive_type,
-                      xla::ifrt::ToPrimitiveType(dtype));
+  ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType xla_primitive_type,
+                        xla::ifrt::ToPrimitiveType(dtype));
   // The XLA shape's layout is irrelevant because we only need to know the
   // tile shape, which is independent from the layout.
   xla::Shape xla_shape = xla::ShapeUtil::MakeShapeWithDescendingLayout(
@@ -153,8 +154,8 @@ absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtConcreteEvenSharding(
 absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtConcreteSharding(
     nb::handle sharding, const xla::ifrt::Shape& shape,
     std::vector<xla::ifrt::Shape> shard_shapes) {
-  TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
-                      GetIfrtDeviceList(sharding));
+  ABSL_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
+                        GetIfrtDeviceList(sharding));
   xla::ifrt::MemoryKind memory_kind = GetMemoryKind(sharding.ptr());
   return xla::ifrt::ConcreteSharding::Create(
       std::move(device_list), std::move(memory_kind), shape,

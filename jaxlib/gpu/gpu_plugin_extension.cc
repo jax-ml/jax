@@ -22,6 +22,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "nanobind/nanobind.h"
@@ -136,7 +137,7 @@ absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
   };
 
 #if PJRT_API_GPU_EXTENSION_VERSION <= 1
-  TF_ASSIGN_OR_RETURN(nb::capsule fn_execute, as_capsule(fn));
+  ABSL_ASSIGN_OR_RETURN(nb::capsule fn_execute, as_capsule(fn));
   args.custom_call_function = fn_execute.data();
   RETURN_STATUS_IF_PJRT_ERROR(register_custom_call(&args), c_api);
   return absl::OkStatus();
@@ -148,7 +149,7 @@ absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
 
   // Register legacy custom call target (untyped void* API).
   if (api_version == 0) {
-    TF_ASSIGN_OR_RETURN(nb::capsule capsule_execute, as_capsule(fn));
+    ABSL_ASSIGN_OR_RETURN(nb::capsule capsule_execute, as_capsule(fn));
     args.handler_execute = capsule_execute.data();
     RETURN_STATUS_IF_PJRT_ERROR(register_custom_call(&args), c_api);
     return absl::OkStatus();
@@ -167,14 +168,14 @@ absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
     if (nb::try_cast<nb::dict>(fn, bundle)) {
       auto handler = [&](const char* name) -> absl::StatusOr<void*> {
         if (!bundle.contains(name)) return nullptr;
-        TF_ASSIGN_OR_RETURN(nb::capsule capsule, as_capsule(bundle[name]));
+        ABSL_ASSIGN_OR_RETURN(nb::capsule capsule, as_capsule(bundle[name]));
         return capsule.data();
       };
 
-      TF_ASSIGN_OR_RETURN(args.handler_instantiate, handler("instantiate"));
-      TF_ASSIGN_OR_RETURN(args.handler_prepare, handler("prepare"));
-      TF_ASSIGN_OR_RETURN(args.handler_initialize, handler("initialize"));
-      TF_ASSIGN_OR_RETURN(args.handler_execute, handler("execute"));
+      ABSL_ASSIGN_OR_RETURN(args.handler_instantiate, handler("instantiate"));
+      ABSL_ASSIGN_OR_RETURN(args.handler_prepare, handler("prepare"));
+      ABSL_ASSIGN_OR_RETURN(args.handler_initialize, handler("initialize"));
+      ABSL_ASSIGN_OR_RETURN(args.handler_execute, handler("execute"));
       RETURN_STATUS_IF_PJRT_ERROR(register_custom_call(&args), c_api);
       return absl::OkStatus();
     }
@@ -221,12 +222,12 @@ absl::Status RegisterCustomType(const PJRT_Api* c_api,
         "optional pointer to a XLA_FFI_TypeInfo in `type_info` fields.");
   }
 
-  TF_ASSIGN_OR_RETURN(auto type_id_capsule, as_capsule(type_dict["type_id"]));
+  ABSL_ASSIGN_OR_RETURN(auto type_id_capsule, as_capsule(type_dict["type_id"]));
   type_id = static_cast<XLA_FFI_TypeId*>(type_id_capsule.data());
 
   if (type_dict.contains("type_info")) {
-    TF_ASSIGN_OR_RETURN(auto type_info_capsule,
-                        as_capsule(type_dict["type_info"]));
+    ABSL_ASSIGN_OR_RETURN(auto type_info_capsule,
+                          as_capsule(type_dict["type_info"]));
     type_info = static_cast<XLA_FFI_TypeInfo*>(type_info_capsule.data());
   }
 

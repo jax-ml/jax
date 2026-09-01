@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -450,9 +451,9 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
     absl::c_transform(
         args, arg_arrays.begin(),
         [&](const PyArray& arg) mutable { return arg.ifrt_array_ref(); });
-    TF_ASSIGN_OR_RETURN(auto result, ifrt_loaded_executable->Execute(
-                                         absl::MakeSpan(arg_arrays), options,
-                                         /*devices=*/std::nullopt));
+    ABSL_ASSIGN_OR_RETURN(auto result, ifrt_loaded_executable->Execute(
+                                           absl::MakeSpan(arg_arrays), options,
+                                           /*devices=*/std::nullopt));
     output_arrays = std::move(result.outputs);
     // options.fill_status is only supposed to be true when the computation has
     // tokens.

@@ -50,6 +50,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 // Required for absl::CEscape.
 // NOLINTNEXTLINE(misc-include-cleaner)
@@ -816,10 +817,9 @@ absl::Status EncodeTmaDescriptorTiled(
         rank, desc.shape.size(), desc.strides.size()));
   }
 
-  TF_ASSIGN_OR_RETURN(
-      const uint32_t elem_size,
-      GetTmaDataTypeSizeBytes(
-          static_cast<CUtensorMapDataType>(desc.elem_type)));
+  ABSL_ASSIGN_OR_RETURN(const uint32_t elem_size,
+                        GetTmaDataTypeSizeBytes(
+                            static_cast<CUtensorMapDataType>(desc.elem_type)));
 
   for (int i = 0; i < rank; ++i) {
     if (desc.shape[i] < 1 || desc.shape[i] > (1ULL << 32)) {

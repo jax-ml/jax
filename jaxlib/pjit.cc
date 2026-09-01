@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -531,7 +532,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
       if (data_device != nullptr && in_device_local_layout.is_none()) {
         TF_RETURN_IF_ERROR(
             ApplyTransferGuardToHostToDevice(transfer_guard_formatter));
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(
             auto device_put_result,
             DevicePutWithDevice(arg,
                                 executable.ifrt_loaded_executable()->client(),
@@ -559,12 +560,12 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
 
     if (!in_device_local_layout.is_none()) {
       xla::ifrt::ArrayRef ifrt_array = py_array.ifrt_array_ref();
-      TF_ASSIGN_OR_RETURN(auto arr_layout, ifrt_array->pjrt_layout());
+      ABSL_ASSIGN_OR_RETURN(auto arr_layout, ifrt_array->pjrt_layout());
       if (arr_layout == nullptr) {
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(
             xla::ifrt::Shape shard_shape,
             ifrt_array->sharding().GetShardShape(ifrt_array->shape()));
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(
             arr_layout,
             executable.ifrt_loaded_executable()->client()->GetDefaultPjRtLayout(
                 ifrt_array->dtype(), shard_shape.dims(),
@@ -613,10 +614,11 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
   if (!copy_groups.empty() && !addressable_devices.empty()) {
     xla::ifrt::Client* const ifrt_client =
         executable.ifrt_loaded_executable()->client();
-    TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef ifrt_devices,
-                        ifrt_client->MakeDeviceList({addressable_devices[0]}));
+    ABSL_ASSIGN_OR_RETURN(
+        xla::ifrt::DeviceListRef ifrt_devices,
+        ifrt_client->MakeDeviceList({addressable_devices[0]}));
     for (auto& [key, group] : copy_groups) {
-      TF_ASSIGN_OR_RETURN(
+      ABSL_ASSIGN_OR_RETURN(
           auto copied_ifrt_arrays,
           ifrt_client->CopyArrays(absl::MakeSpan(group.arrays), ifrt_devices,
                                   std::get<2>(key),
@@ -805,8 +807,8 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
                              cache_entry->const_args.end());
 
     for (nb::handle const_arg : cache_entry->const_args) {
-      TF_ASSIGN_OR_RETURN(auto const_arg_signature,
-                          PyArgSignatureOfValue(const_arg, enable_x64));
+      ABSL_ASSIGN_OR_RETURN(auto const_arg_signature,
+                            PyArgSignatureOfValue(const_arg, enable_x64));
       dynamic_arg_signatures.push_back(std::move(const_arg_signature));
     }
   }
@@ -849,10 +851,10 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   std::vector<xla::ifrt::ArrayRef> output_arrays;
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(auto result,
-                        cache_entry->executable->ifrt_executable()->Execute(
-                            absl::MakeSpan(*num_args_arrays), execute_options,
-                            /*devices=*/std::nullopt));
+    ABSL_ASSIGN_OR_RETURN(auto result,
+                          cache_entry->executable->ifrt_executable()->Execute(
+                              absl::MakeSpan(*num_args_arrays), execute_options,
+                              /*devices=*/std::nullopt));
     output_arrays = std::move(result.outputs);
   }
 
@@ -914,8 +916,8 @@ absl::Status PjitFunction::ComputeCallSignature(
   dynamic_arg_layouts.reserve(flat_dynamic_args.size());
 
   for (nb::handle arg : flat_dynamic_args) {
-    TF_ASSIGN_OR_RETURN(auto arg_signature,
-                        PyArgSignatureOfValue(arg, enable_x64));
+    ABSL_ASSIGN_OR_RETURN(auto arg_signature,
+                          PyArgSignatureOfValue(arg, enable_x64));
     signature.dynamic_arg_signatures.push_back(std::move(arg_signature));
 
     // It should be already checked previously in the entry point of
@@ -1542,7 +1544,7 @@ class NumpyHandler : public ShardArgsHandler {
       std::vector<xla::ifrt::ArrayRef> arrays;
       {
         nb::gil_scoped_release gil_release;
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(
             arrays,
             client->MakeArraysFromHostBufferShards(
                 absl::MakeSpan(group.specs),

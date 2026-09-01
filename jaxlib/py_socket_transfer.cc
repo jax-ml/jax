@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -158,9 +159,9 @@ absl::StatusOr<tsl::RCReference<PullTable::Entry>> CreatePullEntry(
             "Cannot remote transfer non-pjrt arrays.");
       }
       for (auto& pjrt_buf : pjrt_arr->pjrt_buffers()) {
-        TF_ASSIGN_OR_RETURN(size_t buf_size,
-                            pjrt_buf->GetOnDeviceSizeInBytes());
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(size_t buf_size,
+                              pjrt_buf->GetOnDeviceSizeInBytes());
+        ABSL_ASSIGN_OR_RETURN(
             auto raw_buffer,
             xla::PjRtRawBuffer::CreateRawAliasOfBuffer(pjrt_buf.get()));
         refs.push_back(
@@ -179,7 +180,8 @@ absl::StatusOr<tsl::RCReference<PullTable::Entry>> CreatePullEntry(
           "Cannot remote transfer non-pjrt arrays.");
     }
     for (auto& pjrt_buf : pjrt_arr->pjrt_buffers()) {
-      TF_ASSIGN_OR_RETURN(size_t buf_size, pjrt_buf->GetOnDeviceSizeInBytes());
+      ABSL_ASSIGN_OR_RETURN(size_t buf_size,
+                            pjrt_buf->GetOnDeviceSizeInBytes());
       refs.push_back({pjrt_buf, buf_size});
     }
   }
@@ -254,7 +256,7 @@ class PyTransferServer {
 
     server_ = std::make_shared<SocketServer>();
 
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         auto mem, AllocateAndMapPjrtMemory(
                       pjrt_client, max_num_parallel_copies * xfer_size * 2));
     premapped_copier_ = std::make_shared<PremappedCopierState>(
@@ -295,14 +297,14 @@ class PyTransferServer {
 
 absl::StatusOr<xla::ifrt::ArraySpec> ArraySpecFromShapeDtypeStruct(
     nb::handle aval) {
-  TF_ASSIGN_OR_RETURN(xla::ifrt::DType dtype,
-                      xla::DtypeToIfRtDType(
-                          nb::borrow<xla::nb_dtype>(aval.attr("dtype").ptr())));
+  ABSL_ASSIGN_OR_RETURN(xla::ifrt::DType dtype,
+                        xla::DtypeToIfRtDType(nb::borrow<xla::nb_dtype>(
+                            aval.attr("dtype").ptr())));
   auto shape_dims = nb::cast<std::vector<int64_t>>(aval.attr("shape"));
   auto shape = xla::ifrt::Shape(
       xla::ifrt::Shape::Dimensions(shape_dims.begin(), shape_dims.end()));
-  TF_ASSIGN_OR_RETURN(auto sharding,
-                      jax::GetIfrtHloSharding(aval.attr("sharding"), shape));
+  ABSL_ASSIGN_OR_RETURN(auto sharding,
+                        jax::GetIfrtHloSharding(aval.attr("sharding"), shape));
   return xla::ifrt::ArraySpec{dtype, std::move(shape), std::move(sharding)};
 }
 

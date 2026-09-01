@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
@@ -161,8 +162,8 @@ absl::StatusOr<DLDevice> DLDeviceForBuffer(const xla::PjRtBuffer& buffer) {
              buffer.device()->client()->platform_id() == xla::RocmId()) {
     context.device_type = kDLROCMHost;
   } else {
-    TF_ASSIGN_OR_RETURN(context.device_type,
-                        DLDeviceTypeForDevice(*buffer.device()));
+    ABSL_ASSIGN_OR_RETURN(context.device_type,
+                          DLDeviceTypeForDevice(*buffer.device()));
   }
   context.device_id = buffer.device()->local_hardware_id().value();
   return context;
@@ -226,10 +227,10 @@ MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
   if (effective_device_type == kDLCUDAHost ||
       effective_device_type == kDLROCMHost ||
       effective_device_type == kDLTPUHost) {
-    TF_ASSIGN_OR_RETURN(memory_space, device.memory_space_by_kind(
-                                          xla::PinnedHostMemorySpace::kKind));
+    ABSL_ASSIGN_OR_RETURN(memory_space, device.memory_space_by_kind(
+                                            xla::PinnedHostMemorySpace::kKind));
   } else {
-    TF_ASSIGN_OR_RETURN(memory_space, device.default_memory_space());
+    ABSL_ASSIGN_OR_RETURN(memory_space, device.default_memory_space());
   }
 
   // On CPU, creating a view may fail because of unaligned data buffer
@@ -255,11 +256,11 @@ MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
   // Convert tensor strides (expressed in number of elements) to byte strides.
   std::optional<std::vector<int64_t>> byte_strides;
   if (dlmt->dl_tensor.strides) {
-    TF_ASSIGN_OR_RETURN(byte_strides, GetByteStrides(dlmt->dl_tensor));
+    ABSL_ASSIGN_OR_RETURN(byte_strides, GetByteStrides(dlmt->dl_tensor));
   }
 
   // Create a copy.
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto buffer,
       device.client()->BufferFromHostBuffer(
           data, element_type, dimensions, byte_strides,
@@ -301,8 +302,8 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
     // AcquireExternalReference may block; there are no API guarantees.
     GlobalPyRefManager()->CollectGarbage();
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(pack->external_reference,
-                        pjrt_buffer->AcquireExternalReference());
+    ABSL_ASSIGN_OR_RETURN(pack->external_reference,
+                          pjrt_buffer->AcquireExternalReference());
     if (stream) {
       TF_RETURN_IF_ERROR(
           pack->external_reference->WaitUntilBufferReadyOnStream(*stream));
@@ -317,10 +318,10 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
   dt.data = pack->external_reference->OpaqueDeviceMemoryDataPointer();
   pack->tensor.manager_ctx = pack.get();
   pack->tensor.deleter = DLPackTensorDeleter;
-  TF_ASSIGN_OR_RETURN(dt.device, DLDeviceForBuffer(*pjrt_buffer));
+  ABSL_ASSIGN_OR_RETURN(dt.device, DLDeviceForBuffer(*pjrt_buffer));
   dt.ndim = pjrt_buffer->dimensions().size();
-  TF_ASSIGN_OR_RETURN(dt.dtype,
-                      PrimitiveTypeToDLDataType(pjrt_buffer->element_type()));
+  ABSL_ASSIGN_OR_RETURN(dt.dtype,
+                        PrimitiveTypeToDLDataType(pjrt_buffer->element_type()));
 
   pack->shape = std::vector<int64_t>(pjrt_buffer->dimensions().begin(),
                                      pjrt_buffer->dimensions().end());
@@ -385,8 +386,8 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
   }
   absl::Span<int64_t const> dimensions(
       reinterpret_cast<int64_t*>(dlmt->dl_tensor.shape), dlmt->dl_tensor.ndim);
-  TF_ASSIGN_OR_RETURN(xla::PrimitiveType element_type,
-                      xla::DLDataTypeToPrimitiveType(dlmt->dl_tensor.dtype));
+  ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType element_type,
+                        xla::DLDataTypeToPrimitiveType(dlmt->dl_tensor.dtype));
 
   bool has_custom_layout = dlmt->dl_tensor.strides != nullptr;
   std::vector<int64_t> minor_to_major;
@@ -395,7 +396,7 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
     absl::Span<int64_t const> strides(
         reinterpret_cast<int64_t*>(dlmt->dl_tensor.strides),
         dlmt->dl_tensor.ndim);
-    TF_ASSIGN_OR_RETURN(minor_to_major, StridesToLayout(dimensions, strides));
+    ABSL_ASSIGN_OR_RETURN(minor_to_major, StridesToLayout(dimensions, strides));
   } else {
     minor_to_major.resize(dlmt->dl_tensor.ndim);
     std::iota(minor_to_major.rbegin(), minor_to_major.rend(), 0);
@@ -403,7 +404,7 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
   xla::Shape shape = xla::ShapeUtil::MakeShapeWithDenseLayout(
       element_type, dimensions, minor_to_major);
 
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto pjrt_buffer_and_copied,
       MakePjrtBuffer(*device->pjrt_device(), dlmt, shape, element_type,
                      dimensions, copy, stream, dl_device_type));
@@ -424,7 +425,7 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
         "This operation is implemented for a PjRt-compatible backend only.");
   }
   PyUserContextScope user_context_scope;
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto ifrt_array,
       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer_and_copied.first),
                                    has_custom_layout));
@@ -434,7 +435,7 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
 
 absl::StatusOr<nanobind::dlpack::dtype> PrimitiveTypeToNbDLDataType(
     xla::PrimitiveType type) {
-  TF_ASSIGN_OR_RETURN(DLDataType dl_type, PrimitiveTypeToDLDataType(type));
+  ABSL_ASSIGN_OR_RETURN(DLDataType dl_type, PrimitiveTypeToDLDataType(type));
 
   nanobind::dlpack::dtype nb_type;
   nb_type.lanes = dl_type.lanes;

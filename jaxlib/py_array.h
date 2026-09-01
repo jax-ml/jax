@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/cord.h"
 #include "absl/types/span.h"
@@ -207,13 +208,13 @@ class PyArray : public nanobind::object {
 
   absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> layout() {
     xla::ifrt::ArrayRef ifrt_array_ptr = ifrt_array_ref();
-    TF_ASSIGN_OR_RETURN(std::shared_ptr<const xla::PjRtLayout> layout,
-                        ifrt_array_ptr->pjrt_layout());
+    ABSL_ASSIGN_OR_RETURN(std::shared_ptr<const xla::PjRtLayout> layout,
+                          ifrt_array_ptr->pjrt_layout());
     if (layout == nullptr) {
-      TF_ASSIGN_OR_RETURN(
+      ABSL_ASSIGN_OR_RETURN(
           xla::ifrt::Shape shard_shape,
           ifrt_array_ptr->sharding().GetShardShape(ifrt_array_ptr->shape()));
-      TF_ASSIGN_OR_RETURN(
+      ABSL_ASSIGN_OR_RETURN(
           layout, ifrt_array_ptr->client()->GetDefaultPjRtLayout(
                       ifrt_array_ptr->dtype(), shard_shape.dims(),
                       ifrt_array_ptr->sharding().devices()->devices().front(),
