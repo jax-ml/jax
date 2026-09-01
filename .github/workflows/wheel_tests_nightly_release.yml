@@ -37,6 +37,11 @@ on:
         required: false
         default: 'no'
         type: string
+      run-other-jobs:
+        description: 'Also run jobs disabled for the Windows checkout diagnostic'
+        required: false
+        default: false
+        type: boolean
       git_commit:
         description: "Commit SHA to check out for running tests"
         required: false
@@ -60,14 +65,9 @@ jobs:
         matrix:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
-          runner: ["linux-x86-n4-64", "linux-arm64-t2a-48", "windows-x86-n2-64"]
-          python: ["3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]
+          runner: ["windows-x86-n2-64"]
+          python: ["3.12", "3.13", "3.14", "3.15"]
           enable-x64: [0]
-          exclude:
-            - runner: "windows-x86-n2-64"
-              python: "3.14t"
-            - runner: "windows-x86-n2-64"
-              python: "3.15t"
     name: "Pytest CPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.runner }}
@@ -82,7 +82,7 @@ jobs:
       git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-cpu:
-    if: github.repository_owner == 'jax-ml'
+    if: inputs.run-other-jobs && github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -105,7 +105,7 @@ jobs:
       git_commit: ${{ inputs.git_commit }}
 
   run-pytest-cuda:
-    if: github.repository_owner == 'jax-ml'
+    if: inputs.run-other-jobs && github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -158,7 +158,7 @@ jobs:
       git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-cuda:
-    if: github.repository_owner == 'jax-ml'
+    if: inputs.run-other-jobs && github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -187,7 +187,7 @@ jobs:
       git_commit: ${{ inputs.git_commit }}
 
   build-rocm-artifacts:
-    if: github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm'
+    if: inputs.run-other-jobs && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm')
     uses: ./.github/workflows/build_rocm_artifacts.yml
     permissions:
       id-token: write
@@ -222,7 +222,7 @@ jobs:
       git_commit: ${{ inputs.git_commit }}
 
   run-pytest-rocm:
-    if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
+    if: ${{ inputs.run-other-jobs && !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
     needs: [build-rocm-artifacts]
     permissions:
       id-token: write
@@ -252,7 +252,7 @@ jobs:
       git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-rocm:
-    if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
+    if: ${{ inputs.run-other-jobs && !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
     needs: [build-rocm-artifacts]
     permissions:
       id-token: write
@@ -288,7 +288,7 @@ jobs:
       git_commit: ${{ inputs.git_commit }}
 
   run-pytest-tpu:
-    if: github.repository_owner == 'jax-ml'
+    if: inputs.run-other-jobs && github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/pytest_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -352,7 +352,7 @@ jobs:
       git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-tpu:
-    if: github.repository_owner == 'jax-ml'
+    if: inputs.run-other-jobs && github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_test_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -426,7 +426,7 @@ jobs:
       git_commit: ${{ inputs.git_commit }}
 
   verify-release-wheels-install:
-    if: ${{ startsWith(github.ref_name, 'release/') && github.repository_owner == 'jax-ml' }}
+    if: ${{ inputs.run-other-jobs && startsWith(github.ref_name, 'release/') && github.repository_owner == 'jax-ml' }}
     defaults:
       run:
         # Set the shell to bash as GitHub actions runs with /bin/sh by default
