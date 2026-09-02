@@ -32,7 +32,6 @@ from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import memref
-from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax.experimental.mosaic import gpu as mgpu
@@ -2214,15 +2213,15 @@ class DialectLoweringTest(MosaicGpuTest):
     mgpu.lower_mgpu_dialect(self.module, launch_ctx)
     self.assertTrue(self.module.operation.verify())
 
-    all_mbarrier_init_ops = self.find_ops(nvvm.MBarrierInitOp)
+    all_inline_asm_ops = self.find_ops(llvm.InlineAsmOp)
 
-    # One nvvm.mbarrier_init_shared is issued per barrier.
-    self.assertLen(all_mbarrier_init_ops, num_barriers)
+    # One inline asm block is issued per barrier.
+    self.assertLen(all_inline_asm_ops, num_barriers)
 
     # Each barrier has its count equal to the arrival count times the
     # warpgroup size.
-    for op in all_mbarrier_init_ops:
-      count = op.count.owner
+    for op in all_inline_asm_ops:
+      count = op.operands[1].owner
       self.assertIsInstance(count, arith.ConstantOp)
       self.assertEqual(
           count.literal_value, arrival_count * mgpu_utils.WARPGROUP_SIZE

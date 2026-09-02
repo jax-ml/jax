@@ -30,9 +30,9 @@ from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
+from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import memref
-from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax.experimental.mosaic.gpu.mma import mma as do_mma
@@ -279,10 +279,13 @@ def _initialize_barrier_op_lowering_rule(
       utils.WARPGROUP_SIZE if not op.orders_tensor_core.value else 1
   )
   for i in range(op.num_barriers.value):
-    nvvm.mbarrier_init(
-        utils.getelementptr(op.base_pointer, [i], _lowered_barrier_type()),
-        utils.c(arrival_count, i32),
-        predicate=ctx.single_thread_per_block_predicate,
+    bar_ptr = utils.getelementptr(op.base_pointer, [i], _lowered_barrier_type())
+    llvm.inline_asm(
+        ir.Type.parse("!llvm.void"),
+        [bar_ptr, utils.c(arrival_count, i32), ctx.single_thread_per_block_predicate],
+        "@$2 mbarrier.init.shared::cta.b64 [$0], $1;",
+        "r,r,b",
+        has_side_effects=True,
     )
   return []
 
