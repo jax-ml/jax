@@ -7229,13 +7229,9 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       slice_lhs = pl.ds(cluster_idx * block_lhs_shape[0], block_lhs_shape[0])
       slice_rhs = pl.ds(cluster_idx * block_rhs_shape[1], block_rhs_shape[1])
 
-      plgpu.copy_gmem_to_smem(
-          a_gmem.at[pair_idx, slice_lhs, :], a_smem, tma_barrier
-      )
+      plgpu.copy_gmem_to_smem(a_gmem.at[pair_idx, slice_lhs, :], a_smem, tma_barrier)
       plgpu.barrier_wait(tma_barrier)
-      plgpu.copy_gmem_to_smem(
-          b_gmem.at[pair_idx, :, slice_rhs], b_smem, tma_barrier
-      )
+      plgpu.copy_gmem_to_smem(b_gmem.at[pair_idx, :, slice_rhs], b_smem, tma_barrier)
       plgpu.barrier_wait(tma_barrier)
 
       plgpu.barrier_arrive(cluster_barrier)
@@ -7252,7 +7248,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       plgpu.barrier_wait(mma_barrier)
       out_gmem[pair_idx, slice_lhs, :] = plgpu.async_load_tmem(
           acc_tmem, layout=plgpu.Layout.TCGEN05_M64_COLLECTIVE(n)
-      ).astype(dtype)
+      )
 
     scratch_types = [
         plgpu.SMEM(block_lhs_shape, dtype, transforms=a_transforms),
@@ -7264,7 +7260,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     ]
     f = self.kernel(
         kernel,
-        out_type=jax.ShapeDtypeStruct((2, m, n), dtype),
+        out_type=jax.ShapeDtypeStruct((2, m, n), jnp.float32),
         cluster=cluster_shape,
         cluster_names=cluster_names,
         scratch_types=scratch_types,

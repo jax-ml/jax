@@ -860,9 +860,12 @@ def commit_arrive(
           f" have size 2, got: {ctx.cluster_size}"
       )
     i16 = ir.IntegerType.get_signless(16)
-    block_idx = arith.index_castui(i16, utils.cluster_idx())
-    even_block_idx = arith.andi(block_idx, arith.constant(i16, ~1))
-    mask = arith.shli(arith.constant(i16, 0b11), even_block_idx)
+    if ctx.cluster_size == (2, 1, 1):
+      mask = arith.constant(i16, 3)
+    else:
+      block_idx = arith.index_castui(i16, utils.cluster_idx())
+      even_block_idx = arith.andi(block_idx, arith.constant(i16, ~1))
+      mask = arith.shli(arith.constant(i16, 0b11), even_block_idx)
     nvvm.tcgen05_commit(
         barrier, group=nvvm.CTAGroupKind.CTA_2, multicast_mask=mask
     )
