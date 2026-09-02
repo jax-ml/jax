@@ -2258,6 +2258,81 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(x, z)
 
   @parameterized.product(
+      f6_dtype=(jnp.float6_e2m3fn, jnp.float6_e3m2fn),
+      swizzle=(128, 64, 32, 16),
+  )
+  def test_smem_to_tmem_copy_fp6_decompression(self, f6_dtype, swizzle):
+    m, n = 128, 128
+    # In b6x16_p32 layout, effective element size is 8 bits (1 byte/element),
+    # since 16 f6 elements = 12B data + 4B padding = 16B total.
+    effective_bitwidth = 8
+    smem_dtype = jnp.uint8  # We store padded data as uint8.
+    f6_ir_dtype = utils.dtype_to_ir_type(f6_dtype)
+    packing = 4  # TMEM packing for FP8 = 4
+    swizzle_elems = 8 * swizzle // effective_bitwidth
+    tiling = (8, swizzle_elems)
+
+    def kernel(ctx, src, out, scratch):
+      smem, barrier, copy_barrier, tmem_i8 = scratch
+      # Copy uint8 data (pre-padded b6x16_p32) from GMEM to SMEM.
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=smem,
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform(tiling),
+          barrier=barrier,
+      )
+      barrier.wait()
+
+      # Reinterpret the uint8 SMEM buffer as f6 memref (same byte layout).
+      smem_ty = ir.MemRefType(smem.type)
+      f6_ref_ty = ir.MemRefType.get(
+          smem_ty.shape,
+          f6_ir_dtype,
+          smem_ty.layout,
+          smem_ty.memory_space,
+      )
+      fp6_smem = utils.ptr_as_memref(utils.memref_ptr(smem), f6_ref_ty)
+
+      with mgpu.single_thread():
+        # TODO(bchetioui): this is dirty, but it turns out that mgpu.Union is
+        # broken for TMEM. Clean this up once this is fixed.
+        tmem_f6 = dataclasses.replace(tmem_i8, dtype=f6_ir_dtype)
+        tcgen05.async_copy_smem_to_tmem(fp6_smem, tmem_f6, swizzle)
+        tcgen05.commit_arrive(copy_barrier)
+      copy_barrier.wait(orders_tensor_core=True)
+      tmem_i8.load(fa.tmem_native_layout(packing), is_signed=False).store_untiled(
+          out, optimized=False
+      )
+
+    # Construct b6x16_p32 padded data on host using iota bitstream (0..63).
+    # Each group of 16 6-bit f6 values is bitshifted into 12 bytes + 4 bytes
+    # padding.
+    expected = np.arange(m * n, dtype=jnp.uint8).reshape((m, n)) % 64
+    x = np.zeros((m, n), dtype=np.uint8)
+    for r in range(m):
+      for b in range(n // 16):
+        block_vals = expected[r, b * 16 : (b + 1) * 16]
+        val96 = 0
+        for i in range(16):
+          val96 |= (int(block_vals[i]) & 0x3F) << (6 * i)
+        packed_bytes = val96.to_bytes(12, "little")
+        x[r, b * 16 : b * 16 + 12] = np.frombuffer(packed_bytes, dtype=np.uint8)
+
+    out_shape = jax.ShapeDtypeStruct(expected.shape, expected.dtype)
+    smem_shape = tile_shape(expected.shape, tiling)
+    scratch_shape = [
+        jax.ShapeDtypeStruct(smem_shape, smem_dtype),
+        mgpu.TMABarrier(),
+        mgpu.Barrier(1),
+        mgpu.TMEM(expected.shape, jnp.uint8, packing=packing),
+    ]
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, out_shape, scratch_shape
+    )(x)
+    np.testing.assert_array_equal(result, expected)
+
+  @parameterized.product(
       jax_dtype=(jnp.float16,),
       n=(64, 256),
       swizzle=(32, 128),
