@@ -340,11 +340,15 @@ extern "C" void PyArray_tp_finalize(PyObject* self) {
       auto* obj = reinterpret_cast<PyArrayObject*>(self);
       std::string traceback_str;
       if (obj->initialized) {
-        xla::ifrt::Array* ifrt_array_ptr =
-            GetPyArrayStorageFromObject(obj)->ifrt_array.get();
-        if (ifrt_array_ptr != nullptr) {
+        auto* storage = GetPyArrayStorageFromObject(obj);
+        xla::ifrt::ArrayRef ifrt_array;
+        {
+          ft_lock_guard lock(storage->mu);
+          ifrt_array = storage->ifrt_array;
+        }
+        if (ifrt_array != nullptr) {
           std::optional<Traceback> traceback =
-              GetTraceback(ifrt_array_ptr->user_context().get());
+              GetTraceback(ifrt_array->user_context().get());
           if (traceback.has_value()) {
             traceback_str = traceback->ToString();
           }
@@ -712,17 +716,6 @@ nb::object PyArray::CheckAndRearrange(const absl::Span<const PyArray> py_arrays,
                                       const nb::object aval) {
   return PyArray::type().attr("_check_and_rearrange")(py_arrays, sharding,
                                                       aval);
-}
-
-void PyArray::SetIfrtArray(ifrt::ArrayRef ifrt_array) {
-  if (ifrt_array != nullptr && ifrt_array->user_context() == nullptr &&
-      Traceback::IsEnabled()) {
-    throw nb::value_error(
-        "Expecting an IFRT `Array` to have a user context, but got a null "
-        "user context. Use `jax::PyUserContextScope` to set a user context for "
-        "operations producing IFRT `Array`s.");
-  }
-  GetStorage().ifrt_array = std::move(ifrt_array);
 }
 
 const std::vector<PyArray>& PyArray::py_arrays_cached() {
@@ -1126,7 +1119,13 @@ absl::Status PyArray::Delete() {
     ABSL_RETURN_IF_ERROR(arr.Delete());
   }
   py_arrays().clear();
-  if (ifrt_array_ref() != nullptr) {
+  xla::ifrt::ArrayRef ifrt_arr;
+  {
+    Storage& storage = GetStorage();
+    ft_lock_guard lock(storage.mu);
+    ifrt_arr = std::move(storage.ifrt_array);
+  }
+  if (ifrt_arr != nullptr) {
     // We do not wait for the deletion to complete here.
     //
     // (1) Skipping blocking does not affect the correctness of deletion as long
@@ -1137,8 +1136,7 @@ absl::Status PyArray::Delete() {
     // when the deletion can return a status only after the underlying physical
     // buffer has been deleted or a request must be processed via RPC,
     // especially as this deletion is done per array.
-    ifrt_array_ref()->Delete();
-    SetIfrtArray(ifrt::ArrayRef());
+    ifrt_arr->Delete();
   }
   return absl::OkStatus();
 }
@@ -1578,12 +1576,14 @@ absl::Status PyArray::ReplaceWithAlias(PyArray o)
     std::swap(mu1, mu2);
   }
   nanobind::object old_npy_value;
+  xla::ifrt::ArrayRef old_ifrt_array;
   nanobind::object old_fully_replicated_array;
   ft_lock_guard lock1(*mu1);
   ft_lock_guard lock2(*mu2);
 
   old_npy_value = std::move(storage.npy_value);
   storage.npy_value = o_storage.npy_value;
+  old_ifrt_array = std::move(storage.ifrt_array);
   storage.ifrt_array = o_storage.ifrt_array;
   old_fully_replicated_array = std::move(storage.fully_replicated_array);
   storage.fully_replicated_array = o_storage.fully_replicated_array;
@@ -1600,10 +1600,11 @@ std::vector<PyArray> PyClient::LiveArrays() const {
   for (auto& shard : arrays_) {
     ft_lock_guard lock(shard.mutex);
     for (PyArray::Storage* array = shard.arrays; array; array = array->next) {
-      bool all_deleted =
-          (array->ifrt_array == nullptr || array->ifrt_array->IsDeleted());
+      auto py_array = nb::borrow<PyArray>(array->AsHandle());
+      xla::ifrt::ArrayRef ifrt_array = py_array.ifrt_array_ref();
+      bool all_deleted = (ifrt_array == nullptr || ifrt_array->IsDeleted());
       if (!all_deleted) {
-        result.push_back(nb::borrow<PyArray>(array->AsHandle()));
+        result.push_back(std::move(py_array));
       }
     }
   }

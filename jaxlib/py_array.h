@@ -129,7 +129,7 @@ struct PyArray_Storage {
   const nanobind::object sharding;
   nanobind::object npy_value ABSL_GUARDED_BY(mu) = nanobind::none();
 
-  xla::ifrt::ArrayRef ifrt_array;
+  xla::ifrt::ArrayRef ifrt_array ABSL_GUARDED_BY(mu);
   nanobind::object fully_replicated_array ABSL_GUARDED_BY(mu) =
       nanobind::none();
 
@@ -257,7 +257,11 @@ class PyArray : public nanobind::object {
     return storage.result_status;
   }
 
-  xla::ifrt::ArrayRef ifrt_array_ref() const { return GetStorage().ifrt_array; }
+  xla::ifrt::ArrayRef ifrt_array_ref() const {
+    const Storage& storage = GetStorage();
+    ft_lock_guard lock(storage.mu);
+    return storage.ifrt_array;
+  }
 
   int num_addressable_shards() const {
     xla::ifrt::ArrayRef ifrt_array_ptr = ifrt_array_ref();
@@ -346,8 +350,6 @@ class PyArray : public nanobind::object {
   static nanobind::object CheckAndRearrange(absl::Span<const PyArray> py_arrays,
                                             nanobind::object sharding,
                                             nanobind::object aval);
-
-  void SetIfrtArray(xla::ifrt::ArrayRef ifrt_array);
 
   Storage& GetStorage();
   const Storage& GetStorage() const;
