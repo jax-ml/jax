@@ -3524,6 +3524,106 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     atol = 2e-2 if out_jax_dtype == jnp.float16 else 5e-6
     np.testing.assert_allclose(z, ref, atol=atol)
 
+  @parameterized.product(cluster=((2, 2, 1), (2, 1, 2)))
+  def test_mma_collective_multidim_cluster(self, cluster):
+    in_jax_dtype = jnp.float16
+    out_jax_dtype = jnp.float32
+    m = n = 128
+    swizzle = 128
+    k_steps = 2
+
+    in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
+    m_block_tile = m // 2
+    n_block_tile = n // 2
+    swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
+    k = swizzle_elems * k_steps
+    index = ir.IndexType.get()
+
+    tiling = (8, swizzle_elems)
+
+    def kernel(ctx, lhs, rhs, out, scratch):
+      lhs_smem, rhs_smem, barriers, cluster_barrier, mma_barrier, acc = scratch
+      # CTAs with linear cluster indices 2k and 2k + 1 form the k-th MMA pair.
+      block_idx = utils.cluster_idx()
+      pair_id = arith.divui(block_idx, c(2, index))
+      block_id = arith.remui(block_idx, c(2, index))
+      m_start = arith.muli(block_id, c(m_block_tile, index))
+      n_start = arith.muli(block_id, c(n_block_tile, index))
+      ctx.async_copy(
+          src_ref=lhs,
+          dst_ref=lhs_smem,
+          gmem_slice=(pair_id, ds(m_start, m_block_tile)),
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform(tiling),
+          barrier=barriers[0],
+      )
+      ctx.async_copy(
+          src_ref=rhs,
+          dst_ref=rhs_smem,
+          gmem_slice=(pair_id, slice(None), ds(n_start, n_block_tile)),
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform(tiling),
+          barrier=barriers[1],
+      )
+      barriers[0].wait()
+      barriers[1].wait()
+      # The MMA also reads the SMEM operands of the other CTA in the pair.
+      cluster_barrier.arrive()
+      cluster_barrier.wait()
+      is_leader_thread = single_thread_predicate()
+      is_first_block = arith.cmpi(arith.CmpIPredicate.eq, block_id, c(0, index))
+      with when(arith.andi(is_first_block, is_leader_thread)):
+        tcgen05.mma(
+            acc, lhs_smem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False, collective=True
+        )
+        tcgen05.commit_arrive(mma_barrier, collective=True, ctx=ctx)
+      mma_barrier.wait(orders_tensor_core=True)
+      m_slice = ds(m_start, m_block_tile)
+      acc.load().store_untiled(memref_slice(out, (pair_id, m_slice)), optimized=False)
+
+    in_finfo = jnp.finfo(in_jax_dtype)
+    exponent_bits, mantissa_bits = in_finfo.nexp, in_finfo.nmant
+    def quantize(x):
+      # Quantize the input to avoid rounding when feeding the TensorCore
+      return jax.lax.reduce_precision(x, exponent_bits, mantissa_bits)
+
+    x_block_shape = (m_block_tile, k)
+    y_block_shape = (k, n_block_tile)
+    # The two pairs compute GEMMs on different data, so an MMA that reads SMEM
+    # from a CTA outside its own pair, or a commit that signals another pair's
+    # barriers, fails the output comparison instead of passing by accident.
+    x = quantize(self.prng.uniform(-1, 1, (2, m, k))).astype(in_jax_dtype)
+    y = quantize(self.prng.uniform(-1, 1, (2, k, n))).astype(in_jax_dtype)
+    out_shape = jax.ShapeDtypeStruct((2, m, n), out_jax_dtype)
+    scratch_shape = [
+        jax.ShapeDtypeStruct(tile_shape(x_block_shape, tiling), in_jax_dtype),
+        jax.ShapeDtypeStruct(tile_shape(y_block_shape, tiling), in_jax_dtype),
+        mgpu.TMABarrier(2),
+        mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
+        mgpu.Barrier(1),
+        mgpu.TMEM((m_block_tile, n), out_jax_dtype, collective=True),
+    ]
+    z = mgpu.as_gpu_kernel(
+        kernel, cluster, (128, 1, 1), (x, y), out_shape, scratch_shape, cluster=cluster
+    )(x, y)
+    ref = x.astype(np.float32) @ y.astype(np.float32)
+    np.testing.assert_allclose(z, ref, atol=5e-6)
+
+  def test_raises_error_if_collective_arrival_minormost_cluster_dim_not_2(self):
+    def kernel(ctx, out, barrier):
+      del out
+      tcgen05.commit_arrive(barrier, collective=True, ctx=ctx)
+
+    out_shape = jax.ShapeDtypeStruct((128,), jnp.int32)
+    with self.assertRaisesRegex(
+        ValueError,
+        "Collective arrivals require the minormost cluster dimension to have"
+        " size 2",
+    ):
+      mgpu.as_gpu_kernel(
+          kernel, (1, 2, 1), (128, 1, 1), (), out_shape, mgpu.Barrier(1), cluster=(1, 2, 1)
+      )
+
   @parameterized.product(
       in_jax_dtype=(jnp.float16,),
       out_jax_dtype=(jnp.float32,),
