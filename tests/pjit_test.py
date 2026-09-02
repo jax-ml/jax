@@ -370,6 +370,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     jax.tree.map(self.assertDeleted, y_tree)
     jax.tree.map(self.assertNotDeleted, z_tree)
 
+
   @jtu.run_on_devices('tpu', 'cpu', 'gpu')
   def testBufferDonationWithOutputShardingInference(self):
     mesh = jtu.create_mesh((2,), 'x')

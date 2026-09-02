@@ -21,6 +21,7 @@ import logging
 from typing import Any, cast
 
 from jax._src import api
+from jax._src import traceback_util
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -258,6 +259,7 @@ def _check_shape_dtype(shape_dtype):
         "result_shape_dtypes cannot specify 64-bit types when `jax_enable_x64` is disabled")
 
 
+@functools.partial(traceback_util.api_boundary, repro_api_name="jax.pure_callback")
 def pure_callback(
     callback: Callable[..., Any],
     result_shape_dtypes: Any,
@@ -535,6 +537,9 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
 # unique for each callback. Caching defeats this.
 mlir.register_lowering(io_callback_p, io_callback_lowering, cacheable=False)
 
+
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="jax.experimental.io_callback")
 def io_callback(
     callback: Callable[..., Any],
     result_shape_dtypes: Any,
