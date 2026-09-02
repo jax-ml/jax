@@ -17,14 +17,14 @@ kernelspec:
 
 <!--* freshness: { reviewed: '2026-07-16' } *-->
 
-The callable returned by `jax.vjp` is more than a closure to call once and
-throw away: it's a *VJP object*, a first-class value. It's a pytree whose
-leaves are the residual values saved by the forward pass, so it can be
-passed into and out of compiled functions, serialized, or offloaded like any
-other data — and its saved state can be inspected and edited. This page
-covers what that enables: splitting the forward and backward passes into
-separately compiled functions run on your own schedule, and excluding
-argument values (like weights) from the saved state with `saveable_args`.
+The callable returned by `jax.vjp` is a *VJP object*, a first-class value.
+It's a pytree whose leaves are the residual values saved by the forward
+pass, so it can be passed into and out of compiled functions, serialized,
+or offloaded like any other data, and its saved state can be inspected and
+edited. This page covers what that enables: splitting the forward and
+backward passes into separately compiled functions run on your own schedule,
+and excluding argument values (like weights) from the saved state with
+`saveable_args`.
 
 ```{code-cell}
 import jax
@@ -37,8 +37,8 @@ from jax import grad, jit
 
 `jax.grad` and `jax.vjp` package the forward and backward passes together:
 under a `jax.jit`, they compile into a single program. Usually that's what
-you want. But sometimes it's useful to run the forward and backward passes
-as *separate* compiled functions — say, to interleave the forward and
+you want, but sometimes it's useful to run the forward and backward passes
+as *separate* compiled functions, say to interleave the forward and
 backward passes of different microbatches or pipeline stages on a schedule
 of your own, with each function compiled once and reused many times.
 
@@ -53,11 +53,12 @@ def fwd_and_bwd(f):
   return jit(fwd), jit(bwd)
 ```
 
-The trick is that the callable returned by `jax.vjp` is itself a pytree: its
-leaves are the residual values saved by the forward pass, and its tree
+This works because the callable returned by `jax.vjp` is itself a pytree:
+its leaves are the residual values saved by the forward pass, and its tree
 structure records the backward-pass computation. So it can be returned out
 of one jit-compiled function and passed into another, like any other data.
-Notice that there's nothing specific to `f` in `bwd` — it's just "apply".
+Notice that there's nothing specific to `f` in `bwd`: it only applies its
+argument.
 
 Each of `fwd` and `bwd` compiles once, and we can call them however many
 times and in whatever order we like:
@@ -117,15 +118,15 @@ sentinel instead.)
 
 So every VJP object in the pipeline example above carries a full copy of its
 layer's weights. If we're running many microbatches through the same layer
-before applying their backward passes — or serializing or offloading each
-VJP object — every one of them duplicates the weights, which are typically
+before applying their backward passes, or serializing or offloading each
+VJP object, every one of them duplicates the weights, which are typically
 the biggest thing in the saved state and which we already have. Only the
 activations vary per microbatch.
 
 The third attribute, `structured_residuals`, holds residuals that keep a
 user-meaningful structure instead of being flattened into the opaque list:
 custom derivative rules can save named pytrees of residuals there, carried
-through transformations with structure intact — `scan` stacks entries
+through transformations with structure intact: `scan` stacks entries
 across iterations, `cond` records a tagged sum marking which branch ran,
 and `shard_map` stacks per-shard entries along a leading mesh axis. JAX
 can also deduplicate what's saved, storing a value that appears
@@ -137,17 +138,17 @@ primitives' rules, covered in {ref}`jax-301-structured-residuals`.
 
 The `saveable_args` argument to `jax.vjp` is a tuple-tree of bools (nested
 tuples with bool leaves), one entry per argument, defaulting to the single
-bool `True` — everything saveable, the usual behavior. Where a `False`
-applies, argument values that would have been saved verbatim are instead
-replaced with `NotSaveable()` sentinels:
+bool `True`, meaning everything is saveable. Where a `False` applies,
+argument values that would have been saved verbatim are instead replaced
+with `NotSaveable()` sentinels:
 
 ```{code-cell}
 y, f_vjp = jax.vjp(layer, W1, x0, saveable_args=(False, True))
 print(f_vjp.args_res)
 ```
 
-`NotSaveable` is an empty pytree node, so flattening the VJP object — to
-serialize or offload it — includes no leaves for those arguments:
+`NotSaveable` is an empty pytree node, so flattening the VJP object (to
+serialize or offload it) includes no leaves for those arguments:
 
 ```{code-cell}
 print(len(jax.tree.leaves(f_vjp)))  # 3, not 4: W1 isn't part of the saved state
@@ -195,7 +196,7 @@ dW1, dx0 = bwd_light(res1, W1, dx1)
 print(jnp.allclose(dW1, dW1_ref), jnp.allclose(dW2, dW2_ref))
 ```
 
-## The fine print
+## Details
 
 `saveable_args` must form a tree prefix of the arguments, in a loose sense:
 containers are matched only by their number of children, so a tuple entry
@@ -214,11 +215,11 @@ d_grad, = g_vjp(jnp.ones((3, 5)))
 print(jax.tree.map(jnp.shape, d_grad))
 ```
 
-Two more details worth knowing:
+Two more details:
 
 - Only argument values saved *verbatim* are affected. Residuals *computed*
-  from arguments are saved in `opaque_residuals` as usual — `saveable_args`
-  never causes recomputation. For the save-versus-recompute tradeoff, see
-  {doc}`remat`.
+  from arguments are saved in `opaque_residuals` as usual, and
+  `saveable_args` never causes recomputation. For the save-versus-recompute
+  tradeoff, see {doc}`remat`.
 - Arguments the backward pass doesn't need stay `NotNeeded()` even when
   marked `False`, so `args_res` shows exactly which values must be restored.

@@ -28,11 +28,11 @@ When executing eagerly (outside of `jit`), JAX code works with Python control
 flow and logical operators, like `and` or `or`, just like NumPy code. Using
 control flow and logical operators with `jit` is more complicated.
 
-In a nutshell, Python control flow and logical operators are evaluated at
-`jax.jit` trace time, such that the compiled function represents a single
-control path.  Logical operators affect the path via short-circuiting. If the
-path depends on the values of the inputs, the function (by default) cannot be
-traced with `jax.jit`.
+Python control flow and logical operators are evaluated at `jax.jit` trace
+time, such that the compiled function represents a single control path.
+Logical operators affect the path via short-circuiting. If the path depends
+on the values of the inputs, the function (by default) cannot be traced with
+`jax.jit`.
 
 ```{code-cell}
 from jax import jit
@@ -143,7 +143,7 @@ print(good_example_jit(10, 4))
 print(good_example_jit(5, 4))
 ```
 
-`static_argnames` can be handy if `length` in our example rarely changes, but
+`static_argnames` works well if `length` in our example rarely changes, but
 it means constant recompilation if it changes often. (For shapes that genuinely vary
 call to call, see the padding-to-buckets advice in {doc}`jit`.)
 
@@ -229,7 +229,7 @@ lax.while_loop(cond_fun, body_fun, init_val)
 
 Note the differentiability annotation above: `while_loop` is only
 forward-mode differentiable. Reverse-mode autodiff needs to run the loop
-backwards, saving each iteration's intermediates on the way forward — which
+backwards, saving each iteration's intermediates on the way forward, which
 requires a bound on the number of iterations, and a `while_loop`'s trip count
 is dynamic and unbounded. For reverse-mode differentiation through a loop,
 use `scan` (fixed length), or `fori_loop` with static bounds (which lowers to
@@ -258,9 +258,9 @@ lax.fori_loop(start, stop, body_fun, init_val)
 
 ### `scan`
 
-The workhorse of the four is {func}`jax.lax.scan`: a loop with a fixed number
-of iterations that carries state from step to step, optionally consuming a
-per-step slice of an input array and stacking per-step outputs.
+The most commonly used of the four is {func}`jax.lax.scan`: a loop with a
+fixed number of iterations that carries state from step to step, optionally
+consuming a per-step slice of an input array and stacking per-step outputs.
 
 Python equivalent:
 
@@ -285,8 +285,8 @@ print(cumulative)
 ```
 
 Compared to unrolling a Python loop, `scan` compiles the body once no matter
-how many iterations run — long training loops and sequence models compile in
-constant time instead of time proportional to the loop length. And unlike
+how many iterations run, so long training loops and sequence models compile
+in constant time instead of time proportional to the loop length. And unlike
 `while_loop`, `scan` supports both forward- and reverse-mode
 differentiation, which is why it's the standard way to express a training
 loop's steps or an RNN's time axis inside `jit`.
@@ -295,8 +295,8 @@ For fine-tuning that compile-time/run-time trade, `scan` takes an `unroll`
 parameter: `unroll=k` makes each iteration of the compiled loop perform `k`
 steps of the scan, and `unroll=True` unrolls the loop entirely. Larger unroll
 amounts give XLA more opportunity to fuse and parallelize across steps, at
-the cost of compile time and program size — often worthwhile when the body
-is small relative to per-iteration overhead. (`lax.fori_loop` accepts the
+the cost of compile time and program size, which is often worthwhile when the
+body is small relative to per-iteration overhead. (`lax.fori_loop` accepts the
 same parameter.)
 
 ## Logical operators
@@ -347,13 +347,13 @@ print(python_check_positive_even(x))
 
 The constraints on this page are about `jit` (and other transformations that
 trace with abstract values, like `vmap`). Under plain `jax.grad`, ordinary
-Python control flow just works — no `lax.cond` required — because `grad`
-traces with concrete values. See
+Python control flow works, with no `lax.cond` required, because `grad` traces
+with concrete values. See
 {ref}`jax-101-grad-control-flow` in the 101 docs.
 
 ## Next steps
 
-That wraps the compilation thread of these docs: what `jit` buys
+This page completes the compilation thread of these docs: what `jit` buys
 ({doc}`jit`), its stages ({doc}`aot`), and control flow inside compiled
-functions. Next, the story turns from computation to data: {doc}`placement`
-covers where arrays live, with the *mesh* as JAX's unit of placement.
+functions. Next, {doc}`placement` covers where arrays live, with the *mesh*
+as JAX's unit of placement.

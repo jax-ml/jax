@@ -7,15 +7,15 @@ JAX programs are compiled by [XLA](https://openxla.org/xla), and mostly you
 can leave the compiler alone. When you can't, JAX offers two levels of
 control: **compiler flags**, which steer how XLA compiles (globally or per
 function), and **XLA metadata**, which annotates individual operations in the
-compiled program — increasingly load-bearing for compiler-level tooling like
-debuggers and scheduling hints.
+compiled program for compiler-level tooling like debuggers and scheduling
+hints.
 
 (jax-201-compiler-flags)=
 ## XLA compiler flags
 
 The [XLA](https://openxla.org/xla) compiler's behavior is controlled by
 *flags*. There are two ways to set them: per compiled function, with
-`jax.jit`'s `compiler_options` parameter — usually what you want — or
+`jax.jit`'s `compiler_options` parameter (usually what you want), or
 process-wide, with the `XLA_FLAGS` environment variable.
 
 ### Per function: `jit`'s `compiler_options`
@@ -37,9 +37,9 @@ f_opt = jax.jit(f, compiler_options={
 f_opt(1.0)
 ```
 
-One restriction: `compiler_options` must be given on the top-level `jit` —
-the one whose compilation it configures — not on a jitted function called
-from inside another jitted function.
+One restriction: `compiler_options` must be given on the top-level `jit`,
+the one whose compilation it configures, rather than on a jitted function
+called from inside another jitted function.
 
 Alongside XLA's debug-option flags, `compiler_options` also accepts XLA's
 [compilation-effort knobs](https://openxla.org/xla/effort_levels),
@@ -69,8 +69,8 @@ compiled = jax.jit(f).lower(1.0).compile(
 
 ### Process-wide: the `XLA_FLAGS` environment variable
 
-To configure XLA for the whole process — including compilations you don't
-control directly — set the `XLA_FLAGS` environment variable, with flags
+To configure XLA for the whole process, including compilations you don't
+control directly, set the `XLA_FLAGS` environment variable, with flags
 separated by spaces:
 
 ```bash
@@ -78,7 +78,7 @@ XLA_FLAGS='--flag1=value1 --flag2=value2' python3 source.py
 ```
 
 `XLA_FLAGS` is read when JAX initializes its backends, so it must be set
-before then — in practice, before importing JAX. Changing it afterwards has
+before then (in practice, before importing JAX). Changing it afterwards has
 no effect.
 
 For the flags themselves: XLA's flags are defined with their default values
@@ -91,8 +91,8 @@ and XLA publishes a [guide to the key flags](https://openxla.org/xla/flags_guida
 
 Each operation in a compiled XLA program can carry *metadata*: string-valued
 `frontend_attributes` that don't change what the operation computes, but that
-compiler-level tooling — the XLA-TPU debugger, fusion control, scheduling
-hints — can read. JAX's interface for attaching metadata is
+compiler-level tooling (the XLA-TPU debugger, fusion control, scheduling
+hints) can read. JAX's interface for attaching metadata is
 `jax.experimental.xla_metadata`, and the recommended entry point is
 `xla_metadata_call`.
 
@@ -151,7 +151,7 @@ strings, with bools rendered as `"true"`/`"false"`.
 Because the metadata is attached to a function rather than to ambient tracing
 state, JAX transformations preserve it. Under `jax.vmap` the batched
 operations carry it, and under `jax.grad` every computation derived from the
-function — forward pass and backward pass — carries it too:
+function, forward pass and backward pass alike, carries it too:
 
 ```python
 @xla_metadata_call(tag="my_block")
@@ -185,8 +185,8 @@ The forward-pass computation (here just the `cosine` residual saved for the
 backward pass) and the backward-pass computation are each staged out and
 tagged.
 
-To leave the backward pass untagged, or to tag it differently — say, with its
-own scheduling group — use `xla_metadata_call2`, which takes the metadata as a
+To leave the backward pass untagged, or to tag it differently (say, with its
+own scheduling group), use `xla_metadata_call2`, which takes the metadata as a
 dict plus an `ad_metadata` option:
 
 ```python
@@ -238,8 +238,8 @@ manager (or decorator) that tags every operation traced under it.
 Both modes come with caveats that `xla_metadata_call` avoids:
 
 - The context manager works by setting ambient tracing state, which is part
-  of `jit`'s cache key. Any jit-compiled function called under it — including
-  library code that jits internally — is re-traced and re-compiled for each
+  of `jit`'s cache key. Any jit-compiled function called under it, including
+  library code that jits internally, is re-traced and re-compiled for each
   distinct metadata context, rather than reusing its existing cache entries.
 - Value-tagging doesn't propagate through autodiff: differentiate `g` above
   and the backward-pass operations come out untagged.

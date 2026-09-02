@@ -52,11 +52,11 @@ print(foo())
 ```
 
 This value is only reproducible because NumPy promises to run `bar()` before
-`baz()`. Such sequencing promises are exactly what JAX needs to avoid: an
-optimizing compiler should be free to reorder and parallelize work across
-devices. JAX needs random number generation that is **reproducible**,
-**parallelizable**, and **vectorizable**, which rules out sampling functions
-that secretly read and write shared state.
+`baz()`. Such sequencing promises are what JAX needs to avoid: an optimizing
+compiler should be free to reorder and parallelize work across devices. JAX
+needs random number generation that is **reproducible**, **parallelizable**,
+and **vectorizable**, which rules out sampling functions that secretly read
+and write shared state.
 
 The solution isn't to make the generator state an explicit argument that you
 shuttle in and out of functions. Instead, sampling is just a pure function of
@@ -83,7 +83,7 @@ print(jax.typeof(key))
 ```
 
 Passing a key to a sampling function doesn't modify it or "use it up" in any
-physical sense; the sample is simply a deterministic function of the key:
+physical sense; the sample is a deterministic function of the key:
 
 ```{code-cell}
 print(random.normal(key))
@@ -133,7 +133,7 @@ for step in range(3):
 ```
 
 Note the shape of this pattern: every `step_key` is derived directly from one
-parent key, not from its predecessor. That's deliberate.
+parent key, not from its predecessor. The next section explains why.
 
 ### Keep the key tree wide, not deep
 
@@ -185,10 +185,10 @@ key = random.key(42)
 print("all at once: ", random.normal(key, shape=(3,)))
 ```
 
-Sequential equivalence would impose exactly the kind of ordering constraint
-JAX's design exists to avoid. Giving it up means samples drawn from
-independent keys don't depend on each other in any order, so generation can
-be freely vectorized and sharded.
+Sequential equivalence would impose the kind of ordering constraint JAX's
+design exists to avoid. Giving it up means samples drawn from independent
+keys don't depend on each other in any order, so generation can be freely
+vectorized and sharded.
 
 Since keys are just arrays, they compose with everything else in JAX. You can
 `vmap` a sampler over a batch of keys:
@@ -237,5 +237,5 @@ as their first argument.
 ## Next steps
 
 Keys handle randomness while keeping every function pure. The remaining
-expressiveness topic is state — values that evolve as a program runs, and
-genuine in-place mutation — covered in {ref}`jax-101-state`.
+topic is state: values that evolve as a program runs, and genuine in-place
+mutation. It's covered in {ref}`jax-101-state`.

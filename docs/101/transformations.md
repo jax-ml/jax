@@ -139,8 +139,8 @@ print(loss_value)
 ```
 
 And sometimes a function naturally computes intermediate results worth
-returning alongside the scalar being differentiated. Just provide a function
-that produces a `(scalar_output, aux_data)` pair as output and pass
+returning alongside the scalar being differentiated. Provide a function that
+produces a `(scalar_output, aux_data)` pair as output and pass
 `has_aux=True`:
 
 ```{code-cell}
@@ -229,8 +229,8 @@ auto_batch_convolve(xs, ws)
 ```
 
 The transformed function behaves *as if* `convolve` were called on each
-example, but under the hood every operation inside it acts on the whole batch
-at once. No Python loop, no manual rewrite.
+example, but internally every operation inside it acts on the whole batch at
+once, with no Python loop and no manual rewrite.
 
 ### Choosing which axes to map with `in_axes` and `out_axes`
 
@@ -325,7 +325,7 @@ intercepted by the transformation. What happens next depends on the
 transformation being applied: `vmap` replaces each intercepted operation with
 a batched version, and `grad` applies each operation's derivative rule.
 
-Another thing a transformation can do is simply record all the operations and
+Another thing a transformation can do is record all the operations and
 their data dependencies. The result represents the computation performed by
 the traced function, specialized to the JAX types of the inputs that were
 provided. JAX's datatype for representing such a computation is a *jaxpr*. To
@@ -344,7 +344,7 @@ We'll use this `.trace(...).jaxpr` idiom whenever we want to see what a
 function traces to. Notice what appears in the jaxpr: just the JAX operations,
 with every variable annotated with its JAX type (`f32[]` abbreviates
 `float32[]`). Anything else
-about your Python function (variable names, comments, and importantly, any
+about your Python function (variable names, comments, and in particular any
 *non-JAX-intercepted* side effects) is not recorded.
 
 Jaxprs also let us see precisely what a transformation does to a program.
@@ -424,9 +424,9 @@ the batch mid-trace, through the tracer's `.val` attribute:
 jax.vmap(lambda x: print(x.val))(jnp.arange(3.0))
 ```
 
-(Reaching into a tracer's internals like `.val` is unsafe — it's an
-implementation detail, not an API, and in real code you'd use
-{func}`jax.debug.print`. We're doing it here purely for a look inside.)
+(Reaching into a tracer's internals like `.val` is unsafe, since it's an
+implementation detail rather than an API; in real code you'd use
+{func}`jax.debug.print`. We're doing it here only for a look inside.)
 
 So the values may well be present. What traced code can't do is *specialize* on
 them. The operations applied must work for every element of the batch, so the
@@ -468,13 +468,13 @@ to consult in the first place.
 
 On the other hand, anything that depends only on JAX types works freely during
 tracing, because those are ordinary Python values at trace time.
-Python `for` loops over a fixed range, `if` statements on shapes, shape
-arithmetic — all fine. Our `convolve` function above used a Python loop whose
-bounds came from `len(x)`: that loop simply unrolls during tracing, and the
+Python `for` loops over a fixed range, `if` statements on shapes, and shape
+arithmetic are all fine. Our `convolve` function above used a Python loop
+whose bounds came from `len(x)`: that loop unrolls during tracing, and the
 recorded operations are as if we'd written the unrolled version by hand. This
 is also why keeping `import numpy as np` around is useful: `np` operations on
-shapes execute immediately at trace time, cleanly separating "computations on
-static values" from "computations being traced" (`jnp`).
+shapes execute immediately at trace time, separating "computations on static
+values" from "computations being traced" (`jnp`).
 
 (jax-101-grad-control-flow)=
 ### `grad` works with Python control flow
@@ -545,12 +545,11 @@ sum_sq(jnp.arange(3.0))
 The first call with a given set of input JAX types pays for tracing and
 compilation; later calls skip straight to the compiled code. What's new with
 `jit` is performance: compilation, caching and retracing, static arguments,
-asynchronous dispatch. That story starts the performance and scaling docs; see
-{ref}`jax-201-jit`.
+asynchronous dispatch. That is where the performance and scaling docs start;
+see {ref}`jax-201-jit`.
 
 ## Next steps
 
 Real programs pass around richer structures than just arrays: dictionaries of
 parameters, lists of batches, nested configurations. The next page,
-{ref}`jax-101-pytrees`, shows how JAX treats those structures as first-class
-citizens.
+{ref}`jax-101-pytrees`, shows how JAX handles those structures.

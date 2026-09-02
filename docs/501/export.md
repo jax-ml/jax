@@ -821,7 +821,7 @@ module provides `serialize` and `deserialize_and_load` for pickling the
 ({ref}`jax-201-aot`). Compiled executables are far more fragile than
 exported modules: they are specific to the exact accelerator type, runtime
 versions, and device topology they were compiled for, and they come with no
-compatibility guarantees. For the common goal of just avoiding
+compatibility guarantees. For the common goal of avoiding
 recompilation across restarts on the same machines, the persistent
 compilation cache ({ref}`jax-501-compilation-cache`) is usually the better
 tool.
