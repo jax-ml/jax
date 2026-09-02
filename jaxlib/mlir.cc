@@ -122,9 +122,9 @@ absl::StatusOr<xla::XlaComputation> PyMlirModuleToXlaComputation(
   ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                         xla::ParseMlirModuleString(mlir_module, context));
   xla::XlaComputation computation;
-  TF_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation, use_tuple_args,
-                                          return_tuple,
-                                          /*exec_build_options=*/nullptr));
+  ABSL_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation,
+                                            use_tuple_args, return_tuple,
+                                            /*exec_build_options=*/nullptr));
   return computation;
 }
 

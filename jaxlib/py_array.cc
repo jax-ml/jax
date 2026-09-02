@@ -968,7 +968,7 @@ PyArray::SingleDeviceArrayToNumpyArrayDidCopy() {
   ABSL_ASSIGN_OR_RETURN(auto arr, FullyReplicatedShard());
   auto result = arr.GetStorage().host_value.AsNumPyArray(
       arr.GetStorage().dynamic_shape, arr.ifrt_array_ref().get());
-  TF_RETURN_IF_ERROR(arr.BlockUntilResultStatusIsReady());
+  ABSL_RETURN_IF_ERROR(arr.BlockUntilResultStatusIsReady());
   return result;
 }
 
@@ -1210,7 +1210,7 @@ absl::StatusOr<nb::object> CudaArrayInterfaceToBuffer(
 
 absl::Status PyArray::Delete() {
   for (auto& arr : py_arrays()) {
-    TF_RETURN_IF_ERROR(arr.Delete());
+    ABSL_RETURN_IF_ERROR(arr.Delete());
   }
   py_arrays().clear();
   if (ifrt_array_ref() != nullptr) {
@@ -1359,7 +1359,7 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
             ", dst_sharding=",
             nb::cast<std::string_view>(nb::repr(dst_sharding)));
       };
-      TF_RETURN_IF_ERROR(
+      ABSL_RETURN_IF_ERROR(
           ApplyTransferGuardToDeviceToDevice(transfer_guard_formatter));
 
       Batch& batch = batches[BatchedCopyToDeviceWithShardingKey{
@@ -1448,10 +1448,10 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
   args.reserve(xs.size());
   for (const nb::object& x : xs) {
     if (PyArray::IsPyArray(x)) {
-      TF_RETURN_IF_ERROR(
+      ABSL_RETURN_IF_ERROR(
           ApplyTransferGuardToDeviceToDevice(transfer_guard_formatter));
     } else {
-      TF_RETURN_IF_ERROR(
+      ABSL_RETURN_IF_ERROR(
           ApplyTransferGuardToHostToDevice(transfer_guard_formatter));
     }
     args.push_back(x);
@@ -1816,7 +1816,7 @@ int PyArray_bf_getbuffer(PyObject* exporter, Py_buffer* view, int flags) {
         return xla::InvalidArgument(
             "Buffer is potentially a device buffer with non default layout.");
       }
-      TF_RETURN_IF_ERROR(buffer.GetReadyFuture().Await());
+      ABSL_RETURN_IF_ERROR(buffer.GetReadyFuture().Await());
     }
 
     // We must hold the GIL (or at least prevent Python GC) while writing to the
@@ -1952,7 +1952,7 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
                               pjrt_buffer->AcquireExternalReference());
         auto fut = ifrt_array->GetReadyFuture();
         BlockUntilReadyWithCancel(fut);
-        TF_RETURN_IF_ERROR(fut.Await());
+        ABSL_RETURN_IF_ERROR(fut.Await());
       }
       void* data =
           hold_ptr->external_reference_hold->OpaqueDeviceMemoryDataPointer();
@@ -1965,7 +1965,7 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
   }
 
   PyUserContextScope user_context_scope;
-  TF_RETURN_IF_ERROR(CopyToHostAsync(dynamic_shape_holder, ifrt_array));
+  ABSL_RETURN_IF_ERROR(CopyToHostAsync(dynamic_shape_holder, ifrt_array));
   absl::Status status;
   if (!ready_.IsReady()) {
     nb::gil_scoped_release gil;
@@ -1983,7 +1983,7 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
     return xla::ifrt::ExpandUserContexts(std::move(status));
   }
   if (string_array_contents_ != nullptr) {
-    TF_RETURN_IF_ERROR(ConvertStringArrayContentsToNumpyArray(ifrt_array));
+    ABSL_RETURN_IF_ERROR(ConvertStringArrayContentsToNumpyArray(ifrt_array));
   }
   return std::make_pair(value_, true);
 }
@@ -2034,7 +2034,7 @@ absl::Status PyHostValue::CopyStringArrayToHostAsync(
         "), dtype=", ifrt_array->dtype(), ", device=",
         ifrt_array->sharding().devices()->devices().front()->DebugString());
   };
-  TF_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       ApplyTransferGuardToDeviceToHost(transfer_guard_formatter));
 
   ABSL_ASSIGN_OR_RETURN(xla::nb_dtype dtype,
@@ -2082,7 +2082,7 @@ absl::Status PyHostValue::CopyToHostAsync(
         "), dtype=", ifrt_array->dtype(), ", device=",
         ifrt_array->sharding().devices()->devices().front()->DebugString());
   };
-  TF_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       ApplyTransferGuardToDeviceToHost(transfer_guard_formatter));
 
   // TODO(b/182461453): This is a blocking call. If we further implemented

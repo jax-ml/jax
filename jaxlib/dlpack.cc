@@ -187,7 +187,7 @@ absl::Status VerifyDType(const DLTensor& dl_tensor) {
 }
 
 absl::StatusOr<std::vector<int64_t>> GetByteStrides(const DLTensor& dl_tensor) {
-  TF_RETURN_IF_ERROR(VerifyDType(dl_tensor));
+  ABSL_RETURN_IF_ERROR(VerifyDType(dl_tensor));
 
   // Convert element strides from the number of elements to the number of bytes.
   std::vector<int64_t> strides;
@@ -248,7 +248,7 @@ MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
         data, shape, memory_space, on_delete_callback, stream);
     if (!(result.status().code() == absl::StatusCode::kInvalidArgument &&
           fallback_to_copy)) {
-      TF_RETURN_IF_ERROR(result.status());
+      ABSL_RETURN_IF_ERROR(result.status());
       return std::make_pair(*std::move(result), false);
     }
   }
@@ -305,11 +305,11 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
     ABSL_ASSIGN_OR_RETURN(pack->external_reference,
                           pjrt_buffer->AcquireExternalReference());
     if (stream) {
-      TF_RETURN_IF_ERROR(
+      ABSL_RETURN_IF_ERROR(
           pack->external_reference->WaitUntilBufferReadyOnStream(*stream));
     } else {
       xla::ifrt::Array* ifrt_array_ptr = ifrt_array.get();
-      TF_RETURN_IF_ERROR(
+      ABSL_RETURN_IF_ERROR(
           AwaitBuffersReady(absl::MakeConstSpan(&ifrt_array_ptr, 1)));
     }
   }

@@ -92,7 +92,8 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
                                    -> absl::StatusOr<nb::dict> {
         ABSL_ASSIGN_OR_RETURN(auto analysis,
                               client->pjrt_client()->GetHloCostAnalysis());
-        TF_RETURN_IF_ERROR(module.entry_computation()->Accept(analysis.get()));
+        ABSL_RETURN_IF_ERROR(
+            module.entry_computation()->Accept(analysis.get()));
 
         // Convert from HloCostAnalysis::Properties to a standard map.
         nb::dict ret;

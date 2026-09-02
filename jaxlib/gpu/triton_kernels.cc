@@ -133,8 +133,8 @@ absl::StatusOr<std::vector<uint8_t>> CompileModuleImage(
   std::string result_blob;
   std::string fname{ptx};
   tsl::Env* env = tsl::Env::Default();
-  TF_RETURN_IF_ERROR(tsl::ReadFileToString(env, fname, &result_blob));
-  TF_RETURN_IF_ERROR(env->DeleteFile(fname));
+  ABSL_RETURN_IF_ERROR(tsl::ReadFileToString(env, fname, &result_blob));
+  ABSL_RETURN_IF_ERROR(env->DeleteFile(fname));
   module_image.assign(result_blob.begin(), result_blob.end());
 #else
   // TODO(cjfj): Support `TRITON_PTXAS_PATH` environment variable?
@@ -937,7 +937,7 @@ absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
 #if defined(JAX_GPU_CUDA)
       const auto& desc = std::get<Parameter::TmaDescriptor>(param.value);
       CUtensorMap& map = tma_maps.emplace_back();
-      TF_RETURN_IF_ERROR(EncodeTmaDescriptorTiled(desc, base_ptr, &map));
+      ABSL_RETURN_IF_ERROR(EncodeTmaDescriptorTiled(desc, base_ptr, &map));
       params.push_back(&map);
 #else
       (void)base_ptr;

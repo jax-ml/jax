@@ -29,6 +29,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/absl_check.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -283,10 +284,10 @@ absl::Status PyClient::Defragment() {
   // continue if we fail to reconstitute device buffers.
   for (const auto& it : pjrt_buf_to_tmp_buffer) {
     xla::PjRtBuffer* pjrt_buf = it.first;
-    TF_CHECK_OK(pjrt_buf
-                    ->ReleaseDeviceMemoryOwnership(
-                        /*wait_for_operations_to_complete=*/true)
-                    .status());
+    ABSL_CHECK_OK(pjrt_buf
+                      ->ReleaseDeviceMemoryOwnership(
+                          /*wait_for_operations_to_complete=*/true)
+                      .status());
   }
 
   // Copy host copies back to device and update PyArrays in-place.
@@ -298,7 +299,7 @@ absl::Status PyClient::Defragment() {
             ->BufferFromHostLiteral(*tmp_buffer.host_copy,
                                     pjrt_buf->memory_space())
             .value();
-    TF_CHECK_OK(new_copy->GetReadyFuture().Await());
+    ABSL_CHECK_OK(new_copy->GetReadyFuture().Await());
 
     std::shared_ptr<xla::PjRtBuffer> new_pjrt_buf_ptr(new_copy.release());
     for (std::shared_ptr<xla::PjRtBuffer>* pjrt_buffer_ptr :
@@ -492,7 +493,7 @@ PyClient::CompileAndLoad(nb_class_ptr<PyClient> client, mlir::ModuleOp module,
     if (xla::sdy::hasShardyMesh(module)) {
       // Shardy is not enabled, but the module has shardy ops. Likely due to
       // export loading a GSPMD checkpoint. Fall back to GSPMD.
-      TF_RETURN_IF_ERROR(xla::ExportShardyForGSPMD(module));
+      ABSL_RETURN_IF_ERROR(xla::ExportShardyForGSPMD(module));
     }
   }
   options.allow_in_place_mlir_modification = true;  // We just cloned the module
@@ -676,7 +677,7 @@ absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
   std::vector<PyArray> arrays = LiveArrays();
   for (const PyArray& array : arrays) {
     if (xla::ifrt::ArrayRef ifrt_array = array.ifrt_array_ref()) {
-      TF_RETURN_IF_ERROR(
+      ABSL_RETURN_IF_ERROR(
           add_array_to_profile(ifrt_array.get(), array.traceback()));
     }
   }

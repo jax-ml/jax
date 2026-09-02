@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
+#include "absl/log/absl_check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -638,7 +639,7 @@ NB_MODULE(_jax, m) {
               client->ifrt_client()->GetTopologyForDevices(device_list));
         });
 
-  TF_CHECK_OK(PyArray::Register(m));
+  ABSL_CHECK_OK(PyArray::Register(m));
   InitCanonicalizeValueHandlers();
   PyDeviceList::Register(m);
   RegisterSharding(m);

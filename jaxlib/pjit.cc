@@ -530,7 +530,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
 
     if (arg.type().ptr() != PyArray::type().ptr()) {
       if (data_device != nullptr && in_device_local_layout.is_none()) {
-        TF_RETURN_IF_ERROR(
+        ABSL_RETURN_IF_ERROR(
             ApplyTransferGuardToHostToDevice(transfer_guard_formatter));
         ABSL_ASSIGN_OR_RETURN(
             auto device_put_result,
@@ -843,7 +843,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // Check if the thread guard is active and should prevent execution.
   // Skipped for portable executables.
   if (cache_entry->executable->ifrt_executable()->devices().has_value()) {
-    TF_RETURN_IF_ERROR(CheckThreadGuard(
+    ABSL_RETURN_IF_ERROR(CheckThreadGuard(
         *cache_entry->executable->ifrt_executable()->devices()));
   }
 

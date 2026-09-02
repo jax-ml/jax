@@ -210,7 +210,7 @@ CompileMpmdWithLoadedHostCallbacks(
       compile_options);
 
   if (ifrt_ir_compile_options.has_value()) {
-    TF_RETURN_IF_ERROR(
+    ABSL_RETURN_IF_ERROR(
         ifrt_compile_options->SetOptionsFromMap(*ifrt_ir_compile_options));
   }
 

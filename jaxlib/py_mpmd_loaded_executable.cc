@@ -159,7 +159,7 @@ absl::StatusOr<nb::object> PyMpmdLoadedExecutable::ExecuteFastpath(
     }
   }
 
-  TF_RETURN_IF_ERROR(ComputeCallSignature(flat_args, call_signature));
+  ABSL_RETURN_IF_ERROR(ComputeCallSignature(flat_args, call_signature));
 
   std::pair<std::shared_ptr<MpmdExecutableFastpathData>, bool>
       cache_data_and_inserted =

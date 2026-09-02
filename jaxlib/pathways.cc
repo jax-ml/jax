@@ -130,7 +130,7 @@ absl::StatusOr<std::vector<int>> GetSubmeshOffsets(
     submesh_offsets.push_back(0);
   } else {
     std::vector<int> current_entry(mesh_axis_idx, 0);
-    TF_RETURN_IF_ERROR(PopulateSubmeshOffsets(
+    ABSL_RETURN_IF_ERROR(PopulateSubmeshOffsets(
         mesh_axis_sizes.subspan(0, mesh_axis_idx),
         absl::MakeSpan(current_entry), strides, submesh_offsets));
   }
@@ -241,7 +241,7 @@ absl::StatusOr<nb::list> ExperimentalReshardArrays(nb::sequence py_arrays,
       return absl::InvalidArgumentError(
           absl::StrCat("Input array ", i, " has been donated or deleted."));
     }
-    TF_RETURN_IF_ERROR(PyClientFromPyArray(array, backend));
+    ABSL_RETURN_IF_ERROR(PyClientFromPyArray(array, backend));
     ifrt_arrays.push_back(array.ifrt_array_ref());
 
     ABSL_ASSIGN_OR_RETURN(DType ifrt_dtype,
@@ -339,7 +339,7 @@ ExperimentalSplitByMeshAxis(
   std::vector<ArrayRef> input_ifrt_arrays;
   input_ifrt_arrays.reserve(py_arrays.size());
   for (int array_idx = 0; array_idx < py_arrays.size(); ++array_idx) {
-    TF_RETURN_IF_ERROR(PyClientFromPyArray(py_arrays[array_idx], backend));
+    ABSL_RETURN_IF_ERROR(PyClientFromPyArray(py_arrays[array_idx], backend));
     xla::ifrt::ArrayRef array = py_arrays[array_idx].ifrt_array_ref();
     if (array == nullptr) {
       return xla::InvalidArgument("Input array #%d has been donated or deleted",
@@ -479,7 +479,7 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
     submesh_offsets.push_back(0);
   } else {
     std::vector<int> current_entry(mesh_axis_idx, 0);
-    TF_RETURN_IF_ERROR(PopulateSubmeshOffsets(
+    ABSL_RETURN_IF_ERROR(PopulateSubmeshOffsets(
         mesh_axis_sizes.subspan(0, mesh_axis_idx),
         absl::MakeSpan(current_entry), strides, submesh_offsets));
   }
@@ -492,7 +492,7 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
   input_ifrt_arrays.reserve(num_output_arrays * num_input_arrays_per_output);
 
   nb_class_ptr<PyClient> backend;
-  TF_RETURN_IF_ERROR(PyClientFromPyArray(py_arrays_list[0][0], backend));
+  ABSL_RETURN_IF_ERROR(PyClientFromPyArray(py_arrays_list[0][0], backend));
 
   for (int array_idx = 0; array_idx < num_output_arrays; ++array_idx) {
     const auto& py_arrays = py_arrays_list[array_idx];

@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/base/const_init.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/absl_check.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -186,7 +187,7 @@ void PopulateExecuteShardedResults(const nb_class_ptr<PyClient>& client,
         ifrt_arrays[buffer_id]->DisassembleIntoSingleDeviceArrays(
             ifrt::ArrayCopySemantics::kReuseInput,
             ifrt::SingleDeviceShardSemantics::kAddressableShards);
-    TF_CHECK_OK(exploded_arrays.status());
+    ABSL_CHECK_OK(exploded_arrays.status());
     for (auto& exploded_array : *exploded_arrays) {
       outputs[buffer_id].push_back(PyArray::MakeFromSingleDeviceArray(
           client, std::move(exploded_array), false, true, result_status));
@@ -305,7 +306,7 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
           ifrt_arrays[buffer_id]->DisassembleIntoSingleDeviceArrays(
               ifrt::ArrayCopySemantics::kReuseInput,
               ifrt::SingleDeviceShardSemantics::kAddressableShards);
-      TF_CHECK_OK(disassembled_arrays.status());
+      ABSL_CHECK_OK(disassembled_arrays.status());
       nb::list bufs =
           nb::steal<nb::list>(PyList_New(disassembled_arrays->size()));
       int i = 0;
@@ -489,7 +490,7 @@ absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
   // Check if the thread guard is active and should prevent execution.
   // Skipped for portable executables.
   if (ifrt_loaded_executable_->devices().has_value()) {
-    TF_RETURN_IF_ERROR(CheckThreadGuard(*ifrt_loaded_executable_->devices()));
+    ABSL_RETURN_IF_ERROR(CheckThreadGuard(*ifrt_loaded_executable_->devices()));
   }
 
   xla::ifrt::ExecuteOptions options = options_;
