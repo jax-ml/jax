@@ -48,8 +48,16 @@ on:
         options:
         - "1"
         - "0"
+      artifact-type:
+        description: "Which version scheme to stamp the wheel with: default (X.Y.Z.dev<date>+<hash>), nightly (X.Y.Z.dev<date>) or release (X.Y.Z, plus wheel-version-suffix)."
+        type: choice
+        default: "default"
+        options:
+        - "default"
+        - "nightly"
+        - "release"
       wheel-version-suffix:
-        description: "Version suffix for post-releases (e.g., .post3). Leave empty for normal builds."
+        description: "Custom wheel version suffix, e.g. rc1 (needs artifact-type release) or .post3. Leave empty for normal builds."
         type: string
         default: ""
       halt-for-connection:
@@ -97,8 +105,12 @@ on:
         description: "S3 location prefix to where the artifacts should be uploaded"
         default: 's3://jax-ci-amd/jax-rocm-plugin-wheels'
         type: string
+      artifact-type:
+        description: "Which version scheme to stamp the wheel with: default (X.Y.Z.dev<date>+<hash>), nightly (X.Y.Z.dev<date>) or release (X.Y.Z, plus wheel-version-suffix)."
+        type: string
+        default: "default"
       wheel-version-suffix:
-        description: "Version suffix for post-releases (e.g., .post3). Leave empty for normal builds."
+        description: "Custom wheel version suffix, e.g. rc1 (needs artifact-type release) or .post3. Leave empty for normal builds."
         type: string
         default: ""
       halt-for-connection:
@@ -139,6 +151,8 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
       JAXCI_OUTPUT_DIR: "${{ github.workspace }}/dist"
+      JAXCI_ARTIFACT_TYPE: "${{ inputs.artifact-type }}"
+      JAXCI_WHEEL_VERSION_SUFFIX: "${{ inputs.wheel-version-suffix }}"
 
     name: "${{ inputs.artifact }}, py ${{ inputs.python }}, ROCm ${{ inputs.rocm-release-version || inputs.rocm-version }}"
 
@@ -161,7 +175,6 @@ jobs:
         run: ./ci/build_rocm_artifacts.sh "$INPUTS_ARTIFACT"
         env:
           INPUTS_ARTIFACT: ${{ inputs.artifact }}
-          JAXCI_WHEEL_VERSION_SUFFIX: ${{ inputs.wheel-version-suffix }}
       - name: Configure AWS Credentials
         if: ${{ inputs.upload_artifacts_to_s3 }}
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3

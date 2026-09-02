@@ -22,6 +22,25 @@
 #
 # Sourced, not executed, so the "exit 1" calls below fail the calling build.
 
+# Both spell the same suffix.
+if [[ -n "$JAXCI_WHEEL_VERSION_SUFFIX" && -n "$JAXCI_WHEEL_RC_VERSION" ]]; then
+  echo "Error: JAXCI_WHEEL_VERSION_SUFFIX and JAXCI_WHEEL_RC_VERSION are both set."
+  exit 1
+fi
+
+# build/build.py ignores the suffix for nightly wheels, and strips "-" from it,
+# when it computes the wheel name to copy out. Either way the wheel is built but
+# never collected. TODO(jax-ml): fix in build/build.py instead.
+if [[ "$JAXCI_ARTIFACT_TYPE" == "nightly" && -n "$JAXCI_WHEEL_VERSION_SUFFIX" ]]; then
+  echo "Error: JAXCI_WHEEL_VERSION_SUFFIX is not supported with JAXCI_ARTIFACT_TYPE=nightly."
+  exit 1
+fi
+
+if [[ "$JAXCI_WHEEL_VERSION_SUFFIX" == *-* ]]; then
+  echo "Error: JAXCI_WHEEL_VERSION_SUFFIX must not contain \"-\": ${JAXCI_WHEEL_VERSION_SUFFIX}"
+  exit 1
+fi
+
 # Determine the artifact tag flags based on the artifact type. A release
 # wheel is tagged with the release version (e.g. 0.5.1), a nightly wheel is
 # tagged with the release version and a nightly suffix that contains the
