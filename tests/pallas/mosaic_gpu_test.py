@@ -7617,7 +7617,9 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     def kernel(out_ref, cancel_result_ref, barrier, _):
       if with_indexing:
         cancel_result_ref = cancel_result_ref.at[0]
-      plgpu.try_cluster_cancel(cancel_result_ref, barrier)
+      plgpu.try_cluster_cancel(
+          cancel_result_ref, barrier, collective_axes=(*cluster_names, "wg")
+      )
       plgpu.barrier_wait(barrier)
 
       cta_ids, cancelled_launch = plgpu.query_cluster_cancel(

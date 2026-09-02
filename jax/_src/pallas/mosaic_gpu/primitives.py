@@ -20,6 +20,7 @@ from collections.abc import Callable, Hashable, Sequence
 import contextlib
 import dataclasses
 import enum
+import functools
 import inspect
 import itertools
 import math
@@ -4857,6 +4858,7 @@ def try_cluster_cancel_lowering(
     *transforms_leaves,
     result_transforms_tree,
     barrier_transforms_tree,
+    collective_axes,
 ):
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
@@ -4894,20 +4896,18 @@ def try_cluster_cancel_lowering(
         f"Try cluster cancel response must be 128 bits, but is {bits} bits."
     )
 
-  is_first_wg = arith_dialect.cmpi(
-      arith_dialect.CmpIPredicate.eq, mgpu.warpgroup_idx(), mgpu.c(0, i32)
-  )
+  axis_names = ctx.module_ctx.axis_names
+  eq = functools.partial(arith_dialect.cmpi, arith_dialect.CmpIPredicate.eq)
+  zero = mgpu.c(0, ir.IndexType.get())
+  is_first_wg = is_first_cta = mgpu.c(1, i1)
 
-  is_first_cta = mgpu.c(1, i1)
-  for dim in gpu_dialect.Dimension:
-    is_first_cta = arith_dialect.andi(
-        is_first_cta,
-        arith_dialect.cmpi(
-            arith_dialect.CmpIPredicate.eq,
-            mgpu.utils.cluster_idx(dim),
-            mgpu.c(0, ir.IndexType.get()),
-        ),
-    )
+  for axis in collective_axes:
+    if axis_names.wg is not None and axis == axis_names.wg:
+      is_first_wg = eq(mgpu.warpgroup_idx(), mgpu.c(0, i32))
+    else:
+      cluster_dim = lowering._resolve_cluster_axis(axis_names, axis)  # pylint: disable=protected-access
+      cluster_idx = mgpu.utils.cluster_idx(cluster_dim)
+      is_first_cta = arith_dialect.andi(is_first_cta, eq(cluster_idx, zero))
 
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
 
@@ -4924,37 +4924,45 @@ def try_cluster_cancel_lowering(
         barrier.as_barrier_memref(),
         predicate=arith_dialect.andi(is_first_cta, is_first_wg))
   else:
-    assert ctx.module_ctx.single_lane_predicate is not None
-    is_leader_thread = arith_dialect.andi(
-        ctx.module_ctx.single_lane_predicate, is_first_wg
-    )
-    bytes = arith_dialect.select(is_leader_thread, mgpu.c(16, i32), mgpu.c(0, i32))
-    barrier.arrive_expect_tx(bytes)
+    assert (lane_pred := ctx.module_ctx.single_lane_predicate) is not None
+    is_leader = arith_dialect.andi(lane_pred, is_first_wg)
+    tx_count = arith_dialect.select(is_leader, mgpu.c(16, i32), mgpu.c(0, i32))
+    barrier.arrive_expect_tx(tx_count)
     mgpu.try_cluster_cancel(
         result_ref,
         barrier,
-        predicate=arith_dialect.andi(is_leader_thread, is_first_cta),
+        predicate=arith_dialect.andi(is_leader, is_first_cta),
     )
 
   return []
 
 
-def try_cluster_cancel(result_ref: _Ref, barrier: _Ref) -> None:
+def try_cluster_cancel(
+    result_ref: _Ref,
+    barrier: _Ref,
+    *,
+    collective_axes: Hashable | tuple[Hashable, ...] = (),
+) -> None:
   """Initiates an async request to claim a new work unit from the grid.
 
   It allows an SM to dynamically acquire work by atomically canceling the launch
-  of a pending cluster from the grid and claiming its CTA ID as the next unit
-  of work.
-
-  Note that this operation must be called collectively by all Pallas threads.
+  of a pending cluster from the grid and retrieving its indices.
 
   Args:
     result_ref: An SMEM ref where the 16-byte result will be stored.
     barrier: A barrier used to coordinate the completion of the query.
+    collective_axes: The thread / cluster axis names across which the
+      cancellation is collective. When specified, only the axis index 0 along
+      these axes will issue the cancellation request. If more than one thread
+      along an axis calls this function, the axis must be specified here to
+      avoid inadvertently cancelling multiple clusters.
 
   See also:
     :func:`jax.experimental.pallas.mosaic_gpu.query_cluster_cancel`
   """
+  if not isinstance(collective_axes, tuple):
+    collective_axes = (collective_axes,)
+
   if isinstance(result_ref, pallas_core.TransformedRef):
     result_transforms_leaves, result_transforms_tree = jax.tree.flatten(
         result_ref.transforms
@@ -4978,6 +4986,7 @@ def try_cluster_cancel(result_ref: _Ref, barrier: _Ref) -> None:
       *barrier_transforms_leaves,
       result_transforms_tree=result_transforms_tree,
       barrier_transforms_tree=barrier_transforms_tree,
+      collective_axes=collective_axes,
   )
 
 
@@ -4992,10 +5001,7 @@ def _query_cluster_cancel_abstract_eval(try_cancel_buffer,
   del try_cancel_buffer, transforms_leaves, transforms_tree
   grid_idxs = (jax_core.ShapedArray((), jnp.int32),) * len(grid_names)
   return (
-      (
-          *grid_idxs,
-          jax_core.ShapedArray((), jnp.bool_),
-      ),
+      (*grid_idxs, jax_core.ShapedArray((), jnp.bool_)),
       {gpu_core._memory_effect},
   )
 
