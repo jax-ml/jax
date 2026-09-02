@@ -51,11 +51,11 @@ from . import wgmma
 
 @dataclasses.dataclass()
 class LoweringContext:
-  launch_context: lc.LaunchContext | None
-  _single_thread_per_warp_predicate: ir.Value | None
-  _single_thread_per_warpgroup_predicate: ir.Value | None
-  single_thread_per_block_predicate: ir.Value | None
-  single_warp_per_block_predicate: ir.Value | None
+  launch_context: lc.LaunchContext
+  _single_thread_per_warp_predicate: ir.Value
+  _single_thread_per_warpgroup_predicate: ir.Value
+  single_thread_per_block_predicate: ir.Value
+  single_warp_per_block_predicate: ir.Value
   auto_barriers: bool
   smem_requested_bytes: int
   is_collective_kernel: bool | None = dataclasses.field(
@@ -69,10 +69,8 @@ class LoweringContext:
   def single_lane_predicate(self) -> ir.Value:
     match self.thread_semantics:
       case utils.ThreadSubset.WARPGROUP:
-        assert self._single_thread_per_warpgroup_predicate is not None
         return self._single_thread_per_warpgroup_predicate
       case utils.ThreadSubset.WARP:
-        assert self._single_thread_per_warp_predicate is not None
         return self._single_thread_per_warp_predicate
       case _:
         assert_never(self.thread_semantics)
@@ -507,8 +505,6 @@ def _multimem_load_reduce_op_lowering_rule(
   [out_layout_attr] = inference_utils.out_layouts(op)
   out_layout = layouts_lib.from_layout_attr(out_layout_attr)
   # TODO(apaszke): DO NOT IGNORE TRANSFORMS.
-
-  assert ctx.launch_context is not None
 
   # pyrefly: ignore[missing-attribute]
   reduction = str(mgpu.MultimemLoadReductionType(op.reduction_type.value))
@@ -1160,7 +1156,6 @@ def _gmem_slice_and_predicate(
 def _mgpu_async_load_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncLoadOp
 ) -> Sequence[ir.Value]:
-  assert ctx.launch_context is not None
   if is_cp_async := load_op.barrier is None:
     barrier = None
   else:
@@ -1238,8 +1233,6 @@ def _mgpu_async_load_op_lowering_rule(
 def _mgpu_async_prefetch_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncPrefetchOp
 ) -> Sequence[ir.Value]:
-  assert ctx.launch_context is not None
-
   gmem_slice, predicate = _gmem_slice_and_predicate(ctx, load_op)
 
   if load_op.collective:
@@ -1259,8 +1252,6 @@ def _mgpu_async_prefetch_op_lowering_rule(
 def _mgpu_async_store_op_lowering_rule(
     ctx: LoweringContext, store_op: mgpu.AsyncStoreOp
 ) -> Sequence[ir.Value]:
-  assert ctx.launch_context is not None
-
   [transforms_attr] = inference_utils.in_transforms(store_op)
   swizzle = swizzle_from_transforms_attr(transforms_attr)
   transforms = memref_transforms_from_transforms_attr(transforms_attr)
@@ -2987,14 +2978,10 @@ def _gpu_launch_op(module: ir.Module) -> gpu.LaunchOp:
 
 def _lowering_context(
     module: ir.Module,
-    launch_context: lc.LaunchContext | None,
+    launch_context: lc.LaunchContext,
     auto_barriers: bool,
 ) -> LoweringContext:
   """Returns a `LoweringContext` for the given `LaunchContext`."""
-  # TODO(bchetioui): fix tests to not have a test-only path polluting the API.
-  if launch_context is None:  # this case is used in some tests
-    return LoweringContext(None, None, None, None, None, auto_barriers, 10**9)
-
   gpu_launch_op = _gpu_launch_op(module)
   with ir.InsertionPoint.at_block_begin(gpu_launch_op.regions[0].blocks[0]):
     eq = arith.CmpIPredicate.eq
@@ -3019,7 +3006,7 @@ def _lowering_context(
 
 def lower_mgpu_dialect(
     module: ir.Module,
-    launch_context: lc.LaunchContext | None,
+    launch_context: lc.LaunchContext,
     auto_barriers: bool = True,
 ):
   # TODO(apaszke,bchetioui): Make sure the layouts match.
