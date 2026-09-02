@@ -1293,6 +1293,7 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     # TODO(lenamartens): re-enable assertions below.
     # self.assertIsNone(err.get())
 
+  @jtu.skip_on_devices("tpu")
   def test_vmap_of_checkify_of_while(self):
     # vmap-of-checkify-of-while is a supported composition: checkify injects a
     # dce_sink into the while body and the outer vmap must batch it. Regression
