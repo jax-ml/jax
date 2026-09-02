@@ -2587,14 +2587,14 @@ def _program_order(fun, *, enforce, exclude_argnames):
   return wrapped
 
 
-def looped_opt_barrier(prev_outvars, prev_outs, cur_invars, cur_inps):
+def opt_barrier_per_input(prev_outvars, prev_outs, cur_invars, cur_inps):
   from jax._src.lax.lax import optimization_barrier, create_token  # type: ignore
 
   token = create_token()
   token, prev_outs = optimization_barrier((token, prev_outs))
   prev_out_map = dict(zip(prev_outvars, prev_outs))
   # Tokens are not DCEd by opt_barrier even if they are unused.
-  cur_inps = [prev_out_map[v] if isinstance(v, core.Var) and v in prev_out_map
+  cur_inps = [prev_out_map[v] if v in prev_out_map
               else optimization_barrier((token, cinp))[1]
               for v, cinp in safe_zip(cur_invars, cur_inps)]
   return prev_outs, cur_inps
@@ -2603,18 +2603,10 @@ def looped_opt_barrier(prev_outvars, prev_outs, cur_invars, cur_inps):
 def insert_opt_barrier(prev_outvars, prev_outs, cur_invars, cur_inps):
   from jax._src.lax.lax import optimization_barrier  # type: ignore
 
-  is_literal = [isinstance(i, core.Literal) for i in cur_invars]
-  barrier_invars_set = set(partition_list(is_literal, cur_invars)[0])
-  barrier_cinps, excluded_cinps = partition_list(is_literal, cur_inps)
-
-  in_cur_invars = [v in barrier_invars_set for v in prev_outvars]
+  in_cur_invars = [v in cur_invars for v in prev_outvars]
   barrier_pouts, excluded_outs = partition_list(in_cur_invars, prev_outs)
-
-  barrier_pouts, barrier_cinps = optimization_barrier(
-      (barrier_pouts, barrier_cinps))
-
+  barrier_pouts, cur_inps = optimization_barrier((barrier_pouts, cur_inps))
   prev_outs = merge_lists(in_cur_invars, barrier_pouts, excluded_outs)
-  cur_inps = merge_lists(is_literal, barrier_cinps, excluded_cinps)
   return prev_outs, cur_inps
 
 
@@ -2648,19 +2640,23 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
           cur_eqn.ctx.manager):
       cur_inps = map(read, cur_eqn.invars)
       if prev_eqn is not None:
+        is_literal = [isinstance(i, core.Literal) for i in cur_eqn.invars]
+        cur_invars, _ = partition_list(is_literal, cur_eqn.invars)
+        cur_inps, literal_inps = partition_list(is_literal, cur_inps)
         prev_outs = map(read, prev_eqn.outvars)
         if cur_eqn.primitive is program_order_p:
           exclude_mask = cur_eqn.params['exclude_mask']
           barrier_inps, excluded_inps = partition_list(exclude_mask, cur_inps)
           if barrier_inps:
-            barrier_invars, _ = partition_list(exclude_mask, cur_eqn.invars)
-            prev_outs, barrier_inps = looped_opt_barrier(
+            barrier_invars, _ = partition_list(exclude_mask, cur_invars)
+            prev_outs, barrier_inps = opt_barrier_per_input(
                 prev_eqn.outvars, prev_outs, barrier_invars, barrier_inps)
             cur_inps = merge_lists(exclude_mask, barrier_inps, excluded_inps)
         else:
           prev_outs, cur_inps = insert_opt_barrier(
-              prev_eqn.outvars, prev_outs, cur_eqn.invars, cur_inps)
+              prev_eqn.outvars, prev_outs, cur_invars, cur_inps)
         eqn_write(prev_eqn, prev_outs)
+        cur_inps = merge_lists(is_literal, cur_inps, literal_inps)
       ans = cur_eqn.primitive.bind(*cur_inps, **bind_params)
     eqn_write(cur_eqn, ans)
     prev_eqn = cur_eqn
