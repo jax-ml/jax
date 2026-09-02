@@ -59,10 +59,9 @@ def _in1d(ar1: ArrayLike, ar2: ArrayLike, invert: bool,
 
     arr2 = lax.sort(arr2)
     ind = searchsorted(arr2, arr1)
-    if invert:
-      return arr1 != arr2[ind]
-    else:
-      return arr1 == arr2[ind]
+    ind_clipped = where(ind >= arr2.size, arr2.size - 1, ind)
+    found = arr1 == arr2[ind_clipped]
+    return ~found if invert else found
   elif method == 'sort':
     if assume_unique:
       ind_out: slice | Array = slice(None)
