@@ -14,6 +14,7 @@
 
 from functools import partial
 from absl.testing import absltest
+from absl.testing import parameterized
 
 import jax
 import jax.numpy as jnp
@@ -467,8 +468,9 @@ class OverlapTest(jtu.JaxTestCase):
 
     f(x, w)  # doesn't crash
 
+  @parameterized.parameters([True, False])
   @jtu.with_explicit_mesh((2,), 'x')
-  def test_program_order_per_input_barrier(self, mesh):
+  def test_program_order_per_input_barrier(self, strict, mesh):
     x = jax.device_put(jnp.arange(8.0), P('x'))
     a = jax.device_put(jnp.arange(8.0) * 2.0, P('x'))
     b = jax.device_put(jnp.arange(8.0) * 3.0, P('x'))
@@ -478,12 +480,12 @@ class OverlapTest(jtu.JaxTestCase):
     def f(x, a, b):
       x = jnp.sin(x)
 
-      @program_order(enforce=False)
+      @program_order(enforce=False, strict=strict)
       def op1(x):
         return x + 1.0
       y = op1(x)
 
-      @program_order(enforce=False)
+      @program_order(enforce=False, strict=strict)
       def op2(y, a, b):
         return y * a + b
       z = op2(y, a, b)
@@ -491,10 +493,13 @@ class OverlapTest(jtu.JaxTestCase):
 
     jaxpr = f.trace(x, a, b).jaxpr
     jaxpr_str = str(jaxpr)
-    self.assertIn('create_token', jaxpr_str)
-    # sin -> op1: 1 token barrier + 0 per-input barrier = 1
-    # op1 -> op2: 1 token barrier + 2 per-input barriers = 3
-    self.assertEqual(jaxpr_str.count('optimization_barrier'), 4)
+    if strict:
+      self.assertEqual(jaxpr_str.count('optimization_barrier'), 3)
+    else:
+      self.assertIn('create_token', jaxpr_str)
+      # sin -> op1: 1 token barrier + 0 per-input barrier = 1
+      # op1 -> op2: 1 token barrier + 2 per-input barriers = 3
+      self.assertEqual(jaxpr_str.count('optimization_barrier'), 4)
 
     f(x, a, b)  # doesn't crash
 

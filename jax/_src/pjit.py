@@ -2548,16 +2548,18 @@ program_order_p.multiple_results = True
 program_order_p.skip_canonicalization = True
 
 def program_order(f=None, *, enforce: bool,
-                  exclude_argnames: str | Sequence[str] | None = None):
+                  exclude_argnames: str | Sequence[str] | None = None,
+                  strict: bool = False):
   if enforce and exclude_argnames is not None:
     raise ValueError("exclude_argnames cannot be used with enforce=True.")
-  kwargs = dict(enforce=enforce, exclude_argnames=exclude_argnames)
+  kwargs = dict(enforce=enforce, exclude_argnames=exclude_argnames,
+                strict=strict)
   if f is None:
     return lambda g: _program_order(g, **kwargs)
   return _program_order(f, **kwargs)
 
 
-def _program_order(fun, *, enforce, exclude_argnames):
+def _program_order(fun, *, enforce, exclude_argnames, strict):
   @wraps(fun)
   def wrapped(*args, **kwargs):
     if enforce:
@@ -2582,7 +2584,7 @@ def _program_order(fun, *, enforce, exclude_argnames):
       exclude_mask = (False,) * len(traced._consts) + arg_exclude_mask
       out_flat = program_order_p.bind(
           *traced._consts, *args_flat, call_jaxpr=traced.jaxpr,
-          exclude_mask=exclude_mask)
+          exclude_mask=exclude_mask, strict=strict)
       return tree_util.tree_unflatten(traced.out_tree, out_flat)
   return wrapped
 
@@ -2649,8 +2651,12 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
           barrier_inps, excluded_inps = partition_list(exclude_mask, cur_inps)
           if barrier_inps:
             barrier_invars, _ = partition_list(exclude_mask, cur_invars)
-            prev_outs, barrier_inps = opt_barrier_per_input(
-                prev_eqn.outvars, prev_outs, barrier_invars, barrier_inps)
+            if cur_eqn.params['strict']:
+              prev_outs, barrier_inps = insert_opt_barrier(
+                  prev_eqn.outvars, prev_outs, barrier_invars, barrier_inps)
+            else:
+              prev_outs, barrier_inps = opt_barrier_per_input(
+                  prev_eqn.outvars, prev_outs, barrier_invars, barrier_inps)
             cur_inps = merge_lists(exclude_mask, barrier_inps, excluded_inps)
         else:
           prev_outs, cur_inps = insert_opt_barrier(
