@@ -136,7 +136,7 @@ absl::StatusOr<nb::list> PyMpmdLoadedExecutable::Execute(nb::sequence args) {
         nb::borrow<xla::nb_dtype>(out_dtypes_[i].ptr()), out_shapes_[i],
         nb::borrow<nb::object>(out_shardings_[i].ptr()), backend_,
         std::move(result.outputs[i]),
-        /*committed=*/true, /*skip_checks=*/true);
+        /*committed=*/true);
     results.append(std::move(out));
   }
   return results;

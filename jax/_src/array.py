@@ -204,7 +204,12 @@ class ArrayImpl(basearray.Array):
       arrays = self._check_and_rearrange(arrays, self._sharding, self.aval)
     self._arrays = arrays
 
-  def _check_and_rearrange(self, arrays, sharding, aval):
+  @staticmethod
+  def _check_and_rearrange(
+      arrays: Sequence[ArrayImpl],
+      sharding: Sharding,
+      aval: core.ShapedArray,
+  ) -> list[ArrayImpl]:
     device_id_to_buffer = {_get_device(db).id: db for db in arrays}
 
     addressable_dev = sharding.addressable_devices

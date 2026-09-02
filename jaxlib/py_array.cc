@@ -527,8 +527,7 @@ void PyArray::PyInit(PyArray self, nb::object aval, nb::object sharding,
   if (skip_checks) {
     PyInit_helper(self, aval, sharding, py_arrays, committed);
   } else {
-    nb::object rearranged_arrays =
-        self.CheckAndRearrange(py_arrays, sharding, aval);
+    nb::object rearranged_arrays = CheckAndRearrange(py_arrays, sharding, aval);
     auto rearranged_py_arrays =
         nb::cast<std::vector<PyArray>>(rearranged_arrays);
     PyInit_helper(self, aval, sharding, rearranged_py_arrays, committed);
@@ -570,8 +569,7 @@ PyArray PyArray::MakeFromSingleDeviceArray(nb_class_ptr<PyClient> py_client,
       std::move(py_memory_kind));
   return PyArray(std::move(aval), weak_type, dtype, std::move(key.dims),
                  std::move(sharding), std::move(py_client),
-                 std::move(ifrt_array), committed,
-                 /*skip_checks=*/true, std::move(result_status));
+                 std::move(ifrt_array), committed, std::move(result_status));
 }
 
 PyArray PyArray::MakeFromIfrtArrayAndSharding(nb_class_ptr<PyClient> py_client,
@@ -589,21 +587,53 @@ PyArray PyArray::MakeFromIfrtArrayAndSharding(nb_class_ptr<PyClient> py_client,
   auto aval = MakeShapedArrayCached(key);
   auto dtype =
       xla::IfrtDtypeToDtypeWithTokenCanonicalization(key.dtype).value();
-  // Fast path known safe to skip.
   if (!skip_checks) {
     if (ifrt_array->IsDeleted()) {
       ifrt_array = ifrt::ArrayRef();
-      skip_checks = true;
     } else {
-      if (*xla::ValueOrThrow(GetIfrtHloSharding(
-              sharding, ifrt_array->shape())) == ifrt_array->sharding()) {
-        skip_checks = true;
+      auto expected_sharding =
+          xla::ValueOrThrow(GetIfrtHloSharding(sharding, ifrt_array->shape()));
+      if (!(*expected_sharding == ifrt_array->sharding())) {
+        xla::ifrt::UserContextScope user_context_scope(
+            ifrt_array->user_context());
+        std::vector<PyArray> py_arrays;
+        const xla::ifrt::Sharding& ifrt_sharding = ifrt_array->sharding();
+        if (xla::ifrt::isa<ifrt::SingleDeviceSharding>(&ifrt_sharding) &&
+            ifrt_sharding.devices()->devices().front()->IsAddressable()) {
+          py_arrays.push_back(PyArray::MakeFromSingleDeviceArray(
+              py_client, ifrt_array, weak_type, committed));
+        } else {
+          auto single_device_arrays =
+              xla::ValueOrThrow(ifrt_array->DisassembleIntoSingleDeviceArrays(
+                  xla::ifrt::ArrayCopySemantics::kReuseInput,
+                  xla::ifrt::SingleDeviceShardSemantics::kAddressableShards));
+          py_arrays.reserve(single_device_arrays.size());
+          for (auto& arr : single_device_arrays) {
+            py_arrays.push_back(PyArray::MakeFromSingleDeviceArray(
+                py_client, std::move(arr), weak_type, committed));
+          }
+        }
+        nb::object rearranged_arrays =
+            CheckAndRearrange(py_arrays, sharding, aval);
+        auto rearranged_py_arrays =
+            nb::cast<std::vector<PyArray>>(rearranged_arrays);
+        std::vector<ifrt::ArrayRef> ifrt_arrays;
+        ifrt_arrays.reserve(rearranged_py_arrays.size());
+        for (const auto& arr : rearranged_py_arrays) {
+          ifrt_arrays.push_back(arr.ifrt_array_ref());
+        }
+        ifrt_array = xla::ValueOrThrow(
+            py_client->ifrt_client()->AssembleArrayFromSingleDeviceArrays(
+                ifrt_array->dtype(), ifrt_array->shape(),
+                std::move(expected_sharding), absl::MakeSpan(ifrt_arrays),
+                xla::ifrt::ArrayCopySemantics::kReuseInput,
+                xla::ifrt::SingleDeviceShardSemantics::kAddressableShards));
       }
     }
   }
   return PyArray(std::move(aval), weak_type, dtype, std::move(key.dims),
                  std::move(sharding), std::move(py_client),
-                 std::move(ifrt_array), committed, skip_checks);
+                 std::move(ifrt_array), committed);
 }
 
 PyArrayResultHandler::PyArrayResultHandler(
@@ -637,10 +667,9 @@ nanobind::object PyArrayResultHandler::Call(
 nanobind::object PyArrayResultHandler::Call(nb_class_ptr<PyClient> py_client,
                                             ifrt::ArrayRef ifrt_array,
                                             xla::Future<> result_status) const {
-  nanobind::object result =
-      PyArray(aval_, weak_type_, dtype_, shape_, sharding_,
-              std::move(py_client), std::move(ifrt_array), committed_,
-              /*skip_checks=*/true, std::move(result_status));
+  nanobind::object result = PyArray(
+      aval_, weak_type_, dtype_, shape_, sharding_, std::move(py_client),
+      std::move(ifrt_array), committed_, std::move(result_status));
   for (auto& cb : wrappers_) {
     result = cb(std::move(result));
   }
@@ -654,8 +683,7 @@ nanobind::object PyArrayResultHandler::Call(PyArray py_array) const {
 PyArray::PyArray(nb::object aval, bool weak_type, xla::nb_dtype dtype,
                  std::vector<int64_t> shape, nb::object sharding,
                  nb_class_ptr<PyClient> py_client, ifrt::ArrayRef ifrt_array,
-                 bool committed, bool skip_checks,
-                 xla::Future<> result_status) {
+                 bool committed, xla::Future<> result_status) {
   if (ifrt_array->user_context() == nullptr && Traceback::IsEnabled()) {
     throw nb::value_error(
         "Expecting an IFRT `Array` to have a user context, but got a null "
@@ -669,11 +697,6 @@ PyArray::PyArray(nb::object aval, bool weak_type, xla::nb_dtype dtype,
             std::move(dtype), std::move(shape), std::move(sharding), committed,
             std::move(py_client), std::move(ifrt_array),
             std::move(result_status));
-
-  if (!skip_checks) {
-    this->attr("_arrays") = this->attr("_check_and_rearrange")(
-        this->attr("_arrays"), this->attr("_sharding"), this->attr("aval"));
-  }
 }
 
 PyArray::Storage& PyArray::GetStorage() {
@@ -687,7 +710,8 @@ const PyArray::Storage& PyArray::GetStorage() const {
 nb::object PyArray::CheckAndRearrange(const absl::Span<const PyArray> py_arrays,
                                       const nb::object sharding,
                                       const nb::object aval) {
-  return this->attr("_check_and_rearrange")(py_arrays, sharding, aval);
+  return PyArray::type().attr("_check_and_rearrange")(py_arrays, sharding,
+                                                      aval);
 }
 
 void PyArray::SetIfrtArray(ifrt::ArrayRef ifrt_array) {
@@ -1230,7 +1254,7 @@ PyArray PyArray::Clone() const {
   return PyArray(aval(), weak_type(), dtype(),
                  std::vector<int64_t>(shape().begin(), shape().end()),
                  sharding(), py_client(), std::move(out), committed(),
-                 /*skip_checks=*/true, result_status());
+                 result_status());
 }
 
 nb::handle PyArray::Storage::AsHandle() {
@@ -1322,8 +1346,7 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
               py_array.aval(), py_array.weak_type(), py_array.dtype(),
               std::vector<int64_t>(shape_span.begin(), shape_span.end()),
               dst_sharding, py_array.py_client(), ifrt_array_ptr,
-              py_array.committed(),
-              /*skip_checks=*/true, py_array.result_status());
+              py_array.committed(), py_array.result_status());
         }
         continue;
       }
@@ -1381,8 +1404,7 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
         PyArray(py_array.aval(), py_array.weak_type(), py_array.dtype(),
                 std::vector<int64_t>(shape_span.begin(), shape_span.end()),
                 dst_shardings[i], py_client, std::move(ifrt_array),
-                py_array.committed(),
-                /*skip_checks=*/true, py_array.result_status());
+                py_array.committed(), py_array.result_status());
   }
   return results;
 }
@@ -1455,8 +1477,7 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
 
   return PyArray(aval, weak_type, dtype, std::move(shape), std::move(sharding),
                  py_device_list->py_client(),
-                 std::move(device_put_result.ifrt_array), committed,
-                 /*skip_checks=*/true);
+                 std::move(device_put_result.ifrt_array), committed);
 }
 
 absl::StatusOr<PyArray> PyArray::ReorderShards(
@@ -1567,8 +1588,7 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
                  std::vector<int64_t>(x.shape().begin(), x.shape().end()),
                  std::move(dst_sharding), x.py_client(),
                  std::move(new_ifrt_array),
-                 /*committed=*/true,
-                 /*skip_checks=*/true);
+                 /*committed=*/true);
 }
 
 absl::Status PyArray::BatchedBlockUntilReady(std::vector<nb::object> objs) {
@@ -2285,8 +2305,7 @@ absl::Status PyArray::Register(nb::module_& m) {
 
         return PyArray(std::move(aval), weak_type, dtype, std::move(shape),
                        std::move(sharding), self.py_client(),
-                       std::move(new_ifrt_array), /*committed=*/true,
-                       /*skip_checks=*/true);
+                       std::move(new_ifrt_array), /*committed=*/true);
       },
       nb::is_method(), nb::arg("aval"), nb::arg("sharding"));
   type.attr("_sharding") = xla::nb_property_readonly(&PyArray::sharding);

@@ -866,12 +866,12 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     // Creating the PyArray result. In addition to the IFRT arrays, the metadata
     // like `aval` and `sharding` are retrieved from the cache for this
     // function, which are produced by the python path in `cache_miss`.
-    PyArray py_array(
-        cache_entry->out_avals[i], cache_entry->out_weak_types[i],
-        cache_entry->out_dtypes[i], cache_entry->out_shapes[i],
-        cache_entry->out_shardings[i], cache_entry->executable->client(),
-        std::move(output_arrays[i]),
-        /*committed=*/cache_entry->out_committed.at(i), /*skip_checks=*/true);
+    PyArray py_array(cache_entry->out_avals[i], cache_entry->out_weak_types[i],
+                     cache_entry->out_dtypes[i], cache_entry->out_shapes[i],
+                     cache_entry->out_shardings[i],
+                     cache_entry->executable->client(),
+                     std::move(output_arrays[i]),
+                     /*committed=*/cache_entry->out_committed.at(i));
 
     outputs.push_back(std::move(py_array));
   }

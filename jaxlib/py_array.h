@@ -156,15 +156,14 @@ class PyArray : public nanobind::object {
                      absl::Span<const PyArray> py_arrays, bool committed,
                      bool skip_checks);
 
-  // Only used in C++. `skip_checks` should only be set for Arrays created by
-  // jax that cannot possibly have consistency issues (e.g. `sharding` devices
-  // different than `ifrt_array` devices). Arrays created by users should be
-  // checked.
+  // Only used in C++. Requires that the array cannot have consistency issues
+  // (e.g., `sharding` devices different than `ifrt_array` devices). Arrays
+  // created by users or with potentially inconsistent metadata should be
+  // checked (e.g., via `MakeFromIfrtArrayAndSharding`).
   PyArray(nanobind::object aval, bool weak_type, xla::nb_dtype dtype,
           std::vector<int64_t> shape, nanobind::object sharding,
           nb_class_ptr<PyClient> py_client, xla::ifrt::ArrayRef ifrt_array,
-          bool committed, bool skip_checks,
-          xla::Future<> result_status = xla::Future<>());
+          bool committed, xla::Future<> result_status = xla::Future<>());
 
   static PyArray MakeFromSingleDeviceArray(
       nb_class_ptr<PyClient> py_client, xla::ifrt::ArrayRef ifrt_array,
@@ -356,9 +355,9 @@ class PyArray : public nanobind::object {
  private:
   absl::StatusOr<PyArray> AssertUnsharded(std::string_view api);
 
-  nanobind::object CheckAndRearrange(absl::Span<const PyArray> py_arrays,
-                                     nanobind::object sharding,
-                                     nanobind::object aval);
+  static nanobind::object CheckAndRearrange(absl::Span<const PyArray> py_arrays,
+                                            nanobind::object sharding,
+                                            nanobind::object aval);
 
   void SetIfrtArray(xla::ifrt::ArrayRef ifrt_array);
 
