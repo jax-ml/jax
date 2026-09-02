@@ -162,14 +162,14 @@ def process_xml(file_path, job_id, fallback_timestamp=None):
         status = tc.get("status")
         if failure is not None:
           record["status"] = "FAILED"
-        elif status == "notrun":
+        elif error is not None:
+          record["status"] = "ERROR"
+        elif skipped is not None or status == "notrun":
           record["status"] = "SKIPPED"
-        elif (
-            result == "completed" or result is None
-        ):  # Default to passed if completed or not specified.
+        elif result in (None, "completed"):
           record["status"] = "PASSED"
         else:
-          record["status"] = "PASSED"  # Final safety fallback.
+          record["status"] = "ERROR"
 
       else:  # Pytest format.
         cname = tc.get("classname")
