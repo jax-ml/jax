@@ -1564,11 +1564,6 @@ def _barrier_arrive_lowering(
   sem_dtype = barrier_aval.inner_aval.dtype  # pyrefly: ignore[missing-attribute]
   orders_tensor_core = getattr(sem_dtype, "orders_tensor_core", False)
 
-  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
-    scope = mgpu_utils.ThreadSubset.WARP
-  else:
-    scope = mgpu_utils.ThreadSubset.WARPGROUP
-
   if isinstance(barrier, mgpu.CollectiveBarrierRef):
     if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
       raise NotImplementedError(
@@ -1578,17 +1573,9 @@ def _barrier_arrive_lowering(
   elif ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
     barrier.arrive(orders_tensor_core)
   else:
-    if scope == mgpu_utils.ThreadSubset.WARP and not orders_tensor_core:
-      arrival_count = 4
-    else:
-      arrival_count = 1
-
-    pred = ctx.module_ctx.single_lane_predicate if orders_tensor_core else None
+    is_warp = ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp
     barrier.arrive(
-        arrival_count=arrival_count,
-        orders_tensor_core=orders_tensor_core,
-        predicate=pred,
-        scope=scope,
+        arrival_count=4 if is_warp else 1, orders_tensor_core=orders_tensor_core
     )
   return ()
 
@@ -2879,6 +2866,8 @@ def _tcgen05_mma_lowering(
     )
     if arrive:
       assert barrier_ref is not None
+      if not collective:
+        barrier_ref.arrive(WARPGROUP_SIZE - 1, can_complete=False)
       tcgen05.commit_arrive(barrier_ref,
                             collective=collective,
                             ctx=ctx.launch_ctx)
@@ -3154,6 +3143,8 @@ def _tcgen05_commit_arrive_lowering(
     collective = False
 
   with mgpu.when(predicate):
+    if not collective:
+      barrier_ref.arrive(WARPGROUP_SIZE - 1, can_complete=False)
     tcgen05.commit_arrive(barrier_ref,
                           collective=collective,
                           ctx=ctx.launch_ctx)

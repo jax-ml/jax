@@ -275,9 +275,7 @@ def _initialize_barrier_op_lowering_rule(
     op: mgpu.InitializeBarrierOp,
 ) -> Sequence[ir.Value]:
   i32 = ir.IntegerType.get_signless(32)
-  arrival_count = op.arrival_count.value * (
-      utils.WARPGROUP_SIZE if not op.orders_tensor_core.value else 1
-  )
+  arrival_count = op.arrival_count.value * utils.WARPGROUP_SIZE
   for i in range(op.num_barriers.value):
     bar_ptr = utils.getelementptr(op.base_pointer, [i], _lowered_barrier_type())
     llvm.inline_asm(
@@ -1724,27 +1722,12 @@ def _mgpu_arrive_op_lowering_rule(
     ctx: LoweringContext, arrive_op: mgpu.ArriveOp
 ) -> Sequence[ir.Value]:
   barrier = utils.DialectBarrierRef.from_barrier_memref(arrive_op.barrier)
-  orders_tc = arrive_op.orders_tensor_core.value
-  if orders_tc:
-    # Barrier expects a single thread arrival.
-    predicate = ctx.single_lane_predicate
-    arrival_count = 1
-  elif ctx.thread_semantics == utils.ThreadSubset.WARP:
-    # In warp-level lowering, we arrive on each CUDA thread in a warp, but the
-    # barrier still expects a full 128 arrivals so we arrive 4 times on each
-    # CUDA thread instead.
-    predicate = None
-    arrival_count = 4
-  else:
-    # Barrier expects each thread arrives once.
-    predicate = None
-    arrival_count = 1
-
+  # In warp-level lowering, we arrive on each CUDA thread in a warp, but the
+  # barrier still expects a full 128 arrivals so we arrive 4 times on each CUDA
+  # thread instead.
   barrier.barrier_ref.arrive(
-      arrival_count,
-      orders_tensor_core=orders_tc,
-      predicate=predicate,
-      scope=ctx.thread_semantics,
+      4 if ctx.thread_semantics == utils.ThreadSubset.WARP else 1,
+      orders_tensor_core=arrive_op.orders_tensor_core.value,
   )
   return []
 
@@ -2600,6 +2583,8 @@ def _tcgen05_commit_arrive_op_lowering_rule(
   ctx.check_collective(op)
   barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
   with utils.when(ctx.single_lane_predicate):
+    if not op.collective.value:
+      barrier.barrier_ref.arrive(utils.WARPGROUP_SIZE - 1, can_complete=False)
     tcgen05.commit_arrive(
         barrier.barrier_ref, op.collective.value, ctx.launch_context
     )
