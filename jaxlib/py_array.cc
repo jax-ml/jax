@@ -718,31 +718,43 @@ nb::object PyArray::CheckAndRearrange(const absl::Span<const PyArray> py_arrays,
                                                       aval);
 }
 
-const std::vector<PyArray>& PyArray::py_arrays_cached() {
-  auto& py_arrays = this->py_arrays();
-
-  if (py_arrays.empty()) {
-    // Use the user context of this array.
-    xla::ifrt::UserContextScope user_context_scope(
-        ifrt_array_ref()->user_context());
-    auto ifrt_arrays = ifrt_array_ref()->DisassembleIntoSingleDeviceArrays(
-        ifrt::ArrayCopySemantics::kReuseInput,
-        ifrt::SingleDeviceShardSemantics::kAddressableShards);
-    if (!ifrt_arrays.ok()) {
-      throw nb::value_error(
-          absl::StrCat("Failed to disassemble into single-device arrays: ",
-                       ifrt_arrays.status().ToString())
-              .c_str());
+std::vector<PyArray> PyArray::py_arrays_cached() {
+  Storage& storage = GetStorage();
+  xla::ifrt::ArrayRef ifrt_array;
+  xla::Future<> res_status;
+  {
+    ft_lock_guard lock(storage.mu);
+    if (!storage.py_arrays.empty()) {
+      return storage.py_arrays;
     }
-    py_arrays.reserve(ifrt_arrays->size());
-    for (auto& ifrt_array : *ifrt_arrays) {
-      py_arrays.push_back(PyArray::MakeFromSingleDeviceArray(
-          py_client(), std::move(ifrt_array), weak_type(), committed(),
-          result_status()));
-    }
+    ifrt_array = storage.ifrt_array;
+    res_status = storage.result_status;
   }
 
-  return py_arrays;
+  // Use the user context of this array.
+  xla::ifrt::UserContextScope user_context_scope(ifrt_array->user_context());
+  auto ifrt_arrays = ifrt_array->DisassembleIntoSingleDeviceArrays(
+      ifrt::ArrayCopySemantics::kReuseInput,
+      ifrt::SingleDeviceShardSemantics::kAddressableShards);
+  if (!ifrt_arrays.ok()) {
+    throw nb::value_error(
+        absl::StrCat("Failed to disassemble into single-device arrays: ",
+                     ifrt_arrays.status().ToString())
+            .c_str());
+  }
+  std::vector<PyArray> py_arrays;
+  py_arrays.reserve(ifrt_arrays->size());
+  for (auto& single_ifrt_array : *ifrt_arrays) {
+    py_arrays.push_back(PyArray::MakeFromSingleDeviceArray(
+        py_client(), std::move(single_ifrt_array), weak_type(), committed(),
+        res_status));
+  }
+
+  ft_lock_guard lock(storage.mu);
+  if (storage.py_arrays.empty()) {
+    storage.py_arrays = std::move(py_arrays);
+  }
+  return storage.py_arrays;
 }
 
 nb::object PyArray::arrays() {
@@ -899,7 +911,7 @@ absl::StatusOr<PyArray> PyArray::AssertUnsharded(std::string_view api) {
     return *this;
   }
 
-  auto& py_arrays = py_arrays_cached();
+  auto py_arrays = py_arrays_cached();
   if (py_arrays.size() != 1) {
     return xla::InvalidArgument("%s() is supported only for unsharded arrays.",
                                 api);
@@ -1115,10 +1127,15 @@ absl::StatusOr<nb::object> CudaArrayInterfaceToBuffer(
 }
 
 absl::Status PyArray::Delete() {
-  for (auto& arr : py_arrays()) {
+  std::vector<PyArray> py_arrays;
+  {
+    Storage& storage = GetStorage();
+    ft_lock_guard lock(storage.mu);
+    py_arrays = std::move(storage.py_arrays);
+  }
+  for (auto& arr : py_arrays) {
     ABSL_RETURN_IF_ERROR(arr.Delete());
   }
-  py_arrays().clear();
   xla::ifrt::ArrayRef ifrt_arr;
   {
     Storage& storage = GetStorage();
@@ -1578,6 +1595,7 @@ absl::Status PyArray::ReplaceWithAlias(PyArray o)
   nanobind::object old_npy_value;
   xla::ifrt::ArrayRef old_ifrt_array;
   nanobind::object old_fully_replicated_array;
+  std::vector<PyArray> old_py_arrays;
   ft_lock_guard lock1(*mu1);
   ft_lock_guard lock2(*mu2);
 
@@ -1587,6 +1605,7 @@ absl::Status PyArray::ReplaceWithAlias(PyArray o)
   storage.ifrt_array = o_storage.ifrt_array;
   old_fully_replicated_array = std::move(storage.fully_replicated_array);
   storage.fully_replicated_array = o_storage.fully_replicated_array;
+  old_py_arrays = std::move(storage.py_arrays);
   storage.py_arrays = o_storage.py_arrays;
   storage.host_value.Clear();
   storage.dynamic_shape = o_storage.dynamic_shape;
