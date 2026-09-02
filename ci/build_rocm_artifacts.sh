@@ -15,7 +15,7 @@
 # ==============================================================================
 # Build ROCm JAX artifacts.
 # Usage: ./ci/build_rocm_artifacts.sh "<artifact>"
-# Supported artifact values are: jax-rocm-plugin, jax-rocm-pjrt
+# Supported artifact values are: jax-rocm-plugin, jax-rocm-pjrt, jax, jaxlib
 #
 # -e: abort script if one command fails
 # -u: error if undefined variable used
@@ -37,7 +37,9 @@ fi
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
 
-allowed_artifacts=("jax-rocm-plugin" "jax-rocm-pjrt")
+# "jax" and "jaxlib" are backend neutral; they are built here so that all four
+# wheels can come from one commit, stamped with one version.
+allowed_artifacts=("jax-rocm-plugin" "jax-rocm-pjrt" "jax" "jaxlib")
 
 if [[ ! " ${allowed_artifacts[*]} " =~ " ${artifact} " ]]; then
   echo "Error: Invalid artifact: $artifact. Allowed values are: ${allowed_artifacts[*]}"
@@ -46,6 +48,10 @@ fi
 
 # Determine the Bazel flags that stamp the wheel's version.
 source "ci/utilities/set_artifact_tag_flags.sh"
+
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t && "$JAXCI_HERMETIC_PYTHON_VERSION" != *"-ft" ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
+fi
 
 override_xla_repo=""
 if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
@@ -84,5 +90,7 @@ python build/build.py build --wheels="$artifact" \
   $override_xla_repo \
   "${rocm_path_flags[@]}"
 
-# Verify manylinux compliance.
-./ci/utilities/run_auditwheel.sh
+# Verify manylinux compliance. "jax" is pure Python, as in ci/build_artifacts.sh.
+if [[ "$artifact" != "jax" ]]; then
+  ./ci/utilities/run_auditwheel.sh
+fi

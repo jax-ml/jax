@@ -1,7 +1,7 @@
 # CI - Build ROCm Artifacts
-# This workflow builds ROCm wheels (jax-rocm-plugin, jax-rocm-pjrt) in a ROCm container
-# and uploads them to an S3 bucket. It can be triggered manually via workflow_dispatch or
-# called by other workflows via workflow_call.
+# This workflow builds ROCm wheels (jax-rocm-plugin, jax-rocm-pjrt) and, on request, the
+# jax and jaxlib wheels that go with them, in a ROCm container, and uploads them to an S3
+# bucket. It can be triggered manually via workflow_dispatch or called via workflow_call.
 name: CI - Build ROCm Artifacts
 
 on:
@@ -14,12 +14,14 @@ on:
         options:
         - "amd-do-linux.jax.cpu"
       artifact:
-        description: "Which ROCm artifact to build?"
+        description: "Which artifact to build?"
         type: choice
         default: "jax-rocm-plugin"
         options:
         - "jax-rocm-plugin"
         - "jax-rocm-pjrt"
+        - "jax"
+        - "jaxlib"
       python:
         description: "Which python version should the artifact be built for?"
         type: choice
@@ -74,7 +76,7 @@ on:
         type: string
         default: "amd-do-linux.jax.cpu"
       artifact:
-        description: "Which ROCm artifact to build?"
+        description: "Which artifact to build? One of jax-rocm-plugin, jax-rocm-pjrt, jax, jaxlib."
         type: string
         default: "jax-rocm-plugin"
       python:
