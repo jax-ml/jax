@@ -774,93 +774,6 @@ nb::object PyArray::arrays() {
   return nb::cast(py_arrays_cached());
 }
 
-absl::Status PyArray::set_arrays(nb::object obj) {
-  if (obj.is_none()) {
-    SetIfrtArray(ifrt::ArrayRef());
-    py_arrays().clear();
-    return absl::OkStatus();
-  }
-
-  if (!nb::isinstance<nb::list>(obj)) {
-    return xla::InvalidArgument(
-        "Unsupported arg when setting Array._arrays: %s",
-        nb::cast<std::string_view>(nb::str(obj.type())));
-  }
-
-  nb::list list(obj);
-
-  if (list.size() == 0) return absl::OkStatus();
-
-  SetIfrtArray(ifrt::ArrayRef());
-  py_arrays().clear();
-  std::vector<ifrt::ArrayRef> ifrt_arrays;
-  ifrt_arrays.reserve(list.size());
-  absl::InlinedVector<ifrt::Device*, 1> devices;
-  devices.reserve(list.size());
-  std::vector<ifrt::Shape> shapes;
-  shapes.reserve(list.size());
-  for (nb::handle obj : list) {
-    if (obj.type().is(PyArray::type())) {
-      auto py_array = nb::borrow<PyArray>(obj);
-      if (py_array.py_client().get() != py_client().get()) {
-        return xla::InvalidArgument(
-            "Client mismatch when assigning to _arrays.");
-      }
-      if (py_array.num_shards() != 1) {
-        return xla::InvalidArgument("Wrong number of shards: %d",
-                                    py_array.num_shards());
-      }
-      ifrt_arrays.push_back(py_array.ifrt_array_ref());
-      devices.push_back(
-          ifrt_arrays.back()->sharding().devices()->devices().front());
-      shapes.push_back(ifrt_arrays.back()->shape());
-    } else {
-      return xla::InvalidArgument(
-          "Unsupported arg when setting Array._arrays: %s",
-          nb::cast<std::string_view>(nb::str(obj.type())));
-    }
-  }
-  const ifrt::MemoryKind first_memory_kind =
-      ifrt_arrays.front()->sharding().memory_kind();
-#if JAX_IFRT_VERSION_NUMBER < 64
-  // TODO(hyeontaek): Canonicalize every `ifrt::MemoryKind` at creation time to
-  // skip canonicalization here once JAX begins to do it for JAX shardings.
-  const ifrt::MemoryKind canonical_first_memory_kind =
-      ifrt::CanonicalizeMemoryKind(
-          first_memory_kind,
-          ifrt_arrays.front()->sharding().devices()->devices().front());
-#endif
-  for (const auto& ifrt_array : ifrt_arrays) {
-#if JAX_IFRT_VERSION_NUMBER >= 64
-    if (first_memory_kind != ifrt_array->sharding().memory_kind()) {
-#else
-    if (canonical_first_memory_kind !=
-        ifrt::CanonicalizeMemoryKind(
-            ifrt_array->sharding().memory_kind(),
-            ifrt_array->sharding().devices()->devices().front())) {
-#endif
-      throw nb::value_error(
-          absl::StrFormat(
-              "Memory kind mismatch between single-device arrays. Got one "
-              "array with memory kind '%v' and another with memory_kind '%v'",
-              first_memory_kind, ifrt_array->sharding().memory_kind())
-              .c_str());
-    }
-  }
-
-  ABSL_ASSIGN_OR_RETURN(auto ifrt_sharding,
-                        GetIfrtHloSharding(sharding(), ifrt::Shape(shape())));
-  ABSL_ASSIGN_OR_RETURN(
-      auto array,
-      py_client()->ifrt_client()->AssembleArrayFromSingleDeviceArrays(
-          ifrt_arrays[0]->dtype(), ifrt::Shape(shape()),
-          std::move(ifrt_sharding), absl::MakeSpan(ifrt_arrays),
-          ifrt::ArrayCopySemantics::kReuseInput,
-          ifrt::SingleDeviceShardSemantics::kAddressableShards));
-  SetIfrtArray(std::move(array));
-  return absl::OkStatus();
-}
-
 absl::StatusOr<PyArray> PyArray::FullyReplicatedShard() {
   Storage& storage = GetStorage();
   {
@@ -2307,10 +2220,7 @@ absl::Status PyArray::Register(nb::module_& m) {
       nb::is_method(), nb::arg("aval"), nb::arg("sharding"));
   type.attr("_sharding") = xla::nb_property_readonly(&PyArray::sharding);
   type.attr("aval") = xla::nb_property_readonly(&PyArray::aval);
-  type.attr("_arrays") =
-      xla::nb_property(&PyArray::arrays, [](PyArray& self, nb::object obj) {
-        xla::ThrowIfError(self.set_arrays(obj));
-      });
+  type.attr("_arrays") = xla::nb_property_readonly(&PyArray::arrays);
   type.attr("_fully_replicated_shard") = nb::cpp_function(
       [](PyArray self) {
         return xla::ValueOrThrow(self.FullyReplicatedShard());

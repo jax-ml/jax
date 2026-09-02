@@ -280,7 +280,6 @@ class PyArray : public nanobind::object {
   const std::vector<PyArray>& py_arrays_cached();
 
   nanobind::object arrays();
-  absl::Status set_arrays(nanobind::object obj);
   absl::StatusOr<PyArray> FullyReplicatedShard();
 
   int num_shards() const {
