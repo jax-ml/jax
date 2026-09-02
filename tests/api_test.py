@@ -69,7 +69,7 @@ from jax._src.lib import jaxlib_extension_version
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.sharding_impls import make_single_device_sharding
 import jax._src.util as jax_util
-from jax.ad_checkpoint import checkpoint_name
+from jax.ad_checkpoint import checkpoint_name, checkpoint_name_fwd
 from jax.errors import (UnexpectedTracerError, TracerIntegerConversionError,
                         ConcretizationTypeError, TracerBoolConversionError)
 from jax.interpreters import ad
@@ -8371,7 +8371,7 @@ class Remat3Test(RematTest):
     assert jax.config.jax_custom_vjp3
     sin = jax.custom_vjp(jnp.sin)
     def fwd(x):
-      return jnp.sin(x), checkpoint_name(jnp.cos(x), 'cos')
+      return jnp.sin(x), checkpoint_name_fwd(jnp.cos(x), 'cos')
     def bwd(cos_x, g):
       return cos_x * g,
     sin.defvjp(fwd, bwd)
@@ -8407,7 +8407,7 @@ class Remat3Test(RematTest):
     assert jax.config.jax_custom_vjp3
     sin = jax.custom_vjp(lambda _, x: jnp.sin(x), nondiff_argnums=(0,))
     def fwd(_, x):
-      return jnp.sin(x), checkpoint_name(jnp.cos(x), 'cos')
+      return jnp.sin(x), checkpoint_name_fwd(jnp.cos(x), 'cos')
     def bwd(_, cos_x, g):
       return cos_x * g,
     sin.defvjp(fwd, bwd)
@@ -8436,6 +8436,149 @@ class Remat3Test(RematTest):
     self.assertNotIn('cos', fwd_str)
     self.assertIn('cos ', bwd_str)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
+
+  @config.custom_vjp3(True)
+  def test_checkpoint_name_combined_policy(self):
+    # save_from_both_policies returns a plain callable policy, not one of the
+    # name-based policy classes; both plain checkpoint_name and names inside
+    # custom_vjp fwd rules must honor it via the policy(prim, ...) protocol.
+    policy = jax.checkpoint_policies.save_from_both_policies(
+        jax.checkpoint_policies.save_only_these_names('cos'),
+        jax.checkpoint_policies.save_only_these_names('other'))
+    x = jnp.arange(3.)
+
+    def bwd_recomputes_cos(f):
+      y, f_vjp = jax.vjp(f, x)
+      jaxpr = jax.jit(f_vjp).trace(y).lojax.jaxpr
+      jaxpr, _ = pe.dce_jaxpr(jaxpr, True)
+      return '= cos' in jaxpr.pretty_print(use_color=False)
+
+    def plain(z):
+      return z * checkpoint_name(jnp.cos(z), 'cos')
+    self.assertFalse(bwd_recomputes_cos(jax.remat(plain, policy=policy)))
+
+    sin = jax.custom_vjp(jnp.sin)
+    def fwd(z):
+      return jnp.sin(z), checkpoint_name_fwd(jnp.cos(z), 'cos')
+    def bwd(c, g):
+      return c * g,
+    sin.defvjp(fwd, bwd)
+    self.assertFalse(bwd_recomputes_cos(jax.remat(sin, policy=policy)))
+    jtu.check_grads(jax.remat(sin, policy=policy), (3.,), order=2,
+                    modes=['rev'])
+
+  def test_checkpoint_name_zero_tangent_residuals(self):
+    pos = jnp.arange(3.)
+    policy = jax.checkpoint_policies.save_only_these_names('scale')
+    def f(x):
+      return x * checkpoint_name(jnp.cos(pos * 2.0), 'scale')
+
+    x = jnp.ones(3)
+    for block in [f, jax.jit(f)]:
+      _, f_vjp = jax.vjp(jax.remat(block, policy=policy), x)
+      leaves = jax.tree.leaves(f_vjp)
+      self.assertLen(leaves, 1)
+      self.assertArraysAllClose(leaves[0], jnp.cos(pos * 2.0))
+
+    g = jax.remat(
+        lambda x: (x * x * checkpoint_name(jnp.cos(pos * 2.0), 'scale')).sum(),
+        policy=policy)
+    g2 = jax.grad(lambda x: jax.grad(g)(x).sum())(x)
+    self.assertArraysAllClose(g2, 2 * jnp.cos(pos * 2.0))
+
+  @config.custom_vjp3(True)
+  def test_custom_vjp_saved_residual_is_vjp_pytree_leaf(self):
+    sin = jax.custom_vjp(jnp.sin)
+    def fwd(x):
+      return jnp.sin(x), checkpoint_name_fwd(jnp.cos(x), 'cos')
+    def bwd(c, g):
+      return c * g,
+    sin.defvjp(fwd, bwd)
+
+    policy = jax.checkpoint_policies.save_only_these_names('cos')
+    x = jnp.arange(3.)
+    for block in [sin, jax.jit(sin)]:
+      _, f_vjp = jax.vjp(jax.remat(block, policy=policy), x)
+      leaves = jax.tree.leaves(f_vjp)
+      # Exactly the named value is saved, with or without a jit boundary:
+      # checkpoint_name_fwd stages the value directly, so no recompute branch
+      # drags the input x in as an extra residual.
+      self.assertLen(leaves, 1)
+      self.assertArraysAllClose(leaves[0], jnp.cos(x))
+      x_bar, = f_vjp(jnp.ones_like(x))
+      self.assertArraysAllClose(x_bar, jnp.cos(x))
+
+  def test_custom_remat_layered_outermost_policy_wins(self):
+    def f_fwd(policy, x):
+      saveable = (isinstance(policy, SaveOnlyTheseNames) and
+                  'cos' in policy.saveable_names)
+      return jnp.sin(x), (jnp.cos(x) if saveable else None)
+    def f_rem(res, x):
+      return jnp.sin(x), (jnp.cos(x) if res is None else res)
+    def f_bwd(cos_x, g):
+      return cos_x * g,
+    sin = custom_remat(jnp.sin, f_fwd, f_rem, f_bwd)
+    policy = jax.checkpoint_policies.save_only_these_names('cos')
+    x = jnp.arange(3.)
+
+    def bwd_recomputes_cos(f):
+      y, f_vjp = jax.vjp(f, x)
+      jaxpr = jax.jit(f_vjp).trace(y).lojax.jaxpr
+      jaxpr, _ = pe.dce_jaxpr(jaxpr, True)
+      return '= cos' in jaxpr.pretty_print(use_color=False)
+
+    self.assertFalse(bwd_recomputes_cos(
+        jax.remat(jax.remat(sin), policy=policy)))
+    self.assertTrue(bwd_recomputes_cos(
+        jax.remat(jax.remat(sin, policy=policy))))
+
+  @config.custom_vjp3(True)
+  def test_custom_vjp_layered_outermost_policy_wins(self):
+    sin = jax.custom_vjp(jnp.sin)
+    def fwd(x):
+      return jnp.sin(x), checkpoint_name_fwd(jnp.cos(x), 'cos')
+    def bwd(cos_x, g):
+      return cos_x * g,
+    sin.defvjp(fwd, bwd)
+    policy = jax.checkpoint_policies.save_only_these_names('cos')
+    x = jnp.arange(3.)
+
+    def bwd_recomputes_cos(f):
+      y, f_vjp = jax.vjp(f, x)
+      jaxpr = jax.jit(f_vjp).trace(y).lojax.jaxpr
+      jaxpr, _ = pe.dce_jaxpr(jaxpr, True)
+      return '= cos' in jaxpr.pretty_print(use_color=False)
+
+    self.assertFalse(bwd_recomputes_cos(
+        jax.remat(jax.remat(sin), policy=policy)))
+    self.assertTrue(bwd_recomputes_cos(
+        jax.remat(jax.remat(sin, policy=policy))))
+    jtu.check_grads(jax.remat(jax.remat(sin), policy=policy), (3.,),
+                    order=2, modes=['rev'])
+
+  @config.custom_vjp3(True)
+  def test_custom_vjp_offload_names_in_fwd_jaxpr(self):
+    # Jaxpr-level check like test_remat_offload_names_jaxpr, but with the
+    # named values inside a custom_vjp fwd rule: the offloaded residual is
+    # device_put to the offload destination on the fwd pass and saved there,
+    # then device_put back on the bwd pass.
+    policy = jax.checkpoint_policies.save_and_offload_only_these_names(
+        names_which_can_be_saved=['cos'], names_which_can_be_offloaded=['sin2'],
+        offload_src='device', offload_dst='pinned_host')
+
+    sin = jax.custom_vjp(jnp.sin)
+    def fwd(x):
+      return jnp.sin(x), (checkpoint_name_fwd(jnp.cos(x), 'cos'),
+                          checkpoint_name_fwd(jnp.sin(x * 2), 'sin2'))
+    def bwd(res, g):
+      cos_x, sin_2x = res
+      return (cos_x + 0 * sin_2x) * g,
+    sin.defvjp(fwd, bwd)
+
+    f = jax.remat(sin, policy=policy)
+    jaxpr_text = str(api.make_jaxpr(api.grad(lambda x: f(x).sum()))(jnp.arange(16.)))
+    self.assertEqual(jaxpr_text.count('MemorySpace.Host'), 1)
+    self.assertEqual(jaxpr_text.count('MemorySpace.Device'), 1)
 
   def test_remat_dce_input_to_output_forwarding(self):
     traced = jax.jit(lambda x, y: (x, x * y)).trace(
