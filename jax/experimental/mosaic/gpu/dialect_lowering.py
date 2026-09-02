@@ -275,9 +275,7 @@ def _initialize_barrier_op_lowering_rule(
     op: mgpu.InitializeBarrierOp,
 ) -> Sequence[ir.Value]:
   i32 = ir.IntegerType.get_signless(32)
-  arrival_count = op.arrival_count.value * (
-      utils.WARPGROUP_SIZE if not op.orders_tensor_core.value else 1
-  )
+  arrival_count = op.arrival_count.value
   for i in range(op.num_barriers.value):
     bar_ptr = utils.getelementptr(op.base_pointer, [i], _lowered_barrier_type())
     llvm.inline_asm(
@@ -614,12 +612,13 @@ def _async_store_smem_op_lowering_rule(
   cluster_barrier_ref = barrier_ref.remap_to_cluster(cluster_dim, cluster_idx)
 
   total_bits = math.prod(value.shape) * utils.bitwidth(value.mlir_dtype)
-  if total_bits % (8 * utils.WARPGROUP_SIZE):
+  if total_bits % 8:
     raise NotImplementedError(
-        f"Transfer of {total_bits} bits is not divisible by "
-        f"{8 * utils.WARPGROUP_SIZE}"
+        f"Transfer of {total_bits} bits is not divisible by 8"
     )
-  cluster_barrier_ref.arrive_expect_tx(total_bits // 8 // utils.WARPGROUP_SIZE)
+  cluster_barrier_ref.arrive_expect_tx(
+      total_bits // 8, predicate=ctx.single_lane_predicate
+  )
 
   atomic = None
   if op.atomic_type is not None:
@@ -1725,25 +1724,10 @@ def _mgpu_arrive_op_lowering_rule(
 ) -> Sequence[ir.Value]:
   barrier = utils.DialectBarrierRef.from_barrier_memref(arrive_op.barrier)
   orders_tc = arrive_op.orders_tensor_core.value
-  if orders_tc:
-    # Barrier expects a single thread arrival.
-    predicate = ctx.single_lane_predicate
-    arrival_count = 1
-  elif ctx.thread_semantics == utils.ThreadSubset.WARP:
-    # In warp-level lowering, we arrive on each CUDA thread in a warp, but the
-    # barrier still expects a full 128 arrivals so we arrive 4 times on each
-    # CUDA thread instead.
-    predicate = None
-    arrival_count = 4
-  else:
-    # Barrier expects each thread arrives once.
-    predicate = None
-    arrival_count = 1
-
   barrier.barrier_ref.arrive(
-      arrival_count,
+      arrival_count=1,
       orders_tensor_core=orders_tc,
-      predicate=predicate,
+      predicate=ctx.single_lane_predicate,
       scope=ctx.thread_semantics,
   )
   return []
@@ -1753,58 +1737,18 @@ def _mgpu_arrive_op_lowering_rule(
 def _mgpu_arrive_expect_tx_op_lowering_rule(
     ctx: LoweringContext, arrive_expect_tx_op: mgpu.ArriveExpectTxOp
 ) -> Sequence[ir.Value]:
-  i32 = ir.IntegerType.get_signless(32)
-  num_lanes = (
-      utils.WARPGROUP_SIZE
-      if ctx.thread_semantics == utils.ThreadSubset.WARPGROUP
-      else utils.WARP_SIZE
-  )
   # TODO: Remove this branch when the minimum jaxlib version is 0.11.1
   if not isinstance(arrive_expect_tx_op.expect_tx, ir.Value):
     num_bytes = int(arrive_expect_tx_op.expect_tx)
-    if num_bytes % num_lanes == 0:
-      # Prefer uniform arrival whenever possible because it's more efficient.
-      # We arrive uniformly from each lane in the WG/Warp, so we need to divide
-      # the number of bytes by the number of lanes in the WG/Warp.
-      tx_bytes = utils.c(num_bytes // num_lanes, i32)
-    else:
-      tx_bytes = arith.select(
-          ctx.single_lane_predicate,
-          utils.c(num_bytes, i32),
-          utils.c(0, i32),
-      )
   else:
     num_bytes = arrive_expect_tx_op.expect_tx
-    if isinstance(num_bytes.owner, arith.ConstantOp):
-      num_bytes_int = int(num_bytes.owner.value)
-      if num_bytes_int % num_lanes == 0:
-        # Prefer uniform arrival whenever possible because it's more efficient.
-        # We arrive uniformly from each lane in the WG/Warp, so we need to divide
-        # the number of bytes by the number of lanes in the WG/Warp.
-        tx_bytes = utils.c(num_bytes_int // num_lanes, i32)
-      else:
-        tx_bytes = arith.select(
-            ctx.single_lane_predicate,
-            num_bytes,
-            utils.c(0, i32),
-        )
-    else:
-      tx_bytes = arith.select(
-          ctx.single_lane_predicate,
-          num_bytes,
-          utils.c(0, i32),
-      )
 
   barrier = utils.DialectBarrierRef.from_barrier_memref(
       arrive_expect_tx_op.barrier
   )
-  # In Warp-level lowering, we arrive on each CUDA thread in a warp, but the
-  # barrier still expects a full 128 arrivals so we arrive 4 times on each CUDA
-  # thread instead.
-  if ctx.thread_semantics == utils.ThreadSubset.WARP:
-    barrier.barrier_ref.arrive(arrival_count=3, can_complete=False)
-  barrier.barrier_ref.arrive_expect_tx(tx_bytes)
-
+  barrier.barrier_ref.arrive_expect_tx(
+      num_bytes, predicate=ctx.single_lane_predicate
+  )
   return []
 
 

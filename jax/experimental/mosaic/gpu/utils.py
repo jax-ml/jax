@@ -1109,11 +1109,6 @@ class BarrierRef:
       return "cluster"
     return "cta"
 
-  @property
-  def _nvvm_scope(self) -> nvvm.MemScopeKind:
-    if self.base_address.type == ir.Type.parse("!llvm.ptr<7>"):
-      return nvvm.MemScopeKind.CLUSTER
-    return nvvm.MemScopeKind.CTA
 
   def test_parity(
       self,
@@ -1204,15 +1199,14 @@ class BarrierRef:
   ):
     if orders_tensor_core:
       nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
-      if predicate is not None:
-        # We need to synchronize the threads after `::before_thread_sync`, as
-        # not all threads arrive on the barrier.
-        if scope == ThreadSubset.WARPGROUP:
-          warpgroup_barrier()
-        elif scope == ThreadSubset.WARP:
-          warp_barrier()
-        else:
-          raise ValueError(f"Unsupported scope: {scope}")
+    if predicate is not None:
+      # We need to synchronize the threads as not all threads arrive on the barrier.
+      if scope == ThreadSubset.WARPGROUP:
+        warpgroup_barrier()
+      elif scope == ThreadSubset.WARP:
+        warp_barrier()
+      else:
+        raise ValueError(f"Unsupported scope: {scope}")
 
     ptx_scope = self._ptx_scope
     if can_complete or ptx_scope != "cta":
@@ -1252,8 +1246,19 @@ class BarrierRef:
     elif isinstance(bytes.type, ir.IndexType):
       i32 = ir.IntegerType.get_signless(32)
       bytes = arith.index_cast(i32, bytes)
-    nvvm.mbarrier_arrive_expect_tx(
-        self.get_ptr(), bytes, predicate=predicate, scope=self._nvvm_scope
+    ptx_scope = self._ptx_scope
+    pred_ptx = pred_constraint = ""
+    if predicate is not None:
+      pred_ptx = "@$2"
+      pred_constraint = ",b"
+
+    llvm.inline_asm(
+        ir.Type.parse("!llvm.void"),
+        [self.get_ptr(), bytes]
+        + ([predicate] if predicate is not None else []),
+        f"{pred_ptx} mbarrier.arrive.expect_tx.release.{ptx_scope}.shared::{ptx_scope}.b64 _, [$0], $1;",
+        "r,r" + pred_constraint,
+        has_side_effects=True,
     )
 
   def complete_tx(
