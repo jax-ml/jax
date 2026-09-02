@@ -1664,14 +1664,11 @@ absl::Status PyArray::ReplaceWithAlias(PyArray o)
   if (mu1 > mu2) {
     std::swap(mu1, mu2);
   }
-  nanobind::object old_aval;
   nanobind::object old_npy_value;
   nanobind::object old_fully_replicated_array;
   ft_lock_guard lock1(*mu1);
   ft_lock_guard lock2(*mu2);
 
-  old_aval = std::move(storage.aval);
-  storage.aval = o_storage.aval;
   old_npy_value = std::move(storage.npy_value);
   storage.npy_value = o_storage.npy_value;
   storage.ifrt_array = o_storage.ifrt_array;
@@ -2309,7 +2306,7 @@ absl::Status PyArray::Register(nb::module_& m) {
       },
       nb::is_method(), nb::arg("aval"), nb::arg("sharding"));
   type.attr("_sharding") = xla::nb_property_readonly(&PyArray::sharding);
-  type.attr("aval") = xla::nb_property(&PyArray::aval, &PyArray::set_aval);
+  type.attr("aval") = xla::nb_property_readonly(&PyArray::aval);
   type.attr("_arrays") =
       xla::nb_property(&PyArray::arrays, [](PyArray& self, nb::object obj) {
         xla::ThrowIfError(self.set_arrays(obj));

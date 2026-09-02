@@ -269,6 +269,9 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertTrue(arr.sharding.num_devices == 1)
     self.assertEqual(arr._committed, False)
     self.assertFalse(arr.weak_type)
+    if jaxlib_extension_version >= 490:
+      with self.assertRaises(AttributeError):
+        arr.aval = arr.aval
 
   def test_jnp_array_jit_add(self):
     a = jnp.array([1, 2, 3])

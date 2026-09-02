@@ -4131,8 +4131,8 @@ class FooTyRules:
 
   @staticmethod
   def result_handler(sticky_device, aval):
+    del sticky_device
     def handler(_, buf):
-      buf.aval = core.ShapedArray(buf.shape, buf.dtype)
       return FooArray(aval.shape, buf)
     return handler
 

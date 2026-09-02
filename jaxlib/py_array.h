@@ -121,7 +121,8 @@ struct PyArray_Storage {
   const bool committed = false;
   const bool weak_type = false;
   mutable ft_mutex mu;
-  nanobind::object aval ABSL_GUARDED_BY(mu);
+
+  const nanobind::object aval;
   const xla::nb_dtype dtype;
   const std::vector<int64_t> shape;
 
@@ -185,18 +186,7 @@ class PyArray : public nanobind::object {
 
   using Storage = PyArray_Storage;
 
-  nanobind::object aval() const {
-    const Storage& storage = GetStorage();
-    ft_lock_guard lock(storage.mu);
-    return storage.aval;
-  }
-  void set_aval(nanobind::object aval) {
-    Storage& storage = GetStorage();
-    nanobind::object old_aval;
-    ft_lock_guard lock(storage.mu);
-    old_aval = std::move(storage.aval);
-    storage.aval = std::move(aval);
-  }
+  const nanobind::object& aval() const { return GetStorage().aval; }
 
   bool weak_type() const { return GetStorage().weak_type; }
 

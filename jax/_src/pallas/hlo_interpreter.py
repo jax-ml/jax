@@ -356,6 +356,10 @@ def pallas_call_hlo_interpret(
                                 args, input_output_aliases)
   # TODO(b/370563936): Fix correctness issue w/ io aliasing
   scalars = args[grid_mapping.slice_index_ops]
+  scalars = tuple(
+      s.astype(jnp.int32) if isinstance(s.dtype, jax_core.bint) else s
+      for s in scalars
+  )
   block_args = args[len(scalars):]
   # invars: [*scalar_prefetch, *consts, *inputs, *outputs, *scratch]
   # block_args now contains: *consts, *inputs, *outputs
@@ -416,10 +420,6 @@ def pallas_call_hlo_interpret(
 
     carry_consts_ins, scratch = split_list(carry_blocks, [num_inout_blocks])
     with pallas_core.grid_env(local_grid_env):
-      for s in scalars:
-        if isinstance(s.dtype, jax_core.bint):
-          aval = jax_core.typeof(s)
-          s.aval = aval.update(dtype=jnp.int32)
       start_indices = [
           bm.compute_start_indices_interpret(loop_idx, *scalars)
           for bm in grid_mapping.block_mappings
