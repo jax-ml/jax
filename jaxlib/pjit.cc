@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -472,7 +473,7 @@ void CallShardArgFallback(nb::handle arg, nb::handle sharding,
   tsl::profiler::TraceMe traceme("cpp_pjit_shard_arg_fallback");
   auto py_array_or_bufs = fallback(arg, sharding, layout);
   auto py_array = nb::cast<PyArray>(py_array_or_bufs);
-  num_args_arrays.push_back(tsl::FormRef(py_array.ifrt_array()));
+  num_args_arrays.push_back(py_array.ifrt_array_ref());
   keep_alive_objects.push_back(std::move(py_array_or_bufs));
 }
 
@@ -529,9 +530,9 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
 
     if (arg.type().ptr() != PyArray::type().ptr()) {
       if (data_device != nullptr && in_device_local_layout.is_none()) {
-        TF_RETURN_IF_ERROR(
+        ABSL_RETURN_IF_ERROR(
             ApplyTransferGuardToHostToDevice(transfer_guard_formatter));
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(
             auto device_put_result,
             DevicePutWithDevice(arg,
                                 executable.ifrt_loaded_executable()->client(),
@@ -558,13 +559,13 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
            (!py_array.committed() && sharding_num_devices == 1));
 
     if (!in_device_local_layout.is_none()) {
-      xla::ifrt::Array* ifrt_array = py_array.ifrt_array();
-      TF_ASSIGN_OR_RETURN(auto arr_layout, ifrt_array->pjrt_layout());
+      xla::ifrt::ArrayRef ifrt_array = py_array.ifrt_array_ref();
+      ABSL_ASSIGN_OR_RETURN(auto arr_layout, ifrt_array->pjrt_layout());
       if (arr_layout == nullptr) {
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(
             xla::ifrt::Shape shard_shape,
             ifrt_array->sharding().GetShardShape(ifrt_array->shape()));
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(
             arr_layout,
             executable.ifrt_loaded_executable()->client()->GetDefaultPjRtLayout(
                 ifrt_array->dtype(), shard_shape.dims(),
@@ -588,7 +589,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
       continue;
     }
 
-    xla::ifrt::Array* ifrt_array = py_array.ifrt_array();
+    xla::ifrt::ArrayRef ifrt_array = py_array.ifrt_array_ref();
     // PyArray inputs should have already been checked in
     // `PyArgSignatureOfValue()` called by
     // `PjitFunction::ComputeCallSignature()`.
@@ -601,10 +602,10 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
           ifrt_sharding.devices()->devices().front(),
           ifrt_sharding.memory_kind(), GetMemoryKind(in_shardings[dce_index]))];
       copy_group.indices.push_back(num_args_arrays.size());
-      copy_group.arrays.push_back(tsl::FormRef(ifrt_array));
+      copy_group.arrays.push_back(ifrt_array);
       num_args_arrays.push_back({});
     } else {
-      num_args_arrays.push_back(tsl::FormRef(ifrt_array));
+      num_args_arrays.push_back(ifrt_array);
     }
 
     keep_alive_objects.push_back(arg);
@@ -613,10 +614,11 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
   if (!copy_groups.empty() && !addressable_devices.empty()) {
     xla::ifrt::Client* const ifrt_client =
         executable.ifrt_loaded_executable()->client();
-    TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef ifrt_devices,
-                        ifrt_client->MakeDeviceList({addressable_devices[0]}));
+    ABSL_ASSIGN_OR_RETURN(
+        xla::ifrt::DeviceListRef ifrt_devices,
+        ifrt_client->MakeDeviceList({addressable_devices[0]}));
     for (auto& [key, group] : copy_groups) {
-      TF_ASSIGN_OR_RETURN(
+      ABSL_ASSIGN_OR_RETURN(
           auto copied_ifrt_arrays,
           ifrt_client->CopyArrays(absl::MakeSpan(group.arrays), ifrt_devices,
                                   std::get<2>(key),
@@ -805,8 +807,8 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
                              cache_entry->const_args.end());
 
     for (nb::handle const_arg : cache_entry->const_args) {
-      TF_ASSIGN_OR_RETURN(auto const_arg_signature,
-                          PyArgSignatureOfValue(const_arg, enable_x64));
+      ABSL_ASSIGN_OR_RETURN(auto const_arg_signature,
+                            PyArgSignatureOfValue(const_arg, enable_x64));
       dynamic_arg_signatures.push_back(std::move(const_arg_signature));
     }
   }
@@ -841,7 +843,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // Check if the thread guard is active and should prevent execution.
   // Skipped for portable executables.
   if (cache_entry->executable->ifrt_executable()->devices().has_value()) {
-    TF_RETURN_IF_ERROR(CheckThreadGuard(
+    ABSL_RETURN_IF_ERROR(CheckThreadGuard(
         *cache_entry->executable->ifrt_executable()->devices()));
   }
 
@@ -849,10 +851,10 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   std::vector<xla::ifrt::ArrayRef> output_arrays;
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(auto result,
-                        cache_entry->executable->ifrt_executable()->Execute(
-                            absl::MakeSpan(*num_args_arrays), execute_options,
-                            /*devices=*/std::nullopt));
+    ABSL_ASSIGN_OR_RETURN(auto result,
+                          cache_entry->executable->ifrt_executable()->Execute(
+                              absl::MakeSpan(*num_args_arrays), execute_options,
+                              /*devices=*/std::nullopt));
     output_arrays = std::move(result.outputs);
   }
 
@@ -864,12 +866,12 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     // Creating the PyArray result. In addition to the IFRT arrays, the metadata
     // like `aval` and `sharding` are retrieved from the cache for this
     // function, which are produced by the python path in `cache_miss`.
-    PyArray py_array(
-        cache_entry->out_avals[i], cache_entry->out_weak_types[i],
-        cache_entry->out_dtypes[i], cache_entry->out_shapes[i],
-        cache_entry->out_shardings[i], cache_entry->executable->client(),
-        std::move(output_arrays[i]),
-        /*committed=*/cache_entry->out_committed.at(i), /*skip_checks=*/true);
+    PyArray py_array(cache_entry->out_avals[i], cache_entry->out_weak_types[i],
+                     cache_entry->out_dtypes[i], cache_entry->out_shapes[i],
+                     cache_entry->out_shardings[i],
+                     cache_entry->executable->client(),
+                     std::move(output_arrays[i]),
+                     /*committed=*/cache_entry->out_committed.at(i));
 
     outputs.push_back(std::move(py_array));
   }
@@ -914,8 +916,8 @@ absl::Status PjitFunction::ComputeCallSignature(
   dynamic_arg_layouts.reserve(flat_dynamic_args.size());
 
   for (nb::handle arg : flat_dynamic_args) {
-    TF_ASSIGN_OR_RETURN(auto arg_signature,
-                        PyArgSignatureOfValue(arg, enable_x64));
+    ABSL_ASSIGN_OR_RETURN(auto arg_signature,
+                          PyArgSignatureOfValue(arg, enable_x64));
     signature.dynamic_arg_signatures.push_back(std::move(arg_signature));
 
     // It should be already checked previously in the entry point of
@@ -1542,7 +1544,7 @@ class NumpyHandler : public ShardArgsHandler {
       std::vector<xla::ifrt::ArrayRef> arrays;
       {
         nb::gil_scoped_release gil_release;
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(
             arrays,
             client->MakeArraysFromHostBufferShards(
                 absl::MakeSpan(group.specs),

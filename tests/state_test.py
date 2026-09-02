@@ -38,7 +38,11 @@ from jax._src import flattree as ft
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import types as state_types
 from jax._src.state.discharge import (
-                                      discharge_state,run_state, run_state_reference)
+    discharged_aval,
+    discharge_state,
+    run_state,
+    run_state_reference,
+)
 from jax._src.state.primitives import ( addupdate_p,get_p, pin,
                                        ref_addupdate, ref_get, ref_set,
                                        ref_swap, swap_p, unpin,
@@ -2107,6 +2111,34 @@ class PinnedBuffersTest(jtu.JaxTestCase):
   def test_new_ref_pinned_eager_error(self):
     with self.assertRaises(NotImplementedError):
       jax.new_ref(jnp.arange(3.), pin=True)
+
+  def test_discharged_aval_non_ref_preserves_memory_space(self):
+    aval = core.ShapedArray((3,), jnp.float32, memory_space=core.MemorySpace.Host)
+    discharged = discharged_aval(aval, discharge=True, strip_memory_space=True)
+    self.assertEqual(discharged.memory_space, core.MemorySpace.Host)
+    self.assertEqual(discharged, aval)
+
+    discharged_no_strip = discharged_aval(
+        aval, discharge=False, strip_memory_space=True
+    )
+    self.assertEqual(discharged_no_strip, aval)
+
+  def test_discharge_state_preserves_pure_input_memory_space(self):
+    def f(pure_x, ref_init):
+      ref = jax.new_ref(ref_init)
+      ref[...] += 1.0
+      return pure_x, ref[...]
+
+    x_aval = core.ShapedArray(
+        (4,), jnp.float32, memory_space=core.MemorySpace.Host
+    )
+    ref_init_aval = core.ShapedArray((4,), jnp.float32)
+    closed_jaxpr = jax.make_jaxpr(f)(x_aval, ref_init_aval)
+    discharged_jaxpr = discharge_state(closed_jaxpr, strip_memory_space=True)
+    self.assertEqual(
+        discharged_jaxpr.jaxpr.invars[0].aval.memory_space,
+        core.MemorySpace.Host,
+    )
 
 
 class WithMemorySpaceConstraintTest(jtu.JaxTestCase):

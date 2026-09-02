@@ -35,7 +35,7 @@ _VERY_LARGE_NUMBER = 512 * 1024
 
 def create_inputs(
   *shardings: P,
-  dtype: jnp.dtype = jnp.float32,
+  dtype: jax.typing.DTypeLike = jnp.float32,
   mesh_shape: tuple[int, ...] = (2, 2, 2),
 ) -> tuple[jax.sharding.Mesh, tuple[jax.ShapeDtypeStruct, ...]]:
   mesh = jtu.create_mesh(mesh_shape, ("x", "y", "z"))

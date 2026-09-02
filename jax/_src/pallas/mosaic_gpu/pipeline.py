@@ -36,7 +36,7 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
 from jax.experimental import pallas as pl
-from jax.experimental.mosaic.gpu import core as mgpu_core
+from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import jax.numpy as jnp
 
 
@@ -328,7 +328,7 @@ def emit_pipeline[T](
   if not has_dynamic_grid and max_concurrent_steps > num_steps:
     max_concurrent_steps = int(num_steps)
 
-  if is_cp_async := mgpu_core._infer_arch() < (9, 0):
+  if is_cp_async := mgpu_utils._infer_arch() < (9, 0):
     if out_specs:
       raise NotImplementedError(
           "emit_pipeline on pre-Hopper GPUs only supports input-only pipelines"

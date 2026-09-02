@@ -15,24 +15,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 * Deprecations
 
-  * Pallas Triton ops in {mod}`jax.experimental.pallas.ops.gpu` are deprecated.
-    Please use [`tokamax`](https://github.com/openxla/tokamax) for equivalent
-    implementations if available, e.g., `tokamax.layer_norm`,
-    `tokamax.dot_product_attention`.
-  * {func}`jax.experimental.pallas.core_map` is deprecated. Please migrate to
-    {func}`jax.experimental.pallas.kernel`.
   * `pl.reciprocal` was moved into {mod}`jax.experimental.pallas.tpu`.
     Accessing it via {mod}`jax.experimental.pallas` is deprecated.
 
-### Mosaic GPU
-
-* New features
-
-  * The ``barrier`` argument of
-    {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem` must now be
-    omitted on pre-Hopper GPUs (which use the ``cp.async`` implementation).
-    When omitted, the completion of the copy must be awaited via
-    {func}`jax.experimental.pallas.mosaic_gpu.wait_gmem_to_smem`.
+### Mosaic GPU
 
 * Deprecations
 
@@ -49,12 +35,32 @@ Remember to align the itemized text with the first line of an item within a list
 
 * New features
 
-  * Added `jax_pallas_auto_assign_collective_ids_base_id` and
-    `jax_pallas_auto_assign_collective_ids_limit` config flags to allow
-    configuring the base collective ID and the limit for auto-assigned collective IDs.
+  * Added `jax_pallas_auto_assign_collective_ids_limit` config flag to allow
+    configuring the limit for auto-assigned collective IDs.
   * {func}`jax.experimental.pallas.tpu.get_barrier_semaphore` now accepts an
     optional hashable `tag` argument, assigning barrier semaphores automatically
     to kernels sharing the same tag.
+
+## Released with JAX 0.11.1 (August 17, 2026)
+
+* Deprecations
+
+  * Pallas Triton ops in {mod}`jax.experimental.pallas.ops.gpu` are deprecated.
+    Please use [`tokamax`](https://github.com/openxla/tokamax) for equivalent
+    implementations if available, e.g., `tokamax.layer_norm`,
+    `tokamax.dot_product_attention`.
+  * {func}`jax.experimental.pallas.core_map` is deprecated. Please migrate to
+    {func}`jax.experimental.pallas.kernel`.
+
+### Mosaic GPU
+
+* New features
+
+  * The ``barrier`` argument of
+    {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem` must now be
+    omitted on pre-Hopper GPUs (which use the ``cp.async`` implementation).
+    When omitted, the completion of the copy must be awaited via
+    {func}`jax.experimental.pallas.mosaic_gpu.wait_gmem_to_smem`.
 
 ## Released with JAX 0.11.0 (July 16, 2026)
 

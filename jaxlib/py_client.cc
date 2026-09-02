@@ -29,9 +29,11 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/absl_check.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/str_cat.h"
@@ -191,8 +193,9 @@ std::vector<nb_class_ptr<PyDevice>> PyClient::GetAllDevices() {
 
 absl::StatusOr<nb_class_ptr<PyDevice>> PyClient::DeviceFromLocalHardwareId(
     int local_hardware_id) {
-  TF_ASSIGN_OR_RETURN(ifrt::Device * device,
-                      ifrt_client_->LookupAddressableDevice(local_hardware_id));
+  ABSL_ASSIGN_OR_RETURN(
+      ifrt::Device * device,
+      ifrt_client_->LookupAddressableDevice(local_hardware_id));
   return GetPyDevice(device);
 }
 
@@ -243,17 +246,18 @@ absl::Status PyClient::Defragment() {
     // TODO(hyeontaek): Re-construct ifrt::Array with new xla::PjRtBuffer so
     // that std::shared_ptr<xla::PjRtBuffer> does not need to be updated
     // in-place.
-    if (array.ifrt_array() == nullptr) {
+    if (array.ifrt_array_ref() == nullptr) {
       continue;
     }
-    auto* arr = xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(
-        array.ifrt_array());
+    tsl::RCReference<ifrt::PjRtCompatibleArray> arr =
+        xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(
+            array.ifrt_array_ref());
     if (arr == nullptr) {
       throw xla::XlaRuntimeError(
           "This operation is implemented for a PjRt-compatible backend "
           "only.");
     }
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         absl::Span<std::shared_ptr<xla::PjRtBuffer>> pjrt_buffers,
         arr->mutable_pjrt_buffers());
     for (int i = 0; i < pjrt_buffers.size(); ++i) {
@@ -264,8 +268,8 @@ absl::Status PyClient::Defragment() {
       auto [iter, inserted] =
           pjrt_buf_to_tmp_buffer.insert({pjrt_buf_ptr.get(), TmpBuffer()});
       if (inserted) {
-        TF_ASSIGN_OR_RETURN(iter->second.host_copy,
-                            pjrt_buf_ptr->ToLiteral().Await());
+        ABSL_ASSIGN_OR_RETURN(iter->second.host_copy,
+                              pjrt_buf_ptr->ToLiteral().Await());
       }
       iter->second.pjrt_buffer_ptrs.push_back(&pjrt_buf_ptr);
     }
@@ -280,10 +284,10 @@ absl::Status PyClient::Defragment() {
   // continue if we fail to reconstitute device buffers.
   for (const auto& it : pjrt_buf_to_tmp_buffer) {
     xla::PjRtBuffer* pjrt_buf = it.first;
-    TF_CHECK_OK(pjrt_buf
-                    ->ReleaseDeviceMemoryOwnership(
-                        /*wait_for_operations_to_complete=*/true)
-                    .status());
+    ABSL_CHECK_OK(pjrt_buf
+                      ->ReleaseDeviceMemoryOwnership(
+                          /*wait_for_operations_to_complete=*/true)
+                      .status());
   }
 
   // Copy host copies back to device and update PyArrays in-place.
@@ -295,7 +299,7 @@ absl::Status PyClient::Defragment() {
             ->BufferFromHostLiteral(*tmp_buffer.host_copy,
                                     pjrt_buf->memory_space())
             .value();
-    TF_CHECK_OK(new_copy->GetReadyFuture().Await());
+    ABSL_CHECK_OK(new_copy->GetReadyFuture().Await());
 
     std::shared_ptr<xla::PjRtBuffer> new_pjrt_buf_ptr(new_copy.release());
     for (std::shared_ptr<xla::PjRtBuffer>* pjrt_buffer_ptr :
@@ -414,10 +418,10 @@ PyClient::CompileAndLoadIfrtProgram(
             std::move(ifrt_program), std::move(ifrt_options));
     auto ready_future = ifrt_loaded_executable_fut.GetReadyFuture();
     BlockUntilReadyWithCancel(ready_future);
-    TF_ASSIGN_OR_RETURN(ifrt_loaded_executable,
-                        std::move(ifrt_loaded_executable_fut).Await());
+    ABSL_ASSIGN_OR_RETURN(ifrt_loaded_executable,
+                          std::move(ifrt_loaded_executable_fut).Await());
     if (compile_status.ok()) {
-      TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
+      ABSL_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
     }
   }
   if (!compile_status.ok()) {
@@ -443,7 +447,7 @@ static absl::StatusOr<nb_class_ptr<PyExecutable>> CompileWithTopology(
   {
     auto xla_options =
         std::make_unique<ifrt::XlaCompileOptions>(options, std::move(devices));
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         ifrt_executable,
         client->ifrt_client()
             ->GetDefaultCompiler()
@@ -457,7 +461,7 @@ static absl::StatusOr<nb_class_ptr<PyExecutable>> CompileWithTopology(
 absl::StatusOr<nb_class_ptr<PyExecutable>> PyClient::Compile(
     nb_class_ptr<PyClient> client, mlir::ModuleOp module,
     ifrt::DeviceListRef executable_devices, xla::CompileOptions options) {
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto topology,
       client->ifrt_client()->GetTopologyForDevices(executable_devices));
   return CompileWithTopology(std::move(client), module, *topology,
@@ -489,7 +493,7 @@ PyClient::CompileAndLoad(nb_class_ptr<PyClient> client, mlir::ModuleOp module,
     if (xla::sdy::hasShardyMesh(module)) {
       // Shardy is not enabled, but the module has shardy ops. Likely due to
       // export loading a GSPMD checkpoint. Fall back to GSPMD.
-      TF_RETURN_IF_ERROR(xla::ExportShardyForGSPMD(module));
+      ABSL_RETURN_IF_ERROR(xla::ExportShardyForGSPMD(module));
     }
   }
   options.allow_in_place_mlir_modification = true;  // We just cloned the module
@@ -528,8 +532,8 @@ PyClient::CompileAndLoad(nb_class_ptr<PyClient> client, mlir::ModuleOp module,
 
 absl::StatusOr<nb::bytes> PyClient::SerializeExecutable(
     const PyLoadedExecutable& executable) const {
-  TF_ASSIGN_OR_RETURN(auto serialized,
-                      executable.ifrt_loaded_executable()->Serialize());
+  ABSL_ASSIGN_OR_RETURN(auto serialized,
+                        executable.ifrt_loaded_executable()->Serialize());
   return nb::bytes(serialized.data(), serialized.size());
 }
 
@@ -552,14 +556,14 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
   PyUserContextScope user_context_scope;
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         ifrt_loaded_executable,
         client->ifrt_client_->GetDefaultCompiler()
             ->DeserializeLoadedExecutable(std::move(cord),
                                           std::move(ifrt_deserialize_options))
             .Await());
   }
-  TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
+  ABSL_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   return make_nb_class<PyLoadedExecutable>(std::move(client),
                                            std::move(ifrt_loaded_executable),
                                            std::move(fingerprint));
@@ -584,14 +588,14 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
   PyUserContextScope user_context_scope;
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         ifrt_loaded_executable,
         client->ifrt_client_->GetDefaultCompiler()
             ->DeserializeLoadedExecutable(std::move(cord),
                                           std::move(ifrt_deserialize_options))
             .Await());
   }
-  TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
+  ABSL_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   return make_nb_class<PyLoadedExecutable>(std::move(client),
                                            std::move(ifrt_loaded_executable),
                                            std::move(fingerprint));
@@ -642,7 +646,7 @@ absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
     }
     const xla::ifrt::DeviceList* addressable_devices =
         array->sharding().devices()->AddressableDeviceList();
-    TF_ASSIGN_OR_RETURN(std::optional<int64_t> byte_size, array->ByteSize());
+    ABSL_ASSIGN_OR_RETURN(std::optional<int64_t> byte_size, array->ByteSize());
     if (!byte_size.has_value()) {
       return absl::OkStatus();
     }
@@ -672,8 +676,9 @@ absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
 
   std::vector<PyArray> arrays = LiveArrays();
   for (const PyArray& array : arrays) {
-    if (ifrt::Array* ifrt_array = array.ifrt_array()) {
-      TF_RETURN_IF_ERROR(add_array_to_profile(ifrt_array, array.traceback()));
+    if (xla::ifrt::ArrayRef ifrt_array = array.ifrt_array_ref()) {
+      ABSL_RETURN_IF_ERROR(
+          add_array_to_profile(ifrt_array.get(), array.traceback()));
     }
   }
 
@@ -731,7 +736,7 @@ absl::StatusOr<nb::object> PyClient::MakePythonCallbackUsingHostSendAndRecv(
     absl::Span<xla::Shape const> result_shapes,
     absl::Span<uint16_t const> send_channel_ids,
     absl::Span<uint16_t const> recv_channel_ids, nb::callable serializer) {
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto loaded_host_callback,
       PyHostSendAndRecvLoadedHostCallback::Create(
           ifrt_client(), std::move(callable), operand_shapes, result_shapes,

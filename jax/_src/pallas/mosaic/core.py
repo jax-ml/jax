@@ -209,7 +209,7 @@ class CompilerParams:
   replace = dataclasses.replace
 
 
-def check_accumulator_ref(shape: tuple[int, ...], dtype: jnp.dtype, mxu_id: int):
+def check_accumulator_ref(shape: tuple[int, ...], dtype: jax.typing.DTypeLike, mxu_id: int):
   from jax._src.pallas.mosaic import tpu_info  # pyrefly: ignore[missing-module-attribute]
   if len(shape) < 2:
     raise ValueError(f"Acc ref must be at least 2D, got shape {shape}")
@@ -280,7 +280,7 @@ class MemorySpace(enum.Enum):
   def from_type(self, ty):
     return MemoryRef(ty, memory_space=self)
 
-  def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
+  def __call__(self, shape: Sequence[int], dtype: jax.typing.DTypeLike):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
     return self.from_type(jax_core.ShapedArray(tuple(shape), dtype))
 
@@ -299,7 +299,7 @@ class MemorySpace(enum.Enum):
 class AccMemorySpace:
   mxu_id: int
 
-  def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
+  def __call__(self, shape: Sequence[int], dtype: jax.typing.DTypeLike):
     shape = tuple(shape)
     check_accumulator_ref(shape, dtype, self.mxu_id)
     return MemoryRef(

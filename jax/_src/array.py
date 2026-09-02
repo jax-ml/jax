@@ -21,7 +21,7 @@ import functools
 from functools import partial
 import math
 import operator as op
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from jax._src import api
 from jax._src import basearray
@@ -37,7 +37,7 @@ from jax._src.op_shardings import are_hlo_shardings_equal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.layout import AutoLayoutSingleton, Format, Layout
-from jax._src.lib import _jax
+from jax._src.lib import _jax, jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import (empty_concrete_mesh, empty_abstract_mesh,
                            use_abstract_mesh)
@@ -204,7 +204,12 @@ class ArrayImpl(basearray.Array):
       arrays = self._check_and_rearrange(arrays, self._sharding, self.aval)
     self._arrays = arrays
 
-  def _check_and_rearrange(self, arrays, sharding, aval):
+  @staticmethod
+  def _check_and_rearrange(
+      arrays: Sequence[ArrayImpl],
+      sharding: Sharding,
+      aval: core.ShapedArray,
+  ) -> list[ArrayImpl]:
     device_id_to_buffer = {_get_device(db).id: db for db in arrays}
 
     addressable_dev = sharding.addressable_devices
@@ -1283,14 +1288,25 @@ def _array_global_result_handler(global_aval, out_sharding, committed):
       return literals.TypedNdArray(np.zeros(global_aval.shape, dtypes.float0),
                                    aval=global_aval)
     phys_aval = core.physical_aval(global_aval)
-    return xc.array_result_handler(phys_aval, out_sharding, committed=committed,
-                                   _skip_checks=True).wrap(handler)
+    if TYPE_CHECKING or jaxlib_extension_version >= 489:
+      return xc.array_result_handler(
+          phys_aval, out_sharding, committed=committed
+      ).wrap(handler)
+    else:
+      return xc.array_result_handler(
+          phys_aval, out_sharding, committed=committed, _skip_checks=True
+      ).wrap(handler)
   if dtypes.issubdtype(global_aval.dtype, dtypes.extended):
     return global_aval.dtype._rules.global_sharded_result_handler(
         global_aval, out_sharding, committed)
-  return xc.array_result_handler(
-      global_aval, out_sharding, committed=committed, _skip_checks=True
-  )
+  if TYPE_CHECKING or jaxlib_extension_version >= 489:
+    return xc.array_result_handler(
+        global_aval, out_sharding, committed=committed
+    )
+  else:
+    return xc.array_result_handler(
+        global_aval, out_sharding, committed=committed, _skip_checks=True
+    )
 pxla.global_result_handlers[core.ShapedArray] = _array_global_result_handler
 
 # Token handlers

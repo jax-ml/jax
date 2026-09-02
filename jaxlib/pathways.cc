@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -129,7 +130,7 @@ absl::StatusOr<std::vector<int>> GetSubmeshOffsets(
     submesh_offsets.push_back(0);
   } else {
     std::vector<int> current_entry(mesh_axis_idx, 0);
-    TF_RETURN_IF_ERROR(PopulateSubmeshOffsets(
+    ABSL_RETURN_IF_ERROR(PopulateSubmeshOffsets(
         mesh_axis_sizes.subspan(0, mesh_axis_idx),
         absl::MakeSpan(current_entry), strides, submesh_offsets));
   }
@@ -236,18 +237,18 @@ absl::StatusOr<nb::list> ExperimentalReshardArrays(nb::sequence py_arrays,
 
   for (int i = 0; i < num_arrays; ++i) {
     PyArray array = nb::cast<PyArray>(py_arrays[i]);
-    if (array.ifrt_array() == nullptr) {
+    if (array.ifrt_array_ref() == nullptr) {
       return absl::InvalidArgumentError(
           absl::StrCat("Input array ", i, " has been donated or deleted."));
     }
-    TF_RETURN_IF_ERROR(PyClientFromPyArray(array, backend));
-    ifrt_arrays.push_back(tsl::FormRef(array.ifrt_array()));
+    ABSL_RETURN_IF_ERROR(PyClientFromPyArray(array, backend));
+    ifrt_arrays.push_back(array.ifrt_array_ref());
 
-    TF_ASSIGN_OR_RETURN(DType ifrt_dtype,
-                        xla::DtypeToIfRtDType(array.dtype()));
+    ABSL_ASSIGN_OR_RETURN(DType ifrt_dtype,
+                          xla::DtypeToIfRtDType(array.dtype()));
     Shape ifrt_shape(array.shape());
-    TF_ASSIGN_OR_RETURN(ShardingRef ifrt_sharding,
-                        GetIfrtHloSharding(out_shardings[i], ifrt_shape));
+    ABSL_ASSIGN_OR_RETURN(ShardingRef ifrt_sharding,
+                          GetIfrtHloSharding(out_shardings[i], ifrt_shape));
     ifrt_specs.push_back(ArraySpec{
         /*dtype=*/std::move(ifrt_dtype),
         /*shape=*/std::move(ifrt_shape),
@@ -262,7 +263,7 @@ absl::StatusOr<nb::list> ExperimentalReshardArrays(nb::sequence py_arrays,
   std::vector<ArrayRef> outputs;
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         outputs, backend->ifrt_client()->ReshardArrays(
                      absl::MakeSpan(ifrt_arrays), ifrt_specs, copy_semantics));
   }
@@ -314,8 +315,8 @@ ExperimentalSplitByMeshAxis(
 
   PyUserContextScope user_context_scope;
   // All input arrays are expected to use the same mesh.
-  TF_ASSIGN_OR_RETURN(DeviceListRef device_list,
-                      GetIfrtDeviceList(py_arrays[0].sharding()));
+  ABSL_ASSIGN_OR_RETURN(DeviceListRef device_list,
+                        GetIfrtDeviceList(py_arrays[0].sharding()));
   int num_devices = device_list->size();
   // The last entry in `mexh_axis_sections` contains the mesh axis size.
   int mesh_axis_size = mesh_axis_sections.back();
@@ -325,8 +326,8 @@ ExperimentalSplitByMeshAxis(
         num_devices, " vs ", mesh_axis_size));
   }
 
-  TF_ASSIGN_OR_RETURN(std::vector<int> strides, GetStrides(mesh_axis_sizes));
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(std::vector<int> strides, GetStrides(mesh_axis_sizes));
+  ABSL_ASSIGN_OR_RETURN(
       std::vector<int> submesh_offsets,
       GetSubmeshOffsets(mesh_axis_idx, mesh_axis_sizes, strides));
 
@@ -338,8 +339,8 @@ ExperimentalSplitByMeshAxis(
   std::vector<ArrayRef> input_ifrt_arrays;
   input_ifrt_arrays.reserve(py_arrays.size());
   for (int array_idx = 0; array_idx < py_arrays.size(); ++array_idx) {
-    TF_RETURN_IF_ERROR(PyClientFromPyArray(py_arrays[array_idx], backend));
-    Array* array = py_arrays[array_idx].ifrt_array();
+    ABSL_RETURN_IF_ERROR(PyClientFromPyArray(py_arrays[array_idx], backend));
+    xla::ifrt::ArrayRef array = py_arrays[array_idx].ifrt_array_ref();
     if (array == nullptr) {
       return xla::InvalidArgument("Input array #%d has been donated or deleted",
                                   array_idx);
@@ -368,7 +369,7 @@ ExperimentalSplitByMeshAxis(
         dims[sharded_dim_idxs[array_idx]] = dims[sharded_dim_idxs[array_idx]] /
                                             mesh_axis_size * submesh_axis_size;
         Shape subshape = Shape(dims);
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(
             ShardingRef ifrt_submesh_sharding,
             GetIfrtHloSharding(submesh_shardings[array_idx][submesh_idx],
                                subshape));
@@ -378,7 +379,7 @@ ExperimentalSplitByMeshAxis(
                       /*sharding=*/std::move(ifrt_submesh_sharding)});
       } else {
         // The arrays is replicated, so its shape does not change.
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(
             ShardingRef ifrt_submesh_sharding,
             GetIfrtHloSharding(submesh_shardings[array_idx][submesh_idx],
                                array->shape()));
@@ -389,7 +390,7 @@ ExperimentalSplitByMeshAxis(
       }
     }
 
-    input_ifrt_arrays.push_back(FormRef(array));
+    input_ifrt_arrays.push_back(array);
   }
 
   RemapPlan remap_plan(std::move(input_specs), std::move(output_specs),
@@ -399,12 +400,11 @@ ExperimentalSplitByMeshAxis(
   std::vector<ArrayRef> result_ifrt_arrays;
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(
-        result_ifrt_arrays,
-        backend->ifrt_client()->RemapArrays(
-            remap_plan, absl::MakeSpan(input_ifrt_arrays),
-            donate ? ArrayCopySemantics::kDonateInput
-                   : ArrayCopySemantics::kReuseInput));
+    ABSL_ASSIGN_OR_RETURN(result_ifrt_arrays,
+                          backend->ifrt_client()->RemapArrays(
+                              remap_plan, absl::MakeSpan(input_ifrt_arrays),
+                              donate ? ArrayCopySemantics::kDonateInput
+                                     : ArrayCopySemantics::kReuseInput));
   }
 
   DCHECK_EQ(result_ifrt_arrays.size(), py_arrays.size() * num_submeshes);
@@ -473,13 +473,13 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
     }
   }
 
-  TF_ASSIGN_OR_RETURN(std::vector<int> strides, GetStrides(mesh_axis_sizes));
+  ABSL_ASSIGN_OR_RETURN(std::vector<int> strides, GetStrides(mesh_axis_sizes));
   std::vector<int> submesh_offsets;
   if (mesh_axis_idx == 0) {
     submesh_offsets.push_back(0);
   } else {
     std::vector<int> current_entry(mesh_axis_idx, 0);
-    TF_RETURN_IF_ERROR(PopulateSubmeshOffsets(
+    ABSL_RETURN_IF_ERROR(PopulateSubmeshOffsets(
         mesh_axis_sizes.subspan(0, mesh_axis_idx),
         absl::MakeSpan(current_entry), strides, submesh_offsets));
   }
@@ -492,7 +492,7 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
   input_ifrt_arrays.reserve(num_output_arrays * num_input_arrays_per_output);
 
   nb_class_ptr<PyClient> backend;
-  TF_RETURN_IF_ERROR(PyClientFromPyArray(py_arrays_list[0][0], backend));
+  ABSL_RETURN_IF_ERROR(PyClientFromPyArray(py_arrays_list[0][0], backend));
 
   for (int array_idx = 0; array_idx < num_output_arrays; ++array_idx) {
     const auto& py_arrays = py_arrays_list[array_idx];
@@ -504,7 +504,7 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
     for (int input_idx = 0; input_idx < num_input_arrays_per_output;
          ++input_idx) {
       const PyArray& py_array = py_arrays[input_idx];
-      Array* array = py_array.ifrt_array();
+      xla::ifrt::ArrayRef array = py_array.ifrt_array_ref();
       if (array == nullptr) {
         return xla::InvalidArgument(
             "Input array #%d for output #%d has been donated or deleted",
@@ -540,12 +540,12 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
           ArraySpec{.dtype = array->dtype(),
                     .shape = array->shape(),
                     .sharding = array->shared_ptr_sharding()});
-      input_ifrt_arrays.push_back(tsl::FormRef(array));
+      input_ifrt_arrays.push_back(array);
     }
 
-    Array* first_array = py_arrays[0].ifrt_array();
+    xla::ifrt::ArrayRef first_array = py_arrays[0].ifrt_array_ref();
     if (sharded_dim_idxs[array_idx] < 0) {
-      TF_ASSIGN_OR_RETURN(
+      ABSL_ASSIGN_OR_RETURN(
           ShardingRef ifrt_sharding,
           GetIfrtHloSharding(out_shardings[array_idx], first_array->shape()));
       output_specs.push_back(ArraySpec{.dtype = first_array->dtype(),
@@ -558,7 +558,7 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
       concatenated_dims[sharded_dim_idxs[array_idx]] =
           concatenated_sharded_dim_size;
       Shape concatenated_shape = Shape(concatenated_dims);
-      TF_ASSIGN_OR_RETURN(
+      ABSL_ASSIGN_OR_RETURN(
           ShardingRef ifrt_sharding,
           GetIfrtHloSharding(out_shardings[array_idx], concatenated_shape));
       output_specs.push_back(ArraySpec{.dtype = first_array->dtype(),
@@ -575,12 +575,11 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
                          std::move(mappings));
     DCHECK_OK(remap_plan.Validate());
 
-    TF_ASSIGN_OR_RETURN(
-        result_ifrt_arrays,
-        backend->ifrt_client()->RemapArrays(
-            remap_plan, absl::MakeSpan(input_ifrt_arrays),
-            donate ? ArrayCopySemantics::kDonateInput
-                   : ArrayCopySemantics::kReuseInput));
+    ABSL_ASSIGN_OR_RETURN(result_ifrt_arrays,
+                          backend->ifrt_client()->RemapArrays(
+                              remap_plan, absl::MakeSpan(input_ifrt_arrays),
+                              donate ? ArrayCopySemantics::kDonateInput
+                                     : ArrayCopySemantics::kReuseInput));
     DCHECK_EQ(result_ifrt_arrays.size(), num_output_arrays);
   }
 

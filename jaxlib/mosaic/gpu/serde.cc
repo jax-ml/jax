@@ -15,20 +15,30 @@ limitations under the License.
 
 #include "jaxlib/mosaic/gpu/serde.h"
 
+#include <cstdlib>
+#include <optional>
+#include <string>
+
+#include "absl/log/check.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LogicalResult.h"
+#include "llvm/Support/raw_ostream.h"
+#include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Dialect.h"
+#include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
-#include "jaxlib/mosaic/serde.h"
+#include "xla/mosaic/serde.h"
 
 namespace mosaic::gpu {
 
@@ -46,9 +56,149 @@ constexpr llvm::StringRef kVersionAttrName = "stable_mosaic_gpu.version";
 // version in Mosaic GPU lowering in a month!
 // TODO(bchetioui): Update the forward-compatible version to 7 in Mosaic GPU
 // lowering after 2026-08-31.
-constexpr int kVersion = 7;
+// TODO(bchetioui): Update the forward-compatible version to 8 in Mosaic GPU
+// lowering after 2026-09-30.
+constexpr int kVersion = 8;
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
+
+std::optional<mlir::Attribute> MakeNvvmProperty(llvm::StringRef tag,
+                                                llvm::StringRef inner,
+                                                mlir::MLIRContext* ctx) {
+  if (tag == "mem_scope") {
+    if (auto val = mlir::NVVM::symbolizeMemScopeKind(inner)) {
+      return mlir::NVVM::MemScopeKindAttr::get(ctx, *val);
+    }
+  } else if (tag == "tma_load_mode") {
+    if (auto val = mlir::NVVM::symbolizeTMALoadMode(inner)) {
+      return mlir::NVVM::TMALoadModeAttr::get(ctx, *val);
+    }
+  } else if (tag == "tma_store_mode") {
+    if (auto val = mlir::NVVM::symbolizeTMAStoreMode(inner)) {
+      return mlir::NVVM::TMAStoreModeAttr::get(ctx, *val);
+    }
+  } else if (tag == "tcgen05_cp_shape") {
+    if (auto val = mlir::NVVM::symbolizeTcgen05CpShape(inner)) {
+      return mlir::NVVM::Tcgen05CpShapeAttr::get(ctx, *val);
+    }
+  } else if (tag == "tcgen05_cp_multicast") {
+    if (auto val = mlir::NVVM::symbolizeTcgen05CpMulticast(inner)) {
+      return mlir::NVVM::Tcgen05CpMulticastAttr::get(ctx, *val);
+    }
+  } else if (tag == "tcgen05_ldst_shape") {
+    if (auto val = mlir::NVVM::symbolizeTcgen05LdStShape(inner)) {
+      return mlir::NVVM::Tcgen05LdStShapeAttr::get(ctx, *val);
+    }
+  } else if (tag == "shfl_kind") {
+    if (auto val = mlir::NVVM::symbolizeShflKind(inner)) {
+      return mlir::NVVM::ShflKindAttr::get(ctx, *val);
+    }
+  } else if (tag == "proxy_kind") {
+    if (auto val = mlir::NVVM::symbolizeProxyKind(inner)) {
+      return mlir::NVVM::ProxyKindAttr::get(ctx, *val);
+    }
+  } else if (tag == "shared_space") {
+    if (auto val = mlir::NVVM::symbolizeSharedSpace(inner)) {
+      return mlir::NVVM::SharedSpaceAttr::get(ctx, *val);
+    }
+  } else if (tag == "action") {
+    if (auto val = mlir::NVVM::symbolizeSetMaxRegisterAction(inner)) {
+      return mlir::NVVM::SetMaxRegisterActionAttr::get(ctx, *val);
+    }
+  } else if (tag == "vote_sync_kind") {
+    if (auto val = mlir::NVVM::symbolizeVoteSyncKind(inner)) {
+      return mlir::NVVM::VoteSyncKindAttr::get(ctx, *val);
+    }
+  } else if (tag == "cta_group") {
+    if (auto val = mlir::NVVM::symbolizeCTAGroupKind(inner)) {
+      return mlir::NVVM::CTAGroupKindAttr::get(ctx, *val);
+    }
+  } else if (tag == "tcgen05_fence") {
+    if (auto val = mlir::NVVM::symbolizeTcgen05FenceKind(inner)) {
+      return mlir::NVVM::Tcgen05FenceKindAttr::get(ctx, *val);
+    }
+  } else if (tag == "tcgen05_wait") {
+    if (auto val = mlir::NVVM::symbolizeTcgen05WaitKind(inner)) {
+      return mlir::NVVM::Tcgen05WaitKindAttr::get(ctx, *val);
+    }
+  } else if (tag == "ld_st_matrix_elt_type") {
+    if (auto val = mlir::NVVM::symbolizeLdStMatrixEltType(inner)) {
+      return mlir::NVVM::LdStMatrixEltTypeAttr::get(ctx, *val);
+    }
+  } else if (tag == "mma_layout") {
+    if (auto val = mlir::NVVM::symbolizeMMALayout(inner)) {
+      return mlir::NVVM::MMALayoutAttr::get(ctx, *val);
+    }
+  } else if (tag == "ld_st_matrix_shape") {
+    // The string is of the form "m = ?, n = ?".
+    auto [m_str, n_str] = inner.split(',');
+    int m = atoi(m_str.substr(3).data());
+    int n = atoi(n_str.substr(4).data());
+    return mlir::NVVM::LdStMatrixShapeAttr::get(ctx, m, n);
+  } else if (tag == "load_cache_modifier") {
+    if (auto val = mlir::NVVM::symbolizeLoadCacheModifierKind(inner)) {
+      return mlir::NVVM::LoadCacheModifierKindAttr::get(ctx, *val);
+    }
+  } else if (tag == "reduction_kind") {
+    if (auto val = mlir::NVVM::symbolizeReductionKind(inner)) {
+      return mlir::NVVM::ReductionKindAttr::get(ctx, *val);
+    }
+  }
+
+  return std::nullopt;
+}
+
+std::optional<mlir::Attribute> NvvmAttrToProperty(mlir::OpaqueAttr opaque,
+                                                  mlir::MLIRContext* ctx) {
+  CHECK_EQ(opaque.getDialectNamespace(), "nvvm");
+
+  // Attribute format. Necessary to support upgrade rules.
+  llvm::StringRef data = opaque.getAttrData();
+  auto [tag, inner] = data.split('<');
+  if (inner.consume_back(">")) {
+    if (auto property = MakeNvvmProperty(tag.trim(), inner.trim(), ctx)) {
+      return *property;
+    }
+  }
+
+  // Property format. Necessary to support downgrade rules.
+  auto [tag_sp, inner_sp] = data.split(' ');
+  if (!inner_sp.empty()) {
+    if (auto property = MakeNvvmProperty(tag_sp.trim(), inner_sp.trim(), ctx)) {
+      return *property;
+    }
+  }
+  return std::nullopt;
+}
+
+LogicalResult nvvm_attrs_upgrade(Operation* op, int version, bool& erased) {
+  auto* ctx = op->getContext();
+  llvm::SmallVector<mlir::NamedAttribute> new_attrs;
+  bool changed = false;
+  for (auto named_attr : op->getAttrs()) {
+    auto opaque = mlir::dyn_cast<mlir::OpaqueAttr>(named_attr.getValue());
+    if (!opaque || opaque.getDialectNamespace() != "nvvm") {
+      new_attrs.push_back(named_attr);
+      continue;
+    }
+    // This is currently version-independent, because we encode NVVM properties
+    // as `OpaqueAttr`s in more recent versions of the code as well.
+    //
+    // TODO(bchetioui): make this version-dependent (version < 8) in a follow-up
+    // change, once Pallas/Mosaic GPU stops generating NVVM ops.
+    std::optional<mlir::Attribute> property = NvvmAttrToProperty(opaque, ctx);
+    if (!property) {
+      return op->emitOpError("Failed to upgrade NVVM attribute: ")
+             << named_attr.getName() << " = " << opaque;
+    }
+    changed = true;
+    new_attrs.push_back(mlir::NamedAttribute(named_attr.getName(), *property));
+  }
+  if (changed) {
+    op->setAttrs(new_attrs);
+  }
+  return success();
+}
 
 LogicalResult vector_extractelement_upgrade(Operation* op, int version,
                                             bool& erased) {
@@ -94,6 +244,9 @@ LogicalResult vector_insertelement_upgrade(Operation* op, int version,
 
 LogicalResult nvvm_cp_async_bulk_tensor_global_shared_cta_upgrade(
     Operation* op, int version, bool& erased) {
+  if (failed(nvvm_attrs_upgrade(op, version, erased))) {
+    return mlir::failure();
+  }
   // A new operand was added in
   // https://github.com/llvm/llvm-project/pull/155435/commits/216550ca2169677dd6fc33bc47c3e1ba6d93fc20
   if (version < 3) {
@@ -114,8 +267,38 @@ LogicalResult nvvm_cp_async_bulk_tensor_global_shared_cta_upgrade(
   return success();
 }
 
+LogicalResult nvvm_attrs_downgrade(Operation* op, int version, bool& erased) {
+  if (version < 8) {
+    for (auto named_attr : op->getAttrs()) {
+      auto attr = named_attr.getValue();
+      if (auto opaque = mlir::dyn_cast<mlir::OpaqueAttr>(attr);
+          !opaque || opaque.getDialectNamespace() != "nvvm") {
+        continue;
+      }
+
+      std::string attr_str;
+      llvm::raw_string_ostream os(attr_str);
+      attr.print(os);
+      // Ensure that the attribute can be represented as parsable attributes,
+      // and error otherwise.
+      if (!llvm::StringRef(attr_str).contains('<') ||
+          !llvm::StringRef(attr_str).contains('>')) {
+        return op->emitOpError(
+                   "Can't downgrade: NVVM attribute cannot be serialized to "
+                   "pre-v8 "
+                   "format: ")
+               << attr_str;
+      }
+    }
+  }
+  return success();
+}
+
 LogicalResult nvvm_cp_async_bulk_tensor_global_shared_cta_downgrade(
     Operation* op, int version, bool& erased) {
+  if (failed(nvvm_attrs_downgrade(op, version, erased))) {
+    return mlir::failure();
+  }
   // A new operand was added in
   // https://github.com/llvm/llvm-project/pull/155435/commits/216550ca2169677dd6fc33bc47c3e1ba6d93fc20
   if (version < 3) {
@@ -157,6 +340,9 @@ LogicalResult vector_splat_upgrade(Operation* op, int version, bool& erased) {
 
 LogicalResult nvvm_mbarrier_init_shared_upgrade(Operation* op, int version,
                                                 bool& erased) {
+  if (failed(nvvm_attrs_upgrade(op, version, erased))) {
+    return mlir::failure();
+  }
   // https://github.com/llvm/llvm-project/commit/523706f2cd6a06bd9557bf0dca9986d867eddd79
   if (version < 5) {
     mlir::OpBuilder b(op->getParentRegion());
@@ -173,6 +359,9 @@ LogicalResult nvvm_mbarrier_init_shared_upgrade(Operation* op, int version,
 LogicalResult nvvm_mbarrier_try_wait_parity_shared_upgrade(Operation* op,
                                                            int version,
                                                            bool& erased) {
+  if (failed(nvvm_attrs_upgrade(op, version, erased))) {
+    return mlir::failure();
+  }
   // https://github.com/llvm/llvm-project/commit/7eeae8e41d7827d84de12df7b5ecfab3058900cb
   if (version < 6) {
     mlir::OpBuilder b(op->getParentRegion());
@@ -189,6 +378,9 @@ LogicalResult nvvm_mbarrier_try_wait_parity_shared_upgrade(Operation* op,
 LogicalResult nvvm_mbarrier_arrive_expect_tx_shared_upgrade(Operation* op,
                                                             int version,
                                                             bool& erased) {
+  if (failed(nvvm_attrs_upgrade(op, version, erased))) {
+    return mlir::failure();
+  }
   // https://github.com/llvm/llvm-project/commit/fddf7b0510e5df7a08c512a177ea9c1ec4307718
   if (version < 6) {
     mlir::ImplicitLocOpBuilder b(op->getLoc(), op->getParentRegion());
@@ -266,6 +458,33 @@ const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
       {::llvm::StringLiteral("nvvm.mbarrier.arrive.expect_tx.shared"),
        nvvm_mbarrier_arrive_expect_tx_shared_upgrade},
       {::llvm::StringLiteral("gpu.launch"), gpu_launch_upgrade},
+      {::llvm::StringLiteral("nvvm.shfl.sync"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.vote.sync"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.fence.proxy"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.cp.async.bulk.tensor.shared.cluster.global"),
+       nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.mbarrier.init"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.mbarrier.arrive.expect_tx"),
+       nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.mbarrier.test.wait"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.mbarrier.try_wait.parity"),
+       nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.alloc"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.dealloc"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.relinquish_alloc_permit"),
+       nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.commit"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.cp"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.ld"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.st"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.stmatrix"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.ldmatrix"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.setmaxregister"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.fence"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.wait"), nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.cp.async.shared.global"),
+       nvvm_attrs_upgrade},
+      {::llvm::StringLiteral("nvvm.redux.sync"), nvvm_attrs_upgrade},
   };
   return *rules;
 }
@@ -275,6 +494,35 @@ const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
       {::llvm::StringLiteral("nvvm.cp.async.bulk.tensor.global.shared.cta"),
        nvvm_cp_async_bulk_tensor_global_shared_cta_downgrade},
       {::llvm::StringLiteral("gpu.launch"), gpu_launch_downgrade},
+      // TODO(bchetioui): delete nvvm ops out of the Mosaic GPU codebase, and
+      // get rid of the downgrade rules.
+      {::llvm::StringLiteral("nvvm.shfl.sync"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.vote.sync"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.fence.proxy"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.cp.async.bulk.tensor.shared.cluster.global"),
+       nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.mbarrier.init"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.mbarrier.arrive.expect_tx"),
+       nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.mbarrier.test.wait"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.mbarrier.try_wait.parity"),
+       nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.alloc"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.dealloc"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.relinquish_alloc_permit"),
+       nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.commit"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.cp"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.ld"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.st"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.stmatrix"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.ldmatrix"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.setmaxregister"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.fence"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.tcgen05.wait"), nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.cp.async.shared.global"),
+       nvvm_attrs_downgrade},
+      {::llvm::StringLiteral("nvvm.redux.sync"), nvvm_attrs_downgrade},
   };
   return *rules;
 }

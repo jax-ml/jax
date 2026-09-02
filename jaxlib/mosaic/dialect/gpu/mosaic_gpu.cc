@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -209,9 +210,9 @@ absl::Status InitTmaDescriptor(mlir::OpBuilder& builder,
     slice_as_i64.push_back(Constant(b, slice_dim, b.getI64Type()));
   }
 
-  TF_ASSIGN_OR_RETURN(Pointer sizes_array, ToLLVMArray(b, sizes_as_i64));
-  TF_ASSIGN_OR_RETURN(Pointer strides_array, ToLLVMArray(b, strides_as_i64));
-  TF_ASSIGN_OR_RETURN(Pointer slice_array, ToLLVMArray(b, slice_as_i64));
+  ABSL_ASSIGN_OR_RETURN(Pointer sizes_array, ToLLVMArray(b, sizes_as_i64));
+  ABSL_ASSIGN_OR_RETURN(Pointer strides_array, ToLLVMArray(b, strides_as_i64));
+  ABSL_ASSIGN_OR_RETURN(Pointer slice_array, ToLLVMArray(b, slice_as_i64));
 
   IntegerType i64 = b.getI64Type();
 

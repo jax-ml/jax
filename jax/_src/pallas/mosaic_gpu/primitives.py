@@ -45,7 +45,6 @@ from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import builtin as builtin_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import llvm as llvm_dialect
-from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.lib.mlir.dialects import vector as vector_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
@@ -1814,7 +1813,13 @@ def _commit_group_abstract_eval():
 @lowering.register_lowering_rule(commit_group_p, *gpu_core.WGxWARP_SEMANTICS)
 def _commit_group_lowering(ctx: lowering.LoweringRuleContext):
   del ctx  # Unused.
-  nvvm_dialect.cp_async_bulk_commit_group()
+  llvm_dialect.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [],
+      "cp.async.bulk.commit_group;",
+      "",
+      has_side_effects=True,
+  )
   return ()
 
 
@@ -2077,7 +2082,10 @@ def _wgmma_lowering(
     acc_out = mgpu.WGMMAAccumulator(
         _value=acc_value, _original_layout=acc._original_layout, _sync=False
     )
-  nvvm_dialect.wgmma_commit_group_sync_aligned()
+  void = ir.Type.parse("!llvm.void")
+  llvm_dialect.inline_asm(
+      void, [], "wgmma.commit_group.sync.aligned;", "", has_side_effects=True
+  )
   return acc_out
 
 
@@ -2175,7 +2183,10 @@ def _wgmma_warpgroup_lowering(
         new_acc, acc, offsets, strides
     )
 
-  nvvm_dialect.wgmma_commit_group_sync_aligned()
+  void = ir.Type.parse("!llvm.void")
+  llvm_dialect.inline_asm(
+      void, [], "wgmma.commit_group.sync.aligned;", "", has_side_effects=True
+  )
   return new_acc
 
 
@@ -2267,7 +2278,10 @@ def wgmma_wait_effectful_abstract_eval(_):
 @lowering.register_lowering_rule(wgmma_wait_p, mgpu.LoweringSemantics.Warpgroup)
 def _wgmma_wait_lowering(ctx: lowering.LoweringRuleContext, allow_groups):
   del ctx
-  nvvm_dialect.wgmma_wait_group_sync_aligned(allow_groups)
+  void = ir.Type.parse("!llvm.void")
+  llvm_dialect.inline_asm(
+      void, [], f"wgmma.wait_group.sync.aligned {int(allow_groups)};", "", has_side_effects=True,
+  )
   return ()
 
 
@@ -2314,7 +2328,10 @@ def _wgmma_accumulator_deref_lowering(
     ctx: lowering.LoweringRuleContext, acc, *, wait_n: int | None
 ):
   if wait_n is not None:
-    nvvm_dialect.wgmma_wait_group_sync_aligned(wait_n)
+    void = ir.Type.parse("!llvm.void")
+    llvm_dialect.inline_asm(
+        void, [], f"wgmma.wait_group.sync.aligned {int(wait_n)};", "", has_side_effects=True,
+    )
   return (
       acc.value
       if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane
@@ -2385,7 +2402,7 @@ def _wgmma_accumulator_store_warpgroup_lowering(
 ):
   del ctx, acc
   val = mgpu.dialect.optimization_barrier([val])
-  nvvm_dialect.wgmma_fence_aligned()
+  lowering._wgmma_fence_aligned()
   return val
 
 # MMA for TensorCore gen 5.
@@ -3248,11 +3265,13 @@ def _set_max_registers_lowering(
     ctx: lowering.LoweringRuleContext, n, *, action
 ):
   del ctx
-  nvvm_dialect.setmaxregister(
-      n,
-      nvvm_dialect.SetMaxRegisterAction.increase
-      if action == "increase"
-      else nvvm_dialect.SetMaxRegisterAction.decrease,
+  action_str = "inc" if action == "increase" else "dec"
+  llvm_dialect.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [],
+      f"setmaxnreg.{action_str}.sync.aligned.u32 {int(n)};",
+      "",
+      has_side_effects=True,
   )
   return ()
 

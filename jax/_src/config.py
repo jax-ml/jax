@@ -2423,13 +2423,6 @@ jax_pallas_auto_assign_collective_ids_limit = int_state(
     include_in_jit_key=True,
 )
 
-jax_pallas_auto_assign_collective_ids_base_id = int_state(
-    name='jax_pallas_auto_assign_collective_ids_base_id',
-    default=7000,
-    help='Base collective ID for auto-assigned collective IDs.',
-    include_in_jit_key=True,
-)
-
 mtls_cert_file = optional_string_state(
     name='jax_mtls_cert_file',
     default=None,

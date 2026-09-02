@@ -731,7 +731,6 @@ def _lowered_to_custom_call_config(
     ctx: mlir.LoweringRuleContext | None = None,
 ):
   config_mode = config.jax_pallas_auto_assign_collective_ids.value
-  base_id = config.jax_pallas_auto_assign_collective_ids_base_id.value
   id_limit = config.jax_pallas_auto_assign_collective_ids_limit.value
 
   # When not in override mode, collective id and tag cannot both be specified.
@@ -770,9 +769,7 @@ def _lowered_to_custom_call_config(
   ):
     mapping = ctx.module_context.pallas_collective_id_mapping
     if auto_key is not None:
-      collective_id, is_new = mapping.get_or_allocate_id(
-          auto_key, base_id=base_id
-      )
+      collective_id, is_new = mapping.get_or_allocate_id(auto_key)
       if is_new and len(mapping.auto) > id_limit:
         raise ValueError(
             "The number of auto-assigned collective ids for pallas kernels"
@@ -781,9 +778,7 @@ def _lowered_to_custom_call_config(
         )
     elif isinstance(collective_id, int):
       manual_key = ("module", hash(lowered_module_asm), skip_device_barrier)
-      mapping.register_manual_id(
-          manual_key, collective_id, kernel_name=kernel_name, base_id=base_id
-      )
+      mapping.register_manual_id(manual_key, collective_id)
 
   # If we didn't resolve the collective_id to an integer by now, raise an error.
   if not (collective_id is None or isinstance(collective_id, int)):

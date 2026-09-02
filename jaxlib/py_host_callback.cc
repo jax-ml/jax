@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
@@ -73,8 +74,8 @@ absl::StatusOr<std::vector<CpuCallback::Arg>> CreateCallbackArgs(
       callback_args[i].strides = ByteStridesForShape(layout);
       callback_args[i].type = shape.element_type();
       callback_args[i].size_in_bytes = xla::ShapeUtil::ByteSizeOf(layout);
-      TF_ASSIGN_OR_RETURN(callback_args[i].dtype,
-                          PrimitiveTypeToNbDtype(shape.element_type()));
+      ABSL_ASSIGN_OR_RETURN(callback_args[i].dtype,
+                            PrimitiveTypeToNbDtype(shape.element_type()));
     } else if (shape.IsToken()) {
       callback_args[i].type = xla::TOKEN;
     } else {
@@ -134,9 +135,9 @@ PyHostSendAndRecvLoadedHostCallback::Create(
     absl::Span<const xla::Shape> result_shapes,
     absl::Span<const uint16_t> send_channel_ids,
     absl::Span<const uint16_t> recv_channel_ids, nb::callable serializer) {
-  TF_ASSIGN_OR_RETURN(auto callback_args, CreateCallbackArgs(operand_shapes));
-  TF_ASSIGN_OR_RETURN(auto callback_results,
-                      CreateCallbackResults(result_shapes));
+  ABSL_ASSIGN_OR_RETURN(auto callback_args, CreateCallbackArgs(operand_shapes));
+  ABSL_ASSIGN_OR_RETURN(auto callback_results,
+                        CreateCallbackResults(result_shapes));
 
   // `callable` will be destroyed safely with `PythonRefManager` when
   // `CpuCallback` is destroyed.

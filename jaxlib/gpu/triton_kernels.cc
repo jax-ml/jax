@@ -50,6 +50,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 // Required for absl::CEscape.
 // NOLINTNEXTLINE(misc-include-cleaner)
@@ -132,8 +133,8 @@ absl::StatusOr<std::vector<uint8_t>> CompileModuleImage(
   std::string result_blob;
   std::string fname{ptx};
   tsl::Env* env = tsl::Env::Default();
-  TF_RETURN_IF_ERROR(tsl::ReadFileToString(env, fname, &result_blob));
-  TF_RETURN_IF_ERROR(env->DeleteFile(fname));
+  ABSL_RETURN_IF_ERROR(tsl::ReadFileToString(env, fname, &result_blob));
+  ABSL_RETURN_IF_ERROR(env->DeleteFile(fname));
   module_image.assign(result_blob.begin(), result_blob.end());
 #else
   // TODO(cjfj): Support `TRITON_PTXAS_PATH` environment variable?
@@ -816,10 +817,9 @@ absl::Status EncodeTmaDescriptorTiled(
         rank, desc.shape.size(), desc.strides.size()));
   }
 
-  TF_ASSIGN_OR_RETURN(
-      const uint32_t elem_size,
-      GetTmaDataTypeSizeBytes(
-          static_cast<CUtensorMapDataType>(desc.elem_type)));
+  ABSL_ASSIGN_OR_RETURN(const uint32_t elem_size,
+                        GetTmaDataTypeSizeBytes(
+                            static_cast<CUtensorMapDataType>(desc.elem_type)));
 
   for (int i = 0; i < rank; ++i) {
     if (desc.shape[i] < 1 || desc.shape[i] > (1ULL << 32)) {
@@ -937,7 +937,7 @@ absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
 #if defined(JAX_GPU_CUDA)
       const auto& desc = std::get<Parameter::TmaDescriptor>(param.value);
       CUtensorMap& map = tma_maps.emplace_back();
-      TF_RETURN_IF_ERROR(EncodeTmaDescriptorTiled(desc, base_ptr, &map));
+      ABSL_RETURN_IF_ERROR(EncodeTmaDescriptorTiled(desc, base_ptr, &map));
       params.push_back(&map);
 #else
       (void)base_ptr;

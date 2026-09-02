@@ -20,6 +20,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/check.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/IRCore.h"
@@ -82,7 +83,7 @@ absl::StatusOr<nb_class_ptr<PyExecutable>> CompileOnlyPyClient::CompileUnloaded(
 
     auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(
         options, std::move(executable_devices));
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         ifrt_executable,
         ifrt_client->GetDefaultCompiler()
             ->Compile(

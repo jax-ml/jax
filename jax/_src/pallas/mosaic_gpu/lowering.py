@@ -52,7 +52,6 @@ from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import llvm as llvm_dialect
 from jax._src.lib.mlir.dialects import math as math_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
-from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.lib.mlir.dialects import vector as vector_dialect
 from jax._src.pallas import core as pallas_core
@@ -2262,10 +2261,7 @@ def _swap_lowering_rule(
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
     if ctx.avals_out[0].shape:
       raise NotImplementedError("Can only store scalars in warp-level lowering.")
-    i32 = ir.IntegerType.get_signless(32)
-    barrier = functools.partial(
-        nvvm_dialect.bar_warp_sync, arith_dialect.constant(i32, -1)
-    )
+    barrier = mgpu_utils.warp_barrier
   value = _ensure_fa(value, ctx.avals_in[1].dtype)
 
   if not isinstance(x_ref, ir.Value) and isinstance(x_ref, ir.MemRefType):
@@ -3554,6 +3550,13 @@ def _debug_print_lowering_rule(
   return ()
 
 
+def _wgmma_fence_aligned():
+  void = ir.Type.parse("!llvm.void")
+  llvm_dialect.inline_asm(
+      void, [], "wgmma.fence.sync.aligned;", "", has_side_effects=True
+  )
+
+
 @register_lowering_rule(primitives.run_scoped_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(primitives.run_scoped_p, mgpu.LoweringSemantics.Warpgroup)
 def _run_scoped_lowering_rule(
@@ -3608,7 +3611,7 @@ def _run_scoped_lowering_rule(
           acc_type = ir.VectorType.get(aval.shape, dtype)
           acc = vector_dialect.broadcast(acc_type, zero)
           acc = mgpu.dialect.optimization_barrier([acc])
-          nvvm_dialect.wgmma_fence_aligned()
+          _wgmma_fence_aligned()
           input_refs.append(acc)
         should_discharge.append(True)
         continue
@@ -3760,7 +3763,7 @@ def _run_state_lowering_rule(
     if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
       if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
         arg = mgpu.dialect.optimization_barrier([arg])
-        nvvm_dialect.wgmma_fence_aligned()
+        _wgmma_fence_aligned()
         new_input_vals.append(arg)
       else:
         if isinstance(arg, mgpu.WGMMAAccumulator):
@@ -3796,7 +3799,10 @@ def _run_state_lowering_rule(
   # always used with at least one accumulator though, we need to await here
   # anyway.
   deref_acc = iter(should_deref_acc)
-  nvvm_dialect.wgmma_wait_group_sync_aligned(0)
+  void = ir.Type.parse("!llvm.void")
+  llvm_dialect.inline_asm(
+      void, [], "wgmma.wait_group.sync.aligned 0;", "", has_side_effects=True,
+  )
   outs = [
       out.value if isinstance(out, mgpu.WGMMAAccumulator) and next(deref_acc) else out
       for out in outs
@@ -4345,7 +4351,7 @@ def _bcast(
   return x, y
 
 
-def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
+def _ensure_fa(x: object, dtype: jax.typing.DTypeLike) -> mgpu.FragmentedArray:
   if isinstance(x, mgpu.FragmentedArray):
     assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
     return x
@@ -4396,20 +4402,20 @@ def _bcast_wg(
   return x, y
 
 
-def _ensure_ir_value(x: Any, dtype: jnp.dtype) -> ir.Value:
+def _ensure_ir_value(x: Any, dtype: jax.typing.DTypeLike) -> ir.Value:
+  mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
   if isinstance(x, ir.Value):
-    mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
     if isinstance(x.type, ir.VectorType):
       assert ir.VectorType(x.type).element_type == mlir_dtype
     else:
       assert x.type == mlir_dtype, (x.type, mlir_dtype)
     return x
   elif isinstance(x, mgpu.FragmentedArray):
-    assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
+    assert x.mlir_dtype == mlir_dtype
     if isinstance(x.layout, mgpu.WGSplatFragLayout):
       return x.registers.item()
     raise NotImplementedError(f"Unsupported layout: {x.layout}")
-  return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
+  return _ir_constant(x, mlir_dtype)
 
 
 def _device_id_to_logical(

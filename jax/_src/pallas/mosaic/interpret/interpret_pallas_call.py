@@ -2235,23 +2235,23 @@ def interpret_pallas_call(
 
     def _body(
         carry: tuple[
-            jnp.int32,
-            tuple[jnp.int32, ...],
+            jnp.ndarray,
+            tuple[jnp.ndarray, ...],
             jnp.ndarray,
             tuple[jnp.ndarray, ...],
             tuple[jnp.ndarray, ...],
             tuple[jnp.ndarray, ...],
-            jnp.int32,
+            jnp.ndarray,
         ],
         ctx: InterpretContext,
     ) -> tuple[
-        jnp.int32,
-        tuple[jnp.int32, ...],
+        jnp.ndarray,
+        tuple[jnp.ndarray, ...],
         jnp.ndarray,
         tuple[jnp.ndarray, ...],
         tuple[jnp.ndarray, ...],
         tuple[jnp.ndarray, ...],
-        jnp.int32,
+        jnp.ndarray,
     ]:
       """Performs one execution of the kernel body.
 

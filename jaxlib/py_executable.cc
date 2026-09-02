@@ -31,9 +31,11 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/base/const_init.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/absl_check.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -185,7 +187,7 @@ void PopulateExecuteShardedResults(const nb_class_ptr<PyClient>& client,
         ifrt_arrays[buffer_id]->DisassembleIntoSingleDeviceArrays(
             ifrt::ArrayCopySemantics::kReuseInput,
             ifrt::SingleDeviceShardSemantics::kAddressableShards);
-    TF_CHECK_OK(exploded_arrays.status());
+    ABSL_CHECK_OK(exploded_arrays.status());
     for (auto& exploded_array : *exploded_arrays) {
       outputs[buffer_id].push_back(PyArray::MakeFromSingleDeviceArray(
           client, std::move(exploded_array), false, true, result_status));
@@ -304,7 +306,7 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
           ifrt_arrays[buffer_id]->DisassembleIntoSingleDeviceArrays(
               ifrt::ArrayCopySemantics::kReuseInput,
               ifrt::SingleDeviceShardSemantics::kAddressableShards);
-      TF_CHECK_OK(disassembled_arrays.status());
+      ABSL_CHECK_OK(disassembled_arrays.status());
       nb::list bufs =
           nb::steal<nb::list>(PyList_New(disassembled_arrays->size()));
       int i = 0;
@@ -447,13 +449,12 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
       }
     }
     std::vector<ifrt::ArrayRef> arg_arrays(args.size());
-    absl::c_transform(args, arg_arrays.begin(),
-                      [&](const PyArray& arg) mutable {
-                        return tsl::FormRef(arg.ifrt_array());
-                      });
-    TF_ASSIGN_OR_RETURN(auto result, ifrt_loaded_executable->Execute(
-                                         absl::MakeSpan(arg_arrays), options,
-                                         /*devices=*/std::nullopt));
+    absl::c_transform(
+        args, arg_arrays.begin(),
+        [&](const PyArray& arg) mutable { return arg.ifrt_array_ref(); });
+    ABSL_ASSIGN_OR_RETURN(auto result, ifrt_loaded_executable->Execute(
+                                           absl::MakeSpan(arg_arrays), options,
+                                           /*devices=*/std::nullopt));
     output_arrays = std::move(result.outputs);
     // options.fill_status is only supposed to be true when the computation has
     // tokens.
@@ -489,7 +490,7 @@ absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
   // Check if the thread guard is active and should prevent execution.
   // Skipped for portable executables.
   if (ifrt_loaded_executable_->devices().has_value()) {
-    TF_RETURN_IF_ERROR(CheckThreadGuard(*ifrt_loaded_executable_->devices()));
+    ABSL_RETURN_IF_ERROR(CheckThreadGuard(*ifrt_loaded_executable_->devices()));
   }
 
   xla::ifrt::ExecuteOptions options = options_;

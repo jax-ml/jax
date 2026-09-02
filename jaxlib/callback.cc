@@ -28,6 +28,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -82,7 +83,7 @@ absl::Status CpuCallback::PrepareAndCall(void** result, void** arg_ptrs) {
     xla::HostCallbackScope scope;
     maybe_result_tuple = Call(std::move(args));
   }
-  TF_ASSIGN_OR_RETURN(auto result_tuple, maybe_result_tuple);
+  ABSL_ASSIGN_OR_RETURN(auto result_tuple, maybe_result_tuple);
 
   for (size_t i = 0; i < results_.size(); ++i) {
     if (results_[i].type == xla::TOKEN) {

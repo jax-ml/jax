@@ -2910,12 +2910,15 @@ class FragmentedArray:
       op: str | Callable[[ir.Value, ir.Value], ir.Value],
       axis: int | Sequence[int],
       scratch: ir.Value | None = None,
+      *,
+      acc_ilp: int | None = None,
   ) -> FragmentedArray:
     i32 = ir.IntegerType.get_signless(32)
     if isinstance(axis, int):
       axis = (axis,)
     splat_op = None
     redux_op = None
+    default_acc_ilp = 1
     # TODO(apaszke): For associative reductions that reduce both inside and
     # across warps, we could just have everyone use SMEM atomics instead of
     # performing an explicit warp reduction in registers.
@@ -2925,6 +2928,8 @@ class FragmentedArray:
           reduced_elems = math.prod(self.shape[a] for a in axis)
           if isinstance(self.mlir_dtype, ir.FloatType):
             op = addf
+            # TODO(cjfj): Consider bumping to 16 for f16/bf16.
+            default_acc_ilp = 8
             splat_op = lambda x: arith.mulf(x, c(reduced_elems, x.type))
             # TODO(apaszke): Use redux.sync on Blackwell for f32.
           elif isinstance(self.mlir_dtype, ir.IntegerType):
@@ -2935,6 +2940,7 @@ class FragmentedArray:
           else:
             raise NotImplementedError(self.mlir_dtype)
         case "max":
+          default_acc_ilp = 4
           if isinstance(self.mlir_dtype, ir.F32Type):
             op = self._lift_fast_instr("max.NaN.f32")
             if utils.get_arch().major == 10:
@@ -2954,6 +2960,7 @@ class FragmentedArray:
             raise NotImplementedError(self.mlir_dtype)
           splat_op = lambda x: x
         case "min":
+          default_acc_ilp = 4
           if isinstance(self.mlir_dtype, ir.F32Type):
             op = self._lift_fast_instr("min.NaN.f32")
             if utils.get_arch().major == 10:
@@ -2973,6 +2980,7 @@ class FragmentedArray:
           reduced_elems = math.prod(self.shape[a] for a in axis)
           if isinstance(self.mlir_dtype, ir.FloatType):
             op = arith.mulf
+            default_acc_ilp = 8
             # For splat, prod(x, x, ..., x) = x^n
             splat_op = lambda x: mlir_math.powf(
                 x, c(float(reduced_elems), x.type)
@@ -2994,6 +3002,8 @@ class FragmentedArray:
             raise NotImplementedError(self.mlir_dtype)
         case _:
           raise ValueError(f"Unrecognized reduction operator: {op}")
+    if acc_ilp is None:
+      acc_ilp = default_acc_ilp
     assert not isinstance(op, str)
     match self.layout:
       case WGStridedFragLayout(shape=_, vec_size=vec_size):
@@ -3058,14 +3068,25 @@ class FragmentedArray:
     out_regs = np.empty(remaining_shape, dtype=object)
     index = ir.IndexType.get()
 
+    def apply_op(a: ir.Value | None, b: ir.Value | None) -> ir.Value | None:
+      if a is None:
+        return b
+      if b is None:
+        return a
+      return op(a, b)
+
     def reduce_within_warp(out_idx):
-      out_reg: ir.Value | None = None
-      for red_idx in np.ndindex(reduced_shape):
+      # Compute partial reductions, breaking the dependency between subsequent
+      # element-wise operations.
+      [vec_len] = ir.VectorType(self.registers.flat[0].type).shape
+      num_reductions = math.prod(remaining_shape)
+      num_parts = max(1, acc_ilp // vec_len // num_reductions)
+      part_regs: list[ir.Value | None] = [None] * num_parts
+      for i, red_idx in enumerate(np.ndindex(reduced_shape)):
         src_idx = tuple(o + r for o, r in zip(out_idx, red_idx))
-        if out_reg is None:
-          out_reg = cast(ir.Value, self.registers[src_idx])
-        else:
-          out_reg = op(out_reg, cast(ir.Value, self.registers[src_idx]))
+        slot = i % num_parts
+        part_regs[slot] = apply_op(part_regs[slot], self.registers[src_idx])
+      out_reg = functools.reduce(apply_op, part_regs)
       assert out_reg is not None
       # Reduce within the vector dimension, if necessary.
       if reduced_dims[layout.vector_dim]:

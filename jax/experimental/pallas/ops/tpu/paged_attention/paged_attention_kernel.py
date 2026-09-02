@@ -91,7 +91,9 @@ class MultiPageAsyncCopyDescriptor:
     for async_copy in self._async_copies:
       async_copy.start()
 
-  def _maybe_dequantize(self, x, x_scale, dtype=jnp.bfloat16):
+  def _maybe_dequantize(
+      self, x, x_scale, dtype: jax.typing.DTypeLike = jnp.bfloat16
+  ):
     if x_scale is None:
       return x.astype(dtype)
     return quantization_utils.from_int8(x, x_scale, dtype=dtype)

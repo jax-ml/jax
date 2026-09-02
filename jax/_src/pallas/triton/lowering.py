@@ -573,7 +573,7 @@ def _not_lowering_rule(ctx: LoweringRuleContext, x):
 class _Extern:
   arg_types: Sequence[jax.typing.DTypeLike]
   symbol: str
-  result_type: str
+  result_type: jax.typing.DTypeLike
 
   def matches(self, avals: Sequence[jax_core.ShapedArray]) -> bool:
     if len(avals) != len(self.arg_types):
