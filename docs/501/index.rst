@@ -56,7 +56,7 @@ value), ``process_allgather`` (gather a value from every process),
 (convert between per-host and global views of arrays).
 
 **Compatibility policies for long-lived artifacts.** Serialized artifacts
-outlive the process that made them, so it's worth knowing what's promised:
+outlive the process that made them, so here is what's promised:
 exported modules have explicit compatibility windows (see the compatibility
 guarantees in :doc:`export`); persistent compilation cache entries make no
 cross-version promises, but their keys include the jaxlib version, so

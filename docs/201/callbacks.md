@@ -328,9 +328,9 @@ with `jax.debug.print`, in {doc}`debugging`.
 (jax-201-callbacks-sharding)=
 ## Callbacks and sharding
 
-Callbacks run on the host, outside the compiled computation — so when the
-arguments are sharded across many devices ({doc}`sharding`), where does the
-callback run, and what does it see? The answer depends on the mode.
+Callbacks run on the host, outside the compiled computation. When the
+arguments are sharded across many devices ({doc}`sharding`), where the
+callback runs and what it sees depends on the mode.
 
 In the global-view modes (explicit or auto sharding), a callback behaves like
 the rest of the program: as if there were one big machine. The arguments are
@@ -353,13 +353,13 @@ with jax.set_mesh(mesh):
 out
 ```
 
-That's the semantically-consistent behavior, but note what it costs: the
-gather concentrates the whole array (and the callback's work) onto one
-device and its host, which at scale can be slow or exceed memory.
+That's the semantically consistent behavior, but it has a cost: the gather
+concentrates the whole array (and the callback's work) onto one device and
+its host, which at scale can be slow or exceed memory.
 
 Under full manual mode with {func}`jax.shard_map` ({doc}`shard-map`), there's
 no global view to preserve: the body runs per device, and so does the
-callback — one invocation per device, each seeing only its own shard:
+callback, with one invocation per device, each seeing only its own shard:
 
 ```{code-cell}
 with jax.set_mesh(mesh):
@@ -367,13 +367,13 @@ with jax.set_mesh(mesh):
 out
 ```
 
-This per-device behavior is the typical pattern in practice: it keeps data
-local, and it's how you'd express things like shard-local logging or
-per-host data loading in a distributed program.
+This per-device behavior is the typical pattern: it keeps data local, and
+it's how you'd express shard-local logging or per-host data loading in a
+distributed program.
 
 ## Example: `pure_callback` with `custom_jvp`
 
-One powerful way to take advantage of {func}`jax.pure_callback` is to combine it with {class}`jax.custom_jvp`. (Refer to {ref}`jax-301-custom-jvp-vjp` for more details on {func}`jax.custom_jvp`).
+One useful way to take advantage of {func}`jax.pure_callback` is to combine it with {class}`jax.custom_jvp`. (Refer to {ref}`jax-301-custom-jvp-vjp` for more details on {func}`jax.custom_jvp`).
 
 Suppose you want to create a JAX-compatible wrapper for a scipy or numpy function that is not yet available in the {mod}`jax.scipy` or {mod}`jax.numpy` wrappers.
 

@@ -33,8 +33,8 @@ single-device mesh. This page covers how placement is decided by default, how
 to control it with {func}`jax.device_put`, what it means for an array to be
 *committed* to a mesh, and how to move data between meshes.
 
-The full story of how data is laid out *across* a mesh's devices — shardings,
-partition specs, and parallelism — is the next page, {doc}`sharding`. Here we
+How data is laid out *across* a mesh's devices (shardings, partition specs,
+and parallelism) is the subject of the next page, {doc}`sharding`. Here we
 only need the idea of a mesh itself.
 
 We'll simulate eight devices on CPU:
@@ -97,7 +97,7 @@ Now the array is **committed** to `mesh_a` and it stays put. Computations
 follow their data: an operation on `xa` runs on `mesh_a`'s devices.
 
 Commitment is a promise JAX enforces. Combining arrays committed to
-*different* meshes in one operation is an error, not an implicit transfer:
+*different* meshes in one operation is an error:
 
 ```{code-cell}
 :tags: [raises-exception]
@@ -118,8 +118,8 @@ print((a + c).sharding)  # runs on m0, where `a` is committed
 ```
 
 In older code you'll see `jax.device_put(x, some_device)`, committing an
-array to a single device. That's this same model: think of it as committing
-to a single-device mesh.
+array to a single device. That's the same model: committing to a
+single-device mesh.
 
 ## Moving data between meshes
 
@@ -132,7 +132,7 @@ xb = jax.device_put(xa, NamedSharding(mesh_b, jax.P('x')))
 print(xb.sharding.mesh == mesh_b)
 ```
 
-Two related operations are worth distinguishing:
+There are two related operations:
 
 - **Changing layout within a mesh** (same devices, different partitioning)
   is *resharding*, covered in {doc}`sharding` (see `jax.reshard`, and
@@ -140,13 +140,11 @@ Two related operations are worth distinguishing:
 - **Changing meshes**, meaning moving data to a different set of devices, is this
   page's focus, and `jax.device_put` is the tool.
 
-One subtle case worth calling out: a mesh isn't just a *set* of devices, it's
-an *arrangement* of them. So keeping an array's data on the same overall set
-of devices but changing the device *order* in the sharding is also a change
-of mesh, which makes it a `device_put` and not a reshard. That distinction
-has real consequences: the same partition spec over differently-ordered
-meshes assigns different data to each device, so real data movement is
-required.
+One more case: because a mesh is an *arrangement* of devices, keeping an
+array's data on the same set of devices but changing the device *order* in
+the sharding is also a change of mesh, and therefore a `device_put` rather
+than a reshard. The same partition spec over differently-ordered meshes
+assigns different data to each device, so real data movement is required.
 
 ```{code-cell}
 mesh_rev = jax.make_mesh((8,), ('x',), devices=full.devices[::-1])
@@ -165,9 +163,9 @@ print(data_by_device(y))
 As mathematical values, `x` and `y` are identical, but every element has
 moved: device 0 held `0.0` before and holds `7.0` after. (And since `x` and
 `y` are committed to different meshes, combining them in one operation would
-be an error, exactly as above.)
+be an error, as above.)
 
-**Mesh changes are runtime-level operations.** Everything in this section
+Mesh changes are runtime-level operations: everything in this section
 happens at the top level of your program. A compiled computation belongs to
 one fixed mesh: under `jax.jit` (or inside any staged-out control flow like
 `jax.lax.scan`), you can change an array's *layout* on the mesh, but you cannot
@@ -241,7 +239,6 @@ interconnects. That story is in the multi-process systems docs; see
 
 ## Next steps
 
-With placement in hand, the natural question is what happens *within* a
-mesh: how an array's data is partitioned over the mesh's devices, and how
-JAX turns one program into coordinated per-device computation. That's
-{doc}`sharding`.
+The next page, {doc}`sharding`, covers what happens *within* a mesh: how an
+array's data is partitioned over the mesh's devices, and how JAX turns one
+program into coordinated per-device computation.
