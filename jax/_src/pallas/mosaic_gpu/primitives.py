@@ -680,11 +680,10 @@ def _async_store_smem_lowering(
         f"Can only transfer integer bytes (shape={shape}, dtype={dtype})"
     )
   total_bytes = total_bits // 8
-  if total_bytes % WARPGROUP_SIZE:
-    raise NotImplementedError(f"Transfer is not a multiple of {WARPGROUP_SIZE} bytes")
-
   peer_barrier = barrier.remap_to_cluster(gpu_cluster_dim, cluster_idx_val)
-  peer_barrier.arrive_expect_tx(total_bytes // WARPGROUP_SIZE)
+  peer_barrier.arrive_expect_tx(
+      total_bytes, predicate=ctx.module_ctx.single_lane_predicate
+  )
 
   lowering._ensure_fa(src, dtype).store_tiled_async(
       ref_smem,
@@ -1033,55 +1032,28 @@ def _copy_gmem_to_smem_lowering(
     ):
       mgpu.warpgroup_barrier()  # Make sure all reads have completed.
 
+    lane_pred = ctx.module_ctx.single_lane_predicate
+
     if not is_cp_async:
       assert barrier is not None
-      if bytes % WARPGROUP_SIZE:
-        raise NotImplementedError(
-            "Only copies transferring a number of bytes divisible by the"
-            f" warpgroup size are supported. Got {bytes=} but warpgroup size is"
-            f" {WARPGROUP_SIZE}"
+      if is_leader_tracked_copy:
+        first_block = arith_dialect.cmpi(
+            arith_dialect.CmpIPredicate.eq,
+            mgpu.utils.cluster_idx(collective[0]),
+            mgpu.c(0, ir.IndexType.get()),
         )
-      if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup:
-        # We arrive uniformly from each thread in the WG, so we need to divide the
-        # number of bytes by the number of threads in the WG.
-        # TODO: apaszke - Relax this. We can just select the WG leader and have it
-        # arrive with the whole transfer size, while everyone else arrives with 0.
-        # But we should continue using this scheme as it's likely to be faster.
-        bytes //= WARPGROUP_SIZE
-        if predicate is not None:
-          bytes = arith_dialect.select(predicate, mgpu.c(bytes, i32), mgpu.c(0, i32))
-        if is_leader_tracked_copy:
-          first_block = arith_dialect.cmpi(
-              arith_dialect.CmpIPredicate.eq,
-              mgpu.utils.cluster_idx(collective[0]),
-              mgpu.c(0, ir.IndexType.get()),
-          )
-          barrier.arrive_expect_tx(bytes, predicate=first_block)
-        else:
-          barrier.arrive_expect_tx(bytes)
+        arrive_predicate = arith_dialect.andi(lane_pred, first_block)
       else:
-        # In Warp-level lowering, we arrive on each CUDA thread in a warp, but
-        # the barrier still expects a full 128 arrivals so we arrive 4 times
-        # on each CUDA thread instead.
-        # TODO(justinfu): The arrival counts are wrong if called outside of a
-        # single warp. Figure out how to guard against this in user code.
-        bytes = bytes // WARP_SIZE
-        if predicate is not None:
-          bytes = arith_dialect.select(predicate, mgpu.c(bytes, i32), mgpu.c(0, i32))
-        if is_leader_tracked_copy:
-          first_block = arith_dialect.cmpi(
-              arith_dialect.CmpIPredicate.eq,
-              mgpu.utils.cluster_idx(collective[0]),
-              mgpu.c(0, ir.IndexType.get()),
-          )
-          with mgpu.when(first_block):
-            barrier.arrive(arrival_count=3, can_complete=False)
-            barrier.arrive_expect_tx(bytes)
-        else:
-          barrier.arrive(arrival_count=3, can_complete=False)
-          barrier.arrive_expect_tx(bytes)
+        arrive_predicate = lane_pred
 
-    lane_pred = ctx.module_ctx.single_lane_predicate
+      if predicate is not None:
+        tx_bytes = arith_dialect.select(
+            predicate, mgpu.c(bytes, i32), mgpu.c(0, i32)
+        )
+      else:
+        tx_bytes = bytes
+      barrier.arrive_expect_tx(tx_bytes, predicate=arrive_predicate)
+
     if predicate is not None:
       predicate = arith_dialect.andi(predicate, lane_pred)
     else:
@@ -1578,16 +1550,10 @@ def _barrier_arrive_lowering(
   elif ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
     barrier.arrive(orders_tensor_core)
   else:
-    if scope == mgpu_utils.ThreadSubset.WARP and not orders_tensor_core:
-      arrival_count = 4
-    else:
-      arrival_count = 1
-
-    pred = ctx.module_ctx.single_lane_predicate if orders_tensor_core else None
     barrier.arrive(
-        arrival_count=arrival_count,
+        arrival_count=1,
         orders_tensor_core=orders_tensor_core,
-        predicate=pred,
+        predicate=ctx.module_ctx.single_lane_predicate,
         scope=scope,
     )
   return ()
@@ -4928,8 +4894,8 @@ def try_cluster_cancel_lowering(
     is_leader_thread = arith_dialect.andi(
         ctx.module_ctx.single_lane_predicate, is_first_wg
     )
-    bytes = arith_dialect.select(is_leader_thread, mgpu.c(16, i32), mgpu.c(0, i32))
-    barrier.arrive_expect_tx(bytes)
+    bytes = arith_dialect.select(is_first_wg, mgpu.c(16, i32), mgpu.c(0, i32))
+    barrier.arrive_expect_tx(bytes, predicate=ctx.module_ctx.single_lane_predicate)
     mgpu.try_cluster_cancel(
         result_ref,
         barrier,

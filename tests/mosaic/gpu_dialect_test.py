@@ -2218,14 +2218,11 @@ class DialectLoweringTest(MosaicGpuTest):
     # One inline asm block is issued per barrier.
     self.assertLen(all_inline_asm_ops, num_barriers)
 
-    # Each barrier has its count equal to the arrival count times the
-    # warpgroup size.
+    # Each barrier has its count equal to the arrival count.
     for op in all_inline_asm_ops:
       count = op.operands[1].owner
       self.assertIsInstance(count, arith.ConstantOp)
-      self.assertEqual(
-          count.literal_value, arrival_count * mgpu_utils.WARPGROUP_SIZE
-      )
+      self.assertEqual(count.literal_value, arrival_count)
 
   def test_lowering_vector_op_without_layout_fails(self):
     shape = (3, 4)
