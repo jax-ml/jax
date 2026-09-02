@@ -26,6 +26,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `JAX_MTLS_CA_FILE`, `JAX_MTLS_PEER_URI_PREFIX` and
     `JAX_DISTRIBUTED_VERIFY_SECURE_CREDENTIALS` environment variables).
 
+* Breaking changes
+  * Fixed a numerical issue in the gradients produced by `jax.remat`. This may
+    cause ``f(x) != jax.value_and_grad(f)(x)[0]`` (due to numerical differences)
+    for more functions f than previously. See
+    https://github.com/google/jax/pull/22244 for more information.
+
 * Changes
   * The minimum CuDNN version for CUDA 12 is v9.10.2.
   * JAX now uses Bazel 8.7.0 to build from source.
