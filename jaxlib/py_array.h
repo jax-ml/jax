@@ -267,7 +267,6 @@ class PyArray : public nanobind::object {
     return storage.result_status;
   }
 
-  xla::ifrt::Array* ifrt_array() const { return GetStorage().ifrt_array.get(); }
   xla::ifrt::ArrayRef ifrt_array_ref() const { return GetStorage().ifrt_array; }
 
   int num_addressable_shards() const {
