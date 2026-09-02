@@ -5698,6 +5698,29 @@ class FragmentedArrayTest(TestCase):
     result = m * n if reduce_both else n
     np.testing.assert_array_equal(kernel_fn(), jnp.full((m,), result, dtype))
 
+  @parameterized.parameters(jnp.float32, jnp.int32)
+  def test_splat_reduce_prod(self, dtype):
+    shape = (2, 3)
+    def _kernel(ctx, inp, dst, _):
+      src = mgpu.FragmentedArray.splat(
+          memref.load(inp, []),
+          shape,
+          is_signed=utils.is_signed(dtype),
+      )
+      acc = src.reduce("prod", (0, 1))
+      acc.store_untiled(dst, optimized=False)
+
+    kernel = mgpu.as_gpu_kernel(
+        _kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        in_shape=jax.ShapeDtypeStruct((), dtype),
+        out_shape=jax.ShapeDtypeStruct((), dtype),
+        smem_scratch_shape=(),
+    )
+    expected = jnp.array(3**math.prod(shape), dtype=dtype)
+    np.testing.assert_array_equal(kernel(jnp.array(3, dtype=dtype)), expected)
+
   @parameterized.named_parameters(
       ("wgmma_row", fa.WGMMA_LAYOUT, fa.WGMMA_ROW_LAYOUT, 1),
       ("wgmma_col", fa.WGMMA_LAYOUT, fa.WGMMA_COL_LAYOUT, 0),
