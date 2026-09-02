@@ -43,6 +43,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -91,6 +92,7 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
+#include "xla/python/ifrt/index_domain.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/remap_plan.h"
 #include "xla/python/ifrt/rtti.h"
@@ -106,6 +108,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
+#include "xla/python/strides.h"
 #include "xla/python/types.h"
 #include "xla/python/version.h"
 #include "xla/shape.h"
@@ -869,6 +872,17 @@ absl::Status PyArray::BlockUntilResultStatusIsReady() {
   return xla::ifrt::ExpandUserContexts(std::move(status));
 }
 
+absl::StatusOr<std::pair<nb::object, bool>> PyArray::ToNumpyArrayDidCopy() {
+  if (ifrt_array() == nullptr || ifrt_array()->IsDeleted()) {
+    return xla::InvalidArgument("Array has been deleted.");
+  }
+  ABSL_ASSIGN_OR_RETURN(auto result,
+                        GetStorage().host_value.AsNumPyArray(
+                            GetStorage().dynamic_shape, ifrt_array()));
+  ABSL_RETURN_IF_ERROR(BlockUntilResultStatusIsReady());
+  return result;
+}
+
 absl::StatusOr<std::pair<nb::object, bool>>
 PyArray::SingleDeviceArrayToNumpyArrayDidCopy() {
   ABSL_ASSIGN_OR_RETURN(auto arr, FullyReplicatedShard());
@@ -885,8 +899,7 @@ absl::StatusOr<nb::object> PyArray::SingleDeviceArrayToNumpyArray() {
 
 absl::Status PyArray::CopySingleDeviceArrayToHostAsync() {
   ABSL_ASSIGN_OR_RETURN(auto arr, FullyReplicatedShard());
-  return arr.GetStorage().host_value.CopyToHostAsync(
-      arr.GetStorage().dynamic_shape, arr.ifrt_array_ref().get());
+  return BatchedCopyToHostAsync(nb::borrow<nb::sequence>(nb::make_tuple(arr)));
 }
 
 absl::StatusOr<PyArray> PyArray::AssertUnsharded(std::string_view api) {
@@ -1575,12 +1588,15 @@ absl::Status PyArray::ReplaceWithAlias(PyArray o)
   if (mu1 > mu2) {
     std::swap(mu1, mu2);
   }
+  nanobind::object old_aval;
   nanobind::object old_npy_value;
   xla::ifrt::ArrayRef old_ifrt_array;
   nanobind::object old_fully_replicated_array;
   ft_lock_guard lock1(*mu1);
   ft_lock_guard lock2(*mu2);
 
+  old_aval = std::move(storage.aval);
+  storage.aval = o_storage.aval;
   old_npy_value = std::move(storage.npy_value);
   storage.npy_value = o_storage.npy_value;
   old_ifrt_array = std::move(storage.ifrt_array);
@@ -1816,6 +1832,147 @@ bool IsZeroCopyableCpuBuffer(const xla::PjRtBuffer* buf) {
          !xla::primitive_util::IsSubByteNonPredType(buf->element_type()) &&
          has_default_layout;
 }
+
+// Copies a single dense slice into a sub-region of a destination NumPy array
+// using NumPy multidimensional slice assignment, which handles arbitrary
+// multi-dimensional strided copies.
+//
+// REQUIRES: Python GIL is held.
+absl::Status SetSlice(nanobind::handle dst_array, xla::nb_dtype dtype,
+                      const xla::ifrt::IndexDomain& index_domain,
+                      const void* src_data) {
+  const absl::Span<const int64_t>& dims = index_domain.shape().dims();
+  const int ndim = dims.size();
+  nanobind::tuple index_tuple =
+      nanobind::steal<nanobind::tuple>(PyTuple_New(ndim));
+  for (int d = 0; d < ndim; ++d) {
+    const int64_t start = index_domain.origin().elements()[d];
+    const int64_t stop = start + dims[d];
+    PyTuple_SET_ITEM(index_tuple.ptr(), d,
+                     nanobind::slice(start, stop).release().ptr());
+  }
+  xla::nb_numpy_ndarray shard_array(dtype, dims, /*strides=*/std::nullopt,
+                                    src_data);
+  if (PyObject_SetItem(dst_array.ptr(), index_tuple.ptr(), shard_array.ptr()) <
+      0) {
+    PyObject *ptype, *pvalue, *ptraceback;
+    PyErr_Fetch(&ptype, &pvalue, &ptraceback);
+    std::string err_msg = "Failed to copy shard slice to host array";
+    if (pvalue != nullptr) {
+      nanobind::str err_str =
+          nanobind::steal<nanobind::str>(PyObject_Str(pvalue));
+      absl::StrAppend(&err_msg, ": ", err_str.c_str());
+    }
+    Py_XDECREF(ptype);
+    Py_XDECREF(pvalue);
+    Py_XDECREF(ptraceback);
+    return absl::InternalError(err_msg);
+  }
+  return absl::OkStatus();
+}
+
+// Determines the host dynamic shape and layout of the array.
+absl::StatusOr<xla::Shape> GetHostShape(
+    ifrt::Array* ifrt_array, std::optional<xla::Shape>& dynamic_shape_holder) {
+  if (ifrt_array->dtype().kind() == ifrt::DType::kString) {
+    return xla::ShapeUtil::MakeShape(xla::U8, ifrt_array->shape().dims());
+  }
+  // Determine the runtime dynamic shape and layout of the array.
+  // TODO(b/182461453): This is a blocking call. If we further implemented
+  // populating dynamic shape metadata while fetching the literal, we
+  // wouldn't need this static approach.
+  const xla::Shape* dynamic_shape;
+  std::optional<xla::Shape> shape_holder;
+  if (xla::ifrt::isa<xla::ifrt::PjRtCompatibleArray>(ifrt_array)) {
+    ABSL_ASSIGN_OR_RETURN(dynamic_shape,
+                          XlaDynamicShape(ifrt_array, dynamic_shape_holder));
+  } else {
+    // Skip querying the dynamic shape for a non-PjRt Array.
+    ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType type,
+                          xla::ifrt::ToPrimitiveType(ifrt_array->dtype()));
+    shape_holder = xla::ShapeUtil::MakeShapeWithDescendingLayout(
+        type, ifrt_array->shape().dims());
+    dynamic_shape = &*shape_holder;
+  }
+  return xla::ShapeUtil::DeviceShapeToHostShape(*dynamic_shape);
+}
+
+// Returns the element byte size for the given dtype.
+absl::StatusOr<int64_t> GetElementSize(ifrt::DType dtype) {
+  if (dtype.kind() == ifrt::DType::kString) {
+    return sizeof(absl::Cord);
+  }
+  ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType type,
+                        xla::ifrt::ToPrimitiveType(dtype));
+  return xla::ShapeUtil::ByteSizeOfPrimitiveType(type);
+}
+
+// Computes global byte strides for string arrays.
+std::vector<int64_t> GetGlobalByteStridesForStringType(
+    const ifrt::Shape& shape) {
+  const auto& dims = shape.dims();
+  std::vector<int64_t> global_byte_strides(dims.size());
+  int64_t stride = sizeof(absl::Cord);
+  for (int d = static_cast<int>(dims.size()) - 1; d >= 0; --d) {
+    global_byte_strides[d] = stride;
+    stride *= dims[d];
+  }
+  return global_byte_strides;
+}
+
+// Computes the per-shard XLA shape matching the host layout.
+absl::StatusOr<xla::Shape> GetXlaShardShape(const xla::ifrt::Sharding& sharding,
+                                            const xla::ifrt::Shape& shape,
+                                            const xla::Shape& host_shape) {
+  ABSL_ASSIGN_OR_RETURN(xla::ifrt::Shape ifrt_shard_shape,
+                        sharding.GetShardShape(shape));
+  const auto& shard_dims = ifrt_shard_shape.dims();
+  if (host_shape.has_layout()) {
+    return xla::ShapeUtil::MakeShapeWithDenseLayout(
+        host_shape.element_type(), shard_dims,
+        host_shape.layout().minor_to_major());
+  }
+  return xla::ShapeUtil::MakeShapeWithDescendingLayout(
+      host_shape.element_type(), shard_dims);
+}
+
+// Computes the per-shard byte strides for the given sharding, shape, and host
+// shape.
+absl::StatusOr<std::optional<std::vector<int64_t>>> GetShardByteStrides(
+    ifrt::DType dtype, const xla::ifrt::Sharding& sharding,
+    const xla::ifrt::Shape& shape, const xla::Shape& host_shape) {
+  if (dtype.kind() == ifrt::DType::kString) {
+    return std::nullopt;
+  }
+  ABSL_ASSIGN_OR_RETURN(xla::Shape xla_shard_shape,
+                        GetXlaShardShape(sharding, shape, host_shape));
+  return ByteStridesOrDefaultForShapeInt64(xla_shard_shape);
+}
+
+// Returns whether shard dimensions and strides form contiguous regions given
+// the global byte strides.
+absl::StatusOr<bool> IsContiguous(
+    ifrt::DType dtype, const xla::ifrt::Sharding& sharding,
+    const xla::ifrt::Shape& shape, const xla::Shape& host_shape,
+    absl::Span<const int64_t> global_byte_strides) {
+  if (dtype.kind() == ifrt::DType::kString) {
+    return true;
+  }
+  ABSL_ASSIGN_OR_RETURN(xla::Shape xla_shard_shape,
+                        GetXlaShardShape(sharding, shape, host_shape));
+  const auto& shard_dims = xla_shard_shape.dimensions();
+  const std::vector<int64_t> compact_strides =
+      ByteStridesForShape(xla_shard_shape);
+  CHECK_EQ(shard_dims.size(), compact_strides.size());
+  CHECK_EQ(shard_dims.size(), global_byte_strides.size());
+  for (size_t d = 0; d < shard_dims.size(); ++d) {
+    if (shard_dims[d] > 1 && global_byte_strides[d] != compact_strides[d]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 PyHostValue::PyHostValue() = default;
@@ -1876,7 +2033,14 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
   }
 
   PyUserContextScope user_context_scope;
-  ABSL_RETURN_IF_ERROR(CopyToHostAsync(dynamic_shape_holder, ifrt_array));
+  PyHostValue* self = this;
+  std::reference_wrapper<std::optional<xla::Shape>> shape_holder_ref(
+      dynamic_shape_holder);
+  xla::ifrt::Client* client =
+      ifrt_array->sharding().devices()->devices().front()->client();
+  ABSL_RETURN_IF_ERROR(BatchedCopyToHostAsync(
+      client, absl::MakeSpan(&self, 1), absl::MakeSpan(&shape_holder_ref, 1),
+      absl::MakeSpan(&ifrt_array, 1)));
   absl::Status status;
   if (!ready_.IsReady()) {
     nb::gil_scoped_release gil;
@@ -1937,105 +2101,278 @@ absl::Status PyHostValue::ConvertStringArrayContentsToNumpyArray(
   return absl::OkStatus();
 }
 
-absl::Status PyHostValue::CopyStringArrayToHostAsync(
-    std::optional<xla::Shape>& dynamic_shape_holder, ifrt::Array* ifrt_array) {
-  auto transfer_guard_formatter = [ifrt_array] {
-    return absl::StrCat(
-        "shape=(", absl::StrJoin(ifrt_array->shape().dims(), ","),
-        "), dtype=", ifrt_array->dtype(), ", device=",
-        ifrt_array->sharding().devices()->devices().front()->DebugString());
-  };
-  ABSL_RETURN_IF_ERROR(
-      ApplyTransferGuardToDeviceToHost(transfer_guard_formatter));
-
-  ABSL_ASSIGN_OR_RETURN(xla::nb_dtype dtype,
-                        xla::IfrtDtypeToNbDtype(ifrt_array->dtype()));
-  auto shape = ifrt_array->shape();
-
-  // Allocate a vector of cords to hold the contents of the array until
-  // they are until they are ultimately converted to a numpy array as part
-  // of the `AsNumPyArray` call.
-  string_array_contents_ =
-      std::make_shared<std::vector<absl::Cord>>(shape.num_elements());
-  PyUserContextScope user_context_scope;
-  ready_ = ifrt_array->CopyToHostBuffer(string_array_contents_->data(),
-                                        /*byte_strides=*/std::nullopt,
-                                        ifrt::ArrayCopySemantics::kAlwaysCopy);
-
-  ready_.OnReady(
-      [string_array_contents = string_array_contents_](absl::Status) {
-      });  // Keeps the cords alive until the copy is done.
-
-  return absl::OkStatus();
-}
-
-absl::Status PyHostValue::CopyToHostAsync(
-    std::optional<xla::Shape>& dynamic_shape_holder, ifrt::Array* ifrt_array) {
-  if (ready_.IsValid()) {
-    // The array value has been populated, so CopyToHostAsync has been called.
+absl::Status PyHostValue::BatchedCopyToHostAsync(
+    xla::ifrt::Client* client, absl::Span<PyHostValue* const> host_values,
+    absl::Span<const std::reference_wrapper<std::optional<xla::Shape>>>
+        dynamic_shape_holders,
+    absl::Span<xla::ifrt::Array* const> ifrt_arrays) {
+  CHECK(client != nullptr);
+  CHECK_EQ(host_values.size(), dynamic_shape_holders.size());
+  CHECK_EQ(host_values.size(), ifrt_arrays.size());
+  if (host_values.empty()) {
     return absl::OkStatus();
   }
 
-  // Copying in Arrays of type kString requires some special handling
-  if (ifrt_array->dtype().kind() == ifrt::DType::kString) {
-    return CopyStringArrayToHostAsync(dynamic_shape_holder, ifrt_array);
+  // A unique logical data slice of an array.
+  struct DataSlice {
+    // The logical sub-region (shape and offset) in the global array.
+    xla::ifrt::IndexDomain index_domain;
+    // In case the slice is non-contiguous in the destination buffer, a
+    // temporary buffer to copy the shard data into; nullptr otherwise.
+    std::unique_ptr<std::vector<char>> temp_buffer;
+  };
+
+  // State maintained for each array.
+  struct PerArray {
+    PyHostValue* host_value;
+    xla::ifrt::Array* ifrt_array;
+    xla::Shape host_shape;
+    int64_t elem_size;
+    std::vector<int64_t> byte_strides;
+    std::optional<std::vector<int64_t>> shard_byte_strides;
+    // Whether shards occupy contiguous regions in destination NumPy array.
+    bool is_contiguous;
+    // Pointer to the start of the destination NumPy array.
+    char* dst_ptr;
+    // Data slices belonging to this array.
+    std::vector<DataSlice> data_slices;
+  };
+
+  // Fill in the state for each array.
+  std::vector<PerArray> per_array;
+  per_array.reserve(host_values.size());
+  for (size_t arr_idx = 0; arr_idx < host_values.size(); ++arr_idx) {
+    PyHostValue* host_value = host_values[arr_idx];
+    std::optional<xla::Shape>& dynamic_shape_holder =
+        dynamic_shape_holders[arr_idx].get();
+    xla::ifrt::Array* ifrt_array = ifrt_arrays[arr_idx];
+    if (host_value->ready_.IsValid()) {
+      continue;
+    }
+    const xla::ifrt::Sharding& sharding = ifrt_array->sharding();
+    xla::ifrt::DeviceList* addressable_devices =
+        sharding.devices()->AddressableDeviceList();
+    if (addressable_devices->empty()) {
+      continue;
+    }
+    if (auto* pjrt_arr =
+            xla::ifrt::dyn_cast_or_null<xla::ifrt::PjRtCompatibleArray>(
+                ifrt_array);
+        sharding.IsFullyReplicated() && pjrt_arr != nullptr &&
+        !pjrt_arr->pjrt_buffers().front()->IsTuple() &&
+        IsZeroCopyableCpuBuffer(pjrt_arr->pjrt_buffers().front().get())) {
+      // Zero-copy CPU buffer: PyHostValue::AsNumPyArray will construct a
+      // zero-copy view borrowing the device buffer pointer on demand. Mark
+      // ready using the array's ready future.
+      host_value->ready_ = ifrt_array->GetReadyFuture();
+      continue;
+    }
+    auto transfer_guard_formatter = [ifrt_array] {
+      return absl::StrCat(
+          "shape=(", absl::StrJoin(ifrt_array->shape().dims(), ","),
+          "), dtype=", ifrt_array->dtype(), ", device=",
+          ifrt_array->sharding().devices()->devices().front()->DebugString());
+    };
+    ABSL_RETURN_IF_ERROR(
+        ApplyTransferGuardToDeviceToHost(transfer_guard_formatter));
+
+    // Determine the runtime dynamic shape and layout of the array.
+    ABSL_ASSIGN_OR_RETURN(xla::Shape host_shape,
+                          GetHostShape(ifrt_array, dynamic_shape_holder));
+    ABSL_ASSIGN_OR_RETURN(int64_t elem_size,
+                          GetElementSize(ifrt_array->dtype()));
+    std::vector<int64_t> global_byte_strides;
+    if (ifrt_array->dtype().kind() == ifrt::DType::kString) {
+      global_byte_strides =
+          GetGlobalByteStridesForStringType(ifrt_array->shape());
+    } else {
+      global_byte_strides = ByteStridesForShape(host_shape);
+    }
+    ABSL_ASSIGN_OR_RETURN(
+        std::optional<std::vector<int64_t>> shard_byte_strides,
+        GetShardByteStrides(ifrt_array->dtype(), sharding, ifrt_array->shape(),
+                            host_shape));
+
+    // Determine if shards occupy contiguous regions in destination NumPy
+    // buffer. A shard is non-contiguous if its rows/elements have gaps in
+    // the global buffer (e.g. when partitioning along columns or multiple
+    // mesh axes).
+    //
+    // Contiguous shards' data can be copied directly into the destination
+    // NumPy buffer. Non-contiguous shards must be copied into a temporary
+    // dense buffer first, and then re-mapped to the destination NumPy
+    // buffer.
+    ABSL_ASSIGN_OR_RETURN(
+        bool is_contiguous,
+        IsContiguous(ifrt_array->dtype(), sharding, ifrt_array->shape(),
+                     host_shape, global_byte_strides));
+
+    // Determine the pointer to the start of the destination NumPy array.
+    char* dst_ptr = nullptr;
+    if (ifrt_array->dtype().kind() == ifrt::DType::kString) {
+      // Allocate a vector of cords to hold the contents of the array until
+      // they are ultimately converted to a numpy array as part of the
+      // `ConvertStringArrayContentsToNumpyArray` call.
+      host_value->string_array_contents_ =
+          std::make_shared<std::vector<absl::Cord>>(
+              ifrt_array->shape().num_elements());
+      dst_ptr =
+          reinterpret_cast<char*>(host_value->string_array_contents_->data());
+    } else {
+      std::optional<std::vector<int64_t>> strides =
+          ByteStridesOrDefaultForShapeInt64(host_shape);
+      ABSL_ASSIGN_OR_RETURN(xla::nb_dtype dtype,
+                            PrimitiveTypeToNbDtype(host_shape.element_type()));
+      // TODO(hyeontaek): Several PjRt runtimes assume that the host buffer uses
+      // the same transposition as the device buffer. This is different from
+      // xla::PjRtBuffer::ToLiteral()'s semantics that the runtime respects the
+      // layout of the host buffer literal. On the other hand, the runtime often
+      // knows better about an efficient layout for the host buffer. It will be
+      // useful to revisit the semantics of xla::PjRtBuffer::ToLiteral() to see
+      // if it is desirable for the runtime to choose the layout.
+      host_value->value_ =
+          xla::nb_numpy_ndarray(dtype, host_shape.dimensions(), strides);
+      dst_ptr = reinterpret_cast<char*>(host_value->value_.mutable_data());
+    }
+
+    // Partition the array data into logical data slices.
+    using UniqueIndexDomains =
+        absl::InlinedVector<xla::ifrt::Sharding::IndexDomainAndShardIndices, 1>;
+    ABSL_ASSIGN_OR_RETURN(UniqueIndexDomains unique_index_domains,
+                          sharding.UniqueIndexDomains(ifrt_array->shape()));
+    std::vector<DataSlice> data_slices;
+    data_slices.reserve(unique_index_domains.size());
+    for (const xla::ifrt::Sharding::IndexDomainAndShardIndices&
+             unique_index_domain : unique_index_domains) {
+      data_slices.push_back(DataSlice{
+          .index_domain = unique_index_domain.index_domain,
+      });
+    }
+
+    // Fill in the array state.
+    per_array.push_back(PerArray{
+        .host_value = host_value,
+        .ifrt_array = ifrt_array,
+        .host_shape = std::move(host_shape),
+        .elem_size = elem_size,
+        .byte_strides = std::move(global_byte_strides),
+        .shard_byte_strides = std::move(shard_byte_strides),
+        .is_contiguous = is_contiguous,
+        .dst_ptr = dst_ptr,
+        .data_slices = std::move(data_slices),
+    });
   }
 
-  auto* arr =
-      xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(ifrt_array);
-  if (arr != nullptr && !arr->pjrt_buffers().front()->IsTuple() &&
-      IsZeroCopyableCpuBuffer(arr->pjrt_buffers().front().get())) {
+  // Create the copy specifications.
+  std::vector<xla::ifrt::Client::CopyArraysToHostBufferShardsSpec> specs;
+  specs.reserve(per_array.size());
+  for (PerArray& array : per_array) {
+    xla::ifrt::Array* ifrt_array = array.ifrt_array;
+    xla::ifrt::Client::CopyArraysToHostBufferShardsSpec::Buffers buffers;
+    buffers.reserve(array.data_slices.size());
+    for (DataSlice& slice : array.data_slices) {
+      void* data_ptr = nullptr;
+      if (array.is_contiguous) {
+        // Shard data is contiguous in destination NumPy buffer: copy directly
+        // into the destination buffer.
+        int64_t offset = 0;
+        for (int d = 0; d < array.host_shape.dimensions().size(); ++d) {
+          offset +=
+              slice.index_domain.origin().elements()[d] * array.byte_strides[d];
+        }
+        data_ptr = array.dst_ptr + offset;
+      } else {
+        // Shard data is non-contiguous in destination NumPy buffer: copy
+        // into a temporary buffer.
+        int64_t shard_elements = slice.index_domain.shape().num_elements();
+        slice.temp_buffer = std::make_unique<std::vector<char>>(
+            shard_elements * array.elem_size);
+        data_ptr = slice.temp_buffer->data();
+      }
+      buffers.push_back(xla::ifrt::Client::MutableHostBuffer{
+          /*data=*/data_ptr,
+          /*dtype=*/ifrt_array->dtype(),
+          /*shape=*/slice.index_domain.shape(),
+          /*byte_strides=*/array.shard_byte_strides});
+    }
+    specs.push_back(xla::ifrt::Client::CopyArraysToHostBufferShardsSpec{
+        .array = tsl::FormRef(ifrt_array),
+        .buffers = std::move(buffers),
+    });
+  }
+  CHECK_EQ(per_array.size(), specs.size());
+
+  if (specs.empty()) {
+    // Nothing to copy.
     return absl::OkStatus();
   }
-  auto transfer_guard_formatter = [ifrt_array] {
-    return absl::StrCat(
-        "shape=(", absl::StrJoin(ifrt_array->shape().dims(), ","),
-        "), dtype=", ifrt_array->dtype(), ", device=",
-        ifrt_array->sharding().devices()->devices().front()->DebugString());
-  };
-  ABSL_RETURN_IF_ERROR(
-      ApplyTransferGuardToDeviceToHost(transfer_guard_formatter));
 
-  // TODO(b/182461453): This is a blocking call. If we further implemented
-  // populating dynamic shape metadata while fetching the literal, we wouldn't
-  // need this static approach.
-  const xla::Shape* dynamic_shape;
-  std::optional<xla::Shape> shape_holder;
-  if (xla::ifrt::isa<ifrt::PjRtCompatibleArray>(ifrt_array)) {
-    ABSL_ASSIGN_OR_RETURN(dynamic_shape,
-                          XlaDynamicShape(ifrt_array, dynamic_shape_holder));
-  } else {
-    // Skip querying the dynamic shape for a non-PjRt Array.
-    ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType type,
-                          ifrt::ToPrimitiveType(ifrt_array->dtype()));
-    shape_holder = xla::ShapeUtil::MakeShapeWithDescendingLayout(
-        type, ifrt_array->shape().dims());
-    dynamic_shape = &*shape_holder;
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<tsl::Future<>> futures,
+      client->CopyArraysToHostBufferShards(
+          absl::MakeSpan(specs), xla::ifrt::ArrayCopySemantics::kAlwaysCopy));
+  CHECK_EQ(futures.size(), per_array.size());
+  for (int i = 0; i < per_array.size(); ++i) {
+    tsl::Future<>& future = futures[i];
+    PerArray& array = per_array[i];
+    PyHostValue* host_value = array.host_value;
+    xla::ifrt::Array* ifrt_array = array.ifrt_array;
+    if (ifrt_array->dtype().kind() == ifrt::DType::kString) {
+      host_value->ready_ = future;
+      // Keeps the cords alive until the copy is done.
+      future.OnReady([string_array_contents =
+                          host_value->string_array_contents_](absl::Status) {});
+    } else if (array.is_contiguous) {
+      // All shard data is copied directly into the destination NumPy buffer.
+      host_value->value_.attr("flags").attr("writeable") =
+          nanobind::bool_(false);
+      host_value->ready_ = future;
+      // Extend the lifetime of the destination NumPy array until the future
+      // completes.
+      host_value->value_.inc_ref();
+      future.OnReady([raw_ptr = host_value->value_.ptr()](absl::Status status) {
+        GlobalPyRefManager()->AddGarbage(nb::steal(raw_ptr));
+      });
+    } else {
+      // Shard data is copied into temporary dense buffers. Once the copy
+      // completes, unpack the temporary buffers into the destination NumPy
+      // array.
+      auto [promise, ready_future] = tsl::MakePromise<>();
+      host_value->ready_ = std::move(ready_future);
+      host_value->value_.inc_ref();
+      future.OnReady(
+          [promise = std::move(promise), transfer_info = std::move(array),
+           raw_ptr = host_value->value_.ptr()](absl::Status status) mutable {
+            if (!status.ok()) {
+              promise.Set(std::move(status));
+              GlobalPyRefManager()->AddGarbage(nb::steal(raw_ptr));
+              return;
+            }
+            {
+              nanobind::gil_scoped_acquire gil;
+              nanobind::handle value_handle(raw_ptr);
+              auto dtype =
+                  nanobind::cast<xla::nb_dtype>(value_handle.attr("dtype"));
+              for (const auto& slice : transfer_info.data_slices) {
+                CHECK(slice.temp_buffer != nullptr);
+                absl::Status copy_status =
+                    SetSlice(value_handle, dtype, slice.index_domain,
+                             slice.temp_buffer->data());
+                if (!copy_status.ok()) {
+                  promise.Set(std::move(copy_status));
+                  GlobalPyRefManager()->AddGarbage(nb::steal(raw_ptr));
+                  return;
+                }
+              }
+              value_handle.attr("flags").attr("writeable") =
+                  nanobind::bool_(false);
+            }
+            promise.Set(absl::OkStatus());
+            GlobalPyRefManager()->AddGarbage(nb::steal(raw_ptr));
+          });
+    }
   }
 
-  xla::Shape host_shape =
-      xla::ShapeUtil::DeviceShapeToHostShape(*dynamic_shape);
-
-  auto strides = ByteStridesOrDefaultForShapeInt64(host_shape);
-  ABSL_ASSIGN_OR_RETURN(xla::nb_dtype dtype,
-                        PrimitiveTypeToNbDtype(host_shape.element_type()));
-  value_ = xla::nb_numpy_ndarray(dtype, host_shape.dimensions(), strides);
-  // TODO(hyeontaek): Several PjRt runtimes assume that the host buffer uses
-  // the same transposition as the device buffer. This is different from
-  // xla::PjRtBuffer::ToLiteral()'s semantics that the runtime respects the
-  // layout of the host buffer literal. On the other hand, the runtime often
-  // knows better about an efficient layout for the host buffer. It will be
-  // useful to revisit the semantics of xla::PjRtBuffer::ToLiteral() to see if
-  // it is desirable for the runtime to choose the layout.
-  PyUserContextScope user_context_scope;
-  ready_ = ifrt_array->CopyToHostBuffer(value_.mutable_data(), strides,
-                                        ifrt::ArrayCopySemantics::kAlwaysCopy);
-  // Make sure the destination of the copy remains alive until the copy is done.
-  value_.inc_ref();
-  ready_.OnReady([array{value_.ptr()}](absl::Status status) {
-    GlobalPyRefManager()->AddGarbage(nb::steal(array));
-  });
-  value_.attr("flags").attr("writeable") = nb::bool_(false);
   return absl::OkStatus();
 }
 
@@ -2043,6 +2380,66 @@ void PyHostValue::Clear() {
   ready_ = {};
   value_ = {};
   string_array_contents_ = {};
+}
+
+absl::Status PyArray::BatchedCopyToHostAsync(nanobind::sequence py_arrays) {
+  // Group the arrays by client and device list.
+  struct GroupKey {
+    xla::ifrt::Client* client;
+    xla::ifrt::DeviceListRef devices;
+
+    bool operator==(const GroupKey& other) const {
+      return client == other.client && devices == other.devices;
+    }
+
+    struct Hash {
+      size_t operator()(const GroupKey& key) const {
+        return absl::HashOf(key.client, key.devices);
+      }
+    };
+  };
+  absl::flat_hash_map<GroupKey, std::vector<PyArray>, GroupKey::Hash> groups;
+  for (nanobind::handle item : py_arrays) {
+    if (PyArray::IsPyArray(item)) {
+      PyArray py_array = nb::cast<PyArray>(item);
+      if (py_array.ifrt_array() == nullptr ||
+          py_array.ifrt_array()->IsDeleted()) {
+        return xla::InvalidArgument("Array has been deleted.");
+      }
+      xla::ifrt::Array* ifrt_array = py_array.ifrt_array();
+      const xla::ifrt::Sharding& sharding = ifrt_array->sharding();
+      xla::ifrt::DeviceList* addressable_devices =
+          sharding.devices()->AddressableDeviceList();
+      if (addressable_devices->empty()) {
+        continue;
+      }
+
+      xla::ifrt::Client* client = py_array.py_client()->ifrt_client();
+      groups[GroupKey{client, sharding.devices()}].push_back(
+          std::move(py_array));
+    }
+  }
+
+  // Process each group of arrays separately.
+  for (auto& [key, arrays] : groups) {
+    std::vector<PyHostValue*> host_values;
+    std::vector<std::reference_wrapper<std::optional<xla::Shape>>>
+        dynamic_shape_holders;
+    std::vector<xla::ifrt::Array*> ifrt_arrays;
+    host_values.reserve(arrays.size());
+    dynamic_shape_holders.reserve(arrays.size());
+    ifrt_arrays.reserve(arrays.size());
+    for (PyArray& arr : arrays) {
+      host_values.push_back(&arr.GetStorage().host_value);
+      dynamic_shape_holders.push_back(arr.GetStorage().dynamic_shape);
+      ifrt_arrays.push_back(arr.ifrt_array());
+    }
+    ABSL_RETURN_IF_ERROR(PyHostValue::BatchedCopyToHostAsync(
+        key.client, absl::MakeSpan(host_values),
+        absl::MakeSpan(dynamic_shape_holders), absl::MakeSpan(ifrt_arrays)));
+  }
+
+  return absl::OkStatus();
 }
 
 namespace {
@@ -2220,7 +2617,7 @@ absl::Status PyArray::Register(nb::module_& m) {
       },
       nb::is_method(), nb::arg("aval"), nb::arg("sharding"));
   type.attr("_sharding") = xla::nb_property_readonly(&PyArray::sharding);
-  type.attr("aval") = xla::nb_property_readonly(&PyArray::aval);
+  type.attr("aval") = xla::nb_property(&PyArray::aval, &PyArray::set_aval);
   type.attr("_arrays") = xla::nb_property_readonly(&PyArray::arrays);
   type.attr("_fully_replicated_shard") = nb::cpp_function(
       [](PyArray self) {
@@ -2262,6 +2659,8 @@ absl::Status PyArray::Register(nb::module_& m) {
   type.attr("_single_device_array_to_np_array_did_copy") = nb::cpp_function(
       xla::ValueOrThrowWrapper(&PyArray::SingleDeviceArrayToNumpyArrayDidCopy),
       nb::is_method());
+  type.attr("_to_np_array_did_copy") = nb::cpp_function(
+      xla::ValueOrThrowWrapper(&PyArray::ToNumpyArrayDidCopy), nb::is_method());
   type.attr("_copy_single_device_array_to_host_async") = nb::cpp_function(
       [](PyArray& self) {
         xla::ThrowIfError(self.CopySingleDeviceArrayToHostAsync());
