@@ -2587,7 +2587,7 @@ def _program_order(fun, *, enforce, exclude_argnames):
   return wrapped
 
 
-def looped_opt_barrier(prev_outvars, prev_outs, cur_invars, cur_inps):
+def opt_barrier_per_input(prev_outvars, prev_outs, cur_invars, cur_inps):
   from jax._src.lax.lax import optimization_barrier, create_token  # type: ignore
 
   token = create_token()
@@ -2654,9 +2654,13 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
           barrier_inps, excluded_inps = partition_list(exclude_mask, cur_inps)
           if barrier_inps:
             barrier_invars, _ = partition_list(exclude_mask, cur_eqn.invars)
-            prev_outs, barrier_inps = looped_opt_barrier(
+            prev_outs, barrier_inps = opt_barrier_per_input(
                 prev_eqn.outvars, prev_outs, barrier_invars, barrier_inps)
             cur_inps = merge_lists(exclude_mask, barrier_inps, excluded_inps)
+        # TODO(yashkatariya): Replace this with cur_eqn.primitive.is_hop
+        elif cur_eqn.primitive is jit_p:
+          prev_outs, cur_inps = opt_barrier_per_input(
+              prev_eqn.outvars, prev_outs, cur_eqn.invars, cur_inps)
         else:
           prev_outs, cur_inps = insert_opt_barrier(
               prev_eqn.outvars, prev_outs, cur_eqn.invars, cur_inps)
