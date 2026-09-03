@@ -854,6 +854,9 @@ PyType_Slot PyClient::slots_[] = {
             return 0;
           })
       .def_prop_ro("runtime_type", &PyClient::runtime_type)
+      .def_prop_ro(
+          "is_c_api",
+          [](PyClient& self) -> bool { return self.pjrt_client()->is_c_api(); })
       .def("device_count", &PyClient::device_count)
       .def("local_device_count", &PyClient::addressable_device_count)
       .def("devices", &PyClient::Devices)
