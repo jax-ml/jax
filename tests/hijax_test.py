@@ -2601,6 +2601,35 @@ class HijaxTest(jtu.JaxTestCase):
     out_tangent = f_lin(jnp.ones((5,)))
     self.assertArraysEqual(out_tangent, jnp.zeros((5,)))
 
+  def test_staging_pytree_hooks_see_current_trace(self):
+    from jax._src.hijax import custom_vjp3
+    from jax.extend.core import get_opaque_trace_state
+
+    @jax.tree_util.register_pytree_node_class
+    class Box:
+      def __init__(self, x):
+        self.x = x
+
+      def tree_flatten(self):
+        return (self.x,), None
+
+      @classmethod
+      def tree_unflatten(cls, _, xs):
+        get_opaque_trace_state()  # flax's nnx.Variable does this
+        return cls(*xs)
+
+    @custom_vjp3
+    def f(box):
+      return Box(box.x * 2)
+
+    f.defvjp(lambda box: (Box(box.x * 2), ()),
+             lambda res, g: (Box(g.x * 2),))
+
+    out = jax.jit(lambda b: f(b).x)(Box(jnp.float32(3.)))
+    self.assertAllClose(out, jnp.float32(6.))
+    g = jax.jit(jax.grad(lambda b: f(b).x))(Box(jnp.float32(3.)))
+    self.assertAllClose(g.x, jnp.float32(2.))
+
 
 class RefTest(jtu.JaxTestCase):
 
