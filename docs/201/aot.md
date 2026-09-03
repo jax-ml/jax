@@ -89,8 +89,8 @@ The `compile` step accepts the same `compiler_options` dictionary as
 {ref}`jax-201-compiler-flags`.
 
 Alongside `cost_analysis`, compiled executables can also report a memory
-breakdown before you ever run them — useful for checking whether a program
-fits in device memory:
+breakdown before you ever run them, which is useful for checking whether a
+program fits in device memory:
 
 ```python
 >>> stats = compiled.memory_analysis()
@@ -99,8 +99,8 @@ fits in device memory:
 
 ```
 
-And when all you need is a function's *output type* — with no lowering,
-compiling, or executing at all — `eval_shape` runs just the specialization
+When all you need is a function's *output type*, with no lowering,
+compiling, or executing at all, `eval_shape` runs just the specialization
 step:
 
 ```python
@@ -211,7 +211,7 @@ Compiled functions are specialized to a particular set of argument JAX types,
 such as arrays with a specific shape and dtype in our running example.
 From JAX's internal point of view, transformations such as {func}`jax.vmap`
 alter the type signature of functions in a way that invalidates the
-compiled-for type signature. As a policy, JAX simply disallows compiled
+compiled-for type signature. As a policy, JAX disallows compiled
 functions to be involved in transformations. Example:
 
 ```python
@@ -279,8 +279,7 @@ When in doubt, see the package API documentation for {mod}`jax.stages`.
 
 ## Next steps
 
-This page covered the stages underneath `jax.jit`; the main
-thread of the performance docs resumes with {doc}`control-flow`, on
-expressing conditionals and loops that live *inside* compiled code. And when
-lowering ahead of time isn't enough — you want to serialize the result and
-use it from another process — that's the export story: {ref}`jax-501-export`.
+This page covered the stages underneath `jax.jit`; the main thread of the
+performance docs resumes with {doc}`control-flow`, on expressing conditionals
+and loops that live *inside* compiled code. To serialize a lowered or compiled
+result and use it from another process, see {ref}`jax-501-export`.

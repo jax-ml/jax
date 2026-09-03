@@ -32,7 +32,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import state
 from jax._src.ad_checkpoint import saved_residuals
-from jax.ad_checkpoint import checkpoint_name
+from jax.ad_checkpoint import checkpoint_name_fwd
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.custom_derivatives import custom_jvp_call_p
@@ -2863,7 +2863,7 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     def f(y):
       return jnp.sin(y)
     def f_fwd(y):
-      return checkpoint_name(jnp.sin(y), 'saved'), (jnp.cos(y),)
+      return checkpoint_name_fwd(jnp.sin(y), 'saved'), (jnp.cos(y),)
     def f_bwd(res, g):
       c, = res
       return (g * c,)
@@ -2907,7 +2907,7 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     def f(x):
       return jnp.sin(x) * 2.0
     def f_fwd(x):
-      return checkpoint_name(jnp.sin(x) * 2.0, 'saved'), (x,)
+      return checkpoint_name_fwd(jnp.sin(x) * 2.0, 'saved'), (x,)
     def f_bwd(res, g):
       x, = res
       return (g * 2.0 * jnp.cos(x),)

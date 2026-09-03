@@ -408,7 +408,7 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
   return fun_remat
 
 
-def remat(fun: Callable, *, prevent_cse: bool = True,
+def remat(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
           policy: Callable[..., bool] | None = None,
           static_argnums: int | tuple[int, ...] = ()) -> Callable:
   """Alias of :func:`jax.checkpoint`."""
@@ -532,7 +532,8 @@ def _saved_residuals(jaxpr: core.Jaxpr,
     if eqn.primitive is name_p:
       return eqn.params['name']
     elif (eqn.primitive is call_hi_primitive_p
-          and isinstance(p := eqn.params['_prim'], CheckpointName)):
+          and isinstance(p := eqn.params['_prim'],
+                         (CheckpointName, CheckpointNameFwd))):
       return p.name
 
   # TODO(mattjj): actually we want to flag this case as problematic, ie some
@@ -940,6 +941,11 @@ def checkpoint_name(x, name):
     return tree_map(lambda x: checkpoint_name3(name, x), x)
   return tree_map(partial(name_p.bind, name=name), x)
 
+def checkpoint_name_fwd(x, name):
+  if config.remat3.value:
+    return tree_map(lambda x: CheckpointNameFwd(name, typeof(x))(x), x)
+  return tree_map(partial(name_p.bind, name=name), x)
+
 name_p.def_impl(lambda x, *, name: x)
 name_p.def_abstract_eval(lambda x, *, name: x)
 
@@ -1052,22 +1058,22 @@ def _static_argnums(f, argnums, argnames) -> frozenset[int]:
   return frozenset(argnums)
 
 def dce(traced, policy):
-  in_fwd = pe._jaxpr_forwarding(traced.jaxpr)
-  jaxpr = pe.prune_jaxpr_outputs(traced.jaxpr, [f is None for f in in_fwd])
+  jaxpr_, attached = pe.separate_consts(traced.jaxpr)
+  in_fwd = pe._jaxpr_forwarding(jaxpr_)
+  jaxpr = pe.prune_jaxpr_outputs(jaxpr_, [f is None for f in in_fwd])
   for v in jaxpr.outvars:
     if isinstance(v.aval, AbstractRef):
       raise ValueError(
           "the rematted computation's closure contains a mutable array "
           f"reference of type {v.aval.str_short()} that is not one of the "
           "rematted function's inputs, but such refs cannot be saved")
-  # dce_jaxpr preserves attached consts (constvars are never pruned).
   jaxpr, used = pe.dce_jaxpr(jaxpr, True)
   keep = [u or i in {*in_fwd} for i, u in enumerate(used)]
   kept_idx = {i: p for p, i in enumerate(i for i, k in enumerate(keep) if k)}
   in_fwd = tuple(kept_idx[f] if f is not None else None for f in in_fwd)
   take = tuple(kept_idx[i] for i, u in enumerate(used) if u)
-  keep_res, keep_primals = split_list(keep, [traced._num_consts])
-  res = [r for r, u in zip(traced._consts, keep_res) if u]
+  keep_res, keep_primals = split_list(keep, [len(attached) + traced._num_consts])
+  res = [r for r, u in zip([*attached, *traced._consts], keep_res) if u]
   return keep_primals, Partial(
       partial(_dced, jaxpr, in_fwd, take, traced.out_tree, policy), res)
 
@@ -1189,12 +1195,12 @@ class RematTraced(HiPrim):
 
   def remat(self, trace, *args):  # pyrefly: ignore[bad-param-name-override]
     traced = core.jaxpr_as_fun(self.jaxpr)
-    out, rem_ = remat_transform(self.policy, traced, *args,
+    out, rem_ = remat_transform(trace.policy, traced, *args,
                                 custom_vjp_rules=trace.custom_vjp_rules)
     (jaxpr, in_tree, out_tree), (res,) = rem_.func.args, rem_.args
     def rem(*args_):
       args_flat = tree_leaves_checked(in_tree, args_)
-      out_flat = RematTraced(jaxpr, self.policy)(*res, *args_flat)
+      out_flat = RematTraced(jaxpr, trace.policy)(*res, *args_flat)
       return tree_unflatten(out_tree, out_flat)
     return out, rem
 
@@ -1227,26 +1233,19 @@ class CheckpointName(HiPrim):
   def remat(self, trace, x):  # pyrefly: ignore[bad-override]
     policy = trace.policy
     x = CheckpointName(self.name, self.in_avals[0])(x)
-    if isinstance(policy, (SaveOnlyTheseNames, SaveAnyNamesButThese)):
-      saveable = (self.name not in policy.names if isinstance(policy, SaveAnyNamesButThese)
-                  else self.name in policy.saveable_names)
-      rem = partial(primal_left_tangent_right, x) if saveable else lambda x: x
-      return x, rem
-    elif isinstance(policy, SaveAndOffloadOnlyTheseNames):
-      if self.name in policy.names_which_can_be_saved:
-        return x, partial(primal_left_tangent_right, x)
-      elif self.name in policy.names_which_can_be_offloaded:
-        x_host = api.device_put(x, core.mem_kind_to_space(policy.offload_dst),
-                                may_alias=False)
-        src_space = core.mem_kind_to_space(policy.offload_src)
-        def rem(x_rem):
-          x_dev = api.device_put(x_host, src_space, may_alias=False)
-          return primal_left_tangent_right(x_dev, x_rem)
-        return x, rem
-      else:
-        return x, lambda x: x  # full remat
-    elif policy is everything_saveable:
+    if policy is None:
+      return x, lambda x: x  # full remat
+    case = pe.ensure_enum(policy(name_p, name=self.name))
+    if isinstance(case, pe.SaveableType):
       return x, partial(primal_left_tangent_right, x)
+    elif isinstance(case, pe.Offloadable):
+      x_host = api.device_put(x, core.mem_kind_to_space(case.dst),
+                              may_alias=False)
+      src_space = core.mem_kind_to_space(case.src)
+      def rem(x_rem):
+        x_dev = api.device_put(x_host, src_space, may_alias=False)
+        return primal_left_tangent_right(x_dev, x_rem)
+      return x, rem
     else:
       return x, lambda x: x  # full remat
 
@@ -1269,6 +1268,53 @@ class CheckpointName(HiPrim):
   def batch_dim_rule(self, axis_data, dims, /):
     return dims[0]
 
+class CheckpointNameFwd(HiPrim):
+  name: str
+
+  def __init__(self, name, aval):
+    self.in_avals = aval,
+    self.out_aval = aval
+    self.params = dict(name=name)
+    super().__init__()
+
+  def expand(self, x):  # pyrefly: ignore[bad-override]
+    return x
+
+  def remat(self, trace, x):  # pyrefly: ignore[bad-override]
+    policy = trace.policy
+    x = CheckpointNameFwd(self.name, self.in_avals[0])(x)
+    if policy is None:
+      return x, lambda x: x  # full remat
+    case = pe.ensure_enum(policy(name_p, name=self.name))
+    if isinstance(case, pe.SaveableType):
+      return x, lambda _: x
+    elif isinstance(case, pe.Offloadable):
+      x_host = api.device_put(x, core.mem_kind_to_space(case.dst),
+                              may_alias=False)
+      src_space = core.mem_kind_to_space(case.src)
+      return x, lambda _: api.device_put(x_host, src_space, may_alias=False)
+    else:
+      return x, lambda x: x  # full remat
+
+  def jvp(self, primals, tangents):
+    (x,), (xdot,) = primals, tangents
+    return CheckpointNameFwd(self.name, self.in_avals[0])(x), xdot
+
+  def vjp_fwd(self, _nzs_in, x):  # type: ignore
+    return CheckpointNameFwd(self.name, self.in_avals[0])(x), None
+
+  def vjp_bwd_retval(self, _, g):
+    return g,
+
+  def lin(self, nzs_in, x):  # type: ignore
+    return CheckpointNameFwd(self.name, self.in_avals[0])(x), None
+
+  def linearized(self, _, g):  # type: ignore
+    return g
+
+  def batch_dim_rule(self, axis_data, dims, /):
+    return dims[0]
+
 class PrimalLeftTangentRight(HiPrim):
   def __init__(self, aval_x, aval__x):
     self.in_avals = aval_x, aval__x
@@ -1280,13 +1326,13 @@ class PrimalLeftTangentRight(HiPrim):
     return x
 
   def lin(self, nzs_in, x, _x):  # type: ignore
-    return x, None
+    return x, None, nzs_in[1]
 
   def linearized(self, _, xdot, _xdot):  # type: ignore
     return _xdot
 
   def vjp_fwd(self, nzs_in, x, _x):  # type: ignore
-    return x, None
+    return x, None, nzs_in[1]
 
   def vjp_bwd_retval(self, _, g):
     return None, g

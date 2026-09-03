@@ -170,7 +170,7 @@ over the same data.
 
 ## Terminology
 
-It's worth pinning down some terminology.
+Let's pin down some terminology.
 
 We sometimes call each Python process running JAX computations a **controller**,
 but the two terms are essentially synonymous.
@@ -460,7 +460,7 @@ On popular GPU systems such as NVIDIA DGX H100 (A3 instances on GCP, P5 on AWS, 
 each node is a single NVLink domain, so even a two-node job is a multi-slice device mesh.
 ```
 
-Simply reshaping `jax.devices()` to the desired shape will not reliably give good performance,
+Reshaping `jax.devices()` to the desired shape will not reliably give good performance;
 use the helper functions described above.
 
 ## Arrays and computations can be distributed across hosts
@@ -567,7 +567,7 @@ included a `psum` over the `'b'` axis.
 
 ```{warning}
 When applying JAX computations to process-spanning arrays, to avoid deadlocks
-and hangs, **it's crucial that all processes with participating devices run the
+and hangs, **all processes with participating devices must run the
 same computation in the same order**. That's because the computation may
 involve collective communication barriers. If a device over which an array is
 sharded does not join in the collective because its controller didn't issue the

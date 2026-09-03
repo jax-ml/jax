@@ -20,6 +20,16 @@ Remember to align the itemized text with the first line of an item within a list
 
 ### Mosaic GPU
 
+* Changes
+
+  * {func}`jax.experimental.pallas.mosaic_gpu.try_cluster_cancel` now takes a
+    `collective_axes` argument. It is now not, for example, collective in the
+    thread axis unless that is included in `collective_axes`. Users of
+    {func}`jax.experimental.pallas.mosaic_gpu.dynamic_scheduling_loop` that fail
+    to pass complete `thread_axis` and/or `cluster_axes` arguments will now see
+    multiple cluster cancellations (these arguments have always been mandatory,
+    but it may previously have worked without, albeit non-deterministically!).
+
 * Deprecations
 
   * {func}`jax.experimental.pallas.mosaic_gpu.transpose_ref` is

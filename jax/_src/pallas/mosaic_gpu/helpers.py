@@ -404,7 +404,12 @@ def dynamic_scheduling_loop(
           inline_ptx(_FENCE_PROXY_ASYNC_GENERIC_ACQUIRE_SHARED_CLUSTER)
 
         gpu_primitives.try_cluster_cancel(
-            try_cancel_buffer.at[slot], try_cancel_barrier.at[slot]
+            try_cancel_buffer.at[slot],
+            try_cancel_barrier.at[slot],
+            collective_axes=(
+                *cluster_axes,
+                *(() if thread_axis is None else (thread_axis,)),
+            ),
         )
 
         if user_carry is None:

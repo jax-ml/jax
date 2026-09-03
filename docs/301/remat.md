@@ -18,12 +18,12 @@ kernelspec:
 <!--* freshness: { reviewed: '2026-07-10' } *-->
 
 When you differentiate a function in reverse mode, JAX's autodiff saves
-intermediate values from the forward pass — called *residuals* — to use in
-the backward pass. For big models, residual memory is often *the* memory
+intermediate values from the forward pass, called *residuals*, to use in
+the backward pass. For big models, residual memory is often the main memory
 problem. The {func}`jax.checkpoint` decorator (aliased as {func}`jax.remat`)
 gives you control over which intermediates are saved and which are
-*rematerialized* — recomputed on the backward pass — trading memory for
-FLOPs.
+*rematerialized*, meaning recomputed on the backward pass, trading memory
+for FLOPs.
 
 This page describes JAX's new rematerialization implementation, enabled with
 the `jax_remat3` flag (on its way to becoming the default):
@@ -345,11 +345,11 @@ another:
 To operate between these two extremes, saving some things and not others,
 you use the `policy` argument to {func}`jax.checkpoint`. A policy is *data*,
 not code: it names which values are allowed to be saved as residuals, and
-everything else is recomputed. The workflow has two halves:
+everything else is recomputed. There are two steps:
 
 1. **Name values** in the function being differentiated with
    {func}`jax.ad_checkpoint.checkpoint_name`. By itself, `checkpoint_name`
-   is just an identity function — it only attaches a label.
+   is an identity function that attaches a label.
 2. **Select names** in the policy, with one of the constructors on
    {obj}`jax.checkpoint_policies`:
 
@@ -408,8 +408,8 @@ it's actually needed by the backward pass.
 In older versions of JAX, a policy could also be an arbitrary *callable*
 that inspected each primitive application and returned whether its outputs
 were saveable (e.g. `jax.checkpoint_policies.dots_with_no_batch_dims_saveable`).
-Under the new implementation, policies are defunctionalized — they're the
-name-based data described above — which keeps them simple, serializable, and
+Under the new implementation, policies are defunctionalized into the
+name-based data described above, which keeps them simple, serializable, and
 predictable. For cases where a function's remat behavior should depend on
 more than a name, the function author can use `custom_remat`, described
 below.
@@ -459,7 +459,8 @@ recomputation entirely. `custom_remat` lets a function carry its own
 rematerialization behavior, including behavior that depends on the ambient
 policy.
 
-{func}`jax.custom_remat` — called as `custom_remat(f, f_fwd, f_rem, f_bwd)` — takes four functions:
+{func}`jax.custom_remat`, called as `custom_remat(f, f_fwd, f_rem, f_bwd)`,
+takes four functions:
 
 * `f` is the primal function, used everywhere outside of rematerialized
   differentiation;
@@ -471,10 +472,10 @@ policy.
   it (re)computes the output and the residuals the backward rule needs;
 * `f_bwd(res2, g) -> arg_cotangents` is the backward rule.
 
-For example: the derivative of `sin` is `cos`, so a memory/FLOPs sweet spot
-for `sin` under rematerialization can be to save the cosine — a value the
-standard rules would recompute. Here's a `sin` that always saves its cosine
-when rematerialized:
+For example, the derivative of `sin` is `cos`, so a good memory/FLOPs
+tradeoff for `sin` under rematerialization can be to save the cosine, a
+value the standard rules would recompute. Here's a `sin` that always saves
+its cosine when rematerialized:
 
 ```{code-cell}
 sin = jax.custom_remat(jnp.sin,
@@ -647,7 +648,7 @@ def net(all_weights, all_biases, x):
 This scan-over-layers version reduces compile times, but by foiling some
 compiler optimizations it can lead to inefficient computation of gradients.
 To mitigate the issue, you can use {func}`jax.checkpoint` on the scanned
-function — either plain, or with a names-based policy to keep the residuals
+function, either plain or with a names-based policy to keep the residuals
 you know are worth their memory:
 
 ```{code-cell}

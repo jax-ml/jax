@@ -118,9 +118,10 @@ error messages that look something like the following:
    :UNKNOWN:Error received from peer  {grpc_message:"Socket closed", grpc_status:14}
 
 Process 0 is special. If process 0 fails, every process will fail, even with
-fate-sharing disabled. Why? Process 0 runs an RPC service called the
-coordination service that all processes use to coordination with each other. If
-the coordination service fails, all other processes have no choice but to fail.
+fate-sharing disabled. This is because process 0 runs an RPC service called
+the coordination service that all processes use to coordinate with each other.
+If the coordination service fails, all other processes have no choice but to
+fail.
 See :ref:`jax-501-ft-part3` for more details.
 
 Getting Stuck in Collectives
@@ -141,7 +142,7 @@ processes perform a collective ``jnp.sum`` in every iteration of the loop.
 In the highlighted code above, the processes create an array ``x`` sharded
 across the four processes and then perform a distributed ``jnp.sum``. Again run
 the program and fail the fourth process. You'll notice that the first three
-process do not crash, but they do get *stuck*. By default, if a process fails
+processes do not crash, but they do get *stuck*. By default, if a process fails
 while participating in a distributed computation (like ``jnp.sum``), then the
 rest of the processes participating in the computation will get stuck
 *forever*.
@@ -180,7 +181,7 @@ something like this:
 Knowing Who's Alive
 ^^^^^^^^^^^^^^^^^^^
 
-After a process dies, the remaining *alive* procesess need to learn who is dead
+After a process dies, the remaining *alive* processes need to learn who is dead
 and who is alive. For this, we can use the core JAX fault tolerance API:
 ``live_devices``. ``live_devices`` is a context manager that takes a list of
 devices as an argument and returns the subset of these devices that are alive.
@@ -220,7 +221,7 @@ restarts, its device is again included in the set of alive devices returned by
 At first blush, ``live_devices`` seems trivial. You give it a list of devices,
 and it returns the ones that are alive. How complicated can that be?
 Unfortunately, as with `many things in distributed systems`_, there are a lot
-subtleties to iron out. Next, we explain the **barrier** semantics and
+of subtleties to iron out. Next, we explain the **barrier** semantics and
 **atomicity** properties of ``live_devices``.
 
 Barrier Semantics
@@ -241,7 +242,7 @@ then process 4 fails, and then process 3 calls ``live_devices``. Process 1 and
 
 To avoid situations like these, ``live_devices`` guarantees that it returns the
 same set of live devices to every process. It accomplishes this using a
-barrier. A call to ``live_devicess(devices)`` blocks until every live process
+barrier. A call to ``live_devices(devices)`` blocks until every live process
 hosting a device in ``devices`` has also called ``live_devices``. Once every
 live process is in the ``live_devices`` barrier, ``live_devices`` returns the
 same set of live devices to every process.
@@ -253,7 +254,7 @@ same set of live devices to every process.
 
 Because ``live_devices`` implements a barrier it is susceptible to deadlock if
 used improperly. We recommend only having a single ``with live_devices`` block
-in a program. Multiple calls to ``live_devices`` is hard to reason about and
+in a program. Multiple calls to ``live_devices`` are hard to reason about and
 can lead to deadlock.
 
 See :ref:`jax-501-ft-part3` for details on how the ``live_devices`` barrier is implemented
@@ -360,10 +361,9 @@ See :ref:`jax-501-ft-part3` for details on how atomicity is implemented.
 Part 2: Examples
 ----------------
 
-``live_devices`` is not a panacea; it is a tool. It does not magically make
-multi-controller JAX programs fault tolerant. Rather, it allows you to
-implement fault tolerance yourself in the way that is best for your
-application.
+``live_devices`` does not by itself make multi-controller JAX programs fault
+tolerant. It is a tool for implementing fault tolerance yourself, in the way
+that is best for your application.
 
 The exact details of how you implement fault-tolerance will vary greatly based
 on the nature of your application. In this section, we present some examples of
@@ -381,7 +381,7 @@ tolerance.
 
 Data parallelism makes implementing fault tolerance relatively straightforward.
 Because every process has a full copy of the model weights, if a process fails,
-we can simply ignore it and continue training. This example tolerates an
+we can ignore it and continue training. This example tolerates an
 arbitrary number of process failures (excluding process 0), but once a process
 fails, we assume it does not recover. The next example shows how to handle
 process recovery.
@@ -397,7 +397,7 @@ cancelling. We also make the necessary imports and define some flags.
 Next, we define a ``replicated`` function that returns an array replicated
 across a set of devices. Note that ``replicated`` doesn't actually move any
 data. It assumes the argument ``x`` already has equal value across all
-processes. It simply returns a new view of that data, in a process-spanning
+processes. It returns a new view of that data, in a process-spanning
 `jax.Array` with a replicated sharding.
 
 .. literalinclude:: ../_static/fault_tolerance/data_parallelism.py
@@ -441,8 +441,8 @@ Finally, we enter the main training loop.
   are currently alive.
 - We then ensure that the model weights are replicated across these devices and
   ensure that the training data is sharded across these devices. Note that this
-  doesn't actually move any data between the devices; it simply creates JAX
-  arrays with the appropriate replication and sharding metadata.
+  doesn't actually move any data between the devices; it creates JAX arrays
+  with the appropriate replication and sharding metadata.
 - We call ``loss_and_grad`` to compute the gradient of the weights with respect
   to the current batch of data and then compute the new weights. Notice that we
   assign the new weights to ``new_weights`` rather than assigning to
@@ -521,8 +521,8 @@ Here is the full example:
 Part 3: Implementation Details
 ------------------------------
 
-We now take a deep dive into the architecture of multi-controller JAX and the
-semantics and implementation of ``live_devices``. If you're only interested in
+This part covers the architecture of multi-controller JAX and the semantics
+and implementation of ``live_devices`` in detail. If you're only interested in
 writing fault-tolerant multi-controller JAX programs, the first two parts of
 this article suffice.
 
@@ -618,7 +618,7 @@ request, it responds with the set of processes it thinks are alive.
 This is illustrated below. Below each process is a "Call live_processes"
 button. You can click this button to make the process call
 ``jax.live_processes``. Note how the coordination service replies to a
-``live_processess`` request with the set of alive processes. Fail process 2 by
+``live_processes`` request with the set of alive processes. Fail process 2 by
 clicking the "Fail" button and see how it affects later calls to
 ``jax.live_processes``.
 
@@ -633,9 +633,9 @@ clicking the "Fail" button and see how it affects later calls to
       });
     </script>
 
-This naive implementation is simple but incorrect. It is crucial that all
-processes in a multi-controller JAX job execute the same instructions in the
-same order. If the processes start to diverge, by executing different code
+This naive implementation is simple but incorrect. All processes in a
+multi-controller JAX job must execute the same instructions in the same
+order. If the processes start to diverge, by executing different code
 paths in the JAX program, the job will behave erratically. Most likely, it will
 crash or hang or produce garbage values, and most certainly it will be very
 hard to reason about.
@@ -659,8 +659,8 @@ that all processes are alive but report to process 1 that only processes 0 and
     </script>
 
 If processes disagree on which processes are alive, they will almost certainly
-diverge. Thankfully, we can avoid this divergence by augmenting
-``jax.live_processes`` with barrier semantics.
+diverge. We can avoid this divergence by augmenting ``jax.live_processes``
+with barrier semantics.
 
 Barrier Semantics
 ^^^^^^^^^^^^^^^^^
@@ -669,10 +669,9 @@ Let's change the implementation of ``jax.live_processes`` so that when the
 coordination service receives a ``jax.live_processes()`` request, it does not
 reply right away. Instead, the coordination service only replies once *every*
 live process has called ``jax.live_processes()``. Once every alive process has
-entered the ``jax.live_processess()`` barrier, the coordination service returns
-the set of live processes. Crucially, the coordination service returns the
-*same* set of live processes to all processes, which prevents the processes
-from diverging.
+entered the ``jax.live_processes()`` barrier, the coordination service returns
+the set of live processes. The coordination service returns the *same* set
+of live processes to all processes, which prevents them from diverging.
 
 This is illustrated below. Note that coordination server now keeps track of
 which devices are in the ``live_processes`` barrier.  Try calling
@@ -1405,7 +1404,7 @@ The code repeatedly
 - performs a ``jnp.sum`` (i.e. AllReduce) on the array, and
 - increments ``step`` if the ``jnp.sum`` succeeds.
 
-This code *looks* correct, but it has a very subtle bug. Assume the ``jnp.sum``
+This code *looks* correct, but it has a subtle bug. Assume the ``jnp.sum``
 is being performed across a set of processes ``P``. If one (or more) of the
 processes in ``P`` fails during the execution of the ``jnp.sum``, then
 ``jnp.sum`` can behave differently on different processes. Some processes in
@@ -1434,8 +1433,8 @@ process to run the code successfully, or *every* process to learn that the code
 failed to execute successfully. We don't want some processes succeeding and
 others failing.
 
-Thankfully, we can achieve atomicity with a very simple trick: call
-``live_processes`` twice, once before a code block and once after. If all the
+We can achieve atomicity by calling ``live_processes`` twice, once before a
+code block and once after. If all the
 processes that were alive before the block are also alive after the block, then
 the code block executed successfully on all live processes. On the other hand,
 if any process died, then all remaining processes can agree the code block
@@ -1465,7 +1464,7 @@ The code above should give you a rough idea of how to use two calls to
 issues we need to address before it is fully correct. For example,
 
 - What if the code block throws an exception? We need to catch the exception
-  and still call ``live_processess`` the second time and then re-raise the
+  and still call ``live_processes`` the second time and then re-raise the
   exception.
 - What if a process fails after the first call to ``live_processes`` and
   recovers before the second call? Wouldn't the code block fail but the

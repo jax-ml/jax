@@ -724,11 +724,19 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   // TODO(bchetioui): remove dependency on NVVM to lighten the maintenance
   // burden.
   LoadNvDialects(&context);
+
+  std::string diagnostic;
+  mlir::ScopedDiagnosticHandler diagnostic_handler(
+      &context, [&](mlir::Diagnostic& diag) {
+        absl::StrAppend(&diagnostic, diag.str(), "\n");
+        return mlir::LogicalResult::failure();
+      });
   auto manager = mlir::PassManager::on<mlir::ModuleOp>(module->getContext());
   manager.addPass(mosaic::gpu::createSerdePass(
       mosaic::gpu::SerdePassOptions{.serialize = false}));
   if (manager.run(module.get()).failed()) {
-    return absl::InternalError("Failed to deserialize Mosaic GPU module");
+    return absl::InternalError(
+        absl::StrCat("Failed to deserialize Mosaic GPU module: ", diagnostic));
   }
 
   const char* dump_llvm = getenv("MOSAIC_GPU_DUMP_LLVM");

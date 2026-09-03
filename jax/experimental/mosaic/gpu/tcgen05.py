@@ -887,11 +887,18 @@ def commit_arrive(
   if collective:
     if ctx is None:
       raise ValueError("ctx must be provided for collective barriers")
-    # TODO(apaszke): This is just 0b11 shifted by the even CTA index.
-    if ctx.cluster_size != (2, 1, 1):
-      raise NotImplementedError("Collective arrivals only support (2, 1, 1)-shaped clusters")
+    if ctx.cluster_size[0] != 2:
+      raise ValueError(
+          "Collective arrivals require the minormost cluster dimension to"
+          f" have size 2, got: {ctx.cluster_size}"
+      )
     i16 = ir.IntegerType.get_signless(16)
-    mask = arith.constant(i16, 3)
+    if ctx.cluster_size == (2, 1, 1):
+      mask = arith.constant(i16, 3)
+    else:
+      block_idx = arith.index_castui(i16, utils.cluster_idx())
+      even_block_idx = arith.andi(block_idx, arith.constant(i16, ~1))
+      mask = arith.shli(arith.constant(i16, 0b11), even_block_idx)
     nvvm.tcgen05_commit(
         barrier, group=nvvm.CTAGroupKind.CTA_2, multicast_mask=mask
     )

@@ -13,7 +13,7 @@ two different camps:
   [bfloat16](https://en.wikipedia.org/wiki/Bfloat16_floating-point_format) and others
   which deliberately discard the least significant bits in order to speed up computation.
   For these users, the mere presence of a float64 value in their computation can lead
-  to programs that are slow at best, and incompatible with their hardware at worst!
+  to programs that are slow at best, and incompatible with their hardware at worst.
   These users would prefer that computations default to `float32` or `int32`.
 
 The main mechanism JAX offers for this is the `jax_enable_x64` flag, which controls
@@ -41,7 +41,7 @@ Array([1, 1, 1, 1, 1], dtype=int32)
 ```
 
 Beyond defaults, because 64-bit values can be so poisonous to AI workflows, having
-this flag set to False prevents you from creating 64-bit arrays at all! For example:
+this flag set to False prevents you from creating 64-bit arrays at all. For example:
 ```
 >>> jnp.arange(5, dtype='float64')  # doctest: +SKIP
 UserWarning: Explicitly requested dtype float64 requested in arange is not available, and will be 

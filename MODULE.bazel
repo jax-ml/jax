@@ -40,9 +40,9 @@ archive_override(
         "//third_party/xla:onednn_gemm_bfloat16.patch",
         "//third_party/xla:llvm_windows_arm64_native_triple.patch",
     ],
-    integrity = "sha256-QnkNlIhwdfPufrb3+SiPXTZuM+qw4rMYlDC7NPKCml4=",
-    strip_prefix = "xla-6fda17ebbac080edf5d3f1edbec8f0eda8eebd8d",
-    urls = ["https://github.com/openxla/xla/archive/6fda17ebbac080edf5d3f1edbec8f0eda8eebd8d.tar.gz"],
+    integrity = "sha256-xgo608Pio9XUidZkAlDu8ZE6azW8p31/FE+H3Kwwoh8=",
+    strip_prefix = "xla-0978b8bedde09824fcbcd237453a3d7f64ce34ad",
+    urls = ["https://github.com/openxla/xla/archive/0978b8bedde09824fcbcd237453a3d7f64ce34ad.tar.gz"],
 )
 
 # TODO: upstream, otherwise we have to duplicate the patches in jax

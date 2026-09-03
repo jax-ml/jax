@@ -48,7 +48,6 @@ from jaxlib.mlir.dialects import func
 from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
-from jaxlib.mlir.dialects import nvvm
 import numpy as np
 
 from . import dialect_lowering
@@ -626,6 +625,26 @@ def _is_known_multihost_mesh(
   return len(tasks) > 1
 
 
+def _cluster_arrive_relaxed_aligned():
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [],
+      "barrier.cluster.arrive.relaxed.aligned;",
+      "",
+      has_side_effects=True,
+  )
+
+
+def _cluster_wait_aligned():
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [],
+      "barrier.cluster.wait.aligned;",
+      "",
+      has_side_effects=True,
+  )
+
+
 # TODO(apaszke): Inline this
 @contextlib.contextmanager
 def _launch(
@@ -753,10 +772,16 @@ def _launch(
       # TODO(apaszke): Skip fences if no barriers or TMEM is initialized.
       # TODO(apaszke): Only initialize cluster barriers before the cluster wait.
       if utils.get_arch().major >= 9:
-        nvvm.fence_mbarrier_init()
+        llvm.inline_asm(
+            ir.Type.parse("!llvm.void"),
+            [],
+            "fence.mbarrier_init.release.cluster;",
+            "",
+            has_side_effects=True,
+        )
       if math.prod(cluster) != 1:
-        nvvm.cluster_arrive_relaxed(aligned=True)
-        nvvm.cluster_wait(aligned=True)
+        _cluster_arrive_relaxed_aligned()
+        _cluster_wait_aligned()
       if tmem_allocs:
         init_warp_ctx: contextlib.AbstractContextManager
         if lowering_semantics == LoweringSemantics.Warpgroup:
@@ -800,8 +825,8 @@ def _launch(
     if tmem_allocs:
       gpu.barrier()  # Make sure everyone is done before we release TMEM.
       if any(alloc.collective for alloc in tmem_allocs):
-        nvvm.cluster_arrive_relaxed(aligned=True)
-        nvvm.cluster_wait(aligned=True)
+        _cluster_arrive_relaxed_aligned()
+        _cluster_wait_aligned()
       if lowering_semantics == LoweringSemantics.Warpgroup:
         init_warp_ctx = contextlib.nullcontext()
       else:

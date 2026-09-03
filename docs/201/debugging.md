@@ -120,13 +120,12 @@ f(1, 2)
 
 (The reordering happens because the compiler receives a *functional*
 representation of the staged-out computation, in which the imperative order
-of your Python statements is gone and only data dependence remains — invisible
-for pure code, visible once printing enters the picture.)
+of your Python statements is gone and only data dependence remains. For pure
+code that makes no difference; printing makes it visible.)
 
 ### Sharp bits of `jax.debug.print`
 
-A few cautions worth knowing before you sprinkle `jax.debug.print`
-everywhere:
+A few cautions:
 
 **Format strings are deferred.** The format string can't be an f-string:
 f-strings format immediately, while `jax.debug.print` needs to delay
@@ -162,14 +161,14 @@ jax.grad(f)(1.)
 the program XLA compiles: a value that would have lived inside a fused kernel
 must be materialized so it can be printed, which can change performance,
 memory usage, and even numerics (different fusions can round differently).
-Keep this in mind when debugging numerical mysteries — the act of looking can
-disturb the thing you're looking at. Printing sharded values likewise forces
-synchronization to gather the value.
+Keep this in mind when debugging numerical problems: adding a print can
+change the values you're trying to inspect. Printing sharded values likewise
+forces synchronization to gather the value.
 
 **Prints are asynchronous.** Like the computations they're embedded in
 ({ref}`jax-201-async-dispatch`), debug prints can arrive after the enclosing
-function has returned — even after `block_until_ready()`, which waits for
-values, not side effects. To wait for outstanding prints, use
+function has returned, even after `block_until_ready()`, which waits for
+values but not for side effects. To wait for outstanding prints, use
 {func}`jax.effects_barrier`:
 
 ```{code-cell}
@@ -279,7 +278,7 @@ except FloatingPointError as e:
   print(traceback.format_exc(limit=2))
 ```
 
-The NaN generated was caught, with an ordinary Python exception — so running
+The NaN generated was caught with an ordinary Python exception, so running
 `%debug` in IPython gives a post-mortem debugger at the fault. This also
 works with functions under `@jax.jit`:
 
@@ -307,8 +306,8 @@ jax.config.update("jax_debug_nans", False)  # back off for the rest of this page
 throws a standard Python exception and is compatible with PDB postmortem.
 
 **Limitations:** re-running functions eagerly can be slow, and the constant
-device-to-host checks cost real performance — don't leave the NaN-checker on
-when you're not debugging. It also errors on false positives, e.g.
+device-to-host checks are expensive, so don't leave the NaN-checker on when
+you're not debugging. It also errors on false positives, e.g.
 intentionally created NaNs.
 
 ### `jax_debug_infs`
@@ -359,8 +358,8 @@ postmortem.
 ```{warning}
 These flags are best suited to single-process development, and don't work
 well in multi-controller (multi-process) JAX ({ref}`jax-501-multiprocess`).
-Raising a Python error on one process but not the others — say, when only
-one process's shard produces a NaN under `jax_debug_nans` — breaks the
+Raising a Python error on one process but not the others (say, when only
+one process's shard produces a NaN under `jax_debug_nans`) breaks the
 assumption that every process runs the same program in lockstep, and the
 usual symptom is the remaining processes hanging in a collective.
 ```

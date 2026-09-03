@@ -24,7 +24,7 @@ or ABSL command-line flags (if `jax.config.config_with_absl()` is called).
 
 * **`jax_explain_cache_misses`**: Logs an explanation whenever JAX misses
   its in-memory tracing cache or persistent compilation cache.
-  Essential for discovering *why* JAX decided to retrace or recompile a
+  Use this to find out *why* JAX decided to retrace or recompile a
   function.
 
 * **`jax_dump_ir_to`**: Specifies the directory where JAX should dump IR text
@@ -60,7 +60,7 @@ export TF_CPP_MIN_LOG_LEVEL=0
 ## 2. What to Look for in the Logs
 
 Once you have enabled `JAX_LOG_COMPILES` and `JAX_EXPLAIN_CACHE_MISSES`,
-examine the logs for the following critical markers.
+look for the following markers in the logs.
 
 ### Tracing, Lowering, and Compilation Durations
 
@@ -115,7 +115,7 @@ W0610 23:49:11.800984 partial_eval.py:2179] TRACING CACHE MISS at my_script.py:6
 
 ### XLA Compilation Stage Durations
 
-XLA prints precise timing breakdowns for each compiler pass:
+XLA prints a timing breakdown by compiler stage:
 
 ```text
 I0610 23:33:55.090166 deepsea_compiler_hlo_passes.cc:6157] HLO_PASSES stage duration: 5.4901s
@@ -136,7 +136,7 @@ I0610 23:33:59.678832 deepsea_compiler_base.cc:984] END_TO_END stage duration: 1
 
 JAX uses multiple levels of caches to avoid duplicate work.
 Within a JAX process there are caches for tracing, lowering, and compilation.
-Many compilation bottlenecks are caused by subtle Python patterns
+Many compilation bottlenecks are caused by Python patterns
 that unintentionally invalidate JAX's caches.
 
 JAX can also use a persistent compilation cache for use across multiple
@@ -208,7 +208,7 @@ def top_function(x, y, scale_factor):
 
 
 * **The Fix:** Use `functools.partial`. JAX has built-in support for 
-  `functools.partial` objects—it unwraps them and indexes the tracing cache
+  `functools.partial` objects: it unwraps them and indexes the tracing cache
   using the underlying function's `id` (`add_multiply`) along with the
   partially bound arguments (`scale_factor`).
 
@@ -286,8 +286,7 @@ unrolled_loop(jnp.zeros(10))
 When you examine the resulting profile using
 `pprof -top /tmp/jax_ir/jax_000001_unrolled_loop.eqn_count_pprof`,
 `pprof` aggregates the equations by line number,
-immediately revealing the exact Python line responsible for the massive
-unrolling:
+revealing the Python line responsible for the unrolling:
 
 ```text
 showing top 5 nodes out of 5
@@ -304,8 +303,8 @@ pprof -http=localhost:8080 /tmp/jax_ir/jax_000001_unrolled_loop.eqn_count_pprof
 ```
 
 In the web UI, select **Flame Graph** from the **View** menu.
-This appears as a single massive horizontal bar taking up 99.98% of
-the total profile width pinpointing line 8:
+The unrolled loop appears as a single horizontal bar taking up 99.98% of
+the profile width, pointing at line 8:
 
 ![pprof web UI flame graph](../_static/pprof_unrolled_loop.svg)
 
@@ -325,6 +324,6 @@ XLA specializes compiled binaries to exact tensor dimensions and dtypes.
   (e.g., final partial batch in a dataset) or variable sequence length occurs.
 * **The Fix:** Pad dynamic batches to a fixed bucket size
   (e.g., `batch_size=32`),
-  or leverage JAX's experimental support for polymorphic shapes (`jax.export`)
+  or use JAX's experimental support for polymorphic shapes (`jax.export`)
   which can reduce the number of times the code needs to be traced and lowered,
   but does not reduce the number of compilations.
