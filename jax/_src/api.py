@@ -63,8 +63,7 @@ from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray, typeof
 from jax._src.api_util import (
   flatten_fun_nokwargs,
   flatten_axes, _ensure_index, check_callable, debug_info, argnums_partial2)
-from jax._src.lib import jax_jit
-from jax._src.lib import _jax
+from jax._src.lib import _jax, jax_jit, jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.sharding import Sharding
 from jax._src.mesh import get_concrete_mesh, get_abstract_mesh, Mesh
@@ -2578,11 +2577,7 @@ def device_get(x: Any):
     - device_put_replicated
   """
   with config.explicit_device_get_scope():
-    for y in tree_leaves(x):
-      try:
-        y.copy_to_host_async()
-      except AttributeError:
-        pass
+    copy_to_host_async(x)
     return tree_map(_device_get, x)
 
 
@@ -2800,13 +2795,30 @@ def copy_to_host_async(x):
     A pytree with the same structure and values of the input, where the host
     copy of the values of all JAX array leaves are started.
   """
-  for leaf in tree_leaves(x):
+  def try_to_copy(x):
     try:
-      copy_fn = leaf.copy_to_host_async
+      copy_fn = x.copy_to_host_async
     except AttributeError:
-      pass
+      return x
     else:
-      copy_fn()
+      return copy_fn()
+
+  arrays = []
+  for leaf in tree_leaves(x):
+    if isinstance(leaf, (array.ArrayImpl, xc.ArrayImpl)):
+      arrays.append(leaf)
+    else:
+      try_to_copy(leaf)
+
+  if not arrays:
+    pass
+  elif len(arrays) == 1:
+    try_to_copy(arrays[0])
+  elif jaxlib_extension_version >= 484:
+    _jax.batched_copy_to_host_async(arrays)
+  else:
+    for arr in arrays:
+      try_to_copy(arr)
 
   return x
 

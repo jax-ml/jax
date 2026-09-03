@@ -792,6 +792,54 @@ class JaxArrayTest(jtu.JaxTestCase):
     x.copy_to_host_async()  # doesn't crash
     self.assertArraysEqual(np.arange(8.), x)
 
+  def test_copy_to_host_async_fully_sharded(self):
+    global_mesh = jtu.create_mesh((2,), ('x',))
+    x = jax.jit(lambda: jnp.arange(16.).reshape((4, 4)),
+                out_shardings=jax.NamedSharding(global_mesh, P('x', None)))()
+    x.copy_to_host_async()
+    self.assertArraysEqual(np.arange(16.).reshape((4, 4)), x)
+
+  def test_copy_to_host_async_partially_replicated(self):
+    global_mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    x = jax.jit(lambda: jnp.arange(8.),
+                out_shardings=jax.NamedSharding(global_mesh, P('x')))()
+    x.copy_to_host_async()
+    self.assertArraysEqual(np.arange(8.), x)
+
+  def test_copy_to_host_async_fully_replicated(self):
+    global_mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    x = jax.jit(lambda: jnp.arange(8.),
+                out_shardings=jax.NamedSharding(global_mesh, P(None)))()
+    x.copy_to_host_async()
+    self.assertArraysEqual(np.arange(8.), x)
+
+  def test_copy_to_host_async_non_contiguous_sharding(self):
+    global_mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    x = jax.jit(lambda: jnp.arange(16.).reshape((4, 4)),
+                out_shardings=jax.NamedSharding(global_mesh, P(None, 'y')))()
+    x.copy_to_host_async()
+    self.assertArraysEqual(np.arange(16.).reshape((4, 4)), x)
+
+  def test_copy_to_host_async_string_array(self):
+    cpu_devices = jax.devices('cpu')
+    if len(cpu_devices) < 4:
+      self.skipTest(
+          f'Need at least 4 CPU devices, got {len(cpu_devices)}'
+      )
+    global_mesh = jax.sharding.Mesh(
+        np.array(cpu_devices[:4]).reshape((2, 2)), ('x', 'y')
+    )
+    sharding = jax.sharding.NamedSharding(
+        global_mesh, jax.sharding.PartitionSpec('x', 'y')
+    )
+    np_strings = np.array(
+        [['foo', 'bar'], ['baz', 'qux']], dtype=np.dtypes.StringDType()
+    )
+    arr = jax.device_put(np_strings, sharding)
+    arr.copy_to_host_async()
+    self.assertEqual(arr.dtype, np.dtypes.StringDType())
+    np.testing.assert_array_equal(np_strings, np.asarray(arr))
+
   def test_array_fully_replicated_shard(self):
 
     global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))

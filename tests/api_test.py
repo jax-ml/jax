@@ -2792,6 +2792,51 @@ class APITest(jtu.JaxTestCase):
     self.assertIs(y, x)
     self.assertEqual(np.asarray(y), 1.)
 
+  def test_copy_to_host_async_pytree(self):
+    # Test jax.copy_to_host_async() called with multiple arrays.
+    x = device_put(np.arange(10.0))
+    y = device_put(np.ones((4, 4), dtype=np.float32))
+    z = device_put(42)
+    pytree = {"a": x, "b": [y, z], "c": "non_array_data"}
+    res_async = jax.copy_to_host_async(pytree)
+    self.assertIs(res_async, pytree)
+    self.assertArraysEqual(np.asarray(res_async["a"]), np.arange(10.0))
+    self.assertArraysEqual(np.asarray(res_async["b"][0]), np.ones((4, 4), dtype=np.float32))
+    self.assertEqual(np.asarray(res_async["b"][1]), 42)
+
+  def test_copy_to_host_async_string_and_numeric_arrays(self):
+    cpu_devices = jax.devices('cpu')
+    if len(cpu_devices) < 4:
+      self.skipTest(f'Need at least 4 CPU devices, got {len(cpu_devices)}')
+    global_mesh = jax.sharding.Mesh(
+        np.array(cpu_devices[:4]).reshape((2, 2)), ('x', 'y')
+    )
+    sharding = jax.sharding.NamedSharding(
+        global_mesh, jax.sharding.PartitionSpec('x', 'y')
+    )
+    np_strings = np.array(
+        [['hello', 'world'], ['jax', 'array']], dtype=np.dtypes.StringDType()
+    )
+    np_numeric = np.arange(4, dtype=np.float32).reshape((2, 2))
+    str_arr = device_put(np_strings, sharding)
+    num_arr = device_put(np_numeric, sharding)
+
+    res_async = jax.copy_to_host_async((str_arr, num_arr))
+    self.assertIs(res_async[0], str_arr)
+    self.assertIs(res_async[1], num_arr)
+    self.assertEqual(str_arr.dtype, np.dtypes.StringDType())
+    np.testing.assert_array_equal(np_strings, np.asarray(str_arr))
+    np.testing.assert_array_equal(np_numeric, np.asarray(num_arr))
+
+  def test_copy_to_host_async_pytree_deleted_array(self):
+    # Test jax.copy_to_host_async() called with multiple arrays, one of which
+    # has been deleted.
+    x = device_put(np.arange(5.0))
+    y = device_put(np.arange(5.0))
+    x.delete()
+    with self.assertRaisesRegex(Exception, "Array has been deleted"):
+      jax.copy_to_host_async([x, y])
+
   def test_copy_to_host_async_non_array(self):
     # Just tests that we don't error...
     o = object()

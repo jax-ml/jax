@@ -70,8 +70,10 @@ class PyHostValue {
   PyHostValue& operator=(const PyHostValue&) = delete;
   PyHostValue& operator=(PyHostValue&&) = delete;
 
-  absl::Status CopyToHostAsync(absl::Span<const int64_t> dynamic_shape,
-                               xla::ifrt::Array* ifrt_array);
+  static absl::Status BatchedCopyToHostAsync(
+      xla::ifrt::Client* client, absl::Span<PyHostValue* const> host_values,
+      absl::Span<const absl::Span<const int64_t>> dynamic_shapes,
+      absl::Span<xla::ifrt::Array* const> ifrt_arrays);
 
   absl::StatusOr<std::pair<nanobind::object, bool>> AsNumPyArray(
       absl::Span<const int64_t> dynamic_shape, xla::ifrt::Array* ifrt_array);
@@ -79,11 +81,11 @@ class PyHostValue {
   void Clear();
 
  private:
-  absl::Status CopyStringArrayToHostAsync(xla::ifrt::Array* ifrt_array);
-
   absl::Status ConvertStringArrayContentsToNumpyArray(
       xla::ifrt::Array* ifrt_array);
 
+  // Must be awaited without holding the GIL because the work required to make
+  // it ready may have to acquire the GIL.
   tsl::Future<> ready_;
   xla::nb_numpy_ndarray value_;
 
@@ -310,6 +312,7 @@ class PyArray : public nanobind::object {
   absl::StatusOr<size_t> GetOnDeviceSizeInBytes();
   absl::StatusOr<std::pair<nanobind::object, bool>>
   SingleDeviceArrayToNumpyArrayDidCopy();
+  absl::StatusOr<std::pair<nanobind::object, bool>> ToNumpyArrayDidCopy();
   absl::StatusOr<nanobind::object> SingleDeviceArrayToNumpyArray();
   absl::Status CopySingleDeviceArrayToHostAsync();
   nanobind::dict CudaArrayInterface();
@@ -341,6 +344,8 @@ class PyArray : public nanobind::object {
 
   static absl::Status BatchedBlockUntilReady(
       std::vector<nanobind::object> objs);
+
+  static absl::Status BatchedCopyToHostAsync(nanobind::sequence py_arrays);
 
   absl::Status ReplaceWithAlias(PyArray o);
 
