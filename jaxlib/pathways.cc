@@ -75,96 +75,6 @@ using xla::ifrt::DeviceListRef;
 using xla::ifrt::RemapPlan;
 using xla::ifrt::Shape;
 using xla::ifrt::ShardingRef;
-// Returns strides for the given `axis_sizes`.
-absl::StatusOr<std::vector<int>> GetStrides(absl::Span<const int> axis_sizes) {
-  if (axis_sizes.empty()) {
-    return absl::InvalidArgumentError("`axis_sizes` must not be empty");
-  }
-  std::vector<int> strides;
-  strides.reserve(axis_sizes.size());
-  strides.push_back(1);
-  for (int i = axis_sizes.size() - 1; i > 0; --i) {
-    strides.push_back(axis_sizes[i] * strides.back());
-  }
-  std::reverse(strides.begin(), strides.end());
-  return strides;
-}
-
-// Populates `offsets` with the offsets to use to create continuous intervals
-// for `RemapPlan`.
-// `axis_sizes` represents the mesh axis sizes up to the mesh axis on which
-// the arrays are split/concatenated.
-// `current_entry` iterates over the mesh axis sizes to generate the offsets.
-// `strides` are the strides of the mesh axes.
-absl::Status PopulateSubmeshOffsets(absl::Span<const int> axis_sizes,
-                                    absl::Span<int> current_entry,
-                                    absl::Span<const int> strides,
-                                    std::vector<int>& offsets) {
-  int offset = 0;
-  for (int idx = 0; idx < axis_sizes.size(); ++idx) {
-    offset += strides[idx] * current_entry[idx];
-  }
-  offsets.push_back(offset);
-  current_entry[current_entry.size() - 1] += 1;
-  for (int idx = current_entry.size() - 1;
-       idx > 0 && current_entry[idx] >= axis_sizes[idx]; --idx) {
-    current_entry[idx] = 0;
-    current_entry[idx - 1] += 1;
-  }
-  if (current_entry[0] < axis_sizes[0]) {
-    return PopulateSubmeshOffsets(axis_sizes, current_entry, strides, offsets);
-  } else {
-    return absl::OkStatus();
-  }
-}
-
-// Returns a list of offsets for each submesh within the global mesh.
-// These offsets are used to map local shard indices to global mesh indices.
-absl::StatusOr<std::vector<int>> GetSubmeshOffsets(
-    int mesh_axis_idx, absl::Span<const int> mesh_axis_sizes,
-    absl::Span<const int> strides) {
-  DCHECK_GE(mesh_axis_idx, 0);
-  DCHECK_LE(mesh_axis_idx, mesh_axis_sizes.size());
-  std::vector<int> submesh_offsets;
-  if (mesh_axis_idx == 0) {
-    submesh_offsets.push_back(0);
-  } else {
-    std::vector<int> current_entry(mesh_axis_idx, 0);
-    ABSL_RETURN_IF_ERROR(PopulateSubmeshOffsets(
-        mesh_axis_sizes.subspan(0, mesh_axis_idx),
-        absl::MakeSpan(current_entry), strides, submesh_offsets));
-  }
-  return submesh_offsets;
-}
-
-// Generates symmetric intervals for RemapPlan::Mapping.
-// `derived_target` receives intervals calculated from submesh offsets.
-// `contiguous_target` receives linearly incrementing intervals starting from 0.
-// For split: pass `mapping.from` as `derived_target` and `mapping.to` as
-// `contiguous_target`.
-// For concatenate: pass `mapping.to` as `derived_target` and `mapping.from`
-// as `contiguous_target`.
-void PopulateRemapMappings(
-    std::vector<RemapPlan::Interval>& derived_target,
-    std::vector<RemapPlan::Interval>& contiguous_target,
-    absl::Span<const int> submesh_offsets, int submesh_axis_size,
-    absl::Span<const int> strides, int mesh_axis_idx, int submesh_axis_start) {
-  DCHECK_GE(mesh_axis_idx, 0);
-  DCHECK_LT(mesh_axis_idx, strides.size());
-  int incrementing_offset = 0;
-  for (const auto& submesh_offset : submesh_offsets) {
-    int num_contiguous_shards = submesh_axis_size * strides[mesh_axis_idx];
-    int calculated_offset =
-        submesh_offset + submesh_axis_start * strides[mesh_axis_idx];
-
-    derived_target.push_back(RemapPlan::Interval{
-        calculated_offset, calculated_offset + num_contiguous_shards, 1});
-    contiguous_target.push_back(RemapPlan::Interval{
-        incrementing_offset, incrementing_offset + num_contiguous_shards, 1});
-
-    incrementing_offset += num_contiguous_shards;
-  }
-}
 
 Shape GetShardShape(const PyArray& py_array) {
   DCHECK(PyGILState_Check());
@@ -326,14 +236,10 @@ ExperimentalSplitByMeshAxis(
         num_devices, " vs ", mesh_axis_size));
   }
 
-  ABSL_ASSIGN_OR_RETURN(std::vector<int> strides, GetStrides(mesh_axis_sizes));
-  ABSL_ASSIGN_OR_RETURN(
-      std::vector<int> submesh_offsets,
-      GetSubmeshOffsets(mesh_axis_idx, mesh_axis_sizes, strides));
-
   std::vector<ArraySpec> input_specs;
   std::vector<ArraySpec> output_specs;
-  std::vector<RemapPlan::Mapping> mappings;
+  absl::flat_hash_map<int, std::vector<RemapPlan::InputDeviceRange>>
+      input_devices_for_output_map;
 
   nb_class_ptr<PyClient> backend;
   std::vector<ArrayRef> input_ifrt_arrays;
@@ -351,50 +257,44 @@ ExperimentalSplitByMeshAxis(
                                     /*sharding=*/array->shared_ptr_sharding()});
 
     for (int submesh_idx = 0; submesh_idx < num_submeshes; ++submesh_idx) {
-      auto& mapping = mappings.emplace_back();
-      mapping.in_array = array_idx;
-      mapping.out_array = output_specs.size();
       int submesh_axis_size = mesh_axis_sections[submesh_idx];
-      int submesh_axis_start = 0;
       if (submesh_idx > 0) {
         submesh_axis_size -= mesh_axis_sections[submesh_idx - 1];
-        submesh_axis_start = mesh_axis_sections[submesh_idx - 1];
       }
-      PopulateRemapMappings(mapping.from, mapping.to, submesh_offsets,
-                            submesh_axis_size, strides, mesh_axis_idx,
-                            submesh_axis_start);
-      if (sharded_dim_idxs[array_idx] >= 0) {
-        std::vector<int64_t> dims(array->shape().dims().begin(),
-                                  array->shape().dims().end());
-        dims[sharded_dim_idxs[array_idx]] = dims[sharded_dim_idxs[array_idx]] /
-                                            mesh_axis_size * submesh_axis_size;
-        Shape subshape = Shape(dims);
-        ABSL_ASSIGN_OR_RETURN(
-            ShardingRef ifrt_submesh_sharding,
-            GetIfrtHloSharding(submesh_shardings[array_idx][submesh_idx],
-                               subshape));
-        output_specs.push_back(
-            ArraySpec{/*dtype=*/array->dtype(),
-                      /*shape=*/std::move(subshape),
-                      /*sharding=*/std::move(ifrt_submesh_sharding)});
-      } else {
-        // The arrays is replicated, so its shape does not change.
-        ABSL_ASSIGN_OR_RETURN(
-            ShardingRef ifrt_submesh_sharding,
-            GetIfrtHloSharding(submesh_shardings[array_idx][submesh_idx],
-                               array->shape()));
-        output_specs.push_back(
-            ArraySpec{/*dtype=*/array->dtype(),
-                      /*shape=*/array->shape(),
-                      /*sharding=*/std::move(ifrt_submesh_sharding)});
-      }
+      Shape subshape = [&]() -> Shape {
+        if (sharded_dim_idxs[array_idx] >= 0) {
+          std::vector<int64_t> dims(array->shape().dims().begin(),
+                                    array->shape().dims().end());
+          dims[sharded_dim_idxs[array_idx]] =
+              dims[sharded_dim_idxs[array_idx]] / mesh_axis_size *
+              submesh_axis_size;
+          return Shape(dims);
+        } else {
+          // The arrays is replicated, so its shape does not change.
+          return array->shape();
+        }
+      }();
+      ABSL_ASSIGN_OR_RETURN(
+          ShardingRef ifrt_submesh_sharding,
+          GetIfrtHloSharding(submesh_shardings[array_idx][submesh_idx],
+                             subshape));
+      int out_idx = output_specs.size();
+      input_devices_for_output_map[out_idx].push_back(
+          RemapPlan::InputDeviceRange{
+              .in_array = array_idx,
+              .input_devices = ifrt_submesh_sharding->devices(),
+          });
+      output_specs.push_back(
+          ArraySpec{/*dtype=*/array->dtype(),
+                    /*shape=*/std::move(subshape),
+                    /*sharding=*/std::move(ifrt_submesh_sharding)});
     }
 
     input_ifrt_arrays.push_back(array);
   }
 
   RemapPlan remap_plan(std::move(input_specs), std::move(output_specs),
-                       std::move(mappings));
+                       std::move(input_devices_for_output_map));
   DCHECK_OK(remap_plan.Validate());
 
   std::vector<ArrayRef> result_ifrt_arrays;
@@ -473,20 +373,10 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
     }
   }
 
-  ABSL_ASSIGN_OR_RETURN(std::vector<int> strides, GetStrides(mesh_axis_sizes));
-  std::vector<int> submesh_offsets;
-  if (mesh_axis_idx == 0) {
-    submesh_offsets.push_back(0);
-  } else {
-    std::vector<int> current_entry(mesh_axis_idx, 0);
-    ABSL_RETURN_IF_ERROR(PopulateSubmeshOffsets(
-        mesh_axis_sizes.subspan(0, mesh_axis_idx),
-        absl::MakeSpan(current_entry), strides, submesh_offsets));
-  }
-
   std::vector<ArraySpec> input_specs;
   std::vector<ArraySpec> output_specs;
-  std::vector<RemapPlan::Mapping> mappings;
+  absl::flat_hash_map<int, std::vector<RemapPlan::InputDeviceRange>>
+      input_devices_for_output_map;
 
   std::vector<ArrayRef> input_ifrt_arrays;
   input_ifrt_arrays.reserve(num_output_arrays * num_input_arrays_per_output);
@@ -516,26 +406,12 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
             array->shape().dims()[sharded_dim_idxs[array_idx]];
       }
 
-      auto& mapping = mappings.emplace_back();
-      mapping.in_array = input_specs.size();
-      mapping.out_array = array_idx;
-      int submesh_axis_size = mesh_axis_sections[input_idx];
-      int submesh_axis_start = 0;
-      if (input_idx > 0) {
-        submesh_axis_size -= mesh_axis_sections[input_idx - 1];
-        submesh_axis_start = mesh_axis_sections[input_idx - 1];
-      }
-      int offset_from_array = 0;
-      for (const auto& submesh_offset : submesh_offsets) {
-        int num_contiguous_shards = submesh_axis_size * strides[mesh_axis_idx];
-        int offset_to_array =
-            submesh_offset + submesh_axis_start * strides[mesh_axis_idx];
-        mapping.from.push_back(RemapPlan::Interval{
-            offset_from_array, offset_from_array + num_contiguous_shards, 1});
-        mapping.to.push_back(RemapPlan::Interval{
-            offset_to_array, offset_to_array + num_contiguous_shards, 1});
-        offset_from_array += num_contiguous_shards;
-      }
+      int in_array_idx = input_specs.size();
+      input_devices_for_output_map[array_idx].push_back(
+          RemapPlan::InputDeviceRange{
+              .in_array = in_array_idx,
+              .input_devices = array->sharding().devices(),
+          });
       input_specs.push_back(
           ArraySpec{.dtype = array->dtype(),
                     .shape = array->shape(),
@@ -572,7 +448,7 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
   {
     nb::gil_scoped_release gil_release;
     RemapPlan remap_plan(std::move(input_specs), std::move(output_specs),
-                         std::move(mappings));
+                         std::move(input_devices_for_output_map));
     DCHECK_OK(remap_plan.Validate());
 
     ABSL_ASSIGN_OR_RETURN(result_ifrt_arrays,

@@ -1460,12 +1460,7 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
       }
     }
 
-    std::vector<int64_t> from_shard_indices;
-    from_shard_indices.reserve(addressable_devices.size());
-    std::vector<int64_t> to_shard_indices;
-    to_shard_indices.reserve(dst_addressable_devices.size());
     for (int i = 0; i < dst_addressable_devices.size(); ++i) {
-      from_shard_indices.push_back(i);
       const int shard_device_id = addressable_devices[i]->Id().value();
       const auto it = device_id_to_array_shard_index.find(shard_device_id);
       if (it == device_id_to_array_shard_index.end()) {
@@ -1473,23 +1468,16 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
             "Array shard ", i, " is on device id=", shard_device_id,
             ", but sharding does not have a shard on that device."));
       }
-      to_shard_indices.push_back(it->second);
     }
 
-    std::vector<xla::ifrt::RemapPlan::Mapping> mappings;
-    {
-      auto& mapping = mappings.emplace_back();
-      mapping.in_array = 0;
-      mapping.out_array = 0;
-      mapping.from.reserve(dst_addressable_devices.size());
-      mapping.to.reserve(dst_addressable_devices.size());
-      for (int64_t i = 0; i < dst_addressable_devices.size(); ++i) {
-        mapping.from.push_back(xla::ifrt::RemapPlan::Interval{
-            from_shard_indices[i], from_shard_indices[i] + 1, 1});
-        mapping.to.push_back(xla::ifrt::RemapPlan::Interval{
-            to_shard_indices[i], to_shard_indices[i] + 1, 1});
-      }
-    }
+    absl::flat_hash_map<int,
+                        std::vector<xla::ifrt::RemapPlan::InputDeviceRange>>
+        input_devices_for_output_map;
+    input_devices_for_output_map[0].push_back(
+        xla::ifrt::RemapPlan::InputDeviceRange{
+            .in_array = 0,
+            .input_devices = dst_ifrt_sharding->devices(),
+        });
 
     xla::ifrt::RemapPlan plan(
         /*input_specs=*/{xla::ifrt::ArraySpec{
@@ -1499,7 +1487,7 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
         {xla::ifrt::ArraySpec{/*dtype=*/ifrt_array_ptr->dtype(),
                               /*shape=*/ifrt_array_ptr->shape(),
                               /*sharding=*/std::move(dst_ifrt_sharding)}},
-        /*mappings=*/std::move(mappings));
+        std::move(input_devices_for_output_map));
     DCHECK_OK(plan.Validate());
     std::vector<xla::ifrt::ArrayRef> input;
     input.push_back(ifrt_array_ptr);
