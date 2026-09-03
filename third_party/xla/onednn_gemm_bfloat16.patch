@@ -1,0 +1,74 @@
+diff --git a/third_party/mkl_dnn/gemm_bfloat16_namespace.patch b/third_party/mkl_dnn/gemm_bfloat16_namespace.patch
+new file mode 100644
+--- /dev/null
++++ b/third_party/mkl_dnn/gemm_bfloat16_namespace.patch
+@@ -0,0 +1,25 @@
++diff --git a/src/cpu/gemm/gemm.cpp b/src/cpu/gemm/gemm.cpp
++--- a/src/cpu/gemm/gemm.cpp
+++++ b/src/cpu/gemm/gemm.cpp
++@@ -285,16 +285,17 @@
++ 
++ dnnl_status_t gemm_bf16bf16f32(const char *transa, const char *transb,
++         const dim_t *M, const dim_t *N, const dim_t *K, const float *alpha,
++-        const bfloat16_t *A, const dim_t *lda, const bfloat16_t *B,
++-        const dim_t *ldb, const float *beta, float *C, const dim_t *ldc) {
+++        const dnnl::impl::bfloat16_t *A, const dim_t *lda,
+++        const dnnl::impl::bfloat16_t *B, const dim_t *ldb, const float *beta,
+++        float *C, const dim_t *ldc) {
++     dnnl_status_t status = check_gemm_input(transa, transb, M, N, K, A, lda, B,
++             ldb, C, ldc, alpha, beta, false);
++     if (status != dnnl_success) return status;
++ 
++ #if DNNL_X64 && !__BUILD_GEMM_NONE
++     char *dummyOffsetC = nullptr;
++-    bfloat16_t *dummy_ao = nullptr;
++-    bfloat16_t *dummy_bo = nullptr;
+++    dnnl::impl::bfloat16_t *dummy_ao = nullptr;
+++    dnnl::impl::bfloat16_t *dummy_bo = nullptr;
++     float *dummy_co = nullptr;
++ 
++     if (mayiuse(avx512_core) && __BUILD_GEMM_AVX512) {
+diff --git a/third_party/mkl_dnn/gemm_common_bfloat16_namespace.patch b/third_party/mkl_dnn/gemm_common_bfloat16_namespace.patch
+new file mode 100644
+--- /dev/null
++++ b/third_party/mkl_dnn/gemm_common_bfloat16_namespace.patch
+@@ -0,0 +1,27 @@
++diff --git a/src/common/gemm.cpp b/src/common/gemm.cpp
++--- a/src/common/gemm.cpp
+++++ b/src/common/gemm.cpp
++@@ -143,8 +143,9 @@
++ 
++ extern "C" dnnl_status_t DNNL_API dnnl_gemm_bf16bf16f32(char transa,
++         char transb, dim_t M, dim_t N, dim_t K, float alpha,
++-        const bfloat16_t *A, dim_t lda, const bfloat16_t *B, dim_t ldb,
++-        float beta, float *C, dim_t ldc) {
+++        const dnnl::impl::bfloat16_t *A, dim_t lda,
+++        const dnnl::impl::bfloat16_t *B, dim_t ldb, float beta, float *C,
+++        dim_t ldc) {
++ #if DNNL_CPU_RUNTIME != DNNL_RUNTIME_NONE
++     status_t status = dnnl_success;
++     MAYBE_VERBOSE(status, "bf16", "bf16", "f32",
++@@ -207,8 +208,9 @@
++ 
++ extern "C" dnnl_status_t DNNL_API dnnl_threadpool_interop_gemm_bf16bf16f32(
++         char transa, char transb, dim_t M, dim_t N, dim_t K, float alpha,
++-        const bfloat16_t *A, dim_t lda, const bfloat16_t *B, dim_t ldb,
++-        float beta, float *C, dim_t ldc, void *th) {
+++        const dnnl::impl::bfloat16_t *A, dim_t lda,
+++        const dnnl::impl::bfloat16_t *B, dim_t ldb, float beta, float *C,
+++        dim_t ldc, void *th) {
++     threadpool_utils::activate_threadpool(
++             (dnnl::threadpool_interop::threadpool_iface *)th);
++     status_t status = dnnl_success;
+diff --git a/third_party/mkl_dnn/workspace.bzl b/third_party/mkl_dnn/workspace.bzl
+--- a/third_party/mkl_dnn/workspace.bzl
++++ b/third_party/mkl_dnn/workspace.bzl
+@@ -35,6 +35,8 @@
+         patch_file = [
+             "//third_party/mkl_dnn:setting_tsan_race_v3_12_3.patch",
+             "//third_party/mkl_dnn:rename_gtest.patch",
++            "//third_party/mkl_dnn:gemm_bfloat16_namespace.patch",
++            "//third_party/mkl_dnn:gemm_common_bfloat16_namespace.patch",
+         ],
+         sha256 = "12d8551668515c64adae2b26e5ebeeefa48b1ad1035717fe8718fd702c5e066b",
+         strip_prefix = "oneDNN-3.12.3",

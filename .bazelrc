@@ -252,6 +252,23 @@ common:win_clang --extra_toolchains=@local_config_cc//:cc-toolchain-x64_windows-
 common:win_clang --extra_execution_platforms=//jax/tools/toolchains:x64_windows-clang-cl
 common:win_clang --compiler=clang-cl
 
+common:win_arm64_clang --config=clang_local
+common:win_arm64_clang --cpu=arm64_windows
+common:win_arm64_clang --extra_toolchains=@local_config_cc//:cc-toolchain-arm64_windows-clang-cl
+common:win_arm64_clang --extra_execution_platforms=//jax/tools/toolchains:arm64_windows-clang-cl
+common:win_arm64_clang --host_platform=//jax/tools/toolchains:arm64_windows-clang-cl
+common:win_arm64_clang --platforms=//jax/tools/toolchains:arm64_windows-clang-cl
+common:win_arm64_clang --@rules_python//python/config_settings:bootstrap_impl=zip
+common:win_arm64_clang --build_python_zip
+common:win_arm64_clang --define=no_nccl_support=true
+common:win_arm64_clang --define=tensorflow_mkldnn_contraction_kernel=0
+common:win_arm64_clang --define=build_with_mkl_aarch64=false
+common:win_arm64_clang --define=ynn_enable_arm64_neonfp8=false
+# Unsupported SME/SME2 kernels produce incorrect SEH directives with clang-cl on Windows ARM64
+common:win_arm64_clang --define=ynn_enable_arm64_sme=false
+common:win_arm64_clang --define=ynn_enable_arm64_sme2=false
+common:win_arm64_clang --define=no_cuda_support=true 
+common:win_arm64_clang --define=no_rocm_support=true
 # Sanitizers (work only for Linux x86_64)
 # ASan common config
 common:asan --features=asan
@@ -397,6 +414,13 @@ common:ci_windows_amd64 --crosstool_top="@xla//tools/toolchains/win2022/20241118
 common:ci_windows_amd64 --extra_toolchains="@xla//tools/toolchains/win2022/20241118:cc-toolchain-x64_windows-clang-cl"
 common:ci_windows_amd64 --host_linkopt=/FORCE:MULTIPLE --linkopt=/FORCE:MULTIPLE
 common:ci_windows_amd64 --color=yes
+
+# Windows ARM64 CI configs - Native Windows ARM64 CPU build
+common:ci_windows_arm64 --config=win_arm64_clang
+common:ci_windows_arm64 --compiler=clang-cl --config=clang --verbose_failures=true
+common:ci_windows_arm64 --host_linkopt=/FORCE:MULTIPLE --linkopt=/FORCE:MULTIPLE
+common:ci_windows_arm64 --color=yes
+
 
 # Used for rules_python bootstrap 1.8.0+
 build --@rules_python//python/config_settings:bootstrap_impl=script --repo_env=RULES_PYTHON_ENABLE_PIPSTAR=0

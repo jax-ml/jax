@@ -28,3 +28,13 @@ platform(
         "@bazel_tools//tools/cpp:clang-cl",
     ],
 )
+
+# Register a Windows ARM64 platform.
+platform(
+    name = "arm64_windows-clang-cl",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:windows",
+        "@bazel_tools//tools/cpp:clang-cl",
+    ],
+)
