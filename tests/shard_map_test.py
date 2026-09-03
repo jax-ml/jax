@@ -43,7 +43,7 @@ from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.mesh import AxisType, get_abstract_mesh, empty_concrete_mesh
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters.remat import remat_transform
+from jax._src.interpreters.remat import remat_transform, policy_context
 from jax._src import linear_util as lu
 from jax._src import tree_util
 from jax.custom_derivatives import SymbolicZero
@@ -1111,7 +1111,8 @@ class ShardMapTest(jtu.JaxTestCase):
       return z.sum()
 
     x = jax.device_put(jnp.arange(2.), jax.P('i'))
-    y1, f_ = remat_transform(policy, f, x, custom_vjp_rules=True)  # don't crash
+    with policy_context(policy):
+      y1, f_ = remat_transform(f, x, custom_vjp_rules=True)  # don't crash
     y2 = f_(x)
     self.assertAllClose(y1, y2, check_dtypes=False)
 

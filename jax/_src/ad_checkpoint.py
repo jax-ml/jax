@@ -37,7 +37,8 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters.remat import remat_transform
+from jax._src.interpreters.remat import (
+    remat_transform, policy_context, current_policy)
 from jax._src.hijax import HiPrim, call_hi_primitive_p, Static
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
@@ -531,10 +532,6 @@ def _saved_residuals(jaxpr: core.Jaxpr,
   def get_name(eqn) -> str | None:
     if eqn.primitive is name_p:
       return eqn.params['name']
-    elif (eqn.primitive is call_hi_primitive_p
-          and isinstance(p := eqn.params['_prim'],
-                         (CheckpointName, CheckpointNameFwd))):
-      return p.name
 
   # TODO(mattjj): actually we want to flag this case as problematic, ie some
   # other consumer of the input to a name_p
@@ -551,6 +548,9 @@ def _saved_residuals(jaxpr: core.Jaxpr,
           results.append((v.aval,
                           f"output of jitted function '{eqn.params['name']}' "
                           f"from {src}"))
+        elif eqn.primitive is call_hi_primitive_p:
+          prim_name = type(eqn.params['_prim']).__name__
+          results.append((v.aval, f'output of {prim_name} from {src}'))
         else:
           results.append((v.aval, f'output of {eqn.primitive.name} from {src}'))
 
@@ -943,7 +943,7 @@ def checkpoint_name(x, name):
 
 def checkpoint_name_fwd(x, name):
   if config.remat3.value:
-    return tree_map(lambda x: CheckpointNameFwd(name, typeof(x))(x), x)
+    return tree_map(lambda x: checkpoint_name3(name, x, fwd=True), x)
   return tree_map(partial(name_p.bind, name=name), x)
 
 name_p.def_impl(lambda x, *, name: x)
@@ -984,8 +984,19 @@ def _remat_state_discharge_rule(
 # TODO
 #  [ ] zeros propagation (needs separate ruleset, maybe jax.vjp improvement)
 
-def checkpoint_name3(name, x):
-  return CheckpointName(name, typeof(x))(x)
+def checkpoint_name3(name, x, fwd=False):
+  # The policy decides at trace time; the staged primitive carries the verdict
+  # rather than the name.
+  policy = current_policy()
+  if policy is None:
+    return x
+  case = pe.ensure_enum(policy(name_p, name=name))
+  if isinstance(case, pe.SaveableType):
+    return (CheckpointThisFwd if fwd else CheckpointThis)(typeof(x))(x)
+  elif isinstance(case, pe.Offloadable):
+    return (OffloadThisFwd if fwd else OffloadThis)(
+        typeof(x), src=case.src, dst=case.dst)(x)
+  return x
 
 def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=(),
            prevent_cse=True):
@@ -1036,7 +1047,9 @@ def _remat3(f, *, policy, static_argnums, static_argnames, prevent_cse=True):
     dbg = api_util.debug_info(
         'remat3', f, args, kwargs, static_argnums=static_argnums,
         static_argnames=static_argnames)
-    jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
+    with policy_context(policy):
+      jaxpr_, out_avals_ft = _trace_under_policy(f, current_policy(),
+                                                 avals_ft, dbg)
     jaxpr, consts = pe.separate_consts(jaxpr_)
     if isinstance(prevent_cse, bool):
       prevent_cse_ = prevent_cse
@@ -1048,6 +1061,13 @@ def _remat3(f, *, policy, static_argnums, static_argnames, prevent_cse=True):
     out_flat = RematTraced(jaxpr, policy, prevent_cse_)(*consts, *args_ft)
     return out_avals_ft.update(out_flat).unflatten()
   return decorator
+
+@weakref_lru_cache
+def _trace_under_policy(f, policy, avals_ft, dbg):
+  # Like pe.trace_to_jaxpr, but keyed on the (ambient, effective) policy too,
+  # since checkpoint_name reads it while f is traced.
+  del policy
+  return pe.trace_to_jaxpr_nocache(f, avals_ft, dbg)
 
 def _static_argnums(f, argnums, argnames) -> frozenset[int]:
   argnums = set(argnums)
@@ -1113,16 +1133,17 @@ class RematTraced(HiPrim):
     # TODO eval_jaxpr_p trace time
     self._check_differentiable()
     traced = core.jaxpr_as_fun(self.jaxpr)
-    primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
-                                        custom_vjp_rules=True)
     in_nzs = tuple(tree_leaves(nzs_in))
     out_nzs_cell = []
     def make_vjp(*xs):
       _, f_vjp = api.vjp(fwd2, *xs, in_nzs=in_nzs)
       out_nzs_cell.append(f_vjp.out_nzs)  # pyrefly: ignore[missing-attribute]
       return f_vjp
-    with config.mutable_array_checks(False):
-      traced_vjp = api.jit(make_vjp).trace(*primals)
+    with policy_context(self.policy):
+      primals_out, fwd2 = remat_transform(traced, *primals,
+                                          custom_vjp_rules=True)
+      with config.mutable_array_checks(False):
+        traced_vjp = api.jit(make_vjp).trace(*primals)
     used, rem = dce(traced_vjp, self.policy)
     primals_ = [x for x, u in zip(tree_leaves(primals), used) if u]
     if isinstance(self.prevent_cse, bool):
@@ -1162,16 +1183,17 @@ class RematTraced(HiPrim):
   def lin(self, nzs_in, *primals):
     self._check_differentiable()
     traced = core.jaxpr_as_fun(self.jaxpr)
-    primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
-                                        custom_vjp_rules=True)
     in_nzs = tuple(tree_leaves(nzs_in))
     out_nzs_cell = []
     def make_lin(*xs):
       _, f_jvp = api.linearize(fwd2, *xs, in_nzs=in_nzs)
       out_nzs_cell.append(f_jvp.out_nzs)  # pyrefly: ignore[missing-attribute]
       return f_jvp
-    with config.mutable_array_checks(False):
-      traced_lin = api.jit(make_lin).trace(*primals)
+    with policy_context(self.policy):
+      primals_out, fwd2 = remat_transform(traced, *primals,
+                                          custom_vjp_rules=True)
+      with config.mutable_array_checks(False):
+        traced_lin = api.jit(make_lin).trace(*primals)
     used, rem = dce(traced_lin, self.policy)
     primals_ = [x for x, u in zip(tree_leaves(primals), used) if u]
     out_nzs, = out_nzs_cell
@@ -1194,13 +1216,16 @@ class RematTraced(HiPrim):
                        self.prevent_cse)(*args), out_dims
 
   def remat(self, trace, *args):  # pyrefly: ignore[bad-param-name-override]
+    # Nested under another checkpoint's transform: that one's policy is ambient
+    # and governs here too, as in classic remat.
     traced = core.jaxpr_as_fun(self.jaxpr)
-    out, rem_ = remat_transform(trace.policy, traced, *args,
+    out, rem_ = remat_transform(traced, *args,
                                 custom_vjp_rules=trace.custom_vjp_rules)
     (jaxpr, in_tree, out_tree), (res,) = rem_.func.args, rem_.args
+    policy = current_policy()
     def rem(*args_):
       args_flat = tree_leaves_checked(in_tree, args_)
-      out_flat = RematTraced(jaxpr, trace.policy)(*res, *args_flat)
+      out_flat = RematTraced(jaxpr, policy)(*res, *args_flat)
       return tree_unflatten(out_tree, out_flat)
     return out, rem
 
@@ -1218,49 +1243,30 @@ class RematTraced(HiPrim):
     return (tuple(used_ins), tuple(used_outs_flat),
             RematTraced(new_jaxpr, self.policy, prevent_cse))
 
-class CheckpointName(HiPrim):
-  name: str
+class _IdentityPrim(HiPrim):
+  """Identity on one array. Subclasses customize only the remat rule."""
 
-  def __init__(self, name, aval):
+  def __init__(self, aval, **params):
     self.in_avals = aval,
     self.out_aval = aval
-    self.params = dict(name=name)
+    self.params = params
     super().__init__()
 
   def expand(self, x):  # pyrefly: ignore[bad-override]
     return x
 
-  def remat(self, trace, x):  # pyrefly: ignore[bad-override]
-    policy = trace.policy
-    x = CheckpointName(self.name, self.in_avals[0])(x)
-    if policy is None:
-      return x, lambda x: x  # full remat
-    case = pe.ensure_enum(policy(name_p, name=self.name))
-    if isinstance(case, pe.SaveableType):
-      return x, partial(primal_left_tangent_right, x)
-    elif isinstance(case, pe.Offloadable):
-      x_host = api.device_put(x, core.mem_kind_to_space(case.dst),
-                              may_alias=False)
-      src_space = core.mem_kind_to_space(case.src)
-      def rem(x_rem):
-        x_dev = api.device_put(x_host, src_space, may_alias=False)
-        return primal_left_tangent_right(x_dev, x_rem)
-      return x, rem
-    else:
-      return x, lambda x: x  # full remat
-
   def jvp(self, primals, tangents):
     (x,), (xdot,) = primals, tangents
-    return CheckpointName(self.name, self.in_avals[0])(x), xdot
+    return self(x), xdot
 
   def vjp_fwd(self, _nzs_in, x):  # type: ignore
-    return CheckpointName(self.name, self.in_avals[0])(x), None
+    return self(x), None
 
   def vjp_bwd_retval(self, _, g):
     return g,
 
   def lin(self, nzs_in, x):  # type: ignore
-    return CheckpointName(self.name, self.in_avals[0])(x), None
+    return self(x), None
 
   def linearized(self, _, g):  # type: ignore
     return g
@@ -1268,52 +1274,40 @@ class CheckpointName(HiPrim):
   def batch_dim_rule(self, axis_data, dims, /):
     return dims[0]
 
-class CheckpointNameFwd(HiPrim):
-  name: str
+class CheckpointThis(_IdentityPrim):
+  """Save the value as a residual; recompute only its tangent."""
+  def remat(self, _trace, x):  # pyrefly: ignore[bad-override]
+    x = self(x)
+    return x, partial(primal_left_tangent_right, x)
 
-  def __init__(self, name, aval):
-    self.in_avals = aval,
-    self.out_aval = aval
-    self.params = dict(name=name)
-    super().__init__()
+class CheckpointThisFwd(_IdentityPrim):
+  """Save the value as a residual and ignore the recomputation entirely."""
+  def remat(self, _trace, x):  # pyrefly: ignore[bad-override]
+    x = self(x)
+    return x, lambda _: x
 
-  def expand(self, x):  # pyrefly: ignore[bad-override]
-    return x
+def _offload(x, src, dst):
+  x_host = api.device_put(x, core.mem_kind_to_space(dst), may_alias=False)
+  src_space = core.mem_kind_to_space(src)
+  return lambda: api.device_put(x_host, src_space, may_alias=False)
 
-  def remat(self, trace, x):  # pyrefly: ignore[bad-override]
-    policy = trace.policy
-    x = CheckpointNameFwd(self.name, self.in_avals[0])(x)
-    if policy is None:
-      return x, lambda x: x  # full remat
-    case = pe.ensure_enum(policy(name_p, name=self.name))
-    if isinstance(case, pe.SaveableType):
-      return x, lambda _: x
-    elif isinstance(case, pe.Offloadable):
-      x_host = api.device_put(x, core.mem_kind_to_space(case.dst),
-                              may_alias=False)
-      src_space = core.mem_kind_to_space(case.src)
-      return x, lambda _: api.device_put(x_host, src_space, may_alias=False)
-    else:
-      return x, lambda x: x  # full remat
+class OffloadThis(_IdentityPrim):
+  """Like CheckpointThis, but the residual lives in ``dst`` memory."""
+  src: str
+  dst: str
+  def remat(self, _trace, x):  # pyrefly: ignore[bad-override]
+    x = self(x)
+    reload = _offload(x, self.src, self.dst)
+    return x, lambda x_rem: primal_left_tangent_right(reload(), x_rem)
 
-  def jvp(self, primals, tangents):
-    (x,), (xdot,) = primals, tangents
-    return CheckpointNameFwd(self.name, self.in_avals[0])(x), xdot
-
-  def vjp_fwd(self, _nzs_in, x):  # type: ignore
-    return CheckpointNameFwd(self.name, self.in_avals[0])(x), None
-
-  def vjp_bwd_retval(self, _, g):
-    return g,
-
-  def lin(self, nzs_in, x):  # type: ignore
-    return CheckpointNameFwd(self.name, self.in_avals[0])(x), None
-
-  def linearized(self, _, g):  # type: ignore
-    return g
-
-  def batch_dim_rule(self, axis_data, dims, /):
-    return dims[0]
+class OffloadThisFwd(_IdentityPrim):
+  """Like CheckpointThisFwd, but the residual lives in ``dst`` memory."""
+  src: str
+  dst: str
+  def remat(self, _trace, x):  # pyrefly: ignore[bad-override]
+    x = self(x)
+    reload = _offload(x, self.src, self.dst)
+    return x, lambda _: reload()
 
 class PrimalLeftTangentRight(HiPrim):
   def __init__(self, aval_x, aval__x):
@@ -1413,7 +1407,7 @@ class CustomRemat(HiPrim):
 
   def remat(self, trace, *args_flat):  # type: ignore
     args, kwargs = tree_unflatten(self._in_tree, args_flat)  # type: ignore
-    out_primal, res = self.f1(trace.policy, *args, **kwargs)
+    out_primal, res = self.f1(current_policy(), *args, **kwargs)
     out_primal_flat = tree_leaves_checked(self._out_tree, out_primal)  # type: ignore
     def rem_flat(*args_flat):
       args, kwargs = tree_unflatten(self._in_tree, args_flat)  # type: ignore

@@ -2919,7 +2919,8 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
 
     policy = jax.checkpoint_policies.save_only_these_names('saved')
     res = saved_residuals(jax.remat(layer, policy=policy), jnp.arange(4.))
-    self.assertTrue(any("named 'saved'" in s for _, s in res),
+    # remat3's saved-value primitive doesn't carry the name
+    self.assertTrue(any('output of CheckpointThisFwd' in s for _, s in res),
                     msg=f'saved residuals: {[s for _, s in res]}')
 
 

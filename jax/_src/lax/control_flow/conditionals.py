@@ -997,7 +997,7 @@ def _cond_remat(trace, *args, branches, **params):
     # TODO(mattjj): allow forwarding (requires per-branch wiring to survive
     # the cross-branch residual merging below).
     jaxpr_fwd, jaxpr_rem, fwds = remat.remat_jaxpr(
-      jaxpr, trace.policy, trace.custom_vjp_rules, allow_fwds=False)
+      jaxpr, trace.custom_vjp_rules, allow_fwds=False)
     num_res = len(fwds)
     branches_fwd.append(jaxpr_fwd)
     branches_rem.append(jaxpr_rem)

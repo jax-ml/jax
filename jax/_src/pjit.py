@@ -1648,7 +1648,7 @@ ad.primitive_linearizations[jit_p] = _pjit_linearize
 
 def _pjit_remat(trace, *args, jaxpr, **params):
   jaxpr_fwd, jaxpr_rem, fwds = remat.remat_jaxpr(
-      jaxpr, trace.policy, trace.custom_vjp_rules, allow_fwds=True)
+      jaxpr, trace.custom_vjp_rules, allow_fwds=True)
   num_res_out = sum(f is None for f in fwds)
   params_fwd, params_rem = _add_res_to_params(num_res_out, len(fwds), **params)
   primals_res_out = jit_p.bind(*args, jaxpr=jaxpr_fwd, **params_fwd)
