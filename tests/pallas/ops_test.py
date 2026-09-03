@@ -2510,12 +2510,24 @@ class OpsTest(PallasBaseTest):
               (32, 2, 2, 128),
               (((1, 3), (2, 3)), ((0,), (1,))),
           ),
+          (
+              (8, 8, 128),
+              (128, 8, 128),
+              (((1, 2), (1, 2)), ((), ())),
+          ),
+          (
+              (2, 8, 8, 128),
+              (2, 128, 8, 128),
+              (((2, 3), (2, 3)), ((0,), (0,))),
+          ),
       ],
   )
   def test_dot_general_multiple_contracting_dims(self, shapes_and_dim_nums):
     self.skip_if_mosaic_gpu()
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Not supported on this hardware")
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu 0.0.48 or later")
 
     lhs_shape, rhs_shape, dim_nums = shapes_and_dim_nums
     lhs_key, rhs_key = random.split(random.key(0))
