@@ -185,13 +185,21 @@ def ppf(p: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     - :func:`jax.scipy.stats.gumbel_l.sf`
   """
   p, loc, scale = promote_args_inexact("gumbel_l.ppf", p, loc, scale)
-  ok = lax.bitwise_and(lax.gt(p, _lax_const(p, 0)),
-                       lax.lt(p, _lax_const(p, 1)))
+  ok = (scale > 0) & (p >= 0) & (p <= 1)
   # quantile = loc + (scale)*log(-log(1 - p))
   t1 = xlog1py(-1, lax.neg(p))
   # xlogp failed here too, that's why log is used
   t = lax.mul(scale, lax.log(t1))
   quantile = lax.add(loc, t)
+  quantile = jnp.where(
+    p == 0,
+    loc - np.inf,
+    jnp.where(
+      p == 1,
+      loc + np.inf,
+      quantile,
+    ),
+  )
   return jnp.where(ok, quantile, np.nan)
 
 
