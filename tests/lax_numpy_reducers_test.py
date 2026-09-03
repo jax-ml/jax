@@ -781,7 +781,6 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  @unittest.skipIf(jtu.numpy_version() < (2, 2, 0), "test covers NumPy 2.2+ behavior.")
   @jtu.sample_product(
       shape=[(1, 3), (3, 1)],
       rowvar=[True, False]
