@@ -168,6 +168,7 @@ class HiPrim:
         "vjp_from_lin`)")
 
   vjp_bwd_retval_logs: bool = False
+  skip_linearization_on_zero_tangents: bool = False
 
   def vjp_bwd(self, res, outgrad, /, *arg_accums):
     if self.vjp_bwd_retval_logs:
@@ -261,6 +262,7 @@ class VmapOf(HiPrim):
 
   def __init__(self, prim, axis_data, in_dims, out_dim):
     self.vjp_bwd_retval_logs = prim.vjp_bwd_retval_logs
+    self.skip_linearization_on_zero_tangents = prim.skip_linearization_on_zero_tangents
     unmap = lambda a, d: core.unmapped_aval(axis_data.size, d, a,
                                             axis_data.explicit_mesh_axis)
     self.in_avals = tree_map(unmap, prim.in_avals, in_dims)
@@ -410,6 +412,12 @@ batching.fancy_primitive_batchers[call_hi_primitive_p] = _call_hi_primitive_batc
 # backward rule receives them explicitly: `linearized(res, sres, *tangents)`,
 # and `vjp_bwd(res, sres, outgrad, *arg_accums)` (which must be overridden).
 def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
+  zero_in = (not any(nz_in_flat) and
+             not any(isinstance(typeof(x), AbstractRef) for x in args_flat))
+  if zero_in and _prim.skip_linearization_on_zero_tangents:
+    ans_flat = call_hi_primitive_p.bind(*args_flat, _prim=_prim)
+    linearized = lambda _, __, *ts: [ad_util.p2tz(x) for x in ans_flat]
+    return ans_flat, [False] * len(ans_flat), None, None, linearized
   args = tree_unflatten(_prim.in_tree, args_flat)
   nzs_in = tree_unflatten(_prim.in_tree, nz_in_flat)
   if is_vjp:
@@ -419,7 +427,7 @@ def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
     ans, residuals, *rest = _prim.lin(nzs_in, *args)
     linearized = partial(flatten_user_linearized, _prim)
   ans_flat = tree_leaves_checked(_prim.out_tree, ans)
-  nzs_out = rest[0] if rest else True
+  nzs_out = rest[0] if rest else not zero_in
   sres = rest[1] if len(rest) > 1 else None
   if (sres is not None and is_vjp and
       type(_prim).vjp_bwd is HiPrim.vjp_bwd):
@@ -430,6 +438,7 @@ def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
   linearized = partial(linearized, nzs_out_flat) if is_vjp else linearized
   return ans_flat, nzs_out_flat, residuals, sres, linearized
 ad.primitive_linearizations[call_hi_primitive_p] = _call_hi_primitive_linearize
+ad.linearize_on_zero_tangents.add(call_hi_primitive_p)
 
 def fake_linear_op(prim, nz_in_flat, nz_out_flat, rs, sres, *tangents):
   if not any(nz_out_flat):
@@ -688,6 +697,7 @@ vjp_from_lin = _VJPFromLin(_vjp_fwd_from_lin, _transpose_linearized)
 
 
 class CustomVJPTraced(HiPrim):
+  skip_linearization_on_zero_tangents = True  # run the primal, not the fwd rule
   """Applications take ``(consts, fwd_consts, *args)``.
 
   The two leading arguments are synthetic, and both get zero cotangents:

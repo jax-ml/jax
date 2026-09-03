@@ -708,9 +708,8 @@ class LinearizeTrace(Trace):
   def process_primitive(self, primitive, tracers, params, /):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     tangent_nzs = [type(t) is not Zero for t in tangents_in]
-    if (all(type(t) is Zero for t in tangents_in) and
-        primitive is not core.ref_p and primitive is not core.empty_ref_p and
-        type(params.get('_prim')).__name__ != 'PrimalLeftTangentRight' and
+    if (not any(tangent_nzs) and
+        primitive not in linearize_on_zero_tangents and
         not any(isinstance(typeof(x), AbstractRef) for x in primals_in)):
       avals = tuple(core.typeof(x) for x in primals_in)
       return primitive.bind_with_trace(self.parent_trace, primals_in, avals, params)
@@ -921,6 +920,7 @@ class LinearizeTracer(Tracer[LinearizeTrace]):
 primitive_jvps : dict[core.Primitive, Callable] = {}
 primitive_transposes: dict[core.Primitive, Callable] = {}
 primitive_linearizations : dict[core.Primitive, Callable]  = {}
+linearize_on_zero_tangents: set[core.Primitive] = set()  # never skip these rules
 
 def deflinear(primitive, transpose_rule):
   primitive_jvps[primitive] = partial(linear_jvp, primitive)
