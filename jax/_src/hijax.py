@@ -895,7 +895,7 @@ class CustomVJPTraced(HiPrim):
       # custom_vjp_rules=False so that custom_vjp applications inside fwd hit
       # the early return above rather than recursively tracing their fwds.
       fwd = partial(self.fwd, tree_map(lambda _: True, args))
-      (out, _), rem_ = remat.remat_transform(trace.policy, fwd, *args,
+      (out, _), rem_ = remat.remat_transform(fwd, *args,
                                              custom_vjp_rules=False)
       res, rem, bwd = tuple(rem_.args[0]), rem_.func, self.bwd
     fwd2 = lambda _, consts, fc_res, *rest: rem(fc_res[1], consts, fc_res[0], *rest)

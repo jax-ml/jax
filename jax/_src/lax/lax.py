@@ -6614,14 +6614,15 @@ dot_general_p = standard_primitive(
 )
 
 
-def _dot_general_remat(trace, lhs, rhs, **params):
+def _dot_general_remat(_trace, lhs, rhs, **params):
   from jax._src.ad_checkpoint import primal_left_tangent_right
   dot = partial(dot_general_p.bind, **params)
   out = dot(lhs, rhs)
-  if trace.policy is None:
+  policy = remat.current_policy()
+  if policy is None:
     return out, (), lambda _, lhs, rhs: dot(lhs, rhs)  # full remat
   case = pe.ensure_enum(
-      trace.policy(dot_general_p, typeof(lhs), typeof(rhs), **params))
+      policy(dot_general_p, typeof(lhs), typeof(rhs), **params))
   if isinstance(case, pe.SaveableType):
     out = remat.reduce_precision(out)
     return out, out, lambda out, lhs, rhs: primal_left_tangent_right(out, dot(lhs, rhs))

@@ -377,7 +377,7 @@ pe.dce_rules[program_order_p] = _program_order_dce
 
 def _program_order_remat(trace, *args, call_jaxpr, exclude_mask, **params):
   jaxpr_fwd, jaxpr_rem, fwds = remat.remat_jaxpr(
-      call_jaxpr, trace.policy, trace.custom_vjp_rules, allow_fwds=True)
+      call_jaxpr, trace.custom_vjp_rules, allow_fwds=True)
   primals_res_out = program_order_p.bind(
       *args, call_jaxpr=jaxpr_fwd, exclude_mask=exclude_mask, **params)
   primals_out, res = split_list(primals_res_out, [len(call_jaxpr.outvars)])

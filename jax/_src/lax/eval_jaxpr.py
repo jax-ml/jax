@@ -116,7 +116,7 @@ eval_jaxpr_transpose = _eval_jaxpr_transpose
 
 def _eval_jaxpr_remat(prim, trace, *args, call_jaxpr, **params):
   jaxpr_fwd, jaxpr_rem, fwds = remat.remat_jaxpr(
-      call_jaxpr, trace.policy, trace.custom_vjp_rules, allow_fwds=True)
+      call_jaxpr, trace.custom_vjp_rules, allow_fwds=True)
   primals_res_out = prim.bind(*args, call_jaxpr=jaxpr_fwd, **params)
   primals_out, res = split_list(primals_res_out, [len(call_jaxpr.outvars)])
   res_ = iter(res)
