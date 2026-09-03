@@ -45,7 +45,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 490  # PyArray.aval is read-only
+_version = 491  # Add batched_copy_to_host_async
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -556,6 +556,7 @@ batched_copy_array_to_devices_with_sharding = (
     _xla.batched_copy_array_to_devices_with_sharding
 )
 batched_device_put = _xla.batched_device_put
+batched_copy_to_host_async = _xla.batched_copy_to_host_async
 reorder_shards = _xla.reorder_shards
 batched_block_until_ready = _xla.batched_block_until_ready
 check_and_canonicalize_memory_kind = _xla.check_and_canonicalize_memory_kind
