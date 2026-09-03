@@ -21,7 +21,6 @@
 
 from __future__ import annotations
 
-import abc
 from collections.abc import Callable
 import dataclasses
 import functools
@@ -36,7 +35,7 @@ from jax._src import config
 from jax._src import traceback_util
 from jax._src.lib import _jax
 from jax._src.typing import Array, DType, DTypeLike
-from jax._src.util import StrictABC, set_module, cache
+from jax._src.util import set_module, cache
 
 traceback_util.register_exclusion(__file__)
 
@@ -83,11 +82,11 @@ class prng_key(extended):
   """
 
 
-class ExtendedDType(StrictABC):
+class ExtendedDType:
   """Abstract Base Class for extended dtypes"""
   @property
-  @abc.abstractmethod
-  def type(self) -> type: ...
+  def type(self) -> type:
+      raise NotImplementedError
 
   _rules: Any = None
 
