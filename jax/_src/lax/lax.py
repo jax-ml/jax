@@ -631,12 +631,15 @@ def tanh(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> A
 
   Note:
     By default, the gradient of ``tanh`` is computed from the forward
-    output :math:`y = \mathrm{tanh}(x)` as :math:`(1 + y)(1 - y)`, which
-    evaluates to zero when :math:`y` rounds to :math:`\pm 1` in floating-point
-    arithmetic (e.g., :math:`|x| \ge 9.01` for ``float32``). Passing
-    ``accuracy=jax.lax.AccuracyMode.HIGHEST`` computes the derivative directly
-    from ``x`` as :math:`4 \, \mathrm{logistic}(2x) \, \mathrm{logistic}(-2x)`,
-    preserving non-zero gradients in saturated regions.
+    output :math:`y = \mathrm{tanh}(x)` as :math:`(1 + y)(1 - y)`. In the
+    region where :math:`\mathrm{tanh}(x)` rounds to :math:`\pm 1` in
+    floating-point arithmetic (approximately :math:`|x| \ge 9` for ``float32``
+    and :math:`|x| \ge 19` for ``float64``), the computed gradient evaluates
+    to zero, even though the true derivative may still be a non-zero
+    floating-point number. Passing ``accuracy=jax.lax.AccuracyMode.HIGHEST``
+    computes the derivative directly from ``x`` as
+    :math:`4 \, \mathrm{logistic}(2x) \, \mathrm{logistic}(-2x)`, preserving
+    non-zero gradients in this region.
 
   See also:
     - :func:`jax.lax.atanh`: elementwise inverse hyperbolic tangent.
