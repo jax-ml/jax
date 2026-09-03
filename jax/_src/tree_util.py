@@ -118,6 +118,9 @@ def tree_structure(tree: Any,
   """Alias of :func:`jax.tree.structure`."""
   return default_registry.flatten(tree, is_leaf)[1]
 
+# TODO: get rid of the tree registry system altogether (use FlatTree instead)
+def treedef_tuple_tracing_registry(treedefs: Iterable[PyTreeDef]) -> PyTreeDef:
+  return pytree.treedef_tuple(tracing_registry, list(treedefs))
 
 @export
 def treedef_tuple(treedefs: Iterable[PyTreeDef]) -> PyTreeDef:
@@ -1007,7 +1010,7 @@ def register_dataclass(
   registries use the optimized C++ dataclass builtin instead of the argument
   functions.
 
-  See :ref:`pytrees-custom-pytree-nodes` for more information about registering pytrees.
+  See :ref:`jax-101-custom-pytrees` for more information about registering pytrees.
 
   Args:
     nodetype: a Python type to treat as an internal pytree node. This is assumed
@@ -1025,7 +1028,7 @@ def register_dataclass(
     data_fields: data field names: these are attributes which will be treated as non-static
       when this pytree is passed to :func:`jax.jit`. ``data_fields`` is optional only if
       ``nodetype`` is a dataclass, in which case fields are assumed data fields unless
-      marked via :func:`dataclasses.field` (see examples below).
+      marked via :func:`dataclasses.field` (see examples below) or present in drop_fields.
       Data fields *must* be JAX-compatible objects such as arrays (:class:`jax.Array`
       or :class:`numpy.ndarray`), scalars, or pytrees whose leaves are arrays or scalars.
       Note that ``None`` is a valid data field, as JAX recognizes this as an empty pytree.
@@ -1058,9 +1061,9 @@ def register_dataclass(
     >>> m
     MyStruct(x=Array([1., 1., 1.], dtype=float32), y=Array([0, 1, 2], dtype=int32), op='add')
 
-    Starting in JAX v0.4.36, the ``data_fields`` and ``meta_fields`` arguments are optional
-    for :func:`~dataclasses.dataclass` inputs, with fields defaulting to ``data_fields``
-    unless marked as static using `static` metadata in :func:`dataclasses.field`.
+    Since JAX v0.9.0, the ``data_fields`` and ``meta_fields`` arguments can be left
+    out, and all fields will be considered ``data_fields`` unless marked by
+    :func:`jax.tree.static`:
 
     >>> import jax
     >>> from dataclasses import dataclass, field
@@ -1070,7 +1073,7 @@ def register_dataclass(
     ... class MyStruct:
     ...   x: jax.Array  # defaults to non-static data field
     ...   y: jax.Array  # defaults to non-static data field
-    ...   op: str = field(metadata=dict(static=True))  # marked as static meta field.
+    ...   op: str = jax.tree.static()  # marked as static meta field.
     ...
     >>> m = MyStruct(x=jnp.ones(3), y=jnp.arange(3), op='add')
     >>> m
@@ -1111,12 +1114,12 @@ def register_dataclass(
     data_fields = [
         f.name
         for f in dataclasses.fields(nodetype)
-        if not f.metadata.get("static", False)
+        if not f.metadata.get("static", False) and f.name not in drop_fields
     ]
     meta_fields = [
         f.name
         for f in dataclasses.fields(nodetype)
-        if f.metadata.get("static", False)
+        if f.metadata.get("static", False) and f.name not in drop_fields
     ]
 
   assert meta_fields is not None
@@ -1327,13 +1330,13 @@ def _prefix_error(
         f"At that key path, the prefix pytree {name} has a subtree of type\n"
         f"    {type(prefix_tree)}\n"
         f"with {len(prefix_tree_children)} child keys\n"
-        f"    {' '.join(str(k.key) for k in prefix_tree_keys)}\n"
+        f"    {' '.join(str(k) for k in prefix_tree_keys)}\n"
         f"but at the same key path the full pytree has a subtree of the same "
         f"type but with {len(full_tree_children)} child keys\n"
-        f"    {' '.join(str(k.key) for k in full_tree_keys)}\n"
+        f"    {' '.join(str(k) for k in full_tree_keys)}\n"
         + ("" if diff is None else
            f"so the symmetric difference on key sets is\n"
-           f"    {' '.join(str(k.key) for k in diff)}"))
+           f"    {' '.join(str(k) for k in diff)}"))
       return  # don't look for more errors in this subtree
 
   # Or they may disagree if their roots have different pytree metadata:

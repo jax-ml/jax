@@ -23,6 +23,8 @@ import enum
 import math
 from typing import Any, TYPE_CHECKING, Literal, assert_never, cast, final
 
+from jax._src.lib.mlir.dialects import builtin, func
+from jax._src.lib.mlir import ir
 import numpy as np
 
 from . import dialect_lowering as lowering
@@ -382,7 +384,7 @@ def reduce_collapse_shape_expression(
       assert not rev_shape_to_process
       new_tiling = tuple(rev_new_tiling[::-1])
       return SMEMTransforms(lc.TileTransform(tuple(new_tiling)), swizzle)
-    case Constant():
+    case _ if isinstance(reduced_expr, Constant):
       raise NotImplementedError(
           "CollapseShape is only implemented for variables in SMEM")
     case _:
@@ -690,10 +692,6 @@ class IsTransferableSmemRegisters(IsTransferable):
 
     if not isinstance(reg_layout, fa.TiledLayout):
       return tiling_transform is None and swizzle is None
-    if len(self.strides) < 2:
-      smem_transposed = False
-    else:
-      smem_transposed = self.strides[-1] > self.strides[-2]
     tiling = tiling_transform.tiling if tiling_transform is not None else ()
     tiling_rank = len(tiling)
 
@@ -704,44 +702,42 @@ class IsTransferableSmemRegisters(IsTransferable):
       tiling = self.shape
       tiling_rank = len(tiling)
 
-    # TODO(bchetioui): move this below the UNOPTIMIZED check once it is
-    # possible to do so.
-    if smem_transposed:
-      regs_transposed = reg_layout in {fa.TCGEN05_TRANSPOSED_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT}
-      # TODO(olechwierowicz): Lift restriction on 2D tiling rank enforcement below.
-      return tiling_rank == 2 and regs_transposed
-    # For a given `TiledLayout`, all transfers are possible if optimization is
-    # not required.
-    if self.optimized == OptimizedTransferKind.UNOPTIMIZED:
-      return True
-
+    optimized = self.optimized != OptimizedTransferKind.UNOPTIMIZED
     if is_untiled and self.optimized == OptimizedTransferKind.DOWNGRADABLE:
       # Model the Pallas behavior of downgrading to unoptimized transfers in
       # this case.
-      return True
+      optimized = False
 
-    tiled_strides = lowering.tile_strides(self.strides, tiling)
-
-    first_tiled_dim = len(self.shape) - tiling_rank
-    nested_ref_shape = tuple(
-        (self.shape[i] // tiling[i - first_tiled_dim], tiling[i - first_tiled_dim])
-        if i >= first_tiled_dim and tiling[i - first_tiled_dim] != 1
-        else (self.shape[i],)
-        for i in range(len(self.shape))
-    )
-    nested_ref_strides = tuple(
-        (tiled_strides[i], tiled_strides[i + tiling_rank])
-        if i >= first_tiled_dim and tiling[i - first_tiled_dim] != 1
-        else (tiled_strides[i],)
-        for i in range(len(self.shape))
-    )
-
+    int_ty = ir.IntegerType.get_signless(self.bitwidth)
+    layout = ir.StridedLayoutAttr.get(0, lowering.tile_strides(self.strides, tiling))
+    ref_shape = utils.tile_shape(self.shape, tiling)
+    assert len(layout.strides) == len(ref_shape), (len(layout.strides), len(ref_shape))
+    memref_ty = ir.MemRefType.get(ref_shape, int_ty, layout, utils.smem())
+    dummy_func = func.FuncOp("dummy_transfer_test", ir.FunctionType.get([], []))
+    dummy_block = dummy_func.add_entry_block()
     try:
-      fa.plan_tiled_transfer(nested_ref_shape, nested_ref_strides,
-                             reg_layout, self.bitwidth, swizzle or 16)
-      return True
-    except fa.TransferPlanDerivationError:
-      return False
+      with ir.InsertionPoint(dummy_block):
+        fake_ref_op = builtin.UnrealizedConversionCastOp([memref_ty], [])
+        fake_ref = fake_ref_op.results[0]
+        for use_txmatrix in [True, False]:
+          try:
+            next(
+                fa.FragmentedArray.transfer_tiled(
+                    fake_ref,
+                    swizzle or 16,
+                    reg_layout,
+                    self.shape,
+                    optimized=optimized,
+                    ref_tiling_rank=tiling_rank,
+                    use_txmatrix=use_txmatrix,
+                )
+            )
+            return True
+          except (fa.TxMatrixIneligible, fa.TransferPlanDerivationError, fa.UnsupportedTransferError):
+            continue
+        return False
+    finally:
+      dummy_func.erase()
 
   def _constant_holds(self) -> bool:
     match self.source, self.target:
@@ -880,44 +876,6 @@ class MinorDimDivisibleBy(_BaseConstraint):
     return f"{self.expr}.tiling[-1] % {self.divisor} == 0"
 
 
-@dataclasses.dataclass(frozen=True)
-class IsValidMmaTiling(_BaseConstraint):
-  """States that the `expr` SMEM tiling must be compatible with MMA requirements.
-
-  For both tcgen05.mma and wgmma, tiling is valid if it is of the form
-  (8, swizzle_elems), with
-      swizzle_elems in {s * 8 // dtype_bitwidth for s in [32, 64, 128]},
-  as support for unswizzled tilings is not yet supported.
-
-  If `allow_unswizzled` is True, then we additionally accept
-  (8, 16 * 8 // dtype_bitwidth) as a valid tiling.
-  """
-  expr: Expression
-  bitwidth: int
-  allow_unswizzled: bool = False
-
-  @property
-  def _is_constant(self) -> bool:
-    return isinstance(self.expr, Constant)
-
-  def _constant_holds(self) -> bool:
-    assert isinstance(self.expr, Constant)
-    match self.expr:
-      case SMEMTransforms(tiling=None):
-        return False
-      case SMEMTransforms(tiling=lc.TileTransform(tiling=t), swizzle=None):
-        no_swizzle = 16
-        return self.allow_unswizzled and t == (8, no_swizzle * 8 // self.bitwidth)
-      case SMEMTransforms(tiling=lc.TileTransform(tiling=t), swizzle=swizzle):
-        assert swizzle is not None  # satisfy the type checker
-        return t == (8, swizzle * 8 // self.bitwidth)
-      case RegisterLayout() | TMEMLayout() | SMEMTransforms():
-        raise ValueError(f"Unexpected value {self.expr} in IsValidMmaTiling constraint")
-      case _ as never:
-        assert_never(never)
-
-  def __str__(self):
-    return f"IsValidMMATiling({self.expr}, {self.bitwidth}, allow_unswizzled={self.allow_unswizzled})"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -959,16 +917,41 @@ class IsSupportedBroadcast(_BaseConstraint):
     )
 
 
+@dataclasses.dataclass(frozen=True)
+class OneOf(_BaseConstraint):
+  """States that `expr` evaluates to one of the given constants."""
+
+  expr: Expression
+  allowed: tuple[Constant, ...]
+
+  @property
+  def _is_constant(self) -> bool:
+    return isinstance(self.expr, Constant)
+
+  def _constant_holds(self) -> bool:
+    return self.expr in self.allowed
+
+  def canonicalize(self) -> Constraint:
+    # Deduplicate while preserving insertion order.
+    allowed = tuple(dict.fromkeys(self.allowed))
+    if len(allowed) == 1:
+      return Equals(self.expr, allowed[0]).canonicalize()
+    return OneOf(self.expr, allowed)
+
+  def __str__(self):
+    return f"OneOf({self.expr}, {self.allowed})"
+
+
 Constraint = (
     Equals
     | Relayout
     | NotOfType
     | IsTransferable
-    | IsValidMmaTiling
     | Divides
     | IsSupportedBroadcast
     | MinorDimDivisibleBy
     | AlwaysTrue
+    | OneOf
 )
 
 if TYPE_CHECKING:
@@ -1011,11 +994,6 @@ def reduce_constraint(
       if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
         return Unsatisfiable()
       return dataclasses.replace(transfer, source=source_red, target=target_red)
-    case IsValidMmaTiling(expr=expr) as is_valid_mma_tiling:
-      expr_red = reduce_expression(expr, assignments)
-      if isinstance(expr_red, Unsatisfiable):
-        return Unsatisfiable()
-      return dataclasses.replace(is_valid_mma_tiling, expr=expr_red)
     case Divides(expr=expr, tiling_multiple=tiling_multiple):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
@@ -1036,6 +1014,11 @@ def reduce_constraint(
       return IsSupportedBroadcast(src_red, dst_red, dims)
     case AlwaysTrue():
       return constraint
+    case OneOf(expr=expr) as oneof:
+      expr_red = reduce_expression(expr, assignments)
+      if isinstance(expr_red, Unsatisfiable):
+        return Unsatisfiable()
+      return OneOf(expr_red, oneof.allowed).canonicalize()
     case _ as never:
       assert_never(never)
 
@@ -1089,8 +1072,6 @@ class ConstraintSystem:
         case IsTransferable(source=source, target=target):
           extract_variables(source)
           extract_variables(target)
-        case IsValidMmaTiling(expr=expr):
-          extract_variables(expr)
         case Divides(expr=expr):
           extract_variables(expr)
         case MinorDimDivisibleBy(expr=expr):
@@ -1100,6 +1081,8 @@ class ConstraintSystem:
           extract_variables(dst)
         case AlwaysTrue():
           ...
+        case OneOf(expr=expr):
+          extract_variables(expr)
         case _ as never:
           assert_never(never)
     return free_variables
@@ -1209,6 +1192,30 @@ def saturate_distinct_from_splat(
   return constraint_system & ConstraintSystem(constraints=new_constraints)
 
 
+def canonicalize_strict_non_splat_relayouts_to_equals(
+    constraint_system: ConstraintSystem,
+) -> ConstraintSystem:
+  """Replaces strict relayouts from non-splat sources with Equals constraints.
+
+  If we have `Relayout(source, target, strict=True)`, and `source` is known to
+  be non-splat, then the only valid strict relayout is the identity. Thus,
+  `source` must be equal to `target`.
+  """
+  non_splat = non_splat_variables(constraint_system.constraints)
+  new_constraints: list[Constraint] = []
+  for constraint in constraint_system.constraints:
+    match constraint:
+      case Relayout(
+          source=Variable() as source, target=target, strict=True
+      ) if source in non_splat:
+        new_constraints.append(Equals(source, target))
+      case _:
+        new_constraints.append(constraint)
+  return ConstraintSystem(
+      assignments=constraint_system.assignments, constraints=new_constraints
+  )
+
+
 def compute_transitively_equal_vars(
     system: ConstraintSystem,
 ) -> dict[Variable, list[Variable]]:
@@ -1267,14 +1274,66 @@ def saturate_divides_constraints_for_equal_vars(
   for constraint in system.constraints:
     new_constraints.append(constraint)
     match constraint:
-      case Divides(expr=expr, tiling_multiple=tiling_multiple):
-        if isinstance(expr, Variable):
-          for equal_var in equal_vars.get(expr, []):
-            new_constraints.append(Divides(equal_var, tiling_multiple))
+      case Divides(expr=Variable() as expr, tiling_multiple=tiling_multiple):
+        for equal_var in equal_vars.get(expr, []):
+          new_constraints.append(Divides(equal_var, tiling_multiple))
       case _:
         pass
   new_constraints = _merge_all_divides_constraints(new_constraints)
   return dataclasses.replace(system, constraints=new_constraints)
+
+
+def saturate_one_of_constraints_for_equal_vars(
+    system: ConstraintSystem,
+) -> ConstraintSystem | Unsatisfiable:
+  """Saturates OneOf constraints between all transitively equal vars."""
+  equal_vars = compute_transitively_equal_vars(system)
+  new_constraints: list[Constraint] = []
+  for constraint in system.constraints:
+    new_constraints.append(constraint)
+    match constraint:
+      case OneOf(expr=Variable() as expr, allowed=allowed):
+        for equal_var in equal_vars.get(expr, []):
+          new_constraints.append(OneOf(equal_var, allowed))
+      case _:
+        pass
+  merged_constraints = _merge_all_one_of_constraints(new_constraints)
+  if isinstance(merged_constraints, Unsatisfiable):
+    return Unsatisfiable()
+  return dataclasses.replace(system, constraints=merged_constraints)
+
+
+def _merge_all_one_of_constraints(
+    constraints: Sequence[Constraint],
+) -> list[Constraint] | Unsatisfiable:
+  """Merges OneOf constraints associated to the same variable."""
+  result: list[Constraint] = []
+  var_to_one_of: dict[Variable, OneOf] = {}
+  for constraint in constraints:
+    match constraint:
+      case OneOf(expr=Variable() as v) as o1:
+        if (o0 := var_to_one_of.get(v)) is None:
+          var_to_one_of[v] = o1
+          continue
+        merged = _merge_one_of_constraints(o0, o1)
+        if isinstance(merged, Unsatisfiable):
+          return Unsatisfiable()
+        var_to_one_of[v] = merged
+      case _:
+        result.append(constraint)
+  result.extend(var_to_one_of.values())
+  return result
+
+
+def _merge_one_of_constraints(o0: OneOf, o1: OneOf) -> OneOf | Unsatisfiable:
+  if o0.expr != o1.expr:
+    raise ValueError("OneOf constraints must apply to the same expression.")
+  allowed_set = set(o1.allowed)
+  # Preserve order from o0 while intersecting with o1.
+  merged_allowed = tuple(c for c in o0.allowed if c in allowed_set)
+  if not merged_allowed:
+    return Unsatisfiable()
+  return OneOf(o0.expr, merged_allowed)
 
 
 def _merge_all_divides_constraints(constraints: Sequence[Constraint]) -> list[Constraint]:

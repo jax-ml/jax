@@ -1,6 +1,7 @@
 ---
 jupytext:
   formats: ipynb,md:myst
+  notebook_metadata_filter: nosearch
   text_representation:
     extension: .md
     format_name: myst
@@ -9,6 +10,7 @@ jupytext:
 kernelspec:
   display_name: Python 3
   name: python3
+nosearch: true
 ---
 
 +++ {"id": "LqiaKasFjH82"}
@@ -26,6 +28,8 @@ There are two ways to define differentiation rules in JAX:
 2. defining new `core.Primitive` instances along with all their transformation rules, for example to call into functions from other systems like solvers, simulators, or general numerical computing systems.
 
 This notebook is about #1. To read instead about #2, see the [notebook on adding primitives](https://docs.jax.dev/en/latest/notebooks/How_JAX_primitives_work.html).
+
+There are also new experimental APIs that unify these two approaches: hijax primitives, which carry a JAX-traceable Python implementation along with custom rules for differentiation (and other transformations). Check out {ref}`hijax-custom-derivatives`, which mirrors this notebook's content.
 
 For an introduction to JAX's automatic differentiation API, see [The Autodiff Cookbook](https://docs.jax.dev/en/latest/notebooks/autodiff_cookbook.html). This notebook assumes some familiarity with [jax.jvp](https://docs.jax.dev/en/latest/_autosummary/jax.jvp.html) and [jax.grad](https://docs.jax.dev/en/latest/_autosummary/jax.grad.html), and the mathematical meaning of JVPs and VJPs.
 

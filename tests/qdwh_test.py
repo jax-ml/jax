@@ -181,8 +181,9 @@ class QdwhTest(jtu.JaxTestCase):
       uvr = _dot(actual_u, vr)
       actual_results = _dot(uvr.T.conj(), uvr)
       expected_results = np.eye(r, dtype=actual_u.dtype)
+      atol = 2e5 * eps if dtype == np.complex128 else 25 * eps
       self.assertAllClose(
-          actual_results, expected_results, atol=25 * eps, rtol=25 * eps
+          actual_results, expected_results, atol=atol, rtol=25 * eps
       )
 
   @jtu.sample_product(

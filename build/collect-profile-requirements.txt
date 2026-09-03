@@ -1,5 +1,9 @@
-# TF hasn't released 3.13 wheels yet (b/402590302)
-tensorflow; python_version<"3.13"
-xprof>=2.19.0
+# TF hasn't released 3.14 wheels yet (b/402590302)
+tensorflow; python_version<"3.14"
+# TODO(phawkins): remove python_version<"3.15" when xprof and its transitive
+# dependencies (google-cloud-storage -> google-auth -> cryptography) support
+# Python 3.15t specifically. PEP 508 markers cannot express free-threaded
+# ABI (3.15t), so we exclude 3.15 entirely.
+xprof>=2.19.0; python_version<"3.15"
 # Needed for XProf to work without error
 protobuf

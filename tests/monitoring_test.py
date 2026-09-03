@@ -19,6 +19,7 @@ events.
 from absl.testing import absltest
 from jax import monitoring
 from jax._src import monitoring as jax_src_monitoring
+from jax._src import test_util as jtu
 
 
 class MonitoringTest(absltest.TestCase):
@@ -143,4 +144,4 @@ class MonitoringTest(absltest.TestCase):
       jax_src_monitoring.unregister_event_listener(callback)
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

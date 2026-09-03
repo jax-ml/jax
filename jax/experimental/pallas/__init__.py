@@ -18,13 +18,14 @@ See the Pallas documentation at
 https://docs.jax.dev/en/latest/pallas/index.html.
 """
 
+from jax._src import core as _jax_core
 from jax._src.pallas.core import BlockDim as BlockDim
 from jax._src.pallas.core import Blocked as Blocked
 from jax._src.pallas.core import BlockSpec as BlockSpec
 from jax._src.pallas.core import BoundedSlice as BoundedSlice
 from jax._src.pallas.core import Buffered as Buffered
 from jax._src.pallas.core import CompilerParams as CompilerParams
-from jax._src.pallas.core import core_map as core_map
+from jax._src.pallas.core import core_map as _deprecated_core_map
 from jax._src.pallas.core import CostEstimate as CostEstimate
 from jax._src.pallas.core import debug_check as debug_check
 from jax._src.pallas.core import debug_checks_enabled as _deprecated_debug_checks_enabled
@@ -61,7 +62,7 @@ from jax._src.pallas.primitives import get_global as get_global
 from jax._src.pallas.primitives import multiple_of as multiple_of
 from jax._src.pallas.primitives import num_programs as num_programs
 from jax._src.pallas.primitives import program_id as program_id
-from jax._src.pallas.primitives import reciprocal as reciprocal
+from jax._src.pallas.primitives import reciprocal as _deprecated_reciprocal
 from jax._src.pallas.primitives import run_scoped as run_scoped
 from jax._src.pallas.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
@@ -78,9 +79,26 @@ from jax._src.state.primitives import broadcast_to as broadcast_to
 
 
 ANY = MemorySpace.ANY
-HOST = MemorySpace.HOST
+HOST = _jax_core.MemorySpace.Host
 
 _deprecations = {
+    # Added August 17, 2026
+    "reciprocal": (
+        (
+            "jax.experimental.pallas.reciprocal was moved to"
+            " jax.experimental.pallas.tpu. Accessing it via"
+            " jax.experimental.pallas is deprecated."
+        ),
+        _deprecated_reciprocal,
+    ),
+    # Added August 11, 2026
+    "core_map": (
+        (
+            "jax.experimental.pallas.core_map is deprecated, use"
+            " jax.experimental.pallas.kernel instead."
+        ),
+        _deprecated_core_map,
+    ),
     # Added June 4, 2026
     "dot": (
         (
@@ -104,10 +122,13 @@ _deprecations = {
 
 import typing
 if typing.TYPE_CHECKING:
+  core_map = _deprecated_core_map
   debug_checks_enabled = _deprecated_debug_checks_enabled
   dot = _deprecated_dot
+  reciprocal = _deprecated_reciprocal
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
+del _jax_core

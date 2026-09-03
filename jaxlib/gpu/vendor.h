@@ -372,6 +372,8 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuFuncSetCacheConfig cuFuncSetCacheConfig
 #define gpuInit cuInit
 #define gpuLaunchKernel cuLaunchKernel
+#define gpuMemAllocAsync cuMemAllocAsync
+#define gpuMemFreeAsync cuMemFreeAsync
 #define gpuMemcpyDtoHAsync cuMemcpyDtoHAsync
 #define gpuMemcpyHtoDAsync cuMemcpyHtoDAsync
 #define gpuMemsetD8Async cuMemsetD8Async
@@ -845,13 +847,14 @@ inline hipsparseStatus_t gpusparseCreate(gpusparseHandle_t* handle) {
 #define gpuGetStreamDeviceId hipGetStreamDeviceId
 #define gpuInit hipInit
 #define gpuLaunchKernel hipModuleLaunchKernel
+#define gpuMemAllocAsync hipMallocAsync
+#define gpuMemFreeAsync hipFreeAsync
 #define gpuModuleGetFunction hipModuleGetFunction
 #define gpuModuleLoadData hipModuleLoadData
 #define gpuModuleUnload hipModuleUnload
 #define gpuMemsetD8Async hipMemsetD8Async
 #define gpuMemcpyDtoHAsync hipMemcpyDtoHAsync
 #define gpuMemcpyHtoDAsync hipMemcpyHtoDAsync
-#define gpuMemsetD8Async hipMemsetD8Async
 #define gpuThreadExchangeStreamCaptureMode hipThreadExchangeStreamCaptureMode
 #define gpuStreamCreate hipStreamCreateWithFlags
 #define gpuStreamDestroy hipStreamDestroy
@@ -905,9 +908,15 @@ struct GpuErrorTraits<miopenStatus_t> {
 
 #elif defined(JAX_GPU_ONEAPI)
 
-// TODO(Intel-tf):
-// placeholder for OneAPI/SYCL glue code compilation.
-// Full GPU kernel support requires additional type mappings.
+#include <complex>
+
+#include "jaxlib/oneapi/oneapi_gpu_runtime.h"
+
+typedef std::complex<float> gpuComplex;
+typedef std::complex<double> gpuDoubleComplex;
+
+typedef std::complex<float> gpublasComplex;
+typedef std::complex<double> gpublasDoubleComplex;
 
 #define JAX_GPU_NAMESPACE oneapi
 #define JAX_GPU_PREFIX "oneapi"
@@ -917,10 +926,27 @@ struct GpuErrorTraits<miopenStatus_t> {
 #define JAX_GPU_HAVE_FP8 0
 #define JAX_GPU_HAVE_SOLVER_GEEV 0
 
+typedef ::sycl::queue *gpuStream_t;
+
+#define GPU_EVENT_DEFAULT 0
+
+// The Sycl* wrappers return absl::Status; JAX_AS_STATUS resolves to the
+// AsStatus(const absl::Status&) passthrough in gpu_kernel_helpers.h.
+#define gpuMemcpyDeviceToHost ::jax::oneapi::SyclMemcpyDeviceToHost
+#define gpuMemcpyHostToDevice ::jax::oneapi::SyclMemcpyHostToDevice
+#define gpuMemcpyDeviceToDevice ::jax::oneapi::SyclMemcpyDeviceToDevice
+#define gpuMemcpyAsync ::jax::oneapi::SyclMemcpyAsync
+#define gpuGetLastError ::jax::oneapi::SyclGetLastError
+#define gpuStreamSynchronize ::jax::oneapi::SyclStreamSynchronize
+
 namespace jax::oneapi {
-// Probably the SYCL equivalent is "sub-group size".
-// Placeholder to satisfy the vendor.h interface.
 inline constexpr uint32_t kNumThreadsPerWarp = 32;
+
+// Declared here so the AsStatus<T> template in gpu_kernel_helpers.h
+// can compile. Specializations are not needed for oneAPI.
+template <typename T>
+struct GpuErrorTraits;
+
 }  // namespace jax::oneapi
 
 #else  // defined(GPU vendor)

@@ -522,7 +522,9 @@ def _dma_wait_lowering_rule(
     tree,
     device_id_type: pallas_primitives.DeviceIdType,
     insert_dummy_device: bool,
+    is_wait_send: bool = False,
 ):
+  del is_wait_send
   src_ref, dst_ref, sem, _, device_id = _dma_unflatten(
       tree, args
   )
@@ -718,8 +720,8 @@ def _has_indirect_offsets(
 
 
 @register_lowering_rule(jax_core.empty_ref_p)
-def _empty_ref_lowering_rule(ctx: LoweringRuleContext, ty, memory_space):
-  del ty, memory_space
+def _empty_ref_lowering_rule(ctx: LoweringRuleContext, ty, memory_space, pin):
+  del ty, memory_space, pin
   [aval_out] = ctx.avals_out
   return tc_lowering._alloc_value(aval_out, ctx=ctx)
 

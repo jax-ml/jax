@@ -34,7 +34,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "jaxlib/mosaic/gpu/library_paths.h"
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
 #include "absl/base/no_destructor.h"
@@ -46,6 +45,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
@@ -109,6 +109,9 @@ limitations under the License.
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
 #include "mlir/ExecutionEngine/OptUtils.h"
 #include "mlir/IR/AsmState.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OperationSupport.h"
@@ -137,11 +140,12 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/target.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/ffi.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
-#include "xla/backends/gpu/runtime/collective_kernel_api.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
@@ -154,16 +158,9 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
-#include "xla/stream_executor/device_address_handle.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/collective_kernel_metadata.h"
-#include "xla/stream_executor/memory_allocation.h"
-#include "xla/stream_executor/memory_allocator.h"
-#include "xla/stream_executor/memory_space.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/statusor.h"
-#include "xla/tsl/util/tied_ref.h"
 #include "xla/util.h"
 #include "tsl/platform/path.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -175,23 +172,22 @@ using ::mosaic::gpu::NvshmemApi;
 namespace ffi = xla::ffi;
 namespace se = stream_executor;
 
-using MosaicInitFunc = void(void**, void**);
-using MosaicHostFunc = void(void*, void*, void**);
+using MosaicHostFunc = int32_t(CUfunction, void*, void**);
 using KernelHash = std::array<uint64_t, 4>;
 
 // Returns the latest PTX ISA version supported by both LLVM and the underlying
 // PTX compiler.
 absl::StatusOr<std::string> GetPtxIsaVersion(
     const se::cuda::CompilationProvider& compilation_provider) {
-  TF_ASSIGN_OR_RETURN(int ptxas_latest_version,
-                      compilation_provider.GetLatestPtxIsaVersion());
+  ASSIGN_OR_RETURN(int ptxas_latest_version,
+                   compilation_provider.GetLatestPtxIsaVersion());
   // We'd like to target the latest PTX ISA version supported by
   // ptxas. However, it doesn't make sense to ask LLVM to target a PTX
   // ISA that it isn't aware of yet. Find the latest version supported
   // by LLVM and return the minimum of the two versions, one from
   // ptxas and the other from LLVM.
-  TF_ASSIGN_OR_RETURN(int llvm_latest_version,
-                      mosaic::gpu::GetLatestLlvmPtxIsaVersion());
+  ASSIGN_OR_RETURN(int llvm_latest_version,
+                   mosaic::gpu::GetLatestLlvmPtxIsaVersion());
   int final_version = std::min(ptxas_latest_version, llvm_latest_version);
   return absl::StrFormat("ptx%d", final_version);
 }
@@ -338,9 +334,7 @@ void InitContext(mlir::MLIRContext* context) {
                   mlir::func::FuncDialect, mlir::math::MathDialect,
                   mlir::memref::MemRefDialect, mlir::scf::SCFDialect,
                   mlir::vector::VectorDialect, mlir::gpu::GPUDialect,
-                  mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect,
                   mlir::LLVM::LLVMDialect, mosaic_gpu::MosaicGPUDialect>();
-  mlir::registerConvertNVVMToLLVMInterface(registry);
   mlir::registerConvertComplexToLLVMInterface(registry);
   mlir::registerConvertMemRefToLLVMInterface(registry);
   mlir::registerConvertMathToLLVMInterface(registry);
@@ -352,10 +346,20 @@ void InitContext(mlir::MLIRContext* context) {
   mlir::arith::registerConvertArithToLLVMInterface(registry);
   mlir::registerConvertMemRefToLLVMInterface(registry);
   mlir::gpu::registerOffloadingLLVMTranslationInterfaceExternalModels(registry);
-  mlir::NVVM::registerNVVMTargetInterfaceExternalModels(registry);
   mlir::registerBuiltinDialectTranslation(registry);
   mlir::registerGPUDialectTranslation(registry);
   mlir::registerLLVMDialectTranslation(registry);
+  context->appendDialectRegistry(registry);
+  context->loadAllAvailableDialects();
+}
+
+void LoadNvDialects(mlir::MLIRContext* context) {
+  mlir::DialectRegistry registry;
+  // NVGPUDialect depends on NVVMDialect, so both must be loaded here after
+  // parsing to prevent NVVM from eagerly parsing legacy bytecode attributes.
+  registry.insert<mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect>();
+  mlir::registerConvertNVVMToLLVMInterface(registry);
+  mlir::NVVM::registerNVVMTargetInterfaceExternalModels(registry);
   mlir::registerNVVMDialectTranslation(registry);
   context->appendDialectRegistry(registry);
   context->loadAllAvailableDialects();
@@ -416,7 +420,7 @@ absl::StatusOr<se::CudaComputeCapability> GetCudaComputeCapability() {
   CUDA_RETURN_IF_ERROR(cuDeviceGetAttribute(
       &minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device));
 
-  TF_ASSIGN_OR_RETURN(std::string sm, mosaic::gpu::GetSmVersion(major, minor));
+  ASSIGN_OR_RETURN(std::string sm, mosaic::gpu::GetSmVersion(major, minor));
   bool has_accelerated_features = absl::EndsWith(sm, "a");
 
   using FeatureExtension = se::CudaComputeCapability::FeatureExtension;
@@ -426,11 +430,8 @@ absl::StatusOr<se::CudaComputeCapability> GetCudaComputeCapability() {
                                        : FeatureExtension::kNone);
 }
 
-absl::StatusOr<std::pair<std::string, std::string>> GetHostAndInitFuncNames(
-    mlir::ModuleOp module_op) {
-  // We look for two top level C-interface functions:
-  // - "host" function with symbol name "_mlir_ciface_<foo>"
-  // - "init" function with symbol name "_mlir_ciface_<foo>_init"
+absl::StatusOr<std::string> GetHostFuncName(mlir::ModuleOp module_op) {
+  // We look for top level host C-interface function "_mlir_ciface_<foo>"
   constexpr std::string_view prefix = "_mlir_ciface_";
   std::vector<std::string> names;
   for (mlir::LLVM::LLVMFuncOp llvm_func :
@@ -439,42 +440,32 @@ absl::StatusOr<std::pair<std::string, std::string>> GetHostAndInitFuncNames(
       names.push_back(llvm_func.getName().str());
     }
   }
-  if (auto size = names.size(); size != 2) {
+  if (auto size = names.size(); size != 1) {
     return absl::InternalError(absl::StrFormat(
-        "Expected to locate 2 symbols with %s prefix in the MLIR module, found "
-        "%d instead.",
+        "Expected to locate exactly 1 symbol with %s prefix in the MLIR "
+        "module, found %d instead.",
         prefix, size));
   }
-  // _mlir_ciface_<foo>_init now follows _mlir_ciface_<foo>
-  std::sort(names.begin(), names.end());
-
-  std::string host_func_name = names[0];
-  std::string init_func_name = names[1];
-
-  if (init_func_name != absl::StrCat(host_func_name, "_init")) {
-    return absl::InternalError(absl::StrFormat(
-        "Expected init function name to equal the concatenation of the host "
-        "function name and the \"_init\" suffix, instead got "
-        "init_func_name=%s, host_func_name=%s.",
-        init_func_name, host_func_name));
-  }
-  return std::make_pair(host_func_name, init_func_name);
+  return names[0];
 }
 
 struct CompiledKernel {
   CompiledKernel(std::unique_ptr<llvm::orc::LLJIT> lljit,
-                 MosaicHostFunc* host_launch, MosaicInitFunc* init,
-                 bool is_nvshmem_used, bool is_multimem_used,
-                 std::string object_file, std::string host_func_name,
-                 std::string init_func_name)
+                 MosaicHostFunc* host_launch, bool is_nvshmem_used,
+                 bool is_multimem_used, std::string object_file,
+                 std::string host_func_name, std::string gpu_binary,
+                 std::string kernel_name, int32_t smem_bytes,
+                 int32_t cluster_size)
       : lljit(std::move(lljit)),
         host_launch(host_launch),
-        init(init),
         is_nvshmem_used(is_nvshmem_used),
         is_multimem_used(is_multimem_used),
+        gpu_binary(std::move(gpu_binary)),
+        kernel_name(std::move(kernel_name)),
+        smem_bytes(smem_bytes),
+        cluster_size(cluster_size),
         object_file(std::move(object_file)),
-        host_func_name(std::move(host_func_name)),
-        init_func_name(std::move(init_func_name)) {}
+        host_func_name(std::move(host_func_name)) {}
 
   // CompiledKernel is neither copyable nor movable. We use CompiledKernel* as a
   // key in a cache, so we require pointer stability.
@@ -483,33 +474,35 @@ struct CompiledKernel {
 
   std::unique_ptr<llvm::orc::LLJIT> lljit;
   MosaicHostFunc* host_launch = nullptr;
-  MosaicInitFunc* init = nullptr;
   bool is_nvshmem_used = false;
   bool is_multimem_used = false;
+  std::string gpu_binary;
+  std::string kernel_name;
+  int32_t smem_bytes = 0;
+  int32_t cluster_size = 1;
   // The following fields are used for de/serialization of CompiledKernel.
   std::string object_file;
   std::string host_func_name;
-  std::string init_func_name;
 };
 
 absl::Status RunMlirPasses(mlir::ModuleOp module, se::CudaComputeCapability cc,
                            bool is_nvshmem_used,
                            const mosaic::gpu::DumpOptions& dump_opts) {
-  TF_ASSIGN_OR_RETURN(se::cuda::CompilationProvider * compilation_provider,
-                      mosaic::gpu::GetAssemblyToBinaryCompilationProvider());
-  TF_ASSIGN_OR_RETURN(std::string sm,
-                      mosaic::gpu::GetSmVersion(cc.major, cc.minor));
+  ASSIGN_OR_RETURN(se::cuda::CompilationProvider * compilation_provider,
+                   mosaic::gpu::GetAssemblyToBinaryCompilationProvider());
+  ASSIGN_OR_RETURN(std::string sm,
+                   mosaic::gpu::GetSmVersion(cc.major, cc.minor));
   // Here, it is important to use a PTX ISA version that is supported by both
   // the underlying compilation provider, and by LLVM. Using a version that is
   // newer than what LLVM supports will lead to the indication being ignored by
   // LLVM (potentially causing a version downgrade), while using a version that
   // is newer than what the compilation provider supports will lead to LLVM
   // potentially generating PTX that the compilation provider cannot handle.
-  TF_ASSIGN_OR_RETURN(std::string llvm_ptx_isa,
-                      GetPtxIsaVersion(*compilation_provider));
+  ASSIGN_OR_RETURN(std::string llvm_ptx_isa,
+                   GetPtxIsaVersion(*compilation_provider));
   std::string nvshmem_path = "";
   if (is_nvshmem_used) {
-    TF_ASSIGN_OR_RETURN(nvshmem_path, get_nvshmem_llvm_lib_path());
+    ASSIGN_OR_RETURN(nvshmem_path, get_nvshmem_llvm_lib_path());
   }
   // nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a; disable
   // verification on sm_103a, sm_110a etc. where we see spurious failures.
@@ -593,7 +586,8 @@ absl::StatusOr<std::unique_ptr<llvm::MemoryBuffer>> CompileModuleToObject(
 
 absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
     std::unique_ptr<llvm::MemoryBuffer> object_file, std::string host_func_name,
-    std::string init_func_name, bool is_nvshmem_used, bool is_multimem_used) {
+    bool is_nvshmem_used, bool is_multimem_used, std::string gpu_binary,
+    std::string kernel_name, int32_t smem_bytes, int32_t cluster_size) {
   EnsureLLVMisInitialized();
   std::string object_file_str = object_file->getBuffer().str();
   auto lljit_builder = llvm::orc::LLJITBuilder();
@@ -703,18 +697,11 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
         "Failed to lookup host symbol: %s", llvm::toString(std::move(err))));
   }
 
-  auto init_sym = lljit->lookup(init_func_name);
-  if (auto err = init_sym.takeError()) {
-    return absl::InternalError(absl::StrFormat(
-        "Failed to lookup init symbol: %s", llvm::toString(std::move(err))));
-  }
-
   VLOG(5) << "Successfully JIT-linked Mosaic GPU kernel";
   return std::make_unique<CompiledKernel>(
-      std::move(lljit), host_sym->toPtr<MosaicHostFunc*>(),
-      init_sym->toPtr<MosaicInitFunc*>(), is_nvshmem_used, is_multimem_used,
-      std::move(object_file_str), std::move(host_func_name),
-      std::move(init_func_name));
+      std::move(lljit), host_sym->toPtr<MosaicHostFunc*>(), is_nvshmem_used,
+      is_multimem_used, std::move(object_file_str), std::move(host_func_name),
+      std::move(gpu_binary), std::move(kernel_name), smem_bytes, cluster_size);
 }
 
 absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
@@ -730,11 +717,26 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   if (!module) {
     return absl::InternalError("Failed to parse Mosaic GPU module");
   }
+  // NVVM is loaded after `InitContext` because `mlir::parseSourceString`
+  // chokes on parsing NVVM attributes after
+  // https://github.com/llvm/llvm-project/pull/196289 otherwise.
+  //
+  // TODO(bchetioui): remove dependency on NVVM to lighten the maintenance
+  // burden.
+  LoadNvDialects(&context);
+
+  std::string diagnostic;
+  mlir::ScopedDiagnosticHandler diagnostic_handler(
+      &context, [&](mlir::Diagnostic& diag) {
+        absl::StrAppend(&diagnostic, diag.str(), "\n");
+        return mlir::LogicalResult::failure();
+      });
   auto manager = mlir::PassManager::on<mlir::ModuleOp>(module->getContext());
   manager.addPass(mosaic::gpu::createSerdePass(
       mosaic::gpu::SerdePassOptions{.serialize = false}));
   if (manager.run(module.get()).failed()) {
-    return absl::InternalError("Failed to deserialize Mosaic GPU module");
+    return absl::InternalError(
+        absl::StrCat("Failed to deserialize Mosaic GPU module: ", diagnostic));
   }
 
   const char* dump_llvm = getenv("MOSAIC_GPU_DUMP_LLVM");
@@ -783,9 +785,30 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   bool multimem_used = is_multimem_used(*module);
   mosaic::gpu::DumpOptions dump_opts =
       mosaic::gpu::GetOrSetDumpOptionsForModule(*module);
-  TF_RETURN_IF_ERROR(RunMlirPasses(*module, cc, use_nvshmem, dump_opts));
+  RETURN_IF_ERROR(RunMlirPasses(*module, cc, use_nvshmem, dump_opts));
 
-  TF_ASSIGN_OR_RETURN(
+  auto gpu_binary_attr =
+      (*module)->getAttrOfType<mlir::StringAttr>("mosaic_gpu.gpu_binary");
+  auto kernel_name_attr =
+      (*module)->getAttrOfType<mlir::StringAttr>("mosaic_gpu.kernel_name");
+  auto smem_bytes_attr =
+      (*module)->getAttrOfType<mlir::IntegerAttr>("mosaic_gpu.smem_bytes");
+  auto cluster_size_attr =
+      (*module)->getAttrOfType<mlir::IntegerAttr>("mosaic_gpu.cluster_size");
+
+  if (!gpu_binary_attr || !kernel_name_attr || !smem_bytes_attr ||
+      !cluster_size_attr) {
+    return absl::InternalError(
+        "Failed to retrieve kernel metadata attributes after running MLIR "
+        "passes");
+  }
+
+  std::string gpu_binary = gpu_binary_attr.getValue().str();
+  std::string kernel_name = kernel_name_attr.getValue().str();
+  int32_t smem_bytes = smem_bytes_attr.getInt();
+  int32_t cluster_size = cluster_size_attr.getInt();
+
+  ASSIGN_OR_RETURN(
       auto object_file,
       CompileModuleToObject(*module, dump_opts, cpu_target_machine_options));
   VLOG(5) << "Successfully compiled Mosaic GPU kernel to object file";
@@ -796,12 +819,11 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   }
 #endif
 
-  TF_ASSIGN_OR_RETURN(auto host_and_init_func_names,
-                      GetHostAndInitFuncNames(*module));
+  ASSIGN_OR_RETURN(auto host_func_name, GetHostFuncName(*module));
 
-  return CreateAndInitJIT(
-      std::move(object_file), std::move(host_and_init_func_names.first),
-      std::move(host_and_init_func_names.second), use_nvshmem, multimem_used);
+  return CreateAndInitJIT(std::move(object_file), std::move(host_func_name),
+                          use_nvshmem, multimem_used, std::move(gpu_binary),
+                          std::move(kernel_name), smem_bytes, cluster_size);
 }
 
 struct KernelCache {
@@ -830,13 +852,51 @@ absl::StatusOr<CompiledKernel*> GetOrCreateKernel(
   // Release the lock while compiling the kernel. It is possible that multiple
   // threads compile the same kernel concurrently. In that case, we will discard
   // all but the first result.
-  TF_ASSIGN_OR_RETURN(auto kernel, factory());
+  ASSIGN_OR_RETURN(auto kernel, factory());
   absl::MutexLock lock(cache.mutex);
   auto [iter, _] = cache.kernels.try_emplace(kernel_hash, std::move(kernel));
   return iter->second.get();
 }
 
-absl::StatusOr<void*> InitKernel(const CompiledKernel& kernel) {
+class KernelHandle {
+ public:
+  KernelHandle(CUmodule module, CUfunction function, CUcontext ctx)
+      : module_(module), function_(function), ctx_(ctx) {}
+  ~KernelHandle() {
+    if (auto s = Unload(module_, ctx_); !s.ok()) {
+      LOG(ERROR) << "Failed to unload GPU module: " << s;
+    } else {
+      VLOG(5) << "Successfully unloaded GPU module";
+    }
+  }
+
+  // KernelHandle is neither copyable nor movable.
+  KernelHandle(const KernelHandle&) = delete;
+  KernelHandle& operator=(const KernelHandle&) = delete;
+
+  CUmodule module() const { return module_; }
+  CUfunction function() const { return function_; }
+
+ private:
+  static absl::Status Unload(CUmodule module, CUcontext ctx) {
+    CUDA_RETURN_IF_ERROR(cuCtxPushCurrent(ctx));
+    CUDA_RETURN_IF_ERROR(cuModuleUnload(module));
+    CUcontext unused;
+    CUDA_RETURN_IF_ERROR(cuCtxPopCurrent(&unused));
+    return absl::OkStatus();
+  }
+
+  CUmodule module_;
+  CUfunction function_;
+  CUcontext ctx_;
+};
+
+struct InitResult {
+  CUmodule module;
+  CUfunction function;
+};
+
+absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
   if (kernel.is_nvshmem_used &&
       !NvshmemApi::Default(/*assert_ok=*/false).is_loaded()) {
     return absl::InternalError(
@@ -873,20 +933,40 @@ absl::StatusOr<void*> InitKernel(const CompiledKernel& kernel) {
       }
     }
   }
-  void* module_ptr = nullptr;
-  void* kernel_ptr = nullptr;
-  kernel.init(&module_ptr, &kernel_ptr);
+  CUmodule module = nullptr;
+  CUDA_RETURN_IF_ERROR(cuModuleLoadData(&module, kernel.gpu_binary.data()));
+  if (kernel.is_nvshmem_used) {
+    if (NvshmemApi::Default().cumodule_init(module) != NVSHMEM_SUCCESS) {
+      return absl::InternalError("nvshmemx_cumodule_init failed.");
+    }
+  }
+  CUfunction function = nullptr;
+  // TODO(allanrenucci): We should unload the kernel if any of the following
+  // calls fail.
+  CUDA_RETURN_IF_ERROR(
+      cuModuleGetFunction(&function, module, kernel.kernel_name.c_str()));
+  if (kernel.smem_bytes) {
+    CUDA_RETURN_IF_ERROR(cuFuncSetAttribute(
+        function, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+        kernel.smem_bytes));
+  }
+  if (kernel.cluster_size > 8) {
+    CUDA_RETURN_IF_ERROR(cuFuncSetAttribute(
+        function, CU_FUNC_ATTRIBUTE_NON_PORTABLE_CLUSTER_SIZE_ALLOWED, 1));
+  }
   VLOG(5) << "Successfully initialized Mosaic GPU kernel";
-  return kernel_ptr;
+  return InitResult{module, function};
 }
 
 // Initializes the kernel in the current CUDA context and return a handle to the
 // kernel.
-absl::StatusOr<void*> CachedInit(const CompiledKernel* absl_nonnull kernel) {
+absl::StatusOr<std::shared_ptr<KernelHandle>> CachedInit(
+    const CompiledKernel* absl_nonnull kernel) {
   using CacheKey = std::pair<const CompiledKernel*, uintptr_t>;
   struct Cache {
     absl::Mutex mutex;
-    absl::flat_hash_map<CacheKey, void*> contexts ABSL_GUARDED_BY(mutex);
+    absl::flat_hash_map<CacheKey, std::weak_ptr<KernelHandle>> handles
+        ABSL_GUARDED_BY(mutex);
   };
   static absl::NoDestructor<Cache> cache;
 
@@ -895,45 +975,36 @@ absl::StatusOr<void*> CachedInit(const CompiledKernel* absl_nonnull kernel) {
   CacheKey key(kernel, reinterpret_cast<uintptr_t>(ctx));
 
   absl::MutexLock lock(cache->mutex);
-  auto it = cache->contexts.find(key);
-  if (it != cache->contexts.end()) {
-    VLOG(5) << "Found Mosaic GPU kernel in cache";
-    return it->second;
+  if (auto it = cache->handles.find(key); it != cache->handles.end()) {
+    if (auto handle = it->second.lock()) {
+      VLOG(5) << "Found Mosaic GPU kernel in cache";
+      return handle;
+    }
   }
-  TF_ASSIGN_OR_RETURN(void* context, InitKernel(*kernel));
-  cache->contexts.insert_or_assign(key, context);
-  return context;
+  ASSIGN_OR_RETURN(InitResult res, InitKernel(*kernel));
+  auto handle = std::make_shared<KernelHandle>(res.module, res.function, ctx);
+  cache->handles.insert_or_assign(key, handle);
+  return handle;
 }
 
 // Structure stores data needed during the execution and filled during the
 // initialization.
 struct DeviceState {
-  // Memory used to store the current value of the cross-device barrier.
-  std::unique_ptr<se::MemoryAllocation> barrier_signal_value;
-
-  // Memory used to store the signal buffer for the cross-device barrier.
-  std::unique_ptr<se::MemoryAllocation> barrier_signal;
-
-  // Symmetrical memory representing barrier signal memory at the peer
-  // devices registered with NCCL. This is essentially a registered memory
-  // window, which can be used with NCCL collectives API to extract multimem
-  // memory address space and get peer pointers.
-  // The object's lifetime is bound to the custom call clique lifetime.
-  tsl::TiedRef<xla::SymmetricMemory> barrier_signal_symmetric_memory;
-
   // Serialized collective kernel metadata.
   // Structure has the following layout:
   // [CollectiveKernelMetadata][param_to_peers][multimem_addresses]
+  // multimem_addresses are set only for modules that use multimem
+  // instructions.
   // Note: the collective metadata param to peers and multimem addresses are
   // pointing to the nullptr and should not be used during the lowering.
   std::vector<std::byte> metadata_bytes;
 
   // The RAII handle of the buffer on the device which stores the structure
   // above.
-  se::DeviceAddressHandle metadata_handle;
+  se::ScopedDeviceAddress<uint8_t> metadata_handle;
 
-  // Pointer (CUmodule) to the kernel loaded on the GPU.
-  void* kernel_handle = nullptr;
+  // Pointer (CUmodule + CUfunction) to the kernel loaded on the GPU.
+  std::shared_ptr<KernelHandle> kernel_handle;
 };
 
 constexpr int kMaxLocalDevices = 8;
@@ -962,13 +1033,16 @@ absl::StatusOr<std::string> CustomCallResources::Serialize(
     return absl::InternalError(
         "Failed to serialize CustomCallResources: CompiledKernel is null");
   }
-  kernel_proto.set_version(1);
+  kernel_proto.set_version(3);
   kernel_proto.set_object_file(kernel->object_file);
   kernel_proto.set_is_nvshmem_used(kernel->is_nvshmem_used);
   kernel_proto.set_is_multimem_used(kernel->is_multimem_used);
   kernel_proto.set_kernel_hash(resources.hash.data(), sizeof(KernelHash));
   kernel_proto.set_host_func_name(kernel->host_func_name);
-  kernel_proto.set_init_func_name(kernel->init_func_name);
+  kernel_proto.set_gpu_binary(kernel->gpu_binary);
+  kernel_proto.set_kernel_name(kernel->kernel_name);
+  kernel_proto.set_smem_bytes(kernel->smem_bytes);
+  kernel_proto.set_cluster_size(kernel->cluster_size);
   return kernel_proto.SerializeAsString();
 }
 
@@ -978,6 +1052,9 @@ CustomCallResources::Deserialize(absl::string_view data) {
   if (!kernel_proto.ParseFromString(data)) {
     return absl::InternalError("Failed to parse MosaicGpuKernel proto");
   }
+  if (kernel_proto.is_nvshmem_used()) {
+    return absl::UnimplementedError("NVSHMEM is not supported in XLA.");
+  }
   auto resources = std::make_unique<CustomCallResources>();
   if (kernel_proto.kernel_hash().size() != sizeof(KernelHash)) {
     return absl::InternalError("Invalid kernel hash size in proto");
@@ -985,25 +1062,28 @@ CustomCallResources::Deserialize(absl::string_view data) {
   std::memcpy(resources->hash.data(), kernel_proto.kernel_hash().data(),
               sizeof(KernelHash));
 
-  if (kernel_proto.version() != 1) {
+  if (kernel_proto.version() != 3) {
     return absl::InternalError(absl::StrCat(
         "Unsupported Mosaic GPU kernel version: ", kernel_proto.version()));
   }
 
   std::string host_func_name = kernel_proto.host_func_name();
-  std::string init_func_name = kernel_proto.init_func_name();
+  std::string gpu_binary = kernel_proto.gpu_binary();
+  std::string kernel_name = kernel_proto.kernel_name();
+  int32_t smem_bytes = kernel_proto.smem_bytes();
+  int32_t cluster_size = kernel_proto.cluster_size();
 
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       resources->kernel,
       GetOrCreateKernel(
           resources->hash,
           [&]() -> absl::StatusOr<std::unique_ptr<CompiledKernel>> {
-            return CreateAndInitJIT(llvm::MemoryBuffer::getMemBuffer(
-                                        kernel_proto.object_file(), "kernel"),
-                                    std::move(host_func_name),
-                                    std::move(init_func_name),
-                                    kernel_proto.is_nvshmem_used(),
-                                    kernel_proto.is_multimem_used());
+            return CreateAndInitJIT(
+                llvm::MemoryBuffer::getMemBuffer(kernel_proto.object_file(),
+                                                 "kernel"),
+                std::move(host_func_name), kernel_proto.is_nvshmem_used(),
+                kernel_proto.is_multimem_used(), std::move(gpu_binary),
+                std::move(kernel_name), smem_bytes, cluster_size);
           }));
   return resources;
 }
@@ -1019,12 +1099,12 @@ absl::StatusOr<std::unique_ptr<CustomCallResources>> InstantiateResources(
     const se::GpuComputeCapability* cc,
     const xla::cpu::TargetMachineOptions* cpu_target_machine_options,
     ffi::Dictionary attrs) {
-  TF_ASSIGN_OR_RETURN(bool use_custom_barrier,
-                      attrs.get<bool>("use_custom_barrier"));
-  TF_ASSIGN_OR_RETURN(std::string_view kernel_hash,
-                      attrs.get<std::string_view>("kernel_hash"));
-  TF_ASSIGN_OR_RETURN(std::string_view module,
-                      attrs.get<std::string_view>("module"));
+  ASSIGN_OR_RETURN(bool use_custom_barrier,
+                   attrs.get<bool>("use_custom_barrier"));
+  ASSIGN_OR_RETURN(std::string_view kernel_hash,
+                   attrs.get<std::string_view>("kernel_hash"));
+  ASSIGN_OR_RETURN(std::string_view module,
+                   attrs.get<std::string_view>("module"));
   if (use_custom_barrier) {
     return absl::UnimplementedError("Custom barrier is not supported on GPUs.");
   }
@@ -1037,13 +1117,16 @@ absl::StatusOr<std::unique_ptr<CustomCallResources>> InstantiateResources(
   std::memcpy(hash.data(), kernel_hash.data(), sizeof(KernelHash));
   CHECK(cc != nullptr);
   CHECK(cpu_target_machine_options != nullptr);
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       CompiledKernel * kernel,
       GetOrCreateKernel(
           hash, [&]() -> absl::StatusOr<std::unique_ptr<CompiledKernel>> {
             return Compile(module, *cc->cuda_compute_capability(),
                            *cpu_target_machine_options);
           }));
+  if (kernel->is_nvshmem_used) {
+    return absl::UnimplementedError("NVSHMEM is not supported in XLA.");
+  }
   return std::make_unique<CustomCallResources>(
       CustomCallResources{.kernel = kernel, .hash = hash});
 }
@@ -1053,7 +1136,7 @@ absl::StatusOr<std::vector<ffi::AnyBuffer>> GetBuffers(
   std::vector<ffi::AnyBuffer> buffers;
   buffers.reserve(inputs.size() + results.size());
   for (int i = 0; i < inputs.size(); ++i) {
-    TF_ASSIGN_OR_RETURN(auto input_buffer, inputs.get<ffi::AnyBuffer>(i));
+    ASSIGN_OR_RETURN(auto input_buffer, inputs.get<ffi::AnyBuffer>(i));
     if (reinterpret_cast<uintptr_t>(input_buffer.untyped_data()) %
         mosaic::gpu::kExpectedHbmAlignment) {
       return absl::InvalidArgumentError(
@@ -1066,7 +1149,7 @@ absl::StatusOr<std::vector<ffi::AnyBuffer>> GetBuffers(
   std::vector<ffi::AnyBuffer> result_buffers;
   result_buffers.reserve(results.size());
   for (int i = 0; i < results.size(); ++i) {
-    TF_ASSIGN_OR_RETURN(auto result_buffer, results.get<ffi::AnyBuffer>(i));
+    ASSIGN_OR_RETURN(auto result_buffer, results.get<ffi::AnyBuffer>(i));
     if (reinterpret_cast<uintptr_t>(result_buffer->untyped_data()) %
         mosaic::gpu::kExpectedHbmAlignment) {
       return absl::InvalidArgumentError(
@@ -1080,6 +1163,15 @@ absl::StatusOr<std::vector<ffi::AnyBuffer>> GetBuffers(
 
 bool ModuleUsesCollectiveMetadata(const xla::ffi::Dictionary& attrs) {
   return attrs.get<bool>("uses_xla_collective_metadata").value_or(false);
+}
+
+size_t GetCollectiveMetadataSize(size_t num_buffers, size_t num_devices) {
+  const size_t param_to_peers_size_bytes =
+      num_buffers * num_devices * sizeof(void*);
+  const size_t param_to_multimem_addresses_size_bytes =
+      num_buffers * sizeof(void*);
+  return sizeof(CollectiveKernelMetadata) + param_to_peers_size_bytes +
+         param_to_multimem_addresses_size_bytes;
 }
 
 absl::StatusOr<std::vector<int64_t>> ParseInts(std::string_view str) {
@@ -1112,12 +1204,20 @@ absl::StatusOr<std::vector<int64_t>> GetReplicaIds(
 absl::StatusOr<std::vector<bool>> ParseCollectiveMemoryParameters(
     xla::ffi::Dictionary attributes, size_t num_buffers) {
   std::string_view attribute_value =
-      attributes.get<std::string_view>("multimem_parameters").value_or("");
+      attributes.get<std::string_view>("symmetric_memory_parameters")
+          .value_or("");
   if (attribute_value.empty()) {
-    return std::vector<bool>(num_buffers, false);
+    // TODO(b/546817872): Remove multimem_parameters check once backward
+    // compatibility period is over (should be after 01-FEB-2027).
+    attribute_value =
+        attributes.get<std::string_view>("multimem_parameters").value_or("");
+
+    if (attribute_value.empty()) {
+      return std::vector<bool>(num_buffers, false);
+    }
   }
-  TF_ASSIGN_OR_RETURN(std::vector<int64_t> collective_memory_parameters,
-                      ParseInts(attribute_value));
+  ASSIGN_OR_RETURN(std::vector<int64_t> collective_memory_parameters,
+                   ParseInts(attribute_value));
   if (collective_memory_parameters.size() != num_buffers) {
     return absl::InvalidArgumentError(absl::StrFormat(
         "Multimem arguments list size %d is not equal to number "
@@ -1135,9 +1235,8 @@ absl::StatusOr<std::vector<bool>> ParseCollectiveMemoryParameters(
         result[arg] = true;
         break;
       default:
-        return absl::InvalidArgumentError(
-            absl::StrFormat("Invalid collective memory parameter: %d",
-                            collective_memory));
+        return absl::InvalidArgumentError(absl::StrFormat(
+            "Invalid collective memory parameter: %d", collective_memory));
     }
   }
   return result;
@@ -1146,8 +1245,7 @@ absl::StatusOr<std::vector<bool>> ParseCollectiveMemoryParameters(
 absl::StatusOr<xla::gpu::GpuCliqueKey> GetCliqueKey(
     const xla::gpu::CollectiveParams& collective_params,
     const xla::ffi::Dictionary& attributes) {
-  TF_ASSIGN_OR_RETURN(std::vector<int64_t> replica_ids,
-                      GetReplicaIds(attributes));
+  ASSIGN_OR_RETURN(std::vector<int64_t> replica_ids, GetReplicaIds(attributes));
 
   xla::ReplicaGroup group;
   group.mutable_replica_ids()->Reserve(replica_ids.size());
@@ -1167,8 +1265,7 @@ absl::StatusOr<xla::gpu::GpuCliqueKey> GetCliqueKey(
 absl::StatusOr<std::vector<std::vector<xla::GlobalDeviceId>>>
 GetCliqueDeviceGroups(const xla::gpu::CollectiveParams& collective_params,
                       const xla::ffi::Dictionary& attributes) {
-  TF_ASSIGN_OR_RETURN(std::vector<int64_t> replica_ids,
-                      GetReplicaIds(attributes));
+  ASSIGN_OR_RETURN(std::vector<int64_t> replica_ids, GetReplicaIds(attributes));
 
   std::vector<std::vector<xla::GlobalDeviceId>> device_groups(1);
   device_groups[0].resize(replica_ids.size());
@@ -1201,72 +1298,6 @@ void* SubtractOffset(void* ptrs, int64_t offset) {
   return reinterpret_cast<void*>(reinterpret_cast<uint64_t>(ptrs) - offset);
 }
 
-// Allocate and zero dedicated buffer for cross-device barrier. This buffer
-// can't be a part of the output parameter used for collective metadata
-// because buffer assigner can use the same buffer for different ops and we
-// need to ensure that this buffer is zeroed on all devices for a given
-// operation. Barrier buffers are created and zeroed once during the first
-// custom call operation initialization. During reruns we can reuse the same
-// buffers for the same operation since multi-device barrier can be called
-// multiple times on the same buffers.
-absl::Status InitializeBarrier(
-    DeviceState& device_state, se::Stream* stream,
-    const xla::gpu::CollectiveParams* collective_params,
-    xla::gpu::CollectiveCliques* collective_cliques,
-    const xla::gpu::GpuCliqueKey& clique_key, xla::RankId rank) {
-  if (!device_state.barrier_signal ||
-      device_state.barrier_signal->address().is_null()) {
-    // Barrier signal buffer should be allocated within a collective memory
-    // space (kCollective) since it's going to be registered as collective
-    // memory with the NCCL library.
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<se::MemoryAllocator> collective_allocator,
-        collective_params->executor->CreateMemoryAllocator(
-            se::MemorySpace::kCollective));
-
-    if (!device_state.barrier_signal_value ||
-        device_state.barrier_signal_value->address().is_null()) {
-      TF_ASSIGN_OR_RETURN(device_state.barrier_signal_value,
-                          collective_allocator->Allocate(
-                              xla::gpu::GetMultiGpuBarrierSignalValueSize()));
-      se::DeviceAddressBase barrier_signal_value_buffer_address =
-          device_state.barrier_signal_value->address();
-      TF_RETURN_IF_ERROR(
-          stream->MemZero(&barrier_signal_value_buffer_address,
-                          barrier_signal_value_buffer_address.size()));
-    }
-
-    TF_ASSIGN_OR_RETURN(device_state.barrier_signal,
-                        collective_allocator->Allocate(
-                            xla::gpu::GetMultiGpuBarrierSignalBufferSize()));
-
-    se::DeviceAddressBase barrier_signal_buffer_address =
-        device_state.barrier_signal->address();
-    TF_RETURN_IF_ERROR(stream->MemZero(&barrier_signal_buffer_address,
-                                       barrier_signal_buffer_address.size()));
-  }
-
-  // It's important to zero the buffer synchronously to avoid the situation
-  // when peer barrier buffer is not zeroed before the first execution.
-  // We can guarantee a zeroed buffers in all participating devices since
-  // below we are running rendezvous to exchange peer parameters in the
-  // CollectParamToPeers call.
-  TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
-
-  if (device_state.barrier_signal_symmetric_memory.Expired()) {
-    TF_ASSIGN_OR_RETURN(auto* comm,
-                        collective_cliques->GetComm(clique_key, rank));
-    TF_ASSIGN_OR_RETURN(
-        auto symmetric_memory,
-        comm->CreateSymmetricMemory(device_state.barrier_signal->address()));
-
-    TF_ASSIGN_OR_RETURN(
-        device_state.barrier_signal_symmetric_memory,
-        collective_cliques->Tie(clique_key, std::move(symmetric_memory)));
-  }
-  return absl::OkStatus();
-}
-
 DeviceState& GetDeviceState(
     CustomCallResources* resources,
     const xla::gpu::CollectiveParams* collective_params) {
@@ -1283,6 +1314,7 @@ absl::Status MosaicGpuPrepare(
     xla::gpu::CollectiveMemoryRequests* absl_nullable
         collective_memory_requests,
     xla::gpu::CollectiveCliqueRequests* absl_nullable clique_requests,
+    se::DeviceAddressAllocator* absl_nullable allocator,
     CustomCallResources* resources, ffi::RemainingArgs inputs,
     ffi::RemainingRets results, xla::ffi::Dictionary attributes) {
   int device_ordinal = collective_params->global_device_id.value();
@@ -1298,9 +1330,8 @@ absl::Status MosaicGpuPrepare(
   // rendez-vous between Prepare and Initialize, which we need here to make sure
   // that modules were loaded on all devices before the first execution.
   DeviceState& device_state = GetDeviceState(resources, collective_params);
-  TF_ASSIGN_OR_RETURN(device_state.kernel_handle,
-                      CachedInit(resources->kernel));
-  CHECK_NOTNULL(device_state.kernel_handle);
+  ASSIGN_OR_RETURN(device_state.kernel_handle, CachedInit(resources->kernel));
+  CHECK(device_state.kernel_handle != nullptr);
 
   if (!ModuleUsesCollectiveMetadata(attributes)) {
     return absl::OkStatus();
@@ -1308,26 +1339,47 @@ absl::Status MosaicGpuPrepare(
   XLA_VLOG_DEVICE(5, device_ordinal)
       << "MosaicGpuPrepare uses collective metadata";
 
-  CHECK(collective_params != nullptr);
-  CHECK(clique_requests != nullptr);
+  if (collective_params == nullptr || clique_requests == nullptr ||
+      collective_memory_requests == nullptr || allocator == nullptr) {
+    return absl::InternalError(
+        "collective_params, clique_requests, collective_memory_requests, and "
+        "allocator must not be null in MosaicGpuPrepare");
+  }
 
-  TF_ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
-                      GetBuffers(inputs, results));
+  ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
+                   GetBuffers(inputs, results));
 
-  TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
-                      GetCliqueKey(*collective_params, attributes));
-  TF_ASSIGN_OR_RETURN(
-      std::vector<std::vector<xla::GlobalDeviceId>> device_groups,
-      GetCliqueDeviceGroups(*collective_params, attributes));
-  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key, device_groups));
-  TF_ASSIGN_OR_RETURN(
-      std::vector<bool> collective_parameters,
-      ParseCollectiveMemoryParameters(attributes, buffers.size()));
+  ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
+                   GetCliqueKey(*collective_params, attributes));
+  ASSIGN_OR_RETURN(std::vector<std::vector<xla::GlobalDeviceId>> device_groups,
+                   GetCliqueDeviceGroups(*collective_params, attributes));
+  xla::gpu::CollectiveCliqueRequests::CliqueRequirements requirements;
+  requirements.barrier_reqs =
+      xla::gpu::CollectiveCliqueRequests::BarrierRequirements();
+  requirements.barrier_reqs->use_cross_device_barrier = true;
+  RETURN_IF_ERROR(
+      clique_requests->RequestClique(clique_key, device_groups, requirements));
+  ASSIGN_OR_RETURN(std::vector<bool> collective_parameters,
+                   ParseCollectiveMemoryParameters(attributes, buffers.size()));
   for (int i = 0; i < buffers.size(); ++i) {
     if (collective_parameters[i]) {
-      TF_RETURN_IF_ERROR(collective_memory_requests->RequestSymmetricAddress(
+      RETURN_IF_ERROR(collective_memory_requests->RequestSymmetricAddress(
+          clique_key, buffers[i].device_memory()));
+    } else {
+      RETURN_IF_ERROR(collective_memory_requests->RequestPeerAddress(
           clique_key, buffers[i].device_memory()));
     }
+  }
+
+  const size_t metadata_size =
+      GetCollectiveMetadataSize(buffers.size(), clique_key.num_devices());
+  if (device_state.metadata_handle.is_null()) {
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "Allocating device memory for Mosaic GPU collective metadata";
+    ASSIGN_OR_RETURN(
+        device_state.metadata_handle,
+        allocator->Allocate(collective_params->executor->device_ordinal(),
+                            metadata_size));
   }
 
   XLA_VLOG_DEVICE(5, device_ordinal)
@@ -1358,26 +1410,27 @@ absl::Status MosaicGpuInitialize(
         "remove --xla_gpu_experimental_enable_nvshmem from your XLA flags.");
   }
 
+  if (stream == nullptr || collective_params == nullptr ||
+      collective_cliques == nullptr || collective_memory == nullptr ||
+      resources == nullptr) {
+    return absl::InternalError(
+        "stream, collective_params, collective_cliques, collective_memory, and "
+        "resources must not be null in MosaicGpuInitialize");
+  }
   int device_ordinal = collective_params->global_device_id.value();
   XLA_VLOG_DEVICE(5, device_ordinal) << "MosaicGpuInitialize start";
-  TF_ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
-                      GetBuffers(inputs, results));
-  // Pointers to the parameter base addresses which are going to be exchanged
-  // with peer ranks to construct collective metadata.
-  // The parameter base address doesn't have to actually point to the beginning
-  // of the parameter buffer, but the offset between the base address and the
-  // actual parameter buffer must be the same for all ranks to correctly
-  // calculate the offsets during the lowering.
-  std::vector<se::DeviceAddressBase> collective_metadata_parameters(
-      buffers.size());
+  ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
+                   GetBuffers(inputs, results));
+
   std::vector<void*> parameter_multimem_addresses(buffers.size(), nullptr);
-  TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
-                      GetCliqueKey(*collective_params, attributes));
+  ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
+                   GetCliqueKey(*collective_params, attributes));
 
   std::vector<void*> param_to_peers(buffers.size() * clique_key.num_devices());
-  TF_ASSIGN_OR_RETURN(
-      std::vector<bool> collective_memory_parameters,
-      ParseCollectiveMemoryParameters(attributes, buffers.size()));
+  ASSIGN_OR_RETURN(std::vector<bool> collective_memory_parameters,
+                   ParseCollectiveMemoryParameters(attributes, buffers.size()));
+  bool is_multimem_used =
+      resources->kernel != nullptr && resources->kernel->is_multimem_used;
 
   const bool all_parameters_in_collective_memory = absl::c_all_of(
       collective_memory_parameters,
@@ -1394,7 +1447,6 @@ absl::Status MosaicGpuInitialize(
     XLA_VLOG_DEVICE(6, device_ordinal)
         << "MosaicGpuInitialize processing buffer: " << i;
     se::DeviceAddressBase device_address = buffers[i].device_memory();
-    collective_metadata_parameters[i] = device_address;
 
     if (collective_memory_parameters[i]) {
       // The physical memory range contains several allocations
@@ -1408,74 +1460,77 @@ absl::Status MosaicGpuInitialize(
       // addresses of allocation in which the parameter is located.
       auto [symmetric_memory, offset] =
           collective_memory->FindSymmetricMemory(clique_key, device_address);
+      if (symmetric_memory == nullptr) {
+        return absl::InternalError(absl::StrFormat(
+            "Failed to find symmetric memory for buffer %d in clique %s", i,
+            clique_key.ToString()));
+      }
 
-      TF_ASSIGN_OR_RETURN(se::DeviceAddressBase multimem_address,
-                          symmetric_memory->multimem_addr());
+      if (is_multimem_used) {
+        ASSIGN_OR_RETURN(se::DeviceAddressBase multimem_address,
+                         symmetric_memory->multimem_addr());
 
-      XLA_VLOG_DEVICE(6, device_ordinal)
-          << "MosaicGpuInitialize buffer: " << i << " device_address: ("
-          << device_address.opaque() << ", size: " << device_address.size()
-          << ") found multimem_address: (" << multimem_address.opaque()
-          << ", offset: " << offset << ")";
+        XLA_VLOG_DEVICE(6, device_ordinal)
+            << "MosaicGpuInitialize buffer: " << i << " device_address: ("
+            << device_address.opaque() << ", size: " << device_address.size()
+            << ") found multimem_address: (" << multimem_address.opaque()
+            << ", offset: " << offset << ")";
 
-      parameter_multimem_addresses[i] = multimem_address.opaque();
+        parameter_multimem_addresses[i] = multimem_address.opaque();
+      }
 
-      // When all parameters are allocated with VMM API we can use NCCL API
-      // to get peer addresses instead of using a host rendezvous.
-      if (all_parameters_in_collective_memory) {
-        // Use the allocated memory allocation instead to correctly calculate
-        // the offset of the multimem parameter.
-        const size_t parameter_offset = i * clique_key.num_devices();
-        for (int device_rank = 0; device_rank < clique_key.num_devices();
-             ++device_rank) {
-          if (device_rank == rank.value()) {
-            param_to_peers[parameter_offset + device_rank] =
-                se::DeviceAddressBase(
-                    SubtractOffset(device_address.opaque(), offset),
-                    device_address.size() + offset)
-                    .opaque();
-          } else {
-            // Peer address returns the address of XLA allocation on a peer
-            // device This address corresponds to the multimem address space.
-            TF_ASSIGN_OR_RETURN(
-                se::DeviceAddressBase peer_address,
-                symmetric_memory->peer_addr(xla::RankId(device_rank)));
-            param_to_peers[parameter_offset + device_rank] =
-                peer_address.opaque();
-          }
+      // Use the allocated memory allocation instead to correctly calculate
+      // the offset of the multimem parameter.
+      const size_t parameter_offset = i * clique_key.num_devices();
+      for (int device_rank = 0; device_rank < clique_key.num_devices();
+           ++device_rank) {
+        if (device_rank == rank.value()) {
+          param_to_peers[parameter_offset + device_rank] =
+              se::DeviceAddressBase(
+                  SubtractOffset(device_address.opaque(), offset),
+                  device_address.size() + offset)
+                  .opaque();
+        } else {
+          // Peer address returns the address of XLA allocation on a peer
+          // device This address corresponds to the multimem address space.
+          ASSIGN_OR_RETURN(
+              se::DeviceAddressBase peer_address,
+              symmetric_memory->peer_addr(xla::RankId(device_rank)));
+          param_to_peers[parameter_offset + device_rank] =
+              peer_address.opaque();
         }
-      } else {
-        // When only part of the parameters are allocated with VMM API we need
-        // to use a host rendezvous to exchange the parameter addresses.
-        // In order to correctly calculate the offset of address on multimem
-        // address space at device we need to exchange the address of the XLA
-        // allocation and not an address of parameter itself. Since the
-        // FindSymmetricMemory returns an offset from allocation to the
-        // parameter, we need to subtract this offset here.
-        collective_metadata_parameters[i] = se::DeviceAddressBase(
-            SubtractOffset(device_address.opaque(), offset),
-            device_address.size() + offset);
+        XLA_VLOG_DEVICE(7, device_ordinal)
+            << "MosaicGpuInitialize buffer: " << i << " device_address: ("
+            << device_address.opaque() << ", size: " << device_address.size()
+            << ") found peer [" << device_rank << "] address: ("
+            << param_to_peers[parameter_offset + device_rank]
+            << ", size: " << device_address.size() + offset << ")";
+      }
+    } else {
+      for (int device_rank = 0; device_rank < clique_key.num_devices();
+           ++device_rank) {
+        const size_t parameter_offset = i * clique_key.num_devices();
+        std::optional<se::DeviceAddressBase> peer_address =
+            collective_memory->FindPeerAddress(
+                clique_key, xla::RankId(device_rank), device_address);
+        if (!peer_address.has_value()) {
+          return absl::InternalError(absl::StrFormat(
+              "Failed to find peer address for buffer %d and device rank %d "
+              "in clique %s",
+              i, device_rank, clique_key.ToString()));
+        }
+        XLA_VLOG_DEVICE(7, device_ordinal)
+            << "MosaicGpuInitialize buffer: " << i << " device_address: ("
+            << device_address.opaque() << ", size: " << device_address.size()
+            << ") found peer [" << device_rank << "] address: ("
+            << peer_address->opaque() << ", size: " << peer_address->size()
+            << ")";
+        param_to_peers[parameter_offset + device_rank] = peer_address->opaque();
       }
     }
   }
 
   DeviceState& device_state = GetDeviceState(resources, collective_params);
-  TF_RETURN_IF_ERROR(InitializeBarrier(device_state, stream, collective_params,
-                                       collective_cliques, clique_key, rank));
-
-  // If all parameters are allocated with VMM API, we can use NCCL to get peer
-  // addresses. Otherwise, we need to use a rendezvous on the host to exchange
-  // the parameter addresses. In a multi-host setting all parameters should be
-  // allocated with VMM API at the XLA side.
-  if (!all_parameters_in_collective_memory) {
-    XLA_VLOG_DEVICE(6, device_ordinal)
-        << "Param_to_peers before rendezvous: ("
-        << absl::StrJoin(param_to_peers, ", ", PtrFormatter{}) << ")";
-    TF_ASSIGN_OR_RETURN(param_to_peers,
-                        xla::gpu::CollectParamToPeers(
-                            clique_key, rank, stream,
-                            std::move(collective_metadata_parameters)));
-  }
 
   // Construct the collective kernel metadata information.
   CollectiveKernelMetadata metadata;
@@ -1489,9 +1544,8 @@ absl::Status MosaicGpuInitialize(
   const size_t param_to_multimem_addresses_size_bytes =
       parameter_multimem_addresses.size() * sizeof(void*);
 
-  const size_t metadata_size = sizeof(CollectiveKernelMetadata) +
-                               param_to_peers_size_bytes +
-                               param_to_multimem_addresses_size_bytes;
+  const size_t metadata_size =
+      GetCollectiveMetadataSize(buffers.size(), clique_key.num_devices());
   device_state.metadata_bytes.resize(metadata_size);
   std::memcpy(device_state.metadata_bytes.data(), &metadata,
               sizeof(CollectiveKernelMetadata));
@@ -1504,16 +1558,11 @@ absl::Status MosaicGpuInitialize(
   std::memcpy(param_to_multimem_addresses_ptr,
               parameter_multimem_addresses.data(),
               param_to_multimem_addresses_size_bytes);
-
-  device_state.metadata_handle = se::DeviceAddressHandle{
-      collective_params->executor,
-      collective_params->executor->Allocate(metadata_size)};
   // Copy metadata to the device.
-  se::DeviceAddressBase metadata_address =
-      device_state.metadata_handle.address();
-  TF_RETURN_IF_ERROR(stream->Memcpy(&metadata_address,
-                                    device_state.metadata_bytes.data(),
-                                    device_state.metadata_bytes.size()));
+  se::DeviceAddressBase metadata_address = device_state.metadata_handle.cref();
+  RETURN_IF_ERROR(stream->Memcpy(&metadata_address,
+                                 device_state.metadata_bytes.data(),
+                                 device_state.metadata_bytes.size()));
 
   XLA_VLOG_DEVICE(5, device_ordinal)
       << "Constructed device state {"
@@ -1521,10 +1570,6 @@ absl::Status MosaicGpuInitialize(
       << absl::StrJoin(param_to_peers, ", ", PtrFormatter{})
       << "), multimem address spaces: ("
       << absl::StrJoin(parameter_multimem_addresses, ", ", PtrFormatter{})
-      << "), barrier_signal_value: ("
-      << device_state.barrier_signal_value->address().opaque()
-      << "), barrier_signal_buffer: ("
-      << device_state.barrier_signal->address().opaque()
       << "), copied metadata to the device with address: "
       << metadata_address.opaque() << "}";
   return absl::OkStatus();
@@ -1532,11 +1577,12 @@ absl::Status MosaicGpuInitialize(
 
 absl::Status MosaicGpuExecute(
     se::Stream* stream, const xla::gpu::CollectiveParams* collective_params,
+    const xla::gpu::CollectiveCliques* collective_cliques,
     ffi::RemainingArgs inputs, ffi::RemainingRets results,
     CustomCallResources* resources, xla::ffi::Dictionary attributes) {
   std::vector<void*> buffer_ptrs;
-  TF_ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
-                      GetBuffers(inputs, results));
+  ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
+                   GetBuffers(inputs, results));
   bool uses_collective_metadata = ModuleUsesCollectiveMetadata(attributes);
   buffer_ptrs.reserve(buffers.size() + (uses_collective_metadata ? 1 : 0));
   for (const xla::ffi::AnyBuffer& buffer : buffers) {
@@ -1551,13 +1597,13 @@ absl::Status MosaicGpuExecute(
   int device_ordinal = collective_params->global_device_id.value();
   // Adding a CPU version of the collective metadata for TMA initialization.
   if (uses_collective_metadata) {
-    TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
-                        GetCliqueKey(*collective_params, attributes));
+    ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
+                     GetCliqueKey(*collective_params, attributes));
     auto current_rank =
         clique_key.rank(collective_params->global_device_id).value();
 
     se::DeviceAddressBase metadata_address =
-        device_state.metadata_handle.address();
+        device_state.metadata_handle.cref();
     XLA_VLOG_DEVICE(6, device_ordinal)
         << "Executing collective with metadata address: "
         << metadata_address.opaque() << " clique_key: " << clique_key;
@@ -1567,20 +1613,33 @@ absl::Status MosaicGpuExecute(
     buffer_ptrs.push_back(metadata_address.opaque());
     buffer_ptrs.push_back(device_state.metadata_bytes.data());
 
+    ASSIGN_OR_RETURN(xla::gpu::GpuCommunicator * comm,
+                     collective_cliques->GetComm(clique_key, current_rank));
+
     XLA_VLOG_DEVICE(6, device_ordinal)
         << "Starting multi-GPU barrier with key: " << clique_key;
-    TF_RETURN_IF_ERROR(xla::gpu::LaunchMultiGpuBarrierWithNccl(
-        stream, clique_key.num_devices(), current_rank,
-        device_state.barrier_signal_symmetric_memory.Lock().get(),
-        device_state.barrier_signal_value->address()));
+    xla::gpu::GpuCollectives::Executor executor(stream);
+    RETURN_IF_ERROR(comm->LaunchMultiGpuBarrier(executor));
     XLA_VLOG_DEVICE(6, device_ordinal)
         << "Finished multi-GPU barrier with key: " << clique_key;
-  } else if (kernel->is_nvshmem_used) {
-    NvshmemApi::Default().barrier_all_on_stream(cuda_stream);
   }
 
   void** buffers_data = buffer_ptrs.data();
-  kernel->host_launch(device_state.kernel_handle, cuda_stream, buffers_data);
+  int32_t launch_result = kernel->host_launch(
+      device_state.kernel_handle->function(), cuda_stream, buffers_data);
+  if (launch_result != CUDA_SUCCESS) {
+    const char* error_name = nullptr;
+    const char* error_str = nullptr;
+    cuGetErrorName(static_cast<CUresult>(launch_result), &error_name);
+    cuGetErrorString(static_cast<CUresult>(launch_result), &error_str);
+    return absl::InternalError(absl::StrFormat(
+        "Mosaic GPU kernel '%s' (host func: '%s', device: %d, smem: %d bytes, "
+        "cluster: %d) launch failed: %s [%s] (CUDA error %d)",
+        kernel->kernel_name, kernel->host_func_name, device_ordinal,
+        kernel->smem_bytes, kernel->cluster_size,
+        error_name ? error_name : "UNKNOWN_ERROR",
+        error_str ? error_str : "unknown", launch_result));
+  }
   XLA_VLOG_DEVICE(5, device_ordinal) << "MosaicGpuExecute finished";
   return absl::OkStatus();
 }
@@ -1610,6 +1669,7 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuPrepare, MosaicGpuPrepare,
                            .Ctx<ffi::CollectiveParams>()
                            .Ctx<ffi::CollectiveMemoryRequests>()
                            .Ctx<ffi::CollectiveCliqueRequests>()
+                           .Ctx<ffi::Allocator>()
                            .Ctx<xla::ffi::State<CustomCallResources>>()
                            .RemainingArgs()
                            .RemainingRets()
@@ -1644,6 +1704,7 @@ XLA_FFI_DEFINE_HANDLER(
     ffi::Ffi::BindExecute()
         .Ctx<ffi::Stream>()
         .Ctx<ffi::CollectiveParams>()
+        .Ctx<ffi::CollectiveCliques>()
         .RemainingArgs()
         .RemainingRets()
         .Ctx<xla::ffi::State<mosaic::gpu::CustomCallResources>>()
@@ -1664,6 +1725,9 @@ extern "C" {
 
 __attribute__((visibility("default"))) void** MosaicGpuCompile(
     const char* module, int num_module_bytes) {
+  // We should make sure that NVPTX target is initialized before
+  // getting cuda compute capability
+  mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
   std::string module_str(module, num_module_bytes);
   auto cc = GetCudaComputeCapability();
   if (!cc.ok()) {
@@ -1674,12 +1738,12 @@ __attribute__((visibility("default"))) void** MosaicGpuCompile(
   if (!kernel.ok()) {
     return nullptr;
   }
-  auto ctx = InitKernel(**kernel);
-  if (!ctx.ok()) {
+  absl::StatusOr<InitResult> init_res = InitKernel(**kernel);
+  if (!init_res.ok()) {
     return nullptr;
   }
   auto tuple_ptr = new void*[3];
-  tuple_ptr[0] = *ctx;
+  tuple_ptr[0] = init_res->function;
   tuple_ptr[1] = reinterpret_cast<void*>((*kernel)->host_launch);
   tuple_ptr[2] = (*kernel).release();
   return tuple_ptr;
@@ -1692,7 +1756,7 @@ __attribute__((visibility("default"))) void MosaicGpuUnload(void** tuple_ptr) {
 
 __attribute__((visibility("default"))) void MosaicGpuClearKernelCache() {
   auto& cache = GetKernelCache();
-  absl::MutexLock lock(&cache.mutex);
+  absl::MutexLock lock(cache.mutex);
   cache.kernels.clear();
 }
 

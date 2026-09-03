@@ -32,11 +32,11 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/pair.h"  // IWYU pragma: keep
 #include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
@@ -58,6 +58,7 @@ limitations under the License.
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/ir/ifrt_ir_loaded_executable.h"
 #include "xla/python/ifrt/ir/program_memory_tracer.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/nb_numpy.h"
@@ -79,11 +80,11 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> UnwrapArrays(
   result.reserve(nb::len(args));
   for (nb::handle arg : args) {
     jax::PyArray array = nb::cast<jax::PyArray>(arg);
-    xla::ifrt::Array* ifrt_array = array.ifrt_array();
+    xla::ifrt::ArrayRef ifrt_array = array.ifrt_array_ref();
     if (ifrt_array == nullptr) {
       return xla::InvalidArgument("Array deleted or donated");
     }
-    result.push_back(tsl::FormRef(ifrt_array));
+    result.push_back(std::move(ifrt_array));
   }
   return result;
 }
@@ -108,8 +109,8 @@ MpmdExecutableFastpathCache::GetOrInsertIfAbsent(
 }
 
 absl::StatusOr<nb::list> PyMpmdLoadedExecutable::Execute(nb::sequence args) {
-  TF_ASSIGN_OR_RETURN(std::vector<xla::ifrt::ArrayRef> ifrt_args,
-                      UnwrapArrays(args));
+  ABSL_ASSIGN_OR_RETURN(std::vector<xla::ifrt::ArrayRef> ifrt_args,
+                        UnwrapArrays(args));
   xla::ifrt::ExecuteOptions execute_options;
   execute_options.execution_stream_id = GetExecutionStreamId();
 
@@ -117,7 +118,7 @@ absl::StatusOr<nb::list> PyMpmdLoadedExecutable::Execute(nb::sequence args) {
   xla::ifrt::LoadedExecutable::ExecuteResult result;
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         result, ifrt_loaded_executable_->Execute(absl::MakeSpan(ifrt_args),
                                                  std::move(execute_options),
                                                  /*devices=*/std::nullopt));
@@ -135,7 +136,7 @@ absl::StatusOr<nb::list> PyMpmdLoadedExecutable::Execute(nb::sequence args) {
         nb::borrow<xla::nb_dtype>(out_dtypes_[i].ptr()), out_shapes_[i],
         nb::borrow<nb::object>(out_shardings_[i].ptr()), backend_,
         std::move(result.outputs[i]),
-        /*committed=*/true, /*skip_checks=*/true);
+        /*committed=*/true);
     results.append(std::move(out));
   }
   return results;
@@ -158,7 +159,7 @@ absl::StatusOr<nb::object> PyMpmdLoadedExecutable::ExecuteFastpath(
     }
   }
 
-  TF_RETURN_IF_ERROR(ComputeCallSignature(flat_args, call_signature));
+  ABSL_RETURN_IF_ERROR(ComputeCallSignature(flat_args, call_signature));
 
   std::pair<std::shared_ptr<MpmdExecutableFastpathData>, bool>
       cache_data_and_inserted =
@@ -201,8 +202,8 @@ absl::StatusOr<nb::object> PyMpmdLoadedExecutable::ExecuteFastpath(
     }
   }
 
-  TF_ASSIGN_OR_RETURN(nb::list result,
-                      Execute(nb::cast<nb::sequence>(kept_args)));
+  ABSL_ASSIGN_OR_RETURN(nb::list result,
+                        Execute(nb::cast<nb::sequence>(kept_args)));
   std::vector<nb::object> result_list;
   result_list.reserve(result.size());
   for (nb::handle result_item : result) {
@@ -220,7 +221,7 @@ PyMpmdLoadedExecutable::GetMpmdCompiledMemoryStats() const {
 
 absl::StatusOr<xla::ifrt::IfrtIrProgramMemoryStats>
 PyMpmdLoadedExecutable::GetIfrtIrProgramMemoryStats() const {
-  if (auto* exec_ptr = llvm::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
+  if (auto* exec_ptr = xla::ifrt::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
           ifrt_loaded_executable_.get())) {
     return exec_ptr->GetIfrtIrProgramMemoryStats();
   } else {
@@ -232,7 +233,7 @@ PyMpmdLoadedExecutable::GetIfrtIrProgramMemoryStats() const {
 
 absl::StatusOr<std::string> PyMpmdLoadedExecutable::GetIfrtIrProgramXprofUrl()
     const {
-  if (auto* exec_ptr = llvm::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
+  if (auto* exec_ptr = xla::ifrt::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
           ifrt_loaded_executable_.get())) {
     return exec_ptr->GetIfrtIrProgramXprofUrl();
   } else {
@@ -250,7 +251,7 @@ PyMpmdLoadedExecutable::GetMpmdCostAnalysis() {
 
 absl::StatusOr<std::vector<xla::OpSharding>>
 PyMpmdLoadedExecutable::GetParameterShardings() {
-  auto* exec_ptr = llvm::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
+  auto* exec_ptr = xla::ifrt::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
       ifrt_loaded_executable_.get());
   std::optional<std::vector<xla::OpSharding>> param_shardings;
   if (exec_ptr != nullptr) {
@@ -276,7 +277,7 @@ PyMpmdLoadedExecutable::GetHloModules() {
 
 absl::StatusOr<std::vector<xla::OpSharding>>
 PyMpmdLoadedExecutable::GetOutputShardings() {
-  auto* exec_ptr = llvm::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
+  auto* exec_ptr = xla::ifrt::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
       ifrt_loaded_executable_.get());
   std::optional<std::vector<xla::OpSharding>> output_shardings;
   if (exec_ptr != nullptr) {
@@ -295,7 +296,7 @@ PyMpmdLoadedExecutable::GetOutputShardings() {
 
 absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
 PyMpmdLoadedExecutable::GetParameterLayouts() {
-  if (auto* exec_ptr = llvm::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
+  if (auto* exec_ptr = xla::ifrt::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
           ifrt_loaded_executable_.get())) {
     return exec_ptr->GetParameterLayouts();
   } else {
@@ -305,7 +306,7 @@ PyMpmdLoadedExecutable::GetParameterLayouts() {
 
 absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
 PyMpmdLoadedExecutable::GetOutputLayouts() {
-  if (auto* exec_ptr = llvm::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
+  if (auto* exec_ptr = xla::ifrt::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
           ifrt_loaded_executable_.get())) {
     return exec_ptr->GetOutputLayouts();
   } else {
@@ -347,8 +348,8 @@ absl::Status PyMpmdLoadedExecutable::ComputeCallSignature(
   dynamic_arg_layouts.reserve(flat_args.size());
 
   for (nb::handle arg : flat_args) {
-    TF_ASSIGN_OR_RETURN(jax::PyArgSignature arg_signature,
-                        jax::PyArgSignatureOfValue(arg, jax_enable_x64));
+    ABSL_ASSIGN_OR_RETURN(jax::PyArgSignature arg_signature,
+                          jax::PyArgSignatureOfValue(arg, jax_enable_x64));
     call_signature.dynamic_arg_signatures.push_back(std::move(arg_signature));
 
     jax::PyArray py_array = nb::borrow<jax::PyArray>(arg);

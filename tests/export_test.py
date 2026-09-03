@@ -25,27 +25,25 @@ import unittest
 
 from absl.testing import absltest
 import jax
+from jax import export
 from jax import lax
 from jax import numpy as jnp
-from jax import export
-from jax._src.shard_map import shard_map
-from jax.sharding import (NamedSharding, Mesh, PartitionSpec as P,
-                          reshard)
-from jax._src.sharding_impls import GSPMDSharding, make_single_device_sharding
 from jax import tree_util
-
-from jax._src import config
 from jax._src import compute_on
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import lib
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
-from jax._src import lib
 from jax._src.lib.mlir.dialects import hlo
-
+from jax._src.shard_map import shard_map
+from jax._src.sharding_impls import GSPMDSharding, make_single_device_sharding
+from jax.experimental.layout import Format, Layout, with_layout_constraint
+from jax.sharding import (Mesh, NamedSharding, PartitionSpec as P, reshard)
 import numpy as np
 
 # ruff: noqa: F401
@@ -115,7 +113,7 @@ mlir.register_lowering(testing_primitive_with_effect_p,
                        lowering_testing_primitive_with_effect)
 
 ## Setup for multi-platform lowering
-_testing_multi_platform_to_add = dict(cpu=2., tpu=3., cuda=4., rocm=5.)
+_testing_multi_platform_to_add = dict(cpu=2., tpu=3., cuda=4., rocm=5., oneapi=6.)
 
 def _testing_multi_platform_func(x, *,
                                  effect_class_name: str | None = None):
@@ -132,6 +130,7 @@ def _testing_multi_platform_func(x, *,
     tpu=lambda: for_platform("tpu"),
     cuda=lambda: for_platform("cuda"),
     rocm=lambda: for_platform("rocm"),
+    oneapi=lambda: for_platform("oneapi"),
     default=lambda: for_platform("cpu"),
   )
 
@@ -566,7 +565,12 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_default_export_platform(self):
     test_platform = jtu.device_under_test()
     if test_platform == "gpu":
-      test_platform = "rocm" if jtu.is_device_rocm() else "cuda"
+      if jtu.is_device_rocm():
+        test_platform = "rocm"
+      elif jtu.is_device_oneapi():
+        test_platform = "oneapi"
+      else:
+        test_platform = "cuda"
     self.assertEqual(export.default_export_platform(), test_platform)
     exp = export.export(jnp.sin)(1.)
     self.assertEqual(exp.platforms, (export.default_export_platform(),))
@@ -611,9 +615,22 @@ class JaxExportTest(jtu.JaxTestCase):
 
     a = np.arange(3, dtype=np.float32)
     with self.assertRaisesRegex(ValueError,
-        "Cannot serialize code with custom calls whose targets .*"):
+        r"Cannot serialize code with custom calls whose targets [\s\S]*"
+        r"safety check was not disabled for any target[\s\S]*"
+        r"DisabledSafetyCheck.custom_call"):
       get_exported(
         jax.jit(lambda a: a + test_primitive.bind(a))
+      )(a)
+
+    # If the safety check was disabled for a *different* target, the error
+    # should list the targets it was disabled for.
+    with self.assertRaisesRegex(ValueError,
+        r"Cannot serialize code with custom calls whose targets [\s\S]*"
+        r"safety check was disabled for the following targets [\s\S]*"
+        r"wrong_target"):
+      get_exported(
+        jax.jit(lambda a: a + test_primitive.bind(a)),
+        disabled_checks=[export.DisabledSafetyCheck.custom_call("wrong_target")]
       )(a)
 
     # Now try again with the safety check disabled
@@ -1168,6 +1185,13 @@ class JaxExportTest(jtu.JaxTestCase):
       self.skipTest("TPU does not support float8_e8m0fnu.")
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
       self.skipTest("TPU does not support float4_e2m1fn.")
+    if not config.enable_x64.value and dtype in (
+        np.int64,
+        np.uint64,
+        np.float64,
+        np.complex128,
+    ):
+      self.skipTest("x64 dtypes not supported when enable_x64 is False.")
     @jax.jit
     def f_jax(x):
       return x + x
@@ -1368,7 +1392,7 @@ class JaxExportTest(jtu.JaxTestCase):
     if jax.local_device_count() < 2:
       self.skipTest("Need at least 2 devices")
 
-    abs_mesh = jax.sharding.AbstractMesh((2,), "x")
+    abs_mesh = jax.sharding.AbstractMesh((2,), "x", (jax.sharding.AxisType.Auto,))
     input_sharding = jax.sharding.NamedSharding(abs_mesh, P("x", None))
     output_sharding = jax.sharding.NamedSharding(abs_mesh, P(None, "x"))
     @jax.jit
@@ -1540,7 +1564,7 @@ class JaxExportTest(jtu.JaxTestCase):
     a = jax.device_put(np.ones((2, 3), dtype=np.float32), shd)
     f = jax.jit(lambda x: x)
 
-    exported = get_exported(f, platforms=("tpu", "cuda", "rocm"))(a)
+    exported = get_exported(f, platforms=("tpu", "cuda", "rocm", "oneapi"))(a)
     self.assertEqual(exported.in_avals[0].memory_space, core.MemorySpace.Host)
     self.assertEqual(exported.out_avals[0].memory_space, core.MemorySpace.Host)
 
@@ -1567,7 +1591,7 @@ class JaxExportTest(jtu.JaxTestCase):
     f = jax.jit(lambda: jnp.ones((2, 2), dtype=np.float32),
                 out_shardings=shd)
 
-    exported = get_exported(f, platforms=("tpu", "cuda", "rocm"))()
+    exported = get_exported(f, platforms=("tpu", "cuda", "rocm", "oneapi"))()
     self.assertEqual(exported.out_avals[0].memory_space, core.MemorySpace.Host)
     empty_mesh = jax.sharding.AbstractMesh((), ())
     shd_ns = jax.sharding.NamedSharding(empty_mesh, P(None, None),
@@ -1888,8 +1912,8 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform(self):
     x = np.arange(8, dtype=np.float32)
     exp = get_exported(jax.jit(_testing_multi_platform_func),
-                       platforms=("tpu", "cpu", "cuda", "rocm"))(x)
-    self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "rocm"))
+                       platforms=("tpu", "cpu", "cuda", "rocm", "oneapi"))(x)
+    self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "rocm", "oneapi"))
     module_str = str(exp.mlir_module())
     expected_main_re = (
       r"@main\("
@@ -1911,14 +1935,14 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(jax.jit(lambda x: _testing_multi_platform_func(jnp.sin(x))),
-                       platforms=("cpu", "tpu", "cuda", "rocm"))(x)
-    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm"))
+                       platforms=("cpu", "tpu", "cuda", "rocm", "oneapi"))(x)
+    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm", "oneapi"))
 
     # Now serialize the call to the exported using a different sequence of
     # lowering platforms, but included in the lowering platforms for the
     # nested exported.
     exp2 = get_exported(jax.jit(exp.call),
-                        platforms=("cpu", "cuda", "rocm"))(x)
+                        platforms=("cpu", "cuda", "rocm", "oneapi"))(x)
 
     # Ensure that we do not have multiple lowerings of the exported function
     exp2_module_str = str(exp2.mlir_module())
@@ -1937,8 +1961,8 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested_inside_single_platform_export(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(jax.jit(_testing_multi_platform_func),
-                       platforms=("cpu", "tpu", "cuda", "rocm"))(x)
-    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm"))
+                       platforms=("cpu", "tpu", "cuda", "rocm", "oneapi"))(x)
+    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm", "oneapi"))
 
     # Now serialize the call for the current platform.
     exp2 = get_exported(jax.jit(exp.call))(x)
@@ -1974,6 +1998,8 @@ class JaxExportTest(jtu.JaxTestCase):
                            "rocm")
     mlir.register_lowering(times_3, functools.partial(times_n_lowering, 3),
                            "cuda")
+    mlir.register_lowering(times_3, functools.partial(times_n_lowering, 3),
+                           "oneapi")
 
     times_4 = core.Primitive("__testing_times_4")  # x4 for tpu
     times_4.def_abstract_eval(lambda x: x)
@@ -1992,13 +2018,16 @@ class JaxExportTest(jtu.JaxTestCase):
     mlir.register_lowering(times_2_or_3,
                            mlir.lower_fun(times_3.bind,
                                           multiple_results=False), "cuda")
+    mlir.register_lowering(times_2_or_3,
+                           mlir.lower_fun(times_3.bind,
+                                          multiple_results=False), "oneapi")
 
     times_2_or_3_or_4 = core.Primitive("__testing_times_2_or_3_or_4")  # x2 for cpu, x3 for cuda and rocm, x4 for tpu
     times_2_or_3_or_4.def_abstract_eval(lambda x: x)
     times_2_or_3_or_4_lowering_cpu_gpu = mlir.lower_fun(times_2_or_3.bind,
                                                          multiple_results=False)
 
-    for platform in ["cpu", "cuda", "rocm"]:
+    for platform in ["cpu", "cuda", "rocm", "oneapi"]:
       mlir.register_lowering(times_2_or_3_or_4,
                              times_2_or_3_or_4_lowering_cpu_gpu,
                              platform)
@@ -2010,7 +2039,7 @@ class JaxExportTest(jtu.JaxTestCase):
     def f(x):
       return times_2_or_3_or_4.bind(x)
     x = np.float32(42.)
-    exp = export.export(f, platforms=["cpu", "cuda", "rocm", "tpu"])(x)
+    exp = export.export(f, platforms=["cpu", "cuda", "rocm", "tpu", "oneapi"])(x)
     expected = x * np.float32(dict(cpu=2, gpu=3, tpu=4)[jtu.device_under_test()])
     self.assertAllClose(exp.call(x), expected)
 
@@ -2066,7 +2095,7 @@ class JaxExportTest(jtu.JaxTestCase):
       return b * 2.
 
     res_native = f_jax(a)
-    exp = get_exported(f_jax, platforms=("cpu", "tpu", "cuda", "rocm"))(a)
+    exp = get_exported(f_jax, platforms=("cpu", "tpu", "cuda", "rocm", "oneapi"))(a)
 
     # Call with argument placed on different platforms
     for platform in self.platforms:
@@ -2083,7 +2112,7 @@ class JaxExportTest(jtu.JaxTestCase):
     operand = np.float32(0.)
 
     @jax.jit
-    @compute_on.compute_on2(compute_type="device_host",
+    @compute_on.compute_on(compute_type="device_host",
                             out_memory_spaces=jax.memory.Space.Device)
     def f_host(x):
       # Adds 1 on CPU, which should be the result on all platforms because
@@ -2475,6 +2504,44 @@ class JaxExportTest(jtu.JaxTestCase):
     out = exp.call(key)
     self.assertAllClose(jax.random.key_data(split_key(key)),
                         jax.random.key_data(out))
+
+  def test_export_with_layout_constraint(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Only works for TPU")
+    mesh = jtu.create_mesh((2, 2), ("x", "y"))
+    shape = (16, 128)
+    s = NamedSharding(mesh, P("x"))
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+
+    # Create a custom layout instead of using `arr.layout` to test the API.
+    custom_dll = Layout(major_to_minor=arr.format.layout.major_to_minor[::-1])
+
+    def f(x):
+      y = x.T
+      # Constrain `y` to the original layout of `arr` because without it,
+      # the layout of `y` would be the transpose of `arr`.
+      y = with_layout_constraint(y, custom_dll)
+      return y * 2
+
+    f = jax.jit(f)
+    out = f(arr)
+    self.assertEqual(
+        out.format.layout.major_to_minor, custom_dll.major_to_minor
+    )
+    self.assertArraysEqual(out, np_inp.T * 2)
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn("LayoutConstraint", lowered_text)
+
+    # Test export for this layout constraint custom call. Should always work
+    # without "tiling" in the layout.
+    export.export(
+        f,
+        disabled_checks=[
+            export.DisabledSafetyCheck.custom_call("LayoutConstraint")
+        ],
+    )(arr)
 
 
 if __name__ == "__main__":

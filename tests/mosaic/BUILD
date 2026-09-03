@@ -40,6 +40,7 @@ jax_multiplatform_test(
     srcs = ["gpu_test.py"],
     enable_backends = [],
     enable_configs = [
+        "gpu_a100",
         "gpu_h100",
         "gpu_h100_x32",
         "gpu_b200",
@@ -91,7 +92,7 @@ jax_multiplatform_test(
         "gpu_b200x2",
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
-    tags = ["multiaccelerator-only"],
+    tags = ["multiaccelerator"],
     deps = if_cuda_is_configured([
         "//jax/experimental:mosaic_gpu",
     ]) + py_deps([
@@ -113,7 +114,7 @@ jax_multiplatform_test(
         "gpu_b200x2",
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
-    tags = ["multiaccelerator-only"],
+    tags = ["multiaccelerator"],
     deps = [
         "//jax/_src:test_multiprocess",
     ] + if_cuda_is_configured([

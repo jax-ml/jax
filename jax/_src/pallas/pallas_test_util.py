@@ -13,6 +13,7 @@
 # limitations under the License.
 """Pallas test utilities."""
 import sys
+import warnings
 
 from jax._src import config
 from jax._src import test_util as jtu
@@ -40,6 +41,14 @@ class PallasTest(jtu.JaxTestCase):
       if sys.platform == "win32":
         self.skipTest("Only works on non-Windows platforms")
     super().setUp()
+
+    if jtu.test_device_matches(["gpu"]):
+      self.enter_context(warnings.catch_warnings())
+      warnings.filterwarnings(
+          "ignore",
+          category=DeprecationWarning,
+          message="The Pallas Triton backend is deprecated",
+      )
 
   def pallas_call(self, *args, **kwargs):
     return pl_lib.pallas_call(*args, **kwargs, interpret=self.INTERPRET)

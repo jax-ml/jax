@@ -44,6 +44,7 @@ load(
     "wheel_sources",
 )
 load("//jaxlib/rocm:rocm_version.bzl", "ROCM_MAJOR_VERSION")
+load("//jaxlib/tools:rocm_wheel_deps.bzl", "collect_rocm_data_files")
 
 licenses(["notice"])  # Apache 2
 
@@ -225,6 +226,7 @@ wheel_sources(
         "//jaxlib/rocm:rocm_gpu_support",
         "//jaxlib/rocm:rocm_plugin_extension",
     ]) + if_sycl([
+        "//jaxlib/oneapi:oneapi_gpu_support",
         "//jaxlib/oneapi:oneapi_plugin_extension",
     ]),
     py_srcs = [":version"] + if_cuda([
@@ -232,6 +234,8 @@ wheel_sources(
         "//jaxlib/mosaic/gpu:mosaic_gpu",
     ]) + if_rocm([
         "//jaxlib/rocm:rocm_gpu_support",
+    ]) + if_sycl([
+        "//jaxlib/oneapi:oneapi_gpu_support",
     ]),
     static_srcs = [
         "LICENSE.txt",
@@ -241,6 +245,7 @@ wheel_sources(
     ]) + if_rocm([
         "//jax_plugins/rocm:plugin_pyproject.toml",
         "//jax_plugins/rocm:plugin_setup.py",
+        "//jax_plugins/rocm:rocm_version.py",
     ]) + if_sycl([
         "//jax_plugins/oneapi:plugin_pyproject.toml",
         "//jax_plugins/oneapi:plugin_setup.py",
@@ -358,6 +363,7 @@ wheel_sources(
         "//jaxlib/rocm:rocm_gpu_support",
     ]) + if_sycl([
         "//jax_plugins/oneapi:oneapi_plugin",
+        "//jaxlib/oneapi:oneapi_gpu_support",
     ]),
     py_srcs = [
         ":version",
@@ -365,6 +371,8 @@ wheel_sources(
         "//jaxlib/cuda:cuda_gpu_support",
     ]) + if_rocm([
         "//jaxlib/rocm:rocm_gpu_support",
+    ]) + if_sycl([
+        "//jaxlib/oneapi:oneapi_gpu_support",
     ]),
     static_srcs = [
         "LICENSE.txt",
@@ -375,6 +383,7 @@ wheel_sources(
     ]) + if_rocm([
         "//jax_plugins/rocm:pyproject.toml",
         "//jax_plugins/rocm:setup.py",
+        "//jax_plugins/rocm:rocm_version.py",
         "//jax_plugins/rocm:__init__.py",
     ]) + if_sycl([
         "//jax_plugins/oneapi:pyproject.toml",
@@ -535,14 +544,26 @@ py_import(
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
+collect_rocm_data_files(
+    name = "rocm_plugin_libs",
+    roots = ["//jaxlib/rocm:rocm_gpu_support"],
+)
+
+collect_rocm_data_files(
+    name = "rocm_pjrt_libs",
+    roots = ["//jax_plugins/rocm:pjrt_c_api_gpu_plugin.so"],
+)
+
 py_import(
     name = "jax_rocm_plugin_py_import",
     wheel = ":jax_rocm_plugin_wheel",
+    deps = [":rocm_plugin_libs"],
 )
 
 py_import(
     name = "jax_rocm_pjrt_py_import",
     wheel = ":jax_rocm_pjrt_wheel",
+    deps = [":rocm_pjrt_libs"],
 )
 
 # The targets below are used for GPU tests with `--//jax:build_jaxlib=false`.
@@ -691,7 +712,7 @@ pytype_test(
     srcs = [":wheel_size_test.py"],
     args = [
         "--wheel-path=$(location :jax_cuda{cuda}_pjrt_wheel)".format(cuda = cuda_major_version),
-        "--max-size-mib=170",
+        "--max-size-mib=180",
     ],
     data = [":jax_cuda{cuda}_pjrt_wheel".format(cuda = cuda_major_version)],
     main = "wheel_size_test.py",

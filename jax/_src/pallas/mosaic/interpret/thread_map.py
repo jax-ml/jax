@@ -22,14 +22,16 @@ import jax.numpy as jnp
 
 import numpy as np
 
-# Must be distinct from `TOP_LEVEL_TOKEN_VALUE` in `interpret_pallas_call.py`.
+TOP_LEVEL_TOKEN_VALUE = 42
 NESTED_TOKEN_VALUE = 1337
 
 
-def _run_jaxpr(jaxpr, consts, *args):
-  def _run(jaxpr, consts, *args):
-    jax_core.eval_jaxpr(jaxpr, consts, *args)
+# top-level function so that caching works properly
+def _run(jaxpr, consts, *args):
+  jax_core.eval_jaxpr(jaxpr, consts, *args)
 
+
+def _run_jaxpr(jaxpr, consts, *args):
   traced = jax.jit(_run, static_argnums=(0,)).trace(jaxpr, consts, *args)
   traced.lower().compile()(consts, *args)
   return
@@ -61,7 +63,7 @@ def _thread_map_callback(jaxpr, token, device_id, num_threads, consts, invals,
       except Exception as e:
         exceptions.append(e)
   if exceptions:
-    on_exception(exceptions[0], device_id=device_id)
+    on_exception(exceptions[0], device_id=device_id, token=token)
     # TODO(jburnim): Improve exception propagation here.  That is:
     #  - exceptions[0] might be an uninformative exception that just reports
     #    that the computation failed on a different device/core.
@@ -119,5 +121,5 @@ def thread_map(
   jaxpr = jax.make_jaxpr(_f)(jnp.int32(0), *args)
 
   return _call_threadmap_callback(
-      token, device_id, jaxpr.jaxpr, num_threads, jaxpr.consts, args,
+      token, device_id, jaxpr, num_threads, jaxpr.consts, args,
       use_ordered_callback, on_exception)

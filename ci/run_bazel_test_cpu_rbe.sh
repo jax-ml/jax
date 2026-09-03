@@ -43,24 +43,25 @@ fi
 os=$(uname -s | awk '{print tolower($0)}')
 arch=$(uname -m)
 
-bazel_output_base=""
+bazel_startup_options=()
 # Adjust os and arch for Windows
 if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
   os="windows"
   arch="amd64"
-  bazel_output_base="--output_base=C:\actions-runner\_work\bazel_output_base"
+  workspace_path=$(cygpath -m "$PWD")
+  bazel_startup_options+=(
+    "--host_jvm_args=-Djava.security.properties=file:///$workspace_path/ci/bazel_dns_windows.security"
+    "--output_base=C:\actions-runner\_work\bazel_output_base"
+  )
 fi
 
-if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t ]]; then
-  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-ft || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-nogil ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-ft}
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}
   FREETHREADED_FLAG_VALUE="yes"
 else
   FREETHREADED_FLAG_VALUE="no"
-fi
-
-BZLMOD_CONFIG=""
-if [[ "${JAXCI_ENABLE_BZLMOD:-0}" == "1" ]]; then
-  BZLMOD_CONFIG="--config=bzlmod"
 fi
 
  # TODO(b/446172564): Remove this condition when the test is fixed on all
@@ -78,6 +79,7 @@ else
 fi
 
 test_strategy=""
+run_tests_locally=0
 # When running on Mac or Linux Aarch64, we only build the test targets and
 # not run them. These platforms do not have native RBE support so we
 # RBE cross-compile them on remote Linux x86 machines. As the tests still
@@ -88,9 +90,16 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
     rbe_config=rbe_cross_compile_${os}_${arch}
     if [[ "$JAXCI_BAZEL_CPU_RBE_MODE" == 'test' ]]; then
         test_strategy="--strategy=TestRunner=local"
+        run_tests_locally=1
     fi
 else
     rbe_config=rbe_${os}_${arch}
+fi
+
+portserver_test_env=""
+if [[ "$run_tests_locally" == 1 ]]; then
+  PYTHON_BIN="$JAXCI_PYTHON" source ci/utilities/setup_portserver.sh
+  portserver_test_env="--test_env=PORTSERVER_ADDRESS=@unittest-portserver"
 fi
 
 TEST_ARTIFACTS_DIR="test-artifacts"
@@ -100,9 +109,8 @@ echo "::endgroup::" >&2
 echo "::group::Bazel CPU RBE tests" >&2
 INVOCATION_ID=$(python3 ci/utilities/generate_invocation_id.py)
 
-bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
+bazel "${bazel_startup_options[@]}" $JAXCI_BAZEL_CPU_RBE_MODE \
     --invocation_id="$INVOCATION_ID" \
-    $BZLMOD_CONFIG \
     --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --build_runfile_links=false \
     --config=$rbe_config \
@@ -112,6 +120,7 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAX \
     $test_strategy \
+    $portserver_test_env \
     --test_env=JAX_NUM_GENERATED_CASES=25 \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
     --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \

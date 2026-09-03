@@ -21,7 +21,7 @@ import math
 from random import shuffle
 import re
 import gc
-from typing import Union, cast
+from typing import cast
 import unittest
 from unittest import SkipTest
 
@@ -53,7 +53,7 @@ jtu.request_cpu_devices(8)
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
 def all_bdims(*shapes):
-  bdims = (it.chain([cast(Union[int, None], None)], range(len(shape) + 1))
+  bdims = (it.chain([cast(int | None, None)], range(len(shape) + 1))
            for shape in shapes)
   return (t for t in it.product(*bdims) if not all(e is None for e in t))
 
@@ -102,7 +102,7 @@ def create_input_array_for_pmap(input_shape, in_axes=0, input_data=None,
       input_shape, sharding, lambda idx: input_data[idx]), input_data
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 @jtu.with_config(jax_legacy_prng_key="allow")
 class PythonPmapTest(jtu.JaxTestCase):
 
@@ -470,6 +470,20 @@ class PythonPmapTest(jtu.JaxTestCase):
       self.assertAllClose(actual,
                           expected[i * scatter_len:(i + 1) * scatter_len])
 
+  def testReduceScatterNegativeScatterDimension(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/20125: a
+    # negative scatter_dimension should give the same result as the equivalent
+    # non-negative axis.
+    device_count = jax.device_count()
+    shape = (device_count, device_count, 4 * device_count)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    # The per-device operand is rank 2, so scatter_dimension=-1 is axis 1.
+    pos = pmap(lambda x: lax.psum_scatter(x, 'i', scatter_dimension=1,
+                                          tiled=True), axis_name='i')(x)
+    neg = pmap(lambda x: lax.psum_scatter(x, 'i', scatter_dimension=-1,
+                                          tiled=True), axis_name='i')(x)
+    self.assertAllClose(neg, pos)
+
   def testReduceScatterReplicaGroupsTiled(self):
     replicas = jax.device_count()
     if replicas % 2 != 0:
@@ -566,6 +580,18 @@ class PythonPmapTest(jtu.JaxTestCase):
     ref = jnp.moveaxis(x, (pmap_in_axis, split_axis),
                           (concat_axis + 1, 0))
     self.assertAllClose(y, ref)
+
+  def testAllToAllNegativeAxes(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/20125: negative
+    # split_axis/concat_axis arguments should give the same result as the
+    # equivalent non-negative axes.
+    shape = (jax.device_count(),) * 3
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, np.float32)
+    # The per-device operand is rank 2, so (-2, -1) map to (0, 1).
+    pos = pmap(lambda x: lax.all_to_all(x, 'i', 0, 1), axis_name='i')(x)
+    neg = pmap(lambda x: lax.all_to_all(x, 'i', -2, -1), axis_name='i')(x)
+    self.assertAllClose(neg, pos)
 
   def testMismatchedAxisSizes(self):
     n = jax.device_count()
@@ -978,7 +1004,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     # https://github.com/jax-ml/jax/issues/1703
     num_devices = jax.device_count()
     perm = [num_devices - 1] + list(range(num_devices - 1))
-    f = pmap(lambda x: lax.ppermute(x, "i", zip(perm, range(num_devices))), "i")
+    f = pmap(lambda x: lax.ppermute(x, "i", list(zip(perm, range(num_devices)))),
+             "i")
     result = f(jnp.arange(num_devices, dtype=jnp.float32))
     expected = jnp.asarray(perm, dtype=jnp.float32)
     self.assertAllClose(result, expected)
@@ -1721,6 +1748,8 @@ class PythonPmapTest(jtu.JaxTestCase):
           ('_new', jax.checkpoint),
       ])
   def test_remat_of_pmap_policy(self, remat):
+    # Old-remat-only: remat3 doesn't recognize bare-callable policies
+    self.enter_context(config.remat3(False))
     g = jax.pmap(lambda x: jnp.sin(jnp.sin(x)))
     x = jnp.arange(1.)
 
@@ -1786,7 +1815,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertArraysEqual(result1, result2)
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class VmapOfPmapTest(jtu.JaxTestCase):
 
   # TODO(apaszke)
@@ -1829,7 +1858,7 @@ class VmapOfPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class VmapPmapCollectivesTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -2009,7 +2038,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     self.assertAllClose(vmap(f, axis_name='i')(x), pmap(f, axis_name='i')(x))
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class PmapWithDevicesTest(jtu.JaxTestCase):
 
   def testAllDevices(self):
@@ -2269,7 +2298,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
                         jax.grad(mk_case(vmap))(x, y))
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class ArrayTest(jtu.JaxTestCase):
 
   def testThreadsafeIndexing(self):
@@ -2395,7 +2424,7 @@ class ArrayTest(jtu.JaxTestCase):
       _ = x[0]
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class ArrayPmapTest(jtu.JaxTestCase):
 
   def test_pmap_input_array_output_array(self):
@@ -2579,7 +2608,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class PmapShmapMergeTest(jtu.JaxTestCase):
 
   def setUp(self):

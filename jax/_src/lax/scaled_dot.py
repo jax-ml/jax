@@ -308,7 +308,8 @@ def scaled_dot(
   """Computes a scaled dot product.
 
   This function computes `(lhs * lhs_scale) @ (rhs * rhs_scale)` in
-  `preferred_element_type` precision, where `@` denotes `jax.lax.dot_general`.
+  `preferred_element_type` precision, where `@` denotes
+  :func:`jax.lax.dot_general`.
 
   Non-contracting dimensions of the operand and scale must have the same size.
   Contracting dimension size of the operand must be an integer multiple of the

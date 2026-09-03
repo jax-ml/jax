@@ -29,11 +29,13 @@ limitations under the License.
 #include <vector>
 
 // placeholder for index annotation headers
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
+#include "jaxlib/ft_mutex.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.pb.h"
 
@@ -143,10 +145,10 @@ class PyTreeRegistry {
       return a.ptr() == b.ptr();
     }
   };
-  mutable nanobind::ft_mutex mu_;
+  mutable ft_mutex mu_;
   absl::flat_hash_map<nanobind::object, std::unique_ptr<Registration>, TypeHash,
                       TypeEq>
-      registrations_;  // Guarded by mu_
+      registrations_ ABSL_GUARDED_BY(mu_);
   bool enable_namedtuple_;
 
   static int tp_traverse(PyObject* self, visitproc visit, void* arg);

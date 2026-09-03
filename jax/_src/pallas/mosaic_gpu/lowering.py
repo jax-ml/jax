@@ -34,7 +34,8 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import debugging
 from jax._src import dtypes
-from jax._src import linear_util as lu
+from jax._src import flattree as ft
+from jax._src import layout as jax_layout
 from jax._src import literals as jax_literals
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
@@ -51,7 +52,6 @@ from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import llvm as llvm_dialect
 from jax._src.lib.mlir.dialects import math as math_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
-from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.lib.mlir.dialects import vector as vector_dialect
 from jax._src.pallas import core as pallas_core
@@ -68,6 +68,7 @@ from jax._src.state.types import TransposeTransform
 from jax._src.util import foreach
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
+from jax.experimental.mosaic.gpu import fragmented_array as fa
 from jax.experimental.mosaic.gpu import profiler as mgpu_profiler
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
@@ -264,10 +265,7 @@ def _estimate_resources(
       continue
     # Assume that unsupported primitives are neutral wrt resource usage,
     # unless they have a jaxpr in their params.
-    if any(
-        isinstance(v, (jax_core.Jaxpr, jax_core.ClosedJaxpr))
-        for v in eqn.params.values()
-    ):
+    if any( isinstance(v, jax_core.Jaxpr) for v in eqn.params.values()):
       raise NotImplementedError(
           f"Resource estimation does not support {eqn.primitive}"
       )
@@ -282,29 +280,29 @@ def _cond_resource_estimator(
   del args  # Unused.
   return functools.reduce(
       lambda a, b: a.or_(b, ctx.axis_names),
-      (_estimate_resources(ctx, branch.jaxpr) for branch in branches),
+      (_estimate_resources(ctx, branch) for branch in branches),
   )
 
 
 @_register_resource_estimator(lax.scan_p)
 def _scan_resource_estimator(
-    ctx: ResourceEstimatorContext, *args, jaxpr: jax_core.ClosedJaxpr, **params
+    ctx: ResourceEstimatorContext, *args, jaxpr: jax_core.Jaxpr, **params
 ) -> Resources:
   del args, params  # Unused.
-  return _estimate_resources(ctx, jaxpr.jaxpr)
+  return _estimate_resources(ctx, jaxpr)
 
 
 @_register_resource_estimator(lax.while_p)
 def _while_resource_estimator(
     ctx: ResourceEstimatorContext,
     *args,
-    cond_jaxpr: jax_core.ClosedJaxpr,
-    body_jaxpr: jax_core.ClosedJaxpr,
+    cond_jaxpr: jax_core.Jaxpr,
+    body_jaxpr: jax_core.Jaxpr,
     **params,
 ) -> Resources:
   del args, params  # Unused.
-  return _estimate_resources(ctx, cond_jaxpr.jaxpr).or_(
-      _estimate_resources(ctx, body_jaxpr.jaxpr), ctx.axis_names
+  return _estimate_resources(ctx, cond_jaxpr).or_(
+      _estimate_resources(ctx, body_jaxpr), ctx.axis_names
   )
 
 
@@ -312,16 +310,8 @@ def _while_resource_estimator(
 def _pjit_resource_estimator(
     ctx: ResourceEstimatorContext,
     *args,
-    jaxpr: jax_core.ClosedJaxpr,
+    jaxpr: jax_core.Jaxpr,
     **params,
-) -> Resources:
-  del args, params  # Unused.
-  return _estimate_resources(ctx, jaxpr.jaxpr)
-
-
-@_register_resource_estimator(pallas_core.core_map_p)
-def _core_map_resource_estimator(
-    ctx: ResourceEstimatorContext, *args, jaxpr: jax_core.Jaxpr, **params
 ) -> Resources:
   del args, params  # Unused.
   return _estimate_resources(ctx, jaxpr)
@@ -567,17 +557,12 @@ class ModuleContext:
           mgpu_utils.dtype_to_ir_type(struct.dtype),
           memory_space=mgpu_utils.tmem(),
       )
-      slice_op = mgpu.dialect.SliceTmemOp(
+      tmem_ref = mgpu.dialect.slice_tmem(
           type,
           self.tmem_base,
           self.tmem_used_cols,
+          alias_id=self.next_tmem_allocation_id(),
       )
-      # TODO(allanrenucci): Pass alias_id directly to SliceTmemOp after jaxlib
-      # v0.11.0 release.
-      alias_id = self.next_tmem_allocation_id()
-      i64 = ir.IntegerType.get_signless(64)
-      slice_op.attributes["alias_id"] = ir.IntegerAttr.get(i64, alias_id)
-      tmem_ref = slice_op.result
       layout_attr = mgpu.to_layout_attr(layout)
       tmem_ref = mgpu.dialect.tmem_layout_cast(tmem_ref, layout_attr)
     cols_used = layout.cols_in_shape(
@@ -685,7 +670,7 @@ def _eval_index_map(
     block_mapping: pallas_core.BlockMapping,
 ) -> Sequence[ir.Value]:
   block_indices = lower_jaxpr_to_mosaic_gpu(
-      module_ctx, launch_ctx, block_mapping.index_map_jaxpr.jaxpr, idx
+      module_ctx, launch_ctx, block_mapping.index_map_jaxpr, idx
   )
   result = []
   for i, b in zip(block_indices, block_mapping.block_shape):
@@ -709,7 +694,7 @@ def _check_block_mappings(
         f" has block shape {bm.block_shape}, array shape"
         f" {bm.array_aval.shape},"
         # TODO(necula): add index_map source location info
-        f" and index_map {bm.index_map_jaxpr.jaxpr} in"
+        f" and index_map {bm.index_map_jaxpr} in"
         f" memory space {bm.transformed_block_aval.memory_space}."
         " See details at"
         " https://docs.jax.dev/en/latest/pallas/grid_blockspec.html#pallas-blockspec."
@@ -746,7 +731,7 @@ def _block_spec_from_block_mapping(
 ) -> pallas_core.BlockSpec:
   eval_index_map = functools.partial(
       jax.core.eval_jaxpr,
-      bm.index_map_jaxpr.jaxpr,
+      bm.index_map_jaxpr,
       bm.index_map_jaxpr.consts,
   )
 
@@ -882,16 +867,17 @@ def lower_pipelined_jaxpr_to_module(
     )(*refs)
 
   with grid_mapping.trace_env():
-    new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(pipeline_fn, debug_info=jaxpr.debug_info.with_unknown_names()),
-        [
-            gpu_core.GMEM(
-                bm.array_aval.shape, bm.array_aval.dtype
-            ).get_ref_aval()
-            for bm in block_mappings
-        ],
+    in_avals = [
+        gpu_core.GMEM(bm.array_aval.shape, bm.array_aval.dtype).get_ref_aval()
+        for bm in block_mappings
+    ]
+    in_avals_ft = ft.flatten_args(*in_avals)
+    new_jaxpr, _ = pe.trace_to_jaxpr_nocache(
+        pipeline_fn,
+        in_avals_ft,
+        debug_info=jaxpr.debug_info.with_unknown_names(),
     )
-    assert not new_consts
+    assert not new_jaxpr.consts
 
   axis_names = (
       _AxisNames(gpu_mesh.grid_names, gpu_mesh.cluster_names, gpu_mesh.thread_name)
@@ -909,9 +895,50 @@ def lower_pipelined_jaxpr_to_module(
         [bm.array_aval for bm in out_block_mappings],
         new_jaxpr,
         params,
-        new_consts,
+        new_jaxpr.consts,
         outer_traceback=outer_traceback,
     )
+
+
+def lower_unpipelined_jaxpr_to_module(
+    gpu_mesh: gpu_core.Mesh,
+    jax_mesh: mesh_lib.Mesh | None,
+    jaxpr: jax_core.Jaxpr,
+    in_shapes: Sequence[jax_core.ShapedArray],
+    out_shapes: Sequence[jax_core.ShapedArray],
+    params: gpu_core.CompilerParams,
+    *,
+    outer_traceback: xc.Traceback | None = None,
+) -> LoweringResult:
+  """Lowers a jaxpr that operates directly on GMEM refs, without pipelining.
+
+  Unlike ``lower_pipelined_jaxpr_to_module``, the ``jaxpr`` is expected to take
+  the GMEM refs for all inputs and outputs directly, without any block-level
+  pipelining. This is used by ``mpmd_map``, whose kernels perform their own
+  memory transfers.
+  """
+  assert len(jaxpr.outvars) == 0
+  if params.dimension_semantics is not None:
+    raise NotImplementedError(
+        "dimension_semantics= is not supported by the unpipelined lowering"
+    )
+  block = (128 * (gpu_mesh.num_threads or 1), 1, 1)
+  axis_names = _AxisNames(
+      gpu_mesh.grid_names, gpu_mesh.cluster_names, gpu_mesh.thread_name
+  )
+  return lower_jaxpr_to_module(
+      jax_mesh,
+      axis_names,
+      tuple(gpu_mesh.grid),
+      block,
+      tuple(gpu_mesh.cluster),
+      in_shapes,
+      out_shapes,
+      jaxpr,
+      params,
+      (),
+      outer_traceback=outer_traceback,
+  )
 
 
 def lower_jaxpr_to_module(
@@ -1088,8 +1115,10 @@ def lower_jaxpr_to_module(
     else:
       raise ValueError(f"Unsupported trace scope: {params.profile_trace_scope}")
     prof_spec = mgpu_profiler.ProfilerSpec(
-        params.profile_space * 2 * 2, dump_path=params.profile_dir,
-        trace_scope=trace_scope
+        params.profile_space * 2 * 2,
+        dump_path=params.profile_dir,
+        trace_scope=trace_scope,
+        bounds_check=params.profile_bounds_check,
     )
   cuda_grid = tuple(map(operator.mul, parallel_grid, cluster))
 
@@ -1147,20 +1176,12 @@ def lower_jaxpr_to_module(
       uses_pdl=uses_pdl,
   )
 
-  if lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
-    # We need to run a pass that removes dead-code for which layout inference
-    # does not work.
-    pm = mlir.passmanager.PassManager.parse("builtin.module(canonicalize,cse)", module.context)
-    pm.run(module.operation)
-
-    # Run Python lowering passes. The remaining passes will be run in C++ in
-    # jax/jaxlib/mosaic/gpu/custom_call.cc
-    mgpu.infer_layout(module, arch=mgpu_core._infer_arch())
-    mgpu.lower_mgpu_dialect(
-        module, launch_ctx, auto_barriers=not params.unsafe_no_auto_barriers
-    )
-
-  launch_ctx.scratch.finalize_size()
+  mgpu_core.lower_mgpu_module(
+      module,
+      launch_ctx,
+      lowering_semantics,
+      auto_barriers=not params.unsafe_no_auto_barriers,
+  )
 
   return LoweringResult(
       module, cuda_grid, block, new_out_shapes, prof_spec,
@@ -1292,7 +1313,8 @@ def lower_jaxpr_to_mosaic_gpu(
       if i + 1 < len(jaxpr.eqns):
         lookahead_eqn = jaxpr.eqns[i + 1]
         is_layout_cast = lookahead_eqn.primitive == gpu_core.layout_cast_p
-        uses_eqn_output = lookahead_eqn.invars == eqn.outvars
+        # We provide the hint for the first output only.
+        uses_eqn_output = lookahead_eqn.invars == eqn.outvars[:1]
         if is_layout_cast and uses_eqn_output:
           out_layout_hint = lookahead_eqn.params["new_layout"].to_mgpu()
       rule_ctx = LoweringRuleContext(
@@ -1400,31 +1422,38 @@ def _lower_fun(
     )
     flat_args, in_tree = tree_util.tree_flatten(args, is_leaf=is_leaf)
     if in_avals is None:
-      flat_avals = ctx.avals_in
+      unflat_avals = tree_util.tree_unflatten(in_tree, ctx.avals_in)
     else:
-      flat_avals, aval_tree = tree_util.tree_flatten(in_avals)
+      _, aval_tree = tree_util.tree_flatten(in_avals)
       if in_tree != aval_tree:
         raise ValueError(
             "args and in_avals pytrees mismatch:\nargs tree:"
             f" {in_tree}\navals tree: {aval_tree}\nargs: {args}\navals:"
             f" {in_avals}"
         )
-    wrapped_lu_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(
-            fun,
-            params,
-            debug_info=api_util.debug_info("mosaic_gpu lower_fun", fun, args, {}),
-        ),
-        in_tree,
+      unflat_avals = in_avals
+
+    in_avals_ft = ft.flatten_static_argnums_argnames(
+        unflat_avals,
+        params,
+        static_argnums=(),
+        static_argnames=tuple(params.keys()),
     )
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_lu_fun, flat_avals, lower=True)
-    if consts:
+    debug_info = api_util.debug_info(
+        "mosaic_gpu lower_fun", fun, unflat_avals, params,
+        static_argnames=tuple(params.keys()),
+    )
+    closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+        fun, in_avals_ft, debug_info=debug_info, requires_low=True
+    )
+    if closed_jaxpr.consts:
       raise NotImplementedError("lower_fun should not capture constvars")
-    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+    jaxpr = pe.convert_constvars_jaxpr(closed_jaxpr)
     out = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, jaxpr, flat_args, consts
+        ctx.module_ctx, ctx.launch_ctx, jaxpr, flat_args, closed_jaxpr.consts
     )
-    return tree_util.tree_unflatten(out_tree_thunk(), out)
+    out_tree = out_avals_ft.tree
+    return tree_util.tree_unflatten(out_tree, out)
 
   return f_lowered
 
@@ -1623,12 +1652,13 @@ def _extract_aliased_ref(
           ref_ty = ir.MemRefType.get(
               transformed_shape, mlir_dtype, memory_space=mgpu_utils.tmem()
           )
-          # TODO(allanrenucci): Use alias_id directly from SliceTmemOp after
-          # jaxlib v0.11.0 release.
-          alloc_id = ir.IntegerAttr(source_slice_op.attributes["alias_id"]).value
+          alloc_id = source_slice_op.alias_id
+          assert alloc_id is not None
           # TODO(bchetioui): Use a scheme resilient to hash collisions.
-          alias_id = hash((offset, alloc_id, alias_group_idx))
-          slice_op = mgpu.dialect.SliceTmemOp(ref_ty, ref, total_offset)
+          alias_id = hash((offset, alloc_id.value, alias_group_idx))
+          slice_op = mgpu.dialect.SliceTmemOp(
+              ref_ty, source_slice_op.source, total_offset
+          )
           i64 = ir.IntegerType.get_signless(64)
           slice_op.attributes["alias_id"] = ir.IntegerAttr.get(i64, alias_id)
           ref = slice_op.result
@@ -1721,22 +1751,19 @@ def _commute_transform(
 
 def _lower_fn_with_avals(f, avals_in):
   def inner(ctx, *args):
-    f_ = lu.wrap_init(
-        f,
-        debug_info=api_util.debug_info(
-            "Pallas Mosaic GPU lower_fn_with_avals", f, ("",) * len(args), {}
-        ).with_unknown_names(),
+    flat_args = tree_util.tree_leaves(args)
+    in_avals_ft = ft.flatten_args(*avals_in)
+    debug_info = api_util.debug_info(
+        "Pallas Mosaic GPU lower_fn_with_avals", f, ("",) * len(args), {}
+    ).with_unknown_names()
+    jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+        f, in_avals_ft, debug_info=debug_info, requires_low=True
     )
-    flat_args, in_tree_ = tree_util.tree_flatten(args)
-    flat_avals, in_tree = tree_util.tree_flatten(avals_in)
-    fun, out_tree_thunk = api_util.flatten_fun_nokwargs(f_, in_tree)
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, flat_avals, lower=True)
-    out_tree = out_tree_thunk()
     out_flat = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, jaxpr, flat_args, consts
+        ctx.module_ctx, ctx.launch_ctx, jaxpr, flat_args, jaxpr.consts
     )
-
-    return out_tree.unflatten(out_flat), out_tree.unflatten(out_avals)
+    out_tree = out_avals_ft.tree
+    return out_tree.unflatten(out_flat), out_avals_ft.unflatten()
   return inner
 
 
@@ -1893,7 +1920,7 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
 ) -> tuple[T, state_types.AbstractRef, Sequence[state_types.Transform]]:
   # Before we handle other transforms, we resolve any possible leading
   # aliasing transform.
-  ref, ref_aval, transform_avals, transforms = _extract_aliased_ref(  # pyrefly: ignore[no-matching-overload]
+  ref, ref_aval, transform_avals, transforms = _extract_aliased_ref(  # pyrefly: ignore[bad-assignment,no-matching-overload]
       ref,
       ref_aval,
       transform_avals,
@@ -2086,35 +2113,53 @@ def _get_lowering_rule(
   dtype = ctx.avals_out[0].dtype
 
   transforms = jax.tree.unflatten(tree, leaves)
-  transposed = ctx.out_layout_hint and ctx.out_layout_hint in (
-      mgpu.WGMMA_TRANSPOSED_LAYOUT,
-      mgpu.TCGEN05_TRANSPOSED_LAYOUT,
-  )
-  transposed = bool(transposed)
   assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
   transform_avals = tree.unflatten(ctx.avals_in[1:])
-  x_smem, _, transforms = _handle_transforms(
-      ctx, ctx.avals_in[0], x_ref, transform_avals, transforms,
-      handle_transposes=not transposed, allow_peer_refs=True
-  )
-  del x_ref  # Don't use x_ref anymore. Use x_smem instead!
 
+  # Swizzle always applies first, to the raw addresses, so we pop it immediately.
   if transforms and isinstance(transforms[0], gpu_core.UnswizzleRef):
     swizzle = transforms[0].swizzle
     transforms = transforms[1:]
+    transform_avals = transform_avals[1:]
+  elif (
+      len(transforms) > 1
+      and isinstance(transforms[0], gpu_core.ExtractAliasedRef)
+      and isinstance(transforms[1], gpu_core.UnswizzleRef)
+  ):
+    swizzle = transforms[1].swizzle
+    transforms = [transforms[0], *transforms[2:]]
+    transform_avals = [transform_avals[0], *transform_avals[2:]]
   else:
     swizzle = None
 
-  if transforms and isinstance(transforms[-1], state_types.TransposeTransform):
-    permutation = transforms[-1].permutation
-    transforms = transforms[:-1]
-  else:
-    permutation = None
+  # We verify tiling against swizzling in memory before transposes flip it.
+  # Note: we do not check len(tiling) == 2 here because subsequent transforms
+  # (e.g. ReshapeTransform) may commute with it to produce 2D tiling.
+  tiling_transform = None
+  if transforms and isinstance(transforms[0], gpu_core.UntilingTransform):
+    tiling_transform = transforms[0]
+  elif (
+      len(transforms) > 1
+      and isinstance(transforms[0], gpu_core.ExtractAliasedRef)
+      and isinstance(transforms[1], gpu_core.UntilingTransform)
+  ):
+    tiling_transform = transforms[1]
+  if tiling_transform is not None:
+    if swizzle is None:
+      raise NotImplementedError("Tiling without swizzle is not supported.")
+    bw = dtypes.itemsize_bits(ctx.avals_out[0].dtype)
+    expected_minor_tiling = swizzle * 8 // bw
+    if tiling_transform.tiling[-1] != expected_minor_tiling:
+      raise NotImplementedError(
+          "Minor tiling dimension does not fit swizzle: "
+          f" expected {expected_minor_tiling}, got {tiling_transform.tiling[-1]}"
+      )
 
-  if transposed != (permutation is not None):
-    raise ValueError(
-        "Either both the ref and the value are transposed or neither is."
-    )
+  x_smem, _, transforms = _handle_transforms(
+      ctx, ctx.avals_in[0], x_ref, transform_avals, transforms,
+      allow_peer_refs=True
+  )
+  del x_ref  # Don't use x_ref anymore. Use x_smem instead!
 
   is_signed = mgpu_utils.is_signed(dtype)
 
@@ -2126,21 +2171,6 @@ def _get_lowering_rule(
     case (gpu_core.UntilingTransform(tiling),):
       if len(tiling) != 2:
         raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
-      if swizzle is None:
-        raise NotImplementedError("Tiling without swizzle is not supported.")
-      bw = dtypes.itemsize_bits(ctx.avals_out[0].dtype)
-      expected_minor_tiling = swizzle * 8 // bw
-      if tiling[-1] != expected_minor_tiling:
-        raise NotImplementedError(
-            "Minor tiling dimension does not fit swizzle: "
-            f" expected {expected_minor_tiling}, got {tiling[-1]}"
-        )
-      if permutation is not None:
-        if permutation != (1, 0):
-          raise NotImplementedError(
-              f"Unsupported transpose permutation: {permutation}"
-          )
-        x_smem = mgpu.memref_transpose(x_smem, (1, 0, 3, 2))
       return mgpu.FragmentedArray.load_tiled(
           x_smem,
           is_signed=is_signed,
@@ -2152,7 +2182,6 @@ def _get_lowering_rule(
     case ():
       match ctx.out_layout_hint:
         case mgpu.WGStridedFragLayout(shape=shape, vec_size=vec_size):
-          assert permutation is None  # strided/transposed rejected above.
           ref_ty = ir.MemRefType(x_smem.type)
           if shape != tuple(ref_ty.shape):
             raise ValueError(
@@ -2168,7 +2197,6 @@ def _get_lowering_rule(
               vec_size=vec_size,
           )
         case None:
-          assert permutation is None  # strided/transposed rejected above.
           if swizzle is not None:
             raise NotImplementedError(
                 "Unsupported swizzle transform with strided layout"
@@ -2176,8 +2204,6 @@ def _get_lowering_rule(
           return mgpu.FragmentedArray.load_strided(x_smem, is_signed=is_signed)
         case _:
           assert isinstance(ctx.out_layout_hint, mgpu.TiledLayout)
-          if permutation is not None:
-            x_smem = mgpu.memref_transpose(x_smem, permutation)
           return mgpu.FragmentedArray.load_untiled(
               x_smem,
               is_signed=is_signed,
@@ -2235,27 +2261,14 @@ def _swap_lowering_rule(
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
     if ctx.avals_out[0].shape:
       raise NotImplementedError("Can only store scalars in warp-level lowering.")
-    i32 = ir.IntegerType.get_signless(32)
-    barrier = functools.partial(
-        nvvm_dialect.bar_warp_sync, arith_dialect.constant(i32, -1)
-    )
+    barrier = mgpu_utils.warp_barrier
   value = _ensure_fa(value, ctx.avals_in[1].dtype)
 
   if not isinstance(x_ref, ir.Value) and isinstance(x_ref, ir.MemRefType):
     raise TypeError(f"Can only store to references (got {x_ref}).")
   v_aval = ctx.avals_in[1]
   transforms = jax.tree.unflatten(tree, leaves)
-  transposed_value = value.layout in (
-      mgpu.WGMMA_TRANSPOSED_LAYOUT,
-      mgpu.TCGEN05_TRANSPOSED_LAYOUT,
-  )
   transform_avals = jax.tree.unflatten(tree, ctx.avals_in[2:])
-  assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
-  x_smem, _, transforms = _handle_transforms(
-      ctx, ctx.avals_in[0], x_ref, transform_avals, transforms,
-      handle_transposes=not transposed_value, allow_peer_refs=True
-  )
-  del x_ref  # Don't use x_ref anymore. Use x_smem instead!
 
   if ctx.module_ctx.auto_barriers:
     barrier()  # Make sure reads have completed before we write.
@@ -2263,19 +2276,45 @@ def _swap_lowering_rule(
   if transforms and isinstance(transforms[0], gpu_core.UnswizzleRef):
     swizzle = transforms[0].swizzle
     transforms = transforms[1:]
+    transform_avals = transform_avals[1:]
+  elif (
+      len(transforms) > 1
+      and isinstance(transforms[0], gpu_core.ExtractAliasedRef)
+      and isinstance(transforms[1], gpu_core.UnswizzleRef)
+  ):
+    swizzle = transforms[1].swizzle
+    transforms = [transforms[0], *transforms[2:]]
+    transform_avals = [transform_avals[0], *transform_avals[2:]]
   else:
     swizzle = None
 
-  if transforms and isinstance(transforms[-1], state_types.TransposeTransform):
-    permutation = transforms[-1].permutation
-    transforms = transforms[:-1]
-  else:
-    permutation = None
+  # We verify tiling against swizzling in memory before transposes flip it.
+  tiling_transform = None
+  if transforms and isinstance(transforms[0], gpu_core.UntilingTransform):
+    tiling_transform = transforms[0]
+  elif (
+      len(transforms) > 1
+      and isinstance(transforms[0], gpu_core.ExtractAliasedRef)
+      and isinstance(transforms[1], gpu_core.UntilingTransform)
+  ):
+    tiling_transform = transforms[1]
+  if tiling_transform is not None:
+    if swizzle is None:
+      raise NotImplementedError("Tiling without swizzle is not supported.")
+    bw = dtypes.itemsize_bits(v_aval.dtype)
+    expected_minor_tiling = swizzle * 8 // bw
+    if tiling_transform.tiling[-1] != expected_minor_tiling:
+      raise NotImplementedError(
+          "Minor tiling dimension does not fit swizzle: "
+          f" expected {expected_minor_tiling}, got {tiling_transform.tiling[-1]}"
+      )
 
-  if transposed_value != (permutation is not None):
-    raise ValueError(
-        "Either both the ref and the value are transposed or neither is."
-    )
+  assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
+  x_smem, _, transforms = _handle_transforms(
+      ctx, ctx.avals_in[0], x_ref, transform_avals, transforms,
+      allow_peer_refs=True
+  )
+  del x_ref  # Don't use x_ref anymore. Use x_smem instead!
 
   match transforms:
     case _ if math.prod(ctx.avals_out[0].shape) == 1:  # Scalar case.
@@ -2290,23 +2329,6 @@ def _swap_lowering_rule(
     case (gpu_core.UntilingTransform(tiling),):
       if len(tiling) != 2:
         raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
-      if swizzle is None:
-        raise NotImplementedError("Tiling without swizzle is not supported.")
-      bw = dtypes.itemsize_bits(v_aval.dtype)
-      expected_minor_tiling = swizzle * 8 // bw
-      if tiling[-1] != expected_minor_tiling:
-        raise NotImplementedError(
-            "Minor tiling dimension does not fit swizzle: "
-            f" expected {expected_minor_tiling}, got {tiling[-1]}"
-        )
-
-      if permutation is not None:
-        if permutation != (1, 0):
-          raise NotImplementedError(
-              f"Unsupported transpose permutation: {permutation}"
-          )
-        x_smem = mgpu.memref_transpose(x_smem, (1, 0, 3, 2))
-
       old_value = mgpu.FragmentedArray.load_tiled(
           x_smem,
           is_signed=mgpu_utils.is_signed(v_aval.dtype),
@@ -2318,8 +2340,6 @@ def _swap_lowering_rule(
     case ():
       match value.layout:
         case mgpu.TiledLayout():
-          if permutation is not None:
-            x_smem = mgpu.memref_transpose(x_smem, permutation)
           old_value = mgpu.FragmentedArray.load_untiled(
               x_smem,
               layout=value.layout,
@@ -2329,7 +2349,6 @@ def _swap_lowering_rule(
           )
           value.store_untiled(x_smem, swizzle=swizzle or 16, optimized=False)
         case _:
-          assert permutation is None  # strided/transposed rejected above.
           if swizzle is not None:
             raise NotImplementedError(
                 "Unsupported swizzle transform with strided layout"
@@ -2384,11 +2403,12 @@ def _swap_lowering_rule_wg(
 @register_lowering_rule(pjit.jit_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(pjit.jit_p, mgpu.LoweringSemantics.Warpgroup)
 @register_lowering_rule(pjit.jit_p, *gpu_core.LANExWARP_SEMANTICS)
+@register_lowering_rule(pjit.jit_p, *gpu_core.WGxWARP_SEMANTICS)
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **kwargs):
   if jaxpr.consts:
     raise NotImplementedError
   return lower_jaxpr_to_mosaic_gpu(
-      ctx.module_ctx, ctx.launch_ctx, jaxpr.jaxpr, args,
+      ctx.module_ctx, ctx.launch_ctx, jaxpr, args,
   )
 
 
@@ -2426,9 +2446,16 @@ def _concatenate_lowering_rule(ctx: LoweringRuleContext, *args, dimension):
   return mgpu.concatenate(arrays, axis=dimension)
 
 
+@register_lowering_rule(lax.concatenate_p, mgpu.LoweringSemantics.Warpgroup)
+def _concatenate_lowering_rule_wg(ctx: LoweringRuleContext, *args, dimension):
+  operands = [_ensure_ir_value(x, a.dtype) for x, a in zip(args, ctx.avals_in)]
+  return mgpu.dialect.vector_concat(operands, dimension)
+
+
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.select_n_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(lax.select_n_p, *gpu_core.WGxWARP_SEMANTICS)
 def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, *cases):
   if len(cases) != 2:
     raise NotImplementedError(
@@ -2502,6 +2529,9 @@ def _broadcast_in_dim_lowering_rule(
       candidates.append(tcgen05.fa_m64_collective_layout(y_aval.shape[-1]))
     for candidate in candidates:
       if len(candidate.base_tile_shape) != len(shape):
+        continue
+      # check if base_tile_shape is compatible with shape
+      if any(s % t != 0 for s, t in zip(shape, candidate.base_tile_shape)):
         continue
       if candidate.reduce(new_dims) == layout:
         if new_layout is None:
@@ -3101,7 +3131,12 @@ def _copysign_lowering_rule(ctx: LoweringRuleContext, x1, x2):
 
 @register_lowering_rule(lax.sign_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.sign_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(lax.sign_p, *gpu_core.LANExWARP_SEMANTICS)
+@register_lowering_rule(lax.sign_p, *gpu_core.WGxWARP_SEMANTICS)
 def _sign_lowering_rule(ctx: LoweringRuleContext, x):
+  if (ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp and
+      ctx.avals_in[0].shape):
+    raise ValueError("Warp-level sign is not supported for non-scalar inputs.")
   def sign(x):
     if jnp.issubdtype(x.dtype, jnp.floating):
       ones = lax.full(x.shape, 1.0, dtype=x.dtype)
@@ -3279,7 +3314,9 @@ def _reduce_sum_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes,
 
 
 @register_lowering_rule(lax.reduce_max_p, mgpu.LoweringSemantics.Warpgroup)
-def _reduce_max_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
+def _reduce_max_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes,
+                                 out_sharding):
+  del out_sharding
   [x_aval] = ctx.avals_in
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
     kind = vector_dialect.CombiningKind.MAXIMUMF
@@ -3296,7 +3333,9 @@ def _reduce_max_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
 
 
 @register_lowering_rule(lax.reduce_min_p, mgpu.LoweringSemantics.Warpgroup)
-def _reduce_min_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
+def _reduce_min_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes,
+                                 out_sharding):
+  del out_sharding
   [x_aval] = ctx.avals_in
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
     kind = vector_dialect.CombiningKind.MINIMUMF
@@ -3406,9 +3445,6 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
       w_idx = mgpu.warp_idx(sync=True)
       i32 = ir.IntegerType.get_signless(32)
       return arith_dialect.remui(w_idx, _ir_constant(4, i32))
-    raise ValueError(
-        "Named axes can only refer to the warp axis name inside of core_map."
-    )
   gpu_axis_names = ctx.module_ctx.axis_names
   jax_axis_names = getattr(ctx.module_ctx.mesh_info, "axis_names", ())
   if gpu_axis_names is None and not jax_axis_names:
@@ -3514,6 +3550,13 @@ def _debug_print_lowering_rule(
   return ()
 
 
+def _wgmma_fence_aligned():
+  void = ir.Type.parse("!llvm.void")
+  llvm_dialect.inline_asm(
+      void, [], "wgmma.fence.sync.aligned;", "", has_side_effects=True
+  )
+
+
 @register_lowering_rule(primitives.run_scoped_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(primitives.run_scoped_p, mgpu.LoweringSemantics.Warpgroup)
 def _run_scoped_lowering_rule(
@@ -3568,7 +3611,7 @@ def _run_scoped_lowering_rule(
           acc_type = ir.VectorType.get(aval.shape, dtype)
           acc = vector_dialect.broadcast(acc_type, zero)
           acc = mgpu.dialect.optimization_barrier([acc])
-          nvvm_dialect.wgmma_fence_aligned()
+          _wgmma_fence_aligned()
           input_refs.append(acc)
         should_discharge.append(True)
         continue
@@ -3637,10 +3680,11 @@ def _run_scoped_lowering_rule(
       should_discharge = [False] * len(consts) + should_discharge
       with config._check_vma(False):
         discharged_closed_jaxpr = discharge.discharge_state(
-            jax_core.ClosedJaxpr(no_const_jaxpr, ()),
+            no_const_jaxpr,
             should_discharge=should_discharge,
+            strip_memory_space=True,
         )
-        discharged_jaxpr, _ = discharged_closed_jaxpr.jaxpr, discharged_closed_jaxpr.consts
+        discharged_jaxpr, _ = discharged_closed_jaxpr, discharged_closed_jaxpr.consts
       new_input_vals = (*consts, *input_refs)
       outs = lower_jaxpr_to_mosaic_gpu(
           ctx.module_ctx,
@@ -3707,15 +3751,27 @@ def _run_state_lowering_rule(
 
   should_discharge = []
   new_input_vals = []
+  # `should_deref_acc` is used under lane lowering semantics, to figure out
+  # whether we need to return a `WGMMAAccumulator` or a `FragmentedArray` when
+  # encountering a `WGMMAAbstractAccumulatorRef` as input.
+  #
+  # We can't tell the difference under warpgroup lowering semantics, but we do
+  # not need to since we always return a `vector` anyway.
+  should_deref_acc = []
   for arg, v, out_aval in zip(args, jaxpr.invars, ctx.avals_out):
     aval = v.aval
     if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
       if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
         arg = mgpu.dialect.optimization_barrier([arg])
-        nvvm_dialect.wgmma_fence_aligned()
+        _wgmma_fence_aligned()
         new_input_vals.append(arg)
       else:
-        new_input_vals.append(mgpu.WGMMAAccumulator.from_registers(arg))
+        if isinstance(arg, mgpu.WGMMAAccumulator):
+          should_deref_acc.append(False)
+          new_input_vals.append(arg)  # pyrefly: ignore[bad-argument-type]
+        else:
+          should_deref_acc.append(True)
+          new_input_vals.append(mgpu.WGMMAAccumulator.from_registers(arg))
       should_discharge.append(True)
       assert isinstance(out_aval, jax_core.ShapedArray)
     else:
@@ -3728,17 +3784,27 @@ def _run_state_lowering_rule(
 
   with config._check_vma(False):
     discharged_closed_jaxpr = discharge.discharge_state(
-        jax_core.ClosedJaxpr(jaxpr, ()), should_discharge=should_discharge
+        jaxpr, should_discharge=should_discharge,
+        strip_memory_space=True
     )
-    discharged_jaxpr, new_consts = discharged_closed_jaxpr.jaxpr, discharged_closed_jaxpr.consts
+    discharged_jaxpr, new_consts = discharged_closed_jaxpr, discharged_closed_jaxpr.consts
   assert not new_consts
   outs = lower_jaxpr_to_mosaic_gpu(
       ctx.module_ctx, ctx.launch_ctx, discharged_jaxpr, new_input_vals, ()  # pyrefly: ignore[bad-argument-type]
   )
   # Await the accumulators and extract their final values.
-  nvvm_dialect.wgmma_wait_group_sync_aligned(0)
+  #
+  # Note: there may be accumulators that we have closed over and that should not
+  # technically not be dereferenced. That's not a big deal: since `run_state` is
+  # always used with at least one accumulator though, we need to await here
+  # anyway.
+  deref_acc = iter(should_deref_acc)
+  void = ir.Type.parse("!llvm.void")
+  llvm_dialect.inline_asm(
+      void, [], "wgmma.wait_group.sync.aligned 0;", "", has_side_effects=True,
+  )
   outs = [
-      out.value if isinstance(out, mgpu.WGMMAAccumulator) else out
+      out.value if isinstance(out, mgpu.WGMMAAccumulator) and next(deref_acc) else out
       for out in outs
   ]
   # Blend the discharge results with refs we closed over. I don't fully
@@ -3829,19 +3895,20 @@ def _lower_jaxpr_to_for_loop(
 def _scan_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
-    jaxpr: jax_core.ClosedJaxpr,
+    jaxpr: jax_core.Jaxpr,
     length: int,
     reverse: bool,
     unroll: int,
-    num_consts: int,
-    num_carry: int,
+    ft_in,
+    ft_out,
 ):
+  num_consts, num_carry, _ = (len(g) for g in ft_in.unpack())
   # Can only handle fori_loop-like scans.
   if reverse:
     raise NotImplementedError
   del reverse
 
-  jaxpr, jaxpr_consts = jaxpr.jaxpr, jaxpr.consts
+  jaxpr, jaxpr_consts = jaxpr, jaxpr.consts
   if jaxpr_consts:
     raise NotImplementedError
   del jaxpr_consts
@@ -3962,7 +4029,7 @@ def _while_lowering_rule(
   with ir.InsertionPoint.at_block_begin(before_block):
     cond_args = [*cond_consts, *carry_treedef.unflatten(before_block.arguments)]
     [cond] = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, cond_jaxpr.jaxpr, cond_args
+        ctx.module_ctx, ctx.launch_ctx, cond_jaxpr, cond_args
     )
     scf_dialect.condition(
         _ensure_ir_value(cond, *cond_jaxpr.out_avals), before_block.arguments
@@ -3972,7 +4039,7 @@ def _while_lowering_rule(
   with ir.InsertionPoint.at_block_begin(after_block):
     body_args = [*body_consts, *carry_treedef.unflatten(after_block.arguments)]
     loop_out = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, body_jaxpr.jaxpr, body_args
+        ctx.module_ctx, ctx.launch_ctx, body_jaxpr, body_args
     )
     loop_out = [*map(_ensure, loop_out, carry_avals)]
     if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
@@ -4022,7 +4089,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
 
   with ir.InsertionPoint(tmp_module.body):
     outs = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, branches[0].jaxpr, args
+        ctx.module_ctx, ctx.launch_ctx, branches[0], args
     )
     yielded_types = [
         v.type for v in jax.tree.leaves(_yielded_values(outs, ctx.avals_out))
@@ -4046,7 +4113,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
     block = region.blocks[0]
     with ir.InsertionPoint(block):
       outs = lower_jaxpr_to_mosaic_gpu(
-          ctx.module_ctx, ctx.launch_ctx, branch.jaxpr, args, consts=branch.consts
+          ctx.module_ctx, ctx.launch_ctx, branch, args, consts=branch.consts
       )
 
       yielded_leaves, yielded_treedef = jax.tree.flatten(_yielded_values(outs, ctx.avals_out))
@@ -4194,66 +4261,6 @@ def _isolate_from_above(
   return new_op
 
 
-@register_lowering_rule(pallas_core.core_map_p, mgpu.LoweringSemantics.Lane)
-@register_lowering_rule(pallas_core.core_map_p, mgpu.LoweringSemantics.Warpgroup)
-def _core_map_lowering_rule(
-    ctx: LoweringRuleContext,
-    *args,
-    jaxpr,
-    mesh,
-    **_,
-):
-  if not isinstance(mesh, gpu_core.WarpMesh):
-    raise NotImplementedError(f"Unsupported mesh: {mesh}")
-  # A core_map over a WarpMesh represents a fork/join over individual
-  # warps in a warpgroup.
-  if (ctx.module_ctx.warp_axis_name or
-      ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp):
-    raise LoweringError(
-        "Cannot nest core_maps. Already under core_map with warp_axis_name "
-        f"{ctx.module_ctx.warp_axis_name}.")
-  module_ctx = dataclasses.replace(
-      ctx.module_ctx,
-      warp_axis_name=mesh.axis_name,
-      primitive_semantics=gpu_core.PrimitiveSemantics.Warp,
-  )
-  for aval_in in ctx.avals_in:
-    if isinstance(aval_in, jax_core.ShapedArray) and aval_in.shape:
-      raise LoweringError(
-        "Can only close over scalars and Refs when using core_map with "
-        f"WarpMesh. Found array of shape {aval_in}."
-      )
-  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
-    # We allow the warps to schedule async copies without synchronizing with
-    # other warps, so we need to add a barrier here to make sure all reads and
-    # writes have completed.
-    if ctx.module_ctx.auto_barriers:
-      mgpu.warpgroup_barrier()
-    _ = lower_jaxpr_to_mosaic_gpu(
-        module_ctx,
-        ctx.launch_ctx,
-        jaxpr,
-        args=(),
-        consts=args,
-    )
-    if ctx.module_ctx.auto_barriers:
-      # We need to ensure that any effects produced by one warp
-      # (e.g. async copies) are observable by all other warps.
-      mgpu.warpgroup_barrier()
-  else:
-    warp_map_op = mgpu.dialect.WarpMapOp(operands=[])
-    with ir.InsertionPoint(warp_map_op.body):
-      _ = lower_jaxpr_to_mosaic_gpu(
-          module_ctx,
-          ctx.launch_ctx,
-          jaxpr,
-          args=(),
-          consts=args,
-      )
-    _isolate_from_above(warp_map_op)
-  return []
-
-
 @register_lowering_rule(mpmd.mpmd_map_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(mpmd.mpmd_map_p, mgpu.LoweringSemantics.Warpgroup)
 def _mpmd_map_lowering_rule(
@@ -4344,7 +4351,7 @@ def _bcast(
   return x, y
 
 
-def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
+def _ensure_fa(x: object, dtype: jax.typing.DTypeLike) -> mgpu.FragmentedArray:
   if isinstance(x, mgpu.FragmentedArray):
     assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
     return x
@@ -4395,20 +4402,20 @@ def _bcast_wg(
   return x, y
 
 
-def _ensure_ir_value(x: Any, dtype: jnp.dtype) -> ir.Value:
+def _ensure_ir_value(x: Any, dtype: jax.typing.DTypeLike) -> ir.Value:
+  mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
   if isinstance(x, ir.Value):
-    mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
     if isinstance(x.type, ir.VectorType):
       assert ir.VectorType(x.type).element_type == mlir_dtype
     else:
       assert x.type == mlir_dtype, (x.type, mlir_dtype)
     return x
   elif isinstance(x, mgpu.FragmentedArray):
-    assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
+    assert x.mlir_dtype == mlir_dtype
     if isinstance(x.layout, mgpu.WGSplatFragLayout):
       return x.registers.item()
     raise NotImplementedError(f"Unsupported layout: {x.layout}")
-  return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
+  return _ir_constant(x, mlir_dtype)
 
 
 def _device_id_to_logical(
@@ -4626,6 +4633,38 @@ def _check_lowering_rule(ctx: LoweringRuleContext, *err_args, err_tree, debug):
   not_pred = arith_dialect.xori(pred, minus_one)
   cf_dialect.assert_(not_pred, exception.fmt_string)
   return []
+
+
+@register_lowering_rule(pjit.relayout_p, mgpu.LoweringSemantics.Lane)
+def _relayout_lowering_lane(
+    ctx: LoweringRuleContext, x, *, dst_layout
+):
+  del ctx, x, dst_layout
+  raise NotImplementedError(
+      "relayout_p is not supported with Lane semantics."
+  )
+
+
+@register_lowering_rule(pjit.relayout_p, mgpu.LoweringSemantics.Warpgroup)
+def _relayout_lowering_wg(
+    ctx: LoweringRuleContext, x, *, dst_layout
+):
+  if dst_layout is jax_layout.AutoLayout:
+    return x
+  layout = fa.TiledLayout(
+      dst_layout.tiling,
+      dst_layout.warp_dims,
+      dst_layout.lane_dims,
+      dst_layout.vector_dim,
+  )
+  if ctx.avals_in[0].ndim == 0:  # scalar case
+    if layout != mgpu.WGSplatFragLayout():
+      raise ValueError(
+          "Only plgpu.Layout.WG_SPLAT is supported for scalar values."
+      )
+    return x
+  return mgpu.dialect.layout_cast(x, mgpu.to_layout_attr(layout))
+
 
 @register_lowering_rule(gpu_core.layout_cast_p, mgpu.LoweringSemantics.Lane)
 def _layout_cast_lowering(ctx: LoweringRuleContext, x, *, new_layout):

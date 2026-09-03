@@ -362,11 +362,9 @@ void BuildConfigSubmodule(nanobind::module_& m) {
 
   config_module.attr("unset") = GlobalConfigState::Instance().unset();
 
-  config_module.attr("_T") = nb::type_var("_T");
-
   nb::class_<Config> config(config_module, "Config",
                             nb::type_slots(Config::slots_), nb::is_generic(),
-                            nb::sig("class Config(typing.Generic[_T])"));
+                            nb::sig("class Config[T]"));
   config.def(nb::init<std::string, nb::object, bool, bool>(), nb::arg("name"),
              nb::arg("value").none(), nb::kw_only(),
              nb::arg("include_in_jit_key") = false,
@@ -376,25 +374,24 @@ void BuildConfigSubmodule(nanobind::module_& m) {
         "def __init__("
         "self, "
         "name: str, "
-        "value: _T, *, "
+        "value: T, *, "
         "include_in_jit_key: bool = ..., "
         "include_in_trace_context: bool = ..."
         ") -> None"
                  // clang-format on
                  ));
-  config.def_prop_ro("value", &Config::Get, nb::sig("def value(self) -> _T"));
+  config.def_prop_ro("value", &Config::Get, nb::sig("def value(self) -> T"));
   config.def_prop_ro("name", &Config::Name);
-  // TODO(slebedev): All getters and setters should be using _T.
   config.def("get_local", &Config::GetLocal,
-             nb::sig("def get_local(self) -> typing.Any"));
+             nb::sig("def get_local(self) -> T"));
   config.def("get_global", &Config::GetGlobal,
-             nb::sig("def get_global(self) -> _T"));
+             nb::sig("def get_global(self) -> T"));
   config.def("set_local", &Config::SetLocal, nb::arg("value").none(),
-             nb::sig("def set_local(self, value: Any | None) -> None"));
+             nb::sig("def set_local(self, value: T) -> None"));
   config.def("swap_local", &Config::SwapLocal, nb::arg("value").none(),
-             nb::sig("def swap_local(self, value: Any | None) -> Any"));
+             nb::sig("def swap_local(self, value: T) -> T"));
   config.def("set_global", &Config::SetGlobal, nb::arg("value").none(),
-             nb::sig("def set_global(self, value: Any | None) -> None"));
+             nb::sig("def set_global(self, value: T) -> None"));
 
   config_module.def("trace_context", &TraceContext);
   config_module.def("trace_context_names", &TraceContextNames);

@@ -31,12 +31,12 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
+#include "absl/log/absl_check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/nb_defs.h"
 #include "nanobind/stl/function.h"  // IWYU pragma: keep
@@ -60,9 +60,11 @@ limitations under the License.
 #include "xla/pjrt/cpu/cpu_client.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/distributed.h"
+#include "xla/pjrt/distributed/mtls.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/distributed/service.h"
 #include "xla/pjrt/pjrt_compiler.h"
+#include "xla/pjrt/pjrt_topology_description_registry.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
 #include "xla/pjrt/status_casters.h"
@@ -125,6 +127,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/logging.h"  // IWYU pragma: keep
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
@@ -277,6 +280,33 @@ void translate_xla_runtime_error(const std::exception_ptr& p, void*) {
       py_err.restore();
     }
   }
+}
+
+// Returns an mTLS configuration for the coordination service if any of the
+// mtls_* arguments is set, or std::nullopt (insecure credentials) otherwise.
+std::optional<xla::MtlsConfig> BuildCoordinationMtlsConfig(
+    const std::optional<std::string>& mtls_cert_file,
+    const std::optional<std::string>& mtls_key_file,
+    const std::optional<std::string>& mtls_ca_file,
+    const std::optional<std::string>& mtls_peer_uri_prefix) {
+  if (!mtls_cert_file.has_value() && !mtls_key_file.has_value() &&
+      !mtls_ca_file.has_value() && !mtls_peer_uri_prefix.has_value()) {
+    return std::nullopt;
+  }
+  xla::MtlsConfig config;
+  if (mtls_cert_file.has_value()) {
+    config.cert_file = *mtls_cert_file;
+  }
+  if (mtls_key_file.has_value()) {
+    config.key_file = *mtls_key_file;
+  }
+  if (mtls_ca_file.has_value()) {
+    config.ca_file = *mtls_ca_file;
+  }
+  if (mtls_peer_uri_prefix.has_value()) {
+    config.peer_uri_prefix = *mtls_peer_uri_prefix;
+  }
+  return config;
 }
 
 }  // namespace
@@ -500,6 +530,13 @@ NB_MODULE(_jax, m) {
       },
       nb::arg("platform_name"), nb::arg("library_path").none() = std::nullopt,
       nb::arg("c_api").none() = std::nullopt);
+  m.def(
+      "get_pjrt_plugin",
+      [](std::string platform_name) -> nb::capsule {
+        const PJRT_Api* api = xla::ValueOrThrow(pjrt::PjrtApi(platform_name));
+        return nb::capsule(absl::bit_cast<void*>(api), "pjrt_c_api");
+      },
+      nb::arg("platform_name"));
   m.def("pjrt_plugin_initialized", [](std::string platform_name) -> bool {
     return xla::ValueOrThrow(pjrt::IsPjrtPluginInitialized(platform_name));
   });
@@ -566,9 +603,14 @@ NB_MODULE(_jax, m) {
         [](nb::capsule c_api, std::string topology_name,
            const absl::flat_hash_map<std::string, xla::PjRtValueType>& options)
             -> std::shared_ptr<xla::ifrt::Topology> {
-          if (std::string_view(c_api.name()) != "pjrt_c_api") {
+          if (c_api.name() == nullptr ||
+              std::string_view(c_api.name()) != "pjrt_c_api") {
             throw nb::value_error(
                 "Argument to get_c_api_topology was not a pjrt_c_api capsule.");
+          }
+          if (c_api.data() == nullptr) {
+            throw nb::value_error(
+                "Argument to get_c_api_topology contained a null pointer.");
           }
           return std::make_shared<xla::ifrt::PjRtTopology>(xla::ValueOrThrow(
               xla::GetCApiTopology(static_cast<const PJRT_Api*>(c_api.data()),
@@ -597,7 +639,7 @@ NB_MODULE(_jax, m) {
               client->ifrt_client()->GetTopologyForDevices(device_list));
         });
 
-  TF_CHECK_OK(PyArray::Register(m));
+  ABSL_CHECK_OK(PyArray::Register(m));
   InitCanonicalizeValueHandlers();
   PyDeviceList::Register(m);
   RegisterSharding(m);
@@ -896,7 +938,12 @@ NB_MODULE(_jax, m) {
       [](std::string address, int num_nodes,
          std::optional<int> heartbeat_timeout,
          std::optional<int> cluster_register_timeout,
-         std::optional<int> shutdown_timeout, std::optional<bool> recoverable)
+         std::optional<int> shutdown_timeout, std::optional<bool> recoverable,
+         std::optional<std::string> mtls_cert_file,
+         std::optional<std::string> mtls_key_file,
+         std::optional<std::string> mtls_ca_file,
+         std::optional<std::string> mtls_peer_uri_prefix,
+         std::optional<bool> verify_secure_credentials)
           -> std::unique_ptr<xla::DistributedRuntimeService> {
         xla::CoordinationServiceImpl::Options options;
         options.num_nodes = num_nodes;
@@ -913,6 +960,16 @@ NB_MODULE(_jax, m) {
         if (recoverable.has_value()) {
           options.recoverable = *recoverable;
         }
+        std::optional<xla::MtlsConfig> mtls_config =
+            BuildCoordinationMtlsConfig(mtls_cert_file, mtls_key_file,
+                                        mtls_ca_file, mtls_peer_uri_prefix);
+        if (mtls_config.has_value()) {
+          options.credentials =
+              xla::ValueOrThrow(xla::GetMtlsServerCredentials(*mtls_config));
+        }
+        if (verify_secure_credentials.has_value()) {
+          options.verify_secure_credentials = *verify_secure_credentials;
+        }
         std::unique_ptr<xla::DistributedRuntimeService> service =
             xla::ValueOrThrow(GetDistributedRuntimeService(address, options));
         return service;
@@ -921,7 +978,12 @@ NB_MODULE(_jax, m) {
       nb::arg("heartbeat_timeout").none() = std::nullopt,
       nb::arg("cluster_register_timeout").none() = std::nullopt,
       nb::arg("shutdown_timeout").none() = std::nullopt,
-      nb::arg("recoverable").none() = std::nullopt);
+      nb::arg("recoverable").none() = std::nullopt,
+      nb::arg("mtls_cert_file").none() = std::nullopt,
+      nb::arg("mtls_key_file").none() = std::nullopt,
+      nb::arg("mtls_ca_file").none() = std::nullopt,
+      nb::arg("mtls_peer_uri_prefix").none() = std::nullopt,
+      nb::arg("verify_secure_credentials").none() = std::nullopt);
 
   m.def(
       "get_distributed_runtime_client",
@@ -930,7 +992,12 @@ NB_MODULE(_jax, m) {
          std::optional<int> heartbeat_timeout,
          std::optional<nb::callable> missed_heartbeat_callback,
          std::optional<bool> shutdown_on_destruction,
-         std::optional<bool> use_compression)
+         std::optional<bool> use_compression,
+         std::optional<std::string> mtls_cert_file,
+         std::optional<std::string> mtls_key_file,
+         std::optional<std::string> mtls_ca_file,
+         std::optional<std::string> mtls_peer_uri_prefix,
+         std::optional<bool> verify_secure_credentials)
           -> std::shared_ptr<xla::DistributedRuntimeClient> {
         bool compression = use_compression.value_or(false);
         xla::DistributedRuntimeClient::Options options;
@@ -955,6 +1022,16 @@ NB_MODULE(_jax, m) {
         if (shutdown_on_destruction.has_value()) {
           options.shutdown_on_destruction = *shutdown_on_destruction;
         }
+        std::optional<xla::MtlsConfig> mtls_config =
+            BuildCoordinationMtlsConfig(mtls_cert_file, mtls_key_file,
+                                        mtls_ca_file, mtls_peer_uri_prefix);
+        if (mtls_config.has_value()) {
+          options.credentials =
+              xla::ValueOrThrow(xla::GetMtlsClientCredentials(*mtls_config));
+        }
+        if (verify_secure_credentials.has_value()) {
+          options.verify_secure_credentials = *verify_secure_credentials;
+        }
         return GetDistributedRuntimeClient(address, options, compression);
       },
       nb::arg("address"), nb::arg("node_id"),
@@ -964,7 +1041,12 @@ NB_MODULE(_jax, m) {
       nb::arg("heartbeat_timeout").none() = std::nullopt,
       nb::arg("missed_heartbeat_callback").none() = std::nullopt,
       nb::arg("shutdown_on_destruction").none() = std::nullopt,
-      nb::arg("use_compression").none() = std::nullopt);
+      nb::arg("use_compression").none() = std::nullopt,
+      nb::arg("mtls_cert_file").none() = std::nullopt,
+      nb::arg("mtls_key_file").none() = std::nullopt,
+      nb::arg("mtls_ca_file").none() = std::nullopt,
+      nb::arg("mtls_peer_uri_prefix").none() = std::nullopt,
+      nb::arg("verify_secure_credentials").none() = std::nullopt);
 
   m.def("collect_garbage", []() { GlobalPyRefManager()->CollectGarbage(); });
 
@@ -983,7 +1065,7 @@ NB_MODULE(_jax, m) {
   nb::class_<xla::ifrt::Topology>(m, "DeviceTopology")
       .def("_make_compile_only_devices",
            [](std::shared_ptr<xla::ifrt::Topology> topology) {
-             if (!llvm::isa<xla::ifrt::PjRtTopology>(*topology)) {
+             if (!xla::ifrt::isa<xla::ifrt::PjRtTopology>(*topology)) {
                throw xla::XlaRuntimeError("Only PjRtTopologies are supported.");
              }
              return CompileOnlyPyClient::Make(
@@ -991,6 +1073,42 @@ NB_MODULE(_jax, m) {
                             topology))
                  ->Devices();
            })
+      .def(
+          "serialize",
+          [](const xla::ifrt::Topology& topology) -> nb::bytes {
+            const auto* pjrt_topology =
+                dynamic_cast<const xla::ifrt::PjRtTopology*>(&topology);
+            if (pjrt_topology == nullptr) {
+              throw xla::XlaRuntimeError(
+                  "Only PjRtTopologies can be serialized.");
+            }
+            const auto& description = pjrt_topology->description();
+            if (description == nullptr) {
+              throw xla::XlaRuntimeError(
+                  "Topology description is null; cannot serialize.");
+            }
+            auto proto = xla::ValueOrThrow(description->ToProto());
+            std::string serialized = proto.SerializeAsString();
+            return nb::bytes(serialized.data(), serialized.size());
+          },
+          "Serializes the DeviceTopology to a PjRtTopologyDescriptionProto "
+          "bytes payload.")
+      .def_static(
+          "deserialize",
+          [](nb::bytes serialized) -> std::shared_ptr<xla::ifrt::Topology> {
+            xla::PjRtTopologyDescriptionProto proto;
+            if (!proto.ParseFromArray(serialized.data(),
+                                      static_cast<int>(serialized.size()))) {
+              throw nb::value_error(
+                  "Failed to parse PjRtTopologyDescriptionProto from "
+                  "serialized bytes.");
+            }
+            return std::make_shared<xla::ifrt::PjRtTopology>(xla::ValueOrThrow(
+                xla::PjRtTopologyDescriptionFromProto(proto)));
+          },
+          nb::arg("serialized"),
+          "Deserializes a DeviceTopology from a PjRtTopologyDescriptionProto "
+          "bytes payload.")
       .def_prop_ro("platform",
                    [](xla::ifrt::Topology& topology) {
                      return topology.platform_name();

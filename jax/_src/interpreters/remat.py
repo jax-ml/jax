@@ -36,32 +36,35 @@ zip = safe_zip
 #  [ ] allow NotAvailable sentinels
 #  [ ] primal-output-to-residual forwarding
 
-def remat_transform(policy, f, *args):
+def remat_transform(policy, f, *args, custom_vjp_rules):
   dbg = api_util.debug_info("remat", f, args, {})
   with core.take_current_trace() as parent_trace:
     jaxpr_trace = pe.DynamicJaxprTrace(None)
     jaxpr_trace.tag = core.TraceTag()
-    trace = RematTrace(parent_trace, jaxpr_trace, policy)
-    args_ft = ft.flatten_static_argnums_argnames(args, {}, (), ())
+    trace = RematTrace(parent_trace, jaxpr_trace, policy, custom_vjp_rules)
+    args_ft, _ = ft.flatten_args(*args).unpack()
     in_tracers = args_ft.map(
         lambda x: RematTracer(trace, x, jaxpr_trace.new_arg(typeof(x), None)))  # type: ignore # noqa F821
     with core.set_current_trace(trace):
-      args, kwargs = in_tracers.unflatten()
-      ans_pytree = f(*args, **kwargs)
+      args = in_tracers.unflatten()
+      ans_pytree = f(*args)
       dbg = dbg.set_result_paths(ans_pytree)
       ans_ft = ft.flatten(ans_pytree)
-      del ans_pytree, args, kwargs
+      del ans_pytree, args
     out_ft, out_tracer_ft = ans_ft.map(trace.to_val_tracer_pair).unzip2()
     src = source_info_util.current()
     out_tracer_ft = out_tracer_ft.map(partial(jaxpr_trace.to_jaxpr_tracer, source_info=src))
     jaxpr, res = jaxpr_trace.to_jaxpr(list(out_tracer_ft), dbg, src)
     in_tree, out_tree = args_ft.tree, out_ft.tree
     del trace, in_tracers, out_tracer_ft
-  def f_rem(res, *args):
-    args_flat = tree_leaves_checked(in_tree, (args, {}))
-    out_flat = core.eval_jaxpr(jaxpr, res, *args_flat)
-    return tree_unflatten(out_tree, out_flat)
-  return out_ft.unflatten(), Partial(f_rem, map(reduce_precision, res))
+  rem = Partial(partial(_f_rem, jaxpr, in_tree, out_tree),
+                map(reduce_precision, res))
+  return out_ft.unflatten(), rem
+
+def _f_rem(jaxpr, in_tree, out_tree, res, *args):
+  args_flat = tree_leaves_checked(in_tree, args)
+  out_flat = core.eval_jaxpr(jaxpr, res, *args_flat)
+  return tree_unflatten(out_tree, out_flat)
 
 class RematTracer(core.Tracer['RematTrace']):
   _trace: RematTrace
@@ -72,12 +75,14 @@ class RematTracer(core.Tracer['RematTrace']):
     self.tracer = jaxpr_tracer
 
 class RematTrace(core.Trace):
-  def __init__(self, parent_trace, jaxpr_trace, policy):
+  def __init__(self, parent_trace, jaxpr_trace, policy, custom_vjp_rules):
     super().__init__()
     self.parent_trace = parent_trace
     self.jaxpr_trace = jaxpr_trace
     self.policy = policy
     self.requires_low = False
+    # flag to handle checkpoint_name calls in custom_vjp fwd w/o inf recursion
+    self.custom_vjp_rules = custom_vjp_rules
 
   tag = property(lambda self: self.jaxpr_trace.tag)
 
@@ -96,7 +101,7 @@ class RematTrace(core.Trace):
     in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
     if prim in rules:
       with core.set_current_trace(self.parent_trace):
-        out_primal, rem = rules[prim](self.policy, *in_vals, **params)
+        out_primal, rem = rules[prim](self, *in_vals, **params)
       with core.set_current_trace(self.jaxpr_trace):
         out_primal2 = rem(*in_vals2)
     else:  # default: full remat
@@ -109,14 +114,11 @@ class RematTrace(core.Trace):
     else:
       return RematTracer(self, out_primal, out_primal2)
 
-  def process_call(self, call_primitive, f, tracers, params):
-    in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
-    raise NotImplementedError  # TODO remat_subtrace...
-
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
     with core.set_current_trace(self.parent_trace):
-      out_primal = fun.call_wrapped(*in_vals)
+      out_primal = prim.bind(*in_vals, subfuns=(fun, jvp),
+                             symbolic_zeros=symbolic_zeros)
     with core.set_current_trace(self.jaxpr_trace):
       out_primal2 = prim.bind(*in_vals2, subfuns=(fun, jvp),
                               symbolic_zeros=symbolic_zeros)
@@ -125,19 +127,20 @@ class RematTrace(core.Trace):
   def process_custom_vjp_call(self, prim, f, fwd, bwd, tracers, /, *, out_trees, symbolic_zeros):
     in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
     with core.set_current_trace(self.parent_trace):
-      out_primal = f.call_wrapped(*in_vals)
+      out_primal = prim.bind(*in_vals, subfuns=(f, fwd, bwd),
+                             out_trees=out_trees, symbolic_zeros=symbolic_zeros)
     with core.set_current_trace(self.jaxpr_trace):
       out_primal2 = prim.bind(*in_vals2, subfuns=(f, fwd, bwd),
                               out_trees=out_trees, symbolic_zeros=symbolic_zeros)
     return map(partial(RematTracer, self), out_primal, out_primal2)
 
 def remat_subtrace(f: Callable, tag: core.TraceTag, policy,
-                   debug_info: core.DebugInfo, args):
+                   debug_info: core.DebugInfo, args, custom_vjp_rules):
   source_info = source_info_util.current()
   with core.take_current_trace() as parent_trace:
     rem_trace = pe.DynamicJaxprTrace(debug_info, auto_dce=True)
     rem_trace.tag = tag
-    trace = RematTrace(parent_trace, rem_trace, policy)
+    trace = RematTrace(parent_trace, rem_trace, policy, custom_vjp_rules)
     tracers = [RematTracer(trace, x, rem_trace.new_arg(typeof(x), source_info))
                for x in args]
     with core.set_current_trace(trace, check_leaks=True):
@@ -170,31 +173,44 @@ rules: dict[core.Primitive, Callable] = {}
 reduce_precision_handlers: dict[type, Callable] = {}
 
 
-def remat_jaxpr(jaxpr, policy):
-  return _remat_jaxpr(jaxpr, policy)
+def remat_jaxpr(
+    jaxpr, policy, custom_vjp_rules, allow_fwds
+) -> tuple[core.Jaxpr, core.Jaxpr, list[int | None]]:
+  n = len(jaxpr.outvars)
+  if type(allow_fwds) is bool:
+    allow_fwds = (allow_fwds,) * n
+  assert len(allow_fwds) == n
+  return _remat_jaxpr(jaxpr, policy, custom_vjp_rules, tuple(allow_fwds))
 
 @weakref_lru_cache
-def _remat_jaxpr(jaxpr, policy):
-  dbg = jaxpr.jaxpr.debug_info
+def _remat_jaxpr(jaxpr, policy, custom_vjp_rules, allow_fwds):
+  dbg = jaxpr.debug_info
   fwd_trace = pe.DynamicJaxprTrace(dbg)
   rem_trace = pe.DynamicJaxprTrace(dbg, auto_dce=True)
   rem_trace.tag = core.TraceTag()
-  trace = RematTrace(fwd_trace, rem_trace, policy)
+  trace = RematTrace(fwd_trace, rem_trace, policy, custom_vjp_rules)
   src = source_info_util.current()
 
   def new_arg(a):
     return RematTracer(trace, fwd_trace.new_arg(a, src), rem_trace.new_arg(a, src))  # noqa: F821
 
-  tracers = map(new_arg, jaxpr.in_aval_qdds)
+  tracers = map(new_arg, jaxpr.in_avals)
   with core.set_current_trace(trace, check_leaks=True):
-    ans = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *tracers)
+    ans = core.eval_jaxpr(jaxpr, jaxpr.consts, *tracers)
     out_primals, out_rem = unzip2(map(trace.to_val_tracer_pair, ans))
     del trace, ans, new_arg, tracers
 
   out_rem = [rem_trace.to_jaxpr_tracer(x, source_info=src) for x in out_rem]
   rem_jaxpr_, rem_consts = rem_trace.to_jaxpr(out_rem, dbg.with_unknown_names(), src)
-  rem_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(rem_jaxpr_))
+  rem_jaxpr = pe.convert_constvars_jaxpr(rem_jaxpr_)
   rem_trace.invalidate()
+
+  # Residuals that are just primal outputs needn't be returned again by the
+  # fwd jaxpr; the caller passes its own copies of the primal outputs for
+  # them, using fwds as the wiring.
+  id_map = {id(x): i for i, (x, a) in enumerate(zip(out_primals, allow_fwds)) if a}
+  fwds = [id_map.get(id(c)) for c in rem_consts]
+  rem_consts = [c for c, f in zip(rem_consts, fwds) if f is None]
 
   rem_consts = map(partial(fwd_trace.to_jaxpr_tracer, source_info=src), rem_consts)
   out_primals = [fwd_trace.to_jaxpr_tracer(x, source_info=src) for x in out_primals]
@@ -202,5 +218,4 @@ def _remat_jaxpr(jaxpr, policy):
       [*out_primals, *rem_consts], dbg.with_unknown_names(), src)
   fwd_trace.invalidate()
 
-  fwd_jaxpr = core.ClosedJaxpr(fwd_jaxpr_, fwd_consts)
-  return fwd_jaxpr, rem_jaxpr, len(rem_consts)
+  return fwd_jaxpr_.with_consts(fwd_consts), rem_jaxpr, fwds

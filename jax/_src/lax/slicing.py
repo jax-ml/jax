@@ -45,7 +45,7 @@ from jax._src.lax.utils import (_argnum_weak_type, input_dtype,
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.named_sharding import NamedSharding
-from jax._src.partition_spec import PartitionSpec as P
+from jax._src.partition_spec import PartitionSpec as P, UnreducedKind
 from jax._src.typing import Array, ArrayLike, Shape
 from jax._src.state.indexing import ds
 from jax._src.util import safe_map, safe_zip
@@ -1383,6 +1383,9 @@ def _get_sub_spec_size(mesh, sub_spec):
 def _get_sharding_for_varying_out_shape(out_shape, operand, name):
   """Returns a sharding when out_shape may not be the same as operand shape"""
   mesh = operand.sharding.mesh
+  if not out_shape or all(o == 1 for o in out_shape):
+    return NamedSharding(mesh, P())
+
   for op_sh, out_sh, op_spec in safe_zip(
       operand.shape, out_shape, operand.sharding.spec.partitions):
     if (op_sh != out_sh and op_spec is not None and
@@ -1403,7 +1406,9 @@ def _get_sharding_for_varying_out_shape(out_shape, operand, name):
   return operand.sharding
 
 def _slice_ur_rule(operand, *, start_indices, limit_indices, strides):
-  return core.getu(operand), core.getr(operand)
+  out_unreduced = core.getu(operand)
+  kind = UnreducedKind.sum if out_unreduced else None
+  return out_unreduced, core.getr(operand), kind
 
 def _slice_sharding_rule(operand, *, start_indices, limit_indices, strides):
   # TODO(yashkatariya): Once JAX supports uneven sharding at the top level,
@@ -1428,6 +1433,7 @@ def _slice_transpose_fancy(out_ct, operand, *, start_indices, limit_indices, str
   if type(out_ct) is ad_util.Zero or isinstance(operand, ad.NullAccum):
     return
   if isinstance(operand, ad.RefAccum):
+    strides = (1,) * len(start_indices) if strides is None else strides
     slices = map(_slice, start_indices, limit_indices, strides)
     assert operand.ref is not None
     operand.ref.addupdate(out_ct, tuple(slices))
@@ -1523,7 +1529,7 @@ def _dynamic_slice_ur_rule(operand, *starts_and_dyn_sizes, slice_sizes):
     raise NotImplementedError(
         'unreduced rule for dynamic_slice is not implemented. Please'
         ' file an issue at https://github.com/jax-ml/jax/issues')
-  return frozenset(), core.getr(operand)
+  return frozenset(), core.getr(operand), None
 
 def _dynamic_slice_dtype_rule(operand, *starts_and_dyn_sizes, slice_sizes):
   start_indices, dyn = util.split_list(starts_and_dyn_sizes, [operand.ndim])
@@ -1547,10 +1553,12 @@ def _dynamic_slice_transpose_fancy(out_ct, operand, *start_indices, slice_sizes)
     return
   if isinstance(operand, ad.RefAccum):
     assert operand.ref is not None
-    operand.ref.addupdate(out_ct, tuple(map(ds, start_indices, slice_sizes)))
+    operand.ref.addupdate(out_ct, tuple(map(ds, start_indices, slice_sizes)))  # pyrefly: ignore[bad-argument-type]
   else:
+    # use out_ct's dtype, not operand_aval's: cotangents can flow in a
+    # different (e.g. higher-precision) dtype than the primal
     operand_aval, = lax_utils.ensure_shaped(operand.aval)
-    zeros = lax.full(operand_aval.shape, 0, operand_aval.dtype,
+    zeros = lax.full(operand_aval.shape, 0, typeof(out_ct).dtype,
                      sharding=operand_aval.sharding)
     zeros = core.pvary(zeros, tuple(operand_aval.mat.varying))
     operand.accum(dynamic_update_slice_p.bind(zeros, out_ct, *start_indices))
@@ -1664,7 +1672,8 @@ def _dus_unreduced_rule(operand, update):
         " same axes. Got operand sharding"
         f" {operand.str_short(mesh_axis_types=True)} and update sharding"
         f" {update.str_short(mesh_axis_types=True)}.")
-  return core.getu(operand)
+  out_u = core.getu(operand)
+  return out_u, UnreducedKind.sum if out_u else None
 
 def _dus_reduced_rule(operand, update):
   if core.getr(operand) != core.getr(update):
@@ -1676,7 +1685,8 @@ def _dus_reduced_rule(operand, update):
   return core.getr(operand)
 
 def _dynamic_update_slice_ur_rule(operand, update, *start_indices):
-  return _dus_unreduced_rule(operand, update), _dus_reduced_rule(operand, update)
+  out_u, kind = _dus_unreduced_rule(operand, update)
+  return out_u, _dus_reduced_rule(operand, update), kind
 
 def _dynamic_update_slice_dtype_rule(operand, update, *start_indices):
   lax.check_same_dtypes("dynamic_update_slice", operand, update)
@@ -2024,8 +2034,8 @@ def _gather_spec_computation(operand, indices, dimension_numbers, slice_sizes):
   start_indices_batching_dims = dimension_numbers.start_indices_batching_dims
   output_shape_rank = len(offset_dims) + indices.ndim - 1
 
-  operand_spec = operand.sharding.spec
-  indices_spec = list(indices.sharding.spec)
+  operand_spec = operand.sharding.spec.partitions
+  indices_spec = list(indices.sharding.spec.partitions)
 
   if (all(s is None for s in operand_spec) and
       all(s is None for s in indices_spec)):
@@ -2116,6 +2126,25 @@ def _gather_sharding_rule(operand, indices, *, dimension_numbers,
         f" {operand=}, {indices=}")
   return NamedSharding(out_mesh, out_spec)
 
+
+def _gather_reduced_rule(operand, indices):
+  if core.getr(indices):
+    raise core.ShardingTypeError(
+        "gather indices cannot be reduced. Got indices sharding"
+        f" {indices.str_short(mesh_axis_types=True)}.")
+  out_reduced = core.getr(operand)
+  if out_reduced and not all(s is None for s in indices.sharding.spec):
+    raise NotImplementedError
+  return out_reduced
+
+def _gather_ur_rule(operand, indices, **kwargs):
+  if core.getu(operand) or core.getu(indices):
+    raise NotImplementedError(
+        "unreduced rule for gather is not implemented. Please file an issue at"
+        " https://github.com/jax-ml/jax/issues")
+  return frozenset(), _gather_reduced_rule(operand, indices), None
+
+
 def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
                  unique_indices, indices_are_sorted, fill_value,
                  output_shape):
@@ -2162,28 +2191,68 @@ def _gather_jvp_rule(g, operand, indices, *, dimension_numbers,
                 indices_are_sorted=indices_are_sorted, mode=mode,
                 fill_value=0)
 
-def _gather_transpose_rule(t, operand, indices, *, dimension_numbers,
-                           slice_sizes, unique_indices, indices_are_sorted,
-                           mode, fill_value):
-  assert ad.is_undefined_primal(operand)
-  if type(t) is ad_util.Zero:
-    out = ad_util.Zero(operand.aval)
+def _gather_to_ref_indexer(indices, dimension_numbers, slice_sizes, mode,
+                           operand_shape):
+  # Try to express the gather as NumPy-style advanced indexing over leading
+  # operand axes, like the gathers `rewriting_take` builds for `x[idx]`.
+  # Returns a ref indexer of index arrays, or None if the gather doesn't fit.
+  dnums = dimension_numbers
+  if dnums.operand_batching_dims or dnums.start_indices_batching_dims:
+    return None
+  if mode not in (GatherScatterMode.PROMISE_IN_BOUNDS,
+                  GatherScatterMode.FILL_OR_DROP):
+    return None  # e.g. CLIP transposes to clamped updates, but addupdate drops
+  k = len(dnums.start_index_map)
+  num_batch_dims = indices.ndim - 1
+  operand_ndim = len(operand_shape)
+  if not (k > 0 and
+          dnums.start_index_map == tuple(range(k)) and
+          dnums.collapsed_slice_dims == tuple(range(k)) and
+          tuple(slice_sizes) == (1,) * k + tuple(operand_shape[k:]) and
+          dnums.offset_dims == tuple(range(num_batch_dims,
+                                           num_batch_dims + operand_ndim - k))):
+    return None
+  return tuple(indices[..., i] for i in range(k))
+
+def _gather_transpose_fancy(out_ct, operand, indices, *, dimension_numbers,
+                            slice_sizes, unique_indices, indices_are_sorted,
+                            mode, fill_value):
+  assert isinstance(operand, ad.GradAccum)
+  assert not isinstance(indices, ad.GradAccum)
+  if type(out_ct) is ad_util.Zero or isinstance(operand, ad.NullAccum):
+    return
+  operand_aval, = lax_utils.ensure_shaped(operand.aval)
+  op_shape = operand_aval.shape
+  if (isinstance(operand, ad.RefAccum) and
+      (indexer := _gather_to_ref_indexer(
+          indices, dimension_numbers, slice_sizes, mode, op_shape)) is not None):
+    # in-place add-update at the gathered indices, no dense intermediates
+    operand.inst().ref.addupdate(out_ct, indexer)
+    return
+
+  scatter_dnums = ScatterDimensionNumbers(
+      update_window_dims=dimension_numbers.offset_dims,
+      inserted_window_dims=dimension_numbers.collapsed_slice_dims,
+      scatter_dims_to_operand_dims=dimension_numbers.start_index_map,
+      operand_batching_dims=dimension_numbers.operand_batching_dims,
+      scatter_indices_batching_dims=dimension_numbers.start_indices_batching_dims,
+  )
+  if isinstance(operand, ad.RefAccum):
+    # scatter-add onto the ref's current value, still avoiding dense zeros
+    ref = operand.inst().ref
+    ref[...] = scatter_add(ref[...], indices, out_ct, scatter_dnums,
+                           unique_indices=unique_indices,
+                           indices_are_sorted=indices_are_sorted, mode=mode)
   else:
-    zeros = lax.full(operand.aval.shape, 0, typeof(t).dtype,
-                     sharding=operand.aval.sharding)
-    zeros = core.pvary(zeros, tuple(operand.aval.mat.varying))
-    scatter_dnums = ScatterDimensionNumbers(
-        update_window_dims=dimension_numbers.offset_dims,
-        inserted_window_dims=dimension_numbers.collapsed_slice_dims,
-        scatter_dims_to_operand_dims=dimension_numbers.start_index_map,
-        operand_batching_dims=dimension_numbers.operand_batching_dims,
-        scatter_indices_batching_dims=dimension_numbers.start_indices_batching_dims,
-    )
-    out = scatter_add(zeros, indices, t, scatter_dnums,
-                      unique_indices=unique_indices,
-                      indices_are_sorted=indices_are_sorted,
-                      mode=mode)
-  return [out, None]
+    # use out_ct's dtype, not operand_aval's: cotangents can flow in a
+    # different (e.g. higher-precision) dtype than the primal
+    zeros = lax.full(op_shape, 0, typeof(out_ct).dtype,
+                     sharding=operand_aval.sharding)
+    zeros = core.pvary(zeros, tuple(operand_aval.mat.varying))
+    operand.accum(scatter_add(zeros, indices, out_ct, scatter_dnums,
+                              unique_indices=unique_indices,
+                              indices_are_sorted=indices_are_sorted,
+                              mode=mode))
 
 def _gather_batching_rule(batched_args: Sequence[Array], batch_dims: Sequence[int | None], *,
                           dimension_numbers, slice_sizes, unique_indices, indices_are_sorted,
@@ -2274,9 +2343,10 @@ def _gather_batching_rule(batched_args: Sequence[Array], batch_dims: Sequence[in
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
     weak_type_rule=_argnum_weak_type(0), sharding_rule=_gather_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'gather'))
+    vma_rule=partial(core.standard_vma_rule, 'gather'),
+    ur_rule=_gather_ur_rule)
 ad.defjvp(gather_p, _gather_jvp_rule, None)
-ad.primitive_transposes[gather_p] = _gather_transpose_rule
+ad.fancy_transposes[gather_p] = _gather_transpose_fancy
 batching.primitive_batchers[gather_p] = _gather_batching_rule
 
 
@@ -2614,9 +2684,9 @@ def _scatter_spec_computation(
   inserted_window_dims = dimension_numbers.inserted_window_dims
   index_vector_dim = indices.ndim - 1
 
-  operand_spec = operand.sharding.spec
-  indices_spec = indices.sharding.spec
-  updates_spec = updates.sharding.spec
+  operand_spec = operand.sharding.spec.partitions
+  indices_spec = indices.sharding.spec.partitions
+  updates_spec = updates.sharding.spec.partitions
 
   if (all(s is None for s in operand_spec) and
       all(s is None for s in indices_spec) and
@@ -2707,6 +2777,31 @@ def _scatter_sharding_rule(
         " resolved unambiguously (or would require collectives on inputs). Got"
         f" {operand=}, {indices=}, {updates=}")
   return NamedSharding(out_mesh, out_spec)
+
+
+def _scatter_unreduced_rule(operand, indices, updates, **kwargs):
+  if core.getu(indices):
+    raise core.ShardingTypeError(
+        "scatter indices cannot be unreduced. Got indices sharding"
+        f" {indices.str_short(mesh_axis_types=True)}.")
+  if core.getu(operand) != core.getu(updates):
+    raise core.ShardingTypeError(
+        "scatter operand and updates must be unreduced along the same axes."
+        f" Got operand sharding {operand.str_short(mesh_axis_types=True)} and"
+        f" updates sharding {updates.str_short(mesh_axis_types=True)}.")
+  out_u = core.getu(operand)
+  if out_u and not all(s is None for s in indices.sharding.spec):
+    raise NotImplementedError
+  return out_u, UnreducedKind.sum if out_u else None
+
+
+def _scatter_ur_rule(operand, indices, updates, **kwargs):
+  if core.getr(operand) or core.getr(indices) or core.getr(updates):
+    raise NotImplementedError(
+        "reduced rule for scatter is not implemented. Please file an issue at"
+        " https://github.com/jax-ml/jax/issues")
+  out_u, kind = _scatter_unreduced_rule(operand, indices, updates, **kwargs)
+  return out_u, frozenset(), kind
 
 def _clamp_scatter_indices(operand, indices, updates, *, dnums):
   """Clamps `indices` to be in-range for a scatter."""
@@ -2917,7 +3012,8 @@ scatter_add_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
     weak_type_rule=_argnum_weak_type(0), sharding_rule=_scatter_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'scatter_add'),
-    memory_space_rule=_scatter_memory_space_rule)
+    memory_space_rule=_scatter_memory_space_rule,
+    ur_rule=_scatter_ur_rule)
 ad.primitive_jvps[scatter_add_p] = partial(_scatter_addsub_jvp, scatter_add_p)
 ad.primitive_transposes[scatter_add_p] = partial(_scatter_addsub_transpose_rule, scatter_add_p)
 batching.fancy_primitive_batchers[scatter_add_p] = partial(_scatter_batching_rule, scatter_add_p)
@@ -3182,7 +3278,7 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
                             unique_indices=unique_indices, mode=mode)
   return val_out, tangent_out
 
-def _scatter_transpose_rule(t, operand, indices, updates, *,
+def _scatter_transpose_rule(ct, operand, indices, updates, *,
                             update_jaxpr, update_consts, dimension_numbers,
                             indices_are_sorted, unique_indices, mode):
   if not unique_indices:
@@ -3195,7 +3291,7 @@ def _scatter_transpose_rule(t, operand, indices, updates, *,
   else:
     updates_shape = updates.shape
     updates_sharding = typeof(updates).sharding
-  if type(t) is ad_util.Zero:
+  if type(ct) is ad_util.Zero:
     operand_t = ad_util.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
     update_t = ad_util.Zero(updates.aval) if ad.is_undefined_primal(updates) else None
   else:
@@ -3203,8 +3299,8 @@ def _scatter_transpose_rule(t, operand, indices, updates, *,
     if ad.is_undefined_primal(operand):
       # Zero out gradient entries that correspond to updated indices.
       operand_t = scatter(
-          t, indices,
-          lax.full(updates_shape, 0, dtype=t.dtype, sharding=updates_sharding),
+          ct, indices,
+          lax.full(updates_shape, 0, dtype=ct.dtype, sharding=updates_sharding),
           dimension_numbers=dimension_numbers,
           indices_are_sorted=indices_are_sorted, unique_indices=True, mode=mode)
 
@@ -3218,7 +3314,7 @@ def _scatter_transpose_rule(t, operand, indices, updates, *,
       )
       slice_sizes = []
       pos = 0
-      for i in range(len(t.shape)):
+      for i in range(len(ct.shape)):
         if (
             i in dimension_numbers.inserted_window_dims
             or i in dimension_numbers.operand_batching_dims
@@ -3227,7 +3323,7 @@ def _scatter_transpose_rule(t, operand, indices, updates, *,
         else:
           slice_sizes.append(updates_shape[dimension_numbers.update_window_dims[pos]])
           pos += 1
-      update_t = gather(t, indices, dimension_numbers=gather_dnums,
+      update_t = gather(ct, indices, dimension_numbers=gather_dnums,
                         slice_sizes=slice_sizes, mode=mode,
                         fill_value=0)
 

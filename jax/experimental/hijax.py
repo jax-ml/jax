@@ -19,13 +19,15 @@ from jax._src.ad_util import (
 )
 from jax._src.core import (
     AbstractValue as AbstractValue,
-    AvalQDD as AvalQDD,
     ShapedArray as ShapedArray,
     aval_method as aval_method,
     aval_property as aval_property,
-    AvalMutableQDD as AvalMutableQDD,
 )
 from jax._src.interpreters.ad import (
+    GradAccum as GradAccum,
+    NullAccum as NullAccum,
+    RefAccum as RefAccum,
+    ValAccum as ValAccum,
     instantiate_zeros as instantiate_zeros,
     is_undefined_primal as is_undefined_primal,
 )
@@ -33,12 +35,15 @@ from jax._src.effects import (
     control_flow_allowed_effects as control_flow_allowed_effects,
 )
 from jax._src.hijax import (
-    HiPrimitive as HiPrimitive,
+    HiPrim as HiPrim,
     HiPspec as HiPspec,
     HiType as HiType,
-    MutableHiType as MutableHiType,
-    VJPHiPrimitive as VJPHiPrimitive,
+    MappingSpec as MappingSpec,
+    jvp_from_lin as jvp_from_lin,
+    linearize_from_jvp as linearize_from_jvp,
     register_hitype as register_hitype,
+    vjp_from_jvp as vjp_from_jvp,
+    vjp_from_lin as vjp_from_lin,
 )
 from jax._src.state import (
     AbstractRef as AbstractRef,

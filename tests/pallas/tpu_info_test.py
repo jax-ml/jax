@@ -51,6 +51,10 @@ class TpuInfoTest(jtu.JaxTestCase):
         self.assertEqual(info.chip_version, pltpu.ChipVersion.TPU_7)
       case "TPU7x":
         self.assertEqual(info.chip_version, pltpu.ChipVersion.TPU_7X)
+      case "TPU8i":
+        self.assertEqual(info.chip_version, pltpu.ChipVersion.TPU_8I)
+      case "TPU8t":
+        self.assertEqual(info.chip_version, pltpu.ChipVersion.TPU_8T)
       case _:
         self.fail(f"Unexpected device kind: {device.device_kind}")
 
@@ -87,6 +91,7 @@ class TpuInfoTest(jtu.JaxTestCase):
         pltpu.ChipVersion.TPU_V3,
         pltpu.ChipVersion.TPU_7,
         pltpu.ChipVersion.TPU_7X,
+        pltpu.ChipVersion.TPU_8I,
     }:
       self.assertTrue(info.is_split_chip)
     else:
@@ -158,7 +163,9 @@ class TpuInfoStaticTest(jtu.JaxTestCase):
           self.assertTrue(info.is_split_chip)
           self.assertFalse(version.supports_megacore)
           with self.assertRaisesRegex(
-              ValueError, "Lite chips and dual-core chips that do not support"
+              ValueError,
+              "Lite chips, single core chips, and dual-core chips that do not"
+              " support",
           ):
             pltpu.get_tpu_info_for_chip(version, 2)
 
@@ -174,7 +181,22 @@ class TpuInfoStaticTest(jtu.JaxTestCase):
           self.assertTrue(info.is_lite)
           self.assertFalse(version.supports_megacore)
           with self.assertRaisesRegex(
-              ValueError, "Lite chips and dual-core chips that do not support"
+              ValueError,
+              "Lite chips, single core chips, and dual-core chips that do not"
+              " support",
+          ):
+            pltpu.get_tpu_info_for_chip(version, 2)
+        case pltpu.ChipVersion.TPU_8T:
+          # Single core, fish chip
+          info = pltpu.get_tpu_info_for_chip(version, 1)
+          self.assertFalse(info.is_megacore)
+          self.assertFalse(info.is_split_chip)
+          self.assertFalse(info.is_lite)
+          self.assertFalse(version.supports_megacore)
+          with self.assertRaisesRegex(
+              ValueError,
+              "Lite chips, single core chips, and dual-core chips that do not"
+              " support",
           ):
             pltpu.get_tpu_info_for_chip(version, 2)
         case _:

@@ -20,7 +20,7 @@ import itertools as it
 import math
 import operator as op
 from types import SimpleNamespace
-from typing import Any, NamedTuple, TypeVar
+from typing import Any, NamedTuple
 import unittest
 
 from absl.testing import absltest
@@ -39,7 +39,6 @@ from jax._src.random import prng
 from jax._src.random import threefry2x32
 from jax._src.shard_map import shard_map
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.mesh import AxisType, get_abstract_mesh, empty_concrete_mesh
@@ -222,6 +221,9 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(a, b):
       c = jnp.einsum('ab,bc->ac', a, b)
       self.assertEqual(c.aval.mat.varying, {'x', 'y'})
+      c = jax.lax.pcast(c, 'y', to='unreduced')
+      self.assertEqual(c.aval.mat.varying, {'x'})
+      self.assertEqual(c.aval.mat.unreduced, {'y'})
       return c
 
     out = f(arr1, arr2)
@@ -262,6 +264,8 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(a, b):
       c = jnp.dot(a, b)
       self.assertEqual(c.aval.mat.varying, {'x'})
+      c = jax.lax.pcast(c, 'x', to='unreduced')
+      self.assertEqual(c.aval.mat.unreduced, {'x'})
       return c
 
     out = f(arr1, arr2)
@@ -282,9 +286,7 @@ class ShardMapTest(jtu.JaxTestCase):
       self.assertEqual(c.aval.mat.varying, {'x'})
       return c
 
-    with self.assertRaisesRegex(
-        ValueError,
-        "vary_unreduced_cast is a Varying->Unreduced collective"):
+    with self.assertRaisesRegex(ValueError, "out_specs passed to shard_map"):
       f(arr1, arr2)
 
   def test_matmul_reduce_scatter(self):
@@ -1109,7 +1111,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return z.sum()
 
     x = jax.device_put(jnp.arange(2.), jax.P('i'))
-    y1, f_ = remat_transform(policy, f, x)  # don't crash
+    y1, f_ = remat_transform(policy, f, x, custom_vjp_rules=True)  # don't crash
     y2 = f_(x)
     self.assertAllClose(y1, y2, check_dtypes=False)
 
@@ -1198,7 +1200,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return x
 
     x = jnp.arange(4 * 4).reshape(4, 4)
-    jaxpr = jax.make_jaxpr(jax.vmap(f, spmd_axis_name='y'))(x).jaxpr
+    jaxpr = jax.make_jaxpr(jax.vmap(f, spmd_axis_name='y'))(x)
     e, = jaxpr.eqns
     self.assertIn('in_specs', e.params)
     self.assertEqual(e.params['in_specs'], (P('y', 'x'),))
@@ -1285,7 +1287,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return x
 
     x = jnp.arange(4 * 4).reshape(4, 4)
-    jaxpr = jax.make_jaxpr(jax.vmap(f, spmd_axis_name=('x', 'y')))(x).jaxpr
+    jaxpr = jax.make_jaxpr(jax.vmap(f, spmd_axis_name=('x', 'y')))(x)
     e, = jaxpr.eqns
     self.assertIn('in_specs', e.params)
     self.assertEqual(e.params['in_specs'][0], P(('x', 'y')))
@@ -1321,7 +1323,7 @@ class ShardMapTest(jtu.JaxTestCase):
     y = jnp.arange(2 * 2).reshape(2, 2)
     # Inner vmap inside of shard-map will be over an axis of size 1. Outer vmap
     # is over an axis of size 2. This is a problem at the moment.
-    jax.make_jaxpr(mapped)(x, y).jaxpr
+    jax.make_jaxpr(mapped)(x, y)
 
   def test_shard_map_abstract_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
@@ -1974,7 +1976,7 @@ class ShardMapTest(jtu.JaxTestCase):
     x = jnp.zeros((4, 4))
     y = jnp.zeros((8, 8))
     z = jnp.zeros((16, 16))
-    jaxpr = jax.make_jaxpr(f)(x, y, z).jaxpr
+    jaxpr = jax.make_jaxpr(f)(x, y, z)
     self.assertLen(jaxpr.eqns, 1)
     self.assertLen(jaxpr.eqns[0].params['jaxpr'].eqns, 3)
 
@@ -2055,7 +2057,8 @@ class ShardMapTest(jtu.JaxTestCase):
       sub = lu.wrap_init(
         lambda x: [2. * x],
         debug_info=api_util.debug_info("test", lambda x: [2. * x], (x,), {}))
-      return core.call_p.bind(x, subfuns=(sub,))[0] * x
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(sub, [core.typeof(x)])
+      return core.call_p.bind(*consts, x, call_jaxpr=jaxpr)[0] * x
 
     mesh = jtu.create_mesh((4,), ('x',))
     g = shard_map(f, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'))
@@ -2074,7 +2077,8 @@ class ShardMapTest(jtu.JaxTestCase):
       sub = lu.wrap_init(
         lambda: [2. * x],
         debug_info=api_util.debug_info("test", lambda: [2. * x], (), {}))
-      return core.call_p.bind(subfuns=(sub,))[0] * x
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(sub, [])
+      return core.call_p.bind(*consts, call_jaxpr=jaxpr)[0] * x
 
     x = jnp.arange(4.)
     y = f(x)
@@ -2217,11 +2221,11 @@ class ShardMapTest(jtu.JaxTestCase):
       return x
 
     jaxpr = jax.make_jaxpr(jax.vjp(f, 1.)[1])(1.)
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     self.assertEmpty(e.params['jaxpr'].eqns)
 
     jaxpr = jax.make_jaxpr(jax.vjp(jax.vjp(f, 1.)[1], 1.)[1])((1.,))
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     self.assertEmpty(e.params['jaxpr'].eqns)
 
     @partial(shard_map, mesh=mesh, in_specs=P(), out_specs=P())
@@ -2229,7 +2233,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return jax.jit(lambda x: 1. * x)(x)
 
     jaxpr = jax.make_jaxpr(jax.vjp(g, 1.)[1])(1.)
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     e1, = e.params['jaxpr'].eqns
     self.assertLen(e1.params['jaxpr'].eqns, 1)
 
@@ -2241,7 +2245,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return x
 
     jaxpr = jax.make_jaxpr(jax.vjp(f, jnp.arange(1.))[1])(jnp.arange(4.))
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     e2, = e.params['jaxpr'].eqns
     self.assertEqual(str(e2.primitive), 'psum_invariant')
     self.assertEqual(e2.params['axes'], ('x',))
@@ -2254,7 +2258,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return jax.lax.psum(x, 'x')
 
     jaxpr = jax.make_jaxpr(jax.vjp(f, jnp.arange(4.))[1])(jnp.array([1.]))
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     e1, = e.params['jaxpr'].eqns
     self.assertEqual(str(e1.primitive), 'pvary')
 
@@ -2266,7 +2270,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return jax.lax.psum(x, 'x')
 
     jaxpr = jax.make_jaxpr(jax.vjp(f, jnp.arange(4.))[1])(jnp.arange(4.))
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     e1, e2 = e.params['jaxpr'].eqns
     self.assertEqual(str(e1.primitive), 'psum_invariant')
     self.assertEqual(str(e2.primitive), 'pvary')
@@ -2358,7 +2362,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return x * y
 
     jaxpr = jax.make_jaxpr(f)(jnp.arange(1.), jnp.arange(4.))
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     e = e.params['jaxpr'].eqns[0]
     self.assertEqual(e.primitive.name, 'pvary')
     self.assertEqual(e.params['axes'], ('x',))
@@ -2374,7 +2378,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return x
 
     jaxpr = jax.make_jaxpr(f)(jnp.arange(4.))
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     e, = e.params['jaxpr'].eqns
     e1, e2 = e.params['jaxpr'].eqns
     self.assertEqual(e1.primitive.name, 'psum_invariant')
@@ -2421,6 +2425,20 @@ class ShardMapTest(jtu.JaxTestCase):
 
     jax.jit(jax.grad(lambda x: bar(x).sum()))(jnp.arange(8.))  # doesn't crash
 
+  def test_optimization_barrier_varying_manual_axes(self):
+    mesh = Mesh(jax.devices(), ['x'])
+    def f(a, b):
+      a_out, b_out = jax.lax.optimization_barrier((a, b))
+      return a_out, b_out
+
+    a = jnp.arange(float(len(jax.devices())))
+    b = jnp.arange(1.)
+    out_a, out_b = shard_map(
+        f, mesh=mesh, in_specs=(P('x'), P(None)), out_specs=(P('x'), P(None))
+    )(a, b)
+    self.assertAllClose(out_a, a)
+    self.assertAllClose(out_b, b)
+
   @parameterized.parameters(it.product([True, False], repeat=2))
   def test_res_forwarding_optimization(self, jit, remat):
     mesh = jtu.create_mesh((4,), ('i',))
@@ -2441,7 +2459,7 @@ class ShardMapTest(jtu.JaxTestCase):
       # remat3 doesn't support everything_saveable, which these assertions need
       # (they check out_fwd forwarding of a saved primal output)
       return
-    jaxpr, _ = pe.dce_jaxpr(jaxpr_.jaxpr, [True] * len(jaxpr_.out_avals))
+    jaxpr, _ = pe.dce_jaxpr(jaxpr_, [True] * len(jaxpr_.out_avals))
     e1, *_, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 1)  # only primal output
     self.assertLen(e2.invars, 2)   # res and cotangent inputs
@@ -2480,7 +2498,7 @@ class ShardMapTest(jtu.JaxTestCase):
       # remat3 doesn't support everything_saveable, which these assertions need
       # (they check out_fwd forwarding of a saved primal output)
       return
-    jaxpr, _ = pe.dce_jaxpr(jaxpr_.jaxpr, [True] * len(jaxpr_.out_avals))
+    jaxpr, _ = pe.dce_jaxpr(jaxpr_, [True] * len(jaxpr_.out_avals))
     e1, *_, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 2)  # one primal and one res output
     self.assertLen(e2.invars, 4)   # two res and two cotangent inputs
@@ -2572,12 +2590,14 @@ class ShardMapTest(jtu.JaxTestCase):
     if config.custom_vjp3.value:
       with self.assertRaisesRegex(
           ValueError,
-          "the bwd rule produced an output.*which doesn't match expected type"):
+          r"the bwd rule attached to f.*produced an output.*which doesn't match"
+          r' expected type'):
         jax.value_and_grad(lambda x: g(x).sum())(jnp.ones(4))
     else:
       with self.assertRaisesRegex(
           ValueError,
-          "Custom VJP bwd rule must produce an output with the same type"):
+          r'Custom VJP bwd rule attached to f.*must produce an output with the'
+          ' same type'):
         jax.value_and_grad(lambda x: g(x).sum())(jnp.ones(4))
 
   def test_repeated_psum_allowed(self):
@@ -3115,10 +3135,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(v * v, out, check_dtypes=False)
 
     if config.use_shardy_partitioner.value:
-      self.assertIn(
-          'sdy.sharding_constraint %1 <@mesh, [{}, {"j"}]>',
-          f.lower(v).as_text(),
-      )
+      self.assertIn('<@mesh, [{}, {"j"}]>', f.lower(v).as_text())
     else:
       self.assertIn(
           'mhlo.sharding = "{devices=[1,2,2]<=[2,2]T(1,0) last_tile_dims={manual}}"}',
@@ -4146,6 +4163,20 @@ class ShardMapTest(jtu.JaxTestCase):
     jax.jit(f)(arr)  # doesn't crash
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_ppermute_different_axis_order_error(self, mesh):
+    inp = jax.device_put(jnp.arange(4), P(('y', 'x')))
+
+    @jax.jit
+    @shard_map(mesh=mesh, in_specs=P(('y', 'x')), out_specs=P(('y', 'x')))
+    def f(x):
+      perm = [(0, 1), (1, 2), (2, 3), (3, 0)]
+      return lax.ppermute(x, axis_name=('y', 'x'), perm=perm)
+
+    with self.assertRaisesRegex(
+        RuntimeError, "Make sure that the axis_name passed to jax.lax.ppermute"):
+      f(inp)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_shmap_partial_manual_explicit(self, mesh):
     np_inp = np.arange(16).reshape(8, 2)
     arr = jax.device_put(np_inp, P('x', 'y'))
@@ -4479,6 +4510,19 @@ class ShardMapTest(jtu.JaxTestCase):
     out_g = jax.grad(lambda x: f(x).sum())(arr)
     self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
     self.assertArraysEqual(out_g, jnp.ones((8,)))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_ppermute_zip_error(self, mesh):
+    arr = jax.device_put(np.arange(8), P('x'))
+    perm = unsafe_zip([0, 1], [1, 0])
+
+    @jax.shard_map(out_specs=P('x'))
+    def f(x):
+      return jax.lax.ppermute(x, 'x', perm)
+
+    with self.assertRaisesRegex(
+        TypeError, "`perm` passed to `jax.lax.ppermute` must be a list"):
+      f(arr)
 
   @parameterized.parameters([False, True])
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'),
@@ -5075,7 +5119,7 @@ class ShardMapTest(jtu.JaxTestCase):
     @jax.jit
     @shard_map(in_specs=P('x'), out_specs=P(unreduced={'x'}))
     def f(x):
-      return x
+      return jax.lax.pcast(x, 'x', to='unreduced')
 
     out = f(arr)
     self.assertTupleEqual(out.shape, (2,))
@@ -5438,11 +5482,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
 
   @config.use_rgv3(True)
-  @unittest.skipIf(jaxlib_extension_version < 470,
-                   "Requires Shardy RGV3 mesh deduplication fix.")
   def test_all_reduce_rgv3(self):
-    if not jtu.is_libtpu_at_least("0.0.43"):
-      self.skipTest("Requires libtpu 0.0.43 or newer")
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
 
     @jax.jit
@@ -5461,11 +5501,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertRegex(mlir, r'mesh = (@mesh|#sdy\.mesh)')
 
   @config.use_rgv3(True)
-  @unittest.skipIf(jaxlib_extension_version < 470,
-                   "Requires Shardy RGV3 mesh deduplication fix.")
   def test_all_reduce_rgv3_multiple_meshes(self):
-    if not jtu.is_libtpu_at_least("0.0.43"):
-      self.skipTest("Requires libtpu 0.0.43 or newer")
     mesh1 = jtu.create_mesh((2, 2), ('x1', 'y1'))
     mesh2 = jtu.create_mesh((2, 2), ('x2', 'y2'))
 
@@ -5546,15 +5582,9 @@ class ShardMapTest(jtu.JaxTestCase):
       ),
   )
   @config.use_rgv3(True)
-  @unittest.skipIf(
-      jaxlib_extension_version < 470,
-      'Requires Shardy RGV3 mesh deduplication fix.',
-  )
   def test_reduce_scatter_rgv3(
       self, mesh_shape, mesh_axes, spec, axis_name, scatter_dim, x_shape,
       out_shape):
-    if not jtu.is_libtpu_at_least("0.0.43"):
-      self.skipTest("Requires libtpu 0.0.43 or newer")
     mesh = jtu.create_mesh(mesh_shape, mesh_axes)
 
     @jax.jit
@@ -5574,13 +5604,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertRegex(mlir, r'mesh = (@mesh|#sdy\.mesh)')
 
   @config.use_rgv3(True)
-  @unittest.skipIf(
-      jaxlib_extension_version < 470,
-      'Requires Shardy RGV3 mesh deduplication fix.',
-  )
   def test_all_gather_rgv3(self):
-    if not jtu.is_libtpu_at_least("0.0.43"):
-      self.skipTest("Requires libtpu 0.0.43 or newer")
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
 
     @jax.jit
@@ -5598,13 +5622,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertRegex(mlir, r'mesh = (@mesh|#sdy\.mesh)')
 
   @config.use_rgv3(True)
-  @unittest.skipIf(
-      jaxlib_extension_version < 470,
-      'Requires Shardy RGV3 mesh deduplication fix.',
-  )
   def test_all_to_all_rgv3(self):
-    if not jtu.is_libtpu_at_least("0.0.43"):
-      self.skipTest("Requires libtpu 0.0.43 or newer")
     mesh = jtu.create_mesh((2,), ('x',))
 
     @jax.jit
@@ -5816,15 +5834,14 @@ def make_out_spec(
 
 # Combinatorial helper functions
 
-T = TypeVar('T')
-def partitions(s: Sequence[T], k: int) -> Iterator[list[list[T]]]:
+def partitions[T](s: Sequence[T], k: int) -> Iterator[list[list[T]]]:
   for indices in it.product(range(k), repeat=len(s)):
     outs: list[list[T]] = [[] for _ in range(k)]
     for i, elt in zip(indices, s):
       outs[i].append(elt)
     yield outs
 
-def powerset(s: Iterable[T]) -> Iterator[Sequence[T]]:
+def powerset[T](s: Iterable[T]) -> Iterator[Sequence[T]]:
   s = list(s)
   return it.chain.from_iterable(it.combinations(s, r) for r in range(len(s)+1))
 
@@ -5986,7 +6003,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     tol = 1e-2 if jtu.test_device_matches(['gpu', 'tpu']) else None
     self.assertAllClose(ans, expected, check_dtypes=False, atol=tol, rtol=tol)
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class CustomPartitionerTest(jtu.JaxTestCase):
 
   def skip_if_custom_partitioning_not_supported(self):

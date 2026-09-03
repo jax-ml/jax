@@ -64,8 +64,10 @@ if [[ $host_memory_limit -lt $num_test_jobs ]]; then
 fi
 # End of test environment variables setup.
 
-if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t ]]; then
-  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-ft || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-nogil ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-ft}
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}
   FREETHREADED_FLAG_VALUE="yes"
 else
   FREETHREADED_FLAG_VALUE="no"
@@ -100,7 +102,7 @@ common_bazel_test_args=(
   "--repo_env=HERMETIC_CUDA_UMD_VERSION=13.1.1"
   "--//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB"
   "--//jax:build_jax=$JAXCI_BUILD_JAX"
-  "--test_env=JAX_PORTSERVER_ADDRESS=@unittest-portserver"
+  "--test_env=PORTSERVER_ADDRESS=@unittest-portserver"
   "--test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform"
   "--test_env=TF_CPP_MIN_LOG_LEVEL=0"
   "--test_env=JAX_SKIP_SLOW_TESTS=true"
@@ -149,7 +151,7 @@ TEST_ARTIFACTS_DIR="test-artifacts-single"
 mkdir -p "$TEST_ARTIFACTS_DIR"
 echo "::endgroup::" >&2
 
-source ci/utilities/setup_portserver.sh
+PYTHON_BIN="$JAXCI_PYTHON" source ci/utilities/setup_portserver.sh
 
 echo "::group::Bazel CUDA single-accelerator tests" >&2
 INVOCATION_ID_SINGLE=$(python3 ci/utilities/generate_invocation_id.py)
@@ -163,7 +165,7 @@ bazel "${single_accelerator_bazel_test_args[@]}" \
   --test_env=JAX_TESTS_PER_ACCELERATOR=$max_tests_per_gpu \
   --local_test_jobs=$num_test_jobs \
   --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
-  --test_tag_filters=-multiaccelerator,-multiaccelerator-only \
+  --test_tag_filters=-multiaccelerator \
   "${single_accelerator_test_targets[@]}"
 
 # Store the return value of the first bazel command.
@@ -184,7 +186,7 @@ bazel "${common_bazel_test_args[@]}" \
   --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
   --test_output=errors \
   --local_test_jobs=8 \
-  --test_tag_filters=multiaccelerator,multiaccelerator-only \
+  --test_tag_filters=multiaccelerator \
   //tests:gpu_tests //tests/pallas:gpu_tests \
   //tests/multiprocess:gpu_tests
 

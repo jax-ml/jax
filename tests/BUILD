@@ -43,7 +43,10 @@ jax_multiplatform_test(
         "gpu": 5,
         "tpu": 5,
     },
-    deps = py_deps([
+    deps = [
+        "//jax/experimental:compute_on",
+        "//jax/experimental:custom_partitioning",
+    ] + py_deps([
         "absl/testing",
         "numpy",
     ]),
@@ -54,12 +57,18 @@ jax_multiplatform_test(
     srcs = ["custom_api_test.py"],
     backend_tags = {
         "cpu": ["notsan"],
+        "gpu": ["noasan"],  # Times out.
+        "tpu": [
+            "noasan",
+            "notsan",
+        ],  # Times out.
     },
     shard_count = {
         "cpu": select({
             "//tests/config:tsan_freethreading_rbe": 2,
             "//conditions:default": 1,
         }),
+        "gpu": 4,
     },
     deps = [
         "//jax/_src:custom_derivatives",
@@ -135,6 +144,7 @@ jax_multiplatform_test(
     enable_backends = [
         "cpu",
         "gpu",
+        "tpu",
     ],
     enable_configs = [
         "gpu_h100x2_full",
@@ -218,6 +228,10 @@ jax_multiplatform_test(
 jax_py_test(
     name = "distributed_initialize_test",
     srcs = ["distributed_initialize_test.py"],
+    data = [
+        "testdata/mtls_cert.pem",
+        "testdata/mtls_key.pem",
+    ],
     deps = [
         "//jax",
         "//jax/_src:test_util",
@@ -286,6 +300,7 @@ jax_multiplatform_test(
         "tpu",
     ],
     deps = [
+        "//jax/experimental:topologies",
         "//jax/extend:xla",
         "//jaxlib:_xla",
         "@xla//xla/python:_hlo",
@@ -431,7 +446,7 @@ jax_multiplatform_test(
         "tpu_v3_x4",
         "gpu_h100x2_full",
     ],
-    tags = ["multiaccelerator-only"],
+    tags = ["multiaccelerator"],
     deps = [
         "//jax/experimental:custom_partitioning",
     ] + py_deps([
@@ -455,7 +470,7 @@ jax_multiplatform_test(
         "gpu_h100x2_full",
     ],
     shard_count = {
-        "cpu": 5,
+        "cpu": 10,
         "gpu": 2,
         "tpu": 5,
     },
@@ -478,21 +493,9 @@ jax_multiplatform_test(
     enable_configs = [
         "tpu_v3_x4",
     ],
-    tags = ["multiaccelerator-only"],
+    tags = ["multiaccelerator"],
     deps = [
         "//jax/experimental:layout",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "shard_alike_test",
-    srcs = ["shard_alike_test.py"],
-    tags = ["multiaccelerator-only"],
-    deps = [
-        "//jax/experimental:shard_alike",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -508,7 +511,7 @@ jax_multiplatform_test(
     enable_backends = ["gpu"],
     tags = [
         "config-cuda-only",
-        "multiaccelerator-only",
+        "multiaccelerator",
     ],
     deps = [
         "//jax/experimental:profiler",
@@ -581,6 +584,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "image_test",
     srcs = ["image_test.py"],
+    backend_deps = {
+        "cpu": py_deps(["torch"]),
+    },
     shard_count = {
         "cpu": 10,
         "gpu": 10,
@@ -590,7 +596,6 @@ jax_multiplatform_test(
     deps = py_deps([
         "pil",
         "tensorflow_core",
-        "torch",
         "numpy",
         "absl/testing",
     ]),
@@ -638,7 +643,7 @@ jax_multiplatform_test(
         "cpu": ["notsan"],
     },
     shard_count = {
-        "gpu": 2,
+        "gpu": 4,
         "cpu": select({
             "//tests/config:tsan_freethreading_rbe": 8,
             "//conditions:default": 1,
@@ -713,6 +718,7 @@ jax_multiplatform_test(
     srcs = ["lax_numpy_hijax_test.py"],
     backend_tags = {
         "cpu": ["noasan"],
+        "gpu": ["noasan"],
         "tpu": ["noasan"],  # Times out.
     },
     deps = py_deps([
@@ -943,6 +949,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_vmap_test",
     srcs = ["lax_vmap_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],
+    },
     shard_count = {
         "cpu": 20,
         "gpu": 20,
@@ -1065,7 +1074,7 @@ jax_multiplatform_test(
     ],
     shard_count = 2,
     tags = [
-        "multiaccelerator-only",
+        "multiaccelerator",
     ],
     deps = py_deps([
         "absl/testing",
@@ -1518,7 +1527,10 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "sparse_bcoo_bcsr_test",
     srcs = ["sparse_bcoo_bcsr_test.py"],
-    args = ["--jax_bcoo_cusparse_lowering=true"],
+    args = [
+        "--jax_bcoo_cusparse_lowering=true",
+        "--jax_num_generated_cases=8",  # use fewer cases to prevent timeouts.
+    ],
     backend_tags = {
         "cpu": [
             "nomsan",  # Times out
@@ -1529,17 +1541,6 @@ jax_multiplatform_test(
             "noassert",
         ],
     },
-    # Use fewer cases to prevent timeouts.
-    backend_variant_args = {
-        "cpu": ["--jax_num_generated_cases=20"],
-        "cpu_x32": ["--jax_num_generated_cases=30"],
-        "gpu_a100": ["--jax_num_generated_cases=40"],
-        "gpu_h100": ["--jax_num_generated_cases=40"],
-        "gpu_p100": ["--jax_num_generated_cases=40"],
-        "gpu_v100": ["--jax_num_generated_cases=40"],
-        "tpu_v3": ["--jax_num_generated_cases=40"],
-        "tpu_v5e": ["--jax_num_generated_cases=40"],
-    },
     disable_configs = [
         "gpu_b200",  # Times out
         "tpu_7x",  # Times out
@@ -1548,9 +1549,9 @@ jax_multiplatform_test(
         "tpu": 8,
     },
     shard_count = {
-        "cpu": 50,
-        "gpu": 50,
-        "tpu": 50,
+        "cpu": 20,
+        "gpu": 20,
+        "tpu": 10,
     },
     tags = [
         "noasan",
@@ -1691,7 +1692,6 @@ jax_py_test(
 pytype_test(
     name = "typing_test",
     srcs = ["typing_test.py"],
-    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:test_util",
@@ -1774,6 +1774,8 @@ jax_multiplatform_test(
         "//jax/_src:cache_key",
         "//jax/_src:compiler",
         "//jax/_src:custom_partitioning",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_tpu",
     ] + py_deps("absl/testing"),
 )
 
@@ -1965,28 +1967,21 @@ jax_multiplatform_test(
         "tpu",
     ],
     tags = [
-        "multiaccelerator-only",
+        "multiaccelerator",
     ],
     deps = py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
-    name = "control_deps_test",
-    srcs = ["control_deps_test.py"],
+    name = "overlap_test",
+    srcs = ["overlap_test.py"],
+    shard_count = {
+        "cpu": 5,
+        "tpu": 5,
+        "gpu": 2,
+    },
     tags = ["multiaccelerator"],
-    deps = [
-        "//jax/experimental:control_deps",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "async_collectives_test",
-    srcs = ["async_collectives_test.py"],
-    tags = ["multiaccelerator-only"],
-    deps = py_deps([
+    deps = ["//jax/experimental:overlap"] + py_deps([
         "absl/testing",
         "numpy",
     ]),
@@ -2004,7 +1999,7 @@ jax_multiplatform_test(
         "tpu": 50,
     },
     tags = [
-        "multiaccelerator-only",
+        "multiaccelerator",
         "noasan",
         "nomsan",
         "notsan",
@@ -2113,7 +2108,9 @@ jax_multiplatform_test(
     name = "export_test",
     srcs = ["export_test.py"],
     tags = ["multiaccelerator"],
-    deps = py_deps([
+    deps = [
+        "//jax/experimental:layout",
+    ] + py_deps([
         "absl/testing",
         "numpy",
     ]),
@@ -2216,7 +2213,7 @@ jax_multiplatform_test(
     name = "fused_attention_stablehlo_multigpu_test",
     srcs = ["fused_attention_stablehlo_multigpu_test.py"],
     enable_backends = ["gpu"],
-    tags = ["multiaccelerator-only"],
+    tags = ["multiaccelerator"],
     deps = py_deps([
         "absl/testing",
         "numpy",

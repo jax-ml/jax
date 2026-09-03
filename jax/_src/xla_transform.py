@@ -18,17 +18,26 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import enum
-import logging
 
 from jax._src import xla_bridge
+from jax._src.lib import _jax
 from jax._src.lib import _xla
-
-logger = logging.getLogger(__name__)
 
 
 class PipelineStage(enum.Enum):
   PRE_SCHEDULER = 0
   POST_SCHEDULER = 1
+
+
+def _normalize_platforms(
+    platforms: Sequence[str] | str | None,
+) -> list[str]:
+  """Canonicalizes platforms to a list of platform strings."""
+  if platforms is None:
+    return list(xla_bridge.backends().keys())
+  if isinstance(platforms, str):
+    return [platforms]
+  return list(set(platforms))
 
 
 def register_hlo_module_transformation(
@@ -60,38 +69,17 @@ def register_hlo_module_transformation(
       ``"tpu"``). If ``None``, the pass is registered for all known backends by
       default. Can be a single platform string or a sequence of strings.
   """
-  if not isinstance(stage, PipelineStage):
-    raise TypeError(f"stage must be a PipelineStage enum, got {type(stage)}")
-  stage_int = stage.value
+  # Unconditionally trigger backend initialization so that all PJRT plugins are loaded
+  # before we try to access them.
+  xla_bridge.backends()
 
-  # Canonicalize platforms to a list of strings early.
-  if platforms is None:
-    platforms_list = ["cpu"] + list(xla_bridge._backend_factories.keys())
-    platforms_list = list(dict.fromkeys(platforms_list))
-  elif isinstance(platforms, str):
-    platforms_list = [platforms]
-  else:
-    platforms_list = list(dict.fromkeys(platforms))
-
-  # Register directly for in-process backends (e.g., CPU).
-  if "cpu" in platforms_list:
-    _xla.register_xla_transform(name, stage_int, callback)
-
-  # Also register via the PJRT C API on all plugin clients when they are
-  # initialized (e.g., TPU, GPU).
-  def register_on_client(client):
-    if client.platform in platforms_list:
-      try:
-        _xla.register_xla_transform_c_api(client, name, stage_int, callback)
-      except RuntimeError:
-        logger.debug(
-            "Could not register XLA transform via C API for client platform %s",
-            client.platform,
-        )
-
-  # Only register the initialization hook if we need to register on some plugin backends.
-  if any(p != "cpu" for p in platforms_list):
-    xla_bridge.register_backend_initialization_hook(register_on_client)
+  for platform in _normalize_platforms(platforms):
+    if platform == "cpu":
+      # Register CPU directly as it's the only non-PJRT C API backend.
+      _xla.register_xla_transform(name, stage.value, callback)
+      continue
+    c_api = _jax.get_pjrt_plugin(platform)
+    _xla.register_xla_transform_c_api(c_api, name, stage.value, callback)
 
 
 def clear_hlo_module_transformation(
@@ -110,33 +98,17 @@ def clear_hlo_module_transformation(
   Returns:
     True if the pass was found and cleared, False otherwise.
   """
-  if not isinstance(stage, PipelineStage):
-    raise TypeError(f"stage must be a PipelineStage enum, got {type(stage)}")
-  stage_int = stage.value
-
-  if platforms is None:
-    platforms_list = ["cpu"] + list(xla_bridge._backend_factories.keys())
-    platforms_list = list(dict.fromkeys(platforms_list))
-  elif isinstance(platforms, str):
-    platforms_list = [platforms]
-  else:
-    platforms_list = list(dict.fromkeys(platforms))
+  # Unconditionally trigger backend initialization so that all PJRT plugins are loaded
+  # before we try to access them.
+  xla_bridge.backends()
 
   cleared = False
-  if "cpu" in platforms_list:
-    cleared |= _xla.clear_xla_transform(name, stage_int)
-
-  # Also clear on initialized plugin clients.
-  for platform in platforms_list:
-    if platform != "cpu":
-      try:
-        initialized_backends = xla_bridge.backends()
-        if platform in initialized_backends:
-          client = initialized_backends[platform]
-          cleared |= _xla.clear_xla_transform_c_api(client, name, stage_int)
-      except RuntimeError:
-        pass
-      except ValueError:
-        pass
+  for platform in _normalize_platforms(platforms):
+    if platform == "cpu":
+      # Clear CPU directly as it's the only non-PJRT C API backend.
+      cleared |= _xla.clear_xla_transform(name, stage.value)
+      continue
+    c_api = _jax.get_pjrt_plugin(platform)
+    cleared |= _xla.clear_xla_transform_c_api(c_api, name, stage.value)
 
   return cleared

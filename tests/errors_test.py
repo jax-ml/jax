@@ -16,6 +16,7 @@ import contextlib
 import gc
 import re
 import traceback
+from unittest import mock
 import weakref
 
 from absl.testing import absltest
@@ -29,6 +30,7 @@ from jax._src import core
 from jax._src import source_info_util
 from jax._src import test_util as jtu
 from jax._src import traceback_util
+from jax._src.interpreters import partial_eval as pe
 
 
 config.parse_flags_with_absl()
@@ -484,6 +486,35 @@ class CustomErrorsTest(jtu.JaxTestCase):
     err = ErrorClass(FakeTracer(None))
 
     self.assertIn(f'https://docs.jax.dev/en/latest/errors.html#jax.errors.{errorclass}', str(err))
+
+
+class TracerAttributeProbeTest(jtu.JaxTestCase):
+
+  def test_attribute_probes_do_not_build_origin_msg(self):
+    # hasattr()/getattr() probes of unavailable attributes on tracers are a
+    # common pattern in user code (e.g. flax NNX probes x.sharding on every
+    # Variable assignment while tracing a model). These probes swallow the
+    # AttributeError without reading its message, so the message -- in
+    # particular tracer._origin_msg(), which walks every equation traced so
+    # far -- must not be computed eagerly. Doing so makes each probe
+    # O(trace size) and overall tracing O(n^2).
+    probed_attrs = ('sharding', 'device')
+
+    forbidden = mock.Mock(
+        side_effect=AssertionError(
+            'tracer._origin_msg() was invoked while probing an attribute '
+            'with hasattr()/getattr(); this makes tracing quadratic.'))
+
+    def f(x):
+      for _ in range(3):
+        x = x + 1
+        for name in probed_attrs:
+          self.assertFalse(hasattr(x, name))
+          self.assertIsNone(getattr(x, name, None))
+      return x
+
+    with mock.patch.object(pe.DynamicJaxprTracer, '_origin_msg', forbidden):
+      jax.eval_shape(f, jax.ShapeDtypeStruct((2,), jnp.float32))
 
 
 if __name__ == '__main__':

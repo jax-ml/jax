@@ -21,7 +21,7 @@ import functools
 from functools import partial
 import math
 import operator as op
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from jax._src import api
 from jax._src import basearray
@@ -37,7 +37,7 @@ from jax._src.op_shardings import are_hlo_shardings_equal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.layout import AutoLayoutSingleton, Format, Layout
-from jax._src.lib import _jax
+from jax._src.lib import _jax, jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import (empty_concrete_mesh, empty_abstract_mesh,
                            use_abstract_mesh)
@@ -122,9 +122,10 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
   """Method to reconstruct a device array from a serialized state."""
   np_value = fun(*args)
   np_value.__setstate__(arr_state)
-  jnp_value = api.device_put(np_value)
-  jnp_value.aval = jnp_value.aval.update(**aval_state)
-  return jnp_value
+  if aval_state.get('weak_type', False):
+    aval = core.ShapedArray(np_value.shape, np_value.dtype, weak_type=True)
+    np_value = literals.TypedNdArray(np_value, aval=aval)
+  return api.device_put(np_value)
 
 
 @cache(max_size=4096, trace_context_in_key=False)
@@ -188,23 +189,15 @@ class ArrayImpl(basearray.Array):
   def __init__(self, aval: core.ShapedArray, sharding: Sharding,
                arrays: Sequence[ArrayImpl],
                committed: bool, _skip_checks: bool = False):
-    # NOTE: the actual implementation of the constructor is moved to C++.
+    del aval, sharding, arrays, committed, _skip_checks
+    raise NotImplementedError("ArrayImpl is implemented in C++.")
 
-    self.aval = aval
-    self._sharding = sharding
-    self._committed = committed
-    self._npy_value = None
-    arrays = [a._arrays[0] for a in arrays]
-
-    # Don't rearrange if skip_checks is enabled because this assumes that the
-    # input buffers are already arranged properly. This usually happens when
-    # Array's are created as output of a JAX transformation
-    # (like pjit, etc).
-    if not _skip_checks or config.enable_checks.value:
-      arrays = self._check_and_rearrange(arrays, self._sharding, self.aval)
-    self._arrays = arrays
-
-  def _check_and_rearrange(self, arrays, sharding, aval):
+  @staticmethod
+  def _check_and_rearrange(
+      arrays: Sequence[ArrayImpl],
+      sharding: Sharding,
+      aval: core.ShapedArray,
+  ) -> list[ArrayImpl]:
     device_id_to_buffer = {_get_device(db).id: db for db in arrays}
 
     addressable_dev = sharding.addressable_devices
@@ -370,7 +363,7 @@ class ArrayImpl(basearray.Array):
       line_width = np.get_printoptions()["linewidth"]
       if self.size == 0:
         s = f"[], shape={self.shape}"
-      elif not self.sharding.has_addressable_devices:
+      elif not self.sharding.has_addressable_devices or self.nbytes >= 1 << 20:
         s = f"shape={self.shape}"
       else:
         s = np.array2string(self._value, prefix=prefix, suffix=',',
@@ -387,7 +380,7 @@ class ArrayImpl(basearray.Array):
     if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
       return repr(self)
     elif (self.is_fully_addressable or self.is_fully_replicated and
-          self.sharding.has_addressable_devices):
+          self.sharding.has_addressable_devices) and self.nbytes < 1 << 20:
       return str(self._value)  # doesn't print Array(...)
     else:
       return repr(self)
@@ -450,7 +443,12 @@ class ArrayImpl(basearray.Array):
         else:
           dl_device_type = DLDeviceType.kDLCUDA
       elif "rocm" in platform_version:
-        dl_device_type = DLDeviceType.kDLROCM
+        if self.sharding.memory_kind == "pinned_host":
+          dl_device_type = DLDeviceType.kDLROCMHost
+        else:
+          dl_device_type = DLDeviceType.kDLROCM
+      elif "oneapi" in platform_version:
+        dl_device_type = DLDeviceType.kDLOneAPI
       else:
         raise BufferError("Unknown GPU platform for __dlpack__: "
                          f"{platform_version}")
@@ -461,10 +459,24 @@ class ArrayImpl(basearray.Array):
 
       return dl_device_type, local_hardware_id
 
+    elif self.platform() == "tpu":
+      if self.sharding.memory_kind == "pinned_host":
+        dl_device_type = DLDeviceType.kDLTPUHost
+      else:
+        raise BufferError(
+            "__dlpack__ device only supported for TPU pinned host memory"
+        )
+
+      local_hardware_id = _get_device(self).local_hardware_id
+      if local_hardware_id is None:
+        raise BufferError("Couldn't get local_hardware_id for __dlpack__")
+
+      return dl_device_type, local_hardware_id
+
     else:
       raise BufferError(
-          "__dlpack__ device only supported for CPU and GPU, got platform: "
-          f"{self.platform()}"
+          "__dlpack__ device only supported for CPU, GPU and TPU pinned host,"
+          f" got platform: {self.platform()}"
       )
 
   def __reduce__(self):
@@ -621,7 +633,6 @@ class ArrayImpl(basearray.Array):
       # addressable_device_list can be empty. If it's empty, we will error below
       if self.is_fully_replicated and self.sharding.has_addressable_devices:
         npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
-        npy_value.flags.writeable = False
         if did_copy:
           self._npy_value = npy_value
         return npy_value
@@ -1265,14 +1276,25 @@ def _array_global_result_handler(global_aval, out_sharding, committed):
       return literals.TypedNdArray(np.zeros(global_aval.shape, dtypes.float0),
                                    aval=global_aval)
     phys_aval = core.physical_aval(global_aval)
-    return xc.array_result_handler(phys_aval, out_sharding, committed=committed,
-                                   _skip_checks=True).wrap(handler)
+    if TYPE_CHECKING or jaxlib_extension_version >= 489:
+      return xc.array_result_handler(
+          phys_aval, out_sharding, committed=committed
+      ).wrap(handler)
+    else:
+      return xc.array_result_handler(
+          phys_aval, out_sharding, committed=committed, _skip_checks=True
+      ).wrap(handler)
   if dtypes.issubdtype(global_aval.dtype, dtypes.extended):
     return global_aval.dtype._rules.global_sharded_result_handler(
         global_aval, out_sharding, committed)
-  return xc.array_result_handler(
-      global_aval, out_sharding, committed=committed, _skip_checks=True
-  )
+  if TYPE_CHECKING or jaxlib_extension_version >= 489:
+    return xc.array_result_handler(
+        global_aval, out_sharding, committed=committed
+    )
+  else:
+    return xc.array_result_handler(
+        global_aval, out_sharding, committed=committed, _skip_checks=True
+    )
 pxla.global_result_handlers[core.ShapedArray] = _array_global_result_handler
 
 # Token handlers

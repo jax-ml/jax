@@ -113,6 +113,46 @@ class XlaBridgeTest(jtu.JaxTestCase):
     # Map order does not matter.
     self.assertEqual(c1str, c2.SerializeAsString())
 
+  def test_add_disabled_hlo_pass(self):
+    self.assertEqual(
+        compiler._add_disabled_hlo_pass("", "rematerialization"),
+        "rematerialization",
+    )
+    self.assertEqual(
+        compiler._add_disabled_hlo_pass(
+            "scalar-constant-sinker", "rematerialization"
+        ),
+        "scalar-constant-sinker,rematerialization",
+    )
+    # No duplicates, and entries are normalized (XLA matches names exactly,
+    # so a leading space would make a pass name unmatchable).
+    self.assertEqual(
+        compiler._add_disabled_hlo_pass(
+            "scalar-constant-sinker, rematerialization", "rematerialization"
+        ),
+        "scalar-constant-sinker,rematerialization",
+    )
+
+  def test_disable_remat_pass(self):
+    # Note: compile_options must outlive debug_options, which is a view
+    # into it that does not keep it alive.
+    with config.enable_remat_opt_pass(False):
+      compile_options = compiler.get_compile_options(
+          num_replicas=1, num_partitions=1
+      )
+      debug_options = compile_options.executable_build_options.debug_options
+      disabled = debug_options.xla_disable_hlo_passes.split(",")
+      self.assertEqual(disabled.count("rematerialization"), 1)
+    with config.enable_remat_opt_pass(True):
+      compile_options = compiler.get_compile_options(
+          num_replicas=1, num_partitions=1
+      )
+      debug_options = compile_options.executable_build_options.debug_options
+      self.assertNotIn(
+          "rematerialization",
+          debug_options.xla_disable_hlo_passes.split(","),
+      )
+
   def test_local_devices(self):
     self.assertNotEmpty(xb.local_devices())
     with self.assertRaisesRegex(ValueError, "Unknown process_index 100"):

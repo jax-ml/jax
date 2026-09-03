@@ -502,9 +502,11 @@ class TiledLayout:
       full_indices[d] = i
     return tuple(full_indices)
 
-  def lane_indices(self) -> tuple[ir.Value, ...]:
+  def lane_indices(self, lane_idx: ir.Value | None = None) -> tuple[ir.Value, ...]:
     i32 = ir.IntegerType.get_signless(32)
-    lane_idx = arith.remui(utils.thread_idx(), c(WARP_SIZE, i32))
+    if lane_idx is None:
+      lane_idx = arith.remui(utils.thread_idx(), c(WARP_SIZE, i32))
+    assert lane_idx.type == i32
     return self._delinearize_index(lane_idx, self.lane_dims)
 
   def warp_indices(self) -> tuple[ir.Value, ...]:
@@ -603,6 +605,48 @@ class TiledLayout:
         replace_tiled_dim(self.vector_dim),
         _check_canonical=False,
     )
+
+  def find_dim_in_tiling(self, dim: int) -> tuple[int, int]:
+    """Returns the index of the tile containing the given dimension and its position within the tile."""
+    assert dim < 0
+    dims = 0
+    tiling = self.tiling.tiles
+    for dim_tile in range(1, len(tiling) + 1):
+      dims -= len(tiling[-dim_tile])
+      if dim >= dims:
+        dim_within_tile = dim - dims
+        return -dim_tile, dim_within_tile
+    raise ValueError(f"Dimension {dim} not found in tiling")
+
+  def subdivide_tile(self, tile_idx: int, new_tile: tuple[int, ...]) -> TiledLayout:
+    """Inserts new_tile right after tile_idx in the tiling."""
+    assert tile_idx <= -1
+    new_tiles = list(self.tiling.tiles)
+    stable_dim_suffix = sum(map(len, new_tiles[tile_idx:]))
+    assert len(new_tile) == len(new_tiles[tile_idx])
+    if tile_idx == -1:
+      new_tiles.append(new_tile)
+    else:
+      new_tiles.insert(tile_idx + 1, new_tile)
+    def adjust_dim(d: int | Replicated):
+      if isinstance(d, int):
+        if d < -stable_dim_suffix:
+          yield d - len(new_tile)
+          return
+        elif d < -stable_dim_suffix + len(new_tile):
+          yield d - len(new_tile)
+          yield d
+          return
+      yield d
+    if self.vector_dim < -stable_dim_suffix + len(new_tile):
+      raise NotImplementedError("Multiple vector dimensions not supported.")
+    return TiledLayout(
+        Tiling(tuple(new_tiles)),
+        tuple(itertools.chain.from_iterable(map(adjust_dim, self.warp_dims))),
+        tuple(itertools.chain.from_iterable(map(adjust_dim, self.lane_dims))),
+        self.vector_dim,
+        _check_canonical=False,
+    ).canonicalize()
 
   @property
   def replication_factor(self) -> int:
@@ -704,18 +748,15 @@ class WGStridedFragLayout:
       raise TypeError(shaped_ty)
 
     shaped_ty = ir.ShapedType(shaped_ty)
-    if (bitwidth := mgpu.bitwidth(shaped_ty.element_type)) % 8:
-      return None
-    bw = bitwidth // 8
-    assert 8 % bw == 0 and 8 // bw != 0, bw
+    bitwidth = utils.bitwidth(shaped_ty.element_type)
     size = math.prod(shaped_ty.shape)
     if size % WARPGROUP_SIZE != 0:
       return None
     max_vec_size = size // WARPGROUP_SIZE
-    vec_size = min(8 // bw, max_vec_size)
+    vec_size = min(64 // bitwidth, max_vec_size)
     while vec_size > 0 and size % (vec_size * WARPGROUP_SIZE) != 0:
       vec_size //= 2
-    if vec_size == 0:
+    if vec_size == 0 or (vec_size * bitwidth) % 8 != 0:
       return None
     return cls(shape=tuple(shaped_ty.shape), vec_size=vec_size)
 
@@ -2869,12 +2910,15 @@ class FragmentedArray:
       op: str | Callable[[ir.Value, ir.Value], ir.Value],
       axis: int | Sequence[int],
       scratch: ir.Value | None = None,
+      *,
+      acc_ilp: int | None = None,
   ) -> FragmentedArray:
     i32 = ir.IntegerType.get_signless(32)
     if isinstance(axis, int):
       axis = (axis,)
     splat_op = None
     redux_op = None
+    default_acc_ilp = 1
     # TODO(apaszke): For associative reductions that reduce both inside and
     # across warps, we could just have everyone use SMEM atomics instead of
     # performing an explicit warp reduction in registers.
@@ -2884,6 +2928,8 @@ class FragmentedArray:
           reduced_elems = math.prod(self.shape[a] for a in axis)
           if isinstance(self.mlir_dtype, ir.FloatType):
             op = addf
+            # TODO(cjfj): Consider bumping to 16 for f16/bf16.
+            default_acc_ilp = 8
             splat_op = lambda x: arith.mulf(x, c(reduced_elems, x.type))
             # TODO(apaszke): Use redux.sync on Blackwell for f32.
           elif isinstance(self.mlir_dtype, ir.IntegerType):
@@ -2894,6 +2940,7 @@ class FragmentedArray:
           else:
             raise NotImplementedError(self.mlir_dtype)
         case "max":
+          default_acc_ilp = 4
           if isinstance(self.mlir_dtype, ir.F32Type):
             op = self._lift_fast_instr("max.NaN.f32")
             if utils.get_arch().major == 10:
@@ -2913,6 +2960,7 @@ class FragmentedArray:
             raise NotImplementedError(self.mlir_dtype)
           splat_op = lambda x: x
         case "min":
+          default_acc_ilp = 4
           if isinstance(self.mlir_dtype, ir.F32Type):
             op = self._lift_fast_instr("min.NaN.f32")
             if utils.get_arch().major == 10:
@@ -2932,6 +2980,7 @@ class FragmentedArray:
           reduced_elems = math.prod(self.shape[a] for a in axis)
           if isinstance(self.mlir_dtype, ir.FloatType):
             op = arith.mulf
+            default_acc_ilp = 8
             # For splat, prod(x, x, ..., x) = x^n
             splat_op = lambda x: mlir_math.powf(
                 x, c(float(reduced_elems), x.type)
@@ -2953,6 +3002,8 @@ class FragmentedArray:
             raise NotImplementedError(self.mlir_dtype)
         case _:
           raise ValueError(f"Unrecognized reduction operator: {op}")
+    if acc_ilp is None:
+      acc_ilp = default_acc_ilp
     assert not isinstance(op, str)
     match self.layout:
       case WGStridedFragLayout(shape=_, vec_size=vec_size):
@@ -3017,14 +3068,25 @@ class FragmentedArray:
     out_regs = np.empty(remaining_shape, dtype=object)
     index = ir.IndexType.get()
 
+    def apply_op(a: ir.Value | None, b: ir.Value | None) -> ir.Value | None:
+      if a is None:
+        return b
+      if b is None:
+        return a
+      return op(a, b)
+
     def reduce_within_warp(out_idx):
-      out_reg: ir.Value | None = None
-      for red_idx in np.ndindex(reduced_shape):
+      # Compute partial reductions, breaking the dependency between subsequent
+      # element-wise operations.
+      [vec_len] = ir.VectorType(self.registers.flat[0].type).shape
+      num_reductions = math.prod(remaining_shape)
+      num_parts = max(1, acc_ilp // vec_len // num_reductions)
+      part_regs: list[ir.Value | None] = [None] * num_parts
+      for i, red_idx in enumerate(np.ndindex(reduced_shape)):
         src_idx = tuple(o + r for o, r in zip(out_idx, red_idx))
-        if out_reg is None:
-          out_reg = cast(ir.Value, self.registers[src_idx])
-        else:
-          out_reg = op(out_reg, cast(ir.Value, self.registers[src_idx]))
+        slot = i % num_parts
+        part_regs[slot] = apply_op(part_regs[slot], self.registers[src_idx])
+      out_reg = functools.reduce(apply_op, part_regs)
       assert out_reg is not None
       # Reduce within the vector dimension, if necessary.
       if reduced_dims[layout.vector_dim]:
@@ -3461,7 +3523,10 @@ class FragmentedArray:
     if not isinstance(self.layout, TiledLayout) or not isinstance(layout, TiledLayout):
       raise NotImplementedError(self.layout, layout)
     if len(layout.base_tile_shape) != len(shape):
-      raise NotImplementedError("Tiling rank different than broadcast result rank")
+      raise NotImplementedError(
+          "Tiling rank different than broadcast result rank, "
+          f"{layout.base_tile_shape} vs {shape}"
+      )
     new_dimensions = sorted(set(range(len(shape))) - set(source_dimensions))
     expected_layout = layout.reduce(new_dimensions)
     if expected_layout != self.layout:
@@ -3950,6 +4015,7 @@ class FragmentedArray:
       tiling_rank: int | None = None,
       atomic: Literal["add", "max", "min", "and", "or", "xor"] | None = None,
   ):
+    i32 = ir.IntegerType.get_signless(32)
     if not isinstance(self.layout, TiledLayout):
       raise NotImplementedError(self.layout)
     layout, shape = self.layout, self.shape
@@ -3979,6 +4045,30 @@ class FragmentedArray:
       for get, _update, _idx, ptr in stores:
         utils.multimem_store(ptr, get(self.registers))
     else:
+      try:
+        if utils.get_arch().major < 9:
+          raise TxMatrixIneligible("TxMatrix not supported on pre-Hopper GPUs")
+        stores = self.transfer_tiled(
+            ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank, use_txmatrix=True,
+        )
+        bitwidth = utils.bitwidth(self.mlir_dtype)
+        for gets, _updates, _idxs, ptr, tx_layout in stores:
+          if tx_layout == nvvm.MMALayout.col and bitwidth == 8:
+            s = 16
+            elt_type = nvvm.LdStMatrixEltType.B8
+          else:
+            s = 8
+            elt_type = nvvm.LdStMatrixEltType.B16
+          nvvm.stmatrix(
+              ptr,
+              [utils.bitcast(get(self.registers), i32) for get in gets],
+              tx_layout,
+              ir.Attribute.parse(f"#nvvm.ld_st_matrix_shape<m={s}, n={s}>"),
+              elt_type,
+          )
+        return
+      except TxMatrixIneligible:
+        pass
       stores = self.transfer_tiled(
           ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
       )
@@ -4007,6 +4097,7 @@ class FragmentedArray:
       _load_fun: Callable[[ir.VectorType, ir.Value], ir.Value] = llvm.load,
       _narrow_float_as_int: bool = True,
   ) -> FragmentedArray:
+    i32 = ir.IntegerType.get_signless(32)
     if not isinstance(layout, TiledLayout):
       raise NotImplementedError(layout)
     ref_ty = ir.MemRefType(ref.type)
@@ -4034,16 +4125,50 @@ class FragmentedArray:
     reg_ty = ir.VectorType.get((layout.vector_length,), dtype)
     zero = vector.broadcast(reg_ty, c(0, dtype))
     registers = np.full(layout.registers_shape(shape), zero, dtype=object)
+    bitwidth = utils.bitwidth(dtype)
     is_narrow_float = (
-        isinstance(dtype, ir.FloatType) and utils.bitwidth(dtype) <= 8
+        isinstance(dtype, ir.FloatType) and bitwidth <= 8
     )
-    narrow_int = ir.IntegerType.get_signless(utils.bitwidth(dtype))
+    narrow_int = ir.IntegerType.get_signless(bitwidth)
     # Narrow floats are not supported by LLVM, so we need to transfer them as
     # narrow ints and bitcast back to the desired type.
     transfer_ty = ir.VectorType.get(
         (layout.vector_length,),
         narrow_int if is_narrow_float and _narrow_float_as_int else dtype
     )
+    if _load_fun is llvm.load:
+      loads = cls.transfer_tiled(
+          ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank, use_txmatrix=True
+      )
+      try:
+        for _gets, updates, _idxs, ptr, tx_layout in loads:
+          if tx_layout == nvvm.MMALayout.col and bitwidth == 8:
+            num_scale = 2
+            elt_type = nvvm.LdStMatrixEltType.B8
+          else:
+            num_scale = 1
+            elt_type = nvvm.LdStMatrixEltType.B16
+          s = 8 * num_scale
+          loaded_regs_value = nvvm.ldmatrix(
+              ptr,
+              layout=tx_layout,
+              num=len(updates) // num_scale,
+              shape=ir.Attribute.parse(f"#nvvm.ld_st_matrix_shape<m={s}, n={s}>"),
+              elt_type=elt_type,
+          )
+          # ldmatrix returns a single i32 or a struct of i32s.
+          if len(updates) == 1:
+            loaded_regs = [loaded_regs_value]
+          else:
+            loaded_regs = [
+                llvm.extractvalue(i32, loaded_regs_value, [i])
+                for i in range(len(updates))
+            ]
+          for loaded_reg, update in zip(loaded_regs, updates, strict=True):  # type: ignore
+            update(registers, utils.bitcast(loaded_reg, reg_ty))
+        return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
+      except TxMatrixIneligible:
+        pass
     loads = cls.transfer_tiled(
         ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
     )
@@ -4115,6 +4240,7 @@ class FragmentedArray:
       shape: tuple[int, ...],
       optimized: bool = True,
       ref_tiling_rank: int | None = None,
+      use_txmatrix: bool = False,
   ):
     """Generate a transfer schedule for a tiled layout.
 
@@ -4129,7 +4255,6 @@ class FragmentedArray:
       current address, and updates the register array with that register
     * the current address for load/store instructions
     """
-    # TODO(apaszke): Use ldmatrix/stmatrix when possible.
     c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
     i32 = ir.IntegerType.get_signless(32)
     tiling = layout.tiling
@@ -4171,23 +4296,104 @@ class FragmentedArray:
     tiled_nested_shape, tiled_nested_strides = tiling.tile_nested_shape_strides(
         nested_ref_shape, nested_ref_strides
     )
+
+    if use_txmatrix:
+      minor_lane_dim = layout.lane_dims[-1]
+      major_lane_dim = layout.lane_dims[0]
+      is_txmatrix_reg_layout = (
+          utils.bitwidth(dtype) * layout.vector_length == 32
+          and isinstance(minor_lane_dim, int)
+          and math.prod(tiled_nested_shape[minor_lane_dim]) % 4 == 0
+      )
+      is_row_txmatrix_mem_layout = (
+          is_txmatrix_reg_layout
+          # We need the data of each group of 4 consecutive lanes to map to a
+          # contiguous 16-byte chunk of memory.
+          and tiled_nested_shape[minor_lane_dim][-1] % 4 == 0
+          and tiled_nested_strides[minor_lane_dim][-1] == layout.vector_length
+          # The stride along vector_dim will be checked below.
+          # Strides along other lane dims are irrelevant.
+      )
+      is_col_txmatrix_mem_layout = (
+          is_txmatrix_reg_layout
+          and utils.bitwidth(dtype) in {8, 16}
+          and isinstance(major_lane_dim, int)
+          and len(layout.lane_dims) == 2
+          and tiled_nested_shape[major_lane_dim] == (8,)
+          # At this point, considering is_txmatrix_reg_layout, we know that lane
+          # dims represent a 8x4 matrix of vectors.
+          and tiled_nested_strides[major_lane_dim] == (1,)
+      )
+      tx_pair_tiled_dim = None
+      # For 8-bit types, each tile is actually 8x16. However, the only shape
+      # supported by the transposed txmatrix is 16x16. This means that each
+      # transfer actually deals with two tiles and we need to find the tiled
+      # dimension that iterates over tile pairs. One side of the matrix is then
+      # formed by pair_tile_dim and major_lane_dim, while the other is formed by
+      # minor_lane_dim and vector_dim.
+      if is_col_txmatrix_mem_layout and utils.bitwidth(dtype) == 8:
+        if utils.get_arch().major < 10:
+          raise TxMatrixIneligible(
+              "Transposed 8-bit loads and stores are not supported on"
+              " pre-Blackwell architectures"
+          )
+        shape_strides = list(zip(tiled_nested_shape, tiled_nested_strides))
+        for tx_pair_tiled_dim, (shapes, strides) in enumerate_negative(shape_strides):
+          if (
+              tx_pair_tiled_dim in layout.lane_dims
+              or tx_pair_tiled_dim in layout.warp_dims
+              or tx_pair_tiled_dim == layout.vector_dim
+          ):
+            continue
+          if strides[-1] == 8 and shapes[-1] % 2 == 0:
+            break
+        else:
+          # If we don't find a dimension that is a contiguous extension of the
+          # major_lane_dim in the ref (or has an uneven length), then we can't
+          # use txmatrix.
+          is_col_txmatrix_mem_layout = False
+      can_use_txmatrix = (
+          is_row_txmatrix_mem_layout or is_col_txmatrix_mem_layout
+      ) and utils.is_smem_ref(ref)
+      if not can_use_txmatrix:
+        raise TxMatrixIneligible("Cannot use txmatrix for this layout")
+      load_vector_dim = (
+          layout.vector_dim if is_row_txmatrix_mem_layout else major_lane_dim
+      )
+      assert isinstance(load_vector_dim, int)
+      tx_layout = nvvm.MMALayout.row if is_row_txmatrix_mem_layout else nvvm.MMALayout.col
+      # We remap pair_tile_dim to a valid index in tiles_shape (computed below)
+      if tx_pair_tiled_dim is not None:
+        # We need tx_pair_nested_tiled_dim to be positive, since that's what the
+        # lane quadrant logic expects.
+        if tx_pair_tiled_dim == -1:
+          tx_pair_nested_tiled_dim = sum(map(len, tiled_nested_shape)) - 1
+        else:
+          tx_pair_nested_tiled_dim = sum(len(s) for s in tiled_nested_shape[:tx_pair_tiled_dim + 1]) - 1
+      else:
+        tx_pair_tiled_dim = tx_pair_nested_tiled_dim = None
+    else:
+      load_vector_dim = layout.vector_dim
+      tx_layout = None
+      tx_pair_tiled_dim = tx_pair_nested_tiled_dim = None
     # Not sure if this is strictly required for all data types, but it certainly
     # is for sub-byte types (else we might not increment the pointer by whole bytes).
     if any(
         any(s % layout.vector_length and d != 1 for s, d in zip(ss, ds))
-        for i, (ss, ds) in enumerate_negative(list(zip(tiled_nested_strides, tiled_nested_shape)))
-        if i != layout.vector_dim
+        for i, (ss, ds) in enumerate_negative(
+            list(zip(tiled_nested_strides, tiled_nested_shape))
+        )
+        if i != load_vector_dim
     ):
-      raise ValueError(
-          "Tiled strides must be a multiple of the vector length, except for the"
-          " vector dimension"
+      raise UnsupportedTransferError(
+          "Tiled strides must be a multiple of the vector length, except for"
+          " the load vectorized dimension"
       )
-    if tiled_nested_strides[layout.vector_dim] != (1,):
-      raise ValueError(
+    if tiled_nested_strides[load_vector_dim] != (1,):
+      raise UnsupportedTransferError(
           "Vectorized dimension should not require further tiling and have a"
           " stride of 1"
       )
-
     tiles_shape = list(tiled_nested_shape)
     tiles_strides = list(tiled_nested_strides)
     for d in (*layout.partitioned_warp_dims, *layout.partitioned_lane_dims, layout.vector_dim):
@@ -4230,14 +4436,96 @@ class FragmentedArray:
     else:
       raise ValueError(f"Unsupported memory space: {ref_ty.memory_space}")
 
+    plan = TrivialTransferPlan()
     if optimized:
       if llvm_memory_space != 3 and llvm_memory_space != 7:
         raise NotImplementedError("Only optimized transfers to SMEM supported")
+      mem_layout = layout
+      if tx_layout == nvvm.MMALayout.col:
+        major_lane_dim, _ = layout.lane_dims
+        assert isinstance(major_lane_dim, int)
+        if element_bits == 16:
+          # First, find the tile that contains the major lane dim and split it
+          major_lane_dim_tile, major_lane_dim_within_tile = layout.find_dim_in_tiling(major_lane_dim)
+          # Now, we add a new tile that splits the 8-sized dimension into 4 and 2.
+          # It will be inserted right after the tile containing major_lane_dim,
+          # in a way such that after tiling the original tile containing
+          # major_lane_dim will contain a single 4-sized dim in place of
+          # major_lane_dim with all other elements being 1.
+          # For example, if we had a tiling of (8, 8)(2,) with lane_dims=(-3, -2)
+          # and vector_dim=-1, we will transform it into:
+          # tiling=(8, 8)(2, 8)(2,) (tiled base shape of (4, 1, 2, 4, 2)).
+          new_tile = list(layout.tiling.tiles[major_lane_dim_tile])
+          new_tile[major_lane_dim_within_tile] = layout.vector_length
+          sub_layout = layout.subdivide_tile(major_lane_dim_tile, tuple(new_tile))
+          # We now adjust the lane and vector dimensions. The 8-sized lane dim
+          # is now composed of the minor lane dim and the original vector dim,
+          # the minor 4-sized lane dim corresponds to the major portion of the
+          # 4x2 split of the original 8-sized major lane dim, with the remaining
+          # 2 becoming the new vector dim.
+          sub_row_major, sub_row_minor, sub_col_major = sub_layout.lane_dims
+          assert isinstance(sub_row_minor, int)
+          sub_col_minor = sub_layout.vector_dim
+          mem_layout = TiledLayout(
+              sub_layout.tiling,
+              sub_layout.warp_dims,
+              (sub_col_major, sub_col_minor, sub_row_major),
+              sub_row_minor,
+          )
+        elif element_bits == 8:
+          assert tx_pair_tiled_dim is not None
+          *_, minor_lane_dim = layout.lane_dims
+          assert isinstance(minor_lane_dim, int)
+          # If the order was different, we'd have to subdivide the layout in a
+          # different order, or adjust dimension indices.
+          if not (tx_pair_tiled_dim < major_lane_dim < minor_lane_dim):
+            raise NotImplementedError("Unsupported layout for 8-bit txmatrix")
+          # First, we make sure that the tx_pair dimension will be equal to 2.
+          tx_pair_dim_tile, tx_pair_dim_within_tile = layout.find_dim_in_tiling(
+              tx_pair_tiled_dim
+          )
+          new_tile = list(layout.tiling.tiles[tx_pair_dim_tile])
+          new_tile[tx_pair_dim_within_tile] = 16
+          sub_layout = layout.subdivide_tile(tx_pair_dim_tile, tuple(new_tile))
+          # Now, similarly like in the 16-bit case, we partition the major dim,
+          # only this time into 2x4 (major_lane_dim remains 2).
+          major_lane_dim_tile, major_lane_dim_within_tile = sub_layout.find_dim_in_tiling(major_lane_dim)
+          new_major_lane_tile = list(sub_layout.tiling.tiles[major_lane_dim_tile])
+          new_major_lane_tile[major_lane_dim_within_tile] = layout.vector_length
+          sub_layout = sub_layout.subdivide_tile(major_lane_dim_tile, tuple(new_major_lane_tile))
+          # Finally, we partition the minor lane dim into 2x2.
+          minor_lane_dim_tile, minor_lane_dim_within_tile = sub_layout.find_dim_in_tiling(minor_lane_dim)
+          new_minor_lane_tile = list(sub_layout.tiling.tiles[minor_lane_dim_tile])
+          new_minor_lane_tile[minor_lane_dim_within_tile] = 2 * layout.vector_length
+          sub_layout = sub_layout.subdivide_tile(minor_lane_dim_tile, tuple(new_minor_lane_tile))
+          # Note that we skip the majormost col dim. A 16x16 matrix requires
+          # two SMEM wavefronts so we model sequential 16x8 access instead.
+          sub_row_major, sub_row_minor, _, sub_col_major = sub_layout.lane_dims  # 2x4x2x2
+          sub_col_minor = sub_layout.vector_dim  # 4
+          assert isinstance(sub_row_minor, int)
+          # The lane dims are adjusted automatically by subdivide_tile, but we
+          # need to manually adjust the tx_pair dim.
+          sub_tx_pair_tiled_dim = (
+              tx_pair_tiled_dim - len(new_major_lane_tile) - len(new_minor_lane_tile)
+          )
+          # The transfer layout now loads 8 columns (in majormost lanes), and
+          # then uses the remaining minor 4 lanes to load 4-element vectors
+          # along rows.
+          mem_layout = TiledLayout(
+              sub_layout.tiling,
+              sub_layout.warp_dims,
+              (sub_col_major, sub_col_minor, sub_tx_pair_tiled_dim, sub_row_major),
+              sub_row_minor,
+          )
+        else:
+          raise NotImplementedError(
+              f"Unsupported element bits for txmatrix: {element_bits}"
+          )
       plan = plan_tiled_transfer(
-        nested_ref_shape, nested_ref_strides, layout, element_bits, swizzle,
+        nested_ref_shape, nested_ref_strides, mem_layout, element_bits, swizzle,
       )
-    else:
-      plan = TrivialTransferPlan()
+      if tx_layout is not None and not isinstance(plan, TrivialTransferPlan):
+        raise TxMatrixIneligible("txmatrix requires a trivial transfer plan")
 
     tiles_strides_transfer = [s // vector_length for s in tiles_strides]
     # Technically we should keep the vector_dim stride set to 1, but its shape
@@ -4266,14 +4554,34 @@ class FragmentedArray:
       assert len(new_idxs) == sum(map(len, tiled_nested_shape[-layout.tiled_tiling_rank :]))
       return new_idxs
     # All offsets are in units of transfer_dtype.
-    lane_offset = utils.dyn_dot(expand_nested_dims(layout.lane_indices()), dyn_tiled_strides)
+    offset_lane_idx = None
+    if tx_layout == nvvm.MMALayout.col:
+      minor_lane_dim = layout.lane_dims[-1]
+      assert isinstance(minor_lane_dim, int)
+      col_nested_shape = (*tiled_nested_shape[minor_lane_dim], *tiled_nested_shape[layout.vector_dim])
+      col_nested_strides = (*tiled_nested_strides[minor_lane_dim], *tiled_nested_strides[layout.vector_dim])
+      lane_offset = c(0)
+      remaining_lane_idx = arith.remui(utils.thread_idx(), c(math.prod(col_nested_shape)))
+      for size, stride in reversed(list(zip(col_nested_shape, col_nested_strides))):
+        lane_offset = arith.addi(
+            lane_offset,
+            arith.muli(arith.remui(remaining_lane_idx, c(size)), c(stride // vector_length)),
+        )
+        remaining_lane_idx = arith.divui(remaining_lane_idx, c(size))
+    else:
+      if tx_layout == nvvm.MMALayout.row:
+        offset_lane_idx = arith.muli(arith.remui(utils.thread_idx(), c(8)), c(4))
+      lane_offset = utils.dyn_dot(
+          expand_nested_dims(layout.lane_indices(offset_lane_idx)),
+          dyn_tiled_strides,
+      )
     warp_offset = utils.dyn_dot(expand_nested_dims(layout.warp_indices()), dyn_tiled_strides)
     dyn_offset = arith.addi(lane_offset, warp_offset)
     ptr = utils.memref_ptr(ref)
     _as_consts = lambda consts: [c(const) for const in consts.tolist()]
     # This has bits set only for the offset bits that influence swizzling.
     swizzle_mask = swizzle_block_transfers - swizzle_tile_transfers
-    for tile_idx in np.ndindex(*tiles_shape):
+    def get_tile_transfer(tile_idx):
       indices = np.asarray([f(tile_idx) for f in plan.tile_index_transforms])
       const_offset = np.dot(indices, tiles_strides_transfer)
       # We split the offset into a part that interacts with swizzling and a
@@ -4330,7 +4638,171 @@ class FragmentedArray:
         if any(len(t) != 1 for t in tiled_nested_shape):
           raise NotImplementedError("Tiling too complicated")
         return tiling.untile_indices(indices.tolist()[0])
-      yield get_register, update_registers, get_base_index, reg_ptr
+      return get_register, update_registers, get_base_index, reg_ptr
+    if not use_txmatrix:
+      yield from map(get_tile_transfer, np.ndindex(*tiles_shape))
+      return
+    # Below we implement a partitoning scheme for the iteration space that
+    # allows us to use as many high-num transfers as possible.
+    # We use two properties of iteration spaces:
+    # 1. Factorization, where e.g. we can take a 2x3 space and turn it into
+    #    2*(1x3) spaces.
+    # 2. Splitting, where e.g. the 2x3 space can be rewritten as 2x(2+1), which
+    #    is equivalent to taking a sum of two spaces: 2x2 + 2x1.
+    # We factorize the grid, trying to harvest factors of 2 to get to 4 if
+    # possible. If we can't find enough, we try applying the splitting rule to
+    # split the iteration space into a large even part and a smaller remainder.
+    #
+    # Consider a 2x3 space. The best transfer we could probably derive is to
+    # first perform factorization to get 2*(1x3). At this point we can't
+    # factorize any further, so we split that into 2*(1x2 + 1x1). Using
+    # distributivity we get 2*(1x2) + 2*(1x1) which can be further factored
+    # into 4*(1x1) + 2*(1x1). This gives us a good schedule of a single num=4
+    # transfer and a single num=2 transfer, which is ideal given that we had 6
+    # tiles overall.
+    #
+    # The scheme outlined above is fine for most layouts. However, if the loaded
+    # arrays are used to feed MMA instructions directly, we need to ensure that
+    # the order of registers produced by ldmatrix matches up the order in which
+    # the MMA instructions consume them. Otherwise, ptxas emits a bunch of extra
+    # MOV instructions that destroy the performance.
+    from .mma import MMALayouts
+    if any(layout == MMALayouts(dtype, m_warps=w).lhs for w in (1, 2, 4)):
+      assert tiled_nested_shape[-6] == (2,)
+      assert tiled_nested_shape[-5] == (2,)
+      major_dim = len(tiles_shape) - sum(len(s) for s in tiled_nested_shape[-6:])
+      minor_dim = major_dim + 1
+      factored_quadrant_dims = [(major_dim, 2), (minor_dim, 2)]
+    elif any(layout == MMALayouts(dtype, m_warps=w).rhs for w in (1, 2, 4)):
+      assert tiled_nested_shape[-6] == (2,)
+      dim = len(tiles_shape) - sum(len(s) for s in tiled_nested_shape[-6:])
+      factored_quadrant_dims = [(dim, 2)]
+    elif tx_pair_nested_tiled_dim:
+      # For 8-bit values, each tile is 8x16. But, the transposed instruction
+      # uses 16x16 tiles, which is equivalent to pairing up two 8x16 tiles along
+      # tx_pair_nested_tiled_dim, so the transfer implicitly already has a num of 2.
+      # XXX: We must keep tx_pair_nested_tiled_dim minor!
+      if tiles_shape[tx_pair_nested_tiled_dim] % 4 == 0:
+        factored_quadrant_dims = [(tx_pair_nested_tiled_dim, 4)]
+      else:
+        assert tiles_shape[tx_pair_nested_tiled_dim] % 2 == 0
+        candidate_dim = next(
+            (
+                quadrant_dim
+                for quadrant_dim, d in enumerate(tiles_shape)
+                if d % 2 == 0 and quadrant_dim != tx_pair_nested_tiled_dim
+            ),
+            None,
+        )
+        if candidate_dim is not None:
+          factored_quadrant_dims = [
+              (candidate_dim, 2),
+              (tx_pair_nested_tiled_dim, 2),
+          ]
+        else:
+          factored_quadrant_dims = [(tx_pair_nested_tiled_dim, 2)]
+    else:
+      for quadrant_dim, d in enumerate(tiles_shape):
+        if d % 4 == 0:
+          factored_quadrant_dims = [(quadrant_dim, 4)]
+          break
+      else:
+        factored_quadrant_dims = [
+            (quadrant_dim, 2)
+            for quadrant_dim, d in enumerate(tiles_shape)
+            if d % 2 == 0
+        ][:2]
+
+    @dataclasses.dataclass(frozen=True)
+    class TxMatrixTransfer:
+      quadrant_dims: tuple[tuple[int, int], ...]
+      tile_groups_shape: tuple[int, ...]
+      tile_groups_offset: tuple[int, ...]
+
+      @property
+      def num(self) -> int:
+        return math.prod(d[1] for d in self.quadrant_dims)
+
+    for dim, size in factored_quadrant_dims:
+      assert tiles_shape[dim] % size == 0
+      tiles_shape[dim] //= size
+    offsets = [0] * len(tiles_shape)
+    if (factored_num := math.prod(d[1] for d in factored_quadrant_dims)) == 4:
+      transfers = [
+          TxMatrixTransfer(
+              tuple(factored_quadrant_dims), tuple(tiles_shape), tuple(offsets)
+          )
+      ]
+    else:
+      transfers = []
+      missing_factors = (2,) if factored_num == 2 else (4, 2)
+      for factor in missing_factors:
+        for i, size in enumerate(tiles_shape):
+          if size > factor:
+            if any(d[0] == i for d in factored_quadrant_dims):
+              # More than 1 factor => we have num=4 and we wouldn't be here.
+              assert factored_quadrant_dims == [(i, 2)]
+              tx_quadrant_dims = ((i, 4),)
+              total_dim_factor = 4
+            else:
+              tx_quadrant_dims = ((i, factor), *factored_quadrant_dims)
+              total_dim_factor = factor
+            dim_steps = size // factor
+            transfers.append(
+                TxMatrixTransfer(
+                    tx_quadrant_dims,
+                    (*tiles_shape[:i], dim_steps, *tiles_shape[i + 1 :]),
+                    tuple(offsets),
+                )
+            )
+            offsets[i] += dim_steps * total_dim_factor
+            tiles_shape[i] %= factor
+      transfers.append(
+          TxMatrixTransfer(
+              tuple(factored_quadrant_dims),
+              tuple(tiles_shape),
+              tuple(offsets),
+          )
+      )
+
+    lane_quadrant = arith.remui(arith.divui(utils.thread_idx(), c(WARP_SIZE // 4)), c(4))
+    lane_half = arith.remui(arith.divui(utils.thread_idx(), c(WARP_SIZE // 2)), c(2))
+    base_dyn_offset = dyn_offset
+    for tx in transfers:
+      assert tx.num in (1, 2, 4)
+      lane_tile_offset = arith.constant(i32, 0)
+      if tx_pair_nested_tiled_dim:
+        if len(tx.quadrant_dims) == 1:
+          assert tx.quadrant_dims[0][0] == tx_pair_nested_tiled_dim
+          if tx.quadrant_dims[0][1] == 4:
+            lane_tile_offset = arith.muli(lane_half, c(tiles_strides_transfer[tx_pair_nested_tiled_dim] * 2))
+        else:
+          assert len(tx.quadrant_dims) == 2
+          assert tx.quadrant_dims[-1] == (tx_pair_nested_tiled_dim, 2), tx.quadrant_dims
+          dim = tx.quadrant_dims[-2][0]
+          assert dim != tx_pair_nested_tiled_dim
+          lane_tile_offset = arith.muli(lane_half, c(tiles_strides_transfer[dim]))
+      else:
+        lane_quadrant_remaining = lane_quadrant
+        for dim, size in tx.quadrant_dims[::-1]:
+          idx = arith.remui(lane_quadrant_remaining, c(size))
+          lane_tile_offset = arith.addi(lane_tile_offset, arith.muli(idx, c(tiles_strides_transfer[dim])))
+          lane_quadrant_remaining = arith.divui(lane_quadrant_remaining, c(size))
+      def get_tile_idx(tile_group_idx, num_i):
+        tile_group_idx = list(tile_group_idx)
+        for dim, size in tx.quadrant_dims[::-1]:
+          tile_group_idx[dim] = size * tile_group_idx[dim] + (num_i % size)
+          num_i //= size
+        return tuple(i + o for i, o in zip(tile_group_idx, tx.tile_groups_offset))
+      # Note that this will affect the call to get_tile_transfer below.
+      dyn_offset = arith.addi(base_dyn_offset, lane_tile_offset)
+      for tile_group_idx in np.ndindex(*tx.tile_groups_shape):
+        reg_transfers = []
+        for i in range(tx.num):
+          reg_transfers.append(get_tile_transfer(get_tile_idx(tile_group_idx, i)))
+        transfers_t = list(zip(*reg_transfers))
+        # The first address is the one our quadrant is responsible for providing.
+        yield (*transfers_t[:-1], transfers_t[-1][0], tx_layout)
 
   def tree_flatten(self):
     aux = self.layout, self.registers.shape, self.is_signed
@@ -4342,6 +4814,12 @@ class FragmentedArray:
     registers = np.asarray(flat_registers, dtype=object).reshape(reg_shape)
     return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
 
+
+class TxMatrixIneligible(Exception):
+  pass
+
+class UnsupportedTransferError(Exception):
+  pass
 
 IndexTransform: TypeAlias = Callable[[tuple[int, ...]], tuple[int, ...]]
 

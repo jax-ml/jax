@@ -1,22 +1,15 @@
 .. _advanced_guides:
 
-Resources and Advanced Guides
-=============================
+Additional guides
+=================
 
-This section contains examples and tutorials on more advanced topics,
-such as multi-core computation, automatic differentiation, and custom
-operations.
+This section collects guides and examples that complement the main
+documentation levels (:ref:`101 <jax-101>` through :doc:`501 <501/index>`).
 
 .. toctree::
    :caption: Parallel computation
    :maxdepth: 1
 
-   notebooks/shard_map
-   notebooks/layout
-   notebooks/host-offloading
-   multi_process
-   fault_tolerance
-   distributed_data_loading
    notebooks/colocated-python
 
 .. toctree::
@@ -26,85 +19,8 @@ operations.
    the-training-cookbook
 
 .. toctree::
-   :caption: Automatic differentiation
-   :maxdepth: 1
-
-   notebooks/autodiff_cookbook
-   notebooks/autodiff_remat
-   advanced_autodiff
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Errors and debugging
-
-   errors
-   debugging
-   debugging/index
-   transfer_guard
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Pytrees
-
-   custom_pytrees
-
-.. toctree::
    :maxdepth: 1
    :caption: Performance optimizations
 
-   persistent_compilation_cache
-   buffer_donation
    gpu_performance_tips
 
-.. toctree::
-   :maxdepth: 1
-   :caption: Performance benchmarking and profiling
-
-   benchmarking
-   profiling
-   device_memory_profiling
-   debugging/slow_tracing_compilation
-
-.. toctree::
-   :caption: Non-functional programming
-   :maxdepth: 1
-
-   array_refs
-
-.. toctree::
-   :caption: External Callbacks
-   :maxdepth: 1
-
-   external-callbacks
-
-.. toctree::
-   :caption: FFI
-   :maxdepth: 1
-
-   ffi
-   notebooks/cute_dsl_jax
-
-.. toctree::
-   :caption: Modeling workflows
-   :maxdepth: 1
-
-   gradient-checkpointing
-   aot
-   export/index
-
-.. toctree::
-   :caption: Example applications
-   :maxdepth: 1
-
-   notebooks/neural_network_with_tfds_data
-   notebooks/Neural_Network_and_Data_Loading
-   notebooks/vmapped_log_probs
-
-.. toctree::
-   :caption: Deep dives
-   :maxdepth: 1
-
-   notebooks/convolutions
-   xla_flags
-   jax-primitives
-   jaxpr

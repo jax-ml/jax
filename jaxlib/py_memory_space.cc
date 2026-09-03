@@ -26,6 +26,7 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"  // IWYU pragma: keep
 #include "xla/python/ifrt/device.h"
+#include "xla/python/version.h"
 
 namespace ifrt = ::xla::ifrt;
 namespace nb = ::nanobind;
@@ -54,7 +55,11 @@ std::string_view PyMemorySpace::platform() const {
 }
 
 std::string_view PyMemorySpace::kind() const {
+#if JAX_IFRT_VERSION_NUMBER >= 64
+  return memory_->Kind().value();
+#else
   return *memory_->Kind().memory_kind();
+#endif
 }
 
 std::string_view PyMemorySpace::Str() const { return memory_->DebugString(); }

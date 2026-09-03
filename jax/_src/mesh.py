@@ -116,8 +116,8 @@ class AxisType(enum.Enum):
   def __repr__(self):
     return self.name
 
-def _normalize_axis_types(axis_names, axis_types, name):
-  axis_types = ((AxisType.Auto,) * len(axis_names)
+def _normalize_axis_types(axis_names, axis_types, name, default_axis_type):
+  axis_types = ((default_axis_type,) * len(axis_names)
                 if axis_types is None else axis_types)
   if not isinstance(axis_types, tuple):
     axis_types = (axis_types,)
@@ -281,7 +281,8 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
           f"len(axis_names) == {len(axis_names)}.")
 
     devices_flat = tuple(devices.flat)
-    axis_types = _normalize_axis_types(axis_names, axis_types, 'Mesh')
+    axis_types = _normalize_axis_types(axis_names, axis_types, 'Mesh',
+                                       AxisType.Auto)
     empty = not axis_names and devices_flat[0] is None
     size = 0 if empty else math.prod(devices.shape)
     return cls._create(devices_flat, devices.shape, axis_names,
@@ -407,21 +408,9 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
   def abstract_mesh(self):
     if len(self.axis_names) == 0:
       return empty_abstract_mesh
-    d = self.devices.flat[0]
-    if d is None:
-      abstract_device = None
-    else:
-      if d.platform == 'tpu':
-        num_cores = getattr(d, 'num_cores', None)
-      elif d.platform == 'gpu':
-        num_cores = getattr(d, 'core_count', None)
-      else:
-        num_cores = None
-      abstract_device = AbstractDevice(
-          device_kind=d.device_kind, num_cores=num_cores, platform=d.platform)
     return AbstractMesh(
         self.axis_sizes, self.axis_names, axis_types=self.axis_types,
-        abstract_device=abstract_device)
+        abstract_device=abstract_device_from(self.devices.flat[0]))
 
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
@@ -447,6 +436,19 @@ class AbstractDevice:
   def _repr(self):
     return (f"device_kind={self.device_kind}, num_cores={self.num_cores}, "
             f"platform={self.platform}")
+
+
+def abstract_device_from(d) -> AbstractDevice | None:
+  if d is None:
+    return None
+  if d.platform == 'tpu':
+    num_cores = getattr(d, 'num_cores', None)
+  elif d.platform == 'gpu':
+    num_cores = getattr(d, 'core_count', None)
+  else:
+    num_cores = None
+  return AbstractDevice(device_kind=d.device_kind, num_cores=num_cores,
+                        platform=d.platform)
 
 
 @immutable
@@ -488,7 +490,8 @@ class AbstractMesh(BaseMesh):
   def __new__(cls, axis_sizes: tuple[int, ...], axis_names: tuple[str, ...],
                axis_types: AxisType | tuple[AxisType, ...] | None = None,
                *, abstract_device=None):
-    axis_types = _normalize_axis_types(axis_names, axis_types, 'AbstractMesh')
+    axis_types = _normalize_axis_types(axis_names, axis_types, 'AbstractMesh',
+                                       AxisType.Explicit)
     return AbstractMesh._create(axis_sizes, axis_names, axis_types, abstract_device)
 
   # No __eq__ or __hash__: interned classes use object identity.

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 markers = [
-    "multiaccelerator-only: indicates that a test requires multiple accelerators to run or be useful",
+    "multiaccelerator: indicates that a test can make use of and possibly requires multiple accelerators",
     "SlurmMultiNodeGpuTest: mark a test for Slurm multinode GPU nightly CI"
 ]
 filterwarnings = [
@@ -28,6 +28,13 @@ filterwarnings = [
 
     # TODO(phawkins): Remove this once cloud_tpu_init is removed.
     "ignore:jax.cloud_tpu_init was deprecated",
+
+    # In mpmath 1.4.x, private/deprecated submodules define a module-level
+    # __getattr__ that emits a DeprecationWarning on any unknown attribute
+    # lookup. When unittest.TestCase.assertWarnsRegex inspects sys.modules
+    # and checks getattr(mod, '__warningregistry__', None), it triggers these
+    # warnings, which pytest's "error" filter promotes to exceptions.
+    "ignore:the (rational|math2).* module is deprecated.*:DeprecationWarning:mpmath.*",
 
     # NOTE: this is probably not where you want to add code to suppress a
     # warning. Only pytest tests look at this list, whereas Bazel tests also
@@ -147,5 +154,11 @@ max-complexity = 18
 "docs/notebooks/autodiff_cookbook.ipynb" = ["F811", "F821"]
 "docs/notebooks/autodiff_remat.ipynb" = ["F811", "F821"]
 "docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb" = ["F811"]
+"docs/hijax_custom_derivatives.py" = ["F811"]
+"docs/hijax_custom_derivatives.ipynb" = ["F811"]
 "docs/jep/9407-type-promotion.ipynb" = ["F811"]
 "docs/autodidax.ipynb" = ["F811"]
+
+# This looks like a false positive, but there is no upstream bug.
+# TODO(slebedev): Investigate this and remove the ignore.
+"*.ipynb" = ["E113"]

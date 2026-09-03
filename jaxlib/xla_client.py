@@ -23,7 +23,7 @@ import enum
 import logging
 import os
 import threading
-from typing import Any, Protocol, Union
+from typing import Any, Protocol
 
 from jaxlib import _jax as _xla
 
@@ -45,7 +45,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 473  # Add inlining control with multi-state 'inline' parameter
+_version = 490  # PyArray.aval is read-only
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -60,7 +60,7 @@ xla_platform_names = {
 
 logger = logging.getLogger(__name__)
 
-_NameValueMapping = Mapping[str, Union[str, int, list[int], float, bool]]
+_NameValueMapping = Mapping[str, str | int | list[int] | float | bool]
 
 
 def make_cpu_client(
@@ -192,10 +192,18 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
   collective_memory_size = os.getenv(
       'XLA_PYTHON_CLIENT_COLLECTIVE_MEM_SIZE_MB', ''
   )
-  if allocator not in ('default', 'platform', 'bfc', 'cuda_async', 'vmm'):
+  allowed_allocators = (
+      'default',
+      'platform',
+      'bfc',
+      'cuda_async',
+      'vmm',
+      'address',
+  )
+  if allocator not in allowed_allocators:
     raise ValueError(
-        'XLA_PYTHON_CLIENT_ALLOCATOR env var must be "default", "platform", '
-        '"bfc", "cuda_async", or "vmm", got "%s"' % allocator
+        'XLA_PYTHON_CLIENT_ALLOCATOR env var must be one of %s, got "%s"'
+        % (', '.join(f'"{a}"' for a in allowed_allocators), allocator)
     )
   options['allocator'] = allocator
   if memory_fraction:

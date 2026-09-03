@@ -20,7 +20,6 @@ from absl.testing import parameterized
 
 import jax
 from jax import lax
-from jax._src.lib import jaxlib_extension_version
 from jax import vmap
 from jax.sharding import PartitionSpec as P
 from jax._src import config
@@ -205,8 +204,6 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
           testcase_name='_single_axis_name', axis_name='x', mesh_axes=dict(x=4)
       ),
   )
-  @unittest.skipIf(jaxlib_extension_version < 471,
-                   "Requires jaxlib_extension_version >= 471")
   def test_ragged_all_to_all_axis_index_groups(self, axis_name, mesh_axes):
     device_type = jax.devices()[0].platform
     if device_type == 'tpu' and jtu.get_tpu_version() < 4:

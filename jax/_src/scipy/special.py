@@ -31,6 +31,7 @@ from jax._src import numpy as jnp
 from jax._src.numpy.ufuncs import arctan, isposinf, isneginf, sinc
 from jax._src.api import jit, jvp, vmap
 from jax._src.lax.lax import _const as _lax_const
+from jax._src.lax.special import ndtr as _ndtr
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import promote_args_complex, promote_args_inexact, promote_dtypes_inexact
@@ -312,7 +313,7 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{betaln}(a, b) = \log B(a, b)
+     \mathrm{betaln}(a, b) = \log |B(a, b)|
 
   where :math:`B` is the :func:`~jax.scipy.special.beta` function.
 
@@ -321,7 +322,7 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
     b: arraylike, real-valued.  Parameter *b* of the beta distribution.
 
   Returns:
-    array containing the values of the log-beta function
+    array containing the logarithm of the absolute value of the beta function
 
   See Also:
     :func:`jax.scipy.special.beta`
@@ -468,9 +469,9 @@ def digamma(x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{digamma}(z) = \psi(z) = \frac{\mathrm{d}}{\mathrm{d}z}\log \Gamma(z)
+     \mathrm{digamma}(x) = \psi(x) = \frac{\mathrm{d}}{\mathrm{d}x}\log \Gamma(x)
 
-  where :math:`\Gamma(z)` is the :func:`~jax.scipy.special.gamma` function.
+  where :math:`\Gamma(x)` is the :func:`~jax.scipy.special.gamma` function.
 
   Args:
     x: arraylike, real-valued.
@@ -496,7 +497,7 @@ def gammainc(a: ArrayLike, x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{gammainc}(x; a) = \frac{1}{\Gamma(a)}\int_0^x t^{a-1}e^{-t}\mathrm{d}t
+     \mathrm{gammainc}(a, x) = \frac{1}{\Gamma(a)}\int_0^x t^{a-1}e^{-t}\mathrm{d}t
 
   where :math:`\Gamma(a)` is the :func:`~jax.scipy.special.gamma` function.
 
@@ -522,7 +523,7 @@ def gammaincc(a: ArrayLike, x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{gammaincc}(x; a) = \frac{1}{\Gamma(a)}\int_x^\infty t^{a-1}e^{-t}\mathrm{d}t
+     \mathrm{gammaincc}(a, x) = \frac{1}{\Gamma(a)}\int_x^\infty t^{a-1}e^{-t}\mathrm{d}t
 
   where :math:`\Gamma(a)` is the :func:`~jax.scipy.special.gamma` function.
 
@@ -898,7 +899,7 @@ def logit(x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{logit}(p) = \log\frac{p}{1 - p}
+     \mathrm{logit}(x) = \log\frac{x}{1 - x}
 
   Args:
     x: arraylike, real-valued.
@@ -1445,9 +1446,9 @@ def ndtr(x: ArrayLike) -> Array:
   .. math::
     \begin{align}
     \mathrm{ndtr}(x) =&
-      \ \frac{1}{\sqrt{2 \pi}}\int_{-\infty}^{x} e^{-\frac{1}{2}t^2} dt \\
+      \ \frac{1}{\sqrt{2 \pi}}\int_{-\infty}^{x} e^{-\frac{1}{2}t^2} \mathrm{d}t \\
     =&\ \frac{1}{2} (1 + \mathrm{erf}(\frac{x}{\sqrt{2}})) \\
-    =&\ \frac{1}{2} \mathrm{erfc}(\frac{x}{\sqrt{2}})
+    =&\ \frac{1}{2} \mathrm{erfc}(-\frac{x}{\sqrt{2}})
     \end{align}
 
   Args:
@@ -1466,19 +1467,6 @@ def ndtr(x: ArrayLike) -> Array:
         "x.dtype={} is not supported, see docstring for supported types."
         .format(dtype))
   return _ndtr(x)
-
-def _ndtr(x: ArrayLike) -> Array:
-  """Implements ndtr core logic."""
-  dtype = lax.dtype(x).type
-  half_sqrt_2 = dtype(0.5) * np.sqrt(2., dtype=dtype)
-  w = x * half_sqrt_2
-  z = lax.abs(w)
-  y = lax.select(lax.lt(z, half_sqrt_2),
-                      dtype(1.) + lax.erf(w),
-                      lax.select(lax.gt(w, dtype(0.)),
-                                      dtype(2.) - lax.erfc(z),
-                                      lax.erfc(z)))
-  return dtype(0.5) * y
 
 
 def ndtri(p: ArrayLike) -> Array:
@@ -2349,11 +2337,11 @@ def sph_harm_y(n: Array,
     diff_n: Unsupported by JAX.
     n_max: The maximum degree `max(n)`. If the supplied `n_max` is not the true
       maximum value of `n`, the results are clipped to `n_max`. For example,
-      `sph_harm(m=jnp.array([2]), n=jnp.array([10]), theta, phi, n_max=6)`
+      `sph_harm_y(n=jnp.array([10]), m=jnp.array([2]), theta=theta, phi=phi, n_max=6)`
       actually returns
-      `sph_harm(m=jnp.array([2]), n=jnp.array([6]), theta, phi, n_max=6)`
+      `sph_harm_y(n=jnp.array([6]), m=jnp.array([2]), theta=theta, phi=phi, n_max=6)`.
   Returns:
-    A 1D array containing the spherical harmonics at (m, n, theta, phi).
+    A 1D array containing the spherical harmonics at (n, m, theta, phi).
   """
   if diff_n is not None:
     raise NotImplementedError(
@@ -2365,8 +2353,8 @@ def sph_harm_y(n: Array,
   if n_max is None:
     n_max = np.max(n)
   n_max = core.concrete_or_error(
-      int, n_max, 'The `n_max` argument of `jnp.scipy.special.sph_harm` must '
-      'be statically specified to use `sph_harm` within JAX transformations.')
+      int, n_max, 'The `n_max` argument of `jax.scipy.special.sph_harm_y` must '
+      'be statically specified to use `sph_harm_y` within JAX transformations.')
 
   return _sph_harm(n, m, theta, phi, n_max)
 
@@ -2959,7 +2947,7 @@ def expn(n: ArrayLike, x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{expn}(x) = E_n(x) = x^{n-1}\int_x^\infty\frac{e^{-t}}{t^n}\mathrm{d}t
+     \mathrm{expn}(n, x) = E_n(x) = x^{n-1}\int_x^\infty\frac{e^{-t}}{t^n}\mathrm{d}t
 
   Args:
     n: arraylike, real-valued
@@ -3016,7 +3004,7 @@ def exp1(x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{exp1}(x) = E_1(x) = x^{n-1}\int_x^\infty\frac{e^{-t}}{t}\mathrm{d}t
+     \mathrm{exp1}(x) = E_1(x) = \int_x^\infty\frac{e^{-t}}{t}\mathrm{d}t
 
 
   Args:
@@ -3095,33 +3083,31 @@ def spence(x: Array) -> Array:
   It is defined to be:
 
   .. math::
-    \mathrm{spence}(x) = \begin{equation}
-    \int_1^x \frac{\log(t)}{1 - t}dt
-    \end{equation}
 
-  Unlike the SciPy implementation, this is only defined for positive
-  real values of `z`. For negative values, `NaN` is returned.
+    \mathrm{spence}(x) = \int_1^x \frac{\log(t)}{1 - t}\,\mathrm{d}t
+
+  Unlike the SciPy implementation, this is only defined for non-negative
+  real values of `x`. For negative values, `NaN` is returned.
 
   Args:
-    z: An array of type `float32`, `float64`.
+    x: An array of type `float32`, `float64`.
 
   Returns:
-    An array with `dtype=z.dtype`.
-    computed values of Spence's function.
+    An array with `dtype=x.dtype` containing the computed values of Spence's
+    function.
 
   Raises:
-    TypeError: if elements of array `z` are not in (float32, float64).
+    TypeError: if elements of array `x` are not in (float32, float64).
 
   Notes:
-  There is a different convention which defines Spence's function by the
-  integral:
+    There is a different convention which defines Spence's function by the
+    integral:
 
-  .. math::
-    \begin{equation}
-    -\int_0^z \frac{\log(1 - t)}{t}dt
-    \end{equation}
+    .. math::
 
-  This is our spence(1 - z).
+       -\int_0^x \frac{\log(1 - t)}{t}\mathrm{d}t
+
+    This is our spence(1 - x).
   """
   x = jnp.asarray(x)
   dtype = lax.dtype(x)
@@ -3132,15 +3118,15 @@ def spence(x: Array) -> Array:
 
 
 def bernoulli(n: int) -> Array:
-  """Generate the first N Bernoulli numbers.
+  r"""Generate the Bernoulli numbers :math:`B_0` through :math:`B_n`, inclusive.
 
   JAX implementation of :func:`scipy.special.bernoulli`.
 
   Args:
-    n: integer, the number of Bernoulli terms to generate.
+    n: integer, the index of the last Bernoulli number to generate.
 
   Returns:
-    Array containing the first ``n`` Bernoulli numbers.
+    Array containing the Bernoulli numbers :math:`B_0` through :math:`B_n`, inclusive.
 
   Notes:
     ``bernoulli`` generates numbers using the :math:`B_n^-` convention,
@@ -3163,7 +3149,7 @@ def bernoulli(n: int) -> Array:
 
 @custom_derivatives.custom_jvp
 def poch(z: ArrayLike, m: ArrayLike) -> Array:
-  r"""The Pochammer symbol.
+  r"""The Pochhammer symbol.
 
   JAX implementation of :obj:`scipy.special.poch`.
 
@@ -3178,7 +3164,7 @@ def poch(z: ArrayLike, m: ArrayLike) -> Array:
     m: arraylike, real-valued
 
   Returns:
-    array of Pochammer values.
+    array of Pochhammer values.
 
   Notes:
     The JAX version supports only real-valued inputs.
@@ -3273,7 +3259,7 @@ def _hyp1f1_asymptotic(a, b, x):
 @jnp_vectorize.vectorize
 def _hyp1f1_a_derivative(a, b, x):
   """
-  Define it as a serie using :
+  Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/01/
   """
 
@@ -3301,7 +3287,7 @@ def _hyp1f1_a_derivative(a, b, x):
 @jnp_vectorize.vectorize
 def _hyp1f1_b_derivative(a, b, x):
   """
-  Define it as a serie using :
+  Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/02/
   """
 
@@ -3328,7 +3314,7 @@ def _hyp1f1_b_derivative(a, b, x):
 @jit
 def _hyp1f1_x_derivative(a, b, x):
   """
-  Define it as a serie using :
+  Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/04/
   """
 
@@ -3345,9 +3331,9 @@ def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{hyp1f1}(a, b, x) = {}_1F_1(x;a, b) = \sum_{k=0}^\infty \frac{(a)_k}{(b)_kk!}x^k
+     \mathrm{hyp1f1}(a, b, x) = {}_1F_1(a; b; x) = \sum_{k=0}^\infty \frac{(a)_k}{(b)_k}\frac{x^k}{k!}
 
-  where :math:`(\cdot)_k` is the Pochammer symbol (refer to :func:`~jax.scipy.special.poch`).
+  where :math:`(\cdot)_k` is the Pochhammer symbol (refer to :func:`~jax.scipy.special.poch`).
 
   The JAX version only accepts positive and real inputs. Values of ``a``, ``b``,
   and ``x``, leading to high values of 1F1 may lead to erroneous results;
@@ -3583,7 +3569,7 @@ def _hyp2f1_digamma_transform(a, b, c, x):
 @jnp_vectorize.vectorize
 def _hyp2f1_a_derivative(a, b, c, x):
   """
-  Define it as a serie using :
+  Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/01/
   """
 
@@ -3611,7 +3597,7 @@ def _hyp2f1_a_derivative(a, b, c, x):
 @jnp_vectorize.vectorize
 def _hyp2f1_b_derivative(a, b, c, x):
   """
-  Define it as a serie using :
+  Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/02/
   """
 
@@ -3639,7 +3625,7 @@ def _hyp2f1_b_derivative(a, b, c, x):
 @jnp_vectorize.vectorize
 def _hyp2f1_c_derivative(a, b, c, x):
   """
-  Define it as a serie using :
+  Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/03/
   """
 
@@ -3666,7 +3652,7 @@ def _hyp2f1_c_derivative(a, b, c, x):
 @jit
 def _hyp2f1_x_derivative(a, b, c, x):
   """
-  Define the derivative with regard to ``x`` :
+  Define the derivative with respect to ``x``:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/05/
   """
 
@@ -3683,9 +3669,9 @@ def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{hyp2f1}(a, b, c, x) = {}_2F_1(a; b; c; x) = \sum_{k=0}^\infty \frac{(a)_k(b)_k}{(c)_k}\frac{x^k}{k!}
+     \mathrm{hyp2f1}(a, b, c, x) = {}_2F_1(a, b; c; x) = \sum_{k=0}^\infty \frac{(a)_k(b)_k}{(c)_k}\frac{x^k}{k!}
 
-  where :math:`(\cdot)_k` is the Pochammer symbol.
+  where :math:`(\cdot)_k` is the Pochhammer symbol.
 
   The JAX version only accepts positive and real inputs. Values of
   ``a``, ``b``, ``c``, and ``x`` leading to high values of 2F1 may
@@ -3869,7 +3855,7 @@ def softmax(x: ArrayLike,
   such that the elements along :code:`axis` sum to :math:`1`.
 
   .. math ::
-    \mathrm{softmax}(x) = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
+    \mathrm{softmax}(x)_i = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
 
   Args:
     x : input array
@@ -3901,7 +3887,7 @@ def log_softmax(x: ArrayLike,
   JAX implementation of :func:`scipy.special.log_softmax`
 
   Computes the logarithm of the :code:`softmax` function, which rescales
-  elements to the range :math:`[-\infty, 0)`.
+  elements to the range :math:`(-\infty, 0]`.
 
   .. math ::
     \mathrm{log\_softmax}(x)_i = \log \left( \frac{\exp(x_i)}{\sum_j \exp(x_j)}

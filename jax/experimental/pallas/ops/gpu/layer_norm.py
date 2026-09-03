@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import functools
+import warnings
 
 import jax
 from jax import lax
@@ -24,6 +25,14 @@ import jax.numpy as jnp
 
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import triton as plgpu
+
+warnings.warn(
+    "jax.experimental.pallas.ops.gpu.layer_norm is deprecated. Please use "
+    "tokamax.layer_norm instead. See https://github.com/openxla/tokamax for "
+    "more details.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 def layer_norm_forward_kernel(
     x_ref, weight_ref, bias_ref, # Input arrays

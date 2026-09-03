@@ -33,7 +33,7 @@ from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import linalg as jnp_linalg
 from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import (
-    check_arraylike, promote_dtypes, promote_dtypes_inexact,
+    check_arraylike, ensure_arraylike, promote_dtypes, promote_dtypes_inexact,
     promote_dtypes_complex, promote_args_inexact)
 from jax._src.scipy.special import comb
 from jax._src.tpu.linalg import qdwh
@@ -199,7 +199,7 @@ def cho_solve(c_and_lower: tuple[ArrayLike, bool], b: ArrayLike,
     b: right-hand-side of linear system. Array of shape ``(N,)`` (for a
       1-dimensional right-hand-side) or ``(..., N, M)`` (for a batched
       2-dimensional right-hand-side).
-    overwrite_a: unused by JAX
+    overwrite_b: unused by JAX
     check_finite: unused by JAX
 
   Returns:
@@ -363,18 +363,18 @@ def det(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> A
     Determinant of a small 2D array:
 
     >>> x = jnp.array([[1., 2.],
-    ...                [3., 4.]])
+    ...                [2., 3.]])
     >>> jax.scipy.linalg.det(x)
-    Array(-2., dtype=float32)
+    Array(-1., dtype=float32)
 
     Batch-wise determinant of multiple 2D arrays:
 
     >>> x = jnp.array([[[1., 2.],
-    ...                 [3., 4.]],
-    ...                [[8., 5.],
-    ...                 [7., 9.]]])
+    ...                 [2., 3.]],
+    ...                [[8., 4.],
+    ...                 [2., 5.]]])
     >>> jax.scipy.linalg.det(x)
-    Array([-2., 37.], dtype=float32)
+    Array([-1., 32.], dtype=float32)
   """
   del overwrite_a, check_finite  # unused
   return jnp_linalg.det(a)
@@ -574,7 +574,7 @@ def schur(a: ArrayLike, output: str = 'real') -> tuple[Array, Array]:
   if output not in ('real', 'complex'):
     raise ValueError(
       f"Expected 'output' to be either 'real' or 'complex', got {output=}.")
-  return _schur(a, output)
+  return _schur(ensure_arraylike("scipy.schur", a), output)
 
 
 def inv(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> Array:
@@ -1193,7 +1193,7 @@ def _solve(a: ArrayLike, b: ArrayLike, assume_a: str, lower: bool) -> Array:
   custom_solve = partial(
       lax.custom_linear_solve,
       lambda x: lax_linalg._broadcasted_matvec(a, x),
-      solve=lambda _, x: cho_solve(factors, x),
+      solve=lambda _, x: cho_solve(factors, x[..., None]).squeeze(-1),
       symmetric=True)
   if a.ndim == b.ndim + 1:
     # b.shape == [..., m]
@@ -2082,7 +2082,6 @@ def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: float
       If ``side`` is ``"right"`` then :math:`a = up`. If ``side`` is ``"left"``
       then :math:`a = pu`. The default is ``"right"``.
     method: Determines the algorithm used, as described above.
-    precision: :class:`~jax.lax.Precision` object specifying the matmul precision.
     eps: The final result will satisfy
       :math:`\left|x_k - x_{k-1}\right| < \left|x_k\right| (4\epsilon)^{\frac{1}{3}}`,
       where :math:`x_k` are the QDWH iterates. Ignored if ``method`` is not
@@ -2169,7 +2168,7 @@ def _sqrtm_triu(T: Array) -> Array:
   return U
 
 @jit
-def _sqrtm(A: ArrayLike) -> Array:
+def _sqrtm(A: Array) -> Array:
   T, Z = schur(A, output='complex')
   sqrt_T = _sqrtm_triu(T)
   return jnp.matmul(jnp.matmul(Z, sqrt_T, precision=lax.Precision.HIGHEST),
@@ -2222,7 +2221,7 @@ def sqrtm(A: ArrayLike, blocksize: int = 1) -> Array:
   """
   if blocksize > 1:
       raise NotImplementedError("Blocked version is not implemented yet.")
-  return _sqrtm(A)
+  return _sqrtm(ensure_arraylike("scipy.sqrtm", A))
 
 
 @jit

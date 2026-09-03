@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 # Introduction to multi-controller JAX (aka multi-process/multi-host JAX)
 
 <!--* freshness: { reviewed: '2025-04-09' } *-->

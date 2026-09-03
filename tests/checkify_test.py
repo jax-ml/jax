@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import concurrent.futures
 from functools import partial
 import unittest
 
@@ -956,6 +957,26 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "x must be positive")
 
+  def test_checkify_custom_jvp(self):
+    @jax.custom_jvp
+    def f(x):
+      return x * 2.0
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      dx, = tangents
+      return f(x), dx * 2.0
+
+    def body(x):
+      checkify.check(x > 0, "x must be positive")
+      return f(x)
+
+    checked_f = jax.jit(checkify.checkify(body))
+    err, res = checked_f(2.0)
+    self.assertIsNone(err.get())
+    self.assertAllClose(res, 4.0)
+
 
 @jtu.with_config(jax_check_tracer_leaks=True)
 class AssertPrimitiveTests(jtu.JaxTestCase):
@@ -1272,6 +1293,27 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     # TODO(lenamartens): re-enable assertions below.
     # self.assertIsNone(err.get())
 
+  def test_vmap_of_checkify_of_while(self):
+    # vmap-of-checkify-of-while is a supported composition: checkify injects a
+    # dce_sink into the while body and the outer vmap must batch it. Regression
+    # test for "foreach() argument 2 is longer than argument 1".
+    def fun(v):
+      def while_cond(s):
+        counter, value = s
+        return value < 6.
+      def while_body(s):
+        counter, value = s
+        checkify.check(value >= 0, "value needs to be positive!")
+        return counter + 1, value + 1.
+      counter, _ = jax.lax.while_loop(while_cond, while_body,
+                                      (jnp.int32(0), v))
+      return counter
+
+    checked_f = checkify.checkify(fun, errors=checkify.all_checks)
+    err, counts = jax.jit(jax.vmap(checked_f))(jnp.asarray([1., 2., 3.]))
+    self.assertIsNone(err.get())
+    self.assertArraysEqual(counts, jnp.asarray([5, 4, 3], dtype=jnp.int32))
+
   def test_assert_cond_no_data_dependence(self):
     def true_fun():
       return checkify.check(False, "hi!")
@@ -1350,7 +1392,7 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
       return x
     x = jnp.ones(())
     jaxpr = jax.make_jaxpr(f)(x)
-    roundtrip_f = partial(core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts)
+    roundtrip_f = partial(core.eval_jaxpr, jaxpr, jaxpr.consts)
     checked_f = checkify.checkify(jax.jit(roundtrip_f))
     err, _ = checked_f(jnp.ones(()))
     self.assertIsNotNone(err.get())
@@ -1385,6 +1427,119 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
   def test_check_pp_rule(self):
     jaxpr = jax.make_jaxpr(lambda: checkify.check(False, "hi"))()
     jaxpr.pretty_print(source_info=True, name_stack=True)  # Does not crash.
+
+  def test_checkify_trace_determinism(self):
+    x = jnp.array(5.0)
+
+    def make_fn():
+      def f(y):
+        checkify.check(y > 0.0, "Value must be positive!")
+        return y * 2.0
+      return checkify.checkify(f)
+
+    lowered_1 = jax.jit(make_fn()).lower(x)
+    lowered_2 = jax.jit(make_fn()).lower(x)
+    self.assertEqual(lowered_1.as_text(), lowered_2.as_text())
+
+  def test_checkify_multithreaded_determinism(self):
+    x = jnp.array(5.0)
+
+    def trace_and_lower():
+      def f(y):
+        checkify.check(y > 0.0, "Value must be positive!")
+        checkify.check(y < 100.0, "Value must be less than 100!")
+        return y * 2.0
+      return jax.jit(checkify.checkify(f)).lower(x).as_text()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+      futures = [executor.submit(trace_and_lower) for _ in range(16)]
+      results = [f.result() for f in futures]
+
+    for res in results[1:]:
+      self.assertEqual(results[0], res)
+
+  def test_checkify_inner_jit(self):
+    @checkify.checkify
+    def f(x):
+      @jax.jit
+      def inner(y):
+        checkify.check(y > 0.0, "Inner check failed!")
+        return y + 1.0
+      return inner(x)
+
+    err, out = f(jnp.array(3.0))
+    self.assertEqual(out, 4.0)
+
+    err, _ = f(jnp.array(-1.0))
+    with self.assertRaisesRegex(JaxRuntimeError, "Inner check failed!"):
+      err.throw()
+
+  def test_nested_checkify_namespace_collision(self):
+    def g(y):
+      checkify.check(y > 0, "inner check failed")
+      return y
+
+    def f(x, y):
+      checkify.check(x > 0, "outer check failed")
+      err, out = checkify.checkify(g)(y)
+      checkify.check_error(err)
+      return out
+
+    checked_f = checkify.checkify(f)
+
+    err, _ = checked_f(-1, 1)
+    self.assertStartsWith(err.get(), "outer check failed")
+
+    err, _ = checked_f(1, -1)
+    self.assertStartsWith(err.get(), "inner check failed")
+
+  def test_reinjected_error_with_disabled_checks(self):
+    # A check under a disabled error category must not corrupt the code
+    # namespace of the emitted error: re-injecting that error under an outer
+    # checkify alongside further outer checks must keep messages intact.
+    def inner(x):
+      checkify.check(x < 100.0, "dropped check")  # user_checks not enabled
+      return jnp.log(x)
+
+    inner_checked = checkify.checkify(inner, errors=checkify.float_checks)
+    err_inner, _ = inner_checked(jnp.array(-1.0))  # NaN fires
+    self.assertIsNotNone(err_inner.get())
+    self.assertStartsWith(err_inner.get(), "nan generated by primitive: log")
+
+    def outer(err, x):
+      checkify.check_error(err)
+      checkify.check(x < 1000.0, "outer check")  # passes
+      return x
+
+    outer_checked = checkify.checkify(
+        outer, errors=checkify.float_checks | checkify.user_checks)
+    err_out, _ = outer_checked(err_inner, jnp.array(1.0))
+    self.assertIsNotNone(err_out.get())
+    self.assertStartsWith(err_out.get(), "nan generated by primitive: log")
+
+  def test_reinjected_error_after_while_loop_cond_check(self):
+    # The while-loop rule checkifies its cond jaxpr an extra time with the
+    # error outputs dropped; the codes involved must not corrupt the namespace
+    # of the emitted error under later re-injection.
+    def inner(x):
+      def cond(c):
+        checkify.check(c < 100.0, "cond check")  # passes
+        return c < 3.0
+      out = jax.lax.while_loop(cond, lambda c: c + 1.0, x)
+      checkify.check(x < 10.0, "post-while check")  # fires
+      return out
+
+    err_inner, _ = checkify.checkify(inner)(jnp.array(20.0))
+    self.assertStartsWith(err_inner.get(), "post-while check")
+
+    def outer(err, x):
+      checkify.check_error(err)
+      checkify.check(x < 1000.0, "outer check")  # passes
+      return x
+
+    err_out, _ = checkify.checkify(outer)(err_inner, jnp.array(1.0))
+    self.assertIsNotNone(err_out.get())
+    self.assertStartsWith(err_out.get(), "post-while check")
 
 
 if __name__ == "__main__":

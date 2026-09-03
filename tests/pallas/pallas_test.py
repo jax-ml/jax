@@ -98,6 +98,8 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
 class PallasTest(ptu.PallasTest):
 
   def setUp(self):
+    if type(self) is PallasTest:
+      self.skipTest("Base class for Pallas tests")
     if jtu.test_device_matches(["gpu"]):
       self.enter_context(warnings.catch_warnings())
       warnings.filterwarnings(
@@ -298,23 +300,41 @@ class PallasTest(ptu.PallasTest):
     self.assertEqual(o_ref_shape, (128,))
     self.assertAllClose(pids, jnp.zeros(o_ref_shape, dtype=np.int32))
 
+  def test_store_reshaped_ref(self):
+    shape1, shape2 = (4, 3), (2, 6)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape1, jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref.reshape(shape2)[...] = x_ref.reshape(shape2)[...]
+
+    x = jnp.arange(12, dtype=jnp.float32).reshape(shape1)
+    y = kernel(x)
+    np.testing.assert_array_equal(y, x)
+
 
 class PallasTritonTest(PallasTest):
 
-  @classmethod
-  def setUpClass(cls):
+  def setUp(self):
     if not jtu.is_cuda_compute_capability_at_least("8.0"):
-      raise absltest.SkipTest("Only works on a GPU with capability >= sm80")
+      self.skipTest("Only works on a GPU with capability >= sm80")
     if not pltriton:
-      raise absltest.SkipTest("Pallas Triton is not available")
-
-    super().setUpClass()
+      self.skipTest("Pallas Triton is not available")
+    super().setUp()
 
   def pallas_call(self, *args, **kwargs):
     assert "compiler_params" not in kwargs
     return super().pallas_call(
         *args, compiler_params=pltriton.CompilerParams(), **kwargs
     )
+
+  def test_store_reshaped_ref(self):
+    with self.assertRaisesRegex(
+        AttributeError, "object has no attribute 'get_indexer_shape_static'"
+    ):
+      super().test_store_reshaped_ref()
 
   def test_array_indexing(self):
     x = jnp.arange(128, dtype=floatx)
@@ -335,28 +355,26 @@ class PallasTritonTest(PallasTest):
 
 class PallasTPUTest(PallasTest):
 
-  @classmethod
-  def setUpClass(cls):
+  def setUp(self):
     if not jtu.test_device_matches(["tpu"]):
-      raise absltest.SkipTest("Only works on TPU devices")
+      self.skipTest("Only works on TPU devices")
     if not pltpu:
-      raise absltest.SkipTest("Pallas TPU is not available")
+      self.skipTest("Pallas TPU is not available")
+    super().setUp()
 
-    super().setUpClass()
+  def test_store_reshaped_ref(self):
+    if not self.INTERPRET:
+      self.skipTest("Requires TPU sublane tiling (tested in tpu_pallas_test.py)")
+    super().test_store_reshaped_ref()
 
 
 class PallasMGPUTest(PallasTest):
 
-  @classmethod
-  def setUpClass(cls):
-    if not jtu.is_cuda_compute_capability_at_least("9.0"):
-      raise absltest.SkipTest("Only works on a GPU with capability >= sm90")
-    if not plmgpu:
-      raise absltest.SkipTest("Pallas Mosaic GPU is not available")
-
-    super().setUpClass()
-
   def setUp(self):
+    if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest("Only works on a GPU with capability >= sm90")
+    if not plmgpu:
+      self.skipTest("Pallas Mosaic GPU is not available")
     super().setUp()
     self.enter_context(
         mgpu.core.artificial_shared_memory_limit(jtu._SMEM_SIZE_BOUND_FOR_TESTS)
@@ -364,13 +382,23 @@ class PallasMGPUTest(PallasTest):
 
   def pallas_call(self, *args, **kwargs):
     assert "compiler_params" not in kwargs
-    return super().pallas_call(
+    if self.INTERPRET:
+      raise self.skipTest("Mosaic GPU does not support interpret mode.")
+    from jax._src.pallas.mosaic_gpu import pallas_call
+    return pallas_call.pallas_call(
         *args, compiler_params=plmgpu.CompilerParams(), **kwargs
     )
 
   def skip_if_x64(self):
     if floatx == jnp.float64:
       self.skipTest("Mosaic GPU does not support float64.")
+
+  def test_store_reshaped_ref(self):
+    self.skipTest(
+      "Mosaic GPU layout inference does not support this reshape."
+    )
+    self.skip_if_x64()
+    super().test_store_reshaped_ref()
 
   def test_add_one(self):
     self.skip_if_x64()
@@ -391,12 +419,10 @@ class PallasMGPUTest(PallasTest):
 class PallasInterpretTest(PallasTest):
   INTERPRET = True
 
-  @classmethod
-  def setUpClass(cls):
+  def setUp(self):
     if not jtu.test_device_matches(["cpu"]):
-      raise absltest.SkipTest("Only works on CPU devices")
-
-    super().setUpClass()
+      self.skipTest("Only works on CPU devices")
+    super().setUp()
 
 
 class PallasCallTest(ptu.PallasTest):
@@ -1396,8 +1422,8 @@ class PallasCallInputOutputAliasingTest(ptu.PallasTest):
   def test_vector_input_output_aliasing(self):
     # Input needs to be big so it doesn't fit in VMEM
     size = 1024
-    if jtu.is_device_cuda():
-      # Reduce the size on CUDA to avoid OOM.
+    if jtu.is_device_cuda() or jtu.is_device_rocm():
+      # Reduce the size on GPU to avoid OOM.
       size = 256
     x = jnp.ones((32, size, size))
     expected = x + 1
@@ -2712,6 +2738,24 @@ class PallasCallNamedGridTest(ptu.PallasTest):
         y, x + jnp.arange(4, dtype=jnp.int32)[:, None, None]
     )
 
+  def test_vmap_named_grid(self):
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...] * 2
+
+    def f(x):
+      return self.pallas_call(
+          kernel,
+          out_shape=x,
+          in_specs=[pl.BlockSpec((1, 128), lambda i: (i, 0))],
+          out_specs=pl.BlockSpec((1, 128), lambda i: (i, 0)),
+          grid=(("tile", 1),),
+      )(x)
+
+    x = jnp.ones((2, 1, 128))
+    y = jax.vmap(f)(x)
+    np.testing.assert_array_equal(y, x * 2)
+
 
 class PallasCallNamedGridInterpretTest(PallasCallNamedGridTest):
   INTERPRET = True
@@ -2898,4 +2942,4 @@ class PallasHiJaxTest(ptu.PallasTest):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

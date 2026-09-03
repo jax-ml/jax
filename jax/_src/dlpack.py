@@ -86,6 +86,9 @@ _DL_DEVICE_TO_PLATFORM = {
     DLDeviceType.kDLCUDA: "cuda",
     DLDeviceType.kDLCUDAHost: "cuda",
     DLDeviceType.kDLROCM: "rocm",
+    DLDeviceType.kDLROCMHost: "rocm",
+    DLDeviceType.kDLTPUHost: "tpu",
+    DLDeviceType.kDLOneAPI: "oneapi",
 }
 
 
@@ -255,7 +258,11 @@ def from_dlpack(external_array,
   if _is_tensorflow_tensor(external_array):
     # TensorFlow does not support stream=.
     stream = None
-  elif dl_device_type == DLDeviceType.kDLCUDAHost:
+  elif dl_device_type in (
+      DLDeviceType.kDLCUDAHost,
+      DLDeviceType.kDLROCMHost,
+      DLDeviceType.kDLTPUHost,
+  ):
     # Some producers (e.g. torch.Tensor with is_pinned()) route pinned tensors
     # through their CPU __dlpack__, which rejects a non-None stream argument.
     stream = None

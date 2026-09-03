@@ -45,70 +45,32 @@ echo "Running RBE GPU tests..."
 
 TAG_FILTERS="jax_test_gpu,-config-cuda-only,-manual"
 
-TESTS_TO_IGNORE=(
-    -//tests/pallas:pallas_test_gpu
-    -//tests/pallas:ops_test_gpu
-    -//tests/pallas:ops_test_mgpu_gpu
-    -//tests/pallas:pallas_shape_poly_test_gpu
-    -//tests/pallas:pallas_vmap_test_gpu
-    -//tests/pallas:triton_pallas_test_gpu
-    -//tests:export_harnesses_multi_platform_test_gpu
-    -//tests:jet_test_gpu
-    -//tests:lax_autodiff_test_gpu
-    -//tests:lax_numpy_setops_test_gpu
-    -//tests:lax_numpy_test_gpu
-    -//tests:lax_test_gpu
-    -//tests:linalg_test_gpu
-    -//tests:logging_test_gpu
-    -//tests:random_lax_test_gpu
-    -//tests:scipy_signal_test_gpu
-    -//tests:stax_test_gpu
-    -//tests:ode_test_gpu
-    -//tests:lobpcg_test_gpu
-    -//tests:scipy_stats_test_gpu
-    -//tests:nn_test_gpu
-    -//tests:lax_scipy_sparse_test_gpu
-    -//tests:lax_scipy_spectral_dac_test_gpu
-    -//tests:lax_scipy_special_functions_test_gpu
-    -//tests:cholesky_update_test_gpu
-    -//tests:api_test_gpu
-    -//tests:ann_test_gpu
-    -//tests:experimental_rnn_test_gpu
-    -//tests:lax_vmap_test_gpu
-    -//tests:qdwh_test_gpu
-    -//tests:scaled_dot_test_gpu
-    -//tests:scipy_spatial_test_gpu
-    -//tests:shape_poly_test_gpu
-    -//tests:sparsify_test_gpu
-    -//tests:lax_numpy_reducers_test_gpu
-    -//tests:scipy_optimize_test_gpu
-    #TODO(mgaonka-amd) re-enable these tests once this issue is fixed.
-    -//tests:lax_numpy_einsum_test_gpu
-    -//tests:lax_scipy_test_gpu
-    -//tests:sparse_test_gpu
-    -//tests:sparse_bcoo_bcsr_test_gpu
-    -//tests:svd_test_gpu
-    -//tests:eigh_test_gpu
-    -//tests:image_test_gpu
-)
+# JAXCI_GATE_TARGETS_FILE selects which Bazel target pattern file to use.
+# Defaults to the full CI suite; set to build/rocm/ci_blocking_test_targets.txt
+# for the PR blocking gate.
+TARGETS_FILE="${JAXCI_GATE_TARGETS_FILE:-build/rocm/ci_test_targets.txt}"
 
 for arg in "$@"; do
     if [[ "$arg" == "--config=multi_gpu" ]]; then
-        TAG_FILTERS="${TAG_FILTERS},multiaccelerator,multiaccelerator-only"
+        TAG_FILTERS="${TAG_FILTERS},multiaccelerator"
     fi
     if [[ "$arg" == "--config=single_gpu" ]]; then
-        TAG_FILTERS="${TAG_FILTERS},gpu,-multiaccelerator,-multiaccelerator-only"
-    fi
-    if [[ "$arg" == "--//jax:build_jaxlib=false" ]]; then
-        # tests to ignore for pre-built plugin wheels
-        TESTS_TO_IGNORE+=(
-            -//tests:buffer_callback_test_gpu
-        )
+        TAG_FILTERS="${TAG_FILTERS},gpu,-multiaccelerator"
     fi
 done
 
 TEST_ARTIFACTS_DIR="test-artifacts"
 mkdir -p "$TEST_ARTIFACTS_DIR"
+
+# Point ROCM_PATH at the local TheRock installation. Tests find ROCm through
+# their runfiles, so they need no LD_LIBRARY_PATH.
+ROCM_SDK_FLAGS=()
+if command -v rocm-sdk >/dev/null 2>&1; then
+    ROCM_SDK_ROOT="$(rocm-sdk path --root)"
+    ROCM_SDK_FLAGS=(
+        "--repo_env=ROCM_PATH=${ROCM_SDK_ROOT}"
+    )
+fi
 echo "::endgroup::" >&2
 
 echo "::group::Bazel ROCm RBE tests" >&2
@@ -127,15 +89,10 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
     --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx908,gfx90a,gfx942,gfx950" \
     --color=yes \
+    "${ROCM_SDK_FLAGS[@]}" \
     $@ \
     --spawn_strategy=local \
-    -- \
-    //tests:gpu_tests \
-    //tests:backend_independent_tests \
-    //tests/pallas:gpu_tests \
-    //tests/pallas:backend_independent_tests \
-    //jaxlib/tools:check_gpu_wheel_sources_test \
-    "${TESTS_TO_IGNORE[@]}" || bazel_retval=$?
+    --target_pattern_file="${TARGETS_FILE}" || bazel_retval=$?
 echo "::endgroup::" >&2
 
 echo "::group::Cleanup" >&2

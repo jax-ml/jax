@@ -90,6 +90,8 @@ class CompatTest(jtu.JaxTestCase):
     """
     exp = _export.export(fun, platforms=platforms)(*args, **kwargs)
     serialized = exp.serialize(vjp_order=vjp_order)
+    if "current" not in self._testMethodName:
+      return serialized
     updated_testdata = f"""
     # Paste to the test data file (see export_serialization_back_compat_test.py module docstring)
     dict(
@@ -115,7 +117,7 @@ class CompatTest(jtu.JaxTestCase):
   @jtu.parameterized_filterable(
     kwargs=[
       dict(testdata=testdata,
-      testcase_name=("current" if testdata is None
+      testcase_name=(f"current_{_SERIALIZATION_VERSION}" if testdata is None
                      else f"v{testdata['serialization_version']}"))
       for testdata in [None, *export_with_specified_sharding.serializations]
     ]
@@ -142,11 +144,10 @@ class CompatTest(jtu.JaxTestCase):
       self.assertEqual(out.addressable_shards[0].index, (slice(None), slice(0, 2)))
       self.assertEqual(out.addressable_shards[1].index, (slice(None), slice(2, 4)))
 
-
   @jtu.parameterized_filterable(
     kwargs=[
       dict(testdata=testdata,
-      testcase_name=("current" if testdata is None
+      testcase_name=(f"current_{_SERIALIZATION_VERSION}" if testdata is None
                      else f"v{testdata['serialization_version']}"))
       for testdata in [None, *export_with_unspecified_sharding.serializations]
     ]
@@ -178,7 +179,7 @@ class CompatTest(jtu.JaxTestCase):
   @jtu.parameterized_filterable(
     kwargs=[
       dict(testdata=testdata,
-      testcase_name=("current" if testdata is None
+      testcase_name=(f"current_{_SERIALIZATION_VERSION}" if testdata is None
                      else f"v{testdata['serialization_version']}"))
       for testdata in [None, *export_with_memory_space.serializations]
     ]
@@ -215,7 +216,7 @@ class CompatTest(jtu.JaxTestCase):
   @jtu.parameterized_filterable(
     kwargs=[
       dict(testdata=testdata,
-      testcase_name=("current" if testdata is None
+      testcase_name=(f"current_{_SERIALIZATION_VERSION}" if testdata is None
                      else f"v{testdata['serialization_version']}"))
       for testdata in [None, *export_with_multiple_meshes.serializations]
     ]

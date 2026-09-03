@@ -65,9 +65,9 @@ jobs:
   changed_files:
     if: ${{ github.repository_owner == 'jax-ml' && github.event_name == 'pull_request' }}
     runs-on: linux-x86-n4-16
-    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
+    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest  # zizmor: ignore[unpinned-images]
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 2  # HEAD and HEAD^1 is enough for the diff
           persist-credentials: false
@@ -137,11 +137,11 @@ jobs:
           )
       }}
     runs-on: linux-x86-a4-224-b200-1gpu
-    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
+    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'  # zizmor: ignore[unpinned-images]
     timeout-minutes: 15  # Stop potential hangs from keeping the job running too long.
     name: Mosaic GPU B200 tests
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: Wait For Connection

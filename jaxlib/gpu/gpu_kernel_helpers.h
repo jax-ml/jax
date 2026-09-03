@@ -39,12 +39,19 @@ limitations under the License.
     if (ABSL_PREDICT_FALSE(!s___.ok())) return s___; \
   }
 
+#define JAX_ASSIGN_OR_RETURN_IMPL(var, lhs, expr) \
+  auto var = (expr);                              \
+  if (ABSL_PREDICT_FALSE(!var.ok())) {            \
+    return var.status();                          \
+  }                                               \
+  lhs = (*std::move(var))
+
+#define JAX_ASSIGN_OR_RETURN_CONCAT(a, b) a##b
+#define JAX_ASSIGN_OR_RETURN_MAKE_VAR(a, b) JAX_ASSIGN_OR_RETURN_CONCAT(a, b)
+
 #define JAX_ASSIGN_OR_RETURN(lhs, expr) \
-  auto s___ = (expr);                   \
-  if (ABSL_PREDICT_FALSE(!s___.ok())) { \
-    return s___.status();               \
-  }                                     \
-  lhs = (*std::move(s___))
+  JAX_ASSIGN_OR_RETURN_IMPL(            \
+      JAX_ASSIGN_OR_RETURN_MAKE_VAR(status_or_, __COUNTER__), lhs, expr)
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {

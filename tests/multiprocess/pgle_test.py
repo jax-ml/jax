@@ -82,10 +82,11 @@ class PgleTestMultiHost(jt_multiprocess.MultiProcessTest):
         for _ in range(num_runs):
           f(x)
 
-        # There should be 3 fdo profiles: before optimization, after
-        # SPMD-partitioning, and after optimization.
+        # TODO(b/529787598): Don't dump fdo profiles for non-optimized HLOs.
+        # There should be 4 fdo profiles: before optimization, after
+        # SPMD-partitioning, before config assignment and after optimization.
         fdo_profiles_before_pgle = self.get_fdo_profiles(dump_dir)
-        self.assertLen(fdo_profiles_before_pgle, 3)
+        self.assertLen(fdo_profiles_before_pgle, 4)
         self.assertEqual(
             os.path.getsize(
                 os.path.join(dump_dir, fdo_profiles_before_pgle[0])
@@ -96,9 +97,9 @@ class PgleTestMultiHost(jt_multiprocess.MultiProcessTest):
         # Should recompile with the FDO profile.
         f(x)
 
-        # Expect 3 additional non-empty fdo profiles.
+        # Expect 4 additional non-empty fdo profiles.
         fdo_profiles_after_pgle = self.get_fdo_profiles(dump_dir)
-        self.assertLen(fdo_profiles_after_pgle, 6)
+        self.assertLen(fdo_profiles_after_pgle, 8)
         for fdo_profile in fdo_profiles_after_pgle:
           if fdo_profile not in fdo_profiles_before_pgle:
             self.assertGreater(

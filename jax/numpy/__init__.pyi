@@ -4,7 +4,7 @@ from __future__ import annotations
 import builtins
 from collections.abc import Callable, Sequence
 import os
-from typing import Any, IO, Literal, NamedTuple, Protocol, TypeVar, Union, overload
+from typing import Any, IO, Literal, NamedTuple, Protocol, overload
 
 from jax._src import core as _core
 from jax._src import dtypes as _dtypes
@@ -22,9 +22,7 @@ from jax.numpy import fft as fft, linalg as linalg
 from jax.sharding import Sharding as _Sharding
 import numpy as _np
 
-_T = TypeVar('_T')
-
-_Axis = Union[None, int, Sequence[int]]
+_Axis = int | Sequence[int] | None
 
 _Device = Device
 
@@ -249,7 +247,7 @@ def blackman(M: int) -> Array: ...
 def block(arrays: ArrayLike | Sequence[ArrayLike] | Sequence[Sequence[ArrayLike]]) -> Array: ...
 bool: Any
 bool_: Any
-def broadcast_arrays(*args: ArrayLike) -> list[Array]: ...
+def broadcast_arrays(*args: ArrayLike) -> tuple[Array, ...]: ...
 
 @overload
 def broadcast_shapes(*shapes: Sequence[int]) -> tuple[int, ...]: ...
@@ -642,7 +640,7 @@ def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: builtins.bool = True, retstep: builtins.bool = False,
              dtype: DTypeLike | None = ...,
              axis: int = 0,
-             *, device: _Device | _Sharding | None = ...) -> Union[Array, tuple[Array, Array]]: ...
+             *, device: _Device | _Sharding | None = ...) -> Array | tuple[Array, Array]: ...
 
 def load(file: IO[bytes] | str | os.PathLike[Any], *args: Any, **kwargs: Any) -> Array: ...
 def log(x: ArrayLike, /) -> Array: ...
@@ -678,7 +676,7 @@ def median(a: ArrayLike, axis: int | tuple[int, ...] | None = ...,
            out: None = ..., overwrite_input: builtins.bool = ...,
            keepdims: builtins.bool = ...) -> Array: ...
 def meshgrid(*xi: ArrayLike, copy: builtins.bool = ..., sparse: builtins.bool = ...,
-             indexing: str = ...) -> list[Array]: ...
+             indexing: str = ...) -> tuple[Array, ...]: ...
 mgrid: _Mgrid
 def min(a: ArrayLike, axis: _Axis = ..., out: None = ...,
         keepdims: builtins.bool = ..., initial: ArrayLike | None = ...,
@@ -769,7 +767,7 @@ def packbits(
     a: ArrayLike, axis: int | None = ..., bitorder: str = ...
 ) -> Array: ...
 
-PadValueLike = Union[_T, Sequence[_T], Sequence[Sequence[_T]]]
+type PadValueLike[T] = T | Sequence[T] | Sequence[Sequence[T]]
 def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | _np.ndarray],
         mode: str | Callable[..., Any] = ..., **kwargs) -> Array: ...
 
@@ -943,6 +941,15 @@ def tensordot(a: ArrayLike, b: ArrayLike,
               preferred_element_type: DTypeLike | None = ...,
               out_sharding: NamedSharding | P | None = ...) -> Array: ...
 def tile(A: ArrayLike, reps: DimSize | Sequence[DimSize]) -> Array: ...
+def top_k(
+    a: ArrayLike,
+    k: int,
+    /,
+    *,
+    axis: int = ...,
+    mode: str = ...,
+    sorted: builtins.bool = ...,
+) -> tuple[Array, Array]: ...
 def trace(a: ArrayLike, offset: int | ArrayLike = ..., axis1: int = ..., axis2: int = ...,
           dtype: DTypeLike | None = ..., out: None = ...) -> Array: ...
 def transpose(a: ArrayLike, axes: Sequence[int] | None = ...) -> Array: ...

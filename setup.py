@@ -19,12 +19,12 @@ from setuptools import setup, find_packages
 
 project_name = 'jax'
 
-_current_jaxlib_version = '0.10.2'
+_current_jaxlib_version = '0.11.1'
 
 # The following should be updated after each new jaxlib release.
-_latest_jaxlib_version_on_pypi = '0.10.2'
+_latest_jaxlib_version_on_pypi = '0.11.1'
 
-_libtpu_version = '0.0.42.*'
+_libtpu_version = '0.0.46.*'
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -123,6 +123,11 @@ setup(
           f"jax-rocm7-plugin=={_jax_version}.*",
         ],
 
+        'oneapi': [
+          f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
+          f"jax-oneapi-plugin[with-oneapi]>={_current_jaxlib_version},<={_jax_version}",
+        ],
+
         # For automatic bootstrapping distributed jobs in Kubernetes
         'k8s': [
           'kubernetes',
@@ -140,6 +145,7 @@ setup(
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
         "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
         "Programming Language :: Python :: Free Threading :: 3 - Stable",
     ],
     zip_safe=False,

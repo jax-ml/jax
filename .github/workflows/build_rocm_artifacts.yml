@@ -10,9 +10,9 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: choice
-        default: "amd-do-linux.jax.gpu.gfx950.1"
+        default: "amd-do-linux.jax.cpu"
         options:
-        - "amd-do-linux.jax.gpu.gfx950.1"
+        - "amd-do-linux.jax.cpu"
       artifact:
         description: "Which ROCm artifact to build?"
         type: choice
@@ -28,6 +28,7 @@ on:
         - "3.12"
         - "3.13"
         - "3.14"
+        - "3.15"
       rocm-version:
         description: "Which ROCm version to build for?"
         type: string
@@ -63,7 +64,7 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: string
-        default: "amd-do-linux.jax.gpu.gfx950.1"
+        default: "amd-do-linux.jax.cpu"
       artifact:
         description: "Which ROCm artifact to build?"
         type: string
@@ -104,6 +105,11 @@ on:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
         default: 'no'
+      git_commit:
+        description: "Commit SHA to check out for building artifacts"
+        required: false
+        default: ""
+        type: string
     outputs:
       s3_upload_uri:
         description: "S3 location prefix to where the artifacts were uploaded"
@@ -127,10 +133,6 @@ jobs:
       volumes:
         - /data:/data
       options: >-
-        --device=/dev/kfd
-        --device=/dev/dri
-        --security-opt seccomp=unconfined
-        --group-add video
         --shm-size 64G
 
     env:
@@ -138,28 +140,17 @@ jobs:
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
       JAXCI_OUTPUT_DIR: "${{ github.workspace }}/dist"
 
-    name: "${{ inputs.artifact }}, py ${{ inputs.python }}, ROCm ${{ inputs.rocm-version }}"
+    name: "${{ inputs.artifact }}, py ${{ inputs.python }}, ROCm ${{ inputs.rocm-release-version || inputs.rocm-version }}"
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.git_commit }}
           persist-credentials: false
       - name: Install Bazelisk
         run: |
           curl -fSsL -o /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64
           chmod +x /usr/local/bin/bazel
-      - name: ROCm Info
-        run: |
-          # TheRock (pip) ROCm images are /opt/rocm-less; rocminfo lives in the
-          # SDK bin dir, so put it on PATH via rocm-sdk. apt-ROCm images lack
-          # rocm-sdk and already have rocminfo on PATH.
-          if command -v rocm-sdk >/dev/null 2>&1; then
-            sdk_bin="$(rocm-sdk path --bin)"
-            if [[ -n "$sdk_bin" ]]; then
-              export PATH="$sdk_bin:$PATH"
-            fi
-          fi
-          rocminfo
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
@@ -173,7 +164,7 @@ jobs:
           JAXCI_WHEEL_VERSION_SUFFIX: ${{ inputs.wheel-version-suffix }}
       - name: Configure AWS Credentials
         if: ${{ inputs.upload_artifacts_to_s3 }}
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # ratchet:aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
           aws-region: us-east-1

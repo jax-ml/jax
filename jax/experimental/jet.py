@@ -266,17 +266,6 @@ class JetTrace(core.Trace):
     else:
       return [JetTracer(self, p, ts) for p, ts in zip(primal_out, terms_out)]
 
-  def process_call(self, call_primitive, f, tracers, params, /):
-    primals_in, series_in = unzip2(map(self.to_primal_terms_pair, tracers))
-    primals_and_series, in_tree_def = tree_flatten((primals_in, series_in))
-    f_jet, out_tree_def = traceable(jet_subtrace(f, self.main), in_tree_def)
-    update_params = call_param_updaters.get(call_primitive)
-    new_params = (update_params(params, len(primals_and_series))
-                  if update_params else params)
-    result = call_primitive.bind(f_jet, *primals_and_series, **new_params)
-    primals_out, series_out = tree_unflatten(out_tree_def(), result)
-    return [JetTracer(self, p, ts) for p, ts in zip(primals_out, series_out)]
-
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *,
                               symbolic_zeros):
     # TODO(mattjj): don't just ignore custom jvp rules?
@@ -745,11 +734,11 @@ def _jet_jaxpr(
     jaxpr: core.ClosedJaxpr, order: int, primals_and_series_avals, in_tree_def
 ) -> tuple[core.ClosedJaxpr, Any]:
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr),
-                   debug_info=jaxpr.jaxpr.debug_info.with_unknown_names())
+                   debug_info=jaxpr.debug_info.with_unknown_names())
   f_jet, out_tree_def = traceable(jet_fun(jet_subtrace(f), order), in_tree_def)
   jaxpr_jet, _, consts = pe.trace_to_jaxpr_dynamic(
       f_jet, primals_and_series_avals)
-  return core.ClosedJaxpr(jaxpr_jet, consts), out_tree_def
+  return jaxpr_jet.with_consts(consts), out_tree_def
 
 
 def _pjit_jet_rule(primals_in, series_in, **params):

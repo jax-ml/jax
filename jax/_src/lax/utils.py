@@ -28,6 +28,8 @@ from jax._src import mesh as mesh_lib
 from jax._src import state
 from jax._src.named_sharding import DuplicateSpecError, NamedSharding
 from jax._src.partition_spec import PartitionSpec as P
+from jax._src.layout import (AutoLayoutSingleton, AutoLayout, get_layout_mode,
+                             LayoutMode, use_layout_mode)
 from jax._src.util import safe_zip
 from jax._src.typing import DimSize, DType, Shape
 
@@ -44,14 +46,14 @@ def _argnum_weak_type(*argnums):
 
 def standard_primitive(shape_rule, dtype_rule, name,
                        weak_type_rule=None, sharding_rule=None, vma_rule=None,
-                       ur_rule=None, memory_space_rule=None):
+                       ur_rule=None, memory_space_rule=None, layout_rule=None):
   weak_type_rule = weak_type_rule or _standard_weak_type_rule
   prim = core.Primitive(name)
   prim.def_impl(partial(dispatch.apply_primitive, prim))
   prim.def_abstract_eval(
       partial(standard_abstract_eval, prim, shape_rule, dtype_rule,
               weak_type_rule, sharding_rule, vma_rule, ur_rule,
-              memory_space_rule))
+              memory_space_rule, layout_rule))
   return prim
 
 def _get_array_abstraction_level(a): return a.array_abstraction_level
@@ -86,8 +88,8 @@ def call_ur_rule(prim, ur_rule, out_s, num_out, *avals, **kwargs):
     raise NotImplementedError(
         f'unreduced/reduced rule for {prim.name} is not implemented. Please'
         ' file an issue at https://github.com/jax-ml/jax/issues')
-  return ((frozenset(), frozenset()) if num_out is None else
-          ([frozenset()] * num_out, [frozenset()] * num_out))
+  return ((frozenset(), frozenset(), None) if num_out is None else
+          ([frozenset()] * num_out, [frozenset()] * num_out, [None] * num_out))
 
 def call_sharding_rule(prim, sh_rule, ur_rule, num_out, *avals, **kwargs):
   cur_mesh = mesh_lib.get_abstract_mesh()
@@ -104,11 +106,12 @@ def call_sharding_rule(prim, sh_rule, ur_rule, num_out, *avals, **kwargs):
         ' this error by dropping that operation into full auto sharding'
         ' mode via: `jax.sharding.auto_axes(fun, out_shardings=...)`')
   out_s = sh_rule(*avals, **kwargs)
-  unreduced, reduced = call_ur_rule(prim, ur_rule, out_s, num_out, *avals,
-                                    **kwargs)
-  up = lambda sh, u, r: sh.update(spec=sh.spec.update(unreduced=u, reduced=r))
-  return (up(out_s, unreduced, reduced) if num_out is None else
-          [up(s, u, r) for s, u, r in zip(out_s, unreduced, reduced)])
+  unreduced, reduced, u_kind = call_ur_rule(
+      prim, ur_rule, out_s, num_out, *avals, **kwargs)
+  up = lambda sh, u, r, k: sh.update(spec=sh.spec.update(unreduced=u, reduced=r,
+                                                         unreduced_kind=k))
+  return (up(out_s, unreduced, reduced, u_kind) if num_out is None else
+          [up(s, u, r, k) for s, u, r, k in zip(out_s, unreduced, reduced, u_kind)])
 
 def call_shape_dtype_sharding_rule(
     prim, shape_rule, dtype_rule, sharding_rule, ur_rule, multi_out, *avals,
@@ -131,6 +134,27 @@ def call_shape_dtype_sharding_rule(
         f'{prim} operation with inputs: {avals_str} produces an illegally'
         f' sharded result: {out_aval_str}') from e
   return out_shapes, out_dtypes, out_shardings
+
+mosaic_tpu_layout_rule = None
+
+def call_layout_rule(prim, layout_rule, in_avals, out_avals, **kwargs):
+  cur_layout_mode = get_layout_mode()
+  if cur_layout_mode is LayoutMode.AUTO:
+    assert all(isinstance(a.layout, AutoLayoutSingleton) for a in in_avals)
+    return (AutoLayout,) * len(out_avals) if prim.multiple_results else AutoLayout
+  if cur_layout_mode is LayoutMode.PALLAS_TPU:
+    return mosaic_tpu_layout_rule(prim, in_avals, out_avals, **kwargs)  # type: ignore
+  if cur_layout_mode is LayoutMode.PALLAS_GPU:
+    from jax._src.pallas.mosaic_gpu.layout_rules import mgpu_layout_rule  # pylint: disable=g-import-not-at-top
+    return mgpu_layout_rule(prim, in_avals, out_avals, **kwargs)
+
+  assert cur_layout_mode is LayoutMode.JAX
+  if layout_rule is None:
+    raise NotImplementedError(
+        f'Missing layout rule for {prim}. Please file an issue at'
+        ' https://github.com/jax-ml/jax/issues')
+  return layout_rule(prim, in_avals, out_avals, **kwargs)
+
 
 def _default_memory_space_rule(prim, *avals, **kwargs):
   if all(a.memory_space == core.MemorySpace.Any for a in avals):
@@ -158,24 +182,24 @@ def manual_rule(prim, vma_rule, ur_rule, multi_out, *avals, **kwargs):
   num_out = len(out_vma) if multi_out else None
   if mesh_lib.get_abstract_mesh().are_all_axes_manual:
     out_s = None if num_out is None else [None] * num_out
-    out_unreduced, out_reduced = call_ur_rule(
+    out_unreduced, out_reduced, u_kind = call_ur_rule(
         prim, ur_rule, out_s, num_out, *avals, **kwargs)
   else:
     # TODO(yashkatariya): Handle partial manual unreduced/reduced.
-    out_unreduced, out_reduced = (
-        (frozenset(), frozenset()) if num_out is None else
-        ([frozenset()] * num_out, [frozenset()] * num_out))
+    out_unreduced, out_reduced, u_kind = (
+        (frozenset(), frozenset(), None) if num_out is None else
+        ([frozenset()] * num_out, [frozenset()] * num_out, [None] * num_out))
   if num_out is None:
     return core.ManualAxisType(varying=out_vma, unreduced=out_unreduced,
-                               reduced=out_reduced)
+                               reduced=out_reduced, unreduced_kind=u_kind)  # type: ignore
   else:
-    return [core.ManualAxisType(varying=v, unreduced=u, reduced=r)
-            for v, u, r in zip(out_vma, out_unreduced, out_reduced)]
+    return [core.ManualAxisType(varying=v, unreduced=u, reduced=r, unreduced_kind=k)
+            for v, u, r, k in zip(out_vma, out_unreduced, out_reduced, u_kind)]  # type: ignore
 
 
 def standard_abstract_eval(
     prim, shape_rule, dtype_rule, weak_type_rule, sharding_rule, vma_rule,
-    ur_rule, memory_space_rule, *avals, **kwargs):
+    ur_rule, memory_space_rule, layout_rule, *avals, **kwargs):
   assert not prim.multiple_results
   for a in avals:
     if isinstance(a, state.AbstractRef):
@@ -195,9 +219,17 @@ def standard_abstract_eval(
     out_mem_space = (_default_memory_space_rule(prim, *avals, **kwargs)
                      if memory_space_rule is None else
                      memory_space_rule(*avals, **kwargs))
-    out_aval = core.ShapedArray(
-        out_shape, out_dtype, weak_type=weak_type, sharding=out_sharding,
-        manual_axis_type=out_mat, memory_space=out_mem_space)
+    # Enter temporarily into AUTO layout mode to bypass check in ShapedArray
+    # constructor since this aval is a temporary state until we run
+    # `call_layout_rule`. Another option is to create a `InferringLayout`
+    # singleton which is only used here.
+    with use_layout_mode(LayoutMode.AUTO):
+      out_aval = core.ShapedArray(
+          out_shape, out_dtype, weak_type=weak_type, sharding=out_sharding,
+          manual_axis_type=out_mat, memory_space=out_mem_space)
+    out_layout = call_layout_rule(
+        prim, layout_rule, in_avals=avals, out_avals=[out_aval], **kwargs)
+    out_aval = out_aval.update(layout=out_layout)
     core.check_avals_context_mesh([out_aval], prim.name)
     return out_aval
   else:
@@ -205,7 +237,7 @@ def standard_abstract_eval(
 
 def standard_multi_result_abstract_eval(
     prim, shape_rule, dtype_rule, weak_type_rule, sharding_rule, vma_rule,
-    ur_rule, *avals, **kwargs):
+    ur_rule, layout_rule, *avals, **kwargs):
   assert prim.multiple_results
   assert all(isinstance(aval, core.ShapedArray) for aval in avals), avals
   least_specialized = max(map(type, avals), key=_get_array_abstraction_level)
@@ -219,11 +251,15 @@ def standard_multi_result_abstract_eval(
     out_mem_spaces = multi_mem_space_rule(prim, len(out_shapes), *avals, **kwargs)
     if isinstance(weak_types, bool):
       weak_types = (weak_types,) * len(out_shapes)
-    out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh,
-                                  manual_axis_type=mat, memory_space=ms)
-                 for s, d, weak_type, sh, mat, ms in zip(
-                     out_shapes, out_dtypes, weak_types, out_shardings,
-                     out_mats, out_mem_spaces)]
+    with use_layout_mode(LayoutMode.AUTO):
+      out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh,
+                                    manual_axis_type=mat, memory_space=ms)
+                  for s, d, weak_type, sh, mat, ms in zip(
+                      out_shapes, out_dtypes, weak_types, out_shardings,
+                      out_mats, out_mem_spaces)]
+    out_layouts = call_layout_rule(
+        prim, layout_rule, in_avals=avals, out_avals=out_avals, **kwargs)
+    out_avals = [o.update(layout=l) for o, l in zip(out_avals, out_layouts)]
     core.check_avals_context_mesh(out_avals, prim.name)
     return out_avals
   else:

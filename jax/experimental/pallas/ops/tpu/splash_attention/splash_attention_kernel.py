@@ -21,7 +21,7 @@ import dataclasses
 import enum
 import functools
 import json
-from typing import Any, Literal, NamedTuple, Optional, Union, overload
+from typing import Any, Literal, NamedTuple, overload
 
 import jax
 from jax import ad_checkpoint
@@ -68,23 +68,24 @@ class SegmentIds(NamedTuple):
 
 
 # Return type of SplashAttention function that implements the custom vjp rule.
-SplashCustomReturnType = Union[
+SplashCustomReturnType = (
     # out, no residuals
-    jax.Array,
+    jax.Array
+    |
     # out, residuals:
     tuple[jax.Array, tuple[jax.Array,]]
-]
+)
 
 SplashResidualsType = tuple[
     jax.Array,  # q
     jax.Array,  # k
     jax.Array,  # v
-    Optional[SegmentIds],  # segment_ids
-    Optional[jax.Array],   # sinks
+    SegmentIds | None,  # segment_ids
+    jax.Array | None,   # sinks
     jax.Array,  # out
     jax.Array,  # logsumexp
-    Optional[mask_info_lib.MaskInfo],  # dq_mask_info
-    Optional[mask_info_lib.MaskInfo],  # dkv_mask_info
+    mask_info_lib.MaskInfo | None,  # dq_mask_info
+    mask_info_lib.MaskInfo | None,  # dkv_mask_info
 ]
 
 MaskFunctionType = Callable[..., jax.Array]
@@ -2579,7 +2580,7 @@ def _make_splash_attention(
   )
 
   fwd_mask_info, mask_function_fwd = process_mask_fn(
-      mask,
+      mask,  # pyrefly: ignore[bad-argument-type]
       (block_sizes.block_q, block_sizes.block_kv),
       downcast_smem_data=downcast_smem_data,
       head_shards=head_shards,
@@ -2595,8 +2596,8 @@ def _make_splash_attention(
     else:
       bq_dq, bkv_dq = block_sizes.block_q_dq, block_sizes.block_kv_dq
       dq_mask_info, mask_function_dq = process_mask_fn(
-          mask,
-          (bq_dq, bkv_dq),
+          mask,  # pyrefly: ignore[bad-argument-type]
+          (bq_dq, bkv_dq),  # pyrefly: ignore[bad-argument-type]
           downcast_smem_data=downcast_smem_data,
           head_shards=head_shards,
           q_seq_shards=q_seq_shards,
@@ -2605,8 +2606,8 @@ def _make_splash_attention(
       dq_mask_info = tree_util.tree_map(jnp.array, dq_mask_info)
     bq_dkv, bkv_dkv = block_sizes.block_q_dkv, block_sizes.block_kv_dkv
     dkv_mask_info, mask_function_dkv = process_mask_dvk_fn(
-        mask,
-        (bq_dkv, bkv_dkv),
+        mask,  # pyrefly: ignore[bad-argument-type]
+        (bq_dkv, bkv_dkv),  # pyrefly: ignore[bad-argument-type]
         downcast_smem_data=downcast_smem_data,
         head_shards=head_shards,
         q_seq_shards=q_seq_shards,

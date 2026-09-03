@@ -3532,7 +3532,11 @@ def isinf(x: ArrayLike, /) -> Array:
   x = ensure_arraylike("isinf", x)
   dtype = x.dtype
   if dtypes.issubdtype(dtype, np.floating):
-    return lax.eq(lax.abs(x), _constant_like(x, np.inf))
+    # If the dtype has no representation for infinity, return False
+    if not np.isinf(np.array(np.inf, dtype).astype('float64')):
+      return lax.full_like(x, False, dtype=np.bool_)
+    else:
+      return lax.eq(lax.abs(x), _constant_like(x, np.inf))
   elif dtypes.issubdtype(dtype, np.complexfloating):
     re = lax.real(x)
     im = lax.imag(x)
@@ -3547,7 +3551,11 @@ def _isposneginf(infinity: float, x: Array, out) -> Array:
     raise NotImplementedError("The 'out' argument to isneginf/isposinf is not supported.")
   dtype = x.dtype
   if dtypes.issubdtype(dtype, np.floating):
-    return lax.eq(x, _constant_like(x, infinity))
+    # If the dtype has no representation for infinity, return False
+    if not np.isinf(np.array(np.inf, dtype).astype('float64')):
+      return lax.full_like(x, False, dtype=np.bool_)
+    else:
+      return lax.eq(x, _constant_like(x, infinity))
   elif dtypes.issubdtype(dtype, np.complexfloating):
     raise ValueError("isposinf/isneginf are not well defined for complex types")
   else:
@@ -3563,6 +3571,7 @@ def isposinf(x, /, out=None):
 
   Args:
     x: input array or scalar. ``complex`` dtype are not supported.
+    out: unsupported by JAX.
 
   Returns:
     A boolean array of same shape as ``x`` containing ``True`` where ``x`` is
@@ -3598,6 +3607,7 @@ def isneginf(x, /, out=None):
 
   Args:
     x: input array or scalar. ``complex`` dtype are not supported.
+    out: unsupported by JAX.
 
   Returns:
     A boolean array of same shape as ``x`` containing ``True`` where ``x`` is
@@ -3844,10 +3854,18 @@ def sinc(x: ArrayLike, /) -> Array:
   x = ensure_arraylike("sinc", x)
   x, = promote_dtypes_inexact(x)
   eq_zero = lax.eq(x, _lax_const(x, 0))
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    eq_inf = lax.bitwise_and(
+        lax.eq(lax.abs(lax.real(x)), _lax_const(lax.real(x), np.inf)),
+        lax.is_finite(lax.imag(x)),
+    )
+  else:
+    eq_inf = lax.eq(lax.abs(x), _lax_const(x, np.inf))
   pi_x = lax.mul(_lax_const(x, np.pi), x)
-  safe_pi_x = _where(eq_zero, _lax_const(x, 1), pi_x)
-  return _where(eq_zero, _sinc_maclaurin(0, pi_x),
-                lax.div(lax.sin(safe_pi_x), safe_pi_x))
+  safe_pi_x = _where(lax.bitwise_or(eq_zero, eq_inf), _lax_const(x, 1), pi_x)
+  result = _where(eq_zero, _sinc_maclaurin(0, pi_x),
+                  lax.div(lax.sin(safe_pi_x), safe_pi_x))
+  return _where(eq_inf, _lax_const(x, 0), result)
 
 
 @partial(custom_jvp, nondiff_argnums=(0,))

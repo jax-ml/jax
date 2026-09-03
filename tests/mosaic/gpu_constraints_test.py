@@ -19,6 +19,8 @@ import dataclasses
 from absl.testing import parameterized
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.interpreters import mlir as mlir_interpreter
+from jax._src.lib.mlir import ir
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import constraints as cs
 from jax.experimental.mosaic.gpu import fragmented_array as fa
@@ -45,6 +47,12 @@ class ConstraintSystemTest(parameterized.TestCase):
     super().setUp()
     if jtu.test_device_matches(["rocm"]):
       self.skipTest("Mosaic GPU is not supported on ROCm.")
+    context = ir.Context()
+    context.append_dialect_registry(mlir_interpreter.upstream_dialects)
+    context.load_all_available_dialects()
+    mgpu.dialect.register_dialect(context)
+    self.enter_context(context)
+    self.enter_context(ir.Location.unknown())
 
   def test_constraint_system_is_unsatisfiable_if_assignment_is_invalid(
       self,
@@ -107,6 +115,16 @@ class ConstraintSystemTest(parameterized.TestCase):
           mgpu.WGSplatFragLayout((128, 128)),
           mgpu.WGStridedFragLayout((128, 128), vec_size=1),
           True,
+      ),
+      (
+          mgpu.WGSplatFragLayout((4, 8)),
+          mgpu.WGMMA_LAYOUT.reduce([0]),
+          True,
+      ),
+      (
+          mgpu.WGSplatFragLayout((8, 4)),
+          mgpu.WGMMA_LAYOUT.reduce([0]),
+          False,
       ),
   )
   def test_strict_relayout_constraint_holds(self, src, tgt, holds):
@@ -461,12 +479,33 @@ class ConstraintSystemTest(parameterized.TestCase):
         ),
     )
 
+  def test_canonicalize_strict_non_splat_relayouts_to_equals(self):
+    v0, v1, v2 = V(0), V(1), V(2)
+    system = cs.ConstraintSystem(
+        constraints=[
+            cs.NotOfType(v0, mgpu.WGSplatFragLayout),
+            cs.Relayout(v0, v1, bitwidth=32, strict=True),
+            cs.Relayout(v2, v1, bitwidth=32, strict=True),
+            cs.Relayout(v0, v1, bitwidth=32, strict=False),
+        ],
+    )
+
+    self.assertEqual(
+        cs.canonicalize_strict_non_splat_relayouts_to_equals(system),
+        cs.ConstraintSystem(
+            constraints=[
+                cs.NotOfType(v0, mgpu.WGSplatFragLayout),
+                cs.Equals(v0, v1),
+                cs.Relayout(v2, v1, bitwidth=32, strict=True),
+                cs.Relayout(v0, v1, bitwidth=32, strict=False),
+            ],
+        ),
+    )
+
   @parameterized.parameters(
-      # Should work for any tiled layout.
+      # Should work for any tiled layout with compatible vector dim.
       mgpu.WGMMA_LAYOUT,
       mgpu.TCGEN05_LAYOUT,
-      mgpu.WGMMA_TRANSPOSED_LAYOUT,
-      mgpu.TCGEN05_TRANSPOSED_LAYOUT,
       mgpu.WGMMA_ROW_LAYOUT,
       mgpu.WGMMA_COL_LAYOUT,
       mgpu.TCGEN05_ROW_LAYOUT,
@@ -514,11 +553,9 @@ class ConstraintSystemTest(parameterized.TestCase):
     self.assertEqual(smem_to_reg.holds(), holds)
 
   @parameterized.parameters(
-      # Should hold for any layout.
+      # Should hold for any layout with compatible vector dim.
       mgpu.WGMMA_LAYOUT,
       mgpu.TCGEN05_LAYOUT,
-      mgpu.WGMMA_TRANSPOSED_LAYOUT,
-      mgpu.TCGEN05_TRANSPOSED_LAYOUT,
       mgpu.WGMMA_ROW_LAYOUT,
       mgpu.WGMMA_COL_LAYOUT,
       mgpu.TCGEN05_ROW_LAYOUT,
@@ -544,8 +581,8 @@ class ConstraintSystemTest(parameterized.TestCase):
       # Works for some tiled layouts.
       (mgpu.WGMMA_LAYOUT, False),
       (mgpu.TCGEN05_LAYOUT, False),
-      (mgpu.WGMMA_TRANSPOSED_LAYOUT, True),
-      (mgpu.TCGEN05_TRANSPOSED_LAYOUT, True),
+      (mgpu.WGMMA_TRANSPOSED_LAYOUT, False),
+      (mgpu.TCGEN05_TRANSPOSED_LAYOUT, False),
       (mgpu.WGMMA_ROW_LAYOUT, True),
       (mgpu.WGMMA_COL_LAYOUT, True),
       (mgpu.TCGEN05_ROW_LAYOUT, True),
@@ -723,6 +760,89 @@ class ConstraintSystemTest(parameterized.TestCase):
     ]
     self.assertEqual(got.constraints, want)
 
+  def test_saturate_one_of_for_two_equal_vars(self):
+    v0, v1 = cs.Variable(0), cs.Variable(1)
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    s = cs.ConstraintSystem(
+        constraints=[
+            cs.Equals(v0, v1),
+            cs.OneOf(v0, (layout1, layout2)),
+        ],
+    )
+    got = cs.saturate_one_of_constraints_for_equal_vars(s)
+    want = [
+        cs.Equals(v0, v1),
+        cs.OneOf(v0, (layout1, layout2)),
+        cs.OneOf(v1, (layout1, layout2)),
+    ]
+    self.assertEqual(got.constraints, want)
+
+  def test_saturate_one_of_for_multiple_transitively_equal_vars(self):
+    v0, v1, v2, v3, v4, v5 = (cs.Variable(i) for i in range(6))
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    layout3 = RL(mgpu.WGMMA_COL_LAYOUT)
+    s = cs.ConstraintSystem(
+        constraints=[
+            cs.Equals(v0, v1),
+            cs.Equals(v2, v3),
+            cs.Equals(v2, v4),
+            cs.Equals(v1, v4),
+            cs.OneOf(v0, (layout1, layout2)),
+            cs.OneOf(v5, (layout3,)),
+        ],
+    )
+    got = cs.saturate_one_of_constraints_for_equal_vars(s)
+    want = [
+        cs.Equals(v0, v1),
+        cs.Equals(v2, v3),
+        cs.Equals(v2, v4),
+        cs.Equals(v1, v4),
+        cs.OneOf(v0, (layout1, layout2)),
+        cs.OneOf(v1, (layout1, layout2)),
+        cs.OneOf(v2, (layout1, layout2)),
+        cs.OneOf(v3, (layout1, layout2)),
+        cs.OneOf(v4, (layout1, layout2)),
+        cs.OneOf(v5, (layout3,)),
+    ]
+    self.assertEqual(got.constraints, want)
+
+  def test_saturate_one_of_intersects_allowed_constants_for_equal_vars(self):
+    v0, v1 = cs.Variable(0), cs.Variable(1)
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    layout3 = RL(mgpu.WGMMA_COL_LAYOUT)
+    s = cs.ConstraintSystem(
+        constraints=[
+            cs.Equals(v0, v1),
+            cs.OneOf(v0, (layout1, layout2, layout3)),
+            cs.OneOf(v1, (layout2, layout3)),
+        ],
+    )
+    got = cs.saturate_one_of_constraints_for_equal_vars(s)
+    want = [
+        cs.Equals(v0, v1),
+        cs.OneOf(v0, (layout2, layout3)),
+        cs.OneOf(v1, (layout2, layout3)),
+    ]
+    self.assertEqual(got.constraints, want)
+
+  def test_saturate_one_of_returns_unsatisfiable_on_empty_intersection(self):
+    v0, v1 = cs.Variable(0), cs.Variable(1)
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    s = cs.ConstraintSystem(
+        constraints=[
+            cs.Equals(v0, v1),
+            cs.OneOf(v0, (layout1,)),
+            cs.OneOf(v1, (layout2,)),
+        ],
+    )
+    self.assertIsInstance(
+        cs.saturate_one_of_constraints_for_equal_vars(s), cs.Unsatisfiable
+    )
+
   @parameterized.parameters(
     (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, 8),
     (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, 8),
@@ -738,20 +858,6 @@ class ConstraintSystemTest(parameterized.TestCase):
   )
   def test_forcing_relayout_on_supported_bitwidth_succeeds(self, src, dst, bitwidth):
     self.assertTrue(cs.Relayout(cs.RegisterLayout(src), cs.RegisterLayout(dst), bitwidth).holds())
-
-  @parameterized.product(
-      bitwidth=(16, 32),
-      swizzle=(32, 64, 128)
-  )
-  def test_tiling_is_valid_mma_tiling_holds_for_valid_tiling(self, swizzle, bitwidth):
-    swizzle_elems = swizzle * 8 // bitwidth
-    layout = cs.SMEMTransforms(lc.TileTransform((8, swizzle_elems)), swizzle)
-    self.assertTrue(cs.IsValidMmaTiling(layout, bitwidth).holds())
-
-  @parameterized.parameters(False, True)
-  def test_tiling_is_valid_mma_tiling_holds_for_unswizzled_tiling_only_if_allowed(self, allow_unswizzled):
-    layout = cs.SMEMTransforms(lc.TileTransform((8, 8)), None)
-    self.assertEqual(cs.IsValidMmaTiling(layout, 16, allow_unswizzled).holds(), allow_unswizzled)
 
   @parameterized.named_parameters(
       (
@@ -893,7 +999,7 @@ class ConstraintSystemTest(parameterized.TestCase):
       self, shape, strides, reg_layout, expected_holds
   ):
     tiling = None
-    swizzle = 32
+    swizzle = 128
     smem_layout = cs.SMEMTransforms(tiling, swizzle)
     reg_layout_const = cs.RegisterLayout(reg_layout)
     constraint = cs.IsTransferableSmemRegisters(
@@ -901,10 +1007,46 @@ class ConstraintSystemTest(parameterized.TestCase):
         reg_layout_const,
         shape,
         strides,
-        bitwidth=32,
+        bitwidth=16,
         optimized=cs.OptimizedTransferKind.OPTIMIZED,
     )
     self.assertEqual(constraint.holds(), expected_holds)
+
+  def test_one_of_constraint_holds(self):
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    self.assertTrue(cs.OneOf(layout1, (layout1, layout2)).holds())
+    self.assertTrue(cs.OneOf(layout2, (layout1, layout2)).holds())
+    self.assertFalse(cs.OneOf(RL(mgpu.WGMMA_COL_LAYOUT), (layout1, layout2)).holds())
+
+  def test_one_of_reduces_to_unsatisfiable_if_invalid_assignment(self):
+    v0 = V(0)
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    system = cs.ConstraintSystem(
+        assignments={v0: RL(mgpu.WGMMA_COL_LAYOUT)},
+        constraints=[cs.OneOf(v0, (layout1, layout2))],
+    )
+    self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
+
+  def test_one_of_canonicalize_preserves_order_and_removes_duplicates(self):
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    constraint = cs.OneOf(V(0), (layout2, layout1, layout2))
+    self.assertEqual(constraint.canonicalize(), cs.OneOf(V(0), (layout2, layout1)))
+
+  def test_one_of_canonicalize_reduces_singleton_to_equals(self):
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    constraint = cs.OneOf(V(0), (layout1, layout1))
+    self.assertEqual(constraint.canonicalize(), cs.Equals(V(0), layout1))
+
+  def test_reduce_one_of_singleton_yields_equals(self):
+    shape = (128,)
+    v0 = V(MockVariableKey(0, shape, cs.MemorySpace.REG))
+    layout = RL(mgpu.WGSplatFragLayout((128,)))
+    constraint = cs.OneOf(v0, (layout,))
+    self.assertEqual(cs.reduce_constraint(constraint, {}), cs.Equals(v0, layout))
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

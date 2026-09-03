@@ -359,7 +359,7 @@ input data. For example, the `A` reference is allowed to be of shape `(K, M)`, b
 has to be transposed before passing it into the mma function. For example:
 ```python
 assert acc_ref.shape == (M, N) and a_ref.shape == (K, M) and b_ref.shape == (K, N)
-a_ref_t = plgpu.transpose_ref(a_ref, (1, 0))
+a_ref_t = a_ref.transpose((1, 0))
 assert a_ref_t.shape == (M, K)  # The shape expected by plgpu.wgmma
 plgpu.wgmma(acc, a_ref_t, b_ref)
 ```
@@ -417,7 +417,9 @@ The supported MMA shapes are such that:
 * `N` is divisible by 8 and not greater than 256
 * `K` is a multiple of `swizzle` divided by the operand's element type bytewidth
 
-The currently supported data types are: `jnp.float32`, `jnp.bfloat16` and `jnp.float16`.
+The currently supported data types are: `jnp.float32`, `jnp.bfloat16`, `jnp.float16`,
+and the FP8 types `jnp.float8_e4m3fn` and `jnp.float8_e5m2` (which may be mixed across
+the two operands).
 The accumulator `D` must be a `jnp.float32`, with the exception of `jnp.float16` inputs,
 in which case it is allowed to be `jnp.float16` as well.
 
@@ -901,7 +903,7 @@ plgpu.wgmma(smem_ref, ...)
 This explicit synchronization is also required in the other direction, for
 example:
 ```python
-v = plgpu.load(smem_ref, ())
+v = plgpu.load(smem_ref)
 plgpu.commit_smem()
 plgpu.copy_gmem_to_smem(..., smem_ref, ...)
 ```
@@ -1437,7 +1439,7 @@ has to be indexed with that array using the `.at` operator:
     scratch_shapes=[plgpu.Barrier()],
 )
 def kernel(x_ref_gmem, idx_ref, o_ref, barrier_ref):
-  idxs = plgpu.load(idx_ref, (), layout=plgpu.Layout.TMA_INDICES)
+  idxs = plgpu.load(idx_ref, layout=plgpu.Layout.TMA_INDICES)
   plgpu.copy_gmem_to_smem(x_ref_gmem.at[idxs], o_ref, barrier_ref)
   plgpu.barrier_wait(barrier_ref)
 ```

@@ -222,10 +222,19 @@ class NDIndexer:
     for position, idx in enumerate(self.indices):
       if idx.typ == IndexType.SLICE:
         assert isinstance(idx.index, slice)
+        elts = [idx.index.start, idx.index.stop, idx.index.step]
         if not all(_is_slice_element_none_or_constant_or_symbolic(val)
-                   for val in [idx.index.start, idx.index.stop, idx.index.step]):
-          raise IndexError("Slice entries must be static integers."
-                          f" Got {idx.index} at position {position}")
+                   for val in elts):
+          msg = ("Array slice indices must have static start/stop/step to be used "
+                 f"with NumPy indexing syntax. Got {idx.index} at position "
+                 f"{position}. To index an array at a dynamic position with a "
+                 "static slice size, use x[jax.ds(start, size)] or "
+                 "lax.dynamic_slice/dynamic_update_slice instead (JAX does not "
+                 "support dynamically sized arrays within traced functions).")
+          tracer = next((val for val in elts if isinstance(val, core.Tracer)), None)
+          if tracer is not None:
+            msg += tracer._origin_msg()
+          raise IndexError(msg)
 
   @staticmethod
   def is_sharded(arr) -> bool:
@@ -283,7 +292,7 @@ class NDIndexer:
 
   def expand_scalar_bool_indices(self, sharding_spec: Any = None) -> tuple[NDIndexer, Any]:
     new_shape = list(self.shape)
-    new_sharding_spec = list((None for _ in self.shape) if sharding_spec is None else sharding_spec)
+    new_sharding_spec = list((None for _ in self.shape) if sharding_spec is None else sharding_spec.partitions)
     new_indices = list(self.indices)
     current_dim = 0
     for i, idx in enumerate(self.indices):
@@ -619,6 +628,7 @@ def take(
     indices: N-dimensional array of integer indices of values to take from the array.
     axis: the axis along which to take values. If not specified, the array will
       be flattened before indexing is applied.
+    out: unsupported by JAX.
     mode: Out-of-bounds indexing mode, either ``"fill"`` or ``"clip"``. The default
       ``mode="fill"`` returns invalid values (e.g. NaN) for out-of bounds indices;
       the ``fill_value`` argument gives control over this value. For more discussion
@@ -766,7 +776,7 @@ def take_along_axis(
     mode: str | slicing.GatherScatterMode | None = None,
     fill_value: StaticScalar | None = None,
     *,
-    wrap_negative_indices: bool | None = None,
+    wrap_negative_indices: bool = True,
 ) -> Array:
   """Take elements from an array.
 
@@ -775,10 +785,10 @@ def take_along_axis(
   in the case of out-of-bound indices; see the ``mode`` parameter below.
 
   Args:
-    a: array from which to take values.
+    arr: array from which to take values.
     indices: array of integer indices. If ``axis`` is ``None``, must be
-      one-dimensional. If ``axis`` is not None, must have ``a.ndim ==
-      indices.ndim``, and ``a`` must be broadcast-compatible with ``indices``
+      one-dimensional. If ``axis`` is not None, must have ``arr.ndim ==
+      indices.ndim``, and ``arr`` must be broadcast-compatible with ``indices``
       along dimensions other than ``axis``.
     axis: the axis along which to take values. If not specified, the array will
       be flattened before indexing is applied.
@@ -786,13 +796,13 @@ def take_along_axis(
       default ``mode="fill"`` returns invalid values (e.g. NaN) for out-of
       bounds indices. For more discussion of ``mode`` options, see
       :attr:`jax.numpy.ndarray.at`.
+    fill_value: The fill value to return for out-of-bounds indices when
+      ``mode="fill"``. Ignored otherwise.
     wrap_negative_indices: Whether to wrap negative indices to positive like
-      Numpy. If unset, defaults to a legacy behavior (wrapping unless the
-      indexing mode is 'promise_in_bounds'), but this will likely be removed and
-      the default changed to True in the future, so do not depend on it.
+      Numpy.
 
   Returns:
-    Array of values extracted from ``a``.
+    Array of values extracted from ``arr``.
 
   See also:
     - :attr:`jax.numpy.ndarray.at`: take values via indexing syntax.
@@ -874,11 +884,6 @@ def take_along_axis(
   out_shape = lax.broadcast_shapes(idx_shape, arr_shape)
   if axis_size == 0:
     return lax.full(out_shape, 0, a.dtype)
-
-  # Legacy behavior - should eventually be removed, since wrap_negative_indices
-  # should be independent of indexing mode.
-  if wrap_negative_indices is None:
-    wrap_negative_indices = mode != "promise_in_bounds"
 
   index_dtype = lax_utils.index_dtype_for_axis_size(
       dtypes.dtype(indices), axis_size, wrap_negative_indices
@@ -1375,7 +1380,7 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
          not advanced_axes_are_contiguous and idx_pos == 0)):
       advanced_index_arrs = util._broadcast_arrays(*advanced_indexes)
       shape = advanced_index_arrs[0].shape
-      aia_spec = core.typeof(advanced_index_arrs[0]).sharding.spec
+      aia_spec = core.typeof(advanced_index_arrs[0]).sharding.spec.partitions
       ndim = len(shape)
 
       start_dim = len(gather_indices_shape)
@@ -1474,8 +1479,9 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
     collapsed_slice_dims = tuple(sorted(collapsed_slice_dims)),
     start_index_map = tuple(start_index_map)
   )
-  slice_sharding = canonicalize_sharding(x_sharding.update(spec=slice_spec),
-                                         "index_to_gather")
+  slice_sharding = canonicalize_sharding(
+      x_sharding.update(spec=x_sharding.spec.update(partitions=slice_spec)),
+      "index_to_gather")
   return _GatherIndexer(
     slice_shape=slice_shape,
     newaxis_dims=tuple(newaxis_dims),

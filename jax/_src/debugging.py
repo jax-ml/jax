@@ -22,7 +22,7 @@ import importlib.util
 import logging
 import string
 import sys
-from typing import Any, Union, overload
+from typing import Any, overload
 
 import numpy as np
 
@@ -264,9 +264,9 @@ pe.partial_eval_jaxpr_custom_rules[debug_callback_p] = partial(
 
 @state_discharge.register_discharge_rule(debug_callback_p)
 def _debug_callback_state_discharge_rule(
-    in_avals, out_avals, *args, effect, partitioned, callback, **params
+    ctx, *args, effect, partitioned, callback, **params
 ):
-  del in_avals, out_avals  # Unused.
+  del ctx  # Unused.
   out = debug_callback_p.bind(
       *args, effect=effect, partitioned=partitioned, callback=callback, **params
   )
@@ -399,8 +399,8 @@ pe.partial_eval_jaxpr_custom_rules[debug_print_p] = partial(
 
 
 @state_discharge.register_discharge_rule(debug_print_p)
-def _debug_print_state_discharge_rule(in_avals, out_avals, *args, **kwargs):
-  del in_avals, out_avals  # Unused.
+def _debug_print_state_discharge_rule(ctx, *args, **kwargs):
+  del ctx  # Unused.
   out = debug_print_p.bind(*args, **kwargs)
   return args, out
 
@@ -784,7 +784,7 @@ def _raise_to_slice(slc: slice | int):
     return slice(slc, slc + 1)
   return slc
 
-Color = Union[tuple[float, float, float], str]
+Color = tuple[float, float, float] | str
 ColorMap = Callable[[float], tuple[float, float, float, float]]
 
 def _canonicalize_color(color: Color) -> str:

@@ -49,8 +49,10 @@ fi
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
 echo "Running RBE GPU tests..."
 
-if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t ]]; then
-  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-ft || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-nogil ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-ft}
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}
   FREETHREADED_FLAG_VALUE="yes"
 else
   FREETHREADED_FLAG_VALUE="no"
@@ -74,7 +76,7 @@ bazel test --invocation_id="$INVOCATION_ID" \
       --remote_download_regex='.*test\.xml$' \
       --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
       --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
-      --test_tag_filters=-multiaccelerator-only \
+      --test_tag_filters=-multiaccelerator \
       --test_env=JAX_SKIP_SLOW_TESTS=true \
       --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
       --color=yes \

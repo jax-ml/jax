@@ -409,6 +409,55 @@ class DimExprTest(jtu.JaxTestCase):
     # Higher order polynomial
     self.assertEqual(_bounds(a*a + b - 2), (0, np.inf))
     self.assertEqual(_bounds(-2*a*b - b - 2), (-np.inf, -5))
+    sign_crossing_factor = core.min_dim(a - 5, 5)
+    self.assertEqual(_bounds(sign_crossing_factor**2), (0, 25))
+    self.assertEqual(_bounds(sign_crossing_factor**2 * b), (0, np.inf))
+    with self.assertRaises(core.InconclusiveDimensionOperation):
+      _ = sign_crossing_factor**2 >= 1
+
+  def test_bounds_product(self):
+    a, _ = shape_poly.symbolic_shape("a, b")
+
+    # Interval [-2, 1] squared (even power) should have bounds [0, 4].
+    x = core.max_dim(-2, core.min_dim(1, a - 5))
+    self.assertEqual((0, 4), _bounds(x * x))
+
+    # Interval [-2, 1] cubed (odd power) should have bounds [-8, 1].
+    self.assertEqual((-8, 1), _bounds(x * x * x))
+
+    # Product of (-inf, -1] and [0, inf) should have bounds (-inf, 0].
+    u = (a // -2) * core.max_dim(0, a - 5)
+    self.assertEqual((-np.inf, 0), _bounds(u))
+
+    # Product of [-1, 1] and [1, inf) should have unbounded bounds.
+    z = core.max_dim(-1, core.min_dim(1, a - 5))
+    self.assertEqual((-np.inf, np.inf), _bounds(z * a))
+
+  def test_symbolic_dim_bounds(self):
+    m, n, free1, free2 = export.symbolic_shape(
+        "m, n, free1, free2",
+        constraints=("m >= 2", "m <= 8", "n >= 3", "n <= 10"),
+    )
+
+    self.assertEqual(export.symbolic_dim_bounds(np.int32(7)), (7, 7))
+    self.assertEqual(export.symbolic_dim_bounds(m), (2, 8))
+    self.assertEqual(export.symbolic_dim_bounds(m * n + 1), (7, 81))
+    self.assertEqual(export.symbolic_dim_bounds(free1), (1, np.inf))
+    self.assertEqual(
+        export.symbolic_dim_bounds(5 - free1), (-np.inf, 4))
+    self.assertEqual(
+        export.symbolic_dim_bounds(free1 - free2), (-np.inf, np.inf))
+
+    with self.assertRaises(TypeError):
+      export.symbolic_dim_bounds(1.5)
+
+  def test_symbolic_dim_bounds_propagates_inconclusive_operation(self):
+    a, b = export.symbolic_shape("a, b")
+    with self.assertRaisesRegex(
+        jax.errors.InconclusiveDimensionOperation,
+        "Possible division by 0",
+    ):
+      export.symbolic_dim_bounds(a // (b - 1))
 
   def test_bounds_mod(self):
     a, b = shape_poly.symbolic_shape("a, b")
@@ -2540,7 +2589,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   arg_descriptors=[RandArg((3, 5, 5), dtype),
                                    StaticArg(left), StaticArg(right)],
                   polymorphic_shapes=[poly])
-      for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
+      for dtype in {np.float32, np.float64, np.complex64, np.complex128}
       for poly in ["b, ...", "b, w, w"]
       for left in ([True, False] if dtype == np.float32 else [True])
       for right in ([True, False] if dtype == np.float32 else [False])
@@ -2864,7 +2913,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
           arg_descriptors=[RandArg(shape, dtype), StaticArg(full_matrices)],
           polymorphic_shapes=[poly],
           symbolic_constraints=constraints)
-      for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
+      for dtype in {np.float32, np.float64, np.complex64, np.complex128}
       for shape, poly, full_matrices, constraints in [
           ((2, 0, 4), "b, ...", False, ()),  # m = 0
           ((2, 4, 0), "b, ...", False, ()),  # n = 0
@@ -2942,7 +2991,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
           lambda x, lower: lax.linalg.eigh(x, lower=lower),
           arg_descriptors=[RandArg(shape, dtype), StaticArg(lower)],
           polymorphic_shapes=[poly])
-      for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
+      for dtype in {np.float32, np.float64, np.complex64, np.complex128}
       for lower in [True, False]
       for shape, poly in [
           ((4, 4), "n, n"),
@@ -2957,7 +3006,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
           arg_descriptors=[RandArg(shape, dtype)],
           polymorphic_shapes=[poly],
           expect_error=(ValueError, "Argument to symmetric eigendecomposition"))
-      for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
+      for dtype in {np.float32, np.float64, np.complex64, np.complex128}
       for shape, poly in [
           ((4, 5), "m, n"),
           ((2, 3, 4, 5), "b1, b2, ..."),
@@ -2971,7 +3020,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
           arg_descriptors=[RandArg(shape, dtype), StaticArg(full_matrices), StaticArg(compute_uv)],
           polymorphic_shapes=[poly],
           symbolic_constraints=constraints)
-      for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
+      for dtype in {np.float32, np.float64, np.complex64, np.complex128}
       for compute_uv in [True, False]
       for full_matrices in ([True, False] if compute_uv else [True])
       for shape, poly, constraints in [
@@ -3485,6 +3534,11 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda a: jnp.split(a, (2,)),
                 arg_descriptors=[RandArg((16,), _f32)],
                 polymorphic_shapes=["b + 4"]),
+    PolyHarness("jnp_split", "idx_tuple_ct_negative",
+                # The indices are a tuple with negative constants
+                lambda a: jnp.split(a, (-2,)),
+                arg_descriptors=[RandArg((16,), _f32)],
+                polymorphic_shapes=["b + 4"]),
     PolyHarness("jnp_split", "idx_tuple_poly",
                 # The indices are a tuple with poly expressions
                 lambda a: jnp.split(a, (a.shape[0] - 2,), axis=0),
@@ -3553,11 +3607,11 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 arg_descriptors=[RandArg((16,), _f32)],
                 polymorphic_shapes=["b, ..."]),
     PolyHarness("tri", "N=poly_M=None",
-                lambda x: jnp.tri(x.shape[0]) + x,
+                lambda x: jnp.tri(x.shape[0], dtype=_f32) + x,
                 arg_descriptors=[RandArg((3, 1), _f32)],
                 polymorphic_shapes=["b, ..."]),
     PolyHarness("tri", "N=poly_M=poly",
-                lambda x: jnp.tri(x.shape[0], M=x.shape[0] + 2) + x,
+                lambda x: jnp.tri(x.shape[0], M=x.shape[0] + 2, dtype=_f32) + x,
                 arg_descriptors=[RandArg((3, 1), _f32)],
                 polymorphic_shapes=["b, ..."]),
     PolyHarness("tril", "",

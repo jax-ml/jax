@@ -15,17 +15,18 @@
 from __future__ import annotations
 
 import collections
+import dataclasses
 from collections.abc import Callable, Sequence
 import functools
 from functools import partial
 import itertools
 import operator
-from typing import Any, TypeVar
+from typing import Any
 
 from jax._src import flattree as ft
 from jax._src.tree_util import (
-    tree_flatten, tree_unflatten, tree_flatten_with_path, keystr,
-    equality_errors_pytreedef)
+    tree_flatten, tree_unflatten, tree_leaves, tree_flatten_with_path, keystr,
+    equality_errors_pytreedef, register_dataclass)
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config
@@ -35,9 +36,9 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import source_info_util
 from jax._src import util
-from jax._src.state.discharge import register_partial_discharge_rule, discharge_state
+from jax._src.state.discharge import register_discharge_rule, discharge_state
 from jax._src.state.types import AbstractRef, RefEffect
-from jax._src.core import replace_jaxpr_effects, typeof, cur_qdd
+from jax._src.core import replace_jaxpr_effects, typeof
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -161,7 +162,7 @@ def _switch_internal(
         "switch", "branch 0", f"branch{i+1}", branches[0], branches[i+1],
         out_avalss[0], out_avals)
   # prune passthrough outputs
-  fwds = [pe._jaxpr_forwarding(jaxpr.jaxpr) for jaxpr in jaxprs]
+  fwds = [pe._jaxpr_forwarding(jaxpr) for jaxpr in jaxprs]
   in_fwd = [xs[0] if len(set(xs)) == 1 else None for xs in zip(*fwds)]
   keep = [f is None for f in in_fwd]
   jaxprs = [pe.prune_closed_jaxpr_outputs(jaxpr, keep) for jaxpr in jaxprs]
@@ -173,7 +174,7 @@ def _switch_internal(
     raise NotImplementedError(
         f'Effects not supported in `switch`: {disallowed_effects}')
   jaxprs = [replace_jaxpr_effects(
-      jaxpr, core.resolve_input_effects(joined_effects, jaxpr.jaxpr.invars))
+      jaxpr, core.resolve_input_effects(joined_effects, jaxpr.invars))
       for jaxpr in jaxprs]
   params = dict(branches=tuple(jaxprs))
   if branches_platforms is not None:
@@ -275,9 +276,6 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   dbg_true = api_util.debug_info("cond", true_fun, operands, {})
   api_util.check_no_transformed_refs_args(lambda: dbg_true, args.vals)
   avals = args.map(core.typeof)
-  avals = avals.map2(
-      list(args),
-      lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a)
   if config.mutable_array_checks.value:
     api_util.check_no_aliased_ref_args(lambda: dbg_true, list(avals), list(args))
   dbg_false = api_util.debug_info("cond", false_fun, operands, {})
@@ -301,8 +299,8 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
       true_fun, false_fun, out_avals, false_out_avals)
 
   # prune passthrough outputs
-  true_fwds = pe._jaxpr_forwarding(true_jaxpr.jaxpr)
-  false_fwds = pe._jaxpr_forwarding(false_jaxpr.jaxpr)
+  true_fwds = pe._jaxpr_forwarding(true_jaxpr)
+  false_fwds = pe._jaxpr_forwarding(false_jaxpr)
   in_fwd = [i if i == j else None for i, j in zip(true_fwds, false_fwds)]
   keep = [f is None for f in in_fwd]
   true_jaxpr = pe.prune_closed_jaxpr_outputs(true_jaxpr, keep)
@@ -318,10 +316,10 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   index = lax.convert_element_type(pred, np.int32)
   false_jaxpr = replace_jaxpr_effects(
       false_jaxpr,
-      core.resolve_input_effects(joined_effects, false_jaxpr.jaxpr.invars))
+      core.resolve_input_effects(joined_effects, false_jaxpr.invars))
   true_jaxpr = replace_jaxpr_effects(
       true_jaxpr,
-      core.resolve_input_effects(joined_effects, true_jaxpr.jaxpr.invars))
+      core.resolve_input_effects(joined_effects, true_jaxpr.invars))
 
   out = cond_p.bind(index, *consts, *args, branches=(false_jaxpr, true_jaxpr))
   out_ = iter(out)
@@ -420,7 +418,7 @@ def _capitalize(s):
   # s.capitalize() converts s[1:] to lowercase which we don't want.
   return s[0].capitalize() + s[1:]
 
-def _join_cond_effects(branches: Sequence[core.ClosedJaxpr]) -> effects.Effects:
+def _join_cond_effects(branches: Sequence[core.Jaxpr]) -> effects.Effects:
   joined_effects = set()
   for b in branches:
     for eff in core.positional_effects(b):
@@ -431,7 +429,7 @@ def _join_cond_effects(branches: Sequence[core.ClosedJaxpr]) -> effects.Effects:
   return joined_effects
 
 def _cond_abstract_eval(*avals: core.AbstractValue,
-                        branches: Sequence[core.ClosedJaxpr], **_):
+                        branches: Sequence[core.Jaxpr], **_):
   joined_effects = _join_cond_effects(branches)
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
@@ -465,7 +463,7 @@ def _cond_batching_rule(axis_data, args, dims, *, branches, **params):
   index_dim, *op_dims = dims
   # TODO(sharadmv): clean this up by adding a specific blocklist
   if any(isinstance(eff, RefEffect) for branch in branches for eff in
-      branch.jaxpr.effects):
+      branch.effects):
     raise NotImplementedError(
         "State effect not supported in vmap-of-cond.")
   from jax._src.callback import _IOEffect, _OrderedIOEffect
@@ -532,37 +530,49 @@ def _cond_linearize(is_vjp, nzs, *primals_in, branches, **params):
   nzs_out = [ad.linearize_jaxpr(jaxpr, nzs, allow_fwds=False, is_vjp=is_vjp)[2]
              for jaxpr in branches]
   nzs_out = map(any, zip(*nzs_out))
-  primal_jaxprs, tangent_jaxprs, branch_res_avals = [], [], []
+  fwd_jaxprs, tangent_jaxprs, branch_ures_avals, branch_sres_avals = [], [], [], []
   for jaxpr in branches:
-    primal_jaxpr, num_res_out, _, _, tangent_jaxpr = \
+    fwd_jaxpr, fwd_out_tree, _, _, tangent_jaxpr = \
         ad.linearize_jaxpr(jaxpr, nzs, instantiate=nzs_out, allow_fwds=False, is_vjp=is_vjp)
-    res_avals = primal_jaxpr.out_avals[len(primal_jaxpr.out_avals)-num_res_out:]
-    primal_jaxprs.append(primal_jaxpr)
+    _, ures_avals, sres_avals = fwd_out_tree.unpack()
+    fwd_jaxprs.append(fwd_jaxpr)
     tangent_jaxprs.append(tangent_jaxpr)
-    branch_res_avals.append(res_avals)
+    branch_ures_avals.append(ures_avals.unflatten())
+    branch_sres_avals.append(sres_avals)
+  branch_sres_avals = ft.pack(tuple(branch_sres_avals))
 
-  all_res_avals, res_avals_per_branch = _merge_branch_residuals(branch_res_avals)
-  primal_jaxprs = _join_cond_outputs(
-      primal_jaxprs, all_res_avals, res_avals_per_branch, len(nzs_out))
+  merged_ures_avals, ures_aval_indices = _merge_branch_residuals(branch_ures_avals)
+  fwd_jaxprs = _join_cond_outputs(
+      fwd_jaxprs, merged_ures_avals, ures_aval_indices, branch_sres_avals, len(nzs_out))
   tangent_jaxprs = _join_cond_pe_staged_jaxpr_inputs(
-      tangent_jaxprs, all_res_avals, res_avals_per_branch)
+      tangent_jaxprs, merged_ures_avals, ures_aval_indices, branch_sres_avals, sum(nzs))
   tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
 
-  primals_res_out = cond_p.bind(*primals_in, branches=primal_jaxprs, **params)
+  primals_res_out = cond_p.bind(*primals_in, branches=(*fwd_jaxprs,), **params)
   primals, res = split_list(primals_res_out, [len(nzs_out)])
+  ures, sres_flat = split_list_checked(res, [len(merged_ures_avals), len(branch_sres_avals)])
 
-  def tangent_fun(res, *tangents_in):
+  def tangent_fun(res, sres, *tangents_in):
+    if sres is None:
+      idx, *res = res
+      sres_flat = []
+    else:
+      idx = sres.index
+      sres_flat = tree_leaves(sres.branches)
     nz_tangents_in = [t for t in tangents_in if not isinstance(t, ad.Zero)]
-    nz_tangents_out = cond_p.bind(*res, *nz_tangents_in,
-                                  branches=tangent_jaxprs, **params)
+    nz_tangents_out = cond_p.bind(idx, *res, *nz_tangents_in, *sres_flat,
+                                  branches=(*tangent_jaxprs,), **params)
     nz_tangents_out_ = iter(nz_tangents_out)
     tangents_out = [next(nz_tangents_out_) if nz else ad.Zero(aval)
                    for (aval, nz) in zip(tangent_avals_out, nzs_out)]
-    assert next(nz_tangents_out_, None) is None
+    assert next(nz_tangents_out_, sentinel := object()) is sentinel
     return tangents_out
 
   idx, *_ = primals_in
-  return primals, nzs_out, [idx, *res], tangent_fun
+  if not len(branch_sres_avals):
+    return primals, nzs_out, [idx, *ures], None, tangent_fun
+  sres = CondSum(idx, list(branch_sres_avals.update(sres_flat).unflatten()))
+  return primals, nzs_out, ures, sres, tangent_fun
 
 
 def _cond_jvp(primals, tangents, *, branches, **params):
@@ -595,7 +605,7 @@ def _cond_partial_eval(trace, *tracers, branches, **params):
   in_unknowns = [not t.pval.is_known() for t in tracers]
   index_uk, *ops_uk = in_unknowns
   if any(isinstance(eff, RefEffect) for branch in branches for eff in
-      branch.jaxpr.effects):
+      branch.effects):
     raise NotImplementedError(
         "State effect not supported in cond partial-eval.")
 
@@ -624,29 +634,30 @@ def _cond_partial_eval(trace, *tracers, branches, **params):
   num_res = len(all_res_avals)
 
   num_known_outs = len(out_uks) - sum(out_uks)
+  dummy = ft.flatten([[]] * len(branches_known))
   branches_known = _join_cond_outputs(
-      branches_known, all_res_avals, res_avals_per_branch, num_known_outs)
+      branches_known, all_res_avals, res_avals_per_branch, dummy, num_known_outs)
   branches_unknown = _join_cond_pe_staged_jaxpr_inputs(
-      branches_unknown, all_res_avals, res_avals_per_branch)
+      branches_unknown, all_res_avals, res_avals_per_branch, dummy, sum(ops_uk))
   assert all(all(map(core.typematch, j.out_avals, branches_known[0].out_avals))
              for j in branches_known[1:])
 
   in_consts = [t.pval.get_known() for t in tracers if t.pval.is_known()]
-  out_consts_res = cond_p.bind(*in_consts, branches=branches_known,
+  out_consts_res = cond_p.bind(*in_consts, branches=(*branches_known,),
                                **params)
   out_consts, res = split_list(out_consts_res, [len(out_consts_res) - num_res])
 
-  index_tracer = trace.instantiate_const(tracers[0])
+  idx_tracer = trace.instantiate_const(tracers[0])
   ops_tracers = [trace.instantiate_const(t)
                  for uk, t in zip(in_unknowns[1:], tracers[1:]) if uk]
   res_tracers = map(trace.new_instantiated_const, res)
   out_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)
                  for aval in branches_unknown[0].out_avals]
-  params = dict(branches=branches_unknown, **params)
+  params = dict(branches=(*branches_unknown,), **params)
   name_stack = source_info_util.current_name_stack()[len(trace.name_stack):]
   source = source_info_util.current().replace(name_stack=name_stack)
   eqn = pe.new_eqn_recipe(
-      trace, [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params,
+      trace, [idx_tracer, *res_tracers, *ops_tracers], out_tracers, cond_p, params,
       _join_cond_effects(branches_unknown), source)
   for t in out_tracers: t.recipe = eqn
   return util.merge_lists(out_uks, out_consts, out_tracers)
@@ -674,23 +685,23 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   unks_out: list[bool] = [False] * len(eqn.outvars)
   for jaxpr in branches:
     _, _, unks_out_, _, _ = pe.partial_eval_jaxpr_custom(
-        jaxpr.jaxpr, in_unknowns=ops_uk, in_inst=True,
+        jaxpr, in_unknowns=ops_uk, in_inst=True,
         ensure_out_unknowns=False, ensure_out_inst=True, saveable=saveable)
     unks_out = map(operator.or_, unks_out, unks_out_)
 
   # Next, use the computed output unknowns to build a known jaxpr and a staged
   # jaxpr for each branch.
-  branches_known_ : list[core.ClosedJaxpr] = []
-  branches_staged_: list[core.ClosedJaxpr] = []
+  branches_known_ : list[core.Jaxpr] = []
+  branches_staged_: list[core.Jaxpr] = []
   branch_res_avals: list[list[core.AbstractValue]] = []
   for jaxpr in branches:
     jaxpr_known, jaxpr_staged, _, inst_out, num_res = \
         pe.partial_eval_jaxpr_custom(
-            jaxpr.jaxpr, in_unknowns=ops_uk, in_inst=True,
+            jaxpr, in_unknowns=ops_uk, in_inst=True,
             ensure_out_unknowns=unks_out, ensure_out_inst=True,
             saveable=saveable)
-    branches_known_.append( core.ClosedJaxpr(jaxpr_known,  jaxpr.consts))
-    branches_staged_.append(core.ClosedJaxpr(jaxpr_staged, jaxpr.consts))
+    branches_known_.append(jaxpr_known)
+    branches_staged_.append(jaxpr_staged)
     branch_res_avals.append(branches_staged_[-1].in_avals[:num_res])
 
   # Residuals may differ across branches, so we merge them, then use the merged
@@ -698,10 +709,11 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   all_res_avals, res_avals_per_branch = _merge_branch_residuals(branch_res_avals)
   num_res = len(all_res_avals)
   num_known_outs = len(unks_out) - sum(unks_out)
+  dummy = ft.flatten([[]] * len(branches_known_))
   branches_known = _join_cond_outputs(
-      branches_known_, all_res_avals, res_avals_per_branch, num_known_outs)
+      branches_known_, all_res_avals, res_avals_per_branch, dummy, num_known_outs)
   branches_staged = _join_cond_pe_staged_jaxpr_inputs(
-      branches_staged_, all_res_avals, res_avals_per_branch)
+      branches_staged_, all_res_avals, res_avals_per_branch, dummy, len(ops_uk))
   assert all(all(map(core.typematch, j.out_avals, branches_known[0].out_avals))
              for j in branches_known[1:])
 
@@ -711,7 +723,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   # Build the known eqn.
   ins_known, _ = partition_list(unks_in, eqn.invars)  # includes index invar
   out_binders_known, _ = partition_list(unks_out, eqn.outvars)
-  params_known = dict(branches=branches_known, **eqn_rest_params)
+  params_known = dict(branches=(*branches_known,), **eqn_rest_params)
   effects_known = _join_cond_effects(branches_known)
   eqn_known = pe.new_jaxpr_eqn(
       ins_known, [*out_binders_known, *res_binders], cond_p, params_known,
@@ -719,7 +731,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
 
   # Build the staged eqn.
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
-  params_staged = dict(branches=branches_staged, **eqn_rest_params)
+  params_staged = dict(branches=(*branches_staged,), **eqn_rest_params)
   effects_staged = _join_cond_effects(branches_staged)
   eqn_staged = pe.new_jaxpr_eqn(
       [eqn.invars[0], *res_binders, *eqn.invars[1:]], out_binders_staged,
@@ -753,11 +765,11 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
 # [x], [y], [x, x]             -> [x, y, x],    [[0], [1], [0, 2]]
 # [x], [x], [x, x]             -> [x, x],       [[0], [0], [0, 1]]
 # [y, x, x], [x, z, y], [z, x] -> [y, x, x, z], [[0, 1, 2], [1, 3, 0], [3, 1]]
-def _merge_branch_residuals(branch_res_avals):
+def _merge_branch_residuals(branch_ures_avals):
   def enumerate_equal(xs):
     counts = {v: itertools.count() for v in set(xs)}
     return [(x, next(counts[x])) for x in xs]
-  branch_res_tagged_avals = map(enumerate_equal, branch_res_avals)
+  branch_res_tagged_avals = map(enumerate_equal, branch_ures_avals)
   all_tagged_avals = _ordered_unique(util.concatenate(branch_res_tagged_avals))
   indices = {v: i for i, v in enumerate(all_tagged_avals)}
   branch_indices = [
@@ -768,41 +780,41 @@ def _merge_branch_residuals(branch_res_avals):
 # This function augments branch outputs to agree with the merged residual
 # format: each branch is made to return zero-filled values in the places of
 # residual outputs that it does not populate.
-def _join_cond_outputs(jaxprs: Sequence[core.ClosedJaxpr],
-                       all_res_avals, res_aval_indices_per_jaxpr,
-                       num_non_res_outputs) -> tuple[core.ClosedJaxpr, ...]:
-  def augment_jaxpr(jaxpr: core.ClosedJaxpr,
-                    res_indices):
+def _join_cond_outputs(
+    jaxprs, merged_ures_avals, ures_aval_indices_per_jaxpr, sres_avals, num_primals_out
+  ) -> list[core.Jaxpr]:
+  def augment_jaxpr(jaxpr: core.Jaxpr, ures_indices, idx):
     def f_aug(*args):
       outs_and_residuals = core.jaxpr_as_fun(jaxpr)(*args)
-      outs, residuals = split_list(outs_and_residuals, [num_non_res_outputs])
-      aug_residuals = map(ad_util.empty_like_aval, all_res_avals)
-      aug_residuals = util.subvals(aug_residuals, zip(res_indices, residuals))
-      return outs + list(aug_residuals)
+      outs, ures, sres = split_list(outs_and_residuals, [num_primals_out, len(ures_indices)])
+      aug_ures = map(ad_util.empty_like_aval, merged_ures_avals)
+      aug_ures = util.subvals(aug_ures, zip(ures_indices, ures))
+      aug_sres = sres_avals.map(ad_util.empty_like_aval).unpack()
+      aug_sres = util.subvals(aug_sres, [(idx, aug_sres[idx].update(sres))])
+      return [*outs, *aug_ures, *itertools.chain.from_iterable(aug_sres)]
 
-    return _make_closed_jaxpr(f_aug, jaxpr.in_avals, jaxpr.jaxpr.debug_info)
+    return _make_closed_jaxpr(f_aug, jaxpr.in_avals, jaxpr.debug_info)
 
-  return tuple(map(augment_jaxpr, jaxprs, res_aval_indices_per_jaxpr))
+  return map(augment_jaxpr, jaxprs, ures_aval_indices_per_jaxpr, range(len(jaxprs)))
 
 # This function augments branch inputs to agree with the merged residual format:
 # each branch is made to accept all residuals, even though it will ignore those
 # that it does not read.
 def _join_cond_pe_staged_jaxpr_inputs(
-    jaxprs: Sequence[core.ClosedJaxpr], all_res_avals,
-    res_aval_indices_per_jaxpr) -> tuple[core.ClosedJaxpr, ...]:
-  all_res_vars = map(core.Var, all_res_avals)
+    jaxprs, merged_ures_avals, res_aval_indices_per_jaxpr, sres_avals, num_tangents
+  ) -> list[core.Jaxpr]:
+  all_ures_vars = map(core.Var, merged_ures_avals)
+  all_sres_vars = sres_avals.map(core.Var).unpack()
 
-  def augment_jaxpr(jaxpr: core.ClosedJaxpr, res_indices) -> core.ClosedJaxpr:
-    num_res = len(res_indices)
-    res_vars = jaxpr.jaxpr.invars[:num_res]
-    non_res_vars = jaxpr.jaxpr.invars[num_res:]
+  def augment_jaxpr(jaxpr: core.Jaxpr, ures_indices, idx):
+    ures_vars, tangent_vars, sres_vars = \
+        split_list(jaxpr.invars, [len(ures_indices), num_tangents])
+    aug_ures_vars = util.subvals(all_ures_vars, zip(ures_indices, ures_vars))
+    aug_sres_vars = util.subvals(all_sres_vars, [(idx, all_sres_vars[idx].update(sres_vars))])
+    invars = [*aug_ures_vars, *tangent_vars, *itertools.chain.from_iterable(aug_sres_vars)]
+    return jaxpr.replace(invars=invars)
 
-    aug_res_vars = list(util.subvals(all_res_vars, zip(res_indices, res_vars)))
-    aug_invars = aug_res_vars + non_res_vars
-    jaxpr_aug = jaxpr.jaxpr.replace(invars=aug_invars)
-    return core.ClosedJaxpr(jaxpr_aug, jaxpr.consts)
-
-  return tuple(map(augment_jaxpr, jaxprs, res_aval_indices_per_jaxpr))
+  return map(augment_jaxpr, jaxprs, res_aval_indices_per_jaxpr, range(len(jaxprs)))
 
 def _ordered_unique(xs):
   d = collections.OrderedDict((x, None) for x in xs)
@@ -814,8 +826,7 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
   if not any(used_outputs) and not pe.has_effects(eqn):
     return [False] * len(eqn.invars), None
 
-  closed_branches = eqn.params['branches']
-  branches = [closed_jaxpr.jaxpr for closed_jaxpr in closed_branches]
+  branches = eqn.params['branches']
 
   # First, compute which inputs are used in any branch (not including `pred`).
   used_inputs: list[bool] = [False] * (len(eqn.invars) - 1)  # -1 for pred
@@ -824,10 +835,8 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
     used_inputs = map(operator.or_, used_inputs, used_inputs_)
 
   # Next, compute DCEd branches, instantiating according to used_inputs.
-  dce_branches_ = [pe.dce_jaxpr(jaxpr, used_outputs, instantiate=used_inputs)[0]
-                   for jaxpr in branches]
-  dce_branches = [core.ClosedJaxpr(jaxpr, closed_jaxpr.consts)
-                  for closed_jaxpr, jaxpr in zip(closed_branches, dce_branches_)]
+  dce_branches = [pe.dce_jaxpr(jaxpr, used_outputs, instantiate=used_inputs)[0]
+                  for jaxpr in branches]
 
   # Finally, update parameters and form the new eqn.
   new_params = dict(eqn.params, branches=tuple(dce_branches))
@@ -844,36 +853,79 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
   return [True, *used_inputs], new_eqn
 
 
+@register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
+class CondSum:
+  """A cond-shaped sum, represented as a tagged product.
+
+  `index` is the branch that ran, and `branches` has one slot per branch: the
+  branch's value if it ran, zeros if the branch participates but wasn't taken,
+  or None if it doesn't participate. Nested conds nest their CondSums.
+  """
+  index: Any
+  branches: list
+
+
+
 def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
   assert not isinstance(index, ad.GradAccum)
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
-  in_avals = tuple(core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd
-                   else a for x in in_flat)
+  in_avals = tuple(typeof(x) for x in in_flat)
   trans_branches, out_trees = unzip2(
-      _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, (False,) * len(args))
+      _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, (False,) * len(args),
+                             None, 0)
       for j in branches)
-  out_nzs = [[not isinstance(x, ad.Zero) for x in tree_unflatten(t, j.out_avals)]
-             for t, j in zip(out_trees, trans_branches)]
+  outs = [tree_unflatten(t, j.out_avals)
+          for t, j in zip(out_trees, trans_branches)]
+  branch_cts, branch_logs = unzip2(outs)
+  out_nzs = [[not isinstance(x, ad.Zero) for x in cts] for cts in branch_cts]
   out_nz = tuple(map(partial(functools.reduce, operator.or_), zip(*out_nzs)))
+  # Each key logged by any branch gets one slot per branch (see CondSum), so
+  # the branches needn't agree about keys or types.
+  log_spec = []
+  for k in sorted({k for logs in branch_logs for k in logs}):
+    branch_specs = []
+    for logs in branch_logs:
+      if k in logs:
+        avals, treedef = tree_flatten(logs[k])
+        branch_specs.append((treedef, tuple(avals)))
+      else:
+        branch_specs.append(None)  # type: ignore
+    log_spec.append((k, tuple(branch_specs)))
+  log_spec = tuple(log_spec)
   trans_branches, out_trees = unzip2(
-      _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, out_nz) for j in branches)
+      _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, out_nz, log_spec, b)
+      for b, j in enumerate(branches))
   out_tree, = set(out_trees)
-  cts_out = cond_p.bind(index, *in_flat, branches=(*trans_branches,), **params)
-  for x, ct in zip(args, tree_unflatten(out_tree, cts_out)):
+  outs = cond_p.bind(index, *in_flat, branches=(*trans_branches,), **params)
+  cts_out, logs = tree_unflatten(out_tree, outs)
+  for x, ct in zip(args, cts_out):
     if isinstance(x, ad.ValAccum): x.accum(ct)
+  return {k: CondSum(index, slots) for k, slots in logs.items()}
 
 @util.weakref_lru_cache
-def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out):
+def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out, log_spec,
+                           which_branch):
   maybe_inst = lambda x, inst: ad.instantiate_zeros(x) if inst else x
   def transposed(*in_flat):
     primals_ctrefs, cts_in = tree_unflatten(in_tree, in_flat)
     args = ad.unproject_accums(specs, primals_ctrefs)
-    ad.backward_pass3(jaxpr.jaxpr, False, jaxpr.consts, args, cts_in)
+    raw_logs = ad.backward_pass3(jaxpr, False, jaxpr.consts, args, cts_in)
     cts_out = [maybe_inst(x.freeze(), inst) if isinstance(x, ad.ValAccum)
                else None for x, inst in zip(args, inst_out)]
-    return cts_out
-  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
+    if log_spec is None:
+      return cts_out, raw_logs
+    # If this jaxpr runs, this branch was the one taken: its slot holds its
+    # live values, other branches' slots hold zeros (or None for keys they
+    # don't log).
+    logs = {k: [raw_logs.get(k) if b == which_branch else
+                None if spec is None else
+                tree_unflatten(spec[0], map(ad_util.zeros_like_aval, spec[1]))
+                for b, spec in enumerate(branch_specs)]
+            for k, branch_specs in log_spec}
+    return cts_out, logs
+  dbg = jaxpr.debug_info.with_unknown_names()
   closed_jaxpr, out_avals = pe.trace_to_jaxpr(
       transposed, ft.flatten_args(*in_avals), dbg
   )
@@ -886,9 +938,13 @@ def _cond_typecheck(bind_time, *in_atoms, branches, **params):
     _, *in_atoms = in_atoms
   avals = [x.aval for x in in_atoms]
   tc = partial(_typecheck_param, 'cond')
-  tc(branches, 'branches', 'tuple of ClosedJaxpr',
-     type(branches) is tuple and
-     all(type(x) is core.ClosedJaxpr for x in branches))
+  tc(
+      branches,
+      'branches',
+      'tuple of closed Jaxpr',
+      type(branches) is tuple
+      and all(type(x) is core.Jaxpr for x in branches),
+  )
 
   if len(branches) == 0:
     raise core.JaxprTypeError('cond requires at least one branch function')
@@ -935,23 +991,28 @@ def _cond_typecheck(bind_time, *in_atoms, branches, **params):
       f'called with operands of type {_avals_short(op_avals)}')
   return jaxpr0.out_avals, joined_effects
 
-def _cond_remat(policy, *args, branches, **params):
+def _cond_remat(trace, *args, branches, **params):
   branches_fwd, branches_rem, branch_res_avals = [], [], []
   for jaxpr in branches:
-    jaxpr_fwd, jaxpr_rem, num_res = remat.remat_jaxpr(jaxpr, policy)
+    # TODO(mattjj): allow forwarding (requires per-branch wiring to survive
+    # the cross-branch residual merging below).
+    jaxpr_fwd, jaxpr_rem, fwds = remat.remat_jaxpr(
+      jaxpr, trace.policy, trace.custom_vjp_rules, allow_fwds=False)
+    num_res = len(fwds)
     branches_fwd.append(jaxpr_fwd)
     branches_rem.append(jaxpr_rem)
     _, res_avals = split_list_checked(jaxpr_fwd.out_avals, [len(jaxpr.out_avals), num_res])
     branch_res_avals.append(res_avals)
   merged_avals, branch_res_avals = _merge_branch_residuals(branch_res_avals)
+  dummy = ft.flatten([[]] * len(branches))
   branches_fwd = _join_cond_outputs(
-      branches_fwd, merged_avals, branch_res_avals, len(jaxpr.out_avals))
+      branches_fwd, merged_avals, branch_res_avals, dummy, len(jaxpr.out_avals))
   branches_rem = _join_cond_pe_staged_jaxpr_inputs(
-      branches_rem, merged_avals, branch_res_avals)
-  all_out = cond_p.bind(*args, branches=branches_fwd, **params)
+      branches_rem, merged_avals, branch_res_avals, dummy, len(jaxpr.in_avals))
+  all_out = cond_p.bind(*args, branches=(*branches_fwd,), **params)
   primals_out, res = split_list(all_out, [len(jaxpr.out_avals)])
   def rem(idx, *args):
-    return cond_p.bind(idx, *res, *args, branches=branches_rem, **params)
+    return cond_p.bind(idx, *res, *args, branches=(*branches_rem,), **params)
   return primals_out, rem
 
 
@@ -980,31 +1041,17 @@ pe.dce_rules[cond_p] = _cond_dce_rule
 remat.rules[cond_p] = _cond_remat
 
 def _cond_is_high(*_, branches, **__) -> bool:
-  return any(j.jaxpr.is_high for j in branches)
+  return any(j.is_high for j in branches)
 cond_p.is_high = _cond_is_high
 
 def _cond_to_lojax(pred, *hi_args, branches, **kwds):
   jaxpr = branches[0]
   lo_branches = tuple(pe.lower_jaxpr2(j) for j in branches)
-  lo_args = [lo_val for aval, x in zip(branches[0].in_aval_qdds, hi_args)
-             for lo_val in (aval.read_loval(x) if aval.has_qdd
-                            else aval.lower_val(x))]
-  all_outs = cond_p.bind(pred, *lo_args, branches=lo_branches, **kwds)
-  lo_muts_out = sum(len(aval.lo_ty()) for aval in branches[0].final_aval_qdds if aval.has_qdd)
-  out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
-
-  # collect and apply mutations
-  out_mut_ = iter(out_mut)
-  in_idx = {v: i for i, v in enumerate(jaxpr.jaxpr.invars)}
-
-  for v in jaxpr.jaxpr.invars:
-    if v.final_qdd is not None:
-      qdd = v.final_qdd
-      lo_vals = itertools.islice(out_mut_, len(v.aval.lo_ty_qdd(qdd)))
-      v.aval.update_from_loval(qdd, hi_args[in_idx[v]], *lo_vals)
+  lo_args = [lo_val for aval, x in zip(jaxpr.in_avals, hi_args)
+             for lo_val in aval.lower_val(x)]
+  lo_outs = cond_p.bind(pred, *lo_args, branches=lo_branches, **kwds)
 
   lo_outs_ = iter(lo_outs)
-
   hi_outs = [t.raise_val(*itertools.islice(lo_outs_, len(t.lo_ty())))
              for t in jaxpr.out_avals]
   assert next(lo_outs_, None) is None
@@ -1014,7 +1061,7 @@ cond_p.to_lojax = _cond_to_lojax
 
 def _cond_lowering(ctx, index, *args, branches, **params):
   if (branches_platforms := params.get("branches_platforms", None)) is not None:
-    branches_kept: list[core.ClosedJaxpr] = []
+    branches_kept: list[core.Jaxpr] = []
     index_to_kept_index: dict[int, int] = {}
     for p in mlir._platforms_for_eqn(ctx):
       # Each `p` must appear in exactly one branches_platforms, or in the
@@ -1063,9 +1110,9 @@ def _cond_lowering(ctx, index, *args, branches, **params):
     branch = case_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
       consts = mlir.ir_consts(
-          jaxpr.consts, [v.aval for v in jaxpr.jaxpr.constvars])
+          jaxpr.consts, [v.aval for v in jaxpr.constvars])
       out_vals, tokens_out = mlir.jaxpr_subcomp(
-          ctx.module_context, jaxpr.jaxpr, name_stack.extend(f'branch_{i}_fun'),
+          ctx.module_context, jaxpr, name_stack.extend(f'branch_{i}_fun'),
           tokens_in, consts, *args,
           dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering,
           outer_traceback=ctx.traceback)
@@ -1083,12 +1130,13 @@ def _cond_lowering(ctx, index, *args, branches, **params):
 
 mlir.register_lowering(cond_p, _cond_lowering)
 
-@register_partial_discharge_rule(cond_p)
-def _cond_state_discharge_rule(should_discharge, in_avals, out_avals, index, *args,
+@register_discharge_rule(cond_p)
+def _cond_state_discharge_rule(ctx, index, *args,
                                branches, **params):
-  assert not should_discharge[0], "Can't discharge the index."
+  assert not ctx.should_discharge[0], "Can't discharge the index."
   discharged_branches = tuple(
-      discharge_state(branch, should_discharge=should_discharge[1:])
+      discharge_state(branch, should_discharge=ctx.should_discharge[1:],
+                      strip_memory_space=ctx.strip_memory_space)
       for branch in branches
   )
   # Don't thread the ref values through the cond if they never change.
@@ -1097,7 +1145,7 @@ def _cond_state_discharge_rule(should_discharge, in_avals, out_avals, index, *ar
     invar_pos = {v: i for i, v in enumerate(branch.invars)}
     branch_forwarding = [
         invar_pos.get(v, None) if isinstance(v, core.Var) else None
-        for v in branch.outvars[len(out_avals) :]]
+        for v in branch.outvars[len(ctx.out_avals) :]]
     if forwarded_outvars is None:
       forwarded_outvars = branch_forwarding
     else:
@@ -1105,10 +1153,10 @@ def _cond_state_discharge_rule(should_discharge, in_avals, out_avals, index, *ar
           i if i == j else None
           for i, j in zip(forwarded_outvars, branch_forwarding)]
   assert forwarded_outvars is not None
-  all_outvars_fwd = [None] * len(out_avals) + forwarded_outvars
+  all_outvars_fwd = [None] * len(ctx.out_avals) + forwarded_outvars
   new_branches = tuple(
       branch.replace(
-          jaxpr=branch.jaxpr.replace(
+          jaxpr=branch.replace(
               outvars=[v for v, fwd in zip(branch.outvars, all_outvars_fwd) if fwd is None]
           )
       )
@@ -1116,7 +1164,7 @@ def _cond_state_discharge_rule(should_discharge, in_avals, out_avals, index, *ar
   )
   out_vals_no_fwd = cond_p.bind(index, *args, branches=new_branches,
                                 **params)
-  out_vals, out_ref_vals_no_fwd = util.split_list(out_vals_no_fwd, [len(out_avals)])
+  out_vals, out_ref_vals_no_fwd = util.split_list(out_vals_no_fwd, [len(ctx.out_avals)])
   # Insert forwarded values into reference outputs
   ref_val_no_fwd_iter = iter(out_ref_vals_no_fwd)
   out_ref_vals = [next(ref_val_no_fwd_iter) if fwd is None else args[fwd]
@@ -1124,16 +1172,15 @@ def _cond_state_discharge_rule(should_discharge, in_avals, out_avals, index, *ar
   # Map reference outputs back to their invars
   ref_val_iter = iter(out_ref_vals)
   new_invals = []
-  for should, aval in zip(should_discharge, in_avals):
+  for should, aval in zip(ctx.should_discharge, ctx.in_avals):
     discharged_inval = isinstance(aval, AbstractRef) and should
     new_invals.append(next(ref_val_iter) if discharged_inval else None)
   return new_invals, out_vals
 
 
-_T = TypeVar("_T")
-def platform_dependent(*args: Any,
-                       default: Callable[..., _T] | None = None,
-                       **per_platform: Callable[..., _T]):
+def platform_dependent[T](*args: Any,
+                          default: Callable[..., T] | None = None,
+                          **per_platform: Callable[..., T]):
   """Stages out platform-specific code.
 
   In JAX the actual platform on which a computation is run is determined
@@ -1186,7 +1233,8 @@ def platform_dependent(*args: Any,
       raise TypeError(f"lax.platform_dependent: the '{pname}' branch must "
                       "be a callable.")
     if pname == "gpu":
-      raise ValueError("Use 'cuda' or 'rocm' for lax.platform_dependent.")
+      raise ValueError(
+          "Use 'cuda', 'rocm', or 'oneapi' for lax.platform_dependent.")
     for ps, b in branches_platforms_list:
       if b == pbranch:
         ps.append(pname)

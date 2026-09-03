@@ -76,12 +76,11 @@ class ProfilerTest(unittest.TestCase):
 
   def setUp(self):
     if (
-        sys.version_info < (3, 14)
-        and hasattr(sys, "_is_gil_enabled")
+        hasattr(sys, "_is_gil_enabled")
         and not sys._is_gil_enabled()
     ):
       self.skipTest(
-          "Profiler tests are not thread-safe under Python 3.13 free threading"
+          "Profiler tests are not thread-safe under Python free threading"
       )
 
     super().setUp()

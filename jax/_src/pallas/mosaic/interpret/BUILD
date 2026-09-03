@@ -26,7 +26,6 @@ package(
 pytype_strict_library(
     name = "params",
     srcs = ["params.py"],
-    type_checking = "pyrefly",
     deps = [
         ":utils",
         "//jax",
@@ -40,7 +39,6 @@ pytype_strict_library(
         "__init__.py",
         "interpret_pallas_call.py",
     ],
-    type_checking = "pyrefly",
     deps = [
         ":params",
         ":race_detection_state",
@@ -63,6 +61,7 @@ pytype_strict_library(
         "//jax/_src:util",
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",
+        "//jax/_src/pallas/mosaic:pipeline",
         "//jax/_src/pallas/mosaic:primitives",
         "//jax/_src/pallas/mosaic:tpu_info",
     ] + py_deps("numpy"),
@@ -71,14 +70,12 @@ pytype_strict_library(
 pytype_strict_library(
     name = "vector_clock",
     srcs = ["vector_clock.py"],
-    type_checking = "pyrefly",
     deps = py_deps("numpy"),
 )
 
 pytype_strict_library(
     name = "shared_memory",
     srcs = ["shared_memory.py"],
-    type_checking = "pyrefly",
     deps = [
         ":params",
         ":race_detection_state",
@@ -97,7 +94,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "race_detection_state",
     srcs = ["race_detection_state.py"],
-    type_checking = "pyrefly",
     deps = [
         ":vector_clock",
         "//jax/_src:source_info_util",
@@ -107,7 +103,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "thread_map",
     srcs = ["thread_map.py"],
-    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:callback",
@@ -117,7 +112,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "utils",
     srcs = ["utils.py"],
-    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:core",

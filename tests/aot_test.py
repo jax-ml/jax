@@ -20,6 +20,7 @@ from jax import lax
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
 from jax.experimental.serialize_executable import (
@@ -34,6 +35,9 @@ jax.config.parse_flags_with_absl()
 
 prev_xla_flags = None
 
+with contextlib.suppress(ImportError):
+  import pytest
+  pytestmark = pytest.mark.multiaccelerator
 
 
 class JaxAotTest(jtu.JaxTestCase):
@@ -366,6 +370,82 @@ class JaxAotTest(jtu.JaxTestCase):
     )
     result = compiled(input)
     self.assertEqual(result, 14.)
+
+  @jtu.run_on_devices("tpu", "gpu")
+  def test_topology_serialize_deserialize_aot_compile_reload(self):
+    """Tests getting builtin topology, serializing, deserializing, compiling on it, and reloading executable on local devices."""
+    if jtu.TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
+      raise unittest.SkipTest("Compilation caching not yet supported.")
+    if jaxlib_extension_version < 481:
+      raise unittest.SkipTest(
+          "Requires jaxlib_extension_version >= 481 (DeviceTopology.deserialize)"
+      )
+
+    orig_topo = topologies.TopologyDescription(jax.devices())
+    serialized_topo = orig_topo.serialize()
+    self.assertIsInstance(serialized_topo, bytes)
+    self.assertNotEmpty(serialized_topo)
+
+    restored_topo = topologies.TopologyDescription.deserialize(serialized_topo)
+    self.assertLen(restored_topo.devices, len(orig_topo.devices))
+    self.assertEqual(
+        restored_topo.devices[0].client.runtime_type, "compile_only_runtime"
+    )
+    self.assertEqual(
+        [d.id for d in restored_topo.devices],
+        [d.id for d in orig_topo.devices],
+    )
+
+    mesh = jax.sharding.Mesh(np.array(restored_topo.devices[:1]), ("x",))
+    x = jax.ShapeDtypeStruct(
+        shape=(2, 2),
+        dtype=jnp.float32,
+        sharding=jax.sharding.NamedSharding(
+            mesh, jax.sharding.PartitionSpec("x")
+        ),
+    )
+    compiled = jax.jit(lambda x: jnp.sum(x * x)).lower(x).compile()
+    serialized_exec, in_tree, out_tree = serialize(compiled)
+
+    reloaded = deserialize_and_load(
+        serialized_exec,
+        in_tree,
+        out_tree,
+        backend=jax.devices()[0].platform,
+        execution_devices=jax.devices()[:1],
+    )
+
+    inp = jnp.array(
+        [[0.0, 1.0], [2.0, 3.0]], dtype=jnp.float32, device=jax.devices()[0]
+    )
+    result = reloaded(inp)
+    self.assertEqual(result, 14.0)
+
+  def test_serialized_topology_invalid_bytes_raises_error(self):
+    """Tests that passing invalid serialized protobuf bytes raises ValueError."""
+    if jaxlib_extension_version < 481:
+      raise unittest.SkipTest(
+          "Requires jaxlib_extension_version >= 481 (DeviceTopology.deserialize)"
+      )
+    with self.assertRaisesRegex(
+        ValueError,
+        "Failed to parse PjRtTopologyDescriptionProto from serialized bytes",
+    ):
+      topologies.TopologyDescription.deserialize(b"invalid_proto_bytes")
+
+  def test_get_executable_version(self):
+    """Tests LoadedExecutable.get_executable_version() returns non-empty version bytes."""
+    if jaxlib_extension_version < 482:
+      raise unittest.SkipTest(
+          "Requires jaxlib_extension_version >= 482"
+          " (LoadedExecutable.get_executable_version)"
+      )
+    x = jnp.ones((2, 2), dtype=jnp.float32)
+    compiled = jax.jit(lambda x: x + 1).lower(x).compile()
+    py_exec = compiled.runtime_executable()
+    version_bytes = py_exec.get_executable_version()
+    self.assertIsInstance(version_bytes, bytes)
+    self.assertNotEmpty(version_bytes)
 
 
 if __name__ == '__main__':

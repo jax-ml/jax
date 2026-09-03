@@ -36,8 +36,7 @@ from jax._src.pallas.mosaic_gpu.core import SwizzleTransform as SwizzleTransform
 from jax._src.pallas.mosaic_gpu.core import TilingTransform as TilingTransform
 from jax._src.pallas.mosaic_gpu.core import TMEMLayout as TMEMLayout
 from jax._src.pallas.mosaic_gpu.core import TraceScope as TraceScope
-from jax._src.pallas.mosaic_gpu.core import transform_ref as transform_ref
-from jax._src.pallas.mosaic_gpu.core import transpose_ref as transpose_ref
+from jax._src.pallas.mosaic_gpu.core import transpose_ref as _deprecated_transpose_ref
 from jax._src.pallas.mosaic_gpu.core import TryClusterCancelResult as TryClusterCancelResult
 from jax._src.pallas.mosaic_gpu.core import WarpMesh as WarpMesh
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as ACC  # noqa: F401
@@ -49,6 +48,9 @@ from jax._src.pallas.mosaic_gpu.helpers import nd_loop as nd_loop
 from jax._src.pallas.mosaic_gpu.helpers import NDLoopInfo as NDLoopInfo
 from jax._src.pallas.mosaic_gpu.helpers import planar_snake as planar_snake
 from jax._src.pallas.mosaic_gpu.helpers import warp_map as warp_map
+from jax._src.pallas.mosaic_gpu.interpret.params import force_gpu_interpret_mode as force_gpu_interpret_mode
+from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams as InterpretGPUParams
+from jax._src.pallas.mosaic_gpu.interpret.params import set_gpu_interpret_mode as set_gpu_interpret_mode
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline_warp_specialized as emit_pipeline_warp_specialized
 from jax._src.pallas.mosaic_gpu.pipeline import PipelinePipeline as PipelinePipeline
@@ -78,6 +80,7 @@ from jax._src.pallas.mosaic_gpu.primitives import griddepcontrol_launch_dependen
 from jax._src.pallas.mosaic_gpu.primitives import griddepcontrol_wait as griddepcontrol_wait
 from jax._src.pallas.mosaic_gpu.primitives import inline_mgpu as inline_mgpu
 from jax._src.pallas.mosaic_gpu.primitives import load as load
+from jax._src.pallas.mosaic_gpu.primitives import mma as mma
 from jax._src.pallas.mosaic_gpu.primitives import multimem_load_reduce as multimem_load_reduce
 from jax._src.pallas.mosaic_gpu.primitives import multimem_store as multimem_store
 from jax._src.pallas.mosaic_gpu.primitives import print_layout as print_layout
@@ -93,6 +96,7 @@ from jax._src.pallas.mosaic_gpu.primitives import ShapeDtypeStruct as ShapeDtype
 from jax._src.pallas.mosaic_gpu.primitives import tcgen05_commit_arrive as tcgen05_commit_arrive
 from jax._src.pallas.mosaic_gpu.primitives import tcgen05_mma as tcgen05_mma
 from jax._src.pallas.mosaic_gpu.primitives import try_cluster_cancel as try_cluster_cancel
+from jax._src.pallas.mosaic_gpu.primitives import wait_gmem_to_smem as wait_gmem_to_smem
 from jax._src.pallas.mosaic_gpu.primitives import wait_load_tmem as wait_load_tmem
 from jax._src.pallas.mosaic_gpu.primitives import wait_smem_to_gmem as wait_smem_to_gmem
 from jax._src.pallas.mosaic_gpu.primitives import wgmma as wgmma
@@ -115,3 +119,26 @@ SMEM = MemorySpace.SMEM
 TMEM = MemorySpace.TMEM
 #: Alias of :data:`jax.experimental.pallas.mosaic_gpu.MemorySpace.REGS`.
 REGS = MemorySpace.REGS
+
+
+_deprecations = {
+    # Added August 17, 2026
+    "transpose_ref": (
+        (
+            "jax.experimental.pallas.mosaic_gpu.transpose_ref is deprecated."
+            " Use ref.transpose(...) directly instead."
+        ),
+        _deprecated_transpose_ref,
+    ),
+}
+
+import typing
+
+if typing.TYPE_CHECKING:
+  transpose_ref = _deprecated_transpose_ref
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing

@@ -99,6 +99,11 @@ def approx_max_k(operand: Array,
 
   See https://arxiv.org/abs/2206.14286 for the algorithm details.
 
+  **Note:** This algorithm does not guarantee stability. If there are tied values
+  in the operand, the returned indices may not preserve their original relative
+  order. In the event of a tie that crosses the top-k boundary, the exact subset
+  of indices returned is implementation-defined.
+
   Args:
     operand : Array to search for max-k. Must be a floating number type.
     k : Specifies the number of max-k.
@@ -157,6 +162,11 @@ def approx_min_k(operand: Array,
   """Returns min ``k`` values and their indices of the ``operand`` in an approximate manner.
 
   See https://arxiv.org/abs/2206.14286 for the algorithm details.
+
+  **Note:** This algorithm does not guarantee stability. If there are tied values
+  in the operand, the returned indices may not preserve their original relative
+  order. In the event of a tie that crosses the top-k boundary, the exact subset
+  of indices returned is implementation-defined.
 
   Args:
     operand : Array to search for min-k. Must be a floating number type.

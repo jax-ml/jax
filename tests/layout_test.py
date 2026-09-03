@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import math
+import re
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -46,8 +47,8 @@ class LayoutTest(jtu.JaxTestCase):
     def init(x, y):
       return x * 2, y * 2
 
-    np_inp1 = np.arange(math.prod(shape1)).reshape(shape1)
-    np_inp2 = np.arange(math.prod(shape2)).reshape(shape2)
+    np_inp1 = np.arange(math.prod(shape1), dtype=np.int32).reshape(shape1)
+    np_inp2 = np.arange(math.prod(shape2), dtype=np.int32).reshape(shape2)
     sds1 = jax.ShapeDtypeStruct(np_inp1.shape, np_inp1.dtype, sharding=s1)
     sds2 = jax.ShapeDtypeStruct(np_inp2.shape, np_inp2.dtype, sharding=s2)
 
@@ -101,7 +102,7 @@ class LayoutTest(jtu.JaxTestCase):
   def test_default_layout(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     shape = (4, 4, 2)
-    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    np_inp = np.arange(math.prod(shape), dtype=np.int32).reshape(shape)
     s = NamedSharding(mesh, P('x', 'y'))
     sds = jax.ShapeDtypeStruct(np_inp.shape, np_inp.dtype, sharding=s)
     arr = jax.device_put(np_inp, s)
@@ -232,7 +233,7 @@ class LayoutTest(jtu.JaxTestCase):
       self.skipTest('This test does not work on CPU or GPU backends.')
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     shape = (256, 4, 2)
-    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    np_inp = np.arange(math.prod(shape), dtype=np.int32).reshape(shape)
     s = NamedSharding(mesh, P('x'))
 
     sds = jax.ShapeDtypeStruct(np_inp.shape, np_inp.dtype, sharding=s)
@@ -329,7 +330,7 @@ class LayoutTest(jtu.JaxTestCase):
   def test_make_array_from_callback(self):
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
-    np_inp = np.arange(16).reshape(8, 2)
+    np_inp = np.arange(16, dtype=np.int32).reshape(8, 2)
     sds = jax.ShapeDtypeStruct(np_inp.shape, np_inp.dtype, sharding=s)
 
     format = jax.jit(lambda x: x * 2).lower(sds).compile().output_formats
@@ -683,6 +684,44 @@ class LayoutTest(jtu.JaxTestCase):
     lowered_text = f.lower(arr).as_text()
     self.assertIn('LayoutConstraint', lowered_text)
 
+  def test_with_layout_constraint_with_tiling(self):
+    if not jtu.test_device_matches(['tpu']):
+      self.skipTest('Only works for TPU')
+
+    if not jtu.stablehlo_version_at_least('1.18.0'):
+      self.skipTest('Requires stablehlo 1.18.0 or higher')
+
+    shape = (64, 256)
+    np_inp = np.arange(math.prod(shape), dtype=jnp.bfloat16).reshape(shape)
+    arr = jax.device_put(np_inp)
+
+    # Create a custom layout instead of using `arr.layout` to test the API.
+    custom_dll = Layout(
+        major_to_minor=arr.format.layout.major_to_minor[::-1],
+        tiling=((16, 128), (2, 1)),
+    )
+
+    @jax.jit
+    def f(x):
+      y = x.T
+      # Constrain `y` to the original layout of `arr` because without it,
+      # the layout of `y` would be the transpose of `arr`.
+      return with_layout_constraint(y, custom_dll) * 2
+
+    out = f(arr)
+    self.assertEqual(
+        out.format.layout.major_to_minor, custom_dll.major_to_minor
+    )
+    self.assertArraysEqual(out, np_inp.T * 2)
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn('LayoutConstraint', lowered_text)
+    self.assertIn(
+        'result_tilings = [[dense<[16, 128]> : tensor<2xindex>, dense<[2, 1]> :'
+        ' tensor<2xindex>]]',
+        lowered_text,
+    )
+
   def test_with_layout_constraint_vmap(self):
     if not jtu.test_device_matches(['tpu']):
       self.skipTest('Only works for TPU')
@@ -797,6 +836,24 @@ class LayoutTest(jtu.JaxTestCase):
                      NamedSharding(mesh, P(None, None, unreduced={'x'})))
     self.assertEqual(out.format.layout.major_to_minor, (1, 0))
     self.assertNotIn('all-reduce(', f.lower(arr1, arr2).compile().as_text())
+
+  def test_layout_propagation_host(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    arr = jnp.ones((5, 2, 1004, 512, 36), dtype=jnp.float32)
+
+    host_sharding = jax.NamedSharding(mesh, jax.P(), memory_kind='pinned_host')
+    host_format = Format(layout=Layout((0, 1, 4, 2, 3)),
+                          sharding=host_sharding)
+
+    @jax.jit(out_shardings=host_format)
+    def test_fun(x):
+      return with_layout_constraint(x * 2, host_format.layout)
+
+    compiled_text = test_fun.lower(arr).compile().as_text()
+    match = re.search(r'->\s*f32\[5,2,1004,512,36\]\{([^}]+)\}', compiled_text)
+    layout_str = match.group(1)
+    self.assertIn('3,2,4,1,0', layout_str)
+    self.assertIn('S(5)', layout_str)
 
 
 if __name__ == '__main__':

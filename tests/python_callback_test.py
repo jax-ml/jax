@@ -16,6 +16,7 @@ import collections
 import contextlib
 import functools
 import logging
+import threading
 import time
 import unittest
 
@@ -28,7 +29,6 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import util
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.shard_map import shard_map
 from jax._src.sharding_impls import make_single_device_sharding
@@ -616,7 +616,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(lambda: jax.vmap(f)(
         jnp.zeros(100, dtype=jnp.float32)))()
     with jax.ensure_compile_time_eval():
-      jax.core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts)  # doesn't crash
+      jax.core.eval_jaxpr(jaxpr, jaxpr.consts)  # doesn't crash
 
   @parameterized.parameters("int2", "int4", "uint2", "uint4", "float4_e2m1fn")
   def test_subbyte_results(self, dtype: str):
@@ -1251,8 +1251,7 @@ class IOCallbackTest(jtu.JaxTestCase):
       io_callback(lambda x: x, y, y)
       return x
 
-    with self.assertRaisesRegex(NotImplementedError,
-        "Effects not supported in partial-eval of `checkpoint`"):
+    with self.assertRaisesRegex(NotImplementedError, "Effects not supported in"):
       f(2., 3.)
 
   @parameterized.named_parameters(
@@ -1273,9 +1272,16 @@ class IOCallbackTest(jtu.JaxTestCase):
     mesh = jax.sharding.Mesh(np.array(devices), ['dev'])
 
     _collected: list[int] = []
+    # Unordered io_callbacks (ordered=False) do not return sequence tokens, meaning
+    # jax.effects_barrier() does not track or wait for them. We use a condition
+    # variable to safely await completion of background FFI callback CPU threads.
+    cond = threading.Condition()
+
     def _cb(x):
       nonlocal _collected
-      _collected.append(int(x.sum()))
+      with cond:
+        _collected.append(int(x.sum()))
+        cond.notify_all()
 
     io_callback_kwargs = dict(ordered=ordered)
     callback_device = devices[0]
@@ -1307,6 +1313,10 @@ class IOCallbackTest(jtu.JaxTestCase):
     if ordered:
       self.assertAllClose(_collected, expected)
     else:
+      # Await background FFI CPU threads before asserting, as jax.effects_barrier()
+      # only synchronizes ordered callbacks that emit effect tokens.
+      with cond:
+        cond.wait_for(lambda: len(_collected) >= len(expected), timeout=10)
       self.assertEqual(len(_collected), len(expected))
       for v in expected:
         self.assertIn(v, _collected)
@@ -1478,10 +1488,6 @@ class IOCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
 
   def test_create_hlo_output_callback(self):
-    if jaxlib_extension_version < 469:
-      raise unittest.SkipTest(
-          "create_hlo_output_callback requires jaxlib >= 469"
-      )
     client = xla_client.make_cpu_client(asynchronous=False)
     capsule = client.create_hlo_output_callback(123, 2, lambda *_args: None)
     self.assertIsNotNone(capsule)

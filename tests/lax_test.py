@@ -787,8 +787,10 @@ class LaxTest(jtu.JaxTestCase):
         range(len(filter_shape)),
         [out_spec.index(c) for c in out_spec if c not in ('N', 'C')])
     tol = None
-    if (jtu.test_device_matches(["tpu"]) and
-        precision in (None, lax.Precision.DEFAULT)):
+    if jtu.test_device_matches(["tpu", "gpu"]) and precision in (
+        None,
+        lax.Precision.DEFAULT,
+    ):
       tol = 1e-3
     self.assertAllClose(out, patches, atol=tol, rtol=tol)
 
@@ -2729,15 +2731,28 @@ class LaxTest(jtu.JaxTestCase):
     dtype=[np.float32, np.int32, np.uint32],
     shape=[(20,), (8, 20), (2000,)],
     k=[1, 3, 8],
-    axis=[0, -1]
+    axis=[0, -1],
+    is_stable=[True, False]
   )
-  def testTopK(self, shape, dtype, k, axis):
+  def testTopK(self, shape, dtype, k, axis, is_stable):
     rng = jtu.rand_some_equal(self.rng())
     def args_maker():
       return [rng(shape, dtype)]
-    op = lambda vs: lax.top_k(vs, k=k, axis=axis)
-    ref_op = lambda vs: lax_reference.top_k(vs, k=k, axis=axis)
-    self._CheckAgainstNumpy(op, ref_op, args_maker)
+    op = lambda vs: lax.top_k(vs, k=k, axis=axis, is_stable=is_stable)
+    ref_op = lambda vs: lax_reference.top_k(vs, k=k, axis=axis, is_stable=is_stable)
+    if is_stable:
+      self._CheckAgainstNumpy(op, ref_op, args_maker)
+    else:
+      # Unstable sort. Validate the values match
+      args = args_maker()[0]
+      ref_values, _ = ref_op(args)
+      xla_values, xla_indices = op(args)
+      self.assertAllClose(ref_values, xla_values)
+
+      # Validate the indices actually point to the correct top-k values
+      gathered_values = np.take_along_axis(args, xla_indices, axis=axis)
+      self.assertAllClose(ref_values, gathered_values)
+
     self._CompileAndCheck(op, args_maker)
 
   def testTopKOverflow(self):
@@ -3567,7 +3582,7 @@ class LaxTest(jtu.JaxTestCase):
   def test_select_jvp_complexity(self):
     jaxpr = jax.make_jaxpr(lambda x: jax.jvp(lambda x: lax.select(True, x, x),
                                              (x,), (1.,)))(1.)
-    self.assertLen(jaxpr.jaxpr.eqns, 2)
+    self.assertLen(jaxpr.eqns, 2)
 
   def testRngBitGenerator(self):
     # This test covers the original behavior of lax.rng_bit_generator, which
@@ -3734,6 +3749,14 @@ class LaxTest(jtu.JaxTestCase):
     g = jax.grad(f)(5.)  # doesn't crash
     self.assertAllClose(g, 3., check_dtypes=False)
 
+  def test_optimization_barrier_backward_pass_zeros(self):
+    def f(x):
+      y = jnp.log(x)
+      y, x = jax.lax.optimization_barrier((y, x))
+      return x
+    not_nan = jax.grad(f)(0.)
+    self.assertFalse(jnp.isnan(not_nan))
+
   def test_shape_as_value_handles_static_shapes(self):
     result = lax.shape_as_value(())
     self.assertArraysEqual(result, lax.full((0,), np.array(0, np.int32)))
@@ -3874,6 +3897,24 @@ class LaxTest(jtu.JaxTestCase):
     hlo = jax.jit(g).lower(x).compile().as_text()
     self.assertNotIn("add", hlo)
 
+  def test_dce_sink_vmap_of_while(self):
+    # dce_sink is a 0-output, effect-only primitive; its batching rule must
+    # not emit an output. Regression test for a batching-arity bug that made
+    # vmap over a while_loop containing a dce_sink fail with
+    # "foreach() argument 2 is longer than argument 1".
+    def cond(c):
+      x, i = c
+      return i < 3
+    def body(c):
+      x, i = c
+      lax.dce_sink(x > 0)
+      return x + 1., i + 1
+    def f(x):
+      x, _ = lax.while_loop(cond, body, (x, jnp.int32(0)))
+      return x
+    out = jax.jit(jax.vmap(f))(jnp.arange(3.))
+    self.assertAllClose(out, jnp.arange(3.) + 3., check_dtypes=False)
+
   def testStagePreservesWeakType(self):
     aval = core.ShapedArray((), np.float32, weak_type=True)
     x = literals.TypedNdArray(np.array(1.0, dtype=np.float32), aval=aval)
@@ -3884,7 +3925,7 @@ class LaxTest(jtu.JaxTestCase):
     def f(x):
       return list(x)
     jaxpr = jax.make_jaxpr(f)(np.arange(3.))
-    primitives = [eqn.primitive for eqn in jaxpr.jaxpr.eqns]
+    primitives = [eqn.primitive for eqn in jaxpr.eqns]
     self.assertIn(lax_internal.unstack_p, primitives)
 
 
@@ -4090,8 +4131,8 @@ class FooTyRules:
 
   @staticmethod
   def result_handler(sticky_device, aval):
+    del sticky_device
     def handler(_, buf):
-      buf.aval = core.ShapedArray(buf.shape, buf.dtype)
       return FooArray(aval.shape, buf)
     return handler
 
@@ -4374,8 +4415,8 @@ class CustomElementTypesTest(jtu.JaxTestCase):
 
     param_gradient_map = jaxpr_split_transpose.jaxpr.eqns[-1]
     self.assertEqual(param_gradient_map.primitive, jax.lax.scan_p)
-    self.assertEqual(param_gradient_map.params['num_consts'], 0)
-    self.assertEqual(param_gradient_map.params['num_carry'], 0)
+    consts_g, carry_g, _ = param_gradient_map.params['ft_in'].unpack()
+    self.assertEqual([len(consts_g), len(carry_g)], [0, 0])
 
     # Assert that parameter gradients come from the map.
     self.assertEqual(ct_ws, param_gradient_map.outvars[0])
@@ -4571,6 +4612,15 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
   def testFailureOnComplexPlane(self, name, dtype):
     self._testOnComplexPlaneWorker(name, dtype, 'failure')
 
+  def testSincInfinities(self):
+    for dtype in jtu.dtypes.supported([np.float32, np.float64]):
+      x = np.array([-np.inf, np.inf], dtype=dtype)
+      self.assertAllClose(jnp.sinc(x), np.zeros(2, dtype=dtype))
+    for dtype in jtu.dtypes.supported([np.complex64, np.complex128]):
+      x = np.array([-np.inf + 0j, np.inf + 0j, -np.inf + 1.5j, np.inf - 2j],
+                   dtype=dtype)
+      self.assertAllClose(jnp.sinc(x), np.zeros(4, dtype=dtype))
+
   def _testOnComplexPlaneWorker(self, name, dtype, kind):
     try:
       import mpmath
@@ -4715,7 +4765,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'sinc':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'mq1', 'mq2', 'mq3', 'mq4',
                                      'mneg.real', 'mpos.real', 'mnegj', 'mposj',
-                                     'ninf.imag', 'pinf.imag', 'ninfj.real', 'pinfj.real')
+                                     'ninf', 'pinf', 'ninfj', 'pinfj')
 
     elif name == 'sinh':
       if is_cuda:
@@ -4893,6 +4943,27 @@ class CompositeTest(jtu.JaxTestCase):
         '(tensor<5xf32>) -> (tensor<3xf32>, tensor<3xi32>)', mlir_module)
     self.assertIn('@my.top_k(%arg0: tensor<5xf32>) -> (tensor<3xf32>, tensor<3xi32>) {', mlir_module)
     self.assertIn('chlo.top_k(%arg0, k = 3) : tensor<5xf32> -> (tensor<3xf32>, tensor<3xi32>)', mlir_module)
+
+  def test_composite_with_attributes_unstable(self):
+    # The static_argnames is required here since k is a constant that should
+    # come out of a larger context, but we unit test one op (composite) here.
+    @jax.jit(static_argnames=['k', 'is_stable'])
+    @partial(lax.composite, name="my.top_k")
+    def my_top_k(x, *, k, is_stable):
+      return lax.top_k(x, k, is_stable=is_stable)
+
+    x = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=jnp.float32)
+    output, indices = my_top_k(x, k=3, is_stable=False)
+    self.assertArraysEqual(output, jnp.array([5.0, 4.0, 3.0], dtype=jnp.float32))
+    self.assertArraysEqual(indices, jnp.array([4, 3, 2], dtype=jnp.int32))
+
+    mlir_module = my_top_k.lower(x, k=3, is_stable=False).as_text()
+    self.assertIn(
+        'stablehlo.composite "my.top_k" %arg0 '
+        '{composite_attributes = {is_stable = false, k = 3 : i64}, decomposition = @my.top_k} : '
+        '(tensor<5xf32>) -> (tensor<3xf32>, tensor<3xi32>)', mlir_module)
+    self.assertIn('@my.top_k(%arg0: tensor<5xf32>) -> (tensor<3xf32>, tensor<3xi32>) {', mlir_module)
+    self.assertIn('chlo.top_k(%arg0, k = 3, is_stable = false) : tensor<5xf32> -> (tensor<3xf32>, tensor<3xi32>)', mlir_module)
 
   def test_composite_attribute_dtypes(self):
     @jax.jit

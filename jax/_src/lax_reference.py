@@ -314,7 +314,7 @@ def ragged_dot(
   assert lhs.dtype == rhs.dtype
 
   out = np.zeros((m, n), dtype=lhs.dtype)
-  result_iota = np.expand_dims(np.arange(out.shape[0]), list(range(1, out.ndim)))
+  result_iota = np.expand_dims(np.arange(out.shape[0]), tuple(range(1, out.ndim)))
   result_iota = result_iota.astype(group_sizes.dtype)
   start = np.asarray(0, dtype=group_sizes.dtype)
   for i, size in enumerate(group_sizes):
@@ -560,12 +560,13 @@ def _reducer_from_pyfunc(py_binop, init_val):
     return result
   return reducer
 
-def top_k(operand, k, axis=-1):
+def top_k(operand, k, axis=-1, *, is_stable=True):
   if axis < 0:
     axis = operand.ndim + axis
   assert 0 <= axis < operand.ndim
   operand_flipped = np.flip(operand, axis)
-  indices_flipped = np.argsort(operand_flipped, axis=axis, kind="stable")
+  sort_kind = "stable" if is_stable else "quicksort"
+  indices_flipped = np.argsort(operand_flipped, axis=axis, kind=sort_kind)
   indices_all = (operand.shape[axis] - 1 - np.flip(indices_flipped, axis)).astype(np.int32)
   indices = indices_all[(_slice(None),) * axis + (_slice(k),)]
   values = np.take_along_axis(operand, indices, axis=axis)

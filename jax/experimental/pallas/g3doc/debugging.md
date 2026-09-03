@@ -53,17 +53,15 @@ TPU buffers with zeros instead of NaNs.
 
 The `pl.debug_print` function can be used to print runtime values inside of a kernel.
 
-For TPUs only, the kernel must be compiled with the 'xla_tpu_enable_log_recorder' option.
+For TPUs only, the kernel must be compiled with the `xla_tpu_enable_log_recorder` option.
 <!--internal:1-->
 
 ```python
-kernel = pl.pallas_call(...)
-compiled_kernel = (
-       jax.jit(kernel)
-       .lower(x)
-       .compile({'xla_tpu_enable_log_recorder': 'true'})
- )
-result = compiled_kernel(x)
+kernel = jax.jit(
+    pl.pallas_call(...),
+    compiler_options={'xla_tpu_enable_log_recorder': 'true'},
+)
+result = kernel(x)
 ```
 
 ### Runtime Asserts
@@ -200,13 +198,13 @@ RACE DETECTED
   write ... from .../jax/tests/pallas/tpu_pallas_interpret_distributed_test.py:1038:10 (InterpretDistributedTest.test_race_detection.<locals>.kernel.<locals>._)
 ```
 
-<!--internal:3-->
+<!--internal:2-->
 
 ## Useful Command line flags
 
 * OOB Checks: `--xla_mosaic_on_device_checks=bounds`
 * Poison VMEM allocations: `--xla_jf_poison_vmem_allocations=true`
-<!--internal:4-->
+<!--internal:3-->
 * Dump Mosaic: `--xla_mosaic_dump_to=<directory>`
 * Enable trace markers in XProf: `--xla_enable_transpose_trace`
 

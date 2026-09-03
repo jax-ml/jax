@@ -28,7 +28,6 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import deprecations
 from jax._src import effects
-from jax._src import hijax
 from jax._src import numpy as jnp
 from jax._src import state
 from jax._src import flattree as ft
@@ -49,6 +48,7 @@ from jax._src.shard_map import P, _as_manual_mesh, shard_map
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
 from jax._src.traceback_util import api_boundary
+from jax._src import xla_metadata
 from jax._src.util import (
     safe_map,
     safe_zip,
@@ -68,7 +68,7 @@ CostEstimate = pallas_core.CostEstimate
 CompilerParams = pallas_core.CompilerParams
 
 # See the docstring for GridMapping for the calling convention
-pallas_call_p = hijax.HiPrimitive('pallas_call')
+pallas_call_p = jax_core.Primitive('pallas_call')
 pallas_call_p.multiple_results = True
 
 
@@ -171,25 +171,20 @@ def _pallas_call_to_lojax(
     metadata: FrozenDict[str, str] | None,
     name: str | None,
 ):
-  if any(jax_core.typeof(x).has_qdd for x in hi_args):
-    raise NotImplementedError("pallas_call does not support QDD for inputs")
-  if any(aval.has_qdd for aval in out_avals):
-    raise NotImplementedError("pallas_call does not support QDD for outputs")
-  closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, ())
+  closed_jaxpr = jaxpr
   with grid_mapping.trace_env():
     closed_lo_jaxpr = pe.lower_jaxpr2(closed_jaxpr)
   assert not closed_lo_jaxpr.consts
-  lo_jaxpr = closed_lo_jaxpr.jaxpr
+  lo_jaxpr = closed_lo_jaxpr
   for block_mapping in grid_mapping.block_mappings:
     index_map_jaxpr = block_mapping.index_map_jaxpr
-    if index_map_jaxpr.jaxpr.is_high:
+    if index_map_jaxpr.is_high:
       raise NotImplementedError(
           "pallas_call does not support hijax for index_map"
       )
   avals = [jax_core.typeof(a) for a in hi_args]
   lo_args = [lo_val for aval, x in zip(avals, hi_args)
-             for lo_val in (aval.read_loval(x) if aval.has_qdd
-                            else aval.lower_val(x))]
+             for lo_val in aval.lower_val(x)]
   lo_out_avals = [
       lo_aval
       for aval in out_avals
@@ -274,9 +269,9 @@ def _pallas_call_jvp_rule(
   nonzero_tangents = [not isinstance(t, ad_util.Zero) for t in tangents]
   tangents = [t for t in tangents if type(t) is not ad_util.Zero]
   nonzero_tangents_with_outputs = nonzero_tangents + [True] * grid_mapping.num_outputs
-  closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, ())
+  closed_jaxpr = jaxpr
   jvp_jaxpr_, _ = ad.jvp_jaxpr(closed_jaxpr, nonzero_tangents_with_outputs, [])
-  jvp_jaxpr, () = jvp_jaxpr_.jaxpr, jvp_jaxpr_.consts  # TODO consts
+  jvp_jaxpr, () = jvp_jaxpr_, jvp_jaxpr_.consts  # TODO consts
   # `pallas_call` takes in inputs and returns outputs but its jaxpr *does not*.
   # `pallas_call` takes in a stateful jaxpr, meaning the jaxpr accepts input
   # `Ref`s that are read from followed by output `Ref`s that are written to.
@@ -340,7 +335,7 @@ def _batch_block_mapping(
     drop_last_args = args
 
     indices = jax_core.eval_jaxpr(
-        block_mapping.index_map_jaxpr.jaxpr,
+        block_mapping.index_map_jaxpr,
         block_mapping.index_map_jaxpr.consts,
         *drop_last_args,
     )
@@ -357,7 +352,7 @@ def _batch_block_mapping(
   with grid_mapping.trace_env():
     jaxpr, out_avals = pe.trace_to_jaxpr(
         _block_map_function, ft.flatten_args(*idx_avals),
-        block_mapping.index_map_jaxpr.jaxpr.debug_info.with_unknown_names()
+        block_mapping.index_map_jaxpr.debug_info.with_unknown_names()
     )
   shape = block_mapping.block_shape
   if dim is None:
@@ -709,8 +704,16 @@ def _pallas_call_batching_rule(
   axis_size_is_dynamic = not jax_core.is_constant_dim(axis_size)
   new_grid_dim = pallas_core.dynamic_grid_dim if axis_size_is_dynamic else axis_size
 
+  # The batch dimension is prepended to the grid, so grid_names (if present)
+  # must grow to match. The batch dimension is unnamed.
+  batched_grid_names = (
+      None if grid_mapping.grid_names is None
+      else (None, *grid_mapping.grid_names)
+  )
+
   batched_grid_mapping = grid_mapping.replace(
       grid=(new_grid_dim, *grid_mapping.grid),
+      grid_names=batched_grid_names,
       block_mappings=tuple(batched_block_mappings),
       index_map_avals=tuple(batched_index_map_avals),
       index_map_tree=batched_index_map_tree,
@@ -792,15 +795,19 @@ def _trace_kernel_to_jaxpr(
   fun_with_transforms = primitives.wrap_with_transforms(
       fun, kernel_in_transforms)
 
-  with grid_mapping.trace_env(), config._check_vma(False):
-    with config.mutable_array_checks(False):
-      closed_jaxpr, out_avals = pe.trace_to_jaxpr(
-          fun_with_transforms, kernel_avals,
-          debug_info)
-      consts = closed_jaxpr.consts
-      jaxpr, _ = pe.dce_jaxpr(closed_jaxpr.jaxpr,
-                              used_outputs=[True] * len(closed_jaxpr.jaxpr.outvars),
-                              instantiate=True)
+  with (
+      grid_mapping.trace_env(),
+      config._check_vma(False),
+      config.mutable_array_checks(False),
+      xla_metadata.clear_xla_metadata(),
+  ):
+    closed_jaxpr, out_avals = pe.trace_to_jaxpr(
+        fun_with_transforms, kernel_avals,
+        debug_info)
+    consts = closed_jaxpr.consts
+    jaxpr, _ = pe.dce_jaxpr(closed_jaxpr,
+                            used_outputs=[True] * len(closed_jaxpr.outvars),
+                            instantiate=True)
     if consts:
       consts_avals = [
           aval
@@ -953,6 +960,14 @@ def _pallas_call_lowering(
               not config.jax_pallas_use_mosaic_gpu.value)
       ):
         backend = triton_backend
+        deprecations.warn(
+            "jax-pallas-triton",
+            "The Pallas Triton backend is deprecated and will be removed in"
+            " a future JAX version. To keep using Pallas on GPU, please migrate"
+            " to the Mosaic GPU backend. To keep using Triton, switch to"
+            " the official Triton bindings and jax_triton.",
+            stacklevel=2,
+        )
 
     if backend is None:
       raise _unsupported_lowering_error("gpu")
@@ -992,8 +1007,7 @@ jax_core.custom_typechecks[pallas_call_p] = _pallas_call_typecheck_rule
 
 @state_discharge.register_discharge_rule(pallas_call_p)
 def _pallas_call_state_discharge_rule(
-    avals_in,
-    avals_out,
+    ctx,
     *args,
     jaxpr: jax_core.Jaxpr,
     input_output_aliases: tuple[tuple[int, int], ...],
@@ -1007,10 +1021,9 @@ def _pallas_call_state_discharge_rule(
     metadata: FrozenDict[str, str] | None,
     name: str | None,
 ):
-  del avals_out
   assert all(isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars)
   num_refs = len(jaxpr.constvars)
-  ref_avals, rest_in_avals = split_list(avals_in, [num_refs])
+  ref_avals, rest_in_avals = split_list(ctx.in_avals, [num_refs])
   assert all(isinstance(ref_aval, state.AbstractRef) for ref_aval in ref_avals)
   ref_avals = [
       state.AbstractRef(
@@ -1101,7 +1114,7 @@ def _pallas_call_state_discharge_rule(
       *index_operands,
       *ref_args,
       *rest_args,
-      jaxpr=closed_jaxpr.jaxpr,
+      jaxpr=closed_jaxpr,
       input_output_aliases=tuple(new_input_output_aliases),
       grid_mapping=new_grid_mapping,
       mesh=mesh,

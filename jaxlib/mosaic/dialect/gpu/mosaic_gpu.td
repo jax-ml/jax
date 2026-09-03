@@ -92,16 +92,26 @@ def MosaicGPU_ArriveOp : Op<MosaicGPU_Dialect, "arrive", []> {
 
 def MosaicGPU_ArriveExpectTxOp : Op<MosaicGPU_Dialect, "arrive_expect_tx", []> {
   let summary = "Executes an arrive.expect_tx operation on the given barrier.";
+  let description = [{
+     Executes an arrive.expect_tx operation on the given barrier.
+
+    `expect_tx` must be positive or 0. If `expect_tx` is negative, behavior is undefined.
+  }];
 
   let arguments = (ins
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
-    ConfinedAttr<I32Attr, [IntNonNegative]>:$expect_tx);
+    I32:$expect_tx);
 
   let assemblyFormat = [{
     `barrier` `(` $barrier `:` type($barrier) `)`
     $expect_tx
     attr-dict
   }];
+}
+
+// TODO: Remove when the minimum jaxlib version is 0.11.1
+def ArriveDynExpectTxSupportedOp : Op<MosaicGPU_Dialect, "arrive_dyn_expect_tx_supported"> {
+  let summary = "Dummy op that will be removed. DO NOT USE.";
 }
 
 def MosaicGPU_WaitOp : Op<MosaicGPU_Dialect, "wait", []> {
@@ -269,6 +279,17 @@ def MosaicGPU_TMAReduction : I32EnumAttr<"TMAReduction",
   let cppNamespace = "::mosaic_gpu";
 }
 
+def MosaicGPU_TMEMLoadReduction : I32EnumAttr<"TMEMLoadReduction",
+    "Reduction operation for load reduce.",
+    [
+      I32EnumAttrCase<"Min", 0, "min">,
+      I32EnumAttrCase<"Max", 1, "max">,
+      I32EnumAttrCase<"AbsMin", 2, "absmin">,
+      I32EnumAttrCase<"AbsMax", 3, "absmax">
+    ]>{
+  let cppNamespace = "::mosaic_gpu";
+}
+
 def TileTransformAttr : MosaicGPU_Attr<"TileTransform", "tile"> {
   let parameters = (ins "::mlir::DenseI32ArrayAttr":$tiling);
   let summary = "Specifies a transform that tiles suffix dimensions of a memref in SMEM.";
@@ -323,6 +344,19 @@ def MosaicGPU_OOBFillMode : I32EnumAttr<"OOBFillMode",
   let cppNamespace = "::mosaic_gpu";
 }
 
+def MosaicGPU_B6x16P32 : MosaicGPU_Type<"B6x16P32", "b6x16_p32", [MemRefElementTypeInterface]> {
+  let summary = "Packs 16x6-bit values along with 32-bit padding in a 128-bit element.";
+  let parameters = (ins "::mlir::Type":$element_type);
+  let assemblyFormat = "`<` $element_type `>`";
+  let genVerifyDecl = 1;
+}
+def MosaicGPU_P2B6 : MosaicGPU_Type<"P2B6", "p2b6", [MemRefElementTypeInterface]> {
+  let summary = "An 8-bit type that holds a 6-bit value in its low bits.";
+  let parameters = (ins "::mlir::Type":$element_type);
+  let assemblyFormat = "`<` $element_type `>`";
+  let genVerifyDecl = 1;
+}
+
 def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
       [AttrSizedOperandSegments]> {
   let summary = "Schedules an async load of a MemRef from GMEM to SMEM";
@@ -332,7 +366,15 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     contiguous.
 
     Upon completion of the copy, the `complete-tx(complete-count)` operation
-    will always be executed on the provided `barrier`.
+    will be executed on the provided `barrier`, if one is given.
+
+    The `barrier` is required on Hopper and newer GPUs, which use the TMA
+    implementation, and must be omitted on pre-Hopper GPUs, which use the
+    `cp.async` implementation. In that case, completion is tracked via cp.async
+    commit groups and has to be awaited with `nvvm.cp_async_wait_group` rather
+    than the barrier. When the `barrier` is omitted, `collective` and
+    `leader_tracked` must not be set, and `oob_fill_mode` must be
+    `promise_in_bounds`.
 
     The `indices` and `slice_lengths` inputs define what slice of the GMEM
     `source` corresponds to the SMEM `destination`. Both `indices` and
@@ -356,24 +398,34 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     a cluster will first load a slice from GMEM to SMEM and then the slices will
     be multicast to all other blocks in the cluster. In this way TMA multicast
     guarantees L2 cache hits. The `collective` attribute is the list of
-    cluster dimensions along which to partition the input data loads.
+    cluster dimensions along which to partition the input data loads. Only
+    supported with TMA (Hopper and newer).
 
     The `leader_tracked` attribute can be provided to only track the completion
     of the copy in the leader block in the cluster. If `CopyPartitioned(axis)`,
     performs a partitioned collective copy along the given axis. If
-    `CopyReplicated`, all blocks load the same data.
+    `CopyReplicated`, all blocks load the same data. Only supported with TMA
+    (Hopper and newer).
+
+    The `oob_fill_mode` attribute controls the behavior of out-of-bounds
+    accesses. `zeros` and `undefined` are only supported with TMA (Hopper and
+    newer); the `cp.async` implementation only supports `promise_in_bounds`.
 
     The `predicate` allows scheduling the transfer conditionally. The async copy
-   is always scheduled by at most a single lane in the warpgroup.
+    is always scheduled by at most a single lane in the warpgroup.
+
+    The `gmem_peer_id` parameter specifies a particular device id to load from
+    in a multi-GPU setting.
   }];
 
   let arguments = (ins
     AnyMemRef:$source,
     AnyMemRef:$destination,
-    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
+    Optional<MemRefRankOf<[MosaicGPU_Barrier], [0]>>:$barrier,
     Variadic<AnyTypeOf<[I32, VectorOfRankAndType<[1], [I32, I16, I8]>]>>:$indices,
     OptionalAttr<MosaicGPU_CopyPartitionAttrInterface>:$leader_tracked,
     PtxPredicate:$predicate,
+    Optional<I32>:$gmem_peer_id,
 
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
@@ -606,7 +658,7 @@ def MosaicGPU_WGMMASupportedType : AnyTypeOf<[F16, BF16, F32],
     "A type supported by the WGMMA operation">;
 
 def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
-    [SameOperandsAndResultType]> {
+    [SameOperandsAndResultType, Pure]> {
   let summary = "Casts a vector to a new layout.";
   let description = [{Casts a vector value to a new strided or tiled layout.}];
   let arguments = (ins
@@ -625,7 +677,7 @@ def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
 }
 
 def MosaicGPU_TmemLayoutCastOp : Op<MosaicGPU_Dialect, "tmem_layout_cast",
-    [SameOperandsAndResultType]> {
+    [SameOperandsAndResultType, Pure]> {
   let summary = "Casts a TMEM ref to a new TMEM layout.";
   let arguments = (ins
     MemRefRankOf<[AnyType], [2]>:$ref,
@@ -640,7 +692,7 @@ def MosaicGPU_TmemLayoutCastOp : Op<MosaicGPU_Dialect, "tmem_layout_cast",
 }
 
 
-def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", []> {
+def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", [Pure]> {
   let summary = "Broadcasts a vector to a new shape.";
   let description = [{
     The `operand` is broadcast to the shape described by the result type.
@@ -665,6 +717,30 @@ def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", []> {
     `(` $operand `:` type($operand) `)` attr-dict `->` type(results)
   }];
   let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def MosaicGPU_VectorConcatOp : Op<MosaicGPU_Dialect, "vector_concat",
+    [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+  let summary = "Concatenates vectors along a specified dimension.";
+  let description = [{
+    Concatenates a variadic list of operands along `dimension`.
+
+    All operands must have the same rank and element type.
+    This op matches the semantics of `lax.concatenate`.
+  }];
+
+  let arguments = (ins
+    Variadic<AnyVectorOfNonZeroRank>:$operands,
+
+    // Attributes
+    I32Attr:$dimension
+  );
+
+  let results = (outs AnyVectorOfNonZeroRank);
+  let assemblyFormat = [{
+    `(` $operands `:` type($operands) `)` attr-dict `->` type(results)
+  }];
 }
 
 def MosaicGPU_ReinterpretCastOp : Op<MosaicGPU_Dialect, "reinterpret_cast",
@@ -934,7 +1010,7 @@ def MosaicGPU_WarpMapOp : Op<MosaicGPU_Dialect, "warp_map",
 }
 
 def MosaicGPU_WithTransformsOp : Op<MosaicGPU_Dialect, "with_transforms",
-    [SameOperandsAndResultType]> {
+    [SameOperandsAndResultType, Pure]> {
   let summary = "A noop that allows manually setting transforms on a memref.";
   let description = [{
     This op enforces the provided transforms on the parameter memref.
@@ -1025,8 +1101,11 @@ def MosaicGPU_AsyncLoadTmemOp : Op<MosaicGPU_Dialect, "async_load_tmem",
     [DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let summary = "Copies TMEM to registers asynchronously.";
 
-  let arguments = (ins MemRefRankOf<[AnyType], [2]>:$source);
-  let results = (outs VectorOfRank<[2]>);
+  let arguments = (ins
+    MemRefRankOf<[AnyType], [2]>:$source,
+    OptionalAttr<MosaicGPU_TMEMLoadReduction>:$reduce
+  );
+  let results = (outs Variadic<AnyFixedVectorOfNonZeroRank>);
 
   let hasVerifier = 1;
 }
@@ -1117,7 +1196,7 @@ def MosaicGPU_AsyncStoreScalesSmemToTmemOp : Op<MosaicGPU_Dialect, "async_store_
   let hasVerifier = 1;
 }
 
-def MosaicGPU_SliceTmemOp : Op<MosaicGPU_Dialect, "slice_tmem", []> {
+def MosaicGPU_SliceTmemOp : Op<MosaicGPU_Dialect, "slice_tmem", [Pure]> {
   let summary = "Constructs a TMEM MemRef with the requested type that begins at the specified TMEM column offset by the argument";
   let description = [{
     The principal use case for this op is to do a single TMEM allocation and
@@ -1166,7 +1245,7 @@ def MosaicGPU_DebugPrintOp : Op<MosaicGPU_Dialect, "debug_print", []> {
 }
 
 def MosaicGPU_PrintLayoutOp : Op<MosaicGPU_Dialect, "print_layout", []> {
-  let summary = "Prints the layout of the given array or TMEM reference.";
+  let summary = "Prints the layout of the given array, TMEM or SMEM reference.";
 
   let arguments = (ins
     StrAttr:$format,

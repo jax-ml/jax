@@ -620,7 +620,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     body_fun = lambda carry: (carry[0] + 1, carry[1] + 1)
     f = lambda x: lax.while_loop(cond_fun, body_fun, (0, x))
     jaxpr = jax.make_jaxpr(jax.vmap(f))(jnp.arange(3))
-    eqn = jaxpr.jaxpr.eqns[0]
+    eqn = jaxpr.eqns[0]
     self.assertIs(eqn.primitive, lax.while_p)
     self.assertEqual(eqn.params['cond_jaxpr'].in_avals[0].shape, ())
 
@@ -889,15 +889,15 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testSwitchResidualsMerge(self):
     def get_conds(fun):
       jaxpr = jax.make_jaxpr(jax.grad(fun))(0., 0)
-      return [eqn for eqn in jaxpr.jaxpr.eqns if eqn.primitive.name == 'cond']
+      return [eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond']
 
     def branch_invars_len(cond_eqn):
-      lens = [len(jaxpr.jaxpr.invars) for jaxpr in cond_eqn.params['branches']]
+      lens = [len(jaxpr.invars) for jaxpr in cond_eqn.params['branches']]
       assert len(set(lens)) == 1
       return lens[0]
 
     def branch_outvars_len(cond_eqn):
-      lens = [len(jaxpr.jaxpr.outvars) for jaxpr in cond_eqn.params['branches']]
+      lens = [len(jaxpr.outvars) for jaxpr in cond_eqn.params['branches']]
       assert len(set(lens)) == 1
       return lens[0]
 
@@ -2659,7 +2659,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     scan_fun = lambda c, xs: lax.scan(f, c, xs)
 
     def new_jaxpr():
-      jaxpr = jax.make_jaxpr(partial(scan_fun))(c, xs).jaxpr
+      jaxpr = jax.make_jaxpr(partial(scan_fun))(c, xs)
       scan = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'scan')
       return jaxpr, scan
 
@@ -2671,17 +2671,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         lambda: core.check_jaxpr(jaxpr))
 
     jaxpr, eqn = new_jaxpr()
-    eqn.params['num_consts'] = -3
+    eqn.params['ft_in'] = -3
     self.assertRaisesRegex(
         core.JaxprTypeError,
-        re.escape('invalid scan param num_consts of type int, '
-                  'non-negative int required: -3'),
+        re.escape('invalid scan param ft_in of type int, '
+                  'FlatTree required: -3'),
         lambda: core.check_jaxpr(jaxpr))
 
   def test_cond_typecheck_param(self):
     def new_jaxpr():
       jaxpr = jax.make_jaxpr(
-          lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
+          lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.)
       cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
       return jaxpr, cond
 
@@ -2689,9 +2689,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     eqn.params['branches'] = (4, 2)
     self.assertRaisesRegex(
         core.JaxprTypeError,
-        re.escape('invalid cond param branches of type tuple, '
-                  'tuple of ClosedJaxpr required: (4, 2)'),
-        lambda: core.check_jaxpr(jaxpr))
+        re.escape(
+            "invalid cond param branches of type tuple, "
+            "tuple of closed Jaxpr required: (4, 2)"
+        ),
+        lambda: core.check_jaxpr(jaxpr),
+    )
 
   def test_cond_transformation_rule_with_consts(self):
     # https://github.com/jax-ml/jax/pull/9731
@@ -3389,7 +3392,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def g(x):
       return jax.lax.scan(f, 0, x)
     jaxpr = jax.make_jaxpr(g)(jnp.arange(3.))
-    self.assertLen(jaxpr.eqns[0].params["jaxpr"].jaxpr.outvars, 1)
+    self.assertLen(jaxpr.eqns[0].params["jaxpr"].outvars, 1)
 
   @jtu.sample_product(
       seed=range(6),

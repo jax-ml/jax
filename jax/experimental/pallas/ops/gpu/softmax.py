@@ -13,12 +13,20 @@
 # limitations under the License.
 
 """Pallas softmax kernel."""
+
 import functools
+import warnings
 
 import jax
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import triton as plgpu
+
+warnings.warn(
+    "jax.experimental.pallas.ops.gpu.softmax is deprecated.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 def _vmappable_softmax_kernel(

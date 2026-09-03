@@ -108,6 +108,15 @@ on:
         description: "S3 URI for ROCm plugin/PJRT wheels (use 'latest' to resolve via LATEST pointer)"
         default: 'latest'
         type: string
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: string
+        default: 'no'
+      git_commit:
+        description: "Commit SHA to check out for running tests"
+        required: false
+        default: ""
+        type: string
 permissions:
   id-token: write
   contents: read
@@ -129,10 +138,10 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-      options: --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --shm-size 64G --env-file /etc/podinfo/gha-gpu-isolation-settings
-    name: "${{ (contains(inputs.runner, 'gfx950.1') && 'gfx950.1') ||
-        (contains(inputs.runner, 'gfx950.4') && 'gfx950.4') ||
-        (contains(inputs.runner, 'gfx950.8') && 'gfx950.8') }}, ROCm ${{ inputs.rocm-version }}, py${{ inputs.python }}"
+      options: --device=/dev/kfd --device=/dev/dri --group-add video --shm-size 64G --env-file /etc/podinfo/gha-gpu-isolation-settings
+    name: "${{ (contains(inputs.runner, 'gfx950.1') && 'gfx950 1-GPU') ||
+        (contains(inputs.runner, 'gfx950.4') && 'gfx950 4-GPU') ||
+        (contains(inputs.runner, 'gfx950.8') && 'gfx950 8-GPU') }}, ROCm ${{ inputs.rocm-release-version || inputs.rocm-version }}, py${{ inputs.python }}"
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
@@ -145,8 +154,9 @@ jobs:
       HSA_NO_SCRATCH_RECLAIM: "1"
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.git_commit }}
           persist-credentials: false
       - name: Download JAX ROCm wheels
         uses: ./.github/actions/download-jax-rocm-wheels
@@ -160,7 +170,7 @@ jobs:
           s3_download_uri: ${{ inputs.s3_download_uri }}
       - name: Install Python dependencies
         run: |
-          $JAXCI_PYTHON -m pip install uv~=0.11.2
+          $JAXCI_PYTHON -m pip install uv~=0.12.3
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
           $JAXCI_PYTHON -m pip install pytest-json-report
       # Halt for testing
@@ -171,14 +181,6 @@ jobs:
       - name: Run Pytest ROCm tests
         timeout-minutes: 120
         run: ./ci/run_pytest_rocm.sh
-      - name: Upload test artifacts
-        if: always()
-        continue-on-error: true
-        uses: ./.github/actions/upload-test-artifacts
-        with:
-          artifact-name: pytest-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-rocm${{ inputs.rocm-version }}
-          inputs_json: ${{ toJSON(inputs) }}
-          matrix_json: ${{ toJSON(matrix) }}
       - name: Archive test logs
         if: ${{ !cancelled() }}
         run: |
@@ -186,7 +188,7 @@ jobs:
           tar -czf logs.tar.gz logs
       - name: Configure AWS Credentials
         if: ${{ !cancelled() }}
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # ratchet:aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
           aws-region: us-east-1

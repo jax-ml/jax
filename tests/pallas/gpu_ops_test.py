@@ -15,6 +15,7 @@
 import functools
 import os
 import sys
+import warnings
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
@@ -25,6 +26,15 @@ from jax import random
 from jax._src import config
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
+import jax.numpy as jnp
+import numpy as np
+
+warnings.filterwarnings(
+    "ignore",
+    message="jax.experimental.pallas.ops.gpu.* is deprecated.*",
+    category=DeprecationWarning,
+)
+
 if sys.platform != "win32":
   from jax.experimental.pallas.ops.gpu import attention
   from jax.experimental.pallas.ops.gpu import layer_norm
@@ -37,8 +47,6 @@ else:
   rms_norm = None
   softmax = None
   BlockSizes = None
-import jax.numpy as jnp
-import numpy as np
 
 # TODO(sharadmv): Update signatures of pallas_call to correct inputs/outputs.
 
@@ -61,6 +69,14 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
+
+    if jtu.test_device_matches(["gpu"]):
+      self.enter_context(warnings.catch_warnings())
+      warnings.filterwarnings(
+          "ignore",
+          category=DeprecationWarning,
+          message="The Pallas Triton backend is deprecated",
+      )
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
@@ -155,7 +171,14 @@ class FusedAttentionTest(PallasBaseTest):
           segment_ids=segment_ids,
           interpret=self.INTERPRET,
       )
-    o = impl(q, k, v)
+
+    try:
+      o = impl(q, k, v)
+    except jax.errors.JaxRuntimeError as e:
+      if "RESOURCE_EXHAUSTED" in str(e):
+        self.skipTest(f"Skipped: block size configuration exceeds device "
+                      f"resources: {e}")
+      raise
     o_ref = attention.mha_reference(q, k, v, segment_ids, causal=causal)
     np.testing.assert_allclose(o, o_ref, atol=0.05)
 
@@ -437,4 +460,4 @@ class SoftmaxInterpretTest(SoftmaxTest):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

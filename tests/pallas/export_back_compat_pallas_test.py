@@ -79,11 +79,12 @@ class CompatTest(bctu.CompatTestBase):
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on GPUs with capability >= sm90")
 
+    from jax._src.pallas.mosaic_gpu import pallas_call
+
     @functools.partial(
-        pl.pallas_call,
+        pallas_call.pallas_call,
         out_shape=jax.ShapeDtypeStruct((128 * 2,), jnp.float32),
         grid=2,
-        compiler_params=plgpu.CompilerParams(),
     )
     def add_one(x_ref, o_ref):
       o_ref[...] = x_ref[...] + 1

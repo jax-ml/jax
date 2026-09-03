@@ -270,14 +270,25 @@ class CoreMapTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    self.enter_context(
+        jtu.ignore_warning(
+            category=DeprecationWarning,
+            message="jax.experimental.pallas.core_map is deprecated",
+        )
+    )
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Only supported on TPU v4+")
 
   def test_can_create_tensorcore_mesh(self):
-    _ = pltpu.create_tensorcore_mesh("x")
+    mesh = pltpu.TensorCoreMesh(axis_name="x")
+    self.assertEqual(mesh.axis_name, "x")
+    self.assertEqual(mesh.num_cores, jax.devices()[0].num_cores)
+
+    mesh2 = pltpu.TensorCoreMesh(axis_name="x", num_cores=4)
+    self.assertEqual(mesh2.num_cores, 4)
 
   def test_kernel_helper_basic(self):
-    mesh = pltpu.create_tensorcore_mesh("x")
+    mesh = pltpu.TensorCoreMesh(axis_name="x")
     def body(x_ref, o_ref):
       pltpu.sync_copy(x_ref, o_ref)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
@@ -288,42 +299,27 @@ class CoreMapTest(jtu.JaxTestCase):
       result = pl.kernel(out_type=x, mesh=mesh)(body)(x)
       np.testing.assert_array_equal(result, x)
 
-  def test_empty_core_map_raises_error(self):
-    @jax.jit
-    def f(x):
-      y = jnp.zeros_like(x)
-      def inner(refs):
-        del refs  # Unused.
-        @pl.core_map(pltpu.create_tensorcore_mesh("x"))
-        def _():
-          pass
-      _, y = pl.run_state(inner)((x, y))
-      return y
-    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
-    with self.assertRaisesRegex(Exception,
-      "Attempted to lower core_map without discharging."):
-      f(x)
-
   def test_can_signal_cores(self):
     @jax.jit
     def f(x):
-      x_ref = jax.new_ref(x)
-      y_ref = jax.new_ref(jnp.empty_like(x))
-      @pl.core_map(pltpu.create_tensorcore_mesh("x"))
-      def _():
-        @functools.partial(pl.run_scoped, sem=pltpu.SemaphoreType.REGULAR)
-        def inner(sem):
-          s = jax.lax.axis_size("x")
-          for i in range(s):
-            pl.semaphore_signal(sem, device_id={"x": i})
-          pl.semaphore_wait(sem, s)
-          pltpu.sync_copy(x_ref, y_ref)
-      return jax.freeze(y_ref)
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name="x"),
+          out_type=x,
+          scratch_types=[pltpu.SemaphoreType.REGULAR],
+      )
+      def kernel(x_ref, y_ref, sem):
+        s = jax.lax.axis_size("x")
+        for i in range(s):
+          pl.semaphore_signal(sem, device_id={"x": i})
+        pl.semaphore_wait(sem, s)
+        pltpu.sync_copy(x_ref, y_ref)
+
+      return kernel(x)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     np.testing.assert_array_equal(f(x), x)
 
   def test_can_query_core_index(self):
-    mesh = pltpu.create_tensorcore_mesh("x")
+    mesh = pltpu.TensorCoreMesh(axis_name="x")
     slc_size = 16 // mesh.shape["x"]
 
     @jax.jit
@@ -365,7 +361,7 @@ class CoreMapTest(jtu.JaxTestCase):
       y = jnp.zeros_like(x)
 
       @pl.kernel(out_type=x,
-                 mesh=pltpu.create_tensorcore_mesh("x"),
+                 mesh=pltpu.TensorCoreMesh(axis_name="x"),
                  scratch_types=dict(tmp_ref=pltpu.VMEM(x.shape, x.dtype)))
       def kernel(x_ref, out_ref, tmp_ref):
         pltpu.sync_copy(x_ref, tmp_ref)
@@ -375,7 +371,7 @@ class CoreMapTest(jtu.JaxTestCase):
 
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     with self.assertRaisesRegex(
-        Exception, "captures non-Ref constants"
+        Exception, "You can only close over scalars and Refs"
     ):
       f(x)
 
@@ -385,7 +381,7 @@ class CoreMapTest(jtu.JaxTestCase):
   def test_capture_scalar(self, core_type, use_tc_tiling_on_sc):
     match core_type:
       case pltpu.CoreType.TC:
-        mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
+        mesh = pltpu.TensorCoreMesh(axis_name="x", num_cores=1)
         use_tc_tiling_on_sc = None
       case pltpu.CoreType.SC_SCALAR_SUBCORE:
         if pltpu.get_tpu_info().sparse_core is None:
@@ -427,7 +423,7 @@ class CoreMapTest(jtu.JaxTestCase):
       np.testing.assert_array_equal(out, x[i:i+2])
 
   def test_kernel_helper_with_scratch(self):
-    mesh = pltpu.create_tensorcore_mesh("x")
+    mesh = pltpu.TensorCoreMesh(axis_name="x")
     def body(x_ref, o_ref, scratch_ref):
       pltpu.sync_copy(x_ref, scratch_ref)
       scratch_ref[...] += 1
@@ -439,7 +435,7 @@ class CoreMapTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(result, x + 1)
 
   def test_kernel_helper_with_out_tree(self):
-    mesh = pltpu.create_tensorcore_mesh("x")
+    mesh = pltpu.TensorCoreMesh(axis_name="x")
     def body(x_ref, o1_ref, o2_ref, scratch_ref):
       pltpu.sync_copy(x_ref, o1_ref)
       pltpu.sync_copy(x_ref, scratch_ref)
@@ -461,7 +457,7 @@ class CoreMapTest(jtu.JaxTestCase):
   def test_kernel_with_output_memory_space(self, memory_space, color):
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest("Only supported on TPU v5+")
-    mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
+    mesh = pltpu.TensorCoreMesh(axis_name="x", num_cores=1)
     def body(x_ref, o_ref):
       pltpu.sync_copy(x_ref, o_ref)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))

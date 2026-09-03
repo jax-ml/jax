@@ -31,10 +31,10 @@ import argparse
 import asyncio
 import collections
 import logging
+import os
 import signal
 import socket
 import sys
-import psutil
 
 log = None  # Initialized to a logging.Logger by _configure_logging().
 
@@ -42,17 +42,64 @@ _PROTOS = [(socket.SOCK_STREAM, socket.IPPROTO_TCP),
            (socket.SOCK_DGRAM, socket.IPPROTO_UDP)]
 
 
-def _get_process_command_line(pid):
+def _pid_exists(pid):
+    """Check for the existence of a process ID without requiring psutil."""
+    if pid <= 0:
+        return False
+    if pid == 0:
+        return True
     try:
-        return psutil.Process(pid).cmdline()
-    except psutil.NoSuchProcess:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+    # Check /proc/<pid>/status to verify it's a PID and not just a TID on Linux.
+    try:
+        with open(f'/proc/{pid}/status', 'rb') as f:
+            for line in f:
+                if line.startswith(b'Tgid:'):
+                    return int(line.split()[1]) == pid
+    except (OSError, ValueError, IndexError):
+        pass
+    return True
+
+
+def _get_process_command_line(pid):
+    """Read cmdline from /proc without requiring psutil."""
+    try:
+        with open(f'/proc/{pid}/cmdline', 'rb') as f:
+            data = f.read()
+            if not data:
+                return ''
+            sep = b'\x00' if data.endswith(b'\x00') else b' '
+            if data.endswith(sep):
+                data = data[:-1]
+            parts = data.split(sep)
+            return ' '.join(p.decode('utf-8', errors='replace') for p in parts if p)
+    except OSError:
         return ''
 
 
 def _get_process_start_time(pid):
+    """Read process start time without requiring psutil."""
     try:
-        return psutil.Process(pid).create_time()
-    except psutil.NoSuchProcess:
+        with open(f'/proc/{pid}/stat', 'r') as f:
+            stat = f.read()
+        rparen = stat.rfind(')')
+        if rparen != -1:
+            fields = stat[rparen + 2:].split()
+            starttime_ticks = float(fields[19])
+            clock_ticks = os.sysconf(os.sysconf_names['SC_CLK_TCK']) if hasattr(os, 'sysconf') else 100.0
+            return starttime_ticks / clock_ticks
+    except (OSError, ValueError, IndexError, KeyError, AttributeError):
+        pass
+    try:
+        return os.path.getmtime(f'/proc/{pid}')
+    except OSError:
         return 0.0
 
 
@@ -114,7 +161,7 @@ def _should_allocate_port(pid):
         log.info('Not allocating a port to init.')
         return False
 
-    if not psutil.pid_exists(pid):
+    if not _pid_exists(pid):
         log.info('Not allocating a port to a non-existent process')
         return False
     return True
@@ -313,7 +360,18 @@ def _parse_command_line():
                         action='store_true',
                         default=False,
                         help='Enable full debug messages.')
-    return parser.parse_args(sys.argv[1:])
+    parser.add_argument('--daemon',
+                        action='store_true',
+                        default=False,
+                        help='Fork into daemon process after successfully binding socket.')
+    parser.add_argument('--pidfile',
+                        type=str,
+                        default=None,
+                        help='Path to file where the daemon PID will be written.')
+    args = parser.parse_args(sys.argv[1:])
+    if args.daemon and sys.platform == 'win32':
+        parser.error('--daemon option is not supported on Windows (win32).')
+    return args
 
 
 def _parse_port_ranges(pool_str):
@@ -349,7 +407,12 @@ def _configure_logging(verbose=False, debug=False):
     log.setLevel(logging.DEBUG if verbose else overall_level)
 
 
-async def async_main(config):
+def _write_pidfile(path, pid):
+    with open(path, 'w') as f:
+        f.write(str(pid))
+
+
+async def async_main(config, sock):
     ports_to_serve = _parse_port_ranges(config.portserver_static_pool)
     if not ports_to_serve:
         log.error('No ports.  Invalid port ranges in --portserver_static_pool?')
@@ -376,7 +439,7 @@ async def async_main(config):
 
         server = await asyncio.start_unix_server(
             request_handler.handle_port_request,
-            path=config.portserver_address.replace('@', '\0', 1))
+            sock=sock)
 
     log.info('Serving on %s', config.portserver_address)
 
@@ -393,8 +456,24 @@ async def async_main(config):
 def main():
     config = _parse_command_line()
     _configure_logging(verbose=config.verbose, debug=config.debug)
+
+    sock = None
+    if sys.platform != 'win32':
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.bind(config.portserver_address.replace('@', '\0', 1))
+
+    if config.daemon:
+        pid = os.fork()
+        if pid > 0:
+            if config.pidfile:
+                _write_pidfile(config.pidfile, pid)
+            sys.exit(0)
+        os.setsid()
+    elif config.pidfile:
+        _write_pidfile(config.pidfile, os.getpid())
+
     try:
-        asyncio.run(async_main(config))
+        asyncio.run(async_main(config, sock=sock))
     except KeyboardInterrupt:
         log.info('Stopping due to ^C.')
     log.info('Goodbye.')

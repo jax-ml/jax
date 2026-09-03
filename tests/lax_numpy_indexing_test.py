@@ -1037,76 +1037,76 @@ class IndexingTest(jtu.JaxTestCase):
 
   def testSimpleIndexingUsesSlice(self):
     jaxpr = jax.make_jaxpr(lambda x: x[:2, :2])(jnp.ones((3, 4)))
-    eqn, = jaxpr.jaxpr.eqns
+    eqn, = jaxpr.eqns
     self.assertEqual(eqn.primitive, lax.slice_p)
     self.assertIsNone(eqn.params['strides'])
 
     jaxpr = jax.make_jaxpr(lambda x: x[0, :2, 1])(jnp.ones((3, 4, 5)))
-    slice_eqn, squeeze_eqn = jaxpr.jaxpr.eqns
+    slice_eqn, squeeze_eqn = jaxpr.eqns
     self.assertEqual(slice_eqn.primitive, lax.slice_p)
     self.assertEqual(squeeze_eqn.primitive, lax.squeeze_p)
     self.assertIsNone(slice_eqn.params['strides'])
 
     jaxpr = jax.make_jaxpr(lambda x: x[0, 0])(jnp.ones((3, 4, 5)))
-    slice_eqn, squeeze_eqn = jaxpr.jaxpr.eqns
+    slice_eqn, squeeze_eqn = jaxpr.eqns
     self.assertEqual(slice_eqn.primitive, lax.slice_p)
     self.assertEqual(squeeze_eqn.primitive, lax.squeeze_p)
     self.assertIsNone(slice_eqn.params['strides'])
 
     jaxpr = jax.make_jaxpr(lambda x: x[:, 1])(jnp.ones((3, 4, 5)))
-    slice_eqn, squeeze_eqn = jaxpr.jaxpr.eqns
+    slice_eqn, squeeze_eqn = jaxpr.eqns
     self.assertEqual(slice_eqn.primitive, lax.slice_p)
     self.assertEqual(squeeze_eqn.primitive, lax.squeeze_p)
     self.assertIsNone(slice_eqn.params['strides'])
 
     # Indexing with `Ellipsis` is not lowered to `gather` ...
     jaxpr = jax.make_jaxpr(lambda x: x[..., 0])(jnp.ones((3, 4, 5)))
-    slice_eqn, squeeze_eqn = jaxpr.jaxpr.eqns
+    slice_eqn, squeeze_eqn = jaxpr.eqns
     self.assertEqual(slice_eqn.primitive, lax.slice_p)
     self.assertEqual(squeeze_eqn.primitive, lax.squeeze_p)
     self.assertIsNone(slice_eqn.params['strides'])
 
     # ... even when the ellipsis expands to no dimensions.
     jaxpr = jax.make_jaxpr(lambda x: x[..., 0:1])(jnp.ones((3,)))
-    eqn, = jaxpr.jaxpr.eqns
+    eqn, = jaxpr.eqns
     self.assertEqual(eqn.primitive, lax.slice_p)
     self.assertIsNone(eqn.params['strides'])
     jaxpr = jax.make_jaxpr(lambda x: x[0:1, ...])(jnp.ones((3,)))
-    eqn, = jaxpr.jaxpr.eqns
+    eqn, = jaxpr.eqns
     self.assertEqual(eqn.primitive, lax.slice_p)
     self.assertIsNone(eqn.params['strides'])
 
     # Simple reverses lower to lax.rev_p
     jaxpr = jax.make_jaxpr(lambda x: x[:, ::-1])(jnp.ones((3, 4)))
-    eqn, = jaxpr.jaxpr.eqns
+    eqn, = jaxpr.eqns
     self.assertEqual(eqn.primitive, lax.rev_p)
 
     # Non-static scalar indices produce a dynamic slice
     jaxpr = jax.make_jaxpr(lambda x, i: x[i])(jnp.ones((4,)), 2)
-    self.assertLen(jaxpr.jaxpr.eqns, 6)
-    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
-    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+    self.assertLen(jaxpr.eqns, 6)
+    self.assertEqual(jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
+    self.assertEqual(jaxpr.eqns[-1].primitive, lax.squeeze_p)
 
     # Non-scalar indices produce a gather
     jaxpr = jax.make_jaxpr(lambda x, i: x[i])(jnp.ones((4,)), jnp.array([2, 3]))
-    self.assertIn(len(jaxpr.jaxpr.eqns), (5, 6))  # depending on X64 mode
-    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.gather_p)
+    self.assertIn(len(jaxpr.eqns), (5, 6))  # depending on X64 mode
+    self.assertEqual(jaxpr.eqns[-1].primitive, lax.gather_p)
 
   def testTrivialGatherIsntGenerated(self):
     # https://github.com/jax-ml/jax/issues/1621
     jaxpr = jax.make_jaxpr(lambda x: x[:, None])(np.arange(4))
-    self.assertLen(jaxpr.jaxpr.eqns, 1)
+    self.assertLen(jaxpr.eqns, 1)
     self.assertNotIn('gather', str(jaxpr))
 
     jaxpr = jax.make_jaxpr(lambda x: x[0:6:1])(np.arange(4))
-    self.assertLen(jaxpr.jaxpr.eqns, 0)
+    self.assertLen(jaxpr.eqns, 0)
 
     jaxpr = jax.make_jaxpr(lambda x: x[:4])(np.arange(4))
-    self.assertLen(jaxpr.jaxpr.eqns, 0)
+    self.assertLen(jaxpr.eqns, 0)
 
     jaxpr = jax.make_jaxpr(lambda x: x[::-1])(np.arange(4))
-    self.assertLen(jaxpr.jaxpr.eqns, 1)
-    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertEqual(jaxpr.eqns[0].primitive, lax.rev_p)
 
   def testOOBEmptySlice(self):
     x = jnp.arange(4, dtype='float32')
@@ -1134,6 +1134,37 @@ class IndexingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(IndexError,
                                 "index .* out of bounds for axis .* with size 0"):
       jax.jit(lambda i: x[0, i])(0)  # JAX indexing under jit
+
+  def testNonStaticSliceErrorMessage(self):
+    # https://github.com/jax-ml/jax/issues/7222
+    x = jnp.arange(5)
+
+    # The error states the constraint, suggests dynamic-slicing remedies, and
+    # reports the transform and argument that produced the traced index.
+    with self.assertRaises(IndexError) as cm:
+      jax.jit(lambda x, i: x[i:i + 2])(x, 2)
+    self.assertIn("Array slice indices must have static start/stop/step",
+                  str(cm.exception))
+    self.assertIn("jax.ds(start, size)", str(cm.exception))
+    self.assertIn("lax.dynamic_slice", str(cm.exception))
+    self.assertRegex(str(cm.exception), r"while tracing the function .* for jit")
+    self.assertIn("the argument i", str(cm.exception))
+
+    # The transform name reflects the actual tracing context.
+    with self.assertRaises(IndexError) as cm:
+      lax.fori_loop(0, 3, lambda i, acc: acc + x[i:i + 2].sum(), 0)
+    self.assertRegex(str(cm.exception),
+                     r"while tracing the function .* for fori_loop")
+
+    # vmap tracers report their creation site.
+    with self.assertRaises(IndexError) as cm:
+      jax.vmap(lambda i: x[i:i + 1])(jnp.arange(2))
+    self.assertIn("BatchTracer", str(cm.exception))
+
+    # The update path shares the same error.
+    with self.assertRaises(IndexError) as cm:
+      jax.jit(lambda x, i: x.at[i:i + 2].set(0))(x, 2)
+    self.assertIn("jax.ds(start, size)", str(cm.exception))
 
   def testBooleanIndexingWithEmptyResult(self):
     # based on a TensorFlow Probability test that started failing after #1622
@@ -2000,6 +2031,23 @@ class ValidateIndicesTest(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp.asarray(x).at[indexer].get()
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+
+class DSliceTest(jtu.JaxTestCase):
+  @parameterized.parameters([
+    ((None,), slice(None)),
+    ((None,), slice(None, None, 2), dict(stride=2)),
+    ((None, 5), Slice(0, 5, 1)),
+    ((None, 5, 2), Slice(0, 5, 2)),
+    ((5,), Slice(0, 5, 1)),
+    ((0, 5), Slice(0, 5, 1)),
+    ((0, 5, 2), Slice(0, 5, 2)),
+    ((5,), Slice(0, 5, 3), dict(stride=3)),
+    ((0, 5), Slice(0, 5, 4), dict(stride=4)),
+  ])
+  def test_dslice_construction(self, args, expected, kwargs={}):
+    self.assertEqual(jax.ds(*args, **kwargs), expected)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

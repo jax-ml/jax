@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/cord.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -39,6 +40,7 @@ limitations under the License.
 #include "jaxlib/py_device_list.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/sharding.h"
+#include "jaxlib/to_ifrt_sharding.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -91,70 +93,6 @@ absl::StatusOr<ifrt::DeviceListRef> GetDeviceList(nb::sequence devices) {
   }
 }
 
-// Gets `xla::HloSharding` from a JAX Sharding.
-xla::HloSharding GetXlaHloSharding(nb::handle sharding,
-                                   int64_t num_dimensions) {
-  if (sharding.type().is(GSPMDSharding::type())) {
-    return nb::cast<GSPMDSharding*>(sharding)->hlo_sharding();
-  } else {
-    return nb::cast<xla::HloSharding>(
-        sharding.attr("_to_xla_hlo_sharding")(num_dimensions));
-  }
-}
-
-// Gets `ifrt::DeviceList` from a JAX Sharding.
-absl::StatusOr<ifrt::DeviceListRef> GetIfrtDeviceList(nb::handle sharding) {
-  if (sharding.type().is(NamedSharding::type())) {
-    TF_ASSIGN_OR_RETURN(
-        auto ns_device_list,
-        nb::cast<const NamedSharding*>(sharding)->internal_device_list());
-    return ns_device_list->ifrt_device_list();
-  } else if (sharding.type().is(SingleDeviceSharding::type())) {
-    return nb::cast<const SingleDeviceSharding*>(sharding)
-        ->internal_device_list()
-        ->ifrt_device_list();
-  } else if (sharding.type().is(GSPMDSharding::type())) {
-    return nb::cast<const GSPMDSharding*>(sharding)
-        ->internal_device_list()
-        ->ifrt_device_list();
-  } else {
-    return nb::cast<const PyDeviceList*>(sharding.attr("_internal_device_list"))
-        ->ifrt_device_list();
-  }
-}
-
-// Gets `ifrt::MemoryKind` from a JAX Sharding.
-ifrt::MemoryKind GetIfrtMemoryKind(nb::handle sharding) {
-  auto memory_kind = sharding.attr("memory_kind");
-  if (memory_kind.is_none()) {
-    return ifrt::MemoryKind();
-  } else {
-    return ifrt::MemoryKind(nb::cast<std::string>(memory_kind));
-  }
-}
-
-// Makes `ifrt::Sharding` from a JAX Sharding. It requires the number of shape
-// dimensions, which may become necessary when building an HLO sharding.
-absl::StatusOr<ifrt::ShardingRef> GetIfrtSharding(nb::handle sharding,
-                                                  int64_t num_dimensions) {
-  auto ifrt_memory_kind = GetIfrtMemoryKind(sharding);
-  ifrt::ShardingRef ifrt_sharding;
-  if (sharding.type().is(SingleDeviceSharding::type())) {
-    TF_ASSIGN_OR_RETURN(auto ifrt_device_list,
-                        nb::cast<const SingleDeviceSharding*>(sharding)
-                            ->internal_device_list()
-                            ->ifrt_device_list());
-    return ifrt::SingleDeviceSharding::Create(
-        ifrt_device_list->devices().front(), ifrt_memory_kind);
-  } else {
-    TF_ASSIGN_OR_RETURN(auto ifrt_device_list, GetIfrtDeviceList(sharding));
-    auto xla_hlo_sharding = GetXlaHloSharding(sharding, num_dimensions);
-    return ifrt::HloSharding::Create(std::move(ifrt_device_list),
-                                     ifrt_memory_kind,
-                                     std::move(xla_hlo_sharding));
-  }
-}
-
 // Gets `ifrt::ArraySpec`s from a sequence of JAX avals (e.g.,
 // `jax.ShapeDtypeStruct`).
 absl::StatusOr<std::vector<ifrt::ArraySpec>> GetIfrtArraySpecs(
@@ -163,12 +101,12 @@ absl::StatusOr<std::vector<ifrt::ArraySpec>> GetIfrtArraySpecs(
   ifrt_array_specs.reserve(nb::len(avals));
   for (nb::handle aval : avals) {
     ifrt::Shape ifrt_shape(nb::cast<std::vector<int64_t>>(aval.attr("shape")));
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         auto ifrt_dtype,
         DtypeToIfRtDType(nb::cast<xla::nb_dtype>(aval.attr("dtype"))));
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         auto ifrt_sharding,
-        GetIfrtSharding(aval.attr("sharding"), ifrt_shape.dims().size()));
+        GetIfrtHloSharding(aval.attr("sharding"), ifrt_shape));
     ifrt_array_specs.push_back(ifrt::ArraySpec{
         ifrt_dtype, std::move(ifrt_shape), std::move(ifrt_sharding)});
   }
@@ -202,8 +140,8 @@ MakePluginCompileOptions() {
 absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeHloProgram(
     std::string_view mlir_module) {
   auto context = std::make_unique<mlir::MLIRContext>();
-  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      xla::ParseMlirModuleString(mlir_module, *context));
+  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                        xla::ParseMlirModuleString(mlir_module, *context));
   return std::make_unique<xla::ifrt::HloProgram>(std::move(context),
                                                  std::move(module));
 }
@@ -232,8 +170,8 @@ absl::StatusOr<std::unique_ptr<ifrt::CompileOptions>> MakeXlaCompileOptions(
     ifrt_loaded_host_callbacks.push_back(tsl::FormRef(
         static_cast<ifrt::LoadedHostCallback*>(host_callback.data())));
   }
-  TF_ASSIGN_OR_RETURN(ifrt::DeviceListRef executable_devices,
-                      py_executable_devices.ifrt_device_list());
+  ABSL_ASSIGN_OR_RETURN(ifrt::DeviceListRef executable_devices,
+                        py_executable_devices.ifrt_device_list());
   return std::make_unique<ifrt::XlaCompileOptions>(
       std::move(options), std::move(executable_devices),
       std::move(ifrt_loaded_host_callbacks));
@@ -251,9 +189,10 @@ absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeColocatedPythonProgram(
       /*releaser=*/[picked_function](std::string_view) mutable {
         GlobalPyRefManager()->AddGarbage(std::move(picked_function));
       });
-  TF_ASSIGN_OR_RETURN(auto ifrt_device_list, GetDeviceList(devices));
-  TF_ASSIGN_OR_RETURN(auto ifrt_input_specs, GetIfrtArraySpecs(input_avals));
-  TF_ASSIGN_OR_RETURN(auto ifrt_output_specs, GetIfrtArraySpecs(output_avals));
+  ABSL_ASSIGN_OR_RETURN(auto ifrt_device_list, GetDeviceList(devices));
+  ABSL_ASSIGN_OR_RETURN(auto ifrt_input_specs, GetIfrtArraySpecs(input_avals));
+  ABSL_ASSIGN_OR_RETURN(auto ifrt_output_specs,
+                        GetIfrtArraySpecs(output_avals));
   return std::make_unique<ifrt::CustomCallProgram>(
       std::string(kColocatedPythonProgramType), std::move(name),
       std::move(ifrt_serialized_program_text), std::move(ifrt_device_list),

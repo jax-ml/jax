@@ -40,7 +40,6 @@ from jax._src.interpreters import mlir
 from jax._src.lax import control_flow
 from jax._src.lax import lax
 from jax._src.lax import utils as lax_utils
-from jax._src.lax.lax import _float, _complex, _int
 from jax._src.lib import cuda_versions
 from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
@@ -51,6 +50,13 @@ from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.typing import Array, ArrayLike
+
+
+_int = {np.integer}
+_float = {np.float32, np.float64}
+_any_float = {np.floating}
+_complex = {np.complex64, np.complex128}
+_any_complex = {np.complexfloating}
 
 
 def initialize_lapack():
@@ -736,7 +742,8 @@ def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array, *,
 
 # Primitive registration helper functions
 
-_platform_prefix_map = {"cpu": "cpu", "cuda": "cu", "rocm": "hip"}
+_platform_prefix_map = {"cpu": "cpu", "cuda": "cu", "rocm": "hip",
+                        "oneapi": "oneapi"}
 
 def register_cpu_gpu_lowering(
     prim, lowering_rule, supported_platforms=("cpu", "cuda", "rocm")
@@ -833,12 +840,12 @@ def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
     prim.def_abstract_eval(
         partial(lax_utils.standard_multi_result_abstract_eval, prim,
                 shape_rule, dtype_rule, lax_utils._standard_weak_type_rule,
-                sharding_rule, vma_rule, None))
+                sharding_rule, vma_rule, None, None))
   else:
     prim.def_abstract_eval(
       partial(lax_utils.standard_abstract_eval, prim, shape_rule, dtype_rule,
               lax_utils._standard_weak_type_rule, sharding_rule,
-              partial(core.standard_vma_rule, name), None, None))
+              partial(core.standard_vma_rule, name), None, None, None))
   if supports_batching:
     batching.primitive_batchers[prim] = partial(
         batching.expand_dims_batcher, prim)
@@ -917,7 +924,7 @@ ad.primitive_jvps[cholesky_p] = _cholesky_jvp_rule
 mlir.register_lowering(cholesky_p, _cholesky_lowering)
 mlir.register_lowering(cholesky_p, _cholesky_cpu_lowering, platform="cpu")
 register_cpu_gpu_lowering(cholesky_p, _cholesky_gpu_lowering,
-                          supported_platforms=("cuda", "rocm"))
+                          supported_platforms=("cuda", "rocm", "oneapi"))
 
 
 # Cholesky update
@@ -1062,7 +1069,7 @@ def _unpack_conjugate_pairs(w: Array, vr: Array) -> Array:
   vr_shifted_left = lax.pad(vr, lax._zero(vr), pads)
   pads[-1] = (1, -1, 0)
   vr_shifted_right = lax.pad(vr, lax._zero(vr), pads)
-  dims = list(np.delete(np.arange(len(vr.shape), dtype=np.int32), -2))
+  dims = np.delete(np.arange(len(vr.shape), dtype=np.int32), -2).tolist()
   is_real = lax.broadcast_in_dim(is_real, vr.shape, broadcast_dimensions=dims)
   conj_pair_start = lax.broadcast_in_dim(conj_pair_start, vr.shape,
                                          broadcast_dimensions=dims)
@@ -1251,7 +1258,7 @@ eig_p = linalg_primitive(
     multiple_results=True)
 ad.primitive_jvps[eig_p] = eig_jvp_rule
 mlir.register_lowering(eig_p, _eig_cpu_lowering, platform="cpu")
-register_cpu_gpu_lowering(eig_p, _eig_gpu_lowering, ("cuda", "rocm"))
+register_cpu_gpu_lowering(eig_p, _eig_gpu_lowering, ("cuda", "rocm", "oneapi"))
 
 
 # Symmetric/Hermitian eigendecomposition
@@ -1350,7 +1357,8 @@ def _eigh_jvp_rule(
   eye_n = lax._eye(a.dtype, (n, n))
   # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
   with config.numpy_rank_promotion("allow"):
-    Fmat = lax.integer_pow(eye_n + w[..., np.newaxis, :] - w[..., np.newaxis], -1) - eye_n
+    delta_w = w[..., np.newaxis, :] - w[..., np.newaxis]
+    Fmat = lax.integer_pow(delta_w + eye_n, -1) - eye_n
   # eigh impl doesn't support batch dims, but future-proof the grad.
   dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
                 precision=lax.Precision.HIGHEST)
@@ -1460,7 +1468,8 @@ householder_product_p = standard_linalg_primitive(
     _householder_product_shape_rule, "householder_product")
 mlir.register_lowering(householder_product_p, _householder_product_lowering)
 register_cpu_gpu_lowering(
-    householder_product_p, _householder_product_cpu_gpu_lowering)
+    householder_product_p, _householder_product_cpu_gpu_lowering,
+    supported_platforms=("cpu", "cuda", "rocm", "oneapi"))
 
 
 # Orthogonal QR multiply
@@ -1592,7 +1601,8 @@ ormqr_p = standard_linalg_primitive(
     _ormqr_shape_rule, "ormqr")
 mlir.register_lowering(ormqr_p, mlir.lower_fun(
     _ormqr_lowering, multiple_results=False))
-register_cpu_gpu_lowering(ormqr_p, _ormqr_cpu_gpu_lowering)
+register_cpu_gpu_lowering(ormqr_p, _ormqr_cpu_gpu_lowering,
+                          supported_platforms=("cpu", "cuda", "rocm", "oneapi"))
 
 
 # LU decomposition
@@ -1793,7 +1803,8 @@ register_cpu_gpu_lowering(lu_p, _lu_cpu_gpu_lowering)
 def lu_solve(lu: ArrayLike, permutation: ArrayLike, b: ArrayLike,
              trans: int = 0) -> Array:
   """LU solve with broadcasting."""
-  return _lu_solve(lu, permutation, b, trans)
+  return _lu_solve(lax.asarray(lu), lax.asarray(permutation), lax.asarray(b),
+                   trans)
 
 
 def _lu_solve_core(lu: Array, permutation: Array, b: Array, trans: int) -> Array:
@@ -1999,7 +2010,8 @@ geqrf_p = linalg_primitive(
     _geqrf_dtype_rule, (_float | _complex,), (2,), _geqrf_shape_rule, "geqrf",
     multiple_results=True)
 mlir.register_lowering(geqrf_p, _geqrf_lowering_rule)
-register_cpu_gpu_lowering(geqrf_p, _geqrf_cpu_gpu_lowering)
+register_cpu_gpu_lowering(geqrf_p, _geqrf_cpu_gpu_lowering,
+                          supported_platforms=("cpu", "cuda", "rocm", "oneapi"))
 
 
 def geqp3(a: ArrayLike, jpvt: ArrayLike, *,
@@ -2048,7 +2060,8 @@ def _geqp3_cpu_gpu_lowering(ctx, a, jpvt, *, use_magma, target_name_prefix):
 geqp3_p = linalg_primitive(
     _geqp3_dtype_rule, (_float | _complex, _int), (2, 1),
     _geqp3_shape_rule, "geqp3", multiple_results=True, require_same=False)
-register_cpu_gpu_lowering(geqp3_p, _geqp3_cpu_gpu_lowering)
+register_cpu_gpu_lowering(geqp3_p, _geqp3_cpu_gpu_lowering,
+                          ("cpu", "cuda", "rocm", "oneapi"))
 
 
 def _qr_shape_rule(shape, *, pivoting, full_matrices, **_):
@@ -2823,7 +2836,7 @@ def _tri_solve_sharding(a, b, *, left_side, lower, transpose_a, conjugate_a,
   return a.sharding.update(spec=P(*batch_spec, *out_spec))
 
 triangular_solve_p = linalg_primitive(
-    _triangular_solve_dtype_rule, (_float | _complex, _float | _complex),
+    _triangular_solve_dtype_rule, (_any_float | _any_complex, _any_float | _any_complex),
     (2, 2), _triangular_solve_shape_rule, "triangular_solve",
     sharding_rule=_tri_solve_sharding)
 ad.defjvp2(triangular_solve_p,

@@ -31,11 +31,11 @@ pytype_strict_library(
     srcs = [
         "__init__.py",
     ],
-    type_checking = "pyrefly",
     deps = [
         ":block_spec",
         ":custom_evaluate",
         ":custom_fusion",
+        ":fuser_utils",
         ":fusible",
         ":fusion",
         ":jaxpr_fusion",
@@ -47,7 +47,6 @@ pytype_strict_library(
     srcs = [
         "block_spec.py",
     ],
-    type_checking = "pyrefly",
     visibility = [
         "//jax:internal",
     ] + jax_visibility("pallas/fuser/block_spec"),
@@ -76,12 +75,12 @@ pytype_strict_library(
     srcs = [
         "custom_fusion_lib.py",
     ],
-    type_checking = "pyrefly",
     deps = [
         ":block_spec",
         "//jax/_src:api_util",
         "//jax/_src:core",
         "//jax/_src:custom_api_util",
+        "//jax/_src:flattree",
         "//jax/_src:lax",
         "//jax/_src:mlir",
         "//jax/_src:partial_eval",
@@ -98,13 +97,18 @@ pytype_strict_library(
     srcs = [
         "fusible.py",
     ],
-    type_checking = "pyrefly",
     deps = [
+        ":fusible_dtype",
         ":fusion",
         "//jax",
+        "//jax/_src:ad",
         "//jax/_src:api_util",
         "//jax/_src:batching",
         "//jax/_src:core",
+        "//jax/_src:effects",
+        "//jax/_src:flattree",
+        "//jax/_src:hijax",
+        "//jax/_src:lax",
         "//jax/_src:mlir",
         "//jax/_src:partial_eval",
         "//jax/_src:traceback_util",
@@ -118,7 +122,6 @@ pytype_strict_library(
     srcs = [
         "fusion.py",
     ],
-    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:util",
@@ -130,7 +133,6 @@ pytype_strict_library(
     srcs = [
         "jaxpr_fusion.py",
     ],
-    type_checking = "pyrefly",
     deps = [
         ":fuser_utils",
         ":fusible",
@@ -139,11 +141,12 @@ pytype_strict_library(
         "//jax",
         "//jax/_src:api_util",
         "//jax/_src:core",
+        "//jax/_src:flattree",
+        "//jax/_src:hijax",
         "//jax/_src:lax",
         "//jax/_src:partial_eval",
         "//jax/_src:traceback_util",
         "//jax/_src:tree_util",
-        "//jax/_src:util",
     ],
 )
 
@@ -152,18 +155,18 @@ pytype_strict_library(
     srcs = [
         "fusible_dtype.py",
     ],
-    type_checking = "pyrefly",
     visibility = [
         "//jax:internal",
     ] + jax_visibility("pallas/fuser/fusible_dtype"),
     deps = [
         ":block_spec",
-        ":fusible",
         "//jax",
         "//jax/_src:api_util",
         "//jax/_src:core",
         "//jax/_src:custom_derivatives",
         "//jax/_src:dtypes",
+        "//jax/_src:flattree",
+        "//jax/_src:hijax",
         "//jax/_src:lax",
         "//jax/_src:partial_eval",
         "//jax/_src:source_info_util",
@@ -176,7 +179,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "custom_evaluate",
     srcs = ["custom_evaluate.py"],
-    type_checking = "pyrefly",
     deps = [
         ":fuser_utils",
         "//jax",
@@ -190,13 +192,15 @@ pytype_strict_library(
 pytype_strict_library(
     name = "fuser_utils",
     srcs = ["fuser_utils.py"],
-    type_checking = "pyrefly",
     deps = [
         "//jax/_src:api_util",
         "//jax/_src:core",
         "//jax/_src:effects",
+        "//jax/_src:flattree",
         "//jax/_src:lax",
         "//jax/_src:partial_eval",
         "//jax/_src:tree_util",
+        "//jax/_src:util",
+        "//jax/_src/pallas",
     ] + py_deps("numpy"),
 )

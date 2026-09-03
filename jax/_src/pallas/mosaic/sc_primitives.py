@@ -17,7 +17,7 @@ from collections.abc import Callable, Sequence
 import enum
 import functools
 import inspect
-from typing import Any, TypeAlias, TypeVar, overload
+from typing import Any, overload
 
 import jax
 from jax import api_util
@@ -25,9 +25,10 @@ from jax import lax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import linear_util as lu
+from jax._src import flattree as ft
 from jax._src.api_util import check_no_transformed_refs_args
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lib import ifrt_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
@@ -47,10 +48,9 @@ import jax.numpy as jnp
 
 _ensure_ir_value = tc_lowering._ensure_mlir_value
 
-TransformedRef: TypeAlias = state_types.TransformedRef
-Ref: TypeAlias = state_types.AbstractRef | TransformedRef
+TransformedRef = state_types.TransformedRef
+Ref = state_types.AbstractRef | TransformedRef
 
-_T = TypeVar("_T")
 
 load_p = jax_core.Primitive("load")
 load_p.is_effectful = lambda params: True
@@ -233,7 +233,7 @@ def _indexed_shape(ref: Ref, indices: Sequence[jax.Array]) -> tuple[int, ...]:
       )
     if prev_idx is not None and idx.size != prev_idx.size:
       raise ValueError(
-          "Indices must have the same size, got {prev_idx.size} and {idx.size}"
+          f"Indices must have the same size, got {prev_idx.size} and {idx.size}"
       )
     prev_idx = idx
   assert prev_idx is not None
@@ -253,10 +253,13 @@ def _gather_abstract_eval(*flat_args, tree):
     raise TypeError(f"ref.dtype={ref.dtype} must be int32 or float32")
   out_aval = jax_core.ShapedArray(_indexed_shape(ref, indices), ref.dtype)
   sc_lowering._check_aval_is_supported("Gather", out_aval)
-  if mask is not None and mask.shape != out_aval.shape:
-    raise ValueError(
-        f"{mask.shape=} does not match the expected shape {out_aval.shape}"
-    )
+  if mask is not None:
+    if mask.shape != out_aval.shape:
+      raise ValueError(
+          f"{mask.shape=} does not match the expected shape {out_aval.shape}"
+      )
+    if mask.dtype != jnp.bool:
+      raise TypeError(f"Mask must be a boolean array, got {mask.dtype}")
   return out_aval, {state_types.ReadEffect(0)}
 
 
@@ -327,10 +330,13 @@ def _scatter_abstract_eval(*flat_args, tree, add):
     )
   if x.dtype != ref.dtype:
     raise TypeError(f"val.dtype={x.dtype} != ref.dtype={ref.dtype}")
-  if mask is not None and mask.shape != expected_shape:
-    raise ValueError(
-        f"{mask.shape=} does not match expected shape {expected_shape}"
-    )
+  if mask is not None:
+    if mask.shape != expected_shape:
+      raise ValueError(
+          f"{mask.shape=} does not match expected shape {expected_shape}"
+      )
+    if mask.dtype != jnp.bool:
+      raise TypeError(f"Mask must be a boolean array, got {mask.dtype}")
   effects: set[jax_core.Effect] = {state_types.WriteEffect(0)}
   if add:
     effects.add(state_types.ReadEffect(0))
@@ -382,7 +388,7 @@ def store_scatter(
     indices: A sequence of 1D arrays, one for each dimension of ``ref``. Each
       array specifies an index for that dimension. All arrays must have the same
       size.
-    val: The array to store.
+    x: The array to store.
     mask: An optional boolean array, which specifies which elements to store. If
       ``None``, all elements are stored.
   """
@@ -403,11 +409,21 @@ def addupdate_scatter(
     *,
     mask: jax.Array | None = None,
 ) -> None:
-  """Scatters an array to a ref atomically adding to existing values."""
+  """Scatters an array to a ref, atomically adding to existing values.
+
+  Args:
+    ref: The ref in ``VMEM`` to scatter to.
+    indices: A sequence of 1D arrays, one for each dimension of ``ref``. Each
+      array specifies an index for that dimension. All arrays must have the same
+      size.
+    x: The array to add.
+    mask: An optional boolean array, which specifies which elements to add. If
+      ``None``, all elements are added.
+  """
   if not indices:
     raise ValueError("Indices must not be empty")
   ref, transforms = state_primitives.get_ref_and_transforms(
-      ref, None, "store_scatter"
+      ref, None, "addupdate_scatter"
   )
   flat_args, tree = jax.tree.flatten((ref, transforms, indices, x, mask))
   _ = scatter_p.bind(*flat_args, tree=tree, add=True)
@@ -450,6 +466,17 @@ def bitcast(x: jax.Array, dtype: jax.typing.DTypeLike) -> jax.Array:
   Unlike ``lax.bitcast_convert_type``, this function returns an array of the
   same rank as the input. The minormost dimension is expanded/shrunk to
   account for the difference in the element bitwidth.
+
+  When the target dtype has a different bitwidth, the size of the minormost
+  dimension in bits (``x.shape[-1] * old_bitwidth``) must be divisible by the
+  target bitwidth.
+
+  Args:
+    x: The array to bitcast.
+    dtype: The target dtype.
+
+  Returns:
+    The bitcast array.
   """
   if x.dtype == dtype:
     return x
@@ -462,6 +489,7 @@ class MemoryEffect(jax_core.Effect):
 
 effects.control_flow_allowed_effects.add_type(MemoryEffect)
 effects.lowerable_effects.add_type(MemoryEffect)
+pallas_core.kernel_local_effects.add_type(MemoryEffect)
 _memory_effect = MemoryEffect()
 
 barrier_p = jax_core.Primitive("barrier")
@@ -483,12 +511,12 @@ def subcore_barrier():
   """Blocks until all subcores on the same core reach this instruction.
 
   The barrier must be used with
-  :class:jax.experimental.pallas.tpu_sc.VectorSubcoreMesh.
+  :class:`jax.experimental.pallas.tpu_sc.VectorSubcoreMesh`.
   """
   barrier_p.bind()
 
 
-scan_count_p = jax_core.Primitive("unique")
+scan_count_p = jax_core.Primitive("scan_count")
 scan_count_p.multiple_results = True
 
 
@@ -565,9 +593,21 @@ def _masked_cumop_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask,
     sign_bit_vec = vector.broadcast(
         x.type, arith.constant(i32, ir.IntegerAttr.get(i32, 0x80000000)))
     x = arith.xori(x, sign_bit_vec)
-  result = tpu.scan(
-      x.type, x, ir.Attribute.parse(f"#tpu.reduction_kind<{reduction_kind}>"),
-      mask=mask)
+  if ifrt_version < 67:
+    result = tpu.scan(  # pyrefly: ignore[missing-argument]
+        x.type,
+        x,
+        ir.Attribute.parse(f"#tpu.reduction_kind<{reduction_kind}>"),
+        mask=mask,
+    )
+  else:
+    result = tpu.scan(
+        x.type,
+        x,
+        ir.Attribute.parse(f"#tpu.reduction_kind<{reduction_kind}>"),
+        mask=mask,
+        dimension=x.type.rank - 1,  # pyrefly: ignore[unexpected-keyword]
+    )
   if sign_bit_vec is not None:  # Flip the sign bit back
     return arith.xori(result, sign_bit_vec)
   return result
@@ -659,8 +699,21 @@ def _cumsum_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axis,
   i1t = ir.IntegerType.get_signless(1)
   c1 = arith.constant(i1t, ir.IntegerAttr.get(i1t, 1))
   c1v = vector.broadcast(ir.VectorType.get(x.type.shape, c1.type), c1)
-  return tpu.scan(
-      x.type, x, ir.Attribute.parse("#tpu.reduction_kind<sum>"), mask=c1v)
+  if ifrt_version < 67:
+    return tpu.scan(  # pyrefly: ignore[missing-argument]
+        x.type,
+        x,
+        ir.Attribute.parse("#tpu.reduction_kind<sum>"),
+        mask=c1v,
+    )
+  else:
+    return tpu.scan(
+        x.type,
+        x,
+        ir.Attribute.parse("#tpu.reduction_kind<sum>"),
+        mask=c1v,
+        dimension=x.type.rank - 1,  # pyrefly: ignore[unexpected-keyword]
+    )
 
 
 def cumsum(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
@@ -735,22 +788,44 @@ def _masked_sort_lowering_rule(
     return sorted_keys, sorted_values, out_mask
   return sorted_keys, sorted_values
 
+
+@overload
 def sort_key_val(
-    keys: jax.Array, values: jax.Array, *,
-    mask: jax.Array | None = None, descending: bool = False
-) -> jax.Array:
+    keys: jax.Array, values: jax.Array, *, descending: bool = ...
+) -> tuple[jax.Array, jax.Array]:
+  ...
+
+
+@overload
+def sort_key_val(
+    keys: jax.Array,
+    values: jax.Array,
+    *,
+    mask: jax.Array,
+    descending: bool = ...,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+  ...
+
+
+def sort_key_val(
+    keys: jax.Array,
+    values: jax.Array,
+    *,
+    mask: jax.Array | None = None,
+    descending: bool = False,
+) -> tuple[jax.Array, jax.Array, jax.Array] | tuple[jax.Array, jax.Array]:
   """Sorts keys and values, pushing invalid elements to the last positions.
 
   Args:
     keys: An array of integers or floats.
     values: An array of values corresponding to the keys.
     mask: An optional array of booleans, which specifies which elements of
-      `keys` and `values` are valid. If `None`, all elements are valid.
+      ``keys`` and ``values`` are valid. If ``None``, all elements are valid.
     descending: Whether to sort in descending order.
 
   Returns:
-    sorted_keys, sorted_values, [output_mask]: The sorted keys and values, and,
-    if a mask was given, the corresponding mask for output keys and values.
+    A tuple of sorted keys and values, and, if a mask was given, the
+    corresponding mask for output keys and values.
   """
   maybe_mask = () if mask is None else (mask,)
   return masked_sort_p.bind(keys, values, *maybe_mask, descending=descending)
@@ -765,7 +840,7 @@ parallel_loop_p.multiple_results = True
 def _parallel_loop_abstract_eval(*args, jaxpr, tree, **params):
   del params  # Unused.
   _, _, _, _, carries = tree.unflatten(args)
-  if any(isinstance(c, (Ref, TransformedRef)) for c in carries):
+  if any(isinstance(c, Ref) for c in carries):
     raise TypeError(f"Carried values may not be refs, but got: {carries}")
   updated_effects = set()
   for eff in jax_core.positional_effects(jaxpr):
@@ -825,14 +900,14 @@ def parallel_loop(
 
 
 @overload
-def parallel_loop(
+def parallel_loop[T](
     lower: jax.typing.ArrayLike,
     upper: jax.typing.ArrayLike,
     step: jax.typing.ArrayLike = ...,
     *,
     unroll: int = ...,
-    carry: _T,
-) -> Callable[[Callable[[jax.Array, _T], _T]], _T]:
+    carry: T,
+) -> Callable[[Callable[[jax.Array, T], T]], T]:
   ...
 
 
@@ -920,8 +995,9 @@ def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
     ]
     debug_info = api_util.debug_info("parallel_loop", body, flat_avals, {})
     check_no_transformed_refs_args(lambda: debug_info, flat_carries)
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(wrapped, debug_info=debug_info), flat_avals
+    in_avals_ft = ft.flatten_args(*flat_avals)
+    jaxpr, _ = pe.trace_to_jaxpr_nocache(
+        wrapped, in_avals_ft, debug_info=debug_info
     )
     carry_tree.unflatten(jaxpr.outvars)  # Verify same structure.
     disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(
@@ -931,6 +1007,7 @@ def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
       raise NotImplementedError(
           f"Effects not supported in parallel_loop: {disallowed_effects}"
       )
+    jaxpr, consts = pe.separate_consts(jaxpr)
     flat_args, tree = jax.tree.flatten(
         (lower, upper, step, consts, flat_carries)
     )
@@ -1137,8 +1214,14 @@ def unpack(
 def _mask_all_reduce_abstract_eval(x, *, reduce):
   if x.dtype != jnp.bool:
     raise TypeError(f"Mask all-reduce only supports bool arrays, got {x.dtype}")
+  if reduce < 1:
+    raise ValueError(f"reduce must be >=1, got {reduce}")
   match x.shape:
     case (minor_dim,):
+      if minor_dim % reduce != 0:
+        raise ValueError(
+            f"{reduce=} must divide the dimension size {minor_dim}"
+        )
       return jax_core.ShapedArray((minor_dim // reduce,), jnp.int32)
     case _:
       raise ValueError("Mask all-reduce only supports 1D arrays")

@@ -43,7 +43,8 @@ from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import util as numpy_util
 from jax._src.numpy.reductions import _count
 from jax._src.numpy.reductions import Axis
-from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
+from jax._src.sharding_impls import (NamedSharding, PartitionSpec as P,
+                                     canonicalize_sharding)
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.ops.special import logsumexp as _logsumexp
 
@@ -711,14 +712,15 @@ def standardize(x: ArrayLike,
   return jnp.subtract(x, mean) * lax.rsqrt(variance + epsilon)
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
-@api.jit(static_argnames=("num_classes", "dtype", "axis"))
+@api.jit(static_argnames=("num_classes", "dtype", "axis", "out_sharding"))
 def _one_hot(x: Array, num_classes: int, *,
-             dtype: DTypeLike, axis: int | AxisName) -> Array:
+             dtype: DTypeLike, axis: int | AxisName,
+             out_sharding: NamedSharding | None) -> Array:
   num_classes = core.concrete_dim_or_error(
       num_classes,
       "The error arose in jax.nn.one_hot argument `num_classes`.")
   try:
-    output_pos_axis = util.canonicalize_axis(axis, x.ndim + 1)  # pyrefly: ignore[bad-argument-type]
+    out_axis = util.canonicalize_axis(axis, x.ndim + 1)  # pyrefly: ignore[bad-argument-type]
   except TypeError:
     axis_size = lax.axis_size(axis)
     if num_classes != axis_size:
@@ -730,16 +732,30 @@ def _one_hot(x: Array, num_classes: int, *,
   axis = operator.index(axis)
   lhs = lax.expand_dims(x, (axis,))
   rhs_shape = [1] * x.ndim
-  rhs_shape.insert(output_pos_axis, num_classes)
-  # TODO(yashkatariya): Maybe expose `out_sharding` on `one_hot` too?
-  rhs_sharding = NamedSharding(x.aval.sharding.mesh, P(*[None] * len(rhs_shape)))
-  rhs = lax.broadcasted_iota(x.dtype, rhs_shape, output_pos_axis,
-                             out_sharding=rhs_sharding)
+  rhs_shape.insert(out_axis, num_classes)
+  x_aval = core.typeof(x)
+  rhs_spec = [None] * len(rhs_shape)
+  if out_sharding is None:
+    rhs_sharding = NamedSharding(x_aval.sharding.mesh, P(*rhs_spec))
+  else:
+    if out_sharding.spec.unreduced or out_sharding.spec.reduced:
+      raise NotImplementedError
+    out_x_spec = out_sharding.spec[:out_axis] + out_sharding.spec[out_axis+1:]
+    out_x_spec = P(*out_x_spec)._normalized_spec_for_aval(x_aval.ndim)
+    if out_x_spec != x_aval.sharding.spec:
+      raise core.ShardingTypeError(
+          "The input part of spec in out_sharding should match the spec of"
+          f" `x`. Got typeof(x).spec={x_aval.sharding.spec} and"
+          f" out_sharding.spec={out_x_spec}")
+    rhs_spec[out_axis] = out_sharding.spec[out_axis]
+    rhs_sharding = out_sharding.update(spec=P(*rhs_spec))
+  rhs = lax.broadcasted_iota(x.dtype, rhs_shape, out_axis, out_sharding=rhs_sharding)
   return (lhs == rhs).astype(dtype)
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
 def one_hot(x: Any, num_classes: int, *,
-            dtype: Any | None = None, axis: int | AxisName = -1) -> Array:
+            dtype: Any | None = None, axis: int | AxisName = -1,
+            out_sharding: NamedSharding | P | None = None) -> Array:
   r"""One-hot encodes the given indices.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length
@@ -774,7 +790,9 @@ def one_hot(x: Any, num_classes: int, *,
       f"jax.nn.one_hot input should be integer-typed; got dtype={x_arr.dtype}",
       stacklevel=1)
   dtype = dtypes.default_float_dtype() if dtype is None else dtype
-  return _one_hot(x_arr, num_classes, dtype=dtype, axis=axis)
+  out_sharding = canonicalize_sharding(out_sharding, 'jax.nn.one_hot')
+  return _one_hot(x_arr, num_classes, dtype=dtype, axis=axis,
+                  out_sharding=out_sharding)
 
 
 @custom_derivatives.custom_jvp
@@ -1044,7 +1062,8 @@ def dot_product_attention(
     local_window_size: int | tuple[int, int] | None = None,
     implementation: Literal['xla', 'cudnn'] | None = None,
     return_residual: Literal[False] = ...,
-) -> Array: ...
+) -> Array:
+  ...
 
 @overload
 def dot_product_attention(
@@ -1061,7 +1080,8 @@ def dot_product_attention(
     local_window_size: int | tuple[int, int] | None = None,
     implementation: Literal['xla', 'cudnn'] | None = None,
     return_residual: Literal[True] = ...,
-) -> tuple[Array, Array]: ...
+) -> tuple[Array, Array]:
+  ...
 
 def dot_product_attention(
     query: ArrayLike,

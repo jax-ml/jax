@@ -126,6 +126,39 @@ def _scaled_matmul_rocm_lowering(
   )
 
 
+def _scaled_matmul_cpu_lowering_impl(
+    a, b, a_scales, b_scales, *, preferred_element_type
+):
+  # Cast inputs to preferred_element_type first to avoid unsupported float8 ops on CPU.
+  a = a.astype(preferred_element_type)
+  b = b.astype(preferred_element_type)
+  a_scales = a_scales.astype(preferred_element_type)
+  b_scales = b_scales.astype(preferred_element_type)
+
+  B, M, K = a.shape
+  _, N, _ = b.shape
+  _, _, K_a = a_scales.shape
+  _, _, K_b = b_scales.shape
+
+  a_block_size = K // K_a
+  b_block_size = K // K_b
+
+  a_reshaped = jnp.reshape(a, (B, M, K_a, a_block_size))
+  a_scales_reshaped = jnp.reshape(a_scales, (B, M, K_a, 1))
+  a_scaled = jnp.reshape(a_reshaped * a_scales_reshaped, (B, M, K))
+
+  b_reshaped = jnp.reshape(b, (B, N, K_b, b_block_size))
+  b_scales_reshaped = jnp.reshape(b_scales, (B, N, K_b, 1))
+  b_scaled = jnp.reshape(b_reshaped * b_scales_reshaped, (B, N, K))
+
+  return lax.dot_general(
+      a_scaled,
+      b_scaled,
+      (((2,), (2,)), ((0,), (0,))),
+      preferred_element_type=preferred_element_type,
+  )
+
+
 def _scaled_matmul_abstract(a, b, a_scale, b_scale, *, preferred_element_type):
   batch, non_contracting_lhs, contracting_lhs = a.shape
   _, non_contracting_rhs, _ = b.shape
@@ -138,6 +171,11 @@ _scaled_matmul_p.multiple_results = True
 dispatch.simple_impl(_scaled_matmul_p)
 _scaled_matmul_p.def_abstract_eval(_scaled_matmul_abstract)
 
+
+mlir.register_lowering(
+    _scaled_matmul_p,
+    mlir.lower_fun(_scaled_matmul_cpu_lowering_impl, multiple_results=False),
+)
 
 mlir.register_lowering(
     _scaled_matmul_p,

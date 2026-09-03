@@ -30,10 +30,6 @@ on:
         description: "Should x64 mode be enabled?"
         type: string
         default: "0"
-      enable-bzlmod:
-        description: "Should Bzlmod be enabled?"
-        type: string
-        default: "0"
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -55,9 +51,18 @@ on:
         description: "Should latest XLA be used?"
         type: string
         required: true
+      xla_commit:
+        description: "XLA commit SHA to check out after cloning XLA."
+        type: string
+        default: ""
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
         default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+        type: string
+      git_commit:
+        description: "Commit SHA to check out for running tests"
+        required: false
+        default: ""
         type: string
 
 jobs:
@@ -67,27 +72,26 @@ jobs:
         # Explicitly set the shell to bash
         shell: bash
     runs-on: ${{ inputs.runner }}
-    container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest') ||
-                   (contains(inputs.runner, 'linux-arm64') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-arm64:latest') ||
-                   (contains(inputs.runner, 'windows-x86') && null) }}
+    container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest') || (contains(inputs.runner, 'linux-arm64') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-arm64:latest') || (contains(inputs.runner, 'windows-x86') && null) }}  # zizmor: ignore[unpinned-images]
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
       JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
-      JAXCI_ENABLE_BZLMOD: ${{ inputs.enable-bzlmod }}
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_BAZEL_CPU_RBE_MODE: "${{ inputs.bazel_command }}"
       JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
+      JAXCI_XLA_COMMIT: ${{ inputs.xla_commit }}
 
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
         (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||
-        (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, bzlmod=${{ inputs.enable-bzlmod }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
+        (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
 # End Presubmit Naming Check github-cpu-presubmits
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          ref: ${{ inputs.git_commit }}
           persist-credentials: false
       - name: Download JAX CPU wheels
         if: inputs.build_jaxlib == 'false'
@@ -102,13 +106,13 @@ jobs:
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: "Bazel CPU tests with build_jaxlib=${{ format('{0}', inputs.build_jaxlib) }}"
-        timeout-minutes: 60
+        timeout-minutes: 180
         run: ./ci/run_bazel_test_cpu_rbe.sh
       - name: Upload test artifacts
         if: always()
         continue-on-error: true
         uses: ./.github/actions/upload-test-artifacts
         with:
-          artifact-name: bazel-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-x64_${{ inputs.enable-x64 }}-bzlmod_${{ inputs.enable-bzlmod }}-build_${{ inputs.build_jaxlib }}
+          artifact-name: bazel-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-x64_${{ inputs.enable-x64 }}-build_${{ inputs.build_jaxlib }}
           inputs_json: ${{ toJSON(inputs) }}
           matrix_json: ${{ toJSON(matrix) }}

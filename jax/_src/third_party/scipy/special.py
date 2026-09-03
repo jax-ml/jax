@@ -50,20 +50,24 @@ def sincospisquaredhalf(
 
 @custom_derivatives.custom_jvp
 def fresnel(x: ArrayLike) -> tuple[Array, Array]:
-  r"""The Fresnel integrals
+  r"""The Fresnel integrals.
 
   JAX implementation of :obj:`scipy.special.fresnel`.
 
-  The Fresnel integrals are defined as
-    .. math::
-       S(x) &= \int_0^x \sin(\pi t^2 /2) dt \\
-       C(x) &= \int_0^x \cos(\pi t^2 /2) dt.
+  The Fresnel integrals are defined by
+
+  .. math::
+
+    \begin{aligned}
+    S(x) &= \int_0^x \sin\left(\pi t^2 / 2\right)\mathrm{d}t, \\
+    C(x) &= \int_0^x \cos\left(\pi t^2 / 2\right)\mathrm{d}t.
+    \end{aligned}
 
   Args:
     x: arraylike, real-valued.
 
   Returns:
-    Arrays containing the values of the Fresnel integrals.
+    A tuple ``(S, C)`` of arrays containing the values of the Fresnel integrals.
 
   Notes:
      The JAX version only supports real-valued inputs, and

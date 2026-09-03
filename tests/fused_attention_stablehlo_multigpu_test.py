@@ -601,21 +601,28 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     self.assertArraysAllClose(query_grad_ref, query_grad, rtol=2e-1, atol=2e-1)
     self.assertArraysAllClose(key_grad_ref, key_grad, rtol=2e-1, atol=2e-1)
     self.assertArraysAllClose(value_grad_ref, value_grad, rtol=2e-1, atol=2e-1)
+  @jtu.sample_product(
+      num_kv_heads=[4, 2],
+      mask_type=[MaskType.NO_MASK, MaskType.PADDING_CAUSAL],
+  )
   @jtu.run_on_devices("cuda")
-  def test_sdpa_packed_layout(self):
+  def test_sdpa_packed_layout(self, num_kv_heads, mask_type):
     if jax.device_count() < 4:
       self.skipTest("Requires more than 4 devices.")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Requires at least Hopper arch")
+    num_heads = 4
+    head_dim = 64
+    q_per_kv = num_heads // num_kv_heads
     k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
     query = jax.random.normal(
-        k1, (4, 512, 4, 64), dtype=jnp.bfloat16)
+        k1, (4, 512, num_heads, head_dim), dtype=jnp.bfloat16)
     key = jax.random.normal(
-        k2, (4, 512, 4, 64), dtype=jnp.bfloat16)
+        k2, (4, 512, num_kv_heads, head_dim), dtype=jnp.bfloat16)
     value = jax.random.normal(
-        k3, (4, 512, 4, 64), dtype=jnp.bfloat16)
+        k3, (4, 512, num_kv_heads, head_dim), dtype=jnp.bfloat16)
     grad = jax.random.normal(
-        k4, (4, 512, 4, 64), dtype=jnp.bfloat16)
+        k4, (4, 512, num_heads, head_dim), dtype=jnp.bfloat16)
 
     def generate_padding_mask(segment_ids, padding_id, shape, dtype):
       # segment_ids [B, T]
@@ -632,6 +639,12 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       mask = jnp.expand_dims(mask, 1)
       mask *= get_large_negative_number(dtype)
       return mask
+
+    def generate_causal_mask(seq_len, dtype):
+      col_idx = jax.lax.broadcasted_iota(np.int32, (seq_len, seq_len), 1)
+      row_idx = jax.lax.broadcasted_iota(np.int32, (seq_len, seq_len), 0)
+      mask = (row_idx < col_idx).astype(dtype) * get_large_negative_number(dtype)
+      return mask[jnp.newaxis, jnp.newaxis]
 
     # starting pos of each segment
     q_offsets = jnp.asarray([
@@ -661,7 +674,14 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     kv_seqlen = q_seqlen.copy()
 
     mask = generate_padding_mask(segment_ids, q_seqlen.shape[1], query.shape, query.dtype)
+    kv_mask = generate_padding_mask(segment_ids, q_seqlen.shape[1], key.shape, key.dtype)
+    # The reference always runs with NO_MASK, so the variants differ only here.
+    # Causal within a segment is global causal restricted to that segment.
     bias = generate_segment_mask(segment_ids, jnp.float32)
+    if mask_type == MaskType.PADDING_CAUSAL:
+      # `minimum`, not `+`: the large negative value is scaled to leave headroom,
+      # so summing two of them overflows to -inf and gives NaN gradients.
+      bias = jnp.minimum(bias, generate_causal_mask(query.shape[1], jnp.float32))
 
     devices = np.array(jax.local_devices()[:4])
     devices = devices.reshape((2, 2))
@@ -685,7 +705,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
       jitted_sdpa_train = jax.jit(
         partial(
-          sdpa_train, scale=0.1, mask_type=MaskType.NO_MASK, dropout_rate=0),
+          sdpa_train, scale=0.1, mask_type=mask_type, dropout_rate=0),
         in_shardings=(qkv_sharding, qkv_sharding, qkv_sharding, qkv_sharding,
                       None, None, offsets_sharding, offsets_sharding, offsets_sharding, offsets_sharding),
         out_shardings=(qkv_sharding, (qkv_sharding, qkv_sharding, qkv_sharding))
@@ -700,14 +720,26 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       )
 
       query = query * mask
-      key = key * mask
-      value = value * mask
+      key = key * kv_mask
+      value = value * kv_mask
       grad = grad * mask
 
       out, (query_grad, key_grad, value_grad) = \
         jitted_sdpa_train(query, key, value, grad, None, None, q_seqlen, kv_seqlen, q_offsets, kv_offsets)
+
+      # No grouped-query reference, so expand kv: query head i attends to kv
+      # head i // q_per_kv, which is what repeat produces.
+      key_ref = jnp.repeat(key, q_per_kv, axis=2)
+      value_ref = jnp.repeat(value, q_per_kv, axis=2)
       out_ref, (query_grad_ref, key_grad_ref, value_grad_ref, _) = \
-        jitted_sdpa_train_ref(query, key, value, grad, bias)
+        jitted_sdpa_train_ref(query, key_ref, value_ref, grad, bias)
+
+      def fold_heads(x):
+        b, s, _, h = x.shape
+        return x.reshape(b, s, num_kv_heads, q_per_kv, h).sum(axis=3)
+
+      key_grad_ref = fold_heads(key_grad_ref)
+      value_grad_ref = fold_heads(value_grad_ref)
 
       out = out * mask
       out_ref = out_ref * mask
@@ -715,16 +747,19 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       query_grad = query_grad * mask
       query_grad_ref = query_grad_ref * mask
 
-      key_grad = key_grad * mask
-      key_grad_ref = key_grad_ref * mask
+      key_grad = key_grad * kv_mask
+      key_grad_ref = key_grad_ref * kv_mask
 
-      value_grad = value_grad * mask
-      value_grad_ref = value_grad_ref * mask
+      value_grad = value_grad * kv_mask
+      value_grad_ref = value_grad_ref * kv_mask
 
       self.assertArraysAllClose(out_ref, out, rtol=1e-2, atol=1e-2)
-      self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
-      self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-2, atol=1e-2)
-      self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-2, atol=1e-2)
+      # Causal masking leaves fewer terms in each sum, so the gradients disagree
+      # more than the output does: the largest gap measured here needs an atol of
+      # 1.1e-2, against 1.5e-3 for the non-causal cases.
+      self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=2e-2)
+      self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-2, atol=2e-2)
+      self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-2, atol=2e-2)
 
   @jtu.run_on_devices("cuda")
   @jtu.ignore_warning(category=DeprecationWarning,

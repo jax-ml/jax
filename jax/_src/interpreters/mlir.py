@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Hashable, Iterable, Iterator, Sequence
 import dataclasses
 import functools
 from functools import partial
@@ -26,19 +26,18 @@ import itertools
 import operator
 import re
 import types
-import typing
-from typing import Any, NamedTuple, Protocol, Union, cast as type_cast
+from typing import Any, NamedTuple, Protocol, cast as type_cast
 import warnings
 
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
+from jax._src import flattree as ft
 from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import hashable_array
 from jax._src import jaxpr_util
-from jax._src import linear_util as lu
 from jax._src import literals
 from jax._src import path
 from jax._src import sharding_impls
@@ -66,8 +65,6 @@ import numpy as np
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
-
-T = typing.TypeVar("T")
 
 Value = ir.Value
 
@@ -210,7 +207,7 @@ def aval_to_ir_type(ctx: ModuleContext, aval: core.AbstractValue) -> ir.Type:
 
 ir_type_handlers[core.ShapedArray] = _array_ir_types
 ir_type_handlers[core.AbstractToken] = lambda _: hlo.TokenType.get()
-ir_type_handlers[core.AbstractFuture] = lambda x: hlo.FutureType.get([_array_ir_types(x.inner_aval)])
+ir_type_handlers[core.AbstractFuture] = lambda x: _array_ir_types(x.inner_aval)
 
 def aval_to_ir_types(ctx: ModuleContext, aval: core.AbstractValue) -> tuple[ir.Type, ...]:
   """Converts a JAX aval to one or more MLIR IR types.
@@ -417,7 +414,7 @@ def get_attribute_handler(type_: type[Any]) -> AttributeHandler:
 def _numpy_scalar_attribute(val: Any) -> ir.Attribute:
   mlir_type = dtype_to_ir_type(val.dtype)
   if isinstance(mlir_type, ir.IntegerType):
-    return ir.IntegerAttr.get(mlir_type, val)
+    return ir.IntegerAttr.get(mlir_type, int(val))
   elif isinstance(mlir_type, ir.FloatType):
     return ir.FloatAttr.get(mlir_type, val)
   else:
@@ -620,8 +617,15 @@ class JaxIrContext(ir.Context):
     # context. We want to ensure that only the dialects we need are loaded.
     super(ir.Context, self).__init__(*args, **kwargs)
 
-def make_ir_context() -> ir.Context:
-  """Creates an MLIR context suitable for JAX IR."""
+_thread_local_context = _jax.config.Config[Any](
+    'mlir_thread_local_context',
+    None,
+    include_in_jit_key=False,
+    include_in_trace_context=False,
+)
+
+
+def _create_ir_context() -> JaxIrContext:
   context = JaxIrContext()
   context.append_dialect_registry(upstream_dialects)
   context.load_all_available_dialects()
@@ -642,8 +646,25 @@ def make_ir_context() -> ir.Context:
   return context
 
 
-AxisContext = Union[sharding_impls.SPMDAxisContext,
-                    sharding_impls.ShardingContext]
+def make_ir_context() -> ir.Context:
+  """Creates an MLIR context suitable for JAX IR."""
+  val = _thread_local_context.value
+  if val is not None:
+    ctx, count = val
+    # Reuse each context at most 10 times per thread to prevent unbounded
+    # growth of interned values (such as types, attributes, and locations)
+    # in long-running threads. 10 is a compromise intended to get
+    # most of the benefit without much memory overhead.
+    if count < 10:
+      _thread_local_context.set_local((ctx, count + 1))
+      return ctx
+  ctx = _create_ir_context()
+  _thread_local_context.set_local((ctx, 0))
+  return ctx
+
+
+AxisContext = (sharding_impls.SPMDAxisContext |
+               sharding_impls.ShardingContext)
 
 class ShapePolyLoweringState:
   # The names of the dimension variables, sorted by name. This is the order in
@@ -762,6 +783,61 @@ class LoweringCacheKey:
     )
 
 
+def _find_manual_pallas_collective_ids(
+    jaxpr: core.Jaxpr,
+    visited: set[core.Jaxpr] | None = None,
+) -> set[int]:
+  if visited is None:
+    visited = set()
+  elif jaxpr in visited:
+    return set()
+  visited.add(jaxpr)
+
+  manual_ids: set[int] = set()
+  for eqn in jaxpr.eqns:
+    if eqn.primitive.name in ("pallas_call", "mpmd_map"):
+      from jax._src.pallas.mosaic import core as tpu_core  # pyrefly: ignore[missing-import]
+
+      if (params := eqn.params.get("compiler_params")) is not None:
+        if (isinstance(params, tpu_core.CompilerParams)
+            and params.collective_id is not None):
+          manual_ids.add(params.collective_id)
+    else:
+      for subjaxpr in core.jaxprs_in_params(eqn.params):
+        manual_ids |= _find_manual_pallas_collective_ids( subjaxpr, visited)
+  return manual_ids
+
+
+@dataclasses.dataclass
+class CollectiveIdMapping:
+  auto: dict[Hashable, int] = dataclasses.field(default_factory=dict)
+  manual: dict[Hashable, int] = dataclasses.field(default_factory=dict)
+  all_ids: set[int] = dataclasses.field(default_factory=set)
+
+  @classmethod
+  def from_jaxpr(cls, jaxpr: core.Jaxpr) -> CollectiveIdMapping:
+    if config.jax_pallas_auto_assign_collective_ids.value == "override":
+      return cls()
+    return cls(all_ids=_find_manual_pallas_collective_ids(jaxpr))
+
+  def get_or_allocate_id(self, key: Hashable) -> tuple[int, bool]:
+    """Retrieves an existing auto-assigned ID or allocates a new one.
+
+    Returns:
+      A tuple of (collective_id, is_new).
+    """
+    if key in self.auto:
+      return self.auto[key], False
+    new_id = next(id_ for id_ in itertools.count(0) if id_ not in self.all_ids)
+    self.auto[key] = new_id
+    self.all_ids.add(new_id)
+    return new_id, True
+
+  def register_manual_id(self, key: Hashable, collective_id: int) -> None:
+    """Registers a manually assigned collective_id."""
+    self.manual[key] = collective_id
+    self.all_ids.add(collective_id)
+
 @dataclasses.dataclass(frozen=True)
 class LoweringCacheValue:
   func: func_dialect.FuncOp
@@ -798,6 +874,10 @@ class ModuleContext:
   aval_to_ir_types_cache: dict[core.AbstractValue, IrTypes]
   pallas_lowering_cache: dict[Any, Any]
 
+  # In auto collective id assignment mode, we keep track of collective id
+  # mapping to ensure each unique module gets a unique collective id.
+  pallas_collective_id_mapping: CollectiveIdMapping | None
+
   # Cached traceback information.
   traceback_caches: TracebackCaches
 
@@ -824,10 +904,14 @@ class ModuleContext:
       all_default_mem_kind: bool = True,
       sharding_attr_cache: None | dict[SdyArray, sdy.TensorShardingAttr] = None,
       aval_to_ir_types_cache: None | dict[core.AbstractValue, IrTypes] = None,
-      pallas_lowering_cache: None | dict[Any, Any] = None):
+      pallas_lowering_cache: None | dict[Any, Any] = None,
+      pallas_collective_id_mapping: None | CollectiveIdMapping = None):
 
     self.context = context or make_ir_context()
-    self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
+    if module is None:
+      with ir.Location.unknown(self.context):
+        module = ir.Module.create()
+    self.module = module
     self.ip = ip or ir.InsertionPoint(self.module.body)
     self.symbol_table = symbol_table or ir.SymbolTable(self.module.operation)
     self.backend = backend
@@ -849,6 +933,9 @@ class ModuleContext:
     self.sharding_attr_cache = ({} if sharding_attr_cache is None else sharding_attr_cache)
     self.aval_to_ir_types_cache = ({} if aval_to_ir_types_cache is None else aval_to_ir_types_cache)
     self.pallas_lowering_cache = ({} if pallas_lowering_cache is None else pallas_lowering_cache)
+    self.pallas_collective_id_mapping = (CollectiveIdMapping()
+                                         if pallas_collective_id_mapping is None
+                                         else pallas_collective_id_mapping)
 
   def get_backend(self, optional: bool = False) -> xc.Client | None:
     if len(self.platforms) > 1:
@@ -1134,7 +1221,7 @@ class LoweringResult(NamedTuple):
   shape_poly_state: ShapePolyLoweringState
 
 
-_platforms_with_donation = ["cpu", "cuda", "rocm", "tpu", "neuron"]
+_platforms_with_donation = ["cpu", "cuda", "rocm", "tpu", "neuron", "oneapi"]
 
 
 def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
@@ -1219,7 +1306,7 @@ def all_unconstrained(s, aval):
   return False
 
 
-def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
+def check_jaxpr_constants(closed_jaxpr: core.Jaxpr):
   """Check if a JAXPR contains an excessive amount of constants, if so, report where they were captured"""
   if (threshold := config.captured_constants_warn_bytes.value) == -1:
     return
@@ -1251,11 +1338,11 @@ def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
       f"Largest {min(num_frames, len(closed_jaxpr.consts))} allocation(s):\n"
   )
   try:
-    nbytes_var_const = zip(nbytes_iter, closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts)
+    nbytes_var_const = zip(nbytes_iter, closed_jaxpr.constvars, closed_jaxpr.consts)
     for nbytes, var, const in heapq.nlargest(5, nbytes_var_const, key=operator.itemgetter(0)):
       message += f"  Constant {type(const)}, {var.aval.str_short()}, {util.pprint_bytes(nbytes)} captured at:\n"
 
-      for eqn in jaxpr_util.eqns_using_var(closed_jaxpr.jaxpr, var):
+      for eqn in jaxpr_util.eqns_using_var(closed_jaxpr, var):
         call_frame_source_info = source_info_util.summarize(eqn.source_info, num_frames)
         message += "  " * 2 + call_frame_source_info.replace("\n", "\n" + "  " * 2) + "\n\n"
 
@@ -1286,10 +1373,11 @@ COLLECTIVE_CHANNEL_ID = 1
 
 def lower_jaxpr_to_module(
     module_name: str,
-    jaxpr: core.ClosedJaxpr,
+    jaxpr: core.Jaxpr,
     *,
     num_const_args: int,
     in_avals: Sequence[core.AbstractValue],
+    out_avals: Sequence[core.AbstractValue],
     ordered_effects: list[core.Effect],
     # See ModuleContext.get_backend() for backend and platforms usage.
     platforms: Sequence[str],
@@ -1321,8 +1409,8 @@ def lower_jaxpr_to_module(
 
   sharded_in_avals = (in_avals if arg_shardings is None else
                       map(sharded_aval, in_avals, arg_shardings))
-  sharded_out_avals = (jaxpr.out_avals if result_shardings is None else
-                       map(sharded_aval, jaxpr.out_avals, result_shardings))
+  sharded_out_avals = (out_avals if result_shardings is None else
+                       map(sharded_aval, out_avals, result_shardings))
   if all_default_mem_kind:
     arg_memory_kinds = None
     result_memory_kinds = None
@@ -1391,7 +1479,13 @@ def lower_jaxpr_to_module(
                       host_callbacks=host_callbacks,
                       lowering_parameters=lowering_parameters,
                       shape_poly_state=ShapePolyLoweringState(dim_vars, platforms),
-                      all_default_mem_kind=all_default_mem_kind)
+                      all_default_mem_kind=all_default_mem_kind,
+                      pallas_collective_id_mapping=(
+                          CollectiveIdMapping.from_jaxpr(jaxpr.jaxpr)
+                          if "tpu" in platforms
+                          else None
+                      ),
+  )
   with ctx.context, ir.Location.unknown(ctx.context):
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
@@ -1406,6 +1500,7 @@ def lower_jaxpr_to_module(
         main_function=True,
         replicated_args=replicated_args,
         in_avals=in_avals,
+        out_avals=out_avals,
         arg_shardings=arg_shardings,
         result_shardings=result_shardings,
         input_output_aliases=input_output_aliases,
@@ -1610,13 +1705,14 @@ class TokenSet:
 def lower_jaxpr_to_fun(
     ctx: ModuleContext,
     name: str,
-    jaxpr: core.ClosedJaxpr,
+    jaxpr: core.Jaxpr,
     effects: Sequence[core.Effect],
     *,
     num_const_args: int,
     main_function: bool = False,
     replicated_args: Sequence[bool] | None = None,
     in_avals: Sequence[core.AbstractValue],
+    out_avals: Sequence[core.AbstractValue],
     arg_shardings: Sequence[JSharding | None] | None = None,
     result_shardings: Sequence[JSharding | None] | None = None,
     use_sharding_annotations: bool = True,
@@ -1629,6 +1725,7 @@ def lower_jaxpr_to_fun(
     arg_layouts: Sequence[Layout | None | AutoLayoutSingleton] | None = None,
     result_layouts: Sequence[Layout | None | AutoLayoutSingleton] | None = None,
     propagated_out_mem_kinds: tuple[None | str, ...] | None = None,
+    detached: bool = False,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -1662,6 +1759,11 @@ def lower_jaxpr_to_fun(
     input_output_aliases: optional sequence that maps argument numbers to the
       corresponding output that should alias them.
     xla_donated_args: optional sequence of args to set donation annotations.
+    detached: if True, emits a detached function (`ip=False`) that is not
+      inserted into the module's symbol table. This is used for functions that
+      are intended to be inlined into a caller during lowering (e.g., when
+      `inline=jax.Inline.JAX_LATE`), avoiding dead private functions in the
+      MLIR module that would otherwise require symbol dead-code elimination.
   Returns:
     MLIR func op
   """
@@ -1689,7 +1791,7 @@ def lower_jaxpr_to_fun(
 
   # Function inputs: *dim_var_values, *tokens, *const_args, *actual_inputs
   input_types = [_aval_to_ir_types(ctx, a) for a in in_avals]
-  output_types = [_aval_to_ir_types(ctx, a) for a in jaxpr.out_avals]
+  output_types = [_aval_to_ir_types(ctx, a) for a in out_avals]
   num_tokens = len(effects)
 
   token_types = [token_type() for _ in effects]
@@ -1697,7 +1799,7 @@ def lower_jaxpr_to_fun(
   # Order of arguments: dim vars, tokens, const_args, array inputs
   input_avals = dim_var_avals + token_avals + list(in_avals)
   input_types = [*dim_var_types, *token_types, *input_types]
-  output_avals = [core.abstract_token] * num_tokens + jaxpr.out_avals
+  output_avals = [core.abstract_token] * num_tokens + list(out_avals)
   output_types = [*token_types, *output_types]
 
   if input_output_aliases is not None:
@@ -1737,10 +1839,13 @@ def lower_jaxpr_to_fun(
   flat_output_types, _ = ir_tree_registry.flatten(output_types)
   ftype = ir.FunctionType.get(flat_input_types, flat_output_types)
   func_name = "main" if main_function else name
-  func_op = func_dialect.FuncOp(func_name, ftype, ip=ctx.ip)
-  func_op.attributes["sym_visibility"] = ir.StringAttr.get(
-      "public" if main_function else "private")
-  ctx.symbol_table.insert(func_op)
+  if detached:
+    func_op = func_dialect.FuncOp(func_name, ftype, ip=False)
+  else:
+    func_op = func_dialect.FuncOp(func_name, ftype, ip=ctx.ip)
+    func_op.attributes["sym_visibility"] = ir.StringAttr.get(
+        "public" if main_function else "private")
+    ctx.symbol_table.insert(func_op)
 
   ir_arg_shardings = None
   if arg_shardings is not None:
@@ -1802,8 +1907,7 @@ def lower_jaxpr_to_fun(
          for l, a, types in zip(result_layouts, output_avals, output_types)])
 
   # Populate arg_attrs
-  if (
-      replicated_args is not None
+  if (replicated_args is not None
       or ir_arg_shardings is not None
       or ir_arg_memory_kinds is not None
       or ir_arg_layouts is not None
@@ -1812,8 +1916,7 @@ def lower_jaxpr_to_fun(
       or arg_names is not None
       or num_tokens > 0
       or num_dim_vars > 0
-      or num_const_args > 0
-  ):
+      or num_const_args > 0):
     arg_attrs: list[dict[str, ir.Attribute]] = [
         {} for _ in range(len(flat_input_types))]
 
@@ -1947,7 +2050,7 @@ def lower_jaxpr_to_fun(
     flat_args = entry_block.arguments
     dim_var_values, _, const_arg_values, _ = util.split_list(
         flat_args, [num_dim_vars, num_tokens, num_const_args])
-    const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
+    const_args_and_avals = core.jaxpr_const_args(jaxpr)
     if num_const_args == 0:
       # If we did not hoist the constants out of this function, lower them now
       const_arg_values = [ir_constant(c, aval=aval)
@@ -1964,6 +2067,13 @@ def lower_jaxpr_to_fun(
         tokens_in=TokenSet.create([]), tokens_out=None,
         axis_size_env=None, dim_var_values=dim_var_values,
         const_lowering=const_lowering)
+
+    flat_args = [
+        lower_with_sharding_in_types(entry_lowering_ctx, o, aval)
+        if isinstance(aval, core.ShapedArray) and aval.sharding.spec.unreduced
+        else o for o, aval in zip(flat_args, input_avals)
+    ]
+
     if not use_sharding_annotations and ir_arg_shardings is not None:
       flat_args = [
           a if s is None else wrap_with_sharding_op(entry_lowering_ctx, a, a_aval, s)
@@ -1987,12 +2097,12 @@ def lower_jaxpr_to_fun(
     args: list[IrValues] = unflattened_args
     unique_consts = {
         id(c): _ir_constant(c, aval=var.aval)
-        for c, var in zip(jaxpr.consts, jaxpr.jaxpr.constvars)
+        for c, var in zip(jaxpr.consts, jaxpr.constvars)
     }
     consts_for_constvars = [unique_consts[id(c)] for c in jaxpr.consts]
 
     out_vals, tokens_out = jaxpr_subcomp(
-        ctx, jaxpr.jaxpr, name_stack, tokens_in, consts_for_constvars, *args,
+        ctx, jaxpr, name_stack, tokens_in, consts_for_constvars, *args,
         dim_var_values=dim_var_values, const_lowering=const_lowering,
         outer_traceback=outer_traceback)
     outs: list[IrValues] = []
@@ -2024,6 +2134,12 @@ def lower_jaxpr_to_fun(
           for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,
                                  result_shardings)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       ]
+
+    flat_outputs = [
+        lower_with_sharding_in_types(entry_lowering_ctx, o, aval)
+        if isinstance(aval, core.ShapedArray) and aval.sharding.spec.unreduced
+        else o for o, aval in zip(flat_outputs, output_avals)
+    ]
 
     func_dialect.return_(flat_outputs)
 
@@ -2537,7 +2653,7 @@ def lower_per_platform(ctx: LoweringRuleContext,
     flat_output, _ = ir_tree_registry.flatten(output)
     for o, a in zip(flat_output, ctx.avals_out):
       if not isinstance(o, ir.BlockArgument):
-        check_unreduced_constraint(o, a)
+        check_unreduced_constraint(o, a, description)
         wrap_compute_type_in_place(ctx, o)
         wrap_xla_metadata_in_place(ctx, o)
     return flat_output
@@ -2581,7 +2697,7 @@ def lower_per_platform(ctx: LoweringRuleContext,
                         f"{description}, got output {output}") from e
       for o, a in zip(out_nodes, ctx.avals_out):
         if not isinstance(o, ir.BlockArgument):
-          check_unreduced_constraint(o, a)
+          check_unreduced_constraint(o, a, description)
           wrap_compute_type_in_place(ctx, o)
           wrap_xla_metadata_in_place(ctx, o)
       if inner_ctx.tokens_out is not None:
@@ -2614,17 +2730,15 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   as `avals_out`."""
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
-    wrapped_fun = lu.wrap_init(f, params,
-        debug_info=api_util.debug_info("lower_fun", fun, args, {}))
-
-    jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic(
-        wrapped_fun, ctx.avals_in, lower=True)
+    jaxpr, _ = pe.trace_to_jaxpr(
+        partial(f, **params), ft.flatten_args(*ctx.avals_in),
+        api_util.debug_info("lower_fun", fun, args, {}), requires_low=True)
+    consts_for_constvars = jaxpr.consts
 
     if any(isinstance(e, core.InternalMutableArrayEffect) for e in jaxpr.effects):
       from jax._src.interpreters import pxla  # pyrefly: ignore[missing-module-attribute]
-      closed_jaxpr = core.ClosedJaxpr(jaxpr, consts_for_constvars)
-      closed_jaxpr = pxla._discharge_internal_refs(closed_jaxpr)
-      jaxpr, consts_for_constvars = closed_jaxpr.jaxpr, closed_jaxpr.consts
+      jaxpr = pxla._discharge_internal_refs(jaxpr)
+      consts_for_constvars = jaxpr.consts
 
     # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
 
@@ -2646,24 +2760,26 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
 
 
 def _lower_jaxpr_to_fun_cached(
-    ctx: ModuleContext, fn_name, call_jaxpr: core.ClosedJaxpr,
-    num_const_args: int, effects, in_avals, arg_names=None, result_names=None):
+    ctx: ModuleContext, fn_name, call_jaxpr: core.Jaxpr,
+    num_const_args: int, effects, in_avals, out_avals, arg_names=None,
+    result_names=None, detached=False):
   assert num_const_args + len(call_jaxpr.in_avals) == len(in_avals)
   if not call_jaxpr.consts and arg_names is result_names is None:
     # Cacheable.
-    key = (fn_name, call_jaxpr.jaxpr, tuple(effects))
+    key = (fn_name, call_jaxpr, tuple(effects))
     try:
       func_op = ctx.cached_primitive_lowerings[key]
     except KeyError:
       func_op = lower_jaxpr_to_fun(
           ctx, fn_name, call_jaxpr, effects, num_const_args=num_const_args,
-          in_avals=in_avals, arg_names=arg_names, result_names=result_names)
+          in_avals=in_avals, out_avals=out_avals, arg_names=arg_names,
+          result_names=result_names, detached=detached)
       ctx.cached_primitive_lowerings[key] = func_op
   else:
     func_op = lower_jaxpr_to_fun(
         ctx, fn_name, call_jaxpr, effects,
-        num_const_args=num_const_args, in_avals=in_avals,
-        arg_names=arg_names, result_names=result_names)
+        num_const_args=num_const_args, in_avals=in_avals, out_avals=out_avals,
+        arg_names=arg_names, result_names=result_names, detached=detached)
   return func_op
 
 
@@ -2685,29 +2801,31 @@ def check_backend_matches(inner_backend: str | None,
 
 
 def lower_called_computation(
-    fn_name, call_jaxpr: core.ClosedJaxpr, ctx: ModuleContext,
+    fn_name, call_jaxpr: core.Jaxpr, ctx: ModuleContext,
     num_const_args: int, in_avals, out_avals, tokens_in, backend=None,
-    arg_names=None, result_names=None):
-  assert isinstance(call_jaxpr, core.ClosedJaxpr), type(call_jaxpr)
+    arg_names=None, result_names=None, detached=False):
+  assert isinstance(call_jaxpr, core.Jaxpr), type(call_jaxpr)
   check_backend_matches(backend, ctx.platforms)
   effects = list(tokens_in.effects())
   output_types = [_aval_to_ir_types(ctx, a) for a in out_avals]
   output_types = [token_type()] * len(effects) + output_types
   func_op = _lower_jaxpr_to_fun_cached(
       ctx, fn_name, call_jaxpr, num_const_args, effects, in_avals=in_avals,
-      arg_names=arg_names, result_names=result_names)
+      out_avals=out_avals, arg_names=arg_names, result_names=result_names,
+      detached=detached)
   return func_op, output_types, effects
 
 
-def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr, backend,
-                  ctx: ModuleContext, in_avals,
+def call_lowering(fn_name, call_jaxpr: core.Jaxpr, backend,
+                  mod_ctx: ModuleContext, in_avals,
                   out_avals, tokens_in, *args,
                   dim_var_values: Sequence[ir.Value],
                   const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
                   arg_names=None, result_names=None,
-                  attributes: None | dict[str, Any] = None):
-  assert isinstance(call_jaxpr, core.ClosedJaxpr), type(call_jaxpr)
-  const_args_and_avals = core.jaxpr_const_args(call_jaxpr.jaxpr)
+                  attributes: None | dict[str, Any] = None,
+                  inline_jax_late: bool = False):
+  assert isinstance(call_jaxpr, core.Jaxpr), type(call_jaxpr)
+  const_args_and_avals = core.jaxpr_const_args(call_jaxpr)
   const_args, const_avals = util.unzip2(const_args_and_avals)
   const_arg_values = [ir_constants(c, const_lowering=const_lowering, aval=aval)
                       for c, aval in const_args_and_avals]
@@ -2717,44 +2835,42 @@ def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr, backend,
   in_avals = (*const_avals, *in_avals)
 
   func_op, output_types, effects = lower_called_computation(
-      fn_name, call_jaxpr, ctx, len(const_args), in_avals, out_avals,
-      tokens_in,
-      backend=backend, arg_names=arg_names, result_names=result_names)
+      fn_name, call_jaxpr, mod_ctx, len(const_args), in_avals, out_avals,
+      tokens_in, backend=backend, arg_names=arg_names, result_names=result_names,
+      detached=inline_jax_late)
   symbol_name = func_op.name.value
   flat_output_types, treedef = ir_tree_registry.flatten(output_types)
   tokens = [tokens_in.get(eff) for eff in effects]
   args = (*dim_var_values, *tokens, *args)
   flat_args, _ = ir_tree_registry.flatten(args)
-  call = func_dialect.CallOp(flat_output_types,
-                             ir.FlatSymbolRefAttr.get(symbol_name),
-                             flat_args)
-  if attributes:
-    call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(attributes)
-  out_nodes = treedef.unflatten(call.results)
+  if inline_jax_late:
+    results = jax_mlir_ext.inlined_func_call(func_op.operation, flat_args)
+  else:
+    call = func_dialect.CallOp(
+        flat_output_types, ir.FlatSymbolRefAttr.get(symbol_name), flat_args)
+    if attributes:
+      call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(attributes)
+    results = call.results
+  out_nodes = treedef.unflatten(results)
   tokens, out_nodes = util.split_list(out_nodes, [len(effects)])
   tokens_out = tokens_in.update_tokens(TokenSet(dict(zip(effects, tokens))))
   return out_nodes, tokens_out
 
-def core_call_lowering(ctx: LoweringRuleContext,
-                       *args, name, backend=None,
-                       call_jaxpr: core.ClosedJaxpr | core.Jaxpr):
-  if isinstance(call_jaxpr, core.Jaxpr):
-    call_jaxpr = pe.close_jaxpr(call_jaxpr)
+def core_call_lowering(
+    ctx: LoweringRuleContext, *args, name, backend=None, inline_jax_late=False,
+    call_jaxpr: core.Jaxpr, **params):
   effects = list(effects_lib.ordered_effects.filter_in(call_jaxpr.effects))
   tokens_in = ctx.tokens_in.subset(effects)
   out_nodes, tokens = call_lowering(
       name, call_jaxpr, backend, ctx.module_context,
       ctx.avals_in, ctx.avals_out, tokens_in, *args,
       dim_var_values=ctx.dim_var_values,
-      const_lowering=ctx.const_lowering)
+      const_lowering=ctx.const_lowering,
+      inline_jax_late=inline_jax_late)
   ctx.set_tokens_out(ctx.tokens_in.update_tokens(tokens))
-  return out_nodes
+  return [lower_with_sharding_in_types(ctx, o, a)
+          for o, a in zip(out_nodes, ctx.avals_out)]
 
-register_lowering(core.call_p, partial(core_call_lowering, name="core_call"))
-# TODO(phawkins): Not cacheable because of debug_print on TPU.
-register_lowering(core.closed_call_p,
-                  partial(core_call_lowering, name="closed_call"),
-                  cacheable=False)
 
 def map_compute_type(c_type: str) -> str:
   if c_type == "device_host":
@@ -2774,7 +2890,6 @@ def _update_frontend_attributes(op, attrs):
     assert isinstance(attr_array, ir.DictAttr)
     attrs |= {a.name: a.attr for a in attr_array}
   op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(attrs)
-
 
 # TODO(yashkatariya): Delete this after legacy compute_on is deleted.
 def wrap_compute_type_in_place(ctx: LoweringRuleContext,
@@ -2796,7 +2911,6 @@ def wrap_compute_type_in_place(ctx: LoweringRuleContext,
     }
   _update_frontend_attributes(op, dict_attr)
 
-
 def wrap_xla_metadata_in_place(ctx: LoweringRuleContext,
                                op: ir.Value | ir.Operation) -> None:
   if ctx.jaxpr_eqn_ctx is None:
@@ -2813,7 +2927,7 @@ def wrap_xla_metadata_in_place(ctx: LoweringRuleContext,
   _update_frontend_attributes(op, ctx_attributes)
 
 
-def check_unreduced_constraint(op: ir.Value | ir.Operation, aval) -> None:
+def check_unreduced_constraint(op: ir.Value | ir.Operation, aval, name) -> None:
   if not isinstance(aval, core.ShapedArray):
     return
   if not aval.sharding.spec.unreduced:
@@ -2821,15 +2935,16 @@ def check_unreduced_constraint(op: ir.Value | ir.Operation, aval) -> None:
   if isinstance(op, ir.Value):
     op = op.owner.operation if isinstance(op.owner, ir.OpView) else op.owner  # type: ignore
   assert isinstance(op, ir.Operation)
-  if op.name in ("func.call", "sdy.manual_computation", "mpmd.named_computation"):
+  if op.name == "mpmd.named_computation":
     return
   assert op.name == "sdy.sharding_constraint", (
       f"Expected last op to be sdy.sharding_constraint, but got: {op.name} and "
-      f"output type={aval.str_short(True)}")
+      f"output type={aval.str_short(True)} for primitive {name}")
   sharding = sdy.TensorShardingAttr(op.attributes["sharding"])
   assert sharding.unreduced_axes, (
-      "Expected sdy.sharding_constraint to have unreduced_axes populated, "
-      f"but got: {sharding} and output type={aval.str_short(True)}")
+      "Expected sdy.sharding_constraint to have unreduced_axes populated, but"
+      f" got: {sharding} and output type={aval.str_short(True)} for primitive"
+      f" {name}")
 
 
 def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue, *,
@@ -3181,14 +3296,17 @@ def wrap_with_layout_op(ctx: LoweringRuleContext,
   else:
     result_shapes = [eval_dynamic_shape_as_tensor(ctx, out_shape)]
 
-  op = custom_call('LayoutConstraint', result_types=[result_type], operands=[x],
-                   api_version=1,
-                   result_shapes=result_shapes,
-                   # Set operand layouts to anything. XLA will ignore it.
-                   operand_layouts=[list(range(aval_in.ndim))],  # pyrefly: ignore[missing-attribute]
-                   # TODO(yashkatariya): Figure out how to pass tiling to the
-                   # custom call.
-                   result_layouts=[layout.major_to_minor[::-1]])
+  op = custom_call(
+      "LayoutConstraint",
+      result_types=[result_type],
+      operands=[x],
+      api_version=1,
+      result_shapes=result_shapes,
+      # Set operand layouts to anything. XLA will ignore it.
+      operand_layouts=[list(range(aval_in.ndim))],  # pyrefly: ignore[missing-attribute]
+      result_layouts=[layout.major_to_minor[::-1]],
+      result_tilings=None if layout.tiling is None else [layout.tiling],
+  )
   return op.result
 
 
@@ -3273,7 +3391,7 @@ SEND_TO_HOST_TYPE = 2
 RECV_FROM_HOST_TYPE = 3
 
 def build_mlir_module_helper(
-    closed_jaxpr: core.ClosedJaxpr, *, name: str,
+    closed_jaxpr: core.Jaxpr, *, name: str,
     platforms: Sequence[str],
     backend: xc.Client | None,
     axis_context: AxisContext) -> ir.Module:
@@ -3282,14 +3400,16 @@ def build_mlir_module_helper(
       closed_jaxpr.effects)
   if unlowerable_effects:
     raise ValueError(f'Cannot lower jaxpr with effects: {closed_jaxpr.effects}')
-  lowering_result = lower_jaxpr_to_module(name, closed_jaxpr,
-      num_const_args=0,
+  lowering_result = lower_jaxpr_to_module(
+      name, closed_jaxpr, num_const_args=0,
       in_avals=closed_jaxpr.in_avals,
+      out_avals=closed_jaxpr.out_avals,
       backend=backend, ordered_effects=[],
-      donated_args=[False] * len(closed_jaxpr.jaxpr.invars),
+      donated_args=[False] * len(closed_jaxpr.invars),
       axis_context=axis_context, platforms=platforms,
       lowering_parameters=LoweringParameters(hoist_constants_as_args=False))
   return lowering_result.module
+
 
 def custom_call(
     call_target_name: str,
@@ -3304,6 +3424,7 @@ def custom_call(
     operand_output_aliases: dict[int, int] | None = None,
     operand_layouts: Sequence[Sequence[int]] | None = None,
     result_layouts: Sequence[Sequence[int]] | None = None,
+    result_tilings: Sequence[Sequence[Sequence[int]]] | None = None,
     extra_attributes: dict[str, ir.Attribute] | None = None,
 ) -> hlo.CustomCallOp:
   """Helper function for building an hlo.CustomCall.
@@ -3314,14 +3435,15 @@ def custom_call(
     operands: the MLIR IR values that are arguments to the custom call
     backend_config: an opaque string passed to the custom call kernel
     has_side_effect: if True, marks the custom call as effectful
-    result_shapes: tensors that represent the result shapes, to be used when
-      the results have dynamic shapes. If not-None, its length must match the
-      number of the results.
+    result_shapes: tensors that represent the result shapes, to be used when the
+      results have dynamic shapes. If not-None, its length must match the number
+      of the results.
     called_computations: the list of function names called by the custom call.
     api_version: the ABI contract version of the custom call
     operand_output_aliases: a dict mapping operand numbers to outputs they alias
     operand_layouts: a sequence of layouts (dimension orders) for each operand
     result_layouts: a sequence of layouts (dimension orders) for each result
+    result_tilings: a sequence of tiles for each result
     extra_attributes: additional IR attributes to apply to the custom_call.
   """
   operands = list(operands)
@@ -3393,6 +3515,22 @@ def custom_call(
         ir.DenseIntElementsAttr.get(
             np.atleast_1d(np.asarray(l, dtype=np.int64)),
             type=ir.IndexType.get()) for l in result_layouts
+    ])
+  if result_tilings is not None:
+    assert len(result_tilings) == len(result_types), (
+        result_tilings,
+        result_types,
+    )
+    attributes["result_tilings"] = ir.ArrayAttr.get([
+        ir.ArrayAttr.get([
+            ir.DenseIntElementsAttr.get(
+                np.asarray(tile_dim, dtype=np.int64), type=ir.IndexType.get()
+            )
+            for tile_dim in tiling
+        ])
+        if tiling is not None
+        else ir.ArrayAttr.get([])
+        for tiling in result_tilings
     ])
 
   op = hlo.CustomCallOp.build_generic(results=result_types, operands=operands,

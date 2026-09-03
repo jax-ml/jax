@@ -22,19 +22,25 @@ _cuhybrid = import_from_plugin("cuda", "_hybrid")
 _hipsolver = import_from_plugin("rocm", "_solver")
 _hiphybrid = import_from_plugin("rocm", "_hybrid")
 
+_oneapisolver = import_from_plugin("oneapi", "_solver")
+_oneapihybrid = import_from_plugin("oneapi", "_hybrid")
+
 
 def registrations() -> dict[str, list[tuple[str, Any, int]]]:
   registrations: dict[str, list[tuple[str, Any, int]]] = {
       "CUDA": [],
       "ROCM": [],
+      "ONEAPI": [],
   }
-  for platform, module in [("CUDA", _cusolver), ("ROCM", _hipsolver)]:
+  for platform, module in [("CUDA", _cusolver), ("ROCM", _hipsolver),
+                           ("ONEAPI", _oneapisolver)]:
     if module:
       registrations[platform].extend(
           (name, value, int(name.endswith("_ffi")))
           for name, value in module.registrations().items()
       )
-  for platform, module in [("CUDA", _cuhybrid), ("ROCM", _hiphybrid)]:
+  for platform, module in [("CUDA", _cuhybrid), ("ROCM", _hiphybrid),
+                            ("ONEAPI", _oneapihybrid)]:
     if module:
       registrations[platform].extend(
           (*i, 1) for i in module.registrations().items()
@@ -44,12 +50,12 @@ def registrations() -> dict[str, list[tuple[str, Any, int]]]:
 
 def batch_partitionable_targets() -> list[str]:
   targets: list[str] = []
-  for module in [_cusolver, _hipsolver]:
+  for module in [_cusolver, _hipsolver, _oneapisolver]:
     if module:
       targets.extend(
           name for name in module.registrations() if name.endswith("_ffi")
       )
-  for module in [_cuhybrid, _hiphybrid]:
+  for module in [_cuhybrid, _hiphybrid, _oneapihybrid]:
     if module:
       targets.extend(name for name in module.registrations())
   return targets
@@ -60,6 +66,8 @@ def initialize_hybrid_kernels():
     _cuhybrid.initialize()
   if _hiphybrid:
     _hiphybrid.initialize()
+  if _oneapihybrid:
+    _oneapihybrid.initialize()
 
 
 def has_magma():

@@ -15,6 +15,7 @@
 # Shared CUDA/ROCM GPU kernels.
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 # Placeholder: load proto_library
 
 load(
@@ -53,6 +54,7 @@ exports_files(srcs = [
     "prng_kernels.cc",
     "prng_kernels.cu.cc",
     "prng_kernels.h",
+    "prng_kernels_oneapi.cc",
     "py_client_gpu.cc",
     "py_client_gpu.h",
     "rnn.cc",
@@ -69,6 +71,7 @@ exports_files(srcs = [
     "sparse_kernels.cc",
     "sparse_kernels.h",
     "triton.cc",
+    "triton_add_kernel.hlo",
     "triton_kernels.cc",
     "triton_kernels.h",
     "triton_support.cc",
@@ -125,6 +128,7 @@ cc_library(
     deps = [
         "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@nanobind",
@@ -139,5 +143,33 @@ cc_library(
         "@xla//xla/pjrt/c:pjrt_c_api_triton_extension_hdrs",
         "@xla//xla/tsl/platform:statusor",
         "@xla//xla/tsl/python/lib/core:numpy",
+    ],
+)
+
+cc_test(
+    name = "triton_kernel_aot_test",
+    srcs = ["triton_kernel_aot_test.cc"],
+    data = ["triton_add_kernel.hlo"],
+    tags = ["requires-gpu-nvidia"],
+    deps = [
+        "//jaxlib/cuda:cuda_vendor",
+        "//jaxlib/cuda:triton_kernels",
+        "@com_google_googletest//:gtest_main",
+        "@xla//xla:literal",
+        "@xla//xla:literal_util",
+        "@xla//xla/ffi",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/hlo/builder:xla_computation",
+        "@xla//xla/hlo/ir:hlo",
+        "@xla//xla/hlo/parser:hlo_parser",
+        "@xla//xla/pjrt:pjrt_client",
+        "@xla//xla/pjrt:pjrt_executable",
+        "@xla//xla/pjrt/plugin/xla_gpu:xla_gpu_pjrt_client",
+        "@xla//xla/service:gpu_plugin",
+        "@xla//xla/stream_executor/cuda:all_runtime",
+        "@xla//xla/stream_executor/cuda:cuda_platform",
+        "@xla//xla/tests:literal_test_util",
+        "@xla//xla/tsl/platform:env",
+        "@xla//xla/tsl/platform:resource_loader",
     ],
 )

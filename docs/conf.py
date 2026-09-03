@@ -31,12 +31,13 @@ import operator
 import os
 from pathlib import Path
 import sys
+from typing import ForwardRef
+import urllib.request
 
 sys.path.insert(0, os.path.abspath('..'))
 
 # Workaround to avoid expanding type aliases. See:
 # https://github.com/sphinx-doc/sphinx/issues/6518#issuecomment-589613836
-from typing import ForwardRef
 
 def _do_not_evaluate_in_jax(
     self, globalns, *args, _evaluate=ForwardRef._evaluate, **kwargs,
@@ -78,7 +79,7 @@ extensions = [
     'sphinx.ext.napoleon',
     'matplotlib.sphinxext.plot_directive',
     'myst_nb',
-    "sphinx_remove_toctrees",
+    'sphinx_remove_toctrees',
     'sphinx_copybutton',
     'jax_extensions',
     'jax_list_config_options',
@@ -88,13 +89,32 @@ extensions = [
     'sphinxcontrib.mermaid'
 ]
 
+# Define local cache paths
+cache_dir = os.path.join(os.path.dirname(__file__), 'intersphinx_cache')
+
 intersphinx_mapping = {
-    'array_api': ('https://data-apis.org/array-api/2023.12/', None),
-    'python': ('https://docs.python.org/3/', None),
-    'numpy': ('https://numpy.org/doc/stable/', None),
+    'array_api': ('https://data-apis.org/array-api/2023.12/', (os.path.join(cache_dir, 'array_api.inv'), None)),
+    'python': ('https://docs.python.org/3/', (os.path.join(cache_dir, 'python.inv'), None)),
+    'numpy': ('https://numpy.org/doc/stable/', (os.path.join(cache_dir, 'numpy.inv'), None)),
     # TODO(phawkins,jakevdp): revert to stable scipy docs when it is up again.
-    'scipy': ('https://scipy.github.io/devdocs/', None),
+    'scipy': ('https://scipy.github.io/devdocs/', (os.path.join(cache_dir, 'scipy.inv'), None)),
 }
+
+os.makedirs(cache_dir, exist_ok=True)
+for name, (url, (inv_path, _)) in intersphinx_mapping.items():
+  if not os.path.exists(inv_path):
+    print(f"Intersphinx cache miss for '{name}': downloading from {url}...")
+    try:
+      req = urllib.request.Request(
+          url + 'objects.inv',
+          headers={'User-Agent': 'Mozilla/5.0 (compatible; JAX-docs/1.0)'},
+      )
+      with urllib.request.urlopen(req) as resp, open(inv_path, 'wb') as out:
+        out.write(resp.read())
+    except Exception as e:
+      print(f"Warning: failed to download intersphinx inventory for {name}: {e}")
+  else:
+    print(f"Intersphinx cache hit for '{name}': using local inventory file at {inv_path}")
 
 suppress_warnings = [
     'ref.citation',  # Many duplicated citations in numpy/scipy docstrings.
@@ -137,6 +157,8 @@ exclude_patterns = [
     # These are kept in sync using the jupytext pre-commit hook.
     'notebooks/*.md',
     'pallas/quickstart.md',
+    'pallas/gpu/quickstart.md',
+    'pallas/tpu/quickstart.md',
     'pallas/pipelining.md',
     'pallas/gpu/pipelining.md',
     'pallas/tpu/pipelining.md',
@@ -149,6 +171,8 @@ exclude_patterns = [
     'autodidax.md',
     'autodidax2_part1.md',
     'array_refs.md',
+    'hijax_custom_derivatives.md',
+    'hijax_types.md',
     'parallel.md',
     'ffi.ipynb',
 ]
@@ -235,8 +259,6 @@ nb_execution_excludepatterns = [
     'notebooks/autodiff_remat.*',
     # Example only gives the specific output demonstrated on some platforms
     'notebooks/layout.*',
-    # Fails on readthedocs with Kernel Died
-    'notebooks/convolutions.ipynb',
     # Requires accelerators
     'pallas/quickstart.*',
     'pallas/pipelining.*',
@@ -248,8 +270,8 @@ nb_execution_excludepatterns = [
     'pallas/tpu/core_map.*',
     'pallas/tpu/sparsecore.*',
     'distributed_data_loading.*',
-    'notebooks/host-offloading.*',
     'notebooks/cute_dsl_jax.*',
+    '401/cute-dsl.*',
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------
@@ -378,6 +400,15 @@ def linkcode_resolve(domain, info):
 
 # Generate redirects from deleted files to new sources
 rediraffe_redirects = {
+  "rank_promotion_warning.rst": "101/rank_promotion_warning.rst",
+  "notes.rst": "index.rst",
+  "type_promotion.rst": "101/type_promotion.rst",
+  "default_dtypes.md": "101/default_dtypes.md",
+  "notebooks/host-offloading.ipynb": "201/memory-spaces.md",
+  "notebooks/convolutions.ipynb": "101/convolutions.md",
+  "custom_pytrees.md": "101/pytrees.md",
+  "jax-primitives.md": "601/jax-primitives.md",
+  "jaxpr.md": "601/jaxpr.md",
   "jax-101/01-jax-basics.md": "key-concepts.md",
   "jax-101/02-jitting.md": "jit-compilation.md",
   "jax-101/03-vectorization.md": "automatic-vectorization.md",
@@ -390,7 +421,7 @@ rediraffe_redirects = {
   "jax-101/index.rst": "jax-101.rst",
   "tutorials.rst": "jax-101.rst",
   "notebooks/external_callbacks.md": "external-callbacks.md",
-  "notebooks/How_JAX_primitives_work.md": "jax-primitives.md",
+  "notebooks/How_JAX_primitives_work.md": "601/jax-primitives.md",
   "jax.extend.ffi.rst": "jax.ffi.rst",
   "Custom_Operation_for_GPUs.md": "ffi.md",
   "notebooks/quickstart.md": "quickstart.md",
@@ -401,6 +432,50 @@ rediraffe_redirects = {
   "notebooks/Distributed_arrays_and_automatic_parallelization.md": "parallel.md",
   "notebooks/explicit-sharding.md": "parallel.md",
   "sharded-computation.md": "parallel.md",
+  "new_docs/101/arrays.md": "101/arrays.md",
+  "new_docs/101/errors.rst": "101/errors.rst",
+  "new_docs/101/index.rst": "101/index.rst",
+  "new_docs/101/pytrees.md": "101/pytrees.md",
+  "new_docs/101/random.md": "101/random.md",
+  "new_docs/101/state.md": "101/state.md",
+  "new_docs/101/transformations.md": "101/transformations.md",
+  "new_docs/201/aot.md": "201/aot.md",
+  "new_docs/201/callbacks.md": "201/callbacks.md",
+  "new_docs/201/control-flow.md": "201/control-flow.md",
+  "new_docs/201/controlling-xla.md": "201/controlling-xla.md",
+  "new_docs/201/debugging.md": "201/debugging.md",
+  "new_docs/201/gpu-memory.md": "201/gpu-memory.md",
+  "new_docs/201/index.rst": "201/index.rst",
+  "new_docs/201/jit.md": "201/jit.md",
+  "new_docs/201/placement.md": "201/placement.md",
+  "new_docs/201/precision.md": "201/precision.md",
+  "new_docs/201/profiling.md": "201/profiling.md",
+  "new_docs/201/shard-map.md": "201/shard-map.md",
+  "new_docs/201/sharding.md": "201/sharding.md",
+  "new_docs/201/slow-compilation.md": "201/slow-compilation.md",
+  "new_docs/301/cookbook.md": "301/cookbook.md",
+  "new_docs/301/custom-derivatives.md": "301/custom-derivatives.md",
+  "new_docs/301/custom-jvp-vjp.md": "301/custom-jvp-vjp.md",
+  "new_docs/301/hijax-types.md": "301/hijax-types.md",
+  "new_docs/301/index.rst": "301/index.rst",
+  "new_docs/301/refs.md": "301/refs.md",
+  "new_docs/301/remat.md": "301/remat.md",
+  "new_docs/301/sharding-ad.md": "301/sharding-ad.md",
+  "new_docs/301/vjp-objects.md": "301/vjp-objects.md",
+  "new_docs/401/cute-dsl.md": "401/cute-dsl.md",
+  "new_docs/401/ffi.md": "401/ffi.md",
+  "new_docs/401/index.rst": "401/index.rst",
+  "new_docs/401/pallas.md": "401/pallas.md",
+  "new_docs/501/compilation-cache.md": "501/compilation-cache.md",
+  "new_docs/501/data-loading.md": "501/data-loading.md",
+  "new_docs/501/export.md": "501/export.md",
+  "new_docs/501/fault-tolerance.rst": "501/fault-tolerance.rst",
+  "new_docs/501/index.rst": "501/index.rst",
+  "new_docs/501/multiprocess.md": "501/multiprocess.md",
+  "new_docs/501/security.md": "501/security.md",
+  "new_docs/501/shape-polymorphism.md": "501/shape-polymorphism.md",
+  "new_docs/501/transfer-guard.rst": "501/transfer-guard.rst",
+  "new_docs/index.rst": "index.rst",
 }
 
 from jupyter_client.provisioning import KernelProvisionerFactory
@@ -412,3 +487,81 @@ KernelProvisionerFactory.provisioners["portpicker-provisioner"] = EntryPoint(
     group="jupyter_client.kernel_provisioners"
 )
 KernelProvisionerFactory.default_provisioner_name = "portpicker-provisioner"
+
+
+# -- Superseded-page banner ---------------------------------------------------
+# Pages replaced by the leveled docs (101-501) stay at their original URLs but
+# carry a banner pointing at their replacement. Keys are docnames; values are
+# the replacement docname (linked in the banner).
+_superseded_pages = {
+    'jax-101': '101/index',
+    'key-concepts': '101/index',
+    'notebooks/thinking_in_jax': '101/index',
+    'beginner_guide': '101/index',
+    'jit-compilation': '201/jit',
+    'automatic-vectorization': '101/transformations',
+    'automatic-differentiation': '101/transformations',
+    'pytrees': '101/pytrees',
+    'random-numbers': '101/random',
+    'parallel': '201/sharding',
+    'control-flow': '201/control-flow',
+    'tracing': '101/transformations',
+    'stateful-computations': '101/state',
+    'notebooks/shard_map': '201/shard-map',
+    'notebooks/layout': '201/sharding',
+    'multi_process': '501/multiprocess',
+    'fault_tolerance': '501/fault-tolerance',
+    'security': '501/security',
+    'distributed_data_loading': '501/data-loading',
+    'notebooks/autodiff_cookbook': '301/cookbook',
+    'notebooks/autodiff_remat': '301/remat',
+    'advanced_autodiff': '301/index',
+    'higher-order': '301/cookbook',
+    'jacobian-vector-products': '301/cookbook',
+    'complex-differentiation': '301/cookbook',
+    'notebooks/Custom_derivative_rules_for_Python_code': '301/custom-jvp-vjp',
+    'hijax_custom_derivatives': '301/custom-derivatives',
+    'hijax_types': '301/hijax-types',
+    'debugging': '201/debugging',
+    'debugging/index': '201/debugging',
+    'debugging/checkify_guide': '201/debugging',
+    'debugging/flags': '201/debugging',
+    'debugging/print_breakpoint': '201/debugging',
+    'debugging/slow_tracing_compilation': '201/slow-compilation',
+    'debugging/xla_metadata': '201/controlling-xla',
+    'transfer_guard': '501/transfer-guard',
+    'persistent_compilation_cache': '501/compilation-cache',
+    'buffer_donation': '201/jit',
+    'benchmarking': '201/profiling',
+    'profiling': '201/profiling',
+    'device_memory_profiling': '201/profiling',
+    'array_refs': '101/state',
+    'external-callbacks': '201/callbacks',
+    'ffi': '401/ffi',
+    'notebooks/cute_dsl_jax': '401/cute-dsl',
+    'gradient-checkpointing': '301/remat',
+    'aot': '201/aot',
+    'export/index': '501/export',
+    'export/export': '501/export',
+    'export/shape_poly': '501/shape-polymorphism',
+    'xla_flags': '201/controlling-xla',
+    'async_dispatch': '201/jit',
+    'concurrency': '501/index',
+    'gpu_memory_allocation': '201/gpu-memory',
+    'errors': '101/errors',
+    'export/jax2tf': '501/export',
+    'notebooks/neural_network_with_tfds_data': '101/index',
+    'notebooks/Neural_Network_and_Data_Loading': '101/index',
+    'notebooks/vmapped_log_probs': '101/transformations',
+}
+
+
+def _superseded_banner(app, pagename, templatename, context, doctree):
+    target = _superseded_pages.get(pagename)
+    if target is not None:
+        depth = pagename.count('/')
+        context['superseded_target'] = '../' * depth + target + '.html'
+
+
+def setup(app):
+    app.connect('html-page-context', _superseded_banner)

@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 import dataclasses
 import json
 from typing import cast
@@ -24,11 +24,13 @@ from typing import cast
 import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src import flattree as ft
 from jax._src import frozen_dict
+from jax._src import jaxpr_util
 from jax._src import sharding_impls
 from jax._src import state
 from jax._src import tpu_custom_call
-from jax._src import flattree as ft
+from jax._src import xla_metadata
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
@@ -38,6 +40,7 @@ from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import helpers
 from jax._src.pallas.mosaic import lowering
+from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import sc_lowering  # noqa: F401
 from jax._src.pallas.mosaic import tpu_info
@@ -57,6 +60,7 @@ def _get_memory_space_from_aval(
           tpu_core.MemorySpace,
           pallas_core.MemorySpace,
           pallas_core.CoreMemorySpace,
+          jax_core.MemorySpace,
       ),
   ):
     return None  # If we are passed a non-TPU memory space, ignore it.
@@ -68,7 +72,15 @@ def _get_memory_space_from_aval(
     case tpu_core.MemorySpace.VMEM:
       return tpu_custom_call.MemorySpace.VMEM
     case tpu_core.MemorySpace.SMEM:
-      return tpu_custom_call.MemorySpace.SMEM
+      match kernel_type:
+        case tpu_core.CoreType.SC_SCALAR_SUBCORE:
+          return tpu_custom_call.MemorySpace.SC_SCALAR_SMEM
+        case tpu_core.CoreType.SC_VECTOR_SUBCORE:
+          return tpu_custom_call.MemorySpace.SC_VECTOR_SMEM
+        case tpu_core.CoreType.TC:
+          return tpu_custom_call.MemorySpace.SMEM
+        case _:
+          raise ValueError(f"Invalid kernel type for SMEM: {kernel_type}")
     case tpu_core.MemorySpace.SEMAPHORE:
       match kernel_type:
         case tpu_core.CoreType.SC_SCALAR_SUBCORE:
@@ -77,7 +89,7 @@ def _get_memory_space_from_aval(
           return tpu_custom_call.MemorySpace.SEMAPHORE_MEM
         case _:
           raise ValueError(f"Invalid kernel type for semaphore: {kernel_type}")
-    case pallas_core.MemorySpace.HOST:
+    case jax_core.MemorySpace.Host:
       return tpu_custom_call.MemorySpace.HOST
     case pallas_core.CoreMemorySpace(tpu_core.MemorySpace.VMEM, mesh):
       match mesh.core_type:
@@ -85,6 +97,16 @@ def _get_memory_space_from_aval(
           return tpu_custom_call.MemorySpace.VMEM
         case _:
           raise ValueError(f"Invalid core type for VMEM: {mesh.core_type}")
+    case pallas_core.CoreMemorySpace(tpu_core.MemorySpace.SMEM, mesh):
+      match mesh.core_type:
+        case tpu_core.CoreType.SC_SCALAR_SUBCORE:
+          return tpu_custom_call.MemorySpace.SC_SCALAR_SMEM
+        case tpu_core.CoreType.SC_VECTOR_SUBCORE:
+          return tpu_custom_call.MemorySpace.SC_VECTOR_SMEM
+        case tpu_core.CoreType.TC:
+          return tpu_custom_call.MemorySpace.SMEM
+        case _:
+          raise ValueError(f"Invalid core type for SMEM: {mesh.core_type}")
     case pallas_core.CoreMemorySpace(tpu_core.MemorySpace.SEMAPHORE, mesh):
       match mesh.core_type:
         case tpu_core.CoreType.SC_SCALAR_SUBCORE:
@@ -108,7 +130,10 @@ def _get_memory_spaces_from_avals(
 ) -> tuple[tpu_custom_call.MemorySpace | None, ...] | None:
   memory_spaces = None
   if any(isinstance(aval, jax_core.ShapedArray)
-         and not isinstance(aval.memory_space, jax_core.MemorySpace)
+         and (
+             not isinstance(aval.memory_space, jax_core.MemorySpace)
+             or aval.memory_space is jax_core.MemorySpace.Host
+         )
          for aval in avals):
     memory_spaces = tuple(
         _get_memory_space_from_aval(aval, kernel_type=kernel_type)
@@ -261,6 +286,7 @@ def _lower_to_custom_call(
     metadata: frozen_dict.FrozenDict[str, str] | None,
     name: str,
     jax_mesh,
+    collective_id_tag: Hashable | None = None,
 ):
   input_output_aliases = tuple(
       (a[0] + num_dynamic_grid_bounds, a[1]) for a in input_output_aliases
@@ -338,6 +364,7 @@ def _lower_to_custom_call(
       serialization_format=mosaic_params.serialization_format,
       internal_scratch_in_bytes=mosaic_params.internal_scratch_in_bytes,
       collective_id=mosaic_params.collective_id,
+      collective_id_tag=collective_id_tag,
       has_side_effects=_resolve_side_effect_type(
           mosaic_params.has_side_effects
       ),
@@ -351,6 +378,7 @@ def _lower_to_custom_call(
       shape_invariant_numerics=mosaic_params.shape_invariant_numerics,
       needs_layout_passes=mosaic_params.needs_layout_passes,
       tiling=_resolve_tiling(mosaic_params, kernel_type),
+      opt_level=mosaic_params.opt_level,
   )
   _maybe_cast_to_bool = (
       lambda x, aval: x.astype(jax.numpy.bool_)
@@ -364,6 +392,24 @@ def _lower_to_custom_call(
 
   cast_ctx = ctx.replace(avals_in=kernel_out_avals)
   return mlir.lower_fun(_maybe_cast_outputs)(cast_ctx, *out_nodes)
+
+
+def _extract_single_barrier_semaphore_tag(
+    jaxpr: jax_core.Jaxpr,
+) -> Hashable | None:
+  tags = {
+      eqn.params["tag"]
+      for _, eqn in jaxpr_util.all_eqns(jaxpr)
+      if eqn.primitive is tpu_primitives.get_barrier_semaphore_p
+      and eqn.params.get("tag") is not None
+  }
+  if len(tags) > 1:
+    raise ValueError(
+        "Cannot specify multiple distinct barrier semaphore tags within a"
+        f" single kernel: {tags}. XLA only supports one collective_id per"
+        " kernel."
+    )
+  return next(iter(tags)) if tags else None
 
 
 def pallas_call_tpu_lowering_rule(
@@ -395,6 +441,8 @@ def pallas_call_tpu_lowering_rule(
     assert isinstance(compiler_params, tpu_core.CompilerParams)
     mosaic_params = compiler_params
 
+  tag = _extract_single_barrier_semaphore_tag(jaxpr)
+
   jax_mesh = None
   axis_context = ctx.module_context.axis_context
   if axis_context is not None:
@@ -403,7 +451,11 @@ def pallas_call_tpu_lowering_rule(
   mlir_ctx = ctx.module_context.context
   tpu.register_dialect(mlir_ctx)
 
-  with mlir_ctx, ir.Location.unknown(mlir_ctx):
+  with (
+      mlir_ctx,
+      ir.Location.unknown(mlir_ctx),
+      xla_metadata.clear_xla_metadata(),
+  ):
     mosaic_module = lowering.lower_jaxpr_to_pipelined_module(
         ctx,
         grid_mapping,
@@ -419,7 +471,7 @@ def pallas_call_tpu_lowering_rule(
     pm = passmanager.PassManager.parse("builtin.module(canonicalize)", mlir_ctx)
     pm.run(mosaic_module.operation)
     print(f"\nThe Mosaic module for pallas_call {debug_info.func_src_info}:")
-    print(mosaic_module)
+    print(mosaic_module.operation.get_asm(use_name_loc_as_prefix=True))
 
   return _lower_to_custom_call(
       ctx,
@@ -435,6 +487,7 @@ def pallas_call_tpu_lowering_rule(
       metadata=metadata,
       name=name or debug_info.func_name,
       jax_mesh=jax_mesh,
+      collective_id_tag=tag,
   )
 
 
@@ -535,7 +588,7 @@ def _rewrite_jaxpr_for_lowering(
         jaxpr.debug_info.with_unknown_names(),
     )
   assert not new_jaxpr.consts
-  return new_jaxpr.jaxpr
+  return new_jaxpr
 
 
 def mpmd_map_tpu_lowering_rule(
@@ -569,6 +622,18 @@ def mpmd_map_tpu_lowering_rule(
   else:
     assert isinstance(compiler_params, tpu_core.CompilerParams)
     mosaic_params = compiler_params
+
+  all_tags: set[Hashable] = set()
+  for j in jaxprs:
+    if (tag := _extract_single_barrier_semaphore_tag(j)) is not None:
+      all_tags.add(tag)
+  if len(all_tags) > 1:
+    raise ValueError(
+        "Cannot specify multiple distinct barrier semaphore tags across"
+        f" kernels in mpmd_map: {all_tags}. XLA only supports one"
+        " collective_id per custom call."
+    )
+  tag = next(iter(all_tags)) if all_tags else None
 
   # TODO(slebedev): Check kernel type and raise if it is set.
   if mosaic_params.dimension_semantics is not None:
@@ -612,6 +677,21 @@ def mpmd_map_tpu_lowering_rule(
             raise NotImplementedError(
                 "mpmd_map does not support TC kernels yet."
             )
+          if mesh.num_cores > 1:
+            actual_invars = (
+                jaxpr.invars[:-num_scratch]
+                if num_scratch > 0
+                else jaxpr.invars
+            )
+            if any(
+                pallas_core.get_memory_space_aval(v.aval)
+                == tpu_core.MemorySpace.VMEM
+                for v in actual_invars
+            ):
+              raise NotImplementedError(
+                  "TensorCoreMesh does not support VMEM inputs/outputs when there"
+                  " are >1 cores. Use HBM or ANY instead."
+              )
         case (
             tpu_core.CoreType.SC_SCALAR_SUBCORE
             | tpu_core.CoreType.SC_VECTOR_SUBCORE
@@ -652,7 +732,7 @@ def mpmd_map_tpu_lowering_rule(
     pm = passmanager.PassManager.parse("builtin.module(canonicalize)", mlir_ctx)
     pm.run(mosaic_module.operation)
     print("\nThe Mosaic module for mpmd_map:")
-    print(mosaic_module)
+    print(mosaic_module.operation.get_asm(use_name_loc_as_prefix=True))
 
   if name is None:
     name = "_".join(jaxpr.debug_info.func_name for jaxpr in jaxprs)
@@ -703,6 +783,7 @@ def mpmd_map_tpu_lowering_rule(
       metadata=metadata,
       name=name,
       jax_mesh=jax_mesh,
+      collective_id_tag=tag,
   )
 
 

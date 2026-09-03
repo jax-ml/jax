@@ -184,6 +184,10 @@ def prepare_wheel_rocm(
       dst_dir=wheel_sources_path,
       dst_filename="setup.py",
   )
+  copy_files(
+      f"{source_file_prefix}jax_plugins/rocm/rocm_version.py",
+      dst_dir=wheel_sources_path,
+  )
   build_utils.update_setup_with_rocm_version(wheel_sources_path, rocm_version)
   write_setup_cfg(wheel_sources_path, cpu)
 
@@ -243,6 +247,9 @@ def prepare_wheel_oneapi(
   copy_files(
       dst_dir=plugin_dir,
       src_files=[
+          f"{source_file_prefix}jaxlib/oneapi/_hybrid.{pyext}",
+          f"{source_file_prefix}jaxlib/oneapi/_prng.{pyext}",
+          f"{source_file_prefix}jaxlib/oneapi/_solver.{pyext}",
           f"{source_file_prefix}jaxlib/oneapi/oneapi_plugin_extension.{pyext}",
           f"{source_file_prefix}jaxlib/version.py",
       ],

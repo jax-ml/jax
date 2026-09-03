@@ -31,6 +31,7 @@ if _cuda_triton:
   TritonAutotunedKernelCall = _cuda_triton.TritonAutotunedKernelCall
   TritonKernel = _cuda_triton.TritonKernel
   create_array_parameter = _cuda_triton.create_array_parameter
+  create_tma_descriptor_parameter = _cuda_triton.create_tma_descriptor_parameter
   create_scalar_parameter = _cuda_triton.create_scalar_parameter
   get_compute_capability = _cuda_triton.get_compute_capability
   get_arch_details = _cuda_triton.get_arch_details

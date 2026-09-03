@@ -18,15 +18,12 @@ import functools
 import os
 import traceback
 import types
-from typing import TypeVar, cast
+from typing import cast
 
 from jax._src import config
 from jax._src import util
 from jax._src.lib import _jax
 
-
-# TODO(slebedev): Add `bound=Callable` once facebook/pyrefly#3329 is fixed.
-C = TypeVar("C")
 
 _exclude_paths: list[str] = []
 
@@ -149,7 +146,7 @@ def _running_under_ipython() -> bool:
 def _ipython_supports_tracebackhide() -> bool:
   """Returns true if the IPython version supports __tracebackhide__."""
   import IPython  # pyrefly: ignore[missing-import]
-  return IPython.version_info[:2] >= (7, 17)
+  return IPython.version_info[:2] >= (7, 17)  # pyrefly: ignore[unsupported-operation] # pyrefly#896
 
 def _filtering_mode() -> str:
   mode = config.traceback_filtering.value
@@ -160,7 +157,9 @@ def _filtering_mode() -> str:
       mode = "quiet_remove_frames"
   return mode
 
-def api_boundary(
+
+# TODO(slebedev): use [C: Callable[..., Any]] once facebook/pyrefly#3329 is fixed.
+def api_boundary[C](
     fun: C, *,
     repro_api_name: str | None = None,
     repro_user_func: bool = False) -> C:

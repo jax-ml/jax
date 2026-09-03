@@ -43,6 +43,7 @@ Functions related to shape polymorphism
   symbolic_shape
   symbolic_args_specs
   is_symbolic_dim
+  symbolic_dim_bounds
   SymbolicScope
 
 Constants

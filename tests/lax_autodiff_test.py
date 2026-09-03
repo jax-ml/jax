@@ -252,7 +252,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     x = np.float32(3.0)
     _, f_lin = jax.linearize(lambda x: 2 * x**0 + 3 * x**1 + 4 * x**2, x)
     jaxpr = jax.make_jaxpr(f_lin)(x)
-    prims = [eqn.primitive for eqn in jaxpr.jaxpr.eqns]
+    prims = [eqn.primitive for eqn in jaxpr.eqns]
     self.assertNotIn(lax.integer_pow_p, prims)
 
   @parameterized.parameters(itertools.chain.from_iterable(
@@ -1016,6 +1016,35 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                                   fill_value=-1)
     x = rng(shape, dtype)
     check_grads(gather, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, 1.)
+
+  def testGatherTransposeCotangentDtype(self):
+    # cotangents can flow in a different (e.g. higher-precision) dtype than
+    # the primal; the gather and dynamic_slice transposes must follow the
+    # cotangent's dtype rather than the primal's
+    @jax.custom_vjp
+    def h(x):
+      return x.astype(np.float32).sum()
+    def h_fwd(x):
+      return h(x), x.shape
+    def h_bwd(shape, g):
+      return (lax.full(shape, g, np.float32),)  # f32 cotangent, bf16 primal
+    h.defvjp(h_fwd, h_bwd)
+
+    x = np.ones((7, 4), dtypes.bfloat16)
+    idx = np.array([1, 2, 1])
+
+    g = jax.grad(lambda t: h(t[idx]))(x)  # gather
+    self.assertEqual(g.dtype, np.float32)
+    expected = np.zeros((7, 4), np.float32)
+    expected[1], expected[2] = 2., 1.
+    self.assertAllClose(g, expected)
+
+    g = jax.grad(jax.jit(  # dynamic_slice, via the traced start index
+        lambda t, i: h(lax.dynamic_slice(t, (i, 0), (2, 4)))))(x, 1)
+    self.assertEqual(g.dtype, np.float32)
+    expected = np.zeros((7, 4), np.float32)
+    expected[1:3] = 1.
+    self.assertAllClose(g, expected)
 
   @jtu.sample_product(
     [dict(arg_shape=arg_shape, idxs_shape=idxs.shape, idxs_dtype=idxs.dtype,

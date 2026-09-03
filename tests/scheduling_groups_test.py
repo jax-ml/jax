@@ -18,8 +18,8 @@ import jax
 import jax.numpy as jnp
 from jax._src import test_util as jtu
 
-from jax.experimental.scheduling_groups import (
-    scheduling_group, xla_metadata_call)
+from jax.experimental.scheduling_groups import scheduling_group
+from jax.experimental.xla_metadata import xla_metadata_call
 
 jax.config.parse_flags_with_absl()
 

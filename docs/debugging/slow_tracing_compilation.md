@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 (debugging-slow-tracing-compilation)=
 # Debugging slow JAX tracing and XLA compilation
 

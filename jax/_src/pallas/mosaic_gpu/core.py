@@ -24,7 +24,7 @@ import enum
 import functools
 import itertools as it
 import math
-from typing import Any, ClassVar, Literal, Union
+from typing import Any, ClassVar, Literal
 
 import jax
 from jax._src import api
@@ -49,6 +49,7 @@ from jax._src.state import types as state_types
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
+from jax.experimental.mosaic.gpu.launch_context import OOBFillMode
 import jax.numpy as jnp
 from jaxlib.mlir import ir
 
@@ -93,10 +94,9 @@ class CompilerParams:
   Attributes:
     approx_math: If True, the compiler is allowed to use approximate
       implementations of some math operations, e.g. ``exp``. Defaults to False.
-    dimension_semantics: A list of dimension semantics for each grid
-      dimension of the kernel. Either "parallel" for dimensions that can
-      execute in any order, or "sequential" for dimensions that must be
-      executed sequentially.
+    dimension_semantics: A list of dimension semantics for each grid dimension
+      of the kernel. Either "parallel" for dimensions that can execute in any
+      order, or "sequential" for dimensions that must be executed sequentially.
     max_concurrent_steps: The maximum number of sequential stages that are
       active concurrently. Defaults to 1.
     delay_release: The number of steps to wait before reusing the input/output
@@ -104,12 +104,12 @@ class CompilerParams:
       max_concurrent_steps. Generally, you'll want to set it to 1 if you don't
       await the WGMMA in the body.
     unsafe_no_auto_barriers: If True, Pallas will never automatically insert
-      barrier instructions that ensure synchronous semantics of loads and stores.
-      At the moment, the insertion is done conservatively and might regress
-      performance. There are (at least) two conditions that must be satisfied
-      for the use of this flag to be safe. First, no memory region is ever read
-      *and* written to by the same thread (async copies are performed by
-      background threads and do not count towards this rule). Secondly, no
+      barrier instructions that ensure synchronous semantics of loads and
+      stores. At the moment, the insertion is done conservatively and might
+      regress performance. There are (at least) two conditions that must be
+      satisfied for the use of this flag to be safe. First, no memory region is
+      ever read *and* written to by the same thread (async copies are performed
+      by background threads and do not count towards this rule). Secondly, no
       thread ever calls commit_smem(), reads from the committed SMEM and then
       issues an async copy overwriting that region (this is a very artificial
       and highly unlikely scenario).
@@ -120,9 +120,13 @@ class CompilerParams:
       H100 and B200.
     profile_space: The number of profiler events that can be collected in a
       single invocation. It is undefined behavior if a thread collects more
-      events than this.
+      events than this, unless profile_bounds_check is set.
     profile_dir: The directory to which profiling traces will be written to.
-    profile_trace_scope: The scope at which traces are collected (WARP or WARPGROUP).
+    profile_trace_scope: The scope at which traces are collected (WARP or
+      WARPGROUP).
+    profile_bounds_check: If True, profiler events past profile_space are
+      dropped (the trace is truncated) instead of corrupting SMEM, at the cost
+      of a slightly higher per-event profiling overhead.
   """
   approx_math: bool = False
   dimension_semantics: Sequence[DimensionSemantics] | None = None
@@ -132,7 +136,8 @@ class CompilerParams:
   profile_space: int = 0
   profile_dir: str = ""
   profile_trace_scope: TraceScope = TraceScope.WARPGROUP
-  lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Lane
+  profile_bounds_check: bool = False
+  lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Warpgroup
 
   def __post_init__(self):
     if self.dimension_semantics is not None:
@@ -529,7 +534,10 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
   This is the moral equivalent of `jax.tree.leaves` for aliased references.
   """
   flat_refs = []
-  if ref_union.memory_space == SMEM:
+  ref_union_mem_space = (ref_union.memory_space
+                         if isinstance(ref_union, AbstractRefUnion) else
+                         jax_core.typeof(ref_union).memory_space)
+  if ref_union_mem_space == SMEM:
     union_bytes = 0
     for group_idx, ref_group in enumerate(ref_union.refs):
       byte_offset = 0
@@ -562,7 +570,7 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
       flat_refs.append(jax.tree.map(unflatten, ref_group))
       union_bytes = max(union_bytes, byte_offset)
     assert union_bytes == ref_union.shape[0]
-  elif ref_union.memory_space == TMEM:
+  elif ref_union_mem_space == TMEM:
     union_cols = 0
     for group_idx, ref_group in enumerate(ref_union.refs):
       col_offset = 0
@@ -704,7 +712,7 @@ class RefUnion(GPUMemoryRef):
                             memory_space=self.memory_space)
 
 
-Index = Union[mgpu.DynamicSlice, slice, int, ir.Value]
+Index = mgpu.DynamicSlice | slice | int | ir.Value
 
 
 @dataclasses.dataclass(frozen=True)
@@ -740,7 +748,7 @@ class TilingTransform(state_types.Transform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class UntilingTransform(state_types.Transform):
-  tiling: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  tiling: tuple[int, ...] = jax.tree.static()
 
   def transform_type(self, x):
     match x:
@@ -1003,9 +1011,7 @@ def commute_transpose_indexer(
 @dataclasses.dataclass
 class PeerMemRef(state_types.Transform):
   device_id: Any
-  device_id_type: pallas_primitives.DeviceIdType = dataclasses.field(
-      metadata=dict(static=True)
-  )
+  device_id_type: pallas_primitives.DeviceIdType = jax.tree.static()
 
   def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
     raise NotImplementedError()
@@ -1022,9 +1028,7 @@ class PeerMemRef(state_types.Transform):
 @tree_util.register_dataclass
 @dataclasses.dataclass
 class MulticastRef(state_types.Transform):
-  collective_axes: tuple[Hashable, ...] = dataclasses.field(
-      metadata=dict(static=True)
-  )
+  collective_axes: tuple[Hashable, ...] = jax.tree.static()
 
   def transform_type(self, x):
     return x
@@ -1058,9 +1062,7 @@ def remote_ref(
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class ClusterRefTransform(state_types.Transform):
-  dims: tuple[jax_core.AxisName, ...] = dataclasses.field(
-      metadata=dict(static=True)
-  )
+  dims: tuple[jax_core.AxisName, ...] = jax.tree.static()
   idxs: tuple[Any, ...]
 
   def __post_init__(self):
@@ -1118,18 +1120,6 @@ def multicast_ref(
   )
 
 
-def transform_ref(
-    ref: pallas_core.TransformedRef,
-    transform: state_types.Transform
-) -> pallas_core.TransformedRef:
-  if not isinstance(ref, pallas_core.TransformedRef):
-    if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
-      raise TypeError("ref must be a reference")
-    ref = pallas_core.TransformedRef(ref, transforms=())
-  return pallas_core.TransformedRef(
-      ref.ref, (*ref.transforms, transform),
-  )
-
 def transpose_ref(
     ref: pallas_core.TransformedRef | Any,
     permutation: tuple[int, ...],
@@ -1144,17 +1134,15 @@ def transpose_ref(
 @dataclasses.dataclass(frozen=True)
 class ExtractAliasedRef(state_types.Transform):
   """Bitcasts the underlying ref at the given offset to the given shape and dtype."""
-  dtype: dtypes.DType = dataclasses.field(metadata=dict(static=True))
-  shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
-  offset: int = dataclasses.field(metadata=dict(static=True))
+  dtype: dtypes.DType = jax.tree.static()
+  shape: tuple[int, ...] = jax.tree.static()
+  offset: int = jax.tree.static()
 
   # The index of the group of this aliased ref within the input RefUnion.
-  alias_group_idx: int = dataclasses.field(metadata=dict(static=True))
+  alias_group_idx: int = jax.tree.static()
 
   # TMEM-specific params
-  layout: tcgen05.TMEMLayout | None = dataclasses.field(
-      metadata=dict(static=True)
-  )
+  layout: tcgen05.TMEMLayout | None = jax.tree.static()
 
   @classmethod
   def from_transformed_ref(
@@ -1211,7 +1199,7 @@ class SwizzleTransform(state_types.Transform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class UnswizzleRef(state_types.Transform):
-  swizzle: int = dataclasses.field(metadata=dict(static=True))
+  swizzle: int = jax.tree.static()
 
   def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
     # Swizzling preserves the type
@@ -1317,7 +1305,7 @@ class ExpandLeadingBatchDimensionsTransform(state_types.Transform):
   n)`.
   """
 
-  batch_shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  batch_shape: tuple[int, ...] = jax.tree.static()
 
   def transform_type(
       self, x: jax_core.AbstractValue
@@ -1411,10 +1399,13 @@ class BlockSpec(pallas_core.BlockSpec):
       return the same block from the index_map for this operand. This enables
       the pipelining helpers to use collective async copies, which can improve
       performance.
+    oob_fill_mode: Determines the behavior for out-of-bounds accesses during
+      pipelined GMEM-to-SMEM copies. Defaults to ``OOBFillMode.ZEROS``.
   """
   transforms: Sequence[state_types.Transform] = ()
   delay_release: int = 0
-  collective_axes: tuple[Hashable, ...] = ()
+  collective_axes: tuple[Hashable, ...] | None = None
+  oob_fill_mode: OOBFillMode = OOBFillMode.ZEROS
 
   def to_block_mapping(
       self,
@@ -1557,7 +1548,7 @@ class ClusterBarrier:
 @dataclasses.dataclass(frozen=True)
 class WGMMAAccumulatorRef:
   shape: tuple[int, int]
-  dtype: jnp.dtype = jnp.float32
+  dtype: jax.typing.DTypeLike = jnp.float32
   _init: Any = state_types.uninitialized
 
   def get_ref_aval(self) -> state.AbstractRef:
@@ -1756,51 +1747,6 @@ class WarpMesh(pallas_core.Mesh):
     yield
 
 
-def _gpu_mesh_discharge_rule(
-    in_avals,
-    out_avals,
-    *args,
-    mesh,
-    jaxpr,
-    compiler_params,
-    interpret,
-    debug,
-    cost_estimate,
-    name,
-    metadata,
-):
-  if not isinstance(mesh, Mesh):
-    raise TypeError(f"Mesh must be a `plgpu.Mesh`, got {type(mesh)}")
-  if compiler_params and not isinstance(compiler_params, CompilerParams):
-    raise TypeError(
-        "Compiler params must be a `plgpu.CompilerParams`, got"
-        f" {type(compiler_params)}"
-    )
-  if not compiler_params:
-    compiler_params = CompilerParams()
-  sa_avals = [a for a in in_avals if isinstance(a, jax_core.ShapedArray)]
-  if sa_avals:
-    raise NotImplementedError(
-        f"Cannot close over values in core_map: {sa_avals}"
-    )
-  return pallas_core.default_mesh_discharge_rule(
-      in_avals,
-      out_avals,
-      *args,
-      jaxpr=jaxpr,
-      mesh=mesh,
-      compiler_params=compiler_params,
-      debug=debug,
-      interpret=interpret,
-      cost_estimate=cost_estimate,
-      name=name,
-      metadata=metadata,
-  )
-
-
-pallas_core._core_map_mesh_rules[Mesh] = _gpu_mesh_discharge_rule
-
-
 class MemoryEffect(jax_core.Effect):
   pass
 
@@ -1837,6 +1783,8 @@ _pdl_effect = PdlEffect()
 
 # We define the layout_cast primitive here, because it needs to be available in
 # the lowering code (to provide layout hints to the rules).
+#
+# TODO(bchetioui): unify layout_cast_p with relayout_p
 layout_cast_p = jax_core.Primitive("layout_cast")
 
 
@@ -1918,6 +1866,10 @@ class Layout(SomeLayout, enum.Enum):
   # TODO(b/435159109): Remove this once LLVM regression is addressed.
   _WGMMA_ACC_32BIT = enum.auto()  # Temporarily exposed to work around LLVM bugs
 
+  MMA_LHS = enum.auto()
+  MMA_RHS = enum.auto()
+  MMA_ACC = enum.auto()
+
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
 
@@ -1976,6 +1928,18 @@ class Layout(SomeLayout, enum.Enum):
         )
       case Layout.TMA_INDICES:
         return mgpu.TMA_INDICES_LAYOUT
+      case Layout.MMA_LHS:
+        normalize_args = lambda dtype, *, m_warps=4: (dtype, m_warps)
+        dtype, m_warps = normalize_args(*args, **kwargs)
+        return mgpu.MMALayouts(dtype, m_warps=m_warps).lhs
+      case Layout.MMA_RHS:
+        normalize_args = lambda dtype, *, m_warps=4: (dtype, m_warps)
+        dtype, m_warps = normalize_args(*args, **kwargs)
+        return mgpu.MMALayouts(dtype, m_warps=m_warps).rhs
+      case Layout.MMA_ACC:
+        normalize_args = lambda dtype, *, m_warps=4: (dtype, m_warps)
+        dtype, m_warps = normalize_args(*args, **kwargs)
+        return mgpu.MMALayouts(dtype, m_warps=m_warps).acc
       case Layout.TMA_INDICES_4:
         return mgpu.TMA_INDICES_4_LAYOUT
 

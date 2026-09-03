@@ -124,7 +124,7 @@ class PallasBaseTest(jtu.JaxTestCase):
     return pl.pallas_call(*args, interpret=cls.INTERPRET, **kwargs)
 
 
-@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
+@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class IndexerTest(jtu.JaxTestCase):
   """These are unit tests for the indexer logic, not using pallas_call."""
 
@@ -254,7 +254,12 @@ class IndexerTest(jtu.JaxTestCase):
     self.assertTupleEqual(indexer.get_indexer_shape(), (2, 5, 4))
 
   @hp.given(hps.data())
-  @hp.settings(suppress_health_check=[hp.HealthCheck.too_slow])  # ASAN is slow
+  @hp.settings(
+      suppress_health_check=[
+          *hp.settings.default.suppress_health_check,
+          hp.HealthCheck.too_slow,
+      ]
+  )  # ASAN is slow
   def test_ndindexer(self, data):
     shape = data.draw(hnp.array_shapes())
     indices = data.draw(nd_indices_strategy(shape))
@@ -279,7 +284,7 @@ class IndexerTest(jtu.JaxTestCase):
         self.assertEqual(idx.dtype, np.dtype("int32"))
 
 
-@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
+@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class IndexerOpsTest(PallasBaseTest):
 
   def test_multi_indexing_interpreter_only(self):

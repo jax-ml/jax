@@ -19,7 +19,6 @@ from functools import partial
 import math
 from operator import index
 import typing
-from typing import Union
 import warnings
 
 import numpy as np
@@ -181,8 +180,8 @@ class PRNGSpec:
 
 # TODO(frostig,vanderplas): remove PRNGImpl from this union when it's
 # no longer in the public API because `default_prng_impl` is gone
-PRNGSpecDesc = Union[str, PRNGSpec, PRNGImpl, Hashable]
-KeyDTypeLike = Union[str, prng.KeyTy]
+PRNGSpecDesc = str | PRNGSpec | PRNGImpl | Hashable
+KeyDTypeLike = str | prng.KeyTy
 
 
 def resolve_prng_impl(
@@ -1227,6 +1226,7 @@ def beta(key: ArrayLike,
          shape: Shape | None = None,
          dtype: DTypeLikeFloat | None = None,
          *,
+         method: str = "exact",
          out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Beta random values with given shape and float dtype.
 
@@ -1248,6 +1248,11 @@ def beta(key: ArrayLike,
       (None) produces a result shape by broadcasting ``a`` and ``b``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    method: optional, the sampling algorithm to use, either ``'exact'`` (the
+      default) or ``'approximate'``. The ``'exact'`` method is a rejection
+      sampler. The ``'approximate'`` method is loop-free and faster but carries
+      a small bias. The gradient w.r.t. ``a`` and ``b`` differs between the two
+      methods because of the ambiguity in defining a gradient for random variates.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -1262,6 +1267,9 @@ def beta(key: ArrayLike,
     ``shape`` is not None, or else by broadcasting ``a`` and ``b``.
   """
   key, _ = _check_prng_key("beta", key)
+  if method not in {'exact', 'approximate'}:
+    raise ValueError("method argument to `beta` must be one of "
+                     f"{{'exact', 'approximate'}}, got {method!r}")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -1271,11 +1279,11 @@ def beta(key: ArrayLike,
   shape = _check_broadcast_shapes("beta", shape, a, b)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "beta", shape)
 
-  return maybe_auto_axes(_beta, out_sharding,
+  return maybe_auto_axes(_beta, out_sharding, method=method,
                          shape=shape, dtype=dtype)(key, a, b)
 
-@jit(static_argnums=(3, 4))
-def _beta(key, a, b, shape, dtype) -> Array:
+@jit(static_argnums=(3, 4, 5))
+def _beta(key, a, b, method, shape, dtype) -> Array:
   if shape is None:
     shape = lax.broadcast_shapes(np.shape(a), np.shape(b))
   else:
@@ -1288,8 +1296,8 @@ def _beta(key, a, b, shape, dtype) -> Array:
   key_a, key_b = _split(key)
   a = jnp.broadcast_to(a, shape)
   b = jnp.broadcast_to(b, shape)
-  log_gamma_a = loggamma(key_a, a, shape, dtype)
-  log_gamma_b = loggamma(key_b, b, shape, dtype)
+  log_gamma_a = loggamma(key_a, a, shape, dtype, method=method)
+  log_gamma_b = loggamma(key_b, b, shape, dtype, method=method)
   # Compute gamma_a / (gamma_a + gamma_b) without losing precision.
   log_max = lax.max(log_gamma_a, log_gamma_b)
   gamma_a_scaled = jnp.exp(log_gamma_a - log_max)
@@ -1626,6 +1634,7 @@ def gamma(key: ArrayLike,
           shape: Shape | None = None,
           dtype: DTypeLikeFloat | None = None,
           *,
+          method: str = 'exact',
           out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Gamma random values with given shape and float dtype.
 
@@ -1650,6 +1659,11 @@ def gamma(key: ArrayLike,
       produces a result shape equal to ``a.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    method: optional, the sampling algorithm to use, either ``'exact'`` (the
+      default) or ``'approximate'``. The ``'exact'`` method is a rejection
+      sampler. The ``'approximate'`` method is loop-free and faster but carries
+      a small bias. The gradient w.r.t. `a` differs between the two methods
+      because of the ambiguity in defining a gradient for random variates.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -1668,6 +1682,9 @@ def gamma(key: ArrayLike,
       accuracy for small values of ``a``.
   """
   key, _ = _check_prng_key("gamma", key)
+  if method not in {'exact', 'approximate'}:
+    raise ValueError("method argument to `gamma` must be one of "
+                     f"{{'exact', 'approximate'}}, got {method!r}")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -1676,6 +1693,9 @@ def gamma(key: ArrayLike,
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "gamma", shape)
+  if method == 'approximate':
+    return maybe_auto_axes(_gamma_approx, out_sharding,
+                           shape=shape, dtype=dtype)(key, a)
   return maybe_auto_axes(_gamma, out_sharding, shape=shape, dtype=dtype)(key, a)
 
 
@@ -1684,6 +1704,7 @@ def loggamma(key: ArrayLike,
              shape: Shape | None = None,
              dtype: DTypeLikeFloat | None = None,
              *,
+             method: str = 'exact',
              out_sharding: NamedSharding | P | None =None) -> Array:
   """Sample log-gamma random values with given shape and float dtype.
 
@@ -1704,6 +1725,11 @@ def loggamma(key: ArrayLike,
       produces a result shape equal to ``a.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    method: optional, the sampling algorithm to use, either ``'exact'`` (the
+      default) or ``'approximate'``. The ``'exact'`` method is a rejection
+      sampler. The ``'approximate'`` method is loop-free and faster but carries
+      a small bias. The gradient w.r.t. `a` differs between the two methods
+      because of the ambiguity in defining a gradient for random variates.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -1721,6 +1747,9 @@ def loggamma(key: ArrayLike,
     gamma : standard gamma sampler.
   """
   key, _ = _check_prng_key("loggamma", key)
+  if method not in {'exact', 'approximate'}:
+    raise ValueError("method argument to `loggamma` must be one of "
+                     f"{{'exact', 'approximate'}}, got {method!r}")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -1729,6 +1758,9 @@ def loggamma(key: ArrayLike,
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding(out_sharding, "loggamma")
+  if method == 'approximate':
+    return maybe_auto_axes(_gamma_approx, out_sharding, shape=shape,
+                           dtype=dtype, log_space=True)(key, a)
   return maybe_auto_axes(_gamma, out_sharding, shape=shape, dtype=dtype, log_space=True)(key, a)
 
 
@@ -1744,6 +1776,145 @@ def _gamma(key, a, shape, dtype, log_space=False) -> Array:
     a = jnp.broadcast_to(a, shape)
   key, (a,) = random_insert_pvary('gamma', key, a)
   return random_gamma_p.bind(key, a, log_space=log_space)
+
+
+# Coefficients of the chi-square quantile series used by `_gamma_approx` (see
+# there for how they are applied). Each inner tuple k (k=0..6) holds the
+# coefficients of x^k nu^(-k/2), written as a quadratic in 1 / nu: entry [k][j]
+# multiplies nu^(-j) for j=0..2. The leading constant is set to exactly 1 rather
+# than the published 1.0000886; see `_gamma_approx` for why.
+_CHI2_QUANTILE_COEF = (
+    (1.0, -0.2237368, -0.01513904),
+    (0.4713941, 0.02607083, -0.008986007),
+    (0.0001348028, 0.01128186, 0.02277679),
+    (-0.008553069, -0.01153761, -0.01323293),
+    (0.00312558, 0.005169654, -0.006950356),
+    (-0.0008426812, 0.00253001, 0.001060438),
+    (0.00009780499, -0.001450117, 0.001565326),
+)
+
+# Number of Stuart boosting steps used by `_gamma_approx`. Four steps keep the
+# base draw at shape a + 4 >= 4, where the chi-square quantile series is
+# accurate, even as a -> 0.
+_LOGGAMMA_NUM_BOOSTS = 4
+
+
+def _loggamma_chisquare(key, a) -> Array:
+  r"""Sample ``log(Gamma(a, 1))`` via the chi-square quantile series.
+
+  Cubes a 6th-degree polynomial in a standard normal applied to the chi-square
+  distribution with ``nu = 2 * a`` degrees of freedom, using
+  ``Gamma(a, 1) = chi2(2a) / 2``. The polynomial is evaluated by Horner's method
+  both in the normal variate and in ``1 / nu``. The series is only accurate for
+  ``a`` away from zero, so callers boost ``a`` to keep it there; see
+  :func:`_gamma_approx` for the references and overall algorithm.
+  """
+  nu = 2 * a
+  x = _normal(key, np.shape(a), a.dtype)
+  u = 1 / nu
+  # x^k nu^(-k/2) = t^k, so the series is a degree-6 Horner polynomial in t.
+  t = x * lax.rsqrt(nu)
+
+  def row_coef(c):
+    # Evaluate one coefficient row as a quadratic in 1 / nu, by Horner.
+    return c[0] + u * (c[1] + u * c[2])
+
+  poly = row_coef(_CHI2_QUANTILE_COEF[-1])
+  for row in reversed(_CHI2_QUANTILE_COEF[:-1]):
+    poly = poly * t + row_coef(row)
+
+  # chi2 = nu poly^3 and Gamma(a, 1) = chi2 / 2 = a poly^3, so log gains log(a).
+  # `poly` should never actually reach values <= 0, but clip just in case
+  # someone changes some other param
+  poly = jnp.maximum(poly, dtypes.finfo(a.dtype).tiny)
+  return jnp.log(a) + 3 * jnp.log(poly)
+
+
+@jit(static_argnames=('shape', 'dtype', 'log_space'))
+def _gamma_approx(key, a, shape, dtype, log_space=False) -> Array:
+  r"""Loop-free approximate sampler for ``Gamma(a, 1)``.
+
+  Backs the ``method='approximate'`` path of :func:`gamma` and :func:`loggamma`,
+  returning ``log(Gamma(a, 1))`` when ``log_space`` is true and ``Gamma(a, 1)``
+  otherwise. It avoids the rejection loops of the exact sampler, trading a small
+  bias for a fully vectorized computation that is much faster, especially on
+  accelerators.
+
+  The sampler has two ingredients. The first is a base draw from a chi-square
+  quantile series: since :math:`\mathrm{Gamma}(a, 1) = \chi^2_{2a} / 2`, a draw
+  is obtained by cubing a 6th-degree polynomial in a standard normal evaluated at
+  :math:`\nu = 2a` degrees of freedom (eq. 18.37 of Johnson, Kotz & Balakrishnan,
+  originally Goldstein's Algorithm 451). This series is accurate to about 0.05%
+  relative error on the quantiles for shape :math:`\geq 4` (Zar, 1978, table 2)
+  but degrades near zero. The second is Stuart's boosting identity (Stuart,
+  1962), which for independent uniforms :math:`U_k` on :math:`(0, 1)` gives
+
+  .. math::
+     \log G_a = \log G_{a + n} + \sum_{k=0}^{n-1} \frac{\log U_k}{a + k}.
+
+  We take the base draw :math:`G_{a + n}` at the boosted shape :math:`a + n`,
+  where the series is accurate, and let the sum carry the small-``a`` behavior,
+  which it does exactly. :math:`\log U_k` is drawn as
+  :math:`-\mathrm{Exponential}(1)` to avoid evaluating ``log`` at zero.
+
+  With ``n = _LOGGAMMA_NUM_BOOSTS = 4`` the base shape stays :math:`\geq 4` even
+  as :math:`a \to 0`. The cubed polynomial can become non-positive for an
+  extreme normal draw, which would imply a negative chi-square value; we clip it
+  to the smallest positive float, though it should never actually reach that
+  value.
+
+  One coefficient in ``_CHI2_QUANTILE_COEF`` departs from the published series:
+  the leading constant is set to exactly 1 rather than the published 1.0000886.
+  As :math:`\nu \to \infty` the cube root :math:`(\chi^2 / \nu)^{1/3} \to 1`, so
+  this term must be 1; the published value is a fit artifact that scales every
+  draw by :math:`1.0000886^3`, adding a constant :math:`3 \log(1.0000886)
+  \approx 2.7 \times 10^{-4}` bias to ``log(Gamma)``. That bias is negligible
+  against the :math:`O(1 / \sqrt{a})` spread at small ``a``, but at large ``a``
+  the spread shrinks below it and it would otherwise dominate the sampling error.
+
+  The computation runs in at least float32 and narrows to ``dtype`` only at the
+  end: its cost is the rng and transcendentals, which run in float32 regardless,
+  so a narrower compute dtype gives no speedup and only loses accuracy in the
+  draws. Samples below the smallest representable ``dtype`` value underflow to
+  :math:`-\infty` in log space, or to ``0`` otherwise.
+
+  References:
+    Stuart, A. (1962). Gamma-distributed products of independent random
+    variables. Biometrika, 49(3-4), 564-565.
+
+    Johnson, N. L., Kotz, S., & Balakrishnan, N. (1994). Continuous Univariate
+    Distributions, vol. 1 (2nd ed.), eq. 18.37. Wiley.
+
+    Goldstein, R. B. (1973). Algorithm 451: Chi-square quantiles. Communications
+    of the ACM, 16(8), 483-485.
+
+    Zar, J. H. (1978). Approximations for the percentage points of the
+    chi-squared distribution. Journal of the Royal Statistical Society Series C,
+    27(3), 280-290.
+  """
+  # compute at least in float32; don't use dtypes.promote_types, fails in strict mode
+  compute_dtype = np.dtype('float32') if dtypes.finfo(dtype).bits < 32 else dtype
+  shape = _check_broadcast_shapes("gamma", shape, a)
+  a = lax.convert_element_type(a, compute_dtype)
+  if np.shape(a) != shape:
+    a = jnp.broadcast_to(a, shape)
+  key, (a,) = random_insert_pvary('gamma', key, a)
+
+  key_base, key_boost = _split(key)
+  n = _LOGGAMMA_NUM_BOOSTS
+
+  # Base draw at the boosted shape a + n, where the series is accurate.
+  log_base = _loggamma_chisquare(key_base, a + n)
+
+  # Boosting correction sum_k log(U_k) / (a + k), with log(U_k) = -Exp(1). The
+  # boost index k and a sample are stacked along a leading axis; both operands
+  # are reshaped to that rank so the divide needs no implicit rank promotion.
+  k = jnp.arange(n, dtype=compute_dtype).reshape((n,) + (1,) * len(shape))
+  log_u = -_exponential(key_boost, (n, *shape), compute_dtype)
+  log_sample = log_base + jnp.sum(log_u / (a[None, ...] + k), axis=0)
+
+  out = log_sample if log_space else lax.exp(log_sample)
+  return lax.convert_element_type(out, dtype)
 
 
 @jit(static_argnums=(2, 3, 4))
@@ -1833,11 +2004,163 @@ def _poisson(key, lam, shape, dtype) -> Array:
   return lax.select(lam == 0, jnp.zeros_like(result), result)
 
 
+# Below this mean, `_poisson_approx` samples by inverting the truncated cdf
+# directly; above, it inverts the Peizer-Pratt normal approximation of the cdf,
+# whose max cdf error at the split is ~6e-5 (chi-square-detectable only beyond
+# ~3e7 samples).
+_POISSON_SPLIT = 7.0
+
+# Number of pmf terms for the truncated cdf; the truncated tail mass
+# Pr[X > 19 | lam = 7] ~ 4e-5 keeps the truncated-branch total variation below
+# the Peizer-Pratt error at the split (~6e-5).
+_POISSON_NUM_TERMS = 20
+
+# Peizer-Pratt continuity correction constant (0 for simplicity, 0.02 for more
+# accuracy).
+_PEIZER_PRATT_EPS = 0.02
+
+
+@jit(static_argnums=(2, 3))
+def _poisson_approx(key, lam, shape, dtype) -> Array:
+  r"""Loop-free approximate sampler for ``Poisson(lam)``.
+
+  Backs the ``method='approximate'`` path of :func:`poisson`. It avoids the
+  rejection loops of the exact sampler, trading a small bias for a fully
+  vectorized computation that is much faster.
+
+  The total variation distance from the exact distribution stays below 1e-4,
+  worst around ``lam == _POISSON_SPLIT``.
+
+  A standard normal draw is mapped monotonically to a count by inverting an
+  approximate cdf, in :func:`_poisson_from_normal`. Below `_POISSON_SPLIT` the
+  pmf is truncated to `_POISSON_NUM_TERMS` terms and the cdf inverted directly;
+  above, the sampler inverts the very accurate normal approximation of the cdf
+  by Peizer and Pratt (1968), as presented in Johnson, Kemp & Kotz (2005), page
+  168.
+
+  The computation runs in float32, or float64 if ``lam`` is a 64-bit float
+  array or ``dtype`` is a 64-bit type: above ``lam ~ 2**24`` the samples land
+  on the float32 integer lattice, so wider means need the wider compute dtype
+  to resolve them, and a 64-bit ``dtype`` is the only way to represent such
+  counts in the output.
+
+  References:
+    Peizer, D. B., & Pratt, J. W. (1968). A Normal Approximation for Binomial,
+    F, Beta, and other Common, Related Tail Probabilities, I. Journal of the
+    American Statistical Association, 63(324), 1416-1456.
+
+    Johnson, N. L., Kemp, A. W., & Kotz, S. (2005). Univariate discrete
+    distributions (3rd ed), page 168. Wiley.
+  """
+  # compute at least in float32; don't use dtypes.promote_types, fails in
+  # strict mode
+  lam_dtype = dtypes.dtype(lam)
+  lam_is_f64 = (dtypes.issubdtype(lam_dtype, np.floating)
+                and dtypes.finfo(lam_dtype).bits > 32)
+  if lam_is_f64 or np.dtype(dtype).itemsize > 4:
+    compute_dtype = np.dtype('float64')
+  else:
+    compute_dtype = np.dtype('float32')
+
+  lam = lax.convert_element_type(lam, compute_dtype)
+  lam = lax.expand_dims(lam, tuple(range(len(shape) - np.ndim(lam))))
+  key, (lam,) = random_insert_pvary('poisson', key, lam)
+  z = _normal(key, shape, compute_dtype)
+  return lax.convert_element_type(_poisson_from_normal(z, lam), dtype)
+
+
+def _poisson_from_normal(z, lam):
+  """Map a standard normal variate to an approximate Poisson(lam) variate."""
+  small = _poisson_cdf_inversion(lax_special.ndtr(z), lam)
+  large = _poisson_peizer_pratt(z, lam)
+  return jnp.where(lam < _POISSON_SPLIT, small, large)
+
+
+def _poisson_cdf_inversion(u, lam):
+  """Invert the cdf truncated to the first `_POISSON_NUM_TERMS` values."""
+  # unrolled pmf recurrence instead of cumsum(exp(logpmf(arange))): keeps every
+  # op elementwise at the broadcast shape, so xla fuses the inversion into one
+  # kernel instead of materializing shape x _POISSON_NUM_TERMS intermediates
+  pmf = lax.exp(-lam)
+  cdf = pmf
+  # if the final cdf >= 1 due to rounding, the last possible value is never
+  # selected, no overflow
+  count = lax.convert_element_type(cdf < u, u.dtype)
+  for k in range(1, _POISSON_NUM_TERMS - 1):
+    pmf *= lam / k
+    cdf += pmf
+    count += lax.convert_element_type(cdf < u, u.dtype)
+  return count
+
+
+def _poisson_peizer_pratt(z, lam):
+  """Invert the Peizer-Pratt cdf approximation Pr[X <= x] ~ ndtr(z(x)).
+
+  The sample is the smallest integer x with z(x) >= z, i.e., ceil of the real
+  root of z(x) = z. The exact z(x) is evaluated at 2 integers around an
+  analytical guess to select the right value, correcting the guess as long as
+  it falls within +/-1 of the root.
+  """
+  # the guess error stays within (-1 + 0.6, 1 + 0.6) of the root over
+  # lam >= _POISSON_SPLIT, |z| <= 8.4 (the float64 range of normal draws), so
+  # shifting by 0.6 centers it in the +/-1 window around ceil
+  x = _peizer_pratt_root(z, lam) + 0.6
+
+  # select the smallest integer c with z(c) >= z among {c-1, c, c+1},
+  # c = ceil(x); z at negative integers is -inf since Pr[X <= x] = 0 there
+  c = jnp.ceil(x)
+
+  def zint(c):
+    return jnp.where(c < 0, -np.inf, _peizer_pratt_z(jnp.maximum(c, 0.0), lam))
+
+  def root_ge(c):
+    return lax.convert_element_type(zint(c) >= z, x.dtype)
+
+  out = c + 1 - root_ge(c) - root_ge(c - 1)
+  return jnp.maximum(out, 0.0)
+
+
+def _peizer_pratt_root(z, lam):
+  """Cornish-Fisher approximation of the root of `_peizer_pratt_z(x, .) = z`."""
+  s = jnp.sqrt(lam)
+  return (
+      lam + s * z - 2 / 3 + jnp.square(z) / 6 + z * (1 - jnp.square(z)) / (72 * s))
+
+
+def _peizer_pratt_z(x, lam):
+  """Peizer-Pratt z(x) such that Pr[X <= x] ~ ndtr(z(x)), for x > -1/2."""
+  y = (x + 0.5) / lam
+  t = _peizer_pratt_t(y)
+  return (x - lam + 2 / 3 + _PEIZER_PRATT_EPS / (x + 1)) * jnp.sqrt((1 + t) / lam)
+
+
+def _peizer_pratt_t(y):
+  """T(y) = (1 - y^2 + 2 y log y) / (1 - y)^2, stable around y = 1."""
+  d = y - 1
+  small = jnp.abs(d) < 0.25
+
+  # series: T(1 + d) = sum_{k>=1} 2 (-1)^k d^k / ((k+1) (k+2)); 9 terms are the
+  # fewest that keep the truncation error at the cutoff (~2e-8) below float32
+  # resolution; in float64 the Peizer-Pratt error dominates anyway
+  series = jnp.zeros_like(d)
+  for k in reversed(range(1, 10)):
+    coef = 2 * (-1) ** k / ((k + 1) * (k + 2))
+    series = d * (coef + series)
+
+  y_safe = jnp.where(small, 2.0, y)
+  d_safe = jnp.where(small, 1.0, d)
+  direct = (1 - jnp.square(y_safe) + 2 * y_safe * jnp.log(y_safe)) / jnp.square(
+      d_safe)
+
+  return jnp.where(small, series, direct)
+
+
 def poisson(key: ArrayLike,
             lam: RealArray,
             shape: Shape | None = None,
             dtype: DTypeLikeInt | None = None,
             *,
+            method: str = 'exact',
             out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Poisson random values with given shape and integer dtype.
 
@@ -1855,6 +2178,11 @@ def poisson(key: ArrayLike,
       shape. Default (None) produces a result shape equal to ``lam.shape``.
     dtype: optional, a integer dtype for the returned values (default int64 if
       jax_enable_x64 is true, otherwise int32).
+    method: optional, the sampling algorithm to use, either ``'exact'`` (the
+      default) or ``'approximate'``. The ``'exact'`` method uses rejection
+      sampling and supports only the threefry2x32 RNG. The ``'approximate'``
+      method is loop-free and faster but approximate: the total variation
+      distance from the exact distribution is below 1e-4.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -1869,22 +2197,32 @@ def poisson(key: ArrayLike,
     ``shape is not None, or else by ``lam.shape``.
   """
   key, _ = _check_prng_key("poisson", key)
+  if method not in {'exact', 'approximate'}:
+    raise ValueError("method argument to `poisson` must be one of "
+                     f"{{'exact', 'approximate'}}, got {method!r}")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       int if dtype is None else dtype)
+  if shape is not None:
+    shape = core.canonicalize_shape(shape)
+  else:
+    shape = np.shape(lam)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "poisson", shape)
+  if method == 'approximate':
+    # don't preemptively broadcast lam, if lower rank it may save some computation
+    if lax.broadcast_shapes(np.shape(lam), shape) != shape:
+      raise ValueError("lam shape must be broadcastable to shape argument; "
+                       f"got lam.shape {np.shape(lam)}, shape {shape}")
+    return maybe_auto_axes(_poisson_approx, out_sharding,
+                           shape=shape, dtype=dtype)(key, lam)
+  lam = jnp.broadcast_to(lam, shape)
   # TODO(frostig): generalize underlying poisson implementation and
   # remove this check
   keys_dtype = typing.cast(prng.KeyTy, key.dtype)
   key_impl = keys_dtype._impl
   if key_impl is not threefry2x32.threefry_prng_impl:
     raise NotImplementedError(
-        '`poisson` is only implemented for the threefry2x32 RNG, '
-        f'not {key_impl}')
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
-  else:
-    shape = np.shape(lam)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "poisson", shape)
-  lam = jnp.broadcast_to(lam, shape)
+        "`poisson` with method='exact' is only implemented for the "
+        f'threefry2x32 RNG, not {key_impl}')
   lam = lax.convert_element_type(lam, np.float32)
   return maybe_auto_axes(_poisson, out_sharding, shape=shape, dtype=dtype)(key, lam)
 
@@ -1990,8 +2328,8 @@ def _gumbel(key, shape, dtype, mode) -> Array:
                          shape=(2,) + shape, dtype=dtype)
     # TODO(parkers): The condition is to protect against rounding up but
     # we should be able to add safely with the right addition operation.
-    x = jnp.where(high >= 0.5, high,
-        high + 2 ** -(info.nmant) * low + info.tiny)
+    x = jnp.where(high >= 0.5, high, high + 2 ** -(info.nmant) * low + max(
+        2 ** -(2 * info.nmant + 1), info.tiny))
     return -jnp.log(-jnp.log1p(-x))
   else:
     return -jnp.log(-jnp.log(
@@ -2316,6 +2654,7 @@ def chisquare(key: ArrayLike,
               shape: Shape | None = None,
               dtype: DTypeLikeFloat | None = None,
               *,
+              method: str = "exact",
               out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Chisquare random values with given shape and float dtype.
 
@@ -2336,6 +2675,11 @@ def chisquare(key: ArrayLike,
       produces a result shape equal to ``df.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    method: optional, the sampling algorithm to use, either ``'exact'`` (the
+      default) or ``'approximate'``. The ``'exact'`` method is a rejection
+      sampler. The ``'approximate'`` method is loop-free and faster but carries
+      a small bias. The gradient w.r.t. ``df`` differs between the two
+      methods because of the ambiguity in defining a gradient for random variates.
     out_sharding: optional, Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -2350,6 +2694,9 @@ def chisquare(key: ArrayLike,
     ``shape`` is not None, or else by ``df.shape``.
   """
   key, _ = _check_prng_key("chisquare", key)
+  if method not in {"exact", "approximate"}:
+    raise ValueError("method argument to `chisquare` must be one of "
+                     f"{{'exact', 'approximate'}}, got {method!r}")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -2358,14 +2705,16 @@ def chisquare(key: ArrayLike,
   shape = _check_broadcast_shapes("chisquare", shape, df)
   _check_all_safe_to_cast("chisquare", dtype, df)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "chisquare", shape)
-  return _chisquare(key, df, shape, dtype, out_sharding)
+  return maybe_auto_axes(_chisquare, out_sharding, method=method,
+                         shape=shape, dtype=dtype)(key, df)
+
 
 @jit(static_argnums=(2, 3, 4))
-def _chisquare(key, df, shape, dtype, out_sharding) -> Array:
+def _chisquare(key, df, method, shape, dtype) -> Array:
   df = lax.convert_element_type(df, dtype)
   two = lax._const(df, 2)
   half_df = lax.div(df, two)
-  log_g = loggamma(key, a=half_df, shape=shape, dtype=dtype, out_sharding=out_sharding)
+  log_g = loggamma(key, a=half_df, shape=shape, dtype=dtype, method=method)
   chi2 = lax.mul(jnp.exp(log_g), two)
   return chi2
 
@@ -2709,7 +3058,7 @@ def _orthogonal(key, n, _m, shape, dtype):
 
 def generalized_normal(
   key: ArrayLike,
-  p: float,
+  p: RealArray,
   shape: Shape = (),
   dtype: DTypeLikeFloat | None = None,
   *,
@@ -2727,7 +3076,8 @@ def generalized_normal(
 
   Args:
     key: a PRNG key used as the random key.
-    p: a float representing the shape parameter.
+    p: a float or array of floats broadcast-compatible with ``shape``
+      representing the shape parameter.
     shape: optional, the batch dimensions of the result. Default ().
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).

@@ -21,6 +21,7 @@ from typing import Any
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import config
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import fuser
@@ -200,25 +201,19 @@ def _fusible_matmul(
      ) = jax.tree.map(
          jax.new_ref, (x_values, y_values, z_values, scalar_prefetch, out))
 
-    @pl.core_map(pltpu.create_tensorcore_mesh('core'),
+    @pl.core_map(pltpu.TensorCoreMesh(axis_name='core'),
                   interpret=interpret, debug=debug)
     def _():
       def _f(acc_ref, scalar_prefetch_smem_refs):
         pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
 
-        def block_spec_with_prefetch(bs):
-          if bs is pl.no_block_spec:
-            return pl.BlockSpec()
-          if bs.index_map is None:
-            return bs
-          return bs.replace(
-            index_map=lambda *args: bs.index_map(
-                *args, *scalar_prefetch_smem_refs))
-
-        in_specs_ = jax.tree.map(block_spec_with_prefetch, (
-            x_value_block_specs, y_value_block_specs, z_value_block_specs))
-        z_out_block_spec_ = jax.tree.map(
-            block_spec_with_prefetch, z_out_block_spec)
+        in_specs_ = fuser.block_spec_with_prefetch(
+            (x_value_block_specs, y_value_block_specs, z_value_block_specs),
+            scalar_prefetch_smem_refs,
+        )
+        z_out_block_spec_ = fuser.block_spec_with_prefetch(
+            z_out_block_spec, scalar_prefetch_smem_refs
+        )
         pltpu.emit_pipeline(
             functools.partial(
                     matmul_kernel,
@@ -245,19 +240,13 @@ def _fusible_matmul(
              out_ref, acc_vmem_ref, scalar_prefetch_smem_refs):
       pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
 
-      def block_spec_with_prefetch(bs):
-        if bs is pl.no_block_spec:
-          return pl.BlockSpec()
-        if bs.index_map is None:
-          return bs
-        return bs.replace(
-          index_map=lambda *args: bs.index_map(
-              *args, *scalar_prefetch_smem_refs))
-
-      in_specs_ = jax.tree.map(block_spec_with_prefetch, (
-          x_value_block_specs, y_value_block_specs, z_value_block_specs))
-      z_out_block_spec_ = jax.tree.map(
-          block_spec_with_prefetch, z_out_block_spec)
+      in_specs_ = fuser.block_spec_with_prefetch(
+          (x_value_block_specs, y_value_block_specs, z_value_block_specs),
+          scalar_prefetch_smem_refs,
+      )
+      z_out_block_spec_ = fuser.block_spec_with_prefetch(
+          z_out_block_spec, scalar_prefetch_smem_refs
+      )
       pltpu.emit_pipeline(
           functools.partial(
                   matmul_kernel,
@@ -277,7 +266,7 @@ def _fusible_matmul(
     return pl.kernel(
         body,
         out_type=(z_out_type,),
-        mesh=pltpu.create_tensorcore_mesh('core'),
+        mesh=pltpu.TensorCoreMesh(axis_name='core'),
         scratch_types=[
             pltpu.VMEM((bm, bn), jnp.float32),
             jax.tree.map(pltpu.SMEM.like, scalar_prefetch),
@@ -320,6 +309,12 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Only works with TPU v4+')
     super().setUp()
+    self.enter_context(
+        jtu.ignore_warning(
+            category=DeprecationWarning,
+            message='jax.experimental.pallas.core_map is deprecated',
+        )
+    )
 
   @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul(self, dtype, impl):
@@ -594,6 +589,31 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         np.testing.assert_allclose(
             matmul_slice(x, y, i, j), matmul_slice_ref(x, y, i, j), atol=5e-5
         )
+
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
+  def test_matmul_dynamic_slice_clamped_start(self, dtype, impl):
+    """DS before the kernel: slices part of the matmul's LHS input."""
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, (512, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+
+    @jax.jit
+    @fuser.fuse
+    def matmul_ds(x, y, i):
+      x_sliced = jax.lax.dynamic_slice(x, (0, i), (128, 512))
+      return fusible_matmul(x_sliced, y, impl=impl)
+
+    @jit_no_excess_precision
+    def matmul_ds_ref(x, y, i):
+      x_sliced = jax.lax.dynamic_slice(x, (0, i), (128, 512))
+      return mm_ref(x_sliced, y)
+
+    for i in [0, 128, 512]:
+      np.testing.assert_allclose(
+          matmul_ds(x, y, i),
+          matmul_ds_ref(x, y, i),
+          atol=5e-5,
+      )
 
   @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_mixed_slices(self, dtype, impl):
@@ -1183,6 +1203,90 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=0.4,
     )
 
+  @parameterized.named_parameters(
+      ('transpose', 'ab->ba', (512, 512), (128, 128), {}),
+      (
+          'bcnt_to_bn_ct',
+          'bcnt->(bn)(ct)',
+          (2, 4, 128, 128),
+          (128, 128),
+          {},
+      ),
+      (
+          'split_dims',
+          '(ab)c->a(bc)',
+          (128, 128),
+          (1, 128),
+          {'a': 1, 'b': 128},
+      ),
+      ('merge_dims', 'abc->(ab)c', (4, 128, 512), (128, 128), {}),
+      (
+          'split_transpose_merge',
+          'a(bc)->c(ba)',
+          (64, 256),
+          (128, 128),
+          {'b': 2, 'c': 128},
+      ),
+      (
+          'multi_split_merge',
+          '(ab)(cd)->(ac)(bd)',
+          (8, 1024),
+          (2, 512),
+          {'a': 2, 'b': 4, 'c': 8, 'd': 128},
+      ),
+  )
+  def test_einshape_in_input_fusion(
+      self, equation, in_shape, out_block_shape, sizes
+  ):
+    @jax.jit
+    @fuser.fuse
+    def fused_fn(x, w):
+      y = pltpu.einshape(equation, x, **sizes)
+      return fusible_matmul(
+          y, w, bm=out_block_shape[0], bk=out_block_shape[1], bn=128
+      )
+
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, in_shape, jnp.float32)
+    ref_y = pltpu.einshape(equation, x, **sizes)
+    w = jax.random.normal(k1, (ref_y.shape[1], 128), jnp.float32)
+
+    out = fused_fn(x, w)
+    ref_out = mm_ref(ref_y, w)
+    np.testing.assert_allclose(out, ref_out, atol=0.5, rtol=1e-2)
+
+  def test_einshape_in_input_fusion_non_contiguous_raises(self):
+    @jax.jit
+    @fuser.fuse
+    def fused_fn(x, w):
+      y = pltpu.einshape('(ab)c->a(bc)', x, a=128, b=4)
+      return fusible_matmul(y, w, bm=128, bk=128, bn=128)
+
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (512, 512), jnp.float32)
+    w = jax.random.normal(k1, (2048, 128), jnp.float32)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, 'SplitDims slice .* is non-contiguous'
+    ):
+      fused_fn(x, w)
+
+  @parameterized.product(impl=list(KernelImpl))
+  def test_matmul_with_dynamic_update_slice_raises(self, impl):
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (512, 512), jnp.float32)
+    y = jax.random.normal(k1, (512, 512), jnp.float32)
+
+    @jax.jit
+    @fuser.fuse
+    def matmul_dynamic_update_slice(x, y):
+      z = jnp.zeros((512, 512), jnp.float32)
+      ret_slice = fusible_matmul(x[:128, :], y, impl=impl)
+      return jax.lax.dynamic_update_slice(z, ret_slice, (0, 0))
+
+    with self.assertRaisesRegex(ValueError, 'Stateful primitives .* are not'
+                                ' supported in get_fusion_values'):
+      matmul_dynamic_update_slice(x, y)
 
 def dot_ref(x, y, *, bm=128, bk=128, bn=128):
   # Meant to precisely mimic the numerics of the kernel
@@ -1220,6 +1324,12 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Only works with TPU v4+')
     super().setUp()
+    self.enter_context(
+        jtu.ignore_warning(
+            category=DeprecationWarning,
+            message='jax.experimental.pallas.core_map is deprecated',
+        )
+    )
 
   @parameterized.parameters(KernelImpl)
   def test_matmul_bf16_out(self, impl):
@@ -1411,6 +1521,13 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
     )
     out = jax.jit(impl)(x, y)
     self.assertArraysEqual(out, out_ref)
+
+
+class FusibleMatmulPrimitiveTest(FusibleMatmulTest):
+
+  def setUp(self):
+    super().setUp()
+    self.enter_context(config.use_emit_pipeline_primitive(True))
 
 
 if __name__ == '__main__':

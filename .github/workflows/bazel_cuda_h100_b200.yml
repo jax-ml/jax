@@ -93,10 +93,10 @@ jobs:
                           'CI Optional GPU Presubmit'))
       }}
     runs-on: linux-x86-a4-224-b200-1gpu
-    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
+    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'  # zizmor: ignore[unpinned-images]
     name: "Bazel single B200 CUDA tests"
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: Wait For Connection
@@ -149,10 +149,10 @@ jobs:
           )
       }}
     runs-on: linux-x86-a3-8g-h100-8gpu
-    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
+    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'  # zizmor: ignore[unpinned-images]
     name: "Bazel multiple H100 CUDA tests"
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: Wait For Connection
@@ -176,7 +176,9 @@ jobs:
             //tests/multiprocess:gpu_tests
             //jax/experimental/jax2tf/tests/multiprocess:gpu_tests
           JAXCI_TEST_TAG_FILTERS: 'multiaccelerator'
-          JAXCI_LOCAL_TEST_JOBS: '8'
+          # Limit to 4 concurrent jobs to reduce multi-GPU resource contention (OOMs and
+          # timeouts), since every test runs against all 8 H100s.
+          JAXCI_LOCAL_TEST_JOBS: '4'
           JAXCI_EXCLUDE_TEST_TARGETS: 'PmapTest.testSizeOverflow|.*InterpretTest.*'
           CUSTOM_BAZEL_TARGETS: ${{ github.event.inputs.bazel_targets }}
         run: |

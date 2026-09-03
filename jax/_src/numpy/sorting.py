@@ -441,3 +441,84 @@ def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> A
     idx_dtype = dtypes.default_int_dtype()
   iota = lax.broadcasted_iota(idx_dtype, np.shape(key_arrays[0]), axis)
   return lax.sort((*key_arrays[::-1], iota), dimension=axis, num_keys=len(key_arrays))[-1]
+
+
+@export
+@api.jit(static_argnums=1, static_argnames=('axis', 'mode', 'sorted'))
+def top_k(
+    a: ArrayLike,
+    k: int,
+    /,
+    *,
+    axis: int = -1,
+    mode: str = 'largest',
+    sorted: bool = True,
+) -> tuple[Array, Array]:
+  """Return the ``k`` largest or smallest elements and their indices along an axis.
+
+  JAX implementation of :func:`numpy.top_k`.
+
+  Args:
+    a: array to find top k elements from.
+    k: static integer specifying the number of elements to return. Must be a
+      non-negative integer and no larger than the size of the array along the
+      specified ``axis``.
+    axis: static integer axis along which to find top k elements. Default is -1.
+    mode: string specifying whether to return the ``'largest'`` (default) or
+      ``'smallest'`` elements.
+    sorted: boolean specifying whether to return elements in sorted order.
+      Default is True.
+
+  Returns:
+    A tuple of ``(topk_values, topk_indices)``, where ``topk_values`` are the
+    top k values and ``topk_indices`` are the corresponding indices. Both arrays
+    have the shape of ``a`` with the dimension along ``axis`` replaced by ``k``.
+
+  See also:
+    - :func:`jax.numpy.sort`: full sort
+    - :func:`jax.numpy.partition`: partial sort
+    - :func:`jax.lax.top_k`: lower-level XLA TopK operator
+
+  Examples:
+    Find the two largest elements along the last axis:
+
+    >>> a = jnp.array([[1, 2, 3, 4, 5],
+    ...                [5, 4, 3, 2, 1]])
+    >>> values, indices = jnp.top_k(a, 2)
+    >>> values
+    Array([[5, 4],
+           [5, 4]], dtype=int32)
+    >>> indices
+    Array([[4, 3],
+           [0, 1]], dtype=int32)
+
+    Find the two smallest elements along the first axis:
+
+    >>> values, indices = jnp.top_k(a, 2, axis=0, mode='smallest')
+    >>> values
+    Array([[1, 2, 3, 2, 1],
+           [5, 4, 3, 4, 5]], dtype=int32)
+    >>> indices
+    Array([[0, 0, 0, 1, 1],
+           [1, 1, 1, 0, 0]], dtype=int32)
+  """
+  arr = util.ensure_arraylike("top_k", a)
+  if dtypes.issubdtype(arr.dtype, np.complexfloating):
+    raise ValueError("top_k is not compatible with complex inputs.")
+  if mode not in ("largest", "smallest"):
+    raise ValueError(f"mode must be 'largest' or 'smallest', got {mode!r}")
+  axis = canonicalize_axis(axis, arr.ndim)
+  if mode == "largest":
+    return lax.top_k(arr, k, axis=axis)
+  elif dtypes.isdtype(arr.dtype, "bool"):
+    inv = lax.bitwise_not(arr)
+    vals, indices = lax.top_k(inv, k, axis=axis)
+    return lax.bitwise_not(vals), indices
+  elif dtypes.isdtype(arr.dtype, "unsigned integer"):
+    inv = -(arr + 1)
+    vals, indices = lax.top_k(inv, k, axis=axis)
+    return -(vals + 1), indices
+  else:
+    inv = -arr
+    vals, indices = lax.top_k(inv, k, axis=axis)
+    return -vals, indices

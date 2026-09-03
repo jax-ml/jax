@@ -97,9 +97,8 @@ def do_matmul(a_gmem,
   @pl.when(wg_idx == COMPUTE_WG)
   @jax.named_scope("compute_wg")
   def _():
-    @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-    def _per_warp():
-      warp_id = lax.axis_index("warp")
+    @plgpu.warp_map
+    def _per_warp(warp_id):
       @pl.when(warp_id == TMA_WARP)
       def _memory():
         def _loop_body(ki, _):

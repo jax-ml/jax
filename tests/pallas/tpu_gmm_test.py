@@ -18,6 +18,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 import jax.experimental.pallas.ops.tpu.megablox as mblx
 import jax.numpy as jnp
 import numpy as np
@@ -31,18 +32,7 @@ P = jax.sharding.PartitionSpec
 
 partial = functools.partial
 
-hp.settings.register_profile(
-    "deterministic",
-    database=None,
-    derandomize=True,
-    deadline=None,
-    max_examples=10,
-    print_blob=True,
-)
-hp.settings.load_profile("deterministic")
-
-def seed_strategy() -> hps.SearchStrategy[int]:
-  return hps.integers(min_value=0, max_value=4)
+htu.setup_hypothesis(max_examples=10)
 
 @hps.composite
 def group_strategy(
@@ -94,32 +84,36 @@ GROUPED_MATMUL_TESTS = (
 )
 
 def random_dense(
+    rng: np.random.RandomState,
     shape: tuple[int, ...],
-    key: jax.Array,
-    dtype: jnp.dtype,
+    dtype: jax.typing.DTypeLike,
     limit: int | None = None,
 ) -> jnp.ndarray:
   if limit is None:
     limit = 1 / np.prod(shape)
-  x = jax.random.uniform(key, shape, dtype, minval=-limit, maxval=limit)
-  return x.astype(jnp.bfloat16).astype(dtype)
+  x = jtu.rand_uniform(rng, low=-limit, high=limit)(shape, dtype)
+  return jnp.asarray(x).astype(jnp.bfloat16).astype(dtype)
 
 def dot(
     lhs: jnp.ndarray,
     rhs: jnp.ndarray,
     transpose_lhs: bool = False,
     transpose_rhs: bool = False,
-    preferred_element_type: jnp.dtype = jnp.float32,
+    preferred_element_type: jax.typing.DTypeLike = jnp.float32,
 ) -> jnp.ndarray:
   lhs = jnp.transpose(lhs) if transpose_lhs else lhs
   rhs = jnp.transpose(rhs) if transpose_rhs else rhs
   return jax.lax.dot(lhs, rhs, preferred_element_type=preferred_element_type)
 
+@partial(
+    jax.jit,
+    static_argnames=("group_sizes", "preferred_element_type"),
+)
 def reference_gmm(
     lhs: jnp.ndarray,
     rhs: jnp.ndarray,
-    group_sizes: jnp.ndarray,
-    preferred_element_type: jnp.dtype = jnp.float32,
+    group_sizes: tuple[int, ...],
+    preferred_element_type: jax.typing.DTypeLike = jnp.float32,
 ) -> jnp.ndarray:
 
   start = 0
@@ -136,7 +130,9 @@ def reference_gmm(
   return jnp.concatenate(out, axis=0)
 
 def tolerances(
-    lhs_dtype: jnp.dtype, rhs_dtype: jnp.dtype, out_dtype: jnp.dtype
+    lhs_dtype: jax.typing.DTypeLike,
+    rhs_dtype: jax.typing.DTypeLike,
+    out_dtype: jax.typing.DTypeLike,
 ) -> tuple[float, float]:
   if (
       lhs_dtype == jnp.bfloat16
@@ -150,7 +146,7 @@ def tolerances(
 
 # TODO(tgale): Fix errors with strict dtype promotion.
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
-@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
+@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class GroupedMatmulTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -158,7 +154,6 @@ class GroupedMatmulTest(jtu.JaxTestCase):
       self.skipTest("Test requires TPU device.")
 
     super().setUp()
-    self.key = jax.random.PRNGKey(1234)
 
   def assert_allclose(
       self,
@@ -184,7 +179,6 @@ class GroupedMatmulTest(jtu.JaxTestCase):
       data: hps.SearchStrategy[hps.DataObject],
       interpret: bool = False,
   ):
-    seed = data.draw(seed_strategy())
     num_groups, _ = data.draw(group_strategy(max_stride=1))
     lhs_dtype, rhs_dtype, out_dtype = (
         data.draw(hps.sampled_from([jnp.float32, jnp.bfloat16]))
@@ -192,18 +186,18 @@ class GroupedMatmulTest(jtu.JaxTestCase):
     )
     transpose_rhs = data.draw(hps.booleans())
 
-    key = jax.random.key(seed)
-    k1, k2 = jax.random.split(key, 2)
-    lhs = random_dense((m, k), k1, lhs_dtype, limit=1)
-    rhs = random_dense((num_groups, k, n), k2, rhs_dtype, limit=1)
+    lhs = random_dense(self.rng(), (m, k), lhs_dtype, limit=1)
+    rhs = random_dense(self.rng(), (num_groups, k, n), rhs_dtype, limit=1)
     group_sizes = data.draw(group_sizes_strategy(m=m, num_groups=num_groups))
 
     out, vjpfun = jax.vjp(
-        partial(
-            mblx.gmm,
-            preferred_element_type=out_dtype,
-            transpose_rhs=transpose_rhs,
-            interpret=interpret,
+        jax.jit(
+            partial(
+                mblx.gmm,
+                preferred_element_type=out_dtype,
+                transpose_rhs=transpose_rhs,
+                interpret=interpret,
+            )
         ),
         lhs,
         rhs.swapaxes(1, 2) if transpose_rhs else rhs,
@@ -220,7 +214,7 @@ class GroupedMatmulTest(jtu.JaxTestCase):
         partial(reference_fn, preferred_element_type=out_dtype),
         lhs,
         rhs.swapaxes(1, 2) if transpose_rhs else rhs,
-        group_sizes,
+        tuple(int(x) for x in group_sizes),
     )
     self.assertEqual(out.dtype, out_dtype)
     self.assertEqual(expected_out.dtype, out_dtype)
@@ -228,7 +222,7 @@ class GroupedMatmulTest(jtu.JaxTestCase):
     atol, rtol = tolerances(lhs_dtype, rhs_dtype, out_dtype)
     self.assert_allclose(out, expected_out, atol=atol, rtol=rtol)
 
-    cotangent = random_dense((m, n), k1, out_dtype, limit=1)
+    cotangent = random_dense(self.rng(), (m, n), out_dtype, limit=1)
     grad_lhs, grad_rhs, *_ = vjpfun(cotangent)
     expected_grad_lhs, expected_grad_rhs, *_ = reference_vjpfun(cotangent)
     self.assert_allclose(grad_lhs, expected_grad_lhs, atol=atol, rtol=rtol)
@@ -274,65 +268,68 @@ class GroupedMatmulTest(jtu.JaxTestCase):
       n: int,
       data: hps.SearchStrategy[hps.DataObject],
   ):
-    seed = data.draw(seed_strategy())
     num_groups, group_stride = data.draw(group_strategy())
     lhs_dtype, rhs_dtype, out_dtype = (
         data.draw(hps.sampled_from([jnp.float32, jnp.bfloat16]))
         for _ in range(3)
     )
 
-    key = jax.random.key(seed)
-    k1, k2 = jax.random.split(key, 2)
-    lhs = random_dense((m, k), k1, lhs_dtype, limit=1)
-    rhs = random_dense((num_groups, k, n), k2, rhs_dtype, limit=1)
+    lhs = random_dense(self.rng(), (m, k), lhs_dtype, limit=1)
+    rhs = random_dense(self.rng(), (num_groups, k, n), rhs_dtype, limit=1)
     group_sizes = data.draw(group_sizes_strategy(m=m, num_groups=num_groups))
 
-    out, shard_vjpfun = jax.vjp(
-        partial(mblx.gmm, preferred_element_type=out_dtype),
-        lhs,
-        rhs[0:group_stride],
-        group_sizes,
-    )
-    vjpfuns = [shard_vjpfun]
-    for group_offset in range(group_stride, num_groups, group_stride):
+    @jax.jit
+    def run_sharded_gmm(lhs, rhs, group_sizes, cotangent):
       out, shard_vjpfun = jax.vjp(
-          lambda lhs, rhs, group_sizes, out: mblx.gmm(
-              lhs,
-              rhs,
-              group_sizes,
-              out_dtype,
-              group_offset=jnp.array(group_offset, dtype=jnp.int32),
-              existing_out=out,
-          ),
+          partial(mblx.gmm, preferred_element_type=out_dtype),
           lhs,
-          rhs[group_offset : group_offset + group_stride],
+          rhs[0:group_stride],
           group_sizes,
-          out,
       )
-      vjpfuns.append(shard_vjpfun)
+      vjpfuns = [shard_vjpfun]
+      for group_offset in range(group_stride, num_groups, group_stride):
+        out, shard_vjpfun = jax.vjp(
+            lambda lhs, rhs, group_sizes, out, go=group_offset: mblx.gmm(
+                lhs,
+                rhs,
+                group_sizes,
+                out_dtype,
+                group_offset=jnp.array(go, dtype=jnp.int32),
+                existing_out=out,
+            ),
+            lhs,
+            rhs[group_offset : group_offset + group_stride],
+            group_sizes,
+            out,
+        )
+        vjpfuns.append(shard_vjpfun)
+
+      shard_grad_lhs, shard_grad_rhs, *_ = vjpfuns[0](cotangent)
+      grad_lhs = shard_grad_lhs
+      grad_rhs = [shard_grad_rhs]
+      for i in range(len(vjpfuns) - 1):
+        shard_grad_lhs, shard_grad_rhs, *_ = vjpfuns[i + 1](cotangent)
+        grad_lhs += shard_grad_lhs
+        grad_rhs.append(shard_grad_rhs)
+      grad_rhs = jnp.concatenate(grad_rhs, axis=0)
+
+      return out, grad_lhs, grad_rhs
 
     expected_out, reference_vjpfun = jax.vjp(
         partial(reference_gmm, preferred_element_type=out_dtype),
         lhs,
         rhs,
-        group_sizes,
+        tuple(int(x) for x in group_sizes),
     )
+
+    cotangent = random_dense(self.rng(), (m, n), out_dtype, limit=1)
+    out, grad_lhs, grad_rhs = run_sharded_gmm(lhs, rhs, group_sizes, cotangent)
+
     self.assertEqual(out.dtype, out_dtype)
     self.assertEqual(expected_out.dtype, out_dtype)
     atol, rtol = tolerances(lhs_dtype, rhs_dtype, out_dtype)
     self.assert_allclose(out, expected_out, atol=atol, rtol=rtol)
 
-    cotangent = random_dense((m, n), k1, out_dtype, limit=1)
-    shard_grad_lhs, shard_grad_rhs, *_ = vjpfuns[0](cotangent)
-    grad_lhs = shard_grad_lhs
-    grad_rhs = [shard_grad_rhs]
-    for i, group_offset in enumerate(
-        range(group_stride, num_groups, group_stride)
-    ):
-      shard_grad_lhs, shard_grad_rhs, *_ = vjpfuns[i + 1](cotangent)
-      grad_lhs += shard_grad_lhs
-      grad_rhs.append(shard_grad_rhs)
-    grad_rhs = jnp.concatenate(grad_rhs, axis=0)
     expected_grad_lhs, expected_grad_rhs, *_ = reference_vjpfun(cotangent)
     self.assert_allclose(grad_lhs, expected_grad_lhs, atol=atol, rtol=rtol)
     self.assert_allclose(grad_rhs, expected_grad_rhs, atol=atol, rtol=rtol)

@@ -63,7 +63,7 @@ def _collect_jaxprs(jaxpr: core.Jaxpr,
       # For pallas_call, extract also jaxprs inside the grid_mapping
       mapping = e.params["grid_mapping"]
       for bm in mapping.block_mappings:
-        _collect_jaxprs(bm.index_map_jaxpr.jaxpr, acc)
+        _collect_jaxprs(bm.index_map_jaxpr, acc)
     for sj in core.jaxprs_in_params(e.params):
       _collect_jaxprs(sj, acc)
   return acc
@@ -152,7 +152,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     """
     if hasattr(traceable, "trace"):
       traced = traceable.trace(*args, **kwargs)
-      all_jaxprs = _collect_jaxprs(traced.jaxpr.jaxpr)
+      all_jaxprs = _collect_jaxprs(traced.jaxpr)
     else:
       # Just run the function and collect the Jaxprs and modules that are
       # lowered
@@ -162,7 +162,7 @@ class DebugInfoTest(jtu.JaxTestCase):
 
       all_jaxprs = []
       for jaxpr, _ in collection:
-        all_jaxprs.extend(_collect_jaxprs(jaxpr.jaxpr))
+        all_jaxprs.extend(_collect_jaxprs(jaxpr))
 
     found_jaxprs_debug_infos = [_debug_info_to_string(j.debug_info)
                                 for j in all_jaxprs]

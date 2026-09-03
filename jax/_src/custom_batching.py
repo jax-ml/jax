@@ -21,6 +21,7 @@ import operator
 
 from jax._src import api
 from jax._src import core
+from jax._src import flattree as ft
 from jax._src import custom_api_util
 from jax._src import linear_util as lu
 from jax._src import source_info_util
@@ -33,7 +34,9 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_flatten, tree_map, tree_structure,
-                                tree_unflatten, treedef_tuple)
+                                tree_unflatten, treedef_tuple,
+                                tracing_registry,
+                                treedef_tuple_tracing_registry)
 
 
 source_info_util.register_exclusion(__file__)
@@ -153,14 +156,15 @@ class custom_vmap:
       raise AttributeError(
           f"No batching rule defined for custom_vmap function {debug_fun.func_name} "
           "using def_vmap.")
-    args_flat, in_tree = tree_flatten(args)
-    flat_fun, out_tree = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(self.fun, debug_info=debug_fun),
-        in_tree)
+    args_flat, in_tree = tracing_registry.flatten(args)
     in_avals = [core.typeof(x) for x in args_flat]
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
-    closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
-    in_tree = treedef_tuple((tree_structure(consts), in_tree))
+    jaxpr, out_avals = pe.trace_to_jaxpr(
+        self.fun, ft.pack((ft.treedef_args_to_ft(in_tree, in_avals), {})),
+        debug_fun)
+    closed_call, consts = pe.separate_consts(jaxpr)
+    out_tree = tree_structure(out_avals.unflatten())
+    in_tree = treedef_tuple_tracing_registry(
+        (tracing_registry.flatten(consts)[1], in_tree))
     assert self.vmap_rule is not None
     debug_rule = api_util.debug_info("custom_vmap rule", self.vmap_rule,
                                      (0, args, args), {})
@@ -169,8 +173,8 @@ class custom_vmap:
                                   rule=ClosedRule(self.vmap_rule,
                                                   debug_rule),
                                   in_tree=in_tree,
-                                  out_tree=out_tree())
-    return tree_unflatten(out_tree(), out_flat)
+                                  out_tree=out_tree)
+    return tree_unflatten(out_tree, out_flat)
 
 
 ### utils
@@ -259,11 +263,11 @@ def custom_vmap_batching(args_flat, dims, *, call, rule, in_tree, out_tree):
 
 def custom_vmap_abstract_eval(*in_avals, call, **_):
   del in_avals
-  return call.out_avals, call.effects
+  return call.out_avals, core.positional_effects(call)
 
 
 def custom_vmap_jvp(primals, tangents, *,
-                    call: core.ClosedJaxpr,
+                    call: core.Jaxpr,
                     rule: ClosedRule,
                     in_tree: tree_util.PyTreeDef, out_tree: tree_util.PyTreeDef):
   def jvp_of_rule_rule(axis_size: int, in_batched, primals, tangents):
@@ -294,14 +298,14 @@ def custom_vmap_jvp(primals, tangents, *,
       out_mutually_batched.store(out_batched)
       return out
 
-    api_util.save_wrapped_fun_debug_info(to_jvp, call.jaxpr.debug_info)
+    api_util.save_wrapped_fun_debug_info(to_jvp, call.debug_info)
     def to_vmap_over_extra_batched_dims(primals, tangents):
       return api.jvp(to_jvp, primals, tangents)
 
     to_vmap_over_extra_batched_dims_flat, out_tree2 = api_util.flatten_fun_nokwargs(
         lu.wrap_init(to_vmap_over_extra_batched_dims,
                      # TODO(necula): fix the debug_info calling convention
-                     debug_info=call.jaxpr.debug_info),
+                     debug_info=call.debug_info),
         tree_ps_ts)
 
     flat_out_ps_ts, flat_out_axes = vmap_unrestricted(
@@ -332,7 +336,7 @@ def custom_vmap_jvp(primals, tangents, *,
 
   tangents = map(ad.instantiate_zeros, tangents)
   jvp_call, _ = ad.jvp_jaxpr(call, [True] * len(primals), True)
-  jvp_in_tree = treedef_tuple((in_tree, in_tree))
+  jvp_in_tree = treedef_tuple_tracing_registry((in_tree, in_tree))
   jvp_out_tree = treedef_tuple((out_tree, out_tree))
   outs = custom_vmap_p.bind(
       *primals, *tangents,

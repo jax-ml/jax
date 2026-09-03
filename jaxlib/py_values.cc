@@ -34,6 +34,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/no_destructor.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -42,6 +43,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/str_cat.h"
@@ -51,7 +53,9 @@ limitations under the License.
 #include "nanobind/stl/complex.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "jaxlib/config.h"
+#include "jaxlib/ft_mutex.h"
 #include "jaxlib/nb_class_ptr.h"
+#include "jaxlib/numpy.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/sharding.h"
@@ -70,6 +74,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
@@ -97,41 +102,14 @@ nb::object& typed_ndarray_type = *new nb::object();
 nb::object& invalid_input_exception = *new nb::object();
 nb::object& valid_dtypes = *new nb::object();
 
-struct StaticValues {
-  xla::nb_dtype int32;
-  xla::nb_dtype int64;
-  xla::nb_dtype uint32;
-  xla::nb_dtype float32;
-  xla::nb_dtype float64;
-  xla::nb_dtype complex64;
-  xla::nb_dtype complex128;
-  nb::object numpy_generic;
-};
-
-const StaticValues& GetStatic() {
-  static xla::SafeStatic<StaticValues> dtypes_init;
-  return dtypes_init.Get([] {
-    auto d = std::make_unique<StaticValues>();
-    nb::module_ numpy = nb::module_::import_("numpy");
-    d->int32 = xla::nb_dtype::from_args(numpy.attr("int32"));
-    d->int64 = xla::nb_dtype::from_args(numpy.attr("int64"));
-    d->uint32 = xla::nb_dtype::from_args(numpy.attr("uint32"));
-    d->float32 = xla::nb_dtype::from_args(numpy.attr("float32"));
-    d->float64 = xla::nb_dtype::from_args(numpy.attr("float64"));
-    d->complex64 = xla::nb_dtype::from_args(numpy.attr("complex64"));
-    d->complex128 = xla::nb_dtype::from_args(numpy.attr("complex128"));
-    d->numpy_generic = nb::object(numpy.attr("generic"));
-    return d;
-  });
-}
-
 using CanonicalizeValueHandler = std::function<nb::object(nb::handle)>;
 
-static nb::ft_mutex canonicalize_value_handlers_mutex;
+static ft_mutex canonicalize_value_handlers_mutex;
 
 static absl::NoDestructor<
     absl::flat_hash_map<PyObject*, CanonicalizeValueHandler>>
-    canonicalize_value_handlers;
+    canonicalize_value_handlers
+        ABSL_GUARDED_BY(canonicalize_value_handlers_mutex);
 
 // For xla::S64/U64/F64/C128 types, returns the largest 32-bit equivalent.
 xla::PrimitiveType Squash64BitType(xla::PrimitiveType type) {
@@ -326,9 +304,9 @@ absl::StatusOr<ifrt::ArrayRef> MakeIfrtArrayFromShardsInBatch(
                       /*shape=*/std::move(ifrt_shape),
                       /*sharding=*/std::move(ifrt_sharding),
                       /*layout=*/nullptr}});
-  TF_ASSIGN_OR_RETURN(auto arrays,
-                      ifrt_client->MakeArraysFromHostBufferShards(
-                          absl::MakeSpan(specs), safe_host_semantics));
+  ABSL_ASSIGN_OR_RETURN(auto arrays,
+                        ifrt_client->MakeArraysFromHostBufferShards(
+                            absl::MakeSpan(specs), safe_host_semantics));
   return std::move(arrays.front());
 }
 
@@ -346,10 +324,10 @@ absl::StatusOr<ifrt::ArrayRef> MakeIfrtArrayFromShardsWithAssembly(
   std::vector<ifrt::ArrayRef> ifrt_array_shards;
   ifrt_array_shards.reserve(shards.size());
   for (int64_t i = 0; i < shards.size(); ++i) {
-    TF_ASSIGN_OR_RETURN(ifrt::ArrayRef ifrt_array_shard,
-                        MakeSingleDeviceIfrtArrayFromShard(
-                            ifrt_client, ifrt_addressable_devices[i],
-                            ifrt_memory_kind, shards[i]));
+    ABSL_ASSIGN_OR_RETURN(ifrt::ArrayRef ifrt_array_shard,
+                          MakeSingleDeviceIfrtArrayFromShard(
+                              ifrt_client, ifrt_addressable_devices[i],
+                              ifrt_memory_kind, shards[i]));
     ifrt_array_shards.push_back(std::move(ifrt_array_shard));
   }
   return ifrt_client->AssembleArrayFromSingleDeviceArrays(
@@ -387,7 +365,7 @@ absl::StatusOr<ShardFn> HandlePythonScalar(nb::handle obj, ifrt::Client* client,
     data.template emplace<1>(static_cast<SquashedT>(value));
     type = xla::primitive_util::NativeToPrimitiveType<SquashedT>();
   }
-  TF_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, ifrt::ToDType(type));
+  ABSL_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, ifrt::ToDType(type));
 
   return [data, ifrt_dtype]() -> absl::StatusOr<Shard> {
     const void* ptr = std::visit(
@@ -433,7 +411,7 @@ absl::StatusOr<ShardFn> HandlePythonInt(nb::handle obj, ifrt::Client* client,
     }
     type = xla::S64;
   }
-  TF_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, ifrt::ToDType(type));
+  ABSL_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, ifrt::ToDType(type));
   return [data, ifrt_dtype]() -> absl::StatusOr<Shard> {
     const void* ptr = std::visit(
         [](const auto& v) { return static_cast<const void*>(&v); }, data);
@@ -478,6 +456,12 @@ absl::StatusOr<ShardFn> HandleNumpyScalar(nb::handle h, ifrt::Client* client,
   } else if (std::is_same<T, tsl::float4_e2m1fn>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
     type = xla::F4E2M1FN;
+  } else if (std::is_same<T, tsl::float6_e2m3fn>()) {
+    PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
+    type = xla::F6E2M3FN;
+  } else if (std::is_same<T, tsl::float6_e3m2fn>()) {
+    PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
+    type = xla::F6E3M2FN;
   } else if (std::is_same<T, tsl::float8_e3m4>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
     type = xla::F8E3M4;
@@ -516,7 +500,7 @@ absl::StatusOr<ShardFn> HandleNumpyScalar(nb::handle h, ifrt::Client* client,
     py_buffer_ref =
         GlobalPyRefManager()->ManageReference(nb::cast<nb::object>(h));
   }
-  TF_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, ifrt::ToDType(type));
+  ABSL_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, ifrt::ToDType(type));
   return [data, py_buffer_ref = std::move(py_buffer_ref),
           ifrt_dtype]() mutable -> absl::StatusOr<Shard> {
     const void* ptr = std::visit(
@@ -544,7 +528,7 @@ absl::StatusOr<ShardFn> HandleStringNumpyArray(
     ifrt::MemoryKind to_memory_kind, const DevicePutOptions& options) {
   xla::nb_numpy_ndarray array = nb::cast<xla::nb_numpy_ndarray>(h);
   auto py_array_obj = reinterpret_cast<PyArrayObject*>(array.ptr());
-  TF_ASSIGN_OR_RETURN(auto cords, StringDTypeArrayToCords(py_array_obj));
+  ABSL_ASSIGN_OR_RETURN(auto cords, StringDTypeArrayToCords(py_array_obj));
 
   // Assemble all the parameters of MakeArrayFromHostBuffer
   const void* data = cords.data();
@@ -586,15 +570,15 @@ absl::StatusOr<ShardFn> HandleNumpyArray(nb::handle h, ifrt::Client* client,
                                   options);
   }
 
-  TF_ASSIGN_OR_RETURN(xla::PrimitiveType type,
-                      DtypeToPrimitiveType(array.dtype()));
+  ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType type,
+                        DtypeToPrimitiveType(array.dtype()));
 
   xla::PrimitiveType squashed_type;
   if (options.squash_64bit_types) {
     squashed_type = Squash64BitType(type);
     if (squashed_type != type) {
-      TF_ASSIGN_OR_RETURN(xla::nb_dtype squashed_dtype,
-                          PrimitiveTypeToNbDtype(squashed_type));
+      ABSL_ASSIGN_OR_RETURN(xla::nb_dtype squashed_dtype,
+                            PrimitiveTypeToNbDtype(squashed_type));
       array = nb::steal<xla::nb_numpy_ndarray>(PyArray_CastToType(
           reinterpret_cast<PyArrayObject*>(array.ptr()),
           reinterpret_cast<PyArray_Descr*>(squashed_dtype.release().ptr()),
@@ -613,7 +597,7 @@ absl::StatusOr<ShardFn> HandleNumpyArray(nb::handle h, ifrt::Client* client,
   const void* data = array.data();
   std::shared_ptr<PythonRefManager::ManagedPyObjects> py_buffer_ref =
       GlobalPyRefManager()->ManageReference(std::move(array));
-  TF_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, ifrt::ToDType(squashed_type));
+  ABSL_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, ifrt::ToDType(squashed_type));
   return [data, ifrt_dtype, dims = std::move(dims),
           byte_strides = std::move(byte_strides),
           py_buffer_ref = std::move(py_buffer_ref),
@@ -643,8 +627,8 @@ absl::StatusOr<ShardFn> HandleTypedInt(nb::handle h, ifrt::Client* client,
                                        ifrt::MemoryKind to_memory_kind,
                                        const DevicePutOptions& options) {
   xla::nb_dtype dtype = nb::cast<xla::nb_dtype>(h.attr("dtype"));
-  TF_ASSIGN_OR_RETURN(xla::PrimitiveType type,
-                      xla::DtypeToPrimitiveType(dtype));
+  ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType type,
+                        xla::DtypeToPrimitiveType(dtype));
   switch (type) {
     case xla::S64:
       return HandlePythonScalar<int64_t, int64_t>(h, client, to_device,
@@ -663,8 +647,8 @@ absl::StatusOr<ShardFn> HandleTypedFloat(nb::handle h, ifrt::Client* client,
                                          ifrt::MemoryKind to_memory_kind,
                                          const DevicePutOptions& options) {
   xla::nb_dtype dtype = nb::cast<xla::nb_dtype>(h.attr("dtype"));
-  TF_ASSIGN_OR_RETURN(xla::PrimitiveType type,
-                      xla::DtypeToPrimitiveType(dtype));
+  ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType type,
+                        xla::DtypeToPrimitiveType(dtype));
   switch (type) {
     case xla::F64:
       return HandlePythonScalar<double, double>(h, client, to_device,
@@ -683,8 +667,8 @@ absl::StatusOr<ShardFn> HandleTypedComplex(nb::handle h, ifrt::Client* client,
                                            ifrt::MemoryKind to_memory_kind,
                                            const DevicePutOptions& options) {
   xla::nb_dtype dtype = nb::cast<xla::nb_dtype>(h.attr("dtype"));
-  TF_ASSIGN_OR_RETURN(xla::PrimitiveType type,
-                      xla::DtypeToPrimitiveType(dtype));
+  ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType type,
+                        xla::DtypeToPrimitiveType(dtype));
   switch (type) {
     case xla::C128:
       return HandlePythonScalar<xla::complex128, xla::complex128>(
@@ -721,7 +705,7 @@ absl::StatusOr<ShardFn> HandlePyArray(nb::handle obj, ifrt::Client* client,
         py_array.num_shards());
   }
 
-  ifrt::Array* ifrt_array = py_array.ifrt_array();
+  xla::ifrt::ArrayRef ifrt_array = py_array.ifrt_array_ref();
   if (ifrt_array == nullptr) {
     return xla::InvalidArgument("Array has been deleted.");
   }
@@ -732,22 +716,30 @@ absl::StatusOr<ShardFn> HandlePyArray(nb::handle obj, ifrt::Client* client,
                             to_memory_kind, options);
   }
 
+#if JAX_IFRT_VERSION_NUMBER >= 64
+  if (ifrt_array->sharding().devices()->devices().front() == to_device &&
+      options.allow_zero_copy &&
+      ifrt_array->sharding().memory_kind() == to_memory_kind) {
+#else
   if (ifrt_array->sharding().devices()->devices().front() == to_device &&
       options.allow_zero_copy &&
       (!to_memory_kind.memory_kind().has_value() ||
        !ifrt_array->sharding().memory_kind().memory_kind().has_value() ||
        ifrt_array->sharding().memory_kind() == to_memory_kind)) {
-    Shard result(tsl::FormRef(ifrt_array), py_array.weak_type());
-    return [result = std::move(result)]() mutable { return std::move(result); };
+#endif
+    Shard result(ifrt_array, py_array.weak_type());
+    return [result = std::move(result)]() mutable -> absl::StatusOr<Shard> {
+      return std::move(result);
+    };
   } else {
-    return [ifrt_array = tsl::FormRef(ifrt_array), to_device, to_memory_kind,
+    return [ifrt_array, to_device, to_memory_kind,
             weak_type = py_array.weak_type(),
             allow_zero_copy =
                 options.allow_zero_copy]() mutable -> absl::StatusOr<Shard> {
       auto* ifrt_client = ifrt_array->client();
-      TF_ASSIGN_OR_RETURN(ifrt::DeviceListRef device_list,
-                          ifrt_client->MakeDeviceList({to_device}));
-      TF_ASSIGN_OR_RETURN(
+      ABSL_ASSIGN_OR_RETURN(ifrt::DeviceListRef device_list,
+                            ifrt_client->MakeDeviceList({to_device}));
+      ABSL_ASSIGN_OR_RETURN(
           auto copied_ifrt_arrays,
           ifrt_client->CopyArrays(absl::MakeSpan(&ifrt_array, 1),
                                   std::move(device_list), to_memory_kind,
@@ -836,6 +828,8 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
     (*p)[dtypes.np_uint32.ptr()] = HandleNumpyScalar<uint32_t>;
     (*p)[dtypes.np_uint64.ptr()] = HandleNumpyScalar<uint64_t, uint32_t>;
     (*p)[dtypes.np_float4_e2m1fn.ptr()] = HandleNumpyScalar<tsl::float4_e2m1fn>;
+    (*p)[dtypes.np_float6_e2m3fn.ptr()] = HandleNumpyScalar<tsl::float6_e2m3fn>;
+    (*p)[dtypes.np_float6_e3m2fn.ptr()] = HandleNumpyScalar<tsl::float6_e3m2fn>;
     (*p)[dtypes.np_float8_e3m4.ptr()] = HandleNumpyScalar<tsl::float8_e3m4>;
     (*p)[dtypes.np_float8_e4m3.ptr()] = HandleNumpyScalar<tsl::float8_e4m3>;
     (*p)[dtypes.np_float8_e4m3fn.ptr()] = HandleNumpyScalar<tsl::float8_e4m3fn>;
@@ -906,13 +900,13 @@ xla::nb_dtype CanonicalizeDtype(xla::nb_dtype dtype) {
   char kind = dtype.kind();
   ssize_t itemsize = dtype.itemsize();
   if (kind == 'i' && itemsize == 8) {
-    return GetStatic().int32;
+    return NumpyTypes::Get().int32_dtype;
   } else if (kind == 'u' && itemsize == 8) {
-    return GetStatic().uint32;
+    return NumpyTypes::Get().uint32_dtype;
   } else if (kind == 'f' && itemsize == 8) {
-    return GetStatic().float32;
+    return NumpyTypes::Get().float32_dtype;
   } else if (kind == 'c' && itemsize == 16) {
-    return GetStatic().complex64;
+    return NumpyTypes::Get().complex64_dtype;
   }
   return dtype;
 }
@@ -926,7 +920,7 @@ nb::object CanonicalizeInt(nb::handle x) {
                                              " too large to convert to int64")
                                     .c_str());
     }
-    return typed_int_type(x, GetStatic().int64);
+    return typed_int_type(x, NumpyTypes::Get().int64_dtype);
   } else {
     int32_t val;
     if (!nb::try_cast<int32_t>(x, val)) {
@@ -935,19 +929,20 @@ nb::object CanonicalizeInt(nb::handle x) {
                                              " too large to convert to int32")
                                     .c_str());
     }
-    return typed_int_type(x, GetStatic().int32);
+    return typed_int_type(x, NumpyTypes::Get().int32_dtype);
   }
 }
 
 nb::object CanonicalizeFloat(nb::handle x) {
-  const StaticValues& dtypes = GetStatic();
-  return typed_float_type(x, GetEnableX64() ? dtypes.float64 : dtypes.float32);
+  const NumpyTypes& dtypes = NumpyTypes::Get();
+  return typed_float_type(
+      x, GetEnableX64() ? dtypes.float64_dtype : dtypes.float32_dtype);
 }
 
 nb::object CanonicalizeComplex(nb::handle x) {
-  const StaticValues& dtypes = GetStatic();
+  const NumpyTypes& dtypes = NumpyTypes::Get();
   return typed_complex_type(
-      x, GetEnableX64() ? dtypes.complex128 : dtypes.complex64);
+      x, GetEnableX64() ? dtypes.complex128_dtype : dtypes.complex64_dtype);
 }
 
 void CheckValidDtype(nb::handle dtype) {
@@ -1053,7 +1048,7 @@ void SetTypedNdArrayType(nb::object t) {
                                      return cache->Call(cache.ptr(), x);
                                    });
   RegisterCanonicalizeValueHandler(t.ptr(), IdentityHandler);
-  RegisterCanonicalizeValueHandler(GetStatic().numpy_generic.ptr(),
+  RegisterCanonicalizeValueHandler(NumpyTypes::Get().numpy_generic.ptr(),
                                    CanonicalizeNumpyScalar);
 }
 
@@ -1137,7 +1132,7 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         ToPyArgSignatureHandler typed_scalar_handler =
             [](nb::handle h,
                bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
-          TF_ASSIGN_OR_RETURN(
+          ABSL_ASSIGN_OR_RETURN(
               xla::PrimitiveType dtype,
               DtypeToPrimitiveType(nb::cast<xla::nb_dtype>(h.attr("dtype"))));
           return PyArgSignature(dtype, {}, true);
@@ -1157,8 +1152,8 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
                bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
           xla::nb_numpy_ndarray numpy_array =
               nb::cast<xla::nb_numpy_ndarray>(h);
-          TF_ASSIGN_OR_RETURN(xla::PrimitiveType dtype,
-                              DtypeToPrimitiveType(numpy_array.dtype()));
+          ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType dtype,
+                                DtypeToPrimitiveType(numpy_array.dtype()));
           if (!jax_enable_x64) {
             dtype = Squash64BitType(dtype);
           }
@@ -1182,8 +1177,8 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
           bool weak_type = nb::cast<bool>(h.attr("weak_type"));
           xla::nb_numpy_ndarray numpy_array =
               nb::cast<xla::nb_numpy_ndarray>(h.attr("val"));
-          TF_ASSIGN_OR_RETURN(xla::PrimitiveType dtype,
-                              DtypeToPrimitiveType(numpy_array.dtype()));
+          ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType dtype,
+                                DtypeToPrimitiveType(numpy_array.dtype()));
           static_assert(sizeof(int64_t) == sizeof(ssize_t),
                         "Code assumes ssize_t is the same as int64_t");
           return PyArgSignature(
@@ -1225,8 +1220,8 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
           // This block deals with all numpy scalar types, except for
           // int64_dt, float64_dt and complex128_dt which are taken care of
           // in previous if blocks.
-          TF_ASSIGN_OR_RETURN(auto dtype,
-                              xla::DtypeToPrimitiveType(h.attr("dtype")));
+          ABSL_ASSIGN_OR_RETURN(auto dtype,
+                                xla::DtypeToPrimitiveType(h.attr("dtype")));
           return PyArgSignature(dtype, {}, /*weak_type=*/false);
         };
 
@@ -1245,6 +1240,8 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         (*p)[dtypes.np_uint32.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_uint64.ptr()] = np_uint64_handler;
         (*p)[dtypes.np_float4_e2m1fn.ptr()] = numpy_array_handler;
+        (*p)[dtypes.np_float6_e2m3fn.ptr()] = numpy_array_handler;
+        (*p)[dtypes.np_float6_e3m2fn.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e3m4.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e4m3.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e4m3fn.ptr()] = numpy_array_handler;
@@ -1267,12 +1264,12 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
 
   if (arg.type().ptr() == PyArray::type().ptr()) {
     auto array = nb::borrow<PyArray>(arg);
-    ifrt::Array* ifrt_array = array.ifrt_array();
+    xla::ifrt::ArrayRef ifrt_array = array.ifrt_array_ref();
     if (ifrt_array == nullptr) {
       return xla::InvalidArgument("Array has been deleted.");
     }
-    TF_ASSIGN_OR_RETURN(auto primitive_type,
-                        ifrt::ToPrimitiveType(ifrt_array->dtype()));
+    ABSL_ASSIGN_OR_RETURN(auto primitive_type,
+                          ifrt::ToPrimitiveType(ifrt_array->dtype()));
     return PyArgSignature(primitive_type, array.shape(), array.weak_type());
   }
 
@@ -1314,16 +1311,16 @@ absl::StatusOr<DevicePutResult> DevicePutWithDevice(
         ifrt_device->DebugString());
   }
 
-  TF_ASSIGN_OR_RETURN(ShardFn shard_fn,
-                      MakeShardFn(addressable_shard, ifrt_client, ifrt_device,
-                                  ifrt_memory_kind, options));
+  ABSL_ASSIGN_OR_RETURN(ShardFn shard_fn,
+                        MakeShardFn(addressable_shard, ifrt_client, ifrt_device,
+                                    ifrt_memory_kind, options));
 
   nb::gil_scoped_release gil_release;
 
-  TF_ASSIGN_OR_RETURN(Shard shard, std::move(shard_fn)());
-  TF_ASSIGN_OR_RETURN(ifrt::ArrayRef ifrt_array,
-                      MakeSingleDeviceIfrtArrayFromShard(
-                          ifrt_client, ifrt_device, ifrt_memory_kind, shard));
+  ABSL_ASSIGN_OR_RETURN(Shard shard, std::move(shard_fn)());
+  ABSL_ASSIGN_OR_RETURN(ifrt::ArrayRef ifrt_array,
+                        MakeSingleDeviceIfrtArrayFromShard(
+                            ifrt_client, ifrt_device, ifrt_memory_kind, shard));
   return DevicePutResult(std::move(ifrt_array), shard.weak_type);
 }
 
@@ -1335,8 +1332,8 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
   tsl::profiler::TraceMe traceme("DevicePutWithSharding");
   ++GetDevicePutInfo().device_put_with_sharding;
 
-  TF_ASSIGN_OR_RETURN(ifrt::DeviceListRef ifrt_device_list,
-                      GetIfrtDeviceList(sharding));
+  ABSL_ASSIGN_OR_RETURN(ifrt::DeviceListRef ifrt_device_list,
+                        GetIfrtDeviceList(sharding));
   ifrt::DeviceList* ifrt_addressable_device_list =
       ifrt_device_list->AddressableDeviceList();
 
@@ -1347,21 +1344,23 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
         src_shards.size(), dst_devices->size());
   }
 
-  TF_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, DtypeToIfRtDType(dtype));
+  ABSL_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, DtypeToIfRtDType(dtype));
   ifrt::Shape ifrt_shape(shape);
   ifrt::MemoryKind ifrt_memory_kind = GetMemoryKind(sharding);
 
   std::vector<ShardFn> shard_fns;
   shard_fns.reserve(src_shards.size());
   for (int i = 0; i < src_shards.size(); ++i) {
-    TF_ASSIGN_OR_RETURN(ShardFn shard, MakeShardFn(src_shards[i], ifrt_client,
-                                                   dst_devices->devices()[i],
-                                                   ifrt_memory_kind, options));
+    ABSL_ASSIGN_OR_RETURN(
+        ShardFn shard,
+        MakeShardFn(src_shards[i], ifrt_client, dst_devices->devices()[i],
+                    ifrt_memory_kind, options));
     shard_fns.push_back(std::move(shard));
   }
 
   ifrt::ShardingRef ifrt_sharding;
-  TF_ASSIGN_OR_RETURN(ifrt_sharding, GetIfrtHloSharding(sharding, ifrt_shape));
+  ABSL_ASSIGN_OR_RETURN(ifrt_sharding,
+                        GetIfrtHloSharding(sharding, ifrt_shape));
   // Fully-replicated shardings enable additional optimizations of using a
   // single host buffer.
   // TODO(hyeontaek): Enable a similar optimization for partially replicated
@@ -1377,7 +1376,7 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
   std::vector<Shard> shards;
   shards.reserve(shard_fns.size());
   for (int64_t i = 0; i < shard_fns.size(); ++i) {
-    TF_ASSIGN_OR_RETURN(Shard shard, std::move(shard_fns[i])());
+    ABSL_ASSIGN_OR_RETURN(Shard shard, std::move(shard_fns[i])());
     if (shard.is_ifrt_array()) {
       // If any shard is an IFRT array, we should assemble shards.
       should_batch = false;
@@ -1405,19 +1404,20 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
   if (should_batch) {
     if (is_fully_replicated && shards.size() == 1) {
       ++GetDevicePutInfo().device_put_fully_replicated;
-      TF_ASSIGN_OR_RETURN(ifrt_array, MakeIfrtArrayFromFullyReplicatedShard(
-                                          ifrt_client, std::move(ifrt_sharding),
-                                          shards.front()));
+      ABSL_ASSIGN_OR_RETURN(
+          ifrt_array,
+          MakeIfrtArrayFromFullyReplicatedShard(
+              ifrt_client, std::move(ifrt_sharding), shards.front()));
     } else {
       ++GetDevicePutInfo().device_put_batched;
-      TF_ASSIGN_OR_RETURN(
+      ABSL_ASSIGN_OR_RETURN(
           ifrt_array, MakeIfrtArrayFromShardsInBatch(
                           ifrt_client, ifrt_dtype, std::move(ifrt_shape),
                           std::move(ifrt_sharding), absl::MakeSpan(shards)));
     }
   } else {
     ++GetDevicePutInfo().device_put_assembled;
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         ifrt_array, MakeIfrtArrayFromShardsWithAssembly(
                         ifrt_client, ifrt_dtype, std::move(ifrt_shape),
                         std::move(ifrt_sharding), ifrt_addressable_device_list,
@@ -1429,7 +1429,7 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
 
 void RegisterCanonicalizeValueHandler(
     PyObject* type, std::function<nb::object(nb::handle)> handler) {
-  nb::ft_lock_guard lock(canonicalize_value_handlers_mutex);
+  ft_lock_guard lock(canonicalize_value_handlers_mutex);
   auto& handlers = *canonicalize_value_handlers;
   handlers[type] = std::move(handler);
 }
@@ -1442,7 +1442,7 @@ nb::object CanonicalizeValue(nb::handle x) {
   CanonicalizeValueHandler handler;
   PyObject* typ = reinterpret_cast<PyObject*>(x.type().ptr());
   {
-    nb::ft_lock_guard lock(canonicalize_value_handlers_mutex);
+    ft_lock_guard lock(canonicalize_value_handlers_mutex);
     auto& handlers = *canonicalize_value_handlers;
 
     // 1. Direct lookup

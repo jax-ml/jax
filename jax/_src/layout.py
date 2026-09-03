@@ -13,23 +13,46 @@
 # limitations under the License.
 
 from __future__ import annotations
-
-from typing import Union
+from contextlib import contextmanager
+import enum
 
 import numpy as np
 from jax._src.dtypes import iinfo, issubdtype
+from jax._src import config as jax_config
 from jax._src.sharding import Sharding
 from jax._src.util import tuple_insert
 from jax._src.lib import xla_client as xc
 
 Shape = tuple[int, ...]
 
+
 class AutoLayoutSingleton:
-
   def __repr__(self):
-    return "AUTO"
-
+    return "AutoLayout"
 AutoLayout = AutoLayoutSingleton()
+
+
+class LayoutMode(enum.Enum):
+  AUTO = enum.auto()
+  JAX = enum.auto()
+  PALLAS_TPU = enum.auto()
+  PALLAS_GPU = enum.auto()
+
+def get_layout_mode():
+  val = jax_config.layout_tracing_mode.value
+  return LayoutMode.AUTO if val is None else val
+
+@contextmanager
+def use_layout_mode(mode):
+  if not isinstance(mode, LayoutMode):
+    raise TypeError(
+        f'Expected mode of type `LayoutMode`. Got type: {type(mode)}')
+  prev_mode = jax_config.layout_tracing_mode.swap_local(mode)
+  try:
+    yield
+  finally:
+    jax_config.layout_tracing_mode.set_local(prev_mode)
+
 
 class Layout:
   major_to_minor: tuple[int, ...]
@@ -101,8 +124,8 @@ class Layout:
           f' Got major_to_minor={self.major_to_minor} and shape={aval_shape}')
 
 
-LayoutOptions = Union[Layout, None, AutoLayoutSingleton]
-ShardingOptions = Union[Sharding, None]
+LayoutOptions = Layout | None | AutoLayoutSingleton
+ShardingOptions = Sharding | None
 
 
 class Format:

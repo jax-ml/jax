@@ -18,13 +18,16 @@ import dataclasses
 import functools
 import pickle
 import re
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import flatten_util
 from jax import tree_util
+from jax._src import flattree as ft
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax._src.tree_util import (
     prefix_errors, broadcast_flattened_prefix_with_treedef,
     default_registry, dispatch_registry)
@@ -80,6 +83,19 @@ class AnObject:
 
 tree_util.register_pytree_node(AnObject, lambda o: ((o.x, o.y), o.z),
                                lambda z, xy: AnObject(xy[0], xy[1], z))
+
+class ArrayMetadataBox:
+  # A pytree whose metadata (aux_data) is an array, hence unhashable and not
+  # comparable with plain `==` semantics. Used to test that pytree equality
+  # errors name the offending registered type. See issue #13027.
+
+  def __init__(self, x):
+    self.x = x
+
+tree_util.register_pytree_node(
+    ArrayMetadataBox,
+    lambda obj: ((), (obj.x,)),
+    lambda aux_data, children: ArrayMetadataBox(aux_data[0]))
 
 class AnObject2(AnObject): pass
 
@@ -991,6 +1007,11 @@ class TreeTest(jtu.JaxTestCase):
                                        (SequenceKey(1), tree1["sub"][1])])
     self.assertIsNone(meta)
 
+    children, meta = tree_util.flatten_one_level_with_keys(tree1["sub"][1])
+    self.assertEqual(list(children), [(GetAttrKey("foo"), ()),
+                                      (GetAttrKey("bar"), [None])])
+    self.assertEqual(meta, ATuple)
+
     # Custom object with keys
     children, meta = tree_util.flatten_one_level_with_keys(tree1["obj"])
     self.assertEqual(list(children), [("x", EmptyTuple()), ("y", 0)])
@@ -1161,6 +1182,28 @@ class TreeKeyTest(absltest.TestCase):
     with self.assertRaisesRegex(ValueError, msg):
       f(Tree(jnp.arange(4)))
 
+  def testEqualityErrorNamesOffendingType(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/13027
+    a = ArrayMetadataBox(jnp.arange(3))
+    b = ArrayMetadataBox(jnp.arange(3))
+    _, treedef_a = tree_util.tree_flatten(a)
+    _, treedef_b = tree_util.tree_flatten(b)
+
+    # hash succeeds despite unhashable metadata (metadata isn't actually
+    # hashed); the error only appears once equality is checked.
+    hash(treedef_a)
+    hash(treedef_b)
+
+    with self.assertRaisesRegex(ValueError, "ArrayMetadataBox"):
+      treedef_a == treedef_b
+
+    # The same error, reached through jax.jit's dispatch cache, should also
+    # name the offending type.
+    f = jax.jit(lambda x: x)
+    f(a)
+    with self.assertRaisesRegex(ValueError, "ArrayMetadataBox"):
+      f(b)
+
 
 class StaticTest(parameterized.TestCase):
 
@@ -1229,6 +1272,19 @@ class StaticTest(parameterized.TestCase):
       serialized
     )
     self.assertEqual(tree_structure, new_structure)
+
+  @unittest.skipIf(
+      jaxlib_extension_version < 488,
+      "Requires jaxlib_extension_version >= 488",
+  )
+  def test_deserialize_malformed_treedef(self):
+    # A single list node claiming a child that no earlier node supplies.
+    # This used to segfault rather than raise.
+    with self.assertRaisesRegex(ValueError, "Malformed PyTreeDef"):
+      jax.tree_util.PyTreeDef.deserialize_using_proto(
+        jax.tree_util.default_registry,
+        bytes.fromhex("0a0408011002")
+      )
 
   def test_compare_pytreedef_with_registries(self):
     class MyCustomType:
@@ -1417,7 +1473,31 @@ class TreePrefixErrorsTest(jtu.JaxTestCase):
   def test_different_num_children_print_key_diff(self):
     e, = prefix_errors({'a': 1}, {'a': 2, 'b': 3})
     expected = ("so the symmetric difference on key sets is\n"
-                "    b")
+                r"    \['b'\]")
+    with self.assertRaisesRegex(ValueError, expected):
+      raise e('in_axes')
+
+  def test_different_num_children_custom_node_with_keys(self):
+    # https://github.com/jax-ml/jax/issues/25659
+    @tree_util.register_pytree_with_keys_class
+    class Foo:
+      def __init__(self, fields):
+        self.fields = dict(fields)
+
+      def tree_flatten_with_keys(self):
+        return ([(tree_util.GetAttrKey(k), v) for k, v in self.fields.items()],
+                tuple(self.fields))
+
+      @classmethod
+      def tree_unflatten(cls, keys, children):
+        return cls(zip(keys, children))
+
+    e, = prefix_errors(Foo({'a': 1}), Foo({'a': 2, 'b': 3}))
+    expected = ("(?s)pytree structure error: different numbers of pytree "
+                "children at key path\n"
+                "    in_axes\n"
+                ".*so the symmetric difference on key sets is\n"
+                r"    \.b")
     with self.assertRaisesRegex(ValueError, expected):
       raise e('in_axes')
 
@@ -1705,7 +1785,7 @@ class RegistrationTest(jtu.JaxTestCase):
     @dataclasses.dataclass
     class Foo:
       x: int
-      y: int = dataclasses.field(metadata=dict(static=True))
+      y: int = jax.tree.static()
 
     f = Foo(2, 3)
     self.assertLen(jax.tree.leaves(f), 1)
@@ -1789,6 +1869,19 @@ class RegistrationTest(jtu.JaxTestCase):
         Foo, data_fields=["x"], meta_fields=[], drop_fields=["y", "z"]
     )
 
+  def test_register_dataclass_init_false(self):
+    @dataclasses.dataclass
+    class Foo:
+      x: int
+      y: int = dataclasses.field(default=42)
+      z: int = dataclasses.field(default=42, init=False)
+
+    with self.assertRaises(ValueError):
+      # Requires explicit drop_fields
+      tree_util.register_dataclass(Foo)
+
+    tree_util.register_dataclass(Foo, drop_fields="z")
+
   def test_register_dataclass_invalid_plain_class(self):
     class Foo:
       x: int
@@ -1820,6 +1913,23 @@ class RegistrationTest(jtu.JaxTestCase):
       static = jax.tree.static(metadata={"static": False})
       self.assertEqual(static.metadata, {"static": False})
 
+
+class FlatTreeTest(jtu.JaxTestCase):
+
+  def test_filter_and_tupling_commute(self):
+    xs = ft.flatten({'a': 0, 'b': 1})
+    ys = ft.flatten({'c': 2, 'd': 3, 'e': 4})
+    x_mask = [True, False]
+    y_mask = [False, True, True]
+    xs_f1 = xs.filter_with_mask(x_mask)
+    ys_f1 = ys.filter_with_mask(y_mask)
+
+    zs = ft.pack((xs, ys))
+    zs_f = zs.filter_with_mask(x_mask + y_mask)
+    xs_f2, ys_f2 = zs_f.unpack()
+    print(xs_f2)
+    print(ys_f2)
+    self.assertEqual((xs_f1, ys_f1), (xs_f2, ys_f2))
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

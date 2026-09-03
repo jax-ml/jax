@@ -13,33 +13,29 @@
 # limitations under the License.
 # ==============================================================================
 
-load("@python_version_repo//:py_version.bzl", "REQUIREMENTS")
+load(
+    "@python_version_repo//:py_version.bzl",
+    "HERMETIC_PYTHON_VERSION",
+    "REQUIREMENTS",
+)
 load("@rules_python//python:pip.bzl", "compile_pip_requirements")
 load("@rules_python//python:py_library.bzl", "py_library")
 load("//jaxlib:jax.bzl", "all_py_deps")
 
 licenses(["notice"])
 
-COMMON_REQUIREMENTS = [
+REQUIREMENTS_TXT = (
+    "requirements_lock_{}.txt".format(
+        HERMETIC_PYTHON_VERSION.replace(".", "_").replace("-", "_")
+    )
+    if REQUIREMENTS == "//:requirements.txt"
+    else REQUIREMENTS
+)
+
+REQUIREMENTS_SRCS = [
     "requirements.in",
     "test-requirements.txt",
     "nvidia-requirements.txt",
-]
-
-# It isn't possible to constraint based on free-threaded vs non-free threaded
-# in a requirements file. So we do it by having two separate sets of requirement
-# files and two sets of build rules.
-FREETHREADING_REQUIREMENTS = COMMON_REQUIREMENTS + [
-    "freethreading-requirements.txt",
-]
-
-NON_FREETHREADING_REQUIREMENTS = COMMON_REQUIREMENTS + [
-    "nonfreethreading-requirements.txt",
-]
-
-COMBOS = [
-    ("", NON_FREETHREADING_REQUIREMENTS),
-    ("_ft", FREETHREADING_REQUIREMENTS),
 ]
 
 exports_files(["numpy.json"])
@@ -50,56 +46,47 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
-[
-    compile_pip_requirements(
-        name = "requirements" + suffix,
-        srcs = requirements,
-        extra_args = [
-            "--allow-unsafe",
-            "--build-isolation",
-            "--rebuild",
-            "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
-        ],
-        generate_hashes = True,
-        requirements_txt = REQUIREMENTS,
-    )
-    for suffix, requirements in COMBOS
-]
+compile_pip_requirements(
+    name = "requirements",
+    srcs = REQUIREMENTS_SRCS,
+    extra_args = [
+        "--allow-unsafe",
+        "--build-isolation",
+        "--rebuild",
+        "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
+    ],
+    generate_hashes = True,
+    requirements_txt = REQUIREMENTS_TXT,
+)
 
-[
-    compile_pip_requirements(
-        name = "requirements_nightly" + suffix,
-        srcs = requirements,
-        extra_args = [
-            "--allow-unsafe",
-            "--build-isolation",
-            "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
-            "--extra-index-url=https://pypi.anaconda.org/scientific-python-nightly-wheels/simple",
-            "--pre",
-            "--upgrade",
-        ],
-        generate_hashes = False,
-        requirements_txt = REQUIREMENTS,
-    )
-    for suffix, requirements in COMBOS
-]
+compile_pip_requirements(
+    name = "requirements_nightly",
+    srcs = REQUIREMENTS_SRCS,
+    extra_args = [
+        "--allow-unsafe",
+        "--build-isolation",
+        "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
+        "--extra-index-url=https://pypi.anaconda.org/scientific-python-nightly-wheels/simple",
+        "--pre",
+        "--upgrade",
+    ],
+    generate_hashes = False,
+    requirements_txt = REQUIREMENTS_TXT,
+)
 
-[
-    compile_pip_requirements(
-        name = "requirements_dev" + suffix,
-        srcs = requirements,
-        extra_args = [
-            "--allow-unsafe",
-            "--build-isolation",
-            "--upgrade",
-            "--rebuild",
-            "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
-        ],
-        generate_hashes = False,
-        requirements_txt = REQUIREMENTS,
-    )
-    for suffix, requirements in COMBOS
-]
+compile_pip_requirements(
+    name = "requirements_dev",
+    srcs = REQUIREMENTS_SRCS,
+    extra_args = [
+        "--allow-unsafe",
+        "--build-isolation",
+        "--upgrade",
+        "--rebuild",
+        "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
+    ],
+    generate_hashes = False,
+    requirements_txt = REQUIREMENTS_TXT,
+)
 
 py_library(
     name = "all_py_deps",

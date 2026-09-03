@@ -27,3 +27,8 @@ _version = rocm_version_number()
 ROCM_MAJOR_VERSION = str(_version // 10000)
 ROCM_MINOR_VERSION = str((_version % 10000) // 100)
 ROCM_PATCH_VERSION = str(_version % 100)
+ROCM_FULL_VERSION = "%s.%s.%s" % (
+    ROCM_MAJOR_VERSION,
+    ROCM_MINOR_VERSION,
+    ROCM_PATCH_VERSION,
+)

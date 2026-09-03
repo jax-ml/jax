@@ -42,18 +42,53 @@ JAX: High performance array computing
 
     .. grid-item-card:: :material-regular:`rocket_launch;2em` Getting started
       :columns: 12 6 6 4
-      :link: beginner-guide
+      :link: jax-101
       :link-type: ref
       :class-card: getting-started
 
-    .. grid-item-card:: :material-regular:`library_books;2em` JAX 101
+    .. grid-item-card:: :material-regular:`library_books;2em` API reference
       :columns: 12 6 6 4
-      :link: jax-101
-      :link-type: ref
+      :link: jax
+      :link-type: doc
       :class-card: jax-101
 
 If you're looking to use JAX to train neural networks, check out the `JAX AI
 Stack`_!
+
+Documentation
+-------------
+
+The documentation is organized into levels. Start at 101 and read in order,
+or jump to the level that matches what you're trying to do:
+
+* :doc:`JAX 101 <101/index>` — **expressing computations**: arrays and
+  :mod:`jax.numpy`, transformations (:func:`jax.grad`, :func:`jax.vmap`),
+  how tracing works, pytrees, random numbers, and state.
+
+* :doc:`JAX 201 <201/index>` — **performance and scaling**: compiling with
+  :func:`jax.jit`, ahead-of-time compilation, control flow, data placement,
+  sharding and automatic parallelization, per-device programming with
+  ``shard_map``, callbacks, and the diagnostics toolbox: profiling,
+  debugging, compilation time, numerical precision, and GPU memory.
+
+* :doc:`JAX 301 <301/index>` — **advanced autodiff and extending JAX**: the
+  autodiff cookbook (JVPs, VJPs, Jacobians, Hessians), autodiff with
+  sharding, custom derivative rules, autodiff with mutable state, gradient
+  checkpointing, and defining new JAX types.
+
+* :doc:`JAX 401 <401/index>` — **kernels and FFI**: writing custom GPU and
+  TPU kernels with Pallas, and calling external code through the foreign
+  function interface.
+
+* :doc:`JAX 501 <501/index>` — **systems topics**: multi-controller JAX
+  across many hosts, distributed data loading, fault tolerance, exporting
+  and serialization, the persistent compilation cache, and transfer guards.
+
+* :doc:`JAX 601 <601/index>` — **internals**: the jaxpr language,
+  primitives, and Autodidax, which builds JAX's core from scratch.
+
+Already know JAX? See :doc:`whats-new` for the features these docs cover
+for the first time.
 
 Ecosystem
 ---------
@@ -122,27 +157,33 @@ maintains an up-to-date list.
    :caption: Getting started
 
    installation
-   notebooks/thinking_in_jax
 
 .. toctree::
    :hidden:
    :maxdepth: 1
+   :caption: Documentation
 
+   whats-new
+   101/index
+   201/index
+   301/index
+   401/index
+   501/index
+   601/index
    notebooks/Common_Gotchas_in_JAX
-   jax-101
+   pallas/index
 
 .. toctree::
    :hidden:
    :maxdepth: 2
-   :caption: Resources, guides, and references
+   :caption: Resources
 
-   key-concepts
    advanced_guides
    jax
-   pallas/index
+   api_compatibility
+   deprecation
    contributor_guide
    extensions
-   notes
    about
 
 

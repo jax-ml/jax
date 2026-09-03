@@ -15,11 +15,13 @@
 
 import dataclasses
 import functools
+import math
 import re
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import hijax
 from jax._src import test_util as jtu
@@ -43,7 +45,7 @@ SCS = pltpu.CoreType.SC_SCALAR_SUBCORE
 def from_core_type(core_type):
   match core_type:
     case pltpu.CoreType.TC:
-      return pltpu.create_tensorcore_mesh(axis_name="tc_core", num_cores=1)
+      return pltpu.TensorCoreMesh(axis_name="tc_core", num_cores=1)
     case pltpu.CoreType.SC_VECTOR_SUBCORE:
       return plsc.VectorSubcoreMesh(
           core_axis_name="s_core",
@@ -86,14 +88,15 @@ class MpmdAsyncTest(jtu.JaxTestCase):
   def setUp(self):
     if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
       self.skipTest("SparseCore only supported on TPU v5p+")
-    if jtu.is_cloud_tpu():
-      self.skipTest("Not yet supported on Cloud TPU.")
     super().setUp()
 
   @parameterized.parameters([SCS, SCV])
   def test_async_sc_tc_prefetch_vmem(self, sc_core_type):
+    # https://github.com/jax-ml/jax/issues/39621
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
     mesh = from_core_type(sc_core_type)
-    tc_mesh = pltpu.create_tensorcore_mesh(axis_name="tc", num_cores=1)
+    tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
 
     def scalar_subcore_fn(x_ref, out_tc_vmem_ref, tc_sem, sem):
       pltpu.async_remote_copy(
@@ -116,8 +119,8 @@ class MpmdAsyncTest(jtu.JaxTestCase):
           scratch_types=[pltpu.SemaphoreType.DMA(())],
           name=f"sc_copy_start_{x.shape[0]}",
       )(scalar_subcore_fn)(x_ref)
-      out_ref = jax.new_ref(out)
-      sem_ref = jax.new_ref(sem)
+      out_ref = jax.new_ref(out, memory_space=pltpu.VMEM @ tc_mesh)
+      sem_ref = jax.new_ref(sem, memory_space=pltpu.SEMAPHORE @ tc_mesh)
       pl.kernel(
           mesh=tc_mesh,
           name=f"tc_copy_end_{x.shape[0]}",
@@ -137,7 +140,7 @@ class MpmdTest(PallasSCTest):
   def from_core_type(core_type):
     match core_type:
       case pltpu.CoreType.TC:
-        return pltpu.create_tensorcore_mesh(axis_name="tc_core", num_cores=1)
+        return pltpu.TensorCoreMesh(axis_name="tc_core", num_cores=1)
       case pltpu.CoreType.SC_VECTOR_SUBCORE:
         return plsc.VectorSubcoreMesh(
             core_axis_name="s_core",
@@ -242,7 +245,7 @@ class MpmdTest(PallasSCTest):
     np.testing.assert_array_equal(f(x), x)
 
   def test_mpmd_capture_multiple_scalars(self):
-    mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
+    mesh = pltpu.TensorCoreMesh(axis_name="x", num_cores=1)
 
     def f(x, i, j):
       def body(x_ref, out_ref):
@@ -260,7 +263,7 @@ class MpmdTest(PallasSCTest):
     np.testing.assert_array_equal(out[0], x[3])
 
   def test_mpmd_capture_scalar_indexing(self):
-    mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
+    mesh = pltpu.TensorCoreMesh(axis_name="x", num_cores=1)
     def f(x, i):
       def body(x_ref, out_ref):
         idx = jax.lax.axis_index("x")
@@ -277,7 +280,7 @@ class MpmdTest(PallasSCTest):
     np.testing.assert_array_equal(out[0], x[1])
 
   def test_mpmd_capture_scalar_and_ref(self):
-    mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
+    mesh = pltpu.TensorCoreMesh(axis_name="x", num_cores=1)
     @jax.jit
     def f(x, i):
       y = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
@@ -652,8 +655,84 @@ class MpmdTest(PallasSCTest):
     out = jax.vmap(run_kernel)(x[jnp.newaxis])
     np.testing.assert_array_equal(out, x[jnp.newaxis] + 1)
 
+  def test_vmap_emit_pipeline(self):
+    with config.use_emit_pipeline_primitive(True):
+      def pipeline_body(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + 1
+
+      @pl.kernel(
+          out_type=jax.ShapeDtypeStruct((16 * 8, 128), jnp.int32),
+          mesh=from_core_type(SCV),
+      )
+      def kernel(x_hbm_ref, o_hbm_ref):
+        pltpu.emit_pipeline(
+            pipeline_body,
+            grid=(16,),
+            in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+            out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+        )(x_hbm_ref, o_hbm_ref)
+
+      x = jnp.arange(8 * 16 * 8 * 128, dtype=jnp.int32).reshape(8, 16 * 8, 128)
+      out = jax.vmap(kernel)(x)
+      np.testing.assert_array_equal(out, x + 1)
+
+  def test_vmap_emit_pipeline_with_scratch(self):
+    with config.use_emit_pipeline_primitive(True):
+      @pl.kernel(
+          out_type=jax.ShapeDtypeStruct((16 * 8, 128), jnp.int32),
+          scratch_types=(pltpu.VMEM((8, 128), jnp.int32),),
+          mesh=from_core_type(SCV),
+      )
+      def kernel(x_hbm_ref, o_hbm_ref, scratch_ref):
+        assert x_hbm_ref.shape == (16 * 8, 128)
+        assert scratch_ref.shape == (8, 128)  # used inside pipeline
+        def pipeline_body(x_ref, o_ref):
+          scratch_ref[...] = x_ref[...] + 1
+          o_ref[...] = scratch_ref[...]
+        pltpu.emit_pipeline(
+            pipeline_body,
+            grid=(16,),
+            in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+            out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+        )(x_hbm_ref, o_hbm_ref)
+
+      x = jnp.arange(8 * 16 * 8 * 128, dtype=jnp.int32).reshape(8, 16 * 8, 128)
+      out = jax.vmap(kernel)(x)
+      np.testing.assert_array_equal(out, x + 1)
+
+  def test_vmap_emit_pipeline_scalar_prefetch(self):
+    with config.use_emit_pipeline_primitive(True):
+      def pipeline_body(x_ref, o_ref):
+        o_ref[...] = x_ref[...]
+
+      s = jnp.array([4, 3, 2, 5, 3, 5, 2, 7], jnp.int32)
+      s_hbm_ref = jax.new_ref(s)
+      x = jnp.arange(2 * 8 * 8 * 128, dtype=jnp.int32).reshape((2, 8 * 8, 128))
+
+      @pl.kernel(
+          out_type=jax.ShapeDtypeStruct((8 * 8, 128), jnp.int32),
+          scratch_types=(
+              pltpu.SMEM(s.shape, s.dtype),
+              pltpu.SemaphoreType.DMA(()),
+          ),
+          mesh=from_core_type(TC),
+      )
+      def kernel(x_hbm_ref, o_hbm_ref, s_smem_ref, dma_sem):
+        pltpu.async_copy(s_hbm_ref, s_smem_ref, dma_sem).wait()
+        pltpu.emit_pipeline(
+            pipeline_body,
+            grid=(8,),
+            in_specs=pl.BlockSpec((8, 128), lambda i: (s_smem_ref[i], 0)),
+            out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+        )(x_hbm_ref, o_hbm_ref)
+
+      out = jax.vmap(kernel)(x)
+      np.testing.assert_allclose(
+          out, x.reshape((2, 8, 8, -1))[:, s].reshape(x.shape)
+      )
+
   def test_remat_with_checkpoint(self):
-    mesh = pltpu.create_tensorcore_mesh("tc", num_cores=1)
+    mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
 
     kernel_impl = pl.kernel(
         pltpu.sync_copy,
@@ -678,6 +757,53 @@ class MpmdTest(PallasSCTest):
 
     x = jnp.ones((8, 128), dtype=jnp.float32)
     np.testing.assert_array_equal(jax.grad(f)(x), jnp.full_like(x, 2.0))
+
+  def test_passing_in_transformed_refs(self):
+    mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+    x = jnp.arange(16 * 8 * 128, dtype=jnp.int32).reshape(16 * 8, 128)
+
+    @pl.kernel(mesh=mesh)
+    def kernel(x_ref):
+      @functools.partial(
+          pl.run_scoped, scratch_ref=pltpu.VMEM(x_ref.shape, x_ref.dtype)
+      )
+      def _(scratch_ref):
+        pltpu.sync_copy(x_ref, scratch_ref)
+        scratch_ref[...] += 1
+        pltpu.sync_copy(scratch_ref, x_ref)
+
+    @jax.jit
+    def fn(x):
+      x_ref = jax.new_ref(x)
+      kernel(x_ref.reshape((-1, 128)))
+      return jax.freeze(x_ref)
+
+    np.testing.assert_array_equal(fn(x), x + 1)
+
+  def test_passing_in_transformed_refs_with_dynamic_values(self):
+    mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+    x = jnp.arange(16 * 8 * 128, dtype=jnp.int32).reshape(16 * 8, 128)
+
+    @pl.kernel(mesh=mesh)
+    def kernel(x_ref):
+      @functools.partial(
+          pl.run_scoped, scratch_ref=pltpu.VMEM(x_ref.shape, x_ref.dtype)
+      )
+      def _(scratch_ref):
+        pltpu.sync_copy(x_ref, scratch_ref)
+        scratch_ref[...] += 1
+        pltpu.sync_copy(scratch_ref, x_ref)
+
+    @jax.jit
+    def fn(x):
+      x_ref = jax.new_ref(x)
+      def body(i, _):
+        kernel(x_ref.at[i])
+
+      jax.lax.fori_loop(0, 16, body, None)
+      return jax.freeze(x_ref)
+
+    np.testing.assert_array_equal(fn(x)[0, ...], (x + 1)[0, ...])
 
   @parameterized.product(
       use_tc_tiling=(False, True), full_core_spec=(True, False),
@@ -821,6 +947,63 @@ class MpmdTest(PallasSCTest):
     o1, o2 = f(x1, x2)
     np.testing.assert_array_equal(o1, x1)
     np.testing.assert_array_equal(o2, x2)
+
+  @parameterized.parameters([False, True])
+  def test_scs_dma_to_vmem_shared(self, reverse):
+    num_cores = self.sc_info.num_cores
+    num_subcores = self.sc_info.num_subcores
+    v_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="s_core",
+        subcore_axis_name="subcore",
+        num_cores=num_cores,
+        num_subcores=num_subcores,
+    )
+    s_mesh = plsc.ScalarSubcoreMesh(
+        axis_name="s_core", num_cores=num_cores
+    )
+    shape = (num_cores, num_subcores, self.num_lanes)
+    x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
+    scratch_shape = (num_subcores, self.num_lanes)
+
+    def vector_subcore_fn(x_ref, out_ref, scratch_vmem_shd, dma_sem, tec_sem, scs_sem):
+      core_id = jax.lax.axis_index("s_core")
+      subcore_id = jax.lax.axis_index("subcore")
+      if reverse:
+        del out_ref, dma_sem, tec_sem
+        pltpu.sync_copy(x_ref.at[core_id, subcore_id], scratch_vmem_shd.at[subcore_id])
+        pl.semaphore_signal(scs_sem, device_id={"s_core": core_id})
+      else:
+        del x_ref, dma_sem, scs_sem
+        pl.semaphore_wait(tec_sem, 1)
+        pltpu.sync_copy(scratch_vmem_shd.at[subcore_id], out_ref.at[core_id, subcore_id])
+
+    def scalar_subcore_fn(x_ref, out_ref, scratch_vmem_shd, dma_sem, tec_sem, scs_sem):
+      core_id = jax.lax.axis_index("s_core")
+      if reverse:
+        del x_ref, tec_sem
+        pl.semaphore_wait(scs_sem, num_subcores)
+        pltpu.async_copy(scratch_vmem_shd, out_ref.at[core_id], dma_sem).wait()
+      else:
+        del out_ref, scs_sem
+        pltpu.async_copy(x_ref.at[core_id], scratch_vmem_shd, dma_sem).wait()
+        for i in range(num_subcores):
+          pl.semaphore_signal(tec_sem, device_id={"s_core": core_id, "subcore": i})
+
+    @jax.jit
+    def f(x):
+      return pl.kernel(
+          body=[vector_subcore_fn, scalar_subcore_fn],
+          mesh=[v_mesh, s_mesh],
+          out_type=jax.ShapeDtypeStruct(shape, x.dtype),
+          scratch_types=[
+              pltpu.VMEM_SHARED(scratch_shape, x.dtype),
+              pltpu.SemaphoreType.DMA(()) @ s_mesh,
+              pltpu.SemaphoreType.REGULAR(()) @ v_mesh,
+              pltpu.SemaphoreType.REGULAR(()) @ s_mesh,
+          ],
+      )(x)
+
+    np.testing.assert_array_equal(f(x), x)
 
   def test_parallel_subkernels_semaphores_missing_subcore_axis(self):
     v_mesh = plsc.VectorSubcoreMesh(
@@ -969,14 +1152,14 @@ hijax.register_hitype(
     WeirdTuple, lambda t: WeirdTupleTy(jax.typeof(t.x0), jax.typeof(t.x1))
 )
 
-unpack_p = hijax.HiPrimitive("unpack")
+unpack_p = jax_core.Primitive("unpack")
 unpack = unpack_p.bind
 unpack_p.multiple_results = True
 unpack_p.is_high = lambda *_: True
 unpack_p.def_abstract_eval(lambda x: [x.x0_aval, x.x1_aval])
 unpack_p.to_lojax = lambda x: [x.x0, x.x1]
 
-pack_p = hijax.HiPrimitive("pack")
+pack_p = jax_core.Primitive("pack")
 pack = pack_p.bind
 pack_p.is_high = lambda *_: True
 pack_p.def_abstract_eval(lambda x0, x1: WeirdTupleTy(x0, x1))
@@ -1003,7 +1186,7 @@ class MpmdHijaxTest(jtu.JaxTestCase):
       ot_vmem_ref[...] = xt_vmem_ref[...]
       pltpu.sync_copy(ot_vmem_ref, ot_ref)
 
-    mesh = pltpu.create_tensorcore_mesh("tc_core", num_cores=1)
+    mesh = pltpu.TensorCoreMesh(axis_name="tc_core", num_cores=1)
 
     ot = pl.kernel(
         body=kernel,
@@ -1023,7 +1206,7 @@ class MpmdHijaxTest(jtu.JaxTestCase):
         x0=jnp.ones((8, 8), dtype=jnp.int32),
         x1=jnp.zeros((8,), dtype=jnp.int32),
     )
-    mesh = pltpu.create_tensorcore_mesh("tc_core", num_cores=1)
+    mesh = pltpu.TensorCoreMesh(axis_name="tc_core", num_cores=1)
 
     def kernel(xt_ref_inner, scratch_vmem_ref):
       pltpu.sync_copy(xt_ref_inner, scratch_vmem_ref)
@@ -1086,7 +1269,7 @@ class MpmdHijaxTest(jtu.JaxTestCase):
         x0=jnp.ones((8, 8), dtype=jnp.int32),
         x1=jnp.zeros((8,), dtype=jnp.int32),
     )
-    mesh = pltpu.create_tensorcore_mesh("tc_core", num_cores=1)
+    mesh = pltpu.TensorCoreMesh(axis_name="tc_core", num_cores=1)
 
     @jax.jit
     def f(xt_in):
@@ -1159,7 +1342,7 @@ class MpmdPhysicalizeTest(jtu.JaxTestCase):
       def unpack_eval_rule(self, eval_ctx, x):
         return fusible_dtype.unpack(x)
 
-    mesh = pltpu.create_tensorcore_mesh("tc_core", num_cores=1)
+    mesh = pltpu.TensorCoreMesh(axis_name="tc_core", num_cores=1)
 
     def subkernel(x_ref, y_ref, out_ref, x_vmem, y_vmem, out_vmem):
       pltpu.sync_copy(x_ref, x_vmem)

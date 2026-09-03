@@ -20,7 +20,7 @@ import dataclasses
 import functools
 import math
 import operator
-from typing import Any, cast, Protocol, Union
+from typing import Any, cast, Protocol
 
 from jax._src import ad_util
 from jax._src import core
@@ -28,6 +28,7 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import pretty_printer as pp
 from jax._src import traceback_util
+from jax._src import tree
 from jax._src import tree_util
 from jax._src.tree_util import tracing_registry, _registry, _RegistryEntry
 from jax._src.typing import Array
@@ -82,7 +83,7 @@ effects.custom_derivatives_allowed_effects.add_type(core.InternalMutableArrayEff
 effects.partial_eval_kept_effects.add_type(RefEffect)
 effects.remat_allowed_effects.add_type(RefEffect)
 
-StateEffect = Union[ReadEffect, WriteEffect, AccumEffect]
+StateEffect = ReadEffect | WriteEffect | AccumEffect
 
 
 # ## Transforms
@@ -114,7 +115,7 @@ class MultiRefTransform(Transform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
 class BitcastTransform(Transform):
-  dtype: dtypes.DType = dataclasses.field(metadata=dict(static=True))
+  dtype: dtypes.DType = tree.static()
 
   def transform_type(self, x):
     match x:
@@ -164,7 +165,7 @@ def _canonicalize_reshape(
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
 class ReshapeTransform(Transform):
-  shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  shape: tuple[int, ...] = tree.static()
 
   def _validate_shape(self, input_shape: tuple[int, ...]):
     if np.prod(self.shape) != np.prod(input_shape):
@@ -203,7 +204,7 @@ def _perm_inverse(permutation: tuple[int, ...]) -> tuple[int, ...]:
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
 class TransposeTransform(Transform):
-  permutation: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  permutation: tuple[int, ...] = tree.static()
 
   def undo(self, x: core.AbstractValue) -> Transform:
     return TransposeTransform(_perm_inverse(self.permutation))
@@ -234,7 +235,7 @@ class TransposeTransform(Transform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
 class SelectTransform(MultiRefTransform):
-  idx: Array | int = dataclasses.field(metadata=dict(static=False))
+  idx: Array | int
 
   def transform_types(self, xs):
     def _type(ref):
@@ -391,6 +392,23 @@ class TransformedRef:
     from jax._src.state.primitives import ref_get  # pyrefly: ignore[missing-import]
     return ref_get(self, idx)
 
+  @property
+  def memory_space(self):
+    def _mem_space(ref):
+      if isinstance(ref, TransformedRef):
+        return ref.memory_space
+      return core.typeof(ref).memory_space if hasattr(ref, "aval") else ref.memory_space
+
+    if self.multiref:
+      ms, *rest = tuple(_mem_space(r) for r in self.ref)
+      if not all(m == ms for m in rest):
+        raise ValueError(
+            f"Found inconsistent memory spaces in multiref: {self.ref}"
+        )
+      return ms
+
+    return _mem_space(self.ref)
+
   def __getattr__(self, name):
     if self.multiref:
       return cast(MultiRefTransform, self.transforms[0]).getattr(name, self.ref)
@@ -464,12 +482,9 @@ class AbstractRef(core.AbstractValue):
     return self.inner_aval.is_high
 
   def lo_ty(self):
-    return [
-        AbstractRef(x, memory_space=self.memory_space)
-        for x in self.inner_aval.lo_ty()
-    ]
+    return [self.update(inner_aval=x) for x in self.inner_aval.lo_ty()]
 
-  def lower_val(self, ref):
+  def lower_val(self, ref, /):
     if not self.is_high:
       return [ref]
     return self.inner_aval.lower_val(ref._refs)  # pyrefly: ignore[missing-attribute]

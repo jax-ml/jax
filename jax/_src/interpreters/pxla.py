@@ -16,16 +16,14 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Sequence, Iterable
+from collections.abc import Callable, Iterable, Sequence
 import dataclasses
-from functools import partial
 import functools
+from functools import partial
 import itertools as it
 import logging
 import math
-from typing import Any, NamedTuple, Union
-
-import numpy as np
+from typing import Any, NamedTuple
 
 from jax._src import api
 from jax._src import array
@@ -48,32 +46,33 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.abstract_arrays import array_types
 from jax._src.core import ShapedArray
-from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
-from jax._src.layout import Layout, AutoLayoutSingleton, Format
+from jax._src.interpreters import partial_eval as pe
+from jax._src.layout import AutoLayoutSingleton, Format, Layout
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
-from jax._src.partition_spec import PartitionSpec
-from jax._src.sharding import (Sharding as JSharding, IndivisibleError,
-                               common_is_equivalent_to)
 from jax._src.mesh import (AbstractMesh, Mesh, get_abstract_mesh,
                            get_concrete_mesh)
+from jax._src.partition_spec import PartitionSpec
+from jax._src.sharding import ( IndivisibleError,Sharding as JSharding,
+                               common_is_equivalent_to)
 from jax._src.sharding_impls import (
-    ArrayMapping, UnspecifiedValue, SingleDeviceSharding,
-    make_single_device_sharding, GSPMDSharding,
-    NamedSharding, PartitionSpec as P)
-from jax._src.util import (safe_map, safe_zip, partition_list,
-                           unzip2, weakref_lru_cache, tuple_insert)
+    ArrayMapping, GSPMDSharding,
+    NamedSharding, PartitionSpec as P, SingleDeviceSharding, UnspecifiedValue,
+    make_single_device_sharding)
 from jax._src.state.types import AbstractRef, RefEffect
 from jax._src.typing import ArrayLike
+from jax._src.util import ( partition_list,safe_map, safe_zip, tuple_insert,
+                           unzip2, weakref_lru_cache)
+import numpy as np
 
 unsafe_map, map = map, safe_map
 zip, unsafe_zip = safe_zip, zip
 
 logger = logging.getLogger(__name__)
 
-Index = Union[int, slice, tuple[Union[int, slice], ...]]
+Index = int | slice | tuple[int | slice, ...]
 PyTreeDef = tree_util.PyTreeDef
 
 MeshAxisName = sharding_impls.MeshAxisName
@@ -109,7 +108,13 @@ def shard_args(
       safe_zip(args, shardings, layouts, copy_semantics)):
     if canonicalize:
       arg = dtypes.canonicalize_value(arg)
-    batch = batches[type(arg)]
+    t = type(arg)
+    handler = shard_arg_handlers.get(t, None)
+    if handler is None:
+      raise dtypes.InvalidInputException(
+          f"Argument of type {t} is not a valid JAX type."
+      )
+    batch = batches[handler]
     batch[0].append(i)
     batch[1].append(arg)
     batch[2].append(sharding)
@@ -121,11 +126,7 @@ def shard_args(
   # types, we cannot simply flatten the results and we have to use the original
   # indices to put each array back to its original position.
   results: list[typing.Array | None] = [None] * len(args)
-  for t, (indices, a, s, l, xcs) in batches.items():
-    handler = shard_arg_handlers.get(t, None)
-    if handler is None:
-      raise dtypes.InvalidInputException(
-          f"Argument of type {t} is not a valid JAX type.")
+  for handler, (indices, a, s, l, xcs) in batches.items():
     outs = handler(a, s, l, xcs)
     for i, out in safe_zip(indices, outs):
       results[i] = out
@@ -176,21 +177,45 @@ shard_arg_handlers[np.ma.MaskedArray] = _masked_array_error
 
 def _shard_np_array(xs, shardings, layouts, copy_semantics):
   results = []
-  for x, sharding, layout in safe_zip(xs, shardings, layouts):
-    devices = sharding._addressable_device_assignment
+  batch_xs, batch_cs, batch_shardings, batch_indices = [], [], [], []
+  for i, (x, sharding, layout, cs) in enumerate(
+      zip(xs, shardings, layouts, copy_semantics)):
     if x.dtype == dtypes.float0:
       x = np.zeros(x.shape, dtype=np.dtype(bool))
-    aval = core.shaped_abstractify(x)
     if layout is not None:
       results.append(api.device_put(x, Format(layout, sharding)))
     else:
-      if sharding.is_fully_replicated:
-        shards = [x] * len(devices)
+      if config.use_cpp_shard_args.value:
+        results.append(None)
+        batch_xs.append(x)  # Accumulate arguments to `_jax.shard_args`
+        batch_shardings.append(sharding)
+        batch_indices.append(i)
+        batch_cs.append(cs)
       else:
-        indices = tuple(sharding.addressable_devices_indices_map(x.shape).values())
-        shards = [x[i] for i in indices]
-      results.append(batched_device_put(aval, sharding, shards, devices))
+        devices = sharding._addressable_device_assignment
+        shards = ([x] * len(devices) if sharding.is_fully_replicated else
+                  [x[i] for i in tuple(sharding.addressable_devices_indices_map(x.shape).values())])
+        aval = core.shaped_abstractify(x)
+        results.append(batched_device_put(aval, sharding, shards, devices))
+  if batch_xs:
+    # TODO(parkers): handle string dtypes.
+    def _batched_device_put_fallback(shardings, _, __, xs):
+      outs = []
+      for sharding, x in zip(shardings, xs):
+        devices = sharding._addressable_device_assignment
+        shards = ([x] * len(devices) if sharding.is_fully_replicated else
+                  [x[i] for i in tuple(sharding.addressable_devices_indices_map(x.shape).values())])
+        aval = core.shaped_abstractify(x)
+        outs.append(batched_device_put(aval, sharding, shards, devices))
+      return outs
+    copy_outs = _jax.shard_args(batch_shardings, [None] * len(batch_xs),
+                                batch_cs, batch_xs,
+                                fallback=_batched_device_put_fallback)
+    for i, copy_out in zip(batch_indices, copy_outs):
+      assert results[i] is None
+      results[i] = copy_out
   return results
+
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_np_array
 
@@ -509,9 +534,9 @@ def manual_proto(
 
 
 ShardingInfo = tuple[
-    Union[JSharding, UnspecifiedValue],
+    JSharding | UnspecifiedValue,
     stages.MismatchType,
-    Union[Any, None],  # Any is dispatch.SourceInfo to avoid circular imports
+    Any | None,  # Any is dispatch.SourceInfo to avoid circular imports
 ]
 
 
@@ -591,7 +616,7 @@ def _get_and_check_device_assignment(
   else:
     return backend, None, abstract_mesh.size
 
-MaybeSharding = Union[JSharding, UnspecifiedValue]
+MaybeSharding = JSharding | UnspecifiedValue
 
 
 def prune_unused_inputs(
@@ -606,22 +631,18 @@ def prune_unused_inputs(
 
 @weakref_lru_cache
 def _dce_jaxpr(closed_jaxpr, keep_unused, donated_invars):
-  assert isinstance(closed_jaxpr, core.ClosedJaxpr)
-  jaxpr = closed_jaxpr.jaxpr
-  consts = closed_jaxpr.consts
+  assert isinstance(closed_jaxpr, core.Jaxpr)
+  jaxpr = closed_jaxpr
   in_avals = closed_jaxpr.in_avals
 
   if (keep_unused or any(hasattr(a, "shape") and not core.is_constant_shape(a.shape)
                          for a in in_avals)):
     kept_var_idx = set(range(len(in_avals)))
   else:
-    jaxpr, kept_const_idx, kept_var_idx = prune_unused_inputs(jaxpr)
-    consts = [c for i, c in enumerate(consts) if i in kept_const_idx]
+    jaxpr, _, kept_var_idx = prune_unused_inputs(jaxpr)
     donated_invars = tuple(x for i, x in enumerate(donated_invars) if i in kept_var_idx)
-    del kept_const_idx
 
-  closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
-  return closed_jaxpr, donated_invars, kept_var_idx
+  return jaxpr, donated_invars, kept_var_idx
 
 
 class MutationData(NamedTuple):
@@ -633,8 +654,8 @@ class MutationData(NamedTuple):
 
 @weakref_lru_cache
 def _discharge_refs(
-    jaxpr: core.ClosedJaxpr
-) -> tuple[core.ClosedJaxpr, Sequence[int | None], MutationData]:
+    jaxpr: core.Jaxpr
+) -> tuple[core.Jaxpr, Sequence[int | None], MutationData]:
   from jax._src.state.discharge import discharge_state  # pyrefly: ignore[missing-import]
   jaxpr, in_mut = _move_mutable_consts(jaxpr)
   new_jaxpr = discharge_state(jaxpr)
@@ -648,27 +669,27 @@ def _discharge_refs(
 
 @weakref_lru_cache
 def _move_mutable_consts(
-    closed_jaxpr: core.ClosedJaxpr,
-) -> tuple[core.ClosedJaxpr, list[core.Ref]]:
-  jaxpr = closed_jaxpr.jaxpr
+    closed_jaxpr: core.Jaxpr,
+) -> tuple[core.Jaxpr, list[core.Ref]]:
+  jaxpr = closed_jaxpr
   hoist = [isinstance(c, core.Ref) for c in closed_jaxpr.consts]
   consts, in_mut = partition_list(hoist, closed_jaxpr.consts)
   constvars, mutvars = partition_list(hoist, jaxpr.constvars)
   invars = (*jaxpr.invars, *mutvars)
   effects = pe.make_jaxpr_effects(constvars, invars, jaxpr.outvars, jaxpr.eqns)
   # TODO(mattjj): debug_info must be updated...
-  jaxpr = closed_jaxpr.jaxpr.replace(
+  jaxpr = closed_jaxpr.replace(
       constvars=constvars, invars=invars, effects=effects,
-      debug_info=closed_jaxpr.debug_info.with_unknown_names())
-  return core.ClosedJaxpr(jaxpr, consts), in_mut
+      debug_info=closed_jaxpr.debug_info.with_unknown_names(), consts=consts)
+  return jaxpr, in_mut
 
 @weakref_lru_cache
-def _discharge_internal_refs(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
+def _discharge_internal_refs(jaxpr: core.Jaxpr) -> core.Jaxpr:
   # TODO(slebedev): Inline this function.
   from jax._src.state.discharge import discharge_state  # pyrefly: ignore[missing-import]
   discharged_jaxpr = discharge_state(jaxpr)
   return discharged_jaxpr.replace(
-      jaxpr=discharged_jaxpr.jaxpr.replace(debug_info=jaxpr.jaxpr.debug_info)
+      jaxpr=discharged_jaxpr.replace(debug_info=jaxpr.debug_info)
   )
 
 
@@ -694,16 +715,15 @@ class SemanticallyEqualShardings:
 
 @weakref_lru_cache
 def _cached_lowering_to_hlo(
-    closed_jaxpr: core.ClosedJaxpr, module_name, backend, num_const_args: int,
-    in_avals, semantic_in_shardings, semantic_out_shardings,
+    closed_jaxpr: core.Jaxpr, module_name, backend, num_const_args: int,
+    in_avals, out_avals, semantic_in_shardings, semantic_out_shardings,
     in_layouts, out_layouts, num_devices, device_assignment, donated_invars,
     all_default_mem_kind, inout_aliases: None | tuple[None | int, ...],
     propagated_out_mem_kinds: tuple[None | str, ...], platforms: tuple[str, ...],
     lowering_parameters: mlir.LoweringParameters,
     abstract_mesh: AbstractMesh | None):
   # in_avals, in_shardings, in_layouts include the jaxpr_const_args(jaxpr)
-  out_avals = closed_jaxpr.out_avals
-  jaxpr = closed_jaxpr.jaxpr
+  jaxpr = closed_jaxpr
   in_shardings = semantic_in_shardings.shardings
   out_shardings = semantic_out_shardings.shardings
 
@@ -742,6 +762,7 @@ def _cached_lowering_to_hlo(
         platforms=platforms,
         axis_context=axis_ctx,
         in_avals=in_avals,
+        out_avals=out_avals,
         donated_args=donated_invars,
         replicated_args=replicated_args,
         arg_shardings=in_mlir_shardings,
@@ -807,10 +828,10 @@ def are_all_shardings_default_mem_kind(shardings):
 
 
 @weakref_lru_cache
-def get_out_layouts_via_propagation(closed_jaxpr: core.ClosedJaxpr
+def get_out_layouts_via_propagation(closed_jaxpr: core.Jaxpr
                                     ) -> tuple[None | Layout]:
   env = {}
-  jaxpr = closed_jaxpr.jaxpr
+  jaxpr = closed_jaxpr
 
   def read(var):
     if type(var) is core.Literal:
@@ -834,7 +855,7 @@ def get_out_layouts_via_propagation(closed_jaxpr: core.ClosedJaxpr
   return tuple(safe_map(read, jaxpr.outvars))
 
 
-MaybeLayout = Sequence[Union[Layout, AutoLayoutSingleton, None]]
+MaybeLayout = Sequence[Layout | AutoLayoutSingleton | None]
 
 
 class AllArgsInfo(NamedTuple):
@@ -868,11 +889,11 @@ def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
 
 
 def hoist_constants_as_args(
-    closed_jaxpr: core.ClosedJaxpr, global_in_avals, in_shardings, in_layouts,
+    closed_jaxpr: core.Jaxpr, global_in_avals, in_shardings, in_layouts,
     donated_invars, kept_var_idx: set[int], inout_aliases, mut,
     all_args_info: AllArgsInfo):
   const_args, const_arg_avals = unzip2(
-      core.jaxpr_const_args(closed_jaxpr.jaxpr)
+      core.jaxpr_const_args(closed_jaxpr)
   )
   num_const_args = len(const_args)
   if num_const_args:
@@ -953,7 +974,7 @@ def _get_context_mesh(context_mesh: Mesh | AbstractMesh) -> Mesh | AbstractMesh:
 
 @profiler.annotate_function
 def lower_sharding_computation(
-    closed_jaxpr: core.ClosedJaxpr,
+    closed_jaxpr: core.Jaxpr,
     api_name: str,
     fun_name: str,
     in_shardings: Sequence[MaybeSharding],
@@ -969,7 +990,7 @@ def lower_sharding_computation(
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None,
 ) -> MeshComputation:
-  all_args_info = AllArgsInfo(closed_jaxpr.in_avals, closed_jaxpr.jaxpr._debug_info)
+  all_args_info = AllArgsInfo(closed_jaxpr.in_avals, closed_jaxpr._debug_info)
 
   closed_jaxpr, donated_invars, kept_var_idx = _dce_jaxpr(
       closed_jaxpr, keep_unused, donated_invars)
@@ -981,7 +1002,7 @@ def lower_sharding_computation(
        closed_jaxpr, in_shardings, in_layouts, donated_invars, out_shardings,
        out_layouts)
 
-  jaxpr = closed_jaxpr.jaxpr
+  jaxpr = closed_jaxpr
   global_in_avals = closed_jaxpr.in_avals
   global_out_avals = closed_jaxpr.out_avals
 
@@ -993,11 +1014,8 @@ def lower_sharding_computation(
   else:
     const_args = []
 
-  # If layout is propagated, then set the out_layout in the top module to AUTO
-  # so that XLA can override the entry_computation_layout. The propagated
-  # layout will be set via a custom call.
   out_layouts_via_prop = get_out_layouts_via_propagation(closed_jaxpr)
-  out_layouts = tuple(Layout.AUTO if p is not None else o
+  out_layouts = tuple(p if p is not None and o is None else o
                       for o, p in safe_zip(out_layouts, out_layouts_via_prop))
 
   assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (
@@ -1116,13 +1134,13 @@ def lower_sharding_computation(
   semantic_out_shardings = SemanticallyEqualShardings(
       out_shardings, global_out_avals)
 
-  jaxpr_util.maybe_dump_jaxpr_to_file(fun_name, closed_jaxpr.jaxpr)
+  jaxpr_util.maybe_dump_jaxpr_to_file(fun_name, closed_jaxpr)
   module_name = util.wrap_name(api_name, fun_name)
 
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
        closed_jaxpr, module_name, backend,
-       len(const_args), tuple(global_in_avals),
+       len(const_args), tuple(global_in_avals), tuple(global_out_avals),
        semantic_in_shardings, semantic_out_shardings,
        in_layouts, out_layouts, num_devices,
        tuple(device_list) if prim_requires_devices else None,  # pyrefly: ignore[bad-argument-type]
@@ -1951,12 +1969,16 @@ class MeshExecutable(stages.Executable):
         in_shardings = [
             sharding_impls.physical_sharding(a, s)
             if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
-            else s
-            for s, a in zip(self._in_shardings, self.in_avals)
+            else s for s, a in zip(self._in_shardings, self.in_avals)
+        ]
+        out_shardings = [
+            sharding_impls.physical_sharding(a, s)
+            if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
+            else s for s, a in zip(self._out_shardings, self.out_avals)
         ]
         fastpath_data = MeshExecutableFastpathData(
             self.xla_executable, out_tree_dispatch, in_shardings,
-            self._out_shardings, out_avals, out_committed, kept_var_bitvec,
+            out_shardings, out_avals, out_committed, kept_var_bitvec,
             self._dispatch_in_layouts, params.const_args)
       else:
         fastpath_data = None

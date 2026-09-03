@@ -1,2 +1,12 @@
 {% extends "!layout.html" %}
 {% set css_files = css_files + ["_static/style.css"] %}
+{% block docs_navbar %}
+{{ super() }}
+{% if superseded_target %}
+<div class="superseded-banner" role="note">
+  This page is part of an older version of the JAX documentation, kept for
+  reference. See <a href="{{ superseded_target }}">the current documentation</a>
+  for the maintained version of this material.
+</div>
+{% endif %}
+{% endblock %}

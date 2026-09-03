@@ -20,7 +20,7 @@ from collections.abc import Callable, Hashable, Sequence
 import dataclasses
 import functools
 import math
-from typing import Any, TypeVar
+from typing import Any
 
 import jax
 from jax import lax
@@ -54,8 +54,6 @@ from jax._src.util import foreach
 from jax._src.util import split_list
 import jax.numpy as jnp
 import numpy as np
-
-_T = TypeVar("_T")
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -112,7 +110,7 @@ def _eval_index_map(
     ctx: ModuleContext, idx, block_mapping: BlockMapping
 ):
   block_indices = lower_jaxpr_to_triton_ir(
-      ctx, block_mapping.index_map_jaxpr.jaxpr, None, *idx
+      ctx, block_mapping.index_map_jaxpr, None, *idx
   )
   block_indices = tuple(
       _ensure_ir_value(i, jax_core.ShapedArray((), jnp.int32))
@@ -203,11 +201,11 @@ def _bcast(
   return x, y
 
 
-triton_lowering_rules = {}
+triton_lowering_rules: dict[jax_core.Primitive, Callable[..., Any]] = {}
 
 
-def register_lowering(primitive: jax_core.Primitive) -> Callable[[_T], _T]:
-  def wrapper(fn):
+def register_lowering(primitive: jax_core.Primitive) -> Callable[..., Any]:
+  def wrapper[T: Callable[..., Any]](fn: T) -> T:
     triton_lowering_rules[primitive] = fn
     return fn
   return wrapper
@@ -475,7 +473,7 @@ def lower_fun(
     jaxpr, _ = pe.trace_to_jaxpr(
         fn, in_avals_ft, debug_info=debug_info, requires_low=True
     )
-    out = _closed_call_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
+    out = _eval_jaxpr_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
     return out if multiple_results else out[0]
 
   return f_lowered
@@ -549,7 +547,7 @@ def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
   entry = scan_op.regions[0].blocks.append(*param_types)
   with ir.InsertionPoint.at_block_begin(entry):
     results = lower_jaxpr_to_triton_ir(
-        ctx.context, combine_jaxpr.jaxpr, None, *entry.arguments
+        ctx.context, combine_jaxpr, None, *entry.arguments
     )
     tt_dialect.scan_return(results)
   scan_op.verify()
@@ -575,7 +573,7 @@ def _not_lowering_rule(ctx: LoweringRuleContext, x):
 class _Extern:
   arg_types: Sequence[jax.typing.DTypeLike]
   symbol: str
-  result_type: str
+  result_type: jax.typing.DTypeLike
 
   def matches(self, avals: Sequence[jax_core.ShapedArray]) -> bool:
     if len(avals) != len(self.arg_types):
@@ -2497,7 +2495,7 @@ def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
   entry = reduce_op.regions[0].blocks.append(*param_types)
   with ir.InsertionPoint.at_block_begin(entry):
     results = lower_jaxpr_to_triton_ir(
-        ctx.context, combine_jaxpr.jaxpr, None, *entry.arguments
+        ctx.context, combine_jaxpr, None, *entry.arguments
     )
     tt_dialect.reduce_return(results)
   reduce_op.verify()
@@ -2593,7 +2591,7 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   if jaxpr.consts:
     raise NotImplementedError
   return lower_jaxpr_to_triton_ir(
-      ctx.context, jaxpr.jaxpr, ctx.block_infos, *args
+      ctx.context, jaxpr, ctx.block_infos, *args
   )
 
 
@@ -2602,12 +2600,12 @@ def _reshard_lowering_rule(ctx, x, *, dst_sharding, concrete_mesh):
   return x
 
 
-@register_lowering(jax_core.closed_call_p)
+@register_lowering(pe.eval_jaxpr_p)
 @register_lowering(custom_derivatives.custom_jvp_call_p)
-def _closed_call_lowering_rule(
+def _eval_jaxpr_lowering_rule(
     ctx: LoweringRuleContext, *args, call_jaxpr, **_
 ):
-  jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
+  jaxpr, consts = call_jaxpr, call_jaxpr.consts
   if consts:
     raise NotImplementedError
   return lower_jaxpr_to_triton_ir(ctx.context, jaxpr, ctx.block_infos, *args)
@@ -2672,15 +2670,16 @@ def _scan_lowering_rule(
     length,
     reverse,
     unroll,
-    num_consts,
-    num_carry,
+    ft_in,
+    ft_out,
 ):
+  num_consts, num_carry, _ = (len(g) for g in ft_in.unpack())
   # Only implements fori_loop-like scans
   if reverse: raise NotImplementedError
   if unroll != 1: raise NotImplementedError
   del unroll, reverse
 
-  jaxpr, jaxpr_consts = jaxpr.jaxpr, jaxpr.consts
+  jaxpr, jaxpr_consts = jaxpr, jaxpr.consts
   if jaxpr_consts: raise NotImplementedError
   del jaxpr_consts
 
@@ -2718,7 +2717,7 @@ def _maybe_pattern_match_fori_loop(
 ):
   if cond_nconsts:
     return None
-  _, cond_invars = split_list(cond_jaxpr.jaxpr.invars, [cond_nconsts])
+  _, cond_invars = split_list(cond_jaxpr.invars, [cond_nconsts])
   cond_in_avals = [v.aval for v in cond_invars]
   if len(cond_in_avals) < 2:
     return None
@@ -2730,11 +2729,11 @@ def _maybe_pattern_match_fori_loop(
     return None
   # Check that the only eqn in the cond checks the loop index condition
   v1, v2 = cond_invars[:2]
-  outvar = cond_jaxpr.jaxpr.outvars[0]
+  outvar = cond_jaxpr.outvars[0]
   assert outvar.aval.dtype == jnp.bool_
-  if len(cond_jaxpr.jaxpr.eqns) != 1:
+  if len(cond_jaxpr.eqns) != 1:
     return None
-  eqn = cond_jaxpr.jaxpr.eqns[0]
+  eqn = cond_jaxpr.eqns[0]
   if eqn.primitive != lax.lt_p:
     return None
   if eqn.outvars != [outvar]:
@@ -2742,14 +2741,14 @@ def _maybe_pattern_match_fori_loop(
   if eqn.invars != [v1, v2]:
     return None
   # Check that the carry is updated in the body appropriately
-  _, body_invars = split_list(body_jaxpr.jaxpr.invars, [body_nconsts])
+  _, body_invars = split_list(body_jaxpr.invars, [body_nconsts])
   v1, v2 = body_invars[:2]
-  vo1, vo2 = body_jaxpr.jaxpr.outvars[:2]
+  vo1, vo2 = body_jaxpr.outvars[:2]
   # Upper bound should be constant
   if v2 is not vo2:
     return None
   # Check that we increment the loop index in the body
-  for i, eqn in enumerate(body_jaxpr.jaxpr.eqns):
+  for i, eqn in enumerate(body_jaxpr.eqns):
     if eqn.primitive is lax.add_p:
       if eqn.invars[0] is v1:
         if isinstance(eqn.invars[1], jax_core.Literal):
@@ -2759,7 +2758,7 @@ def _maybe_pattern_match_fori_loop(
               break
   else:
     return None
-  jaxpr = body_jaxpr.jaxpr
+  jaxpr = body_jaxpr
   new_invars = (*jaxpr.invars[:body_nconsts],
                 jaxpr.invars[body_nconsts],
                 *jaxpr.invars[body_nconsts + 2:])
@@ -2829,7 +2828,7 @@ def _while_lowering_rule(
   with ir.InsertionPoint.at_block_begin(before_block):
     [cond] = lower_jaxpr_to_triton_ir(
         ctx.context,
-        cond_jaxpr.jaxpr,
+        cond_jaxpr,
         [*cond_const_block_infos, *carry_block_infos],
         *cond_args,
     )
@@ -2847,7 +2846,7 @@ def _while_lowering_rule(
   with ir.InsertionPoint.at_block_begin(after_block):
     loop_out = lower_jaxpr_to_triton_ir(
         ctx.context,
-        body_jaxpr.jaxpr,
+        body_jaxpr,
         [*body_const_block_infos, *carry_block_infos],
         *body_const_args,
         *carry_args
@@ -2883,7 +2882,7 @@ def _cond_lowering_rule(
   with ir.InsertionPoint.at_block_begin(if_op.then_block):
     outs0 = lower_jaxpr_to_triton_ir(
         ctx.context,
-        branches[0].jaxpr,
+        branches[0],
         block_infos[1:],
         *args)
     scf_dialect.yield_(outs0)
@@ -2900,7 +2899,7 @@ def _cond_lowering_rule(
     else:
       outs1 = lower_jaxpr_to_triton_ir(
           ctx.context,
-          branches[1].jaxpr,
+          branches[1],
           block_infos[1:],
           *args)
     scf_dialect.yield_(outs1)

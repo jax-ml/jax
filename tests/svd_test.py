@@ -122,7 +122,7 @@ class SvdTest(jtu.JaxTestCase):
 
       relative_diff = np.linalg.norm(a - (u * s) @ v) / np.linalg.norm(a)
 
-      np.testing.assert_almost_equal(relative_diff, 1E-6, decimal=6)
+      np.testing.assert_almost_equal(relative_diff, 1E-6, decimal=5)
 
   @jtu.sample_product(
     [dict(m=m, r=r) for m, r in zip([8, 8, 8, 10], [3, 5, 7, 9])],

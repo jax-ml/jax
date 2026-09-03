@@ -1,25 +1,17 @@
 # #############################################################################
 # All default build options below. These apply to all build commands.
 # #############################################################################
-# TODO: Enable Bzlmod
-common --noenable_bzlmod
-common:bzlmod --enable_bzlmod --noenable_workspace
+common --enable_bzlmod --noenable_workspace
 ## Make sure direct dependencies specified match the resolved version.
-common:bzlmod --check_direct_dependencies=warning
-## Canonical repo names become `@foo+` instead of `@foo~`
-## TODO: Remove after upgrading to Bazel 8
-common:bzlmod --incompatible_use_plus_in_repo_names
+common --check_direct_dependencies=warning
+common --incompatible_disallow_empty_glob=false
+
 
 # Make Bazel print out all options from rc files.
 common --announce_rc
 
 # Use a downloader config to mirror GitHub downloads.
-# We use the experimental_ name for better compatibility with different Bazel versions.
-build --experimental_downloader_config=bazel_downloader.cfg
-test --experimental_downloader_config=bazel_downloader.cfg
-fetch --experimental_downloader_config=bazel_downloader.cfg
-sync --experimental_downloader_config=bazel_downloader.cfg
-query --experimental_downloader_config=bazel_downloader.cfg
+common --downloader_config=bazel_downloader.cfg
 
 # By default, execute all actions locally.
 common --spawn_strategy=local
@@ -31,10 +23,18 @@ common --enable_platform_specific_config
 common --experimental_cc_shared_library
 
 common --incompatible_enable_cc_toolchain_resolution
+common --incompatible_default_to_explicit_init_py
 common --repo_env USE_HERMETIC_CC_TOOLCHAIN=1
 
 # Increase the timeout scaling factor
 common --http_timeout_scaling=3
+
+# external_include_paths feature forces passing external repositories headers
+# via -isystem alters how Clang resolves their file paths. This feature with
+# old versions of rules_cc triggering errors.
+# Following lines can be removed after rules_cc will be updated to >= 0.2.20
+common --features=-external_include_paths
+common --host_features=-external_include_paths
 
 # TODO: Migrate for https://github.com/bazelbuild/bazel/issues/7260
 common:clang_local --noincompatible_enable_cc_toolchain_resolution
@@ -92,6 +92,9 @@ common:macos --config=clang_local
 common:macos --apple_crosstool_top=@local_config_apple_cc//:toolchain
 common:macos --crosstool_top=@local_config_apple_cc//:toolchain
 common:macos --host_crosstool_top=@local_config_apple_cc//:toolchain
+# Disable apple_support's default layering check because dependencies (e.g. absl)
+# have layering check violations.
+common:macos --repo_env=APPLE_SUPPORT_LAYERING_CHECK_BETA=0
 
 common:windows --config=clang_local
 
@@ -190,9 +193,9 @@ common:clang --copt=-Wno-error=c23-extensions
 
 # Configs for CUDA
 common:cuda_v12 --repo_env=HERMETIC_CUDA_VERSION="12.9.1"
-common:cuda_v12 --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"
+common:cuda_v12 --repo_env=HERMETIC_CUDNN_VERSION="9.10.2"
 common:cuda_v12 --repo_env=HERMETIC_NVSHMEM_VERSION="3.3.9"
-common:cuda_v12 --repo_env=HERMETIC_NCCL_VERSION="2.29.7"
+common:cuda_v12 --repo_env=HERMETIC_NCCL_VERSION="2.30.7"
 # "sm" means we emit only cubin, which is forward compatible within a GPU generation.
 # "compute" means we emit both cubin and PTX, which is larger but also forward compatible to future GPU generations.
 common:cuda_v12 --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,sm_90,sm_100,sm_101,compute_120"
@@ -200,7 +203,7 @@ common:cuda_v12 --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70
 common:cuda_v13 --repo_env=HERMETIC_CUDA_VERSION="13.0.0"
 common:cuda_v13 --repo_env=HERMETIC_CUDNN_VERSION="9.12.0"
 common:cuda_v13 --repo_env=HERMETIC_NVSHMEM_VERSION="3.3.20"
-common:cuda_v13 --repo_env=HERMETIC_NCCL_VERSION="2.29.7"
+common:cuda_v13 --repo_env=HERMETIC_NCCL_VERSION="2.30.7"
 common:cuda_v13 --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_75,sm_80,sm_90,sm_100,sm_110,compute_120"
 
 common:cuda_common --repo_env TF_NEED_CUDA=1
@@ -283,6 +286,7 @@ common:tsan_shared --linkopt=-shared-libsan
 common:oneapi --@rules_ml_toolchain//common:enable_sycl=True
 common:oneapi --repo_env=TF_NEED_SYCL=1
 common:oneapi --define=tensorflow_mkldnn_contraction_kernel=0
+common:oneapi --repo_env=ENABLE_INTEL_XPU_TRITON=1
 
 # oneAPI Hermetic setup
 common:oneapi --repo_env=SYCL_BUILD_HERMETIC=1
@@ -343,6 +347,8 @@ common:ci_linux_x86_64_cuda13 --config=cuda13 --config=ci_linux_x86_64_cuda_comm
 # Linux Aarch64 CI configs
 common:ci_linux_aarch64_base --config=clang --verbose_failures=true
 common:ci_linux_aarch64_base --color=yes
+# b/543046203
+common:ci_linux_aarch64_base --define ynn_enable_arm64_neonfp8=false
 
 # This appears to help avoid a timeout in CI for linalg_test.
 common:ci_linux_aarch64_base --test_env=OMP_NUM_THREADS=8
@@ -526,6 +532,7 @@ common:cross_compile_base --extra_toolchains=@xla//tools/toolchains/cross_compil
 common:cross_compile_linux_aarch64 --platforms=@xla//tools/toolchains/cross_compile/config:linux_aarch64
 common:cross_compile_linux_aarch64 --cpu=aarch64
 common:cross_compile_linux_aarch64 --extra_execution_platforms=@xla//tools/toolchains/cross_compile/config:linux_x86_64
+common:cross_compile_linux_aarch64 --define=ynn_enable_arm64_neonfp8=false
 
 common:rbe_cross_compile_base --config=rbe
 common:rbe_cross_compile_base --remote_instance_name=projects/tensorflow-testing/instances/default_instance

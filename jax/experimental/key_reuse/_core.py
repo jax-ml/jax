@@ -26,7 +26,7 @@ from jax.errors import KeyReuseError
 from jax.interpreters import batching, mlir
 from jax._src import api_util
 from jax._src import core
-from jax._src import linear_util as lu
+from jax._src import flattree as ft
 from jax._src import pjit
 from jax._src.random import prng
 from jax._src import random
@@ -223,7 +223,7 @@ def key_reuse_signature_from_eqn(eqn: core.JaxprEqn) -> KeyReuseSignature:
 
 def key_reuse_signature_from_primitive(prim, *args, **params):
   if prim == pjit.jit_p:
-    return jaxpr_type_signature(params['jaxpr'].jaxpr)
+    return jaxpr_type_signature(params['jaxpr'])
   if prim not in key_reuse_signatures:
     # TODO(jakevdp) should we generate an unknown signature here?
     raise RuntimeError(f"Internal: no key reuse rule for primitive {prim}")
@@ -231,7 +231,7 @@ def key_reuse_signature_from_primitive(prim, *args, **params):
   if isinstance(sig, KeyReuseSignature):
     return sig
   elif isinstance(sig, DynamicKeyReuseSignature):
-    jaxpr = jax.make_jaxpr(partial(prim.bind, **params))(*args).jaxpr
+    jaxpr = jax.make_jaxpr(partial(prim.bind, **params))(*args)
     return jaxpr_type_signature(jaxpr)
   else:
     raise TypeError(
@@ -405,13 +405,11 @@ def jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
 
 
 def function_type_signature(fun: Callable[..., Any], *args: Any) -> KeyReuseSignature:
-  args_flat, in_tree = tree_util.tree_flatten(args)
+  args_flat, in_tree = tree_util.tree_flatten((args, {}))
   in_avals_flat = [core.typeof(arg) for arg in args_flat]
-  wrapped_fun, _ = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(fun,
-                   debug_info=api_util.debug_info("key_reuse", fun, args, {})),
-      in_tree)
-  jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
+  jaxpr, _ = pe.trace_to_jaxpr(
+      fun, ft.treedef_args_to_ft(in_tree, in_avals_flat),
+      api_util.debug_info("key_reuse", fun, args, {}))
   return jaxpr_type_signature(jaxpr)
 
 
@@ -467,7 +465,7 @@ key_reuse_signatures[lax.concatenate_p] = _concatenate_signature
 
 @dynamic_key_reuse_signature
 def _pjit_key_type_signature(eqn):
-  return jaxpr_type_signature(eqn.params['jaxpr'].jaxpr)
+  return jaxpr_type_signature(eqn.params['jaxpr'])
 
 key_reuse_signatures[pjit.jit_p] = _pjit_key_type_signature
 
@@ -479,7 +477,7 @@ key_reuse_signatures[shard_map_p] = _shard_map_type_signature
 
 @dynamic_key_reuse_signature
 def _cond_key_type_signature(eqn):
-  signatures = [jaxpr_type_signature(branch.jaxpr) for branch in eqn.params['branches']]
+  signatures = [jaxpr_type_signature(branch) for branch in eqn.params['branches']]
   sinks = defaultdict(list)
   sources = defaultdict(list)
   for sig in signatures:
@@ -498,9 +496,8 @@ key_reuse_signatures[lax.cond_p] = _cond_key_type_signature
 
 @dynamic_key_reuse_signature
 def _scan_key_type_signature(eqn):
-  jaxpr = eqn.params['jaxpr'].jaxpr
-  num_consts = eqn.params['num_consts']
-  num_carry = eqn.params['num_carry']
+  jaxpr = eqn.params['jaxpr']
+  num_consts, num_carry, _ = (len(g) for g in eqn.params['ft_in'].unpack())
   signature = jaxpr_type_signature(jaxpr)
 
   # scan body should not consume key in constants
@@ -528,9 +525,9 @@ key_reuse_signatures[jax.lax.scan_p] = _scan_key_type_signature
 
 @dynamic_key_reuse_signature
 def _while_key_type_signature(eqn):
-  cond_jaxpr = eqn.params['cond_jaxpr'].jaxpr
+  cond_jaxpr = eqn.params['cond_jaxpr']
   cond_nconsts = eqn.params['cond_nconsts']
-  body_jaxpr = eqn.params['body_jaxpr'].jaxpr
+  body_jaxpr = eqn.params['body_jaxpr']
   body_nconsts = eqn.params['body_nconsts']
 
   cond_signature = jaxpr_type_signature(cond_jaxpr)

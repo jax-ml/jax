@@ -16,6 +16,167 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New features
+  * Added {func}`jax.export.symbolic_dim_bounds` for querying conservative
+    bounds on symbolic dimension expressions ({jax-issue}`#40006`).
+  * {func}`jax.distributed.initialize` can now secure the coordination service
+    with mutual TLS via the new `mtls_cert_file`, `mtls_key_file`,
+    `mtls_ca_file`, `mtls_peer_uri_prefix` and `verify_secure_credentials`
+    arguments (or the `JAX_MTLS_CERT_FILE`, `JAX_MTLS_KEY_FILE`,
+    `JAX_MTLS_CA_FILE`, `JAX_MTLS_PEER_URI_PREFIX` and
+    `JAX_DISTRIBUTED_VERIFY_SECURE_CREDENTIALS` environment variables).
+
+* Changes
+  * The minimum CuDNN version for CUDA 12 is v9.10.2.
+  * JAX now uses Bazel 8.7.0 to build from source.
+  * JAX now uses Bzlmod for its Bazel builds instead of WORKSPACE.
+  * On GPU, multi-dimensional inverse real FFTs ({func}`jax.numpy.fft.irfftn`,
+    {func}`jax.numpy.fft.irfft2` and {func}`jax.lax.fft` with `FftType.IRFFT`)
+    are again lowered to a single C2R transform, as before JAX 0.10.0, instead
+    of an IFFT over the outer axes and a 1-D IRFFT with two transposes. The
+    input is first made Hermitian-symmetric along the outer axes, which does
+    not change the result under NumPy's convention (only the last axis is
+    assumed symmetric), so results are unchanged while the transform is
+    ~1.4x faster at typical sizes.
+  * {func}`jax.numpy.tri` now returns an array with the default float dtype
+    when the `dtype` argument is not specified. Previously it always returned
+    `float32` ({jax-issue}`#40242`).
+  * {func}`jax.numpy.unique` with `axis` specified now matches NumPy's output
+    shape for arrays that are empty along the given axis, instead of
+    fabricating a phantom slice for fully-empty inputs.
+
+* Bug fixes
+  * Fixed a bug where {func}`jax.numpy.linalg.cond` returned NaN instead of
+    infinity for singular matrices when `p` is `None` or `2`, matching NumPy
+    and the other norms.
+  * Fixed {func}`jax.numpy.intersect1d` and {func}`jax.numpy.setxor1d` with
+    ``size=0``, which previously raised a ValueError; they now return empty
+    arrays of the natural result dtype.
+  * Fixed {func}`jax.numpy.setdiff1d` raising an `IndexError` when called with
+    ``size=0`` on non-empty inputs; it now returns an empty array.
+
+## JAX 0.11.1 (August 17, 2026)
+
+* New features
+  * Added an error check for trying to deserialize JAX exports that are older
+    than the backwards compatibility window. Without this check the
+    deserialization of expired artifacts may succeed and then result in
+    obscure downstream errors.
+    Added a configuration flag `--jax_export_deserialize_expired_versions` to
+    temporarily bypass the error check.
+    See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees.
+  * Added {func}`jax.numpy.top_k`, which implements {func}`numpy.top_k`, added in
+    in NumPy v2.6.0 ({jax-issue}`#39729`).
+
+* Breaking changes
+  * The `exec_time_optimization_effort` and `memory_fitting_effort` flags have been
+    removed in favor of the `EffortLevel` enum.
+  * JAX does not support anymore deserialization of Exported modules from
+    before January 15th, 2026 because they are beyond the backwards compatibility
+    window. On that date we added support to serialize shardings as NamedSharding,
+    and now that is the only sharding serialization that is supported.
+  * jnp.take_along_axis now always defaults wrap_negative_indices to True.
+    It used to default to False for mode=promise_in_bounds and True otherwise.
+    (This also means None is no longer a valid value for wrap_negative_indices.)
+
+* Deprecations
+  * The fields `in_shardings_hlo` and `out_shardings_hlo` of
+    `jax.export.Exported` have been deprecated for a while. Now accessing them
+    raises a warning. Use `in_shardings_jax` and `out_shardings_jax` instead.
+
+* Changes
+  * The cuDNN fused attention backward pass (used by
+    {func}`jax.nn.dot_product_attention` with `implementation='cudnn'`) no
+    longer computes a bias gradient when the only attention bias comes from
+    a boolean `mask`, whose gradient no caller can request. Bias gradients
+    for an explicit `bias` or a non-boolean `mask` are unchanged
+    ({jax-issue}`#34685`).
+  * {func}`jax.numpy.meshgrid`, {obj}`jax.numpy.ogrid`, and
+    {func}`jax.numpy.broadcast_arrays` now return tuples rather than lists
+    in order to align with NumPy>2.0 and the Array API specification.
+    ({jax-issue}`#39783`, {jax-issue}`#39789`, {jax-issue}`#39802`)
+  * When {func}`jax.grad` or {func}`jax.value_and_grad` rejects a function with
+    a non-scalar output, the error message now suggests reducing the output
+    to a scalar (e.g. with `output.sum()`), using {func}`jax.jacobian`, or
+    reshaping size-1 outputs ({jax-issue}`#2303`).
+  * When indexing with non-static or traced slice indices, the error message
+    now suggests using {func}`jax.lax.dynamic_slice`,
+    {func}`jax.lax.dynamic_update_slice`, or `jax.ds`, and shows tracer
+    provenance ({jax-issue}`#7222`).
+  * PyTree metadata equality comparison failures now report the specific
+    registered pytree type that caused the error ({jax-issue}`#13027`).
+
+* Bug fixes
+  * {func}`jax.numpy.linalg.det` and {func}`jax.numpy.linalg.slogdet` now use a
+    closed-form LU decomposition with row pivoting for 2x2 and 3x3 matrices
+    instead of closed-form polynomial expansions to avoid numerical instability
+    and catastrophic cancellation ({jax-issue}`#39905`).
+  * Fixed a crash when `jax_explain_cache_misses` is enabled and a
+    `jax.custom_batching.custom_vmap`-decorated function (or
+    `custom_partitioning`, `custom_gradient`, `closure_convert`,
+    `linear_call`, or `run_state`) is retraced with different-shaped
+    arguments ({jax-issue}`#40110`).
+  * The batching rules of the cuDNN fused attention primitives (used by
+    {func}`jax.nn.dot_product_attention` with `implementation='cudnn'`) now
+    support operands that do not carry the vmap axis, including a shared
+    bias or `mask`. Previously `jax.jacobian`, `jax.vmap` with partial
+    `in_axes`, and `jax.vmap` of a VJP or of `jax.grad` failed with a
+    reshape `TypeError` ({jax-issue}`#38495`).
+  * `jax.vmap` of fp8 cuDNN fused attention now works: its batching rules
+    additionally mislabeled or dropped the amax outputs and restored output
+    shapes incorrectly, so previously no vmap of the fp8 path succeeded at
+    all. The amax outputs are whole-batch statistics and do not carry the
+    vmap axis; vmap over the scale/descale operands raises a clear
+    `NotImplementedError`.
+  * Setting `jax_compiler_enable_remat_pass` to `False` now adds
+    `rematerialization` to the set of disabled XLA passes instead of
+    overwriting it, so HLO passes disabled via
+    `XLA_FLAGS=--xla_disable_hlo_passes=...` stay disabled
+    ({jax-issue}`#37391`).
+  * {func}`jax.numpy.split`, {func}`jax.numpy.array_split`, and the
+    `hsplit`/`vsplit`/`dsplit` variants once again accept negative entries in
+    `indices_or_sections`, resolving them against the axis size as NumPy does
+    ({jax-issue}`#6599`). Out-of-bound indices are now clipped to the axis
+    bounds and produce empty sections, also matching NumPy, instead of raising
+    `ValueError: Sizes passed to split must be nonnegative`.
+  * Fixed abstract evaluation in {func}`jax.lax.scan` to only check `.mat`
+    equivalency when the abstract value is a `ShapedArray`
+    ({jax-issue}`#39700`).
+  * Fixed propagation of singleton sharded dimensions in {func}`jax.lax.reshape`
+    when reshaping arrays with sharding constraints ({jax-issue}`#39309`).
+  * Fixed {func}`jax.tree_util.flatten_one_level_with_keys` for `namedtuple`
+    instances ({jax-issue}`#39297`).
+  * Fixed `_get_prime_factors` in `jax.experimental.mesh_utils`
+    ({jax-issue}`#38286`).
+  * `PyTreeDef.deserialize_using_proto` now raises `ValueError` for a
+    malformed `PyTreeDefProto` instead of crashing the interpreter. A node
+    whose arity exceeds the subtrees preceding it is rejected, as is a dict
+    node whose arity disagrees with its key list, which previously segfaulted
+    later, when the structure was used to unflatten.
+    `PyTreeDef.compose` likewise raises `ValueError` rather than crashing when
+    an operand carries such an inconsistent arity, which is reachable from
+    `pickle.loads` ({jax-issue}`#37410`).
+
+## JAX 0.11.0 (July 16, 2026)
+
+* New features
+  * Added a doc on defining custom derivative rules with the experimental
+    hijax API ({ref}`hijax-custom-derivatives`), along with
+    `jax.experimental.hijax` helpers for deriving `HiPrim` autodiff
+    rules from a `jvp` or `lin` rule: `linearize_from_jvp` with
+    `apply_derived_linearization`, `vjp_fwd_from_jvp` with `transpose_jvp`,
+    `vjp_fwd_from_lin` with `transpose_linearized`, and `jvp_from_lin`.
+  * Added {func}`jax.custom_remat` to the top-level `jax` namespace, for
+    per-function control of rematerialization under the new `jax_remat3`
+    implementation.
+  * `jax.checkpoint_policies` is now a submodule rather than a namespace
+    object (so `from jax.checkpoint_policies import ...` now works; attribute
+    access is unchanged), and it additionally exposes the name-based policy
+    classes `SaveOnlyTheseNames`, `SaveAnyNamesButThese`, and
+    `SaveAndOffloadOnlyTheseNames`.
+  * Added {class}`jax.Inline` enum for specify inlining policies to
+    {func}`jax.jit`.
+
 * Breaking changes
   * The deprecated module jax.cloud_tpu_init was removed. This did nothing and
     references to it can be safely removed.
@@ -33,6 +194,19 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 * Deprecations
   * Passing 2-dimensional arrays (or mixed 2D and 3D arrays) to {func}`jax.numpy.cross` is deprecated and will be removed in JAX 0.12.0, aligning with NumPy 2.5 behavior.
+  * Several previously-deprecated APIs from {mod}`jax.core` have been removed, including
+    `CallPrimitive`, `DebugInfo`, `DropVar`, `Effect`, `Effects`, `InconclusiveDimensionOperation`,
+    `JaxprTypeError`, `abstract_token`, `check_jaxpr`, `concrete_or_error`, `find_top_trace`, `gensym`,
+    `get_opaque_trace_state`, `is_concrete`, `is_constant_dim`, `is_constant_shape`, `jaxprs_in_params`,
+    `new_jaxpr_eqn`, `no_effects`, `nonempty_axis_env_DO_NOT_USE`, `primal_dtype_to_tangent_dtype`,
+    `unsafe_am_i_under_a_jit_DO_NOT_USE`, `unsafe_am_i_under_a_vmap_DO_NOT_USE`,
+    `unsafe_get_axis_names_DO_NOT_USE`, `valid_jaxtype`, `JaxprPpContext`, `JaxprPpSettings`, `OutputType`,
+    `aval_mapping_handlers`, `call`, `concretization_function_error`, `custom_typechecks`,
+    `literalable_types`, `no_axis_name`, and `trace_ctx`.
+  * Several previously-deprecated APIs from {mod}`jax.interpreters.pxla` have been removed, including
+    `Index`, `MeshAxisName`, `MeshExecutable`, `global_aval_to_result_handler`, `global_result_handlers`,
+    `are_hlo_shardings_equal`, `is_hlo_sharding_replicated`, `ArrayMapping`, `_UNSPECIFIED`,
+    `array_mapping_to_axis_resources`, and `op_sharding_to_indices`.
 
 ## JAX 0.10.2 (June 17, 2026)
 

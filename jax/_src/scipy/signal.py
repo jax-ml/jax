@@ -279,12 +279,6 @@ def convolve2d(in1: Array, in2: Array, mode: ModeString = 'full', boundary: str 
 
     boundary: only ``"fill"`` is supported.
     fillvalue: only ``0`` is supported.
-    method: controls the computation method. Options are
-
-      * ``"auto"``: (default) always uses the ``"direct"`` method.
-      * ``"direct"``: lower to :func:`jax.lax.conv_general_dilated`.
-      * ``"fft"``: compute the result via a fast Fourier transform.
-
     precision: Specify the precision of the computation. Refer to
       :class:`jax.lax.Precision` for a description of available values.
 
@@ -413,12 +407,6 @@ def correlate2d(in1: Array, in2: Array, mode: ModeString = 'full', boundary: str
 
     boundary: only ``"fill"`` is supported.
     fillvalue: only ``0`` is supported.
-    method: controls the computation method. Options are
-
-      * ``"auto"``: (default) always uses the ``"direct"`` method.
-      * ``"direct"``: lower to :func:`jax.lax.conv_general_dilated`.
-      * ``"fft"``: compute the result via a fast Fourier transform.
-
     precision: Specify the precision of the computation. Refer to
       :class:`jax.lax.Precision` for a description of available values.
 

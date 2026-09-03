@@ -199,6 +199,96 @@ class PallasCallRemoteDMATest(TestCase):
     expected = x[8:] if jax.process_index() == 0 else x[:8]
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
+  def test_remote_dma_tma_load(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+    def kernel(x_ref, y_ref, ready_sem, recv_sem, scratch_ref, barrier):
+      other_dev_id = 1 - lax.axis_index("x")
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+
+      neighbor_ptr = plgpu.remote_ref(x_ref, other_dev_id)
+      plgpu.copy_gmem_to_smem(neighbor_ptr, scratch_ref, barrier)
+      plgpu.barrier_wait(barrier)
+      pl.semaphore_signal(recv_sem, device_id=other_dev_id)
+
+      plgpu.copy_smem_to_gmem(scratch_ref, y_ref)
+      plgpu.wait_smem_to_gmem(0)
+      # Make sure the other device's copy completed before exiting the kernel.
+      pl.semaphore_wait(recv_sem)
+
+    x = jnp.arange(2 * 8 * 128, dtype=jnp.float32).reshape((2 * 8, 128))
+    def body(x):
+      return self.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          scratch_types=[
+              plgpu.SemaphoreType.REGULAR,
+              plgpu.SemaphoreType.REGULAR,
+              plgpu.SMEM((8, 128), jnp.float32),
+              plgpu.Barrier(),
+          ],
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    y = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )(x)
+
+    expected = x[8:] if jax.process_index() == 0 else x[:8]
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
+  def test_remote_dma_dynamic_other_device_id(self):
+    # Regression test for device_collective_metadata being DCE'd under
+    # WG lowering.
+    #
+    # We use a dynamic device_id (loaded from a memref)
+    # which forces the lowering to use `device_collective_metadata` to resolve
+    # the remote address.
+    #
+    # The choice of `copy_smem_to_gmem` instead of simple store is deliberate as
+    # in the former case we do not handle remote ref GMEM transforms in Pallas
+    # lowering. As a consequence we do not call `launch_ctx.to_remote` leaving
+    # device collective metadata unused and prone to DCE.
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+    @self.kernel(
+      out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+      scratch_types=[
+          plgpu.SMEM((8, 128), jnp.float32),
+      ],
+    )
+    def kernel(x_ref, other_dev_id_ref, y_ref, x_smem):
+      x_smem[...] = x_ref[...]
+      other_dev_id = other_dev_id_ref[0]
+      remote_y_ref = plgpu.remote_ref(y_ref, other_dev_id)
+      plgpu.copy_smem_to_gmem(x_smem, remote_y_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(2 * 8 * 128, dtype=jnp.float32).reshape((2 * 8, 128))
+    other_dev_ids = jnp.array([1, 0], dtype=jnp.int32)
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    y = jax.jit(
+        jax.shard_map(
+            kernel,
+            mesh=mesh,
+            in_specs=(P("x"), P("x")),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )(x, other_dev_ids)
+
+    expected = x[8:] if jax.process_index() == 0 else x[:8]
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
   # Test verifies an execution of HLO with several slightly different mosaic
   # custom calls. The difference is needed to validate correct initialization
   # of the collective metadata before each kernel execution.
@@ -614,6 +704,10 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
   def test_semaphore_signal_collective_axes(self):
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.process_index() > 2:
       self.monkey_patched_api_was_used = True
       return  # Only 2 processes needed.
@@ -654,6 +748,10 @@ class PallasCallRemoteDMATest(TestCase):
         raise
 
   def test_semaphore_signal_multicast_collective_axes_warp_level(self):
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.process_index() > 2:
       self.monkey_patched_api_was_used = True
       return  # Only 2 processes needed.
@@ -661,14 +759,13 @@ class PallasCallRemoteDMATest(TestCase):
     def kernel(y_ref, sem_out_ref, sem):
       dev_idx = jax.lax.axis_index("x")
 
-      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-      def _per_warp():
-        warp_idx = jax.lax.axis_index("warp")
+      @plgpu.warp_map
+      def _per_warp(warp_id):
 
-        @pl.when(warp_idx == dev_idx)
+        @pl.when(warp_id == dev_idx)
         def _():
           # One warp on each device signals. In total, both semaphores get signaled once.
-          plgpu.semaphore_signal_multicast(sem.at[warp_idx], collective_axes="x")
+          plgpu.semaphore_signal_multicast(sem.at[warp_id], collective_axes="x")
 
           y_ref[0, 0] = 1.0
 
@@ -840,6 +937,11 @@ class PallasCallRemoteDMATest(TestCase):
 class PallasCallMultimemTest(TestCase):
   def setUp(self):
     super().setUp()
+    # TODO: b/541298091 - Skip when NCCL_NVLS_ENABLE='0' until b/541298091 is resolved.
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
     if any(
@@ -1106,6 +1208,11 @@ class PallasCallMultimemThreadUnsafeTest(TestCase):
 
   def setUp(self):
     super().setUp()
+    # TODO: b/541298091 - Skip when NCCL_NVLS_ENABLE='0' until b/541298091 is resolved.
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
     if any(

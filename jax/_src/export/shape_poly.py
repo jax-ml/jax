@@ -28,7 +28,7 @@ import io
 import copy
 import operator as op
 import tokenize
-from typing import Any, SupportsIndex, TypeAlias, TypeGuard, Union, overload
+from typing import Any, SupportsIndex, TypeAlias, TypeGuard, overload
 import warnings
 
 import numpy as np
@@ -46,7 +46,6 @@ from jax._src import typing
 from jax._src import util
 
 
-DimSize: TypeAlias = Union["_DimExpr", int]
 TfVal = Any
 DimVarEnv = dict[str, typing.Array]
 DType = Any
@@ -407,7 +406,7 @@ class _DimExpr:
   to the free integer coefficient of the expression.
 
   We overload integer operations, but we do that soundly, raising
-  :class:`InconclusiveDimensionOperation` when the result is not
+  :class:`~jax.errors.InconclusiveDimensionOperation` when the result is not
   representable as a _DimExpr.
   """
   __array_priority__ = 1000   # Same as tracer, for __radd__ and others on ndarray
@@ -977,6 +976,9 @@ def cmp_sequence(s1, s2, elem_cmp) -> int:
   return 0
 
 
+DimSize: TypeAlias = _DimExpr | int
+
+
 class SymbolicScope:
   """Identifies a scope for symbolic expressions.
 
@@ -1224,6 +1226,32 @@ def is_symbolic_dim(p: DimSize) -> TypeGuard[_DimExpr]:
   """Checks if a dimension is symbolic.
   """
   return isinstance(p, _DimExpr)
+
+
+def symbolic_dim_bounds(
+    dimension: DimSize | SupportsIndex,
+) -> tuple[float, float]:
+  """Returns inclusive bounds that JAX can prove for a dimension expression.
+
+  The returned bounds are conservative and may not be tight. Infinite bounds
+  mean that JAX could not establish a finite bound; they do not prove that the
+  dimension is unbounded.
+
+  Args:
+    dimension: An integer or symbolic dimension expression.
+
+  Returns:
+    A ``(lower_bound, upper_bound)`` pair. A lower bound of ``-inf`` or an
+    upper bound of ``inf`` means that JAX did not establish a finite bound.
+
+  Raises:
+    TypeError: If ``dimension`` is not an integer or symbolic dimension.
+    jax.errors.InconclusiveDimensionOperation: If the bounds cannot be computed because
+      JAX cannot prove that an operation in the expression is defined.
+  """
+  resolved_dimension: DimSize = core.concrete_dim_or_error(
+      dimension, "argument `dimension` of `symbolic_dim_bounds`")
+  return _bounds_decision(resolved_dimension, BoundsPrecision.BEST)
 
 dtypes.python_scalar_types.add(_DimExpr)
 dtypes.python_scalar_types_to_dtypes[_DimExpr] = dtypes.python_scalar_types_to_dtypes[int]
@@ -1494,8 +1522,8 @@ def symbolic_args_specs(
   return args_tree.unflatten(args_specs_flat)
 
 def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
-  """Returns the shape and dtype of a jax.Array or a j"""
-  if isinstance(a, api.ShapeDtypeStruct):
+  """Returns the shape and dtype of a jax.Array or a jax.ShapeDtypeStruct."""
+  if hasattr(a, "shape") and hasattr(a, "dtype"):
     return a.shape, a.dtype
   aval = core.typeof(a)
   return aval.shape, aval.dtype

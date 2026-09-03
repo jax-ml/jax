@@ -17,12 +17,21 @@
 from __future__ import annotations
 
 import functools
+import warnings
 
 import jax
 from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import triton as plgpu
 import jax.numpy as jnp
+
+warnings.warn(
+    "jax.experimental.pallas.ops.gpu.rms_norm is deprecated. Please use "
+    "tokamax.layer_norm(..., subtract_mean=False) instead. See "
+    "https://github.com/openxla/tokamax for more details.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 def rms_norm_forward_kernel(
     x_ref, weight_ref, bias_ref, # Input arrays

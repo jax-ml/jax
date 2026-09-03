@@ -23,6 +23,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
 from jax._src.lib import hlo as _hlo
+from jax.experimental import topologies
 import jax.extend.xla as jex_xla
 import jax.numpy as jnp
 import numpy as np
@@ -35,8 +36,10 @@ class XlaTransformTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jax.devices()[0].platform != "cpu":
-      self.skipTest("Skipping test for non-CPU devices")
+    if jtu.TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
+      self.skipTest(
+          "XLA transforms are not part of the persistent cache key"
+      )
     self._registered_transforms = []
 
   def tearDown(self):
@@ -69,6 +72,11 @@ class XlaTransformTest(jtu.JaxTestCase):
       if not changed:
         return None
 
+      sched = module.schedule()
+      if sched is not None:
+        sched.update()
+        module.set_schedule(sched)
+
       return module.as_serialized_hlo_module_proto()
 
     name = f"sin_to_cos_{stage.name}_test"
@@ -88,8 +96,10 @@ class XlaTransformTest(jtu.JaxTestCase):
     expected = jnp.cos(x)
     self.assertAllClose(result, expected, atol=1e-5)
 
+  @jtu.skip_on_devices("cpu")
   def test_sin_to_cos_platform_filtering(self):
-    """Register a pass for tpu only, compiling on cpu should not apply it."""
+    # TODO(skyewm, yashkatariya): Fix this
+    self.skipTest('The numerics check below is broken on TPU.')
 
     def sin_to_cos(serialized_hlo: bytes) -> bytes | None:
       module = _hlo.HloModule.from_serialized_hlo_module_proto(serialized_hlo)
@@ -108,17 +118,21 @@ class XlaTransformTest(jtu.JaxTestCase):
       if not changed:
         return None
 
+      sched = module.schedule()
+      if sched is not None:
+        sched.update()
+        module.set_schedule(sched)
       return module.as_serialized_hlo_module_proto()
 
-    # Registering for "tpu" only. Since our test runs on "cpu", this pass
-    # should NOT be executed.
-    name = "sin_to_cos_tpu_only_test"
+    # Register for "cpu" only. Since this test only runs on non-cpu backends,
+    # the pass should NOT be applied.
+    name = "sin_to_cos_cpu_only_test"
     stage = jex_xla.PipelineStage.PRE_SCHEDULER
     jex_xla.register_hlo_module_transformation(
         sin_to_cos,
         name=name,
         stage=stage,
-        platforms="tpu",
+        platforms="cpu",
     )
     self._registered_transforms.append((name, stage))
 
@@ -128,7 +142,7 @@ class XlaTransformTest(jtu.JaxTestCase):
 
     x = jnp.array([0.0, 1.0, 2.0])
     result = f(x)
-    # Since it's compiled on CPU, it should still return sin(x), not cos(x).
+    # Since it's not compiled on CPU, it should still return sin(x), not cos(x).
     expected = jnp.sin(x)
     self.assertAllClose(result, expected, atol=1e-5)
 
@@ -151,6 +165,11 @@ class XlaTransformTest(jtu.JaxTestCase):
 
       if not changed:
         return None
+
+      sched = module.schedule()
+      if sched is not None:
+        sched.update()
+        module.set_schedule(sched)
 
       return module.as_serialized_hlo_module_proto()
 
@@ -183,6 +202,35 @@ class XlaTransformTest(jtu.JaxTestCase):
 
     # 3. Verify it does NOT apply anymore.
     self.assertAllClose(f(x), jnp.sin(x), atol=1e-5)
+
+  @jtu.run_on_devices("tpu")
+  def test_aot_compile(self):
+    calls = []
+
+    def record(serialized_hlo: bytes) -> bytes | None:
+      calls.append(len(serialized_hlo))
+      return None  # no rewrite
+
+    name = "aot_record_test"
+    stage = jex_xla.PipelineStage.PRE_SCHEDULER
+    jex_xla.register_hlo_module_transformation(
+        record, name=name, stage=stage, platforms="tpu"
+    )
+    self._registered_transforms.append((name, stage))
+
+    topo = topologies.get_topology_desc(
+        platform=jax.devices()[0].platform
+    )
+    mesh = jax.sharding.Mesh(np.array(topo.devices).reshape(-1), ("x",))
+    s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
+    sds = jax.ShapeDtypeStruct(
+        (len(topo.devices) * 4,), jnp.float32, sharding=s
+    )
+    jax.jit(lambda x: x + 1).lower(sds).compile()
+
+    self.assertGreater(
+        len(calls), 0, "transform did not fire under AOT compile"
+    )
 
 
 def layernorm(x, eps=1e-5):
@@ -250,6 +298,46 @@ class XlaTransformE2ETest(jtu.JaxTestCase):
     for name, stage in self._registered_transforms:
       jex_xla.clear_hlo_module_transformation(name, stage)
     super().tearDown()
+
+  def test_simple_transform_preserves_donation_and_aliasing(self):
+    """Register an simple pass and verify it preserves donation and aliasing."""
+
+    def simple_transform(serialized_hlo: bytes) -> bytes | None:
+      return serialized_hlo
+
+    name = "transform_preserve_donation_aliasing_test"
+    stage = jex_xla.PipelineStage.PRE_SCHEDULER
+    jex_xla.register_hlo_module_transformation(
+        simple_transform,
+        name=name,
+        stage=stage,
+    )
+    self._registered_transforms.append((name, stage))
+
+    @functools.partial(jax.jit, donate_argnums=(0,))
+    def f(x):
+      return x * 2
+
+    # 1. Verify aliasing via compilation memory analysis
+    x_spec = jax.ShapeDtypeStruct((10, 10), jnp.float32)
+    compiled = f.lower(x_spec).compile()
+
+    mem_analysis = compiled.memory_analysis()
+    self.assertIsNotNone(mem_analysis)
+
+    expected_num_bytes = 10 * 10 * 4
+    # If aliasing is preserved, the alias size should match the allocated argument size.
+    self.assertEqual(
+        mem_analysis.alias_size_in_bytes, mem_analysis.argument_size_in_bytes
+    )
+    self.assertGreaterEqual(
+        mem_analysis.alias_size_in_bytes, expected_num_bytes
+    )
+
+    # 2. Verify donation (input buffer is invalidated/deleted after run)
+    x = jax.device_put(jnp.ones((10, 10), dtype=jnp.float32))
+    _ = compiled(x)
+    self.assertTrue(x.is_deleted())
 
   # Pre-scheduler XLA transformation: replaces all sin ops with cos.
   def sin_to_cos(self, serialized_hlo: bytes) -> bytes | None:
@@ -460,4 +548,4 @@ class XlaTransformE2ETest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

@@ -130,7 +130,7 @@ class JaxprEffectsTest(jtu.JaxTestCase):
       effect_p.bind(effect=foo_effect)
       return x + 1.
     jaxpr = jax.make_jaxpr(f)(2.)
-    self.assertEqual({foo_effect}, jaxpr.jaxpr.eqns[0].effects)
+    self.assertEqual({foo_effect}, jaxpr.eqns[0].effects)
     self.assertEqual({foo_effect}, jaxpr.effects)
 
   def test_different_effects_in_jaxpr(self):
@@ -139,8 +139,8 @@ class JaxprEffectsTest(jtu.JaxTestCase):
       effect_p.bind(effect=bar_effect)
       return x + 1.
     jaxpr = jax.make_jaxpr(f)(2.)
-    self.assertEqual({foo_effect}, jaxpr.jaxpr.eqns[0].effects)
-    self.assertEqual({bar_effect}, jaxpr.jaxpr.eqns[1].effects)
+    self.assertEqual({foo_effect}, jaxpr.eqns[0].effects)
+    self.assertEqual({bar_effect}, jaxpr.eqns[1].effects)
     self.assertEqual({foo_effect, bar_effect}, jaxpr.effects)
 
   def test_jaxpr_typecheck_should_verify_eqn_effects_are_subset(self):
@@ -148,7 +148,7 @@ class JaxprEffectsTest(jtu.JaxTestCase):
       effect_p.bind(effect=foo_effect)
       effect_p.bind(effect=bar_effect)
       return x + 1.
-    jaxpr = jax.make_jaxpr(f)(2.).jaxpr
+    jaxpr = jax.make_jaxpr(f)(2.)
 
     # Edit jaxpr to make its type wrong
     jaxpr = jaxpr.replace(effects={foo_effect})
@@ -167,11 +167,12 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
         effect_p.bind(effect=bar_effect)
         return [x]
       dbg = api_util.debug_info("test", f_, (2.,), {})
-      return core.call(
-          x, subfuns=(lu.wrap_init(f_, debug_info=dbg),))[0]
+      call_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+          lu.wrap_init(f_, debug_info=dbg), [core.typeof(x)])
+      return core.eval_jaxpr_p.bind(*consts, x, call_jaxpr=call_jaxpr)[0]
     jaxpr = jax.make_jaxpr(f)(2.)
-    self.assertIn(foo_effect, jaxpr.jaxpr.effects)
-    self.assertIn(bar_effect, jaxpr.jaxpr.effects)
+    self.assertIn(foo_effect, jaxpr.effects)
+    self.assertIn(bar_effect, jaxpr.effects)
 
   def test_jit_primitive_inherits_effects(self):
 
@@ -182,8 +183,8 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       return x
     jax.make_jaxpr(f)(2.)
     jaxpr = jax.make_jaxpr(f)(2.)
-    self.assertIn(foo_effect, jaxpr.jaxpr.effects)
-    self.assertIn(bar_effect, jaxpr.jaxpr.effects)
+    self.assertIn(foo_effect, jaxpr.effects)
+    self.assertIn(bar_effect, jaxpr.effects)
 
   def test_remat_call_primitive_inherits_effects(self):
 
@@ -917,7 +918,7 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
   def assertInputEffect(self, jaxpr, index):
     # An InputEffect on the index-th input (constvars + invars) of jaxpr.
     if isinstance(jaxpr, core.ClosedJaxpr):
-      jaxpr = jaxpr.jaxpr
+      jaxpr = jaxpr
     inputs = [*jaxpr.constvars, *jaxpr.invars]
     self.assertIn(InputEffect(inputs[index]), jaxpr.effects)
 
@@ -968,7 +969,7 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
     self.assertInputEffect(jaxpr, 1)
 
     jaxpr_left, jaxpr_right, _, _, _ = pe.partial_eval_jaxpr_custom(
-        jaxpr.jaxpr, [False, True], in_inst=[False, True],
+        jaxpr, [False, True], in_inst=[False, True],
         ensure_out_unknowns=[], ensure_out_inst=[],
         saveable=lambda *_, **__: True)
     self.assertEmpty(jaxpr_left.effects)
@@ -976,7 +977,7 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
                         jaxpr_right.effects)
 
     jaxpr_left, jaxpr_right, _, _, _ = pe.partial_eval_jaxpr_custom(
-        jaxpr.jaxpr, [True, False], in_inst=[True, False],
+        jaxpr, [True, False], in_inst=[True, False],
         ensure_out_unknowns=[], ensure_out_inst=[],
         saveable=lambda *_, **__: True)
     self.assertEmpty(jaxpr_right.effects)
@@ -988,7 +989,7 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
       input_effect(y, index=0)
     jaxpr = jax.make_jaxpr(f)(0, 1)
     self.assertInputEffect(jaxpr, 1)
-    jaxpr2, _ = pe.dce_jaxpr(jaxpr.jaxpr, [], instantiate=[False, False])
+    jaxpr2, _ = pe.dce_jaxpr(jaxpr, [], instantiate=[False, False])
     self.assertInputEffect(jaxpr2, 0)
 
     @jax.jit
@@ -996,7 +997,7 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
       input_effect(y, index=0)
     jaxpr = jax.make_jaxpr(f)(0, 1)
     self.assertInputEffect(jaxpr, 1)
-    jaxpr2, _ = pe.dce_jaxpr(jaxpr.jaxpr, [], instantiate=[False, False])
+    jaxpr2, _ = pe.dce_jaxpr(jaxpr, [], instantiate=[False, False])
     self.assertInputEffect(jaxpr2, 0)
 
     x = np.ones(2, np.int32)
@@ -1007,7 +1008,7 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
       self.assertEmpty(jaxpr.effects)
     else:
       self.assertInputEffect(jaxpr, 0)
-    jaxpr3, _ = pe.dce_jaxpr(jaxpr.jaxpr, [], instantiate=[False])
+    jaxpr3, _ = pe.dce_jaxpr(jaxpr, [], instantiate=[False])
     if config.use_simplified_jaxpr_constants.value:
       self.assertEmpty(jaxpr3.effects)
     else:
@@ -1084,21 +1085,21 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
         lax.scan(body, z, xs)
       return f
     jaxpr = jax.make_jaxpr(make_fun(0))(jnp.arange(8), 0)
-    jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [])
+    jaxpr, _ = pe.dce_jaxpr(jaxpr, [])
     if config.use_simplified_jaxpr_constants.value:
       self.assertInputEffect(jaxpr, 0)
     else:
       self.assertInputEffect(jaxpr, 1)
 
     jaxpr = jax.make_jaxpr(make_fun(1))(jnp.arange(8), 0)
-    jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [])
+    jaxpr, _ = pe.dce_jaxpr(jaxpr, [])
     if config.use_simplified_jaxpr_constants.value:
       self.assertInputEffect(jaxpr, 1)
     else:
       self.assertInputEffect(jaxpr, 2)
 
     jaxpr = jax.make_jaxpr(make_fun(2))(jnp.arange(8), 0)
-    jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [])
+    jaxpr, _ = pe.dce_jaxpr(jaxpr, [])
     if config.use_simplified_jaxpr_constants.value:
       self.assertEmpty(jaxpr.effects)
     else:

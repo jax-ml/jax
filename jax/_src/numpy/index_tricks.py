@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, Union
+from typing import Any
 
 import numpy as np
 
@@ -132,13 +132,13 @@ class _Ogrid:
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name="ogrid") for k in key)
     with config.numpy_dtype_promotion('standard'):
       output = promote_dtypes(*output)
-    return meshgrid(*output, indexing='ij', sparse=True)
+    return list(meshgrid(*output, indexing='ij', sparse=True))
 
 
 ogrid = export(_Ogrid())
 
 
-_IndexType = Union[ArrayLike, str, slice]
+_IndexType = ArrayLike | str | slice
 
 
 class _AxisConcat:

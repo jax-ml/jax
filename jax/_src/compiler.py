@@ -16,13 +16,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from collections.abc import Sequence
 import copy
+import enum
 from functools import partial
 import logging
 import time
 from typing import Any
-from collections.abc import Callable
 import warnings
 
 from jax._src import compilation_cache
@@ -36,12 +37,40 @@ from jax._src import traceback_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
-from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
+from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 import numpy as np
 
 
+class CompilerEffortLevel(enum.Enum):
+  """Effort level enumeration for XLA.
+
+  Used to specify the degree to which the XLA compiler should optimize for
+  runtime performance or memory fitting, as described in
+  https://openxla.org/xla/effort_levels. Higher effort levels will expend
+  more compile time but should yield better results in the respective
+  dimension.
+  """
+
+  UNKNOWN = 0
+  O0 = 9
+  O1 = 19
+  O2 = 29
+  O3 = 39
+
+  @classmethod
+  def _missing_(cls, value: object) -> CompilerEffortLevel | None:
+    return _effort_from_string.get(value)
+
+
+_effort_from_string: dict[Any, CompilerEffortLevel] = {
+    "UNKNOWN": CompilerEffortLevel.UNKNOWN,
+    "O0": CompilerEffortLevel.O0,
+    "O1": CompilerEffortLevel.O1,
+    "O2": CompilerEffortLevel.O2,
+    "O3": CompilerEffortLevel.O3,
+}
 _DISABLE_MOST_OPTIMIZATIONS = config.bool_flag(
     'jax_disable_most_optimizations',
     config.bool_env('JAX_DISABLE_MOST_OPTIMIZATIONS', False),
@@ -67,6 +96,19 @@ traceback_util.register_exclusion(__file__)
 CompileOptions = xc.CompileOptions
 
 logger = logging.getLogger(__name__)
+
+
+def _add_disabled_hlo_pass(disabled_passes: str, pass_name: str) -> str:
+  """Adds a pass to a comma-separated pass list, preserving existing entries.
+
+  ``DebugOptions.xla_disable_hlo_passes`` may already hold passes the user
+  disabled via ``XLA_FLAGS=--xla_disable_hlo_passes=...``; those must not be
+  overwritten. Entries are stripped because XLA matches pass names exactly.
+  """
+  passes = [p.strip() for p in disabled_passes.split(",") if p.strip()]
+  if pass_name not in passes:
+    passes.append(pass_name)
+  return ",".join(passes)
 
 
 def _get_cross_compile_backend(compile_only_backend):
@@ -139,7 +181,7 @@ def get_compile_options(
     num_replicas: int,
     num_partitions: int,
     device_assignment=None,
-    env_options_overrides: dict[str, str] | None = None,
+    env_options_overrides: dict[str, Any] | None = None,
     fdo_profile: bytes | None = None,
     detailed_logging: bool = True,
     backend: xc.Client | None = None,
@@ -194,27 +236,29 @@ def get_compile_options(
     assert device_assignment.computation_count() == num_partitions
     compile_options.device_assignment = device_assignment
 
-  build_options.exec_time_optimization_effort = config.exec_time_optimization_effort.value
-  build_options.memory_fitting_effort = config.memory_fitting_effort.value
-  build_options.optimization_level = config.EffortLevel(
+  build_options.optimization_level = CompilerEffortLevel(
       config.optimization_level.value
   ).value
-  build_options.memory_fitting_level = config.EffortLevel(
+  build_options.memory_fitting_level = CompilerEffortLevel(
       config.memory_fitting_level.value
   ).value
 
   if env_options_overrides is not None:
-    # Some overrides are passed directly on build_options.
-    overrides_on_build_options = [
-        "exec_time_optimization_effort", "memory_fitting_effort"]
-    overrides_on_build_options.extend(
-        ["optimization_level", "memory_fitting_level"]
-    )
+    # Some overrides are passed directly on compile_options or build_options.
+    overrides_on_compile_options = ["individually_defined_output_indices"]
+    overrides_on_build_options = ["optimization_level", "memory_fitting_level"]
 
     env_options_overrides = dict(env_options_overrides)
+    for name in overrides_on_compile_options:
+      if name in env_options_overrides:
+        setattr(compile_options, name, env_options_overrides.pop(name))
     for name in overrides_on_build_options:
       if name in env_options_overrides:
-        setattr(build_options, name, env_options_overrides.pop(name))
+        setattr(
+            build_options,
+            name,
+            CompilerEffortLevel(env_options_overrides.pop(name)).value,
+        )
     compile_options.env_option_overrides = list(env_options_overrides.items())
 
   debug_options = compile_options.executable_build_options.debug_options
@@ -227,7 +271,8 @@ def get_compile_options(
     debug_options.xla_test_all_input_layouts = False
 
   if not config.enable_remat_opt_pass.value:
-    debug_options.xla_disable_hlo_passes = "rematerialization"
+    debug_options.xla_disable_hlo_passes = _add_disabled_hlo_pass(
+        debug_options.xla_disable_hlo_passes, "rematerialization")
 
   # XLA-AutoFDO profile version: precedence order is:
   # 1. Whatever --jax_xla_profile_version is set to.

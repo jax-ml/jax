@@ -15,7 +15,7 @@
 
 from collections.abc import Callable, Hashable, Sequence
 import functools
-from typing import Any, TypeVar, cast, overload
+from typing import Any, cast, overload
 
 from jax._src import api
 from jax._src import config
@@ -87,9 +87,6 @@ def when(
   return _wrapped
 
 
-_T = TypeVar("_T")
-
-
 @overload
 def loop(
     lower: jax_typing.ArrayLike,
@@ -103,25 +100,25 @@ def loop(
 
 
 @overload
-def loop(
+def loop[T](
     lower: jax_typing.ArrayLike,
     upper: jax_typing.ArrayLike,
     *,
-    init_carry: _T = ...,
+    init_carry: T = ...,
     step: jax_typing.ArrayLike = ...,
     unroll: int | bool | None = ...,
-) -> Callable[[Callable[[jax_typing.Array, _T], _T]], _T]:
+) -> Callable[[Callable[[jax_typing.Array, T], T]], T]:
   ...
 
 
-def loop(
+def loop[T](
     lower: jax_typing.ArrayLike,
     upper: jax_typing.ArrayLike,
     *,
-    init_carry: _T | None = None,
+    init_carry: T | None = None,
     step: jax_typing.ArrayLike = 1,
     unroll: int | bool | None = None,
-) -> Callable[[Callable[..., _T | None]], _T | None]:
+) -> Callable[[Callable[..., T | None]], T | None]:
   """Returns a decorator that calls the decorated function in a loop."""
   zero: jax_typing.ArrayLike
   if not all(map(jax_core.is_concrete, (lower, upper, step))):
@@ -197,19 +194,6 @@ def kernel(
         mesh=[v_mesh, s_mesh],
         out_type=...
     )
-
-  JAX ``Ref`` objects can be closed over by the kernel body or passed in as
-  arguments. Any such ``Ref`` will be treated as if it is read-from and
-  written-to and will be aliased in and out of the kernel.
-
-  .. code-block:: python
-
-    @pl.kernel(mesh=...)
-    def kernel(in_ref, out_ref):
-      ...
-    x_ref = jax.new_ref(...)
-    y_ref = jax.new_ref(...)
-    kernel(x_ref, y_ref)  # Can now mutate x_ref and y_ref
 
   Args:
     body: The body of the kernel. If provided, this function behaves as a
@@ -309,9 +293,9 @@ def with_scoped(
 
   """
   def decorator(f):
-    def inner(*args):
+    def inner(*args, **kwargs):
       return pl_primitives.run_scoped(
-          functools.partial(f, *args),
+          functools.partial(f, *args, **kwargs),
           *types,
           collective_axes=collective_axes,
           **kw_types,

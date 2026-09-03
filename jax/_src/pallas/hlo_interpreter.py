@@ -24,35 +24,34 @@ are carried out in stages:
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from collections.abc import Iterable, Sequence
-from functools import reduce, partial
+from functools import partial, reduce
 import itertools
 from typing import Any
-from collections.abc import Callable
 
+import jax
+from jax._src import core as jax_core
+from jax._src import flattree as ft
+from jax._src import frozen_dict
+from jax._src import numpy as jnp
+from jax._src import source_info_util
+from jax._src import state
+from jax._src import typing as jax_typing
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax.control_flow import conditionals
 from jax._src.lax.control_flow import loops
-from jax._src import core as jax_core
-from jax._src import frozen_dict
-from jax._src import flattree as ft
-from jax._src import source_info_util
-from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
-from jax._src import state
 from jax._src.state import discharge as state_discharge
-from jax._src import typing as jax_typing
-from jax._src import util
-
 from jax._src.util import (
     foreach,
     safe_map,
     safe_zip,
     split_list,
 )
-from jax._src import numpy as jnp
 import numpy as np
 
 map, unsafe_map = safe_map, map
@@ -171,8 +170,9 @@ def kernel_to_hlo_jaxpr(
     scratch_invars = phys_jaxpr.invars[grid_mapping.slice_scratch_ops]
     scratch_avals = [v.aval for v in scratch_invars]
     discharged_closed_jaxpr = state_discharge.discharge_state(
-        jax_core.ClosedJaxpr(phys_jaxpr, phys_consts))
-  return discharged_closed_jaxpr.jaxpr, discharged_closed_jaxpr.consts, scratch_avals
+        phys_jaxpr.with_consts(phys_consts), strip_memory_space=True
+    )
+  return discharged_closed_jaxpr, discharged_closed_jaxpr.consts, scratch_avals
 
 
 def eval_jaxpr_recursive(
@@ -218,6 +218,8 @@ def eval_jaxpr_recursive(
             recurse_hop_rule, *in_vals, **eqn.params)
       else:
         bind_params = eqn.primitive.get_bind_params(eqn.params)
+        if eqn.primitive.name == "new_ref":
+          bind_params = dict(bind_params, memory_space=None)
         ans = eqn.primitive.bind(*in_vals, **bind_params)
     if eqn.primitive.multiple_results:
       foreach(write, eqn.outvars, ans)
@@ -228,27 +230,6 @@ def eval_jaxpr_recursive(
 
 # Higher-order primitive rules.
 _eval_jaxpr_hop_rules = {}
-
-def pad_jaxpr_constvars(jaxpr: jax_core.Jaxpr,
-                        i: int,
-                        all_const_avals: Sequence[Any]
-                        ) -> jax_core.ClosedJaxpr:
-  """Pads a Jaxpr with constvars from all branches.
-
-  For primitives that have multiple Jaxprs (e.g. cond_p), we need
-  to pad each Jaxpr with all consts from all branches so the
-  signatures match, but only use the consts for this branch.
-  """
-  unused_const_vars = [tuple(map(jax_core.Var, const_avals))
-                       for const_avals in all_const_avals]
-  const_prefix = util.concatenate(unused_const_vars[:i])
-  const_suffix = util.concatenate(unused_const_vars[i + 1:])
-  constvars = [*const_prefix, *jaxpr.constvars, *const_suffix]
-  jaxpr = jaxpr.replace(constvars=constvars)
-  effects = pe.make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
-                                  jaxpr.outvars, jaxpr.eqns)
-  jaxpr = jaxpr.replace(effects=effects)
-  return jax_core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
 
 
 def make_hop_rule(primitive, *keys):
@@ -263,38 +244,27 @@ def make_hop_rule(primitive, *keys):
     A primitive rule for the edtype Jaxpr pass. This should be registered
     using `register_edtype_rule`.
   """
-  def _resolve_jaxpr(interpreter,
-                     value: jax_core.Jaxpr | jax_core.ClosedJaxpr,
-                     mapped_idx=None):
+  def _resolve_jaxpr(interpreter, value: jax_core.Jaxpr, mapped_idx=None):
     extra_args = ()
-    if isinstance(value, jax_core.Jaxpr):
-      if len(value.constvars) > 0:
-        raise ValueError(f"Cannot physicalize a jaxpr with constvars: {value}")
-      physical_jaxpr, physical_consts = interpreter(value, ())
-      if physical_consts:
-        if mapped_idx is not None:
-          new_jaxpr = pad_jaxpr_constvars(physical_jaxpr,
-                                          mapped_idx,
-                                          physical_consts)
-          extra_args = tuple(physical_consts)
-        else:
-          new_jaxpr = pe.convert_constvars_jaxpr(physical_jaxpr)
-          extra_args = tuple(physical_consts)
-      else:
-        new_jaxpr = physical_jaxpr
-    elif isinstance(value, jax_core.ClosedJaxpr):
-      jaxpr, new_consts = interpreter(value.jaxpr, value.consts)
-      new_jaxpr = jax_core.ClosedJaxpr(jaxpr, new_consts)
-    else:
+    if not isinstance(value, jax_core.Jaxpr):
       raise ValueError(f"Parameter of type {type(value)} is not a Jaxpr.")
+    if len(value.consts) != len(value.constvars):
+      raise ValueError(
+          f"Cannot physicalize a jaxpr with unapplied constvars: {value}"
+      )
+    # All primitives registered via make_hop_rule take closed jaxpr params, so
+    # new consts introduced by the interpreter are re-attached to the jaxpr
+    # rather than passed as extra leading arguments.
+    del mapped_idx
+    jaxpr, new_consts = interpreter(value, value.consts)
+    new_jaxpr = jaxpr.with_consts(new_consts)
     return new_jaxpr, extra_args
 
   def rule(interpreter, *args, **params):
     new_params = {}
     for key in keys:
       value = params[key]
-      if isinstance(value, jax_core.Jaxpr) or isinstance(
-          value, jax_core.ClosedJaxpr):
+      if isinstance(value, jax_core.Jaxpr):
         new_jaxpr, extra_args = _resolve_jaxpr(interpreter, value)
         new_params[key] = new_jaxpr
         args = extra_args + args
@@ -330,7 +300,7 @@ _eval_jaxpr_hop_rules[primitives.run_scoped_p] = _run_scoped_physicalize_rule
 
 # TODO(justinfu): Replace this with a standardized physicalize pass.
 def resolve_physical_types(jaxpr: jax_core.Jaxpr, consts: Sequence[Any]):
-  kernel_avals = jax_core.ClosedJaxpr(jaxpr, consts).in_avals
+  kernel_avals = jaxpr.in_avals
   kernel_avals = tuple(map(_logical_aval_to_interpret_mode_aval,
                              kernel_avals))
   interp_fun = partial(
@@ -340,7 +310,7 @@ def resolve_physical_types(jaxpr: jax_core.Jaxpr, consts: Sequence[Any]):
       interp_fun, ft.flatten_args(*kernel_avals),
       jaxpr.debug_info
   )
-  return closed_jaxpr.jaxpr, closed_jaxpr.consts
+  return closed_jaxpr, closed_jaxpr.consts
 
 
 def pallas_call_hlo_interpret(
@@ -363,6 +333,13 @@ def pallas_call_hlo_interpret(
   dynamic_grid_args, args = split_list(
       args, [grid_mapping.num_dynamic_grid_bounds]
   )
+  args = tuple(
+      jax.device_put(x, jax_core.MemorySpace.Device)
+      if isinstance(x, jax_core.Tracer)
+      and getattr(x.aval, "memory_space", None) is not None
+      else x
+      for x in args
+  )
   dynamic_grid_args_iter = iter(dynamic_grid_args)
   grid = tuple(
       a if not isinstance(a, pallas_core.DynamicGridDim)
@@ -379,6 +356,10 @@ def pallas_call_hlo_interpret(
                                 args, input_output_aliases)
   # TODO(b/370563936): Fix correctness issue w/ io aliasing
   scalars = args[grid_mapping.slice_index_ops]
+  scalars = tuple(
+      s.astype(jnp.int32) if isinstance(s.dtype, jax_core.bint) else s
+      for s in scalars
+  )
   block_args = args[len(scalars):]
   # invars: [*scalar_prefetch, *consts, *inputs, *outputs, *scratch]
   # block_args now contains: *consts, *inputs, *outputs
@@ -439,34 +420,51 @@ def pallas_call_hlo_interpret(
 
     carry_consts_ins, scratch = split_list(carry_blocks, [num_inout_blocks])
     with pallas_core.grid_env(local_grid_env):
-      for s in scalars:
-        if isinstance(s.dtype, jax_core.bint):
-          aval = jax_core.typeof(s)
-          s.aval = aval.update(dtype=jnp.int32)
       start_indices = [
           bm.compute_start_indices_interpret(loop_idx, *scalars)
           for bm in grid_mapping.block_mappings
       ]
-    blocks = map(_dynamic_slice, start_indices, block_shapes,
-                 carry_consts_ins, is_squeeze_dim)
+    in_blocks = map(
+        _dynamic_slice,
+        start_indices,
+        block_shapes,
+        carry_consts_ins,
+        is_squeeze_dim,
+    )
     with pallas_core.grid_env(local_grid_env):
-      assert len(discharged_jaxpr.invars) == len(scalars) + len(blocks) + len(
-          scratch_values
-      ), (
+      assert len(discharged_jaxpr.invars) == len(scalars) + len(
+          in_blocks
+      ) + len(scratch_values), (
           len(discharged_jaxpr.invars),
           len(scalars),
-          len(blocks),
+          len(in_blocks),
           len(scratch_values),
       )
 
-      blocks = jax_core.eval_jaxpr(
-          discharged_jaxpr, discharged_consts, *scalars, *blocks, *scratch
+      out_blocks = jax_core.eval_jaxpr(
+          discharged_jaxpr, discharged_consts, *scalars, *in_blocks, *scratch
       )
 
     _, out_inout, out_scratch = split_list(
-        blocks, [grid_mapping.num_index_operands, num_inout_blocks])
+        out_blocks, [grid_mapping.num_index_operands, num_inout_blocks]
+    )
     out_carry = map(_dynamic_update_slice, start_indices, block_shapes,
                     carry_consts_ins, out_inout, is_squeeze_dim)
+    # Synchronize array mutations across aliased input/output carry buffers so
+    # updates written to one aliased operand during this grid step are visible
+    # to both operands in subsequent grid iterations.
+    out_carry = list(out_carry)
+    for in_idx, out_idx in input_output_aliases:
+      in_idx_adj = in_idx - len(scalars)
+      out_idx_adj = len(block_args) + out_idx
+      input_modified = out_inout[in_idx_adj] is not in_blocks[in_idx_adj]
+      output_modified = out_inout[out_idx_adj] is not in_blocks[out_idx_adj]
+      if input_modified and not output_modified:
+        out_carry[out_idx_adj] = out_carry[in_idx_adj]
+      elif output_modified and not input_modified:
+        out_carry[in_idx_adj] = out_carry[out_idx_adj]
+      elif input_modified and output_modified:
+        out_carry[out_idx_adj] = out_carry[in_idx_adj]
     return (i + 1, _get_next_indices(grid, loop_idx),
             *out_carry, *out_scratch)
 

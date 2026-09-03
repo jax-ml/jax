@@ -22,6 +22,7 @@ import functools
 from functools import cached_property, partial
 import inspect
 
+import logging
 import math
 import os
 import platform
@@ -32,7 +33,6 @@ import textwrap
 import threading
 from typing import Any, TextIO
 import unittest
-import warnings
 import zlib
 
 from absl.testing import parameterized
@@ -50,7 +50,10 @@ from jax._src import sharding_impls
 from jax._src import test_warning_util
 from jax._src import xla_bridge
 from jax._src import util
-from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
+from jax._src.cloud_tpu_init import (
+    is_libtpu_at_least as is_libtpu_at_least,
+    running_in_cloud_tpu_vm as running_in_cloud_tpu_vm,
+)
 from jax._src.interpreters import mlir
 from jax._src.lax import lax
 from jax._src.lib import cuda_versions
@@ -68,6 +71,8 @@ from jax._src.typing import ArrayLike, DTypeLike
 from jax._src.util import unzip2
 import numpy as np
 import numpy.random as npr
+
+logger = logging.getLogger(__name__)
 
 # When running tests, install the ABSL failure signal handler. This dumps a
 # C++ back trace on fatal signals, which is helpful for debugging.
@@ -291,6 +296,7 @@ count_jit_and_pmap_lowerings = count_events("lower_jaxpr_to_module")
 count_jit_compilation_cache_miss = count_events("pxla_cached_compilation")
 count_compilation_after_persistent_cache_miss = count_events("compile_after_persistent_compilation_miss")
 count_jax_array_shard_arg_calls = count_events("_array_shard_arg")
+count_infer_params_cache_miss = count_events("infer_params_cache_miss")
 
 
 @contextmanager
@@ -320,13 +326,13 @@ def count_subjaxpr_to_hlo_conversion(fun_name):
 
 @contextmanager
 def collect_lowered_jaxprs() -> Generator[
-    Sequence[tuple[core.ClosedJaxpr, mlir.ir.Module]],
+    Sequence[tuple[core.Jaxpr, mlir.ir.Module]],
 ]:
   """
   Collects all the pairs of (jaxpr, mlir_module) that are lowered.
   """
   assert thread_local_state.collect_lowered_jaxprs is None
-  collection: list[tuple[core.ClosedJaxpr, mlir.ir.Module]] = []
+  collection: list[tuple[core.Jaxpr, mlir.ir.Module]] = []
   thread_local_state.collect_lowered_jaxprs = collection
   try:
     yield collection
@@ -420,52 +426,6 @@ def is_test_rbe() -> bool:
       os.getenv("IS_JAX_RBE_TESTING", "").lower() in {"true", "1", "yes", "y"}
       )
 
-def is_libtpu_at_least(version_str: str) -> bool:
-  """Returns True if not running on Cloud TPU.
-
-  If running on Cloud TPU, returns True if the installed libtpu version
-  is at least `version_str`.
-
-  Note: This checks the version of the installed `libtpu` Python package.
-  If `TPU_LIBRARY_PATH` is set to a different path than the installed
-  package's default, a warning will be issued as the loaded library
-  might not match the package version we are checking.
-  """
-  if not is_cloud_tpu():
-    return True
-
-  tpu_library_path = os.environ.get('TPU_LIBRARY_PATH')
-  try:
-    import libtpu  # pyrefly: ignore[missing-import]
-  except ImportError:
-    if tpu_library_path:
-      warnings.warn(
-          f"libtpu Python package is not installed, but TPU_LIBRARY_PATH is set to {tpu_library_path}. "
-          f"Cannot determine libtpu version. Assuming it is newer than {version_str}.",
-          stacklevel=2
-      )
-    else:
-      warnings.warn(
-          f"libtpu Python package is not installed, but we appear to be on a Cloud TPU VM. "
-          f"Cannot determine libtpu version. Assuming it is newer than {version_str}.",
-          stacklevel=2
-      )
-    return True
-
-  if tpu_library_path and tpu_library_path != libtpu.get_library_path():
-    warnings.warn(
-        f"TPU_LIBRARY_PATH is set to {tpu_library_path}, which differs from "
-        f"the installed package default ({libtpu.get_library_path()}). "
-        "is_libtpu_at_least will check the installed package version, "
-        "which may not match the loaded library.",
-        stacklevel=2
-    )
-
-  # Parse unconditionally. If it throws ValueError, let it propagate.
-  actual_version = parse_version(libtpu.__version__)
-  required_version = parse_version(version_str)
-
-  return actual_version >= required_version
 
 def pjrt_c_api_version_at_least(major_version: int, minor_version: int) -> bool:
   pjrt_c_api_versions = xla_bridge.backend_pjrt_c_api_version()
@@ -479,7 +439,7 @@ def stablehlo_version_at_least(required_version: str) -> bool:
     return True
   return hlo.get_smaller_version(
       ".".join(map(str, plugin_version)), required_version
-  ) == plugin_version
+  ) == required_version
 
 def get_tpu_version() -> int:
   if device_under_test() != "tpu":
@@ -511,6 +471,8 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
     return device_kind.endswith("v5")
   elif expected_version == "v7x":
     return "TPU7x" in device_kind
+  elif expected_version == "v8i":
+    return "TPU8i" in device_kind
   return expected_version in device_kind
 
 def pattern_search(patterns: str | Sequence[str], string: str) -> str | None:
@@ -1075,7 +1037,7 @@ def iter_eqns(jaxpr):
 
 def assert_dot_precision(expected_precision, fun, *args):
   jaxpr = api.make_jaxpr(fun)(*args)
-  precisions = [eqn.params['precision'] for eqn in iter_eqns(jaxpr.jaxpr)
+  precisions = [eqn.params['precision'] for eqn in iter_eqns(jaxpr)
                 if eqn.primitive == lax.dot_general_p]
   for precision in precisions:
     msg = f"Unexpected precision: {expected_precision} != {precision}"
@@ -1087,7 +1049,7 @@ def assert_dot_precision(expected_precision, fun, *args):
 
 def assert_dot_preferred_element_type(expected, fun, *args, **kwargs):
   jaxpr = api.make_jaxpr(partial(fun, **kwargs))(*args)
-  pref_eltypes = [eqn.params['preferred_element_type'] for eqn in iter_eqns(jaxpr.jaxpr)
+  pref_eltypes = [eqn.params['preferred_element_type'] for eqn in iter_eqns(jaxpr)
                    if eqn.primitive == lax.dot_general_p]
   for pref_eltype in pref_eltypes:
     msg = f"Unexpected preferred_element_type: {expected} != {pref_eltype}"
@@ -2369,7 +2331,7 @@ def runtime_environment() -> str | None:
   """Returns None, "bazel" or "pytest"."""
   if sys.executable is None:
     return None
-  elif 'bazel-out' in sys.executable:
+  elif "TEST_TMPDIR" in os.environ:
     return "bazel"
   else:
     return "pytest"

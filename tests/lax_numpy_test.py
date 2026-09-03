@@ -24,7 +24,7 @@ import io
 import itertools
 import math
 import platform
-from typing import Union, cast
+from typing import cast
 import unittest
 from unittest import SkipTest
 
@@ -167,6 +167,27 @@ def _shapes_are_broadcast_compatible(shapes):
 
 def _shapes_are_equal_length(shapes):
   return all(len(shape) == len(shapes[0]) for shape in shapes[1:])
+
+
+def ref_top_k(arr, k, /, *, axis, mode, sorted):
+  """Reference implementation of numpy.top_k, added in NumPy v2.6.0"""
+  # TODO(jakevdp): remove this helper when minimum required NumPy is version 2.6.0.
+  if jtu.numpy_version() >= (2, 6, 0):
+    return np.top_k(arr, k, axis=axis, mode=mode, sorted=sorted)
+  if mode == 'largest':
+    sorted_indices = np.argsort(
+        -arr.astype(np.float64) if np.issubdtype(arr.dtype, np.floating)
+        else ~arr if arr.dtype == np.bool_
+        else -arr.astype(np.int64) if not np.issubdtype(arr.dtype, np.unsignedinteger)
+        else -(arr.astype(np.int64) + 1),
+        axis=axis, kind='stable')
+  else:
+    sorted_indices = np.argsort(arr, axis=axis, kind='stable')
+  slc = [slice(None)] * arr.ndim
+  slc[axis] = slice(0, k)
+  indices = sorted_indices[tuple(slc)]
+  values = np.take_along_axis(arr, indices, axis=axis)
+  return values, indices
 
 
 class LaxBackedNumpyTests(jtu.JaxTestCase):
@@ -615,7 +636,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x = jax.ShapeDtypeStruct((1, 5, 4), jnp.float32)
     y = jax.ShapeDtypeStruct((1, 4, 3), jnp.float32)
     jaxpr = jax.make_jaxpr(jnp.matmul)(x, y)
-    [dot_eqn] = (eqn for eqn in jaxpr.jaxpr.eqns if eqn.primitive == lax.dot_general_p)
+    [dot_eqn] = (eqn for eqn in jaxpr.eqns if eqn.primitive == lax.dot_general_p)
     self.assertEqual(dot_eqn.invars[0].aval.shape, (5, 4))
     self.assertEqual(dot_eqn.invars[1].aval.shape, (4, 3))
     self.assertEqual(dot_eqn.params['dimension_numbers'], (((1,), (0,)), ((), ())))
@@ -1346,7 +1367,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testPermuteDims(self, shape, dtype):
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
+
+    # Generate a permutation of axes, with some positive and some negative
     axes = self.rng().permutation(len(shape))
+    neg = self.rng().randint(0, 2, size=len(shape), dtype=bool)
+    axes = np.where(neg, axes - len(shape), axes)
+
     np_fun = partial(getattr(np, "permute_dims", np.transpose), axes=axes)
     jnp_fun = partial(jnp.permute_dims, axes=axes)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
@@ -1472,7 +1498,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testIntegerPower(self, ptype):
     p = {'int': 2, 'np.int': np.int32(2), 'jnp.int': jnp.int32(2)}[ptype]
     jaxpr = jax.make_jaxpr(lambda x1: jnp.power(x1, p))(1)
-    eqns = jaxpr.jaxpr.eqns
+    eqns = jaxpr.eqns
     self.assertLen(eqns, 1)
     self.assertEqual(eqns[0].primitive, lax.integer_pow_p)
 
@@ -1919,7 +1945,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     a = jnp.array([1,2,3,4])
     f = lambda a: jnp.repeat(a, repeats=2)
     jaxpr = jax.make_jaxpr(f)(a)
-    self.assertLessEqual(len(jaxpr.jaxpr.eqns), 6)
+    self.assertLessEqual(len(jaxpr.eqns), 6)
 
   @jtu.sample_product(fixed_size=[False, True])
   def testNonScalarRepeats(self, fixed_size):
@@ -2006,8 +2032,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = partial(jnp_op, mode=mode, precision=precision)
     def np_fun(x, y):
       return np_op(x, y, mode=mode).astype(dtypes.to_inexact_dtype(dtype))
-    tol = {np.float16: 2e-1, np.float32: 1e-2, np.float64: 1e-14,
-           np.complex128: 1e-14}
+    tol = {
+        np.float16: 2e-1,
+        np.float32: 1e-2,
+        np.complex64: 1e-2,
+        np.float64: 1e-14,
+        np.complex128: 1e-14,
+    }
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -3078,6 +3109,35 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @jtu.sample_product(
+    [dict(op=op, shape=shape, axis=axis, indices=indices)
+      # Includes negative and out-of-bound indices, which numpy resolves
+      # relative to the axis size and then clips to [0, size].
+      for op, shape, axis, indices in [
+          ('split', (3,), 0, [-1]), ('split', (12,), 0, [2, -1]),
+          ('split', (12, 4), 0, [2, -2]), ('split', (12, 4), 1, [-3, -1]),
+          ('split', (2, 3, 4), -1, [1, -1]), ('split', (2, 3, 4), -2, [-2]),
+          ('split', (3,), 0, [-5]), ('split', (3,), 0, [5]),
+          ('split', (3,), 0, [-5, 5]), ('split', (12,), 0, [0, 12]),
+          ('split', (12,), 0, [20, 30]),
+          ('array_split', (12,), 0, [5, -2]),
+          ('array_split', (2, 3, 5), -1, [1, -1]),
+          ('array_split', (7, 2, 2), 0, [-5]),
+          ('vsplit', (12, 4), 0, [1, -2]), ('hsplit', (12, 4), 1, [-1]),
+          ('dsplit', (2, 3, 4), 2, [-2]), ('vsplit', (4, 3, 4), 0, [-1, 5])]
+    ],
+    dtype=default_dtypes,
+  )
+  def testSplitIndices(self, op, shape, indices, axis, dtype):
+    rng = jtu.rand_default(self.rng())
+    # vsplit, hsplit and dsplit split along a fixed axis, so take no axis arg.
+    kwds = {} if op in ['vsplit', 'hsplit', 'dsplit'] else {'axis': axis}
+    np_fun = lambda x: getattr(np, op)(x, indices, **kwds)
+    jnp_fun = lambda x: getattr(jnp, op)(x, indices, **kwds)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   def testSplitTypeError(self):
     # If we pass an ndarray for indices_or_sections -> no error
     self.assertEqual(3, len(jnp.split(jnp.zeros(3), jnp.array([1, 2]))))
@@ -3142,6 +3202,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     tol = {jnp.bfloat16: 2E-2, np.float16: 1E-1}
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
                             tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(bins=[1, 3, 10])
+  def testHistogramEmptyInput(self, bins):
+    # The range cannot be inferred from an empty array; NumPy falls back to
+    # (0, 1) rather than failing inside min/max.
+    np_fun = lambda a: np.histogram(a, bins=bins)
+    jnp_fun = lambda a: jnp.histogram(a, bins=bins)
+    args_maker = lambda: [jnp.array([], dtype='float32')]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(bins=[1, 3, 10])
+  def testHistogramBinEdgesEmptyInput(self, bins):
+    np_fun = lambda a: np.histogram_bin_edges(a, bins=bins)
+    jnp_fun = lambda a: jnp.histogram_bin_edges(a, bins=bins)
+    args_maker = lambda: [jnp.array([], dtype='float32')]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
@@ -4479,6 +4557,51 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._assertSamePartitionedArrays(jnp_values, np_values, axis, kth, shape)
 
   @jtu.sample_product(
+    [dict(shape=shape, axis=axis, k=k)
+     for shape in [(20,), (5, 8), (3, 4, 5)]
+     for axis in range(-len(shape), len(shape))
+     for k in [0, 1, 3, shape[axis]]],
+    mode=['largest', 'smallest'],
+    sorted=[True, False],
+    dtype=[np.float32, np.int32, np.uint32, np.bool_],
+  )
+  def testTopK(self, shape, dtype, axis, k, mode, sorted):
+    rng = jtu.rand_some_equal(self.rng())
+    arg = rng(shape, dtype)
+    args_maker = lambda: [arg]
+
+    jnp_fun = lambda x: jnp.top_k(x, k, axis=axis, mode=mode, sorted=sorted)
+
+    jnp_vals, jnp_indices = jnp_fun(arg)
+    ref_vals, _ = ref_top_k(arg, k, axis=axis, mode=mode, sorted=sorted)
+
+    if sorted:
+      self.assertArraysEqual(jnp_vals, ref_vals)
+    else:
+      self.assertArraysEqual(
+          jnp.sort(jnp_vals, axis=axis),
+          jnp.sort(ref_vals, axis=axis),
+      )
+
+    gathered = jnp.take_along_axis(arg, jnp_indices, axis=axis)
+    self.assertArraysEqual(gathered, jnp_vals)
+
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  def testTopKErrors(self):
+    x = jnp.arange(10)
+    with self.assertRaisesRegex(ValueError, "k argument to top_k must be nonnegative"):
+      jnp.top_k(x, -1)
+    with self.assertRaisesRegex(ValueError, "k argument to top_k must be no larger than size"):
+      jnp.top_k(x, 15)
+    with self.assertRaisesRegex(ValueError, "axis 5 is out of bounds"):
+      jnp.top_k(x, 2, axis=5)
+    with self.assertRaisesRegex(ValueError, "mode must be 'largest' or 'smallest'"):
+      jnp.top_k(x, 2, mode="middle")
+    with self.assertRaisesRegex(ValueError, "top_k is not compatible with complex inputs"):
+      jnp.top_k(jnp.array([1+2j, 3+4j]), 1)
+
+  @jtu.sample_product(
     [dict(shifts=shifts, axis=axis)
       for shifts, axis in [
         (3, None),
@@ -4548,7 +4671,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     [dict(shape=shape, axis=axis)
       for shape in [(3,), (3, 4), (3, 4, 5)]
       for axis in itertools.chain(range(-len(shape), len(shape)),
-                                  [cast(Union[int, None], None)])
+                                  [cast(int | None, None)])
     ],
     index_shape=scalar_shapes + [(3,), (2, 1, 3)],
     dtype=all_dtypes,
@@ -4600,7 +4723,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         filter(_shapes_are_broadcast_compatible,
                itertools.combinations_with_replacement(nonempty_nonscalar_array_shapes, 2)))
       for axis in itertools.chain(range(len(x_shape)), [-1],
-                                  [cast(Union[int, None], None)])
+                                  [cast(int | None, None)])
     ],
     dtype=default_dtypes,
     index_dtype=int_dtypes,
@@ -4654,10 +4777,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
             wrap_negative_indices=False,
         )
     )(indices)
-    [jit_eqn] = (eqn for eqn in jaxpr.jaxpr.eqns if eqn.primitive.name == 'jit')
+    [jit_eqn] = (eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'jit')
     nested_jaxpr = jit_eqn.params['jaxpr']
     [gather_eqn] = (
-        eqn for eqn in nested_jaxpr.jaxpr.eqns if eqn.primitive == lax.gather_p
+        eqn for eqn in nested_jaxpr.eqns if eqn.primitive == lax.gather_p
     )
     indices_var = gather_eqn.invars[1]
     self.assertEqual(indices_var.aval.dtype, jnp.int8)
@@ -4670,10 +4793,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
             arr, i, axis=0, mode='promise_in_bounds', wrap_negative_indices=True
         )
     )(indices)
-    [jit_eqn] = (eqn for eqn in jaxpr.jaxpr.eqns if eqn.primitive.name == 'jit')
+    [jit_eqn] = (eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'jit')
     nested_jaxpr = jit_eqn.params['jaxpr']
     [gather_eqn] = (
-        eqn for eqn in nested_jaxpr.jaxpr.eqns if eqn.primitive == lax.gather_p
+        eqn for eqn in nested_jaxpr.eqns if eqn.primitive == lax.gather_p
     )
     indices_var = gather_eqn.invars[1]
     self.assertEqual(indices_var.aval.dtype, jnp.int32)
@@ -4752,7 +4875,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     )(x, idx)
     jaxpr_default = jax.make_jaxpr(
         lambda x, i: jnp.take_along_axis(
-            x, i, axis=0, mode='promise_in_bounds'  # should not wrap by default
+            x, i, axis=0, mode='promise_in_bounds'  # should wrap by default
         )
     )(x, idx)
 
@@ -4764,9 +4887,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           prims.update(get_all_primitives(eqn.params['jaxpr']))
       return prims
 
-    wrap_prims = get_all_primitives(jaxpr_wrap.jaxpr)
-    no_wrap_prims = get_all_primitives(jaxpr_no_wrap.jaxpr)
-    default_prims = get_all_primitives(jaxpr_default.jaxpr)
+    wrap_prims = get_all_primitives(jaxpr_wrap)
+    no_wrap_prims = get_all_primitives(jaxpr_no_wrap)
+    default_prims = get_all_primitives(jaxpr_default)
 
     self.assertTrue(
         'select' in wrap_prims or 'lt' in wrap_prims or 'add' in wrap_prims
@@ -4776,7 +4899,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         or 'lt' in no_wrap_prims
         or 'add' in no_wrap_prims
     )
-    self.assertFalse(
+    self.assertTrue(
         'select' in default_prims
         or 'lt' in default_prims
         or 'add' in default_prims
@@ -5144,8 +5267,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # [a:i32[5] = iota[dimension=0 dtype=int32 shape=(5,)],
     #  a:i32[5] = device_put[devices=[None] srcs=[None]] b]
     num_eqs = 2 if device is not None else 1
-    self.assertEqual(len(jaxpr.jaxpr.eqns), num_eqs)
-    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.iota_p)
+    self.assertEqual(len(jaxpr.eqns), num_eqs)
+    self.assertEqual(jaxpr.eqns[0].primitive, lax.iota_p)
 
   @jtu.sample_product(specify_device=[True, False])
   def testArangeJaxprNonZeroStart(self, specify_device):
@@ -5153,9 +5276,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(lambda: jnp.arange(1, 5, device=device))()
     # Non-zero start should produce iota + add (+ device_put if device specified)
     num_eqs = 3 if device is not None else 2
-    self.assertEqual(len(jaxpr.jaxpr.eqns), num_eqs)
-    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.iota_p)
-    self.assertEqual(jaxpr.jaxpr.eqns[1].primitive, lax.add_p)
+    self.assertEqual(len(jaxpr.eqns), num_eqs)
+    self.assertEqual(jaxpr.eqns[0].primitive, lax.iota_p)
+    self.assertEqual(jaxpr.eqns[1].primitive, lax.add_p)
 
   @jtu.sample_product(
       dtype=[np.int32, np.float32],

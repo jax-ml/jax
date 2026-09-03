@@ -22,13 +22,13 @@ import enum
 import functools
 import itertools as it
 import math
-from typing import Any, Protocol, TypeAlias, Union
+from typing import Any, Protocol
 
 import jax
 from jax import api_util
 from jax import lax
 from jax._src import core
-from jax._src import linear_util as lu
+from jax._src import flattree as ft
 from jax._src import state
 from jax._src import util
 from jax._src.interpreters import partial_eval as pe
@@ -36,19 +36,21 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
 from jax.experimental import pallas as pl
+from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import jax.numpy as jnp
 
 
 map = util.safe_map
 zip = util.safe_zip
+
+OOBFillMode = gpu_primitives.OOBFillMode
+
 class PipelineCallback[T](Protocol):
   """A callback that returns the same type as the input."""
   def __call__(self, arg: T, /) -> T: ...
 
-BlockSpecPytree: TypeAlias = Sequence[Union[pl.BlockSpec, "BlockSpecPytree"]]
-AbstractRefPytree: TypeAlias = Sequence[
-    Union[state.AbstractRef, "AbstractRefPytree"]
-]
+type BlockSpecPytree = Sequence[pl.BlockSpec | BlockSpecPytree]
+type AbstractRefPytree = Sequence[state.AbstractRef | AbstractRefPytree]
 
 
 def _get_block_size(bd: pl.BlockDim | int | None) -> int:
@@ -73,6 +75,41 @@ def _get_block_shape(spec: pallas_core.BlockSpec, ref_shape: tuple[int, ...]):
   return block_shape
 
 
+def _is_fully_in_bounds(
+    spec: pallas_core.BlockSpec, operand_shape: tuple[int, ...]
+) -> bool:
+  """Returns whether all windowed accesses into an operand stay in bounds."""
+  if spec.block_shape is None:
+    return True
+  for bd, dim in zip(spec.block_shape, operand_shape):
+    match bd:
+      case int() | pl.Blocked():
+        if dim % _get_block_size(bd) != 0:
+          return False
+      case pl.Element():
+        # Addresses arbitrary offsets.
+        return False
+      case None | pl.Squeezed():
+        continue
+      case _:
+        raise ValueError(f"Unsupported block dimension type: {type(bd)}")
+  return True
+
+
+def _maybe_promise_in_bounds(
+    spec: gpu_core.BlockSpec, operand_shape: tuple[int, ...]
+) -> gpu_core.BlockSpec:
+  """Upgrades to ``OOBFillMode.PROMISE_IN_BOUNDS`` if provably in bounds."""
+  if (
+      spec.oob_fill_mode is not OOBFillMode.PROMISE_IN_BOUNDS
+      and _is_fully_in_bounds(spec, operand_shape)
+  ):
+    return dataclasses.replace(
+        spec, oob_fill_mode=OOBFillMode.PROMISE_IN_BOUNDS
+    )
+  return spec
+
+
 map_brefs = functools.partial(
     jax.tree.map, is_leaf=lambda x: isinstance(x, BufferedRef)
 )
@@ -80,8 +117,8 @@ map_brefs = functools.partial(
 @jax.tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class BufferedRef:
-  spec: pallas_core.BlockSpec = dataclasses.field(metadata={"static": True})
-  is_index_invariant: bool = dataclasses.field(metadata={"static": True})
+  spec: pallas_core.BlockSpec = jax.tree.static()
+  is_index_invariant: bool = jax.tree.static()
   gmem_ref: state.AbstractRef
   # ``None`` if the ref is pinned to GMEM; otherwise, has shape
   # [num_slots, *spec.block_shape].
@@ -127,12 +164,20 @@ class BufferedRef:
       return
     assert self.smem_ref is not None
     gmem_slices = self.compute_gmem_slice(grid_indices)
+    oob_mode = getattr(self.spec, "oob_fill_mode", None)
+    if barrier_ref is None:
+      barrier = None
+    else:
+      barrier = barrier_ref.at[
+          barrier_slot if barrier_slot is not None else slot
+      ]
     gpu_primitives.copy_gmem_to_smem(
         # pyrefly: ignore[bad-index]
         self.gmem_ref.at[gmem_slices],
         self.smem_ref.at[slot],
-        barrier_ref.at[barrier_slot if barrier_slot is not None else slot],
-        collective_axes=getattr(self.spec, "collective_axes", ()),
+        barrier,
+        collective_axes=getattr(self.spec, "collective_axes", None),
+        oob_mode=oob_mode,
     )
 
   def copy_out(self, slot, grid_indices, predicate=None):
@@ -155,14 +200,15 @@ def _uses_arguments(
   if not num_args:
     return ()
 
-  jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(
-          index_map,
-          debug_info=api_util.debug_info("pallas index_map",
-                                         index_map,
-                                         (0,) * num_args, {})),
-      (core.ShapedArray((), jnp.int32),) * num_args
+  in_avals = (core.ShapedArray((), jnp.int32),) * num_args
+  in_avals_ft = ft.flatten_args(*in_avals)
+  debug_info = api_util.debug_info(
+      "pallas index_map", index_map, (0,) * num_args, {}
   )
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      index_map, in_avals_ft, debug_info=debug_info
+  )
+  jaxpr = closed_jaxpr
   _, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs=[True] * len(jaxpr.outvars))
   return used_inputs
 
@@ -254,16 +300,13 @@ def emit_pipeline[T](
         f"All elements in the grid must be strictly positive, but got {grid=}"
     )
 
-  in_specs = tuple(map(_downcast_spec, in_specs))
-  out_specs = tuple(map(_downcast_spec, out_specs))
-  for spec in in_specs:
-    if isinstance(spec, gpu_core.BlockSpec) and spec.collective_axes:
+  in_specs: tuple[gpu_core.BlockSpec, ...] = tuple(map(_downcast_spec, in_specs))
+  out_specs: tuple[gpu_core.BlockSpec, ...] = tuple(map(_downcast_spec, out_specs))
+  for spec in it.chain(in_specs, out_specs):
+    if spec.collective_axes:
       raise NotImplementedError(
-          "BlockSpecs with collective_axes are not supported in emit_pipeline"
+          "pl.BlockSpec with collective_axes= is not supported"
       )
-  for spec in out_specs:
-    if isinstance(spec, gpu_core.BlockSpec) and spec.collective_axes:
-      raise ValueError("Output BlockSpecs cannot have collective_axes")
   # TODO(justinfu): Factor out common code between warp-specialized and
   # normal pipelines.
   delay_release_levels = sorted(
@@ -285,8 +328,31 @@ def emit_pipeline[T](
   if not has_dynamic_grid and max_concurrent_steps > num_steps:
     max_concurrent_steps = int(num_steps)
 
+  if is_cp_async := mgpu_utils._infer_arch() < (9, 0):
+    if out_specs:
+      raise NotImplementedError(
+          "emit_pipeline on pre-Hopper GPUs only supports input-only pipelines"
+      )
+    if has_dynamic_grid:
+      raise NotImplementedError(
+          "emit_pipeline on pre-Hopper GPUs requires a static grid"
+      )
+
   def pipeline(*gmem_refs: state.AbstractRef):
     in_gmem_refs, out_gmem_refs = util.split_list(gmem_refs, [len(in_specs)])
+    effective_in_specs = in_specs
+    if is_cp_async:
+      effective_in_specs = tuple(
+          _maybe_promise_in_bounds(spec, ref.shape)
+          for spec, ref in zip(in_specs, in_gmem_refs)
+      )
+      for spec in effective_in_specs:
+        if spec.oob_fill_mode is not OOBFillMode.PROMISE_IN_BOUNDS:
+          raise NotImplementedError(
+              "emit_pipeline on pre-Hopper GPUs requires input accesses to be"
+              " provably in bounds, or oob_fill_mode="
+              "OOBFillMode.PROMISE_IN_BOUNDS to be set explicitly"
+          )
     in_smem_refs, out_smem_refs = util.split_list(
         [
             gpu_core.SMEM(
@@ -299,30 +365,40 @@ def emit_pipeline[T](
             )
             if _in_smem(spec)
             else None
-            for spec, ref in zip(it.chain(in_specs, out_specs), gmem_refs)
+            for spec, ref in zip(
+                it.chain(effective_in_specs, out_specs), gmem_refs
+            )
         ],
         [len(in_specs)],
     )
-    num_arrivals = sum(map(_in_smem, in_specs))
+    copies_per_step = sum(map(_in_smem, in_specs))
     return pl.run_scoped(
         functools.partial(
             scoped_pipeline,
+            in_specs=effective_in_specs,
             in_gmem_refs=in_gmem_refs,
             out_gmem_refs=out_gmem_refs,
         ),
         in_smem_refs=in_smem_refs,
         out_smem_refs=out_smem_refs,
         barrier_ref=None
-        if num_arrivals == 0
+        if copies_per_step == 0
+        or is_cp_async  # cp.async uses wait_gmem_to_smem
         else gpu_core.Barrier(
             # TODO(slebedev): Change this to arrive only once.
-            num_arrivals=num_arrivals,
+            num_arrivals=copies_per_step,
             num_barriers=max_concurrent_steps,
         ),
     )
 
   def scoped_pipeline(
-      *, in_gmem_refs, out_gmem_refs, in_smem_refs, out_smem_refs, barrier_ref
+      *,
+      in_specs,
+      in_gmem_refs,
+      out_gmem_refs,
+      in_smem_refs,
+      out_smem_refs,
+      barrier_ref,
   ):
     in_brefs: Sequence[BufferedRef] = [
         BufferedRef(spec, _is_index_invariant(spec, grid), gmem_ref, smem_ref)
@@ -336,6 +412,7 @@ def emit_pipeline[T](
             out_specs, out_gmem_refs, out_smem_refs
         )
     ]
+    copies_per_step = sum(_in_smem(bref.spec) for bref in in_brefs)
 
     # Initialize the pipeline.
     indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
@@ -359,13 +436,17 @@ def emit_pipeline[T](
     # In the loop body, `max_concurrent_steps` may be larger than `num_steps` in
     # the dynamic grid case. This is fine, since in that case, we will never
     # need to fetch more data anyway.
-    def loop_body(step, carry):
+    def loop_body(step, carry, *, wait_count=0):
       slot = lax.rem(step, max_concurrent_steps)
       indices, fetch_index_levels, last_store_indices, prev_body_carry = carry
 
       if barrier_ref is not None:
         # Wait for the current GMEM->SMEM copy to complete, if any.
         gpu_primitives.barrier_wait(barrier_ref.at[slot])
+      elif is_cp_async and copies_per_step > 0:
+        # Pre-Hopper: await cp.async copies. The wait-group count must be a
+        # compile-time constant, so it is threaded in via ``wait_count``.
+        gpu_primitives.wait_gmem_to_smem(wait_count)
       # Wait for the previous output SMEM->GMEM copy to complete.
       if copies_out_in_loop:
         gpu_primitives.wait_smem_to_gmem(
@@ -456,12 +537,37 @@ def emit_pipeline[T](
         else (jnp.array(-1),) * len(bref.spec.block_shape)
         for bref in out_brefs
     ]
-    last_indices, _, _, final_carry = lax.fori_loop(
-        0,
-        num_steps,
-        loop_body,
-        (indices, fetch_index_levels, last_store_indices, init_carry),
+    init_loop_carry = (
+        indices,
+        fetch_index_levels,
+        last_store_indices,
+        init_carry,
     )
+    if is_cp_async and copies_per_step > 0:
+      assert isinstance(num_steps, int)
+      # cp.async wait-group must be a compile-time constant. Drain steps are
+      # unrolled with decreasing wait counts (down to 0).
+      steady_steps = max(0, num_steps - (max_concurrent_steps - 1))
+      loop_carry = lax.fori_loop(
+          0,
+          steady_steps,
+          functools.partial(
+              loop_body,
+              wait_count=(max_concurrent_steps - 1) * copies_per_step,
+          ),
+          init_loop_carry,
+      )
+      for step in range(steady_steps, num_steps):
+        loop_carry = loop_body(
+            step,
+            loop_carry,
+            wait_count=(num_steps - 1 - step) * copies_per_step,
+        )
+      last_indices, _, _, final_carry = loop_carry
+    else:
+      last_indices, _, _, final_carry = lax.fori_loop(
+          0, num_steps, loop_body, init_loop_carry,
+      )
 
     # Outputs invariant to the sequential axis are never written from inside the
     # loop. This is the only place where we store them.
@@ -540,6 +646,7 @@ def emit_pipeline_warp_specialized(
     wg_axis: str,
     num_compute_wgs: int,
     pipeline_state: jax.Array | PipelinePipeline | None = None,
+    manual_produced_barriers: bool = False,
     manual_consumed_barriers: bool = False,
     compute_context: ComputeContext | None = None,
     memory_thread_idx: int | None = None,
@@ -573,6 +680,9 @@ def emit_pipeline_warp_specialized(
       active concurrently. Defaults to 2.
     wg_axis: The axis name for the warp group axis.
     num_compute_wgs: The number of compute warpgroups
+    manual_produced_barriers: If True, produced barriers will be passed into the
+      body function after the output refs. There will be one barrier per input
+      and will be passed in the same order.
     manual_consumed_barriers: If True, consumed barriers will be
       passed into the body function after the output refs. There will be one
       barrier per input and will be passed in the same order.
@@ -619,13 +729,13 @@ def emit_pipeline_warp_specialized(
   flat_in_specs, in_specs_treedef = jax.tree.flatten(in_specs)
   flat_in_specs = tuple(map(_downcast_spec, flat_in_specs))
   for spec in flat_in_specs:
-    if len(spec.collective_axes) > 1:
+    if spec.collective_axes and len(spec.collective_axes) > 1:
       raise ValueError(
           "Only a single collective axis supported in input BlockSpecs, but"
           f" got {spec.collective_axes}"
       )
   collective_axes = tuple(frozenset(
-      a for spec in flat_in_specs for a in spec.collective_axes
+      a for spec in flat_in_specs for a in spec.collective_axes or ()
   ))
   flat_out_specs, out_specs_treedef = jax.tree.flatten(out_specs)
   flat_out_specs = tuple(map(_downcast_spec, flat_out_specs))
@@ -716,27 +826,36 @@ def emit_pipeline_warp_specialized(
       )
     flat_in_smem_refs, flat_out_smem_refs = util.split_list(
         smem_allocs, [len(flat_in_specs)])
-    in_smem_barrier = gpu_core.Barrier(
-        num_arrivals=len(flat_in_specs), num_barriers=max_concurrent_steps
-    )
-    flat_consumed_barriers: list[gpu_core.Barrier | gpu_core.ClusterBarrier]
-    flat_consumed_barriers = []
-    consumed_barrier_type: Any
+    if manual_produced_barriers:
+      flat_produced_barriers = [
+          gpu_core.Barrier(num_barriers=max_concurrent_steps)
+          for _ in flat_in_specs
+      ]
+    else:
+      flat_produced_barriers = [
+          gpu_core.Barrier(
+              num_arrivals=len(flat_in_specs), num_barriers=max_concurrent_steps
+          )
+      ]
+
     if collective_axes:
       consumed_barrier_type = functools.partial(
-          gpu_core.ClusterBarrier, collective_axes=collective_axes
+          gpu_core.ClusterBarrier, collective_axes=collective_axes  # pyrefly: ignore[bad-argument-type]
       )
     else:
       consumed_barrier_type = gpu_core.Barrier
-    for _ in flat_in_specs:
-      if manual_consumed_barriers:
+
+    flat_consumed_barriers: list[gpu_core.Barrier | gpu_core.ClusterBarrier]
+    if manual_consumed_barriers:
+      flat_consumed_barriers = []
+      for _ in flat_in_specs:
         flat_consumed_barriers.append(
             consumed_barrier_type(
                 num_arrivals=num_compute_wgs,
                 num_barriers=max_concurrent_steps,
             )
         )
-    if not manual_consumed_barriers:
+    else:
       # We only allocated one consumed barrier for all inputs when using
       # automatic consumed barriers.
       flat_consumed_barriers = [
@@ -748,7 +867,7 @@ def emit_pipeline_warp_specialized(
     return dict(
         flat_in_smem_refs=flat_in_smem_refs,
         flat_out_smem_refs=flat_out_smem_refs,
-        in_smem_barrier_ref=in_smem_barrier,
+        flat_produced_barrier_refs=flat_produced_barriers,
         flat_consumed_barrier_refs=flat_consumed_barriers,
     )
 
@@ -806,7 +925,7 @@ def emit_pipeline_warp_specialized(
       flat_out_gmem_refs,
       flat_in_smem_refs,
       flat_out_smem_refs,
-      in_smem_barrier_ref,
+      flat_produced_barrier_refs,
       flat_consumed_barrier_refs,
   ):
     flat_in_brefs: Sequence[BufferedRef] = [
@@ -851,8 +970,10 @@ def emit_pipeline_warp_specialized(
         indices, last_store_indices, prev_body_carry = carry
         slot = lax.rem(step, max_concurrent_steps)
         consumed_slot = lax.rem(step - delay_release, max_concurrent_steps)
-        # Wait for the current GMEM->SMEM copies to complete.
-        gpu_primitives.barrier_wait(in_smem_barrier_ref.at[_get_slot(slot, True)])
+        if not manual_produced_barriers:
+          # Wait for the current GMEM->SMEM copies to complete.
+          [barrier] = flat_produced_barrier_refs
+          gpu_primitives.barrier_wait(barrier.at[_get_slot(slot, True)])
 
         # Wait for the previous output SMEM->GMEM copy to complete.
         if copies_out_in_loop:
@@ -870,6 +991,12 @@ def emit_pipeline_warp_specialized(
             all_brefs,
         )
 
+        if manual_produced_barriers:
+          barriers = jax.tree.unflatten(
+              in_specs_treedef,
+              [barrier.at[slot] for barrier in flat_produced_barrier_refs],
+          )
+          body_args = (*body_args, *barriers)
         if manual_consumed_barriers:
           barriers = jax.tree.unflatten(
               in_specs_treedef,
@@ -1001,12 +1128,18 @@ def emit_pipeline_warp_specialized(
         else:
           prologue_steps = jnp.where(pipeline_state == PipelinePipeline.START, prologue_steps, 0)
 
+      if manual_produced_barriers:
+        produced_barriers_refs = flat_produced_barrier_refs
+      else:
+        [produced_barrier] = flat_produced_barrier_refs
+        produced_barriers_refs = [produced_barrier] * len(flat_in_brefs)
+
       # Begin initial copies.
       def _init_step(step, indices):
-        for bref in flat_in_brefs:
+        for bref, barrier in zip(flat_in_brefs, produced_barriers_refs):
           buf_slot = _get_slot(step, not bref.is_index_invariant)
           barrier_slot = _get_slot(step, True)
-          bref.copy_in(buf_slot, indices, in_smem_barrier_ref, barrier_slot)
+          bref.copy_in(buf_slot, indices, barrier, barrier_slot)
         return _inc_grid_by_1(indices, grid)
 
       indices = jax.lax.fori_loop(
@@ -1018,22 +1151,24 @@ def emit_pipeline_warp_specialized(
         slot = lax.rem(step, max_concurrent_steps)
         fetch_slot = slot  # (x + y) % y == x % y
 
-        if not manual_consumed_barriers:
+        if manual_consumed_barriers:
+          consumed_barriers_refs = flat_consumed_barrier_refs
+        else:
           # We only have one consumed barrier when using automatic consumed
           # barrier management.
           [consumed_barrier_ref] = flat_consumed_barrier_refs
           gpu_primitives.barrier_wait(consumed_barrier_ref.at[slot])
-          consumed_barrier_it = [None] * len(flat_in_brefs)
-        else:
-          consumed_barrier_it = flat_consumed_barrier_refs
+          consumed_barriers_refs = [None] * len(flat_in_brefs)
 
-        for bref, consumed_barrier in zip(flat_in_brefs, consumed_barrier_it):
+        for bref, barrier, consumed_barrier in zip(
+            flat_in_brefs, produced_barriers_refs, consumed_barriers_refs
+        ):
           if manual_consumed_barriers:
             assert consumed_barrier is not None
             gpu_primitives.barrier_wait(consumed_barrier.at[slot])
           buf_slot = _get_slot(fetch_slot, not bref.is_index_invariant)
           barrier_slot = _get_slot(fetch_slot, True)
-          bref.copy_in(buf_slot, indices, in_smem_barrier_ref, barrier_slot)
+          bref.copy_in(buf_slot, indices, barrier, barrier_slot)
         next_indices = _inc_grid_by_1(indices, grid)
         return (next_indices,)
       lax.fori_loop(0, num_steps - prologue_steps, memory_loop_body, (indices,))
@@ -1058,8 +1193,10 @@ def emit_pipeline_warp_specialized(
         compute_block,
         memory_block
     )
+
   # Type checkers do not understand the get_allocations assignment above.
   return pipeline  # pyrefly: ignore[bad-return]
+
 
 def _compute_registers(memory_registers: int, num_compute_wgs: int) -> int:
   """Returns the max number of registers to use in compute threads.

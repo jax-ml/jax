@@ -20,6 +20,8 @@ import re
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import core as jax_core
+from jax._src.state import primitives as state_primitives
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
@@ -116,6 +118,34 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
           ),
       )
 
+  @parameterized.parameters(pltpu.VMEM, pltpu.SMEM)
+  def test_vmap_input_memory_space_constraint(self, memory_space):
+    def kernel(x_ref, y_ref):
+      pltpu.sync_copy(x_ref, y_ref)
+
+    def f(x):
+      x = pltpu.with_memory_space_constraint(x, memory_space=memory_space)
+      self.assertEqual(jax.typeof(x).memory_space, memory_space)
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          in_specs=[pl.BlockSpec(memory_space=memory_space)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+      )(x)
+
+    x = jnp.arange(4 * 8 * 128, dtype=jnp.float32).reshape((4, 8, 128))
+    np.testing.assert_array_equal(jax.jit(jax.vmap(f))(x), x)
+
+    jaxpr = jax.make_jaxpr(jax.vmap(f))(x)
+    (eqn,) = [
+        eqn
+        for eqn in jaxpr.jaxpr.eqns
+        if eqn.primitive is state_primitives.with_memory_space_constraint_p
+    ]
+    (outvar,) = eqn.outvars
+    self.assertEqual(outvar.aval.shape, x.shape)
+    self.assertEqual(outvar.aval.memory_space, memory_space)
+
   @parameterized.parameters(
       (pltpu.VMEM, 1),
       (pltpu.SMEM, 4),
@@ -124,9 +154,12 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
       (pl.HOST, 5),
   )
   def test_basic_output_memory_space_constraint(self, memory_space, color):
-    out_shape_ctor = memory_space
     if color is None:
       out_shape_ctor = jax.ShapeDtypeStruct
+    else:
+      out_shape_ctor = lambda shape, dtype: jax_core.ShapedArray(
+          shape, dtype, memory_space=memory_space
+      )
 
     def kernel(x_ref, y_ref):
       pltpu.sync_copy(x_ref, y_ref)
@@ -218,6 +251,11 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
     )
 
 
+# TODO(slebedev): Inline once ``pl.core_map`` is gone.
+def _make_run_kernel(**kwargs):
+  return lambda fn: pl.kernel(**kwargs)(fn)()
+
+
 class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -231,7 +269,9 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
       (pltpu.HBM, 0),
       (pl.ANY, None),
   )
-  def test_basic_ref_memory_space_constraint(self, memory_space, color):
+  def test_basic_ref_memory_space_constraint(
+      self, memory_space, color
+  ):
     @jax.jit
     def f(x):
       x_ref = jax.new_ref(x, memory_space=memory_space)
@@ -240,7 +280,11 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
       self.assertEqual(jax.typeof(x_ref).memory_space, memory_space)
       self.assertEqual(jax.typeof(y_ref).memory_space, memory_space)
 
-      @pl.core_map(mesh=pltpu.create_tensorcore_mesh('core'))
+      run_kernel = _make_run_kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name='core'),
+      )
+
+      @run_kernel
       def _():
         if jax.typeof(x_ref).memory_space is pltpu.VMEM:
           y_ref[...] = x_ref[...]
@@ -251,7 +295,8 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
 
     x = jnp.arange(1024, dtype=jnp.float32).reshape((8, 128))
     num_cores = jax.devices()[0].num_cores
-    if num_cores > 1 and memory_space == pltpu.VMEM:
+    # TODO(slebedev): Make sure mpmd_map also fails here.
+    if num_cores > 1 and memory_space is pltpu.VMEM:
       with self.assertRaisesRegex(
           NotImplementedError,
           'TensorCoreMesh does not support VMEM inputs/outputs when there are'
@@ -285,22 +330,22 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(y, x)
 
   def test_smem_copy(self):
-    mesh = pltpu.create_tensorcore_mesh('core')
-    if len(mesh.devices) > 1:
+    mesh = pltpu.TensorCoreMesh(axis_name='core')
+    if mesh.num_cores > 1:
       self.skipTest('Only one core is supported for this test.')
 
-    kernel = pl.core_map(mesh=mesh)
+    run_kernel = _make_run_kernel(mesh=mesh)
 
     @jax.jit
     def f():
       y_ref = pl.empty_ref_like(pltpu.SMEM((8,), jnp.int32))
 
-      @kernel
+      @run_kernel
       def _():
         for i in range(y_ref.shape[0]):
           y_ref[i] = i
 
-      @kernel
+      @run_kernel
       def _():
         for i in range(y_ref.shape[0]):
           y_ref[i] = y_ref[i] + 1
@@ -310,22 +355,22 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(f(), np.arange(8) + 1)
 
   def test_smem_async_copy(self):
-    mesh = pltpu.create_tensorcore_mesh('core')
-    if len(mesh.devices) > 1:
+    mesh = pltpu.TensorCoreMesh(axis_name='core')
+    if mesh.num_cores > 1:
       self.skipTest('Only one core is supported for this test.')
 
-    kernel = pl.core_map(mesh=mesh)
+    run_kernel = _make_run_kernel(mesh=mesh)
 
     @jax.jit
     def f():
       y_ref = pl.empty_ref_like(pltpu.SMEM((8,), jnp.int32))
 
-      @kernel
+      @run_kernel
       def _():
         for i in range(y_ref.shape[0]):
           y_ref[i] = i
 
-      @kernel
+      @run_kernel
       def _():
         for i in range(y_ref.shape[0]):
           y_ref[i] = y_ref[i] + 1
@@ -334,11 +379,11 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
 
       sem = pl.empty_ref_like(pltpu.SemaphoreType.DMA(()))
 
-      @kernel
+      @run_kernel
       def _():
         pltpu.make_async_copy(y_ref, y_out_ref, sem).start()
 
-      @kernel
+      @run_kernel
       def _():
         pltpu.make_async_copy(y_ref, y_out_ref, sem).wait()
 
@@ -347,25 +392,25 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(f(), np.arange(8) + 1)
 
   def test_smem_async_copy_megacore(self):
-    mesh = pltpu.create_tensorcore_mesh('core')
-    num_cores = len(mesh.devices)
+    mesh = pltpu.TensorCoreMesh(axis_name='core')
+    num_cores = mesh.num_cores
     if num_cores == 1:
       self.skipTest('Only megacore is supported for this test.')
 
-    kernel = pl.core_map(mesh=mesh)
+    run_kernel = _make_run_kernel(mesh=mesh)
     n = 256
 
     @jax.jit
     def f():
       y_ref = pl.empty_ref_like(pltpu.SMEM((1, n), jnp.int32))
 
-      @kernel
+      @run_kernel
       def _():
         core_i = jax.lax.axis_index('core')
         for i in range(n):
           y_ref[0, i] = i + core_i * n
 
-      @kernel
+      @run_kernel
       def _():
         for i in range(n):
           y_ref[0, i] = y_ref[0, i] + 1
@@ -374,12 +419,12 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
 
       sem = pl.empty_ref_like(pltpu.SemaphoreType.DMA(()))
 
-      @kernel
+      @run_kernel
       def _():
         core_i = jax.lax.axis_index('core')
         pltpu.make_async_copy(y_ref, y_out_ref.at[core_i, ...], sem).start()
 
-      @kernel
+      @run_kernel
       def _():
         core_i = jax.lax.axis_index('core')
         pltpu.make_async_copy(y_ref, y_out_ref.at[core_i, ...], sem).wait()

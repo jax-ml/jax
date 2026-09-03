@@ -86,10 +86,19 @@ on:
         description: "Should latest XLA be used?"
         type: string
         required: true
+      xla_commit:
+        description: "XLA commit SHA to check out after cloning XLA."
+        type: string
+        default: ""
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
         default: 'no'
+      git_commit:
+        description: "Commit SHA to check out for running tests"
+        required: false
+        default: ""
+        type: string
 permissions: {}
 jobs:
   run-tests:
@@ -98,7 +107,7 @@ jobs:
         # Explicitly set the shell to bash
         shell: bash
     runs-on: ${{ inputs.runner }}
-    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"  # zizmor: ignore[unpinned-images]
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
@@ -108,6 +117,7 @@ jobs:
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
+      JAXCI_XLA_COMMIT: ${{ inputs.xla_commit }}
       JAXCI_BUILD_ARTIFACT_WITH_RBE: ${{ inputs.build_artifacts_with_rbe }}
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
@@ -115,8 +125,9 @@ jobs:
         (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py${{ inputs.python }}, CUDA=${{ inputs.cuda-version }}, jaxlib=${{ inputs.jaxlib-version }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
 # End Presubmit Naming Check github-cuda-presubmits
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.git_commit }}
           persist-credentials: false
       - name: Download JAX CUDA wheels
         if: inputs.build_jaxlib == 'false'

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import math
 import unittest
 
@@ -25,6 +26,7 @@ from jax._src import core
 from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
 from jax._src.mesh import AxisType, AbstractMesh, Mesh
@@ -41,6 +43,9 @@ from jax._src.random import threefry2x32
 jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
 
+with contextlib.suppress(ImportError):
+  import pytest
+  pytestmark = pytest.mark.multiaccelerator
 
 
 def create_array(shape, sharding, global_data=None):
@@ -247,12 +252,26 @@ class JaxArrayTest(jtu.JaxTestCase):
     x = jnp.empty(shape, dtype)
     self.assertEqual(repr(x), f"Array([], shape={shape}, dtype={dtype})")
 
+  def test_large_array_repr(self):
+    small = jnp.arange(10, dtype=jnp.int32)
+    self.assertEqual(small.nbytes, 40)
+    self.assertEqual(repr(small), 'Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], dtype=int32)')
+    self.assertEqual(str(small), '[0 1 2 3 4 5 6 7 8 9]')
+
+    large = jnp.arange(2 ** 20, dtype=jnp.int8)
+    self.assertEqual(large.nbytes, 2 ** 20)
+    self.assertEqual(repr(large), 'Array(shape=(1048576,), dtype=int8)')
+    self.assertEqual(str(large), 'Array(shape=(1048576,), dtype=int8)')
+
   def test_jnp_array(self):
     arr = jnp.array([1, 2, 3])
     self.assertIsInstance(arr, array.ArrayImpl)
     self.assertTrue(arr.sharding.num_devices == 1)
     self.assertEqual(arr._committed, False)
     self.assertFalse(arr.weak_type)
+    if jaxlib_extension_version >= 490:
+      with self.assertRaises(AttributeError):
+        arr.aval = arr.aval
 
   def test_jnp_array_jit_add(self):
     a = jnp.array([1, 2, 3])
@@ -1440,11 +1459,11 @@ class ShardingTest(jtu.JaxTestCase):
     pspec = P('a', 'b', None, unreduced={'c'}, reduced={'d'})
     self.assertEqual(
         repr(pspec),
-        "P('a', 'b', None, unreduced={'c'}, reduced={'d'})")
+        "P('a', 'b', None, unreduced={'c'}, reduced={'d'}, unreduced_kind=sum)")
 
     pspec1 = P('a', 'b', None, unreduced={'c'})
     self.assertEqual(repr(pspec1),
-                     "P('a', 'b', None, unreduced={'c'})")
+                     "P('a', 'b', None, unreduced={'c'}, unreduced_kind=sum)")
 
     pspec2 = P('a', 'b', None, unreduced={'c'})
     self.assertEqual(pspec1, pspec2)
@@ -1457,17 +1476,17 @@ class ShardingTest(jtu.JaxTestCase):
 
     pspec4 = P('x', unreduced={'y'})
     self.assertEqual(repr(pspec4),
-                     "P('x', unreduced={'y'})")
+                     "P('x', unreduced={'y'}, unreduced_kind=sum)")
 
     pspec5 = P(None, None, unreduced={'x'})
     self.assertEqual(repr(pspec5),
-                     "P(None, None, unreduced={'x'})")
+                     "P(None, None, unreduced={'x'}, unreduced_kind=sum)")
 
     pspec6 = P(None, unreduced={'x'})
-    self.assertEqual(repr(pspec6), "P(None, unreduced={'x'})")
+    self.assertEqual(repr(pspec6), "P(None, unreduced={'x'}, unreduced_kind=sum)")
 
     pspec7 = P(unreduced={'x'})
-    self.assertEqual(repr(pspec7), "P(unreduced={'x'})")
+    self.assertEqual(repr(pspec7), "P(unreduced={'x'}, unreduced_kind=sum)")
 
     with self.assertRaisesRegex(
         TypeError, 'unreduced in `__add__` of PartitionSpec'):
@@ -1570,6 +1589,16 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertTrue(s1 == s2)
     self.assertTrue(s1.is_equivalent_to(s2, 2))
 
+  def test_pspec_check(self):
+    def create_pspec(kind):
+      return P('x', unreduced={'y'}, unreduced_kind=kind)
+
+    create_pspec(None)
+    create_pspec(jax.sharding.UnreducedKind.min)
+    with self.assertRaisesRegex(
+        TypeError, "Expected unreduced_kind to be of type"):
+      create_pspec(frozenset())
+
 
 class RngShardingTest(jtu.JaxTestCase):
   # tests that the PRNGs are automatically sharded as expected
@@ -1653,6 +1682,56 @@ class RngShardingTest(jtu.JaxTestCase):
     abstract_mesh2 = jax.sharding.AbstractMesh((), ())
     self.assertTrue(abstract_mesh2.empty)
     self.assertEqual(abstract_mesh2.size, 0)
+
+  @unittest.skipIf(
+      jaxlib_extension_version < 487,
+      "Requires jaxlib_extension_version >= 487",
+  )
+  def test_replace_with(self):
+    a = jnp.array([1, 2, 3])
+    b = jnp.array([4, 5, 6])
+    a._replace_with(b)
+    self.assertArraysEqual(a, [4, 5, 6])
+
+    # weak_type mismatch
+    w1 = jnp.array(1.0)
+    w2 = jnp.array(1.0, dtype=w1.dtype)
+    self.assertTrue(w1.weak_type)
+    self.assertFalse(w2.weak_type)
+    self.assertEqual(w1.dtype, w2.dtype)
+    with self.assertRaisesRegex(RuntimeError, "different weak_type"):
+      w1._replace_with(w2)
+
+    # dtype mismatch
+    c = jnp.array([1.0, 2.0, 3.0], dtype=np.float32)
+    with self.assertRaisesRegex(RuntimeError, "different dtype"):
+      a._replace_with(c)
+
+    # shape mismatch
+    d = jnp.array([1, 2])
+    with self.assertRaisesRegex(RuntimeError, "different shape"):
+      a._replace_with(d)
+
+    # committed mismatch
+    committed_arr = jax.device_put(jnp.array([1, 2, 3]), jax.devices()[0])
+    uncommitted_arr = jnp.array([1, 2, 3])
+    self.assertTrue(committed_arr._committed)
+    self.assertFalse(uncommitted_arr._committed)
+    with self.assertRaisesRegex(RuntimeError, "different committed"):
+      committed_arr._replace_with(uncommitted_arr)
+
+    # new_ref buffer is committed
+    ref = jax.new_ref(jnp.zeros(3))
+    self.assertTrue(ref._refs._buf._committed)
+
+    # sharding mismatch
+    mesh = jax.sharding.Mesh(np.array(jax.devices()[:1]), ("x",))
+    s1 = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
+    s2 = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    x1 = jax.device_put(jnp.array([1, 2, 3]), s1)
+    x2 = jax.device_put(jnp.array([1, 2, 3]), s2)
+    with self.assertRaisesRegex(RuntimeError, "different sharding"):
+      x1._replace_with(x2)
 
 
 if __name__ == '__main__':

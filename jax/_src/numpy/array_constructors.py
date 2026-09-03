@@ -393,6 +393,9 @@ def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
       None, which will only copy when necessary.
     device: optional :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
       to which the created array will be committed.
+    out_sharding: optional :class:`~jax.sharding.PartitionSpec` or
+      :class:`~jax.NamedSharding` specifying the sharding of the output array.
+      Cannot be used together with ``device``.
 
   Returns:
     A JAX array constructed from the input.

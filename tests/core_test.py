@@ -42,21 +42,13 @@ __ = pe.PartialVal.unknown(ShapedArray((), np.float32))
 def call(f, *args):
   return jit(f)(*args)
 
+@util.curry
 def core_call(f, *args):
   args, in_tree = jax.tree.flatten(args)
   dbg = debug_info("core_call_test", f, args, {})
   f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, debug_info=dbg), in_tree)
-  out = core.call_p.bind(*args, subfuns=(f,))
-  return jax.tree.unflatten(out_tree(), out)
-# call = core_call
-core_call = util.curry(core_call)
-
-@util.curry
-def core_closed_call(f, *args):
-  args, in_tree = jax.tree.flatten(args)
-  dbg = debug_info("core_closed_call_test", f, args, {})
-  f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, debug_info=dbg), in_tree)
-  out = core.closed_call_p.bind(*args, subfuns=(f,))
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(f, [core.typeof(x) for x in args])
+  out = core.eval_jaxpr_p.bind(*consts, *args, call_jaxpr=jaxpr)
   return jax.tree.unflatten(out_tree(), out)
 
 def simple_fun(x, y):
@@ -150,9 +142,6 @@ for ts in test_specs_base:
   test_specs.append(CallSpec(core_call(ts.fun), ts.args))
   test_specs.append(CallSpec(core_call(jit(ts.fun)), ts.args))
   test_specs.append(CallSpec(core_call(core_call(ts.fun)), ts.args))
-  test_specs.append(CallSpec(core_closed_call(ts.fun), ts.args))
-  test_specs.append(CallSpec(core_closed_call(jit(ts.fun)), ts.args))
-  test_specs.append(CallSpec(core_closed_call(core_closed_call(ts.fun)), ts.args))
   test_specs.append(CallSpec(partial(jvp_unlinearized, ts.fun),
                              (ts.args, ts.args)))
 
@@ -304,7 +293,13 @@ class CoreTest(jtu.JaxTestCase):
   def test_reference_cycles(self):
     if jtu.TEST_NUM_THREADS.value > 1:
       self.skipTest("Test does not work with multiple threads")
-    gc.collect()
+    jax.clear_caches()
+    # Weak reference callbacks or outer finalizers triggered during garbage
+    # collection can drop the last external reference to other cyclic garbage,
+    # requiring multiple collection passes to drain the heap before testing.
+    for _ in range(10):
+      if not gc.collect():
+        break
 
     def f(x):
       return x.sum()
@@ -319,12 +314,19 @@ class CoreTest(jtu.JaxTestCase):
       self.assertEqual(gc.collect(), 0, msg=str(gc.garbage))
     finally:
       gc.set_debug(debug)
+      gc.garbage.clear()
 
   @jtu.thread_unsafe_test()  # gc isn't predictable when threaded
   def test_reference_cycles_jit(self):
     if jtu.TEST_NUM_THREADS.value > 1:
       self.skipTest("Test does not work with multiple threads")
-    gc.collect()
+    jax.clear_caches()
+    # Weak reference callbacks or outer finalizers triggered during garbage
+    # collection can drop the last external reference to other cyclic garbage,
+    # requiring multiple collection passes to drain the heap before testing.
+    for _ in range(10):
+      if not gc.collect():
+        break
 
     def f(x):
       return x.sum()
@@ -339,6 +341,7 @@ class CoreTest(jtu.JaxTestCase):
       self.assertEqual(gc.collect(), 0, msg=str(gc.garbage))
     finally:
       gc.set_debug(debug)
+      gc.garbage.clear()
 
   def test_invalid_shape_error_with_jit_tracer_passed(self):
     @jax.jit
@@ -398,7 +401,7 @@ class CoreTest(jtu.JaxTestCase):
       return z, zdot
 
     jaxpr = jax.make_jaxpr(f)(y)
-    e1, e2 = jaxpr.jaxpr.eqns
+    e1, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 1)  # only primal out, no residuals
     self.assertEqual(e1.outvars[0].aval.shape, (3, 3))  # only primal out shape
 
@@ -477,7 +480,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
   def test_check_jaxpr_cond_invalid(self):
     jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
     cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
-    cond.params['branches'][0].jaxpr._invars = ()
+    cond.params['branches'][0].jaxpr._all_invars = ()
     self.assertRaisesRegex(
         core.JaxprTypeError,
         'cond branch 0 takes 0 inputs, branch 1 takes 1',
@@ -512,7 +515,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
         lambda x: lax.switch(0, [jnp.sin, jnp.cos], x), 100))(1.).jaxpr
 
     cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
-    cond.params['branches'][0].jaxpr._invars = ()
+    cond.params['branches'][0].jaxpr._all_invars = ()
     msg = ''
     try:
       core.check_jaxpr(jaxpr)

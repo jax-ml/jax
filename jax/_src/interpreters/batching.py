@@ -245,11 +245,6 @@ class BatchTrace(Trace):
     else:
       return val, None
 
-  def cur_qdd(self, x):
-    val, _ = self.to_batch_info(x)
-    with core.set_current_trace(self.parent_trace):
-      return core.cur_qdd(val)
-
   def stage_value(self, val):
     if isinstance(val, BatchTracer) and val._trace.tag is self.tag:
       return val
@@ -278,17 +273,6 @@ class BatchTrace(Trace):
                                dict(params))
     else:
       raise NotImplementedError(f"Batching rule for '{p}' not implemented")
-
-  def process_call(self, call_primitive, f, tracers, params, /):
-    assert call_primitive.multiple_results
-    params = dict(params, name=params.get('name', f.__name__))
-    vals, dims = unzip2(map(self.to_batch_info, tracers))
-    f_, dims_out = batch_subtrace(f, self.tag, self.axis_data, tuple(dims))
-
-    with core.set_current_trace(self.parent_trace):
-      vals_out = call_primitive.bind(*vals, subfuns=(f_,), **params)
-    src = source_info_util.current()
-    return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out())]
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     in_vals, in_dims = unzip2(map(self.to_batch_info, tracers))
@@ -397,20 +381,20 @@ def batch_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
 ### API for batching jaxprs
 
 def batch_jaxpr2(
-    closed_jaxpr: core.ClosedJaxpr,
+    closed_jaxpr: core.Jaxpr,
     axis_data,
     in_axes: tuple[int | NotMapped, ...],
-  ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped, ...]]:
+  ) -> tuple[core.Jaxpr, tuple[int | NotMapped, ...]]:
   return _batch_jaxpr2(closed_jaxpr, axis_data, tuple(in_axes))
 
 @weakref_lru_cache
 def _batch_jaxpr2(
-    closed_jaxpr: core.ClosedJaxpr,
+    closed_jaxpr: core.Jaxpr,
     axis_data,
     in_axes: tuple[int | NotMapped, ...],
-  ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped, ...]]:
+  ) -> tuple[core.Jaxpr, tuple[int | NotMapped, ...]]:
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr),
-                   debug_info=closed_jaxpr.jaxpr.debug_info)
+                   debug_info=closed_jaxpr.debug_info)
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
   f = _batch_jaxpr_outer(f, axis_data, in_axes)
   avals_in2 = []
@@ -427,7 +411,7 @@ def _batch_jaxpr2(
           aval = aval.update(manual_axis_type=mat)
       avals_in2.append(aval)
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in2)
-  return core.ClosedJaxpr(jaxpr_out, consts), out_axes()
+  return jaxpr_out.with_consts(consts), out_axes()
 
 def batch_jaxpr(closed_jaxpr, axis_data, in_batched, instantiate):
   inst = tuple(instantiate) if isinstance(instantiate, list) else instantiate
@@ -447,11 +431,11 @@ def batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest):
   return _batch_jaxpr_axes(closed_jaxpr, axis_data, tuple(in_axes), tuple(out_axes_dest))
 
 @weakref_lru_cache
-def _batch_jaxpr_axes(closed_jaxpr: core.ClosedJaxpr,
+def _batch_jaxpr_axes(closed_jaxpr: core.Jaxpr,
                       axis_data: AxisData,
                       in_axes: Sequence[int], out_axes_dest: Sequence[int]):
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr),
-                   debug_info=closed_jaxpr.jaxpr.debug_info)
+                   debug_info=closed_jaxpr.debug_info)
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
   f, out_batched = _match_axes_jaxpr(f, axis_data, out_axes_dest, out_axes)
   f = _batch_jaxpr_outer(f, axis_data, in_axes)
@@ -460,7 +444,7 @@ def _batch_jaxpr_axes(closed_jaxpr: core.ClosedJaxpr,
               if b is not None
               else aval for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
-  return core.ClosedJaxpr(jaxpr_out, consts), out_batched()
+  return jaxpr_out.with_consts(consts), out_batched()
 
 @lu.transformation_with_aux2
 def _batch_jaxpr_inner(f, store, axis_data, tag, in_axes, *in_vals):
@@ -550,17 +534,30 @@ def batch_custom_vjp_bwd(bwd: lu.WrappedFun, tag: core.TraceTag,
             for x, dim in zip(args, in_dims_)]
     in_dims_ = [None if type(x) is SymbolicZero else d
                 for x, d in zip(args, in_dims_)]
-    bwd_, out_dims_thunk = batch_subtrace(bwd, tag, axis_data, in_dims_)
-    bwd_ = _match_axes_and_sum(bwd_, axis_data, out_dims_thunk, out_dim_dests)
-    return bwd_.call_wrapped(*args)
+    bwd_pair, pair_info_thunk = _flatten_cts_logs_pair(bwd)
+    bwd_, out_dims_thunk = batch_subtrace(bwd_pair, tag, axis_data, in_dims_)
+    all_dests = lambda: (*out_dim_dests, *(0,) * pair_info_thunk()[1].num_leaves)
+    bwd_ = _match_axes_and_sum(bwd_, axis_data, out_dims_thunk, all_dests)
+    outs = bwd_.call_wrapped(*args)
+    num_cts, log_tree = pair_info_thunk()
+    cts, log_leaves = split_list(outs, [num_cts])
+    return cts, tree_unflatten(log_tree, log_leaves)
   return lu.wrap_init(new_bwd, debug_info=bwd.debug_info)
 
+@lu.transformation_with_aux2
+def _flatten_cts_logs_pair(f, store, *args):
+  cts, logs = f(*args)
+  log_leaves, log_tree = tree_flatten(logs)
+  store.store((len(cts), log_tree))
+  return [*cts, *log_leaves]
+
 @lu.transformation2
-def _match_axes_and_sum(f, axis_data, out_dims_thunk, out_dim_dests, *in_vals):
+def _match_axes_and_sum(f, axis_data, out_dims_thunk, out_dim_dests_thunk,
+                        *in_vals):
   # this is like _match_axes, but we do reduce-sums as needed
   out_vals = f(*in_vals)
   return map(partial(_matchaxis_symzeros, axis_data, sum_match=True),
-             out_dims_thunk(), out_dim_dests, out_vals)
+             out_dims_thunk(), out_dim_dests_thunk(), out_vals)
 
 def _matchaxis_symzeros(axis_data, src, dst, x, sum_match=False):
   # Just like `matchaxis`, but handles symbolic zeros using ad_util.py

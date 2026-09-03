@@ -300,7 +300,15 @@ class NDIndexer(state_types.Transform):
         if self.is_dynamic_size:
           return DShapedArray(self.get_indexer_shape(), x.dtype,
                               weak_type=x.weak_type)
-        return x.update(shape=self.get_indexer_shape())
+        out_shape = self.get_indexer_shape()
+        out_ndim, out_spec = len(out_shape), x.sharding.spec
+        if out_ndim < len(out_spec):
+          assert all(s is None for s in out_spec.partitions[out_ndim:])
+          out_s = x.sharding.update(spec=x.sharding.spec.update(
+              partitions=out_spec.partitions[:out_ndim]))
+        else:
+          out_s = x.sharding
+        return x.update(shape=out_shape, sharding=out_s)
       case _:
         if type(x) in indexer_transform_type_registry:
           assert hasattr(x, "transform_ndindexer")

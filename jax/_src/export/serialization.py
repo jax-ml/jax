@@ -22,7 +22,8 @@ import dataclasses
 import itertools
 from functools import partial
 import types
-from typing import cast, Any, TypeVar
+from typing import Any
+import warnings
 
 try:
   import flatbuffers
@@ -31,22 +32,20 @@ except ImportError as e:
       "Please install 'flatbuffers' in order to use Exported serialization"
       ) from e
 
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src.export import serialization_generated as ser_flatbuf
 from jax._src.export import _export
 from jax._src.export import shape_poly
-from jax._src.lib import xla_client
 from jax._src import mesh
 from jax._src import named_sharding
 from jax._src import partition_spec
 from jax._src import tree_util
 
+from jax import version
 import numpy as np
-
-T = TypeVar("T")
-SerT = TypeVar("SerT")
 
 # The _SERIALIZATION_VERSION changes when we change the serialization schema
 # even if the change is backwards compatible.
@@ -54,11 +53,14 @@ SerT = TypeVar("SerT")
 # Version 2, Dec 16th, 2023, adds the f0 dtype.
 # Version 3, October 16th, 2024, adds serialization for namedtuple and custom types
 #   This version is backwards compatible with Version 2.
+#   This version is beyond the 6 months compat window and not supported anymore.
 # Version 4, April 7th, 2025, adds serialization for PRNGs key types.
 #   This version is backwards compatible with Version 2 and 3.
+#   This version is beyond the 6 months compat window and not supported anymore.
 # Version 5, November 23rd, 2025, adds serialization for aval memory_space,
 #   upgrade num_devices to a 32 bit value.
 #   This version is backwards compatible with Version 2 to 4.
+#   This version is beyond the 6 months compat window and not supported anymore.
 # Version 6, January 15th, 2026, adds serialization for sharding as
 #   NamedSharding, including the abstract mesh, and the partition spec.
 #   Contains also HloSharding serialization, for forward compatibility.
@@ -72,7 +74,20 @@ SerT = TypeVar("SerT")
 # Version 10, April 4th, 2026, optimizes serialization of duplicate shardings,
 #   abstract meshes and avals.
 # Version 11, May 15th, 2026, add AbstractDevice.platform.
-_SERIALIZATION_VERSION = 11
+# Version 12, July 29th, 2026, add JAX version for the serializer.
+_SERIALIZATION_VERSION = 12
+
+
+def _expired_error_msg(exp: ser_flatbuf.Exported) -> str:
+  msg = (
+      "Exported being deserialized seems to be older than the 6-month "
+      "backward-compatibility window and cannot be deserialized anymore."
+      f"The Exported uses serialization version {exp.SerializationVersion()}."
+  )
+  if exp.JaxVersion() is not None:
+    msg += f" It was created with JAX version {exp.JaxVersion().decode('utf-8')}."
+  msg += " See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees."
+  return msg
 
 
 @dataclasses.dataclass(slots=True)
@@ -155,9 +170,6 @@ def _serialize_exported(
     builder: flatbuffers.Builder, exp: _export.Exported, vjp_order: int
 ) -> int:
   uniques = _SerializedUniques.create_from_exported(exp)
-  if not exp._has_named_shardings:
-    raise ValueError(
-      "Exported being serialized must have named shardings after 3/17/2026.")
   # Serialize bottom-up
   fun_name = builder.CreateString(exp.fun_name)
   in_tree = _serialize_pytreedef(builder, exp.in_tree)
@@ -222,13 +234,11 @@ def _serialize_exported(
     np.array([0 if s is None else 1 + uniques.named_shardings_map[s]
               for s in exp._out_named_shardings], dtype=np.uint32))
 
+  jax_version_idx = builder.CreateString(version.__version__)
+
   ser_flatbuf.ExportedStart(builder)
-  # TODO(necula): we cannot really store the actual serialization_version
-  # in the flatbuffer because prior to 11/25/2025 deserializers checked
-  # if the version is 2 or 3. I have now removed that check, but for the
-  # sake of old deserializers we can only store version 3. Starting
-  # on January 2026 we can store the actual version.
-  ser_flatbuf.ExportedAddSerializationVersion(builder, 3)
+  # Started saving the actual serialization version on 7/27/2026.
+  ser_flatbuf.ExportedAddSerializationVersion(builder, _SERIALIZATION_VERSION)
   ser_flatbuf.ExportedAddFunctionName(builder, fun_name)
   ser_flatbuf.ExportedAddInTree(builder, in_tree)
   ser_flatbuf.ExportedAddInAvals(builder, in_avals)
@@ -261,11 +271,11 @@ def _serialize_exported(
   ser_flatbuf.ExportedAddOutAvalsIdxs(builder, out_aval_idxs)
   ser_flatbuf.ExportedAddInShardingsIdxs(builder, in_shardings_idxs)
   ser_flatbuf.ExportedAddOutShardingsIdxs(builder, out_shardings_idxs)
-
+  ser_flatbuf.ExportedAddJaxVersion(builder, jax_version_idx)
   return ser_flatbuf.ExportedEnd(builder)
 
 
-def _serialize_array(
+def _serialize_array[T](
     builder: flatbuffers.Builder,
     serialize_one: Callable[[flatbuffers.Builder, T], int],
     elements: Iterable[T],
@@ -279,6 +289,11 @@ def _serialize_array(
 
 
 def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
+  # TODO(b/539419341): check the minimum serialization version.
+  # We only started to save the actual serialization version on 7/27/2026, so
+  # we can add this check after 1/27/2027. We also started saving the
+  # JAX version that created the export on 7/28/2026 and we can use it
+  # after 1/28/2027 in error messages.
   scope = shape_poly.SymbolicScope(())  # TODO(necula): serialize the constraints
 
   unique_avals = [
@@ -301,10 +316,15 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
 
   fun_name = exp.FunctionName().decode("utf-8")
 
-  # TODO(necula): remove the fallback to NrDevicesShort and mark
-  # the field "deprecated" once we abandon the old
-  # serialization format (6 months after 11/24/2025).
-  nr_devices = exp.NrDevices() or exp.NrDevicesShort()
+  nr_devices = exp.NrDevices()
+  if nr_devices == 0 and exp.NrDevicesShort() > 0:
+    msg = _expired_error_msg(exp)
+    if not config.export_deserialize_expired_versions.value:
+      raise ValueError(msg)
+    # TODO(necula): remove this once we bump the minimum supported version.
+    warnings.warn(msg, DeprecationWarning)
+    nr_devices = exp.NrDevicesShort()
+
   def sharding_by_idx(idx):
     if idx == 0:
       return None
@@ -318,7 +338,7 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   elif exp.InShardingsLength() > 0:
     # TODO(necula): remove 6 months after 4/4/26
     in_shardings = tuple(
-        _deserialize_sharding(exp.InShardings(i), uniques=uniques)
+        _deserialize_sharding(exp, exp.InShardings(i), uniques=uniques)
         for i in range(exp.InShardingsLength())
     )
   else:
@@ -332,66 +352,42 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   elif exp.OutShardingsLength() > 0:
     # TODO(necula): remove 6 months after 4/4/26
     out_shardings = tuple(
-      _deserialize_sharding(exp.OutShardings(i), uniques=uniques)
+      _deserialize_sharding(exp, exp.OutShardings(i), uniques=uniques)
       for i in range(exp.OutShardingsLength())
     )
   else:
     out_shardings = ()
 
-  # has_named_sharding will be True for all exports created after 1/15/2026
-  # TODO(b/489569164): remove has_named_sharding 6 months after 1/15/2026
-  has_named_shardings = not any(isinstance(s, _export.HloSharding)
-                                for s in itertools.chain(in_shardings, out_shardings))
-  if has_named_shardings:
-    def get_aval_by_idx(idx, sharding: _export.NamedSharding | None):
-      base_aval = uniques.unique_avals[idx]
-      if sharding is None:
-        return base_aval
-      return core.update_aval_with_sharding(base_aval, sharding)
+  def get_aval_by_idx(idx, sharding: _export.NamedSharding | None):
+    base_aval = uniques.unique_avals[idx]
+    if sharding is None:
+      return base_aval
+    return core.update_aval_with_sharding(base_aval, sharding)
 
-    if exp.InAvalsIdxsLength() > 0:
-      in_avals = tuple(
-          get_aval_by_idx(exp.InAvalsIdxs(i), in_shardings[i])  # pyrefly: ignore[bad-argument-type]
-          for i in range(exp.InAvalsIdxsLength()))
-    elif exp.InAvalsLength() > 0:
-      # TODO(necula): remove 6 months after 4/4/26
-      in_avals = tuple(
-          _deserialize_aval(exp.InAvals(i), scope=scope, sharding=in_shardings[i])  # pyrefly: ignore[bad-argument-type]
-          for i in range(exp.InAvalsLength()))
-    else:
-      in_avals = ()
-
-    if exp.OutAvalsIdxsLength() > 0:
-      out_avals = tuple(
-          get_aval_by_idx(exp.OutAvalsIdxs(i), out_shardings[i])  # pyrefly: ignore[bad-argument-type]
-                          for i in range(exp.OutAvalsIdxsLength()))
-    elif exp.OutAvalsLength() > 0:
-      # TODO(necula): remove 6 months after 4/4/26
-      out_avals = tuple(
-        _deserialize_aval(exp.OutAvals(i), scope=scope, sharding=out_shardings[i])  # pyrefly: ignore[bad-argument-type]
-        for i in range(exp.OutAvalsLength())
-      )
-    else:
-      out_avals = ()
-
-    in_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)  # pyrefly: ignore[bad-argument-type]
-                             for s, aval in zip(in_shardings, in_avals))
-    out_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)  # pyrefly: ignore[bad-argument-type]
-                             for s, aval in zip(out_shardings, out_avals))
-  else:
-    # Export from before 1/15/26
+  if exp.InAvalsIdxsLength() > 0:
     in_avals = tuple(
-        _deserialize_aval(exp.InAvals(i), scope=scope, sharding=None)
-        for i in range(exp.InAvalsLength())
-    )
+        get_aval_by_idx(exp.InAvalsIdxs(i), in_shardings[i])  # pyrefly: ignore[bad-argument-type]
+        for i in range(exp.InAvalsIdxsLength()))
+  elif exp.InAvalsLength() > 0:
+    # TODO(necula): remove 6 months after 4/4/26
+    in_avals = tuple(
+        _deserialize_aval(exp.InAvals(i), scope=scope, sharding=in_shardings[i])  # pyrefly: ignore[bad-argument-type]
+        for i in range(exp.InAvalsLength()))
+  else:
+    in_avals = ()
+
+  if exp.OutAvalsIdxsLength() > 0:
     out_avals = tuple(
-        _deserialize_aval(exp.OutAvals(i), scope=scope, sharding=None)
-        for i in range(exp.OutAvalsLength())
+        get_aval_by_idx(exp.OutAvalsIdxs(i), out_shardings[i])  # pyrefly: ignore[bad-argument-type]
+                        for i in range(exp.OutAvalsIdxsLength()))
+  elif exp.OutAvalsLength() > 0:
+    # TODO(necula): remove 6 months after 4/4/26
+    out_avals = tuple(
+      _deserialize_aval(exp.OutAvals(i), scope=scope, sharding=out_shardings[i])  # pyrefly: ignore[bad-argument-type]
+      for i in range(exp.OutAvalsLength())
     )
-    in_shardings_hlo = cast(tuple[_export.HloSharding | None, ...], in_shardings)
-    in_shardings = (None,) * len(in_shardings)
-    out_shardings_hlo = cast(tuple[_export.HloSharding | None, ...], out_shardings)
-    out_shardings = (None,) * len(out_shardings)
+  else:
+    out_avals = ()
 
   in_tree = _deserialize_pytreedef(exp.InTree(), in_avals)
   out_tree = _deserialize_pytreedef(exp.OutTree(), out_avals)
@@ -429,9 +425,8 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
       out_tree=out_tree,
       out_avals=out_avals,
       nr_devices=nr_devices,
-      in_shardings_hlo=in_shardings_hlo,
-      out_shardings_hlo=out_shardings_hlo,
-      _has_named_shardings=has_named_shardings,
+      in_shardings_hlo=(None,) * len(in_avals),
+      out_shardings_hlo=(None,) * len(out_avals),
       _in_named_shardings=in_shardings,  # pyrefly: ignore[bad-argument-type]
       _out_named_shardings=out_shardings,  # pyrefly: ignore[bad-argument-type]
       platforms=platforms,
@@ -444,7 +439,6 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
       uses_global_constants=uses_global_constants,
       _get_vjp=_get_vjp,
   )
-
 
 
 def _serialize_pytreedef(
@@ -643,6 +637,7 @@ def _serialize_abstract_device(builder: flatbuffers.Builder,
     ser_flatbuf.AbstractDeviceAddNumCores(builder, device.num_cores)
   ser_flatbuf.AbstractDeviceAddPlatform(builder, platform)
   return ser_flatbuf.AbstractDeviceEnd(builder)
+
 
 # TODO(necula): remove 6 months after 5/15/2026
 def get_platform_from_device_kind(device_kind) -> str:
@@ -853,18 +848,15 @@ def _serialize_sharding(
   return ser_flatbuf.ShardingEnd(builder)
 
 
-def _deserialize_sharding(s: ser_flatbuf.Sharding, *,
+def _deserialize_sharding(exp: ser_flatbuf.Exported, s: ser_flatbuf.Sharding, *,
                           uniques: _SerializedUniques) -> _export.HloSharding | named_sharding.NamedSharding | None:
   if (named_sharding_off := s.NamedSharding()) is not None:
     # After 1/15/26 all exports will have named shardings (or None)
     # TODO(necula): We must keep reading the NamedSharding for 6 months after 4/4/26
     return _deserialize_named_sharding(named_sharding_off, uniques=uniques)
 
-  # TODO(b/489569164): We must keep reading the HloSharding for 6 months after 1/15/2026.
   if not s.HloShardingProtoIsNone():
-    proto = xla_client.OpSharding()
-    proto.ParseFromString(s.HloShardingProtoAsNumpy().tobytes())
-    return xla_client.HloSharding.from_proto(proto)
+    raise ValueError(_expired_error_msg(exp))
 
   return None  # Unspecified sharding
 

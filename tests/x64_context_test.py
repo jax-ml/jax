@@ -264,6 +264,41 @@ class X64ContextTests(jtu.JaxTestCase):
         self.assertEqual(int(jnp.int64(1 << 40)), 1 << 40)
         self.assertEqual(int(jnp.array(1 << 40, dtype=jnp.int64)), 1 << 40)
 
+  def test_explicit_x64_dtypes_allow_reduce(self):
+    with config.explicit_x64_dtypes('allow'):
+      with jax.enable_x64(False):
+        res = jnp.max(jnp.array([0, 1], dtype=jnp.int64))
+        self.assertEqual(res, 1)
+        self.assertEqual(res.dtype, jnp.int64)
+
+  def test_explicit_x64_dtypes_allow_reduce_initial(self):
+    with config.explicit_x64_dtypes('allow'):
+      with jax.enable_x64(False):
+        res = jnp.max(jnp.array([0, 1], dtype=jnp.int64), initial=0)
+        self.assertEqual(res, 1)
+        self.assertEqual(res.dtype, jnp.int64)
+
+        res = jnp.max(jnp.array([0, 1], dtype=jnp.int64), initial=jnp.int64(5))
+        self.assertEqual(res, 5)
+        self.assertEqual(res.dtype, jnp.int64)
+
+  def test_explicit_x64_dtypes_allow_shape_dtype_struct(self):
+    # We canonicalize ShapeDtypeStruct dtypes at JAX boundary time so that explicit
+    # 64-bit dtypes are respected when jax_explicit_x64_dtypes="allow".
+    with config.explicit_x64_dtypes('allow'):
+      with jax.enable_x64(False):
+        def f(x):
+          with jax.enable_x64():
+            return x + jnp.int64(1)
+        input_spec = jax.ShapeDtypeStruct((), np.int64)
+        self.assertEqual(input_spec.dtype, np.dtype('int64'))
+        lowered = jax.jit(f).lower(input_spec)
+        compiled = lowered.compile()
+        x = jnp.int64(42)
+        res = compiled(x)
+        self.assertEqual(res.dtype, jnp.int64)
+        self.assertEqual(int(res), 43)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

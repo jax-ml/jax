@@ -95,3 +95,15 @@ def pytest_collection() -> None:
     # HIP_VISIBLE_DEVICES to all GPUs; override to "0" so HIP doesn't try to
     # enable agents that ROCr just hid.
     os.environ["HIP_VISIBLE_DEVICES"] = "0"
+
+  elif num_oneapi_devices := os.environ.get("JAX_ENABLE_ONEAPI_XDIST", None):
+    num_oneapi_devices = int(num_oneapi_devices)
+    if num_oneapi_devices <= 0:
+      return
+    xdist_worker_name = os.environ.get("PYTEST_XDIST_WORKER", "")
+    if not xdist_worker_name.startswith("gw"):
+      return
+    xdist_worker_number = int(xdist_worker_name[len("gw") :])
+    os.environ.setdefault(
+        "ZE_AFFINITY_MASK", str(xdist_worker_number % num_oneapi_devices)
+    )

@@ -12,20 +12,44 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ctypes
+import functools
+import mmap
 import unittest
 import warnings
+import weakref
 
 from absl.testing import absltest
-import numpy as np
-
 import jax
-import jax.dlpack
-import jax.numpy as jnp
-from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import dlpack as dlpack_src
 from jax._src import test_util as jtu
 from jax._src.util import cache
+import jax.dlpack
+import jax.numpy as jnp
+from jax.sharding import PartitionSpec as P
+import numpy as np
+
+
+def alloc_and_map(c_type, np_dtype, size):
+  device = jax.devices("tpu")[0]
+  client = device.client
+
+  element_size = ctypes.sizeof(c_type)
+  requested_bytes = size * element_size
+  size_bytes = ((requested_bytes + 4095) // 4096) * 4096
+
+  buf = mmap.mmap(-1, size_bytes)
+
+  char_arr = (ctypes.c_char * size_bytes).from_buffer(buf)
+  addr = ctypes.addressof(char_arr)
+
+  client.dma_map(addr, size_bytes)
+
+  weakref.finalize(buf, client.dma_unmap, addr)
+
+  return np.frombuffer(buf, dtype=np_dtype, count=size)
+
 
 config.parse_flags_with_absl()
 
@@ -166,7 +190,7 @@ def _get_max_align_bits(dtype, device):
 class DLPackTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
-    if not jtu.test_device_matches(["cpu", "gpu"]):
+    if not jtu.test_device_matches(["cpu", "gpu", "tpu"]):
       self.skipTest(f"DLPack not supported on {jtu.device_under_test()}")
 
   @jtu.sample_product(
@@ -180,9 +204,10 @@ class DLPackTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
 
+    device_type = jtu.device_under_test()
     # Check if the source device is preserved
     x = jax.device_put(np, jax.devices("cpu")[0])
-    device = jax.devices("gpu")[0]
+    device = jax.devices(device_type)[0]
     y = jax.device_put(x, device)
     # TODO(parkers): Remove after setting 'stream' properly below.
     jax.block_until_ready(y)
@@ -192,17 +217,24 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertAllClose(np.astype(x.dtype), z)
 
   @jtu.sample_product(
-    shape=all_shapes,
-    dtype=dlpack_dtypes,
-    gpu=[False, True],
+      shape=all_shapes,
+      dtype=dlpack_dtypes,
+      device_type=[None, "cpu", "gpu"],
   )
-  def testJaxArrayRoundTrip(self, shape, dtype, gpu):
+  def testJaxArrayRoundTrip(self, shape, dtype, device_type):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
-    if gpu and jax.default_backend() == "cpu":
-      raise unittest.SkipTest("Skipping GPU test case on CPU")
-    device = jax.devices("gpu" if gpu else "cpu")[0]
+    if device_type is None:
+      device = jax.devices()[0]
+    else:
+      if device_type == "gpu" and not jtu.test_device_matches(["gpu"]):
+        raise unittest.SkipTest("GPU not available")
+      if device_type == "tpu" and not jtu.test_device_matches(["tpu"]):
+        raise unittest.SkipTest("TPU not available")
+      device = jax.devices(device_type)[0]
     x = jax.device_put(np, device)
+    if device.platform == "tpu":
+      raise unittest.SkipTest("TPU device memory not supported for DLPack")
     # TODO(parkers): Remove after setting 'stream' properly.
     jax.block_until_ready(x)
     y = jax.dlpack.from_dlpack(x)
@@ -212,6 +244,28 @@ class DLPackTest(jtu.JaxTestCase):
     z = jax.dlpack.from_dlpack(x)
     self.assertEqual(z.devices(), {device})
     self.assertAllClose(np.astype(x.dtype), z)
+
+  @jtu.run_on_devices("gpu", "tpu")
+  def testJaxPinnedHostRoundTrip(self):
+    device = jax.devices()[0]
+    if device.platform not in ["gpu", "tpu"]:
+      raise unittest.SkipTest("Test requires GPU or TPU")
+    try:
+      sharding = jax.sharding.SingleDeviceSharding(
+          device, memory_kind="pinned_host"
+      )
+    except ValueError:
+      raise unittest.SkipTest("pinned_host memory kind not supported")
+
+    rng = jtu.rand_default(self.rng())
+    np_arr = rng((3, 4), jnp.float32)
+    x = jax.device_put(np_arr, sharding)
+    self.assertEqual(x.sharding.memory_kind, "pinned_host")
+
+    y = jax.dlpack.from_dlpack(x)
+    self.assertEqual(y.devices(), {device})
+    self.assertEqual(y.sharding.memory_kind, "pinned_host")
+    self.assertAllClose(np_arr, y)
 
   @jtu.sample_product(shape=all_shapes, dtype=dlpack_dtypes)
   @unittest.skipIf(not tf, "Test requires TensorFlow")
@@ -237,6 +291,7 @@ class DLPackTest(jtu.JaxTestCase):
       shape=all_shapes,
       dtype=dlpack_dtypes,
   )
+  @jtu.run_on_devices("cpu", "gpu")
   @unittest.skipIf(not tf, "Test requires TensorFlow")
   def testJaxToTensorFlow(self, shape, dtype):
     if (not config.enable_x64.value and
@@ -303,6 +358,65 @@ class DLPackTest(jtu.JaxTestCase):
     x_np = np.from_dlpack(x_jax)
     self.assertAllClose(x_np, x_jax)
 
+  @jtu.run_on_devices("tpu")
+  def testTpuHostBufferDmaMap(self):
+    from jax._src.typing import DLDeviceType
+
+    device = jax.devices("tpu")[0]
+
+    try:
+      np_array = alloc_and_map(ctypes.c_uint32, np.uint32, 1024)
+    except RuntimeError as e:
+      self.skipTest(str(e))
+
+    np_array[:] = 0
+
+    class DLPackWrapper:
+
+      def __init__(self, arr, device_type, device_id=0):
+        self.arr = arr
+        self.device_type = device_type
+        self.device_id = device_id
+
+      def __dlpack_device__(self):
+        return (self.device_type, self.device_id)
+
+      def __dlpack__(self, stream=None):
+        return self.arr.__dlpack__(stream=stream)
+
+    dev_id = device.local_hardware_id
+    if dev_id is None:
+      dev_id = 0
+
+    wrapper = DLPackWrapper(np_array, DLDeviceType.kDLTPUHost, dev_id)
+
+    jax_arr = jax.dlpack.from_dlpack(wrapper, device=device, copy=False)
+    jax.block_until_ready(jax_arr)
+
+    self.assertEqual(jax_arr.device, device)
+    self.assertEqual(jax_arr.sharding.memory_kind, "pinned_host")
+
+    # Fill data *after* import to verify zero-copy
+    np_array[:] = np.arange(1024, dtype=np.uint32)
+
+    host_sharding = jax.sharding.SingleDeviceSharding(
+        device, memory_kind="pinned_host"
+    )
+    device_sharding = jax.sharding.SingleDeviceSharding(
+        device, memory_kind="device"
+    )
+
+    @functools.partial(
+        jax.jit, in_shardings=host_sharding, out_shardings=device_sharding
+    )
+    def add_one(x):
+      return jax.device_put(x, device_sharding) + 1
+
+    result = add_one(jax_arr)
+    result_np = np.asarray(result)
+    expected = np.arange(1024, dtype=np.uint32) + 1
+    self.assertAllClose(result_np, expected)
+
 
 class CudaArrayInterfaceTest(jtu.JaxTestCase):
 
@@ -338,6 +452,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     dtype=cuda_array_interface_dtypes,
   )
   @jtu.run_on_devices("gpu")
+  @jtu.skip_on_devices("oneapi") # OneAPI does not support `__cuda_array_interface__`
   def testCudaArrayInterfaceWorks(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
@@ -348,6 +463,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     self.assertEqual(z.__array_interface__["typestr"], a["typestr"])
 
   @jtu.run_on_devices("gpu")
+  @jtu.skip_on_devices("oneapi") # OneAPI does not support `__cuda_array_interface__`
   def testCudaArrayInterfaceBfloat16Fails(self):
     rng = jtu.rand_default(self.rng())
     x = rng((2, 2), jnp.bfloat16)
@@ -393,6 +509,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.supported(cuda_array_interface_dtypes),
   )
   @jtu.run_on_devices("gpu")
+  @jtu.skip_on_devices("oneapi") # OneAPI does not support `__cuda_array_interface__`
   def testCaiToJax(self, shape, dtype):
     dtype = np.dtype(dtype)
 

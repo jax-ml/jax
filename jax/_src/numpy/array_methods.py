@@ -228,16 +228,16 @@ def _copy(self: Array) -> Array:
   """
   return lax_numpy.copy(self)
 
-def _cumprod(self: Array, axis: reductions.Axis = None, dtype: DTypeLike | None = None,
-             out: None = None) -> Array:
+def _cumprod(self: Array, axis: int | None = None,
+             dtype: DTypeLike | None = None, out: None = None) -> Array:
   """Return the cumulative product of the array.
 
   Refer to :func:`jax.numpy.cumprod` for the full documentation.
   """
   return reductions.cumprod(self, axis=axis, dtype=dtype, out=out)
 
-def _cumsum(self: Array, axis: reductions.Axis = None, dtype: DTypeLike | None = None,
-            out: None = None) -> Array:
+def _cumsum(self: Array, axis: int | None = None,
+            dtype: DTypeLike | None = None, out: None = None) -> Array:
   """Return the cumulative sum of the array.
 
   Refer to :func:`jax.numpy.cumsum` for the full documentation.
@@ -1022,7 +1022,7 @@ def _chunk_iter(x, size):
   if size > x.shape[0]:
     yield x
   else:
-    num_chunks, tail = ufuncs.divmod(x.shape[0], size)
+    num_chunks, tail = divmod(x.shape[0], size)
     for i in range(num_chunks):
       yield lax_slicing.dynamic_slice_in_dim(x, i * size, size)
     if tail:

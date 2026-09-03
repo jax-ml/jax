@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 
 import functools
+import warnings
 from typing import Any
 
 import jax
@@ -24,6 +25,12 @@ from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import triton as plgpu
 import jax.numpy as jnp
+
+warnings.warn(
+    "jax.experimental.pallas.ops.gpu.decode_attention is deprecated.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 def attn_forward_kernel(
     # inputs

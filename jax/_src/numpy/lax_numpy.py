@@ -30,7 +30,7 @@ from functools import partial
 import math
 import operator
 import os
-from typing import Any, IO, Literal, Protocol, TypeVar, Union, cast, overload
+from typing import Any, IO, Literal, Protocol, Union, cast, overload, TypedDict
 
 import numpy as np
 
@@ -55,6 +55,7 @@ from jax._src.numpy import reductions
 from jax._src.numpy import tensor_contractions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
+from jax._src.numpy.reductions import Axis
 from jax._src.numpy.sorting import argsort, sort
 from jax._src.numpy.vectorize import vectorize
 from jax._src.sharding_impls import canonicalize_sharding
@@ -72,8 +73,6 @@ from jax._src.pjit import auto_axes
 from jax._src.tree_util import tree_map
 
 export = set_module('jax.numpy')
-
-T = TypeVar('T')
 
 # Wrappers for NumPy printoptions
 
@@ -794,7 +793,7 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
   bins_int = core.concrete_or_error(operator.index, bins,
                                     "bins argument of histogram_bin_edges")
   if range is None:
-    range = [arr.min(), arr.max()]
+    range = [0, 1] if arr.size == 0 else [arr.min(), arr.max()]
   range = asarray(range, dtype=dtype)
   if np.shape(range) != (2,):
     raise ValueError(f"`range` must be either None or a sequence of scalars, got {range}")
@@ -879,7 +878,8 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
   bin_edges = histogram_bin_edges(a, bins, range, weights)
   bin_idx = searchsorted(bin_edges, a, side='right')
   bin_idx = where(a == bin_edges[-1], len(bin_edges) - 1, bin_idx)
-  counts = array_creation.zeros(len(bin_edges), weights.dtype).at[bin_idx].add(weights)[1:]
+  counts = array_creation.zeros(len(bin_edges), weights.dtype
+                                ).at[bin_idx].add(weights)[1:]
   if density:
     bin_widths = diff(bin_edges)
     counts = counts / bin_widths / counts.sum()
@@ -1191,6 +1191,7 @@ def permute_dims(a: ArrayLike, /, axes: tuple[int, ...]) -> Array:
            [3, 6]], dtype=int32)
   """
   a = util.ensure_arraylike("permute_dims", a)
+  axes = util.canonicalize_axis_tuple(tuple(axes), a.ndim, allow_duplicate=False)
   return lax.transpose(a, axes)
 
 
@@ -1393,7 +1394,7 @@ def flip(m: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
   return _flip(arr, reductions._ensure_optional_axes(axis))
 
 @api.jit(static_argnames=('axis',))
-def _flip(m: Array, axis: int | tuple[int, ...] | None = None) -> Array:
+def _flip(m: Array, axis: Axis = None) -> Array:
   if axis is None:
     return lax.rev(m, list(range(len(np.shape(m)))))
   axis = _ensure_index_tuple(axis)
@@ -1917,6 +1918,8 @@ def reshape(
       JAX does not support ``order="A"``.
     copy: unused by JAX; JAX always returns a copy, though under JIT the compiler
       may optimize such copies away.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     reshaped copy of input array with the specified shape.
@@ -1998,6 +2001,8 @@ def ravel(a: ArrayLike, order: str = "C", *, out_sharding=None) -> Array:
     order: ``'F'`` or ``'C'``, specifies whether the reshape should apply column-major
       (fortran-style, ``"F"``) or row-major (C-style, ``"C"``) order; default is ``"C"``.
       JAX does not support `order="A"` or `order="K"`.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     flattened copy of input array.
@@ -2327,7 +2332,7 @@ def squeeze(a: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
   return _squeeze(arr, _ensure_index_tuple(axis) if axis is not None else None)
 
 @api.jit(static_argnames=('axis',), inline=True)
-def _squeeze(a: Array, axis: tuple[int, ...]) -> Array:
+def _squeeze(a: Array, axis: tuple[int, ...] | None) -> Array:
   if axis is None:
     a_shape = np.shape(a)
     if not core.is_constant_shape(a_shape):
@@ -3041,7 +3046,7 @@ def broadcast_shapes(*shapes):
 
 
 @export
-def broadcast_arrays(*args: ArrayLike) -> list[Array]:
+def broadcast_arrays(*args: ArrayLike) -> tuple[Array, ...]:
   """Broadcast arrays to a common shape.
 
   JAX implementation of :func:`numpy.broadcast_arrays`. JAX uses NumPy-style
@@ -3062,7 +3067,7 @@ def broadcast_arrays(*args: ArrayLike) -> list[Array]:
     >>> x = jnp.arange(3)
     >>> y = jnp.int32(1)
     >>> jnp.broadcast_arrays(x, y)
-    [Array([0, 1, 2], dtype=int32), Array([1, 1, 1], dtype=int32)]
+    (Array([0, 1, 2], dtype=int32), Array([1, 1, 1], dtype=int32))
 
     >>> x = jnp.array([[1, 2, 3]])
     >>> y = jnp.array([[10],
@@ -3092,6 +3097,8 @@ def broadcast_to(array: ArrayLike, shape: DimSize | Shape,
   Args:
     array: array to be broadcast.
     shape: shape to which the array will be broadcast.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     a copy of array broadcast to the specified shape.
@@ -3129,9 +3136,22 @@ def _split(op: str, ary: ArrayLike,
   if (isinstance(indices_or_sections, (tuple, list)) or
       isinstance(indices_or_sections, (np.ndarray, Array)) and
       indices_or_sections.ndim > 0):
-    split_indices = np.asarray([0] + [
-        core.concrete_dim_or_error(i_s, f"in jax.numpy.{op} argument 1")
-        for i_s in indices_or_sections] + [size])
+    # As in np.split, negative indices are resolved relative to the axis size,
+    # and the result is clipped to [0, size] so that out-of-bound indices yield
+    # empty sections rather than negative sizes. Symbolic indices are left
+    # untouched, and clipping is skipped for symbolic sizes, since neither
+    # comparison is well-defined for them.
+    def _resolve(i_s):
+      i = core.concrete_dim_or_error(i_s, f"in jax.numpy.{op} argument 1")
+      if core.is_symbolic_dim(i):
+        return i
+      if i < 0:
+        i += size
+      if core.is_symbolic_dim(size):
+        return i
+      return np.clip(i, 0, size)
+    split_indices = np.asarray(
+        [0, *(_resolve(i_s) for i_s in indices_or_sections), size])
     sizes = list(np.diff(split_indices))
   else:
     if core.is_symbolic_dim(indices_or_sections):
@@ -3856,8 +3876,8 @@ def unwrap(p: ArrayLike, discont: ArrayLike | None = None,
 
 ### Padding
 
-PadValueLike = Union[T, Sequence[T], Sequence[Sequence[T]]]
-PadValue = tuple[tuple[T, T], ...]
+type PadValueLike[T] = Union[T, Sequence[T], Sequence[Sequence[T]]]
+type PadValue[T] = tuple[tuple[T, T], ...]
 
 class PadStatFunc(Protocol):
   def __call__(self, array: ArrayLike, /, *,
@@ -3865,7 +3885,7 @@ class PadStatFunc(Protocol):
                keepdims: bool = False) -> Array: ...
 
 
-def _broadcast_to_pairs(nvals: PadValueLike, nd: int, name: str) -> PadValue:
+def _broadcast_to_pairs(nvals: PadValueLike[Any], nd: int, name: str) -> PadValue[Any]:
   try:
     nvals = np.asarray(tree_map(
       lambda x: core.concrete_or_error(None, x, context=f"{name} argument of jnp.pad"),
@@ -4147,7 +4167,7 @@ def _pad_func(array: Array, pad_width: PadValue[int], func: Callable[..., Any], 
 
 @api.jit(static_argnums=(1, 2, 4, 5, 6))
 def _pad(array: ArrayLike, pad_width: PadValueLike[int], mode: str,
-         constant_values: ArrayLike, stat_length: PadValueLike[int],
+         constant_values: ArrayLike, stat_length: PadValueLike[int] | None,
          end_values: PadValueLike[ArrayLike], reflect_type: str):
   array = asarray(array)
   nd = np.ndim(array)
@@ -4351,7 +4371,8 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | np.ndarray],
   end_values = kwargs.get('end_values', 0)
   reflect_type = kwargs.get('reflect_type', "even")
 
-  return _pad(array, pad_width, mode, constant_values, stat_length, end_values, reflect_type)
+  return _pad(array, pad_width, mode, constant_values, stat_length, end_values,
+              reflect_type)
 
 ### Array-creation functions
 
@@ -4814,8 +4835,6 @@ def column_stack(tup: np.ndarray | Array | Sequence[ArrayLike]) -> Array:
       Input arrays will be promoted to at least rank 2. If a single array is given
       it will be treated equivalently to `tup = unstack(tup)`, but the implementation
       will avoid explicit unstacking.
-    dtype: optional dtype of the resulting array. If not specified, the dtype
-      will be determined via type promotion rules described in :ref:`type-promotion`.
 
   Returns:
     the stacked result.
@@ -4968,7 +4987,7 @@ def _atleast_nd(x: ArrayLike, n: int) -> Array:
   m = np.ndim(x)
   return lax.broadcast(x, (1,) * (n - m)) if m < n else asarray(x)
 
-def _block(xs: ArrayLike | list[ArrayLike]) -> tuple[Array, int]:
+def _block(xs: ArrayLike | list[Any]) -> tuple[Array, int]:
   if isinstance(xs, tuple):
     raise ValueError("jax.numpy.block does not allow tuples, got {}"
                      .format(xs))
@@ -4987,7 +5006,7 @@ def _block(xs: ArrayLike | list[ArrayLike]) -> tuple[Array, int]:
 
 @export
 @api.jit
-def block(arrays: ArrayLike | list[ArrayLike]) -> Array:
+def block(arrays: ArrayLike | list[Any]) -> Array:
   """Create an array from a list of blocks.
 
   JAX implementation of :func:`numpy.block`.
@@ -6007,7 +6026,7 @@ def _arange_dynamic(
 
 @export
 def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
-             indexing: str = 'xy') -> list[Array]:
+             indexing: str = 'xy') -> tuple[Array, ...]:
   """Construct N-dimensional grid arrays from N 1-dimensional vectors.
 
   JAX implementation of :func:`numpy.meshgrid`.
@@ -6023,7 +6042,7 @@ def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
       for matrix indexing.
 
   Returns:
-    A length-N list of grid arrays.
+    A length-N tuple of grid arrays.
 
   See also:
     - :func:`jax.numpy.indices`: generate a grid of indices.
@@ -6083,7 +6102,7 @@ def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
   output = [lax.broadcast_in_dim(a, _a_shape(i, a), (i,)) for i, a, in enumerate(args)]
   if indexing == "xy" and len(args) >= 2:
     output[0], output[1] = output[1], output[0]
-  return output
+  return tuple(output)
 
 
 @export
@@ -6275,6 +6294,8 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
       If ``sum(repeats)`` is larger than the specified ``total_repeat_length``,
       the remaining values will be discarded. If ``sum(repeats)`` is smaller
       than ``total_repeat_length``, the final value will be repeated.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     an array constructed from repeated values of ``a``.
@@ -6559,8 +6580,7 @@ def tri(N: int, M: int | None = None, k: int = 0, dtype: DTypeLike | None = None
            [1., 1., 0., 0.]], dtype=float32)
   """
   if dtype is None:
-    # TODO(phawkins): this is a strange default.
-    dtype = np.dtype(np.float32)
+    dtype = dtypes.default_float_dtype()
   else:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "tri")
   M = M if M is not None else N
@@ -9450,7 +9470,10 @@ def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False,
   if bins_arr.shape[0] == 0:
     return array_creation.zeros_like(x, dtype=np.int32)
   side = 'right' if not right else 'left'
-  kwds: dict[str, str] = {} if method is None else {'method': method}
+
+  class Kwds(TypedDict, total=False):
+    method: str
+  kwds: Kwds = {} if method is None else {'method': method}
   return where(
     bins_arr[-1] >= bins_arr[0],
     searchsorted(bins_arr, x, side=side, **kwds),

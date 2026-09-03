@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import enum
-from typing import Any, TypeAlias
+from typing import Any
 
 import jax
 from jax._src import core as jax_core
@@ -41,7 +41,7 @@ import jax.numpy as jnp
 import numpy as np
 
 
-Ref: TypeAlias = state.AbstractRef | state.TransformedRef
+type Ref = state.AbstractRef | state.TransformedRef
 
 Slice = indexing.Slice
 
@@ -310,9 +310,8 @@ atomic_rmw_p = jax_core.Primitive("atomic_rmw")
 
 
 def _atomic_rmw_discharge_rule(
-    in_avals, out_avals, *args_flat, args_tree, atomic_type: AtomicOpType
+    ctx, *args_flat, args_tree, atomic_type: AtomicOpType
 ):
-  del out_avals  # Unused.
   ref, transforms, val, mask = args_tree.unflatten(args_flat)
   *prev_transforms, idx = transforms
   ref = state_discharge.transform_array(ref, prev_transforms)
@@ -348,7 +347,7 @@ def _atomic_rmw_discharge_rule(
     x_new = ref.at[idx.indices].set(monoid(out, val))
   else:
     raise NotImplementedError
-  return (x_new,) + (None,) * (len(in_avals) - 1), out
+  return (x_new,) + (None,) * (len(ctx.in_avals) - 1), out
 
 
 state_discharge.register_discharge_rule(atomic_rmw_p)(
@@ -648,8 +647,8 @@ def atomic_cas(ref, cmp, val):
 
 
 @state_discharge.register_discharge_rule(atomic_cas_p)
-def _atomic_cas_discharge_rule(in_avals, out_avals, ref, cmp, val):
-  del in_avals, out_avals
+def _atomic_cas_discharge_rule(ctx, ref, cmp, val):
+  del ctx
   new_val = jnp.where(ref == cmp, val, ref)
   return (new_val, None, None), ref
 

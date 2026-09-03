@@ -479,6 +479,10 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
   def test_shmap_all_to_all(self):
     if jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("TODO(b/268295912): ShardingRemover crash")
+    if jtu.test_device_matches(["tpu"]) and (
+        not jtu.is_device_tpu_at_least(4) or
+        jtu.is_device_tpu_at_least(7)):
+      raise unittest.SkipTest("Shardy compilation error on TPU v3 and v7")
 
     mesh = Mesh(self.devices, axis_names=('x'))
     a = np.arange(4 * 4, dtype=np.float32).reshape((4, 4))

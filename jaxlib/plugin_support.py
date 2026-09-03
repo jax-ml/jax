@@ -23,7 +23,13 @@ from .version import __version__ as jaxlib_version
 
 _PLUGIN_MODULE_NAMES = {
     "cuda": ["jax_cuda13_plugin", "jax_cuda12_plugin"],
-    "rocm": ["jax_rocm7_plugin", "jax_rocm60_plugin"],
+    # ROCm plugin wheels are named jax_rocm<major>_plugin. jaxlib only tries
+    # the names listed here; it does not scan for others. A new ROCm major
+    # needs its name added in a jaxlib release. Using a plugin wheel whose
+    # major is not listed (e.g. jax_rocmXX_plugin on jaxlib that only lists
+    # rocm10/7/60) is unsupported: GPU kernel modules will not load.
+    "rocm": ["jax_rocm10_plugin", "jax_rocm7_plugin", "jax_rocm60_plugin"],
+    "oneapi": ["jax_oneapi_plugin"],
 }
 
 
@@ -34,7 +40,9 @@ def import_from_plugin(
 
   Args:
     plugin_name: The name of the plugin. The supported values are "cuda" or
-      "rocm".
+      "rocm". For ROCm, only plugin packages named in
+      _PLUGIN_MODULE_NAMES["rocm"] are loaded. Installing a plugin for an
+      unlisted ROCm major is unsupported.
     submodule_name: The name of the submodule to import, e.g. "_triton".
     check_version: Whether to check that the plugin version is compatible with
       the jaxlib version. If the plugin is installed but the versions are not

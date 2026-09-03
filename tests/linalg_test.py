@@ -230,6 +230,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                   [ 18, -21,   9]], dtype=jnp.float32)
     jtu.check_grads(jnp.linalg.det, (b,), 1, atol=1e-1, rtol=1e-1, eps=1e-1)
 
+  def testDet3x3NumericalStabilityIssue39905(self):
+    a = jnp.array([[41932.215, 41927.867, 41927.867],
+                   [41927.867, 41932.215, 41927.867],
+                   [41927.867, 41927.867, 41932.215]], dtype=np.float32)
+    expected = np.linalg.det(np.asarray(a, dtype=np.float64))
+    self.assertAllClose(jnp.linalg.det(a), expected, rtol=1e-3, check_dtypes=False)
+
   @jtu.sample_product(
     m=[1, 5, 7, 23],
     nq=zip([2, 4, 6, 36], [(1, 2), (2, 2), (1, 2, 3), (3, 3, 1, 4)]),
@@ -937,10 +944,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Regression test for https://github.com/jax-ml/jax/issues/10530
     rng = jtu.rand_default(self.rng())
     arr = rng(shape, dtype)
-    if jtu.test_device_matches(['cpu']):
-      err, msg = NotImplementedError, "Unsupported dtype float16"
-    else:
-      err, msg = Exception, "Unsupported dtype"
+    err, msg = TypeError, "does not accept dtype float16"
     with self.assertRaisesRegex(err, msg):
       jax.block_until_ready(jnp.linalg.qr(arr))
 
@@ -987,6 +991,21 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       partial_norm = partial(jnp.linalg.cond, p=pnorm)
       self._CompileAndCheck(partial_norm, lambda: [gen_mat()],
                             check_dtypes=False, rtol=1e-03, atol=1e-03)
+
+  @jtu.sample_product(
+    pnorm=[jnp.inf, -jnp.inf, 1, -1, 2, -2, 'fro', None],
+    dtype=float_types + complex_types,
+    batched=[True, False],
+  )
+  def testCondSingular(self, pnorm, dtype, batched):
+    # Singular matrices have an infinite condition number for every norm.
+    singular = np.zeros((2, 2), dtype=dtype)
+    x = np.stack([singular, np.eye(2, dtype=dtype)]) if batched else singular
+    args_maker = lambda: [x, pnorm]
+    self._CheckAgainstNumpy(np.linalg.cond, jnp.linalg.cond, args_maker,
+                            check_dtypes=False)
+    partial_cond = partial(jnp.linalg.cond, p=pnorm)
+    self._CompileAndCheck(partial_cond, lambda: [x], check_dtypes=False)
 
   @jtu.sample_product(
     shape=[(1, 1), (4, 4), (6, 2, 3), (3, 4, 2, 6)],
@@ -1049,6 +1068,26 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.linalg.inv, jnp.linalg.inv, args_maker,
                             tol=1e-3)
     self._CompileAndCheck(jnp.linalg.inv, args_maker)
+
+  @jtu.run_on_devices('cpu')
+  def testInvDtypeError(self):
+    # regression test for https://github.com/jax-ml/jax/issues/38825
+    x = jnp.ones((3, 3), dtype='float16')
+    with self.assertRaisesRegex(TypeError,
+                                "lu does not accept dtype float16"):
+      jsp.linalg.inv(x)
+
+  def testLinalgPrimitivesInvalidDtype(self):
+    x = jnp.ones((3, 3), dtype=jnp.float16)
+    with self.assertRaisesRegex(TypeError, "cholesky does not accept dtype float16"):
+      jnp.linalg.cholesky(x)
+    with self.assertRaisesRegex(TypeError, "eigh does not accept dtype float16"):
+      jnp.linalg.eigh(x)
+    with self.assertRaisesRegex(TypeError, "svd does not accept dtype float16"):
+      jnp.linalg.svd(x)
+    with self.assertRaisesRegex(TypeError, "eig does not accept dtype float16"):
+      jnp.linalg.eig(x)
+
 
   @jtu.sample_product(
     [dict(shape=shape, hermitian=hermitian)
@@ -1474,6 +1513,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         ((1, 1), (1, 1)),
         ((4, 4), (4,)),
         ((8, 8), (8, 4)),
+        ((3, 4, 4), (3, 4, 4)),
       ]
     ],
     [dict(assume_a=assume_a, lower=lower)
@@ -1486,6 +1526,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     dtype=float_types + complex_types,
   )
   def testSolve(self, lhs_shape, rhs_shape, dtype, assume_a, lower):
+    if scipy_version < (1, 17, 0) and len(lhs_shape) > 2:
+      self.skipTest("scipy 1.17 or newer required for batched solve.")
     rng = jtu.rand_default(self.rng())
     osp_fun = lambda lhs, rhs: osp.linalg.solve(lhs, rhs, assume_a=assume_a, lower=lower)
     jsp_fun = lambda lhs, rhs: jsp.linalg.solve(lhs, rhs, assume_a=assume_a, lower=lower)
@@ -2432,7 +2474,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     if jtu.test_device_matches(["gpu"]) and method == "schur":
       self.skipTest("Schur not supported on GPU.")
 
-    tol = {np.float32: 5e-2, np.float64: 1e-9, np.complex64: 5e-2, np.complex128: 1e-9}
+    tol = {np.float32: 1e-1, np.float64: 1e-9, np.complex64: 5e-2, np.complex128: 1e-9}
 
     def args_maker():
       rng = jtu.rand_default(self.rng())

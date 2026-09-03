@@ -51,9 +51,10 @@ def jax_docs_dir() -> str:
 
 
 UNDOCUMENTED_APIS = {
-  'jax': ['auto_pcast', 'empty_ref', 'memory', 'NamedSharding', 'P', 'Ref', 'Shard', 'reshard', 'ad_checkpoint', 'api_util', 'checkpoint_policies', 'core', 'custom_derivatives', 'custom_transpose', 'debug_key_reuse', 'device_put_replicated', 'device_put_sharded', 'effects_barrier', 'example_libraries', 'explain_cache_misses', 'experimental', 'extend', 'float0', 'free_ref', 'freeze', 'fwd_and_bwd', 'host_count', 'host_id', 'host_ids', 'interpreters', 'jax', 'jax2tf_associative_scan_reductions', 'legacy_prng_key', 'lib', 'make_user_context', 'new_ref', 'no_execution', 'numpy_dtype_promotion', 'remat', 'remove_size_one_mesh_axis_from_type', 'softmax_custom_jvp', 'threefry_partitionable', 'thread_guard', 'tools', 'transfer_guard_device_to_device', 'transfer_guard_device_to_host', 'transfer_guard_host_to_device', 'version', 'allow_f16_reductions'],
+  'jax': ['use_abstract_mesh', 'get_abstract_mesh', 'get_mesh', 'auto_pcast', 'empty_ref', 'memory', 'NamedSharding', 'P', 'Ref', 'Shard', 'reshard', 'ad_checkpoint', 'api_util', 'checkpoint_policies', 'core', 'custom_derivatives', 'custom_transpose', 'debug_key_reuse', 'device_put_replicated', 'device_put_sharded', 'effects_barrier', 'example_libraries', 'explain_cache_misses', 'experimental', 'extend', 'float0', 'free_ref', 'freeze', 'host_count', 'host_id', 'host_ids', 'interpreters', 'jax', 'jax2tf_associative_scan_reductions', 'legacy_prng_key', 'lib', 'make_user_context', 'new_ref', 'no_execution', 'numpy_dtype_promotion', 'remat', 'remove_size_one_mesh_axis_from_type', 'softmax_custom_jvp', 'threefry_partitionable', 'thread_guard', 'tools', 'transfer_guard_device_to_device', 'transfer_guard_device_to_host', 'transfer_guard_host_to_device', 'version', 'allow_f16_reductions'],
   'jax.ref': ['empty_ref', 'free_ref'],
-  'jax.ad_checkpoint': ['checkpoint', 'checkpoint_policies', 'print_saved_residuals', 'remat', 'Offloadable', 'Recompute', 'Saveable'],
+  'jax.ad_checkpoint': ['checkpoint', 'checkpoint_policies', 'checkpoint_name_fwd', 'print_saved_residuals', 'remat', 'Offloadable', 'Recompute', 'Saveable'],
+  'jax.checkpoint_policies': ['save_anything_except_these_names'],
   'jax.custom_batching': ['custom_vmap', 'sequential_vmap'],
   'jax.custom_derivatives': ['CustomVJPPrimal', 'SymbolicZero', 'closure_convert', 'custom_gradient', 'custom_jvp', 'custom_jvp_call_p', 'custom_vjp', 'custom_vjp_call_p', 'custom_vjp_primal_tree_values', 'linear_call', 'remat_opt_p', 'zero_from_primal'],
   'jax.debug': ['DebugEffect', 'OrderedDebugEffect', 'log'],
@@ -67,7 +68,7 @@ UNDOCUMENTED_APIS = {
   'jax.profiler': ['ProfileData', 'ProfileEvent', 'ProfileOptions', 'ProfilePlane', 'stop_server'],
   'jax.random': ['key_impl', 'random_gamma_p'],
   'jax.scipy.special': ['bessel_jn'],
-  'jax.sharding': ['AbstractDevice', 'AbstractMesh', 'AxisType', 'auto_axes', 'explicit_axes', 'get_abstract_mesh', 'reshard', 'set_mesh', 'use_abstract_mesh', 'get_mesh', 'ManualAxisType', 'make_single_device_sharding'],
+  'jax.sharding': ['UnreducedKind', 'AbstractDevice', 'AbstractMesh', 'AxisType', 'auto_axes', 'explicit_axes', 'get_abstract_mesh', 'reshard', 'set_mesh', 'use_abstract_mesh', 'get_mesh', 'ManualAxisType', 'make_single_device_sharding'],
   'jax.stages': ['ArgInfo', 'CompilerOptions'],
   'jax.tree_util': ['DictKey', 'FlattenedIndexKey', 'GetAttrKey', 'PyTreeDef', 'SequenceKey', 'default_registry'],
 }
@@ -82,6 +83,7 @@ MODULES_TO_SKIP = [
   "jax.core",  # internal tools, not documented.
   "jax.example_libraries",  # TODO(jakevdp): un-skip these.
   "jax.extend.backend",
+  "jax.extend.core",
   "jax.extend.core.primitives",
   "jax.extend.ifrt_programs",
   "jax.extend.mlir",

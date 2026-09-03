@@ -67,9 +67,9 @@ absl::StatusOr<std::string> GetSmVersion(int major, int minor) {
     }
     for (const llvm::SubtargetSubTypeKV& subtype :
          subtarget_info->getAllProcessorDescriptions()) {
-      if (absl::StartsWith(subtype.Key, sm_base) &&
-          absl::EndsWith(subtype.Key, "a")) {
-        sm_arch_specific = subtype.Key;
+      if (absl::StartsWith(subtype.key(), sm_base) &&
+          absl::EndsWith(subtype.key(), "a")) {
+        sm_arch_specific = subtype.key();
         break;
       }
     }
@@ -97,7 +97,7 @@ absl::StatusOr<int> GetLatestLlvmPtxIsaVersion() {
   int llvm_latest_version = 0;
   for (const llvm::SubtargetFeatureKV& feature :
        subtarget_info->getAllProcessorFeatures()) {
-    std::string_view version_string = feature.Key;
+    std::string_view version_string = feature.key();
     if (absl::ConsumePrefix(&version_string, "ptx")) {
       int version;
       if (!absl::SimpleAtoi(version_string, &version)) {

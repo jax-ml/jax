@@ -34,6 +34,7 @@ limitations under the License.
 #include "jaxlib/ffi_helpers.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
+#include "tsl/platform/platform.h"
 
 namespace ffi = xla::ffi;
 
@@ -75,6 +76,7 @@ void CopyIfDiffBuffer(ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out) {
 // cost_per_matrix is a FLOP estimate for each batch element.
 int64_t GetLapackBatchChunkSize(int64_t batch_size, int64_t cost_per_matrix,
                                 int64_t num_threads) {
+#ifdef PLATFORM_GOOGLE
   // We want the minimum chunk size to be at least as big as the cost of a
   // thread context switch. Let's assume that's about 2us and each core can do
   // 100 GFLOP/s. So our minimum chunk size is 2e-6 * 1e11 = 2e5 FLOP.
@@ -95,6 +97,13 @@ int64_t GetLapackBatchChunkSize(int64_t batch_size, int64_t cost_per_matrix,
       (kMinWorkPerTask + cost_per_matrix - 1) / cost_per_matrix;
 
   return std::max(chunk_for_even_division, chunk_for_min_work);
+#else
+  // Parallelizing LAPACK routines over a thread pool is disabled in open-source
+  // builds because it can lead to performance regressions or crashes due to
+  // interactions with external LAPACK/BLAS implementations (e.g.,
+  // OpenBLAS/MKL).
+  return batch_size;
+#endif  // PLATFORM_GOOGLE
 }
 
 // Divide batch_count elements into chunk_size pieces, and call run_chunk on
@@ -102,6 +111,7 @@ int64_t GetLapackBatchChunkSize(int64_t batch_size, int64_t cost_per_matrix,
 static ffi::Error ParallelBatchMap(
     ffi::ThreadPool thread_pool, int64_t batch_count, int64_t chunk_size,
     absl::FunctionRef<void(int64_t, int64_t)> run_chunk) {
+#ifdef PLATFORM_GOOGLE
   if (chunk_size >= batch_count) {
     run_chunk(0, batch_count);
     return ffi::Error::Success();
@@ -121,6 +131,14 @@ static ffi::Error ParallelBatchMap(
     counter.Wait();
     return ffi::Error::Success();
   }
+#else
+  // Parallelizing LAPACK routines over a thread pool is disabled in open-source
+  // builds because it can lead to performance regressions or crashes due to
+  // interactions with external LAPACK/BLAS implementations (e.g.,
+  // OpenBLAS/MKL).
+  run_chunk(0, batch_count);
+  return ffi::Error::Success();
+#endif  // PLATFORM_GOOGLE
 }
 
 //== Triangular System Solver ==//

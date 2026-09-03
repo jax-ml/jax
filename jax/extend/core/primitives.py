@@ -27,6 +27,12 @@ from jax._src.core import (
   closed_call_p as closed_call_p
 )
 
+from jax._src.lax.eval_jaxpr import (
+  create_call_primitive as create_call_primitive,
+  eval_jaxpr_transpose as eval_jaxpr_transpose,
+  register_call_primitive_rules as register_call_primitive_rules,
+)
+
 from jax._src.custom_derivatives import (
   custom_jvp_call_p as custom_jvp_call_p,
   custom_vjp_call_p as custom_vjp_call_p,

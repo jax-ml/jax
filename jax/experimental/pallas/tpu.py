@@ -15,40 +15,45 @@
 """Mosaic-specific Pallas APIs."""
 import typing
 
+from jax._src import core as _jax_core
 from jax._src.pallas.einshape import einshape as einshape
 from jax._src.pallas.mosaic import core as core
+from jax._src.pallas.mosaic.core import CompilerParams as CompilerParams
 from jax._src.pallas.mosaic.core import CoreType as CoreType
-from jax._src.pallas.mosaic.core import create_tensorcore_mesh as create_tensorcore_mesh
 from jax._src.pallas.mosaic.core import dma_semaphore as dma_semaphore
 from jax._src.pallas.mosaic.core import GridDimensionSemantics as GridDimensionSemantics
 from jax._src.pallas.mosaic.core import MemorySpace as MemorySpace
 from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec as PrefetchScalarGridSpec
 from jax._src.pallas.mosaic.core import SemaphoreType as SemaphoreType
 from jax._src.pallas.mosaic.core import SideEffectType as SideEffectType
-from jax._src.pallas.mosaic.core import CompilerParams as CompilerParams
-from jax._src.pallas.mosaic.helpers import sync_copy as sync_copy
+from jax._src.pallas.mosaic.core import TensorCoreMesh as TensorCoreMesh
 from jax._src.pallas.mosaic.helpers import core_barrier as core_barrier
 from jax._src.pallas.mosaic.helpers import run_on_first_core as run_on_first_core
-from jax._src.pallas.mosaic.interpret.params import InterpretParams as InterpretParams
+from jax._src.pallas.mosaic.helpers import sync_copy as sync_copy
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import force_tpu_interpret_mode as force_tpu_interpret_mode
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import reset_tpu_interpret_mode_state as reset_tpu_interpret_mode_state
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import set_tpu_interpret_mode as set_tpu_interpret_mode
+from jax._src.pallas.mosaic.interpret.params import InterpretParams as InterpretParams
 from jax._src.pallas.mosaic.lowering import LoweringException as LoweringException
 from jax._src.pallas.mosaic.pipeline import BufferedRef as BufferedRef
 from jax._src.pallas.mosaic.pipeline import BufferedRefBase as BufferedRefBase
 from jax._src.pallas.mosaic.pipeline import BufferType as BufferType
 from jax._src.pallas.mosaic.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations as emit_pipeline_with_allocations
+from jax._src.pallas.mosaic.pipeline import PipelineStep as PipelineStep
 from jax._src.pallas.mosaic.primitives import async_copy as async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy as async_remote_copy
 from jax._src.pallas.mosaic.primitives import bitcast as bitcast
+from jax._src.pallas.mosaic.primitives import conv as conv
 from jax._src.pallas.mosaic.primitives import get_barrier_semaphore as get_barrier_semaphore
 from jax._src.pallas.mosaic.primitives import load as load
 from jax._src.pallas.mosaic.primitives import make_async_copy as make_async_copy
 from jax._src.pallas.mosaic.primitives import make_async_remote_copy as make_async_remote_copy
-from jax._src.pallas.mosaic.primitives import matmul_push_rhs as matmul_push_rhs
 from jax._src.pallas.mosaic.primitives import matmul_acc_lhs as matmul_acc_lhs
+from jax._src.pallas.mosaic.primitives import matmul_lhs_fifo as matmul_lhs_fifo
 from jax._src.pallas.mosaic.primitives import matmul_pop as matmul_pop
+from jax._src.pallas.mosaic.primitives import matmul_pop_fifo as matmul_pop_fifo
+from jax._src.pallas.mosaic.primitives import matmul_push_rhs as matmul_push_rhs
 from jax._src.pallas.mosaic.primitives import pack_elementwise as pack_elementwise
 from jax._src.pallas.mosaic.primitives import prng_random_bits as prng_random_bits
 from jax._src.pallas.mosaic.primitives import prng_seed as prng_seed
@@ -71,27 +76,35 @@ from jax._src.pallas.mosaic.tpu_info import get_tpu_info_for_chip as get_tpu_inf
 from jax._src.pallas.mosaic.tpu_info import is_tpu_device as is_tpu_device
 from jax._src.pallas.mosaic.tpu_info import Tiling as Tiling
 from jax._src.pallas.mosaic.tpu_info import TpuInfo as TpuInfo
+from jax._src.pallas.primitives import reciprocal as reciprocal
 
-from jax._src.pallas import core as _pl_core
 
 PARALLEL = GridDimensionSemantics.PARALLEL
 CORE_PARALLEL = GridDimensionSemantics.CORE_PARALLEL
 SUBCORE_PARALLEL = GridDimensionSemantics.SUBCORE_PARALLEL
 ARBITRARY = GridDimensionSemantics.ARBITRARY
 
+ACC = core.AccMemorySpace
 CMEM = MemorySpace.CMEM
 SMEM = MemorySpace.SMEM
 VMEM = MemorySpace.VMEM
 VMEM_SHARED = MemorySpace.VMEM_SHARED
 HBM = MemorySpace.HBM
+HOST = _jax_core.MemorySpace.Host
 SEMAPHORE = MemorySpace.SEMAPHORE
 
 
 _deprecations = {
+    # Added June 30, 2026
+    "create_tensorcore_mesh": (
+        "pltpu.create_tensorcore_mesh is deprecated, use pltpu.TensorCoreMesh"
+        " instead.",
+        core.create_tensorcore_mesh,
+    ),
     # Added June 4, 2026
     "HOST": (
         "pltpu.HOST is deprecated, use pl.HOST instead.",
-        _pl_core.MemorySpace.HOST,
+        _jax_core.MemorySpace.Host,
     ),
     # Finalized in JAX v0.11.0
     # TODO(jakevdp): remove these for JAX v0.12.0.
@@ -123,9 +136,11 @@ _deprecations = {
 }
 
 if typing.TYPE_CHECKING:
-  HOST = _pl_core.MemorySpace.HOST
+  HOST = _jax_core.MemorySpace.Host
+  from jax._src.pallas.mosaic.core import create_tensorcore_mesh as create_tensorcore_mesh
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
+del _jax_core
