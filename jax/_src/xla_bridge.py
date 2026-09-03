@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import atexit
 from collections.abc import Callable, Mapping
+from collections.abc import Sequence
 import dataclasses
 from functools import partial
 import importlib
@@ -32,18 +33,18 @@ import pkgutil
 import platform as py_platform
 import threading
 from typing import Any
-from collections.abc import Sequence
 import warnings
 
 from jax._src import config
 from jax._src import distributed
 from jax._src import hardware_utils
+from jax._src import lib as jaxlib
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.cloud_tpu_init import get_tpu_library_path
-from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib import _profiler
+from jax._src.lib import xla_client
 
 logger = logging.getLogger(__name__)
 
@@ -1166,7 +1167,9 @@ def host_ids(
 
 
 def using_pjrt_c_api(backend=None):
-  return "PJRT C API" in get_backend(backend).platform_version
+  if jaxlib.jaxlib_extension_version < 491:
+    return "PJRT C API" in get_backend(backend).platform_version
+  return get_backend(backend).is_c_api
 
 def make_pjrt_topology(platform: str, topology_name='', **kwargs):
   _discover_and_register_pjrt_plugins()
