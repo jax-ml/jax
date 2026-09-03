@@ -629,6 +629,15 @@ def tanh(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> A
     Array of the same shape and dtype as ``x`` containing the element-wise
     hyperbolic tangent.
 
+  Note:
+    By default, the gradient of ``tanh`` is computed from the forward
+    output :math:`y = \mathrm{tanh}(x)` as :math:`(1 + y)(1 - y)`, which
+    evaluates to zero when :math:`y` rounds to :math:`\pm 1` in floating-point
+    arithmetic (e.g., :math:`|x| \ge 9.01` for ``float32``). Passing
+    ``accuracy=jax.lax.AccuracyMode.HIGHEST`` computes the derivative directly
+    from ``x`` as :math:`4 \, \mathrm{logistic}(2x) \, \mathrm{logistic}(-2x)`,
+    preserving non-zero gradients in saturated regions.
+
   See also:
     - :func:`jax.lax.atanh`: elementwise inverse hyperbolic tangent.
     - :func:`jax.lax.cosh`: elementwise hyperbolic cosine.

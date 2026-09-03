@@ -165,6 +165,32 @@ class LaxTest(jtu.JaxTestCase):
         grads, neg_grads, atol=jtu.default_tolerance()[np.dtype(np.float32)], rtol=0.0
     )
 
+  def testTanhSaturatedGrad(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40388.
+    # For x <= -9.0109138 in float32, tanh(x) rounds to -1.0. Because the default
+    # JVP rule computes the derivative from the forward output y = tanh(x) as
+    # (1 + y) * (1 - y), it suffers catastrophic cancellation and returns 0.0.
+    # With accuracy=AccuracyMode.HIGHEST, the derivative is computed directly
+    # from x as 4 * logistic(2x) * logistic(-2x), preserving the non-zero float32
+    # gradient in the saturated region.
+    x = jnp.float32(-9.010913848876953)
+    expected = jnp.float32(5.9604584379258085e-08)
+    default_grad = jax.grad(lax.tanh)(x)
+    self.assertEqual(default_grad, 0.0)
+    high_acc_grad = jax.grad(
+        lambda z: lax.tanh(z, accuracy=lax.AccuracyMode.HIGHEST)
+    )(x)
+    rtol = (
+        2e-6
+        if (
+            jtu.is_device_tpu()
+            and not jtu.is_device_tpu(5, "p")
+            and not jtu.is_device_tpu_at_least(6)
+        )
+        else 1e-6
+    )
+    self.assertAllClose(high_acc_grad, expected, atol=0.0, rtol=rtol)
+
   def testExpm1Grad(self):
     x = jnp.arange(-80.0, 80.0, 1.0, dtype=jnp.float32)
     expected = jax.vmap(jax.grad(lambda x: lax.exp(x, accuracy=lax.AccuracyMode.HIGHEST)))(x)

@@ -1048,7 +1048,14 @@ def tanh(x: ArrayLike, /) -> Array:
     to inexact dtype.
 
   Note:
-    ``jnp.tanh`` is equivalent to computing ``-1j * jnp.tan(1j * x)``.
+    - ``jnp.tanh`` is equivalent to computing ``-1j * jnp.tan(1j * x)``.
+    - By default, the gradient of ``tanh`` is computed using the forward output
+      :math:`y = \mathrm{tanh}(x)` as :math:`(1 + y)(1 - y)`. When :math:`|x|`
+      is large enough that :math:`y` rounds to :math:`\pm 1` in floating-point
+      arithmetic (e.g., :math:`|x| \ge 9.01` for ``float32``), the computed
+      gradient evaluates to ``0.0``. To preserve non-zero gradients in saturated
+      regions, use :func:`jax.lax.tanh` with
+      ``accuracy=jax.lax.AccuracyMode.HIGHEST``.
 
   See also:
     - :func:`jax.numpy.sinh`: Computes the element-wise hyperbolic sine of the input.
