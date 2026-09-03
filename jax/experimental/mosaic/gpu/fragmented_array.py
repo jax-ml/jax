@@ -3904,7 +3904,7 @@ class FragmentedArray:
     else:
       red = "red"
       scope = "cta" if is_smem else "gpu"
-      space = ".shared::cta" if is_smem else ""
+      space = ".shared::cta" if is_smem else ".global"
       ptr_constraint = "r" if is_smem else "l"
     element_type = self.mlir_dtype
     element_bitwidth = utils.bitwidth(element_type)
