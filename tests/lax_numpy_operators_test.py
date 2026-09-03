@@ -769,6 +769,18 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self.assertArraysEqual(jnp.isneginf(arr), expected_neginf,
                            err_msg=f"isneginf check failed for {dtype}")
 
+  @jtu.sample_product(dtype=[f for f in float_dtypes if f != jnp.bfloat16])
+  def testNextafterGrad(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/38679
+    # nextafter returns the next representable float value, so its gradient
+    # is defined to be zero almost everywhere. jax.grad used to raise
+    # NotImplementedError because nextafter_p had no JVP rule registered.
+    x = jnp.array(1, dtype=dtype)
+    y = jnp.array(2, dtype=dtype)
+    dx, dy = jax.grad(jnp.nextafter, argnums=(0, 1))(x, y)
+    self.assertArraysEqual(dx, jnp.zeros_like(dx))
+    self.assertArraysEqual(dy, jnp.zeros_like(dy))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
