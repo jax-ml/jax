@@ -24,6 +24,7 @@ from collections.abc import Callable, Iterator
 
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
+from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvvm
@@ -884,6 +885,18 @@ def commit_arrive(
         "barrier must be a Mosaic barrier or a SMEM pointer, got:"
         f" {barrier.type}"
     )
+  # Barrier expects 128 arrivals. Hardware commit provides 1 arrival,
+  # so we pre-arrive 127 times.
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [barrier],
+      """
+  {
+      mbarrier.arrive.release.cta.shared::cta.b64 _, [$0], 127;
+  }""",
+      "r",
+      has_side_effects=True,
+  )
   if collective:
     if ctx is None:
       raise ValueError("ctx must be provided for collective barriers")
@@ -892,6 +905,23 @@ def commit_arrive(
           "Collective arrivals require the minormost cluster dimension to"
           f" have size 2, got: {ctx.cluster_size}"
       )
+    i32 = ir.IntegerType.get_signless(32)
+    peer_cta_rank = arith.xori(
+        arith.index_castui(i32, utils.cluster_idx()),
+        utils.c(1, i32),
+    )
+    llvm.inline_asm(
+        ir.Type.parse("!llvm.void"),
+        [barrier, peer_cta_rank],
+        """
+    {
+        .reg .b32 mapped_addr;
+        mapa.shared::cluster.u32 mapped_addr, $0, $1;
+        mbarrier.arrive.shared::cluster.b64 _, [mapped_addr], 127;
+    }""",
+        "r,r",
+        has_side_effects=True,
+    )
     i16 = ir.IntegerType.get_signless(16)
     if ctx.cluster_size == (2, 1, 1):
       mask = arith.constant(i16, 3)
