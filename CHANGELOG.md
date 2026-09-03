@@ -120,6 +120,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `custom_partitioning`, `custom_gradient`, `closure_convert`,
     `linear_call`, or `run_state`) is retraced with different-shaped
     arguments ({jax-issue}`#40110`).
+  * Runtime errors surfacing through the C++ fast path of jitted functions
+    are now raised as {class}`jax.errors.JaxRuntimeError` instead of a
+    plain `ValueError`. Since JAX 0.7.2 this affected exceptions raised
+    inside a {func}`jax.pure_callback` after an earlier successful call of
+    the jitted function; longer-standing instances of the same bug include
+    errors such as reusing a donated buffer. Code that catches `ValueError`
+    for these failures should catch `jax.errors.JaxRuntimeError` (a
+    `RuntimeError` subclass) instead ({jax-issue}`#34083`).
   * The batching rules of the cuDNN fused attention primitives (used by
     {func}`jax.nn.dot_product_attention` with `implementation='cudnn'`) now
     support operands that do not carry the vmap axis, including a shared
