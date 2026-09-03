@@ -2016,7 +2016,11 @@ def _index_to_start_size_stride(
     stride = 1
     squeeze = True
   else:
-    if np.shape(idx):
+    # ``np.shape`` is always () for an already lowered index, so the MLIR type
+    # has to be checked separately.
+    if np.shape(idx) or (
+        isinstance(idx, ir.Value) and isinstance(idx.type, ir.VectorType)
+    ):
       raise ValueError(f"Can only use ()-shaped and slice indexing: {idx}")
     start = _maybe_cast_to_index(cast_to_index, idx)
     size = 1
