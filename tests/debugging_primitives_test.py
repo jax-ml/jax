@@ -933,6 +933,15 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     devices = [DummyDevice("CPU", i, "CPU") for i in range(num_devices)]
     return np.array(devices).reshape(shape)
 
+  @parameterized.parameters(
+      (1, 1), (1, 2), (1, 5), (2, 2), (2, 3), (2, 4), (2, 5))
+  def test_make_color_iter_uses_all_colors(self, num_rows, num_cols):
+    num_colors = num_rows * num_cols
+    colors = list(debugging.make_color_iter(lambda x: x, num_rows, num_cols))
+
+    self.assertLen(colors, num_colors)
+    self.assertArraysEqual(np.sort(colors), np.linspace(0, 1, num_colors))
+
   def test_trivial_sharding(self):
     mesh = jax.sharding.Mesh(self._create_devices(1), ['x'])
     pspec = jax.sharding.PartitionSpec('x')
