@@ -98,7 +98,12 @@ def pallas_call_lowering(
     print(lowering_result.module.operation)
 
   return _emit_mosaic_gpu_custom_call(
-      ctx, args, lowering_result, input_output_aliases, debug_info
+      ctx,
+      args,
+      lowering_result,
+      input_output_aliases,
+      debug_info,
+      skip_device_barrier=gpu_params.skip_device_barrier,
   )
 
 
@@ -108,6 +113,7 @@ def _emit_mosaic_gpu_custom_call(
     lowering_result: lowering.LoweringResult,
     input_output_aliases: tuple[tuple[int, int], ...],
     debug_info,
+    skip_device_barrier: bool = False,
 ):
   module = lowering_result.module
   new_avals_in = list(ctx.avals_in)
@@ -131,13 +137,15 @@ def _emit_mosaic_gpu_custom_call(
     )(ctx.replace(avals_in=()))
   outs = mgpu.core._mosaic_gpu_lowering_rule(
       ctx.replace(avals_in=new_avals_in, avals_out=new_avals_out),
-      *args, *scratch_args,
+      *args,
+      *scratch_args,
       module=module,
       out_types=lowering_result.new_out_shapes,
       inout_types=(),
       input_output_aliases=input_output_aliases,
       # False until we add get_barrier_semaphore() feature.
       use_custom_barrier=False,
+      skip_device_barrier=skip_device_barrier,
   )
   if (prof_spec := lowering_result.profiler_spec) is not None:
     *outs, prof_buffer = outs
@@ -261,4 +269,5 @@ def mpmd_map_mgpu_lowering_rule(
       lowering_result,
       tuple(input_output_aliases.items()),
       jaxpr.debug_info,
+      skip_device_barrier=gpu_params.skip_device_barrier,
   )
