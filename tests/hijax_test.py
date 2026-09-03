@@ -1245,7 +1245,7 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(jax.vmap(f)(xs), xs**3)
     self.assertEqual(jax.grad(f)(2.0), 12.0)
 
-  def test_newstyle_hiprimitive_defines_both_types_of_vjp_error(self):
+  def test_newstyle_hiprimitive_defines_both_types_of_vjp(self):
     class RaiseToStaticPower(HiPrim):
       def __init__(self, in_aval, *, power):
         self.in_avals = (in_aval,)
@@ -1256,7 +1256,7 @@ class HijaxTest(jtu.JaxTestCase):
       def expand(self, x):
         return x ** self.power
 
-      def vjp_fwd(self, x):
+      def vjp_fwd(self, nzs_in, x):
         ans = self(x)
         return (ans, x)
 
@@ -1279,8 +1279,7 @@ class HijaxTest(jtu.JaxTestCase):
     def f(x):
       return raise_to_static_power(x, power=3)
 
-    with self.assertRaises(AttributeError):
-      f(2.0)
+    self.assertEqual(jax.grad(f)(2.0), 12.0)
 
   def test_newstyle_hiprimitive_vmap(self):
 
