@@ -48,7 +48,9 @@ from jax._src.sharding_impls import (
     device_replica_id_map, hashed_index, num_addressable_indices,
     local_to_global_shape, _internal_use_concrete_mesh)  # pyformat: disable
 from jax._src.typing import ArrayLike, DLDeviceType, DTypeLike, ExtendedDType
-from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method, cache
+from jax._src.util import (
+    cache, merge_lists, partition_list, safe_zip, unzip3, use_cpp_class,
+    use_cpp_method)  # pyformat: disable
 import numpy as np
 
 zip, unsafe_zip = safe_zip, zip
@@ -1162,16 +1164,26 @@ def as_slice_indices(arr: Any, idx: Index) -> tuple[
 
 
 def shard_device_array(x, devices, indices, sharding):
-  start_indices, limit_indices, removed_dims = unzip3(
-      as_slice_indices(x, idx) for idx in indices)
   if sharding.is_fully_replicated:
     shards = [x] * len(devices)
   else:
+    indices = tuple(indices)
+    seen = set()
+    is_duplicate = [
+        True if i in seen else (seen.add(i) or False) for i in indices]
+    unique_indices, duplicate_indices = partition_list(is_duplicate, indices)
+
+    start_indices, limit_indices, removed_dims = unzip3(
+        as_slice_indices(x, idx) for idx in unique_indices
+    )
     # TODO(yashkatariya): Maybe this should be set when we call the handler in
     # InputsHandler.__call__?
     with (_internal_use_concrete_mesh(empty_concrete_mesh),
           use_abstract_mesh(empty_abstract_mesh)):
-      shards = x._multi_slice(start_indices, limit_indices, removed_dims)
+      unique_shards = x._multi_slice(start_indices, limit_indices, removed_dims)
+    idx_to_shard = dict(safe_zip(unique_indices, unique_shards))
+    duplicate_shards = [idx_to_shard[idx] for idx in duplicate_indices]
+    shards = merge_lists(is_duplicate, unique_shards, duplicate_shards)
   aval = core.shaped_abstractify(x)
   return pxla.batched_device_put(aval, sharding, shards, devices)
 
