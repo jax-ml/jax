@@ -1085,6 +1085,7 @@ def _dced(jaxpr, in_fwd, take, out_tree, policy, res, *args):
 
 
 class RematTraced(HiPrim):
+  skip_linearization_on_zero_tangents = True
   jaxpr: core.Jaxpr
   policy: Any
   prevent_cse: bool | tuple[bool, ...]
@@ -1397,6 +1398,7 @@ def custom_remat(f, f_fwd, f_rem, f_bwd, *, static_argnums=(),
   return call
 
 class CustomRemat(HiPrim):
+  skip_linearization_on_zero_tangents = True
   jaxpr: core.Jaxpr
   f1: Callable
   f2_fbwd: Callable

@@ -1147,6 +1147,7 @@ def _ref_lin(_is_vjp, nzs, x, *, memory_space, kind, pin):
 
 ad.primitive_jvps[core.ref_p] = _ref_jvp
 ad.primitive_linearizations[core.ref_p] = _ref_lin
+ad.linearize_on_zero_tangents.add(core.ref_p)
 # TODO(mattjj): lin rule for freeze and accum_grad_in_ref?
 ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))
 ad.defjvp(core.accum_grad_in_ref_p, lambda g, _: core.accum_grad_in_ref_p.bind(g))
@@ -1166,6 +1167,7 @@ def _empty_ref_lin(_is_vjp, nzs_in, *, ty, memory_space, pin):
                                  memory_space=memory_space, pin=pin)
   return primal_ref, True, None, None, lin
 ad.primitive_linearizations[core.empty_ref_p] = _empty_ref_lin
+ad.linearize_on_zero_tangents.add(core.empty_ref_p)
 
 def _free_ref_jvp(primals, tangents):
   [primal_ref], [tangent_ref] = primals, tangents
