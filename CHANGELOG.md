@@ -54,6 +54,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     arrays of the natural result dtype.
   * Fixed {func}`jax.numpy.setdiff1d` raising an `IndexError` when called with
     ``size=0`` on non-empty inputs; it now returns an empty array.
+  * Fixed incorrect gradients for {func}`jax.scipy.linalg.cholesky` and
+    {func}`jax.numpy.linalg.cholesky` with `symmetrize_input=False` where
+    non-zero gradients leaked into the unused triangle of the input matrix
+    ({jax-issue}`#40421`).
 
 ## JAX 0.11.1 (August 17, 2026)
 
