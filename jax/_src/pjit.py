@@ -2652,6 +2652,9 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
             prev_outs, barrier_inps = opt_barrier_per_input(
                 prev_eqn.outvars, prev_outs, barrier_invars, barrier_inps)
             cur_inps = merge_lists(exclude_mask, barrier_inps, excluded_inps)
+        elif cur_eqn.primitive is jit_p:
+          prev_outs, cur_inps = opt_barrier_per_input(
+              prev_eqn.outvars, prev_outs, cur_invars, cur_inps)
         else:
           prev_outs, cur_inps = insert_opt_barrier(
               prev_eqn.outvars, prev_outs, cur_invars, cur_inps)
