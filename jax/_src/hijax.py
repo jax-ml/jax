@@ -866,7 +866,7 @@ class CustomVJPTraced(HiPrim):
       fwd = lambda *dyn_args: self.fwd(*merge_lists(which_static, list(dyn_args), static_args))
     # custom_vjp_rules=False so that custom_vjp applications inside fwd hit
     # the early return above rather than recursively tracing their fwds.
-    (out, _), rem_ = remat.remat_transform(trace.policy, fwd, *dyn_args,
+    (out, _), rem_ = remat.remat_transform(fwd, *dyn_args,
                                            custom_vjp_rules=False)
     res = tuple(rem_.args[0])
     replay, statics = rem_.func, self.static_argnums

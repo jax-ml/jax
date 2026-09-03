@@ -7111,7 +7111,11 @@ class RematTest(jtu.JaxTestCase):
       return x
 
     res = saved_residuals(f, jnp.ones((3, 3)))
-    self.assertStartsWith(res[1][1], "named 'foo'")
+    self.assertStartsWith(res[1][1], self._named_residual_prefix('foo'))
+
+  def _named_residual_prefix(self, name):
+    # remat3's saved-value primitive doesn't carry the name.
+    return 'output of CheckpointThis' if config.remat3.value else f"named '{name}'"
 
   def test_name_pytree(self):
     policy = jax.checkpoint_policies.save_only_these_names('foo')
@@ -7123,7 +7127,7 @@ class RematTest(jtu.JaxTestCase):
       return x
 
     res = saved_residuals(f, jnp.ones((3, 3)))
-    self.assertStartsWith(res[1][1], "named 'foo'")
+    self.assertStartsWith(res[1][1], self._named_residual_prefix('foo'))
 
   def test_name_denylist(self):
     def f(x):
@@ -7211,7 +7215,11 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(res[3][0].shape, ())
     self.assertEqual(res[3][1], "from the argument y")
     self.assertEqual(res[4][0].shape, ())
-    self.assertStartsWith(res[4][1], "named 'z'")
+    if config.remat3.value:
+      # outside any checkpoint, remat3's checkpoint_name stages nothing
+      self.assertStartsWith(res[4][1], "output of sin")
+    else:
+      self.assertStartsWith(res[4][1], "named 'z'")
     self.assertEqual(res[5][0].shape, ())
 
   def test_saved_residuals_utility_jit(self):
@@ -8288,10 +8296,11 @@ class Remat3Test(RematTest):
     def body(x):
       return checkpoint_name(jnp.sin(x), 'y')
 
-    jaxpr = jax.jit(body).trace(1.).jaxpr
     policy = jax.checkpoint_policies.save_only_these_names('y')
-    fwd_jaxpr, _, fwds = remat_internal.remat_jaxpr(
-        jaxpr, policy, custom_vjp_rules=True, allow_fwds=True)
+    with remat_internal.policy_context(policy):
+      jaxpr = jax.jit(body).trace(1.).jaxpr
+      fwd_jaxpr, _, fwds = remat_internal.remat_jaxpr(
+          jaxpr, custom_vjp_rules=True, allow_fwds=True)
     self.assertEqual(fwds, [0])
     self.assertLen(fwd_jaxpr.outvars, len(jaxpr.jaxpr.outvars))
 
