@@ -857,6 +857,18 @@ PyType_Slot PyClient::slots_[] = {
             return 0;
           })
       .def_prop_ro("runtime_type", &PyClient::runtime_type)
+      .def_prop_ro(
+          "is_c_api",
+          [](PyClient& self) -> bool {
+            if (auto* pjrt_comp =
+                    xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleClient>(
+                        self.ifrt_client())) {
+              if (auto* pjrt_client = pjrt_comp->pjrt_client()) {
+                return pjrt_client->IsCApi();
+              }
+            }
+            return false;
+          })
       .def("device_count", &PyClient::device_count)
       .def("local_device_count", &PyClient::addressable_device_count)
       .def("devices", &PyClient::Devices)
