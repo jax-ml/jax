@@ -228,7 +228,7 @@ class LLVMAttrInsertionPass
   }
 };
 
-// Replaces all "pallas_call"/"mpmd_map" locations within a FuncOp with the
+// Replaces all "pallas_call"/"pallas_kernel" locations within a FuncOp with the
 // location of the first operation in the function that has a different
 // location. This provides more specific source information for debugging.
 class ResolveTrivialLocationsPass
@@ -247,7 +247,9 @@ class ResolveTrivialLocationsPass
     }
     llvm::StringRef name = name_loc.getName().getValue();
     name.consume_back(":");
-    if (name != "pallas_call" && name != "mpmd_map") {
+    // TODO(rdyro): Remove mpmd_map once it's fully migrated to pallas_kernel.
+    if (name != "pallas_call" && name != "mpmd_map" &&
+        name != "pallas_kernel") {
       return false;
     }
     return mlir::isa<mlir::UnknownLoc>(name_loc.getChildLoc()) ||

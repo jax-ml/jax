@@ -400,15 +400,17 @@ def _run_state_rule(ctx: Context, *args, jaxpr, which_linear, is_initialized):
 _physicalize_rules[state_discharge.run_state_p] = _run_state_rule
 
 
-def _mpmd_map_rule(ctx: Context, *args, jaxprs, meshes, external_meshes, **params):
+def _pallas_kernel_rule(
+    ctx: Context, *args, jaxprs, meshes, external_meshes, **params
+):
   _assert_no_fusion_types(ctx.avals_in)
   _assert_no_fusion_types(ctx.avals_out)
   all_meshes = meshes + external_meshes
   new_jaxprs = []
   for mesh, jaxpr in zip(meshes, jaxprs):
-    with mpmd.mpmd_map_tracing_context(mesh, all_meshes):
+    with mpmd.pallas_kernel_tracing_context(mesh, all_meshes):
       new_jaxprs.append(physicalize_jaxpr(jaxpr))
-  return mpmd.mpmd_map_p.bind(
+  return mpmd.pallas_kernel_p.bind(
       *args,
       jaxprs=tuple(new_jaxprs),
       meshes=meshes,
@@ -417,7 +419,7 @@ def _mpmd_map_rule(ctx: Context, *args, jaxprs, meshes, external_meshes, **param
   )
 
 
-_physicalize_rules[mpmd.mpmd_map_p] = _mpmd_map_rule
+_physicalize_rules[mpmd.pallas_kernel_p] = _pallas_kernel_rule
 
 
 def _run_scoped_rule(ctx: Context, *args, jaxpr, **params):

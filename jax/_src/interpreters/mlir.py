@@ -795,7 +795,8 @@ def _find_manual_pallas_collective_ids(
 
   manual_ids: set[int] = set()
   for eqn in jaxpr.eqns:
-    if eqn.primitive.name in ("pallas_call", "mpmd_map"):
+    # TODO(rdyro): remove "mpmd_map" once it's fully renamed to "pallas_kernel".
+    if eqn.primitive.name in ("pallas_call", "mpmd_map", "pallas_kernel"):
       from jax._src.pallas.mosaic import core as tpu_core  # pyrefly: ignore[missing-import]
 
       if (params := eqn.params.get("compiler_params")) is not None:

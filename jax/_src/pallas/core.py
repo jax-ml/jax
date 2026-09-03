@@ -1524,7 +1524,7 @@ def core_map(
 
   def wrapped(f: Callable):
     from jax._src.pallas import mpmd
-    mpmd._mpmd_map(
+    mpmd._pallas_kernel(
         [(mesh, f)],
         scratch_types=scratch_shapes,
         compiler_params=compiler_params,

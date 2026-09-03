@@ -186,7 +186,7 @@ def _as_shaped_array(t: jax.ShapeDtypeStruct) -> jax_core.ShapedArray:
 pallas_core.register_lowering_rule(gpu_core.CompilerParams, pallas_call_lowering, "gpu")
 
 
-def mpmd_map_mgpu_lowering_rule(
+def pallas_kernel_mgpu_lowering_rule(
     ctx: mlir.LoweringRuleContext,
     *args,
     meshes,
@@ -218,16 +218,20 @@ def mpmd_map_mgpu_lowering_rule(
     raise NotImplementedError(
         f"Mesh {mesh} is not supported by the Mosaic GPU backend"
     )
-  # On GPU ``mpmd_map`` kernels never carry scratch operands -- scratch is
+  # On GPU ``pallas_kernel`` kernels never carry scratch operands -- scratch is
   # handled separately by ``plgpu.kernel``. So the jaxpr invars are exactly the
   # inputs followed by the outputs.
   if len(jaxpr.invars) != len(args) + len(ctx.avals_out):
     raise NotImplementedError(
-        "Scratch operands are not supported by the Mosaic GPU mpmd_map lowering"
+        "Scratch operands are not supported by the Mosaic GPU pallas_kernel"
+        " lowering"
     )
 
   if debug:
-    print(f"\nThe kernel jaxpr for mpmd_map {jaxpr.debug_info.func_src_info}:")
+    print(
+        f"\nThe kernel jaxpr for pallas_kernel"
+        f" {jaxpr.debug_info.func_src_info}:"
+    )
     print(jaxpr)
 
   mgpu.dialect.register_dialect(ctx.module_context.context)
@@ -249,7 +253,7 @@ def mpmd_map_mgpu_lowering_rule(
   # axis environment. The pipelined path binds them via ``grid_mapping.trace_env``;
   # here we bind them straight from the mesh.
   from jax._src.pallas import mpmd  # pyrefly: ignore[import-cycle]
-  with mpmd.mpmd_map_tracing_context(mesh, (*meshes, *external_meshes)):
+  with mpmd.pallas_kernel_tracing_context(mesh, (*meshes, *external_meshes)):
     lowering_result = lowering.lower_unpipelined_jaxpr_to_module(
         mesh,
         jax_mesh,
@@ -260,7 +264,10 @@ def mpmd_map_mgpu_lowering_rule(
         outer_traceback=ctx.traceback,
     )
   if debug:
-    print(f"\nThe Mosaic GPU module for mpmd_map {jaxpr.debug_info.func_src_info}:")
+    print(
+        f"\nThe Mosaic GPU module for pallas_kernel"
+        f" {jaxpr.debug_info.func_src_info}:"
+    )
     print(lowering_result.module.operation)
 
   return _emit_mosaic_gpu_custom_call(

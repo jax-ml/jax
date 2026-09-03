@@ -581,7 +581,7 @@ def _rewrite_jaxpr_for_lowering(
 
     return jax_core.eval_jaxpr(jaxpr, jaxpr.constvars, *processed_args)
 
-  with mpmd.mpmd_map_tracing_context(mesh, all_meshes):
+  with mpmd.pallas_kernel_tracing_context(mesh, all_meshes):
     # TODO(necula): use trace_to_jaxpr_nocache instead
     new_jaxpr, _ = pe.trace_to_jaxpr(
         new_body, ft.flatten_args(*new_in_avals),
@@ -591,7 +591,7 @@ def _rewrite_jaxpr_for_lowering(
   return new_jaxpr
 
 
-def mpmd_map_tpu_lowering_rule(
+def pallas_kernel_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
     meshes,
@@ -612,7 +612,7 @@ def mpmd_map_tpu_lowering_rule(
   if debug:
     for idx, jaxpr in enumerate(jaxprs):
       print(
-          f"\nThe kernel jaxpr {idx=} for mpmd_map"
+          f"\nThe kernel jaxpr {idx=} for pallas_kernel"
           f" {jaxpr.debug_info.func_src_info}:"
       )
       print(jaxpr)
@@ -630,7 +630,7 @@ def mpmd_map_tpu_lowering_rule(
   if len(all_tags) > 1:
     raise ValueError(
         "Cannot specify multiple distinct barrier semaphore tags across"
-        f" kernels in mpmd_map: {all_tags}. XLA only supports one"
+        f" kernels in pallas_kernel: {all_tags}. XLA only supports one"
         " collective_id per custom call."
     )
   tag = next(iter(all_tags)) if all_tags else None
@@ -638,7 +638,8 @@ def mpmd_map_tpu_lowering_rule(
   # TODO(slebedev): Check kernel type and raise if it is set.
   if mosaic_params.dimension_semantics is not None:
     raise ValueError(
-        "mpmd_map does not support dimension_semantics= in compiler_params="
+        "pallas_kernel does not support dimension_semantics= in"
+        " compiler_params="
     )
 
   mpmd_meshes_map = {
@@ -665,7 +666,7 @@ def mpmd_map_tpu_lowering_rule(
           mesh, "dimension_semantics"
       ):
         raise ValueError(
-            "mpmd_map requires the mesh to define its ``core_type`` and"
+            "pallas_kernel requires the mesh to define its ``core_type`` and"
             " ``dimension_semantics``"
         )
 
@@ -675,7 +676,7 @@ def mpmd_map_tpu_lowering_rule(
               tpu_core.CoreType.TC
           }:
             raise NotImplementedError(
-                "mpmd_map does not support TC kernels yet."
+                "pallas_kernel does not support TC kernels yet."
             )
           if mesh.num_cores > 1:
             actual_invars = (
@@ -731,7 +732,7 @@ def mpmd_map_tpu_lowering_rule(
   if debug:
     pm = passmanager.PassManager.parse("builtin.module(canonicalize)", mlir_ctx)
     pm.run(mosaic_module.operation)
-    print("\nThe Mosaic module for mpmd_map:")
+    print("\nThe Mosaic module for pallas_kernel:")
     print(mosaic_module.operation.get_asm(use_name_loc_as_prefix=True))
 
   if name is None:
