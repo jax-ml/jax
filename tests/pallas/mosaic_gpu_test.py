@@ -7990,6 +7990,39 @@ class PipelineTest(PallasTest):
     with self.assertRaisesRegex(NotImplementedError, "provably in bounds"):
       kernel(x)
 
+  @parameterized.product(num_steps=[0, 1, 5, 100], max_concurrent_steps=[2, 3])
+  @run_on_sm80
+  def test_emit_in_specs_only_dynamic_grid(
+      self, num_steps, max_concurrent_steps
+  ):
+    dtype = jnp.float32
+    block_size = 128
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((block_size,), dtype),
+        scratch_types=[plgpu.SMEM((block_size,), dtype)],
+    )
+    def kernel(num_steps_gmem, x_gmem, o_gmem, acc_ref):
+      acc_ref[...] = jnp.zeros_like(acc_ref)
+
+      def body(_, x_smem):
+        acc_ref[...] += x_smem[...]
+
+      plgpu.emit_pipeline(
+          body,
+          in_specs=[pl.BlockSpec((block_size,), lambda i: (i,))],
+          grid=(num_steps_gmem[...],),
+          max_concurrent_steps=max_concurrent_steps,
+      )(x_gmem)
+
+      o_gmem[...] = acc_ref[...]
+
+    x = jnp.ones(max(num_steps, 1) * block_size, dtype=dtype)
+    np.testing.assert_array_equal(
+        kernel(jnp.int32(num_steps), x),
+        jnp.full(block_size, num_steps, dtype=dtype)
+    )
+
   def test_pipeline_oob_mode(self):
     # This test crashes with the default OOB fill mode of ZEROS because
     # it can't copy large 1D arrays.
