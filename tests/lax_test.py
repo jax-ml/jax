@@ -3757,6 +3757,51 @@ class LaxTest(jtu.JaxTestCase):
     not_nan = jax.grad(f)(0.)
     self.assertFalse(jnp.isnan(not_nan))
 
+  @jtu.sample_product(
+      use_jit=[True, False],
+      zero_all_val_cts=[True, False],
+  )
+  def test_optimization_barrier_grad_refs(self, use_jit, zero_all_val_cts):
+    x_ref = jax.new_ref(2.0)
+    y_ref = jax.new_ref(5.0)
+
+    def f(x, x_ref, y, y_ref, z):
+      x, x_ref, y, y_ref, z = jax.lax.optimization_barrier(
+          (x, x_ref, y, y_ref, z)
+      )
+      if zero_all_val_cts:
+        return x_ref[...] * y_ref[...]
+      return x * x_ref[...] + z * y_ref[...]
+
+    if use_jit:
+      f = jax.jit(f)
+
+    _, f_vjp = jax.vjp(f, 3.0, x_ref, 7.0, y_ref, 11.0)
+    x_grad_ref = jax.new_ref(0.0)
+    y_grad_ref = jax.new_ref(0.0)
+    f_vjp = f_vjp.with_refs(
+        jax.ad.GradValue(),
+        x_grad_ref,
+        jax.ad.GradValue(),
+        y_grad_ref,
+        jax.ad.GradValue(),
+    )
+    dx, dx_ref, dy, dy_ref, dz = f_vjp(1.0)
+    self.assertIsInstance(dx_ref, jax.ad.GradRef)
+    self.assertIsInstance(dy_ref, jax.ad.GradRef)
+    if zero_all_val_cts:
+      self.assertAllClose(dx, 0.0)
+      self.assertAllClose(dy, 0.0)
+      self.assertAllClose(dz, 0.0)
+      self.assertAllClose(x_grad_ref[...], 5.0)
+      self.assertAllClose(y_grad_ref[...], 2.0)
+    else:
+      self.assertAllClose(dx, 2.0)
+      self.assertAllClose(dy, 0.0)
+      self.assertAllClose(dz, 5.0)
+      self.assertAllClose(x_grad_ref[...], 3.0)
+      self.assertAllClose(y_grad_ref[...], 11.0)
+
   def test_shape_as_value_handles_static_shapes(self):
     result = lax.shape_as_value(())
     self.assertArraysEqual(result, lax.full((0,), np.array(0, np.int32)))

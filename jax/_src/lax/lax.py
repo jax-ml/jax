@@ -9960,23 +9960,31 @@ def _optimization_barrier_batcher(batched_args, batch_dims, **params):
 batching.primitive_batchers[optimization_barrier_p] = _optimization_barrier_batcher
 
 def _opt_barrier_jvp(primals, tangents):
-  primals_out = optimization_barrier(primals)
+  is_ref = [isinstance(core.typeof(x), AbstractRef) for x in primals]
+  primals_out = optimization_barrier_p.bind(*primals)
   nzs = [not isinstance(t, ad.Zero) for t in tangents]
   nz_ts = [t for t, nz in zip(tangents, nzs) if nz]
   if not nz_ts:
-    return primals_out, tangents
-  out = iter(optimization_barrier(nz_ts))
-  tangents_out = [next(out) if nz else t for t, nz in zip(tangents, nzs)]
+    return primals_out, [t for t, r in zip(tangents, is_ref) if not r]
+  out = iter(optimization_barrier_p.bind(*nz_ts))
+  tangents_out = [next(out) if nz else t
+                  for t, nz, r in zip(tangents, nzs, is_ref) if not r]
   return primals_out, tangents_out
 ad.primitive_jvps[optimization_barrier_p] = _opt_barrier_jvp
 
-def _opt_barrier_transpose(cts, *primals):
+def _opt_barrier_fancy_transpose(cts, *accums):
   nzs = [not isinstance(ct, ad.Zero) for ct in cts]
   nz_cts = [ct for ct, nz in zip(cts, nzs) if nz]
-  if not nz_cts: return cts
-  out = iter(optimization_barrier(nz_cts))
-  return [next(out) if nz else ct for ct, nz in zip(cts, nzs)]
-ad.primitive_transposes[optimization_barrier_p] = _opt_barrier_transpose
+  ct_refs = [x.ref for x in accums if isinstance(x, ad.RefAccum)]
+  if not nz_cts and not ct_refs:
+    return
+  out = iter(optimization_barrier_p.bind(*nz_cts, *ct_refs))
+  cts_out = (next(out) if nz else ct for ct, nz in zip(cts, nzs))
+  for x in accums:
+    if not isinstance(x, ad.RefAccum):
+      x.accum(next(cts_out))
+  assert next(cts_out, None) is None
+ad.fancy_transposes[optimization_barrier_p] = _opt_barrier_fancy_transpose
 
 
 def _array_reduce_precision_handler(t, x):
