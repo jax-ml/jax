@@ -18,6 +18,13 @@ Remember to align the itemized text with the first line of an item within a list
   * `pl.reciprocal` was moved into {mod}`jax.experimental.pallas.tpu`.
     Accessing it via {mod}`jax.experimental.pallas` is deprecated.
 
+* Removals
+
+  * Removed the previously deprecated `pl.dot`. Use {func}`jax.numpy.dot`,
+    {func}`jax.numpy.einsum` or the `@` operator instead in TPU or MGPU kernels.
+  * Removed the previously deprecated `pl.debug_checks_enabled`. Use
+    `pl.enable_debug_checks.value` instead.
+
 ### Mosaic GPU
 
 * Changes

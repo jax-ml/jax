@@ -28,7 +28,6 @@ from jax._src.pallas.core import CompilerParams as CompilerParams
 from jax._src.pallas.core import core_map as _deprecated_core_map
 from jax._src.pallas.core import CostEstimate as CostEstimate
 from jax._src.pallas.core import debug_check as debug_check
-from jax._src.pallas.core import debug_checks_enabled as _deprecated_debug_checks_enabled
 from jax._src.pallas.core import Element as Element
 from jax._src.pallas.core import enable_debug_checks as enable_debug_checks
 from jax._src.pallas.core import enable_poison_buffers as enable_poison_buffers
@@ -57,7 +56,6 @@ from jax._src.pallas.pallas_call import pallas_call_p as pallas_call_p
 from jax._src.pallas.primitives import debug_print as debug_print
 from jax._src.pallas.primitives import delay as delay
 from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
-from jax._src.pallas.primitives import dot as _deprecated_dot
 from jax._src.pallas.primitives import get_global as get_global
 from jax._src.pallas.primitives import multiple_of as multiple_of
 from jax._src.pallas.primitives import num_programs as num_programs
@@ -99,32 +97,11 @@ _deprecations = {
         ),
         _deprecated_core_map,
     ),
-    # Added June 4, 2026
-    "dot": (
-        (
-            "jax.experimental.pallas.dot was moved to"
-            " jax.experimental.pallas.triton. Accessing it via"
-            " jax.experimental.pallas is deprecated. You can use jax.numpy.dot,"
-            " jax.numpy.einsum or the @ operator instead in a TPU or MGPU"
-            " kernel."
-        ),
-        _deprecated_dot,
-    ),
-    # Added May 15, 2026
-    "debug_checks_enabled": (
-        (
-            "jax.experimental.pallas.debug_checks_enabled is deprecated, "
-            "use pl.enable_debug_checks.value instead."
-        ),
-        _deprecated_debug_checks_enabled,
-    ),
 }
 
 import typing
 if typing.TYPE_CHECKING:
   core_map = _deprecated_core_map
-  debug_checks_enabled = _deprecated_debug_checks_enabled
-  dot = _deprecated_dot
   reciprocal = _deprecated_reciprocal
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
