@@ -1165,6 +1165,10 @@ bool ModuleUsesCollectiveMetadata(const xla::ffi::Dictionary& attrs) {
   return attrs.get<bool>("uses_xla_collective_metadata").value_or(false);
 }
 
+bool ModuleSkipsDeviceBarrier(const xla::ffi::Dictionary& attrs) {
+  return attrs.get<bool>("skip_device_barrier").value_or(false);
+}
+
 size_t GetCollectiveMetadataSize(size_t num_buffers, size_t num_devices) {
   const size_t param_to_peers_size_bytes =
       num_buffers * num_devices * sizeof(void*);
@@ -1613,15 +1617,18 @@ absl::Status MosaicGpuExecute(
     buffer_ptrs.push_back(metadata_address.opaque());
     buffer_ptrs.push_back(device_state.metadata_bytes.data());
 
-    ASSIGN_OR_RETURN(xla::gpu::GpuCommunicator * comm,
-                     collective_cliques->GetComm(clique_key, current_rank));
+    bool skip_device_barrier = ModuleSkipsDeviceBarrier(attributes);
+    if (!skip_device_barrier) {
+      ASSIGN_OR_RETURN(xla::gpu::GpuCommunicator * comm,
+                       collective_cliques->GetComm(clique_key, current_rank));
 
-    XLA_VLOG_DEVICE(6, device_ordinal)
-        << "Starting multi-GPU barrier with key: " << clique_key;
-    xla::gpu::GpuCollectives::Executor executor(stream);
-    RETURN_IF_ERROR(comm->LaunchMultiGpuBarrier(executor));
-    XLA_VLOG_DEVICE(6, device_ordinal)
-        << "Finished multi-GPU barrier with key: " << clique_key;
+      XLA_VLOG_DEVICE(6, device_ordinal)
+          << "Starting multi-GPU barrier with key: " << clique_key;
+      xla::gpu::GpuCollectives::Executor executor(stream);
+      RETURN_IF_ERROR(comm->LaunchMultiGpuBarrier(executor));
+      XLA_VLOG_DEVICE(6, device_ordinal)
+          << "Finished multi-GPU barrier with key: " << clique_key;
+    }
   }
 
   void** buffers_data = buffer_ptrs.data();
@@ -1698,6 +1705,7 @@ XLA_FFI_DEFINE_HANDLER(
 // - kernel_hash: a hash of the kernel.
 // - module: the serialized MLIR module.
 // - use_custom_barrier
+// - skip_device_barrier (optional)
 // - uses_xla_collective_metadata (optional)
 XLA_FFI_DEFINE_HANDLER(
     kMosaicGpuExecute, MosaicGpuExecute,
