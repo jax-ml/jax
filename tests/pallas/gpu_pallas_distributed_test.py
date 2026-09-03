@@ -311,6 +311,50 @@ class PallasCallRemoteDMATest(TestCase):
 
     expected = x[8:] if jax.process_index() == 0 else x[:8]
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+  def test_remote_tma_dynamic_peer_id_program_id(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+    def kernel(y_ref, scratch_ref, sem):
+      dev_id = lax.axis_index("x")
+      peer_id = pl.program_id(0)
+      other_dev_id = 1 - dev_id
+      zero = jnp.int32(0)
+      @pl.when(dev_id == zero)
+      def _store():
+        output = plgpu.layout_cast(
+            lax.broadcasted_iota(jnp.int32, (128, 128), 1), plgpu.Layout.WGMMA
+        )
+        scratch_ref[...] = output
+        remote_y = plgpu.remote_ref(y_ref, {"x": peer_id})
+        plgpu.copy_smem_to_gmem(
+            scratch_ref,
+            remote_y.at[pl.ds(0, 128), pl.ds(0, 128)],
+            commit_group=False,
+        )
+        plgpu.wait_smem_to_gmem(0)
+      pl.semaphore_signal(sem, 1, device_id=other_dev_id)
+      pl.semaphore_wait(sem)
+    transforms = self.default_transforms(dtype=jnp.int32)
+    def body():
+      return self.kernel(
+          kernel,
+          grid=(2,),
+          grid_names=("peer_id",),
+          out_type=jax.ShapeDtypeStruct((128, 128), jnp.int32),
+          scratch_types=[
+              plgpu.SMEM((128, 128), jnp.int32, transforms=transforms),
+              plgpu.SemaphoreType.REGULAR,
+          ],
+      )()
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    y = jax.jit(
+        jax.shard_map(
+            body, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False
+        )
+    )()
+    expected = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
   def test_remote_dma_dynamic_other_device_id(self):
     # Regression test for device_collective_metadata being DCE'd under
