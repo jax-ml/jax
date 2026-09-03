@@ -227,6 +227,20 @@ class CustomRootTest(jtu.JaxTestCase):
 
     jtu.check_close(fwd_aux, jax.tree.map(jnp.zeros_like, fwd_aux))
 
+  def test_custom_root_with_integer_aux(self):
+    def root(a):
+      f = lambda x: x - a
+      solve = lambda f, x: (a, np.array(1))
+      tangent_solve = lambda g, y: y
+      return lax.custom_root(f, 0., solve, tangent_solve, has_aux=True)
+
+    (value, aux), (value_dot, aux_dot) = jax.jvp(root, (2.,), (1.,))
+
+    self.assertAllClose(value, 2.)
+    self.assertAllClose(aux, 1)
+    self.assertAllClose(value_dot, 1.)
+    self.assertEqual(aux_dot.dtype, jax.dtypes.float0)
+
   def test_custom_root_with_xla_metadata_call(self):
     """Test that custom_root VJP works when f contains xla_metadata_call."""
     from jax.experimental import xla_metadata
