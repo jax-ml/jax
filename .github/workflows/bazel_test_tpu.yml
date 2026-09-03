@@ -38,6 +38,50 @@ on:
         description: "Should the full TPU test suite be run?"
         type: string
         default: "0"
+      probe-name:
+        description: "Optional label for a focused TPU probe."
+        type: string
+        default: ""
+      probe-target:
+        description: "Optional exact Bazel target to run instead of the TPU suites."
+        type: string
+        default: ""
+      probe-kind:
+        description: "Focused probe launch mode: single, multiprocess, or local."
+        type: string
+        default: "multiprocess"
+      probe-runs:
+        description: "Number of times to run the focused probe target."
+        type: string
+        default: "1"
+      probe-test-threads:
+        description: "JAX_TEST_NUM_THREADS value for the focused probe."
+        type: string
+        default: "0"
+      probe-test-filter:
+        description: "Optional JAX_TEST_TARGETS regex for the focused probe."
+        type: string
+        default: ""
+      probe-python-gil:
+        description: "Optional PYTHON_GIL value for the focused probe."
+        type: string
+        default: ""
+      probe-warmup:
+        description: "Optional in-process probe warm-up mode."
+        type: string
+        default: ""
+      probe-disable-gc:
+        description: "Disable cyclic GC before the focused probe when set to 1."
+        type: string
+        default: "0"
+      probe-platforms:
+        description: "JAX_PLATFORMS value for the focused probe."
+        type: string
+        default: "tpu,cpu"
+      probe-timeout:
+        description: "Optional Bazel test timeout in seconds for the focused probe."
+        type: string
+        default: ""
       libtpu-version-type:
         description: "Which libtpu version should be used for testing?"
         type: string
@@ -113,6 +157,16 @@ jobs:
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_RUN_FULL_TPU_TEST_SUITE: "${{ inputs.run-full-tpu-test-suite }}"
       JAXCI_TPU_CORES: "${{ inputs.cores }}"
+      JAXCI_TPU_PROBE_TARGET: "${{ inputs.probe-target }}"
+      JAXCI_TPU_PROBE_KIND: "${{ inputs.probe-kind }}"
+      JAXCI_TPU_PROBE_RUNS: "${{ inputs.probe-runs }}"
+      JAXCI_TPU_PROBE_TEST_THREADS: "${{ inputs.probe-test-threads }}"
+      JAXCI_TPU_PROBE_TEST_FILTER: "${{ inputs.probe-test-filter }}"
+      JAXCI_TPU_PROBE_PYTHON_GIL: "${{ inputs.probe-python-gil }}"
+      JAXCI_TPU_PROBE_WARMUP: "${{ inputs.probe-warmup }}"
+      JAXCI_TPU_PROBE_DISABLE_GC: "${{ inputs.probe-disable-gc }}"
+      JAXCI_TPU_PROBE_PLATFORMS: "${{ inputs.probe-platforms }}"
+      JAXCI_TPU_PROBE_TIMEOUT: "${{ inputs.probe-timeout }}"
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
@@ -166,6 +220,6 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/upload-test-artifacts
         with:
-          artifact-name: bazel-test-artifacts-${{ inputs.tpu-type }}-py${{ inputs.python }}
+          artifact-name: bazel-test-artifacts-${{ inputs.tpu-type }}-py${{ inputs.python }}-${{ inputs.probe-name || 'suite' }}
           inputs_json: ${{ toJSON(inputs) }}
           matrix_json: ${{ toJSON(matrix) }}
