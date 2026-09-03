@@ -679,13 +679,27 @@ batching.fancy_primitive_batchers[core.freeze_p] = _freeze_batched
 def _state_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   del saveable  # ignored, always full remat state ops on known inputs
                 # (except for no_grad_no_remat)
-  ref_unk, *_ = unks_in
+  ref_unk, *val_unks = unks_in
   ref_inst, *inst_in = inst_in
   _, *val_vars = eqn.invars
   assert ref_inst
   res = [v for v, inst in zip(val_vars, inst_in) if not inst]
   if ref_unk:
     return None, eqn, [True], [True], res  # tangent operation
+  elif any(val_unks):
+    raise NotImplementedError(
+        "Mutating a reference with unknown/differentiated values is not"
+        " supported.\nIf this occurred under `jax.checkpoint` and"
+        " `jax.config.jax_remat3 == False`, consider one of the following"
+        " options:\n\n"
+        "  * Enabling `jax_remat3` via `jax.config.update('jax_remat3',"
+        " True)`.\n"
+        "  * Creating the Ref outside the function being rematerialized and"
+        " passing it as an input.\n"
+        "  * Creating the Ref in a data-dependent way from a value being"
+        " differentiated, e.g.:\n\n"
+        "      ref = jax.new_ref(x * 0.0)  # instead of zeros_like(x)"
+    )
   elif eqn.invars[0].aval.kind == "no_grad_no_remat":
     return eqn, None, [False], [False], res
   else:
@@ -695,13 +709,27 @@ pe.partial_eval_jaxpr_custom_rules[swap_p] = _state_partial_eval_custom
 
 def _addupdate_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   del saveable  # ignored, always full remat state ops on known inputs
-  ref_unk, *_ = unks_in
+  ref_unk, *val_unks = unks_in
   ref_inst, *inst_in = inst_in
   _, *val_vars = eqn.invars
   assert ref_inst
   res = [v for v, inst in zip(val_vars, inst_in) if not inst]
   if ref_unk:
     return None, eqn, [], [], res  # tangent operation
+  elif any(val_unks):
+    raise NotImplementedError(
+        "Mutating a reference with unknown/differentiated values is not"
+        " supported.\nIf this occurred under `jax.checkpoint` and"
+        " `jax.config.jax_remat3 == False`, consider one of the following"
+        " options:\n\n"
+        "  * Enabling `jax_remat3` via `jax.config.update('jax_remat3',"
+        " True)`.\n"
+        "  * Creating the Ref outside the function being rematerialized and"
+        " passing it as an input.\n"
+        "  * Creating the Ref in a data-dependent way from a value being"
+        " differentiated, e.g.:\n\n"
+        "      ref = jax.new_ref(x * 0.0)  # instead of zeros_like(x)"
+    )
   else:
     return eqn, eqn, [], [], res  # full remat
 pe.partial_eval_jaxpr_custom_rules[addupdate_p] = _addupdate_partial_eval_custom

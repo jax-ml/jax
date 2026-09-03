@@ -1511,6 +1511,24 @@ class StateControlFlowTest(jtu.JaxTestCase):
     out = f(4.)
     np.testing.assert_array_equal(out, jnp.exp(4.))
 
+  def test_checkpoint_internal_ref_mutation_grad(self):
+    x = jnp.ones((4, 4))
+
+    def f(x):
+      ref = jax.new_ref(jnp.zeros_like(x))
+      ref[...] = x + 1.0
+      return jax.ref.freeze(ref)
+
+    with config.remat3(False), self.assertRaisesRegex(
+        NotImplementedError,
+        "Mutating a reference with unknown/differentiated values",
+    ):
+      jax.grad(lambda x: jnp.sum(jax.checkpoint(f)(x)))(x)
+
+    with config.remat3(True):
+      grad = jax.grad(lambda x: jnp.sum(jax.checkpoint(f)(x)))(x)
+      np.testing.assert_allclose(grad, jnp.ones((4, 4)))
+
   def test_transformed_ref_is_a_pytree_node(self):
     @jax.jit
     def fn():
