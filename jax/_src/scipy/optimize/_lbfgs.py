@@ -54,8 +54,7 @@ class LBFGSResults(NamedTuple):
       tolerance.
     status: integer describing the status:
       0 = nominal  ,  1 = max iters reached  ,  2 = max fun evals reached
-      3 = max grad evals reached  ,  4 = insufficient progress (ftol)
-      5 = line search failed
+      3 = max grad evals reached  ,  5 = line search failed
     ls_status: integer describing the end status of the last line search
   """
   converged: Array
@@ -103,7 +102,10 @@ def _minimize_lbfgs(
     maxiter: maximum number of iterations
     norm: order of norm for convergence check. Default inf.
     maxcor: maximum number of metric corrections ("history size")
-    ftol: terminates the minimization when `(f_k - f_{k+1}) < ftol`
+    ftol: terminates the minimization when `(f_k - f_{k+1}) < ftol`. Such a
+      termination is reported as converged unless the line search failed at
+      that iteration, in which case the run is reported as failed with
+      status 5.
     gtol: terminates the minimization when `|g_k|_norm < gtol`
     maxfun: maximum number of function evaluations
     maxgrad: maximum number of gradient evaluations
@@ -175,13 +177,14 @@ def _minimize_lbfgs(
 
     # replacements for next iteration
     status = jnp.array(0)
-    status = jnp.where(state.f_k - f_kp1 < ftol, 4, status)
     status = jnp.where(state.ngev >= maxgrad, 3, status)
     status = jnp.where(state.nfev >= maxfun, 2, status)
     status = jnp.where(state.k >= maxiter, 1, status)
     status = jnp.where(ls_results.failed, 5, status)
 
-    converged = jnp_linalg.norm(g_kp1, ord=norm) < gtol
+    ls_ok = ~ls_results.failed
+    converged = ((ls_ok & (state.f_k - f_kp1 < ftol)) |
+                 (jnp_linalg.norm(g_kp1, ord=norm) < gtol))
 
     # TODO(jakevdp): use a fixed-point procedure rather than type-casting?
     state = state._replace(

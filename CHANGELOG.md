@@ -54,6 +54,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     arrays of the natural result dtype.
   * Fixed {func}`jax.numpy.setdiff1d` raising an `IndexError` when called with
     ``size=0`` on non-empty inputs; it now returns an empty array.
+  * {func}`jax.scipy.optimize.minimize` with method
+    `l-bfgs-experimental-do-not-rely-on-this` now reports a run stopped by the
+    `ftol` criterion (small function decrease) as converged (`success=True`,
+    `status=0`) instead of as failed with status 4, provided the line search
+    at that iteration succeeded. An iteration whose line search failed still
+    ends the run as failed (status 5, `success=False`).
 
 ## JAX 0.11.1 (August 17, 2026)
 
