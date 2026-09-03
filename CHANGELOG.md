@@ -120,6 +120,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `custom_partitioning`, `custom_gradient`, `closure_convert`,
     `linear_call`, or `run_state`) is retraced with different-shaped
     arguments ({jax-issue}`#40110`).
+  * Fixed three defects in {func}`jax.scipy.signal.istft`. `noverlap=0` is
+    no longer treated as an omitted argument, which silently applied the
+    default 50 percent overlap and produced a wrong reconstruction. The
+    inverse FFT now uses the resolved FFT length, fixing a shape error when
+    `nfft` is unspecified with one-sided input and an odd `nperseg`. And
+    `nperseg=0` is now rejected with an error, matching
+    `scipy.signal.istft` ({jax-issue}`#38315`).
   * The batching rules of the cuDNN fused attention primitives (used by
     {func}`jax.nn.dot_product_attention` with `implementation='cudnn'`) now
     support operands that do not carry the vmap axis, including a shared
