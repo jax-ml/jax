@@ -724,6 +724,55 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.floor_divide, jnp.floor_divide, args_maker)
     self._CompileAndCheck(jnp.floor_divide, args_maker)
 
+  @jtu.sample_product(
+      dtype=float_dtypes,
+      fn=["remainder", "mod", "floor_divide", "divmod"],
+  )
+  @jtu.ignore_warning(category=RuntimeWarning, message="divide by zero*")
+  @jtu.ignore_warning(category=RuntimeWarning, message="invalid value*")
+  def test_divlike_result_sign(self, fn, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/40028: an
+    # exactly-zero result must match NumPy's sign (the divisor's sign for
+    # remainder/mod, the true quotient's sign for floor_divide). NaN results
+    # are mapped to True so that their (unspecified) sign bit is not compared.
+    if jtu.test_device_matches(["tpu"]) and dtype == np.float16:
+      # TPU gives wrong float16 results for finite dividends with an
+      # infinite divisor.
+      raise SkipTest("wrong float16 results for infinite divisors on TPU")
+    vals = np.array([-4.0, -3.0, -1.0, -0.5, -0.0, 0.0, 0.5, 1.0, 3.0, 4.0,
+                     np.inf, -np.inf], dtype=dtype)
+    x1, x2 = map(np.ravel, np.meshgrid(vals, vals))
+    args_maker = lambda: [x1, x2]
+
+    def jnp_fun(*args):
+      result = getattr(jnp, fn)(*args)
+      return jax.tree.map(lambda x: jnp.isnan(x) | jnp.signbit(x), result)
+
+    def np_fun(*args):
+      result = getattr(np, fn)(*args)
+      return jax.tree.map(lambda x: np.isnan(x) | np.signbit(x), result)
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+      dtype=[jnp.float8_e4m3fn, jnp.float8_e5m2],
+      fn=["remainder", "mod", "floor_divide", "divmod"],
+  )
+  def test_float8_division_ops(self, fn, dtype):
+    # The signed-zero fix (#40028) is skipped for float8 (signbit/copysign do
+    # not support it); these ops must keep working there.
+    x1 = np.array([-3.0, -1.0, 0.0, 2.5], dtype=dtype)
+    x2 = np.array([2.0, -2.0, -3.0, 1.5], dtype=dtype)
+    np_fun, jnp_fun = getattr(np, fn), getattr(jnp, fn)
+    expected = np_fun(x1, x2)
+    for f in [jnp_fun, jax.jit(jnp_fun)]:
+      actual = f(x1, x2)
+      exp_outs = expected if isinstance(expected, tuple) else (expected,)
+      act_outs = actual if isinstance(actual, tuple) else (actual,)
+      for exp, act in zip(exp_outs, act_outs):
+        self.assertArraysEqual(np.asarray(act), exp, check_dtypes=False)
+
   @jtu.sample_product(dtype=float_dtypes)
   def test_heaviside_nan(self, dtype):
     # Regression test for https://github.com/jax-ml/jax/issues/38105
