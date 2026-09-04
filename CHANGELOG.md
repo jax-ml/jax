@@ -27,6 +27,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `JAX_DISTRIBUTED_VERIFY_SECURE_CREDENTIALS` environment variables).
 
 * Changes
+  * `inline=True` in {func}`jax.jit` now corresponds to
+    {attr}`jax.Inline.JAX_LATE` instead of {attr}`jax.Inline.JAX_EARLY`.
   * The minimum CuDNN version for CUDA 12 is v9.10.2.
   * JAX now uses Bazel 8.7.0 to build from source.
   * JAX now uses Bzlmod for its Bazel builds instead of WORKSPACE.

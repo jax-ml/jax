@@ -198,7 +198,7 @@ def threefry4x32_seed(seed: typing.Array) -> typing.Array:
   return _threefry4x32_seed(seed)
 
 
-@api.jit(inline=True)
+@api.jit(inline=api.Inline.JAX_EARLY)
 def _threefry4x32_seed(seed: typing.Array) -> typing.Array:
   """Create a single Threefry 4x32 PRNG key from an integer seed."""
   if seed.shape:
@@ -239,7 +239,7 @@ def threefry4x32_split(key: typing.Array, shape: prng.Shape) -> typing.Array:
   return _threefry4x32_split(key, shape)
 
 
-@api.jit(static_argnums=(1,), inline=True)
+@api.jit(static_argnums=(1,), inline=api.Inline.JAX_EARLY)
 def _threefry4x32_split(key: typing.Array, shape: prng.Shape) -> typing.Array:
   """Split a Threefry 4x32 key into multiple sub-keys."""
   k0, k1, k2, k3 = key[0], key[1], key[2], key[3]
@@ -300,7 +300,7 @@ def threefry4x32_random_bits(
   return _threefry4x32_random_bits(key, bit_width, shape)
 
 
-@api.jit(static_argnums=(1, 2), inline=True)
+@api.jit(static_argnums=(1, 2), inline=api.Inline.JAX_EARLY)
 def _threefry4x32_random_bits(
     key: typing.Array, bit_width: int, shape: tuple[int, ...]
 ) -> typing.Array:

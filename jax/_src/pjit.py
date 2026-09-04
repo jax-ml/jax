@@ -352,7 +352,7 @@ def _canonicalize_inline(inline: bool | api.Inline) -> api.Inline:
   if isinstance(inline, api.Inline):
     return inline
   if inline is True:
-    return api.Inline.JAX_EARLY
+    return api.Inline.JAX_LATE
   if inline is False:
     return api.Inline.AUTO
   raise ValueError(f"Invalid inline option: {inline!r}")

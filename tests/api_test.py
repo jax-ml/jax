@@ -4610,12 +4610,20 @@ class APITest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(f)(3)
     self.assertIn('jit', str(jaxpr))
 
-    @api.jit(inline=True)
+    @api.jit(inline=jax.Inline.JAX_EARLY)
     def f(x):
       return x * 2
 
     jaxpr = api.make_jaxpr(f)(3)
     self.assertNotIn('jit', str(jaxpr))
+
+    # inline=True means JAX_LATE, which is preserved in make_jaxpr
+    @api.jit(inline=True)
+    def f(x):
+      return x * 2
+
+    jaxpr = api.make_jaxpr(f)(3)
+    self.assertIn('jit', str(jaxpr))
 
   def test_jit_inline_multistate(self):
     @api.jit(inline=jax.Inline.AUTO)

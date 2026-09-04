@@ -320,7 +320,7 @@ def einsum(
         "`out_sharding` argument of `einsum` only supports NamedSharding"
         " instances.")
 
-  jit_einsum = api.jit(_einsum, static_argnums=(1, 2, 3, 4, 5), inline=True)
+  jit_einsum = api.jit(_einsum, static_argnums=(1, 2, 3, 4, 5), inline=api.Inline.JAX_EARLY)
   if spec is not None:
     jit_einsum = api.named_call(jit_einsum, name=spec)
   operand_arrays = list(util.ensure_arraylike_tuple("einsum", operands))

@@ -2772,12 +2772,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(f)(3)
     self.assertIn('jit', str(jaxpr))
 
-    @partial(pjit, inline=True)
+    @partial(pjit, inline=jax.Inline.JAX_EARLY)
     def g(x):
       return x * 2
 
     jaxpr = jax.make_jaxpr(g)(3)
     self.assertNotIn('jit', str(jaxpr))
+
+    # inline=True means JAX_LATE, which is preserved in make_jaxpr
+    @partial(pjit, inline=True)
+    def h(x):
+      return x * 2
+
+    jaxpr = jax.make_jaxpr(h)(3)
+    self.assertIn('jit', str(jaxpr))
 
   def test_pjit_inline_literal(self):
     # https://github.com/jax-ml/jax/issues/27545

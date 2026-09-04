@@ -306,7 +306,7 @@ def jit(
       ``'tpu'``.
     inline: Optional boolean or :class:`jax.Inline` instance specifying
       the inlining policy for nested jitted functions. Can be passed as a boolean
-      (``True`` for ``jax.Inline.JAX_EARLY``, ``False`` for ``jax.Inline.AUTO``)
+      (``True`` for ``jax.Inline.JAX_LATE``, ``False`` for ``jax.Inline.AUTO``)
       or a :class:`jax.Inline` enum member. Default ``False`` (``jax.Inline.AUTO``).
 
   Returns:
