@@ -1486,7 +1486,7 @@ def _handle_dtype_bitcast(
     raise NotImplementedError(
         "Data type bitcast is only supported for 1D arrays."
     )
-  [stride], _ = ref_ty.get_strides_and_offset()
+  [stride], static_offset = ref_ty.get_strides_and_offset()
   if stride != 1:
     raise ValueError(
         "Data type bitcast is only supported for contiguous 1D arrays, but got "
@@ -1508,11 +1508,34 @@ def _handle_dtype_bitcast(
       memory_space=ref_ty.memory_space,
   )
 
-  # Do a memref_ptr/ptr_as_memref roundtrip instead of using `memref.view`,
-  # which refuses to take in our source ref. This is because `memref.view` only
-  # works on a super restricted set of `memref`s. E.g., it does not work if an
-  # offset is specified, which can be the case for our SMEM refs.
-  return mgpu_utils.ptr_as_memref(mgpu_utils.memref_ptr(ref), result_type)
+  _, offset, *_ = memref_dialect.extract_strided_metadata(ref)  # pyrefly: ignore[not-iterable]
+
+  if static_offset == ir.ShapedType.get_dynamic_stride_or_offset():
+    shape = (ir.ShapedType.get_dynamic_size(),)
+    size = arith_dialect.constant(offset.type, shape_bytes)
+    sizes = [arith_dialect.addi(offset, size)]
+    static_sizes = []
+  else:
+    shape = (static_offset + shape_bytes,)
+    sizes = []
+    static_sizes = [static_offset + shape_bytes]
+
+  # Remove the offset from the memref so it can be used with `memref.view`.
+  ref = memref_dialect.reinterpret_cast(
+      ir.MemRefType.get(
+          shape=shape,
+          element_type=ref_ty.element_type,
+          memory_space=ref_ty.memory_space,
+      ),
+      ref,
+      offsets=[],
+      sizes=sizes,
+      strides=[],
+      static_offsets=[0],
+      static_sizes=static_sizes,
+      static_strides=[1],
+  )
+  return memref_dialect.view(result_type, ref, offset, [])
 
 
 @overload
