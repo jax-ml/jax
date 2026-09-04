@@ -252,6 +252,15 @@ jax_multiplatform_test(
 )
 
 jax_py_test(
+    name = "cloud_tpu_cluster_test",
+    srcs = ["cloud_tpu_cluster_test.py"],
+    deps = [
+        "//jax",
+        "//jax/_src:test_util",
+    ] + py_deps("absl/testing"),
+)
+
+jax_py_test(
     name = "multiprocess_gpu_test",
     srcs = ["multiprocess_gpu_test.py"],
     args = [
