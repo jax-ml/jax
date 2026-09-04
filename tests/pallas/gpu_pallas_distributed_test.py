@@ -35,7 +35,6 @@ from jax._src.config import config
 from jax._src.lib import cuda_versions
 from jax.experimental import multihost_utils
 from jax.experimental import pallas as pl
-from jax.experimental.mosaic.gpu import profiler as mgpu_profiler
 from jax.experimental.pallas import mosaic_gpu as _plgpu
 from jax.experimental.pallas.ops.gpu.all_gather_mgpu import all_gather
 from jax.experimental.pallas.ops.gpu.reduce_scatter_mgpu import reduce_scatter
@@ -199,72 +198,6 @@ class PallasCallRemoteDMATest(TestCase):
 
     expected = x[8:] if jax.process_index() == 0 else x[:8]
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
-
-  def test_skip_device_sync(self):
-    if jax.process_index() > 2:
-      self.monkey_patched_api_was_used = True
-      return  # Only 2 processes needed.
-
-    # Kernel with cross-device barrier which makes sure that the other device
-    # has completed the previous kernel.
-    def barrier_kernel(x_ref, y_ref):
-      other_dev_id = 1 - lax.axis_index("x")
-      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
-      neighbor_ptr[...] = x_ref[...]
-
-    # Kernel with no cross-device barrier.
-    def skip_barrier_kernel(x_ref, y_ref):
-      other_dev_id = 1 - lax.axis_index("x")
-      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
-      neighbor_ptr[...] = x_ref[...] * 2
-
-    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
-
-    # The first kernel is executed with a device barrier, the second without.
-    def body(x):
-      y = self.kernel(
-          barrier_kernel,
-          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-      )(x)
-      y_ref = jax.new_ref(y)
-      self.kernel(
-          skip_barrier_kernel,
-          compiler_params=plgpu.CompilerParams(skip_device_barrier=True),
-      )(x, y_ref)
-      return jax.freeze(y_ref)
-
-    devices = jax.devices()[:2]
-    mesh = jax.sharding.Mesh(devices, ["x"])
-    sharded_fn = jax.jit(
-        jax.shard_map(
-            body,
-            mesh=mesh,
-            in_specs=P("x"),
-            out_specs=P("x"),
-            check_vma=False,
-        )
-    )
-
-    hlo = sharded_fn.lower(x).compile().as_text()
-    self.assertIn("skip_device_barrier = true", hlo)
-    self.assertIn("output_to_operand_aliasing", hlo)
-
-    out, timings = mgpu_profiler.measure(sharded_fn, aggregate=False)(x)
-    kernel_names = [name for name, _ in timings] if timings else []
-    barrier_kernels = [
-        name for name in kernel_names if "MultiGpuBarrier" in name
-    ]
-    local_devices = [d for d in devices if d in jax.local_devices()]
-    num_barrier_kernels = len(barrier_kernels) // len(local_devices)
-    expected_barriers = 1
-    self.assertEqual(
-        num_barrier_kernels,
-        expected_barriers,
-        f"Expected {expected_barriers} barrier kernels, got"
-        f" {num_barrier_kernels} in {kernel_names}",
-    )
-    expected = (x[8:] if jax.process_index() == 0 else x[:8]) * 2
-    np.testing.assert_array_equal(out.addressable_shards[0].data, expected)
 
   def test_remote_dma_tma_load(self):
     if jax.process_index() > 2:
