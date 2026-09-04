@@ -1152,8 +1152,11 @@ class JaxprInterpreter:
           case gpu_primitives.wait_smem_to_gmem_p:
             token, out = self._interpret_wait_smem_to_gmem_p(
                 eqn, token, deferred_invals)
-          case gpu_primitives.set_max_registers_p:
-            # This primitive is a no-op in GPU Interpret Mode.
+          case (
+              gpu_primitives.set_max_registers_p
+              | gpu_primitives.async_prefetch_p
+          ):
+            # These primitives are no-ops in GPU Interpret Mode.
             out = []
           case mosaic_gpu_core.layout_cast_p:
             # Interpret mode only considers layouts when interacting with a ref.
