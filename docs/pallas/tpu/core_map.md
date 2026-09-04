@@ -312,12 +312,12 @@ The code below is very similar to the `add_one_kernel` we wrote earlier, except 
 
 1. You need to split the work amongst all subcores, so a few lines to compute the specific slice for each subcore.
 
-1. SparseCore register computation allows smaller slices (`4x16` max for int32), so you need nested loops to iterate the slice during computation phase.
+1. SparseCore register computation requires smaller slices, so you need nested loops to iterate the slice during computation phase.
 
 
 ```python
 input_shape = (4096, 128)
-SC_REG_OP_SHAPE = (4, 16)
+SC_REG_OP_SHAPE = (1, sc_info.num_lanes)
 
 def sc_add_one_body(in_vmem, out_vmem):
   @pl.loop(0, in_vmem.shape[0], step=SC_REG_OP_SHAPE[0])
