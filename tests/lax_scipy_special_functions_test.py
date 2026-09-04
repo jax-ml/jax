@@ -364,6 +364,61 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
         f(0.0)
 
+  def testZetaQInfinity(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38637
+    # ζ(s, q) → 0 as q → +∞ for s > 1; JAX was returning NaN.
+    for dtype in [np.float32, np.float64]:
+      if dtype == np.float64 and not jax.config.x64_enabled:
+        continue
+      inf = dtype(np.inf)
+
+      # Basic: q = +inf, s > 1 → 0.0
+      s_pos = np.array([2.0, 3.0, 1.5], dtype=dtype)
+      q_inf = np.array([inf, inf, inf], dtype=dtype)
+      out = np.asarray(lsp_special.zeta(jnp.asarray(s_pos), jnp.asarray(q_inf)))
+      self.assertTrue(np.all(out == dtype(0.0)),
+                      msg=f"zeta(s>1, +inf) expected 0.0, got {out}")
+
+      # s <= 1, q = +inf → NaN (function is undefined for s <= 1).
+      # Gemini bot review: the guard must NOT overwrite these with 0.0.
+      s_le_1 = np.array([0.5, 1.0, -1.0], dtype=dtype)
+      q_inf3 = np.array([inf, inf, inf], dtype=dtype)
+      out_s_le_1 = np.asarray(lsp_special.zeta(
+          jnp.asarray(s_le_1), jnp.asarray(q_inf3)))
+      self.assertTrue(np.all(np.isnan(out_s_le_1) | np.isinf(out_s_le_1)),
+                      msg=f"zeta(s<=1, +inf) expected NaN or inf, got {out_s_le_1}")
+
+      # q = -inf → NaN (undefined domain regardless of s)
+      q_neginf = np.array([-inf, -inf], dtype=dtype)
+      out_neg = np.asarray(lsp_special.zeta(
+          jnp.asarray(np.array([2.0, 2.0], dtype=dtype)),
+          jnp.asarray(q_neginf)))
+      self.assertTrue(np.all(np.isnan(out_neg)),
+                      msg=f"zeta(s, -inf) expected NaN, got {out_neg}")
+
+      # Batched: mix of finite q and q=+inf with s > 1
+      s_batch = np.array([2.0, 2.0], dtype=dtype)
+      q_batch = np.array([1.0, inf], dtype=dtype)
+      out_batch = np.asarray(lsp_special.zeta(
+          jnp.asarray(s_batch), jnp.asarray(q_batch)))
+      self.assertFalse(np.any(np.isnan(out_batch)),
+                       msg=f"zeta batched: unexpected NaN in {out_batch}")
+      self.assertEqual(out_batch[1], dtype(0.0),
+                       msg=f"zeta(2, +inf) in batch expected 0.0, got {out_batch[1]}")
+
+      # Under JIT
+      jit_zeta = jax.jit(lsp_special.zeta)
+      out_jit = np.asarray(jit_zeta(jnp.asarray(dtype(2.0)),
+                                    jnp.asarray(dtype(inf))))
+      self.assertEqual(float(out_jit), 0.0,
+                       msg=f"jit(zeta)(2, +inf) expected 0.0, got {out_jit}")
+
+      # Gradient w.r.t. q at q=inf, s>1 → 0.0 (dζ/dq = -s·ζ(s+1,q) → 0)
+      grad_q = jax.grad(lsp_special.zeta, argnums=1)(
+          jnp.asarray(dtype(2.0)), jnp.asarray(dtype(inf)))
+      self.assertEqual(float(grad_q), 0.0,
+                       msg=f"grad_q zeta(2, +inf) expected 0.0, got {grad_q}")
+
   def testRelEntrExtremeValues(self):
     # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).
     dtype = jnp.zeros(0).dtype  # default float dtype.
