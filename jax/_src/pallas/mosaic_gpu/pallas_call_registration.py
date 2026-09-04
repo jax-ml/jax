@@ -25,6 +25,7 @@ import warnings
 
 import jax
 from jax._src import core as jax_core
+from jax._src import dtypes
 from jax._src import frozen_dict
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
@@ -180,6 +181,9 @@ def _emit_mosaic_gpu_custom_call(
 
 
 def _as_shaped_array(t: jax.ShapeDtypeStruct) -> jax_core.ShapedArray:
+  if isinstance(t.dtype, dtypes.ExtendedDType):
+    phys_dtype = jax_core.physical_element_aval(t.dtype).dtype
+    return jax_core.ShapedArray(t.shape, np.dtype(phys_dtype))
   return jax_core.ShapedArray(t.shape, np.dtype(t.dtype))
 
 

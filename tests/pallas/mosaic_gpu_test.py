@@ -9407,6 +9407,8 @@ class SemaphoreTest(PallasTest):
         scratch_types=[plgpu.SemaphoreType.REGULAR],
         grid=(2,),
         grid_names=("x",),
+        num_threads=1,
+        thread_name="wg",
     )
     text = jax.jit(kernel).lower().as_text()
     np.testing.assert_array_equal(kernel(), jnp.ones((128,), jnp.float32))
@@ -9597,6 +9599,44 @@ class SemaphoreTest(PallasTest):
     result = kernel()
     np.testing.assert_array_equal(result, jnp.ones((128,), jnp.float32))
 
+  def test_first_class_semaphore(self):
+    sem = plgpu.semaphore((2,), plgpu.SemaphoreType.REGULAR)
+    self.assertEqual(sem.dtype, plgpu.SemaphoreType.REGULAR.dtype)
+
+    sem_zeros = jnp.zeros((2,), dtype=plgpu.SemaphoreType.REGULAR.dtype)
+    self.assertEqual(sem_zeros.dtype, plgpu.SemaphoreType.REGULAR.dtype)
+
+    def body(sem_ref, out_ref):
+      block_id = lax.axis_index("x")
+      @pl.when(block_id == 0)
+      def _():
+        pl.semaphore_signal(sem_ref.at[0], inc=3)
+        pl.semaphore_signal(sem_ref.at[1], inc=7)
+      @pl.when(block_id == 1)
+      def _():
+        pl.semaphore_wait(sem_ref.at[0], value=3, decrement=False)
+        pl.semaphore_wait(sem_ref.at[1], value=7, decrement=False)
+        out_ref[0] = pl.semaphore_read(sem_ref.at[0])
+        out_ref[1] = pl.semaphore_read(sem_ref.at[1])
+
+    kernel = self.kernel(
+        body,
+        out_type=jax.ShapeDtypeStruct((2,), jnp.int32),
+        grid=(2,),
+        grid_names=("x",),
+    )
+
+    result = kernel(sem)
+    np.testing.assert_array_equal(result, jnp.array([3, 7], jnp.int32))
+
+    result_zeros = kernel(sem_zeros)
+    np.testing.assert_array_equal(result_zeros, jnp.array([3, 7], jnp.int32))
+
+    @jax.jit
+    def run():
+      s = plgpu.semaphore((2,))
+      return kernel(s)
+    np.testing.assert_array_equal(run(), jnp.array([3, 7], jnp.int32))
 
 class SemaphoreWGTest(
     SemaphoreTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
