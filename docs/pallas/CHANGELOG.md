@@ -40,13 +40,16 @@ Remember to align the itemized text with the first line of an item within a list
 * Deprecations
 
   * {func}`jax.experimental.pallas.mosaic_gpu.transpose_ref` is
-    deprecated. Use ``ref.transpose(...)` directly instead.
+    deprecated. Use `ref.transpose(...)` directly instead.
 
 * Removals
 
   * Removed {func}`jax.experimental.pallas.mosaic_gpu.transform_ref`. It is
     only marginally useful in the presence of transform inference. If you find
     that transform inference is insufficient, please file a bug.
+  * Removed the previously deprecated support for
+    {func}`jax.experimental.pallas.pallas_call`. Mosaic GPU kernels can now
+    only be defined via {func}`jax.experimental.pallas.mosaic_gpu.kernel`.
 
 ### TPU
 

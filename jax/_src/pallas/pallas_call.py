@@ -920,35 +920,6 @@ def _pallas_call_lowering(
     backend: Any = None
 
     try:
-      from jax._src.pallas.mosaic_gpu import core as mgpu_core  # pyrefly: ignore[missing-import]
-      from jax._src.pallas.mosaic_gpu import pallas_call_registration as mosaic_gpu_backend  # pyrefly: ignore[missing-import]
-    except ImportError:
-      pass
-    else:
-      if (
-          isinstance(compiler_params, mgpu_core.CompilerParams)
-          or (compiler_params is None and
-              config.jax_pallas_use_mosaic_gpu.value)
-      ):
-        backend = mosaic_gpu_backend
-
-      if backend is mosaic_gpu_backend:
-        if is_rocm:
-          raise ValueError(
-              "Mosaic GPU does not yet support AMD ROCm devices. "
-              "Use ``compiler_params=pltriton.CompilerParams()`` for ROCm."
-          )
-
-        if ctx.primitive is pallas_call_p:
-          deprecations.warn(
-              "jax-pallas-call-mgpu",
-              "Using ``pl.pallas_call`` for Mosaic GPU kernels is deprecated."
-              " Support for that will be removed in a future JAX version."
-              " Please migrate to ``plgpu.kernel``.",
-              stacklevel=2,
-          )
-
-    try:
       from jax._src.pallas.triton import core as triton_core  # pyrefly: ignore[missing-import]
       from jax._src.pallas.triton import pallas_call_registration as triton_backend  # pyrefly: ignore[missing-import]
     except ImportError:
