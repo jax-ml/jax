@@ -6263,6 +6263,22 @@ class RematTest(jtu.JaxTestCase):
     expected = np.cos(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_remat_wrapped_kwarg_with_static_argnums(self):
+    def f(x, is_training):
+      return x * 2. if is_training else x
+
+    @functools.wraps(f)
+    def stateful_fun(*args, **kwargs):
+      extra = kwargs.pop('extra', 0.)
+      return f(*args, **kwargs) + extra
+
+    rematted = jax.remat(stateful_fun, static_argnums=1)
+    ans = rematted(3.0, True, extra=1.0)
+    self.assertEqual(ans, 7.0)
+
+    grad_ans = jax.grad(lambda x: rematted(x, True, extra=1.0))(3.0)
+    self.assertEqual(grad_ans, 2.0)
+
   def test_remat_retracing(self):
     # This is *not* a very important behavior; remat doesn't need to provide
     # caching guarantees with the same importance as jit. But even so, in the
