@@ -659,6 +659,37 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @jtu.sample_product(dtype=complex_dtypes)
+  def testSqrtPreservesBranchCutSign(self, dtype):
+    x = np.array([
+        complex(-1.0, 0.0), complex(-1.0, -0.0),
+        complex(1.0, 0.0), complex(1.0, -0.0),
+        complex(-0.0, 0.0), complex(-0.0, -0.0),
+    ], dtype=dtype)
+    expected = np.sqrt(x)
+    for actual in (jnp.sqrt(x), jax.jit(jnp.sqrt)(x)):
+      self.assertArraysEqual(actual, expected)
+      self.assertArraysEqual(np.signbit(actual.real), np.signbit(expected.real))
+      self.assertArraysEqual(np.signbit(actual.imag), np.signbit(expected.imag))
+
+  @jtu.sample_product(dtype=complex_dtypes)
+  def testSqrtSignedZeroJvp(self, dtype):
+    x = np.array([
+        complex(-1.0, 0.0), complex(-1.0, -0.0),
+        complex(1.0, 0.0), complex(1.0, -0.0),
+    ], dtype=dtype)
+    tangent = np.array([1j, -1j, 1j, -1j], dtype=dtype)
+    expected_primal = np.sqrt(x)
+    expected_tangent = tangent / (2 * expected_primal)
+
+    def sqrt_jvp(x, tangent):
+      return jax.jvp(jnp.sqrt, (x,), (tangent,))
+
+    for actual_primal, actual_tangent in (
+        sqrt_jvp(x, tangent), jax.jit(sqrt_jvp)(x, tangent)):
+      self.assertArraysEqual(actual_primal, expected_primal)
+      self.assertArraysAllClose(actual_tangent, expected_tangent)
+
   def testDeferToNamedTuple(self):
     class MyArray(NamedTuple):
       arr: jax.Array
