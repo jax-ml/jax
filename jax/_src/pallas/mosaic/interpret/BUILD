@@ -116,6 +116,7 @@ pytype_strict_library(
         "//jax",
         "//jax/_src:core",
         "//jax/_src:source_info_util",
+        "//jax/_src:state_types",
         "//jax/_src:util",
         "//jax/_src/pallas",
     ] + py_deps("numpy"),

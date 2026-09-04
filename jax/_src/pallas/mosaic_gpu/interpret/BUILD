@@ -45,6 +45,7 @@ pytype_strict_library(
         ":gpu_callbacks",
         ":jaxpr_interpret",
         ":params",
+        ":race_detection_state",
         ":shared_memory",
         "//jax",
         "//jax/_src:callback",
@@ -64,6 +65,7 @@ pytype_strict_library(
     srcs = ["gpu_callbacks.py"],
     deps = [
         ":params",
+        ":race_detection_state",
         ":shared_memory",
         "//jax",
         "//jax/_src:callback",
@@ -100,6 +102,17 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic_gpu:core",
         "//jax/_src/pallas/mosaic_gpu:primitives",
+    ],
+)
+
+pytype_strict_library(
+    name = "race_detection_state",
+    srcs = ["race_detection_state.py"],
+    deps = [
+        ":shared_memory",
+        "//jax/_src:source_info_util",
+        "//jax/_src/pallas/mosaic/interpret:race_detection_state",
+        "//jax/_src/pallas/mosaic/interpret:utils",
     ],
 )
 

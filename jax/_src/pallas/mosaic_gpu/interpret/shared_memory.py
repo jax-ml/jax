@@ -38,6 +38,15 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+# How a ref is laid out rather than what it contains. Applying these to a ref's
+# physical aval gives its logical one, and since every buffer is allocated at
+# that logical shape they are identities at every use site.
+LAYOUT_TRANSFORMS = (
+    mosaic_gpu_core.UnswizzleRef,
+    mosaic_gpu_core.UntilingTransform,
+)
+
+
 IDX_BY_GPU_MEMORY_SPACE: collections.abc.Mapping[
     mosaic_gpu_core.MemorySpace, int
 ]
@@ -555,6 +564,64 @@ class GPUSharedMemory(
     self.num_blocks_per_cluster = num_blocks_per_cluster
     self.num_pallas_threads_per_block = num_threads_per_block
     self.reset_per_cluster_state()
+
+  def buffer_shape_and_dtype(self, key: MemKey) -> memory.ShapeAndDtype:
+    """The logical shape and dtype of `key`'s buffer."""
+    with self.lock:
+      buff = self.mem[key]
+    if not isinstance(buff, memory.Buffer):
+      raise ValueError(f"Allocation with key `{key}` is not a `Buffer`.")
+    return memory.ShapeAndDtype(buff.logical_shape, buff.dtype)
+
+  def access(self, key: MemKey, transforms) -> interpret_utils.Access:
+    """What `transforms` touches of `key`'s buffer, in its coordinates."""
+    return interpret_utils.to_access(
+        transforms, self.buffer_shape_and_dtype(key).shape
+    )
+
+  # The accessors below take an `interpret_utils.Access` (a range in the
+  # buffer's coordinates plus an axis permutation) where the base class takes
+  # a plain range. The range is handed down as is and only the value crossing
+  # the boundary is reordered, so the shared layer never sees a transpose.
+
+  def get_buffer_content(
+      self, key, access: interpret_utils.Access, *args, **kwargs
+  ):
+    result, shape_and_dtype, clock = super().get_buffer_content(
+        key, access.range, *args, **kwargs
+    )
+    if result is not None and access.permutation is not None:
+      result = result.transpose(access.permutation)
+    return result, shape_and_dtype, clock
+
+  def store_buffer_content(
+      self, key, access: interpret_utils.Access, value, *args, **kwargs
+  ):
+    if access.permutation is not None:
+      value = value.transpose(access.inverse_permutation)
+    in_bounds, shape_and_dtype, clock = super().store_buffer_content(
+        key, access.range, value, *args, **kwargs
+    )
+    if not in_bounds:
+      raise IndexError(
+          f"Out-of-bounds store of {key}: writing [{access}] but buffer has"
+          f" shape {shape_and_dtype.shape}."
+      )
+    return in_bounds, shape_and_dtype, clock
+
+  def swap_buffer_content(
+      self, key, access: interpret_utils.Access, value, mask, *args, **kwargs
+  ):
+    if access.permutation is not None:
+      value = value.transpose(access.inverse_permutation)
+      if mask is not None:
+        mask = mask.transpose(access.inverse_permutation)
+    result, shape_and_dtype, clock = super().swap_buffer_content(
+        key, access.range, value, mask, *args, **kwargs
+    )
+    if result is not None and access.permutation is not None:
+      result = result.transpose(access.permutation)
+    return result, shape_and_dtype, clock
 
   def reset_per_cluster_state(self):
     """Resets the per-cluster state of the shared memory."""

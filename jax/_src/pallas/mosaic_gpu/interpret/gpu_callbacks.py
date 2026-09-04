@@ -29,13 +29,14 @@ from jax._src import callback
 from jax._src import source_info_util
 from jax._src.pallas.mosaic.interpret import thread_map
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
-from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
 from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
 from jax._src.pallas.mosaic_gpu.interpret import shared_memory as memory
+from jax._src.pallas.mosaic_gpu.interpret.race_detection_state import GPURaceDetectionState
 from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
 from jax._src.pallas.mosaic_gpu.interpret.shared_memory import HostAllocationKey
 from jax._src.pallas.mosaic_gpu.interpret.shared_memory import HostAllocationRequest
 from jax._src.state import indexing
+from jax._src.state import types as state_types
 from jax.experimental.mosaic import gpu as mgpu
 import numpy as np
 
@@ -46,7 +47,7 @@ def is_gmem_memory_space(space: mosaic_gpu_core.MemorySpace | None) -> bool:
 
 _shared_memory: memory.GPUSharedMemory | None = None
 _shared_memory_init_lock = threading.Lock()
-_races: RaceDetectionState[memory.GPUSharedMemory.ThreadKey] | None = None
+_races: GPURaceDetectionState | None = None
 
 
 def _get_shared_memory() -> memory.GPUSharedMemory:
@@ -60,7 +61,7 @@ def _clear_shared_memory():
     _shared_memory = None
 
 
-def get_races() -> RaceDetectionState[memory.GPUSharedMemory.ThreadKey]:
+def get_races() -> GPURaceDetectionState:
   assert _races is not None
   return _races
 
@@ -178,7 +179,7 @@ def _initialize_shared_memory(
 
   with _shared_memory_init_lock:
     if _shared_memory is None:
-      _races = RaceDetectionState(num_cores=num_total_concurrent_threads)
+      _races = GPURaceDetectionState(num_cores=num_total_concurrent_threads)
       _shared_memory = memory.GPUSharedMemory(
           num_devices=num_gpus_as_int,
           num_threads_per_block=num_threads_per_block_as_int,
@@ -269,6 +270,38 @@ def _make_allocation_request_array(
       thread_id=thread_id,
       initial_ref_count=initial_ref_count,
   ).as_np_array
+
+
+@fail_on_exception
+def _tag_ref_union(
+    token: jax.Array,
+    member_keys_as_array: np.ndarray,
+    alias_group_idxs: tuple[int, ...],
+) -> jax.Array:
+  """Tells race detection that `member_keys_as_array` names one `RefUnion`.
+
+  The union is identified by its first member's key.
+  """
+  races = get_races()
+  keys = [HostAllocationKey.from_array(k) for k in member_keys_as_array]
+  for key, alias_group_idx in zip(keys, alias_group_idxs, strict=True):
+    races.tag_ref_union_member(key, keys[0], alias_group_idx)
+  return token
+
+
+def call_tag_ref_union(
+    token: jax.Array,
+    member_keys_as_array: jax.Array,
+    alias_group_idxs: Sequence[int],
+) -> jax.Array:
+  return callback.io_callback(
+      functools.partial(
+          _tag_ref_union, alias_group_idxs=tuple(alias_group_idxs)
+      ),
+      TOKEN_SHAPE_DTYPE,
+      token,
+      member_keys_as_array,
+  )
 
 
 def call_make_allocation_request_array(
@@ -510,7 +543,7 @@ def _handle_out_of_bounds_read(
     shape: Sequence[int],
     dtype: np.dtype,
     allocation_key: HostAllocationKey,
-    read_range: tuple[int | slice, ...],
+    read_range: interpret_utils.Access,
     shared_memory: memory.GPUSharedMemory,
     source_info,
     input_name: str | None,
@@ -570,6 +603,8 @@ def _validate_transforms(transforms):
           raise ValueError(
               "Dynamic indexing not supported in GPU interpret mode"
           )
+      case state_types.TransposeTransform():
+        pass
       case _:
         raise ValueError(f"Unsupported transform: {transform}")
 
@@ -607,7 +642,7 @@ def _get(
 
   shared_memory = _get_shared_memory()
 
-  read_range = interpret_utils.to_range(transforms)
+  read_range = shared_memory.access(allocation_key, transforms)
   ret, (shape, dtype), clock_ = shared_memory.get_buffer_content(
       allocation_key,
       read_range,
@@ -617,26 +652,7 @@ def _get(
   )
   clock = clock if clock is not None else clock_
 
-  # Compute the shape of the read value, assuming the read is fully in-bounds.
-  # TODO(jburnim): We already know this shape in the Jaxpr where we insert a
-  # callback to `get`.  Should we just pass the shape to `get`?
-  # TODO(jburnim): Move to a helper function?
-  new_full_read_shape: list[int] = []
-  assert len(read_range) <= len(shape)
-  for dim_size, idx_or_slice in itertools.zip_longest(
-      shape, read_range, fillvalue=None
-  ):
-    assert isinstance(dim_size, int)
-    if idx_or_slice is None:
-      new_full_read_shape.append(dim_size)
-    elif isinstance(idx_or_slice, int):
-      continue
-    else:
-      dim_size = (idx_or_slice.stop - idx_or_slice.start) // idx_or_slice.step
-      assert isinstance(dim_size, int)
-      new_full_read_shape.append(dim_size)
-  full_read_shape = tuple(new_full_read_shape)
-  del new_full_read_shape
+  full_read_shape = read_range.shape
 
   if (ret is None) or (full_read_shape != ret.shape):
     ret = _handle_out_of_bounds_read(
@@ -719,7 +735,7 @@ def _swap(
 
   shared_memory = _get_shared_memory()
 
-  read_write_range = interpret_utils.to_range(transforms)
+  read_write_range = shared_memory.access(allocation_key, transforms)
   ret, (shape, _), clock_ = shared_memory.swap_buffer_content(
       allocation_key,
       read_write_range,
@@ -748,6 +764,11 @@ def _swap(
 
   if shared_memory.detect_races:
     assert clock is not None
+    # TODO(paulbib): Only the write half of the swap is registered with race
+    # detection. This is important for RefUnions: since writes are lowered to
+    # swaps, if we included the read in race-checking, we would constantly be
+    # tripping the RefUnion different-view check. If we could distinguish
+    # "real" swaps, then we should check the read here for "real" swaps
     get_races().check_write(
         thread,
         clock.generic_clock,
@@ -1128,6 +1149,28 @@ def call_allocate_cluster_barriers(
   )
 
 
+def _pad_to_requested(
+    val: np.ndarray | None, requested: tuple[int, ...], dtype, fill_value
+) -> np.ndarray:
+  padded = np.full(requested, fill_value, dtype=dtype)
+  if val is not None:
+    padded[tuple(slice(s) for s in val.shape)] = val
+  return padded
+
+
+def _clip_store_to_shape(
+    access: interpret_utils.Access, val: np.ndarray, shape: tuple[int, ...]
+) -> tuple[interpret_utils.Access, np.ndarray] | None:
+  """Restricts a store of `val` at `access` to the part inside `shape`."""
+  if access.permutation is not None:
+    raise NotImplementedError("Transposed TMA destination not supported.")
+  clipped = interpret_utils.clip_range_to_shape(access.range, shape)
+  if clipped is None:
+    return None
+  access = interpret_utils.Access(clipped)
+  return access, val[tuple(slice(s) for s in access.shape)]
+
+
 class AsyncCopyTask:
   """
   An async task representing a TMA memory copy.
@@ -1147,13 +1190,13 @@ class AsyncCopyTask:
   # The pseudo-thread being used to execute the memory transfer.
   tma_thread_id: int
 
-  # Allocation key and transforms for the source buffer.
+  # Allocation key and access for the source buffer.
   src_allocation_key: HostAllocationKey
-  src_transforms: tuple[Any, ...]
+  src_access: interpret_utils.Access
 
-  # Allocation key and transforms for the destination buffer.
+  # Allocation key and access for the destination buffer.
   dst_allocation_key: HostAllocationKey
-  dst_transforms: tuple[Any, ...]
+  dst_access: interpret_utils.Access
 
   source_info: source_info_util.SourceInfo | None = None
 
@@ -1161,21 +1204,27 @@ class AsyncCopyTask:
 
   data: np.ndarray | None = None
 
+  # Value to pad reads with, or None if they must stay in bounds.
+  out_of_bounds_source_fill: Any = None
+
+  # Whether writing out-out-of-bounds is clipped or is an error.
+  clips_out_of_bounds_destination: bool = False
+
   def __init__(self,
       mesh_location: memory.MeshLocation,
       thread: memory.Thread,
       src_allocation_key: HostAllocationKey,
-      src_transforms: tuple[Any, ...],
+      src_access: interpret_utils.Access,
       dst_allocation_key: HostAllocationKey,
-      dst_transforms: tuple[Any, ...],
+      dst_access: interpret_utils.Access,
       source_info: source_info_util.SourceInfo | None = None,
   ):
     self.mesh_location = mesh_location
     self.thread = thread
     self.src_allocation_key = src_allocation_key
-    self.src_transforms = src_transforms
+    self.src_access = src_access
     self.dst_allocation_key = dst_allocation_key
-    self.dst_transforms = dst_transforms
+    self.dst_access = dst_access
     self.source_info = source_info
     self.logging_info = memory.GPULoggingInfo(
         mesh_location, thread, source_info
@@ -1186,23 +1235,41 @@ class AsyncCopyTask:
 
     self.pre_read(tma_thread_id, shared_memory)
 
-    val, _, _ = shared_memory.get_buffer_content(
+    val, (_, src_dtype), _ = shared_memory.get_buffer_content(
         self.src_allocation_key,
-        interpret_utils.to_range(self.src_transforms),
+        self.src_access,
         self.thread,
         logging_info=self.logging_info,
     )
-    assert val is not None
+    if val is None or val.shape != self.src_access.shape:
+      # The source window indexed out of bounds.
+      if self.out_of_bounds_source_fill is None:
+        raise IndexError(
+            f"Out-of-bounds copy from {self.src_allocation_key} to"
+            f" {self.dst_allocation_key}: copying [{self.src_access}] to"
+            f" [{self.dst_access}]."
+        )
+      val = _pad_to_requested(
+          val, self.src_access.shape, src_dtype, self.out_of_bounds_source_fill
+      )
 
     self.post_read(tma_thread_id, shared_memory)
 
-    shared_memory.store_buffer_content(
-        self.dst_allocation_key,
-        interpret_utils.to_range(self.dst_transforms),
-        val,
-        self.thread,
-        logging_info=self.logging_info,
-    )
+    store = (self.dst_access, val)
+    if self.clips_out_of_bounds_destination:
+      store = _clip_store_to_shape(
+          self.dst_access,
+          val,
+          tuple(shared_memory.buffer_shape_and_dtype(self.dst_allocation_key).shape),
+      )
+    # If the out-of-bounds is an error, it will be reported by store_buffer_content.
+    if store is not None:
+      shared_memory.store_buffer_content(
+          self.dst_allocation_key,
+          *store,
+          self.thread,
+          logging_info=self.logging_info,
+      )
 
     self.post_write(tma_thread_id, shared_memory)
 
@@ -1221,6 +1288,9 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
 
   VectorClock = memory.GPUSharedMemory.VectorClock
 
+  # TODO(paulbib):support more than just the default of `OOBFillMode.ZEROS`.
+  out_of_bounds_source_fill = 0
+
   barrier: memory.Barrier
   clock: VectorClock | None = None
 
@@ -1229,9 +1299,9 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
         mesh_location: memory.MeshLocation,
         thread: memory.Thread,
         src_allocation_key: HostAllocationKey,
-        src_transforms: tuple[Any, ...],
+        src_access: interpret_utils.Access,
         dst_allocation_key: HostAllocationKey,
-        dst_transforms: tuple[Any, ...],
+        dst_access: interpret_utils.Access,
         barrier_allocation_key: HostAllocationKey,
         source_info: source_info_util.SourceInfo | None,
         clock: VectorClock | None = None,
@@ -1240,9 +1310,9 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
         mesh_location=mesh_location,
         thread=thread,
         src_allocation_key=src_allocation_key,
-        src_transforms=src_transforms,
+        src_access=src_access,
         dst_allocation_key=dst_allocation_key,
-        dst_transforms=dst_transforms,
+        dst_access=dst_access,
         source_info=source_info)
     shared_memory = _get_shared_memory()
     self.barrier = shared_memory.get_barrier(barrier_allocation_key)
@@ -1259,7 +1329,7 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
           self.thread,
           self.clock.generic_clock.copy(),
           self.src_allocation_key,
-          interpret_utils.to_range(self.src_transforms),
+          self.src_access,
           source_info=self.source_info,
       )
 
@@ -1272,7 +1342,7 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
           self.thread,
           self.clock.async_smem_clock.copy(),
           self.dst_allocation_key,
-          interpret_utils.to_range(self.dst_transforms),
+          self.dst_access,
           source_info=self.source_info,
       )
 
@@ -1289,6 +1359,9 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
 
   VectorClock = memory.GPUSharedMemory.VectorClock
 
+  # A TMA store drops out-of-bounds writes.
+  clips_out_of_bounds_destination = True
+
   clock: VectorClock | None = None
   read_clock: VectorClock | None = None
   write_clock: VectorClock | None = None
@@ -1298,9 +1371,9 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
       mesh_location: memory.MeshLocation,
       thread: memory.Thread,
       src_allocation_key: HostAllocationKey,
-      src_transforms: tuple[Any, ...],
+      src_access: interpret_utils.Access,
       dst_allocation_key: HostAllocationKey,
-      dst_transforms: tuple[Any, ...],
+      dst_access: interpret_utils.Access,
       source_info: source_info_util.SourceInfo | None,
       clock: VectorClock | None = None,
   ):
@@ -1308,9 +1381,9 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
         mesh_location=mesh_location,
         thread=thread,
         src_allocation_key=src_allocation_key,
-        src_transforms=src_transforms,
+        src_access=src_access,
         dst_allocation_key=dst_allocation_key,
-        dst_transforms=dst_transforms,
+        dst_access=dst_access,
         source_info=source_info)
     self.clock = clock
 
@@ -1323,7 +1396,7 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
           self.thread,
           self.clock.async_smem_clock.copy(),
           self.src_allocation_key,
-          interpret_utils.to_range(self.src_transforms),
+          self.src_access,
           source_info=self.source_info,
       )
 
@@ -1336,7 +1409,7 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
           self.thread,
           self.clock.async_smem_clock.copy(),
           self.dst_allocation_key,
-          interpret_utils.to_range(self.dst_transforms),
+          self.dst_access,
           source_info=self.source_info,
       )
 
@@ -1351,10 +1424,10 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
       )
 
 
-NOOP_TRANSFORMS = (
-    mosaic_gpu_core.UnswizzleRef,
-    mosaic_gpu_core.UntilingTransform,
-)
+# Buffers are allocated at their logical shape (see
+# `jaxpr_interpret.apply_layout_transforms`), so the transforms that describe
+# how they are laid out are identities on an access and are dropped here.
+NOOP_TRANSFORMS = memory.LAYOUT_TRANSFORMS
 
 
 def _remove_noop_transforms(transforms: tuple[Any, ...]) -> tuple[Any, ...]:
@@ -1373,7 +1446,6 @@ def wgmma(
     thread: memory.Thread,
     acc_allocation_key_as_array: jax.Array,
     acc_transforms: tuple[Any, ...],
-    acc_dtype: jnp.dtype,
     a_allocation_key_as_array: jax.Array,
     a_transforms: tuple[Any, ...],
     b_allocation_key_as_array: jax.Array,
@@ -1395,27 +1467,28 @@ def wgmma(
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
   a, _, _ = shared_memory.get_buffer_content(
       a_allocation_key,
-      interpret_utils.to_range(a_transforms),
+      shared_memory.access(a_allocation_key, a_transforms),
       thread,
       logging_info=logging_info,
   )
   b, _, _ = shared_memory.get_buffer_content(
       b_allocation_key,
-      interpret_utils.to_range(b_transforms),
+      shared_memory.access(b_allocation_key, b_transforms),
       thread,
       logging_info=logging_info,
   )
   assert a is not None
   assert b is not None
-  acc_range = interpret_utils.to_range(acc_transforms)
+  acc_range = shared_memory.access(acc_allocation_key, acc_transforms)
   acc, _, _ = shared_memory.get_buffer_content(
       acc_allocation_key,
       acc_range,
       thread,
       logging_info=logging_info,
   )
+  assert acc is not None
 
-  res = acc + np.matmul(a, b, dtype=acc_dtype)
+  res = acc + np.matmul(a, b, dtype=acc.dtype)
 
   shared_memory.store_buffer_content(
       acc_allocation_key,
@@ -1447,7 +1520,10 @@ def wgmma_accumulator_deref(
 
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
   acc, _, _ = shared_memory.get_buffer_content(
-      acc_allocation_key, (), thread, logging_info=logging_info
+      acc_allocation_key,
+      shared_memory.access(acc_allocation_key, ()),
+      thread,
+      logging_info=logging_info,
   )
   return token, acc
 
@@ -1489,9 +1565,9 @@ def copy_smem_to_gmem(
       mesh_location=mesh_location,
       thread=thread,
       src_allocation_key=src_allocation_key,
-      src_transforms=src_transforms,
+      src_access=shared_memory.access(src_allocation_key, src_transforms),
       dst_allocation_key=dst_allocation_key,
-      dst_transforms=dst_transforms,
+      dst_access=shared_memory.access(dst_allocation_key, dst_transforms),
       source_info=source_info,
       clock=clock,
   )
@@ -1549,9 +1625,9 @@ def copy_gmem_to_smem(
       mesh_location=mesh_location,
       thread=thread,
       src_allocation_key=src_allocation_key,
-      src_transforms=src_transforms,
+      src_access=shared_memory.access(src_allocation_key, src_transforms),
       dst_allocation_key=dst_allocation_key,
-      dst_transforms=dst_transforms,
+      dst_access=shared_memory.access(dst_allocation_key, dst_transforms),
       barrier_allocation_key=barrier_allocation_key,
       source_info=source_info,
       clock=clock,
@@ -1583,12 +1659,11 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
   mesh_location: memory.MeshLocation
   thread: memory.Thread
   acc_key: HostAllocationKey
-  acc_transforms: tuple[Any, ...]
-  acc_dtype: jnp.dtype
+  acc_access: interpret_utils.Access
   a_key: HostAllocationKey
-  a_transforms: tuple[Any, ...]
+  a_access: interpret_utils.Access
   b_key: HostAllocationKey
-  b_transforms: tuple[Any, ...]
+  b_access: interpret_utils.Access
   accumulate: bool
   barrier_key: HostAllocationKey | None = None
   a_scale_key: HostAllocationKey | None = None
@@ -1602,13 +1677,11 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
 
   def forms_pipeline(self, parent: memory.PipelineableAsyncTask) -> bool:
     if isinstance(parent, TcGen05Mma):
-      # In order to pipeline with another mma, the accumulator, collective block
-      # count, and dtype must match
+      # In order to pipeline with another mma, the accumulator window and
+      # collective block count must match.
       return (
           parent.acc_key == self.acc_key
-          and interpret_utils.to_range(parent.acc_transforms)
-          == interpret_utils.to_range(self.acc_transforms)
-          and parent.acc_dtype == self.acc_dtype
+          and parent.acc_access == self.acc_access
           and parent.collective_axis == self.collective_axis
       )
     if isinstance(parent, TcGen05Copy):
@@ -1633,13 +1706,13 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
     )
     a, _, _ = shared_memory.get_buffer_content(
         self.a_key,
-        interpret_utils.to_range(self.a_transforms),
+        self.a_access,
         self.thread,
         logging_info=logging_info,
     )
     b, _, _ = shared_memory.get_buffer_content(
         self.b_key,
-        interpret_utils.to_range(self.b_transforms),
+        self.b_access,
         self.thread,
         logging_info=logging_info,
     )
@@ -1667,18 +1740,19 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
           self.thread,
           a_clock,
           self.a_key,
-          interpret_utils.to_range(self.a_transforms),
+          self.a_access,
           source_info=self.source_info,
       )
       get_races().check_read(
           self.thread,
           clock.async_smem_clock,
           self.b_key,
-          interpret_utils.to_range(self.b_transforms),
+          self.b_access,
           source_info=self.source_info,
       )
 
-    acc_range = interpret_utils.to_range(self.acc_transforms)
+    acc_range = self.acc_access
+    acc_dtype = shared_memory.buffer_shape_and_dtype(self.acc_key).dtype
 
     if self.accumulate:
       acc, _, _ = shared_memory.get_buffer_content(
@@ -1688,9 +1762,9 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
           logging_info=logging_info,
       )
       assert acc is not None
-      res = acc + np.matmul(a, b, dtype=self.acc_dtype)
+      res = acc + np.matmul(a, b, dtype=acc_dtype)
     else:
-      res = np.matmul(a, b, dtype=self.acc_dtype)
+      res = np.matmul(a, b, dtype=acc_dtype)
 
     shared_memory.store_buffer_content(
         self.acc_key,
@@ -1703,6 +1777,10 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
 
     if shared_memory.detect_races:
       assert clock is not None
+      # TODO(paulbib): for race-checking, we don't technically need to check
+      # the accumulator read, since the subsequent write will catch the race.
+      # However, we should still add a `check_read` here since it also is
+      # import for checking RefUnion invariants.
       get_races().check_write(
           self.thread,
           clock.generic_clock,
@@ -1737,7 +1815,6 @@ def tcgen05_mma(
     thread: memory.Thread,
     acc_allocation_key_as_array: jax.Array,
     acc_transforms: tuple[Any, ...],
-    acc_dtype: jnp.dtype,
     a_allocation_key_as_array: jax.Array,
     a_transforms: tuple[Any, ...],
     b_allocation_key_as_array: jax.Array,
@@ -1794,12 +1871,11 @@ def tcgen05_mma(
           mesh_location=mesh_location,
           thread=thread,
           acc_key=acc_allocation_key,
-          acc_transforms=acc_transforms,
-          acc_dtype=acc_dtype,
+          acc_access=shared_memory.access(acc_allocation_key, acc_transforms),
           a_key=a_allocation_key,
-          a_transforms=a_transforms,
+          a_access=shared_memory.access(a_allocation_key, a_transforms),
           b_key=b_allocation_key,
-          b_transforms=b_transforms,
+          b_access=shared_memory.access(b_allocation_key, b_transforms),
           accumulate=accumulate,
           barrier_key=barrier_key,
           a_scale_key=a_scale_allocation_key,
@@ -1822,9 +1898,9 @@ class TcGen05Copy(memory.PipelineableAsyncTask):
   mesh_location: memory.MeshLocation
   thread: memory.Thread
   smem_key: HostAllocationKey
-  smem_transforms: tuple[Any, ...]
+  smem_access: interpret_utils.Access
   tmem_key: HostAllocationKey
-  tmem_transforms: tuple[Any, ...]
+  tmem_access: interpret_utils.Access
   collective_axis: str | None = None
   source_info: source_info_util.SourceInfo | None = None
 
@@ -1847,7 +1923,7 @@ class TcGen05Copy(memory.PipelineableAsyncTask):
     )
     smem, _, _ = shared_memory.get_buffer_content(
         self.smem_key,
-        interpret_utils.to_range(self.smem_transforms),
+        self.smem_access,
         self.thread,
         logging_info=logging_info,
     )
@@ -1866,11 +1942,11 @@ class TcGen05Copy(memory.PipelineableAsyncTask):
           self.thread,
           clock.async_smem_clock,
           self.smem_key,
-          interpret_utils.to_range(self.smem_transforms),
+          self.smem_access,
           source_info=self.source_info,
       )
 
-    tmem_range = interpret_utils.to_range(self.tmem_transforms)
+    tmem_range = self.tmem_access
 
     shared_memory.store_buffer_content(
         self.tmem_key,
@@ -1925,9 +2001,9 @@ def async_copy_smem_to_tmem(
           mesh_location=mesh_location,
           thread=thread,
           smem_key=smem_allocation_key,
-          smem_transforms=smem_transforms,
+          smem_access=shared_memory.access(smem_allocation_key, smem_transforms),
           tmem_key=tmem_allocation_key,
-          tmem_transforms=tmem_transforms,
+          tmem_access=shared_memory.access(tmem_allocation_key, tmem_transforms),
           collective_axis=collective_axis,
           source_info=source_info,
       ),
@@ -2004,7 +2080,7 @@ def async_store_tmem(
     shared_memory = _get_shared_memory()
     shared_memory.store_buffer_content(
         dst_allocation_key,
-        interpret_utils.to_range(dst_transforms),
+        shared_memory.access(dst_allocation_key, dst_transforms),
         vals,
         thread,
         increment_clock=False,
@@ -2018,7 +2094,7 @@ def async_store_tmem(
           thread,
           clock.generic_clock,
           dst_allocation_key,
-          interpret_utils.to_range(dst_transforms),
+          shared_memory.access(dst_allocation_key, dst_transforms),
           source_info=source_info,
       )
       shared_memory.add_store_tmem_clock(thread, clock)
@@ -2047,7 +2123,7 @@ def async_load_tmem(
 
     val, _, _ = shared_memory.get_buffer_content(
         src_allocation_key,
-        interpret_utils.to_range(src_transforms),
+        shared_memory.access(src_allocation_key, src_transforms),
         None,
         logging_info=logging_info,
     )
@@ -2060,7 +2136,7 @@ def async_load_tmem(
           thread,
           clock.generic_clock,
           src_allocation_key,
-          interpret_utils.to_range(src_transforms),
+          shared_memory.access(src_allocation_key, src_transforms),
           source_info=source_info,
       )
       shared_memory.add_load_tmem_clock(thread, clock)
