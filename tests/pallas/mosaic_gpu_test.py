@@ -1463,6 +1463,26 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
     np.testing.assert_array_equal(kernel(), np.array([0, 0, 1, 0, 1]))
 
+  def test_barrier_test_predicated(self):
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((3,), jnp.int32),
+        scratch_types=[plgpu.Barrier(num_barriers=1)],
+    )
+    def kernel(o_ref, barrier_ref):
+      plgpu.barrier_arrive(barrier_ref.at[0])
+      o_ref[0] = plgpu.barrier_test(
+          barrier_ref.at[0], predicate=jnp.bool_(False)
+      ).astype(jnp.int32)
+      o_ref[1] = plgpu.barrier_test(
+          barrier_ref.at[0], predicate=jnp.bool_(True)
+      ).astype(jnp.int32)
+      o_ref[2] = plgpu.barrier_test(
+          barrier_ref.at[0], predicate=jnp.bool_(False)
+      ).astype(jnp.int32)
+
+    np.testing.assert_array_equal(kernel(), np.array([0, 1, 0]))
+
   @parameterized.named_parameters(
       {
           "testcase_name": "1d_none",
@@ -7645,6 +7665,30 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
           out_ref[warp_idx] = jnp.ones_like(out_ref.at[warp_idx])
 
     np.testing.assert_array_equal(kernel(), np.array([1, 1], dtype=np.int32))
+
+  @parameterized.parameters(True, False)
+  def test_barrier_arrive_wait_predicated(self, orders_tensor_core):
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((4,), jnp.int32),
+        scratch_types=[
+            plgpu.Barrier(num_arrivals=2, orders_tensor_core=orders_tensor_core)
+        ],
+    )
+    def kernel(out_ref, bar):
+      @plgpu.warp_map
+      def _per_warp(warp_idx):
+        pred = warp_idx < 2
+        plgpu.barrier_arrive(bar, predicate=pred)
+        plgpu.barrier_wait(bar, predicate=pred)
+
+        @pl.when(pred)
+        def _():
+          out_ref[warp_idx] = jnp.ones_like(out_ref.at[warp_idx])
+
+    np.testing.assert_array_equal(
+        kernel(), np.array([1, 1, 0, 0], dtype=np.int32)
+    )
 
 
 class PallasCallTCGen05WGTest(
