@@ -89,3 +89,68 @@ jobs:
       build_jax: ${{ 'true' }}
       bazel_command: ${{ (contains(matrix.runner, 'linux-x86') && 'test') || 'build' }}
       clone_main_xla: 0
+  
+  temporary-test-download-windows:
+    runs-on:  "windows-x86-n2-16"
+    name: "Temporary Download Test on windows-x86-n2-16"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Verify Windows Image
+        shell: bash
+        run: |
+          if [[ -d "/c/gcloud" ]]; then
+            echo "New Windows runner image is ACTIVE!"
+            which gcloud
+          else
+            echo "Old Windows runner image is still running."
+            exit 1
+          fi
+      - name: Set dummy env keys for downloading action
+        shell: bash
+        run: echo "JAXCI_HERMETIC_PYTHON_VERSION=3.11" >> "$GITHUB_ENV"
+      - name: Execute Download Action
+        uses: ./.github/actions/download-jax-cpu-wheels
+        with:
+          runner: "windows-x86-n2-16"
+          python: "3.11"
+          skip-download-jaxlib-from-gcs: '1'
+          gcs_download_uri: "gs://general-ml-ci-transient/jax-github-actions/jax-fork/CI - Wheel Tests (Continuous)/${{ github.run_id }}-${{ github.run_attempt }}"
+
+  temporary-test-download-linux:
+    runs-on:  "linux-x86-n4-16"
+    name: "Temporary Download Test on linux-x86-n4-16"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set dummy env keys for downloading action
+        shell: bash
+        run: echo "JAXCI_HERMETIC_PYTHON_VERSION=3.11" >> "$GITHUB_ENV"
+      - name: Execute Download Action
+        uses: ./.github/actions/download-jax-cpu-wheels
+        with:
+          runner: "linux-x86-n4-16"
+          python: "3.11"
+          skip-download-jaxlib-from-gcs: '1'
+          gcs_download_uri: "gs://general-ml-ci-transient/jax-github-actions/jax-fork/CI - Wheel Tests (Continuous)/${{ github.run_id }}-${{ github.run_attempt }}"
+
+
+  temporary-test-upload-windows:
+    uses: ./.github/workflows/build_artifacts.yml
+    name: "Temporary Upload Test on windows-x86-n2-16"
+    with:
+      runner: "windows-x86-n2-16"
+      artifact: "jax"
+      upload_artifacts_to_gcs: true
+      gcs_upload_uri: "gs://general-ml-ci-transient/jax-github-actions/jax-fork/CI - Wheel Tests (Continuous)/${{ github.run_id }}-${{ github.run_attempt }}"
+
+  temporary-test-upload-linux:
+    uses: ./.github/workflows/build_artifacts.yml
+    name: "Temporary Upload Test on linux-x86-n4-16"
+    with:
+      runner: "linux-x86-n4-16"
+      artifact: "jax"
+      upload_artifacts_to_gcs: true
+      gcs_upload_uri: "gs://general-ml-ci-transient/jax-github-actions/jax-fork/CI - Wheel Tests (Continuous)/${{ github.run_id }}-${{ github.run_attempt }}"
