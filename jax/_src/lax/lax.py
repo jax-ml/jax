@@ -4608,7 +4608,7 @@ ad.defjvp2(
         ),
     )
     if accuracy is AccuracyMode.HIGHEST
-    else mul(add(g, mul(g, ans)), sub(_one(x), ans)),
+    else mul(g, sub(_one(ans), mul(ans, ans))),
 )
 mlir.register_lowering(tanh_p, partial(_nary_lower_hlo, hlo.tanh))
 core.pp_eqn_rules[tanh_p] = _unary_with_accuracy_pp_rule
