@@ -266,6 +266,44 @@ class PallasCallRemoteDMATest(TestCase):
     expected = (x[8:] if jax.process_index() == 0 else x[:8]) * 2
     np.testing.assert_array_equal(out.addressable_shards[0].data, expected)
 
+  @parameterized.parameters(jnp.uint32, jnp.int32)
+  def test_remote_dma_as_semaphore(self, sem_dtype):
+    if jax.process_index() >= 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    def kernel(x_ref, sem_raw_ref, y_ref):
+      other_dev_id = 1 - lax.axis_index("x")
+      sem = plgpu.as_semaphore(sem_raw_ref)
+      ready_sem = sem.at[0]
+      recv_sem = sem.at[1]
+      y_ref[...] = x_ref[...]
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(recv_sem, device_id=other_dev_id)
+      pl.semaphore_wait(recv_sem)
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+    sem_buffer = jnp.zeros((2,), dtype=sem_dtype)
+
+    def body(x, sem):
+      return self.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+      )(x, sem)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    y = jax.jit(
+        jax.shard_map(
+            body, mesh=mesh, in_specs=(P("x"), P(None)), out_specs=P("x"), check_vma=False,
+        )
+    )(x, sem_buffer)
+    expected = x[8:] if jax.process_index() == 0 else x[:8]
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
   def test_remote_dma_tma_load(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.

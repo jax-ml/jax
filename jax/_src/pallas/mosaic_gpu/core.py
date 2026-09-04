@@ -1065,6 +1065,53 @@ def remote_ref(
 
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
+class AsSemaphoreTransform(state_types.Transform):
+  """Reinterprets an underlying uint32/int32 ref as a Semaphore ref."""
+  semaphore_type: pallas_core.AbstractSemaphoreTy = jax.tree.static()
+
+  def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
+    match x:
+      case state_types.AbstractRef():
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
+      case jax_core.ShapedArray():
+        if not (
+            jnp.issubdtype(x.dtype, jnp.integer)
+            and dtypes.itemsize_bits(x.dtype) == 32
+        ):
+          raise TypeError(
+              f"Cannot cast {x.dtype} to semaphore; expected uint32 or int32."
+          )
+        return x.update(dtype=self.semaphore_type)
+      case _:
+        raise TypeError(f"Cannot cast {x} to semaphore")
+
+  def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
+    raise NotImplementedError
+
+  def commute_ndindexer(
+      self, _: jax_core.AbstractValue, indexer: indexing.NDIndexer
+  ) -> tuple[indexing.NDIndexer, AsSemaphoreTransform]:
+    return indexer, self
+
+
+def as_semaphore(
+    ref: _Ref,
+    semaphore_type: pallas_core.AbstractSemaphoreTy | SemaphoreType = SemaphoreType.REGULAR,
+) -> pallas_core.TransformedRef:
+  """Reinterprets a uint32/int32 reference as a Semaphore reference."""
+  if isinstance(semaphore_type, SemaphoreType):
+    sem_dtype = pallas_core.BarrierSemaphore() if semaphore_type == SemaphoreType.BARRIER else pallas_core.Semaphore()
+  else:
+    sem_dtype = semaphore_type
+  if not isinstance(ref, pallas_core.TransformedRef):
+    if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
+      raise TypeError(f"ref must be a reference, got {type(ref)}")
+    ref = pallas_core.TransformedRef(ref, transforms=())
+  return pallas_core.TransformedRef(ref.ref, (*ref.transforms, AsSemaphoreTransform(sem_dtype)))
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
 class ClusterRefTransform(state_types.Transform):
   dims: tuple[jax_core.AxisName, ...] = jax.tree.static()
   idxs: tuple[Any, ...]

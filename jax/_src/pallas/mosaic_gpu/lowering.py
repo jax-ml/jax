@@ -1742,7 +1742,8 @@ def _commute_transform(
         gpu_core.UntilingTransform() | gpu_core.UnswizzleRef() as t1,
         gpu_core.ClusterRefTransform()
         | gpu_core.MulticastRef()
-        | gpu_core.PeerMemRef() as t2,
+        | gpu_core.PeerMemRef()
+        | gpu_core.AsSemaphoreTransform() as t2,
     ):
       return t2, t1
     case _:
@@ -1870,6 +1871,7 @@ def _bubble_up_transforms_for_lowering(
           | gpu_core.PeerMemRef()
           | gpu_core.MulticastRef()
           | gpu_core.ClusterRefTransform()
+          | gpu_core.AsSemaphoreTransform()
       ):
         should_bubble_up = True
       case _:
@@ -2032,6 +2034,8 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
           )
         cluster_dim = _resolve_cluster_axis(ctx.module_ctx.axis_names, dims[0])
         cluster_idx = _as_index(idxs[0])
+      case gpu_core.AsSemaphoreTransform():
+        ref_aval = cast(state_types.AbstractRef, t_aval.transform_type(ref_aval))
       case _:
         raise AssertionError(
             f"Transform {t} has no defined lowering rule."
