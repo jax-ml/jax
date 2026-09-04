@@ -6457,6 +6457,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with self.assertWarnsRegex(DeprecationWarning, msg):
       op([1, 2, 3])
 
+  @jtu.run_on_devices("cpu")
+  def testLog2Accuracy(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40419
+    exponents_f32 = np.arange(-10, 11)
+    values_f32 = np.ldexp(1.0, exponents_f32).astype(jnp.float32)
+    self.assertArraysEqual(jnp.log2(values_f32), exponents_f32.astype(jnp.float32))
+
+    exponents_bf16 = np.array([-5, 5, 10, 19, 20, 38, 40, 53, 57, 67, 76, 80, 89, 93, 106, 114, 119, 127])
+    values_bf16 = np.ldexp(1.0, exponents_bf16).astype(jnp.bfloat16)
+    self.assertArraysEqual(jnp.log2(values_bf16), exponents_bf16.astype(jnp.bfloat16))
+
+  @jtu.run_on_devices("cpu")
+  def testLog10Accuracy(self):
+    # Using precomputed 1/log(10) instead of dividing by log(10) improves accuracy.
+    exponents_f32 = np.array([-8, -7, -6, -5, -4, -3, -2, -1, 1, 2, 3, 4, 5, 6, 7, 8])
+    values_f32 = np.power(10.0, exponents_f32).astype(np.float32)
+    self.assertArraysEqual(jnp.log10(values_f32), exponents_f32.astype(np.float32))
+
+    exponents_bf16 = np.array([-7, 7, 9, 11, 14, 17, 18, 22, 23, 27, 28, 29, 31, 34, 36])
+    values_bf16 = np.power(10.0, exponents_bf16).astype(jnp.bfloat16)
+    self.assertArraysEqual(jnp.log10(values_bf16), exponents_bf16.astype(jnp.bfloat16))
+
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
