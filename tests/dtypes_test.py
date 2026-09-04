@@ -17,8 +17,11 @@ import dataclasses
 import enum
 import functools
 from functools import partial
+import gc
 import itertools
 import operator
+import os
+import sys
 import types
 
 from absl.testing import absltest
@@ -1323,5 +1326,36 @@ class TestPromotionTables(jtu.JaxTestCase):
                          dtypes.safe_to_cast(input_dtype, output_dtype))
 
 
-if __name__ == "__main__":
+def _configure_concurrency_probe():
+  if os.getenv('JAXCI_TPU_PROBE_ACTIVE') != '1':
+    return
+
+  if os.getenv('JAXCI_TPU_PROBE_DISABLE_GC') == '1':
+    gc.disable()
+
+  warmup = os.getenv('JAXCI_TPU_PROBE_WARMUP', '')
+  warmup_display = warmup or 'none'
+  gil_enabled = getattr(sys, '_is_gil_enabled', lambda: None)()
+  test_threads = os.getenv('JAX_TEST_NUM_THREADS')
+  test_platforms = os.getenv('JAX_PLATFORMS')
+  print(
+      'Dtypes concurrency probe: '
+      f'gil_enabled={gil_enabled}, gc_enabled={gc.isenabled()}, '
+      f'test_threads={test_threads}, platforms={test_platforms}, '
+      f'warmup={warmup_display}',
+      flush=True,
+  )
+
+  if warmup == 'devices':
+    devices = jax.devices()
+    platforms = sorted({device.platform for device in devices})
+    print(
+        f'Dtypes concurrency probe warm-up: devices={len(devices)}, '
+        f'platforms={platforms}',
+        flush=True,
+    )
+
+
+if __name__ == '__main__':
+  _configure_concurrency_probe()
   absltest.main(testLoader=jtu.JaxTestLoader())

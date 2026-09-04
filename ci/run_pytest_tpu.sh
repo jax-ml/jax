@@ -37,11 +37,13 @@ source "ci/utilities/setup_build_environment.sh"
 echo "Installed packages:"
 "$JAXCI_PYTHON" -m uv pip freeze
 
-"$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
 "$JAXCI_PYTHON" -c 'import sys; print("python version:", sys.version)'
 "$JAXCI_PYTHON" -c 'import jax; print("jax version:", jax.__version__)'
 "$JAXCI_PYTHON" -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
-"$JAXCI_PYTHON" -c 'import jax.extend; print("libtpu version:",jax.extend.backend.get_backend().platform_version)'
+if [[ -z "${JAXCI_TPU_PYTEST_PROBE_NODE:-}" ]]; then
+  "$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
+  "$JAXCI_PYTHON" -c 'import jax.extend; print("libtpu version:",jax.extend.backend.get_backend().platform_version)'
+fi
 
 # Set up all common test environment variables
 export PY_COLORS=1
@@ -56,7 +58,64 @@ mkdir -p test-artifacts
 # commands below.
 set +e
 
-if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
+first_cmd_retval=0
+second_cmd_retval=0
+
+run_tpu_health_probe() {
+  local phase="$1"
+  local run_number="$2"
+  local log_file="test-artifacts/health-${run_number}-${phase}.log"
+
+  echo "::group::TPU health probe ${run_number} (${phase})" >&2
+  timeout --signal=TERM --kill-after=30s 120s "$JAXCI_PYTHON" -c '
+import jax
+
+devices = jax.devices()
+value = jax.random.normal(jax.random.key(0), (1024, 1024))
+value.block_until_ready()
+print("devices:", devices)
+print("random normal shape:", value.shape)
+' 2>&1 | tee "$log_file"
+  local probe_status=${PIPESTATUS[0]}
+  echo "::endgroup::" >&2
+  return "$probe_status"
+}
+
+if [[ -n "${JAXCI_TPU_PYTEST_PROBE_NODE:-}" ]]; then
+  if ! [[ "$JAXCI_TPU_PYTEST_PROBE_RUNS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Invalid TPU pytest probe run count: $JAXCI_TPU_PYTEST_PROBE_RUNS" >&2
+    exit 2
+  fi
+
+  printf 'run\tpre_health\tpytest\tpost_health\n' > test-artifacts/probe-status.tsv
+
+  for ((probe_run = 1; probe_run <= JAXCI_TPU_PYTEST_PROBE_RUNS; probe_run++)); do
+    run_tpu_health_probe pre "$probe_run"
+    pre_health_status=$?
+
+    echo "::group::Pytest TPU focused probe ${probe_run}: $JAXCI_TPU_PYTEST_PROBE_NODE" >&2
+    JAX_ENABLE_TPU_XDIST=true timeout --signal=TERM --kill-after=30s 300s \
+      "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --dist=loadfile \
+      --tb=short --maxfail=1 -vv \
+      --junitxml="test-artifacts/junit-probe-${probe_run}.xml" \
+      "$JAXCI_TPU_PYTEST_PROBE_NODE"
+    pytest_status=$?
+    echo "::endgroup::" >&2
+
+    run_tpu_health_probe post "$probe_run"
+    post_health_status=$?
+
+    printf '%s\t%s\t%s\t%s\n' \
+      "$probe_run" "$pre_health_status" "$pytest_status" "$post_health_status" \
+      >> test-artifacts/probe-status.tsv
+
+    for status in "$pre_health_status" "$pytest_status" "$post_health_status"; do
+      if [[ $first_cmd_retval -eq 0 && $status -ne 0 ]]; then
+        first_cmd_retval=$status
+      fi
+    done
+  done
+elif [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   # Run single-accelerator tests in parallel
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
     --junitxml=test-artifacts/junit-single.xml \

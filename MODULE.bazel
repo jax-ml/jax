@@ -140,7 +140,7 @@ python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 python.override(
     add_runtime_manifest_files = ["//third_party/py:rules_python_cpython_3_15.txt"],
     minor_mapping = {
-        "3.15": "3.15.0rc1",
+        "3.15": "3.15.0rc2",
     },
 )
 python.defaults(

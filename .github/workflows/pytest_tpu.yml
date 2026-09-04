@@ -39,6 +39,18 @@ on:
         description: "Should the full TPU test suite be run?"
         type: string
         default: "0"
+      probe-name:
+        description: "Optional label for a focused TPU probe."
+        type: string
+        default: ""
+      probe-node:
+        description: "Optional exact pytest node to run instead of the TPU suites."
+        type: string
+        default: ""
+      probe-runs:
+        description: "Number of fresh pytest processes for the focused probe."
+        type: string
+        default: "1"
       libtpu-version-type:
         description: "Which libtpu version should be used for testing?"
         type: string
@@ -84,6 +96,8 @@ jobs:
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_RUN_FULL_TPU_TEST_SUITE: "${{ inputs.run-full-tpu-test-suite }}"
       JAXCI_TPU_CORES: "${{ inputs.cores }}"
+      JAXCI_TPU_PYTEST_PROBE_NODE: "${{ inputs.probe-node }}"
+      JAXCI_TPU_PYTEST_PROBE_RUNS: "${{ inputs.probe-runs }}"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -133,6 +147,6 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/upload-test-artifacts
         with:
-          artifact-name: pytest-test-artifacts-${{ inputs.tpu-type }}-py${{ inputs.python }}
+          artifact-name: pytest-test-artifacts-${{ inputs.tpu-type }}-py${{ inputs.python }}-${{ inputs.probe-name || 'suite' }}
           inputs_json: ${{ toJSON(inputs) }}
           matrix_json: ${{ toJSON(matrix) }}
