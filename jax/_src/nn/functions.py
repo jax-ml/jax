@@ -564,12 +564,19 @@ def log_softmax(x: ArrayLike,
     :func:`softmax`
   """
   x_arr = numpy_util.ensure_arraylike("log_softmax", x)
+  input_dtype = x_arr.dtype
+  if input_dtype == np.float16:
+    # The reverse-mode cotangent reduction can overflow float16 even when
+    # the resulting gradients are representable in float16.
+    x_arr = x_arr.astype(np.float32)
   x_max = jnp.max(x_arr, axis, where=where, initial=-np.inf, keepdims=True)
   x_safe = x_arr if where is None else jnp.where(where, x_arr, -np.inf)
   shifted = x_safe - lax.stop_gradient(x_max)
   shifted_logsumexp = jnp.log(
       jnp.sum(jnp.exp(shifted), axis, where=where, keepdims=True))
   result = shifted - shifted_logsumexp
+  if input_dtype == np.float16:
+    result = result.astype(input_dtype)
   if where is not None:
     return jnp.where(where, result, -np.inf)
   return result
