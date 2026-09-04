@@ -963,6 +963,13 @@ class custom_vjp3:
       f = dyn_args_fun(self.f, self.static_argnums,
                        tuple(map(WrapHashably, static_args)), len(args))
       traced = api.jit(f).trace(*dyn_args)
+    if any(isinstance(eff, effects.ErrorEffect) for eff in traced.effects):
+      raise NotImplementedError(
+          "checkify effects (e.g. checkify.check) are not supported in"
+          " custom_vjp-decorated primal functions under jax_custom_vjp3. Place"
+          " the check outside the custom_vjp decorator, or in the fwd/bwd"
+          " rules."
+      )
     args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
     consts, traced = traced.with_consts_as_arg()
     fwd_ = update_wrapper(lambda _, __, *args: self.fwd(*args), self.fwd)
