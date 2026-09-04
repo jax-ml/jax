@@ -21,7 +21,7 @@ from jax import lax
 from jax._src import core as jax_core
 from jax._src import hijax
 from jax._src import test_util as jtu
-from jax._src.pallas.fuser import fusible_dtype
+from jax.experimental import pallas as pl
 from jax.experimental.pallas import fuser
 import jax.numpy as jnp
 import numpy as np
@@ -371,19 +371,6 @@ class FusionTest(jtu.JaxTestCase):
     jax.core.eval_jaxpr(closed_jaxpr, closed_jaxpr.consts, x, y)
 
     np.testing.assert_allclose(ref[...], 5.0)
-
-  def test_physicalize_fusible(self):
-
-    @fuser.fusible
-    def f(x_fn, out_fn):
-      x = x_fn()
-      if out_fn is None:
-        out_fn = lambda x: x
-      return out_fn(x + 1.0)
-
-    x = jnp.array(1.0)
-    y = fusible_dtype.physicalize(f)(x)
-    np.testing.assert_allclose(y, 2.0)
 
   def test_fusible_outside_fuse(self):
     @fuser.fusible
@@ -836,6 +823,38 @@ hijax.register_hitype(
 )
 
 
+class PackArrayTuple(hijax.HiPrim):
+
+  def __init__(self, x0_aval, x1_aval):
+    self.in_avals = (x0_aval, x1_aval)
+    self.out_aval = ArrayTupleTy(x0_aval, x1_aval)
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x0, x1):
+    return ArrayTuple(x0, x1)
+
+
+class UnpackArrayTuple(hijax.HiPrim):
+
+  def __init__(self, aval):
+    self.in_avals = (aval,)
+    self.out_aval = (aval.x0, aval.x1)
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x):
+    return x.x0, x.x1
+
+
+def pack_array_tuple(x0, x1):
+  return PackArrayTuple(jax.typeof(x0), jax.typeof(x1))(x0, x1)
+
+
+def unpack_array_tuple(x):
+  return UnpackArrayTuple(jax.typeof(x))(x)
+
+
 class FusionHijaxTest(jtu.JaxTestCase):
 
   def test_basic_fusion(self):
@@ -853,6 +872,64 @@ class FusionHijaxTest(jtu.JaxTestCase):
     ot = f(xt)
     np.testing.assert_array_equal(ot.x0, xt.x0)
     np.testing.assert_array_equal(ot.x1, xt.x1)
+
+  @parameterized.product(fuse=[False, True], jit=[False, True])
+  def test_fusible_hijax_output(self, fuse, jit):
+    @fuser.fusible
+    def f(x_fn, out_fn):
+      x = x_fn()
+      out = pack_array_tuple(x, x + 1)
+      return out if out_fn is None else out_fn(out)
+
+    if fuse:
+      f = fuser.fuse(f)
+    if jit:
+      f = jax.jit(f)
+    x = jnp.arange(8, dtype=jnp.float32)
+    out = f(x)
+    self.assertIsInstance(out, ArrayTuple)
+    self.assertArraysEqual(out.x0, x)
+    self.assertArraysEqual(out.x1, x + 1)
+
+  @parameterized.product(fuse=[False, True], jit=[False, True])
+  def test_fusible_closed_over_hijax(self, fuse, jit):
+    xs = ArrayTuple(jnp.arange(8, dtype=jnp.float32), jnp.ones(8))
+
+    @fuser.fusible
+    def f(x_fn, out_fn):
+      x0, x1 = unpack_array_tuple(xs)
+      out = x_fn() + x0 + x1
+      return out if out_fn is None else out_fn(out)
+
+    if fuse:
+      f = fuser.fuse(f)
+    if jit:
+      f = jax.jit(f)
+    x = jnp.full(8, 2.0)
+    self.assertArraysEqual(f(x), x + xs.x0 + xs.x1)
+
+  @parameterized.product(fuse=[False, True], jit=[False, True])
+  def test_fusible_pallas_hijax(self, fuse, jit):
+    def kernel(x_ref, y_ref, out_ref):
+      packed = pack_array_tuple(x_ref[...], y_ref[...])
+      x, y = unpack_array_tuple(packed)
+      out_ref[...] = x + y
+
+    @fuser.fusible
+    def f(x_fn, y_fn, out_fn):
+      x, y = x_fn(), y_fn()
+      out = pl.pallas_call(
+          kernel, out_shape=jax.ShapeDtypeStruct.like(x), interpret=True
+      )(x, y)
+      return out if out_fn is None else out_fn(out)
+
+    if fuse:
+      f = fuser.fuse(f)
+    if jit:
+      f = jax.jit(f)
+    x = jnp.arange(16, dtype=jnp.float32).reshape(4, 4)
+    y = jnp.full_like(x, 2)
+    self.assertArraysEqual(f(x, y), x + y)
 
 
 if __name__ == "__main__":
