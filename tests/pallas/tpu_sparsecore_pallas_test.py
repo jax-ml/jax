@@ -835,6 +835,12 @@ class VectorSubcoreTest(PallasSCTest):
   def test_gather_2d_with_col_slice(self, use_num_lanes_indices):
     if not self.USE_TC_TILING:
       self.skipTest("Test only works under TC tiling.")
+    if (not use_num_lanes_indices and jtu.is_device_tpu(7, "x")
+        and not jtu.is_libtpu_at_least("0.0.48")):
+      self.skipTest(
+          "20-index column-slice gather fails on TPU7x with libtpu < 0.0.48."
+      )
+
     n_indices = self.num_lanes if use_num_lanes_indices else 20
     x = jnp.arange(n_indices * 4096, dtype=jnp.int32).reshape(n_indices, 4096)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(n_indices))
