@@ -155,6 +155,10 @@ class HiPrim:
   def expand(self, *args):
     raise NotImplementedError(f"subclass {type(self)} must implement `expand`")
 
+  # physicalization interface for fuser
+  def physicalize(self, ctx, *args):
+    return call_hi_primitive_p.bind(*args, _prim=self)
+
   # reverse-mode AD interface
   def vjp_fwd(self, nzs_in, /, *args):
     raise NotImplementedError(
@@ -731,6 +735,34 @@ class CustomVJPTraced(HiPrim):
     args = self.drop_fwd_consts(*args)
     return self.traced(*[x for x in args if not isinstance(x, Static)])
 
+  def physicalize_self(self, ctx):
+    from jax._src import stages
+    new_jaxpr = ctx.physicalize_closed_jaxpr(self.traced.jaxpr)
+    new_params = dict(self.traced._params, jaxpr=new_jaxpr)
+    new_traced = stages.Traced(
+        list(new_jaxpr.in_avals),
+        new_params,
+        self.traced._in_tree,
+        self.traced.out_tree,
+        self.traced._consts,
+        self.traced._fun_sourceinfo,
+    )
+    new_in_avals = tree_map(ctx.physicalize_aval, self.in_avals)
+    return CustomVJPTraced(
+        new_traced,
+        self.fwd,
+        self.bwd,
+        new_in_avals,
+        self.symbolic_zeros,
+        self.static_argnums,
+        self.opt_remat,
+        self.with_logs,
+    )
+
+  def physicalize(self, ctx, *args):
+    new_prim = self.physicalize_self(ctx)
+    return call_hi_primitive_p.bind(*args, _prim=new_prim)
+
   def lin(self, nzs_in, *primals):
     out, res, *rest = self.vjp_fwd(nzs_in, *primals)
     nzs_out = rest[0] if rest else True
@@ -996,6 +1028,22 @@ class OptRemat(HiPrim):
   def expand(self, *primals):
     return self.traced_fwd(*primals)
 
+  def physicalize(self, ctx, *args):
+    from jax._src import stages
+    new_orig = self.orig.physicalize_self(ctx)
+    new_jaxpr = ctx.physicalize_closed_jaxpr(self.traced_fwd.jaxpr)
+    new_params = dict(self.traced_fwd._params, jaxpr=new_jaxpr)
+    new_traced_fwd = stages.Traced(
+        list(new_jaxpr.in_avals),
+        new_params,
+        self.traced_fwd._in_tree,
+        self.traced_fwd.out_tree,
+        self.traced_fwd._consts,
+        self.traced_fwd._fun_sourceinfo,
+    )
+    new_prim = OptRemat(new_orig, new_traced_fwd)
+    return call_hi_primitive_p.bind(*args, _prim=new_prim)
+
   def dce(self, used_outs):
     used_primals, used_res = used_outs
     if any(tree_leaves(used_res)):
@@ -1038,6 +1086,28 @@ class CustomJVPTraced(HiPrim):
   def expand(self, *args):
     args = [x for x in args if not isinstance(x, Static)]
     return self.traced(*args)
+
+  def physicalize(self, ctx, *args):
+    from jax._src import stages
+    new_jaxpr = ctx.physicalize_closed_jaxpr(self.traced.jaxpr)
+    new_params = dict(self.traced._params, jaxpr=new_jaxpr)
+    new_traced = stages.Traced(
+        list(new_jaxpr.in_avals),
+        new_params,
+        self.traced._in_tree,
+        self.traced.out_tree,
+        self.traced._consts,
+        self.traced._fun_sourceinfo,
+    )
+    new_in_avals = tree_map(ctx.physicalize_aval, self.in_avals)
+    new_prim = CustomJVPTraced(
+        new_traced,
+        self.jvp_fun,
+        new_in_avals,
+        self.symbolic_zeros,
+        self.static_argnums,
+    )
+    return call_hi_primitive_p.bind(*args, _prim=new_prim)
 
   def jvp(self, primals, tangents):
     static_args = tuple(x.val for x in primals if isinstance(x, Static))

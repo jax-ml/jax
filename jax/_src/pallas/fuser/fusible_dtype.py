@@ -226,6 +226,10 @@ def physicalize_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
 class Context:
   avals_in: Sequence[Any]
   avals_out: Sequence[Any]
+  physicalize_closed_jaxpr: Callable[[core.Jaxpr], core.Jaxpr] = (
+      physicalize_closed_jaxpr
+  )
+  physicalize_aval: Callable[[Any], Any] = _physical_aval
 
 
 def physicalize_interp(
@@ -582,3 +586,12 @@ def _call_hi_primitive_physicalize_rule(ctx, *args, _prim, **params):
 _physicalize_rules[hijax.call_hi_primitive_p] = (
     _call_hi_primitive_physicalize_rule
 )
+
+
+def _eval_jaxpr_rule(ctx: Context, *args, call_jaxpr, **params):
+  _assert_no_fusion_types(ctx.avals_out)
+  new_call_jaxpr = physicalize_closed_jaxpr(call_jaxpr)
+  return core.eval_jaxpr_p.bind(*args, call_jaxpr=new_call_jaxpr, **params)
+
+
+_physicalize_rules[core.eval_jaxpr_p] = _eval_jaxpr_rule
