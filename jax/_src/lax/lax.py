@@ -1984,7 +1984,10 @@ def _composite_lowering(
     if v is not None:
       composite_attrs[k] = mlir.ir_attribute(v)
   symbol_name = func_op.name.value
-  flat_args, _ = mlir.ir_tree_registry.flatten(const_arg_values + args)
+  # lower_jaxpr_to_fun adds dim_var_values to the decomposition. The same
+  # variables must be added to the composite.
+  flat_args, _ = mlir.ir_tree_registry.flatten(
+      (*ctx.dim_var_values, *const_arg_values, *args))
   return hlo.CompositeOp(
       func_op.type.results,
       flat_args,

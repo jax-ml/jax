@@ -5138,6 +5138,48 @@ class CompositeTest(jtu.JaxTestCase):
         '-> (tensor<f32>, tensor<f32>, tensor<f32>)', mlir_module)
     self.assertIn('return %arg0, %arg1, %arg2 : tensor<f32>, tensor<f32>, tensor<f32>', mlir_module)
 
+  def test_composite_with_symbolic_shapes(self):
+    @partial(lax.composite, name="my.square")
+    def my_square(x):
+      return x * x
+
+    exp = export.export(jax.jit(my_square))(
+        jax.ShapeDtypeStruct(export.symbolic_shape("b"), jnp.float32))
+    mlir_module = str(exp.mlir_module())
+    # The decomposition takes the dimension variable as its first argument, so
+    # the composite must pass it too.
+    self.assertRegex(
+        mlir_module,
+        r'stablehlo.composite "my.square" %arg0, %arg1 '
+        r'\{decomposition = @my.square\} : '
+        r'\(tensor<i..>, tensor<\?xf32>\) -> tensor<\?xf32>')
+    self.assertRegex(
+        mlir_module,
+        r'@my.square\(%arg0: tensor<i..>.*jax.global_constant = "b".*, '
+        r'%arg1: tensor<\?xf32>.*\) -> tensor<\?xf32>')
+
+  def test_composite_with_multiple_platforms(self):
+    @partial(lax.composite, name="my.square")
+    def my_square(x):
+      return x * x
+
+    x = jnp.arange(4, dtype=jnp.float32)
+    exp = export.export(jax.jit(my_square), platforms=("cpu", "tpu"))(x)
+    mlir_module = str(exp.mlir_module())
+    # Multi-platform lowering adds a platform index argument to every function,
+    # including the decomposition, so the composite must pass it too.
+    self.assertRegex(
+        mlir_module,
+        r'stablehlo.composite "my.square" %arg0, %arg1 '
+        r'\{decomposition = @my.square\} : '
+        r'\(tensor<i..>, tensor<4xf32>\) -> tensor<4xf32>')
+    self.assertRegex(
+        mlir_module,
+        r'@my.square\(%arg0: tensor<i..>.*jax.global_constant = "_platform_index".*, '
+        r'%arg1: tensor<4xf32>.*\) -> tensor<4xf32>')
+    x_cpu = jax.device_put(x, jax.devices("cpu")[0])
+    self.assertArraysEqual(exp.call(x_cpu), x * x)
+
   def test_composite_jvp(self):
     @partial(lax.composite, name="my.square")
     def my_square(x):
