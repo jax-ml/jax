@@ -2594,7 +2594,9 @@ def _multiple_of_lowering_rule(ctx: LoweringRuleContext, val, *, values):
 def reduce_lowering_rule(reduce_fn, type_to_kind, type_to_identity):
   def _lowering_rule(ctx: LoweringRuleContext, x, *, axes, **kwargs):
     (x_aval,) = ctx.avals_in
-    if not ctx.avals_out[0].shape:
+    if not ctx.avals_out[0].shape and (
+        ctx.forward_compatible or not ctx.is_libtpu_at_least("0.0.46")
+    ):
       # If reducing to a scalar, we reduce by adding a leading singleton
       # dimension and reducing over all other dimensions. This avoids
       # the materialization of a scalar tensor by the reduction op which
@@ -2611,12 +2613,14 @@ def reduce_lowering_rule(reduce_fn, type_to_kind, type_to_identity):
 
     if jnp.issubdtype(x_aval.dtype, jnp.floating):
       kind = type_to_kind[jnp.floating]
-      val = type_to_identity[jnp.floating]
-      val = ir.FloatAttr.get(ctx.aval_to_ir_type(x_aval, shape=()), val)
+      identity = type_to_identity[jnp.floating]
+      identity = ir.FloatAttr.get(
+          ctx.aval_to_ir_type(x_aval, shape=()), identity
+      )
     elif x_aval.dtype == jnp.int32:
       kind = type_to_kind[jnp.signedinteger]
-      val = type_to_identity[jnp.signedinteger]
-      val = ir.IntegerAttr.get(ir.IntegerType.get_signless(32), val)
+      identity = type_to_identity[jnp.signedinteger]
+      identity = ir.IntegerAttr.get(ir.IntegerType.get_signless(32), identity)
     elif jnp.issubdtype(x_aval.dtype, jnp.unsignedinteger):
       raise NotImplementedError(
           "Reductions over unsigned integers not implemented."
@@ -2625,7 +2629,8 @@ def reduce_lowering_rule(reduce_fn, type_to_kind, type_to_identity):
       raise NotImplementedError(
           f"Reductions over {x_aval.dtype} not implemented.")
     out_type = ctx.aval_to_ir_type(ctx.avals_out[0])
-    identity = ir.DenseElementsAttr.get_splat(out_type, val)
+    if ctx.avals_out[0].shape:
+      identity = ir.DenseElementsAttr.get_splat(out_type, identity)
     acc = arith.constant(out_type, identity)
     return vector.multi_reduction(kind, x, acc, axes)
   return _lowering_rule
