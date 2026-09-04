@@ -78,6 +78,7 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic/interpret:vector_clock",
         "//jax/_src/pallas/mosaic_gpu:core",
+        "//jax/_src/pallas/mosaic_gpu:primitives",
         "//jax/experimental:mosaic_gpu",
     ] + py_deps([
         "numpy",

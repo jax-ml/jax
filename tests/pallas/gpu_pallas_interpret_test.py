@@ -2655,6 +2655,54 @@ class InterpretTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(Exception, r'Out-of-bounds read'):
       _kernel(jnp.arange(4, dtype=jnp.int32)).block_until_ready()
 
+  @jtu.parameterized.product(
+      returns_value=[True, False], inline_mgpu=['error', 'ignore', 'fizzbuzz']
+  )
+  def test_inline_mgpu_handling(self, returns_value, inline_mgpu):
+    if returns_value:
+      inline = plgpu.inline_mgpu(
+          return_type=plgpu.ShapeDtypeStruct((), jnp.float32, None)
+      )(lambda _: None)
+    else:
+      inline = plgpu.inline_mgpu()(lambda _: None)
+
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+        interpret=InterpretParams(inline_mgpu=inline_mgpu),
+    )
+    def kernel(o_ref):
+      value = inline()
+      o_ref[...] = jnp.full((128,), 1.0, jnp.float32)
+      if returns_value:
+        o_ref[...] += value
+
+    if inline_mgpu == 'error':
+      with self.assertRaisesRegex(
+          ValueError,
+          r'GPU interpret mode does not support `inline_mgpu`. Pass'
+          r' `inline_mgpu=',
+      ):
+        kernel()
+    elif inline_mgpu == 'ignore':
+      if returns_value:
+        with self.assertRaisesRegex(
+            ValueError,
+            r'GPU interpret mode does not support `inline_mgpu` with a return'
+            r' value',
+        ):
+          kernel()
+      else:
+        np.testing.assert_array_equal(
+            kernel(), np.full((128,), 1.0, jnp.float32)
+        )
+    elif inline_mgpu == 'fizzbuzz':
+      with self.assertRaisesRegex(
+          ValueError,
+          r'GPU interpret mode does not support `inline_mgpu` param with value',
+      ):
+        kernel()
+
 
 @dataclasses.dataclass(frozen=True)
 class TuningConfig:

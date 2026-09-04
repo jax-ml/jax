@@ -30,6 +30,7 @@ from jax._src import source_info_util
 from jax._src.pallas.mosaic.interpret import thread_map
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
+from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
 from jax._src.pallas.mosaic_gpu.interpret import shared_memory as memory
 from jax._src.pallas.mosaic_gpu.interpret.race_detection_state import GPURaceDetectionState
 from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
@@ -1042,6 +1043,69 @@ def call_barrier_arrive(
       mesh_location,
       thread,
       allocation_key_as_array,
+  )
+
+
+@fail_on_exception
+def _named_barrier(
+    token: jax.Array,
+    mesh_location: memory.MeshLocation,
+    thread: memory.Thread,
+    barrier_id: jax.Array,
+    *,
+    num_threads: int,
+    sync: bool,
+    source_info: source_info_util.SourceInfo | None = None,
+):
+  """`bar.arrive` on barrier `barrier_id`, or `bar.sync` if `sync`.
+
+  `num_threads` CUDA threads take part, i.e. `num_threads / 128`
+  warpgroups. We count arrivals in units of warpgroups.
+  """
+
+  if isinstance(thread, memory.Warp):
+    raise NotImplementedError(
+        "Named barriers are not yet supported for Warp threads."
+    )
+  if num_threads % gpu_primitives.WARPGROUP_SIZE != 0:
+    raise NotImplementedError(
+        f"Named barrier over {num_threads} threads, which is not a whole number"
+        " of warpgroups."
+    )
+  shared_memory = _get_shared_memory()
+  barrier = shared_memory.named_barrier(
+      thread, int(barrier_id), num_threads // gpu_primitives.WARPGROUP_SIZE
+  )
+  clock = shared_memory.incr_clock(thread) if shared_memory.detect_races else None
+  logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
+  barrier.arrive(thread, clock, logging_info)
+  if sync:
+    barrier.wait(thread, logging_info)
+  return token
+
+
+def call_named_barrier(
+    token: jax.Array,
+    mesh_location: memory.MeshLocation,
+    thread: memory.Thread,
+    barrier_id: jax.Array | int,
+    *,
+    num_threads: int,
+    sync: bool,
+    source_info: source_info_util.SourceInfo | None = None,
+):
+  return callback.io_callback(
+      functools.partial(
+          _named_barrier,
+          num_threads=num_threads,
+          sync=sync,
+          source_info=source_info,
+      ),
+      TOKEN_SHAPE_DTYPE,
+      token,
+      mesh_location,
+      thread,
+      jnp.asarray(barrier_id, jnp.int32),
   )
 
 

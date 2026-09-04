@@ -15,6 +15,7 @@
 from collections.abc import Callable, Mapping, Sequence
 import dataclasses
 import functools
+import inspect
 import math
 from typing import Any, Literal
 
@@ -822,6 +823,101 @@ class JaxprInterpreter:
       bind_params = eqn.primitive.get_bind_params(eqn.params)
       return eqn.primitive.bind(*get_invals(), **bind_params)
 
+  def _interpret_inline_mgpu_p(
+      self, eqn, token, get_invals: Callable[[], Sequence[Any]]
+  ):
+    if self.interpret_params.inline_mgpu == "error":
+      raise ValueError(
+          "GPU interpret mode does not support `inline_mgpu`. Pass `inline_mgpu="
+          "'ignore'` to skip MGPU calls."
+      )
+    elif self.interpret_params.inline_mgpu == "ignore":
+      if eqn.outvars:
+        raise ValueError(
+            "GPU interpret mode does not support `inline_mgpu` with a return "
+            "value even in `ignore` mode."
+        )
+      return token, []
+    elif self.interpret_params.inline_mgpu == "_hack_model_inline_mgpu_tokamax":
+      pass
+    else:
+      raise ValueError(
+          "GPU interpret mode does not support `inline_mgpu` param with value"
+          f" {self.interpret_params.inline_mgpu}."
+      )
+
+    # Stand-ins for certain `inline_mgpu` usages in tokamax.
+
+    assert eqn.primitive is gpu_primitives.inline_mgpu_p
+    fn = eqn.params["mgpu_fn"]
+    name = fn.__qualname__.rsplit(".", 1)[-1]
+    num_args = eqn.params["pytree_args"].num_leaves
+    args = lambda: get_invals()[:num_args]
+
+    def thread_callback(callback_fn):
+      return callback.io_callback(
+          functools.partial(callback_fn, source_info=eqn.source_info),
+          gpu_callbacks.TOKEN_SHAPE_DTYPE,
+          token=token,
+          mesh_location=self.mesh_location,
+          thread=self.thread,
+      ), []
+
+    match name:
+      case "tcgen05_wait_ld":
+        return thread_callback(gpu_callbacks.wait_load_tmem)
+      case "tcgen05_wait_st":
+        return thread_callback(gpu_callbacks.commit_tmem)
+      case "fence_async_shared_cta":
+        # `fence.proxy.async.shared::cta`: makes this thread's generic-proxy
+        # SMEM accesses visible to the async proxy, as `commit_smem` does.
+        return thread_callback(gpu_callbacks.commit_smem)
+      case "tcgen05_fence_before_thread_sync" | "<lambda>":
+        # `tcgen05.fence::before_thread_sync` and `warpgroup_barrier` order
+        # a warpgroup's own operations. No-op from perspective of interp mode.
+        return token, []
+      case "bar_op":
+        # `bar.arrive` / `bar.sync` on a named barrier.
+        closure = inspect.getclosurevars(fn).nonlocals
+        operation = closure["operation"]
+        assert operation in ("arrive", "sync"), operation
+        if "barrier_id" in closure:
+          barrier_id = closure["barrier_id"]
+        else:
+          (barrier_id,) = args()
+        token = gpu_callbacks.call_named_barrier(
+            token,
+            self.mesh_location,
+            self.thread,
+            barrier_id,
+            num_threads=closure["num_threads"],
+            sync=operation == "sync",
+            source_info=eqn.source_info,
+        )
+        return token, []
+    if name == "warp_any":
+      # TODO(paubib): this is the worst case for inline mgpu support: we don't
+      # split the values among warps, so there's no sense in which we can do a
+      # `warp_any`. Instead, we just have to do an `any` across the whole
+      # warpgroup's values, which is an overapproximation. Luckily, this does
+      # not affect correctness in the contexts it's used in.
+      (x,) = args()
+      return token, [jnp.any(x)]
+    elif name == "unpack_booleans":
+      # Bit `c % bits` of packed element `(r, c // bits)` (little-endian).
+      # Inverse of the `jnp.packbits(..., bitorder="little")`.
+      (packed,) = args()
+      (out_ty,) = eqn.params["flat_ret_ty"]
+      rows = packed.shape[0]
+      bits = jnp.unpackbits(
+          packed.view(jnp.uint8).reshape(rows, -1), axis=-1, bitorder="little"
+      )
+      return token, [bits.reshape(out_ty.shape).astype(out_ty.dtype)]
+    raise NotImplementedError(
+        f"GPU interpret mode has no implementation for the `inline_mgpu` function"
+        f" `{fn.__module__}.{fn.__qualname__}`."
+    )
+
   def _interpret_copy_gmem_to_smem_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
@@ -1293,6 +1389,9 @@ class JaxprInterpreter:
             out = deferred_invals()[0]
           case gpu_primitives.commit_smem_p:
             token, out = self._interpret_commit_smem_p(eqn, token, deferred_invals)
+          case gpu_primitives.inline_mgpu_p:
+            token, out = self._interpret_inline_mgpu_p(
+                eqn, token, deferred_invals)
           case _:
             out = self._interpret_arithmetic_primitive(eqn, deferred_invals)
 

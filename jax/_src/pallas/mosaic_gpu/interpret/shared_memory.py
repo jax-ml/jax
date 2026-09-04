@@ -44,6 +44,9 @@ logger = logging.getLogger(__name__)
 LAYOUT_TRANSFORMS = (
     mosaic_gpu_core.UnswizzleRef,
     mosaic_gpu_core.UntilingTransform,
+    # A TMEM ref of rank > 2 is stored as `(m, prod(batch) * n)` and carries
+    # this transform back to `(*batch, m, n)`.
+    mosaic_gpu_core.ExpandLeadingBatchDimensionsTransform,
 )
 
 
@@ -459,6 +462,10 @@ class GPUSharedMemory(
 
   num_pallas_threads_per_block: int
 
+  # Hardware named barriers (`bar.sync` / `bar.arrive`), keyed by
+  # `(device, block, barrier id)`. See `named_barrier`.
+  named_barriers: dict[tuple[int, int, int], Barrier]
+
   # thread -> next available REGS buffer ID.
   #
   # NOTE: We use negative integers so that, when debugging, it is easy to
@@ -628,6 +635,7 @@ class GPUSharedMemory(
     with self.lock:
       self.next_tma_thread_id = 0
       self.next_regs_id = collections.defaultdict(lambda: -100)
+      self.named_barriers = {}
       self.clocks = {
           thread: self.VectorClock(self.vector_clock_size)
           for thread in self.all_concurrent_threads
@@ -726,6 +734,40 @@ class GPUSharedMemory(
       )
 
     return barrier, clock
+
+  def named_barrier(
+      self, thread: Thread, barrier_id: int, num_arrivals: int
+  ) -> Barrier:
+    """Named barrier `barrier_id` of `thread`'s block, created on first use.
+
+    Named barriers are hardware resources rather than program allocations, so
+    they live outside `self.mem` and need no deallocation.
+    """
+    # We model a named barrier with `n` arrivals as a `Barrier` with `n/128`
+    # arrivals, since for now a warpgroup is the smallest unit of threads that
+    # can use a named barrier.
+    key = (thread.device_id, thread.block_id, barrier_id)
+    with self.lock:
+      barrier = self.named_barriers.get(key)
+      if barrier is None:
+        barrier = Barrier(
+            self,
+            num_pallas_threads_per_block=self.num_pallas_threads_per_block,
+            ref_count=0,
+            num_arrivals=num_arrivals,
+            orders_tensor_core=False,
+            enable_logging=(
+                self.logging_mode is not None
+                and params.LoggingMode.BARRIER in self.logging_mode
+            ),
+        )
+        self.named_barriers[key] = barrier
+    if barrier.num_arrivals != num_arrivals:
+      raise ValueError(
+          f"Named barrier {barrier_id} is used with {num_arrivals} arrivals"
+          f" but was first used with {barrier.num_arrivals}."
+      )
+    return barrier
 
   def get_barrier(self, key: MemKey) -> Barrier:
     with self.lock:
