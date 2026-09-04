@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import concurrent.futures
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -196,6 +198,20 @@ class StringArrayTest(jtu.JaxTestCase):
         r".*StringDType.*is not a valid dtype",
         lambda: f(input_array),
     )
+
+  def test_string_array_copy_to_host_concurrent(self):
+    def worker(arr: jax.Array) -> None:
+      for _ in range(10):
+        arr.copy_to_host_async()
+        _ = np.asarray(arr)
+        _ = arr._single_device_array_to_np_array_did_copy()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+      for _ in range(10):
+        arr = self.make_test_string_array()
+        futures = [executor.submit(worker, arr) for _ in range(8)]
+        for f in futures:
+          f.result()
 
 
 if __name__ == "__main__":

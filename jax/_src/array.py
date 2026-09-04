@@ -658,8 +658,8 @@ class ArrayImpl(basearray.Array):
       npy_value = np.empty(self.shape, self.dtype)
       for i, ind in _cached_index_calc(self.sharding, self.shape):
         npy_value[ind], _ = self._arrays[i]._single_device_array_to_np_array_did_copy()
+      npy_value.flags.writeable = False
       self._npy_value = npy_value
-      self._npy_value.flags.writeable = False
     return self._npy_value
 
 
