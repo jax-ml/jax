@@ -78,6 +78,11 @@ else
   BAZEL_STARTUP_ARGS=()
 fi
 
+RBE_CACHE_OPTION=""
+if [[ "$JAXCI_USE_RBE_CACHE" == "1" || "$JAXCI_USE_RBE_CACHE" == "true" ]]; then
+  RBE_CACHE_OPTION="--config=ci_rbe_cache"
+fi
+
 echo "Running Bazel TPU tests..."
 
 # Don't abort the script if one command fails to ensure we run all test
@@ -110,7 +115,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     $OVERRIDE_XLA_REPO \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     --config=ci_linux_x86_64 \
-    --config=ci_rbe_cache \
+    $RBE_CACHE_OPTION \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAX \
     --run_under="$(pwd)/build/parallel_accelerator_execute.sh" \
@@ -153,7 +158,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     $OVERRIDE_XLA_REPO \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     --config=ci_linux_x86_64 \
-    --config=ci_rbe_cache \
+    $RBE_CACHE_OPTION \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
@@ -192,7 +197,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     $OVERRIDE_XLA_REPO \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     --config=ci_linux_x86_64 \
-    --config=ci_rbe_cache \
+    $RBE_CACHE_OPTION \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
@@ -230,7 +235,7 @@ else
     $OVERRIDE_XLA_REPO \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     --config=ci_linux_x86_64 \
-    --config=ci_rbe_cache \
+    $RBE_CACHE_OPTION \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
     --run_under="$(pwd)/build/parallel_accelerator_execute.sh" \
@@ -289,7 +294,7 @@ else
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     $OVERRIDE_XLA_REPO \
     --config=ci_linux_x86_64 \
-    --config=ci_rbe_cache \
+    $RBE_CACHE_OPTION \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
