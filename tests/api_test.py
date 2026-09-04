@@ -8322,8 +8322,6 @@ class Remat3Test(RematTest):
     self.assertAllClose(api.grad(g)(1.), api.grad(g_ref)(1.),
                         check_dtypes=False)
 
-  # We don't support everything_saveable with remat3
-  def test_remat_custom_policy_save_anything_new_remat(self): pass
   def test_remat_residual_logging(self): pass
 
   # The latter part of RematTest.test_remat_eval_counter used core.call_p, which

@@ -1114,9 +1114,14 @@ class RematTraced(HiPrim):
     # TODO eval_jaxpr_p trace time
     self._check_differentiable()
     traced = core.jaxpr_as_fun(self.jaxpr)
+    in_nzs = tuple(tree_leaves(nzs_in))
+    if self.policy is everything_saveable:
+      primals_out, f_vjp = api.vjp(traced, *primals, in_nzs=in_nzs)
+      out_nzs = f_vjp.out_nzs  # pyrefly: ignore[missing-attribute]
+      rem = Partial(lambda res, *_: res, f_vjp)
+      return primals_out, (list(primals), Static(self.prevent_cse), rem), list(out_nzs)
     primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
                                         custom_vjp_rules=True)
-    in_nzs = tuple(tree_leaves(nzs_in))
     out_nzs_cell = []
     def make_vjp(*xs):
       _, f_vjp = api.vjp(fwd2, *xs, in_nzs=in_nzs)
@@ -1163,9 +1168,14 @@ class RematTraced(HiPrim):
   def lin(self, nzs_in, *primals):
     self._check_differentiable()
     traced = core.jaxpr_as_fun(self.jaxpr)
+    in_nzs = tuple(tree_leaves(nzs_in))
+    if self.policy is everything_saveable:
+      primals_out, f_lin = api.linearize(traced, *primals, in_nzs=in_nzs)
+      out_nzs = f_lin.out_nzs  # pyrefly: ignore[missing-attribute]
+      rem = Partial(lambda res, *_: res, f_lin)
+      return primals_out, (list(primals), rem, tuple(out_nzs)), list(out_nzs)
     primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
                                         custom_vjp_rules=True)
-    in_nzs = tuple(tree_leaves(nzs_in))
     out_nzs_cell = []
     def make_lin(*xs):
       _, f_jvp = api.linearize(fwd2, *xs, in_nzs=in_nzs)
