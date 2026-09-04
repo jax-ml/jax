@@ -30,7 +30,6 @@ limitations under the License.
 #include "jaxlib/absl_status_casters.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/mosaic/gpu/target.h"
-#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
 
 namespace jax::cuda {
 namespace {
@@ -63,6 +62,9 @@ using CuptiBuffersCallbackRequestFuncV2 = void(CUPTIAPI*)(
 using CuptiBuffersCallbackCompleteFuncV2 = void(CUPTIAPI*)(
     uint8_t*, size_t, size_t, void*);
 
+// V2 availability is determined by weak runtime-symbol checks in
+// CanUseCuptiV2(). These aliases only make the weak declarations below match
+// the CUPTI headers used to build jaxlib.
 #ifdef CUpti_ActivityConfig_STRUCT_SIZE
 using CuptiActivityConfigAbi = CUpti_ActivityConfig;
 using CuptiBuffersCallbackRequestFuncV2Abi =
@@ -172,7 +174,8 @@ struct {
 } profiler_state;
 
 bool IsRecoverableV2PreflightFailure(CUptiResult result) {
-  return result == CUPTI_ERROR_NOT_SUPPORTED || result == CUPTI_ERROR_UNKNOWN;
+  return result == CUPTI_ERROR_MULTIPLE_SUBSCRIBERS_NOT_SUPPORTED ||
+         result == CUPTI_ERROR_NOT_SUPPORTED || result == CUPTI_ERROR_UNKNOWN;
 }
 
 // cuptiActivityGetNextRecord_v2 and cuptiGetTimestamp_v2 were added in CUDA
@@ -184,6 +187,19 @@ bool CanUseCuptiV2() {
          cuptiActivityEnable_v2 != nullptr &&
          cuptiActivityDisable_v2 != nullptr &&
          cuptiActivityGetNextRecord_v2 != nullptr;
+}
+
+enum class CuptiV2SubscribeResult { kSubscribed, kFallBackToV1 };
+
+CuptiV2SubscribeResult SubscribeCuptiV2(CuptiSubscriberParamsAbi* params,
+                                         CUpti_SubscriberHandle* handle) {
+  CUptiResult result = cuptiSubscribe_v2(
+      handle, /*callback=*/nullptr, /*userdata=*/nullptr, params);
+  if (IsRecoverableV2PreflightFailure(result)) {
+    return CuptiV2SubscribeResult::kFallBackToV1;
+  }
+  THROW_IF_CUPTI_ERROR(result, "failed to subscribe to V2 CUPTI");
+  return CuptiV2SubscribeResult::kSubscribed;
 }
 
 void callback_request_impl(uint8_t** buffer, size_t* size,
@@ -260,6 +276,85 @@ void CUPTIAPI callback_complete_v2(uint8_t* buffer, size_t, size_t valid_size,
   process_activity_buffer(buffer, valid_size);
 }
 
+bool InitCuptiV2() {
+  if (!CanUseCuptiV2()) {
+    return false;
+  }
+
+  CuptiSubscriberParamsAbi params = {};
+  params.structSize = kCuptiSubscriberParamsStructSize;
+  params.subscriberName = "MosaicGpuProfiler";
+  if (!SetAllowMultipleSubscribersIfSupported(&params)) {
+    return false;
+  }
+  CUpti_SubscriberHandle handle = nullptr;
+  if (SubscribeCuptiV2(&params, &handle) !=
+      CuptiV2SubscribeResult::kSubscribed) {
+    return false;
+  }
+
+  CuptiSubscriber candidate(handle, CuptiApi::kV2);
+  uint64_t timestamp = 0;
+  CUptiResult result = cuptiGetTimestamp_v2(candidate.get(), &timestamp);
+  if (result == CUPTI_SUCCESS) {
+    // Publish the subscriber before enabling V2 activity collection: CUPTI
+    // can invoke the registered callbacks during enablement.
+    profiler_state.subscriber = std::move(candidate);
+    result = cuptiActivityRegisterCallbacks_v2(
+        profiler_state.subscriber.get(),
+        reinterpret_cast<CuptiBuffersCallbackRequestFuncV2Abi>(
+            callback_request_v2),
+        reinterpret_cast<CuptiBuffersCallbackCompleteFuncV2Abi>(
+            callback_complete_v2));
+    if (result == CUPTI_SUCCESS) {
+      result = cuptiActivityEnable_v2(profiler_state.subscriber.get(),
+                                      CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL,
+                                      nullptr);
+    }
+    if (result != CUPTI_SUCCESS) {
+      profiler_state.subscriber.Close();
+      THROW_IF_CUPTI_ERROR(result,
+                           "failed to enable V2 CUPTI activity tracing");
+    }
+    return true;
+  }
+
+  CUptiResult unsubscribe_result = candidate.Close();
+  if (unsubscribe_result != CUPTI_SUCCESS) {
+    THROW_IF_CUPTI_ERROR(unsubscribe_result,
+                         "failed to unsubscribe V2 CUPTI subscriber");
+  }
+  if (!IsRecoverableV2PreflightFailure(result)) {
+    THROW_IF_CUPTI_ERROR(result, "failed to initialize V2 CUPTI profiler");
+  }
+  return false;
+}
+
+void InitCuptiV1() {
+  // Ok to pass nullptr for the callback here because we don't register any
+  // callbacks through cuptiEnableCallback.
+  CUpti_SubscriberHandle handle = nullptr;
+  auto subscribe_result =
+      cuptiSubscribe(&handle, /*callback=*/nullptr, /*userdata=*/nullptr);
+  if (subscribe_result == CUPTI_ERROR_MULTIPLE_SUBSCRIBERS_NOT_SUPPORTED) {
+    THROW(
+        "Attempted to subscribe to CUPTI while another subscriber, such as "
+        "Nsight Systems or Nsight Compute, is active. CUPTI backend of the "
+        "Mosaic GPU profiler cannot be used in that mode since CUPTI does "
+        "not support multiple subscribers.");
+  }
+  THROW_IF_CUPTI_ERROR(subscribe_result, "failed to subscribe to CUPTI");
+
+  CuptiSubscriber candidate(handle, CuptiApi::kV1);
+  THROW_IF_CUPTI_ERROR(
+      cuptiActivityRegisterCallbacks(callback_request_v1, callback_complete_v1),
+      "failed to register CUPTI activity callbacks");
+  THROW_IF_CUPTI_ERROR(
+      cuptiActivityEnable(CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL),
+      "failed to enable tracking of kernel activity by CUPTI");
+  profiler_state.subscriber = std::move(candidate);
+}
+
 NB_MODULE(_mosaic_gpu_ext, m) {
   m.def("_sync_all_devices", []() {
     int devices = 0;
@@ -280,80 +375,11 @@ NB_MODULE(_mosaic_gpu_ext, m) {
     THROW_IF(profiler_state.active,
              "Nested or concurrent Mosaic CUPTI profiling is not supported.");
     profiler_state.timings.clear();
-    if (CanUseCuptiV2()) {
-      CuptiSubscriberParamsAbi params = {};
-      params.structSize = kCuptiSubscriberParamsStructSize;
-      params.subscriberName = "MosaicGpuProfiler";
-      if (SetAllowMultipleSubscribersIfSupported(&params)) {
-        CUpti_SubscriberHandle handle = nullptr;
-        CUptiResult result = cuptiSubscribe_v2(
-            &handle, /*callback=*/nullptr, /*userdata=*/nullptr, &params);
-        if (result == CUPTI_ERROR_MULTIPLE_SUBSCRIBERS_NOT_SUPPORTED) {
-          // CUPTI may reject V2 multi-subscriber mode at runtime, e.g. static
-          // CUPTI. Since V2 subscription failed, fall back to legacy V1.
-          result = CUPTI_ERROR_NOT_SUPPORTED;
-        }
-        if (result == CUPTI_SUCCESS) {
-          CuptiSubscriber candidate(handle, CuptiApi::kV2);
-          uint64_t timestamp = 0;
-          result = cuptiGetTimestamp_v2(candidate.get(), &timestamp);
-          if (result == CUPTI_SUCCESS) {
-            // Publish the subscriber before enabling V2 activity collection:
-            // CUPTI can invoke the registered callbacks during enablement.
-            profiler_state.subscriber = std::move(candidate);
-            result = cuptiActivityRegisterCallbacks_v2(
-                profiler_state.subscriber.get(),
-                reinterpret_cast<CuptiBuffersCallbackRequestFuncV2Abi>(
-                    callback_request_v2),
-                reinterpret_cast<CuptiBuffersCallbackCompleteFuncV2Abi>(
-                    callback_complete_v2));
-            if (result == CUPTI_SUCCESS) {
-              result = cuptiActivityEnable_v2(
-                  profiler_state.subscriber.get(),
-                  CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL, nullptr);
-            }
-            if (result != CUPTI_SUCCESS) {
-              profiler_state.subscriber.Close();
-              THROW_IF_CUPTI_ERROR(result,
-                                   "failed to enable V2 CUPTI activity tracing");
-            }
-            profiler_state.active = true;
-            return;
-          }
-          CUptiResult unsubscribe_result = candidate.Close();
-          if (unsubscribe_result != CUPTI_SUCCESS) {
-            THROW_IF_CUPTI_ERROR(unsubscribe_result,
-                                 "failed to unsubscribe V2 CUPTI subscriber");
-          }
-        }
-        if (!IsRecoverableV2PreflightFailure(result)) {
-          THROW_IF_CUPTI_ERROR(result, "failed to initialize V2 CUPTI profiler");
-        }
-      }
+    // If V2 is unavailable or fails during preflight, clean up any temporary
+    // V2 subscriber and continue with the legacy V1 initialization below.
+    if (!InitCuptiV2()) {
+      InitCuptiV1();
     }
-
-    CuptiSubscriber candidate;
-    // Ok to pass nullptr for the callback here because we don't register any
-    // callbacks through cuptiEnableCallback.
-    CUpti_SubscriberHandle handle = nullptr;
-    auto subscribe_result =
-        cuptiSubscribe(&handle, /*callback=*/nullptr, /*userdata=*/nullptr);
-    if (subscribe_result == CUPTI_ERROR_MULTIPLE_SUBSCRIBERS_NOT_SUPPORTED) {
-      THROW(
-          "Attempted to subscribe to CUPTI while another subscriber, such as "
-          "Nsight Systems or Nsight Compute, is active. CUPTI backend of the "
-          "Mosaic GPU profiler cannot be used in that mode since CUPTI does "
-          "not support multiple subscribers.");
-    }
-    THROW_IF_CUPTI_ERROR(subscribe_result, "failed to subscribe to CUPTI");
-    candidate = CuptiSubscriber(handle, CuptiApi::kV1);
-    THROW_IF_CUPTI_ERROR(
-        cuptiActivityRegisterCallbacks(callback_request_v1, callback_complete_v1),
-        "failed to register CUPTI activity callbacks");
-    THROW_IF_CUPTI_ERROR(
-        cuptiActivityEnable(CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL),
-        "failed to enable tracking of kernel activity by CUPTI");
-    profiler_state.subscriber = std::move(candidate);
     profiler_state.active = true;
   });
   m.def(
@@ -361,6 +387,9 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       [](bool finalize) {
         THROW_IF(!profiler_state.active, "Mosaic CUPTI profiling is not active.");
         CUptiResult first_error = CUPTI_SUCCESS;
+        // Continue teardown after an error: throwing immediately could leave
+        // the subscriber installed. Preserve the first error to report after
+        // the profiler has been made inactive.
         auto record_error = [&first_error](CUptiResult result) {
           if (first_error == CUPTI_SUCCESS && result != CUPTI_SUCCESS) {
             first_error = result;
