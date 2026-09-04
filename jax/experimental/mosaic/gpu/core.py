@@ -378,10 +378,9 @@ class _TMEMAlloc:
 
   def alloc(self) -> int:
     """Allocates TMEM and returns the number of columns allocated."""
-    _, cols = tcgen05.tmem_alloc(
+    return tcgen05.tmem_alloc(
         self.addr_ref, self.num_cols, collective=self.collective, exact=False
     )
-    return cols
 
   def dealloc(self):
     addr = memref.load(self.addr_ref, [])
