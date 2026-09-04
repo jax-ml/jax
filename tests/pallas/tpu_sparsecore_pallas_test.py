@@ -831,15 +831,18 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x, indices), x[1, 8:][indices])
 
-  def test_gather_2d_with_col_slice(self):
+  @parameterized.parameters(True, False)
+  def test_gather_2d_with_col_slice(self, use_num_lanes_indices):
     if not self.USE_TC_TILING:
       self.skipTest("Test only works under TC tiling.")
-    nl = self.num_lanes
-    x = jnp.arange(nl * 4096, dtype=jnp.int32).reshape(nl, 4096)
-    indices = jax.random.permutation(jax.random.key(42), jnp.arange(nl))
+    n_indices = self.num_lanes if use_num_lanes_indices else 20
+    x = jnp.arange(n_indices * 4096, dtype=jnp.int32).reshape(n_indices, 4096)
+    indices = jax.random.permutation(jax.random.key(42), jnp.arange(n_indices))
 
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(shape=(nl, 1024), dtype=jnp.int32),
+        out_shape=jax.ShapeDtypeStruct(
+            shape=(n_indices, 1024), dtype=jnp.int32
+        ),
         in_specs=(
             pl.BlockSpec(memory_space=pltpu.HBM),
             pl.BlockSpec(memory_space=pltpu.VMEM),
