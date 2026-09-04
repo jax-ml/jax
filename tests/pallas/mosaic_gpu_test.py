@@ -164,6 +164,59 @@ def run_on_sm80(method):
   return method
 
 
+# The transforms that put a float32 copy on the tiled (swizzled) cp.async path.
+_TILED_F32 = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
+
+# (name, operand shape, block shape, transforms) for the pre-Hopper cp.async
+# out-of-bounds tests. In each case the block overhangs the operand, so the
+# copy has to be bounded rather than promised in bounds.
+_OOB_ZERO_FILL_CASES = (
+    # The block overhangs by a whole row, so the transfers covering it are
+    # entirely out of bounds and copy no bytes at all.
+    ("whole_rows", (3, 128), (4, 128), ()),
+    # The bound falls *inside* a transfer: 386 is not a multiple of the
+    # 4-element vector, so one transfer is partly valid and the hardware
+    # zero-fills the rest of it.
+    ("split_transfer", (386,), (512,), ()),
+    # The tiled (swizzled) path. Rows of a tile are strided in GMEM, so the
+    # row and column bounds have to be checked separately: here whole rows
+    # of the block are out of bounds...
+    ("tiled_whole_rows", (60, 64), (64, 64), _TILED_F32),
+    # ...and here the single row is short, with 34 not a multiple of the
+    # 4-element vector, so one transfer straddles the column bound. Only a
+    # single row can be short: cp.async needs 16-byte aligned addresses, so the
+    # row stride of a multi-row tiled copy has to be a multiple of 4 float32s
+    # anyway.
+    ("tiled_split_transfer", (1, 34), (64, 64), _TILED_F32),
+)
+
+
+def _oob_zero_fill_kernel(block, transforms):
+  """A pipelined kernel whose only OOB access is the GMEM->SMEM input copy.
+
+  The output covers the whole (overhanging) block, so nothing but the pipelined
+  input copy can go out of bounds.
+  """
+  def kernel(x_gmem, o_gmem):
+    def body(_, x_smem):
+      o_gmem[...] = x_smem[...] * 2.0
+
+    plgpu.emit_pipeline(
+        body,
+        in_specs=[
+            plgpu.BlockSpec(
+                block,
+                lambda i: (0,) * len(block),
+                oob_fill_mode=plgpu.OOBFillMode.ZEROS,
+                transforms=transforms,
+            )
+        ],
+        grid=(1,),
+    )(x_gmem)
+
+  return kernel
+
+
 class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
   LOWERING_SEMANTICS: ClassVar[plgpu.LoweringSemantics]
 
@@ -7939,25 +7992,20 @@ class PipelineTest(PallasTest):
     x = jax.random.uniform(jax.random.key(0), (m, n)).astype(dtype)
     np.testing.assert_allclose(kernel(x), x.sum(0, keepdims=True), rtol=1e-6)
 
+  @parameterized.named_parameters(*_OOB_ZERO_FILL_CASES)
   @run_on_sm80
-  def test_emit_in_specs_only_requires_in_bounds(self):
+  def test_emit_in_specs_out_of_bounds_zero_fill(self, shape, block, transforms):
     if jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("cp.async OOB constraint is pre-Hopper only")
 
-    n = 128
-
-    @self.kernel()
-    def kernel(x_gmem):
-      plgpu.emit_pipeline(
-          lambda _, x_smem: None,
-          in_specs=[plgpu.BlockSpec((4, n), lambda i: (i, 0))],
-          grid=(2,),
-      )(x_gmem)
-
-    x = jnp.zeros((6, n), dtype=jnp.float32)
-
-    with self.assertRaisesRegex(NotImplementedError, "provably in bounds"):
-      kernel(x)
+    x = jax.random.uniform(jax.random.key(0), shape, dtype=jnp.float32)
+    f = self.kernel(
+        _oob_zero_fill_kernel(block, transforms),
+        out_type=jax.ShapeDtypeStruct(block, jnp.float32),
+    )
+    expected = np.zeros(block, np.float32)
+    expected[tuple(slice(s) for s in shape)] = np.asarray(x) * 2.0
+    np.testing.assert_array_equal(f(x), expected)
 
   @parameterized.product(num_steps=[0, 1, 5, 100], max_concurrent_steps=[2, 3])
   @run_on_sm80

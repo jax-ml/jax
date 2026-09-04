@@ -938,6 +938,7 @@ class LaunchContext:
       collective: Sequence[gpu.Dimension] | None,
       leader_tracked: CopyPartition | None,
       implementation: AsyncCopyImplementation,
+      oob_mode: OOBFillMode = OOBFillMode.PROMISE_IN_BOUNDS,
   ):
     """Performs setup common to TMA and CP_ASYNC implementations."""
     index = ir.IndexType.get()
@@ -977,8 +978,13 @@ class LaunchContext:
     base_indices, slice_shape, is_squeezed = utils.parse_indices(
         gmem_slice,
         ir.MemRefType(gmem_ref.type).shape,
-        # NOTE: TMA supports OOB indices, so we skip the check.
-        check_oob=implementation != AsyncCopyImplementation.TMA,
+        # NOTE: TMA supports OOB indices, and so does cp.async once it is
+        # allowed to bound its transfers. Only a promise of in-bounds access
+        # makes a statically out-of-bounds slice an error.
+        check_oob=(
+            implementation != AsyncCopyImplementation.TMA
+            and oob_mode == OOBFillMode.PROMISE_IN_BOUNDS
+        ),
     )
     if gather_indices is not None:
       slice_shape = [gather_indices.shape[0], *slice_shape[1:]]
@@ -1320,6 +1326,7 @@ class LaunchContext:
         collective,
         leader_tracked,
         implementation,
+        oob_mode,
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
 
@@ -1361,6 +1368,9 @@ class LaunchContext:
         gep_type = element_type
 
       gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
+      # The number of addressable units (of ``gep_type``) in the whole GMEM
+      # ref. Captured before the squeeze below narrows ``gmem_ref``.
+      gmem_size = math.prod(gmem_ref_ty.shape) // offset_scale
       transformed_strides = gmem_strides
       for t in gmem_transform:
         transformed_strides = t.transform_strides(transformed_strides)
@@ -1371,10 +1381,23 @@ class LaunchContext:
         gmem_offset = arith.divui(gmem_offset, c(offset_scale, index))
       gmem_offset = arith.index_castui(i64, gmem_offset)
 
+      # ``gmem_offset`` recovers the linear offset of the slice origin by
+      # dotting the transformed indices with the transformed strides. Doing the
+      # same with the strides of a unit vector along one logical dimension
+      # instead recovers that dimension's base index, since the transform is a
+      # linear reindexing. Only valid before the squeeze below, which rebinds
+      # ``gmem_ref_ty``.
+      def base_index(dim, rank=gmem_ref_ty.rank):
+        strides = [0] * rank
+        strides[dim] = 1
+        for t in gmem_transform:
+          strides = t.transform_strides(strides)
+        return utils.dyn_dot(dyn_base_indices, [c(s, index) for s in strides])
+
+      sliced_dims = [
+          i for i in range(gmem_ref_ty.rank) if i not in squeezed_dims
+      ]
       if squeezed_dims:
-        sliced_dims = [
-            i for i in range(gmem_ref_ty.rank) if i not in squeezed_dims
-        ]
         if (
             not gmem_transform
             and sliced_dims
@@ -1413,12 +1436,12 @@ class LaunchContext:
           raise ValueError(
               "CP_ASYNC requires at least 4 bytes per transfer"
           )
-        gmem_base_ptr = utils.memref_ptr(gmem_ref)
-        gmem_base_ptr = llvm.addrspacecast(
-            llvm.PointerType.get(address_space=1), gmem_base_ptr
+        gmem_ref_ptr = utils.memref_ptr(gmem_ref)
+        gmem_ref_ptr = llvm.addrspacecast(
+            llvm.PointerType.get(address_space=1), gmem_ref_ptr
         )
         gmem_base_ptr = utils.getelementptr(
-            gmem_base_ptr, [gmem_offset], gep_type
+            gmem_ref_ptr, [gmem_offset], gep_type
         )
         smem_base_ptr = utils.memref_ptr(smem_ref)
         bytes_per_transfer = layout.vec_size * element_bitwidth // 8
@@ -1427,17 +1450,53 @@ class LaunchContext:
             if bytes_per_transfer == 16
             else nvvm.LoadCacheModifierKind.CA
         )
+        bound_transfers = oob_mode != OOBFillMode.PROMISE_IN_BOUNDS
+        gep_bytes = element_bitwidth * offset_scale // 8
         for linear_idx in layout.linear_thread_idxs():
           idx = arith.index_castui(i32, linear_idx)
           if offset_scale > 1:
             idx = arith.divui(idx, c(offset_scale, i32))
           smem_ptr = utils.getelementptr(smem_base_ptr, [idx], gep_type)
-          gmem_ptr = utils.getelementptr(gmem_base_ptr, [idx], gep_type)
+          if not bound_transfers:
+            gmem_ptr = utils.getelementptr(gmem_base_ptr, [idx], gep_type)
+            nvvm.cp_async_shared_global(
+                smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier
+            )
+            continue
+          offset = arith.addi(gmem_offset, arith.extui(i64, idx))
+          remaining_bytes = arith.muli(
+              arith.subi(
+                  c(gmem_size, i64), arith.minui(offset, c(gmem_size, i64))
+              ),
+              c(gep_bytes, i64),
+          )
+          src_size = arith.trunci(
+              i32, arith.minui(remaining_bytes, c(bytes_per_transfer, i64))
+          )
+          # A zero-sized transfer reads no data, but the hardware still wants a
+          # valid (and suitably aligned) source address, so point it at the
+          # base of the ref.
+          offset = arith.select(
+              arith.cmpi(arith.CmpIPredicate.eq, src_size, c(0, i32)),
+              c(0, i64),
+              offset,
+          )
+          gmem_ptr = utils.getelementptr(gmem_ref_ptr, [offset], gep_type)
           nvvm.cp_async_shared_global(
-              smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier
+              smem_ptr,
+              gmem_ptr,
+              bytes_per_transfer,
+              cache_modifier,
+              cp_size=src_size,
           )
       else:
         assert swizzle is not None
+        bound_transfers = oob_mode != OOBFillMode.PROMISE_IN_BOUNDS
+        if bound_transfers and offset_scale > 1:
+          raise NotImplementedError(
+              "Out-of-bounds handling for tiled CP_ASYNC copies of sub-byte"
+              " types is not implemented"
+          )
         swizzle_elems = 8 * swizzle // element_bitwidth
         tiling = (8, swizzle_elems)
         if gmem_transform != (TileTransform(tiling),):
@@ -1445,18 +1504,24 @@ class LaunchContext:
         layout = fa.tiled_copy_smem_gmem_layout(
             *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth  # pyrefly: ignore[bad-argument-count]
         )
-        dst_tiled_strides = [
-            arith.constant(i32, s)
-            for s in layout.tiling.tile_strides(tuple(gmem_strides))[gmem_ref_ty.rank :]
-        ]
-        lane_offset = utils.dyn_dot(layout.lane_indices(), dst_tiled_strides)
-        warp_offset = utils.dyn_dot(layout.warp_indices(), dst_tiled_strides)
+        if gmem_ref_ty.rank != 2:
+          raise NotImplementedError("Only 2D copies implemented")
+        def tiled_strides(strides):
+          return [
+              arith.constant(i32, s)
+              for s in layout.tiling.tile_strides(tuple(strides))[
+                  gmem_ref_ty.rank :
+              ]
+          ]
+        dst_tiled_strides = tiled_strides(gmem_strides)
+        lane_indices = layout.lane_indices()
+        warp_indices = layout.warp_indices()
+        lane_offset = utils.dyn_dot(lane_indices, dst_tiled_strides)
+        warp_offset = utils.dyn_dot(warp_indices, dst_tiled_strides)
         dyn_offset = arith.addi(lane_offset, warp_offset)
         dyn_offset = arith.divui(dyn_offset, c(offset_scale, i32))
         dyn_offset = arith.extui(i64, dyn_offset)
         dyn_offset = arith.addi(dyn_offset, gmem_offset)
-        if gmem_ref_ty.rank != 2:
-          raise NotImplementedError("Only 2D copies implemented")
         gmem_slice_shape = tuple(
             s
             for i, s in enumerate(untransformed_slice_shape)
@@ -1465,10 +1530,10 @@ class LaunchContext:
         transfers = fa.FragmentedArray.transfer_tiled(
             smem_ref, swizzle, layout, gmem_slice_shape, optimized=False
         )
-        gmem_base_ptr = utils.getelementptr(utils.memref_ptr(gmem_ref), [dyn_offset], gep_type)
-        gmem_base_ptr = llvm.addrspacecast(
-            llvm.PointerType.get(address_space=1), gmem_base_ptr
+        gmem_ref_ptr = llvm.addrspacecast(
+            llvm.PointerType.get(address_space=1), utils.memref_ptr(gmem_ref)
         )
+        gmem_base_ptr = utils.getelementptr(gmem_ref_ptr, [dyn_offset], gep_type)
         bytes_per_transfer = layout.vector_length * element_bitwidth // 8
         # Only 16-byte transfers can skip the L1 cache (this is what CG means).
         cache_modifier = (
@@ -1476,10 +1541,69 @@ class LaunchContext:
             if bytes_per_transfer == 16
             else nvvm.LoadCacheModifierKind.CA
         )
+        if bound_transfers:
+          # See the untiled path for why we bound transfers rather than branch.
+          # A single linear bound is not enough here though: the rows of a tile
+          # are strided in GMEM, so a transfer that runs off the end of a row
+          # is not the last one, and each dimension has to be checked
+          # separately. The lane and warp indices are reduced to a flat offset
+          # above, but the same dot product against the tiled strides of a unit
+          # vector recovers the index along a single logical dimension.
+          tiled_indices = [
+              arith.addi(l, w)
+              for l, w in zip(lane_indices, warp_indices, strict=True)
+          ]
+          dyn_row = utils.dyn_dot(tiled_indices, tiled_strides([1, 0]))
+          dyn_col = utils.dyn_dot(tiled_indices, tiled_strides([0, 1]))
+          dyn_row = arith.addi(
+              dyn_row, arith.index_castui(i32, base_index(sliced_dims[0]))
+          )
+          dyn_col = arith.addi(
+              dyn_col, arith.index_castui(i32, base_index(sliced_dims[1]))
+          )
+          num_rows, num_cols = gmem_ref_ty.shape
         for _get, _update, get_base_idx, smem_ptr in transfers:
-          constant_offset = sum(i * s for i, s in zip(get_base_idx(), gmem_strides, strict=True))
-          gmem_ptr = utils.getelementptr(gmem_base_ptr, [constant_offset // offset_scale], gep_type)
-          nvvm.cp_async_shared_global(smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier)
+          base_idx = get_base_idx()
+          constant_offset = sum(i * s for i, s in zip(base_idx, gmem_strides, strict=True))
+          if not bound_transfers:
+            gmem_ptr = utils.getelementptr(
+                gmem_base_ptr, [constant_offset // offset_scale], gep_type
+            )
+            nvvm.cp_async_shared_global(
+                smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier
+            )
+            continue
+          row = arith.addi(dyn_row, c(base_idx[0], i32))
+          col = arith.addi(dyn_col, c(base_idx[1], i32))
+          # The transfer reads ``vector_length`` elements contiguous along the
+          # minor dimension, so a partial row tail transfers fewer bytes and
+          # the hardware zero-fills the rest. A row past the end transfers
+          # nothing at all.
+          valid_cols = arith.subi(
+              c(num_cols, i32), arith.minui(col, c(num_cols, i32))
+          )
+          valid_cols = arith.minui(valid_cols, c(layout.vector_length, i32))
+          valid_cols = arith.select(
+              arith.cmpi(arith.CmpIPredicate.ult, row, c(num_rows, i32)),
+              valid_cols,
+              c(0, i32),
+          )
+          src_size = arith.muli(valid_cols, c(element_bitwidth // 8, i32))
+          # See the untiled path: a zero-sized transfer still needs a valid
+          # source address.
+          offset = arith.select(
+              arith.cmpi(arith.CmpIPredicate.eq, src_size, c(0, i32)),
+              c(0, i64),
+              arith.addi(dyn_offset, c(constant_offset // offset_scale, i64)),
+          )
+          gmem_ptr = utils.getelementptr(gmem_ref_ptr, [offset], gep_type)
+          nvvm.cp_async_shared_global(
+              smem_ptr,
+              gmem_ptr,
+              bytes_per_transfer,
+              cache_modifier,
+              cp_size=src_size,
+          )
       if barrier is None:
         nvvm.cp_async_commit_group()
       else:
