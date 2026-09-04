@@ -147,7 +147,7 @@ set +e
 # It appears --run_under needs an absolute path.
 # The product of the `JAX_ACCELERATOR_COUNT`` and `JAX_TESTS_PER_ACCELERATOR`
 # should match the VM's CPU core count (set in `--local_test_jobs`).
-TEST_ARTIFACTS_DIR="test-artifacts-single"
+TEST_ARTIFACTS_DIR="${JAXCI_TEST_ARTIFACTS_DIR}-single"
 mkdir -p "$TEST_ARTIFACTS_DIR"
 echo "::endgroup::" >&2
 
@@ -175,7 +175,7 @@ python3 ci/utilities/report_resultstore_link.py "CUDA single-accelerator tests" 
 ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
 # Runs multiaccelerator tests with all GPUs directly on the VM without RBE...
-TEST_ARTIFACTS_DIR="test-artifacts-multi"
+TEST_ARTIFACTS_DIR="${JAXCI_TEST_ARTIFACTS_DIR}-multi"
 mkdir -p "$TEST_ARTIFACTS_DIR"
 
 echo "::group::Bazel CUDA multi-accelerator tests" >&2
@@ -199,17 +199,17 @@ ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 echo "::group::Cleanup" >&2
 # Merge results with prefixes to avoid overwriting
 { set +x; } 2>/dev/null
-mkdir -p test-artifacts
-if [[ -d test-artifacts-single ]]; then
-  for f in test-artifacts-single/*; do
+mkdir -p "$JAXCI_TEST_ARTIFACTS_DIR"
+if [[ -d "${JAXCI_TEST_ARTIFACTS_DIR}-single" ]]; then
+  for f in "${JAXCI_TEST_ARTIFACTS_DIR}-single"/*; do
     [[ -e "$f" ]] || continue
-    cp "$f" "test-artifacts/single_$(basename "$f")"
+    cp "$f" "${JAXCI_TEST_ARTIFACTS_DIR}/single_$(basename "$f")"
   done
 fi
-if [[ -d test-artifacts-multi ]]; then
-  for f in test-artifacts-multi/*; do
+if [[ -d "${JAXCI_TEST_ARTIFACTS_DIR}-multi" ]]; then
+  for f in "${JAXCI_TEST_ARTIFACTS_DIR}-multi"/*; do
     [[ -e "$f" ]] || continue
-    cp "$f" "test-artifacts/multi_$(basename "$f")"
+    cp "$f" "${JAXCI_TEST_ARTIFACTS_DIR}/multi_$(basename "$f")"
   done
 fi
 set -x

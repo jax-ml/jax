@@ -102,7 +102,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   IGNORE_TESTS="-//tests/pallas:tpu_pallas_interpret_thread_map_test_tpu"
 
   # Run single-accelerator tests in parallel
-  TEST_ARTIFACTS_DIR="test-artifacts-single"
+  TEST_ARTIFACTS_DIR="${JAXCI_TEST_ARTIFACTS_DIR}-single"
   mkdir -p "$TEST_ARTIFACTS_DIR"
 
   echo "::group::Bazel TPU single-accelerator tests (full)" >&2
@@ -145,7 +145,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
   # Run non-multiprocess multi-accelerator tests across all chips
-  TEST_ARTIFACTS_DIR="test-artifacts-multi"
+  TEST_ARTIFACTS_DIR="${JAXCI_TEST_ARTIFACTS_DIR}-multi"
   mkdir -p "$TEST_ARTIFACTS_DIR"
 
   echo "::group::Bazel TPU multi-accelerator tests (full)" >&2
@@ -184,7 +184,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 
   # Run multiprocess targets one at a time. Their workers must execute each test
   # together, so disable test-level threading.
-  TEST_ARTIFACTS_DIR="test-artifacts-multiprocess"
+  TEST_ARTIFACTS_DIR="${JAXCI_TEST_ARTIFACTS_DIR}-multiprocess"
   mkdir -p "$TEST_ARTIFACTS_DIR"
 
   echo "::group::Bazel TPU multiprocess tests (full)" >&2
@@ -222,7 +222,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 else
 
   # Run single-accelerator tests in parallel
-  TEST_ARTIFACTS_DIR="test-artifacts-single"
+  TEST_ARTIFACTS_DIR="${JAXCI_TEST_ARTIFACTS_DIR}-single"
   mkdir -p "$TEST_ARTIFACTS_DIR"
 
   echo "::group::Bazel TPU single-accelerator tests" >&2
@@ -281,7 +281,7 @@ else
   ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
   # Run multi-accelerator across all chips
-  TEST_ARTIFACTS_DIR="test-artifacts-multi"
+  TEST_ARTIFACTS_DIR="${JAXCI_TEST_ARTIFACTS_DIR}-multi"
   mkdir -p "$TEST_ARTIFACTS_DIR"
 
   echo "::group::Bazel TPU multi-accelerator tests" >&2
@@ -328,23 +328,23 @@ fi
 echo "::group::Cleanup" >&2
 # Merge results with prefixes to avoid overwriting
 { set +x; } 2>/dev/null
-mkdir -p test-artifacts
-if [[ -d test-artifacts-single ]]; then
-  for f in test-artifacts-single/*; do
+mkdir -p "$JAXCI_TEST_ARTIFACTS_DIR"
+if [[ -d "${JAXCI_TEST_ARTIFACTS_DIR}-single" ]]; then
+  for f in "${JAXCI_TEST_ARTIFACTS_DIR}-single"/*; do
     [[ -e "$f" ]] || continue
-    cp "$f" "test-artifacts/single_$(basename "$f")"
+    cp "$f" "${JAXCI_TEST_ARTIFACTS_DIR}/single_$(basename "$f")"
   done
 fi
-if [[ -d test-artifacts-multi ]]; then
-  for f in test-artifacts-multi/*; do
+if [[ -d "${JAXCI_TEST_ARTIFACTS_DIR}-multi" ]]; then
+  for f in "${JAXCI_TEST_ARTIFACTS_DIR}-multi"/*; do
     [[ -e "$f" ]] || continue
-    cp "$f" "test-artifacts/multi_$(basename "$f")"
+    cp "$f" "${JAXCI_TEST_ARTIFACTS_DIR}/multi_$(basename "$f")"
   done
 fi
-if [[ -d test-artifacts-multiprocess ]]; then
-  for f in test-artifacts-multiprocess/*; do
+if [[ -d "${JAXCI_TEST_ARTIFACTS_DIR}-multiprocess" ]]; then
+  for f in "${JAXCI_TEST_ARTIFACTS_DIR}-multiprocess"/*; do
     [[ -e "$f" ]] || continue
-    cp "$f" "test-artifacts/multiprocess_$(basename "$f")"
+    cp "$f" "${JAXCI_TEST_ARTIFACTS_DIR}/multiprocess_$(basename "$f")"
   done
 fi
 set -x
