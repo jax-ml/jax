@@ -951,6 +951,8 @@ class custom_vjp3:
            for l in tree_leaves(args[i])):
       raise UnexpectedTracerError("custom_vjp inputs marked with nondiff_argnums "
                                   "must be static, not Tracers")
+    if core.trace_state_clean() and not any(isinstance(l, core.Tracer) for l in tree_leaves(args)):
+      return self.f(*args)
     if all(is_hashable(args[i]) for i in self.static_argnums):
       traced = api.jit(self.f, static_argnums=(*self.static_argnums,)).trace(*args)
     else:

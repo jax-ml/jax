@@ -2921,6 +2921,28 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     self.assertTrue(any("named 'saved'" in s for _, s in res),
                     msg=f'saved residuals: {[s for _, s in res]}')
 
+  def test_eager_call_not_traced(self):
+    calls = 0
+    @jax.custom_vjp
+    def f(x):
+      nonlocal calls
+      calls += 1
+      if x > 0:
+        return x * 2
+      else:
+        return -x
+
+    def f_fwd(x):
+      return f(x), ()
+    def f_bwd(_, g):
+      return (g,)
+    f.defvjp(f_fwd, f_bwd)
+
+    self.assertEqual(f(3), 6)
+    self.assertEqual(calls, 1)
+    self.assertEqual(f(-3), 3)
+    self.assertEqual(calls, 2)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
