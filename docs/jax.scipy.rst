@@ -183,6 +183,7 @@ jax.scipy.special
    expi
    expit
    expn
+   exprel
    factorial
    fresnel
    gamma
@@ -196,6 +197,8 @@ jax.scipy.special
    i0e
    i1
    i1e
+   inv_boxcox
+   inv_boxcox1p
    kl_div
    log_ndtr
    log_softmax
