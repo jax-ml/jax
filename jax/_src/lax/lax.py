@@ -1946,7 +1946,7 @@ def composite(
         name=name,
         attributes=tuple(attributes),
         version=version,
-        jaxpr=closed_jaxpr,
+        call_jaxpr=closed_jaxpr,
     )
     return tree_util.tree_unflatten(out_tree, out_flat)
 
@@ -1959,24 +1959,9 @@ def _composite_lowering(
     name: str,
     attributes: Sequence[tuple[str, tuple[Any, ...], tree_util.PyTreeDef]],
     version: int,
-    jaxpr: core.Jaxpr,
+    call_jaxpr: core.Jaxpr,
 ):
-  """Makes composite which calls the implementation function.
-
-  Lowering a composite primitive to a ``stablehlo.composite`` op.
-
-  Args:
-    ctx: The MLIR context.
-    *args: The arguments to the composite.
-    name: The name of the composite.
-    attributes: The attributes of the composite.
-    version: The version of the composite.
-    jaxpr: The jaxpr of the underlying composite.
-
-  Returns:
-    The results of the composite.
-  """
-  const_args_and_avals = core.jaxpr_const_args(jaxpr)
+  const_args_and_avals = core.jaxpr_const_args(call_jaxpr)
   const_args, const_avals = util.unzip2(const_args_and_avals)
   const_arg_values = tuple(
       mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
@@ -1985,7 +1970,7 @@ def _composite_lowering(
   in_avals = (*const_avals, *ctx.avals_in)
   func_op, _, _ = mlir.lower_called_computation(
       name,
-      jaxpr,
+      call_jaxpr,
       ctx.module_context,
       len(const_args),
       in_avals,
@@ -2010,13 +1995,13 @@ def _composite_lowering(
   ).results
 
 
-def _composite_impl(*args, jaxpr, **_):
-  return core.jaxpr_as_fun(jaxpr)(*args)
+def _composite_impl(*args, call_jaxpr, **_):
+  return core.jaxpr_as_fun(call_jaxpr)(*args)
 
 
-def _composite_abstract_eval(*args, jaxpr, **_):
+def _composite_abstract_eval(*args, call_jaxpr, **_):
   del args
-  return jaxpr.out_avals
+  return call_jaxpr.out_avals
 
 
 def composite_jvp(*args, **_):
@@ -2041,6 +2026,7 @@ composite_p = core.Primitive("composite")
 composite_p.def_impl(_composite_impl)
 composite_p.def_abstract_eval(_composite_abstract_eval)
 composite_p.multiple_results = True
+composite_p.to_lojax = partial(pe._eval_jaxpr_to_lojax, composite_p)
 ad.primitive_jvps[composite_p] = composite_jvp
 ad.primitive_transposes[composite_p] = composite_transpose
 mlir.register_lowering(composite_p, _composite_lowering)

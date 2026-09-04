@@ -5202,6 +5202,22 @@ class CompositeTest(jtu.JaxTestCase):
         "composite op 'my.consts'."):
       jax.jit(fun)(x, scale)
 
+  def test_composite_custom_vjp(self):
+    with config.custom_vjp3(True):
+      @jax.custom_vjp
+      def f(x):
+        return 2.0 * x
+
+      f.defvjp(lambda x: (2.0 * x, ()), lambda res, g: (2.0 * g,))
+
+      @partial(lax.composite, name="my.custom_vjp")
+      def comp(x):
+        return f(x)
+
+      x = jnp.array(3.0)
+      self.assertEqual(comp(x), 6.0)
+      self.assertEqual(jax.jit(comp)(x), 6.0)
+
 
 class RaggedTest(jtu.JaxTestCase):
 
