@@ -1374,6 +1374,29 @@ def _async_prefetch_abstract_eval(ref, *args, **params):
   return (), {state.ReadEffect(0)}
 
 
+def _async_prefetch_pp_eqn(
+    eqn: jax_core.JaxprEqn,
+    context: jax_core.JaxprPpContext,
+    settings: jax_core.JaxprPpSettings,
+):
+  ref, *flat_args = eqn.invars
+  pp_params = {}
+  if eqn.params.get("has_predicate", False):
+    *flat_args, predicate = flat_args
+    pp_params["predicate"] = predicate.pretty_print(context)
+  ref_transforms_treedef = eqn.params["ref_transforms_treedef"]
+  ref_transforms = ref_transforms_treedef.unflatten(flat_args)
+  return pp.concat([
+      pp.text("async_prefetch"),
+      jax_core.pp_kv_pairs(pp_params.items(), context, settings),
+      pp.text(" "),
+      state_primitives.pp_ref_transforms(context, ref, ref_transforms),
+  ])
+
+
+jax_core.pp_eqn_rules[async_prefetch_p] = _async_prefetch_pp_eqn
+
+
 @lowering.register_lowering_rule(async_prefetch_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(async_prefetch_p, *gpu_core.LANExWARP_SEMANTICS)
 @lowering.register_lowering_rule(async_prefetch_p, mgpu.LoweringSemantics.Warpgroup)
@@ -1381,13 +1404,22 @@ def _async_prefetch_abstract_eval(ref, *args, **params):
 def _async_prefetch_lowering(
     ctx: lowering.LoweringRuleContext,
     ref,
-    *flat_ref_transforms,
+    *flat_args,
     ref_transforms_treedef,
     collective_axes,
     leader_tracked,
+    has_predicate: bool = False,
 ):
-  ref_transforms = ref_transforms_treedef.unflatten(flat_ref_transforms)
-  ref_transform_avals = ref_transforms_treedef.unflatten(ctx.avals_in[1:])
+  if has_predicate:
+    *flat_args, predicate = flat_args
+    predicate = lowering._ensure_ir_value(predicate, jnp.bool)  # pylint: disable=protected-access
+  else:
+    predicate = None
+
+  ref_transforms = ref_transforms_treedef.unflatten(flat_args)
+  ref_transform_avals = ref_transforms_treedef.unflatten(
+      ctx.avals_in[1 : 1 + ref_transforms_treedef.num_leaves]
+  )
   copy_params = _extract_gmem_copy_params(
       ctx, ref_transforms, ref_transform_avals
   )
@@ -1399,13 +1431,19 @@ def _async_prefetch_lowering(
     )
 
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
-    predicate_kwarg: dict[str, Any] = dict(
-        predicate=ctx.module_ctx.single_lane_predicate
-    )
+    pred = ctx.module_ctx.single_lane_predicate
+    if predicate is not None:
+      pred = arith_dialect.andi(predicate, pred)
+
+    predicate_kwarg: dict[str, Any] = dict(predicate=pred)
     if gmem_slice := copy_params.get("gmem_slice", ()):
       first_idx = gmem_slice[0]
       # Gathers are a warpgroup-level collective and can't take a predicate.
       if isinstance(first_idx, mgpu.FragmentedArray) and first_idx.shape:
+        if has_predicate:
+          raise NotImplementedError(
+              "Gather/scatter TMA does not support predicates yet."
+          )
         predicate_kwarg = {}
 
     ctx.launch_ctx.async_prefetch(
@@ -1430,7 +1468,11 @@ def _async_prefetch_lowering(
         "GMEM refs with peer ids are not supported in warpgroup lowering."
     )
   mgpu.dialect.async_prefetch(
-      ref, indices, slice_lengths, collective=ir.ArrayAttr.get([])
+      ref,
+      indices,
+      slice_lengths,
+      collective=ir.ArrayAttr.get([]),
+      predicate=predicate,
   )
   return ()
 
@@ -1440,6 +1482,7 @@ def async_prefetch(
     *,
     collective_axes: str | tuple[str, ...] | None = None,
     leader_tracked: CopyPartition | None = None,
+    predicate: jax.Array | None = None,
 ) -> None:
   """Asynchronously prefetches a GMEM reference to the L2 cache.
 
@@ -1455,6 +1498,8 @@ def async_prefetch(
     ref: The source Ref. Must be in GMEM.
     collective_axes: The collective axes to use for the prefetch.
     leader_tracked: The partitioning to use for the prefetch.
+    predicate: A boolean indicating whether the prefetch should be performed. If
+      ``None``, the prefetch is always performed.
   """
   ref, ref_transforms = state_primitives.get_ref_and_transforms(
       ref, None, "async_prefetch"
@@ -1467,9 +1512,11 @@ def async_prefetch(
   async_prefetch_p.bind(
       ref,
       *flat_ref_transforms,
+      *() if predicate is None else (predicate,),
       ref_transforms_treedef=ref_transforms_treedef,
       collective_axes=collective_axes,
       leader_tracked=leader_tracked,
+      has_predicate=predicate is not None,
   )
   return None
 
