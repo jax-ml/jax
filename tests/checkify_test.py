@@ -747,26 +747,56 @@ class CheckifyTransformTests(jtu.JaxTestCase):
   def test_custom_vjp_explicit_check(self):
     @jax.custom_vjp
     def f(x):
-      checkify.check(x > 0, "must be positive")
+      checkify.check(x > 0, "check in f")
       return x * 2.
 
     def f_fwd(x):
-      return f(x), ()
-    def f_bwd(_, g):
+      checkify.check(x > -10, "check in fwd")
+      return f(x), (x,)
+
+    def f_bwd(res, g):
+      checkify.check(g > 0, "check in bwd")
       return (g * 2.,)
+
     f.defvjp(f_fwd, f_bwd)
 
+    # 1. Primal check under checkify (no grad):
+    # Under custom_vjp3, custom_vjp emits CustomVJPTraced, which checkify
+    # does not functionalize inside. Lowering at staging time triggers the
+    # unfunctionalized check error.
     checked_f = checkify.checkify(f)
     if not config.config.jax_custom_vjp3:
       err, _ = jax.jit(checked_f)(-1.)
-      self.assertIn("must be positive", err.get())
+      self.assertIn("check in f", err.get())
     else:
-      # Under custom_vjp3, custom_vjp emits a CustomVJPTraced higher-order
-      # primitive. checkify does not inspect or functionalize inside
-      # CustomVJPTraced, so when CustomVJPTraced expands during lojax lowering,
-      # the unfunctionalized check_p primitive leaks into MLIR lowering.
       with self.assertRaisesRegex(ValueError, "Cannot abstractly evaluate a checkify.check"):
         jax.jit(checked_f)(-1.)
+
+    # 2. checkify(grad(f)):
+    # grad differentiates CustomVJPTraced into calls to f_fwd and f_bwd.
+    # The resulting computation is then checkified.
+    # Checks in fwd and bwd work under both classic and custom_vjp3!
+    checked_grad = checkify.checkify(jax.grad(f))
+    err, _ = jax.jit(checked_grad)(1.)  # all checks pass (x=1 > 0, x=1 > -10, g=1 > 0)
+    self.assertIsNone(err.get())
+
+    err, _ = jax.jit(checked_grad)(-20.)  # fails "check in fwd" (x=-20 < -10)
+    self.assertIn("check in fwd", err.get())
+
+    err, _ = jax.jit(checked_grad)(-5.)  # passes fwd (x=-5 > -10), fails f (x=-5 < 0)
+    self.assertIn("check in f", err.get())
+
+    _, vjp_fn = jax.vjp(f, 1.)
+    err, _ = jax.jit(checkify.checkify(vjp_fn))(-1.)  # cotangent g=-1 fails "check in bwd"
+    self.assertIn("check in bwd", err.get())
+
+    # 3. If the check is placed outside the custom_vjp decorator, it works:
+    def f_safe(x):
+      checkify.check(x > 0, "check outside custom_vjp")
+      return f(x)
+
+    err, _ = jax.jit(checkify.checkify(f_safe))(-1.)
+    self.assertIn("check outside custom_vjp", err.get())
 
   def test_scan_consts(self):
     def f(xs):
