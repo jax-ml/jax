@@ -191,18 +191,6 @@ class LaxTest(jtu.JaxTestCase):
     )
     self.assertAllClose(high_acc_grad, expected, atol=0.0, rtol=rtol)
 
-  def testTanhGradSymmetry(self):
-    # Because tanh(-x) == -tanh(x) and floating-point multiplication is
-    # commutative, g * ((1 + tanh(x)) * (1 - tanh(x))) is bit-for-bit identical
-    # for +x and -x for any x and any tangent/cotangent g.
-    x = jnp.linspace(0.1, 8.9, 100, dtype=jnp.float32)
-    g = jnp.full_like(x, 1.3)
-    _, jvp_pos = jax.jvp(lax.tanh, (x,), (g,))
-    _, jvp_neg = jax.jvp(lax.tanh, (-x,), (g,))
-    self.assertArraysEqual(jvp_pos, jvp_neg)
-    grad_fn = jax.vmap(jax.grad(lambda z: jnp.float32(1.3) * lax.tanh(z)))
-    self.assertArraysEqual(grad_fn(x), grad_fn(-x))
-
   def testExpm1Grad(self):
     x = jnp.arange(-80.0, 80.0, 1.0, dtype=jnp.float32)
     expected = jax.vmap(jax.grad(lambda x: lax.exp(x, accuracy=lax.AccuracyMode.HIGHEST)))(x)

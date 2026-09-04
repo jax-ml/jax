@@ -401,7 +401,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
   @parameterized.parameters(
       ("x*x", lambda x: x * x, "add"),
       ("sin(x)", jnp.sin, "cosine"),
-      ("tanh(x)", jnp.tanh, "multiply"),
+      ("tanh(x)", jnp.tanh, "add"),
       ("1/x", lambda x: 1 / x, "negate"),
       ("sinc(x)", jnp.sinc, "call"),
   )
