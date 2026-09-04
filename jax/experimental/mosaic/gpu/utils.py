@@ -26,6 +26,8 @@ import os
 from typing import Any, Literal, cast, overload
 
 import jax
+from jax._src import core as jax_core
+from jax._src import dtypes
 from jax import numpy as jnp
 from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
 from jax.extend import backend as jex_backend
@@ -1944,6 +1946,8 @@ def cluster_collective_mask(
 
 
 def dtype_to_ir_type(dtype: jax.typing.DTypeLike) -> ir.Type:
+  if isinstance(dtype, dtypes.ExtendedDType):
+    dtype = jax_core.physical_element_aval(dtype).dtype
   dtype = jnp.dtype(dtype)
   if jnp.issubdtype(dtype, jnp.integer):
     # All integer types in Mosaic GPU are signless.

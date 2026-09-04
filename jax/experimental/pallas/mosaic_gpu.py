@@ -31,6 +31,7 @@ from jax._src.pallas.mosaic_gpu.core import multicast_ref as multicast_ref
 from jax._src.pallas.mosaic_gpu.core import PeerMemRef as PeerMemRef
 from jax._src.pallas.mosaic_gpu.core import RefUnion as RefUnion
 from jax._src.pallas.mosaic_gpu.core import remote_ref as remote_ref
+from jax._src.pallas.mosaic_gpu.core import semaphore as semaphore
 from jax._src.pallas.mosaic_gpu.core import SemaphoreType as SemaphoreType
 from jax._src.pallas.mosaic_gpu.core import SwizzleTransform as SwizzleTransform
 from jax._src.pallas.mosaic_gpu.core import TilingTransform as TilingTransform

@@ -216,16 +216,74 @@ class MemorySpace(enum.Enum):
     return self(shape_dtype_like.shape, shape_dtype_like.dtype)
 
 
+# GPU semaphores are backed by physical 32-bit integer memory in GMEM,
+# allowing first-class JAX program-level array allocation via jnp.zeros.
+# TPU semaphores are on-chip hardware register flags in MemorySpace.SEMAPHORE
+# and cannot be allocated as physical JAX arrays. Specializing the rules here
+# leaves AbstractSemaphoreTyRules unavailable for TPU array allocation.
+class GPUSemaphoreTyRules(pallas_core.AbstractSemaphoreTyRules):
+  allow_conversion: bool = True
+
+  @staticmethod
+  def full(shape, fill_value, dtype):
+    base = lax.full(shape, fill_value, dtype=jnp.int32)
+    return lax.convert_element_type(base, dtype)
+
+  @staticmethod
+  def tangent_dtype(_):
+    return dtypes.float0
+
+  @staticmethod
+  def global_sharded_result_handler(aval, out_sharding, committed):
+    from jax._src import earray
+    from jax._src.interpreters import pxla
+    phys_sharding = out_sharding
+    phys_aval = jax_core.physical_aval(aval)
+    assert isinstance(phys_aval, jax_core.ShapedArray)
+    phys_handler_maker = pxla.global_result_handlers[jax_core.ShapedArray]
+    phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
+    return phys_handler.wrap(lambda arr: earray.EArray(aval, arr))
+
+  @staticmethod
+  def make_sharded_array(aval, sharding, arrays, committed=True):
+    from jax._src import array
+    from jax._src import earray
+    phys_aval = jax_core.physical_aval(aval)
+    assert isinstance(phys_aval, jax_core.ShapedArray)
+    arr = array.ArrayImpl(
+        phys_aval, sharding, arrays, committed=committed  # pyrefly: ignore[bad-argument-type]
+    )
+    return earray.EArray(aval, arr)
+
+
+class GPUSemaphore(pallas_core.AbstractSemaphoreTy):
+  name = "semaphore"
+  type = pallas_core.semaphore
+  _rules = GPUSemaphoreTyRules
+
+
+class GPUBarrierSemaphore(pallas_core.AbstractSemaphoreTy):
+  name = "barrier_semaphore"
+  type = pallas_core.barrier_semaphore
+  _rules = GPUSemaphoreTyRules
+
+
 class SemaphoreType(enum.Enum):
   REGULAR = "regular"
   BARRIER = "barrier"
 
+  @property
+  def dtype(self) -> pallas_core.AbstractSemaphoreTy:
+    if self == SemaphoreType.BARRIER:
+      return GPUBarrierSemaphore()
+    return GPUSemaphore()
+
   def __call__(self, shape: tuple[int, ...]):
     dtype: Any
     if self == SemaphoreType.BARRIER:
-      dtype = pallas_core.BarrierSemaphore()
+      dtype = GPUBarrierSemaphore()
     else:
-      dtype = pallas_core.Semaphore()
+      dtype = GPUSemaphore()
     return pallas_core.MemoryRef(jax_core.ShapedArray(shape, dtype),
                                  MemorySpace.GMEM)
 
@@ -235,6 +293,15 @@ class SemaphoreType(enum.Enum):
   def get_ref_aval(self) -> _Ref:
     return self(()).get_ref_aval()
 
+pallas_core._out_shape_to_aval_mapping[SemaphoreType] = (
+    lambda s: s.get_array_aval()
+)
+
+def semaphore(
+    shape: tuple[int, ...],
+    sem_type: SemaphoreType = SemaphoreType.REGULAR,
+) -> jax.Array:
+  return jnp.zeros(shape, dtype=sem_type.dtype)  # pyrefly: ignore[bad-argument-type]
 
 class PrimitiveSemantics(enum.Enum):
   """Thread semantics for a primitives at the Pallas user-level."""
