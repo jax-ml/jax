@@ -5315,12 +5315,19 @@ def copy_tiled(src: ir.Value, dst: ir.Value, swizzle: int = 16):
     layout = tiled_copy_smem_gmem_layout(
         *smem_ty.shape[-4:-2], swizzle, bitwidth  # pyrefly: ignore[bad-argument-count]
     )
+    # Only the two minor dimensions are tiled, as the rank check above says, so
+    # the tiling rank has to be stated: the default of half the SMEM rank is odd
+    # for an odd-ranked copy, and wrong for any rank but two.
+    tiling_rank = smem_ty.rank - gmem_ty.rank
     if utils.is_smem_ref(src_ty):
-      regs = FragmentedArray.load_tiled(src, swizzle, is_signed=is_signed, layout=layout)
+      regs = FragmentedArray.load_tiled(
+          src, swizzle, is_signed=is_signed, layout=layout,
+          tiling_rank=tiling_rank,
+      )
       regs.store_untiled(dst, optimized=False)
     else:
       regs = FragmentedArray.load_untiled(src, is_signed=is_signed, layout=layout, optimized=False)
-      regs.store_tiled(dst, swizzle)
+      regs.store_tiled(dst, swizzle, tiling_rank=tiling_rank)
     return
   raise NotImplementedError(f"Unsupported copy: {src.type} -> {dst.type}")
 
