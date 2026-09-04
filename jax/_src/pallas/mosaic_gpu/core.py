@@ -118,6 +118,10 @@ class CompilerParams:
       registers can be reduced in parallel. 2 * 128 * 6 * 4 = 6144 bytes is
       typically a good value in order to extract most of the potential gains on
       H100 and B200.
+    reduction_acc_ilp: The instruction-level parallelism (ILP) factor for
+      in-register accumulator reductions. Controls the number of parallel
+      accumulator chains used during reductions before combining them.
+      If None, uses the backend's default for the operation and dtype.
     profile_space: The number of profiler events that can be collected in a
       single invocation. It is undefined behavior if a thread collects more
       events than this, unless profile_bounds_check is set.
@@ -133,6 +137,7 @@ class CompilerParams:
   max_concurrent_steps: int = 1
   unsafe_no_auto_barriers: bool = False
   reduction_scratch_bytes: int = 128 * 4 * 4
+  reduction_acc_ilp: int | None = None
   profile_space: int = 0
   profile_dir: str = ""
   profile_trace_scope: TraceScope = TraceScope.WARPGROUP
