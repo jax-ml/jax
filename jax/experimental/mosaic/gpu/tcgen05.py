@@ -964,13 +964,8 @@ def tmem_alloc(
   ncols = tmem_alloc_exact_ncols(ncols, exact)
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [tmem_addr, utils.c(ncols, i32)],
-      f"tcgen05.alloc.cta_group::{cta_group}.sync.aligned.shared::cta.b32 [$0], $1;",
-      "r,r",
-      has_side_effects=True,
-  )
+  ptx = f"tcgen05.alloc.cta_group::{cta_group}.sync.aligned.shared::cta.b32 [$0], $1;"
+  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32))
   return ncols
 
 
@@ -985,24 +980,15 @@ def tmem_dealloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exac
   ncols = tmem_alloc_exact_ncols(ncols, exact)
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [tmem_addr, utils.c(ncols, i32)],
-      f"tcgen05.dealloc.cta_group::{cta_group}.sync.aligned.b32 $0, $1;",
-      "r,r",
-      has_side_effects=True,
-  )
+  ptx = f"tcgen05.dealloc.cta_group::{cta_group}.sync.aligned.b32 $0, $1;"
+  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32))
 
 
 def tmem_relinquish_alloc_permit(collective: bool) -> None:
   cta_group = "2" if collective else "1"
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [],
-      f"tcgen05.relinquish_alloc_permit.cta_group::{cta_group}.sync.aligned;",
-      "",
-      has_side_effects=True,
-  )
+  ptx = f"tcgen05.relinquish_alloc_permit.cta_group::{cta_group}.sync.aligned;"
+  utils.inline_ptx(ptx)
+
 
 def _tmem_access_helper(shape, num) -> tuple[int, str]:
   if num.bit_count() != 1 or num > 128:
@@ -1882,14 +1868,12 @@ def _load_32xcols_native(
 
 
 def commit_tmem() -> None:
-  void = ir.Type.parse("!llvm.void")
-  llvm.inline_asm(void, [], "tcgen05.wait::st.sync.aligned;", "", has_side_effects=True)
+  utils.inline_ptx("tcgen05.wait::st.sync.aligned;")
   utils.warpgroup_barrier()
 
 
 def wait_load_tmem() -> None:
-  void = ir.Type.parse("!llvm.void")
-  llvm.inline_asm(void, [], "tcgen05.wait::ld.sync.aligned;", "", has_side_effects=True)
+  utils.inline_ptx("tcgen05.wait::ld.sync.aligned;")
   utils.warpgroup_barrier()
 
 
@@ -1902,13 +1886,8 @@ def _tcgen05_cp(
 ) -> None:
   cta_group = "2" if collective else "1"
   mc = f".{multicast}" if multicast else ""
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [tmem_addr, smem_desc],
-      f"tcgen05.cp.cta_group::{cta_group}.{shape}{mc} [$0], $1;",
-      "r,l",
-      has_side_effects=True,
-  )
+  ptx = f"tcgen05.cp.cta_group::{cta_group}.{shape}{mc} [$0], $1;"
+  utils.inline_ptx(ptx, tmem_addr, smem_desc)
 
 
 def async_copy_scales_smem_to_tmem(
