@@ -3004,7 +3004,6 @@ def _cumred_chlo_lowering(ctx, x, *, axis, reverse, reducer, identity):
 
 
 def _is_supported_cumred(inp, axis, reverse):
-  return False
   return (
       not reverse
       and isinstance(inp, ShapedArray)
