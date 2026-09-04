@@ -334,7 +334,6 @@ def scatter(x, indices):
 gathered = jnp.take(x, indices, axis=0)
 out = scatter(gathered, indices)
 np.testing.assert_array_equal(out, x)
-
 ```
 
 ## Benchmark against TensorCore
@@ -355,4 +354,68 @@ gather_tc(x, indices).block_until_ready()
 ```
 4.05 ms ± 2.02 µs per loop (mean ± std. dev. of 7 runs, 100 loops each)
 18.1 ms ± 5.24 µs per loop (mean ± std. dev. of 7 runs, 100 loops each)
+```
+
+## Gathering and scattering 16-bit dtypes
+
+SparseCore DMA hardware natively supports only 32-bit transfers (`int32`, `float32`, `uint32`). You cannot directly gather 16-bit types like `bfloat16` or `float16`.
+
+To gather 16-bit data, you can pack pairs of rows into 32-bit words in HBM, issue the gather with halved indices, and unpack the target row in VMEM:
+
+1. Pair adjacent rows along the last dimension and view them as `int32`. A table of shape `(batch_size, value_dim)` in `bfloat16` becomes `(batch_size // 2, value_dim)` in `int32`.
+2. Gather using `index // 2` (via `pltpu.sync_copy`, or `pl.Indirect` on the data table). Each 32-bit row fetched contains both row `2*i` and row `2*i + 1`.
+3. In VMEM, view the buffer back as `bfloat16` and select the requested row based on whether the original index was even or odd (`index % 2`).
+
+Below is an example gathering `bfloat16` values with packed rows:
+
+```python
+x_bf16 = x.astype(jnp.bfloat16)
+
+
+@jax.jit
+def gather_bf16_packed(x, indices):
+  packing = 32 // 16  # 2
+  # Pack adjacent 16-bit rows (2*i, 2*i+1) into 32-bit int32 words on HBM
+  x_packed = x.reshape(batch_size // packing, packing * value_dim).view(
+      jnp.int32
+  )
+
+  @pl.kernel(
+      out_type=jax.ShapeDtypeStruct((num_indices, value_dim), x.dtype),
+      mesh=vector_mesh,
+      scratch_types=dict(
+          gather_vmem=pltpu.VMEM((gather_window_size, value_dim), jnp.int32)
+      ),
+  )
+  def kernel(x_packed_hbm, i_hbm, o_hbm, *, gather_vmem):
+    def body(idx_vmem, o_vmem):
+      # Issue indirect 32-bit DMA gather using halved index
+      pltpu.sync_copy(
+          x_packed_hbm.at[jax.lax.div(idx_vmem, packing)], gather_vmem
+      )
+      # Vectorized pair selection across the gathered window
+      pairs = gather_vmem.view(jnp.bfloat16).reshape(-1, packing, value_dim)
+      is_odd = (idx_vmem % 2)[:, None]
+      o_vmem[...] = jnp.where(is_odd == 1, pairs[:, 1], pairs[:, 0])
+
+    pltpu.emit_pipeline(
+        body,
+        grid=(num_indices // gather_window_size,),
+        in_specs=[
+            pl.BlockSpec((gather_window_size,), index_map=lambda i: (i,))
+        ],
+        out_specs=[
+            pl.BlockSpec(
+                (gather_window_size, value_dim), index_map=lambda i: (i, 0)
+            )
+        ],
+        core_axis_name='subcore',
+        dimension_semantics=(pltpu.PARALLEL,),
+    )(i_hbm, o_hbm)
+
+  return kernel(x_packed, indices)
+
+
+out = gather_bf16_packed(x_bf16, indices)
+np.testing.assert_array_equal(out, jnp.take(x_bf16, indices, axis=0))
 ```
