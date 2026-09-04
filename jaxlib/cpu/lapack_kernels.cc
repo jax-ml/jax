@@ -19,7 +19,9 @@ limitations under the License.
 #include <cmath>
 #include <complex>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -106,6 +108,34 @@ int64_t GetLapackBatchChunkSize(int64_t batch_size, int64_t cost_per_matrix,
 #endif  // PLATFORM_GOOGLE
 }
 
+// RAII guard that constrains OpenBLAS to a single thread for the duration of a
+// ParallelBatchMap call. JAX parallelizes across the batch dimension via its
+// own thread pool; allowing each individual LAPACK call to also spawn threads
+// causes catastrophic thread oversubscription (N tasks × N OpenBLAS threads)
+// and heap corruption from OpenBLAS internal workspace contention.
+class OpenblasThreadGuard {
+ public:
+  OpenblasThreadGuard() {
+    const char* old_val = getenv("OPENBLAS_NUM_THREADS");
+    if (old_val) {
+      saved_ = std::string(old_val);
+    }
+    setenv("OPENBLAS_NUM_THREADS", "1", /*overwrite=*/1);
+  }
+  ~OpenblasThreadGuard() {
+    if (saved_.has_value()) {
+      setenv("OPENBLAS_NUM_THREADS", saved_->c_str(), /*overwrite=*/1);
+    } else {
+      unsetenv("OPENBLAS_NUM_THREADS");
+    }
+  }
+  OpenblasThreadGuard(const OpenblasThreadGuard&) = delete;
+  OpenblasThreadGuard& operator=(const OpenblasThreadGuard&) = delete;
+
+ private:
+  std::optional<std::string> saved_;
+};
+
 // Divide batch_count elements into chunk_size pieces, and call run_chunk on
 // each. Use the thread pool if we have more than one chunk.
 static ffi::Error ParallelBatchMap(
@@ -116,13 +146,14 @@ static ffi::Error ParallelBatchMap(
     run_chunk(0, batch_count);
     return ffi::Error::Success();
   } else {
+    auto guard = std::make_shared<OpenblasThreadGuard>();
     int64_t num_tasks = (batch_count + chunk_size - 1) / chunk_size;
     absl::BlockingCounter counter(num_tasks);
 
     for (int64_t i = 0; i < batch_count; i += chunk_size) {
       int64_t current_chunk_size = std::min(chunk_size, batch_count - i);
 
-      thread_pool.Schedule([run_chunk, &counter, i, current_chunk_size]() {
+      thread_pool.Schedule([run_chunk, &counter, guard, i, current_chunk_size]() {
         run_chunk(i, current_chunk_size);
         counter.DecrementCount();
       });
