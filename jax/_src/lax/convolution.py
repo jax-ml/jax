@@ -75,8 +75,13 @@ def conv_general_dilated(
   operator.
 
   Args:
-    lhs: a rank `n+2` dimensional input array.
-    rhs: a rank `n+2` dimensional array of kernel weights.
+    lhs: a rank `n+2` dimensional input array. By default, the dimensions are
+      interpreted as ``(batch, channels, spatial...)``, i.e., ``NCHW`` for 2D
+      convolutions. Use ``dimension_numbers`` to change the layout.
+    rhs: a rank `n+2` dimensional array of kernel weights. By default, the
+      dimensions are interpreted as ``(out_channels, in_channels, spatial...)``,
+      i.e., ``OIHW`` for 2D convolutions. Use ``dimension_numbers`` to change
+      the layout.
     window_strides: a sequence of `n` integers, representing the inter-window
       strides.
     padding: either the strings `'SAME'`, `'SAME_LOWER'`, or `'VALID'`, or a
@@ -197,8 +202,11 @@ def conv(lhs: Array, rhs: Array, window_strides: Sequence[int],
   """Convenience wrapper around `conv_general_dilated`.
 
   Args:
-    lhs: a rank `n+2` dimensional input array.
-    rhs: a rank `n+2` dimensional array of kernel weights.
+    lhs: a rank `n+2` dimensional input array, with dimensions in order
+      ``(batch, channels, spatial...)``, e.g., ``NCHW`` for 2D convolutions.
+    rhs: a rank `n+2` dimensional array of kernel weights, with dimensions in
+      order ``(out_channels, in_channels, spatial...)``, e.g., ``OIHW`` for 2D
+      convolutions.
     window_strides: a sequence of `n` integers, representing the inter-window
       strides.
     padding: either the string `'SAME'`, the string `'VALID'`.
@@ -227,8 +235,11 @@ def conv_with_general_padding(lhs: Array, rhs: Array,
   """Convenience wrapper around `conv_general_dilated`.
 
   Args:
-    lhs: a rank `n+2` dimensional input array.
-    rhs: a rank `n+2` dimensional array of kernel weights.
+    lhs: a rank `n+2` dimensional input array, with dimensions in order
+      ``(batch, channels, spatial...)``, e.g., ``NCHW`` for 2D convolutions.
+    rhs: a rank `n+2` dimensional array of kernel weights, with dimensions in
+      order ``(out_channels, in_channels, spatial...)``, e.g., ``OIHW`` for 2D
+      convolutions.
     window_strides: a sequence of `n` integers, representing the inter-window
       strides.
     padding: either the string `'SAME'`, the string `'VALID'`, or a sequence of
@@ -307,6 +318,13 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
   indirectly calculating the gradient (transpose) of a forward convolution.
 
   Notes:
+    Default Dimension Order: Unlike ``conv`` and ``conv_general_dilated``,
+    this function defaults to TensorFlow-style dimension ordering:
+    ``NHWC`` for inputs and ``HWIO`` for kernels. For example, for a 2D
+    transposed convolution, ``dimension_numbers`` defaults to
+    ``('NHWC', 'HWIO', 'NHWC')``. Use the ``dimension_numbers`` argument
+    to change the layout.
+
     TensorFlow/Keras Compatibility: By default, JAX does NOT reverse the
     kernel's spatial dimensions. This differs from TensorFlow's "Conv2DTranspose"
     and similar frameworks, which flip spatial axes and swap input/output channels.
@@ -314,8 +332,13 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
     To match TensorFlow/Keras behavior, set "transpose_kernel=True" .
 
   Args:
-    lhs: a rank `n+2` dimensional input array.
-    rhs: a rank `n+2` dimensional array of kernel weights.
+    lhs: a rank `n+2` dimensional input array. By default, the dimensions are
+      interpreted as ``(batch, spatial..., channels)``, i.e., ``NHWC`` for 2D
+      convolutions. Use ``dimension_numbers`` to change the layout.
+    rhs: a rank `n+2` dimensional array of kernel weights. By default, the
+      dimensions are interpreted as ``(spatial..., in_channels, out_channels)``,
+      i.e., ``HWIO`` for 2D convolutions. Use ``dimension_numbers`` to change
+      the layout.
     strides: sequence of `n` integers, sets fractional stride.
     padding: 'SAME', 'VALID', or a sequence of `n` integer 2-tuples describing before-and-after
       padding for each spatial dimension. If `use_consistent_padding=True`, this is interpreted
