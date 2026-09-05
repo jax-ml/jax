@@ -1192,6 +1192,38 @@ def inv(a: ArrayLike) -> Array:
     arr, lax.broadcast(jnp.eye(arr.shape[-1], dtype=arr.dtype), arr.shape[:-2]))
 
 
+@custom_jvp
+def _sqrt0_non_negative(s: Array) -> Array:
+  # ufuncs.sqrt with a custom gradient of 0, the symmetric subgradient of the norm.
+  # The Hessian is NaN, since the second derivative is genuinely singular. Other derivatives
+  # remain untouched. Function must not be called with negative values.
+  return ufuncs.sqrt(s)
+
+
+@custom_jvp
+def _dsqrt0_non_negative(s: Array) -> Array:
+  # Clamping keeps the value finite at s = 0, making the gradient 0.
+  # Function is never called with negative values.
+  return 0.5 / ufuncs.sqrt(ufuncs.maximum(s, jnp.finfo(s.dtype).tiny))
+
+
+@_sqrt0_non_negative.defjvp
+def _sqrt0_non_negative_jvp(primals, tangents):
+  s, = primals
+  ds, = tangents
+  return _sqrt0_non_negative(s), _dsqrt0_non_negative(s) * ds
+
+
+@_dsqrt0_non_negative.defjvp
+def _dsqrt0_non_negative_jvp(primals, tangents):
+  s, = primals
+  ds, = tangents
+  # Second derivative of sqrt is -0.25 s**-1.5 away from zero, and NaN at zero. The Hessian's
+  # x_i x_j term is then 0 * NaN = NaN at the origin
+  d2 = jnp.where(s > 0, -0.25 * s ** -1.5, np.nan)
+  return _dsqrt0_non_negative(s), d2 * ds
+
+
 @export
 @api.jit(static_argnames=('ord', 'axis', 'keepdims'))
 def norm(x: ArrayLike, ord: int | str | float | None = None,
@@ -1274,7 +1306,7 @@ def norm(x: ArrayLike, ord: int | str | float | None = None,
     # NumPy has an undocumented behavior that admits arbitrary rank inputs if
     # `ord` is None: https://github.com/numpy/numpy/issues/14215
     if ord is None:
-      return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), keepdims=keepdims))
+      return _sqrt0_non_negative(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), keepdims=keepdims))
     axis = tuple(range(ndim))
   elif isinstance(axis, tuple):
     axis = tuple(canonicalize_axis(x, ndim) for x in axis)
@@ -1286,7 +1318,7 @@ def norm(x: ArrayLike, ord: int | str | float | None = None,
       return vector_norm(x, ord=2 if ord is None else ord, axis=axis, keepdims=keepdims)
     case [row_axis, col_axis]:
       if ord is None or ord in ('f', 'fro'):
-        return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
+        return _sqrt0_non_negative(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
                                         keepdims=keepdims))
       elif ord == 1:
         if not keepdims and col_axis > row_axis:
@@ -1770,7 +1802,7 @@ def vector_norm(x: ArrayLike, /, *, axis: int | tuple[int, ...] | None = None, k
   """
   x = ensure_arraylike('jnp.linalg.vector_norm', x)
   if ord is None or ord == 2:
-    return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
+    return _sqrt0_non_negative(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
                                       keepdims=keepdims))
   elif ord == np.inf:
     return reductions.amax(ufuncs.abs(x), axis=axis, keepdims=keepdims, initial=0)
