@@ -5456,6 +5456,41 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     )(x)
     np.testing.assert_array_equal(out, x)
 
+  @parameterized.parameters('fori_loop', 'run_scoped')
+  def test_aliased_output_write_with_input_read_in_nested_scope(self, scope):
+    # Reads the aliased input only inside a nested scope (a loop body or a
+    # run_scoped) and writes the aliased output. Regression test for the HLO
+    # interpreter, which used to discard the output writes in this case.
+    if not self.INTERPRET and not jtu.is_device_tpu_at_least(4):
+      self.skipTest('DMAs not supported on TPU generations <= 3')
+
+    def kernel(x_hbm_ref, o_hbm_ref, vmem_ref, sem):
+      i = pl.program_id(0)
+      if scope == 'fori_loop':
+        def body(_, carry):
+          pltpu.async_copy(x_hbm_ref.at[i], vmem_ref, sem).wait()
+          return carry
+        lax.fori_loop(0, 1, body, None)
+      else:
+        pltpu.sync_copy(x_hbm_ref.at[i], vmem_ref)
+      vmem_ref[...] += 1
+      pltpu.async_copy(vmem_ref, o_hbm_ref.at[i], sem).wait()
+
+    x = jnp.arange(2 * 8 * 128, dtype=jnp.int32).reshape((2, 8, 128))
+    y = self.pallas_call(
+        kernel,
+        grid=(2,),
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        scratch_shapes=[
+            pltpu.VMEM((8, 128), jnp.int32),
+            pltpu.SemaphoreType.DMA,
+        ],
+        input_output_aliases={0: 0},
+    )(x)
+    np.testing.assert_array_equal(y, x + 1)
+
 
 class MiscellaneousInterpretTest(MiscellaneousTest):
   INTERPRET: bool = True
