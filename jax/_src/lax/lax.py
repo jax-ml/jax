@@ -9145,7 +9145,12 @@ def _stop_gradient_batch_rule(batched_args, batch_dims):
   dim, = batch_dims
   return stop_gradient(x), dim
 
+def _stop_gradient_transpose_rule(ct, x):
+  # Batching may insert stop_gradient into an already-linearized jaxpr.
+  return [None]
+
 ad.primitive_jvps[ad_util.stop_gradient_p] = _stop_gradient_jvp_rule
+ad.primitive_transposes[ad_util.stop_gradient_p] = _stop_gradient_transpose_rule
 batching.primitive_batchers[ad_util.stop_gradient_p] = _stop_gradient_batch_rule
 
 
