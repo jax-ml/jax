@@ -228,7 +228,10 @@ def _gpu_test_deps():
         "//jax:config_build_jaxlib_true": if_cuda_is_configured([
             "//jaxlib/cuda:gpu_only_test_deps",
             "//jax_plugins:gpu_plugin_only_test_deps",
-        ]) + if_rocm_is_configured(EXTERNAL_DEPS),
+        ]) + if_rocm_is_configured(EXTERNAL_DEPS) + if_oneapi_is_configured([
+            "//jaxlib/oneapi:gpu_only_test_deps",
+            "//jax_plugins:gpu_plugin_only_test_deps",
+        ]),
         "//jax:config_build_jaxlib_false": if_cuda_is_configured([
             "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
             "//jaxlib/tools:pypi_jax_cuda_pjrt_with_cuda_deps",
@@ -236,7 +239,10 @@ def _gpu_test_deps():
         "//jax:config_build_jaxlib_wheel": if_cuda_is_configured([
             "//jaxlib/tools:jax_cuda_plugin_py_import",
             "//jaxlib/tools:jax_cuda_pjrt_py_import",
-        ]) + if_rocm_is_configured(EXTERNAL_DEPS),
+        ]) + if_rocm_is_configured(EXTERNAL_DEPS) + if_oneapi_is_configured([
+            "//jaxlib/tools:jax_oneapi_pjrt_py_import",
+            "//jaxlib/tools:jax_oneapi_plugin_py_import",
+        ]),
     })
 
 def _get_jax_test_deps(deps):
