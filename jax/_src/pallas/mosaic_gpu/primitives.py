@@ -5873,3 +5873,56 @@ def _semaphore_wait_lowering_rule(
         val, decrement=decrement, scope=scope, memory_scope=memory_scope,
     )
   return ()
+
+
+get_barrier_semaphore_p = jax_core.Primitive("get_barrier_semaphore")
+
+
+@get_barrier_semaphore_p.def_abstract_eval
+def _get_barrier_semaphore_abstract_eval(*, count: int | None = None):
+  shape = () if count is None else (count,)
+  return state_types.AbstractRef(
+      jax_core.ShapedArray(shape, pallas_core.BarrierSemaphore()),
+      gpu_core.MemorySpace.GMEM,
+  )
+
+
+def get_barrier_semaphore(count: int | None = None):
+  """Returns a barrier semaphore."""
+  if count is not None and count <= 0:
+    raise ValueError(f"count must be positive, got {count}")
+  return get_barrier_semaphore_p.bind(count=count)
+
+
+@lowering._register_resource_estimator(get_barrier_semaphore_p)
+def _get_barrier_semaphore_resource_estimator(
+    ctx: lowering.ResourceEstimatorContext,
+    *,
+    count: int | None = None,
+) -> lowering.Resources:
+  del ctx
+  barrier_semaphores_count = 1 if count is None else count
+  return lowering.Resources(
+      uses_barrier_semaphore=True,
+      barrier_semaphores_count=barrier_semaphores_count,
+  )
+
+
+@lowering.register_lowering_rule(
+    get_barrier_semaphore_p, mgpu.LoweringSemantics.Lane
+)
+@lowering.register_lowering_rule(
+    get_barrier_semaphore_p, *gpu_core.LANExWARP_SEMANTICS
+)
+@lowering.register_lowering_rule(
+    get_barrier_semaphore_p, mgpu.LoweringSemantics.Warpgroup
+)
+@lowering.register_lowering_rule(
+    get_barrier_semaphore_p, *gpu_core.WGxWARP_SEMANTICS
+)
+def _get_barrier_semaphore_lowering_rule(
+    ctx: lowering.LoweringRuleContext,
+    *,
+    count: int | None = None,
+):
+  return ctx.launch_ctx.barrier_semaphore(count)

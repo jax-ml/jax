@@ -748,6 +748,36 @@ class LaunchContext:
   def host_collective_metadata(self) -> ir.Value | None:
     return self._collective_metadata(1)
 
+  def barrier_semaphore(self, count: int | None = None) -> ir.Value:
+    if not hasattr(self, "_barrier_semaphores"):
+      self._barrier_semaphores = {}
+    if count in self._barrier_semaphores:
+      return self._barrier_semaphores[count]
+    self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()
+    host_block = self.buffers.owner
+    assert isinstance(host_block, ir.Block)
+    with ir.InsertionPoint.at_block_begin(host_block):
+      ptr_ty = llvm.PointerType.get()
+      i32 = ir.IntegerType.get_signless(32)
+      buffer_ptr = utils.getelementptr(
+          self.buffers, [self.num_params + 2], ptr_ty
+      )
+      semaphore_ptr = llvm.load(ptr_ty, buffer_ptr)
+      shape = () if count is None else (count,)
+      semaphore_ty = ir.MemRefType.get(
+          shape,
+          i32,
+      )
+      semaphore_memref = utils.ptr_as_memref(semaphore_ptr, semaphore_ty)
+      semaphore_memref.owner.attributes[KERNEL_ARG_ID_ATTR] = (
+          ir.IntegerAttr.get(i32, self.num_params)
+      )
+      semaphore_memref.owner.attributes[ORIGINAL_KERNEL_ARG_ATTR] = (
+          ir.UnitAttr.get()
+      )
+      self._barrier_semaphores[count] = semaphore_memref
+      return semaphore_memref
+
   def _alloc_scratch(
       self,
       size: int,
@@ -2042,7 +2072,7 @@ class LaunchContext:
 
     op = ref.owner
     while KERNEL_ARG_ID_ATTR not in getattr(op, "attributes", {}):
-      if not isinstance(op, ir.OpView):
+      if not isinstance(op, (ir.OpView, ir.Operation)):
         raise ValueError(
             f"Can't find the kernel argument for the reference: {ref}"
         )

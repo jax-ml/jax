@@ -163,6 +163,8 @@ class Resources:
   scoped_gmem_semaphores: dict[CollectiveAxesType, int] = dataclasses.field(
       default_factory=dict
   )
+  uses_barrier_semaphore: bool = False
+  barrier_semaphores_count: int = 0
 
   def __post_init__(self):
     object.__setattr__(
@@ -203,6 +205,11 @@ class Resources:
         + other.tmem_collective_scratch_cols,
         barrier_counts=self.barrier_counts + other.barrier_counts,
         scoped_gmem_semaphores=scoped_gmem_semaphores,
+        uses_barrier_semaphore=self.uses_barrier_semaphore
+        or other.uses_barrier_semaphore,
+        barrier_semaphores_count=max(
+            self.barrier_semaphores_count, other.barrier_semaphores_count
+        ),
     )
 
   def or_(self, other: Resources, axis_names: _AxisNames) -> Resources:
@@ -228,6 +235,11 @@ class Resources:
         ),
         barrier_counts=self.barrier_counts | other.barrier_counts,
         scoped_gmem_semaphores=scoped_gmem_semaphores,
+        uses_barrier_semaphore=self.uses_barrier_semaphore
+        or other.uses_barrier_semaphore,
+        barrier_semaphores_count=max(
+            self.barrier_semaphores_count, other.barrier_semaphores_count
+        ),
     )
 
 
@@ -646,6 +658,8 @@ class LoweringResult:
   new_out_shapes: tuple[jax.ShapeDtypeStruct, ...]  # Does not include gmem scratch!
   profiler_spec: mgpu_profiler.ProfilerSpec | None
   gmem_scratch_shapes: tuple[jax.ShapeDtypeStruct, ...]
+  uses_barrier_semaphore: bool = False
+  barrier_semaphores_count: int = 0
 
 
 class LoweringError(Exception):
@@ -998,8 +1012,14 @@ def lower_jaxpr_to_module(
   )
 
   return LoweringResult(
-      module, cuda_grid, block, new_out_shapes, prof_spec,
+      module,
+      cuda_grid,
+      block,
+      new_out_shapes,
+      prof_spec,
       scoped_semaphores_shape,
+      uses_barrier_semaphore=rs.uses_barrier_semaphore,
+      barrier_semaphores_count=rs.barrier_semaphores_count,
   )
 
 

@@ -35,6 +35,7 @@ from jax._src.config import config
 from jax._src.lib import cuda_versions
 from jax.experimental import multihost_utils
 from jax.experimental import pallas as pl
+from jax.experimental.mosaic.gpu import profiler as mgpu_profiler
 from jax.experimental.pallas import mosaic_gpu as _plgpu
 from jax.experimental.pallas.ops.gpu.all_gather_mgpu import all_gather
 from jax.experimental.pallas.ops.gpu.reduce_scatter_mgpu import reduce_scatter
@@ -196,6 +197,109 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
+    expected = x[8:] if jax.process_index() == 0 else x[:8]
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
+  def test_rma_with_barrier_semaphore(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    def kernel(x_ref, y_ref):
+      other_dev_id = 1 - lax.axis_index("x")
+      sem = plgpu.get_barrier_semaphore()
+      y_ref[...] = x_ref[...]
+      pl.semaphore_signal(sem, device_id=other_dev_id)
+      pl.semaphore_wait(sem)
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(sem, device_id=other_dev_id)
+      pl.semaphore_wait(sem)
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+
+    def body(x):
+      return self.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    sharded_fn = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    hlo = sharded_fn.lower(x).compile().as_text()
+    self.assertIn("use_custom_barrier = true", hlo)
+
+    _, timings = mgpu_profiler.measure(sharded_fn, aggregate=False)(x)
+    kernel_names = [name for name, _ in timings] if timings else []
+    has_barrier_kernel = any("MultiGpuBarrier" in name for name in kernel_names)
+    self.assertFalse(
+        has_barrier_kernel, f"Barrier kernel found in {kernel_names}"
+    )
+
+    y = sharded_fn(x)
+    expected = x[8:] if jax.process_index() == 0 else x[:8]
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
+  def test_rma_with_barrier_granular_semaphores(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    def kernel(x_ref, y_ref):
+      other_dev_id = 1 - lax.axis_index("x")
+      sems = plgpu.get_barrier_semaphore(2)
+      ready_sem = sems.at[0]
+      recv_sem = sems.at[1]
+      y_ref[...] = x_ref[...]
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(recv_sem, device_id=other_dev_id)
+      pl.semaphore_wait(recv_sem)
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+
+    def body(x):
+      return self.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    sharded_fn = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    hlo = sharded_fn.lower(x).compile().as_text()
+    self.assertIn("use_custom_barrier = true", hlo)
+    self.assertIn("clique_semaphores_count = 2", hlo)
+
+    _, timings = mgpu_profiler.measure(sharded_fn, aggregate=False)(x)
+    kernel_names = [name for name, _ in timings] if timings else []
+    has_barrier_kernel = any("MultiGpuBarrier" in name for name in kernel_names)
+    self.assertFalse(
+        has_barrier_kernel, f"Barrier kernel found in {kernel_names}"
+    )
+
+    y = sharded_fn(x)
     expected = x[8:] if jax.process_index() == 0 else x[:8]
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 

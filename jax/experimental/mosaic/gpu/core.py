@@ -196,6 +196,7 @@ def _mosaic_gpu_lowering_rule(
     inout_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
     use_custom_barrier: bool = False,
+    clique_semaphores_count: int = 0,
 ):
   axis_context = ctx.module_context.axis_context
   replica_ids = []
@@ -262,6 +263,11 @@ def _mosaic_gpu_lowering_rule(
           launch_context.uses_collective_metadata(module)
       ),
   )
+  if clique_semaphores_count > 0:
+    i64 = ir.IntegerType.get_signless(64)
+    backend_config["clique_semaphores_count"] = ir.IntegerAttr.get(
+        i64, clique_semaphores_count
+    )
 
   # If NVSHMEM is available it will be used by default, otherwise we will use
   # collective metadata.
