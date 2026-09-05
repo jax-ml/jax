@@ -5044,7 +5044,10 @@ def _alloc_value(
     if isinstance(aval.memory_space, tpu_core.AccMemorySpace):
       return ctx.lowering_context.alloc_accumulator(aval)
     elif jnp.issubdtype(aval.dtype, pallas_core.semaphore_dtype):
-      assert aval.memory_space == SEMAPHORE
+      tpu_mem_space = tpu_core.memory_space_to_tpu_memory_space(
+          aval.memory_space, ctx.lowering_context.kernel_type
+      )
+      assert tpu_mem_space == SEMAPHORE, f"Expected SEMAPHORE, got {tpu_mem_space}"
       memref_type = ctx.aval_to_ir_type(aval, memory_space=SEMAPHORE)
       return tpu.sem_alloc(memref_type)
     else:
@@ -5149,8 +5152,7 @@ def _device_id_to_logical(
     # the required axis names are present in the current kernel type's mesh.
     subcore_index = None
     if dest_kernel_type == tpu_core.CoreType.SC_VECTOR_SUBCORE:
-      if not mpmd_core_axis_names and dest_kernel_type == kernel_type:
-        # short circuit for same core semaphores without a core type annotation
+      if dest_mesh is None:
         return logical_device_id, None, None
       assert isinstance(dest_mesh, sc_core.VectorSubcoreMesh), (
           f"Unrecognized dest_mesh: {type(dest_mesh)} != VectorSubcoreMesh")
@@ -5163,8 +5165,7 @@ def _device_id_to_logical(
       core_index = core_id
       subcore_index = subcore_id
     elif dest_kernel_type == tpu_core.CoreType.SC_SCALAR_SUBCORE:
-      if not mpmd_core_axis_names and dest_kernel_type == kernel_type:
-        # short circuit for same core semaphores without a core type annotation
+      if dest_mesh is None:
         return logical_device_id, None, None
       assert isinstance(dest_mesh, sc_core.ScalarSubcoreMesh), (
           f"Unrecognized dest_mesh: {type(dest_mesh)} != ScalarSubcoreMesh")
