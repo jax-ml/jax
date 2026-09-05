@@ -193,7 +193,7 @@ def _summarize_frame(frame: Frame) -> str:
   else:
     return f"{frame.file_name}:{frame.start_line} ({frame.function_name})"
 
-def summarize(source_info: SourceInfo, num_frames=1) -> str:
+def summarize(source_info: SourceInfo, num_frames: int | None = 1) -> str:
   frames = itertools.islice(user_frames(source_info.traceback), num_frames)
   frame_strs = [_summarize_frame(frame) if frame else "unknown"
                 for frame in frames]
