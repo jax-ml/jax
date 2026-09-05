@@ -525,6 +525,17 @@ def is_cuda_version_at_least(major: int, minor: int) -> bool:
       and cuda_versions.cuda_runtime_get_version() >= major * 1000 + minor * 10
   )
 
+def is_rocm_mx_capable() -> bool:
+  """Returns True on ROCm devices that support MX (block-scaled) types.
+
+  Mirrors `RocmComputeCapability::has_mx_type_support` in
+  xla/stream_executor/rocm/rocm_compute_capability.h.
+  """
+  if not is_device_rocm():
+    return False
+  d, *_ = xla_bridge.local_devices(backend="gpu")
+  return d.compute_capability.split(":")[0] in ("gfx950", "gfx1250")
+
 # Artificial shared memory size used for some tests. 99 KiB is the limit for compute
 # capabilities 8.6, 8.9 and 12.0. Using a smaller limit when running architecture
 # agnostic tests on all hardware helps avoid introducing architecture-specific OOM

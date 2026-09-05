@@ -2590,9 +2590,6 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
     if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("perturb_singular=True only supported on CPU and GPU")
-    # TODO: Add these tests back once rocSparse issues are fixed.
-    if jtu.is_device_rocm() and shape in [(3, 4), (3, 4, 5)]:
-      self.skipTest("Skipped on ROCm due to rocSparse numerical error.")
     rng = self.rng()
     d = 1.0 + jtu.rand_positive(rng)(shape, dtype)
     dl = jtu.rand_default(rng)(shape, dtype)
@@ -2654,10 +2651,6 @@ class LaxLinalgTest(jtu.JaxTestCase):
     if not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("Pivoting not supported in fallback tridiagonal solve")
 
-    # TODO(magaonka-amd): Re-enable once hipSPARSE gtsv2 numerical issues are resolved.
-    if jtu.is_device_rocm() and not perturb_singular:
-      self.skipTest(
-          "Skipped on ROCm: hipsparseSgtsv2 numerical error on pivoting path.")
     dl = np.array([0.0, 1.0, -6.0, 1.0], dtype=np.float32)
     d = np.array([1.0, -1.0, 2.0, 1.0], dtype=np.float32)
     du = np.array([2.0, 1.0, -1.0, 0.0], dtype=np.float32)
@@ -2712,9 +2705,6 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
     if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("perturb_singular=True only supported on CPU and GPU")
-    # TODO: Add these tests back once rocSparse issues are fixed.
-    if jtu.is_device_rocm() and shape == (3, 4):
-      self.skipTest("Skipped on ROCm due to rocSparse numerical error.")
     rng = self.rng()
     d = 1.0 + jtu.rand_positive(rng)(shape, dtype)
     dl = jtu.rand_default(rng)(shape, dtype)
