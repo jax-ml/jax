@@ -245,14 +245,22 @@ class FTSingleton(FlatTree):
 
 class FTStatic(FlatTree):
   # Static Aux
-  def __init__(self, val): self.val = val
+  def __init__(self, val):
+    self.val = val
+    try:
+      self._hash = hash(val)
+      self._hashable = True
+    except TypeError:
+      self._hash = id(val)
+      self._hashable = False
+
   def __len__(self): return 0
   def __eq__(self, other):
     return (
         isinstance(other, FTStatic) and
         type(self.val) is type(other.val) and  # see https://github.com/jax-ml/jax/pull/9311
-        self.val == other.val)
-  def __hash__(self): return hash(self.val)
+        (self.val == other.val if self._hashable else self.val is other.val))
+  def __hash__(self): return self._hash
   def __repr__(self): return f"Static({self.val})"
   def map(self, f): return self
   @property
@@ -304,7 +312,7 @@ def flatten_args(*arg_trees: PyTree, registry=tracing_registry) -> FlatTree:
 # statics to the Left, dynamics to the Right
 def statics_mask(args: PyArgs, static_argnums, static_argnames):
   num_args = len(args.args)
-  static_argnums = [i % num_args if i < 0 else i for i in static_argnums]
+  static_argnums = [i % num_args if (i < 0 and num_args > 0) else i for i in static_argnums]
   return ([i in static_argnums for i in range(num_args)] +
           [k in static_argnames for k in args.kwargs.keys()])
 
