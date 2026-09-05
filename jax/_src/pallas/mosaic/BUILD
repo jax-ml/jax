@@ -263,3 +263,18 @@ pytype_strict_library(
         "//jax/_src:api",
     ],
 )
+
+pytype_library(
+    name = "prefetch",
+    srcs = ["prefetch.py"],
+    deps = [
+        ":core",
+        ":helpers",
+        ":pipeline",
+        "//jax",
+        "//jax/_src:core",
+        "//jax/_src:lax",
+        "//jax/_src:tree_util",
+        "//jax/_src/pallas",
+    ],
+)

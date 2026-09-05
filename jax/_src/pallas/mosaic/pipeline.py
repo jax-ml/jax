@@ -510,6 +510,8 @@ class BufferedRef(BufferedRefBase):
   is_trivial_windowing: bool = jax.tree.static(default=False)
   has_allocated_buffer: bool = jax.tree.static(default=False)
   prefetched_count: int = jax.tree.static(default=0)
+  # New style prefetch with folded emit_pipeline await. New is False here.
+  await_prefetch: bool = jax.tree.static(default=False)
 
   def __post_init__(self):
     if self.is_buffered and self.buffer_count < 1:
@@ -638,9 +640,9 @@ class BufferedRef(BufferedRefBase):
       window_ref = buffer_memory_space.from_type(buffer_ty)
       if prefetched_count > 0:
         window_ref = None
-        if not is_trivial_windowing and prefetched_count >= buffer_count:
+        if not is_trivial_windowing and prefetched_count > buffer_count:
           raise ValueError(
-              "prefetched_count must be less than buffer_count for"
+              "prefetched_count must be at most buffer_count for"
               f" non-trivial windowing, got prefetched_count={prefetched_count}"
               f" and buffer_count={buffer_count}"
           )
@@ -1040,11 +1042,13 @@ def fetch_with_lookahead(buffered_ref, src_ref,
     next_block_indices = buffered_ref.compute_index(*next_indices_offset)
     will_change = _tuples_differ(block_indices, next_block_indices)
     pred = will_change
+    if buffered_ref.prefetched_count > 0:
+      pred &= cumulative_copy_in >= buffered_ref.prefetched_count
     bref = buffered_ref.with_slot_index(copy_in_slot=cumulative_copy_in)
     @when(pred)
     def _start():
       bref.copy_in(src_ref, next_indices_offset)
-    next_copy_in = cumulative_copy_in + as_uint32(pred)
+    next_copy_in = cumulative_copy_in + as_uint32(will_change)
     next_next_indices = increment_indices(next_indices)
     return next_indices, next_next_indices, next_copy_in
   current_indices = buffered_ref.next_fetch_indices
@@ -1143,7 +1147,7 @@ class Scheduler:
 
   def __init__(
       self,
-      step: jax.Array,
+      step: int | jax.Array,
       indices: tuple[int | jax.Array, ...],
       grid: tuple[int | jax.Array, ...],
       grid_offsets: tuple[int | jax.Array, ...],
@@ -1280,7 +1284,9 @@ class Scheduler:
   # Below is the sequence of conditional waits and copies used for inputs,
   # outputs, and in-outs.
 
-  def initialize_step(self, buffered_ref, src_ref, step=0):
+  def initialize_step(
+      self, buffered_ref, src_ref, step=0, init_limit: int | None = None
+  ):
 
     with self._named_scope(f"ep_initialize_{step}"):
 
@@ -1290,34 +1296,33 @@ class Scheduler:
       if buffered_ref.is_trivial_windowing:
         return buffered_ref
 
-      if (step + 1) >= buffered_ref.buffer_count:
+      if init_limit is None:
+        init_limit = max(buffered_ref.buffer_count - 1, 0)
+      if step >= init_limit:
         return buffered_ref
 
-      if step < buffered_ref.prefetched_count:
-        if buffered_ref.use_lookahead and step > 0:
-          buffered_ref = buffered_ref.advance_next_fetch(self.grid)
-        return buffered_ref.advance_copy_in_slot()
-
+      in_bounds = step < self.num_steps
       if buffered_ref.use_lookahead:
         if step == 0:
           # We always fetch the first block.
-          @when(self.first_step)
+          predicate = self.first_step & in_bounds
+          @when(predicate & (step >= buffered_ref.prefetched_count))
           def _start():
             buffered_ref.copy_in(src_ref,
               self.add_offset(buffered_ref.next_fetch_indices))
-          buffered_ref = buffered_ref.advance_copy_in_slot(self.first_step)
+          buffered_ref = buffered_ref.advance_copy_in_slot(predicate)
         else:
           buffered_ref, _ = fetch_with_lookahead(
               buffered_ref,
               src_ref,
               self.grid,
               self.grid_offsets,
-              predicate=self.first_step,
+              predicate=self.first_step & in_bounds,
               max_num_fetches=1,
           )
       else:
         if step == 0:
-          predicate = self.first_step
+          predicate = self.first_step & in_bounds
           fetch_indices = self.fetch_indices[step]
         else:
           fetch_indices = self.fetch_indices[step]
@@ -1327,8 +1332,8 @@ class Scheduler:
               buffered_ref, *prev_grid_indices
           )
           block_changed = _tuples_differ(block_indices, prev_block_indices)
-          predicate = self.first_step & block_changed
-        @when(predicate)
+          predicate = self.first_step & in_bounds & block_changed
+        @when(predicate & (step >= buffered_ref.prefetched_count))
         def _start():
           buffered_ref.copy_in(src_ref, fetch_indices)
         buffered_ref = buffered_ref.advance_copy_in_slot(predicate)
@@ -1338,7 +1343,8 @@ class Scheduler:
     if buffered_ref.is_trivial_windowing:
       return buffered_ref
     pred = self.has_changed(buffered_ref) | self.first_step
-    pred = pred & (~(self.step < buffered_ref.prefetched_count))
+    if not buffered_ref.await_prefetch:
+      pred = pred & (self.step >= buffered_ref.prefetched_count)
 
     @when(pred)
     @self._named_scope("ep_wait_in")
@@ -1351,7 +1357,7 @@ class Scheduler:
     if buffered_ref.is_trivial_windowing:
       return buffered_ref
     pred = (self.will_change_fetch(buffered_ref) &
-            ~self.out_of_fetch(buffered_ref))
+            jnp.logical_not(self.out_of_fetch(buffered_ref)))
 
     # Single-buffered refs skip the prologue, so the first copy_in in the
     # loop must always fire to populate the buffer before wait_in.
@@ -1365,7 +1371,11 @@ class Scheduler:
           buffered_ref, src_ref, self.grid, self.grid_offsets, predicate=True
       )
     else:
-      @when(pred)
+      needs_copy_in = True
+      if buffered_ref.prefetched_count > 0:
+        needs_copy_in = (self.step + buffered_ref.buffer_count
+                         > buffered_ref.prefetched_count)
+      @when(pred & needs_copy_in)
       @self._named_scope("ep_copy_in")
       def _send():
         if buffered_ref.is_input and buffered_ref.is_buffered:
@@ -1378,7 +1388,7 @@ class Scheduler:
   def wait_out(self, buffered_ref, dst_ref) -> BufferedRef:
     if buffered_ref.is_trivial_windowing:
       return buffered_ref
-    pred = self.has_changed(buffered_ref) & ~self.first_step
+    pred = self.has_changed(buffered_ref) & jnp.logical_not(self.first_step)
     @when(pred)
     @self._named_scope("ep_wait_out")
     def _wait():
@@ -1803,6 +1813,31 @@ def _emit_pipeline(
       )
     if isinstance(allocations, list):
       allocations = tuple(allocations)
+
+    # When using async prefetch, we only allocate the input buffers, so we need
+    # to allocate the output buffers here, if they are missing.
+    if len(allocations) == len(in_specs):
+      # Re-bind specs so that index maps use lowering invars instead of
+      # closed-over tracers from the outer Python scope.
+      allocations = map_brefs(
+          lambda b, s: b.with_spec(s), allocations, in_specs
+      )
+      if len(refs) > len(in_specs):
+        return primitives.run_scoped(
+            lambda out_allocations: pipeline(
+                *refs,
+                scratches=scratches,
+                allocations=(*allocations, *out_allocations),
+                body_prologue=body_prologue,
+            ),
+            _make_pipeline_allocations(
+                *refs[len(in_specs):],
+                in_specs=(),
+                out_specs=out_specs,
+                grid=grid,
+                tiling=tiling,
+            ),
+        )
 
     def make_scheduler(step, indices):
       return Scheduler(
