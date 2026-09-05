@@ -61,6 +61,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     non-zero gradients leaked into the unused triangle of the input matrix
     ({jax-issue}`#40421`).
 
+* Bug fixes
+  * {func}`jax.scipy.special.erfcx` no longer returns ``0`` for arguments
+    just below the point where the direct evaluation overflows (about
+    ``26.5`` in float64 and ``9.2`` in float32), where ``erfc(x)`` dropped
+    into the subnormal range and was flushed to zero.
+
 ## JAX 0.11.1 (August 17, 2026)
 
 * New features

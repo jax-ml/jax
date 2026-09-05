@@ -250,14 +250,17 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
                       rtol=.1, eps=1e-3)
 
   def testErfcxLargeX(self):
-    # Verify no overflow and agreement with scipy in the asymptotic regime
-    # (float32: x > ~9.4, float64: x > ~26.6 — where exp(x^2) would overflow naively)
-    x = np.array([10., 20., 50., 100.], dtype=np.float32)
+    # Verify no overflow and agreement with scipy in the asymptotic regime,
+    # including the band just below the old overflow threshold where erfc(x)
+    # went subnormal and XLA flushed it to zero.
+    x = np.array([8.25, 8.5, 8.8, 9.0, 9.2, 9.35, 9.5, 10., 20., 50., 100.],
+                 dtype=np.float32)
     jax_val = lsp_special.erfcx(x)
-    scipy_val = osp_special.erfcx(x)
+    scipy_val = osp_special.erfcx(x.astype(np.float64)).astype(np.float32)
     self.assertAllClose(jax_val, scipy_val, rtol=1e-5)
     if jax.config.x64_enabled:
-      x = np.array([27., 50., 100., 500.], dtype=np.float64)
+      x = np.array([26.25, 26.4, 26.5, 26.55, 26.6, 26.62, 26.65, 26.7,
+                    27., 50., 100., 500.], dtype=np.float64)
       jax_val = lsp_special.erfcx(x)
       scipy_val = osp_special.erfcx(x)
       self.assertAllClose(jax_val, scipy_val, rtol=1e-12)
