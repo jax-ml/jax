@@ -4500,6 +4500,32 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._assertSamePartitionedArrays(jnp_output, np_output, axis, kth, shape)
 
   @jtu.sample_product(
+    kth=range(10),
+    dtype=int_dtypes,
+  )
+  def testPartitionSignedWithMinValue(self, kth, dtype):
+    min_val = np.iinfo(dtype).min
+    max_val = np.iinfo(dtype).max
+    arg = jnp.array([[6, max_val, min_val, 4, 3, 1, min_val, 7, 5, 2]], dtype=dtype)
+    axis = -1
+    shape = arg.shape
+    jnp_output = jnp.partition(arg, axis=axis, kth=kth)
+    np_output = np.partition(arg, axis=axis, kth=kth)
+    self._assertSamePartitionedArrays(jnp_output, np_output, axis, kth, shape)
+
+  @jtu.sample_product(
+    kth=range(6),
+    dtype=bool_dtypes,
+  )
+  def testPartitionBool(self, kth, dtype):
+    arg = jnp.array([[True, False, True, True, False, False]], dtype=dtype)
+    axis = -1
+    shape = arg.shape
+    jnp_output = jnp.partition(arg, axis=axis, kth=kth)
+    np_output = np.partition(arg, axis=axis, kth=kth)
+    self._assertSamePartitionedArrays(jnp_output, np_output, axis, kth, shape)
+
+  @jtu.sample_product(
     [{'shape': shape, 'axis': axis, 'kth': kth}
      for shape in nonzerodim_shapes
      for axis in range(-len(shape), len(shape))
@@ -4557,6 +4583,54 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._assertSamePartitionedArrays(jnp_values, np_values, axis, kth, shape)
 
   @jtu.sample_product(
+    kth=range(10),
+    dtype=int_dtypes,
+  )
+  def testArgpartitionSignedWithMinValue(self, kth, dtype):
+    min_val = np.iinfo(dtype).min
+    max_val = np.iinfo(dtype).max
+    arg = jnp.array([[6, max_val, min_val, 4, 3, 1, min_val, 7, 5, 2, 3]], dtype=dtype)
+    axis = -1
+    shape = arg.shape
+    jnp_output = jnp.argpartition(arg, axis=axis, kth=kth)
+    np_output = np.argpartition(arg, axis=axis, kth=kth)
+
+    # Assert that all indices are present
+    self.assertArraysEqual(jnp.sort(jnp_output, axis), np.sort(np_output, axis), check_dtypes=False)
+
+    # Because JAX & numpy may treat duplicates differently, we must compare values
+    # rather than indices.
+    getvals = lambda x, ind: x[ind]
+    for ax in range(arg.ndim):
+      if ax != range(arg.ndim)[axis]:
+        getvals = jax.vmap(getvals, in_axes=ax, out_axes=ax)
+    jnp_values = getvals(arg, jnp_output)
+    np_values = getvals(arg, np_output)
+    self._assertSamePartitionedArrays(jnp_values, np_values, axis, kth, shape)
+
+  @jtu.sample_product(
+    kth=range(6),
+    dtype=bool_dtypes,
+  )
+  def testArgpartitionBool(self, kth, dtype):
+    arg = jnp.array([[True, False, True, True, False, False]], dtype=dtype)
+    axis = -1
+    shape = arg.shape
+    jnp_output = jnp.argpartition(arg, axis=axis, kth=kth)
+    np_output = np.argpartition(arg, axis=axis, kth=kth)
+
+    # Assert that all indices are present
+    self.assertArraysEqual(jnp.sort(jnp_output, axis), np.sort(np_output, axis), check_dtypes=False)
+
+    getvals = lambda x, ind: x[ind]
+    for ax in range(arg.ndim):
+      if ax != range(arg.ndim)[axis]:
+        getvals = jax.vmap(getvals, in_axes=ax, out_axes=ax)
+    jnp_values = getvals(arg, jnp_output)
+    np_values = getvals(arg, np_output)
+    self._assertSamePartitionedArrays(jnp_values, np_values, axis, kth, shape)
+
+  @jtu.sample_product(
     [dict(shape=shape, axis=axis, k=k)
      for shape in [(20,), (5, 8), (3, 4, 5)]
      for axis in range(-len(shape), len(shape))
@@ -4587,6 +4661,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertArraysEqual(gathered, jnp_vals)
 
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    dtype=int_dtypes,
+    k=[1, 2, 5],
+  )
+  def testTopKSmallestWithMinValue(self, dtype, k):
+    min_val = np.iinfo(dtype).min
+    max_val = np.iinfo(dtype).max
+    arg = jnp.array([6, max_val, min_val, 4, 3, 1, min_val, 7, 5, 2], dtype=dtype)
+    vals, indices = jnp.top_k(arg, k, mode='smallest')
+    self.assertArraysEqual(vals, jnp.sort(arg)[:k])
+    self.assertArraysEqual(jnp.take(arg, indices), vals)
 
   def testTopKErrors(self):
     x = jnp.arange(10)

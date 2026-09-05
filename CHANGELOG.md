@@ -48,6 +48,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     fabricating a phantom slice for fully-empty inputs.
 
 * Bug fixes
+  * Fixed {func}`jax.numpy.partition`, {func}`jax.numpy.argpartition` and
+    {func}`jax.numpy.top_k` with `mode='smallest'` on signed integer arrays
+    containing the smallest representable value, which was treated as the
+    largest element and dropped from the result.
+  * {func}`jax.numpy.partition` and {func}`jax.numpy.argpartition` now accept
+    boolean arrays, as {func}`jax.numpy.top_k` already did.
   * Fixed a bug where {func}`jax.numpy.linalg.cond` returned NaN instead of
     infinity for singular matrices when `p` is `None` or `2`, matching NumPy
     and the other norms.
