@@ -25,7 +25,6 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import hijax
 from jax._src import test_util as jtu
-from jax._src.pallas.fuser import fusible_dtype
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import fuser
 from jax.experimental.pallas import tpu as pltpu
@@ -1299,58 +1298,16 @@ class MpmdHijaxTest(jtu.JaxTestCase):
     self.assertArraysEqual(ot.x0, xt.x0)
     self.assertArraysEqual(ot.x1, xt.x1)
 
-
-# TODO(rdyro): A temporary workaround to avoid flakiness.
-@jtu.thread_unsafe_test_class()
-class MpmdPhysicalizeTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    if not jtu.is_device_tpu():
-      self.skipTest("Only works on TPU.")
-    super().setUp()
-
-  def test_mpmd_map_physicalize(self):
-
-    @dataclasses.dataclass(frozen=True)
-    class SimpleFusionDType(fusible_dtype.FusionDType):
-
-      def __str__(self):
-        return "simple_fusion_dtype"
-
-      def abstract_unpack(self, x):
-        if isinstance(x, jax_core.ShapedArray):
-          return (x.update(dtype=jnp.float32), x.update(dtype=jnp.float32))
-        raise NotImplementedError(type(x))
-
-      def abstract_pack(self, x, y):
-        if isinstance(x, jax_core.ShapedArray):
-          return x.update(dtype=self)
-        raise NotImplementedError(type(x))
-
-      def pull_block_spec_one_step(self, aval_out, block_spec):
-        return block_spec, block_spec
-
-      def unpack_push_block_spec(self, aval_in, block_spec):
-        return block_spec, block_spec
-
-      def unpack_pull_block_spec(self, aval_in, block_spec1, block_spec2):
-        return (block_spec1,)
-
-      def pack_eval_rule(self, eval_ctx, x, y):
-        return fusible_dtype.pack_dtype_p.bind(x, y, dtype=self)
-
-      def unpack_eval_rule(self, eval_ctx, x):
-        return fusible_dtype.unpack(x)
+  @parameterized.product(fuse=[False, True])
+  def test_fusible_mpmd_map_hijax(self, fuse):
 
     mesh = pltpu.TensorCoreMesh(axis_name="tc_core", num_cores=1)
 
     def subkernel(x_ref, y_ref, out_ref, x_vmem, y_vmem, out_vmem):
       pltpu.sync_copy(x_ref, x_vmem)
       pltpu.sync_copy(y_ref, y_vmem)
-      packed = fusible_dtype.pack(
-          x_vmem[...], y_vmem[...], dtype=SimpleFusionDType()
-      )
-      x_val, y_val = fusible_dtype.unpack(packed)
+      packed = pack(x_vmem[...], y_vmem[...])
+      x_val, y_val = unpack(packed)
       out_vmem[...] = x_val + y_val
       pltpu.sync_copy(out_vmem, out_ref)
 
@@ -1375,8 +1332,8 @@ class MpmdPhysicalizeTest(jtu.JaxTestCase):
     x = jnp.ones((8, 8), dtype=jnp.float32)
     y = jnp.ones((8, 8), dtype=jnp.float32)
 
-    physicalized_f = fusible_dtype.physicalize(mpmd_f)
-    res = physicalized_f(x, y)
+    f = fuser.fuse(mpmd_f) if fuse else mpmd_f
+    res = f(x, y)
     np.testing.assert_allclose(res, x + y)
 
 
