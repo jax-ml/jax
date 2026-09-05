@@ -458,6 +458,8 @@ class ModuleContext:
   auto_barriers: bool
   # See the documentation of reduction_scratch_bytes in CompilerParams.
   reduction_scratch_bytes: int
+  # See the documentation of reduction_acc_ilp in CompilerParams.
+  reduction_acc_ilp: int | None = None
   warp_axis_name: jax_core.AxisName | None = None
   outer_traceback: xc.Traceback | None = None
   _smem_allocation_counter: int = dataclasses.field(default=0, init=False)
@@ -891,6 +893,7 @@ def lower_jaxpr_to_module(
         else None,
         auto_barriers=not params.unsafe_no_auto_barriers,
         reduction_scratch_bytes=params.reduction_scratch_bytes,
+        reduction_acc_ilp=params.reduction_acc_ilp,
         outer_traceback=outer_traceback,
     )
     del runtime_smem, grouped_barriers, runtime_barriers
@@ -3042,6 +3045,7 @@ def _squeeze_lowering_rule_wg(ctx: LoweringRuleContext, x, dimensions):
 
 def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
   [x_aval] = ctx.avals_in
+  acc_ilp = ctx.module_ctx.reduction_acc_ilp
   match x.layout:
     case mgpu.WGStridedFragLayout():
       if set(axes) != set(range(x_aval.ndim)):
@@ -3056,7 +3060,7 @@ def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
         )
       scratch_ty = jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)
       with ctx.module_ctx.scratch_view(scratch_ty) as scratch:
-        return x.reduce(op, axes, scratch)
+        return x.reduce(op, axes, scratch, acc_ilp=acc_ilp)
     case mgpu.TiledLayout():
       if len(axes) != 1:
         raise NotImplementedError("Multi-axis reductions not supported")
@@ -3071,7 +3075,7 @@ def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
       else:
         scratch_ctx = contextlib.nullcontext(None)
       with scratch_ctx as scratch:
-        return x.reduce(op, axes[0], scratch=scratch)
+        return x.reduce(op, axes[0], scratch=scratch, acc_ilp=acc_ilp)
     case _:
       raise NotImplementedError(f"Unsupported layout {x.layout}")
 
@@ -3117,6 +3121,8 @@ def _reduce_lowering_rule_wg(
   # TODO(bchetioui): here, we could just donate all the remaining free SMEM that
   # we have at this point in time.
   reduction.attributes["scratch_size"] = i32_attr(ctx.module_ctx.reduction_scratch_bytes)
+  if ctx.module_ctx.reduction_acc_ilp is not None:
+    reduction.attributes["acc_ilp"] = i32_attr(ctx.module_ctx.reduction_acc_ilp)
   return reduction.result
 
 

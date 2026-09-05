@@ -859,13 +859,17 @@ def _vector_reduction_op_lowering_rule(
   op_kind = _combining_kind(op.kind)
   is_signed = _is_reduction_signed(op_kind)
   a = _fragmented_array_from_ir(op.vector, layout, is_signed)
+  if "acc_ilp" in op.attributes:
+    acc_ilp = ir.IntegerAttr(op.attributes["acc_ilp"]).value
+  else:
+    acc_ilp = None
   match op_kind:
     case vector.CombiningKind.ADD:
-      result = a.reduce("add", axes, scratch)
+      result = a.reduce("add", axes, scratch, acc_ilp=acc_ilp)
     case vector.CombiningKind.MAXSI | vector.CombiningKind.MAXUI | vector.CombiningKind.MAXIMUMF:
-      result = a.reduce("max", axes, scratch)
+      result = a.reduce("max", axes, scratch, acc_ilp=acc_ilp)
     case vector.CombiningKind.MINUI | vector.CombiningKind.MINSI | vector.CombiningKind.MINIMUMF:
-      result = a.reduce("min", axes, scratch)
+      result = a.reduce("min", axes, scratch, acc_ilp=acc_ilp)
     case _:
       raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
   assert isinstance(result.layout, fa.WGSplatFragLayout)
@@ -907,15 +911,20 @@ def _vector_multi_dim_reduction_op_lowering_rule(
   else:
     scratch = None
 
+  if "acc_ilp" in op.attributes:
+    acc_ilp = ir.IntegerAttr(op.attributes["acc_ilp"]).value
+  else:
+    acc_ilp = None
+
   match op_kind:
     case vector.CombiningKind.ADD:
-      result = src.reduce("add", op.reduction_dims[0], scratch)
+      result = src.reduce("add", op.reduction_dims[0], scratch, acc_ilp=acc_ilp)
       result += acc
     case vector.CombiningKind.MAXSI | vector.CombiningKind.MAXUI | vector.CombiningKind.MAXIMUMF:
-      result = src.reduce("max", op.reduction_dims[0], scratch)
+      result = src.reduce("max", op.reduction_dims[0], scratch, acc_ilp=acc_ilp)
       result = result.max(acc)
     case vector.CombiningKind.MINUI | vector.CombiningKind.MINSI | vector.CombiningKind.MINIMUMF:
-      result = src.reduce("min", op.reduction_dims[0], scratch)
+      result = src.reduce("min", op.reduction_dims[0], scratch, acc_ilp=acc_ilp)
       result = result.min(acc)
     case _:
       raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
