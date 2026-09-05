@@ -32,7 +32,6 @@ from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import math as mlir_math
 from jaxlib.mlir.dialects import memref
-from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import vector
 import numpy as np
 
@@ -51,7 +50,13 @@ SMEM_BANK_BYTES = 4
 c = utils.c
 
 
-ReductionKind = nvvm.ReductionKind
+ReductionKind = utils.ReductionKind
+
+
+class LdStMatrixLayout(enum.Enum):
+  row = "row"
+  col = "col"
+
 
 @dataclasses.dataclass(frozen=True)
 class Tiling:
@@ -4053,18 +4058,19 @@ class FragmentedArray:
         )
         bitwidth = utils.bitwidth(self.mlir_dtype)
         for gets, _updates, _idxs, ptr, tx_layout in stores:
-          if tx_layout == nvvm.MMALayout.col and bitwidth == 8:
-            s = 16
-            elt_type = nvvm.LdStMatrixEltType.B8
+          if tx_layout == LdStMatrixLayout.col and bitwidth == 8:
+            m = n = 16
+            elt_type = "b8"
           else:
-            s = 8
-            elt_type = nvvm.LdStMatrixEltType.B16
-          nvvm.stmatrix(
-              ptr,
-              [utils.bitcast(get(self.registers), i32) for get in gets],
-              tx_layout,
-              ir.Attribute.parse(f"#nvvm.ld_st_matrix_shape<m={s}, n={s}>"),
-              elt_type,
+            m = n = 8
+            elt_type = "b16"
+          trans_str = ".trans" if tx_layout == LdStMatrixLayout.col else ""
+          source_regs = [utils.bitcast(get(self.registers), i32) for get in gets]
+          num = len(source_regs)
+          regs_str = "{" + ", ".join(f"${i}" for i in range(1, 1 + num)) + "}"
+          utils.inline_ptx(
+              f"stmatrix.sync.aligned.m{m}n{n}.x{num}{trans_str}.shared.{elt_type} [$0], {regs_str};",
+              ptr, *source_regs,
           )
         return
       except TxMatrixIneligible:
@@ -4142,28 +4148,24 @@ class FragmentedArray:
       )
       try:
         for _gets, updates, _idxs, ptr, tx_layout in loads:
-          if tx_layout == nvvm.MMALayout.col and bitwidth == 8:
+          if tx_layout == LdStMatrixLayout.col and bitwidth == 8:
             num_scale = 2
-            elt_type = nvvm.LdStMatrixEltType.B8
+            m = n = 16
+            elt_type = "b8"
           else:
             num_scale = 1
-            elt_type = nvvm.LdStMatrixEltType.B16
-          s = 8 * num_scale
-          loaded_regs_value = nvvm.ldmatrix(
+            m = n = 8
+            elt_type = "b16"
+          trans_str = ".trans" if tx_layout == LdStMatrixLayout.col else ""
+          num_outs = len(updates)
+          instr_num = num_outs // num_scale
+          dst_regs_str = "{" + ", ".join(f"${i}" for i in range(num_outs)) + "}"
+          loaded_regs = utils.inline_ptx(
+              f"ldmatrix.sync.aligned.m{m}n{n}.x{instr_num}{trans_str}.shared.{elt_type} {dst_regs_str}, [${num_outs}];",
               ptr,
-              layout=tx_layout,
-              num=len(updates) // num_scale,
-              shape=ir.Attribute.parse(f"#nvvm.ld_st_matrix_shape<m={s}, n={s}>"),
-              elt_type=elt_type,
+              result_type=[i32] * num_outs,
+              has_side_effects=True,
           )
-          # ldmatrix returns a single i32 or a struct of i32s.
-          if len(updates) == 1:
-            loaded_regs = [loaded_regs_value]
-          else:
-            loaded_regs = [
-                llvm.extractvalue(i32, loaded_regs_value, [i])
-                for i in range(len(updates))
-            ]
           for loaded_reg, update in zip(loaded_regs, updates, strict=True):  # type: ignore
             update(registers, utils.bitcast(loaded_reg, reg_ty))
         return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
@@ -4361,7 +4363,7 @@ class FragmentedArray:
           layout.vector_dim if is_row_txmatrix_mem_layout else major_lane_dim
       )
       assert isinstance(load_vector_dim, int)
-      tx_layout = nvvm.MMALayout.row if is_row_txmatrix_mem_layout else nvvm.MMALayout.col
+      tx_layout = LdStMatrixLayout.row if is_row_txmatrix_mem_layout else LdStMatrixLayout.col
       # We remap pair_tile_dim to a valid index in tiles_shape (computed below)
       if tx_pair_tiled_dim is not None:
         # We need tx_pair_nested_tiled_dim to be positive, since that's what the
@@ -4441,7 +4443,7 @@ class FragmentedArray:
       if llvm_memory_space != 3 and llvm_memory_space != 7:
         raise NotImplementedError("Only optimized transfers to SMEM supported")
       mem_layout = layout
-      if tx_layout == nvvm.MMALayout.col:
+      if tx_layout == LdStMatrixLayout.col:
         major_lane_dim, _ = layout.lane_dims
         assert isinstance(major_lane_dim, int)
         if element_bits == 16:
@@ -4555,7 +4557,7 @@ class FragmentedArray:
       return new_idxs
     # All offsets are in units of transfer_dtype.
     offset_lane_idx = None
-    if tx_layout == nvvm.MMALayout.col:
+    if tx_layout == LdStMatrixLayout.col:
       minor_lane_dim = layout.lane_dims[-1]
       assert isinstance(minor_lane_dim, int)
       col_nested_shape = (*tiled_nested_shape[minor_lane_dim], *tiled_nested_shape[layout.vector_dim])
@@ -4569,7 +4571,7 @@ class FragmentedArray:
         )
         remaining_lane_idx = arith.divui(remaining_lane_idx, c(size))
     else:
-      if tx_layout == nvvm.MMALayout.row:
+      if tx_layout == LdStMatrixLayout.row:
         offset_lane_idx = arith.muli(arith.remui(utils.thread_idx(), c(8)), c(4))
       lane_offset = utils.dyn_dot(
           expand_nested_dims(layout.lane_indices(offset_lane_idx)),
