@@ -1097,12 +1097,94 @@ class OpsTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(result, expected)
 
   @parameterized.product(
+      in_bitwidth=[2, 4],
+      sublane_group_id=[0, 1],
+  )
+  def test_unpack_and_join(self, in_bitwidth, sublane_group_id):
+    """Tests unpack and join operations for TPU 7x+.
+
+    This tests the following 4 hardware instructions:
+      - `vdst = vunpack.c.join.l.b2.b4 vx, vy`
+      - `vdst = vunpack.c.join.u.b2.b4 vx, vy`
+      - `vdst = vunpack.c.join.l.b4.b8 vx, vy`
+      - `vdst = vunpack.c.join.u.b4.b8 vx, vy`
+
+    Supported starting from TPU 7x+.
+    """
+    if not jtu.is_device_tpu_at_least(version=7):
+      self.skipTest("vunpack.c.join requires TPU v7+")
+
+    tpu_info = pltpu.get_tpu_info()
+    sublane_count = tpu_info.num_sublanes
+    lane_count = tpu_info.num_lanes
+    shape = (sublane_count, lane_count)
+    hsl = sublane_count // 2
+
+    def kernel(l_ref, u_ref, o_ref):
+      o_ref[...] = pltpu.unpack_and_join(
+          l_ref[...],
+          u_ref[...],
+          sublane_group_id=sublane_group_id,
+          in_bitwidth=in_bitwidth,
+      )
+
+    rng = np.random.default_rng(12345)
+    lower = rng.integers(0, 0xFFFFFFFF, size=shape, dtype=np.uint32)
+    upper = rng.integers(0, 0xFFFFFFFF, size=shape, dtype=np.uint32)
+
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.uint32),
+    )(lower, upper)
+    self.assertEqual(out.shape, shape)
+
+    # Hardware Reference Implementation:
+    # 1. Sublane Selection:
+    #    - sublane_group_id=0 (.l) reads source sublanes 0..hsl-1
+    #    - sublane_group_id=1 (.u) reads source sublanes hsl..2*hsl-1
+    sublane_offset = 0 if sublane_group_id == 0 else hsl
+    num_elems = 16 // in_bitwidth  # 4 elems for 4b (b4.b8), 8 elems for 2b
+    mask = (1 << in_bitwidth) - 1
+
+    def unpack_half_word(src_row, col, elem_offset):
+      # 2. Unpack & Join:
+      #    For each k-th element in the 16-bit half-word:
+      #      - lower element occupies bits [2*k*w .. 2*k*w + w - 1]
+      #      - upper element occupies bits [2*k*w + w .. 2*k*w + 2*w - 1]
+      #    Resulting in a 32-bit word where each element is doubled in bitwidth.
+      w = in_bitwidth
+      return sum(
+          int(
+              ((upper[src_row, col] >> (w * (elem_offset + k))) & mask)
+              << (2 * w * k + w)
+          )
+          | int(
+              ((lower[src_row, col] >> (w * (elem_offset + k))) & mask)
+              << (2 * w * k)
+          )
+          for k in range(num_elems)
+      )
+
+    expected = np.zeros(shape, dtype=np.uint32)
+    for d in range(hsl):
+      src_row = sublane_offset + d
+      for c in range(lane_count):
+        # 3. Output Destination Rows:
+        #    Each source sublane d produces two destination sublanes:
+        #      - Even row 2*d: gets unpacked lower 16 bits of word (src_row, c)
+        #      - Odd row 2*d+1: gets unpacked upper 16 bits of word (src_row, c)
+        expected[2 * d, c] = unpack_half_word(src_row, c, 0)
+        expected[2 * d + 1, c] = unpack_half_word(src_row, c, num_elems)
+
+    np.testing.assert_array_equal(np.asarray(out), expected)
+
+  @parameterized.product(
       dtype=[jnp.float32, jnp.bfloat16, jnp.int32, jnp.int8],
       shape_reps=[
           ((8, 128), (2, 1)),
           ((8, 128), (1, 2)),
           ((8, 128), (2, 2)),
-          ((128, 8, 128), (3,2,1)),
+          ((128, 8, 128), (3, 2, 1)),
       ],
   )
   def test_tile(self, dtype, shape_reps):
