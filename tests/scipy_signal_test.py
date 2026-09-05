@@ -341,6 +341,27 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
+  def testWelchDefaultNperseg(self):
+    # Regression test for #40012: default nperseg should be 256 when input_length > 256
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=1000).astype(np.float32)
+    f_osp, pxx_osp = osp_signal.welch(x)
+    f_jsp, pxx_jsp = jsp_signal.welch(x)
+    self.assertEqual(f_jsp.shape, (129,))
+    self.assertEqual(pxx_jsp.shape, (129,))
+    self.assertAllClose(
+        f_jsp.astype(_real_dtype(np.float32)),
+        f_osp.astype(_real_dtype(np.float32)),
+        rtol=1e-5,
+        atol=1e-5,
+    )
+    self.assertAllClose(
+        pxx_jsp.astype(_real_dtype(np.float32)),
+        pxx_osp.astype(_real_dtype(np.float32)),
+        rtol=1e-5,
+        atol=1e-5,
+    )
+
   @jtu.sample_product(
     [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis)
       for shape, nperseg, noverlap, timeaxis in welch_test_shapes
@@ -353,8 +374,6 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   def testWelchWithDefaultStepArgsAgainstNumpy(
       self, *, shape, dtype, nperseg, noverlap, use_nperseg, use_noverlap,
       use_window, timeaxis):
-    if tuple(shape) == (2, 3, 389, 5) and nperseg == 17 and noverlap == 13:
-      raise unittest.SkipTest("Test fails for these inputs")
     kwargs = {'axis': timeaxis}
 
     if use_nperseg:
@@ -368,7 +387,11 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     def osp_fun(x):
       freqs, Pxx = osp_signal.welch(x, **kwargs)
       return freqs.astype(_real_dtype(dtype)), Pxx.astype(_real_dtype(dtype))
-    jsp_fun = partial(jsp_signal.welch, **kwargs)
+
+    @jtu.ignore_warning(message="nperseg")
+    def jsp_fun(x):
+      return jsp_signal.welch(x, **kwargs)
+
     tol = {
         np.float32: 1e-5, np.float64: 1e-12,
         np.complex64: 1e-5, np.complex128: 1e-12
