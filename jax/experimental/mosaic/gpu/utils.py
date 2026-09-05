@@ -2450,6 +2450,7 @@ def query_cluster_cancel(
         @$3 clusterlaunchcontrol.query_cancel.get_first_ctaid.v4.b32.b128 {$0, $1, $2, _},  handle;
     }""",
       "=r,=r,=r,=b,r",
+      has_side_effects=True,
   )
   assert isinstance(desc, ir.Value)
   cta_id_x = llvm.extractvalue(i32, desc, [0])
