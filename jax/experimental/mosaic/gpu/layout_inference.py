@@ -740,6 +740,7 @@ for _op in [
     arith.MinSIOp,
     arith.MulIOp,
     arith.MulFOp,
+    arith.NegFOp,
     arith.OrIOp,
     arith.FloorDivSIOp,
     arith.DivSIOp,

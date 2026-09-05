@@ -2521,8 +2521,16 @@ mosaic_lowering_rules[gpu_core.LANExWARP_SEMANTICS].update({
     lax.not_p: _unary_warp_lowering_rule(lambda x: ~x)
 })
 
+
+def _neg_lowering_rule_wg(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  if jnp.issubdtype(x_aval.dtype, jnp.floating):
+    return arith_dialect.negf(_ensure_ir_value(x, x_aval.dtype))
+  return _lower_fun(lambda x: jnp.subtract(0, x))(ctx, x)
+
+
 mosaic_lowering_rules[gpu_core.WGxWG_SEMANTICS].update({
-    lax.neg_p: _lower_fun(lambda x: jnp.subtract(0, x)),
+    lax.neg_p: _neg_lowering_rule_wg,
     lax.not_p: _lower_fun(
         lambda x: jnp.astype(
             jnp.bitwise_xor(jnp.astype(x, int), -1), jnp.dtype(x)
