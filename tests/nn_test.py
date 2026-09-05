@@ -644,6 +644,66 @@ class NNFunctionsTest(jtu.JaxTestCase):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
     jtu.check_grads(nn.softmax, (x,), order=2, atol=5e-3)
 
+  @parameterized.product(
+      shape_axis=[((65536,), None), ((2, 65536), -1),
+                  ((256, 256), (0, 1))],
+      masked=[False, True],
+      compiled=[False, True],
+  )
+  def testLogSoftmaxFloat16LargeGrad(self, shape_axis, masked, compiled):
+    # Regression for https://github.com/jax-ml/jax/issues/40409: the
+    # cotangent reduction overflows float16 even when each derivative fits.
+    shape, axis = shape_axis
+    size = 1
+    for dim in shape:
+      size *= dim
+    x = jnp.linspace(-2., 2., size).astype(jnp.float16).reshape(shape)
+    where = (jnp.arange(size).reshape(shape) % 4 != 0) if masked else None
+    if masked:
+      x = jnp.where(where, x, jnp.float16(10000.))
+    cotangent = jnp.full_like(x, 2.)
+
+    def value_and_vjp(x):
+      y, pullback = jax.vjp(partial(nn.log_softmax, axis=axis, where=where), x)
+      return y, pullback(cotangent)[0]
+
+    fn = jax.jit(value_and_vjp) if compiled else value_and_vjp
+    y, actual = fn(x)
+    x32 = x.astype(jnp.float32)
+    safe_x = x32 if where is None else jnp.where(where, x32, -jnp.inf)
+    shifted = safe_x - jnp.max(safe_x, axis=axis, keepdims=True)
+    exp_x = jnp.exp(shifted)
+    total = exp_x.sum(axis=axis, keepdims=True)
+    weights = cotangent.astype(jnp.float32)
+    if masked:
+      weights = jnp.where(where, weights, 0.)
+    expected = weights - exp_x / total * weights.sum(axis=axis, keepdims=True)
+
+    self.assertEqual(y.dtype, x.dtype)
+    self.assertEqual(actual.dtype, x.dtype)
+    self.assertTrue(jnp.isfinite(actual).all())
+    self.assertAllClose(actual, expected.astype(x.dtype), atol=3e-3, rtol=3e-3)
+    self.assertAllClose(y, (shifted - jnp.log(total)).astype(x.dtype),
+                        atol=1e-2, rtol=1e-3)
+
+  @parameterized.parameters(False, True)
+  def testLogSoftmaxFloat16LargeGradCancellation(self, compiled):
+    # The normalization cotangent alone exceeds float16's range, but the
+    # final gradient fits after cancellation with the direct cotangent.
+    x = jnp.zeros(65536, dtype=jnp.float16).at[0].set(12.)
+    cotangent = jnp.ones_like(x).at[0].set(60000.)
+
+    def vjp(x):
+      return jax.vjp(nn.log_softmax, x)[1](cotangent)[0]
+
+    actual = (jax.jit(vjp) if compiled else vjp)(x)
+    x32 = x.astype(jnp.float32)
+    exp_x = jnp.exp(x32 - x32.max())
+    weights = cotangent.astype(jnp.float32)
+    expected = weights - exp_x / exp_x.sum() * weights.sum()
+    self.assertTrue(jnp.isfinite(actual).all())
+    self.assertAllClose(actual, expected.astype(x.dtype), atol=1e-3, rtol=1e-3)
+
   def testSoftmaxGradResiduals(self):
     if not config.softmax_custom_jvp.value:
       raise unittest.SkipTest("only applies when upgrade flag enabled")
