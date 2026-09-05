@@ -30,6 +30,7 @@
 #   JAXCI_TESTS_PER_ACCELERATOR: value for JAX_TESTS_PER_ACCELERATOR when run_under is enabled (default: 8)
 #   JAXCI_HERMETIC_PYTHON_VERSION: Hermetic Python version (default: 3.14)
 #   JAXCI_XLA_TRACK: XLA source to use, "pinned", "head", or "commit" (default: pinned)
+#   JAXCI_PROFILE_MEMORY: "1" or "true" to profile peak RSS memory usage with memory_wrapper.py
 
 set -euox pipefail
 
@@ -103,9 +104,19 @@ if [[ -n "${JAXCI_TEST_TAG_FILTERS:-}" ]]; then
 fi
 
 if [[ "${JAXCI_USE_PARALLEL_ACCELERATOR_RUNNER:-0}" == '1' ]]; then
-  bazel_args+=(--run_under "$(pwd)/build/parallel_accelerator_execute.sh")
+  run_under_cmd="$(pwd)/build/parallel_accelerator_execute.sh"
+  if [[ "${JAXCI_PROFILE_MEMORY:-0}" == '1' || "${JAXCI_PROFILE_MEMORY:-false}" == 'true' || "${JAXCI_PROFILE_MEMORY:-no}" == 'yes' ]]; then
+    run_under_cmd="python3 $(pwd)/ci/utilities/memory_wrapper.py ${run_under_cmd}"
+  fi
+  bazel_args+=(--run_under "${run_under_cmd}")
   bazel_args+=(--test_env=JAX_ACCELERATOR_COUNT="${JAXCI_ACCELERATOR_COUNT:-1}")
   bazel_args+=(--test_env=JAX_TESTS_PER_ACCELERATOR="${JAXCI_TESTS_PER_ACCELERATOR:-8}")
+elif [[ "${JAXCI_PROFILE_MEMORY:-0}" == '1' || "${JAXCI_PROFILE_MEMORY:-false}" == 'true' || "${JAXCI_PROFILE_MEMORY:-no}" == 'yes' ]]; then
+  bazel_args+=(--run_under="python3 $(pwd)/ci/utilities/memory_wrapper.py")
+fi
+
+if [[ "${JAXCI_PROFILE_MEMORY:-0}" == '1' || "${JAXCI_PROFILE_MEMORY:-false}" == 'true' || "${JAXCI_PROFILE_MEMORY:-no}" == 'yes' ]]; then
+  bazel_args+=(--nocache_test_results)
 fi
 
 if [[ -n "${JAXCI_EXCLUDE_TEST_TARGETS:-}" ]]; then
