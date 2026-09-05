@@ -316,7 +316,9 @@ def _as_rotvec(quat: Array, degrees: bool) -> Array:
   angle = 2. * jnp.arctan2(_vector_norm(quat[:3]), quat[3])
   angle2 = angle * angle
   small_scale = 2 + angle2 / 12 + 7 * angle2 * angle2 / 2880
-  large_scale = angle / jnp.sin(angle / 2)
+  sin_half = jnp.sin(angle / 2)
+  denom = jnp.where(sin_half == 0, 1.0, sin_half)
+  large_scale = angle / denom
   scale = jnp.where(angle <= 1e-3, small_scale, large_scale)
   scale = jnp.where(degrees, jnp.rad2deg(scale), scale)
   return scale * jnp.array(quat[:3])
@@ -386,8 +388,9 @@ def _from_rotvec(rotvec: Array, degrees: bool) -> Array:
   rotvec = jnp.where(degrees, jnp.deg2rad(rotvec), rotvec)
   angle = _vector_norm(rotvec)
   angle2 = angle * angle
-  small_scale = scale = 0.5 - angle2 / 48 + angle2 * angle2 / 3840
-  large_scale = jnp.sin(angle / 2) / angle
+  small_scale = 0.5 - angle2 / 48 + angle2 * angle2 / 3840
+  denom = jnp.where(angle == 0, 1.0, angle)
+  large_scale = jnp.sin(angle / 2) / denom
   scale = jnp.where(angle <= 1e-3, small_scale, large_scale)
   return jnp.hstack([scale * rotvec, jnp.cos(angle / 2)])
 

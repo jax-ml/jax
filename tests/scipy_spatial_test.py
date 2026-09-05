@@ -234,6 +234,19 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=True, tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
+  def testRotationIdentityDebugNans(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/23839
+    with jax.debug_nans(True):
+      rotvec = jsp_Rotation.identity().as_rotvec()
+      self.assertAllClose(rotvec, jnp.zeros(3), check_dtypes=False)
+
+  def testRotationFromZeroRotvecDebugNans(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/23839
+    with jax.debug_nans(True):
+      rot = jsp_Rotation.from_rotvec(jnp.zeros(3))
+      self.assertAllClose(
+          rot.as_quat(), jnp.array([0., 0., 0., 1.]), check_dtypes=False)
+
   @jtu.sample_product(
     dtype=float_dtypes,
     shape=[(4,), (num_samples, 4)],
