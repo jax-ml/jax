@@ -55,3 +55,4 @@ from jax._src.nn.functions import (
   mish as mish,
   log1mexp as log1mexp,
 )
+from jax._src.nn.sample_image import sample_image as sample_image
