@@ -1234,6 +1234,15 @@ class LaxTest(jtu.JaxTestCase):
         raise SkipTest(
             f"The dot algorithm '{algorithm}' is not supported on CPU.")
     if jtu.test_device_matches(["gpu"]):
+      # TF32 presets are not currently supported on OneAPI.
+      # TODO(Intel-tf): Remove this skip once OneAPI supports TF32 presets.
+      if algorithm in {
+          lax.DotAlgorithmPreset.TF32_TF32_F32,
+          lax.DotAlgorithmPreset.TF32_TF32_F32_X3,
+      }:
+        if jtu.test_device_matches(["oneapi"]):
+          raise SkipTest(
+              f"The dot algorithm '{algorithm}' is not supported on OneAPI.")
       # GPU algorithm support is a little spotty. It is checked in
       # xla/service/algorithm_util.cc and the logic is copied here.
       if algorithm in {
