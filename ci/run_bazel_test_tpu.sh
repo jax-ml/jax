@@ -71,6 +71,11 @@ COMMON_TPU_TEST_ENV_VARS="--test_env=PORTSERVER_ADDRESS=@unittest-portserver \
  --test_env=HOST_BOUNDS \
  --test_env=VBAR_CONTROL_SERVICE_URL"
 
+# Workaround for vbar.sock permission race condition (b/554011017):
+# Fetch the host VM's IP via the GCE Metadata server and route traffic over TCP.
+NODE_IP=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/ip" -H "Metadata-Flavor: Google")
+VBAR_CONTROL_SERVICE_URL="${NODE_IP}:8353"
+
 # Only TPU v6e runners, used for presubmits, are configured with enough /dev/shm space for Bazel output_base.
 if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" != "1" ]]; then
   BAZEL_STARTUP_ARGS=("--output_base=/dev/shm/bazel")
