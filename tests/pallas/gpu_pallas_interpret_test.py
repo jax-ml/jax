@@ -1482,6 +1482,35 @@ class InterpretTest(jtu.JaxTestCase):
     ):
       _kernel()
 
+  @jtu.parameterized.named_parameters(
+      ('full_slice_of_one', 1, lambda b, i: b.at[()]),
+      ('static_unit_slice', 2, lambda b, i: b.at[pl.ds(1, 1)]),
+      ('dynamic_unit_slice', 2, lambda b, i: b.at[pl.ds(i, 1)]),
+  )
+  def test_barrier_slice_names_one_barrier(self, num_barriers, select):
+    # As when lowering, a slice of a barrier array contributes its start:
+    # `barrier.at[()]` on a single barrier and `barrier.at[pl.ds(i, 1)]` both
+    # mean `barrier.at[i]`.
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128, 64), jnp.float32),
+        scratch_types=dict(
+            smem=plgpu.SMEM((128, 64), jnp.float32),
+            barrier=plgpu.Barrier(num_barriers=num_barriers),
+        ),
+        interpret=InterpretParams(),
+    )
+    def kernel(i_ref, x_ref, o_ref, smem, barrier):
+      b = select(barrier, i_ref[0])
+      plgpu.copy_gmem_to_smem(x_ref, smem, b)
+      plgpu.barrier_wait(b)
+      o_ref[...] = smem[...] + 1.0
+
+    x = jnp.arange(128 * 64, dtype=jnp.float32).reshape(128, 64)
+    y = kernel(jnp.array([num_barriers - 1], jnp.int32), x)
+    np.testing.assert_array_equal(y, np.asarray(x) + 1.0)
+
+
   def test_not_waiting_for_all_barrier_completions_in_thread_raises(self):
     @functools.partial(
         plgpu.kernel,

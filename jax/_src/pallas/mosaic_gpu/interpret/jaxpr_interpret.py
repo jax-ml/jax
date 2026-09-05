@@ -113,65 +113,57 @@ def _raise_if_unsupported_collective_axes(
       )
 
 
-# TODO(nrink): Try unifying this function with `_extract_barrier_slice_base`
-# from `jax._src.pallas.mosaic_gpu.primitives`.
-def _get_index_for_barrier_allocation_key(
-    transforms_treedef, transforms_leaves,
-) -> indexing.DimIndexer | None:
-  # TODO(nrink): The working out of `transforms` and the returned index below
-  # may need tidying up. Specifically, GPU interpret mode should correctly
-  # support legal ways to index into barriers. (Here, 'legal' is to be read as
-  # 'allowed by the Pallas GPU semantics'.)
-  if transforms_treedef is None:
-    return None
-  transforms = jax.tree.unflatten(transforms_treedef, transforms_leaves)
-
-  if not transforms:
-    return None
-  if not hasattr(transforms, "__len__") or len(transforms) != 1:
-    raise NotImplementedError(
-        f"Indexing barrier with {transforms} not supported in GPU interpret"
-        " mode"
-    )
-  if not isinstance(transforms[0], indexing.NDIndexer):
-    raise ValueError(f"Expected an `NDIndexer`, but got {transforms[0]}")
-  if len(transforms[0].indices) == 1:
-    return transforms[0].indices[0]
-  return tuple(transforms[0].indices)
-
-
 def _get_barrier_allocation_key_from_inval(
     inval, transforms_treedef, transforms_leaves
 ) -> jax.Array:
-  # `inval` is expected to correspond to a barrier. Since we are interpreting,
-  # `inval` will in fact contain the allocation key (which is a Jax array) for
-  # the barrier.
-  allocation_key_as_array = inval
+  """Selects one barrier's allocation key from a barrier array's stacked keys.
 
-  # Assert to check internal consistency: `allocation_key_as_array` should be
-  # at least a 2D array, and the size of the last dimension is 5 (which matches the
-  # fields count of HostAllocationKey).
-  assert len(allocation_key_as_array.shape) >= 2
-  assert (
-      allocation_key_as_array.shape[-1:]
-      == gpu_callbacks.HostAllocationKey.shape_and_dtype().shape
+  `inval` should hold the keys of a barrier array, shaped `(*num_barriers, key)`.
+  This implementation mirrors the slightly unintuitive behavior of the lowering:
+  every use names exactly one barrier. A slice selects its start, so
+  `barrier.at[()]` means `barrier.at[0]` and `barrier.at[pl.ds(i, 1)]` means
+  `barrier.at[i]`. Omitted axes select index 0.
+  """
+  keys = inval
+  # `keys.shape[-1]` is the number of `HostAllocationKey` fields.
+  assert keys.ndim >= 2
+  assert keys.shape[-1:] == gpu_callbacks.HostAllocationKey.shape_and_dtype().shape
+  rank = keys.ndim - 1
+
+  transforms = (
+      ()
+      if transforms_treedef is None
+      else jax.tree.unflatten(transforms_treedef, transforms_leaves)
   )
-  num_barriers = math.prod(allocation_key_as_array.shape[:-1])
-
-  index = _get_index_for_barrier_allocation_key(
-      transforms_treedef, transforms_leaves
-  )
-
-  if index is None:
-    if num_barriers != 1:
+  index = []
+  for transform in transforms:
+    if not isinstance(transform, indexing.NDIndexer):
+      raise NotImplementedError(
+          f"Indexing barrier with {transform} not supported in GPU interpret"
+          " mode"
+      )
+    for i in transform.indices:
+      if isinstance(i, indexing.Slice):
+        if i.stride != 1:
+          raise NotImplementedError(
+              "Barrier does not support slice with `stride != 1`"
+          )
+        i = i.start
+      index.append(i)
+  if len(index) > rank:
+    raise ValueError(f"Index {index} has more axes than barrier {keys.shape[:rank]}.")
+  if any(dim != 1 for dim in keys.shape[len(index) : rank]):
+    num_barriers = math.prod(keys.shape[:rank])
+    if not index:
       raise ValueError(
           "Attempting to operate on barrier without indexing, but"
           f" `num_barriers = {num_barriers}`"
       )
-    idx = (0,) * (len(allocation_key_as_array.shape) - 1)
-    return allocation_key_as_array[idx]
-  else:
-    return allocation_key_as_array[index]
+    raise ValueError(
+        f"Index {tuple(index)} does not select one barrier of an array of"
+        f" {keys.shape[:rank]} barriers."
+    )
+  return keys[tuple(index) + (0,) * (rank - len(index))]
 
 
 def _get_num_threads_sharing_collective_allocation(
