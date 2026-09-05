@@ -154,7 +154,8 @@ from jax._src.sharding_impls import (
     NamedSharding as NamedSharding,
     make_mesh as make_mesh,
     set_mesh as set_mesh,
-    get_mesh as get_mesh
+    get_mesh as get_mesh,
+    local_to_global_shape as local_to_global_shape,
 )
 from jax._src.mesh import (
     use_abstract_mesh as use_abstract_mesh,
