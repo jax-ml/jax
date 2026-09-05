@@ -193,9 +193,9 @@ the expression above would lead to an implicit type promotion:
    >>> jnp.int32(2) * x
    Array([0, 2, 4, 6, 8], dtype=int32)
 
-When used in JAX, Python scalars are sometimes promoted to :class:`~jax.numpy.DeviceArray`
+When used in JAX, Python scalars are sometimes promoted to :class:`~jax.Array`
 objects, for example during JIT compilation. To maintain the desired promotion
-semantics in this case, :class:`~jax.numpy.DeviceArray` objects carry a ``weak_type`` flag
+semantics in this case, :class:`~jax.Array` objects carry a ``weak_type`` flag
 that can be seen in an array's string representation:
 
 .. code-block:: python
