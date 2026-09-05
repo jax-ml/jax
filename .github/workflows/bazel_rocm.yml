@@ -87,6 +87,10 @@ on:
         description: "S3 URI for ROCm plugin/PJRT wheels (use 'latest' to resolve via LATEST pointer)"
         default: 'latest'
         type: string
+      jax-jaxlib-source:
+        description: "Where to take the base jax/jaxlib wheels from: 'upstream' (shared nightly bucket) or 'vendor' (the same store as the ROCm wheels)"
+        default: 'upstream'
+        type: string
       gate-targets-file:
         description: "Path to a file listing Bazel targets to run (one per line). If empty, runs the full default test suite."
         type: string
@@ -180,6 +184,7 @@ jobs:
           jaxlib-version: ${{ inputs.jaxlib-version }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
           s3_download_uri: ${{ inputs.s3_download_uri }}
+          jax-jaxlib-source: ${{ inputs.jax-jaxlib-source }}
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
