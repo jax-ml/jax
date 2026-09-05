@@ -1468,6 +1468,7 @@ for _op, _unary_impl, _is_signed in [
         lambda x: x._pointwise(mlir_math.ctlz, restrict_bitwidth=False),
         None,
     ),
+    (arith.NegFOp, operator.neg, None),
 ]:
   _lowerings[_op.OPERATION_NAME] = functools.partial(
       _unary_op_lowering_rule, impl=_unary_impl, is_signed=_is_signed
