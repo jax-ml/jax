@@ -61,6 +61,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     non-zero gradients leaked into the unused triangle of the input matrix
     ({jax-issue}`#40421`).
 
+* Bug fixes
+  * {func}`jax.scipy.stats.multinomial.logpmf` and
+    {func}`jax.scipy.stats.multinomial.pmf` now perform their support check
+    over the last axis of ``x`` only, so batched inputs containing rows whose
+    counts do not sum to ``n`` return correct values for the valid rows
+    instead of ``-inf`` everywhere.
+
 ## JAX 0.11.1 (August 17, 2026)
 
 * New features
