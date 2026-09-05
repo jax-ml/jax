@@ -25,6 +25,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     arguments (or the `JAX_MTLS_CERT_FILE`, `JAX_MTLS_KEY_FILE`,
     `JAX_MTLS_CA_FILE`, `JAX_MTLS_PEER_URI_PREFIX` and
     `JAX_DISTRIBUTED_VERIFY_SECURE_CREDENTIALS` environment variables).
+  * {func}`jax.numpy.fill_diagonal` now supports `wrap=True`, matching the
+    NumPy behavior of wrapping the diagonal for tall matrices.
 
 * Changes
   * `inline=True` in {func}`jax.jit` now corresponds to
