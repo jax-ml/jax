@@ -28,6 +28,7 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import effects
+from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src import state
 from jax._src.state import primitives as state_primitives
@@ -365,6 +366,120 @@ def _mpmd_map_partial_eval_custom(saveable, unks_in, inst_in, eqn):
 pe.partial_eval_jaxpr_custom_rules[mpmd_map_p] = _mpmd_map_partial_eval_custom
 
 
+def _is_scalar_prefetch_memory_space(memory_space: Any) -> bool:
+  """Returns whether ``memory_space`` is a scalar-prefetch memory space.
+
+  Scalar-prefetch values (e.g. the ``group_sizes`` of a grouped matmul) live in
+  scalar memory (``SMEM`` on TPU, or the backend-agnostic ``INDEX`` space) and
+  are typically used to compute dynamic grid/block-spec indices. Such values
+  cannot be vectorized by adding a batch dimension to the kernel body, so a
+  batched scalar-prefetch argument forces the explicit-loop batching fallback.
+  """
+  if memory_space is None:
+    return False
+  if memory_space is pallas_core.MemorySpace.INDEX:
+    return True
+  try:
+    from jax._src.pallas.mosaic import core as tpu_core  # pyrefly: ignore[missing-import]
+  except ImportError:
+    return False
+  return memory_space is tpu_core.MemorySpace.SMEM
+
+
+def _mpmd_map_batch_with_explicit_loop(
+    args,
+    dims,
+    *,
+    jaxprs,
+    meshes,
+    out_avals,
+    input_output_aliases,
+    axis_size,
+    **params,
+):
+  """Batches ``mpmd_map`` by looping over the batch dimension.
+
+  This is a fallback for cases in which adding a batch dimension to the kernel
+  body is not supported -- currently when a scalar-prefetch (SMEM/index)
+  argument is batched. It mirrors ``pallas_call._batch_with_explicit_loop``.
+  """
+  # Original memory-space constraints of the inputs. Slicing an array along the
+  # batch dimension drops any memory-space annotation, so we re-apply it below
+  # to keep scalar-prefetch arguments in scalar memory.
+  orig_memory_spaces = [
+      getattr(jax_core.typeof(arg), "memory_space", None) for arg in args
+  ]
+
+  # Move the batch dimension to axis 0 for all batched args. For non-ref array
+  # inputs we also strip any pallas memory-space annotation (e.g. SMEM), since
+  # ops like ``dynamic_slice`` used to slice the batch dimension cannot operate
+  # on pallas memory spaces outside a kernel. The original constraint is
+  # re-applied to each slice in ``loop_body`` below.
+  moved_args = []
+  for arg, dim, memory_space in zip(args, dims, orig_memory_spaces):
+    if dim is None:
+      moved_args.append(arg)
+      continue
+    if memory_space is not None and not isinstance(
+        jax_core.typeof(arg), state.AbstractRef
+    ):
+      arg = state_primitives.with_memory_space_constraint(
+          arg, jax_core.MemorySpace.Device
+      )
+    moved_args.append(batching.moveaxis(arg, dim, 0))
+
+  batched_out_refs = [
+      jax_core.new_ref(
+          lax.empty((axis_size, *out_aval.shape), out_aval.dtype),
+          memory_space=getattr(out_aval, "memory_space", None),
+      )
+      for out_aval in out_avals
+  ]
+
+  def loop_body(i, _):
+    sliced_args = []
+    for arg, dim, memory_space in zip(moved_args, dims, orig_memory_spaces):
+      if dim is None:
+        sliced_args.append(arg)
+      elif isinstance(arg_aval := jax_core.typeof(arg), state.AbstractRef):
+        sliced_args.append(
+            jax_core.new_ref(arg[i], memory_space=arg_aval.memory_space)
+        )
+      else:
+        sliced = arg[i]
+        # Re-apply the memory-space constraint (e.g. SMEM)
+        if memory_space is not None:
+          sliced = state_primitives.with_memory_space_constraint(
+              sliced, memory_space
+          )
+        sliced_args.append(sliced)
+
+    outs = mpmd_map_p.bind(
+        *sliced_args,
+        jaxprs=jaxprs,
+        meshes=meshes,
+        out_avals=out_avals,
+        input_output_aliases=input_output_aliases,
+        **params,
+    )
+
+    # Write outputs into the batched output refs at position i.
+    for batched_ref, out in zip(batched_out_refs, outs):
+      batched_ref[i] = out
+
+    # Write back any modified input refs.
+    for arg, sliced_arg, dim in zip(moved_args, sliced_args, dims):
+      if dim is not None and isinstance(jax_core.typeof(arg), state.AbstractRef):
+        arg[i] = jax_core.freeze(sliced_arg)
+
+    return None
+
+  lax.fori_loop(0, axis_size, loop_body, init_val=None)
+
+  batched_outs = [jax_core.freeze(ref) for ref in batched_out_refs]
+  return batched_outs, (0,) * len(batched_outs)
+
+
 def _mpmd_map_batching_rule(
     axis_data,
     args,
@@ -436,6 +551,26 @@ def _mpmd_map_batching_rule(
       if isinstance(jax_core.typeof(arg), state.AbstractRef):
         arg[...] = jnp.expand_dims(jax_core.freeze(squeezed_arg), dim)
     return [jnp.expand_dims(out, 0) for out in outs], (0,) * len(outs)
+
+  # If there exists a batched scalar-prefetch argument, we must use the explicit
+  # loop batching fallback (see ``pallas_call._batch_with_explicit_loop``).
+  needs_explicit_loop = any(
+      dim is not None
+      and isinstance(var.aval, state.AbstractRef)
+      and _is_scalar_prefetch_memory_space(var.aval.memory_space)
+      for var, dim in zip(jaxprs[0].invars[: len(args)], dims)
+  )
+  if needs_explicit_loop:
+    return _mpmd_map_batch_with_explicit_loop(
+        args,
+        dims,
+        jaxprs=jaxprs,
+        meshes=meshes,
+        out_avals=out_avals,
+        input_output_aliases=input_output_aliases,
+        axis_size=axis_data.size,
+        **params,
+    )
 
   # Move the batch dimension to axis 0 for all batched args.
   moved_args = [
