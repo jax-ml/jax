@@ -855,6 +855,11 @@ class JaxprInterpreter:
           thread=self.thread,
       ), []
 
+    # We can't handle inline_ptx, so return a dummy value which covers the
+    # cases where it's just used for ordering.
+    if fn.__qualname__.startswith("inline_ptx."):
+      return token, []
+
     match name:
       case "tcgen05_wait_ld":
         return thread_callback(gpu_callbacks.wait_load_tmem)
@@ -1278,6 +1283,52 @@ class JaxprInterpreter:
         thread=self.thread,
     ), []
 
+  def _interpret_try_cluster_cancel_p(
+      self, eqn, token: jax.Array, get_invals: Callable[[], Sequence[Any]]
+  ):
+    # In theory, cluster cancellation lets a block try to claim the work of a
+    # different not-yet-launched block. However, on the real device this is
+    # allowed to fail. To simplify interpret mode, we make it always fail
+    # so blocks are enumerated by the outer loop in interpret_pallas_call.
+    # TODO(paulbib): we're missing the ability to catch races by not letting
+    # this succeed sometimes.
+
+    assert eqn.primitive is gpu_primitives.try_cluster_cancel_p
+    _, barrier, *transforms_leaves = get_invals()
+    result_transforms_tree = eqn.params["result_transforms_tree"]
+    num_result_leaves = (
+        result_transforms_tree.num_leaves
+        if result_transforms_tree is not None
+        else 0
+    )
+    barrier_transforms_leaves = transforms_leaves[num_result_leaves:]
+    # The only effect that matters is the arrival, which the matching
+    # `barrier_wait` is blocked on.
+    barrier_key = _get_barrier_allocation_key_from_inval(
+        barrier,
+        eqn.params["barrier_transforms_tree"],
+        barrier_transforms_leaves,
+    )
+    token = gpu_callbacks.call_barrier_arrive(
+        token,
+        self.mesh_location,
+        self.thread,
+        barrier_key,
+        eqn.source_info,
+    )
+    return token, []
+
+  def _interpret_query_cluster_cancel_p(
+      self, eqn, token: jax.Array, _get_invals: Callable[[], Sequence[Any]]
+  ):
+    assert eqn.primitive is gpu_primitives.query_cluster_cancel_p
+    grid_names = eqn.params["grid_names"]
+    return token, [
+        # Return dummy value, since reading these values is UB if False is returned
+        *(jnp.zeros((), jnp.int32) for _ in grid_names),
+        jnp.bool_(False),
+    ]
+
   def interpret(self, jaxpr, token, *args):
     sentinel_for_floating_point_values = (
         _SENTINEL if self.interpret_params.skip_floating_point_ops else None
@@ -1371,6 +1422,12 @@ class JaxprInterpreter:
             out = []  # TODO(jburnim): wgmma_wait_p
           case gpu_primitives.wait_smem_to_gmem_p:
             token, out = self._interpret_wait_smem_to_gmem_p(
+                eqn, token, deferred_invals)
+          case gpu_primitives.try_cluster_cancel_p:
+            token, out = self._interpret_try_cluster_cancel_p(
+                eqn, token, deferred_invals)
+          case gpu_primitives.query_cluster_cancel_p:
+            token, out = self._interpret_query_cluster_cancel_p(
                 eqn, token, deferred_invals)
           case gpu_primitives.set_max_registers_p:
             # This primitive is a no-op in GPU Interpret Mode.

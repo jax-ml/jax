@@ -2581,6 +2581,38 @@ class InterpretTest(jtu.JaxTestCase):
     output = kernel(a)
     self.assertArraysEqual(output, a)
 
+
+  @jtu.parameterized.product(grid=[(4,), (2, 3)])
+  def test_dynamic_scheduling_loop(self, grid):
+    # `dynamic_scheduling_loop` lets a block claim a not-yet-launched block's
+    # work. The interpreter enumerates the whole grid itself, so there is never
+    # unlaunched work to claim: every cancellation attempt fails -- a legal
+    # hardware outcome -- and each block runs exactly its own grid index.
+    grid_names = tuple(f'g{i}' for i in range(len(grid)))
+
+    def _kernel(o_ref):
+      block = tuple(jax.lax.axis_index(name) for name in grid_names)
+
+      @plgpu.dynamic_scheduling_loop(grid_names, thread_axis='wg')
+      def _(loop_info: plgpu.NDLoopInfo):
+        o_ref[loop_info.index] = jnp.int32(
+            sum(b * s for b, s in zip(block, (*grid[1:], 1)))
+        )
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_type=jax.ShapeDtypeStruct(grid, jnp.int32),
+        grid=grid,
+        grid_names=grid_names,
+        num_threads=1,
+        thread_name='wg',
+        interpret=InterpretParams(inline_mgpu='ignore')
+    )
+
+    np.testing.assert_array_equal(
+        kernel(), np.arange(math.prod(grid), dtype=np.int32).reshape(grid)
+    )
+
   def test_exception_in_kernel_is_reported(self):
     @functools.partial(
         plgpu.kernel,
