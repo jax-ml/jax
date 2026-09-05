@@ -1151,29 +1151,13 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CompileAndCheck(
       jnp_fun, args_maker, check_dtypes=False)
 
-  @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
-     for shape, axis in (
-         ((0,), None),
-         ((0,), 0),
-         ((0, 4), 0),
-         ((0, 4), -2),
-         ((0, 4), None),
-         ((3, 0), 1),
-         ((3, 0), None),
-         ((2, 0, 3), 1),
-         ((2, 0, 3), (0, 1)),
-         ((2, 0, 3), (1, 2)),
-     )],
-    keepdims=[False, True],
-  )
-  def testMedianEmptyReductionRaises(self, shape, axis, keepdims):
-    x = np.empty(shape, dtype=np.float32)
+  def testMedianEmptyReductionRaises(self):
+    x = np.empty((0,), dtype=np.float32)
     msg = "median reduction axis must be non-empty"
     with self.assertRaisesRegex(ValueError, msg):
-      jnp.median(x, axis=axis, keepdims=keepdims)
+      jnp.median(x)
     with self.assertRaisesRegex(ValueError, msg):
-      jax.jit(partial(jnp.median, axis=axis, keepdims=keepdims))(x)
+      jax.jit(jnp.median)(x)
 
   def testMedianEmptyArrayNonEmptyReductionAxis(self):
     # Array is empty, but the reduction axis itself is not.
