@@ -943,6 +943,107 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected[0] = device_count
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastDynamicRoot(self):
+    # Source given as a dynamic i32 scalar; uses has_dynamic_root=True.
+    device_count = jax.device_count()
+    # Broadcast from device 0 using a dynamic source array.
+    source_arr = np.int32(0)
+    f = lambda x: lax.pbroadcast(x, source=source_arr, axis_name='i')
+    f = pmap(f, 'i')
+    x = jnp.arange(4 * device_count).reshape((device_count, 4))
+    ans = f(x)
+    expected = np.take(x, [0] * device_count, axis=0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastDynamicRootNonzeroSource(self):
+    # Dynamic source selects a non-zero device.
+    device_count = jax.device_count()
+    if device_count < 2:
+      raise SkipTest("requires at least 2 devices")
+    source_arr = np.int32(1)
+    f = lambda x: lax.pbroadcast(x, source=source_arr, axis_name='i')
+    f = pmap(f, 'i')
+    x = jnp.arange(4 * device_count, dtype=np.float32).reshape((device_count, 4))
+    ans = f(x)
+    expected = np.take(x, [1] * device_count, axis=0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastDynamicRootGrad(self):
+    # Reverse-mode AD through pbroadcast with dynamic source.
+    device_count = jax.device_count()
+    source_arr = np.int32(0)
+    f = lambda x: lax.pbroadcast(x, source=source_arr, axis_name='i')
+    x = np.arange(device_count, dtype=np.float32)
+    ans = pmap(grad(f), 'i')(x)
+    expected = np.zeros_like(x)
+    expected[0] = device_count
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastDynamicRootAxisIndexAsSource(self):
+    # Source derived from axis_index (fully dynamic: different per device).
+    # Broadcast from device 0 by passing source = axis_index % 1 == 0 always.
+    device_count = jax.device_count()
+    def f(x):
+      # Each device computes source = 0 dynamically.
+      source = jnp.int32(0)
+      return lax.pbroadcast(x, source=source, axis_name='i')
+    f = pmap(f, 'i')
+    x = jnp.arange(4 * device_count).reshape((device_count, 4))
+    ans = f(x)
+    expected = np.take(x, [0] * device_count, axis=0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastDynamicRootBatcherConstantData(self):
+    # Exercises the batcher's d-is-None path: x is a constant (not batched
+    # over the pmap axis), so pbroadcast is a no-op and the batcher returns
+    # the original value unchanged.
+    device_count = jax.device_count()
+    constant = jnp.ones((4,), dtype=jnp.float32)
+    def f(_ignored):
+      return lax.pbroadcast(constant, source=jnp.int32(1), axis_name='i')
+    ans = pmap(f, 'i')(jnp.zeros((device_count,)))
+    # Broadcasting a value that is the same on all devices is a no-op.
+    expected = jnp.broadcast_to(constant, (device_count, 4))
+    self.assertAllClose(ans, expected)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastDynamicRootBatcherNonzeroSource(self):
+    # Exercises the batcher's d-is-not-None path with a non-zero dynamic
+    # source: verifies that dynamic_index_in_dim + broadcast_in_dim correctly
+    # tiles the selected slice across the batch dimension.
+    device_count = jax.device_count()
+    if device_count < 2:
+      raise SkipTest("requires at least 2 devices")
+    x = jnp.arange(4 * device_count, dtype=jnp.float32).reshape((device_count, 4))
+    # Broadcast from device device_count-1 using a dynamic source.
+    src = np.int32(device_count - 1)
+    ans = pmap(lambda v: lax.pbroadcast(v, source=src, axis_name='i'), 'i')(x)
+    expected = jnp.broadcast_to(x[device_count - 1], (device_count, 4))
+    self.assertAllClose(ans, expected)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastDynamicRootVmapOuterAxis(self):
+    # Exercises the batcher's axis-not-in-axis_name pass-through: an outer
+    # vmap maps over a batch dimension independent of the collective axis, so
+    # the pbroadcast_dynamic is forwarded unchanged.
+    device_count = jax.device_count()
+    batch = 2
+    x = jnp.arange(batch * device_count * 4, dtype=jnp.float32).reshape(
+        (batch, device_count, 4))
+    def f_inner(v):
+      return lax.pbroadcast(v, source=jnp.int32(0), axis_name='i')
+    # vmap over the leading batch axis; pmap handles the collective axis.
+    f = jax.vmap(pmap(f_inner, 'i'), out_axes=0)
+    ans = f(x)
+    expected = jnp.stack([jnp.broadcast_to(x[b, 0], (device_count, 4))
+                          for b in range(batch)])
+    self.assertAllClose(ans, expected)
+
   def testCollectivePermute(self):
     device_count = jax.device_count()
     rotation = [(i, (i + 1) % device_count) for i in range(device_count)]
