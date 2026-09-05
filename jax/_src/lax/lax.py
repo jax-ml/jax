@@ -9699,7 +9699,26 @@ def _one_vjp(x):
   x_aval = core.typeof(x)
   ct_s = core.primal_sharding_to_cotangent_sharding(x_aval.sharding)
   ct_s = ct_s.update(spec=ct_s.spec.update(partitions=()))
-  return full_like(x, shape=(), fill_value=1, sharding=ct_s)
+  one = full_like(x, shape=(), fill_value=1, sharding=ct_s)
+  if x_aval.memory_space not in (
+      core.MemorySpace.Device,
+      core.MemorySpace.Any,
+  ):
+    target_sharding = ct_s.update(
+        memory_kind=core.mem_space_to_kind(x_aval.memory_space)
+    )
+    # This explicit placement is a correctness-first path and may materialize
+    # a small copy. This is required to support locality domain memory spaces since
+    # otherwise the cotangent seed will be created in the default device mem space causing
+    # a mismatch. The more optimal implementation is for full_like to accept memory_kind 
+    # and create the cotangent seed directly in the requested memory space.
+    one = dispatch.device_put_p.bind(
+        one,
+        devices=(target_sharding,),
+        srcs=(None,),
+        copy_semantics=(dispatch.ArrayCopySemantics.REUSE_INPUT,),
+    )[0]
+  return one
 
 _twos: Callable = partial(full_like, fill_value=2)
 _two: Callable = partial(full_like, shape=(), fill_value=2)

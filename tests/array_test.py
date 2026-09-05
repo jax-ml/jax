@@ -1429,6 +1429,37 @@ class ShardingTest(jtu.JaxTestCase):
         ValueError, 'Got invalid memory kind'):
       NamedSharding(abstract_mesh, P(), memory_kind='weird_device')
 
+  def test_locality_memory_kind_with_abstract_mesh(self):
+    abstract_mesh = AbstractMesh((2,), ('x',))
+    max_domain_id = (1 << 63) - 1 - 16
+
+    for memory_kind in (
+        'locality_domain:0',
+        'locality_domain:1',
+        'locality_domain:256',
+        f'locality_domain:{max_domain_id}',
+    ):
+      with self.subTest(memory_kind=memory_kind):
+        sharding = NamedSharding(
+            abstract_mesh, P(), memory_kind=memory_kind
+        )
+        self.assertEqual(sharding.memory_kind, memory_kind)
+
+    for memory_kind in (
+        'locality_domain:',
+        'locality_domain:-1',
+        'locality_domain:+1',
+        'locality_domain:01',
+        'locality_domain: 1',
+        'locality_domain:1 ',
+        'locality_domain:1.0',
+        'locality_domain:one',
+        f'locality_domain:{max_domain_id + 1}',
+    ):
+      with self.subTest(memory_kind=memory_kind):
+        with self.assertRaisesRegex(ValueError, 'invalid memory kind'):
+          NamedSharding(abstract_mesh, P(), memory_kind=memory_kind)
+
   def test_pspec_mix_axis_types(self):
     mesh = AbstractMesh(
         (2, 2, 2, 2), ('a', 'b', 'c', 'd'),
