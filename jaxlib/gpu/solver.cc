@@ -17,6 +17,9 @@ limitations under the License.
 #include "jaxlib/gpu/solver_kernels_ffi.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
+#ifdef JAX_GPU_HIP
+#include "jaxlib/gpu/rocm/potrf_kernels.h"
+#endif  // JAX_GPU_HIP
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
@@ -40,6 +43,7 @@ nb::dict Registrations() {
 
 #ifdef JAX_GPU_HIP
   dict[JAX_GPU_PREFIX "solver_gesdd_ffi"] = EncapsulateFfiHandler(GesddFfi);
+  dict["rocsolver_potrf_ffi"] = EncapsulateFfiHandler(RocPotrfFfi);
 #endif  // JAX_GPU_HIP
 
 #ifdef JAX_GPU_CUDA
