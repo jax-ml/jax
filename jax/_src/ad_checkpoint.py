@@ -1110,6 +1110,11 @@ class RematTraced(HiPrim):
   def expand(self, *args):
     return core.eval_jaxpr_p.bind(*args, call_jaxpr=self.jaxpr)
 
+  def physicalize(self, ctx, *args):
+    new_jaxpr = ctx.physicalize_closed_jaxpr(self.jaxpr)
+    new_prim = RematTraced(new_jaxpr, self.policy, self.prevent_cse)
+    return call_hi_primitive_p.bind(*args, _prim=new_prim)
+
   def vjp_fwd(self, nzs_in, *primals):
     # TODO eval_jaxpr_p trace time
     self._check_differentiable()
