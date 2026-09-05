@@ -1825,6 +1825,9 @@ def lower_jaxpr_to_fun(
   if result_memory_kinds is not None:
     token_memory_kinds = [None] * num_tokens
     result_memory_kinds = [*token_memory_kinds, *result_memory_kinds]
+  if propagated_out_mem_kinds is not None:
+    token_memory_kinds = [None] * num_tokens
+    propagated_out_mem_kinds = (*token_memory_kinds, *propagated_out_mem_kinds)
   if arg_layouts is not None:
     prefix_layouts = [None] * (num_dim_vars + num_tokens)
     arg_layouts = [*prefix_layouts, *arg_layouts]

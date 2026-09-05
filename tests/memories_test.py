@@ -28,6 +28,7 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.layout import Layout as DLL, Format
 from jax._src import config
+from jax._src.callback import io_callback
 from jax.ad_checkpoint import checkpoint_name, Recompute
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
@@ -1323,6 +1324,28 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(out.sharding, out_s)
     executable_mk = get_memory_kinds_from_executable(h, [inp])
     self._check_mem_kind(executable_mk[0], out.sharding, "pinned_host")
+
+  def test_ordered_effect_with_non_default_memory_kind(self):
+    _, s, np_inp, inp = _create_inputs((8, 2), P("x", "y"))
+    out_s = s.with_memory_kind("pinned_host")
+
+    def f(x):
+      io_callback(lambda _: None, None, x, ordered=True)
+      return x * 2
+
+    out = jax.jit(f, out_shardings=out_s)(inp)
+    self.assertEqual(out.sharding, out_s)
+    self.assertArraysEqual(out, np_inp * 2)
+
+    @jax.jit
+    def g(x):
+      io_callback(lambda _: None, None, x, ordered=True)
+      return jax.device_put(x * 2, out_s)
+
+    out = g(inp)
+    self.assertEqual(out.sharding.memory_kind, "pinned_host")
+    self.assertArraysEqual(out, np_inp * 2)
+    jax.effects_barrier()
 
   def test_jit_in_shardings(self):
     _, s, np_inp, inp = _create_inputs((8, 2), P("x", "y"))
