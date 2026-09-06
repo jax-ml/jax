@@ -2507,19 +2507,26 @@ def _pred_bcast_select_hlo(ctx,
 
 ### fori_loop
 
-def _fori_cond_fun(loop_carry):
+def _fori_trip_count(lower, upper, step):
+  """Number of iterations of ``range(lower, upper, step)``."""
+  # Integer ceil division, not float, to avoid rounding on large bounds.
+  return max(0, -(-(upper - lower) // step))
+
+def _fori_cond_fun(loop_carry, step=1):
   i, upper, _ = loop_carry
-  return lax.lt(i, upper)
+  # `upper` is the exclusive stop bound in both directions.
+  return lax.lt(i, upper) if step > 0 else lax.gt(i, upper)
 
 @weakref_lru_cache
-def _fori_body_fun(body_fun: Callable, body_fun_dbg: core.DebugInfo) -> Callable:
+def _fori_body_fun(body_fun: Callable, body_fun_dbg: core.DebugInfo,
+                   step: int = 1) -> Callable:
   body_fun_ref = weakref.ref(body_fun)
 
   def while_body_fun(loop_carry):
     i, upper, x = loop_carry
     body_fun = body_fun_ref()
     assert body_fun is not None
-    return lax.add(i, lax._const(i, 1)), upper, body_fun(i, x)
+    return lax.add(i, lax._const(i, step)), upper, body_fun(i, x)
   if body_fun_dbg.arg_names is not None:
     arg_names = (body_fun_dbg.arg_names[0],
                  "",  # upper,
@@ -2532,20 +2539,21 @@ def _fori_body_fun(body_fun: Callable, body_fun_dbg: core.DebugInfo) -> Callable
   return while_body_fun
 
 @weakref_lru_cache
-def _fori_scan_body_fun(body_fun: Callable, body_fun_dbg: core.DebugInfo) -> Callable:
+def _fori_scan_body_fun(body_fun: Callable, body_fun_dbg: core.DebugInfo,
+                        step: int = 1) -> Callable:
   body_fun_ref = weakref.ref(body_fun)
   def scanned_fun(loop_carry, _):
     i, x = loop_carry
     body_fun = body_fun_ref()
     assert body_fun is not None
-    return (i + 1, body_fun(i, x)), None
+    return (i + step, body_fun(i, x)), None
   api_util.save_wrapped_fun_debug_info(
       scanned_fun, body_fun_dbg._replace(result_paths=None))
   return scanned_fun
 
 @partial(api_boundary, repro_api_name="jax.lax.fori_loop")
 def fori_loop(lower, upper, body_fun, init_val,
-              *, unroll: int | bool | None = None):
+              *, unroll: int | bool | None = None, step: int = 1):
   """Loop from ``lower`` to ``upper`` by reduction to :func:`jax.lax.while_loop`.
 
   The `Haskell-like type signature`_ in brief is
@@ -2556,14 +2564,15 @@ def fori_loop(lower, upper, body_fun, init_val,
 
   The semantics of ``fori_loop`` are given by this Python implementation::
 
-    def fori_loop(lower, upper, body_fun, init_val):
+    def fori_loop(lower, upper, body_fun, init_val, *, step=1):
       val = init_val
-      for i in range(lower, upper):
+      for i in range(lower, upper, step):
         val = body_fun(i, val)
       return val
 
-  As the Python version suggests, setting ``upper <= lower`` will produce no
-  iterations. Negative or custom increments are not supported.
+  As the Python version suggests, an empty range produces no iterations: with a
+  positive ``step`` that means ``upper <= lower``, and with a negative ``step``
+  it means ``upper >= lower``.
 
   Unlike that Python version, ``fori_loop`` is implemented in terms of either a
   call to :func:`jax.lax.while_loop` or a call to :func:`jax.lax.scan`. If the
@@ -2596,6 +2605,10 @@ def fori_loop(lower, upper, body_fun, init_val,
       boolean is provided, it will determine if the loop is completely unrolled
       (i.e. `unroll=True`) or left completely unrolled (i.e. `unroll=False`).
       This argument is only applicable if the loop bounds are statically known.
+    step: an optional nonzero Python ``int`` giving the loop index increment,
+      following :py:func:`range` semantics, so the index passed to ``body_fun``
+      on iteration ``k`` is ``lower + k * step``. Unlike ``lower`` and
+      ``upper``, it must be a concrete Python ``int``.
 
   Returns:
     Loop value from the final iteration, of type ``a``.
@@ -2604,6 +2617,12 @@ def fori_loop(lower, upper, body_fun, init_val,
   """
   if not callable(body_fun):
     raise TypeError("lax.fori_loop: body_fun argument should be callable.")
+  # `bool` is a subclass of `int`, so guard it explicitly.
+  if isinstance(step, bool) or not isinstance(step, int):
+    raise TypeError("lax.fori_loop: step argument should be a nonzero Python "
+                    f"int, got {step!r}.")
+  if step == 0:
+    raise ValueError("lax.fori_loop: step argument should be nonzero.")
 
   # TODO(phawkins): perhaps do more type checking here, better error messages.
   lower_dtype = lax.dtype(lower)
@@ -2648,11 +2667,11 @@ def fori_loop(lower, upper, body_fun, init_val,
   if use_scan:
     if unroll is None:
       unroll = False
-    length = max(upper_ - lower_, 0)
+    length = _fori_trip_count(lower_, upper_, step)
     if config.disable_jit.value and length == 0:
       # non-jit implementation of scan does not support length=0
       return init_val
-    scan_body = _fori_scan_body_fun(body_fun, body_fun_dbg)
+    scan_body = _fori_scan_body_fun(body_fun, body_fun_dbg, step)
     (_, result), _ = scan(
         scan_body,
         (lower_, init_val),
@@ -2669,8 +2688,8 @@ def fori_loop(lower, upper, body_fun, init_val,
     lower = lax.convert_element_type(lower, dtype)
   if upper_dtype != dtype:
     upper = lax.convert_element_type(upper, dtype)
-  while_body_fun = _fori_body_fun(body_fun, body_fun_dbg)
-  _, _, result = while_loop(_fori_cond_fun, while_body_fun,
+  while_body_fun = _fori_body_fun(body_fun, body_fun_dbg, step)
+  _, _, result = while_loop(partial(_fori_cond_fun, step=step), while_body_fun,
                             (lower, upper, init_val))
   return result
 

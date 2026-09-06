@@ -94,11 +94,47 @@ WHILE_LOOP_IMPLS = [
     (while_loop_new_checkpoint, 'new_checkpoint'),
 ]
 
+# (lower, upper, step) triples spanning both directions, strides that do and do
+# not divide the span, and every empty range.
+FORI_STEP_CASES = [
+    (0, 5, 1),
+    (5, 0, -1),
+    (0, 10, 3),
+    (0, 7, 3),
+    (0, 9, 3),
+    (10, 0, -3),
+    (5, 0, 1),      # empty
+    (0, 5, -1),     # empty
+    (3, 3, 1),      # zero length
+    (3, 3, -1),     # zero length
+    (0, 1, 100),    # single iteration
+    (0, -1, -100),  # single iteration
+    (-5, 5, 2),
+    (5, -5, -2),
+]
+
+# `fori_loop` lowers to `scan` when both bounds are concrete and to `while_loop`
+# otherwise; the second entry passes the bounds as jit arguments to force it.
+FORI_PATHS = [
+    ("scan", lambda lower, upper, body, init, step:
+        lax.fori_loop(lower, upper, body, init, step=step)),
+    ("while", lambda lower, upper, body, init, step:
+        jax.jit(lambda lo, up, v: lax.fori_loop(lo, up, body, v, step=step))(
+            lower, upper, init)),
+]
+
 
 def while_loop_reference(cond, body, carry):
   while cond(carry):
     carry = body(carry)
   return carry
+
+
+def fori_loop_reference(lower, upper, body, init, step=1):
+  val = init
+  for i in range(lower, upper, step):
+    val = body(i, val)
+  return val
 
 
 def scan_reference(f, init, xs):
@@ -730,6 +766,148 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(should_raise_wo_jit(), 0., check_dtypes=False)
     with jax.disable_jit():
       self.assertRaises(ValueError, should_raise_wo_jit)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{path}_{lower=}_{upper=}_{step=}",
+       "run": run, "lower": lower, "upper": upper, "step": step}
+      for path, run in FORI_PATHS
+      for lower, upper, step in FORI_STEP_CASES
+  )
+  def testForiLoopStep(self, run, lower, upper, step):
+    """`step` must match `range(lower, upper, step)` on both lowerings."""
+    # Accumulating the index, not counting, so that a body receiving the loop
+    # counter instead of the index fails here.
+    body = lambda i, val: val + i
+    expected = fori_loop_reference(lower, upper, body, 0, step)
+    self.assertEqual(int(run(lower, upper, body, 0, step)), expected)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{path}_{step=}", "run": run, "step": step}
+      for path, run in FORI_PATHS
+      for step in (1, -1, 3, -3)
+  )
+  def testForiLoopStepEmptyRangeRunsNoIterations(self, run, step):
+    """An empty range must run zero iterations and return init untouched.
+
+    `scan` traces `body_fun` even when `length == 0`, so this asserts on the
+    executed iteration count rather than on trace-time calls.
+    """
+    lower, upper = (5, 0) if step > 0 else (0, 5)
+    self.assertEqual(list(range(lower, upper, step)), [])
+
+    init = jnp.float32(10)
+    body = lambda i, val: val + i + 1.
+    self.assertEqual(run(lower, upper, body, init, step), init)
+
+  def testForiLoopStepTakesScanPathWhenBoundsConcrete(self):
+    """Concrete bounds must still lower to `scan`, which is differentiable."""
+    jaxpr = jax.make_jaxpr(
+        lambda x: lax.fori_loop(5, 0, lambda i, v: v * 2., x, step=-1))(1.)
+    prims = {eqn.primitive.name for eqn in jaxpr.eqns}
+    self.assertIn("scan", prims)
+    self.assertNotIn("while", prims)
+
+  def testForiLoopStepLargeTripCount(self):
+    """Trip count must use integer math, which float ceil would round."""
+    lower, upper, step = 0, 10 ** 7, 3
+    expected = len(range(lower, upper, step))
+    count = lax.fori_loop(lower, upper, lambda i, v: v + 1, 0, step=step)
+    self.assertEqual(int(count), expected)
+
+  def testForiLoopStepZero(self):
+    with self.assertRaisesRegex(ValueError, "step argument should be nonzero"):
+      lax.fori_loop(0, 5, lambda i, v: v, 0, step=0)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{step=}", "step": step}
+      for step in (True, False, 2.0, "2")
+  )
+  def testForiLoopStepNotAnInt(self, step):
+    # `bool` subclasses `int`, so `step=True` must not be read as `step=1`.
+    with self.assertRaisesRegex(TypeError, "step argument should be"):
+      lax.fori_loop(0, 5, lambda i, v: v, 0, step=step)
+
+  def testForiLoopStepTracedStepRejected(self):
+    """A traced step has no known sign, so its comparison cannot be chosen."""
+    with self.assertRaisesRegex(TypeError, "step argument should be"):
+      lax.fori_loop(0, 5, lambda i, v: v, 0, step=jnp.int32(2))
+
+    with self.assertRaisesRegex(TypeError, "step argument should be"):
+      jax.jit(lambda s: lax.fori_loop(0, 5, lambda i, v: v, 0, step=s))(2)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{step=}", "step": step} for step in (1, -1, 2, -2)
+  )
+  def testForiLoopStepGrad(self, step):
+    """Reverse-mode autodiff through the `scan` lowering."""
+    lower, upper = (0, 5) if step > 0 else (5, 0)
+    body = lambda i, val: val * (i + 1.)
+    f = lambda x: lax.fori_loop(lower, upper, body, x, step=step)
+    ref = lambda x: fori_loop_reference(lower, upper, body, x, step)
+
+    self.assertAllClose(f(2.), ref(2.), check_dtypes=False)
+    self.assertAllClose(jax.grad(f)(2.), jax.grad(ref)(2.), check_dtypes=False)
+    jtu.check_grads(f, (2.,), order=2, modes=["fwd", "rev"])
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{step=}", "step": step} for step in (1, -1, 2, -2)
+  )
+  def testForiLoopStepBatched(self, step):
+    lower, upper = (0, 6) if step > 0 else (6, 0)
+    body = lambda i, val: val + i
+    f = lambda init: lax.fori_loop(lower, upper, body, init, step=step)
+    xs = jnp.arange(4, dtype=jnp.float32)
+    expected = jnp.stack(
+        [fori_loop_reference(lower, upper, body, x, step) for x in xs])
+    self.assertAllClose(jax.vmap(f)(xs), expected, check_dtypes=False)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{path}_x64={x64}_{step=}",
+       "run": run, "x64": x64, "step": step}
+      for path, run in FORI_PATHS
+      for x64 in (False, True)
+      for step in (1, -1, 3, -3)
+  )
+  def testForiLoopStepIndexDtype(self, run, x64, step):
+    """The index dtype must follow the x64 setting.
+
+    Asserts dtype only, since weak_type already differs between the two
+    lowerings independently of `step`.
+    """
+    with config.enable_x64(x64):
+      expected_dtype = jnp.dtype(jnp.int64 if x64 else jnp.int32)
+      lower, upper = (0, 6) if step > 0 else (6, 0)
+
+      seen = []
+      def body(i, val):
+        seen.append(jnp.asarray(i).dtype)
+        return val + i
+
+      run(lower, upper, body, 0, step)
+      self.assertEqual(seen[-1], expected_dtype)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{step=}_{unroll=}", "step": step, "unroll": unroll}
+      for step in (1, -1, 2, -2)
+      for unroll in (False, True, 2)
+  )
+  def testForiLoopStepUnroll(self, step, unroll):
+    """`unroll` must keep working alongside a non-unit step."""
+    lower, upper = (0, 8) if step > 0 else (8, 0)
+    body = lambda i, val: val + i
+    expected = fori_loop_reference(lower, upper, body, 0, step)
+    actual = lax.fori_loop(lower, upper, body, 0, step=step, unroll=unroll)
+    self.assertEqual(int(actual), expected)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{lower=}_{upper=}", "lower": lower, "upper": upper}
+      for lower, upper in ((0, 5), (0, 0), (5, 0), (-3, 3))
+  )
+  def testForiLoopDefaultStepUnchanged(self, lower, upper):
+    """Calls that omit `step` must be unaffected."""
+    body = lambda i, val: val + i
+    expected = fori_loop_reference(lower, upper, body, 0)
+    self.assertEqual(int(lax.fori_loop(lower, upper, body, 0)), expected)
 
   def testCond(self):
     def fun(x):

@@ -19,6 +19,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * New features
   * Added {func}`jax.export.symbolic_dim_bounds` for querying conservative
     bounds on symbolic dimension expressions ({jax-issue}`#40006`).
+  * {func}`jax.lax.fori_loop` now accepts a `step` argument, giving it
+    `range(lower, upper, step)` semantics including negative steps for
+    reverse iteration ({jax-issue}`#2016`).
   * {func}`jax.distributed.initialize` can now secure the coordination service
     with mutual TLS via the new `mtls_cert_file`, `mtls_key_file`,
     `mtls_ca_file`, `mtls_peer_uri_prefix` and `verify_secure_credentials`
