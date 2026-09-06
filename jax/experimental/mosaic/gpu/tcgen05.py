@@ -969,11 +969,6 @@ def tmem_alloc(
   return ncols
 
 
-def _tmem_addr_to_ptr(tmem_addr: ir.Value) -> ir.Value:
-  assert tmem_addr.type == ir.IntegerType.get_signless(32)
-  return llvm.inttoptr(llvm.PointerType.get(address_space=6), tmem_addr)
-
-
 def tmem_dealloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact: bool = True) -> None:
   if tmem_addr.type != ir.IntegerType.get_signless(32):
     raise ValueError(f"tmem_addr must be an i32, got: {tmem_addr.type}")
