@@ -5139,6 +5139,8 @@ class CompositeTest(jtu.JaxTestCase):
     self.assertIn('return %arg0, %arg1, %arg2 : tensor<f32>, tensor<f32>, tensor<f32>', mlir_module)
 
   def test_composite_with_symbolic_shapes(self):
+    # Executing this export requires StableHLO shape refinement support for
+    # composite decompositions with dynamic shapes (see #40486).
     @partial(lax.composite, name="my.square")
     def my_square(x):
       return x * x
@@ -5157,6 +5159,23 @@ class CompositeTest(jtu.JaxTestCase):
         mlir_module,
         r'@my.square\(%arg0: tensor<i..>.*jax.global_constant = "b".*, '
         r'%arg1: tensor<\?xf32>.*\) -> tensor<\?xf32>')
+
+  def test_composite_with_symbolic_shapes_execution(self):
+    @partial(lax.composite, name="my.square")
+    def my_square(x):
+      return x * x
+
+    # This decomposition accepts the enclosing export's dimension variables,
+    # but returns a scalar value so that it does not require shape refinement
+    # to execute
+    def f(x):
+      return my_square(x.sum())
+
+    exp = export.export(jax.jit(f))(
+        jax.ShapeDtypeStruct(export.symbolic_shape("b"), jnp.float32))
+    for b in (3, 5):
+      x = jnp.arange(b, dtype=jnp.float32)
+      self.assertArraysEqual(exp.call(x), x.sum() ** 2)
 
   def test_composite_with_multiple_platforms(self):
     @partial(lax.composite, name="my.square")
