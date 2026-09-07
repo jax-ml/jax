@@ -2570,7 +2570,7 @@ def _construct_value_error_with_op_stacktrace(
   tb = None
   try:
     tb = error.traceback_from_op(culprit_op.operation)
-  except Exception:  # pylint: disable=broad-except
+  except Exception:
     pass
   ve = ValueError(msg)
   if tb is not None:

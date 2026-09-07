@@ -1499,14 +1499,14 @@ def _get_barrier_base_index(aval, transforms) -> ir.Value | None:
           if isinstance(
               idx, (int, ir.Value, mgpu.FragmentedArray, literals.TypedNdArray)
           ):
-            idx = lowering._as_index(idx)  # pylint: disable=protected-access
+            idx = lowering._as_index(idx)
           else:
             raise ValueError(
                 "Barrier can only be indexed with integers or slices, got"
                 f" {idx}"
             )
 
-          idx = arith_dialect.muli(idx, lowering._as_index(stride))  # pylint: disable=protected-access
+          idx = arith_dialect.muli(idx, lowering._as_index(stride))
           if base_index is None:
             base_index = idx
           else:
@@ -4905,7 +4905,7 @@ def try_cluster_cancel_lowering(
     if axis_names.wg is not None and axis == axis_names.wg:
       is_first_wg = eq(mgpu.warpgroup_idx(), mgpu.c(0, i32))
     else:
-      cluster_dim = lowering._resolve_cluster_axis(axis_names, axis)  # pylint: disable=protected-access
+      cluster_dim = lowering._resolve_cluster_axis(axis_names, axis)
       cluster_idx = mgpu.utils.cluster_idx(cluster_dim)
       is_first_cta = arith_dialect.andi(is_first_cta, eq(cluster_idx, zero))
 

@@ -1052,7 +1052,7 @@ def _tmem_load(
   regs = llvm.inline_asm(
       asm_out_ty,
       [tmem_addr],
-      f"tcgen05.ld{red_mod}.sync.aligned.{shape}.x{num}{suffix} {regs_vector}{red_reg_arg}, [${num_out_regs}];",  # pylint: disable=line-too-long
+      f"tcgen05.ld{red_mod}.sync.aligned.{shape}.x{num}{suffix} {regs_vector}{red_reg_arg}, [${num_out_regs}];",
       "=r," * num_out_regs + "r",
       has_side_effects=True,
   )
