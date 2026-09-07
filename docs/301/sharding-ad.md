@@ -20,29 +20,27 @@ kernelspec:
 In explicit sharding mode ({ref}`jax-201-sharding`), shardings are part of
 JAX types: `jax.typeof(x)` might print `float32[8@X,4]`, meaning the leading
 axis is sharded along mesh axis `X`. This page is about what happens when you
-differentiate such a program. The main idea:
+differentiate such a program. The main idea is that you control how your
+backward pass is sharded through local reasoning about your forward pass.
 
-**You control how your backward pass is sharded, through simple, local
-reasoning about your forward pass.**
-
-The rule that delivers this is that *cotangent types are a function of primal
-types*: the type of each gradient value in the backward pass — shape, dtype,
-and sharding — is determined by the type of the corresponding value in the
+The rule behind this is that *cotangent types are a function of primal
+types*: the type of each gradient value in the backward pass (shape, dtype,
+and sharding) is determined by the type of the corresponding value in the
 forward pass. Once you know your forward-pass types, you know your
 backward-pass types, and hence where backward-pass communication happens.
 
 There's a second theme running through this page. If every axis of every
 array were plain *sharded*, autodiff would need nothing new: sharded
-cotangents for sharded primals, no communication anywhere. It's
-*replication* — wanting a full copy of an array on several devices — that
-makes things interesting. Replication's dual under transposition is
-*reduction*, i.e. a cross-device sum, and someone has to decide where that
-sum happens. Demanding efficient autodiff plus local reasoning in the
-presence of replication is what leads to the two new sharding states
-introduced below, `unreduced` and `reduced`.
+cotangents for sharded primals, no communication anywhere. *Replication*,
+meaning a full copy of an array on several devices, is what requires
+something new. Replication's dual under transposition is *reduction*, i.e. a
+cross-device sum, and someone has to decide where that sum happens.
+Demanding efficient autodiff plus local reasoning in the presence of
+replication is what leads to the two new sharding states introduced below,
+`unreduced` and `reduced`.
 
 Most of this page works in explicit mode; the final section shows the same
-story playing out in manual mode, inside {func}`jax.shard_map`.
+thing in manual mode, inside {func}`jax.shard_map`.
 
 We'll use two CPU devices and a one-axis mesh throughout:
 
@@ -90,12 +88,13 @@ primal shardings:
 
 1. **User control.** The goal of explicit mode is that user-written code
    determines all the shardings in the computation, in an easy-to-predict,
-   local way. The backward pass is part of the computation — but you don't
-   write it, autodiff does. Making cotangent shardings a function of primal
-   shardings means your forward-pass sharding decisions *are* your
-   backward-pass sharding decisions. (Compiler-based automatic sharding mode
-   has no analogous guarantee: there, backward-pass shardings can be chosen
-   by the compiler, unrelated to the corresponding primal shardings.)
+   local way. The backward pass is part of the computation, but it's
+   written by autodiff rather than by you. Making cotangent shardings a
+   function of primal shardings means your forward-pass sharding decisions
+   *are* your backward-pass sharding decisions. (Compiler-based automatic
+   sharding mode has no analogous guarantee: there, backward-pass shardings
+   can be chosen by the compiler, unrelated to the corresponding primal
+   shardings.)
 
 2. **Ruling out ambiguities.** If a variable is used more than once in the
    forward pass (fan-out), autodiff generates an addition of cotangents in
@@ -108,12 +107,13 @@ primal shardings:
    same primal variable, so they have the same type.
 
 This is a special case of a general principle in JAX's autodiff: cotangent
-types are always a function of the corresponding primal types — shapes,
-dtypes, and now shardings. That gives us three things: each op's backward
-rule has a clear type and knows exactly what kind of cotangent it will
-receive; a well-typed forward program always yields a well-typed backward
-program; and you can predict backward-pass types by looking only at your
-forward-pass code, without knowing what the rest of the program looks like.
+types are always a function of the corresponding primal types, meaning
+shapes, dtypes, and now shardings. That gives us three things: each op's
+backward rule has a clear type and knows exactly what kind of cotangent it
+will receive; a well-typed forward program always yields a well-typed
+backward program; and you can predict backward-pass types by looking only at
+your forward-pass code, without knowing what the rest of the program looks
+like.
 
 ## Where backward-pass communication comes from
 
@@ -121,14 +121,14 @@ In the example above, look at the types in the backward pass of `x @ w`. The
 cotangent `dw` must be replicated, because `w` is. But the data it's built
 from is spread across devices: `dw` is (the transpose of) a contraction of
 two arrays sharded along `@X`, the batch axis. Producing a replicated result
-from a contraction over a sharded axis requires a cross-device sum — an
+from a contraction over a sharded axis requires a cross-device sum, an
 AllReduce. The partitioner inserts it inside that final `dot_general`.
 
 This is the familiar gradient synchronization of data-parallel training, and
 notice that you can predict it purely locally: `w` is replicated, each device
 touches only part of the batch, so somewhere in the backward pass the
 per-device gradient contributions must be summed. The types tell you the
-communication exists — but in the jaxpr above it's *implicit*, hidden inside
+communication exists, but in the jaxpr above it's *implicit*, hidden inside
 an op whose operands have a sharded contracting dimension. The rest of this
 page is about making that communication explicit: something you can see in
 the types, move around, and batch up.
@@ -192,16 +192,16 @@ for shard in c.addressable_shards:
 ```
 
 An unreduced array is a reduction waiting to happen. To perform it, reshard
-to an ordinary sharding — this is where the deferred AllReduce runs:
+to an ordinary sharding, which runs the deferred AllReduce:
 
 ```{code-cell}
 print(jax.reshard(c, jax.P(None, None)))
 ```
 
-Why defer? Because you might want to do more work first, and pay for fewer,
-bigger collectives. Only *linear* operations make sense on
-unreduced arrays. Adding two arrays unreduced along the same axes is fine —
-sums of partial sums are partial sums of sums:
+Deferring lets you do more work first and pay for fewer, bigger
+collectives. Only *linear* operations make sense on unreduced arrays.
+Adding two arrays unreduced along the same axes is fine, since sums of
+partial sums are partial sums of sums:
 
 ```{code-cell}
 c2 = jnp.einsum('ij,jk->ik', 2. * a, b,
@@ -209,12 +209,12 @@ c2 = jnp.einsum('ij,jk->ik', 2. * a, b,
 print(jax.typeof(c + c2))
 ```
 
-That lets you compute a sum of sharded matmuls with a single AllReduce at the
-end — think of a LoRA-style `x @ W + x @ A @ B` — rather than one per
+That lets you compute a sum of sharded matmuls (for example, a LoRA-style
+`x @ W + x @ A @ B`) with a single AllReduce at the end rather than one per
 matmul. Nonlinear operations, on the other hand, *can't* have a rule for
 unreduced inputs: the cosine of a sum is not the sum of the cosines, so
-applying `cos` to each device's partial sum would just compute the wrong
-answer. Such ops raise an error instead:
+applying `cos` to each device's partial sum would compute the wrong answer.
+Such ops raise an error instead:
 
 ```{code-cell}
 :tags: [raises-exception]
@@ -222,11 +222,11 @@ answer. Such ops raise an error instead:
 jnp.cos(c)
 ```
 
-One honest caveat: for straight-line code like `c + c2` above, XLA can often
+One caveat: for straight-line code like `c + c2` above, XLA can often
 merge adjacent AllReduces on its own, so the compiled program may be equally
 good either way. The type-level guarantee matters when the compiler can't
-find the merge — above all, across the iterations of a loop. We'll see
-exactly that in the capstone example below.
+find the merge, above all across the iterations of a loop. The microbatch
+example below shows that case.
 
 ## Reduced: choosing unreduced gradients
 
@@ -236,16 +236,16 @@ sharded cotangents, replicated primals get replicated cotangents.
 
 The replicated entry is exactly where backward-pass communication comes
 from: replication's transpose is a cross-device sum. With
-`CT(Replicated) = Replicated`, autodiff performs that sum *eagerly* — each
+`CT(Replicated) = Replicated`, autodiff performs that sum *eagerly*: each
 backward-pass op that produces a cotangent for a replicated primal does its
 AllReduce on the spot, implicitly, like the `dw` dot we saw earlier. The
-natural, before-any-communication state of such a cotangent is a bunch of
-per-device partial sums — an *unreduced* array! So what if we want autodiff
-to leave it that way, and let us decide when to reduce?
+natural, before-any-communication state of such a cotangent is a set of
+per-device partial sums, an *unreduced* array. Suppose we want autodiff to
+leave it that way and let us decide when to reduce.
 
 We need a way to ask for that in the forward pass, and it has to be a new
-*type* — remember, cotangent types are a function of primal types. That's
-what `reduced` is for:
+*type*, since cotangent types are a function of primal types. That's what
+`reduced` is for:
 
 ```{code-cell}
 w_ = jax.reshard(w, jax.P(None, None, reduced={'X'}))
@@ -256,9 +256,8 @@ An array that's *reduced* along `X`, written `{R:X}`, is physically identical
 to a replicated array: a full copy on every device along `X`. (The name is
 the past tense of "unreduced": it's the state an array is in after its
 reduction has happened.) In the forward pass it behaves exactly like a
-replicated array, and the reshard above is communication-free — no data
-moves. The *only* difference is how autodiff treats it. The complete
-cotangent map is:
+replicated array, and the reshard above moves no data. The only difference
+is how autodiff treats it. The complete cotangent map is:
 
 | primal type       | cotangent type    |
 |-------------------|-------------------|
@@ -268,16 +267,15 @@ cotangent map is:
 | unreduced `{U:X}` | reduced `{R:X}`   |
 
 Use `Replicated` and you get replicated gradients; use `Reduced` and you get
-unreduced gradients. That's the only difference between them.
+unreduced gradients.
 
-The reshard-to-reduced above is a communication-free cast
-in the forward pass, and under transposition it becomes a
-reshard-from-unreduced in the backward pass — which is precisely the
-AllReduce. **A free cast in your forward code pins down where the collective
-runs in your backward code.** Backward-pass communication becomes something
-you can see, place, and reason about locally, while writing the forward
-pass. Compare the backward pass of our data-parallel loss with and without
-the cast:
+The reshard-to-reduced above is a communication-free cast in the forward
+pass, and under transposition it becomes a reshard-from-unreduced in the
+backward pass, which is the AllReduce. A free cast in your forward code pins
+down where the collective runs in your backward code, so backward-pass
+communication becomes something you can see and place while writing the
+forward pass. Compare the backward pass of our data-parallel loss with and
+without the cast:
 
 ```{code-cell}
 def loss2(w, x):
@@ -289,12 +287,12 @@ print(jax.jit(jax.grad(loss2)).trace(w, x).jaxpr)
 
 Where the original jaxpr had a `dot_general` with an implicit AllReduce
 buried inside, this one shows the dot producing an explicit
-`f32[2,4]{U:X}` value, and a final `reshard` — the transposed cast — turning
+`f32[2,4]{U:X}` value, and a final `reshard` (the transposed cast) turning
 it into the replicated `dw`. Same math, same total communication, but now the
 reduction is a visible, movable object in the program.
 
-And once it's visible, you can move it. Suppose the weights are used twice —
-two heads, two microbatches, a LoRA branch:
+Once it's visible, you can move it. Suppose the weights are used twice, as
+with two heads, two microbatches, or a LoRA branch:
 
 ```{code-cell}
 def loss_fanout(w, x1, x2):
@@ -307,18 +305,18 @@ print(jax.jit(jax.grad(loss_fanout)).trace(w, x1, x2).jaxpr)
 ```
 
 Both backward dots produce `{U:X}` contributions, the fan-out addition
-happens *unreduced* (addition is linear!), and a single `reshard` performs
+happens *unreduced* (addition is linear), and a single `reshard` performs
 one AllReduce for the whole gradient. Without the cast, each contribution
 would be reduced separately inside its own dot. Here the fusion is guaranteed
-by the types, not left to compiler pattern-matching — which is about to
-matter.
+by the types rather than left to compiler pattern-matching, which matters in
+the next example.
 
-## Capstone: microbatch gradient accumulation
+## Example: microbatch gradient accumulation
 
-The classic place this bites is gradient accumulation. A realistic training
+The classic case is gradient accumulation. A realistic training
 step has *two* loops that the compiler can't see through: a scan over layers
 inside the model, and a scan over microbatches accumulating gradients, with
-one update at the end. The gradient AllReduce should happen once per step —
+one update at the end. The gradient AllReduce should happen once per step,
 but if the weights are replicated, every microbatch's backward pass
 synchronizes its own gradient contribution, inside both loops, and XLA
 cannot hoist collectives out of a loop for you. With `reduced` weights, the
@@ -358,15 +356,15 @@ print(jax.typeof(new_ws))
 ```
 
 Everything type-checks locally: the weights are `{R:X}`, so each microbatch's
-gradients come out `{U:X}` — even though they're computed by a scan over
-layers; unreduced arrays support addition, so the microbatch scan carry
+gradients come out `{U:X}` (even though they're computed by a scan over
+layers); unreduced arrays support addition, so the microbatch scan carry
 accumulates them; and one reshard to replicated is the step's single
 AllReduce. Notice the `assert` in the scan body: because shardings are part
-of JAX types, "the gradients are unreduced" isn't a hope or a comment — it's
-a property of a value you can check with `jax.typeof`, inside traced code,
-at trace time. The updated weights come back replicated; casting them back to
-`{R:X}` for the next step is free. And the compiled program keeps the
-promise — exactly one AllReduce, outside both loops:
+of JAX types, "the gradients are unreduced" is a property of a value that
+you can check with `jax.typeof`, inside traced code, at trace time. The
+updated weights come back replicated; casting them back to `{R:X}` for the
+next step is free. And the compiled program has exactly one AllReduce,
+outside both loops:
 
 ```{code-cell}
 import re
@@ -396,22 +394,22 @@ ws_replicated = jax.reshard(stacked_ws, jax.P())
 print_all_reduces(step_replicated, ws_replicated, xs)
 ```
 
-The op name says it all: `while/body/.../while/body` — this AllReduce sits
+The op name `while/body/.../while/body` shows that this AllReduce sits
 inside the transposed layer scan, inside the microbatch scan: it runs once
-per layer per microbatch. Hoisting the gradient reduction out of loops this
-way — from once per layer per microbatch down to once per step — has produced
-large wins in production LLM training — in one case cutting per-step time
-spent in gradient reduction by several times — and it's a transformation
-the compiler cannot make on its own, because it can't pattern-match
-collectives through a loop.
+per layer per microbatch. Hoisting the gradient reduction out of both loops,
+from once per layer per microbatch to once per step, has produced large wins
+in production LLM training (in one case cutting per-step time spent in
+gradient reduction by several times). The compiler cannot make this
+transformation on its own, because it can't pattern-match collectives
+through a loop.
 
 ## Why this design?
 
-A few frequently-asked design questions, for the curious.
+Some design questions that come up.
 
 **Why not make the cotangent of Replicated be Unreduced?** It would be
-coherent — but it takes options away. Lots of code returns replicated values
-(most obviously, loss values!), and making their cotangents unreduced would
+coherent, but it takes options away. Lots of code returns replicated values
+(loss values, for one), and making their cotangents unreduced would
 introduce surprising communication requirements into existing programs. By
 keeping `Replicated ↔ Replicated` and adding `Reduced ↔ Unreduced` as a
 separate pair, you get to choose per-array whether gradients arrive
@@ -427,7 +425,7 @@ Suppose we want the following, none of which is individually exotic:
    requires no communication should transpose to a backward op that requires
    no communication (or at least, we need *some* way to write such a
    backward pass);
-2. replication should be expressible — we don't want *only* sharded axes;
+2. replication should be expressible (we don't want *only* sharded axes);
 3. multiplying a replicated scalar by a sharded vector, a communication-free
    forward op, should be expressible;
 4. cotangents should have the same shape as their primals.
@@ -444,7 +442,7 @@ shape.)
 
 In manual mode ({ref}`jax-201-shard-map`), you write per-device code and
 communication is explicit: an AllReduce isn't implied by an `out_sharding`
-or performed by a `reshard` — it's a `jax.lax.psum` you place yourself. All
+or performed by a `reshard`; it's a `jax.lax.psum` you place yourself. All
 the machinery above has a manual-mode counterpart, run by the same rule:
 cotangent types are a function of primal types.
 
@@ -469,8 +467,8 @@ is a fact about the mesh axis alone.) The cotangent map is the image of the
 one above: varying and invarying are each their own cotangent type, and
 unreduced and reduced swap.
 
-Here's the matmul from the unreduced section — same `a` and `b` — written
-per-device:
+Here's the matmul from the unreduced section, with the same `a` and `b`,
+written per-device:
 
 ```{code-cell}
 @jax.shard_map(in_specs=(jax.P(None, 'X'), jax.P('X', None)),
@@ -484,7 +482,7 @@ print(jax.typeof(c))
 ```
 
 Each device multiplies its column block of `a` with its row block of `b`, a
-computation whose result is *varying* over `X` — each device holds a
+computation whose result is *varying* over `X`: each device holds a
 different partial sum. Declaring `out_specs` unreduced makes `shard_map`
 insert a free varying-to-unreduced cast, and outside we get exactly the
 `float32[2,2]{U:X}` value we built with `out_sharding` before. The backward
@@ -500,8 +498,8 @@ print(jax.jit(jax.grad(matmul_loss, argnums=(0, 1))).trace(a, b).jaxpr)
 Read the two `shard_map` equations. In the forward one, the body is a local
 `dot_general` on varying operands followed by the free
 `vary_unreduced_cast`. In the backward one, the cotangent of the unreduced
-output arrives with `in_specs=P(None, None, reduced={'X'})` — the boundary
-specs obey the cotangent map — and the body is `reduced_vary_cast` (the free
+output arrives with `in_specs=P(None, None, reduced={'X'})` (the boundary
+specs obey the cotangent map) and the body is `reduced_vary_cast` (the free
 transpose of the forward's free cast) followed by two local dots. Neither
 body contains any communication: the single AllReduce is the transposed
 outer `reshard`, exactly where explicit mode put it.
@@ -543,5 +541,5 @@ print(jax.typeof(dw))
 
 So a model whose layers are written with `shard_map` accumulates unreduced
 gradients across microbatches with a single AllReduce per step, exactly like
-the capstone above. For the full menu of collectives and their transposes,
-see the tables in {ref}`jax-201-shard-map`.
+the example above. For the full table of collectives and their transposes,
+see {ref}`jax-201-shard-map`.

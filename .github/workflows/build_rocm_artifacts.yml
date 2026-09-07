@@ -133,7 +133,6 @@ jobs:
       volumes:
         - /data:/data
       options: >-
-        --security-opt seccomp=unconfined
         --shm-size 64G
 
     env:

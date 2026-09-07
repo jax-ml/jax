@@ -15,8 +15,8 @@ computation needs them.
 ```{note}
 The examples on this page are shown with outputs from an accelerator
 platform; memory-kind support varies by platform, so these snippets are
-illustrative rather than executed in place. Offloading can also cost real
-performance in host-device transfers — measure before committing to it.
+illustrative rather than executed in place. Offloading also costs time in
+host-device transfers, so measure before committing to it.
 ```
 
 ## Building blocks
@@ -61,8 +61,7 @@ out_dev = g(arr_host)   # host-resident input, device-resident result
 ```
 
 Inside a jitted function, {func}`jax.device_put` moves values between
-spaces mid-computation — this is the workhorse for the offloading patterns
-below.
+spaces mid-computation. The offloading patterns below are built on this.
 
 ## Offloading activations
 
@@ -73,8 +72,8 @@ forward pass and fetch them back for the backward pass, using
 {func}`jax.checkpoint` with the
 `jax.checkpoint_policies.save_and_offload_only_these_names` policy. That
 machinery belongs to rematerialization, and is covered with the rest of the
-remat story in {ref}`jax-301-remat-offload`. As a taste of the effect, for
-the 10-layer scanned MLP used as a running example below, offloading the
+remat story in {ref}`jax-301-remat-offload`. To give a sense of the effect,
+for the 10-layer scanned MLP used as a running example below, offloading the
 layer activations cuts temporary memory from 17.25 MB to 6.50 MB.
 
 ## Offloading parameters
@@ -139,12 +138,11 @@ memory. Three effects combine:
    rematerialization keeps JAX from holding on-device copies of the weights
    alive for the backward pass.
 
-Two limitations to know about. {func}`jax.lax.scan` is load-bearing in this
-pattern: with an explicit Python loop, the parameters would continuously
-occupy device memory, giving no saving. And parameter offloading currently
-works only when scanning over axis 0 — other axes insert an expensive
-`transpose` when returning parameters to the device, and aren't supported
-on all platforms.
+Two limitations. The pattern depends on {func}`jax.lax.scan`: with an
+explicit Python loop, the parameters would continuously occupy device
+memory, giving no saving. And parameter offloading currently works only when
+scanning over axis 0. Other axes insert an expensive `transpose` when
+returning parameters to the device, and aren't supported on all platforms.
 
 ## Offloading optimizer state
 
@@ -182,18 +180,18 @@ new_params, new_opt_state = step(params, opt_state, input)
 ```
 
 For a four-layer 7168×7168 MLP with Adam, memory analysis reports 4.59 GB
-total without offloading and 2.87 GB with it — a 1.72 GB saving, almost all
-from the optimizer state leaving device argument memory. Note the
-trade-off's structure: offloading can *add* temporary memory (updated state
-needs device buffers before it's copied out to the host, and XLA's
-latency-hiding scheduling extends buffer live ranges to overlap transfers
-with compute), but the argument-memory saving typically dominates.
+total without offloading and 2.87 GB with it, a 1.72 GB saving that comes
+almost entirely from the optimizer state leaving device argument memory.
+Offloading can *add* temporary memory (updated state needs device buffers
+before it's copied out to the host, and XLA's latency-hiding scheduling
+extends buffer live ranges to overlap transfers with compute), but the
+argument-memory saving typically dominates.
 
 ## Measuring
 
 {func}`jax.stages.Compiled.memory_analysis`, used throughout this page,
 reports a compiled function's memory breakdown before you run it: sum the
 temporary, argument, and output sizes, minus the alias size, for the total.
-For runtime measurement — including verifying that transfers overlap with
-compute — see the device memory profiling and tracing tools in
+For runtime measurement, including verifying that transfers overlap with
+compute, see the device memory profiling and tracing tools in
 {doc}`profiling`.

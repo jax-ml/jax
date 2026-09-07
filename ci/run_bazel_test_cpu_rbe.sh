@@ -43,12 +43,16 @@ fi
 os=$(uname -s | awk '{print tolower($0)}')
 arch=$(uname -m)
 
-bazel_output_base=""
+bazel_startup_options=()
 # Adjust os and arch for Windows
 if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
   os="windows"
   arch="amd64"
-  bazel_output_base="--output_base=C:\actions-runner\_work\bazel_output_base"
+  workspace_path=$(cygpath -m "$PWD")
+  bazel_startup_options+=(
+    "--host_jvm_args=-Djava.security.properties=file:///$workspace_path/ci/bazel_dns_windows.security"
+    "--output_base=C:\actions-runner\_work\bazel_output_base"
+  )
 fi
 
 if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-ft || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-nogil ]]; then
@@ -98,14 +102,14 @@ if [[ "$run_tests_locally" == 1 ]]; then
   portserver_test_env="--test_env=PORTSERVER_ADDRESS=@unittest-portserver"
 fi
 
-TEST_ARTIFACTS_DIR="test-artifacts"
+TEST_ARTIFACTS_DIR="$JAXCI_TEST_ARTIFACTS_DIR"
 mkdir -p "$TEST_ARTIFACTS_DIR"
 echo "::endgroup::" >&2
 
 echo "::group::Bazel CPU RBE tests" >&2
 INVOCATION_ID=$(python3 ci/utilities/generate_invocation_id.py)
 
-bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
+bazel "${bazel_startup_options[@]}" $JAXCI_BAZEL_CPU_RBE_MODE \
     --invocation_id="$INVOCATION_ID" \
     --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --build_runfile_links=false \

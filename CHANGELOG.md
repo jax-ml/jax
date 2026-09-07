@@ -27,6 +27,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `JAX_DISTRIBUTED_VERIFY_SECURE_CREDENTIALS` environment variables).
 
 * Changes
+  * `inline=True` in {func}`jax.jit` now corresponds to
+    {attr}`jax.Inline.JAX_LATE` instead of {attr}`jax.Inline.JAX_EARLY`.
   * The minimum CuDNN version for CUDA 12 is v9.10.2.
   * JAX now uses Bazel 8.7.0 to build from source.
   * JAX now uses Bzlmod for its Bazel builds instead of WORKSPACE.
@@ -54,6 +56,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     arrays of the natural result dtype.
   * Fixed {func}`jax.numpy.setdiff1d` raising an `IndexError` when called with
     ``size=0`` on non-empty inputs; it now returns an empty array.
+  * Fixed incorrect gradients for {func}`jax.scipy.linalg.cholesky` and
+    {func}`jax.numpy.linalg.cholesky` with `symmetrize_input=False` where
+    non-zero gradients leaked into the unused triangle of the input matrix
+    ({jax-issue}`#40421`).
 
 ## JAX 0.11.1 (August 17, 2026)
 

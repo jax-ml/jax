@@ -27,7 +27,6 @@ import traceback
 import types
 from typing import ClassVar, TYPE_CHECKING
 from unittest import mock
-import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -2791,36 +2790,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(math.prod(shape), dtype=jnp.uint16).reshape(shape)
     y = x.reshape(256 // 64, 64, 128 // 64, 64).sum(axis=(0, 2), dtype=jnp.uint16)
     np.testing.assert_array_equal(kernel(x), y)
-
-  # TODO(slebedev): Remove once we no longer support ``pl.pallas_call``.
-  def test_input_output_aliases(self):
-    a = np.zeros((64, 64), dtype=jnp.float32)
-
-    # Note that we're writing to the input pointer, which should alias b_ptr.
-    @functools.partial(
-        pl.pallas_call,
-        in_specs=[plgpu.BlockSpec(memory_space=plgpu.GMEM)],
-        out_specs=plgpu.BlockSpec(memory_space=plgpu.GMEM),
-        input_output_aliases={0: 0},
-        compiler_params=plgpu.CompilerParams(
-            lowering_semantics=self.LOWERING_SEMANTICS
-        ),
-        out_shape=jax.ShapeDtypeStruct.like(a),
-    )
-    def kernel(a_ref, b_ref):
-      del b_ref
-      a_ref[...] = jnp.ones_like(a_ref)
-
-    with warnings.catch_warnings():
-      warnings.filterwarnings(
-          "ignore",
-          category=DeprecationWarning,
-          message=(
-              "Using ``pl.pallas_call`` for Mosaic GPU kernels is deprecated"
-          ),
-      )
-      b = kernel(a)
-    np.testing.assert_array_equal(b, np.ones_like(a))
 
   def test_slicing(self):
     left = upper = slice(None, 64)
@@ -8090,6 +8059,39 @@ class PipelineTest(PallasTest):
 
     with self.assertRaisesRegex(NotImplementedError, "provably in bounds"):
       kernel(x)
+
+  @parameterized.product(num_steps=[0, 1, 5, 100], max_concurrent_steps=[2, 3])
+  @run_on_sm80
+  def test_emit_in_specs_only_dynamic_grid(
+      self, num_steps, max_concurrent_steps
+  ):
+    dtype = jnp.float32
+    block_size = 128
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((block_size,), dtype),
+        scratch_types=[plgpu.SMEM((block_size,), dtype)],
+    )
+    def kernel(num_steps_gmem, x_gmem, o_gmem, acc_ref):
+      acc_ref[...] = jnp.zeros_like(acc_ref)
+
+      def body(_, x_smem):
+        acc_ref[...] += x_smem[...]
+
+      plgpu.emit_pipeline(
+          body,
+          in_specs=[pl.BlockSpec((block_size,), lambda i: (i,))],
+          grid=(num_steps_gmem[...],),
+          max_concurrent_steps=max_concurrent_steps,
+      )(x_gmem)
+
+      o_gmem[...] = acc_ref[...]
+
+    x = jnp.ones(max(num_steps, 1) * block_size, dtype=dtype)
+    np.testing.assert_array_equal(
+        kernel(jnp.int32(num_steps), x),
+        jnp.full(block_size, num_steps, dtype=dtype)
+    )
 
   def test_pipeline_oob_mode(self):
     # This test crashes with the default OOB fill mode of ZEROS because

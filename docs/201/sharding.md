@@ -279,7 +279,7 @@ print(y.sharding)
 ```
 
 Now that we understand mesh shapes, axis names, and shardings at the top
-level, we can dive into mesh axis types and how Explicit and Auto modes
+level, we can look at mesh axis types and how Explicit and Auto modes
 differ.
 
 ## Explicit sharding mode makes sharding queryable at trace time
@@ -615,9 +615,9 @@ For details, see the {doc}`shard-map` tutorial.
 
 A sharding answers "where do an array's values live?" at the scale of
 devices: how the values are distributed *across* memories. Zoom into any one
-of those memories and the very same question recurs one level down: how are
-that shard's values arranged *within* the memory — for instance, row-major or
-column-major? That's the array's device-local **layout**. Sharding is just
+of those memories and the same question recurs one level down: how are that
+shard's values arranged *within* the memory, for instance row-major or
+column-major? That's the array's device-local **layout**. Sharding is
 distributed layout, and JAX's APIs reflect this: the same argument slots that
 accept shardings also accept layout-and-sharding pairs. The
 `jax.experimental.layout` package provides the types.
@@ -653,8 +653,8 @@ They typically do not accept `Layout` instances directly.
 
 ```{note}
 The examples in this section are shown with outputs from an accelerator
-platform. Compiler layout choices are platform-dependent — on CPU, for
-instance, XLA currently chooses row-major layouts across the board — so
+platform. Compiler layout choices are platform-dependent (on CPU, for
+instance, XLA currently chooses row-major layouts across the board), so
 these snippets are illustrative rather than executed in place. The
 `jax.experimental.layout` APIs are also still experimental and may change.
 ```
@@ -805,9 +805,9 @@ layouts rather than shardings.
 
 ## Next steps
 
-The natural continuation is {doc}`shard-map`, the full tutorial for manual
-mode: per-device programming with explicit collectives, for complete control
-over how computation and communication are partitioned. And for how sharding
-interacts with automatic differentiation — including the *unreduced*
-shardings introduced above — see {ref}`jax-301-sharding-ad` in the advanced
-autodiff docs.
+The next page, {doc}`shard-map`, is the full tutorial for manual mode:
+per-device programming with explicit collectives, for complete control over
+how computation and communication are partitioned. For how sharding interacts
+with automatic differentiation, including the *unreduced* shardings
+introduced above, see {ref}`jax-301-sharding-ad` in the advanced autodiff
+docs.

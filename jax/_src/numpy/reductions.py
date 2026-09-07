@@ -227,7 +227,7 @@ def _ensure_optional_axes(x: Axis) -> Axis:
     force, x, "The axis argument must be known statically.")
 
 
-@api.jit(static_argnames=('axis', 'dtype', 'keepdims', 'promote_integers'), inline=True)
+@api.jit(static_argnames=('axis', 'dtype', 'keepdims', 'promote_integers'), inline=api.Inline.JAX_EARLY)
 def _reduce_sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                 out: None = None, keepdims: bool = False,
                 initial: ArrayLike | None = None, where: ArrayLike | None = None,
@@ -314,7 +314,7 @@ def sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                      promote_integers=promote_integers)
 
 
-@api.jit(static_argnames=('axis', 'dtype', 'keepdims', 'promote_integers'), inline=True)
+@api.jit(static_argnames=('axis', 'dtype', 'keepdims', 'promote_integers'), inline=api.Inline.JAX_EARLY)
 def _reduce_prod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                  out: None = None, keepdims: bool = False,
                  initial: ArrayLike | None = None, where: ArrayLike | None = None,
@@ -401,7 +401,7 @@ def prod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                       promote_integers=promote_integers)
 
 
-@api.jit(static_argnames=('axis', 'keepdims'), inline=True)
+@api.jit(static_argnames=('axis', 'keepdims'), inline=api.Inline.JAX_EARLY)
 def _reduce_max(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                 out: None = None, keepdims: bool = False,
                 initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
@@ -484,7 +484,7 @@ def max(a: ArrayLike, axis: Axis = None, out: None = None,
   return _reduce_max(a, axis=_ensure_optional_axes(axis), out=out,
                      keepdims=keepdims, initial=initial, where=where)
 
-@api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+@api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=api.Inline.JAX_EARLY)
 def _reduce_min(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                 out: None = None, keepdims: bool = False,
                 initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
@@ -566,7 +566,7 @@ def min(a: ArrayLike, axis: Axis = None, out: None = None,
   return _reduce_min(a, axis=_ensure_optional_axes(axis), out=out,
                      keepdims=keepdims, initial=initial, where=where)
 
-@api.jit(static_argnames=('axis', 'keepdims'), inline=True)
+@api.jit(static_argnames=('axis', 'keepdims'), inline=api.Inline.JAX_EARLY)
 def _reduce_all(a: ArrayLike, axis: Axis = None, out: None = None,
                 keepdims: bool = False, *, where: ArrayLike | None = None) -> Array:
   return _reduction(a, "all", lax.bitwise_and, True, preproc=_cast_to_bool,
@@ -623,7 +623,7 @@ def all(a: ArrayLike, axis: Axis = None, out: None = None,
   return _reduce_all(a, axis=_ensure_optional_axes(axis), out=out,
                      keepdims=keepdims, where=where)
 
-@api.jit(static_argnames=('axis', 'keepdims'), inline=True)
+@api.jit(static_argnames=('axis', 'keepdims'), inline=api.Inline.JAX_EARLY)
 def _reduce_any(a: ArrayLike, axis: Axis = None, out: None = None,
                 keepdims: bool = False, *, where: ArrayLike | None = None) -> Array:
   return _reduction(a, "any", lax.bitwise_or, False, preproc=_cast_to_bool,
@@ -681,7 +681,7 @@ def any(a: ArrayLike, axis: Axis = None, out: None = None,
                      keepdims=keepdims, where=where)
 
 
-@api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+@api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=api.Inline.JAX_EARLY)
 def _reduce_bitwise_and(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                         out: None = None, keepdims: bool = False,
                         initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
@@ -692,7 +692,7 @@ def _reduce_bitwise_and(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None
                     initial=initial, where_=where)
 
 
-@api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+@api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=api.Inline.JAX_EARLY)
 def _reduce_bitwise_or(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                         out: None = None, keepdims: bool = False,
                         initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
@@ -701,7 +701,7 @@ def _reduce_bitwise_or(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None 
                     initial=initial, where_=where)
 
 
-@api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+@api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=api.Inline.JAX_EARLY)
 def _reduce_bitwise_xor(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                         out: None = None, keepdims: bool = False,
                         initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
@@ -710,7 +710,7 @@ def _reduce_bitwise_xor(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None
                     initial=initial, where_=where)
 
 
-@api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+@api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=api.Inline.JAX_EARLY)
 def _reduce_logical_and(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                         out: None = None, keepdims: bool = False,
                         initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
@@ -719,7 +719,7 @@ def _reduce_logical_and(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None
                     initial=initial, where_=where)
 
 
-@api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+@api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=api.Inline.JAX_EARLY)
 def _reduce_logical_or(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                        out: None = None, keepdims: bool = False,
                        initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
@@ -728,7 +728,7 @@ def _reduce_logical_or(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None 
                     initial=initial, where_=where)
 
 
-@api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+@api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=api.Inline.JAX_EARLY)
 def _reduce_logical_xor(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                         out: None = None, keepdims: bool = False,
                         initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
@@ -890,7 +890,7 @@ def _count(
   return count
 
 @api.jit(static_argnames=('axis', 'dtype', 'keepdims', 'upcast_f16_for_computation'),
-         inline=True)
+         inline=api.Inline.JAX_EARLY)
 def _mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
           out: None = None, keepdims: bool = False, *,
           upcast_f16_for_computation: bool = True,
@@ -995,7 +995,7 @@ def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
   """
   return _average(a, _ensure_optional_axes(axis), weights, returned, keepdims)
 
-@api.jit(static_argnames=('axis', 'returned', 'keepdims'), inline=True)
+@api.jit(static_argnames=('axis', 'returned', 'keepdims'), inline=api.Inline.JAX_EARLY)
 def _average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
              returned: bool = False, keepdims: bool = False) -> Array | tuple[Array, Array]:
   axis_tuple = canonicalize_axis_tuple(axis, np.ndim(a))

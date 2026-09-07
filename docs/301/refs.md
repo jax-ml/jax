@@ -17,9 +17,9 @@ kernelspec:
 
 <!--* freshness: { reviewed: '2026-07-10' } *-->
 
-Refs — JAX's mutable arrays, introduced in {ref}`jax-101-refs` — interact
-with automatic differentiation in ways that go beyond what immutable values
-can express: plumbing data out of backward passes, accumulating gradients
+Refs (JAX's mutable arrays, introduced in {ref}`jax-101-refs`) interact
+with automatic differentiation in ways that immutable values can't express:
+plumbing data out of backward passes, accumulating gradients
 in place across many contributions, and differentiating with respect to
 mutable state itself. This page covers the interaction in detail, ending
 with a recipe that uses refs to relax `jax.lax.scan`'s fixed access pattern.
@@ -201,7 +201,7 @@ We can mix and match. Each entry of `with_refs` can be:
 * `jax.ad.GradValue()`, meaning return this argument's gradient as a value in
   the usual way (the default); or
 * `jax.ad.DontWant()`, meaning don't compute this argument's gradient at all
-  (the VJP call returns a `jax.ad.DidntWant()` placeholder in that position —
+  (the VJP call returns a `jax.ad.DidntWant()` placeholder in that position;
   more on this below).
 
 One reason to use a gradient ref here is to exploit sparsity. Consider
@@ -251,7 +251,7 @@ print(take_vjp_jaxpr())
 ```
 
 The backward pass boils down to `b[c:c+1] += j`, an in-place add-update of
-one element of the gradient ref, with no dense one-hot array in sight.
+one element of the gradient ref, with no dense one-hot array.
 
 How does this work? During transposition, each primitive's backward rule is
 handed a *gradient accumulator* for each input, and when a gradient ref is
@@ -261,8 +261,8 @@ accumulator and perform an in-place add-update of just the entries they
 touched. If you define custom derivatives with hijax, you can make your own
 primitives do the same: implement the general `vjp_bwd` method (rather than
 the convenience wrapper `vjp_bwd_retval`) and handle the `RefAccum` case
-with an in-place update. See {ref}`jax-301-vjp-bwd-accums` for the full
-story and a worked example.
+with an in-place update. See {ref}`jax-301-vjp-bwd-accums` for details
+and a worked example.
 
 ## `DontWant`: skipping unneeded gradients
 

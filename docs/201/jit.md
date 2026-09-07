@@ -114,7 +114,7 @@ side effects, use {func}`jax.check_tracer_leaks`.
 ## Why can't we just `jit` everything?
 
 Recall from {ref}`jax-101-transformations` that traced code can't always
-specialize on data values — and `jit` is the extreme case: its tracers carry
+specialize on data values, and `jit` is the extreme case: its tracers carry
 no values at all, only JAX types.
 Value-dependent Python control flow therefore fails:
 
@@ -334,12 +334,12 @@ c.calc(3)
 
 The problem is that the first argument to `calc` is `self`, of type
 `CustomClass`, and JAX doesn't know how to handle that type. There are three
-basic strategies, in increasing order of power.
+basic strategies, in increasing order of flexibility.
 
 ### Strategy 1: a jitted helper function
 
-The most straightforward approach: keep `jit` on a stand-alone helper that
-takes only JAX-compatible arguments, and have the method call it:
+The simplest approach is to keep `jit` on a stand-alone helper that takes
+only JAX-compatible arguments, and have the method call it:
 
 ```{code-cell}
 class CustomClass:
@@ -387,7 +387,7 @@ print(c.calc(3))
 
 This runs, but it has a flaw. Static arguments become cache keys, so
 JAX relies on their hash and equality. The default `__hash__` for a custom
-object is its object ID, which doesn't change when the object mutates — so
+object is its object ID, which doesn't change when the object mutates, so
 mutating the object silently serves stale compiled code:
 
 ```{code-cell}
@@ -420,9 +420,9 @@ class CustomClass:
 
 This works with `jit` and other transformations **so long as you never
 mutate the object**: mutating a value that's in use as a hash key leads to
-subtle problems — which is exactly why Python's mutable containers (`dict`,
-`list`) don't define `__hash__`. If your class mutates its attributes, it
-isn't really static, and there's a better option.
+subtle problems, which is why Python's mutable containers (`dict`, `list`)
+don't define `__hash__`. If your class mutates its attributes, it isn't
+really static, and there's a better option.
 
 ### Strategy 3: registering the class as a pytree
 
@@ -534,7 +534,7 @@ replaces the old:
 params, state = jax.jit(update_fn, donate_argnums=(0, 1))(params, state)
 ```
 
-Think of donation as a memory-efficient functional update on immutable
+Donation amounts to a memory-efficient functional update on immutable
 arrays. *Within* a compiled computation, XLA reuses buffers automatically;
 at the `jit` boundary, though, JAX must assume you might still hold a
 reference to the input unless you promise otherwise with `donate_argnums`
@@ -553,8 +553,8 @@ z = jax.jit(add, donate_argnums=(1,))(x, y)
 
 Donation comes with rules and sharp edges:
 
-- **Donated means gone.** After the call, the donated input is invalid, and
-  using it is an error:
+- **Donated buffers are invalid afterwards.** Using the donated input after
+  the call is an error:
 
   ```python
   z = jax.jit(add, donate_argnums=(1,))(x, y)
@@ -590,8 +590,8 @@ As the sharp edges above suggest, donation is a promise layered on top of
 immutable semantics, and it's possible to get subtly wrong. The promise is
 checked only partially, and only at runtime. When you have the freedom to
 restructure, refs ({ref}`jax-201-jit-refs` above) express the same intent
-with less to misuse. Donation remains the workhorse for functionally-written
-code, which is to say most JAX code today.
+with less to misuse. Donation remains the standard mechanism for
+functionally-written code, which is to say most JAX code today.
 
 (jax-201-async-dispatch)=
 ## Asynchronous dispatch
@@ -627,7 +627,7 @@ and you measure only the dispatch:
 ```
 
 A fraction of a millisecond would be a suspiciously good time for a
-1000×1000 matrix multiplication! To measure the actual computation, force
+1000×1000 matrix multiplication. To measure the actual computation, force
 completion with {meth}`~jax.Array.block_until_ready`:
 
 ```{code-cell}
@@ -637,7 +637,7 @@ completion with {meth}`~jax.Array.block_until_ready`:
 Blocking without transferring the result to the host (as `block_until_ready`
 does) is usually faster than forcing a transfer with `np.asarray(...)`, and is
 the right tool for microbenchmarks. Benchmarking JAX code has a few more
-pitfalls of this flavor — {doc}`profiling` starts there.
+pitfalls of this flavor; {doc}`profiling` starts there.
 
 ## Where to next
 

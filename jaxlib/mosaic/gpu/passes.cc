@@ -228,9 +228,9 @@ class LLVMAttrInsertionPass
   }
 };
 
-// Replaces all "pallas_call"/"mpmd_map" locations within a FuncOp with the
-// location of the first operation in the function that has a different
-// location. This provides more specific source information for debugging.
+// Replaces all "mpmd_map" locations within a FuncOp with the location of the
+// first operation in the function that has a different location. This provides
+// more specific source information for debugging.
 class ResolveTrivialLocationsPass
     : public jaxlib::mlir::Pass<ResolveTrivialLocationsPass, mlir::ModuleOp> {
  public:
@@ -247,7 +247,7 @@ class ResolveTrivialLocationsPass
     }
     llvm::StringRef name = name_loc.getName().getValue();
     name.consume_back(":");
-    if (name != "pallas_call" && name != "mpmd_map") {
+    if (name != "mpmd_map") {
       return false;
     }
     return mlir::isa<mlir::UnknownLoc>(name_loc.getChildLoc()) ||

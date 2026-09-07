@@ -1987,7 +1987,7 @@ def reshape(
 
 
 @export
-@api.jit(static_argnames=('order', 'out_sharding'), inline=True)
+@api.jit(static_argnames=('order', 'out_sharding'), inline=api.Inline.JAX_EARLY)
 def ravel(a: ArrayLike, order: str = "C", *, out_sharding=None) -> Array:
   """Flatten array into a 1-dimensional shape.
 
@@ -2331,7 +2331,7 @@ def squeeze(a: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
   arr = util.ensure_arraylike("squeeze", a)
   return _squeeze(arr, _ensure_index_tuple(axis) if axis is not None else None)
 
-@api.jit(static_argnames=('axis',), inline=True)
+@api.jit(static_argnames=('axis',), inline=api.Inline.JAX_EARLY)
 def _squeeze(a: Array, axis: tuple[int, ...] | None) -> Array:
   if axis is None:
     a_shape = np.shape(a)
@@ -2414,7 +2414,7 @@ def expand_dims(a: ArrayLike, axis: int | Sequence[int]) -> Array:
 
 
 @export
-@api.jit(static_argnames=('axis1', 'axis2'), inline=True)
+@api.jit(static_argnames=('axis1', 'axis2'), inline=api.Inline.JAX_EARLY)
 def swapaxes(a: ArrayLike, axis1: int, axis2: int) -> Array:
   """Swap two axes of an array.
 
@@ -2514,7 +2514,7 @@ def moveaxis(a: ArrayLike, source: int | Sequence[int],
   return _moveaxis(arr, _ensure_index_tuple(source),
                    _ensure_index_tuple(destination))
 
-@api.jit(static_argnames=('source', 'destination'), inline=True)
+@api.jit(static_argnames=('source', 'destination'), inline=api.Inline.JAX_EARLY)
 def _moveaxis(a: Array, source: tuple[int, ...], destination: tuple[int, ...]) -> Array:
   source = tuple(_canonicalize_axis(i, np.ndim(a)) for i in source)
   destination = tuple(_canonicalize_axis(i, np.ndim(a)) for i in destination)
@@ -4442,7 +4442,7 @@ def stack(arrays: np.ndarray | Array | Sequence[ArrayLike],
 
 
 @export
-@api.jit(static_argnames="axis", inline=True)
+@api.jit(static_argnames="axis", inline=api.Inline.JAX_EARLY)
 def unstack(x: ArrayLike, /, *, axis: int = 0) -> tuple[Array, ...]:
   """Unstack an array along an axis.
 
@@ -8274,7 +8274,7 @@ def argmax(a: ArrayLike, axis: int | None = None, out: None = None,
   return _argmax(arr, None if axis is None else operator.index(axis),
                  keepdims=bool(keepdims))
 
-@api.jit(static_argnames=('axis', 'keepdims'), inline=True)
+@api.jit(static_argnames=('axis', 'keepdims'), inline=api.Inline.JAX_EARLY)
 def _argmax(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
   if axis is None:
     dims = list(range(np.ndim(a)))
@@ -8335,7 +8335,7 @@ def argmin(a: ArrayLike, axis: int | None = None, out: None = None,
   return _argmin(arr, None if axis is None else operator.index(axis),
                  keepdims=bool(keepdims))
 
-@api.jit(static_argnames=('axis', 'keepdims'), inline=True)
+@api.jit(static_argnames=('axis', 'keepdims'), inline=api.Inline.JAX_EARLY)
 def _argmin(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
   if axis is None:
     dims = list(range(np.ndim(a)))

@@ -105,15 +105,15 @@ for _ in range(3):
 ```
 
 The caller now keeps track of the state explicitly. In exchange, `count` is
-pure and hence easy to trace, and tracing it tells a completely different story:
+pure and hence easy to trace, and its jaxpr looks quite different:
 
 ```{code-cell}
 jax.jit(counter.count).trace(0).jaxpr
 ```
 
 The state flows visibly through the recorded program: in as the argument, out
-as a result. Nothing is baked in, nothing is hidden, and every transformation
-handles this function correctly, because there's nothing left to mishandle.
+as a result. Nothing is baked in or hidden, so every transformation handles
+this function correctly.
 
 What we did to the counter works for any stateful computation. Take a class of
 the form
@@ -136,7 +136,7 @@ def stateless_method(state: State, *args, **kwargs) -> tuple[Output, State]:
 
 This is a common [functional programming](https://en.wikipedia.org/wiki/Functional_programming)
 pattern, and it's how state is expressed in nearly all JAX programs. Training
-loops are its signature application: the parameters, and any optimizer state,
+loops are the most common example: the parameters, and any optimizer state,
 thread through a pure `update` function step after step:
 
 ```{code-cell}
@@ -175,15 +175,15 @@ optimizer libraries like [Optax](https://optax.readthedocs.io/) are built
 around `update(grads, opt_state, ...) -> (updates, new_opt_state)`, and neural
 network libraries handle parameters the same way.
 
-Threading state as values has a deeper payoff, too: because each state is an
-immutable snapshot, transformations apply cleanly to the whole loop. You can
+Threading state as values has another benefit: because each state is an
+immutable snapshot, transformations apply to the whole loop. You can
 differentiate through an update step, or `vmap` it to run many independent
 training runs at once, without worrying about aliased mutations.
 
 (jax-101-refs)=
 ## Refs: mutable arrays
 
-Threading values is the workhorse approach, but it can be awkward. If a
+Threading values is the standard approach, but it can be awkward. If a
 function deep in your call stack wants to update normalization statistics or
 record a metric, every function along the way must plumb that state in and out
 of its signature.
@@ -342,21 +342,20 @@ restrictions may be lifted over time.
 
 ### Ref performance and further reading
 
-Refs aren't just for expressiveness: they're also a tool for performance.
-Writing to a ref updates its buffer in place rather than allocating a fresh
-array. The full performance story is covered in {ref}`jax-201-jit`.
+Refs are also a tool for performance. Writing to a ref updates its buffer in
+place rather than allocating a fresh array. The performance details are
+covered in {ref}`jax-201-jit`.
 
 Refs also interact with automatic differentiation: you can plumb values out of
 backward passes, accumulate gradients in place across microbatches, and
 differentiate with respect to ref arguments. That material lives with
 {ref}`jax-301-refs`.
 
-## Where you've arrived
+## Next steps
 
-This completes the expressiveness tour: arrays and `jax.numpy` as the
-vocabulary, `grad` and `vmap` as the verbs, pytrees for structure, keys for
-randomness, and threaded values or refs for state.
+This completes the tour of how to express computations in JAX: arrays and
+`jax.numpy`, `grad` and `vmap`, pytrees for structure, keys for randomness,
+and threaded values or refs for state.
 
-What you can't do yet is make it *fast*. That's a matter of `jax.jit`,
-sharding, and profiling, and it's exactly where the performance and scaling
-docs pick up: {ref}`jax-201-jit`.
+Making it *fast* is a matter of `jax.jit`, sharding, and profiling, which is
+where the performance and scaling docs pick up: {ref}`jax-201-jit`.

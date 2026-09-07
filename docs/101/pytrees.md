@@ -24,10 +24,10 @@ kernelspec:
 
 <!--* freshness: { reviewed: '2026-07-09' } *-->
 
-JAX functions and transformations fundamentally operate on arrays, but in
-practice programs pass around richer structures: a neural network's parameters
-might live in a dictionary of arrays with meaningful names, a dataset might be
-a list of dicts, and so on. JAX has built-in support for such nested
+JAX functions and transformations operate on arrays, but programs pass
+around richer structures: a neural network's parameters might live in a
+dictionary of arrays with meaningful names, a dataset might be a list of
+dicts, and so on. JAX has built-in support for such nested
 structures, which it calls **pytrees**. This page explains the pytree
 abstraction, the utilities for working with pytrees, and some common gotchas
 and patterns.
@@ -80,7 +80,7 @@ print(treedef)
 print(jax.tree.unflatten(treedef, leaves))
 ```
 
-This flatten/unflatten decomposition is exactly how JAX transformations support
+This flatten/unflatten decomposition is how JAX transformations support
 pytrees: internally they operate on the flat list of arrays, then reassemble
 your structure around the results. Pytrees are tree-like, rather than DAG-like
 or graph-like, in that we handle them assuming referential transparency and
@@ -377,8 +377,9 @@ jax.tree.leaves([
 
 The `name` field doesn't appear among the leaves: as a `meta_field`, it's
 carried in the treedef, like `aux_data` above (and so it must be hashable).
-This distinction pays off again with `jax.jit`, where meta fields are
-automatically treated as static arguments — see {ref}`jax-201-jit-static-arguments`.
+This distinction matters again with `jax.jit`, where meta fields are
+automatically treated as static arguments; see
+{ref}`jax-201-jit-static-arguments`.
 Instances of `MyDataclassContainer` can be passed into JIT-ed functions, and
 `name` will be treated as static:
 
@@ -463,7 +464,7 @@ def tree_unflatten(aux_data, children):
 ### Mistaking pytree nodes for leaves
 
 Watch out for accidentally treating *nodes* as *leaves*. For example, an
-array's `.shape` is a tuple — which is a pytree node, not a leaf:
+array's `.shape` is a tuple, which is a pytree node, not a leaf:
 
 ```{code-cell}
 a_tree = [jnp.zeros((2, 3)), jnp.zeros((3, 4))]
@@ -511,8 +512,8 @@ order without sorting, or you can register a custom node type.
 
 ### Transposing a list of trees into a tree of lists
 
-To turn a list of trees into a tree of lists, the idiomatic trick is
-`jax.tree.map` with a variadic function:
+To turn a list of trees into a tree of lists, the idiom is `jax.tree.map`
+with a variadic function:
 
 ```{code-cell}
 def tree_transpose(list_of_trees):
@@ -530,6 +531,5 @@ inner and outer structure explicitly.
 ## Next steps
 
 With arrays, transformations, and pytrees, you can express most pure
-computations in JAX. Two pieces of the expressiveness story remain:
-pseudorandom numbers ({ref}`jax-101-random`) and stateful computations
-({ref}`jax-101-state`).
+computations in JAX. Two topics remain: pseudorandom numbers
+({ref}`jax-101-random`) and stateful computations ({ref}`jax-101-state`).

@@ -59,7 +59,7 @@ for arg in "$@"; do
     fi
 done
 
-TEST_ARTIFACTS_DIR="test-artifacts"
+TEST_ARTIFACTS_DIR="$JAXCI_TEST_ARTIFACTS_DIR"
 mkdir -p "$TEST_ARTIFACTS_DIR"
 
 # Point ROCM_PATH at the local TheRock installation. Tests find ROCm through

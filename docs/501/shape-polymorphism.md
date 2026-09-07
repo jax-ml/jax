@@ -117,7 +117,7 @@ symbolic shape, and any concrete argument `arg` whose shape matches `arg_spec`:
  * and if the exporting succeeds with symbolic shapes: `exp = export.export(f)(arg_spec)`,
  * then compiling and running the export will succeed with the same result: `res == exp.call(arg)`
 
-It is crucial to understand that `f(arg)` has the freedom to re-invoke
+Note that `f(arg)` has the freedom to re-invoke
 the JAX tracing machinery,
 and in fact it does so for each distinct concrete `arg` shape,
 while the execution of `exp.call(arg)` cannot use JAX tracing anymore

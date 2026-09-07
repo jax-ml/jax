@@ -40,9 +40,9 @@ in JAX. They're meant to be read in order:
 10. :doc:`rank_promotion_warning` — configuring :mod:`jax.numpy` to warn or
     error on implicit rank promotion.
 
-How do we make these computations fast? Compilation with :func:`jax.jit`,
-sharded arrays and parallelism, and profiling. Those are the subject of the
-performance and scaling docs: :doc:`/201/index`.
+The performance and scaling docs, :doc:`/201/index`, cover making these
+computations fast: compilation with :func:`jax.jit`, sharded arrays and
+parallelism, and profiling.
 
 .. toctree::
    :hidden:

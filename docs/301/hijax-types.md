@@ -28,8 +28,8 @@ into its array leaves at every boundary.
 But sometimes you don't want transparency. Some data is best
 modeled as a new *type*, with its own identity:
 
-* it should appear in jaxprs as a single value of a single type, not as a
-  spray of array leaves;
+* it should appear in jaxprs as a single value of a single type rather
+  than as a list of array leaves;
 * it has internal invariants, so users should only produce and consume it
   through a fixed set of operations, rather than by freely constructing or
   pattern-matching its components;
@@ -43,8 +43,8 @@ modeled as a new *type*, with its own identity:
 Hijax types (or "hi types") provide this. You subclass `HiType` to define
 the type, register a Python class as carrying values of that type, and write
 hijax primitives whose input and output types mention the new type. This
-document walks through the whole story with one running example: a
-quantized array type.
+document walks through all of this with one running example: a quantized
+array type.
 
 We'll assume some familiarity with hijax primitives; see
 {ref}`jax-301-custom-derivatives` for an introduction to them. Like everything
@@ -105,7 +105,7 @@ give up:
   type, so jaxprs say what they mean.
 * **Tangents.** A quantized array's values live on a discrete grid, so it
   makes no sense to perturb them along the grid. But a pytree's tangent
-  type is forced to be the pytree of its leaves' tangent types — and the
+  type is forced to be the pytree of its leaves' tangent types, and the
   tangent type of an integer array like `qvalue` is a `float0` array,
   which can only carry a trivial payload. So as a pytree, a quantized
   array would admit no useful perturbations at all. What we want is to
@@ -179,7 +179,7 @@ register_hitype(QArray, lambda q: QArrayTy(q.qvalue.shape,
 The `register_hitype` call associates the value class with the type: its
 second argument computes the type of any given value, analogous to how
 `jax.typeof` maps an array to its `ShapedArray` type. (Ours reads both the
-shape and the sharding off the `qvalue` component — every array carries a
+shape and the sharding off the `qvalue` component. Every array carries a
 sharding, trivial when no mesh is in play.) After registration,
 `jax.typeof` works on `QArray`s, and JAX transformations accept them
 anywhere a value is expected.
@@ -266,13 +266,13 @@ print(dequantize(qx))
 The `expand` methods above construct `QArray` values and read their
 attributes directly. It's important that this kind of direct container
 manipulation happen *only* in `expand` (and in the type's own methods,
-like `lower_val` and `raise_val`). Everywhere else — in particular, in
-any function you might `jit`, differentiate, or `vmap` — hi values should
+like `lower_val` and `raise_val`). Everywhere else, and in particular in
+any function you might `jit`, differentiate, or `vmap`, hi values should
 be produced and consumed only by applying primitives.
 
 The reason is what traced code actually sees. Under a trace, a quantized
 array is not a `QArray` instance: it's a `Tracer` of type `q8[...]`. So
-reading an attribute in traced code fails —
+reading an attribute in traced code fails:
 
 ```{code-cell}
 try:
@@ -281,8 +281,8 @@ except AttributeError as e:
   print('AttributeError:', e)
 ```
 
-and, worse, calling the constructor on traced arrays doesn't fail right
-away. It smuggles `Tracer`s inside a container that JAX treats as one
+Worse, calling the constructor on traced arrays doesn't fail right away.
+It smuggles `Tracer`s inside a container that JAX treats as one
 opaque concrete value, and the mistake surfaces later, as a confusing
 error far from its cause (here a missing constant handler; under `grad`
 it's a leaked-tracer error):
@@ -298,10 +298,10 @@ except TypeError as e:
   print('TypeError:', e)
 ```
 
-In `expand` it's a different story: by the time `expand` runs, JAX has
+Inside `expand` it's different: by the time `expand` runs, JAX has
 committed to implementing the primitive in terms of the type's lojax
 components, and its `QArray` arguments are genuine `QArray` instances
-(holding lojax values — possibly traced ones). There, manipulating the
+(holding lojax values, possibly traced ones). There, manipulating the
 value as a plain container is exactly right.
 
 (The top-level peeks at attributes like `qx.qvalue` elsewhere in this
@@ -311,9 +311,9 @@ traced, stick to primitives.)
 
 ### A more realistic op: dense × quantized matmul
 
-Conversion ops alone make for a thin API: in practice, a quantized array
-type earns its keep in ops that consume the type directly. The classic
-example is an inference-style matmul, where the activations `x` are an
+Conversion ops alone make for a thin API. The point of a quantized array
+type is ops that consume the type directly. The classic example is an
+inference-style matmul, where the activations `x` are an
 ordinary dense `f32` array and the weights are quantized:
 
 ```{code-cell}
@@ -362,15 +362,15 @@ folded into the dense operand, so the heavy matmul runs directly against
 the `int8` payload rather than a dequantized copy. Owning the op as a
 single primitive lets us state that rewriting once, in one place.
 
-Also notice the discipline from the previous section in action: `expand`
-reads `qw.scale` and `qw.qvalue` as container attributes, while the VJP
-rules — which are ordinary traced code — go through the `dequantize`
-primitive instead.
+Also notice the discipline from the previous section: `expand` reads
+`qw.scale` and `qw.qvalue` as container attributes, while the VJP rules,
+which are ordinary traced code, go through the `dequantize` primitive
+instead.
 
-(The typing rule also computes an output *sharding* — output rows
+(The typing rule also computes an output *sharding*: output rows
 partitioned like `x`'s, output columns like `qw`'s, with the contracted
-axes required to be unsharded — and the backward rule passes
-`out_sharding` hints to its matmuls. Both are explained in the
+axes required to be unsharded. The backward rule passes `out_sharding`
+hints to its matmuls. Both are explained in the
 explicit-sharding section below; outside of explicit mode all these
 shardings are trivial and the extra code is inert.)
 
@@ -397,7 +397,7 @@ only disappears at lowering time, when `expand` is traced and each
 `q8[...]`-typed value is expanded into the array components given by
 `lo_ty`.
 
-Ops with mixed operand kinds read just as directly — one equation with a
+Ops with mixed operand kinds read just as directly, as one equation with a
 `f32[2,3] @ q8[3,4] -> f32[2,4]` signature:
 
 ```{code-cell}
@@ -418,7 +418,8 @@ print(jax.jit(dequantize)(qx2))                        # QArray argument
 
 ## Autodiff and tangent types
 
-Here's where hi types earn their keep. On the type, we implemented
+Tangent types are the main thing a pytree couldn't give us. On the type,
+we implemented
 
 ```python
   def to_tangent_aval(self):
@@ -466,16 +467,15 @@ grad_x, grad_qw = jax.grad(loss, argnums=(0, 1))(x, qw)
 print(jax.typeof(grad_x), jax.typeof(grad_qw))
 ```
 
-Notice that making the tangent type an `f32` array was a *choice*, and
-there's a real design space here. We could instead have made the tangent
-type of `QArrayTy` be `QArrayTy` itself, so that tangents and cotangents
-are quantized too — a different tradeoff, sensible for different
-applications. (For that choice, since the tangent type is then a hi type,
-we'd also implement `vspace_zero` and `vspace_add` on it so autodiff can
-instantiate and accumulate cotangents.) This flexibility is why hi types
-are a user extension point: for each piece of JAX — tracing, lowering,
-autodiff, and batching — you set up how your type participates, however
-your situation needs.
+Making the tangent type an `f32` array was a *choice*, and other choices
+are possible. We could instead have made the tangent type of `QArrayTy` be
+`QArrayTy` itself, so that tangents and cotangents are quantized too (a
+different tradeoff, sensible for different applications). For that choice,
+since the tangent type is then a hi type, we'd also implement `vspace_zero`
+and `vspace_add` on it so autodiff can instantiate and accumulate
+cotangents. This flexibility is why hi types are a user extension point:
+for each piece of JAX (tracing, lowering, autodiff, and batching) you set
+up how your type participates.
 
 ## `vmap` and mapping specs
 
@@ -527,7 +527,7 @@ QArrayTy.inc_rank = qarray_inc_rank
 ```
 
 (We're attaching methods to the class as we go, notebook-style; in real
-code these would just be more methods in the `class QArrayTy` definition.)
+code these would be more methods in the `class QArrayTy` definition.)
 
 On the primitives, we implement `batch` rules. A `batch` rule receives the
 batched arguments along with their mapping specs (`None` for unbatched
@@ -556,9 +556,9 @@ def dequantize_batch(self, axis_data, args, in_dims):
 Dequantize.batch = dequantize_batch
 ```
 
-Because per-row quantization applies at any rank, both rules can just apply
-the unbatched operation to the stacked value — the hallmark of a type whose
-batches are values of the same type family.
+Because per-row quantization applies at any rank, both rules can apply the
+unbatched operation to the stacked value, as with any type whose batches
+are values of the same type family.
 
 Now we can `vmap`. Mapping *to* a quantized array output, the axis size is
 inferred from the array argument as usual, and we pass a spec for
@@ -572,7 +572,7 @@ print(jax.typeof(qxs))
 print(qxs.qvalue.shape, qxs.scale.shape)
 ```
 
-Mapping *over* a quantized array input, we pass a spec for `in_axes` — and
+Mapping *over* a quantized array input, we pass a spec for `in_axes`, and
 since there's no array argument to infer the axis size from, we must pass
 `axis_size` explicitly:
 
@@ -581,7 +581,7 @@ xs_roundtrip = jax.vmap(dequantize, in_axes=QArraySpec(), axis_size=4)(qxs)
 print(jax.typeof(xs_roundtrip))
 ```
 
-All the usual compositions work — `vmap` of `jit`,
+All the usual compositions work: `vmap` of `jit`,
 
 ```{code-cell}
 print(jax.typeof(jax.vmap(jax.jit(dequantize), in_axes=QArraySpec(),
@@ -600,7 +600,7 @@ print(jax.vmap(jax.grad(norm_quantized))(xs).shape)
 ## `scan` and the leading axis
 
 `jax.lax.scan` can loop over a stacked hi value, consuming one slice per
-step — and it can carry and produce hi values too. Where `vmap` asks the
+step, and it can carry and produce hi values too. Where `vmap` asks the
 *user* for a mapping spec, `scan` always walks the leading axis, so it
 instead asks the *type*: the one extra method to implement is
 `leading_axis_spec`, which returns the mapping spec describing your type's
@@ -644,7 +644,7 @@ print(jax.typeof(qys))
 
 ## Sharding in types: explicit mode
 
-Finally, sharding. In JAX's explicit sharding mode (see
+The last piece is sharding. In JAX's explicit sharding mode (see
 {ref}`jax-201-sharding`), shardings are part
 of array *types*: `jax.typeof` reports how a value is partitioned across
 the mesh, sharding propagation happens while tracing, and mismatches
@@ -659,7 +659,7 @@ dropped, so every row travels with its scale.
 
 Let's see it work. We make a mesh (this is where we use the 8 CPU devices
 requested in this document's first cell), shard some rows across it, and
-quantize — the shardings propagate through our typing rules into the
+quantize. The shardings propagate through our typing rules into the
 result type, which `jax.typeof` displays with `@` markers:
 
 ```{code-cell}
@@ -675,7 +675,7 @@ print(qrows.qvalue.sharding.spec, qrows.scale.sharding.spec)
 print(jax.typeof(dequantize(qrows)))
 ```
 
-The same holds while tracing — hi types in jaxprs now display their
+The same holds while tracing: hi types in jaxprs now display their
 shardings, computed by our `out_aval` rules:
 
 ```{code-cell}
@@ -713,7 +713,7 @@ Autodiff composes with all of this. Recall that `MatmulQ`'s backward rule
 passed `out_sharding` hints to its matmuls: that's because the cotangent
 for `qw` contracts over the row axis, which may be sharded (as it is
 here), and explicit mode refuses to guess how an all-sharded contraction
-should land. The right answer is the primal operand's sharding —
+should land. The right answer is the primal operand's sharding, since
 cotangents live where their primals live:
 
 ```{code-cell}
@@ -739,7 +739,7 @@ spec type of our own, saying how `shard_map`'s `in_specs`/`out_specs`
 apply to it. We keep the same design as above: a quantized array is
 sharded along its leading axes only.
 
-For `shard_map`, we express this with an `HiPspec` subclass — the
+For `shard_map`, we express this with an `HiPspec` subclass, the
 partition spec analogue of the `MappingSpec` above. Users pass instances
 of it as `in_specs`/`out_specs` entries, and its `to_lo` method says how
 it translates to one `jax.P` partition spec per lowered component (in
@@ -810,7 +810,7 @@ print(jnp.max(jnp.abs(dequantize_shards(qrows) - rows)))
 ```
 
 Because scales are per-row, quantizing shard-by-shard agrees exactly with
-quantizing globally — the same property that made batching pleasant:
+quantizing globally, the same property that made batching simple:
 
 ```{code-cell}
 qrows_global = quantize(rows)
@@ -824,9 +824,9 @@ hi type, which is used to shard autodiff residuals.)
 
 ## Additional examples
 
-The recipe is always the same — a value class, a `HiType` with the
+The recipe is always the same: a value class, a `HiType` with the
 `lo_ty`/`lower_val`/`raise_val` lowering triple, and primitives whose type
-signatures mention the new type — so further examples can be read quickly.
+signatures mention the new type. So further examples can be read quickly.
 
 ### Rank-1 arrays
 
@@ -887,7 +887,7 @@ before, with the field consumed in `lo_ty`: the dense row axis is carried
 by `col` and the dense column axis by `row`.
 
 Unlike `QArray`, whose values were only ever created inside `quantize`,
-here construction from factors is itself a primitive — and there's an
+here construction from factors is itself a primitive, and there's an
 accessor primitive too, so that *rules* (which are ordinary traced code)
 can get at the factors without touching container attributes:
 
@@ -957,13 +957,12 @@ def matmul_r1(x, r1):
   return MatmulR1(jax.typeof(x), jax.typeof(r1))(x, r1)
 ```
 
-(Note `Factors` declares its output type as a *tuple* of types —
-`in_avals` entries and `out_aval` can be pytrees of types — and that it
-carries no autodiff rules at all, since we only apply it in forward
-passes; rules are only needed for the transformations you actually use.
-Note also `MatmulR1`'s backward rule computes the dense operand's
-cotangent as an outer product, exploiting the representation the same way
-`expand` does.)
+(Note that `Factors` declares its output type as a *tuple* of types:
+`in_avals` entries and `out_aval` can be pytrees of types. It carries no
+autodiff rules at all, since we only apply it in forward passes; rules are
+only needed for the transformations you actually use. Note also that
+`MatmulR1`'s backward rule computes the dense operand's cotangent as an
+outer product, exploiting the representation the same way `expand` does.)
 
 ```{code-cell}
 col = jnp.arange(6., dtype='float32') / 6.
@@ -1012,7 +1011,7 @@ partition spec type.
 
 Our last example is a generic container: a tuple whose elements are any
 JAX values. Where `QArrayTy` and `Rank1Ty` had a fixed component
-structure, `TupTy` is parameterized by its component *types* — and every
+structure, `TupTy` is parameterized by its component *types*, and every
 method delegates to them:
 
 ```{code-cell}
@@ -1050,9 +1049,9 @@ class TupTy(HiType):
 register_hitype(HiTup, lambda t: TupTy(tuple(map(jax.typeof, t.elts))))
 ```
 
-Two things fall out of the delegation for free. First, elements can
-themselves be hi types — tuples of tuples, or a tuple holding a `QArray` —
-since `lo_ty` and friends just recurse. Second, there's no `sharding`
+Two things follow from the delegation. First, elements can themselves be
+hi types (tuples of tuples, or a tuple holding a `QArray`), since `lo_ty`
+and friends recurse. Second, there's no `sharding`
 field this time: the stored component types carry their own shardings, a
 third way of handling sharding-in-types alongside `QArrayTy`'s single
 field and `Rank1Ty`'s dense-shape spec.
@@ -1116,7 +1115,7 @@ def get_tuple_element(tup, idx):
   return GetTupElt(jax.typeof(tup), idx)(tup)
 ```
 
-(Note `GetTupElt`'s batch rule handles unbatched inputs — hi primitive
+(Note `GetTupElt`'s batch rule handles unbatched inputs: hi primitive
 batch rules are invoked even when no argument is batched, so `in_dims`
 entries can be `None`.)
 
@@ -1134,8 +1133,8 @@ print(jax.jit(lambda t: get_tuple_element(get_tuple_element(t, 0), 1))(nested))
 print(jax.typeof(make_tup(qx, 3.)))  # a quantized array element
 ```
 
-The per-component mapping spec is the payoff under `vmap`: each element
-gets its own `in_axes`/`out_axes` entry, visible in the types. Here the
+Under `vmap`, the per-component mapping spec gives each element its own
+`in_axes`/`out_axes` entry, visible in the types. Here the
 first element is mapped on the way in, and only the second on the way
 out:
 
@@ -1150,7 +1149,7 @@ print(jax.typeof(tup), '->', jax.typeof(out))
 ```
 
 And since the component types carry their own shardings, sharding-in-types
-needs nothing extra at all:
+needs nothing extra:
 
 ```{code-cell}
 print(jax.typeof(make_tup(rows, jnp.float32(1.))))
@@ -1167,5 +1166,5 @@ rematerialization and dead code elimination.
 
 As ever with hijax, `tests/hijax_test.py` is a good source of worked
 examples, and {ref}`jax-301-custom-derivatives` covers the primitive-side
-API — including JVP rules, symbolic zeros, and custom linearization — in
+API (including JVP rules, symbolic zeros, and custom linearization) in
 more depth.

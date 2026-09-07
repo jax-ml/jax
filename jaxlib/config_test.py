@@ -14,12 +14,17 @@
 # ==============================================================================
 
 import threading
+import unittest
 
 from absl.testing import absltest
 
 from jax.jaxlib import _jax
+from jax.jaxlib import xla_client
 
 config = _jax.config
+
+
+test_race_config = config.Config("test_race", 1)
 
 
 class ConfigTest(absltest.TestCase):
@@ -62,6 +67,30 @@ class ConfigTest(absltest.TestCase):
         self.assertEqual(c.value, i)
 
     threads = [threading.Thread(target=Body) for _ in range(4)]
+    for t in threads:
+      t.start()
+    for t in threads:
+      t.join()
+
+  @unittest.skipIf(
+      xla_client._version < 491,
+      "Requires jaxlib_extension_version >= 491",
+  )
+  def testConcurrentGlobalStateRace(self):
+    def writer():
+      for _ in range(2000):
+        test_race_config.set_global(2)
+        test_race_config.set_global(1)
+
+    def reader():
+      for _ in range(2000):
+        _ = test_race_config.value
+
+    threads = [
+        threading.Thread(target=writer),
+        threading.Thread(target=reader),
+        threading.Thread(target=reader),
+    ]
     for t in threads:
       t.start()
     for t in threads:

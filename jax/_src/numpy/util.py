@@ -259,7 +259,7 @@ def promote_args_complex(fun_name: str, *args: ArrayLike) -> list[Array]:
   return promote_shapes(fun_name, *promote_dtypes_complex(*args))
 
 
-@api.jit(inline=True)
+@api.jit(inline=api.Inline.JAX_EARLY)
 def _broadcast_arrays(*args: ArrayLike) -> tuple[Array, ...]:
   """Like Numpy's broadcast_arrays but doesn't return views."""
   avals = [core.shaped_abstractify(arg) for arg in args]

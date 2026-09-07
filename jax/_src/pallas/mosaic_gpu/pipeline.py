@@ -333,10 +333,6 @@ def emit_pipeline[T](
       raise NotImplementedError(
           "emit_pipeline on pre-Hopper GPUs only supports input-only pipelines"
       )
-    if has_dynamic_grid:
-      raise NotImplementedError(
-          "emit_pipeline on pre-Hopper GPUs requires a static grid"
-      )
 
   def pipeline(*gmem_refs: state.AbstractRef):
     in_gmem_refs, out_gmem_refs = util.split_list(gmem_refs, [len(in_specs)])
@@ -417,7 +413,10 @@ def emit_pipeline[T](
     # Initialize the pipeline.
     indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
     if has_dynamic_grid:
-      prologue_steps = lax.min(max_concurrent_steps, num_steps)
+      assert isinstance(num_steps, jax.Array)
+      prologue_steps = lax.min(
+          jnp.asarray(max_concurrent_steps, dtype=num_steps.dtype), num_steps
+      )
     else:
       assert max_concurrent_steps <= num_steps
       prologue_steps = max_concurrent_steps
@@ -437,7 +436,9 @@ def emit_pipeline[T](
     # the dynamic grid case. This is fine, since in that case, we will never
     # need to fetch more data anyway.
     def loop_body(step, carry, *, wait_count=0):
-      slot = lax.rem(step, max_concurrent_steps)
+      slot = lax.rem(
+          step, jnp.asarray(max_concurrent_steps, dtype=step.dtype)
+      )
       indices, fetch_index_levels, last_store_indices, prev_body_carry = carry
 
       if barrier_ref is not None:
@@ -499,7 +500,10 @@ def emit_pipeline[T](
           delay_release_levels, fetch_index_levels
       ):
         fetch_step = step + (max_concurrent_steps - delay_release)
-        fetch_slot = lax.rem(fetch_step, max_concurrent_steps)
+        fetch_slot = lax.rem(
+            fetch_step,
+            jnp.asarray(max_concurrent_steps, dtype=fetch_step.dtype),
+        )
         def do_fetch():
           for bref in in_brefs:
             if getattr(bref.spec, "delay_release", 0) == delay_release:
@@ -544,10 +548,12 @@ def emit_pipeline[T](
         init_carry,
     )
     if is_cp_async and copies_per_step > 0:
-      assert isinstance(num_steps, int)
-      # cp.async wait-group must be a compile-time constant. Drain steps are
-      # unrolled with decreasing wait counts (down to 0).
-      steady_steps = max(0, num_steps - (max_concurrent_steps - 1))
+      if has_dynamic_grid:
+        steady_steps = lax.max(
+            jnp.zeros_like(num_steps), num_steps - (max_concurrent_steps - 1)
+        )
+      else:
+        steady_steps = max(0, num_steps - (max_concurrent_steps - 1))
       loop_carry = lax.fori_loop(
           0,
           steady_steps,
@@ -557,12 +563,27 @@ def emit_pipeline[T](
           ),
           init_loop_carry,
       )
-      for step in range(steady_steps, num_steps):
-        loop_carry = loop_body(
-            step,
+      if has_dynamic_grid:
+        # cp.async.wait_group requires an immediate operand. We await all
+        # in-flight copies upfront to avoid unrolling the drain.
+        # TODO(slebedev): Consider branching on the number of remaining steps
+        # via ``pl.when`` to generate unrolled drain variants with precise wait
+        # counts, recovering the copy-compute overlap.
+        loop_carry = lax.fori_loop(
+            steady_steps,
+            num_steps,
+            functools.partial(loop_body, wait_count=0),
             loop_carry,
-            wait_count=(num_steps - 1 - step) * copies_per_step,
         )
+      else:
+        # cp.async wait-group must be a compile-time constant. Drain steps are
+        # unrolled with decreasing wait counts (down to 0).
+        for step in range(steady_steps, num_steps):
+          loop_carry = loop_body(
+              jnp.asarray(step),
+              loop_carry,
+              wait_count=(num_steps - 1 - step) * copies_per_step,
+          )
       last_indices, _, _, final_carry = loop_carry
     else:
       last_indices, _, _, final_carry = lax.fori_loop(
@@ -575,7 +596,8 @@ def emit_pipeline[T](
       gpu_primitives.commit_smem()
 
     if needs_epilogue:
-      last_slot = lax.rem(num_steps - 1, max_concurrent_steps)
+      last_step = jnp.asarray(num_steps - 1)
+      last_slot = lax.rem(last_step, max_concurrent_steps)
       for bref in out_brefs:
         if bref.is_index_invariant:
           bref.copy_out(last_slot, last_indices, predicate=None)
@@ -1103,7 +1125,9 @@ def emit_pipeline_warp_specialized(
       gpu_primitives.set_max_registers(memory_registers, action="decrease")
       indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
       if has_dynamic_grid:
-        prologue_steps = lax.min(max_concurrent_steps, num_steps)
+        prologue_steps = lax.min(
+            jnp.asarray(max_concurrent_steps, dtype=num_steps.dtype), num_steps
+        )
       else:
         assert max_concurrent_steps <= num_steps
         prologue_steps = max_concurrent_steps

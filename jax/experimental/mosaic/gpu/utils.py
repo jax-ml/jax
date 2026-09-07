@@ -74,6 +74,124 @@ def dump_to_file_or_stdout(
     print(content)
 
 
+def _ptx_constraint(t: ir.Type) -> str:
+  """Infers the LLVM inline asm constraint string for a given MLIR type in PTX."""
+  if isinstance(t, ir.IntegerType):
+    width = ir.IntegerType(t).width
+    return {1: "b", 16: "h", 32: "r", 64: "l"}[width]
+  if isinstance(t, ir.FloatType):
+    width = ir.FloatType(t).width
+    return {16: "h", 32: "f"}[width]
+  if isinstance(t, llvm.PointerType):
+    # Treat global memory pointers as 64-bit, and others as 32-bit. This is not
+    # entirely correct, since SMEM pointers may also be using 64 bits unless in
+    # short address mode (see computeNVPTXDataLayout in
+    # llvm/llvm-project/llvm/lib/TargetParser/TargetDataLayout.cpp), but it is
+    # practically the most convenient mapping---as PTX intrinsics mostly expect
+    # these pointers to be provided as 32-bit values anyway.
+    return "l" if t.address_space in [0, 1] else "r"
+  raise NotImplementedError(f"Unknown PTX constraint for type: {t}")
+
+
+@overload
+def inline_ptx(
+    ptx: str,
+    *args: ir.Value,
+    result_types: ir.Type,
+    has_side_effects: bool = False,
+) -> ir.Value:
+  ...
+
+
+@overload
+def inline_ptx(
+    ptx: str,
+    *args: ir.Value,
+    result_types: Sequence[ir.Type],
+    has_side_effects: bool = False,
+) -> tuple[ir.Value, ...]:
+  ...
+
+
+@overload
+def inline_ptx(
+    ptx: str,
+    *args: ir.Value,
+    result_types: None = None,
+    has_side_effects: Literal[True] = True,
+) -> None:
+  ...
+
+
+def inline_ptx(
+    ptx: str,
+    *args: ir.Value,
+    result_types: Sequence[ir.Type] | ir.Type | None = None,
+    has_side_effects: bool = False,
+) -> ir.Value | tuple[ir.Value, ...] | None:
+  """Emits an LLVM inline assembly operation targeting PTX.
+
+  Args:
+    ptx: The PTX assembly template string, in the format expected by
+      `llvm.inline_asm`.
+    *args: `ir.Value`s passed as operands to the assembly.
+    result_types: The output type, sequence of output types, or `None` if void.
+    has_side_effects: Whether the inline asm has side effects. If the assembly
+      does not return any result, this must be `True`.
+
+  Returns:
+    `None` if `result_types` is `None`, a single `ir.Value` if `result_types` is
+    a single `ir.Type`, or a tuple of `ir.Value`s if `result_types` is a
+    sequence of types.
+  """
+  if isinstance(result_types, ir.Type):
+    normalized_types = (result_types,)
+  elif result_types is None:
+    normalized_types = ()
+    # This is consistent with the overload we define---`has_side_effects` is
+    # defined to be `True` when `result_types` is `None`.
+    has_side_effects = True
+  else:
+    normalized_types = tuple(result_types)
+
+  # An inline asm with no results and no side effects is a no-op, which is
+  # almost certainly a mistake (this covers `result_types=()`).
+  if not normalized_types and not has_side_effects:
+    raise ValueError(
+        "`result_types` must be specified if `has_side_effects` is False."
+    )
+
+  if not normalized_types:
+    asm_ret_type = ir.Type.parse("!llvm.void")
+  elif len(normalized_types) == 1:
+    asm_ret_type = normalized_types[0]
+  else:
+    asm_ret_type = llvm.StructType.get_literal(normalized_types)
+
+  out_constraints = [f"={_ptx_constraint(t)}" for t in normalized_types]
+  in_constraints = [_ptx_constraint(arg.type) for arg in args]
+
+  result = llvm.inline_asm(
+      asm_ret_type,
+      list(args),
+      ptx,
+      ",".join(out_constraints + in_constraints),
+      has_side_effects=has_side_effects,
+  )
+  if result_types is None:
+    return None
+  assert isinstance(result, ir.Value)
+  if isinstance(result_types, ir.Type):
+    return result
+  assert isinstance(result_types, Sequence)
+  if len(result_types) == 1:
+    return (result,)
+  return tuple(
+      llvm.extractvalue(t, result, [i])
+      for i, t in enumerate(normalized_types)
+  )
+
+
 def gpu_address_space_to_nvptx(address_space: gpu.AddressSpace) -> int:
   match address_space:
     case gpu.AddressSpace.Global:
@@ -338,31 +456,20 @@ def multimem_load_reduce(
   # It's unclear to me why, but at least according to PTX docs, we have to use
   # the floating-point instructions here to be able to store vectors.
   acc_prec = ""
-  if vector_i32_length == 1:
-    asm_out_ty = i32
-  else:
-    asm_out_ty = llvm.StructType.get_literal([i32] * vector_i32_length)
-  out_reg_struct = llvm.inline_asm(
-      asm_out_ty,
-      [ptr],
+  out_regs = inline_ptx(
       f"multimem.ld_reduce.relaxed.sys.global.{reduction}{acc_prec}{vec_mod}.{ptx_ty}"
       f" {vec_ptx}, [${vector_i32_length}];",
-      "=r," * vector_i32_length + "l",
+      ptr,
+      result_types=[i32] * vector_i32_length,
       has_side_effects=True,
   )
-  assert isinstance(out_reg_struct, ir.Value)
   if vector_i32_length == 1:
-    return bitcast(out_reg_struct, ty)
-  else:
-    out_regs = [
-        llvm.extractvalue(i32, out_reg_struct, [i])
-        for i in range(vector_i32_length)
-    ]
-    vec_i32_ty = ir.VectorType.get((1,), i32)
-    return bitcast(
-        vector_concat([bitcast(out_reg, vec_i32_ty) for out_reg in out_regs]),
-        ty,
-    )
+    return bitcast(out_regs[0], ty)
+  vec_i32_ty = ir.VectorType.get((1,), i32)
+  return bitcast(
+      vector_concat([bitcast(out_reg, vec_i32_ty) for out_reg in out_regs]),
+      ty,
+  )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1856,7 +1963,7 @@ def get_memref_llvm_address_space(memref_ty: ir.MemRefType) -> int | None:
   return gpu_address_space_to_nvptx(_MEMORY_SPACES[str(memory_space)])
 
 
-def memref_ptr(memref_arg):
+def memref_ptr(memref_arg) -> ir.Value:
   i64 = ir.IntegerType.get_signless(64)
   memref_ty = ir.MemRefType(memref_arg.type)
   rank = len(memref_ty.shape)

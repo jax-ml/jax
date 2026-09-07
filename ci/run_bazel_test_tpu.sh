@@ -78,6 +78,11 @@ else
   BAZEL_STARTUP_ARGS=()
 fi
 
+RBE_CACHE_OPTION=""
+if [[ "$JAXCI_USE_RBE_CACHE" == "1" || "$JAXCI_USE_RBE_CACHE" == "true" ]]; then
+  RBE_CACHE_OPTION="--config=ci_rbe_cache"
+fi
+
 echo "Running Bazel TPU tests..."
 
 # Don't abort the script if one command fails to ensure we run all test
@@ -97,7 +102,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   IGNORE_TESTS="-//tests/pallas:tpu_pallas_interpret_thread_map_test_tpu"
 
   # Run single-accelerator tests in parallel
-  TEST_ARTIFACTS_DIR="test-artifacts-single"
+  TEST_ARTIFACTS_DIR="${JAXCI_TEST_ARTIFACTS_DIR}-single"
   mkdir -p "$TEST_ARTIFACTS_DIR"
 
   echo "::group::Bazel TPU single-accelerator tests (full)" >&2
@@ -110,7 +115,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     $OVERRIDE_XLA_REPO \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     --config=ci_linux_x86_64 \
-    --config=ci_rbe_cache \
+    $RBE_CACHE_OPTION \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAX \
     --run_under="$(pwd)/build/parallel_accelerator_execute.sh" \
@@ -140,7 +145,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
   # Run non-multiprocess multi-accelerator tests across all chips
-  TEST_ARTIFACTS_DIR="test-artifacts-multi"
+  TEST_ARTIFACTS_DIR="${JAXCI_TEST_ARTIFACTS_DIR}-multi"
   mkdir -p "$TEST_ARTIFACTS_DIR"
 
   echo "::group::Bazel TPU multi-accelerator tests (full)" >&2
@@ -153,7 +158,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     $OVERRIDE_XLA_REPO \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     --config=ci_linux_x86_64 \
-    --config=ci_rbe_cache \
+    $RBE_CACHE_OPTION \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
@@ -179,7 +184,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 
   # Run multiprocess targets one at a time. Their workers must execute each test
   # together, so disable test-level threading.
-  TEST_ARTIFACTS_DIR="test-artifacts-multiprocess"
+  TEST_ARTIFACTS_DIR="${JAXCI_TEST_ARTIFACTS_DIR}-multiprocess"
   mkdir -p "$TEST_ARTIFACTS_DIR"
 
   echo "::group::Bazel TPU multiprocess tests (full)" >&2
@@ -192,7 +197,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     $OVERRIDE_XLA_REPO \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     --config=ci_linux_x86_64 \
-    --config=ci_rbe_cache \
+    $RBE_CACHE_OPTION \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
@@ -217,7 +222,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 else
 
   # Run single-accelerator tests in parallel
-  TEST_ARTIFACTS_DIR="test-artifacts-single"
+  TEST_ARTIFACTS_DIR="${JAXCI_TEST_ARTIFACTS_DIR}-single"
   mkdir -p "$TEST_ARTIFACTS_DIR"
 
   echo "::group::Bazel TPU single-accelerator tests" >&2
@@ -230,7 +235,7 @@ else
     $OVERRIDE_XLA_REPO \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     --config=ci_linux_x86_64 \
-    --config=ci_rbe_cache \
+    $RBE_CACHE_OPTION \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
     --run_under="$(pwd)/build/parallel_accelerator_execute.sh" \
@@ -276,7 +281,7 @@ else
   ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
   # Run multi-accelerator across all chips
-  TEST_ARTIFACTS_DIR="test-artifacts-multi"
+  TEST_ARTIFACTS_DIR="${JAXCI_TEST_ARTIFACTS_DIR}-multi"
   mkdir -p "$TEST_ARTIFACTS_DIR"
 
   echo "::group::Bazel TPU multi-accelerator tests" >&2
@@ -289,7 +294,7 @@ else
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     $OVERRIDE_XLA_REPO \
     --config=ci_linux_x86_64 \
-    --config=ci_rbe_cache \
+    $RBE_CACHE_OPTION \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
     --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
@@ -323,23 +328,23 @@ fi
 echo "::group::Cleanup" >&2
 # Merge results with prefixes to avoid overwriting
 { set +x; } 2>/dev/null
-mkdir -p test-artifacts
-if [[ -d test-artifacts-single ]]; then
-  for f in test-artifacts-single/*; do
+mkdir -p "$JAXCI_TEST_ARTIFACTS_DIR"
+if [[ -d "${JAXCI_TEST_ARTIFACTS_DIR}-single" ]]; then
+  for f in "${JAXCI_TEST_ARTIFACTS_DIR}-single"/*; do
     [[ -e "$f" ]] || continue
-    cp "$f" "test-artifacts/single_$(basename "$f")"
+    cp "$f" "${JAXCI_TEST_ARTIFACTS_DIR}/single_$(basename "$f")"
   done
 fi
-if [[ -d test-artifacts-multi ]]; then
-  for f in test-artifacts-multi/*; do
+if [[ -d "${JAXCI_TEST_ARTIFACTS_DIR}-multi" ]]; then
+  for f in "${JAXCI_TEST_ARTIFACTS_DIR}-multi"/*; do
     [[ -e "$f" ]] || continue
-    cp "$f" "test-artifacts/multi_$(basename "$f")"
+    cp "$f" "${JAXCI_TEST_ARTIFACTS_DIR}/multi_$(basename "$f")"
   done
 fi
-if [[ -d test-artifacts-multiprocess ]]; then
-  for f in test-artifacts-multiprocess/*; do
+if [[ -d "${JAXCI_TEST_ARTIFACTS_DIR}-multiprocess" ]]; then
+  for f in "${JAXCI_TEST_ARTIFACTS_DIR}-multiprocess"/*; do
     [[ -e "$f" ]] || continue
-    cp "$f" "test-artifacts/multiprocess_$(basename "$f")"
+    cp "$f" "${JAXCI_TEST_ARTIFACTS_DIR}/multiprocess_$(basename "$f")"
   done
 fi
 set -x

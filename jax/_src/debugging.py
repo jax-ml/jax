@@ -802,10 +802,13 @@ def _get_text_color(color: str) -> str:
 def make_color_iter(color_map, num_rows, num_cols):
   num_colors = num_rows * num_cols
   color_values = np.linspace(0, 1, num_colors)
+  # A step coprime to num_colors visits every color exactly once.
+  step = (num_colors // 2 + bool(num_colors % 2 == 0)
+          + bool(num_colors % 4 == 2))
   idx = 0
   for _ in range(num_colors):
     yield color_map(color_values[idx])
-    idx = (idx + num_colors // 2 + bool(num_colors % 2 == 0)) % num_colors
+    idx = (idx + step) % num_colors
 
 def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
                        use_color: bool = True, scale: float = 1.,

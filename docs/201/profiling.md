@@ -17,13 +17,12 @@ kernelspec:
 
 <!--* freshness: { reviewed: '2026-07-09' } *-->
 
-The golden rule of performance work: measure first. This page covers the three
-levels of measurement for JAX programs — *benchmarking* (timing code honestly,
-which in JAX takes some care), *profiling computation* (recording a trace of
-what actually ran, where, and for how long), and *profiling device memory*
-(seeing what's occupying your accelerator's memory, and why). For how JAX
-*allocates* GPU memory and what to do about out-of-memory failures, see
-{doc}`gpu-memory`.
+This page covers three levels of measurement for JAX programs:
+*benchmarking* (timing code, which in JAX takes some care), *profiling
+computation* (recording a trace of what actually ran, where, and for how
+long), and *profiling device memory* (seeing what's occupying your
+accelerator's memory, and why). For how JAX *allocates* GPU memory and what
+to do about out-of-memory failures, see {doc}`gpu-memory`.
 
 (jax-201-benchmarking)=
 ## Benchmarking JAX code
@@ -74,13 +73,14 @@ f_jit = jax.jit(f)
 %timeit f_jit(x_jax).block_until_ready()  # measure JAX runtime
 ```
 
-Benchmarks tell you *how fast*; to learn *why*, take a profile.
+A benchmark tells you how long something takes. To find out where the time
+goes, take a profile.
 
 (jax-201-profiling-computation)=
 ## Profiling computation
 
 The main profiling tool for JAX is [XProf](https://openxla.org/xprof), which
-records and visualizes detailed traces of program execution — per-device
+records and visualizes detailed traces of program execution: per-device
 timelines, op-level statistics, memory usage, and more. Two alternatives are
 covered afterwards: the Perfetto integration, for a quick interactive look at
 a trace, and NVIDIA's Nsight tools for GPU-specific analysis.
@@ -501,16 +501,15 @@ pip install tensorboard xprof
 
 ### What to look for in a trace
 
-A trace tells you where time actually goes. Some common signatures, and what
-they usually mean:
+Some common signatures in a trace, and what they usually mean:
 
 - **Gaps between ops on the device timeline.** The device is idle, waiting on
   the host. Typical causes: eager op-by-op dispatch (wrap more of the program
   in `jax.jit`), Python work on the critical path between steps (data
   loading, logging), or synchronization forced by fetching values back to the
-  host (including debug prints — see {doc}`debugging`).
-- **A long first step.** Compilation. Expected once per JAX type signature;
-  if it keeps happening, you're retracing — see {doc}`slow-compilation`.
+  host (including debug prints; see {doc}`debugging`).
+- **A long first step.** Compilation, expected once per JAX type signature.
+  If it keeps happening, you're retracing; see {doc}`slow-compilation`.
 - **Many tiny kernels back to back.** Per-op overhead is dominating; larger
   jitted regions give the compiler more to fuse.
 - **Long collective ops.** For sharded programs, time spent in ops like
@@ -523,9 +522,9 @@ they usually mean:
 
 ### Profiling distributed code
 
-Traces are captured per process, with one timeline per local device — so a
+Traces are captured per process, with one timeline per local device, so a
 single-process program running on all eight of a host's GPUs (or all of a TPU
-host's chips) is covered out of the box, including the collective operations
+host's chips) is covered without extra setup, including the collective operations
 that sharded computations execute. For multi-process programs, start a
 profiler server in each process; XProf's capture dialog accepts a
 comma-separated list of profiler-service addresses, so you can capture
@@ -535,7 +534,7 @@ is covered in the systems docs; see {ref}`jax-501-multiprocess`.)
 ### Viewing program traces with Perfetto
 
 As a lighter-weight alternative to XProf, the JAX profiler can generate
-traces viewable in the [Perfetto visualizer](https://ui.perfetto.dev) — handy
+traces viewable in the [Perfetto visualizer](https://ui.perfetto.dev), useful
 for a quick interactive look with nothing to install. Currently, this method
 blocks the program until a link is clicked and the Perfetto UI loads the
 trace.
@@ -605,8 +604,8 @@ documentation](https://developer.nvidia.com/tools-overview).
 (jax-201-memory-profiling)=
 ## Profiling device memory
 
-For most device-memory questions — above all, "why did my program run out of
-memory?" — the recommended tool is [XProf](jax-201-xprof), using the same
+For most device-memory questions (above all, "why did my program run out of
+memory?") the recommended tool is [XProf](jax-201-xprof), using the same
 trace capture described above: take a profile, then open the
 [Memory Profile](https://openxla.org/xprof/memory_profile) and
 [Memory Viewer](https://openxla.org/xprof/memory_viewer) tools to see memory
@@ -616,9 +615,9 @@ and lifetime.
 JAX also has a second, complementary memory profiler with a different view: a
 *snapshot* of every live buffer on the device, attributed to the Python call
 stack that allocated it. Where XProf shows what happens *within* a profiled
-window, these snapshots show what's resident at a moment you choose — and
-snapshots taken at different times can be diffed. That makes them the right
-tool for tracking down memory *leaks*: buffers kept alive by Python
+window, these snapshots show what's resident at a moment you choose, and
+snapshots taken at different times can be diffed. That makes them well
+suited to tracking down memory *leaks*: buffers kept alive by Python
 references, accumulating across steps.
 
 ### Installation
@@ -704,9 +703,9 @@ completes before the device memory profile is collected. See
 ### Debugging memory leaks
 
 For a quick first check at the REPL, {func}`jax.live_arrays` returns every
-array currently alive on the backend — often enough to spot an accumulating
-collection of arrays without any tooling. To *attribute* growing memory to
-the code responsible, use snapshots.
+array currently alive on the backend, which is often enough to spot an
+accumulating collection of arrays without any tooling. To attribute growing
+memory to the code responsible, use snapshots.
 
 We can also use the JAX device memory profiler to track down memory leaks by using
 `pprof` to visualize the change in memory usage between two device memory profiles

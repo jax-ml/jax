@@ -740,8 +740,13 @@ class GenericSharedMemory[
         in_bounds_shape = result.shape
 
         if mask is None:
-          assert in_bounds_shape == value.shape
-          buff[rnge] = value
+          if in_bounds_shape != value.shape:
+            # Runs past the end of the buffer, and there is nowhere to put the
+            # part that does not fit. Reported the same way a wholly
+            # out-of-bounds swap is.
+            result = None
+          else:
+            buff[rnge] = value
         else:
           in_bounds_mask = np.full(mask.shape, True)
           for i in range(len(in_bounds_shape)):

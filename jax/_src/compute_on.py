@@ -166,6 +166,7 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
   tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(effects, tokens))))
   ctx.set_tokens_out(tokens_out)
   return [
+      on if compute_type == 'tpu_sparsecore' and oms is core.MemorySpace.Device else
       mlir.wrap_with_memory_kind(ctx.module_context, on, core.mem_space_to_kind(oms), out_aval)
       for on, out_aval, oms in zip(out_nodes, ctx.avals_out, out_memory_spaces)
   ]

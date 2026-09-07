@@ -31,6 +31,7 @@ limitations under the License.
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/typing.h"
+#include "jaxlib/ft_mutex.h"
 #include "jaxlib/python_ref_manager.h"
 
 namespace jax {
@@ -132,7 +133,8 @@ class GlobalConfigState {
   absl::flat_hash_set<ThreadLocalConfigState*> thread_local_states_
       ABSL_GUARDED_BY(mu_);
   std::vector<std::string> names_;
-  std::vector<nb::object> entries_;
+  mutable ft_mutex entries_mu_;
+  std::vector<nb::object> entries_ ABSL_GUARDED_BY(entries_mu_);
   std::vector<int> include_in_jit_key_;
   std::vector<int> include_in_trace_context_;
   nb::object unset_ = UnsetObject();
@@ -161,23 +163,33 @@ void ThreadLocalConfigState::Set(int key, nb::object value) {
 
 nb::object GlobalConfigState::Get(int key) const {
   DCHECK_GE(key, 0);
+  ft_lock_guard lock(entries_mu_);
   DCHECK_LT(key, entries_.size());
   return entries_[key];
 }
 
 void GlobalConfigState::Set(int key, nb::object value) {
   DCHECK_GE(key, 0);
-  DCHECK_LT(key, entries_.size());
-  std::swap(entries_[key], value);
+  nb::object old_value;
+  {
+    ft_lock_guard lock(entries_mu_);
+    DCHECK_LT(key, entries_.size());
+    old_value = std::move(entries_[key]);
+    entries_[key] = std::move(value);
+  }
 }
 
 int GlobalConfigState::tp_traverse(int key, PyObject* self, visitproc visit,
                                    void* arg) {
   DCHECK_GE(key, 0);
-  if (key < entries_.size()) {
-    PyObject* value = entries_[key].ptr();
-    Py_VISIT(value);
+  PyObject* value = nullptr;
+  {
+    ft_lock_guard lock(entries_mu_);
+    if (key < entries_.size()) {
+      value = entries_[key].ptr();
+    }
   }
+  Py_VISIT(value);
   absl::MutexLock lock(mu_);
   for (const auto* state : thread_local_states_) {
     if (key < state->entries_.size()) {
@@ -189,9 +201,12 @@ int GlobalConfigState::tp_traverse(int key, PyObject* self, visitproc visit,
 }
 
 int GlobalConfigState::tp_clear(int key, PyObject* self) {
-  if (key < entries_.size()) {
-    nb::object tmp;
-    std::swap(entries_[key], tmp);
+  nb::object old_value;
+  {
+    ft_lock_guard lock(entries_mu_);
+    if (key < entries_.size()) {
+      old_value = std::move(entries_[key]);
+    }
   }
   // We destroy the python objects outside of the lock out of an abundance of
   // caution.
@@ -211,6 +226,7 @@ int GlobalConfigState::tp_clear(int key, PyObject* self) {
 Config::Config(std::string name, nb::object value, bool include_in_jit_key,
                bool include_in_trace_context) {
   auto& instance = GlobalConfigState::Instance();
+  ft_lock_guard lock(instance.entries_mu_);
   key_ = instance.entries_.size();
   instance.names_.push_back(std::move(name));
   instance.entries_.push_back(std::move(value));

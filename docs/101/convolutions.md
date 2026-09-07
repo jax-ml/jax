@@ -20,8 +20,8 @@ kernelspec:
 For basic convolution operations, JAX provides NumPy- and SciPy-style
 interfaces: {func}`jax.numpy.convolve` (with {func}`jax.numpy.correlate`) and
 {func}`jax.scipy.signal.convolve` (with its 2D and correlation variants).
-Those work like their NumPy and SciPy counterparts, and their API docs tell
-the story.
+Those work like their NumPy and SciPy counterparts, and their API docs
+describe them.
 
 This page is about the general case: the batched, N-dimensional convolutions
 used in deep neural networks, computed by
@@ -86,7 +86,7 @@ dn = lax.conv_dimension_numbers(img.shape,     # only ndim matters, not shape
 print(dn)
 ```
 
-With dimension numbers in hand, here's a basic convolution — `'SAME'` padding
+With dimension numbers in hand, here's a basic convolution. `'SAME'` padding
 preserves the spatial shape:
 
 ```{code-cell}
@@ -101,7 +101,7 @@ print("out shape: ", out.shape)
 plt.imshow(np.array(out)[0,:,:,0]);
 ```
 
-Strides downsample the output — with `(2,2)` window strides, the output has
+Strides downsample the output. With `(2,2)` window strides, the output has
 half the spatial size (and `'VALID'` padding, which applies no padding at
 all, would shrink it further):
 
@@ -114,7 +114,7 @@ plt.imshow(np.array(out)[0,:,:,0]);
 ```
 
 Kernel (rhs) dilation spreads the kernel taps apart, giving *atrous* or
-*dilated* convolution — here with an excessive dilation to make the effect
+*dilated* convolution. Here we use an excessive dilation to make the effect
 obvious:
 
 ```{code-cell}
@@ -151,7 +151,7 @@ print("out shape: ", out.shape, "<-- larger than the input")
 plt.imshow(np.array(out)[0,:,:,0]);
 ```
 
-Under the hood, this is just another `conv_general_dilated`: a transposed
+Internally, this is another `conv_general_dilated`: a transposed
 convolution is a 180° kernel rotation plus *lhs* (input) dilation, which
 spreads the input values apart:
 

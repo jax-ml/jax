@@ -126,7 +126,6 @@ jobs:
       options: >-
         --device=/dev/kfd
         --device=/dev/dri
-        --security-opt seccomp=unconfined
         --group-add video
         --shm-size 64G
         --env-file /etc/podinfo/gha-gpu-isolation-settings

@@ -10,9 +10,9 @@ autodiff interacts with sharding, defining your own derivative rules and
 even your own types, autodiff with mutable state, and controlling the
 memory/compute tradeoff of differentiation.
 
-1. :doc:`cookbook` — cooking with autodiff's fundamental ingredients, the
-   ``jvp`` and ``vjp`` machinery: recipes for Hessian-vector products and
-   full Jacobians, spiced up by mixing in ``vmap`` and complex numbers.
+1. :doc:`cookbook` — autodiff's basic ingredients, the ``jvp`` and ``vjp``
+   machinery: recipes for Hessian-vector products and full Jacobians, plus
+   ``vmap`` and complex numbers.
 2. :doc:`vjp-objects` — the VJP object as a pytree, splitting the forward
    and backward passes into separately compiled functions run on your own
    schedule, and excluding argument values (like weights) from the saved

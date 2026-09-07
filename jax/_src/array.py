@@ -48,7 +48,9 @@ from jax._src.sharding_impls import (
     device_replica_id_map, hashed_index, num_addressable_indices,
     local_to_global_shape, _internal_use_concrete_mesh)  # pyformat: disable
 from jax._src.typing import ArrayLike, DLDeviceType, DTypeLike, ExtendedDType
-from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method, cache
+from jax._src.util import (
+    cache, merge_lists, partition_list, safe_zip, unzip3, use_cpp_class,
+    use_cpp_method)  # pyformat: disable
 import numpy as np
 
 zip, unsafe_zip = safe_zip, zip
@@ -122,9 +124,10 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
   """Method to reconstruct a device array from a serialized state."""
   np_value = fun(*args)
   np_value.__setstate__(arr_state)
-  jnp_value = api.device_put(np_value)
-  jnp_value.aval = jnp_value.aval.update(**aval_state)
-  return jnp_value
+  if aval_state.get('weak_type', False):
+    aval = core.ShapedArray(np_value.shape, np_value.dtype, weak_type=True)
+    np_value = literals.TypedNdArray(np_value, aval=aval)
+  return api.device_put(np_value)
 
 
 @cache(max_size=4096, trace_context_in_key=False)
@@ -188,21 +191,8 @@ class ArrayImpl(basearray.Array):
   def __init__(self, aval: core.ShapedArray, sharding: Sharding,
                arrays: Sequence[ArrayImpl],
                committed: bool, _skip_checks: bool = False):
-    # NOTE: the actual implementation of the constructor is moved to C++.
-
-    self.aval = aval
-    self._sharding = sharding
-    self._committed = committed
-    self._npy_value = None
-    arrays = [a._arrays[0] for a in arrays]
-
-    # Don't rearrange if skip_checks is enabled because this assumes that the
-    # input buffers are already arranged properly. This usually happens when
-    # Array's are created as output of a JAX transformation
-    # (like pjit, etc).
-    if not _skip_checks or config.enable_checks.value:
-      arrays = self._check_and_rearrange(arrays, self._sharding, self.aval)
-    self._arrays = arrays
+    del aval, sharding, arrays, committed, _skip_checks
+    raise NotImplementedError("ArrayImpl is implemented in C++.")
 
   @staticmethod
   def _check_and_rearrange(
@@ -668,8 +658,8 @@ class ArrayImpl(basearray.Array):
       npy_value = np.empty(self.shape, self.dtype)
       for i, ind in _cached_index_calc(self.sharding, self.shape):
         npy_value[ind], _ = self._arrays[i]._single_device_array_to_np_array_did_copy()
+      npy_value.flags.writeable = False
       self._npy_value = npy_value
-      self._npy_value.flags.writeable = False
     return self._npy_value
 
 
@@ -1174,16 +1164,26 @@ def as_slice_indices(arr: Any, idx: Index) -> tuple[
 
 
 def shard_device_array(x, devices, indices, sharding):
-  start_indices, limit_indices, removed_dims = unzip3(
-      as_slice_indices(x, idx) for idx in indices)
   if sharding.is_fully_replicated:
     shards = [x] * len(devices)
   else:
+    indices = tuple(indices)
+    seen = set()
+    is_duplicate = [
+        True if i in seen else (seen.add(i) or False) for i in indices]
+    unique_indices, duplicate_indices = partition_list(is_duplicate, indices)
+
+    start_indices, limit_indices, removed_dims = unzip3(
+        as_slice_indices(x, idx) for idx in unique_indices
+    )
     # TODO(yashkatariya): Maybe this should be set when we call the handler in
     # InputsHandler.__call__?
     with (_internal_use_concrete_mesh(empty_concrete_mesh),
           use_abstract_mesh(empty_abstract_mesh)):
-      shards = x._multi_slice(start_indices, limit_indices, removed_dims)
+      unique_shards = x._multi_slice(start_indices, limit_indices, removed_dims)
+    idx_to_shard = dict(safe_zip(unique_indices, unique_shards))
+    duplicate_shards = [idx_to_shard[idx] for idx in duplicate_indices]
+    shards = merge_lists(is_duplicate, unique_shards, duplicate_shards)
   aval = core.shaped_abstractify(x)
   return pxla.batched_device_put(aval, sharding, shards, devices)
 

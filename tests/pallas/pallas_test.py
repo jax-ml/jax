@@ -21,7 +21,6 @@ import math
 import os
 import re
 import sys
-import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -100,15 +99,6 @@ class PallasTest(ptu.PallasTest):
   def setUp(self):
     if type(self) is PallasTest:
       self.skipTest("Base class for Pallas tests")
-    if jtu.test_device_matches(["gpu"]):
-      self.enter_context(warnings.catch_warnings())
-      warnings.filterwarnings(
-          "ignore",
-          category=DeprecationWarning,
-          message=(
-              "Using ``pl.pallas_call`` for Mosaic GPU kernels is deprecated"
-          ),
-      )
 
     super().setUp()
 
@@ -433,53 +423,6 @@ class PallasCallTest(ptu.PallasTest):
     # Pallas/Mosaic GPU.
     self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
     self.enter_context(mgpu.core.artificial_shared_memory_limit(jtu._SMEM_SIZE_BOUND_FOR_TESTS))
-
-  @jtu.ignore_warning(
-      category=DeprecationWarning,
-      message="Using .*pl.pallas_call.* for Mosaic GPU kernels is "
-      "deprecated",
-  )
-  def test_pallas_call_infers_backend_from_compiler_params(self):
-    if not jtu.test_device_matches(["gpu"]):
-      self.skipTest("Only works on GPU.")
-    if jtu.test_device_matches(["rocm"]):
-      self.skipTest("Mosaic GPU is not supported on ROCm.")
-    if not jtu.is_cuda_compute_capability_at_least("9.0"):
-      self.skipTest("Only works on a GPU with capability >= sm90")
-
-    triton_params = pltriton.CompilerParams(
-        num_warps=2,
-        num_stages=1,
-    )
-    mosaic_gpu_params = plmgpu.CompilerParams()
-
-    pallas_call = functools.partial(
-        pl.pallas_call,
-        grid=(1,),
-        out_shape=jax.ShapeDtypeStruct((128, 64), jnp.float32),
-    )
-    def add_one(x_ref, o_ref):
-      x = x_ref[:]
-      # Use a Pallas/Mosaic GPU-specific primitive to trigger a failure when
-      # using a different backend.
-      plmgpu.print_layout("x: {}", x)
-      o_ref[:] = x + 1
-
-    add_one_mgpu = pallas_call(add_one, compiler_params=mosaic_gpu_params)
-    add_one_triton = pallas_call(add_one, compiler_params=triton_params)
-
-    x = jnp.ones((128, 64), jnp.float32)
-
-    # Running on the Mosaic GPU backend should be fine.
-    self.assertArraysEqual(add_one_mgpu(x), x + 1)
-
-    # But Triton doesn't have the required primitive, so it should fail to
-    # lower.
-    with self.assertRaisesRegex(
-        NotImplementedError,
-        "Unimplemented primitive in Pallas Triton lowering: print_layout."
-    ):
-      add_one_triton(x)
 
   @jtu.skip_on_devices("gpu")  # TODO: RET_CHECK failure
   def test_block_spec_with_padding(self):

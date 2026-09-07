@@ -130,7 +130,7 @@ on this lattice, which generates the following binary promotion table:
 
 Jax's type promotion rules differ from those of NumPy, as given by
 :func:`numpy.promote_types`, in those cells highlighted with a green background
-in the table above. There are three key classes of differences:
+in the table above. There are three classes of differences:
 
 * When promoting a weakly typed value against a typed JAX value of the same category,
   JAX always prefers the precision of the JAX value. For example, ``jnp.int16(1) + 1``

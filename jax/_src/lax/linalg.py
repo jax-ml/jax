@@ -868,6 +868,14 @@ def _cholesky_shape_rule(shape):
 def _cholesky_jvp_rule(primals, tangents):
   x, = primals
   sigma_dot, = tangents
+  if dtypes.issubdtype(sigma_dot.dtype, np.complexfloating):
+    r, i = lax.real(sigma_dot), lax.imag(sigma_dot)
+    sigma_dot = lax.complex(
+        _tril(r) + _T(_tril(r, -1)),
+        _tril(i, -1) - _T(_tril(i, -1)),
+    )
+  else:
+    sigma_dot = _tril(sigma_dot) + _T(_tril(sigma_dot, -1))
   L = _tril(cholesky_p.bind(x))
 
   # Forward-mode rule from https://arxiv.org/pdf/1602.07527.pdf

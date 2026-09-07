@@ -43,7 +43,6 @@ Functions
   broadcast_to
   debug_check
   debug_print
-  dot
   get_global
   loop
   multiple_of

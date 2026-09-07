@@ -166,6 +166,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     if jnp.finfo(dtype).bits == 64:
       jtu.check_grads(jnp.linalg.cholesky, args_maker(), order=2)
+      jtu.check_grads(
+          partial(jnp.linalg.cholesky, upper=upper, symmetrize_input=False),
+          args_maker(),
+          order=2,
+      )
+      jtu.check_grads(
+          partial(jsp.linalg.cholesky, lower=not upper), args_maker(), order=2
+      )
 
   def testCholeskyGradPrecision(self):
     rng = jtu.rand_default(self.rng())

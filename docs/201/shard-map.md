@@ -560,15 +560,15 @@ A few notes on the table:
 The VMA types above track two states per mesh axis: varying and invarying.
 There are two more, mirroring the `unreduced` and `reduced` sharding states
 available in explicit mode. In brief, a value that is *unreduced* along a
-mesh axis is a sum waiting to happen: each function instance along the axis
-holds a full-shape partial sum, and the value's true meaning is the sum of
-those pieces (think of the state after local matmuls but before the `psum`
-when the contracting dimension is split). A value that is *reduced* holds
+mesh axis is a pending sum: each function instance along the axis holds a
+full-shape partial sum, and the value's true meaning is the sum of those
+pieces (the state after local matmuls but before the `psum`, when the
+contracting dimension is split). A value that is *reduced* holds
 the same data on each instance, just like an invarying value; the type
 differs only in how autodiff treats it. Both exist mainly for controlling
-communication in autodiff-generated backward passes — see
-{ref}`jax-301-sharding-ad` for that story. Here we just summarize how they
-appear inside a `shard_map`.
+communication in autodiff-generated backward passes; see
+{ref}`jax-301-sharding-ad`. Here we only summarize how they appear inside a
+`shard_map`.
 
 Each manual type corresponds to a sharding type outside the `shard_map`,
 with `in_specs` and `out_specs` mediating the correspondence:
@@ -1136,8 +1136,8 @@ print(jnp.allclose(out, lhs @ rhs, atol=1e-3, rtol=1e-3))
 
 But this version gets no compute/communication overlap: before we can start
 the matmul, we need the `all_gather` to complete.
-Here's a profile — captured and viewed with the tools described in
-{doc}`profiling` — using the same code, but on larger example shapes (`(8192,
+Here's a profile (captured and viewed with the tools described in
+{doc}`profiling`) using the same code, but on larger example shapes (`(8192,
 8192)` for `lhs` and `(8192, 1024)` for `rhs`):
 
 ![Profile of an all-gather matmul without overlap.](../_static/shard_map_08_profile_of_an_all_gather_matmul_without_overlap.png)
