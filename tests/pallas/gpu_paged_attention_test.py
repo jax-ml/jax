@@ -26,6 +26,11 @@ warnings.filterwarnings(
     message="jax.experimental.pallas.ops.gpu.* is deprecated.*",
     category=DeprecationWarning,
 )
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message="The Pallas Triton backend is deprecated",
+)
 
 if sys.platform != "win32":
   from jax.experimental.pallas.ops.gpu import paged_attention

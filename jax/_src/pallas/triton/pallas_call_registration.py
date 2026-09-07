@@ -21,6 +21,7 @@ import json
 from typing import Final
 
 from jax._src import core as jax_core
+from jax._src import deprecations
 from jax._src import frozen_dict
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
@@ -61,6 +62,16 @@ def pallas_call_lowering(
     name: str | None,
 ):
   del interpret, out_avals, cost_estimate, name
+
+  deprecations.warn(
+      "jax-pallas-triton",
+      "The Pallas Triton backend is deprecated and will be removed in"
+      " a future JAX version. To keep using Pallas on GPU, please migrate"
+      " to the Mosaic GPU backend. To keep using Triton, switch to"
+      " the official Triton bindings and jax_triton.",
+      stacklevel=2,
+  )
+
   debug_info = jaxpr.debug_info
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(

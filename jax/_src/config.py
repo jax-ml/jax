@@ -2379,17 +2379,6 @@ jax_pallas_enable_debug_checks = bool_state(
     include_in_trace_context=True,
 )
 
-jax_pallas_use_mosaic_gpu = bool_state(
-    name='jax_pallas_use_mosaic_gpu',
-    default=bool_env('JAX_PALLAS_USE_MOSAIC_GPU', True),
-    help=(
-        'If True, lower Pallas kernels to the experimental Mosaic GPU'
-        ' dialect, instead of Triton IR.'
-    ),
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
-
 jax_mosaic_allow_hlo = bool_state(
     name='jax_mosaic_allow_hlo',
     default=False,

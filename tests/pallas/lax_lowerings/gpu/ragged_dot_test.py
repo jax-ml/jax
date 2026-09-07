@@ -15,6 +15,8 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
+import warnings
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -37,6 +39,12 @@ class RaggedDotGpuPallasTest(jtu.JaxTestCase):
     else:
       if not jtu.is_cuda_compute_capability_at_least("8.0"):
         self.skipTest("This test requires a GPU")
+    self.enter_context(warnings.catch_warnings())
+    warnings.filterwarnings(
+        "ignore",
+        category=DeprecationWarning,
+        message="The Pallas Triton backend is deprecated",
+    )
     super().setUp()
 
   def _test_ragged_dot(self, m, k, n, num_groups, dtype):

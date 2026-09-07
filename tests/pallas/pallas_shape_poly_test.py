@@ -107,9 +107,6 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
         category=DeprecationWarning,
         message="The Pallas Triton backend is deprecated",
     )
-    # TODO(bchetioui): Remove this for H100+ once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_copy(self):
     # The blocks are static, but the input and the grid are of polymorphic
