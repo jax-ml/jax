@@ -129,11 +129,11 @@ def _get_barrier(
     aval: ShapedAbstractValue, arrival_multiplier: int
 ) -> mgpu.Barrier:
   assert isinstance(aval.dtype, gpu_core.BarrierType)
-  num_arrivals = aval.dtype.num_arrivals
-  num_barriers = math.prod(aval.shape)
-  if not (orders_tc := aval.dtype.orders_tensor_core):
-    num_arrivals *= arrival_multiplier
-  return mgpu.Barrier(num_arrivals, num_barriers, orders_tc)
+  return mgpu.Barrier(
+      arrival_count=aval.dtype.num_arrivals * arrival_multiplier,
+      num_barriers=math.prod(aval.shape),
+      orders_tensor_core=aval.dtype.orders_tensor_core,
+  )
 
 
 def _get_cluster_barrier(
