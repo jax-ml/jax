@@ -682,10 +682,11 @@ class VectorSubcoreTest(PallasSCTest):
     info = plsc.get_sparse_core_info()
     shape = (info.num_lanes,)
     dtype = jnp.int32
-    @pl.kernel(out_type=jax.ShapeDtypeStruct(shape, dtype),
-               mesh=mesh,
-               scratch_types=[pltpu.VMEM(shape, dtype) @ mesh],
-               compiler_params=pltpu.CompilerParams(needs_layout_passes=False))
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct(shape, dtype),
+        mesh=mesh,
+        scratch_types=[pltpu.VMEM(shape, dtype) @ mesh],
+    )
     def kernel(output_ref, scratch):
       scratch[...] = jnp.zeros_like(scratch)
       plsc.addupdate_scatter(
@@ -1206,10 +1207,7 @@ class VectorSubcoreTest(PallasSCTest):
         jax.random.key(42), jnp.arange(self.num_lanes)
     )
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, o_ref):
       x = x_ref[...]
       o_ref[...] = jnp.ones_like(o_ref)
