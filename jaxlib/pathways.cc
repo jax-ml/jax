@@ -15,7 +15,6 @@ limitations under the License.
 
 #include <Python.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
