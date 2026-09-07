@@ -1248,8 +1248,7 @@ class BarrierRef:
       raise ValueError(f"Unsupported scope: {scope}")
 
     if orders_tensor_core:
-      with when(wait_complete):
-        nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.AFTER_THREAD_SYNC)
+      nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.AFTER_THREAD_SYNC)
     return wait_complete
 
   def test(
