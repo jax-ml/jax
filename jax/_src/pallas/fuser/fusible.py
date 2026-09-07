@@ -27,7 +27,6 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.control_flow.loops import eval_jaxpr_p
-from jax._src.pallas.fuser import fusible_dtype
 from jax._src.pallas.fuser import fusion as fusion_lib
 from jax._src.traceback_util import api_boundary
 
@@ -122,31 +121,6 @@ class Fusible(hijax.HiPrim):
     out_dims = tree_util.tree_map(lambda _: 0, self.out_aval)
 
     return out, out_dims
-
-  def physicalize(self, _, *args):
-    consts = args[: self.num_consts]
-    new_jaxpr = fusible_dtype.physicalize_closed_jaxpr(
-        jax_core.ClosedJaxpr(self.jaxpr, list(consts))
-    )
-
-    const_avals = tuple(map(jax_core.typeof, new_jaxpr.consts))
-    flat_avals = tree_util.tree_map(jax_core.typeof, args[self.num_consts :])
-
-    out_avals_flat = [v.aval for v in new_jaxpr.outvars]
-    _, out_tree = tree_util.tree_flatten(self.out_aval)
-    new_out_aval = tree_util.tree_unflatten(out_tree, out_avals_flat)
-
-    new_prim = Fusible(
-        jaxpr=new_jaxpr,
-        in_avals=const_avals + flat_avals,
-        out_aval=new_out_aval,
-        output_fusion_prefix=self.output_fusion_prefix,
-        func=self.func,
-        num_consts=len(new_jaxpr.consts),
-        args_tree=self.args_tree,
-    )
-    out = new_prim(*new_jaxpr.consts, *args[self.num_consts :])
-    return jax.tree.leaves(out)
 
 
 def _make_trivial_fusion(x: jax.Array) -> fusion_lib.Fusion:

@@ -25,7 +25,6 @@ from jax._src import hijax
 from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas.fuser import fuser_utils
-from jax._src.pallas.fuser import fusible_dtype
 from jax._src.pallas.fuser import fusion as fusion_lib
 from jax._src.pallas.fuser.fusible import Fusible
 from jax._src.state import types as state_types
@@ -36,7 +35,6 @@ from jax._src.traceback_util import api_boundary
 def fuse(
     f=None,
     *,
-    resolve_fusion_dtypes: bool = True,
     debug: bool = False,
     strict_mode: bool = True,
     static_argnums: int | Sequence[int] | None = None,
@@ -46,8 +44,6 @@ def fuse(
 
   Args:
     f: The function to fuse.
-    resolve_fusion_dtypes: (experimental) whether or not to resolve fusion
-      dtypes (which don't correspond to physical dtypes)
     debug: Whether to print debug information.
     strict_mode: Whether to verify block index map equality in collisions during
       block spec propagations in output fusions.
@@ -105,12 +101,6 @@ def fuse(
                             strict_mode=strict_mode)
       return tree_util.tree_unflatten(out_tree, out_flat)
 
-    if resolve_fusion_dtypes:
-      wrapper = fusible_dtype.physicalize(
-          wrapper,
-          static_argnums=static_argnums_,
-          static_argnames=static_argnames_,
-      )
     return wrapper
 
   if f is not None:
