@@ -2811,6 +2811,15 @@ def infer_layout(
       global_constraint_system
   )
 
+  # TODO(bchetioui): Remove this fallback once minimum jaxlib version is 0.11.2.
+  dump_options = mgpu.get_or_set_dump_options(module)  # pyrefly: ignore[missing-attribute]
+  if getattr(dump_options, "constraint_system", False):
+    utils.dump_to_file_or_stdout(
+        str(global_constraint_system),
+        f"{dump_options.module_basename}.constraint_system.txt",
+        dump_options.dump_path
+    )
+
   # Attempt to find assignments that satisfy the constraint system.
   solution, remaining_fuel = find_assignments_for(
       list(ctx.value_sites_for_variable.keys()),
@@ -2842,7 +2851,8 @@ def infer_layout(
 
     raise ValueError(
         "Failed to infer a possible set of layouts. This should only happen if "
-        "user-provided layout casts are unsatisfiable."
+        "user-provided layout casts are unsatisfiable. To dump the constraint "
+        "system for debugging, use `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM=1`."
     )
 
   layout_for_value_site: dict[ValueSite, cs.Constant] = {}

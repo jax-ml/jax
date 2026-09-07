@@ -26,6 +26,8 @@ namespace mosaic {
 namespace gpu {
 
 struct DumpOptions {
+  // Whether to dump the constraint system built during layout inference.
+  bool constraint_system = false;
   // Whether to dump the MLIR module before and after each pass.
   bool mlir_passes = false;
   // Whether to dump the PTX resulting from the compilation.

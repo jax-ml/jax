@@ -37,6 +37,13 @@ Remember to align the itemized text with the first line of an item within a list
     multiple cluster cancellations (these arguments have always been mandatory,
     but it may previously have worked without, albeit non-deterministically!).
 
+* New features
+
+  * Added the `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM` environment variable, which
+    dumps the constraint system built during layout inference. This is useful
+    for debugging layout inference failures. Like the other dump variables, it
+    is also enabled by `MOSAIC_GPU_DUMP_TO`.
+
 * Deprecations
 
   * {func}`jax.experimental.pallas.mosaic_gpu.transpose_ref` is

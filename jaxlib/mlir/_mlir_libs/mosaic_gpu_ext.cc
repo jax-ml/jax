@@ -313,6 +313,8 @@ NB_MODULE(_mosaic_gpu_ext, m) {
 
   nb::class_<mosaic::gpu::DumpOptions>(m, "DumpOptions")
       .def(nb::init<>())
+      .def_ro("constraint_system",
+              &mosaic::gpu::DumpOptions::constraint_system)
       .def_ro("mlir_passes", &mosaic::gpu::DumpOptions::mlir_passes)
       .def_ro("ptx", &mosaic::gpu::DumpOptions::ptx)
       .def_ro("ptxas", &mosaic::gpu::DumpOptions::ptxas)
