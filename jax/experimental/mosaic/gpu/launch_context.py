@@ -740,11 +740,11 @@ class LaunchContext:
       )
       return utils.ptr_as_memref(metadata_ptr, metadata_ty)
 
-  @functools.cached_property
+  @property
   def device_collective_metadata(self) -> ir.Value | None:
     return self._collective_metadata(0)
 
-  @functools.cached_property
+  @property
   def host_collective_metadata(self) -> ir.Value | None:
     return self._collective_metadata(1)
 
@@ -783,6 +783,22 @@ class LaunchContext:
     )
     gep.move_after(self.scratch.device_ptr().owner)  # pyrefly: ignore[bad-argument-type]
     return gep.result
+
+  def _can_recompute_peer_id(self, peer_id: ir.Value, fuel=8) -> bool:
+    if fuel == 0 or isinstance(peer_id, ir.BlockArgument):
+      return False
+    op: Any = peer_id.owner
+    if op.OPERATION_NAME.startswith("arith."):
+      if DEVICE_ID_ATTR in op.attributes:
+        return True
+      return all(self._can_recompute_peer_id(x, fuel - 1) for x in op.operands)
+    if (
+        isinstance(op, llvm.CallOp)
+        and op.callee is not None
+        and op.callee.value == "nvshmem_my_pe"
+    ):
+      return True
+    return False
 
   def _recompute_peer_id(
       self,
@@ -841,14 +857,26 @@ class LaunchContext:
   ):
     gmem_ref = _find_kernel_argument_for_gmem_ref(gmem_ref)
     tma_dtype = _tma_dma_type(ir.MemRefType(gmem_ref.type).element_type, reduction_op)
+    i8 = ir.IntegerType.get_signless(8)
+    i32 = ir.IntegerType.get_signless(32)
+    i64 = ir.IntegerType.get_signless(64)
+    ptr_ty = llvm.PointerType.get()
+    is_dynamic_peer = (
+        isinstance(gmem_peer_id, ir.Value)
+        and not self._can_recompute_peer_id(gmem_peer_id, fuel=16)
+    )
     # Using ir.Values in cache keys is a little sketchy, but I think it should
     # be fine. Having it in the key will keep it alive, and if comparison and
     # hashing is by identity then it should work out.
-    tma_desc_key = (gmem_ref, transformed_slice_shape, swizzle, gmem_transform, gmem_peer_id, tma_dtype)
-    if (tma_desc := self.tma_descriptors.get(tma_desc_key, None)) is None:
-      i32 = ir.IntegerType.get_signless(32)
-      i64 = ir.IntegerType.get_signless(64)
-      ptr_ty = llvm.PointerType.get()
+    tma_desc_key = (
+        gmem_ref,
+        transformed_slice_shape,
+        swizzle,
+        gmem_transform,
+        "dynamic_peer_table" if is_dynamic_peer else gmem_peer_id,
+        tma_dtype,
+    )
+    if (tma_desc_base := self.tma_descriptors.get(tma_desc_key, None)) is None:
       def init_tma_desc(host_ptr: ir.Value):
         ref = gmem_ref
         for t in gmem_transform:
@@ -872,34 +900,6 @@ class LaunchContext:
         base_ptr = llvm.getelementptr(
             ptr_ty, alloc_ptr, [as_i64(offset)], [llvm_dyn], ref_ty.element_type, llvm.GEPNoWrapFlags.none,
         )
-        if isinstance(gmem_peer_id, GlobalBroadcast):
-          multimem_ref = self.to_remote_multicast(ref, on_host=True)
-          base_ptr = utils.memref_ptr(multimem_ref.ref)
-        elif gmem_peer_id is not None:
-          if not isinstance(gmem_peer_id, ir.Value):
-            peer_id = c(gmem_peer_id, i32)
-          else:
-            try:
-              # We try to reproduce the gmem_peer_id computation on the host.
-              peer_id = self._recompute_peer_id(gmem_peer_id, fuel=16)
-            except ReplicationError as e:
-              raise ValueError(
-                  "Failed to recompute the async_copy peer id on the host"
-              ) from e
-
-          if self.host_collective_metadata is None:
-            self._ensure_nvshmem_decls()
-            base_ptr = llvm.call(
-                base_ptr.type,
-                [base_ptr, peer_id],
-                [],
-                [],
-                callee="nvshmem_ptr",
-            )
-            assert isinstance(base_ptr, ir.Value)
-          else:
-            remote_ref = self.to_remote(ref, peer_id, on_host=True)
-            base_ptr = utils.memref_ptr(remote_ref)
         rank = ref_ty.rank
         assert rank * 2 == len(sizes_and_strides)
         swizzle_arg = (
@@ -910,25 +910,76 @@ class LaunchContext:
         # TODO(apaszke): Better verification (e.g. slice is non-zero)
         # TODO(apaszke): We always know strides statically.
         dtype_or_bitwidth = c(tma_dtype, i64)
-        args: list[ir.Value] = [
-            host_ptr,
-            base_ptr,
-            dtype_or_bitwidth,
-            c(rank, i64),
-            utils.pack_array([as_i64(i) for i in sizes_and_strides[:rank]]),
-            utils.pack_array([as_i64(i) for i in sizes_and_strides[rank:]]),
-            c(swizzle_arg, i64),
-            utils.pack_array([c(v, i64) for v in transformed_slice_shape]),
-        ]
-        func.call([], "mosaic_gpu_init_tma_desc", args)
 
-      tma_desc = self._alloc_scratch(
-          TMA_DESCRIPTOR_BYTES,
+        def get_peer_base_ptr(peer_id: ir.Value) -> ir.Value:
+          if self.host_collective_metadata is None:
+            self._ensure_nvshmem_decls()
+            peer_ptr = llvm.call(
+                base_ptr.type,
+                [base_ptr, peer_id],
+                [],
+                [],
+                callee="nvshmem_ptr",
+            )
+            assert isinstance(peer_ptr, ir.Value)
+            return peer_ptr
+          remote_ref = self.to_remote(ref, peer_id, on_host=True)
+          return utils.memref_ptr(remote_ref)
+
+        def init_single_tma_desc(desc_ptr: ir.Value, target_base_ptr: ir.Value):
+          args: list[ir.Value] = [
+              desc_ptr,
+              target_base_ptr,
+              dtype_or_bitwidth,
+              c(rank, i64),
+              utils.pack_array([as_i64(i) for i in sizes_and_strides[:rank]]),
+              utils.pack_array([as_i64(i) for i in sizes_and_strides[rank:]]),
+              c(swizzle_arg, i64),
+              utils.pack_array([c(v, i64) for v in transformed_slice_shape]),
+          ]
+          func.call([], "mosaic_gpu_init_tma_desc", args)
+
+        if is_dynamic_peer:
+          for p in range(self.num_peers):
+            p_host_desc_ptr = llvm.getelementptr(
+                ptr_ty, host_ptr, [], [p * TMA_DESCRIPTOR_BYTES], i8, llvm.GEPNoWrapFlags.none,
+            )
+            init_single_tma_desc(p_host_desc_ptr, get_peer_base_ptr(c(p, i32)))
+        else:
+          if isinstance(gmem_peer_id, GlobalBroadcast):
+            multimem_ref = self.to_remote_multicast(ref, on_host=True)
+            base_ptr = utils.memref_ptr(multimem_ref.ref)
+          elif gmem_peer_id is not None:
+            peer_id = (
+                c(gmem_peer_id, i32)
+                if not isinstance(gmem_peer_id, ir.Value)
+                else self._recompute_peer_id(gmem_peer_id, fuel=16)
+            )
+            base_ptr = get_peer_base_ptr(peer_id)
+          init_single_tma_desc(host_ptr, base_ptr)
+      total_bytes = TMA_DESCRIPTOR_BYTES * (self.num_peers if is_dynamic_peer else 1)
+      tma_desc_base = self._alloc_scratch(
+          total_bytes,
           alignment=TMA_DESCRIPTOR_ALIGNMENT,
           host_init=init_tma_desc,
       )
-      self.tma_descriptors[tma_desc_key] = tma_desc
-    return tma_desc
+      self.tma_descriptors[tma_desc_key] = tma_desc_base
+
+    if is_dynamic_peer:
+      assert isinstance(gmem_peer_id, ir.Value)
+      peer_idx = gmem_peer_id
+      if isinstance(peer_idx.type, ir.IndexType):
+        peer_idx = arith.index_cast(i32, peer_idx)
+      elif peer_idx.type != i32:
+        peer_idx = (
+            arith.trunci(i32, peer_idx)
+            if utils.bitwidth(peer_idx.type) > 32
+            else arith.extsi(i32, peer_idx)
+        )
+      byte_offset = arith.muli(peer_idx, c(TMA_DESCRIPTOR_BYTES, i32))
+      return utils.getelementptr(tma_desc_base, [byte_offset], i8)
+
+    return tma_desc_base
 
   def _prepare_async_copy(
       self,
