@@ -199,6 +199,54 @@ class PallasCallRemoteDMATest(TestCase):
     expected = x[8:] if jax.process_index() == 0 else x[:8]
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
+  def test_skip_device_sync(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    # Kernel with cross-device barrier which makes sure that the other device
+    # has completed the previous kernel.
+    def barrier_kernel(x_ref, y_ref):
+      other_dev_id = 1 - lax.axis_index("x")
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+
+    # Kernel with no cross-device barrier.
+    def skip_barrier_kernel(x_ref, y_ref):
+      other_dev_id = 1 - lax.axis_index("x")
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...] * 2
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+
+    # The first kernel is executed with a device barrier, the second without.
+    def body(x):
+      y = self.kernel(
+          barrier_kernel,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+      )(x)
+      y_ref = jax.new_ref(y)
+      self.kernel(
+          skip_barrier_kernel,
+          compiler_params=plgpu.CompilerParams(skip_device_barrier=True),
+      )(x, y_ref)
+      return jax.freeze(y_ref)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    sharded_fn = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    hlo = sharded_fn.lower(x).compile().as_text()
+    self.assertIn("skip_device_barrier = true", hlo)
+
   def test_remote_dma_tma_load(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
