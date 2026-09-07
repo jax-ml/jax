@@ -74,13 +74,10 @@ class Fusible(hijax.HiPrim):
     consts, args = util.split_list(consts_and_args, [self.num_consts])
     flat_args = tree_util.tree_leaves(args)
     if self.jaxpr.is_high:
-      arg_avals = [jax_core.typeof(a) for a in flat_args]
-      lo_args = [
-          lo_val
-          for aval, x in zip(arg_avals, flat_args)
-          for lo_val in aval.lower_val(x)
-      ]
-      lo_jaxpr = pe.lower_jaxpr2(jax_core.ClosedJaxpr(self.jaxpr, consts))
+      consts, args = util.split_list(consts_and_args, [self.num_consts])
+      flat_args = tree_util.tree_leaves(args)
+      out_flat = jax_core.jaxpr_as_fun(self.jaxpr)(*consts, *flat_args)
+      return tree_util.tree_unflatten(self.out_tree, out_flat)
     else:
       lo_args = flat_args
       lo_jaxpr = jax_core.ClosedJaxpr(self.jaxpr, consts)
