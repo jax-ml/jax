@@ -22,7 +22,7 @@ kernelspec:
 (jax-101-pytrees)=
 # Pytrees
 
-<!--* freshness: { reviewed: '2026-07-09' } *-->
+<!--* freshness: { reviewed: '2026-09-14' } *-->
 
 JAX functions and transformations operate on arrays, but programs pass
 around richer structures: a neural network's parameters might live in a
@@ -248,11 +248,12 @@ it's a container-like class holding arrays inside:
 
 ```{code-cell}
 class Special:
-  def __init__(self, x, y):
+  def __init__(self, name, x, y):
+    self.name = name
     self.x = x
     self.y = y
 
-jax.tree.leaves([Special(0, 1), Special(2, 4)])
+jax.tree.leaves([Special('a', 0, 1), Special('b', 2, 4)])
 ```
 
 The two `Special` objects themselves are the leaves. So mapping over what you
@@ -261,32 +262,34 @@ The two `Special` objects themselves are the leaves. So mapping over what you
 ```{code-cell}
 :tags: [raises-exception]
 
-jax.tree.map(lambda x: x + 1, [Special(0, 1), Special(2, 4)])
+jax.tree.map(lambda x: x + 1, [Special('a', 0, 1), Special('b', 2, 4)])
 ```
 
 To make your own class act as a container, register it with
 {func}`jax.tree_util.register_pytree_node`, supplying a pair of functions: one
 that *flattens* an instance into `(children, aux_data)`, and one that
-*unflattens* those pieces back into an instance:
+*unflattens* those pieces back into an instance. The `name` is static
+metadata rather than array data, so it goes in `aux_data`:
 
 ```{code-cell}
 from jax.tree_util import register_pytree_node
 
 class RegisteredSpecial(Special):
   def __repr__(self):
-    return f"RegisteredSpecial(x={self.x}, y={self.y})"
+    return f"RegisteredSpecial({self.name!r}, x={self.x}, y={self.y})"
 
 def special_flatten(v):
   children = (v.x, v.y)  # the dynamic contents, traversed recursively
-  aux_data = None        # static metadata, stored in the treedef
+  aux_data = v.name      # static metadata, stored in the treedef
   return children, aux_data
 
 def special_unflatten(aux_data, children):
-  return RegisteredSpecial(*children)
+  return RegisteredSpecial(aux_data, *children)
 
 register_pytree_node(RegisteredSpecial, special_flatten, special_unflatten)
 
-jax.tree.map(lambda x: x + 1, [RegisteredSpecial(0, 1), RegisteredSpecial(2, 4)])
+jax.tree.map(lambda x: x + 1,
+             [RegisteredSpecial('a', 0, 1), RegisteredSpecial('b', 2, 4)])
 ```
 
 The division of labor matters: `children` should hold the *dynamic* values
@@ -301,7 +304,7 @@ a `RegisteredSpecial` input, returning a matching `RegisteredSpecial` of
 gradients:
 
 ```{code-cell}
-jax.grad(lambda s: s.x ** 2 + s.y)(RegisteredSpecial(3.0, 4.0))
+jax.grad(lambda s: s.x ** 2 + s.y)(RegisteredSpecial('a', 3.0, 4.0))
 ```
 
 Alternatively, you can define appropriate `tree_flatten` and `tree_unflatten`
@@ -314,19 +317,19 @@ from jax.tree_util import register_pytree_node_class
 @register_pytree_node_class
 class RegisteredSpecial2(Special):
   def __repr__(self):
-    return f"RegisteredSpecial2(x={self.x}, y={self.y})"
+    return f"RegisteredSpecial2({self.name!r}, x={self.x}, y={self.y})"
 
   def tree_flatten(self):
     children = (self.x, self.y)
-    aux_data = None
+    aux_data = self.name
     return (children, aux_data)
 
   @classmethod
   def tree_unflatten(cls, aux_data, children):
-    return cls(*children)
+    return cls(aux_data, *children)
 
 jax.tree.map(lambda x: x + 1,
-             [RegisteredSpecial2(0, 1), RegisteredSpecial2(2, 4)])
+             [RegisteredSpecial2('a', 0, 1), RegisteredSpecial2('b', 2, 4)])
 ```
 
 Some standard Python containers come pre-registered. A `NamedTuple` subclass,
