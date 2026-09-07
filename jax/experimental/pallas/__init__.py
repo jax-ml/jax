@@ -97,6 +97,23 @@ _deprecations = {
         ),
         _deprecated_core_map,
     ),
+    # Finalized in JAX v0.12.0
+    # TODO(slebedev): remove these for JAX v0.13.0.
+    "dot": (
+        (
+            "pl.dot was deprecated in JAX v0.11.0, and removed in JAX v0.12.0."
+            " Use jax.numpy.dot, jax.numpy.einsum or the @ operator instead in"
+            " TPU or MGPU kernels."
+        ),
+        None,
+    ),
+    "debug_checks_enabled": (
+        (
+            "pl.debug_checks_enabled was deprecated in JAX v0.11.0, and removed"
+            " in JAX v0.12.0. Use pl.enable_debug_checks instead."
+        ),
+        None,
+    ),
 }
 
 import typing
