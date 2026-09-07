@@ -26,7 +26,6 @@ from typing import Any, Literal
 
 import jax
 from jax._src import core as jax_core
-from jax._src import deprecations
 from jax._src import state
 from jax._src import util
 from jax._src.frozen_dict import FrozenDict
@@ -259,17 +258,6 @@ class MemorySpace(enum.Enum):
   @property
   def memory_kind(self) -> str:
     return "device"
-
-  def __getattr__(self, name):
-    if name == "HOST":
-      # Deprecated on June 4, 2026.
-      deprecations.warn(
-          "pltpu-memory-space-host",
-          "pltpu.MemorySpace.HOST is deprecated. Use pl.HOST instead.",
-          stacklevel=2,
-      )
-      return jax_core.MemorySpace.Host
-    super().__getattr__(name)  # pyrefly: ignore[missing-attribute]
 
   def __str__(self) -> str:
     return self.value

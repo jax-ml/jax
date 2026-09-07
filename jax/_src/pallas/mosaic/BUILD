@@ -32,7 +32,6 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax/_src:core",
-        "//jax/_src:deprecations",
         "//jax/_src:flattree",
         "//jax/_src:frozen_dict",
         "//jax/_src:lax",
