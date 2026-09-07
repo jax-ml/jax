@@ -1350,29 +1350,31 @@ class BarrierRef:
       nvvm.mbarrier_arrive_nocomplete(self.get_ptr(), count)
 
   def arrive_expect_tx(
-      self, bytes: int | ir.Value, predicate: ir.Value | None = None
+      self, tx_count: int | ir.Value, predicate: ir.Value | None = None
   ):
     if get_arch().major < 9:
       raise NotImplementedError("arrive_expect_tx is only supported on Hopper+ hardware")
-    if isinstance(bytes, int):
-      bytes = c(bytes, ir.IntegerType.get_signless(32))
-    elif isinstance(bytes.type, ir.IndexType):
-      i32 = ir.IntegerType.get_signless(32)
-      bytes = arith.index_cast(i32, bytes)
+
+    i32 = ir.IntegerType.get_signless(32)
+    if isinstance(tx_count, int):
+      tx_count = c(tx_count, i32)
+    elif isinstance(tx_count.type, ir.IndexType):
+      tx_count = arith.index_cast(i32, tx_count)
     nvvm.mbarrier_arrive_expect_tx(
-        self.get_ptr(), bytes, predicate=predicate, scope=self._nvvm_scope
+        self.get_ptr(), tx_count, predicate=predicate, scope=self._nvvm_scope
     )
 
   def complete_tx(
-      self, bytes: int | ir.Value, predicate: ir.Value | None = None
+      self, tx_count: int | ir.Value, predicate: ir.Value | None = None
   ):
     if get_arch().major < 9:
       raise NotImplementedError("complete_tx is only supported on Hopper+ hardware")
-    if isinstance(bytes, int):
-      bytes = c(bytes, ir.IntegerType.get_signless(32))
-    elif isinstance(bytes.type, ir.IndexType):
-      i32 = ir.IntegerType.get_signless(32)
-      bytes = arith.index_cast(i32, bytes)
+
+    i32 = ir.IntegerType.get_signless(32)
+    if isinstance(tx_count, int):
+      tx_count = c(tx_count, i32)
+    elif isinstance(tx_count.type, ir.IndexType):
+      tx_count = arith.index_cast(i32, tx_count)
 
     pred_ptx = pred_constraint = ""
     if predicate is not None:
@@ -1381,7 +1383,7 @@ class BarrierRef:
 
     llvm.inline_asm(
         ir.Type.parse("!llvm.void"),
-        [self.get_ptr(), bytes]
+        [self.get_ptr(), tx_count]
         + ([predicate] if predicate is not None else []),
         f"{pred_ptx} mbarrier.complete_tx.shared::{self._ptx_scope}.b64 [$0], $1;",
         "l,r" + pred_constraint,
@@ -1482,12 +1484,12 @@ class DialectBarrierRef:
     assert self.orders_tensor_core == orders_tensor_core
     dialect.ArriveOp(self.as_barrier_memref(), orders_tensor_core)
 
-  def arrive_expect_tx(self, bytes: int | ir.Value):
+  def arrive_expect_tx(self, tx_count: int | ir.Value):
     # TODO: Remove when the minimum jaxlib version is 0.11.1
-    if hasattr(dialect, "arrive_dyn_expect_tx_supported") and isinstance(bytes, int):
-      bytes = c(bytes, ir.IntegerType.get_signless(32))
+    if hasattr(dialect, "arrive_dyn_expect_tx_supported") and isinstance(tx_count, int):
+      tx_count = c(tx_count, ir.IntegerType.get_signless(32))
     # pyrefly: ignore[bad-argument-type]
-    dialect.ArriveExpectTxOp(barrier=self.as_barrier_memref(), expect_tx=bytes)
+    dialect.ArriveExpectTxOp(barrier=self.as_barrier_memref(), expect_tx=tx_count)
 
   def get_ptr(self):
     return self.barrier_ref.get_ptr()
