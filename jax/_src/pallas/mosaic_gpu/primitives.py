@@ -1750,12 +1750,16 @@ def _barrier_wait_pp_eqn(
     context: jax_core.JaxprPpContext,
     settings: jax_core.JaxprPpSettings,
 ):
-  del settings
-  barrier, *flat_transforms = eqn.invars
+  barrier, *flat_args = eqn.invars
+  pp_params = {}
+  if eqn.params.get("has_user_predicate", False):
+    *flat_args, user_predicate = flat_args
+    pp_params["user_predicate"] = user_predicate.pretty_print(context)
   transforms_treedef = eqn.params["transforms_treedef"]
-  transforms = transforms_treedef.unflatten(flat_transforms)
+  transforms = transforms_treedef.unflatten(flat_args)
   return pp.concat([
       pp.text("barrier_wait"),
+      jax_core.pp_kv_pairs(pp_params.items(), context, settings),
       pp.text(" "),
       state_primitives.pp_ref_transforms(context, barrier, transforms),
   ])
@@ -1773,30 +1777,45 @@ jax_core.pp_eqn_rules[barrier_wait_p] = _barrier_wait_pp_eqn
 def _barrier_wait_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,
-    *flat_transforms,
+    *flat_args,
     transforms_treedef,
+    has_user_predicate: bool = False,
 ):
+  if has_user_predicate:
+    *flat_args, user_predicate = flat_args
+    predicate = lowering._ensure_ir_value(user_predicate, jnp.bool)  # pylint: disable=protected-access
+  else:
+    predicate = None
+
   barrier_aval = ctx.avals_in[0]
   assert isinstance(barrier_aval, state_types.AbstractRef)
-  transforms = transforms_treedef.unflatten(flat_transforms)
+  transforms = transforms_treedef.unflatten(flat_args)
   orders_tensor_core = getattr(
       barrier_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
   )
   base_index = _get_barrier_base_index(barrier_aval, transforms)
   if base_index is not None:
     barrier = barrier[base_index]
-  barrier.wait(orders_tensor_core=orders_tensor_core)
+  barrier.wait(orders_tensor_core=orders_tensor_core, predicate=predicate)
   return ()
 
 
-def barrier_wait(barrier: state.AbstractRef) -> None:
+def barrier_wait(
+    barrier: state.AbstractRef,
+    *,
+    predicate: jax.Array | None = None,
+) -> None:
   """Waits on the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
       barrier, None, "barrier_wait"
   )
   flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
   barrier_wait_p.bind(
-      barrier, *flat_transforms, transforms_treedef=transforms_treedef,
+      barrier,
+      *flat_transforms,
+      *() if predicate is None else (predicate,),
+      transforms_treedef=transforms_treedef,
+      has_user_predicate=predicate is not None,
   )
 
 
