@@ -1013,23 +1013,12 @@ def _remat3(f, *, policy, static_argnums, static_argnames, prevent_cse=True):
   if not isinstance(prevent_cse, bool) and (static_argnums or static_argnames):
     raise NotImplementedError(
         "non-bool prevent_cse together with static_argnums/static_argnames")
+  static_argnums = api_util._ensure_index_tuple(static_argnums)
+  static_argnames = api_util._ensure_str_tuple(static_argnames)
+  if static_argnames:
+    static_argnums = _static_argnums(f, static_argnums, static_argnames)
   @wraps(f)
   def decorator(*args, **kwargs):
-    if static_argnums or static_argnames:
-      # Like classic remat (and custom_vjp3), support unhashable static
-      # values by closing over them instead of threading them through the
-      # tracing machinery, which hashes them.
-      args_ = api_util.resolve_kwargs(f, args, kwargs)
-      argnums_ = (static_argnums,) if type(static_argnums) is int else static_argnums
-      argnums = frozenset(i % len(args_) for i in _static_argnums(
-          f, argnums_, static_argnames))
-      if not all(api_util.is_hashable(args_[i]) for i in argnums):
-        which_static = [i in argnums for i in range(len(args_))]
-        dyn_args, static_args = partition_list(which_static, args_)
-        f2 = _dyn_args_fun(f, argnums, tuple(map(WrapHashably, static_args)),
-                           len(args_))
-        return _remat3(f2, policy=policy, static_argnums=(),
-                       static_argnames=())(*dyn_args)
     args_ft = ft.flatten_static_argnums_argnames(
         args, kwargs, static_argnums, static_argnames)
     avals_ft = args_ft.map(typeof)
@@ -1049,13 +1038,13 @@ def _remat3(f, *, policy, static_argnums, static_argnames, prevent_cse=True):
     return out_avals_ft.update(out_flat).unflatten()
   return decorator
 
-def _static_argnums(f, argnums, argnames) -> frozenset[int]:
+def _static_argnums(f, argnums, argnames) -> tuple[int, ...]:
   argnums = set(argnums)
   if argnames:
     sig = api_util.fun_signature(f)
-    assert sig is not None
-    argnums |= set(api_util.infer_argnums_and_argnames(sig, None, argnames)[0])
-  return frozenset(argnums)
+    if sig is not None:
+      argnums |= set(api_util.infer_argnums_and_argnames(sig, None, argnames)[0])
+  return tuple(argnums)
 
 def dce(traced, policy):
   jaxpr_, attached = pe.separate_consts(traced.jaxpr)
@@ -1394,6 +1383,8 @@ def custom_remat(f, f_fwd, f_rem, f_bwd, *, static_argnums=(),
   # TODO reverse-mode only... use hijax instead of custom_vjp
   helper = custom_derivatives.custom_vjp(lambda _, *args: f(*args))
   helper.defvjp(f_rem, lambda res, g: (None, *f_bwd(res, g)))
+  static_argnums = api_util._ensure_index_tuple(static_argnums)
+  static_argnames = api_util._ensure_str_tuple(static_argnames)
   def call(*args, **kwargs):
     args_ft = ft.flatten_static_argnums_argnames(
         args, kwargs, static_argnums, static_argnames)
