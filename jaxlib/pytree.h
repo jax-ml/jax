@@ -50,6 +50,7 @@ enum class PyTreeKind {
   kDict,        // A dict
   kCustom,      // A custom type.
   kDataclass,   // A dataclass.
+  kFrozenDict,  // A frozendict.
 };
 
 // Registry of custom node types.

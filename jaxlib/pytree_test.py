@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
+import builtins
 import collections
 import dataclasses
 import gc
+import sys
 import warnings
 
 from absl.testing import absltest, parameterized
@@ -256,6 +258,44 @@ class PyTreeTest(parameterized.TestCase):
       leaves, _ = registry.flatten(v, lambda x: isinstance(x, dict_values_type))
       self.assertEmpty(w)
     self.assertEqual(leaves, [v])
+
+  def testFrozenDict(self):
+    if sys.version_info < (3, 15):
+      self.skipTest("frozendict requires Python 3.15+")
+    frozendict = getattr(builtins, "frozendict")
+    fd = frozendict({"b": 2, "a": 1})
+    leaves, treedef = registry.flatten(fd)
+    self.assertEqual(leaves, [1, 2])
+    self.assertEqual(treedef.unflatten(leaves), fd)
+    self.assertIsInstance(treedef.unflatten(leaves), frozendict)
+
+    # Different from dict treedef
+    _, dict_treedef = registry.flatten({"b": 2, "a": 1})
+    self.assertNotEqual(treedef, dict_treedef)
+
+    # Repr
+    self.assertEqual(repr(treedef), "PyTreeDef(frozendict({'a': *, 'b': *}))")
+
+    # Flatten up to: flattens up to the frozendict treedef, leaving subtrees as leaves
+    nested = frozendict({"a": [1, 2], "b": (3, 4)})
+    self.assertEqual(treedef.flatten_up_to(nested), [[1, 2], (3, 4)])
+
+    # Type and key mismatch errors in flatten_up_to
+    with self.assertRaisesRegex(ValueError, "Expected frozendict"):
+      treedef.flatten_up_to({"a": 1, "b": 2})
+    with self.assertRaisesRegex(ValueError, "frozendict key mismatch"):
+      treedef.flatten_up_to(frozendict({"a": 1, "c": 2}))
+
+    # Node data roundtrip
+    node_data = treedef.node_data()
+    self.assertIsNotNone(node_data)
+    self.assertEqual(node_data[0], frozendict)
+    reconstructed = pytree.PyTreeDef.from_node_data_and_children(
+        registry, node_data, treedef.children()
+    )
+    self.assertEqual(reconstructed, treedef)
+    self.assertEqual(reconstructed.unflatten(leaves), fd)
+
 
 if __name__ == "__main__":
   absltest.main()
