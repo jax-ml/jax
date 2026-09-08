@@ -578,7 +578,9 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":ft_mutex",
         ":python_ref_manager",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
@@ -1205,7 +1207,9 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":ffi",
+        ":ft_mutex",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

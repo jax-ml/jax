@@ -21,10 +21,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "nanobind/nanobind.h"
+#include "jaxlib/ft_mutex.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/xla_data.pb.h"
@@ -69,8 +71,6 @@ class CpuCallback {
   size_t num_results() const { return results_.size(); }
   void* callback() const { return callable_.ptr(); }
 
-  xla::TransposePlanCache& transpose_cache() { return transpose_cache_; }
-
   absl::Status PrepareAndCall(void** result, void** arg_ptrs);
 
   absl::StatusOr<nanobind::tuple> Call(nanobind::tuple args);
@@ -79,7 +79,8 @@ class CpuCallback {
   nanobind::callable callable_;
   std::vector<Arg> args_;
   std::vector<Result> results_;
-  xla::TransposePlanCache transpose_cache_;
+  mutable ft_mutex transpose_cache_mu_;
+  xla::TransposePlanCache transpose_cache_ ABSL_GUARDED_BY(transpose_cache_mu_);
 };
 
 }  // namespace jax

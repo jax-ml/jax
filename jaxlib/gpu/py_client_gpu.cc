@@ -26,6 +26,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -36,6 +37,7 @@ limitations under the License.
 #include "include/dlpack/dlpack.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/ffi.h"
+#include "jaxlib/ft_mutex.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"
@@ -58,7 +60,8 @@ struct GpuTransposePlanCache {
   static xla::ffi::TypeInfo info;
 
   explicit GpuTransposePlanCache(int capacity) : cache(capacity) {}
-  xla::TransposePlanCache cache;
+  ft_mutex mu;
+  xla::TransposePlanCache cache ABSL_GUARDED_BY(mu);
 };
 
 xla::ffi::TypeId GpuTransposePlanCache::id =
@@ -225,7 +228,11 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
                            reversed_layout.begin());
       options.permutation = reversed_layout;
       options.input_striding = xla::TransposePlan::Striding{strides};
-      auto maybe_plan = transpose_cache->cache.GetOrCreate(options);
+      absl::StatusOr<std::shared_ptr<xla::TransposePlan>> maybe_plan;
+      {
+        ft_lock_guard lock(transpose_cache->mu);
+        maybe_plan = transpose_cache->cache.GetOrCreate(options);
+      }
       if (!maybe_plan.ok()) {
         return xla::ffi::Error::Internal(maybe_plan.status().ToString());
       }

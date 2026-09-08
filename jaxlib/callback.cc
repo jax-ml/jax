@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "jaxlib/ft_mutex.h"
 #include "jaxlib/python_ref_manager.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/transpose.h"
@@ -106,8 +107,11 @@ absl::Status CpuCallback::PrepareAndCall(void** result, void** arg_ptrs) {
       options.dims = dims;
       options.permutation = results_[i].reversed_layout;
       options.input_striding = xla::TransposePlan::Striding{strides};
-      absl::StatusOr<std::shared_ptr<xla::TransposePlan>> plan =
-          transpose_cache_.GetOrCreate(options);
+      absl::StatusOr<std::shared_ptr<xla::TransposePlan>> plan;
+      {
+        ft_lock_guard lock(transpose_cache_mu_);
+        plan = transpose_cache_.GetOrCreate(options);
+      }
       if (!plan.ok()) {
         return std::move(plan).status();
       }

@@ -27,6 +27,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "include/dlpack/dlpack.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/ffi.h"
+#include "jaxlib/ft_mutex.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/transpose.h"
@@ -52,7 +54,8 @@ struct CpuTransposePlanCache {
   static ffi::TypeInfo info;
 
   explicit CpuTransposePlanCache(int capacity) : cache(capacity) {}
-  xla::TransposePlanCache cache;
+  ft_mutex mu;
+  xla::TransposePlanCache cache ABSL_GUARDED_BY(mu);
 };
 
 ffi::TypeId CpuTransposePlanCache::id =
@@ -179,7 +182,11 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
                            reversed_layout.begin());
       options.permutation = reversed_layout;
       options.input_striding = xla::TransposePlan::Striding{strides};
-      auto maybe_plan = transpose_cache->cache.GetOrCreate(options);
+      absl::StatusOr<std::shared_ptr<xla::TransposePlan>> maybe_plan;
+      {
+        ft_lock_guard lock(transpose_cache->mu);
+        maybe_plan = transpose_cache->cache.GetOrCreate(options);
+      }
       if (!maybe_plan.ok()) {
         return ffi::Error::Internal(maybe_plan.status().ToString());
       }
