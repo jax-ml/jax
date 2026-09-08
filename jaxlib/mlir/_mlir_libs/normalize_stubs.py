@@ -25,24 +25,23 @@ def normalize(content: str, *, jaxlib_build: bool = False) -> str:
 
   # Replace internal module paths with public ones.
   content = re.sub(r"mlir\._mlir_libs\._mlir\.ir", "mlir.ir", content)
+  content = re.sub(r"\b_mlir\.ir\.", "ir.", content)
 
   # Rewrite `import mlir.ir` to `from mlir import ir`.
   content = re.sub(
       r"import (jaxlib\.)?mlir\.ir", r"from \1mlir import ir", content
   )
 
-  # Deduplicate consecutive `from mlir import ir` lines.
+  # Deduplicate `from mlir import ir` lines.
   content = re.sub(
-      r"(^\s*from (?:jaxlib\.)?mlir import ir\s*\n)"
-      r"(?:\s*from (?:jaxlib\.)?mlir import ir\s*\n)+",
-      r"\1",
+      r"(from (?:jaxlib\.)?mlir import ir\n)(?=[\s\S]*\1)",
+      "",
       content,
-      flags=re.MULTILINE,
   )
 
   # Shorten `mlir.ir.<NAME>` to `ir.<NAME>`.
   content = re.sub(
-      r"(?:jaxlib\.)?mlir\.ir\.([a-zA-Z0-9_]+)", r"ir.\1", content
+      r"\b(?:jaxlib\.)?mlir\.ir\.([a-zA-Z0-9_]+)", r"ir.\1", content
   )
 
   # Fixup old-style MLIR attributes/types which have classmethods return

@@ -149,9 +149,12 @@ DEFINE_CONCRETE_ATTR(TileTransformAttr, mlirMosaicGpuIsATileTransformAttr,
         return PyTileTransformAttr(ctx.resolve().getRef(), transform_attr);
       },
       nb::arg("tiling"), nb::arg("ctx") = nb::none());
-  cls.def_prop_ro("tiling", [](PyTileTransformAttr& self) {
-    return mlirMosaicGpuTileTransformAttrGetTiling(self.get());
-  });
+  cls.def_prop_ro(
+      "tiling",
+      [](PyTileTransformAttr& self) {
+        return mlirMosaicGpuTileTransformAttrGetTiling(self.get());
+      },
+      nb::sig("def tiling(self) -> mlir.ir.DenseI32ArrayAttr"));
 }
 
 DEFINE_CONCRETE_ATTR(SwizzleTransformAttr, mlirMosaicGpuIsASwizzleTransformAttr,
@@ -179,10 +182,15 @@ DEFINE_CONCRETE_ATTR(WGSplatFragLayoutAttr,
             ctx.resolve().getRef(),
             mlirMosaicGpuWGSplatFragLayoutAttrGet(ctx.resolve().get(), shape));
       },
-      nb::arg("shape"), nb::arg("ctx") = nb::none());
-  cls.def_prop_ro("shape", [](PyWGSplatFragLayoutAttr& self) {
-    return mlirMosaicGpuWGSplatFragLayoutAttrGetShape(self.get());
-  });
+      nb::arg("shape"), nb::arg("ctx") = nb::none(),
+      nb::sig("def get(shape: mlir.ir.DenseI64ArrayAttr, ctx: mlir.ir.Context "
+              "| None = None) -> WGSplatFragLayoutAttr"));
+  cls.def_prop_ro(
+      "shape",
+      [](PyWGSplatFragLayoutAttr& self) {
+        return mlirMosaicGpuWGSplatFragLayoutAttrGetShape(self.get());
+      },
+      nb::sig("def shape(self) -> mlir.ir.DenseI64ArrayAttr"));
 }
 
 DEFINE_CONCRETE_ATTR(WGStridedFragLayoutAttr,
@@ -198,10 +206,16 @@ DEFINE_CONCRETE_ATTR(WGStridedFragLayoutAttr,
             mlirMosaicGpuWGStridedFragLayoutAttrGet(ctx.resolve().get(), shape,
                                                     vector_size));
       },
-      nb::arg("shape"), nb::arg("vector_size"), nb::arg("ctx") = nb::none());
-  cls.def_prop_ro("shape", [](PyWGStridedFragLayoutAttr& self) {
-    return mlirMosaicGpuWGStridedFragLayoutAttrGetShape(self.get());
-  });
+      nb::arg("shape"), nb::arg("vector_size"), nb::arg("ctx") = nb::none(),
+      nb::sig("def get(shape: mlir.ir.DenseI64ArrayAttr, vector_size: int, "
+              "ctx: mlir.ir.Context | None = None) -> "
+              "WGStridedFragLayoutAttr"));
+  cls.def_prop_ro(
+      "shape",
+      [](PyWGStridedFragLayoutAttr& self) {
+        return mlirMosaicGpuWGStridedFragLayoutAttrGetShape(self.get());
+      },
+      nb::sig("def shape(self) -> mlir.ir.DenseI64ArrayAttr"));
   cls.def_prop_ro("vector_size", [](PyWGStridedFragLayoutAttr& self) {
     return mlirMosaicGpuWGStridedFragLayoutAttrGetVectorSize(self.get());
   });
@@ -234,16 +248,28 @@ DEFINE_CONCRETE_ATTR(TiledLayoutAttr, mlirMosaicGpuIsATiledLayoutAttr,
                                             warp_dims, lane_dims, vector_dim));
       },
       nb::arg("tiling"), nb::arg("warp_dims"), nb::arg("lane_dims"),
-      nb::arg("vector_dim"), nb::arg("ctx") = nb::none());
-  cls.def_prop_ro("tiling", [](PyTiledLayoutAttr& self) {
-    return mlirMosaicGpuTiledLayoutAttrGetTiling(self.get());
-  });
-  cls.def_prop_ro("warp_dims", [](PyTiledLayoutAttr& self) {
-    return mlirMosaicGpuTiledLayoutAttrGetWarpDims(self.get());
-  });
-  cls.def_prop_ro("lane_dims", [](PyTiledLayoutAttr& self) {
-    return mlirMosaicGpuTiledLayoutAttrGetLaneDims(self.get());
-  });
+      nb::arg("vector_dim"), nb::arg("ctx") = nb::none(),
+      nb::sig("def get(tiling: mlir.ir.ArrayAttr, warp_dims: mlir.ir.ArrayAttr, "
+              "lane_dims: mlir.ir.ArrayAttr, vector_dim: int, ctx: "
+              "mlir.ir.Context | None = None) -> TiledLayoutAttr"));
+  cls.def_prop_ro(
+      "tiling",
+      [](PyTiledLayoutAttr& self) {
+        return mlirMosaicGpuTiledLayoutAttrGetTiling(self.get());
+      },
+      nb::sig("def tiling(self) -> mlir.ir.ArrayAttr"));
+  cls.def_prop_ro(
+      "warp_dims",
+      [](PyTiledLayoutAttr& self) {
+        return mlirMosaicGpuTiledLayoutAttrGetWarpDims(self.get());
+      },
+      nb::sig("def warp_dims(self) -> mlir.ir.ArrayAttr"));
+  cls.def_prop_ro(
+      "lane_dims",
+      [](PyTiledLayoutAttr& self) {
+        return mlirMosaicGpuTiledLayoutAttrGetLaneDims(self.get());
+      },
+      nb::sig("def lane_dims(self) -> mlir.ir.ArrayAttr"));
   cls.def_prop_ro("vector_dim", [](PyTiledLayoutAttr& self) {
     return mlirMosaicGpuTiledLayoutAttrGetVectorDim(self.get());
   });
@@ -293,6 +319,8 @@ DEFINE_CONCRETE_ATTR(CopyPartitionedAttr, mlirMosaicGpuIsACopyPartitionedAttr,
 }  // namespace
 
 NB_MODULE(_mosaic_gpu_ext, m) {
+  nanobind::module_::import_(MAKE_MLIR_PYTHON_QUALNAME("ir"));
+
   m.def(
       "register_dialect",
       [](MlirContext context, bool load) {
