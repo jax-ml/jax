@@ -1192,7 +1192,8 @@ def _mma_constraint_system(
 ) -> ConstraintSystemDerivationRuleResult:
   del ctx
   element_type = op.a.type.element_type
-  layouts = MMALayouts(element_type)
+  m, n = op.accumulator.type.shape
+  layouts = MMALayouts.for_shape(element_type, m, n)
 
   assignments: dict[cs.Variable, cs.Constant] = {}
   value_sites_for_variable: ValueSitesForVariable = {}

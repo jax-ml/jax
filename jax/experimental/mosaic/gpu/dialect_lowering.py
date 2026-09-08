@@ -1704,7 +1704,8 @@ def _mgpu_mma_op_lowering_rule(
   [out_layout] = inference_utils.out_layouts(mma_op)
 
   a_element_type = mma_op.a.type.element_type
-  mma_layouts = MMALayouts(a_element_type)
+  m, n = mma_op.accumulator.type.shape
+  mma_layouts = MMALayouts.for_shape(a_element_type, m, n)
   expected_acc_layout = layouts_lib.to_layout_attr(mma_layouts.acc)
   assert acc_layout == expected_acc_layout
   assert out_layout == expected_acc_layout
