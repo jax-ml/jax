@@ -1096,7 +1096,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(g2, jnp.cos(jnp.sin(x)) * jnp.cos(x),
                         check_dtypes=False, atol=1e-3, rtol=1e-3)
     saved_res = saved_residuals(f2, x)
-    self.assertLen(saved_res, 1 if config.remat3.value else 2)
+    self.assertLen(saved_res, 3 if config.remat3.value else 2)
 
   @jtu.with_explicit_mesh((2,), ('i',), axis_types=(AxisType.Auto,))
   def test_remat_transform(self, mesh):

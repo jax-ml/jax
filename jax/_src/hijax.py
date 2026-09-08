@@ -38,7 +38,8 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import remat
 from jax._src.partition_spec import PartitionSpec
 from jax._src.custom_derivatives import (
-    CustomVJPPrimal, _temporary_dtype_exception, _check_for_returned_refs)
+    CustomVJPPrimal, _temporary_dtype_exception, _check_for_returned_refs,
+    _check_for_aliased_refs)
 from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src import ad_util
@@ -964,6 +965,7 @@ class custom_vjp3:
                 optimize_remat=optimize_remat)
     self.with_logs = True
 
+  @partial(traceback_util.api_boundary, repro_api_name="jax.custom_vjp.__call__")
   def __call__(self, *args, **kwargs):
     if not self.fwd or not self.bwd:
       msg = f"No VJP defined for custom_vjp function {self.f.__name__} using defvjp."
@@ -975,6 +977,13 @@ class custom_vjp3:
       raise UnexpectedTracerError("custom_vjp inputs marked with nondiff_argnums "
                                   "must be static, not Tracers")
     if core.trace_state_clean() and not any(isinstance(l, core.Tracer) for l in tree_leaves(args)):
+      if config.mutable_array_checks.value:
+        debug = debug_info("custom_vjp fun", self.f, args, {},
+                           static_argnums=tuple(self.static_argnums))  # type: ignore
+        _check_for_aliased_refs(self.f, tuple(self.static_argnums), debug, args)  # type: ignore
+        out = self.f(*args)
+        _check_for_returned_refs(self.f, out, 'primal', [], 0)
+        return out
       return self.f(*args)
     if all(is_hashable(args[i]) for i in self.static_argnums):
       traced = api.jit(self.f, static_argnums=(*self.static_argnums,)).trace(*args)

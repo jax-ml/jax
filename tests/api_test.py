@@ -9652,24 +9652,29 @@ class TracebackTest(jtu.JaxTestCase):
 
   def test_custom_vjp_traceback(self):
     # TODO(dougalm): improve this
-    expected_depth_f = 7 if config.custom_vjp3.value else 9
-    expected_depth_f_fwd = 17 if config.custom_vjp3.value else 16
+    expected_depth_f = 3 if config.custom_vjp3.value else 9
+    expected_depth_f_fwd = 18 if config.custom_vjp3.value else 16
     expected_depth_f_rev = 12
     init_depth = self.cur_depth()
+
     @jax.custom_vjp
     def f(x):
       self.assertExpectedDepth(init_depth, expected_depth_f)
       return x
-    def f_fwd(x):
+    f.defvjp(lambda x: (x, None), lambda _, g: (g,))
+    f(1.0)
+
+    @jax.custom_vjp
+    def g(x):
+      return x
+    def g_fwd(x):
       self.assertExpectedDepth(init_depth, expected_depth_f_fwd)
       return x, None
-    def f_rev(_, g):
+    def g_rev(_, g):
       self.assertExpectedDepth(init_depth, expected_depth_f_rev)
       return (g,)
-    f.defvjp(f_fwd, f_rev)
-
-    f(1.0)
-    grad(f)(1.0)
+    g.defvjp(g_fwd, g_rev)
+    grad(g)(1.0)
 
 
 class EvalJaxprPrimitiveTest(jtu.JaxTestCase):
