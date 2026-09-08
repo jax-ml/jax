@@ -1228,7 +1228,7 @@ class BarrierRef:
       parity,
       orders_tensor_core: bool = False,
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
-    ) -> ir.Value:
+  ) -> ir.Value:
     i1 = ir.IntegerType.get_signless(1)
     i32 = ir.IntegerType.get_signless(32)
     parity = arith.extui(i32, parity)
@@ -1469,9 +1469,23 @@ class DialectBarrierRef:
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     return self.barrier_ref.update_parities(parities)
 
-  def arrive(self, orders_tensor_core: bool = False):
+  def arrive(
+      self,
+      *,
+      orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
+  ):
     assert self.orders_tensor_core == orders_tensor_core
-    dialect.ArriveOp(self.as_barrier_memref(), orders_tensor_core)
+    # TODO(cjfj): remove when minimum jaxlib version is 0.11.2.
+    if hasattr(dialect.ArriveOp, "predicate"):
+      dialect.ArriveOp(
+          self.as_barrier_memref(),
+          orders_tensor_core=orders_tensor_core,
+          predicate=predicate,  # pyrefly: ignore[unexpected-keyword]
+      )
+    else:
+      with contextlib.nullcontext() if predicate is None else when(predicate):
+        dialect.ArriveOp(self.as_barrier_memref(), orders_tensor_core)
 
   def arrive_expect_tx(self, tx_count: int | ir.Value):
     if isinstance(tx_count, int):
@@ -1585,7 +1599,12 @@ class CollectiveBarrierRef:
         self.barrier[offset], self.cluster_mask, self.leader_tracked
     )
 
-  def arrive(self, orders_tensor_core: bool = False):
+  def arrive(
+      self,
+      *,
+      orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
+  ):
     """Arrives on a barrier in one or several blocks in a cluster.
 
     Specifically,
@@ -1601,9 +1620,11 @@ class CollectiveBarrierRef:
       raise ValueError("Can only arrive on a single barrier")
 
     if self.cluster_mask is None:
+      pred = single_thread_predicate(ThreadSubset.WARPGROUP)
+      if predicate is not None:
+        pred = arith.andi(predicate, pred)
       return self.barrier.arrive(
-          predicate=single_thread_predicate(ThreadSubset.WARPGROUP),
-          orders_tensor_core=orders_tensor_core,
+          predicate=pred, orders_tensor_core=orders_tensor_core
       )
 
     if orders_tensor_core:
@@ -1628,6 +1649,8 @@ class CollectiveBarrierRef:
         c(0, i32),
     )
     should_arrive = arith.andi(is_collective_block, is_signaling_thread)
+    if predicate is not None:
+      should_arrive = arith.andi(predicate, should_arrive)
     inline_ptx(
         """
     {

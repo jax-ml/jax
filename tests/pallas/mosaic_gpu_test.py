@@ -7652,6 +7652,25 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
 
     np.testing.assert_array_equal(kernel(), np.array([1, 1], dtype=np.int32))
 
+  def test_barrier_arrive_predicated(self):
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((4,), jnp.int32),
+        scratch_types=[plgpu.Barrier(num_arrivals=2)],
+    )
+    def kernel(out_ref, bar):
+      @plgpu.warp_map
+      def _per_warp(warp_idx):
+        plgpu.barrier_arrive(bar, predicate=(warp_idx < 2))
+        plgpu.barrier_wait(bar)
+        out_ref[warp_idx] = warp_idx + 1
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      np.testing.assert_array_equal(
+          kernel(), np.array([1, 2, 3, 4], dtype=np.int32)
+      )
+    self.assertIn("@%p2 mbarrier.arrive", ptx())
+
 
 class PallasCallTCGen05WGTest(
     PallasCallTCGen05Test, lowering_semantics=plgpu.LoweringSemantics.Warpgroup

@@ -1579,12 +1579,16 @@ def _barrier_arrive_pp_eqn(
     context: jax_core.JaxprPpContext,
     settings: jax_core.JaxprPpSettings,
 ):
-  del settings
-  barrier, *flat_transforms = eqn.invars
+  barrier, *flat_args = eqn.invars
+  pp_params = {}
+  if eqn.params["has_user_predicate"]:
+    *flat_args, user_predicate = flat_args
+    pp_params["user_predicate"] = user_predicate.pretty_print(context)
   transforms_treedef = eqn.params["transforms_treedef"]
-  transforms = transforms_treedef.unflatten(flat_transforms)
+  transforms = transforms_treedef.unflatten(flat_args)
   return pp.concat([
       pp.text("barrier_arrive"),
+      jax_core.pp_kv_pairs(pp_params.items(), context, settings),
       pp.text(" "),
       state_primitives.pp_ref_transforms(context, barrier, transforms),
   ])
@@ -1600,10 +1604,17 @@ jax_core.pp_eqn_rules[barrier_arrive_p] = _barrier_arrive_pp_eqn
 def _barrier_arrive_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,
-    *flat_transforms,
+    *flat_args,
     transforms_treedef,
+    has_user_predicate: bool = False,
 ):
-  transforms = transforms_treedef.unflatten(flat_transforms)
+  if has_user_predicate:
+    *flat_args, user_predicate = flat_args
+    predicate = lowering._ensure_ir_value(user_predicate, jnp.bool)  # pylint: disable=protected-access
+  else:
+    predicate = None
+
+  transforms = transforms_treedef.unflatten(flat_args)
   barrier_aval = ctx.avals_in[0]
   assert isinstance(barrier_aval, state_types.AbstractRef)
   base_index = _get_barrier_base_index(barrier_aval, transforms)
@@ -1622,9 +1633,9 @@ def _barrier_arrive_lowering(
       raise NotImplementedError(
           "Arriving on a collective barrier is not supported in a warp context"
       )
-    barrier.arrive(orders_tensor_core)
+    barrier.arrive(orders_tensor_core=orders_tensor_core, predicate=predicate)
   elif ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
-    barrier.arrive(orders_tensor_core)
+    barrier.arrive(orders_tensor_core=orders_tensor_core, predicate=predicate)
   else:
     if scope == mgpu_utils.ThreadSubset.WARP and not orders_tensor_core:
       arrival_count = 4
@@ -1632,6 +1643,8 @@ def _barrier_arrive_lowering(
       arrival_count = 1
 
     pred = ctx.module_ctx.single_lane_predicate if orders_tensor_core else None
+    if predicate is not None:
+      pred = predicate if pred is None else arith_dialect.andi(predicate, pred)
     barrier.arrive(
         arrival_count=arrival_count,
         orders_tensor_core=orders_tensor_core,
@@ -1641,14 +1654,22 @@ def _barrier_arrive_lowering(
   return ()
 
 
-def barrier_arrive(barrier: state.AbstractRef) -> None:
+def barrier_arrive(
+    barrier: state.AbstractRef,
+    *,
+    predicate: jax.Array | None = None,
+) -> None:
   """Arrives at the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
       barrier, None, "barrier_arrive"
   )
   flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
   barrier_arrive_p.bind(
-      barrier, *flat_transforms, transforms_treedef=transforms_treedef
+      barrier,
+      *flat_transforms,
+      *() if predicate is None else (predicate,),
+      transforms_treedef=transforms_treedef,
+      has_user_predicate=predicate is not None,
   )
 
 
