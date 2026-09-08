@@ -152,7 +152,8 @@ class PyTreeRegistry {
       registrations_ ABSL_GUARDED_BY(mu_);
   bool enable_namedtuple_;
 
-  static int tp_traverse(PyObject* self, visitproc visit, void* arg);
+  static int tp_traverse(PyObject* self, visitproc visit, void* arg)
+      ABSL_NO_THREAD_SAFETY_ANALYSIS;
   static int tp_clear(PyObject* self);
 };
 

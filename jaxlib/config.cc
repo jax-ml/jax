@@ -105,7 +105,8 @@ class GlobalConfigState {
 
   // Python GC helpers. These are called from the tp_traverse and tp_clear
   // methods of the Config class.
-  int tp_traverse(int key, PyObject* self, visitproc visit, void* arg);
+  int tp_traverse(int key, PyObject* self, visitproc visit, void* arg)
+      ABSL_NO_THREAD_SAFETY_ANALYSIS;
   int tp_clear(int key, PyObject* self);
 
   // Returns the singleton object representing "value not set".
@@ -182,14 +183,15 @@ void GlobalConfigState::Set(int key, nb::object value) {
 int GlobalConfigState::tp_traverse(int key, PyObject* self, visitproc visit,
                                    void* arg) {
   DCHECK_GE(key, 0);
-  PyObject* value = nullptr;
-  {
-    ft_lock_guard lock(entries_mu_);
-    if (key < entries_.size()) {
-      value = entries_[key].ptr();
-    }
+  // Do not lock entries_mu_ (an ft_mutex / PyMutex) here. Python GC is
+  // stop-the-world even under free-threading, so no attached Python thread can
+  // mutate entries_ concurrently. Moreover, acquiring a PyMutex during
+  // tp_traverse deadlocks if another thread was unparked on that PyMutex while
+  // detached and is waiting in tstate_wait_attach for GC to finish.
+  if (key < entries_.size()) {
+    PyObject* value = entries_[key].ptr();
+    Py_VISIT(value);
   }
-  Py_VISIT(value);
   absl::MutexLock lock(mu_);
   for (const auto* state : thread_local_states_) {
     if (key < state->entries_.size()) {

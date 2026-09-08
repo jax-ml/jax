@@ -13,6 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
+import gc
 import threading
 import unittest
 
@@ -86,10 +87,15 @@ class ConfigTest(absltest.TestCase):
       for _ in range(2000):
         _ = test_race_config.value
 
+    def collector():
+      for _ in range(50):
+        gc.collect()
+
     threads = [
         threading.Thread(target=writer),
         threading.Thread(target=reader),
         threading.Thread(target=reader),
+        threading.Thread(target=collector),
     ]
     for t in threads:
       t.start()

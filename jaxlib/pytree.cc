@@ -463,7 +463,10 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
     return 0;
   }
   PyTreeRegistry* registry = nb::inst_ptr<PyTreeRegistry>(self);
-  ft_lock_guard lock(registry->mu_);
+  // Do not lock registry->mu_ (an ft_mutex / PyMutex) here. Python GC is
+  // stop-the-world even under free-threading, and acquiring a PyMutex in
+  // tp_traverse can deadlock if another thread was unparked while detached and
+  // is waiting in tstate_wait_attach for GC to finish.
   for (const auto& [key, value] : registry->registrations_) {
     Py_VISIT(key.ptr());
     int rval = value->tp_traverse(visit, arg);
