@@ -387,11 +387,10 @@ def multimem_store(ptr: ir.Value, value: ir.Value):
     vec_mod = ".v" + str(vector_length)
   # It's unclear to me why, but at least according to PTX docs, we have to use
   # the floating-point instructions here to be able to store vectors.
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [ptr, *regs],
+  inline_ptx(
       f"multimem.st.relaxed.sys.global{vec_mod}.f32 [$0], {vec_ptx};",
-      "l" + ",r" * len(regs),
+      ptr,
+      *regs,
       has_side_effects=True,
   )
 
@@ -646,34 +645,28 @@ def single_thread(scope: ThreadSubset = ThreadSubset.BLOCK):
 
 def clock():
   i32 = ir.IntegerType.get_signless(32)
-  return llvm.inline_asm(
-      i32, [], "mov.u32  $0,%clock;", "=r", asm_dialect=0, has_side_effects=True
+  return inline_ptx(
+      "mov.u32 $0, %clock;", result_types=i32, has_side_effects=True
   )
 
 
 def smid():
   i32 = ir.IntegerType.get_signless(32)
-  return llvm.inline_asm(i32, [], "mov.u32  $0,%smid;", "=r", asm_dialect=0)
+  return inline_ptx(
+      "mov.u32 $0, %smid;", result_types=i32, has_side_effects=True
+  )
 
 
 def globaltimer(kind: Literal["low", "high"] | None = None):
   if kind is None:
     i64 = ir.IntegerType.get_signless(64)
-    return llvm.inline_asm(
-        i64,
-        [],
-        "mov.u64  $0,%globaltimer;",
-        "=l",
-        asm_dialect=0,
-        has_side_effects=True,
+    return inline_ptx(
+        "mov.u64 $0, %globaltimer;", result_types=i64, has_side_effects=True
     )
   i32 = ir.IntegerType.get_signless(32)
-  return llvm.inline_asm(
-      i32,
-      [],
+  return inline_ptx(
       f"mov.u32  $0,%globaltimer_{kind[:2]};",
-      "=r",
-      asm_dialect=0,
+      result_types=i32,
       has_side_effects=True,
   )
 
@@ -1139,13 +1132,8 @@ def warpgroup_barrier_idx(sync: bool = True) -> ir.Value[ir.IntegerType]:
 
 
 def warpgroup_barrier():
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [warpgroup_barrier_idx(sync=False)],
-      f"bar.sync $0, {WARPGROUP_SIZE};",
-      "r",
-      has_side_effects=True,
-  )
+  wg_idx = warpgroup_barrier_idx(sync=False)
+  inline_ptx(f"bar.sync $0, {WARPGROUP_SIZE};", wg_idx, has_side_effects=True)
 
 
 def warp_barrier():
@@ -1162,12 +1150,10 @@ def prefetch_tensormap(
     desc_ptr: A pointer to the 128-byte aligned TMA descriptor.
     predicate: An optional i1 predicate value.
   """
-  pred = "" if predicate is None else "@$1 "
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [desc_ptr] if predicate is None else [desc_ptr, predicate],
-      f"{pred}prefetch.tensormap [$0];",
-      "l" if predicate is None else "l,b",
+  inline_ptx(
+      "prefetch.tensormap [$0];",
+      desc_ptr,
+      predicate=predicate,
       has_side_effects=True,
   )
 
@@ -1249,11 +1235,11 @@ class BarrierRef:
     wait_complete = nvvm.mbarrier_test_wait(self.get_ptr(), parity)
 
     if scope == ThreadSubset.WARPGROUP:
-      wait_complete = llvm.inline_asm(
-          i1,
-          [warpgroup_barrier_idx(sync=False), wait_complete],
+      wait_complete = inline_ptx(
           f"bar.red.or.pred $0, $1, {WARPGROUP_SIZE}, $2;",
-          "=b,r,b",
+          warpgroup_barrier_idx(sync=False),
+          wait_complete,
+          result_types=i1,
           has_side_effects=True,
       )
       wait_complete = cast(ir.OpResult[ir.IntegerType], wait_complete)
@@ -1642,16 +1628,16 @@ class CollectiveBarrierRef:
         c(0, i32),
     )
     should_arrive = arith.andi(is_collective_block, is_signaling_thread)
-    llvm.inline_asm(
-        ir.Type.parse("!llvm.void"),
-        [should_arrive, self.barrier.get_ptr(), signaled_block],
+    inline_ptx(
         """
     {
         .reg .b32 mapped_addr;
         @$0 mapa.shared::cluster.u32 mapped_addr, $1, $2;
         @$0 mbarrier.arrive.shared::cluster.b64 _, [mapped_addr];
     }""",
-        "b,r,r",
+        should_arrive,
+        self.barrier.get_ptr(),
+        signaled_block,
         has_side_effects=True,
     )
 
@@ -1701,15 +1687,15 @@ class SemaphoreRef:
       raise ValueError(f"Expected a i32 value, got {value.type}")
     if predicate is None:
       predicate = single_thread_predicate(ThreadSubset.WARPGROUP)
-    llvm.inline_asm(
-        ir.Type.parse("!llvm.void"),
-        [ptr, value, predicate],
+    inline_ptx(
         """{
             @$2 multimem.red.release.sys.global.add.u32 [$0], $1;
             fence.proxy.alias;
         }
         """,
-        "l,r,b",
+        ptr,
+        value,
+        predicate,
         has_side_effects=True,
     )
 
@@ -1735,12 +1721,12 @@ class SemaphoreRef:
       with ir.InsertionPoint.at_block_begin(before_block):
         [expected_in_memory] = before_block.arguments
         if decrement:
-          new_val = arith.subi(expected_in_memory, value)
-          in_memory = llvm.inline_asm(
-              i32,
-              [self.ptr, expected_in_memory, new_val],
+          in_memory = inline_ptx(
               f"atom.relaxed.{memory_scope}.global.cas.b32 $0, [$1], $2, $3;",
-              "=r,l,r,r",
+              self.ptr,
+              expected_in_memory,
+              arith.subi(expected_in_memory, value),
+              result_types=i32,
               has_side_effects=True,
           )
           assert isinstance(in_memory, ir.Value)
@@ -1748,14 +1734,12 @@ class SemaphoreRef:
           comparison = arith.cmpi(ne_pred, in_memory, expected_in_memory)
           new_expected_in_memory = arith.maxui(in_memory, value)
         else:
-          in_memory = llvm.inline_asm(
-              i32,
-              [self.ptr],
+          in_memory = inline_ptx(
               f"ld.relaxed.{memory_scope}.global.b32 $0, [$1];",
-              "=r,l",
+              self.ptr,
+              result_types=i32,
               has_side_effects=True,
           )
-          assert isinstance(in_memory, ir.Value)
           lt_pred = arith.CmpIPredicate.ult
           comparison = arith.cmpi(lt_pred, in_memory, value)
           new_expected_in_memory = expected_in_memory
@@ -1763,13 +1747,7 @@ class SemaphoreRef:
       after_block = while_op.after.blocks.append(i32)
       with ir.InsertionPoint.at_block_begin(after_block):
         scf.yield_(after_block.arguments)
-      llvm.inline_asm(
-          ir.Type.parse("!llvm.void"),
-          [],
-          f"fence.acquire.{memory_scope};",
-          "",
-          has_side_effects=True,
-      )
+      inline_ptx(f"fence.acquire.{memory_scope};", has_side_effects=True)
     if scope == ThreadSubset.WARPGROUP:
       warpgroup_barrier()
     elif scope == ThreadSubset.WARP:
@@ -1779,13 +1757,7 @@ class SemaphoreRef:
 
 
 def fence_release_sys():
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [],
-      "fence.release.sys;",
-      "",
-      has_side_effects=True,
-  )
+  inline_ptx("fence.release.sys;", has_side_effects=True)
 
 
 class Partition:
@@ -2184,10 +2156,9 @@ def prmt(high: ir.Value, low: ir.Value, permutation: ir.Value):
     low = bitcast(low, i32)
   if permutation.type != i32:
     permutation = bitcast(permutation, i32)
-  result = llvm.inline_asm(
-      i32, [high, low, permutation], "prmt.b32 $0, $1, $2, $3;", "=r,r,r,r"
+  result = inline_ptx(
+      "prmt.b32 $0, $1, $2, $3;", high, low, permutation, result_types=i32
   )
-  assert isinstance(result, ir.Value)
   return bitcast(result, result_type)
 
 
@@ -2421,12 +2392,11 @@ def try_cluster_cancel(
   """
   if predicate is None:
     predicate = single_thread_predicate(ThreadSubset.BLOCK)
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [memref_ptr(result_ref), barrier.get_ptr(), predicate],
-      "@$2 clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128"
-      " [$0], [$1];",
-      "r,r,b",
+  inline_ptx(
+      "clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128 [$0], [$1];",
+      memref_ptr(result_ref),
+      barrier.get_ptr(),
+      predicate=predicate,
       has_side_effects=True,
   )
 
@@ -2465,13 +2435,7 @@ def query_cluster_cancel(
 
 def nanosleep(nanos: ir.Value):
   """Sleeps the current thread for the given number of nanoseconds."""
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [nanos],
-      "nanosleep.u32 $0;",
-      "r",
-      has_side_effects=True,
-  )
+  inline_ptx("nanosleep.u32 $0;", nanos, has_side_effects=True)
 
 
 def cluster_idx(
