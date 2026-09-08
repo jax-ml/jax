@@ -1264,34 +1264,67 @@ class BarrierRef:
       memref.store(new_parities, self.phases, [])
     return wait_complete
 
-  def wait_parity(self, parity, orders_tensor_core: bool = False):
+  def wait_parity(
+      self,
+      parity,
+      *,
+      orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
+  ):
     if self._ptx_scope != "cta":
       raise ValueError("Can only await on CTA-local barriers")
+    i1 = ir.IntegerType.get_signless(1)
     i32 = ir.IntegerType.get_signless(32)
     parity = arith.extui(i32, parity)
+
+    if predicate is None:
+      wait_complete = c(0, i1)
+    else:
+      wait_complete = arith.xori(predicate, c(1, i1))
+
+    args = [wait_complete, self.get_ptr(), parity]
+    constraints = "b,r,r"
+
     if get_arch().major < 9:
       # TODO(apaszke): consider using a single lane + barrier for waiting
-      i1 = ir.IntegerType.get_signless(1)
-      while_op = scf.WhileOp([], [])
-      before_block = while_op.before.blocks.append()
-      with ir.InsertionPoint.at_block_begin(before_block):
-        wait_complete = nvvm.mbarrier_test_wait(self.get_ptr(), parity)
-        wait_incomplete = arith.xori(wait_complete, c(1, i1))
-        scf.condition(wait_incomplete, [])
-      after_block = while_op.after.blocks.append()
-      with ir.InsertionPoint.at_block_begin(after_block):
-        scf.yield_([])
+      inst = "test_wait"
+      ticks_ptx = ""
     else:
-      ticks = arith.constant(i32, 10000000)
-      nvvm.mbarrier_try_wait_parity(self.get_ptr(), parity, ticks)
+      inst = "try_wait"
+      args.append(arith.constant(i32, 10000000))  # ticks
+      constraints += ",r"
+      ticks_ptx = ", $3"
+
+    llvm.inline_asm(
+        None,
+        args,
+        f"""
+    {{
+        waitLoop:
+        @!$0 mbarrier.{inst}.parity.acquire.{self._ptx_scope}.shared::cta.b64 $0, [$1], $2{ticks_ptx};
+        @!$0 bra.uni waitLoop;
+    }}""",
+        constraints,
+        has_side_effects=True,
+    )
+
     if orders_tensor_core:
       nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.AFTER_THREAD_SYNC)
 
-  def wait(self, orders_tensor_core: bool = False):
+  def wait(
+      self,
+      *,
+      orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
+  ):
     parities = memref.load(self.phases, [])
     parity, new_parities = self.update_parities(parities)
+    if predicate is not None:
+      new_parities = arith.select(predicate, new_parities, parities)
     memref.store(new_parities, self.phases, [])
-    self.wait_parity(parity, orders_tensor_core)
+    self.wait_parity(
+        parity, orders_tensor_core=orders_tensor_core, predicate=predicate
+    )
 
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     i32 = ir.IntegerType.get_signless(32)
@@ -1457,14 +1490,29 @@ class DialectBarrierRef:
     assert self.barrier_ref.phases is not None
     return self.barrier_ref.test(orders_tensor_core, scope=scope)
 
-  def wait_parity(self, parity, orders_tensor_core: bool = False):
+  def wait_parity(
+      self,
+      parity,
+      *,
+      orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
+  ):
     assert self.orders_tensor_core == orders_tensor_core
-    self.barrier_ref.wait_parity(parity, orders_tensor_core)
+    self.barrier_ref.wait_parity(
+        parity, orders_tensor_core=orders_tensor_core, predicate=predicate
+    )
 
-  def wait(self, orders_tensor_core: bool = False):
+  def wait(
+      self,
+      *,
+      orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
+  ):
     assert self.orders_tensor_core == orders_tensor_core
     assert self.barrier_ref.phases is not None
-    self.barrier_ref.wait(orders_tensor_core)
+    self.barrier_ref.wait(
+        orders_tensor_core=orders_tensor_core, predicate=predicate
+    )
 
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     return self.barrier_ref.update_parities(parities)

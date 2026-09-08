@@ -784,16 +784,27 @@ class JaxprInterpreter:
   ):
     assert eqn.primitive is gpu_primitives.barrier_wait_p
     invals = get_invals()
+    if eqn.params.get("has_user_predicate", False):
+      *invals, predicate = invals
+    else:
+      predicate = None
+
     allocation_key_as_array = _get_barrier_allocation_key_from_inval(
         invals[0], eqn.params["transforms_treedef"], invals[1:]
     )
-    token = gpu_callbacks.call_barrier_wait(
-        token,
-        self.mesh_location,
-        self.thread,
-        allocation_key_as_array,
-        eqn.source_info,
+
+    call_barrier_wait = functools.partial(
+        gpu_callbacks.call_barrier_wait,
+        mesh_location=self.mesh_location,
+        thread=self.thread,
+        allocation_key_as_array=allocation_key_as_array,
+        source_info=eqn.source_info,
     )
+
+    if predicate is None:
+      token = call_barrier_wait(token)
+    else:
+      token = lax.cond(predicate, call_barrier_wait, lambda tok: tok, token)
     assert eqn.primitive.multiple_results
     return token, []
 

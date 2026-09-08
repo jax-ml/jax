@@ -7652,6 +7652,37 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
 
     np.testing.assert_array_equal(kernel(), np.array([1, 1], dtype=np.int32))
 
+  def test_barrier_wait_predicated(self):
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((4,), jnp.int32),
+        scratch_types=[plgpu.Barrier(), plgpu.SMEM((), jnp.int32)],
+        compiler_params=plgpu.CompilerParams(unsafe_no_auto_barriers=True),
+    )
+    def kernel(out_ref, bar, smem_ref):
+      smem_ref[...] = 0
+      plgpu.commit_smem()
+
+      @plgpu.warp_map
+      def _per_warp(warp_idx):
+        plgpu.barrier_wait(bar, predicate=(warp_idx > 0))
+
+      val = smem_ref[...]
+
+      @plgpu.warp_map
+      def _per_warp(warp_idx):
+        out_ref[warp_idx] = val
+
+        @pl.when(warp_idx == 0)
+        def _():
+          smem_ref[...] = 1
+          plgpu.barrier_arrive(bar)
+          plgpu.barrier_wait(bar)  # Check parity is correct.
+
+    np.testing.assert_array_equal(
+        kernel(), np.array([0, 1, 1, 1], dtype=np.int32)
+    )
+
 
 class PallasCallTCGen05WGTest(
     PallasCallTCGen05Test, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
