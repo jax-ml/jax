@@ -729,6 +729,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if jtu.is_device_rocm() and algorithm == lax.linalg.SvdAlgorithm.POLAR:
       self.skipTest("ROCM polar SVD not implemented")
 
+    if jtu.is_device_oneapi() and algorithm == lax.linalg.SvdAlgorithm.JACOBI:
+      self.skipTest("OneAPI does not support Jacobi SVD")
+
+    if jtu.is_device_oneapi() and algorithm == lax.linalg.SvdAlgorithm.POLAR:
+      self.skipTest("OneAPI does not support Polar SVD")
+
     if (not jtu.is_device_rocm() and jtu.device_under_test() == "gpu"
         and algorithm == lax.linalg.SvdAlgorithm.DIVIDE_AND_CONQUER):
       self.skipTest("Divide-and-conquer SVD only supported on AMD (ROCm) GPUs")
