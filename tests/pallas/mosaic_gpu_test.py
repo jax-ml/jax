@@ -1404,8 +1404,11 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
     np.testing.assert_array_equal(kernel(x), x)
 
-  @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
-  def test_async_prefetch(self, indexer):
+  @parameterized.product(
+      indexer=[..., slice(128), slice(None, 128)],
+      predicate=[None, True, False],
+  )
+  def test_async_prefetch(self, indexer, predicate):
 
     @self.kernel(
         out_type=jax.ShapeDtypeStruct([256], jnp.float32),
@@ -1415,7 +1418,10 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         ],
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
-      plgpu.async_prefetch(x_ref_gmem.at[indexer])
+      plgpu.async_prefetch(
+          x_ref_gmem.at[indexer],
+          predicate=None if predicate is None else jnp.bool_(predicate),
+      )
       plgpu.copy_gmem_to_smem(
           x_ref_gmem.at[indexer], scratch_ref.at[indexer], barrier_ref
       )
