@@ -98,7 +98,8 @@ def inline_ptx(
     ptx: str,
     *args: ir.Value,
     result_types: ir.Type,
-    has_side_effects: bool = False,
+    predicate: None = ...,
+    has_side_effects: bool = ...,
 ) -> ir.Value:
   ...
 
@@ -108,7 +109,8 @@ def inline_ptx(
     ptx: str,
     *args: ir.Value,
     result_types: Sequence[ir.Type],
-    has_side_effects: bool = False,
+    predicate: None = ...,
+    has_side_effects: bool = ...,
 ) -> tuple[ir.Value, ...]:
   ...
 
@@ -117,8 +119,9 @@ def inline_ptx(
 def inline_ptx(
     ptx: str,
     *args: ir.Value,
-    result_types: None = None,
-    has_side_effects: Literal[True] = True,
+    result_types: None = ...,
+    predicate: ir.Value | None = ...,
+    has_side_effects: Literal[True] = ...,
 ) -> None:
   ...
 
@@ -127,6 +130,7 @@ def inline_ptx(
     ptx: str,
     *args: ir.Value,
     result_types: Sequence[ir.Type] | ir.Type | None = None,
+    predicate: ir.Value | None = None,
     has_side_effects: bool = False,
 ) -> ir.Value | tuple[ir.Value, ...] | None:
   """Emits an LLVM inline assembly operation targeting PTX.
@@ -136,6 +140,8 @@ def inline_ptx(
       `llvm.inline_asm`.
     *args: `ir.Value`s passed as operands to the assembly.
     result_types: The output type, sequence of output types, or `None` if void.
+    predicate: An optional predicate to prepend to each PTX instruction.
+      This must be `None` if `result_types` is not `None`.
     has_side_effects: Whether the inline asm has side effects. If the assembly
       does not return any result, this must be `True`.
 
@@ -168,15 +174,24 @@ def inline_ptx(
   else:
     asm_ret_type = llvm.StructType.get_literal(normalized_types)
 
+  if predicate is not None:
+    if normalized_types:
+      raise ValueError("predicate must be None if result_types is not None.")
+
+    if ptx.count(";") != 1:
+      raise NotImplementedError(
+          "predicate is not yet supported for multi-line PTX: " + ptx
+      )
+
+    ptx = f"@${len(args)} {ptx}"
+    args = (*args, predicate)
+
   out_constraints = [f"={_ptx_constraint(t)}" for t in normalized_types]
   in_constraints = [_ptx_constraint(arg.type) for arg in args]
+  constraints = ",".join(out_constraints + in_constraints)
 
   result = llvm.inline_asm(
-      asm_ret_type,
-      list(args),
-      ptx,
-      ",".join(out_constraints + in_constraints),
-      has_side_effects=has_side_effects,
+      asm_ret_type, args, ptx, constraints, has_side_effects=has_side_effects
   )
   if result_types is None:
     return None
@@ -1322,10 +1337,6 @@ class BarrierRef:
 
     ptx_scope = self._ptx_scope
     if can_complete or ptx_scope != "cta":
-      pred_ptx = pred_constraint = ""
-      if predicate is not None:
-        pred_ptx = "@$2"
-        pred_constraint = ",b"
       count_ptx = f", {arrival_count}"
       if get_arch().major < 9:
         if arrival_count != 1:
@@ -1333,11 +1344,10 @@ class BarrierRef:
               "Only single-thread arrival is supported on pre-Hopper hardware"
           )
         count_ptx = ""
-      llvm.inline_asm(
-          ir.IntegerType.get_signless(64),
-          [self.get_ptr()] + ([predicate] if predicate is not None else []),
-          f"{pred_ptx} mbarrier.arrive.release.{ptx_scope}.shared::{ptx_scope}.b64 $0, [$1]{count_ptx};",
-          "=l,r" + pred_constraint,
+      inline_ptx(
+          f"mbarrier.arrive.release.{ptx_scope}.shared::{ptx_scope}.b64 _, [$0]{count_ptx};",
+          self.get_ptr(),
+          predicate=predicate,
           has_side_effects=True,
       )
     else:
@@ -1375,17 +1385,11 @@ class BarrierRef:
     elif isinstance(tx_count.type, ir.IndexType):
       tx_count = arith.index_cast(i32, tx_count)
 
-    pred_ptx = pred_constraint = ""
-    if predicate is not None:
-      pred_ptx = "@$2"
-      pred_constraint = ",b"
-
-    llvm.inline_asm(
-        ir.Type.parse("!llvm.void"),
-        [self.get_ptr(), tx_count]
-        + ([predicate] if predicate is not None else []),
-        f"{pred_ptx} mbarrier.complete_tx.shared::{self._ptx_scope}.b64 [$0], $1;",
-        "l,r" + pred_constraint,
+    inline_ptx(
+        f"mbarrier.complete_tx.shared::{self._ptx_scope}.b64 [$0], $1;",
+        self.get_ptr(),
+        tx_count,
+        predicate=predicate,
         has_side_effects=True,
     )
 
@@ -1681,11 +1685,11 @@ class SemaphoreRef:
       raise ValueError(f"Unsupported memory_scope: {memory_scope}")
 
     semantics = "relaxed" if relaxed else "release"
-    llvm.inline_asm(
-        ir.Type.parse("!llvm.void"),
-        [self.ptr, value, predicate],
-        f"@$2 red.{semantics}.{memory_scope}.global.add.u32 [$0], $1;",
-        "l,r,b",
+    inline_ptx(
+        f"red.{semantics}.{memory_scope}.global.add.u32 [$0], $1;",
+        self.ptr,
+        value,
+        predicate=predicate,
         has_side_effects=True,
     )
 
