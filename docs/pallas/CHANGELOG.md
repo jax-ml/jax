@@ -24,6 +24,7 @@ Remember to align the itemized text with the first line of an item within a list
     {func}`jax.numpy.einsum` or the `@` operator instead in TPU or MGPU kernels.
   * Removed the previously deprecated `pl.debug_checks_enabled`. Use
     `pl.enable_debug_checks.value` instead.
+  * Removed the previously deprecated `pltpu.HOST`. Use `pl.HOST` instead.
 
 ### Mosaic GPU
 

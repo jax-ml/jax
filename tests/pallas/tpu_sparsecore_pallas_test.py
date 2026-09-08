@@ -2820,8 +2820,8 @@ class ScalarSubcoreTest(PallasSCTest):
       sc_mesh = plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
 
       y_ref = pl.empty_ref_like(pltpu.HBM(x.shape, x.dtype))
-      x_device = pltpu.with_memory_space_constraint(x, pltpu.HOST)
-      x_ref = jax.new_ref(x_device, memory_space=pltpu.HOST)
+      x_device = pltpu.with_memory_space_constraint(x, pl.HOST)
+      x_ref = jax.new_ref(x_device, memory_space=pl.HOST)
 
       pl.kernel(
           lambda: pltpu.sync_copy(x_ref, y_ref),
@@ -2862,7 +2862,7 @@ class ScalarSubcoreTest(PallasSCTest):
       def kernel(x_ref, y_ref):
         pltpu.sync_copy(x_ref, y_ref)
 
-      return pltpu.with_memory_space_constraint(kernel(x), pltpu.HOST)
+      return pltpu.with_memory_space_constraint(kernel(x), pl.HOST)
 
     o = jax.block_until_ready(foo(x))
     np.testing.assert_array_equal(o, x)

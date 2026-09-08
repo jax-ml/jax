@@ -90,7 +90,6 @@ SMEM = MemorySpace.SMEM
 VMEM = MemorySpace.VMEM
 VMEM_SHARED = MemorySpace.VMEM_SHARED
 HBM = MemorySpace.HBM
-HOST = _jax_core.MemorySpace.Host
 SEMAPHORE = MemorySpace.SEMAPHORE
 
 
@@ -101,10 +100,12 @@ _deprecations = {
         " instead.",
         core.create_tensorcore_mesh,
     ),
-    # Added June 4, 2026
+    # Finalized in JAX v0.12.0
+    # TODO(slebedev): remove these for JAX v0.13.0.
     "HOST": (
-        "pltpu.HOST is deprecated, use pl.HOST instead.",
-        _jax_core.MemorySpace.Host,
+        "pltpu.HOST was deprecated in JAX v0.10.0, and removed in JAX v0.12.0."
+        " Use pl.HOST instead.",
+        None,
     ),
     # Finalized in JAX v0.11.0
     # TODO(jakevdp): remove these for JAX v0.12.0.
@@ -136,7 +137,6 @@ _deprecations = {
 }
 
 if typing.TYPE_CHECKING:
-  HOST = _jax_core.MemorySpace.Host
   from jax._src.pallas.mosaic.core import create_tensorcore_mesh as create_tensorcore_mesh
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
