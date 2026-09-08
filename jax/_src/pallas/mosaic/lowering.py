@@ -5505,9 +5505,14 @@ def _debug_print_rule(
         "Only positional arguments are supported by debug_print on Pallas."
     )
 
+  # TODO(slebedev): We can also support printing a single ref.
   is_scalar_inputs = [not aval.shape for aval in ctx.avals_in]
   is_all_scalars = all(is_scalar_inputs)
-  is_single_vector = len(is_scalar_inputs) == 1 and not is_scalar_inputs[0]
+  is_single_vector = (
+      len(is_scalar_inputs) == 1
+      and not is_scalar_inputs[0]
+      and isinstance(ctx.avals_in[0], jax_core.ShapedArray)
+  )
   if not (is_all_scalars or is_single_vector):
     raise ValueError(
         "All inputs to debug_print must be all scalars or a single vector, but"

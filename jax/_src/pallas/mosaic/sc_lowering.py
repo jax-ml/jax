@@ -300,7 +300,7 @@ def _check_aval_is_supported(caller: str, aval: jax_core.ShapedArray) -> None:
 @register_lowering_rule(debugging.debug_print_p)
 def _debug_print_lowering_rule(
     ctx: LoweringRuleContext,
-    *args,
+    *dyn_args,
     fmt: str,
     ordered,
     partitioned,
@@ -310,7 +310,7 @@ def _debug_print_lowering_rule(
     has_placeholders,
     logging_record,
 ):
-  del partitioned, np_printoptions, in_tree, static_args
+  del partitioned, np_printoptions, logging_record
   def fail(reason: str) -> NoReturn:
     raise NotImplementedError(
         f"pl.debug_print() {reason} when lowering to SparseCore"
@@ -321,11 +321,24 @@ def _debug_print_lowering_rule(
   if has_placeholders:
     fail("does not support placeholders")
 
+  args, kwargs = debugging.merge_callback_args(in_tree, dyn_args, static_args)
+  if kwargs:
+    fail("does not support keyword arguments")
+  avals, _ = debugging.merge_callback_args(
+      in_tree, list(ctx.avals_in), static_args
+  )
+
   match args:
     case []:
       tpu.log(inputs=[], tag=fmt)
+    case [state.TransformedRef() as tref]:
+      ref, transforms = _get_ref_and_transforms(tref)
+      ref_aval, _ = _get_ref_and_transforms(avals[0])
+      assert isinstance(ref_aval, state.AbstractRef)
+      ref, _ = _transform_ref(ref, ref_aval, ref_aval.shape, transforms)
+      tpu.log_buffer(ref, avals[0].shape, fmt)
     case [arg] if isinstance(arg.type, ir.MemRefType):
-      tpu.log_buffer(arg, ctx.avals_in[0].shape, fmt)
+      tpu.log_buffer(arg, avals[0].shape, fmt)
     case [arg]:
       tpu.log(inputs=[arg], tag=fmt)
     case _:

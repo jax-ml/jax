@@ -274,7 +274,9 @@ def _debug_callback_state_discharge_rule(
 
 
 def _split_callback_args(args, kwargs):
-  flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
+  # We use ``tracing_registry`` to flatten ``TransformedRef``s which are not
+  # pytrees.
+  flat_args, in_tree = tree_util.tracing_registry.flatten((args, kwargs))
   static_args, dyn_args = {}, []
   for i, a in enumerate(flat_args):
     try:

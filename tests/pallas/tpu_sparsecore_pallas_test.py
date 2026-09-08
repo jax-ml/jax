@@ -278,6 +278,7 @@ class DebugPrintTest(PallasSCTest):
     )
     def kernel(x_hbm_ref, _):
       pl.debug_print("Memref", x_hbm_ref)
+      pl.debug_print("Sliced memref", x_hbm_ref.at[:self.num_lanes // 2])
       x = x_hbm_ref[...] + 100
       pl.debug_print("Vector value", x)
       masks = x < 103
@@ -296,6 +297,8 @@ class DebugPrintTest(PallasSCTest):
       jax.block_until_ready(compiled_kernel(x))
     self.assertIn("Memref", get_output())
     self.assertIn(", ".join(map(str, range(self.num_lanes))), get_output())
+    self.assertIn("Sliced memref", get_output())
+    self.assertIn(", ".join(map(str, range(self.num_lanes // 2))), get_output())
     self.assertIn("Vector value", get_output())
     self.assertIn(
         ", ".join(map(str, range(100, 100 + self.num_lanes))), get_output()
