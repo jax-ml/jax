@@ -2640,6 +2640,10 @@ class LaxLinalgTest(jtu.JaxTestCase):
     if jtu.is_device_rocm() and not perturb_singular:
       self.skipTest(
           "Skipped on ROCm: hipsparseSgtsv2 numerical error on pivoting path.")
+    # OneAPI's non-perturbed path uses the non-pivoting Thomas decomposition.
+    if jtu.test_device_matches(["oneapi"]) and not perturb_singular:
+      self.skipTest(
+          "OneAPI non-perturbed path uses the non-pivoting fallback solver.")
     dl = np.array([0.0, 2.0, -2.0, 3.0], dtype=np.float32)
     d = np.array([1.0, 4.0, 1.0, -1.0], dtype=np.float32)
     du = np.array([2.0, -1.0, 1.0, 0.0], dtype=np.float32)
@@ -2658,6 +2662,9 @@ class LaxLinalgTest(jtu.JaxTestCase):
     if jtu.is_device_rocm() and not perturb_singular:
       self.skipTest(
           "Skipped on ROCm: hipsparseSgtsv2 numerical error on pivoting path.")
+    if jtu.test_device_matches(["oneapi"]) and not perturb_singular:
+      self.skipTest(
+          "OneAPI non-perturbed path uses the non-pivoting fallback solver.")
     dl = np.array([0.0, 1.0, -6.0, 1.0], dtype=np.float32)
     d = np.array([1.0, -1.0, 2.0, 1.0], dtype=np.float32)
     du = np.array([2.0, 1.0, -1.0, 0.0], dtype=np.float32)
