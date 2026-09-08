@@ -313,6 +313,15 @@ UNARY_FUNCTIONS = [
 
 class PallasBaseTest(ptu.PallasTest):
 
+  def setUp(self):
+    super().setUp()
+    if (
+        _USE_MOSAIC_GPU.value
+        and jtu.test_device_matches(["cuda"])
+        and not jtu.is_cuda_compute_capability_at_least("9.0")
+    ):
+      self.skipTest("This test only works on a GPU with capability >= sm90")
+
   @classmethod
   def pallas_call(
       cls,
