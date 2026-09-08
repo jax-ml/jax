@@ -34,6 +34,8 @@ struct DumpOptions {
   bool ptx = false;
   // Whether to run ptxas in verbose mode.
   bool ptxas = false;
+  // Whether to dump resource estimators information.
+  bool resources = false;
   // Whether to dump the SASS resulting from the compilation. If both `sass`
   // and `sass_ctrl` are true, a single dump containing both will be
   // generated.

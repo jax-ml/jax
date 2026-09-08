@@ -287,18 +287,20 @@ DumpOptions GetOrSetDumpOptionsForModule(mlir::ModuleOp module) {
     opts.mlir_passes = true;
     opts.ptx = true;
     opts.ptxas = true;
+    opts.resources = true;
     opts.sass = true;
     opts.sass_ctrl = true;
     return opts;
   }
 
+  opts.constraint_system =
+      getenv("MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM") != nullptr;
   opts.mlir_passes = getenv("MOSAIC_GPU_DUMP_MLIR_PASSES") != nullptr;
   opts.ptx = getenv("MOSAIC_GPU_DUMP_PTX") != nullptr;
   opts.ptxas = getenv("MOSAIC_GPU_DUMP_PTXAS") != nullptr;
   opts.sass_ctrl = getenv("MOSAIC_GPU_DUMP_SASS_CTRL") != nullptr;
   opts.sass = getenv("MOSAIC_GPU_DUMP_SASS") != nullptr || opts.sass_ctrl;
-  opts.constraint_system =
-      getenv("MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM") != nullptr;
+  opts.resources = getenv("MOSAIC_GPU_DUMP_RESOURCES") != nullptr;
   return opts;
 }
 

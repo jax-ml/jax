@@ -346,6 +346,7 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       .def_ro("mlir_passes", &mosaic::gpu::DumpOptions::mlir_passes)
       .def_ro("ptx", &mosaic::gpu::DumpOptions::ptx)
       .def_ro("ptxas", &mosaic::gpu::DumpOptions::ptxas)
+      .def_ro("resources", &mosaic::gpu::DumpOptions::resources)
       .def_ro("sass", &mosaic::gpu::DumpOptions::sass)
       .def_ro("sass_ctrl", &mosaic::gpu::DumpOptions::sass_ctrl)
       .def_ro("dump_path", &mosaic::gpu::DumpOptions::dump_path)

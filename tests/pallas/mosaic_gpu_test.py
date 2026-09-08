@@ -4838,6 +4838,36 @@ class PallasCallWGTest(
           any(f.endswith(".after_layout_inference.txt") for f in files)
       )
 
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_dump_resources(self):
+    # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.2.
+    if not hasattr(mgpu.dialect.DumpOptions(), "resources"):
+      self.skipTest("Test requires jaxlib with DumpOptions.resources")
+
+    x = jax.ShapeDtypeStruct((64, 64), jnp.float32)
+
+    @self.kernel(
+        out_type=x,
+        scratch_types=[
+            plgpu.SMEM((64, 64), jnp.float32),
+            plgpu.SMEM((32, 32), jnp.float32),
+            plgpu.TMEM((128, 32), jnp.float32),
+            plgpu.TMEM((128, 1), jnp.float32),
+        ],
+    )
+    def kernel(x_gmem, o_gmem, *scratch_refs):
+      del scratch_refs
+      o_gmem[...] = plgpu.load(x_gmem, optimized=False)
+
+    expected_smem_bytes = 64 * 64 * 4 + 32 * 32 * 4
+    expected_tmem_cols = 40  # 32 + 1 = 33 padded to next multiple of 8
+
+    with (jtu.set_env(MOSAIC_GPU_DUMP_RESOURCES="1"),
+          self.capture_stdout() as rs):
+      jax.jit(kernel).lower(x)
+    self.assertIn(f"smem_scratch_bytes={expected_smem_bytes}", rs())
+    self.assertIn(f"tmem_scratch_cols={expected_tmem_cols}", rs())
+
 
 class PallasCallSm90ATest(PallasSm90ATest):
 

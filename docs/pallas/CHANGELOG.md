@@ -40,6 +40,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 * New features
 
+  * Added the `MOSAIC_GPU_DUMP_RESOURCES` environment variable, which dumps
+    the estimated resources (e.g. TMEM columns, SMEM bytes) when compiling a
+    model. Like the other dump variables, it is also enabled by
+    `MOSAIC_GPU_DUMP_TO`.
   * Added the `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM` environment variable, which
     dumps the constraint system built during layout inference. This is useful
     for debugging layout inference failures. Like the other dump variables, it

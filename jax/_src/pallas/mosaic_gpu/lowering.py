@@ -997,6 +997,15 @@ def lower_jaxpr_to_module(
       auto_barriers=not params.unsafe_no_auto_barriers,
   )
 
+  dump_options = mgpu.dialect.get_or_set_dump_options(module)
+  # TODO(bchetioui): clean up when the minimum jaxlib version is 0.11.2.
+  if getattr(dump_options, "resources", False):
+    mgpu_utils.dump_to_file_or_stdout(
+        str(rs),
+        f"{dump_options.module_basename}.resources.txt",
+        dump_options.dump_path,
+    )
+
   return LoweringResult(
       module, cuda_grid, block, new_out_shapes, prof_spec,
       scoped_semaphores_shape,

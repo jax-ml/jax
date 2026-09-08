@@ -1504,6 +1504,8 @@ generated low-level code:
 * `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM` allows dumping the constraint system built
   during layout inference to standard output, which is useful for debugging
   layout inference failures;
+* `MOSAIC_GPU_DUMP_RESOURCES` allows dumping the estimated resources (such
+  as TMEM columns and SMEM bytes) to standard output;
 * `MOSAIC_GPU_DUMP_TO` allows specifying a directory path (that must exist)
   where all of the above will be dumped as files.
 * `MOSAIC_GPU_LLVM_DEBUG_ONLY` allows specifying a comma-separated list of
