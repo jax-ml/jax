@@ -47,6 +47,7 @@ exports_files(srcs = [
     "linalg.cc",
     "linalg_kernels.cc",
     "linalg_kernels.cu.cc",
+    "linalg_kernels_oneapi.cc",
     "linalg_kernels.h",
     "make_batch_pointers.cu.cc",
     "make_batch_pointers.h",
