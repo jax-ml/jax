@@ -30,11 +30,6 @@ warnings.filterwarnings(
     message="jax.experimental.pallas.ops.gpu.* is deprecated.*",
     category=DeprecationWarning,
 )
-warnings.filterwarnings(
-    "ignore",
-    category=DeprecationWarning,
-    message="The Pallas Triton backend is deprecated",
-)
 
 if sys.platform != "win32":
   from jax.experimental.pallas.ops.gpu import decode_attention
@@ -67,6 +62,13 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
+
+    self.enter_context(
+          jtu.ignore_warning(
+              category=DeprecationWarning,
+              message="The Pallas Triton backend is deprecated",
+          )
+      )
 
 
 class DecodeAttentionTest(PallasBaseTest):

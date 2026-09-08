@@ -26,11 +26,6 @@ warnings.filterwarnings(
     message="jax.experimental.pallas.ops.gpu.* is deprecated.*",
     category=DeprecationWarning,
 )
-warnings.filterwarnings(
-    "ignore",
-    category=DeprecationWarning,
-    message="The Pallas Triton backend is deprecated",
-)
 
 if sys.platform != "win32":
   from jax.experimental.pallas.ops.gpu import paged_attention
@@ -121,11 +116,11 @@ class PallasBaseTest(jtu.JaxTestCase):
     super().setUp()
 
     if jtu.test_device_matches(["gpu"]):
-      self.enter_context(warnings.catch_warnings())
-      warnings.filterwarnings(
-          "ignore",
-          category=DeprecationWarning,
-          message="The Pallas Triton backend is deprecated",
+      self.enter_context(
+          jtu.ignore_warning(
+              category=DeprecationWarning,
+              message="The Pallas Triton backend is deprecated",
+          )
       )
 
 class PagedAttentionKernelTest(PallasBaseTest):
