@@ -123,7 +123,8 @@ class Fusible(hijax.HiPrim):
 
     return out, out_dims
 
-  def physicalize(self, _, *args):
+  def physicalize(self, ctx, *args):
+    del ctx
     consts = args[: self.num_consts]
     new_jaxpr = fusible_dtype.physicalize_closed_jaxpr(
         jax_core.ClosedJaxpr(self.jaxpr, list(consts))

@@ -496,6 +496,18 @@ class Traced(Stage):
     traced._fun_sourceinfo = self._fun_sourceinfo
     return consts, traced
 
+  def physicalize(self, ctx) -> Traced:
+    new_jaxpr = ctx.physicalize_closed_jaxpr(self.jaxpr)
+    new_params = dict(self._params, jaxpr=new_jaxpr)
+    return Traced(
+        list(new_jaxpr.in_avals),
+        new_params,
+        self._in_tree,
+        self.out_tree,
+        self._consts,
+        self._fun_sourceinfo,
+    )
+
   @property
   def lojax(self) -> LoJax:
     if self._lojax is not None:
