@@ -988,6 +988,7 @@ def lower_jaxpr_to_module(
       jax_mesh=jax_mesh,
       base_loc=base_loc,
       uses_pdl=uses_pdl,
+      is_multi_process=params.is_multi_process,
   )
 
   mgpu_core.lower_mgpu_module(
