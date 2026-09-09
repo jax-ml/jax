@@ -677,6 +677,9 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_addupdate_scatter_core_memory_space(self):
+    if not jtu.is_libtpu_at_least("0.0.47"):
+      self.skipTest("Requires libtpu >= 0.0.47")
+
     # Regression test ensuring that we can addupdate_scatter into a VMEM ref
     # associated to a vector subcore memory space.
     mesh = plsc.VectorSubcoreMesh(core_axis_name="core",
@@ -1205,6 +1208,9 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(*MASK_FNS)
   def test_addupdate_scatter(self, mask_fn):
+    if not jtu.is_libtpu_at_least("0.0.47"):
+      self.skipTest("Requires libtpu >= 0.0.47")
+
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
