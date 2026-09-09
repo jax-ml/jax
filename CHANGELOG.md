@@ -60,6 +60,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.numpy.linalg.cholesky` with `symmetrize_input=False` where
     non-zero gradients leaked into the unused triangle of the input matrix
     ({jax-issue}`#40421`).
+  * Fixed {func}`jax.numpy.median` on an input that is empty along the
+    reduction axis, which previously raised an internal error from ``gather``;
+    it now raises a ``ValueError``.
 
 ## JAX 0.11.1 (August 17, 2026)
 
