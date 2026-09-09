@@ -13,11 +13,12 @@
 # limitations under the License.
 
 
+import base64
 import collections
 from functools import partial
 import itertools
 import math
-from unittest import SkipTest
+from unittest import SkipTest, skipIf
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -25,6 +26,7 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
+import jax.numpy as jnp
 from jax import dtypes
 from jax import lax
 from jax._src import test_util as jtu
@@ -1285,6 +1287,57 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(arg_shape, dtype)]
     op = lambda x: lax.tile(x, reps)
     check_grads(op, args_maker(), order=3, modes=["fwd", "rev"], eps=1.)
+
+  @skipIf(not jax.config.x64_enabled, "requires x64")
+  def test_max_min_jvp(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40564
+    X_B64 = "ELHRv7ZM3z4EdVc/2Gr3PqIYTj+bXU6/A26LPkcphT8wbaY/ie6avuVKXj9bOHC8F1fEPldM+z0kEbS/u99sv9k7ML//GGu9UBF6P4Cy5Du20pE+hXVDv9ZJmj7P4Ya/Morsvg0uwj8IHSXAQEa+P74dgD9Ff+6//IqDP1q8RD93Bws+A8/oPLBRxr2xP5W+lXLoP8Q1r7/yPhlA/kzoPg=="
+    X_SHAPE = (8, 5)
+    Z_B64 = "C9iXPgWdxL70Oxq/RQHxPaA80L6AGy28VfMOvQGrxT3RZxm+AluWPr474L2RrQ++ckmPvnxlDL5fy6S9zLegPSjeib7Rw1U8VqKRPlPrOr46HL69aAA3Pvnhhz6xGQC/3supPV/fe74Di4O+Yf0WPLxXDz65fUK+3MiGPr2ecT5Pm8Y+mdnSvdzkfb4PiX6+N0UZv0n1jL22HhE+SFSrvf5QOr5yDmc+hhGlvmtB2b7LUaW9Mn+nvn+FiL8xNmg9PoqcvepjHT1jhPk+UpWcvjOpbL41xC2+i7ABv33KtL51TQK+ZrWWvj4R8D0W8pK7RPDqPQxNQ70yh7y9/1LjvaL8zj26mCc++GQiPtYrt77KcoC+Ie10PaDqET8S67W+dXuVvaT1Dz4qRDG/IU1OvV5OTz14AlQ9gNcFv7rtSD4Urz09oejaPMwR7D7GfZy+LnUsvqjjOT7riSe+zULrvpiThznzkZY99guLvvVQKT4fJZS5h/56vcJGvT79MiS/H3AOvkYHi74jGJw+bB8dPtcafr0MR5o+RUfsvXzdUT2zzoW+PwGnO4AwJb30pJM8UE4oPoQmnD1B1Ai/yYb5veSGkr77p6A+AZmOvlYUEryWHI0+PQK/vRYger6I2Ea9SbaRPoCsMr+u/h+8GA7jPbs9cz537Wg6n4f4PfBjLD5W/4M+ulG4PfPiY77Gt1k+CBUcv1kVuD7BR8M9ggy2PfO9Tr2kPqC+TYp+PHmsRL4+ASy+hR/IvpBwgL0dSAU+zFX2vXmiA71zx8Q+1RsWPlLdrz30gPu+3JIWPuuGET7S7am+jax5vhbIvL21a5M+4rPTPgVMHD/yE/Q+ayZdPA=="
+    Z_SHAPE = (32, 5)
+
+    def load(b64, shape):
+      return np.frombuffer(base64.b64decode(b64), np.float32).reshape(shape)
+
+    x32 = jnp.asarray(load(X_B64, X_SHAPE))
+    z32 = jnp.asarray(load(Z_B64, Z_SHAPE))
+
+    def loss(z, x):
+      zn = jnp.maximum(jnp.linalg.norm(z, ord=2, axis=-1, keepdims=True), 1e-15).T
+      dot = jnp.einsum("bi,oi->bo", x, z, precision=jax.lax.Precision.HIGHEST)
+      return jnp.sum((zn * jnp.arcsinh(dot / zn)) ** 2)
+
+    g_jit = np.asarray(jax.jit(jax.grad(loss))(z32, x32), np.float64)
+    g_ref = np.asarray(jax.grad(loss)(z32.astype(np.float64), x32.astype(np.float64)), np.float64)
+    relerr = np.abs(g_jit - g_ref).max() / np.abs(g_ref).max()
+    self.assertLess(relerr, 1e-4)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{op.__name__}", "op": op}
+      for op in [lax.max, lax.min]
+  )
+  def test_max_min_nan_gradient(self, op):
+    # Verify that NaN operands produce 0.0 gradients rather than 0.5 (tie).
+    x = jnp.array([2.0, 0.0, np.nan, 1.0, np.nan])
+    y = jnp.array([1.0, 0.0, 1.0, np.nan, np.nan])
+
+    if op is lax.max:
+      expected_gx = np.array([1.0, 0.5, 0.0, 0.0, 0.0])
+      expected_gy = np.array([0.0, 0.5, 0.0, 0.0, 0.0])
+    else:
+      expected_gx = np.array([0.0, 0.5, 0.0, 0.0, 0.0])
+      expected_gy = np.array([1.0, 0.5, 0.0, 0.0, 0.0])
+
+    # Reverse-mode (vjp / grad)
+    gx, gy = jax.grad(lambda a, b: jnp.sum(op(a, b)), argnums=(0, 1))(x, y)
+    self.assertAllClose(gx, expected_gx)
+    self.assertAllClose(gy, expected_gy)
+
+    # Forward-mode (jvp)
+    _, tx = jax.jvp(op, (x, y), (jnp.ones_like(x), jnp.zeros_like(y)))
+    _, ty = jax.jvp(op, (x, y), (jnp.zeros_like(x), jnp.ones_like(y)))
+    self.assertAllClose(tx, expected_gx)
+    self.assertAllClose(ty, expected_gy)
 
 
 if __name__ == '__main__':

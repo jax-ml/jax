@@ -5232,15 +5232,15 @@ ad.defjvp(
 mlir.register_lowering(rem_p, partial(_nary_lower_hlo, hlo.remainder))
 
 max_p: core.Primitive = standard_naryop([_any, _any], 'max')
-ad.defjvp2(max_p,
-           lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
-           lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
+ad.defjvp(max_p,
+          lambda g, x, y: mul(g, _balanced_cmp(x, y)),
+          lambda g, x, y: mul(g, _balanced_cmp(y, x)))
 mlir.register_lowering(max_p, partial(_nary_lower_hlo, mlir.max_hlo))
 
 min_p: core.Primitive = standard_naryop([_any, _any], 'min')
-ad.defjvp2(min_p,
-           lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
-           lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
+ad.defjvp(min_p,
+          lambda g, x, y: mul(g, _balanced_cmp(y, x)),
+          lambda g, x, y: mul(g, _balanced_cmp(x, y)))
 mlir.register_lowering(min_p, partial(_nary_lower_hlo, mlir.min_hlo))
 
 shift_left_p = standard_naryop([_int, _int], 'shift_left')
@@ -9830,9 +9830,14 @@ def canonicalize_precision(precision: PrecisionLike) -> CanonicalPrecision:
       f"but got {precision}.")
 
 
-def _balanced_eq(x, z, y):
-  return div(select(_eq_meet(x, z), _ones(z), _zeros(z)),
-             select(_eq_meet(y, z), _twos(z), _ones(z)))
+def _balanced_cmp(x, y):
+  # 1.0 if x > y, 0.5 if x == y, 0.0 if x < y or NaN
+  gt_mask = gt(x, y)
+  eq_mask = eq(x, y)
+  ones = full_like(gt_mask, 1, dtype=x.dtype)
+  zeros = full_like(gt_mask, 0, dtype=x.dtype)
+  half = full_like(gt_mask, 0.5, dtype=x.dtype)
+  return select(gt_mask, ones, select(eq_mask, half, zeros))
 
 
 def _eq_meet(a, b):
