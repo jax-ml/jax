@@ -23,16 +23,17 @@ limitations under the License.
 #include <sstream>
 #include <string>
 #include <thread>  // NOLINT
+#include <utility>
 
 #include "absl/base/attributes.h"
-#include "absl/base/const_init.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
-#include "absl/synchronization/mutex.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
+#include "jaxlib/ft_mutex.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/util.h"
@@ -43,8 +44,10 @@ namespace nb = ::nanobind;
 
 namespace {
 
-// Protected by the GIL.
-GuardState& global_state = *new GuardState();
+// Protected by the GIL in GIL mode, and by global_state_mu in freethreading
+// mode.
+ft_mutex global_state_mu;
+GuardState global_state ABSL_GUARDED_BY(global_state_mu);
 
 ABSL_CONST_INIT thread_local GuardState thread_local_state;
 
@@ -85,34 +88,60 @@ TransferGuardAction GetTransferGuardAction(TransferGuardLevel guard_level,
 }
 
 // Returns the transfer guard action for a host-to-device transfer.
-// REQUIRES: Python GIL.
 TransferGuardAction GetTransferGuardActionForHostToDevice() {
-  return GetTransferGuardAction(
-      thread_local_state.host_to_device.value_or(
-          global_state.host_to_device.value_or(kDefaultGuardLevel)),
-      thread_local_state.explicit_device_put);
+  auto level = thread_local_state.host_to_device;
+  if (!level.has_value()) {
+    ft_lock_guard lock(global_state_mu);
+    level = global_state.host_to_device;
+  }
+  return GetTransferGuardAction(level.value_or(kDefaultGuardLevel),
+                                thread_local_state.explicit_device_put);
 }
 
 // Returns the transfer guard action for a device-to-device transfer.
-// REQUIRES: Python GIL.
 TransferGuardAction GetTransferGuardActionForDeviceToDevice() {
-  return GetTransferGuardAction(
-      thread_local_state.device_to_device.value_or(
-          global_state.device_to_device.value_or(kDefaultGuardLevel)),
-      thread_local_state.explicit_device_put);
+  auto level = thread_local_state.device_to_device;
+  if (!level.has_value()) {
+    ft_lock_guard lock(global_state_mu);
+    level = global_state.device_to_device;
+  }
+  return GetTransferGuardAction(level.value_or(kDefaultGuardLevel),
+                                thread_local_state.explicit_device_put);
 }
 
 // Returns the transfer guard action for a device-to-host transfer.
-// REQUIRES: Python GIL.
 TransferGuardAction GetTransferGuardActionForDeviceToHost() {
-  return GetTransferGuardAction(
-      thread_local_state.device_to_host.value_or(
-          global_state.device_to_host.value_or(kDefaultGuardLevel)),
-      thread_local_state.explicit_device_get);
+  auto level = thread_local_state.device_to_host;
+  if (!level.has_value()) {
+    ft_lock_guard lock(global_state_mu);
+    level = global_state.device_to_host;
+  }
+  return GetTransferGuardAction(level.value_or(kDefaultGuardLevel),
+                                thread_local_state.explicit_device_get);
 }
 
-// Guards the global state's thread ID.
-ABSL_CONST_INIT absl::Mutex thread_id_mu(absl::kConstInit);
+template <typename T>
+auto MakeGetter(T GuardState::* member) {
+  return [member](const GuardState& state) -> T {
+    if (&state == &global_state) {
+      ft_lock_guard lock(global_state_mu);
+      return state.*member;
+    }
+    return state.*member;
+  };
+}
+
+template <typename T>
+auto MakeSetter(T GuardState::* member) {
+  return [member](GuardState& state, T val) {
+    if (&state == &global_state) {
+      ft_lock_guard lock(global_state_mu);
+      state.*member = std::move(val);
+    } else {
+      state.*member = std::move(val);
+    }
+  };
+}
 
 }  // namespace
 
@@ -162,13 +191,16 @@ absl::Status ApplyTransferGuardToDeviceToHost(
 }
 
 GarbageCollectionGuardLevel GetGarbageCollectArrayGuard() {
-  return thread_local_state.garbage_collect_array.value_or(
-      global_state.garbage_collect_array.value_or(
-          kDefaultGarbageCollectionGuardLevel));
+  auto level = thread_local_state.garbage_collect_array;
+  if (!level.has_value()) {
+    ft_lock_guard lock(global_state_mu);
+    level = global_state.garbage_collect_array;
+  }
+  return level.value_or(kDefaultGarbageCollectionGuardLevel);
 }
 
 absl::Status CheckThreadGuard(xla::ifrt::DeviceListRef devices) {
-  absl::MutexLock lock(thread_id_mu);
+  ft_lock_guard lock(global_state_mu);
   // If the thread id is not set, then the thread guard is not enabled.
   if (!global_state.thread_id.has_value()) {
     return absl::OkStatus();
@@ -205,7 +237,7 @@ absl::Status CheckThreadGuard(xla::ifrt::DeviceListRef devices) {
 }
 
 absl::Status UpdateThreadGuardGlobalState(bool set_thread_id) {
-  absl::MutexLock lock(thread_id_mu);
+  ft_lock_guard lock(global_state_mu);
   // If set_thread_id is true, then the thread guard context was entered and the
   // thread id should be set. If the thread ID is already set, then a thread
   // guard is nested, which is allowed only in the same thread.
@@ -245,16 +277,24 @@ void BuildGuardSubmodule(nb::module_& m) {
   gcglevel.value("FATAL", GarbageCollectionGuardLevel::kFatal);
 
   nb::class_<GuardState> tgstate(glib, "GuardState");
-  tgstate.def_rw("host_to_device", &GuardState::host_to_device,
-                 nb::arg().none());
-  tgstate.def_rw("device_to_device", &GuardState::device_to_device,
-                 nb::arg().none());
-  tgstate.def_rw("device_to_host", &GuardState::device_to_host,
-                 nb::arg().none());
-  tgstate.def_rw("explicit_device_put", &GuardState::explicit_device_put);
-  tgstate.def_rw("explicit_device_get", &GuardState::explicit_device_get);
-  tgstate.def_rw("garbage_collect_array", &GuardState::garbage_collect_array,
-                 nb::arg().none());
+  tgstate.def_prop_rw("host_to_device", MakeGetter(&GuardState::host_to_device),
+                      MakeSetter(&GuardState::host_to_device),
+                      nb::arg().none());
+  tgstate.def_prop_rw(
+      "device_to_device", MakeGetter(&GuardState::device_to_device),
+      MakeSetter(&GuardState::device_to_device), nb::arg().none());
+  tgstate.def_prop_rw("device_to_host", MakeGetter(&GuardState::device_to_host),
+                      MakeSetter(&GuardState::device_to_host),
+                      nb::arg().none());
+  tgstate.def_prop_rw("explicit_device_put",
+                      MakeGetter(&GuardState::explicit_device_put),
+                      MakeSetter(&GuardState::explicit_device_put));
+  tgstate.def_prop_rw("explicit_device_get",
+                      MakeGetter(&GuardState::explicit_device_get),
+                      MakeSetter(&GuardState::explicit_device_get));
+  tgstate.def_prop_rw(
+      "garbage_collect_array", MakeGetter(&GuardState::garbage_collect_array),
+      MakeSetter(&GuardState::garbage_collect_array), nb::arg().none());
 
   glib.def(
       "global_state", [&]() { return &global_state; },
