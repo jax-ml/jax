@@ -171,9 +171,6 @@ class DialectTest(MosaicGpuTest):
     self.assertTrue(barrier_ty.orders_tensor_core)
 
   def test_b6x16_p32_type_bindings(self):
-    # TODO(bchetioui): remove once minimum jaxlib version is 0.11.1.
-    if not hasattr(mgpu.dialect, "B6x16P32Type"):
-      self.skipTest("B6x16P32Type is not supported.")
     f6_ty = ir.Float6E2M3FNType.get()
     b6x16p32_ty = mgpu.dialect.B6x16P32Type.get(f6_ty)
     self.assertIsInstance(b6x16p32_ty, ir.Type)
@@ -190,9 +187,6 @@ class DialectTest(MosaicGpuTest):
       ir.Type.parse("!mosaic_gpu.b6x16_p32<f16>")
 
   def test_p2b6_type_bindings(self):
-    # TODO(bchetioui): remove once minimum jaxlib version is 0.11.1.
-    if not hasattr(mgpu.dialect, "P2B6Type"):
-      self.skipTest("P2B6Type is not supported.")
     f6_ty = ir.Float6E2M3FNType.get()
     p2b6_ty = mgpu.dialect.P2B6Type.get(f6_ty)
     self.assertIsInstance(p2b6_ty, ir.Type)
