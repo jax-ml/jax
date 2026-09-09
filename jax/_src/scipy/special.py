@@ -702,12 +702,12 @@ def erfcx(x: ArrayLike) -> Array:
 @custom_derivatives.custom_jvp
 def _erfcx(x: Array) -> Array:
   if x.dtype == np.float64:
-    # At threshold ~26.6, first omitted term |c_9|/x^18 ~ 1e-21 << eps64 ~ 2e-16.
+    # At the switch point ~26.54, first omitted term |c_9|/x^18 ~ 2e-22 << eps64 ~ 2e-16.
     return _erfcx_impl(x, nterms=9)
   elif x.dtype == np.float32:
-    # At threshold ~9.4, first omitted term |c_5|/x^10 ~ 5e-9 << eps32 ~ 1e-7.
+    # At the switch point ~9.19, first omitted term |c_5|/x^10 ~ 5e-9 << eps32 ~ 1.2e-7.
     return _erfcx_impl(x, nterms=5)
-  else:  # float16, bfloat16 — upcast to float32
+  else:  # float16, bfloat16, upcast to float32
     return _erfcx_impl(x.astype(np.float32), nterms=5).astype(x.dtype)
 
 _erfcx.defjvps(
@@ -725,10 +725,22 @@ def _erfcx_asymptotic(x: Array, nterms: int) -> Array:
   return p / (x * _lax_const(x, np.sqrt(np.pi)))
 
 
+_ERFCX_SWITCH_THRESHOLD = {
+    # Largest x for which lax.erfc(x) remains in the normal range, i.e.
+    # x <= erfcinv(finfo.smallest_normal). Beyond it erfc(x) underflows to
+    # subnormal values, which XLA may flush to zero. Values from
+    # scipy.special.erfcinv, hardcoded since scipy is not a runtime dependency.
+    np.dtype(np.float64): 26.543258454250985,
+    np.dtype(np.float32): 9.194549,
+}
+
+
 def _erfcx_impl(x: Array, nterms: int) -> Array:
-  # Switch to asymptotic expansion when exp(x^2) would overflow.
-  # Overflow occurs when x^2 > log(fmax), i.e. x > sqrt(log(fmax)).
-  threshold = np.sqrt(np.log(dtypes.finfo(x.dtype).max))
+  # Switch to the asymptotic expansion once lax.erfc(x), computed on the direct
+  # path as exp(x**2) * erfc(x), would underflow into the subnormal range. This
+  # bound also keeps exp(x**2) finite, because erfcinv(finfo.smallest_normal)
+  # lies below the overflow point sqrt(log(finfo.max)) for both dtypes.
+  threshold = _ERFCX_SWITCH_THRESHOLD[np.dtype(x.dtype)]
   large = x > _lax_const(x, threshold)
   safe_x = lax.select(large, lax.full_like(x, 1.), x)
   direct = lax.exp(lax.square(safe_x)) * lax.erfc(safe_x)
