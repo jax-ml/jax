@@ -493,4 +493,50 @@ TEST_F(CustomCallTest, GPUModuleIsRecompiledAfterExpiration) {
   }
 }
 
+TEST_F(CustomCallTest, MosaicGpuRecordsIntoCommandBuffer) {
+  std::string module_str = TestMGPUHloModule();
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       xla::ParseAndReturnUnverifiedModule(module_str));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+  xla::CompileOptions compile_options;
+  compile_options.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_graph_min_graph_size(1);
+  absl::SetVLogLevel("custom_call", 5);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                             std::move(compile_options)));
+  // Warmup.
+  EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  // Create.
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    HasSubstr("MosaicGpuRecord called for "
+                              "kernel_mosaic_gpu_kernel with action=Create")))
+        .Times(1);
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    HasSubstr("MosaicGpuExecute launching kernel with name: "
+                              "kernel_mosaic_gpu_kernel")))
+        .Times(0);
+    log.StartCapturingLogs();
+    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  }
+  // Launch graph. XLA only. No mosaic gpu logs expected.
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _, HasSubstr("MosaicGpuRecord")))
+        .Times(0);
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _, HasSubstr("MosaicGpuExecute")))
+        .Times(0);
+    log.StartCapturingLogs();
+    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  }
+}
+
 }  // namespace
