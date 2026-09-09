@@ -400,6 +400,28 @@ def pallas_call_hlo_interpret(
     # Base case is always one iteration when grid is ()
     num_iterations = 1
 
+  # For each aliased input/output pair, determine statically (from the kernel
+  # jaxpr's effects, which include writes made inside loop and branch bodies)
+  # whether the kernel writes through the input ref and/or the output ref.
+  # Note that we cannot infer this from the discharged jaxpr's outputs: a ref
+  # that is merely *read* inside e.g. a loop body or a `run_scoped` is still
+  # threaded through the discharged region and comes back as a new value.
+  written_refs = {
+      eff.input for eff in jaxpr.effects
+      if isinstance(eff, (state.WriteEffect, state.AccumEffect))
+  }
+  # jaxpr.invars: [*scalar_prefetch, *consts, *inputs, *outputs, *scratch].
+  # `in_idx` indexes into `args` (a prefix of the invars) and `out_idx` indexes
+  # into the outputs.
+  alias_input_written = {
+      in_idx: jaxpr.invars[in_idx] in written_refs
+      for in_idx, _ in input_output_aliases
+  }
+  alias_output_written = {
+      out_idx: jaxpr.invars[len(args) + out_idx] in written_refs
+      for _, out_idx in input_output_aliases
+  }
+
   # The scan carry: (i, loop_idx, *consts, *ins, *outs, *scratch)
   # i:int32 is the iteration index
   # loop_idx: tuple[int32] are the program ids for each grid axis
@@ -457,8 +479,8 @@ def pallas_call_hlo_interpret(
     for in_idx, out_idx in input_output_aliases:
       in_idx_adj = in_idx - len(scalars)
       out_idx_adj = len(block_args) + out_idx
-      input_modified = out_inout[in_idx_adj] is not in_blocks[in_idx_adj]
-      output_modified = out_inout[out_idx_adj] is not in_blocks[out_idx_adj]
+      input_modified = alias_input_written[in_idx]
+      output_modified = alias_output_written[out_idx]
       if input_modified and not output_modified:
         out_carry[out_idx_adj] = out_carry[in_idx_adj]
       elif output_modified and not input_modified:
