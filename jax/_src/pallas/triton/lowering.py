@@ -2018,8 +2018,28 @@ def _get_lowering_rule(ctx: LoweringRuleContext, ptr, *idx, tree):
   )
 
 
-_STR_TO_EVICTION_POLICY = {str(e): e for e in tt_dialect.EvictionPolicy}
-_STR_TO_CACHE_MODIFIER = {str(c): c for c in tt_dialect.CacheModifier}
+_STR_TO_EVICTION_POLICY = {str(e): str(e) for e in tt_dialect.EvictionPolicy}
+_STR_TO_CACHE_MODIFIER = {str(c): str(c) for c in tt_dialect.CacheModifier}
+
+
+def _get_cache_policy(
+    cache_modifier: str | None,
+    eviction_policy: str | None,
+    *,
+    context: ir.Context | None = None,
+) -> ir.Attribute | None:
+  cache = (
+      "none"
+      if cache_modifier is None
+      else cache_modifier.removeprefix(".")
+  )
+  evict = "evict_normal" if eviction_policy is None else eviction_policy
+  if cache == "none" and evict == "evict_normal":
+    return None
+  return ir.Attribute.parse(
+      f"#tt.cache_policy<cache_modifier = {cache}, eviction_policy = {evict}>",
+      context=context,
+  )
 
 
 def _load(
@@ -2032,13 +2052,13 @@ def _load(
     is_volatile: bool = False,
 ) -> ir.Value:
   if cache_modifier is None:
-    cache = tt_dialect.CacheModifier.NONE
+    cache = "none"
   elif cache_modifier == ".ca" or cache_modifier == ".cg":
-    cache = _STR_TO_CACHE_MODIFIER[cache_modifier]
+    cache = cache_modifier.removeprefix(".")
   else:
     raise ValueError(f"unsupported cache modifier: {cache_modifier}")
   if eviction_policy is None:
-    evict = tt_dialect.EvictionPolicy.NORMAL
+    evict = "evict_normal"
   else:
     try:
       evict = _STR_TO_EVICTION_POLICY[eviction_policy]
@@ -2077,12 +2097,12 @@ def _load(
   if other is not None:
     other = _ir_cast(other, pointee_type, signed=False)
 
+  cache_policy = _get_cache_policy(cache, evict, context=ptr.context)
   result = tt_dialect.load(
       ptr,
       mask=mask,
       other=other,
-      cache=cache,
-      evict=evict,
+      cache_policy=cache_policy,
       is_volatile=is_volatile,
   )
   return (
@@ -2230,13 +2250,13 @@ def _store(
     eviction_policy: str | None = None,
 ) -> None:
   if cache_modifier is None:
-    cache = tt_dialect.CacheModifier.NONE
+    cache = "none"
   elif cache_modifier != ".ca":
-    cache = _STR_TO_CACHE_MODIFIER[cache_modifier]
+    cache = cache_modifier.removeprefix(".")
   else:
     raise ValueError(f"unsupported cache modifier: {cache_modifier}")
   if eviction_policy is None:
-    evict = tt_dialect.EvictionPolicy.NORMAL
+    evict = "evict_normal"
   else:
     try:
       evict = _STR_TO_EVICTION_POLICY[eviction_policy]
@@ -2261,7 +2281,8 @@ def _store(
       raise ValueError("mask cannot be a block if pointer is not a block")
 
   pointee_type = ptr_type.pointee_type
-  if isinstance(pointee_type, ir.IntegerType) and pointee_type.width == 1:
+  is_int1 = isinstance(pointee_type, ir.IntegerType) and pointee_type.width == 1
+  if is_int1:
     pointee_type = ir.IntegerType.get_signless(8)
     ptr = _ir_cast(
         ptr,
@@ -2270,7 +2291,8 @@ def _store(
     )
 
   value = _ir_cast(value, pointee_type, signed=False)
-  tt_dialect.store(ptr, value, mask=mask, cache=cache, evict=evict)
+  cache_policy = _get_cache_policy(cache, evict, context=ptr.context)
+  tt_dialect.store(ptr, value, mask=mask, cache_policy=cache_policy)
 
 
 @register_lowering(primitives.swap_p)
