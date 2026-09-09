@@ -19,13 +19,13 @@ import re
 
 
 def normalize(content: str, *, jaxlib_build: bool = False) -> str:
+  # Replace internal module paths with public ones.
+  content = re.sub(r"mlir\._mlir_libs\._mlir\.ir", "mlir.ir", content)
+  content = re.sub(r"\b_mlir\.ir\b", "mlir.ir", content)
+
   if jaxlib_build:
     # If we are building jaxlib, normalize `mlir.ir` to `jaxlib.mlir.ir`.
     content = re.sub(r"\bmlir\.ir", "jaxlib.mlir.ir", content)
-
-  # Replace internal module paths with public ones.
-  content = re.sub(r"mlir\._mlir_libs\._mlir\.ir", "mlir.ir", content)
-  content = re.sub(r"\b_mlir\.ir\.", "ir.", content)
 
   # Rewrite `import mlir.ir` to `from mlir import ir`.
   content = re.sub(
