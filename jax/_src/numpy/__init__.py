@@ -189,6 +189,7 @@ from jax._src.numpy.tensor_contractions import (
 
 from jax._src.numpy.ufuncs import (
     abs as abs,
+    arccos as arccos,
     arctan2 as arctan2,
     bitwise_and as bitwise_and,
     cbrt as cbrt,
