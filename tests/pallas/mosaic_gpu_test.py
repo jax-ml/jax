@@ -5833,6 +5833,25 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_array_equal(x_result, x + 1)
 
+  def test_tmem_ref_union_3d(self):
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((128, 32), jnp.float32),
+        scratch_types=[
+            plgpu.RefUnion(
+                plgpu.TMEM((2, 128, 16), jnp.float32),
+                plgpu.TMEM((128, 32), jnp.float32),
+            ),
+        ],
+    )
+    def kernel(o_ref, tmem_ref_union):
+      tmem0, tmem1 = tmem_ref_union
+      # Layout cast is necessary for the test to pass under lane semantics.
+      regs = plgpu.layout_cast(jnp.ones_like(tmem0), plgpu.Layout.TCGEN05)
+      plgpu.async_store_tmem(tmem0, regs)
+      o_ref[...] = plgpu.async_load_tmem(tmem1)
+
+    np.testing.assert_array_equal(kernel(), jnp.ones((128, 32), dtype=jnp.float32))
+
   def test_tmem_ref_union_multi_allocation(self):
     @self.kernel(
         out_type=jax.ShapeDtypeStruct((128, 512), jnp.float16),

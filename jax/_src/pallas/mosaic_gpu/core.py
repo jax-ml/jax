@@ -512,7 +512,13 @@ def _ref_group_tmem_col_size(refs: _GPUMemoryRefTree) -> int:
   """
   ncols = 0
   for ref in jax.tree.leaves(refs):
-    ref_ncols = ref.layout.cols_in_shape(ref.shape,
+    # Refs with leading batch dimensions are collapsed to 2D in TMEM (see
+    # `CollapseLeadingBatchDimensionsTransform`), so we compute the column count
+    # on the collapsed shape.
+    shape = ref.shape
+    if len(shape) > 2:
+      shape = (shape[-2], math.prod(shape[:-2]) * shape[-1])
+    ref_ncols = ref.layout.cols_in_shape(shape,
                                          dtypes.itemsize_bits(ref.dtype))
     ncols += align_to(ref_ncols, TMEM_COL_ALIGNMENT)
   return ncols
@@ -583,7 +589,9 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
         col_offset = align_to(col_offset, TMEM_COL_ALIGNMENT)
         if not isinstance(ref, pallas_core.TransformedRef):
           ref = pallas_core.TransformedRef(ref, transforms=())
-        ncols = ref.layout.cols_in_shape(ref.shape,
+        # `ref.ref.shape` is the physical (collapsed to 2D) TMEM shape, whereas
+        # `ref.shape` may carry leading batch dimensions.
+        ncols = ref.layout.cols_in_shape(ref.ref.shape,
                                          dtypes.itemsize_bits(ref.dtype))
         transform = ExtractAliasedRef.from_transformed_ref(
             ref, col_offset, group_idx, layout=ref.layout)
