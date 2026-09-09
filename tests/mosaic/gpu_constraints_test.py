@@ -370,6 +370,55 @@ class ConstraintSystemTest(parameterized.TestCase):
     eq = cs.Reshape(layout, source_shape, target_shape)
     self.assertEqual(cs.reduce_expression(eq, {}), layout)
 
+  def test_reduce_reshape_of_tiled_layout_over_untiled_degenerate_dim_is_identity(
+      self,
+  ):
+    layout = RL(mgpu.WGMMA_LAYOUT)
+    eq = cs.Reshape(layout, (1, 128, 8), (128, 8))
+    self.assertEqual(cs.reduce_expression(eq, {}), layout)
+
+  # Layouts whose base tile spans every dimension, so that dropping a
+  # degenerate dimension changes the rank of the tiling itself.
+  @parameterized.parameters(
+      (
+          fa.TiledLayout(
+              fa.Tiling(((32, 128, 1), (32, 32, 1), (8, 4, 1))),
+              warp_dims=(-8,),
+              lane_dims=(-6, -5),
+              vector_dim=-2,
+          ),
+          (32, 128, 1),
+          (32, 128),
+          (2,),
+      ),
+      (
+          fa.TiledLayout(
+              fa.Tiling(((1, 128, 128), (32, 128), (32, 4))),
+              warp_dims=(-6,),
+              lane_dims=(-3,),
+              vector_dim=-1,
+          ),
+          (1, 128, 128),
+          (128, 128),
+          (0,),
+      ),
+  )
+  def test_reduce_reshape_of_tiled_layout_over_tiled_degenerate_dim(
+      self, tiled, source_shape, target_shape, dropped_dims
+  ):
+    squeezed = tiled.reduce(dropped_dims)
+
+    self.assertEqual(
+        cs.reduce_expression(cs.Reshape(RL(tiled), source_shape, target_shape), {}),
+        RL(squeezed),
+    )
+    # And back the other way, which is the direction that lets inference
+    # recover the source layout from the result of the reshape.
+    self.assertEqual(
+        cs.reduce_expression(cs.Reshape(RL(squeezed), target_shape, source_shape), {}),
+        RL(tiled),
+    )
+
   def test_reduce_strict_relayout_produces_equals_constraint(self):
     layout = RL(mgpu.WGStridedFragLayout((128, 128), vec_size=1))
     relayout = cs.Relayout(layout, V(0), 32, strict=True)
