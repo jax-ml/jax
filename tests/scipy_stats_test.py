@@ -502,6 +502,42 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=tol)
       self._CompileAndCheck(lax_fun, args_maker, atol=tol, rtol=tol)
 
+  def testDirichletLogPdfBoundaryAlphaLt1(self):
+    # For alpha_i < 1 the Dirichlet density diverges as x_i -> 0, so logpdf at
+    # a simplex boundary point with x_i = 0 must be +inf, not -inf.
+    # PyTorch and JAX's own gamma/beta/chi2 distributions all agree on +inf.
+    x_boundary = jnp.array([0.0, 0.5, 0.5])
+    alpha_lt1  = jnp.array([0.5, 0.5, 0.5])
+    alpha_eq1  = jnp.array([1.0, 1.0, 1.0])
+    alpha_gt1  = jnp.array([2.0, 2.0, 2.0])
+
+    # alpha < 1: density diverges at boundary -> logpdf must be +inf
+    val = lsp_stats.dirichlet.logpdf(x_boundary, alpha_lt1)
+    self.assertTrue(jnp.isposinf(val),
+                    f"expected +inf for alpha<1 at boundary, got {val}")
+
+    # alpha = 1 (uniform): density is constant; boundary returns a finite value
+    val_eq1 = lsp_stats.dirichlet.logpdf(x_boundary, alpha_eq1)
+    self.assertTrue(jnp.isfinite(val_eq1),
+                    f"expected finite for alpha=1 at boundary, got {val_eq1}")
+
+    # alpha > 1: density goes to 0 at boundary -> logpdf must be -inf
+    val_gt1 = lsp_stats.dirichlet.logpdf(x_boundary, alpha_gt1)
+    self.assertTrue(jnp.isneginf(val_gt1),
+                    f"expected -inf for alpha>1 at boundary, got {val_gt1}")
+
+    # point with negative component is outside simplex -> -inf regardless of alpha
+    x_neg = jnp.array([-0.1, 0.6, 0.5])
+    val_neg = lsp_stats.dirichlet.logpdf(x_neg, alpha_lt1)
+    self.assertTrue(jnp.isneginf(val_neg),
+                    f"expected -inf for x outside simplex, got {val_neg}")
+
+    # value at boundary matches one-sided limit (monotone approach from interior)
+    x_near = jnp.array([1e-8, 0.5, 0.5 - 1e-8])
+    val_near = lsp_stats.dirichlet.logpdf(x_near, alpha_lt1)
+    self.assertGreater(float(val_near), 0.0,
+                       "logpdf approaching boundary should be large positive")
+
   @genNamedParametersNArgs(3)
   def testExponLogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
