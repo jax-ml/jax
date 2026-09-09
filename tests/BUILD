@@ -874,6 +874,7 @@ jax_multiplatform_test(
 
 jax_multiplatform_test(
     name = "lax_scipy_special_functions_test",
+    size = "large",
     srcs = ["lax_scipy_special_functions_test.py"],
     backend_tags = {
         "cpu": [
@@ -895,6 +896,7 @@ jax_multiplatform_test(
         "numpy",
         "scipy",
         "absl/testing",
+        "mpmath",
     ]),
 )
 

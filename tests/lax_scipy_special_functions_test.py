@@ -15,6 +15,7 @@
 import collections
 import functools
 import itertools
+import mpmath
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -27,6 +28,7 @@ import jax
 import jax.numpy as jnp
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src.scipy import special as _src_special
 from jax.scipy import special as lsp_special
 
 jax.config.parse_flags_with_absl()
@@ -64,11 +66,20 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "betainc", 3, float_dtypes, jtu.rand_positive, False
     ),
     op_record(
-        "boxcox", 2, float_dtypes, jtu.rand_positive, True
+        "boxcox", 2, float_dtypes, jtu.rand_positive, False
     ),
     op_record(
         "boxcox1p", 2, float_dtypes,
-        functools.partial(jtu.rand_uniform, low=-0.5, high=5.0), True
+        functools.partial(jtu.rand_uniform, low=-0.5, high=5.0), False
+    ),
+    op_record(
+        "inv_boxcox", 2, float_dtypes, jtu.rand_positive, False
+    ),
+    op_record(
+        "inv_boxcox1p", 2, float_dtypes, jtu.rand_positive, False
+    ),
+    op_record(
+        "exprel", 1, float_dtypes, jtu.rand_default, True
     ),
     op_record(
         "gamma", 1, float_dtypes, jtu.rand_default, True
@@ -205,6 +216,159 @@ def _pretty_special_fun_name(case):
   dtypes_str = "_".join(np.dtype(d).name for d in case["dtypes"])
   name = f"_{case['op']}_{shapes_str}_{dtypes_str}"
   return dict(**case, testcase_name=name)
+
+
+def _dense_around(dt, center=0.0, high=None, num=9,
+                   include_tiny=False):
+  """Symmetric log-spaced test points around `center`, from ±eps to ±high."""
+  eps = float(np.finfo(dt).eps)
+  tiny = [float(np.finfo(dt).tiny)] if include_tiny else []
+  core = [-eps] + [-t for t in tiny] + [0.0] + tiny + [eps]
+  if high is None:
+    return center + np.array(core)
+  ladder = np.geomspace(eps, high, num)
+  return np.unique(np.concatenate(
+      [center - ladder[::-1], center + np.array(core),
+       center + ladder]
+  ))
+
+
+def _signed_sweep(dt, high=5.0, num=5, spread=0.5):
+  """Signed points across [-high, high], dense near zero."""
+  pos = np.geomspace(0.01, high, num)
+  near = _dense_around(dt, high=spread, include_tiny=True)
+  return jnp.asarray(
+      np.union1d(np.concatenate([-pos, pos]), near), dt)
+
+
+def _boxcox_inputs(dt, is_1p=False):
+  """Positive x in [0.01, 100], dense near 1."""
+  pts = np.union1d(
+      np.geomspace(0.01, 100.0, 9),
+      _dense_around(dt, center=1.0, high=0.5))
+  return jnp.asarray(pts - 1.0 if is_1p else pts, dt)
+
+
+def _boxcox_lambdas(dt):
+  """Lambdas in [-2, 2], dense near 0, ±1 (branch points)."""
+  return np.unique(np.concatenate([
+      [-2.0, -0.5, 0.5, 2.0],
+      _dense_around(dt, center=-1.0),
+      _dense_around(dt, high=0.5, num=7, include_tiny=True),
+      _dense_around(dt, center=1.0),
+  ]))
+
+
+def _boxcox_grid(dt, **kwargs):
+  """(x, lambda) pairs for boxcox / boxcox1p tests."""
+  xg, lg = np.meshgrid(
+      _boxcox_inputs(dt, **kwargs), _boxcox_lambdas(dt))
+  return jnp.asarray(xg.ravel(), dt), jnp.asarray(lg.ravel(), dt)
+
+
+def _inv_boxcox_grid(dt):
+  """(y, lambda) pairs for inv_boxcox, filtered to valid domain."""
+  yg, lg = np.meshgrid(_signed_sweep(dt), _boxcox_lambdas(dt))
+  yf, lf = yg.ravel(), lg.ravel()
+  valid = (1.0 + lf * yf) > 0.0
+  return jnp.asarray(yf[valid], dt), jnp.asarray(lf[valid], dt)
+
+
+def _mp_eval(fn, x):
+  """Evaluate scalar fn via mpmath at 50-digit precision."""
+  x_np = np.asarray(x, dtype=np.float64)
+  with mpmath.workdps(50):
+    res = [float(fn(mpmath.mpf(xi))) for xi in x_np.flat]
+  return np.asarray(res, dtype=np.float64).reshape(x.shape)
+
+
+def _np_exprel(x):
+  """mpmath float64 reference for exprel(x)."""
+  return _mp_eval(lambda xi: mpmath.expm1(xi) / xi if xi != 0 else 1.0, x)
+
+
+def _np_dexprel_dx(x):
+  """mpmath float64 reference for d/dx exprel(x)."""
+  def fn(xi):
+    if abs(xi) < 1e-10:
+      return 0.5 + float(xi) / 3.0
+    return float((mpmath.exp(xi) * (xi - 1) + 1) / xi**2)
+  return _mp_eval(fn, x)
+
+
+def _np_logrel(x):
+  """mpmath float64 reference for logrel(x) = log1p(x) / x."""
+  return _mp_eval(lambda xi: mpmath.log1p(xi) / xi if xi != 0 else 1.0, x)
+
+
+def _np_dlogrel_dx(x):
+  """mpmath float64 reference for d/dx logrel(x)."""
+  def fn(xi):
+    if abs(xi) < 1e-10:
+      return -0.5 + 2.0 * float(xi) / 3.0
+    return float((xi / (1 + xi) - mpmath.log1p(xi)) / xi**2)
+  return _mp_eval(fn, x)
+
+
+def _np_boxcox(x, lmbda, is_1p=False):
+  """NumPy float64 reference for boxcox(x, lmbda) or boxcox1p."""
+  x64 = np.asarray(x, dtype=np.float64)
+  l64 = np.asarray(lmbda, dtype=np.float64)
+  lx = np.log1p(x64) if is_1p else np.log(x64)
+  return lx * _np_exprel(l64 * lx)
+
+
+def _np_boxcox_grad(x, lmbda, is_1p=False):
+  """NumPy float64 reference for gradients (d/dx, d/dlmbda) of boxcox."""
+  x64 = np.asarray(x, dtype=np.float64)
+  l64 = np.asarray(lmbda, dtype=np.float64)
+  lx = np.log1p(x64) if is_1p else np.log(x64)
+  dx = np.exp((l64 - 1.0) * lx)
+  dlmbda = lx * (lx * _np_dexprel_dx(l64 * lx))
+  return dx, dlmbda
+
+
+def _np_boxcox_log_input_grad(lx, lmbda):
+  """NumPy float64 reference for gradients of _boxcox_log_input."""
+  lx64 = np.asarray(lx, dtype=np.float64)
+  l64 = np.asarray(lmbda, dtype=np.float64)
+  dlx = np.exp(l64 * lx64)
+  dlmbda = lx64 * (lx64 * _np_dexprel_dx(l64 * lx64))
+  return dlx, dlmbda
+
+
+def _np_inv_boxcox_log_output(y, lmbda):
+  """NumPy float64 reference for _inv_boxcox_log_output(y, lmbda)."""
+  y64 = np.asarray(y, dtype=np.float64)
+  l64 = np.asarray(lmbda, dtype=np.float64)
+  return y64 * _np_logrel(l64 * y64)
+
+
+def _np_inv_boxcox_log_output_grad(y, lmbda):
+  """NumPy float64 reference for gradients of _inv_boxcox_log_output."""
+  y64 = np.asarray(y, dtype=np.float64)
+  l64 = np.asarray(lmbda, dtype=np.float64)
+  lx = _np_inv_boxcox_log_output(y64, l64)
+  dy = np.where(1.0 + l64 * y64 <= 0.0, np.nan, np.exp(-l64 * lx))
+  dlmbda = y64 * (y64 * _np_dlogrel_dx(l64 * y64))
+  return dy, dlmbda
+
+
+def _np_inv_boxcox(y, lmbda, is_1p=False):
+  """NumPy float64 reference for inv_boxcox(y, lmbda) or inv_boxcox1p."""
+  log_out = _np_inv_boxcox_log_output(y, lmbda)
+  return np.expm1(log_out) if is_1p else np.exp(log_out)
+
+
+def _np_inv_boxcox_grad(y, lmbda):  # No is_1p: gradients are identical.
+  """NumPy float64 reference for gradients of inv_boxcox or inv_boxcox1p."""
+  y64 = np.asarray(y, dtype=np.float64)
+  l64 = np.asarray(lmbda, dtype=np.float64)
+  lx = _np_inv_boxcox_log_output(y64, l64)
+  fwd = np.exp(lx)
+  dy = np.where(1.0 + l64 * y64 <= 0.0, np.nan, np.exp((1.0 - l64) * lx))
+  dlmbda = fwd * (y64 * (y64 * _np_dlogrel_dx(l64 * y64)))
+  return dy, dlmbda
 
 
 class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
@@ -522,6 +686,277 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
     self.assertAllClose(lsp_special.gamma(z), osp_special.gamma(z),
                         atol=1e-5, rtol=rtol)
+
+  def _boxcox_tol(self, dt):
+    if jtu.test_device_matches(["tpu"]):
+      return 1e-3
+    return 1e-14 if dt == jnp.float64 else None
+
+  def _check_boxcox_vals(self, dt, out, ref):
+    tol = self._boxcox_tol(dt)
+    self.assertAllClose(
+        out, jnp.asarray(ref, dtype=dt), atol=tol, rtol=tol)
+
+  def _check_boxcox_grads(self, dt, a, b, out_fn, ref_fn):
+    tol = self._boxcox_tol(dt)
+    d_out = jax.vmap(jax.grad(out_fn, argnums=(0, 1)))(a, b)
+    d_ref = ref_fn(a, b)
+    for o, r in zip(d_out, d_ref):
+      self.assertAllClose(
+          o, jnp.asarray(r, dtype=dt), atol=tol, rtol=tol)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testExprel(self, dt):
+    x = _signed_sweep(dt)
+    out = lsp_special.exprel(x)
+    ref = _np_exprel(x)
+    self._check_boxcox_vals(dt, out, ref)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testExprelGrad(self, dt):
+    x = _signed_sweep(dt)
+    out = jax.vmap(jax.grad(lsp_special.exprel))(x)
+    ref = _np_dexprel_dx(x)
+    self._check_boxcox_vals(dt, out, ref)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testExprelGradCrossover(self, dt):
+    # Tests crossover of d/dx exprel at +/- 0.4 across [-0.8, 0.8].
+    x = jnp.linspace(dt(-0.8), dt(0.8), 201, dtype=dt)
+    out = jax.vmap(jax.grad(lsp_special.exprel))(x)
+    ref = _np_dexprel_dx(x)
+    self._check_boxcox_vals(dt, out, ref)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testBoxcoxLogInput(self, dt):
+    x, lmbda = _boxcox_grid(dt)
+    lx = jnp.log(x)
+    out = _src_special._boxcox_log_input(lx, lmbda)
+    ref = _np_boxcox(x, lmbda)
+    self._check_boxcox_vals(dt, out, ref)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testBoxcoxLogInputGrad(self, dt):
+    x, lmbda = _boxcox_grid(dt)
+    lx = jnp.log(x)
+    out_fn = _src_special._boxcox_log_input
+    ref_fn = _np_boxcox_log_input_grad
+    self._check_boxcox_grads(dt, lx, lmbda, out_fn, ref_fn)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testBoxcox(self, dt):
+    x, lmbda = _boxcox_grid(dt)
+    out = lsp_special.boxcox(x, lmbda)
+    ref = _np_boxcox(x, lmbda)
+    self._check_boxcox_vals(dt, out, ref)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testBoxcox1p(self, dt):
+    x, lmbda = _boxcox_grid(dt, is_1p=True)
+    out = lsp_special.boxcox1p(x, lmbda)
+    ref = _np_boxcox(x, lmbda, is_1p=True)
+    self._check_boxcox_vals(dt, out, ref)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testBoxcoxGrad(self, dt):
+    x, lmbda = _boxcox_grid(dt)
+    out_fn = lsp_special.boxcox
+    ref_fn = _np_boxcox_grad
+    self._check_boxcox_grads(dt, x, lmbda, out_fn, ref_fn)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testBoxcox1pGrad(self, dt):
+    x, lmbda = _boxcox_grid(dt, is_1p=True)
+    out_fn = lsp_special.boxcox1p
+    ref_fn = functools.partial(_np_boxcox_grad, is_1p=True)
+    self._check_boxcox_grads(dt, x, lmbda, out_fn, ref_fn)
+
+  @parameterized.named_parameters(("", False), ("1p", True))
+  def testBoxcoxGradXCancellation(self, is_1p):
+    # Verifies that d/dx of boxcox / boxcox1p does not suffer catastrophic
+    # cancellation when lambda * log(x) << -1 (large x, negative lambda).
+    dt = jnp.float32
+    x = jnp.array([100.0, 1e7, 1e8], dtype=dt)
+    lmbda = jnp.array([-10.0, -2.0, -2.0], dtype=dt)
+    out_fn = lsp_special.boxcox1p if is_1p else lsp_special.boxcox
+    dx_out = jax.vmap(jax.grad(out_fn, argnums=0))(x, lmbda)
+    dx_ref, _ = _np_boxcox_grad(x, lmbda, is_1p=is_1p)
+    dx_ref = jnp.asarray(dx_ref, dtype=dt)
+    self.assertAllClose(dx_out, dx_ref)
+
+  @parameterized.named_parameters(("", False), ("1p", True))
+  def testBoxcoxGradXUnderflow(self, is_1p):
+    # Verifies that d/dx of boxcox / boxcox1p does not prematurely underflow
+    # when x << 1 and lambda > 1 (where exp(lambda * log(x)) underflows to 0).
+    dt = jnp.float32
+    if is_1p:
+      # 1+x in [5e-5, 8e-5]: exp(9.5*log1p(x)) underflows to 0,
+      # but exp(8.5*log1p(x)) is normal in float32.
+      x = jnp.linspace(5e-5, 8e-5, 4, dtype=dt) - 1
+      lmbda = jnp.full_like(x, 9.5)
+    else:
+      x = jnp.array([1e-25, 1e-20, 1e-15], dtype=dt)
+      lmbda = jnp.array([2.0, 2.0, 2.0], dtype=dt)
+    out_fn = lsp_special.boxcox1p if is_1p else lsp_special.boxcox
+    dx_out = jax.vmap(jax.grad(out_fn, argnums=0))(x, lmbda)
+    dx_ref, _ = _np_boxcox_grad(x, lmbda, is_1p=is_1p)
+    dx_ref = jnp.asarray(dx_ref, dtype=dt)
+    self.assertAllClose(dx_out, dx_ref)
+
+  def testBoxcoxAnchorPoints(self):
+    # Tests anchor points (d/dx=1, d/dlmbda=0) for (inv_)boxcox(1p).
+    dt = jnp.float32
+    lmbdas = jnp.array([-10.0, -1.0, 0.0, 1.0, 10.0], dtype=dt)
+    x0 = jnp.zeros_like(lmbdas)
+    x1 = jnp.ones_like(lmbdas)
+    for fn, x, ref in [
+        (lsp_special.boxcox, x1, x0),
+        (lsp_special.boxcox1p, x0, x0),
+        (lsp_special.inv_boxcox, x0, x1),
+        (lsp_special.inv_boxcox1p, x0, x0),
+    ]:
+      self.assertAllClose(jax.vmap(fn)(x, lmbdas), ref)
+      dx, dl = jax.vmap(jax.grad(fn, argnums=(0, 1)))(x, lmbdas)
+      self.assertAllClose(dx, x1)
+      self.assertAllClose(dl, x0)
+
+  def testBoxcoxGradNearZero(self):
+    # Verifies d/dlmbda boxcox approaches 0.5 * log(x)^2 as lambda -> 0.
+    dt = jnp.float32
+    l0 = jnp.array([0.0, 1e-20, -1e-20, 1e-10, -1e-10], dtype=dt)
+    x = jnp.array(2.0, dtype=dt)
+    out = jax.vmap(lambda l: jax.grad(lsp_special.boxcox, argnums=1)(x, l))(l0)
+    ref = jnp.full_like(l0, 0.5 * (np.log(2.0) ** 2))
+    self.assertAllClose(out, ref)
+
+  def testBoxcoxHessian(self):
+    # Probes 2nd-order autodiff (Hessian symmetry and finiteness).
+    rtol = 1e-4 if jtu.test_device_matches(["tpu"]) else None
+    for fn in [
+        lsp_special.boxcox,
+        lsp_special.boxcox1p,
+        lsp_special.inv_boxcox,
+        lsp_special.inv_boxcox1p,
+    ]:
+      h = jax.hessian(fn, argnums=(0, 1))(jnp.float32(2.0), jnp.float32(0.5))
+      self.assertTrue(jnp.all(jnp.isfinite(h[0][0])))
+      self.assertTrue(jnp.all(jnp.isfinite(h[1][1])))
+      self.assertAllClose(h[0][1], h[1][0], rtol=rtol)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testLogrel(self, dt):
+    x = _boxcox_inputs(dt, is_1p=True)
+    out = _src_special._logrel(x)
+    ref = _np_logrel(x)
+    self._check_boxcox_vals(dt, out, ref)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testLogrelGrad(self, dt):
+    x = _boxcox_inputs(dt, is_1p=True)
+    out = jax.vmap(jax.grad(_src_special._logrel))(x)
+    ref = _np_dlogrel_dx(x)
+    self._check_boxcox_vals(dt, out, ref)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testLogrelGradCrossover(self, dt):
+    # Tests crossover of d/dx logrel at +/- 0.2 across [-0.4, 0.4].
+    x = jnp.linspace(dt(-0.4), dt(0.4), 201, dtype=dt)
+    out = jax.vmap(jax.grad(_src_special._logrel))(x)
+    ref = _np_dlogrel_dx(x)
+    self._check_boxcox_vals(dt, out, ref)
+
+  def testExprelSecondDerivativeAtOrigin(self):
+    self.assertAllClose(
+        jax.grad(jax.grad(lsp_special.exprel))(0.0), 1.0 / 3.0)
+
+  def testLogrelSecondDerivativeAtOrigin(self):
+    self.assertAllClose(
+        jax.grad(jax.grad(_src_special._logrel))(0.0), 2.0 / 3.0)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testInvBoxcoxLogOutput(self, dt):
+    y, lmbda = _inv_boxcox_grid(dt)
+    out = _src_special._inv_boxcox_log_output(y, lmbda)
+    ref = _np_inv_boxcox_log_output(y, lmbda)
+    self._check_boxcox_vals(dt, out, ref)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testInvBoxcoxLogOutputGrad(self, dt):
+    y, lmbda = _inv_boxcox_grid(dt)
+    out_fn = _src_special._inv_boxcox_log_output
+    ref_fn = _np_inv_boxcox_log_output_grad
+    self._check_boxcox_grads(dt, y, lmbda, out_fn, ref_fn)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testInvBoxcox(self, dt):
+    y, lmbda = _inv_boxcox_grid(dt)
+    out = lsp_special.inv_boxcox(y, lmbda)
+    ref = _np_inv_boxcox(y, lmbda)
+    self._check_boxcox_vals(dt, out, ref)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testInvBoxcox1p(self, dt):
+    y, lmbda = _inv_boxcox_grid(dt)
+    out = lsp_special.inv_boxcox1p(y, lmbda)
+    ref = _np_inv_boxcox(y, lmbda, is_1p=True)
+    self._check_boxcox_vals(dt, out, ref)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testInvBoxcoxGrad(self, dt):
+    y, lmbda = _inv_boxcox_grid(dt)
+    out_fn = lsp_special.inv_boxcox
+    ref_fn = _np_inv_boxcox_grad
+    self._check_boxcox_grads(dt, y, lmbda, out_fn, ref_fn)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testInvBoxcox1pGrad(self, dt):
+    y, lmbda = _inv_boxcox_grid(dt)
+    out_fn = lsp_special.inv_boxcox1p
+    ref_fn = _np_inv_boxcox_grad
+    self._check_boxcox_grads(dt, y, lmbda, out_fn, ref_fn)
+
+  def testBoxcoxLogInputAdditionLaw(self):
+    # Assert Lie exponential homomorphism for φ = _boxcox_log_input:
+    # φ(u1 + u2) = φ(u1) + φ(u2) + λ · φ(u1) · φ(u2).
+    tol = 1e-4 if jtu.test_device_matches(["tpu"]) else None
+    u1 = jnp.array([-1.5, -0.3, 0.0, 0.4, 1.2])[:, None]
+    u2 = jnp.array([0.8, -0.2, 0.5, 0.0, -0.9])[:, None]
+    lmbda = jnp.array([-2.0, -0.5, 0.0, 0.5, 2.0])[None, :]
+    u_stacked = jnp.stack([u1 + u2, u1, u2])
+    y_sum, y1, y2 = _src_special._boxcox_log_input(u_stacked, lmbda[None])
+    self.assertAllClose(y_sum, y1 + y2 + lmbda * y1 * y2, atol=tol, rtol=tol)
+
+  def testInvBoxcoxLogOutputAdditionLaw(self):
+    # Assert Lie logarithm homomorphism for φ⁻¹ = _inv_boxcox_log_output:
+    # φ⁻¹(y1 + y2 + λ · y1 · y2) = φ⁻¹(y1) + φ⁻¹(y2).
+    tol = 1e-4 if jtu.test_device_matches(["tpu"]) else None
+    y1 = jnp.array([0.1, 0.3, 0.0, 0.5, 0.2])[:, None]
+    y2 = jnp.array([0.2, 0.1, 0.4, 0.0, 0.3])[:, None]
+    lmbda = jnp.array([-0.5, 0.0, 0.5, 1.5])[None, :]
+    group_sum = y1 + y2 + lmbda * y1 * y2
+    y_stacked = jnp.stack(jnp.broadcast_arrays(group_sum, y1, y2))
+    u_sum, u1, u2 = _src_special._inv_boxcox_log_output(y_stacked, lmbda[None])
+    self.assertAllClose(u_sum, u1 + u2, atol=tol, rtol=tol)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testBoxcoxRoundtrip(self, dt):
+    x = jnp.array([0.1, 0.5, 1.0, 2.0, 5.0, 10.0], dtype=dt)
+    lmbda = jnp.array([-1.5, -0.5, 0.0, 0.5, 1.5], dtype=dt)
+    xg, lg = jnp.meshgrid(x, lmbda)
+    xf, lf = xg.ravel(), lg.ravel()
+    self._check_boxcox_vals(
+        dt, lsp_special.inv_boxcox(
+            lsp_special.boxcox(xf, lf), lf), xf)
+
+  @parameterized.parameters(jtu.dtypes.floating)
+  def testBoxcox1pRoundtrip(self, dt):
+    x = jnp.array([-0.5, -0.1, 0.0, 0.1, 0.5, 2.0, 5.0], dtype=dt)
+    lmbda = jnp.array([-1.5, -0.5, 0.0, 0.5, 1.5], dtype=dt)
+    xg, lg = jnp.meshgrid(x, lmbda)
+    xf, lf = xg.ravel(), lg.ravel()
+    self._check_boxcox_vals(
+        dt, lsp_special.inv_boxcox1p(
+            lsp_special.boxcox1p(xf, lf), lf), xf)
 
 
 if __name__ == "__main__":
