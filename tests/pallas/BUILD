@@ -461,6 +461,9 @@ jax_multiplatform_test(
         "tpu_v5p",
     ],
     shard_count = 8,
+    tags = [
+        "noasan",
+    ],
     deps = [
         "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:mesh_utils",
