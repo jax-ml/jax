@@ -4102,17 +4102,18 @@ def _log_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
 def _log2_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
-  # TODO(phawkins): Use mlir_math.log2(x) once math.log2 is implemented in Mosaic TPU.
-  aval_out = ctx.avals_out[0]
-  out_type = ctx.aval_to_ir_type(aval_out)
-  if not aval_out.shape:
-    log2e = ir_constant(1.4426950408889634, mlir_type=out_type)
-  else:
-    log2e = vector.broadcast(
-        out_type,
-        ir_constant(1.4426950408889634, _dtype_to_ir_type(aval_out.dtype)),
-    )
-  return arith.mulf(mlir_math.log(x), log2e)
+  if ctx.forward_compatible or not ctx.is_libtpu_at_least("0.0.48"):
+    aval_out = ctx.avals_out[0]
+    out_type = ctx.aval_to_ir_type(aval_out)
+    if not aval_out.shape:
+      log2e = ir_constant(1.4426950408889634, mlir_type=out_type)
+    else:
+      log2e = vector.broadcast(
+          out_type,
+          ir_constant(1.4426950408889634, _dtype_to_ir_type(aval_out.dtype)),
+      )
+    return arith.mulf(mlir_math.log(x), log2e)
+  return mlir_math.log2(x)
 
 
 @register_lowering_rule(lax.log1p_p)
