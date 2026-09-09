@@ -155,8 +155,8 @@ def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
   def body_fun(value):
     x, r, rhat, alpha, omega, rho, p, q, k = value
     rho_ = _vdot_tree(rhat, r)
-    beta = rho_ / rho * alpha / omega
-    p_ = _add(r, _mul(beta, _sub(p, _mul(omega, q))))
+    gamma = rho_ / rho * alpha
+    p_ = _add(r, _sub(_mul(gamma / omega, p), _mul(gamma, q)))
     phat = M(p_)
     q_ = A(phat)
     alpha_ = rho_ / _vdot_tree(rhat, q_)
