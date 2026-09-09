@@ -1457,6 +1457,7 @@ for _op, _unary_impl, _is_signed in [
     (mlir_math.SinOp, fa.FragmentedArray.sin, None),
     (mlir_math.CosOp, fa.FragmentedArray.cos, None),
     (mlir_math.LogOp, fa.FragmentedArray.log, None),
+    (mlir_math.Log2Op, fa.FragmentedArray.log2, None),
     (mlir_math.TanhOp, fa.FragmentedArray.tanh, None),
     (mlir_math.AbsFOp, fa.FragmentedArray.abs, None),
     (mlir_math.AbsIOp, fa.FragmentedArray.abs, True),

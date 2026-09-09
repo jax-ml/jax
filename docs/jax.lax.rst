@@ -116,6 +116,7 @@ Operators
     lgamma
     log
     log1p
+    log2
     logistic
     lt
     max

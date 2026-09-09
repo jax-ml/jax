@@ -2819,14 +2819,7 @@ def log2(x: ArrayLike, /) -> Array:
     Array([-2., -1.,  0.,  1.,  2.,  3.], dtype=float32)
   """
   x, = promote_args_inexact("log2", x)
-  one_over_log2 = np.array(1.4426950408889634,  # exact value of 1 / log(2)
-                           dtype=dtypes.finfo(x.dtype).dtype)
-  if dtypes.issubdtype(x.dtype, np.complexfloating):
-    r = lax.log(x)
-    re = lax.real(r)
-    im = lax.imag(r)
-    return lax.complex(lax.mul(re, one_over_log2), lax.mul(im, one_over_log2))
-  out = lax.mul(lax.log(x), one_over_log2)
+  out = lax.log2(x)
   jnp_error._set_error_if_nan(out)
   return out
 

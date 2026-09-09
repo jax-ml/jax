@@ -501,8 +501,9 @@ def exp(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
 def exp2(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise base-2 exponential: :math:`2^x`.
 
-  This function is implemented in terms of the `stablehlo.exponential`_
-  and `stablehlo.multiply`_ operations.
+  This function is currently implemented in terms of the
+  `stablehlo.exponential`_ and `stablehlo.multiply`_ operations. In the future,
+  it may be implemented directly in terms of a ``stablehlo.exp2`` operation.
 
   Args:
     x: input array. Must have floating-point or complex type.
@@ -580,6 +581,36 @@ def log(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
   .. _stablehlo.log: https://openxla.org/stablehlo/spec#log
   """
   return log_p.bind(x, accuracy=accuracy)
+
+@export
+def log2(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
+  r"""Elementwise base-2 logarithm: :math:`\mathrm{log}_2(x)`.
+
+  This function is currently implemented in terms of the `stablehlo.log`_
+  and `stablehlo.multiply`_ operations. In the future, it may be implemented
+  directly in terms of a ``stablehlo.log2`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object that
+      selects the implementation of the op based on the requested accuracy. If
+      the implementation cannot satisfy the requested tolerance, the
+      compiler will return an error. If mode is specified and there are no
+      multiple implementations available, the default implementation will be
+      used.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    base-2 logarithm.
+
+  See also:
+    - :func:`jax.lax.exp2`: elementwise base-2 exponential: :math:`2^x`.
+    - :func:`jax.lax.log`: elementwise natural logarithm: :math:`\mathrm{log}(x)`.
+
+  .. _stablehlo.log: https://openxla.org/stablehlo/spec#log
+  .. _stablehlo.multiply: https://openxla.org/stablehlo/spec#multiply
+  """
+  return log2_p.bind(x, accuracy=accuracy)
 
 @export
 def log1p(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
@@ -4579,6 +4610,29 @@ log_p = standard_unop(_float | _complex, 'log')
 ad.defjvp(log_p, lambda g, x, **kwargs: div(g, x))
 mlir.register_lowering(log_p, partial(_nary_lower_hlo, hlo.log))
 core.pp_eqn_rules[log_p] = _unary_with_accuracy_pp_rule
+
+log2_p = standard_unop(_float | _complex, 'log2')
+ad.defjvp(log2_p, lambda g, x, **kwargs: div(g, mul(x, log(_const(x, 2)))))
+
+def _log2_lower(ctx, x, accuracy):
+  x_aval, = ctx.avals_in
+  log_x = hlo.log(x, result_accuracy=accuracy_attr(accuracy))
+  if np.issubdtype(x_aval.dtype, np.complexfloating):
+    re = hlo.real(log_x)
+    im = hlo.imag(log_x)
+    real_dtype = _real_dtype(x_aval.dtype)
+    one_over_ln2 = mlir.ir_constant(np.array(1.4426950408889634, real_dtype))
+    one_over_ln2 = mlir.broadcast_in_dim(
+        ctx, one_over_ln2, core.ShapedArray(x_aval.shape, real_dtype), broadcast_dimensions=()
+    )
+    return [hlo.complex(hlo.multiply(re, one_over_ln2), hlo.multiply(im, one_over_ln2))]
+  else:
+    one_over_ln2 = mlir.ir_constant(np.array(1.4426950408889634, x_aval.dtype))
+    one_over_ln2 = mlir.broadcast_in_dim(ctx, one_over_ln2, x_aval, broadcast_dimensions=())
+    return [hlo.multiply(log_x, one_over_ln2)]
+
+mlir.register_lowering(log2_p, _log2_lower)
+core.pp_eqn_rules[log2_p] = _unary_with_accuracy_pp_rule
 
 expm1_p = standard_unop(_float | _complex, 'expm1')
 ad.defjvp2(

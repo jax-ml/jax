@@ -278,6 +278,7 @@ UNARY_PRIMITIVES = [
             (lax.logistic_p, {"accuracy": None}),
             (lax.rsqrt_p, {"accuracy": None}),
             (lax.log_p, {"accuracy": None}),
+            (lax.log2_p, {"accuracy": None}),
             (lax.exp2_p, {"accuracy": None}),
             (lax.log1p_p, {"accuracy": None}),
             (lax.sin_p, {"accuracy": None}),
@@ -687,7 +688,7 @@ class OpsTest(PallasBaseTest):
     # We want exact equality here to match how JAX lowers to XLA
     tol = 0.
     if jtu.test_device_matches(["tpu"]):
-      if name == "exp2":
+      if name in ("exp2", "log2"):
         tol = 1e-6
       # TODO(b/538128436): Remove this logistic branch once mosaic TPU has a
       # tpu.logistic op.
@@ -698,7 +699,7 @@ class OpsTest(PallasBaseTest):
         self.skipTest("TODO: not implemented on GPU")
       if name == "tanh":
         tol = 1e-6
-      elif name == "exp2":
+      elif name in ("exp2", "log2"):
         tol = 1e-6
 
     def kernel(x_ref, y_ref):
@@ -1220,7 +1221,7 @@ class OpsTest(PallasBaseTest):
       ),
       ([jnp.ceil, jnp.floor], ["bfloat16", "float32", "float64", "int32"]),
       (
-          [jnp.exp, jnp.exp2, jnp.sin, jnp.cos, jnp.log, jnp.sqrt],
+          [jnp.exp, jnp.exp2, jnp.sin, jnp.cos, jnp.log, jnp.log2, jnp.sqrt],
           ["bfloat16", "float16", "float32", "float64"],
       ),
       (

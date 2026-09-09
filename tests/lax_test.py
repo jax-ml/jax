@@ -126,7 +126,7 @@ class LaxTest(jtu.JaxTestCase):
     if jtu.test_device_matches(["tpu"]):
       if dtype in (np.float32, np.complex64) and op_name in (
         "acosh", "asinh", "betainc", "cos", "cosh", "digamma", "exp", "exp2", "igamma",
-        "igammac", "log", "log1p", "logistic", "pow", "sin", "sinh", "tan"):
+        "igammac", "log", "log2", "log1p", "logistic", "pow", "sin", "sinh", "tan"):
         tol = jtu.join_tolerance(tol, 2e-4)
       elif op_name == "asinh" and dtype == np.float16:
         tol = jtu.join_tolerance(tol, 1e-3)
@@ -209,6 +209,24 @@ class LaxTest(jtu.JaxTestCase):
     actual = jax.vmap(jax.grad(lambda x: lax.expm1(x, accuracy=lax.AccuracyMode.HIGHEST)))(x)
     self.assertAllClose(
         actual, expected, atol=jtu.default_tolerance()[np.dtype(np.float32)], rtol=0.0
+    )
+
+  def testExp2(self):
+    x = jnp.array([0.25, 0.5, 1.0, 2.0, 4.0], dtype=jnp.float32)
+    ln2 = np.float32(np.log(2.0))
+    self.assertAllClose(lax.exp2(x), np.exp2(x))
+    self.assertAllClose(
+        jax.grad(lambda z: jnp.sum(lax.exp2(z)))(x),
+        np.exp2(x) * ln2,
+    )
+
+  def testLog2(self):
+    x = jnp.array([0.25, 0.5, 1.0, 2.0, 4.0], dtype=jnp.float32)
+    ln2 = np.float32(np.log(2.0))
+    self.assertAllClose(lax.log2(x), np.log2(x))
+    self.assertAllClose(
+        jax.grad(lambda z: jnp.sum(lax.log2(z)))(x),
+        1.0 / (x * ln2),
     )
 
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
@@ -4670,7 +4688,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     'arccos', 'arccosh', 'arcsin', 'arcsinh',
     'arctan', 'arctanh', 'conjugate', 'cos',
     'cosh', 'exp', 'exp2', 'expm1', 'log',
-    'log10', 'log1p', 'sin', 'sinh', 'sqrt',
+    'log10', 'log1p', 'log2', 'sin', 'sinh', 'sqrt',
     'square', 'tan', 'tanh', 'sinc', 'positive',
     'negative', 'absolute', 'sign'
   ]
@@ -4830,10 +4848,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'sign':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4')
 
-    elif name == 'log':
-      regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'ninf.imag', 'pinf.imag', 'ninfj.imag', 'pinfj.imag')
-
-    elif name == 'log10':
+    elif name in ('log', 'log2', 'log10'):
       regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'ninf.imag', 'pinf.imag', 'ninfj.imag', 'pinfj.imag')
 
     elif name == 'exp':

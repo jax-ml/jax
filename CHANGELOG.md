@@ -17,6 +17,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added {func}`jax.lax.log2` and primitive {data}`jax.lax.log2_p`, making
+    `log2` a first-class primitive in JAX ({func}`jax.numpy.log2` now lowers via
+    `jax.lax.log2`).
   * Added {func}`jax.export.symbolic_dim_bounds` for querying conservative
     bounds on symbolic dimension expressions ({jax-issue}`#40006`).
   * {func}`jax.distributed.initialize` can now secure the coordination service
