@@ -37,6 +37,9 @@ Remember to align the itemized text with the first line of an item within a list
     to pass complete `thread_axis` and/or `cluster_axes` arguments will now see
     multiple cluster cancellations (these arguments have always been mandatory,
     but it may previously have worked without, albeit non-deterministically!).
+  * Added support for im2col TMA copies to
+    {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem` via the
+    `im2col_box` and `im2col_offsets` arguments.
 
 * New features
 
