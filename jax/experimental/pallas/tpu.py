@@ -87,6 +87,7 @@ ARBITRARY = GridDimensionSemantics.ARBITRARY
 ACC = core.AccMemorySpace
 CMEM = MemorySpace.CMEM
 SMEM = MemorySpace.SMEM
+SREG = MemorySpace.SREG
 VMEM = MemorySpace.VMEM
 VMEM_SHARED = MemorySpace.VMEM_SHARED
 HBM = MemorySpace.HBM
