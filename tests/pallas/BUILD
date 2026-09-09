@@ -466,6 +466,7 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax/_src/pallas:pallas_test_util",
+        "//jax/experimental:layout",
         "//jax/experimental:mesh_utils",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",

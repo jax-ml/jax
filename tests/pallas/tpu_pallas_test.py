@@ -43,6 +43,8 @@ from jax._src.state import utils as state_utils
 from jax.experimental import mesh_utils
 from jax.experimental import mosaic
 from jax.experimental import pallas as pl
+from jax.experimental.layout import Layout
+from jax.experimental.layout import with_layout_constraint
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas.ops.tpu import example_kernel
 import jax.numpy as jnp
@@ -2449,6 +2451,59 @@ class PallasCallTest(ptu.PallasTPUTest):
         compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(2**18)),
     )(x)
 
+  @parameterized.named_parameters(
+      ('bf16_2x1_1x1', jnp.bfloat16, (2, 1), (1, 1)),
+      ('bf16_4x2_1x1', jnp.bfloat16, (4, 2), (1, 1)),
+      ('bf16_8x4_1x2', jnp.bfloat16, (8, 4), (1, 2)),
+      ('f8_e5m2_4x2_1x1', jnp.float8_e5m2, (4, 2), (1, 1)),
+      ('f8_e5m2_4x2_2x1', jnp.float8_e5m2, (4, 2), (2, 1)),
+      ('f8_e5m2_8x4_1x2', jnp.float8_e5m2, (8, 4), (1, 2)),
+  )
+  def test_l2m_with_small_second_minor_blocks(
+      self, dtype, in_multipliers, block_multipliers
+  ):
+    if not jtu.is_libtpu_at_least('0.0.48'):
+      self.skipTest('Test requires libtpu >= 0.0.48')
+
+    sublane_count = pltpu.get_tpu_info().num_sublanes
+    lane_count = pltpu.get_tpu_info().num_lanes
+    m = in_multipliers[0] * sublane_count
+    n = in_multipliers[1] * lane_count
+    bm = block_multipliers[0] * sublane_count
+    bn = block_multipliers[1] * lane_count
+
+    def custom_kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    packing = 4 // jnp.dtype(dtype).itemsize
+    tile_size = (sublane_count * packing, lane_count)
+    layout = Layout(major_to_minor=(0, 1), tiling=(tile_size, (packing, 1)))
+
+    @jax.jit
+    def matmul_then_pallas(a, b):
+      c = (a @ b).astype(dtype)
+      # Enforce large second minor for kernel inputs.
+      c_constrained = with_layout_constraint(c, layout)
+      out = self.pallas_call(
+          custom_kernel,
+          out_shape=c,
+          in_specs=[
+              pl.BlockSpec(block_shape=(bm, bn), index_map=lambda i, j: (i, j))
+          ],
+          out_specs=pl.BlockSpec(
+              block_shape=(bm, bn), index_map=lambda i, j: (i, j)
+          ),
+          grid=(m // bm, n // bn),
+      )(c_constrained)
+      return out, c
+
+    k = 128
+    k1, k2 = jax.random.split(jax.random.key(0))
+    a = jax.random.normal(k1, (m, k), dtype=jnp.bfloat16)
+    b = jax.random.normal(k2, (k, n), dtype=jnp.bfloat16)
+    out, expected = matmul_then_pallas(a, b)
+    np.testing.assert_array_equal(out, expected)
+
   def test_jitted_kernel_with_program_id(self):
     @jax.jit
     def body(x_ref, o_ref):
@@ -2536,10 +2591,10 @@ class PallasCallTest(ptu.PallasTPUTest):
                          out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
                          debug=True)
     def f(x_ref, y_ref):
-        y_ref[...] = x_ref[...]
-        def body(i, _):
-          y_ref[...] += i
-        lax.fori_loop(0, 5, body, None, unroll=2)
+      y_ref[...] = x_ref[...]
+      def body(i, _):
+        y_ref[...] += i
+      lax.fori_loop(0, 5, body, None, unroll=2)
 
     with jtu.capture_stdout() as get_output:
       y = f(jnp.array([0], jnp.int32))
