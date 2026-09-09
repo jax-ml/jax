@@ -365,10 +365,20 @@ class ExecuteReplicated:
 
   def _add_tokens_to_inputs(self, input_bufs):
     if self.ordered_effects:
-      tokens = [
-          dispatch.runtime_tokens.get_token_input(eff, self._local_devices)._buf
-          for eff in self.ordered_effects
-      ]
+      try:
+        tokens = [
+            dispatch.runtime_tokens.get_token_input(eff, self._local_devices)._buf
+            for eff in self.ordered_effects
+        ]
+      except:
+        # The previous call's callback raised but execute_sharded returned
+        # normally, leaving a bad token in the runtime token set.  Clear
+        # the stale state and start a fresh token chain for this call.
+        dispatch.runtime_tokens.clear()
+        tokens = [
+            dispatch.runtime_tokens.get_token_input(eff, self._local_devices)._buf
+            for eff in self.ordered_effects
+        ]
       input_bufs = [*tokens, *input_bufs]
     return input_bufs
 
@@ -410,7 +420,18 @@ class ExecuteReplicated:
       if (self.ordered_effects or self.has_unordered_effects
           or self.has_host_callbacks):
         input_bufs = self._add_tokens_to_inputs(input_bufs)
-        results = self.xla_executable.execute_sharded(input_bufs, with_tokens=True)
+        try:
+          results = self.xla_executable.execute_sharded(
+              input_bufs, with_tokens=True)
+        except:
+          # The input tokens were already consumed by XLA, but the
+          # exception prevented us from updating the token state
+          # (_handle_token_bufs).  If we leave stale tokens in place,
+          # every future ordered-IO callback will fail with the same
+          # cached error.  Resetting the token set lets subsequent calls
+          # start from a clean state.
+          dispatch.runtime_tokens.clear()
+          raise
 
         result_token_bufs = results.consume_with_handlers(
             [lambda xs: xs] * len(self.ordered_effects), strict=False)
