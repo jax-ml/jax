@@ -62,6 +62,7 @@ from jax._src.pallas.mosaic.primitives import stochastic_round as stochastic_rou
 from jax._src.pallas.mosaic.primitives import store as store
 from jax._src.pallas.mosaic.primitives import touch as touch
 from jax._src.pallas.mosaic.primitives import trace_value as trace_value
+from jax._src.pallas.mosaic.primitives import unpack_and_join as unpack_and_join
 from jax._src.pallas.mosaic.primitives import unpack_elementwise as unpack_elementwise
 from jax._src.pallas.mosaic.primitives import with_memory_space_constraint as with_memory_space_constraint
 from jax._src.pallas.mosaic.random import sample_block as sample_block

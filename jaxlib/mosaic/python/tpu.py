@@ -113,3 +113,24 @@ def reinterpret_cast(
       loc=loc,
       ip=ip,
   ).result
+
+
+def unpack_and_join(
+    result,
+    lower,
+    upper,
+    *,
+    sublane_group_id,
+    in_bitwidth,
+    loc=None,
+    ip=None,
+):
+  return _tpu_ops_gen.UnpackAndJoinOp(
+      result,
+      lower,
+      upper,
+      sublane_group_id=sublane_group_id,
+      in_bitwidth=in_bitwidth,
+      loc=loc,
+      ip=ip,
+  ).result
