@@ -700,7 +700,7 @@ class MpmdTest(PallasSCTest):
       out = jax.vmap(kernel)(x)
       np.testing.assert_array_equal(out, x + 1)
 
-  def test_vmap_emit_pipeline_scalar_prefetch(self):
+  def test_vmap_emit_pipeline_unbatched_scalar_prefetch(self):
     with config.use_emit_pipeline_primitive(True):
       def pipeline_body(x_ref, o_ref):
         o_ref[...] = x_ref[...]
@@ -730,6 +730,40 @@ class MpmdTest(PallasSCTest):
       np.testing.assert_allclose(
           out, x.reshape((2, 8, 8, -1))[:, s].reshape(x.shape)
       )
+
+  def test_vmap_emit_pipeline_batched_scalar_prefetch(self):
+    with config.use_emit_pipeline_primitive(True):
+      def pipeline_body(x_ref, o_ref):
+        o_ref[...] = x_ref[...]
+
+      def fn(s, x):
+        @pl.kernel(
+            out_type=jax.ShapeDtypeStruct((8 * 8, 128), jnp.int32),
+            mesh=from_core_type(TC),
+        )
+        def kernel(s_smem_ref, x_hbm_ref, o_hbm_ref):
+          pltpu.emit_pipeline(
+              pipeline_body,
+              grid=(8,),
+              in_specs=pl.BlockSpec((8, 128), lambda i: (s_smem_ref[i], 0)),
+              out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+          )(x_hbm_ref, o_hbm_ref)
+
+        s_smem = pltpu.with_memory_space_constraint(s, pltpu.SMEM)
+        return kernel(s_smem, x)
+
+      s = jnp.array([
+          [4, 3, 2, 5, 3, 5, 2, 7],
+          [1, 2, 3, 4, 5, 6, 7, 0],
+      ], jnp.int32)
+      x = jnp.arange(2 * 8 * 8 * 128, dtype=jnp.int32).reshape((2, 8 * 8, 128))
+
+      out = jax.jit(jax.vmap(fn, in_axes=(0, 0)))(s, x)
+      expected = jnp.stack([
+          x[0].reshape((8, 8, 128))[s[0]].reshape((8 * 8, 128)),
+          x[1].reshape((8, 8, 128))[s[1]].reshape((8 * 8, 128)),
+      ])
+      np.testing.assert_allclose(out, expected)
 
   def test_remat_with_checkpoint(self):
     mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
