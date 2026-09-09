@@ -673,6 +673,12 @@ NB_MODULE(_jax, m) {
                    })
       .def_rw("peak_memory_in_bytes",
               &xla::CompiledMemoryStats::peak_memory_in_bytes)
+      .def_rw("total_allocation_bytes",
+              &xla::CompiledMemoryStats::total_allocation_bytes)
+      .def_rw("indefinite_allocations",
+              &xla::CompiledMemoryStats::indefinite_allocations)
+      .def_rw("peak_unpadded_heap_bytes",
+              &xla::CompiledMemoryStats::peak_unpadded_heap_bytes)
       .def("__str__", &xla::CompiledMemoryStats::DebugString);
 
   m.def("get_execution_stream_id", []() { return GetExecutionStreamId(); });
