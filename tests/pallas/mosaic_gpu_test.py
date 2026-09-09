@@ -4868,6 +4868,30 @@ class PallasCallWGTest(
     self.assertIn(f"smem_scratch_bytes={expected_smem_bytes}", rs())
     self.assertIn(f"tmem_scratch_cols={expected_tmem_cols}", rs())
 
+  def test_dump_basename_does_not_poison_kernel_hash(self):
+    if not hasattr(mgpu.dialect, "get_or_set_dump_options"):
+      self.skipTest("Test requires jaxlib >= 0.11.1")
+    x = jnp.ones((64, 64), dtype=jnp.float32)
+
+    def make_kernel():
+      @self.kernel(out_type=jax.ShapeDtypeStruct(x.shape, x.dtype))
+      def kernel(x_gmem, o_gmem):
+        o_gmem[...] = plgpu.load(x_gmem, optimized=False)
+      return kernel
+
+    k1 = make_kernel()
+    k2 = make_kernel()
+
+    def fn(x):
+      return k1(x), k2(x)
+
+    ir_text = str(jax.jit(fn).lower(x).compiler_ir())
+    kernel_hashes = re.findall(
+        r'kernel_hash\s*=\s*"((?:[^"\\]|\\.)*)"', ir_text
+    )
+    self.assertLen(kernel_hashes, 2)
+    self.assertLen(set(kernel_hashes), 1)
+
 
 class PallasCallSm90ATest(PallasSm90ATest):
 
