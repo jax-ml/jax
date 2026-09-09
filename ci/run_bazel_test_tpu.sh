@@ -71,6 +71,10 @@ COMMON_TPU_TEST_ENV_VARS="--test_env=PORTSERVER_ADDRESS=@unittest-portserver \
  --test_env=HOST_BOUNDS \
  --test_env=VBAR_CONTROL_SERVICE_URL"
 
+if [[ -n "${JAXCI_EXTRA_TEST_ENV:-}" ]]; then
+  COMMON_TPU_TEST_ENV_VARS+=" ${JAXCI_EXTRA_TEST_ENV}"
+fi
+
 # Only TPU v6e runners, used for presubmits, are configured with enough /dev/shm space for Bazel output_base.
 if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" != "1" ]]; then
   BAZEL_STARTUP_ARGS=("--output_base=/dev/shm/bazel")

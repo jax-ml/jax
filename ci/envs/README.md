@@ -31,6 +31,7 @@ Name                                        | Default Value                     
 `JAXCI_USE_RBE_CACHE` | 1 | Controls whether to use the RBE cache (`--config=ci_rbe_cache`) for Bazel tests. When set to 0, RBE caching is disabled. | [Usage](https://github.com/search?q=repo%3Ajax-ml%2Fjax%20JAXCI_USE_RBE_CACHE&type=code)
 
 `JAXCI_TEST_ARTIFACTS_DIR` | "test-artifacts" | Controls the directory where test artifacts are written to. | [Usage](https://github.com/search?q=repo%3Ajax-ml%2Fjax%20JAXCI_TEST_ARTIFACTS_DIR&type=code)
+`JAXCI_EXTRA_TEST_ENV` | Empty String | Additional `--test_env` flags passed to Bazel test commands. | [Usage](https://github.com/search?q=repo%3Ajax-ml%2Fjax%20JAXCI_EXTRA_TEST_ENV&type=code)
 
 ## Docker Specific Environment Variables
 
