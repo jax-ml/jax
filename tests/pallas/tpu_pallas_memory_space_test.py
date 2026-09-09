@@ -21,8 +21,8 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import core as jax_core
-from jax._src.state import primitives as state_primitives
 from jax._src import test_util as jtu
+from jax._src.state import primitives as state_primitives
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
@@ -435,6 +435,36 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
         f(), np.arange(num_cores * n).reshape((num_cores, 1, n)) + 1
     )
 
+
+class TPUPallasAnnotateTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Needs a newer TPU')
+
+  @jtu.thread_unsafe_test()
+  def test_annotate_emits_mosaic_ops(self):
+    def kernel(x_ref, y_ref):
+      ann_x = pltpu.annotate(x_ref, no_store=True, no_bank_conflict=True)
+      ann_y = pltpu.annotate(y_ref, no_hazard=True)
+      ann_y[...] = ann_x[...]
+
+    x = jnp.arange(128, dtype=jnp.float32).reshape((8, 16))
+    with jtu.capture_stdout() as get_output:
+      _ = pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+          debug=True,
+      )(x)
+
+    debug_string = get_output()
+    self.assertEqual(debug_string.count('tpu.annotate'), 2)
+    self.assertIn('no_store = true', debug_string)
+    self.assertIn('no_bank_conflict = true', debug_string)
+    self.assertIn('no_hazard = true', debug_string)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

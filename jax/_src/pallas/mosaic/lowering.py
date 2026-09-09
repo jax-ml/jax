@@ -2206,6 +2206,7 @@ def _transform_ref(ref, ref_ty, ref_block_shape, transforms=()):
     ref_block_shape, _ = _get_ref_and_transforms(ref_block_shape)
   assert not isinstance(ref_ty, state.TransformedRef)
   assert not isinstance(ref_block_shape, state.TransformedRef)
+  assumption = None
   for transform in transforms:
     match transform:
       case NDIndexer():
@@ -2225,9 +2226,32 @@ def _transform_ref(ref, ref_ty, ref_block_shape, transforms=()):
             "_transform_ref() only supports single ref transforms. Got:"
             f" {ref = }, {ref_ty = }, {ref_block_shape = }, {transforms = }"
         )
+      case tpu_core.AccessAssumptionTransform(new_assumption):
+        assumption = (
+            new_assumption
+            if assumption is None
+            else assumption.union(new_assumption)
+        )
       case _:
         raise NotImplementedError(f"Unsupported transform: {transform}")
     ref_ty = transform.transform_type(ref_ty)
+  if assumption is not None:
+    if assumption.no_hazard or assumption.no_hazard_no_deps:
+      memory_space = getattr(ref_ty, "memory_space", None)
+      if isinstance(memory_space, pallas_core.CoreMemorySpace):
+        memory_space = memory_space.memory_space
+      if memory_space != tpu_core.MemorySpace.VMEM:
+        raise ValueError(
+            "Hazard overrides ('no_hazard' or 'no_hazard_no_deps') are only"
+            f" valid for VMEM references, but got memory space: {memory_space}"
+        )
+    ref = tpu.annotate(
+        ref,
+        no_store=assumption.no_store,
+        no_bank_conflict=assumption.no_bank_conflict,
+        no_hazard=assumption.no_hazard,
+        no_hazard_no_deps=assumption.no_hazard_no_deps,
+    )
   return ref, ref_block_shape
 
 
