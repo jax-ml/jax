@@ -67,8 +67,8 @@ def extract_file_name(xml_file_name):
   return target_path + ".py"
 
 
-def process_xml(file_path, job_id, fallback_timestamp=None):
-  """Parses a JUnit XML file and streams flat JSON records to stdout.
+def iter_xml_records(file_path, job_id=None, fallback_timestamp=None):
+  """Parses a JUnit XML file and yields flat dictionary records.
 
   Overall Logic:
   1. Parse the XML tree and detect whether it is a Bazel or Pytest report.
@@ -77,7 +77,7 @@ def process_xml(file_path, job_id, fallback_timestamp=None):
   tracebacks.
   4. Resolve missing timestamps using GHA jobs.json or the current execution
   time.
-  5. Serialize the finalized flat record to stdout as a single-line JSON string.
+  5. Yield flat dictionary records.
   """
   base_name = os.path.basename(file_path)
 
@@ -201,7 +201,13 @@ def process_xml(file_path, job_id, fallback_timestamp=None):
       if stderr is not None:
         record["system_err"] = stderr.text.strip() if stderr.text else ""
 
-      print(json.dumps(record))
+      yield record
+
+
+def process_xml(file_path, job_id, fallback_timestamp=None):
+  """Parses a JUnit XML file and streams flat JSON records to stdout."""
+  for record in iter_xml_records(file_path, job_id, fallback_timestamp):
+    print(json.dumps(record))
 
 
 if __name__ == "__main__":
