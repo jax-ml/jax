@@ -2912,6 +2912,9 @@ def median(a: ArrayLike, axis: int | tuple[int, ...] | None = None,
            [4.5]], dtype=float32)
   """
   a = ensure_arraylike("median", a)
+  reduction_axes = canonicalize_axis_tuple(axis, np.ndim(a))
+  if builtins.any(core.definitely_equal(a.shape[ax], 0) for ax in reduction_axes):
+    raise ValueError("jax.numpy.median reduction axis must be non-empty")
   return quantile(a, 0.5, axis=axis, out=out, overwrite_input=overwrite_input,
                   keepdims=keepdims, method='midpoint')
 
