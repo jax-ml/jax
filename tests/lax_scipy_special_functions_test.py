@@ -262,6 +262,25 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       scipy_val = osp_special.erfcx(x)
       self.assertAllClose(jax_val, scipy_val, rtol=1e-12)
 
+  def testErfcxNoSpuriousZeros(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38607. erfcx(x)
+    # is strictly positive for all finite x, but it returned a spurious 0 in a
+    # band of large x where exp(x^2) is still finite yet erfc(x) has underflowed,
+    # so the direct product exp(x^2) * erfc(x) underflowed to 0. The bands were
+    # ~[9.2, 9.42] for float32 and ~[26.5, 26.64] for float64 -- just below the
+    # argument at which exp(x^2) overflows.
+    x = np.linspace(8., 11., 2000, dtype=np.float32)
+    jax_val = lsp_special.erfcx(x)
+    self.assertTrue(np.all(np.asarray(jax_val) > 0.))
+    self.assertAllClose(jax_val, osp_special.erfcx(x.astype(np.float64)),
+                        rtol=1e-5, check_dtypes=False)
+    if jax.config.x64_enabled:
+      x = np.linspace(25., 28., 2000, dtype=np.float64)
+      jax_val = lsp_special.erfcx(x)
+      self.assertTrue(np.all(np.asarray(jax_val) > 0.))
+      self.assertAllClose(jax_val, osp_special.erfcx(x), rtol=1e-12,
+                          check_dtypes=False)
+
   def testWofzAccuracy(self):
     # Verify wofz agrees with scipy over the full complex plane (float32).
     rng = jtu.rand_default(np.random.RandomState(0))
