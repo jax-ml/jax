@@ -299,7 +299,8 @@ def initialize(coordinator_address: str | None = None,
   distributed arguments. You may pass any of the automatic ``spec_detect_methods`` to this
   argument though it is not necessary in the TPU, Slurm, or Open MPI cases.  For other MPI
   installations, if you have a functional ``mpi4py`` installed, you may pass
-  ``cluster_detection_method="mpi4py"`` to bootstrap the required arguments.
+  ``cluster_detection_method="mpi4py"`` to bootstrap the required arguments. Open MPI 5
+  and newer also require a functional ``mpi4py`` installation for automatic detection.
 
   Otherwise, you must provide the ``coordinator_address``,
   ``num_processes``, ``process_id``, and ``local_device_ids`` arguments
