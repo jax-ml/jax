@@ -4005,6 +4005,9 @@ def _bitcast_convert_type_lowering_rule(
 
 
 @register_lowering_rule(lax.optimization_barrier_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(
+    lax.optimization_barrier_p, *gpu_core.LANExWARP_SEMANTICS
+)
 def _optimization_barrier_lowering(ctx: LoweringRuleContext, *args):
   result = mgpu.optimization_barrier(
       *(_ensure_fa(arg, aval.dtype) for arg, aval in zip(args, ctx.avals_in))
@@ -4014,6 +4017,9 @@ def _optimization_barrier_lowering(ctx: LoweringRuleContext, *args):
 
 @register_lowering_rule(
     lax.optimization_barrier_p, mgpu.LoweringSemantics.Warpgroup
+)
+@register_lowering_rule(
+    lax.optimization_barrier_p, *gpu_core.WGxWARP_SEMANTICS
 )
 def _optimization_barrier_lowering_wg(ctx: LoweringRuleContext, *args):
   result = mgpu.dialect.optimization_barrier([

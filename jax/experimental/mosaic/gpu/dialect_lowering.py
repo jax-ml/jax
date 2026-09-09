@@ -298,7 +298,7 @@ def _assume_multiple_op_lowering_rule(
   return [op.value]
 
 
-@_register_lowering(mgpu.OptimizationBarrierOp)
+@_register_lowering(mgpu.OptimizationBarrierOp, support_warp_semantics=True)
 def _optimization_barrier_op_lowering_rule(
     _: LoweringContext,
     op: mgpu.OptimizationBarrierOp,
