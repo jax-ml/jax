@@ -23,7 +23,6 @@ from jax._src import effects
 from jax._src import flattree as ft
 from jax._src import hijax
 from jax._src import tree_util
-from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.control_flow.loops import eval_jaxpr_p
@@ -70,26 +69,15 @@ class Fusible(hijax.HiPrim):
     self.effects = _positional_effects(jaxpr)
     super().__init__()
 
-  def expand(self, *consts_and_args):
-    consts, args = util.split_list(consts_and_args, [self.num_consts])
-    flat_args = tree_util.tree_leaves(args)
-    if self.jaxpr.is_high:
-      arg_avals = [jax_core.typeof(a) for a in flat_args]
-      lo_args = [
-          lo_val
-          for aval, x in zip(arg_avals, flat_args)
-          for lo_val in aval.lower_val(x)
-      ]
-      lo_jaxpr = pe.lower_jaxpr2(jax_core.ClosedJaxpr(self.jaxpr, consts))
-    else:
-      lo_args = flat_args
-      lo_jaxpr = jax_core.ClosedJaxpr(self.jaxpr, consts)
-    lo_outs = eval_jaxpr_p.bind(*lo_args, call_jaxpr=lo_jaxpr)
-    out_flat = pe.raise_lo_outs(self.out_avals_flat, lo_outs)
+  def inline(self, *consts_and_args):
+    args_flat = tree_util.tree_leaves(consts_and_args)
+    out_flat = eval_jaxpr_p.bind(*args_flat, call_jaxpr=self.jaxpr)
     return tree_util.tree_unflatten(self.out_tree, out_flat)
 
+  expand = inline
+
   def vjp_fwd(self, in_nzs, *args):
-    out, vjp_fun = jax.vjp(self.expand, *args)
+    out, vjp_fun = jax.vjp(self.inline, *args)
     return out, vjp_fun
 
   def vjp_bwd_retval(self, vjp_fun, outgrad):
@@ -137,16 +125,18 @@ class Fusible(hijax.HiPrim):
     _, out_tree = tree_util.tree_flatten(self.out_aval)
     new_out_aval = tree_util.tree_unflatten(out_tree, out_avals_flat)
 
+    new_jaxpr, consts = pe.separate_consts(new_jaxpr)
+
     new_prim = Fusible(
         jaxpr=new_jaxpr,
         in_avals=const_avals + flat_avals,
         out_aval=new_out_aval,
         output_fusion_prefix=self.output_fusion_prefix,
         func=self.func,
-        num_consts=len(new_jaxpr.consts),
+        num_consts=len(consts),
         args_tree=self.args_tree,
     )
-    out = new_prim(*new_jaxpr.consts, *args[self.num_consts :])
+    out = new_prim(*consts, *args[self.num_consts :])
     return jax.tree.leaves(out)
 
 
@@ -177,20 +167,18 @@ def fusible(f=None, *, output_fusion_prefix: Any = True):
       jaxpr, out_avals_ft = pe.trace_to_jaxpr(
           wrapped, in_avals_ft, debug_info
       )
+      jaxpr, consts = pe.separate_consts(jaxpr)
       prim = Fusible(
           jaxpr=jaxpr,
-          in_avals=tuple(map(jax_core.typeof, jaxpr.consts))
-          + tuple(in_avals_ft.vals),
+          in_avals=(*map(jax_core.typeof, consts), *in_avals_ft.vals),
           out_aval=tree_util.tree_unflatten(
-              out_avals_ft.tree, out_avals_ft.vals
-          ),
+              out_avals_ft.tree, out_avals_ft.vals),
           output_fusion_prefix=output_fusion_prefix,
           func=f,
           num_consts=len(jaxpr.consts),
           args_tree=args_ft.tree,
       )
-      out = prim(*jaxpr.consts, *args_ft.vals)
-      return out
+      return prim(*consts, *args_ft.vals)
 
     return wrapper
 

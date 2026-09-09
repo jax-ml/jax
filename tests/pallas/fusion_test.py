@@ -879,5 +879,37 @@ class FusionHijaxTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(ot.x1, xt.x1)
 
 
+@jtu.with_config(jax_custom_vjp3=True)
+class FusibleCustomVJP3Test(jtu.JaxTestCase):
+
+  def test_fusible_custom_vjp3_grad(self):
+    @jax.custom_vjp
+    def scale(x):
+      return x * 2.0
+
+    def scale_fwd(x):
+      return scale(x), x
+
+    def scale_bwd(x, g):
+      # Intentionally different from fwd to verify custom vjp rule is preserved
+      # during expand().
+      return (g * 3.0,)
+
+    scale.defvjp(scale_fwd, scale_bwd)
+
+    @fuser.fusible
+    def f(x_fn, out_fn):
+      x = x_fn()
+      y = scale(x)
+      if out_fn is None:
+        out_fn = lambda v: v
+      return out_fn(y)
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    loss = lambda v: jnp.sum(f(v))
+    grad_x = jax.grad(loss)(x)
+    np.testing.assert_allclose(grad_x, jnp.full_like(x, 3.0))
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
