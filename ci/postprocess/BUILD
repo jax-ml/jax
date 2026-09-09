@@ -15,10 +15,7 @@
 
 load("//third_party/bazel_rules/rules_shell/shell:sh_binary.bzl", "sh_binary")
 
-package(
-    default_applicable_licenses = [],
-    default_visibility = ["//jax:__subpackages__"],
-)
+package(default_applicable_licenses = [])
 
 sh_binary(
     name = "process_test_results",
