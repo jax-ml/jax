@@ -257,13 +257,6 @@ class NamedLocationsTest(PallasSCTest):
 @jtu.thread_unsafe_test_class()  # Overrides stderr.
 class DebugPrintTest(PallasSCTest):
 
-  def setUp(self):
-    if jtu.is_cloud_tpu():
-      # TODO(slebedev): Investigate this and remove the skip.
-      self.skipTest("Fails on Cloud TPUs")
-
-    super().setUp()
-
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_vector_subcore(self, dtype):
     if jtu.is_device_tpu(8, "i"):
