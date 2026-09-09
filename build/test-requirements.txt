@@ -3,7 +3,7 @@ cloudpickle
 filelock
 flatbuffers
 hypothesis
-mpmath
+mpmath>=1.4.1
 pillow>=11.3
 portpicker
 pytest

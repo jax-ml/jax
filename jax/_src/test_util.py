@@ -2043,64 +2043,17 @@ class numpy_with_mpmath:
   def negative(self, x):
     return -x
 
-  def sqrt(self, x):
-    ctx = x.context
-    if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in sqrt(+-inf+-infj) evaluation (see mpmath/mpmath#776).
-      # TODO(pearu): remove this function when mpmath 1.4 or newer
-      # will be the required test dependency.
-      if ctx.isinf(x.imag):
-        return ctx.make_mpc((ctx.inf._mpf_, x.imag._mpf_))
-    return ctx.sqrt(x)
-
   def expm1(self, x):
     return x.context.expm1(x)
-
-  def log1p(self, x):
-    ctx = x.context
-    if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in log(+-inf+-infj) evaluation (see mpmath/mpmath#774).
-      # TODO(pearu): remove this function when mpmath 1.4 or newer
-      # will be the required test dependency.
-      if ctx.isinf(x.real) and ctx.isinf(x.imag):
-        pi = ctx.pi
-        if x.real > 0 and x.imag > 0:
-          return ctx.make_mpc((x.real._mpf_, (pi / 4)._mpf_))
-        if x.real > 0 and x.imag < 0:
-          return ctx.make_mpc((x.real._mpf_, (-pi / 4)._mpf_))
-        if x.real < 0 and x.imag < 0:
-          return ctx.make_mpc(((-x.real)._mpf_, (-3 * pi / 4)._mpf_))
-        if x.real < 0 and x.imag > 0:
-          return ctx.make_mpc(((-x.real)._mpf_, (3 * pi / 4)._mpf_))
-    return ctx.log1p(x)
 
   def tan(self, x):
     ctx = x.context
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in tan(+-inf+-infj) evaluation (see mpmath/mpmath#781).
-      # TODO(pearu): remove this function when mpmath 1.4 or newer
-      # will be the required test dependency.
-      if ctx.isinf(x.imag) and (ctx.isinf(x.real) or ctx.isfinite(x.real)):
-        if x.imag > 0:
-          return ctx.make_mpc((ctx.zero._mpf_, ctx.one._mpf_))
-        return ctx.make_mpc((ctx.zero._mpf_, (-ctx.one)._mpf_))
+      # mpmath.mp.tan(+-inf + 0j) returns nan + 0j, whereas numpy.tan/C99 ctan
+      # returns nan + nanj.
       if ctx.isinf(x.real) and ctx.isfinite(x.imag):
         return ctx.make_mpc((ctx.nan._mpf_, ctx.nan._mpf_))
     return ctx.tan(x)
-
-  def tanh(self, x):
-    ctx = x.context
-    if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in tanh(+-inf+-infj) evaluation (see mpmath/mpmath#781).
-      # TODO(pearu): remove this function when mpmath 1.4 or newer
-      # will be the required test dependency.
-      if ctx.isinf(x.imag) and (ctx.isinf(x.real) or ctx.isfinite(x.real)):
-        if x.imag > 0:
-          return ctx.make_mpc((ctx.zero._mpf_, ctx.one._mpf_))
-        return ctx.make_mpc((ctx.zero._mpf_, (-ctx.one)._mpf_))
-      if ctx.isinf(x.real) and ctx.isfinite(x.imag):
-        return ctx.make_mpc((ctx.nan._mpf_, ctx.nan._mpf_))
-    return ctx.tanh(x)
 
   def log2(self, x):
     return x.context.ln(x) / x.context.ln2
@@ -2114,21 +2067,6 @@ class numpy_with_mpmath:
   def arcsin(self, x):
     ctx = x.context
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in asin(+-inf+-infj) evaluation (see
-      # mpmath/mpmath#793).
-      # TODO(pearu): remove the if-block below when mpmath 1.4 or
-      # newer will be the required test dependency.
-      pi = ctx.pi
-      inf = ctx.inf
-      zero = ctx.zero
-      if ctx.isinf(x.real):
-        sign_real = -1 if x.real < 0 else 1
-        real = sign_real * pi / (4 if ctx.isinf(x.imag) else 2)
-        imag = -inf if x.imag < 0 else inf
-        return ctx.make_mpc((real._mpf_, imag._mpf_))
-      elif ctx.isinf(x.imag):
-        return ctx.make_mpc((zero._mpf_, x.imag._mpf_))
-
       # On branch cut, mpmath.mp.asin returns different value compared
       # to mpmath.fp.asin and numpy.arcsin (see
       # mpmath/mpmath#786). The following if-block ensures
@@ -2142,26 +2080,6 @@ class numpy_with_mpmath:
     ctx = x.context
 
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in acos(+-inf+-infj) evaluation (see
-      # mpmath/mpmath#793).
-      # TODO(pearu): remove the if-block below when mpmath 1.4 or
-      # newer will be the required test dependency.
-      pi = ctx.pi
-      inf = ctx.inf
-      zero = ctx.zero
-
-      if ctx.isinf(x.imag):
-        if ctx.isinf(x.real):
-          real = pi / 4 if x.real > 0 else 3 * pi / 4
-        else:
-          real = pi / 2
-        imag = inf if x.imag < 0 else -inf
-        return ctx.make_mpc((real._mpf_, imag._mpf_))
-      elif ctx.isinf(x.real):
-        inf = ctx.inf
-        sign_imag = -1 if x.imag < 0 else 1
-        real = zero if x.real > 0 else pi
-        return ctx.make_mpc((real._mpf_, (-sign_imag * inf)._mpf_))
       # On branch cut, mpmath.mp.acos returns different value
       # compared to mpmath.fp.acos and numpy.arccos. The
       # following if-block ensures compatibility with
@@ -2175,21 +2093,6 @@ class numpy_with_mpmath:
     ctx = x.context
 
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in asinh(+-inf+-infj) evaluation
-      # (see mpmath/mpmath#749).
-      # TODO(pearu): remove the if-block below when mpmath 1.4 or
-      # newer will be the required test dependency.
-      pi = ctx.pi
-      inf = ctx.inf
-      zero = ctx.zero
-      if ctx.isinf(x.imag):
-        sign_imag = -1 if x.imag < 0 else 1
-        real = -inf if x.real < 0 else inf
-        imag = sign_imag * pi / (4 if ctx.isinf(x.real) else 2)
-        return ctx.make_mpc((real._mpf_, imag._mpf_))
-      elif ctx.isinf(x.real):
-        return ctx.make_mpc((x.real._mpf_, zero._mpf_))
-
       # On branch cut, mpmath.mp.asinh returns different value
       # compared to mpmath.fp.asinh and numpy.arcsinh (see
       # mpmath/mpmath#786).  The following if-block ensures
@@ -2198,44 +2101,10 @@ class numpy_with_mpmath:
         return (-ctx.asinh(x)).conjugate()
     return ctx.asinh(x)
 
-  def arccosh(self, x):
-    ctx = x.context
-
-    if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in acosh(+-inf+-infj) evaluation
-      # (see mpmath/mpmath#749).
-      pi = ctx.pi
-      inf = ctx.inf
-      zero = ctx.zero
-      if ctx.isinf(x.real):
-        sign_imag = -1 if x.imag < 0 else 1
-        imag = (
-          (3 if x.real < 0 else 1) * sign_imag * pi / 4
-          if ctx.isinf(x.imag)
-          else (sign_imag * pi if x.real < 0 else zero)
-        )
-        return ctx.make_mpc((inf._mpf_, imag._mpf_))
-      elif ctx.isinf(x.imag):
-        sign_imag = -1 if x.imag < 0 else 1
-        imag = sign_imag * pi / 2
-        return ctx.make_mpc((inf._mpf_, imag._mpf_))
-    return ctx.acosh(x)
-
   def arctan(self, x):
     ctx = x.context
 
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in atan(+-inf+-infj) evaluation
-      # (see mpmath/mpmath#775 with the fix).
-      # TODO(pearu): remove the if-block below when mpmath 1.4 or
-      # newer will be the required test dependency.
-      pi = ctx.pi
-      zero = ctx.zero
-      if ctx.isinf(x.real) or ctx.isinf(x.imag):
-        if x.real < 0:
-          return ctx.make_mpc(((-pi / 2)._mpf_, zero._mpf_))
-        return ctx.make_mpc(((pi / 2)._mpf_, zero._mpf_))
-
       # On branch cut, mpmath.mp.atan returns different value compared
       # to mpmath.fp.atan and numpy.arctan (see mpmath/mpmath#865).
       # The following if-block ensures compatibility with
@@ -2248,17 +2117,6 @@ class numpy_with_mpmath:
     ctx = x.context
 
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in atanh(+-inf+-infj) evaluation
-      # (see mpmath/mpmath#775 with the fix).
-      # TODO(pearu): remove the if-block below when mpmath 1.4 or
-      # newer will be the required test dependency.
-      pi = ctx.pi
-      zero = ctx.zero
-      if ctx.isinf(x.real) or ctx.isinf(x.imag):
-        if x.imag < 0:
-          return ctx.make_mpc((zero._mpf_, (-pi / 2)._mpf_))
-        return ctx.make_mpc((zero._mpf_, (pi / 2)._mpf_))
-
       # On branch cut, mpmath.mp.atanh returns different value
       # compared to mpmath.fp.atanh and numpy.arctanh.  The following
       # if-block ensures compatibility with numpy.arctanh.
