@@ -827,6 +827,15 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     reduce = lambda xs, ys: lax.reduce((xs, ys), init_vals, op, dims)
     check_grads(reduce, operands, 2, ["fwd", "rev"], tol, tol)
 
+  def test_reduce_grad_doesnt_reorder(self):
+    # https://github.com/jax-ml/jax/issues/32474
+    def f(arr):
+      return jax.lax.reduce(arr, 1.0, lambda x, y: x * y ** jnp.sign(x), [0])
+    inp = jnp.array([1,-2,3,-4], dtype=float)
+    ans, _ = jax.jvp(f, (inp,), (inp,))
+    expected = f(inp)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   @jtu.sample_product(
     [dict(init_val=init_val, op=op, dtype=dtype, rng_factory=rng_factory,
           shape=shape, dims=dims, strides=strides, padding=padding,
