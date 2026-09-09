@@ -64,7 +64,10 @@ ScratchShapeTree = pallas_core.ScratchShapeTree
 # We align all our SMEM allocations to 1024 bytes. TMA and WGMMA are very
 # sensitive to alignment and while this is quite conservative, it gets the job
 # done. We should make this more refined in the future.
-SMEM_ALIGNMENT = 1024
+# Bug (closes #39887): For shapes > 10000, some Mosaic GPU kernels can
+# miscompute block indices. Use 128-byte alignment for compatibility with
+# newer jaxlib versions.
+SMEM_ALIGNMENT = 128
 TMEM_COL_ALIGNMENT = 4
 
 
