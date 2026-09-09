@@ -36,17 +36,21 @@ def get_metadata(key):
   # Based on https://github.com/tensorflow/tensorflow/pull/40317
   gce_metadata_endpoint = 'http://' + os.environ.get(
       'GCE_METADATA_IP', 'metadata.google.internal')
+  gce_metadata_retries = int(os.environ.get('GCE_METADATA_RETRIES', "6"))
 
   retry_count = 0
   retrySeconds = 0.500
   api_resp = None
 
-  while retry_count < 6:
-    api_resp = requests.get(
-        f'{gce_metadata_endpoint}/computeMetadata/v1/instance/attributes/{key}',
-        headers={'Metadata-Flavor': 'Google'}, timeout=60)
-    if api_resp.status_code == 200:
-      break
+  while retry_count < gce_metadata_retries:
+    try:
+      api_resp = requests.get(
+          f'{gce_metadata_endpoint}/computeMetadata/v1/instance/attributes/{key}',
+          headers={'Metadata-Flavor': 'Google'}, timeout=60)
+      if api_resp.status_code == metadata_response_code_success:
+        break
+    except requests.exceptions.ConnectionError:
+      logger.debug("Connection error reaching metadata server, retrying...")
     retry_count += 1
     time.sleep(retrySeconds)
 
