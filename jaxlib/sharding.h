@@ -28,7 +28,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/cached_py_object.h"
-#include "jaxlib/ft_mutex.h"
+#include "jaxlib/free_threading.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device_list.h"

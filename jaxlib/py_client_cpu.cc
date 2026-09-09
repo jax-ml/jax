@@ -36,7 +36,7 @@ limitations under the License.
 #include "include/dlpack/dlpack.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/ffi.h"
-#include "jaxlib/ft_mutex.h"
+#include "jaxlib/free_threading.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/transpose.h"

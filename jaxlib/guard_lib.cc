@@ -33,7 +33,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
-#include "jaxlib/ft_mutex.h"
+#include "jaxlib/free_threading.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/util.h"

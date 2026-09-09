@@ -53,7 +53,7 @@ limitations under the License.
 #include "nanobind/stl/complex.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "jaxlib/config.h"
-#include "jaxlib/ft_mutex.h"
+#include "jaxlib/free_threading.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/numpy.h"
 #include "jaxlib/py_array.h"

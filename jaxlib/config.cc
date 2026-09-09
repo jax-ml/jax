@@ -31,7 +31,7 @@ limitations under the License.
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/typing.h"
-#include "jaxlib/ft_mutex.h"
+#include "jaxlib/free_threading.h"
 #include "jaxlib/python_ref_manager.h"
 
 namespace jax {

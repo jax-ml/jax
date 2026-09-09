@@ -538,7 +538,7 @@ cc_library(
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
         "//jaxlib:ffi",
-        "//jaxlib:ft_mutex",
+        "//jaxlib:free_threading",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",

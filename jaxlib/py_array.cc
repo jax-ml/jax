@@ -61,7 +61,7 @@ limitations under the License.
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
-#include "jaxlib/ft_mutex.h"
+#include "jaxlib/free_threading.h"
 #include "jaxlib/guard_lib.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/numpy.h"
@@ -1679,22 +1679,6 @@ absl::Status PyArray::ReplaceWithAlias(PyArray o)
   }
   return absl::OkStatus();
 }
-
-namespace {
-
-template <typename T = nb::object>
-T TryBorrow(nb::handle handle) {
-#ifdef Py_GIL_DISABLED
-  if (!PyUnstable_TryIncRef(handle.ptr())) {
-    return T();
-  }
-  return nb::steal<T>(handle);
-#else
-  return nb::borrow<T>(handle);
-#endif
-}
-
-}  // namespace
 
 std::vector<PyArray> PyClient::LiveArrays() const {
   std::vector<PyArray> result;

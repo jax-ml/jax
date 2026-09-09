@@ -35,7 +35,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
-#include "jaxlib/ft_mutex.h"
+#include "jaxlib/free_threading.h"
 #include "jaxlib/python_ref_manager.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/transpose.h"

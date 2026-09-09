@@ -35,7 +35,7 @@ limitations under the License.
 #include "absl/strings/cord.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
-#include "jaxlib/ft_mutex.h"
+#include "jaxlib/free_threading.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_user_context.h"

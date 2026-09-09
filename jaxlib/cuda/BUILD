@@ -669,7 +669,7 @@ cc_library(
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
         "//jaxlib:ffi",
-        "//jaxlib:ft_mutex",
+        "//jaxlib:free_threading",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",

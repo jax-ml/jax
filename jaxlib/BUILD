@@ -578,7 +578,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        ":ft_mutex",
+        ":free_threading",
         ":python_ref_manager",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
@@ -638,7 +638,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        ":ft_mutex",
+        ":free_threading",
         ":python_ref_manager",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -774,7 +774,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        ":ft_mutex",
+        ":free_threading",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
@@ -939,8 +939,8 @@ cc_library(
 )
 
 cc_library(
-    name = "ft_mutex",
-    hdrs = ["ft_mutex.h"],
+    name = "free_threading",
+    hdrs = ["free_threading.h"],
     copts = ["-fexceptions"],
     features = ["-use_header_modules"],
     deps = [
@@ -980,7 +980,7 @@ cc_library(
     deps = [
         ":call_location",
         ":config",
-        ":ft_mutex",
+        ":free_threading",
         ":guard_lib",
         ":jax_jit",
         ":nb_class_ptr",
@@ -1096,7 +1096,7 @@ cc_library(
         ":cached_py_object",
         ":call_location",
         ":config",
-        ":ft_mutex",
+        ":free_threading",
         ":guard_lib",
         ":hash_util",
         ":nb_class_ptr",
@@ -1208,7 +1208,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":ffi",
-        ":ft_mutex",
+        ":free_threading",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
@@ -1447,7 +1447,7 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = jax_visibility("jaxlib/pytree"),
     deps = [
-        ":ft_mutex",
+        ":free_threading",
         ":hash_util",
         ":nb_class_ptr",
         ":pytree_cc_proto",
