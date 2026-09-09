@@ -645,6 +645,7 @@ def single_thread(scope: ThreadSubset = ThreadSubset.BLOCK):
 
 def clock():
   i32 = ir.IntegerType.get_signless(32)
+  # `has_side_effects=True` prevents the compiler reordering this instruction.
   return inline_ptx(
       "mov.u32 $0, %clock;", result_types=i32, has_side_effects=True
   )
@@ -652,12 +653,14 @@ def clock():
 
 def smid():
   i32 = ir.IntegerType.get_signless(32)
+  # `has_side_effects=True` prevents the compiler reordering this instruction.
   return inline_ptx(
       "mov.u32 $0, %smid;", result_types=i32, has_side_effects=True
   )
 
 
 def globaltimer(kind: Literal["low", "high"] | None = None):
+  # `has_side_effects=True` prevents the compiler reordering this instruction.
   if kind is None:
     i64 = ir.IntegerType.get_signless(64)
     return inline_ptx(
