@@ -4226,6 +4226,28 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(result, x + y)
 
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_atomic_add_gmem(self):
+    m, n = 128, 64
+
+    def body(inp_ref, out_ref):
+      val = plgpu.load(
+          inp_ref, layout=plgpu.Layout.WGMMA, optimized=False
+      )
+      out_ref[...] = jnp.zeros_like(out_ref)
+      plgpu.atomic_add(out_ref, val)
+
+    x = jnp.arange(1, m * n + 1, dtype=jnp.float32).reshape(m, n)
+    inp = x
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      result = self.kernel(
+          body,
+          out_type=jax.ShapeDtypeStruct([m, n], jnp.float32),
+      )(inp)
+      jax.block_until_ready(result)
+    self.assertArraysEqual(result, x)
+    self.assertIn("red.global", ptx())
+
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_griddepcontrol(self):
     @jax.jit
     def f(x):

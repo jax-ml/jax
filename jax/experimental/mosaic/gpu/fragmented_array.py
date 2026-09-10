@@ -3929,8 +3929,14 @@ class FragmentedArray:
     else:
       red = "red"
       scope = "cta" if is_smem else "gpu"
-      space = ".shared::cta" if is_smem else ""
+      space = ".shared::cta" if is_smem else ".global"
       ptr_constraint = "r" if is_smem else "l"
+      if not is_smem and base_ptr.type.address_space == 0:
+        # `.global` requires a global-state-space address: cast the generic
+        # pointer to LLVM address space 1.
+        base_ptr = llvm.addrspacecast(
+            llvm.PointerType.get(address_space=1), base_ptr
+        )
     element_type = self.mlir_dtype
     element_bitwidth = utils.bitwidth(element_type)
     noftz = ""
