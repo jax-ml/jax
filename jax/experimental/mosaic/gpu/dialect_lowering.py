@@ -1452,6 +1452,7 @@ def _unary_op_lowering_rule(
 
 for _op, _unary_impl, _is_signed in [
     (mlir_math.RsqrtOp, fa.FragmentedArray.rsqrt, None),
+    (mlir_math.SqrtOp, fa.FragmentedArray.sqrt, None),
     (mlir_math.ExpOp, fa.FragmentedArray.exp, None),
     (mlir_math.Exp2Op, fa.FragmentedArray.exp2, None),
     (mlir_math.SinOp, fa.FragmentedArray.sin, None),

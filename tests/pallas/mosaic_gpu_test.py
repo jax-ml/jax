@@ -344,6 +344,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
           lambda x: x**2,
           lambda x: x**5,
           lax.rsqrt,
+          lax.sqrt,
           lax.tanh,
           lax.log,
           jax.nn.gelu,
@@ -369,6 +370,25 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_allclose(
         kernel(x), op(x), rtol=1e-5 if approx_math else 3e-7
     )
+
+  @parameterized.parameters(False, True)
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_sqrt(self, approx_math):
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct([256], jnp.float32),
+        compiler_params=plgpu.CompilerParams(approx_math=approx_math),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = lax.sqrt(x_ref[...])
+
+    x = jnp.arange(256).astype(jnp.float32)
+    if approx_math:
+      with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as out:
+        y = jax.block_until_ready(kernel(x))
+      self.assertIn("sqrt.approx.f32", out())
+    else:
+      y = kernel(x)
+    np.testing.assert_allclose(y, lax.sqrt(x), rtol=1e-5)
 
   @parameterized.parameters(jnp.float32, jnp.int32, jnp.uint32)
   def test_sign(self, dtype):
