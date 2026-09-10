@@ -325,7 +325,18 @@ def assert_func(ctx: CheckifyContext, error: Error, pred: Bool,
 def update_error(error, pred, code, metadata, payload, effect_type):
   err_of_type = error._pred.get(effect_type, False)
   out_err = err_of_type | pred
-  out_code = lax.select(err_of_type, error._code.get(effect_type, _INACTIVE_CODE), code)
+  prev_code = error._code.get(effect_type, None)
+  if prev_code is None:
+    prev_code = lax.full_like(code, _INACTIVE_CODE)
+  code_dtype = dtypes.result_type(prev_code, code)
+  prev_code = lax.convert_element_type(prev_code, code_dtype)
+  code = lax.convert_element_type(code, code_dtype)
+  if np.shape(prev_code) != np.shape(code):
+    if not np.shape(prev_code):
+      prev_code = lax.broadcast(prev_code, np.shape(code))
+    elif not np.shape(code):
+      code = lax.broadcast(code, np.shape(prev_code))
+  out_code = lax.select(err_of_type, prev_code, code)
   cur_payload = error._payload.get(effect_type, None)
   if cur_payload is not None:
     out_payload = tree_map(functools.partial(lax.select, err_of_type), cur_payload, payload)
