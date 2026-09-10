@@ -1,0 +1,308 @@
+"""Distributed MNIST training with JAX on Kubernetes.
+
+This example trains a simple ConvNet on MNIST using data-parallel training
+across multiple JAX processes, orchestrated by a Kubernetes JobSet.
+
+Each process trains on a shard of the data and gradients are averaged across
+all processes via jax.lax.pmean.
+
+Usage (local single-process):
+    python train_mnist.py
+
+Usage (Kubernetes):
+    See the JobSet manifest in jobset.yaml and the README for instructions.
+"""
+
+import argparse
+import time
+from functools import partial
+
+import jax
+import jax.numpy as jnp
+from jax import random
+from jax.sharding import Mesh, PartitionSpec, NamedSharding
+from jax import shard_map
+import optax
+import numpy as np
+
+
+# ---------------------------------------------------------------------------
+# Model: simple ConvNet
+# ---------------------------------------------------------------------------
+
+def init_params(key):
+    """Initialize parameters for a simple ConvNet."""
+    keys = random.split(key, 5)
+    params = {
+        'conv1': {
+            'w': random.normal(keys[0], (3, 3, 1, 32)) * 0.1,
+            'b': jnp.zeros(32),
+        },
+        'conv2': {
+            'w': random.normal(keys[1], (3, 3, 32, 64)) * 0.1,
+            'b': jnp.zeros(64),
+        },
+        'fc1': {
+            'w': random.normal(keys[2], (9216, 128)) * 0.05,
+            'b': jnp.zeros(128),
+        },
+        'fc2': {
+            'w': random.normal(keys[3], (128, 10)) * 0.05,
+            'b': jnp.zeros(10),
+        },
+    }
+    return params
+
+
+def conv2d(x, w, b):
+    """Simple 2D convolution with SAME-ish padding via JAX."""
+    x = jax.lax.conv_general_dilated(
+        x, w,
+        window_strides=(1, 1),
+        padding='VALID',
+        dimension_numbers=('NHWC', 'HWIO', 'NHWC'),
+    )
+    return x + b
+
+
+def forward(params, x):
+    """Forward pass: Conv -> ReLU -> Conv -> ReLU -> Pool -> FC -> FC."""
+    x = conv2d(x, params['conv1']['w'], params['conv1']['b'])
+    x = jax.nn.relu(x)
+    x = conv2d(x, params['conv2']['w'], params['conv2']['b'])
+    x = jax.nn.relu(x)
+    # Max pool 2x2
+    x = jax.lax.reduce_window(
+        x, -jnp.inf, jax.lax.max, (1, 2, 2, 1), (1, 2, 2, 1), 'VALID'
+    )
+    x = x.reshape((x.shape[0], -1))  # Flatten
+    x = jax.nn.relu(x @ params['fc1']['w'] + params['fc1']['b'])
+    x = x @ params['fc2']['w'] + params['fc2']['b']
+    return jax.nn.log_softmax(x, axis=-1)
+
+
+# ---------------------------------------------------------------------------
+# Loss and training step
+# ---------------------------------------------------------------------------
+
+def cross_entropy_loss(params, images, labels):
+    logits = forward(params, images)
+    one_hot = jax.nn.one_hot(labels, 10)
+    return -jnp.mean(jnp.sum(one_hot * logits, axis=-1))
+
+
+@partial(jax.jit, static_argnums=(4,))
+def train_step(params, opt_state, images, labels, mesh):
+    """Single training step with data parallelism via shard_map."""
+    def _step(params, opt_state, images, labels):
+        loss, grads = jax.value_and_grad(cross_entropy_loss)(params, images, labels)
+        # Average gradients across all devices in the mesh.
+        grads = jax.lax.pmean(grads, axis_name='batch')
+        loss = jax.lax.pmean(loss, axis_name='batch')
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        params = optax.apply_updates(params, updates)
+        return params, opt_state, loss
+
+    return shard_map(
+        _step, mesh=mesh,
+        in_specs=(PartitionSpec(), PartitionSpec(), PartitionSpec('batch'), PartitionSpec('batch')),
+        out_specs=(PartitionSpec(), PartitionSpec(), PartitionSpec())
+    )(params, opt_state, images, labels)
+
+
+@partial(jax.jit, static_argnums=(3,))
+def eval_step(params, images, labels, mesh):
+    """Evaluation step with data parallelism via shard_map."""
+    def _step(params, images, labels):
+        logits = forward(params, images)
+        predictions = jnp.argmax(logits, axis=-1)
+        return jax.lax.psum(jnp.sum(predictions == labels), axis_name='batch')
+
+    return shard_map(
+        _step, mesh=mesh,
+        in_specs=(PartitionSpec(), PartitionSpec('batch'), PartitionSpec('batch')),
+        out_specs=PartitionSpec()
+    )(params, images, labels)
+
+
+# ---------------------------------------------------------------------------
+# Data loading (downloads MNIST directly from GCS, no external dependencies)
+# ---------------------------------------------------------------------------
+
+def load_mnist():
+    """Load MNIST data as numpy arrays (downloads from GCS, no dependencies)."""
+    import urllib.request
+    import gzip
+    import struct
+    import os
+
+    base_url = "https://storage.googleapis.com/cvdf-datasets/mnist/"
+    files = {
+        "train_images": "train-images-idx3-ubyte.gz",
+        "train_labels": "train-labels-idx1-ubyte.gz",
+        "test_images": "t10k-images-idx3-ubyte.gz",
+        "test_labels": "t10k-labels-idx1-ubyte.gz",
+    }
+
+    data_dir = "/tmp/mnist"
+    os.makedirs(data_dir, exist_ok=True)
+
+    def download_and_parse_images(filename):
+        path = os.path.join(data_dir, filename)
+        if not os.path.exists(path):
+            urllib.request.urlretrieve(base_url + filename, path)
+        with gzip.open(path, "rb") as f:
+            _, num, rows, cols = struct.unpack(">IIII", f.read(16))
+            return np.frombuffer(f.read(), dtype=np.uint8).reshape(
+                num, rows, cols, 1
+            ).astype(np.float32) / 255.0
+
+    def download_and_parse_labels(filename):
+        path = os.path.join(data_dir, filename)
+        if not os.path.exists(path):
+            urllib.request.urlretrieve(base_url + filename, path)
+        with gzip.open(path, "rb") as f:
+            struct.unpack(">II", f.read(8))
+            return np.frombuffer(f.read(), dtype=np.uint8).astype(np.int32)
+
+    train_images = download_and_parse_images(files["train_images"])
+    train_labels = download_and_parse_labels(files["train_labels"])
+    test_images = download_and_parse_images(files["test_images"])
+    test_labels = download_and_parse_labels(files["test_labels"])
+
+    return train_images, train_labels, test_images, test_labels
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+# Module-level optimizer so train_step can close over it.
+optimizer = optax.adam(1e-3)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='JAX MNIST on Kubernetes')
+    parser.add_argument('--epochs', type=int, default=5,
+                        help='number of training epochs (default: 5)')
+    parser.add_argument('--batch-size', type=int, default=128,
+                        help='per-device batch size (default: 128)')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='run one batch only, for testing')
+    args = parser.parse_args()
+
+    # ----- Distributed initialization -----
+    # On Kubernetes (via JobSet) and Cloud TPU, jax.distributed.initialize()
+    # auto-detects coordinator address, process count, and process ID from
+    # the environment. No arguments needed.
+    jax.distributed.initialize()
+
+    process_idx = jax.process_index()
+    num_processes = jax.process_count()
+    local_devices = jax.local_devices()
+    global_devices = jax.devices()
+
+    if process_idx == 0:
+        print(f"JAX distributed initialized: {num_processes} process(es)")
+        print(f"Global devices: {len(global_devices)} — {global_devices}")
+    print(f"[Process {process_idx}] Local devices: {local_devices}")
+
+    # ----- Data loading and sharding -----
+    train_images, train_labels, test_images, test_labels = load_mnist()
+
+    if process_idx == 0:
+        print(f"Training on {len(train_images)} samples total across all processes")
+
+    # ----- Initialize model and optimizer -----
+    key = random.PRNGKey(42)
+    params = init_params(key)
+    opt_state = optimizer.init(params)
+
+    # Create a global mesh for data parallelism across ALL devices.
+    mesh = Mesh(np.array(global_devices), axis_names=('batch',))
+
+    per_device_batch = args.batch_size
+    num_global_devices = len(global_devices)
+
+    # Total batch size across all devices in all processes.
+    global_batch_size = per_device_batch * num_global_devices
+
+    # ----- Training loop -----
+    for epoch in range(1, args.epochs + 1):
+        epoch_start = time.time()
+
+        # Shuffle data each epoch - use the SAME seed on all processes to ensure
+        # that jax.device_put(global_batch, sharding) sees the same data.
+        rng = np.random.default_rng(42 + epoch)
+        perm = rng.permutation(len(train_images))
+        train_images = train_images[perm]
+        train_labels = train_labels[perm]
+
+        num_batches = len(train_images) // global_batch_size
+        epoch_loss = 0.0
+
+        for batch_idx in range(num_batches):
+            i = batch_idx * global_batch_size
+            batch_images = train_images[i:i + global_batch_size]
+            batch_labels = train_labels[i:i + global_batch_size]
+
+            # Sharding for global data parallelism: shard across the 'batch' axis.
+            sharding = NamedSharding(mesh, PartitionSpec('batch'))
+            batch_images = jax.device_put(batch_images, sharding)
+            batch_labels = jax.device_put(batch_labels, sharding)
+
+            with mesh:
+                params, opt_state, loss = train_step(
+                    params, opt_state, batch_images, batch_labels, mesh
+                )
+
+            epoch_loss += float(loss)
+
+            if args.dry_run:
+                if process_idx == 0:
+                    print(f"Dry run batch loss: {loss:.4f}")
+                jax.distributed.shutdown()
+                return
+
+        elapsed = time.time() - epoch_start
+        avg_loss = epoch_loss / max(num_batches, 1)
+
+        if process_idx == 0:
+            print(f"Epoch {epoch}/{args.epochs} — "
+                  f"loss: {avg_loss:.4f}, "
+                  f"time: {elapsed:.1f}s")
+
+    # ----- Evaluation -----
+    # All processes must participate in eval_step (shard_map requires it).
+    # Only process 0 prints results.
+    if process_idx == 0:
+        print("\nRunning evaluation...")
+
+    correct = 0
+    num_test_samples = 0
+    eval_batch = per_device_batch * num_global_devices
+    for i in range(0, len(test_images), eval_batch):
+        batch_images = test_images[i:i + eval_batch]
+        batch_labels = test_labels[i:i + eval_batch]
+
+        # Skip incomplete batches that can't be evenly sharded.
+        if len(batch_images) % num_global_devices != 0:
+            continue
+
+        sharding = NamedSharding(mesh, PartitionSpec('batch'))
+        batch_images = jax.device_put(batch_images, sharding)
+        batch_labels = jax.device_put(batch_labels, sharding)
+
+        with mesh:
+            correct += int(eval_step(params, batch_images, batch_labels, mesh))
+            num_test_samples += len(batch_images)
+
+    if process_idx == 0:
+        accuracy = (correct / num_test_samples * 100) if num_test_samples > 0 else 0
+        print(f"Test accuracy: {correct}/{num_test_samples} ({accuracy:.1f}%)")
+
+    jax.distributed.shutdown()
+
+
+if __name__ == '__main__':
+    main()
