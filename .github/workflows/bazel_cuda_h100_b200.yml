@@ -131,7 +131,7 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/upload-test-artifacts
         with:
-          artifact-name: bazel-cuda-h100-single
+          artifact-name: bazel-cuda-b200-single
           inputs_json: ${{ toJSON(inputs) }}
           matrix_json: ${{ toJSON(matrix) }}
   run_multiaccelerator_tests:
