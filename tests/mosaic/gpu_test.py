@@ -1891,7 +1891,9 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       self.skipTest("swizzle too large for input (lhs)")
     n_steps = 2 if kwargs["m"] == 64 else 1
     n_instr_size = kwargs["n"] * in_bytewidth // n_steps
-    if n_instr_size < swizzle or n_instr_size % swizzle != 0:
+    if not kwargs["rhs_transpose"] and (
+        n_instr_size < swizzle or n_instr_size % swizzle != 0
+    ):
       self.skipTest("swizzle doesn't work with this instruction size")
     if dtypes.itemsize_bits(kwargs["in_jax_dtype"]) <= 8 and kwargs["n"] == swizzle:
       self.skipTest("Only 8-bit and larger inputs are supported for MMA")
@@ -1920,7 +1922,9 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       self.skipTest("swizzle too large for input (lhs)")
     n_steps = 2 if kwargs["m"] == 64 else 1
     n_instr_size = kwargs["n"] * in_bytewidth // n_steps
-    if n_instr_size < swizzle or n_instr_size % swizzle != 0:
+    if not kwargs["rhs_transpose"] and (
+        n_instr_size < swizzle or n_instr_size % swizzle != 0
+    ):
       self.skipTest("swizzle doesn't work with this instruction size")
     if dtypes.itemsize_bits(kwargs["in_jax_dtype"]) <= 8 and kwargs["n"] == swizzle:
       self.skipTest("Only 8-bit and larger inputs are supported for MMA")
