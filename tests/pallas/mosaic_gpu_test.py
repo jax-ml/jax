@@ -575,6 +575,17 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(math.prod(shape)).reshape(shape).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x[1, 1])
 
+  def test_slice_array_with_static_ds(self):
+    shape = (3, 64, 8)
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct((2, 64, 8), jnp.float32))
+    def kernel(x_ref, out_ref):
+      x = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+      out_ref[...] = x[pl.ds(1, 2)]
+
+    x = jnp.arange(math.prod(shape)).reshape(shape).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x[1:3])
+
   @parameterized.named_parameters(
       ("axis0", 0, ((64, 64), (128, 64))),
       ("axis1", 1, ((64, 64), (64, 128))),
