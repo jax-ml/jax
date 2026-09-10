@@ -536,7 +536,8 @@ def logmeanexp(
 @api.jit(static_argnames=("axis",))
 def log_softmax(x: ArrayLike,
                 axis: Axis = -1,
-                where: ArrayLike | None = None) -> Array:
+                where: ArrayLike | None = None,
+                initial: ArrayLike = -np.inf) -> Array:
   r"""Log-Softmax function.
 
   Computes the logarithm of the :code:`softmax` function, which rescales
@@ -552,6 +553,7 @@ def log_softmax(x: ArrayLike,
       computed. Either an integer, tuple of integers, or ``None`` (all axes).
     where: Elements to include in the :code:`log_softmax`. The output for any
       masked-out element is minus infinity.
+    initial: The minimum value used to shift the input array. Optional.
 
   Returns:
     An array.
@@ -563,8 +565,49 @@ def log_softmax(x: ArrayLike,
   See also:
     :func:`softmax`
   """
+  if config.softmax_custom_jvp.value:
+    return _log_softmax(x, axis, where, initial)
+  else:
+    return _log_softmax_deprecated(x, axis, where, initial)
+
+
+# TODO(mattjj): replace log_softmax with _log_softmax when deprecation flag is removed
+@partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))
+def _log_softmax(
+    x: ArrayLike,
+    axis: Axis = -1,
+    where: ArrayLike | None = None,
+    initial: ArrayLike = -np.inf) -> Array:
   x_arr = numpy_util.ensure_arraylike("log_softmax", x)
-  x_max = jnp.max(x_arr, axis, where=where, initial=-np.inf, keepdims=True)
+  x_max = jnp.max(x_arr, axis, where=where, initial=initial, keepdims=True)
+  x_safe = x_arr if where is None else jnp.where(where, x_arr, initial)
+  shifted = x_safe - x_max
+  shifted_logsumexp = jnp.log(
+      jnp.sum(jnp.exp(shifted), axis, where=where, keepdims=True))
+  result = shifted - shifted_logsumexp
+  if where is not None:
+    return jnp.where(where, result, -np.inf)
+  return result
+
+
+@_log_softmax.defjvp
+def _log_softmax_jvp(axis, primals, tangents):
+  (x, where, initial), (x_dot, _, _) = primals, tangents
+  y = _log_softmax(x, axis, where, initial)
+  p = _softmax(x, axis, where, initial)
+  y_dot = x_dot - (p * x_dot).sum(axis, where=where, keepdims=True)
+  if where is not None:
+    y_dot = jnp.where(where, y_dot, 0)
+  return y, y_dot
+
+
+def _log_softmax_deprecated(
+    x: ArrayLike,
+    axis: Axis = -1,
+    where: ArrayLike | None = None,
+    initial: ArrayLike = -np.inf) -> Array:
+  x_arr = numpy_util.ensure_arraylike("log_softmax", x)
+  x_max = jnp.max(x_arr, axis, where=where, initial=initial, keepdims=True)
   x_safe = x_arr if where is None else jnp.where(where, x_arr, -np.inf)
   shifted = x_safe - lax.stop_gradient(x_max)
   shifted_logsumexp = jnp.log(
@@ -579,7 +622,8 @@ def log_softmax(x: ArrayLike,
 # @api.jit(static_argnames=("axis",))
 def softmax(x: ArrayLike,
             axis: Axis = -1,
-            where: ArrayLike | None = None) -> Array:
+            where: ArrayLike | None = None,
+            initial: ArrayLike = -np.inf) -> Array:
   r"""Softmax function.
 
   Computes the function which rescales elements to the range :math:`[0, 1]`
@@ -595,6 +639,7 @@ def softmax(x: ArrayLike,
       Either an integer, tuple of integers, or ``None`` (all axes).
     where: Elements to include in the :code:`softmax`. The output for any
       masked-out element is zero.
+    initial: The minimum value used to shift the input array. Optional.
 
   Returns:
     An array.
@@ -607,9 +652,9 @@ def softmax(x: ArrayLike,
     :func:`log_softmax`
   """
   if config.softmax_custom_jvp.value:
-    return _softmax(x, axis, where)
+    return _softmax(x, axis, where, initial)
   else:
-    return _softmax_deprecated(x, axis, where)
+    return _softmax_deprecated(x, axis, where, initial)
 
 # TODO(mattjj): replace softmax with _softmax when deprecation flag is removed
 @partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))

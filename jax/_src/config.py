@@ -1487,8 +1487,8 @@ softmax_custom_jvp = bool_state(
     name='jax_softmax_custom_jvp',
     default=False,
     upgrade=True,
-    help=('Use a new custom_jvp rule for jax.nn.softmax. The new rule should '
-          'improve memory usage and stability. Set True to use new '
+    help=('Use a new custom_jvp rule for jax.nn.softmax and jax.nn.log_softmax. '
+          'The new rule should improve memory usage and stability. Set True to use new '
           'behavior. See https://github.com/jax-ml/jax/pull/15677'),
     include_in_jit_key=True,
     include_in_trace_context=True)

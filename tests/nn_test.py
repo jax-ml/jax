@@ -622,11 +622,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
     probs = out if fn is nn.softmax else jnp.exp(out)
     self.assertAllClose(probs.sum(), 1.0)
 
-    # TODO(mattjj): include log_softmax in these extra tests if/when we add a
-    # custom_jvp rule for it (since otherwise it doesn't pass the numerical
-    # checks below).
-    if fn is nn.softmax and config.softmax_custom_jvp.value:
-      g_fun = lambda x: jnp.take(fn(x, where=m, initial=-jnp.inf),
+    if config.softmax_custom_jvp.value:
+      g_fun = lambda x: jnp.take(fn(x, where=m),
                                 jnp.array([0, 2, 3]))
       jtu.check_grads(g_fun, (x,), order=2)
 
@@ -663,6 +660,29 @@ class NNFunctionsTest(jtu.JaxTestCase):
       res = ad_checkpoint.saved_residuals(nn.softmax, x)
     self.assertLen(res, 1)
     self.assertEqual(sum(a.size for a, _ in res), 4)
+
+  def testLogSoftmaxGrad(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    with jax.softmax_custom_jvp(True):
+      jtu.check_grads(nn.log_softmax, (x,), order=2, atol=5e-3)
+
+  def testLogSoftmaxGradResiduals(self):
+    if not config.softmax_custom_jvp.value:
+      raise unittest.SkipTest("only applies when upgrade flag enabled")
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    res = ad_checkpoint.saved_residuals(nn.log_softmax, x)
+    self.assertLen(res, 1)
+
+  def testLogSoftmaxGradFlag(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+
+    with jax.softmax_custom_jvp(False):
+      res = ad_checkpoint.saved_residuals(nn.log_softmax, x)
+    self.assertLen(res, 3)
+
+    with jax.softmax_custom_jvp(True):
+      res = ad_checkpoint.saved_residuals(nn.log_softmax, x)
+    self.assertLen(res, 1)
 
   def testStandardizeWhereMask(self):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
