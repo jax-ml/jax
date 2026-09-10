@@ -5346,6 +5346,31 @@ class FragmentedArrayTest(TestCase):
     )(values)
     np.testing.assert_array_equal(res, expected)
 
+  @parameterized.product(
+      jax_wide_dtype=(jnp.float32, jnp.float16, jnp.bfloat16),
+      vec_len=(4, 8),
+  )
+  def test_roundtrip_conversion_f4(self, jax_wide_dtype, vec_len):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("f4 conversions not supported on pre-Blackwell GPUs")
+
+    def kernel(ctx, inp, out, smem):
+      del ctx, smem
+      t = mgpu.FragmentedArray.load_untiled(
+          inp, layout=fa.tmem_native_layout(vec_len), optimized=False
+      )
+      t = t.astype(utils.dtype_to_ir_type(jnp.float4_e2m1fn))
+      t = t.astype(utils.dtype_to_ir_type(jax_wide_dtype))
+      t.store_untiled(out, optimized=False)
+
+    # 1.5 is exactly representable in FP4 e2m1fn.
+    values = jnp.full((128, 64), 1.5, dtype=jax_wide_dtype)
+    expected = values
+    res = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), values, expected, ()
+    )(values)
+    np.testing.assert_array_equal(res, expected)
+
   def test_rounding_f8e8m0fnu(self):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("f8e8m0fnu not supported on pre-Blackwell GPUs")

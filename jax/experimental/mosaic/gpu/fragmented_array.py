@@ -2719,8 +2719,8 @@ class FragmentedArray:
         base_idx = 0
         result_vecs = []
         while convert_vec_len >= 2:
-          if cur_dtype == f4e2m1fn and convert_vec_len == 4 and ptx_isa_version < 90:
-            convert_vec_len //= 2  # ptxas miscompiles 4xfp4 on CUDA 12.8...
+          if cur_dtype == f4e2m1fn and convert_vec_len >= 4 and ptx_isa_version < 90:
+            convert_vec_len //= 2  # ptxas miscompiles >=4xfp4 on CUDA 12.8...
             continue
           while (next_base_idx := base_idx + convert_vec_len) <= even_vector_len:
             vec = utils.vector_slice(reg, slice(base_idx, next_base_idx))
