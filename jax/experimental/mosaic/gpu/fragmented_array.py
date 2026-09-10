@@ -1923,6 +1923,15 @@ class FragmentedArray:
         self._lift_fast_instr("rsqrt.approx.f32") if approx else mlir_math.rsqrt
     )
 
+  def sqrt(self, *, approx: bool = False) -> FragmentedArray:
+    if not isinstance(self.mlir_dtype, ir.FloatType):
+      raise NotImplementedError
+    if approx and self.mlir_dtype != ir.F32Type.get():
+      raise NotImplementedError
+    return self._pointwise(
+        self._lift_fast_instr("sqrt.approx.f32") if approx else mlir_math.sqrt
+    )
+
   def abs(self) -> FragmentedArray:
     if isinstance(self.mlir_dtype, ir.FloatType):
       absf = mlir_math.absf

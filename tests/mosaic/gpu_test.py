@@ -5520,6 +5520,7 @@ class FragmentedArrayTest(TestCase):
       (mgpu.FragmentedArray.cos, np.cos),
       (mgpu.FragmentedArray.tanh, np.tanh),
       (mgpu.FragmentedArray.rsqrt, jax.lax.rsqrt),
+      (mgpu.FragmentedArray.sqrt, np.sqrt),
       (mgpu.FragmentedArray.erf, jax.scipy.special.erf),
   )
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``
