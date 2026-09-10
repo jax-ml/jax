@@ -5569,6 +5569,51 @@ class FragmentedArrayTest(TestCase):
     x = np.arange(m * n, dtype=jnp.float32).reshape(m, n) + 2
     np.testing.assert_allclose(result, np.arctan2(y, x), atol=2e-7, rtol=2e-7)
 
+  @parameterized.parameters(jnp.float32, jnp.float16, jnp.bfloat16)
+  def test_rpow(self, dtype):
+    m, n = 64, 32
+    def kernel(ctx, dst, _):
+      del ctx
+      # Powers of two are exactly representable in every float type, and an
+      # exponent below 10 keeps the result small enough for f16 and bf16 too.
+      exp = (iota_tensor(m, n, jnp.int32) % 10).astype(
+          utils.dtype_to_ir_type(dtype)
+      )
+      (2 ** exp).store_untiled(dst, optimized=False)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    ref = (2 ** (np.arange(m * n, dtype=np.int32).reshape(m, n) % 10)).astype(
+        dtype
+    )
+    np.testing.assert_array_equal(result, ref)
+
+  @parameterized.parameters(
+      jnp.int16, jnp.int32, jnp.float16, jnp.bfloat16, jnp.float32
+  )
+  def test_pow(self, dtype):
+    m, n = 64, 32
+    def kernel(ctx, dst, _):
+      del ctx
+      # Keep the base below 6 so that its cube is exactly representable in all
+      # the tested types (bf16, the coarsest, is exact up to 256).
+      base = (iota_tensor(m, n, jnp.int32) % 6).astype(
+          utils.dtype_to_ir_type(dtype), is_signed=utils.is_signed(dtype)
+      )
+      (base ** 3).store_untiled(dst, optimized=False)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    ref = ((np.arange(m * n, dtype=np.int32).reshape(m, n) % 6) ** 3).astype(
+        dtype
+    )
+    np.testing.assert_array_equal(result, ref)
+
+
   def test_strided_copy_noncontig_good(self):
     def kernel(ctx, src, dst, _):
       src_slice = mgpu.memref_slice(src, (slice(None), 1))

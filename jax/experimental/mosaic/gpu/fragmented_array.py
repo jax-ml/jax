@@ -1009,6 +1009,19 @@ def can_relayout_wgmma_2x_to_wgmma(bitwidth: int) -> bool:
   return bitwidth <= 16
 
 
+def _int_pow(x: ir.Value, n: int) -> ir.Value:
+  if n < 0:
+    raise ValueError("Negative exponent not supported for integers")
+  result = c(1, x.type)
+  base = x
+  while n > 0:
+    if n % 2 == 1:
+      result = arith.muli(result, base)
+    base = arith.muli(base, base)
+    n //= 2
+  return result
+
+
 @jax.tree_util.register_pytree_node_class
 @dataclasses.dataclass(init=False, frozen=True, slots=True)
 class FragmentedArray:
@@ -1668,6 +1681,18 @@ class FragmentedArray:
       return self._pointwise(lambda s, o: arith.remsi(o, s), other)
     else:
       return self._pointwise(lambda s, o: arith.remui(o, s), other)
+
+  def __pow__(self, other):
+    if isinstance(self.mlir_dtype, ir.IntegerType):
+      return self._pointwise(lambda x: _int_pow(x, other))
+    if not isinstance(self.mlir_dtype, ir.FloatType):
+      return NotImplemented
+    return self._pointwise(mlir_math.powf, other)
+
+  def __rpow__(self, other):
+    if not isinstance(self.mlir_dtype, ir.FloatType):
+      return NotImplemented
+    return self._pointwise(lambda s, o: mlir_math.powf(o, s), other)
 
   def __invert__(self):
     if not isinstance(self.mlir_dtype, ir.IntegerType):
@@ -2988,16 +3013,7 @@ class FragmentedArray:
           elif isinstance(self.mlir_dtype, ir.IntegerType):
             op = arith.muli
             # For splat, use repeated squaring to compute x^n
-            def int_pow(x, n=reduced_elems):
-              result = c(1, x.type)
-              base = x
-              while n > 0:
-                if n % 2 == 1:
-                  result = arith.muli(result, base)
-                base = arith.muli(base, base)
-                n //= 2
-              return result
-            splat_op = int_pow
+            splat_op = functools.partial(_int_pow, n=reduced_elems)
           else:
             raise NotImplementedError(self.mlir_dtype)
         case _:
