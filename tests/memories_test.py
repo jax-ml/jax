@@ -1732,6 +1732,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     jax.jit(fn2)(x_host)  # doesn't crash
 
   def test_compute_on_cache_miss(self):
+    if not jtu.is_libtpu_at_least('0.0.48'):
+      self.skipTest('Requires libtpu >= 0.0.48')
     def f(x):
       return x * 2
 
@@ -2293,6 +2295,8 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_compute_on_reshard_inside(self, mesh):
+    if not jtu.is_libtpu_at_least('0.0.48'):
+      self.skipTest('Requires libtpu >= 0.0.48')
     arr = jnp.ones((2, 8))
 
     @compute_on(compute_type="tpu_sparsecore",
