@@ -31,7 +31,6 @@ from jax._src import api
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_batching
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import frozen_dict
@@ -256,11 +255,9 @@ WGxWARP_SEMANTICS = (
 
 def kernel(
     body: Callable[..., None] | api.NotSpecified = api.NotSpecified(),
-    out_shape: object | api.NotSpecified = api.NotSpecified(),
     *,
-    out_type: object | api.NotSpecified = api.NotSpecified(),
-    scratch_types: ScratchShapeTree | api.NotSpecified = api.NotSpecified(),
-    scratch_shapes: ScratchShapeTree | api.NotSpecified = api.NotSpecified(),
+    out_type: object = (),
+    scratch_types: ScratchShapeTree = (),
     compiler_params: pallas_core.CompilerParams | None = None,
     # Mesh kwargs
     grid: tuple[int, ...] = (),
@@ -281,10 +278,8 @@ def kernel(
       arguments passed into kernel returned by this function. The number of
       output and scratch Refs are determined by `out_shape` and `scratch_shapes`
       respectively.
-    out_shape: A deprecated alias for ``out_type``.
     out_type: The type of the output. Should be a PyTree of
       ``jax.ShapeDtypeStruct`` or JAX types.
-    scratch_shapes: A deprecated alias for ``scratch_types``.
     scratch_types: The types of the scratch ``Ref``\s to allocate. Should be a
       PyTree of ``jax.ShapeDtypeStruct`` or JAX types.
     compiler_params: Additional compiler options. See the `CompilerParams`
@@ -312,9 +307,7 @@ def kernel(
   if isinstance(body, api.NotSpecified):
     return lambda fun: kernel(
         fun,
-        out_shape,
         out_type=out_type,
-        scratch_shapes=scratch_shapes,
         scratch_types=scratch_types,
         compiler_params=compiler_params,
         grid=grid,
@@ -327,36 +320,6 @@ def kernel(
         debug=debug,
         **mesh_kwargs,
     )
-
-  if (
-      not isinstance(out_shape, api.NotSpecified)
-      or not isinstance(scratch_shapes, api.NotSpecified)
-  ):
-    deprecations.warn(
-        "jax-pallas-mgpu-shapes-types",
-        "The out_shape and scratch_shapes arguments to plgpu.kernel are"
-        " deprecated. Use out_type and scratch_types instead.",
-        stacklevel=2,
-    )
-
-  if not isinstance(out_shape, api.NotSpecified):
-    if not isinstance(out_type, api.NotSpecified):
-      raise ValueError(
-          "Cannot specify both out_shape and out_type. Use out_type."
-      )
-    out_type = out_shape
-  elif isinstance(out_type, api.NotSpecified):
-    out_type = ()
-
-  if not isinstance(scratch_shapes, api.NotSpecified):
-    if not isinstance(scratch_types, api.NotSpecified):
-      raise ValueError(
-          "Cannot specify both scratch_shapes and scratch_types. Use"
-          " scratch_types."
-      )
-    scratch_types = scratch_shapes
-  elif isinstance(scratch_types, api.NotSpecified):
-    scratch_types = ()
 
   if unwrap_out := not isinstance(out_type, (tuple, list)):
     out_type = (out_type,)

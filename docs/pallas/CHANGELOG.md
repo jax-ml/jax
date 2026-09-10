@@ -25,6 +25,9 @@ Remember to align the itemized text with the first line of an item within a list
   * Removed the previously deprecated `pl.debug_checks_enabled`. Use
     `pl.enable_debug_checks.value` instead.
   * Removed the previously deprecated `pltpu.HOST`. Use `pl.HOST` instead.
+  * Removed the previously deprecated `scrach_shapes` and `out_shapes`
+    arguments from {func}`jax.experimental.pallas.mosaic_gpu.kernel`. Use
+    `scratch_types` and `out_type` instead.
 
 ### Mosaic GPU
 
