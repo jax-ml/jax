@@ -42,6 +42,16 @@ on:
         required: false
         default: ""
         type: string
+      artifact-type:
+        description: "Version scheme for the wheels this workflow builds: default, nightly or release."
+        required: false
+        default: 'default'
+        type: string
+      wheel-version-suffix:
+        description: "Custom wheel version suffix, e.g. rc1 (needs artifact-type release) or .post1. Empty for normal builds."
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -197,18 +207,29 @@ jobs:
         fail-fast: false
         matrix:
           runner: ["amd-do-linux.jax.cpu"]
-          artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
+          # Where the ROCm runners are the only build capacity available, build the base wheels
+          # here too, so the test legs below get all four wheels from one commit, stamped alike.
+          # The GCS nightlies they would otherwise use are whatever the last nightly published,
+          # and on a release branch cannot satisfy jax's exact jaxlib pin at all.
+          artifact: ${{ (github.repository_owner == 'ROCm' && fromJSON('["jax-rocm-plugin", "jax-rocm-pjrt", "jax", "jaxlib"]')) || fromJSON('["jax-rocm-plugin", "jax-rocm-pjrt"]') }}
           python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
             {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-10.0:latest" },
             {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-latest:latest"},
           ]
           exclude:
+            # pjrt and jax are not per-Python; one build per ROCm variant covers every version.
             - artifact: "jax-rocm-pjrt"
               python: "3.13"
             - artifact: "jax-rocm-pjrt"
               python: "3.14"
             - artifact: "jax-rocm-pjrt"
+              python: "3.15"
+            - artifact: "jax"
+              python: "3.13"
+            - artifact: "jax"
+              python: "3.14"
+            - artifact: "jax"
               python: "3.15"
     name: "Build ROCm artifacts ${{ matrix.rocm.label }}"
     with:
@@ -222,6 +243,8 @@ jobs:
       upload_artifacts_to_s3: true
       s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-nightly/${{ github.run_number }}/${{ github.run_attempt }}'
       git_commit: ${{ inputs.git_commit }}
+      artifact-type: ${{ inputs.artifact-type }}
+      wheel-version-suffix: ${{ inputs.wheel-version-suffix }}
 
   run-pytest-rocm:
     if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
@@ -252,6 +275,8 @@ jobs:
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-nightly/${{ github.run_number }}/${{ github.run_attempt }}'
       git_commit: ${{ inputs.git_commit }}
+      # Must match the artifact list of the build job above.
+      jax-jaxlib-source: ${{ github.repository_owner == 'ROCm' && 'vendor' || 'upstream' }}
 
   run-bazel-test-rocm:
     if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
@@ -288,6 +313,8 @@ jobs:
       run_multiaccelerator_tests: ${{ 'true' }}
       clone_main_xla: 0
       git_commit: ${{ inputs.git_commit }}
+      # Must match the artifact list of the build job above.
+      jax-jaxlib-source: ${{ github.repository_owner == 'ROCm' && 'vendor' || 'upstream' }}
 
   run-pytest-tpu:
     if: github.repository_owner == 'jax-ml'
