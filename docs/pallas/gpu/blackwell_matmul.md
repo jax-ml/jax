@@ -6,6 +6,10 @@ However, in just a few simple steps it can be modified into a state-of-the-art
 kernel, matching or exceeding highly optimized implementations such as cuBLAS
 and CUTLASS.
 
+```{note}
+The code below runs on the data-center grade Blackwell GPUs (e.g. B200) with compute capability 10.0. For consumer grade Blackwell GPUs (e.g. GB10, RTX PRO etc) with compute capability 12.0+, please check [this tutorial](blackwell_geforce_matmul.md).
+```
+
 ```{warning}
 The utilization shown in the table below might be different than what you see online,
 but the differences can likely be explained by a different input data distribution.
