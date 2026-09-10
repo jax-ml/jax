@@ -816,6 +816,7 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertEqual(
         copied_tpu_array.format.layout, canonical_tpu_array.format.layout)
 
+  @jtu.pytest_mark_if_available('multiaccelerator')
   @jtu.run_on_devices('tpu')
   @jtu.with_explicit_mesh((2,), 'x')
   def test_reshard_layout_constraint(self, mesh):
@@ -837,6 +838,7 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertEqual(out.format.layout.major_to_minor, (1, 0))
     self.assertNotIn('all-reduce(', f.lower(arr1, arr2).compile().as_text())
 
+  @jtu.pytest_mark_if_available('multiaccelerator')
   def test_layout_propagation_host(self):
     mesh = jtu.create_mesh((2,), 'x')
     arr = jnp.ones((5, 2, 1004, 512, 36), dtype=jnp.float32)
