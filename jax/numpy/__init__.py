@@ -357,6 +357,7 @@ from jax._src.numpy.reductions import (
     mean as mean,
     median as median,
     min as min,
+    minmax as minmax,
     nancumsum as nancumsum,
     nancumprod as nancumprod,
     nanmax as nanmax,
