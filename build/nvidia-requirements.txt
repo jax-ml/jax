@@ -28,3 +28,5 @@ nvidia-nvjitlink>=13.0.39 ; sys_platform == "linux"
 nvidia-cuda-nvrtc>=13.0.48 ; sys_platform == "linux"
 nvidia-nvvm>=13.0.48 ; sys_platform == "linux"
 nvidia-cuda-crt>=13.0.48 ; sys_platform == "linux"
+
+nvidia-cuda-cccl>=13.3.4 ; sys_platform == "linux"
