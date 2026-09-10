@@ -838,17 +838,17 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x, indices), x[1, 8:][indices])
 
-  @parameterized.parameters(True, False)
-  def test_gather_2d_with_col_slice(self, use_num_lanes_indices):
+  @parameterized.parameters(None, 20, 12, 7, 25)
+  def test_gather_2d_with_col_slice(self, n_indices):
     if not self.USE_TC_TILING:
       self.skipTest("Test only works under TC tiling.")
-    if (not use_num_lanes_indices and jtu.is_device_tpu(7, "x")
+    if (n_indices is None and jtu.is_device_tpu(7, "x")
         and not jtu.is_libtpu_at_least("0.0.48")):
       self.skipTest(
           "20-index column-slice gather fails on TPU7x with libtpu < 0.0.48."
       )
 
-    n_indices = self.num_lanes if use_num_lanes_indices else 20
+    n_indices = self.num_lanes if n_indices is None else n_indices
     x = jnp.arange(n_indices * 4096, dtype=jnp.int32).reshape(n_indices, 4096)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(n_indices))
 
@@ -865,6 +865,32 @@ class VectorSubcoreTest(PallasSCTest):
       pltpu.sync_copy(x_hbm_ref.at[indices_ref, pl.ds(128, 1024)], o_ref)
 
     np.testing.assert_array_equal(kernel(x, indices), x[indices, 128:1152])
+
+  @parameterized.parameters(None, 20, 12, 7, 25)
+  def test_scatter_2d_with_col_slice(self, n_indices):
+    if not self.USE_TC_TILING:
+      self.skipTest("Test only works under TC tiling.")
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Test fails with libtpu < 0.0.48.")
+    n_indices = self.num_lanes if n_indices is None else n_indices
+    x = jnp.arange(n_indices * 1024, dtype=jnp.int32).reshape(n_indices, 1024)
+    indices = jax.random.permutation(jax.random.key(42), jnp.arange(n_indices))
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(
+            shape=(n_indices, 4096), dtype=jnp.int32
+        ),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_ref, indices_ref, o_hbm_ref):
+      pltpu.sync_copy(x_ref, o_hbm_ref.at[indices_ref, pl.ds(128, 1024)])
+    np.testing.assert_array_equal(
+        kernel(x, indices)[:, 128:1152],
+        jnp.empty_like(x).at[indices].set(x),
+    )
 
   def test_gather_1d_with_indexed_ref(self):
     if jtu.is_device_tpu(8, "i"):
