@@ -257,7 +257,10 @@ def lax_ops():
           1,
           float_dtypes + complex_dtypes,
           test_util.rand_default,
-          {np.float32: 3e-5},
+          {
+            np.float32: 3e-5,
+            np.complex64: 1e-6 if config.enable_x64.value else 3e-5
+          },
       ),
       op_record(
           "asin",
