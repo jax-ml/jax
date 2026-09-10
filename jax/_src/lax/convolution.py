@@ -333,8 +333,7 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
     transpose_kernel: if True flips spatial axes and swaps the input/output
       channel axes of the kernel. This makes the output of this function identical
       to the gradient-derived functions like keras.layers.Conv2DTranspose
-      applied to the same kernel. For typical use in neural nets this is completely
-      pointless and just makes input/output channel specification confusing.
+      applied to the same kernel.
     precision: Optional. Either ``None``, which means the default precision for
       the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
