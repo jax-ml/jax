@@ -116,7 +116,7 @@ eval_jaxpr_transpose = _eval_jaxpr_transpose
 
 def register_call_primitive_rules(
     prim: core.Primitive, name: str | None = None, transpose_rule=None,
-    inline_jax_late: bool = False):
+    inline_jax_late: bool = True):
   prim.multiple_results = True
   prim.def_impl(eval_jaxpr_p.impl)
   prim.def_effectful_abstract_eval(eval_jaxpr_p.abstract_eval)
@@ -136,12 +136,12 @@ def register_call_primitive_rules(
         mlir.core_call_lowering, name=name, inline_jax_late=inline_jax_late)
     mlir.register_lowering(prim, lowering_rule, cacheable=False)
 
-def create_call_primitive(name: str) -> core.Primitive:
+def create_call_primitive(name: str, inline_jax_late: bool = True
+                          ) -> core.Primitive:
   prim = core.Primitive(name)
-  register_call_primitive_rules(prim, name=name)
+  register_call_primitive_rules(prim, name=name,
+                                inline_jax_late=inline_jax_late)
   return prim
 
-register_call_primitive_rules(eval_jaxpr_p, name='eval_jaxpr',
-                              inline_jax_late=True)
-register_call_primitive_rules(program_order_p, name='program_order',
-                              inline_jax_late=True)
+register_call_primitive_rules(eval_jaxpr_p, name='eval_jaxpr')
+register_call_primitive_rules(program_order_p, name='program_order')
