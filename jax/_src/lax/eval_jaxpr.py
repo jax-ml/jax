@@ -141,6 +141,7 @@ def create_call_primitive(name: str) -> core.Primitive:
   register_call_primitive_rules(prim, name=name)
   return prim
 
-register_call_primitive_rules(eval_jaxpr_p, name='eval_jaxpr')
+register_call_primitive_rules(eval_jaxpr_p, name='eval_jaxpr',
+                              inline_jax_late=True)
 register_call_primitive_rules(program_order_p, name='program_order',
                               inline_jax_late=True)
