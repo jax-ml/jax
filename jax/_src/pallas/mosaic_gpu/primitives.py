@@ -4092,6 +4092,62 @@ def load(
   return result
 
 
+store_p = jax_core.Primitive("store")
+store_p.multiple_results = True
+
+
+@store_p.def_effectful_abstract_eval
+def _store_abstract_eval(dst, val, *avals_flat, tree, optimized):
+  del optimized  # Unused.
+  # `store` is `swap` without the result, so we can reuse its checks.
+  _, effects = state_primitives._swap_abstract_eval(
+      dst, val, *avals_flat, tree=tree
+  )
+  return (), effects
+
+
+@lowering.register_lowering_rule(store_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(store_p, *gpu_core.LANExWARP_SEMANTICS)
+@lowering.register_lowering_rule(store_p, mgpu.LoweringSemantics.Warpgroup)
+@lowering.register_lowering_rule(store_p, *gpu_core.WGxWARP_SEMANTICS)
+def _store_lowering_rule(
+    ctx: lowering.LoweringRuleContext, dst, value, *leaves, tree, optimized
+):
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+    rule = lowering._swap_lowering_rule_wg
+  else:
+    rule = lowering._swap_lowering_rule
+  return rule(
+      ctx, dst, value, *leaves, tree=tree, optimized=optimized, load=False
+  )
+
+
+def store(dst: _Ref, value: jax.Array, *, optimized: bool = True) -> None:
+  """Stores an array to a reference in SMEM or GMEM.
+
+  Currently, only unoptimized stores to GMEM are supported.
+
+  Args:
+    dst: The reference to store to. Can be either in SMEM or GMEM.
+    value: The array to store.
+    optimized: If True, a compilation error will be raised if no optimized
+      implementation for the store is available.
+  """
+  dst, dst_transforms = state_primitives.get_ref_and_transforms(
+      dst, None, "store"
+  )
+  flat_dst_transforms, dst_transforms_treedef = tree_util.tree_flatten(
+      dst_transforms
+  )
+  store_p.bind(
+      dst,
+      value,
+      *flat_dst_transforms,
+      tree=dst_transforms_treedef,
+      optimized=optimized,
+  )
+
+
 async_load_tmem_p = jax_core.Primitive("async_load")
 async_load_tmem_p.multiple_results = True
 
@@ -5273,6 +5329,7 @@ def _atomic_store(
     *,
     atomic_type: AtomicOpType,
 ):
+  # TODO(bchetioui): add an optimized kwarg to atomic store ops.
   x_ref, transforms = state_primitives.get_ref_and_transforms(
       x_ref_or_view, None, "atomic_store"
   )
@@ -5304,7 +5361,17 @@ def _atomic_store_lowering_rule_wg(
         f"Unsupported transforms for atomic_store: {remaining_transforms}"
     )
 
-  mgpu.dialect.vector_store(value, ref, atomic_type=_atomic_op_type_to_int(atomic_type))
+  mgpu.dialect.vector_store(
+      value,
+      ref,
+      # Force optimized transfers to SMEM.
+      # TODO(bchetioui): this is a temporary solution to avoid a regression, but
+      # should be handled by passing an optimized kwarg to atomic store ops.
+      # At the moment, lane semantics still models downgradable semantics for
+      # this.
+      optimized=ref_aval.memory_space != gpu_core.MemorySpace.GMEM,
+      atomic_type=_atomic_op_type_to_int(atomic_type),
+  )
   return ()
 
 
