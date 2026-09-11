@@ -2328,6 +2328,17 @@ class OpsTest(PallasBaseTest):
         self.skipTest("All dimensions of lhs and rhs must be >= 16")
       if any(not is_power_of_two(x) for x in lhs_shape + rhs_shape):
         self.skipTest("All dimensions of lhs and rhs must be power of two")
+      if (
+          jtu.is_cuda_compute_capability_equal("8.9")
+          and lhs_and_rhs_shape == ((128, 128), (128, 128))
+          and dtype == jnp.float32
+          and not trans_x
+          and trans_y
+      ):
+        self.skipTest(
+            "Triton produces incorrect numerical output for transposed RHS"
+            " on L4 GPU"
+        )
 
     @functools.partial(
         self.pallas_call,
