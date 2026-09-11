@@ -425,6 +425,20 @@ def exp(x: ArrayLike, /) -> Array:
     An array containing the exponential of each element in ``x``, promotes to
     inexact dtype.
 
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             0             1            1
+    NVIDIA GPU      1             1            2
+    TPU v2–v5e      1             1            116
+    TPU v5p         1             1            109
+    TPU v6e         1             1            64
+    TPU 7x          1             1            65
+    ==============  ============  ===========  ===========
+
   See also:
     - :func:`jax.numpy.log`: Calculates element-wise logarithm of the input.
     - :func:`jax.numpy.expm1`: Calculates :math:`e^x-1` of each element of the
@@ -466,6 +480,19 @@ def log(x: ArrayLike, /) -> Array:
   Returns:
     An array containing the logarithm of each element in ``x``, promotes to inexact
     dtype.
+
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             0             1            1
+    NVIDIA GPU      0             1            1
+    TPU v2–v5e      1             1            4030
+    TPU v5p         0             1            62
+    TPU v6e, 7x     0             1            2
+    ==============  ============  ===========  ===========
 
   See also:
     - :func:`jax.numpy.exp`: Calculates element-wise exponential of the input.
@@ -595,6 +622,17 @@ def sin(x: ArrayLike, /) -> Array:
     An array containing the sine of each element in ``x``, promotes to inexact
     dtype.
 
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             1             1            1
+    NVIDIA GPU      0             1            1
+    TPU             1             1            3
+    ==============  ============  ===========  ===========
+
   See also:
     - :func:`jax.numpy.cos`: Computes a trigonometric cosine of each element of
       input.
@@ -629,6 +667,17 @@ def cos(x: ArrayLike, /) -> Array:
     An array containing the cosine of each element in ``x``, promotes to inexact
     dtype.
 
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             0             1            1
+    NVIDIA GPU      0             1            2
+    TPU             0             1            3
+    ==============  ============  ===========  ===========
+
   See also:
     - :func:`jax.numpy.sin`: Computes a trigonometric sine of each element of input.
     - :func:`jax.numpy.tan`: Computes a trigonometric tangent of each element of
@@ -661,6 +710,19 @@ def tan(x: ArrayLike, /) -> Array:
   Returns:
     An array containing the tangent of each element in ``x``, promotes to inexact
     dtype.
+
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             0             1            0
+    NVIDIA GPU      0             1            3
+    TPU v2–v5e      0             1            6
+    TPU v5p         0             1            7
+    TPU v6e, 7x     0             1            5
+    ==============  ============  ===========  ===========
 
   See also:
     - :func:`jax.numpy.sin`: Computes a trigonometric sine of each element of input.
@@ -834,6 +896,19 @@ def sinh(x: ArrayLike, /) -> Array:
   Note:
     ``jnp.sinh`` is equivalent to computing ``-1j * jnp.sin(1j * x)``.
 
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             0             1            24
+    NVIDIA GPU      0             0            3
+    TPU v2–v5e      1             1            1794
+    TPU v5p         1             1            1332
+    TPU v6e, 7x     1             1            59
+    ==============  ============  ===========  ===========
+
   See also:
     - :func:`jax.numpy.cosh`: Computes the element-wise hyperbolic cosine of the
       input.
@@ -888,6 +963,19 @@ def cosh(x: ArrayLike, /) -> Array:
 
   Note:
     ``jnp.cosh`` is equivalent to computing ``jnp.cos(1j * x)``.
+
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             0             1            24
+    NVIDIA GPU      0             1            2
+    TPU v2–v5e      0             1            93
+    TPU v5p         1             1            99
+    TPU v6e, 7x     1             1            59
+    ==============  ============  ===========  ===========
 
   See also:
     - :func:`jax.numpy.sinh`: Computes the element-wise hyperbolic sine of the input.
@@ -1057,6 +1145,19 @@ def tanh(x: ArrayLike, /) -> Array:
       ``0.0``, even though the true derivative may still be a non-zero
       floating-point number. To preserve non-zero gradients in this region,
       use :func:`jax.lax.tanh` with ``accuracy=jax.lax.AccuracyMode.HIGHEST``.
+
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             0             0            5
+    NVIDIA GPU      0             0            5
+    TPU v2–v5e      0             1            1365
+    TPU v5p         0             1            92
+    TPU v6e, 7x     0             0            1
+    ==============  ============  ===========  ===========
 
   See also:
     - :func:`jax.numpy.sinh`: Computes the element-wise hyperbolic sine of the input.
