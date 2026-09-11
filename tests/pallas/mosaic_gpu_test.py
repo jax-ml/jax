@@ -1155,6 +1155,58 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
 
+  @parameterized.product(
+      rank=(3, 4),
+      offset=(0, 1, 2),
+  )
+  def test_copy_gmem_to_smem_im2col(self, rank, offset):
+    self.skip_if_wg_semantics()
+    dtype = jnp.float16
+    channels = 64
+    pixels_per_column = 4
+    if rank == 3:
+      src_shape = (1, 8, channels)
+      im2col_box = ((-1, 1),)
+      im2col_offsets = (offset,)
+      gmem_index = (slice(None), slice(2, None), slice(None))
+    else:
+      src_shape = (1, 4, 8, channels)
+      im2col_box = ((-1, 1), (-1, 1))
+      im2col_offsets = (0, offset)
+      gmem_index = (slice(None), slice(None), slice(2, None), slice(None))
+
+    dst_shape = (pixels_per_column, channels)
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(dst_shape, dtype),
+        scratch_types=[
+            plgpu.SMEM(dst_shape, dtype),
+            plgpu.Barrier(),
+        ],
+    )
+    def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(
+          x_ref_gmem.at[gmem_index],
+          scratch_ref,
+          barrier_ref,
+          im2col_box=im2col_box,
+          im2col_offsets=im2col_offsets,
+      )
+      plgpu.barrier_wait(barrier_ref)
+      o_ref[...] = scratch_ref[...]
+
+    x = (np.arange(np.prod(src_shape), dtype=dtype) + 1.0).reshape(src_shape)
+    y = kernel(x)
+
+    w = 2 + np.arange(pixels_per_column) + offset
+    valid = (w >= 0) & (w < src_shape[-2])
+    expected = np.zeros(dst_shape, dtype=dtype)
+    if rank == 3:
+      expected[valid] = x[0, w[valid]]
+    else:
+      expected[valid] = x[0, 0, w[valid]]
+    np.testing.assert_array_equal(y, expected)
+
   @run_on_sm80
   def test_copy_gmem_to_smem_dynamic_slice(self):
     needs_barrier = jtu.is_cuda_compute_capability_at_least("9.0")
