@@ -626,6 +626,7 @@ class LoweringRuleContext:
   avals_in: Sequence[ShapedAbstractValue]
   avals_out: Sequence[ShapedAbstractValue]
   out_layout_hint: mgpu.FragmentedLayout | None
+  source_info: source_info_util.SourceInfo | None = None
 
   replace = dataclasses.replace
 
@@ -1147,6 +1148,7 @@ def lower_jaxpr_to_mosaic_gpu(
           avals_out=[cast(ShapedAbstractValue, v.aval) for v in eqn.outvars],
           prim=eqn.primitive,
           out_layout_hint=out_layout_hint,
+          source_info=eqn.source_info,
       )
       try:
         outvals = rule(rule_ctx, *invals, **eqn.params)
@@ -3089,6 +3091,8 @@ def _squeeze_lowering_rule_wg(ctx: LoweringRuleContext, x, dimensions):
 
 def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
   [x_aval] = ctx.avals_in
+  ilp_op = "sum" if op == "add" else op
+  acc_ilp = gpu_core.get_reduction_ilp(ctx.source_info, ilp_op)
   match x.layout:
     case mgpu.WGStridedFragLayout():
       if set(axes) != set(range(x_aval.ndim)):
@@ -3103,7 +3107,7 @@ def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
         )
       scratch_ty = jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)
       with ctx.module_ctx.scratch_view(scratch_ty) as scratch:
-        return x.reduce(op, axes, scratch)
+        return x.reduce(op, axes, scratch, acc_ilp=acc_ilp)
     case mgpu.TiledLayout():
       if len(axes) != 1:
         raise NotImplementedError("Multi-axis reductions not supported")
@@ -3118,7 +3122,7 @@ def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
       else:
         scratch_ctx = contextlib.nullcontext(None)
       with scratch_ctx as scratch:
-        return x.reduce(op, axes[0], scratch=scratch)
+        return x.reduce(op, axes[0], scratch=scratch, acc_ilp=acc_ilp)
     case _:
       raise NotImplementedError(f"Unsupported layout {x.layout}")
 
@@ -3130,6 +3134,9 @@ register_lowering_rule(lax.reduce_max_p, mgpu.LoweringSemantics.Lane)(
 )
 register_lowering_rule(lax.reduce_min_p, mgpu.LoweringSemantics.Lane)(
     functools.partial(_reduce_lowering_rule, "min")
+)
+register_lowering_rule(lax.reduce_prod_p, mgpu.LoweringSemantics.Lane)(
+    functools.partial(_reduce_lowering_rule, "prod")
 )
 
 
@@ -3164,6 +3171,27 @@ def _reduce_lowering_rule_wg(
   # TODO(bchetioui): here, we could just donate all the remaining free SMEM that
   # we have at this point in time.
   reduction.attributes["scratch_size"] = i32_attr(ctx.module_ctx.reduction_scratch_bytes)
+  match kind:
+    case vector_dialect.CombiningKind.ADD:
+      acc_ilp = gpu_core.get_reduction_ilp(ctx.source_info, "sum")
+    case (
+        vector_dialect.CombiningKind.MAXIMUMF
+        | vector_dialect.CombiningKind.MAXSI
+        | vector_dialect.CombiningKind.MAXUI
+    ):
+      acc_ilp = gpu_core.get_reduction_ilp(ctx.source_info, "max")
+    case (
+        vector_dialect.CombiningKind.MINIMUMF
+        | vector_dialect.CombiningKind.MINSI
+        | vector_dialect.CombiningKind.MINUI
+    ):
+      acc_ilp = gpu_core.get_reduction_ilp(ctx.source_info, "min")
+    case vector_dialect.CombiningKind.MUL:
+      acc_ilp = gpu_core.get_reduction_ilp(ctx.source_info, "prod")
+    case _:
+      acc_ilp = None
+  if acc_ilp is not None:
+    reduction.attributes["acc_ilp"] = i32_attr(acc_ilp)
   return reduction.result
 
 
