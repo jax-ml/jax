@@ -126,7 +126,7 @@ class LaxTest(jtu.JaxTestCase):
     if jtu.test_device_matches(["tpu"]):
       if dtype in (np.float32, np.complex64) and op_name in (
         "acosh", "asinh", "betainc", "cos", "cosh", "digamma", "exp", "exp2", "igamma",
-        "igammac", "log", "log1p", "logistic", "pow", "sin", "sinh", "tan"):
+        "igammac", "log", "log2", "log1p", "logistic", "pow", "sin", "sinh", "tan"):
         tol = jtu.join_tolerance(tol, 2e-4)
       elif op_name == "asinh" and dtype == np.float16:
         tol = jtu.join_tolerance(tol, 1e-3)
@@ -165,12 +165,68 @@ class LaxTest(jtu.JaxTestCase):
         grads, neg_grads, atol=jtu.default_tolerance()[np.dtype(np.float32)], rtol=0.0
     )
 
+  def testTanhSaturatedGrad(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40388.
+    # For x <= -9.0109138 in float32, tanh(x) rounds to -1.0. Because the default
+    # JVP rule computes the derivative from the forward output y = tanh(x) as
+    # (1 + y) * (1 - y), it suffers catastrophic cancellation and returns 0.0.
+    # With accuracy=AccuracyMode.HIGHEST, the derivative is computed directly
+    # from x as 4 * logistic(2x) * logistic(-2x), preserving the non-zero float32
+    # gradient in the saturated region.
+    x = jnp.float32(-9.010913848876953)
+    expected = jnp.float32(5.9604584379258085e-08)
+    default_grad = jax.grad(lax.tanh)(x)
+    self.assertEqual(default_grad, 0.0)
+    high_acc_grad = jax.grad(
+        lambda z: lax.tanh(z, accuracy=lax.AccuracyMode.HIGHEST)
+    )(x)
+    rtol = (
+        2e-6
+        if (
+            jtu.is_device_tpu()
+            and not jtu.is_device_tpu(5, "p")
+            and not jtu.is_device_tpu_at_least(6)
+        )
+        else 1e-6
+    )
+    self.assertAllClose(high_acc_grad, expected, atol=0.0, rtol=rtol)
+
+  def testTanhGradSymmetry(self):
+    # Because tanh(-x) == -tanh(x) and floating-point multiplication is
+    # commutative, g * ((1 + tanh(x)) * (1 - tanh(x))) is bit-for-bit identical
+    # for +x and -x for any x and any tangent/cotangent g.
+    x = jnp.linspace(0.1, 8.9, 100, dtype=jnp.float32)
+    g = jnp.full_like(x, 1.3)
+    _, jvp_pos = jax.jvp(lax.tanh, (x,), (g,))
+    _, jvp_neg = jax.jvp(lax.tanh, (-x,), (g,))
+    self.assertArraysEqual(jvp_pos, jvp_neg)
+    grad_fn = jax.vmap(jax.grad(lambda z: jnp.float32(1.3) * lax.tanh(z)))
+    self.assertArraysEqual(grad_fn(x), grad_fn(-x))
+
   def testExpm1Grad(self):
     x = jnp.arange(-80.0, 80.0, 1.0, dtype=jnp.float32)
     expected = jax.vmap(jax.grad(lambda x: lax.exp(x, accuracy=lax.AccuracyMode.HIGHEST)))(x)
     actual = jax.vmap(jax.grad(lambda x: lax.expm1(x, accuracy=lax.AccuracyMode.HIGHEST)))(x)
     self.assertAllClose(
         actual, expected, atol=jtu.default_tolerance()[np.dtype(np.float32)], rtol=0.0
+    )
+
+  def testExp2(self):
+    x = jnp.array([0.25, 0.5, 1.0, 2.0, 4.0], dtype=jnp.float32)
+    ln2 = np.float32(np.log(2.0))
+    self.assertAllClose(lax.exp2(x), np.exp2(x))
+    self.assertAllClose(
+        jax.grad(lambda z: jnp.sum(lax.exp2(z)))(x),
+        np.exp2(x) * ln2,
+    )
+
+  def testLog2(self):
+    x = jnp.array([0.25, 0.5, 1.0, 2.0, 4.0], dtype=jnp.float32)
+    ln2 = np.float32(np.log(2.0))
+    self.assertAllClose(lax.log2(x), np.log2(x))
+    self.assertAllClose(
+        jax.grad(lambda z: jnp.sum(lax.log2(z)))(x),
+        1.0 / (x * ln2),
     )
 
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
@@ -3757,6 +3813,51 @@ class LaxTest(jtu.JaxTestCase):
     not_nan = jax.grad(f)(0.)
     self.assertFalse(jnp.isnan(not_nan))
 
+  @jtu.sample_product(
+      use_jit=[True, False],
+      zero_all_val_cts=[True, False],
+  )
+  def test_optimization_barrier_grad_refs(self, use_jit, zero_all_val_cts):
+    x_ref = jax.new_ref(2.0)
+    y_ref = jax.new_ref(5.0)
+
+    def f(x, x_ref, y, y_ref, z):
+      x, x_ref, y, y_ref, z = jax.lax.optimization_barrier(
+          (x, x_ref, y, y_ref, z)
+      )
+      if zero_all_val_cts:
+        return x_ref[...] * y_ref[...]
+      return x * x_ref[...] + z * y_ref[...]
+
+    if use_jit:
+      f = jax.jit(f)
+
+    _, f_vjp = jax.vjp(f, 3.0, x_ref, 7.0, y_ref, 11.0)
+    x_grad_ref = jax.new_ref(0.0)
+    y_grad_ref = jax.new_ref(0.0)
+    f_vjp = f_vjp.with_refs(
+        jax.ad.GradValue(),
+        x_grad_ref,
+        jax.ad.GradValue(),
+        y_grad_ref,
+        jax.ad.GradValue(),
+    )
+    dx, dx_ref, dy, dy_ref, dz = f_vjp(1.0)
+    self.assertIsInstance(dx_ref, jax.ad.GradRef)
+    self.assertIsInstance(dy_ref, jax.ad.GradRef)
+    if zero_all_val_cts:
+      self.assertAllClose(dx, 0.0)
+      self.assertAllClose(dy, 0.0)
+      self.assertAllClose(dz, 0.0)
+      self.assertAllClose(x_grad_ref[...], 5.0)
+      self.assertAllClose(y_grad_ref[...], 2.0)
+    else:
+      self.assertAllClose(dx, 2.0)
+      self.assertAllClose(dy, 0.0)
+      self.assertAllClose(dz, 5.0)
+      self.assertAllClose(x_grad_ref[...], 3.0)
+      self.assertAllClose(y_grad_ref[...], 11.0)
+
   def test_shape_as_value_handles_static_shapes(self):
     result = lax.shape_as_value(())
     self.assertArraysEqual(result, lax.full((0,), np.array(0, np.int32)))
@@ -4131,8 +4232,8 @@ class FooTyRules:
 
   @staticmethod
   def result_handler(sticky_device, aval):
+    del sticky_device
     def handler(_, buf):
-      buf.aval = core.ShapedArray(buf.shape, buf.dtype)
       return FooArray(aval.shape, buf)
     return handler
 
@@ -4587,7 +4688,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     'arccos', 'arccosh', 'arcsin', 'arcsinh',
     'arctan', 'arctanh', 'conjugate', 'cos',
     'cosh', 'exp', 'exp2', 'expm1', 'log',
-    'log10', 'log1p', 'sin', 'sinh', 'sqrt',
+    'log10', 'log1p', 'log2', 'sin', 'sinh', 'sqrt',
     'square', 'tan', 'tanh', 'sinc', 'positive',
     'negative', 'absolute', 'sign'
   ]
@@ -4747,10 +4848,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'sign':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4')
 
-    elif name == 'log':
-      regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'ninf.imag', 'pinf.imag', 'ninfj.imag', 'pinfj.imag')
-
-    elif name == 'log10':
+    elif name in ('log', 'log2', 'log10'):
       regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'ninf.imag', 'pinf.imag', 'ninfj.imag', 'pinfj.imag')
 
     elif name == 'exp':
@@ -5130,6 +5228,22 @@ class CompositeTest(jtu.JaxTestCase):
         "Found a JAX Tracer as a constant in the decomposition for the "
         "composite op 'my.consts'."):
       jax.jit(fun)(x, scale)
+
+  def test_composite_custom_vjp(self):
+    with config.custom_vjp3(True):
+      @jax.custom_vjp
+      def f(x):
+        return 2.0 * x
+
+      f.defvjp(lambda x: (2.0 * x, ()), lambda res, g: (2.0 * g,))
+
+      @partial(lax.composite, name="my.custom_vjp")
+      def comp(x):
+        return f(x)
+
+      x = jnp.array(3.0)
+      self.assertEqual(comp(x), 6.0)
+      self.assertEqual(jax.jit(comp)(x), 6.0)
 
 
 class RaggedTest(jtu.JaxTestCase):

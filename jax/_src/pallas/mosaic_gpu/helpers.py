@@ -286,7 +286,7 @@ def planar_snake(
       isinstance(shape[1 - minor_dim], int)
       and shape[1 - minor_dim] & (shape[1 - minor_dim] - 1) == 0
   )
-  tile_width = jnp.int32(tile_width)
+  tile_width = jnp.int32(tile_width)  # pyrefly: ignore[bad-assignment]
   major_size = jnp.int32(shape[1 - minor_dim])
   minor_size = jnp.int32(shape[minor_dim])
   tile_size = tile_width * major_size
@@ -404,7 +404,12 @@ def dynamic_scheduling_loop(
           inline_ptx(_FENCE_PROXY_ASYNC_GENERIC_ACQUIRE_SHARED_CLUSTER)
 
         gpu_primitives.try_cluster_cancel(
-            try_cancel_buffer.at[slot], try_cancel_barrier.at[slot]
+            try_cancel_buffer.at[slot],
+            try_cancel_barrier.at[slot],
+            collective_axes=(
+                *cluster_axes,
+                *(() if thread_axis is None else (thread_axis,)),
+            ),
         )
 
         if user_carry is None:

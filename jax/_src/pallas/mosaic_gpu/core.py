@@ -31,7 +31,6 @@ from jax._src import api
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_batching
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import frozen_dict
@@ -127,6 +126,9 @@ class CompilerParams:
     profile_bounds_check: If True, profiler events past profile_space are
       dropped (the trace is truncated) instead of corrupting SMEM, at the cost
       of a slightly higher per-event profiling overhead.
+    skip_device_barrier: If True, skips the cross-device barrier before kernel
+      launch. Improper use of this flag can lead to race conditions. !!!Use with
+      caution!!! Defaults to False.
   """
   approx_math: bool = False
   dimension_semantics: Sequence[DimensionSemantics] | None = None
@@ -138,6 +140,7 @@ class CompilerParams:
   profile_trace_scope: TraceScope = TraceScope.WARPGROUP
   profile_bounds_check: bool = False
   lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Warpgroup
+  skip_device_barrier: bool = False
 
   def __post_init__(self):
     if self.dimension_semantics is not None:
@@ -252,11 +255,9 @@ WGxWARP_SEMANTICS = (
 
 def kernel(
     body: Callable[..., None] | api.NotSpecified = api.NotSpecified(),
-    out_shape: object | api.NotSpecified = api.NotSpecified(),
     *,
-    out_type: object | api.NotSpecified = api.NotSpecified(),
-    scratch_types: ScratchShapeTree | api.NotSpecified = api.NotSpecified(),
-    scratch_shapes: ScratchShapeTree | api.NotSpecified = api.NotSpecified(),
+    out_type: object = (),
+    scratch_types: ScratchShapeTree = (),
     compiler_params: pallas_core.CompilerParams | None = None,
     # Mesh kwargs
     grid: tuple[int, ...] = (),
@@ -277,10 +278,8 @@ def kernel(
       arguments passed into kernel returned by this function. The number of
       output and scratch Refs are determined by `out_shape` and `scratch_shapes`
       respectively.
-    out_shape: A deprecated alias for ``out_type``.
     out_type: The type of the output. Should be a PyTree of
       ``jax.ShapeDtypeStruct`` or JAX types.
-    scratch_shapes: A deprecated alias for ``scratch_types``.
     scratch_types: The types of the scratch ``Ref``\s to allocate. Should be a
       PyTree of ``jax.ShapeDtypeStruct`` or JAX types.
     compiler_params: Additional compiler options. See the `CompilerParams`
@@ -308,9 +307,7 @@ def kernel(
   if isinstance(body, api.NotSpecified):
     return lambda fun: kernel(
         fun,
-        out_shape,
         out_type=out_type,
-        scratch_shapes=scratch_shapes,
         scratch_types=scratch_types,
         compiler_params=compiler_params,
         grid=grid,
@@ -323,36 +320,6 @@ def kernel(
         debug=debug,
         **mesh_kwargs,
     )
-
-  if (
-      not isinstance(out_shape, api.NotSpecified)
-      or not isinstance(scratch_shapes, api.NotSpecified)
-  ):
-    deprecations.warn(
-        "jax-pallas-mgpu-shapes-types",
-        "The out_shape and scratch_shapes arguments to plgpu.kernel are"
-        " deprecated. Use out_type and scratch_types instead.",
-        stacklevel=2,
-    )
-
-  if not isinstance(out_shape, api.NotSpecified):
-    if not isinstance(out_type, api.NotSpecified):
-      raise ValueError(
-          "Cannot specify both out_shape and out_type. Use out_type."
-      )
-    out_type = out_shape
-  elif isinstance(out_type, api.NotSpecified):
-    out_type = ()
-
-  if not isinstance(scratch_shapes, api.NotSpecified):
-    if not isinstance(scratch_types, api.NotSpecified):
-      raise ValueError(
-          "Cannot specify both scratch_shapes and scratch_types. Use"
-          " scratch_types."
-      )
-    scratch_types = scratch_shapes
-  elif isinstance(scratch_types, api.NotSpecified):
-    scratch_types = ()
 
   if unwrap_out := not isinstance(out_type, (tuple, list)):
     out_type = (out_type,)
@@ -508,7 +475,13 @@ def _ref_group_tmem_col_size(refs: _GPUMemoryRefTree) -> int:
   """
   ncols = 0
   for ref in jax.tree.leaves(refs):
-    ref_ncols = ref.layout.cols_in_shape(ref.shape,
+    # Refs with leading batch dimensions are collapsed to 2D in TMEM (see
+    # `CollapseLeadingBatchDimensionsTransform`), so we compute the column count
+    # on the collapsed shape.
+    shape = ref.shape
+    if len(shape) > 2:
+      shape = (shape[-2], math.prod(shape[:-2]) * shape[-1])
+    ref_ncols = ref.layout.cols_in_shape(shape,
                                          dtypes.itemsize_bits(ref.dtype))
     ncols += align_to(ref_ncols, TMEM_COL_ALIGNMENT)
   return ncols
@@ -579,7 +552,9 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
         col_offset = align_to(col_offset, TMEM_COL_ALIGNMENT)
         if not isinstance(ref, pallas_core.TransformedRef):
           ref = pallas_core.TransformedRef(ref, transforms=())
-        ncols = ref.layout.cols_in_shape(ref.shape,
+        # `ref.ref.shape` is the physical (collapsed to 2D) TMEM shape, whereas
+        # `ref.shape` may carry leading batch dimensions.
+        ncols = ref.layout.cols_in_shape(ref.ref.shape,
                                          dtypes.itemsize_bits(ref.dtype))
         transform = ExtractAliasedRef.from_transformed_ref(
             ref, col_offset, group_idx, layout=ref.layout)
@@ -1548,7 +1523,7 @@ class ClusterBarrier:
 @dataclasses.dataclass(frozen=True)
 class WGMMAAccumulatorRef:
   shape: tuple[int, int]
-  dtype: jnp.dtype = jnp.float32
+  dtype: jax.typing.DTypeLike = jnp.float32
   _init: Any = state_types.uninitialized
 
   def get_ref_aval(self) -> state.AbstractRef:

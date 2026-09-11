@@ -152,13 +152,13 @@ def num_available_amd_gpus(stop_at: int | None = None) -> int:
               gpu_count += 1
               if stop_at is not None and gpu_count >= stop_at:
                 return gpu_count
-      except Exception as e:  # pylint: disable=broad-exception-caught
+      except Exception as e:
         logger.debug(
           "Failed to read KFD node file '%s': %s", node_props_path, e
         )
         continue
 
-  except Exception as e:  # pylint: disable=broad-exception-caught
+  except Exception as e:
     logger.warning("Failed to count AMD GPUs: %s", e)
     return -1
   return gpu_count
@@ -182,6 +182,6 @@ def get_shm_size_in_mb():
 
     return shm_size_mb
 
-  except Exception as e:  # pylint: disable=broad-exception-caught
+  except Exception as e:
     logger.debug("Failed to check /dev/shm size: %s", e)
     return 0

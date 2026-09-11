@@ -48,6 +48,7 @@ exp = np.exp
 exp2 = np.exp2
 expm1 = np.expm1
 log = np.log
+log2 = np.log2
 log1p = np.log1p
 tanh = np.tanh
 sin = np.sin

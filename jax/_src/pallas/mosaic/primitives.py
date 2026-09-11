@@ -15,7 +15,7 @@
 """Module for Pallas:TPU-specific JAX primitives and functions."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 import dataclasses
 import logging
 from typing import Any
@@ -41,6 +41,7 @@ from jax._src.random import prng as jax_prng
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
+from jax._src.state import types as state_types
 from jax._src.typing import DTypeLike
 import jax.numpy as jnp
 
@@ -790,17 +791,24 @@ def async_remote_copy(
 get_barrier_semaphore_p = jax_core.Primitive('get_barrier_semaphore')
 
 @get_barrier_semaphore_p.def_abstract_eval
-def _get_barrier_semaphore_abstract_eval():
+def _get_barrier_semaphore_abstract_eval(*, tag: Hashable | None = None):
+  del tag
   return state.AbstractRef(
       jax_core.ShapedArray((), pl_core.BarrierSemaphore()),
       tpu_core.MemorySpace.SEMAPHORE,
   )
 
-def get_barrier_semaphore():
+
+def get_barrier_semaphore(tag: Hashable | None = None):
   """Returns a barrier semaphore.
 
   This function returns a barrier semaphore based on the collective_id of the
-  current pallas kernel.
+  current pallas kernel or the optional tag provided.
+
+  Args:
+    tag: An optional collective ID or hashable tag (e.g. string or tuple)
+      identifying the barrier semaphore. When provided, kernels sharing the same
+      tag will be assigned the same barrier semaphore by XLA.
 
   It's very important that the semaphore is wait-ed back down to 0, or else the
   semaphores will become corrupted.
@@ -817,7 +825,7 @@ def get_barrier_semaphore():
   Note that reusing the same collective_id doesn't guarantee that the same
   semaphore is provided by XLA.
   """
-  return get_barrier_semaphore_p.bind()
+  return get_barrier_semaphore_p.bind(tag=tag)
 
 
 # RNG Ops
@@ -1577,3 +1585,81 @@ def _conv_abstract_eval(
   )
   out_dtype = preferred_element_type or lhs.dtype
   return jax_core.ShapedArray(out_shape, out_dtype)
+
+
+def annotate(
+    ref: Any,
+    *,
+    no_store: bool = False,
+    no_bank_conflict: bool = False,
+    no_hazard: bool = False,
+    no_hazard_no_deps: bool = False,
+) -> state_types.TransformedRef:
+  """Annotates a memory reference or slice with access assumptions.
+
+  Attaches memory access assumptions to the underlying reference when lowering
+  to Mosaic/TPU, allowing the compiler to override default scheduling, alias
+  analysis, bundle packing, or hazard latency.
+
+  Supported keyword arguments:
+
+  * ``no_store``: (VMEM/SMEM) Marks the reference as pure and
+    rematerializable. There are no stores to this buffer within the kernel, so
+    instead of spilling registers to memory, the compiler can reload the value
+    from VMEM/SMEM. DMAs are still permitted.
+  * ``no_bank_conflict``: (VMEM/SMEM) Asserts that accesses will not experience
+    bank conflicts between slots, improving bundle packing. Always sound to
+    add, but can cause VLIW bundle delays if conflicts actually happen.
+  * ``no_hazard``: (VMEM-only) Sets the read-after-write (RAW) hazard latency
+    to 1 cycle while keeping data dependencies. Always sound to add, but
+    if there is a legitimate read-after-write dependency then there will be a
+    significant performance penalty.
+  * ``no_hazard_no_deps``: (VMEM-only) Drops all memory dependencies between
+    loads and stores to this buffer, except across global memory barriers.
+    Register data dependencies are preserved, but loads and stores to the
+    annotated ref may be reordered.
+
+  ``no_bank_conflict`` can be combined with at most one of ``no_store``,
+  ``no_hazard``, or ``no_hazard_no_deps``. On TPUs older than TPU v4, some
+  attributes (such as ``no_hazard`` and ``no_bank_conflict``) will be stripped.
+
+  Args:
+    ref: The reference or slice to annotate.
+    no_store: Whether the buffer is rematerializable and has no stores.
+    no_bank_conflict: Asserts accesses will not experience bank conflicts.
+    no_hazard: Sets RAW hazard latency to 1 cycle.
+    no_hazard_no_deps: Drops memory dependencies between loads and stores.
+
+  Returns:
+    The annotated reference as a ``TransformedRef``.
+  """
+  assumption = tpu_core.AccessAssumption(
+      no_store=no_store,
+      no_bank_conflict=no_bank_conflict,
+      no_hazard=no_hazard,
+      no_hazard_no_deps=no_hazard_no_deps,
+  )
+  if not isinstance(ref, state_types.TransformedRef):
+    if not isinstance(jax_core.typeof(ref), state.AbstractRef):
+      raise TypeError(f"ref must be a reference, got {ref}")
+    ref = state_types.TransformedRef(ref, transforms=())
+  underlying_aval = ref.ref.aval
+  assert isinstance(underlying_aval, state.AbstractRef)
+  memory_space = underlying_aval.memory_space
+  if isinstance(memory_space, pl_core.CoreMemorySpace):
+    memory_space = memory_space.memory_space
+  if assumption.no_hazard or assumption.no_hazard_no_deps:
+    if memory_space != tpu_core.MemorySpace.VMEM:
+      raise ValueError(
+          "Hazard overrides ('no_hazard' or 'no_hazard_no_deps') are only"
+          f" valid for VMEM references, but got memory space: {memory_space}"
+      )
+  new_transforms = []
+  for transform in ref.transforms:
+    if isinstance(transform, tpu_core.AccessAssumptionTransform):
+      assumption = transform.assumption.union(assumption)
+    else:
+      new_transforms.append(transform)
+  return state_types.TransformedRef(
+      ref.ref, (*new_transforms, tpu_core.AccessAssumptionTransform(assumption))
+  )

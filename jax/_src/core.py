@@ -2955,6 +2955,8 @@ def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any, pin: bool):
     if init_aval.memory_space is not MemorySpace.Device:
       memory_space = init_aval.memory_space
     init_aval = init_aval.update(memory_space=MemorySpace.Device)
+  if isinstance(init_aval, ShapedArray) and init_aval.weak_type:
+    init_aval = init_aval.update(weak_type=False)
   return (AbstractRef(init_aval, memory_space=memory_space, kind=kind),
           {internal_mutable_array_effect})
 
@@ -2968,9 +2970,14 @@ def _ref_impl(init_val, *, memory_space: Any, kind: Any, pin: bool):
         "pinned array ref only works inside of a `jit`.")
   from jax._src.api import device_put  # pyrefly: ignore[missing-import]
   from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
-  from jax._src.lax.lax import _array_copy  # pyrefly: ignore[missing-import]
-  aval = AbstractRef(typeof(init_val), kind=kind)
-  buf = _array_copy(init_val)
+  from jax._src.lax.lax import _array_copy, _convert_element_type  # pyrefly: ignore[missing-import]
+  if dtypes.is_weakly_typed(init_val):
+    buf = _convert_element_type(
+        init_val, dtypes.dtype(init_val), weak_type=False
+    )
+  else:
+    buf = _array_copy(init_val)
+  aval = AbstractRef(typeof(buf), kind=kind)
   if not buf.committed:
     buf = device_put(buf, buf.sharding)
   return Ref(aval, ArrayRefImpl(aval, buf))
@@ -2997,6 +3004,8 @@ empty_ref_p.to_lojax = _empty_ref_to_lojax
 @empty_ref_p.def_effectful_abstract_eval
 def _empty_ref_abstract_eval(*, ty, memory_space, pin):
   from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
+  if isinstance(ty, ShapedArray) and ty.weak_type:
+    ty = ty.update(weak_type=False)
   return (AbstractRef(ty, memory_space=memory_space),
           {internal_mutable_array_effect})
 

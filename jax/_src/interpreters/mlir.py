@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Hashable, Iterable, Iterator, Sequence
 import dataclasses
 import functools
 from functools import partial
@@ -782,11 +782,61 @@ class LoweringCacheKey:
         f"platforms={self.platforms})"
     )
 
-@dataclasses.dataclass(frozen=True)
+
+def _find_manual_pallas_collective_ids(
+    jaxpr: core.Jaxpr,
+    visited: set[core.Jaxpr] | None = None,
+) -> set[int]:
+  if visited is None:
+    visited = set()
+  elif jaxpr in visited:
+    return set()
+  visited.add(jaxpr)
+
+  manual_ids: set[int] = set()
+  for eqn in jaxpr.eqns:
+    if eqn.primitive.name in ("pallas_call", "mpmd_map"):
+      from jax._src.pallas.mosaic import core as tpu_core  # pyrefly: ignore[missing-import]
+
+      if (params := eqn.params.get("compiler_params")) is not None:
+        if (isinstance(params, tpu_core.CompilerParams)
+            and params.collective_id is not None):
+          manual_ids.add(params.collective_id)
+    else:
+      for subjaxpr in core.jaxprs_in_params(eqn.params):
+        manual_ids |= _find_manual_pallas_collective_ids( subjaxpr, visited)
+  return manual_ids
+
+
+@dataclasses.dataclass
 class CollectiveIdMapping:
-  auto: dict[Any, int] = dataclasses.field(default_factory=dict)
-  manual: dict[Any, int] = dataclasses.field(default_factory=dict)
+  auto: dict[Hashable, int] = dataclasses.field(default_factory=dict)
+  manual: dict[Hashable, int] = dataclasses.field(default_factory=dict)
   all_ids: set[int] = dataclasses.field(default_factory=set)
+
+  @classmethod
+  def from_jaxpr(cls, jaxpr: core.Jaxpr) -> CollectiveIdMapping:
+    if config.jax_pallas_auto_assign_collective_ids.value == "override":
+      return cls()
+    return cls(all_ids=_find_manual_pallas_collective_ids(jaxpr))
+
+  def get_or_allocate_id(self, key: Hashable) -> tuple[int, bool]:
+    """Retrieves an existing auto-assigned ID or allocates a new one.
+
+    Returns:
+      A tuple of (collective_id, is_new).
+    """
+    if key in self.auto:
+      return self.auto[key], False
+    new_id = next(id_ for id_ in itertools.count(0) if id_ not in self.all_ids)
+    self.auto[key] = new_id
+    self.all_ids.add(new_id)
+    return new_id, True
+
+  def register_manual_id(self, key: Hashable, collective_id: int) -> None:
+    """Registers a manually assigned collective_id."""
+    self.manual[key] = collective_id
+    self.all_ids.add(collective_id)
 
 @dataclasses.dataclass(frozen=True)
 class LoweringCacheValue:
@@ -1429,7 +1479,13 @@ def lower_jaxpr_to_module(
                       host_callbacks=host_callbacks,
                       lowering_parameters=lowering_parameters,
                       shape_poly_state=ShapePolyLoweringState(dim_vars, platforms),
-                      all_default_mem_kind=all_default_mem_kind)
+                      all_default_mem_kind=all_default_mem_kind,
+                      pallas_collective_id_mapping=(
+                          CollectiveIdMapping.from_jaxpr(jaxpr.jaxpr)
+                          if "tpu" in platforms
+                          else None
+                      ),
+  )
   with ctx.context, ir.Location.unknown(ctx.context):
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.

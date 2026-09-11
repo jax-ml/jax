@@ -351,7 +351,7 @@ class LaxLinalgEighTest(jtu.JaxTestCase):
         continue
       if (
           implementation == lax.linalg.EighImplementation.JACOBI
-          and jtu.test_device_matches(["cpu"])
+          and jtu.test_device_matches(["cpu", "oneapi"])
       ):
         continue
       if (

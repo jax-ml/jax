@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -209,9 +210,9 @@ absl::Status InitTmaDescriptor(mlir::OpBuilder& builder,
     slice_as_i64.push_back(Constant(b, slice_dim, b.getI64Type()));
   }
 
-  TF_ASSIGN_OR_RETURN(Pointer sizes_array, ToLLVMArray(b, sizes_as_i64));
-  TF_ASSIGN_OR_RETURN(Pointer strides_array, ToLLVMArray(b, strides_as_i64));
-  TF_ASSIGN_OR_RETURN(Pointer slice_array, ToLLVMArray(b, slice_as_i64));
+  ABSL_ASSIGN_OR_RETURN(Pointer sizes_array, ToLLVMArray(b, sizes_as_i64));
+  ABSL_ASSIGN_OR_RETURN(Pointer strides_array, ToLLVMArray(b, strides_as_i64));
+  ABSL_ASSIGN_OR_RETURN(Pointer slice_array, ToLLVMArray(b, slice_as_i64));
 
   IntegerType i64 = b.getI64Type();
 
@@ -1376,39 +1377,24 @@ void ReinterpretCastOp::getCanonicalizationPatterns(
   patterns.add<FoldMGPUReinterpretCastOfSliceSMEM>(context);
 }
 
-namespace {
-
-struct FuseChainedBroadcastInDims
-    : public mlir::OpRewritePattern<BroadcastInDimOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  mlir::LogicalResult matchAndRewrite(
-      BroadcastInDimOp op, mlir::PatternRewriter& rewriter) const override {
-    auto parent_bcast = op.getOperand().getDefiningOp<BroadcastInDimOp>();
-    if (!parent_bcast) {
-      return mlir::failure();
-    }
-
-    llvm::ArrayRef<int64_t> dims1 = parent_bcast.getBroadcastDimensions();
-    llvm::ArrayRef<int64_t> dims2 = op.getBroadcastDimensions();
-
-    llvm::SmallVector<int64_t> new_dims;
-    new_dims.reserve(dims1.size());
-    for (int64_t dim : dims1) {
-      new_dims.push_back(dims2[dim]);
-    }
-
-    rewriter.replaceOpWithNewOp<BroadcastInDimOp>(
-        op, op.getType(), parent_bcast.getOperand(), new_dims);
-    return mlir::success();
+mlir::OpFoldResult BroadcastInDimOp::fold(FoldAdaptor) {
+  // Fold chains: broadcast_in_dim(broadcast_in_dim(x)) -> broadcast_in_dim(x).
+  auto parent_bcast = getOperand().getDefiningOp<BroadcastInDimOp>();
+  if (!parent_bcast) {
+    return {};
   }
-};
+  llvm::ArrayRef<int64_t> dims1 = parent_bcast.getBroadcastDimensions();
+  llvm::ArrayRef<int64_t> dims2 = getBroadcastDimensions();
 
-}  // namespace
+  llvm::SmallVector<int64_t> new_dims;
+  new_dims.reserve(dims1.size());
+  for (int64_t dim : dims1) {
+    new_dims.push_back(dims2[dim]);
+  }
 
-void BroadcastInDimOp::getCanonicalizationPatterns(
-    mlir::RewritePatternSet& patterns, mlir::MLIRContext* context) {
-  patterns.add<FuseChainedBroadcastInDims>(context);
+  getOperandMutable().assign(parent_bcast.getOperand());
+  setBroadcastDimensions(new_dims);
+  return getResult();
 }
 
 namespace {

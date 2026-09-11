@@ -427,12 +427,20 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
         "xla/ffi/api/c_api.h",
         "xla/ffi/api/api.h",
         "xla/ffi/api/ffi.h",
+        "xla/ffi/api/collectives_c_api.h",
+        "xla/ffi/api/collectives_api.h",
+        "xla/ffi/api/record_c_api.h",
+        "xla/ffi/api/record_api.h",
     ]
   else:
     xla_ffi_files = [
         f"{source_file_prefix}jaxlib/include/xla/ffi/api/c_api.h",
         f"{source_file_prefix}jaxlib/include/xla/ffi/api/api.h",
         f"{source_file_prefix}jaxlib/include/xla/ffi/api/ffi.h",
+        f"{source_file_prefix}jaxlib/include/xla/ffi/api/collectives_c_api.h",
+        f"{source_file_prefix}jaxlib/include/xla/ffi/api/collectives_api.h",
+        f"{source_file_prefix}jaxlib/include/xla/ffi/api/record_c_api.h",
+        f"{source_file_prefix}jaxlib/include/xla/ffi/api/record_api.h",
     ]
 
   copy_files(

@@ -27,7 +27,7 @@ import numpy as np
 
 from jax._src import core
 from jax._src import dtypes
-from jax._src.api import jit
+from jax._src.api import Inline, jit
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax
 from jax._src.lax import other as lax_other
@@ -65,7 +65,7 @@ def _to_bool(x: Array) -> Array:
 
 def unary_ufunc(func: Callable[[ArrayLike], Array]) -> ufunc:
   """An internal helper function for defining unary ufuncs."""
-  func_jit = jit(func, inline=True)
+  func_jit = jit(func, inline=Inline.JAX_EARLY)
   return ufunc(func_jit, name=func.__name__, nin=1, nout=1, call=func_jit)
 
 
@@ -75,14 +75,14 @@ def binary_ufunc(identity: Any, reduce: Callable[..., Any] | None = None,
                  reduceat: Callable[..., Any] | None = None) -> Callable[[Callable[[ArrayLike, ArrayLike], Array]], ufunc]:
   """An internal helper function for defining binary ufuncs."""
   def decorator(func: Callable[[ArrayLike, ArrayLike], Array]) -> ufunc:
-    func_jit = jit(func, inline=True)
+    func_jit = jit(func, inline=Inline.JAX_EARLY)
     return ufunc(func_jit, name=func.__name__, nin=2, nout=1, call=func_jit,
                  identity=identity, reduce=reduce, accumulate=accumulate, at=at, reduceat=reduceat)
   return decorator
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def fabs(x: ArrayLike, /) -> Array:
   """Compute the element-wise absolute values of the real-valued input.
 
@@ -127,21 +127,21 @@ def fabs(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def bitwise_invert(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.invert`."""
   return lax.bitwise_not(*promote_args('bitwise_invert', x))
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def bitwise_not(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.invert`."""
   return lax.bitwise_not(*promote_args('bitwise_not', x))
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def invert(x: ArrayLike, /) -> Array:
   """Compute the bitwise inversion of an input.
 
@@ -234,7 +234,7 @@ def negative(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def positive(x: ArrayLike, /) -> Array:
   """Return element-wise positive values of the input.
 
@@ -283,7 +283,7 @@ def positive(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def sign(x: ArrayLike, /) -> Array:
   r"""Return an element-wise indication of sign of the input.
 
@@ -334,7 +334,7 @@ def sign(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def floor(x: ArrayLike, /) -> Array:
   """Round input to the nearest integer downwards.
 
@@ -373,7 +373,7 @@ def floor(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def ceil(x: ArrayLike, /) -> Array:
   """Round input to the nearest integer upwards.
 
@@ -412,7 +412,7 @@ def ceil(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def exp(x: ArrayLike, /) -> Array:
   """Calculate element-wise exponential of the input.
 
@@ -424,6 +424,20 @@ def exp(x: ArrayLike, /) -> Array:
   Returns:
     An array containing the exponential of each element in ``x``, promotes to
     inexact dtype.
+
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             0             1            1
+    NVIDIA GPU      1             1            2
+    TPU v2–v5e      1             1            116
+    TPU v5p         1             1            109
+    TPU v6e         1             1            64
+    TPU 7x          1             1            65
+    ==============  ============  ===========  ===========
 
   See also:
     - :func:`jax.numpy.log`: Calculates element-wise logarithm of the input.
@@ -454,7 +468,7 @@ def exp(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def log(x: ArrayLike, /) -> Array:
   """Calculate element-wise natural logarithm of the input.
 
@@ -466,6 +480,19 @@ def log(x: ArrayLike, /) -> Array:
   Returns:
     An array containing the logarithm of each element in ``x``, promotes to inexact
     dtype.
+
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             0             1            1
+    NVIDIA GPU      0             1            1
+    TPU v2–v5e      1             1            4030
+    TPU v5p         0             1            62
+    TPU v6e, 7x     0             1            2
+    ==============  ============  ===========  ===========
 
   See also:
     - :func:`jax.numpy.exp`: Calculates element-wise exponential of the input.
@@ -494,7 +521,7 @@ def log(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def expm1(x: ArrayLike, /) -> Array:
   """Calculate ``exp(x)-1`` of each element of the input.
 
@@ -539,7 +566,7 @@ def expm1(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def log1p(x: ArrayLike, /) -> Array:
   """Calculates element-wise logarithm of one plus input, ``log(x+1)``.
 
@@ -582,7 +609,7 @@ def log1p(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def sin(x: ArrayLike, /) -> Array:
   """Compute a trigonometric sine of each element of input.
 
@@ -594,6 +621,17 @@ def sin(x: ArrayLike, /) -> Array:
   Returns:
     An array containing the sine of each element in ``x``, promotes to inexact
     dtype.
+
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             1             1            1
+    NVIDIA GPU      0             1            1
+    TPU             1             1            3
+    ==============  ============  ===========  ===========
 
   See also:
     - :func:`jax.numpy.cos`: Computes a trigonometric cosine of each element of
@@ -616,7 +654,7 @@ def sin(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def cos(x: ArrayLike, /) -> Array:
   """Compute a trigonometric cosine of each element of input.
 
@@ -628,6 +666,17 @@ def cos(x: ArrayLike, /) -> Array:
   Returns:
     An array containing the cosine of each element in ``x``, promotes to inexact
     dtype.
+
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             0             1            1
+    NVIDIA GPU      0             1            2
+    TPU             0             1            3
+    ==============  ============  ===========  ===========
 
   See also:
     - :func:`jax.numpy.sin`: Computes a trigonometric sine of each element of input.
@@ -649,7 +698,7 @@ def cos(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def tan(x: ArrayLike, /) -> Array:
   """Compute a trigonometric tangent of each element of input.
 
@@ -661,6 +710,19 @@ def tan(x: ArrayLike, /) -> Array:
   Returns:
     An array containing the tangent of each element in ``x``, promotes to inexact
     dtype.
+
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             0             1            0
+    NVIDIA GPU      0             1            3
+    TPU v2–v5e      0             1            6
+    TPU v5p         0             1            7
+    TPU v6e, 7x     0             1            5
+    ==============  ============  ===========  ===========
 
   See also:
     - :func:`jax.numpy.sin`: Computes a trigonometric sine of each element of input.
@@ -682,7 +744,7 @@ def tan(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def arcsin(x: ArrayLike, /) -> Array:
   r"""Compute element-wise inverse of trigonometric sine of input.
 
@@ -726,7 +788,7 @@ def arcsin(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def arccos(x: ArrayLike, /) -> Array:
   """Compute element-wise inverse of trigonometric cosine of input.
 
@@ -771,7 +833,7 @@ def arccos(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def arctan(x: ArrayLike, /) -> Array:
   """Compute element-wise inverse of trigonometric tangent of input.
 
@@ -812,7 +874,7 @@ def arctan(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def sinh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise hyperbolic sine of input.
 
@@ -833,6 +895,19 @@ def sinh(x: ArrayLike, /) -> Array:
 
   Note:
     ``jnp.sinh`` is equivalent to computing ``-1j * jnp.sin(1j * x)``.
+
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             0             1            24
+    NVIDIA GPU      0             0            3
+    TPU v2–v5e      1             1            1794
+    TPU v5p         1             1            1332
+    TPU v6e, 7x     1             1            59
+    ==============  ============  ===========  ===========
 
   See also:
     - :func:`jax.numpy.cosh`: Computes the element-wise hyperbolic cosine of the
@@ -867,7 +942,7 @@ def sinh(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def cosh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise hyperbolic cosine of input.
 
@@ -888,6 +963,19 @@ def cosh(x: ArrayLike, /) -> Array:
 
   Note:
     ``jnp.cosh`` is equivalent to computing ``jnp.cos(1j * x)``.
+
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             0             1            24
+    NVIDIA GPU      0             1            2
+    TPU v2–v5e      0             1            93
+    TPU v5p         1             1            99
+    TPU v6e, 7x     1             1            59
+    ==============  ============  ===========  ===========
 
   See also:
     - :func:`jax.numpy.sinh`: Computes the element-wise hyperbolic sine of the input.
@@ -921,7 +1009,7 @@ def cosh(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def arcsinh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise inverse of hyperbolic sine of input.
 
@@ -1028,7 +1116,7 @@ def arccosh(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def tanh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise hyperbolic tangent of input.
 
@@ -1048,7 +1136,28 @@ def tanh(x: ArrayLike, /) -> Array:
     to inexact dtype.
 
   Note:
-    ``jnp.tanh`` is equivalent to computing ``-1j * jnp.tan(1j * x)``.
+    - ``jnp.tanh`` is equivalent to computing ``-1j * jnp.tan(1j * x)``.
+    - By default, the gradient of ``tanh`` is computed using the forward output
+      :math:`y = \mathrm{tanh}(x)` as :math:`(1 + y)(1 - y)`. In the region
+      where :math:`\mathrm{tanh}(x)` rounds to :math:`\pm 1` in floating-point
+      arithmetic (approximately :math:`|x| \ge 9` for ``float32`` and
+      :math:`|x| \ge 19` for ``float64``), the computed gradient evaluates to
+      ``0.0``, even though the true derivative may still be a non-zero
+      floating-point number. To preserve non-zero gradients in this region,
+      use :func:`jax.lax.tanh` with ``accuracy=jax.lax.AccuracyMode.HIGHEST``.
+
+  Numerical Precision:
+    Maximum error in units in the last place (ULPs):
+
+    ==============  ============  ===========  ===========
+    Platform        ``bfloat16``  ``float16``  ``float32``
+    ==============  ============  ===========  ===========
+    CPU             0             0            5
+    NVIDIA GPU      0             0            5
+    TPU v2–v5e      0             1            1365
+    TPU v5p         0             1            92
+    TPU v6e, 7x     0             0            1
+    ==============  ============  ===========  ===========
 
   See also:
     - :func:`jax.numpy.sinh`: Computes the element-wise hyperbolic sine of the input.
@@ -1082,7 +1191,7 @@ def tanh(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def arctanh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise inverse of hyperbolic tangent of input.
 
@@ -1133,7 +1242,7 @@ def arctanh(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def sqrt(x: ArrayLike, /) -> Array:
   """Calculates element-wise non-negative square root of the input array.
 
@@ -1168,7 +1277,7 @@ def sqrt(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def cbrt(x: ArrayLike, /) -> Array:
   """Calculates element-wise cube root of the input array.
 
@@ -1372,7 +1481,7 @@ def bitwise_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def left_shift(x: ArrayLike, y: ArrayLike, /) -> Array:
   r"""Shift bits of ``x`` to left by the amount specified in ``y``, element-wise.
 
@@ -1428,14 +1537,14 @@ def left_shift(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def bitwise_left_shift(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.left_shift`."""
   return lax.shift_left(*promote_args_numeric("bitwise_left_shift", x, y))
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def equal(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Returns element-wise truth value of ``x == y``.
 
@@ -1485,7 +1594,7 @@ def equal(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def not_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Returns element-wise truth value of ``x != y``.
 
@@ -1572,7 +1681,7 @@ def subtract(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def arctan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   r"""Compute the arctangent of x1/x2, choosing the correct quadrant.
 
@@ -1747,7 +1856,7 @@ def maximum(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def float_power(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Calculate element-wise base ``x`` exponential of ``y``.
 
@@ -1796,7 +1905,7 @@ def float_power(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def nextafter(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise next floating point value after ``x`` towards ``y``.
 
@@ -1824,7 +1933,7 @@ def nextafter(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def spacing(x: ArrayLike, /) -> Array:
   """Return the spacing between ``x`` and the next adjacent number.
 
@@ -1932,7 +2041,7 @@ def logical_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def logical_not(x: ArrayLike, /) -> Array:
   """Compute NOT bool(x) element-wise.
 
@@ -1979,7 +2088,7 @@ def _complex_comparison(lax_op: Callable[[ArrayLike, ArrayLike], Array],
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def greater_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise truth value of ``x >= y``.
 
@@ -2025,7 +2134,7 @@ def greater_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def greater(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise truth value of ``x > y``.
 
@@ -2072,7 +2181,7 @@ def greater(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def less_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise truth value of ``x <= y``.
 
@@ -2119,7 +2228,7 @@ def less_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def less(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise truth value of ``x < y``.
 
@@ -2167,49 +2276,49 @@ def less(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 # Array API aliases
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def acos(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arccos`"""
   return arccos(*promote_args('acos', x))
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def acosh(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arccosh`"""
   return arccosh(*promote_args('acosh', x))
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def asin(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arcsin`"""
   return arcsin(*promote_args('asin', x))
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def asinh(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arcsinh`"""
   return arcsinh(*promote_args('asinh', x))
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def atan(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arctan`"""
   return arctan(*promote_args('atan', x))
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def atanh(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arctanh`"""
   return arctanh(*promote_args('atanh', x))
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def atan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arctan2`"""
   return arctan2(*promote_args('atan2', x1, x2))
@@ -2253,7 +2362,7 @@ def bitwise_count(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   r"""Right shift the bits of ``x1`` to the amount specified in ``x2``.
 
@@ -2305,14 +2414,14 @@ def right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def bitwise_right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.right_shift`."""
   return right_shift(x1, x2)
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def absolute(x: ArrayLike, /) -> Array:
   r"""Calculate the absolute value element-wise.
 
@@ -2352,7 +2461,7 @@ def absolute(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def abs(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.absolute`."""
   return absolute(x)
@@ -2439,7 +2548,7 @@ def copysign(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def true_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Calculates the division of x1 by x2 element-wise
 
@@ -2699,7 +2808,7 @@ def pow(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.power`"""
   return power(x1, x2)
 
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def _power(x1: ArrayLike, x2: ArrayLike) -> Array:
   x1, x2 = promote_shapes("power", x1, x2)  # not dtypes
 
@@ -2792,7 +2901,7 @@ def logaddexp2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def log2(x: ArrayLike, /) -> Array:
   """Calculates the base-2 logarithm of ``x`` element-wise.
 
@@ -2811,19 +2920,13 @@ def log2(x: ArrayLike, /) -> Array:
     Array([-2., -1.,  0.,  1.,  2.,  3.], dtype=float32)
   """
   x, = promote_args_inexact("log2", x)
-  if dtypes.issubdtype(x.dtype, np.complexfloating):
-    r = lax.log(x)
-    re = lax.real(r)
-    im = lax.imag(r)
-    ln2 = lax.log(_constant_like(re, 2))
-    return lax.complex(lax.div(re, ln2), lax.div(im, ln2))
-  out = lax.div(lax.log(x), lax.log(_constant_like(x, 2)))
+  out = lax.log2(x)
   jnp_error._set_error_if_nan(out)
   return out
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def log10(x: ArrayLike, /) -> Array:
   """Calculates the base-10 logarithm of x element-wise
 
@@ -2856,7 +2959,7 @@ def log10(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def exp2(x: ArrayLike, /) -> Array:
   """Calculate element-wise base-2 exponential of input.
 
@@ -3191,7 +3294,7 @@ def fmod(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def square(x: ArrayLike, /) -> Array:
   """Calculate element-wise square of the input array.
 
@@ -3241,7 +3344,7 @@ def square(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def deg2rad(x: ArrayLike, /) -> Array:
   r"""Convert angles from degrees to radians.
 
@@ -3276,7 +3379,7 @@ def deg2rad(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def rad2deg(x: ArrayLike, /) -> Array:
   r"""Convert angles from radians to degrees.
 
@@ -3324,7 +3427,7 @@ def radians(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def conjugate(x: ArrayLike, /) -> Array:
   """Return element-wise complex-conjugate of the input.
 
@@ -3360,7 +3463,7 @@ def conj(x: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def imag(val: ArrayLike, /) -> Array:
   """Return element-wise imaginary of part of the complex argument.
 
@@ -3392,7 +3495,7 @@ def imag(val: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def real(val: ArrayLike, /) -> Array:
   """Return element-wise real part of the complex argument.
 
@@ -3458,7 +3561,7 @@ def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def isfinite(x: ArrayLike, /) -> Array:
   """Return a boolean array indicating whether each element of input is finite.
 
@@ -3635,7 +3738,7 @@ def isneginf(x, /, out=None):
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def isnan(x: ArrayLike, /) -> Array:
   """Returns a boolean array indicating whether each element of input is ``NaN``.
 
@@ -3770,7 +3873,7 @@ def hypot(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @export
-@jit(inline=True)
+@jit(inline=Inline.JAX_EARLY)
 def reciprocal(x: ArrayLike, /) -> Array:
   """Calculate element-wise reciprocal of the input.
 

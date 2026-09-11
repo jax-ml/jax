@@ -14,14 +14,14 @@
 
 """Tests for distributed pallas GPU operations."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import math
 import os
 import tempfile
 import types
-from typing import ClassVar, TYPE_CHECKING
+from typing import Any, ClassVar, TYPE_CHECKING
 from unittest import mock
 
 from absl.testing import absltest
@@ -153,6 +153,25 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
         plgpu.SwizzleTransform(swizzle),
     )
 
+  def assert_arrays_equal_per_shard(
+      self,
+      y: jax.Array,
+      expected_fn: Callable[[int], Any],
+      **kwargs,
+  ):
+    if hasattr(y.sharding, "mesh"):
+      devices = list(y.sharding.mesh.devices.flat)
+    elif hasattr(y.sharding, "_internal_device_list"):
+      devices = list(y.sharding._internal_device_list)
+    else:
+      devices = list(y.sharding.device_set)
+    self.assertNotEmpty(y.addressable_shards)
+    if jax.process_count() == 1:
+      self.assertLen(y.addressable_shards, len(devices))
+    for shard in y.addressable_shards:
+      dev_idx = devices.index(shard.device)
+      np.testing.assert_array_equal(shard.data, expected_fn(dev_idx), **kwargs)
+
 
 class PallasCallRemoteDMATest(TestCase):
   def setUp(self):
@@ -196,8 +215,57 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[8:] if jax.process_index() == 0 else x[:8]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+    )
+
+  def test_skip_device_sync(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    # Kernel with cross-device barrier which makes sure that the other device
+    # has completed the previous kernel.
+    def barrier_kernel(x_ref, y_ref):
+      other_dev_id = 1 - lax.axis_index("x")
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+
+    # Kernel with no cross-device barrier.
+    def skip_barrier_kernel(x_ref, y_ref):
+      other_dev_id = 1 - lax.axis_index("x")
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...] * 2
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+
+    # The first kernel is executed with a device barrier, the second without.
+    def body(x):
+      y = self.kernel(
+          barrier_kernel,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+      )(x)
+      y_ref = jax.new_ref(y)
+      self.kernel(
+          skip_barrier_kernel,
+          compiler_params=plgpu.CompilerParams(skip_device_barrier=True),
+      )(x, y_ref)
+      return jax.freeze(y_ref)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    sharded_fn = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    hlo = sharded_fn.lower(x).compile().as_text()
+    self.assertIn("skip_device_barrier = true", hlo)
 
   def test_remote_dma_tma_load(self):
     if jax.process_index() > 2:
@@ -242,8 +310,9 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[8:] if jax.process_index() == 0 else x[:8]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+    )
 
   def test_remote_dma_dynamic_other_device_id(self):
     # Regression test for device_collective_metadata being DCE'd under
@@ -286,8 +355,9 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x, other_dev_ids)
 
-    expected = x[8:] if jax.process_index() == 0 else x[:8]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+    )
 
   # Test verifies an execution of HLO with several slightly different mosaic
   # custom calls. The difference is needed to validate correct initialization
@@ -349,8 +419,9 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[:8] if jax.process_index() == 0 else x[8:]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[:8] if dev_idx == 0 else x[8:]
+    )
 
   def test_remote_dma_inline_mgpu(self):
     if jax.process_index() > 2:
@@ -418,8 +489,9 @@ class PallasCallRemoteDMATest(TestCase):
     )(x)
     y.block_until_ready()
 
-    expected = x[128:] if jax.process_index() == 0 else x[:128]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[128:] if dev_idx == 0 else x[:128]
+    )
 
   def test_remote_dma_with_retries(self):
     if jax.process_index() > 2:
@@ -458,8 +530,9 @@ class PallasCallRemoteDMATest(TestCase):
     for _ in range(51):
       y = jit_body(y)
 
-    expected = x[8:] if jax.process_index() == 0 else x[:8]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+    )
 
   def test_remote_dma_with_profiler(self):
     if jax.process_index() > 2:
@@ -502,8 +575,9 @@ class PallasCallRemoteDMATest(TestCase):
             )
         )(x)
 
-      expected = x[8:] if jax.process_index() == 0 else x[:8]
-      np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+      self.assert_arrays_equal_per_shard(
+          y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+      )
 
   def test_remote_dma_in_loop(self):
     if jax.process_index() > 2:
@@ -543,8 +617,9 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[1:] if jax.process_index() == 0 else x[:1]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[1:] if dev_idx == 0 else x[:1]
+    )
 
   def test_remote_dma_dynamic_index(self):
     if jax.process_index() > 2:
@@ -580,8 +655,9 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[1:] if jax.process_index() == 0 else x[:1]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[1:] if dev_idx == 0 else x[:1]
+    )
 
   @parameterized.parameters(('x',), ('y',))
   def test_remote_dma_2d_mesh(self, axis):
@@ -615,8 +691,13 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[8:] if jax.process_index() == 0 else x[:8]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    axis_idx = ["x", "y"].index(axis)
+    self.assert_arrays_equal_per_shard(
+        y,
+        lambda dev_idx: (
+            x[8:] if np.unravel_index(dev_idx, (2, 2))[axis_idx] == 0 else x[:8]
+        ),
+    )
 
   def test_wait_twice(self):
     if jax.process_index() > 2:

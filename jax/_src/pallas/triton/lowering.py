@@ -573,7 +573,7 @@ def _not_lowering_rule(ctx: LoweringRuleContext, x):
 class _Extern:
   arg_types: Sequence[jax.typing.DTypeLike]
   symbol: str
-  result_type: str
+  result_type: jax.typing.DTypeLike
 
   def matches(self, avals: Sequence[jax_core.ShapedArray]) -> bool:
     if len(avals) != len(self.arg_types):
@@ -745,6 +745,20 @@ log_dispatch_table = _make_dispatch_table(
         _Extern([jnp.float32], "__ocml_log_f32", jnp.float32),
         _Extern([jnp.float64], "__ocml_log_f64", jnp.float64),
         _Fallback([jnp.floating], math_dialect.log),
+    ],
+)
+
+log2_dispatch_table = _make_dispatch_table(
+    "log2",
+    cuda=[
+        _Extern([jnp.float32], "__nv_log2f", jnp.float32),
+        _Extern([jnp.float64], "__nv_log2", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.log2),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_log2_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_log2_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.log2),
     ],
 )
 
@@ -1071,6 +1085,7 @@ triton_lowering_rules.update({
     lax.exp2_p: exp2_dispatch_table,
     lax.expm1_p: expm1_dispatch_table,
     lax.log_p: log_dispatch_table,
+    lax.log2_p: log2_dispatch_table,
     lax.log1p_p: log1p_dispatch_table,
     lax.sqrt_p: sqrt_dispatch_table,
     lax.square_p: lambda ctx, x: _mul(x, x),

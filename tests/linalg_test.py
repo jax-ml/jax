@@ -166,6 +166,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     if jnp.finfo(dtype).bits == 64:
       jtu.check_grads(jnp.linalg.cholesky, args_maker(), order=2)
+      jtu.check_grads(
+          partial(jnp.linalg.cholesky, upper=upper, symmetrize_input=False),
+          args_maker(),
+          order=2,
+      )
+      jtu.check_grads(
+          partial(jsp.linalg.cholesky, lower=not upper), args_maker(), order=2
+      )
 
   def testCholeskyGradPrecision(self):
     rng = jtu.rand_default(self.rng())
@@ -266,7 +274,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             tol={np.float32: 1e-2, np.float64: 1e-3})
     self._CompileAndCheck(jnp.linalg.tensorsolve,
                           args_maker,
-                          rtol={np.float64: 1e-13})
+                          tol={np.float32: 1e-5, np.float64: 1e-13})
 
   def testTensorsolveAxes(self):
     a_shape = (2, 1, 3, 6)
@@ -720,6 +728,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     if jtu.is_device_rocm() and algorithm == lax.linalg.SvdAlgorithm.POLAR:
       self.skipTest("ROCM polar SVD not implemented")
+
+    if jtu.is_device_oneapi() and algorithm == lax.linalg.SvdAlgorithm.JACOBI:
+      self.skipTest("OneAPI does not support Jacobi SVD")
+
+    if jtu.is_device_oneapi() and algorithm == lax.linalg.SvdAlgorithm.POLAR:
+      self.skipTest("OneAPI does not support Polar SVD")
 
     if (not jtu.is_device_rocm() and jtu.device_under_test() == "gpu"
         and algorithm == lax.linalg.SvdAlgorithm.DIVIDE_AND_CONQUER):

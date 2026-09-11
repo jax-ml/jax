@@ -38,7 +38,8 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import remat
 from jax._src.partition_spec import PartitionSpec
 from jax._src.custom_derivatives import (
-    CustomVJPPrimal, _temporary_dtype_exception, _check_for_returned_refs)
+    CustomVJPPrimal, _temporary_dtype_exception, _check_for_returned_refs,
+    _check_for_aliased_refs)
 from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src import ad_util
@@ -146,10 +147,6 @@ class HiPrim:
       raise AttributeError("subclass __init__ should set `self.out_aval`")
     if not hasattr(self, 'params'):
       raise AttributeError("subclass __init__ should set `self.params`")
-    if (type(self).vjp_bwd is not HiPrim.vjp_bwd and
-        type(self).vjp_bwd_retval is not HiPrim.vjp_bwd_retval):
-      raise AttributeError(f"subclass {type(self)} should not override both "
-                           "`vjp_bwd` and `vjp_bwd_retval`")
     self.in_avals_flat, self.in_tree = tracing_registry.flatten(self.in_avals)
     self.out_avals_flat, self.out_tree = tracing_registry.flatten(self.out_aval)
     self.__dict__.update(self.params)
@@ -159,6 +156,10 @@ class HiPrim:
   def expand(self, *args):
     raise NotImplementedError(f"subclass {type(self)} must implement `expand`")
 
+  # physicalization interface for fuser
+  def physicalize(self, ctx, *args):
+    return call_hi_primitive_p.bind(*args, _prim=self)
+
   # reverse-mode AD interface
   def vjp_fwd(self, nzs_in, /, *args):
     raise NotImplementedError(
@@ -167,16 +168,16 @@ class HiPrim:
         "setting `vjp_fwd, vjp_bwd_retval = vjp_from_jvp` (or `= "
         "vjp_from_lin`)")
 
-  vjp_bwd_retval_logs: bool = False
+  skip_linearization_on_zero_tangents: bool = False
 
   def vjp_bwd(self, res, outgrad, /, *arg_accums):
-    if self.vjp_bwd_retval_logs:
-      args_grad, logs = self.vjp_bwd_retval(res, outgrad)
-    else:
-      args_grad, logs = self.vjp_bwd_retval(res, outgrad), None
+    args_grad, logs = self.vjp_bwd_retval_logs(res, outgrad)
     maybe_accum = lambda acc, v: isinstance(acc, ad.GradAccum) and acc.accum(v)
     tree_map(maybe_accum, arg_accums, args_grad)
     return logs
+
+  def vjp_bwd_retval_logs(self, res, outgrad, /):
+    return self.vjp_bwd_retval(res, outgrad), None
 
   def vjp_bwd_retval(self, res, outgrad, /):
     # Classic API: returns values instead of using accumulators
@@ -260,7 +261,7 @@ class VmapOf(HiPrim):
   out_dim: Any
 
   def __init__(self, prim, axis_data, in_dims, out_dim):
-    self.vjp_bwd_retval_logs = prim.vjp_bwd_retval_logs
+    self.skip_linearization_on_zero_tangents = prim.skip_linearization_on_zero_tangents
     unmap = lambda a, d: core.unmapped_aval(axis_data.size, d, a,
                                             axis_data.explicit_mesh_axis)
     self.in_avals = tree_map(unmap, prim.in_avals, in_dims)
@@ -302,18 +303,16 @@ class VmapOf(HiPrim):
           **self._vmap_params)(*args)
     return primal_out, (res, Static(res_axes)), *store.out_nzs  # pyrefly: ignore[missing-attribute]
 
-  def vjp_bwd_retval(self, res_, g):
+  def vjp_bwd_retval_logs(self, res_, g):
     # TODO probably gonna get non-pytree-prefix errors because of sym zeros...
     res, res_axes = res_[0], res_[1].val
     in_dims = tree_map(lambda x: batching.sum_axis if x is None else x, self.in_dims,
                        is_leaf=lambda x: x is None)
     g = tree_map(partial(map_zero, self.axis_data), self.out_dim, g, is_leaf=lambda x: x is None)
-    out_axes = (in_dims, 0) if self.vjp_bwd_retval_logs else in_dims
-    out = api.vmap(self.prim.vjp_bwd_retval, in_axes=(res_axes, self.out_dim),  # pyrefly: ignore[missing-attribute]
-                   out_axes=out_axes, **self._vmap_params, sum_match=True)(res, g)
-    out, logs = out if self.vjp_bwd_retval_logs else (out, None)
+    out, logs = api.vmap(self.prim.vjp_bwd_retval_logs, in_axes=(res_axes, self.out_dim),  # pyrefly: ignore[missing-attribute]
+                         out_axes=(in_dims, 0), **self._vmap_params, sum_match=True)(res, g)
     out = tree_map(partial(unmap_zero, self.axis_data), self.in_dims, out, is_leaf=lambda x: x is None)
-    return (out, logs) if self.vjp_bwd_retval_logs else out
+    return out, logs
 
   def batch_dim_rule(self, axis_data, in_dims):
     fix = lambda d, d_: d if (d is None or d_ is None) else d - (d_ < d)
@@ -375,9 +374,10 @@ core.custom_typechecks[call_hi_primitive_p] = _call_hi_primitive_typecheck
 
 def _call_hi_primitive_staging(trace, source_info, *args_flat, _prim):
   trace.frame.is_high = True
-  args = tree_unflatten(_prim.in_tree, args_flat)
-  ans = _prim.staging(trace, source_info, *args)
-  return tree_leaves_checked(_prim.out_tree, ans)
+  with core.set_current_trace(trace):
+    args = tree_unflatten(_prim.in_tree, args_flat)
+    ans = _prim.staging(trace, source_info, *args)
+    return tree_leaves_checked(_prim.out_tree, ans)
 pe.custom_staging_rules[call_hi_primitive_p] = _call_hi_primitive_staging
 
 def _call_hi_primitive_to_lojax(*args_flat, _prim):
@@ -410,6 +410,12 @@ batching.fancy_primitive_batchers[call_hi_primitive_p] = _call_hi_primitive_batc
 # backward rule receives them explicitly: `linearized(res, sres, *tangents)`,
 # and `vjp_bwd(res, sres, outgrad, *arg_accums)` (which must be overridden).
 def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
+  zero_in = (not any(nz_in_flat) and
+             not any(isinstance(typeof(x), AbstractRef) for x in args_flat))
+  if zero_in and _prim.skip_linearization_on_zero_tangents:
+    ans_flat = call_hi_primitive_p.bind(*args_flat, _prim=_prim)
+    linearized = lambda _, __, *ts: [ad_util.p2tz(x) for x in ans_flat]
+    return ans_flat, [False] * len(ans_flat), None, None, linearized
   args = tree_unflatten(_prim.in_tree, args_flat)
   nzs_in = tree_unflatten(_prim.in_tree, nz_in_flat)
   if is_vjp:
@@ -419,7 +425,7 @@ def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
     ans, residuals, *rest = _prim.lin(nzs_in, *args)
     linearized = partial(flatten_user_linearized, _prim)
   ans_flat = tree_leaves_checked(_prim.out_tree, ans)
-  nzs_out = rest[0] if rest else True
+  nzs_out = rest[0] if rest else not zero_in
   sres = rest[1] if len(rest) > 1 else None
   if (sres is not None and is_vjp and
       type(_prim).vjp_bwd is HiPrim.vjp_bwd):
@@ -430,8 +436,11 @@ def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
   linearized = partial(linearized, nzs_out_flat) if is_vjp else linearized
   return ans_flat, nzs_out_flat, residuals, sres, linearized
 ad.primitive_linearizations[call_hi_primitive_p] = _call_hi_primitive_linearize
+ad.linearize_on_zero_tangents.add(call_hi_primitive_p)
 
 def fake_linear_op(prim, nz_in_flat, nz_out_flat, rs, sres, *tangents):
+  if not any(nz_out_flat):
+    return [ad_util.Zero(a.to_tangent_aval()) for a in prim.out_avals_flat]
   rs = rs if sres is None else (rs, sres)  # unpacked in the transpose rule
   residuals_flat, residuals_tree = tree_flatten(rs)
   assert nz_in_flat == [not isinstance(t, ad_util.Zero) for t in tangents]
@@ -686,6 +695,7 @@ vjp_from_lin = _VJPFromLin(_vjp_fwd_from_lin, _transpose_linearized)
 
 
 class CustomVJPTraced(HiPrim):
+  skip_linearization_on_zero_tangents = True  # run the primal, not the fwd rule
   """Applications take ``(consts, fwd_consts, *args)``.
 
   The two leading arguments are synthetic, and both get zero cotangents:
@@ -715,7 +725,6 @@ class CustomVJPTraced(HiPrim):
 
   def __init__(self, traced, fwd, bwd, in_avals, sym_zeros, static_argnums,
                opt_remat, with_logs=False):
-    self.vjp_bwd_retval_logs = with_logs
     self.in_avals = in_avals
     self.out_aval = traced.out_avals
     self.effects = traced.effects
@@ -727,6 +736,24 @@ class CustomVJPTraced(HiPrim):
   def expand(self, *args):
     args = self.drop_fwd_consts(*args)
     return self.traced(*[x for x in args if not isinstance(x, Static)])
+
+  def physicalize_self(self, ctx):
+    new_traced = self.traced.physicalize(ctx)
+    new_in_avals = tree_map(ctx.physicalize_aval, self.in_avals)
+    return CustomVJPTraced(
+        new_traced,
+        self.fwd,
+        self.bwd,
+        new_in_avals,
+        self.symbolic_zeros,
+        self.static_argnums,
+        self.opt_remat,
+        self.with_logs,
+    )
+
+  def physicalize(self, ctx, *args):
+    new_prim = self.physicalize_self(ctx)
+    return call_hi_primitive_p.bind(*args, _prim=new_prim)
 
   def lin(self, nzs_in, *primals):
     out, res, *rest = self.vjp_fwd(nzs_in, *primals)
@@ -768,7 +795,7 @@ class CustomVJPTraced(HiPrim):
     else:
       return out, res
 
-  def vjp_bwd_retval(self, res, out_ct):
+  def vjp_bwd_retval_logs(self, res, out_ct):
     static_args = tuple(x.val for x in self.in_avals if isinstance(x, Static))
     in_avals_ = tuple(x for x in self.in_avals if not isinstance(x, Static))
     leaf = lambda x: isinstance(x, ad_util.Zero)
@@ -807,7 +834,7 @@ class CustomVJPTraced(HiPrim):
                                self.in_avals[2:], in_cts[2:])
     if self.symbolic_zeros:
       in_cts = tree_map(ad_util.replace_rule_output_symbolic_zeros, in_cts)
-    return (in_cts, logs) if self.with_logs else in_cts
+    return in_cts, logs
 
   def jvp(self, primals, tangents):
     if self.symbolic_zeros: ad.raise_custom_vjp_error_on_jvp()
@@ -938,6 +965,7 @@ class custom_vjp3:
                 optimize_remat=optimize_remat)
     self.with_logs = True
 
+  @partial(traceback_util.api_boundary, repro_api_name="jax.custom_vjp.__call__")
   def __call__(self, *args, **kwargs):
     if not self.fwd or not self.bwd:
       msg = f"No VJP defined for custom_vjp function {self.f.__name__} using defvjp."
@@ -948,6 +976,15 @@ class custom_vjp3:
            for l in tree_leaves(args[i])):
       raise UnexpectedTracerError("custom_vjp inputs marked with nondiff_argnums "
                                   "must be static, not Tracers")
+    if core.trace_state_clean() and not any(isinstance(l, core.Tracer) for l in tree_leaves(args)):
+      if config.mutable_array_checks.value:
+        debug = debug_info("custom_vjp fun", self.f, args, {},
+                           static_argnums=tuple(self.static_argnums))  # type: ignore
+        _check_for_aliased_refs(self.f, tuple(self.static_argnums), debug, args)  # type: ignore
+        out = self.f(*args)
+        _check_for_returned_refs(self.f, out, 'primal', [], 0)
+        return out
+      return self.f(*args)
     if all(is_hashable(args[i]) for i in self.static_argnums):
       traced = api.jit(self.f, static_argnums=(*self.static_argnums,)).trace(*args)
     else:
@@ -958,6 +995,13 @@ class custom_vjp3:
       f = dyn_args_fun(self.f, self.static_argnums,
                        tuple(map(WrapHashably, static_args)), len(args))
       traced = api.jit(f).trace(*dyn_args)
+    if any(isinstance(eff, effects.ErrorEffect) for eff in traced.effects):
+      raise NotImplementedError(
+          "checkify effects (e.g. checkify.check) are not supported in"
+          " custom_vjp-decorated primal functions under jax_custom_vjp3. Place"
+          " the check outside the custom_vjp decorator, or in the fwd/bwd"
+          " rules."
+      )
     args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
     consts, traced = traced.with_consts_as_arg()
     fwd_ = update_wrapper(lambda _, __, *args: self.fwd(*args), self.fwd)
@@ -983,6 +1027,12 @@ class OptRemat(HiPrim):
 
   def expand(self, *primals):
     return self.traced_fwd(*primals)
+
+  def physicalize(self, ctx, *args):
+    new_orig = self.orig.physicalize_self(ctx)
+    new_traced_fwd = self.traced_fwd.physicalize(ctx)
+    new_prim = OptRemat(new_orig, new_traced_fwd)
+    return call_hi_primitive_p.bind(*args, _prim=new_prim)
 
   def dce(self, used_outs):
     used_primals, used_res = used_outs
@@ -1026,6 +1076,18 @@ class CustomJVPTraced(HiPrim):
   def expand(self, *args):
     args = [x for x in args if not isinstance(x, Static)]
     return self.traced(*args)
+
+  def physicalize(self, ctx, *args):
+    new_traced = self.traced.physicalize(ctx)
+    new_in_avals = tree_map(ctx.physicalize_aval, self.in_avals)
+    new_prim = CustomJVPTraced(
+        new_traced,
+        self.jvp_fun,
+        new_in_avals,
+        self.symbolic_zeros,
+        self.static_argnums,
+    )
+    return call_hi_primitive_p.bind(*args, _prim=new_prim)
 
   def jvp(self, primals, tangents):
     static_args = tuple(x.val for x in primals if isinstance(x, Static))

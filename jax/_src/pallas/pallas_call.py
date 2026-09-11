@@ -26,7 +26,6 @@ from jax._src import api
 from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
-from jax._src import deprecations
 from jax._src import effects
 from jax._src import numpy as jnp
 from jax._src import state
@@ -75,7 +74,7 @@ pallas_call_p.multiple_results = True
 def _pallas_call_impl(*args, **params):
 
   # Call the lowering path
-  @api.jit(inline=True)
+  @api.jit(inline=api.Inline.JAX_EARLY)
   def _jit_run(*args):
     return pallas_call_p.bind(*args, **params)
 
@@ -907,74 +906,24 @@ def _pallas_call_lowering(
   def gpu_lowering(
       ctx: mlir.LoweringRuleContext,
       *in_nodes: ir.Value | Sequence[ir.Value],
-      is_rocm: bool,
       compiler_params: pallas_core.CompilerParams | None,
       **params,
   ):
     """Shared GPU lowering implementation for CUDA and ROCm."""
-    if compiler_params is not None:
-      rule = pallas_core.get_lowering_rule(type(compiler_params), "gpu")
-      if rule is not None:
-        return rule(ctx, *in_nodes, compiler_params=compiler_params, **params)
-
-    backend: Any = None
-
     try:
-      from jax._src.pallas.mosaic_gpu import core as mgpu_core  # pyrefly: ignore[missing-import]
-      from jax._src.pallas.mosaic_gpu import pallas_call_registration as mosaic_gpu_backend  # pyrefly: ignore[missing-import]
+      from jax._src.pallas.triton import pallas_call_registration  # pyrefly: ignore[missing-import]
     except ImportError:
-      pass
+      raise _unsupported_lowering_error("gpu") from None
     else:
-      if (
-          isinstance(compiler_params, mgpu_core.CompilerParams)
-          or (compiler_params is None and
-              config.jax_pallas_use_mosaic_gpu.value)
-      ):
-        backend = mosaic_gpu_backend
+      del pallas_call_registration
 
-      if backend is mosaic_gpu_backend:
-        if is_rocm:
-          raise ValueError(
-              "Mosaic GPU does not yet support AMD ROCm devices. "
-              "Use ``compiler_params=pltriton.CompilerParams()`` for ROCm."
-          )
-
-        if ctx.primitive is pallas_call_p:
-          deprecations.warn(
-              "jax-pallas-call-mgpu",
-              "Using ``pl.pallas_call`` for Mosaic GPU kernels is deprecated."
-              " Support for that will be removed in a future JAX version."
-              " Please migrate to ``plgpu.kernel``.",
-              stacklevel=2,
-          )
-
-    try:
+    if compiler_params is None:
       from jax._src.pallas.triton import core as triton_core  # pyrefly: ignore[missing-import]
-      from jax._src.pallas.triton import pallas_call_registration as triton_backend  # pyrefly: ignore[missing-import]
-    except ImportError:
-      pass
-    else:
-      if (
-          isinstance(compiler_params, triton_core.CompilerParams)
-          or (compiler_params is None and
-              not config.jax_pallas_use_mosaic_gpu.value)
-      ):
-        backend = triton_backend
-        deprecations.warn(
-            "jax-pallas-triton",
-            "The Pallas Triton backend is deprecated and will be removed in"
-            " a future JAX version. To keep using Pallas on GPU, please migrate"
-            " to the Mosaic GPU backend. To keep using Triton, switch to"
-            " the official Triton bindings and jax_triton.",
-            stacklevel=2,
-        )
+      compiler_params = triton_core.CompilerParams()
 
-    if backend is None:
-      raise _unsupported_lowering_error("gpu")
-
-    return backend.pallas_call_lowering(
-        ctx, *in_nodes, compiler_params=compiler_params, **params
-    )
+    rule = pallas_core.get_lowering_rule(type(compiler_params), "gpu")
+    assert rule is not None
+    return rule(ctx, *in_nodes, compiler_params=compiler_params, **params)
 
   return mlir.lower_per_platform(
       ctx,
@@ -982,8 +931,8 @@ def _pallas_call_lowering(
       dict(
           cpu=cpu_lowering,
           tpu=tpu_lowering,
-          cuda=partial(gpu_lowering, is_rocm=False),
-          rocm=partial(gpu_lowering, is_rocm=True),
+          cuda=gpu_lowering,
+          rocm=gpu_lowering,
       ),
       None,  # default_rule
       effects.no_effects,
@@ -1275,7 +1224,7 @@ def _pallas_call(
   flat_out_shapes_with_paths, out_tree = tree_util.tree_flatten_with_path(out_shape)
   out_paths, flat_out_shapes = unzip2(flat_out_shapes_with_paths)
 
-  @api.jit(inline=True)
+  @api.jit(inline=api.Inline.JAX_EARLY)
   def wrapped(*args):
     flat_args_with_paths, in_tree = tree_util.tree_flatten_with_path(args)
     in_paths, flat_args = unzip2(flat_args_with_paths)

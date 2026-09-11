@@ -278,6 +278,7 @@ class DebugPrintTest(PallasSCTest):
     )
     def kernel(x_hbm_ref, _):
       pl.debug_print("Memref", x_hbm_ref)
+      pl.debug_print("Sliced memref", x_hbm_ref.at[:self.num_lanes // 2])
       x = x_hbm_ref[...] + 100
       pl.debug_print("Vector value", x)
       masks = x < 103
@@ -296,6 +297,8 @@ class DebugPrintTest(PallasSCTest):
       jax.block_until_ready(compiled_kernel(x))
     self.assertIn("Memref", get_output())
     self.assertIn(", ".join(map(str, range(self.num_lanes))), get_output())
+    self.assertIn("Sliced memref", get_output())
+    self.assertIn(", ".join(map(str, range(self.num_lanes // 2))), get_output())
     self.assertIn("Vector value", get_output())
     self.assertIn(
         ", ".join(map(str, range(100, 100 + self.num_lanes))), get_output()
@@ -674,6 +677,9 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_addupdate_scatter_core_memory_space(self):
+    if not jtu.is_libtpu_at_least("0.0.47"):
+      self.skipTest("Requires libtpu >= 0.0.47")
+
     # Regression test ensuring that we can addupdate_scatter into a VMEM ref
     # associated to a vector subcore memory space.
     mesh = plsc.VectorSubcoreMesh(core_axis_name="core",
@@ -682,10 +688,11 @@ class VectorSubcoreTest(PallasSCTest):
     info = plsc.get_sparse_core_info()
     shape = (info.num_lanes,)
     dtype = jnp.int32
-    @pl.kernel(out_type=jax.ShapeDtypeStruct(shape, dtype),
-               mesh=mesh,
-               scratch_types=[pltpu.VMEM(shape, dtype) @ mesh],
-               compiler_params=pltpu.CompilerParams(needs_layout_passes=False))
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct(shape, dtype),
+        mesh=mesh,
+        scratch_types=[pltpu.VMEM(shape, dtype) @ mesh],
+    )
     def kernel(output_ref, scratch):
       scratch[...] = jnp.zeros_like(scratch)
       plsc.addupdate_scatter(
@@ -831,15 +838,24 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x, indices), x[1, 8:][indices])
 
-  def test_gather_2d_with_col_slice(self):
+  @parameterized.parameters(True, False)
+  def test_gather_2d_with_col_slice(self, use_num_lanes_indices):
     if not self.USE_TC_TILING:
       self.skipTest("Test only works under TC tiling.")
-    nl = self.num_lanes
-    x = jnp.arange(nl * 4096, dtype=jnp.int32).reshape(nl, 4096)
-    indices = jax.random.permutation(jax.random.key(42), jnp.arange(nl))
+    if (not use_num_lanes_indices and jtu.is_device_tpu(7, "x")
+        and not jtu.is_libtpu_at_least("0.0.48")):
+      self.skipTest(
+          "20-index column-slice gather fails on TPU7x with libtpu < 0.0.48."
+      )
+
+    n_indices = self.num_lanes if use_num_lanes_indices else 20
+    x = jnp.arange(n_indices * 4096, dtype=jnp.int32).reshape(n_indices, 4096)
+    indices = jax.random.permutation(jax.random.key(42), jnp.arange(n_indices))
 
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(shape=(nl, 1024), dtype=jnp.int32),
+        out_shape=jax.ShapeDtypeStruct(
+            shape=(n_indices, 1024), dtype=jnp.int32
+        ),
         in_specs=(
             pl.BlockSpec(memory_space=pltpu.HBM),
             pl.BlockSpec(memory_space=pltpu.VMEM),
@@ -1192,15 +1208,15 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(*MASK_FNS)
   def test_addupdate_scatter(self, mask_fn):
+    if not jtu.is_libtpu_at_least("0.0.47"):
+      self.skipTest("Requires libtpu >= 0.0.47")
+
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
     )
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, o_ref):
       x = x_ref[...]
       o_ref[...] = jnp.ones_like(o_ref)
@@ -1693,6 +1709,41 @@ class VectorSubcoreTest(PallasSCTest):
       o_ref[...] = scratch_ref[...].astype(x.dtype)
 
     np.testing.assert_array_equal(kernel(x), x)
+
+  def test_scratch_tc_vmem(self):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
+
+    x = jnp.arange(self.num_lanes, dtype=jnp.int32)
+    tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+    tec_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+        num_cores=1,
+        num_subcores=1,
+    )
+
+    @pl.kernel(
+        mesh=tec_mesh,
+        out_type=x,
+        scratch_types=[pltpu.VMEM(x.shape, x.dtype) @ tc_mesh],
+    )
+    def kernel(x_ref, o_ref, scratch_ref):
+      pltpu.sync_copy(x_ref, scratch_ref)
+      pltpu.sync_copy(scratch_ref, o_ref)
+
+    # TC VMEM scratch on SparseCore is only supported on TPU v8i.
+    if jtu.is_device_tpu(8, "i"):
+      out = jax.jit(kernel)(x)
+      np.testing.assert_array_equal(out, x)
+    else:
+      with self.assertRaisesRegex(
+          jax.errors.JaxRuntimeError,
+          r"(RESOURCE_EXHAUSTED|exceeds the legitimate user allocatable"
+          r" offset|Ran out of memory|exceed memory|Targeting VMEM on MegaCore"
+          r" targets is ambiguous)",
+      ):
+        jax.jit(kernel)(x)
 
   def test_pl_kernel_in_shmap_explicit_mesh(self):
     num_subcores = self.sc_info.num_subcores
@@ -2778,8 +2829,8 @@ class ScalarSubcoreTest(PallasSCTest):
       sc_mesh = plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
 
       y_ref = pl.empty_ref_like(pltpu.HBM(x.shape, x.dtype))
-      x_device = pltpu.with_memory_space_constraint(x, pltpu.HOST)
-      x_ref = jax.new_ref(x_device, memory_space=pltpu.HOST)
+      x_device = pltpu.with_memory_space_constraint(x, pl.HOST)
+      x_ref = jax.new_ref(x_device, memory_space=pl.HOST)
 
       pl.kernel(
           lambda: pltpu.sync_copy(x_ref, y_ref),
@@ -2820,7 +2871,7 @@ class ScalarSubcoreTest(PallasSCTest):
       def kernel(x_ref, y_ref):
         pltpu.sync_copy(x_ref, y_ref)
 
-      return pltpu.with_memory_space_constraint(kernel(x), pltpu.HOST)
+      return pltpu.with_memory_space_constraint(kernel(x), pl.HOST)
 
     o = jax.block_until_ready(foo(x))
     np.testing.assert_array_equal(o, x)

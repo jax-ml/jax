@@ -87,7 +87,9 @@ def MosaicGPU_ArriveOp : Op<MosaicGPU_Dialect, "arrive", []> {
 
   let arguments = (ins
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
-    BoolAttr:$orders_tensor_core);
+    BoolAttr:$orders_tensor_core,
+    PtxPredicate:$predicate
+  );
 }
 
 def MosaicGPU_ArriveExpectTxOp : Op<MosaicGPU_Dialect, "arrive_expect_tx", []> {
@@ -717,7 +719,7 @@ def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", [Pure
     `(` $operand `:` type($operand) `)` attr-dict `->` type(results)
   }];
   let hasVerifier = 1;
-  let hasCanonicalizer = 1;
+  let hasFolder = 1;
 }
 
 def MosaicGPU_VectorConcatOp : Op<MosaicGPU_Dialect, "vector_concat",

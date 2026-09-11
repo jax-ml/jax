@@ -5,17 +5,16 @@
 
 Most of the time, you don't write kernels: you write `jax.numpy` programs,
 and the compiler decides how to turn them into device code. Usually it does
-well. But sometimes you know something the compiler doesn't — a fusion it
-won't find, a memory-access pattern it won't discover (think
-FlashAttention), a sparsity structure it can't exploit — and the way to get
-that last factor of performance is to take over and write the kernel
-yourself.
+well. But sometimes you know something the compiler doesn't: a fusion it
+won't find, a memory-access pattern it won't discover (as in
+FlashAttention), or a sparsity structure it can't exploit. Then the way to
+get the remaining performance is to write the kernel yourself.
 
 Pallas is JAX's kernel language: an extension of JAX that lets you write
 custom kernels for GPU and TPU, with fine-grained control over the generated
 code while keeping JAX tracing and the `jax.numpy` API. Kernels are written
 as functions over `Ref`s in fast on-chip memory, launched over a grid with
-`pl.kernel`, and they compose with the rest of JAX — you can `jit`, `vmap`,
+`pl.kernel`, and they compose with the rest of JAX: you can `jit`, `vmap`,
 and differentiate around them.
 
 Pallas has its own extensive documentation site, which we won't duplicate
@@ -35,5 +34,5 @@ Good entry points:
   details, lowering paths, and platform-specific features.
 * The {mod}`jax.experimental.pallas` module API reference.
 
-Note that Pallas is experimental and changes frequently: expect sharp
-edges, and see the Pallas changelog for recent developments.
+Pallas is experimental and changes frequently; see the Pallas changelog
+for recent developments.

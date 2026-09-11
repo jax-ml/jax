@@ -14,6 +14,7 @@
 # ==============================================================================
 """(Deviceless) tests for the Mosaic GPU MLIR dialect."""
 
+import contextlib
 import os
 import tempfile
 
@@ -31,7 +32,6 @@ from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import memref
-from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax.experimental.mosaic import gpu as mgpu
@@ -121,6 +121,31 @@ class MosaicGpuTest(parameterized.TestCase):
       walk_operations(op, callback)
     return result
 
+  @contextlib.contextmanager
+  def kernel(self):
+    with ir.InsertionPoint(self.module.body):
+      func_op = func.FuncOp("main", ir.FunctionType.get([], []))
+      entry_block = func_op.add_entry_block()
+      with ir.InsertionPoint(entry_block):
+        i32 = ir.IntegerType.get_signless(32)
+        cst_smem = arith.constant(i32, 228 * 1024)
+        launch_op = gpu.LaunchOp(
+            (1, 1, 1),
+            (128, 1, 1),
+            dynamic_shared_memory_size=cst_smem,
+        )
+        dummy_buffers = llvm.mlir_undef(llvm.PointerType.get())
+        launch_ctx = launch_context.LaunchContext(
+            self.module,
+            launch_context.Scratch(launch_op),
+            cluster_size=(1, 1, 1),
+            buffers=dummy_buffers,
+        )
+        func.ReturnOp([])
+    with ir.InsertionPoint(launch_op.body.blocks[0]):
+      yield launch_ctx
+      gpu.terminator()
+
 
 class DialectTest(MosaicGpuTest):
 
@@ -146,9 +171,6 @@ class DialectTest(MosaicGpuTest):
     self.assertTrue(barrier_ty.orders_tensor_core)
 
   def test_b6x16_p32_type_bindings(self):
-    # TODO(bchetioui): remove once minimum jaxlib version is 0.11.1.
-    if not hasattr(mgpu.dialect, "B6x16P32Type"):
-      self.skipTest("B6x16P32Type is not supported.")
     f6_ty = ir.Float6E2M3FNType.get()
     b6x16p32_ty = mgpu.dialect.B6x16P32Type.get(f6_ty)
     self.assertIsInstance(b6x16p32_ty, ir.Type)
@@ -165,9 +187,6 @@ class DialectTest(MosaicGpuTest):
       ir.Type.parse("!mosaic_gpu.b6x16_p32<f16>")
 
   def test_p2b6_type_bindings(self):
-    # TODO(bchetioui): remove once minimum jaxlib version is 0.11.1.
-    if not hasattr(mgpu.dialect, "P2B6Type"):
-      self.skipTest("P2B6Type is not supported.")
     f6_ty = ir.Float6E2M3FNType.get()
     p2b6_ty = mgpu.dialect.P2B6Type.get(f6_ty)
     self.assertIsInstance(p2b6_ty, ir.Type)
@@ -2139,21 +2158,22 @@ ir.MLIRError,
 class DialectLoweringTest(MosaicGpuTest):
 
   def test_lowering_removes_mosaic_gpu_ops(self):
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       mgpu.dialect.initialize_barrier(
           llvm.UndefOp(workgroup_ptr_ty()),
           arrival_count=1,
           num_barriers=2,
           orders_tensor_core=False,
       )
-    mgpu.lower_mgpu_dialect(self.module, None)
+    mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
+    [launch_op] = self.find_ops(gpu.LaunchOp)
     self.assertEmpty(
-        list(filter(is_mosaic_gpu_op, self.module.body.operations))
+        list(filter(is_mosaic_gpu_op, launch_op.body.blocks[0].operations))
     )
 
   def test_lowering_traverses_regions_correctly(self):
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       bool_type = ir.IntegerType.get_signless(1)
       cst_true = arith.constant(bool_type, ir.IntegerAttr.get(bool_type, 1))
       if_op = scf.IfOp(cst_true)
@@ -2165,7 +2185,7 @@ class DialectLoweringTest(MosaicGpuTest):
             orders_tensor_core=False,
         )
         scf.yield_([])
-    mgpu.lower_mgpu_dialect(self.module, None)
+    mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
     self.assertEmpty(
         list(filter(is_mosaic_gpu_op, if_op.then_block.operations))
@@ -2175,7 +2195,7 @@ class DialectLoweringTest(MosaicGpuTest):
     num_barriers = 4
     arrival_count = 1337
 
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       mgpu.dialect.initialize_barrier(
           llvm.UndefOp(workgroup_ptr_ty()),
           arrival_count=arrival_count,
@@ -2184,18 +2204,18 @@ class DialectLoweringTest(MosaicGpuTest):
       )
 
     self.assertTrue(self.module.operation.verify())
-    mgpu.lower_mgpu_dialect(self.module, None)
+    mgpu.lower_mgpu_dialect(self.module, launch_ctx)
     self.assertTrue(self.module.operation.verify())
 
-    all_mbarrier_init_ops = self.find_ops(nvvm.MBarrierInitOp)
+    all_inline_asm_ops = self.find_ops(llvm.InlineAsmOp)
 
-    # One nvvm.mbarrier_init_shared is issued per barrier.
-    self.assertLen(all_mbarrier_init_ops, num_barriers)
+    # One inline asm block is issued per barrier.
+    self.assertLen(all_inline_asm_ops, num_barriers)
 
     # Each barrier has its count equal to the arrival count times the
     # warpgroup size.
-    for op in all_mbarrier_init_ops:
-      count = op.count.owner
+    for op in all_inline_asm_ops:
+      count = op.operands[1].owner
       self.assertIsInstance(count, arith.ConstantOp)
       self.assertEqual(
           count.literal_value, arrival_count * mgpu_utils.WARPGROUP_SIZE
@@ -2204,18 +2224,18 @@ class DialectLoweringTest(MosaicGpuTest):
   def test_lowering_vector_op_without_layout_fails(self):
     shape = (3, 4)
     elt_ty = ir.BF16Type.get()
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       ref = llvm.mlir_undef(ir.MemRefType.get(shape, elt_ty))
       mgpu.dialect.vector_load(ref)
     with self.assertRaisesRegex(
         ValueError, "missing a layout and can not be lowered"
     ):
-      mgpu.lower_mgpu_dialect(self.module, None)
+      mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
   def test_lowering_load_and_store_with_only_swizzle_lowers(self):
     shape = (128, 128)
     elt_ty = ir.BF16Type.get()
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       memref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu_utils.smem())
       in_transforms = ir.ArrayAttr.get([mgpu.dialect.SwizzleTransformAttr.get(128)])
       transforms_attr = ir.ArrayAttr.get([in_transforms])
@@ -2232,12 +2252,12 @@ class DialectLoweringTest(MosaicGpuTest):
       ])
       store.attributes["in_transforms"] = transforms_attr
 
-    mgpu.lower_mgpu_dialect(self.module, None)
+    mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
   def test_lowering_eliminates_layouts(self):
     shape = (4, 128)
     elt_ty = ir.BF16Type.get()
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       ref = llvm.mlir_undef(ir.MemRefType.get(shape, elt_ty))
       load = mgpu.dialect.vector_load(ref)
       strided_layout = mgpu.WGStridedFragLayout.from_shaped_type(load.type)
@@ -2246,7 +2266,7 @@ class DialectLoweringTest(MosaicGpuTest):
           layouts.to_layout_attr(strided_layout)
       ])
 
-    mgpu.lower_mgpu_dialect(self.module, None)
+    mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
     all_ops_with_layouts = []
     def append(op):
@@ -2259,7 +2279,7 @@ class DialectLoweringTest(MosaicGpuTest):
   def test_lowering_splat_constant(self):
     elt_ty = ir.BF16Type.get()
 
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       vec_ty = ir.VectorType.get((16, 8), elt_ty)
       zero = ir.FloatAttr.get(elt_ty, 0)
       cst = arith.ConstantOp(
@@ -2271,22 +2291,23 @@ class DialectLoweringTest(MosaicGpuTest):
           )
       ])
 
-    mgpu.lower_mgpu_dialect(self.module, None)
+    mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
-    cst_ops = self.find_ops(arith.ConstantOp)
+    cst_ops = [
+        op for op in self.find_ops(arith.ConstantOp) if op.result.type == elt_ty
+    ]
     self.assertLen(cst_ops, 1)
-    self.assertEqual(cst_ops[0].result.type, elt_ty)
 
   def test_lowering_vector_load_and_store_ops(self):
     shape = (8, 128)
     elt_ty = ir.BF16Type.get()
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       ref = llvm.mlir_undef(ir.MemRefType.get(shape, elt_ty))
       reg = mgpu.dialect.vector_load(ref)
       mgpu.dialect.vector_store(reg, ref)
 
     mgpu.infer_layout(self.module)
-    mgpu.lower_mgpu_dialect(self.module, None)
+    mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
     all_loads = self.find_ops(vector.LoadOp)
     all_stores = self.find_ops(vector.StoreOp)
@@ -2314,7 +2335,7 @@ class DialectLoweringTest(MosaicGpuTest):
     shape = (4, 128)
     i32 = ir.IntegerType.get_signless(32)
     splat_layout_attr = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       i1 = arith.constant(ir.IndexType.get(), 1)
       c1 = arith.constant(i32, 1)
       splat = vector.BroadcastOp(
@@ -2343,7 +2364,7 @@ class DialectLoweringTest(MosaicGpuTest):
         yield_op = scf.YieldOp([new_int_carry, new_vec_carry])
         yield_op.attributes["in_layouts"] = ir.ArrayAttr.get([strided_layout_attr])
 
-    mgpu.lower_mgpu_dialect(self.module, None)
+    mgpu.lower_mgpu_dialect(self.module, launch_ctx)
     self.module.operation.verify()
     [for_op] = self.find_ops(scf.ForOp)
     result_types = [r.type for r in for_op.results]
@@ -2351,13 +2372,13 @@ class DialectLoweringTest(MosaicGpuTest):
     self.assertSequenceEqual(result_types, [i32, reg_vec_ty, reg_vec_ty])
 
   def test_lowering_slice_smem_op(self):
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       i32 = ir.IntegerType.get_signless(32)
       ty = ir.MemRefType.get((4, 32), i32, memory_space=mgpu_utils.smem())
       op = mgpu.dialect.SliceSMEMOp(ty, 1234)
       op.attributes["out_transforms"] = ir.ArrayAttr.get([ir.ArrayAttr.get([])])
 
-    mgpu.lower_mgpu_dialect(self.module, None)
+    mgpu.lower_mgpu_dialect(self.module, launch_ctx)
     # Avoid making a change detector, only validate that lowering runs as
     # expected.
     self.assertEmpty(self.find_ops(mgpu.dialect.SliceSMEMOp))
@@ -2376,7 +2397,7 @@ class DialectLoweringTest(MosaicGpuTest):
   def test_lower_conversion_op_lowers_to_same_op(self, op, in_dtype, out_dtype):
     shape = (4, 32)
 
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       scalar_in_ty = mgpu_utils.dtype_to_ir_type(in_dtype)
       scalar_out_ty = mgpu_utils.dtype_to_ir_type(out_dtype)
       in_ty = ir.VectorType.get(shape, scalar_in_ty)
@@ -2391,7 +2412,7 @@ class DialectLoweringTest(MosaicGpuTest):
       op(out_ty, splat_zero)
 
     mgpu.infer_layout(self.module)
-    mgpu.lower_mgpu_dialect(self.module, None)
+    mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
     conversion_ops = self.find_ops(op)
     # This is a splat, so we expect a single conversion op involving a scalar
@@ -2467,9 +2488,9 @@ class DialectLoweringTest(MosaicGpuTest):
       self.assertEqual(strides, [512, 4096, 1, 16])
 
   def test_lowering_memref_transpose_nd(self):
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       ty_logical = ir.MemRefType.get(
-          (64, 128, 256),
+          (2, 32, 64),
           ir.BF16Type.get(),
           memory_space=mgpu_utils.smem(),
       )
@@ -2487,16 +2508,16 @@ class DialectLoweringTest(MosaicGpuTest):
       transforms_attr = ir.ArrayAttr.get([ir.ArrayAttr.get([tile_transform_attr])])
       attributes["out_transforms"] = transforms_attr
 
-    mgpu.lower_mgpu_dialect(self.module, None)
+    mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
     [new_transpose_op] = self.find_ops(memref.TransposeOp)
     expected_permutation = ir.AffineMap.get_permutation([0, 2, 1, 4, 3])
     self.assertEqual(new_transpose_op.permutation.value, expected_permutation)
 
   def test_lowering_memref_transpose_nd_bad_inout_tiling(self):
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       ty_logical = ir.MemRefType.get(
-          (64, 128, 256),
+          (2, 32, 64),
           ir.BF16Type.get(),
           memory_space=mgpu_utils.smem(),
       )
@@ -2511,12 +2532,12 @@ class DialectLoweringTest(MosaicGpuTest):
       attributes["in_transforms"] = attributes["out_transforms"] = transforms_attr
 
     with self.assertRaisesRegex(ValueError, "Invalid in/out transforms."):
-      mgpu.lower_mgpu_dialect(self.module, None)
+      mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
   def test_lowering_memref_transpose_nd_size_mismatch_transforms_raises(self):
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       ty_logical = ir.MemRefType.get(
-          (64, 128, 256),
+          (2, 32, 64),
           ir.BF16Type.get(),
           memory_space=mgpu_utils.smem(),
       )
@@ -2535,12 +2556,12 @@ class DialectLoweringTest(MosaicGpuTest):
       attributes["out_transforms"] = out_transforms_attr
 
     with self.assertRaisesRegex(ValueError, "Size mismatch for in/out transforms."):
-      mgpu.lower_mgpu_dialect(self.module, None)
+      mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
   def test_lowering_memref_transposed_tiled_and_untiled_tims_raises(self):
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       ty_logical = ir.MemRefType.get(
-          (64, 128, 256),
+          (2, 32, 64),
           ir.BF16Type.get(),
           memory_space=mgpu_utils.smem(),
       )
@@ -2555,7 +2576,7 @@ class DialectLoweringTest(MosaicGpuTest):
       attributes["in_transforms"] = attributes["out_transforms"] = transforms_attr
 
     with self.assertRaisesRegex(ValueError, "Cannot tile a transpose"):
-      mgpu.lower_mgpu_dialect(self.module, None)
+      mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
   @parameterized.parameters(
       # We use lambdas here because we need a MLIR context to be set to produce
@@ -2576,7 +2597,7 @@ class DialectLoweringTest(MosaicGpuTest):
   def test_lowering_memref_collapse_shape_with_incompatible_transforms_raises(
       self, in_transforms_fn, out_transforms_fn, error_regex
   ):
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       in_transforms = ir.ArrayAttr.get([
           ir.ArrayAttr.get(in_transforms_fn())
       ])
@@ -2593,10 +2614,10 @@ class DialectLoweringTest(MosaicGpuTest):
       collapsed.owner.attributes["in_transforms"] = in_transforms
       collapsed.owner.attributes["out_transforms"] = out_transforms
     with self.assertRaisesRegex(ValueError, error_regex):
-      mgpu.lower_mgpu_dialect(self.module, None)
+      mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
   def test_lowering_memref_collapse_shape_tiles_reassociation_correctly(self):
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       in_transforms = ir.ArrayAttr.get([
           ir.ArrayAttr.get([TileTransformAttr.get((1, 16))])
       ])
@@ -2605,14 +2626,14 @@ class DialectLoweringTest(MosaicGpuTest):
       ])
       smem = mgpu_utils.smem()
       bf16 = ir.BF16Type.get()
-      in_ty = ir.MemRefType.get((10, 128, 128), bf16, memory_space=smem)
-      out_ty = ir.MemRefType.get((10, 128 * 128,), bf16, memory_space=smem)
+      in_ty = ir.MemRefType.get((2, 128, 128), bf16, memory_space=smem)
+      out_ty = ir.MemRefType.get((2, 128 * 128,), bf16, memory_space=smem)
       smem = mgpu.dialect.slice_smem(in_ty, 0)
       smem.owner.attributes["out_transforms"] = in_transforms
       collapsed = memref.collapse_shape(out_ty, smem, [[0], [1, 2]])
       collapsed.owner.attributes["in_transforms"] = in_transforms
       collapsed.owner.attributes["out_transforms"] = out_transforms
-    mgpu.lower_mgpu_dialect(self.module, None)
+    mgpu.lower_mgpu_dialect(self.module, launch_ctx)
     [collapse_shape] = self.find_ops(memref.CollapseShapeOp)
     self.assertIsInstance(collapse_shape, memref.CollapseShapeOp)
     reassociation = [
@@ -2673,7 +2694,7 @@ class DialectLoweringTest(MosaicGpuTest):
     shape = (128, 128)
     dtype = ir.BF16Type.get()
 
-    with ir.InsertionPoint(self.module.body):
+    with self.kernel() as launch_ctx:
       ty_logical = ir.MemRefType.get(shape, dtype, memory_space=mgpu_utils.smem())
       smem = mgpu.dialect.slice_smem(ty_logical, 0)
       transforms_attr = ir.ArrayAttr.get([
@@ -2693,7 +2714,7 @@ class DialectLoweringTest(MosaicGpuTest):
     with self.assertRaisesRegex(
         NotImplementedError, "Transformed or swizzled strided loads are not supported"
     ):
-      mgpu.lower_mgpu_dialect(self.module, None)
+      mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
   def test_transform_type_handles_type_with_untiled_dimensions_correctly(self):
     ty = ir.MemRefType.get(
@@ -2821,6 +2842,30 @@ class DialectLoweringTest(MosaicGpuTest):
       files = os.listdir(dump_dir)
       self.assertTrue(any(f.endswith(".before_layout_inference.txt") for f in files))
       self.assertTrue(any(f.endswith(".after_layout_inference.txt") for f in files))
+
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_dump_constraint_system(self):
+    # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.2.
+    if not hasattr(mgpu.dialect.DumpOptions(), "constraint_system"):
+      self.skipTest("Test requires jaxlib >= 0.11.2")
+    def body(_, src, dst, scratch):
+      del scratch
+      mgpu.dialect.vector_store(mgpu.dialect.vector_load(src), dst)
+    shape = (128, 128)
+
+    with tempfile.TemporaryDirectory() as dump_dir:
+      with jtu.set_env(MOSAIC_GPU_DUMP_TO=dump_dir):
+        mgpu.as_gpu_kernel(
+            body,
+            grid=(1, 1, 1),
+            block=(128, 1, 1),
+            in_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+            out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+            smem_scratch_shape=[],
+            thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+        )
+      files = os.listdir(dump_dir)
+      self.assertTrue(any(f.endswith(".constraint_system.txt") for f in files))
 
 
 if hp is not None:

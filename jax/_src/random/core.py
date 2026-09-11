@@ -33,7 +33,7 @@ from jax._src.random import threefry2x32
 from jax._src import xla_bridge
 from jax._src.mesh import get_abstract_mesh
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
-from jax._src.api import jit, vmap
+from jax._src.api import Inline, jit, vmap
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -3404,7 +3404,7 @@ def triangular(key: ArrayLike,
   _check_all_safe_to_cast("triangular", dtype, left, mode, right)
   return maybe_auto_axes(_triangular, out_sharding, shape=shape, dtype=dtype)(key, left, mode, right)
 
-@jit(static_argnums=(4, 5), inline=True)
+@jit(static_argnums=(4, 5), inline=Inline.JAX_EARLY)
 def _triangular(key, left, mode, right, shape, dtype) -> Array:
   # https://en.wikipedia.org/wiki/Triangular_distribution#Generating_triangular-distributed_random_variates
   left = jnp.broadcast_to(lax.convert_element_type(left, dtype), shape)
@@ -3463,7 +3463,7 @@ def lognormal(key: ArrayLike,
   _check_all_safe_to_cast("lognormal", dtype, sigma)
   return maybe_auto_axes(_lognormal, out_sharding, shape=shape, dtype=dtype)(key, sigma)
 
-@jit(static_argnums=(2, 3), inline=True)
+@jit(static_argnums=(2, 3), inline=Inline.JAX_EARLY)
 def _lognormal(key, sigma, shape, dtype) -> Array:
   sigma = lax.convert_element_type(sigma, dtype)
   scaled_norm = normal(key, shape, dtype) * sigma
@@ -3495,7 +3495,7 @@ def _stirling_approx_tail(k):
       use_tail_values, stirling_tail_vals[jnp.asarray(k, dtype='int32')], approx)
 
 
-@jit(static_argnums=(3, 4, 5), inline=True)
+@jit(static_argnums=(3, 4, 5), inline=Inline.JAX_EARLY)
 def _binomial_inversion(key, count, prob, shape, dtype, max_iters):
   if config.enable_checks.value:
     assert dtypes.issubdtype(prob.dtype, np.floating)
@@ -3522,7 +3522,7 @@ def _binomial_inversion(key, count, prob, shape, dtype, max_iters):
   return (k - 1).astype(dtype)
 
 
-@jit(static_argnums=(3, 4, 5), inline=True)
+@jit(static_argnums=(3, 4, 5), inline=Inline.JAX_EARLY)
 def _btrs(key, count, prob, shape, dtype, max_iters):
   # transforman-rejection algorithm
   # https://www.tandfonline.com/doi/abs/10.1080/00949659308811496
@@ -3570,7 +3570,7 @@ def _btrs(key, count, prob, shape, dtype, max_iters):
   return lax_control_flow.while_loop(cond_fn, body_fn, carry)[1].astype(dtype)
 
 
-@jit(static_argnums=(3, 4), inline=True)
+@jit(static_argnums=(3, 4), inline=Inline.JAX_EARLY)
 def _binomial(key, count, prob, shape, dtype) -> Array:
   # The implementation matches TensorFlow and TensorFlow Probability:
   # https://github.com/tensorflow/tensorflow/blob/v2.2.0-rc3/tensorflow/core/kernels/random_binomial_op.cc

@@ -62,7 +62,7 @@ def is_pallas_impl(impl: jax_prng.PRNGImpl) -> bool:
   return impl == tpu_key_impl or impl == tpu_internal_stateful_impl
 
 
-def _seed_func(seed: jnp.int32):
+def _seed_func(seed: jax.Array):
   seed_data = jnp.zeros(tpu_key_impl.key_shape, dtype=jnp.int32)
   return (seed_data + seed).astype(jnp.uint32)  # Broadcast the seed.
 
@@ -104,7 +104,7 @@ jax_prng.register_prng(tpu_key_impl)
 # random functions expect a key as an argument, and
 # the keys are only generated as part of unused arguments.
 
-def _pl_stateful_seed_func(seed: jnp.int32):
+def _pl_stateful_seed_func(seed: int | jax.Array):
   del seed
   # Unused. Return the correct shape and dtype.
   return jnp.zeros((), dtype=jnp.int32)

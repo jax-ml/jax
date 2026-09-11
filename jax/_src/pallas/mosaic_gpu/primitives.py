@@ -20,6 +20,7 @@ from collections.abc import Callable, Hashable, Sequence
 import contextlib
 import dataclasses
 import enum
+import functools
 import inspect
 import itertools
 import math
@@ -45,7 +46,6 @@ from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import builtin as builtin_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import llvm as llvm_dialect
-from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.lib.mlir.dialects import vector as vector_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
@@ -1374,6 +1374,29 @@ def _async_prefetch_abstract_eval(ref, *args, **params):
   return (), {state.ReadEffect(0)}
 
 
+def _async_prefetch_pp_eqn(
+    eqn: jax_core.JaxprEqn,
+    context: jax_core.JaxprPpContext,
+    settings: jax_core.JaxprPpSettings,
+):
+  ref, *flat_args = eqn.invars
+  pp_params = {}
+  if eqn.params["has_user_predicate"]:
+    *flat_args, user_predicate = flat_args
+    pp_params["user_predicate"] = user_predicate.pretty_print(context)
+  ref_transforms_treedef = eqn.params["ref_transforms_treedef"]
+  ref_transforms = ref_transforms_treedef.unflatten(flat_args)
+  return pp.concat([
+      pp.text("async_prefetch"),
+      jax_core.pp_kv_pairs(pp_params.items(), context, settings),
+      pp.text(" "),
+      state_primitives.pp_ref_transforms(context, ref, ref_transforms),
+  ])
+
+
+jax_core.pp_eqn_rules[async_prefetch_p] = _async_prefetch_pp_eqn
+
+
 @lowering.register_lowering_rule(async_prefetch_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(async_prefetch_p, *gpu_core.LANExWARP_SEMANTICS)
 @lowering.register_lowering_rule(async_prefetch_p, mgpu.LoweringSemantics.Warpgroup)
@@ -1381,13 +1404,22 @@ def _async_prefetch_abstract_eval(ref, *args, **params):
 def _async_prefetch_lowering(
     ctx: lowering.LoweringRuleContext,
     ref,
-    *flat_ref_transforms,
+    *flat_args,
     ref_transforms_treedef,
     collective_axes,
     leader_tracked,
+    has_user_predicate: bool = False,
 ):
-  ref_transforms = ref_transforms_treedef.unflatten(flat_ref_transforms)
-  ref_transform_avals = ref_transforms_treedef.unflatten(ctx.avals_in[1:])
+  if has_user_predicate:
+    *flat_args, user_predicate = flat_args
+    predicate = lowering._ensure_ir_value(user_predicate, jnp.bool)  # pylint: disable=protected-access
+  else:
+    predicate = None
+
+  ref_transforms = ref_transforms_treedef.unflatten(flat_args)
+  ref_transform_avals = ref_transforms_treedef.unflatten(
+      ctx.avals_in[1 : 1 + ref_transforms_treedef.num_leaves]
+  )
   copy_params = _extract_gmem_copy_params(
       ctx, ref_transforms, ref_transform_avals
   )
@@ -1399,13 +1431,19 @@ def _async_prefetch_lowering(
     )
 
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
-    predicate_kwarg: dict[str, Any] = dict(
-        predicate=ctx.module_ctx.single_lane_predicate
-    )
+    pred = ctx.module_ctx.single_lane_predicate
+    if predicate is not None:
+      pred = arith_dialect.andi(predicate, pred)
+
+    predicate_kwarg: dict[str, Any] = dict(predicate=pred)
     if gmem_slice := copy_params.get("gmem_slice", ()):
       first_idx = gmem_slice[0]
       # Gathers are a warpgroup-level collective and can't take a predicate.
       if isinstance(first_idx, mgpu.FragmentedArray) and first_idx.shape:
+        if has_user_predicate:
+          raise NotImplementedError(
+              "Gather/scatter TMA does not support predicates yet."
+          )
         predicate_kwarg = {}
 
     ctx.launch_ctx.async_prefetch(
@@ -1430,7 +1468,11 @@ def _async_prefetch_lowering(
         "GMEM refs with peer ids are not supported in warpgroup lowering."
     )
   mgpu.dialect.async_prefetch(
-      ref, indices, slice_lengths, collective=ir.ArrayAttr.get([])
+      ref,
+      indices,
+      slice_lengths,
+      collective=ir.ArrayAttr.get([]),
+      predicate=predicate,
   )
   return ()
 
@@ -1440,6 +1482,7 @@ def async_prefetch(
     *,
     collective_axes: str | tuple[str, ...] | None = None,
     leader_tracked: CopyPartition | None = None,
+    predicate: jax.Array | None = None,
 ) -> None:
   """Asynchronously prefetches a GMEM reference to the L2 cache.
 
@@ -1455,6 +1498,8 @@ def async_prefetch(
     ref: The source Ref. Must be in GMEM.
     collective_axes: The collective axes to use for the prefetch.
     leader_tracked: The partitioning to use for the prefetch.
+    predicate: A boolean indicating whether the prefetch should be performed. If
+      ``None``, the prefetch is always performed.
   """
   ref, ref_transforms = state_primitives.get_ref_and_transforms(
       ref, None, "async_prefetch"
@@ -1467,9 +1512,11 @@ def async_prefetch(
   async_prefetch_p.bind(
       ref,
       *flat_ref_transforms,
+      *() if predicate is None else (predicate,),
       ref_transforms_treedef=ref_transforms_treedef,
       collective_axes=collective_axes,
       leader_tracked=leader_tracked,
+      has_user_predicate=predicate is not None,
   )
   return None
 
@@ -1499,14 +1546,14 @@ def _get_barrier_base_index(aval, transforms) -> ir.Value | None:
           if isinstance(
               idx, (int, ir.Value, mgpu.FragmentedArray, literals.TypedNdArray)
           ):
-            idx = lowering._as_index(idx)  # pylint: disable=protected-access
+            idx = lowering._as_index(idx)
           else:
             raise ValueError(
                 "Barrier can only be indexed with integers or slices, got"
                 f" {idx}"
             )
 
-          idx = arith_dialect.muli(idx, lowering._as_index(stride))  # pylint: disable=protected-access
+          idx = arith_dialect.muli(idx, lowering._as_index(stride))
           if base_index is None:
             base_index = idx
           else:
@@ -1532,12 +1579,16 @@ def _barrier_arrive_pp_eqn(
     context: jax_core.JaxprPpContext,
     settings: jax_core.JaxprPpSettings,
 ):
-  del settings
-  barrier, *flat_transforms = eqn.invars
+  barrier, *flat_args = eqn.invars
+  pp_params = {}
+  if eqn.params["has_user_predicate"]:
+    *flat_args, user_predicate = flat_args
+    pp_params["user_predicate"] = user_predicate.pretty_print(context)
   transforms_treedef = eqn.params["transforms_treedef"]
-  transforms = transforms_treedef.unflatten(flat_transforms)
+  transforms = transforms_treedef.unflatten(flat_args)
   return pp.concat([
       pp.text("barrier_arrive"),
+      jax_core.pp_kv_pairs(pp_params.items(), context, settings),
       pp.text(" "),
       state_primitives.pp_ref_transforms(context, barrier, transforms),
   ])
@@ -1553,10 +1604,17 @@ jax_core.pp_eqn_rules[barrier_arrive_p] = _barrier_arrive_pp_eqn
 def _barrier_arrive_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,
-    *flat_transforms,
+    *flat_args,
     transforms_treedef,
+    has_user_predicate: bool = False,
 ):
-  transforms = transforms_treedef.unflatten(flat_transforms)
+  if has_user_predicate:
+    *flat_args, user_predicate = flat_args
+    predicate = lowering._ensure_ir_value(user_predicate, jnp.bool)  # pylint: disable=protected-access
+  else:
+    predicate = None
+
+  transforms = transforms_treedef.unflatten(flat_args)
   barrier_aval = ctx.avals_in[0]
   assert isinstance(barrier_aval, state_types.AbstractRef)
   base_index = _get_barrier_base_index(barrier_aval, transforms)
@@ -1575,9 +1633,9 @@ def _barrier_arrive_lowering(
       raise NotImplementedError(
           "Arriving on a collective barrier is not supported in a warp context"
       )
-    barrier.arrive(orders_tensor_core)
+    barrier.arrive(orders_tensor_core=orders_tensor_core, predicate=predicate)
   elif ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
-    barrier.arrive(orders_tensor_core)
+    barrier.arrive(orders_tensor_core=orders_tensor_core, predicate=predicate)
   else:
     if scope == mgpu_utils.ThreadSubset.WARP and not orders_tensor_core:
       arrival_count = 4
@@ -1585,6 +1643,8 @@ def _barrier_arrive_lowering(
       arrival_count = 1
 
     pred = ctx.module_ctx.single_lane_predicate if orders_tensor_core else None
+    if predicate is not None:
+      pred = predicate if pred is None else arith_dialect.andi(predicate, pred)
     barrier.arrive(
         arrival_count=arrival_count,
         orders_tensor_core=orders_tensor_core,
@@ -1594,14 +1654,22 @@ def _barrier_arrive_lowering(
   return ()
 
 
-def barrier_arrive(barrier: state.AbstractRef) -> None:
+def barrier_arrive(
+    barrier: state.AbstractRef,
+    *,
+    predicate: jax.Array | None = None,
+) -> None:
   """Arrives at the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
       barrier, None, "barrier_arrive"
   )
   flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
   barrier_arrive_p.bind(
-      barrier, *flat_transforms, transforms_treedef=transforms_treedef
+      barrier,
+      *flat_transforms,
+      *() if predicate is None else (predicate,),
+      transforms_treedef=transforms_treedef,
+      has_user_predicate=predicate is not None,
   )
 
 
@@ -1814,7 +1882,13 @@ def _commit_group_abstract_eval():
 @lowering.register_lowering_rule(commit_group_p, *gpu_core.WGxWARP_SEMANTICS)
 def _commit_group_lowering(ctx: lowering.LoweringRuleContext):
   del ctx  # Unused.
-  nvvm_dialect.cp_async_bulk_commit_group()
+  llvm_dialect.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [],
+      "cp.async.bulk.commit_group;",
+      "",
+      has_side_effects=True,
+  )
   return ()
 
 
@@ -2077,7 +2151,10 @@ def _wgmma_lowering(
     acc_out = mgpu.WGMMAAccumulator(
         _value=acc_value, _original_layout=acc._original_layout, _sync=False
     )
-  nvvm_dialect.wgmma_commit_group_sync_aligned()
+  void = ir.Type.parse("!llvm.void")
+  llvm_dialect.inline_asm(
+      void, [], "wgmma.commit_group.sync.aligned;", "", has_side_effects=True
+  )
   return acc_out
 
 
@@ -2175,7 +2252,10 @@ def _wgmma_warpgroup_lowering(
         new_acc, acc, offsets, strides
     )
 
-  nvvm_dialect.wgmma_commit_group_sync_aligned()
+  void = ir.Type.parse("!llvm.void")
+  llvm_dialect.inline_asm(
+      void, [], "wgmma.commit_group.sync.aligned;", "", has_side_effects=True
+  )
   return new_acc
 
 
@@ -2267,7 +2347,10 @@ def wgmma_wait_effectful_abstract_eval(_):
 @lowering.register_lowering_rule(wgmma_wait_p, mgpu.LoweringSemantics.Warpgroup)
 def _wgmma_wait_lowering(ctx: lowering.LoweringRuleContext, allow_groups):
   del ctx
-  nvvm_dialect.wgmma_wait_group_sync_aligned(allow_groups)
+  void = ir.Type.parse("!llvm.void")
+  llvm_dialect.inline_asm(
+      void, [], f"wgmma.wait_group.sync.aligned {int(allow_groups)};", "", has_side_effects=True,
+  )
   return ()
 
 
@@ -2314,7 +2397,10 @@ def _wgmma_accumulator_deref_lowering(
     ctx: lowering.LoweringRuleContext, acc, *, wait_n: int | None
 ):
   if wait_n is not None:
-    nvvm_dialect.wgmma_wait_group_sync_aligned(wait_n)
+    void = ir.Type.parse("!llvm.void")
+    llvm_dialect.inline_asm(
+        void, [], f"wgmma.wait_group.sync.aligned {int(wait_n)};", "", has_side_effects=True,
+    )
   return (
       acc.value
       if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane
@@ -2385,7 +2471,7 @@ def _wgmma_accumulator_store_warpgroup_lowering(
 ):
   del ctx, acc
   val = mgpu.dialect.optimization_barrier([val])
-  nvvm_dialect.wgmma_fence_aligned()
+  lowering._wgmma_fence_aligned()
   return val
 
 # MMA for TensorCore gen 5.
@@ -3248,11 +3334,13 @@ def _set_max_registers_lowering(
     ctx: lowering.LoweringRuleContext, n, *, action
 ):
   del ctx
-  nvvm_dialect.setmaxregister(
-      n,
-      nvvm_dialect.SetMaxRegisterAction.increase
-      if action == "increase"
-      else nvvm_dialect.SetMaxRegisterAction.decrease,
+  action_str = "inc" if action == "increase" else "dec"
+  llvm_dialect.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [],
+      f"setmaxnreg.{action_str}.sync.aligned.u32 {int(n)};",
+      "",
+      has_side_effects=True,
   )
   return ()
 
@@ -4838,6 +4926,7 @@ def try_cluster_cancel_lowering(
     *transforms_leaves,
     result_transforms_tree,
     barrier_transforms_tree,
+    collective_axes,
 ):
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
@@ -4875,20 +4964,18 @@ def try_cluster_cancel_lowering(
         f"Try cluster cancel response must be 128 bits, but is {bits} bits."
     )
 
-  is_first_wg = arith_dialect.cmpi(
-      arith_dialect.CmpIPredicate.eq, mgpu.warpgroup_idx(), mgpu.c(0, i32)
-  )
+  axis_names = ctx.module_ctx.axis_names
+  eq = functools.partial(arith_dialect.cmpi, arith_dialect.CmpIPredicate.eq)
+  zero = mgpu.c(0, ir.IndexType.get())
+  is_first_wg = is_first_cta = mgpu.c(1, i1)
 
-  is_first_cta = mgpu.c(1, i1)
-  for dim in gpu_dialect.Dimension:
-    is_first_cta = arith_dialect.andi(
-        is_first_cta,
-        arith_dialect.cmpi(
-            arith_dialect.CmpIPredicate.eq,
-            mgpu.utils.cluster_idx(dim),
-            mgpu.c(0, ir.IndexType.get()),
-        ),
-    )
+  for axis in collective_axes:
+    if axis_names.wg is not None and axis == axis_names.wg:
+      is_first_wg = eq(mgpu.warpgroup_idx(), mgpu.c(0, i32))
+    else:
+      cluster_dim = lowering._resolve_cluster_axis(axis_names, axis)
+      cluster_idx = mgpu.utils.cluster_idx(cluster_dim)
+      is_first_cta = arith_dialect.andi(is_first_cta, eq(cluster_idx, zero))
 
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
 
@@ -4905,37 +4992,45 @@ def try_cluster_cancel_lowering(
         barrier.as_barrier_memref(),
         predicate=arith_dialect.andi(is_first_cta, is_first_wg))
   else:
-    assert ctx.module_ctx.single_lane_predicate is not None
-    is_leader_thread = arith_dialect.andi(
-        ctx.module_ctx.single_lane_predicate, is_first_wg
-    )
-    bytes = arith_dialect.select(is_leader_thread, mgpu.c(16, i32), mgpu.c(0, i32))
-    barrier.arrive_expect_tx(bytes)
+    assert (lane_pred := ctx.module_ctx.single_lane_predicate) is not None
+    is_leader = arith_dialect.andi(lane_pred, is_first_wg)
+    tx_count = arith_dialect.select(is_leader, mgpu.c(16, i32), mgpu.c(0, i32))
+    barrier.arrive_expect_tx(tx_count)
     mgpu.try_cluster_cancel(
         result_ref,
         barrier,
-        predicate=arith_dialect.andi(is_leader_thread, is_first_cta),
+        predicate=arith_dialect.andi(is_leader, is_first_cta),
     )
 
   return []
 
 
-def try_cluster_cancel(result_ref: _Ref, barrier: _Ref) -> None:
+def try_cluster_cancel(
+    result_ref: _Ref,
+    barrier: _Ref,
+    *,
+    collective_axes: Hashable | tuple[Hashable, ...] = (),
+) -> None:
   """Initiates an async request to claim a new work unit from the grid.
 
   It allows an SM to dynamically acquire work by atomically canceling the launch
-  of a pending cluster from the grid and claiming its CTA ID as the next unit
-  of work.
-
-  Note that this operation must be called collectively by all Pallas threads.
+  of a pending cluster from the grid and retrieving its indices.
 
   Args:
     result_ref: An SMEM ref where the 16-byte result will be stored.
     barrier: A barrier used to coordinate the completion of the query.
+    collective_axes: The thread / cluster axis names across which the
+      cancellation is collective. When specified, only the axis index 0 along
+      these axes will issue the cancellation request. If more than one thread
+      along an axis calls this function, the axis must be specified here to
+      avoid inadvertently cancelling multiple clusters.
 
   See also:
     :func:`jax.experimental.pallas.mosaic_gpu.query_cluster_cancel`
   """
+  if not isinstance(collective_axes, tuple):
+    collective_axes = (collective_axes,)
+
   if isinstance(result_ref, pallas_core.TransformedRef):
     result_transforms_leaves, result_transforms_tree = jax.tree.flatten(
         result_ref.transforms
@@ -4959,6 +5054,7 @@ def try_cluster_cancel(result_ref: _Ref, barrier: _Ref) -> None:
       *barrier_transforms_leaves,
       result_transforms_tree=result_transforms_tree,
       barrier_transforms_tree=barrier_transforms_tree,
+      collective_axes=collective_axes,
   )
 
 
@@ -4973,10 +5069,7 @@ def _query_cluster_cancel_abstract_eval(try_cancel_buffer,
   del try_cancel_buffer, transforms_leaves, transforms_tree
   grid_idxs = (jax_core.ShapedArray((), jnp.int32),) * len(grid_names)
   return (
-      (
-          *grid_idxs,
-          jax_core.ShapedArray((), jnp.bool_),
-      ),
+      (*grid_idxs, jax_core.ShapedArray((), jnp.bool_)),
       {gpu_core._memory_effect},
   )
 

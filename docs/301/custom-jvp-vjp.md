@@ -24,7 +24,7 @@ There are two ways to define differentiation rules in JAX:
 
 This notebook is about #1. To read instead about #2, see {doc}`custom-derivatives` and {doc}`hijax-types`.
 
-Hijax primitives (see {doc}`custom-derivatives`) unify these two approaches, and are the recommended path going forward: a hijax primitive carries a JAX-traceable Python implementation along with custom rules for differentiation and other transformations. The APIs here remain fully supported, and are often the most convenient for simple cases.
+Hijax primitives (see {doc}`custom-derivatives`) unify these two approaches, and are now the recommended approach: a hijax primitive carries a JAX-traceable Python implementation along with custom rules for differentiation and other transformations. The APIs here remain fully supported, and are often the most convenient for simple cases.
 
 For an introduction to JAX's automatic differentiation API, see {doc}`cookbook`. This notebook assumes some familiarity with [jax.jvp](https://docs.jax.dev/en/latest/_autosummary/jax.jvp.html) and [jax.grad](https://docs.jax.dev/en/latest/_autosummary/jax.grad.html), and the mathematical meaning of JVPs and VJPs.
 
@@ -104,7 +104,7 @@ print(grad(f)(2., 3.))
 
 ## Example problems
 
-To get an idea of what problems `jax.custom_jvp` and `jax.custom_vjp` are meant to solve, let's go over one example for each — a `custom_jvp` for numerical stability, and a `custom_vjp` for gradient clipping. (More example problems, including enforcing a differentiation convention at a boundary and efficient implicit differentiation of fixed points, are worked in {doc}`custom-derivatives`; each translates directly to these APIs.) A more thorough introduction to the `jax.custom_jvp` and `jax.custom_vjp` APIs is in the next section.
+To get an idea of what problems `jax.custom_jvp` and `jax.custom_vjp` are meant to solve, let's go over one example for each: a `custom_jvp` for numerical stability, and a `custom_vjp` for gradient clipping. (More example problems, including enforcing a differentiation convention at a boundary and efficient implicit differentiation of fixed points, are worked in {doc}`custom-derivatives`; each translates directly to these APIs.) A more thorough introduction to the `jax.custom_jvp` and `jax.custom_vjp` APIs is in the next section.
 
 +++
 
@@ -616,7 +616,7 @@ Array(-0.91113025, dtype=float32)
 
 One important limitation: defining a `custom_vjp` rule makes the function
 reverse-mode only. JAX has no way to derive a JVP rule from your VJP rules,
-so applying forward-mode autodiff — `jax.jvp` or `jax.jacfwd` — to a
+so applying forward-mode autodiff (`jax.jvp` or `jax.jacfwd`) to a
 function that contains a `custom_vjp` function raises an error:
 
 ```{code-cell}
@@ -627,13 +627,13 @@ from jax import jvp
 jvp(lambda x: clip_gradient(-1., 1., x), (3.,), (1.,))
 ```
 
-Note that reverse mode *composes* fine: `jax.grad`-of-`grad`,
+Reverse mode *composes* fine: `jax.grad`-of-`grad`,
 `jax.hessian`, and forward-over-reverse Hessian-vector products all work on
 functions containing `custom_vjp`, because after one reverse-mode pass the
 remaining computation is built from your `fwd` and `bwd` rules, which are
 themselves differentiable. It's only forward mode applied to the
-`custom_vjp` function directly that fails — as in `jax.jacfwd` of your
-model, or `jax.jvp`-based sensitivity analysis. If you need both modes,
+`custom_vjp` function directly that fails, as in `jax.jacfwd` of your
+model or `jax.jvp`-based sensitivity analysis. If you need both modes,
 define a `custom_jvp` instead (JAX derives reverse mode from it
 automatically), or use a hijax primitive ({doc}`custom-derivatives`), which
 can carry rules for both modes at once.

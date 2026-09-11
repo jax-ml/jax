@@ -393,8 +393,8 @@ common:ci_darwin_arm64 --color=yes
 common:ci_windows_amd64 --config=clang_local
 common:ci_windows_amd64 --config=avx_windows
 common:ci_windows_amd64 --compiler=clang-cl --config=clang --verbose_failures=true
-common:ci_windows_amd64 --crosstool_top="@xla//tools/toolchains/win2022/20241118:toolchain"
-common:ci_windows_amd64 --extra_toolchains="@xla//tools/toolchains/win2022/20241118:cc-toolchain-x64_windows-clang-cl"
+common:ci_windows_amd64 --crosstool_top="@xla//tools/toolchains/win2022/t20260812:toolchain"
+common:ci_windows_amd64 --extra_toolchains="@xla//tools/toolchains/win2022/t20260812:cc-toolchain-x64_windows-clang-cl"
 common:ci_windows_amd64 --host_linkopt=/FORCE:MULTIPLE --linkopt=/FORCE:MULTIPLE
 common:ci_windows_amd64 --color=yes
 
@@ -490,9 +490,9 @@ common:rbe_windows_amd64 --config=clang_local
 common:rbe_windows_amd64 --config=rbe
 
 # Set the host, execution, and target platform
-common:rbe_windows_amd64 --host_platform="@xla//tools/toolchains/win2022:windows_ltsc2022_clang"
-common:rbe_windows_amd64 --extra_execution_platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang"
-common:rbe_windows_amd64 --platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang"
+common:rbe_windows_amd64 --host_platform="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_ml_actions"
+common:rbe_windows_amd64 --extra_execution_platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_ml_actions"
+common:rbe_windows_amd64 --platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_ml_actions"
 
 common:rbe_windows_amd64 --shell_executable=C:\\tools\\msys64\\usr\\bin\\bash.exe
 common:rbe_windows_amd64 --enable_runfiles
@@ -507,10 +507,6 @@ common:rbe_windows_amd64 --config=ci_windows_amd64
 # Override the remote instance and BES instance names to use the new RBE pools
 common:rbe_windows_amd64 --remote_instance_name=projects/ml-oss-rbe-general/instances/default_instance
 common:rbe_windows_amd64 --bes_instance_name="ml-oss-rbe-general"
-
-common:rbe_windows_amd64 --host_platform="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_new"
-common:rbe_windows_amd64 --extra_execution_platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_new"
-common:rbe_windows_amd64 --platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_new"
 
 # #############################################################################
 # Cross-compile config options below. Native RBE support does not exist for

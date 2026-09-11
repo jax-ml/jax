@@ -38,6 +38,18 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+# How a ref is laid out rather than what it contains. Applying these to a ref's
+# physical aval gives its logical one, and since every buffer is allocated at
+# that logical shape they are identities at every use site.
+LAYOUT_TRANSFORMS = (
+    mosaic_gpu_core.UnswizzleRef,
+    mosaic_gpu_core.UntilingTransform,
+    # A TMEM ref of rank > 2 is stored as `(m, prod(batch) * n)` and carries
+    # this transform back to `(*batch, m, n)`.
+    mosaic_gpu_core.ExpandLeadingBatchDimensionsTransform,
+)
+
+
 IDX_BY_GPU_MEMORY_SPACE: collections.abc.Mapping[
     mosaic_gpu_core.MemorySpace, int
 ]
@@ -450,6 +462,10 @@ class GPUSharedMemory(
 
   num_pallas_threads_per_block: int
 
+  # Hardware named barriers (`bar.sync` / `bar.arrive`), keyed by
+  # `(device, block, barrier id)`. See `named_barrier`.
+  named_barriers: dict[tuple[int, int, int], Barrier]
+
   # thread -> next available REGS buffer ID.
   #
   # NOTE: We use negative integers so that, when debugging, it is easy to
@@ -556,11 +572,70 @@ class GPUSharedMemory(
     self.num_pallas_threads_per_block = num_threads_per_block
     self.reset_per_cluster_state()
 
+  def buffer_shape_and_dtype(self, key: MemKey) -> memory.ShapeAndDtype:
+    """The logical shape and dtype of `key`'s buffer."""
+    with self.lock:
+      buff = self.mem[key]
+    if not isinstance(buff, memory.Buffer):
+      raise ValueError(f"Allocation with key `{key}` is not a `Buffer`.")
+    return memory.ShapeAndDtype(buff.logical_shape, buff.dtype)
+
+  def access(self, key: MemKey, transforms) -> interpret_utils.Access:
+    """What `transforms` touches of `key`'s buffer, in its coordinates."""
+    return interpret_utils.to_access(
+        transforms, self.buffer_shape_and_dtype(key).shape
+    )
+
+  # The accessors below take an `interpret_utils.Access` (a range in the
+  # buffer's coordinates plus an axis permutation) where the base class takes
+  # a plain range. The range is handed down as is and only the value crossing
+  # the boundary is reordered, so the shared layer never sees a transpose.
+
+  def get_buffer_content(
+      self, key, access: interpret_utils.Access, *args, **kwargs
+  ):
+    result, shape_and_dtype, clock = super().get_buffer_content(
+        key, access.range, *args, **kwargs
+    )
+    if result is not None and access.permutation is not None:
+      result = result.transpose(access.permutation)
+    return result, shape_and_dtype, clock
+
+  def store_buffer_content(
+      self, key, access: interpret_utils.Access, value, *args, **kwargs
+  ):
+    if access.permutation is not None:
+      value = value.transpose(access.inverse_permutation)
+    in_bounds, shape_and_dtype, clock = super().store_buffer_content(
+        key, access.range, value, *args, **kwargs
+    )
+    if not in_bounds:
+      raise IndexError(
+          f"Out-of-bounds store of {key}: writing [{access}] but buffer has"
+          f" shape {shape_and_dtype.shape}."
+      )
+    return in_bounds, shape_and_dtype, clock
+
+  def swap_buffer_content(
+      self, key, access: interpret_utils.Access, value, mask, *args, **kwargs
+  ):
+    if access.permutation is not None:
+      value = value.transpose(access.inverse_permutation)
+      if mask is not None:
+        mask = mask.transpose(access.inverse_permutation)
+    result, shape_and_dtype, clock = super().swap_buffer_content(
+        key, access.range, value, mask, *args, **kwargs
+    )
+    if result is not None and access.permutation is not None:
+      result = result.transpose(access.permutation)
+    return result, shape_and_dtype, clock
+
   def reset_per_cluster_state(self):
     """Resets the per-cluster state of the shared memory."""
     with self.lock:
       self.next_tma_thread_id = 0
       self.next_regs_id = collections.defaultdict(lambda: -100)
+      self.named_barriers = {}
       self.clocks = {
           thread: self.VectorClock(self.vector_clock_size)
           for thread in self.all_concurrent_threads
@@ -581,6 +656,13 @@ class GPUSharedMemory(
       )
       self.pending_tmem_stores = {}
       self.pending_tmem_loads = {}
+
+  def _abort_waiters(self):
+    # Called by `set_failed` while `self.lock` is held. Acquiring a barrier's
+    # `cv` lock while holding `self.lock` is allowed (see `Barrier.__init__`).
+    for alloc in self.mem.values():
+      if isinstance(alloc, (Barrier, ClusterBarrier)):
+        alloc.abort()
 
   def thread_to_vc_position(self, thread: ThreadKey) -> int:
     return self.all_concurrent_threads[thread]
@@ -652,6 +734,40 @@ class GPUSharedMemory(
       )
 
     return barrier, clock
+
+  def named_barrier(
+      self, thread: Thread, barrier_id: int, num_arrivals: int
+  ) -> Barrier:
+    """Named barrier `barrier_id` of `thread`'s block, created on first use.
+
+    Named barriers are hardware resources rather than program allocations, so
+    they live outside `self.mem` and need no deallocation.
+    """
+    # We model a named barrier with `n` arrivals as a `Barrier` with `n/128`
+    # arrivals, since for now a warpgroup is the smallest unit of threads that
+    # can use a named barrier.
+    key = (thread.device_id, thread.block_id, barrier_id)
+    with self.lock:
+      barrier = self.named_barriers.get(key)
+      if barrier is None:
+        barrier = Barrier(
+            self,
+            num_pallas_threads_per_block=self.num_pallas_threads_per_block,
+            ref_count=0,
+            num_arrivals=num_arrivals,
+            orders_tensor_core=False,
+            enable_logging=(
+                self.logging_mode is not None
+                and params.LoggingMode.BARRIER in self.logging_mode
+            ),
+        )
+        self.named_barriers[key] = barrier
+    if barrier.num_arrivals != num_arrivals:
+      raise ValueError(
+          f"Named barrier {barrier_id} is used with {num_arrivals} arrivals"
+          f" but was first used with {barrier.num_arrivals}."
+      )
+    return barrier
 
   def get_barrier(self, key: MemKey) -> Barrier:
     with self.lock:
@@ -951,6 +1067,10 @@ class GPUSharedMemory(
       self.clocks[dest].update(self.clocks[source])
 
 
+class _BarrierAborted(Exception):
+  pass
+
+
 class Barrier(memory.Allocation):
 
   VectorClock = GPUSharedMemory.VectorClock
@@ -1012,6 +1132,10 @@ class Barrier(memory.Allocation):
     # 1. A thread that waits on any phase must wait on all phases.
     # 2. At least one thread must observe each barrier completion.
     self.phase: int = 0  # Protected by `self.cv`'s lock.
+    # Set once the interpreted kernel has failed. Threads waiting on the barrier
+    # check this flag (instead of `shared_memory.check_failed`, which requires
+    # `shared_memory.lock`) and, if it is set, raise instead of waiting.
+    self.aborted: bool = False  # Protected by `self.cv`'s lock.
     # Last observed phase by each thread. Note that not every thread has to
     # participate in the barrier, and we don't know ahead of time which ones
     # will, so we lazily initialize this dict the first time a thread waits on
@@ -1088,6 +1212,13 @@ class Barrier(memory.Allocation):
               f" up to phase {self.phase - 1}."
           )
 
+  def abort(self):
+    """Aborts the `Barrier`, waking up and failing all current waiters."""
+    with self.cv:
+      self.aborted = True
+      # just notifying is enough since the waiters will check the aborted flag
+      self.cv.notify_all()
+
   def arrive(
       self,
       thread: Thread | None,
@@ -1146,7 +1277,23 @@ class Barrier(memory.Allocation):
       thread: Thread,
       logging_info: GPULoggingInfo | None = None,
   ):
+    # Fail early if the kernel has already failed. This cannot be done while
+    # holding the lock on `self.cv`, so the below loop checks `self.aborted`
+    # and we only call `check_failed` again once `self.cv` has been released.
+    self.shared_memory.check_failed()
+    try:
+      self._wait(thread, logging_info)
+    except _BarrierAborted:
+      self.shared_memory.check_failed()
+      raise RuntimeError(
+          f"Barrier {id(self)} was aborted, but no failure was recorded."
+      ) from None
 
+  def _wait(
+      self,
+      thread: Thread,
+      logging_info: GPULoggingInfo | None = None,
+  ):
     with self.cv:
       last_observed_phase = self.last_observed_phase_by_thread.get(
           thread, None
@@ -1214,6 +1361,9 @@ class Barrier(memory.Allocation):
         # Case 3: we're attempting to observe phase `p+1`, which has not completed yet.
         # We must wait.
         while last_observed_phase == self.phase:
+          if self.aborted:
+            # Raise after releasing the lock on `self.cv`, see `wait`.
+            raise _BarrierAborted()
           if self.enable_logging and logging_info is not None:
             self._log(
                 logging_info.format(
@@ -1363,6 +1513,12 @@ class ClusterBarrier(memory.Allocation):
   def has_zero_ref_count(self) -> bool:
     with self.lock:
       return self.ref_count == 0
+
+  def abort(self):
+    """Aborts the `ClusterBarrier`."""
+    with self.lock:
+      for barrier in self.barriers:
+        barrier.abort()
 
   def arrive(
       self,

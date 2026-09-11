@@ -71,25 +71,8 @@ class MaskType(enum.Enum):
   ALIBI = 4
 
 
-def convert_mask_type_to_string(mask_type: MaskType) -> str:
-  if mask_type == MaskType.NO_MASK:
-    return "NO_MASK"
-  elif mask_type == MaskType.PADDING:
-    return "PADDING"
-  elif mask_type == MaskType.CAUSAL:
-    return "CAUSAL"
-  elif mask_type == MaskType.PADDING_CAUSAL:
-    return "PADDING_CAUSAL"
-  elif mask_type == MaskType.ALIBI:
-    return "ALIBI"
-  else:
-    raise ValueError(f"Unexpected mask type: {mask_type}")
-
 def has_padding(mask_type: MaskType) -> bool:
-  return mask_type == MaskType.PADDING or mask_type == MaskType.PADDING_CAUSAL
-
-def should_export_dbias(bias_shape, query_shape, layout) -> bool:
-  return True
+  return mask_type in (MaskType.PADDING, MaskType.PADDING_CAUSAL)
 
 def get_large_negative_number(dtype):
   # temp WAR as cuDNN has a bug for subtraction between two large negative value
@@ -116,6 +99,22 @@ def element_type_to_backend_config_type_mapping(dtype):
 
 def default_layouts(*shapes):
   return [range(len(shape) - 1, -1, -1) for shape in shapes]
+
+def _canonical_bnth_shape(shape, layout):
+  # Reorder a 4D Q/K/V shape to canonical (B, N, T_or_S, H), independent of
+  # whether the layout is BTNH or BNTH.
+  if layout == AttentionLayout.BNTH.value:
+    b, n, ts, h = shape
+  else:
+    b, ts, n, h = shape
+  return b, n, ts, h
+
+def _bnth_output_layout_and_perm(layout):
+  # Result minor-to-major layout and the transpose perm that maps the BNTH
+  # custom-call output back to the query's (BTNH or BNTH) layout.
+  if layout == AttentionLayout.BNTH.value:
+    return (3, 2, 1, 0), mlir.dense_int_array((0, 1, 2, 3))
+  return (3, 1, 2, 0), mlir.dense_int_array((0, 2, 1, 3))
 
 def get_max_seg_per_batch(q_offsets):
   return q_offsets.shape[1] - 1 if len(q_offsets.shape) == 2 else 1
@@ -163,7 +162,7 @@ def create_dot_product_attention_backend_config_base(
       "is_dynamic_dimension": [False, False, False, False],
     },
     "is_flash_attention": True,
-    "mask_type": convert_mask_type_to_string(mask_type),
+    "mask_type": mask_type.name,
   }
 
   # We define the contracting and batch dims in the format of
@@ -238,11 +237,10 @@ def create_dot_product_attention_backend_config(
   )
   if sliding_window_length is None:
     sliding_window_length = 0
-  backend_config['cudnn_fmha_backend_config']["dropout_rate"] = dropout_rate
-  backend_config['cudnn_fmha_backend_config']["seed"] = seed
-  backend_config['cudnn_fmha_backend_config']["sliding_window_length"] = sliding_window_length
-  backend_config['cudnn_fmha_backend_config']["max_seg_per_batch"] = max_seg_per_batch
-  backend_config['cudnn_fmha_backend_config']["is_paged_attention"] = is_paged_attention
+  backend_config["cudnn_fmha_backend_config"].update(
+      dropout_rate=dropout_rate, seed=seed,
+      sliding_window_length=sliding_window_length,
+      max_seg_per_batch=max_seg_per_batch, is_paged_attention=is_paged_attention)
   return json.dumps(backend_config)
 
 def create_dot_product_attention_fp8_backend_config(
@@ -278,7 +276,7 @@ def check_layout(query, key, value, bias, q_seqlen, kv_seqlen,
   q_offsets, kv_offsets, page_table_k, page_table_v, layout):
   def check_eq(a, b, c, msg):
     if not (a == b == c):
-      raise ValueError(f"{msg} must be same, got {a}, {b}, {b}")
+      raise ValueError(f"{msg} must be same, got {a}, {b}, {c}")
 
   q_rank, k_rank, v_rank = len(query.shape), len(key.shape), len(value.shape)
   if q_rank != 4:
@@ -586,14 +584,9 @@ def _dot_product_attention_fwd_abstract(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
     page_table_k, page_table_v, *, scale, seed, dropout_rate, variadic_args,
     mask_type, layout, sliding_window_length, is_training):
-  if layout == AttentionLayout.BNTH.value:
-    B, N, T, _ = query.shape
-    _, _, S, H = value.shape
-    output_shape = (B, N, T, H)
-  else:
-    B, T, N, _ = query.shape
-    _, S, _, H = value.shape
-    output_shape = (B, T, N, H)
+  B, N, T, _ = _canonical_bnth_shape(query.shape, layout)
+  _, _, _, H = _canonical_bnth_shape(value.shape, layout)
+  output_shape = (*query.shape[:3], H)
 
   max_seg_per_batch = get_max_seg_per_batch(q_offsets)
   softmax_stat_shape = (B * max_seg_per_batch, N, T)
@@ -637,16 +630,9 @@ def _dot_product_attention_fwd_cuda_lowering(
   value_type = ir.RankedTensorType(value.type)
   value_shape = value_type.shape
 
-  if layout == AttentionLayout.BNTH.value:
-    B, N, T, qk_H = query_shape
-    _, _, S, v_H = value_shape
-    output_layout = (3, 2, 1, 0)
-    output_transpose_perm = mlir.dense_int_array((0, 1, 2, 3))
-  else:
-    B, T, N, qk_H = query_shape
-    _, S, _, v_H = value_shape
-    output_layout = (3, 1, 2, 0)
-    output_transpose_perm = mlir.dense_int_array((0, 2, 1, 3))
+  B, N, T, qk_H = _canonical_bnth_shape(query_shape, layout)
+  _, _, S, v_H = _canonical_bnth_shape(value_shape, layout)
+  output_layout, output_transpose_perm = _bnth_output_layout_and_perm(layout)
 
   max_seg_per_batch = get_max_seg_per_batch(ir.RankedTensorType(q_offsets.type))
   is_paged_attention = check_is_paged_attention(ir.RankedTensorType(page_table_k.type))
@@ -719,16 +705,9 @@ def _dot_product_attention_bwd_cuda_lowering(
   value_type = ir.RankedTensorType(value.type)
   value_shape = value_type.shape
 
-  if layout == AttentionLayout.BNTH.value:
-    B, q_N, T, qk_H = query_shape
-    _, v_N, S, v_H = value_shape
-    grad_layout = (3, 2, 1, 0)
-    grad_transpose_perm = mlir.dense_int_array((0, 1, 2, 3))
-  else:
-    B, T, q_N, qk_H = query_shape
-    _, S, v_N, v_H = value_shape
-    grad_layout = (3, 1, 2, 0)
-    grad_transpose_perm = mlir.dense_int_array((0, 2, 1, 3))
+  B, q_N, T, qk_H = _canonical_bnth_shape(query_shape, layout)
+  _, v_N, S, v_H = _canonical_bnth_shape(value_shape, layout)
+  grad_layout, grad_transpose_perm = _bnth_output_layout_and_perm(layout)
 
   workspace_shape = (0,)
   workspace_type = ir.IntegerType.get_unsigned(8)
@@ -1051,9 +1030,6 @@ def _fwd_shardy_rule(value_types, result_types, layout, is_training, is_fp8):
       output_sharding += (ArrayMapping(CompoundFactor('batch', 'n'), 'nhead', 'qseq'),)
   return SdyShardingRule(tuple(input_sharding), output_sharding, **factor_sizes)
 
-_dot_product_attention_fwd_lower = custom_partitioning(
-    _dot_product_attention_fwd_impl, static_argnums=(10, 11, 12, 13, 14, 15, 16, 17))
-
 def _dot_product_attention_fwd_infer_sharding_from_operands(
     scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
     is_training, mesh, arg_shapes, result_shape):
@@ -1118,10 +1094,6 @@ def _bwd_shardy_rule(num_args, has_dbias, is_fp8):
     output_sharding += (amax, amax, amax, amax)
   return SdyShardingRule(input_sharding, output_sharding)
 
-_dot_product_attention_bwd_lower = custom_partitioning(
-    _dot_product_attention_bwd_impl, static_argnums=(13, 14, 15, 16, 17, 18, 19)
-)
-
 def _dot_product_attention_bwd_infer_sharding_from_operands(
     scale, seed, dropout_rate, variadic_args, mask_type, layout,
     sliding_window_length, mesh, arg_shapes, result_shape):
@@ -1184,91 +1156,59 @@ def _dot_product_attention_bwd_partition(
     return grads
   return mesh, sharded_impl, out_shardings, arg_shardings
 
-# Create dot_product_attention_fwd_p for forward operation.
-_dot_product_attention_fwd_p = core.Primitive("dot_product_attention_fwd")
-_dot_product_attention_fwd_p.multiple_results = True
-_dot_product_attention_fwd_p.def_impl(
-    functools.partial(dispatch.apply_primitive, _dot_product_attention_fwd_p)
-)
-_dot_product_attention_fwd_p.def_abstract_eval(
-    _dot_product_attention_fwd_abstract
-)
+def _register_fused_attention_primitive(
+    name, *, abstract_eval, cuda_lowering, impl, batcher, static_argnums,
+    infer_sharding_from_operands, partition, sharding_rule):
+  # Each fused-attention op is backed by two primitives: a core primitive that
+  # lowers directly to the cuDNN custom call, and a wrapper primitive that also
+  # carries the batching and custom-partitioning rules. Returns
+  # (core_p, wrapper_p).
+  core_p = core.Primitive(name)
+  core_p.multiple_results = True
+  core_p.def_impl(functools.partial(dispatch.apply_primitive, core_p))
+  core_p.def_abstract_eval(abstract_eval)
+  mlir.register_lowering(core_p, cuda_lowering, platform="cuda")
 
-mlir.register_lowering(
-  _dot_product_attention_fwd_p,
-  _dot_product_attention_fwd_cuda_lowering,
-  platform="cuda",
-)
+  wrapper_p = core.Primitive(name + "_wrapper")
+  wrapper_p.multiple_results = True
+  wrapper_p.def_impl(impl)
+  wrapper_p.def_abstract_eval(abstract_eval)
+  batching.primitive_batchers[wrapper_p] = batcher
+  lower = custom_partitioning(impl, static_argnums=static_argnums)
+  lower.def_partition(
+      infer_sharding_from_operands=infer_sharding_from_operands,
+      partition=partition,
+      sharding_rule=sharding_rule)
+  mlir.register_lowering(
+      wrapper_p, mlir.lower_fun(lower, multiple_results=True))
 
-_dot_product_attention_fwd_p_wrapper = core.Primitive(
-    "dot_product_attention_fwd_wrapper"
-)
-_dot_product_attention_fwd_p_wrapper.multiple_results = True
-_dot_product_attention_fwd_p_wrapper.def_impl(_dot_product_attention_fwd_impl)
-_dot_product_attention_fwd_p_wrapper.def_abstract_eval(
-    _dot_product_attention_fwd_abstract
-)
+  dispatch.prim_requires_devices_during_lowering.add(core_p)
+  dispatch.prim_requires_devices_during_lowering.add(wrapper_p)
+  return core_p, wrapper_p
 
-# Create dot_product_attention_bwd_p for backward operation.
-_dot_product_attention_bwd_p = core.Primitive("dot_product_attention_bwd")
-_dot_product_attention_bwd_p.multiple_results = True
-_dot_product_attention_bwd_p.def_impl(
-    functools.partial(dispatch.apply_primitive, _dot_product_attention_bwd_p)
-)
-_dot_product_attention_bwd_p.def_abstract_eval(
-    _dot_product_attention_bwd_abstract
-)
+_dot_product_attention_fwd_p, _dot_product_attention_fwd_p_wrapper = (
+    _register_fused_attention_primitive(
+        "dot_product_attention_fwd",
+        abstract_eval=_dot_product_attention_fwd_abstract,
+        cuda_lowering=_dot_product_attention_fwd_cuda_lowering,
+        impl=_dot_product_attention_fwd_impl,
+        batcher=_dot_product_attention_fwd_batcher,
+        static_argnums=(10, 11, 12, 13, 14, 15, 16, 17),
+        infer_sharding_from_operands=_dot_product_attention_fwd_infer_sharding_from_operands,
+        partition=_dot_product_attention_fwd_partition,
+        sharding_rule=_dot_product_attention_fwd_shardy_rule))
 
-mlir.register_lowering(
-  _dot_product_attention_bwd_p,
-  _dot_product_attention_bwd_cuda_lowering,
-  platform="cuda",
-)
-
-_dot_product_attention_bwd_p_wrapper = core.Primitive(
-    "dot_product_attention_bwd_wrapper"
-)
-_dot_product_attention_bwd_p_wrapper.multiple_results = True
-_dot_product_attention_bwd_p_wrapper.def_impl(_dot_product_attention_bwd_impl)
-_dot_product_attention_bwd_p_wrapper.def_abstract_eval(
-    _dot_product_attention_bwd_abstract
-)
-
-batching.primitive_batchers[
-    _dot_product_attention_fwd_p_wrapper
-] = _dot_product_attention_fwd_batcher
-batching.primitive_batchers[
-    _dot_product_attention_bwd_p_wrapper
-] = _dot_product_attention_bwd_batcher
-
-_dot_product_attention_fwd_lower.def_partition(
-  infer_sharding_from_operands=_dot_product_attention_fwd_infer_sharding_from_operands,
-  partition=_dot_product_attention_fwd_partition,
-  sharding_rule=_dot_product_attention_fwd_shardy_rule)
-
-mlir.register_lowering(_dot_product_attention_fwd_p_wrapper,
-                        mlir.lower_fun(_dot_product_attention_fwd_lower, multiple_results=True))
-
-_dot_product_attention_bwd_lower.def_partition(
-  infer_sharding_from_operands=_dot_product_attention_bwd_infer_sharding_from_operands,
-  partition=_dot_product_attention_bwd_partition,
-  sharding_rule=_dot_product_attention_bwd_shardy_rule)
-
-mlir.register_lowering(_dot_product_attention_bwd_p_wrapper,
-                        mlir.lower_fun(_dot_product_attention_bwd_lower, multiple_results=True))
-
-dispatch.prim_requires_devices_during_lowering.add(
-  _dot_product_attention_fwd_p
-)
-dispatch.prim_requires_devices_during_lowering.add(
-  _dot_product_attention_fwd_p_wrapper
-)
-dispatch.prim_requires_devices_during_lowering.add(
-  _dot_product_attention_bwd_p
-)
-dispatch.prim_requires_devices_during_lowering.add(
-  _dot_product_attention_bwd_p_wrapper
-)
+_dot_product_attention_bwd_p, _dot_product_attention_bwd_p_wrapper = (
+    _register_fused_attention_primitive(
+        "dot_product_attention_bwd",
+        abstract_eval=_dot_product_attention_bwd_abstract,
+        cuda_lowering=_dot_product_attention_bwd_cuda_lowering,
+        impl=_dot_product_attention_bwd_impl,
+        batcher=_dot_product_attention_bwd_batcher,
+        static_argnums=(13, 14, 15, 16, 17, 18, 19),
+        infer_sharding_from_operands=_dot_product_attention_bwd_infer_sharding_from_operands,
+        partition=_dot_product_attention_bwd_partition,
+        sharding_rule=_dot_product_attention_bwd_shardy_rule))
 
 @functools.partial(custom_derivatives.custom_vjp, nondiff_argnums=(10, 11, 12, 13, 14, 15, 16, 17, 18))
 def _dot_product_attention(query: Array,
@@ -1421,12 +1361,7 @@ def _dot_product_attention_fp8_fwd_abstract(
     query, key, value,
     descale_q, descale_k, descale_v, descale_s, scale_s, scale_o,
     scale, use_causal_mask, layout, is_training):
-  if layout == AttentionLayout.BNTH.value:
-    B, N, T, _ = query.shape
-    _, _, S, _ = key.shape
-  else:
-    B, T, N, _ = query.shape
-    _, S, _, _ = key.shape
+  B, N, T, _ = _canonical_bnth_shape(query.shape, layout)
   output_shape = query.shape
   softmax_stat_shape = (B, N, T)
 
@@ -1470,16 +1405,9 @@ def _dot_product_attention_fp8_fwd_cuda_lowering(
   key_type = ir.RankedTensorType(key.type)
   key_shape = key_type.shape
 
-  if layout == AttentionLayout.BNTH.value:
-    B, N, T, H = query_shape
-    _, _, S, _ = key_shape
-    output_layout = (3, 2, 1, 0)
-    output_transpose_perm = mlir.dense_int_array((0, 1, 2, 3))
-  else:
-    B, T, N, H = query_shape
-    _, S, _, _ = key_shape
-    output_layout = (3, 1, 2, 0)
-    output_transpose_perm = mlir.dense_int_array((0, 2, 1, 3))
+  B, N, T, H = _canonical_bnth_shape(query_shape, layout)
+  _, _, S, _ = _canonical_bnth_shape(key_shape, layout)
+  output_layout, output_transpose_perm = _bnth_output_layout_and_perm(layout)
 
   output_shape = (B, N, T, H)
   softmax_stat_shape = (B, N, T)
@@ -1543,16 +1471,9 @@ def _dot_product_attention_fp8_bwd_cuda_lowering(
   key_shape = key_type.shape
   value_type = ir.RankedTensorType(value.type)
 
-  if layout == AttentionLayout.BNTH.value:
-    B, q_N, T, H = query_shape
-    _, k_N, S, _ = key_shape
-    grad_layout = (3, 2, 1, 0)
-    grad_transpose_perm = mlir.dense_int_array((0, 1, 2, 3))
-  else:
-    B, T, q_N, H = query_shape
-    _, S, k_N, _ = key_shape
-    grad_layout = (3, 1, 2, 0)
-    grad_transpose_perm = mlir.dense_int_array((0, 2, 1, 3))
+  B, q_N, T, H = _canonical_bnth_shape(query_shape, layout)
+  _, k_N, S, _ = _canonical_bnth_shape(key_shape, layout)
+  grad_layout, grad_transpose_perm = _bnth_output_layout_and_perm(layout)
 
   workspace_shape = (0,)
   workspace_type = ir.IntegerType.get_unsigned(8)
@@ -1722,20 +1643,14 @@ def _dot_product_attention_fp8_bwd_batcher(
   return grads, out_bdims
 
 def _infer_fp8_fwd_output_sharding(mesh, arg_shapes, is_training, layout):
-  # Prepare variadic_args for the original function
-  has_bias = False  # Adjust as needed
-  variadic_args = (has_bias, None)  # Dummy value, adjust as necessary
-
-  # Call the original function with the required parameters
-  output_sharding = _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args, is_training, layout)
+  # FP8 attention never has a bias: variadic_args = (has_bias, has_dbias).
+  output_sharding = _infer_fwd_output_sharding(
+      mesh, arg_shapes, (False, None), is_training, layout)
   amax_sharding = NamedSharding(mesh, PartitionSpec())
   if is_training:
     out_sharding, activation_sharding = output_sharding[0], output_sharding[1]
     return [out_sharding, amax_sharding, amax_sharding, activation_sharding]
   return output_sharding + [amax_sharding, amax_sharding]
-
-_dot_product_attention_fp8_fwd_lower = custom_partitioning(
-    _dot_product_attention_fp8_fwd_impl, static_argnums=(9, 10, 11, 12))
 
 def _dot_product_attention_fp8_fwd_infer_sharding_from_operands(
     scale, use_causal_mask, layout, is_training,
@@ -1760,25 +1675,11 @@ def _dot_product_attention_fp8_fwd_shardy_rule(
   return _fwd_shardy_rule(value_types, result_types, layout, is_training, is_fp8=True)
 
 def _infer_fp8_bwd_output_sharding(mesh, arg_shapes, layout):
-  # Prepare variadic_args for the original function
-  has_bias = False  # Adjust as needed
-  has_dbias = False  # Adjust as needed
-  variadic_args = (has_bias, has_dbias)  # Dummy value, adjust as necessary
-
-  # Call the original function with the required parameters
-  output_shardings = _infer_bwd_output_sharding(mesh, arg_shapes, layout, variadic_args)
-
-  # Prepare amax_sharding
-  amax_sharding = NamedSharding(mesh, PartitionSpec())  # Use a default spec or adjust as needed
-
-  # Append amax_sharding for each output sharding
-  out_shardings_with_amax = output_shardings + [amax_sharding] * 4
-
-  return out_shardings_with_amax
-
-_dot_product_attention_fp8_bwd_lower = custom_partitioning(
-    _dot_product_attention_fp8_bwd_impl, static_argnums=(18,19,20)
-)
+  # FP8 attention never has a bias: variadic_args = (has_bias, has_dbias).
+  output_shardings = _infer_bwd_output_sharding(
+      mesh, arg_shapes, layout, (False, False))
+  amax_sharding = NamedSharding(mesh, PartitionSpec())
+  return output_shardings + [amax_sharding] * 4
 
 def _dot_product_attention_fp8_bwd_infer_sharding_from_operands(
     scale, use_causal_mask, layout, mesh,
@@ -1801,91 +1702,29 @@ def _dot_product_attention_fp8_bwd_partition(
   )
   return mesh, impl, out_shardings, arg_shardings
 
-# Create dot_product_attention_fp8_fwd_p for forward operation.
-_dot_product_attention_fp8_fwd_p = core.Primitive("dot_product_attention_fp8_fwd")
-_dot_product_attention_fp8_fwd_p.multiple_results = True
-_dot_product_attention_fp8_fwd_p.def_impl(
-    functools.partial(dispatch.apply_primitive, _dot_product_attention_fp8_fwd_p)
-)
-_dot_product_attention_fp8_fwd_p.def_abstract_eval(
-    _dot_product_attention_fp8_fwd_abstract
-)
+_dot_product_attention_fp8_fwd_p, _dot_product_attention_fp8_fwd_p_wrapper = (
+    _register_fused_attention_primitive(
+        "dot_product_attention_fp8_fwd",
+        abstract_eval=_dot_product_attention_fp8_fwd_abstract,
+        cuda_lowering=_dot_product_attention_fp8_fwd_cuda_lowering,
+        impl=_dot_product_attention_fp8_fwd_impl,
+        batcher=_dot_product_attention_fp8_fwd_batcher,
+        static_argnums=(9, 10, 11, 12),
+        infer_sharding_from_operands=_dot_product_attention_fp8_fwd_infer_sharding_from_operands,
+        partition=_dot_product_attention_fp8_fwd_partition,
+        sharding_rule=_dot_product_attention_fp8_fwd_shardy_rule))
 
-mlir.register_lowering(
-  _dot_product_attention_fp8_fwd_p,
-  _dot_product_attention_fp8_fwd_cuda_lowering,
-  platform="cuda",
-)
-
-_dot_product_attention_fp8_fwd_p_wrapper = core.Primitive(
-    "dot_product_attention_fp8_fwd_wrapper"
-)
-_dot_product_attention_fp8_fwd_p_wrapper.multiple_results = True
-_dot_product_attention_fp8_fwd_p_wrapper.def_impl(_dot_product_attention_fp8_fwd_impl)
-_dot_product_attention_fp8_fwd_p_wrapper.def_abstract_eval(
-    _dot_product_attention_fp8_fwd_abstract
-)
-
-# Create dot_product_attention_bwd_p for backward operation.
-_dot_product_attention_fp8_bwd_p = core.Primitive("dot_product_attention_fp8_bwd")
-_dot_product_attention_fp8_bwd_p.multiple_results = True
-_dot_product_attention_fp8_bwd_p.def_impl(
-    functools.partial(dispatch.apply_primitive, _dot_product_attention_fp8_bwd_p)
-)
-_dot_product_attention_fp8_bwd_p.def_abstract_eval(
-    _dot_product_attention_fp8_bwd_abstract
-)
-
-mlir.register_lowering(
-  _dot_product_attention_fp8_bwd_p,
-  _dot_product_attention_fp8_bwd_cuda_lowering,
-  platform="cuda",
-)
-
-_dot_product_attention_fp8_bwd_p_wrapper = core.Primitive(
-    "dot_product_attention_fp8_bwd_wrapper"
-)
-_dot_product_attention_fp8_bwd_p_wrapper.multiple_results = True
-_dot_product_attention_fp8_bwd_p_wrapper.def_impl(_dot_product_attention_fp8_bwd_impl)
-_dot_product_attention_fp8_bwd_p_wrapper.def_abstract_eval(
-    _dot_product_attention_fp8_bwd_abstract
-)
-
-batching.primitive_batchers[
-    _dot_product_attention_fp8_fwd_p_wrapper
-] = _dot_product_attention_fp8_fwd_batcher
-batching.primitive_batchers[
-    _dot_product_attention_fp8_bwd_p_wrapper
-] = _dot_product_attention_fp8_bwd_batcher
-
-_dot_product_attention_fp8_fwd_lower.def_partition(
-  infer_sharding_from_operands=_dot_product_attention_fp8_fwd_infer_sharding_from_operands,
-  partition=_dot_product_attention_fp8_fwd_partition,
-  sharding_rule=_dot_product_attention_fp8_fwd_shardy_rule)
-
-mlir.register_lowering(_dot_product_attention_fp8_fwd_p_wrapper,
-                        mlir.lower_fun(_dot_product_attention_fp8_fwd_lower, multiple_results=True))
-
-_dot_product_attention_fp8_bwd_lower.def_partition(
-  infer_sharding_from_operands=_dot_product_attention_fp8_bwd_infer_sharding_from_operands,
-  partition=_dot_product_attention_fp8_bwd_partition,
-  sharding_rule=_dot_product_attention_fp8_bwd_shardy_rule)
-
-mlir.register_lowering(_dot_product_attention_fp8_bwd_p_wrapper,
-                        mlir.lower_fun(_dot_product_attention_fp8_bwd_lower, multiple_results=True))
-
-dispatch.prim_requires_devices_during_lowering.add(
-  _dot_product_attention_fp8_fwd_p
-)
-dispatch.prim_requires_devices_during_lowering.add(
-  _dot_product_attention_fp8_fwd_p_wrapper
-)
-dispatch.prim_requires_devices_during_lowering.add(
-  _dot_product_attention_fp8_bwd_p
-)
-dispatch.prim_requires_devices_during_lowering.add(
-  _dot_product_attention_fp8_bwd_p_wrapper
-)
+_dot_product_attention_fp8_bwd_p, _dot_product_attention_fp8_bwd_p_wrapper = (
+    _register_fused_attention_primitive(
+        "dot_product_attention_fp8_bwd",
+        abstract_eval=_dot_product_attention_fp8_bwd_abstract,
+        cuda_lowering=_dot_product_attention_fp8_bwd_cuda_lowering,
+        impl=_dot_product_attention_fp8_bwd_impl,
+        batcher=_dot_product_attention_fp8_bwd_batcher,
+        static_argnums=(18, 19, 20),
+        infer_sharding_from_operands=_dot_product_attention_fp8_bwd_infer_sharding_from_operands,
+        partition=_dot_product_attention_fp8_bwd_partition,
+        sharding_rule=_dot_product_attention_fp8_bwd_shardy_rule))
 
 @functools.partial(custom_derivatives.custom_vjp, nondiff_argnums=(4, 5, 6, 7))
 def _dot_product_attention_fp8(query: Array,
@@ -2005,8 +1844,7 @@ def paged_attention(
   check_layout(query, key, value, bias, q_seqlen, kv_seqlen, None, None,
     page_table_k, page_table_v, layout)
   has_bias = bias is not None
-  has_dbias = has_bias and \
-    should_export_dbias(bias.shape, query.shape, layout)
+  has_dbias = has_bias
   variadic_args = (has_bias, has_dbias)
 
   _not_used = jnp.zeros(0, dtype=query.dtype)
@@ -2152,8 +1990,7 @@ def dot_product_attention(
     check_layout(query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
       None, None, layout)
     has_bias = bias is not None
-    has_dbias = has_bias and bias_is_differentiable and \
-      should_export_dbias(bias.shape, query.shape, layout)
+    has_dbias = has_bias and bias_is_differentiable
     variadic_args = (has_bias, has_dbias)
 
     _not_used = jnp.zeros(0, dtype=query.dtype)

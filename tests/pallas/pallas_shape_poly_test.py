@@ -18,7 +18,6 @@ import functools
 import math
 import os
 import sys
-import warnings
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
@@ -101,15 +100,12 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
     if plgpu is None:
       self.skipTest("Triton is not available on this platform")
     super().setUp()
-    self.enter_context(warnings.catch_warnings())
-    warnings.filterwarnings(
-        "ignore",
-        category=DeprecationWarning,
-        message="The Pallas Triton backend is deprecated",
+    self.enter_context(
+        jtu.ignore_warning(
+            category=DeprecationWarning,
+            message="The Pallas Triton backend is deprecated",
+        )
     )
-    # TODO(bchetioui): Remove this for H100+ once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_copy(self):
     # The blocks are static, but the input and the grid are of polymorphic

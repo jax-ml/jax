@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import contextlib
+import re
 import unittest
 from absl.testing import absltest
 import jax
@@ -63,7 +64,6 @@ class JaxAotTest(jtu.JaxTestCase):
         jax.pmap(lambda x: x * x).lower(
             np.zeros((len(jax.devices()), 4), dtype=np.float32)))
 
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): This test is segfaulting on TPU
   def test_topology_jit_serialize(self):
     try:
       aot_topo = topologies.get_topology_desc(
@@ -76,8 +76,6 @@ class JaxAotTest(jtu.JaxTestCase):
 
     if jtu.TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       raise unittest.SkipTest('Compilation caching not yet supported.')
-    if jtu.test_device_matches(['gpu']):
-      raise unittest.SkipTest('Broken on GPU: b/442353988')
 
     @jax.jit
     def fn(x):
@@ -100,8 +98,19 @@ class JaxAotTest(jtu.JaxTestCase):
 
     ref_mesh = topologies.make_mesh(ref_topo, mesh_shape, ('x', 'y'))
     aot_mesh = topologies.make_mesh(aot_topo, mesh_shape, ('x', 'y'))
+
+    # Unlike CPU and GPU, TPU lowerings retain debug info in text format. We'll
+    # keep function-level info since that gives us confidence that things match,
+    # but line/column level will never match so let's rip them out.
+    def normalize_mlir_locations(ir_text: str) -> str:
+      lines_removed = re.sub(r'line=(\d+)', 'line=stripped', ir_text)
+      columns_removed = re.sub(
+          r'column=(\d+)', 'column=stripped', lines_removed)
+      return columns_removed
+
     self.assertEqual(
-        lower_and_load(ref_mesh).as_text(), lower_and_load(aot_mesh).as_text()
+        normalize_mlir_locations(lower_and_load(ref_mesh).as_text()),
+        normalize_mlir_locations(lower_and_load(aot_mesh).as_text())
     )
 
   def test_get_topology_from_devices(self):

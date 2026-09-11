@@ -111,6 +111,7 @@ limitations under the License.
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OperationSupport.h"
@@ -333,9 +334,7 @@ void InitContext(mlir::MLIRContext* context) {
                   mlir::func::FuncDialect, mlir::math::MathDialect,
                   mlir::memref::MemRefDialect, mlir::scf::SCFDialect,
                   mlir::vector::VectorDialect, mlir::gpu::GPUDialect,
-                  mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect,
                   mlir::LLVM::LLVMDialect, mosaic_gpu::MosaicGPUDialect>();
-  mlir::registerConvertNVVMToLLVMInterface(registry);
   mlir::registerConvertComplexToLLVMInterface(registry);
   mlir::registerConvertMemRefToLLVMInterface(registry);
   mlir::registerConvertMathToLLVMInterface(registry);
@@ -347,10 +346,20 @@ void InitContext(mlir::MLIRContext* context) {
   mlir::arith::registerConvertArithToLLVMInterface(registry);
   mlir::registerConvertMemRefToLLVMInterface(registry);
   mlir::gpu::registerOffloadingLLVMTranslationInterfaceExternalModels(registry);
-  mlir::NVVM::registerNVVMTargetInterfaceExternalModels(registry);
   mlir::registerBuiltinDialectTranslation(registry);
   mlir::registerGPUDialectTranslation(registry);
   mlir::registerLLVMDialectTranslation(registry);
+  context->appendDialectRegistry(registry);
+  context->loadAllAvailableDialects();
+}
+
+void LoadNvDialects(mlir::MLIRContext* context) {
+  mlir::DialectRegistry registry;
+  // NVGPUDialect depends on NVVMDialect, so both must be loaded here after
+  // parsing to prevent NVVM from eagerly parsing legacy bytecode attributes.
+  registry.insert<mlir::nvgpu::NVGPUDialect, mlir::NVVM::NVVMDialect>();
+  mlir::registerConvertNVVMToLLVMInterface(registry);
+  mlir::NVVM::registerNVVMTargetInterfaceExternalModels(registry);
   mlir::registerNVVMDialectTranslation(registry);
   context->appendDialectRegistry(registry);
   context->loadAllAvailableDialects();
@@ -708,11 +717,26 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   if (!module) {
     return absl::InternalError("Failed to parse Mosaic GPU module");
   }
+  // NVVM is loaded after `InitContext` because `mlir::parseSourceString`
+  // chokes on parsing NVVM attributes after
+  // https://github.com/llvm/llvm-project/pull/196289 otherwise.
+  //
+  // TODO(bchetioui): remove dependency on NVVM to lighten the maintenance
+  // burden.
+  LoadNvDialects(&context);
+
+  std::string diagnostic;
+  mlir::ScopedDiagnosticHandler diagnostic_handler(
+      &context, [&](mlir::Diagnostic& diag) {
+        absl::StrAppend(&diagnostic, diag.str(), "\n");
+        return mlir::LogicalResult::failure();
+      });
   auto manager = mlir::PassManager::on<mlir::ModuleOp>(module->getContext());
   manager.addPass(mosaic::gpu::createSerdePass(
       mosaic::gpu::SerdePassOptions{.serialize = false}));
   if (manager.run(module.get()).failed()) {
-    return absl::InternalError("Failed to deserialize Mosaic GPU module");
+    return absl::InternalError(
+        absl::StrCat("Failed to deserialize Mosaic GPU module: ", diagnostic));
   }
 
   const char* dump_llvm = getenv("MOSAIC_GPU_DUMP_LLVM");
@@ -1139,6 +1163,10 @@ absl::StatusOr<std::vector<ffi::AnyBuffer>> GetBuffers(
 
 bool ModuleUsesCollectiveMetadata(const xla::ffi::Dictionary& attrs) {
   return attrs.get<bool>("uses_xla_collective_metadata").value_or(false);
+}
+
+bool ModuleSkipsDeviceBarrier(const xla::ffi::Dictionary& attrs) {
+  return attrs.get<bool>("skip_device_barrier").value_or(false);
 }
 
 size_t GetCollectiveMetadataSize(size_t num_buffers, size_t num_devices) {
@@ -1589,15 +1617,18 @@ absl::Status MosaicGpuExecute(
     buffer_ptrs.push_back(metadata_address.opaque());
     buffer_ptrs.push_back(device_state.metadata_bytes.data());
 
-    ASSIGN_OR_RETURN(xla::gpu::GpuCommunicator * comm,
-                     collective_cliques->GetComm(clique_key, current_rank));
+    bool skip_device_barrier = ModuleSkipsDeviceBarrier(attributes);
+    if (!skip_device_barrier) {
+      ASSIGN_OR_RETURN(xla::gpu::GpuCommunicator * comm,
+                       collective_cliques->GetComm(clique_key, current_rank));
 
-    XLA_VLOG_DEVICE(6, device_ordinal)
-        << "Starting multi-GPU barrier with key: " << clique_key;
-    xla::gpu::GpuCollectives::Executor executor(stream);
-    RETURN_IF_ERROR(comm->LaunchMultiGpuBarrier(executor));
-    XLA_VLOG_DEVICE(6, device_ordinal)
-        << "Finished multi-GPU barrier with key: " << clique_key;
+      XLA_VLOG_DEVICE(6, device_ordinal)
+          << "Starting multi-GPU barrier with key: " << clique_key;
+      xla::gpu::GpuCollectives::Executor executor(stream);
+      RETURN_IF_ERROR(comm->LaunchMultiGpuBarrier(executor));
+      XLA_VLOG_DEVICE(6, device_ordinal)
+          << "Finished multi-GPU barrier with key: " << clique_key;
+    }
   }
 
   void** buffers_data = buffer_ptrs.data();
@@ -1674,6 +1705,7 @@ XLA_FFI_DEFINE_HANDLER(
 // - kernel_hash: a hash of the kernel.
 // - module: the serialized MLIR module.
 // - use_custom_barrier
+// - skip_device_barrier (optional)
 // - uses_xla_collective_metadata (optional)
 XLA_FFI_DEFINE_HANDLER(
     kMosaicGpuExecute, MosaicGpuExecute,

@@ -32,7 +32,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import state
 from jax._src.ad_checkpoint import saved_residuals
-from jax.ad_checkpoint import checkpoint_name
+from jax.ad_checkpoint import checkpoint_name_fwd
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.custom_derivatives import custom_jvp_call_p
@@ -1245,7 +1245,7 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(jax.vmap(f)(xs), xs**3)
     self.assertEqual(jax.grad(f)(2.0), 12.0)
 
-  def test_newstyle_hiprimitive_defines_both_types_of_vjp_error(self):
+  def test_newstyle_hiprimitive_defines_both_types_of_vjp(self):
     class RaiseToStaticPower(HiPrim):
       def __init__(self, in_aval, *, power):
         self.in_avals = (in_aval,)
@@ -1256,7 +1256,7 @@ class HijaxTest(jtu.JaxTestCase):
       def expand(self, x):
         return x ** self.power
 
-      def vjp_fwd(self, x):
+      def vjp_fwd(self, nzs_in, x):
         ans = self(x)
         return (ans, x)
 
@@ -1279,8 +1279,7 @@ class HijaxTest(jtu.JaxTestCase):
     def f(x):
       return raise_to_static_power(x, power=3)
 
-    with self.assertRaises(AttributeError):
-      f(2.0)
+    self.assertEqual(jax.grad(f)(2.0), 12.0)
 
   def test_newstyle_hiprimitive_vmap(self):
 
@@ -2863,7 +2862,7 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     def f(y):
       return jnp.sin(y)
     def f_fwd(y):
-      return checkpoint_name(jnp.sin(y), 'saved'), (jnp.cos(y),)
+      return checkpoint_name_fwd(jnp.sin(y), 'saved'), (jnp.cos(y),)
     def f_bwd(res, g):
       c, = res
       return (g * c,)
@@ -2907,7 +2906,7 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     def f(x):
       return jnp.sin(x) * 2.0
     def f_fwd(x):
-      return checkpoint_name(jnp.sin(x) * 2.0, 'saved'), (x,)
+      return checkpoint_name_fwd(jnp.sin(x) * 2.0, 'saved'), (x,)
     def f_bwd(res, g):
       x, = res
       return (g * 2.0 * jnp.cos(x),)
@@ -2921,6 +2920,28 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     res = saved_residuals(jax.remat(layer, policy=policy), jnp.arange(4.))
     self.assertTrue(any("named 'saved'" in s for _, s in res),
                     msg=f'saved residuals: {[s for _, s in res]}')
+
+  def test_eager_call_not_traced(self):
+    calls = 0
+    @jax.custom_vjp
+    def f(x):
+      nonlocal calls
+      calls += 1
+      if x > 0:
+        return x * 2
+      else:
+        return -x
+
+    def f_fwd(x):
+      return f(x), ()
+    def f_bwd(_, g):
+      return (g,)
+    f.defvjp(f_fwd, f_bwd)
+
+    self.assertEqual(f(3), 6)
+    self.assertEqual(calls, 1)
+    self.assertEqual(f(-3), 3)
+    self.assertEqual(calls, 2)
 
 
 if __name__ == '__main__':

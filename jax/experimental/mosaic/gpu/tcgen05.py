@@ -26,7 +26,6 @@ from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
-from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import vector
 import numpy as np
 
@@ -112,6 +111,24 @@ def create_instr_descriptor(
   return arith.constant(ir.IntegerType.get_signless(32), desc)
 
 
+def _mxf4_sparsity_version() -> int:
+  """Sparsity version for .kind::mxf4{,nvf4}.
+
+  This needs to be set in the descriptor and encodes the sparsity granularity.
+  """
+  arch = utils.get_arch()
+  assert arch.major in {10, 11}, arch
+  return int(arch.major == 10 and arch.minor >= 7)
+
+
+def sparse_group_elems(element_type: ir.Type) -> int:
+  """The number of A elements described by one pair of metadata entries."""
+  assert utils.bitwidth(element_type) != 32, "tf32 support not implemented"
+  if utils.bitwidth(element_type) != 4:
+    return 4
+  return 4 if _mxf4_sparsity_version() == 1 else 8
+
+
 def _create_scaled_instr_descriptor(
     get_input_encoding: Callable[[ir.Type], int],
     m: int,
@@ -125,15 +142,23 @@ def _create_scaled_instr_descriptor(
     scale_type: ir.Type,
     sparse: bool = False,
 ) -> ir.Value:
+  # Use .kind::mxf4 and .kind::mxf4nvf4 encoding for 4-bit types
+  is_fp4 = utils.bitwidth(a_type) == 4 and utils.bitwidth(b_type) == 4
   desc = 0
-  # Bits 0, 1 are reserved
+  # Bits 0, 1 are reserved and must be 0
   desc |= sparse << 2  # Sparsity, bit 2
-  # Bit 3 is reserved
+  # Bit 3 is the upper bit of the encoded K dimension .kind::mxf4 and
+  # .kind::mxf4nvf4
   assert 0 <= b_scale_idx < 4
   desc |= b_scale_idx << 4  # B scale factor data ID, bits 4-5
   # Bit 6 is reserved
   desc |= get_input_encoding(a_type) << 7  # A dtype, bits 7-9
-  desc |= get_input_encoding(b_type) << 10  # B dtype, bits 10-12
+  desc |= get_input_encoding(b_type) << 10  # B dtype, bits 10-12 or 10-11
+  assert not is_fp4 or (desc >> 11) == 0
+  if is_fp4 and sparse:
+    sparsity_version = _mxf4_sparsity_version()
+    assert sparsity_version in {0, 1}
+    desc |= sparsity_version << 12  # Sparsity version, bit 12
   # We ignore negate bits 13-14
   desc |= transpose_a << 15  # Transpose A
   desc |= transpose_b << 16  # Transpose B
@@ -152,12 +177,19 @@ def _create_scaled_instr_descriptor(
     raise ValueError(f"M must be a multiple of 16 and <= 256, got: {m}")
   desc |= (m >> 7) << 27  # M >> 7, bits 27-28
   desc |= a_scale_idx << 29  # A scale factor data ID, bits 29-30
-  # Bit 31 is reserved
+  # Bit 31 is the lowest bit of the encoded K dimension for .kind::mxf4,
+  # .kind::mxf4nvf4, and .kind::mxf8f6f4. Zero means Dense K=64 / Sparse
+  # K=128 for .kind::mxf4 and .kind::mxf4nvf4 and Dense K=32 / Sparse K=64
+  # for .kind::mxf8f6f4.
   return arith.constant(ir.IntegerType.get_signless(32), desc)
 
 
 def create_scaled_f8f6f4_instr_descriptor(*args, **kwargs) -> ir.Value:
   def get_input_encoding(ty):
+    # The instruction descriptor encoding logic implemented above assumes
+    # that 4-bit types come through .kind::mxf4 or .kind::mxf4nvf4.
+    if utils.bitwidth(ty) == 4:
+      raise NotImplementedError(f"4-bit type {ty} not supported via f8f6f4")
     if ty == ir.Float8E4M3FNType.get():
       return 0
     elif ty == ir.Float8E5M2Type.get():
@@ -494,9 +526,8 @@ def mma(
           f" got {b_scale.shape}"
       )
   if is_sparse:
-    sparse_group_elems = 8 if utils.bitwidth(a_element_type) == 4 else 4
     # Each sparse group has 2 entries.
-    expected_meta_k = k // sparse_group_elems * 2
+    expected_meta_k = k // sparse_group_elems(a_element_type) * 2
     if a_sparse_metadata.shape != (m, expected_meta_k):
       raise ValueError(
           f"A sparse metadata shape mismatch: expected {(m, expected_meta_k)},"
@@ -588,9 +619,8 @@ def mma(
     if a_sparse_addr_base is not None:
       if n_groups != 1 or m_groups != 1:
         raise NotImplementedError("A sparse metadata address calculation for multiple tiles")
-      sparse_group_elems = 8 if utils.bitwidth(mma_a_element_type) == 4 else 4
       # Each sparse group has 2 entries, each TMEM column holds 16 i2 entries.
-      cols_per_k_group = k_group_elems // sparse_group_elems * 2 // 16
+      cols_per_k_group = k_group_elems // sparse_group_elems(mma_a_element_type) * 2 // 16
       a_sparse_addr = arith.addi(a_sparse_addr_base, utils.c(ki * cols_per_k_group, i32))
     else:
       a_sparse_addr = None
@@ -683,6 +713,7 @@ def _do_mma(
   is_scaled = a_scale_addr is not None
   is_sparse = a_sparse_addr is not None
   elem_bitwidth = utils.bitwidth(a_element_type)
+  # TODO: support larger K values on newer hardware
   instr_k = (1 + is_sparse) * 8 * 32 // elem_bitwidth
   packing = 8 * 4 // elem_bitwidth
 
@@ -765,16 +796,17 @@ def _do_mma(
   for k_step in range(k // instr_k):
     if is_sparse:
       assert a_sparse_addr is not None
-      sparse_group_elems = 8 if elem_bitwidth == 4 else 4
-      # Each sparse group has 2 entries, each TMEM column holds 16 i2 entries.
-      meta_cols_per_instr = instr_k // sparse_group_elems * 2 // 16
-      instrs_per_col_pair = 2 // meta_cols_per_instr
-      sp_selector = k_step % instrs_per_col_pair
-      sparse_addr = (
-          arith.addi(
-              a_sparse_addr, utils.c(k_step // instrs_per_col_pair * 2, i32)
-          ),
-      )
+      # Sparse metadata is organised as 32-row columns of 32-bit cells in TMEM; 4 bits
+      # of metadata map to 2 (1:2 sparsity), 4 (2:4 sparsity) or 8 (4:8 sparsity)
+      # of the `instr_k` columns in A consumed by each tcgen05.mma.sp instruction.
+      meta_cols_per_instr = instr_k // sparse_group_elems(a_element_type) * 2 // 16
+      # The metadata operand always names a column pair, and the descriptor's
+      # sparsity selector picks which half of that pair to read if needed. This
+      # selector is only non-zero for wider types (smaller instr_k) that only
+      # have one metadata column per instruction (e.g. .kind::f16).
+      meta_col = k_step * meta_cols_per_instr
+      sp_selector = meta_col % 2
+      sparse_addr = (arith.addi(a_sparse_addr, utils.c(meta_col // 2 * 2, i32)),)
     if is_scaled:
       assert scale_steps is not None
       scale_vec_width = 4 // scale_steps
@@ -854,16 +886,42 @@ def commit_arrive(
   if collective:
     if ctx is None:
       raise ValueError("ctx must be provided for collective barriers")
-    # TODO(apaszke): This is just 0b11 shifted by the even CTA index.
-    if ctx.cluster_size != (2, 1, 1):
-      raise NotImplementedError("Collective arrivals only support (2, 1, 1)-shaped clusters")
+    if ctx.cluster_size[0] != 2:
+      raise ValueError(
+          "Collective arrivals require the minormost cluster dimension to"
+          f" have size 2, got: {ctx.cluster_size}"
+      )
     i16 = ir.IntegerType.get_signless(16)
-    mask = arith.constant(i16, 3)
-    nvvm.tcgen05_commit(
-        barrier, group=nvvm.CTAGroupKind.CTA_2, multicast_mask=mask
+    if ctx.cluster_size == (2, 1, 1):
+      mask = arith.constant(i16, 3)
+    else:
+      block_idx = arith.index_castui(i16, utils.cluster_idx())
+      even_block_idx = arith.andi(block_idx, arith.constant(i16, ~1))
+      mask = arith.shli(arith.constant(i16, 0b11), even_block_idx)
+    # We emit the LLVM intrinsic directly instead of using inline PTX because
+    # there seems to be a miscompilation when using inline PTX. The main
+    # difference is that, when we use a llvm.inline_asm block, the generated
+    # PTX stores the address of the barrier in a register, while otherwise the
+    # instruction is emitted with the immediate `[__dynamic_smem+0x0FF537]` as
+    # the barrier address.
+    #
+    # While it seems like this shouldn't change anything, it appears that ptxas
+    # messes up in that case, producing incorrect code.
+    llvm.call_intrinsic(
+        None,
+        "llvm.nvvm.tcgen05.commit.mc.cg2",
+        [barrier, mask],
+        [],
+        [],
     )
   else:
-    nvvm.tcgen05_commit(barrier)
+    llvm.call_intrinsic(
+        None,
+        "llvm.nvvm.tcgen05.commit.cg1",
+        [barrier],
+        [],
+        [],
+    )
 
 
 def tmem_alloc_exact_ncols(ncols: int, exact: bool) -> int:
@@ -888,7 +946,10 @@ def tmem_alloc_exact_ncols(ncols: int, exact: bool) -> int:
   return ncols
 
 
-def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact: bool = True) -> tuple[ir.Value, int]:
+def tmem_alloc(
+    tmem_addr: ir.Value, ncols: int, collective: bool = False, exact: bool = True
+) -> int:
+  """Allocates TMEM and returns the number of columns allocated."""
   if isinstance(tmem_addr.type, ir.MemRefType):
     ref_ty = ir.MemRefType(tmem_addr.type)
     if ref_ty.element_type != ir.IntegerType.get_signless(32):
@@ -901,30 +962,28 @@ def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact:
   elif tmem_addr.type != llvm.PointerType.get(address_space=3):
     raise ValueError(f"tmem_addr must be an SMEM pointer or a memref, got: {tmem_addr.type}")
   ncols = tmem_alloc_exact_ncols(ncols, exact)
-  group = nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
+  cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
-  return nvvm.tcgen05_alloc(tmem_addr, utils.c(ncols, i32), group=group), ncols  # pyrefly: ignore[bad-return]
-
-
-def _tmem_addr_to_ptr(tmem_addr: ir.Value) -> ir.Value:
-  assert tmem_addr.type == ir.IntegerType.get_signless(32)
-  return llvm.inttoptr(llvm.PointerType.get(address_space=6), tmem_addr)
+  ptx = f"tcgen05.alloc.cta_group::{cta_group}.sync.aligned.shared::cta.b32 [$0], $1;"
+  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32))
+  return ncols
 
 
 def tmem_dealloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact: bool = True) -> None:
   if tmem_addr.type != ir.IntegerType.get_signless(32):
     raise ValueError(f"tmem_addr must be an i32, got: {tmem_addr.type}")
   ncols = tmem_alloc_exact_ncols(ncols, exact)
-  group = nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
+  cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
-  nvvm.tcgen05_dealloc(
-      _tmem_addr_to_ptr(tmem_addr), utils.c(ncols, i32), group=group
-  )
+  ptx = f"tcgen05.dealloc.cta_group::{cta_group}.sync.aligned.b32 $0, $1;"
+  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32))
 
 
 def tmem_relinquish_alloc_permit(collective: bool) -> None:
-  group = nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
-  nvvm.tcgen05_relinquish_alloc_permit(group=group)
+  cta_group = "2" if collective else "1"
+  ptx = f"tcgen05.relinquish_alloc_permit.cta_group::{cta_group}.sync.aligned;"
+  utils.inline_ptx(ptx)
+
 
 def _tmem_access_helper(shape, num) -> tuple[int, str]:
   if num.bit_count() != 1 or num > 128:
@@ -993,7 +1052,7 @@ def _tmem_load(
   regs = llvm.inline_asm(
       asm_out_ty,
       [tmem_addr],
-      f"tcgen05.ld{red_mod}.sync.aligned.{shape}.x{num}{suffix} {regs_vector}{red_reg_arg}, [${num_out_regs}];",  # pylint: disable=line-too-long
+      f"tcgen05.ld{red_mod}.sync.aligned.{shape}.x{num}{suffix} {regs_vector}{red_reg_arg}, [${num_out_regs}];",
       "=r," * num_out_regs + "r",
       has_side_effects=True,
   )
@@ -1524,10 +1583,8 @@ class TMEMRef:
     num_cols = self.layout.cols_in_shape(self.shape, utils.bitwidth(self.dtype))
     lane = arith.remui(utils.thread_idx(), arith.constant(i32, utils.WARPGROUP_SIZE))
     for c in range(num_cols):
-      ptr = _tmem_addr_to_ptr(arith.addi(self.address, arith.constant(i32, c)))
-      i32_vec = ir.VectorType.get((1,), i32)
-      vec_val = nvvm.tcgen05_ld(i32_vec, nvvm.Tcgen05LdStShape.SHAPE_32X32B, ptr)
-      val = vector.extract(vec_val, [], [0])
+      col_addr = arith.addi(self.address, arith.constant(i32, c))
+      val = _tmem_load(col_addr, "32x32b", 1, pack=False)[0]
       dtype_bitwidth = utils.bitwidth(self.dtype)
       full_packing = 32 // dtype_bitwidth
       if self.packing == 1:
@@ -1806,13 +1863,26 @@ def _load_32xcols_native(
 
 
 def commit_tmem() -> None:
-  nvvm.tcgen05_wait(nvvm.Tcgen05WaitKind.STORE)
+  utils.inline_ptx("tcgen05.wait::st.sync.aligned;")
   utils.warpgroup_barrier()
 
 
 def wait_load_tmem() -> None:
-  nvvm.tcgen05_wait(nvvm.Tcgen05WaitKind.LOAD)
+  utils.inline_ptx("tcgen05.wait::ld.sync.aligned;")
   utils.warpgroup_barrier()
+
+
+def _tcgen05_cp(
+    shape: str,
+    tmem_addr: ir.Value,
+    smem_desc: ir.Value,
+    multicast: str | None = None,
+    collective: bool = False,
+) -> None:
+  cta_group = "2" if collective else "1"
+  mc = f".{multicast}" if multicast else ""
+  ptx = f"tcgen05.cp.cta_group::{cta_group}.{shape}{mc} [$0], $1;"
+  utils.inline_ptx(ptx, tmem_addr, smem_desc)
 
 
 def async_copy_scales_smem_to_tmem(
@@ -1892,12 +1962,8 @@ def async_copy_scales_smem_to_tmem(
           tmem_ref.address, arith.constant(i32, 4 * k_tile),
       )
       desc = mma_utils.encode_descriptor(load_ptr, 0, 8 * 16, swizzle=None)
-      nvvm.tcgen05_cp(
-          nvvm.Tcgen05CpShape.SHAPE_64x128b,
-          _tmem_addr_to_ptr(store_addr),
-          desc,
-          multicast=nvvm.Tcgen05CpMulticast.WARPX2_01_23,
-          group=nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1,
+      _tcgen05_cp(
+          "64x128b", store_addr, desc, multicast="warpx2::01_23", collective=collective,
       )
     return
 
@@ -1936,12 +2002,8 @@ def async_copy_scales_smem_to_tmem(
     )
     # The "core matrix" here is the same as in MMA: 8x(16 bytes).
     desc = mma_utils.encode_descriptor(load_ptr, 0, 8 * 16, swizzle=None)
-    nvvm.tcgen05_cp(
-        nvvm.Tcgen05CpShape.SHAPE_32x128b,
-        _tmem_addr_to_ptr(store_addr),
-        desc,
-        multicast=nvvm.Tcgen05CpMulticast.WARPX4,
-        group=nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1,
+    _tcgen05_cp(
+        "32x128b", store_addr, desc, multicast="warpx4", collective=collective,
     )
 
 
@@ -1984,11 +2046,7 @@ def async_copy_sparse_metadata_smem_to_tmem(
     store_ptr = arith.addi(tmem_ref.address, arith.constant(i32, 4 * k_tile))
     # The "core matrix" here is the same as in MMA: 8x(16 bytes).
     desc = mma_utils.encode_descriptor(load_ptr, 0, 8 * 16, swizzle=None)
-    ptr = _tmem_addr_to_ptr(store_ptr)
-    nvvm.tcgen05_cp(
-        nvvm.Tcgen05CpShape.SHAPE_128x128b, ptr, desc,
-        group=nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
-    )
+    _tcgen05_cp("128x128b", store_ptr, desc, collective=collective)
 
 
 def async_copy_smem_to_tmem(
@@ -2046,10 +2104,10 @@ def async_copy_smem_to_tmem(
   stride_byte_offset = row_tile_stride * bitwidth // 8
   assert tmem_ref.shape[1] * bitwidth // 8 >= 16
   if swizzle == 16:
-    cp_shape = nvvm.Tcgen05CpShape.SHAPE_128x128b
+    cp_shape = "128x128b"
     cp_cols_bytes = 16  # 128 bit = 16 bytes
   else:
-    cp_shape = nvvm.Tcgen05CpShape.SHAPE_128x256b
+    cp_shape = "128x256b"
     cp_cols_bytes = 32  # 256 bit = 32 bytes
 
   minor_elems_per_cp = cp_cols_bytes * 8 // bitwidth
@@ -2057,9 +2115,6 @@ def async_copy_smem_to_tmem(
   cps_per_smem_minor_tile = swizzle_elems // minor_elems_per_cp
   col_tile_byte_stride = col_tile_stride * bitwidth // 8
   smem_base_ptr = utils.memref_ptr(smem_ref)
-  group = (
-      nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
-  )
   for smem_minor_tile in range(num_smem_minor_tiles):
     for cp_idx in range(cps_per_smem_minor_tile):
       smem_byte_offset = (
@@ -2074,6 +2129,4 @@ def async_copy_smem_to_tmem(
       desc = mma_utils.encode_descriptor(
           load_ptr, leading_byte_offset, stride_byte_offset, swizzle
       )
-      nvvm.tcgen05_cp(
-          cp_shape, _tmem_addr_to_ptr(store_addr), desc, group=group
-      )
+      _tcgen05_cp(cp_shape, store_addr, desc, collective=collective)

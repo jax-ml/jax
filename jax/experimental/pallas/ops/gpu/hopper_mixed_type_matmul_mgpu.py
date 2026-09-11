@@ -55,7 +55,7 @@ class TuningConfig:
 
 
 def mixed_matmul_kernel(
-    a: jax.Array, b: jax.Array, *, out_dtype: jnp.dtype, config: TuningConfig
+    a: jax.Array, b: jax.Array, *, out_dtype: jax.typing.DTypeLike, config: TuningConfig
 ) -> jax.Array:
   """Mixed-type matrix multiplication kernel for Hopper GPUs.
 
@@ -267,7 +267,7 @@ def mixed_matmul_kernel(
 
 
 def reference(
-    a: jax.Array, b: jax.Array, *, out_dtype: jnp.dtype
+    a: jax.Array, b: jax.Array, *, out_dtype: jax.typing.DTypeLike
 ) -> jax.Array:
   """Reference implementation of a mixed-type matrix multiplication."""
   return jax.numpy.dot(a, b, preferred_element_type=jnp.float32).astype(

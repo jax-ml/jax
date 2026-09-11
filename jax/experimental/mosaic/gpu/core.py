@@ -39,7 +39,6 @@ from jax._src import util as jax_util
 from jax._src.interpreters import mlir
 from jax._src.lib import mosaic_gpu_dialect as dialect
 from jax._src.pallas.mosaic import error_handling as error
-from jax.extend import backend as jex_backend
 from jaxlib.mlir import ir
 from jaxlib.mlir import passmanager
 from jaxlib.mlir.dialects import _gpu_ops_gen
@@ -49,7 +48,6 @@ from jaxlib.mlir.dialects import func
 from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
-from jaxlib.mlir.dialects import nvvm
 import numpy as np
 
 from . import dialect_lowering
@@ -198,6 +196,7 @@ def _mosaic_gpu_lowering_rule(
     inout_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
     use_custom_barrier: bool = False,
+    skip_device_barrier: bool = False,
 ):
   axis_context = ctx.module_context.axis_context
   replica_ids = []
@@ -260,6 +259,7 @@ def _mosaic_gpu_lowering_rule(
       kernel_hash=ir.StringAttr.get(kernel_id),
       module=ir.StringAttr.get(module_asm),
       use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
+      skip_device_barrier=ir.BoolAttr.get(skip_device_barrier),
       uses_xla_collective_metadata=ir.BoolAttr.get(
           launch_context.uses_collective_metadata(module)
       ),
@@ -378,10 +378,9 @@ class _TMEMAlloc:
 
   def alloc(self) -> int:
     """Allocates TMEM and returns the number of columns allocated."""
-    _, cols = tcgen05.tmem_alloc(
+    return tcgen05.tmem_alloc(
         self.addr_ref, self.num_cols, collective=self.collective, exact=False
     )
-    return cols
 
   def dealloc(self):
     addr = memref.load(self.addr_ref, [])
@@ -627,6 +626,26 @@ def _is_known_multihost_mesh(
   return len(tasks) > 1
 
 
+def _cluster_arrive_relaxed_aligned():
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [],
+      "barrier.cluster.arrive.relaxed.aligned;",
+      "",
+      has_side_effects=True,
+  )
+
+
+def _cluster_wait_aligned():
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [],
+      "barrier.cluster.wait.aligned;",
+      "",
+      has_side_effects=True,
+  )
+
+
 # TODO(apaszke): Inline this
 @contextlib.contextmanager
 def _launch(
@@ -754,10 +773,16 @@ def _launch(
       # TODO(apaszke): Skip fences if no barriers or TMEM is initialized.
       # TODO(apaszke): Only initialize cluster barriers before the cluster wait.
       if utils.get_arch().major >= 9:
-        nvvm.fence_mbarrier_init()
+        llvm.inline_asm(
+            ir.Type.parse("!llvm.void"),
+            [],
+            "fence.mbarrier_init.release.cluster;",
+            "",
+            has_side_effects=True,
+        )
       if math.prod(cluster) != 1:
-        nvvm.cluster_arrive_relaxed(aligned=True)
-        nvvm.cluster_wait(aligned=True)
+        _cluster_arrive_relaxed_aligned()
+        _cluster_wait_aligned()
       if tmem_allocs:
         init_warp_ctx: contextlib.AbstractContextManager
         if lowering_semantics == LoweringSemantics.Warpgroup:
@@ -801,8 +826,8 @@ def _launch(
     if tmem_allocs:
       gpu.barrier()  # Make sure everyone is done before we release TMEM.
       if any(alloc.collective for alloc in tmem_allocs):
-        nvvm.cluster_arrive_relaxed(aligned=True)
-        nvvm.cluster_wait(aligned=True)
+        _cluster_arrive_relaxed_aligned()
+        _cluster_wait_aligned()
       if lowering_semantics == LoweringSemantics.Warpgroup:
         init_warp_ctx = contextlib.nullcontext()
       else:
@@ -813,28 +838,6 @@ def _launch(
     if prof is not None:
       prof.finalize(grid=grid, block=block)
     gpu.terminator()
-
-
-def _infer_arch() -> tuple[int, int]:
-  device: Any = jax.sharding.get_abstract_mesh().abstract_device
-  default_device = jex_backend.get_default_device()
-  if device is None:
-    device = default_device
-  elif (
-      hasattr(default_device, "compute_capability")
-      and device.device_kind == default_device.device_kind
-  ):
-    device = default_device
-  if not hasattr(device, "compute_capability"):
-    return (9, 0)  # TODO(apaszke): Remove this once we figure out the export story.
-  arch_name = device.compute_capability
-  # Handle ROCm devices that return architecture strings like "gfxXXX".
-  if arch_name.startswith("gfx"):
-    raise ValueError(
-        f"Mosaic GPU does not yet support AMD ROCm devices. "
-        f"Got compute_capability: {arch_name}"
-    )
-  return tuple(map(int, arch_name.split(".")))  # pyrefly: ignore[bad-return]
 
 
 def _lower_as_gpu_kernel(
@@ -880,7 +883,7 @@ def _lower_as_gpu_kernel(
   dialect.register_dialect(module.context)
   attrs = module.operation.attributes
   attrs["sym_name"] = ir.StringAttr.get(module_name)
-  arch_major, arch_minor = _infer_arch()
+  arch_major, arch_minor = utils._infer_arch()
   attrs["mosaic_gpu.arch_major"] = ir.IntegerAttr.get(i32, arch_major)
   attrs["mosaic_gpu.arch_minor"] = ir.IntegerAttr.get(i32, arch_minor)
   if uses_pdl:
@@ -1031,7 +1034,7 @@ def lower_mgpu_module(
           dump_options.dump_path
       )
 
-    layout_inference.infer_layout(module, arch=_infer_arch())
+    layout_inference.infer_layout(module, arch=utils._infer_arch())
 
     if dump_options is not None and dump_options.mlir_passes:
       utils.dump_to_file_or_stdout(

@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -89,9 +90,10 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       xla::ValueOrThrowWrapper([](jax::PyClient* client,
                                   const HloModule& module)
                                    -> absl::StatusOr<nb::dict> {
-        TF_ASSIGN_OR_RETURN(auto analysis,
-                            client->pjrt_client()->GetHloCostAnalysis());
-        TF_RETURN_IF_ERROR(module.entry_computation()->Accept(analysis.get()));
+        ABSL_ASSIGN_OR_RETURN(auto analysis,
+                              client->pjrt_client()->GetHloCostAnalysis());
+        ABSL_RETURN_IF_ERROR(
+            module.entry_computation()->Accept(analysis.get()));
 
         // Convert from HloCostAnalysis::Properties to a standard map.
         nb::dict ret;

@@ -26,12 +26,16 @@ namespace mosaic {
 namespace gpu {
 
 struct DumpOptions {
+  // Whether to dump the constraint system built during layout inference.
+  bool constraint_system = false;
   // Whether to dump the MLIR module before and after each pass.
   bool mlir_passes = false;
   // Whether to dump the PTX resulting from the compilation.
   bool ptx = false;
   // Whether to run ptxas in verbose mode.
   bool ptxas = false;
+  // Whether to dump resource estimators information.
+  bool resources = false;
   // Whether to dump the SASS resulting from the compilation. If both `sass`
   // and `sass_ctrl` are true, a single dump containing both will be
   // generated.

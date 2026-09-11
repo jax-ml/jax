@@ -706,7 +706,7 @@ def _mpmd_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes, **params):
     )
   [platform] = platforms
   match platform:
-    case "cuda" if config.jax_pallas_use_mosaic_gpu.value:
+    case "cuda" if not params.get("interpret"):
       return _mpmd_map_mgpu_lowering(ctx, *in_nodes, **params)
     case "cpu" | "cuda" | "rocm":
       return _mpmd_map_fallback_lowering(ctx, *in_nodes, **params)

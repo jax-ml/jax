@@ -23,10 +23,12 @@ limitations under the License.
 #include <utility>
 
 // placeholder for index annotation headers
+#include "absl/base/thread_annotations.h"
 #include "absl/hash/hash.h"
 #include "absl/status/statusor.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/cached_py_object.h"
+#include "jaxlib/free_threading.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device_list.h"
@@ -163,7 +165,8 @@ class GSPMDSharding : public Sharding {
   nb_class_ptr<PyDeviceList> devices() const { return devices_; }
   const nanobind::object& memory_kind() const { return memory_kind_; }
 
-  size_t Hash() {
+  size_t Hash() const {
+    ft_lock_guard lock(mu_);
     if (!hash_.has_value()) {
       hash_ = CalculateHash();
     }
@@ -216,7 +219,8 @@ class GSPMDSharding : public Sharding {
   nb_class_ptr<PyDeviceList> devices_;
   xla::HloSharding hlo_sharding_;
   nanobind::object memory_kind_;
-  std::optional<size_t> hash_;
+  mutable ft_mutex mu_;
+  mutable std::optional<size_t> hash_ ABSL_GUARDED_BY(mu_);
   nb_class_ptr<PyDeviceList> internal_device_list_;
 
   static PyObject* type_;

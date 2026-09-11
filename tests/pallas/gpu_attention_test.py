@@ -63,6 +63,13 @@ class PallasBaseTest(jtu.JaxTestCase):
 
     super().setUp()
 
+    self.enter_context(
+          jtu.ignore_warning(
+              category=DeprecationWarning,
+              message="The Pallas Triton backend is deprecated",
+          )
+      )
+
 
 class DecodeAttentionTest(PallasBaseTest):
   INTERPRET = False

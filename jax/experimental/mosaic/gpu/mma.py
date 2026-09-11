@@ -65,6 +65,27 @@ class MMALayouts:
         _check_canonical=False,
     ).canonicalize()
 
+  @classmethod
+  def for_shape(
+      cls, element_type: ir.Type | typing.DTypeLike, m: int, n: int
+  ) -> "MMALayouts":
+    """Returns `MMALayouts` with `m_warps` selected for the given MMA shape.
+
+    The four warps of the warpgroup are distributed as `m_warps` along the M
+    dimension and `n_warps = 4 // m_warps` along the N dimension. We pick the
+    largest valid `m_warps` so that the accumulator tile `(m_warps * 16,
+    n_warps * 8)` evenly divides the `(m, n)` shape.
+    """
+    for m_warps in (4, 2, 1):
+      n_warps = 4 // m_warps
+      if m % (m_warps * 16) == 0 and n % (n_warps * 8) == 0:
+        return cls(element_type, m_warps=m_warps)
+    raise ValueError(
+        f"No valid m_warps in (1, 2, 4) for MMA shape {(m, n)=}: the "
+        "accumulator tile (m_warps * 16, (4 // m_warps) * 8) must evenly "
+        "divide the shape."
+    )
+
 
 def _ptx_dtype_str(dtype: ir.Type, *, is_signed: bool | None = None) -> str:
   if isinstance(dtype, ir.Float8E4M3FNType):

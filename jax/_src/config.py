@@ -2379,17 +2379,6 @@ jax_pallas_enable_debug_checks = bool_state(
     include_in_trace_context=True,
 )
 
-jax_pallas_use_mosaic_gpu = bool_state(
-    name='jax_pallas_use_mosaic_gpu',
-    default=bool_env('JAX_PALLAS_USE_MOSAIC_GPU', True),
-    help=(
-        'If True, lower Pallas kernels to the experimental Mosaic GPU'
-        ' dialect, instead of Triton IR.'
-    ),
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
-
 jax_mosaic_allow_hlo = bool_state(
     name='jax_mosaic_allow_hlo',
     default=False,
@@ -2413,6 +2402,13 @@ jax_pallas_auto_assign_collective_ids = enum_state(
         'Auto-assign or override the collective ids in pallas_call with'
         ' auto-assigned ones, based on the serialized kernel (module) hash.'
     ),
+    include_in_jit_key=True,
+)
+
+jax_pallas_auto_assign_collective_ids_limit = int_state(
+    name='jax_pallas_auto_assign_collective_ids_limit',
+    default=25,
+    help='Maximum number of auto-assigned collective IDs before erroring.',
     include_in_jit_key=True,
 )
 

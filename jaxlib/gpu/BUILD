@@ -128,6 +128,7 @@ cc_library(
     deps = [
         "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@nanobind",
@@ -139,8 +140,6 @@ cc_library(
         "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_helpers",
         "@xla//xla/pjrt/c:pjrt_c_api_status_utils",
-        "@xla//xla/pjrt/c:pjrt_c_api_triton_extension_hdrs",
-        "@xla//xla/tsl/platform:statusor",
         "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )

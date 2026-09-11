@@ -21,7 +21,6 @@ import math
 import os
 import re
 import sys
-import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -100,15 +99,6 @@ class PallasTest(ptu.PallasTest):
   def setUp(self):
     if type(self) is PallasTest:
       self.skipTest("Base class for Pallas tests")
-    if jtu.test_device_matches(["gpu"]):
-      self.enter_context(warnings.catch_warnings())
-      warnings.filterwarnings(
-          "ignore",
-          category=DeprecationWarning,
-          message=(
-              "Using ``pl.pallas_call`` for Mosaic GPU kernels is deprecated"
-          ),
-      )
 
     super().setUp()
 
@@ -394,6 +384,9 @@ class PallasMGPUTest(PallasTest):
       self.skipTest("Mosaic GPU does not support float64.")
 
   def test_store_reshaped_ref(self):
+    self.skipTest(
+      "Mosaic GPU layout inference does not support this reshape."
+    )
     self.skip_if_x64()
     super().test_store_reshaped_ref()
 
@@ -426,57 +419,7 @@ class PallasCallTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
     self.enter_context(mgpu.core.artificial_shared_memory_limit(jtu._SMEM_SIZE_BOUND_FOR_TESTS))
-
-  @jtu.ignore_warning(
-      category=DeprecationWarning,
-      message="Using .*pl.pallas_call.* for Mosaic GPU kernels is "
-      "deprecated",
-  )
-  def test_pallas_call_infers_backend_from_compiler_params(self):
-    if not jtu.test_device_matches(["gpu"]):
-      self.skipTest("Only works on GPU.")
-    if jtu.test_device_matches(["rocm"]):
-      self.skipTest("Mosaic GPU is not supported on ROCm.")
-    if not jtu.is_cuda_compute_capability_at_least("9.0"):
-      self.skipTest("Only works on a GPU with capability >= sm90")
-
-    triton_params = pltriton.CompilerParams(
-        num_warps=2,
-        num_stages=1,
-    )
-    mosaic_gpu_params = plmgpu.CompilerParams()
-
-    pallas_call = functools.partial(
-        pl.pallas_call,
-        grid=(1,),
-        out_shape=jax.ShapeDtypeStruct((128, 64), jnp.float32),
-    )
-    def add_one(x_ref, o_ref):
-      x = x_ref[:]
-      # Use a Pallas/Mosaic GPU-specific primitive to trigger a failure when
-      # using a different backend.
-      plmgpu.print_layout("x: {}", x)
-      o_ref[:] = x + 1
-
-    add_one_mgpu = pallas_call(add_one, compiler_params=mosaic_gpu_params)
-    add_one_triton = pallas_call(add_one, compiler_params=triton_params)
-
-    x = jnp.ones((128, 64), jnp.float32)
-
-    # Running on the Mosaic GPU backend should be fine.
-    self.assertArraysEqual(add_one_mgpu(x), x + 1)
-
-    # But Triton doesn't have the required primitive, so it should fail to
-    # lower.
-    with self.assertRaisesRegex(
-        NotImplementedError,
-        "Unimplemented primitive in Pallas Triton lowering: print_layout."
-    ):
-      add_one_triton(x)
 
   @jtu.skip_on_devices("gpu")  # TODO: RET_CHECK failure
   def test_block_spec_with_padding(self):
@@ -981,9 +924,6 @@ class PallasCallInterpretTest(PallasCallTest):
 class PallasCallElementIndexingTest(ptu.PallasTest):
   def setUp(self):
     super().setUp()
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_block_spec_element(self):
     def show_program_ids(
@@ -1153,9 +1093,6 @@ class ApiErrorTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_pallas_call_kernel_args_mismatch(self):
     a = np.arange(256, dtype=np.int32)
@@ -1412,9 +1349,6 @@ class PallasCallInputOutputAliasingTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_vector_input_output_aliasing(self):
     # Input needs to be big so it doesn't fit in VMEM
@@ -1525,9 +1459,6 @@ class PallasControlFlowTest(ptu.PallasTest):
     super().setUp()
     if self.INTERPRET:
       self.skipTest("Control flow not supported in interpret mode yet.")
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_loop_with_unused_i_no_int(self):
     @functools.partial(
@@ -2403,9 +2334,6 @@ class PallasCallAutodifferentiationTest(ptu.PallasTest):
     # TODO: improve tolerance setting
     self.tol = 1e-5
     self.grad_tol = jtu.default_gradient_tolerance[np.dtype(jnp.float32)]
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   @parameterized.named_parameters(*AD_TEST_CASES)
   def test_jvp(self, impl):
@@ -2633,9 +2561,6 @@ class PallasCallNamedGridTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_named_grid(self):
 
@@ -2879,9 +2804,6 @@ class PallasHiJaxTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_pass_weird_tuple_into_pallas_call(self):
 

@@ -3897,6 +3897,35 @@ class CustomVJP3Test(CustomVJPTest):
     self.assertIn(core.internal_mutable_array_effect, jaxpr.effects)
     self.assertAllClose(jax.jit(f)(2.0), 4.0, check_dtypes=False)
 
+  def test_staging_custom_pytree_trace_state(self):
+    class CustomNode:
+      def __init__(self, val):
+        self.val = val
+
+    def unflatten(aux, children):
+      core.get_opaque_trace_state()
+      return CustomNode(*children)
+
+    def flatten(node):
+      return (node.val,), None
+
+    jax.tree_util.register_pytree_node(CustomNode, flatten, unflatten)
+
+    @jax.custom_vjp
+    def f(node):
+      return node.val * 2.0
+
+    def f_fwd(node):
+      return f(node), node.val
+
+    def f_bwd(res, g):
+      return (CustomNode(g * 2.0),)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    out = jax.jit(f)(CustomNode(3.0))
+    self.assertEqual(out, 6.0)
+
 class CustomVmapTest(jtu.JaxTestCase):
 
   def test_basic(self):

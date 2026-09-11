@@ -183,7 +183,46 @@ def _symmetrize_irfft_input(x, *, fft_lengths):
   return lax.concatenate(parts, ndim - 1)
 
 
+def _fft_lowering_1d_real(ctx, x, *, fft_type, fft_lengths):
+  """Lowers a multi-dimensional real transform as 1-D real plus complex."""
+  def move_axis(x, src, dst):
+    perm = list(range(len(ctx.avals_in[0].shape)))
+    perm.insert(dst, perm.pop(src))
+    return hlo.transpose(x, mlir.dense_int_array(perm))
+
+  def outer_transform(x, outer_fft_type):
+    # Park the real axis so the outer FFT axes are minormost, then put it back.
+    pos = len(ctx.avals_in[0].shape) - len(fft_lengths)
+    x = move_axis(x, -1, pos)
+    x = hlo.fft(x, hlo.FftTypeAttr.get(outer_fft_type.name),
+                mlir.dense_int_array(fft_lengths[:-1]))
+    return move_axis(x, pos, len(ctx.avals_in[0].shape))
+
+  def real_transform(x):
+    return hlo.fft(x, hlo.FftTypeAttr.get(fft_type.name),
+                   mlir.dense_int_array(fft_lengths[-1:]))
+
+  if fft_type == FftType.RFFT:
+    return [outer_transform(real_transform(x), FftType.FFT)]
+  return [real_transform(outer_transform(x, FftType.IFFT))]
+
+
 def _fft_lowering_gpu(ctx, x, *, fft_type, fft_lengths):
+  multi_dim_real = (fft_type in (FftType.RFFT, FftType.IRFFT)
+                    and len(fft_lengths) > 1
+                    and is_constant_shape(fft_lengths))
+
+  # Workaround: rocFFT's 2D twiddle table cache is keyed without the
+  # attach_halfN flags that select the table a fused real pre/post-processing
+  # kernel needs, so a multi-dimensional R2C or C2R silently reuses a plain
+  # complex kernel's table and returns wrong results. Its 1D cache is keyed
+  # correctly, so keep the real transform 1-D to stay off the broken path.
+  # TODO(magaonka-amd): gate this on the ROCm version once the rocFFT fix ships.
+  if (multi_dim_real
+      and "rocm" in (ctx.platforms or ctx.module_context.platforms)):
+    return _fft_lowering_1d_real(ctx, x, fft_type=fft_type,
+                                 fft_lengths=fft_lengths)
+
   # cuFFT and hipFFT assume Hermitian symmetry on all dimensions of a
   # multi-dimensional C2R transform, whereas our other implementations and
   # NumPy only require symmetry on the final dimension. Rather than
@@ -192,8 +231,7 @@ def _fft_lowering_gpu(ctx, x, *, fft_type, fft_lengths):
   # single multi-dimensional C2R transform), make the input satisfy the
   # stronger assumption, which does not change its IRFFT under NumPy's
   # convention (see _symmetrize_irfft_input), and emit one C2R transform.
-  if (fft_type == FftType.IRFFT and len(fft_lengths) > 1
-      and is_constant_shape(fft_lengths)):
+  if multi_dim_real and fft_type == FftType.IRFFT:
     x, = mlir.lower_fun(_symmetrize_irfft_input, multiple_results=False)(
         ctx, x, fft_lengths=fft_lengths)
   return _fft_lowering(ctx, x, fft_type=fft_type, fft_lengths=fft_lengths)

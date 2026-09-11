@@ -41,6 +41,7 @@ from jax._src.pallas.mosaic.pipeline import BufferType as BufferType
 from jax._src.pallas.mosaic.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations as emit_pipeline_with_allocations
 from jax._src.pallas.mosaic.pipeline import PipelineStep as PipelineStep
+from jax._src.pallas.mosaic.primitives import annotate as annotate
 from jax._src.pallas.mosaic.primitives import async_copy as async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy as async_remote_copy
 from jax._src.pallas.mosaic.primitives import bitcast as bitcast
@@ -90,7 +91,6 @@ SMEM = MemorySpace.SMEM
 VMEM = MemorySpace.VMEM
 VMEM_SHARED = MemorySpace.VMEM_SHARED
 HBM = MemorySpace.HBM
-HOST = _jax_core.MemorySpace.Host
 SEMAPHORE = MemorySpace.SEMAPHORE
 
 
@@ -101,10 +101,12 @@ _deprecations = {
         " instead.",
         core.create_tensorcore_mesh,
     ),
-    # Added June 4, 2026
+    # Finalized in JAX v0.12.0
+    # TODO(slebedev): remove these for JAX v0.13.0.
     "HOST": (
-        "pltpu.HOST is deprecated, use pl.HOST instead.",
-        _jax_core.MemorySpace.Host,
+        "pltpu.HOST was deprecated in JAX v0.10.0, and removed in JAX v0.12.0."
+        " Use pl.HOST instead.",
+        None,
     ),
     # Finalized in JAX v0.11.0
     # TODO(jakevdp): remove these for JAX v0.12.0.
@@ -136,7 +138,6 @@ _deprecations = {
 }
 
 if typing.TYPE_CHECKING:
-  HOST = _jax_core.MemorySpace.Host
   from jax._src.pallas.mosaic.core import create_tensorcore_mesh as create_tensorcore_mesh
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr

@@ -35,7 +35,7 @@ export = set_module('jax.numpy')
 
 @export
 @api.jit(static_argnames=('precision', 'preferred_element_type', 'out_sharding'),
-         inline=True)
+         inline=api.Inline.JAX_EARLY)
 def dot(a: ArrayLike, b: ArrayLike, *,
         precision: lax.PrecisionLike = None,
         preferred_element_type: DTypeLike | None = None,
@@ -133,7 +133,7 @@ def dot(a: ArrayLike, b: ArrayLike, *,
 @partial(
     api.jit,
     static_argnames=('precision', 'preferred_element_type', 'out_sharding'),
-    inline=True,
+    inline=api.Inline.JAX_EARLY,
 )
 def matmul(a: ArrayLike, b: ArrayLike, *,
            precision: lax.PrecisionLike = None,
@@ -364,7 +364,7 @@ def vecmat(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @export
-@api.jit(static_argnames=('precision', 'preferred_element_type'), inline=True)
+@api.jit(static_argnames=('precision', 'preferred_element_type'), inline=api.Inline.JAX_EARLY)
 def vdot(
     a: ArrayLike, b: ArrayLike, *,
     precision: lax.PrecisionLike = None,
@@ -593,7 +593,7 @@ def tensordot(a: ArrayLike, b: ArrayLike,
 
 
 @export
-@api.jit(static_argnames=('precision', 'preferred_element_type'), inline=True)
+@api.jit(static_argnames=('precision', 'preferred_element_type'), inline=api.Inline.JAX_EARLY)
 def inner(
     a: ArrayLike, b: ArrayLike, *, precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
@@ -651,7 +651,7 @@ def inner(
 
 
 @export
-@api.jit(inline=True)
+@api.jit(inline=api.Inline.JAX_EARLY)
 def outer(a: ArrayLike, b: ArrayLike, out: None = None) -> Array:
   """Compute the outer product of two arrays.
 

@@ -28,6 +28,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -59,8 +60,8 @@ namespace se = ::stream_executor;
 absl::StatusOr<std::string> SetPtxIsaVersionToHighestSupported(
     const se::cuda::CompilationProvider& compilation_provider,
     llvm::StringRef ptx_str) {
-  TF_ASSIGN_OR_RETURN(int ptx_isa_latest_version,
-                      compilation_provider.GetLatestPtxIsaVersion());
+  ABSL_ASSIGN_OR_RETURN(int ptx_isa_latest_version,
+                        compilation_provider.GetLatestPtxIsaVersion());
 
   int major_version = ptx_isa_latest_version / 10;
   int minor_version = ptx_isa_latest_version % 10;

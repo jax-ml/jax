@@ -129,6 +129,8 @@ from jax._src.lax.lax import (
   log as log,
   log1p as log1p,
   log1p_p as log1p_p,
+  log2 as log2,
+  log2_p as log2_p,
   log_p as log_p,
   logistic as logistic,
   logistic_p as logistic_p,

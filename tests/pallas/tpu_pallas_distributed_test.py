@@ -832,25 +832,22 @@ class PallasBarrierCollectiveIdsTest(jtu.JaxTestCase, parameterized.TestCase):
   def setUp(self):
     if not jtu.is_device_tpu():
       self.skipTest('Test requires TPU')
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Test requires TPU v5+')
     super().setUp()
 
   def test_auto_assigned_barrier_semaphores_no_data_corruption(self):
     if jax.device_count() < 4:
       self.skipTest('Requires at least 4 devices.')
-    if not jtu.is_device_tpu_at_least(5):
-      self.skipTest('Vmem output requires TPU v5+')
 
     # Kernel A: 0 -> 1 (two-way handshake)
     # Dst: Device 1's shared_buf_a
     def kernel_a(x_ref, y_ref, sem):
       my_id = lax.axis_index('x')
-
-      # @partial(pl.run_scoped, sem=pltpu.SemaphoreType.REGULAR(()))
-      # def body(sem):
       barrier_sem = pltpu.get_barrier_semaphore()
 
       @pl.when(my_id == 0)
-      def _():
+      def on_dev0():
         pl.semaphore_wait(barrier_sem)  # Wait for 1 to be ready
         pl.delay(1_500_000)  # Simulate some work.
         pl.semaphore_signal(sem, 5, device_id={'x': 1})
@@ -858,7 +855,7 @@ class PallasBarrierCollectiveIdsTest(jtu.JaxTestCase, parameterized.TestCase):
         pltpu.sync_copy(x_ref, y_ref)  # Mostly to defeat DCE.
 
       @pl.when(my_id == 1)
-      def _():
+      def on_dev1():
         pl.semaphore_signal(barrier_sem, device_id={'x': 0})  # Signal 0 ready
         pl.semaphore_wait(barrier_sem)  # Wait for 0 done
         y_ref[...] = jnp.full_like(y_ref, pl.semaphore_read(sem))
@@ -871,13 +868,13 @@ class PallasBarrierCollectiveIdsTest(jtu.JaxTestCase, parameterized.TestCase):
       barrier_sem = pltpu.get_barrier_semaphore()
 
       @pl.when(my_id == 1)
-      def _():
+      def on_dev1():
         pl.semaphore_wait(barrier_sem)  # Wait for 2 to be ready
         pl.semaphore_signal(barrier_sem, device_id={'x': 2})  # Signal 2 done
         pltpu.sync_copy(x_ref, y_ref)  # Make the final copy-out.
 
       @pl.when(my_id == 2)
-      def _():
+      def on_dev2():
         pl.semaphore_signal(barrier_sem, device_id={'x': 1})  # Signal 1 ready
         pl.semaphore_wait(barrier_sem)  # Wait for 1 done
 
@@ -909,6 +906,62 @@ class PallasBarrierCollectiveIdsTest(jtu.JaxTestCase, parameterized.TestCase):
     self.assertGreaterEqual(len(semaphores), 2)
     # Output is on device 1.
     np.testing.assert_allclose(np.array(y)[1, ...], np.full(y.shape[1:], 5.0))
+
+  def test_tag_assigned_barrier_semaphores_decoupled_handshake(self):
+    if jax.device_count() < 2:
+      self.skipTest('Requires at least 2 devices.')
+
+    # Producer kernel: signals barrier semaphore on peer
+    def kernel_signal(x_ref, y_ref, scratch):
+      my_id = lax.axis_index('x')
+      barrier_sem = pltpu.get_barrier_semaphore('decoupled_barrier')
+      @pl.when(my_id == 0)
+      def on_dev0():
+        pl.semaphore_signal(barrier_sem, device_id={'x': 1})
+      pltpu.sync_copy(x_ref, scratch)
+      pltpu.sync_copy(scratch, y_ref)
+
+    # Consumer kernel: waits on barrier semaphore from peer
+    def kernel_wait(x_ref, y_ref, scratch):
+      my_id = lax.axis_index('x')
+      barrier_sem = pltpu.get_barrier_semaphore('decoupled_barrier')
+      @pl.when(my_id == 1)
+      def on_dev1():
+        pl.semaphore_wait(barrier_sem)
+      pltpu.sync_copy(x_ref, scratch)
+      pltpu.sync_copy(scratch, y_ref)
+
+    @jax.jit
+    @partial(shard_map.shard_map, out_specs=P('x'), check_vma=True)
+    def body(x):
+      mesh = pltpu.TensorCoreMesh(num_cores=1, axis_name=('x',))
+      # Both kernels have different ASM, but share the same collective_id tag.
+      x = pl.kernel(
+          kernel_signal,
+          mesh=mesh,
+          out_type=jax.typeof(x),
+          scratch_types=[pltpu.VMEM(x.shape, x.dtype)],
+      )(x)
+      return pl.kernel(
+          kernel_wait,
+          mesh=mesh,
+          out_type=jax.typeof(x),
+          scratch_types=[pltpu.VMEM(x.shape, x.dtype)],
+      )(x)
+
+    mesh = jax.make_mesh((jax.device_count(),), ('x',))
+    with jax.sharding.set_mesh(mesh):
+      x_shape = (jax.device_count(), 8, 128)
+      x = jnp.ones(x_shape, dtype=jnp.float32, out_sharding=P('x'))
+      y = body(x)
+      hlo = body.lower(x).compile().as_text()
+    semaphores = list(
+        re.findall(r'{"barrier_type":"CUSTOM","id":"(\d+)"}', hlo)
+    )
+    self.assertGreaterEqual(len(semaphores), 2)
+    # Both kernels must share the same collective id despite different ASM.
+    self.assertEqual(semaphores[0], semaphores[1])
+    np.testing.assert_allclose(np.array(y), np.ones(x_shape, dtype=jnp.float32))
 
 
 class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):

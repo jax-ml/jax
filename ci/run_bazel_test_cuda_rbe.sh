@@ -58,7 +58,7 @@ else
   FREETHREADED_FLAG_VALUE="no"
 fi
 
-TEST_ARTIFACTS_DIR="test-artifacts"
+TEST_ARTIFACTS_DIR="$JAXCI_TEST_ARTIFACTS_DIR"
 mkdir -p "$TEST_ARTIFACTS_DIR"
 echo "::endgroup::" >&2
 

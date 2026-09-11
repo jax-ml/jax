@@ -868,6 +868,14 @@ def _cholesky_shape_rule(shape):
 def _cholesky_jvp_rule(primals, tangents):
   x, = primals
   sigma_dot, = tangents
+  if dtypes.issubdtype(sigma_dot.dtype, np.complexfloating):
+    r, i = lax.real(sigma_dot), lax.imag(sigma_dot)
+    sigma_dot = lax.complex(
+        _tril(r) + _T(_tril(r, -1)),
+        _tril(i, -1) - _T(_tril(i, -1)),
+    )
+  else:
+    sigma_dot = _tril(sigma_dot) + _T(_tril(sigma_dot, -1))
   L = _tril(cholesky_p.bind(x))
 
   # Forward-mode rule from https://arxiv.org/pdf/1602.07527.pdf
@@ -1293,6 +1301,8 @@ def _eigh_cpu_gpu_lowering(
     raise NotImplementedError("QDWH implementation is only supported on TPU")
   if algorithm == EighImplementation.JACOBI and target_name_prefix == "cpu":
     raise NotImplementedError("Jacobi implementation is not supported on CPU")
+  if algorithm == EighImplementation.JACOBI and target_name_prefix == "oneapi":
+    raise NotImplementedError("Jacobi implementation is not supported on OneAPI")
 
   if target_name_prefix == "cpu":
     dtype = operand_aval.dtype
@@ -1373,6 +1383,7 @@ eigh_p = linalg_primitive(
     multiple_results=True)
 ad.primitive_jvps[eigh_p] = _eigh_jvp_rule
 register_cpu_gpu_lowering(eigh_p, _eigh_cpu_gpu_lowering)
+register_cpu_gpu_lowering(eigh_p, _eigh_cpu_gpu_lowering, ("oneapi",))
 
 
 # Hessenberg reduction
@@ -1798,6 +1809,7 @@ ad.primitive_jvps[lu_p] = _lu_jvp_rule
 mlir.register_lowering(lu_p, mlir.lower_fun(_lu_python, multiple_results=True))
 mlir.register_lowering(lu_p, _lu_tpu_lowering_rule, platform='tpu')
 register_cpu_gpu_lowering(lu_p, _lu_cpu_gpu_lowering)
+register_cpu_gpu_lowering(lu_p, _lu_cpu_gpu_lowering, ("oneapi",))
 
 
 def lu_solve(lu: ArrayLike, permutation: ArrayLike, b: ArrayLike,
@@ -2435,8 +2447,14 @@ def _resolve_gpu_svd_implementation(
   if algorithm == SvdAlgorithm.QR:
     return _GpuSvdImpl.QR_GESVD
   if algorithm == SvdAlgorithm.JACOBI:
+    if target_name_prefix == "oneapi":
+      raise NotImplementedError(
+          "Jacobi SVD is not supported on OneAPI")
     return _GpuSvdImpl.JACOBI
   if algorithm == SvdAlgorithm.POLAR:
+    if target_name_prefix == "oneapi":
+      raise NotImplementedError(
+          "Polar SVD is not supported on OneAPI")
     return _GpuSvdImpl.POLAR
   if algorithm == SvdAlgorithm.DIVIDE_AND_CONQUER:
     if target_name_prefix != "hip":
@@ -2456,6 +2474,9 @@ def _resolve_gpu_svd_implementation(
     except core.InconclusiveDimensionOperation:
       pass
     return _GpuSvdImpl.GESVD
+
+  if target_name_prefix == "oneapi":
+    return _GpuSvdImpl.QR_GESVD
 
   raise AssertionError(
       f"Unexpected GPU target_name_prefix for SVD: {target_name_prefix!r}")
@@ -2625,6 +2646,7 @@ svd_p = linalg_primitive(
     multiple_results=True)
 ad.primitive_jvps[svd_p] = _svd_jvp_rule
 register_cpu_gpu_lowering(svd_p, _svd_cpu_gpu_lowering)
+register_cpu_gpu_lowering(svd_p, _svd_cpu_gpu_lowering, ("oneapi",))
 
 
 # Symmetric product

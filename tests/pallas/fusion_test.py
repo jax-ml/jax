@@ -18,6 +18,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import hijax
 from jax._src import test_util as jtu
@@ -384,6 +385,29 @@ class FusionTest(jtu.JaxTestCase):
     x = jnp.array(1.0)
     y = fusible_dtype.physicalize(f)(x)
     np.testing.assert_allclose(y, 2.0)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"cvjp3_{cvjp3}_remat3_{remat3}", "cvjp3": cvjp3, "remat3": remat3}
+      for cvjp3 in (False, True)
+      for remat3 in (False, True)
+  )
+  def test_fusible_physicalize_custom_vjp_and_remat(self, cvjp3, remat3):
+    with config.custom_vjp3(cvjp3), config.remat3(remat3):
+      @jax.custom_vjp
+      def custom_fn(x):
+        return x * 2.0
+      def custom_fn_fwd(x):
+        return custom_fn(x), None
+      def custom_fn_bwd(res, g):
+        return (g * 2.0,)
+      custom_fn.defvjp(custom_fn_fwd, custom_fn_bwd)
+
+      def f(x):
+        return jax.checkpoint(custom_fn)(x) + 1.0
+
+      x = jnp.array(3.0)
+      y = fusible_dtype.physicalize(f)(x)
+      np.testing.assert_allclose(y, 7.0)
 
   def test_fusible_outside_fuse(self):
     @fuser.fusible
@@ -853,6 +877,38 @@ class FusionHijaxTest(jtu.JaxTestCase):
     ot = f(xt)
     np.testing.assert_array_equal(ot.x0, xt.x0)
     np.testing.assert_array_equal(ot.x1, xt.x1)
+
+
+@jtu.with_config(jax_custom_vjp3=True)
+class FusibleCustomVJP3Test(jtu.JaxTestCase):
+
+  def test_fusible_custom_vjp3_grad(self):
+    @jax.custom_vjp
+    def scale(x):
+      return x * 2.0
+
+    def scale_fwd(x):
+      return scale(x), x
+
+    def scale_bwd(x, g):
+      # Intentionally different from fwd to verify custom vjp rule is preserved
+      # during expand().
+      return (g * 3.0,)
+
+    scale.defvjp(scale_fwd, scale_bwd)
+
+    @fuser.fusible
+    def f(x_fn, out_fn):
+      x = x_fn()
+      y = scale(x)
+      if out_fn is None:
+        out_fn = lambda v: v
+      return out_fn(y)
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    loss = lambda v: jnp.sum(f(v))
+    grad_x = jax.grad(loss)(x)
+    np.testing.assert_allclose(grad_x, jnp.full_like(x, 3.0))
 
 
 if __name__ == "__main__":

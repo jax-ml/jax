@@ -287,7 +287,7 @@ class MemorySpace(enum.Enum):
   def from_type(self, type: jax_core.AbstractValue) -> MemoryRef:
     return MemoryRef(type, memory_space=self)
 
-  def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
+  def __call__(self, shape: tuple[int, ...], dtype: jax_typing.DTypeLike):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
     return self.from_type(jax_core.ShapedArray(shape, dtype))
 
@@ -309,7 +309,7 @@ class CoreMemorySpace:
           f" {self.mesh}"
       )
 
-  def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
+  def __call__(self, shape: Sequence[int], dtype: jax_typing.DTypeLike):
     return MemoryRef(jax_core.ShapedArray(tuple(shape), dtype), self)
 
   def __str__(self) -> str:

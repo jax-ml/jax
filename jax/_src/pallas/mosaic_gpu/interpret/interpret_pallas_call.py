@@ -29,13 +29,14 @@ from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
 from jax._src.pallas.mosaic_gpu.interpret import gpu_callbacks
 from jax._src.pallas.mosaic_gpu.interpret import jaxpr_interpret
 from jax._src.pallas.mosaic_gpu.interpret import shared_memory as memory
+from jax._src.pallas.mosaic_gpu.interpret.race_detection_state import GPURaceDetectionState
 from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
 from jax._src.state import types as state_types
 from jax._src.typing import Array
 from jax._src.util import (safe_zip, split_list)
 
 
-def get_races() -> gpu_callbacks.RaceDetectionState:
+def get_races() -> GPURaceDetectionState:
   return gpu_callbacks.get_races()
 
 
@@ -221,6 +222,13 @@ def _get_kernel_buffers(
         kernel_buffer_keys.append(input_buffer_keys[i])
       if is_output:
         kernel_buffer_keys.append(output_buffer_keys[output_idx])
+    elif isinstance(aval, mosaic_gpu_core.AbstractRefUnion):
+      # Didn't test on this case (plgpu.kernel lowers to `run_scoped`) so raise
+      # here for safety.
+      raise NotImplementedError(
+          "`RefUnion` is not supported as a `pallas_call` scratch shape in"
+          " interpret mode; allocate it as `plgpu.kernel` scratch instead."
+      )
     else:
       token, req = gpu_callbacks.call_make_allocation_request_array(
           token=token,
@@ -237,7 +245,7 @@ def _get_kernel_buffers(
         # We want to allocate a buffer with the logical shape, instead of
         # the tiled shape, so we undo the swizzing and/or tiling here to get
         # the logical shape.
-        aval = jaxpr_interpret.apply_unswizzle_and_untile(transforms, aval)
+        aval = jaxpr_interpret.apply_layout_transforms(transforms, aval)
       init_val = jaxpr_interpret.get_uninitialized_array(
           aval.shape,
           aval.dtype,
@@ -394,7 +402,7 @@ def interpret_pallas_call(
   # We pass our `token` through an ordered IO callback at the start and end of
   # the interpreted kernel, to ensure that execution of this interpreted kernel
   # cannot overlap with the interpretation of any other kernel.
-  token = jnp.int32(42)
+  token = jnp.int32(thread_map.TOP_LEVEL_TOKEN_VALUE)
   token = callback.io_callback(
       gpu_callbacks.ordering_barrier,
       gpu_callbacks.TOKEN_SHAPE_DTYPE,
@@ -550,6 +558,7 @@ def interpret_pallas_call(
         token,
         grid_coords,
         use_ordered_callback=True,
+        on_exception=gpu_callbacks.fail,
     )
     token = callback.io_callback(
         functools.partial(gpu_callbacks.cluster_finished),

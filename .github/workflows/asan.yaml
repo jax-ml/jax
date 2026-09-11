@@ -142,6 +142,7 @@ jobs:
           printf '  %s\n' "${test_targets[@]}"
           echo "Bazel profile directory: ${PROFILE_DIR}"
 
+          sed -i '/python\.override(/,/^)/d' MODULE.bazel
           cat << EOF >> MODULE.bazel
           python.override(minor_mapping = {"${PYTHON_VERSION}": "${PYTHON_VERSION}.12"})
           python.single_version_platform_override(

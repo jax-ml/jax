@@ -19,9 +19,9 @@ kernelspec:
 
 JAX has a pretty general automatic differentiation system. In this document
 we'll go through a whole bunch of neat autodiff ideas that you can cherry-pick
-for your own work. The basics of `jax.grad` — `argnums`, differentiating with
+for your own work. The basics of `jax.grad` (`argnums`, differentiating with
 respect to containers, `value_and_grad`, checking derivatives against finite
-differences — are covered in the 101 docs ({ref}`jax-101-transformations`), so
+differences) are covered in the 101 docs ({ref}`jax-101-transformations`), so
 here we start one level up: Hessian-vector products, full Jacobians, the
 `jvp`/`vjp` machinery underneath it all, and differentiation with complex
 numbers.
@@ -134,7 +134,7 @@ To implement `hessian`, we could have used `jacfwd(jacrev(f))` or `jacrev(jacfwd
 
 Sometimes you want autodiff to treat a value as a constant: use it as usual
 in the forward pass, but propagate no derivative through it. That's what
-`jax.lax.stop_gradient` does — it's the identity function, with a derivative
+`jax.lax.stop_gradient` does: it's the identity function, with a derivative
 that's identically zero.
 
 One classic use is optimizing against a target built from the same
@@ -159,7 +159,7 @@ print(grad(td_loss)(theta, s_prev, r, s))
 ```
 
 Without the `stop_gradient`, the gradient would include a second term
-flowing through `target` — a different (and here, unwanted) algorithm.
+flowing through `target`, a different (and here, unwanted) algorithm.
 
 Another classic is the *straight-through estimator*: apply a
 non-differentiable (or zero-derivative) function in the forward pass, but
@@ -319,7 +319,7 @@ For more on how reverse-mode works, see [this tutorial video from the Deep Learn
 
 ### `jax.linearize`: one forward pass, many JVPs
 
-Every call to `jvp(f, (x,), (v,))` redoes the forward pass: it evaluates $f(x)$ alongside $\partial f(x) v$. If you want Jacobian-vector products against many different vectors $v$ at the *same* point $x$, that's wasteful — the work that depends only on $x$ could be done once. That's what `jax.linearize` provides:
+Every call to `jvp(f, (x,), (v,))` redoes the forward pass: it evaluates $f(x)$ alongside $\partial f(x) v$. If you want Jacobian-vector products against many different vectors $v$ at the *same* point $x$, that's wasteful: the work that depends only on $x$ could be done once. That's what `jax.linearize` provides:
 
 ```{code-cell}
 from jax import linearize
@@ -345,7 +345,7 @@ print(f_jvp(v1))
 print(f_jvp(v2))
 ```
 
-Besides the efficiency, `linearize` gives us a clean way to think about reverse-mode. The function `f_jvp` is guaranteed to be *linear*, and a linear function can be transposed — JAX exposes that operation as `jax.linear_transpose`. Reverse-mode is literally the composition of the two: linearize the function at $x$, then transpose the resulting linear map:
+Besides the efficiency, `linearize` gives us a way to think about reverse-mode. The function `f_jvp` is guaranteed to be *linear*, and a linear function can be transposed (JAX exposes that operation as `jax.linear_transpose`). Reverse-mode is the composition of the two: linearize the function at $x$, then transpose the resulting linear map:
 
 ```{code-cell}
 from jax import linear_transpose, vjp
@@ -358,7 +358,7 @@ u = jnp.ones_like(y)
 print(jnp.allclose(f_vjp(u)[0], f_vjp_ref(u)[0]))
 ```
 
-This "linearize, then transpose" decomposition is worth remembering. It's how JAX implements `vjp` and `grad` internally, and it's vocabulary the rest of this documentation section leans on: when we say one operation "transposes to" another — as in {doc}`sharding-ad` and {doc}`custom-derivatives` — we mean precisely this transposition of the linearized computation.
+This "linearize, then transpose" decomposition is how JAX implements `vjp` and `grad` internally, and the rest of this documentation section uses its vocabulary: when we say one operation "transposes to" another (as in {doc}`sharding-ad` and {doc}`custom-derivatives`), we mean this transposition of the linearized computation.
 
 +++
 
@@ -569,10 +569,10 @@ print(jit(f_vjp)(1.))
 ```
 
 In fact, the callable returned by `jax.vjp` is a first-class value in its
-own right — a pytree whose leaves are the saved residuals — which you can
-use to split the forward and backward passes into separately compiled
-functions, schedule them yourself, and control what gets saved. That's the
-subject of {doc}`vjp-objects`.
+own right, a pytree whose leaves are the saved residuals. You can use it to
+split the forward and backward passes into separately compiled functions,
+schedule them yourself, and control what gets saved. That's the subject of
+{doc}`vjp-objects`.
 
 (jax-301-complex)=
 ## Complex numbers and differentiation
@@ -631,7 +631,7 @@ dual map sends an output linear functional $\varphi$ to an input linear
 functional by composition, $\varphi \mapsto \varphi \circ \partial F(x)$.
 Because $f$ is in general only $\mathbb{R}$-differentiable, its tangent and
 cotangent spaces are vector spaces over $\mathbb{R}$, and cotangents are
-$\mathbb{R}$-linear functionals into $\mathbb{R}$ — not complex numbers.
+$\mathbb{R}$-linear functionals into $\mathbb{R}$, not complex numbers.
 
 JAX's `vjp` nonetheless returns cotangents with the same type as the primal
 values, so covectors must be *represented* as complex numbers, and that
@@ -662,7 +662,7 @@ To unpack the functional from the number: a cotangent $w = w_1 + w_2 i$
 returned by `vjp` encodes the $\mathbb{R}$-linear functional
 $t \mapsto \operatorname{Re}(w t)$, which acts on the real pair
 $(t_1, t_2)$ as $w_1 t_1 - w_2 t_2$. Its components against the standard
-dual basis are therefore $(w_1, -w_2)$ — the components of $\bar{w}$. This
+dual basis are therefore $(w_1, -w_2)$, the components of $\bar{w}$. This
 is the conjugation that resurfaces in `grad` below.
 
 Under this convention, `vjp` is characterized by
@@ -710,7 +710,7 @@ the derivative of an $\mathbb{R} \to \mathbb{C}$ function, and one `vjp` (or
 When in doubt about what a complex derivative means, use `jvp` and `vjp`
 directly: they are always well-defined, for any function.
 
-### `grad` at complex inputs: mind the conjugate
+### `grad` at complex inputs
 
 For a scalar function $f : \mathbb{C} \to \mathbb{R}$ with $f(x + yi) = u(x,
 y)$, JAX defines `grad(f)(x)` as `vjp(f, x)[1](1.0)`. Applying the bilinear
@@ -778,10 +778,10 @@ What the bilinear pairing provides:
 3. **Derivative rules work unchanged from their real implementations.**
    Since $\operatorname{Re}((cw)t) = \operatorname{Re}(w(ct))$,
    multiplication by $c$ transposes to multiplication by $c$. So for a
-   holomorphic primitive, the VJP is just the regular complex derivative
-   multiplied by the incoming cotangent $w$ — the same expression as the
-   real-case rule — and most simple math primitives don't need their
-   derivative rules changed from their real implementations. (For example,
+   holomorphic primitive, the VJP is the regular complex derivative
+   multiplied by the incoming cotangent $w$, the same expression as in the
+   real case, and most simple math primitives don't need their derivative
+   rules changed from their real implementations. (For example,
    the VJP rule for `sin` is $w \mapsto w \cos(z)$ in the real and complex
    cases alike.) This holds whether VJP rules are written directly, as in
    Autograd, or derived by transposing linearized computations, as in JAX;

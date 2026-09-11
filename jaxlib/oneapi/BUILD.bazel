@@ -144,8 +144,8 @@ nanobind_extension(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
-        "@oneapi//:headers",
         "@nanobind",
+        "@oneapi//:headers",
         "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
@@ -157,8 +157,8 @@ nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
-    linkopts = ["-link_stage"],
     features = ["-use_header_modules"],
+    linkopts = ["-link_stage"],
     module_name = "_prng",
     deps = [
         ":oneapi_gpu_kernel_helpers",
@@ -176,8 +176,8 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":oneapi_gpu_kernel_helpers",
-        ":oneapi_vendor",
         ":oneapi_gpu_runtime",
+        ":oneapi_vendor",
         "//jaxlib:ffi_helpers",
         "//jaxlib/cpu:lapack_kernels",
         "@com_google_absl//absl/algorithm:container",
@@ -209,8 +209,8 @@ nanobind_extension(
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/cpu:lapack_kernels",
         "@com_google_absl//absl/base",
-        "@oneapi//:headers",
         "@nanobind",
+        "@oneapi//:headers",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/python:safe_static_init",
     ],
@@ -219,9 +219,9 @@ nanobind_extension(
 py_library(
     name = "oneapi_gpu_support",
     deps = [
+        ":_hybrid",
         ":_prng",
         ":_solver",
-        ":_hybrid",
     ],
 )
 
@@ -239,8 +239,10 @@ sycl_library(
         ":oneapi_gpu_runtime",
         ":oneapi_vendor",
         "//jaxlib:ffi",
+        "//jaxlib:free_threading",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -275,7 +277,7 @@ nanobind_extension(
         "//jaxlib/gpu:gpu_plugin_extension",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
-        "@oneapi//:headers",
         "@nanobind",
+        "@oneapi//:headers",
     ],
 )

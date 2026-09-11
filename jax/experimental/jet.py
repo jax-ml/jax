@@ -429,7 +429,9 @@ def def_comp(prim, comp, **kwargs):
   jet_rules[prim] = partial(jet2, comp, **kwargs)
 
 
+def_comp(lax.exp2_p, lambda x: lax.exp(x * np.log(2)))
 def_comp(lax.expm1_p, lambda x: lax.exp(x) - 1)
+def_comp(lax.log2_p, lambda x: lax.log(x) / np.log(2))
 def_comp(lax.log1p_p, lambda x: lax.log(1 + x))
 def_comp(lax.sqrt_p, lambda x: x ** 0.5)
 def_comp(lax.square_p, lambda x: x * x)

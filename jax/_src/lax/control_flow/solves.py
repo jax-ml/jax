@@ -164,9 +164,9 @@ def _root_jvp(const_lengths, jaxprs, primals, tangents):
   rhs = f_at_solution_lin(*params_dot.f)
   solution_dot = _map(
       operator.neg, linearize_and_solve(*solution, *rhs))
-  # append aux, create symbolic zero tangents for the aux values
+  # append aux, create zero tangents of the appropriate tangent type
   solution += aux
-  solution_dot += _map(ad_util.zeros_like_jaxval, aux)
+  solution_dot += _map(ad_util.zero_from_primal, aux)
 
   return solution, solution_dot
 

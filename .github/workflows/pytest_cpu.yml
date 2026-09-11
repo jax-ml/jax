@@ -76,6 +76,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        env:
+          # actions/checkout launches Git from native Windows Node.
+          # Without this, MSYS performs argv glob expansion, rewrites its `^{object}` suffix
+          # and makes valid commit SHAs appear missing.
+          MSYS: noglob
         with:
           ref: ${{ inputs.git_commit }}
           persist-credentials: false

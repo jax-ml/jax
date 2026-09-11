@@ -37,7 +37,7 @@ order:
    reading profiler traces (including of distributed code), and device
    memory profiling.
 9. :doc:`debugging` — printing and inspecting values inside compiled code,
-   and the debugging flags every JAX user should know.
+   and the most useful debugging flags.
 10. :doc:`slow-compilation` — diagnostic flags, reading the logs, and the
     Python patterns that defeat JAX's caches.
 11. :doc:`precision` — dot algorithms, the classic ``Precision`` levels, and
@@ -49,7 +49,7 @@ order:
 14. :doc:`memory-spaces` — host offloading: parking parameters, activations,
     and optimizer state in host memory to save device memory.
 
-One more performance topic — computation/communication overlap — will be
+One more performance topic, computation/communication overlap, will be
 added here as that part of JAX stabilizes.
 
 .. toctree::

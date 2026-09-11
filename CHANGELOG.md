@@ -17,6 +17,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added {func}`jax.lax.log2` and primitive {data}`jax.lax.log2_p`, making
+    `log2` a first-class primitive in JAX ({func}`jax.numpy.log2` now lowers via
+    `jax.lax.log2`).
   * Added {func}`jax.export.symbolic_dim_bounds` for querying conservative
     bounds on symbolic dimension expressions ({jax-issue}`#40006`).
   * {func}`jax.distributed.initialize` can now secure the coordination service
@@ -27,6 +30,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `JAX_DISTRIBUTED_VERIFY_SECURE_CREDENTIALS` environment variables).
 
 * Changes
+  * `inline=True` in {func}`jax.jit` now corresponds to
+    {attr}`jax.Inline.JAX_LATE` instead of {attr}`jax.Inline.JAX_EARLY`.
   * The minimum CuDNN version for CUDA 12 is v9.10.2.
   * JAX now uses Bazel 8.7.0 to build from source.
   * JAX now uses Bzlmod for its Bazel builds instead of WORKSPACE.
@@ -60,6 +65,15 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     cache eviction state for subcomputations that DCE leaves unchanged
     ({jax-issue}`#40312`). Subcomputations that DCE genuinely rewrites can
     still deduplicate differently depending on cache state.
+  * Fixed {func}`jax.numpy.setdiff1d` raising an `IndexError` when called with
+    ``size=0`` on non-empty inputs; it now returns an empty array.
+  * Fixed incorrect gradients for {func}`jax.scipy.linalg.cholesky` and
+    {func}`jax.numpy.linalg.cholesky` with `symmetrize_input=False` where
+    non-zero gradients leaked into the unused triangle of the input matrix
+    ({jax-issue}`#40421`).
+  * Fixed {func}`jax.numpy.median` on an input that is empty along the
+    reduction axis, which previously raised an internal error from ``gather``;
+    it now raises a ``ValueError``.
 
 ## JAX 0.11.1 (August 17, 2026)
 
@@ -154,6 +168,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     instances ({jax-issue}`#39297`).
   * Fixed `_get_prime_factors` in `jax.experimental.mesh_utils`
     ({jax-issue}`#38286`).
+  * `PyTreeDef.deserialize_using_proto` now raises `ValueError` for a
+    malformed `PyTreeDefProto` instead of crashing the interpreter. A node
+    whose arity exceeds the subtrees preceding it is rejected, as is a dict
+    node whose arity disagrees with its key list, which previously segfaulted
+    later, when the structure was used to unflatten.
+    `PyTreeDef.compose` likewise raises `ValueError` rather than crashing when
+    an operand carries such an inconsistent arity, which is reachable from
+    `pickle.loads` ({jax-issue}`#37410`).
 
 ## JAX 0.11.0 (July 16, 2026)
 

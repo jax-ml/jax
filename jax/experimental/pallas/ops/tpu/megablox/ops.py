@@ -29,7 +29,7 @@ def _gmm_fwd(
     lhs: jnp.ndarray,
     rhs: jnp.ndarray,
     group_sizes: jnp.ndarray,
-    preferred_element_type: jnp.dtype = jnp.float32,
+    preferred_element_type: jax.typing.DTypeLike = jnp.float32,
     tiling: tuple[int, int, int] = (128, 128, 128),
     group_offset: jnp.ndarray | None = None,
     existing_out: jnp.ndarray | None = None,
@@ -61,7 +61,7 @@ def _gmm_fwd(
 
 
 def _gmm_bwd(
-    preferred_element_type: jnp.dtype,
+    preferred_element_type: jax.typing.DTypeLike,
     tiling: tuple[int, int, int],
     transpose_rhs: bool,
     interpret: bool,

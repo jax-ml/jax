@@ -44,7 +44,7 @@ def all_gather_lhs_matmul(
     axis_name,
     *,
     config: hopper_matmul_mgpu.TuningConfig,
-    dtype: jnp.dtype = jnp.float16,
+    dtype: jax.typing.DTypeLike = jnp.float16,
 ) -> jax.Array:
   if (
       num_devices := jax.device_count()

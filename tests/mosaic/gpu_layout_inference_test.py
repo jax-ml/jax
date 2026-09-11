@@ -1793,18 +1793,22 @@ class LayoutInferenceTest(parameterized.TestCase):
         inference_utils.in_transforms(wgmma_op), in_transforms
     )
 
-  @parameterized.parameters(
-      ir.F16Type.get,
-      ir.BF16Type.get,
-      ir.Float8E4M3FNType.get,
-      ir.Float8E5M2Type.get,
-      lambda: ir.IntegerType.get_signless(8),
-      lambda: ir.IntegerType.get_signless(4),
+  @parameterized.product(
+      elt_ty_fn=(
+          ir.F16Type.get,
+          ir.BF16Type.get,
+          ir.Float8E4M3FNType.get,
+          ir.Float8E5M2Type.get,
+          lambda: ir.IntegerType.get_signless(8),
+          lambda: ir.IntegerType.get_signless(4),
+      ),
+      mn=((64, 8), (32, 16), (16, 32)),
   )
-  def test_infer_layouts_for_mma_op(self, elt_ty_fn):
+  def test_infer_layouts_for_mma_op(self, elt_ty_fn, mn):
+    m, n = mn
     with ir.InsertionPoint(self.module.body):
       elt_ty = elt_ty_fn()
-      m, n, k = 64, 8, 8 * (32 // mgpu.utils.bitwidth(elt_ty))
+      k = 8 * (32 // mgpu.utils.bitwidth(elt_ty))
       acc_elem_ty = (
           ir.IntegerType.get_signless(32)
           if isinstance(elt_ty, ir.IntegerType)
@@ -1818,11 +1822,26 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     mgpu.infer_layout(self.module)
 
-    layouts_inst = MMALayouts(elt_ty)
+    layouts_inst = MMALayouts.for_shape(elt_ty, m, n)
     self.checkInLayouts(
         mma_op, [layouts_inst.acc, layouts_inst.lhs, layouts_inst.rhs]
     )
     self.checkOutLayouts(mma_op, [layouts_inst.acc])
+
+  def test_infer_layouts_for_mma_op_with_infeasible_shape_raises(self):
+    with ir.InsertionPoint(self.module.body):
+      elt_ty = ir.BF16Type.get()
+      m, n, k = 32, 8, 16
+      acc_ty = ir.VectorType.get((m, n), ir.F32Type.get())
+      lhs_ty = ir.VectorType.get((m, k), elt_ty)
+      rhs_ty = ir.VectorType.get((k, n), elt_ty)
+      acc, lhs, rhs = undefs(acc_ty, lhs_ty, rhs_ty)
+      mgpu.dialect.MMAOp(acc, lhs, rhs)
+
+    with self.assertRaisesRegex(
+        ValueError, "No valid m_warps in .* for MMA shape"
+    ):
+      mgpu.infer_layout(self.module)
 
   @parameterized.product(
       dtype=(jnp.int8, jnp.uint8),

@@ -428,6 +428,31 @@ class WeakrefLRUCacheTest(absltest.TestCase):
     b = A()
     cache(b)
 
+  def testExplainException(self):
+    should_raise = True
+
+    def raising_explain_factory():
+      if should_raise:
+        raise RuntimeError("explain factory error")
+      return None
+
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x: 42, explain=raising_explain_factory
+    )
+
+    class A:
+      pass
+
+    a = A()
+    with self.assertRaisesRegex(RuntimeError, "explain factory error"):
+      cache(a)
+
+    # Subsequent calls with the same key on the same thread or another thread
+    # must not raise RecursionError or deadlock.
+    should_raise = False
+    self.assertEqual(cache(a), 42)
+
+
   def testEvictionIsLRU(self):
     cache = weakref_lru_cache.weakref_lru_cache(lambda: None, lambda x, y: y, 2)
 

@@ -46,10 +46,14 @@ class InterpretGPUParams(interpret_params.SharedInterpretParams):
       separate vector clock is maintained for each TMA thread.
       Default: 1.
     logging_mode: Logging mode for GPU interpret mode.
+    inline_mgpu: control how interpret mode handles inline MGPU usage. Either
+      "error" or "ignore", since in general it's not possible to simulate MGPU
+      behavior in interpret mode. Default: "error".
   """
 
   num_tma_threads_per_device: int = 5
   logging_mode: interpret_params.LoggingMode | None = None
+  inline_mgpu: str = "error"
 
   def __post_init__(self):
     super().__post_init__()

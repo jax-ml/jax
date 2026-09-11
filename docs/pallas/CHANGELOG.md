@@ -15,14 +15,81 @@ Remember to align the itemized text with the first line of an item within a list
 
 * Deprecations
 
+  * `pl.reciprocal` was moved into {mod}`jax.experimental.pallas.tpu`.
+    Accessing it via {mod}`jax.experimental.pallas` is deprecated.
+
+* Removals
+
+  * Removed the previously deprecated `pl.dot`. Use {func}`jax.numpy.dot`,
+    {func}`jax.numpy.einsum` or the `@` operator instead in TPU or MGPU kernels.
+  * Removed the previously deprecated `pl.debug_checks_enabled`. Use
+    `pl.enable_debug_checks.value` instead.
+  * Removed the previously deprecated `pltpu.HOST`. Use `pl.HOST` instead.
+  * Removed the previously deprecated `scrach_shapes` and `out_shapes`
+    arguments from {func}`jax.experimental.pallas.mosaic_gpu.kernel`. Use
+    `scratch_types` and `out_type` instead.
+
+### Mosaic GPU
+
+* Changes
+
+  * {func}`jax.experimental.pallas.mosaic_gpu.try_cluster_cancel` now takes a
+    `collective_axes` argument. It is now not, for example, collective in the
+    thread axis unless that is included in `collective_axes`. Users of
+    {func}`jax.experimental.pallas.mosaic_gpu.dynamic_scheduling_loop` that fail
+    to pass complete `thread_axis` and/or `cluster_axes` arguments will now see
+    multiple cluster cancellations (these arguments have always been mandatory,
+    but it may previously have worked without, albeit non-deterministically!).
+
+* New features
+
+  * Added the `MOSAIC_GPU_DUMP_RESOURCES` environment variable, which dumps
+    the estimated resources (e.g. TMEM columns, SMEM bytes) when compiling a
+    model. Like the other dump variables, it is also enabled by
+    `MOSAIC_GPU_DUMP_TO`.
+  * Added the `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM` environment variable, which
+    dumps the constraint system built during layout inference. This is useful
+    for debugging layout inference failures. Like the other dump variables, it
+    is also enabled by `MOSAIC_GPU_DUMP_TO`.
+
+* Deprecations
+
+  * {func}`jax.experimental.pallas.mosaic_gpu.transpose_ref` is
+    deprecated. Use `ref.transpose(...)` directly instead.
+
+* Removals
+
+  * Removed {func}`jax.experimental.pallas.mosaic_gpu.transform_ref`. It is
+    only marginally useful in the presence of transform inference. If you find
+    that transform inference is insufficient, please file a bug.
+  * Removed the previously deprecated support for
+    {func}`jax.experimental.pallas.pallas_call`. Mosaic GPU kernels can now
+    only be defined via {func}`jax.experimental.pallas.mosaic_gpu.kernel`.
+
+### TPU
+
+* New features
+
+  * Added {func}`jax.experimental.pallas.tpu.annotate` to attach memory access
+    assumptions (`no_store`, `no_bank_conflict`, `no_hazard`, and
+    `no_hazard_no_deps`) to VMEM/SMEM references, allowing kernels to
+    override compiler scheduling, bundle packing, and memory dependency analysis.
+  * Added `jax_pallas_auto_assign_collective_ids_limit` config flag to allow
+    configuring the limit for auto-assigned collective IDs.
+  * {func}`jax.experimental.pallas.tpu.get_barrier_semaphore` now accepts an
+    optional hashable `tag` argument, assigning barrier semaphores automatically
+    to kernels sharing the same tag.
+
+## Released with JAX 0.11.1 (August 17, 2026)
+
+* Deprecations
+
   * Pallas Triton ops in {mod}`jax.experimental.pallas.ops.gpu` are deprecated.
     Please use [`tokamax`](https://github.com/openxla/tokamax) for equivalent
     implementations if available, e.g., `tokamax.layer_norm`,
     `tokamax.dot_product_attention`.
   * {func}`jax.experimental.pallas.core_map` is deprecated. Please migrate to
     {func}`jax.experimental.pallas.kernel`.
-  * `pl.reciprocal` was moved into {mod}`jax.experimental.pallas.tpu`.
-    Accessing it via {mod}`jax.experimental.pallas` is deprecated.
 
 ### Mosaic GPU
 
@@ -33,17 +100,6 @@ Remember to align the itemized text with the first line of an item within a list
     omitted on pre-Hopper GPUs (which use the ``cp.async`` implementation).
     When omitted, the completion of the copy must be awaited via
     {func}`jax.experimental.pallas.mosaic_gpu.wait_gmem_to_smem`.
-
-* Deprecations
-
-  * {func}`jax.experimental.pallas.mosaic_gpu.transpose_ref` is
-    deprecated. Use ``ref.transpose(...)` directly instead.
-
-* Removals
-
-  * Removed {func}`jax.experimental.pallas.mosaic_gpu.transform_ref`. It is
-    only marginally useful in the presence of transform inference. If you find
-    that transform inference is insufficient, please file a bug.
 
 ## Released with JAX 0.11.0 (July 16, 2026)
 

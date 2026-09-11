@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -55,7 +56,7 @@ namespace nb = nanobind;
 absl::StatusOr<nb_class_ptr<PyDeviceList>> GetPyDeviceList(
     nb::handle sharding) {
   if (sharding.type().is(NamedSharding::type())) {
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         auto ns_device_list,
         nb::cast<const NamedSharding*>(sharding)->internal_device_list());
     return ns_device_list;

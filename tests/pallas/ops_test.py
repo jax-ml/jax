@@ -19,16 +19,16 @@ import math
 import re
 import subprocess
 import sys
-import unittest
 from typing import Any
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
+from absl import flags
 import jax
 from jax import api_util
 from jax import lax
 from jax import random
-from jax._src import config
 from jax._src import dtypes
 from jax._src import state
 from jax._src import test_util as jtu
@@ -55,14 +55,17 @@ import hypothesis as hp
 import hypothesis.extra.numpy as hnp
 import hypothesis.strategies as hps
 
+_USE_MOSAIC_GPU = flags.DEFINE_bool(
+    "jax_pallas_use_mosaic_gpu",
+    False,
+    "If true, use the Mosaic GPU backend for Pallas.",
+)
 
 # There are many inherited redefinitions of _
 # ruff: noqa: F811
 
 jax.config.parse_flags_with_absl()
 htu.setup_hypothesis(max_examples=50)
-
-use_mosaic_gpu = config.jax_pallas_use_mosaic_gpu.value
 
 intx = dtypes.default_int_dtype()
 floatx = dtypes.default_float_dtype()
@@ -275,6 +278,7 @@ UNARY_PRIMITIVES = [
             (lax.logistic_p, {"accuracy": None}),
             (lax.rsqrt_p, {"accuracy": None}),
             (lax.log_p, {"accuracy": None}),
+            (lax.log2_p, {"accuracy": None}),
             (lax.exp2_p, {"accuracy": None}),
             (lax.log1p_p, {"accuracy": None}),
             (lax.sin_p, {"accuracy": None}),
@@ -310,6 +314,15 @@ UNARY_FUNCTIONS = [
 
 class PallasBaseTest(ptu.PallasTest):
 
+  def setUp(self):
+    super().setUp()
+    if (
+        _USE_MOSAIC_GPU.value
+        and jtu.test_device_matches(["cuda"])
+        and not jtu.is_cuda_compute_capability_at_least("9.0")
+    ):
+      self.skipTest("This test only works on a GPU with capability >= sm90")
+
   @classmethod
   def pallas_call(
       cls,
@@ -320,7 +333,7 @@ class PallasBaseTest(ptu.PallasTest):
       out_specs=pl.no_block_spec,
       **kwargs,
   ):
-    if not (jtu.test_device_matches(["gpu"]) and use_mosaic_gpu):
+    if not (jtu.test_device_matches(["gpu"]) and _USE_MOSAIC_GPU.value):
       return pl.pallas_call(
           fn,
           out_shape=out_shape,
@@ -359,7 +372,7 @@ class PallasBaseTest(ptu.PallasTest):
     )
 
   def skip_if_mosaic_gpu(self):
-    if jtu.test_device_matches(["gpu"]) and use_mosaic_gpu:
+    if jtu.test_device_matches(["gpu"]) and _USE_MOSAIC_GPU.value:
       if jtu.test_device_matches(["rocm"]):
         self.skipTest("Mosaic GPU is not supported on ROCm.")
       self.skipTest("TODO: Mosaic GPU does not support this yet")
@@ -675,7 +688,7 @@ class OpsTest(PallasBaseTest):
     # We want exact equality here to match how JAX lowers to XLA
     tol = 0.
     if jtu.test_device_matches(["tpu"]):
-      if name == "exp2":
+      if name in ("exp2", "log2"):
         tol = 1e-6
       # TODO(b/538128436): Remove this logistic branch once mosaic TPU has a
       # tpu.logistic op.
@@ -686,14 +699,14 @@ class OpsTest(PallasBaseTest):
         self.skipTest("TODO: not implemented on GPU")
       if name == "tanh":
         tol = 1e-6
-      elif name == "exp2":
+      elif name in ("exp2", "log2"):
         tol = 1e-6
 
     def kernel(x_ref, y_ref):
       y_ref[...] = func(x_ref[...])
     x_shape_dtype = data.draw(shape_dtype_strategy)
 
-    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and use_mosaic_gpu
+    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and _USE_MOSAIC_GPU.value
     if sut_is_mosaic_gpu:
       hp.assume(math.prod(x_shape_dtype.shape) % 128 == 0)
       hp.assume(x_shape_dtype.shape[-1] >= 16)
@@ -715,7 +728,7 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["cpu"]) and jtu.SKIP_SLOW_TESTS.value:
       self.skipTest("Test is slow on CPU.")
 
-    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and use_mosaic_gpu
+    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and _USE_MOSAIC_GPU.value
     if to_dtype in {"float8_e4m3b11fnuz", "float8_e5m2", "float8_e4m3fn"}:
       if not jtu.test_device_matches(["tpu"]):
         self.skipTest("Not supported on this hardware")
@@ -777,7 +790,7 @@ class OpsTest(PallasBaseTest):
   # miss bugs that would be hidden due to exhaustive enumeration being in order.
   @parameterized.product(from_dtype=_DTYPES_SUB_32BIT, to_dtype=_DTYPES, randomize=(False, True))
   def test_cast_from_sub_32bit(self, from_dtype, to_dtype, randomize):
-    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and use_mosaic_gpu
+    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and _USE_MOSAIC_GPU.value
 
     if from_dtype == to_dtype:
       self.skipTest("Unnecessary test")
@@ -1208,7 +1221,7 @@ class OpsTest(PallasBaseTest):
       ),
       ([jnp.ceil, jnp.floor], ["bfloat16", "float32", "float64", "int32"]),
       (
-          [jnp.exp, jnp.exp2, jnp.sin, jnp.cos, jnp.log, jnp.sqrt],
+          [jnp.exp, jnp.exp2, jnp.sin, jnp.cos, jnp.log, jnp.log2, jnp.sqrt],
           ["bfloat16", "float16", "float32", "float64"],
       ),
       (
@@ -2315,6 +2328,17 @@ class OpsTest(PallasBaseTest):
         self.skipTest("All dimensions of lhs and rhs must be >= 16")
       if any(not is_power_of_two(x) for x in lhs_shape + rhs_shape):
         self.skipTest("All dimensions of lhs and rhs must be power of two")
+      if (
+          jtu.is_cuda_compute_capability_equal("8.9")
+          and lhs_and_rhs_shape == ((128, 128), (128, 128))
+          and dtype == jnp.float32
+          and not trans_x
+          and trans_y
+      ):
+        self.skipTest(
+            "Triton produces incorrect numerical output for transposed RHS"
+            " on L4 GPU"
+        )
 
     @functools.partial(
         self.pallas_call,
@@ -3072,7 +3096,7 @@ class OpsTest(PallasBaseTest):
       )
       output_ref[...] = output
 
-    if jtu.test_device_matches(["rocm"]) and use_mosaic_gpu:
+    if jtu.test_device_matches(["rocm"]) and _USE_MOSAIC_GPU.value:
       self.skipTest("Mosaic GPU is not supported on ROCm.")
     deq_call = self.pallas_call(
         kernel,
@@ -3089,7 +3113,7 @@ class OpsTest(PallasBaseTest):
 
   def test_delay(self):
     if jtu.test_device_matches(["gpu"]):
-      if not use_mosaic_gpu:
+      if not _USE_MOSAIC_GPU.value:
         self.skipTest("Delay is only implemented on the MGPU backend for GPUs.")
       elif jtu.test_device_matches(["rocm"]):
         self.skipTest("Mosaic GPU is not supported on ROCm.")

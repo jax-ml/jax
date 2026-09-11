@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/cord.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -100,11 +101,12 @@ absl::StatusOr<std::vector<ifrt::ArraySpec>> GetIfrtArraySpecs(
   ifrt_array_specs.reserve(nb::len(avals));
   for (nb::handle aval : avals) {
     ifrt::Shape ifrt_shape(nb::cast<std::vector<int64_t>>(aval.attr("shape")));
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         auto ifrt_dtype,
         DtypeToIfRtDType(nb::cast<xla::nb_dtype>(aval.attr("dtype"))));
-    TF_ASSIGN_OR_RETURN(auto ifrt_sharding,
-                        GetIfrtHloSharding(aval.attr("sharding"), ifrt_shape));
+    ABSL_ASSIGN_OR_RETURN(
+        auto ifrt_sharding,
+        GetIfrtHloSharding(aval.attr("sharding"), ifrt_shape));
     ifrt_array_specs.push_back(ifrt::ArraySpec{
         ifrt_dtype, std::move(ifrt_shape), std::move(ifrt_sharding)});
   }
@@ -138,8 +140,8 @@ MakePluginCompileOptions() {
 absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeHloProgram(
     std::string_view mlir_module) {
   auto context = std::make_unique<mlir::MLIRContext>();
-  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      xla::ParseMlirModuleString(mlir_module, *context));
+  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                        xla::ParseMlirModuleString(mlir_module, *context));
   return std::make_unique<xla::ifrt::HloProgram>(std::move(context),
                                                  std::move(module));
 }
@@ -168,8 +170,8 @@ absl::StatusOr<std::unique_ptr<ifrt::CompileOptions>> MakeXlaCompileOptions(
     ifrt_loaded_host_callbacks.push_back(tsl::FormRef(
         static_cast<ifrt::LoadedHostCallback*>(host_callback.data())));
   }
-  TF_ASSIGN_OR_RETURN(ifrt::DeviceListRef executable_devices,
-                      py_executable_devices.ifrt_device_list());
+  ABSL_ASSIGN_OR_RETURN(ifrt::DeviceListRef executable_devices,
+                        py_executable_devices.ifrt_device_list());
   return std::make_unique<ifrt::XlaCompileOptions>(
       std::move(options), std::move(executable_devices),
       std::move(ifrt_loaded_host_callbacks));
@@ -187,9 +189,10 @@ absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeColocatedPythonProgram(
       /*releaser=*/[picked_function](std::string_view) mutable {
         GlobalPyRefManager()->AddGarbage(std::move(picked_function));
       });
-  TF_ASSIGN_OR_RETURN(auto ifrt_device_list, GetDeviceList(devices));
-  TF_ASSIGN_OR_RETURN(auto ifrt_input_specs, GetIfrtArraySpecs(input_avals));
-  TF_ASSIGN_OR_RETURN(auto ifrt_output_specs, GetIfrtArraySpecs(output_avals));
+  ABSL_ASSIGN_OR_RETURN(auto ifrt_device_list, GetDeviceList(devices));
+  ABSL_ASSIGN_OR_RETURN(auto ifrt_input_specs, GetIfrtArraySpecs(input_avals));
+  ABSL_ASSIGN_OR_RETURN(auto ifrt_output_specs,
+                        GetIfrtArraySpecs(output_avals));
   return std::make_unique<ifrt::CustomCallProgram>(
       std::string(kColocatedPythonProgramType), std::move(name),
       std::move(ifrt_serialized_program_text), std::move(ifrt_device_list),

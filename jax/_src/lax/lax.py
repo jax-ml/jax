@@ -501,8 +501,9 @@ def exp(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
 def exp2(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise base-2 exponential: :math:`2^x`.
 
-  This function is implemented in terms of the `stablehlo.exponential`_
-  and `stablehlo.multiply`_ operations.
+  This function is currently implemented in terms of the
+  `stablehlo.exponential`_ and `stablehlo.multiply`_ operations. In the future,
+  it may be implemented directly in terms of a ``stablehlo.exp2`` operation.
 
   Args:
     x: input array. Must have floating-point or complex type.
@@ -582,6 +583,36 @@ def log(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
   return log_p.bind(x, accuracy=accuracy)
 
 @export
+def log2(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
+  r"""Elementwise base-2 logarithm: :math:`\mathrm{log}_2(x)`.
+
+  This function is currently implemented in terms of the `stablehlo.log`_
+  and `stablehlo.multiply`_ operations. In the future, it may be implemented
+  directly in terms of a ``stablehlo.log2`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object that
+      selects the implementation of the op based on the requested accuracy. If
+      the implementation cannot satisfy the requested tolerance, the
+      compiler will return an error. If mode is specified and there are no
+      multiple implementations available, the default implementation will be
+      used.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    base-2 logarithm.
+
+  See also:
+    - :func:`jax.lax.exp2`: elementwise base-2 exponential: :math:`2^x`.
+    - :func:`jax.lax.log`: elementwise natural logarithm: :math:`\mathrm{log}(x)`.
+
+  .. _stablehlo.log: https://openxla.org/stablehlo/spec#log
+  .. _stablehlo.multiply: https://openxla.org/stablehlo/spec#multiply
+  """
+  return log2_p.bind(x, accuracy=accuracy)
+
+@export
 def log1p(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise :math:`\mathrm{log}(1 + x)`.
 
@@ -628,6 +659,18 @@ def tanh(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> A
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     hyperbolic tangent.
+
+  Note:
+    By default, the gradient of ``tanh`` is computed from the forward
+    output :math:`y = \mathrm{tanh}(x)` as :math:`(1 + y)(1 - y)`. In the
+    region where :math:`\mathrm{tanh}(x)` rounds to :math:`\pm 1` in
+    floating-point arithmetic (approximately :math:`|x| \ge 9` for ``float32``
+    and :math:`|x| \ge 19` for ``float64``), the computed gradient evaluates
+    to zero, even though the true derivative may still be a non-zero
+    floating-point number. Passing ``accuracy=jax.lax.AccuracyMode.HIGHEST``
+    computes the derivative directly from ``x`` as
+    :math:`4 \, \mathrm{logistic}(2x) \, \mathrm{logistic}(-2x)`, preserving
+    non-zero gradients in this region.
 
   See also:
     - :func:`jax.lax.atanh`: elementwise inverse hyperbolic tangent.
@@ -1934,7 +1977,7 @@ def composite(
         name=name,
         attributes=tuple(attributes),
         version=version,
-        jaxpr=closed_jaxpr,
+        call_jaxpr=closed_jaxpr,
     )
     return tree_util.tree_unflatten(out_tree, out_flat)
 
@@ -1947,24 +1990,9 @@ def _composite_lowering(
     name: str,
     attributes: Sequence[tuple[str, tuple[Any, ...], tree_util.PyTreeDef]],
     version: int,
-    jaxpr: core.Jaxpr,
+    call_jaxpr: core.Jaxpr,
 ):
-  """Makes composite which calls the implementation function.
-
-  Lowering a composite primitive to a ``stablehlo.composite`` op.
-
-  Args:
-    ctx: The MLIR context.
-    *args: The arguments to the composite.
-    name: The name of the composite.
-    attributes: The attributes of the composite.
-    version: The version of the composite.
-    jaxpr: The jaxpr of the underlying composite.
-
-  Returns:
-    The results of the composite.
-  """
-  const_args_and_avals = core.jaxpr_const_args(jaxpr)
+  const_args_and_avals = core.jaxpr_const_args(call_jaxpr)
   const_args, const_avals = util.unzip2(const_args_and_avals)
   const_arg_values = tuple(
       mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
@@ -1973,7 +2001,7 @@ def _composite_lowering(
   in_avals = (*const_avals, *ctx.avals_in)
   func_op, _, _ = mlir.lower_called_computation(
       name,
-      jaxpr,
+      call_jaxpr,
       ctx.module_context,
       len(const_args),
       in_avals,
@@ -1998,13 +2026,13 @@ def _composite_lowering(
   ).results
 
 
-def _composite_impl(*args, jaxpr, **_):
-  return core.jaxpr_as_fun(jaxpr)(*args)
+def _composite_impl(*args, call_jaxpr, **_):
+  return core.jaxpr_as_fun(call_jaxpr)(*args)
 
 
-def _composite_abstract_eval(*args, jaxpr, **_):
+def _composite_abstract_eval(*args, call_jaxpr, **_):
   del args
-  return jaxpr.out_avals
+  return call_jaxpr.out_avals
 
 
 def composite_jvp(*args, **_):
@@ -2029,6 +2057,7 @@ composite_p = core.Primitive("composite")
 composite_p.def_impl(_composite_impl)
 composite_p.def_abstract_eval(_composite_abstract_eval)
 composite_p.multiple_results = True
+composite_p.to_lojax = partial(pe._eval_jaxpr_to_lojax, composite_p)
 ad.primitive_jvps[composite_p] = composite_jvp
 ad.primitive_transposes[composite_p] = composite_transpose
 mlir.register_lowering(composite_p, _composite_lowering)
@@ -4582,6 +4611,29 @@ ad.defjvp(log_p, lambda g, x, **kwargs: div(g, x))
 mlir.register_lowering(log_p, partial(_nary_lower_hlo, hlo.log))
 core.pp_eqn_rules[log_p] = _unary_with_accuracy_pp_rule
 
+log2_p = standard_unop(_float | _complex, 'log2')
+ad.defjvp(log2_p, lambda g, x, **kwargs: div(g, mul(x, log(_const(x, 2)))))
+
+def _log2_lower(ctx, x, accuracy):
+  x_aval, = ctx.avals_in
+  log_x = hlo.log(x, result_accuracy=accuracy_attr(accuracy))
+  if np.issubdtype(x_aval.dtype, np.complexfloating):
+    re = hlo.real(log_x)
+    im = hlo.imag(log_x)
+    real_dtype = _real_dtype(x_aval.dtype)
+    one_over_ln2 = mlir.ir_constant(np.array(1.4426950408889634, real_dtype))
+    one_over_ln2 = mlir.broadcast_in_dim(
+        ctx, one_over_ln2, core.ShapedArray(x_aval.shape, real_dtype), broadcast_dimensions=()
+    )
+    return [hlo.complex(hlo.multiply(re, one_over_ln2), hlo.multiply(im, one_over_ln2))]
+  else:
+    one_over_ln2 = mlir.ir_constant(np.array(1.4426950408889634, x_aval.dtype))
+    one_over_ln2 = mlir.broadcast_in_dim(ctx, one_over_ln2, x_aval, broadcast_dimensions=())
+    return [hlo.multiply(log_x, one_over_ln2)]
+
+mlir.register_lowering(log2_p, _log2_lower)
+core.pp_eqn_rules[log2_p] = _unary_with_accuracy_pp_rule
+
 expm1_p = standard_unop(_float | _complex, 'expm1')
 ad.defjvp2(
     expm1_p,
@@ -4610,7 +4662,7 @@ ad.defjvp2(
         ),
     )
     if accuracy is AccuracyMode.HIGHEST
-    else mul(add(g, mul(g, ans)), sub(_one(x), ans)),
+    else mul(g, mul(add(_one(ans), ans), sub(_one(ans), ans))),
 )
 mlir.register_lowering(tanh_p, partial(_nary_lower_hlo, hlo.tanh))
 core.pp_eqn_rules[tanh_p] = _unary_with_accuracy_pp_rule
@@ -5180,15 +5232,15 @@ ad.defjvp(
 mlir.register_lowering(rem_p, partial(_nary_lower_hlo, hlo.remainder))
 
 max_p: core.Primitive = standard_naryop([_any, _any], 'max')
-ad.defjvp2(max_p,
-           lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
-           lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
+ad.defjvp(max_p,
+          lambda g, x, y: mul(g, _balanced_cmp(x, y)),
+          lambda g, x, y: mul(g, _balanced_cmp(y, x)))
 mlir.register_lowering(max_p, partial(_nary_lower_hlo, mlir.max_hlo))
 
 min_p: core.Primitive = standard_naryop([_any, _any], 'min')
-ad.defjvp2(min_p,
-           lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
-           lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
+ad.defjvp(min_p,
+          lambda g, x, y: mul(g, _balanced_cmp(y, x)),
+          lambda g, x, y: mul(g, _balanced_cmp(x, y)))
 mlir.register_lowering(min_p, partial(_nary_lower_hlo, mlir.min_hlo))
 
 shift_left_p = standard_naryop([_int, _int], 'shift_left')
@@ -9778,9 +9830,14 @@ def canonicalize_precision(precision: PrecisionLike) -> CanonicalPrecision:
       f"but got {precision}.")
 
 
-def _balanced_eq(x, z, y):
-  return div(select(_eq_meet(x, z), _ones(z), _zeros(z)),
-             select(_eq_meet(y, z), _twos(z), _ones(z)))
+def _balanced_cmp(x, y):
+  # 1.0 if x > y, 0.5 if x == y, 0.0 if x < y or NaN
+  gt_mask = gt(x, y)
+  eq_mask = eq(x, y)
+  ones = full_like(gt_mask, 1, dtype=x.dtype)
+  zeros = full_like(gt_mask, 0, dtype=x.dtype)
+  half = full_like(gt_mask, 0.5, dtype=x.dtype)
+  return select(gt_mask, ones, select(eq_mask, half, zeros))
 
 
 def _eq_meet(a, b):
@@ -9960,23 +10017,31 @@ def _optimization_barrier_batcher(batched_args, batch_dims, **params):
 batching.primitive_batchers[optimization_barrier_p] = _optimization_barrier_batcher
 
 def _opt_barrier_jvp(primals, tangents):
-  primals_out = optimization_barrier(primals)
+  is_ref = [isinstance(core.typeof(x), AbstractRef) for x in primals]
+  primals_out = optimization_barrier_p.bind(*primals)
   nzs = [not isinstance(t, ad.Zero) for t in tangents]
   nz_ts = [t for t, nz in zip(tangents, nzs) if nz]
   if not nz_ts:
-    return primals_out, tangents
-  out = iter(optimization_barrier(nz_ts))
-  tangents_out = [next(out) if nz else t for t, nz in zip(tangents, nzs)]
+    return primals_out, [t for t, r in zip(tangents, is_ref) if not r]
+  out = iter(optimization_barrier_p.bind(*nz_ts))
+  tangents_out = [next(out) if nz else t
+                  for t, nz, r in zip(tangents, nzs, is_ref) if not r]
   return primals_out, tangents_out
 ad.primitive_jvps[optimization_barrier_p] = _opt_barrier_jvp
 
-def _opt_barrier_transpose(cts, *primals):
+def _opt_barrier_fancy_transpose(cts, *accums):
   nzs = [not isinstance(ct, ad.Zero) for ct in cts]
   nz_cts = [ct for ct, nz in zip(cts, nzs) if nz]
-  if not nz_cts: return cts
-  out = iter(optimization_barrier(nz_cts))
-  return [next(out) if nz else ct for ct, nz in zip(cts, nzs)]
-ad.primitive_transposes[optimization_barrier_p] = _opt_barrier_transpose
+  ct_refs = [x.ref for x in accums if isinstance(x, ad.RefAccum)]
+  if not nz_cts and not ct_refs:
+    return
+  out = iter(optimization_barrier_p.bind(*nz_cts, *ct_refs))
+  cts_out = (next(out) if nz else ct for ct, nz in zip(cts, nzs))
+  for x in accums:
+    if not isinstance(x, ad.RefAccum):
+      x.accum(next(cts_out))
+  assert next(cts_out, None) is None
+ad.fancy_transposes[optimization_barrier_p] = _opt_barrier_fancy_transpose
 
 
 def _array_reduce_precision_handler(t, x):

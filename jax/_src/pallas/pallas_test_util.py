@@ -13,9 +13,7 @@
 # limitations under the License.
 """Pallas test utilities."""
 import sys
-import warnings
 
-from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call as pl_lib
 
@@ -34,20 +32,16 @@ class PallasTest(jtu.JaxTestCase):
       if (jtu.test_device_matches(["cuda"]) and
           not jtu.is_cuda_compute_capability_at_least("8.0")):
         self.skipTest("Only works on GPU with capability >= sm80")
-      if (jtu.test_device_matches(["cuda"]) and
-          config.jax_pallas_use_mosaic_gpu.value and
-          not jtu.is_cuda_compute_capability_at_least("9.0")):
-        self.skipTest("Mosaic GPU requires capability >= sm90")
       if sys.platform == "win32":
         self.skipTest("Only works on non-Windows platforms")
     super().setUp()
 
     if jtu.test_device_matches(["gpu"]):
-      self.enter_context(warnings.catch_warnings())
-      warnings.filterwarnings(
-          "ignore",
-          category=DeprecationWarning,
-          message="The Pallas Triton backend is deprecated",
+      self.enter_context(
+          jtu.ignore_warning(
+              category=DeprecationWarning,
+              message="The Pallas Triton backend is deprecated",
+          )
       )
 
   def pallas_call(self, *args, **kwargs):

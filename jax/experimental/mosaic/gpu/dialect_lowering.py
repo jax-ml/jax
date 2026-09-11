@@ -30,9 +30,9 @@ from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
+from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import memref
-from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax.experimental.mosaic.gpu.mma import mma as do_mma
@@ -51,11 +51,11 @@ from . import wgmma
 
 @dataclasses.dataclass()
 class LoweringContext:
-  launch_context: lc.LaunchContext | None
-  _single_thread_per_warp_predicate: ir.Value | None
-  _single_thread_per_warpgroup_predicate: ir.Value | None
-  single_thread_per_block_predicate: ir.Value | None
-  single_warp_per_block_predicate: ir.Value | None
+  launch_context: lc.LaunchContext
+  _single_thread_per_warp_predicate: ir.Value
+  _single_thread_per_warpgroup_predicate: ir.Value
+  single_thread_per_block_predicate: ir.Value
+  single_warp_per_block_predicate: ir.Value
   auto_barriers: bool
   smem_requested_bytes: int
   is_collective_kernel: bool | None = dataclasses.field(
@@ -69,10 +69,8 @@ class LoweringContext:
   def single_lane_predicate(self) -> ir.Value:
     match self.thread_semantics:
       case utils.ThreadSubset.WARPGROUP:
-        assert self._single_thread_per_warpgroup_predicate is not None
         return self._single_thread_per_warpgroup_predicate
       case utils.ThreadSubset.WARP:
-        assert self._single_thread_per_warp_predicate is not None
         return self._single_thread_per_warp_predicate
       case _:
         assert_never(self.thread_semantics)
@@ -281,10 +279,13 @@ def _initialize_barrier_op_lowering_rule(
       utils.WARPGROUP_SIZE if not op.orders_tensor_core.value else 1
   )
   for i in range(op.num_barriers.value):
-    nvvm.mbarrier_init(
-        utils.getelementptr(op.base_pointer, [i], _lowered_barrier_type()),
-        utils.c(arrival_count, i32),
-        predicate=ctx.single_thread_per_block_predicate,
+    bar_ptr = utils.getelementptr(op.base_pointer, [i], _lowered_barrier_type())
+    llvm.inline_asm(
+        ir.Type.parse("!llvm.void"),
+        [bar_ptr, utils.c(arrival_count, i32), ctx.single_thread_per_block_predicate],
+        "@$2 mbarrier.init.shared::cta.b64 [$0], $1;",
+        "r,r,b",
+        has_side_effects=True,
     )
   return []
 
@@ -297,7 +298,7 @@ def _assume_multiple_op_lowering_rule(
   return [op.value]
 
 
-@_register_lowering(mgpu.OptimizationBarrierOp)
+@_register_lowering(mgpu.OptimizationBarrierOp, support_warp_semantics=True)
 def _optimization_barrier_op_lowering_rule(
     _: LoweringContext,
     op: mgpu.OptimizationBarrierOp,
@@ -507,8 +508,6 @@ def _multimem_load_reduce_op_lowering_rule(
   [out_layout_attr] = inference_utils.out_layouts(op)
   out_layout = layouts_lib.from_layout_attr(out_layout_attr)
   # TODO(apaszke): DO NOT IGNORE TRANSFORMS.
-
-  assert ctx.launch_context is not None
 
   # pyrefly: ignore[missing-attribute]
   reduction = str(mgpu.MultimemLoadReductionType(op.reduction_type.value))
@@ -1160,7 +1159,6 @@ def _gmem_slice_and_predicate(
 def _mgpu_async_load_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncLoadOp
 ) -> Sequence[ir.Value]:
-  assert ctx.launch_context is not None
   if is_cp_async := load_op.barrier is None:
     barrier = None
   else:
@@ -1238,8 +1236,6 @@ def _mgpu_async_load_op_lowering_rule(
 def _mgpu_async_prefetch_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncPrefetchOp
 ) -> Sequence[ir.Value]:
-  assert ctx.launch_context is not None
-
   gmem_slice, predicate = _gmem_slice_and_predicate(ctx, load_op)
 
   if load_op.collective:
@@ -1259,8 +1255,6 @@ def _mgpu_async_prefetch_op_lowering_rule(
 def _mgpu_async_store_op_lowering_rule(
     ctx: LoweringContext, store_op: mgpu.AsyncStoreOp
 ) -> Sequence[ir.Value]:
-  assert ctx.launch_context is not None
-
   [transforms_attr] = inference_utils.in_transforms(store_op)
   swizzle = swizzle_from_transforms_attr(transforms_attr)
   transforms = memref_transforms_from_transforms_attr(transforms_attr)
@@ -1458,11 +1452,13 @@ def _unary_op_lowering_rule(
 
 for _op, _unary_impl, _is_signed in [
     (mlir_math.RsqrtOp, fa.FragmentedArray.rsqrt, None),
+    (mlir_math.SqrtOp, fa.FragmentedArray.sqrt, None),
     (mlir_math.ExpOp, fa.FragmentedArray.exp, None),
     (mlir_math.Exp2Op, fa.FragmentedArray.exp2, None),
     (mlir_math.SinOp, fa.FragmentedArray.sin, None),
     (mlir_math.CosOp, fa.FragmentedArray.cos, None),
     (mlir_math.LogOp, fa.FragmentedArray.log, None),
+    (mlir_math.Log2Op, fa.FragmentedArray.log2, None),
     (mlir_math.TanhOp, fa.FragmentedArray.tanh, None),
     (mlir_math.AbsFOp, fa.FragmentedArray.abs, None),
     (mlir_math.AbsIOp, fa.FragmentedArray.abs, True),
@@ -1474,6 +1470,7 @@ for _op, _unary_impl, _is_signed in [
         lambda x: x._pointwise(mlir_math.ctlz, restrict_bitwidth=False),
         None,
     ),
+    (arith.NegFOp, operator.neg, None),
 ]:
   _lowerings[_op.OPERATION_NAME] = functools.partial(
       _unary_op_lowering_rule, impl=_unary_impl, is_signed=_is_signed
@@ -1709,7 +1706,8 @@ def _mgpu_mma_op_lowering_rule(
   [out_layout] = inference_utils.out_layouts(mma_op)
 
   a_element_type = mma_op.a.type.element_type
-  mma_layouts = MMALayouts(a_element_type)
+  m, n = mma_op.accumulator.type.shape
+  mma_layouts = MMALayouts.for_shape(a_element_type, m, n)
   expected_acc_layout = layouts_lib.to_layout_attr(mma_layouts.acc)
   assert acc_layout == expected_acc_layout
   assert out_layout == expected_acc_layout
@@ -1731,19 +1729,20 @@ def _mgpu_arrive_op_lowering_rule(
 ) -> Sequence[ir.Value]:
   barrier = utils.DialectBarrierRef.from_barrier_memref(arrive_op.barrier)
   orders_tc = arrive_op.orders_tensor_core.value
+  # TODO(cjfj): simplify when minimum jaxlib version is 0.11.2.
+  predicate = getattr(arrive_op, "predicate", None)
   if orders_tc:
     # Barrier expects a single thread arrival.
-    predicate = ctx.single_lane_predicate
+    pred = ctx.single_lane_predicate
+    predicate = pred if predicate is None else arith.andi(predicate, pred)
     arrival_count = 1
   elif ctx.thread_semantics == utils.ThreadSubset.WARP:
     # In warp-level lowering, we arrive on each CUDA thread in a warp, but the
     # barrier still expects a full 128 arrivals so we arrive 4 times on each
     # CUDA thread instead.
-    predicate = None
     arrival_count = 4
   else:
     # Barrier expects each thread arrives once.
-    predicate = None
     arrival_count = 1
 
   barrier.barrier_ref.arrive(
@@ -2987,14 +2986,10 @@ def _gpu_launch_op(module: ir.Module) -> gpu.LaunchOp:
 
 def _lowering_context(
     module: ir.Module,
-    launch_context: lc.LaunchContext | None,
+    launch_context: lc.LaunchContext,
     auto_barriers: bool,
 ) -> LoweringContext:
   """Returns a `LoweringContext` for the given `LaunchContext`."""
-  # TODO(bchetioui): fix tests to not have a test-only path polluting the API.
-  if launch_context is None:  # this case is used in some tests
-    return LoweringContext(None, None, None, None, None, auto_barriers, 10**9)
-
   gpu_launch_op = _gpu_launch_op(module)
   with ir.InsertionPoint.at_block_begin(gpu_launch_op.regions[0].blocks[0]):
     eq = arith.CmpIPredicate.eq
@@ -3019,7 +3014,7 @@ def _lowering_context(
 
 def lower_mgpu_dialect(
     module: ir.Module,
-    launch_context: lc.LaunchContext | None,
+    launch_context: lc.LaunchContext,
     auto_barriers: bool = True,
 ):
   # TODO(apaszke,bchetioui): Make sure the layouts match.

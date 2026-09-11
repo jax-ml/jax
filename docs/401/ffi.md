@@ -276,9 +276,9 @@ x = jnp.linspace(-0.5, 0.5, 32).reshape((8, 4))
 np.testing.assert_allclose(rms_norm(x), rms_norm_ref(x), rtol=1e-5)
 ```
 
-This code cell includes a lot of inline comments which should explain most of what is happening here, but there are a few points that are worth explicitly highlighting.
-Most of the heavy lifting here is done by the {func}`~jax.ffi.ffi_call` function, which tells JAX how to call the foreign function for a particular set of inputs.
-It's important to note that the first argument to {func}`~jax.ffi.ffi_call` must be a string that matches the target name that we used when calling {func}`~jax.ffi.register_ffi_target` above.
+This code cell includes a lot of inline comments which should explain most of what is happening here, but there are a few points to highlight.
+Most of the work here is done by the {func}`~jax.ffi.ffi_call` function, which tells JAX how to call the foreign function for a particular set of inputs.
+The first argument to {func}`~jax.ffi.ffi_call` must be a string that matches the target name that we used when calling {func}`~jax.ffi.register_ffi_target` above.
 
 Any attributes (defined using `Attr` in the C++ wrapper above) should be passed as keyword arguments to {func}`~jax.ffi.ffi_call`.
 Note that we explicitly cast `eps` to `np.float32` because our FFI library expects a C `float`, and we can't use `jax.numpy` here, because these parameters must be static arguments.
@@ -487,7 +487,7 @@ XLA can take advantage of this for the pure-JAX `rms_norm_ref`, but it can't see
 
 We can do better by handling the sharding _inside_ the primitive, in its `expand` rule.
 When using JAX's explicit sharding mode (see {ref}`jax-201-sharding`), the output sharding of each operation is determined by the shardings of its inputs, and our primitive's `out_aval` carries that sharding.
-The idea is to use {func}`~jax.shard_map` to drop into manual ("per-device") mode inside `expand`, so that the FFI call only ever sees the local shard of the data.
+Inside `expand`, we use {func}`~jax.shard_map` to drop into manual ("per-device") mode, so that the FFI call only ever sees the local shard of the data.
 Because RMS normalization only reduces over the last (replicated) axis, running the FFI call on each shard independently computes exactly the right answer, with no communication.
 
 First, let's create a mesh and make it the active mesh:
@@ -625,7 +625,7 @@ As you can see in the lowered program above, the FFI call now targets `rms_norm_
 
 The approach above, where {func}`~jax.vmap` support comes from a HiJAX primitive's `batch` rule, is the recommended way to make a foreign function batchable.
 But you may encounter older code that instead passes a `vmap_method` string argument directly to {func}`~jax.ffi.ffi_call`.
-This argument is deprecated in favor of the HiJAX primitive approach, but it's worth knowing what it does.
+This argument is deprecated in favor of the HiJAX primitive approach; this section describes what it did.
 
 When `vmap_method` was specified, a bare {func}`~jax.ffi.ffi_call` could be mapped under {func}`~jax.vmap` without defining a custom primitive.
 For example, the batching behavior of our RMS normalization example used to be written like this:

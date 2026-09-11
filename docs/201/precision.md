@@ -13,14 +13,14 @@ reduced-precision arithmetic internally (`bfloat16` on TPU, TF32 on recent
 GPUs). But that's just a default, and you can take explicit control, per
 operation and globally.
 
-The `precision` argument — accepted by {func}`jax.lax.dot_general`,
+The `precision` argument, accepted by {func}`jax.lax.dot_general`,
 {func}`jax.lax.dot`, and the `jax.numpy` functions built on them
-(`jnp.dot`, `jnp.matmul`, `@`, `jnp.einsum`, convolutions) — is how you say
-what you want. It accepts two kinds of value: a *dot algorithm* (the modern,
-precise interface) or a coarse-grained {class}`~jax.lax.Precision` level (the
-classic one).
+(`jnp.dot`, `jnp.matmul`, `@`, `jnp.einsum`, convolutions), is how you
+control this. It accepts two kinds of value: a *dot algorithm*, which names
+the computation exactly, or a coarse-grained {class}`~jax.lax.Precision`
+level, the older interface.
 
-## Dot algorithms: saying exactly what you want
+## Dot algorithms
 
 The most direct way to control a dot product is to name the algorithm that
 computes it, by passing a {class}`jax.lax.DotAlgorithmPreset` (or its name as
@@ -56,14 +56,14 @@ accumulation. The available presets:
 - `ANY_F8_ANY_F8_ANY`, `ANY_F8_ANY_F8_ANY_FAST_ACCUM` — as above, with the
   accumulation type controlled by `preferred_element_type`.
 
-A few properties make this interface pleasant to use in practice:
+Some properties of this interface:
 
 - **Any input dtypes are accepted.** JAX inserts casts so that the operands
-  reach the hardware in the algorithm's storage types — you can pass
+  reach the hardware in the algorithm's storage types: you can pass
   `float32` arrays with `precision="BF16_BF16_F32"` and the rounding is
   handled for you.
 - **The output type matches the inputs** (under the usual promotion rules),
-  regardless of the algorithm's internal accumulation type — so switching
+  regardless of the algorithm's internal accumulation type, so switching
   algorithms doesn't ripple type changes through your program. To instead
   keep the accumulator's type, use `preferred_element_type`:
 
@@ -75,9 +75,8 @@ A few properties make this interface pleasant to use in practice:
   ```
 
 - **Autodiff carries the same algorithm through to the backward pass.** The
-  transposed dots in the gradient computation carry the *exact same*
-  `precision` argument as the primal — not permuted or altered. You can see
-  this directly in the jaxpr of a gradient:
+  transposed dots in the gradient computation carry the same `precision`
+  argument as the primal. You can see this in the jaxpr of a gradient:
 
   ```python
   def loss(x, w):
@@ -105,12 +104,12 @@ A few properties make this interface pleasant to use in practice:
     in (f,) }
   ```
 
-  Both `dot_general`s — the forward one and the transposed one that computes
-  the gradient — carry `precision=BF16_BF16_F32`. (If you need a *different*
+  Both `dot_general`s, the forward one and the transposed one that computes
+  the gradient, carry `precision=BF16_BF16_F32`. (If you need a *different*
   backward-pass algorithm, express that with {func}`jax.custom_vjp`.)
 - **Support is platform-dependent, and checked at compile time.** Requesting
-  an algorithm the backend can't provide is a compile-time error, not a
-  silent fallback — e.g. `precision="F16_F16_F32"` on CPU fails with
+  an algorithm the backend can't provide is a compile-time error. For
+  example, `precision="F16_F16_F32"` on CPU fails with
   `The precision 'F16_F16_F32' is not supported by dot_general on CPU`.
 
 If no preset fits, you can specify a fully custom algorithm with
@@ -136,15 +135,15 @@ The `precision` argument also accepts the older, coarser
 jnp.dot(x, x, precision='highest')   # give me real float32, whatever it costs
 ```
 
-These remain widely used and perfectly serviceable, but when you care about
-the exact numerics — for reproducibility, for cross-platform agreement, or
-for squeezing out f8/f16 throughput — prefer naming a dot algorithm, which
-pins down the computation rather than a device-dependent accuracy level.
+These remain widely used, but when you care about the exact numerics (for
+reproducibility, for cross-platform agreement, or for f8/f16 throughput),
+prefer naming a dot algorithm, which pins down the computation rather than a
+device-dependent accuracy level.
 
 ## Setting a default globally
 
 To change the default for every dot-like operation that doesn't specify its
-own `precision`, use the `jax_default_matmul_precision` config — as a context
+own `precision`, use the `jax_default_matmul_precision` config, as a context
 manager, a config update, or an environment variable. It accepts the same
 values as the `precision` argument, including dot algorithm preset names:
 
@@ -162,15 +161,15 @@ JAX_DEFAULT_MATMUL_PRECISION=highest python train.py
 ```
 
 A common recipe when debugging suspected numerics problems: run once under
-`jax.default_matmul_precision('highest')` — if the mystery disappears, you're
-looking at reduced-precision matmul accumulation, not a bug.
+`jax.default_matmul_precision('highest')`. If the discrepancy disappears, it
+was reduced-precision matmul accumulation rather than a bug.
 
 ## Precision is not dtype
 
-Finally, a distinction worth keeping sharp: everything on this page controls
-how dot products are *computed* for given inputs. It's separate from the
-choice of dtype your data is *stored* in ({ref}`jax-101-arrays` covers
-defaults and {doc}`/101/type_promotion` the promotion rules). Storing model
-parameters or activations in `bfloat16` changes memory footprint and
-bandwidth everywhere; `precision` changes arithmetic inside individual
-operations. Performance work on accelerators usually involves deciding both.
+Finally, a distinction: everything on this page controls how dot products
+are *computed* for given inputs. That's separate from the choice of dtype
+your data is *stored* in ({ref}`jax-101-arrays` covers defaults and
+{doc}`/101/type_promotion` the promotion rules). Storing model parameters
+or activations in `bfloat16` changes memory footprint and bandwidth
+everywhere; `precision` changes arithmetic inside individual operations.
+Performance work on accelerators usually involves deciding both.
