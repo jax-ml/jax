@@ -1225,7 +1225,6 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: bool | Sequence[bool],
 
   new_jaxpr, used_inputs = _dce_jaxpr(jaxpr, tuple(used_outputs),
                                       tuple(instantiate))
-  # A None new_jaxpr signals no-op DCE; reuse the input jaxpr (see _dce_jaxpr).
   return (jaxpr if new_jaxpr is None else new_jaxpr), used_inputs
 
 
@@ -1298,9 +1297,6 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
   outvars = [v for v, b in zip(jaxpr.outvars, used_outputs) if b]
   eqns = new_eqns[::-1]
 
-  # No-op DCE: have the caller reuse the input jaxpr so identity-keyed caches
-  # (e.g. lowering) do not depend on this cache's eviction state. None rather
-  # than the jaxpr: the key as its own value would pin the entry forever.
   if (len(eqns) == len(jaxpr.eqns)
       and all(e1 is e2 for e1, e2 in zip(eqns, jaxpr.eqns))
       and all(used_inputs) and all(used_outputs)):
@@ -1325,9 +1321,7 @@ DCERule = Callable[[list[bool], JaxprEqn],
 @weakref_lru_cache
 def _closed_call_dce_cached(jaxpr_, used_outputs: tuple[bool, ...]
                             ) -> tuple[Jaxpr | None, list[bool]]:
-  # dce_jaxpr preserves attached consts (constvars are never pruned).
   new_jaxpr, used_inputs = dce_jaxpr(jaxpr_, used_outputs)
-  # None on no-op DCE: the key jaxpr as the value would pin this cache entry.
   return (None if new_jaxpr is jaxpr_ else new_jaxpr), used_inputs
 
 
