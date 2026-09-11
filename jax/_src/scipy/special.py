@@ -33,6 +33,7 @@ from jax._src.api import jit, jvp, vmap
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.lax.special import ndtr as _ndtr
 from jax._src.numpy import einsum as jnp_einsum
+from jax._src.numpy import lax_numpy
 from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import promote_args_complex, promote_args_inexact, promote_dtypes_inexact
 from jax._src.ops import special as ops_special
@@ -1803,7 +1804,9 @@ def i0(x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.i1e`
   """
   x, = promote_args_inexact("i0", x)
-  return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i0e(x))
+  if not jnp.issubdtype(x.dtype, np.floating):
+    raise ValueError(f"Unsupported input type to jax.scipy.special.i0: {x.dtype}")
+  return lax_numpy.i0_impl(x)
 
 
 def i1e(x: ArrayLike) -> Array:
@@ -1853,7 +1856,9 @@ def i1(x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.i1e`
   """
   x, = promote_args_inexact("i1", x)
-  return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i1e(x))
+  if not jnp.issubdtype(x.dtype, np.floating):
+    raise ValueError(f"Unsupported input type to jax.scipy.special.i1: {x.dtype}")
+  return lax_numpy.i1_impl(x)
 
 def _bessel_jn_scan_body_fun(carry, k):
   f0, f1, bs, z = carry

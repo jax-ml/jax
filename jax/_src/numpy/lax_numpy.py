@@ -6139,21 +6139,63 @@ def i0(x: ArrayLike) -> Array:
     >>> jnp.i0(x)
     Array([2.2795851, 1.266066 , 1.0000001, 1.266066 , 2.2795851], dtype=float32)
   """
-  x_arr, = util.promote_args_inexact("i0", x)
-  if not issubdtype(x_arr.dtype, np.floating):
-    raise ValueError(f"Unsupported input type to jax.numpy.i0: {x_arr.dtype}")
-  return _i0(x_arr)
+  x, = util.promote_args_inexact("i0", x)
+  if not issubdtype(x.dtype, np.floating):
+    raise ValueError(f"Unsupported input type to jax.numpy.i0: {x.dtype}")
+  return i0_impl(x)
+
+
+@partial(custom_jvp, nondiff_argnums=(0,))
+def _i1_maclaurin(k: int, x: Array) -> Array:
+  # compute the kth derivative of i1 evaluated near zero using a two-term
+  # Maclaurin series.
+  if k % 2 == 0:
+    m = (k + 1) // 2
+    c = math.comb(k + 1, m) / (2 ** (k + 1))
+    return lax.mul(lax._const(x, c), x)
+  else:
+    m = k // 2
+    c = math.comb(k, m) / (2 ** k)
+    return lax.full_like(x, c)
+
+@_i1_maclaurin.defjvp
+def _i1_maclaurin_jvp(k: int, primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
+  (x,), (t,) = primals, tangents
+  return _i1_maclaurin(k, x), lax.mul(_i1_maclaurin(k + 1, x), t)
 
 
 @custom_jvp
-def _i0(x):
+def i1_impl(x: Array) -> Array:
+  return lax.mul(lax.exp(lax.abs(x)), lax_special.bessel_i1e(x))
+
+@i1_impl.defjvp
+def i1_impl_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
+  # A closed-form JVP using Bessel recurrence (e.g. i1'(x) = i0(x) - i1(x)/x)
+  # is not viable due to the 0/0 singularity at x = 0. Meanwhile, autodiff
+  # through exp(abs(x)) * bessel_i1e(x) fails for higher-order derivatives
+  # near 0 due to (1) the cusp in abs(x) and (2) catastrophic cancellation when
+  # evaluating (i0e(x) - i1e(x)/x) / x^2 in floating-point arithmetic.
+  # We therefore use a recursive two-term Maclaurin series approximation for
+  # |x| <= sqrt(eps), where the series truncation error is strictly below
+  # machine precision.
+  primal_out, tangent_out = api.jvp(i1_impl.fun, primals, tangents)
+  x, = primals
+  t, = tangents
+  cutoff = math.sqrt(dtypes.finfo(x.dtype).eps)
+  use_series = lax.le(lax.abs(x), lax._const(x, cutoff))
+  return primal_out, where(use_series, lax.mul(_i1_maclaurin(1, x), t), tangent_out)
+
+
+@custom_jvp
+def i0_impl(x: Array) -> Array:
   abs_x = lax.abs(x)
   return lax.mul(lax.exp(abs_x), lax_special.bessel_i0e(abs_x))
 
-@_i0.defjvp
-def _i0_jvp(primals, tangents):
-  primal_out, tangent_out = api.jvp(_i0.fun, primals, tangents)
-  return primal_out, where(primals[0] == 0, 0.0, tangent_out)
+@i0_impl.defjvp
+def i0_impl_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
+  x, = primals
+  x_dot, = tangents
+  return i0_impl(x), lax.mul(x_dot, i1_impl(x))
 
 @export
 def ix_(*args: ArrayLike) -> tuple[Array, ...]:
