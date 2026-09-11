@@ -15,6 +15,7 @@
 import collections
 import functools
 import itertools
+import math
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -523,6 +524,36 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(lsp_special.gamma(z), osp_special.gamma(z),
                         atol=1e-5, rtol=rtol)
 
+  @parameterized.parameters(range(1, 5))
+  def test_i0_gradients(self, order):
+    # Regression test for https://github.com/jax-ml/jax/issues/40627 & 40628
+    def d_i0(x, n=order):
+      """Closed form of the nth derivative of i0(x)"""
+      return sum(math.comb(n, k) * osp_special.iv(abs(2 * k - n), x) for k in range(n + 1)) / (2 ** n)
+
+    eps = dtypes.finfo(dtypes.default_float_dtype()).eps
+    x = np.array([0.0, eps * 0.01, eps * 0.1, eps, eps * 10, eps * 100, 1.0])
+    args_maker = lambda: [x]
+    f = jax.scipy.special.i0
+    for _ in range(order):
+      f = jax.grad(f)
+    self._CheckAgainstNumpy(jax.vmap(f), d_i0, args_maker, rtol=1e-5)
+    self._CompileAndCheck(jax.vmap(f), args_maker, rtol=1e-5)
+
+  @parameterized.parameters(range(1, 5))
+  def test_i1_gradients(self, order):
+    def d_i1(x, n=order):
+      """Closed form of the nth derivative of i1(x)"""
+      return sum(math.comb(n + 1, k) * osp_special.iv(abs(2 * k - n - 1), x) for k in range(n + 2)) / (2 ** (n + 1))
+
+    eps = dtypes.finfo(dtypes.default_float_dtype()).eps
+    x = np.array([0.0, eps * 0.01, eps * 0.1, eps, eps * 10, eps * 100, 1.0])
+    args_maker = lambda: [x]
+    f = jax.scipy.special.i1
+    for _ in range(order):
+      f = jax.grad(f)
+    self._CheckAgainstNumpy(jax.vmap(f), d_i1, args_maker, rtol=1e-5)
+    self._CompileAndCheck(jax.vmap(f), args_maker, rtol=1e-5)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
