@@ -37,6 +37,7 @@ from jax._src import hijax
 from jax._src import numpy as jnp
 from jax._src import state
 from jax._src import flattree as ft
+from jax._src import tree
 from jax._src import tree_util
 from jax._src import typing as jax_typing
 from jax._src import util
@@ -742,6 +743,49 @@ def undo_transforms(
   for t, a in reversed(list(zip(memory_transforms, avals))):
     transforms.append(t.undo(a))
   return transforms
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class PadTransform(state_types.Transform):
+  shape: tuple[int, ...] = tree.static()
+
+  def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
+    match x:
+      case state_types.AbstractRef():
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
+      case jax_core.ShapedArray():
+        if len(x.shape) != len(self.shape):
+          raise ValueError(
+              f"Padded shape rank {len(self.shape)} does not match ref rank"
+              f" {len(x.shape)}"
+          )
+        for orig_d, pad_d in zip(x.shape, self.shape):
+          if pad_d < orig_d:
+            raise ValueError(
+                f"Padded dim {pad_d} cannot be smaller than original dim"
+                f" {orig_d}"
+            )
+        return x.update(shape=self.shape)
+      case _:
+        raise TypeError(f"Cannot pad {x}")
+
+  def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
+    raise NotImplementedError
+
+
+def pad_ref(
+    ref: state.AbstractRef | TransformedRef,
+    shape: tuple[int, ...],
+) -> TransformedRef:
+  """Translate memref to a padded memref for out-of-bounds reads."""
+  if not isinstance(ref, TransformedRef):
+    if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
+      raise TypeError("ref must be a reference")
+    ref = TransformedRef(ref, transforms=())
+  return TransformedRef(
+      ref.ref, (*ref.transforms, PadTransform(shape)),
+  )
 
 
 @dataclasses.dataclass(frozen=True)

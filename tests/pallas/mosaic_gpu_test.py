@@ -1906,6 +1906,80 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(2 * 128, dtype=jnp.float32).reshape(2, 128)
     np.testing.assert_array_equal(kernel(x), x)
 
+  @parameterized.product(
+      dtype=[jnp.float16, jnp.bfloat16],
+      slice_shape=[
+          (64, 156),  # Inner dim padded
+          (58, 160),  # Outer dim padded
+          (58, 156),  # Both dims padded
+          (64, 160),  # Neither dim padded
+      ],
+  )
+  def test_padded_ref_gmem_copy_to_smem(self, dtype, slice_shape):
+    self.skip_if_wg_semantics()
+    padded_slice_shape = (64, 160)
+    full_shape = (2, 4, *slice_shape)
+    padded_full_shape = (2, 4, *padded_slice_shape)
+    out_shape = (2, 4, *padded_slice_shape)
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(out_shape, dtype),
+        scratch_types=[plgpu.SMEM(padded_slice_shape, dtype)],
+    )
+    def kernel(x_ref, o_ref, s_ref):
+      x_padded = pl.pad_ref(x_ref, shape=padded_full_shape)
+      for b in range(2):
+        for h in range(4):
+          plgpu.copy_gmem_to_smem(x_padded.at[b, h, :, :], s_ref)
+          plgpu.wait_gmem_to_smem(0)
+          val = plgpu.load(s_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+          o_ref[b, h, ...] = val
+
+    x = ((jnp.arange(math.prod(full_shape), dtype=jnp.int32) % 1000 + 1)
+         .astype(dtype).reshape(full_shape))
+    np.testing.assert_array_equal(
+        kernel(x)[:, :, :slice_shape[0], :slice_shape[1]], x
+    )
+
+  @parameterized.product(
+      dtype=[jnp.float16, jnp.bfloat16],
+      slice_shape=[
+          (60, 64),  # Row padded
+          (64, 56),  # Col padded
+          (60, 56),  # Both row and col padded
+          (64, 64),  # Neither padded
+      ],
+      swizzle=[64, 128],
+  )
+  def test_padded_ref_tiled_gmem_copy_to_smem(self, dtype, slice_shape, swizzle):
+    self.skip_if_wg_semantics()
+    padded_slice_shape = (64, 64)
+    full_shape = (2, 4, *slice_shape)
+    padded_full_shape = (2, 4, *padded_slice_shape)
+    out_shape = (2, 4, *padded_slice_shape)
+    smem_transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(out_shape, dtype),
+        scratch_types=[
+            plgpu.SMEM(padded_slice_shape, dtype, transforms=smem_transforms)
+        ],
+    )
+    def kernel(x_ref, o_ref, s_ref):
+      x_padded = pl.pad_ref(x_ref, shape=padded_full_shape)
+      for b in range(2):
+        for h in range(4):
+          plgpu.copy_gmem_to_smem(x_padded.at[b, h, :, :], s_ref)
+          plgpu.wait_gmem_to_smem(0)
+          val = plgpu.load(s_ref, layout=plgpu.Layout.WGMMA)
+          o_ref[b, h, ...] = val
+
+    x = ((jnp.arange(math.prod(full_shape), dtype=jnp.int32) % 1000 + 1)
+         .astype(dtype).reshape(full_shape))
+    np.testing.assert_array_equal(
+        kernel(x)[:, :, :slice_shape[0], :slice_shape[1]], x
+    )
+
   @parameterized.parameters(None, plgpu.TilingTransform((32,)))
   def test_smem_gmem_transposed_copies(self, tiling):
     shape = (2, 2, 64)

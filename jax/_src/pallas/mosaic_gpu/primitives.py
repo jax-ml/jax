@@ -424,6 +424,7 @@ def _extract_gmem_copy_params(
     return {}
   peer_id = None
   indexers = []
+  is_padded = False
   for transform, transform_aval in zip(
       transforms, transform_avals, strict=True
   ):
@@ -456,6 +457,9 @@ def _extract_gmem_copy_params(
       continue
     elif isinstance(transform, indexing.NDIndexer):
       indexers.append(transform)
+    elif isinstance(transform, pallas_core.PadTransform):
+      is_padded = True
+      continue
     else:
       raise NotImplementedError(
           "Non-indexing transforms on GMEM refs are not implemented.")
@@ -467,6 +471,7 @@ def _extract_gmem_copy_params(
   return dict(
       gmem_slice=gmem_slice,
       gmem_peer_id=peer_id,
+      gmem_is_padded=is_padded,
   )
 
 
@@ -991,9 +996,16 @@ def _copy_gmem_to_smem_lowering(
           f" cluster size {ctx.launch_ctx.cluster_size}."
       )
 
-  # TMA is only available on Hopper and newer. On older architectures we fall
-  # back to the cp.async implementation.
-  if is_cp_async := mgpu.utils.get_arch().major < 9:
+  # TMA is only available on Hopper and newer. We use the cp.async
+  # implementation for older architectures or if we have a padded GMEM ref.
+  # TODO(olechwierowicz): True restriction which prevents us from using TMA is
+  # if GMEM stride is non-16-byte aligned.
+  is_cp_async = copy_params.pop("gmem_is_padded", False) or mgpu.utils.get_arch().major < 9
+  if is_cp_async:
+    if oob_mode == OOBFillMode.ZEROS:
+      raise NotImplementedError(oob_mode)
+    if oob_mode is None:
+      oob_mode = OOBFillMode.UNDEFINED
     if barrier is not None:
       raise ValueError(
           "copy_gmem_to_smem with a barrier is only supported Hopper and newer"
@@ -1005,13 +1017,6 @@ def _copy_gmem_to_smem_lowering(
       raise ValueError(
           "Only the TMA implementation supports leader_tracked copies"
       )
-    # cp.async does not predicate out-of-bounds accesses, so the caller has to
-    # guarantee that the copy stays in bounds.
-    if oob_mode != OOBFillMode.PROMISE_IN_BOUNDS:
-      raise ValueError(
-          "The cp.async implementation only supports "
-          "oob_mode=OOBFillMode.PROMISE_IN_BOUNDS"
-      )
     if has_user_predicate:
       raise NotImplementedError(
           "The cp.async implementation does not support user-defined predicates"
@@ -1019,7 +1024,6 @@ def _copy_gmem_to_smem_lowering(
   else:
     if oob_mode is None:
       oob_mode = OOBFillMode.ZEROS
-
     if barrier is None:
       raise ValueError(
           "copy_gmem_to_smem without a barrier is only supported on pre-Hopper"
@@ -1342,11 +1346,6 @@ def _wait_gmem_to_smem_abstract_eval(n):
 @lowering.register_lowering_rule(
     wait_gmem_to_smem_p, *gpu_core.WGxWARP_SEMANTICS)
 def _wait_gmem_to_smem_lowering(ctx: lowering.LoweringRuleContext, n):
-  if mgpu.utils.get_arch().major >= 9:
-    raise ValueError(
-        "wait_gmem_to_smem is only supported on pre-Hopper GPUs, which use"
-        " cp.async for GMEM->SMEM copies."
-    )
   ctx.launch_ctx.await_cp_async_copy(allow_groups=n)
   return ()
 
@@ -1354,8 +1353,8 @@ def _wait_gmem_to_smem_lowering(ctx: lowering.LoweringRuleContext, n):
 def wait_gmem_to_smem(n: int) -> None:
   """Waits until at most ``n`` ``cp.async`` GMEM->SMEM copies are in flight.
 
-  .. note:: This waiting mechanism is only supported on pre-Hopper GPUs, which
-            use the ``cp.async`` implementation of
+  .. note:: This waiting mechanism is only supported on pre-Hopper GPUs or
+            padded GMEM refs, which use the ``cp.async`` implementation of
             :func:`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem`.
 
   Args:
