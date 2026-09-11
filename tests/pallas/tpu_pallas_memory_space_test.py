@@ -442,6 +442,8 @@ class TPUPallasAnnotateTest(jtu.JaxTestCase):
     super().setUp()
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('Needs a newer TPU')
+    if not jtu.is_libtpu_at_least('0.0.48'):
+      self.skipTest('Needs a newer libtpu')
 
   @jtu.thread_unsafe_test()
   def test_annotate_emits_mosaic_ops(self):
