@@ -149,17 +149,20 @@ def _get_library_path():
   if installed_path.exists():
     return installed_path
 
-  local_path = (
-      base_path / 'pjrt_c_api_gpu_plugin.so'
+  local_path = os.path.join(
+      os.path.dirname(__file__), 'pjrt_c_api_gpu_plugin.so'
   )
-  if not local_path.exists():
+  if not os.path.exists(local_path):
     runfiles_dir = os.getenv('RUNFILES_DIR', None)
     if runfiles_dir:
       local_path = pathlib.Path(
-          os.path.join(runfiles_dir, 'xla/xla/pjrt/c/pjrt_c_api_gpu_plugin.so')
+        os.path.join(
+          runfiles_dir,
+          '__main__/jax_plugins/oneapi/pjrt_c_api_gpu_plugin.so',
+        )
       )
 
-  if local_path.exists():
+  if os.path.exists(local_path):
     logger.debug(
         'Native library %s does not exist. This most likely indicates an issue'
         ' with how %s was built or installed. Fallback to local test'
