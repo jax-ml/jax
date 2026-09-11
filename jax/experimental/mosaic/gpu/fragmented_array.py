@@ -249,16 +249,6 @@ class Tiling:
         tuple(tuple(d) if d else (1,) for d in strides),
     )
 
-  def tile_indices(self, indices: tuple[int, ...]) -> tuple[int, ...]:
-    for tile in self.tiles:
-      untiled, tiled = indices[:-len(tile)], indices[-len(tile):]
-      indices = (
-          *untiled,
-          *(i // t for i, t in zip(tiled, tile)),
-          *(i % t for i, t in zip(tiled, tile)),
-      )
-    return indices
-
   def untile_indices(self, indices: tuple[int, ...]) -> tuple[int, ...]:
     for tile in reversed(self.tiles):
       untiled = indices[:-2 * len(tile)]

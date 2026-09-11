@@ -1893,20 +1893,6 @@ class Partition1D:
   def get_base(self, source_coords: ir.Value) -> ir.Value:
     return self.partition.get_base(source_coords)[0]
 
-  def refine(
-      self,
-      *,
-      chunk: ir.Value | None = None,
-      num_chunks: int | None = None,
-      chunk_size: int | None = None,
-  ):
-    return Partition1D(
-        self.partition.target_block_shape[0],
-        num_chunks=num_chunks,
-        chunk_size=chunk_size,
-        base_offset=self.get_base(chunk) if chunk is not None else None,
-    )
-
 
 def tile_shape(shape, tiling):
   if len(tiling) > len(shape):
@@ -2226,10 +2212,6 @@ def bitcast(x: ir.Value, new_type: ir.Type):
   if isinstance(x.type, ir.FloatType) and isinstance(new_type, ir.FloatType):
     return arith.bitcast(new_type, x)
   raise ValueError(f"Can't bitcast {x.type} to {new_type}")
-
-
-def ceil_div(x: int, y: int):
-  return (x + y - 1) // y
 
 
 def vector_slice(v: ir.Value, s: slice):

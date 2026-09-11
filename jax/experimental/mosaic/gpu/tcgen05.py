@@ -1265,40 +1265,6 @@ class TMEMRef:
   def __post_init__(self):
     self.layout.check_type(self.shape, utils.bitwidth(self.dtype))
 
-  @classmethod
-  def from_alloc(
-      cls,
-      tmem_addr_ref: ir.Value,
-      shape: tuple[int, int],
-      dtype,
-      collective: bool | None = None,
-      layout: TMEMLayout | None = None,
-  ) -> TMEMRef:
-    i32 = ir.IntegerType.get_signless(32)
-    if not isinstance(tmem_addr_ref.type, ir.MemRefType):
-      raise ValueError(f"tmem_addr_ref must be a memref or a pointer, got: {tmem_addr_ref.type}")
-    addr_ref_ty = ir.MemRefType(tmem_addr_ref.type)
-    if not utils.is_smem_ref(addr_ref_ty):
-      raise ValueError(f"tmem_addr_ref must be in shared memory, got: {addr_ref_ty}")
-    if addr_ref_ty.element_type != i32:
-      raise ValueError(f"tmem_addr_ref must be an i32 memref, got: {addr_ref_ty}")
-    if math.prod(addr_ref_ty.shape) != 1:
-      raise ValueError(f"tmem_addr_ref must contain a single element, got: {addr_ref_ty}")
-    i0 = arith.ConstantOp.create_index(0)
-    tmem_addr = memref.load(tmem_addr_ref, [i0] * addr_ref_ty.rank)
-    if shape[0] < 32:
-      raise ValueError(f"TMEM refs must have at least 32 rows, got: {shape[0]}")
-    if layout is None:
-      if collective is None:
-        raise ValueError(
-            "collective argument must be provided when TMEM layout is inferred"
-        )
-      layout = _infer_tmem_layout(shape, collective, packing=1)
-    # TODO: Do we have to do this??
-    # warp_idx = utils.warp_idx(sync=False)
-    # tmem_addr = arith.ori(tmem_addr, arith.shli(warp_idx, utils.c(21, i32)))
-    return cls(tmem_addr, shape, dtype, layout)
-
   def slice(self, *idxs) -> TMEMRef:
     i32 = ir.IntegerType.get_signless(32)
     base_idx, slice_shape, is_squeezed = utils.parse_indices(idxs, self.shape)
