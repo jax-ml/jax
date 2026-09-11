@@ -242,6 +242,13 @@ def _mosaic_gpu_lowering_rule(
       serialize=True,
       ir_version=FWD_COMPAT_IR_VERSION if ctx.is_forward_compat() else None,
   )
+  # `mosaic_gpu.dump_basename` is debug-only metadata: a process-global counter
+  # stamped by GetOrSetDumpOptionsForModule purely to name dump files. It must
+  # not participate in the kernel cache key, or otherwise-identical kernels
+  # (e.g. per-transformer-layer attention) never dedupe and recompile from
+  # scratch. C++ re-derives a basename on demand, so dumping is unaffected.
+  if "mosaic_gpu.dump_basename" in module.operation.attributes:
+    del module.operation.attributes["mosaic_gpu.dump_basename"]
   bytecode_buffer = io.BytesIO()
   module.operation.write_bytecode(bytecode_buffer, desired_version=0)
   module_asm = bytecode_buffer.getvalue()
