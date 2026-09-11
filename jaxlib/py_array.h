@@ -58,6 +58,9 @@ limitations under the License.
 
 namespace jax {
 
+class PyArray;
+struct CopyToHostState;
+
 // Private to PyArray, but you cannot forward declare member classes.
 struct PyHostValue {
   void Clear() {
@@ -294,6 +297,9 @@ class PyArray : public nanobind::object {
   absl::StatusOr<size_t> GetOnDeviceSizeInBytes();
   absl::StatusOr<std::pair<nanobind::object, bool>>
   SingleDeviceArrayToNumpyArrayDidCopy();
+  // Returns the numpy array and a boolean indicating whether the array was
+  // copied from the devices.
+  absl::StatusOr<std::pair<nanobind::object, bool>> ToNumpyArrayDidCopy();
   absl::StatusOr<nanobind::object> SingleDeviceArrayToNumpyArray();
   absl::Status CopySingleDeviceArrayToHostAsync();
   nanobind::dict CudaArrayInterface();
@@ -304,6 +310,13 @@ class PyArray : public nanobind::object {
   bool IsDeleted() const;
 
   PyArray Clone() const;
+
+  // Returns the state needed to copy the array to host, or std::nullopt if
+  // the array has no addressable devices. It is safe for the returned object to
+  // outlive `this`.
+  struct CopyToHostState;
+  absl::StatusOr<std::optional<CopyToHostState>> GetCopyToHostState(
+      xla::ifrt::Client* client);
 
   static absl::StatusOr<std::vector<PyArray>> BatchedCopyToDeviceWithSharding(
       absl::Span<const PyArray> py_arrays,
@@ -326,17 +339,22 @@ class PyArray : public nanobind::object {
   static absl::Status BatchedBlockUntilReady(
       std::vector<nanobind::object> objs);
 
+  // Copies a batch of multi-device PyArrays to the host.
+  static absl::Status BatchedCopyToHostAsync(nanobind::sequence py_arrays);
+
   absl::Status ReplaceWithAlias(PyArray o);
 
  private:
-  absl::StatusOr<tsl::Future<>> CopyToHostAsync(
-      absl::Span<const int64_t> dynamic_shape, xla::ifrt::Array* ifrt_array);
+  absl::StatusOr<tsl::Future<>> CopyToHostAsync();
 
   absl::StatusOr<PyArray> AssertUnsharded(std::string_view api);
 
   static nanobind::object CheckAndRearrange(absl::Span<const PyArray> py_arrays,
                                             nanobind::object sharding,
                                             nanobind::object aval);
+
+  static absl::Status BatchedCopyToHostAsyncHelper(
+      xla::ifrt::Client* client, std::vector<CopyToHostState> array_states);
 
   Storage& GetStorage();
   const Storage& GetStorage() const;
