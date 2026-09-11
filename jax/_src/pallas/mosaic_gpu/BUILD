@@ -102,6 +102,7 @@ pytype_strict_library(
         "//jax/_src:frozen_dict",
         "//jax/_src:lax",
         "//jax/_src:pretty_printer",
+        "//jax/_src:source_info_util",
         "//jax/_src:state_types",
         "//jax/_src:tree_util",
         "//jax/_src:util",

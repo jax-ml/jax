@@ -24,7 +24,7 @@ import enum
 import functools
 import itertools as it
 import math
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, TypedDict
 
 import jax
 from jax._src import api
@@ -36,6 +36,7 @@ from jax._src import effects
 from jax._src import frozen_dict
 from jax._src import lax
 from jax._src import pretty_printer as pp
+from jax._src import source_info_util
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
@@ -1960,3 +1961,61 @@ def TryClusterCancelResult(
     return SMEM((16,), jnp.int8)
   else:
     return SMEM((num_buffers, 16), jnp.int8)
+
+
+class ReductionILP(TypedDict, total=False):
+  """Accumulator ILP settings for reduction operations."""
+  min: int
+  max: int
+  sum: int
+  prod: int
+
+
+_REDUCTION_ILP_PREFIX = "_reduction_ilp:"
+
+
+@contextlib.contextmanager
+def reduction_ilp(ilps: ReductionILP):
+  """Sets the accumulator ILP for reduction operations within this scope.
+
+  Args:
+    ilps: A dictionary mapping reduction operation names ('min', 'max', 'sum',
+      'prod') to positive integer ILP values.
+  """
+  if not isinstance(ilps, Mapping):
+    raise TypeError(f"Expected a Mapping for reduction_ilp, got {type(ilps)}")
+  for k, v in ilps.items():
+    if k not in ReductionILP.__annotations__.keys():
+      raise ValueError(
+          f"Invalid reduction op '{k}' in reduction_ilp. Valid ops are:"
+          f" {ReductionILP.__annotations__.keys()}"
+      )
+    if not isinstance(v, int) or isinstance(v, bool) or v <= 0:
+      raise ValueError(
+          f"ILP value for '{k}' must be a positive integer, got: {v}"
+      )
+
+  encoded = ",".join(f"{k}={v}" for k, v in ilps.items())
+  with source_info_util.extend_name_stack(f"{_REDUCTION_ILP_PREFIX}{encoded}"):
+    yield
+
+
+def get_reduction_ilp(
+    source_info: source_info_util.SourceInfo | None, op: str
+) -> int | None:
+  if source_info is None or source_info.name_stack is None:
+    return None
+  val = None
+  for item in source_info.name_stack.stack:
+    if isinstance(item, source_info_util.Scope) and item.name.startswith(
+        _REDUCTION_ILP_PREFIX
+    ):
+      content = item.name[len(_REDUCTION_ILP_PREFIX) :]
+      for entry in content.split(","):
+        if not entry:
+          continue
+        k, v = entry.split("=")
+        if k == op:
+          val = int(v)
+  return val
+
