@@ -740,10 +740,24 @@ class CustomVJPTraced(HiPrim):
   def physicalize_self(self, ctx):
     new_traced = self.traced.physicalize(ctx)
     new_in_avals = tree_map(ctx.physicalize_aval, self.in_avals)
+    which_static = [isinstance(x, Static) for x in self.in_avals]
+    def new_fwd(*args_):
+      dyn_args, static_args = partition_list(which_static, args_)
+      f = lambda *dyn: self.fwd(*merge_lists(which_static, list(dyn), static_args))
+      return ctx.physicalize(f)(*dyn_args)
+    update_wrapper(new_fwd, self.fwd)
+
+    num_static = sum(which_static)
+    def new_bwd(*args):
+      static_args = args[:num_static]
+      dyn_args = args[num_static:]
+      f = lambda *dyn: self.bwd(*static_args, *dyn)
+      return ctx.physicalize(f)(*dyn_args)
+    update_wrapper(new_bwd, self.bwd)
     return CustomVJPTraced(
         new_traced,
-        self.fwd,
-        self.bwd,
+        new_fwd,
+        new_bwd,
         new_in_avals,
         self.symbolic_zeros,
         self.static_argnums,
@@ -1080,9 +1094,17 @@ class CustomJVPTraced(HiPrim):
   def physicalize(self, ctx, *args):
     new_traced = self.traced.physicalize(ctx)
     new_in_avals = tree_map(ctx.physicalize_aval, self.in_avals)
+    which_static = [isinstance(x, Static) for x in self.in_avals]
+    num_static = sum(which_static)
+    def new_jvp_fun(*args_):
+      static_args = args_[:num_static]
+      dyn_args = args_[num_static:]
+      f = lambda *dyn: self.jvp_fun(*static_args, *dyn)
+      return ctx.physicalize(f)(*dyn_args)
+    update_wrapper(new_jvp_fun, self.jvp_fun)
     new_prim = CustomJVPTraced(
         new_traced,
-        self.jvp_fun,
+        new_jvp_fun,
         new_in_avals,
         self.symbolic_zeros,
         self.static_argnums,

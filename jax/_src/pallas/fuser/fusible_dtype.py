@@ -230,6 +230,7 @@ class Context:
       physicalize_closed_jaxpr
   )
   physicalize_aval: Callable[[Any], Any] = _physical_aval
+  physicalize: Callable = physicalize
 
 
 def physicalize_interp(
