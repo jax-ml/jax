@@ -1214,14 +1214,19 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: bool | Sequence[bool],
       If a bool, the same value is used for all inputs.
 
   Returns:
-    A tuple of ``(new_jaxpr, used_inputs)``.
+    A tuple of ``(new_jaxpr, used_inputs)``. When DCE eliminates nothing,
+    ``new_jaxpr`` is the input ``jaxpr`` object itself, preserving its
+    identity for identity-keyed caches.
   """
   if type(used_outputs) is bool:
     used_outputs = (used_outputs,) * len(jaxpr.outvars)
   if type(instantiate) is bool:
     instantiate = (instantiate,) * len(jaxpr.invars)
 
-  return _dce_jaxpr(jaxpr, tuple(used_outputs), tuple(instantiate))
+  new_jaxpr, used_inputs = _dce_jaxpr(jaxpr, tuple(used_outputs),
+                                      tuple(instantiate))
+  # A None new_jaxpr signals no-op DCE; reuse the input jaxpr (see _dce_jaxpr).
+  return (jaxpr if new_jaxpr is None else new_jaxpr), used_inputs
 
 
 def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
@@ -1267,7 +1272,7 @@ def has_effects(eqn: JaxprEqn) -> bool:
 @weakref_lru_cache
 def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
                instantiate: tuple[bool, ...]
-               ) -> tuple[Jaxpr, list[bool]]:
+               ) -> tuple[Jaxpr | None, list[bool]]:
   env: dict[Var, bool] = {}
 
   def read(v: Var) -> bool:
@@ -1292,6 +1297,15 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
   invars = [v for v, b in zip(jaxpr.invars, used_inputs)   if b]
   outvars = [v for v, b in zip(jaxpr.outvars, used_outputs) if b]
   eqns = new_eqns[::-1]
+
+  # No-op DCE: have the caller reuse the input jaxpr so identity-keyed caches
+  # (e.g. lowering) do not depend on this cache's eviction state. None rather
+  # than the jaxpr: the key as its own value would pin the entry forever.
+  if (len(eqns) == len(jaxpr.eqns)
+      and all(e1 is e2 for e1, e2 in zip(eqns, jaxpr.eqns))
+      and all(used_inputs) and all(used_outputs)):
+    return None, used_inputs
+
   jaxpr_effects = make_jaxpr_effects(jaxpr.constvars, invars, outvars, eqns)
 
   dbg = core.DebugInfo(
@@ -1309,10 +1323,18 @@ DCERule = Callable[[list[bool], JaxprEqn],
 
 
 @weakref_lru_cache
+def _closed_call_dce_cached(jaxpr_, used_outputs: tuple[bool, ...]
+                            ) -> tuple[Jaxpr | None, list[bool]]:
+  # dce_jaxpr preserves attached consts (constvars are never pruned).
+  new_jaxpr, used_inputs = dce_jaxpr(jaxpr_, used_outputs)
+  # None on no-op DCE: the key jaxpr as the value would pin this cache entry.
+  return (None if new_jaxpr is jaxpr_ else new_jaxpr), used_inputs
+
+
 def _cached_closed_call_dce(jaxpr_, used_outputs: tuple[bool, ...]
                             ) -> tuple[Jaxpr, list[bool]]:
-  # dce_jaxpr preserves attached consts (constvars are never pruned).
-  return dce_jaxpr(jaxpr_, used_outputs)
+  new_jaxpr, used_inputs = _closed_call_dce_cached(jaxpr_, used_outputs)
+  return (jaxpr_ if new_jaxpr is None else new_jaxpr), used_inputs
 
 def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
                                ) -> tuple[list[bool], JaxprEqn | None]:
