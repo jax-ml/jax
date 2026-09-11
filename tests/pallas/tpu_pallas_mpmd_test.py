@@ -26,6 +26,7 @@ from jax._src import core as jax_core
 from jax._src import hijax
 from jax._src import test_util as jtu
 from jax._src.pallas.fuser import fusible_dtype
+from jax._src.state import primitives as state_primitives
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import fuser
 from jax.experimental.pallas import tpu as pltpu
@@ -90,22 +91,36 @@ class MpmdAsyncTest(jtu.JaxTestCase):
       self.skipTest("SparseCore only supported on TPU v5p+")
     super().setUp()
 
-  @parameterized.parameters([SCS, SCV])
-  def test_async_sc_tc_prefetch_vmem(self, sc_core_type):
+  @parameterized.product(
+      sc_core_type=[SCS, SCV],
+      source=[pltpu.HBM, pltpu.VMEM_SHARED],
+  )
+  def test_async_sc_tc_prefetch_vmem(self, sc_core_type, source):
     # https://github.com/jax-ml/jax/issues/39621
     if not jtu.is_libtpu_at_least("0.0.48"):
       self.skipTest("Requires libtpu >= 0.0.48")
     mesh = from_core_type(sc_core_type)
     tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+    x = jnp.arange(8 * 128).reshape(8, 128)
 
-    def scalar_subcore_fn(x_ref, out_tc_vmem_ref, tc_sem, sem):
+    def sc_fn(x_ref, out_tc_vmem_ref, tc_sem, sem, *scratch):
+      if source == pltpu.VMEM_SHARED:
+        (sc_vmem_ref,) = scratch
+        pltpu.sync_copy(x_ref, sc_vmem_ref)
+        src_ref = sc_vmem_ref
+      else:
+        src_ref = x_ref
       pltpu.async_remote_copy(
-          x_ref, out_tc_vmem_ref, sem, tc_sem, device_id={"tc": 0}
+          src_ref, out_tc_vmem_ref, sem, tc_sem, device_id={"tc": 0}
       ).wait_send()
 
     def tc_fn(x_ref, out_tc_vmem_ref, tc_sem):
       pltpu.make_async_copy(x_ref, out_tc_vmem_ref, tc_sem).wait()
       out_tc_vmem_ref[...] += 1
+
+    scratch_types = [pltpu.SemaphoreType.DMA(())]
+    if source == pltpu.VMEM_SHARED:
+      scratch_types.append(pltpu.VMEM_SHARED(x.shape, x.dtype))
 
     @jax.jit
     def f(x):
@@ -116,9 +131,9 @@ class MpmdAsyncTest(jtu.JaxTestCase):
               pltpu.VMEM(x.shape, x.dtype) @ tc_mesh,
               pltpu.SemaphoreType.DMA(()) @ tc_mesh,
           ),
-          scratch_types=[pltpu.SemaphoreType.DMA(())],
+          scratch_types=scratch_types,
           name=f"sc_copy_start_{x.shape[0]}",
-      )(scalar_subcore_fn)(x_ref)
+      )(sc_fn)(x_ref)
       out_ref = jax.new_ref(out, memory_space=pltpu.VMEM @ tc_mesh)
       sem_ref = jax.new_ref(sem, memory_space=pltpu.SEMAPHORE @ tc_mesh)
       pl.kernel(
@@ -126,6 +141,45 @@ class MpmdAsyncTest(jtu.JaxTestCase):
           name=f"tc_copy_end_{x.shape[0]}",
       )(tc_fn)(x_ref, out_ref, sem_ref)
       return jax.freeze(out_ref)
+
+    out = f(x)
+    np.testing.assert_array_equal(out, x + 1)
+
+  def test_tc_vmem_to_sc_vmem_shared(self):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
+
+    mesh = from_core_type(SCV)
+    tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+
+    def tc_fn(x_ref, tc_vmem_ref):
+      pltpu.sync_copy(x_ref, tc_vmem_ref)
+
+    def vector_subcore_fn(tc_vmem_ref, out_ref, sc_vmem_ref, local_vmem_ref):
+      pltpu.sync_copy(tc_vmem_ref, sc_vmem_ref)
+      pltpu.sync_copy(sc_vmem_ref, local_vmem_ref)
+      local_vmem_ref[...] += 1
+      pltpu.sync_copy(local_vmem_ref, out_ref)
+
+    @jax.jit
+    def f(x):
+      tc_vmem = pl.kernel(
+          mesh=tc_mesh,
+          out_type=pltpu.VMEM(x.shape, x.dtype) @ tc_mesh,
+          name=f"tc_stage_{x.shape[0]}",
+      )(tc_fn)(x)
+      tc_vmem = state_primitives.with_memory_space_constraint(
+          tc_vmem, pltpu.VMEM @ tc_mesh
+      )
+      return pl.kernel(
+          mesh=mesh,
+          out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          scratch_types=[
+              pltpu.VMEM_SHARED(x.shape, x.dtype),
+              pltpu.VMEM(x.shape, x.dtype),
+          ],
+          name=f"sc_stage_{x.shape[0]}",
+      )(vector_subcore_fn)(tc_vmem)
 
     x = jnp.arange(8 * 128).reshape(8, 128)
     out = f(x)
