@@ -118,6 +118,51 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
           ),
       )
 
+  @parameterized.parameters(
+      (pltpu.VMEM, 1),
+      (pltpu.SMEM, 4),
+      (pltpu.HBM, 0),
+      (pl.ANY, None),
+  )
+  def test_basic_input_memory_space_constraint_with_kernel(
+      self, memory_space, color
+  ):
+    def g(x):
+      t_ref = jax.new_ref(x)
+
+      def kernel(x_ref, y_ref):
+        pltpu.sync_copy(x_ref, t_ref)
+        pltpu.sync_copy(x_ref, y_ref)
+
+      return pl.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+      )(x)
+
+    @jax.jit
+    def f(x):
+      x = pltpu.with_memory_space_constraint(x, memory_space=memory_space)
+      if color is not None:
+        self.assertEqual(jax.typeof(x).memory_space, memory_space)
+      x = g(x)
+      return x
+
+    x = jnp.ones((8, 128), dtype=jnp.float32)
+    y = f(x)
+    np.testing.assert_array_equal(y, x)
+    lowered = jax.jit(f).lower(x)
+    lowered.compile()
+    hlo = lowered.compiler_ir(dialect='hlo').as_hlo_text()
+    if color is None or memory_space == pltpu.SMEM:
+      self.assertNotIn('input_memory_space_colors', hlo)
+    else:
+      self.assertRegex(
+          hlo,
+          r'"input_memory_space_colors"\s*:\s*\[[^\]]*'
+          + _json_object_with_fields({'color': color, 'operand_index': 0}),
+      )
+
   @parameterized.parameters(pltpu.VMEM, pltpu.SMEM)
   def test_vmap_input_memory_space_constraint(self, memory_space):
     def kernel(x_ref, y_ref):

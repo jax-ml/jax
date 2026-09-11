@@ -294,6 +294,7 @@ class MemorySpace(enum.Enum):
   def __str__(self) -> str:
     return self.value
 
+state_discharge.register_neutral_memory_space(MemorySpace.ANY)
 
 @dataclasses.dataclass(frozen=True)
 class CoreMemorySpace:

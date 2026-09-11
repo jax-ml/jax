@@ -956,7 +956,7 @@ jax_core.custom_typechecks[pallas_call_p] = _pallas_call_typecheck_rule
 
 @state_discharge.register_discharge_rule(pallas_call_p)
 def _pallas_call_state_discharge_rule(
-    ctx,
+    ctx: state_discharge.DischargeContext,
     *args,
     jaxpr: jax_core.Jaxpr,
     input_output_aliases: tuple[tuple[int, int], ...],
@@ -974,6 +974,7 @@ def _pallas_call_state_discharge_rule(
   num_refs = len(jaxpr.constvars)
   ref_avals, rest_in_avals = split_list(ctx.in_avals, [num_refs])
   assert all(isinstance(ref_aval, state.AbstractRef) for ref_aval in ref_avals)
+  ref_avals = cast(list[state.AbstractRef], ref_avals)
   ref_avals = [
       state.AbstractRef(
           ref_aval.inner_aval, pallas_core.MemorySpace.ANY
@@ -1076,6 +1077,12 @@ def _pallas_call_state_discharge_rule(
       name=name,
   )
   refs_out, rest = split_list(out_flat, [num_refs])
+  # constrain aliased outputs
+  for i, o in input_output_aliases:
+    in_aval = rest_in_avals[i]
+    if isinstance(in_aval, state.AbstractRef):
+      ms = getattr(in_aval, 'memory_space', None)
+      rest[o] = state_discharge.constrain(rest[o], ms, ctx.strip_memory_space)
   updated_vals_in = refs_out + [None] * len(rest_in_avals)
   return updated_vals_in, rest
 
