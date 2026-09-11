@@ -1134,8 +1134,15 @@ def warpgroup_barrier_idx(sync: bool = True) -> ir.Value[ir.IntegerType]:
 
 
 def warpgroup_barrier():
-  wg_idx = warpgroup_barrier_idx(sync=False)
-  inline_ptx(f"bar.sync $0, {WARPGROUP_SIZE};", wg_idx, has_side_effects=True)
+  # `bar.sync` is convergent, and inline asm cannot currently be marked
+  # convergent, so use the intrinsic instead.
+  nvvm.barrier(
+      barrier_id=warpgroup_barrier_idx(sync=False),
+      number_of_threads=c(WARPGROUP_SIZE, ir.IntegerType.get_signless(32)),
+      # Not all threads in the CTA reach this barrier (it is per-warpgroup), so
+      # we need the non-`.aligned` form, matching `bar.sync id, count`.
+      aligned=False,
+  )
 
 
 def warp_barrier():
@@ -1237,12 +1244,19 @@ class BarrierRef:
     wait_complete = nvvm.mbarrier_test_wait(self.get_ptr(), parity)
 
     if scope == ThreadSubset.WARPGROUP:
-      wait_complete = inline_ptx(
-          f"bar.red.or.pred $0, $1, {WARPGROUP_SIZE}, $2;",
-          warpgroup_barrier_idx(sync=False),
-          wait_complete,
-          result_types=i1,
-          has_side_effects=True,
+      # `bar.red.or.pred` is convergent, and inline asm cannot currently be
+      # marked convergent, so use the intrinsic instead. We want the
+      # non-`.aligned` form, as this barrier is per-warpgroup.
+      wait_complete = llvm.call_intrinsic(
+          i1,
+          "llvm.nvvm.barrier.cta.red.or.count",
+          [
+              warpgroup_barrier_idx(sync=False),
+              c(WARPGROUP_SIZE, i32),
+              wait_complete,
+          ],
+          [],
+          [],
       )
       wait_complete = cast(ir.OpResult[ir.IntegerType], wait_complete)
     elif scope == ThreadSubset.WARP:
