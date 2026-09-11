@@ -3819,6 +3819,76 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_allclose(x_result, op(x, axis=axis), atol=5e-5)
 
+  @parameterized.named_parameters(
+      ("negative_ilp", -1, ValueError),
+      ("zero_ilp", 0, ValueError),
+      ("float_ilp", 2.5, ValueError),
+      ("string_ilp", "4", ValueError),
+      ("bool_ilp", True, ValueError),
+  )
+  def test_reduction_accumulator_ilp_validation(self, ilp, expected_error):
+    with self.assertRaises(expected_error):
+      plgpu.reduce_sum(jnp.ones((4, 4)), accumulator_ilp=ilp)
+    with self.assertRaises(expected_error):
+      plgpu.reduce_max(jnp.ones((4, 4)), accumulator_ilp=ilp)
+    with self.assertRaises(expected_error):
+      plgpu.reduce_min(jnp.ones((4, 4)), accumulator_ilp=ilp)
+    with self.assertRaises(expected_error):
+      plgpu.reduce_prod(jnp.ones((4, 4)), accumulator_ilp=ilp)
+
+  @parameterized.product(
+      op_info=(
+          (plgpu.reduce_sum, jnp.sum),
+          (plgpu.reduce_max, jnp.max),
+          (plgpu.reduce_min, jnp.min),
+          (plgpu.reduce_prod, jnp.prod),
+          (plgpu.sum, jnp.sum),
+          (plgpu.max, jnp.max),
+          (plgpu.min, jnp.min),
+          (plgpu.prod, jnp.prod),
+      ),
+      ilp=(1, 2, 4),
+  )
+  def test_reduction_accumulator_ilp(self, op_info, ilp):
+    pl_op, jnp_op = op_info
+    axis = -1
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct((128,), jnp.float32))
+    def kernel(x_ref, y_ref):
+      x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+      y_ref[...] = pl_op(x_val, axis=axis, accumulator_ilp=ilp)
+
+    x = jax.random.uniform(jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
+    if jnp_op == jnp.prod:
+      x = x * 0.1 + 0.95  # Avoid overflow / underflow for product reduction.
+    with mock.patch.object(
+        mgpu.FragmentedArray,
+        "reduce",
+        autospec=True,
+        side_effect=mgpu.FragmentedArray.reduce,
+    ) as mock_reduce:
+      x_result = jax.block_until_ready(kernel(x))
+      mock_reduce.assert_called()
+      for call in mock_reduce.call_args_list:
+        self.assertEqual(call.kwargs.get("acc_ilp"), ilp)
+    np.testing.assert_allclose(x_result, jnp_op(x, axis=axis), atol=1e-4, rtol=1e-4)
+
+  @parameterized.product(
+      op_info=(
+          (plgpu.reduce_sum, jnp.sum),
+          (plgpu.reduce_max, jnp.max),
+          (plgpu.reduce_min, jnp.min),
+          (plgpu.reduce_prod, jnp.prod),
+      ),
+      keepdims=(True, False),
+  )
+  def test_reduction_keepdims(self, op_info, keepdims):
+    pl_op, jnp_op = op_info
+    x = jax.random.uniform(jax.random.key(0), shape=(8, 16), dtype=jnp.float32)
+    res = pl_op(x, axis=-1, keepdims=keepdims)
+    expected = jnp_op(x, axis=-1, keepdims=keepdims)
+    np.testing.assert_allclose(res, expected)
+
   def test_cross_warp_reduction(self):
 
     @self.kernel(

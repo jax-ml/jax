@@ -859,13 +859,17 @@ def _vector_reduction_op_lowering_rule(
   op_kind = _combining_kind(op.kind)
   is_signed = _is_reduction_signed(op_kind)
   a = _fragmented_array_from_ir(op.vector, layout, is_signed)
+  acc_ilp_attr = op.attributes.get("acc_ilp")
+  acc_ilp = None if acc_ilp_attr is None else ir.IntegerAttr(acc_ilp_attr).value
   match op_kind:
     case vector.CombiningKind.ADD:
-      result = a.reduce("add", axes, scratch)
+      result = a.reduce("add", axes, scratch, acc_ilp=acc_ilp)
+    case vector.CombiningKind.MUL:
+      result = a.reduce("prod", axes, scratch, acc_ilp=acc_ilp)
     case vector.CombiningKind.MAXSI | vector.CombiningKind.MAXUI | vector.CombiningKind.MAXIMUMF:
-      result = a.reduce("max", axes, scratch)
+      result = a.reduce("max", axes, scratch, acc_ilp=acc_ilp)
     case vector.CombiningKind.MINUI | vector.CombiningKind.MINSI | vector.CombiningKind.MINIMUMF:
-      result = a.reduce("min", axes, scratch)
+      result = a.reduce("min", axes, scratch, acc_ilp=acc_ilp)
     case _:
       raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
   assert isinstance(result.layout, fa.WGSplatFragLayout)
@@ -907,16 +911,23 @@ def _vector_multi_dim_reduction_op_lowering_rule(
   else:
     scratch = None
 
+  acc_ilp_attr = op.attributes.get("acc_ilp")
+  acc_ilp = None if acc_ilp_attr is None else ir.IntegerAttr(acc_ilp_attr).value
+  reduce_src = functools.partial(
+      src.reduce,
+      axis=op.reduction_dims[0],
+      scratch=scratch,
+      acc_ilp=acc_ilp,
+  )
   match op_kind:
     case vector.CombiningKind.ADD:
-      result = src.reduce("add", op.reduction_dims[0], scratch)
-      result += acc
+      result = reduce_src("add") + acc
+    case vector.CombiningKind.MUL:
+      result = reduce_src("prod") * acc
     case vector.CombiningKind.MAXSI | vector.CombiningKind.MAXUI | vector.CombiningKind.MAXIMUMF:
-      result = src.reduce("max", op.reduction_dims[0], scratch)
-      result = result.max(acc)
+      result = reduce_src("max").max(acc)
     case vector.CombiningKind.MINUI | vector.CombiningKind.MINSI | vector.CombiningKind.MINIMUMF:
-      result = src.reduce("min", op.reduction_dims[0], scratch)
-      result = result.min(acc)
+      result = reduce_src("min").min(acc)
     case _:
       raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
   assert result.layout == layouts_lib.from_layout_attr(out_layout)
