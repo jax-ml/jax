@@ -1362,6 +1362,8 @@ class IOCallbackTest(jtu.JaxTestCase):
   def test_sequence_pjit_io_callback_ordered(self):
     if jtu.is_device_tpu(7, 'x'):
       self.skipTest('TODO(b/453664256): Failing on TPU 7x.')
+    if not jtu.is_libtpu_at_least('0.0.48'):
+      self.skipTest('Requires libtpu >= 0.0.48')
 
     # A sequence of pairs of calls to pjit(io_callback(ordered=True)) with each
     # pair on a different device assignment.
