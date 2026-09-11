@@ -150,6 +150,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AsmParser",
         "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:NVVMDialect",
         "@llvm-project//mlir:Pass",

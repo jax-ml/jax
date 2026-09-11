@@ -712,8 +712,12 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   context.allowUnregisteredDialects(true);
   InitContext(&context);
   mlir::ParserConfig parse_config(&context);
-  auto module =
-      mlir::parseSourceString<mlir::ModuleOp>(module_str, parse_config);
+  // TODO(bchetioui): remove 6 months after IR version 9 is the forward
+  // compatible IR version.
+  std::string upgraded_module_str =
+      mosaic::gpu::UpgradeLegacyAttributeSyntax(module_str);
+  auto module = mlir::parseSourceString<mlir::ModuleOp>(upgraded_module_str,
+                                                        parse_config);
   if (!module) {
     return absl::InternalError("Failed to parse Mosaic GPU module");
   }

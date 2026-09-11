@@ -16,8 +16,10 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/serde.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "absl/log/check.h"
 #include "llvm/ADT/StringMap.h"
@@ -25,12 +27,14 @@ limitations under the License.
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/AsmParser/AsmParser.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/MLIRContext.h"
@@ -58,7 +62,9 @@ constexpr llvm::StringRef kVersionAttrName = "stable_mosaic_gpu.version";
 // lowering after 2026-08-31.
 // TODO(bchetioui): Update the forward-compatible version to 8 in Mosaic GPU
 // lowering after 2026-09-30.
-constexpr int kVersion = 8;
+// TODO(bchetioui): Update the forward-compatible version to 9 in Mosaic GPU
+// lowering after 2026-10-11.
+constexpr int kVersion = 9;
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
 
@@ -442,6 +448,27 @@ LogicalResult gpu_launch_downgrade(Operation* op, int version, bool& erased) {
   return success();
 }
 
+LogicalResult gpu_dimension_downgrade(Operation* op, int version,
+                                      bool& erased) {
+  // https://github.com/llvm/llvm-project/pull/220608
+  if (version < 9) {
+    auto dimension = op->getAttrOfType<mlir::gpu::DimensionAttr>("dimension");
+    if (!dimension) {
+      return op->emitOpError("Missing or invalid dimension attribute");
+    }
+    auto* ctx = op->getContext();
+    op->setAttr(
+        "dimension",
+        mlir::OpaqueAttr::get(
+            mlir::StringAttr::get(ctx,
+                                  mlir::gpu::GPUDialect::getDialectNamespace()),
+            ("dim " + mlir::gpu::stringifyDimension(dimension.getValue()))
+                .str(),
+            mlir::NoneType::get(ctx)));
+  }
+  return success();
+}
+
 const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
   static auto rules = new llvm::StringMap<SerdeRuleType>{
       {::llvm::StringLiteral("vector.extractelement"),
@@ -494,6 +521,13 @@ const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
       {::llvm::StringLiteral("nvvm.cp.async.bulk.tensor.global.shared.cta"),
        nvvm_cp_async_bulk_tensor_global_shared_cta_downgrade},
       {::llvm::StringLiteral("gpu.launch"), gpu_launch_downgrade},
+      {::llvm::StringLiteral("gpu.block_dim"), gpu_dimension_downgrade},
+      {::llvm::StringLiteral("gpu.block_id"), gpu_dimension_downgrade},
+      {::llvm::StringLiteral("gpu.cluster_block_id"), gpu_dimension_downgrade},
+      {::llvm::StringLiteral("gpu.cluster_dim_blocks"),
+       gpu_dimension_downgrade},
+      {::llvm::StringLiteral("gpu.grid_dim"), gpu_dimension_downgrade},
+      {::llvm::StringLiteral("gpu.thread_id"), gpu_dimension_downgrade},
       // TODO(bchetioui): delete nvvm ops out of the Mosaic GPU codebase, and
       // get rid of the downgrade rules.
       {::llvm::StringLiteral("nvvm.shfl.sync"), nvvm_attrs_downgrade},
@@ -528,6 +562,47 @@ const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
 }
 
 }  // namespace
+
+std::string UpgradeLegacyAttributeSyntax(llvm::StringRef serialized_module) {
+  // `gpu::DimensionAttr` used to be printed in its bare form (`#gpu<dim x>`),
+  // but https://github.com/llvm/llvm-project/pull/220608 made angle brackets
+  // the default assembly format for enum attributes---so the parser now only
+  // accepts `#gpu.dim<x>`. The attribute appears in serialized modules because
+  // `gpu.{thread,block}_id` & co. are mangled, and are therefore printed in
+  // their generic form.
+  //
+  // Note that both spellings have the same length. This matters: attributes of
+  // dialects that do not implement a bytecode interface (such as `gpu`) are
+  // stored in bytecode as null-terminated assembly strings, so the substitution
+  // below must not change the size of the module.
+  //
+  // TODO(bchetioui): delete once we no longer need to deserialize modules that
+  // use the legacy spelling. This requires that:
+  //  - the forward-compatible version in Mosaic GPU lowering is at least 9 (see
+  //    the TODO above `kVersion`), since serializing for older versions keeps
+  //    emitting the legacy spelling;
+  //  - the 6-month export backwards compatibility window has elapsed since
+  //    then.
+  static constexpr std::pair<llvm::StringLiteral, llvm::StringLiteral>
+      kLegacySpellings[] = {
+          {"#gpu<dim x>", "#gpu.dim<x>"},
+          {"#gpu<dim y>", "#gpu.dim<y>"},
+          {"#gpu<dim z>", "#gpu.dim<z>"},
+      };
+
+  std::string module = serialized_module.str();
+  for (const auto& [legacy, current] : kLegacySpellings) {
+    // Since both spellings have the same size, each occurrence is overwritten
+    // in place: the rest of the module is never shifted, and the string is
+    // never reallocated.
+    CHECK_EQ(legacy.size(), current.size());
+    for (size_t pos = module.find(legacy.data()); pos != std::string::npos;
+         pos = module.find(legacy.data(), pos + legacy.size())) {
+      std::memcpy(module.data() + pos, current.data(), current.size());
+    }
+  }
+  return module;
+}
 
 void SerdePass::runOnOperation() {
   mlir::ModuleOp module = getOperation();
