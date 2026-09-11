@@ -152,6 +152,8 @@ from jax._src.lax.lax import (
   nextafter as nextafter,
   nextafter_p as nextafter_p,
   not_p as not_p,
+  one_minus_square as one_minus_square,
+  one_minus_square_p as one_minus_square_p,
   optimization_barrier as optimization_barrier,
   optimization_barrier_p as optimization_barrier_p,
   or_p as or_p,

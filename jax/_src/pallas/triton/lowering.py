@@ -1089,6 +1089,9 @@ triton_lowering_rules.update({
     lax.log1p_p: log1p_dispatch_table,
     lax.sqrt_p: sqrt_dispatch_table,
     lax.square_p: lambda ctx, x: _mul(x, x),
+    lax.one_minus_square_p: lambda ctx, x: _mul(
+        _add(_ones_like(x), x), _sub(_ones_like(x), x)
+    ),
     lax.pow_p: pow_dispatch_table,
     lax.cbrt_p: cbrt_dispatch_table,
     lax.rsqrt_p: rsqrt_dispatch_table,

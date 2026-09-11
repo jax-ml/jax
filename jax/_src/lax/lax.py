@@ -4043,6 +4043,16 @@ def square(x: ArrayLike) -> Array:
   r"""Elementwise square: :math:`x^2`."""
   return square_p.bind(x)
 
+def one_minus_square(x: ArrayLike) -> Array:
+  r"""Elementwise :math:`1 - x^2`.
+
+  Evaluates :math:`(1 + x)(1 - x)` to preserve precision when :math:`|x|` is
+  close to :math:`1`, while defining its primitive JVP rule directly as
+  :math:`-2x` to avoid catastrophic cancellation when differentiating near
+  :math:`x = 0`.
+  """
+  return one_minus_square_p.bind(x)
+
 def reciprocal(x: ArrayLike) -> Array:
   r"""Elementwise reciprocal: :math:`1 \over x`."""
   return integer_pow(x, -1)
@@ -4662,7 +4672,7 @@ ad.defjvp2(
         ),
     )
     if accuracy is AccuracyMode.HIGHEST
-    else mul(g, mul(add(_one(ans), ans), sub(_one(ans), ans))),
+    else mul(g, one_minus_square(ans)),
 )
 mlir.register_lowering(tanh_p, partial(_nary_lower_hlo, hlo.tanh))
 core.pp_eqn_rules[tanh_p] = _unary_with_accuracy_pp_rule
@@ -4767,11 +4777,11 @@ mlir.register_lowering(tan_p, partial(_nary_lower_hlo, hlo.tan))
 core.pp_eqn_rules[tan_p] = _unary_with_accuracy_pp_rule
 
 asin_p = standard_unop(_float | _complex, 'asin')
-ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(sub(_const(x, 1), square(x)))))
+ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(one_minus_square(x))))
 mlir.register_lowering(asin_p, partial(_nary_lower_hlo, chlo.asin))
 
 acos_p = standard_unop(_float | _complex, 'acos')
-ad.defjvp(acos_p, lambda g, x: mul(g, neg(rsqrt(sub(_const(x, 1), square(x))))))
+ad.defjvp(acos_p, lambda g, x: mul(g, neg(rsqrt(one_minus_square(x)))))
 mlir.register_lowering(acos_p, partial(_nary_lower_hlo, chlo.acos))
 
 atan_p = standard_unop(_float | _complex, 'atan')
@@ -4798,14 +4808,11 @@ mlir.register_lowering(asinh_p, partial(_nary_lower_hlo, chlo.asinh))
 
 acosh_p = standard_unop(_float | _complex, 'acosh')
 ad.defjvp(acosh_p,
-          # We use x^2-1 rather than (x+1)(x-1). The latter is more accurate
-          # for x near zero, but the function domain is x>=1.
-          lambda g, x: mul(g, rsqrt(sub(square(x), _one(x)))))
+          lambda g, x: mul(g, rsqrt(neg(one_minus_square(x)))))
 mlir.register_lowering(acosh_p, partial(_nary_lower_hlo, chlo.acosh))
 
 atanh_p = standard_unop(_float | _complex, 'atanh')
-ad.defjvp(atanh_p,
-          lambda g, x: mul(reciprocal(add(_one(x), x)), div(g, sub(_one(x), x))))
+ad.defjvp(atanh_p, lambda g, x: div(g, one_minus_square(x)))
 mlir.register_lowering(atanh_p, partial(_nary_lower_hlo, chlo.atanh))
 
 real_p = unop(_complex_basetype, _complex, 'real')
@@ -4912,6 +4919,35 @@ def _square_lower_hlo(ctx, x):
 
 ad.defjvp2(square_p, lambda g, ans, x: mul(g, mul(_const(x, 2), x)))
 mlir.register_lowering(square_p, _square_lower_hlo)
+
+# one_minus_square_p computes 1 - x^2.
+#
+# Purpose:
+# 1. Accuracy when |x| is close to 1 (evaluating 1 - x^2):
+#    Evaluates (1 + x) * (1 - x) rather than 1 - x^2. When |x| is close to 1,
+#    squaring x first produces a value near 1.0 whose lower significant bits
+#    are rounded away before subtracting from 1.0, losing up to half of all
+#    significant bits on hardware without vector FMA (such as TPU). Subtracting
+#    1 - x first cancels the leading bits before multiplication, preserving
+#    full floating-point precision across all hardware.
+#
+# 2. Accuracy when x is close to 0 (differentiating 1 - x^2):
+#    If (1 + x) * (1 - x) were expressed directly using standard mul/add/sub
+#    primitives, differentiating it via the product rule would produce
+#    (1 - x) - (1 + x). For tiny |x| < machine epsilon (e.g., x = 1e-300 in
+#    float64), both 1 - x and 1 + x round to 1.0, causing catastrophic
+#    cancellation to 0.0 instead of -2x. Defining one_minus_square_p as a
+#    primitive with JVP rule d/dx (1 - x^2) = -2x avoids this cancellation
+#    when differentiating.
+one_minus_square_p = standard_unop(_int | _float | _complex, 'one_minus_square')
+ad.defjvp(one_minus_square_p, lambda g, x: mul(g, mul(_const(x, -2), x)))
+mlir.register_lowering(
+    one_minus_square_p,
+    mlir.lower_fun(
+        lambda x: mul(add(_one(x), x), sub(_one(x), x)),
+        multiple_results=False,
+    ),
+)
 
 def _pow_dtype_rule(x, y):
   if (dtypes.issubdtype(x.dtype, np.inexact) and

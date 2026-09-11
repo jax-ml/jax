@@ -126,6 +126,7 @@ Operators
     ne
     neg
     nextafter
+    one_minus_square
     optimization_barrier
     pad
     platform_dependent

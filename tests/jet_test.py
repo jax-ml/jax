@@ -464,6 +464,19 @@ class JetTest(jtu.JaxTestCase):
     self.check_jet(lambda x: lax.unstack(x, axis=1), primals, series_in, atol=1e-3, rtol=1e-3)
     self.check_jet(lambda x: lax.unstack(x, axis=-1), primals, series_in, atol=1e-3, rtol=1e-3)
 
+  def test_one_minus_square(self):
+    order = 3
+    rng = self.rng()
+    x = rng.randn(4, 3)
+    primals = (x,)
+    terms_in = [rng.randn(*x.shape) for _ in range(order)]
+    self.check_jet(lax.one_minus_square, primals, (terms_in,), atol=1e-3, rtol=1e-3)
+
+    # Verify first Taylor term near x=0 does not suffer catastrophic cancellation.
+    tiny = jnp.array(1e-20, dtype=jnp.float32)
+    _, (term1,) = jet(lax.one_minus_square, (tiny,), ([jnp.float32(1.0)],))
+    self.assertArraysAllClose(term1, jnp.array(-2e-20, dtype=jnp.float32))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

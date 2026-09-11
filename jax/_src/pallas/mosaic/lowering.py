@@ -3996,6 +3996,11 @@ def _square_lowering_rule(ctx: LoweringRuleContext, x):
   return arith.mulf(x, x)
 
 
+@register_lowering_rule(lax.one_minus_square_p)
+def _one_minus_square_lowering_rule(ctx: LoweringRuleContext, x):
+  return lower_fun(lambda x: (1 + x) * (1 - x))(ctx, x)
+
+
 @register_lowering_rule(lax.exp_p, kernel_types=[*tpu_core.CoreType])
 def _exp_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:

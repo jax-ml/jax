@@ -102,6 +102,7 @@ from jax._src.lax.lax import (
   neg_p as neg_p,
   nextafter_p as nextafter_p,
   not_p as not_p,
+  one_minus_square_p as one_minus_square_p,
   or_p as or_p,
   pad_p as pad_p,
   population_count_p as population_count_p,

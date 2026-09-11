@@ -2767,6 +2767,12 @@ def _square_lowering_rule(ctx: LoweringRuleContext, x):
   raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
 
 
+@register_lowering_rule(lax.one_minus_square_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(lax.one_minus_square_p, mgpu.LoweringSemantics.Warpgroup)
+def _one_minus_square_lowering_rule(ctx: LoweringRuleContext, x):
+  return _lower_fun(lambda x: (1 + x) * (1 - x))(ctx, x)
+
+
 @register_lowering_rule(lax.clz_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.clz_p, mgpu.LoweringSemantics.Warpgroup)
 def _clz_lowering_rule(ctx: LoweringRuleContext, x):

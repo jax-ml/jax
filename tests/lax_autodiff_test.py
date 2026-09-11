@@ -163,6 +163,8 @@ LAX_GRAD_OPS = [
     #                dtypes=grad_float_dtypes, name="MaxSomeEqual"),
     # grad_test_spec(lax.min, nargs=2, order=1, rng_factory=jtu.rand_some_equal,
     #                dtypes=grad_float_dtypes, name="MinSomeEqual"),
+    grad_test_spec(lax.one_minus_square, nargs=1, order=2,
+                   rng_factory=jtu.rand_default, dtypes=grad_inexact_dtypes),
 ]
 
 GradSpecialValuesTestSpec = collections.namedtuple(
@@ -1339,6 +1341,81 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     self.assertAllClose(tx, expected_gx)
     self.assertAllClose(ty, expected_gy)
 
+  def testOneMinusSquareAccuracy(self):
+    # 1. Near +/-1: evaluating 1 - x^2 as (1 + x) * (1 - x) avoids rounding away
+    # lower bits of x^2 against 1.0 before subtraction.
+    x = jax.numpy.float32(0.9999)
+    exact = np.float32(1.0 - np.float64(x) ** 2)
+    val = lax.one_minus_square(x)
+    naive = 1.0 - x * x
+    self.assertAllClose(val, exact, rtol=1e-6)
+    self.assertLess(abs(val - exact), abs(naive - exact))
+
+    # 2. Near 0: differentiating one_minus_square avoids the (1 - x) - (1 + x)
+    # catastrophic cancellation of differentiating (1 + x) * (1 - x) via the
+    # product rule.
+    tiny = jax.numpy.float32(1e-10)
+    self.assertEqual(
+        jax.grad(lambda z: (1.0 + z) * (1.0 - z))(tiny), 0.0
+    )
+    self.assertAllClose(
+        jax.grad(lax.one_minus_square)(tiny), -2.0 * tiny, atol=0.0, rtol=1e-5
+    )
+    self.assertAllClose(
+        jax.jvp(lax.one_minus_square, (tiny,), (jnp.ones_like(tiny),))[1],
+        -2.0 * tiny,
+        atol=0.0,
+        rtol=1e-5,
+    )
+    self.assertAllClose(
+        jax.grad(jax.grad(lax.one_minus_square))(tiny),
+        jnp.float32(-2.0),
+        atol=0.0,
+        rtol=1e-5,
+    )
+    self.assertAllClose(
+        jax.jvp(
+            lambda z: jax.jvp(lax.one_minus_square, (z,), (jnp.ones_like(z),))[1],
+            (tiny,),
+            (jnp.ones_like(tiny),),
+        )[1],
+        jnp.float32(-2.0),
+        atol=0.0,
+        rtol=1e-5,
+    )
+
+  @parameterized.named_parameters(
+      dict(testcase_name="tanh", fn=lax.tanh, x=5.0,
+           d1=lambda x: (1 - lax.tanh(x)) * (1 + lax.tanh(x)), d2=lambda t: -2 * t),
+      dict(testcase_name="atanh", fn=lax.atanh, x=0.9999,
+           d1=lambda x: 1 / ((1 - x) * (1 + x)), d2=lambda t: 2 * t),
+      dict(testcase_name="asin", fn=lax.asin, x=0.9999,
+           d1=lambda x: lax.rsqrt((1 - x) * (1 + x)), d2=lambda t: t),
+      dict(testcase_name="acos", fn=lax.acos, x=0.9999,
+           d1=lambda x: -lax.rsqrt((1 - x) * (1 + x)), d2=lambda t: -t),
+      dict(testcase_name="acosh", fn=lax.acosh, x=1.0001,
+           d1=lambda x: lax.rsqrt((x - 1) * (x + 1)), d2=None),
+  )
+  def testOneMinusSquareDerivativesAccuracy(self, fn, x, d1, d2):
+    # Regression test for https://github.com/jax-ml/jax/issues/39801.
+    x = jax.numpy.float32(x)
+    self.assertAllClose(jax.grad(fn)(x), d1(x))
+    self.assertAllClose(jax.jvp(fn, (x,), (jnp.ones_like(x),))[1], d1(x))
+    if d2 is not None:
+      tiny = jax.numpy.float32(1e-10)
+      self.assertAllClose(
+          jax.grad(jax.grad(fn))(tiny), d2(tiny), atol=0.0, rtol=1e-5
+      )
+      self.assertAllClose(
+          jax.jvp(
+              lambda z: jax.jvp(fn, (z,), (jnp.ones_like(z),))[1],
+              (tiny,),
+              (jnp.ones_like(tiny),),
+          )[1],
+          d2(tiny),
+          atol=0.0,
+          rtol=1e-5,
+      )
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -435,6 +435,13 @@ def_comp(lax.log2_p, lambda x: lax.log(x) / np.log(2))
 def_comp(lax.log1p_p, lambda x: lax.log(1 + x))
 def_comp(lax.sqrt_p, lambda x: x ** 0.5)
 def_comp(lax.square_p, lambda x: x * x)
+
+def _one_minus_square_rule(primals_in, series_in):
+  x, = primals_in
+  _, series_out = jet_rules[lax.square_p](primals_in, series_in)
+  return lax.one_minus_square(x), [lax.neg(t) for t in series_out]
+jet_rules[lax.one_minus_square_p] = _one_minus_square_rule
+
 def_comp(lax.rsqrt_p, lambda x: x ** -0.5)
 def_comp(lax.asinh_p, lambda x: lax.log(x + lax.sqrt(lax.square(x) + 1)))
 def_comp(lax.acosh_p, lambda x: lax.log(x + lax.sqrt(lax.square(x) - 1)))
