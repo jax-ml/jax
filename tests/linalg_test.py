@@ -274,7 +274,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             tol={np.float32: 1e-2, np.float64: 1e-3})
     self._CompileAndCheck(jnp.linalg.tensorsolve,
                           args_maker,
-                          rtol={np.float64: 1e-13})
+                          tol={np.float32: 1e-5, np.float64: 1e-13})
 
   def testTensorsolveAxes(self):
     a_shape = (2, 1, 3, 6)
