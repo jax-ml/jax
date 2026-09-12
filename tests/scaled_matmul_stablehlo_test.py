@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 import math
 from absl.testing import absltest
@@ -53,7 +53,7 @@ c_name = "__cudnn$blockScaledDot"
 @dataclass(frozen=True)
 class CollectiveExpectation:
   family: str
-  shape_fragment: str
+  result_shape_fragment: str
   dimensions: tuple[int, ...] | None = None
   group_size: int = 2
   num_groups: int = 2
@@ -71,6 +71,7 @@ class ParsedCollective:
   line: str
   op_name: str
   family: str
+  result_shape: str | None
   dimensions: tuple[int, ...] | None
   group_size: int | None
   num_groups: int | None
@@ -91,6 +92,29 @@ def _normalize_collective_family(op_name):
   if op_name.endswith("-done"):
     return op_name[:-5]
   return op_name
+
+
+def _async_all_gather_result_shape(shape):
+  if not (shape.startswith("(") and shape.endswith(")")):
+    return None
+  depth = 0
+  for i, char in enumerate(shape):
+    depth += char in "([{"
+    depth -= char in ")]}"
+    if char == "," and depth == 1:
+      return shape[i + 1:-1].strip()
+  return None
+
+
+def _parse_collective_result_shape(line, op_name, op_start):
+  assignment = line.find("=")
+  if assignment == -1 or assignment >= op_start:
+    return None
+
+  instruction_result_shape = line[assignment + 1:op_start].strip()
+  if op_name == "all-gather-start":
+    return _async_all_gather_result_shape(instruction_result_shape)
+  return instruction_result_shape
 
 
 def _parse_replica_group_semantics(line):
@@ -160,6 +184,9 @@ def _parse_collective_line(line):
       line=line,
       op_name=op_name,
       family=_normalize_collective_family(op_name),
+      result_shape=_parse_collective_result_shape(
+          line, op_name, op_match.start()
+      ),
       dimensions=dimensions,
       group_size=group_size,
       num_groups=num_groups,
@@ -168,24 +195,196 @@ def _parse_collective_line(line):
   )
 
 
+_HLO_NAME_PATTERN = r"%[A-Za-z0-9_.-]+"
+_HLO_COMPUTATION_HEADER_RE = re.compile(
+    rf"^\s*(?:ENTRY\s+)?(?P<name>{_HLO_NAME_PATTERN})\s*\(.*->.*\{{\s*$"
+)
+_HLO_INSTRUCTION_NAME_RE = re.compile(
+    rf"^\s*(?:ROOT\s+)?(?P<name>{_HLO_NAME_PATTERN})\s*="
+)
+
+
+def _hlo_computations(hlo_text):
+  """Groups HLO instruction lines by computation."""
+  computations = {None: []}
+  current_computation = None
+  for line in hlo_text.splitlines():
+    if match := _HLO_COMPUTATION_HEADER_RE.match(line):
+      current_computation = match.group("name")
+      computations[current_computation] = []
+    elif line.strip() == "}":
+      current_computation = None
+    else:
+      computations.setdefault(current_computation, []).append(line)
+  return computations
+
+
+def _instruction_name(line):
+  match = _HLO_INSTRUCTION_NAME_RE.match(line)
+  return match.group("name") if match is not None else None
+
+
+def _find_unary_instruction(lines, op_name, operand):
+  if operand is None:
+    return None
+  pattern = re.compile(
+      rf"\b{re.escape(op_name)}\(\s*{re.escape(operand)}\s*\)"
+  )
+  return next((line for line in lines if pattern.search(line)), None)
+
+
+def _instruction_result_shape(line, op_name):
+  if line is None:
+    return None
+  op_match = re.search(rf"\b{re.escape(op_name)}\(", line)
+  assignment = line.find("=")
+  if op_match is None or assignment == -1 or assignment >= op_match.start():
+    return None
+  return line[assignment + 1:op_match.start()].strip()
+
+
+def _triton_result_shape(computation_name, collective_line, computations):
+  """Follows a Triton fusion to its restoring output bitcast."""
+  if (
+      computation_name is None
+      or not collective_line.lstrip().startswith("ROOT ")
+  ):
+    return None
+
+  called_computation = re.compile(
+      rf"\bcalls={re.escape(computation_name)}(?=\s|,|$)"
+  )
+  for caller_lines in computations.values():
+    for start_line in caller_lines:
+      if (
+          "__triton_collective" not in start_line
+          or not called_computation.search(start_line)
+          or re.search(r"\bfusion-start\(", start_line) is None
+      ):
+        continue
+
+      done_line = _find_unary_instruction(
+          caller_lines, "fusion-done", _instruction_name(start_line)
+      )
+      bitcast_line = _find_unary_instruction(
+          caller_lines, "bitcast", _instruction_name(done_line or "")
+      )
+      return _instruction_result_shape(bitcast_line, "bitcast")
+  return None
+
+
 def _collective_lines(hlo_text):
-  return tuple(
-      parsed
-      for line in hlo_text.splitlines()
-      if (parsed := _parse_collective_line(line)) is not None
+  computations = _hlo_computations(hlo_text)
+  collectives = []
+  for computation_name, lines in computations.items():
+    for line in lines:
+      parsed = _parse_collective_line(line)
+      if parsed is None:
+        continue
+      result_shape = (
+          _triton_result_shape(computation_name, line, computations)
+          or parsed.result_shape
+      )
+      collectives.append(replace(parsed, result_shape=result_shape))
+  return tuple(collectives)
+
+
+def _matches_collective(expectation, parsed):
+  return (
+      parsed.family == expectation.family
+      and parsed.result_shape is not None
+      and expectation.result_shape_fragment in parsed.result_shape
+      and (
+          expectation.dimensions is None
+          or parsed.dimensions == expectation.dimensions
+      )
+      and parsed.group_size == expectation.group_size
+      and parsed.num_groups == expectation.num_groups
+      and parsed.total_devices == expectation.total_devices
+      and not parsed.op_name.endswith("-done")
   )
 
 
+class CollectiveParsingTest(absltest.TestCase):
+
+  def test_direct_collective_result_shapes(self):
+    gathered = (
+        "(f8e4m3fn[512,1024]{1,0}, f8e8m0fnu[512,32]{1,0})"
+    )
+    cases = (
+        (f"%sync = {gathered} all-gather(%data, %scales)", gathered),
+        (
+            "%start = ((f8e4m3fn[256,1024]{1,0}), "
+            f"{gathered}) all-gather-start(%data, %scales)",
+            gathered,
+        ),
+        (
+            "%start = f32[1,512,512]{2,1,0} all-reduce-start(%data)",
+            "f32[1,512,512]{2,1,0}",
+        ),
+        (
+            "%bad = f32[256,1024]{1,0} all-gather-start(%data)",
+            None,
+        ),
+    )
+
+    for line, expected in cases:
+      with self.subTest(line=line):
+        parsed = _parse_collective_line(line)
+        assert parsed is not None
+        self.assertEqual(parsed.result_shape, expected)
+
+  def test_triton_collective_uses_restoring_bitcast_shape(self):
+    hlo_text = "\n".join((
+        "%fused_psum (x: f32[8]) -> f32[8] {",
+        "  %x = f32[8]{0} parameter(0)",
+        (
+            "  ROOT %psum = f32[8]{0} all-reduce(%x), "
+            "replica_groups={{0,1},{2,3}}"
+        ),
+        "}",
+        "ENTRY %main (x: f32[1,2,4]) -> f32[1,2,4] {",
+        "  %x = f32[1,2,4]{2,1,0} parameter(0)",
+        "  %flat = f32[8]{0} bitcast(%x)",
+        (
+            "  %start = ((f32[8]{0}), f32[8]{0}) fusion-start(%flat), "
+            "calls=%fused_psum, kind=__triton_collective"
+        ),
+        "  %done = f32[8]{0} fusion-done(%start)",
+        "  ROOT %result = f32[1,2,4]{2,1,0} bitcast(%done)",
+        "}",
+    ))
+
+    collectives = _collective_lines(hlo_text)
+
+    self.assertLen(collectives, 1)
+    self.assertEqual(collectives[0].result_shape, "f32[1,2,4]{2,1,0}")
+    self.assertTrue(
+        _matches_collective(
+            CollectiveExpectation("all-reduce", "f32[1,2,4]"),
+            collectives[0],
+        )
+    )
+
+
 expected_hlo_semantics = [
-    HloExpectation(collectives=(CollectiveExpectation("all-reduce", "f32[1,512,512]"),)),
-    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn[512,512]", (1,)),)),
-    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn[512,512]", (1,)),)),
+    HloExpectation(collectives=(CollectiveExpectation(
+        "all-reduce", "f32[1,512,512]"),)),
+    HloExpectation(collectives=(CollectiveExpectation(
+        "all-gather", "f8e4m3fn[512,1024]", (1,)),)),
+    HloExpectation(collectives=(CollectiveExpectation(
+        "all-gather", "f8e4m3fn[512,1024]", (1,)),)),
     HloExpectation(),
-    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn[256,1024]", (0,)),)),
-    HloExpectation(optional_collectives=(CollectiveExpectation("reduce-scatter", "f32[2,256,512]"),)),
-    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn", (0,)),)),
-    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn[2,512,512]", (0,)),)),
-    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn[2,256,1024]", (0,)),)),
+    HloExpectation(collectives=(CollectiveExpectation(
+        "all-gather", "f8e4m3fn[512,1024]", (0,)),)),
+    HloExpectation(optional_collectives=(CollectiveExpectation(
+        "reduce-scatter", "f32"),)),
+    HloExpectation(collectives=(CollectiveExpectation(
+        "all-gather", "f8e4m3fn", (0,)),)),
+    HloExpectation(collectives=(CollectiveExpectation(
+        "all-gather", "f8e4m3fn[4,512,512]", (0,)),)),
+    HloExpectation(collectives=(CollectiveExpectation(
+        "all-gather", "f8e4m3fn[4,256,1024]", (0,)),)),
 ]
 expected_output_spec = [
     PartitionSpec('dp',),
@@ -435,18 +634,6 @@ class ScaledMatmulTest(jtu.JaxTestCase):
           ),
       )
 
-    def matches(expectation, parsed):
-      return (
-          parsed.family == expectation.family and
-          expectation.shape_fragment in parsed.line and
-          (expectation.dimensions is None or
-           parsed.dimensions == expectation.dimensions) and
-          parsed.group_size == expectation.group_size and
-          parsed.num_groups == expectation.num_groups and
-          parsed.total_devices == expectation.total_devices and
-          not parsed.op_name.endswith("-done")
-      )
-
     def check_collective(expectation, *, optional=False):
       family_lines = [
           parsed.line for parsed in collectives if parsed.family == expectation.family
@@ -454,7 +641,7 @@ class ScaledMatmulTest(jtu.JaxTestCase):
       if optional and not family_lines:
         return
       for parsed in collectives:
-        if matches(expectation, parsed):
+        if _matches_collective(expectation, parsed):
           maybe_assert_async_done(parsed)
           return
       self.fail(
