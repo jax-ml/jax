@@ -166,6 +166,8 @@ class FfiTest(jtu.JaxTestCase):
       target_name = "lapack_sgetrf_ffi"
     elif jtu.test_device_matches(["rocm"]):
       target_name = "hipsolver_getrf_ffi"
+    elif jtu.test_device_matches(["oneapi"]):
+      target_name = "oneapisolver_getrf_ffi"
     elif jtu.test_device_matches(["cuda", "gpu"]):
       target_name = "cusolver_getrf_ffi"
     else:
@@ -337,6 +339,7 @@ def ffi_call_geqrf(x, **kwargs):
         cpu="lapack_sgeqrf_ffi",
         rocm="hipsolver_geqrf_ffi",
         cuda="cusolver_geqrf_ffi",
+        oneapi="oneapisolver_geqrf_ffi",
     )[platform]
     return jax.ffi.ffi_call(
         target_name, output_types, input_output_aliases={0: 0},
@@ -346,7 +349,7 @@ def ffi_call_geqrf(x, **kwargs):
 
   return lax.platform_dependent(
       x, cpu=partial(call, "cpu"), rocm=partial(call, "rocm"),
-      cuda=partial(call, "cuda"))
+      cuda=partial(call, "cuda"), oneapi=partial(call, "oneapi"))
 
 
 class BatchPartitioningTest(jtu.JaxTestCase):
@@ -355,7 +358,7 @@ class BatchPartitioningTest(jtu.JaxTestCase):
     # Register callbacks before checking the number of devices to make sure
     # that we're testing the registration path, even if we can't run the tests.
     for target_name in ["lapack_sgeqrf_ffi", "cusolver_geqrf_ffi",
-                        "hipsolver_geqrf_ffi"]:
+                        "hipsolver_geqrf_ffi", "oneapisolver_geqrf_ffi"]:
       jax.ffi.register_ffi_target_as_batch_partitionable(target_name)
     if jax.device_count() < 2:
       self.skipTest("Requires multiple devices")
@@ -430,6 +433,11 @@ mlir.register_lowering(
     batch_partitionable_p,
     partial(_batch_partitionable_lowering, "hipsolver_geqrf_ffi"),
     platform="rocm",
+)
+mlir.register_lowering(
+    batch_partitionable_p,
+    partial(_batch_partitionable_lowering, "oneapisolver_geqrf_ffi"),
+    platform="oneapi",
 )
 
 
