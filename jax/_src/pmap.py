@@ -620,7 +620,10 @@ def _get_in_axes_flat(
           )
       )
     except ValueError:
-      e, *_ = prefix_errors((dyn_in_axes, 0), (dyn_args, kwargs))
+      # None is a valid in_axes leaf (the broadcast above treats it as one),
+      # so the error scan must treat it as one too.
+      e, *_ = prefix_errors((dyn_in_axes, 0), (dyn_args, kwargs),
+                            is_leaf=lambda x: x is None or x is _UNMAPPED_PMAxis)
       ex = e("pmap in_axes")
       (msg,) = ex.args
       msg += (

@@ -612,6 +612,14 @@ class PythonPmapTest(jtu.JaxTestCase):
         ValueError, re.escape("each argument passed by keyword is mapped")):
       f(x=(x, x), y=x)
 
+  def testInAxesPyTreePrefixMismatchErrorWithNone(self):
+    # A valid None entry in in_axes must not be reported as the mismatch.
+    # https://github.com/jax-ml/jax/issues/13074
+    x = jnp.array([3.14])
+    f = pmap(lambda x, y: x, in_axes=(None, (0, 0, 0)))
+    with self.assertRaisesRegex(ValueError, re.escape("pmap in_axes[0][1]")):
+      f(x, (x, x))
+
   def testOutAxesPyTreePrefixMismatchError(self):
     x = jnp.array([3.14])
     f = jax.pmap(lambda x, y: ((x, x), x), out_axes=((0, 0, 0), 0))
