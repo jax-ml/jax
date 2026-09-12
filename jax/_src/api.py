@@ -284,6 +284,11 @@ def jit(
       parameters listed in either ``donate_argnums`` or ``donate_argnames`` will
       be donated.
 
+      Donation is ignored (with no warning) in functions compiled while the
+      ``jax_debug_nans`` configuration option is enabled, since that debugging
+      mode needs the input buffers to re-run the function when an invalid
+      value is detected.
+
       For more details on buffer donation see the
       `FAQ <https://docs.jax.dev/en/latest/faq.html#buffer-donation>`_.
     donate_argnames: optional, a string or collection of strings specifying
