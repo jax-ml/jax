@@ -53,7 +53,7 @@ def buffer_callback(
   mechanism for prototyping computational kernels using other Python libraries
   including Numpy, PyTorch, Cupy, and others.
 
-  Let's start with a simple example:
+  Let's start with a simple example, which targets the CPU backend:
 
     >>> def py_add_one_inplace(ctx, out, x):
     ...   np.asarray(out)[...] = np.asarray(x) + 1
@@ -70,6 +70,24 @@ def buffer_callback(
   the output arrays upon returning from the callback. Note that even though the
   callback function operates on mutable buffers, JAX still sees this as an
   operation that consumes and produces regular immutable JAX arrays.
+
+  This example only works on CPU. The buffers passed to the callback are
+  zero-copy views of the raw device memory, so on a GPU device ``np.asarray``
+  fails with ``Buffer.__array__ is only supported on CPU``, because numpy
+  cannot address GPU memory. On GPU, use a library that can operate directly
+  on device memory instead. For example, using CuPy:
+
+    >>> def py_add_one_inplace_cuda(ctx, out, x):
+    ...   with cupy.cuda.ExternalStream(ctx.stream):
+    ...     cupy.asarray(out)[...] = cupy.asarray(x) + 1
+    ...
+    >>> add_one = buffer_callback(py_add_one_inplace_cuda, out_type)
+    >>> add_one(x)  # doctest: +SKIP
+    Array(42, dtype=int32)
+
+  Here ``cupy.asarray`` wraps the buffers' device memory in place (via the
+  ``__cuda_array_interface__`` protocol), and ``ctx.stream`` submits the
+  computation to the stream that XLA is executing on.
 
   Unlike the other JAX callback APIs, ``buffer_callback`` requires that the
   user-defined Python function have the following signature:
@@ -93,9 +111,11 @@ def buffer_callback(
   construct mutable JAX buffers directly in Python.
 
   The bespoke :class:`~jax.experimental.buffer_callback.Buffer` type is an
-  array-like object that supports the ``__array__`` protocol on CPU, the
-  ``__cuda_array_interface__`` protocol on GPU, and the ``__dlpack__`` protocol
-  on both CPU and GPU.
+  array-like object that supports the ``__array__`` protocol on CPU (e.g.
+  ``np.asarray``), the ``__cuda_array_interface__`` protocol on GPU (e.g.
+  ``cupy.asarray``), and the ``__dlpack__`` protocol on both CPU and GPU. All
+  three expose the underlying buffer in place, without copying; a protocol
+  that the buffer's device doesn't support raises an error.
 
   Args:
     callback: A Python function with the signature and behavior described above.
