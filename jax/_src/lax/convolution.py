@@ -311,7 +311,7 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
     kernel's spatial dimensions. This differs from TensorFlow's "Conv2DTranspose"
     and similar frameworks, which flip spatial axes and swap input/output channels.
 
-    To match TensorFlow/Keras behavior, set "transpose_kernel=True" .
+    To match TensorFlow/Keras behavior, set ``transpose_kernel=True``.
 
   Args:
     lhs: a rank `n+2` dimensional input array.
@@ -333,8 +333,9 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
     transpose_kernel: if True flips spatial axes and swaps the input/output
       channel axes of the kernel. This makes the output of this function identical
       to the gradient-derived functions like keras.layers.Conv2DTranspose
-      applied to the same kernel. For typical use in neural nets this is completely
-      pointless and just makes input/output channel specification confusing.
+      applied to the same kernel. If False (the default), the kernel is used
+      as-is, which differs from the TensorFlow/Keras convention (see the Notes
+      section above).
     precision: Optional. Either ``None``, which means the default precision for
       the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
