@@ -1181,6 +1181,48 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     y = rng(update_shape, dtype)
     check_grads(scatter_min, (x, y), 2, ["fwd", "rev"], 1e-2, 1e-2)
 
+  @jtu.sample_product(
+    op=[lax.scatter_max, lax.scatter_min],
+    mode=["clip", "fill", "drop"],
+    dtype=grad_float_dtypes,
+  )
+  def testScatterExtremalModesOutOfBounds(self, op, mode, dtype):
+    rng = jtu.rand_default(self.rng())
+    x = rng((5,), dtype)
+    y = rng((2,), dtype)
+    idxs = np.array([[-3], [8]], dtype=np.int32)
+    dnums = lax.ScatterDimensionNumbers(
+        update_window_dims=(), inserted_window_dims=(0,),
+        scatter_dims_to_operand_dims=(0,))
+    scatter_fn = lambda x, y: op(x, idxs, y, dnums, mode=mode)
+    check_grads(scatter_fn, (x, y), 2, ["fwd", "rev"], 1e-2, 1e-2)
+
+  def testScatterMaxOutOfBoundsIssue40626(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40626
+    def target(t):
+      x = jnp.asarray([1.0, 3.0, 4.0])
+      u = t * jnp.asarray([1.0, -1.0]) + jnp.asarray([1.0, 4.0])
+      i = jnp.asarray([[-3], [8]], dtype=jnp.int32)
+      dnums = lax.ScatterDimensionNumbers(
+          update_window_dims=(),
+          inserted_window_dims=(0,),
+          scatter_dims_to_operand_dims=(0,),
+      )
+      y = lax.scatter_max(
+          x, i, u, dnums,
+          indices_are_sorted=True,
+          unique_indices=True,
+          mode="clip",
+      )
+      return jnp.sum(y * jnp.asarray([2.0, -1.0, 3.0]))
+
+    x = jnp.asarray(0.03125, dtype=jnp.float32)
+    g = jax.grad(target)(x)
+    self.assertFalse(jnp.isinf(g))
+    self.assertFalse(jnp.isnan(g))
+    self.assertAllClose(g, 2.0)
+
+
   def testStopGradient(self):
     def f(x):
       return lax.sin(x) * lax.cos(lax.stop_gradient(x))
