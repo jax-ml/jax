@@ -1238,22 +1238,56 @@ def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
 
   consts, init, xs = ft_in.update(args).unpack()
   consts_bdims, init_bdims, xs_bdims = ft_in.update(dims).unpack()
-  new_consts = [batching.moveaxis(x, d, 0) if d is not None and d != 0
-                else x for x, d in zip(consts, consts_bdims)]
-  new_init = [batching.broadcast(x, axis_data.size, 0, axis_data.explicit_mesh_axis)
-              if now_batched and not was_batched
-              else batching.moveaxis(x, d, 0) if now_batched else x
-              for x, d, was_batched, now_batched in
-              zip(init, init_bdims, init_batched, carry_batched)]
-  new_xs = [batching.moveaxis(x, d, 1) if d is not None and d != 1
-            else x for x, d in zip(xs, xs_bdims)]
+  # Helper functions
+  def move_to_leading_axis(x, d):
+    aval = core.typeof(x)
+    return batching.matchaxis(
+      axis_data, d, aval.leading_axis_spec(), x)
+
+  def move_to_scan_axis(x, d):
+    if isinstance(d, core._StackedAxis):
+      assert d.stack_size == length
+      return x
+    if d is not None and d != 1:
+      return batching.moveaxis(x, d, 1)
+    return x
+
+  new_consts = [
+    move_to_leading_axis(x, d) if d is not None
+    else x
+    for x, d in zip(consts, consts_bdims)
+  ]
+  new_init = [
+    batching.broadcast(
+      x, axis_data.size, 0, axis_data.explicit_mesh_axis)
+    if now_batched and not was_batched
+    else move_to_leading_axis(x, d) if now_batched else x
+    for x, d, was_batched, now_batched in
+    zip(init, init_bdims, init_batched, carry_batched)
+  ]
+  new_xs = [
+    move_to_scan_axis(x, d)
+    for x, d in zip(xs, xs_bdims)
+  ]
   new_args = new_consts + new_init + new_xs
 
   outs = scan_p.bind(
       *new_args, reverse=reverse, length=length, jaxpr=jaxpr_batched,
       ft_in=ft_in, ft_out=ft_out, unroll=unroll)
-  carry_bdims = [0 if b else None for b in carry_batched]
-  ys_bdims = [1 if b else None for b in ys_batched]
+  carry_avals, y_avals = ft_out.update(
+    jaxpr_batched.out_avals).unpack()
+
+  carry_bdims = [
+    aval.leading_axis_spec() if b else None
+    for aval, b in zip(carry_avals, carry_batched)
+  ]
+
+  ys_bdims = [
+    (core._StackedAxis(length, aval.leading_axis_spec())
+     if aval.is_high else 1)
+    if b else None
+    for aval, b in zip(y_avals, ys_batched)
+  ]
   return outs, carry_bdims + ys_bdims
 
 def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn

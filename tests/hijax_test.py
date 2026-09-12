@@ -2165,6 +2165,129 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertFalse(eqn.params['jaxpr'].is_high)
     self.assertEqual(eqn.params['out_spaces'], (jax.memory.Space.Device,))
 
+  def test_vmap_scan_hitype_carry(self):
+    @dataclass(frozen=True)
+    class BoxSpec(MappingSpec):
+      pass
+
+    @dataclass(frozen=True)
+    class Box:
+      a: jax.Array
+
+    @dataclass(frozen=True)
+    class BoxTy(HiType):
+      shape: tuple[int, ...]
+
+      def lo_ty(self):
+        return [ShapedArray(self.shape, jnp.dtype('float32'))]
+
+      def lower_val(self, b):
+        return [b.a]
+
+      def raise_val(self, a):
+        return Box(a)
+
+      def to_tangent_aval(self):
+        return ShapedArray(self.shape, jnp.dtype('float32'))
+
+      def dec_rank(self, size, spec):
+        assert isinstance(spec, BoxSpec)
+        assert self.shape[0] == size
+        return BoxTy(self.shape[1:])
+
+      def inc_rank(self, size, spec):
+        assert isinstance(spec, BoxSpec)
+        return BoxTy((size, *self.shape))
+
+      def leading_axis_spec(self):
+        return BoxSpec()
+
+      def str_short(self, short_dtypes=False, **_):
+        return f"box{list(self.shape)}"
+
+    register_hitype(Box, lambda b: BoxTy(b.a.shape))
+
+    class Wrap(HiPrim):
+      def __init__(self, aval):
+        self.in_avals = (aval,)
+        self.out_aval = BoxTy(aval.shape)
+        self.params = {}
+        super().__init__()
+
+      def expand(self, a):
+        return Box(a)
+
+      def jvp(self, primals, tangents):
+        (a,), (da,) = primals, tangents
+        return wrap(a), da
+
+      vjp_fwd, vjp_bwd_retval = vjp_from_jvp
+
+      def batch(self, _axis_data, args, dims):
+        (a,), (d,) = args, dims
+        if d is None:
+          return wrap(a), None
+        return wrap(jnp.moveaxis(a, d, 0)), BoxSpec()
+
+    class Unwrap(HiPrim):
+      def __init__(self, aval):
+        self.in_avals = (aval,)
+        self.out_aval = ShapedArray(aval.shape, jnp.dtype('float32'))
+        self.params = {}
+        super().__init__()
+
+      def expand(self, b):
+        return b.a
+
+      def jvp(self, primals, tangents):
+        (b,), (db,) = primals, tangents
+        return unwrap(b), db
+
+      vjp_fwd, vjp_bwd_retval = vjp_from_jvp
+
+      def batch(self, _axis_data, args, dims):
+        (b,), (d,) = args, dims
+        if d is None:
+          return unwrap(b), None
+        assert isinstance(d, BoxSpec)
+        return unwrap(b), 0
+
+    wrap = lambda a: Wrap(jax.typeof(a))(a)
+    unwrap = lambda b: Unwrap(jax.typeof(b))(b)
+
+    def f(k):
+      box = wrap(jnp.arange(3, dtype='float32') * k)
+      box, _ = jax.lax.scan(
+          lambda c, _: (wrap(unwrap(c) * 2.0), None),
+          box,
+          None,
+          length=2,
+      )
+      return jnp.sum(unwrap(box) ** 2)
+
+    ks = jnp.linspace(1.0, 2.0, 4, dtype='float32')
+
+    expected = jnp.stack([f(k) for k in ks])
+    self.assertAllClose(jax.vmap(f)(ks), expected)
+
+    def g(k):
+      box = wrap(jnp.arange(3, dtype='float32'))
+
+      def step(u, _):
+        inner = wrap(unwrap(box) + u)
+        return u + 0.1 * k * unwrap(inner), None
+
+      u, _ = jax.lax.scan(
+          step,
+          jnp.zeros(3, dtype='float32'),
+          None,
+          length=3,
+      )
+      return jnp.sum(u ** 2)
+
+    expected_grad = jnp.stack([jax.grad(g)(k) for k in ks])
+    self.assertAllClose(jax.vmap(jax.grad(g))(ks), expected_grad)
+
   def test_backward_pass_logging_call_primitives(self):
     from jax._src import api_util
     from jax._src import flattree as ft
