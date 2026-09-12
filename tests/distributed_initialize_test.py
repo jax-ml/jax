@@ -14,9 +14,11 @@
 
 import os
 import unittest
+from unittest import mock
 
 from absl.testing import absltest
 import jax
+from jax._src import clusters
 from jax._src import test_util as jtu
 from jax._src.lib import jaxlib_extension_version
 
@@ -26,6 +28,72 @@ except ImportError:
   portpicker = None
 
 jax.config.parse_flags_with_absl()
+
+_PRRTE_ENV = {
+    "PRTE_LAUNCHED": "1",
+    "PMIX_NAMESPACE": "prterun-node18-12345@1",
+    "PMIX_SERVER_URI41": (
+        "prterun-node18-12345@0.0;tcp4://10.20.30.40:45678"
+    ),
+    "OMPI_COMM_WORLD_SIZE": "8",
+    "OMPI_COMM_WORLD_RANK": "3",
+    "OMPI_COMM_WORLD_LOCAL_RANK": "1",
+}
+
+
+@mock.patch.dict(os.environ, _PRRTE_ENV, clear=True)
+class PrrteClusterTest(jtu.JaxTestCase):
+
+  def test_cluster_properties(self):
+    self.assertTrue(clusters.PrrteCluster.is_env_present())
+    self.assertEqual(
+        clusters.PrrteCluster.get_coordinator_address(None, None),
+        "10.20.30.40:61497",
+    )
+    self.assertEqual(clusters.PrrteCluster.get_process_count(), 8)
+    self.assertEqual(clusters.PrrteCluster.get_process_id(), 3)
+    self.assertEqual(clusters.PrrteCluster.get_local_process_id(), 1)
+
+  def test_auto_detect(self):
+    actual = clusters.ClusterEnv.auto_detect_unset_distributed_params(
+        None, None, None, None, None, 300
+    )
+    self.assertEqual(actual, ("10.20.30.40:61497", 8, 3, [1]))
+
+  def test_coordinator_port_override(self):
+    self.assertEqual(
+        clusters.PrrteCluster.get_coordinator_address(None, "1234"),
+        "10.20.30.40:1234",
+    )
+
+  def test_ipv6_coordinator(self):
+    with mock.patch.dict(
+        os.environ,
+        {
+            "PMIX_SERVER_URI41": (
+                "prterun-node18-12345@0.0;tcp6://[2001:db8::1]:45678"
+            )
+        },
+    ):
+      self.assertEqual(
+          clusters.PrrteCluster.get_coordinator_address(None, None),
+          "[2001:db8::1]:61497",
+      )
+
+  def test_requires_prrte_launcher(self):
+    with mock.patch.dict(os.environ, {"PRTE_LAUNCHED": "0"}):
+      self.assertFalse(clusters.PrrteCluster.is_env_present())
+
+  def test_missing_server_uri(self):
+    env = {k: v for k, v in _PRRTE_ENV.items() if k != "PMIX_SERVER_URI41"}
+    with mock.patch.dict(os.environ, env, clear=True):
+      with self.assertRaisesRegex(RuntimeError, "PMIX_SERVER_URI"):
+        clusters.PrrteCluster.get_coordinator_address(None, None)
+
+  def test_invalid_namespace(self):
+    with mock.patch.dict(os.environ, {"PMIX_NAMESPACE": "invalid"}):
+      with self.assertRaisesRegex(RuntimeError, "PMIX_NAMESPACE"):
+        clusters.PrrteCluster.get_coordinator_address(None, None)
 
 
 @unittest.skipIf(not portpicker, "Test requires portpicker")
