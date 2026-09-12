@@ -113,13 +113,59 @@ y, y_dot = jvp(f, (2., 3.), (1., 0.))
 print(y)
 print(y_dot)
 print(grad(f)(2., 3.))
-
-
 # -
 
 # Note that, unlike with `jax.custom_jvp` and `jax.custom_vjp` where you must
 # choose one or the other, a single hijax primitive can carry both forward- and
 # reverse-mode rules.
+#
+# ### Transpose rules for primitives used linearly
+#
+# Reverse-mode autodiff works by linearizing and then transposing. Most of the
+# time the `vjp_fwd`/`vjp_bwd_retval` pair is all you need. But if a primitive is
+# linear in some of its inputs and ends up *inside a computation that is itself
+# transposed* -- for example, when it is called from the tangent rule of a
+# `jax.custom_jvp` function -- then reverse-mode needs a rule for how to transpose
+# it, and you'll see an error like `for transpose support, subclass ... must
+# implement 'transpose'`.
+#
+# Define the optional `transpose` method for these cases. It receives the output
+# cotangent and one accumulator per input; for each linear input whose
+# accumulator is a `GradAccum`, add that input's cotangent:
+
+# +
+from jax.experimental.hijax import VJPHiPrimitive, GradAccum
+
+class AddPrim(VJPHiPrimitive):
+  def __init__(self, x_aval, y_aval):
+    self.in_avals = (x_aval, y_aval)
+    self.out_aval = x_aval
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x, y):
+    return x + y
+
+  def vjp_fwd(self, nzs_in, x, y):
+    return self(x, y), ()
+
+  def vjp_bwd_retval(self, res, g):
+    return (g, g)
+
+  # `add` is linear in both inputs, so the output cotangent flows to each.
+  def transpose(self, ct, *maybe_accums):
+    for accum in maybe_accums:
+      if isinstance(accum, GradAccum):
+        accum.accum(ct)
+
+
+# -
+
+# With the `transpose` rule in place, the primitive can be differentiated even
+# when it appears in a linearized computation, such as the tangent rule of a
+# `jax.custom_jvp` function. This is the recommended way to get such support: a
+# `jax.custom_vjp` function does not define a transpose rule and cannot be used
+# this way.
 #
 # ## Example problems
 #

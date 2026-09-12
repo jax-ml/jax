@@ -1165,6 +1165,17 @@ def _custom_vjp_call_pp_rule(eqn: core.JaxprEqn,
 
 core.pp_eqn_rules[custom_vjp_call_p] = _custom_vjp_call_pp_rule
 
+
+def _custom_vjp_call_transpose(*_, **__):
+  raise NotImplementedError(
+      "Reverse-mode differentiation (transpose) is not supported for a "
+      "custom_vjp function that appears inside a linearized computation, such "
+      "as a custom_vjp function called from the tangent rule of a custom_jvp "
+      "function. To define a primitive with a custom transpose rule, use "
+      "jax.experimental.hijax.VJPHiPrimitive instead.")
+ad.primitive_transposes[custom_vjp_call_p] = _custom_vjp_call_transpose
+
+
 batching.primitive_batchers[ad.custom_lin_p] = ad.raise_custom_vjp_error_on_jvp
 # TODO(phawkins,mattjj): make this primitive cacheable.
 mlir.register_lowering(ad.custom_lin_p, ad.raise_custom_vjp_error_on_jvp,
