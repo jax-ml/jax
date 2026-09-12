@@ -545,6 +545,43 @@ class TiledLayout:
         _check_canonical=False,
     ).canonicalize()
 
+  def insert_dimension(self, dim: int) -> TiledLayout:
+    """Returns a layout with a size-1 dimension inserted at `dim`.
+
+    This is the inverse of `remove_dimension` for a size-1 dimension. Tile ranks
+    are nested (each tile covers the trailing dimensions of the previous one),
+    so which tiles originally spanned the inserted dimension is ambiguous. We
+    insert into every tile that spans it: a tile that did not gets a leading
+    `1`, which `canonicalize` trims back off.
+    """
+    if dim < 0 or dim > len(self.tiling.tiles[0]):
+      raise ValueError(f"Dimension {dim} is out of range for {self.tiling}")
+    tiles, dim_in_tile, last_rank = [], dim, len(self.tiling.tiles[0]) + 1
+    for t in self.tiling.tiles:
+      i = dim_in_tile - (last_rank - len(t) - 1)
+      if i >= 0:
+        t, dim_in_tile = t[:i] + (1,) + t[i:], i
+      else:
+        dim_in_tile -= last_rank - len(t)
+      last_rank = len(t)
+      tiles.append(t)
+    new_tiling = Tiling(tuple(tiles))
+    # The inserted dimension contributes exactly the size-1 entries flagged
+    # here; every other entry keeps its order, so it only needs reindexing.
+    inserted_dim = new_tiling.tile_dimension(dim)
+    kept = [i for i, ins in enumerate(inserted_dim) if not ins]
+    def replace_tiled_dim(d: int | Replicated):
+      if isinstance(d, Replicated):
+        return d
+      return kept[d + len(kept)] - len(inserted_dim)
+    return TiledLayout(
+        new_tiling,
+        tuple(replace_tiled_dim(d) for d in self.warp_dims),
+        tuple(replace_tiled_dim(d) for d in self.lane_dims),
+        replace_tiled_dim(self.vector_dim),
+        _check_canonical=False,
+    ).canonicalize()
+
   def reduce(self, axes: Sequence[int]) -> TiledLayout:
     reduced_layout = self
     for a in sorted(axes, reverse=True):
@@ -658,6 +695,55 @@ class TiledLayout:
       if isinstance(dim, Replicated):
         replication_factor *= dim.times
     return replication_factor
+
+
+def degenerate_reshape(
+    layout: TiledLayout,
+    source_shape: tuple[int, ...],
+    target_shape: tuple[int, ...],
+) -> TiledLayout | None:
+  """Adapts `layout` to `target_shape`, if the reshape only adds/removes 1s.
+
+  Size-1 dimensions only ever occupy size-1 entries of the tiled shape, so
+  adding or removing them is a pure relabeling of the layout: the registers are
+  unchanged. Returns `None` if the reshape does anything else, in which case
+  the caller has to fall back to a layout change.
+  """
+  if source_shape == target_shape:
+    return layout
+  if [d for d in source_shape if d != 1] != [d for d in target_shape if d != 1]:
+    return None
+
+  def degenerate_axes(shape, other):
+    """The axes of `shape` (all size 1) that `other` does not have."""
+    axes, matched = [], 0
+    for axis, d in enumerate(shape):
+      if matched < len(other) and other[matched] == d:
+        matched += 1
+      else:
+        axes.append(axis)
+    return tuple(axes) if matched == len(other) else None
+
+  # The tiling only describes the trailing dimensions; leading ones are merely
+  # replicated over registers, so adding or removing them is a no-op.
+  untiled = len(source_shape) - len(layout.base_tile_shape)
+  if untiled < 0:
+    return None
+
+  if len(source_shape) > len(target_shape):
+    if (axes := degenerate_axes(source_shape, target_shape)) is None:
+      return None
+    return layout.reduce(tuple(a - untiled for a in axes if a >= untiled))
+  if len(source_shape) < len(target_shape):
+    if (axes := degenerate_axes(target_shape, source_shape)) is None:
+      return None
+    for axis in sorted(axes):  # Ascending, so `untiled` stays in step.
+      if axis < untiled:
+        untiled += 1
+      else:
+        layout = layout.insert_dimension(axis - untiled)
+    return layout
+  return None  # Same rank, but the 1s moved around.
 
 
 def _tiled_wgmma_layout(shape: tuple[int, ...]):
@@ -3464,6 +3550,17 @@ class FragmentedArray:
             _is_signed=self.is_signed,
         )
       case TiledLayout():
+        # Adding or removing size-1 dimensions is a pure relabeling of the
+        # layout, even when it changes the rank of the base tile.
+        new_layout = degenerate_reshape(self.layout, self.shape, shape)
+        if new_layout is not None:
+          return FragmentedArray(
+              _registers=self.registers.reshape(
+                  new_layout.registers_shape(shape)
+              ),
+              _layout=new_layout,
+              _is_signed=self.is_signed,
+          )
         base_tile_shape = self.layout.base_tile_shape
         assert base_tile_shape
         old_shape_suffix = self.shape[-len(base_tile_shape):]
