@@ -77,6 +77,26 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  def testVonMisesPdfKappaZero(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38621.
+    # kappa == 0 is a valid boundary case: the distribution reduces to the
+    # uniform distribution on the circle, with density 1 / (2 * pi). It must
+    # not be treated as out-of-support and return nan. The default RNG used by
+    # testVonMises{Pdf,LogPdf} essentially never samples kappa exactly 0, so
+    # the boundary is exercised explicitly here.
+    x = np.array([0.0, 1.0, -1.0, np.pi, -np.pi])
+    kappa = np.zeros_like(x)
+    self.assertAllClose(lsp_stats.vonmises.pdf(x, kappa),
+                        osp_stats.vonmises.pdf(x, kappa),
+                        check_dtypes=False, rtol=1e-5)
+    self.assertAllClose(lsp_stats.vonmises.logpdf(x, kappa),
+                        osp_stats.vonmises.logpdf(x, kappa),
+                        check_dtypes=False, rtol=1e-5)
+    self._CompileAndCheck(lsp_stats.vonmises.pdf, lambda: [x, kappa])
+    # kappa < 0 is out of support and still returns nan, matching scipy.
+    neg_kappa = np.full_like(x, -1.0)
+    self.assertTrue(np.all(np.isnan(lsp_stats.vonmises.pdf(x, neg_kappa))))
+
   @genNamedParametersNArgs(2)
   def testWrappedCauchyPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())

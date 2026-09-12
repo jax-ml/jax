@@ -48,7 +48,11 @@ def logpdf(x: ArrayLike, kappa: ArrayLike) -> Array:
   """
   x, kappa = promote_args_inexact('vonmises.logpdf', x, kappa)
   zero = _lax_const(kappa, 0)
-  return jnp.where(lax.gt(kappa, zero), kappa * (jnp.cos(x) - 1) - jnp.log(2 * np.pi * lax.bessel_i0e(kappa)), np.nan)
+  # kappa == 0 is a valid boundary case: the distribution reduces to the uniform
+  # distribution on the circle, with density 1 / (2 * pi). The closed-form
+  # expression already evaluates correctly there (bessel_i0e(0) == 1), so it is
+  # included via a non-strict comparison; only kappa < 0 is out of support.
+  return jnp.where(lax.ge(kappa, zero), kappa * (jnp.cos(x) - 1) - jnp.log(2 * np.pi * lax.bessel_i0e(kappa)), np.nan)
 
 
 def pdf(x: ArrayLike, kappa: ArrayLike) -> Array:
