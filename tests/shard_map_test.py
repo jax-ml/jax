@@ -745,6 +745,33 @@ class ShardMapTest(jtu.JaxTestCase):
     c = fwd(a)  # Don't crash
     self.assertAllClose(c, a + 1)
 
+  @jtu.run_on_devices("gpu")
+  def test_pbroadcast_dynamic_root(self):
+    # Test pbroadcast with dynamic source (has_dynamic_root=True) via shard_map.
+    # The broadcast root is passed as a jitted function argument (not hardcoded),
+    # exercising the has_dynamic_root path end-to-end.
+    mesh = jtu.create_mesh((4,), ('x',))
+    in_out_sharding = jax.sharding.NamedSharding(mesh, P('x', None))
+    scalar_sharding = jax.sharding.NamedSharding(mesh, P())
+    a = jax.device_put(jnp.arange(16).reshape((4, 4)), in_out_sharding)
+
+    @jax.jit
+    @partial(
+        shard_map,
+        mesh=mesh,
+        in_specs=(in_out_sharding.spec, P()),
+        out_specs=in_out_sharding.spec,
+    )
+    def fwd(x, root):
+      return lax.pbroadcast(x, 'x', source=root)
+
+    for root in range(4):
+      root_arr = jax.device_put(jnp.int32(root), scalar_sharding)
+      c = fwd(a, root_arr)
+      # Every device should receive the shard held by device `root`.
+      expected = jnp.broadcast_to(a[root:root + 1], a.shape)
+      self.assertAllClose(c, expected)
+
   def test_all_to_all_with_axis_index_groups(self):
     mesh = jtu.create_mesh((4,), ('x',))
     a = jax.device_put(
