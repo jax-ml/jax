@@ -100,6 +100,10 @@ def element_type_to_backend_config_type_mapping(dtype):
 def default_layouts(*shapes):
   return [range(len(shape) - 1, -1, -1) for shape in shapes]
 
+def _operand_layouts(operands):
+  return default_layouts(
+      *[ir.RankedTensorType(operand.type).shape for operand in operands])
+
 def _canonical_bnth_shape(shape, layout):
   # Reorder a 4D Q/K/V shape to canonical (B, N, T_or_S, H), independent of
   # whether the layout is BTNH or BNTH.
@@ -405,21 +409,19 @@ def check_cudnn_version():
     raise RuntimeError("cuDNN is not detected.")
   return cuda_versions.cudnn_get_version()
 
-def check_compute_capability(capability):
-  if not 'cuda' in xla_bridge.get_backend().platform_version:
-    return False
+def _cuda_compute_capability():
+  if 'cuda' not in xla_bridge.get_backend().platform_version:
+    return None
   d, *_ = xla_bridge.local_devices(backend="gpu")
-  target = tuple(int(x) for x in capability.split("."))
-  current = tuple(int(x) for x in d.compute_capability.split("."))
-  return current >= target
+  return tuple(int(x) for x in d.compute_capability.split("."))
+
+def check_compute_capability(capability):
+  current = _cuda_compute_capability()
+  return current is not None and current >= tuple(int(x) for x in capability.split("."))
 
 def is_cuda_compute_capability_equal(capability):
-  if not 'cuda' in xla_bridge.get_backend().platform_version:
-    return False
-  d, *_ = xla_bridge.local_devices(backend="gpu")
-  target = tuple(int(x) for x in capability.split("."))
-  current = tuple(int(x) for x in d.compute_capability.split("."))
-  return current == target
+  current = _cuda_compute_capability()
+  return current is not None and current == tuple(int(x) for x in capability.split("."))
 
 def _dot_product_attention_fwd(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
@@ -684,8 +686,7 @@ def _dot_product_attention_fwd_cuda_lowering(
     result_types=result_types,
     operands=operands,
     backend_config=backend_config,
-    operand_layouts=default_layouts(
-      *[ir.RankedTensorType(operand.type).shape for operand in operands]),
+    operand_layouts=_operand_layouts(operands),
     result_layouts=result_layouts,
   )
   # drop workspace memory
@@ -764,8 +765,7 @@ def _dot_product_attention_bwd_cuda_lowering(
     result_types=result_types,
     operands=operands,
     backend_config=backend_config,
-    operand_layouts=default_layouts(
-      *[ir.RankedTensorType(operand.type).shape for operand in operands]),
+    operand_layouts=_operand_layouts(operands),
     result_layouts=result_layouts,
   )
   dqkv = (hlo.transpose(out.results[0], grad_transpose_perm),
@@ -830,13 +830,10 @@ def _dot_product_attention_fwd_batcher(
   else:
     out_bdims = (query_bdim,)
 
-  if layout == AttentionLayout.BNTH.value:
-    *Bs, N, T, _ = query.shape
-    *_, _, S, _ = key.shape
-  else:
-    *Bs, T, N, _ = query.shape
-    *_, S, _, _ = key.shape
+  Bs = query.shape[:-3]
   B = math.prod(Bs)
+  _, N, T, _ = _canonical_bnth_shape(query.shape[-4:], layout)
+  _, _, S, _ = _canonical_bnth_shape(key.shape[-4:], layout)
   original_shape = query.shape
   # reshape to 4D shape
   query = jnp.reshape(query, (B,) + query.shape[-3:])
@@ -890,13 +887,10 @@ def _dot_product_attention_bwd_batcher(
   query_bdim = batch_dims[0]
   out_bdims = query_bdim, query_bdim, query_bdim
 
-  if layout == AttentionLayout.BNTH.value:
-    *Bs, N, T, _ = query.shape
-    *_, _, S, _ = key.shape
-  else:
-    *Bs, T, N, _ = query.shape
-    *_, S, _, _ = key.shape
+  Bs = query.shape[:-3]
   B = math.prod(Bs)
+  _, N, T, _ = _canonical_bnth_shape(query.shape[-4:], layout)
+  _, _, S, _ = _canonical_bnth_shape(key.shape[-4:], layout)
   original_query_shape = query.shape
   original_key_shape = key.shape
   original_value_shape = value.shape
@@ -1277,13 +1271,9 @@ def _dot_product_attention_fp8_fwd(
     scale, use_causal_mask, layout, cudnn_version):
   check_is_flash_attention_fp8(
       query, key, value, layout, cudnn_version, is_training=False)
-  descale_q, descale_k, descale_v, descale_s, scale_s, scale_o = fp8_params_fwd
-  outputs = _dot_product_attention_fp8_fwd_p_wrapper.bind(
-      query, key, value,
-      descale_q, descale_k, descale_v, descale_s,
-      scale_s, scale_o,
+  return _dot_product_attention_fp8_fwd_p_wrapper.bind(
+      query, key, value, *fp8_params_fwd,
       scale=scale, use_causal_mask=use_causal_mask, layout=layout, is_training=False)
-  return outputs
 
 def _dot_product_attention_fp8_fwd_rule(
     query, key, value,
@@ -1313,7 +1303,7 @@ def _dot_product_attention_fp8_bwd_rule(
     scale=scale,
     use_causal_mask=use_causal_mask,
     layout=layout,
-    )
+  )
 
   fp8_params_grads = dict.fromkeys(fp8_params_keys)
   keys_to_grad_indices = ['amax_dQ', 'amax_dK', 'amax_dV', 'amax_dP']
@@ -1327,7 +1317,7 @@ def _dot_product_attention_fp8_fwd_impl(
     query, key, value,
     descale_q, descale_k, descale_v, descale_s, scale_s, scale_o,
     scale, use_causal_mask, layout, is_training):
-  outputs = _dot_product_attention_fp8_fwd_p.bind(
+  return _dot_product_attention_fp8_fwd_p.bind(
       query,
       key,
       value,
@@ -1342,7 +1332,6 @@ def _dot_product_attention_fp8_fwd_impl(
       layout=layout,
       is_training=is_training,
   )
-  return outputs
 
 def _dot_product_attention_fp8_bwd_impl(
     query, key, value, fwd_output, grad_output, activation,
@@ -1414,6 +1403,7 @@ def _dot_product_attention_fp8_fwd_cuda_lowering(
   workspace_shape = (0,)
   amax_shape = (1,1,1,1)
   workspace_type = ir.IntegerType.get_unsigned(8)
+  amax_type = ir.RankedTensorType.get(amax_shape, ir.F32Type.get())
   mask_type = MaskType.CAUSAL if use_causal_mask else MaskType.NO_MASK
   backend_config = create_dot_product_attention_fp8_backend_config(
       B, N, T, S, ir.BF16Type.get(),  # query_type.element_type,
@@ -1426,8 +1416,8 @@ def _dot_product_attention_fp8_fwd_cuda_lowering(
   if is_training:
     result_types = [
       ir.RankedTensorType.get(output_shape, query_type.element_type),
-      ir.RankedTensorType.get((1,1,1,1), ir.F32Type.get()),
-      ir.RankedTensorType.get((1,1,1,1), ir.F32Type.get()),
+      amax_type,
+      amax_type,
       ir.RankedTensorType.get(softmax_stat_shape, ir.F32Type.get()),
       ir.RankedTensorType.get(workspace_shape, workspace_type),
     ]
@@ -1435,8 +1425,8 @@ def _dot_product_attention_fp8_fwd_cuda_lowering(
   else:
     result_types = [
       ir.RankedTensorType.get(output_shape, query_type.element_type),
-      ir.RankedTensorType.get((1,1,1,1), ir.F32Type.get()),
-      ir.RankedTensorType.get((1,1,1,1), ir.F32Type.get()),
+      amax_type,
+      amax_type,
       ir.RankedTensorType.get(workspace_shape, workspace_type)
     ]
     result_layouts = [output_layout] + default_layouts(amax_shape, amax_shape, workspace_shape)
@@ -1489,37 +1479,22 @@ def _dot_product_attention_fp8_bwd_cuda_lowering(
       scale, mask_type, layout, is_bwd=True,
   )
 
+  # fmt: off
   operands = [
-    query,
-    key,
-    value,
-    fwd_output,
-    grad_output,
-    activation,
-    descale_q,
-    descale_k,
-    descale_v,
-    descale_o,
-    descale_dO,
-    descale_s,
-    descale_dP,
-    scale_s,
-    scale_dQ,
-    scale_dK,
-    scale_dV,
-    scale_dP,
+    query, key, value, fwd_output, grad_output, activation,
+    descale_q, descale_k, descale_v, descale_o, descale_dO, descale_s,
+    descale_dP, scale_s, scale_dQ, scale_dK, scale_dV, scale_dP,
   ]
+  # fmt: on
 
   custom_call_name = get_fp8_custom_call_name(is_bwd=True)
 
+  amax_type = ir.RankedTensorType.get(amax_shape, ir.F32Type.get())
   result_types = [
     ir.RankedTensorType.get(grad_query_shape, query_type.element_type),
     ir.RankedTensorType.get(grad_key_shape, key_type.element_type),
     ir.RankedTensorType.get(grad_value_shape, value_type.element_type),
-    ir.RankedTensorType.get(amax_shape, ir.F32Type.get()),
-    ir.RankedTensorType.get(amax_shape, ir.F32Type.get()),
-    ir.RankedTensorType.get(amax_shape, ir.F32Type.get()),
-    ir.RankedTensorType.get(amax_shape, ir.F32Type.get()),
+    amax_type, amax_type, amax_type, amax_type,
   ]
   result_layouts = [grad_layout, grad_layout, grad_layout] + default_layouts(amax_shape, amax_shape, amax_shape, amax_shape)
 
@@ -1530,8 +1505,7 @@ def _dot_product_attention_fp8_bwd_cuda_lowering(
     result_types=result_types,
     operands=operands,
     backend_config=backend_config,
-    operand_layouts=default_layouts(
-      *[ir.RankedTensorType(operand.type).shape for operand in operands]),
+    operand_layouts=_operand_layouts(operands),
     result_layouts=result_layouts,
   )
   dqkv_amaxs = (hlo.transpose(out.results[0], grad_transpose_perm),
@@ -1568,13 +1542,10 @@ def _dot_product_attention_fp8_fwd_batcher(
   else:
     out_bdims = (query_bdim, None, None)
 
-  if layout == AttentionLayout.BNTH.value:
-    *Bs, N, T, _ = query.shape
-    *_, _, S, _ = key.shape
-  else:
-    *Bs, T, N, _ = query.shape
-    *_, S, _, _ = key.shape
+  Bs = query.shape[:-3]
   B = math.prod(Bs)
+  _, N, T, _ = _canonical_bnth_shape(query.shape[-4:], layout)
+  _, _, S, _ = _canonical_bnth_shape(key.shape[-4:], layout)
   original_shape = query.shape
 
   # reshape to 4D shape
@@ -1609,13 +1580,10 @@ def _dot_product_attention_fp8_bwd_batcher(
   # The four amax outputs are whole-batch statistics (see the fwd batcher).
   out_bdims = (query_bdim, query_bdim, query_bdim, None, None, None, None)
 
-  if layout == AttentionLayout.BNTH.value:
-    *Bs, N, T, _ = query.shape
-    *_, _, S, _ = key.shape
-  else:
-    *Bs, T, N, _ = query.shape
-    *_, S, _, _ = key.shape
+  Bs = query.shape[:-3]
   B = math.prod(Bs)
+  _, N, T, _ = _canonical_bnth_shape(query.shape[-4:], layout)
+  _, _, S, _ = _canonical_bnth_shape(key.shape[-4:], layout)
   original_query_shape = query.shape
   original_key_shape = key.shape
   original_value_shape = value.shape
