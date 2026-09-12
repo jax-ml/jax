@@ -4946,7 +4946,11 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
 
   @parameterized.product(
       swizzle=(16, 32, 64, 128),
-      shape=((64, 128), (128, 32)),
+      # Only the two minor dimensions are tiled, so a rank-3 copy is the rank-2
+      # one repeated over the leading dimension. Rank 4 would be too: it stops
+      # here because tiling two of four dimensions leaves six strided ones, over
+      # the limit of five that an async copy supports.
+      shape=((64, 128), (128, 32), (2, 64, 128)),
       dtype=(jnp.float32, jnp.float16, jnp.float8_e5m2, jnp.int4),
       use_barrier=(False, True),
   )
