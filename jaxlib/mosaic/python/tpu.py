@@ -113,3 +113,48 @@ def reinterpret_cast(
       loc=loc,
       ip=ip,
   ).result
+
+
+def shared_memref_slice(
+    result,
+    source,
+    *,
+    loc=None,
+    ip=None,
+):
+  """Slices a VMEM_SHARED memref into a per-subcore VMEM memref.
+
+  Extracts the executing vector subcore's local VMEM slice from a shared VMEM
+  memref along the final dimension.
+
+  Requirements:
+    - The source memref must reside in `#tpu.memory_space<vmem_shared>`.
+    - Slicing occurs strictly along the last dimension (`dim[-1]`).
+    - The last dimension of `source` must adhere to the following constraints:
+      - Non-packed layouts (e.g. `i32`, `f32`, or unpacked `bf16`):
+        `source.shape[-1] == num_subcores * spmem_stripe_size_words * (
+            word_size // itemsize)`
+      - Packed layouts (e.g. `bf16` with 2 elements packed per 32-bit word):
+          `source.shape[-1] == num_subcores * spmem_stripe_size_words`
+    - `result` must have memory space `#tpu.memory_space<vmem>` and match
+      `source` in rank, element type, and all leading dimensions, with its
+      last dimension size equal to `source.shape[-1] // num_subcores`.
+
+  Examples of valid input layouts in VMEM_SHARED, assuming 16 subcores, 4-byte
+    words, and 8-word stripes:
+    - `8x128xi32, #tpu.tiled<(8,128),[1,1]>`
+    - `8x256xbf16, #tpu.tiled<(16),[16,1]>` (no packing, 16 elements/subcore)
+    - `8x128xbf16, #tpu.tiled<(8,128)(2,1),[1,1]>` (2 packed elements/word)
+
+  Args:
+    result: The resulting subcore-local VMEM memref type or value.
+    source: The input VMEM_SHARED memref value to slice.
+    loc: Optional MLIR source location.
+    ip: Optional insertion point.
+
+  Returns:
+    The sliced subcore-local VMEM memref.
+  """
+  return _tpu_ops_gen.SharedMemRefSliceOp(
+      result, source, loc=loc, ip=ip
+  ).result
