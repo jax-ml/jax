@@ -6,6 +6,12 @@ race:llvm::RuntimeDyldELF::registerEHFrames
 race:dnnl_sgemm
 
 # https://github.com/python/cpython/issues/128050
+# Fixed on the 3.14 branch by https://github.com/python/cpython/pull/143882
+# (merged 2026-01-16). Remove once the hermetic TSAN CPython tarball is
+# known to be built from a revision containing that fix (the tarball URL is
+# an unversioned "3.14.x" name, so its upload date does not establish the
+# source revision), or after a deliberately triggered green TSAN run with
+# the suppression removed.
 race:partial_vectorcall_fallback
 
 # Races because the LAPACK and BLAS in our scipy isn't TSAN instrumented.
@@ -21,4 +27,7 @@ race:gemm_oncopy
 race:type_update_dict
 
 # https://github.com/python/cpython/issues/154821
+# Fixed on the 3.14 branch by https://github.com/python/cpython/pull/154831
+# (merged 2026-07-29). Remove once the hermetic TSAN CPython tarball is
+# built from a revision containing that fix.
 race:func_set_name
