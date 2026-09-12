@@ -266,7 +266,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
   @parameterized.product(
       mask_mode=['bias', 'causal', 'padding', 'custom', ('causal', 'padding'),
                  ('custom', 'padding'), ('bias', 'causal'),
-                 ('causal', 'sliding_window')],
+                 ('causal', 'sliding_window'), 'sliding_window',
+                 ('sliding_window', 'padding'),
+                 ('causal', 'sliding_window', 'padding')],
   )
   def testDotProductAttentionMask(self, mask_mode):
     if isinstance(mask_mode, str):
@@ -276,8 +278,6 @@ class NNFunctionsTest(jtu.JaxTestCase):
     if use_cudnn:
       if not jtu.is_cuda_compute_capability_at_least("8.0"):
         raise unittest.SkipTest("Requires compute capability 8.0 or higher.")
-      if jtu.is_cuda_version_at_least(13, 0):
-        raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
     dtype = jnp.bfloat16
     B, S, T, N, H = 2, 128, 128, 4, 32
@@ -294,6 +294,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
     if 'padding' in mask_mode:
       q_seqlen = jnp.array([T // 2, T // 4], dtype=jnp.int32)
       kv_seqlen = jnp.array([S // 4, S // 2], dtype=jnp.int32)
+      if 'sliding_window' in mask_mode:
+        # Keep every query's window over at least one unpadded key: on fully
+        # masked rows cuDNN returns 0 and the reference returns mean(V).
+        q_seqlen = jnp.minimum(q_seqlen, kv_seqlen)
     if 'custom' in mask_mode:
       # Use a generated causal mask as the custom mask.
       custom_mask = jnp.tril(jnp.ones((T, S), dtype=jnp.bool_))
