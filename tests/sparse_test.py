@@ -94,11 +94,13 @@ class cuSparseTest(sptu.SparseTestCase):
   @jtu.sample_product(
     shape=[(5, 8), (8, 5), (5, 5), (8, 8)],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+    nse_padding=[0, 3],
   )
-  def test_csr_fromdense_ad(self, shape, dtype):
+  def test_csr_fromdense_ad(self, shape, dtype, nse_padding):
     rng = sptu.rand_sparse(self.rng(), post=jnp.array)
     M = rng(shape, dtype)
-    nse = (M != 0).sum()
+    nnz = (M != 0).sum()
+    nse = nnz + nse_padding
     f = lambda M: sparse_csr._csr_fromdense(M, nse=nse)
 
     # Forward-mode
@@ -106,7 +108,8 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(primals[0], f(M)[0])
     self.assertArraysEqual(primals[1], f(M)[1])
     self.assertArraysEqual(primals[2], f(M)[2])
-    self.assertArraysEqual(tangents[0], jnp.ones(nse, dtype=dtype))
+    expected_tangents = jnp.where(jnp.arange(nse) < nnz, jnp.ones(nse, dtype=dtype), 0)
+    self.assertArraysEqual(tangents[0], expected_tangents)
     self.assertEqual(tangents[1].dtype, dtypes.float0)
     self.assertEqual(tangents[2].dtype, dtypes.float0)
 
@@ -441,11 +444,13 @@ class cuSparseTest(sptu.SparseTestCase):
   @jtu.sample_product(
     shape=[(5, 8), (8, 5), (5, 5), (8, 8)],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+    nse_padding=[0, 3],
   )
-  def test_coo_fromdense_ad(self, shape, dtype):
+  def test_coo_fromdense_ad(self, shape, dtype, nse_padding):
     rng = sptu.rand_sparse(self.rng(), post=jnp.array)
     M = rng(shape, dtype)
-    nse = (M != 0).sum()
+    nnz = (M != 0).sum()
+    nse = nnz + nse_padding
     f = lambda M: sparse_coo._coo_fromdense(M, nse=nse)
 
     # Forward-mode
@@ -453,7 +458,8 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(primals[0], f(M)[0])
     self.assertArraysEqual(primals[1], f(M)[1])
     self.assertArraysEqual(primals[2], f(M)[2])
-    self.assertArraysEqual(tangents[0], jnp.ones(nse, dtype=dtype))
+    expected_tangents = jnp.where(jnp.arange(nse) < nnz, jnp.ones(nse, dtype=dtype), 0)
+    self.assertArraysEqual(tangents[0], expected_tangents)
     self.assertEqual(tangents[1].dtype, dtypes.float0)
     self.assertEqual(tangents[2].dtype, dtypes.float0)
 
@@ -464,6 +470,25 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(primals[1], f(M)[1])
     self.assertArraysEqual(primals[2], f(M)[2])
     self.assertArraysEqual(M_out, M)
+
+  def test_coo_fromdense_padded_second_derivative_issue40624(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40624
+    def target(t):
+      z = jnp.zeros_like(t)
+      a = jnp.stack((t + 1, z, -t, z, z, t * t + 2)).reshape((2, 3)).T
+      out = sparse_coo.coo_fromdense(
+          a,
+          nse=5,
+          index_dtype=jnp.int32,
+      )
+      return jnp.sum(out.data ** 2)
+
+    x = jnp.asarray(0.02, dtype=jnp.float32)
+    # Target function with true nonzeros: (t + 1)**2 + t**2 + (t**2 + 2)**2
+    # At t = 0.02, expected second derivative is 12.0048
+    second_deriv = jax.grad(jax.grad(target))(x)
+    self.assertAllClose(second_deriv, 12.0048, atol=1e-3, rtol=1e-3)
+
 
   @jtu.sample_product(
     [dict(shape=shape, bshape=bshape)

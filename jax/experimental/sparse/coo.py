@@ -360,7 +360,8 @@ def _coo_fromdense_jvp(primals, tangents, *, nse, index_dtype):
   if type(Mdot) is ad.Zero:
     data_dot = ad.p2tz(data)
   else:
-    data_dot = _coo_extract(row, col, Mdot)
+    true_nonzeros = jnp.arange(nse) < (M != 0).sum()
+    data_dot = jnp.where(true_nonzeros, _coo_extract(row, col, Mdot), 0)
 
   tangents_out = (data_dot, ad.p2tz(row), ad.p2tz(col))
 
