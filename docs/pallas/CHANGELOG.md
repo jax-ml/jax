@@ -31,6 +31,13 @@ Remember to align the itemized text with the first line of an item within a list
 
 ### Mosaic GPU
 
+* New features
+
+  * Added support for cumulative reductions inside Mosaic GPU kernels:
+    {func}`jax.numpy.cumsum`, {func}`jax.numpy.cumprod`,
+    {func}`jax.lax.cummax`, {func}`jax.lax.cummin` and
+    {func}`jax.lax.cumlogsumexp`.
+
 * Changes
 
   * {func}`jax.experimental.pallas.mosaic_gpu.try_cluster_cancel` now takes a

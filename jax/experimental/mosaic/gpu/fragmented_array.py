@@ -2939,6 +2939,387 @@ class FragmentedArray:
         _registers=new_registers, _layout=self.layout, _is_signed=is_signed
     )
 
+  def scan(
+      self,
+      op: str | Callable[[ir.Value, ir.Value], ir.Value],
+      axis: int | Sequence[int],
+      scratch: ir.Value | None = None,
+      reverse: bool = False,
+  ) -> FragmentedArray:
+    i32 = ir.IntegerType.get_signless(32)
+    if isinstance(axis, int):
+      axis = (axis,)
+    splat_scan_op = None
+    if isinstance(op, str):
+      match op:
+        case "add":
+          if isinstance(self.mlir_dtype, ir.FloatType):
+            op = addf
+            splat_scan_op = lambda x, position: arith.mulf(x, position)
+          elif isinstance(self.mlir_dtype, ir.IntegerType):
+            op = arith.addi
+            splat_scan_op = lambda x, position: arith.muli(x, position)
+          else:
+            raise NotImplementedError(self.mlir_dtype)
+        case "max":
+          if isinstance(self.mlir_dtype, ir.F32Type):
+            op = self._lift_fast_instr("max.NaN.f32")
+          elif isinstance(self.mlir_dtype, ir.F16Type):
+            op = self._lift_fast_packed_instr("max.NaN.f16x2", "max.NaN.f16")
+          elif isinstance(self.mlir_dtype, ir.BF16Type):
+            op = self._lift_fast_packed_instr("max.NaN.bf16x2", "max.NaN.bf16")
+          elif isinstance(self.mlir_dtype, ir.FloatType):
+            op = arith.maximumf
+          elif isinstance(self.mlir_dtype, ir.IntegerType):
+            op = arith.maxsi if self.is_signed else arith.maxui
+          else:
+            raise NotImplementedError(self.mlir_dtype)
+          splat_scan_op = lambda x, position: x
+        case "min":
+          if isinstance(self.mlir_dtype, ir.F32Type):
+            op = self._lift_fast_instr("min.NaN.f32")
+          elif isinstance(self.mlir_dtype, ir.F16Type):
+            op = self._lift_fast_packed_instr("min.NaN.f16x2", "min.NaN.f16")
+          elif isinstance(self.mlir_dtype, ir.BF16Type):
+            op = self._lift_fast_packed_instr("min.NaN.bf16x2", "min.NaN.bf16")
+          elif isinstance(self.mlir_dtype, ir.FloatType):
+            op = arith.minimumf
+          elif isinstance(self.mlir_dtype, ir.IntegerType):
+            op = arith.minsi if self.is_signed else arith.minui
+          else:
+            raise NotImplementedError(self.mlir_dtype)
+          splat_scan_op = lambda x, position: x
+        case "prod":
+          if isinstance(self.mlir_dtype, ir.FloatType):
+            op = arith.mulf
+            splat_scan_op = lambda x, position: mlir_math.powf(x, position)
+          elif isinstance(self.mlir_dtype, ir.IntegerType):
+            op = arith.muli
+          else:
+            raise NotImplementedError(self.mlir_dtype)
+        case "logaddexp":
+          if isinstance(self.mlir_dtype, ir.FloatType):
+            def logaddexp(a, b):
+              delta = arith.subf(a, b)
+              safe = arith.addf(
+                  arith.maximumf(a, b),
+                  mlir_math.log1p(
+                      mlir_math.exp(arith.negf(mlir_math.absf(delta)))
+                  ),
+              )
+              return arith.select(
+                  arith.cmpf(arith.CmpFPredicate.UNO, delta, delta),
+                  arith.addf(a, b),
+                  safe,
+              )
+            op = logaddexp
+          else:
+            raise NotImplementedError(self.mlir_dtype)
+        case _:
+          raise ValueError(f"Unrecognized scan operator: {op}")
+    assert not isinstance(op, str)
+    match self.layout:
+      case WGStridedFragLayout(shape=_, vec_size=vec_size):
+        if set(axis) != set(range(len(self.shape))):
+          raise NotImplementedError(
+              "Warpgroup strided layout only supports scanning along all axes"
+          )
+        layout = TiledLayout(
+            tiling=Tiling(((128 * vec_size,), (32 * vec_size,), (vec_size,))),
+            warp_dims=(-3,),
+            lane_dims=(-2,),
+            vector_dim=-1,
+        )
+        scanned = FragmentedArray(
+            _registers=self.registers.reshape(
+                layout.registers_shape((math.prod(self.shape),))
+            ),
+            _layout=layout,
+            _is_signed=self.is_signed,
+        ).scan(op, 0, scratch, reverse=reverse)
+        # Restore the caller's layout: the reinterpretation above is an
+        # implementation detail and the result must be laid out like the input.
+        return FragmentedArray(
+            _registers=scanned.registers.reshape(self.registers.shape),
+            _layout=self.layout,
+            _is_signed=self.is_signed,
+        )
+      case WGSplatFragLayout():
+        if splat_scan_op is None:
+          raise NotImplementedError(
+              "Splat scan not yet implemented for this op"
+          )
+        if len(axis) != 1:
+          raise NotImplementedError("Splat scan only supports a single axis")
+        [scan_axis] = axis
+        strided_layout = WGStridedFragLayout.from_shaped_type(
+            ir.VectorType.get(self.shape, self.mlir_dtype)
+        )
+        if strided_layout is None:
+          raise NotImplementedError(
+              f"{self.shape} does not admit a strided layout for splat scan"
+          )
+        x = self.registers.item()
+        index = ir.IndexType.get()
+        out_regs = np.empty(strided_layout.registers_shape(self.shape), dtype=object)
+        for idx, thread_pos in zip(
+            np.ndindex(out_regs.shape), strided_layout.thread_idxs(self.shape)
+        ):
+          position = arith.addi(thread_pos[scan_axis], c(1, index))
+          if isinstance(self.mlir_dtype, ir.IntegerType):
+            position = arith.index_cast(self.mlir_dtype, position)
+          else:
+            position = arith.uitofp(
+                self.mlir_dtype, arith.index_cast(i32, position)
+            )
+          out_regs[idx] = splat_scan_op(x, position)
+        return FragmentedArray(
+            _registers=out_regs, _layout=strided_layout, _is_signed=self.is_signed
+        )
+      case TiledLayout():
+        pass
+      case _:
+        raise NotImplementedError(self.layout)
+    assert isinstance(self.layout, TiledLayout)
+    layout = self.layout
+    untiled_rank = len(self.shape) - len(layout.base_tile_shape)
+    tiled_tiling_shape = layout.tiled_tiling_shape
+    tiled_axes = tuple(a - untiled_rank for a in axis if a >= untiled_rank)
+    tiled_reduced_dims = (False,) * (len(layout.base_tile_shape) + len(tiled_tiling_shape))
+    for a in tiled_axes:
+      tiled_reduced_dims = tuple(
+          r or d for r, d in zip(tiled_reduced_dims, layout.tiling.tile_dimension(a), strict=True)
+      )
+    reduced_dims = (*(a in axis for a in range(untiled_rank)), *tiled_reduced_dims)
+    regs_shape = self.registers.shape
+    rank = len(regs_shape)
+    tiled_strides = layout.tiling.tile_strides(
+        tuple(utils.get_contiguous_strides(self.shape))
+    )
+    scanned_dims = sorted(
+        (d for d in range(rank) if reduced_dims[d]),
+        key=lambda d: tiled_strides[d],
+    )
+
+    def index_field(dims, d):
+      sizes = tuple(
+          x.times if isinstance(x, Replicated) else tiled_tiling_shape[x]
+          for x in dims
+      )
+      strides = utils.get_contiguous_strides(sizes)
+      for x, stride, size in zip(dims, strides, sizes):
+        if not isinstance(x, Replicated) and x == d - rank:
+          return stride, size
+      return None
+
+    lane_idx = arith.remui(utils.thread_idx(), c(WARP_SIZE, i32))
+    warp_idx = arith.remui(
+        arith.divui(utils.thread_idx(), c(WARP_SIZE, i32)),
+        c(WARPS_IN_WARPGROUP, i32),
+    )
+    vector_scanned = reduced_dims[layout.vector_dim]
+
+    def splat(x, ref):
+      if vector_scanned:
+        return vector.broadcast(ref.type, x)
+      return x
+
+    def sub_index(base, stride, extent):
+      return arith.remui(arith.divui(base, c(stride, i32)), c(extent, i32))
+
+    value = np.empty(regs_shape, dtype=object)
+    running = np.empty(regs_shape, dtype=object)
+    for idx in np.ndindex(regs_shape):
+      reg = cast(ir.Value, self.registers[idx])
+      total = reg
+      if vector_scanned:
+        [vec_len] = ir.VectorType(reg.type).shape
+        acc: ir.Value | None = None
+        scalars = {}
+        order = range(vec_len - 1, -1, -1) if reverse else range(vec_len)
+        for i in order:
+          scalar = vector.extract(
+              reg,
+              dynamic_position=[],
+              static_position=ir.DenseI64ArrayAttr.get([i]),
+          )
+          acc = scalar if acc is None else op(acc, scalar)
+          scalars[i] = acc
+        new_reg = llvm.mlir_undef(reg.type)
+        for i in range(vec_len):
+          new_reg = vector.insert(
+              scalars[i],
+              new_reg,
+              dynamic_position=[],
+              static_position=ir.DenseI64ArrayAttr.get([i]),
+          )
+        reg = new_reg
+        total = acc
+      value[idx] = reg
+      running[idx] = total
+
+    def scan_register_dim(d):
+      others = tuple(x for x in range(rank) if x != d)
+      for other in np.ndindex(tuple(regs_shape[x] for x in others)):
+        carry = None
+        group = []
+        order = (
+            range(regs_shape[d] - 1, -1, -1) if reverse
+            else range(regs_shape[d])
+        )
+        for i in order:
+          idx = [0] * rank
+          for x, j in zip(others, other):
+            idx[x] = j
+          idx[d] = i
+          idx = tuple(idx)
+          group.append(idx)
+          if carry is None:
+            carry = running[idx]
+          else:
+            value[idx] = op(value[idx], splat(carry, value[idx]))
+            carry = op(carry, running[idx])
+        for idx in group:
+          running[idx] = carry
+
+    def scan_lane_dim(stride, extent):
+      position = sub_index(lane_idx, stride, extent)
+      if reverse:
+        depth = arith.subi(c(extent - 1, i32), position)
+        shuffle = utils.shfl_down
+        last_lane = arith.andi(
+            lane_idx, c(~((extent - 1) * stride) & (WARP_SIZE - 1), i32)
+        )
+      else:
+        depth = position
+        shuffle = utils.shfl_up
+        last_lane = arith.ori(lane_idx, c((extent - 1) * stride, i32))
+      has_carry = arith.cmpi(arith.CmpIPredicate.ugt, depth, c(0, i32))
+      for idx in np.ndindex(regs_shape):
+        inclusive = running[idx]
+        step = 1
+        while step < extent:
+          shifted = shuffle(inclusive, stride * step)
+          inclusive = arith.select(
+              arith.cmpi(arith.CmpIPredicate.uge, depth, c(step, i32)),
+              op(inclusive, shifted),
+              inclusive,
+          )
+          step *= 2
+        exclusive = shuffle(inclusive, stride)
+        value[idx] = arith.select(
+            has_carry,
+            op(value[idx], splat(exclusive, value[idx])),
+            value[idx],
+        )
+        running[idx] = utils.shfl_idx(inclusive, last_lane)
+
+    def scan_warp_dim(stride, extent):
+      if scratch is None:
+        raise NotImplementedError("Cross-warp scan requires scratch memory")
+      index = ir.IndexType.get()
+      lanes = 1 if vector_scanned else ir.VectorType(
+          cast(ir.Value, running[(0,) * rank]).type
+      ).shape[0]
+      slot_size = WARPGROUP_SIZE * lanes
+      capacity = ir.MemRefType(scratch.type).shape[0] // slot_size
+      if capacity < 1:
+        raise NotImplementedError(
+            "Not enough scratch memory for a cross-warp scan"
+        )
+      position = sub_index(warp_idx, stride, extent)
+      depth = (
+          arith.subi(c(extent - 1, i32), position) if reverse else position
+      )
+      has_carry = arith.cmpi(arith.CmpIPredicate.ugt, depth, c(0, i32))
+      keep = ~((extent - 1) * stride) & (WARPS_IN_WARPGROUP - 1)
+      thread = utils.thread_idx()
+
+      def address(slot, thread_id):
+        offset = arith.addi(c(slot * WARPGROUP_SIZE, i32), thread_id)
+        if lanes != 1:
+          offset = arith.muli(offset, c(lanes, i32))
+        return arith.index_cast(index, offset)
+
+      groups: dict[int, list[tuple[int, ...]]] = {}
+      for idx in np.ndindex(regs_shape):
+        groups.setdefault(id(running[idx]), []).append(idx)
+      members_of = {members[0]: members for members in groups.values()}
+      reps = list(members_of)
+      for base in range(0, len(reps), capacity):
+        chunk = reps[base:base + capacity]
+        for slot, idx in enumerate(chunk):
+          if vector_scanned:
+            memref.store(running[idx], scratch, [address(slot, thread)])
+          else:
+            vector.store(running[idx], scratch, [address(slot, thread)])
+        utils.warpgroup_barrier()
+        for slot, idx in enumerate(chunk):
+          peers = []
+          for w in range(extent):
+            other_warp = arith.ori(
+                arith.andi(warp_idx, c(keep, i32)), c(w * stride, i32)
+            )
+            other_thread = arith.addi(
+                arith.muli(other_warp, c(WARP_SIZE, i32)), lane_idx
+            )
+            addr = address(slot, other_thread)
+            if vector_scanned:
+              peers.append(memref.load(scratch, [addr]))
+            else:
+              peers.append(
+                  vector.load(
+                      cast(ir.Value, running[idx]).type, scratch, [addr]
+                  )
+              )
+          if reverse:
+            exclusive = peers[extent - 1]
+            for w in range(extent - 2, 0, -1):
+              exclusive = arith.select(
+                  arith.cmpi(arith.CmpIPredicate.ugt, c(w, i32), position),
+                  op(exclusive, peers[w]),
+                  exclusive,
+              )
+          else:
+            exclusive = peers[0]
+            for w in range(1, extent - 1):
+              exclusive = arith.select(
+                  arith.cmpi(arith.CmpIPredicate.ult, c(w, i32), position),
+                  op(exclusive, peers[w]),
+                  exclusive,
+              )
+          peer_order = (
+              range(extent - 1, -1, -1) if reverse else range(extent)
+          )
+          peer_order = list(peer_order)
+          total = peers[peer_order[0]]
+          for w in peer_order[1:]:
+            total = op(total, peers[w])
+          for member in members_of[idx]:
+            value[member] = arith.select(
+                has_carry,
+                op(value[member], splat(exclusive, value[member])),
+                value[member],
+            )
+            running[member] = total
+        utils.warpgroup_barrier()
+
+    for d in scanned_dims:
+      if d == layout.vector_dim + rank:
+        continue
+      lane = index_field(layout.lane_dims, d)
+      warp = index_field(layout.warp_dims, d)
+      if lane is not None:
+        scan_lane_dim(*lane)
+      elif warp is not None:
+        scan_warp_dim(*warp)
+      else:
+        scan_register_dim(d)
+
+    return FragmentedArray(
+        _registers=value, _layout=self.layout, _is_signed=self.is_signed
+    )
+
   def reduce(
       self,
       op: str | Callable[[ir.Value, ir.Value], ir.Value],

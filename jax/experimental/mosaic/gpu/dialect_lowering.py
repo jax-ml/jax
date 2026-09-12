@@ -923,6 +923,63 @@ def _vector_multi_dim_reduction_op_lowering_rule(
   return [fragmented_array_to_ir(result, op.result.type)]
 
 
+_SCAN_KIND_TO_OP = {
+    int(mgpu.ScanKind.Add): "add",
+    int(mgpu.ScanKind.Mul): "prod",
+    int(mgpu.ScanKind.Max): "max",
+    int(mgpu.ScanKind.Min): "min",
+    int(mgpu.ScanKind.LogAddExp): "logaddexp",
+}
+
+
+@_register_lowering(mgpu.ScanOp)
+def _mgpu_scan_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.ScanOp
+) -> Sequence[ir.Value]:
+  [in_layout] = inference_utils.in_layouts(op)
+  [out_layout] = inference_utils.out_layouts(op)
+  if out_layout != in_layout:
+    raise ValueError(
+        f"Scan result layout {out_layout} must match the source layout"
+        f" {in_layout}"
+    )
+  is_signed = ir.BoolAttr(op.attributes["is_signed"]).value
+  element_type = ir.VectorType(op.source.type).element_type
+  if not isinstance(element_type, ir.IntegerType):
+    is_signed = None
+  src = _fragmented_array_from_ir(op.source, in_layout, is_signed)
+  dimension = ir.IntegerAttr(op.attributes["dimension"]).value
+  reverse = ir.BoolAttr(op.attributes["reverse"]).value
+  kind = _SCAN_KIND_TO_OP[ir.IntegerAttr(op.attributes["kind"]).value]
+
+  if isinstance(src.layout, fa.WGStridedFragLayout):
+    needs_scratch = True
+  elif isinstance(src.layout, fa.TiledLayout):
+    scanned_dim = src.layout.tiling.tile_dimension(dimension)
+    needs_scratch = any(
+        scanned_dim[d] for d in src.layout.partitioned_warp_dims
+    )
+  else:
+    raise NotImplementedError(f"Unsupported layout: {src.layout}")
+  if needs_scratch:
+    allocation_size = (
+        ir.IntegerAttr(op.attributes["scratch_size"]).value
+        * 8
+        // utils.bitwidth(element_type)
+    )
+    scratch = _slice_smem(
+        ir.MemRefType.get(
+            [allocation_size], element_type, memory_space=utils.smem()
+        ),
+        ir.IntegerAttr(op.attributes["offset"]).value,
+        ctx.smem_requested_bytes,
+    )
+  else:
+    scratch = None
+  result = src.scan(kind, dimension, scratch, reverse=reverse)
+  assert result.layout == layouts_lib.from_layout_attr(out_layout)
+  return [fragmented_array_to_ir(result, op.result.type)]
+
 @_register_lowering(mgpu.LayoutCastOp)
 def _mgpu_layout_cast_op_lowering_rule(
     _: LoweringContext, op: mgpu.LayoutCastOp

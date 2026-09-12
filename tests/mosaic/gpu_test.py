@@ -5882,6 +5882,116 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_array_equal(result, x.sum(axis=axis))
 
   @parameterized.product(
+      op=("add", "max", "min"),
+      m=(64, 128),
+      n=(8, 16, 32, 64, 80, 128, 256),
+  )
+  def test_scan(self, op, m, n):
+    def kernel(ctx, dst, _):
+      iota_tensor(m, n, jnp.float32).scan(op, axis=1).store_untiled(
+          dst, optimized=False
+      )
+
+    out_shape = jax.ShapeDtypeStruct((m, n), jnp.float32)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    x = np.arange(m * n, dtype=jnp.float32).reshape(m, n)
+    expected = {
+        "add": np.cumsum,
+        "max": np.maximum.accumulate,
+        "min": np.minimum.accumulate,
+    }[op](x, axis=1)
+    np.testing.assert_array_equal(result, expected)
+
+  @parameterized.named_parameters(
+      ("untiled", 0, (2, 64, 32)),
+      ("tiled", 2, (2, 64, 32)),
+      ("4d_untiled", 0, (2, 4, 64, 16)),
+      ("4d_tiled", 3, (2, 4, 64, 16)),
+  )
+  def test_untiled_scan(self, axis, shape):
+    def kernel(ctx, inp, dst, scratch):
+      arr = mgpu.FragmentedArray.load_untiled(
+          inp, layout=mgpu.WGMMA_LAYOUT, optimized=False, is_signed=True
+      )
+      arr.scan("add", axis=axis, scratch=scratch).store_untiled(
+          dst, optimized=False
+      )
+
+    x = np.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        jax.ShapeDtypeStruct(shape, jnp.int32),
+        jax.ShapeDtypeStruct(shape, jnp.int32),
+        smem_scratch_shape=jax.ShapeDtypeStruct((1024,), jnp.int32),
+    )(x)
+    np.testing.assert_array_equal(
+        result, np.cumsum(x, axis=axis, dtype=np.int32)
+    )
+
+  @parameterized.product(
+      op=("add", "max", "min"),
+      dtype=(jnp.float16, jnp.bfloat16, jnp.float32, jnp.int32),
+      n=(8, 64, 128),
+  )
+  def test_scan_dtypes(self, op, dtype, n):
+    m = 64
+    is_int = jnp.issubdtype(dtype, jnp.integer)
+
+    def kernel(ctx, inp, dst, _):
+      arr = mgpu.FragmentedArray.load_untiled(
+          inp,
+          layout=mgpu.WGMMA_LAYOUT,
+          optimized=False,
+          is_signed=True if is_int else None,
+      )
+      arr.scan(op, axis=1).store_untiled(dst, optimized=False)
+
+    # Values in {-1, 0, 1} keep every partial sum exactly representable even
+    # in bfloat16, whose integers are exact only up to 256.
+    x = np.random.default_rng(1234).integers(-1, 2, size=(m, n)).astype(dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        jax.ShapeDtypeStruct((m, n), dtype),
+        jax.ShapeDtypeStruct((m, n), dtype),
+        (),
+    )(x)
+    ref = {
+        "add": np.cumsum,
+        "max": np.maximum.accumulate,
+        "min": np.minimum.accumulate,
+    }[op]
+    expected = ref(x.astype(np.float64), axis=1).astype(dtype)
+    np.testing.assert_array_equal(result, expected)
+
+  @parameterized.product(m=(64, 128), n=(8, 16, 64))
+  def test_scan_prod(self, m, n):
+    def kernel(ctx, inp, dst, _):
+      arr = mgpu.FragmentedArray.load_untiled(
+          inp, layout=mgpu.WGMMA_LAYOUT, optimized=False
+      )
+      arr.scan("prod", axis=1).store_untiled(dst, optimized=False)
+
+    rng = np.random.default_rng(1234)
+    targets = rng.integers(-4, 5, size=(m, n))
+    exponents = np.diff(targets, axis=1, prepend=np.zeros((m, 1), np.int64))
+    x = (2.0 ** exponents).astype(jnp.float32)
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        jax.ShapeDtypeStruct((m, n), jnp.float32),
+        jax.ShapeDtypeStruct((m, n), jnp.float32),
+        (),
+    )(x)
+    np.testing.assert_array_equal(result, (2.0 ** targets).astype(jnp.float32))
+
+  @parameterized.product(
       vec_size=(4, 3, 1),
       dtype=(jnp.float32, jnp.float16, jnp.bfloat16,
              jnp.int32, jnp.int16, jnp.uint32, jnp.uint16),

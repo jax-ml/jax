@@ -3738,6 +3738,107 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_allclose(x_result, op(x, axis=axis), atol=5e-5)
 
+  @parameterized.product(
+      op=(lax.cumsum, lax.cummax, lax.cummin),
+      axis=(0, 1),
+      dtype=(jnp.float32, jnp.int32, jnp.float16, jnp.bfloat16),
+  )
+  def test_cumulative_with_layout(self, op, axis, dtype):
+    shape = (128, 128)
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct(shape, dtype))
+    def kernel(x_ref, o_ref):
+      x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+      o_ref[...] = op(x_val, axis=axis)
+
+    if dtype in (jnp.float16, jnp.bfloat16):
+      # bfloat16 represents integers exactly only up to 256, so keep every
+      # partial sum small.
+      x = np.random.default_rng(0).integers(-1, 2, size=shape).astype(dtype)
+    else:
+      x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    expected = {
+        lax.cumsum: np.cumsum,
+        lax.cummax: np.maximum.accumulate,
+        lax.cummin: np.minimum.accumulate,
+    }[op](x.astype(np.float64), axis=axis).astype(dtype)
+    np.testing.assert_array_equal(kernel(x), expected)
+
+  @parameterized.product(axis=(0, 1))
+  def test_cumsum_reverse(self, axis):
+    shape = (128, 128)
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct(shape, jnp.float32))
+    def kernel(x_ref, o_ref):
+      x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+      o_ref[...] = lax.cumsum(x_val, axis=axis, reverse=True)
+
+    x = np.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
+    expected = np.flip(np.cumsum(np.flip(x, axis), axis=axis), axis)
+    np.testing.assert_array_equal(kernel(x), expected)
+
+  @parameterized.product(axis=(0, 1))
+  def test_cumlogsumexp(self, axis):
+    shape = (128, 128)
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct(shape, jnp.float32))
+    def kernel(x_ref, o_ref):
+      x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+      o_ref[...] = lax.cumlogsumexp(x_val, axis=axis)
+
+    x = jax.random.uniform(
+        jax.random.key(0), shape=shape, dtype=jnp.float32, minval=-4, maxval=4
+    )
+    np.testing.assert_allclose(
+        kernel(x), lax.cumlogsumexp(x, axis=axis), rtol=1e-5, atol=1e-5
+    )
+
+  @parameterized.product(axis=(0, 1))
+  def test_cumprod(self, axis):
+    shape = (128, 128)
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct(shape, jnp.float32))
+    def kernel(x_ref, o_ref):
+      x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+      o_ref[...] = lax.cumprod(x_val, axis=axis)
+
+    rng = np.random.default_rng(1234)
+    targets = rng.integers(-4, 5, size=shape)
+    zeros = np.zeros([1 if i == axis else d for i, d in enumerate(shape)], np.int64)
+    exponents = np.diff(targets, axis=axis, prepend=zeros)
+    x = (2.0 ** exponents).astype(jnp.float32)
+    np.testing.assert_array_equal(
+        kernel(x), (2.0 ** targets).astype(jnp.float32)
+    )
+
+  @parameterized.product(
+      op=(lax.cumsum, lax.cummax, lax.cummin, lax.cumprod),
+      size=(128, 256, 1024, 4096),
+  )
+  def test_cumulative_rank1(self, op, size):
+    shape = (size,)
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct(shape, jnp.float32))
+    def kernel(x_ref, o_ref):
+      o_ref[...] = op(x_ref[...], axis=0)
+
+    rng = np.random.default_rng(0)
+    if op is lax.cumprod:
+      # Choose the partial products up front so that they stay exactly
+      # representable however long the scan is.
+      targets = rng.integers(-4, 5, size=shape)
+      exponents = np.diff(targets, prepend=np.zeros(1, np.int64))
+      x = (2.0**exponents).astype(jnp.float32)
+      expected = (2.0**targets).astype(jnp.float32)
+    else:
+      x = rng.integers(-8, 8, size=shape).astype(jnp.float32)
+      expected = {
+          lax.cumsum: np.cumsum,
+          lax.cummax: np.maximum.accumulate,
+          lax.cummin: np.minimum.accumulate,
+      }[op](x.astype(np.float64), axis=0).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), expected)
+
   def test_cross_warp_reduction(self):
 
     @self.kernel(

@@ -402,11 +402,17 @@ def _run_scoped_resource_estimator(
 @_register_resource_estimator(lax.reduce_sum_p)
 @_register_resource_estimator(lax.reduce_max_p)
 @_register_resource_estimator(lax.reduce_min_p)
+@_register_resource_estimator(lax.cumsum_p)
+@_register_resource_estimator(lax.cummax_p)
+@_register_resource_estimator(lax.cummin_p)
+@_register_resource_estimator(lax.cumprod_p)
+@_register_resource_estimator(lax.cumlogsumexp_p)
 def _reduce_resource_estimator(
-    ctx: ResourceEstimatorContext, x_aval: jax_core.ShapedArray, *, axes,
-    **kwargs
+    ctx: ResourceEstimatorContext, x_aval: jax_core.ShapedArray, **kwargs
 ) -> Resources:
-  del x_aval, axes, kwargs  # Unused.
+  # `kwargs` is `axes` for reductions, and `axis`/`reverse` for cumulative
+  # reductions.
+  del x_aval, kwargs  # Unused.
   # We don't need SMEM for some reductions, but it depends on the layout, so we
   # conservatively request the maximum scratch space we might need.
   return Resources(smem_scratch_bytes=ctx.reduction_scratch_bytes)
@@ -3229,6 +3235,167 @@ def _reduce_prod_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
     raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
   kind = vector_dialect.CombiningKind.MUL
   return _reduce_lowering_rule_wg(ctx, kind, acc, x, axes)
+
+
+def _cumulative_lowering_rule(
+    op, ctx: LoweringRuleContext, x, *, axis, reverse, **params
+):
+  del params  # Unused.
+  [x_aval] = ctx.avals_in
+  match x.layout:
+    case mgpu.WGStridedFragLayout():
+      # FragmentedArray.scan only supports scanning a strided layout along all
+      # of its axes, which for a cumulative reduction means a 1D operand.
+      if x_aval.ndim != 1:
+        raise NotImplementedError(
+            "Cumulative reductions of a strided layout are only supported for"
+            " 1D operands"
+        )
+      # To relax the restriction below, you need to ensure sufficient
+      # synchronization with other places that use `scratch_view` (which at the
+      # time of writing is only `run_scoped`).
+      if ctx.module_ctx.axis_names.wg is not None:
+        raise NotImplementedError(
+            "No support for cumulative reductions over all axes and multiple"
+            " Pallas threads"
+        )
+      dtype_bitwidth = dtypes.itemsize_bits(x_aval.dtype)
+      if dtype_bitwidth % 8:
+        raise NotImplementedError("Sub-byte dtypes not supported")
+      scratch_elems = ctx.module_ctx.reduction_scratch_bytes * 8 // dtype_bitwidth
+      scratch_ty = jax.ShapeDtypeStruct(
+          shape=(scratch_elems,), dtype=x_aval.dtype
+      )
+      with ctx.module_ctx.scratch_view(scratch_ty) as scratch:
+        return x.scan(op, axis, scratch, reverse=reverse)
+    case mgpu.TiledLayout():
+      scanned_dim = x.layout.tiling.tile_dimension(axis)
+      if any(scanned_dim[d] for d in x.layout.partitioned_warp_dims):
+        dtype_bitwidth = dtypes.itemsize_bits(x_aval.dtype)
+        if dtype_bitwidth % 8:
+          raise NotImplementedError("Sub-byte dtypes not supported")
+        scratch_elems = ctx.module_ctx.reduction_scratch_bytes * 8 // dtype_bitwidth
+        scratch_ty = jax.ShapeDtypeStruct(shape=(scratch_elems,), dtype=x_aval.dtype)
+        scratch_ctx = ctx.module_ctx.scratch_view(scratch_ty)
+      else:
+        scratch_ctx = contextlib.nullcontext(None)
+      with scratch_ctx as scratch:
+        return x.scan(op, axis, scratch=scratch, reverse=reverse)
+    case _:
+      raise NotImplementedError(f"Unsupported layout {x.layout}")
+
+register_lowering_rule(lax.cumsum_p, mgpu.LoweringSemantics.Lane)(
+    functools.partial(_cumulative_lowering_rule, "add")
+)
+register_lowering_rule(lax.cummax_p, mgpu.LoweringSemantics.Lane)(
+    functools.partial(_cumulative_lowering_rule, "max")
+)
+register_lowering_rule(lax.cummin_p, mgpu.LoweringSemantics.Lane)(
+    functools.partial(_cumulative_lowering_rule, "min")
+)
+register_lowering_rule(lax.cumprod_p, mgpu.LoweringSemantics.Lane)(
+    functools.partial(_cumulative_lowering_rule, "prod")
+)
+
+
+def _logaddexp(a: ir.Value, b: ir.Value) -> ir.Value:
+  delta = arith_dialect.subf(a, b)
+  safe = arith_dialect.addf(
+      arith_dialect.maximumf(a, b),
+      math_dialect.log1p(
+          math_dialect.exp(arith_dialect.negf(math_dialect.absf(delta)))
+      ),
+  )
+  return arith_dialect.select(
+      arith_dialect.cmpf(arith_dialect.CmpFPredicate.UNO, delta, delta),
+      arith_dialect.addf(a, b),
+      safe,
+  )
+
+
+register_lowering_rule(lax.cumlogsumexp_p, mgpu.LoweringSemantics.Lane)(
+    functools.partial(_cumulative_lowering_rule, _logaddexp)
+)
+
+
+_CUMULATIVE_SCAN_KIND = {
+    "add": "Add",
+    "prod": "Mul",
+    "max": "Max",
+    "min": "Min",
+    "logaddexp": "LogAddExp",
+}
+
+
+def _cumulative_kind_and_identity(
+    op: str, dtype: jnp.dtype
+) -> tuple[vector_dialect.CombiningKind, int | float]:
+  """Returns the `vector.scan` combining kind and its identity for `op`."""
+  is_float = jnp.issubdtype(dtype, jnp.floating)
+  if not is_float and not jnp.issubdtype(dtype, jnp.integer):
+    raise NotImplementedError(f"Unsupported dtype {dtype}")
+  is_signed = jnp.issubdtype(dtype, jnp.signedinteger)
+  match op:
+    case "add":
+      return vector_dialect.CombiningKind.ADD, 0
+    case "prod":
+      return vector_dialect.CombiningKind.MUL, 1 if not is_float else 1.0
+    case "max":
+      if is_float:
+        return vector_dialect.CombiningKind.MAXIMUMF, float("-inf")
+      kind = (
+          vector_dialect.CombiningKind.MAXSI
+          if is_signed
+          else vector_dialect.CombiningKind.MAXUI
+      )
+      return kind, np.iinfo(dtype).min
+    case "min":
+      if is_float:
+        return vector_dialect.CombiningKind.MINIMUMF, float("inf")
+      kind = (
+          vector_dialect.CombiningKind.MINSI
+          if is_signed
+          else vector_dialect.CombiningKind.MINUI
+      )
+      return kind, np.iinfo(dtype).max
+    case _:
+      raise NotImplementedError(f"Unsupported cumulative reduction {op}")
+
+
+def _cumulative_lowering_rule_wg(
+    op: str, ctx: LoweringRuleContext, x, *, axis, reverse, **params
+) -> ir.Value:
+  del params  # Unused.
+  [x_aval] = ctx.avals_in
+  [out_aval] = ctx.avals_out
+  x = _ensure_ir_value(x, x_aval.dtype)
+  return mgpu.dialect.scan(
+      x,
+      kind=mgpu.dialect.ScanKind[_CUMULATIVE_SCAN_KIND[op]],
+      dimension=axis,
+      reverse=reverse,
+      is_signed=jnp.issubdtype(out_aval.dtype, jnp.signedinteger),
+      offset=ctx.module_ctx.smem_used_bytes,
+      # TODO(bchetioui): here, we could just donate all the remaining free SMEM
+      # that we have at this point in time.
+      scratch_size=ctx.module_ctx.reduction_scratch_bytes,
+  )
+
+register_lowering_rule(lax.cumlogsumexp_p, mgpu.LoweringSemantics.Warpgroup)(
+    functools.partial(_cumulative_lowering_rule_wg, "logaddexp")
+)
+register_lowering_rule(lax.cumsum_p, mgpu.LoweringSemantics.Warpgroup)(
+    functools.partial(_cumulative_lowering_rule_wg, "add")
+)
+register_lowering_rule(lax.cummax_p, mgpu.LoweringSemantics.Warpgroup)(
+    functools.partial(_cumulative_lowering_rule_wg, "max")
+)
+register_lowering_rule(lax.cummin_p, mgpu.LoweringSemantics.Warpgroup)(
+    functools.partial(_cumulative_lowering_rule_wg, "min")
+)
+register_lowering_rule(lax.cumprod_p, mgpu.LoweringSemantics.Warpgroup)(
+    functools.partial(_cumulative_lowering_rule_wg, "prod")
+)
 
 
 def _block_id(ctx: LoweringRuleContext, dim: gpu_dialect.Dimension) -> ir.Value:

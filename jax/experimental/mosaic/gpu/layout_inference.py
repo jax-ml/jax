@@ -1266,6 +1266,19 @@ def _vector_reduction_constraint_system(
   return cs.ConstraintSystem(), {in_variable: [in_variable.key]}
 
 
+@_add_constraint_system_derivation_rule(mgpu.ScanOp)
+def _mgpu_scan_constraint_system(
+    ctx: DerivationContext,
+    op: mgpu.ScanOp,
+) -> ConstraintSystemDerivationRuleResult:
+  del ctx
+  source = ValueSite(op, VariableType.OPERAND, 0)
+  result = ValueSite(op, VariableType.RESULT, 0)
+  variable = cs.Variable(source)
+  # A scan preserves the shape of its operand, so the source and the result
+  # share a single variable, i.e. a single layout.
+  return cs.ConstraintSystem(), {variable: [source, result]}
+
 @_add_constraint_system_derivation_rule(vector.MultiDimReductionOp)
 def _multi_dim_reduction_constraint_system(
     ctx: DerivationContext,
