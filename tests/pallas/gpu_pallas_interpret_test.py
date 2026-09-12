@@ -16,10 +16,13 @@ import dataclasses
 import functools
 import math
 from typing import Any
+from unittest import mock
+
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
 from jax._src.pallas import mpmd
+from jax._src.pallas.mosaic_gpu import helpers
 from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_interpret
 from jax._src.pallas.mosaic_gpu.interpret.params import force_gpu_interpret_mode
 from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams as InterpretParams
@@ -83,9 +86,12 @@ class InterpretTest(jtu.JaxTestCase):
         platform='gpu',
         num_cores=8,
     )
-    with (jax.sharding.use_abstract_mesh(
-              jax.sharding.AbstractMesh((), (), abstract_device=device)),
-          force_gpu_interpret_mode(InterpretParams())):
+    mesh = jax.sharding.AbstractMesh((), (), abstract_device=device)
+    with (
+        jax.sharding.use_abstract_mesh(mesh),
+        force_gpu_interpret_mode(InterpretParams()),
+        mock.patch.object(helpers, 'fence_proxy', lambda _: None),
+    ):
       res = hopper_matmul_mgpu.matmul(a, b, c, spec).block_until_ready()
     expected = (
         jnp.dot(a, b, preferred_element_type=jnp.float32) + c)
