@@ -6563,8 +6563,9 @@ def trapezoid(y: ArrayLike, x: ArrayLike | None = None, dx: ArrayLike = 1.0,
     else:
       dx_array = moveaxis(diff(x_arr, axis=axis), axis, -1)
   y_arr = moveaxis(y_arr, axis, -1)
-  # Fast path: dx is constant along the integration axis.
-  if dx_array.ndim == 0 or dx_array.shape[-1] == 1:
+  # Fast path: dx is constant along the integration axis. It relies on the
+  # first and last elements existing, so it does not apply to an empty axis.
+  if y_arr.shape[-1] > 0 and (dx_array.ndim == 0 or dx_array.shape[-1] == 1):
     dx_reduced = dx_array if dx_array.ndim == 0 else dx_array[..., 0]
     return dx_reduced * (y_arr.sum(-1) - 0.5 * (y_arr[..., 0] + y_arr[..., -1]))
   return 0.5 * (dx_array * (y_arr[..., 1:] + y_arr[..., :-1])).sum(-1)

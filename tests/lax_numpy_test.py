@@ -6340,6 +6340,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         ((3, 10), (10,), 1.0, -1),
         ((3, 10), (3, 10), 1.0, -1),
         ((2, 3, 10), (3, 10), 1.0, -2),
+        # empty integration axis: the result is zero, as in numpy.
+        ((0,), None, 1.0, -1),
+        ((3, 0), None, 1.0, -1),
+        ((0, 3), None, 1.0, 0),
       ]
     ],
     dtype=float_dtypes + int_dtypes,
