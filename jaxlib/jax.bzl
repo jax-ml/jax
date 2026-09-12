@@ -99,7 +99,7 @@ _py_deps = {
     "scipy": ["@pypi//scipy"],
     "tensorflow_core": [],
     "tensorstore": ["//:pypi_optional_tensorstore"],
-    "torch": [],
+    "torch": ["@pypi//torch"],
     "tensorflow": ["//:pypi_optional_tensorflow"],
     "tpu_ops": [],
     # We're never going to need zstandard for 3.14+ because zstandard is now

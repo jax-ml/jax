@@ -43,11 +43,17 @@ config.parse_flags_with_absl()
 class TorchTest(jtu.JaxTestCase):
 
   def setUp(self):
+    # TODO: explicitly skip the tests
+    # remove when we enable torch tests
+    self.skipTest("Skip torch tests")
+
     super().setUp()
     if jtu.test_device_matches(["rocm"]):
       self.skipTest("Mosaic GPU is not supported on ROCm.")
     if torch is None:
       self.skipTest("Test requires PyTorch")
+    if not torch.cuda.is_available():
+      self.skipTest("Test requires torch with CUDA support")
     if attention_mgpu is None:
       self.skipTest("Mosaic GPU not available.")
     if (not jtu.test_device_matches(["cuda"]) or

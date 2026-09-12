@@ -13,3 +13,10 @@ rich
 matplotlib; python_version<"3.15"
 auditwheel
 scipy-stubs
+
+
+# Explicitly set sympy version (1.14.0rc1) which
+# wheel does require mpmath<1.4
+sympy>=1.14.0rc1
+--find-links="https://download.pytorch.org/whl/cu132/torch/"
+torch>=2.12
