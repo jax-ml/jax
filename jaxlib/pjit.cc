@@ -926,10 +926,12 @@ absl::Status PjitFunction::ComputeCallSignature(
       auto py_array = nb::borrow<PyArray>(arg);
       signature.dynamic_arg_shardings.push_back(py_array.sharding());
       auto layout = py_array.layout();
-      if (absl::IsUnimplemented(layout.status())) {
+      if (layout.ok()) {
+        signature.dynamic_arg_layouts.push_back(*std::move(layout));
+      } else if (absl::IsUnimplemented(layout.status())) {
         signature.dynamic_arg_layouts.push_back(nullptr);
       } else {
-        signature.dynamic_arg_layouts.push_back(*std::move(layout));
+        return layout.status();
       }
       signature.committed_args.push_back(py_array.committed());
     } else {
