@@ -24,6 +24,7 @@ from jax._src.scipy.signal import (
   detrend as detrend,
   csd as csd,
   istft as istft,
+  savgol_coeffs as savgol_coeffs,
   stft as stft,
   welch as welch,
 )

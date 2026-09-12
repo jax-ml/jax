@@ -131,6 +131,7 @@ jax.scipy.signal
    csd
    detrend
    istft
+   savgol_coeffs
    stft
    welch
 
