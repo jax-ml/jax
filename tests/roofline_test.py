@@ -978,6 +978,7 @@ class RooflineTest(jtu.JaxTestCase):
         y,
         dimension_numbers=dimension_numbers,
         slice_sizes=(1, 1, 3),
+        mode=lax.GatherScatterMode.PROMISE_IN_BOUNDS,
     )
 
     _, result = roofline.roofline(f)(operand, indices)
