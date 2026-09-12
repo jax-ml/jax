@@ -13,22 +13,20 @@
 # limitations under the License.
 
 
-
 # At present JAX doesn't have a reason to distinguish between scalars and arrays
 # in its object system. Further, we want JAX scalars to have the same type
 # promotion behaviors as JAX arrays. Rather than introducing a new type of JAX
 # scalar object with JAX promotion behaviors, instead we make the JAX scalar
 # types return JAX arrays when instantiated.
 
+import types
 from typing import Any
 
-import numpy as np
-
-from jax._src.typing import Array
 from jax._src import core
 from jax._src import dtypes
 from jax._src.numpy.array_constructors import asarray
-
+from jax._src.typing import Array
+import numpy as np
 
 # Some objects below rewrite their __module__ attribute to this name.
 _PUBLIC_MODULE_NAME = "jax.numpy"
@@ -62,8 +60,12 @@ def _abstractify_scalar_meta(x):
 core.pytype_aval_mappings[_ScalarMeta] = _abstractify_scalar_meta
 
 def _make_scalar_type(np_scalar_type: type) -> _ScalarMeta:
-  meta = _ScalarMeta(np_scalar_type.__name__, (object,),
-                     {"dtype": np.dtype(np_scalar_type)})
+  meta_type = types.new_class(
+      f"_ScalarMeta{np_scalar_type.__name__.title()}", bases=(_ScalarMeta,)
+  )
+  meta = meta_type(
+      np_scalar_type.__name__, (object,), {"dtype": np.dtype(np_scalar_type)}
+  )
   meta.__module__ = _PUBLIC_MODULE_NAME
   meta.__doc__ =\
   f"""A JAX scalar constructor of type {np_scalar_type.__name__}.
