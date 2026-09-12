@@ -1611,6 +1611,25 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     self.assertIsNotNone(err_out.get())
     self.assertStartsWith(err_out.get(), "post-while check")
 
+  def test_checkify_enable_x64_scope(self):
+    # Regression test for https://github.com/google/jax/issues/40482
+    def f(x):
+      with jax.enable_x64():
+        checkify.check(x > 0, "positive")
+        return x
+
+    err, out = checkify.checkify(f)(jnp.ones((), dtype=jnp.float64))
+    self.assertIsNone(err.get())
+    self.assertEqual(out, 1.0)
+
+    err, out = jax.jit(checkify.checkify(f))(jnp.ones((), dtype=jnp.float64))
+    self.assertIsNone(err.get())
+    self.assertEqual(out, 1.0)
+
+    err, _ = jax.jit(checkify.checkify(f))(jnp.array(-1.0, dtype=jnp.float64))
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "positive")
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
