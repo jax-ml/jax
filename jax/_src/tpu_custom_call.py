@@ -345,6 +345,8 @@ class CustomCallBackendConfig:
     if self.device_type == "sparsecore":
       config.write(b', "sparse_core_config": ')
       sparse_core_config: dict[str, Any] = {}
+      if self.active_core_count == 1:
+        sparse_core_config["core_ids"] = ["0"]
       tiling = self.tiling if self.tiling is not None else Tiling.COMPACT
       sparse_core_config["tiling"] = tiling.value
       if self.opt_level is not None:
