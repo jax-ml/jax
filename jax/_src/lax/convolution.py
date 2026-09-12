@@ -306,49 +306,82 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
   This function directly calculates a fractionally strided conv rather than
   indirectly calculating the gradient (transpose) of a forward convolution.
 
-  Notes:
-    TensorFlow/Keras Compatibility: By default, JAX does NOT reverse the
-    kernel's spatial dimensions. This differs from TensorFlow's "Conv2DTranspose"
-    and similar frameworks, which flip spatial axes and swap input/output channels.
+  .. warning::
 
-    To match TensorFlow/Keras behavior, set "transpose_kernel=True" .
+    **TensorFlow/Keras Compatibility:** By default, JAX does **not** reverse
+    the kernel's spatial dimensions. This differs from TensorFlow's
+    ``tf.nn.conv2d_transpose`` / ``keras.layers.Conv2DTranspose`` and similar
+    frameworks, which flip the kernel's spatial axes and swap input/output
+    channel axes before performing the transposed convolution.
+
+    As a result, given the same kernel weights, ``lax.conv_transpose`` and
+    TensorFlow's ``Conv2DTranspose`` will produce **different outputs** by
+    default.
+
+    To match TensorFlow/Keras behavior, set ``transpose_kernel=True``::
+
+      # JAX default (no kernel flip):
+      out_jax = lax.conv_transpose(x, kernel, strides=(2,), padding='SAME')
+
+      # Equivalent to TensorFlow's Conv1DTranspose:
+      out_tf_style = lax.conv_transpose(x, kernel, strides=(2,),
+                                        padding='SAME',
+                                        transpose_kernel=True)
+
+    When ``transpose_kernel=False`` (the default), the kernel is used as-is.
+    When ``transpose_kernel=True``, the kernel's spatial axes are flipped and
+    its input/output channel axes are swapped before the convolution, matching
+    the convention used by TensorFlow, Keras, and PyTorch's
+    ``ConvTranspose{1,2,3}d``.
 
   Args:
-    lhs: a rank `n+2` dimensional input array.
-    rhs: a rank `n+2` dimensional array of kernel weights.
-    strides: sequence of `n` integers, sets fractional stride.
-    padding: 'SAME', 'VALID', or a sequence of `n` integer 2-tuples describing before-and-after
-      padding for each spatial dimension. If `use_consistent_padding=True`, this is interpreted
-      as the padding of the corresponding forward conv, which effectively adds
-      `dilation * (kernel_size - 1) - padding` zero padding to each side
-      of the input so that `conv_transpose` becomes the gradient of `conv` when given the same padding
-      and stride arguments. This is the behavior in PyTorch. If `use_consistent_padding=False`,
-      the 'SAME' and 'VALID' strings are interpreted as the padding of the corresponding forward conv,
-      but integer tuples are interpreted as padding for the transposed convolution.
-    rhs_dilation: `None`, or a sequence of `n` integers, giving the
-      dilation factor to apply in each spatial dimension of `rhs`. RHS dilation
-      is also known as atrous convolution.
+    lhs: a rank ``n+2`` dimensional input array.
+    rhs: a rank ``n+2`` dimensional array of kernel weights.
+    strides: sequence of ``n`` integers, sets fractional stride.
+    padding: ``'SAME'``, ``'VALID'``, or a sequence of ``n`` integer 2-tuples
+      describing before-and-after padding for each spatial dimension. If
+      ``use_consistent_padding=True``, this is interpreted as the padding of
+      the corresponding forward conv, which effectively adds
+      ``dilation * (kernel_size - 1) - padding`` zero padding to each side
+      of the input so that ``conv_transpose`` becomes the gradient of ``conv``
+      when given the same padding and stride arguments. This is the behavior
+      in PyTorch. If ``use_consistent_padding=False``, the ``'SAME'`` and
+      ``'VALID'`` strings are interpreted as the padding of the corresponding
+      forward conv, but integer tuples are interpreted as padding for the
+      transposed convolution.
+    rhs_dilation: ``None``, or a sequence of ``n`` integers, giving the
+      dilation factor to apply in each spatial dimension of ``rhs``. RHS
+      dilation is also known as atrous convolution.
     dimension_numbers: tuple of dimension descriptors as in
-      lax.conv_general_dilated. Defaults to tensorflow convention.
-    transpose_kernel: if True flips spatial axes and swaps the input/output
-      channel axes of the kernel. This makes the output of this function identical
-      to the gradient-derived functions like keras.layers.Conv2DTranspose
-      applied to the same kernel. For typical use in neural nets this is completely
-      pointless and just makes input/output channel specification confusing.
+      :func:`jax.lax.conv_general_dilated`. Defaults to TensorFlow convention.
+    transpose_kernel: if ``True``, flips spatial axes and swaps the
+      input/output channel axes of the kernel before the convolution. This
+      makes the output of this function match the behavior of
+      gradient-derived transposed convolution implementations such as
+      ``keras.layers.Conv2DTranspose`` and ``torch.nn.ConvTranspose2d``
+      when applied to the same kernel weights. Default is ``False``.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
-      :class:`~jax.lax.Precision` enums indicating precision of ``lhs``` and ``rhs``.
+      the backend, a :class:`~jax.lax.Precision` enum value
+      (``Precision.DEFAULT``, ``Precision.HIGH`` or ``Precision.HIGHEST``) or
+      a tuple of two :class:`~jax.lax.Precision` enums indicating precision
+      of ``lhs`` and ``rhs``.
     preferred_element_type: Optional. Either ``None``, which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
-    use_consistent_padding : In older versions of jax, the `padding` argument was interpreted differently
-      depending on whether it was a string or a sequence of integers. Strings were interpreted as padding
-      for the forward convolution, while integers were interpreted as padding for the transposed convolution.
-      If `use_consistent_padding` is False, this inconsistent behavior is preserved for backwards compatibility.
+    use_consistent_padding: In older versions of JAX, the ``padding`` argument
+      was interpreted differently depending on whether it was a string or a
+      sequence of integers. Strings were interpreted as padding for the forward
+      convolution, while integers were interpreted as padding for the transposed
+      convolution. If ``use_consistent_padding`` is ``False``, this inconsistent
+      behavior is preserved for backwards compatibility.
+
   Returns:
     Transposed N-d convolution, with output padding following the conventions of
-    keras.layers.Conv2DTranspose.
+    ``keras.layers.Conv2DTranspose``.
+
+  See also:
+    - :func:`jax.lax.conv_general_dilated`: General N-d convolution.
+    - `TensorFlow Conv2DTranspose <https://www.tensorflow.org/api_docs/python/tf/nn/conv2d_transpose>`_
   """
   assert len(lhs.shape) == len(rhs.shape) and len(lhs.shape) >= 2
   ndims = len(lhs.shape)
