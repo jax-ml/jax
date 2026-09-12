@@ -471,6 +471,40 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     # We expect the print to happen twice since it is rematerialized.
     self.assertEqual(output(), "y: 3.0, z: 6.0\n" * 2)
 
+  def test_remat_of_debug_print_with_sentinel_policy(self):
+    # Same situation as test_remat_of_debug_print, but with a policy that
+    # returns RematCases sentinels instead of bools. Recompute has to mean what
+    # False means: do not save the callback, so it is printed on the recompute
+    # too.
+    def f_(x):
+      a = ad_checkpoint.checkpoint_name(x + 1., "a")
+      b = ad_checkpoint.checkpoint_name(x * 3., "b")
+      debug_print('a: {}, b: {}', a, b)
+      return jnp.sin(a) * jnp.cos(b)
+
+    # Both of these say the same thing about the debug callback -- it is not in
+    # the allow-list, so do not save it -- but one says it with False and the
+    # other with ad_checkpoint.Recompute. Saving "a" and not "b" is what makes
+    # the callback's inputs only partly instantiated, which is the case where
+    # the two branches of the rule differ.
+    policies = [
+        ad_checkpoint.save_only_these_names("a"),
+        ad_checkpoint.save_and_offload_only_these_names(
+            names_which_can_be_saved=["a"], names_which_can_be_offloaded=[],
+            offload_src='device', offload_dst='pinned_host'),
+    ]
+
+    outputs = []
+    for policy in policies:
+      with jtu.capture_stdout() as output:
+        jax.grad(jax.checkpoint(f_, policy=policy))(2.)
+        jax.effects_barrier()
+      outputs.append(output())
+
+    # Printed twice under either spelling, since the callback is rematerialized.
+    self.assertEqual(outputs[0], "a: 3.0, b: 6.0\n" * 2)
+    self.assertEqual(outputs[1], outputs[0])
+
   def test_debug_print_in_staged_out_custom_jvp(self):
     @jax.jit
     def f(x):

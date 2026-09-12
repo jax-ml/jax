@@ -7416,6 +7416,26 @@ class RematTest(jtu.JaxTestCase):
           names_which_can_be_saved=['y'], names_which_can_be_offloaded=['y'],
           offload_src='device', offload_dst='pinned_host')
 
+  def test_remat_policy_sentinel_truthiness(self):
+    # RematCases_ admits both bools and the RematCases sentinels, and not every
+    # consumer of a policy result routes it through ensure_enum. So each
+    # sentinel's truthiness has to match its meaning.
+    offloadable = pe.Offloadable(src='device', dst='pinned_host')
+    self.assertFalse(pe.Recompute)
+    self.assertTrue(pe.Saveable)
+    self.assertTrue(offloadable)  # offloading keeps the value, it does not recompute it
+
+    # __bool__ must leave ensure_enum alone: it dispatches on
+    # isinstance(case, bool), which is False for all three either way.
+    self.assertIs(pe.ensure_enum(False), pe.Recompute)
+    self.assertIs(pe.ensure_enum(True), pe.Saveable)
+    self.assertIs(pe.ensure_enum(pe.Recompute), pe.Recompute)
+    self.assertIs(pe.ensure_enum(pe.Saveable), pe.Saveable)
+    self.assertIs(pe.ensure_enum(offloadable), offloadable)
+
+    # Offloadable is still an ordinary NamedTuple.
+    self.assertEqual(tuple(offloadable), ('device', 'pinned_host'))
+
   def test_remat_offload_names_of_scan_jaxpr(self):
     # Like test_remat_offload_names_jaxpr, but with the named values inside a
     # scan body: the per-iteration offloaded copies are saved as stacked
