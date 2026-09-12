@@ -1417,5 +1417,73 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           rtol=1e-5,
       )
 
+  @parameterized.parameters(lax.asinh, lax.acosh)
+  def testAsinhAcoshGradLargeValues(self, fn):
+    # float16: x^2 overflows for x > ~256
+    x16 = jnp.float16(300.0)
+    g16 = jax.grad(fn)(x16)
+    _, t16 = jax.jvp(fn, (x16,), (jnp.ones_like(x16),))
+    self.assertAllClose(g16, np.float16(1.0 / 300.0), rtol=1e-2)
+    self.assertAllClose(t16, np.float16(1.0 / 300.0), rtol=1e-2)
+
+    # float32: x^2 overflows for x > ~1.84e19
+    x32 = jnp.float32(1e25)
+    g32 = jax.grad(fn)(x32)
+    _, t32 = jax.jvp(fn, (x32,), (jnp.ones_like(x32),))
+    self.assertAllClose(g32, jnp.float32(1e-25), rtol=1e-5)
+    self.assertAllClose(t32, jnp.float32(1e-25), rtol=1e-5)
+
+    # float64: x^2 overflows for x > ~1.34e154
+    with jax.enable_x64():
+      x64 = jnp.float64(1e200)
+      g64 = jax.grad(fn)(x64)
+      _, t64 = jax.jvp(fn, (x64,), (jnp.ones_like(x64),))
+      self.assertAllClose(g64, jnp.float64(1e-200), rtol=1e-5)
+      self.assertAllClose(t64, jnp.float64(1e-200), rtol=1e-5)
+
+  def testAcoshDerivatives(self):
+    # 1. Near x = 1: avoids catastrophic cancellation
+    x_near1 = jnp.float32(1.0001)
+    true_val = np.float32(1.0 / np.sqrt(np.float64(x_near1) ** 2 - 1.0))
+    self.assertAllClose(jax.grad(lax.acosh)(x_near1), true_val, rtol=1e-6)
+
+    # 2. Complex plane with negative real part: correct branch cut
+    z = jnp.complex64(-2.0 + 1.0j)
+    expected_acosh = 1.0 / (np.sqrt(complex(z) - 1.0) * np.sqrt(complex(z) + 1.0))
+    _, t_acosh = jax.jvp(lax.acosh, (z,), (jnp.complex64(1.0),))
+    self.assertAllClose(t_acosh, expected_acosh, rtol=1e-5, check_dtypes=False)
+
+    # 3. Large complex value
+    z_large = jnp.complex64(1e25 + 1e25j)
+    expected_large = 1.0 / complex(z_large)
+    _, t_large = jax.jvp(lax.acosh, (z_large,), (jnp.complex64(1.0),))
+    self.assertAllClose(t_large, expected_large, rtol=1e-5, check_dtypes=False)
+
+    # 4. Second derivative
+    d2 = jax.grad(jax.grad(lax.acosh))(jnp.float32(2.0))
+    self.assertAllClose(d2, jnp.float32(-2.0 / 3.0 ** 1.5), rtol=1e-5)
+
+  def testAsinhDerivatives(self):
+    # 1. Near x = 0
+    self.assertAllClose(jax.grad(lax.asinh)(jnp.float32(0.0)), jnp.float32(1.0))
+    self.assertAllClose(jax.grad(lax.asinh)(jnp.float32(1e-10)), jnp.float32(1.0))
+
+    # 2. Large negative value
+    x32_neg = jnp.float32(-1e25)
+    self.assertAllClose(jax.grad(lax.asinh)(x32_neg), jnp.float32(1e-25), rtol=1e-5)
+
+    # 3. Large complex value
+    z_large = jnp.complex64(1e25 + 1e25j)
+    expected_large = 1.0 / complex(z_large)
+    _, t_large = jax.jvp(lax.asinh, (z_large,), (jnp.complex64(1.0),))
+    self.assertAllClose(t_large, expected_large, rtol=1e-5, check_dtypes=False)
+
+    # 4. Second derivative
+    d2_zero = jax.grad(jax.grad(lax.asinh))(jnp.float32(0.0))
+    self.assertAllClose(d2_zero, jnp.float32(0.0), atol=1e-7)
+    d2_one = jax.grad(jax.grad(lax.asinh))(jnp.float32(1.0))
+    self.assertAllClose(d2_one, jnp.float32(-1.0 / 2.0 ** 1.5), rtol=1e-5)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
