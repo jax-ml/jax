@@ -22,7 +22,7 @@ kernelspec:
 (jax-101-pytrees)=
 # Pytrees
 
-<!--* freshness: { reviewed: '2026-07-09' } *-->
+<!--* freshness: { reviewed: '2026-09-09' } *-->
 
 JAX functions and transformations operate on arrays, but programs pass
 around richer structures: a neural network's parameters might live in a
@@ -306,27 +306,33 @@ jax.grad(lambda s: s.x ** 2 + s.y)(RegisteredSpecial(3.0, 4.0))
 
 Alternatively, you can define appropriate `tree_flatten` and `tree_unflatten`
 methods on your class and decorate it with
-{func}`~jax.tree_util.register_pytree_node_class`:
+{func}`~jax.tree_util.register_pytree_node_class`. This version also carries a
+`name`. That is static metadata, not array data, so it goes in `aux_data`,
+where it stays out of the leaves and is handed back to `tree_unflatten`:
 
 ```{code-cell}
 from jax.tree_util import register_pytree_node_class
 
 @register_pytree_node_class
 class RegisteredSpecial2(Special):
+  def __init__(self, name, x, y):
+    self.name = name
+    super().__init__(x, y)
+
   def __repr__(self):
-    return f"RegisteredSpecial2(x={self.x}, y={self.y})"
+    return f"RegisteredSpecial2({self.name!r}, x={self.x}, y={self.y})"
 
   def tree_flatten(self):
     children = (self.x, self.y)
-    aux_data = None
+    aux_data = self.name
     return (children, aux_data)
 
   @classmethod
   def tree_unflatten(cls, aux_data, children):
-    return cls(*children)
+    return cls(aux_data, *children)
 
 jax.tree.map(lambda x: x + 1,
-             [RegisteredSpecial2(0, 1), RegisteredSpecial2(2, 4)])
+             [RegisteredSpecial2('a', 0, 1), RegisteredSpecial2('b', 2, 4)])
 ```
 
 Some standard Python containers come pre-registered. A `NamedTuple` subclass,

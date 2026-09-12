@@ -341,7 +341,10 @@ def register_pytree_node_class(cls: Typ) -> Typ:
   a class-oriented interface.
 
   Args:
-    cls: a type to register as a pytree
+    cls: a type to register as a pytree. The class must define a
+      ``tree_flatten`` method and a ``tree_unflatten`` class method, which
+      implement ``flatten_func`` and ``unflatten_func`` as described in
+      :func:`jax.tree_util.register_pytree_node`.
 
   Returns:
     The input class ``cls`` is returned unchanged after being added to JAX's pytree
@@ -362,16 +365,19 @@ def register_pytree_node_class(cls: Typ) -> Typ:
     >>> import jax
     >>> @jax.tree_util.register_pytree_node_class
     ... class MyContainer:
-    ...   def __init__(self, x, y):
-    ...     self.x = x
-    ...     self.y = y
+    ...   def __init__(self, name, x, y):
+    ...     self.name = name  # static metadata
+    ...     self.x = x        # array data
+    ...     self.y = y        # array data
     ...   def tree_flatten(self):
-    ...     return ((self.x, self.y), None)
+    ...     children = (self.x, self.y)
+    ...     aux_data = self.name
+    ...     return (children, aux_data)
     ...   @classmethod
     ...   def tree_unflatten(cls, aux_data, children):
-    ...     return cls(*children)
+    ...     return cls(aux_data, *children)
     ...
-    >>> m = MyContainer(jnp.zeros(4), jnp.arange(4))
+    >>> m = MyContainer('m', jnp.zeros(4), jnp.arange(4))
     >>> def f(m):
     ...   return m.x + 2 * m.y
     >>> jax.jit(f)(m)
