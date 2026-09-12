@@ -2312,6 +2312,7 @@ use_high_dynamic_range_gumbel = bool_state(
     default=False,
     help='If True, gumbel noise draws two samples to cover low probability '
          'events with more precision.',
+    include_in_jit_key=True,
     include_in_trace_context=True,
 )
 
