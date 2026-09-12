@@ -17,7 +17,7 @@ nosearch: true
 (debugging-flags)=
 # JAX debugging flags
 
-<!--* freshness: { reviewed: '2025-10-28' } *-->
+<!--* freshness: { reviewed: '2026-09-07' } *-->
 
 JAX offers flags and context managers that enable catching errors more easily.
 
@@ -89,10 +89,63 @@ with jax.debug_nans(False):
 
 ## `jax_debug_infs` configuration option and context manager
 
-`jax_debug_infs` works similarly to `jax_debug_nans`. `jax_debug_infs` often needs to be combined with `jax_disable_jit`, since Infs might not cascade to the output like NaNs. Alternatively, `jax.experimental.checkify` may be used to find Infs in intermediates.
+**Summary:** Enable the `jax_debug_infs` flag to automatically detect when Infs are produced in `jax.jit`-compiled code.
 
-Full documentation of `jax_debug_infs` is forthcoming.
-<!-- https://github.com/jax-ml/jax/issues/17722 -->
+`jax_debug_infs` is a JAX flag that when enabled, will cause computations to error-out immediately on production of an Inf. It works similarly to `jax_debug_nans`, but it often needs to be combined with `jax_disable_jit`, since Infs might not cascade to the output like NaNs. Alternatively, `jax.experimental.checkify` may be used to find Infs in intermediates.
+
+### Usage
+
+If you want to trace where Infs are occurring in your functions or gradients, you can turn on the Inf-checker by doing one of:
+* running your code inside the `jax.debug_infs` context manager, using `with jax.debug_infs(True):`;
+* setting the `JAX_DEBUG_INFS=True` environment variable;
+* adding `jax.config.update("jax_debug_infs", True)` near the top of your main file;
+* adding `jax.config.parse_flags_with_absl()` to your main file, then set the option using a command-line flag like `--jax_debug_infs=True`;
+
+### Example(s)
+
+```{code-cell}
+import jax
+import jax.numpy as jnp
+import traceback
+jax.config.update("jax_debug_infs", True)
+
+def g(x):
+  return jnp.log(x)
+
+# The stack trace is very long so only print a couple lines.
+try:
+  g(0.)
+except FloatingPointError as e:
+  print(traceback.format_exc(limit=2))
+```
+
+The Inf generated was caught. By running `%debug`, we can get a post-mortem debugger. This also works with functions under `@jax.jit`, as the example below shows.
+
+```{code-cell}
+:tags: [raises-exception]
+
+jax.jit(g)(0.)
+```
+
+When this code sees an Inf in the output of an `@jax.jit` function, it calls into the de-optimized code, so we still get a clear stack trace. And we can run a post-mortem debugger with `%debug` to inspect all the values to figure out the error.
+
+The `jax.debug_infs` context manager can be used to activate/deactivate Inf debugging. Since we activated it above with `jax.config.update`, let's deactivate it:
+
+```{code-cell}
+with jax.debug_infs(False):
+  print(jax.jit(g)(0.))
+```
+
+#### Strengths and limitations of `jax_debug_infs`
+##### Strengths
+* Easy to apply
+* Precisely detects where Infs were produced
+* Throws a standard Python exception and is compatible with PDB postmortem
+
+##### Limitations
+* Re-running functions eagerly can be slow. You shouldn't have the Inf-checker on if you're not debugging, as it can introduce lots of device-host round-trips and performance regressions.
+* Errors on false positives (e.g. intentionally created Infs, such as the large negative values used to mask attention logits)
+* Infs do not always cascade to the output of an `@jax.jit` function the way NaNs do, so `jax_debug_infs` often needs to be combined with `jax_disable_jit`, or replaced by `jax.experimental.checkify` to catch Infs in intermediates.
 
 ## `jax_disable_jit` configuration option and context manager
 
