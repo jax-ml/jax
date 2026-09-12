@@ -307,11 +307,16 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
   indirectly calculating the gradient (transpose) of a forward convolution.
 
   Notes:
-    TensorFlow/Keras Compatibility: By default, JAX does NOT reverse the
-    kernel's spatial dimensions. This differs from TensorFlow's "Conv2DTranspose"
-    and similar frameworks, which flip spatial axes and swap input/output channels.
+    TensorFlow/Keras Compatibility: By default, JAX does not reverse the
+    kernel's spatial dimensions. This differs from TensorFlow/Keras
+    transposed convolution layers, which use a convention equivalent to
+    flipping the spatial axes and swapping input/output channel axes.
 
-    To match TensorFlow/Keras behavior, set "transpose_kernel=True" .
+    To match the TensorFlow/Keras convention when passing a TensorFlow-style
+    transposed convolution kernel, set ``transpose_kernel=True``. For example,
+    for a 2D kernel using the default ``"HWIO"`` layout, this flips the
+    ``H`` and ``W`` axes and swaps the ``I`` and ``O`` axes before applying
+    the convolution.
 
   Args:
     lhs: a rank `n+2` dimensional input array.
@@ -330,11 +335,11 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
       is also known as atrous convolution.
     dimension_numbers: tuple of dimension descriptors as in
       lax.conv_general_dilated. Defaults to tensorflow convention.
-    transpose_kernel: if True flips spatial axes and swaps the input/output
-      channel axes of the kernel. This makes the output of this function identical
-      to the gradient-derived functions like keras.layers.Conv2DTranspose
-      applied to the same kernel. For typical use in neural nets this is completely
-      pointless and just makes input/output channel specification confusing.
+  transpose_kernel: If True, flips the spatial axes of ``rhs`` and swaps
+    its input/output channel axes before applying the convolution. This is
+    useful when using kernels that follow the TensorFlow/Keras transposed
+    convolution convention. The default is False, which preserves JAX's
+    existing convention.
     precision: Optional. Either ``None``, which means the default precision for
       the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
@@ -346,6 +351,7 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
       depending on whether it was a string or a sequence of integers. Strings were interpreted as padding
       for the forward convolution, while integers were interpreted as padding for the transposed convolution.
       If `use_consistent_padding` is False, this inconsistent behavior is preserved for backwards compatibility.
+      
   Returns:
     Transposed N-d convolution, with output padding following the conventions of
     keras.layers.Conv2DTranspose.
