@@ -127,6 +127,18 @@ class ApiUtilTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, r"Mismatch details \(2 found\)"):
       api_util.flatten_axis_resources("test_spec", tree, shardings, False)
 
+  def test_flatten_axis_resources_error_no_pytreeleaf_and_handles_none(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/13074
+    tree = jax.tree.structure({"a": 1, "b": 2})
+    shardings = {"a": None, "b": (None, None)}
+    with self.assertRaises(ValueError) as cm:
+      api_util.flatten_axis_resources("in_axis_resources", tree, shardings, False)
+    msg = str(cm.exception)
+    self.assertNotIn("PytreeLeaf", msg)
+    self.assertNotIn("NoneType", msg)
+    self.assertIn("has a leaf", msg)
+    self.assertIn("Mismatch details (1 found)", msg)
+
   def test_fun_sourceinfo(self):
     fsi = api_util.fun_sourceinfo
 

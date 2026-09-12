@@ -1608,6 +1608,21 @@ class TreePrefixErrorsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, expected):
       raise e('in_axes')
 
+  def test_prefix_errors_leaf_and_none(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/13074:
+    # equality_errors_pytreedef should say "None" not "<class 'NoneType'>"
+    # and "pytree leaf" not the internal LeafMeta class name.
+    from jax._src.tree_util import equality_errors_pytreedef
+    t1 = jax.tree.structure({"a": None, "b": (1, 2)})
+    t2 = jax.tree.structure({"a": (1, 2), "b": 3})
+    errs = list(equality_errors_pytreedef(t1, t2))
+    # 'a': None in t1 vs (1,2) in t2 — should say "None" not "NoneType"
+    self.assertEqual(errs[0][1], "None")
+    self.assertNotIn("NoneType", errs[0][1])
+    # 'b': (1,2) in t1 vs leaf(3) in t2 — should say "pytree leaf", not LeafMeta
+    self.assertEqual(errs[1][2], "pytree leaf")
+    self.assertNotIn("LeafMeta", errs[1][2])
+
 
 class TreeAliasTest(jtu.JaxTestCase):
   """Simple smoke-tests for tree_util aliases under jax.tree"""
