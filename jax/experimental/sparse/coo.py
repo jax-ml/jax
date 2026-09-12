@@ -493,9 +493,8 @@ def _coo_matvec_transpose(ct, data, row, col, v, *, spinfo, transpose):
     return data, row, col, _coo_matvec(data, row, col, ct, spinfo=spinfo, transpose=not transpose)
   else:
     v = jnp.asarray(v)
-    # The following line does this, but more efficiently:
-    # return _coo_extract(row, col, jnp.outer(ct, v)), row, col, v
-    return ct[row] * v[col], row, col, v
+    r, c = (col, row) if transpose else (row, col)
+    return ct[r] * v[c], row, col, v
 
 ad.defjvp(coo_matvec_p, _coo_matvec_jvp_mat, None, None, _coo_matvec_jvp_vec)
 ad.primitive_transposes[coo_matvec_p] = _coo_matvec_transpose
@@ -613,7 +612,8 @@ def _coo_matmat_transpose(ct, data, row, col, B, *, spinfo, transpose):
     return data, row, col, _coo_matmat(data, row, col, ct, spinfo=spinfo, transpose=not transpose)
   else:
     B = jnp.asarray(B)
-    return (ct[row] * B[col]).sum(1), row, col, B
+    r, c = (col, row) if transpose else (row, col)
+    return (ct[r] * B[c]).sum(1), row, col, B
 
 ad.defjvp(coo_matmat_p, _coo_matmat_jvp_left, None, None, _coo_matmat_jvp_right)
 ad.primitive_transposes[coo_matmat_p] = _coo_matmat_transpose

@@ -510,8 +510,9 @@ def _csr_matvec_transpose(ct, data, indices, indptr, v, *, shape, transpose):
   else:
     v = jnp.asarray(v)
     # The following lines do this, but more efficiently.
-    # return _csr_extract(indices, indptr, jnp.outer(ct, v)), indices, indptr, v
     row, col = _csr_to_coo(indices, indptr)
+    if transpose:
+      row, col = col, row
     return ct[row] * v[col], indices, indptr, v
 
 ad.defjvp(csr_matvec_p, _csr_matvec_jvp_mat, None, None, _csr_matvec_jvp_vec)
@@ -618,6 +619,8 @@ def _csr_matmat_transpose(ct, data, indices, indptr, B, *, shape, transpose):
   else:
     B = jnp.asarray(B)
     row, col = _csr_to_coo(indices, indptr)
+    if transpose:
+      row, col = col, row
     return (ct[row] * B[col]).sum(1), indices, indptr, B
 
 ad.defjvp(csr_matmat_p, _csr_matmat_jvp_left, None, None, _csr_matmat_jvp_right)

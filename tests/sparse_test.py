@@ -466,14 +466,17 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(M_out, M)
 
   @jtu.sample_product(
-    [dict(shape=shape, bshape=bshape)
+    [
+      dict(shape=shape, bshape=bshape, transpose=transpose)
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
-      for bshape in [shape[-1:] + s for s in [(), (1,), (3,)]]
+      for transpose in [True, False]
+      for bshape in [(shape[0] if transpose else shape[1],) + s for s in [(), (1,), (3,)]]
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   @jax.default_matmul_precision("float32")
-  def test_coo_matmul_ad(self, shape, dtype, bshape):
+  def test_coo_matmul_ad(self, shape, dtype, bshape, transpose):
+    op = lambda M: M.T if transpose else M
     coo_matmul = sparse_coo._coo_matvec if len(bshape) == 1 else sparse_coo._coo_matmat
     tol = {np.float32: 1E-5, np.float64: 1E-12, np.complex64: 1E-5, np.complex128: 1E-12}
 
@@ -487,8 +490,8 @@ class cuSparseTest(sptu.SparseTestCase):
     spinfo = sparse_coo.COOInfo(shape=M.shape, rows_sorted=True)
 
     # Forward-mode with respect to the vector
-    f_dense = lambda x: M @ x
-    f_sparse = lambda x: coo_matmul(data, row, col, x, spinfo=spinfo)
+    f_dense = lambda x: op(M) @ x
+    f_sparse = lambda x: coo_matmul(data, row, col, x, spinfo=spinfo, transpose=transpose)
     v_sparse, t_sparse = jax.jvp(f_sparse, [x], [xdot])
     v_dense, t_dense = jax.jvp(f_dense, [x], [xdot])
     self.assertAllClose(v_sparse, v_dense, atol=tol, rtol=tol)
@@ -503,13 +506,70 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
 
     # Forward-mode with respect to nonzero elements of the matrix
-    f_sparse = lambda data: coo_matmul(data, row, col, x, spinfo=spinfo)
-    f_dense = lambda data: sparse_coo._coo_todense(data, row, col, spinfo=spinfo) @ x
+    f_sparse = lambda data: coo_matmul(data, row, col, x, spinfo=spinfo, transpose=transpose)
+    f_dense = lambda data: op(sparse_coo._coo_todense(data, row, col, spinfo=spinfo)) @ x
     data = rng((len(data),), data.dtype)
     data_dot = rng((len(data),), data.dtype)
     v_sparse, t_sparse = jax.jvp(f_sparse, [data], [data_dot])
     v_dense, t_dense = jax.jvp(f_dense, [data], [data_dot])
 
+    self.assertAllClose(v_sparse, v_dense, atol=tol, rtol=tol)
+    self.assertAllClose(t_sparse, t_dense, atol=tol, rtol=tol)
+
+    # Reverse-mode with respect to nonzero elements of the matrix
+    primals_dense, vjp_dense = jax.vjp(f_dense, data)
+    primals_sparse, vjp_sparse = jax.vjp(f_sparse, data)
+    out_dense, = vjp_dense(primals_dense)
+    out_sparse, = vjp_sparse(primals_sparse)
+    self.assertAllClose(primals_dense[0], primals_sparse[0], atol=tol, rtol=tol)
+    self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
+
+  @jtu.sample_product(
+    [
+      dict(shape=shape, bshape=bshape, transpose=transpose)
+      for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
+      for transpose in [True, False]
+      for bshape in [(shape[0] if transpose else shape[1],) + s for s in [(), (1,), (3,)]]
+    ],
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+  )
+  @jax.default_matmul_precision("float32")
+  def test_csr_matmul_ad(self, shape, dtype, bshape, transpose):
+    op = lambda M: M.T if transpose else M
+    csr_matmul = sparse_csr._csr_matvec if len(bshape) == 1 else sparse_csr._csr_matmat
+    tol = {np.float32: 1E-5, np.float64: 1E-12, np.complex64: 1E-5, np.complex128: 1E-12}
+
+    rng = sptu.rand_sparse(self.rng(), post=jnp.array)
+    rng_b = jtu.rand_default(self.rng())
+
+    M = rng(shape, dtype)
+    data, indices, indptr = sparse_csr._csr_fromdense(M, nse=(M != 0).sum())
+    x = rng_b(bshape, dtype)
+    xdot = rng_b(bshape, dtype)
+
+    # Forward-mode with respect to the vector
+    f_dense = lambda x: op(M) @ x
+    f_sparse = lambda x: csr_matmul(data, indices, indptr, x, shape=M.shape, transpose=transpose)
+    v_sparse, t_sparse = jax.jvp(f_sparse, [x], [xdot])
+    v_dense, t_dense = jax.jvp(f_dense, [x], [xdot])
+    self.assertAllClose(v_sparse, v_dense, atol=tol, rtol=tol)
+    self.assertAllClose(t_sparse, t_dense, atol=tol, rtol=tol)
+
+    # Reverse-mode with respect to the vector
+    primals_dense, vjp_dense = jax.vjp(f_dense, x)
+    primals_sparse, vjp_sparse = jax.vjp(f_sparse, x)
+    out_dense, = vjp_dense(primals_dense)
+    out_sparse, = vjp_sparse(primals_sparse)
+    self.assertAllClose(primals_dense[0], primals_sparse[0], atol=tol, rtol=tol)
+    self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
+
+    # Forward-mode with respect to nonzero elements of the matrix
+    f_sparse = lambda data: csr_matmul(data, indices, indptr, x, shape=M.shape, transpose=transpose)
+    f_dense = lambda data: op(sparse_csr._csr_todense(data, indices, indptr, shape=M.shape)) @ x
+    data = rng((len(data),), data.dtype)
+    data_dot = rng((len(data),), data.dtype)
+    v_sparse, t_sparse = jax.jvp(f_sparse, [data], [data_dot])
+    v_dense, t_dense = jax.jvp(f_dense, [data], [data_dot])
     self.assertAllClose(v_sparse, v_dense, atol=tol, rtol=tol)
     self.assertAllClose(t_sparse, t_dense, atol=tol, rtol=tol)
 
