@@ -1689,12 +1689,16 @@ def _barrier_test_pp_eqn(
     context: jax_core.JaxprPpContext,
     settings: jax_core.JaxprPpSettings,
 ):
-  del settings
-  barrier, *flat_transforms = eqn.invars
+  barrier, *flat_args = eqn.invars
+  pp_params = {}
+  if eqn.params.get("has_user_predicate", False):
+    *flat_args, user_predicate = flat_args
+    pp_params["user_predicate"] = user_predicate.pretty_print(context)
   transforms_treedef = eqn.params["transforms_treedef"]
-  transforms = transforms_treedef.unflatten(flat_transforms)
+  transforms = transforms_treedef.unflatten(flat_args)
   return pp.concat([
       pp.text("barrier_test"),
+      jax_core.pp_kv_pairs(pp_params.items(), context, settings),
       pp.text(" "),
       state_primitives.pp_ref_transforms(context, barrier, transforms),
   ])
@@ -1712,12 +1716,19 @@ jax_core.pp_eqn_rules[barrier_test_p] = _barrier_test_pp_eqn
 def _barrier_test_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,
-    *flat_transforms,
+    *flat_args,
     transforms_treedef,
+    has_user_predicate: bool = False,
 ):
+  if has_user_predicate:
+    *flat_args, user_predicate = flat_args
+    predicate = lowering._ensure_ir_value(user_predicate, jnp.bool)  # pylint: disable=protected-access
+  else:
+    predicate = None
+
   barrier_aval = ctx.avals_in[0]
   assert isinstance(barrier_aval, state_types.AbstractRef)
-  transforms = transforms_treedef.unflatten(flat_transforms)
+  transforms = transforms_treedef.unflatten(flat_args)
   orders_tensor_core = getattr(
       barrier_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
   )
@@ -1731,14 +1742,18 @@ def _barrier_test_lowering(
   if base_index is not None:
     barrier = barrier[base_index]
   wait_complete = barrier.test(
-      orders_tensor_core=orders_tensor_core, scope=scope
+      orders_tensor_core=orders_tensor_core, predicate=predicate, scope=scope
   )
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
     return wait_complete
   return mgpu.FragmentedArray.splat(wait_complete, shape=(), is_signed=False)
 
 
-def barrier_test(barrier: state.AbstractRef) -> jax.Array:
+def barrier_test(
+    barrier: state.AbstractRef,
+    *,
+    predicate: jax.Array | None = None,
+) -> jax.Array:
   """Tests the given barrier.
 
   This is a non-blocking equivalent of `barrier_wait`, which returns a boolean
@@ -1751,7 +1766,11 @@ def barrier_test(barrier: state.AbstractRef) -> jax.Array:
   )
   flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
   return barrier_test_p.bind(
-      barrier, *flat_transforms, transforms_treedef=transforms_treedef,
+      barrier,
+      *flat_transforms,
+      *() if predicate is None else (predicate,),
+      transforms_treedef=transforms_treedef,
+      has_user_predicate=predicate is not None,
   )
 
 

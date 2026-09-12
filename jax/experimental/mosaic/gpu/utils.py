@@ -1229,12 +1229,21 @@ class BarrierRef:
       self,
       parity,
       orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
   ) -> ir.Value:
     i1 = ir.IntegerType.get_signless(1)
     i32 = ir.IntegerType.get_signless(32)
     parity = arith.extui(i32, parity)
-    wait_complete = nvvm.mbarrier_test_wait(self.get_ptr(), parity)
+    pred_ptx = "" if predicate is None else "@$0 "
+    wait_complete = llvm.inline_asm(
+        i1,
+        ([] if predicate is None else [predicate]) + [self.get_ptr(), parity],
+        f"{pred_ptx}mbarrier.test_wait.parity.acquire.{self._ptx_scope}.shared::cta.b64 $0, [$1], $2;",
+        "=b,r,r" if predicate is None else "+b,r,r",
+        has_side_effects=True,
+    )
+    wait_complete = cast(ir.OpResult[ir.IntegerType], wait_complete)
 
     if scope == ThreadSubset.WARPGROUP:
       wait_complete = inline_ptx(
@@ -1257,11 +1266,14 @@ class BarrierRef:
   def test(
       self,
       orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
   ) -> ir.Value:
     parities = memref.load(self.phases, [])
     parity, new_parities = self.update_parities(parities)
-    wait_complete = self.test_parity(parity, orders_tensor_core, scope)
+    wait_complete = self.test_parity(
+        parity, orders_tensor_core, predicate=predicate, scope=scope
+    )
     with when(wait_complete):
       memref.store(new_parities, self.phases, [])
     return wait_complete
@@ -1445,19 +1457,25 @@ class DialectBarrierRef:
       self,
       parity,
       orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
   ) -> ir.Value:
     assert self.orders_tensor_core == orders_tensor_core
-    return self.barrier_ref.test_parity(parity, orders_tensor_core, scope=scope)
+    return self.barrier_ref.test_parity(
+        parity, orders_tensor_core, predicate=predicate, scope=scope
+    )
 
   def test(
       self,
       orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
   ) -> ir.Value:
     assert self.orders_tensor_core == orders_tensor_core
     assert self.barrier_ref.phases is not None
-    return self.barrier_ref.test(orders_tensor_core, scope=scope)
+    return self.barrier_ref.test(
+        orders_tensor_core, predicate=predicate, scope=scope
+    )
 
   def wait_parity(self, parity, orders_tensor_core: bool = False):
     assert self.orders_tensor_core == orders_tensor_core
