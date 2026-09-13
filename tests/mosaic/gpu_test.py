@@ -5048,6 +5048,118 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     )(x)
     np.testing.assert_array_equal(y, expected)
 
+  @parameterized.product(
+      slice_shape=[
+          (64, 156),  # Inner dim padded
+          (58, 160),  # Outer dim padded
+          (58, 156),  # Both dims padded
+          (64, 160),  # Neither dim padded
+      ],
+  )
+  def test_cp_async_padded_untiled(self, slice_shape):
+    padded_slice_shape = (64, 160)
+    full_shape = (2, 4, *slice_shape)
+    out_shape = (2, 4, *padded_slice_shape)
+
+    dtype = jnp.float16
+    def kernel(ctx, src, dst, smem):
+      for b in range(2):
+        for h in range(4):
+          ctx.async_copy(
+              src_ref=src,
+              dst_ref=smem,
+              gmem_slice=(
+                  b,
+                  h,
+                  slice(0, padded_slice_shape[0]),
+                  slice(0, padded_slice_shape[1]),
+              ),
+              implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
+              oob_mode=mgpu.OOBFillMode.UNDEFINED,
+          )
+          ctx.await_cp_async_copy(0)
+          dst_slice = memref_slice(dst, (b, h))
+          copy(smem, dst_slice)
+
+    x = (
+        (np.arange(math.prod(full_shape), dtype=np.int32) % 1000 + 1)
+        .astype(dtype)
+        .reshape(full_shape)
+    )
+    smem = jax.ShapeDtypeStruct(padded_slice_shape, dtype)
+    out = jax.ShapeDtypeStruct(out_shape, dtype)
+    y = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        x,
+        out,
+        smem,
+    )(x)
+    np.testing.assert_array_equal(
+        y[:, :, : slice_shape[0], : slice_shape[1]], x
+    )
+
+  @parameterized.product(
+      slice_shape=[
+          (60, 64),  # Row padded
+          (64, 56),  # Col padded
+          (60, 56),  # Both row and col padded
+          (64, 64),  # Neither padded
+      ],
+      swizzle=[64, 128],
+  )
+  def test_cp_async_padded_tiled(self, slice_shape, swizzle):
+    dtype = jnp.float16
+    padded_slice_shape = (64, 64)
+    full_shape = (2, 4, *slice_shape)
+    out_shape = (2, 4, *padded_slice_shape)
+
+    bw = bitwidth(dtype_to_ir_type(dtype))
+    swizzle_elems = 8 * swizzle // bw
+    tiling = (8, swizzle_elems)
+
+    def kernel(ctx, src, dst, smem):
+      for b in range(2):
+        for h in range(4):
+          ctx.async_copy(
+              src_ref=src,
+              dst_ref=smem,
+              gmem_slice=(
+                  b,
+                  h,
+                  slice(0, padded_slice_shape[0]),
+                  slice(0, padded_slice_shape[1]),
+              ),
+              swizzle=swizzle,
+              gmem_transform=mgpu.TileTransform(tiling),
+              implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
+              oob_mode=mgpu.OOBFillMode.UNDEFINED,
+          )
+          ctx.await_cp_async_copy(0)
+          dst_slice = memref_slice(dst, (b, h))
+          mgpu.copy_tiled(smem, dst_slice, swizzle=swizzle)
+
+    x = (
+        (np.arange(math.prod(full_shape), dtype=np.int32) % 1000 + 1)
+        .astype(dtype)
+        .reshape(full_shape)
+    )
+    smem_shape = mgpu.tile_shape(padded_slice_shape, tiling)
+    smem = jax.ShapeDtypeStruct(smem_shape, dtype)
+    out = jax.ShapeDtypeStruct(out_shape, dtype)
+    y = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        x,
+        out,
+        smem,
+    )(x)
+    np.testing.assert_array_equal(
+        y[:, :, :slice_shape[0], :slice_shape[1]], x
+    )
+
 
   def test_tma_collective_async_cp_with_no_swizzle(self):
     def body(ctx, src, dst, scratch):

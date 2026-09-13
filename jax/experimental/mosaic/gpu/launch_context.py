@@ -938,6 +938,7 @@ class LaunchContext:
       collective: Sequence[gpu.Dimension] | None,
       leader_tracked: CopyPartition | None,
       implementation: AsyncCopyImplementation,
+      oob_mode: OOBFillMode,
   ):
     """Performs setup common to TMA and CP_ASYNC implementations."""
     index = ir.IndexType.get()
@@ -978,7 +979,8 @@ class LaunchContext:
         gmem_slice,
         ir.MemRefType(gmem_ref.type).shape,
         # NOTE: TMA supports OOB indices, so we skip the check.
-        check_oob=implementation != AsyncCopyImplementation.TMA,
+        check_oob=implementation != AsyncCopyImplementation.TMA
+        and oob_mode != OOBFillMode.UNDEFINED,
     )
     if gather_indices is not None:
       slice_shape = [gather_indices.shape[0], *slice_shape[1:]]
@@ -1035,7 +1037,7 @@ class LaunchContext:
     # transforms. For slicing this is done using transform_index and
     # transform_shape. For squeezing we actually move all the squeezed dims to
     # the front, and then batch each transform, making it ignore the extra dims.
-    if squeezed_dims and implementation != AsyncCopyImplementation.CP_ASYNC:
+    if squeezed_dims and (implementation != AsyncCopyImplementation.CP_ASYNC or gmem_transform):
       sliced_dims = [i for i, squeezed in enumerate(is_squeezed) if not squeezed]
       gmem_transform = (TransposeTransform((*squeezed_dims, *sliced_dims)),
                         *(t.batch(len(squeezed_dims)) for t in gmem_transform))
@@ -1320,11 +1322,13 @@ class LaunchContext:
         collective,
         leader_tracked,
         implementation,
+        oob_mode,
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
 
     gmem_ref_ty = ir.MemRefType(gmem_ref.type)
     smem_ref_ty = ir.MemRefType(smem_ref.type)
+    smem_shape = tuple(smem_ref_ty.shape)
     # We moved all squeezed dims to the front in _prepare_async_copy.
     assert all(d == 1 for d in slice_shape[:len(squeezed_dims)])
     if slice_shape[len(squeezed_dims):] != smem_ref_ty.shape:
@@ -1371,6 +1375,7 @@ class LaunchContext:
         gmem_offset = arith.divui(gmem_offset, c(offset_scale, index))
       gmem_offset = arith.index_castui(i64, gmem_offset)
 
+      sliced_dims: list[int] = []
       if squeezed_dims:
         sliced_dims = [
             i for i in range(gmem_ref_ty.rank) if i not in squeezed_dims
@@ -1394,6 +1399,31 @@ class LaunchContext:
         )
         gmem_ref_ty = gmem_ref.type
         gmem_strides = [gmem_strides[i] for i in sliced_dims]
+
+      gmem_shape = gmem_ref_ty.shape
+      smem_shape = smem_ref_ty.shape
+      gmem_size = math.prod(gmem_shape)
+      smem_size = math.prod(smem_shape)
+      gmem_slice_shape = tuple(
+          s
+          for i, s in enumerate(untransformed_slice_shape)
+          if i not in squeezed_dims
+      )
+      needs_bounds_check = (
+          oob_mode == OOBFillMode.UNDEFINED and smem_size > gmem_size
+      )
+
+      if oob_mode == OOBFillMode.UNDEFINED:
+        logical_smem_shape = (
+            gmem_slice_shape if gmem_transform else smem_shape
+        )
+        if len(gmem_shape) != len(logical_smem_shape):
+          raise ValueError(
+              f"Different ranks between src and dst. {src_ref_ty=}, {dst_ref_ty=}."
+          )
+        for g, s in zip(gmem_shape, logical_smem_shape, strict=True):
+          if g > s:
+            raise NotImplementedError("Only GMEM can be padded.")
 
       if not gmem_transform:
         if (
@@ -1431,16 +1461,61 @@ class LaunchContext:
           idx = arith.index_castui(i32, linear_idx)
           if offset_scale > 1:
             idx = arith.divui(idx, c(offset_scale, i32))
+          # We have to adjust the stride of SMEM, otherwise we'll read the
+          # next row with undesireable (non-zero) offset for padded shape.
+          curr_idx = linear_idx
+          smem_idxs = []
+          for dim_sz in reversed(smem_shape):
+            dim_sz = c(dim_sz, index)
+            smem_idxs.append(arith.remui(curr_idx, dim_sz))
+            curr_idx = arith.divui(curr_idx, dim_sz)
+          smem_idxs = smem_idxs[::-1]
+
+          gmem_idx = c(0, index)
+          for coord, stride in zip(smem_idxs, gmem_strides, strict=True):
+            gmem_idx = arith.addi(
+                gmem_idx, arith.muli(coord, c(stride, index))
+            )
+
+          if needs_bounds_check:
+            rem_elems = arith.maxsi(
+                arith.subi(c(gmem_size, index), gmem_idx), c(0, index)
+            )
+            if element_bitwidth >= 8:
+              valid_bytes = arith.muli(
+                  rem_elems, c(element_bitwidth // 8, index)
+              )
+            else:
+              valid_bytes = arith.divui(rem_elems, c(offset_scale, index))
+            cp_size_val = arith.minsi(valid_bytes, c(bytes_per_transfer, index))
+            cp_size = arith.index_castui(i32, cp_size_val)
+          else:
+            cp_size = None
+
           smem_ptr = utils.getelementptr(smem_base_ptr, [idx], gep_type)
-          gmem_ptr = utils.getelementptr(gmem_base_ptr, [idx], gep_type)
+          gmem_idx_i64 = arith.index_castui(i64, gmem_idx)
+          gmem_ptr = utils.getelementptr(
+              gmem_base_ptr, [gmem_idx_i64], gep_type
+          )
           nvvm.cp_async_shared_global(
-              smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier
+              smem_ptr,
+              gmem_ptr,
+              bytes_per_transfer,
+              cache_modifier,
+              cp_size=cp_size,
           )
       else:
         assert swizzle is not None
         swizzle_elems = 8 * swizzle // element_bitwidth
         tiling = (8, swizzle_elems)
-        if gmem_transform != (TileTransform(tiling),):
+        if squeezed_dims:
+          expected_gmem_transform = (
+              TransposeTransform((*squeezed_dims, *sliced_dims)),
+              TileTransform(tiling),
+          )
+        else:
+          expected_gmem_transform = (TileTransform(tiling),)
+        if gmem_transform != expected_gmem_transform:
           raise NotImplementedError(gmem_transform)
         layout = fa.tiled_copy_smem_gmem_layout(
             *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth  # pyrefly: ignore[bad-argument-count]
@@ -1454,6 +1529,7 @@ class LaunchContext:
         dyn_offset = arith.addi(lane_offset, warp_offset)
         dyn_offset = arith.divui(dyn_offset, c(offset_scale, i32))
         dyn_offset = arith.extui(i64, dyn_offset)
+        dyn_slice_offset = dyn_offset
         dyn_offset = arith.addi(dyn_offset, gmem_offset)
         if gmem_ref_ty.rank != 2:
           raise NotImplementedError("Only 2D copies implemented")
@@ -1477,9 +1553,43 @@ class LaunchContext:
             else nvvm.LoadCacheModifierKind.CA
         )
         for _get, _update, get_base_idx, smem_ptr in transfers:
-          constant_offset = sum(i * s for i, s in zip(get_base_idx(), gmem_strides, strict=True))
-          gmem_ptr = utils.getelementptr(gmem_base_ptr, [constant_offset // offset_scale], gep_type)
-          nvvm.cp_async_shared_global(smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier)
+          tile_row = get_base_idx()[0]
+          if needs_bounds_check and tile_row >= gmem_shape[0]:
+            continue
+
+          constant_offset = sum(
+              i * s for i, s in zip(get_base_idx(), gmem_strides, strict=True)
+          )
+          gmem_ptr = utils.getelementptr(
+              gmem_base_ptr, [constant_offset // offset_scale], gep_type
+          )
+          if needs_bounds_check:
+            gmem_idx = arith.addi(
+                dyn_slice_offset, c(constant_offset // offset_scale, i64)
+            )
+            rem_elems = arith.maxsi(
+                arith.subi(c(gmem_size, i64), gmem_idx), c(0, i64)
+            )
+            if element_bitwidth >= 8:
+              valid_bytes = arith.muli(
+                  rem_elems, c(element_bitwidth // 8, i64)
+              )
+            else:
+              valid_bytes = arith.divui(rem_elems, c(offset_scale, i64))
+            cp_size_val = arith.minsi(
+                valid_bytes, c(bytes_per_transfer, i64)
+            )
+            cp_size = arith.trunci(i32, cp_size_val)
+          else:
+            cp_size = None
+
+          nvvm.cp_async_shared_global(
+              smem_ptr,
+              gmem_ptr,
+              bytes_per_transfer,
+              cache_modifier,
+              cp_size=cp_size,
+          )
       if barrier is None:
         nvvm.cp_async_commit_group()
       else:
@@ -1955,7 +2065,13 @@ class LaunchContext:
         gather_indices,
         gmem_transform,
     ) = self._prepare_async_copy(
-        gmem_ref, gmem_slice, gmem_transform, collective, leader_tracked, impl
+        gmem_ref,
+        gmem_slice,
+        gmem_transform,
+        collective,
+        leader_tracked,
+        impl,
+        OOBFillMode.ZEROS,
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
 

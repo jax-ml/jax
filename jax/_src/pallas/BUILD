@@ -71,6 +71,7 @@ pytype_library(
         "//jax/_src:shard_map",
         "//jax/_src:source_info_util",
         "//jax/_src:traceback_util",
+        "//jax/_src:tree",
         "//jax/_src:tree_util",
         "//jax/_src:typing",
         "//jax/_src:util",

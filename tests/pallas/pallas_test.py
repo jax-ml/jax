@@ -2860,5 +2860,36 @@ class PallasHiJaxTest(ptu.PallasTest):
     self.assertArraysEqual(os.s, xs.s)
 
 
+class PadRefTest(jtu.JaxTestCase):
+
+  def test_pad_ref_basic(self):
+    ref = jax.new_ref(jnp.zeros((2, 6), dtype=jnp.float32))
+    padded = pl.pad_ref(ref, (4, 8))
+    self.assertIsInstance(padded, jax._src.state.types.TransformedRef)
+    self.assertEqual(padded.shape, (4, 8))
+    self.assertEqual(padded.dtype, jnp.float32)
+    self.assertLen(padded.transforms, 1)
+    self.assertIsInstance(padded.transforms[0], pl.PadTransform)
+    self.assertEqual(padded.transforms[0].shape, (4, 8))
+
+  def test_pad_ref_on_transformed_ref(self):
+    ref = jax.new_ref(jnp.zeros((4, 8), dtype=jnp.float32))
+    padded1 = pl.pad_ref(ref, (6, 10))
+    padded2 = pl.pad_ref(padded1, (8, 12))
+    self.assertEqual(padded2.shape, (8, 12))
+    self.assertLen(padded2.transforms, 2)
+    self.assertIsInstance(padded2.transforms[0], pl.PadTransform)
+    self.assertIsInstance(padded2.transforms[1], pl.PadTransform)
+
+  def test_pad_ref_errors(self):
+    ref = jax.new_ref(jnp.zeros((2, 6), dtype=jnp.float32))
+    with self.assertRaisesRegex(ValueError, "does not match ref rank"):
+      _ = pl.pad_ref(ref, (4, 8, 1)).shape
+    with self.assertRaisesRegex(ValueError, "cannot be smaller than original dim"):
+      _ = pl.pad_ref(ref, (1, 8)).shape
+    with self.assertRaisesRegex(TypeError, "ref must be a reference"):
+      _ = pl.pad_ref(jnp.zeros((2, 6)), (4, 8))
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
