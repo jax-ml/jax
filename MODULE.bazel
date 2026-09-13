@@ -79,6 +79,7 @@ use_repo(
     "eigen_archive",
     "gloo",
     "nanobind",
+    "riegeli",
     "shardy",
     "stablehlo",
     "triton",
