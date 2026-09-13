@@ -61,7 +61,8 @@ from jax._src.named_sharding import NamedSharding, get_replicated_axes
 from jax._src import named_sharding as ns
 from jax._src.sharding import Sharding
 from jax._src.layout import (Format, AutoLayout, AutoLayoutSingleton,
-                             get_layout_mode, LayoutMode)
+                             get_layout_mode, layout_mode_to_config_value,
+                             LayoutMode)
 from jax._src.lib import _jax
 from jax._src import traceback_util
 from jax._src.typing import Array, ArrayLike, DimSize, Shape
@@ -381,7 +382,7 @@ class JaxprEqnContextManager:
     self.prev_abstract_mesh = config.abstract_mesh_context_manager.swap_local(
         self.context.cur_abstract_mesh)
     self.prev_layout_mode = config.layout_tracing_mode.swap_local(
-        self.context.cur_layout_mode)
+        layout_mode_to_config_value(self.context.cur_layout_mode))
     self.prev_remove_size_one_mesh_axis = config.remove_size_one_mesh_axis_from_type.swap_local(
         self.context.remove_size_one_mesh_axis)
 

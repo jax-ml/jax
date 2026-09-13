@@ -42,12 +42,21 @@ def get_layout_mode():
   val = jax_config.layout_tracing_mode.value
   return LayoutMode.AUTO if val is None else val
 
+def layout_mode_to_config_value(mode: LayoutMode) -> LayoutMode | None:
+  # `LayoutMode.AUTO` is the default and is represented as `None` in the
+  # `layout_tracing_mode` config (see `get_layout_mode`). Always write it back
+  # as `None` so that the config value -- which is part of the jit cache key --
+  # is the same whether AUTO was set explicitly, re-entered via a
+  # `JaxprEqnContext`, or never set at all.
+  return None if mode is LayoutMode.AUTO else mode
+
 @contextmanager
 def use_layout_mode(mode):
   if not isinstance(mode, LayoutMode):
     raise TypeError(
         f'Expected mode of type `LayoutMode`. Got type: {type(mode)}')
-  prev_mode = jax_config.layout_tracing_mode.swap_local(mode)
+  prev_mode = jax_config.layout_tracing_mode.swap_local(
+      layout_mode_to_config_value(mode))
   try:
     yield
   finally:

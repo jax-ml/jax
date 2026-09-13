@@ -24,7 +24,9 @@ import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec as P
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src import config
+from jax._src import core
 from jax._src import test_util as jtu
+from jax._src.layout import LayoutMode, use_layout_mode
 from jax._src.util import safe_zip
 from jax.experimental.layout import with_layout_constraint, Format, Layout
 
@@ -854,6 +856,56 @@ class LayoutTest(jtu.JaxTestCase):
     layout_str = match.group(1)
     self.assertIn('3,2,4,1,0', layout_str)
     self.assertIn('S(5)', layout_str)
+
+
+  def test_default_layout_mode_does_not_change_jit_cache_key(self):
+    traces = []
+
+    @jax.jit
+    def f(x):
+      traces.append(None)
+      return x * 2
+
+    x = jnp.arange(4.0)
+    # Under a mesh so that the ambient abstract mesh is set explicitly too.
+    with jax.set_mesh(jtu.create_mesh((1,), ('x',))):
+      f(x)
+      # Explicitly entering the default (AUTO) layout mode ...
+      with use_layout_mode(LayoutMode.AUTO):
+        f(x)
+      # ... or re-entering the ambient context recorded on a jaxpr equation
+      # (as e.g. `core.eval_jaxpr` does) must not change `f`'s tracing cache
+      # key.
+      with core.JaxprEqnContext().manager:
+        f(x)
+    self.assertLen(traces, 1)
+
+  def test_jit_in_custom_vjp_fwd_under_scan_traced_once(self):
+    # The scan linearize rule re-evaluates the scan body under each equation's
+    # `JaxprEqnContext`, which is where `f_fwd` (and hence `helper`) runs.
+    traces = []
+
+    @jax.jit
+    def helper(x):
+      traces.append(None)
+      return x * 2.0
+
+    @jax.custom_vjp
+    def f(x):
+      return helper(x)
+    def f_fwd(x):
+      return helper(x), None
+    def f_bwd(_, ct):
+      return (ct * 2.0,)
+    f.defvjp(f_fwd, f_bwd)
+
+    def loss(x):
+      y, _ = jax.lax.scan(lambda c, _: (f(c), None), x, None, length=2)
+      return y.sum()
+
+    with jax.set_mesh(jtu.create_mesh((1,), ('x',))):
+      jax.grad(loss)(jnp.ones((4,), jnp.float32))
+    self.assertLen(traces, 1)
 
 
 if __name__ == '__main__':
