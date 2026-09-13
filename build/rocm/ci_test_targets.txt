@@ -14,5 +14,4 @@
 -//tests/pallas:triton_pallas_test_gpu
 
 # Flaky on the CI workers.
--//tests:lru_cache_test
 -//tests:export_harnesses_multi_platform_test_gpu
