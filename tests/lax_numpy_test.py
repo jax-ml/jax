@@ -53,8 +53,6 @@ from jax._src.util import safe_zip, tuple_update
 
 config.parse_flags_with_absl()
 
-numpy_version = jtu.numpy_version()
-
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
 nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
 one_dim_array_shapes = [(1,), (6,), (12,)]
@@ -691,9 +689,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fn = jnp.matvec
     @jtu.promote_like_jnp
     def np_fn(x, y):
-      f = (np.vectorize(np.matmul, signature="(m,n),(n)->(m)")
-           if jtu.numpy_version() < (2, 2, 0) else np.matvec)
-      return f(x, y).astype(x.dtype)
+      return np.matvec(x, y).astype(x.dtype)
     tol = {np.float16: 1e-2, np.float32: 1E-3, np.float64: 1e-12,
            np.complex64: 1E-3, np.complex128: 1e-12, jnp.bfloat16: 1e-1}
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
@@ -716,10 +712,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fn = jnp.vecmat
     @jtu.promote_like_jnp
     def np_fn(x, y):
-      f = (np.vectorize(lambda x, y: np.matmul(np.conj(x), y),
-                        signature="(m),(m,n)->(n)")
-           if jtu.numpy_version() < (2, 2, 0) else np.vecmat)
-      return f(x, y).astype(x.dtype)
+      return np.vecmat(x, y).astype(x.dtype)
     tol = {np.float16: 1e-2, np.float32: 1E-3, np.float64: 1e-12,
            np.complex64: 1E-3, np.complex128: 1e-12, jnp.bfloat16: 1e-1}
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
@@ -1395,7 +1388,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=default_dtypes,
-    shape=one_dim_array_shapes if jtu.numpy_version() < (2, 2, 0) else all_shapes,
+    shape=all_shapes,
     trim=["f", "b", "fb"],
   )
   def testTrimZeros(self, shape, dtype, trim):
@@ -1411,7 +1404,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     trim=["f", "b", "fb"],
     axis=[None, 0, -1]  # note: contrary to its docs, NumPy errors for multiple axes.
   )
-  @unittest.skipIf(jtu.numpy_version() < (2, 2, 0), "n-dimensional trim_zeros requires NumPy 2.2")
   def testTrimZerosAxis(self, shape, dtype, trim, axis):
     print(shape, trim, axis)
     rng = jtu.rand_some_zero(self.rng())
@@ -5392,7 +5384,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  @unittest.skipIf(numpy_version < (2, 2, 0), "test covers NumPy 2.2+ behavior.")
   @jtu.sample_product(
       shape=[(1, 3), (3, 1)],
       rowvar=[True, False],
