@@ -146,6 +146,7 @@ import jaxlib.gpu_rnn as gpu_rnn  # noqa: F401
 import jaxlib.gpu_triton as gpu_triton  # noqa: F401
 
 import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # noqa: F401
+import jaxlib.thunky.python.thunky as thunky_dialect  # noqa: F401
 
 import jaxlib.mosaic.python.tpu as tpu  # noqa: F401
 

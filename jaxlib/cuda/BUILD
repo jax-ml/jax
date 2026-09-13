@@ -485,6 +485,7 @@ cc_library(
         ":cusparse_kernels",
         ":triton_support",
         "//jaxlib/mosaic/gpu:mosaic_gpu_support",
+        "//jaxlib/thunky:thunky_support",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
     ],
@@ -653,6 +654,7 @@ py_library(
         ":_triton",
         ":_versions",
         "//jaxlib/mosaic/gpu:mosaic_gpu",
+        "//jaxlib/thunky:thunky_gpu_support",
     ],
 )
 
