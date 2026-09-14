@@ -113,6 +113,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/Parser/Parser.h"
@@ -209,7 +210,7 @@ void EnsureLLVMisInitialized() {
   });
 }
 
-mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
+absl::StatusOr<mlir::OpPassManager> GetPassPipeline(
     mlir::MLIRContext* ctx,
     const se::cuda::CompilationProvider* compilation_provider,
     const se::CudaComputeCapability& cc, const std::string& sm,
@@ -250,12 +251,26 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::LLVM::registerDIScopeForLLVMFuncOpPass();
   });
 
+  std::string diag_msg;
+  llvm::raw_string_ostream os(diag_msg);
+  mlir::ScopedDiagnosticHandler handler(
+      ctx, [&](mlir::Diagnostic& diag) {
+        diag.print(os);
+        os << "\n";
+        for (const auto& note : diag.getNotes()) {
+          os << "  note: ";
+          note.print(os);
+          os << "\n";
+        }
+        return mlir::success();
+      });
+
   std::vector<std::string> libraries_to_link{
       ::xla::gpu::nvptx::LibDevicePath(mosaic::gpu::kDefaultCudaDataDir)};
   if (!nvshmem_path.empty()) {
     libraries_to_link.push_back(nvshmem_path);
   }
-  return mlir::parsePassPipeline(absl::StrFormat(
+  auto passes = mlir::parsePassPipeline(absl::StrFormat(
       R"(
         builtin.module(
           mosaic-gpu-resolve-trivial-locations,
@@ -293,13 +308,35 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         )
       )",
       sm, ptx_isa, absl::StrJoin(libraries_to_link, ","), verify_target));
+  if (mlir::failed(passes)) {
+    os.flush();
+    if (diag_msg.empty()) {
+      diag_msg = "Unspecified MLIR pass pipeline construction failure.";
+    }
+    return absl::InternalError(absl::StrFormat(
+        "Failed to construct Mosaic GPU pass pipeline:\n%s", diag_msg));
+  }
+  return *passes;
 }
 
-mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
-                              mlir::ModuleOp module,
-                              const mosaic::gpu::DumpOptions& dump_opts) {
+absl::Status RunPasses(mlir::OpPassManager&& passes,
+                       mlir::ModuleOp module,
+                       const mosaic::gpu::DumpOptions& dump_opts) {
   mlir::PassManager pm(module.getContext());
   *static_cast<mlir::OpPassManager*>(&pm) = std::move(passes);
+  std::string diag_msg;
+  llvm::raw_string_ostream os(diag_msg);
+  mlir::ScopedDiagnosticHandler handler(
+      module.getContext(), [&](mlir::Diagnostic& diag) {
+        diag.print(os);
+        os << "\n";
+        for (const auto& note : diag.getNotes()) {
+          os << "  note: ";
+          note.print(os);
+          os << "\n";
+        }
+        return mlir::success();
+      });
   std::optional<llvm::raw_fd_ostream> dump_stream;
   if (dump_opts.mlir_passes) {
     if (!dump_opts.dump_path.empty()) {
@@ -325,7 +362,15 @@ mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
         dump_stream.has_value() ? *dump_stream : llvm::outs(),
         mlir::OpPrintingFlags().enableDebugInfo().printNameLocAsPrefix());
   }
-  return pm.run(module);
+  if (mlir::failed(pm.run(module))) {
+    os.flush();
+    if (diag_msg.empty()) {
+      diag_msg = "Unspecified MLIR pass failure.";
+    }
+    return absl::InternalError(
+        absl::StrFormat("Mosaic GPU pass pipeline failed:\n%s", diag_msg));
+  }
+  return absl::OkStatus();
 }
 
 void InitContext(mlir::MLIRContext* context) {
@@ -507,15 +552,11 @@ absl::Status RunMlirPasses(mlir::ModuleOp module, se::CudaComputeCapability cc,
   // nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a; disable
   // verification on sm_103a, sm_110a etc. where we see spurious failures.
   bool verify_target = !((cc.major == 10 && cc.minor > 0) || cc.major == 11);
-  auto passes = GetPassPipeline(module.getContext(), compilation_provider, cc,
-                                sm, llvm_ptx_isa, nvshmem_path, verify_target);
-  if (mlir::failed(passes)) {
-    return absl::InternalError("Failed to construct pass pipeline");
-  }
-  if (RunPasses(std::move(*passes), module, dump_opts).failed()) {
-    return absl::InternalError("Pass pipeline failed");
-  }
-  return absl::OkStatus();
+  ASSIGN_OR_RETURN(
+      auto passes,
+      GetPassPipeline(module.getContext(), compilation_provider, cc, sm,
+                      llvm_ptx_isa, nvshmem_path, verify_target));
+  return RunPasses(std::move(passes), module, dump_opts);
 }
 
 // This function was inspired by mlir::ExecutionEngine::create. It takes an MLIR
