@@ -906,6 +906,7 @@ def lower_module_to_custom_call(
   )
 
 
+
 def as_tpu_kernel(
     module: ir.Module,
     out_type: Any,
