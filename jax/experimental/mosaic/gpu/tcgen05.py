@@ -964,8 +964,14 @@ def tmem_alloc(
   ncols = tmem_alloc_exact_ncols(ncols, exact)
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
-  ptx = f"tcgen05.alloc.cta_group::{cta_group}.sync.aligned.shared::cta.b32 [$0], $1;"
-  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32))
+  # See wait_load_tmem: tcgen05.alloc is convergent.
+  llvm.call_intrinsic(
+      None,
+      f"llvm.nvvm.tcgen05.alloc.cg{cta_group}",
+      [tmem_addr, utils.c(ncols, i32), utils.c(0, ir.IntegerType.get_signless(1))],
+      [],
+      [],
+  )
   return ncols
 
 
@@ -975,14 +981,26 @@ def tmem_dealloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exac
   ncols = tmem_alloc_exact_ncols(ncols, exact)
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
-  ptx = f"tcgen05.dealloc.cta_group::{cta_group}.sync.aligned.b32 $0, $1;"
-  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32))
+  # See wait_load_tmem: tcgen05.dealloc is convergent.
+  llvm.call_intrinsic(
+      None,
+      f"llvm.nvvm.tcgen05.dealloc.cg{cta_group}",
+      [
+          llvm.inttoptr(llvm.PointerType.get(address_space=6), tmem_addr),
+          utils.c(ncols, i32),
+          utils.c(0, ir.IntegerType.get_signless(1)),
+      ],
+      [],
+      [],
+  )
 
 
 def tmem_relinquish_alloc_permit(collective: bool) -> None:
   cta_group = "2" if collective else "1"
-  ptx = f"tcgen05.relinquish_alloc_permit.cta_group::{cta_group}.sync.aligned;"
-  utils.inline_ptx(ptx)
+  # See wait_load_tmem: tcgen05.relinquish_alloc_permit is convergent.
+  llvm.call_intrinsic(
+      None, f"llvm.nvvm.tcgen05.relinq.alloc.permit.cg{cta_group}", [], [], []
+  )
 
 
 def _tmem_access_helper(shape, num) -> tuple[int, str]:
@@ -1863,12 +1881,15 @@ def _load_32xcols_native(
 
 
 def commit_tmem() -> None:
-  utils.inline_ptx("tcgen05.wait::st.sync.aligned;")
+  # See wait_load_tmem: tcgen05.wait::st is convergent.
+  llvm.call_intrinsic(None, "llvm.nvvm.tcgen05.wait.st", [], [], [])
   utils.warpgroup_barrier()
 
 
 def wait_load_tmem() -> None:
-  utils.inline_ptx("tcgen05.wait::ld.sync.aligned;")
+  # tcgen05.wait::ld is convergent, and inline asm cannot currently be marked
+  # convergent, so use the intrinsic instead.
+  llvm.call_intrinsic(None, "llvm.nvvm.tcgen05.wait.ld", [], [], [])
   utils.warpgroup_barrier()
 
 
