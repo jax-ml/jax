@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-load("//third_party/bazel_rules/rules_shell/shell:sh_binary.bzl", "sh_binary")
+load("//jaxlib:jax.bzl", "py_library", "py_test")
 
 package(
     default_applicable_licenses = [],
@@ -24,4 +24,15 @@ sh_binary(
     name = "process_test_results",
     srcs = ["process_test_results.sh"],
     data = [":xml2json.py"],
+)
+
+py_library(
+    name = "xml2json",
+    srcs = ["xml2json.py"],
+)
+
+py_test(
+    name = "xml2json_test",
+    srcs = ["xml2json_test.py"],
+    deps = [":xml2json"],
 )
