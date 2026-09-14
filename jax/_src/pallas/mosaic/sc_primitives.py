@@ -1087,6 +1087,11 @@ def _pack_lowering_rule(
     preferred_element_type,
 ):
   del preferred_element_type  # Unused.
+  if ctx.lowering_context.needs_layout_passes:
+    raise NotImplementedError(
+        "plsc.pack is not supported with needs_layout_passes=True. Use"
+        " jax.lax.convert_element_type or jax.Array.astype instead."
+    )
   [out_aval] = ctx.avals_out
   return tpu.pack_subelements(
       ctx.aval_to_ir_type(out_aval),
@@ -1106,8 +1111,12 @@ def pack(
 ) -> jax.Array:
   """Packs two arrays according to the given format.
 
-  .. warning:: This API is temporary and will be removed once the SparseCore
-               compiler is able to do packing/unpacking automatically.
+  .. warning:: This is a temporary low-level API, which only works with
+               ``needs_layout_passes=False``. Use
+               :func:`jax.lax.convert_element_type` or
+               :meth:`jax.Array.astype` instead. It will be removed once the
+               SparseCore compiler is able to do packing/unpacking
+               automatically.
 
   Args:
     a: The first array to pack.
@@ -1172,6 +1181,11 @@ def _unpack_lowering_rule(
     ctx: sc_lowering.LoweringRuleContext, ab, *, format, preferred_element_type
 ):
   del preferred_element_type  # Unused.
+  if ctx.lowering_context.needs_layout_passes:
+    raise NotImplementedError(
+        "plsc.unpack is not supported with needs_layout_passes=True. Use"
+        " jax.lax.convert_element_type or jax.Array.astype instead."
+    )
   out_aval, _ = ctx.avals_out
   out_type = ctx.aval_to_ir_type(out_aval)
   return (
@@ -1189,8 +1203,12 @@ def unpack(
 ) -> tuple[jax.Array, jax.Array]:
   """Unpacks two arrays according to the given format.
 
-  .. warning:: This API is temporary and will be removed once the SparseCore
-               compiler is able to do packing/unpacking automatically.
+  .. warning:: This is a temporary low-level API, which only works with
+               ``needs_layout_passes=False``. Use
+               :func:`jax.lax.convert_element_type` or
+               :meth:`jax.Array.astype` instead. It will be removed once the
+               SparseCore compiler is able to do packing/unpacking
+               automatically.
 
   Args:
     ab: The array to unpack.
