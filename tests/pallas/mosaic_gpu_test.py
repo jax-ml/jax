@@ -1407,6 +1407,28 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     ):
       jax.eval_shape(kernel)
 
+  def test_set_max_registers_raises_on_invalid_action(self):
+    @self.kernel(out_type=jax.ShapeDtypeStruct([256], jnp.float32))
+    def kernel(o_ref):
+      del o_ref  # Unused.
+      plgpu.set_max_registers(40, action="Increase")
+
+    with self.assertRaisesRegex(
+        ValueError, "action must be 'increase' or 'decrease', got 'Increase'"
+    ):
+      jax.eval_shape(kernel)
+
+  def test_set_max_registers_raises_on_invalid_register_count(self):
+    @self.kernel(out_type=jax.ShapeDtypeStruct([256], jnp.float32))
+    def kernel(o_ref):
+      del o_ref  # Unused.
+      plgpu.set_max_registers(41, action="increase")
+
+    with self.assertRaisesRegex(
+        ValueError, "n must be a positive multiple of 8, got 41"
+    ):
+      jax.eval_shape(kernel)
+
   def test_copy_gmem_to_smem_predicate(self):
     @self.kernel(
       out_type=jax.ShapeDtypeStruct([256], jnp.float32),

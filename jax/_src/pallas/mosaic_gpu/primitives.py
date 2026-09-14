@@ -3326,8 +3326,14 @@ set_max_registers_p.multiple_results = True
 
 
 @set_max_registers_p.def_effectful_abstract_eval
-def _set_max_registers_abstract_eval(n, *, action):
-  del n, action  # Unused.
+def _set_max_registers_abstract_eval(*, n: int, action):
+  # The register count of `setmaxnreg` must be a multiple of 8.
+  if not isinstance(n, int) or n <= 0 or n % 8:
+    raise ValueError(f"n must be a positive multiple of 8, got {n}")
+  if action not in ("increase", "decrease"):
+    raise ValueError(
+        f"action must be 'increase' or 'decrease', got {action!r}"
+    )
   return (), {gpu_core._memory_effect}
 
 
@@ -3336,14 +3342,14 @@ def _set_max_registers_abstract_eval(n, *, action):
 @lowering.register_lowering_rule(
     set_max_registers_p, mgpu.LoweringSemantics.Warpgroup)
 def _set_max_registers_lowering(
-    ctx: lowering.LoweringRuleContext, n, *, action
+    ctx: lowering.LoweringRuleContext, *, n: int, action
 ):
   del ctx
   action_str = "inc" if action == "increase" else "dec"
   llvm_dialect.inline_asm(
       ir.Type.parse("!llvm.void"),
       [],
-      f"setmaxnreg.{action_str}.sync.aligned.u32 {int(n)};",
+      f"setmaxnreg.{action_str}.sync.aligned.u32 {n};",
       "",
       has_side_effects=True,
   )
@@ -3352,7 +3358,7 @@ def _set_max_registers_lowering(
 
 def set_max_registers(n: int, *, action: Literal["increase", "decrease"]):
   """Sets the maximum number of per-lane registers in the thread."""
-  set_max_registers_p.bind(n, action=action)
+  set_max_registers_p.bind(n=n, action=action)
 
 
 commit_smem_p = jax_core.Primitive("commit_smem")
