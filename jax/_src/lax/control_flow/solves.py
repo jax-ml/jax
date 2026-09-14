@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for the custom linear solve and utilities."""
-import collections
 from functools import partial
 import operator
 from typing import Any, NamedTuple
@@ -22,14 +21,15 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import core
-from jax._src import custom_derivatives
+from jax._src import effects
+from jax._src import hijax
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.traceback_util import api_boundary
 from jax._src import flattree as ft
-from jax._src.tree_util import tree_leaves
+from jax._src.tree_util import tree_leaves, tree_map, tree_structure
 from jax._src.util import split_list, safe_map
 import numpy as np
 
@@ -38,14 +38,6 @@ from jax._src.lax.control_flow.common import (
     )
 
 _map = safe_map
-
-_RootTuple = collections.namedtuple('_RootTuple', 'f, solve, l_and_s')
-
-
-def _split_root_args(args, const_lengths):
-  params_list = split_list(args, list(const_lengths))
-  return _RootTuple(*params_list[:-1]), params_list[-1]
-
 
 @api_boundary
 def custom_root(f: Callable,
@@ -90,85 +82,151 @@ def custom_root(f: Callable,
     The result of calling solve(f, initial_guess) with gradients defined via
     implicit differentiation assuming ``f(solve(f, initial_guess)) == 0``.
   """
-  guess_flat = ft.flatten(initial_guess)
-  guess_avals = guess_flat.map(core.typeof)
-  f_debug = api_util.debug_info("custom_root", f, (initial_guess,), {})
-  args_avals = ft.pack(((guess_avals,),{}))
-  f_jaxpr, out_avals = pe.trace_to_jaxpr(f, args_avals, f_debug)
-  f_jaxpr, f_consts = pe.separate_consts(f_jaxpr)
+  guess_avals = tree_map(core.typeof, initial_guess)
+  guess_tree = tree_structure(initial_guess)
+  f_traced = api.jit(f).trace(initial_guess)
+  _check_tree("f", "initial_guess", f_traced.out_tree, guess_tree, False)
+  f_consts, f = f_traced.closure_convert()
 
-  _check_tree("f", "initial_guess", out_avals.tree, guess_avals.tree, False)
+  solve_traced = api.jit(partial(solve, partial(f, f_consts))).trace(initial_guess)
+  _check_tree("solve", "initial_guess", solve_traced.out_tree, guess_tree, has_aux)
+  solve_consts, solve = solve_traced.closure_convert()
 
-  solve_debug = api_util.debug_info("custom_root solve", solve,
-                                    (f, initial_guess), {},
-                                    static_argnums=(0,))
-  solve_jaxpr, solution_avals = pe.trace_to_jaxpr(
-      partial(solve, f), args_avals, solve_debug)
-  solve_jaxpr, solve_consts = pe.separate_consts(solve_jaxpr)
-  _check_tree("solve", "initial_guess", solution_avals.tree, guess_flat.tree, has_aux)
-
+  # Capture tangent_solve's environment without constructing the derivative of f.
+  tangent_avals = tree_map(lambda a: a.to_tangent_aval(), guess_avals)
+  f_jvp = _RootLinearMap(
+      f, (tree_map(core.typeof, f_consts), guess_avals, tangent_avals),
+      tree_map(lambda a: a.to_tangent_aval(), f_traced.out_avals), f_traced.effects)
   def linearize_and_solve(x, b):
-    unchecked_zeros, f_jvp = api.linearize(f, x)
-    return tangent_solve(f_jvp, b)
+    return tangent_solve(partial(f_jvp, f_consts, x), b)
+  tangent_traced = api.jit(linearize_and_solve).trace(guess_avals, tangent_avals)
+  _check_tree("tangent_solve", "x", tangent_traced.out_tree, guess_tree, False)
+  tangent_consts, tangent = tangent_traced.closure_convert()
 
-  linearize_and_solve_dbg = api_util.debug_info("custom_root tangent_solve",
-      tangent_solve, (initial_guess, initial_guess), {})
-
-
-  linearize_and_solve_avals = ft.pack(((guess_avals, guess_avals), {}))
-  l_and_s_jaxpr, out_avals = pe.trace_to_jaxpr(
-      linearize_and_solve, linearize_and_solve_avals, linearize_and_solve_dbg)
-  l_and_s_jaxpr, l_and_s_consts = pe.separate_consts(l_and_s_jaxpr)
-  _check_tree("tangent_solve", "x", out_avals.tree, guess_flat.tree, False)
-
-  all_consts = [f_consts, solve_consts, l_and_s_consts]
-  const_lengths = _RootTuple(*_map(len, all_consts))
-  jaxprs = _RootTuple(f_jaxpr, solve_jaxpr, l_and_s_jaxpr)
-
-  solution_flat = _custom_root(
-      const_lengths, jaxprs, *_flatten(all_consts), *guess_flat)
-  return solution_avals.update(solution_flat).unflatten()
+  # Keep solve's operands first so its input effect indices carry over directly.
+  args = (solve_consts, initial_guess, f_consts, tangent_consts)
+  return CustomRoot(f, solve, tangent, solve_traced, tree_map(core.typeof, args),
+                    has_aux)(*args)
 
 
-@partial(custom_derivatives.custom_jvp, nondiff_argnums=(0, 1))
-def _custom_root(const_lengths, jaxprs, *args):
-  params, initial_guess = _split_root_args(args, const_lengths)
-  solution = core.jaxpr_as_fun(jaxprs.solve)(*(params.solve + initial_guess))
-  return solution
+class CustomRoot(hijax.HiPrim):
+  f: Callable
+  solve: Callable
+  tangent_solve: Callable
+  solve_jaxpr: core.Jaxpr
+  has_aux: bool
+  skip_linearization_on_zero_tangents = True
+
+  def __init__(self, f, solve, tangent_solve, solve_traced, in_avals, has_aux):
+    self.in_avals = in_avals
+    self.out_aval = solve_traced.out_avals
+    self.effects = solve_traced.effects
+    self.params = dict(f=f, solve=solve, tangent_solve=tangent_solve,
+                       solve_jaxpr=solve_traced.jaxpr.replace(consts=None),
+                       has_aux=has_aux)
+    super().__init__()
+
+  def check(self, *_):
+    disallowed = effects.custom_derivatives_allowed_effects.filter_not_in(
+        self.effects)
+    if disallowed:
+      raise NotImplementedError(
+          f'Effects not supported in `custom_root`: {disallowed}')
+
+  def expand(self, solve_consts, guess, f_consts, tangent_consts):  # pyrefly: ignore[bad-override]
+    return self.solve(solve_consts, guess)
+
+  def lin(self, nzs, solve_consts, guess, f_consts, tangent_consts):  # pyrefly: ignore[bad-override]
+    sol = self(solve_consts, guess, f_consts, tangent_consts)
+    if not any(tree_leaves(nzs[2])):
+      return sol, None, False
+    root, aux = sol if self.has_aux else (sol, ())
+    _, f_lin = api.linearize(lambda p: self.f(p, root), f_consts, in_nzs=(nzs[2],))
+    aux_dot = tree_map(ad_util.p2tz, aux)
+    nzs_out = (True, False) if self.has_aux else True
+    return sol, (root, tangent_consts, f_lin, aux_dot), nzs_out
+
+  def linearized(self, res, solve_dot, guess_dot, f_dot, tangent_dot):  # pyrefly: ignore[bad-override]
+    if res is None:
+      return tree_map(ad_util.a2tz, self.out_aval)
+    root, tangent_consts, f_lin, aux_dot = res
+    rhs = f_lin(tree_map(ad_util.instantiate, f_dot,
+                         is_leaf=lambda x: isinstance(x, ad_util.Zero)))
+    # F(p, x(p)) = 0 implies dx = -(D_x F)^-1 D_p F dp.
+    root_dot = tree_map(operator.neg, self.tangent_solve(tangent_consts, root, rhs))
+    return (root_dot, aux_dot) if self.has_aux else root_dot
+
+  jvp = hijax.jvp_from_lin
+  vjp_fwd, vjp_bwd_retval = hijax.vjp_from_lin
+
+  def batch_dim_rule(self, axis_data, dims):
+    in_dims = tree_leaves(dims[:2], is_leaf=lambda x: x is None)
+    _, out_dims = batching.batch_jaxpr2(self.solve_jaxpr, axis_data, tuple(in_dims))
+    out_dims = self.out_tree.unflatten(out_dims)
+    root_dims, aux_dims = out_dims if self.has_aux else (out_dims, ())
+    # Implicit derivatives may vary even when the primal root is constant.
+    if any(d is not None for d in tree_leaves(dims, is_leaf=lambda x: x is None)):
+      root_avals = self.out_aval[0] if self.has_aux else self.out_aval
+      root_dims = tree_map(lambda a: a.leading_axis_spec(), root_avals)
+    return (root_dims, aux_dims) if self.has_aux else root_dims
 
 
-@_custom_root.defjvp
-def _root_jvp(const_lengths, jaxprs, primals, tangents):
-  params, _ = _split_root_args(primals, const_lengths)
-  sol = _custom_root(const_lengths, jaxprs, *primals)
+class _RootLinearMap(hijax.HiPrim):
+  """Apply D_x f or its transpose, expanding AD only when the map is used.
 
-  f_out_vals = len(jaxprs.f.out_avals)
-  solution, aux = split_list(sol, [f_out_vals])
+  Keeping the map opaque also lets tangent_solve build a Jacobian with jacfwd
+  or jacrev without differentiating f during the primal custom_root trace.
+  """
+  f: Callable
+  transposed: bool
+  skip_linearization_on_zero_tangents = True
 
-  params_dot, _ = _split_root_args(tangents, const_lengths)
+  def __init__(self, f, in_avals, out_aval, effects, transposed=False):
+    self.in_avals = in_avals
+    self.out_aval = out_aval
+    self.params = dict(f=f, transposed=transposed)
+    self.effects = effects
+    super().__init__()
 
-  # F(m, u) = 0      # system of equations in u, parameterized by m
-  #                  # solution is u*(m) defined in a neighborhood
-  # F(m, u*(m)) = 0  # satisfied in a neighborhood
-  #
-  # ∂_0 F(m, u*(m)) + ∂_1 F(m, u*(m)) ∂ u*(m) = 0       # implied by line above
-  # ∂ u*(m) = - (∂_1 F(m, u*(m)))^{-1} ∂_0 F(m, u*(m))  # rearrange
-  #
-  # ∂ u*(m)[v] = - (∂_1 F(m, u*(m)))^{-1} [∂_0 F(m, u*(m))[v]]  # jvp
+  def expand(self, consts, x, v):  # pyrefly: ignore[bad-override]
+    if self.transposed:
+      return api.vjp(partial(self.f, consts), x)[1](v)[0]
+    return api.jvp(partial(self.f, consts), (x,), (v,))[1]
 
-  f = core.jaxpr_as_fun(jaxprs.f)
-  linearize_and_solve = partial(
-      core.jaxpr_as_fun(jaxprs.l_and_s), *params.l_and_s)
-  f_at_solution = lambda *params: f(*params, *solution)
-  _, f_at_solution_lin = api.linearize(f_at_solution, *params.f)
-  rhs = f_at_solution_lin(*params_dot.f)
-  solution_dot = _map(
-      operator.neg, linearize_and_solve(*solution, *rhs))
-  # append aux, create zero tangents of the appropriate tangent type
-  solution += aux
-  solution_dot += _map(ad_util.zero_from_primal, aux)
+  def transpose(self, out_ct, consts, x, v_accums):  # pyrefly: ignore[bad-override]
+    in_avals = (*self.in_avals[:2], tree_map(lambda a: a.to_ct_aval(), self.out_aval))
+    out_aval = tree_map(lambda a: a.to_ct_aval(), self.in_avals[2])
+    prim = _RootLinearMap(self.f, in_avals, out_aval, self.effects,
+                          not self.transposed)
+    out_ct = tree_map(ad_util.instantiate, out_ct,
+                       is_leaf=lambda x: isinstance(x, ad_util.Zero))
+    v_ct = prim(consts, x, out_ct)
+    for acc, ct in zip(tree_leaves(v_accums), tree_leaves(v_ct)):
+      if isinstance(acc, ad.GradAccum):
+        acc.accum(ct)
 
-  return solution, solution_dot
+  def jvp(self, primals, tangents):
+    const_dot, x_dot, v_dot = tangents
+    zero = lambda x: isinstance(x, ad_util.Zero)
+    if all(zero(t) for t in tree_leaves((const_dot, x_dot), is_leaf=zero)):
+      consts, x, _ = primals
+      out = self(*primals)
+      if all(zero(t) for t in tree_leaves(v_dot, is_leaf=zero)):
+        return out, tree_map(ad_util.p2tz, out)
+      v_dot = tree_map(ad_util.instantiate, v_dot, is_leaf=zero)
+      return out, self(consts, x, v_dot)
+    # Preserve symbolic zeros when differentiating the operator's coefficients.
+    primals_ft = ft.flatten(primals)
+    tangents_ft = primals_ft.update(self.in_tree.flatten_up_to(tangents))
+    out, out_dot = ad.jvp(self.expand, primals_ft, tangents_ft, instantiate=False)
+    return out.unflatten(), out_dot.unflatten()
+
+  lin, linearized = hijax.linearize_from_jvp
+  vjp_fwd, vjp_bwd_retval = hijax.vjp_from_lin
+
+  def batch_dim_rule(self, axis_data, dims):
+    mapped = any(d is not None for d in tree_leaves(dims, is_leaf=lambda x: x is None))
+    return tree_map(lambda a: a.leading_axis_spec() if mapped else None, self.out_aval)
 
 
 class _LinearSolveTuple(NamedTuple):
