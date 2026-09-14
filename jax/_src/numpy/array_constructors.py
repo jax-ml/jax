@@ -49,22 +49,29 @@ for pkg_name in ['jax_cuda13_plugin', 'jax_cuda12_plugin', 'jaxlib.cuda']:
     break
 
 # Dynamically find and load ROCm plugin extension
+# Skip discovery if JAX_PLATFORMS is set and doesn't include ROCm,
+# to avoid iterating all distributions (slow in large venvs).
+import os as _os
+_jax_platforms = _os.environ.get('JAX_PLATFORMS', '')
 rocm_plugin_extension = None
-try:
-  from importlib.metadata import distributions
-  for dist in distributions():
-    name = dist.metadata.get('Name', '')
-    if name.startswith('jax-rocm') and name.endswith('-plugin'):
-      module_name = name.replace('-', '_')
-      try:
-        rocm_plugin_extension = importlib.import_module(
-            f'{module_name}.rocm_plugin_extension'
-        )
-        break
-      except ImportError:
-        continue
-except Exception as e:
-  logger.debug("ROCm plugin discovery failed: %s", e)
+if _jax_platforms and not any(k in _jax_platforms.lower() for k in ('rocm', 'gpu')):
+  pass  # skip ROCm discovery
+else:
+  try:
+    from importlib.metadata import distributions
+    for dist in distributions():
+      name = dist.metadata.get('Name', '')
+      if name.startswith('jax-rocm') and name.endswith('-plugin'):
+        module_name = name.replace('-', '_')
+        try:
+          rocm_plugin_extension = importlib.import_module(
+              f'{module_name}.rocm_plugin_extension'
+          )
+          break
+        except ImportError:
+          continue
+  except Exception as e:
+    logger.debug("ROCm plugin discovery failed: %s", e)
 
 
 def _supports_buffer_protocol(obj):
