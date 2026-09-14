@@ -5544,38 +5544,44 @@ class FragmentedArrayTest(TestCase):
       (mgpu.FragmentedArray.sin, np.sin),
       (mgpu.FragmentedArray.cos, np.cos),
       (mgpu.FragmentedArray.tanh, np.tanh),
+      (mgpu.FragmentedArray.tanh, np.tanh, jnp.float16),
+      (mgpu.FragmentedArray.tanh, np.tanh, jnp.bfloat16),
       (mgpu.FragmentedArray.rsqrt, jax.lax.rsqrt),
       (mgpu.FragmentedArray.sqrt, np.sqrt),
       (mgpu.FragmentedArray.erf, jax.scipy.special.erf),
   )
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``
   @jtu.ignore_warning(message="overflow encountered", category=RuntimeWarning)
-  def test_math(self, op, np_op, m=64, n=32):
+  def test_math(self, op, np_op, dtype=jnp.float32, m=64, n=32):
     if jtu.is_running_under_pytest():
       self.skipTest("PTX dump capture fails under pytest")
     def run_test(**kwargs):
       def kernel(ctx, dst, _):
         del ctx
-        iota = iota_tensor(m, n, jnp.float32) + 1
+        iota = iota_tensor(m, n, dtype) + 1
         op(iota, **kwargs).store_untiled(dst, optimized=False)
-      out_shape = jax.ShapeDtypeStruct((m, n), jnp.float32)
+      out_shape = jax.ShapeDtypeStruct((m, n), dtype)
       with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), jtu.capture_stdout() as ptx:
         result = mgpu.as_gpu_kernel(
             kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
         )()
       return result, ptx()
-    x = np.arange(m * n, dtype=jnp.float32).reshape(m, n) + 1
+    x = np.arange(m * n, dtype=np.float32).reshape(m, n) + 1
     kwargs = {} if op is mgpu.FragmentedArray.erf else {"approx": False}
-    ref = np_op(x)
+    ref = np_op(x).astype(dtype)
     result, ptx = run_test(**kwargs)
-    np.testing.assert_allclose(result, ref, atol=2e-7, rtol=2e-7)
+    atol = 2e-3 if dtype in (jnp.float16, jnp.bfloat16) else 2e-7
+    rtol = 2e-3 if dtype in (jnp.float16, jnp.bfloat16) else 2e-7
+    np.testing.assert_allclose(result, ref, atol=atol, rtol=rtol)
 
     if op is mgpu.FragmentedArray.erf:
       # erf not supported with approximation.
       return
 
     result_approx, ptx_approx = run_test(approx=True)
-    np.testing.assert_allclose(result_approx, ref, atol=5e-3, rtol=4e-6)
+    atol = 1e-2 if dtype in (jnp.float16, jnp.bfloat16) else 5e-3
+    rtol = 1e-2 if dtype in (jnp.float16, jnp.bfloat16) else 4e-6
+    np.testing.assert_allclose(result_approx, ref, atol=atol, rtol=rtol)
 
     # This is not super precise, but is a generic way of ensuring we take
     # different code generation paths.
@@ -5638,7 +5644,6 @@ class FragmentedArrayTest(TestCase):
         dtype
     )
     np.testing.assert_array_equal(result, ref)
-
 
   def test_strided_copy_noncontig_good(self):
     def kernel(ctx, src, dst, _):

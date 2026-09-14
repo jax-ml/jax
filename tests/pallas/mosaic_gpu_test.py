@@ -390,6 +390,35 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       y = kernel(x)
     np.testing.assert_allclose(y, lax.sqrt(x), rtol=1e-5)
 
+  @parameterized.product(
+      approx_math=(False, True),
+      dtype=(jnp.float32, jnp.float16, jnp.bfloat16),
+  )
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_tanh(self, approx_math, dtype):
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct([256], dtype),
+        compiler_params=plgpu.CompilerParams(approx_math=approx_math),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = lax.tanh(x_ref[...])
+
+    x = (jnp.arange(256).astype(dtype) - 128) / 32
+    if approx_math:
+      with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as out:
+        y = jax.block_until_ready(kernel(x))
+      instr = {
+          jnp.float32: "tanh.approx.f32",
+          jnp.float16: "tanh.approx.f16",
+          jnp.bfloat16: "tanh.approx.bf16",
+      }[dtype]
+      self.assertIn(instr, out())
+    else:
+      y = kernel(x)
+    atol = 1e-2 if approx_math else 2e-3
+    rtol = 1e-2 if approx_math else 2e-3
+    np.testing.assert_allclose(y, lax.tanh(x), atol=atol, rtol=rtol)
+
   @parameterized.parameters(jnp.float32, jnp.int32, jnp.uint32)
   def test_sign(self, dtype):
     @functools.partial(

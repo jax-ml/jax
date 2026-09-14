@@ -1908,11 +1908,21 @@ class FragmentedArray:
   def tanh(self, *, approx: bool = False) -> FragmentedArray:
     if not isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
-    if approx and self.mlir_dtype != ir.F32Type.get():
-      raise NotImplementedError
-    return self._pointwise(
-        self._lift_fast_instr("tanh.approx.f32") if approx else mlir_math.tanh
-    )
+    tanhf = mlir_math.tanh
+    if approx:
+      if isinstance(self.mlir_dtype, ir.F32Type):
+        tanhf = self._lift_fast_instr("tanh.approx.f32")
+      elif isinstance(self.mlir_dtype, ir.F16Type):
+        tanhf = self._lift_fast_packed_instr(
+            "tanh.approx.f16x2", "tanh.approx.f16"
+        )
+      elif isinstance(self.mlir_dtype, ir.BF16Type):
+        tanhf = self._lift_fast_packed_instr(
+            "tanh.approx.bf16x2", "tanh.approx.bf16"
+        )
+      else:
+        raise NotImplementedError(self.mlir_dtype)
+    return self._pointwise(tanhf)
 
   def rsqrt(self, *, approx: bool = False) -> FragmentedArray:
     if not isinstance(self.mlir_dtype, ir.FloatType):
