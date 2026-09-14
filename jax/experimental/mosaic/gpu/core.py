@@ -1004,6 +1004,25 @@ def _declare_runtime_functions():
   func.FuncOp(
       "mosaic_gpu_init_tma_desc", init_tma_desc_type, visibility="private"
   )
+  im2col_arg_tys = [
+      ptr_ty,
+      ptr_ty,
+      i64,
+      i64,
+      ptr_ty,
+      ptr_ty,
+      i64,
+      ptr_ty,
+      ptr_ty,
+      i64,
+      i64,
+  ]
+  init_tma_im2col_desc_type = ir.FunctionType.get(im2col_arg_tys, [])
+  func.FuncOp(
+      "mosaic_gpu_init_tma_im2col_desc",
+      init_tma_im2col_desc_type,
+      visibility="private",
+  )
 
 
 def lower_mgpu_module(
