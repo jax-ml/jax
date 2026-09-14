@@ -260,8 +260,17 @@ def _serialize(obj: Any) -> bytes:
     _common_obj_state.common_obj_index = None
 
 
+# NOTE: Lock is required since `loads` can trigger importing Python modules,
+# and doing so across multiple threads in parallel is not thread safe and
+# can lead to deadlocks.
+_deserialize_lock = threading.Lock()
+
+
 def _deserialize(serialized: bytes) -> Any:
-  """Deserializes callables and input/output spec objects.
+  """Deserializes callables and input/output spec objects without locking.
+
+  Used directly in safe contexts (e.g. `_deserialize_specs`) where unpickling
+  will not trigger arbitrary Python module imports.
 
   DO NOT USE THIS FUNCTION EXCEPT FOR THE INTERNAL IMPLEMENTATION OF
   colocated_python. See serialize() for details.
@@ -279,6 +288,16 @@ def _deserialize(serialized: bytes) -> Any:
     return cloudpickle.loads(serialized)
   finally:
     _common_obj_state.common_obj = None
+
+
+def _deserialize_with_lock(serialized: bytes) -> Any:
+  """Deserializes callables and objects while holding a global lock.
+
+  Use this variant when unpickling objects that may trigger Python module
+  imports across multiple threads.
+  """
+  with _deserialize_lock:
+    return _deserialize(serialized)
 
 
 def _make_specs_for_serialized_specs(

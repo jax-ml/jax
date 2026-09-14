@@ -35,7 +35,7 @@ from jax._src.sharding_impls import physical_sharding
 from jax._src.traceback_util import api_boundary
 from jax._src.util import wraps
 from jax.experimental.colocated_python import func_backend
-from jax.experimental.colocated_python.serialization import _deserialize, _deserialize_specs, _make_specs_for_serialized_specs, _serialize, _serialize_specs
+from jax.experimental.colocated_python.serialization import _deserialize_specs, _deserialize_with_lock, _make_specs_for_serialized_specs, _serialize, _serialize_specs
 from jax.extend.backend import register_backend_cache as jax_register_backend_cache
 from jax.extend.ifrt_programs import ifrt_programs
 
@@ -322,7 +322,7 @@ def _compile_to_executable(
     # TODO(hyeontaek): Implement colocated Python support in McJAX and remove
     # this fallback path.
     if "PjRtCompiler requires an HloProgram" in str(e):
-      deserialized_fun = _deserialize(pickled_function)[0]
+      deserialized_fun = _deserialize_with_lock(pickled_function)[0]
 
       @wraps(deserialized_fun)
       def fallback_call(*args, __deserialized_fun=deserialized_fun, **kwargs):
