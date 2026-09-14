@@ -1754,6 +1754,49 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(jax.jit(jax.grad(sin))(2.0), jnp.cos(2.0))
     self.assertAllClose(jax.grad(jax.grad(sin))(2.0), -jnp.sin(2.0))
 
+  @parameterized.parameters(False, True)
+  def test_vjp_from_lin_symbolic_zeros_and_integer_aux(self, jit):
+    class WithAux(HiPrim):
+      def __init__(self, x, scale, n):
+        self.in_avals = (x, scale, n)
+        self.out_aval = {'value': x, 'aux': n}
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x, scale, n):
+        return {'value': x * scale, 'aux': n}
+
+      def jvp(self, primals, tangents):
+        x, scale, _ = primals
+        x_dot, scale_dot, _ = map(instantiate_zeros, tangents)
+        out = self(*primals)
+        return out, {'value': x_dot * scale + x * scale_dot,
+                     'aux': Zero(jax.typeof(out['aux']).to_tangent_aval())}
+
+      lin, linearized = linearize_from_jvp
+      vjp_fwd, vjp_bwd_retval = vjp_from_lin
+
+      def batch_dim_rule(self, axis_data, dims):
+        x, scale, n = dims
+        return {'value': 0 if x is not None or scale is not None else None,
+                'aux': n}
+
+    def f(x, scale, n):
+      return WithAux(*map(jax.typeof, (x, scale, n)))(x, scale, n)
+
+    if jit:
+      f = jax.jit(f)
+    n = jnp.int32(7)
+    value = lambda x, scale: f(x, scale, n)['value']
+    self.assertAllClose(jax.grad(value)(2., 3.), 3.)
+    self.assertAllClose(jax.grad(value, argnums=1)(2., 3.), 2.)
+    self.assertAllClose(jax.grad(jax.grad(value), argnums=1)(2., 3.), 1.)
+    n_ct = jax.grad(lambda n: f(2., 3., n)['value'], allow_int=True)(n)
+    self.assertEqual(n_ct.dtype, jax.dtypes.float0)
+    xs = jnp.arange(3.)
+    self.assertAllClose(jax.grad(lambda scale: jax.vmap(
+        lambda x: value(x, scale))(xs).sum())(3.), xs.sum())
+
   def test_structured_residuals(self):
     # `lin` and `vjp_fwd` may return a fourth element, structured residuals,
     # in which case `linearized` and `vjp_bwd` receive them as an extra
