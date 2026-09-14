@@ -140,6 +140,7 @@ pytype_strict_library(
         ":fusion",
         "//jax",
         "//jax/_src:api_util",
+        "//jax/_src:config",
         "//jax/_src:core",
         "//jax/_src:flattree",
         "//jax/_src:hijax",

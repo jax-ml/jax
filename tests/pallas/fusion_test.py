@@ -46,6 +46,69 @@ class FusionTest(jtu.JaxTestCase):
     x = jax.random.normal(jax.random.key(0), (128, 128), dtype=jnp.float32)
     np.testing.assert_array_equal(f(x), x)
 
+  def test_nested_fuse(self):
+    @fuser.fusible
+    def f(x_fn, y_fn):
+      x = x_fn()
+      if y_fn is None:
+        y_fn = lambda x: x
+      return y_fn(x)
+
+    @fuser.fuse
+    def inner(x):
+      return f(x) + 1.0
+
+    @jax.jit
+    @fuser.fuse
+    def outer(x):
+      return inner(x) * 2.0
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    np.testing.assert_allclose(outer(x), (x + 1.0) * 2.0)
+    np.testing.assert_allclose(inner(x), x + 1.0)
+
+    @jax.jit
+    @fuser.fuse
+    @fuser.fuse
+    def double_fused(x):
+      return f(x) + 3.0
+
+    np.testing.assert_allclose(double_fused(x), x + 3.0)
+
+    # Pass fuse wrapper as an argument
+    @functools.partial(fuser.fuse, static_argnums=0)
+    def outer_with_fn_arg(fn, x):
+      return fn(x) * 2.0
+
+    np.testing.assert_allclose(
+        jax.jit(outer_with_fn_arg, static_argnums=0)(inner, x), (x + 1.0) * 2.0
+    )
+
+  def test_nested_fuse_cache(self):
+    @fuser.fusible
+    def f(x_fn, y_fn):
+      x = x_fn()
+      if y_fn is None:
+        y_fn = lambda x: x
+      return y_fn(x)
+
+    @fuser.fuse
+    def inner(x):
+      return f(x) + 1.0
+
+    @fusible_dtype.physicalize
+    def cached_inner(x):
+      return inner(x)
+
+    @jax.jit
+    @fuser.fuse
+    def outer_cached(x):
+      return cached_inner(x) * 2.0
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    np.testing.assert_allclose(cached_inner(x), x + 1.0)
+    np.testing.assert_allclose(outer_cached(x), (x + 1.0) * 2.0)
+
   def test_separate_output_fusions_trivial(self):
 
     @fuser.fusible(output_fusion_prefix=(True, True))
