@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from functools import partial
+import operator
 from typing import Any
 import warnings
 
@@ -443,9 +444,24 @@ def reduce_window_jvp(
   if not all(isinstance(t, ad.Zero) for t in init_value_tangent):
     raise TypeError("reduce_window jvp does not support non-zero init_value_tangent.")
 
-  init_value_tangent = map(ad_util.instantiate, init_value_tangent)
   c_reduction_jaxpr = reduction_jaxpr.with_consts(consts)
-  jvp_reduction = ad.jvp_jaxpr(c_reduction_jaxpr, (True,) * len(tangents), [False] * len(init_value_tangent))[0]
+
+  # Fixpoint computation of which operand tangents are not ad.zero.
+  nonzero_tangents = [not isinstance(t, ad.Zero) for t in operand_tangent]
+  for _ in range(1 + n):
+    jvp_reduction, out_nonzero_tangents = ad.jvp_jaxpr(
+        c_reduction_jaxpr, [*nonzero_tangents, *nonzero_tangents],
+        instantiate=nonzero_tangents)
+    if out_nonzero_tangents == nonzero_tangents:
+      break
+    nonzero_tangents = map(operator.or_, nonzero_tangents, out_nonzero_tangents)
+  else:
+    assert False, "Fixpoint not reached"
+
+  operand_tangent = [ad.instantiate_zeros(t)
+                     for t, nz in zip(operand_tangent, nonzero_tangents) if nz]
+  init_value_tangent = [ad.instantiate_zeros(t)
+                        for t, nz in zip(init_value_tangent, nonzero_tangents) if nz]
 
   def wrapper(left, right):
     pl, tl = util.split_list(left, [n])
@@ -462,7 +478,10 @@ def reduce_window_jvp(
       base_dilation=base_dilation,
       window_dilation=window_dilation,
   )
-  primals, tangents = util.split_list(jvp_primals_tangents, [len(jvp_primals_tangents) // 2])
+  primals, tangents = util.split_list(jvp_primals_tangents, [n])
+  tangents_iter = iter(tangents)
+  tangents = [next(tangents_iter) if nz else ad_util.p2tz(p)
+              for p, nz in zip(primals, nonzero_tangents)]
   return [*primals], [*tangents]
 
 ad.primitive_jvps[reduce_window_p] = reduce_window_jvp
