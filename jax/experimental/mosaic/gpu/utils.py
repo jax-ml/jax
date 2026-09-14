@@ -100,6 +100,7 @@ def inline_ptx(
     result_types: ir.Type,
     predicate: None = ...,
     has_side_effects: bool = ...,
+    convergent: bool = ...,
 ) -> ir.Value:
   ...
 
@@ -111,6 +112,7 @@ def inline_ptx(
     result_types: Sequence[ir.Type],
     predicate: None = ...,
     has_side_effects: bool = ...,
+    convergent: bool = ...,
 ) -> tuple[ir.Value, ...]:
   ...
 
@@ -122,6 +124,7 @@ def inline_ptx(
     result_types: None = ...,
     predicate: ir.Value | None = ...,
     has_side_effects: Literal[True] = ...,
+    convergent: bool = ...,
 ) -> None:
   ...
 
@@ -132,6 +135,7 @@ def inline_ptx(
     result_types: Sequence[ir.Type] | ir.Type | None = None,
     predicate: ir.Value | None = None,
     has_side_effects: bool = False,
+    convergent: bool = False,
 ) -> ir.Value | tuple[ir.Value, ...] | None:
   """Emits an LLVM inline assembly operation targeting PTX.
 
@@ -144,6 +148,11 @@ def inline_ptx(
       This must be `None` if `result_types` is not `None`.
     has_side_effects: Whether the inline asm has side effects. If the assembly
       does not return any result, this must be `True`.
+    convergent: Whether the inline asm is convergent, i.e. whether it interacts
+      with a dynamically-determined set of threads (barriers, shuffles, and
+      other warp/warpgroup collectives). This prevents passes from moving or
+      merging it across divergent control flow. `has_side_effects` does not
+      imply this.
 
   Returns:
     `None` if `result_types` is `None`, a single `ir.Value` if `result_types` is
@@ -190,8 +199,23 @@ def inline_ptx(
   in_constraints = [_ptx_constraint(arg.type) for arg in args]
   constraints = ",".join(out_constraints + in_constraints)
 
+  # TODO(bchetioui): pass `convergent` unconditionally the minimum jaxlib
+  # version is 0.11.2.
+  extra_kwargs = {}
+  if hasattr(llvm.InlineAsmOp, "convergent"):
+    extra_kwargs["convergent"] = convergent
+  elif convergent:
+    raise NotImplementedError(
+        "Marking inline PTX as convergent requires a jaxlib >= 0.11.2"
+    )
+
   result = llvm.inline_asm(
-      asm_ret_type, args, ptx, constraints, has_side_effects=has_side_effects
+      asm_ret_type,
+      args,
+      ptx,
+      constraints,
+      has_side_effects=has_side_effects,
+      **extra_kwargs,  # pyrefly: ignore[bad-argument-type]
   )
   if result_types is None:
     return None
