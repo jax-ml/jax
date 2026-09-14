@@ -41,28 +41,107 @@ py_library(
         "absl/flags",
         "mpmath",
         "numpy",
+        "scipy",
     ]),
 )
 
-jax_multiplatform_test(
+ELEMENTARY_OPS = [
+    "acos",
+    "acosh",
+    "asin",
+    "asinh",
+    "atan",
+    "atanh",
+    "cbrt",
+    "cos",
+    "cosh",
+    "exp",
+    "exp2",
+    "expm1",
+    "log",
+    "log10",
+    "log1p",
+    "log2",
+    "logistic",
+    "reciprocal",
+    "rsqrt",
+    "sin",
+    "sinc",
+    "sinh",
+    "sqrt",
+    "square",
+    "tan",
+    "tanh",
+]
+
+[
+    jax_multiplatform_test(
+        name = "elementary_test_" + op,
+        srcs = ["elementary_test.py"],
+        args = ["--test_targets=ElementaryTest.test_" + op + "_"],
+        disable_configs = [
+            "cpu_x32",
+            "gpu_a100_x32",
+            "gpu_h100_x32",
+            "gpu_p100_x32",
+            "gpu_v100_x32",
+            "tpu_v4_compilation_cache",
+        ],
+        tags = ["cpu:4"],
+        deps = [
+            ":numerics_test_util",
+        ] + py_deps([
+            "absl/testing",
+            "mpmath",
+            "numpy",
+        ]),
+    )
+    for op in ELEMENTARY_OPS
+]
+
+test_suite(
     name = "elementary_test",
-    srcs = ["elementary_test.py"],
-    disable_configs = [
-        "cpu_x32",
-        "gpu_a100_x32",
-        "gpu_h100_x32",
-        "gpu_p100_x32",
-        "gpu_v100_x32",
-    ],
-    shard_count = 10,
-    tags = ["cpu:4"],
-    deps = [
-        ":numerics_test_util",
-    ] + py_deps([
-        "absl/testing",
-        "mpmath",
-        "numpy",
-    ]),
+    tests = [":elementary_test_" + op for op in ELEMENTARY_OPS],
+)
+
+SPECIAL_OPS = [
+    "bessel_i0e",
+    "bessel_i1e",
+    "digamma",
+    "erf",
+    "erfc",
+    "erf_inv",
+    "lgamma",
+]
+
+[
+    jax_multiplatform_test(
+        name = "special_test_" + op,
+        srcs = ["special_test.py"],
+        args = ["--test_targets=SpecialTest.test_" + op + "_"],
+        disable_configs = [
+            "cpu_x32",
+            "gpu_a100_x32",
+            "gpu_h100_x32",
+            "gpu_p100_x32",
+            "gpu_v100_x32",
+            "tpu_v4_compilation_cache",
+        ],
+        tags = ["cpu:4"],
+        deps = [
+            ":numerics_test_util",
+        ] + py_deps([
+            "absl/testing",
+            "mpmath",
+            "numpy",
+        ]),
+    )
+    for op in SPECIAL_OPS
+]
+
+test_suite(
+    name = "special_test",
+    tests = [":special_test_" + op for op in SPECIAL_OPS],
 )
 
 jax_multiplatform_test(

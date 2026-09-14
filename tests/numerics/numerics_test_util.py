@@ -14,6 +14,7 @@
 
 """Precision testing utilities for elementary floating-point functions."""
 
+from collections.abc import Callable
 import collections
 import concurrent.futures
 import os
@@ -25,6 +26,7 @@ from jax._src import tpu_info
 import jax.numpy as jnp
 import mpmath
 import numpy as np
+import scipy.special
 
 
 def _default_num_workers() -> int:
@@ -267,7 +269,10 @@ def _eval_mpmath(mpmath_fn, val, dtype=None, input_ftz: bool = True):
   """Evaluates scalar mpmath function at current mpmath precision."""
   if input_ftz and dtype is not None:
     val = _flush_subnormals(np.array(val, dtype=dtype), dtype).item()
-  res = mpmath_fn(mpmath.mpf(float(val)))
+  try:
+    res = mpmath_fn(mpmath.mpf(float(val)))
+  except ZeroDivisionError:
+    return -mpmath.inf if np.signbit(val) else mpmath.inf
   if isinstance(res, mpmath.mpc):
     return mpmath.nan
   return res
@@ -455,6 +460,7 @@ def check_unary_precision(
     bounds: list | None = None, input_ftz: bool | list = True,
     output_ftz: bool | list = True,
     ignore_inputs: list | None = None,
+    ref_fn: Callable | None = None,
 ):
   """Checks unary precision of `jax_fn` against a higher-precision reference.
 
@@ -478,7 +484,11 @@ def check_unary_precision(
       ULP distances (bool or per-variant override list).
     ignore_inputs: Optional per-variant list of specific input values or uint
       bit patterns to exclude from error checking.
+    ref_fn: Optional custom reference function operating on float64 numpy arrays.
   """
+  if (dtype == jnp.float64 or dtype == np.float64) and jtu.device_under_test() == "tpu":
+    test_case.skipTest("float64 on TPU is ef57 double-double")
+
   variant = get_hardware_variant()
   in_ftz = _resolve_override(input_ftz, variant, dtype, True)
   out_ftz = _resolve_override(output_ftz, variant, dtype, True)
@@ -496,7 +506,29 @@ def check_unary_precision(
   total_points = min(total_elements, max_samples)
 
   jitted_jax_fn = jax.jit(jax_fn)
-  np_fn = getattr(np, jax_fn.__name__)
+  if ref_fn is not None:
+    np_fn = ref_fn
+  else:
+    np_fn = getattr(np, jax_fn.__name__, None)
+    if np_fn is None:
+      if jax_fn.__name__ == "rsqrt":
+        np_fn = lambda x: np.reciprocal(np.sqrt(x))
+      elif jax_fn.__name__ == "logistic":
+        np_fn = lambda x: 1.0 / (1.0 + np.exp(-x))
+      elif hasattr(scipy.special, jax_fn.__name__):
+        np_fn = getattr(scipy.special, jax_fn.__name__)
+      elif jax_fn.__name__ == "erf_inv":
+        np_fn = scipy.special.erfinv
+      elif jax_fn.__name__ == "bessel_i0e":
+        np_fn = scipy.special.i0e
+      elif jax_fn.__name__ == "bessel_i1e":
+        np_fn = scipy.special.i1e
+      elif jax_fn.__name__ == "lgamma":
+        np_fn = scipy.special.gammaln
+      elif jax_fn.__name__ == "digamma":
+        np_fn = scipy.special.psi
+      else:
+        raise ValueError(f"No reference function for {jax_fn.__name__}")
   k = NUM_WORST_CASES.value
   max_bin = MAX_ULP_BIN.value
 
