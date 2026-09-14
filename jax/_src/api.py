@@ -22,64 +22,62 @@ arrays.
 """
 from __future__ import annotations
 
-import gc
-import sys
-import os
 import atexit
 import collections
 from collections.abc import Callable, Hashable, Iterable, Sequence
+from contextlib import contextmanager
 import dataclasses
 import enum
 from functools import partial
+import gc
 import inspect
-from typing import Any, Literal, overload, cast, TYPE_CHECKING
+import os
+import sys
+from typing import Any, Literal, TYPE_CHECKING, cast, overload
 import weakref
 
-import numpy as np
-from contextlib import contextmanager
-
 from jax._src import api_util
-from jax._src import linear_util as lu
-from jax._src import flattree as ft
-from jax._src.tree_util import (
-    tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
-    tree_leaves, Partial, PyTreeDef, keystr, generate_key_paths,
-    tree_flatten_with_path, equality_errors_pytreedef, register_pytree_node,
-    register_dataclass, treedef_is_strict_leaf, broadcast_prefix)
+from jax._src import array
+from jax._src import basearray
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
-from jax._src import array
-from jax._src import basearray
 from jax._src import distributed
 from jax._src import dtypes
-from jax._src.dtypes import canonicalize_value
+from jax._src import flattree as ft
+from jax._src import linear_util as lu
+from jax._src import pjit
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
-from jax._src import pjit
-from jax._src import xla_bridge as xb
-from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray, typeof
-from jax._src.api_util import (
-  flatten_fun_nokwargs,
-  flatten_axes, _ensure_index, check_callable, debug_info, argnums_partial2)
-from jax._src.lib import jax_jit
-from jax._src.lib import _jax
-from jax._src.lib import xla_client as xc
-from jax._src.sharding import Sharding
-from jax._src.mesh import get_concrete_mesh, get_abstract_mesh, Mesh
-from jax._src.sharding_impls import PartitionSpec as P, NamedSharding
-from jax._src.layout import Format
-from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
-from jax._src.util import unzip2, safe_map, safe_zip, wraps
 from jax._src import util
+from jax._src import xla_bridge as xb
 from jax._src.ad_util import a2tz
-
+from jax._src.api_util import ( _ensure_index, argnums_partial2, check_callable, debug_info,
+  flatten_axes,
+  flatten_fun_nokwargs)
+from jax._src.core import ShapedArray, eval_jaxpr, shaped_abstractify, typeof
+from jax._src.dtypes import canonicalize_value
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
+from jax._src.layout import Format
+from jax._src.lib import _jax
+from jax._src.lib import jax_jit
+from jax._src.lib import xla_client as xc
+from jax._src.mesh import AbstractMesh, Mesh, get_abstract_mesh, get_concrete_mesh
+from jax._src.sharding import Sharding
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
+from jax._src.traceback_util import api_boundary
+from jax._src.tree_util import ( Partial, PyTreeDef, broadcast_prefix, equality_errors_pytreedef, generate_key_paths, keystr,
+    register_dataclass, register_pytree_node, tree_flatten,
+    tree_flatten_with_path,
+    tree_leaves,
+    tree_map, tree_structure, tree_transpose, tree_unflatten, treedef_is_strict_leaf)
+from jax._src.util import safe_map, safe_zip, unzip2, wraps
+import numpy as np
 
 config_ext = _jax.config
 
@@ -2268,6 +2266,42 @@ def _check_string_compatible_sharding(s):
       f" unsupported device or sharding: {s}")
 
 
+def _check_collective_memory_sharding(sharding: Sharding):
+  if sharding._is_concrete:
+    if not sharding.device_set:
+      raise ValueError(
+          "When using `memory_kind='collective'`, memory must be placed in"
+          " all participating devices, but got empty device set."
+      )
+    participating_devices = set(
+        next(iter(sharding.device_set)).client.devices()
+    )
+    if sharding.device_set != participating_devices:
+      raise ValueError(
+          "When using `memory_kind='collective'`, memory must be placed in"
+          " all participating devices. Got sharding with"
+          f" {len(sharding.device_set)} devices ({sharding.device_set}),"
+          f" but there are {len(participating_devices)} participating"
+          f" devices ({participating_devices})."
+      )
+  elif isinstance(sharding, NamedSharding) and isinstance(
+      sharding.mesh, AbstractMesh
+  ):
+    backend = (
+        sharding.mesh.abstract_device.platform
+        if sharding.mesh.abstract_device is not None
+        else None
+    )
+    num_participating = xb.device_count(backend)
+    if sharding.mesh.size != num_participating:
+      raise ValueError(
+          "When using `memory_kind='collective'`, memory must be placed in"
+          " all participating devices. Got AbstractMesh of size"
+          f" {sharding.mesh.size}, but there are {num_participating}"
+          " participating devices."
+      )
+
+
 @util.cache(max_size=2048, trace_context_in_key=False)
 def _check_sharding(aval, s):
   if (s is not None and
@@ -2278,6 +2312,10 @@ def _check_sharding(aval, s):
         f" values. Received invalid value: {s}")
   if isinstance(aval, core.ShapedArray) and aval.dtype == dtypes.string_dtype:
     _check_string_compatible_sharding(s)
+
+  sharding = s.sharding if isinstance(s, Format) else s
+  if isinstance(sharding, Sharding) and sharding.memory_kind == "collective":
+    _check_collective_memory_sharding(sharding)
 
   if isinstance(s, Sharding):
     if isinstance(aval, core.AbstractToken):
@@ -2376,13 +2414,21 @@ def device_put(
         copy_semantics.append(dispatch.ArrayCopySemantics.ALWAYS_COPY)
 
     dst_avals = []
-    for x_aval, d in zip(x_avals, device_flat):
+    for x_aval, d, s in zip(x_avals, device_flat, src_flat):
       if x_aval.is_high:
         raise NotImplementedError(
             "jax.device_put does not yet support values of hijax type "
             f"{x_aval}. Instead, shard the value's components (e.g. before "
             "constructing it), or produce the value with the desired "
             "sharding under jit or shard_map.")
+      if d == core.MemorySpace.Collective:
+        if isinstance(s, Sharding):
+          _check_collective_memory_sharding(s)
+        elif xb.device_count() > 1:
+          raise ValueError(
+              "When using `memory_kind='collective'`, memory must be placed in"
+              " all participating devices."
+          )
       aval = dispatch.update_dp_aval(x_aval, d)
       dst_avals.append(aval)
       _check_sharding(aval, d)
