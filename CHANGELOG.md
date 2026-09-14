@@ -67,6 +67,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     reduction axis, which previously raised an internal error from ``gather``;
     it now raises a ``ValueError``.
 
+* Bug fixes
+  * {func}`jax.scipy.stats.chi2.logpdf` and {func}`jax.scipy.stats.chi2.pdf`
+    now evaluate the ``df == 2`` case correctly at the boundary points
+    ``x == 0`` and ``x = inf``, returning the finite scipy values instead of
+    ``nan``.
+
 ## JAX 0.11.1 (August 17, 2026)
 
 * New features
