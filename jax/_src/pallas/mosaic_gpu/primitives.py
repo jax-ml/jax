@@ -4030,6 +4030,9 @@ lowering.register_lowering_rule(load_p, *gpu_core.LANExWARP_SEMANTICS)(
 lowering.register_lowering_rule(load_p, mgpu.LoweringSemantics.Warpgroup)(
     lowering._get_lowering_rule_wg
 )
+lowering.register_lowering_rule(load_p, *gpu_core.WGxWARP_SEMANTICS)(
+    lowering._get_lowering_rule_wg
+)
 
 
 def load(

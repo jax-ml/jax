@@ -4607,6 +4607,16 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
           y_ref[...] = x_ref[...]
     np.testing.assert_array_equal(kernel(4), 4)
 
+  def test_scalar_plgpu_load(self):
+    @self.kernel(out_type=jax.ShapeDtypeStruct((), jnp.int32))
+    def kernel(x_ref, y_ref):
+      @plgpu.warp_map
+      def _(warp_id):
+        @pl.when(warp_id == 1)
+        def _():
+          y_ref[...] = plgpu.load(x_ref)
+    np.testing.assert_array_equal(kernel(jnp.int32(4)), 4)
+
   def test_non_scalar_load_raises(self):
     @self.kernel(out_type=jax.ShapeDtypeStruct((2,), jnp.int32))
     def kernel(x_ref, y_ref):
