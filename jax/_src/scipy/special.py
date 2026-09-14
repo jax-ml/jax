@@ -3075,9 +3075,13 @@ def _spence_calc(x: Array) -> Array:
 
 
 def _spence(x: Array) -> Array:
+  # Avoid a subnormal reciprocal, which may flush to zero in _spence_calc.
+  large_finite = jnp.isfinite(x) & (x >= 1 / dtypes.finfo(x.dtype).tiny)
   return jnp.piecewise(x,
-                       [x < 0.0, x == 1.0, x == 0.0],
-                       [np.nan, 0, np.pi ** 2 / 6, _spence_calc])
+                       [x < 0.0, x == 1.0, x == 0.0, large_finite],
+                       [np.nan, 0, np.pi ** 2 / 6,
+                        lambda x: -np.pi ** 2 / 6 - 0.5 * jnp.log(x) ** 2,
+                        _spence_calc])
 
 
 def spence(x: Array) -> Array:
