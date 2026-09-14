@@ -1250,10 +1250,16 @@ print(arg_cts)
 print(logs)
 ```
 
-The rules' dicts are merged with clobber semantics: on a key collision, the
-entry logged earlier in forward order (that is, later in the backward pass)
-wins. Distinct keys keep entries separate. Here the tag is a static
-parameter, so one primitive class can log under different names:
+The rules' dicts are merged, and each key must be unique within a backward
+pass. If a rule returns a key that has already been logged, JAX raises a
+`ValueError`, even if the values are equal or the logs are discarded by a
+plain VJP call or `jax.grad`. The error names the duplicate key and the
+primitive whose backward rule returned it; the attached traceback points
+to the originating forward operation.
+
+Use distinct keys for separate logging sites, including repeated calls to
+the same primitive. Here the tag is a static parameter, so one primitive
+class can log under different names:
 
 ```{code-cell}
 f = lambda x: square(square(x, 'inner'), 'outer')
@@ -1277,6 +1283,12 @@ the forward computation:
 * out of a rematerialized (`jax.remat`, i.e. `jax.checkpoint`) backward
   pass, unchanged: rematerialization affects what's saved versus
   recomputed, not what's logged.
+
+Keys must be unique within a `scan` body or a `cond` branch. Reusing a key
+across `scan` iterations is supported through stacking, and different
+`cond` branches may log the same key into separate slots of its `CondSum`.
+The resulting entries must have distinct keys from other logs in the
+surrounding backward pass, including logs from other control-flow calls.
 
 ```{note}
 Backward-pass logging doesn't work nicely with `jax.remat` unless you set
