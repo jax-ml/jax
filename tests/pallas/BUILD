@@ -100,6 +100,26 @@ jax_py_test(
 )
 
 jax_multiplatform_test(
+    name = "utils_test",
+    srcs = [
+        "utils_test.py",
+    ],
+    enable_backends = [],
+    enable_configs = [
+        "cpu",
+    ],
+    deps = [
+        "//jax/_src:hypothesis_test_util",
+        "//jax/_src/pallas",
+        "//jax/experimental:pallas",
+    ] + py_deps([
+        "absl/testing",
+        "hypothesis",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "ops_test",
     srcs = [
         "ops_test.py",
