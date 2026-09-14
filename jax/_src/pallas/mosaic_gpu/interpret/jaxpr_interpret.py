@@ -1266,7 +1266,8 @@ class JaxprInterpreter:
       self, eqn, token: jax.Array, get_invals: Callable[[], Sequence[Any]]
   ):
     assert eqn.primitive is gpu_primitives.wait_smem_to_gmem_p
-    n, = get_invals()
+    del get_invals  # Unused.
+    n = eqn.params["n"]
     wait_read_only = eqn.params["wait_read_only"]
     return callback.io_callback(
         functools.partial(

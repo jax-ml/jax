@@ -1385,6 +1385,28 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     ):
       jax.jit(kernel).lower()
 
+  def test_wait_smem_to_gmem_raises_on_non_integer_operand(self):
+    @self.kernel(out_type=jax.ShapeDtypeStruct([256], jnp.float32))
+    def kernel(o_ref):
+      del o_ref  # Unused.
+      plgpu.wait_smem_to_gmem(0.0)
+
+    with self.assertRaisesRegex(
+        ValueError, "n must be a non-negative integer, got 0.0"
+    ):
+      jax.eval_shape(kernel)
+
+  def test_wgmma_wait_raises_on_negative_operand(self):
+    @self.kernel(out_type=jax.ShapeDtypeStruct([256], jnp.float32))
+    def kernel(o_ref):
+      del o_ref  # Unused.
+      plgpu.wgmma_wait(-1)
+
+    with self.assertRaisesRegex(
+        ValueError, "n must be a non-negative integer, got -1"
+    ):
+      jax.eval_shape(kernel)
+
   def test_copy_gmem_to_smem_predicate(self):
     @self.kernel(
       out_type=jax.ShapeDtypeStruct([256], jnp.float32),

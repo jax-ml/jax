@@ -1328,8 +1328,9 @@ wait_gmem_to_smem_p.multiple_results = True
 
 
 @wait_gmem_to_smem_p.def_effectful_abstract_eval
-def _wait_gmem_to_smem_abstract_eval(n):
-  del n  # Unused.
+def _wait_gmem_to_smem_abstract_eval(*, n: int):
+  if not isinstance(n, int) or n < 0:
+    raise ValueError(f"n must be a non-negative integer, got {n}")
   return (), {gpu_core._memory_effect}
 
 
@@ -1341,7 +1342,7 @@ def _wait_gmem_to_smem_abstract_eval(n):
     wait_gmem_to_smem_p, mgpu.LoweringSemantics.Warpgroup)
 @lowering.register_lowering_rule(
     wait_gmem_to_smem_p, *gpu_core.WGxWARP_SEMANTICS)
-def _wait_gmem_to_smem_lowering(ctx: lowering.LoweringRuleContext, n):
+def _wait_gmem_to_smem_lowering(ctx: lowering.LoweringRuleContext, *, n: int):
   if mgpu.utils.get_arch().major >= 9:
     raise ValueError(
         "wait_gmem_to_smem is only supported on pre-Hopper GPUs, which use"
@@ -1361,7 +1362,7 @@ def wait_gmem_to_smem(n: int) -> None:
   Args:
     n: The maximum number of copies allowed to remain in flight.
   """
-  wait_gmem_to_smem_p.bind(n)
+  wait_gmem_to_smem_p.bind(n=n)
 
 
 async_prefetch_p = jax_core.Primitive("async_prefetch")
@@ -1826,8 +1827,10 @@ wait_smem_to_gmem_p.multiple_results = True
 
 
 @wait_smem_to_gmem_p.def_effectful_abstract_eval
-def _wait_smem_to_gmem_abstract_eval(n, *, wait_read_only):
-  del n, wait_read_only  # Unused.
+def _wait_smem_to_gmem_abstract_eval(*, n: int, wait_read_only):
+  del wait_read_only  # Unused.
+  if not isinstance(n, int) or n < 0:
+    raise ValueError(f"n must be a non-negative integer, got {n}")
   return (), {gpu_core._memory_effect}
 
 
@@ -1841,7 +1844,7 @@ def _wait_smem_to_gmem_abstract_eval(n, *, wait_read_only):
 @lowering.register_lowering_rule(
     wait_smem_to_gmem_p, *gpu_core.WGxWARP_SEMANTICS)
 def _wait_smem_to_gmem_lowering(
-    ctx: lowering.LoweringRuleContext, n, *, wait_read_only
+    ctx: lowering.LoweringRuleContext, *, n: int, wait_read_only
 ):
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
     scope = mgpu_utils.ThreadSubset.WARP
@@ -1862,7 +1865,7 @@ def wait_smem_to_gmem(n: int, wait_read_only: bool = False) -> None:
     wait_read_only: If ``True``, wait for the in flight copies to finish
       reading from SMEM. The writes to GMEM are not waited for.
   """
-  wait_smem_to_gmem_p.bind(n, wait_read_only=wait_read_only)
+  wait_smem_to_gmem_p.bind(n=n, wait_read_only=wait_read_only)
 
 
 commit_group_p = jax_core.Primitive("commit_group")
@@ -2335,21 +2338,23 @@ wgmma_wait_p.multiple_results = True
 
 def wgmma_wait(n: int):
   """Waits until there is no more than ``n`` WGMMA operations in flight."""
-  return wgmma_wait_p.bind(n)
+  return wgmma_wait_p.bind(n=n)
 
 
 @wgmma_wait_p.def_effectful_abstract_eval
-def wgmma_wait_effectful_abstract_eval(_):
+def wgmma_wait_effectful_abstract_eval(*, n: int):
+  if not isinstance(n, int) or n < 0:
+    raise ValueError(f"n must be a non-negative integer, got {n}")
   return [], {gpu_core._wgmma_pipeline_effect}
 
 
 @lowering.register_lowering_rule(wgmma_wait_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(wgmma_wait_p, mgpu.LoweringSemantics.Warpgroup)
-def _wgmma_wait_lowering(ctx: lowering.LoweringRuleContext, allow_groups):
+def _wgmma_wait_lowering(ctx: lowering.LoweringRuleContext, *, n: int):
   del ctx
   void = ir.Type.parse("!llvm.void")
   llvm_dialect.inline_asm(
-      void, [], f"wgmma.wait_group.sync.aligned {int(allow_groups)};", "", has_side_effects=True,
+      void, [], f"wgmma.wait_group.sync.aligned {n};", "", has_side_effects=True,
   )
   return ()
 
