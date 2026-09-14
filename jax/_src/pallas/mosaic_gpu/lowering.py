@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Hashable, Iterator, Generator, MutableMapping, MutableSequence, Sequence
+from collections.abc import Callable, Generator, Hashable, Iterator, MutableMapping, MutableSequence, Sequence
 import contextlib
 import dataclasses
 import functools
@@ -33,6 +33,7 @@ from jax._src import checkify
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import debugging
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import flattree as ft
 from jax._src import layout as jax_layout
@@ -1175,6 +1176,12 @@ def lower_jaxpr_to_mosaic_gpu(
 def _program_id_lowering_rule(ctx: LoweringRuleContext, axis):
   if ctx.module_ctx.program_ids is None:
     raise NotImplementedError("pl.program_id() is not supported in this context")
+  deprecations.warn(
+      "jax-pallas-mgpu-program-id",
+      "Using pl.program_id in Pallas MGPU is deprecated. Use jax.lax.axis_index"
+      " instead.",
+      stacklevel=2,
+  )
   return ctx.module_ctx.program_ids[axis]
 
 

@@ -56,6 +56,10 @@ Remember to align the itemized text with the first line of an item within a list
 
   * {func}`jax.experimental.pallas.mosaic_gpu.transpose_ref` is
     deprecated. Use `ref.transpose(...)` directly instead.
+  * Using {func}`jax.experimental.pallas.program_id` and
+    {func}`jax.experimental.pallas.num_programs` in Pallas MGPU kernels is
+    deprecated. Use {func}`jax.lax.axis_index` and {func}`jax.lax.axis_size`
+    instead.
 
 * Removals
 

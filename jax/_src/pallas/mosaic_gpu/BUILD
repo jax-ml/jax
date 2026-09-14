@@ -65,6 +65,7 @@ pytype_strict_library(
         "//jax/_src:config",
         "//jax/_src:core",
         "//jax/_src:debugging",
+        "//jax/_src:deprecations",
         "//jax/_src:dtypes",
         "//jax/_src:flattree",
         "//jax/_src:lax",
