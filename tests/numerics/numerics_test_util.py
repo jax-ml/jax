@@ -200,7 +200,7 @@ def _ulp_diff_jax(computed, reference, dtype, ftz: bool = True):
   return jnp.where(mismatch, mismatch_inf, signed_ulp)
 
 
-def _ulp_diff_mpmath(
+def ulp_diff_mpmath(
     computed: np.ndarray, reference: np.ndarray, dtype, ftz: bool = True
 ) -> np.ndarray:
   """Computes signed real ULP differences (computed - reference) / ulp(reference) with mpmath."""
@@ -346,7 +346,7 @@ def ulp_diff(
 ) -> np.ndarray:
   """Computes real float64 ULP distance between computed (in dtype) and reference."""
   if np.dtype(dtype) == np.float64:
-    return np.abs(_ulp_diff_mpmath(computed, reference, dtype, ftz=ftz))
+    return np.abs(ulp_diff_mpmath(computed, reference, dtype, ftz=ftz))
   cpu_dev = jax.devices("cpu")[0]
   with jax.enable_x64(True), jax.default_device(cpu_dev):
     signed_ulp = _ulp_diff_jax(
@@ -368,7 +368,7 @@ def _flush_subnormals(x: np.ndarray, dtype) -> np.ndarray:
   return np.where(mask, np.where(np.signbit(x), dtype(-0.0), dtype(0.0)), x)
 
 
-def _eval_mpmath(mpmath_fn, val, dtype=None, input_ftz: bool = True):
+def eval_mpmath(mpmath_fn, val, dtype=None, input_ftz: bool = True):
   """Evaluates scalar mpmath function at current mpmath precision."""
   if input_ftz and dtype is not None:
     val = _flush_subnormals(np.array(val, dtype=dtype), dtype).item()
@@ -451,7 +451,7 @@ def eval_ulp_stats(
   comp_arr = np.asarray(computed, dtype=dtype).ravel()
   if np.dtype(dtype) == np.float64:
     ref_arr = np.asarray(reference).ravel()
-    signed_ulps = _ulp_diff_mpmath(comp_arr, ref_arr, dtype, ftz=ftz)
+    signed_ulps = ulp_diff_mpmath(comp_arr, ref_arr, dtype, ftz=ftz)
     ref_f64 = np.array([float(r) for r in ref_arr], dtype=np.float64)
     cpu_dev = jax.devices("cpu")[0]
     with jax.enable_x64(True), jax.default_device(cpu_dev):
@@ -516,7 +516,7 @@ def _format_worst_cases(
       ref_dt = np.array(y_ref, dtype=dtype)
       ref_hex = hex(int(ref_dt.view(udt)))
 
-      mp_val = _eval_mpmath(mpmath_fn, x, dtype=dtype, input_ftz=input_ftz)
+      mp_val = eval_mpmath(mpmath_fn, x, dtype=dtype, input_ftz=input_ftz)
       mp_exact_str = mpmath.nstr(mp_val, 30)
 
       comp_str = f"{y} ({y_hex})"
@@ -669,7 +669,7 @@ def check_unary_precision(
     if is_f64:
       return np.array(
           [
-              _eval_mpmath(mpmath_fn, val.item(), dtype=dtype, input_ftz=in_ftz)
+              eval_mpmath(mpmath_fn, val.item(), dtype=dtype, input_ftz=in_ftz)
               for val in in_arr
           ],
           dtype=object,
