@@ -430,5 +430,57 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
                             check_dtypes=False)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
+  @jtu.sample_product(onesided=[False, True])
+  def testIstftZeroNoverlap(self, *, onesided):
+    # noverlap=0 is valid and must not fall back to the default overlap
+    # (https://github.com/jax-ml/jax/issues/38315).
+    shape = (33, 10) if onesided else (64, 10)
+    kwds = dict(window='boxcar', nperseg=64, noverlap=0,
+                input_onesided=onesided, boundary=False)
+    osp_fun = partial(osp_signal.istft, **kwds)
+    jsp_fun = partial(jsp_signal.istft, **kwds)
+    tol = _TPU_FFT_TOL if jtu.test_device_matches(['tpu']) else 1e-4
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, np.complex64)]
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
+
+  def testIstftDefaultNfftOddNperseg(self):
+    # With nfft=None, one-sided input and odd nperseg, the IFFT must use the
+    # resolved nfft_int (https://github.com/jax-ml/jax/issues/38315).
+    shape = (4, 10)  # 4 freq bins -> n_default = 6, odd nperseg = 7
+    kwds = dict(window='boxcar', nperseg=7, input_onesided=True,
+                boundary=False)
+    osp_fun = partial(osp_signal.istft, **kwds)
+    jsp_fun = partial(jsp_signal.istft, **kwds)
+    tol = _TPU_FFT_TOL if jtu.test_device_matches(['tpu']) else 1e-4
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, np.complex64)]
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
+
+  def testIstftInvalidNperseg(self):
+    # nperseg=0 must be rejected like scipy does, not silently replaced.
+    Zxx = jnp.zeros((17, 5), np.complex64)
+    with self.assertRaisesRegex(ValueError,
+                                "nperseg must be a positive integer"):
+      jsp_signal.istft(Zxx, nperseg=0)
+
+  def testIstftRoundTripZeroNoverlap(self):
+    # istft must invert stft at noverlap=0 (boxcar satisfies NOLA).
+    kwds = dict(window='boxcar', nperseg=64, noverlap=0)
+    tol = _TPU_FFT_TOL if jtu.test_device_matches(['tpu']) else 1e-4
+
+    rng = jtu.rand_default(self.rng())
+    x = rng((640,), np.float32)
+    _, _, Zxx = jsp_signal.stft(x, **kwds)
+    _, x_rec = jsp_signal.istft(Zxx, **kwds)
+    self.assertAllClose(x_rec[:x.shape[0]], x, rtol=tol, atol=tol,
+                        check_dtypes=False)
+
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())
