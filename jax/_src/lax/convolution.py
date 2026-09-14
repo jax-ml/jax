@@ -75,8 +75,13 @@ def conv_general_dilated(
   operator.
 
   Args:
-    lhs: a rank `n+2` dimensional input array.
-    rhs: a rank `n+2` dimensional array of kernel weights.
+    lhs: a rank `n+2` dimensional input array. Under the default
+      ``dimension_numbers``, the dimensions are interpreted as
+      ``(batch, in_features, spatial...)``, i.e. ``NCHW`` for a 2D convolution.
+    rhs: a rank `n+2` dimensional array of kernel weights. Under the default
+      ``dimension_numbers``, the dimensions are interpreted as
+      ``(out_features, in_features, spatial...)``, i.e. ``OIHW`` for a 2D
+      convolution.
     window_strides: a sequence of `n` integers, representing the inter-window
       strides.
     padding: either the strings `'SAME'`, `'SAME_LOWER'`, or `'VALID'`, or a
@@ -197,8 +202,11 @@ def conv(lhs: Array, rhs: Array, window_strides: Sequence[int],
   """Convenience wrapper around `conv_general_dilated`.
 
   Args:
-    lhs: a rank `n+2` dimensional input array.
-    rhs: a rank `n+2` dimensional array of kernel weights.
+    lhs: a rank `n+2` dimensional input array, with dimensions ordered as
+      ``(batch, in_features, spatial...)``, i.e. ``NCHW`` for a 2D convolution.
+    rhs: a rank `n+2` dimensional array of kernel weights, with dimensions
+      ordered as ``(out_features, in_features, spatial...)``, i.e. ``OIHW`` for
+      a 2D convolution.
     window_strides: a sequence of `n` integers, representing the inter-window
       strides.
     padding: either the string `'SAME'`, the string `'VALID'`.
@@ -227,8 +235,11 @@ def conv_with_general_padding(lhs: Array, rhs: Array,
   """Convenience wrapper around `conv_general_dilated`.
 
   Args:
-    lhs: a rank `n+2` dimensional input array.
-    rhs: a rank `n+2` dimensional array of kernel weights.
+    lhs: a rank `n+2` dimensional input array, with dimensions ordered as
+      ``(batch, in_features, spatial...)``, i.e. ``NCHW`` for a 2D convolution.
+    rhs: a rank `n+2` dimensional array of kernel weights, with dimensions
+      ordered as ``(out_features, in_features, spatial...)``, i.e. ``OIHW`` for
+      a 2D convolution.
     window_strides: a sequence of `n` integers, representing the inter-window
       strides.
     padding: either the string `'SAME'`, the string `'VALID'`, or a sequence of
