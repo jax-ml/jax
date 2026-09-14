@@ -18,7 +18,7 @@ from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
-from jax._src.scipy.special import gammainc, gammaincc
+from jax._src.scipy.special import gammainc, gammaincc, xlogy
 from jax._src.typing import Array, ArrayLike
 
 
@@ -62,7 +62,7 @@ def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
   y = lax.div(lax.sub(x, loc), scale)
   df_on_two = lax.div(df, two)
 
-  kernel = lax.sub(lax.mul(lax.sub(df_on_two, one), lax.log(y)), lax.div(y,two))
+  kernel = lax.sub(xlogy(lax.sub(df_on_two, one), y), lax.div(y,two))
 
   nrml_cnst = lax.neg(lax.add(lax.lgamma(df_on_two),lax.div(lax.mul(lax.log(two), df),two)))
 
