@@ -2642,6 +2642,44 @@ class APITest(jtu.JaxTestCase):
     expected = [3., 0.]
     self.assertEqual(actual, expected)
 
+  @parameterized.product(jit=[False, True], dtype=[np.float32, np.complex64,
+                                                np.int32])
+  def test_linear_transpose_float0(self, jit, dtype):
+    zero = np.zeros((2,), dtype=float0)
+    unused = np.zeros((3,), dtype=float0)
+    x = np.arange(2, dtype=dtype)
+    f = lambda x, z, unused: {'value': 2 * x, 'zeros': (z, z)}
+    if jit:
+      f = api.jit(f)
+    transpose = api.linear_transpose(f, x, zero, unused)
+    if jit:
+      transpose = api.jit(transpose)
+    # The repeated output must accumulate symbolically: adding float0 arrays
+    # is undefined, even though the transpose is well-defined.
+    x_ct, z_ct, unused_ct = transpose({'value': x, 'zeros': (zero, zero)})
+    self.assertArraysEqual(x_ct, 2 * x)
+    self.assertArraysEqual(z_ct, zero)
+    self.assertArraysEqual(unused_ct, unused)
+
+  @parameterized.parameters(False, True)
+  def test_linear_transpose_float0_only(self, jit):
+    zero = np.zeros((2,), dtype=float0)
+    transpose = api.linear_transpose(lambda z: (z, z), zero)
+    if jit:
+      transpose = api.jit(transpose)
+    actual, = transpose((zero, zero))
+    self.assertArraysEqual(actual, zero)
+
+  @parameterized.product(jit=[False, True], float0_input=[False, True])
+  def test_linear_transpose_float0_zero_map(self, jit, float0_input):
+    x = np.ones((2,), dtype=float0 if float0_input else np.float32)
+    y = np.zeros((3,), dtype=np.float32 if float0_input else float0)
+    transpose = api.linear_transpose(lambda x: y, x)
+    if jit:
+      transpose = api.jit(transpose)
+    actual, = transpose(y)
+    self.assertArraysEqual(actual, np.zeros_like(x))
+
   def test_complex_grad_raises_error(self):
     self.assertRaises(TypeError, lambda: grad(lambda x: jnp.sin(x))(1 + 2j))
 
