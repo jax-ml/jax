@@ -246,6 +246,10 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertAllClose(np.astype(x.dtype), z)
 
   @jtu.run_on_devices("gpu", "tpu")
+  # DLPack has no kDLOneAPIHost device type to preserve pinned-host memory.
+  # Therefore skip the test on oneAPI devices.
+  # TODO(Intel-tf): Remove the skip once kDLOneAPIHost is added and supported.
+  @jtu.skip_on_devices("oneapi")
   def testJaxPinnedHostRoundTrip(self):
     device = jax.devices()[0]
     if device.platform not in ["gpu", "tpu"]:
