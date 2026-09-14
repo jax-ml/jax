@@ -581,6 +581,17 @@ def _raise_value_error(name):
 empty_abstract_mesh = AbstractMesh((), ())
 empty_concrete_mesh = Mesh(np.empty((), dtype=object), ())
 
+abstract_mesh_context_manager = config_ext.Config[Any](
+    'abstract_mesh_context_manager',
+    empty_abstract_mesh,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+device_context = config_ext.Config[Any](
+    'device_context', empty_concrete_mesh, include_in_jit_key=True
+)
+
 class use_abstract_mesh:
   """Sets a abstract mesh in a thread-local context.
 
@@ -617,24 +628,22 @@ class use_abstract_mesh:
     self.mesh = mesh
 
   def __enter__(self):
-    self.prev = jax_config.abstract_mesh_context_manager.swap_local(self.mesh)
+    self.prev = abstract_mesh_context_manager.swap_local(self.mesh)
     if (self.prev is not config_ext.unset and
         not self.prev.empty and not self.mesh.empty and
         self.prev.size != self.mesh.size):
-      jax_config.abstract_mesh_context_manager.set_local(self.prev)
+      abstract_mesh_context_manager.set_local(self.prev)
       raise ValueError(
           "use_abstract_mesh cannot change the size of the mesh. Got new mesh:"
           f" {self.mesh} with size={self.mesh.size} and prev mesh:"
           f" {self.prev} with size={self.prev.size}")
 
   def __exit__(self, exc_type, exc_value, traceback):
-    jax_config.abstract_mesh_context_manager.set_local(self.prev)
+    abstract_mesh_context_manager.set_local(self.prev)
 
 
 def get_abstract_mesh() -> AbstractMesh:
-  val = jax_config.abstract_mesh_context_manager.value
-  return empty_abstract_mesh if val is None else val
+  return abstract_mesh_context_manager.value
 
 def get_concrete_mesh() -> Mesh:
-  val = jax_config.device_context.value
-  return empty_concrete_mesh if val is None else val
+  return device_context.value
