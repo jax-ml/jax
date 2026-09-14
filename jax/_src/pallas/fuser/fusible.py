@@ -175,7 +175,7 @@ def fusible(f=None, *, output_fusion_prefix: Any = True):
               out_avals_ft.tree, out_avals_ft.vals),
           output_fusion_prefix=output_fusion_prefix,
           func=f,
-          num_consts=len(jaxpr.consts),
+          num_consts=len(consts),
           args_tree=args_ft.tree,
       )
       return prim(*consts, *args_ft.vals)

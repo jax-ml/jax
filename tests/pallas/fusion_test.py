@@ -855,6 +855,24 @@ class FusionTest(jtu.JaxTestCase):
     grad_x = jax.grad(loss)(x)
     np.testing.assert_allclose(grad_x, jnp.full_like(x, 2.0))
 
+  def test_fusible_closed_over_constants(self):
+    c = jnp.array(3.0)
+
+    @fuser.fuse
+    def f(x):
+      @fuser.fusible
+      def inner(x_fn, out_fn):
+        x = x_fn()
+        if out_fn is None:
+          out_fn = lambda v: v
+        return out_fn(x * c)
+
+      return inner(x)
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    y = f(x)
+    np.testing.assert_allclose(y, x * 3.0)
+
 
 @dataclasses.dataclass(frozen=True)
 class ArrayTuple:
