@@ -653,17 +653,28 @@ def _transpose_jvp(self, res, out_ct):
 
 def _vjp_fwd_from_lin(self, nzs_in, *primals):
   """The `vjp_fwd` half of the `vjp_from_lin` pair."""
-  return self.lin(nzs_in, *primals)
+  out, res, *rest = self.lin(nzs_in, *primals)
+  return out, (res, Static(nzs_in)), *rest
 
 def _transpose_linearized(self, residuals, out_ct):
   """The `vjp_bwd_retval` half of the `vjp_from_lin` pair."""
-  def tangent_map(*tangents):
-    return self.linearized(residuals, *tangents)
-  zero = lambda x: isinstance(x, ad_util.Zero)
-  out_ct = tree_map(ad_util.instantiate, out_ct, is_leaf=zero)
-  dummies = tree_map(lambda a: ad_util.zeros_like_aval(a.to_tangent_aval()),
-                     self.in_avals)
-  return api.linear_transpose(tangent_map, *dummies)(out_ct)
+  res, nzs = residuals
+  nzs_in = tree_leaves_checked(self.in_tree, nzs.val)
+  inst = lambda x: tree_map(ad_util.instantiate, x,
+                            is_leaf=lambda x: isinstance(x, ad_util.Zero))
+
+  def tangent_map(*ts):
+    ts = iter(ts)
+    tangents = tree_unflatten(self.in_tree,
+        [next(ts) if nz else ad_util.a2tz(a)
+         for nz, a in zip(nzs_in, self.in_avals_flat)])
+    return inst(self.linearized(res, *tangents))
+  dummies = [a.to_tangent_aval()
+             for a, nz in zip(self.in_avals_flat, nzs_in) if nz]
+  cts = iter(api.linear_transpose(tangent_map, *dummies)(inst(out_ct)))
+  return tree_unflatten(self.in_tree,
+      [next(cts) if nz else ad_util.a2tz(a)
+       for nz, a in zip(nzs_in, self.in_avals_flat)])
 
 class _LinearizeFromJVP(NamedTuple):
   lin: Callable
