@@ -29,6 +29,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `JAX_MTLS_CA_FILE`, `JAX_MTLS_PEER_URI_PREFIX` and
     `JAX_DISTRIBUTED_VERIFY_SECURE_CREDENTIALS` environment variables).
 
+* Breaking changes
+  * Fixed a numerical issue in the gradients produced by `jax.remat`. This may
+    cause ``f(x) != jax.value_and_grad(f)(x)[0]`` (due to numerical differences)
+    for more functions f than previously. See
+    https://github.com/google/jax/pull/22244 for more information.
+
 * Changes
   * `inline=True` in {func}`jax.jit` now corresponds to
     {attr}`jax.Inline.JAX_LATE` instead of {attr}`jax.Inline.JAX_EARLY`.
