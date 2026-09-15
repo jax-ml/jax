@@ -67,7 +67,7 @@ from jax._src.lib import jax_jit
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.sharding import Sharding
-from jax._src.mesh import get_concrete_mesh, get_abstract_mesh, Mesh
+from jax._src.mesh import get_concrete_mesh, get_abstract_mesh, Mesh, AbstractMesh
 from jax._src.sharding_impls import PartitionSpec as P, NamedSharding
 from jax._src.layout import Format
 from jax._src.traceback_util import api_boundary
@@ -2274,6 +2274,42 @@ def _check_string_compatible_sharding(s):
       f" unsupported device or sharding: {s}")
 
 
+def _check_collective_memory_sharding(sharding: Sharding):
+  if sharding._is_concrete:
+    if not sharding.device_set:
+      raise ValueError(
+          "When using `memory_kind='collective'`, memory must be placed in"
+          " all participating devices, but got empty device set."
+      )
+    participating_devices = set(
+        next(iter(sharding.device_set)).client.devices()
+    )
+    if sharding.device_set != participating_devices:
+      raise ValueError(
+          "When using `memory_kind='collective'`, memory must be placed in"
+          " all participating devices. Got sharding with"
+          f" {len(sharding.device_set)} devices ({sharding.device_set}),"
+          f" but there are {len(participating_devices)} participating"
+          f" devices ({participating_devices})."
+      )
+  elif isinstance(sharding, NamedSharding) and isinstance(
+      sharding.mesh, AbstractMesh
+  ):
+    backend = (
+        sharding.mesh.abstract_device.platform
+        if sharding.mesh.abstract_device is not None
+        else None
+    )
+    num_participating = xb.device_count(backend)
+    if sharding.mesh.size != num_participating:
+      raise ValueError(
+          "When using `memory_kind='collective'`, memory must be placed in"
+          " all participating devices. Got AbstractMesh of size"
+          f" {sharding.mesh.size}, but there are {num_participating}"
+          " participating devices."
+      )
+
+
 @util.cache(max_size=2048, trace_context_in_key=False)
 def _check_sharding(aval, s):
   if (s is not None and
@@ -2284,6 +2320,10 @@ def _check_sharding(aval, s):
         f" values. Received invalid value: {s}")
   if isinstance(aval, core.ShapedArray) and aval.dtype == dtypes.string_dtype:
     _check_string_compatible_sharding(s)
+
+  sharding = s.sharding if isinstance(s, Format) else s
+  if isinstance(sharding, Sharding) and sharding.memory_kind == "collective":
+    _check_collective_memory_sharding(sharding)
 
   if isinstance(s, Sharding):
     if isinstance(aval, core.AbstractToken):
@@ -2382,13 +2422,21 @@ def device_put(
         copy_semantics.append(dispatch.ArrayCopySemantics.ALWAYS_COPY)
 
     dst_avals = []
-    for x_aval, d in zip(x_avals, device_flat):
+    for x_aval, d, s in zip(x_avals, device_flat, src_flat):
       if x_aval.is_high:
         raise NotImplementedError(
             "jax.device_put does not yet support values of hijax type "
             f"{x_aval}. Instead, shard the value's components (e.g. before "
             "constructing it), or produce the value with the desired "
             "sharding under jit or shard_map.")
+      if d == core.MemorySpace.Collective:
+        if isinstance(s, Sharding):
+          _check_collective_memory_sharding(s)
+        elif xb.device_count() > 1:
+          raise ValueError(
+              "When using `memory_kind='collective'`, memory must be placed in"
+              " all participating devices."
+          )
       aval = dispatch.update_dp_aval(x_aval, d)
       dst_avals.append(aval)
       _check_sharding(aval, d)
