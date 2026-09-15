@@ -773,9 +773,16 @@ def _equality_errors(path, t1, t2, is_leaf):
   if (treedef_is_strict_leaf(tree_structure(t1, is_leaf=is_leaf)) and
       treedef_is_strict_leaf(tree_structure(t2, is_leaf=is_leaf))): return
 
+  def _type_name(t: Any) -> str:
+    if t is None:
+      return "None"
+    if type(t).__name__ in ("PytreeLeaf", "Leaf"):
+      return "pytree leaf"
+    return str(type(t))
+
   # The trees may disagree because they are different types:
   if type(t1) != type(t2):
-    yield path, str(type(t1)), str(type(t2)), 'their Python types differ'
+    yield path, _type_name(t1), _type_name(t2), 'their Python types differ'
     return  # no more errors to find
 
   # Or they may disagree because their roots have different numbers or keys of
@@ -1286,13 +1293,22 @@ def _prefix_error(
 
   # The subtrees may disagree because their roots are of different types:
   if type(prefix_tree) != type(full_tree):
+    def _desc(t: Any, is_prefix: bool) -> str:
+      if t is None:
+        return "None"
+      if type(t).__name__ in ("PytreeLeaf", "Leaf"):
+        return "a leaf"
+      prefix = "a subtree of type\n    " if is_prefix else "a subtree of different type\n    "
+      return f"{prefix}{type(t)}"
+
+    prefix_desc = _desc(prefix_tree, is_prefix=True)
+    full_desc = _desc(full_tree, is_prefix=False)
+
     yield lambda name: ValueError(
       "pytree structure error: different types at key path\n"
       f"    {name}{keystr(key_path)}\n"
-      f"At that key path, the prefix pytree {name} has a subtree of type\n"
-      f"    {type(prefix_tree)}\n"
-      f"but at the same key path the full pytree has a subtree of different type\n"
-      f"    {type(full_tree)}.")
+      f"At that key path, the prefix pytree {name} has {prefix_desc}\n"
+      f"but at the same key path the full pytree has {full_desc}.")
     return  # don't look for more errors in this subtree
 
   # Or they may disagree if their roots have different numbers or keys of
@@ -1368,7 +1384,7 @@ def _prefix_error(
     ("equal pytree nodes gave differing prefix_tree_keys: "
      f"{prefix_tree_keys} and {full_tree_keys}")
   for k, t1, t2 in zip(prefix_tree_keys, prefix_tree_children, full_tree_children):
-    yield from _prefix_error((*key_path, k), t1, t2)
+    yield from _prefix_error((*key_path, k), t1, t2, is_leaf)
 
 def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
                      ) -> tuple[int, ...]:
