@@ -5617,8 +5617,13 @@ class EmitPipelineTest(ptu.PallasTPUTest):
   )
   def test_emit_pipeline_small_window(self, tile_major, dtype):
     if not jtu.is_device_tpu_at_least(4) and tile_major == 1:
+      expected_error = (
+          jax.errors.JaxRuntimeError
+          if jtu.is_libtpu_at_least('0.0.48')
+          else error_handling.MosaicError
+      )
       expect_ctx = self.assertRaisesRegex(
-          error_handling.MosaicError,
+          expected_error,
           'The contiguous inner slice in the DMA transfer',
       )
     else:
