@@ -1544,6 +1544,29 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(JaxRuntimeError, "Inner check failed!"):
       err.throw()
 
+  def test_check_inside_local_enable_x64_scope(self):
+    prev = config.explicit_x64_dtypes.value
+    config.update('jax_explicit_x64_dtypes', 'allow')
+    try:
+      def f(x):
+        with jax.enable_x64():
+          checkify.check(x > 0, "positive")
+          return x
+
+      checked_f = jax.jit(checkify.checkify(f))
+      err, out = checked_f(jnp.ones((), dtype=jnp.float64))
+      self.assertIs(err.get(), None)
+      self.assertEqual(out, 1.0)
+
+      err, out = checked_f(jnp.array(-1.0, dtype=jnp.float64))
+      self.assertIsNotNone(err.get())
+      self.assertStartsWith(err.get(), "positive")
+
+      err, out = checkify.checkify(jax.jit(f))(jnp.ones((), dtype=jnp.float64))
+      self.assertIs(err.get(), None)
+    finally:
+      config.update('jax_explicit_x64_dtypes', prev)
+
   def test_nested_checkify_namespace_collision(self):
     def g(y):
       checkify.check(y > 0, "inner check failed")
