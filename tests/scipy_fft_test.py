@@ -162,5 +162,122 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
       jsp_func(x, s=(2, 3, 4))
 
 
+  @jtu.sample_product(
+    dtype=all_dtypes,
+    shape=[(10,), (2, 5)],
+    n=[None, 1, 7, 13, 20],
+    axis=[-1, 0],
+    norm=[None, 'ortho', 'backward'],
+  )
+  def testDst(self, shape, dtype, n, axis, norm):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    jnp_fn = lambda a: jsp_fft.dst(a, n=n, axis=axis, norm=norm)
+    np_fn = lambda a: osp_fft.dst(a, n=n, axis=axis, norm=norm)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axes=axes, s=s)
+     for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5)]
+     for axes in _get_dctn_test_axes(shape)
+     for s in _get_dctn_test_s(shape, axes)],
+    dtype=all_dtypes,
+    norm=[None, 'ortho', 'backward'],
+  )
+  def testDstn(self, shape, dtype, s, axes, norm):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    jnp_fn = lambda a: jsp_fft.dstn(a, s=s, axes=axes, norm=norm)
+    np_fn = lambda a: osp_fft.dstn(a, s=s, axes=axes, norm=norm)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
+
+  @jtu.sample_product(
+    dtype=all_dtypes,
+    shape=[(10,), (2, 5)],
+    n=[None, 1, 7, 13, 20],
+    axis=[-1, 0],
+    norm=[None, 'ortho', 'backward'],
+  )
+  def testiDst(self, shape, dtype, n, axis, norm):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    jnp_fn = lambda a: jsp_fft.idst(a, n=n, axis=axis, norm=norm)
+    np_fn = lambda a: osp_fft.idst(a, n=n, axis=axis, norm=norm)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axes=axes, s=s)
+     for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5)]
+     for axes in _get_dctn_test_axes(shape)
+     for s in _get_dctn_test_s(shape, axes)],
+    dtype=all_dtypes,
+    norm=[None, 'ortho', 'backward'],
+  )
+  def testiDstn(self, shape, dtype, s, axes, norm):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    jnp_fn = lambda a: jsp_fft.idstn(a, s=s, axes=axes, norm=norm)
+    np_fn = lambda a: osp_fft.idstn(a, s=s, axes=axes, norm=norm)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
+  def testIdstNormalizationPrecision(self):
+    # reported in https://github.com/jax-ml/jax/issues/23895
+    # but with dst
+    if not config.enable_x64.value:
+      raise self.skipTest("requires jax_enable_x64=true")
+    x = np.ones(3, dtype="float64")
+    n = 10
+    expected = osp_fft.idst(x, n=n, type=2)
+    actual = jsp_fft.idst(x, n=n, type=2)
+    self.assertArraysAllClose(actual, expected, atol=1e-14)
+
+  @jtu.sample_product(func=['idstn', 'dstn'])
+  def testDstnShape(self, func):
+    # Regression test for https://github.com/jax-ml/jax/issues/31836
+    # but with dst
+    x = np.arange(10.0).reshape(5, 2)
+    kwds = dict(type=2, s=(12, 7), axes=(-2, -1))
+
+    osp_func = getattr(osp_fft, func)
+    jsp_func = getattr(jsp_fft, func)
+
+    expected = osp_func(x, **kwds)
+    actual = jsp_func(x, **kwds)
+    rtol = {np.float64: 1E-12, np.float32: 1E-4}
+    self.assertArraysAllClose(actual, expected, rtol=rtol)
+
+  @jtu.sample_product(func=['idstn', 'dstn'])
+  def testDstnAxesNoneSSpecified(self, func):
+    # Regression test for https://github.com/jax-ml/jax/issues/29426
+    # but with dst
+    x = np.arange(3.0).reshape(1, 3)
+    kwds = dict(type=2, s=(5,), axes=None)
+
+    osp_func = getattr(osp_fft, func)
+    jsp_func = getattr(jsp_fft, func)
+
+    expected = osp_func(x, **kwds)
+    actual = jsp_func(x, **kwds)
+    self.assertArraysAllClose(actual, expected, atol=1e-4)
+
+
+  @jtu.sample_product(func=['idstn', 'dstn'])
+  def testDstnSShapeTooLargeError(self, func):
+    x = np.arange(3.0).reshape(1, 3)
+    jsp_func = getattr(jsp_fft, func)
+    with self.assertRaisesRegex(
+        ValueError, r"s must have at most x.ndim \(2\) elements, got 3"):
+      jsp_func(x, s=(2, 3, 4))
+
+
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())
