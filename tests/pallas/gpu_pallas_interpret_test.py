@@ -1310,7 +1310,7 @@ class InterpretTest(jtu.JaxTestCase):
     @functools.partial(
         plgpu.kernel,
         out_type=jax.ShapeDtypeStruct((), jnp.int32),
-        scratch_types=(plgpu.Barrier(),),
+        scratch_types=(plgpu.Barrier(num_barriers=1),),
         num_threads=1,
         thread_name='t',
         interpret=InterpretParams(),

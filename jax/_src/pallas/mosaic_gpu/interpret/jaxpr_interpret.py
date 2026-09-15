@@ -125,8 +125,9 @@ def _get_barrier_allocation_key_from_inval(
   `barrier.at[i]`. Omitted axes select index 0.
   """
   keys = inval
-  # `keys.shape[-1]` is the number of `HostAllocationKey` fields.
-  assert keys.ndim >= 2
+  # `keys.shape[-1]` is the number of `HostAllocationKey` fields, so the
+  # preceding axes are the shape of the barrier array. They are absent when the
+  # reference is to a single barrier.
   assert keys.shape[-1:] == gpu_callbacks.HostAllocationKey.shape_and_dtype().shape
   rank = keys.ndim - 1
 

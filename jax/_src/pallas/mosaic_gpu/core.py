@@ -1462,15 +1462,16 @@ class Barrier:
 
   Attributes:
     num_arrivals: The number of arrivals that will be recorded by this barrier.
-    num_barriers: The number of barriers that will be created. Individual
-      barriers can be accessed by indexing into the barrier Ref.
+    num_barriers: The shape of the barrier array to create. By default a single
+      barrier is created, and the reference to it has an empty shape. Individual
+      barriers of an array can be accessed by indexing into the barrier Ref.
     orders_tensor_core: If False, a successful wait from one thread does not
       guarantee that the TensorCore-related operations in other threads have
       completed. Similarly, when False any TensorCore operation in the waiting
       thread is allowed to begin before the wait succeeds.
   """
   num_arrivals: int = 1
-  num_barriers: int | Sequence[int] = 1
+  num_barriers: int | Sequence[int] = ()
   orders_tensor_core: bool = False
 
   def __post_init__(self):
@@ -1493,7 +1494,7 @@ class Barrier:
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class ClusterBarrier:
   collective_axes: tuple[str | tuple[str, ...], ...]
-  num_barriers: int | Sequence[int] = 1
+  num_barriers: int | Sequence[int] = ()
   num_arrivals: int = 1
   orders_tensor_core: bool = False
   leader_tracked: bool = False

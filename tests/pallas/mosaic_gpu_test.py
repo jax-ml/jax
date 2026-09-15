@@ -270,6 +270,14 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     self.assertEqual(ref.inner_aval.dtype, jnp.float32)
     self.assertEqual(ref.memory_space, gpu_core.MemorySpace.GMEM)
 
+  def test_barrier_ref_shape(self):
+    # A single barrier is referred to by a scalar reference, so that uses of a
+    # barrier array can be told apart from uses of a single barrier.
+    self.assertEqual(plgpu.Barrier().get_ref_aval().shape, ())
+    self.assertEqual(plgpu.Barrier(num_barriers=1).get_ref_aval().shape, (1,))
+    self.assertEqual(plgpu.Barrier(num_barriers=(2, 3)).get_ref_aval().shape,
+                     (2, 3))
+
   def test_io_aliasing(self):
     @jax.jit
     def f():
