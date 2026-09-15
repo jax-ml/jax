@@ -447,7 +447,7 @@ def _emit_detached_func(
   func_op = func.FuncOp(name, ftype, ip=False)
   entry_block = func_op.add_entry_block()
   try:
-    with ir.InsertionPoint(entry_block):
+    with ir.InsertionPoint(entry_block), ir.Location.unknown():
       outs = body_builder(list(entry_block.arguments))
       func.return_(list(outs))
   except Exception:
