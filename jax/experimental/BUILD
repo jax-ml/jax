@@ -452,6 +452,7 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic:lowering",
         "//jax/_src/pallas/mosaic:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic:pipeline",
+        "//jax/_src/pallas/mosaic:prefetch",
         "//jax/_src/pallas/mosaic:primitives",
         "//jax/_src/pallas/mosaic:random",
         "//jax/_src/pallas/mosaic:tpu_info",
