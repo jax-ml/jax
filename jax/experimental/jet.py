@@ -444,7 +444,7 @@ jet_rules[lax.one_minus_square_p] = _one_minus_square_rule
 
 def_comp(lax.rsqrt_p, lambda x: x ** -0.5)
 def_comp(lax.asinh_p, lambda x: lax.log(x + lax.sqrt(lax.square(x) + 1)))
-def_comp(lax.acosh_p, lambda x: lax.log(x + lax.sqrt(lax.square(x) - 1)))
+def_comp(lax.acosh_p, lambda x: lax.log(x + lax.sqrt(x - 1) * lax.sqrt(x + 1)))
 def_comp(lax.atanh_p, lambda x: 0.5 * lax.log(lax.div(1 + x, 1 - x)))
 def_comp(lax.erfc_p, lambda x: 1 - lax.erf(x))
 def_comp(lax.rem_p, lambda x, y: x - y * lax.floor(x / y))
