@@ -813,7 +813,7 @@ def ptp(a: ArrayLike, axis: _Axis = ..., out: None = ...,
 def put(a: ArrayLike, ind: ArrayLike, v: ArrayLike,
         mode: str | None = ..., *, inplace: builtins.bool = ...) -> Array: ...
 def put_along_axis(arr: ArrayLike, indices: ArrayLike, values: ArrayLike,
-        axis: int | None, inplace: bool = True, *, mode: str | None = None) -> Array: ...
+        axis: int | None, inplace: builtins.bool = True, *, mode: str | None = None) -> Array: ...
 def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = ...,
              out: None = ..., overwrite_input: builtins.bool = ..., method: str = ...,
              keepdims: builtins.bool = ..., *, interpolation: DeprecatedArg | str = ...) -> Array: ...
@@ -831,7 +831,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = ..., *,
            total_repeat_length: int | None = ...,
            out_sharding: NamedSharding | P | None = None) -> Array: ...
 def reshape(
-    a: ArrayLike, shape: DimSize | Shape, order: str = ..., *, copy: bool | None = ...,
+    a: ArrayLike, shape: DimSize | Shape, order: str = ..., *, copy: builtins.bool | None = ...,
     out_sharding: NamedSharding | P | None = ...,
 ) -> Array: ...
 
@@ -1004,7 +1004,7 @@ class _UniqueInverseResult(NamedTuple):
 def unique(ar: ArrayLike, return_index: builtins.bool = ..., return_inverse: builtins.bool = ...,
            return_counts: builtins.bool = ..., axis: int | None = ...,
            *, equal_nan: builtins.bool = ..., size: int | None = ...,
-           fill_value: ArrayLike | None = ..., sorted: bool = ...,
+           fill_value: ArrayLike | None = ..., sorted: builtins.bool = ...,
 ): ...
 def unique_all(x: ArrayLike, /, *, size: int | None = ...,
                fill_value: ArrayLike | None = ...) -> _UniqueAllResult: ...
