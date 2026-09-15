@@ -4807,8 +4807,10 @@ ad.defjvp(asinh_p, lambda g, x: mul(g, rsqrt(add(square(x), _one(x)))))
 mlir.register_lowering(asinh_p, partial(_nary_lower_hlo, chlo.asinh))
 
 acosh_p = standard_unop(_float | _complex, 'acosh')
-ad.defjvp(acosh_p,
-          lambda g, x: mul(g, rsqrt(neg(one_minus_square(x)))))
+ad.defjvp(
+    acosh_p,
+    lambda g, x: mul(g, mul(rsqrt(sub(x, _one(x))), rsqrt(add(x, _one(x))))),
+)
 mlir.register_lowering(acosh_p, partial(_nary_lower_hlo, chlo.acosh))
 
 atanh_p = standard_unop(_float | _complex, 'atanh')
