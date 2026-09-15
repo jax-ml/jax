@@ -977,8 +977,7 @@ def make_array_from_process_local_data(
 def _array_from_process_local_data(
     local_data: np.ndarray, sharding: Sharding,
     global_shape: Shape | None = None) -> ArrayImpl:
-  # TODO(sandler): consider supporting partially specified global_shape or
-  # making local_to_global_shape available in the api.
+  # TODO(sandler): consider supporting partially specified global_shape
   local_shape = local_data.shape
   if global_shape is None:
     global_shape = local_to_global_shape(sharding, local_shape)  # pyrefly: ignore[bad-assignment]
