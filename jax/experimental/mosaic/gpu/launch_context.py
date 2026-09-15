@@ -1455,15 +1455,32 @@ class LaunchContext:
         dyn_offset = arith.divui(dyn_offset, c(offset_scale, i32))
         dyn_offset = arith.extui(i64, dyn_offset)
         dyn_offset = arith.addi(dyn_offset, gmem_offset)
-        if gmem_ref_ty.rank != 2:
-          raise NotImplementedError("Only 2D copies implemented")
+        # The tiling applies to the two minor dimensions, so the dimensions
+        # above them are whole, and both the layout above and ``transfer_tiled``
+        # below treat them as logical dimensions to iterate over. Everything
+        # here that indexes GMEM does so through ``Tiling``, which applies to a
+        # suffix of the strides, so it is indifferent to how many there are.
+        tiling_rank = len(tiling)
+        if gmem_ref_ty.rank < tiling_rank:
+          raise NotImplementedError(
+              f"Tiled copies need at least {tiling_rank} dimensions, got"
+              f" {gmem_ref_ty.rank}"
+          )
         gmem_slice_shape = tuple(
             s
             for i, s in enumerate(untransformed_slice_shape)
             if i not in squeezed_dims
         )
         transfers = fa.FragmentedArray.transfer_tiled(
-            smem_ref, swizzle, layout, gmem_slice_shape, optimized=False
+            smem_ref,
+            swizzle,
+            layout,
+            gmem_slice_shape,
+            optimized=False,
+            # Only the two minor dimensions are tiled, so the SMEM ref's rank
+            # exceeds GMEM's by two, whatever GMEM's is. That makes it odd for an
+            # odd-ranked copy, which the default of half the rank cannot handle.
+            ref_tiling_rank=tiling_rank,
         )
         gmem_base_ptr = utils.getelementptr(utils.memref_ptr(gmem_ref), [dyn_offset], gep_type)
         gmem_base_ptr = llvm.addrspacecast(
