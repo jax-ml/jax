@@ -1529,6 +1529,26 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(api.value_and_grad(f)(x),
                         (jnp.sin(x), 2 * jnp.cos(x)))
 
+  def test_transpose_inside_custom_jvp_tangent_error(self):
+    @jax.custom_vjp
+    def g(x, y):
+      return x + y
+    g.defvjp(lambda x, y: (g(x, y), None), lambda _, ct: (ct, ct))
+
+    @jax.custom_jvp
+    def f(x, y):
+      return x + y
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, y = primals
+      tx, ty = tangents
+      return f(x, y), g(tx, ty)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "hijax.VJPHiPrimitive"):
+      api.grad(f)(1., 1.)
+
   def test_invariance(self):
     @jax.custom_vjp
     def f(x):
