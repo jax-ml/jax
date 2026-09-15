@@ -8785,6 +8785,54 @@ class Remat3Test(RematTest):
     self.assertIs(eqn.primitive, pe.eval_jaxpr_p)
     self.assertLen(eqn.params['call_jaxpr'].eqns, 11)  # 10 sins + inner call
 
+  def test_remat_save_from_both_policies_with_everything_saveable(self):
+    p = jax.checkpoint_policies.save_from_both_policies(
+        jax.checkpoint_policies.everything_saveable,
+        jax.checkpoint_policies.save_only_these_names('foo'))
+    self.assertIs(p, jax.checkpoint_policies.everything_saveable)
+
+    def f(x):
+      return jnp.sin(jnp.sin(x))
+
+    f_remat = jax.remat(f, policy=p)
+    res = saved_residuals(f_remat, jnp.float32(1.))
+    self.assertLen(res, 2)  # both x and sin(x) are saved
+
+  def test_remat_dot_policy_composed_with_save_from_both_policies(self):
+    dot_policy = jax.checkpoint_policies.save_from_both_policies(
+        jax.checkpoint_policies.dots_saveable,
+        jax.checkpoint_policies.save_only_these_names('foo'))
+
+    def g(x, w):
+      y = x @ w
+      z = checkpoint_name(jnp.sin(y), 'foo')
+      return jnp.cos(z)
+
+    g_remat = jax.remat(g, policy=dot_policy)
+    res_g = saved_residuals(g_remat, jnp.ones((2, 2)), jnp.ones((2, 2)))
+    srcs = [src for _, src in res_g]
+    self.assertLen(res_g, 4)  # x, w, x @ w, and 'foo' saved
+    self.assertTrue(any('output of dot_general' in s for s in srcs))
+    self.assertTrue(any("named 'foo'" in s for s in srcs))
+
+  def test_remat_nested_outer_saved_residuals_preserved(self):
+    @jax.remat
+    def inner(x):
+      y = checkpoint_name(jnp.sin(x), 'saved')
+      return y * y
+
+    @partial(jax.remat, policy=jax.checkpoint_policies.save_only_these_names('saved'))
+    def outer(x):
+      return inner(x)
+
+    _, f_vjp = jax.vjp(outer, 1.)
+    bwd_jaxpr = jax.jit(f_vjp).trace(1.).lojax.jaxpr
+    bwd_jaxpr, _ = pe.dce_jaxpr(bwd_jaxpr, True)
+    bwd_text = bwd_jaxpr.pretty_print(use_color=False)
+    # Outer policy saves 'saved' (sin(x)) inside inner; PrimalLeftTangentRight.remat
+    # preserves that saved residual so sin(x) is not recomputed on the backward pass.
+    self.assertEqual(bwd_text.count('= sin'), 0)
+
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTest(jtu.JaxTestCase):

@@ -6169,14 +6169,16 @@ dot_general_p = standard_primitive(
 
 def _dot_general_remat(trace, lhs, rhs, **params):
   from jax._src.ad_checkpoint import (
-      DotsSaveable, OffloadDotWithNoBatchDims, primal_left_tangent_right)
+      everything_saveable, DotsSaveable, OffloadDotWithNoBatchDims,
+      SaveFromBothPolicies, primal_left_tangent_right)
   dot = partial(dot_general_p.bind, **params)
   out = dot(lhs, rhs)
-  if (isinstance(trace.policy, DotsSaveable) and
-      trace.policy(dot_general_p, typeof(lhs), typeof(rhs), **params)):
+  if trace.policy is everything_saveable:
     return out, lambda lhs, rhs: primal_left_tangent_right(out, dot(lhs, rhs))
-  if isinstance(trace.policy, OffloadDotWithNoBatchDims):
-    verdict = trace.policy(dot_general_p, typeof(lhs), typeof(rhs), **params)
+  if isinstance(trace.policy, (DotsSaveable, OffloadDotWithNoBatchDims, SaveFromBothPolicies)):
+    verdict = pe.ensure_enum(trace.policy(dot_general_p, typeof(lhs), typeof(rhs), **params))
+    if isinstance(verdict, pe.SaveableType):
+      return out, lambda lhs, rhs: primal_left_tangent_right(out, dot(lhs, rhs))
     if isinstance(verdict, pe.Offloadable):
       from jax._src.api import device_put
       out_host = device_put(out, core.mem_kind_to_space(verdict.dst),

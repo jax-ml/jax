@@ -182,20 +182,31 @@ def save_and_offload_only_these_names(
       offload_src, offload_dst)
 
 
+@dataclass(frozen=True)
+class SaveFromBothPolicies:
+  policy_1: Any
+  policy_2: Any
+  def __call__(self, prim, *args, **params):
+    out1 = pe.ensure_enum(self.policy_1(prim, *args, **params))
+    out2 = pe.ensure_enum(self.policy_2(prim, *args, **params))
+    if isinstance(out1, pe.SaveableType) or isinstance(out2, pe.SaveableType):
+      return pe.Saveable
+    if isinstance(out1, pe.Offloadable):
+      return out1
+    if isinstance(out2, pe.Offloadable):
+      return out2
+    return pe.Recompute
+
+
 def save_from_both_policies(policy_1, policy_2):
   """Logical OR of the given policies.
 
   A residual is saveable iff it is saveable according to either policy."""
-  def policy(prim, *args, **params):
-    out1 = policy_1(prim, *args, **params)
-    out2 = policy_2(prim, *args, **params)
-    if not (isinstance(out1, bool) and isinstance(out2, bool)):
-      raise ValueError(
-          "The return value of the policies should be a boolean. Got:"
-          f" {out1} and {out2}. Please write a custom policy function directly,"
-          " rather than using this helper function.")
-    return out1 or out2
-  return policy
+  if policy_1 is everything_saveable or policy_2 is everything_saveable:
+    return everything_saveable
+  if isinstance(policy_1, SaveOnlyTheseNames) and isinstance(policy_2, SaveOnlyTheseNames):
+    return SaveOnlyTheseNames(policy_1.saveable_names | policy_2.saveable_names)
+  return SaveFromBothPolicies(policy_1, policy_2)
 
 
 # Please update the file docs/gradient-checkpointing.md with any new
@@ -204,6 +215,7 @@ checkpoint_policies = types.SimpleNamespace(
     SaveOnlyTheseNames=SaveOnlyTheseNames,
     SaveAnyNamesButThese=SaveAnyNamesButThese,
     SaveAndOffloadOnlyTheseNames=SaveAndOffloadOnlyTheseNames,
+    SaveFromBothPolicies=SaveFromBothPolicies,
     everything_saveable=everything_saveable,
     nothing_saveable=nothing_saveable,
     dots_saveable=dots_saveable,
@@ -1113,7 +1125,8 @@ class RematTraced(HiPrim):
       primals_out, f_vjp = api.vjp(traced, *primals, in_nzs=in_nzs)
       out_nzs = f_vjp.out_nzs  # pyrefly: ignore[missing-attribute]
       rem = Partial(lambda res, *_: res, f_vjp)
-      return primals_out, (list(primals), Static(self.prevent_cse), rem), list(out_nzs)
+      prevent_cse = self.prevent_cse if isinstance(self.prevent_cse, bool) else ()
+      return primals_out, ([], Static(prevent_cse), rem), list(out_nzs)
     primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
                                         custom_vjp_rules=True)
     out_nzs_cell = []
@@ -1205,7 +1218,7 @@ class RematTraced(HiPrim):
     (jaxpr, in_tree, out_tree), (res,) = rem_.func.args, rem_.args
     def rem(*args_):
       args_flat = tree_leaves_checked(in_tree, args_)
-      out_flat = RematTraced(jaxpr, trace.policy)(*res, *args_flat)
+      out_flat = RematTraced(jaxpr, trace.policy, self.prevent_cse)(*res, *args_flat)
       return tree_unflatten(out_tree, out_flat)
     return out, rem
 
