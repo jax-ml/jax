@@ -3452,6 +3452,53 @@ class EmitPipelinePrefetchTest(jtu.JaxTestCase):
     result = run(x, y1, y2)
     np.testing.assert_allclose(result, x + y1 + 1)
 
+  def test_transformed_ref_prefetch(self):
+    grid = (4,)
+    mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+
+    @jax.jit
+    def run(x):
+      in_spec = pl.BlockSpec(
+          (8, 128),
+          lambda i: (i, 0),
+          pipeline_mode=pl.Buffered(buffer_count=2, prefetched_count=1),
+          memory_space=pltpu.VMEM,
+      )
+      out_spec = pl.BlockSpec(
+          (8, 128),
+          lambda i: (i, 0),
+          pipeline_mode=pl.Buffered(buffer_count=2),
+          memory_space=pltpu.VMEM,
+      )
+
+      def pipeline_body(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + 1
+
+      pipeline, async_prefetch = pltpu.emit_pipeline_with_async_prefetch(
+          pipeline_body,
+          grid=grid,
+          in_specs=[in_spec],
+          out_specs=out_spec,
+          mesh=mesh,
+      )
+      x_ref = jax.new_ref(x).at[8:40, :]
+      pref = async_prefetch(x_ref)
+
+      def copy_kernel(x_hbm_ref, o_hbm_ref):
+        pipeline(x_hbm_ref.at[8:40, :], o_hbm_ref, allocations=pref)
+
+      run_kernel = pl.kernel(
+          copy_kernel,
+          out_type=jax.ShapeDtypeStruct((32, 128), jnp.float32),
+          mesh=mesh,
+      )
+      return run_kernel(x)
+
+    x = jnp.arange(48 * 128, dtype=jnp.float32).reshape((48, 128))
+    result = run(x)
+    expected = x[8:40] + 1
+    np.testing.assert_allclose(result, expected)
+
 
 class EmitPipelinePrefetchPrimitiveTest(EmitPipelinePrefetchTest):
 

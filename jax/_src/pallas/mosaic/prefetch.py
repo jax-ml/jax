@@ -20,8 +20,7 @@ from collections.abc import Callable
 import dataclasses
 
 import jax
-from jax._src import core as jax_core
-from jax._src.state import AbstractRef
+from jax._src import state
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import helpers
 from jax._src.pallas.mosaic import core as tpu_core
@@ -106,7 +105,9 @@ def emit_pipeline_with_async_prefetch(
     )
     # TODO(rdyro): Support TransformedRefs.
     inputs_flat = [
-        jax.new_ref(x) if not isinstance(jax_core.typeof(x), AbstractRef) else x
+        x
+        if isinstance(x, (state.AbstractRef, state.TransformedRef))
+        else jax.new_ref(x)
         for x in jax.tree.leaves(filt_inputs)
     ]
     in_specs_flat = jax.tree.leaves(filt_in_specs)
