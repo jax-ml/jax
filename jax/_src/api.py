@@ -2031,8 +2031,8 @@ class VJP:
                     self.want_logs)(out_ct)
 
   # Like __call__, but returns a pair (arg_cts, logs), where logs is a dict
-  # merging (with clobber semantics, in backward execution order) the dicts
-  # logged by transpose/vjp_bwd rules. Plain __call__ drops the logs.
+  # merging the dicts logged by transpose/vjp_bwd rules. Repeated keys are an
+  # error, even with plain __call__, which drops the logs.
   with_logs = property(lambda self: self.replace(want_logs=True))
 
   def with_refs(self, *maybe_ct_refs):

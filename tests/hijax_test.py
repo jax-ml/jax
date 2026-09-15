@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
 import itertools as it
+import traceback
 from typing import Any
 import unittest
 import numpy as np
@@ -1869,7 +1870,7 @@ class HijaxTest(jtu.JaxTestCase):
   def test_backward_pass_logging(self):
     # A vjp_bwd rule can return a dict of pytrees to log out of the backward
     # pass; f_vjp.with_logs(out_ct) returns (arg_cts, logs), where logs merges
-    # the rules' dicts with clobber semantics. Plain f_vjp(out_ct) drops them.
+    # the rules' dicts with unique keys. Plain f_vjp(out_ct) drops them.
     class Square(HiPrim):
       def __init__(self, in_aval, tag):
         self.in_avals = (in_aval,)
@@ -1899,8 +1900,7 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(f_vjp(1.0)[0], 6.0)  # plain call drops the logs
     self.assertAllClose(jax.grad(square)(3.0), 6.0)
 
-    # distinct keys are both present; a repeated key is clobbered, with the
-    # earlier-in-forward-order rule winning
+    # distinct keys are both present; a repeated key is an error
     f2 = lambda x: square(square(x, 'inner'), 'outer')
     _, f2_vjp = jax.vjp(f2, 2.0)
     _, logs2 = f2_vjp.with_logs(1.0)
@@ -1908,8 +1908,8 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(logs2['inner']['x'], 2.0)
     self.assertAllClose(logs2['outer']['x'], 4.0)
     _, f3_vjp = jax.vjp(lambda x: square(square(x)), 2.0)
-    _, logs3 = f3_vjp.with_logs(1.0)
-    self.assertAllClose(logs3['sq']['x'], 2.0)
+    with self.assertRaisesRegex(ValueError, "Duplicate backward-pass log key 'sq'"):
+      f3_vjp.with_logs(1.0)
 
     # logs flow out of a transposed jit, and with_logs itself can be traced
     fj = jax.jit(lambda x: square(x))
@@ -1924,14 +1924,78 @@ class HijaxTest(jtu.JaxTestCase):
     # logs from a scan body are stacked leaf-wise, index-aligned with the
     # forward iterations
     def f_scan(xs):
-      c_out, ys = jax.lax.scan(lambda c, x: (c + square(x), square(x)), 0., xs)
+      c_out, ys = jax.lax.scan(
+          lambda c, x: (c + square(x, 'carry'), square(x, 'ys')), 0., xs)
       return c_out + ys.sum()
     xs = jnp.array([1., 2., 3.])
     _, fs_vjp = jax.vjp(f_scan, xs)
     ctss, logss = fs_vjp.with_logs(1.0)
     self.assertAllClose(ctss[0], 4.0 * xs)
-    self.assertArraysEqual(logss['sq']['x'], xs)
-    self.assertEqual(logss['sq']['ct_in'].shape, xs.shape)
+    self.assertEqual(set(logss), {'carry', 'ys'})
+    for log in logss.values():
+      self.assertArraysEqual(log['x'], xs)
+      self.assertEqual(log['ct_in'].shape, xs.shape)
+
+  @parameterized.product(
+      transform=['eager', 'jit', 'jit_pullback', 'checkpoint', 'scan',
+                 'jit_boundary', 'scan_boundary', 'cond_boundary'],
+      with_logs=[False, True])
+  def test_backward_pass_logging_duplicate_key(self, transform, with_logs):
+    @jax.custom_vjp
+    def log_id(x):
+      return x
+
+    def fwd(x):
+      return x, None
+
+    def bwd(_, ct):
+      return (ct,), {'duplicate': ct}
+
+    log_id.defvjp_with_logs(fwd, bwd)
+
+    def first_log(x):
+      return log_id(x)
+
+    def repeated(x):
+      return log_id(first_log(x))
+
+    f = repeated
+    if transform == 'jit':
+      f = jax.jit(f)
+    elif transform == 'checkpoint':
+      f = jax.checkpoint(f)
+    elif transform == 'scan':
+      f = lambda x: jax.lax.scan(lambda c, _: (repeated(c), None),
+                                 x, None, length=2)[0]
+    elif transform == 'jit_boundary':
+      f = lambda x: log_id(jax.jit(log_id)(x))
+    elif transform == 'scan_boundary':
+      f = lambda x: log_id(jax.lax.scan(lambda c, _: (log_id(c), None),
+                                       x, None, length=2)[0])
+    elif transform == 'cond_boundary':
+      f = lambda x: log_id(jax.lax.cond(x > 0, log_id, log_id, x))
+
+    def apply(x):
+      _, pullback = jax.vjp(f, x)
+      return pullback.with_logs(1.) if with_logs else pullback(1.)
+
+    if transform == 'jit_pullback':
+      apply = jax.jit(apply)
+    with self.assertRaisesRegex(
+        ValueError, "Duplicate backward-pass log key 'duplicate'.*"
+                    "fancy transpose rule for '") as err:
+      apply(2.)
+
+    if transform == 'eager':
+      # The merge runs in the equation's source context, so the exception
+      # points to the forward call whose backward rule repeated the key.
+      cause = err.exception.__cause__
+      self.assertIsNotNone(cause)
+      frames = traceback.extract_tb(cause.__traceback__)
+      self.assertIn('first_log', [frame.name for frame in frames])
+
+    with self.assertRaisesRegex(ValueError, "Duplicate backward-pass log key"):
+      jax.grad(f)(2.)
 
   def test_backward_pass_logging_cond(self):
     # A transposed cond logs a sum represented as a tagged product: each key

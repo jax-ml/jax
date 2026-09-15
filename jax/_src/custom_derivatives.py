@@ -705,7 +705,8 @@ class custom_vjp[ReturnValue]:
     ``with_logs`` method: ``f_vjp.with_logs(out_ct)`` returns a pair
     ``(arg_cts, logs)``. Logging is drop-by-default: a plain ``f_vjp(out_ct)``
     call ignores the logs, and under ``jit`` the logging computation is
-    dead-code-eliminated.
+    dead-code-eliminated. Log keys must be unique within a backward pass;
+    repeated keys raise a ``ValueError``, even when the logs are ignored.
     """
     self.defvjp(fwd, bwd, symbolic_zeros=symbolic_zeros,
                 optimize_remat=optimize_remat)
@@ -1209,6 +1210,8 @@ def custom_gradient(fun=None, *, with_logs: bool = False):
       the cotangents, where ``logs`` is a dict of named pytrees to log out of
       the backward pass, or ``None`` to log nothing, as with
       :py:meth:`jax.custom_vjp.defvjp_with_logs`.
+      Log keys must be unique within a backward pass; repeated keys raise a
+      ``ValueError``, even when the logs are ignored.
 
   Returns:
     A Python callable that accepts the same arguments as ``fun`` and returns the
