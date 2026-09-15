@@ -1367,6 +1367,196 @@ class OpsTest(ptu.PallasTPUTest):
       kwargs.update(dict(atol=2e-5, rtol=2e-5))
     np.testing.assert_allclose(out, jax.lax.reciprocal(x), **kwargs)
 
+  @parameterized.product(
+      bits=[
+          (2,),
+          (4,),
+          (4, 2),
+      ]
+  )
+  def test_join_bits(self, bits):
+    if 2 in bits and not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    if 4 in bits and not jtu.is_device_tpu_at_least(version=4):
+      self.skipTest("Requires TPU v4+")
+    shape = (256, 128)
+    i8_inputs = jax.random.randint(
+        jax.random.key(0),
+        shape,
+        0,
+        2**8,
+        dtype=jnp.uint8,
+    )
+    bit_inputs = []
+    shift = 0
+    for bit in bits:
+      mask = (1 << bit) - 1
+      dtype = getattr(jnp, f"int{bit}")
+      bit_inputs.append(((i8_inputs >> shift) & mask).astype(dtype))
+      shift += bit
+
+    kw_pairs = [(4, "four_bits"), (2, "two_bits")]
+
+    def kernel(*args):
+      *bit_args, o_ref = args
+      kwargs = {}
+      bit_args_list = list(bit_args)
+      for bit, kw in kw_pairs:
+        if bit in bits:
+          kwargs[kw] = bit_args_list.pop(0)[...]
+      o_ref[...] = pltpu.join_bits(**kwargs)
+
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int8),
+    )(*bit_inputs)
+    total_bits = sum(bits)
+    mask = (1 << total_bits) - 1
+    np.testing.assert_array_equal(result.astype(jnp.uint8) >> total_bits, 0)
+    np.testing.assert_array_equal(result & mask, i8_inputs & mask)
+
+  @parameterized.product(
+      bitwidths=[
+          (4, 2),
+          (2, 4),
+          (4,),
+          (2,),
+      ]
+  )
+  def test_split_bits(self, bitwidths):
+    if 2 in bitwidths and not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    if 4 in bitwidths and not jtu.is_device_tpu_at_least(version=4):
+      self.skipTest("Requires TPU v4+")
+    shape = (256, 128)
+    i8_inputs = jax.random.randint(
+        jax.random.key(0),
+        shape,
+        0,
+        2**8,
+        dtype=jnp.uint8,
+    )
+
+    def kernel(x_ref, *o_refs):
+      outs = pltpu.split_bits(x_ref[...], bitwidths=bitwidths)
+      for o_ref, out in zip(o_refs, outs):
+        o_ref[...] = out
+
+    out_shapes = [
+        jax.ShapeDtypeStruct(shape, getattr(jnp, f"int{bw}"))
+        for bw in bitwidths
+    ]
+    if len(out_shapes) == 1:
+      result = self.pallas_call(
+          kernel,
+          out_shape=out_shapes[0],
+      )(i8_inputs)
+      results = [result]
+    else:
+      results = self.pallas_call(
+          kernel,
+          out_shape=tuple(out_shapes),
+      )(i8_inputs)
+
+    expected = []
+    shift = 0
+    for bw in bitwidths:
+      mask = (1 << bw) - 1
+      dtype = getattr(jnp, f"int{bw}")
+      expected.append(((i8_inputs >> shift) & mask).astype(dtype))
+      shift += bw
+
+    for res, exp in zip(results, expected):
+      np.testing.assert_array_equal(res, exp)
+
+  def test_fp6_unpack(self):
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    shape = (256, 128)
+    two_bits_in = jax.random.randint(
+        jax.random.key(0), shape, -2, 2, dtype=jnp.int2
+    )
+    four_bits_in = jax.random.randint(
+        jax.random.key(1), shape, -8, 8, dtype=jnp.int4
+    )
+
+    def unpack_kernel(two_b_ref, four_b_ref, o_ref):
+      o_ref[...] = pltpu.unpack_fp6(two_b_ref[...], four_b_ref[...])
+
+    unpacked_fp6_out = self.pallas_call(
+        unpack_kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int8),
+    )(two_bits_in, four_bits_in)
+
+    # Validate that unpacking produces valid 6-bit containers (bits [7:6] are 0)
+    np.testing.assert_array_equal(unpacked_fp6_out.astype(jnp.uint8) >> 6, 0)
+    expected_unpacked = (
+        ((two_bits_in.astype(jnp.uint8) & 0x3) << 4)
+        | (four_bits_in.astype(jnp.uint8) & 0xF)
+    ).astype(jnp.int8)
+    np.testing.assert_array_equal(unpacked_fp6_out, expected_unpacked)
+
+  def test_fp6_pack(self):
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    shape = (256, 128)
+    fp6_input = jax.random.randint(
+        jax.random.key(0), shape, 0, 64, dtype=jnp.uint8
+    )
+
+    def pack_kernel(fp6_ref, two_b_out_ref, four_b_out_ref):
+      two_b, four_b = pltpu.pack_fp6(fp6_ref[...])
+      two_b_out_ref[...] = two_b
+      four_b_out_ref[...] = four_b
+
+    two_bits_out, four_bits_out = self.pallas_call(
+        pack_kernel,
+        out_shape=(
+            jax.ShapeDtypeStruct(shape, jnp.int2),
+            jax.ShapeDtypeStruct(shape, jnp.int4),
+        ),
+    )(fp6_input)
+
+    expected_four_b = (fp6_input & 0xF).astype(jnp.int4)
+    expected_two_b = ((fp6_input >> 4) & 0x3).astype(jnp.int2)
+    np.testing.assert_array_equal(four_bits_out, expected_four_b)
+    np.testing.assert_array_equal(two_bits_out, expected_two_b)
+
+  def test_fp6_layout_roundtrip(self):
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    shape = (256, 128)
+    two_bits_in = jax.random.randint(
+        jax.random.key(0), shape, -2, 2, dtype=jnp.int2
+    )
+    four_bits_in = jax.random.randint(
+        jax.random.key(1), shape, -8, 8, dtype=jnp.int4
+    )
+
+    def unpack_kernel(two_b_ref, four_b_ref, o_ref):
+      o_ref[...] = pltpu.unpack_fp6(two_b_ref[...], four_b_ref[...])
+
+    unpacked_fp6_out = self.pallas_call(
+        unpack_kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int8),
+    )(two_bits_in, four_bits_in)
+
+    def pack_kernel(fp6_ref, two_b_out_ref, four_b_out_ref):
+      two_b, four_b = pltpu.pack_fp6(fp6_ref[...])
+      two_b_out_ref[...] = two_b
+      four_b_out_ref[...] = four_b
+
+    two_bits_out, four_bits_out = self.pallas_call(
+        pack_kernel,
+        out_shape=(
+            jax.ShapeDtypeStruct(shape, jnp.int2),
+            jax.ShapeDtypeStruct(shape, jnp.int4),
+        ),
+    )(unpacked_fp6_out)
+
+    np.testing.assert_array_equal(two_bits_out, two_bits_in)
+    np.testing.assert_array_equal(four_bits_out, four_bits_in)
+
 
 class ConvTest(ptu.PallasTPUTest):
 
