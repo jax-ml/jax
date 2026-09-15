@@ -475,6 +475,19 @@ def _tpu_custom_call_lowering(
     metadata_dict["kernel_metadata"] = ir.StringAttr.get(
         _compact_json_object(**metadata)
     )
+    if "comm_priority" in metadata:
+      metadata_dict["comm_priority"] = ir.StringAttr.get(
+          str(metadata["comm_priority"])
+      )
+    if "frontend_attributes" in metadata and isinstance(
+        metadata["frontend_attributes"], dict
+    ):
+      for k, v in metadata["frontend_attributes"].items():
+        metadata_dict[k] = ir.StringAttr.get(str(v))
+  if ctx.jaxpr_eqn_ctx is not None and ctx.jaxpr_eqn_ctx.xla_metadata:
+    for k, v in ctx.jaxpr_eqn_ctx.xla_metadata.items():
+      v_str = str(v).lower() if isinstance(v, bool) else str(v)
+      metadata_dict[k] = ir.StringAttr.get(v_str)
   assert isinstance(has_side_effects, TpuSideEffectType)
   if has_side_effects == TpuSideEffectType.DATAFLOW_SIDE_EFFECTING:
     metadata_dict["xla_allow_dce_side_effecting_op"] = ir.StringAttr.get("true")
