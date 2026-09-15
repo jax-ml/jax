@@ -130,6 +130,26 @@ static const std::array<std::string_view, 3> valid_memory_kinds = {
     "unpinned_host",
 };
 
+static bool IsCanonicalLocalityDomainMemoryKind(std::string_view memory_kind) {
+  constexpr std::string_view kPrefix = "locality_domain:";
+  // The maximum locality domain ID permissible is (INT64_MAX - 16 = 2^63 - 1) - 16
+  constexpr std::string_view kMaxLocalityDomainId = "9223372036854775791";
+
+  if (memory_kind.size() <= kPrefix.size() ||
+      memory_kind.substr(0, kPrefix.size()) != kPrefix) {
+    return false;
+  }
+  const std::string_view suffix = memory_kind.substr(kPrefix.size());
+  if ((suffix.size() > 1 && suffix.front() == '0') ||
+      !std::all_of(suffix.begin(), suffix.end(),
+                   [](char c) { return c >= '0' && c <= '9'; })) {
+    return false;
+  }
+  return suffix.size() < kMaxLocalityDomainId.size() ||
+         (suffix.size() == kMaxLocalityDomainId.size() &&
+          suffix <= kMaxLocalityDomainId);
+}
+
 NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
                              nb::object memory_kind,
                              nb::object logical_device_ids)
@@ -150,15 +170,20 @@ NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
     memory_kind_ =
         CheckAndCanonicalizeMemoryKind(memory_kind_, *internal_device_list_);
   } else {
+    const std::string_view memory_kind =
+        memory_kind_.is_none() ? std::string_view()
+                               : nb::cast<std::string_view>(memory_kind_);
     if (!memory_kind_.is_none() &&
-        (std::find(valid_memory_kinds.begin(), valid_memory_kinds.end(),
-                   nb::cast<std::string_view>(memory_kind_)) ==
-         valid_memory_kinds.end())) {
+        std::find(valid_memory_kinds.begin(), valid_memory_kinds.end(),
+                  memory_kind) == valid_memory_kinds.end() &&
+        !IsCanonicalLocalityDomainMemoryKind(memory_kind)) {
       throw nb::value_error(
           absl::StrCat("Got invalid memory kind: ",
-                       nb::cast<std::string_view>(memory_kind_),
+                       memory_kind,
                        ". Valid memory kinds are: ",
-                       absl::StrJoin(valid_memory_kinds, ", "))
+                       absl::StrJoin(valid_memory_kinds, ", "),
+                       ", or locality_domain:<unsigned decimal> with value at "
+                       "most 9223372036854775791")
               .c_str());
     }
   }
