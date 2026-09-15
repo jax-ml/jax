@@ -71,6 +71,7 @@ ir_version_override: Callable[[], int | None] | None = None
 #    return None
 #
 # We should also add a TODO to remove the conditional one month later.
+# TODO(slebedev): Bump to 16 after 2026-09-17.
 _FWD_COMPAT_VERSION = 15
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
