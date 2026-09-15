@@ -39,7 +39,6 @@ from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 from jax._src import config
 from jax._src import core
-from jax._src import custom_options as custom_options_lib
 from jax._src import sharding as sharding_lib
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -721,10 +720,6 @@ class Lowered(Stage):
 class Compiled(Stage):
   """Compiled representation of a function specialized to types/values.
 
-  A compiled function accepts the reserved ``custom_options`` keyword
-  argument: a dictionary of per-call custom options forwarded to the runtime
-  as ``ifrt::ExecuteOptions::custom_options`` (see ``jax._src.custom_options``).
-
   A compiled computation is associated with an executable and the
   remaining information needed to execute it. It also provides a
   common API for querying properties of compiled computations across
@@ -893,7 +888,6 @@ class Compiled(Stage):
     # which might conflict here.
     params = args[0]
     args = args[1:]  # Not including const_args
-    custom_options = kwargs.pop("custom_options", None)
     if params.no_kwargs and kwargs:
       kws = ', '.join(kwargs.keys())
       raise NotImplementedError(
@@ -934,8 +928,7 @@ class Compiled(Stage):
               "Cannot apply JAX transformations to a function lowered and "
               "compiled for a particular signature. Detected argument of "
               f"Tracer type {type(arg)}.")
-    with custom_options_lib.custom_options(**(custom_options or {})):
-      lo_outs = params.executable.call(*params.const_args, *args_flat)
+    lo_outs = params.executable.call(*params.const_args, *args_flat)
 
     if params.is_high:
       out_hi_tree, out_hi_types = params.out_types

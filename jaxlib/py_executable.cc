@@ -49,7 +49,7 @@ limitations under the License.
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/call_location.h"
-#include "jaxlib/custom_options.h"
+#include "jaxlib/execution_options.h"
 #include "jaxlib/free_threading.h"
 #include "jaxlib/guard_lib.h"
 #include "jaxlib/nb_class_ptr.h"
@@ -507,7 +507,7 @@ absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
   }
   PyUserContextScope user_context_scope;
   PopulateCallLocation(options, xla::ifrt::UserContextScope::current().get());
-  PopulateCustomOptions(options);
+  PopulateExecutionOptions(options);
   std::optional<std::vector<xla::Future<>>> returned_futures;
   if (with_tokens) {
     returned_futures.emplace();

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/custom_options.h"
+#include "jaxlib/execution_options.h"
 
 #include <cstdint>
 #include <optional>
@@ -38,8 +38,7 @@ using xla::ifrt::AttributeMap;
 
 namespace {
 
-thread_local std::optional<AttributeMap> custom_options_thread_local_ =
-    std::nullopt;
+thread_local ExecutionOptions execution_options_thread_local_;
 
 AttributeMap::Value ValueFromPyObject(const std::string& key,
                                       nb::handle value) {
@@ -119,17 +118,17 @@ nb::dict AttributeMapToPyDict(const AttributeMap& map) {
   return dict;
 }
 
-void SetCustomOptionsThreadLocal(std::optional<AttributeMap> options) {
-  custom_options_thread_local_ = std::move(options);
+void SetExecutionOptionsThreadLocal(ExecutionOptions options) {
+  execution_options_thread_local_ = std::move(options);
 }
 
-const std::optional<AttributeMap>& GetCustomOptionsThreadLocal() {
-  return custom_options_thread_local_;
+const ExecutionOptions& GetExecutionOptionsThreadLocal() {
+  return execution_options_thread_local_;
 }
 
-void PopulateCustomOptions(xla::ifrt::ExecuteOptions& options) {
+void PopulateExecutionOptions(xla::ifrt::ExecuteOptions& options) {
   const std::optional<AttributeMap>& custom_options =
-      custom_options_thread_local_;
+      execution_options_thread_local_.custom_options;
   if (!custom_options.has_value()) {  // Default case
     return;
   }
@@ -147,55 +146,31 @@ void PopulateCustomOptions(xla::ifrt::ExecuteOptions& options) {
       });
 }
 
-ScopedCustomOptions::ScopedCustomOptions(std::optional<AttributeMap> options) {
-  if (!options.has_value()) {
-    return;
-  }
-  active_ = true;
-  previous_ = custom_options_thread_local_;
-  if (previous_.has_value()) {
-    // Options passed to the call take precedence over the thread-local ones.
-    AttributeMap merged = *previous_;
-    options->ForEach(
-        [&](const std::string& key, const AttributeMap::Value& value) {
-          std::visit([&](const auto& v) { CHECK_OK(merged.Set(key, v.value)); },
-                     value);
-        });
-    custom_options_thread_local_ = std::move(merged);
-  } else {
-    custom_options_thread_local_ = std::move(options);
-  }
-}
-
-ScopedCustomOptions::~ScopedCustomOptions() {
-  if (active_) {
-    custom_options_thread_local_ = std::move(previous_);
-  }
-}
-
-void BuildCustomOptionsSubmodule(nb::module_& m) {
+void BuildExecutionOptionsSubmodule(nb::module_& m) {
+  nb::class_<ExecutionOptions>(m, "ExecutionOptions")
+      .def_prop_ro(
+          "custom_options",
+          [](const ExecutionOptions& options) -> std::optional<nb::dict> {
+            if (!options.custom_options.has_value()) {
+              return std::nullopt;
+            }
+            return AttributeMapToPyDict(*options.custom_options);
+          });
   m.def(
-      "set_custom_options_thread_local",
-      [](std::optional<nb::dict> options) {
-        if (options.has_value()) {
-          SetCustomOptionsThreadLocal(
-              AttributeMapFromPyDict(*std::move(options)));
-        } else {
-          SetCustomOptionsThreadLocal(std::nullopt);
+      "set_execution_options_thread_local",
+      [](std::optional<nb::dict> custom_options) {
+        ExecutionOptions options;
+        if (custom_options.has_value()) {
+          options.custom_options =
+              AttributeMapFromPyDict(*std::move(custom_options));
         }
+        SetExecutionOptionsThreadLocal(std::move(options));
       },
-      nb::arg("options").none(),
-      "Sets thread-local custom options attached to every execution dispatched "
-      "from the current thread.");
-  m.def(
-      "get_custom_options_thread_local",
-      []() -> std::optional<nb::dict> {
-        const std::optional<AttributeMap>& options =
-            GetCustomOptionsThreadLocal();
-        if (!options.has_value()) return std::nullopt;
-        return AttributeMapToPyDict(*options);
-      },
-      "Returns thread-local custom options, if set.");
+      nb::kw_only(), nb::arg("custom_options").none() = nb::none(),
+      "Sets execution options attached to every execution dispatched from the "
+      "current thread.");
+  m.def("get_execution_options_thread_local", GetExecutionOptionsThreadLocal,
+        "Returns execution options in effect on the current thread.");
 }
 
 }  // namespace jax

@@ -55,7 +55,7 @@ limitations under the License.
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/call_location.h"
-#include "jaxlib/custom_options.h"
+#include "jaxlib/execution_options.h"
 #include "jaxlib/config.h"
 #include "jaxlib/free_threading.h"
 #include "jaxlib/guard_lib.h"
@@ -647,51 +647,6 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // may never free temporary buffers for copies of arguments.
   GlobalPyRefManager()->MaybeCollectGarbage();
 
-  // Strip the reserved `custom_options` keyword argument and install it as the
-  // thread-local custom options for the duration of the call (both the C++ fast
-  // path and the Python fallback pick it up via `PopulateCustomOptions`).
-  std::optional<xla::ifrt::AttributeMap> custom_options;
-  std::vector<PyObject*> stripped_args;
-  nb::tuple stripped_kwnames;
-  if (kwnames != nullptr) {
-    size_t num_positional = PyVectorcall_NARGS(nargs);
-    size_t num_keyword = PyTuple_GET_SIZE(kwnames);
-    for (size_t i = 0; i < num_keyword; ++i) {
-      PyObject* kwname = PyTuple_GET_ITEM(kwnames, i);
-      if (PyUnicode_CompareWithASCIIString(kwname, kCustomOptionsKwarg) !=
-          0) {
-        continue;
-      }
-      nb::handle value(args[num_positional + i]);
-      if (!value.is_none()) {
-        if (!nb::isinstance<nb::dict>(value)) {
-          throw nb::type_error(
-              absl::StrCat(kCustomOptionsKwarg,
-                           " must be a dictionary or None")
-                  .c_str());
-        }
-        custom_options = AttributeMapFromPyDict(nb::borrow<nb::dict>(value));
-      }
-      // Rebuild the vectorcall arguments without the reserved keyword.
-      stripped_args.reserve(num_positional + num_keyword - 1);
-      stripped_args.insert(stripped_args.end(), args, args + num_positional);
-      stripped_kwnames = nb::steal<nb::tuple>(PyTuple_New(num_keyword - 1));
-      for (size_t j = 0, k = 0; j < num_keyword; ++j) {
-        if (j == i) continue;
-        stripped_args.push_back(args[num_positional + j]);
-        Py_INCREF(PyTuple_GET_ITEM(kwnames, j));
-        PyTuple_SET_ITEM(stripped_kwnames.ptr(), k++,
-                         PyTuple_GET_ITEM(kwnames, j));
-      }
-      args = stripped_args.data();
-      nargs = num_positional;
-      kwnames = num_keyword > 1 ? stripped_kwnames.ptr() : nullptr;
-      break;
-    }
-  }
-  
-  ScopedCustomOptions scoped_custom_options(std::move(custom_options));
-
   if (GetDisableJit()) {
     if (!fun_.has_value()) {
       throw nb::value_error(
@@ -885,7 +840,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   }
   PopulateCallLocation(execute_options,
                        xla::ifrt::UserContextScope::current().get());
-  PopulateCustomOptions(execute_options);
+  PopulateExecutionOptions(execute_options);
 
   // Check if the thread guard is active and should prevent execution.
   // Skipped for portable executables.

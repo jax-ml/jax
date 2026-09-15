@@ -407,8 +407,8 @@ nanobind_pywrap_extension(
         ":call_location",
         ":config",
         ":custom_call_sharding",
-        ":custom_options",
         ":dlpack",
+        ":execution_options",
         ":ffi",
         ":guard_lib",
         ":hash_util",
@@ -602,9 +602,9 @@ cc_library(
 )
 
 cc_library(
-    name = "custom_options",
-    srcs = ["custom_options.cc"],
-    hdrs = ["custom_options.h"],
+    name = "execution_options",
+    srcs = ["execution_options.cc"],
+    hdrs = ["execution_options.h"],
     compatible_with = [],
     copts = [
         "-fexceptions",
@@ -1000,7 +1000,7 @@ cc_library(
     deps = [
         ":call_location",
         ":config",
-        ":custom_options",
+        ":execution_options",
         ":free_threading",
         ":guard_lib",
         ":jax_jit",
@@ -1117,7 +1117,7 @@ cc_library(
         ":cached_py_object",
         ":call_location",
         ":config",
-        ":custom_options",
+        ":execution_options",
         ":free_threading",
         ":guard_lib",
         ":hash_util",
@@ -1311,7 +1311,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        ":custom_options",
+        ":execution_options",
         ":jax_jit",
         ":nb_class_ptr",
         ":py_client",
