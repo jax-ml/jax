@@ -29,6 +29,8 @@ if jtu.is_running_under_pytest():
 
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
+import numpy as np
+import scipy.special
 
 config.parse_flags_with_absl()
 
@@ -131,20 +133,29 @@ class SpecialTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_lgamma_accuracy(self, dtype):
-    # TODO(phawkins): Large errors occur near zero-crossings (where |gamma(x)| = 1,
-    # e.g. x ~= -3.14358) where small approximation errors cause sign flips across
-    # zero, and at x = -inf due to inf/NaN handling differences.
+    # TODO(phawkins): In float64, chlo.lgamma has large errors near negative
+    # zero-crossings (where |gamma(x)| = 1, e.g. x ~= -3.14358).
     bounds = [
-        (["cpu"], {bf16: 18446744073709551615, f16: 18446744073709551615, f32: 18446744073709551615, f64: 18446744073709551615}),
-        (["gpu"], {bf16: 18446744073709551615, f16: 18446744073709551615, f32: 18446744073709551615, f64: 18446744073709551615}),
-        (tpu_devices, {bf16: 18446744073709551615, f16: 18446744073709551615, f32: 18446744073709551615}),
+        (["cpu"], {bf16: 0, f16: 1, f32: 1, f64: 18446744073709551615}),
+        (["gpu"], {bf16: 0, f16: 1, f32: 1, f64: 18446744073709551615}),
+        (tpu_devices, {bf16: 0, f16: 1, f32: 1}),
+    ]
+    input_ftz = [
+        (["cpu", "gpu"], {bf16: False, f16: False, f32: False}),
+        (tpu_devices, {f16: False, f32: False}),
     ]
     util.check_unary_precision(
         self,
         lax.lgamma,
-        lambda x: mpmath.log(abs(mpmath.gamma(x))),
+        lambda x: (
+            mpmath.inf
+            if x == -mpmath.inf
+            else mpmath.log(abs(mpmath.gamma(x)))
+        ),
         dtype,
         bounds=bounds,
+        input_ftz=input_ftz,
+        ref_fn=lambda x: np.where(x == -np.inf, np.inf, scipy.special.gammaln(x)),
     )
 
 
