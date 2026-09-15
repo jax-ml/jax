@@ -4363,16 +4363,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   def testSortStableDescending(self):
-    # TODO(jakevdp): test directly against np.sort when descending is supported.
-    x = jnp.array([0, 1, jnp.nan, 0, 2, jnp.nan, -jnp.inf, jnp.inf])
-    x_sorted = jnp.array([-jnp.inf, 0, 0, 1, 2, jnp.inf, jnp.nan, jnp.nan])
-    argsorted_stable = jnp.array([6, 0, 3, 1, 4, 7, 2, 5])
-    argsorted_rev_stable = jnp.array([2, 5, 7, 4, 1, 0, 3, 6])
-
-    self.assertArraysEqual(jnp.sort(x), x_sorted)
-    self.assertArraysEqual(jnp.sort(x, descending=True), lax.rev(x_sorted, [0]))
-    self.assertArraysEqual(jnp.argsort(x), argsorted_stable)
-    self.assertArraysEqual(jnp.argsort(x, descending=True), argsorted_rev_stable)
+    x = np.array([0, 1, np.nan, 0, 2, np.nan, -np.inf, np.inf])
+    self.assertArraysEqual(jnp.sort(x), np.sort(x, stable=True))
+    self.assertArraysEqual(
+        jnp.sort(x, descending=True), np.sort(x, descending=True, stable=True)
+    )
 
   @jtu.sample_product(shape=nonzerodim_shapes, dtype=all_dtypes)
   def testSortComplex(self, shape, dtype):
@@ -4426,6 +4421,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  def testArgsortStableDescending(self):
+    x = np.array([0, 1, np.nan, 0, 2, np.nan, -np.inf, np.inf])
+    np_argsort = jtu.with_jax_dtype_defaults(np.argsort)
+    self.assertArraysEqual(jnp.argsort(x), np_argsort(x, stable=True))
+    self.assertArraysEqual(
+        jnp.argsort(x, descending=True),
+        np_argsort(x, descending=True, stable=True),
+    )
 
   @jtu.sample_product(dtype=[np.int16, np.uint32])
   def testArgsortDtype(self, dtype):
