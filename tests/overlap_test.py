@@ -557,6 +557,246 @@ class OverlapTest(jtu.JaxTestCase):
 
     f(x, y)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), ('fsdp',))
+  def test_nvidia_repro(self, mesh):
+    def fan_in_scaled_normal(rng, shape, out_sharding, dtype=jnp.bfloat16):
+      return (shape[-2] ** -0.5) * jax.random.normal(rng, shape, dtype=dtype,
+                                                     out_sharding=out_sharding)
+
+    def init_attention_block(rng, model_dim, dtype=jnp.bfloat16):
+      rngs = jax.random.split(rng, 4)
+
+      _init_weight = partial(
+          fan_in_scaled_normal,
+          shape=(model_dim, model_dim),
+          out_sharding=P("fsdp", None),
+          dtype=dtype,
+      )
+
+      return {
+          "w_q": _init_weight(rngs[0]),
+          "w_k": _init_weight(rngs[1]),
+          "w_v": _init_weight(rngs[2]),
+          "w_o": _init_weight(rngs[3]),
+      }
+
+
+    def forward_attention_block(q_src, kv_src, attention_block_params_ag, w_in,
+                                num_attention_heads):
+      B, S_q, D = q_src.shape
+      _, S_kv, _ = kv_src.shape
+      H = num_attention_heads
+      assert D % H == 0
+      d = D // H
+
+      # Start AG of MLP w_in.
+      w_in_ag_future = parallel.all_gather_start(
+          w_in,
+          axis_name="fsdp",
+          tiled=True,
+      )
+
+      # Overlap AG of MLP w_in with current layer's compute.
+      @program_order(enforce=False)
+      def _attention_block_compute():
+        q = (q_src @ attention_block_params_ag["w_q"]).reshape(B, S_q, H, d)
+        k = (kv_src @ attention_block_params_ag["w_k"]).reshape(B, S_kv, H, d)
+        v = (kv_src @ attention_block_params_ag["w_v"]).reshape(B, S_kv, H, d)
+        attn_op_out = jax.nn.dot_product_attention(
+            q, k, v, scale=d**-0.5, implementation="cudnn"
+        )
+        return attn_op_out.reshape(B, S_q, D) @ attention_block_params_ag["w_o"]
+
+      o = _attention_block_compute()
+
+      # Finish MLP w_in AG by the time our attention block is complete.
+      w_in_ag = w_in_ag_future.done()
+
+      return o, w_in_ag
+
+
+    def init_mlp_block(rng, model_dim, hidden_dim, dtype=jnp.bfloat16):
+      w_in_rng, w_out_rng = jax.random.split(rng, 2)
+      return {
+          "w_in": fan_in_scaled_normal(
+              w_in_rng,
+              (model_dim, hidden_dim),
+              dtype=dtype,
+              out_sharding=P("fsdp", None),
+          ),
+          "w_out": fan_in_scaled_normal(
+              w_out_rng,
+              (hidden_dim, model_dim),
+              dtype=dtype,
+              out_sharding=P("fsdp", None),
+          ),
+      }
+
+
+    def forward_mlp_block(inputs, w_in_ag, w_out, next_attention_block_params):
+      # Overlap AG(w_out) with the w_in proj.
+      w_out_ag_future = parallel.all_gather_start(
+          w_out,
+          axis_name="fsdp",
+          tiled=True,
+      )
+      hiddens = jnp.dot(inputs, w_in_ag)
+      w_out_ag = w_out_ag_future.done()
+
+      # Overlap AG(next_w_qkvo) with the activation function + output proj.
+      next_attention_block_params_ag_futures = parallel.all_gather_start(
+          next_attention_block_params,
+          axis_name="fsdp",
+          tiled=True,
+      )
+
+      @program_order(enforce=False)
+      def _act_fn_output_proj():
+          return jnp.dot(jax.nn.relu(hiddens), w_out_ag)
+
+      out = _act_fn_output_proj()
+
+      next_attention_block_params_ag = jax.tree.map(
+          lambda f: f.done(), next_attention_block_params_ag_futures
+      )
+      return out, next_attention_block_params_ag
+
+    @partial(jax.jit, static_argnums=(1, 2, 3))
+    def init_transformer_block(rng, model_dim, mlp_hidden_dim,
+                               dtype=jnp.bfloat16):
+      attention_rng, mlp_rng = jax.random.split(rng, 2)
+      return {
+          "attention_block": init_attention_block(attention_rng, model_dim, dtype=dtype),
+          "mlp_block": init_mlp_block(mlp_rng, model_dim, mlp_hidden_dim, dtype=dtype),
+      }
+
+
+    def forward_transformer_block(
+        batch,
+        attention_block_params_ag,
+        mlp_block_params,
+        next_attention_block_params,
+        num_attention_heads,
+    ):
+      attention_out, w_in_ag = forward_attention_block(
+          q_src=batch,
+          kv_src=batch,
+          attention_block_params_ag=attention_block_params_ag,
+          w_in=mlp_block_params["w_in"],
+          num_attention_heads=num_attention_heads,
+      )
+      batch = batch + attention_out
+
+      mlp_out, next_attention_block_params_ag = forward_mlp_block(
+          batch,
+          w_in_ag=w_in_ag,
+          w_out=mlp_block_params["w_out"],
+          next_attention_block_params=next_attention_block_params,
+      )
+      return batch + mlp_out, next_attention_block_params_ag
+
+    def init_model(
+        rng,
+        num_layers,
+        model_dim,
+        mlp_hidden_dim,
+        dtype=jnp.bfloat16,
+    ):
+      all_params = [
+          init_transformer_block(
+              layer_rng,
+              model_dim,
+              mlp_hidden_dim,
+              dtype=dtype,
+          )
+          for layer_rng in jax.random.split(rng, num_layers)
+      ]
+      all_params_stacked = jax.tree.map(lambda *xs: jnp.stack(xs), *all_params)
+
+      prologue_params = {
+          "attention_block": jax.tree.map(
+              lambda x: x[0, ...], all_params_stacked["attention_block"]
+          )
+      }
+      scan_params = {
+          "next_attention_block": jax.tree.map(
+              lambda x: x[1:, ...], all_params_stacked["attention_block"]
+          ),
+          "mlp_block": jax.tree.map(
+              lambda x: x[:-1, ...], all_params_stacked["mlp_block"]
+          ),
+      }
+      epilogue_params = {
+          "mlp_block": jax.tree.map(lambda x: x[-1, ...], all_params_stacked["mlp_block"])
+      }
+
+      return {"prologue": prologue_params, "scan": scan_params,
+              "epilogue": epilogue_params}
+
+
+    compiler_options = {}
+    if jtu.device_under_test() == "gpu":
+      compiler_options[
+          "xla_gpu_experimental_parallel_collective_overlap_limit"
+      ] = 4
+
+    @partial(jax.jit, compiler_options=compiler_options)
+    def forward_model(batch, model_params):
+      @program_order(enforce=True)
+      @jax.shard_map(out_specs=jax.typeof(batch).sharding.spec)
+      def _forward_model(batch_shard, model_params_shard):
+        # Prologue: AG the first attention block's params.
+        layer_0_attention_block_params_ag = jax.lax.all_gather(
+            model_params_shard["prologue"]["attention_block"],
+            axis_name="fsdp",
+            tiled=True,
+        )
+
+        # Scan loop: run up to the last layer.
+        init_carry = (batch_shard, layer_0_attention_block_params_ag)
+
+        # Extra program_order needed because program_order does not rewrite
+        # the nested scan body jaxpr bound to scan_p.
+        @program_order(enforce=True)
+        def _scan_body(carry, curr_scan_params):
+            curr_batch, attention_block_params_ag = carry
+            next_carry = forward_transformer_block(
+                curr_batch,
+                attention_block_params_ag,
+                mlp_block_params=curr_scan_params["mlp_block"],
+                next_attention_block_params=curr_scan_params["next_attention_block"],
+                num_attention_heads=16,
+            )
+            return next_carry, None
+
+        before_epilogue, attention_block_params_ag = jax.lax.scan(
+            _scan_body, init_carry, model_params_shard["scan"]
+        )[0]
+
+        # Epilogue: run the last layer.
+        return forward_transformer_block(
+            before_epilogue,
+            attention_block_params_ag,
+            mlp_block_params=model_params_shard["epilogue"]["mlp_block"],
+            next_attention_block_params={},
+            num_attention_heads=16,
+        )[0]
+
+      return _forward_model(batch, model_params)
+
+    data_rng, param_rng = jax.random.split(jax.random.key(0), 2)
+
+    batch = jax.random.normal(
+          data_rng,
+          shape=(jax.device_count(), 2048, 4096),
+          dtype=jnp.bfloat16,
+          out_sharding=P("fsdp", None, None),
+      )
+
+    model_params = init_model(param_rng, num_layers=32, model_dim=4096,
+                              mlp_hidden_dim=16_384)
+    forward_model(batch, model_params)
+
 
 class AsyncCollectivesTest(jtu.JaxTestCase):
 
