@@ -550,6 +550,69 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       actual = lsp_special.spence(x)
       self.assertArraysEqual(actual, nan_array, check_dtypes=False)
 
+  @jtu.sample_product(dtype=float_dtypes)
+  def test_spence_large_values(self, dtype):
+    finfo = np.finfo(dtype)
+    boundary = dtype(1) / finfo.tiny
+    x = np.array([
+        0.125, 0.5, 1., 1.25, 1.5, 2., 4.,
+        np.nextafter(boundary, dtype(0)), boundary,
+        np.nextafter(boundary, dtype(np.inf)),
+        1e38 if dtype == np.float32 else 1e308,
+        finfo.max,
+    ], dtype=dtype).reshape(3, 4)
+    expected = osp_special.spence(x)
+    funcs = (
+        lsp_special.spence,
+        jax.jit(lsp_special.spence),
+        jax.jit(jax.vmap(lsp_special.spence)),
+    )
+    rtol = 1e-4 if jtu.test_device_matches(["tpu"]) else 4 * finfo.eps
+    for fun in funcs:
+      self.assertArraysAllClose(fun(x), expected, rtol=rtol, atol=0,
+                                check_dtypes=False)
+
+    for value in x.ravel():
+      for fun in funcs[:2]:
+        self.assertArraysAllClose(fun(value), osp_special.spence(value),
+                                  rtol=rtol, atol=0, check_dtypes=False)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def test_spence_large_derivatives(self, dtype):
+    finfo = np.finfo(dtype)
+    boundary = dtype(1) / finfo.tiny
+    x = np.array([
+        0.25, 0.75, 4., boundary,
+        np.nextafter(boundary, dtype(np.inf)),
+        1e38 if dtype == np.float32 else 1e308,
+        finfo.max,
+    ], dtype=dtype)
+    expected = np.log(x) / (1 - x)
+    reverse = jax.vmap(jax.grad(lsp_special.spence))
+    rtol = 1e-4 if jtu.test_device_matches(["tpu"]) else 16 * finfo.eps
+    for fun in (reverse, jax.jit(reverse)):
+      self.assertArraysAllClose(fun(x), expected, rtol=rtol, atol=0,
+                                check_dtypes=False)
+
+    def scaled_jvp(x):
+      return jax.jvp(lsp_special.spence, (x,), (x,))[1]
+
+    for fun in (scaled_jvp, jax.jit(scaled_jvp)):
+      self.assertArraysAllClose(fun(jnp.asarray(x)), expected * x,
+                                rtol=rtol, atol=0, check_dtypes=False)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def test_spence_special_values(self, dtype):
+    x = np.array([-np.inf, -1., -0., 0., 1., np.inf, np.nan], dtype=dtype)
+    expected = osp_special.spence(x)
+    funcs = (
+        lsp_special.spence,
+        jax.jit(lsp_special.spence),
+        jax.jit(jax.vmap(lsp_special.spence)),
+    )
+    for fun in funcs:
+      self.assertArraysEqual(fun(x), expected, check_dtypes=False)
+
   @jtu.sample_product(
     [dict(yshape=yshape, xshape=xshape, dx=dx, axis=axis)
       for yshape, xshape, dx, axis in [
