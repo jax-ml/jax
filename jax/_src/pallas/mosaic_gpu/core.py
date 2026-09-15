@@ -129,6 +129,12 @@ class CompilerParams:
     skip_device_barrier: If True, skips the cross-device barrier before kernel
       launch. Improper use of this flag can lead to race conditions. !!!Use with
       caution!!! Defaults to False.
+    is_multi_process: If True, indicates that the kernel runs in a multi-process
+      environment and performs cross-process device communication. This is
+      mostly needed when compiling distributed-over-processes code with an
+      AbstractMesh, as with a concrete Mesh in standard JIT compilation,
+      multi-process execution is detected automatically from the mesh devices.
+      Defaults to False.
   """
   approx_math: bool = False
   dimension_semantics: Sequence[DimensionSemantics] | None = None
@@ -141,6 +147,7 @@ class CompilerParams:
   profile_bounds_check: bool = False
   lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Warpgroup
   skip_device_barrier: bool = False
+  is_multi_process: bool = False
 
   def __post_init__(self):
     if self.dimension_semantics is not None:

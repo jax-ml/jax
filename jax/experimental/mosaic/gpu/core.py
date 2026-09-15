@@ -209,12 +209,13 @@ def _mosaic_gpu_lowering_rule(
       mesh = axis_context.mesh
       if isinstance(mesh, mesh_lib.Mesh):
         replica_ids = mesh.device_ids.ravel()
-        # Skip the check for AbstractMesh
         if not np.array_equal(mesh.device_ids.ravel(), np.arange(mesh.size)):
           raise NotImplementedError(
               "Mosaic GPU only supports meshes with device ordering that follows"
               f" row-major device ids. Got: {mesh.device_ids.ravel()} device ids."
           )
+      elif isinstance(mesh, mesh_lib.AbstractMesh):
+        replica_ids = np.arange(mesh.size)
     elif isinstance(axis_context, sharding_impls.ShardingContext):
       if axis_context.num_devices != 1:
         raise NotImplementedError(
@@ -662,6 +663,7 @@ def _launch(
     num_peers: int = 0,
     num_params: int = 0,
     jax_mesh: mesh_lib.Mesh | None = None,
+    is_multi_process: bool = False,
 ):
   if (profiler_spec is None) != (maybe_prof_buffer is None):
     raise ValueError(
@@ -763,7 +765,9 @@ def _launch(
         prof,
         num_peers=num_peers,
         num_params=num_params,
-        multihost_kernel=_is_known_multihost_mesh(jax_mesh),
+        multihost_kernel=is_multi_process or _is_known_multihost_mesh(
+            jax_mesh
+        ),
     )
     with ctx.named_region("Init"):
       tmem_allocs: list[_TMEMAlloc | _TMEMDialectAlloc] = []
@@ -856,6 +860,7 @@ def _lower_as_gpu_kernel(
     jax_mesh: mesh_lib.Mesh | None = None,
     base_loc: ir.Location | None = None,
     uses_pdl: bool = False,
+    is_multi_process: bool = False,
 ):
   ptr_ty = llvm.PointerType.get()
   token_ty = gpu.AsyncTokenType.get()
@@ -948,6 +953,7 @@ def _lower_as_gpu_kernel(
           num_peers,
           num_params,
           jax_mesh,
+          is_multi_process=is_multi_process,
       ) as (_launch_ctx, smem_refs):
         launch_ctx = _launch_ctx
         body(launch_ctx, *arg_refs, smem_refs)
@@ -1067,6 +1073,7 @@ def _kernel_to_module(
     kernel_name: str | None = None,
     thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
     inout_shape = (),
+    is_multi_process: bool = False,
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
@@ -1088,7 +1095,7 @@ def _kernel_to_module(
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, inout_shape,
           smem_scratch_shape, thread_semantics, module_name, kernel_name,
-          prof_spec, jax_mesh=jax_mesh
+          prof_spec, jax_mesh=jax_mesh, is_multi_process=is_multi_process,
       )
   )
 
@@ -1118,10 +1125,12 @@ def as_gpu_kernel(
     ir_version: int | None = None,
     thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
     inout_shape = (),
+    is_multi_process: bool = False,
 ):
   module, in_shape, inout_shape, out_shape, unwrap_output_tuple, is_device_collective = _kernel_to_module(
       body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec,
-      cluster, module_name, kernel_name, thread_semantics, inout_shape
+      cluster, module_name, kernel_name, thread_semantics, inout_shape,
+      is_multi_process=is_multi_process,
   )
 
   expected_arg_tys, expected_arg_treedef = jax.tree.flatten((*in_shape, *inout_shape))
