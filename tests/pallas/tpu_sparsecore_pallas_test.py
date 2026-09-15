@@ -1045,10 +1045,7 @@ class VectorSubcoreTest(PallasSCTest):
         jax.random.key(42), jnp.arange(self.num_lanes)
     )
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, o_ref):
       o_ref[...] = plsc.load_gather(x_ref, [indices_ref[...]])
 
@@ -1062,7 +1059,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct((self.num_lanes,), x.dtype),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices0_ref, indices1_ref, o_ref):
       o_ref[...] = plsc.load_gather(
@@ -1082,7 +1078,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices_ref, o_ref):
       indices = indices_ref[...]
@@ -1102,7 +1097,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices_ref, o_ref):
       o_ref[...] = plsc.load_gather(
@@ -1137,7 +1131,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices_ref, o_ref):
       plsc.store_scatter(o_ref, [indices_ref[...]], x_ref[...])
@@ -1155,7 +1148,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices_ref, o_ref):
       x = x_ref[...]
@@ -1192,7 +1184,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices_ref, o_ref):
       indices = indices_ref[...]
