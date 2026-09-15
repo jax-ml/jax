@@ -177,6 +177,12 @@ class OptLevel(enum.Enum):
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class MosaicDebugLocations:
+  locations: tuple[str, ...]
+  indices: tuple[int, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class CustomCallBackendConfig:
   """Represents an unserialized backend config for custom calls."""
   lowered_module_asm: bytes
@@ -201,6 +207,7 @@ class CustomCallBackendConfig:
   shape_invariant_numerics: bool
   tiling: Tiling | None = None  # Only used for SparseCore.
   opt_level: OptLevel | None = None  # Only used for SparseCore.
+  debug_locations: MosaicDebugLocations | None = None
 
   def __post_init__(self):
     if self.allow_input_fusion is not None:
@@ -341,6 +348,14 @@ class CustomCallBackendConfig:
     if self.skip_device_barrier:
       config.write(b', "skip_device_barrier": ')
       config.write(str(self.skip_device_barrier).lower().encode("ascii"))
+    if self.debug_locations and self.debug_locations.locations:
+      config.write(b', "debug_locations": ')
+      config.write(
+          _compact_json_object(
+              locations=self.debug_locations.locations,
+              indices=self.debug_locations.indices,
+          )
+      )
     config.write(b"}")  # End of custom_call_config.
     if self.device_type == "sparsecore":
       config.write(b', "sparse_core_config": ')
@@ -487,11 +502,38 @@ mlir.register_lowering(tpu_custom_call_p, _tpu_custom_call_lowering,
                        platform="tpu")
 
 
+def _unzip_mosaic_debug_locations(
+    module_op: ir.Operation,
+) -> MosaicDebugLocations:
+  locations: list[str] = []
+  indices: list[int] = []
+  loc_to_index: dict[str, int] = {}
+  ctx = module_op.context
+  unknown_loc = ir.Location.unknown(ctx)
+
+  def walk_fn(op: ir.Operation) -> ir.WalkResult:
+    loc_str = str(op.location)
+    idx = loc_to_index.get(loc_str)
+    if idx is None:
+      idx = len(locations)
+      loc_to_index[loc_str] = idx
+      locations.append(loc_str)
+    indices.append(idx)
+    op.location = unknown_loc
+    return ir.WalkResult.ADVANCE
+
+  module_op.walk(walk_fn, walk_order=ir.WalkOrder.PRE_ORDER)
+  return MosaicDebugLocations(
+      locations=tuple(locations), indices=tuple(indices)
+  )
+
+
 def _lower_mosaic_module_to_asm(
     module: ir.Module,
     *,
     ir_version: int | None = None,
-) -> tuple[bytes, tuple[bool, bool]]:
+    unzip_debug_locations: bool = True,
+) -> tuple[bytes, tuple[bool, bool], MosaicDebugLocations | None]:
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
   )
@@ -510,14 +552,22 @@ def _lower_mosaic_module_to_asm(
       )
       pipeline.enable_verifier(bool(config.enable_checks.value))
       pipeline.run(module_op)
+      if unzip_debug_locations:
+        debug_locations = _unzip_mosaic_debug_locations(module_op)
+      else:
+        debug_locations = None
     finally:
       ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects
     bytecode_buffer = io.BytesIO()
     module_op.write_bytecode(bytecode_buffer, desired_version=0)
     asm = bytecode_buffer.getvalue()
-    return asm, (
-        has_communication,
-        has_custom_barrier,
+    return (
+        asm,
+        (
+            has_communication,
+            has_custom_barrier,
+        ),
+        debug_locations,
     )
 
 
@@ -662,12 +712,22 @@ def _lower_to_custom_call_config(
   needs_hlo_passes = config.jax_mosaic_allow_hlo.value
   # TC kernels always require layout passes.
   needs_layout_passes = needs_layout_passes or not device_type
-  lowered_module_asm, (
-      has_communication,
-      has_custom_barrier,
+  unzip_debug_locations = (
+      config.jax_mosaic_unzip_debug_locations.value
+      and (ctx is None or not ctx.is_forward_compat())
+      and is_libtpu_at_least("0.0.49")
+  )
+  (
+      lowered_module_asm,
+      (
+          has_communication,
+          has_custom_barrier,
+      ),
+      debug_locations,
   ) = _lower_mosaic_module_to_asm(
       module,
       ir_version=ir_version,
+      unzip_debug_locations=unzip_debug_locations,
   )
   active_core_count = _get_active_core_count(module)
   return _lowered_to_custom_call_config(
@@ -697,6 +757,7 @@ def _lower_to_custom_call_config(
       tiling=tiling,
       opt_level=opt_level,
       ctx=ctx,
+      debug_locations=debug_locations,
   )
 
 
@@ -729,6 +790,7 @@ def _lowered_to_custom_call_config(
     opt_level: OptLevel | None = None,
     kernel_name: str | None = None,
     ctx: mlir.LoweringRuleContext | None = None,
+    debug_locations: MosaicDebugLocations | None = None,
 ):
   config_mode = config.jax_pallas_auto_assign_collective_ids.value
   id_limit = config.jax_pallas_auto_assign_collective_ids_limit.value
@@ -834,6 +896,7 @@ def _lowered_to_custom_call_config(
       shape_invariant_numerics=shape_invariant_numerics,
       tiling=tiling,
       opt_level=opt_level,
+      debug_locations=debug_locations,
   )
 
 
