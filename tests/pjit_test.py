@@ -31,6 +31,7 @@ import jax
 import jax.numpy as jnp
 from jax import reshard
 from jax._src import core
+from jax._src import custom_options
 from jax._src import config
 from jax._src import dispatch
 from jax._src import test_util as jtu
@@ -872,6 +873,55 @@ class PJitTest(jtu.BufferDonationTestCase):
     exe = f.lower(x, x + 1, a=1, b=2).compile()
     out = exe(x, x + 1, a=1, b=2)
     self.assertArraysEqual(out, x @ (x + 1))
+
+  def testCustomOptionsContextManager(self):
+    get = jax._src.lib._jax.get_custom_options_thread_local
+    self.assertIsNone(get())
+    with custom_options.custom_options(scale=2.5, count=7, mode="fast",
+                                   flag=True, ids=[1, 2, 3]):
+      self.assertEqual(
+          get(),
+          {"scale": 2.5, "count": 7, "mode": "fast", "flag": True,
+           "ids": [1, 2, 3]})
+      # Nested contexts are merged, innermost wins.
+      with custom_options.custom_options(count=8):
+        self.assertEqual(get()["count"], 8)
+        self.assertEqual(get()["scale"], 2.5)
+      self.assertEqual(get()["count"], 7)
+    self.assertIsNone(get())
+
+    # Options are attached per-thread and do not affect execution semantics.
+    with custom_options.custom_options(scale=2.0):
+      self.assertEqual(jax.jit(lambda x: x + 1)(1), 2)
+
+    with self.assertRaisesRegex(TypeError, "Unsupported custom option"):
+      with custom_options.custom_options(bad=object()):
+        pass
+
+  def testCustomOptionsKwarg(self):
+    get = jax._src.lib._jax.get_custom_options_thread_local
+    seen = []
+
+    def record(x):
+      seen.append(get())
+      return x + 1
+
+    f = jax.jit(record)
+    # Cache miss (Python path) and cache hit (C++ fast path) both strip the
+    # reserved keyword argument and install the options for the call.
+    self.assertEqual(f(1, custom_options={"foo": 42}), 2)
+    self.assertEqual(f(1, custom_options={"foo": 43}), 2)
+    self.assertEqual(f(1), 2)
+    self.assertEqual(seen, [{"foo": 42}])  # traced once
+    self.assertIsNone(get())
+
+    compiled = f.lower(1).compile()
+    self.assertEqual(compiled(1, custom_options={"foo": 44}), 2)
+    self.assertEqual(compiled(1), 2)
+    self.assertIsNone(get())
+
+    with self.assertRaisesRegex((TypeError, ValueError), "must be a dictionary"):
+      f(1, custom_options=42)
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompileInTreeMismatch(self):
