@@ -85,6 +85,8 @@ def sort(
     arr = arr.ravel()
     axis = 0
   dimension = canonicalize_axis(axis, arr.ndim)
+  if descending and dtypes.issubdtype(arr.dtype, np.inexact):
+    return lax.neg(lax.sort(lax.neg(arr), dimension=dimension, is_stable=stable))
   result = lax.sort(arr, dimension=dimension, is_stable=stable)
   return lax.rev(result, dimensions=[dimension]) if descending else result
 
@@ -167,6 +169,11 @@ def argsort(
       idx_dtype = dtypes.default_int_dtype()
   iota = lax.broadcasted_iota(idx_dtype, arr.shape, dimension,
                               out_sharding=core.typeof(arr).sharding)
+  if descending and dtypes.issubdtype(arr.dtype, np.inexact):
+    _, indices = lax.sort_key_val(
+        lax.neg(arr), iota, dimension=dimension, is_stable=stable
+    )
+    return indices
   # For stable descending sort, we reverse the array and indices to ensure that
   # duplicates remain in their original order when the final indices are reversed.
   # For non-stable descending sort, we can avoid these extra operations.
