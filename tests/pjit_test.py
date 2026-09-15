@@ -7680,22 +7680,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out_mesh = jax.sharding.get_mesh()
       self.assertEqual(out_mesh, mesh)
     finally:
-      mesh_lib.abstract_mesh_context_manager.set_local(
+      config.abstract_mesh_context_manager.set_local(
           mesh_lib.empty_abstract_mesh)
-      mesh_lib.device_context.set_local(mesh_lib.empty_concrete_mesh)
-
-  def test_trace_cache_hit_default_abs_mesh_ctx(self):
-    x = jnp.arange(4.0)
-
-    @jax.jit
-    def f(x):
-      return x
-
-    with jtu.count_jit_tracing_cache_miss() as count:
-      f(x)
-      with jax.sharding.use_abstract_mesh(mesh_lib.empty_abstract_mesh):
-        f(x)
-    self.assertEqual(count(), 1)
+      config.device_context.set_local(None)
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_auto_axes_late_bind(self, mesh):

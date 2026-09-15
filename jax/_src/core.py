@@ -61,7 +61,7 @@ from jax._src.named_sharding import NamedSharding, get_replicated_axes
 from jax._src import named_sharding as ns
 from jax._src.sharding import Sharding
 from jax._src.layout import (Format, AutoLayout, AutoLayoutSingleton,
-                             get_layout_mode, LayoutMode, layout_tracing_mode)
+                             get_layout_mode, LayoutMode)
 from jax._src.lib import _jax
 from jax._src import traceback_util
 from jax._src.typing import Array, ArrayLike, DimSize, Shape
@@ -378,9 +378,9 @@ class JaxprEqnContextManager:
         self.context.threefry_partitionable)
     self.prev_compute_type = config.compute_on_context_manager.swap_local(
         self.context.compute_type)
-    self.prev_abstract_mesh = mesh_lib.abstract_mesh_context_manager.swap_local(
+    self.prev_abstract_mesh = config.abstract_mesh_context_manager.swap_local(
         self.context.cur_abstract_mesh)
-    self.prev_layout_mode = layout_tracing_mode.swap_local(
+    self.prev_layout_mode = config.layout_tracing_mode.swap_local(
         self.context.cur_layout_mode)
     self.prev_remove_size_one_mesh_axis = config.remove_size_one_mesh_axis_from_type.swap_local(
         self.context.remove_size_one_mesh_axis)
@@ -389,8 +389,8 @@ class JaxprEqnContextManager:
     config.xla_metadata_context_manager.set_local(self.prev_xla_metadata)
     config.threefry_partitionable.set_local(self.prev_threefry_partitionable)
     config.compute_on_context_manager.set_local(self.prev_compute_type)
-    mesh_lib.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
-    layout_tracing_mode.set_local(self.prev_layout_mode)
+    config.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
+    config.layout_tracing_mode.set_local(self.prev_layout_mode)
     config.remove_size_one_mesh_axis_from_type.set_local(self.prev_remove_size_one_mesh_axis)
 
 

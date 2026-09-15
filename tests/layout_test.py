@@ -25,7 +25,6 @@ from jax.sharding import NamedSharding, PartitionSpec as P
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.layout import LayoutMode, use_layout_mode
 from jax._src.util import safe_zip
 from jax.experimental.layout import with_layout_constraint, Format, Layout
 
@@ -855,19 +854,6 @@ class LayoutTest(jtu.JaxTestCase):
     layout_str = match.group(1)
     self.assertIn('3,2,4,1,0', layout_str)
     self.assertIn('S(5)', layout_str)
-
-  def test_trace_cache_hit_default_layout_tracing_mode(self):
-    x = jnp.arange(4.0)
-
-    @jax.jit
-    def f(x):
-      return x
-
-    with jtu.count_jit_tracing_cache_miss() as count:
-      f(x)
-      with use_layout_mode(LayoutMode.AUTO):
-        f(x)
-    self.assertEqual(count(), 1)
 
 
 if __name__ == '__main__':
