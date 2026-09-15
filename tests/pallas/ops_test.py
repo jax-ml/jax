@@ -2550,8 +2550,8 @@ class OpsTest(PallasBaseTest):
     self.skip_if_mosaic_gpu()
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Not supported on this hardware")
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu 0.0.48 or later")
+    if not jtu.is_libtpu_at_least("0.0.49"):
+      self.skipTest("Requires libtpu 0.0.49 or later")
 
     lhs_shape, rhs_shape, dim_nums = shapes_and_dim_nums
     lhs_key, rhs_key = random.split(random.key(0))
