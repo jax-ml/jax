@@ -3053,6 +3053,12 @@ def _spence_poly(w: Array) -> Array:
 
 
 def _spence_calc(x: Array) -> Array:
+  # Near reciprocal underflow, use the asymptotic form accurate to one ULP.
+  large = (x >= 1.0 / np.finfo(x.dtype).tiny) & jnp.isfinite(x)
+  large_x = jnp.where(large, x, 1.0)
+  # Keep the inactive branch finite for autodiff.
+  x = jnp.where(large, 0.5, x)
+
   x2_bool = x > 2.0
   x = jnp.piecewise(x, [x2_bool],
                     [lambda x: 1.0 / x, lambda x: x])
@@ -3071,7 +3077,8 @@ def _spence_calc(x: Array) -> Array:
   y_flag_one = np.pi ** 2 / 6.0 - jnp.log(x) * jnp.log(1.0 - x) - y
   y = jnp.where(x_5_bool, y_flag_one, y)
   y_flag_two = -0.5 * jnp.log(x) ** 2 - y
-  return jnp.where(x2_bool, y_flag_two, y)
+  y = jnp.where(x2_bool, y_flag_two, y)
+  return jnp.where(large, -np.pi ** 2 / 6.0 - 0.5 * jnp.log(large_x) ** 2, y)
 
 
 def _spence(x: Array) -> Array:
