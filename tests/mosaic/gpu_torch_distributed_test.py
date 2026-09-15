@@ -43,6 +43,10 @@ class TorchTest(parameterized.TestCase):
 
   @classmethod
   def setUpClass(cls):
+    # TODO: explicitly skip the tests
+    # remove when we enable torch tests
+    raise unittest.SkipTest("Skip torch tests")
+
     if torch is None:
       raise unittest.SkipTest("Test requires torch")
     if jtu.test_device_matches(["rocm"]):
