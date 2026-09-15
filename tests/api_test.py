@@ -52,6 +52,7 @@ from jax._src import api, api_util, dtypes, lib
 from jax._src import array
 from jax._src import config
 from jax._src import core
+from jax._src import execution_options
 from jax._src import dispatch
 from jax._src import state
 from jax._src import linear_util as lu
@@ -1595,6 +1596,36 @@ class JitTest(jtu.BufferDonationTestCase):
 
     with self.subTest("jit closure"):
       self.assertEqual(jax.jit(lambda: jnp.sum(mask))(), N)
+
+
+  def test_execution_options_custom_options(self):
+    def get():
+      return execution_options.current_execution_options().custom_options
+    self.assertIsNone(get())
+    with jax.execution_options(custom_options={"scale": 2.5, "count": 7,
+                                               "mode": "fast", "flag": True,
+                                               "ids": [1, 2, 3]}):
+      self.assertEqual(
+          get(),
+          {"scale": 2.5, "count": 7, "mode": "fast", "flag": True,
+           "ids": [1, 2, 3]})
+      # Nested contexts are merged, innermost wins.
+      with jax.execution_options(custom_options={"count": 8}):
+        self.assertEqual(get()["count"], 8)
+        self.assertEqual(get()["scale"], 2.5)
+      self.assertEqual(get()["count"], 7)
+      # Options are attached per-thread and do not affect execution semantics.
+      self.assertEqual(jax.jit(lambda x: x + 1)(1), 2)
+      compiled = jax.jit(lambda x: x + 1).lower(1).compile()
+      self.assertEqual(compiled(1), 2)
+    self.assertIsNone(get())
+
+    with jax.execution_options():
+      self.assertIsNone(get())
+
+    with self.assertRaisesRegex(TypeError, "Unsupported custom option"):
+      with jax.execution_options(custom_options={"bad": object()}):
+        pass
 
 
 class APITest(jtu.JaxTestCase):

@@ -55,6 +55,7 @@ limitations under the License.
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/call_location.h"
+#include "jaxlib/execution_options.h"
 #include "jaxlib/config.h"
 #include "jaxlib/free_threading.h"
 #include "jaxlib/guard_lib.h"
@@ -839,6 +840,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   }
   PopulateCallLocation(execute_options,
                        xla::ifrt::UserContextScope::current().get());
+  PopulateExecutionOptions(execute_options);
 
   // Check if the thread guard is active and should prevent execution.
   // Skipped for portable executables.
