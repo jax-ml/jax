@@ -22,7 +22,7 @@ import numpy as np
 from functools import partial, reduce as _reduce
 
 from jax._src import core
-from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
+from jax._src.lax.lax import (abs, add, bitwise_and, bitwise_not, bitwise_or,
                               broadcast_in_dim, broadcast_shapes,
                               convert_element_type, div, eq, exp, full_like, ge,
                               gt, le, log, log1p, lt, mul, ne, neg, reciprocal,
@@ -31,6 +31,7 @@ from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
                               _const, _dtype,
                               _float, _nary_lower_hlo, _ones, _isnan)
 from jax._src.lax.control_flow.loops import while_loop
+from jax._src.lax.lgamma import lgamma_impl
 
 from jax._src import dtypes
 from jax._src.interpreters import ad
@@ -715,9 +716,16 @@ ad.defjvp(regularized_incomplete_beta_p,
   betainc_grad_not_implemented,
   betainc_gradx)
 
+def _lgamma_lowering(ctx, x):
+  aval = ctx.avals_in[0]
+  if aval.dtype == np.float64:
+    return _nary_lower_hlo(chlo.lgamma, ctx, x)
+  return mlir.lower_fun(_up_and_broadcast(lgamma_impl), multiple_results=False)(ctx, x)
+
+
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
-mlir.register_lowering(lgamma_p, partial(_nary_lower_hlo, chlo.lgamma))
+mlir.register_lowering(lgamma_p, _lgamma_lowering)
 
 digamma_p = standard_unop(_float, 'digamma')
 mlir.register_lowering(digamma_p, partial(_nary_lower_hlo, chlo.digamma))

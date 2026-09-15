@@ -555,5 +555,78 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jax.vmap(f), d_i1, args_maker, rtol=1e-5)
     self._CompileAndCheck(jax.vmap(f), args_maker, rtol=1e-5)
 
+  def test_gammaln_ulp_error(self):
+    # Exact zeros at x = 1.0 and x = 2.0
+    self.assertEqual(float(lsp_special.gammaln(np.float32(1.0))), 0.0)
+    self.assertEqual(float(lsp_special.gammaln(np.float32(2.0))), 0.0)
+
+    # Special values: poles, overflow threshold, infinities, NaN
+    special_inf = np.array([
+        0.0, -0.0, -1.0, -2.0, -3.0, -10.0, -1000.0, -1e7,
+        4.0850034e36, np.inf, -np.inf
+    ], dtype=np.float32)
+    res_inf = np.asarray(lsp_special.gammaln(special_inf))
+    self.assertTrue(np.all(np.isposinf(res_inf)), f"Expected +inf, got {res_inf}")
+    self.assertTrue(np.isnan(float(lsp_special.gammaln(np.float32(np.nan)))))
+
+    # Derivative check (JVP / grad)
+    x_grad = np.array([0.25, 0.75, 1.5, 3.5, 12.0, -0.5, -1.5, -2.5], dtype=np.float32)
+    self.assertAllClose(
+        jax.vmap(jax.grad(lsp_special.gammaln))(x_grad),
+        lsp_special.digamma(x_grad),
+        rtol=1e-5, atol=1e-5)
+
+    def max_ulp_vs_ref(xs_f32, ref_f64):
+      ys_f32 = np.asarray(lsp_special.gammaln(xs_f32), dtype=np.float64)
+      ref_as_f32 = ref_f64.astype(np.float32)
+      ulp = np.abs(np.spacing(ref_as_f32).astype(np.float64))
+      errs = np.abs(ys_f32 - ref_f64) / ulp
+      idx = int(np.argmax(errs))
+      return float(errs[idx]), float(xs_f32[idx])
+
+    # 1. 60-digit mpmath certified points within +/- 2 ULP of all 15 negative roots
+    CERTIFIED_ROOT_PTS = [(-2.457024335861206, 6.098183754018183e-07), (-2.457024574279785, 2.484696988890678e-07), (-2.4570248126983643, -1.1287842529645816e-07), (-2.4570250511169434, -4.742259971548743e-07), (-2.4570252895355225, -8.355730166862955e-07), (-3.143580436706543, 3.5146424031690423e-06), (-3.143580675125122, 1.659292425530781e-06), (-3.143580913543701, -1.9605461541614247e-07), (-3.1435811519622803, -2.051398719680857e-06), (-3.1435813903808594, -3.906739887272491e-06), (-2.7476820945739746, -1.0570121172887281e-06), (-2.7476823329925537, -6.005974428686868e-07), (-2.747682571411133, -1.4418167987778365e-07), (-2.747682809829712, 3.1223517168561536e-07), (-2.747683048248291, 7.686531118231443e-07), (-4.039361000061035, 2.249564626449368e-05), (-4.039361476898193, 9.720763558572296e-06), (-4.039361953735352, -3.053971690394376e-06), (-4.03936243057251, -1.5828559485961922e-05), (-4.039362907409668, -2.8602999831685795e-05), (-3.955293893814087, -8.104382793261057e-06), (-3.955294132232666, -3.1631758619440246e-06), (-3.955294370651245, 1.7780596858250852e-06), (-3.955294609069824, 6.7193238503496265e-06), (-3.9552948474884033, 1.1660616631932957e-05), (-5.0082173347473145, 0.00010283681295424625), (-5.008217811584473, 4.400893627975495e-05), (-5.008218288421631, -1.4815572806334704e-05), (-5.008218765258789, -7.363671469471415e-05), (-5.008219242095947, -0.00013245448977600686), (-4.991543769836426, -0.00010146515471314859), (-4.991544246673584, -4.590078166675967e-05), (-4.991544723510742, 9.666772148365217e-06), (-4.9915452003479, 6.523750709091674e-05), (-4.991545677185059, 0.00012081142351964627), (-6.001384258270264, 0.0007502033977111201), (-6.001384735107422, 0.0004049005350435363), (-6.00138521194458, 5.9716251821000246e-05), (-6.001385688781738, -0.00028534953358012286), (-6.0013861656188965, -0.0006302969026992184), (-5.9986066818237305, -0.000571583788528323), (-5.998607158660889, -0.0002301889621487998), (-5.998607635498047, 0.00011132306745354033), (-5.998608112335205, 0.0004529523805681395), (-5.998608589172363, 0.0007946990575669714), (-7.000197410583496, 0.0046656094182512976), (-7.000197887420654, 0.002252102177623758), (-7.0001983642578125, -0.0001555986874670934), (-7.000198841094971, -0.0025575210588133666), (-7.000199317932129, -0.004953692617858581), (-6.999800682067871, -0.004150185635306569), (-6.999801158905029, -0.00175593634176963), (-6.9998016357421875, 0.0006440637640683667), (-6.999802112579346, 0.0030498423636509397), (-6.999802589416504, 0.0054614273387702), (-8.000022888183594, 0.08023788354150395), (-8.00002384185791, 0.03941384761713908), (-8.000024795532227, 0.00019109306263327084), (-8.000025749206543, -0.037551276318553026), (-8.00002670288086, -0.0739209618848819), (-7.999974250793457, -0.03744103667945246), (-7.999974727630615, -0.01874992444328908), (-7.999975204467773, 0.0002972497521375302), (-7.999975681304932, 0.019714314834692555), (-7.99997615814209, 0.03951592135704702), (-9.000000953674316, 1.0611139836802737), (-9.000001907348633, 0.367964655686062), (-9.00000286102295, -0.037502599853472283), (-9.000003814697266, -0.32518681973372665), (-9.000004768371582, -0.5483325184735134), (-8.999995231628418, -0.5483110440874025), (-8.999996185302734, -0.3251696402248379), (-8.99999713897705, -0.03748971522180572), (-8.999998092651367, 0.3679732454405064), (-8.999999046325684, 1.061118278557496)]
+    cert_xs = np.array([p[0] for p in CERTIFIED_ROOT_PTS], dtype=np.float32)
+    cert_ref = np.array([p[1] for p in CERTIFIED_ROOT_PTS], dtype=np.float64)
+    max_root_ulp, worst_root_x = max_ulp_vs_ref(cert_xs, cert_ref)
+    self.assertLessEqual(
+        max_root_ulp, 1.0,
+        f"Max ULP {max_root_ulp} at negative root x={worst_root_x} exceeds 1.0")
+
+    # 2. Sweep across positive and negative float32 domains vs float64 scipy
+    sweep_xs = np.concatenate([
+        np.logspace(-37, -1, 500, dtype=np.float32),
+        np.linspace(0.1, 0.4999, 500, dtype=np.float32),
+        np.linspace(0.5, 0.9999, 500, dtype=np.float32),
+        np.linspace(1.0001, 1.9999, 1000, dtype=np.float32),
+        np.linspace(2.0001, 4.0, 500, dtype=np.float32),
+        np.linspace(4.001, 16.0, 500, dtype=np.float32),
+        np.logspace(1.21, 35.0, 500, dtype=np.float32),
+        np.array([
+            np.nextafter(np.float32(1.0), np.float32(0.0)),
+            np.nextafter(np.float32(1.0), np.float32(2.0)),
+            np.nextafter(np.float32(2.0), np.float32(1.0)),
+            np.nextafter(np.float32(2.0), np.float32(3.0)),
+            np.float32(1.4616321),
+            np.float32(10.92287),
+            np.float32(4.085003e36),
+            # Global worst-case inputs across all 3.32 billion float32 numbers:
+            np.float32(4.012665),    # global positive max ULP (0.525179 ULP)
+            np.float32(-3.1757019),  # global negative reflection max ULP (0.691768 ULP)
+            np.float32(-2.5576105),  # global overall float32 max ULP (0.697693 ULP)
+            np.float32(-2.5056348),  # (-2.6, -2.5) root window boundary test
+        ], dtype=np.float32),
+        np.linspace(-1.999, -1.001, 400, dtype=np.float32),
+        np.linspace(-0.999, -0.001, 400, dtype=np.float32),
+        np.linspace(-99.9, -10.1, 400, dtype=np.float32),
+    ])
+    sweep_xs = sweep_xs[sweep_xs != np.floor(sweep_xs)]
+    sweep_ref = osp_special.gammaln(sweep_xs.astype(np.float64))
+    max_sweep_ulp, worst_sweep_x = max_ulp_vs_ref(sweep_xs, sweep_ref)
+    self.assertLessEqual(
+        max_sweep_ulp, 1.0,
+        f"Max ULP {max_sweep_ulp} at x={worst_sweep_x} exceeds 1.0")
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
