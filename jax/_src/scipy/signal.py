@@ -1109,8 +1109,9 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   n_default = (2 * (Zxx.shape[freq_axis] - 1) if input_onesided
                else Zxx.shape[freq_axis])
 
-  nperseg_int = core.concrete_or_error(int, nperseg or n_default,
-                                           "nperseg: segment length of STFT")
+  nperseg_int = core.concrete_or_error(
+      int, n_default if nperseg is None else nperseg,
+      "nperseg: segment length of STFT")
   if nperseg_int < 1:
     raise ValueError('nperseg must be a positive integer')
 
@@ -1126,7 +1127,8 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
         f'FFT length ({nfft_int}) must be longer than nperseg ({nperseg_int}).')
 
   noverlap_int = core.concrete_or_error(
-      int, noverlap or nperseg_int // 2, "noverlap of STFT")
+      int, nperseg_int // 2 if noverlap is None else noverlap,
+      "noverlap of STFT")
   if noverlap_int >= nperseg_int:
     raise ValueError('noverlap must be less than nperseg.')
   nstep = nperseg_int - noverlap_int
@@ -1140,7 +1142,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   # Perform IFFT
   ifunc = jnp_fft.irfft if input_onesided else jnp_fft.ifft
   # xsubs: [..., T, N], N is the number of frames, T is the frame length.
-  xsubs = ifunc(Zxx, axis=-2, n=nfft)[..., :nperseg_int, :]
+  xsubs = ifunc(Zxx, axis=-2, n=nfft_int)[..., :nperseg_int, :]
 
   # Get window as array
   if isinstance(window, str) and window == 'hann':
