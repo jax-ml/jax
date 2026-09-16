@@ -47,6 +47,7 @@ from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
+from jax._src import xla_bridge as xb
 from jax._src.typing import Array
 from jax._src.util import (canonicalize_axis, moveaxis, safe_map, safe_zip,
                            unzip2)
@@ -1478,12 +1479,39 @@ _pbroadcast_dynamic_fallback_lowering = mlir.lower_fun(
 )
 
 # has_dynamic_root (variadic collective_broadcast) requires StableHLO >= 1.20.0.
-_STABLEHLO_HAS_DYNAMIC_ROOT = (
-    hlo.get_smaller_version(hlo.get_current_version(), "1.20.0") == "1.20.0"
-)
+_STABLEHLO_DYNAMIC_ROOT_MIN_VERSION = "1.20.0"
+
+def _stablehlo_has_dynamic_root(ctx: mlir.LoweringRuleContext) -> bool:
+  """Whether whatever will consume this lowering understands the
+  has_dynamic_root variant of stablehlo.collective_broadcast.
+
+  The local jaxlib's in-process StableHLO version is not a reliable signal:
+  i.e. forward-compatible or IFRT-proxy-serialized programs get downgraded to a
+  conservative default StableHLO version (xla::GetDefaultStablehloVersion(),
+  always >=12 weeks old) before being handed to whatever actually runs them,
+  which may not contain this attribute.
+  """
+  if ctx.is_forward_compat():
+    return False
+
+  backend = ctx.module_context.get_backend(optional=True)
+  if backend is not None:
+    runtime_type = getattr(backend, "runtime_type", "") or ""
+    if runtime_type.startswith("proxy/"):
+      return False
+    plugin_version = xb.backend_stablehlo_version(backend)
+    if plugin_version is not None:
+      return hlo.get_smaller_version(
+          ".".join(map(str, plugin_version)),
+          _STABLEHLO_DYNAMIC_ROOT_MIN_VERSION,
+      ) == _STABLEHLO_DYNAMIC_ROOT_MIN_VERSION
+
+  return hlo.get_smaller_version(
+      hlo.get_current_version(), _STABLEHLO_DYNAMIC_ROOT_MIN_VERSION
+  ) == _STABLEHLO_DYNAMIC_ROOT_MIN_VERSION
 
 def _pbroadcast_dynamic_lowering(ctx, x, source, *, axis_name):
-  if not _STABLEHLO_HAS_DYNAMIC_ROOT:
+  if not _stablehlo_has_dynamic_root(ctx):
     return _pbroadcast_dynamic_fallback_lowering(ctx, x, source, axis_name=axis_name)
 
   replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name, None)
