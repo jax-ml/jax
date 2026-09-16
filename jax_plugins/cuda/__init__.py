@@ -21,7 +21,7 @@ import traceback
 from typing import Any
 
 from jax._src.lib import xla_client
-from jax._src.lib.plugin_support import load_pkg_so
+from jaxlib.plugin_support import load_pkg_so
 import jax._src.xla_bridge as xb
 
 cuda_plugin_extension = None
