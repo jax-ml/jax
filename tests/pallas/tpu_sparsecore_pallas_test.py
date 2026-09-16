@@ -1378,6 +1378,40 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(out_a, a)
     np.testing.assert_array_equal(out_b, b)
 
+  def test_pack_unsupported_with_layout_passes(self):
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct((2 * self.num_lanes,), jnp.bfloat16),
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
+    )
+    def kernel(a_ref, b_ref, o_ref):
+      o_ref[...] = plsc.pack(
+          a_ref[...], b_ref[...], format=plsc.PackFormat.INTERLEAVED
+      )
+
+    a = jnp.arange(self.num_lanes, dtype=jnp.float32)
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "plsc.pack is not supported with needs_layout_passes=True",
+    ):
+      kernel(a, a)
+
+  def test_unpack_unsupported_with_layout_passes(self):
+    @self.vector_subcore_kernel(
+        out_shape=(jax.ShapeDtypeStruct((self.num_lanes,), jnp.float32),) * 2,
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
+    )
+    def kernel(ab_ref, oa_ref, ob_ref):
+      oa_ref[...], ob_ref[...] = plsc.unpack(
+          ab_ref[...], format=plsc.PackFormat.INTERLEAVED
+      )
+
+    ab = jnp.arange(2 * self.num_lanes, dtype=jnp.bfloat16)
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "plsc.unpack is not supported with needs_layout_passes=True",
+    ):
+      kernel(ab)
+
   @parameterized.parameters(jnp.int32, jnp.float32)
   def test_scan_count(self, dtype):
     if jtu.is_device_tpu(8, "i"):
