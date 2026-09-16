@@ -401,6 +401,10 @@ class JaxAotTest(jtu.JaxTestCase):
         restored_topo.devices[0].client.runtime_type, "compile_only_runtime"
     )
     self.assertEqual(
+        restored_topo.devices[0].client.platform_version,
+        jax.devices()[0].client.platform_version,
+    )
+    self.assertEqual(
         [d.id for d in restored_topo.devices],
         [d.id for d in orig_topo.devices],
     )
@@ -413,7 +417,20 @@ class JaxAotTest(jtu.JaxTestCase):
             mesh, jax.sharding.PartitionSpec("x")
         ),
     )
-    compiled = jax.jit(lambda x: jnp.sum(x * x)).lower(x).compile()
+    sharding_called = False
+
+    def _check_sharding(s):
+      nonlocal sharding_called
+      sharding_called = True
+      self.assertIsInstance(s, jax.sharding.Sharding)
+
+    def fn(x):
+      jax.debug.inspect_array_sharding(x, callback=_check_sharding)
+      return jnp.sum(x * x)
+
+    compiled = jax.jit(fn).lower(x).compile()
+    if not jtu.is_cloud_tpu():
+      self.assertTrue(sharding_called)
     serialized_exec, in_tree, out_tree = serialize(compiled)
 
     reloaded = deserialize_and_load(
