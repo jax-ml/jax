@@ -20,6 +20,7 @@ import warnings
 import pathlib
 import os
 import ctypes
+import errno
 
 from .version import __version__ as jaxlib_version
 
@@ -44,7 +45,7 @@ def load_pkg_so(module, libraries):
   for lib in libraries:
     excs = []
     if m is None:
-      excs.append(FileNotFoundError(OSError.errno.ENONENT, os.strerror(OSError.errno.ENOENT),lib))
+      excs.append(FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),lib))
       continue
 
     loaded = False
@@ -58,7 +59,7 @@ def load_pkg_so(module, libraries):
         continue
 
     if not loaded:
-      excs.append(FileNotFoundError(OSError.errno.ENONENT, os.strerror(OSError.errno.ENOENT),lib))
+      excs.append(FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),lib))
 
     # TODO(phawkins): check the non-Python path here and error if not found.
     # # Try again, without the Python module path.
