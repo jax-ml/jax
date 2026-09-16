@@ -447,7 +447,7 @@ def _emit_detached_func(
   func_op = func.FuncOp(name, ftype, ip=False)
   entry_block = func_op.add_entry_block()
   try:
-    with ir.InsertionPoint(entry_block):
+    with ir.InsertionPoint(entry_block), ir.Location.unknown():
       outs = body_builder(list(entry_block.arguments))
       func.return_(list(outs))
   except Exception:
@@ -487,17 +487,22 @@ def _emit_pallas_lowering_rule_as_fun(
       sub_ctx = rule_context.replace(
           lowering_context=ctx.replace(
               user_grid_indices=block_args[:grid_arity],
+              name_stack=source_info_util.new_name_stack(),
           )
       )
     else:
       sub_ctx = rule_context.replace(
           lowering_context=ctx.replace(
               user_grid_indices=None,
+              name_stack=source_info_util.new_name_stack(),
           )
       )
       rule_args = block_args
 
-    outs = rule(sub_ctx, *rule_args, **params)
+    with source_info_util.user_context(
+        None, name_stack=source_info_util.new_name_stack()
+    ):
+      outs = rule(sub_ctx, *rule_args, **params)
 
     flat_outs = list(outs) if primitive.multiple_results else [outs]
     flat_outs = [_ensure_valid_argument(x, aval)
