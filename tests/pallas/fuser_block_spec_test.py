@@ -96,6 +96,12 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     out = kernel_fn((0, 0), (), (x, None), g)
     np.testing.assert_array_equal(out, x + g)
 
+    with self.assertRaisesRegex(ValueError, 'Expected .* PyTree, got .*'):
+      kernel_fn((0, 0), (), (x, 1.0), g)
+
+    with self.assertRaisesRegex(ValueError, 'Expected .* PyTree, got .*'):
+      kernel_fn((0, 0), (), [x, None], g)
+
   @parameterized.named_parameters(
       ('transpose', 'ab->ba', (32, 32), (16, 16), {}, (16, 16)),
       (
