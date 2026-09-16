@@ -66,6 +66,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Fixed {func}`jax.numpy.median` on an input that is empty along the
     reduction axis, which previously raised an internal error from ``gather``;
     it now raises a ``ValueError``.
+  * Fixed a bug where {func}`jax.lax.dot_general` on TPU crashed with an
+    internal compiler error when given a mixed float/integer operand pair
+    together with an integer `preferred_element_type`; the operands are now
+    cast to a common dtype before lowering. This matches the existing
+    CPU/GPU behavior for the default precision; an explicit
+    `precision=DotAlgorithmPreset.DEFAULT` is also fixed on TPU, though its
+    result may still differ numerically from CPU/GPU's pre-existing behavior
+    for that specific, unusual combination ({jax-issue}`#40581`).
 
 ## JAX 0.11.1 (August 17, 2026)
 
