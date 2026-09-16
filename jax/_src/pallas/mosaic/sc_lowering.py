@@ -67,6 +67,38 @@ register_lowering_rule = functools.partial(
 )
 
 
+def _lower_vmem_shared_slice(
+    ref: ir.Value, starts: Sequence[ir.Value], sizes: Sequence[Any]
+) -> tuple[ir.Value, MemorySpace, list[ir.Value]]:
+  """Slices a VMEM_SHARED memref for a subcore into a VMEM memref."""
+  vmem_memory_space = ir.Attribute.parse("#tpu.memory_space<vmem>")
+  num_subcores = sc_core.get_sparse_core_info().num_subcores
+  slice_size = int(sizes[-1])
+  if ref.type.shape[-1] % num_subcores != 0:
+    raise ValueError(
+        f"VMEM_SHARED last dimension ({ref.type.shape[-1]}) must be divisible "
+        f"by the number of subcores ({num_subcores})."
+    )
+  if slice_size != ref.type.shape[-1] // num_subcores:
+    raise ValueError(
+        f"Slice size along VMEM_SHARED last dimension ({slice_size}) must "
+        f"equal the full dimension size ({ref.type.shape[-1]}) divided by the "
+        f"number of subcores ({num_subcores}), which is "
+        f"{ref.type.shape[-1] // num_subcores}."
+    )
+
+  vmem_shape = list(ref.type.shape)
+  vmem_shape[-1] //= num_subcores
+  vmem_type = ir.MemRefType.get(
+      vmem_shape, ref.type.element_type, memory_space=vmem_memory_space
+  )
+  ref = tpu.shared_memref_slice(vmem_type, ref)
+  start_val = starts[-1]
+  zero = arith.constant(start_val.type, ir.IntegerAttr.get(start_val.type, 0))
+  new_starts = [*starts[:-1], zero]
+  return ref, MemorySpace.VMEM, new_starts
+
+
 @register_lowering_rule(state_primitives.get_p)
 def _get_lowering_rule(ctx: LoweringRuleContext, ref, *flat_transforms, tree):
   return _load_lowering_rule(ctx, ref, None, *flat_transforms, tree=tree)
@@ -83,10 +115,7 @@ def _load_lowering_rule(
   ref_memory_space = tpu_core.memory_space_to_tpu_memory_space(
       ref_aval.memory_space, ctx.lowering_context.kernel_type
   )
-  if (
-      ref_memory_space is MemorySpace.HBM
-      or ref_memory_space is MemorySpace.VMEM_SHARED
-  ):
+  if ref_memory_space is MemorySpace.HBM:
     raise NotImplementedError(
         f"Get does not support loading from {ref_memory_space!r}."
         " Copy the data to a core-local memory space, e.g. VMEM,"
@@ -106,6 +135,10 @@ def _load_lowering_rule(
   starts, sizes, strides, squeeze_dims, _ = tc_lowering._indexer_to_start_size_stride(
       indexer, ref_block_shape, cast_to_index=True
   )
+  if ref_memory_space is MemorySpace.VMEM_SHARED:
+    ref, ref_memory_space, starts = _lower_vmem_shared_slice(
+        ref, starts, sizes
+    )
   for first_nontrivial_dim, s in enumerate(sizes):
     if s != 1:
       break
@@ -182,10 +215,7 @@ def _store_lowering_rule(
   ref_memory_space = tpu_core.memory_space_to_tpu_memory_space(
       ref_aval.memory_space, ctx.lowering_context.kernel_type
   )
-  if (
-      ref_memory_space is MemorySpace.HBM
-      or ref_memory_space is MemorySpace.VMEM_SHARED
-  ):
+  if ref_memory_space is MemorySpace.HBM:
     raise NotImplementedError(
         f"Swap does not support storing to {ref_memory_space!r}."
         " Copy the data to a core-local memory space, e.g. VMEM,"
@@ -205,6 +235,10 @@ def _store_lowering_rule(
   starts, sizes, strides, squeeze_dims, _ = tc_lowering._indexer_to_start_size_stride(
       indexer, ref_block_shape, cast_to_index=True
   )
+  if ref_memory_space is MemorySpace.VMEM_SHARED:
+    ref, ref_memory_space, starts = _lower_vmem_shared_slice(
+        ref, starts, sizes
+    )
   for first_nontrivial_dim, s in enumerate(sizes):
     if s != 1:
       break
