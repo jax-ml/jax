@@ -54,12 +54,20 @@ def empty_like(x: object):
 
 
 def empty_ref_like(x: object) -> jax_typing.Array:
-  """Returns an empty array Ref with same shape/dtype/memory space as x."""
+  """Returns an empty array Ref with same shape/dtype/memory space as x.
+
+  ``x`` may be a ``pl.MemoryRef``, a ``jax.ShapeDtypeStruct``, or a ``Ref``
+  (e.g. a kernel argument).
+  """
   match x:
     case pl_core.MemoryRef():
       memory_space = x.memory_space
     case jax_core.ShapeDtypeStruct():
       memory_space = pl_core.MemorySpace.ANY
+    case jax_core.Tracer() | jax_core.Ref() if isinstance(
+        aval := jax_core.typeof(x), state_types.AbstractRef):
+      return jax_core.new_ref(
+          empty(aval.shape, aval.dtype), memory_space=aval.memory_space)
     case _:
       raise ValueError(f'empty_ref_like does not support {type(x)}')
   return jax_core.new_ref(empty_like(x), memory_space=memory_space)
