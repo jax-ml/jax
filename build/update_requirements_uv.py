@@ -65,9 +65,6 @@ def update_requirements(
     # Target Python version for resolution
     cmd.extend(["--python-version", py_ver])
 
-    # Use toml config to prevent automatic torch dependencies installation
-    cmd.extend(["--config-file", "build/torch_dep_uv.toml"])
-
     # 3. Apply flag logic matching BUILD.bazel
     if nightly:
         cmd.extend([

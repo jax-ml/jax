@@ -1,3 +1,0 @@
-[pip]
-# We need latest UV to fetch to most recent backend
-torch-backend="cu132"
