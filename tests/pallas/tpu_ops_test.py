@@ -1611,8 +1611,6 @@ class ConvTest(ptu.PallasTPUTest):
       feature_group_count=1,
       batch_group_count=1,
   ):
-    if not jtu.is_device_tpu_at_least(version=4):
-      self.skipTest("Test requires TPUv4+")
     dimension_numbers = ("NHWC", "HWIO", "NHWC")
     conv = functools.partial(
         jax.lax.conv_general_dilated,
@@ -1651,8 +1649,6 @@ class ConvTest(ptu.PallasTPUTest):
   def test_conv_dimension_numbers(
       self, *, dimension_numbers, lhs_shape, rhs_shape
   ):
-    if not jtu.is_device_tpu_at_least(version=4):
-      self.skipTest("Test requires TPUv4+")
     conv = functools.partial(
         jax.lax.conv_general_dilated,
         window_strides=(1, 1),
@@ -1669,9 +1665,24 @@ class ConvTest(ptu.PallasTPUTest):
     result = self.pallas_call(kernel, out_shape=out)(lhs, rhs)
     np.testing.assert_array_equal(result, expected)
 
+  def test_conv_0d(self):
+    conv = functools.partial(
+        jax.lax.conv_general_dilated,
+        window_strides=(),
+        padding=(),
+        dimension_numbers=("NC", "IO", "NC"),
+    )
+
+    def kernel(x_ref, w_ref, o_ref):
+      o_ref[...] = conv(x_ref[...], w_ref[...])
+
+    lhs, rhs = self._conv_operands((8, 128), (128, 128), jnp.float32)
+    expected = conv(lhs, rhs)
+    out = jax.ShapeDtypeStruct(expected.shape, expected.dtype)
+    result = self.pallas_call(kernel, out_shape=out)(lhs, rhs)
+    np.testing.assert_array_equal(result, expected)
+
   def test_conv_1d(self):
-    if not jtu.is_device_tpu_at_least(version=4):
-      self.skipTest("Test requires TPUv4+")
     conv = functools.partial(
         jax.lax.conv_general_dilated,
         window_strides=(2,),
@@ -1690,8 +1701,6 @@ class ConvTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(result, expected)
 
   def test_conv_3d(self):
-    if not jtu.is_device_tpu_at_least(version=4):
-      self.skipTest("Test requires TPUv4+")
     conv = functools.partial(
         jax.lax.conv_general_dilated,
         window_strides=(1, 1, 1),
@@ -1716,8 +1725,6 @@ class ConvTest(ptu.PallasTPUTest):
       (jnp.float32, jnp.float32),
   )
   def test_conv_dtypes(self, dtype, preferred_element_type):
-    if not jtu.is_device_tpu_at_least(version=4):
-      self.skipTest("Test requires TPUv4+")
     conv = functools.partial(
         jax.lax.conv_general_dilated,
         window_strides=(1, 1),
@@ -1842,8 +1849,6 @@ class ConvTest(ptu.PallasTPUTest):
       jax.lax.Precision.HIGHEST,
   )
   def test_conv_precision(self, precision):
-    if not jtu.is_device_tpu_at_least(version=4):
-      self.skipTest("Test requires TPUv4+")
     conv = functools.partial(
         jax.lax.conv_general_dilated,
         window_strides=(1, 1),
@@ -1864,8 +1869,6 @@ class ConvTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(result, expected)
 
   def test_pltpu_conv(self):
-    if not jtu.is_device_tpu_at_least(version=4):
-      self.skipTest("Test requires TPUv4+")
 
     def kernel(x_ref, w_ref, o_ref):
       o_ref[...] = pltpu.conv(
