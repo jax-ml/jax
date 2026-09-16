@@ -944,7 +944,7 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
 
   @parameterized.product(
       in_buffer_count=[2, 4],
-      out_buffer_count=[2],
+      out_buffer_count=[2, 3, 4],
   )
   def test_copy(self, in_buffer_count, out_buffer_count):
     x = jnp.reshape(jnp.arange(512 * 512), (512, 512))
@@ -972,10 +972,40 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
     result = fn(x)
     np.testing.assert_allclose(result, x)
 
+  def test_mixed_output_buffer_counts(self):
+    x = jnp.reshape(jnp.arange(512 * 512, dtype=jnp.float32), (512, 512))
+
+    @pl.kernel(
+        out_type=(jax.ShapeDtypeStruct.like(x), jax.ShapeDtypeStruct.like(x)),
+        mesh=pltpu.TensorCoreMesh(axis_name='core'),
+    )
+    def copy_kernel(x_hbm_ref, o1_hbm_ref, o2_hbm_ref):
+      def inner_kernel(x_ref, o1_ref, o2_ref):
+        o1_ref[...] = x_ref[...] + 1.0
+        o2_ref[...] = x_ref[...] + 2.0
+      pltpu.emit_pipeline(
+          inner_kernel,
+          grid=(4, 4),
+          in_specs=[
+              pl.BlockSpec((128, 128), lambda i, j: (i, j),
+                pipeline_mode=pl.Buffered(buffer_count=2)),
+          ],
+          out_specs=[
+              pl.BlockSpec((128, 128), lambda i, j: (i, j),
+                pipeline_mode=pl.Buffered(buffer_count=2)),
+              pl.BlockSpec((128, 128), lambda i, j: (i, j),
+                pipeline_mode=pl.Buffered(buffer_count=4)),
+          ],
+      )(x_hbm_ref, o1_hbm_ref, o2_hbm_ref)
+
+    res1, res2 = copy_kernel(x)
+    np.testing.assert_allclose(res1, x + 1.0)
+    np.testing.assert_allclose(res2, x + 2.0)
+
   @parameterized.product(
       x_buffer_count=[2, 4],
       y_buffer_count=[2, 4],
-      out_buffer_count=[2],
+      out_buffer_count=[2, 4],
   )
   def test_matmul(self, x_buffer_count, y_buffer_count, out_buffer_count):
     block_shape = (128, 128)
@@ -1027,7 +1057,7 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
   @parameterized.product(
       x_buffer_count=[2, 4],
       y_buffer_count=[2, 4],
-      out_buffer_count=[2],
+      out_buffer_count=[2, 4],
   )
   def test_matmul_megacore(self, x_buffer_count, y_buffer_count,
                            out_buffer_count):
