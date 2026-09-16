@@ -1539,6 +1539,7 @@ jax_multiplatform_test(
         google_value = [
             "--xla_tpu_enable_mlir_verifier=ALL",
             "--xla_sc_assert_level=san",
+            "--xla_mosaic_unsafe_allow_multicore_remote_dma=true",
         ],
     ),
     enable_backends = [],
