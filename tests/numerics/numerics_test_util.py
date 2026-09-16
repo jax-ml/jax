@@ -14,6 +14,7 @@
 
 """Precision testing utilities for elementary floating-point functions."""
 
+from collections.abc import Callable
 import collections
 import concurrent.futures
 import os
@@ -25,6 +26,7 @@ from jax._src import tpu_info
 import jax.numpy as jnp
 import mpmath
 import numpy as np
+import scipy.special
 
 
 def _default_num_workers() -> int:
@@ -230,6 +232,15 @@ def _flush_subnormals(x: np.ndarray, dtype) -> np.ndarray:
   return np.where(mask, np.where(np.signbit(x), dtype(-0.0), dtype(0.0)), x)
 
 
+def _erfinv_reference(x: np.ndarray) -> np.ndarray:
+  """Evaluates erfinv with a domain guard to avoid slow C++ exception handling."""
+  return np.where(
+      np.abs(x) <= 1.0,
+      scipy.special.erfinv(np.clip(x, -1.0, 1.0)),
+      np.nan,
+  )
+
+
 def _round_mpmath_to_dtype(mp_val, dtype) -> np.ndarray:
   """Rounds an mpmath.mpf directly to dtype (RNE) without double rounding.
 
@@ -260,14 +271,25 @@ def _round_mpmath_to_dtype(mp_val, dtype) -> np.ndarray:
     q += 1
   if q == 0 and mp_val < 0:
     return np.array(-0.0, dtype=dtype)
-  return np.array(float(mpmath.ldexp(q, lsb_exp)), dtype=dtype)
+  rounded = mpmath.ldexp(q, lsb_exp)
+  max_val = float(finfo.max)
+  if rounded > max_val:
+    return np.array(np.inf, dtype=dtype)
+  if rounded < -max_val:
+    return np.array(-np.inf, dtype=dtype)
+  return np.array(float(rounded), dtype=dtype)
 
 
 def _eval_mpmath(mpmath_fn, val, dtype=None, input_ftz: bool = True):
   """Evaluates scalar mpmath function at current mpmath precision."""
   if input_ftz and dtype is not None:
     val = _flush_subnormals(np.array(val, dtype=dtype), dtype).item()
-  res = mpmath_fn(mpmath.mpf(float(val)))
+  try:
+    res = mpmath_fn(mpmath.mpf(float(val)))
+  except ZeroDivisionError:
+    return -mpmath.inf if np.signbit(val) else mpmath.inf
+  except (ValueError, OverflowError):
+    return mpmath.nan
   if isinstance(res, mpmath.mpc):
     return mpmath.nan
   return res
@@ -371,22 +393,14 @@ def eval_ulp_stats(
   return counts_dict, top_k
 
 
-def _fail_precision(
-    test_case, jax_fn, mpmath_fn, dtype, max_ulp, top_k, udt, label="",
-    input_ftz: bool = True, output_ftz: bool = True
-):
-  variant = get_hardware_variant()
-  max_diff = int(top_k[0][0])
-  suffix = f" [{label}]" if label else ""
-
+def _format_worst_cases(
+    top_k, udt, mpmath_fn, dtype, input_ftz: bool = True, output_ftz: bool = True
+) -> str:
   lines = [
-      f"Max integer ULP error for {jax_fn.__name__} on {variant} "
-      f"({np.dtype(dtype).name}){suffix} exceeded bound: {max_diff} > {max_ulp}",
       f"Top {len(top_k)} worst cases:",
       f"{'Rank':<4} | {'ULP (ref)':<9} | {'ULP (mp)':<8} | {'Input x':<16} | {'x (hex)':<18} | {'Computed y':<24} | {'Reference y*':<24} | {'mpmath exact'}",
       "-" * 155,
   ]
-
   for rank, (d, x, y, y_ref) in enumerate(top_k, 1):
     x_hex = hex(int(np.array(x, dtype=dtype).view(udt)))
     y_hex = hex(int(np.array(y, dtype=dtype).view(udt)))
@@ -401,8 +415,24 @@ def _fail_precision(
     lines.append(
         f"{rank:<4} | {int(d):<9} | {ulp_mp:<8} | {str(x):<16} | {x_hex:<18} | {comp_str:<24} | {ref_str:<24} | {mp_exact_str}"
     )
+  return "\n".join(lines)
 
-  test_case.fail("\n".join(lines))
+
+def _fail_precision(
+    test_case, jax_fn, mpmath_fn, dtype, max_ulp, top_k, udt, label="",
+    input_ftz: bool = True, output_ftz: bool = True
+):
+  variant = get_hardware_variant()
+  max_diff = int(top_k[0][0])
+  suffix = f" [{label}]" if label else ""
+  header = (
+      f"Max integer ULP error for {jax_fn.__name__} on {variant} "
+      f"({np.dtype(dtype).name}){suffix} exceeded bound: {max_diff} > {max_ulp}"
+  )
+  worst_cases_str = _format_worst_cases(
+      top_k, udt, mpmath_fn, dtype, input_ftz=input_ftz, output_ftz=output_ftz
+  )
+  test_case.fail(f"{header}\n{worst_cases_str}")
 
 
 def _fmt_signed(v: int) -> str:
@@ -455,6 +485,7 @@ def check_unary_precision(
     bounds: list | None = None, input_ftz: bool | list = True,
     output_ftz: bool | list = True,
     ignore_inputs: list | None = None,
+    ref_fn: Callable | None = None,
 ):
   """Checks unary precision of `jax_fn` against a higher-precision reference.
 
@@ -478,7 +509,11 @@ def check_unary_precision(
       ULP distances (bool or per-variant override list).
     ignore_inputs: Optional per-variant list of specific input values or uint
       bit patterns to exclude from error checking.
+    ref_fn: Optional custom reference function operating on float64 numpy arrays.
   """
+  if (dtype == jnp.float64 or dtype == np.float64) and jtu.device_under_test() == "tpu":
+    test_case.skipTest("float64 on TPU is ef57 double-double")
+
   variant = get_hardware_variant()
   in_ftz = _resolve_override(input_ftz, variant, dtype, True)
   out_ftz = _resolve_override(output_ftz, variant, dtype, True)
@@ -496,7 +531,29 @@ def check_unary_precision(
   total_points = min(total_elements, max_samples)
 
   jitted_jax_fn = jax.jit(jax_fn)
-  np_fn = getattr(np, jax_fn.__name__)
+  if ref_fn is not None:
+    np_fn = ref_fn
+  else:
+    np_fn = getattr(np, jax_fn.__name__, None)
+    if np_fn is None:
+      if jax_fn.__name__ == "rsqrt":
+        np_fn = lambda x: np.reciprocal(np.sqrt(x))
+      elif jax_fn.__name__ == "logistic":
+        np_fn = lambda x: 1.0 / (1.0 + np.exp(-x))
+      elif hasattr(scipy.special, jax_fn.__name__):
+        np_fn = getattr(scipy.special, jax_fn.__name__)
+      elif jax_fn.__name__ == "erf_inv":
+        np_fn = _erfinv_reference
+      elif jax_fn.__name__ == "bessel_i0e":
+        np_fn = scipy.special.i0e
+      elif jax_fn.__name__ == "bessel_i1e":
+        np_fn = scipy.special.i1e
+      elif jax_fn.__name__ == "lgamma":
+        np_fn = scipy.special.gammaln
+      elif jax_fn.__name__ == "digamma":
+        np_fn = scipy.special.psi
+      else:
+        raise ValueError(f"No reference function for {jax_fn.__name__}")
   k = NUM_WORST_CASES.value
   max_bin = MAX_ULP_BIN.value
 
@@ -581,10 +638,14 @@ def check_unary_precision(
       f", ignored {len(ignored_bits)} inputs" if len(ignored_bits) > 0 else ""
   )
   hist_str = render_histogram_from_counts(counts_dict, total_points)
+  worst_cases_str = _format_worst_cases(
+      top_k, udt, mpmath_fn, dtype, input_ftz=in_ftz, output_ftz=out_ftz
+  )
   output = (
       f"[{variant}] {jax_fn.__name__} ({np.dtype(dtype).name}): "
       f"max ULP error = {max_diff} (bound = {max_ulp}, {label}{ignored_str})\n"
       f"{hist_str}\n"
+      f"{worst_cases_str}\n"
   )
   print(output, end="", flush=True)
 
