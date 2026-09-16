@@ -2273,18 +2273,67 @@ class RefTransformTest(jtu.JaxTestCase):
     expected = jnp.ones((4, 3))
     self.assertAllClose(f(), expected)
 
-  def test_addupdate_on_reshaped_slice_raises_error(self):
+  def test_addupdate_on_reshaped_slice(self):
     @jax.jit
     def f():
       ref = jax.new_ref(jnp.zeros((4, 3), dtype=jnp.float32))
       ref_addupdate(ref.reshape(2, 6), (0, slice(0, 3)), jnp.ones(3, dtype=jnp.float32))
       return ref[...]
 
+    expected = jnp.array(
+        [[1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    self.assertAllClose(f(), expected)
+
+  def test_addupdate_on_reshaped_view_slice(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 3), dtype=jnp.float32))
+      view = ref.reshape(2, 6).at[0, :3]
+      ref_addupdate(view, (), jnp.ones(3, dtype=jnp.float32))
+      return ref[...]
+
+    expected = jnp.array(
+        [[1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    self.assertAllClose(f(), expected)
+
+  def test_addupdate_on_sliced_ref_reshape(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 6), dtype=jnp.float32))
+      ref_addupdate(ref.at[0].reshape(2, 3), (), jnp.ones((2, 3), dtype=jnp.float32))
+      return ref[...]
+
+    expected = jnp.zeros((4, 6), dtype=jnp.float32).at[0].set(1.0)
+    self.assertAllClose(f(), expected)
+
+  def test_addupdate_on_reshaped_sliced_reshaped(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 3), dtype=jnp.float32))
+      view = ref.reshape(2, 6).at[0].reshape(3, 2)
+      ref_addupdate(view, (), jnp.ones((3, 2), dtype=jnp.float32))
+      return ref[...]
+
+    expected = jnp.array(
+        [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    self.assertAllClose(f(), expected)
+  def test_addupdate_on_multiple_indexers_raises_error(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 3), dtype=jnp.float32))
+      ref_addupdate(ref.at[0].at[0], (), jnp.array(1.0, dtype=jnp.float32))
+      return ref[...]
+
     with self.assertRaisesRegex(
-        NotImplementedError, "does not support combining an indexer"
+        NotImplementedError, "Multiple indexers are not supported"
     ):
       f()
-
   def test_addupdate_on_bitcast_raises_error(self):
     @jax.jit
     def f():

@@ -680,53 +680,67 @@ def _addupdate_discharge(x, val, idx, tree):
         " instead."
     )
 
-  if transforms and isinstance(transforms[-1], ReshapeTransform):
-    broadcast_shape = transforms[-1].shape
-    while transforms and isinstance(transforms[-1], ReshapeTransform):
-      transforms.pop()
-    target_shape = (
-        transforms[-1].get_indexer_shape()
-        if transforms and isinstance(transforms[-1], indexing.NDIndexer)
-        else x.shape
+  for t in transforms:
+    if not isinstance(t, (ReshapeTransform, indexing.NDIndexer)):
+      raise NotImplementedError(
+          f"Unsupported transform for `addupdate`: {t}"
+      )
+
+  indexer_indices = [
+      i for i, t in enumerate(transforms) if isinstance(t, indexing.NDIndexer)
+  ]
+  if len(indexer_indices) > 1:
+    raise NotImplementedError(
+        f"Multiple indexers are not supported for `addupdate`, got {transforms}."
     )
-    val = lax_numpy.broadcast_to(val, broadcast_shape).reshape(target_shape)
-  if not transforms:
+
+  if not indexer_indices:
+    if transforms:
+      val = lax_numpy.broadcast_to(val, transforms[-1].shape)
+      val = lax.reshape(val, x.shape)
     return x + val
-  if len(transforms) > 1:
-    raise NotImplementedError(
-        "`addupdate` does not support combining an indexer with other"
-        f" transforms (e.g. indexed reshape views); got {transforms}."
-    )
-  indexer = transforms[0]
-  if not isinstance(indexer, indexing.NDIndexer):
-    raise NotImplementedError(
-        f"Unsupported transform for `addupdate`: {indexer}"
-    )
+
+  (indexer_idx,) = indexer_indices
+  indexer: indexing.NDIndexer = transforms[indexer_idx]
+  leading_reshapes = transforms[:indexer_idx]
+  trailing_reshapes = transforms[indexer_idx + 1 :]
+
+  # Reshape x to match the domain expected by the indexer.
+  x_reshaped = (
+      lax.reshape(x, leading_reshapes[-1].shape) if leading_reshapes else x
+  )
+
+  # Reshape val to match the slice shape produced by the indexer.
+  if trailing_reshapes:
+    val = lax_numpy.broadcast_to(val, trailing_reshapes[-1].shape)
+    val = lax.reshape(val, indexer.get_indexer_shape())
 
   if _is_trivial_indexer(indexer):
-    return x + val
-
-  # If everything in the indexer is a slice or ()-shaped, we can also
-  # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
-  # We need to squeeze out the 1-sized slices at the end.
-  if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
+    x_updated = x_reshaped + val
+  elif maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
     starts, sizes, squeeze_dims = maybe_slice
-    x_old = lax_slicing.dynamic_slice(x, starts, sizes)
+    x_old = lax_slicing.dynamic_slice(x_reshaped, starts, sizes)
     val = lax.expand_dims(val, squeeze_dims)
-    y = lax_slicing.dynamic_update_slice(x, x_old + val, starts)
-    return y
+    x_updated = lax_slicing.dynamic_update_slice(x_reshaped, x_old + val, starts)
+  else:
+    transpose_order = _maybe_transpose_before_gather(indexer)
+    if transpose_order is not None:
+      x_reshaped, indexer = _perform_transpose_before_gather(
+          x_reshaped, indexer, transpose_order
+      )
+    arrays = _convert_to_gather_arrays(indexer)
+    # `asarray` ensures `x_reshaped` has an `.at` attribute; it may be a plain
+    # value rather than a jax array.
+    x_updated = lax_numpy.asarray(x_reshaped).at[arrays].add(val)
+    if transpose_order is not None:
+      transpose_order_inversed = np.argsort(transpose_order)
+      x_updated = x_updated.transpose(transpose_order_inversed)
 
-  transpose_order = _maybe_transpose_before_gather(indexer)
-  if transpose_order is not None:
-    x, indexer = _perform_transpose_before_gather(x, indexer, transpose_order)
-  arrays = _convert_to_gather_arrays(indexer)
-  # `asarray` ensures `x` has an `.at` attribute; it may be a plain value
-  # rather than a jax array.
-  x = lax_numpy.asarray(x).at[arrays].add(val)
-  if transpose_order is not None:
-    transpose_order_inversed = np.argsort(transpose_order)
-    x = x.transpose(transpose_order_inversed)
-  return x
+  # Invert leading reshapes back to original x shape.
+  if leading_reshapes:
+    x_updated = lax.reshape(x_updated, x.shape)
+
+  return x_updated
 
 
 @weakref_lru_cache
