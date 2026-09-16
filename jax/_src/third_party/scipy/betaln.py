@@ -60,4 +60,25 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
     a, b = jnp.minimum(a, b), jnp.maximum(a, b)
     small_b = lax.lgamma(a) + (lax.lgamma(b) - lax.lgamma(a + b))
     large_b = lax.lgamma(a) + algdiv(a, b)
-    return jnp.where(b < 8, small_b, large_b)
+    result = jnp.where(b < 8, small_b, large_b)
+    # When both ``a`` and ``a + b`` are non-positive integers, ``gamma`` has a
+    # pole at each, so ``lgamma(a)`` and ``lgamma(a + b)`` are both ``+inf`` and
+    # the expression above evaluates to ``nan``. The beta function is finite
+    # there, however, because the poles cancel: taking the limit ``a -> -n`` via
+    # the residues of ``gamma`` gives
+    #   B(a, b) = (-1)**b * gamma(b) * gamma(1 - a - b) / gamma(1 - a),
+    # so ``betaln`` is ``lgamma(b) + lgamma(1 - a - b) - lgamma(1 - a)``. This
+    # also yields the correct ``+inf`` when ``b`` is a non-positive integer.
+    both_poles = _is_nonpos_int(a) & _is_nonpos_int(a + b)
+    # Evaluate the reflection formula on safe arguments where it is unused, so
+    # that the final ``where`` does not introduce nan gradients for ordinary
+    # inputs (``lgamma`` has infinite derivatives at its own poles).
+    safe_a = jnp.where(both_poles, a, -1.0)
+    safe_b = jnp.where(both_poles, b, 1.0)
+    reflected = (lax.lgamma(safe_b) + lax.lgamma(1 - safe_a - safe_b)
+                 - lax.lgamma(1 - safe_a))
+    return jnp.where(both_poles, reflected, result)
+
+
+def _is_nonpos_int(x: Array) -> Array:
+    return (x <= 0) & (x == jnp.floor(x)) & jnp.isfinite(x)
