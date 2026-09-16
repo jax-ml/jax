@@ -340,6 +340,16 @@ class BufferedRefBase:
   def await_prefetch(self) -> bool:
     return False
 
+  @property
+  def prefetch_steps(self) -> int:
+    """Number of input iterations prefetched ahead of kernel execution."""
+    return 0
+
+  @property
+  def drain_steps(self) -> int:
+    """Number of output iterations delayed before wait_out."""
+    return 0
+
   def initialize_slots(self):
     """Initializes slots to 0."""
     raise NotImplementedError()
@@ -501,6 +511,8 @@ class BufferedRef(BufferedRefBase):
   _spec: pallas_core.BlockSpec = jax.tree.static()
   _buffer_type: BufferType = jax.tree.static()
   _buffer_count: int = jax.tree.static()
+  _prefetch_steps: int = jax.tree.static()
+  _drain_steps: int = jax.tree.static()
   _grid_rank: int | None = jax.tree.static()
   window_ref: ArrayRef | None
   copy_in_slot: int | jax.Array | None
@@ -518,14 +530,24 @@ class BufferedRef(BufferedRefBase):
   await_prefetch: bool = jax.tree.static(default=False)
 
   def __post_init__(self):
-    if self.is_buffered and self.buffer_count < 1:
-      raise ValueError(
-          f"buffer_count must be at least 1, got {self.buffer_count}"
-      )
-    if self.is_output:
-      if self.is_buffered and self.buffer_count > 2:
-        raise NotImplementedError(
-            "Buffer count >2 not supported for output buffered refs."
+    if self.is_buffered and not self.is_trivial_windowing:
+      if self.buffer_count < 1:
+        raise ValueError(
+            f"buffer_count must be at least 1, got {self.buffer_count}"
+        )
+      if self.prefetch_steps < 0:
+        raise ValueError(
+            f"prefetch_steps must be >= 0, got {self.prefetch_steps}"
+        )
+      if self.drain_steps < 0:
+        raise ValueError(f"drain_steps must be >= 0, got {self.drain_steps}")
+      required_slots = self.prefetch_steps + 1 + self.drain_steps
+      if self.buffer_count < required_slots:
+        raise ValueError(
+            f"buffer_count ({self.buffer_count}) is too small for"
+            f" prefetch_steps={self.prefetch_steps} and"
+            f" drain_steps={self.drain_steps}; requires at least"
+            f" {required_slots} physical VMEM slots to avoid DMA hazards."
         )
 
   @property
@@ -553,6 +575,16 @@ class BufferedRef(BufferedRefBase):
       raise ValueError("buffer count is undefined")
     return self._buffer_count
 
+  @property
+  def prefetch_steps(self) -> int:
+    """Number of input iterations prefetched ahead of kernel execution."""
+    return self._prefetch_steps if self.is_input else 0
+
+  @property
+  def drain_steps(self) -> int:
+    """Number of output iterations delayed before wait_out."""
+    return self._drain_steps if self.is_output else 0
+
   @classmethod
   def create(
       cls,
@@ -560,6 +592,8 @@ class BufferedRef(BufferedRefBase):
       dtype_or_type,
       buffer_type,
       buffer_count,
+      prefetch_steps: int | None = None,
+      drain_steps: int | None = None,
       grid_rank=None,
       use_lookahead=False,
       source_memory_space: tpu_core.MemorySpace | Literal[ANY] = ANY,  # pyrefly: ignore[not-a-type]
@@ -575,10 +609,14 @@ class BufferedRef(BufferedRefBase):
         ignored.
       buffer_type: enum indicating whether this is an input, output, or in/out
         buffered reference.
+      buffer_count: number of physical buffers to allocate.
+      prefetch_steps: number of input iterations to prefetch ahead of compute.
+      drain_steps: number of output iterations to delay before wait_out.
       grid_rank: rank of the pipeline grid.
       use_lookahead: whether to enable pipeline lookahead.
       source_memory_space: The memory space of the backing source Ref.
       tiling: The tiling to assume for the buffers.
+      is_trivial_windowing: whether the spec uses trivial windowing.
       prefetched_count: number of buffers that have been prefetched.
 
     Returns:
@@ -613,6 +651,8 @@ class BufferedRef(BufferedRefBase):
           _spec=spec,
           _buffer_type=buffer_type,
           _buffer_count=0,
+          _prefetch_steps=0,
+          _drain_steps=0,
           _grid_rank=None,
           window_ref=None,  # to be bound to existing ref by the pipeline routine
           copy_in_slot=None,
@@ -631,6 +671,30 @@ class BufferedRef(BufferedRefBase):
         raise ValueError(
             "grid_rank must be specified when use_lookahead is True."
         )
+
+      if is_trivial_windowing:
+        resolved_prefetch_steps = 0
+        resolved_drain_steps = 0
+      else:
+        if prefetch_steps is not None:
+          resolved_prefetch_steps = prefetch_steps
+        elif buffer_type == BufferType.INPUT:
+          resolved_prefetch_steps = max(0, buffer_count - 1)
+        elif buffer_type == BufferType.INPUT_OUTPUT:
+          resolved_prefetch_steps = 1 if buffer_count >= 2 else 0
+        else:
+          resolved_prefetch_steps = 0
+
+        if drain_steps is not None:
+          resolved_drain_steps = drain_steps
+        elif buffer_type == BufferType.OUTPUT:
+          resolved_drain_steps = max(0, buffer_count - 1)
+        elif buffer_type == BufferType.INPUT_OUTPUT:
+          resolved_drain_steps = (
+              max(0, buffer_count - 2) if buffer_count >= 3 else 0
+          )
+        else:
+          resolved_drain_steps = 0
 
       if is_trivial_windowing:
         buffer_ty = ty
@@ -655,6 +719,8 @@ class BufferedRef(BufferedRefBase):
           _spec=spec,
           _buffer_type=buffer_type,
           _buffer_count=buffer_count,
+          _prefetch_steps=resolved_prefetch_steps,
+          _drain_steps=resolved_drain_steps,
           _grid_rank=grid_rank if use_lookahead else None,
           window_ref=window_ref,
           copy_in_slot=None,
@@ -679,21 +745,59 @@ class BufferedRef(BufferedRefBase):
       )
 
   @classmethod
-  def input(cls, spec, dtype_or_type, buffer_count=2, **kwargs):
+  def input(
+      cls,
+      spec,
+      dtype_or_type,
+      buffer_count=2,
+      prefetch_steps: int | None = None,
+      **kwargs,
+  ):
     return cls.create(
-        spec, dtype_or_type, BufferType.INPUT, buffer_count, **kwargs
+        spec,
+        dtype_or_type,
+        BufferType.INPUT,
+        buffer_count,
+        prefetch_steps=prefetch_steps,
+        **kwargs,
     )
 
   @classmethod
-  def output(cls, spec, dtype_or_type, buffer_count=2, **kwargs):
+  def output(
+      cls,
+      spec,
+      dtype_or_type,
+      buffer_count=2,
+      drain_steps: int | None = None,
+      **kwargs,
+  ):
     return cls.create(
-        spec, dtype_or_type, BufferType.OUTPUT, buffer_count, **kwargs
+        spec,
+        dtype_or_type,
+        BufferType.OUTPUT,
+        buffer_count,
+        drain_steps=drain_steps,
+        **kwargs,
     )
 
   @classmethod
-  def input_output(cls, spec, dtype_or_type, buffer_count=2, **kwargs):
+  def input_output(
+      cls,
+      spec,
+      dtype_or_type,
+      buffer_count=2,
+      prefetch_steps: int | None = None,
+      drain_steps: int | None = None,
+      **kwargs,
+  ):
     return cls.create(
-        spec, dtype_or_type, BufferType.INPUT_OUTPUT, buffer_count, **kwargs
+        spec,
+        dtype_or_type,
+        BufferType.INPUT_OUTPUT,
+        buffer_count,
+        prefetch_steps=prefetch_steps,
+        drain_steps=drain_steps,
+        **kwargs,
     )
 
   def with_spec(self, spec: pallas_core.BlockSpec) -> BufferedRef:
@@ -943,7 +1047,7 @@ class BufferedRef(BufferedRefBase):
     slot = self.current_copy_out_slot
     dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
     src_slice = self._to_window_slice(dst_slice)
-    if self.buffer_count == 1:
+    if self.drain_steps == 0:
       tpu_helpers.sync_copy(
           self._window_ref_at(slot, src_slice),
           dst_ref.at[dst_slice],
@@ -979,8 +1083,8 @@ class BufferedRef(BufferedRefBase):
     wait_slot = self.current_wait_out_slot
     dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
     src_slice = self._to_window_slice(dst_slice)
-    # Single-buffered outputs are synchronously copied.
-    if self.buffer_count > 1:
+    # Outputs with drain_steps == 0 are synchronously copied.
+    if self.drain_steps > 0:
       tpu_primitives.make_async_copy(
           self._window_ref_at(wait_slot, src_slice),  # nb: doesn't matter
           dst_ref.at[dst_slice],  # only dst shape is important
@@ -1022,7 +1126,9 @@ def fetch_with_lookahead(buffered_ref, src_ref,
     else:
       return x.astype(jnp.uint32)
 
-  fetch_limit = buffered_ref.cumulative_wait_in + buffered_ref.buffer_count
+  fetch_limit = (
+      buffered_ref.cumulative_wait_in + buffered_ref.prefetch_steps + 1
+  )
   if max_num_fetches is not None:
     fetch_once_limit = buffered_ref.cumulative_copy_in + max_num_fetches
     # We would like to write jnp.minimum(fetch_limit, fetch_once_limit)
@@ -1189,10 +1295,13 @@ class Scheduler:
         i + j for i, j in zip(indices, grid_offsets, strict=True)
     )
 
-    self.prev_indices = tuple(
-        i + j
-        for i, j in zip(_prev_index(indices, grid), grid_offsets, strict=True)
-    )
+    self.prev_indices = [self.indices]
+    prev_indices = indices
+    for _ in range(self.num_stages):
+      prev_indices = _prev_index(prev_indices, grid)
+      self.prev_indices.append(
+          tuple(i + j for i, j in zip(prev_indices, grid_offsets, strict=True))
+      )
     next_indices = _next_index(indices, grid)
     self.next_indices = tuple(
         i + j
@@ -1244,15 +1353,15 @@ class Scheduler:
     # lookahead this will depend on whether the lookahead reached the end.
     if not buffered_ref.is_buffered:
       return jnp.bool(False)
-    return self.step >= (self.num_steps - buffered_ref.buffer_count + 1)
+    return self.step >= (self.num_steps - buffered_ref.prefetch_steps)
 
-  def has_changed(self, buffered_ref):
+  def has_changed(self, buffered_ref, step=1):
     if not buffered_ref.is_buffered or buffered_ref.is_trivial_windowing:
       return False
     if buffered_ref.has_indirect:
       return True
-    indices = self._compute_index(buffered_ref, *self.indices)
-    prev_indices = self._compute_index(buffered_ref, *self.prev_indices)
+    indices = self._compute_index(buffered_ref, *self.prev_indices[step - 1])
+    prev_indices = self._compute_index(buffered_ref, *self.prev_indices[step])
     return _tuples_differ(indices, prev_indices)
 
   def will_change_current(self, buffered_ref):
@@ -1269,12 +1378,11 @@ class Scheduler:
       return False
     if buffered_ref.has_indirect:
       return True
-    if buffered_ref.buffer_count < 2:
+    if buffered_ref.prefetch_steps == 0:
       return self.has_changed(buffered_ref)
-    indices = self._compute_index(
-        buffered_ref, *self.fetch_indices[buffered_ref.buffer_count-2])
-    next_indices = self._compute_index(
-        buffered_ref, *self.fetch_indices[buffered_ref.buffer_count-1])
+    k = buffered_ref.prefetch_steps
+    indices = self._compute_index(buffered_ref, *self.fetch_indices[k - 1])
+    next_indices = self._compute_index(buffered_ref, *self.fetch_indices[k])
     return _tuples_differ(indices, next_indices)
 
   def alias_local_refs(self, buffered_ref, ref):
@@ -1301,7 +1409,7 @@ class Scheduler:
         return buffered_ref
 
       if init_limit is None:
-        init_limit = max(buffered_ref.buffer_count - 1, 0)
+        init_limit = buffered_ref.prefetch_steps
       if step >= init_limit:
         return buffered_ref
 
@@ -1365,7 +1473,7 @@ class Scheduler:
 
     # Single-buffered refs skip the prologue, so the first copy_in in the
     # loop must always fire to populate the buffer before wait_in.
-    if buffered_ref.is_buffered and buffered_ref.buffer_count < 2:
+    if buffered_ref.is_buffered and buffered_ref.prefetch_steps == 0:
       pred = pred | self.first_step
     if not buffered_ref.is_input:
       return buffered_ref
@@ -1383,27 +1491,26 @@ class Scheduler:
       @self._named_scope("ep_copy_in")
       def _send():
         if buffered_ref.is_input and buffered_ref.is_buffered:
-          buffered_ref.copy_in(src_ref,
-            self.fetch_indices[buffered_ref.buffer_count-1])
+          buffered_ref.copy_in(
+              src_ref, self.fetch_indices[buffered_ref.prefetch_steps]
+          )
       buffered_ref = buffered_ref.advance_copy_in_slot(
-          pred & buffered_ref.is_input)
+          pred & buffered_ref.is_input
+      )
     return buffered_ref
 
   def wait_out(self, buffered_ref, dst_ref) -> BufferedRef:
-    if buffered_ref.is_trivial_windowing:
+    if buffered_ref.is_trivial_windowing or not buffered_ref.is_buffered:
       return buffered_ref
-    pred = self.has_changed(buffered_ref) & jnp.logical_not(self.first_step)
+    if buffered_ref.drain_steps == 0:
+      return buffered_ref
+    delay = buffered_ref.drain_steps
+    pred = self.has_changed(buffered_ref, delay) & (self.step >= delay)
     @when(pred)
     @self._named_scope("ep_wait_out")
     def _wait():
       if buffered_ref.is_output:
-        # Note: As implemented, the current scheduler cannot support multiple
-        # buffering on outputs. In order to do so properly, we need to save
-        # the indices for which the copy_out was issued, and wait on them
-        # here. In the current schedule we always immediately wait_out
-        # on the iteration after the copy_out, so the prev_indices is always
-        # the correct grid index to wait on.
-        buffered_ref.wait_out(dst_ref, self.prev_indices)
+        buffered_ref.wait_out(dst_ref, self.prev_indices[delay])
     return buffered_ref.advance_wait_out_slot(pred & buffered_ref.is_output)
 
   def copy_out(self, buffered_ref, dst_ref) -> BufferedRef:
@@ -1419,16 +1526,22 @@ class Scheduler:
 
     return buffered_ref.advance_copy_out_slot(pred & buffered_ref.is_output)
 
-  def finalize(self, buffered_ref, dst_ref):
-    if buffered_ref.is_trivial_windowing:
-      return
-    pred = self.last_step
+  def finalize_step(self, buffered_ref, dst_ref, step=0):
+    if (
+        buffered_ref.is_trivial_windowing
+        or not buffered_ref.is_buffered
+        or step >= buffered_ref.drain_steps
+    ):
+      return buffered_ref
+    changed = True if step == 0 else self.has_changed(buffered_ref, step)
+    pred = self.last_step & (step < self.num_steps) & changed
 
-    @when(pred)
-    @self._named_scope("ep_finalize")
+    @self._named_scope(f"ep_finalize_{step}")
     def _end():
       if buffered_ref.is_output:
-        buffered_ref.wait_out(dst_ref, self.indices)
+        buffered_ref.wait_out(dst_ref, self.prev_indices[step])
+
+    return buffered_ref.advance_wait_out_slot(pred & buffered_ref.is_output)
 
   def advance_slots(self, buffered_ref):
     if buffered_ref.is_input:
@@ -1495,10 +1608,14 @@ def _make_pipeline_allocations(
     buffer_count = 2
     use_lookahead = False
     prefetched_count = 0
+    prefetch_steps = None
+    drain_steps = None
     if has_buffering := in_spec.pipeline_mode is not None:
       buffer_count = in_spec.pipeline_mode.buffer_count
       use_lookahead = in_spec.pipeline_mode.use_lookahead
       prefetched_count = in_spec.pipeline_mode.prefetched_count
+      prefetch_steps = getattr(in_spec.pipeline_mode, "prefetch_steps", None)
+      drain_steps = getattr(in_spec.pipeline_mode, "drain_steps", None)
     if use_lookahead and grid is None:
       raise ValueError("Grid must be specified when using lookahead.")
     is_trivial = _spec_has_trivial_windowing(in_spec, grid, in_aval.shape)
@@ -1511,6 +1628,8 @@ def _make_pipeline_allocations(
         in_spec,
         in_aval,
         buffer_count,
+        prefetch_steps=prefetch_steps,
+        drain_steps=drain_steps,
         grid_rank=len(grid),
         use_lookahead=use_lookahead,
         source_memory_space=sms,
@@ -1522,10 +1641,14 @@ def _make_pipeline_allocations(
   def make_output_bref(out_spec, out_ref):
     out_aval = _ref_to_value_aval(out_ref)
     buffer_count = 2
+    prefetch_steps = None
+    drain_steps = None
     if has_buffering := out_spec.pipeline_mode is not None:
       buffer_count = out_spec.pipeline_mode.buffer_count
       if out_spec.pipeline_mode.use_lookahead:
         raise ValueError("Output buffering does not support lookahead.")
+      prefetch_steps = getattr(out_spec.pipeline_mode, "prefetch_steps", None)
+      drain_steps = getattr(out_spec.pipeline_mode, "drain_steps", None)
     is_trivial = _spec_has_trivial_windowing(out_spec, grid, out_aval.shape)
     if not has_buffering and is_trivial:
       buffer_count = 1
@@ -1536,6 +1659,8 @@ def _make_pipeline_allocations(
         out_spec,
         out_aval,
         buffer_count,
+        prefetch_steps=prefetch_steps,
+        drain_steps=drain_steps,
         source_memory_space=sms,
         tiling=tiling,
         is_trivial_windowing=is_trivial,
@@ -1843,13 +1968,20 @@ def _emit_pipeline(
             ),
         )
 
+    bref_buffer_counts = [
+        bref.buffer_count
+        for bref in jax.tree.leaves(allocations)
+        if hasattr(bref, "buffer_count")
+    ]
+    effective_num_stages = max((max_buffer_count, *bref_buffer_counts))
+
     def make_scheduler(step, indices):
       return Scheduler(
           step,
           indices,
           grid,
           grid_offsets=grid_offsets,
-          num_stages=max_buffer_count,
+          num_stages=effective_num_stages,
           trace_scopes=trace_scopes,
           _explicit_indices=_explicit_indices,
       )
@@ -1961,7 +2093,12 @@ def _emit_pipeline(
         final_indices = _prev_index(next_indices, grid)
         scheduler = make_scheduler(num_steps - 1, final_indices)
         with scheduler.grid_env():
-          map_brefs(scheduler.finalize, brefs, refs)
+          for step in range(scheduler.num_stages - 2, -1, -1):
+            brefs = map_brefs(
+                functools.partial(scheduler.finalize_step, step=step),
+                brefs,
+                refs,
+            )
 
         def _sync_copy_out(bref, ref):
           if bref.is_trivial_windowing and bref.window_ref is not None:
