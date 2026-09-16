@@ -17,6 +17,9 @@ import importlib
 import re
 from types import ModuleType
 import warnings
+import pathlib
+import os
+import ctypes
 
 from .version import __version__ as jaxlib_version
 
@@ -31,6 +34,41 @@ _PLUGIN_MODULE_NAMES = {
     "rocm": ["jax_rocm10_plugin", "jax_rocm7_plugin", "jax_rocm60_plugin"],
     "oneapi": ["jax_oneapi_plugin"],
 }
+
+def load_pkg_so(module, libraries):
+  try:
+    m = importlib.import_module(f"nvidia.{module}")
+  except ImportError:
+    m = None
+
+  for lib in libraries:
+    excs = []
+    if m is None:
+      excs.append(FileNotFoundError(OSError.errno.ENONENT, os.strerror(OSError.errno.ENOENT),lib))
+      continue
+
+    loaded = False
+    for p in m.__path__:
+      path = pathlib.Path(p)/ "lib" / lib
+      try:
+        ctypes.cdll.LoadLibrary(path)
+        loaded = True
+        break
+      except OSError:
+        continue
+
+    if not loaded:
+      excs.append(FileNotFoundError(OSError.errno.ENONENT, os.strerror(OSError.errno.ENOENT),lib))
+
+    # TODO(phawkins): check the non-Python path here and error if not found.
+    # # Try again, without the Python module path.
+    # try:
+    #   ctypes.cdll.LoadLibrary(lib)
+    #   continue
+    # except OSError as e:
+    #   excs.append(e)
+    #
+    # raise ExceptionGroup(f"Unable to load CUDA library {lib}", excs)  # noqa: F821
 
 
 def import_from_plugin(

@@ -14,8 +14,19 @@
 
 from typing import Any
 
-from .plugin_support import import_from_plugin
+from .plugin_support import import_from_plugin, load_pkg_so
 
+# try loading libcudart from python package directory before import cuda plugin.
+# the native plugin also trigger libcudart dlopen from its call_init,
+# but no python context there to easily lookup package directory.
+# it has to rely on RPATH or LD_LIBRARY_PATH to locate libcudart,
+# if we can load libcudart from python package,
+# it's much more reliable than RPATH or LD_LIBRARY_PATH
+# this is also consist with jax_plugins/cuda/__init__.py logic
+# so we either gets exactly same libcudart.so,
+# or fail in both location.
+load_pkg_so("cuda_runtime", ["libcudart.so.12"])
+load_pkg_so("cu13", ["libcudart.so.13"])
 _cusolver = import_from_plugin("cuda", "_solver")
 _cuhybrid = import_from_plugin("cuda", "_hybrid")
 

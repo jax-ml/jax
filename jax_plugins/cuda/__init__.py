@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import ctypes
 import functools
 import importlib
 import logging
@@ -22,6 +21,7 @@ import traceback
 from typing import Any
 
 from jax._src.lib import xla_client
+from jax._src.lib.plugin_support import load_pkg_so
 import jax._src.xla_bridge as xb
 
 cuda_plugin_extension = None
@@ -88,60 +88,34 @@ def _get_library_path():
   )
   return None
 
-
-def _load(module, libraries):
-  try:
-    m = importlib.import_module(f"nvidia.{module}")
-  except ImportError:
-    m = None
-
-  for lib in libraries:
-    excs = []
-    if m is not None:
-      path = pathlib.Path(m.__path__[0]) / "lib" / lib
-      try:
-        ctypes.cdll.LoadLibrary(path)
-        continue
-      except OSError as e:
-        excs.append(e)
-
-    # TODO(phawkins): check the non-Python path here and error if not found.
-    # # Try again, without the Python module path.
-    # try:
-    #   ctypes.cdll.LoadLibrary(lib)
-    #   continue
-    # except OSError as e:
-    #   excs.append(e)
-    #
-    # raise ExceptionGroup(f"Unable to load CUDA library {lib}", excs)  # noqa: F821
-
-
 def _load_nvidia_libraries():
   """Attempts to load NVIDIA's libraries.
 
   We prefer the Python packages, if present. If not, we fall back to loading
   them from LD_LIBRARY_PATH. By loading the libraries here, later lookups will
   find these copies."""
-  _load("cuda_runtime", ["libcudart.so.12"])
-  _load("cu13", ["libcudart.so.13"])
+  load_pkg_so("cuda_runtime", ["libcudart.so.12"])
+  load_pkg_so("cu13", ["libcudart.so.13"])
   # cuda_nvrtc isn't directly a dependency of JAX, but CUDNN appears to need it
   # and at least in CUDA 12.9 has RUNPATHs misconfigured to refer to
   # nvidia/nvrtc instead of nvidia/cuda_nvrtc.
-  _load("cuda_nvrtc", ["libnvrtc.so.12"])
-  _load("cu13", ["libnvrtc.so.13"])
-  _load("cublas", ["libcublas.so.12", "libcublasLt.so.12"])
-  _load("cu13", ["libcublas.so.13", "libcublasLt.so.13"])
-  _load("nccl", ["libnccl.so.2"])
-  _load("cuda_cupti", ["libcupti.so.12"])
-  _load("cu13", ["libcupti.so.13"])
-  _load("cusparse", ["libcusparse.so.12"])
-  _load("cu13", ["libcusparse.so.12"])
-  _load("cusolver", ["libcusolver.so.11"])
-  _load("cu13", ["libcusolver.so.12"])
-  _load("cufft", ["libcufft.so.11"])
-  _load("cu13", ["libcufft.so.12"])
-  _load("nvshmem", ["libnvshmem_host.so.3"])
-  _load("cudnn", ["libcudnn.so.9"])
+  # libcusolver depends on nvJitLink so nvJitLink must be loaded before it
+  load_pkg_so("cuda_nvrtc", ["libnvrtc.so.12"])
+  load_pkg_so("cu13", ["libnvrtc.so.13"])
+  load_pkg_so("cublas", ["libcublas.so.12", "libcublasLt.so.12"])
+  load_pkg_so("cu13", ["libcublas.so.13", "libcublasLt.so.13"])
+  load_pkg_so("nccl", ["libnccl.so.2"])
+  load_pkg_so("cuda_cupti", ["libcupti.so.12"])
+  load_pkg_so("cu13", ["libcupti.so.13"])
+  load_pkg_so("cusparse", ["libcusparse.so.12"])
+  load_pkg_so("cu13", ["libnvJitLink.so.13"])
+  load_pkg_so("cu13", ["libcusparse.so.12"])
+  load_pkg_so("cusolver", ["libcusolver.so.11"])
+  load_pkg_so("cu13", ["libcusolver.so.12"])
+  load_pkg_so("cufft", ["libcufft.so.11"])
+  load_pkg_so("cu13", ["libcufft.so.12"])
+  load_pkg_so("nvshmem", ["libnvshmem_host.so.3"])
+  load_pkg_so("cudnn", ["libcudnn.so.9"])
 
 
 def _check_cuda_versions(raise_on_first_error: bool = False,
