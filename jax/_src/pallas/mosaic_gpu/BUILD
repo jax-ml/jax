@@ -138,6 +138,7 @@ pytype_strict_library(
         ":lowering",
         "//jax",
         "//jax/_src:api",
+        "//jax/_src:batching",
         "//jax/_src:core",
         "//jax/_src:debugging",
         "//jax/_src:deprecations",

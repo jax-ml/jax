@@ -38,6 +38,7 @@ from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
+from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import utils as lax_utils
 from jax._src.layout import get_layout_mode, LayoutMode
@@ -5955,3 +5956,99 @@ def _semaphore_wait_lowering_rule(
         val, decrement=decrement, scope=scope, memory_scope=memory_scope,
     )
   return ()
+
+
+reduce_sum_p = jax_core.Primitive("mosaic_gpu_reduce_sum")
+reduce_max_p = jax_core.Primitive("mosaic_gpu_reduce_max")
+reduce_min_p = jax_core.Primitive("mosaic_gpu_reduce_min")
+reduce_prod_p = jax_core.Primitive("mosaic_gpu_reduce_prod")
+
+
+def _reduce_abstract_eval(
+    x_aval: jax_core.ShapedArray,
+    *,
+    axes: tuple[int, ...],
+    accumulator_ilp: int | None = None,
+) -> jax_core.ShapedArray:
+  del accumulator_ilp
+  canonical_axes = tuple(util.canonicalize_axis(a, x_aval.ndim) for a in axes)
+  out_shape = tuple(
+      s for i, s in enumerate(x_aval.shape) if i not in canonical_axes
+  )
+  return jax_core.ShapedArray(out_shape, x_aval.dtype)
+
+
+for prim, lax_fn, op in (
+    (reduce_sum_p, lax.reduce_sum, "add"),
+    (reduce_max_p, lax.reduce_max, "max"),
+    (reduce_min_p, lax.reduce_min, "min"),
+    (reduce_prod_p, lax.reduce_prod, "prod"),
+):
+  prim.def_abstract_eval(_reduce_abstract_eval)
+  prim.def_impl(
+      functools.partial(
+          lambda fn, x, *, axes, accumulator_ilp=None: fn(x, axes=axes), lax_fn
+      )
+  )
+  batching.defreducer(prim)
+  lowering._register_resource_estimator(prim)(
+      lowering._reduce_resource_estimator
+  )
+  lowering.register_lowering_rule(prim, mgpu.LoweringSemantics.Lane)(
+      functools.partial(lowering._reduce_lowering_rule, op)
+  )
+
+lowering.register_lowering_rule(reduce_sum_p, mgpu.LoweringSemantics.Warpgroup)(
+    lowering._reduce_sum_lowering_rule_wg
+)
+lowering.register_lowering_rule(reduce_max_p, mgpu.LoweringSemantics.Warpgroup)(
+    lowering._reduce_max_lowering_rule_wg
+)
+lowering.register_lowering_rule(reduce_min_p, mgpu.LoweringSemantics.Warpgroup)(
+    lowering._reduce_min_lowering_rule_wg
+)
+lowering.register_lowering_rule(reduce_prod_p, mgpu.LoweringSemantics.Warpgroup)(
+    lowering._reduce_prod_lowering_rule_wg
+)
+
+
+def _canonicalize_reduction_axes(
+    x: Any, axis: int | Sequence[int] | None
+) -> tuple[int, ...]:
+  if axis is None:
+    axes = tuple(range(x.ndim))
+  elif isinstance(axis, int):
+    axes = (axis,)
+  else:
+    axes = tuple(axis)
+  return tuple(util.canonicalize_axis(a, x.ndim) for a in axes)
+
+
+def _reduce(
+    prim: jax_core.Primitive,
+    x: Any,
+    axis: int | Sequence[int] | None = None,
+    keepdims: bool = False,
+    *,
+    accumulator_ilp: int | None = None,
+) -> Any:
+  if accumulator_ilp is not None and (
+      not isinstance(accumulator_ilp, int)
+      or isinstance(accumulator_ilp, bool)
+      or accumulator_ilp <= 0
+  ):
+    raise ValueError(
+        f"accumulator_ilp must be a positive integer, got: {accumulator_ilp}"
+    )
+
+  axes = _canonicalize_reduction_axes(x, axis)
+  result = prim.bind(x, axes=axes, accumulator_ilp=accumulator_ilp)
+  if keepdims:
+    result = lax.expand_dims(result, axes)
+  return result
+
+
+reduce_sum = functools.partial(_reduce, reduce_sum_p)
+reduce_max = functools.partial(_reduce, reduce_max_p)
+reduce_min = functools.partial(_reduce, reduce_min_p)
+reduce_prod = functools.partial(_reduce, reduce_prod_p)
