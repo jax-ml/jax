@@ -127,6 +127,9 @@ extern "C" {
 [[gnu::weak]] CUptiResult cuptiActivityGetNextRecord_v2(
     CUpti_SubscriberHandle subscriber, uint8_t* buffer, size_t valid_size,
     CUpti_Activity** record);
+[[gnu::weak]] CUptiResult cuptiActivityGetNumDroppedRecords_v2(
+    CUpti_SubscriberHandle subscriber, CUcontext context, uint32_t stream_id,
+    size_t* dropped);
 [[gnu::weak]] CUptiResult cuptiGetTimestamp_v2(
     CUpti_SubscriberHandle subscriber, uint64_t* timestamp);
 [[gnu::weak]] CUptiResult cuptiSubscribe_v2(
@@ -178,15 +181,14 @@ bool IsRecoverableV2PreflightFailure(CUptiResult result) {
          result == CUPTI_ERROR_NOT_SUPPORTED || result == CUPTI_ERROR_UNKNOWN;
 }
 
-// cuptiActivityGetNextRecord_v2 and cuptiGetTimestamp_v2 were added in CUDA
-// 13.3. Requiring them keeps CUDA 13.2's preview V2 APIs on V1. Used by
-// V2-specific tests.
+// These V2 APIs require CUDA 13.3; CUDA 13.2 stays on V1.
 bool CanUseCuptiV2() {
   return cuptiSubscribe_v2 != nullptr && cuptiGetTimestamp_v2 != nullptr &&
          cuptiActivityRegisterCallbacks_v2 != nullptr &&
          cuptiActivityEnable_v2 != nullptr &&
          cuptiActivityDisable_v2 != nullptr &&
-         cuptiActivityGetNextRecord_v2 != nullptr;
+         cuptiActivityGetNextRecord_v2 != nullptr &&
+         cuptiActivityGetNumDroppedRecords_v2 != nullptr;
 }
 
 enum class CuptiV2SubscribeResult { kSubscribed, kFallBackToV1 };
@@ -274,6 +276,13 @@ void callback_complete_v1(CUcontext context, uint32_t stream_id, uint8_t* buffer
 void CUPTIAPI callback_complete_v2(uint8_t* buffer, size_t, size_t valid_size,
                                    void*) {
   process_activity_buffer(buffer, valid_size);
+  size_t num_dropped = 0;
+  // V2 reserves the context and stream ID.
+  THROW_IF_CUPTI_ERROR(cuptiActivityGetNumDroppedRecords_v2(
+                           profiler_state.subscriber.get(),
+                           /*context=*/nullptr, /*stream_id=*/0, &num_dropped),
+                       "failed to get dropped V2 records");
+  THROW_IF(num_dropped > 0, "V2 activity records were dropped");
 }
 
 bool InitCuptiV2() {
@@ -386,30 +395,30 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       "_cupti_get_timings",
       [](bool finalize) {
         THROW_IF(!profiler_state.active, "Mosaic CUPTI profiling is not active.");
-        CUptiResult first_error = CUPTI_SUCCESS;
-        // Continue teardown after an error: throwing immediately could leave
-        // the subscriber installed. Preserve the first error to report after
-        // the profiler has been made inactive.
-        auto record_error = [&first_error](CUptiResult result) {
-          if (first_error == CUPTI_SUCCESS && result != CUPTI_SUCCESS) {
-            first_error = result;
-          }
+        // Flush callbacks may throw; reset state on every exit.
+        absl::Cleanup reset_profiler_state = [] {
+          (void)profiler_state.subscriber.Close();
+          profiler_state.active = false;
         };
         if (profiler_state.subscriber.api() == CuptiApi::kV2) {
-          record_error(cuptiActivityDisable_v2(
-              profiler_state.subscriber.get(),
-              CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL, nullptr));
+          THROW_IF_CUPTI_ERROR(
+              cuptiActivityDisable_v2(profiler_state.subscriber.get(),
+                                      CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL,
+                                      nullptr),
+              "failed to disable V2 activity");
         } else {
-          record_error(
-              cuptiActivityDisable(CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL));
+          THROW_IF_CUPTI_ERROR(
+              cuptiActivityDisable(CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL),
+              "failed to disable activity");
         }
-        record_error(cuptiActivityFlushAll(CUPTI_ACTIVITY_FLAG_FLUSH_FORCED));
+        THROW_IF_CUPTI_ERROR(
+            cuptiActivityFlushAll(CUPTI_ACTIVITY_FLAG_FLUSH_FORCED),
+            "failed to flush activity buffers");
         if (profiler_state.subscriber.api() == CuptiApi::kV1 && finalize) {
-          record_error(cuptiFinalize());
+          THROW_IF_CUPTI_ERROR(cuptiFinalize(), "failed to finalize");
         }
-        record_error(profiler_state.subscriber.Close());
-        profiler_state.active = false;
-        THROW_IF_CUPTI_ERROR(first_error, "failed to stop CUPTI profiling");
+        THROW_IF_CUPTI_ERROR(profiler_state.subscriber.Close(),
+                             "failed to unsubscribe");
         return profiler_state.timings;
       },
       nb::arg("finalize") = true);

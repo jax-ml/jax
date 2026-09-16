@@ -91,10 +91,10 @@ class ProfilerCuptiTest(parameterized.TestCase):
       self.assertIsInstance(item, float)
 
   def test_tokamax_cupti_xprof_ordering(self):
-    """Regression test for TokaMax's CUPTI/XProf ordering.
+    """Covers Tokamax's CUPTI/XProf ordering.
 
-    This checks that the XLA-backed JAX
-    profiler and Mosaic can both use CUPTI V2 in the TokaMax ordering.
+    See Tokamax's compile benchmark test:
+    https://github.com/openxla/tokamax/blob/1eecca42fecde67217995126f6e7c45a5607dcf9/tokamax/_src/benchmarking_test.py#L144-L165
     """
     if not _cupti_v2_available():
       self.skipTest("CUPTI V2 multi-subscriber APIs are unavailable")
