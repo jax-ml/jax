@@ -1040,21 +1040,22 @@ class VectorSubcoreTest(PallasSCTest):
       kernel(x, indices)
 
   def test_load_gather_1d(self):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
     )
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, o_ref):
       o_ref[...] = plsc.load_gather(x_ref, [indices_ref[...]])
 
     np.testing.assert_array_equal(kernel(x, indices), x[indices])
 
   def test_load_gather_2d(self):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
     x = jnp.arange(self.num_lanes * self.num_lanes).reshape(self.num_lanes, -1)
     indices0 = indices1 = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
@@ -1062,7 +1063,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct((self.num_lanes,), x.dtype),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices0_ref, indices1_ref, o_ref):
       o_ref[...] = plsc.load_gather(
@@ -1074,6 +1074,8 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_load_gather_with_indexing(self):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
     num_steps = 4
     x = jnp.arange(num_steps * self.num_lanes).reshape(num_steps, self.num_lanes)
     indices = jax.random.permutation(
@@ -1082,7 +1084,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices_ref, o_ref):
       indices = indices_ref[...]
@@ -1095,6 +1096,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(*MASK_FNS)
   def test_load_gather_masked(self, mask_fn):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
@@ -1102,7 +1105,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices_ref, o_ref):
       o_ref[...] = plsc.load_gather(
@@ -1130,6 +1132,8 @@ class VectorSubcoreTest(PallasSCTest):
       kernel(x, indices)
 
   def test_store_scatter(self):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
@@ -1137,7 +1141,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices_ref, o_ref):
       plsc.store_scatter(o_ref, [indices_ref[...]], x_ref[...])
@@ -1148,6 +1151,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(*MASK_FNS)
   def test_store_scatter_masked(self, mask_fn):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
@@ -1155,7 +1160,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices_ref, o_ref):
       x = x_ref[...]
@@ -1184,6 +1188,8 @@ class VectorSubcoreTest(PallasSCTest):
       kernel(x, indices)
 
   def test_store_scatter_2d(self):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
     num_steps = 4
     x = jnp.arange(num_steps * self.num_lanes).reshape(num_steps, self.num_lanes)
     indices = jax.random.permutation(
@@ -1192,7 +1198,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices_ref, o_ref):
       indices = indices_ref[...]
