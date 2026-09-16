@@ -11843,6 +11843,25 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ValueError, "The denominator cannot be unreduced passed to `div`"):
       f(arr1, arr1)
 
+  @config.numpy_dtype_promotion('standard')
+  @jtu.with_explicit_mesh((2, 2, 2), ('replica', 'data', 'seq'))
+  def test_histogram_flattened_multi_axis_sharding_error(self, mesh):
+    positions = jax.device_put(
+        jnp.broadcast_to(jnp.arange(16, dtype=jnp.int32), (8, 16)),
+        P(('replica', 'data'), 'seq'))
+
+    mask = jax.device_put(jnp.ones((8, 16), dtype=jnp.bool_),
+                          P(('replica', 'data'), 'seq'))
+
+    @jax.jit
+    def f(positions, mask):
+      flat = positions.flatten()
+      self.assertEqual(flat.aval.sharding.spec, P(('replica', 'data', 'seq')))
+      return jnp.histogram(flat, bins=4, range=(0, 16),
+                           weights=mask.flatten(), out_sharding=P())[0]
+
+    f(positions, mask)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

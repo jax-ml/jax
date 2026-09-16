@@ -526,7 +526,8 @@ def heaviside(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def histogram(a: ArrayLike, bins: ArrayLike = ...,
               range: Sequence[ArrayLike] | None = ...,
               weights: ArrayLike | None = ...,
-              density: builtins.bool | None = ...) -> tuple[Array, Array]: ...
+              density: builtins.bool | None = ...,
+              out_sharding: NamedSharding | P | None = ...) -> tuple[Array, Array]: ...
 def histogram2d(
     x: ArrayLike,
     y: ArrayLike,

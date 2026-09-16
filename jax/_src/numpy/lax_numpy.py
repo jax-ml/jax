@@ -806,8 +806,9 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
 @export
 def histogram(a: ArrayLike, bins: ArrayLike = 10,
               range: Sequence[ArrayLike] | None = None,
-              weights: ArrayLike | None = None,
-              density: bool | None = None) -> tuple[Array, Array]:
+              weights: ArrayLike | None = None, density: bool | None = None,
+              out_sharding: NamedSharding | P | None = None
+              ) -> tuple[Array, Array]:
   """Compute a 1-dimensional histogram.
 
   JAX implementation of :func:`numpy.histogram`.
@@ -865,6 +866,7 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
     >>> jnp.allclose(normed_sum, 1.0)
     Array(True, dtype=bool)
   """
+  out_sharding = canonicalize_sharding(out_sharding, 'jnp.histogram')
   if weights is None:
     a, _ = util.ensure_arraylike("histogram", a, bins)
     a, = util.promote_dtypes_inexact(a)
@@ -875,6 +877,16 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
       raise ValueError("weights should have the same shape as a.")
     a, weights = util.promote_dtypes_inexact(a, weights)
 
+  if out_sharding is not None:
+    return auto_axes(partial(_histogram, bins=bins, density=density),
+                     out_sharding=out_sharding,
+                     axes=out_sharding.mesh.explicit_axes
+                     )(a, range, weights)
+  else:
+    return _histogram(a, range, weights, bins, density)
+
+
+def _histogram(a, range, weights, bins, density):
   bin_edges = histogram_bin_edges(a, bins, range, weights)
   bin_idx = searchsorted(bin_edges, a, side='right')
   bin_idx = where(a == bin_edges[-1], len(bin_edges) - 1, bin_idx)
