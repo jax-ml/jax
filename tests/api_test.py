@@ -612,6 +612,22 @@ class JitTest(jtu.BufferDonationTestCase):
     f(inp1=x)
     self.assertDeleted(x)
 
+  @jtu.device_supports_buffer_donation()
+  def test_donated_buffer_reuse_error_type(self):
+    # Regression test for #34083: fastpath errors must be JaxRuntimeError.
+    if jtu.parse_version(jax.lib.__version__) < (0, 11, 1):
+      self.skipTest("Requires jaxlib 0.11.1 or newer.")
+
+    @jax.jit(donate_argnums=0)
+    def f(x):
+      return x + 1
+
+    x = jax.device_put(jnp.arange(4.0), jax.devices()[0])
+    f(x)
+    # The message is backend-specific, so assert only the exception type.
+    with self.assertRaises(jax.errors.JaxRuntimeError):
+      f(x)
+
   def test_donate_args_info_aot(self):
     def fn(x, y):
       return jax.tree.map(lambda i: i * 2, x), y * 2
