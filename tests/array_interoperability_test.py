@@ -51,6 +51,15 @@ def alloc_and_map(c_type, np_dtype, size):
   return np.frombuffer(buf, dtype=np_dtype, count=size)
 
 
+def is_tpu_host_buffer_supported():
+  try:
+    device = jax.devices("tpu")[0]
+    client = device.client
+    return getattr(client, "pjrt_c_api_minor_version", 0) >= 114
+  except (ValueError, IndexError):
+    return False
+
+
 config.parse_flags_with_absl()
 
 try:
@@ -250,6 +259,9 @@ class DLPackTest(jtu.JaxTestCase):
     device = jax.devices()[0]
     if device.platform not in ["gpu", "tpu"]:
       raise unittest.SkipTest("Test requires GPU or TPU")
+    if device.platform == "tpu" and not is_tpu_host_buffer_supported():
+      raise unittest.SkipTest(
+          "TPU requires host buffer support (pjrt_c_api_minor_version >= 114)")
     try:
       sharding = jax.sharding.SingleDeviceSharding(
           device, memory_kind="pinned_host"
@@ -360,6 +372,9 @@ class DLPackTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("tpu")
   def testTpuHostBufferDmaMap(self):
+    if not is_tpu_host_buffer_supported():
+      raise unittest.SkipTest(
+          "TPU requires host buffer support (pjrt_c_api_minor_version >= 114)")
     from jax._src.typing import DLDeviceType
 
     device = jax.devices("tpu")[0]
