@@ -4803,7 +4803,11 @@ ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
 mlir.register_lowering(cosh_p, partial(_nary_lower_hlo, chlo.cosh))
 
 asinh_p = standard_unop(_float | _complex, 'asinh')
-ad.defjvp(asinh_p, lambda g, x: mul(g, rsqrt(add(square(x), _one(x)))))
+# Use 1/cosh(asinh(x)) instead of 1/sqrt(x^2 + 1) to avoid float32 overflow.
+# When |x| > ~1.84e19, x^2 overflows to inf in float32, making rsqrt(inf) = 0
+# and the derivative exactly 0.0. cosh(asinh(x)) = sqrt(x^2+1) is computed
+# stably via the log form of asinh, so no overflow occurs.
+ad.defjvp(asinh_p, lambda g, x: mul(g, reciprocal(cosh(asinh(x)))))
 mlir.register_lowering(asinh_p, partial(_nary_lower_hlo, chlo.asinh))
 
 acosh_p = standard_unop(_float | _complex, 'acosh')
