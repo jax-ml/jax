@@ -379,6 +379,66 @@ class JetTest(jtu.JaxTestCase):
 
     self.unary_check(f, rtol=5e-4)
 
+  @jtu.sample_product(custom_derivative=['jvp', 'vjp'], compiled=[False, True])
+  def test_custom_derivative_call(self, custom_derivative, compiled):
+    def f(x):
+      return {'cubic': x ** 3, 'constant': jnp.ones_like(x)}
+
+    def unused_rule(*args):
+      self.fail('jet should differentiate the primal implementation')
+
+    if custom_derivative == 'jvp':
+      custom_f = jax.custom_jvp(f)
+      custom_f.defjvp(unused_rule)
+    else:
+      custom_f = jax.custom_vjp(f)
+      custom_f.defvjp(unused_rule, unused_rule)
+
+    x = jnp.array([-2., 1., 3.])
+    series = ([jnp.ones_like(x), jnp.zeros_like(x), jnp.zeros_like(x)],)
+
+    def run(x):
+      return jet(custom_f, (x,), series)
+
+    actual = jit(run)(x) if compiled else run(x)
+    expected = jvp_taylor(f, (x,), series)
+    self.assertAllClose(actual[0], expected[0])
+    for i, term in enumerate(expected[1]):
+      self.assertAllClose(jax.tree.map(lambda terms: terms[i], actual[1],
+                                      is_leaf=lambda x: isinstance(x, list)),
+                          term, atol=1e-5, rtol=1e-5)
+
+  @jtu.sample_product(custom_derivative=['jvp', 'vjp'])
+  def test_custom_derivative_closed_over_tracer(self, custom_derivative):
+    def f(x):
+      def inner(y):
+        return x * y * y
+
+      def unused_rule(*args):
+        self.fail('jet should differentiate the primal implementation')
+
+      if custom_derivative == 'jvp':
+        custom_inner = jax.custom_jvp(inner)
+        custom_inner.defjvp(unused_rule)
+      else:
+        custom_inner = jax.custom_vjp(inner)
+        custom_inner.defvjp(unused_rule, unused_rule)
+      return custom_inner(2 * x)
+
+    x = jnp.array([-2., 1., 3.])
+    series = ([jnp.ones_like(x), jnp.zeros_like(x)],)
+    expected = jet(lambda x: 4 * x ** 3, (x,), series)
+    for fun in (f, jit(f), jax.vmap(f)):
+      self.assertAllClose(jet(fun, (x,), series), expected)
+
+  def test_relu(self):
+    # Regression for https://github.com/jax-ml/jax/issues/30352.
+    x = jnp.array([-1., 0., 1.])
+    series = ([jnp.ones_like(x), jnp.zeros_like(x)],)
+    expected = jet(lambda x: jnp.maximum(x, 0), (x,), series)
+    for fun in (jax.nn.relu, jit(jax.nn.relu), jax.vmap(jax.nn.relu)):
+      self.assertAllClose(jet(fun, (x,), series), expected)
+
   def test_select(self):
     M, K = 2, 3
     order = 3

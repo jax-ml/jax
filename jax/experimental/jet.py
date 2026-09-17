@@ -270,11 +270,13 @@ class JetTrace(core.Trace):
                               symbolic_zeros):
     # TODO(mattjj): don't just ignore custom jvp rules?
     del primitive, jvp  # Unused.
-    return fun.call_wrapped(*tracers)
+    with core.set_current_trace(self):
+      return fun.call_wrapped(*tracers)
 
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, /, *, out_trees, symbolic_zeros):
     del primitive, fwd, bwd, out_trees, symbolic_zeros  # Unused.
-    return fun.call_wrapped(*tracers)
+    with core.set_current_trace(self):
+      return fun.call_wrapped(*tracers)
 
 
 class ZeroTerm: pass
