@@ -266,16 +266,15 @@ class DebugPrintTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_vector_subcore(self, dtype):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("TODO(b/535267274): Fix logger.")
     x = jnp.arange(self.num_lanes, dtype=dtype)
     debug_int = 1234552
     debug_float = 12344.625
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_hbm_ref, _):
       pl.debug_print("Memref", x_hbm_ref)
       pl.debug_print("Sliced memref", x_hbm_ref.at[:self.num_lanes // 2])
@@ -1971,6 +1970,8 @@ class VectorSubcoreTest(PallasSCTest):
       ("debug_print", lambda vec: pl.debug_print("test", vec)),
   )
   def test_effect_discharge(self, effectful_op):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
     x = jnp.arange(self.sc_info.num_lanes)
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
@@ -1980,7 +1981,6 @@ class VectorSubcoreTest(PallasSCTest):
         mesh=mesh,
         out_type=x,
         scratch_types=[pltpu.VMEM(x.shape, x.dtype)],
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def body(x_ref, o_ref, scratch_ref):
       pltpu.sync_copy(x_ref, scratch_ref)
