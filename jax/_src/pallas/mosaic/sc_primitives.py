@@ -116,7 +116,8 @@ swap_p.is_effectful = lambda params: True
 
 
 @swap_p.def_effectful_abstract_eval
-def _swap_abstract_eval(ref, x, *args, has_mask, tree, add):
+def _swap_abstract_eval(ref, x, *args, has_mask, tree, add, compress):
+  del compress  # Only used during lowering.
   flat_transforms = args[:-1] if has_mask else args
   tref = state_types.TransformedRef(
       ref, jax.tree.unflatten(tree, flat_transforms))
@@ -140,14 +141,28 @@ def _swap_abstract_eval(ref, x, *args, has_mask, tree, add):
 
 @sc_lowering.register_lowering_rule(swap_p)
 def _swap_lowering_rule(
-    ctx: sc_lowering.LoweringRuleContext, ref, x, *args, has_mask, tree, add
+    ctx: sc_lowering.LoweringRuleContext,
+    ref,
+    x,
+    *args,
+    has_mask,
+    tree,
+    add,
+    compress,
 ):
   if has_mask:
     *flat_transforms, mask = args
   else:
     flat_transforms, mask = list(args), None
   return sc_lowering._store_lowering_rule(
-      ctx, ref, x, mask, *flat_transforms, tree=tree, add=add
+      ctx,
+      ref,
+      x,
+      mask,
+      *flat_transforms,
+      tree=tree,
+      add=add,
+      compress=compress,
   )
 
 
@@ -181,6 +196,7 @@ def store_compressed(ref: Ref, x: jax.Array, *, mask: jax.Array) -> None:
       has_mask=True,
       tree=tree,
       add=False,
+      compress=True,
   )
   return None
 
@@ -199,7 +215,13 @@ def addupdate(ref: Ref, x: jax.Array) -> None:
   assert isinstance(ref, TransformedRef)
   flat_transforms, tree = jax.tree.flatten(ref.transforms)
   _ = swap_p.bind(
-      ref.ref, x, *flat_transforms, has_mask=False, tree=tree, add=True
+      ref.ref,
+      x,
+      *flat_transforms,
+      has_mask=False,
+      tree=tree,
+      add=True,
+      compress=False,
   )
   return None
 
@@ -216,7 +238,14 @@ def addupdate_compressed(ref: Ref, x: jax.Array, *, mask: jax.Array) -> None:
   assert isinstance(ref, TransformedRef)
   flat_transforms, tree = jax.tree.flatten(ref.transforms)
   _ = swap_p.bind(
-      ref.ref, x, *flat_transforms, mask, has_mask=True, tree=tree, add=True
+      ref.ref,
+      x,
+      *flat_transforms,
+      mask,
+      has_mask=True,
+      tree=tree,
+      add=True,
+      compress=True,
   )
   return None
 
