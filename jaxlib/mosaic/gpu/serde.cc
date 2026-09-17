@@ -355,7 +355,7 @@ LogicalResult nvvm_mbarrier_init_shared_upgrade(Operation* op, int version,
     b.setInsertionPointAfter(op);
     mlir::NVVM::MBarrierInitOp::create(
         b, op->getLoc(), op->getOperand(0), op->getOperand(1),
-        op->getNumOperands() < 3 ? Value{} : op->getOperand(2));
+        /*layout=*/0, op->getNumOperands() < 3 ? Value{} : op->getOperand(2));
     op->erase();
     erased = true;
   }
