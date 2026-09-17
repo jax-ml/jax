@@ -213,23 +213,6 @@ class BaseMesh:
     return dict(safe_zip(self.axis_names, self.axis_types))
 
 
-class _HashableDeviceArray:
-  __slots__ = ('array', 'device_list', '_hash')
-
-  def __init__(self, array: np.ndarray, device_list: xc.DeviceList):
-    self.array = array
-    self.device_list = device_list
-    self._hash = hash((array.shape, device_list))
-
-  def __hash__(self) -> int:
-    return self._hash
-
-  def __eq__(self, other: Any) -> bool:
-    return (isinstance(other, _HashableDeviceArray)
-            and self.array.shape == other.array.shape
-            and self.device_list == other.device_list)
-
-
 @immutable
 class Mesh(BaseMesh, contextlib.ContextDecorator):
   """Declare the hardware resources available in the scope of this manager.
@@ -267,19 +250,17 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
   devices: np.ndarray
   axis_names: tuple[MeshAxisName, ...]
   size: int
-  _cached_device_list: xc.DeviceList
 
   @staticmethod
   @weak_value_interner
-  def _create(hashable_devices, axis_names, axis_types, size):
-    devices = hashable_devices.array
+  def _create(flat_devices_tuple, device_shape, axis_names, axis_types, size):
+    devices = np.array(flat_devices_tuple).reshape(device_shape)
     devices.flags.writeable = False
     obj = object.__new__(Mesh)
     object.__setattr__(obj, 'devices', devices)
     object.__setattr__(obj, 'axis_names', axis_names)
     object.__setattr__(obj, 'axis_types', axis_types)
     object.__setattr__(obj, 'size', size)
-    object.__setattr__(obj, '_cached_device_list', hashable_devices.device_list)
     return obj
 
   def __new__(cls, devices: np.ndarray | Sequence[xc.Device],
@@ -304,8 +285,8 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
                                        AxisType.Auto)
     empty = not axis_names and devices_flat[0] is None
     size = 0 if empty else math.prod(devices.shape)
-    hashable_devices = _HashableDeviceArray(devices, xc.DeviceList(devices_flat))
-    return cls._create(hashable_devices, axis_names, axis_types, size)
+    return cls._create(devices_flat, devices.shape, axis_names,
+                       axis_types, size)
 
   # No __eq__ or __hash__: interned classes use object identity.
 
@@ -392,9 +373,9 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
   def _flat_devices_tuple(self):
     return tuple(self.devices.flat)
 
-  @property
+  @functools.cached_property
   def _internal_device_list(self):
-    return self._cached_device_list
+    return xc.DeviceList(self._flat_devices_tuple)
 
   @functools.cached_property
   def _flat_devices_set(self):
