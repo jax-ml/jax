@@ -60,3 +60,4 @@ Other functions
     get_scaled_dot_general_config
     scaled_dot_general
     log1mexp
+    sample_image
