@@ -188,6 +188,25 @@ def _has_communication(module, **_):
 KNOWN_KERNELS: dict[bytes, bytes] = {}
 
 
+# Frontend attributes understood by the XLA:GPU compiler. They let a custom
+# call request a specific memory space for its operands and results. See
+# xla/service/gpu/gpu_memory_space_assignment.h for the definitions.
+_OPERANDS_MEMORY_SPACES_ATTR = "operands_memory_spaces"
+_RESULTS_MEMORY_SPACES_ATTR = "results_memory_spaces"
+
+# Must be kept in sync with xla::gpu::MemorySpaceColor::kCollective. Buffers
+# in this memory space are allocated as symmetric memory, which is a
+# prerequisite for peer-to-peer and multimem accesses.
+_COLLECTIVE_MEMORY_SPACE = 1
+
+
+def _memory_spaces_attr_value(indices: Sequence[int]) -> str:
+  """Formats ``indices`` as an XLA ``{index:memory_space,...}`` attribute."""
+  return "{%s}" % ",".join(
+      f"{index}:{_COLLECTIVE_MEMORY_SPACE}" for index in indices
+  )
+
+
 def _mosaic_gpu_lowering_rule(
     ctx,
     *args,
@@ -265,6 +284,8 @@ def _mosaic_gpu_lowering_rule(
       ),
   )
 
+  frontend_attributes: dict[str, ir.Attribute] = {}
+
   # If NVSHMEM is available it will be used by default, otherwise we will use
   # collective metadata.
   if is_multi_device_module and (
@@ -283,9 +304,35 @@ def _mosaic_gpu_lowering_rule(
           ),
           dtype=bool,
       )
+      # The Mosaic runtime uses this to decide which buffers to exchange with
+      # the peers through the collective metadata.
       backend_config["symmetric_memory_parameters"] = ir.StringAttr.get(
           ",".join(map(str, map(int, symmetric_memory_args)))
       )
+      # Mosaic kernel parameters are the flat list of the custom call buffers:
+      # all the operands first, followed by all the results. Ask the XLA
+      # compiler to allocate the symmetric ones in the collective memory space.
+      num_operands = len(ctx.avals_in)
+      operand_indices = [
+          i for i, s in enumerate(symmetric_memory_args[:num_operands]) if s
+      ]
+      result_indices = [
+          i for i, s in enumerate(symmetric_memory_args[num_operands:]) if s
+      ]
+      if operand_indices:
+        frontend_attributes[_OPERANDS_MEMORY_SPACES_ATTR] = ir.StringAttr.get(
+            _memory_spaces_attr_value(operand_indices)
+        )
+      if result_indices:
+        frontend_attributes[_RESULTS_MEMORY_SPACES_ATTR] = ir.StringAttr.get(
+            _memory_spaces_attr_value(result_indices)
+        )
+
+  extra_attributes: dict[str, ir.Attribute] | None = None
+  if frontend_attributes:
+    extra_attributes = {
+        "mhlo.frontend_attributes": ir.DictAttr.get(frontend_attributes)
+    }
 
   result_types, _ = mlir.ir_tree_registry.flatten([
       mlir.aval_to_ir_type(ctx.module_context, aval) for aval in ctx.avals_out
@@ -299,6 +346,7 @@ def _mosaic_gpu_lowering_rule(
       backend_config=backend_config,
       operand_output_aliases=dict(input_output_aliases),
       api_version=4,
+      extra_attributes=extra_attributes,
   ).results
 
 mlir.register_lowering(mosaic_gpu_p, _mosaic_gpu_lowering_rule, "cuda")
