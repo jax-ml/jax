@@ -4363,7 +4363,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   def testSortStableDescending(self):
-    # TODO(jakevdp): test directly against np.sort when descending is supported.
     x = jnp.array([0, 1, jnp.nan, 0, 2, jnp.nan, -jnp.inf, jnp.inf])
     x_sorted = jnp.array([-jnp.inf, 0, 0, 1, 2, jnp.inf, jnp.nan, jnp.nan])
     argsorted_stable = jnp.array([6, 0, 3, 1, 4, 7, 2, 5])

@@ -55,6 +55,12 @@ def sort(
     Sorted array of shape ``a.shape`` (if ``axis`` is an integer) or of shape
     ``(a.size,)`` (if ``axis`` is None).
 
+  Note:
+    For descending sorts, ``NaN`` values are sorted to the beginning of the
+    array (whereas for ascending sorts they are sorted to the end). While this
+    differs from NumPy's behavior (which sorts NaNs to the end for both
+    orders), it conforms to the Python Array API specification.
+
   Examples:
     Simple 1-dimensional sort
 
@@ -118,6 +124,12 @@ def argsort(
   Returns:
     Array of indices that sort an array. Returned array will be of shape ``a.shape``
     (if ``axis`` is an integer) or of shape ``(a.size,)`` (if ``axis`` is None).
+
+  Note:
+    For descending sorts, ``NaN`` values are sorted to the beginning of the
+    array (whereas for ascending sorts they are sorted to the end). While this
+    differs from NumPy's behavior (which sorts NaNs to the end for both
+    orders), it conforms to the Python Array API specification.
 
   Examples:
     Simple 1-dimensional sort
