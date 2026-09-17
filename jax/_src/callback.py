@@ -188,7 +188,7 @@ def _callback_op_sharding(
             "Please file a bug at https://github.com/jax-ml/jax/issues")
       try:
         device_index = device_assignment.index(device)
-      except IndexError as e:
+      except ValueError as e:
         raise ValueError(
             "Sharding provided to pure_callback specifies a device"
             f" {device} that is not in the device assignment"
