@@ -70,6 +70,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Fixed {func}`jax.numpy.median` on an input that is empty along the
     reduction axis, which previously raised an internal error from ``gather``;
     it now raises a ``ValueError``.
+  * Fixed {func}`jax.vmap` of a {func}`jax.lax.scan` whose body closes over
+    or scans over a Ref batched along a non-leading axis, which previously
+    failed with ``AttributeError: 'Ref' object has no attribute 'transpose'``
+    ({jax-issue}`#39288`).
 
 ## JAX 0.11.1 (August 17, 2026)
 
