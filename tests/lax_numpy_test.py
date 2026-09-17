@@ -6685,7 +6685,11 @@ class NumpyGradTests(jtu.JaxTestCase):
     pi_x = pi * x
     expected_sinc = jnp.sin(pi_x) / pi_x
     expected_grad = (jnp.cos(pi_x) - expected_sinc) / x
-    expected_hess = -pi ** 2 * expected_sinc - scalar(2.0) * expected_grad / x
+    expected_hess = (
+        -scalar(pi ** 2)
+        * expected_sinc - scalar(2.0)
+        * expected_grad / x
+    )
 
     self.assertAllClose(actual_sinc, expected_sinc, rtol=tol, atol=tol)
     self.assertAllClose(actual_grad, expected_grad, rtol=tol, atol=tol)
