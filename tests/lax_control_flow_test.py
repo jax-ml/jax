@@ -2850,6 +2850,24 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return lax.cond(x < 0., lambda x: x, lambda x: x, x)
     jax.vmap(jax.jacrev(lambda x: cond_id(cond_id(x))))(jnp.ones(1))
 
+  def test_cond_linear_transpose_batched_pred(self):
+    # https://github.com/jax-ml/jax/issues/39219
+    def cond(pred, x):
+      return lax.cond(pred, lambda: x, lambda: 2 * x)
+
+    def linearize(pred, x):
+      _, lin_fn = jax.linearize(lambda y: cond(pred, y), 1.)
+      return lin_fn(x)
+
+    def vmap(pred, x):
+      return jax.vmap(linearize)(pred[None], x[None])[0]
+
+    for pred, expected in [(True, 1.), (False, 2.)]:
+      with self.subTest(pred=pred):
+        transpose = jax.linear_transpose(
+            lambda x: vmap(jnp.array(pred), x), 1.)
+        self.assertAllClose(transpose(1.)[0], expected)
+
   @parameterized.named_parameters(
       {"testcase_name": f"impl={scan_name}", "scan": scan_impl}
       for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
