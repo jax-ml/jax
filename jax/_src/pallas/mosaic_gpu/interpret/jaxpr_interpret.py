@@ -413,17 +413,20 @@ class JaxprInterpreter:
   def _interpret_swap_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
-    assert eqn.primitive is state_primitives.swap_p
-    assert isinstance(eqn.outvars[0].aval, jax_core.ShapedArray)
+    assert eqn.primitive in (state_primitives.swap_p, gpu_primitives.store_p)
+    # `store_p` has no results, so we use the value aval to describe the result
+    # of the underlying swap.
+    val_aval = eqn.invars[1].aval
+    assert isinstance(val_aval, jax_core.ShapedArray)
     invals = get_invals()
     ref, transforms = resolve_ref(
         eqn.invars[0].aval,
         invals[0],
         jax.tree.unflatten(eqn.params["tree"], invals[2:]),
     )
-    return gpu_callbacks.call_swap(
+    token, old_val = gpu_callbacks.call_swap(
         token=token,
-        result_shape_and_dtype=eqn.outvars[0].aval,
+        result_shape_and_dtype=val_aval,
         mesh_location=self.mesh_location,
         thread=self.thread,
         allocation_key_as_array=ref,
@@ -432,6 +435,9 @@ class JaxprInterpreter:
         mask=None,
         source_info=eqn.source_info,
     )
+    if eqn.primitive is gpu_primitives.store_p:
+      return token, []
+    return token, old_val
 
   def _interpret_run_scoped_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
@@ -1375,7 +1381,7 @@ class JaxprInterpreter:
             token, out = self._interpret_get_p(eqn, token, deferred_invals)
           case primitives.load_p:
             raise NotImplementedError("load_p is not supported on GPU yet")
-          case state_primitives.swap_p:
+          case state_primitives.swap_p | gpu_primitives.store_p:
             token, out = self._interpret_swap_p(eqn, token, deferred_invals)
           case primitives.swap_p:
             raise NotImplementedError("swap_p is not supported on GPU yet")
