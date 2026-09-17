@@ -97,8 +97,8 @@ class MpmdAsyncTest(jtu.JaxTestCase):
   )
   def test_async_sc_tc_prefetch_vmem(self, sc_core_type, source):
     # https://github.com/jax-ml/jax/issues/39621
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
+    if not jtu.is_libtpu_at_least("0.0.49"):
+      self.skipTest("Requires libtpu >= 0.0.49")
     mesh = from_core_type(sc_core_type)
     tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
     x = jnp.arange(8 * 128).reshape(8, 128)
