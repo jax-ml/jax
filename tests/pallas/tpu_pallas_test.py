@@ -3433,6 +3433,12 @@ class PallasCallUnsignedIntegerTest(ptu.PallasTPUTest):
 
 class PallasUXTest(ptu.PallasTPUTest):
 
+  def setUp(self):
+    if self._testMethodName == 'test_cached_primitive_mlir_location_isolation':
+      jtu.JaxTestCase.setUp(self)
+      return
+    super().setUp()
+
   def test_mlir_location(self):
     # Make sure that MLIR locations are correctly propagated to primitives.
     args = (jax.ShapeDtypeStruct((8, 128), jnp.float32),)
@@ -3447,6 +3453,55 @@ class PallasUXTest(ptu.PallasTPUTest):
       jax.jit(f).lower(*args)
     finally:
       mosaic.as_tpu_kernel = as_tpu_kernel
+
+  def test_cached_primitive_mlir_location_isolation(self):
+    # Regression test: cached lowering rule functions (_pallas_<primitive>)
+    # built via _emit_detached_func must not inherit the first caller's
+    # active NameLoc or source info context (including rules that call
+    # back into lower_fun), nor leak them into subsequent callers upon
+    # InlinedCall.
+    def kernel(x_ref, y_ref):
+      with jax.named_scope('scope_a'):
+        a = jnp.exp(x_ref[...])
+        a = jax.lax.one_minus_square_p.bind(a)
+      with jax.named_scope('scope_b'):
+        b = jnp.exp(a)
+        b = jax.lax.one_minus_square_p.bind(b)
+      y_ref[...] = b
+
+    @jax.jit
+    def f(x):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      )(x)
+
+    args = (jax.ShapeDtypeStruct((8, 128), jnp.float32),)
+    orig_lower_module = mosaic.lower_module_to_custom_call
+    captured_asm = []
+
+    def capture_lower_module(ctx, *args, module, **kwargs):
+      captured_asm.append(module.operation.get_asm(enable_debug_info=True))
+      return orig_lower_module(ctx, *args, module=module, **kwargs)
+
+    mosaic.lower_module_to_custom_call = capture_lower_module
+    try:
+      f.trace(*args).lower(lowering_platforms=('tpu',))
+    except Exception:
+      if not captured_asm:
+        raise
+    finally:
+      mosaic.lower_module_to_custom_call = orig_lower_module
+
+    self.assertLen(captured_asm, 1)
+    asm = captured_asm[0]
+    self.assertIn('scope_a/exp', asm)
+    self.assertIn('scope_b/exp', asm)
+    self.assertNotIn('scope_a/exp/scope_a', asm)
+    self.assertNotIn('scope_b/exp/scope_a', asm)
+    self.assertIn('scope_a/one_minus_square', asm)
+    self.assertIn('scope_b/one_minus_square', asm)
+    self.assertNotIn('callsite(', asm)
 
 
 class PallasMegacoreTest(ptu.PallasTPUTest):
