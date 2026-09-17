@@ -101,6 +101,7 @@ def _load_oneapi_libraries():
       'libsycl.so*',
       'libmpi.so*',
       'libmkl_core.so*',
+      'libmkl_def.so*',
       'libmkl_sequential.so*',
       'libmkl_intel_ilp64.so*',
       'libmkl_intel_lp64.so*',
