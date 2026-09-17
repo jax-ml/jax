@@ -142,6 +142,8 @@ class MpmdAsyncTest(jtu.JaxTestCase):
       )(tc_fn)(x_ref, out_ref, sem_ref)
       return jax.freeze(out_ref)
 
+    hlo_text = f.lower(x).as_text()
+    self.assertIn("output_memory_space_colors", hlo_text)
     out = f(x)
     np.testing.assert_array_equal(out, x + 1)
 
@@ -184,6 +186,35 @@ class MpmdAsyncTest(jtu.JaxTestCase):
     x = jnp.arange(8 * 128).reshape(8, 128)
     out = f(x)
     np.testing.assert_array_equal(out, x + 1)
+
+  def test_mpmd_discharge_preserves_out_type_memory_space(self):
+    mesh = from_core_type(SCS)
+    tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+
+    def sc_fn(x_ref, out_tc_vmem_ref, tc_sem):
+      del x_ref, out_tc_vmem_ref, tc_sem
+
+    @jax.jit
+    def f(x):
+      x_ref = jax.new_ref(x)
+      out, sem = pl.kernel(
+          mesh=mesh,
+          out_type=(
+              pltpu.VMEM(x.shape, x.dtype) @ tc_mesh,
+              pltpu.SemaphoreType.DMA(()) @ tc_mesh,
+          ),
+          name="sc_producer",
+      )(sc_fn)(x_ref)
+      return out, sem
+
+    hlo_text = f.lower(x).as_text()
+    self.assertIn(
+        r"\22output_memory_space_colors\22:"
+        r" [{\22color\22:1,\22shape_index\22:[0]},"
+        r"{\22color\22:2,\22shape_index\22:[1]}]",
+        hlo_text,
+    )
 
 
 # TODO(rdyro): A temporary workaround to avoid flakiness.
