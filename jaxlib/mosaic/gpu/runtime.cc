@@ -16,9 +16,13 @@ limitations under the License.
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <numeric>
 #include <utility>
+#include <vector>
 
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "jaxlib/mosaic/gpu/launch_config.h"
 
 namespace {
 template <typename... Args>
@@ -186,56 +190,41 @@ void mosaic_gpu_init_tma_desc(CUtensorMap* tma_desc, void* base_addr,
       "cuTensorMapEncodeTiled failed: %s\n");
 }
 
-CUresult mosaic_gpu_launch_kernel(CUfunction function, uint32_t grid_x,
-                                  uint32_t grid_y, uint32_t grid_z,
-                                  uint32_t cluster_x, uint32_t cluster_y,
-                                  uint32_t cluster_z, uint32_t block_x,
-                                  uint32_t block_y, uint32_t block_z,
-                                  uint32_t smem_bytes, int32_t uses_pdl,
-                                  CUstream stream, void** params) {
-  CUlaunchConfig config{
-      .gridDimX = grid_x,
-      .gridDimY = grid_y,
-      .gridDimZ = grid_z,
-      .blockDimX = block_x,
-      .blockDimY = block_y,
-      .blockDimZ = block_z,
-      .sharedMemBytes = smem_bytes,
-      .hStream = stream,
-      .attrs = nullptr,
-      .numAttrs = 0,
-  };
-  CUlaunchAttribute attrs[2];
-  int num_attrs = 0;
-  if (cluster_x != 0) {
-    attrs[num_attrs].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
-    attrs[num_attrs].value.clusterDim = {
-        .x = cluster_x,
-        .y = cluster_y,
-        .z = cluster_z,
-    };
-    num_attrs++;
-  }
-  if (uses_pdl) {
-    attrs[num_attrs].id = CU_LAUNCH_ATTRIBUTE_PROGRAMMATIC_STREAM_SERIALIZATION;
-    attrs[num_attrs].value.programmaticStreamSerializationAllowed = 1;
-    num_attrs++;
-  }
-  if (num_attrs > 0) {
-    config.attrs = attrs;
-    config.numAttrs = num_attrs;
-  }
-  CUresult result = cuLaunchKernelEx(&config, function, params, nullptr);
-  if (result == CUDA_ERROR_INVALID_CLUSTER_SIZE) {
-    int max_cluster_size;
-    if (cuOccupancyMaxPotentialClusterSize(&max_cluster_size, function,
-                                           &config) == CUDA_SUCCESS) {
-      fprintf(stderr,
-              "cuLaunchKernel failed with invalid cluster size (%d, %d, %d)"
-              ": maximum is %d\n",
-              cluster_x, cluster_y, cluster_z, max_cluster_size);
+// Fills `cfg` with the kernel spec.
+// Called by the JIT'd host function.
+// arg_ptrs[i] points at the i-th kernel argument value slot.
+// arg_bytes[i] == 0 => device pointer argument.
+// `arg_bytes[i] > 0` => host (byval) argument.
+// Pre: arg_ptrs.size() == arg_bytes.size() == num_args.
+void mosaic_gpu_build_kernel_spec(mosaic::gpu::MosaicKernelSpec* cfg,
+                                  uint32_t grid_x, uint32_t grid_y,
+                                  uint32_t grid_z, uint32_t cluster_x,
+                                  uint32_t cluster_y, uint32_t cluster_z,
+                                  uint32_t block_x, uint32_t block_y,
+                                  uint32_t block_z, uint32_t smem_bytes,
+                                  int32_t uses_pdl, int32_t num_args,
+                                  void** arg_ptrs, const int32_t* arg_bytes) {
+  cfg->grid = {grid_x, grid_y, grid_z};
+  cfg->block = {block_x, block_y, block_z};
+  cfg->cluster = {cluster_x, cluster_y, cluster_z};
+  cfg->smem_bytes = smem_bytes;
+  cfg->uses_pdl = uses_pdl;
+
+  const size_t total_host =
+      std::accumulate(arg_bytes, arg_bytes + num_args, size_t{0});
+  cfg->host_bytes.resize(total_host);
+  cfg->args.clear();
+  cfg->args.reserve(num_args);
+
+  size_t off = 0;
+  for (int32_t i = 0; i < num_args; ++i) {
+    if (arg_bytes[i] > 0) {  // Host (byval) argument: copy the blob.
+      std::memcpy(cfg->host_bytes.data() + off, arg_ptrs[i], arg_bytes[i]);
+      cfg->args.push_back({cfg->host_bytes.data() + off, arg_bytes[i], true});
+      off += arg_bytes[i];
+    } else {  // Device pointer argument: the slot holds the pointer value.
+      cfg->args.push_back({*reinterpret_cast<void**>(arg_ptrs[i]), 0, false});
     }
   }
-  return result;
 }
 }
