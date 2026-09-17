@@ -53,7 +53,7 @@ limitations under the License.
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
-#include "jaxlib/ft_mutex.h"
+#include "jaxlib/free_threading.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pprof_profile_builder.h"
 #include "jaxlib/py_array.h"
@@ -204,7 +204,10 @@ nb::typed<nb::list, PyLoadedExecutable> PyClient::LiveExecutables() {
   ft_lock_guard lock(executables_mutex_);
   nb::list executables;
   for (PyLoadedExecutable* exec = executables_; exec; exec = exec->next_) {
-    executables.append(nb::find(exec));
+    nb::object py_exec = nb::find(exec);
+    if (py_exec.is_valid()) {
+      executables.append(std::move(py_exec));
+    }
   }
   return executables;
 }
@@ -854,6 +857,18 @@ PyType_Slot PyClient::slots_[] = {
             return 0;
           })
       .def_prop_ro("runtime_type", &PyClient::runtime_type)
+      .def_prop_ro(
+          "is_c_api",
+          [](PyClient& self) -> bool {
+            if (auto* pjrt_comp =
+                    xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleClient>(
+                        self.ifrt_client())) {
+              if (auto* pjrt_client = pjrt_comp->pjrt_client()) {
+                return pjrt_client->IsCApi();
+              }
+            }
+            return false;
+          })
       .def("device_count", &PyClient::device_count)
       .def("local_device_count", &PyClient::addressable_device_count)
       .def("devices", &PyClient::Devices)

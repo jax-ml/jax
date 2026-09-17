@@ -35,7 +35,7 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
-#include "jaxlib/ft_mutex.h"
+#include "jaxlib/free_threading.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.pb.h"
 
@@ -50,6 +50,7 @@ enum class PyTreeKind {
   kDict,        // A dict
   kCustom,      // A custom type.
   kDataclass,   // A dataclass.
+  kFrozenDict,  // A frozendict.
 };
 
 // Registry of custom node types.
@@ -151,7 +152,8 @@ class PyTreeRegistry {
       registrations_ ABSL_GUARDED_BY(mu_);
   bool enable_namedtuple_;
 
-  static int tp_traverse(PyObject* self, visitproc visit, void* arg);
+  static int tp_traverse(PyObject* self, visitproc visit, void* arg)
+      ABSL_NO_THREAD_SAFETY_ANALYSIS;
   static int tp_clear(PyObject* self);
 };
 

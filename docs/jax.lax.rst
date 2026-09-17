@@ -116,6 +116,7 @@ Operators
     lgamma
     log
     log1p
+    log2
     logistic
     lt
     max
@@ -125,6 +126,7 @@ Operators
     ne
     neg
     nextafter
+    one_minus_square
     optimization_barrier
     pad
     platform_dependent

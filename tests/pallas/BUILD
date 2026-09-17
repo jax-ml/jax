@@ -100,6 +100,26 @@ jax_py_test(
 )
 
 jax_multiplatform_test(
+    name = "utils_test",
+    srcs = [
+        "utils_test.py",
+    ],
+    enable_backends = [],
+    enable_configs = [
+        "cpu",
+    ],
+    deps = [
+        "//jax/_src:hypothesis_test_util",
+        "//jax/_src/pallas",
+        "//jax/experimental:pallas",
+    ] + py_deps([
+        "absl/testing",
+        "hypothesis",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "ops_test",
     srcs = [
         "ops_test.py",
@@ -118,9 +138,6 @@ jax_multiplatform_test(
         "gpu_b200",
         "tpu_v6e",
     ],
-    env = {
-        "JAX_PALLAS_USE_MOSAIC_GPU": "0",
-    },
     shard_count = {
         "cpu": 16,
         "gpu": 32,
@@ -188,6 +205,9 @@ jax_multiplatform_test(
     srcs = [
         "ops_test.py",
     ],
+    args = [
+        "--jax_pallas_use_mosaic_gpu=true",
+    ],
     disable_configs = [
         "gpu_v100",
         "gpu_v100_x32",
@@ -204,9 +224,6 @@ jax_multiplatform_test(
         "gpu_h100_x32",
         "gpu_b200",
     ],
-    env = {
-        "JAX_PALLAS_USE_MOSAIC_GPU": "1",
-    },
     shard_count = 16,
     tags = [
         "mosaic_gpu_test",
@@ -464,6 +481,9 @@ jax_multiplatform_test(
         "tpu_v5p",
     ],
     shard_count = 8,
+    tags = [
+        "noasan",
+    ],
     deps = [
         "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:mesh_utils",

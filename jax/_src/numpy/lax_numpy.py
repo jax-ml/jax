@@ -806,8 +806,9 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
 @export
 def histogram(a: ArrayLike, bins: ArrayLike = 10,
               range: Sequence[ArrayLike] | None = None,
-              weights: ArrayLike | None = None,
-              density: bool | None = None) -> tuple[Array, Array]:
+              weights: ArrayLike | None = None, density: bool | None = None,
+              out_sharding: NamedSharding | P | None = None
+              ) -> tuple[Array, Array]:
   """Compute a 1-dimensional histogram.
 
   JAX implementation of :func:`numpy.histogram`.
@@ -865,6 +866,7 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
     >>> jnp.allclose(normed_sum, 1.0)
     Array(True, dtype=bool)
   """
+  out_sharding = canonicalize_sharding(out_sharding, 'jnp.histogram')
   if weights is None:
     a, _ = util.ensure_arraylike("histogram", a, bins)
     a, = util.promote_dtypes_inexact(a)
@@ -875,6 +877,16 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
       raise ValueError("weights should have the same shape as a.")
     a, weights = util.promote_dtypes_inexact(a, weights)
 
+  if out_sharding is not None:
+    return auto_axes(partial(_histogram, bins=bins, density=density),
+                     out_sharding=out_sharding,
+                     axes=out_sharding.mesh.explicit_axes
+                     )(a, range, weights)
+  else:
+    return _histogram(a, range, weights, bins, density)
+
+
+def _histogram(a, range, weights, bins, density):
   bin_edges = histogram_bin_edges(a, bins, range, weights)
   bin_idx = searchsorted(bin_edges, a, side='right')
   bin_idx = where(a == bin_edges[-1], len(bin_edges) - 1, bin_idx)
@@ -1987,7 +1999,7 @@ def reshape(
 
 
 @export
-@api.jit(static_argnames=('order', 'out_sharding'), inline=True)
+@api.jit(static_argnames=('order', 'out_sharding'), inline=api.Inline.JAX_EARLY)
 def ravel(a: ArrayLike, order: str = "C", *, out_sharding=None) -> Array:
   """Flatten array into a 1-dimensional shape.
 
@@ -2331,7 +2343,7 @@ def squeeze(a: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
   arr = util.ensure_arraylike("squeeze", a)
   return _squeeze(arr, _ensure_index_tuple(axis) if axis is not None else None)
 
-@api.jit(static_argnames=('axis',), inline=True)
+@api.jit(static_argnames=('axis',), inline=api.Inline.JAX_EARLY)
 def _squeeze(a: Array, axis: tuple[int, ...] | None) -> Array:
   if axis is None:
     a_shape = np.shape(a)
@@ -2414,7 +2426,7 @@ def expand_dims(a: ArrayLike, axis: int | Sequence[int]) -> Array:
 
 
 @export
-@api.jit(static_argnames=('axis1', 'axis2'), inline=True)
+@api.jit(static_argnames=('axis1', 'axis2'), inline=api.Inline.JAX_EARLY)
 def swapaxes(a: ArrayLike, axis1: int, axis2: int) -> Array:
   """Swap two axes of an array.
 
@@ -2514,7 +2526,7 @@ def moveaxis(a: ArrayLike, source: int | Sequence[int],
   return _moveaxis(arr, _ensure_index_tuple(source),
                    _ensure_index_tuple(destination))
 
-@api.jit(static_argnames=('source', 'destination'), inline=True)
+@api.jit(static_argnames=('source', 'destination'), inline=api.Inline.JAX_EARLY)
 def _moveaxis(a: Array, source: tuple[int, ...], destination: tuple[int, ...]) -> Array:
   source = tuple(_canonicalize_axis(i, np.ndim(a)) for i in source)
   destination = tuple(_canonicalize_axis(i, np.ndim(a)) for i in destination)
@@ -4442,7 +4454,7 @@ def stack(arrays: np.ndarray | Array | Sequence[ArrayLike],
 
 
 @export
-@api.jit(static_argnames="axis", inline=True)
+@api.jit(static_argnames="axis", inline=api.Inline.JAX_EARLY)
 def unstack(x: ArrayLike, /, *, axis: int = 0) -> tuple[Array, ...]:
   """Unstack an array along an axis.
 
@@ -6139,21 +6151,63 @@ def i0(x: ArrayLike) -> Array:
     >>> jnp.i0(x)
     Array([2.2795851, 1.266066 , 1.0000001, 1.266066 , 2.2795851], dtype=float32)
   """
-  x_arr, = util.promote_args_inexact("i0", x)
-  if not issubdtype(x_arr.dtype, np.floating):
-    raise ValueError(f"Unsupported input type to jax.numpy.i0: {x_arr.dtype}")
-  return _i0(x_arr)
+  x, = util.promote_args_inexact("i0", x)
+  if not issubdtype(x.dtype, np.floating):
+    raise ValueError(f"Unsupported input type to jax.numpy.i0: {x.dtype}")
+  return i0_impl(x)
+
+
+@partial(custom_jvp, nondiff_argnums=(0,))
+def _i1_maclaurin(k: int, x: Array) -> Array:
+  # compute the kth derivative of i1 evaluated near zero using a two-term
+  # Maclaurin series.
+  if k % 2 == 0:
+    m = (k + 1) // 2
+    c = math.comb(k + 1, m) / (2 ** (k + 1))
+    return lax.mul(lax._const(x, c), x)
+  else:
+    m = k // 2
+    c = math.comb(k, m) / (2 ** k)
+    return lax.full_like(x, c)
+
+@_i1_maclaurin.defjvp
+def _i1_maclaurin_jvp(k: int, primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
+  (x,), (t,) = primals, tangents
+  return _i1_maclaurin(k, x), lax.mul(_i1_maclaurin(k + 1, x), t)
 
 
 @custom_jvp
-def _i0(x):
+def i1_impl(x: Array) -> Array:
+  return lax.mul(lax.exp(lax.abs(x)), lax_special.bessel_i1e(x))
+
+@i1_impl.defjvp
+def i1_impl_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
+  # A closed-form JVP using Bessel recurrence (e.g. i1'(x) = i0(x) - i1(x)/x)
+  # is not viable due to the 0/0 singularity at x = 0. Meanwhile, autodiff
+  # through exp(abs(x)) * bessel_i1e(x) fails for higher-order derivatives
+  # near 0 due to (1) the cusp in abs(x) and (2) catastrophic cancellation when
+  # evaluating (i0e(x) - i1e(x)/x) / x^2 in floating-point arithmetic.
+  # We therefore use a recursive two-term Maclaurin series approximation for
+  # |x| <= sqrt(eps), where the series truncation error is strictly below
+  # machine precision.
+  primal_out, tangent_out = api.jvp(i1_impl.fun, primals, tangents)
+  x, = primals
+  t, = tangents
+  cutoff = math.sqrt(dtypes.finfo(x.dtype).eps)
+  use_series = lax.le(lax.abs(x), lax._const(x, cutoff))
+  return primal_out, where(use_series, lax.mul(_i1_maclaurin(1, x), t), tangent_out)
+
+
+@custom_jvp
+def i0_impl(x: Array) -> Array:
   abs_x = lax.abs(x)
   return lax.mul(lax.exp(abs_x), lax_special.bessel_i0e(abs_x))
 
-@_i0.defjvp
-def _i0_jvp(primals, tangents):
-  primal_out, tangent_out = api.jvp(_i0.fun, primals, tangents)
-  return primal_out, where(primals[0] == 0, 0.0, tangent_out)
+@i0_impl.defjvp
+def i0_impl_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
+  x, = primals
+  x_dot, = tangents
+  return i0_impl(x), lax.mul(x_dot, i1_impl(x))
 
 @export
 def ix_(*args: ArrayLike) -> tuple[Array, ...]:
@@ -8274,7 +8328,7 @@ def argmax(a: ArrayLike, axis: int | None = None, out: None = None,
   return _argmax(arr, None if axis is None else operator.index(axis),
                  keepdims=bool(keepdims))
 
-@api.jit(static_argnames=('axis', 'keepdims'), inline=True)
+@api.jit(static_argnames=('axis', 'keepdims'), inline=api.Inline.JAX_EARLY)
 def _argmax(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
   if axis is None:
     dims = list(range(np.ndim(a)))
@@ -8335,7 +8389,7 @@ def argmin(a: ArrayLike, axis: int | None = None, out: None = None,
   return _argmin(arr, None if axis is None else operator.index(axis),
                  keepdims=bool(keepdims))
 
-@api.jit(static_argnames=('axis', 'keepdims'), inline=True)
+@api.jit(static_argnames=('axis', 'keepdims'), inline=api.Inline.JAX_EARLY)
 def _argmin(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
   if axis is None:
     dims = list(range(np.ndim(a)))

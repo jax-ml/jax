@@ -196,6 +196,7 @@ def _mosaic_gpu_lowering_rule(
     inout_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
     use_custom_barrier: bool = False,
+    skip_device_barrier: bool = False,
 ):
   axis_context = ctx.module_context.axis_context
   replica_ids = []
@@ -258,6 +259,7 @@ def _mosaic_gpu_lowering_rule(
       kernel_hash=ir.StringAttr.get(kernel_id),
       module=ir.StringAttr.get(module_asm),
       use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
+      skip_device_barrier=ir.BoolAttr.get(skip_device_barrier),
       uses_xla_collective_metadata=ir.BoolAttr.get(
           launch_context.uses_collective_metadata(module)
       ),
@@ -376,10 +378,9 @@ class _TMEMAlloc:
 
   def alloc(self) -> int:
     """Allocates TMEM and returns the number of columns allocated."""
-    _, cols = tcgen05.tmem_alloc(
+    return tcgen05.tmem_alloc(
         self.addr_ref, self.num_cols, collective=self.collective, exact=False
     )
-    return cols
 
   def dealloc(self):
     addr = memref.load(self.addr_ref, [])

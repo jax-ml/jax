@@ -17,6 +17,7 @@ import collections
 import functools
 from functools import partial
 import itertools
+import math
 import operator
 from typing import NamedTuple
 from unittest import SkipTest
@@ -673,10 +674,29 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self.assertIsInstance(b * a, MyArray)
     self.assertIsInstance(jax.jit(operator.mul)(b, a), MyArray)
 
-  def testI0Grad(self):
-    # Regression test for https://github.com/jax-ml/jax/issues/11479
-    dx = jax.grad(jax.numpy.i0)(0.0)
-    self.assertArraysEqual(dx, 0.0)
+  @jtu.sample_product(
+      order=range(1, 6),
+  )
+  def testI0Grad(self, order):
+    # Regression test for https://github.com/jax-ml/jax/issues/11479 & 40627
+    # Higher-order gradients at zero should match the Maclaurin series
+    expected = 0.0 if order % 2 else math.comb(order, order // 2) / (4 ** (order // 2))
+    f = jax.numpy.i0
+    for _ in range(order):
+      f = jax.grad(f)
+    self.assertAllClose(f(0.0), expected)
+    self.assertAllClose(jax.jit(f)(0.0), expected)
+
+    sub_eps = dtypes.finfo(dtypes.default_float_dtype()).eps * 0.1
+    x = jnp.array([-1.0, -sub_eps, 0.0, sub_eps, 1.0])
+    out = jax.vmap(f)(x)
+    self.assertAllClose(out[2], expected)
+    if order % 2:
+      self.assertAllClose(out[0], -out[4])
+      self.assertAllClose(out[1], -out[3])
+    else:
+      self.assertAllClose(out[0], out[4])
+      self.assertAllClose(out[1], out[3])
 
   @jtu.sample_product(
       shape=all_shapes,

@@ -50,23 +50,8 @@ if [[ $os =~ "msys_nt"  && $arch == "x86_64" ]]; then
   arch="amd64"
 fi
 
-# Determine the artifact tag flags based on the artifact type. A release
-# wheel is tagged with the release version (e.g. 0.5.1), a nightly wheel is
-# tagged with the release version and a nightly suffix that contains the
-# current date (e.g. 0.5.2.dev20250227), and a default wheel is tagged with
-# the git commit hash of the HEAD of the current branch and the date of the
-# commit (e.g. 0.5.1.dev20250128+3e75e20c7).
-if [[ "$JAXCI_ARTIFACT_TYPE" == "release" ]]; then
-  artifact_tag_flags="--bazel_options=--repo_env=ML_WHEEL_TYPE=release  --bazel_options=--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)"
-elif [[ "$JAXCI_ARTIFACT_TYPE" == "nightly" ]]; then
-  current_date=$(date +%Y%m%d)
-  artifact_tag_flags="--bazel_options=--repo_env=ML_WHEEL_BUILD_DATE=${current_date} --bazel_options=--repo_env=ML_WHEEL_TYPE=nightly  --bazel_options=--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)"
-elif [[ "$JAXCI_ARTIFACT_TYPE" == "default" ]]; then
-  artifact_tag_flags="--bazel_options=--repo_env=ML_WHEEL_TYPE=custom --bazel_options=--repo_env=ML_WHEEL_BUILD_DATE=$(git show -s --format=%as HEAD) --bazel_options=--repo_env=ML_WHEEL_GIT_HASH=$(git rev-parse HEAD) --bazel_options=--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)"
-else
-  echo "Error: Invalid artifact type: $JAXCI_ARTIFACT_TYPE. Allowed values are: release, nightly, default"
-  exit 1
-fi
+# Determine the Bazel flags that stamp the wheel's version.
+source "ci/utilities/set_artifact_tag_flags.sh"
 
 if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t && "$JAXCI_HERMETIC_PYTHON_VERSION" != *"-ft" ]]; then
   JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
@@ -118,8 +103,9 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
     $artifact_tag_flags
 
   # If building release artifacts, we also build a release candidate ("rc")
-  # tagged wheel.
-  if [[ "$JAXCI_ARTIFACT_TYPE" == "release" ]]; then
+  # tagged wheel. A build using JAXCI_WHEEL_VERSION_SUFFIX already has its rc
+  # wheel from above.
+  if [[ "$JAXCI_ARTIFACT_TYPE" == "release" && -n "$JAXCI_WHEEL_RC_VERSION" ]]; then
     python build/build.py build --wheels="$artifact" \
       --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
       --bazel_options=--config=rbe_cpu_pool \

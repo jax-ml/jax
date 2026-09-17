@@ -21,7 +21,6 @@ from jax._src import test_util as jtu
 from jax._src.pallas.triton import gpu_info
 
 if sys.platform != "win32":
-  # pylint: disable=g-import-not-at-top
   from jax.experimental.pallas import triton as plgpu
   GpuVersion = plgpu.GpuVersion
 else:

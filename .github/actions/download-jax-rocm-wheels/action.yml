@@ -27,6 +27,14 @@ inputs:
   s3_download_uri:
     description: "S3 URI for ROCm plugin/PJRT wheels (use 'latest' to resolve via LATEST pointer)"
     default: 'latest'
+  jax-jaxlib-source:
+    description: >-
+      Where the base jax/jaxlib wheels come from: 'upstream' (the shared nightly bucket in GCS)
+      or 'vendor' (the same store as the ROCm wheels). 'vendor' requires jaxlib-version 'head'.
+    default: 'upstream'
+  vendor-wheels-base-url:
+    description: "Base URL that serves the ROCm wheel store"
+    default: 'https://d22q5eopkfeftw.cloudfront.net'
 permissions: {}
 runs:
   using: "composite"
@@ -74,7 +82,30 @@ runs:
         mkdir -p $(pwd)/dist
         # Disable Authentication on the ROCm runners.
         gcloud config set auth/disable_credentials True
-        if [[ "${INPUTS_DOWNLOAD_JAX_FROM_GCS}" == "1" ]]; then
+
+        case "${INPUTS_JAX_JAXLIB_SOURCE}" in
+          upstream|vendor) ;;
+          *)
+            echo "Invalid jax-jaxlib-source: ${INPUTS_JAX_JAXLIB_SOURCE}. Expected 'upstream' or 'vendor'."
+            exit 1
+            ;;
+        esac
+
+        # Only the "head" path below reads the vendor store.
+        if [[ "${INPUTS_JAX_JAXLIB_SOURCE}" == "vendor" ]]; then
+          if [[ "${INPUTS_JAXLIB_VERSION}" != "head" ]]; then
+            echo "jax-jaxlib-source=vendor requires jaxlib-version=head, got ${INPUTS_JAXLIB_VERSION}."
+            exit 1
+          fi
+          if [[ "${INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS}" == "1" ]]; then
+            echo "jax-jaxlib-source=vendor is incompatible with skip-download-jaxlib-and-plugins-from-gcs=1."
+            exit 1
+          fi
+        fi
+
+        if [[ "${INPUTS_JAX_JAXLIB_SOURCE}" == "vendor" && "${INPUTS_DOWNLOAD_JAX_FROM_GCS}" == "1" ]]; then
+          echo "jax wheel will be downloaded from the ROCm wheel store."
+        elif [[ "${INPUTS_JAX_JAXLIB_SOURCE}" != "vendor" && "${INPUTS_DOWNLOAD_JAX_FROM_GCS}" == "1" ]]; then
           gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}"/jax*py3*none*any.whl $(pwd)/dist/
         else
           echo "JAX wheel won't be downloaded, only jaxlib pre-built wheel is tested."
@@ -86,10 +117,12 @@ runs:
           echo "JAX only release. Only downloading the jax wheel from the release bucket."
         else
           if [[ ${INPUTS_JAXLIB_VERSION} == "head" ]]; then
-            gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+            if [[ "${INPUTS_JAX_JAXLIB_SOURCE}" != "vendor" ]]; then
+              gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+            fi
 
-            # Resolve ROCm plugin/PJRT wheels path via CloudFront.
-            ROCM_WHEELS_BASE_URL="https://d22q5eopkfeftw.cloudfront.net"
+            # Resolve the ROCm plugin/PJRT wheels path in the vendor store.
+            ROCM_WHEELS_BASE_URL="${INPUTS_VENDOR_WHEELS_BASE_URL%/}"
             if [[ "${INPUTS_S3_DOWNLOAD_URI}" == "latest" ]]; then
               LATEST_KEY="rocm-wheels/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/${INPUTS_ROCM_FULL_VERSION}/LATEST"
               RESOLVED_S3_URI=$(curl -fsSL "${ROCM_WHEELS_BASE_URL}/${LATEST_KEY}" | tr -d '[:space:]')
@@ -112,8 +145,34 @@ runs:
               exit 1
             fi
 
+            DOWNLOAD_FILES=("${PJRT_FILE}" "${PLUGIN_FILE}")
+
+            # The base wheels were uploaded to this same prefix.
+            if [[ "${INPUTS_JAX_JAXLIB_SOURCE}" == "vendor" ]]; then
+              JAXLIB_FILE=$(echo "$FILES" | grep "jaxlib-" | grep "${PYTHON_MAJOR_MINOR}" | head -n1 || true)
+              if [[ -z "${JAXLIB_FILE}" ]]; then
+                echo "Could not find a jaxlib wheel in ${WHEELS_URL}"
+                exit 1
+              fi
+              DOWNLOAD_FILES+=("${JAXLIB_FILE}")
+
+              if [[ "${INPUTS_DOWNLOAD_JAX_FROM_GCS}" == "1" ]]; then
+                JAX_FILE=$(echo "$FILES" | grep -E 'jax-[0-9].*-py3-none-any\.whl' | head -n1 || true)
+                if [[ -z "${JAX_FILE}" ]]; then
+                  echo "Could not find a jax wheel in ${WHEELS_URL}"
+                  exit 1
+                fi
+                DOWNLOAD_FILES+=("${JAX_FILE}")
+              fi
+            fi
+
+            DOWNLOAD_URLS=()
+            for f in "${DOWNLOAD_FILES[@]}"; do
+              DOWNLOAD_URLS+=("${WHEELS_URL}/${f}")
+            done
+
             PYTHON_BIN="python${INPUTS_PYTHON}"
-            "${PYTHON_BIN}" -m pip download --no-deps --dest "$(pwd)/dist" "${WHEELS_URL}/${PJRT_FILE}" "${WHEELS_URL}/${PLUGIN_FILE}"
+            "${PYTHON_BIN}" -m pip download --no-deps --dest "$(pwd)/dist" "${DOWNLOAD_URLS[@]}"
           elif [[ ${INPUTS_JAXLIB_VERSION} == "pypi_latest" ]]; then
             PYTHON=python${INPUTS_PYTHON}
             $PYTHON -m pip download jaxlib jax-rocm${JAXCI_ROCM_VERSION}-pjrt jax-rocm${JAXCI_ROCM_VERSION}-plugin --dest $(pwd)/dist/ --no-deps
@@ -134,6 +193,8 @@ runs:
         INPUTS_PYTHON: ${{ inputs.python }}
         INPUTS_S3_DOWNLOAD_URI: ${{ inputs.s3_download_uri }}
         INPUTS_ROCM_FULL_VERSION: ${{ inputs.rocm-release-version || inputs.rocm-version }}
+        INPUTS_JAX_JAXLIB_SOURCE: ${{ inputs.jax-jaxlib-source }}
+        INPUTS_VENDOR_WHEELS_BASE_URL: ${{ inputs.vendor-wheels-base-url }}
     - name: Skip the test run if the wheel artifacts were not downloaded successfully
       shell: bash
       if: steps.download-wheel-artifacts.outcome == 'failure'

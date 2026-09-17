@@ -1009,6 +1009,19 @@ def can_relayout_wgmma_2x_to_wgmma(bitwidth: int) -> bool:
   return bitwidth <= 16
 
 
+def _int_pow(x: ir.Value, n: int) -> ir.Value:
+  if n < 0:
+    raise ValueError("Negative exponent not supported for integers")
+  result = c(1, x.type)
+  base = x
+  while n > 0:
+    if n % 2 == 1:
+      result = arith.muli(result, base)
+    base = arith.muli(base, base)
+    n //= 2
+  return result
+
+
 @jax.tree_util.register_pytree_node_class
 @dataclasses.dataclass(init=False, frozen=True, slots=True)
 class FragmentedArray:
@@ -1669,6 +1682,18 @@ class FragmentedArray:
     else:
       return self._pointwise(lambda s, o: arith.remui(o, s), other)
 
+  def __pow__(self, other):
+    if isinstance(self.mlir_dtype, ir.IntegerType):
+      return self._pointwise(lambda x: _int_pow(x, other))
+    if not isinstance(self.mlir_dtype, ir.FloatType):
+      return NotImplemented
+    return self._pointwise(mlir_math.powf, other)
+
+  def __rpow__(self, other):
+    if not isinstance(self.mlir_dtype, ir.FloatType):
+      return NotImplemented
+    return self._pointwise(lambda s, o: mlir_math.powf(o, s), other)
+
   def __invert__(self):
     if not isinstance(self.mlir_dtype, ir.IntegerType):
       return NotImplemented
@@ -1883,11 +1908,21 @@ class FragmentedArray:
   def tanh(self, *, approx: bool = False) -> FragmentedArray:
     if not isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
-    if approx and self.mlir_dtype != ir.F32Type.get():
-      raise NotImplementedError
-    return self._pointwise(
-        self._lift_fast_instr("tanh.approx.f32") if approx else mlir_math.tanh
-    )
+    tanhf = mlir_math.tanh
+    if approx:
+      if isinstance(self.mlir_dtype, ir.F32Type):
+        tanhf = self._lift_fast_instr("tanh.approx.f32")
+      elif isinstance(self.mlir_dtype, ir.F16Type):
+        tanhf = self._lift_fast_packed_instr(
+            "tanh.approx.f16x2", "tanh.approx.f16"
+        )
+      elif isinstance(self.mlir_dtype, ir.BF16Type):
+        tanhf = self._lift_fast_packed_instr(
+            "tanh.approx.bf16x2", "tanh.approx.bf16"
+        )
+      else:
+        raise NotImplementedError(self.mlir_dtype)
+    return self._pointwise(tanhf)
 
   def rsqrt(self, *, approx: bool = False) -> FragmentedArray:
     if not isinstance(self.mlir_dtype, ir.FloatType):
@@ -1896,6 +1931,15 @@ class FragmentedArray:
       raise NotImplementedError
     return self._pointwise(
         self._lift_fast_instr("rsqrt.approx.f32") if approx else mlir_math.rsqrt
+    )
+
+  def sqrt(self, *, approx: bool = False) -> FragmentedArray:
+    if not isinstance(self.mlir_dtype, ir.FloatType):
+      raise NotImplementedError
+    if approx and self.mlir_dtype != ir.F32Type.get():
+      raise NotImplementedError
+    return self._pointwise(
+        self._lift_fast_instr("sqrt.approx.f32") if approx else mlir_math.sqrt
     )
 
   def abs(self) -> FragmentedArray:
@@ -2685,8 +2729,8 @@ class FragmentedArray:
         base_idx = 0
         result_vecs = []
         while convert_vec_len >= 2:
-          if cur_dtype == f4e2m1fn and convert_vec_len == 4 and ptx_isa_version < 90:
-            convert_vec_len //= 2  # ptxas miscompiles 4xfp4 on CUDA 12.8...
+          if cur_dtype == f4e2m1fn and convert_vec_len >= 4 and ptx_isa_version < 90:
+            convert_vec_len //= 2  # ptxas miscompiles >=4xfp4 on CUDA 12.8...
             continue
           while (next_base_idx := base_idx + convert_vec_len) <= even_vector_len:
             vec = utils.vector_slice(reg, slice(base_idx, next_base_idx))
@@ -2988,16 +3032,7 @@ class FragmentedArray:
           elif isinstance(self.mlir_dtype, ir.IntegerType):
             op = arith.muli
             # For splat, use repeated squaring to compute x^n
-            def int_pow(x, n=reduced_elems):
-              result = c(1, x.type)
-              base = x
-              while n > 0:
-                if n % 2 == 1:
-                  result = arith.muli(result, base)
-                base = arith.muli(base, base)
-                n //= 2
-              return result
-            splat_op = int_pow
+            splat_op = functools.partial(_int_pow, n=reduced_elems)
           else:
             raise NotImplementedError(self.mlir_dtype)
         case _:
@@ -3904,8 +3939,16 @@ class FragmentedArray:
     else:
       red = "red"
       scope = "cta" if is_smem else "gpu"
-      space = ".shared::cta" if is_smem else ""
+      space = ".shared::cta" if is_smem else ".global"
       ptr_constraint = "r" if is_smem else "l"
+      if not is_smem and base_ptr.type.address_space != 1:
+        if base_ptr.type.address_space != 0:
+          raise ValueError(
+              f"base_ptr should be a generic pointer, but got {base_ptr.type.address_space}"
+          )
+        base_ptr = llvm.addrspacecast(
+            llvm.PointerType.get(address_space=1), base_ptr
+        )
     element_type = self.mlir_dtype
     element_bitwidth = utils.bitwidth(element_type)
     noftz = ""

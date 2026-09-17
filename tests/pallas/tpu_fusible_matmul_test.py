@@ -348,6 +348,27 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         matmul_relu(x, y), matmul_relu_ref(x, y), atol=5e-5
     )
 
+  @parameterized.product(dtype=['float32'], impl=list(KernelImpl))
+  def test_nested_fuse(self, dtype, impl):
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (512, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+
+    @fuser.fuse
+    def inner(x, y):
+      return fusible_matmul(x, y, impl=impl) + 1.0
+
+    @jax.jit
+    @fuser.fuse
+    def outer(x, y):
+      return jnp.maximum(inner(x, y), 0.0)
+
+    @jit_no_excess_precision
+    def ref(x, y):
+      return jax.nn.relu(mm_ref(x, y) + 1.0)
+
+    np.testing.assert_allclose(outer(x, y), ref(x, y), atol=5e-5)
+
   @parameterized.parameters(KernelImpl)
   def test_matmul_reduce_sum(self, impl):
     if not jtu.is_device_tpu_at_least(5):

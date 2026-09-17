@@ -134,7 +134,7 @@ def philox2x32_seed(seed: typing.Array) -> typing.Array:
   return _philox2x32_seed(seed)
 
 
-@api.jit(inline=True)
+@api.jit(inline=api.Inline.JAX_EARLY)
 def _philox2x32_seed(seed: typing.Array) -> typing.Array:
   """Internal implementation of philox2x32_seed."""
   if seed.shape:
@@ -159,7 +159,7 @@ def philox2x32_split(key: typing.Array, shape: prng.Shape) -> typing.Array:
   return _philox2x32_split(key, shape)
 
 
-@api.jit(static_argnums=(1,), inline=True)
+@api.jit(static_argnums=(1,), inline=api.Inline.JAX_EARLY)
 def _philox2x32_split(key: typing.Array, shape: prng.Shape) -> typing.Array:
   """Internal implementation of philox2x32_split."""
   counts1, counts2 = prng.iota_2x32_shape(shape)
@@ -191,7 +191,7 @@ def philox2x32_random_bits(
   return _philox2x32_random_bits(key, bit_width, shape)
 
 
-@api.jit(static_argnums=(1, 2), inline=True)
+@api.jit(static_argnums=(1, 2), inline=api.Inline.JAX_EARLY)
 def _philox2x32_random_bits(
     key: typing.Array, bit_width: int, shape: tuple[int, ...]
 ) -> typing.Array:

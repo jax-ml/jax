@@ -1599,6 +1599,12 @@ class LaunchContext:
         slice_gather_strides = t.transform_strides(slice_gather_strides)
       is_gather_dim = [bool(s) for s in slice_gather_strides]
 
+      if slice_shape[-1] > 256:
+        raise ValueError(
+            "Gather/scatter TMA can't handle slices with more than 256 columns."
+            " Consider adding a TilingTransform with the minormost dimension <="
+            " 256."
+        )
       tma_desc = self._get_tma_desc(
           gmem_ref, (), gmem_peer_id, (1, slice_shape[-1]), swizzle, reduction_op,
       )

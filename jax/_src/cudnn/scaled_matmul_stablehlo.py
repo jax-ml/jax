@@ -378,13 +378,19 @@ _scaled_matmul_lower.def_partition(
 
 def _scaled_matmul_batcher(batched_args, batch_dims, *, preferred_element_type):
   assert len(batch_dims) == 4
-  assert (
-      batch_dims[0] == batch_dims[1]
-      and batch_dims[0] == batch_dims[2]
-      and batch_dims[0] == batch_dims[3]
-  )
-  out_bdims = (batch_dims[0],)
-  lhs, rhs, lhs_scales, rhs_scales = batched_args
+  if (batch_dims[0] is not None
+      and batch_dims[0] == batch_dims[1] == batch_dims[2] == batch_dims[3]):
+    out_bdims = (batch_dims[0],)
+    lhs, rhs, lhs_scales, rhs_scales = batched_args
+  else:
+    size = next(
+        x.shape[d] for x, d in zip(batched_args, batch_dims) if d is not None
+    )
+    lhs, rhs, lhs_scales, rhs_scales = [
+        batching.bdim_at_front(x, d, size)
+        for x, d in zip(batched_args, batch_dims)
+    ]
+    out_bdims = (0,)
   *batch, lhs_non_contracting, contracting = lhs.shape
   *_, _, scales_contracting = lhs_scales.shape
   *_, rhs_non_contracting, _ = rhs.shape

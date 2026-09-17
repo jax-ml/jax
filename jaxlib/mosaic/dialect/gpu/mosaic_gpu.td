@@ -87,7 +87,9 @@ def MosaicGPU_ArriveOp : Op<MosaicGPU_Dialect, "arrive", []> {
 
   let arguments = (ins
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
-    BoolAttr:$orders_tensor_core);
+    BoolAttr:$orders_tensor_core,
+    PtxPredicate:$predicate
+  );
 }
 
 def MosaicGPU_ArriveExpectTxOp : Op<MosaicGPU_Dialect, "arrive_expect_tx", []> {

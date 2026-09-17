@@ -5346,6 +5346,31 @@ class FragmentedArrayTest(TestCase):
     )(values)
     np.testing.assert_array_equal(res, expected)
 
+  @parameterized.product(
+      jax_wide_dtype=(jnp.float32, jnp.float16, jnp.bfloat16),
+      vec_len=(4, 8),
+  )
+  def test_roundtrip_conversion_f4(self, jax_wide_dtype, vec_len):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("f4 conversions not supported on pre-Blackwell GPUs")
+
+    def kernel(ctx, inp, out, smem):
+      del ctx, smem
+      t = mgpu.FragmentedArray.load_untiled(
+          inp, layout=fa.tmem_native_layout(vec_len), optimized=False
+      )
+      t = t.astype(utils.dtype_to_ir_type(jnp.float4_e2m1fn))
+      t = t.astype(utils.dtype_to_ir_type(jax_wide_dtype))
+      t.store_untiled(out, optimized=False)
+
+    # 1.5 is exactly representable in FP4 e2m1fn.
+    values = jnp.full((128, 64), 1.5, dtype=jax_wide_dtype)
+    expected = values
+    res = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), values, expected, ()
+    )(values)
+    np.testing.assert_array_equal(res, expected)
+
   def test_rounding_f8e8m0fnu(self):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("f8e8m0fnu not supported on pre-Blackwell GPUs")
@@ -5519,37 +5544,44 @@ class FragmentedArrayTest(TestCase):
       (mgpu.FragmentedArray.sin, np.sin),
       (mgpu.FragmentedArray.cos, np.cos),
       (mgpu.FragmentedArray.tanh, np.tanh),
+      (mgpu.FragmentedArray.tanh, np.tanh, jnp.float16),
+      (mgpu.FragmentedArray.tanh, np.tanh, jnp.bfloat16),
       (mgpu.FragmentedArray.rsqrt, jax.lax.rsqrt),
+      (mgpu.FragmentedArray.sqrt, np.sqrt),
       (mgpu.FragmentedArray.erf, jax.scipy.special.erf),
   )
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``
   @jtu.ignore_warning(message="overflow encountered", category=RuntimeWarning)
-  def test_math(self, op, np_op, m=64, n=32):
+  def test_math(self, op, np_op, dtype=jnp.float32, m=64, n=32):
     if jtu.is_running_under_pytest():
       self.skipTest("PTX dump capture fails under pytest")
     def run_test(**kwargs):
       def kernel(ctx, dst, _):
         del ctx
-        iota = iota_tensor(m, n, jnp.float32) + 1
+        iota = iota_tensor(m, n, dtype) + 1
         op(iota, **kwargs).store_untiled(dst, optimized=False)
-      out_shape = jax.ShapeDtypeStruct((m, n), jnp.float32)
+      out_shape = jax.ShapeDtypeStruct((m, n), dtype)
       with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), jtu.capture_stdout() as ptx:
         result = mgpu.as_gpu_kernel(
             kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
         )()
       return result, ptx()
-    x = np.arange(m * n, dtype=jnp.float32).reshape(m, n) + 1
+    x = np.arange(m * n, dtype=np.float32).reshape(m, n) + 1
     kwargs = {} if op is mgpu.FragmentedArray.erf else {"approx": False}
-    ref = np_op(x)
+    ref = np_op(x).astype(dtype)
     result, ptx = run_test(**kwargs)
-    np.testing.assert_allclose(result, ref, atol=2e-7, rtol=2e-7)
+    atol = 2e-3 if dtype in (jnp.float16, jnp.bfloat16) else 2e-7
+    rtol = 2e-3 if dtype in (jnp.float16, jnp.bfloat16) else 2e-7
+    np.testing.assert_allclose(result, ref, atol=atol, rtol=rtol)
 
     if op is mgpu.FragmentedArray.erf:
       # erf not supported with approximation.
       return
 
     result_approx, ptx_approx = run_test(approx=True)
-    np.testing.assert_allclose(result_approx, ref, atol=5e-3, rtol=4e-6)
+    atol = 1e-2 if dtype in (jnp.float16, jnp.bfloat16) else 5e-3
+    rtol = 1e-2 if dtype in (jnp.float16, jnp.bfloat16) else 4e-6
+    np.testing.assert_allclose(result_approx, ref, atol=atol, rtol=rtol)
 
     # This is not super precise, but is a generic way of ensuring we take
     # different code generation paths.
@@ -5568,6 +5600,50 @@ class FragmentedArrayTest(TestCase):
     y = np.arange(m * n, dtype=jnp.float32).reshape(m, n) + 1
     x = np.arange(m * n, dtype=jnp.float32).reshape(m, n) + 2
     np.testing.assert_allclose(result, np.arctan2(y, x), atol=2e-7, rtol=2e-7)
+
+  @parameterized.parameters(jnp.float32, jnp.float16, jnp.bfloat16)
+  def test_rpow(self, dtype):
+    m, n = 64, 32
+    def kernel(ctx, dst, _):
+      del ctx
+      # Powers of two are exactly representable in every float type, and an
+      # exponent below 10 keeps the result small enough for f16 and bf16 too.
+      exp = (iota_tensor(m, n, jnp.int32) % 10).astype(
+          utils.dtype_to_ir_type(dtype)
+      )
+      (2 ** exp).store_untiled(dst, optimized=False)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    ref = (2 ** (np.arange(m * n, dtype=np.int32).reshape(m, n) % 10)).astype(
+        dtype
+    )
+    np.testing.assert_array_equal(result, ref)
+
+  @parameterized.parameters(
+      jnp.int16, jnp.int32, jnp.float16, jnp.bfloat16, jnp.float32
+  )
+  def test_pow(self, dtype):
+    m, n = 64, 32
+    def kernel(ctx, dst, _):
+      del ctx
+      # Keep the base below 6 so that its cube is exactly representable in all
+      # the tested types (bf16, the coarsest, is exact up to 256).
+      base = (iota_tensor(m, n, jnp.int32) % 6).astype(
+          utils.dtype_to_ir_type(dtype), is_signed=utils.is_signed(dtype)
+      )
+      (base ** 3).store_untiled(dst, optimized=False)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    ref = ((np.arange(m * n, dtype=np.int32).reshape(m, n) % 6) ** 3).astype(
+        dtype
+    )
+    np.testing.assert_array_equal(result, ref)
 
   def test_strided_copy_noncontig_good(self):
     def kernel(ctx, src, dst, _):

@@ -38,7 +38,9 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.state import indexing
-from jax._src.state.primitives import addupdate_p, get_p, swap_p, pin, unpin
+from jax._src.state.primitives import (
+    addupdate_p, get_p, swap_p, pin, unpin, with_memory_space_constraint
+)
 from jax._src.state.types import (
     AbstractLinVal, AbstractRef, BitcastTransform, RefEffect, ReshapeTransform,
     get_ref_aval_from_value, uninitialized,)
@@ -85,7 +87,7 @@ def discharge_state(
     *,
     should_discharge: bool | Sequence[bool] = True,
     lower: bool = True,
-    strip_memory_space: bool = True,
+    strip_memory_space: bool = False,
 ) -> core.Jaxpr:
   """Converts a stateful jaxpr into a pure one.
 
@@ -198,6 +200,33 @@ def register_discharge_rule(prim: core.Primitive):
   return register
 
 
+_neutral_memory_spaces: set[Any] = {
+    None,
+    core.MemorySpace.Device,
+    core.MemorySpace.Any,
+}
+
+def register_neutral_memory_space(ms):
+  _neutral_memory_spaces.add(ms)
+
+def unconstrain(
+    x, ms, strip: bool, *, neutral_ms: Sequence[Any] = ()
+):
+  if not isinstance(core.typeof(x), core.ShapedArray):
+    return x
+  if strip or ms in _neutral_memory_spaces or ms in neutral_ms:
+    return x
+  return with_memory_space_constraint(x, core.MemorySpace.Device)
+
+def constrain(
+    x, ms, strip: bool, *, neutral_ms: Sequence[Any] = ()
+):
+  if not isinstance(core.typeof(x), core.ShapedArray):
+    return x
+  if strip or ms in _neutral_memory_spaces or ms in neutral_ms:
+    return x
+  return with_memory_space_constraint(x, ms)
+
 def _eval_jaxpr_discharge_state(
     jaxpr: core.Jaxpr, should_discharge: Sequence[bool], consts: Sequence[Any],
     strip_memory_space: bool, *args: Any):
@@ -222,6 +251,9 @@ def _eval_jaxpr_discharge_state(
         ans = env.read(invar)
         if eqn.params['pin']:
           ans = pin(ans)
+        else:
+          ms = getattr(outvar.aval, "memory_space", None)
+          ans = constrain(ans, ms, strip_memory_space)
         refs_to_discharge.add(id(outvar.aval))
       elif eqn.primitive is core.empty_ref_p:
         [], [outvar] = eqn.invars, eqn.outvars
@@ -234,6 +266,9 @@ def _eval_jaxpr_discharge_state(
           # TODO(mattjj,yashkatariya): switch to create_linear once the
           # CreateBuffer custom call is implemented in the runtime
           ans = pin(ans)
+        else:
+          ms = getattr(outvar.aval, "memory_space", None)
+          ans = constrain(ans, ms, strip_memory_space)
         refs_to_discharge.add(id(outvar.aval))
       elif eqn.primitive is core.free_ref_p:
         [invar], [] = eqn.invars, eqn.outvars
@@ -250,6 +285,9 @@ def _eval_jaxpr_discharge_state(
         # unpinned.
         if isinstance(core.typeof(ans), AbstractLinVal):
           ans = unpin(ans)
+        else:
+          ms = getattr(invar.aval, "memory_space", None)
+          ans = unconstrain(ans, ms, strip_memory_space)
         refs_to_discharge.remove(id(invar.aval))
       elif any(should_discharge) or core.internal_mutable_array_effect in eqn.effects:
         if eqn.primitive in _discharge_rules:
@@ -263,8 +301,7 @@ def _eval_jaxpr_discharge_state(
         ctx = DischargeContext(
             in_avals, out_avals, should_discharge, strip_memory_space
         )
-        new_invals, ans = rule(
-            ctx, *invals, **eqn.params)
+        new_invals, ans = rule(ctx, *invals, **eqn.params)
         for invar, should, new_inval in zip(eqn.invars, should_discharge, new_invals):
           if new_inval is not None:
             if not should:
@@ -458,7 +495,8 @@ def _convert_to_gather_arrays(indexer: indexing.NDIndexer) -> tuple[Array, ...]:
 def _get_discharge_rule(
     ctx: DischargeContext, x, *idx,
     tree):
-  del ctx
+  ms = getattr(ctx.in_avals[0], 'memory_space', None)
+  x = unconstrain(x, ms, ctx.strip_memory_space)
   y = _get_discharge(x, idx, tree)
   return (None,) * (len(idx) + 1), y
 
@@ -501,7 +539,7 @@ def transform_array(x, transforms):
       case ReshapeTransform():
         result = lax.reshape(result, transform.shape)
       case _:
-        raise NotImplementedError(f"Unsupported transform: {transform}")
+        result = transform.transform_array(result)
   return result
 
 def transform_swap_array(x, transforms, val):
@@ -551,7 +589,8 @@ def transform_swap_array(x, transforms, val):
         new_val = lax.reshape(new_val, transform.shape)
         intermediates.append(new_val)
       case _:
-        raise NotImplementedError(f"Unsupported transform: {transform}")
+        new_val = transform.transform_array(new_val)
+        intermediates.append(new_val)
 
   # Will hold the final state of the `x` after `val` has been written to the
   # transformed location, and will have the same shape as `x`.
@@ -587,7 +626,7 @@ def transform_swap_array(x, transforms, val):
     elif isinstance(transform, BitcastTransform):
       new_x = bitcast(new_x, intermediate.dtype)
     else:
-      raise NotImplementedError(f"Unsupported transform: {transform}")
+      new_x = transform.undo(intermediate).transform_array(new_x)
 
   return new_val, new_x
 
@@ -600,8 +639,10 @@ def _get_discharge(x, idx, tree):
 def _swap_discharge_rule(
     ctx: DischargeContext, x, val, *idx,
     tree):
-  del ctx
+  ms = getattr(ctx.in_avals[0], 'memory_space', None)
+  x = unconstrain(x, ms, ctx.strip_memory_space)
   z, x_new = _swap_discharge(x, val, idx, tree)
+  x_new = constrain(x_new, ms, ctx.strip_memory_space)
   return (x_new, None) + (None,) * len(idx), z
 
 def _swap_discharge(x, val, idx, tree):
@@ -612,8 +653,10 @@ def _swap_discharge(x, val, idx, tree):
 def _addupdate_discharge_rule(
     ctx: DischargeContext, x, val, *idx,
     tree):
-  del ctx
+  ms = getattr(ctx.in_avals[0], 'memory_space', None)
+  x = unconstrain(x, ms, ctx.strip_memory_space)
   ans = _addupdate_discharge(x, val, idx, tree)
+  ans = constrain(ans, ms, ctx.strip_memory_space)
   return (ans, None) + (None,) * len(idx), []
 
 @register_discharge_rule(lax.optimization_barrier_p)
@@ -637,53 +680,67 @@ def _addupdate_discharge(x, val, idx, tree):
         " instead."
     )
 
-  if transforms and isinstance(transforms[-1], ReshapeTransform):
-    broadcast_shape = transforms[-1].shape
-    while transforms and isinstance(transforms[-1], ReshapeTransform):
-      transforms.pop()
-    target_shape = (
-        transforms[-1].get_indexer_shape()
-        if transforms and isinstance(transforms[-1], indexing.NDIndexer)
-        else x.shape
+  for t in transforms:
+    if not isinstance(t, (ReshapeTransform, indexing.NDIndexer)):
+      raise NotImplementedError(
+          f"Unsupported transform for `addupdate`: {t}"
+      )
+
+  indexer_indices = [
+      i for i, t in enumerate(transforms) if isinstance(t, indexing.NDIndexer)
+  ]
+  if len(indexer_indices) > 1:
+    raise NotImplementedError(
+        f"Multiple indexers are not supported for `addupdate`, got {transforms}."
     )
-    val = lax_numpy.broadcast_to(val, broadcast_shape).reshape(target_shape)
-  if not transforms:
+
+  if not indexer_indices:
+    if transforms:
+      val = lax_numpy.broadcast_to(val, transforms[-1].shape)
+      val = lax.reshape(val, x.shape)
     return x + val
-  if len(transforms) > 1:
-    raise NotImplementedError(
-        "`addupdate` does not support combining an indexer with other"
-        f" transforms (e.g. indexed reshape views); got {transforms}."
-    )
-  indexer = transforms[0]
-  if not isinstance(indexer, indexing.NDIndexer):
-    raise NotImplementedError(
-        f"Unsupported transform for `addupdate`: {indexer}"
-    )
+
+  (indexer_idx,) = indexer_indices
+  indexer: indexing.NDIndexer = transforms[indexer_idx]
+  leading_reshapes = transforms[:indexer_idx]
+  trailing_reshapes = transforms[indexer_idx + 1 :]
+
+  # Reshape x to match the domain expected by the indexer.
+  x_reshaped = (
+      lax.reshape(x, leading_reshapes[-1].shape) if leading_reshapes else x
+  )
+
+  # Reshape val to match the slice shape produced by the indexer.
+  if trailing_reshapes:
+    val = lax_numpy.broadcast_to(val, trailing_reshapes[-1].shape)
+    val = lax.reshape(val, indexer.get_indexer_shape())
 
   if _is_trivial_indexer(indexer):
-    return x + val
-
-  # If everything in the indexer is a slice or ()-shaped, we can also
-  # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
-  # We need to squeeze out the 1-sized slices at the end.
-  if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
+    x_updated = x_reshaped + val
+  elif maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
     starts, sizes, squeeze_dims = maybe_slice
-    x_old = lax_slicing.dynamic_slice(x, starts, sizes)
+    x_old = lax_slicing.dynamic_slice(x_reshaped, starts, sizes)
     val = lax.expand_dims(val, squeeze_dims)
-    y = lax_slicing.dynamic_update_slice(x, x_old + val, starts)
-    return y
+    x_updated = lax_slicing.dynamic_update_slice(x_reshaped, x_old + val, starts)
+  else:
+    transpose_order = _maybe_transpose_before_gather(indexer)
+    if transpose_order is not None:
+      x_reshaped, indexer = _perform_transpose_before_gather(
+          x_reshaped, indexer, transpose_order
+      )
+    arrays = _convert_to_gather_arrays(indexer)
+    # `asarray` ensures `x_reshaped` has an `.at` attribute; it may be a plain
+    # value rather than a jax array.
+    x_updated = lax_numpy.asarray(x_reshaped).at[arrays].add(val)
+    if transpose_order is not None:
+      transpose_order_inversed = np.argsort(transpose_order)
+      x_updated = x_updated.transpose(transpose_order_inversed)
 
-  transpose_order = _maybe_transpose_before_gather(indexer)
-  if transpose_order is not None:
-    x, indexer = _perform_transpose_before_gather(x, indexer, transpose_order)
-  arrays = _convert_to_gather_arrays(indexer)
-  # `asarray` ensures `x` has an `.at` attribute; it may be a plain value
-  # rather than a jax array.
-  x = lax_numpy.asarray(x).at[arrays].add(val)
-  if transpose_order is not None:
-    transpose_order_inversed = np.argsort(transpose_order)
-    x = x.transpose(transpose_order_inversed)
-  return x
+  # Invert leading reshapes back to original x shape.
+  if leading_reshapes:
+    x_updated = lax.reshape(x_updated, x.shape)
+
+  return x_updated
 
 
 @weakref_lru_cache

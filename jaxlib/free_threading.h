@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_FT_MUTEX_H_
-#define JAXLIB_FT_MUTEX_H_
+#ifndef JAXLIB_FREE_THREADING_H_
+#define JAXLIB_FREE_THREADING_H_
 
 #include "absl/base/thread_annotations.h"
 #include "nanobind/nanobind.h"
@@ -56,6 +56,21 @@ class ABSL_SCOPED_LOCKABLE ft_lock_guard {
   nanobind::ft_lock_guard guard_;
 };
 
+// Safely borrows a reference to a Python object handle under free-threading.
+// Returns an empty/invalid object if the object's reference count has already
+// reached zero and is being deallocated on another thread.
+template <typename T = nanobind::object>
+T TryBorrow(nanobind::handle handle) {
+#ifdef Py_GIL_DISABLED
+  if (!PyUnstable_TryIncRef(handle.ptr())) {
+    return T();
+  }
+  return nanobind::steal<T>(handle);
+#else
+  return nanobind::borrow<T>(handle);
+#endif
+}
+
 }  // namespace jax
 
-#endif  // JAXLIB_FT_MUTEX_H_
+#endif  // JAXLIB_FREE_THREADING_H_

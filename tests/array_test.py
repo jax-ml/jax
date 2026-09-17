@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import concurrent.futures
 import contextlib
 import math
 import unittest
@@ -791,6 +792,57 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertLen(x.sharding.device_set, 4)
     x.copy_to_host_async()  # doesn't crash
     self.assertArraysEqual(np.arange(8.), x)
+
+  def test_array_copy_to_host_async_concurrent(self):
+    def worker(arr: jax.Array) -> None:
+      for _ in range(10):
+        arr.copy_to_host_async()
+        _ = np.asarray(arr)
+        _ = arr._single_device_array_to_np_array_did_copy()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+      for dtype in (jnp.float32, jnp.int4):
+        for _ in range(10):
+          arr = jnp.zeros((128,), dtype=dtype)
+          futures = [executor.submit(worker, arr) for _ in range(8)]
+          for f in futures:
+            f.result()
+
+  def test_array_concurrent_shards_and_transfers(self):
+    def worker_sharded(arr: jax.Array) -> None:
+      for _ in range(10):
+        _ = arr._arrays
+        arr.copy_to_host_async()
+        _ = np.asarray(arr)
+
+    def worker_replicated(arr: jax.Array) -> None:
+      for _ in range(10):
+        _ = arr._arrays
+        _ = arr._fully_replicated_shard()
+        arr.copy_to_host_async()
+        _ = np.asarray(arr)
+        _ = arr._single_device_array_to_np_array_did_copy()
+
+    global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+      for _ in range(5):
+        arr_sharded, _ = create_array(
+            (8, 4), jax.sharding.NamedSharding(global_mesh, P('x', 'y'))
+        )
+        futures = [
+            executor.submit(worker_sharded, arr_sharded) for _ in range(8)
+        ]
+        for f in futures:
+          f.result()
+
+        arr_replicated, _ = create_array(
+            (8, 4), jax.sharding.NamedSharding(global_mesh, P())
+        )
+        futures = [
+            executor.submit(worker_replicated, arr_replicated) for _ in range(8)
+        ]
+        for f in futures:
+          f.result()
 
   def test_array_fully_replicated_shard(self):
 
@@ -1732,6 +1784,26 @@ class RngShardingTest(jtu.JaxTestCase):
     x2 = jax.device_put(jnp.array([1, 2, 3]), s2)
     with self.assertRaisesRegex(RuntimeError, "different sharding"):
       x1._replace_with(x2)
+
+    del_arr1 = jnp.array([1, 2, 3])
+    del_arr2 = jnp.array([4, 5, 6])
+    del_arr1.delete()
+    with self.assertRaises(Exception):
+      del_arr1._replace_with(del_arr2)
+    with self.assertRaises(Exception):
+      del_arr2._replace_with(del_arr1)
+
+  def test_deleted_array_accessors(self):
+    arr = jnp.arange(8)
+    arr.delete()
+    with self.assertRaises(Exception):
+      arr.unsafe_buffer_pointer()
+    with self.assertRaises(Exception):
+      arr.unsafe_raw_buffer()
+    with self.assertRaises(Exception):
+      jax.make_array_from_single_device_arrays(
+          arr.shape, arr.sharding, [arr]
+      )
 
 
 if __name__ == '__main__':

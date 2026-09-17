@@ -38,6 +38,18 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+# How a ref is laid out rather than what it contains. Applying these to a ref's
+# physical aval gives its logical one, and since every buffer is allocated at
+# that logical shape they are identities at every use site.
+LAYOUT_TRANSFORMS = (
+    mosaic_gpu_core.UnswizzleRef,
+    mosaic_gpu_core.UntilingTransform,
+    # A TMEM ref of rank > 2 is stored as `(m, prod(batch) * n)` and carries
+    # this transform back to `(*batch, m, n)`.
+    mosaic_gpu_core.ExpandLeadingBatchDimensionsTransform,
+)
+
+
 IDX_BY_GPU_MEMORY_SPACE: collections.abc.Mapping[
     mosaic_gpu_core.MemorySpace, int
 ]
@@ -450,6 +462,10 @@ class GPUSharedMemory(
 
   num_pallas_threads_per_block: int
 
+  # Hardware named barriers (`bar.sync` / `bar.arrive`), keyed by
+  # `(device, block, barrier id)`. See `named_barrier`.
+  named_barriers: dict[tuple[int, int, int], Barrier]
+
   # thread -> next available REGS buffer ID.
   #
   # NOTE: We use negative integers so that, when debugging, it is easy to
@@ -556,11 +572,70 @@ class GPUSharedMemory(
     self.num_pallas_threads_per_block = num_threads_per_block
     self.reset_per_cluster_state()
 
+  def buffer_shape_and_dtype(self, key: MemKey) -> memory.ShapeAndDtype:
+    """The logical shape and dtype of `key`'s buffer."""
+    with self.lock:
+      buff = self.mem[key]
+    if not isinstance(buff, memory.Buffer):
+      raise ValueError(f"Allocation with key `{key}` is not a `Buffer`.")
+    return memory.ShapeAndDtype(buff.logical_shape, buff.dtype)
+
+  def access(self, key: MemKey, transforms) -> interpret_utils.Access:
+    """What `transforms` touches of `key`'s buffer, in its coordinates."""
+    return interpret_utils.to_access(
+        transforms, self.buffer_shape_and_dtype(key).shape
+    )
+
+  # The accessors below take an `interpret_utils.Access` (a range in the
+  # buffer's coordinates plus an axis permutation) where the base class takes
+  # a plain range. The range is handed down as is and only the value crossing
+  # the boundary is reordered, so the shared layer never sees a transpose.
+
+  def get_buffer_content(
+      self, key, access: interpret_utils.Access, *args, **kwargs
+  ):
+    result, shape_and_dtype, clock = super().get_buffer_content(
+        key, access.range, *args, **kwargs
+    )
+    if result is not None and access.permutation is not None:
+      result = result.transpose(access.permutation)
+    return result, shape_and_dtype, clock
+
+  def store_buffer_content(
+      self, key, access: interpret_utils.Access, value, *args, **kwargs
+  ):
+    if access.permutation is not None:
+      value = value.transpose(access.inverse_permutation)
+    in_bounds, shape_and_dtype, clock = super().store_buffer_content(
+        key, access.range, value, *args, **kwargs
+    )
+    if not in_bounds:
+      raise IndexError(
+          f"Out-of-bounds store of {key}: writing [{access}] but buffer has"
+          f" shape {shape_and_dtype.shape}."
+      )
+    return in_bounds, shape_and_dtype, clock
+
+  def swap_buffer_content(
+      self, key, access: interpret_utils.Access, value, mask, *args, **kwargs
+  ):
+    if access.permutation is not None:
+      value = value.transpose(access.inverse_permutation)
+      if mask is not None:
+        mask = mask.transpose(access.inverse_permutation)
+    result, shape_and_dtype, clock = super().swap_buffer_content(
+        key, access.range, value, mask, *args, **kwargs
+    )
+    if result is not None and access.permutation is not None:
+      result = result.transpose(access.permutation)
+    return result, shape_and_dtype, clock
+
   def reset_per_cluster_state(self):
     """Resets the per-cluster state of the shared memory."""
     with self.lock:
       self.next_tma_thread_id = 0
       self.next_regs_id = collections.defaultdict(lambda: -100)
+      self.named_barriers = {}
       self.clocks = {
           thread: self.VectorClock(self.vector_clock_size)
           for thread in self.all_concurrent_threads
@@ -659,6 +734,40 @@ class GPUSharedMemory(
       )
 
     return barrier, clock
+
+  def named_barrier(
+      self, thread: Thread, barrier_id: int, num_arrivals: int
+  ) -> Barrier:
+    """Named barrier `barrier_id` of `thread`'s block, created on first use.
+
+    Named barriers are hardware resources rather than program allocations, so
+    they live outside `self.mem` and need no deallocation.
+    """
+    # We model a named barrier with `n` arrivals as a `Barrier` with `n/128`
+    # arrivals, since for now a warpgroup is the smallest unit of threads that
+    # can use a named barrier.
+    key = (thread.device_id, thread.block_id, barrier_id)
+    with self.lock:
+      barrier = self.named_barriers.get(key)
+      if barrier is None:
+        barrier = Barrier(
+            self,
+            num_pallas_threads_per_block=self.num_pallas_threads_per_block,
+            ref_count=0,
+            num_arrivals=num_arrivals,
+            orders_tensor_core=False,
+            enable_logging=(
+                self.logging_mode is not None
+                and params.LoggingMode.BARRIER in self.logging_mode
+            ),
+        )
+        self.named_barriers[key] = barrier
+    if barrier.num_arrivals != num_arrivals:
+      raise ValueError(
+          f"Named barrier {barrier_id} is used with {num_arrivals} arrivals"
+          f" but was first used with {barrier.num_arrivals}."
+      )
+    return barrier
 
   def get_barrier(self, key: MemKey) -> Barrier:
     with self.lock:

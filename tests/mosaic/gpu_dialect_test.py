@@ -171,9 +171,6 @@ class DialectTest(MosaicGpuTest):
     self.assertTrue(barrier_ty.orders_tensor_core)
 
   def test_b6x16_p32_type_bindings(self):
-    # TODO(bchetioui): remove once minimum jaxlib version is 0.11.1.
-    if not hasattr(mgpu.dialect, "B6x16P32Type"):
-      self.skipTest("B6x16P32Type is not supported.")
     f6_ty = ir.Float6E2M3FNType.get()
     b6x16p32_ty = mgpu.dialect.B6x16P32Type.get(f6_ty)
     self.assertIsInstance(b6x16p32_ty, ir.Type)
@@ -190,9 +187,6 @@ class DialectTest(MosaicGpuTest):
       ir.Type.parse("!mosaic_gpu.b6x16_p32<f16>")
 
   def test_p2b6_type_bindings(self):
-    # TODO(bchetioui): remove once minimum jaxlib version is 0.11.1.
-    if not hasattr(mgpu.dialect, "P2B6Type"):
-      self.skipTest("P2B6Type is not supported.")
     f6_ty = ir.Float6E2M3FNType.get()
     p2b6_ty = mgpu.dialect.P2B6Type.get(f6_ty)
     self.assertIsInstance(p2b6_ty, ir.Type)
@@ -2848,6 +2842,30 @@ class DialectLoweringTest(MosaicGpuTest):
       files = os.listdir(dump_dir)
       self.assertTrue(any(f.endswith(".before_layout_inference.txt") for f in files))
       self.assertTrue(any(f.endswith(".after_layout_inference.txt") for f in files))
+
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_dump_constraint_system(self):
+    # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.2.
+    if not hasattr(mgpu.dialect.DumpOptions(), "constraint_system"):
+      self.skipTest("Test requires jaxlib >= 0.11.2")
+    def body(_, src, dst, scratch):
+      del scratch
+      mgpu.dialect.vector_store(mgpu.dialect.vector_load(src), dst)
+    shape = (128, 128)
+
+    with tempfile.TemporaryDirectory() as dump_dir:
+      with jtu.set_env(MOSAIC_GPU_DUMP_TO=dump_dir):
+        mgpu.as_gpu_kernel(
+            body,
+            grid=(1, 1, 1),
+            block=(128, 1, 1),
+            in_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+            out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+            smem_scratch_shape=[],
+            thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+        )
+      files = os.listdir(dump_dir)
+      self.assertTrue(any(f.endswith(".constraint_system.txt") for f in files))
 
 
 if hp is not None:

@@ -691,7 +691,6 @@ _uncacheable_primitives: set[jax_core.Primitive] = {
     lax.scan_p,
     lax.cond_p,
     primitives.run_scoped_p,
-    primitives.jaxpr_call_p,
     pjit.jit_p,
     custom_derivatives.custom_jvp_call_p,
     custom_derivatives.custom_vjp_call_p,
@@ -2207,6 +2206,7 @@ def _transform_ref(ref, ref_ty, ref_block_shape, transforms=()):
     ref_block_shape, _ = _get_ref_and_transforms(ref_block_shape)
   assert not isinstance(ref_ty, state.TransformedRef)
   assert not isinstance(ref_block_shape, state.TransformedRef)
+  assumption = None
   for transform in transforms:
     match transform:
       case NDIndexer():
@@ -2226,9 +2226,32 @@ def _transform_ref(ref, ref_ty, ref_block_shape, transforms=()):
             "_transform_ref() only supports single ref transforms. Got:"
             f" {ref = }, {ref_ty = }, {ref_block_shape = }, {transforms = }"
         )
+      case tpu_core.AccessAssumptionTransform(new_assumption):
+        assumption = (
+            new_assumption
+            if assumption is None
+            else assumption.union(new_assumption)
+        )
       case _:
         raise NotImplementedError(f"Unsupported transform: {transform}")
     ref_ty = transform.transform_type(ref_ty)
+  if assumption is not None:
+    if assumption.no_hazard or assumption.no_hazard_no_deps:
+      memory_space = getattr(ref_ty, "memory_space", None)
+      if isinstance(memory_space, pallas_core.CoreMemorySpace):
+        memory_space = memory_space.memory_space
+      if memory_space != tpu_core.MemorySpace.VMEM:
+        raise ValueError(
+            "Hazard overrides ('no_hazard' or 'no_hazard_no_deps') are only"
+            f" valid for VMEM references, but got memory space: {memory_space}"
+        )
+    ref = tpu.annotate(
+        ref,
+        no_store=assumption.no_store,
+        no_bank_conflict=assumption.no_bank_conflict,
+        no_hazard=assumption.no_hazard,
+        no_hazard_no_deps=assumption.no_hazard_no_deps,
+    )
   return ref, ref_block_shape
 
 
@@ -3973,6 +3996,11 @@ def _square_lowering_rule(ctx: LoweringRuleContext, x):
   return arith.mulf(x, x)
 
 
+@register_lowering_rule(lax.one_minus_square_p)
+def _one_minus_square_lowering_rule(ctx: LoweringRuleContext, x):
+  return lower_fun(lambda x: (1 + x) * (1 - x))(ctx, x)
+
+
 @register_lowering_rule(lax.exp_p, kernel_types=[*tpu_core.CoreType])
 def _exp_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
@@ -4094,6 +4122,27 @@ def _log_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   return mlir_math.log(x)
+
+
+@register_lowering_rule(
+    lax.log2_p,
+    kernel_types=(tpu_core.CoreType.TC, tpu_core.CoreType.SC_VECTOR_SUBCORE),
+)
+def _log2_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
+  if ctx.forward_compatible or not ctx.is_libtpu_at_least("0.0.48"):
+    aval_out = ctx.avals_out[0]
+    out_type = ctx.aval_to_ir_type(aval_out)
+    if not aval_out.shape:
+      log2e = ir_constant(1.4426950408889634, mlir_type=out_type)
+    else:
+      log2e = vector.broadcast(
+          out_type,
+          ir_constant(1.4426950408889634, _dtype_to_ir_type(aval_out.dtype)),
+      )
+    return arith.mulf(mlir_math.log(x), log2e)
+  return mlir_math.log2(x)
 
 
 @register_lowering_rule(lax.log1p_p)
@@ -5506,9 +5555,14 @@ def _debug_print_rule(
         "Only positional arguments are supported by debug_print on Pallas."
     )
 
+  # TODO(slebedev): We can also support printing a single ref.
   is_scalar_inputs = [not aval.shape for aval in ctx.avals_in]
   is_all_scalars = all(is_scalar_inputs)
-  is_single_vector = len(is_scalar_inputs) == 1 and not is_scalar_inputs[0]
+  is_single_vector = (
+      len(is_scalar_inputs) == 1
+      and not is_scalar_inputs[0]
+      and isinstance(ctx.avals_in[0], jax_core.ShapedArray)
+  )
   if not (is_all_scalars or is_single_vector):
     raise ValueError(
         "All inputs to debug_print must be all scalars or a single vector, but"

@@ -2642,6 +2642,44 @@ class APITest(jtu.JaxTestCase):
     expected = [3., 0.]
     self.assertEqual(actual, expected)
 
+  @parameterized.product(jit=[False, True], dtype=[np.float32, np.complex64,
+                                                np.int32])
+  def test_linear_transpose_float0(self, jit, dtype):
+    zero = np.zeros((2,), dtype=float0)
+    unused = np.zeros((3,), dtype=float0)
+    x = np.arange(2, dtype=dtype)
+    f = lambda x, z, unused: {'value': 2 * x, 'zeros': (z, z)}
+    if jit:
+      f = api.jit(f)
+    transpose = api.linear_transpose(f, x, zero, unused)
+    if jit:
+      transpose = api.jit(transpose)
+    # The repeated output must accumulate symbolically: adding float0 arrays
+    # is undefined, even though the transpose is well-defined.
+    x_ct, z_ct, unused_ct = transpose({'value': x, 'zeros': (zero, zero)})
+    self.assertArraysEqual(x_ct, 2 * x)
+    self.assertArraysEqual(z_ct, zero)
+    self.assertArraysEqual(unused_ct, unused)
+
+  @parameterized.parameters(False, True)
+  def test_linear_transpose_float0_only(self, jit):
+    zero = np.zeros((2,), dtype=float0)
+    transpose = api.linear_transpose(lambda z: (z, z), zero)
+    if jit:
+      transpose = api.jit(transpose)
+    actual, = transpose((zero, zero))
+    self.assertArraysEqual(actual, zero)
+
+  @parameterized.product(jit=[False, True], float0_input=[False, True])
+  def test_linear_transpose_float0_zero_map(self, jit, float0_input):
+    x = np.ones((2,), dtype=float0 if float0_input else np.float32)
+    y = np.zeros((3,), dtype=np.float32 if float0_input else float0)
+    transpose = api.linear_transpose(lambda x: y, x)
+    if jit:
+      transpose = api.jit(transpose)
+    actual, = transpose(y)
+    self.assertArraysEqual(actual, np.zeros_like(x))
+
   def test_complex_grad_raises_error(self):
     self.assertRaises(TypeError, lambda: grad(lambda x: jnp.sin(x))(1 + 2j))
 
@@ -4610,12 +4648,20 @@ class APITest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(f)(3)
     self.assertIn('jit', str(jaxpr))
 
-    @api.jit(inline=True)
+    @api.jit(inline=jax.Inline.JAX_EARLY)
     def f(x):
       return x * 2
 
     jaxpr = api.make_jaxpr(f)(3)
     self.assertNotIn('jit', str(jaxpr))
+
+    # inline=True means JAX_LATE, which is preserved in make_jaxpr
+    @api.jit(inline=True)
+    def f(x):
+      return x * 2
+
+    jaxpr = api.make_jaxpr(f)(3)
+    self.assertIn('jit', str(jaxpr))
 
   def test_jit_inline_multistate(self):
     @api.jit(inline=jax.Inline.AUTO)
@@ -6254,6 +6300,22 @@ class RematTest(jtu.JaxTestCase):
     ans = api.grad(lambda x: f(A(x)))(2.)
     expected = np.cos(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_wrapped_kwarg_with_static_argnums(self):
+    def f(x, is_training):
+      return x * 2. if is_training else x
+
+    @functools.wraps(f)
+    def stateful_fun(*args, **kwargs):
+      extra = kwargs.pop('extra', 0.)
+      return f(*args, **kwargs) + extra
+
+    rematted = jax.remat(stateful_fun, static_argnums=1)
+    ans = rematted(3.0, True, extra=1.0)
+    self.assertEqual(ans, 7.0)
+
+    grad_ans = jax.grad(lambda x: rematted(x, True, extra=1.0))(3.0)
+    self.assertEqual(grad_ans, 2.0)
 
   def test_remat_retracing(self):
     # This is *not* a very important behavior; remat doesn't need to provide
@@ -8322,8 +8384,6 @@ class Remat3Test(RematTest):
     self.assertAllClose(api.grad(g)(1.), api.grad(g_ref)(1.),
                         check_dtypes=False)
 
-  # We don't support everything_saveable with remat3
-  def test_remat_custom_policy_save_anything_new_remat(self): pass
   def test_remat_residual_logging(self): pass
 
   # The latter part of RematTest.test_remat_eval_counter used core.call_p, which
@@ -9630,24 +9690,29 @@ class TracebackTest(jtu.JaxTestCase):
 
   def test_custom_vjp_traceback(self):
     # TODO(dougalm): improve this
-    expected_depth_f = 7 if config.custom_vjp3.value else 9
-    expected_depth_f_fwd = 17 if config.custom_vjp3.value else 16
+    expected_depth_f = 3 if config.custom_vjp3.value else 9
+    expected_depth_f_fwd = 18 if config.custom_vjp3.value else 16
     expected_depth_f_rev = 12
     init_depth = self.cur_depth()
+
     @jax.custom_vjp
     def f(x):
       self.assertExpectedDepth(init_depth, expected_depth_f)
       return x
-    def f_fwd(x):
+    f.defvjp(lambda x: (x, None), lambda _, g: (g,))
+    f(1.0)
+
+    @jax.custom_vjp
+    def g(x):
+      return x
+    def g_fwd(x):
       self.assertExpectedDepth(init_depth, expected_depth_f_fwd)
       return x, None
-    def f_rev(_, g):
+    def g_rev(_, g):
       self.assertExpectedDepth(init_depth, expected_depth_f_rev)
       return (g,)
-    f.defvjp(f_fwd, f_rev)
-
-    f(1.0)
-    grad(f)(1.0)
+    g.defvjp(g_fwd, g_rev)
+    grad(g)(1.0)
 
 
 class EvalJaxprPrimitiveTest(jtu.JaxTestCase):

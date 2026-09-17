@@ -356,10 +356,12 @@ absl::Status PyMpmdLoadedExecutable::ComputeCallSignature(
     call_signature.dynamic_arg_shardings.push_back(py_array.sharding());
     absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> layout =
         py_array.layout();
-    if (absl::IsUnimplemented(layout.status())) {
+    if (layout.ok()) {
+      call_signature.dynamic_arg_layouts.push_back(*std::move(layout));
+    } else if (absl::IsUnimplemented(layout.status())) {
       call_signature.dynamic_arg_layouts.push_back(nullptr);
     } else {
-      call_signature.dynamic_arg_layouts.push_back(*std::move(layout));
+      return layout.status();
     }
     call_signature.committed_args.push_back(py_array.committed());
   }

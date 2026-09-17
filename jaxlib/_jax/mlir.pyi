@@ -17,6 +17,7 @@
 """MLIR/XLA integration"""
 
 from typing import Any, overload
+
 import jaxlib._hlo
 
 def hlo_to_stablehlo(computation: bytes) -> bytes: ...

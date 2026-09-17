@@ -66,6 +66,7 @@ from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType, get_abstract_mesh
 from jax._src.interpreters import pxla
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.util import curry, unzip2
 from jax._src import tree_util
@@ -2772,12 +2773,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(f)(3)
     self.assertIn('jit', str(jaxpr))
 
-    @partial(pjit, inline=True)
+    @partial(pjit, inline=jax.Inline.JAX_EARLY)
     def g(x):
       return x * 2
 
     jaxpr = jax.make_jaxpr(g)(3)
     self.assertNotIn('jit', str(jaxpr))
+
+    # inline=True means JAX_LATE, which is preserved in make_jaxpr
+    @partial(pjit, inline=True)
+    def h(x):
+      return x * 2
+
+    jaxpr = jax.make_jaxpr(h)(3)
+    self.assertIn('jit', str(jaxpr))
 
   def test_pjit_inline_literal(self):
     # https://github.com/jax-ml/jax/issues/27545
@@ -7671,9 +7680,22 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out_mesh = jax.sharding.get_mesh()
       self.assertEqual(out_mesh, mesh)
     finally:
-      config.abstract_mesh_context_manager.set_local(
+      mesh_lib.abstract_mesh_context_manager.set_local(
           mesh_lib.empty_abstract_mesh)
-      config.device_context.set_local(None)
+      mesh_lib.device_context.set_local(mesh_lib.empty_concrete_mesh)
+
+  def test_trace_cache_hit_default_abs_mesh_ctx(self):
+    x = jnp.arange(4.0)
+
+    @jax.jit
+    def f(x):
+      return x
+
+    with jtu.count_jit_tracing_cache_miss() as count:
+      f(x)
+      with jax.sharding.use_abstract_mesh(mesh_lib.empty_abstract_mesh):
+        f(x)
+    self.assertEqual(count(), 1)
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_auto_axes_late_bind(self, mesh):
@@ -11821,6 +11843,25 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ValueError, "The denominator cannot be unreduced passed to `div`"):
       f(arr1, arr1)
 
+  @config.numpy_dtype_promotion('standard')
+  @jtu.with_explicit_mesh((2, 2, 2), ('replica', 'data', 'seq'))
+  def test_histogram_flattened_multi_axis_sharding_error(self, mesh):
+    positions = jax.device_put(
+        jnp.broadcast_to(jnp.arange(16, dtype=jnp.int32), (8, 16)),
+        P(('replica', 'data'), 'seq'))
+
+    mask = jax.device_put(jnp.ones((8, 16), dtype=jnp.bool_),
+                          P(('replica', 'data'), 'seq'))
+
+    @jax.jit
+    def f(positions, mask):
+      flat = positions.flatten()
+      self.assertEqual(flat.aval.sharding.spec, P(('replica', 'data', 'seq')))
+      return jnp.histogram(flat, bins=4, range=(0, 16),
+                           weights=mask.flatten(), out_sharding=P())[0]
+
+    f(positions, mask)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
@@ -12059,6 +12100,20 @@ class PJitErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex((RuntimeError, ValueError),
                                 '.*(Array|buffer|Buffer) has been deleted.*'):
       x.delete()
+      _ = f(x)
+
+  @unittest.skipIf(
+      jaxlib_extension_version < 493,
+      "Requires jaxlib_extension_version >= 493",
+  )
+  def test_compiled_with_deleted_input(self):
+    shape = (8,)
+    inp_data = np.arange(math.prod(shape)).reshape(shape)
+    x = jax.device_put(inp_data)
+    f = jax.jit(lambda x: x + 1).lower(x).compile()
+    x.delete()
+    with self.assertRaisesRegex((RuntimeError, ValueError),
+                                '.*(Array|buffer|Buffer) has been deleted.*'):
       _ = f(x)
 
   def test_aot_error_on_dced_avals_mismatch(self):

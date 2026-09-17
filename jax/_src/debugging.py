@@ -274,7 +274,9 @@ def _debug_callback_state_discharge_rule(
 
 
 def _split_callback_args(args, kwargs):
-  flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
+  # We use ``tracing_registry`` to flatten ``TransformedRef``s which are not
+  # pytrees.
+  flat_args, in_tree = tree_util.tracing_registry.flatten((args, kwargs))
   static_args, dyn_args = {}, []
   for i, a in enumerate(flat_args):
     try:
@@ -802,10 +804,13 @@ def _get_text_color(color: str) -> str:
 def make_color_iter(color_map, num_rows, num_cols):
   num_colors = num_rows * num_cols
   color_values = np.linspace(0, 1, num_colors)
+  # A step coprime to num_colors visits every color exactly once.
+  step = (num_colors // 2 + bool(num_colors % 2 == 0)
+          + bool(num_colors % 4 == 2))
   idx = 0
   for _ in range(num_colors):
     yield color_map(color_values[idx])
-    idx = (idx + num_colors // 2 + bool(num_colors % 2 == 0)) % num_colors
+    idx = (idx + step) % num_colors
 
 def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
                        use_color: bool = True, scale: float = 1.,

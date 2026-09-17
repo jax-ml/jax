@@ -1328,8 +1328,9 @@ wait_gmem_to_smem_p.multiple_results = True
 
 
 @wait_gmem_to_smem_p.def_effectful_abstract_eval
-def _wait_gmem_to_smem_abstract_eval(n):
-  del n  # Unused.
+def _wait_gmem_to_smem_abstract_eval(*, n: int):
+  if not isinstance(n, int) or n < 0:
+    raise ValueError(f"n must be a non-negative integer, got {n}")
   return (), {gpu_core._memory_effect}
 
 
@@ -1341,7 +1342,7 @@ def _wait_gmem_to_smem_abstract_eval(n):
     wait_gmem_to_smem_p, mgpu.LoweringSemantics.Warpgroup)
 @lowering.register_lowering_rule(
     wait_gmem_to_smem_p, *gpu_core.WGxWARP_SEMANTICS)
-def _wait_gmem_to_smem_lowering(ctx: lowering.LoweringRuleContext, n):
+def _wait_gmem_to_smem_lowering(ctx: lowering.LoweringRuleContext, *, n: int):
   if mgpu.utils.get_arch().major >= 9:
     raise ValueError(
         "wait_gmem_to_smem is only supported on pre-Hopper GPUs, which use"
@@ -1361,7 +1362,7 @@ def wait_gmem_to_smem(n: int) -> None:
   Args:
     n: The maximum number of copies allowed to remain in flight.
   """
-  wait_gmem_to_smem_p.bind(n)
+  wait_gmem_to_smem_p.bind(n=n)
 
 
 async_prefetch_p = jax_core.Primitive("async_prefetch")
@@ -1374,6 +1375,29 @@ def _async_prefetch_abstract_eval(ref, *args, **params):
   return (), {state.ReadEffect(0)}
 
 
+def _async_prefetch_pp_eqn(
+    eqn: jax_core.JaxprEqn,
+    context: jax_core.JaxprPpContext,
+    settings: jax_core.JaxprPpSettings,
+):
+  ref, *flat_args = eqn.invars
+  pp_params = {}
+  if eqn.params["has_user_predicate"]:
+    *flat_args, user_predicate = flat_args
+    pp_params["user_predicate"] = user_predicate.pretty_print(context)
+  ref_transforms_treedef = eqn.params["ref_transforms_treedef"]
+  ref_transforms = ref_transforms_treedef.unflatten(flat_args)
+  return pp.concat([
+      pp.text("async_prefetch"),
+      jax_core.pp_kv_pairs(pp_params.items(), context, settings),
+      pp.text(" "),
+      state_primitives.pp_ref_transforms(context, ref, ref_transforms),
+  ])
+
+
+jax_core.pp_eqn_rules[async_prefetch_p] = _async_prefetch_pp_eqn
+
+
 @lowering.register_lowering_rule(async_prefetch_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(async_prefetch_p, *gpu_core.LANExWARP_SEMANTICS)
 @lowering.register_lowering_rule(async_prefetch_p, mgpu.LoweringSemantics.Warpgroup)
@@ -1381,13 +1405,22 @@ def _async_prefetch_abstract_eval(ref, *args, **params):
 def _async_prefetch_lowering(
     ctx: lowering.LoweringRuleContext,
     ref,
-    *flat_ref_transforms,
+    *flat_args,
     ref_transforms_treedef,
     collective_axes,
     leader_tracked,
+    has_user_predicate: bool = False,
 ):
-  ref_transforms = ref_transforms_treedef.unflatten(flat_ref_transforms)
-  ref_transform_avals = ref_transforms_treedef.unflatten(ctx.avals_in[1:])
+  if has_user_predicate:
+    *flat_args, user_predicate = flat_args
+    predicate = lowering._ensure_ir_value(user_predicate, jnp.bool)  # pylint: disable=protected-access
+  else:
+    predicate = None
+
+  ref_transforms = ref_transforms_treedef.unflatten(flat_args)
+  ref_transform_avals = ref_transforms_treedef.unflatten(
+      ctx.avals_in[1 : 1 + ref_transforms_treedef.num_leaves]
+  )
   copy_params = _extract_gmem_copy_params(
       ctx, ref_transforms, ref_transform_avals
   )
@@ -1399,13 +1432,19 @@ def _async_prefetch_lowering(
     )
 
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
-    predicate_kwarg: dict[str, Any] = dict(
-        predicate=ctx.module_ctx.single_lane_predicate
-    )
+    pred = ctx.module_ctx.single_lane_predicate
+    if predicate is not None:
+      pred = arith_dialect.andi(predicate, pred)
+
+    predicate_kwarg: dict[str, Any] = dict(predicate=pred)
     if gmem_slice := copy_params.get("gmem_slice", ()):
       first_idx = gmem_slice[0]
       # Gathers are a warpgroup-level collective and can't take a predicate.
       if isinstance(first_idx, mgpu.FragmentedArray) and first_idx.shape:
+        if has_user_predicate:
+          raise NotImplementedError(
+              "Gather/scatter TMA does not support predicates yet."
+          )
         predicate_kwarg = {}
 
     ctx.launch_ctx.async_prefetch(
@@ -1430,7 +1469,11 @@ def _async_prefetch_lowering(
         "GMEM refs with peer ids are not supported in warpgroup lowering."
     )
   mgpu.dialect.async_prefetch(
-      ref, indices, slice_lengths, collective=ir.ArrayAttr.get([])
+      ref,
+      indices,
+      slice_lengths,
+      collective=ir.ArrayAttr.get([]),
+      predicate=predicate,
   )
   return ()
 
@@ -1440,6 +1483,7 @@ def async_prefetch(
     *,
     collective_axes: str | tuple[str, ...] | None = None,
     leader_tracked: CopyPartition | None = None,
+    predicate: jax.Array | None = None,
 ) -> None:
   """Asynchronously prefetches a GMEM reference to the L2 cache.
 
@@ -1455,6 +1499,8 @@ def async_prefetch(
     ref: The source Ref. Must be in GMEM.
     collective_axes: The collective axes to use for the prefetch.
     leader_tracked: The partitioning to use for the prefetch.
+    predicate: A boolean indicating whether the prefetch should be performed. If
+      ``None``, the prefetch is always performed.
   """
   ref, ref_transforms = state_primitives.get_ref_and_transforms(
       ref, None, "async_prefetch"
@@ -1467,9 +1513,11 @@ def async_prefetch(
   async_prefetch_p.bind(
       ref,
       *flat_ref_transforms,
+      *() if predicate is None else (predicate,),
       ref_transforms_treedef=ref_transforms_treedef,
       collective_axes=collective_axes,
       leader_tracked=leader_tracked,
+      has_user_predicate=predicate is not None,
   )
   return None
 
@@ -1499,14 +1547,14 @@ def _get_barrier_base_index(aval, transforms) -> ir.Value | None:
           if isinstance(
               idx, (int, ir.Value, mgpu.FragmentedArray, literals.TypedNdArray)
           ):
-            idx = lowering._as_index(idx)  # pylint: disable=protected-access
+            idx = lowering._as_index(idx)
           else:
             raise ValueError(
                 "Barrier can only be indexed with integers or slices, got"
                 f" {idx}"
             )
 
-          idx = arith_dialect.muli(idx, lowering._as_index(stride))  # pylint: disable=protected-access
+          idx = arith_dialect.muli(idx, lowering._as_index(stride))
           if base_index is None:
             base_index = idx
           else:
@@ -1532,12 +1580,16 @@ def _barrier_arrive_pp_eqn(
     context: jax_core.JaxprPpContext,
     settings: jax_core.JaxprPpSettings,
 ):
-  del settings
-  barrier, *flat_transforms = eqn.invars
+  barrier, *flat_args = eqn.invars
+  pp_params = {}
+  if eqn.params["has_user_predicate"]:
+    *flat_args, user_predicate = flat_args
+    pp_params["user_predicate"] = user_predicate.pretty_print(context)
   transforms_treedef = eqn.params["transforms_treedef"]
-  transforms = transforms_treedef.unflatten(flat_transforms)
+  transforms = transforms_treedef.unflatten(flat_args)
   return pp.concat([
       pp.text("barrier_arrive"),
+      jax_core.pp_kv_pairs(pp_params.items(), context, settings),
       pp.text(" "),
       state_primitives.pp_ref_transforms(context, barrier, transforms),
   ])
@@ -1553,10 +1605,17 @@ jax_core.pp_eqn_rules[barrier_arrive_p] = _barrier_arrive_pp_eqn
 def _barrier_arrive_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,
-    *flat_transforms,
+    *flat_args,
     transforms_treedef,
+    has_user_predicate: bool = False,
 ):
-  transforms = transforms_treedef.unflatten(flat_transforms)
+  if has_user_predicate:
+    *flat_args, user_predicate = flat_args
+    predicate = lowering._ensure_ir_value(user_predicate, jnp.bool)  # pylint: disable=protected-access
+  else:
+    predicate = None
+
+  transforms = transforms_treedef.unflatten(flat_args)
   barrier_aval = ctx.avals_in[0]
   assert isinstance(barrier_aval, state_types.AbstractRef)
   base_index = _get_barrier_base_index(barrier_aval, transforms)
@@ -1575,9 +1634,9 @@ def _barrier_arrive_lowering(
       raise NotImplementedError(
           "Arriving on a collective barrier is not supported in a warp context"
       )
-    barrier.arrive(orders_tensor_core)
+    barrier.arrive(orders_tensor_core=orders_tensor_core, predicate=predicate)
   elif ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
-    barrier.arrive(orders_tensor_core)
+    barrier.arrive(orders_tensor_core=orders_tensor_core, predicate=predicate)
   else:
     if scope == mgpu_utils.ThreadSubset.WARP and not orders_tensor_core:
       arrival_count = 4
@@ -1585,6 +1644,8 @@ def _barrier_arrive_lowering(
       arrival_count = 1
 
     pred = ctx.module_ctx.single_lane_predicate if orders_tensor_core else None
+    if predicate is not None:
+      pred = predicate if pred is None else arith_dialect.andi(predicate, pred)
     barrier.arrive(
         arrival_count=arrival_count,
         orders_tensor_core=orders_tensor_core,
@@ -1594,14 +1655,22 @@ def _barrier_arrive_lowering(
   return ()
 
 
-def barrier_arrive(barrier: state.AbstractRef) -> None:
+def barrier_arrive(
+    barrier: state.AbstractRef,
+    *,
+    predicate: jax.Array | None = None,
+) -> None:
   """Arrives at the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
       barrier, None, "barrier_arrive"
   )
   flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
   barrier_arrive_p.bind(
-      barrier, *flat_transforms, transforms_treedef=transforms_treedef
+      barrier,
+      *flat_transforms,
+      *() if predicate is None else (predicate,),
+      transforms_treedef=transforms_treedef,
+      has_user_predicate=predicate is not None,
   )
 
 
@@ -1758,8 +1827,10 @@ wait_smem_to_gmem_p.multiple_results = True
 
 
 @wait_smem_to_gmem_p.def_effectful_abstract_eval
-def _wait_smem_to_gmem_abstract_eval(n, *, wait_read_only):
-  del n, wait_read_only  # Unused.
+def _wait_smem_to_gmem_abstract_eval(*, n: int, wait_read_only):
+  del wait_read_only  # Unused.
+  if not isinstance(n, int) or n < 0:
+    raise ValueError(f"n must be a non-negative integer, got {n}")
   return (), {gpu_core._memory_effect}
 
 
@@ -1773,7 +1844,7 @@ def _wait_smem_to_gmem_abstract_eval(n, *, wait_read_only):
 @lowering.register_lowering_rule(
     wait_smem_to_gmem_p, *gpu_core.WGxWARP_SEMANTICS)
 def _wait_smem_to_gmem_lowering(
-    ctx: lowering.LoweringRuleContext, n, *, wait_read_only
+    ctx: lowering.LoweringRuleContext, *, n: int, wait_read_only
 ):
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
     scope = mgpu_utils.ThreadSubset.WARP
@@ -1794,7 +1865,7 @@ def wait_smem_to_gmem(n: int, wait_read_only: bool = False) -> None:
     wait_read_only: If ``True``, wait for the in flight copies to finish
       reading from SMEM. The writes to GMEM are not waited for.
   """
-  wait_smem_to_gmem_p.bind(n, wait_read_only=wait_read_only)
+  wait_smem_to_gmem_p.bind(n=n, wait_read_only=wait_read_only)
 
 
 commit_group_p = jax_core.Primitive("commit_group")
@@ -2267,21 +2338,23 @@ wgmma_wait_p.multiple_results = True
 
 def wgmma_wait(n: int):
   """Waits until there is no more than ``n`` WGMMA operations in flight."""
-  return wgmma_wait_p.bind(n)
+  return wgmma_wait_p.bind(n=n)
 
 
 @wgmma_wait_p.def_effectful_abstract_eval
-def wgmma_wait_effectful_abstract_eval(_):
+def wgmma_wait_effectful_abstract_eval(*, n: int):
+  if not isinstance(n, int) or n < 0:
+    raise ValueError(f"n must be a non-negative integer, got {n}")
   return [], {gpu_core._wgmma_pipeline_effect}
 
 
 @lowering.register_lowering_rule(wgmma_wait_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(wgmma_wait_p, mgpu.LoweringSemantics.Warpgroup)
-def _wgmma_wait_lowering(ctx: lowering.LoweringRuleContext, allow_groups):
+def _wgmma_wait_lowering(ctx: lowering.LoweringRuleContext, *, n: int):
   del ctx
   void = ir.Type.parse("!llvm.void")
   llvm_dialect.inline_asm(
-      void, [], f"wgmma.wait_group.sync.aligned {int(allow_groups)};", "", has_side_effects=True,
+      void, [], f"wgmma.wait_group.sync.aligned {n};", "", has_side_effects=True,
   )
   return ()
 
@@ -3253,8 +3326,14 @@ set_max_registers_p.multiple_results = True
 
 
 @set_max_registers_p.def_effectful_abstract_eval
-def _set_max_registers_abstract_eval(n, *, action):
-  del n, action  # Unused.
+def _set_max_registers_abstract_eval(*, n: int, action):
+  # The register count of `setmaxnreg` must be a multiple of 8.
+  if not isinstance(n, int) or n <= 0 or n % 8:
+    raise ValueError(f"n must be a positive multiple of 8, got {n}")
+  if action not in ("increase", "decrease"):
+    raise ValueError(
+        f"action must be 'increase' or 'decrease', got {action!r}"
+    )
   return (), {gpu_core._memory_effect}
 
 
@@ -3263,14 +3342,14 @@ def _set_max_registers_abstract_eval(n, *, action):
 @lowering.register_lowering_rule(
     set_max_registers_p, mgpu.LoweringSemantics.Warpgroup)
 def _set_max_registers_lowering(
-    ctx: lowering.LoweringRuleContext, n, *, action
+    ctx: lowering.LoweringRuleContext, *, n: int, action
 ):
   del ctx
   action_str = "inc" if action == "increase" else "dec"
   llvm_dialect.inline_asm(
       ir.Type.parse("!llvm.void"),
       [],
-      f"setmaxnreg.{action_str}.sync.aligned.u32 {int(n)};",
+      f"setmaxnreg.{action_str}.sync.aligned.u32 {n};",
       "",
       has_side_effects=True,
   )
@@ -3279,7 +3358,7 @@ def _set_max_registers_lowering(
 
 def set_max_registers(n: int, *, action: Literal["increase", "decrease"]):
   """Sets the maximum number of per-lane registers in the thread."""
-  set_max_registers_p.bind(n, action=action)
+  set_max_registers_p.bind(n=n, action=action)
 
 
 commit_smem_p = jax_core.Primitive("commit_smem")
@@ -3960,6 +4039,9 @@ lowering.register_lowering_rule(load_p, *gpu_core.LANExWARP_SEMANTICS)(
     lowering._get_lowering_rule
 )
 lowering.register_lowering_rule(load_p, mgpu.LoweringSemantics.Warpgroup)(
+    lowering._get_lowering_rule_wg
+)
+lowering.register_lowering_rule(load_p, *gpu_core.WGxWARP_SEMANTICS)(
     lowering._get_lowering_rule_wg
 )
 
@@ -4905,7 +4987,7 @@ def try_cluster_cancel_lowering(
     if axis_names.wg is not None and axis == axis_names.wg:
       is_first_wg = eq(mgpu.warpgroup_idx(), mgpu.c(0, i32))
     else:
-      cluster_dim = lowering._resolve_cluster_axis(axis_names, axis)  # pylint: disable=protected-access
+      cluster_dim = lowering._resolve_cluster_axis(axis_names, axis)
       cluster_idx = mgpu.utils.cluster_idx(cluster_dim)
       is_first_cta = arith_dialect.andi(is_first_cta, eq(cluster_idx, zero))
 

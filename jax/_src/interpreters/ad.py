@@ -303,8 +303,7 @@ def backward_pass3(
   # Returns a dict of backward-pass log entries. A fancy transpose rule can
   # contribute entries by returning a dict (None, which all accumulator-style
   # rules return today, means the same as {}). Entries are merged in backward
-  # execution order with clobber semantics, so on a key collision the entry
-  # from the earlier-in-forward-order equation wins.
+  # execution order, and repeated keys are an error.
   if all(type(ct) is Zero for ct in cotangents_in) and not jaxpr.effects:
     return {}
 
@@ -381,6 +380,12 @@ def _merge_rule_logs(logs: dict, eqn_logs, primitive) -> dict:
         f"the fancy transpose rule for '{primitive}' should return None or a "
         "dict of backward-pass log entries (see VJP.with_logs), but it "
         f"returned a {type(eqn_logs).__name__}")
+  for key in eqn_logs:
+    if key in logs:
+      raise ValueError(
+          f"Duplicate backward-pass log key {key!r} from the fancy transpose "
+          f"rule for '{primitive}'. Each key must be unique within a "
+          "backward pass.")
   return {**logs, **eqn_logs} if eqn_logs else logs
 
 def _name_stack_ctx(src_info):
@@ -708,9 +713,8 @@ class LinearizeTrace(Trace):
   def process_primitive(self, primitive, tracers, params, /):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     tangent_nzs = [type(t) is not Zero for t in tangents_in]
-    if (all(type(t) is Zero for t in tangents_in) and
-        primitive is not core.ref_p and primitive is not core.empty_ref_p and
-        type(params.get('_prim')).__name__ != 'PrimalLeftTangentRight' and
+    if (not any(tangent_nzs) and
+        primitive not in linearize_on_zero_tangents and
         not any(isinstance(typeof(x), AbstractRef) for x in primals_in)):
       avals = tuple(core.typeof(x) for x in primals_in)
       return primitive.bind_with_trace(self.parent_trace, primals_in, avals, params)
@@ -921,6 +925,7 @@ class LinearizeTracer(Tracer[LinearizeTrace]):
 primitive_jvps : dict[core.Primitive, Callable] = {}
 primitive_transposes: dict[core.Primitive, Callable] = {}
 primitive_linearizations : dict[core.Primitive, Callable]  = {}
+linearize_on_zero_tangents: set[core.Primitive] = set()  # never skip these rules
 
 def deflinear(primitive, transpose_rule):
   primitive_jvps[primitive] = partial(linear_jvp, primitive)

@@ -523,6 +523,27 @@ PyObject* WeakrefLRUCacheBase::Call(PyObject* self_obj,
   std::vector<nb::object> miss_keys;
   nb::object explainer;
 
+  // We must ensure that entry is destroyed under the lock so that if it is
+  // the last reference, its destructor ~CacheEntry runs under the lock.
+  // There are various scenarios where our copy of entry ends up as the last
+  // owner of the entry, e.g., consider if a thread races to insert an entry
+  // at the same time another thread calls Clear().
+  absl::Cleanup destroy_entry_under_lock = [self_obj, &entry, &cache_ptr]() {
+    if (entry || cache_ptr) {
+      nb::ft_object_guard lock(self_obj);
+      entry.reset();
+      cache_ptr.reset();
+    }
+  };
+
+  // Ensure that if this call inserted `entry`, `entry->completed` is notified
+  // even if an exception or error occurs before computation completes.
+  absl::Cleanup notify = [&inserted, &entry]() {
+    if (inserted) {
+      entry->completed.Notify();
+    }
+  };
+
   {
     nb::ft_object_guard lock(self_obj);
     ++total_queries_;
@@ -593,23 +614,8 @@ PyObject* WeakrefLRUCacheBase::Call(PyObject* self_obj,
     }
   }
 
-  // We must ensure that entry is destroyed under the lock so that if it is
-  // the last reference, its destructor ~CacheEntry runs under the lock.
-  // There are various scenarios where our copy of entry ends up as the last
-  // owner of the entry, e.g., consider if a thread races to insert an entry
-  // at the same time another thread calls Clear().
-  absl::Cleanup destroy_entry_under_lock = [self_obj, &entry, &cache_ptr]() {
-    nb::ft_object_guard lock(self_obj);
-    entry.reset();
-    cache_ptr.reset();
-  };
-
   if (!entry->completed.HasBeenNotified()) {
     if (inserted) {
-      // explainer and fn_ may throw, so we use an absl::Cleanup to ensure
-      // entry->completed is always notified.
-      absl::Cleanup notify = [&] { entry->completed.Notify(); };
-
       if (explainer) {
         nb::object py_miss_keys = nb::cast(miss_keys);
 

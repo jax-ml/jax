@@ -740,6 +740,7 @@ for _op in [
     arith.MinSIOp,
     arith.MulIOp,
     arith.MulFOp,
+    arith.NegFOp,
     arith.OrIOp,
     arith.FloorDivSIOp,
     arith.DivSIOp,
@@ -761,7 +762,9 @@ for _op in [
     mlir_math.SinOp,
     mlir_math.CosOp,
     mlir_math.LogOp,
+    mlir_math.Log2Op,
     mlir_math.RsqrtOp,
+    mlir_math.SqrtOp,
     mlir_math.TanhOp,
     mlir_math.AbsFOp,
     mlir_math.AbsIOp,
@@ -1191,7 +1194,8 @@ def _mma_constraint_system(
 ) -> ConstraintSystemDerivationRuleResult:
   del ctx
   element_type = op.a.type.element_type
-  layouts = MMALayouts(element_type)
+  m, n = op.accumulator.type.shape
+  layouts = MMALayouts.for_shape(element_type, m, n)
 
   assignments: dict[cs.Variable, cs.Constant] = {}
   value_sites_for_variable: ValueSitesForVariable = {}
@@ -2569,7 +2573,7 @@ def _construct_value_error_with_op_stacktrace(
   tb = None
   try:
     tb = error.traceback_from_op(culprit_op.operation)
-  except Exception:  # pylint: disable=broad-except
+  except Exception:
     pass
   ve = ValueError(msg)
   if tb is not None:
@@ -2810,6 +2814,15 @@ def infer_layout(
       global_constraint_system
   )
 
+  # TODO(bchetioui): Remove this fallback once minimum jaxlib version is 0.11.2.
+  dump_options = mgpu.get_or_set_dump_options(module)  # pyrefly: ignore[missing-attribute]
+  if getattr(dump_options, "constraint_system", False):
+    utils.dump_to_file_or_stdout(
+        str(global_constraint_system),
+        f"{dump_options.module_basename}.constraint_system.txt",
+        dump_options.dump_path
+    )
+
   # Attempt to find assignments that satisfy the constraint system.
   solution, remaining_fuel = find_assignments_for(
       list(ctx.value_sites_for_variable.keys()),
@@ -2841,7 +2854,8 @@ def infer_layout(
 
     raise ValueError(
         "Failed to infer a possible set of layouts. This should only happen if "
-        "user-provided layout casts are unsatisfiable."
+        "user-provided layout casts are unsatisfiable. To dump the constraint "
+        "system for debugging, use `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM=1`."
     )
 
   layout_for_value_site: dict[ValueSite, cs.Constant] = {}

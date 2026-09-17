@@ -145,7 +145,7 @@ def call_layout_rule(prim, layout_rule, in_avals, out_avals, **kwargs):
   if cur_layout_mode is LayoutMode.PALLAS_TPU:
     return mosaic_tpu_layout_rule(prim, in_avals, out_avals, **kwargs)  # type: ignore
   if cur_layout_mode is LayoutMode.PALLAS_GPU:
-    from jax._src.pallas.mosaic_gpu.layout_rules import mgpu_layout_rule  # pylint: disable=g-import-not-at-top
+    from jax._src.pallas.mosaic_gpu.layout_rules import mgpu_layout_rule
     return mgpu_layout_rule(prim, in_avals, out_avals, **kwargs)
 
   assert cur_layout_mode is LayoutMode.JAX

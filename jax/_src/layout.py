@@ -15,13 +15,16 @@
 from __future__ import annotations
 from contextlib import contextmanager
 import enum
+from typing import Any
 
 import numpy as np
 from jax._src.dtypes import iinfo, issubdtype
-from jax._src import config as jax_config
 from jax._src.sharding import Sharding
 from jax._src.util import tuple_insert
+from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
+
+config_ext = _jax.config
 
 Shape = tuple[int, ...]
 
@@ -38,20 +41,26 @@ class LayoutMode(enum.Enum):
   PALLAS_TPU = enum.auto()
   PALLAS_GPU = enum.auto()
 
+layout_tracing_mode = config_ext.Config[Any](
+    'layout_tracing_mode',
+    LayoutMode.AUTO,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
 def get_layout_mode():
-  val = jax_config.layout_tracing_mode.value
-  return LayoutMode.AUTO if val is None else val
+  return layout_tracing_mode.value
 
 @contextmanager
 def use_layout_mode(mode):
   if not isinstance(mode, LayoutMode):
     raise TypeError(
         f'Expected mode of type `LayoutMode`. Got type: {type(mode)}')
-  prev_mode = jax_config.layout_tracing_mode.swap_local(mode)
+  prev_mode = layout_tracing_mode.swap_local(mode)
   try:
     yield
   finally:
-    jax_config.layout_tracing_mode.set_local(prev_mode)
+    layout_tracing_mode.set_local(prev_mode)
 
 
 class Layout:

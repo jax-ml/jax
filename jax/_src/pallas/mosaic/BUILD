@@ -32,11 +32,12 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax/_src:core",
-        "//jax/_src:deprecations",
         "//jax/_src:flattree",
         "//jax/_src:frozen_dict",
         "//jax/_src:lax",
         "//jax/_src:partial_eval",
+        "//jax/_src:pretty_printer",
+        "//jax/_src:state_types",
         "//jax/_src:tpu_custom_call",
         "//jax/_src:tree_util",
         "//jax/_src:util",
@@ -61,11 +62,15 @@ pytype_library(
     deps = [
         ":core",
         "//jax",
+        "//jax/_src:batching",
         "//jax/_src:core",
         "//jax/_src:dtypes",
+        "//jax/_src:effects",
         "//jax/_src:flattree",
+        "//jax/_src:lax",
         "//jax/_src:mlir",
         "//jax/_src:pretty_printer",
+        "//jax/_src:random",
         "//jax/_src:tree_util",
         "//jax/_src:typing",
         "//jax/_src:util",
@@ -256,5 +261,20 @@ pytype_strict_library(
     visibility = ["//jax:internal"] + jax_visibility("pallas/mosaic/tpu_info"),
     deps = [
         "//jax/_src:api",
+    ],
+)
+
+pytype_library(
+    name = "prefetch",
+    srcs = ["prefetch.py"],
+    deps = [
+        ":core",
+        ":helpers",
+        ":pipeline",
+        "//jax",
+        "//jax/_src:core",
+        "//jax/_src:lax",
+        "//jax/_src:tree_util",
+        "//jax/_src/pallas",
     ],
 )

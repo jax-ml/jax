@@ -989,15 +989,6 @@ mesh_context_manager = config_ext.Config[Any](
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
-abstract_mesh_context_manager = config_ext.Config[Any](
-    'abstract_mesh_context_manager',
-    None,
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
-device_context = config_ext.Config[Any](
-    'device_context', None, include_in_jit_key=True
-)
 compute_on_context_manager = config_ext.Config[Any](
     'compute_on_context_manager',
     None,
@@ -1012,12 +1003,6 @@ xla_metadata_context_manager = config_ext.Config[Any](
 )
 pallas_tpu_interpret_mode_context_manager = config_ext.Config[Any](
     'pallas_tpu_interpret_mode_context_manager',
-    None,
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
-layout_tracing_mode = config_ext.Config[Any](
-    'layout_tracing_mode',
     None,
     include_in_jit_key=True,
     include_in_trace_context=True,
@@ -2374,17 +2359,6 @@ jax_pallas_enable_debug_checks = bool_state(
     help=(
         'If set, ``pl.debug_check`` calls are checked at runtime. Otherwise,'
         ' they are a noop.'
-    ),
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
-
-jax_pallas_use_mosaic_gpu = bool_state(
-    name='jax_pallas_use_mosaic_gpu',
-    default=bool_env('JAX_PALLAS_USE_MOSAIC_GPU', True),
-    help=(
-        'If True, lower Pallas kernels to the experimental Mosaic GPU'
-        ' dialect, instead of Triton IR.'
     ),
     include_in_jit_key=True,
     include_in_trace_context=True,

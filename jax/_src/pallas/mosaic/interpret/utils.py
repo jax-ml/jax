@@ -23,6 +23,8 @@ from jax import lax
 from jax._src import core as jax_core
 from jax._src import source_info_util
 from jax._src.pallas import primitives
+from jax._src.state import indexing
+from jax._src.state import types as state_types
 from jax._src.util import safe_map
 import jax.numpy as jnp
 import numpy as np
@@ -323,6 +325,86 @@ def _compose_slice_or_index(slice_or_idx1, slice_or_idx2):
       )
       i += 1
       j += 1
+
+
+@dataclasses.dataclass(frozen=True)
+class Access:
+  """What a ref access touches.
+
+  Use as `buffer[access.range].transpose(access.permutation)`. The range has one
+  entry per buffer axis and is relative to the buffer's logical shape.
+  """
+
+  range: tuple[slice | int, ...]
+  permutation: tuple[int, ...] | None = None
+
+  @property
+  def inverse_permutation(self) -> tuple[int, ...] | None:
+    if self.permutation is None:
+      return None
+    inverse = [0] * len(self.permutation)
+    for position, axis in enumerate(self.permutation):
+      inverse[axis] = position
+    return tuple(inverse)
+
+  @property
+  def shape(self) -> tuple[int, ...]:
+    """The shape of the value read or written assuming no OOB access."""
+    requested = []
+    for r in self.range:
+      if isinstance(r, int):
+        continue  # An integer index drops its axis.
+      step = 1 if r.step is None else r.step
+      requested.append(max(0, (r.stop - r.start + step - 1) // step))
+    if self.permutation is not None:
+      requested = [requested[axis] for axis in self.permutation]
+    return tuple(requested)
+
+
+def _compose_axis(outer: slice, inner):
+  """Composes `inner`, stated in `outer`'s coordinates, with `outer`."""
+  if not isinstance(inner, indexing.Slice):
+    inner = int(inner)
+  return _compose_slice_or_index(
+      (outer,), (_transform_slice_or_index(inner),)
+  )[0]
+
+
+def to_access(transforms, shape: Sequence[int]) -> Access:
+  """Normalizes a ref's transforms into one buffer range plus one permutation.
+
+  Indexing a transposed view is the same as indexing the buffer with the
+  indices permuted and transposing the result, so however indexers and
+  transposes are interleaved they collapse into this pair.
+  """
+  # For each buffer axis, what is selected from it.
+  selection: list[slice | int] = [slice(0, dim, 1) for dim in shape]
+  # The buffer axes still visible.
+  visible = list(range(len(shape)))
+
+  for transform in transforms:
+    if isinstance(transform, state_types.TransposeTransform):
+      permutation = tuple(int(p) for p in transform.permutation)
+      visible = [visible[p] for p in permutation]
+      continue
+    dropped = []
+    for position, index in enumerate(transform.indices):
+      axis = visible[position]
+      outer = selection[axis]
+      assert isinstance(outer, slice)
+      selection[axis] = _compose_axis(outer, index)
+      if not isinstance(index, indexing.Slice):
+        # `int` case, since advanced indexing will be rejected in _compose_axis
+        dropped.append(axis)
+    visible = [axis for axis in visible if axis not in dropped]
+
+  # `buffer[range]` hands back the surviving axes in *buffer* order; the access
+  # wants them in `visible` order.
+  surviving = sorted(visible)
+  permutation = tuple(surviving.index(axis) for axis in visible)
+  if list(permutation) == sorted(permutation):
+    permutation = None  # Already in buffer order.
+  return Access(tuple(selection), permutation)
 
 
 def to_range(transforms) -> tuple[slice | int, ...]:

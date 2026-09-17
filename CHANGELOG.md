@@ -17,6 +17,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added {func}`jax.lax.log2` and primitive {data}`jax.lax.log2_p`, making
+    `log2` a first-class primitive in JAX ({func}`jax.numpy.log2` now lowers via
+    `jax.lax.log2`).
   * Added {func}`jax.export.symbolic_dim_bounds` for querying conservative
     bounds on symbolic dimension expressions ({jax-issue}`#40006`).
   * {func}`jax.distributed.initialize` can now secure the coordination service
@@ -27,6 +30,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `JAX_DISTRIBUTED_VERIFY_SECURE_CREDENTIALS` environment variables).
 
 * Changes
+  * `inline=True` in {func}`jax.jit` now corresponds to
+    {attr}`jax.Inline.JAX_LATE` instead of {attr}`jax.Inline.JAX_EARLY`.
   * The minimum CuDNN version for CUDA 12 is v9.10.2.
   * JAX now uses Bazel 8.7.0 to build from source.
   * JAX now uses Bzlmod for its Bazel builds instead of WORKSPACE.
@@ -46,6 +51,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     fabricating a phantom slice for fully-empty inputs.
 
 * Bug fixes
+  * {func}`jax.numpy.sinc` now uses a Taylor series near zero, giving
+    accurate derivatives of all orders. Previously, autodiff of the
+    `sin(πx)/(πx)` quotient suffered catastrophic cancellation near zero
+    ({jax-issue}`#34139`, {jax-issue}`#10750`).
   * Fixed a bug where {func}`jax.numpy.linalg.cond` returned NaN instead of
     infinity for singular matrices when `p` is `None` or `2`, matching NumPy
     and the other norms.
@@ -54,6 +63,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     arrays of the natural result dtype.
   * Fixed {func}`jax.numpy.setdiff1d` raising an `IndexError` when called with
     ``size=0`` on non-empty inputs; it now returns an empty array.
+  * Fixed incorrect gradients for {func}`jax.scipy.linalg.cholesky` and
+    {func}`jax.numpy.linalg.cholesky` with `symmetrize_input=False` where
+    non-zero gradients leaked into the unused triangle of the input matrix
+    ({jax-issue}`#40421`).
+  * Fixed {func}`jax.numpy.median` on an input that is empty along the
+    reduction axis, which previously raised an internal error from ``gather``;
+    it now raises a ``ValueError``.
 
 ## JAX 0.11.1 (August 17, 2026)
 

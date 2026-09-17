@@ -74,7 +74,9 @@ class IndexType(enum.Enum):
     elif isinstance(idx, slice):
       return cls.SLICE
     elif isinstance(idx, indexing.Slice):
-      return cls.DYNAMIC_SLICE
+      if idx.is_dynamic_start or idx.is_dynamic_size:
+        return cls.DYNAMIC_SLICE
+      return cls.SLICE
     elif _is_integer_index(idx):
       return cls.INTEGER
     elif _is_boolean_index(idx):
@@ -113,6 +115,17 @@ class ParsedIndex(NamedTuple):
   index: Index
   typ: IndexType
   consumed_axes: tuple[int, ...]
+
+
+def _as_slice(idx: slice | indexing.Slice) -> slice:
+  if isinstance(idx, slice):
+    return idx
+  elif isinstance(idx, indexing.Slice):
+    assert isinstance(idx.start, int)
+    assert isinstance(idx.size, int)
+    assert isinstance(idx.stride, int)
+    return slice(idx.start, idx.start + idx.size, idx.stride)
+  raise RuntimeError(f"Internal: expected slice or Slice, got {type(idx)}")
 
 
 def _parse_indices(
@@ -221,8 +234,9 @@ class NDIndexer:
     """
     for position, idx in enumerate(self.indices):
       if idx.typ == IndexType.SLICE:
-        assert isinstance(idx.index, slice)
-        elts = [idx.index.start, idx.index.stop, idx.index.step]
+        assert isinstance(idx.index, (slice, indexing.Slice))
+        slc = _as_slice(idx.index)
+        elts = [slc.start, slc.stop, slc.step]
         if not all(_is_slice_element_none_or_constant_or_symbolic(val)
                    for val in elts):
           msg = ("Array slice indices must have static start/stop/step to be used "
@@ -251,8 +265,8 @@ class NDIndexer:
       if idx.typ in [IndexType.INTEGER, IndexType.DYNAMIC_SLICE]:
         return True
       if idx.typ == IndexType.SLICE:
-        slc = idx.index
-        assert isinstance(slc, slice)
+        assert isinstance(idx.index, (slice, indexing.Slice))
+        slc = _as_slice(idx.index)
         axis, = idx.consumed_axes
         size = self.shape[axis]
         start, stop, step = slc.indices(self.shape[axis])
@@ -440,10 +454,11 @@ class NDIndexer:
         strides.append(1)
         squeeze_axes.append(axis)
       elif pidx.typ == IndexType.SLICE:
-        assert isinstance(pidx.index, slice)
+        assert isinstance(pidx.index, (slice, indexing.Slice))
+        slc = _as_slice(pidx.index)
         axis, = pidx.consumed_axes
         size = self.shape[axis]
-        start, stop, stride = pidx.index.indices(size)
+        start, stop, stride = slc.indices(size)
         if stride < 0:
           new_start = min(size, stop + 1 + abs(start - stop - 1) % abs(stride))
           start_indices.append(new_start)
@@ -495,8 +510,9 @@ class NDIndexer:
           raise TypeError("dynamic_slice: only unit steps supported in slice."
                           f" Got {pidx.index} at position {position}")
       elif pidx.typ == IndexType.SLICE:
-        assert isinstance(pidx.index, slice)
-        if pidx.index.step is not None and pidx.index.step not in [-1, 1]:
+        assert isinstance(pidx.index, (slice, indexing.Slice))
+        slc = _as_slice(pidx.index)
+        if slc.step is not None and slc.step not in [-1, 1]:
           raise TypeError("dynamic_slice: only unit steps supported in slice."
                           f" Got {pidx.index} at position {position}")
       elif pidx.typ == IndexType.ARRAY:
@@ -538,12 +554,13 @@ class NDIndexer:
         slice_sizes.append(1)
         squeeze_axes.append(axis)
       elif pidx.typ == IndexType.SLICE:
-        assert isinstance(pidx.index, slice)
-        if pidx.index != slice(None):
+        assert isinstance(pidx.index, (slice, indexing.Slice))
+        slc = _as_slice(pidx.index)
+        if slc != slice(None):
           trivial_slicing = False
         axis, = pidx.consumed_axes
         size = self.shape[axis]
-        start, stop, stride = pidx.index.indices(size)
+        start, stop, stride = slc.indices(size)
         assert stride in [-1, 1]  # validated above
         if stride < 0:
           new_start = stop + 1 + abs(start - stop - 1) % abs(stride)

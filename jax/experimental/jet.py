@@ -429,13 +429,22 @@ def def_comp(prim, comp, **kwargs):
   jet_rules[prim] = partial(jet2, comp, **kwargs)
 
 
+def_comp(lax.exp2_p, lambda x: lax.exp(x * np.log(2)))
 def_comp(lax.expm1_p, lambda x: lax.exp(x) - 1)
+def_comp(lax.log2_p, lambda x: lax.log(x) / np.log(2))
 def_comp(lax.log1p_p, lambda x: lax.log(1 + x))
 def_comp(lax.sqrt_p, lambda x: x ** 0.5)
 def_comp(lax.square_p, lambda x: x * x)
+
+def _one_minus_square_rule(primals_in, series_in):
+  x, = primals_in
+  _, series_out = jet_rules[lax.square_p](primals_in, series_in)
+  return lax.one_minus_square(x), [lax.neg(t) for t in series_out]
+jet_rules[lax.one_minus_square_p] = _one_minus_square_rule
+
 def_comp(lax.rsqrt_p, lambda x: x ** -0.5)
 def_comp(lax.asinh_p, lambda x: lax.log(x + lax.sqrt(lax.square(x) + 1)))
-def_comp(lax.acosh_p, lambda x: lax.log(x + lax.sqrt(lax.square(x) - 1)))
+def_comp(lax.acosh_p, lambda x: lax.log(x + lax.sqrt(x - 1) * lax.sqrt(x + 1)))
 def_comp(lax.atanh_p, lambda x: 0.5 * lax.log(lax.div(1 + x, 1 - x)))
 def_comp(lax.erfc_p, lambda x: 1 - lax.erf(x))
 def_comp(lax.rem_p, lambda x, y: x - y * lax.floor(x / y))

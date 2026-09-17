@@ -306,7 +306,7 @@ def jit(
       ``'tpu'``.
     inline: Optional boolean or :class:`jax.Inline` instance specifying
       the inlining policy for nested jitted functions. Can be passed as a boolean
-      (``True`` for ``jax.Inline.JAX_EARLY``, ``False`` for ``jax.Inline.AUTO``)
+      (``True`` for ``jax.Inline.JAX_LATE``, ``False`` for ``jax.Inline.AUTO``)
       or a :class:`jax.Inline` enum member. Default ``False`` (``jax.Inline.AUTO``).
 
   Returns:
@@ -2031,8 +2031,8 @@ class VJP:
                     self.want_logs)(out_ct)
 
   # Like __call__, but returns a pair (arg_cts, logs), where logs is a dict
-  # merging (with clobber semantics, in backward execution order) the dicts
-  # logged by transpose/vjp_bwd rules. Plain __call__ drops the logs.
+  # merging the dicts logged by transpose/vjp_bwd rules. Repeated keys are an
+  # error, even with plain __call__, which drops the logs.
   with_logs = property(lambda self: self.replace(want_logs=True))
 
   def with_refs(self, *maybe_ct_refs):
@@ -2064,7 +2064,8 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   as ``primals``, even if some values are truncated (e.g., from complex to
   float, or from float64 to float32). To avoid truncation, use dtypes in
   ``primals`` that match the full range of desired outputs from the transposed
-  function. Integer dtypes are not supported.
+  function. The trivial vector-space dtype ``float0`` is also supported.
+  Integer dtypes are supported only for integer-to-integer functions.
 
   Args:
     fun: the linear function to be transposed.
@@ -2107,11 +2108,12 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars), True)
   out_avals, _ = unzip2(out_pvals)
   out_dtypes = [a.dtype for a in out_avals if not a.is_high]
-  if not (all(dtypes.issubdtype(d, np.inexact) for d in in_dtypes + out_dtypes)
-          or all(dtypes.issubdtype(d, np.integer)
+  if not (all(d == float0 or dtypes.issubdtype(d, np.inexact)
+              for d in in_dtypes + out_dtypes)
+          or all(d == float0 or dtypes.issubdtype(d, np.integer)
                  for d in in_dtypes + out_dtypes)):
-    raise TypeError("linear_transpose only supports [float or complex] -> "
-                    "[float or complex], and integer -> integer functions, "
+    raise TypeError("linear_transpose only supports [float, complex, or float0] -> "
+                    "[float, complex, or float0], and integer -> integer functions, "
                     f"but got {in_dtypes} -> {out_dtypes}.")
 
   @api_boundary
@@ -2123,6 +2125,10 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
     if not all(map(core.typecheck, out_avals, out_cts)):
       raise TypeError("cotangent type does not match function output, "
                       f"expected {out_avals} but got {out_cts}")
+    # float0 has only one value; represent it symbolically during transposition
+    # so transpose rules never need to add or otherwise operate on float0 arrays.
+    out_cts = [ad.Zero(a.to_ct_aval()) if getattr(a, 'dtype', None) == float0
+               else ct for a, ct in zip(out_avals, out_cts)]
     dummies = [ad.UndefinedPrimal(a.to_ct_aval()) for a in in_avals]
     in_cts = ad.backward_pass(jaxpr, True, const, dummies, out_cts)
     in_cts = map(ad.instantiate_zeros, in_cts)

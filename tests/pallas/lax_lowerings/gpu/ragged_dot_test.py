@@ -38,6 +38,12 @@ class RaggedDotGpuPallasTest(jtu.JaxTestCase):
       if not jtu.is_cuda_compute_capability_at_least("8.0"):
         self.skipTest("This test requires a GPU")
     super().setUp()
+    self.enter_context(
+          jtu.ignore_warning(
+              category=DeprecationWarning,
+              message="The Pallas Triton backend is deprecated",
+          )
+      )
 
   def _test_ragged_dot(self, m, k, n, num_groups, dtype):
     if dtype == np.float16:

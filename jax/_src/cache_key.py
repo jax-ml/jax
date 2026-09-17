@@ -187,7 +187,7 @@ def _strip_mosaic_debug_info(m: ir.Module) -> None:
   MLIR embedded in backend_config, so source file paths leak into the cache key.
   """
   try:
-    from jax._src.lib import tpu  # pylint: disable=g-import-not-at-top
+    from jax._src.lib import tpu
   except ImportError:
     return
 

@@ -298,7 +298,7 @@ def _assume_multiple_op_lowering_rule(
   return [op.value]
 
 
-@_register_lowering(mgpu.OptimizationBarrierOp)
+@_register_lowering(mgpu.OptimizationBarrierOp, support_warp_semantics=True)
 def _optimization_barrier_op_lowering_rule(
     _: LoweringContext,
     op: mgpu.OptimizationBarrierOp,
@@ -1452,11 +1452,13 @@ def _unary_op_lowering_rule(
 
 for _op, _unary_impl, _is_signed in [
     (mlir_math.RsqrtOp, fa.FragmentedArray.rsqrt, None),
+    (mlir_math.SqrtOp, fa.FragmentedArray.sqrt, None),
     (mlir_math.ExpOp, fa.FragmentedArray.exp, None),
     (mlir_math.Exp2Op, fa.FragmentedArray.exp2, None),
     (mlir_math.SinOp, fa.FragmentedArray.sin, None),
     (mlir_math.CosOp, fa.FragmentedArray.cos, None),
     (mlir_math.LogOp, fa.FragmentedArray.log, None),
+    (mlir_math.Log2Op, fa.FragmentedArray.log2, None),
     (mlir_math.TanhOp, fa.FragmentedArray.tanh, None),
     (mlir_math.AbsFOp, fa.FragmentedArray.abs, None),
     (mlir_math.AbsIOp, fa.FragmentedArray.abs, True),
@@ -1468,6 +1470,7 @@ for _op, _unary_impl, _is_signed in [
         lambda x: x._pointwise(mlir_math.ctlz, restrict_bitwidth=False),
         None,
     ),
+    (arith.NegFOp, operator.neg, None),
 ]:
   _lowerings[_op.OPERATION_NAME] = functools.partial(
       _unary_op_lowering_rule, impl=_unary_impl, is_signed=_is_signed
@@ -1703,7 +1706,8 @@ def _mgpu_mma_op_lowering_rule(
   [out_layout] = inference_utils.out_layouts(mma_op)
 
   a_element_type = mma_op.a.type.element_type
-  mma_layouts = MMALayouts(a_element_type)
+  m, n = mma_op.accumulator.type.shape
+  mma_layouts = MMALayouts.for_shape(a_element_type, m, n)
   expected_acc_layout = layouts_lib.to_layout_attr(mma_layouts.acc)
   assert acc_layout == expected_acc_layout
   assert out_layout == expected_acc_layout
@@ -1725,19 +1729,20 @@ def _mgpu_arrive_op_lowering_rule(
 ) -> Sequence[ir.Value]:
   barrier = utils.DialectBarrierRef.from_barrier_memref(arrive_op.barrier)
   orders_tc = arrive_op.orders_tensor_core.value
+  # TODO(cjfj): simplify when minimum jaxlib version is 0.11.2.
+  predicate = getattr(arrive_op, "predicate", None)
   if orders_tc:
     # Barrier expects a single thread arrival.
-    predicate = ctx.single_lane_predicate
+    pred = ctx.single_lane_predicate
+    predicate = pred if predicate is None else arith.andi(predicate, pred)
     arrival_count = 1
   elif ctx.thread_semantics == utils.ThreadSubset.WARP:
     # In warp-level lowering, we arrive on each CUDA thread in a warp, but the
     # barrier still expects a full 128 arrivals so we arrive 4 times on each
     # CUDA thread instead.
-    predicate = None
     arrival_count = 4
   else:
     # Barrier expects each thread arrives once.
-    predicate = None
     arrival_count = 1
 
   barrier.barrier_ref.arrive(

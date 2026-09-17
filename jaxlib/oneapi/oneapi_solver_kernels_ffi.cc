@@ -32,7 +32,6 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_format.h"
 #include "jaxlib/ffi_helpers.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/solver_kernels_ffi.h"
@@ -50,8 +49,20 @@ namespace oneapi {
 
 namespace ffi = ::xla::ffi;
 
-// Picks the real (orgqr/ormqr) vs complex (ungqr/unmqr) oneMKL routine at
-// compile time inside one templated Impl.
+template <typename T>
+struct RealType {
+  using value = T;
+};
+template <>
+struct RealType<gpuComplex> {
+  using value = float;
+};
+template <>
+struct RealType<gpuDoubleComplex> {
+  using value = double;
+};
+// Picks the real vs complex oneMKL routine (e.g. orgqr/ungqr, ormqr/unmqr,
+// syevd/heevd) at compile time inside one templated Impl.
 template <typename T>
 inline constexpr bool kIsComplex =
     std::is_same_v<T, gpuComplex> || std::is_same_v<T, gpuDoubleComplex>;
@@ -70,14 +81,190 @@ inline constexpr bool kIsComplex =
       break;                                      \
   }
 
-// LU decomposition: getrf (stub)
+// LU decomposition: getrf
+
+template <typename T>
+ffi::Error GetrfImpl(int64_t batch, int64_t rows, int64_t cols,
+                     gpuStream_t stream, ffi::ScratchAllocator& scratch,
+                     ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
+                     ffi::Result<ffi::Buffer<ffi::S32>> ipiv,
+                     ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  int64_t m = rows;
+  int64_t n = cols;
+  int64_t lda = m;
+  int64_t ipiv_len = std::min(m, n);
+
+  FFI_ASSIGN_OR_RETURN(int64_t scratchpad_size, TryCatchToStatus([&] {
+                         return ::oneapi::mkl::lapack::getrf_scratchpad_size<T>(
+                             *stream, m, n, lda);
+                       }));
+  FFI_ASSIGN_OR_RETURN(auto scratchpad,
+                       AllocateWorkspace<T>(scratch, scratchpad_size, "getrf"));
+
+  FFI_ASSIGN_OR_RETURN(
+      auto ipiv_i64,
+      AllocateWorkspace<std::int64_t>(scratch, batch * ipiv_len, "getrf_ipiv"));
+
+  auto* a_data = static_cast<T*>(a.untyped_data());
+  auto* out_data = static_cast<T*>(out->untyped_data());
+  auto* ipiv_data = ipiv->typed_data();
+  auto* info_data = info->typed_data();
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      SyclMemsetAsync(info_data, 0, batch * sizeof(int32_t), stream));
+
+  try {
+    std::int64_t* ipiv_i64_ptr = ipiv_i64;
+    for (int64_t i = 0; i < batch; ++i) {
+      try {
+        ::oneapi::mkl::lapack::getrf(
+            *stream, m, n, out_data, lda, ipiv_i64_ptr, scratchpad,
+            scratchpad_size);
+      } catch (::oneapi::mkl::lapack::exception const& e) {
+        if (e.info() < 0) {
+          return ffi::Error::Internal(e.what());
+        }
+        JAX_FFI_RETURN_IF_GPU_ERROR(SyclMemfillAsync(
+            &info_data[i], static_cast<int32_t>(e.info()), 1, stream));
+      }
+      out_data += m * n;
+      ipiv_i64_ptr += ipiv_len;
+    }
+
+    {
+      int64_t total = batch * ipiv_len;
+      JAX_FFI_RETURN_IF_GPU_ERROR(TryCatchToStatus([&] {
+        stream->submit([&](sycl::handler& cgh) {
+          cgh.parallel_for(sycl::range<1>(total), [=](sycl::id<1> idx) {
+            ipiv_data[idx] = static_cast<int32_t>(ipiv_i64[idx]);
+          });
+        });
+      }));
+    }
+  } catch (std::exception const& e) {
+    return ffi::Error::Internal(e.what());
+  } catch (...) {
+    return ffi::Error::Internal("getrf: unknown exception");
+  }
+
+  return ffi::Error::Success();
+}
+
+// getrf batched
+
+template <typename T>
+ffi::Error GetrfBatchedImpl(int64_t batch, int64_t cols, gpuStream_t stream,
+                            ffi::ScratchAllocator& scratch, ffi::AnyBuffer a,
+                            ffi::Result<ffi::AnyBuffer> out,
+                            ffi::Result<ffi::Buffer<ffi::S32>> ipiv,
+                            ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  int64_t n = cols;
+  int64_t lda = n;
+  int64_t stride_a = n * n;
+  int64_t stride_ipiv = n;
+
+  FFI_ASSIGN_OR_RETURN(
+      int64_t scratchpad_size, TryCatchToStatus([&] {
+        return ::oneapi::mkl::lapack::getrf_batch_scratchpad_size<T>(
+            *stream, n, n, lda, stride_a, stride_ipiv, batch);
+      }));
+  FFI_ASSIGN_OR_RETURN(
+      auto scratchpad,
+      AllocateWorkspace<T>(scratch, scratchpad_size, "getrf_batch"));
+
+  int64_t ipiv_count = batch * n;
+  FFI_ASSIGN_OR_RETURN(
+      auto ipiv_i64,
+      AllocateWorkspace<std::int64_t>(scratch, ipiv_count, "getrf_batch_ipiv"));
+
+  auto* a_data = static_cast<T*>(a.untyped_data());
+  auto* out_data = static_cast<T*>(out->untyped_data());
+  auto* ipiv_data = ipiv->typed_data();
+  auto* info_data = info->typed_data();
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      SyclMemsetAsync(info_data, 0, batch * sizeof(int32_t), stream));
+
+  try {
+    try {
+      ::oneapi::mkl::lapack::getrf_batch(
+          *stream, n, n, out_data, lda, stride_a, ipiv_i64, stride_ipiv, batch,
+          scratchpad, scratchpad_size);
+    } catch (::oneapi::mkl::lapack::batch_error const& be) {
+      auto const& ids = be.ids();
+      auto const& exceptions = be.exceptions();
+      std::vector<int32_t> host_info(batch, 0);
+      for (std::size_t ei = 0; ei < ids.size(); ++ei) {
+        try {
+          std::rethrow_exception(exceptions[ei]);
+        } catch (::oneapi::mkl::lapack::exception const& e) {
+          if (e.info() < 0) {
+            return ffi::Error::Internal(e.what());
+          }
+          int64_t batch_idx = ids[ei];
+          host_info[batch_idx] = static_cast<int32_t>(e.info());
+        }
+      }
+      JAX_FFI_RETURN_IF_GPU_ERROR(
+          gpuMemcpyAsync(info_data, host_info.data(), batch * sizeof(int32_t),
+                         gpuMemcpyHostToDevice, stream));
+      JAX_FFI_RETURN_IF_GPU_ERROR(gpuStreamSynchronize(stream));
+    }
+
+    {
+      JAX_FFI_RETURN_IF_GPU_ERROR(TryCatchToStatus([&] {
+        stream->submit([&](sycl::handler& cgh) {
+          cgh.parallel_for(sycl::range<1>(ipiv_count), [=](sycl::id<1> wi) {
+            ipiv_data[wi] = static_cast<int32_t>(ipiv_i64[wi]);
+          });
+        });
+      }));
+    }
+  } catch (std::exception const& e) {
+    return ffi::Error::Internal(e.what());
+  } catch (...) {
+    return ffi::Error::Internal("getrf_batch: unknown exception");
+  }
+
+  return ffi::Error::Success();
+}
+
+// getrf dispatch
 
 ffi::Error GetrfDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
                          ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
                          ffi::Result<ffi::Buffer<ffi::S32>> ipiv,
                          ffi::Result<ffi::Buffer<ffi::S32>> info) {
-  return ffi::Error(ffi::ErrorCode::kUnimplemented,
-                    "getrf: not yet implemented for OneAPI");
+  auto dataType = a.element_type();
+  if (dataType != out->element_type()) {
+    return ffi::Error::InvalidArgument(
+        "The input and output to getrf must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(a.dimensions()));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, rows, cols}, "out", "getrf"));
+  FFI_RETURN_IF_ERROR(CheckShape(
+      ipiv->dimensions(), {batch, std::min(rows, cols)}, "ipiv", "getrf"));
+  FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "getrf"));
+
+  if (batch > 1 && rows == cols && rows <= 16) {
+    SOLVER_DISPATCH_IMPL(GetrfBatchedImpl, batch, cols, stream, scratch, a, out,
+                         ipiv, info);
+  } else {
+    SOLVER_DISPATCH_IMPL(GetrfImpl, batch, rows, cols, stream, scratch, a, out,
+                         ipiv, info);
+  }
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in getrf", absl::FormatStreamed(dataType)));
 }
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(GetrfFfi, GetrfDispatch,
@@ -484,15 +671,97 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PotrfFfi, PotrfDispatch,
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
 
-// Symmetric Eigenvalue Decomposition: syevd (real) / heevd (complex) (stub)
+// Symmetric Eigenvalue Decomposition: syevd (real) / heevd (complex)
+
+template <typename T>
+ffi::Error SyevdImpl(int64_t batch, int64_t n, gpuStream_t stream,
+                     ffi::ScratchAllocator& scratch, bool lower,
+                     ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
+                     ffi::Result<ffi::AnyBuffer> w,
+                     ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  using Real = typename RealType<T>::value;
+  auto jobz = ::oneapi::mkl::job::vec;
+  auto uplo = lower ? ::oneapi::mkl::uplo::lower : ::oneapi::mkl::uplo::upper;
+
+  FFI_ASSIGN_OR_RETURN(
+      int64_t scratchpad_size, TryCatchToStatus([&] {
+        if constexpr (kIsComplex<T>) {
+          return ::oneapi::mkl::lapack::heevd_scratchpad_size<T>(*stream, jobz,
+                                                                 uplo, n, n);
+        } else {
+          return ::oneapi::mkl::lapack::syevd_scratchpad_size<T>(*stream, jobz,
+                                                                 uplo, n, n);
+        }
+      }));
+  FFI_ASSIGN_OR_RETURN(auto scratchpad,
+                       AllocateWorkspace<T>(scratch, scratchpad_size, "syevd"));
+
+  auto* a_data = static_cast<T*>(a.untyped_data());
+  auto* out_data = static_cast<T*>(out->untyped_data());
+  auto* w_data = static_cast<Real*>(w->untyped_data());
+  auto* info_data = info->typed_data();
+
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      SyclMemsetAsync(info_data, 0, batch * sizeof(int32_t), stream));
+
+  try {
+    for (int64_t i = 0; i < batch; ++i) {
+      try {
+        if constexpr (kIsComplex<T>) {
+          ::oneapi::mkl::lapack::heevd(*stream, jobz, uplo, n, out_data, n,
+                                       w_data, scratchpad, scratchpad_size);
+        } else {
+          ::oneapi::mkl::lapack::syevd(*stream, jobz, uplo, n, out_data, n,
+                                       w_data, scratchpad, scratchpad_size);
+        }
+      } catch (::oneapi::mkl::lapack::exception const& e) {
+        if (e.info() < 0) {
+          return ffi::Error::Internal(e.what());
+        }
+        JAX_FFI_RETURN_IF_GPU_ERROR(SyclMemfillAsync(
+            &info_data[i], static_cast<int32_t>(e.info()), 1, stream));
+      }
+      out_data += n * n;
+      w_data += n;
+    }
+  } catch (std::exception const& e) {
+    return ffi::Error::Internal(e.what());
+  } catch (...) {
+    return ffi::Error::Internal("syevd: unknown exception");
+  }
+  return ffi::Error::Success();
+}
 
 ffi::Error SyevdDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
                          SyevdAlgorithm algorithm, bool lower, ffi::AnyBuffer a,
                          ffi::Result<ffi::AnyBuffer> out,
                          ffi::Result<ffi::AnyBuffer> w,
                          ffi::Result<ffi::Buffer<ffi::S32>> info) {
-  return ffi::Error(ffi::ErrorCode::kUnimplemented,
-                    "syevd: not yet implemented for OneAPI");
+  auto dataType = a.element_type();
+  if (dataType != out->element_type() ||
+      ffi::ToReal(dataType) != w->element_type()) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to syevd must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(a.dimensions()));
+  if (rows != cols) {
+    return ffi::Error::InvalidArgument(
+        "The input matrix to syevd must be square");
+  }
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, rows, cols}, "out", "syevd"));
+  FFI_RETURN_IF_ERROR(CheckShape(w->dimensions(), {batch, cols}, "w", "syevd"));
+  FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "syevd"));
+
+  SOLVER_DISPATCH_IMPL(SyevdImpl, batch, cols, stream, scratch, lower, a, out,
+                       w, info);
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in syevd", absl::FormatStreamed(dataType)));
 }
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(SyevdFfi, SyevdDispatch,
@@ -528,7 +797,86 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(SyrkFfi, SyrkDispatch,
                                   .Ret<ffi::AnyBuffer>()  // c_out
 );
 
-// Singular Value Decomposition: gesvd (stub)
+// Singular Value Decomposition: gesvd
+
+template <typename T>
+ffi::Error GesvdImpl(int64_t batch, int64_t m, int64_t n, gpuStream_t stream,
+                     ffi::ScratchAllocator& scratch, bool full_matrices,
+                     bool compute_uv, ffi::AnyBuffer a,
+                     ffi::Result<ffi::AnyBuffer> out,
+                     ffi::Result<ffi::AnyBuffer> s,
+                     ffi::Result<ffi::AnyBuffer> u,
+                     ffi::Result<ffi::AnyBuffer> vt,
+                     ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  using Real = typename RealType<T>::value;
+
+  auto jobu = ::oneapi::mkl::jobsvd::novec;
+  auto jobvt = ::oneapi::mkl::jobsvd::novec;
+  int64_t ldu = m;
+  int64_t ldvt = n;
+  if (compute_uv) {
+    if (full_matrices) {
+      jobu = ::oneapi::mkl::jobsvd::vectors;
+      jobvt = ::oneapi::mkl::jobsvd::vectors;
+    } else {
+      jobu = ::oneapi::mkl::jobsvd::somevec;
+      jobvt = ::oneapi::mkl::jobsvd::somevec;
+      ldu = m;
+      ldvt = std::min(m, n);
+    }
+  }
+
+  FFI_ASSIGN_OR_RETURN(int64_t scratchpad_size, TryCatchToStatus([&] {
+                         return ::oneapi::mkl::lapack::gesvd_scratchpad_size<T>(
+                             *stream, jobu, jobvt, m, n, m, ldu, ldvt);
+                       }));
+  FFI_ASSIGN_OR_RETURN(auto scratchpad,
+                       AllocateWorkspace<T>(scratch, scratchpad_size, "gesvd"));
+
+  auto* a_data = static_cast<T*>(a.untyped_data());
+  auto* out_data = static_cast<T*>(out->untyped_data());
+  auto* s_data = static_cast<Real*>(s->untyped_data());
+  auto* u_data = compute_uv ? static_cast<T*>(u->untyped_data()) : nullptr;
+  auto* vt_data = compute_uv ? static_cast<T*>(vt->untyped_data()) : nullptr;
+  auto* info_data = info->typed_data();
+
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      SyclMemsetAsync(info_data, 0, batch * sizeof(int32_t), stream));
+
+  int64_t out_step = m * n;
+  int64_t s_step = std::min(m, n);
+  int64_t u_step = compute_uv ? m * (full_matrices ? m : std::min(m, n)) : 0;
+  int64_t vt_step = compute_uv ? (full_matrices ? n : std::min(m, n)) * n : 0;
+
+  try {
+    for (int64_t i = 0; i < batch; ++i) {
+      try {
+        ::oneapi::mkl::lapack::gesvd(
+            *stream, jobu, jobvt, m, n, out_data, m, s_data, u_data, ldu,
+            vt_data, ldvt, scratchpad, scratchpad_size);
+      } catch (::oneapi::mkl::lapack::exception const& e) {
+        if (e.info() < 0) {
+          return ffi::Error::Internal(e.what());
+        }
+        JAX_FFI_RETURN_IF_GPU_ERROR(SyclMemfillAsync(
+            &info_data[i], static_cast<int32_t>(e.info()), 1, stream));
+      }
+      out_data += out_step;
+      s_data += s_step;
+      if (u_data) u_data += u_step;
+      if (vt_data) vt_data += vt_step;
+    }
+  } catch (std::exception const& e) {
+    return ffi::Error::Internal(e.what());
+  } catch (...) {
+    return ffi::Error::Internal("gesvd: unknown exception");
+  }
+  return ffi::Error::Success();
+}
 
 ffi::Error GesvdDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
                          bool full_matrices, bool compute_uv, bool transposed,
@@ -537,8 +885,47 @@ ffi::Error GesvdDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
                          ffi::Result<ffi::AnyBuffer> u,
                          ffi::Result<ffi::AnyBuffer> vt,
                          ffi::Result<ffi::Buffer<ffi::S32>> info) {
-  return ffi::Error(ffi::ErrorCode::kUnimplemented,
-                    "gesvd: not yet implemented for OneAPI");
+  auto dataType = a.element_type();
+  if (out->element_type() != dataType ||
+      s->element_type() != ffi::ToReal(dataType) ||
+      u->element_type() != dataType || vt->element_type() != dataType) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to gesvd must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(a.dimensions()));
+  int64_t m = transposed ? cols : rows;
+  int64_t n = transposed ? rows : cols;
+  if (n > m) {
+    return ffi::Error::InvalidArgument(
+        "The GPU implementation of gesvd requires that the input matrix be m x "
+        "n with m >= n");
+  }
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, rows, cols}, "out", "gesvd"));
+  FFI_RETURN_IF_ERROR(CheckShape(s->dimensions(), {batch, n}, "s", "gesvd"));
+  if (compute_uv) {
+    if (full_matrices) {
+      FFI_RETURN_IF_ERROR(
+          CheckShape(u->dimensions(), {batch, m, m}, "u", "gesvd"));
+    } else {
+      if (transposed) {
+        FFI_RETURN_IF_ERROR(
+            CheckShape(u->dimensions(), {batch, n, m}, "u", "gesvd"));
+      } else {
+        FFI_RETURN_IF_ERROR(
+            CheckShape(u->dimensions(), {batch, m, n}, "u", "gesvd"));
+      }
+    }
+    FFI_RETURN_IF_ERROR(
+        CheckShape(vt->dimensions(), {batch, n, n}, "vt", "gesvd"));
+  }
+  FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "gesvd"));
+
+  SOLVER_DISPATCH_IMPL(GesvdImpl, batch, m, n, stream, scratch, full_matrices,
+                       compute_uv, a, out, s, u, vt, info);
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in gesvd", absl::FormatStreamed(dataType)));
 }
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdFfi, GesvdDispatch,

@@ -115,11 +115,13 @@ _densifying_primitives : list[core.Primitive] = [
   lax.cosh_p,
   lax.eq_p,
   lax.exp_p,
+  lax.exp2_p,
   lax.ge_p,
   lax.gt_p,
   lax.le_p,
   lax.lt_p,
   lax.log_p,
+  lax.log2_p,
   lax.ne_p,
   lax.xor_p
 ]

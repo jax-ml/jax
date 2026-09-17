@@ -213,6 +213,9 @@ def lax_ops():
           "log", 1, float_dtypes + complex_dtypes, test_util.rand_positive
       ),
       op_record(
+          "log2", 1, float_dtypes + complex_dtypes, test_util.rand_positive
+      ),
+      op_record(
           "log1p", 1, float_dtypes + complex_dtypes, test_util.rand_positive
       ),
       # TODO(b/142975473): on CPU, tanh for complex128 is only accurate to
@@ -254,7 +257,7 @@ def lax_ops():
           1,
           float_dtypes + complex_dtypes,
           test_util.rand_default,
-          {np.float32: 3e-5},
+          {np.float32: 3e-5, np.complex64: 3e-5},
       ),
       op_record(
           "asin",

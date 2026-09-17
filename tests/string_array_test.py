@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import concurrent.futures
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -85,6 +87,41 @@ class StringArrayTest(jtu.JaxTestCase):
         [["abcd", "efgh"], ["ijkl", "mnop"]], dtype=np.dtypes.StringDType()
     )
     mesh = jax.sharding.Mesh(np.array(cpu_devices)[:2].reshape((2, 1)), ("x", "y"))
+    sharding = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec("x", "y")
+    )
+
+    if asarray:
+      jax_string_array = jnp.asarray(numpy_string_array, device=sharding)
+    else:
+      jax_string_array = jax.device_put(numpy_string_array, device=sharding)
+    jax_string_array.block_until_ready()
+
+    array_read_back = jax.device_get(jax_string_array)
+    self.assertEqual(array_read_back.dtype, np.dtypes.StringDType())
+    np.testing.assert_array_equal(array_read_back, numpy_string_array)
+
+  @parameterized.named_parameters(
+      ("asarray", True),
+      ("device_put", False),
+  )
+  @jtu.run_on_devices("cpu")
+  def test_non_contiguous_multi_device_array(self, asarray):
+    cpu_devices = jax.devices("cpu")
+    if len(cpu_devices) < 2:
+      self.skipTest(
+          f"Skipping this test because only {len(cpu_devices)} host"
+          " devices are available. Need at least 2."
+      )
+
+    numpy_string_array = np.array(
+        [["abcd", "efgh"], ["ijkl", "mnop"]], dtype=np.dtypes.StringDType()
+    )
+    # Sharding along columns (non-major axis) results in non-contiguous shards
+    # in the global flat row-major buffer.
+    mesh = jax.sharding.Mesh(
+        np.array(cpu_devices)[:2].reshape((1, 2)), ("x", "y")
+    )
     sharding = jax.sharding.NamedSharding(
         mesh, jax.sharding.PartitionSpec("x", "y")
     )
@@ -196,6 +233,20 @@ class StringArrayTest(jtu.JaxTestCase):
         r".*StringDType.*is not a valid dtype",
         lambda: f(input_array),
     )
+
+  def test_string_array_copy_to_host_concurrent(self):
+    def worker(arr: jax.Array) -> None:
+      for _ in range(10):
+        arr.copy_to_host_async()
+        _ = np.asarray(arr)
+        _ = arr._single_device_array_to_np_array_did_copy()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+      for _ in range(10):
+        arr = self.make_test_string_array()
+        futures = [executor.submit(worker, arr) for _ in range(8)]
+        for f in futures:
+          f.result()
 
 
 if __name__ == "__main__":

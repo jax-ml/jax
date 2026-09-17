@@ -92,22 +92,7 @@ class JaxException(Exception):
     raise NotImplementedError
 
 
-@functools.total_ordering
-@dataclasses.dataclass(eq=True, frozen=True, slots=True)
-class ErrorEffect(effects.Effect):
-  error_type: type[JaxException]
-  shape_dtypes: tuple[api.ShapeDtypeStruct, ...]
-
-  def __lt__(self, other: ErrorEffect):
-    shape_dtypes = lambda x: tuple((sd.shape, str(sd.dtype))  # dtype is not comparable
-                                   for sd in x.shape_dtypes)
-    unpack = lambda x: (str(x.error_type), shape_dtypes(x))
-    return (unpack(self) < unpack(other))
-
-effects.lowerable_effects.add_type(ErrorEffect)
-effects.control_flow_allowed_effects.add_type(ErrorEffect)
-effects.custom_derivatives_allowed_effects.add_type(ErrorEffect)
-effects.remat_allowed_effects.add_type(ErrorEffect)
+ErrorEffect = effects.ErrorEffect
 
 class DivisionByZeroError(JaxException):
 
@@ -617,9 +602,10 @@ nan_primitives = [lax.acos_p, lax.acosh_p, lax.add_p, lax.asin_p, lax.asinh_p,
                   lax.cos_p, lax.cosh_p, lax.cumlogsumexp_p, lax.cummax_p,
                   lax.cummin_p, lax.cumprod_p, lax.cumsum_p, lax.digamma_p,
                   lax.dot_general_p, lax.erf_inv_p, lax.erf_p, lax.erfc_p,
-                  lax.exp_p, lax.expm1_p, lax.fft_p, lax.igamma_grad_a_p,
-                  lax.igamma_p, lax.igammac_p, lax.integer_pow_p, lax.lgamma_p,
-                  lax.linear_solve_p, lax.log1p_p, lax.log_p, lax.logistic_p,
+                  lax.exp_p, lax.exp2_p, lax.expm1_p, lax.fft_p,
+                  lax.igamma_grad_a_p, lax.igamma_p, lax.igammac_p,
+                  lax.integer_pow_p, lax.lgamma_p, lax.linear_solve_p,
+                  lax.log1p_p, lax.log2_p, lax.log_p, lax.logistic_p,
                   lax.mul_p, lax.pad_p, lax.pow_p, lax.psum_p,
                   lax.reduce_p, lax.reduce_prod_p,
                   lax.reduce_sum_p, lax.reduce_window_p,

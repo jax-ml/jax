@@ -2417,46 +2417,42 @@ class JaxExportTest(jtu.JaxTestCase):
                                     NamedSharding(mesh4, P("d"))))(a, b)
 
   @jtu.parameterized_filterable(
-    kwargs=[
-        {"use_shardy_on_save": True, "error_msg": "Please enable Shardy",
-         "poly_shape": False},
-        {"use_shardy_on_save": False, "error_msg": "", "poly_shape": False},
-        {"use_shardy_on_save": False, "error_msg": "", "poly_shape": True},
-    ])
-  def test_lower_load_with_different_partitioners(self, use_shardy_on_save,
-                                                  error_msg, poly_shape):
-    with config.use_shardy_partitioner(use_shardy_on_save):
-      mesh = jtu.create_mesh((8,), ("a",))
-      @jax.jit
-      def f(x, y):
-        z = x + y
-        return jax.lax.with_sharding_constraint(
-            z, NamedSharding(mesh, P("a")))
+      kwargs=[
+          {"poly_shape": False},
+          {"poly_shape": True},
+      ]
+  )
+  def test_lower_and_load_with_sharding_constraint(self, poly_shape):
+    mesh = jtu.create_mesh((8,), ("a",))
 
-      args = (
-          jax.ShapeDtypeStruct(
-              (32, 32), dtype=np.float32,
-              sharding=NamedSharding(mesh, P(None, "a"))),
-          jax.ShapeDtypeStruct(
-              (32, 32), dtype=np.float32,
-              sharding=NamedSharding(mesh, P("a"))))
+    @jax.jit
+    def f(x, y):
+      z = x + y
+      return jax.lax.with_sharding_constraint(z, NamedSharding(mesh, P("a")))
 
-      if poly_shape:
-        args = export.symbolic_args_specs(args, shapes_specs=["32, a", "32, a"])
+    args = (
+        jax.ShapeDtypeStruct(
+            (32, 32),
+            dtype=np.float32,
+            sharding=NamedSharding(mesh, P(None, "a")),
+        ),
+        jax.ShapeDtypeStruct(
+            (32, 32), dtype=np.float32, sharding=NamedSharding(mesh, P("a"))
+        ),
+    )
 
-      exp = get_exported(f)(*args)
+    if poly_shape:
+      args = export.symbolic_args_specs(args, shapes_specs=["32, a", "32, a"])
 
-      with config.use_shardy_partitioner(not use_shardy_on_save):
-        a = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
-        a = jax.device_put(a, NamedSharding(mesh, P(None, "a")))
-        b = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
-        b = jax.device_put(b, NamedSharding(mesh, P("a")))
+    exp = get_exported(f)(*args)
 
-        if use_shardy_on_save:
-          with self.assertRaisesRegex(ValueError, error_msg):
-            jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
-        else:
-          jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
+    a = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+    a = jax.device_put(a, NamedSharding(mesh, P(None, "a")))
+    b = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+    b = jax.device_put(b, NamedSharding(mesh, P("a")))
+
+    res = jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
+    self.assertAllClose(a + b, res)
 
   def test_with_multiple_meshes(self):
     nr_devices = 2

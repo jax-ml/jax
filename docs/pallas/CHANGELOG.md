@@ -18,6 +18,17 @@ Remember to align the itemized text with the first line of an item within a list
   * `pl.reciprocal` was moved into {mod}`jax.experimental.pallas.tpu`.
     Accessing it via {mod}`jax.experimental.pallas` is deprecated.
 
+* Removals
+
+  * Removed the previously deprecated `pl.dot`. Use {func}`jax.numpy.dot`,
+    {func}`jax.numpy.einsum` or the `@` operator instead in TPU or MGPU kernels.
+  * Removed the previously deprecated `pl.debug_checks_enabled`. Use
+    `pl.enable_debug_checks.value` instead.
+  * Removed the previously deprecated `pltpu.HOST`. Use `pl.HOST` instead.
+  * Removed the previously deprecated `scrach_shapes` and `out_shapes`
+    arguments from {func}`jax.experimental.pallas.mosaic_gpu.kernel`. Use
+    `scratch_types` and `out_type` instead.
+
 ### Mosaic GPU
 
 * Changes
@@ -30,21 +41,43 @@ Remember to align the itemized text with the first line of an item within a list
     multiple cluster cancellations (these arguments have always been mandatory,
     but it may previously have worked without, albeit non-deterministically!).
 
+* New features
+
+  * Added the `MOSAIC_GPU_DUMP_RESOURCES` environment variable, which dumps
+    the estimated resources (e.g. TMEM columns, SMEM bytes) when compiling a
+    model. Like the other dump variables, it is also enabled by
+    `MOSAIC_GPU_DUMP_TO`.
+  * Added the `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM` environment variable, which
+    dumps the constraint system built during layout inference. This is useful
+    for debugging layout inference failures. Like the other dump variables, it
+    is also enabled by `MOSAIC_GPU_DUMP_TO`.
+
 * Deprecations
 
   * {func}`jax.experimental.pallas.mosaic_gpu.transpose_ref` is
-    deprecated. Use ``ref.transpose(...)` directly instead.
+    deprecated. Use `ref.transpose(...)` directly instead.
+  * Using {func}`jax.experimental.pallas.program_id` and
+    {func}`jax.experimental.pallas.num_programs` in Pallas MGPU kernels is
+    deprecated. Use {func}`jax.lax.axis_index` and {func}`jax.lax.axis_size`
+    instead.
 
 * Removals
 
   * Removed {func}`jax.experimental.pallas.mosaic_gpu.transform_ref`. It is
     only marginally useful in the presence of transform inference. If you find
     that transform inference is insufficient, please file a bug.
+  * Removed the previously deprecated support for
+    {func}`jax.experimental.pallas.pallas_call`. Mosaic GPU kernels can now
+    only be defined via {func}`jax.experimental.pallas.mosaic_gpu.kernel`.
 
 ### TPU
 
 * New features
 
+  * Added {func}`jax.experimental.pallas.tpu.annotate` to attach memory access
+    assumptions (`no_store`, `no_bank_conflict`, `no_hazard`, and
+    `no_hazard_no_deps`) to VMEM/SMEM references, allowing kernels to
+    override compiler scheduling, bundle packing, and memory dependency analysis.
   * Added `jax_pallas_auto_assign_collective_ids_limit` config flag to allow
     configuring the limit for auto-assigned collective IDs.
   * {func}`jax.experimental.pallas.tpu.get_barrier_semaphore` now accepts an

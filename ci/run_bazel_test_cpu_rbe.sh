@@ -102,7 +102,7 @@ if [[ "$run_tests_locally" == 1 ]]; then
   portserver_test_env="--test_env=PORTSERVER_ADDRESS=@unittest-portserver"
 fi
 
-TEST_ARTIFACTS_DIR="test-artifacts"
+TEST_ARTIFACTS_DIR="$JAXCI_TEST_ARTIFACTS_DIR"
 mkdir -p "$TEST_ARTIFACTS_DIR"
 echo "::endgroup::" >&2
 

@@ -53,7 +53,7 @@ limitations under the License.
 #include "nanobind/stl/tuple.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "nanobind/typing.h"
-#include "jaxlib/ft_mutex.h"
+#include "jaxlib/free_threading.h"
 #include "jaxlib/hash_util.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.pb.h"
@@ -92,6 +92,9 @@ PyTreeRegistry::PyTreeRegistry(bool enable_none, bool enable_tuple,
   }
   if (enable_dict) {
     add_builtin_type(&PyDict_Type, PyTreeKind::kDict);
+#if PY_VERSION_HEX >= 0x030F0000
+    add_builtin_type(&PyFrozenDict_Type, PyTreeKind::kFrozenDict);
+#endif
   }
 }
 
@@ -371,7 +374,8 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
       }
       return nb::make_tuple(nb::borrow(x), nb::none());
     }
-    case PyTreeKind::kDict: {
+    case PyTreeKind::kDict:
+    case PyTreeKind::kFrozenDict: {
       nb::dict dict = nb::borrow<nb::dict>(x);
       std::vector<nb::object> sorted_keys = GetSortedPyDictKeys(dict.ptr());
       nb::tuple keys = nb::steal<nb::tuple>(PyTuple_New(sorted_keys.size()));
@@ -459,7 +463,10 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
     return 0;
   }
   PyTreeRegistry* registry = nb::inst_ptr<PyTreeRegistry>(self);
-  ft_lock_guard lock(registry->mu_);
+  // Do not lock registry->mu_ (an ft_mutex / PyMutex) here. Python GC is
+  // stop-the-world even under free-threading, and acquiring a PyMutex in
+  // tp_traverse can deadlock if another thread was unparked while detached and
+  // is waiting in tstate_wait_attach for GC to finish.
   for (const auto& [key, value] : registry->registrations_) {
     Py_VISIT(key.ptr());
     int rval = value->tp_traverse(visit, arg);
@@ -660,7 +667,8 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
         }
         break;
       }
-      case PyTreeKind::kDict: {
+      case PyTreeKind::kDict:
+      case PyTreeKind::kFrozenDict: {
         nb::dict dict = nb::borrow<nb::dict>(handle);
 
         std::vector<nb::object> keys = GetSortedPyDictKeys(dict.ptr());
@@ -673,7 +681,7 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
             keypath->pop_back();
           }
         }
-        node.arity = dict.size();
+        node.arity = keys.size();
         node.sorted_dict_keys = std::move(keys);
         break;
       }
@@ -865,6 +873,7 @@ nb::object PyTreeDef::UnflattenImpl(T leaves) const {
       case PyTreeKind::kNamedTuple:
       case PyTreeKind::kList:
       case PyTreeKind::kDict:
+      case PyTreeKind::kFrozenDict:
       case PyTreeKind::kCustom:
       case PyTreeKind::kDataclass: {
         const int size = agenda.size();
@@ -937,6 +946,21 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
       }
       return std::move(dict);
       break;
+    }
+    case PyTreeKind::kFrozenDict: {
+#if PY_VERSION_HEX >= 0x030F0000
+      nb::dict dict;
+      for (int i = 0; i < node.arity; ++i) {
+        dict[node.sorted_dict_keys[i]] = std::move(children[i]);
+      }
+      PyObject* fd = PyFrozenDict_New(dict.ptr());
+      if (!fd) {
+        throw nb::python_error();
+      }
+      return nb::steal<nb::object>(fd);
+#else
+      throw std::logic_error("frozendict is not supported on Python < 3.15");
+#endif
     }
     case PyTreeKind::kCustom: {
       nb::object tuple = nb::steal(PyTuple_New(node.arity));
@@ -1058,6 +1082,33 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         for (nb::handle key : keys) {
           agenda.push_back(dict[key]);
         }
+        break;
+      }
+
+      case PyTreeKind::kFrozenDict: {
+#if PY_VERSION_HEX >= 0x030F0000
+        if (!PyFrozenDict_CheckExact(object.ptr())) {
+          throw std::invalid_argument(
+              absl::StrFormat("Expected frozendict, got %s.",
+                              nb::cast<std::string_view>(nb::repr(object))));
+        }
+        nb::dict dict = nb::borrow<nb::dict>(object);
+        std::vector<nb::object> keys = GetSortedPyDictKeys(dict.ptr());
+        if (!IsSortedPyDictKeysEqual(keys, node.sorted_dict_keys)) {
+          // Convert to a nb::list for nb::repr to avoid having to stringify a
+          // vector. This is error path so it is fine to pay conversion cost.
+          throw std::invalid_argument(absl::StrFormat(
+              "frozendict key mismatch; expected keys: %s; present keys: %s.",
+              nb::cast<std::string_view>(
+                  nb::repr(nb::cast(node.sorted_dict_keys))),
+              nb::cast<std::string_view>(nb::repr(nb::cast(keys)))));
+        }
+        for (nb::handle key : keys) {
+          agenda.push_back(dict[key]);
+        }
+#else
+        throw std::logic_error("frozendict is not supported on Python < 3.15");
+#endif
         break;
       }
 
@@ -1185,6 +1236,7 @@ nb::object PyTreeDef::Walk(const nb::callable& f_node, nb::handle f_leaf,
       case PyTreeKind::kNamedTuple:
       case PyTreeKind::kList:
       case PyTreeKind::kDict:
+      case PyTreeKind::kFrozenDict:
       case PyTreeKind::kCustom:
       case PyTreeKind::kDataclass: {
         if (agenda.size() < node.arity) {
@@ -1196,7 +1248,8 @@ nb::object PyTreeDef::Walk(const nb::callable& f_node, nb::handle f_leaf,
           agenda.pop_back();
         }
         nb::object node_data = node.node_data;
-        if (node.kind == PyTreeKind::kDict) {
+        if (node.kind == PyTreeKind::kDict ||
+            node.kind == PyTreeKind::kFrozenDict) {
           // Convert to a nb::list for f_node invocation.
           node_data = nb::cast(node.sorted_dict_keys);
         }
@@ -1341,11 +1394,12 @@ std::string PyTreeDef::ToString() const {
       case PyTreeKind::kList:
         representation = absl::StrCat("[", children, "]");
         break;
-      case PyTreeKind::kDict: {
+      case PyTreeKind::kDict:
+      case PyTreeKind::kFrozenDict: {
         if (node.sorted_dict_keys.size() != node.arity) {
           throw std::logic_error("Number of keys and entries does not match.");
         }
-        representation = "{";
+        representation = node.kind == PyTreeKind::kDict ? "{" : "frozendict({";
         std::string separator;
         auto child_iter = agenda.end() - node.arity;
         for (const nb::handle& key : node.sorted_dict_keys) {
@@ -1355,7 +1409,7 @@ std::string PyTreeDef::ToString() const {
           child_iter++;
           separator = ", ";
         }
-        representation += "}";
+        representation += node.kind == PyTreeKind::kDict ? "}" : "})";
         break;
       }
 
@@ -1399,7 +1453,8 @@ nb::object PyTreeDef::ToPickle() const {
   nb::list traversal;
   for (const auto& node : traversal_) {
     nb::object node_data = node.node_data;
-    if (node.kind == PyTreeKind::kDict) {
+    if (node.kind == PyTreeKind::kDict ||
+        node.kind == PyTreeKind::kFrozenDict) {
       // Convert to a nb::list for pickling to avoid having to pickle a vector.
       // Pickle should be a rare operation so this conversion cost is hopefully
       // on non-critical path.
@@ -1428,6 +1483,7 @@ void PyTreeDef::FromPickle(nb::object pickle) {
         node.node_data = t[2];
         break;
       case PyTreeKind::kDict:
+      case PyTreeKind::kFrozenDict:
         node.sorted_dict_keys = nb::cast<std::vector<nb::object>>(t[2]);
         break;
       case PyTreeKind::kCustom:
@@ -1615,6 +1671,13 @@ std::optional<std::pair<nb::object, nb::object>> PyTreeDef::GetNodeData()
     case PyTreeKind::kDict:
       return std::make_pair(builtin_type(&PyDict_Type),
                             nb::cast(node.sorted_dict_keys));
+    case PyTreeKind::kFrozenDict:
+#if PY_VERSION_HEX >= 0x030F0000
+      return std::make_pair(builtin_type(&PyFrozenDict_Type),
+                            nb::cast(node.sorted_dict_keys));
+#else
+      throw std::logic_error("frozendict is not supported on Python < 3.15");
+#endif
     case PyTreeKind::kNamedTuple:
       return std::make_pair(node.node_data, nb::none());
     case PyTreeKind::kCustom:
@@ -1670,7 +1733,8 @@ nb_class_ptr<PyTreeDef> PyTreeDef::FromNodeDataAndChildren(
     node.node_data = node_data->second;
   } else if (node.kind == PyTreeKind::kNamedTuple) {
     node.node_data = node_data->first;
-  } else if (node.kind == PyTreeKind::kDict) {
+  } else if (node.kind == PyTreeKind::kDict ||
+             node.kind == PyTreeKind::kFrozenDict) {
     node.sorted_dict_keys =
         nb::cast<std::vector<nb::object>>(node_data->second);
   }

@@ -2605,6 +2605,64 @@ class PallasCallTest(ptu.PallasTPUTest):
     )(x, y)
     np.testing.assert_array_equal(res, expected)
 
+  @parameterized.product(
+      cmp_op=[
+          operator.gt,
+          operator.ge,
+          operator.lt,
+          operator.le,
+          operator.eq,
+          operator.ne,
+      ],
+      dtype=[jnp.int4, jnp.uint4, jnp.int8, jnp.uint8, jnp.int16, jnp.uint16],
+  )
+  def test_int4_mask_ops_pallas_kernel(self, cmp_op, dtype):
+    if not jtu.is_libtpu_at_least('0.0.48'):
+      self.skipTest(
+          '4-bit integer boolean mask comparisons require libtpu >= 0.0.48'
+      )
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('i4 is not supported on TPU generations < 4')
+
+    iinfo = jnp.iinfo(dtype)
+    cmp_val = 1 if iinfo.min < 0 else 4
+
+    def kernel(x_ref, y_ref, z_ref, o_log_ref, o_un_ref, o_sel_ref):
+      m1 = cmp_op(x_ref[...], cmp_val)
+      m2 = cmp_op(y_ref[...], cmp_val)
+      o_log_ref[...] = (m1 & m2).astype(dtype)
+      o_un_ref[...] = (~m1).astype(dtype)
+      o_sel_ref[...] = jnp.where(m1, y_ref[...], z_ref[...])
+
+    shape = (128, 2048)
+    np_dtype = np.int8 if iinfo.min < 0 else np.uint8
+    x_np = np.random.randint(
+        int(iinfo.min), int(iinfo.max) + 1, size=shape
+    ).astype(np_dtype)
+    y_np = np.random.randint(
+        int(iinfo.min), int(iinfo.max) + 1, size=shape
+    ).astype(np_dtype)
+    z_np = np.random.randint(
+        int(iinfo.min), int(iinfo.max) + 1, size=shape
+    ).astype(np_dtype)
+    x = jnp.asarray(x_np, dtype=dtype)
+    y = jnp.asarray(y_np, dtype=dtype)
+    z = jnp.asarray(z_np, dtype=dtype)
+
+    m1_np, m2_np = cmp_op(x_np, cmp_val), cmp_op(y_np, cmp_val)
+    exp_log = (m1_np & m2_np).astype(np_dtype)
+    exp_un = (~m1_np).astype(np_dtype)
+    exp_sel = np.where(m1_np, y_np, z_np).astype(np_dtype)
+
+    out_struct = jax.ShapeDtypeStruct(shape, dtype)
+    res_log, res_un, res_sel = pl.pallas_call(
+        kernel, out_shape=(out_struct, out_struct, out_struct)
+    )(x, y, z)
+
+    np.testing.assert_array_equal(res_log, exp_log)
+    np.testing.assert_array_equal(res_un, exp_un)
+    np.testing.assert_array_equal(res_sel, exp_sel)
+
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
 class PallasCallPoisonTest(ptu.PallasTPUTest):
@@ -5456,6 +5514,41 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     )(x)
     np.testing.assert_array_equal(out, x)
 
+  @parameterized.parameters('fori_loop', 'run_scoped')
+  def test_aliased_output_write_with_input_read_in_nested_scope(self, scope):
+    # Reads the aliased input only inside a nested scope (a loop body or a
+    # run_scoped) and writes the aliased output. Regression test for the HLO
+    # interpreter, which used to discard the output writes in this case.
+    if not self.INTERPRET and not jtu.is_device_tpu_at_least(4):
+      self.skipTest('DMAs not supported on TPU generations <= 3')
+
+    def kernel(x_hbm_ref, o_hbm_ref, vmem_ref, sem):
+      i = pl.program_id(0)
+      if scope == 'fori_loop':
+        def body(_, carry):
+          pltpu.async_copy(x_hbm_ref.at[i], vmem_ref, sem).wait()
+          return carry
+        lax.fori_loop(0, 1, body, None)
+      else:
+        pltpu.sync_copy(x_hbm_ref.at[i], vmem_ref)
+      vmem_ref[...] += 1
+      pltpu.async_copy(vmem_ref, o_hbm_ref.at[i], sem).wait()
+
+    x = jnp.arange(2 * 8 * 128, dtype=jnp.int32).reshape((2, 8, 128))
+    y = self.pallas_call(
+        kernel,
+        grid=(2,),
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        scratch_shapes=[
+            pltpu.VMEM((8, 128), jnp.int32),
+            pltpu.SemaphoreType.DMA,
+        ],
+        input_output_aliases={0: 0},
+    )(x)
+    np.testing.assert_array_equal(y, x + 1)
+
 
 class MiscellaneousInterpretTest(MiscellaneousTest):
   INTERPRET: bool = True
@@ -5524,8 +5617,13 @@ class EmitPipelineTest(ptu.PallasTPUTest):
   )
   def test_emit_pipeline_small_window(self, tile_major, dtype):
     if not jtu.is_device_tpu_at_least(4) and tile_major == 1:
+      expected_error = (
+          jax.errors.JaxRuntimeError
+          if jtu.is_libtpu_at_least('0.0.48')
+          else error_handling.MosaicError
+      )
       expect_ctx = self.assertRaisesRegex(
-          error_handling.MosaicError,
+          expected_error,
           'The contiguous inner slice in the DMA transfer',
       )
     else:

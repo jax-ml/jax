@@ -1753,7 +1753,7 @@ class ConvTest(ptu.PallasTPUTest):
     )
     try:
       self.pallas_call(kernel, out_shape=out)(lhs, rhs)
-    except Exception:  # pylint: disable=broad-except
+    except Exception:
       return False
     return True
 

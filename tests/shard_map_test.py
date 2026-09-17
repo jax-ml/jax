@@ -1096,7 +1096,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(g2, jnp.cos(jnp.sin(x)) * jnp.cos(x),
                         check_dtypes=False, atol=1e-3, rtol=1e-3)
     saved_res = saved_residuals(f2, x)
-    self.assertLen(saved_res, 1 if config.remat3.value else 2)
+    self.assertLen(saved_res, 3 if config.remat3.value else 2)
 
   @jtu.with_explicit_mesh((2,), ('i',), axis_types=(AxisType.Auto,))
   def test_remat_transform(self, mesh):
@@ -4181,6 +4181,7 @@ class ShardMapTest(jtu.JaxTestCase):
     np_inp = np.arange(16).reshape(8, 2)
     arr = jax.device_put(np_inp, P('x', 'y'))
 
+    @jax.jit
     @partial(jax.shard_map, axis_names=frozenset('x'), out_specs=P('x'))
     def f(x):
       self.assertEqual(get_abstract_mesh().manual_axes, ('x',))
@@ -4192,7 +4193,9 @@ class ShardMapTest(jtu.JaxTestCase):
       self.assertEqual(out.aval.mat.varying, {'x'})
       return out
 
-    out = jax.jit(f)(arr)
+    out = f(arr)
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn('[{"x", ?}, {?}]', lowered_text)
     self.assertArraysEqual(out, np_inp * 2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 

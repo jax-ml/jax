@@ -673,6 +673,12 @@ NB_MODULE(_jax, m) {
                    })
       .def_rw("peak_memory_in_bytes",
               &xla::CompiledMemoryStats::peak_memory_in_bytes)
+      .def_rw("total_allocation_bytes",
+              &xla::CompiledMemoryStats::total_allocation_bytes)
+      .def_rw("indefinite_allocations",
+              &xla::CompiledMemoryStats::indefinite_allocations)
+      .def_rw("peak_unpadded_heap_bytes",
+              &xla::CompiledMemoryStats::peak_unpadded_heap_bytes)
       .def("__str__", &xla::CompiledMemoryStats::DebugString);
 
   m.def("get_execution_stream_id", []() { return GetExecutionStreamId(); });
@@ -1172,6 +1178,13 @@ NB_MODULE(_jax, m) {
   m.def("batched_block_until_ready", [](std::vector<nb::object> xs) {
     xla::ThrowIfError(PyArray::BatchedBlockUntilReady(std::move(xs)));
   });
+
+  m.def(
+      "batched_copy_to_host_async",
+      [](nanobind::sequence py_arrays) {
+        xla::ThrowIfError(PyArray::BatchedCopyToHostAsync(py_arrays));
+      },
+      nb::arg("arrays"));
 
   m.def("check_and_canonicalize_memory_kind", &CheckAndCanonicalizeMemoryKind,
         nb::arg("memory_kind").none(), nb::arg("device_list"));
