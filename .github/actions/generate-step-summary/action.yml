@@ -1,0 +1,48 @@
+name: "Generate Step Summary"
+description: "Generates GitHub Step Summary for Bazel invocations."
+
+inputs:
+  description:
+    description: "Description of the Bazel invocation (e.g., 'CPU RBE tests')."
+    required: true
+  invocation-id:
+    description: "The Bazel invocation ID (as comma-separated id:name pairs)."
+    required: true
+  job-status:
+    description: "The status of the job."
+    required: true
+  bazel-command:
+    description: "The action type ('test' or 'build')."
+    required: false
+    default: "test"
+  artifacts-dir:
+    description: "Directory containing collected test.xml files."
+    required: false
+    default: "test-artifacts"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate Summary
+      shell: bash
+      env:
+        DESCRIPTION: ${{ inputs.description }}
+        INVOCATION_ID: ${{ inputs.invocation-id }}
+        JOB_STATUS: ${{ inputs.job-status }}
+        BAZEL_COMMAND: ${{ inputs.bazel-command }}
+        ARTIFACTS_DIR: ${{ inputs.artifacts-dir }}
+      run: |
+        # Convert job status to exit code proxy for the Python script
+        JOB_STATUS_CODE=$([ "$JOB_STATUS" = "success" ] && echo "0" || echo "1")
+        if [ -d "$ARTIFACTS_DIR" ]; then
+          python3 ci/utilities/generate_step_summary.py "$DESCRIPTION" "$ARTIFACTS_DIR" "$INVOCATION_ID" "$JOB_STATUS_CODE" "$BAZEL_COMMAND"
+        else
+          # Fallback message if artifacts directory doesn't exist (e.g., workflow failed early)
+          ACTION_TYPE=$([ "$BAZEL_COMMAND" = "build" ] && echo "Build" || echo "Tests")
+          {
+            echo "## ❌ $DESCRIPTION"
+            echo ""
+            echo "> [!WARNING]"
+            echo "> **Workflow failed before $ACTION_TYPE could finish.** Please check the workflow logs for errors."
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
