@@ -1215,7 +1215,7 @@ def _transpose_scan_jaxpr_fancy(
 def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
                         ft_in, ft_out, unroll):
   orig_batched = [d is not None for d in dims]
-  _, init_batched, xs_batched = ft_in.update(orig_batched).unpack()
+  _, init_batched, _ = ft_in.update(orig_batched).unpack()
   consts, init, xs = ft_in.update(args).unpack()
   consts_bdims, init_bdims, xs_bdims = ft_in.update(dims).unpack()
 
@@ -1225,6 +1225,27 @@ def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
   # anyway, since that would mean transposing the underlying mutable memory.
   const_axes = list(consts_bdims)
 
+  # An xs which is a Ref is left in place for the same reason. The scan
+  # indexes each xs along its leading axis before the body sees it, so a Ref
+  # xs batched along axis d is batched along axis d - 1 inside the body. A Ref
+  # whose batch axis is the leading axis would need a transposed view of the
+  # buffer, which a Ref cannot provide.
+  xs_is_ref = [isinstance(typeof(x), AbstractRef) for x in xs]
+  xs_axes = []
+  for d, is_ref in zip(xs_bdims, xs_is_ref):
+    if d is None:
+      xs_axes.append(None)
+    elif not is_ref:
+      xs_axes.append(0)
+    elif d == 0:
+      raise NotImplementedError(
+          "vmap of a scan over a Ref batched along its leading axis is not "
+          "supported: that axis is the scan axis, and a Ref cannot be "
+          "transposed. Batch the Ref along another axis, or scan over an "
+          "array instead.")
+    else:
+      xs_axes.append(d - 1)
+
   # Fixpoint computation of which carry are batched: either
   # batched from init, or the carry out is batched. Each iteration promotes
   # at least one carry to batched. We need at most len(carry) iterations,
@@ -1233,7 +1254,7 @@ def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
   carry_batched = init_batched
   for _ in range(1 + len(carry_batched)):
     in_axes = (const_axes + [0 if b else None for b in carry_batched]
-               + [0 if b else None for b in xs_batched])
+               + xs_axes)
     instantiate = list(carry_batched) + [False] * len(ft_out.unpack()[1])
     out_axes_dest = [0 if inst else batching.zero_if_mapped
                      for inst in instantiate]
@@ -1253,8 +1274,9 @@ def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
               else batching.moveaxis(x, d, 0) if now_batched else x
               for x, d, was_batched, now_batched in
               zip(init, init_bdims, init_batched, carry_batched)]
-  new_xs = [batching.moveaxis(x, d, 1) if d is not None and d != 1
-            else x for x, d in zip(xs, xs_bdims)]
+  new_xs = [x if d is None or d == 1 or is_ref
+            else batching.moveaxis(x, d, 1)
+            for x, d, is_ref in zip(xs, xs_bdims, xs_is_ref)]
   new_args = new_consts + new_init + new_xs
 
   outs = scan_p.bind(

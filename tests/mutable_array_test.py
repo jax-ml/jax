@@ -384,6 +384,51 @@ class MutableArrayTest(jtu.JaxTestCase):
     self.assertAllClose(ref[...], jnp.tile(xs.sum(axis=1), (2, 1)),
                         check_dtypes=False)
 
+  @parameterized.product(jit=[True, False], axis=[1, 2])
+  def test_vmap_axes_scan_over_ref(self, jit, axis):
+    # https://github.com/jax-ml/jax/issues/39288
+    # The Ref is the scanned-over input, batched along a non-leading axis.
+    def f(rs):
+      def body(carry, r):
+        r[0] += 1.
+        return carry + r[0], r[0]
+      return jax.lax.scan(body, 0., rs)
+
+    def doit(ref):
+      return jax.vmap(f, in_axes=axis)(ref)
+    if jit:
+      doit = jax.jit(doit)
+
+    # The same program written with arrays, for the expected values.
+    def f_array(xs):
+      def body(carry, r):
+        r = r.at[0].add(1.)
+        return carry + r[0], (r[0], r)
+      carry, (ys, new_xs) = jax.lax.scan(body, 0., xs)
+      return carry, ys, new_xs
+
+    x = jnp.arange(24.).reshape(4, 2, 3)
+    ref = jax.new_ref(x)
+    carry, ys = doit(ref)
+    carry_expected, ys_expected, x_expected = jax.vmap(
+        f_array, in_axes=axis, out_axes=(0, 0, axis))(x)
+    self.assertAllClose(carry, carry_expected, check_dtypes=False)
+    self.assertAllClose(ys, ys_expected, check_dtypes=False)
+    self.assertAllClose(ref[...], x_expected, check_dtypes=False)
+
+  def test_vmap_axes_scan_over_ref_leading_axis(self):
+    # Batching the scanned-over Ref along its leading axis would need a
+    # transposed view of the buffer, so it is rejected with a clear error.
+    def f(rs):
+      def body(carry, r):
+        r[0] += 1.
+        return carry + r[0], None
+      return jax.lax.scan(body, 0., rs)[0]
+
+    ref = jax.new_ref(jnp.zeros((4, 2, 3)))
+    with self.assertRaisesRegex(NotImplementedError, "leading axis"):
+      jax.vmap(f, in_axes=0)(ref)
+
   def test_vmap_extensive_inputs(self):
     def f(x_ref, val):
       x_ref[...] += val
