@@ -536,8 +536,7 @@ def MosaicGPU_VectorLoadOp : Op<MosaicGPU_Dialect, "vector_load",
     non-contiguous memory.
 
     If `optimized` is true, raises an error if we cannot generate an optimised
-    transfer. If unset, fall back to a non-optimized transfer if unable to
-    generate an optimized transfer.
+    transfer. `optimized` defaults to true when unset.
   }];
 
   let arguments = (ins
@@ -610,8 +609,7 @@ def MosaicGPU_VectorStoreOp : Op<MosaicGPU_Dialect, "vector_store",
     non-contiguous memory.
 
     If `optimized` is true, raises an error if we cannot generate an optimised
-    transfer. If unset, fall back to a non-optimized transfer if unable to
-    generate an optimized transfer.
+    transfer. `optimized` defaults to true when unset.
 
     If `atomic_type` is set, performs an atomic store-(add|min|...) of the value.
 

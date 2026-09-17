@@ -791,10 +791,8 @@ def _vector_load_constraint_system(
   constraints: list[cs.Constraint]
   constraints = [cs.NotOfType(dest_var, fa.WGSplatFragLayout)]
 
-  if op.optimized is None or op.optimized:
-    optimized = cs.OptimizedTransferKind.OPTIMIZED
-  else:
-    optimized = cs.OptimizedTransferKind.UNOPTIMIZED
+  # An unset `optimized` attribute means that we require an optimized transfer.
+  optimized = op.optimized is None or bool(op.optimized)
 
   # SMEM
   if _is_smem_ref(op.source):
@@ -839,14 +837,8 @@ def _vector_store_constraint_system(
   value_var = cs.Variable(value)
   value_sites_for_variable = {value_var: [value]}
 
-  # Store is a special case in Pallas, where we are willing to downgrade from
-  # requiring an optimized transfer in some cases.
-  if op.optimized is None:
-    optimized = cs.OptimizedTransferKind.DOWNGRADABLE
-  elif op.optimized:
-    optimized = cs.OptimizedTransferKind.OPTIMIZED
-  else:
-    optimized = cs.OptimizedTransferKind.UNOPTIMIZED
+  # An unset `optimized` attribute means that we require an optimized transfer.
+  optimized = op.optimized is None or bool(op.optimized)
 
   # SMEM
   constraints = []

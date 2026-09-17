@@ -650,27 +650,6 @@ class IsTransferableTmemRegisters(IsTransferable):
     return f"IsTransferableTmemRegisters({self.source} ⟶ {self.target})"
 
 
-class OptimizedTransferKind(enum.Enum):
-  """A classification of the type of SMEM <-> Registers transfer.
-
-  Specifically, this refers to whether the transfer should be optimized to
-  avoid bank conflicts, if optimization is not requested, or if optimization
-  should be done, but downgrading is acceptable.
-  """
-  # Denotes a conflict-free transfer.
-  OPTIMIZED = enum.auto()
-  # Denotes an unoptimized transfer.
-  UNOPTIMIZED = enum.auto()
-  # Denotes a transfer that we are willing to downgrade to UNOPTIMIZED in
-  # certain circumstances. This mode is necessary to accurately model the
-  # Pallas behavior for SMEM stores with certain combinations of layouts and
-  # transforms.
-  #
-  # TODO(bchetioui): implement symmetric default behaviours for load/store in
-  # Pallas, and remove/harden this mode.
-  DOWNGRADABLE = enum.auto()
-
-
 @dataclasses.dataclass(frozen=True)
 class IsTransferableSmemRegisters(IsTransferable):
   """States that `source` layout must be transferable across memory spaces to `target` layout.
@@ -680,7 +659,7 @@ class IsTransferableSmemRegisters(IsTransferable):
   """
   strides: tuple[int, ...]
   bitwidth: int
-  optimized: OptimizedTransferKind
+  optimized: bool
 
   def _is_supported_smem_transfer(
       self,
@@ -695,18 +674,11 @@ class IsTransferableSmemRegisters(IsTransferable):
     tiling = tiling_transform.tiling if tiling_transform is not None else ()
     tiling_rank = len(tiling)
 
-    is_untiled = tiling_rank == 0
     # If `tiling_rank` is 0, then we tile by the shape. This is the logic that
     # is implemented in `load_untiled` and `store_untiled`.
-    if is_untiled:
+    if tiling_rank == 0:
       tiling = self.shape
       tiling_rank = len(tiling)
-
-    optimized = self.optimized != OptimizedTransferKind.UNOPTIMIZED
-    if is_untiled and self.optimized == OptimizedTransferKind.DOWNGRADABLE:
-      # Model the Pallas behavior of downgrading to unoptimized transfers in
-      # this case.
-      optimized = False
 
     int_ty = ir.IntegerType.get_signless(self.bitwidth)
     layout = ir.StridedLayoutAttr.get(0, lowering.tile_strides(self.strides, tiling))
@@ -727,7 +699,7 @@ class IsTransferableSmemRegisters(IsTransferable):
                     swizzle or 16,
                     reg_layout,
                     self.shape,
-                    optimized=optimized,
+                    optimized=self.optimized,
                     ref_tiling_rank=tiling_rank,
                     use_txmatrix=use_txmatrix,
                 )

@@ -2080,23 +2080,29 @@ def _get_lowering_rule_wg(
 @register_lowering_rule(sp.swap_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(sp.swap_p, *gpu_core.LANExWARP_SEMANTICS)
 def _swap_lowering_rule(
-    ctx: LoweringRuleContext, x_ref, value, *leaves, tree
+    ctx: LoweringRuleContext,
+    x_ref,
+    value,
+    *leaves,
+    tree,
+    optimized: bool = True,
+    load: bool = True,
 ):
   if isinstance(x_ref, tcgen05.TMEMRef):
     raise RuntimeError(
         "Stores to TMEM are asynchronous operations and cannot be performed"
         " using the usual syntax. Please use plgpu.async_store_tmem instead."
     )
+  v_aval = ctx.avals_in[1]
   barrier = mgpu.warpgroup_barrier
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
-    if ctx.avals_out[0].shape:
+    if v_aval.shape:
       raise NotImplementedError("Can only store scalars in warp-level lowering.")
     barrier = mgpu_utils.warp_barrier
-  value = _ensure_fa(value, ctx.avals_in[1].dtype)
+  value = _ensure_fa(value, v_aval.dtype)
 
   if not isinstance(x_ref, ir.Value) and isinstance(x_ref, ir.MemRefType):
     raise TypeError(f"Can only store to references (got {x_ref}).")
-  v_aval = ctx.avals_in[1]
   transforms = jax.tree.unflatten(tree, leaves)
   transform_avals = jax.tree.unflatten(tree, ctx.avals_in[2:])
 
@@ -2146,46 +2152,55 @@ def _swap_lowering_rule(
   )
   del x_ref  # Don't use x_ref anymore. Use x_smem instead!
 
+  old_value = ()
+
   match transforms:
-    case _ if math.prod(ctx.avals_out[0].shape) == 1:  # Scalar case.
+    case _ if math.prod(v_aval.shape) == 1:  # Scalar case.
       zero_idx = _ir_constant(0, ir.IndexType.get())
-      indices = [zero_idx] * len(ctx.avals_out[0].shape)
-      old_value = mgpu.FragmentedArray.splat(
-          memref_dialect.load(x_smem, indices),
-          shape=(),
-          is_signed=mgpu_utils.is_signed(v_aval.dtype),
-      )
+      indices = [zero_idx] * len(v_aval.shape)
+      if load:
+        old_value = mgpu.FragmentedArray.splat(
+            memref_dialect.load(x_smem, indices),
+            shape=(),
+            is_signed=mgpu_utils.is_signed(v_aval.dtype),
+        )
       value.store_untiled(x_smem)
     case (gpu_core.UntilingTransform(tiling),):
       if len(tiling) != 2:
         raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
-      old_value = mgpu.FragmentedArray.load_tiled(
-          x_smem,
-          is_signed=mgpu_utils.is_signed(v_aval.dtype),
-          swizzle=swizzle,
-          layout=value.layout,
-          tiling_rank=len(tiling),
+      if load:
+        old_value = mgpu.FragmentedArray.load_tiled(
+            x_smem,
+            is_signed=mgpu_utils.is_signed(v_aval.dtype),
+            swizzle=swizzle,
+            layout=value.layout,
+            optimized=optimized,
+            tiling_rank=len(tiling),
+        )
+      value.store_tiled(
+          x_smem, swizzle=swizzle, optimized=optimized, tiling_rank=len(tiling)
       )
-      value.store_tiled(x_smem, swizzle=swizzle, tiling_rank=len(tiling))
     case ():
       match value.layout:
         case mgpu.TiledLayout():
-          old_value = mgpu.FragmentedArray.load_untiled(
-              x_smem,
-              layout=value.layout,
-              is_signed=mgpu_utils.is_signed(v_aval.dtype),
-              swizzle=swizzle or 16,
-              optimized=False,
-          )
-          value.store_untiled(x_smem, swizzle=swizzle or 16, optimized=False)
+          if load:
+            old_value = mgpu.FragmentedArray.load_untiled(
+                x_smem,
+                layout=value.layout,
+                is_signed=mgpu_utils.is_signed(v_aval.dtype),
+                swizzle=swizzle or 16,
+                optimized=optimized,
+            )
+          value.store_untiled(x_smem, swizzle=swizzle or 16, optimized=optimized)
         case _:
           if swizzle is not None:
             raise NotImplementedError(
                 "Unsupported swizzle transform with strided layout"
             )
-          old_value = mgpu.FragmentedArray.load_strided(
-              x_smem, is_signed=mgpu_utils.is_signed(v_aval.dtype)
-          )
+          if load:
+            old_value = mgpu.FragmentedArray.load_strided(
+                x_smem, is_signed=mgpu_utils.is_signed(v_aval.dtype)
+            )
           value.store_untiled(x_smem)
     case _:
       raise NotImplementedError(f"Unsupported transforms: {transforms}")
@@ -2197,9 +2212,16 @@ def _swap_lowering_rule(
 @register_lowering_rule(sp.swap_p, mgpu.LoweringSemantics.Warpgroup)
 @register_lowering_rule(sp.swap_p, *gpu_core.WGxWARP_SEMANTICS)
 def _swap_lowering_rule_wg(
-    ctx: LoweringRuleContext, x_smem, value, *leaves, tree
+    ctx: LoweringRuleContext,
+    x_smem,
+    value,
+    *leaves,
+    tree,
+    optimized: bool = True,
+    load: bool = True,
 ):
-  shape = ctx.avals_out[0].shape
+  v_aval = ctx.avals_in[1]
+  shape = v_aval.shape
   if shape and not isinstance(value.type, ir.VectorType):
     raise TypeError(f"Can only store scalars or vectors (got {value}).")
   if not (
@@ -2220,12 +2242,15 @@ def _swap_lowering_rule_wg(
         "Transforms are not yet implemented for warpgroup semantics"
     )
   assert isinstance(x_smem, ir.Value)
-  value = _ensure_ir_value(value, ctx.avals_in[1].dtype)
+  value = _ensure_ir_value(value, v_aval.dtype)
+  old_value = ()
   if shape:
-    old_value = mgpu.dialect.vector_load(x_smem)
-    mgpu.dialect.vector_store(value, x_smem)
+    if load:
+      old_value = mgpu.dialect.vector_load(x_smem, optimized=optimized)
+    mgpu.dialect.vector_store(value, x_smem, optimized=optimized)
   else:
-    old_value = memref_dialect.load(x_smem, [])
+    if load:
+      old_value = memref_dialect.load(x_smem, [])
     memref_dialect.store(value, x_smem, [])
   return old_value
 

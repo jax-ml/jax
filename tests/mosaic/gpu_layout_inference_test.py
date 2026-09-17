@@ -1571,7 +1571,7 @@ class LayoutInferenceTest(parameterized.TestCase):
         shape,
         strides,
         bitwidth=32,
-        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+        optimized=False,
     )
     [(_, tiling)] = list(layout_inference.conjure_assignment(
         {var}, cs.ConstraintSystem(constraints=[is_transferable]), arch=(9, 0)
@@ -1597,7 +1597,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     var = cs.Variable(value_site)
     is_transferable = cs.IsTransferableSmemRegisters(
         cs.RegisterLayout(layout), var, shape, (128, 1), bitwidth=32,
-        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+        optimized=False,
     )
     assignments = list(layout_inference.conjure_assignment(
         {var}, cs.ConstraintSystem(constraints=[is_transferable]), arch=(9, 0)
@@ -1624,7 +1624,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     var = cs.Variable(value_site)
     transfer_constraint = lambda reg_layout: cs.IsTransferableSmemRegisters(
         reg_layout, var, shape, tuple(strides), bitwidth=32,
-        optimized=cs.OptimizedTransferKind.OPTIMIZED,
+        optimized=True,
     )
 
     def conjure(constraints) -> list[tuple[cs.Variable, cs.Constant]]:
@@ -2564,29 +2564,24 @@ class LayoutInferenceTest(parameterized.TestCase):
           inference_utils.in_transforms(op), [expected_transforms]
       )
 
-  def test_infer_transforms_for_vector_store_op_downgrades_when_unspecified(self):
+  def test_infer_transforms_for_vector_store_op_optimizes_when_unspecified(self):
     with ir.InsertionPoint(self.module.body):
       smem_ty = ir.MemRefType.get((128, 128), ir.BF16Type.get(), memory_space=mgpu.utils.smem())
       value_ty = ir.VectorType.get((128, 128), ir.BF16Type.get())
-      [smem0, smem1, value0, value1] = undefs(smem_ty, smem_ty, value_ty, value_ty)
-      value0 = layout_cast(value0, fa.TMEM_NATIVE_LAYOUT)
-      store0 = mgpu.dialect.VectorStoreOp(value0, smem0)
-      value1 = layout_cast(value1, fa.WGMMA_LAYOUT)
-      store1 = mgpu.dialect.VectorStoreOp(value1, smem1)
+      [smem, value] = undefs(smem_ty, value_ty)
+      value = layout_cast(value, fa.WGMMA_LAYOUT)
+      store = mgpu.dialect.VectorStoreOp(value, smem)
 
     mgpu.infer_layout(self.module)
 
-    # There is no optimized schedule here, we allow a downgrade.
-    self.assertSequenceEqual(
-        inference_utils.in_transforms(store0), [ir.ArrayAttr.get([])]
-    )
-    # There is an optimized schedule here, so we actually infer the transforms.
+    # An unset `optimized` attribute requires an optimized transfer, so we
+    # infer the transforms that make one possible.
     expected_transforms = ir.ArrayAttr.get([
         mgpu.dialect.TileTransformAttr.get((8, 64)),
         mgpu.dialect.SwizzleTransformAttr.get(128),
     ])
     self.assertSequenceEqual(
-        inference_utils.in_transforms(store1), [expected_transforms]
+        inference_utils.in_transforms(store), [expected_transforms]
     )
 
   def test_slice_smem_gets_empty_by_default(self):
