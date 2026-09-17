@@ -4195,9 +4195,51 @@ class ShardMapTest(jtu.JaxTestCase):
 
     out = f(arr)
     lowered_text = f.lower(arr).as_text()
-    self.assertIn('[{"x", ?}, {?}]', lowered_text)
+    self.assertIn('[{"x"}, {"y"}]', lowered_text)
     self.assertArraysEqual(out, np_inp * 2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_partial_manual_explicit_nested(self, mesh):
+    np_inp = np.arange(128).reshape(8, 4, 4)
+    arr = jax.device_put(np_inp, P('x', 'y', 'z'))
+
+    @jax.shard_map(in_specs=P(None, None, 'z'), out_specs=P(None, None, 'z'))
+    def h(x):
+      self.assertEqual(x.aval.sharding.spec, P(None, None, None))
+      self.assertEqual(x.aval.mat.varying, {'x', 'y', 'z'})
+      out = jnp.cos(x)
+      self.assertEqual(out.aval.sharding.spec, P(None, None, None))
+      self.assertEqual(out.aval.mat.varying, {'x', 'y', 'z'})
+      return out
+
+    @jax.shard_map(in_specs=P(None, 'y'), out_specs=P(None, 'y'), axis_names={'y'})
+    def g(x):
+      self.assertEqual(x.aval.sharding.spec, P(None, None, 'z'))
+      self.assertEqual(x.aval.mat.varying, {'x', 'y'})
+      out = jnp.sin(x)
+      self.assertEqual(out.aval.sharding.spec, P(None, None, 'z'))
+      self.assertEqual(out.aval.mat.varying, {'x', 'y'})
+      out2 = h(out)
+      self.assertEqual(out2.aval.sharding.spec, P(None, None, 'z'))
+      self.assertEqual(out2.aval.mat.varying, {'x', 'y'})
+      return out2
+
+    @jax.jit
+    @partial(jax.shard_map, out_specs=P('x'), axis_names={'x'})
+    def f(x):
+      self.assertEqual(x.aval.sharding.spec, P(None, 'y', 'z'))
+      self.assertEqual(x.aval.mat.varying, {'x'})
+      out = x * 2
+      self.assertEqual(out.aval.sharding.spec, P(None, 'y', 'z'))
+      self.assertEqual(out.aval.mat.varying, {'x'})
+      out2 = g(x)
+      self.assertEqual(out2.aval.sharding.spec, P(None, 'y', 'z'))
+      self.assertEqual(out2.aval.mat.varying, {'x'})
+      return out2
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y', 'z')))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
   def test_shmap_full_manual_context_auto(self, mesh):
@@ -4352,7 +4394,7 @@ class ShardMapTest(jtu.JaxTestCase):
       self.assertEqual(get_abstract_mesh().manual_axes, ('x',))
       self.assertEqual(get_abstract_mesh().explicit_axes, ('y', 'z'))
       self.assertEqual(x.aval.mat.varying, {'x'})
-      out = jax.smap(g, in_axes=0, out_axes=0, axis_name='y')(x)
+      out = jax.smap(g, in_axes=1, out_axes=1, axis_name='y')(x)
       self.assertEqual(out.aval.mat.varying, {'x'})
       return out
 
@@ -4538,6 +4580,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(a):
       self.assertEqual(a.aval.mat.varying, {'y'})
       b = a * 2
+      b = jax.reshard(b, P(None, 'x'))
       return jax.smap(g, in_axes=1, out_axes=1, axis_name='x')(b)
 
     arr = jax.device_put(np.arange(16).reshape(8, 2), P('y'))
@@ -4579,6 +4622,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(a):
       self.assertEqual(a.aval.mat.varying, {'y'})
       b = a * 2
+      b = jax.reshard(b, P(None, 'x'))
       return g(b)
 
     if jit:
