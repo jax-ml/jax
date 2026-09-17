@@ -839,7 +839,10 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertNotIn('all-reduce(', f.lower(arr1, arr2).compile().as_text())
 
   def test_host_auto_layout(self):
-    if not jtu.is_libtpu_at_least('0.0.48'):
+    if jtu.test_device_matches(['cpu', 'gpu']):
+      self.skipTest('This test does not work on CPU or GPU backends.')
+
+    if not jtu.is_libtpu_at_least('0.0.49'):
       self.skipTest('Needs a newer libtpu')
 
     mesh = jtu.create_mesh((jax.device_count(),), ('data',))
