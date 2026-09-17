@@ -1056,10 +1056,16 @@ class LayoutInTypesTest(jtu.JaxTestCase):
         jnp.ones((e, d, b), dtype=jnp.float32), P(None, 'data', None))
     w3 = jax.device_put(
         jnp.ones((f, d, g), dtype=jnp.float32), P(None, 'data', None))
-    tiling = x.format.layout.tiling
-    l_012 = Layout((0, 1, 2), tiling)
-    l_0213 = Layout((0, 2, 1, 3), tiling)
-    l_02314 = Layout((0, 2, 3, 1, 4), tiling)
+    x_tiling = x.format.layout.tiling
+    w1_tiling = w1.format.layout.tiling
+    w2_tiling = w2.format.layout.tiling
+    w3_tiling = w3.format.layout.tiling
+    y_tiling = x_tiling if x_tiling == w1_tiling else None
+    cd_tiling = y_tiling if y_tiling == w2_tiling else None
+    cg_tiling = y_tiling if y_tiling == w3_tiling else None
+    l_012 = Layout((0, 1, 2), cd_tiling)
+    l_0213 = Layout((0, 2, 1, 3), y_tiling)
+    l_02314 = Layout((0, 2, 3, 1, 4), cg_tiling)
 
     # 1. Single matmul: (a, b, c) @ (e, b, d) -> (a, c, e, d)
     # lhs (a, b, c) layout (0, 1, 2) -> a major, (b, c) minor (c is non-contracting)
@@ -1078,7 +1084,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
 
     out_s_without = single_without(x, w1)
     out_s_with = single_with(x, w1)
-    self.assertEqual(out_s_with.format.layout, l_0213)
+    self.assertEqual(out_s_with.format.layout.major_to_minor, (0, 2, 1, 3))
     self.assertArraysAllClose(out_s_with, out_s_without)
 
     # 2. Chained matmul contracting (e, d) back down:
@@ -1127,7 +1133,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
 
     out_cg_without = chain_grow_without(x, w1, w3)
     out_cg_with = chain_grow_with(x, w1, w3)
-    self.assertEqual(out_cg_with.format.layout, l_02314)
+    self.assertEqual(out_cg_with.format.layout.major_to_minor, (0, 2, 3, 1, 4))
     self.assertArraysAllClose(out_cg_with, out_cg_without)
 
   def test_dot_layout_errors(self):
