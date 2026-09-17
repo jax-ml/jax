@@ -557,6 +557,74 @@ class OverlapTest(jtu.JaxTestCase):
 
     f(x, y)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_strict_in_out_basic(self, mesh):
+    x = jax.device_put(jnp.arange(8.0), P('x'))
+    y = jax.device_put(jnp.arange(8.0), P('x'))
+
+    @jax.jit
+    @program_order(enforce=True, strict_in_out=True)
+    def f(x, y):
+      x1 = jax.reshard(x, P())
+      x2 = jnp.sin(x1)
+      y1 = jax.reshard(y, P())
+      y2 = jnp.cos(y1)
+      return x2, y2
+
+    jaxpr = f.trace(x, y).jaxpr
+    self.assertEqual(jaxpr.eqns[0].primitive.name, 'optimization_barrier')
+    self.assertEqual(jaxpr.eqns[-1].primitive.name, 'optimization_barrier')
+    self.assertEqual(str(jaxpr).count('optimization_barrier'), 5)
+
+    out_x, out_y = f(x, y)
+    self.assertArraysEqual(out_x, jnp.sin(x))
+    self.assertArraysEqual(out_y, jnp.cos(y))
+
+    with self.assertRaisesRegex(
+        ValueError, 'strict_in_out=True cannot be used with enforce=False'):
+      @program_order(enforce=False, strict_in_out=True)
+      def _(x):
+        return x
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_program_order_true_false_true_nest_strict_in_out(self, mesh):
+    x = jax.device_put(jnp.arange(8.0), P('x'))
+    w = jax.device_put(jnp.arange(8.0) * 2.0, P('x'))
+
+    @jax.jit
+    @program_order(enforce=True, strict_in_out=True)
+    def f(x, w):
+      x = jnp.exp(x)
+      w = jnp.exp(w)
+
+      @program_order(enforce=False)
+      def op1(x):
+        x = jnp.sin(x)
+        x = jnp.cos(x)
+        @program_order(enforce=True, strict_in_out=True)
+        def inner1(x):
+          x1 = x + 1.0
+          return x1 * 2.0
+        return inner1(x)
+      y = op1(x)
+
+      @program_order(enforce=False, exclude_argnames='w')
+      def op2(w):
+        @program_order(enforce=True, strict_in_out=True)
+        def inner2(w):
+          y1 = y * w
+          return y1 + 3.0
+        return inner2(w)
+      return op2(w)
+
+    jaxpr = f.trace(x, w).jaxpr
+    self.assertEqual(jaxpr.eqns[0].primitive.name, 'optimization_barrier')
+    self.assertEqual(jaxpr.eqns[-1].primitive.name, 'optimization_barrier')
+    lowered_text = f.lower(x, w).as_text()
+    self.assertNotIn('program_order', lowered_text)
+
+    f(x, w)  # doesn't crash
+
 
 class AsyncCollectivesTest(jtu.JaxTestCase):
 
