@@ -146,6 +146,7 @@ pytype_strict_library(
         "//jax/_src:xla_bridge",
         "//jax/_src/lib",
         "//jax/_src/pallas",
+        "//jax/_src/pallas/fuser:custom_fusion",
         "//jax/experimental:mosaic",
     ] + py_deps("numpy"),
 )
@@ -228,6 +229,7 @@ pytype_library(
         "//jax/_src:lax",
         "//jax/_src:util",
         "//jax/_src/pallas",
+        "//jax/_src/pallas/fuser:fusible_dtype",
         "//jax/_src/pallas/mosaic:lowering",
         "//jax/extend:backend",
     ] + py_deps("numpy"),

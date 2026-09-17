@@ -55,6 +55,7 @@ from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.interpreters import batching
 from jax._src.pallas.pallas_call import _batch_block_mapping
+from jax._src.pallas.fuser import fusible_dtype
 import jax.numpy as jnp
 
 cdiv = utils.cdiv
@@ -2338,11 +2339,10 @@ def _emit_pipeline_physicalize_rule(
     ctx, *args_flat, body_jaxpr: core.Jaxpr, args_tree, grid_mapping, refs_tree,
     **params
 ):
-  from jax._src.pallas.fuser.fusible_dtype import physicalize_closed_jaxpr  # pyrefly: ignore[missing-import]
   del ctx
   all_args: EmitPipelinePrimitiveArgs = args_tree.unflatten(args_flat)
   with grid_mapping.trace_env():
-    new_closed = physicalize_closed_jaxpr(
+    new_closed = fusible_dtype.physicalize_closed_jaxpr(
         core.ClosedJaxpr(body_jaxpr, all_args.body_consts)
     )
   new_args = EmitPipelinePrimitiveArgs(
@@ -2361,12 +2361,9 @@ def _emit_pipeline_physicalize_rule(
                               refs_tree=refs_tree,
                               **params)
 
-try:
-  from jax._src.pallas.fuser import fusible_dtype  # pyrefly: ignore[missing-import]
-  fusible_dtype._physicalize_rules[emit_pipeline_p] = (
-      _emit_pipeline_physicalize_rule)
-except ImportError:
-  pass
+
+fusible_dtype._physicalize_rules[emit_pipeline_p] = (
+    _emit_pipeline_physicalize_rule)
 
 
 @register_lowering_rule(pipeline_body_p, kernel_types=[*tpu_core.CoreType])
