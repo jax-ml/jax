@@ -4803,7 +4803,11 @@ ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
 mlir.register_lowering(cosh_p, partial(_nary_lower_hlo, chlo.cosh))
 
 asinh_p = standard_unop(_float | _complex, 'asinh')
-ad.defjvp(asinh_p, lambda g, x: mul(g, rsqrt(add(square(x), _one(x)))))
+# Use 1/sqrt(x+i) * 1/sqrt(x-i) = 1/sqrt(x^2+1) to avoid float overflow.
+# This is the same factorization approach used for acosh (1/sqrt(x-1) * 1/sqrt(x+1)),
+# but in the complex plane since x^2+1 = (x+i)(x-i). The sqrt factors avoid computing
+# x^2 directly, which overflows in float32 for |x| > ~1.84e19.
+ad.defjvp(asinh_p, lambda g, x: mul(g, mul(rsqrt(add(x, complex(_zero(x), _one(x)))), rsqrt(sub(x, complex(_zero(x), _one(x)))))))
 mlir.register_lowering(asinh_p, partial(_nary_lower_hlo, chlo.asinh))
 
 acosh_p = standard_unop(_float | _complex, 'acosh')
