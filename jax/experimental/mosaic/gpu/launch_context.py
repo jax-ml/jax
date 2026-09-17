@@ -676,6 +676,20 @@ def _tma_dma_type(
   return tma_dtype
 
 
+def _is_contiguous(ref: ir.Value | ir.MemRefType) -> bool:
+  ref_ty = ir.MemRefType(ref.type) if isinstance(ref, ir.Value) else ref
+  strides, _ = ref_ty.get_strides_and_offset()
+  return all(
+      s == cs or d == 1  # Strides don't matter for dims of size 1.
+      for s, cs, d in zip(
+          strides,
+          utils.get_contiguous_strides(ref_ty.shape),
+          ref_ty.shape,
+          strict=True,
+      )
+  )
+
+
 class AsyncCopyImplementation(enum.Enum):
   TMA = enum.auto()
   CP_ASYNC = enum.auto()
@@ -708,10 +722,9 @@ class LaunchContext:
   profiler: OnDeviceProfiler | None = None
   num_peers: int = 0
   num_params: int = 0
-  tma_descriptors: dict[
-      tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...], Any, int],
-      ir.Value,
-  ] = dataclasses.field(default_factory=dict, init=False)
+  tma_descriptors: dict[Any, ir.Value] = dataclasses.field(
+      default_factory=dict, init=False
+  )
   is_device_collective: bool = False
   multihost_kernel: bool = False
 
@@ -835,16 +848,44 @@ class LaunchContext:
       gmem_ref: ir.Value,
       gmem_transform: tuple[MemRefTransform, ...],
       gmem_peer_id: int | ir.Value | GlobalBroadcast | None,
-      transformed_slice_shape: tuple[int, ...],
-      swizzle: int | None,
-      reduction_op: TMAReductionOp | None,
+      transformed_slice_shape: tuple[int, ...] | None = None,
+      swizzle: int | None = None,
+      reduction_op: TMAReductionOp | None = None,
+      *,
+      bounding_box: tuple[tuple[int, int], ...] | None = None,
+      channels_per_pixel: int | None = None,
+      pixels_per_column: int | None = None,
   ):
+    is_im2col = bounding_box is not None
+    if is_im2col:
+      if channels_per_pixel is None or pixels_per_column is None:
+        raise ValueError("Missing required im2col parameters")
+      if transformed_slice_shape is not None or reduction_op is not None:
+        raise ValueError(
+            "transformed_slice_shape and reduction_op are not supported for"
+            " im2col TMA"
+        )
+      desc_key_extra = (bounding_box, channels_per_pixel, pixels_per_column)
+    else:
+      if transformed_slice_shape is None:
+        raise ValueError(
+            "transformed_slice_shape is required when not using im2col TMA"
+        )
+      desc_key_extra = (transformed_slice_shape,)
+
     gmem_ref = _find_kernel_argument_for_gmem_ref(gmem_ref)
     tma_dtype = _tma_dma_type(ir.MemRefType(gmem_ref.type).element_type, reduction_op)
     # Using ir.Values in cache keys is a little sketchy, but I think it should
     # be fine. Having it in the key will keep it alive, and if comparison and
     # hashing is by identity then it should work out.
-    tma_desc_key = (gmem_ref, transformed_slice_shape, swizzle, gmem_transform, gmem_peer_id, tma_dtype)
+    tma_desc_key = (
+        gmem_ref,
+        *desc_key_extra,
+        swizzle,
+        gmem_transform,
+        gmem_peer_id,
+        tma_dtype,
+    )
     if (tma_desc := self.tma_descriptors.get(tma_desc_key, None)) is None:
       i32 = ir.IntegerType.get_signless(32)
       i64 = ir.IntegerType.get_signless(64)
@@ -910,17 +951,37 @@ class LaunchContext:
         # TODO(apaszke): Better verification (e.g. slice is non-zero)
         # TODO(apaszke): We always know strides statically.
         dtype_or_bitwidth = c(tma_dtype, i64)
-        args: list[ir.Value] = [
-            host_ptr,
-            base_ptr,
-            dtype_or_bitwidth,
-            c(rank, i64),
-            utils.pack_array([as_i64(i) for i in sizes_and_strides[:rank]]),
-            utils.pack_array([as_i64(i) for i in sizes_and_strides[rank:]]),
-            c(swizzle_arg, i64),
-            utils.pack_array([c(v, i64) for v in transformed_slice_shape]),
-        ]
-        func.call([], "mosaic_gpu_init_tma_desc", args)
+        if is_im2col:
+          assert bounding_box is not None
+          assert channels_per_pixel is not None
+          assert pixels_per_column is not None
+          args: list[ir.Value] = [
+              host_ptr,
+              base_ptr,
+              dtype_or_bitwidth,
+              c(rank, i64),
+              utils.pack_array([as_i64(i) for i in sizes_and_strides[:rank]]),
+              utils.pack_array([as_i64(i) for i in sizes_and_strides[rank:]]),
+              c(swizzle_arg, i64),
+              utils.pack_array([c(b[0], i32) for b in bounding_box]),
+              utils.pack_array([c(b[1], i32) for b in bounding_box]),
+              c(channels_per_pixel, i64),
+              c(pixels_per_column, i64),
+          ]
+          func.call([], "mosaic_gpu_init_tma_im2col_desc", args)
+        else:
+          assert transformed_slice_shape is not None
+          args: list[ir.Value] = [
+              host_ptr,
+              base_ptr,
+              dtype_or_bitwidth,
+              c(rank, i64),
+              utils.pack_array([as_i64(i) for i in sizes_and_strides[:rank]]),
+              utils.pack_array([as_i64(i) for i in sizes_and_strides[rank:]]),
+              c(swizzle_arg, i64),
+              utils.pack_array([c(v, i64) for v in transformed_slice_shape]),
+          ]
+          func.call([], "mosaic_gpu_init_tma_desc", args)
 
       tma_desc = self._alloc_scratch(
           TMA_DESCRIPTOR_BYTES,
@@ -1206,6 +1267,187 @@ class LaunchContext:
       )
     return (smem_ref, slice_shape, dyn_base_indices, gmem_transform)
 
+  def _async_copy_tma_im2col(
+      self,
+      *,
+      gmem_ref: ir.Value,
+      smem_ref: ir.Value,
+      gmem_transform: tuple[MemRefTransform, ...],
+      gmem_slice: tuple[Any, ...],
+      gmem_peer_id: int | ir.Value | GlobalBroadcast | None,
+      swizzle: int | None,
+      barrier: utils.BarrierRef,
+      arrive: bool,
+      collective: Sequence[gpu.Dimension],
+      leader_tracked: CopyPartition | None,
+      im2col_box: tuple[tuple[int, int], ...],
+      im2col_offsets: tuple[int | ir.Value, ...] | None,
+      predicate: ir.Value | _DefaultPredicate | None,
+  ):
+    c = utils.c
+    index = ir.IndexType.get()
+    i16 = ir.IntegerType.get_signless(16)
+    i32 = ir.IntegerType.get_signless(32)
+
+    gmem_ref_ty = ir.MemRefType(gmem_ref.type)
+    smem_ref_ty = ir.MemRefType(smem_ref.type)
+    element_bitwidth = utils.bitwidth(gmem_ref_ty.element_type)
+
+    gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
+    if any(s * element_bitwidth % 128 != 0 for s in gmem_strides[:-1]):
+      raise ValueError(
+          "async_copy requires all GMEM strides except the last one to be a"
+          " multiple of 16 bytes"
+      )
+    if gmem_strides[-1] != 1:
+      raise ValueError(
+          "async_copy requires the last GMEM stride to be 1, but got"
+          f" {gmem_strides[-1]}"
+      )
+
+    rank = gmem_ref_ty.rank
+    if rank not in (3, 4, 5):
+      raise ValueError(f"im2col TMA requires GMEM rank in (3, 4, 5), got {rank}")
+    num_spatial = rank - 2
+    if len(im2col_box) != num_spatial:
+      raise ValueError(
+          f"Expected {num_spatial} spatial bounding box intervals, got"
+          f" {len(im2col_box)}"
+      )
+    box_bounds = {
+        3: range(-(2**15), 2**15),
+        4: range(-(2**7), 2**7),
+        5: range(-(2**4), 2**4),
+    }
+    allowed_box = box_bounds[rank]
+    for i, (lower, upper) in enumerate(im2col_box):
+      if lower > upper:
+        raise ValueError(
+            f"im2col bounding box lower corner must be <= upper corner along"
+            f" spatial dim {i}, but got [{lower}, {upper}]"
+        )
+      if lower not in allowed_box or upper not in allowed_box:
+        raise ValueError(
+            f"im2col bounding box corners along spatial dim {i} must be in"
+            f" [{allowed_box.start}, {allowed_box.stop - 1}] for rank {rank}, but got [{lower}, {upper}]"
+        )
+
+    if smem_ref_ty.rank != 2:
+      raise ValueError(
+          f"im2col TMA requires 2D SMEM destination, got {smem_ref_ty.shape}"
+      )
+    pixels_per_column, channels_per_pixel = smem_ref_ty.shape
+    if channels_per_pixel > 256:
+      raise ValueError(
+          f"channels_per_pixel must be <= 256, got {channels_per_pixel}"
+      )
+    if pixels_per_column > 1024:
+      raise ValueError(
+          f"pixels_per_column must be <= 1024, got {pixels_per_column}"
+      )
+
+    if not _is_contiguous(smem_ref_ty):
+      smem_strides, _ = smem_ref_ty.get_strides_and_offset()
+      raise ValueError(
+          "async_copy needs the SMEM reference to be contiguous, but got"
+          f" strides {smem_strides} for shape {smem_ref_ty.shape}"
+      )
+
+    if len(gmem_slice) == 0:
+      base_indices = tuple(0 for _ in range(rank))
+    elif len(gmem_slice) == rank:
+      base_indices, _, _ = utils.parse_indices(
+          gmem_slice, gmem_ref_ty.shape, check_oob=False
+      )
+    else:
+      raise ValueError(
+          f"Expected gmem_slice of length {rank} for im2col, got {len(gmem_slice)}"
+      )
+    dyn_base_indices = tuple(
+        c(i, index) if not isinstance(i, ir.Value) else i for i in base_indices
+    )
+    for t in gmem_transform:
+      dyn_base_indices = t.transform_index(dyn_base_indices)
+
+    if im2col_offsets is None:
+      im2col_offsets = (0,) * num_spatial
+    elif len(im2col_offsets) != num_spatial:
+      raise ValueError(
+          f"Expected {num_spatial} im2col offsets, got {len(im2col_offsets)}"
+      )
+
+    offset_bounds = {
+        3: range(2**16),
+        4: range(2**8),
+        5: range(2**5),
+    }
+    allowed_offsets = offset_bounds[rank]
+
+    def to_i16(val: int | ir.Value) -> ir.Value:
+      if isinstance(val, int):
+        if val not in allowed_offsets:
+          raise ValueError(
+              f"im2col offsets must be in [{allowed_offsets.start}, {allowed_offsets.stop - 1}] for"
+              f" rank {rank}, got {val}"
+          )
+        return c(val, i16)
+      if val.type == i16:
+        return val
+      return arith.trunci(i16, val)
+
+    rev_im2col_offsets = [to_i16(v) for v in reversed(im2col_offsets)]
+    rev_dyn_base_indices = [
+        arith.index_cast(i32, idx) for idx in reversed(dyn_base_indices)
+    ]
+
+    collective_size = math.prod(self.cluster_size[d] for d in collective)
+    assert math.prod(smem_ref_ty.shape) * element_bitwidth * collective_size % 8 == 0
+    transfer_bytes_val = (
+        math.prod(smem_ref_ty.shape) * element_bitwidth * collective_size // 8
+    )
+    if isinstance(leader_tracked, _Replicated):
+      transfer_bytes_val *= collective_size
+    transfer_bytes = c(transfer_bytes_val, i32)
+
+    tma_desc = self._get_tma_desc(
+        gmem_ref=gmem_ref,
+        gmem_transform=gmem_transform,
+        gmem_peer_id=gmem_peer_id,
+        swizzle=swizzle,
+        bounding_box=im2col_box,
+        channels_per_pixel=channels_per_pixel,
+        pixels_per_column=pixels_per_column,
+    )
+
+    barrier_ptr = barrier.get_ptr()
+    if isinstance(predicate, _DefaultPredicate):
+      predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
+    if predicate is None:
+      predicate = c(1, ir.IntegerType.get_signless(1))
+
+    if arrive:
+      nvvm.mbarrier_arrive_expect_tx(
+          barrier_ptr, transfer_bytes, predicate=predicate
+      )
+    if collective_size > 1:
+      multicast_mask = arith.trunci(
+          i16, utils.cluster_collective_mask(self.cluster_size, collective)
+      )
+    else:
+      multicast_mask = None
+
+    smem_ptr = utils.memref_ptr(smem_ref)
+    nvvm.cp_async_bulk_tensor_shared_cluster_global(
+        smem_ptr,
+        tma_desc,
+        rev_dyn_base_indices,
+        barrier_ptr,
+        rev_im2col_offsets,
+        multicast_mask=multicast_mask,
+        predicate=predicate,
+        mode=nvvm.TMALoadMode.IM2COL,
+    )
+
   def async_copy(
       self,
       *,
@@ -1224,6 +1466,8 @@ class LaunchContext:
       reduction_op: TMAReductionOp | None = None,
       implementation: AsyncCopyImplementation = AsyncCopyImplementation.TMA,
       oob_mode: OOBFillMode = OOBFillMode.ZEROS,
+      im2col_box: tuple[tuple[int, int], ...] | None = None,
+      im2col_offsets: tuple[int | ir.Value, ...] | None = None,
   ):
     """Initiates an async copy between GMEM and SMEM.
 
@@ -1288,6 +1532,9 @@ class LaunchContext:
             f" implementation for element type {element_type}"
         )
 
+    if im2col_box is None and im2col_offsets is not None:
+      raise ValueError("im2col_box must be specified when im2col_offsets is provided")
+
     if src_ref_ty.memory_space is None and utils.is_smem_ref(dst_ref_ty):
       gmem_ref, smem_ref = src_ref, dst_ref
       if implementation == AsyncCopyImplementation.TMA and barrier is None:
@@ -1295,6 +1542,8 @@ class LaunchContext:
       if arrive is None:
         arrive = True  # Arrive by default
     elif utils.is_smem_ref(src_ref_ty) and dst_ref_ty.memory_space is None:
+      if im2col_box is not None:
+        raise ValueError("im2col TMA only supports GMEM -> SMEM copies")
       gmem_ref, smem_ref = dst_ref, src_ref
       if barrier is not None:
         raise ValueError("Barriers are unsupported for SMEM -> GMEM copies")
@@ -1305,6 +1554,33 @@ class LaunchContext:
 
     if collective and gmem_ref is dst_ref:
       raise ValueError("Only GMEM -> SMEM copies can be collective")
+
+    if implementation == AsyncCopyImplementation.CP_ASYNC:
+      if im2col_box is not None:
+        raise ValueError("im2col is only supported with TMA implementation")
+    elif implementation == AsyncCopyImplementation.TMA:
+      if im2col_box is not None:
+        if reduction_op is not None:
+          raise ValueError("im2col does not support TMA reduction operations")
+        assert barrier is not None
+        self._async_copy_tma_im2col(
+            gmem_ref=gmem_ref,
+            smem_ref=smem_ref,
+            gmem_transform=gmem_transform,
+            gmem_slice=gmem_slice,
+            gmem_peer_id=gmem_peer_id,
+            swizzle=swizzle,
+            barrier=barrier,
+            arrive=arrive,
+            collective=collective,
+            leader_tracked=leader_tracked,
+            im2col_box=im2col_box,
+            im2col_offsets=im2col_offsets,
+            predicate=predicate,
+        )
+        return
+    else:
+      raise ValueError(f"Unsupported async copy implementation: {implementation}")
 
     (
         slice_shape,
@@ -1515,15 +1791,8 @@ class LaunchContext:
     )
     assert smem_ref is not None  # For type checkers.
     smem_ref_ty = ir.MemRefType(smem_ref.type)
-    smem_strides, _ = smem_ref_ty.get_strides_and_offset()
-    if any(
-        s != cs and d != 1  # Strides don't matter for dims of size 1.
-        for s, cs, d in zip(
-            smem_strides,
-            utils.get_contiguous_strides(smem_ref_ty.shape),
-            smem_ref_ty.shape,
-        )
-    ):
+    if not _is_contiguous(smem_ref_ty):
+      smem_strides, _ = smem_ref_ty.get_strides_and_offset()
       raise ValueError(
           "async_copy needs the SMEM reference to be contiguous, but got"
           f" strides {smem_strides} for shape {smem_ref_ty.shape}"
