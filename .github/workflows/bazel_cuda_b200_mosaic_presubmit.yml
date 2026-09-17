@@ -161,7 +161,12 @@ jobs:
           JAXCI_USE_PARALLEL_ACCELERATOR_RUNNER: '1'
           JAXCI_LOCAL_TEST_JOBS: '8'
           JAXCI_TEST_TIMEOUT: '420'
+          JAXCI_PROFILE_MEMORY: true
         run: bash ./ci/run_bazel_cuda_targeted_tests.sh
+      - name: Parse Memory Profile
+        continue-on-error: true
+        if: always()
+        run: python3 ci/utilities/parse_memory_profiles.py
       - name: Upload test artifacts
         if: always()
         continue-on-error: true
