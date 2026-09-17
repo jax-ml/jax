@@ -1841,6 +1841,60 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     compiled_text = compiled_f_sc.as_text()
     self.assertIn('async_execution_thread="sparsecore"', compiled_text)
 
+  def test_sparsecore_supported_sort(self):
+    if not (
+        jax.devices()[0].device_kind == "TPU v5"
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest("Does not have a sparsecore present")
+
+    @jax.jit
+    def f_tc(operand):
+      return jax.lax.sort(operand)
+
+    @compute_on(
+        compute_type="tpu_sparsecore",
+        out_memory_spaces=jax.memory.Space.Device,
+        compiler_options={"sparse_core_config": {"core_ids": [0]}},
+    )
+    def f_sc(operand):
+      return jax.lax.sort(operand)
+
+    inputs = (np.linspace(0, 1, 524288).reshape(524288),)
+
+    self.assertAllClose(f_tc(*inputs), f_sc(*inputs))
+
+    compiled_f_sc = jax.jit(f_sc).lower(*inputs).compile()
+    compiled_text = compiled_f_sc.as_text()
+    self.assertIn('async_execution_thread="sparsecore"', compiled_text)
+
+  def test_sparsecore_supported_reshape(self):
+    if not (
+        jax.devices()[0].device_kind == "TPU v5"
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest("Does not have a sparsecore present")
+
+    @jax.jit
+    def f_tc(operand):
+      return jax.lax.reshape(operand, (8, 512))
+
+    @compute_on(
+        compute_type="tpu_sparsecore",
+        out_memory_spaces=jax.memory.Space.Device,
+        compiler_options={"sparse_core_config": {"core_ids": [0]}},
+    )
+    def f_sc(operand):
+      return jax.lax.reshape(operand, (8, 512))
+
+    inputs = (np.linspace(0, 1, 4096, dtype=np.float32).reshape(2, 2048),)
+
+    self.assertAllClose(f_tc(*inputs), f_sc(*inputs))
+
+    compiled_f_sc = jax.jit(f_sc).lower(*inputs).compile()
+    compiled_text = compiled_f_sc.as_text()
+    self.assertIn('async_execution_thread="sparsecore"', compiled_text)
+
   def test_sparsecore_supported_scatter(self):
     if not (
         jax.devices()[0].device_kind == "TPU v5"
@@ -1874,7 +1928,6 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     compiled_f_sc = jax.jit(f_sc).lower(*inputs).compile()
     compiled_text = compiled_f_sc.as_text()
     self.assertIn('async_execution_thread="sparsecore"', compiled_text)
-
 
   def test_sparsecore_supported_gather(self):
     if not (
