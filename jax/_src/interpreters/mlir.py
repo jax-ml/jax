@@ -1333,17 +1333,21 @@ def check_jaxpr_constants(closed_jaxpr: core.Jaxpr):
     warnings.warn(message)
     return
 
+  num_constants = min(5, len(closed_jaxpr.consts))
   message += (
       "The subsequent report may be disabled by setting JAX_CAPTURED_CONSTANTS_REPORT_FRAMES=0.\n\n"
-      f"Largest {min(num_frames, len(closed_jaxpr.consts))} allocation(s):\n"
+      f"Largest {num_constants} allocation(s):\n"
   )
+  report_frames = None if num_frames < 0 else num_frames
   try:
     nbytes_var_const = zip(nbytes_iter, closed_jaxpr.constvars, closed_jaxpr.consts)
-    for nbytes, var, const in heapq.nlargest(5, nbytes_var_const, key=operator.itemgetter(0)):
+    for nbytes, var, const in heapq.nlargest(num_constants, nbytes_var_const,
+                                             key=operator.itemgetter(0)):
       message += f"  Constant {type(const)}, {var.aval.str_short()}, {util.pprint_bytes(nbytes)} captured at:\n"
 
       for eqn in jaxpr_util.eqns_using_var(closed_jaxpr, var):
-        call_frame_source_info = source_info_util.summarize(eqn.source_info, num_frames)
+        call_frame_source_info = source_info_util.summarize(
+            eqn.source_info, report_frames)
         message += "  " * 2 + call_frame_source_info.replace("\n", "\n" + "  " * 2) + "\n\n"
 
     warnings.warn(message)
@@ -1356,8 +1360,9 @@ def log_closed_over_constant(v: core.Literal, eqn: core.JaxprEqn,
     return
   msg = (f"Closed-over constant {type(v.val)}: {v.aval.str_short()} "
          f"in {debug_info.func_src_info}")
-  if (num_frames := config.captured_constants_report_frames.value) > 0:
-    eqn_si = source_info_util.summarize(eqn.source_info, num_frames)
+  if num_frames := config.captured_constants_report_frames.value:
+    report_frames = None if num_frames < 0 else num_frames
+    eqn_si = source_info_util.summarize(eqn.source_info, report_frames)
     msg += (" used at:\n" +
            "  " * 2 + eqn_si.replace("\n", "\n" + "  " * 2) +
            "\n\n")
