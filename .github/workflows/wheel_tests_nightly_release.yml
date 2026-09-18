@@ -231,6 +231,9 @@ jobs:
               python: "3.14"
             - artifact: "jax"
               python: "3.15"
+            # Release runs test only the ROCm that ships with them, not the moving pre-release.
+            - rocm:
+                release-version: ${{ (startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'rocm-jaxlib-v') || inputs.artifact-type == 'release') && 'therock-latest' }}
     name: "Build ROCm artifacts ${{ matrix.rocm.label }}"
     with:
       runner: ${{ matrix.runner }}
@@ -263,6 +266,10 @@ jobs:
             {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", tag: "therock-10.0"},
             {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
           ]
+          exclude:
+            # Release runs test only the ROCm that ships with them, not the moving pre-release.
+            - rocm:
+                release-version: ${{ (startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'rocm-jaxlib-v') || inputs.artifact-type == 'release') && 'therock-latest' }}
     name: "Pytest ROCm ${{ matrix.rocm.label }}"
     with:
       runner: ${{ matrix.runner }}
@@ -295,6 +302,10 @@ jobs:
             {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
           ]
           enable-x64: [0]
+          exclude:
+            # Release runs test only the ROCm that ships with them, not the moving pre-release.
+            - rocm:
+                release-version: ${{ (startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'rocm-jaxlib-v') || inputs.artifact-type == 'release') && 'therock-latest' }}
     name: "Bazel ROCm ${{ matrix.rocm.label }}"
     with:
       runner: ${{ matrix.runner }}
