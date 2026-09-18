@@ -910,6 +910,9 @@ class BufferedRef(BufferedRefBase):
         self.window_ref is None
         or isinstance(self.window_ref, state.AbstractRef)
     )
+    # Trivial windows use the single buffer directly without slot indexing.
+    if self.is_trivial_windowing:
+      return self.window_ref
     if self.window_ref.ndim > 1:
       return self.window_ref.at[(slot, *(window_slice or ()))]
 
@@ -1298,7 +1301,12 @@ class Scheduler:
       if not buffered_ref.is_input or not buffered_ref.is_buffered:
         return buffered_ref
 
-      if buffered_ref.is_trivial_windowing:
+      # Trivial windows only prefetch once (step 0 in async_prefetch, never in prologue).
+      if buffered_ref.is_trivial_windowing and (
+          not buffered_ref.await_prefetch
+          or buffered_ref.prefetched_count > 0
+          or step > 0
+      ):
         return buffered_ref
 
       if init_limit is None:
@@ -1345,7 +1353,8 @@ class Scheduler:
     return buffered_ref
 
   def wait_in(self, buffered_ref, src_ref) -> BufferedRef:
-    if buffered_ref.is_trivial_windowing:
+    # Non-async trivial windows are copied synchronously before the loop.
+    if buffered_ref.is_trivial_windowing and not buffered_ref.await_prefetch:
       return buffered_ref
     pred = self.has_changed(buffered_ref) | self.first_step
     if not buffered_ref.await_prefetch:
@@ -1895,12 +1904,6 @@ def _emit_pipeline(
       initial_indices = (0,) * len(grid)
       brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
 
-      @functools.partial(
-          jax.lax.fori_loop,
-          0,
-          num_steps,
-          init_val=(brefs, initial_indices),
-      )
       def _loop_body(step, carry):
         brefs, indices = carry
         indices = _filter_indices(indices, grid)
@@ -1928,6 +1931,9 @@ def _emit_pipeline(
           map_outputs(copy_out, brefs, refs)
         brefs = map_brefs(scheduler.unalias_local_refs, brefs)
         return brefs, _next_index(indices, grid)
+
+      with config.mutable_array_checks(False):
+        jax.lax.fori_loop(0, num_steps, _loop_body, (brefs, initial_indices))
     else:
       @when(num_steps > 0)
       def _():
@@ -1954,9 +1960,10 @@ def _emit_pipeline(
                 brefs, refs)
 
         # pipeline loop
-        brefs, next_indices = lax.fori_loop(
-            0, num_steps, loop_body, (brefs, initial_indices)
-        )
+        with config.mutable_array_checks(False):
+          brefs, next_indices = lax.fori_loop(
+              0, num_steps, loop_body, (brefs, initial_indices)
+          )
 
         # pipeline epilogue
         final_indices = _prev_index(next_indices, grid)
