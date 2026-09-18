@@ -1403,32 +1403,68 @@ class ConvTest(ptu.PallasTPUTest):
     )
     self.assertAllClose(out, expected, rtol=1e-5, atol=1e-5)
 
-  def test_pltpu_conv_2d(self):
-    x = jax.random.normal(jax.random.key(2), (1, 8, 8, 8), dtype=jnp.float32)
-    kernel = jax.random.normal(
-        jax.random.key(3), (3, 3, 8, 4), dtype=jnp.float32
-    )
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="_basic",
+          lhs_shape=(1, 8, 8, 8),
+          rhs_shape=(3, 3, 8, 4),
+          window_strides=(1, 1),
+          padding=((0, 0), (0, 0)),
+      ),
+      dict(
+          testcase_name="_rhs_non_contracting_spatial",
+          lhs_shape=(8, 1, 1, 128),
+          rhs_shape=(4, 8, 128, 128),
+          window_strides=(1, 1),
+          padding=((3, 3), (7, 7)),
+          window_reversal=(True, True),
+      ),
+      dict(
+          testcase_name="_padded_batch_spatial",
+          lhs_shape=(8, 4, 8, 128),
+          rhs_shape=(4, 8, 128, 128),
+          window_strides=(4, 8),
+          padding=((3, 3), (7, 7)),
+          lhs_dilation=(3, 7),
+          window_reversal=(True, True),
+      ),
+  )
+  def test_pltpu_conv_2d(
+      self,
+      *,
+      lhs_shape,
+      rhs_shape,
+      window_strides,
+      padding,
+      lhs_dilation=None,
+      window_reversal=None,
+  ):
+    x, kernel = self._conv_operands(lhs_shape, rhs_shape, jnp.float32)
 
     def conv_kernel(x_ref, k_ref, o_ref):
       o_ref[...] = pltpu.conv(
           x_ref[...],
           k_ref[...],
-          window_strides=(1, 1),
-          padding=((0, 0), (0, 0)),
+          window_strides=window_strides,
+          padding=padding,
+          lhs_dilation=lhs_dilation,
+          window_reversal=window_reversal,
           dimension_numbers=("NHWC", "HWIO", "NHWC"),
       )
 
-    out = pl.pallas_call(
-        conv_kernel,
-        out_shape=jax.ShapeDtypeStruct((1, 6, 6, 4), jnp.float32),
-    )(x, kernel)
+    ref_kernel = jnp.flip(kernel, axis=(0, 1)) if window_reversal else kernel
     expected = lax.conv_general_dilated(
         x,
-        kernel,
-        window_strides=(1, 1),
-        padding="VALID",
+        ref_kernel,
+        window_strides=window_strides,
+        padding=padding,
+        lhs_dilation=lhs_dilation,
         dimension_numbers=("NHWC", "HWIO", "NHWC"),
     )
+    out = pl.pallas_call(
+        conv_kernel,
+        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.float32),
+    )(x, kernel)
     self.assertAllClose(out, expected, rtol=1e-5, atol=1e-5)
 
   def test_conv_with_strides(self):
@@ -1604,6 +1640,21 @@ class ConvTest(ptu.PallasTPUTest):
           rhs_shape=(1, 3, 128, 128),
           window_strides=(1, 1),
           padding=((0, 0), (1, 1)),
+      ),
+      dict(
+          testcase_name="_lhs_non_contracting_spatial",
+          lhs_shape=(2, 1, 8, 128),
+          rhs_shape=(1, 1, 128, 128),
+          window_strides=(1, 1),
+          padding=((0, 0), (0, 0)),
+      ),
+      dict(
+          testcase_name="_unpadded_batch_spatial",
+          lhs_shape=(8, 4, 8, 128),
+          rhs_shape=(4, 8, 128, 128),
+          window_strides=(3, 7),
+          padding=((0, 0), (0, 0)),
+          lhs_dilation=(4, 8),
       ),
   )
   def test_conv_general_dilated(
