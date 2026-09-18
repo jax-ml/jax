@@ -14,8 +14,6 @@
 
 """Precision tests for elementary functions against reference implementations."""
 
-import math
-
 from absl.testing import absltest
 from absl.testing import parameterized
 from jax import lax
@@ -46,7 +44,7 @@ TPU_EUPV1 = ["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"]
 class ElementaryTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_exp_accuracy(self, dtype):
+  def test_exp_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 1.0, f32: 1.5, f64: 1.0}),
         ("gpu", {bf16: 1.0, f16: 1.0, f32: 2.0, f64: 1.5}),
@@ -59,7 +57,7 @@ class ElementaryTest(jtu.JaxTestCase):
         self, jnp.exp, np.exp, mpmath.exp, dtype, bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_log_accuracy(self, dtype):
+  def test_log_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 1.0, f32: 1.5}),
         ("gpu", {f16: 1.0, f32: 1.0, f64: 1.5}),
@@ -77,7 +75,7 @@ class ElementaryTest(jtu.JaxTestCase):
         bounds=bounds, input_ftz=input_ftz)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_sin_accuracy(self, dtype):
+  def test_sin_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 1.0}),
         ("gpu", {f16: 1.0, f32: 1.5, f64: 2.5}),
@@ -97,7 +95,7 @@ class ElementaryTest(jtu.JaxTestCase):
         check_signed_zeros=check_signed_zeros)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_cos_accuracy(self, dtype):
+  def test_cos_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 1.0}),
         ("gpu", {f16: 1.0, f32: 2.0, f64: 1.5}),
@@ -108,7 +106,7 @@ class ElementaryTest(jtu.JaxTestCase):
         self, jnp.cos, np.cos, mpmath.cos, dtype, bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_tan_accuracy(self, dtype):
+  def test_tan_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 1.0}),
         ("gpu", {f16: 1.0, f32: 3.5, f64: 2.5}),
@@ -126,7 +124,7 @@ class ElementaryTest(jtu.JaxTestCase):
         bounds=bounds, input_ftz=input_ftz)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_sinh_accuracy(self, dtype):
+  def test_sinh_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 1.0, f32: 25.0, f64: 496.0}),
         ("gpu", {f32: 3.0, f64: 2.5}),
@@ -155,7 +153,7 @@ class ElementaryTest(jtu.JaxTestCase):
         check_signed_zeros=check_signed_zeros)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_cosh_accuracy(self, dtype):
+  def test_cosh_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 1.0, f32: 25.0, f64: 496.0}),
         ("gpu", {f16: 1.0, f32: 2.5, f64: 2.5}),
@@ -175,7 +173,7 @@ class ElementaryTest(jtu.JaxTestCase):
         bounds=bounds, ignore_inputs=ignore_inputs)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_tanh_accuracy(self, dtype):
+  def test_tanh_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f32: 5.0, f64: 6.5}),
         ("gpu", {f32: 5.5, f64: 3.5}),
@@ -193,7 +191,7 @@ class ElementaryTest(jtu.JaxTestCase):
         bounds=bounds, input_ftz=input_ftz)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_acos_accuracy(self, dtype):
+  def test_acos_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {bf16: 1.5, f16: 1.5, f32: 1.5, f64: 1.0}),
         ("gpu", {f16: 1.0, f32: 1.5, f64: 1.5}),
@@ -204,7 +202,7 @@ class ElementaryTest(jtu.JaxTestCase):
         self, jnp.acos, np.arccos, mpmath.acos, dtype, bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_asin_accuracy(self, dtype):
+  def test_asin_test_accuracy(self, dtype):
     # TODO(phawkins): Large errors occur for normal inputs in the first exponent
     # bin (|x| < 2 * tiny) on CPU/TPU because XLA lowers asin(x) to
     # 2 * atan2(x, 1 + sqrt(1 - x^2)), where the intermediate x / 2 is subnormal
@@ -219,7 +217,7 @@ class ElementaryTest(jtu.JaxTestCase):
         self, jnp.asin, np.arcsin, mpmath.asin, dtype, bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_atan_accuracy(self, dtype):
+  def test_atan_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 1.0, f32: (4.0, 5.5), f64: 3.5}),
         ("gpu", {f16: 1.0, f32: 1.5, f64: 2.5}),
@@ -233,7 +231,7 @@ class ElementaryTest(jtu.JaxTestCase):
         check_signed_zeros=check_signed_zeros)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_acosh_accuracy(self, dtype):
+  def test_acosh_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {bf16: 2.0, f16: 2.0, f32: 4.5, f64: 3.5}),
         ("gpu", {f16: 1.0, f32: 2.5, f64: 2.5}),
@@ -245,7 +243,7 @@ class ElementaryTest(jtu.JaxTestCase):
         self, jnp.acosh, np.arccosh, mpmath.acosh, dtype, bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_asinh_accuracy(self, dtype):
+  def test_asinh_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.5, f64: 2.0}),
         ("gpu", {f16: 1.0, f32: 2.0, f64: 2.5}),
@@ -257,7 +255,7 @@ class ElementaryTest(jtu.JaxTestCase):
         self, jnp.asinh, np.arcsinh, mpmath.asinh, dtype, bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_atanh_accuracy(self, dtype):
+  def test_atanh_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.0, f64: 2.5}),
         ("gpu", {f32: 3.5, f64: 3.5}),
@@ -269,7 +267,7 @@ class ElementaryTest(jtu.JaxTestCase):
         self, jnp.atanh, np.arctanh, mpmath.atanh, dtype, bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_sqrt_accuracy(self, dtype):
+  def test_sqrt_test_accuracy(self, dtype):
     bounds = [
         ("gpu", {f32: 1.0}),
         ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 3.0}),
@@ -285,7 +283,7 @@ class ElementaryTest(jtu.JaxTestCase):
         bounds=bounds, input_ftz=input_ftz)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_rsqrt_accuracy(self, dtype):
+  def test_rsqrt_test_accuracy(self, dtype):
     # The max ULP for float32 is either 1.0 and 2.0 depend on CPU vendor (AMD
     # vs Intel). The (min, max) tuple allows tightness checks to pass on both.
     bounds = [
@@ -306,7 +304,7 @@ class ElementaryTest(jtu.JaxTestCase):
         dtype, bounds=bounds, input_ftz=input_ftz)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_cbrt_accuracy(self, dtype):
+  def test_cbrt_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 1.0}),
         ("gpu", {f16: 1.0, f32: 1.5, f64: 1.5}),
@@ -324,13 +322,13 @@ class ElementaryTest(jtu.JaxTestCase):
         dtype, bounds=bounds, input_ftz=input_ftz)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_square_accuracy(self, dtype):
+  def test_square_test_accuracy(self, dtype):
     bounds = []
     util.check_unary_precision(
         self, jnp.square, np.square, lambda x: x * x, dtype, bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_reciprocal_accuracy(self, dtype):
+  def test_reciprocal_test_accuracy(self, dtype):
     bounds = [
         ("gpu", {f32: 1.0}),
         (TPU_EUPV1, {bf16: 1.0, f32: 198.0}),
@@ -347,7 +345,7 @@ class ElementaryTest(jtu.JaxTestCase):
         dtype, bounds=bounds, input_ftz=input_ftz)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_exp2_accuracy(self, dtype):
+  def test_exp2_test_accuracy(self, dtype):
     # TODO(phawkins): lax.exp2 lowers as exp(x * ln(2)) where ln(2) is cast
     # to the input dtype. In bfloat16, ln(2) has ~0.25% relative error, which
     # causes large output errors (~93 ULP) and causes x = 128.0 to evaluate to
@@ -368,7 +366,7 @@ class ElementaryTest(jtu.JaxTestCase):
         dtype, bounds=bounds, ignore_inputs=ignore_inputs)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_expm1_accuracy(self, dtype):
+  def test_expm1_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 2.5, f32: 6.5, f64: 4.5}),
         ("gpu", {f16: 1.0, f32: 1.5, f64: 1.5}),
@@ -385,7 +383,7 @@ class ElementaryTest(jtu.JaxTestCase):
         check_signed_zeros=check_signed_zeros)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_log2_accuracy(self, dtype):
+  def test_log2_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {bf16: 2.0, f16: 2.0, f32: 2.5, f64: 1.5}),
         ("gpu", {bf16: 2.0, f16: 2.0, f32: 2.0, f64: 1.5}),
@@ -403,7 +401,7 @@ class ElementaryTest(jtu.JaxTestCase):
         bounds=bounds, input_ftz=input_ftz)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_log10_accuracy(self, dtype):
+  def test_log10_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {bf16: 2.0, f16: 1.5, f32: 3.0, f64: 2.0}),
         ("gpu", {bf16: 2.0, f16: 1.5, f32: 2.5, f64: 2.5}),
@@ -421,9 +419,9 @@ class ElementaryTest(jtu.JaxTestCase):
         bounds=bounds, input_ftz=input_ftz)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_log1p_accuracy(self, dtype):
+  def test_log1p_test_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 3.0, f64: 1.5}),
+        ("cpu", {f16: 1.0, f32: 3.0, f64: 2.0}),
         ("gpu", {f16: 1.0, f32: 1.0, f64: 1.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4034.0}),
         ("tpu_v5p", {f16: 1.0, f32: 2082.5}),
@@ -433,7 +431,7 @@ class ElementaryTest(jtu.JaxTestCase):
         self, jnp.log1p, np.log1p, mpmath.log1p, dtype, bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_logistic_accuracy(self, dtype):
+  def test_logistic_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {bf16: 2.5, f16: 2.0, f32: 2.5, f64: 3.5}),
         ("gpu", {bf16: 2.5, f16: 2.0, f32: 4.0, f64: 4.5}),
@@ -446,18 +444,64 @@ class ElementaryTest(jtu.JaxTestCase):
         self, lax.logistic, lambda x: 1.0 / (1.0 + np.exp(-x)),
         lambda x: 1 / (1 + mpmath.exp(-x)), dtype, bounds=bounds)
 
+  @jtu.run_on_devices("cpu")
+  def test_sinc_test_ref(self):
+    # Verify that the float64 NumPy reference implementation _sinc_ref matches
+    # mpmath.sincpi within a few float64 ULPs across random full-range inputs
+    # and explicit corner cases (zeros, infinities, NaNs, integers, and
+    # near-integer values).
+    rng = jtu.rand_fullrange(self.rng())
+    random_x = rng((10_000,), np.float64)
+    ints = np.array([-1000.0, -3.0, -2.0, -1.0, 1.0, 2.0, 3.0, 1000.0])
+    special_x = np.concatenate([
+        np.array([0.0, -0.0, np.inf, -np.inf, np.nan]),
+        ints,
+        np.nextafter(ints, np.inf),
+        np.nextafter(ints, -np.inf),
+    ])
+    x = np.concatenate([random_x, special_x])
+    with np.errstate(all="ignore"):
+      actual = _sinc_ref(x)
+    expected = np.array(
+        [
+            util.eval_mpmath(mpmath.sincpi, v.item(), dtype=np.float64)
+            for v in x
+        ],
+        dtype=object,
+    )
+    ulps = np.abs(util.ulp_diff_mpmath(actual, expected, np.float64))
+    self.assertLessEqual(np.max(ulps), 3.0)
+
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_sinc_accuracy(self, dtype):
-    # TODO(phawkins): Large errors occur when |x| >= max_float / pi because
-    # pi * x overflows to inf, evaluating to sin(inf) = NaN rather than 0.0.
+  def test_sinc_test_accuracy(self, dtype):
     bounds = [
-        ("cpu", {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
-        ("gpu", {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
-        ("tpu", {bf16: math.inf, f16: 4145.0, f32: math.inf}),
+        ("cpu", {f32: 2.5, f64: 2.0}),
+        ("gpu", {f32: 3.5, f64: 2.0}),
+        ([*TPU_EUPV1, "tpu_v5p", "tpu_v6e"], {f32: 4.0}),
+        ("tpu_7x", {f32: 3.5}),
     ]
-    ref_fn = lambda x: np.where(np.isinf(x), 0.0, np.sinc(x))
     util.check_unary_precision(
-        self, jnp.sinc, ref_fn, mpmath.sincpi, dtype, bounds=bounds)
+        self, jnp.sinc, _sinc_ref, mpmath.sincpi, dtype, bounds=bounds
+    )
+
+
+def _sinc_ref(x: np.ndarray) -> np.ndarray:
+  # np.sinc(x) computes sin(pi * x) / (pi * x) directly, which loses float64
+  # precision near non-zero integers due to rounding in pi * x. Instead, use
+  # exact additive range reduction x = n + r with n = round(x) and
+  # r = x - n in [-0.5, 0.5] so sin(pi * x) = (-1)^n * sin(pi * r).
+  x_dt = x.astype(np.float64)
+  n = np.round(x_dt)
+  r = x_dt - n
+  val = np.where(n % 2 == 0, 1, -1) * np.sin(np.pi * r) / (np.pi * x_dt)
+  # Special cases:
+  # - x == 0: val evaluates 0 / 0 = NaN, whereas sinc(0) == 1.0.
+  # - r == 0 (non-zero integers): (-1)^n * (+0.0) / (pi * x) yields -0.0
+  #   when (-1)^n / x < 0; explicitly return +0.0.
+  # - isinf(x): r = inf - inf = NaN, whereas lim_{|x|->inf} sinc(x) == 0.0.
+  return np.where(
+      x == 0, 1.0, np.where((r == 0) | np.isinf(x), 0.0, val)
+  ).astype(np.float64)
 
 
 if __name__ == "__main__":

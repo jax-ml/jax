@@ -77,7 +77,7 @@ ELEMENTARY_OPS = [
     jax_multiplatform_test(
         name = "elementary_test_" + op,
         srcs = ["elementary_test.py"],
-        args = ["--test_targets=ElementaryTest.test_" + op + "_accuracy_"],
+        args = ["--test_targets=ElementaryTest.test_" + op + "_test_"],
         disable_configs = [
             "cpu_x32",
             "gpu_a100",
@@ -120,7 +120,7 @@ SPECIAL_OPS = [
     jax_multiplatform_test(
         name = "special_test_" + op,
         srcs = ["special_test.py"],
-        args = ["--test_targets=SpecialTest.test_" + op + "_accuracy_"],
+        args = ["--test_targets=SpecialTest.test_" + op + "_test_"],
         disable_configs = [
             "cpu_x32",
             "gpu_a100",
