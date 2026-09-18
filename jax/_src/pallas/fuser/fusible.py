@@ -151,14 +151,16 @@ def _make_trivial_fusion(x: jax.Array) -> fusion_lib.Fusion:
 @partial(api_boundary, repro_api_name="fuser.fusible")
 def fusible(f=None, *, output_fusion_prefix: Any = True):
   def decorator(f):
-    def wrapper(*args):
+    def wrapper(*args, **kwargs):
+      f_bound = partial(f, **kwargs) if kwargs else f
+
       def wrapped(*args):
         in_fusions = tree_util.tree_map(_make_trivial_fusion, args)
         output_fusions = tree_util.tree_unflatten(
             tree_util.tree_structure(output_fusion_prefix),
             [None] * len(tree_util.tree_leaves(output_fusion_prefix)),
         )
-        return f(*in_fusions, output_fusions)
+        return f_bound(*in_fusions, output_fusions)
 
       args_ft = ft.flatten(args)
       debug_info = api_util.debug_info("fusible", wrapped, args, {})
@@ -174,7 +176,7 @@ def fusible(f=None, *, output_fusion_prefix: Any = True):
           out_aval=tree_util.tree_unflatten(
               out_avals_ft.tree, out_avals_ft.vals),
           output_fusion_prefix=output_fusion_prefix,
-          func=f,
+          func=f_bound,
           num_consts=len(consts),
           args_tree=args_ft.tree,
       )

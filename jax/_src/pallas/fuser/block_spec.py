@@ -2785,6 +2785,7 @@ def push_block_spec(
     scalar_prefetch_handler: Any | None = None,
     grid_len: int | None = None,
     strict_mode: bool = True,
+    return_out_type: bool = False,
     **in_spec_kwargs,
 ):
   def wrapper(*args, **kwargs):
@@ -2814,7 +2815,56 @@ def push_block_spec(
           ),
           out_bs,
       )
-    return tree_util.tree_unflatten(out_tree, out_bs)
+    out = tree_util.tree_unflatten(out_tree, out_bs)
+    if return_out_type:
+      out_type = tree_util.tree_unflatten(
+          out_tree,
+          [
+              jax.ShapeDtypeStruct(v.aval.shape, v.aval.dtype)
+              for v in jaxpr.outvars
+          ],
+      )
+      return out, out_type
+    return out
+
+  return wrapper
+
+
+@functools.partial(api_boundary, repro_api_name='fuser.push_pull_block_spec')
+def push_pull_block_spec(
+    f: Callable,
+    *block_specs: Any,
+    scalar_prefetch_handler: Any | None = None,
+    grid_len: int | None = None,
+    **block_spec_kwargs: Any,
+):
+  def wrapper(values, *args, **kwargs):
+    values_block_specs = jax.tree.map(
+        lambda _: pallas_core.no_block_spec, values
+    )
+    out_block_specs, out_type = push_block_spec(
+        f,
+        values_block_specs,
+        *block_specs,
+        scalar_prefetch_handler=scalar_prefetch_handler,
+        grid_len=grid_len,
+        return_out_type=True,
+        **block_spec_kwargs,
+    )(values, *args, **kwargs)
+    kernel_fn, (values_block_specs, *_), kwarg_block_specs = pull_block_spec(
+        f,
+        out_block_specs,
+        scalar_prefetch_handler=scalar_prefetch_handler,
+        grid_len=grid_len,
+        strict_mode=False,
+    )(values, *args, **kwargs)
+    return (
+        kernel_fn,
+        values_block_specs,
+        kwarg_block_specs,
+        out_type,
+        out_block_specs,
+    )
 
   return wrapper
 

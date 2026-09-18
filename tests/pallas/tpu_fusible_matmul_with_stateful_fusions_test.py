@@ -92,7 +92,6 @@ def _fusible_matmul(
     interpret: bool,
     debug: bool,
     impl: KernelImpl,
-    output_pull_strict_mode: bool = True,
 ) -> jax.Array:
   m, k = x.shape
   k_, n = y.shape
@@ -156,8 +155,6 @@ def _fusible_matmul(
         lambda v: v.inner_aval if isinstance(v, jax.ref.AbstractRef) else v,
         jax.tree.map(jax.typeof, values))
 
-  z_out_type = jax.eval_shape(z_fn, types_without_refs(z_values), z_type)
-
   # We construct the set of scalar prefetch arguments that will be passed to
   # the kernel.
   scalar_prefetch = (x_scalar_prefetch, y_scalar_prefetch, z_scalar_prefetch)
@@ -176,20 +173,14 @@ def _fusible_matmul(
       grid_len=len(grid),
   )(types_without_refs(y_values))
 
-  z_out_block_spec = fuser.push_block_spec(
-      z_fn,
-      tuple([pl.no_block_spec] * len(z_values)),
-      z_block_spec,
-      scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(2),
-      grid_len=len(grid)
-  )(types_without_refs(z_values), z_type)
-  z_fn, (z_value_block_specs, _), _ = fuser.pull_block_spec(
-      z_fn,
-      z_out_block_spec,
-      scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(2),
-      grid_len=len(grid),
-      strict_mode=output_pull_strict_mode,
-  )(types_without_refs(z_values), z_type)
+  z_fn, z_value_block_specs, _, z_out_type, z_out_block_spec = (
+      fuser.push_pull_block_spec(
+          z_fn,
+          z_block_spec,
+          scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(2),
+          grid_len=len(grid),
+      )(types_without_refs(z_values), z_type)
+  )
 
   # TODO(sharadmv): This is a hack. We should be able to pass in the scalar
   # prefetch arguments directly to the kernel but don't have Mosaic support atm.
@@ -374,7 +365,6 @@ def fusible_matmul(
     debug: bool = False,
     interpret: bool = False,
     impl: KernelImpl = KernelImpl.CORE_MAP,
-    output_pull_strict_mode: bool = True,
 ) -> jax.Array:
   return fuser.fusible(
       functools.partial(
@@ -385,7 +375,6 @@ def fusible_matmul(
           interpret=interpret,
           debug=debug,
           impl=impl,
-          output_pull_strict_mode=output_pull_strict_mode,
       )
   )(x, y)
 
@@ -675,13 +664,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     y = jax.random.normal(k1, (512, 512), jnp.float32)
 
     OFFSET, SIZE, bm = 128, 128, 128
-    # When an output fusion writes to multiple references, pulling block specs
-    # backward reconverges on the shared matmul accumulator. Non-strict mode
-    # skips comparing index transformations across distinct output destinations
-    # because both branches originated from the same starting accumulator spec.
-    _fusible_matmul = functools.partial(
-        fusible_matmul, impl=impl, bm=bm, output_pull_strict_mode=False
-    )
+    _fusible_matmul = functools.partial(fusible_matmul, impl=impl, bm=bm)
 
     @jax.jit
     def run_matmul(x, y):
