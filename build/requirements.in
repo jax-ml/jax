@@ -1,10 +1,15 @@
 #
 # runtime deps
 #
-numpy~=2.1.0; python_version<="3.13"
-numpy>=2.3.2; python_version>="3.14"
-scipy>=1.15.0; python_version<="3.12"
-scipy>=1.15.2; python_version>="3.13"
+
+# Windows ARM64 uses the latest NumPy and SciPy.
+numpy~=2.1.0; python_version<="3.13" and (sys_platform != "win32" and  platform_machine != "ARM64")
+numpy>=2.3.2; python_version>="3.14" and (sys_platform != "win32" and  platform_machine != "ARM64")
+numpy>=2.3.3; sys_platform == "win32" and platform_machine == "ARM64"
+
+scipy>=1.15.0; python_version<="3.12" and (sys_platform != "win32" and  platform_machine != "ARM64")
+scipy>=1.15.2; python_version>="3.13" and (sys_platform != "win32" and  platform_machine != "ARM64")
+scipy>=1.16.2; sys_platform == "win32" and platform_machine == "ARM64"
 
 ml_dtypes>=0.5.3
 etils[epath]
@@ -18,7 +23,8 @@ tensorstore
 
 # For jax2tf_test
 # TODO(phawkins): re-enable on Python 3.14+ once TensorFlow supports Python 3.14+
-tensorflow; python_version<"3.14"
+# TensorFlow is not available for Windows ARM64
+tensorflow; python_version<"3.14" and (sys_platform != "win32" and platform_machine != "ARM64")
 
 # Needed to build wheels
 build
@@ -26,10 +32,10 @@ setuptools
 wheel
 
 # JAX's own libraries. We include these in the requirements so you can
-# bazel test without building jaxlib and without manually updating the
+# bazel test without building jaxlib and without manually updating
 # the requirements files.
-jax
-jaxlib
+jax; sys_platform != "win32" and platform_machine != "ARM64"
+jaxlib; sys_platform != "win32" and platform_machine != "ARM64"
 
 jax-cuda12-plugin; sys_platform == "linux"
 jax-cuda13-plugin

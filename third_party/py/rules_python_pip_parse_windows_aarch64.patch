@@ -1,0 +1,18 @@
+diff --git a/python/private/pypi/hub_builder.bzl b/python/private/pypi/hub_builder.bzl
+--- a/python/private/pypi/hub_builder.bzl
++++ b/python/private/pypi/hub_builder.bzl
+@@ -428,7 +428,10 @@ def _platforms(module_ctx, *, python_version, config, target_platforms):
+     target_platforms = sorted({
+         p.format(
+             os = repo_utils.get_platforms_os_name(module_ctx),
+             arch = repo_utils.get_platforms_cpu_name(module_ctx),
+         ): None
+         for p in target_platforms
+     })
++    if "windows_aarch64" not in target_platforms:
++        target_platforms = target_platforms + ["windows_aarch64"]
++
+     for platform, values in config.platforms.items():
+         if target_platforms and platform not in target_platforms:
+             continue
+ 
