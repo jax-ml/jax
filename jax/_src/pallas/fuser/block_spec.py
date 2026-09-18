@@ -49,6 +49,7 @@ from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.fuser import fuser_utils
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
+from jax._src.state import types as state_types
 from jax._src.traceback_util import api_boundary
 import jax.numpy as jnp
 import numpy as np
@@ -387,6 +388,15 @@ def _unwrap_block_spec_scalar_prefetch(
   )
 
 
+def _types_without_refs(x: Any) -> Any:
+  if isinstance(x, (jax.ref.Ref, state_types.TransformedRef)):
+    return core.ShapedArray(x.shape, x.dtype)
+  aval = core.typeof(x)
+  if isinstance(aval, state_types.AbstractRef):
+    return aval.inner_aval
+  return x
+
+
 @functools.partial(api_boundary, repro_api_name="fuser.pull_block_spec")
 def pull_block_spec(
     f: Callable,
@@ -397,6 +407,8 @@ def pull_block_spec(
     strict_mode: bool = True,
 ):
   def wrapped(*args, **kwargs):
+    args = jax.tree.map(_types_without_refs, args)
+    kwargs = jax.tree.map(_types_without_refs, kwargs)
     jaxpr, consts, in_tree, out_tree_ = fuser_utils.make_jaxpr(
         f, *args, **kwargs
     )
@@ -849,6 +861,14 @@ def _get_fusion_values(
 
 
   def new_kernel_fn(values, *args, **kwargs):
+    if discharge_refs:
+      values = [
+          v[...]
+          if isinstance(v, (jax.ref.Ref, state_types.TransformedRef))
+          or isinstance(core.typeof(v), state_types.AbstractRef)
+          else v
+          for v in values
+      ]
     values = util.merge_lists(
         is_scalar_prefetch, values, scalar_prefetch_values
     )
@@ -2797,6 +2817,8 @@ def push_block_spec(
       flat_block_specs = jax.tree.map(
           _unwrap_block_spec_scalar_prefetch, flat_block_specs
       )
+    args = jax.tree.map(_types_without_refs, args)
+    kwargs = jax.tree.map(_types_without_refs, kwargs)
     jaxpr, _, in_tree, out_tree = fuser_utils.make_jaxpr(f, *args, **kwargs)
     if in_tree != in_tree_:
       raise ValueError(f'Expected {in_tree} PyTree, got {in_tree_}')
