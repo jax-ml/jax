@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
+#include <tuple>
 
 #include "absl/status/statusor.h"
 #include "include/dlpack/dlpack.h"
@@ -38,7 +39,9 @@ namespace jax {
 // be synchronized to the buffer as per
 // https://dmlc.github.io/dlpack/latest/python_spec.html#python-specification-for-dlpack.
 absl::StatusOr<nanobind::capsule> BufferToDLPackManagedTensor(
-    nanobind::handle buffer, std::optional<std::intptr_t> stream);
+    nanobind::handle buffer, std::optional<std::intptr_t> stream,
+    std::optional<std::tuple<int64_t, int64_t>> max_version = std::nullopt,
+    bool copied = false);
 
 absl::StatusOr<nanobind::object> DLPackManagedTensorToBuffer(
     const nanobind::capsule& tensor, xla::ifrt::Device* device,
