@@ -199,8 +199,6 @@ class Nonzero(HiPrim):
       size = operator.index(size)
       if size < 0:
         raise ValueError(f"size must be a positive integer; got {size=}")
-    if not dtypes.issubdtype(out_dtype, np.integer):
-      raise ValueError(f"out_dtype must be integer typed; got {out_dtype=}")
     if not all(0 <= ax < a_aval.ndim for ax in axes):
       raise ValueError(f"axes out of range for array with {a_aval.ndim} dimensions:  {axes=}")
     if len(axes) != len(set(axes)):

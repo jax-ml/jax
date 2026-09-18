@@ -70,7 +70,7 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.mesh import get_abstract_mesh
 from jax._src.pjit import auto_axes
-from jax._src.tree_util import tree_map
+from jax._src.tree_util import tree_flatten, tree_map
 
 export = set_module('jax.numpy')
 
@@ -3722,31 +3722,27 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
     (Array([1, 3, 5, 6, 6], dtype=int32),)
   """
   arr = util.ensure_arraylike("nonzero", a)
-  del a
-  if np.ndim(arr) == 0:
+  if arr.ndim == 0:
     raise ValueError("Calling nonzero on 0d arrays is not allowed. "
                      "Use jnp.atleast_1d(scalar).nonzero() instead.")
-  mask = arr if arr.dtype == bool else (arr != 0)
-  calculated_size_ = mask.sum() if size is None else size
-  calculated_size: int = core.concrete_dim_or_error(calculated_size_,
-    "The size argument of jnp.nonzero must be statically specified "
-    "to use jnp.nonzero within JAX transformations.")
-  if arr.size == 0 or calculated_size == 0:
-    return tuple(array_creation.zeros(calculated_size, int) for dim in arr.shape)
-  flat_indices = reductions.cumsum(
-      bincount(reductions.cumsum(mask), length=calculated_size))
-  strides: np.ndarray = np.cumprod(arr.shape[::-1])[::-1] // arr.shape
-  if all(core.is_constant_dim(d) for d in strides):
-    strides = strides.astype(flat_indices.dtype)
-  out = tuple((flat_indices // stride) % size for stride, size in zip(strides, arr.shape))
-  if fill_value is not None:
-    fill_value_tup = fill_value if isinstance(fill_value, tuple) else arr.ndim * (fill_value,)
-    if any(np.shape(val) != () for val in fill_value_tup):
-      raise ValueError(f"fill_value must be a scalar or a tuple of length {arr.ndim}; got {fill_value}")
-    fill_mask = arange(calculated_size) >= mask.sum()
-    out = tuple(where(fill_mask, fval, entry) for fval, entry in safe_zip(fill_value_tup, out))
-  return out
-
+  if size is None:
+    mask = arr if arr.dtype == bool else (arr != 0)
+    processed_size: int | Array = mask.sum()
+  else:
+    processed_size = size
+  static_size: int = core.concrete_dim_or_error(processed_size,
+      "The size argument of jnp.nonzero must be statically specified "
+      "to use jnp.nonzero within JAX transformations.")
+  dtype = dtypes.result_type(
+      dtypes.default_int_dtype(),
+      *tree_flatten(fill_value)[0])
+  return hijax.nonzero(
+      arr,
+      size=static_size,
+      fill_value=fill_value,
+      axes=None,  # all axes
+      dtype=dtype,
+  )
 
 @export
 def flatnonzero(a: ArrayLike, *, size: int | None = None,
