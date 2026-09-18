@@ -1672,6 +1672,23 @@ class ConvTest(ptu.PallasTPUTest):
     result = self.pallas_call(kernel, out_shape=out)(lhs, rhs)
     np.testing.assert_array_equal(result, expected)
 
+  def test_conv_0d(self):
+    conv = functools.partial(
+        jax.lax.conv_general_dilated,
+        window_strides=(),
+        padding=(),
+        dimension_numbers=("NC", "IO", "NC"),
+    )
+
+    def kernel(x_ref, w_ref, o_ref):
+      o_ref[...] = conv(x_ref[...], w_ref[...])
+
+    lhs, rhs = self._conv_operands((8, 128), (128, 128), jnp.float32)
+    expected = conv(lhs, rhs)
+    out = jax.ShapeDtypeStruct(expected.shape, expected.dtype)
+    result = self.pallas_call(kernel, out_shape=out)(lhs, rhs)
+    np.testing.assert_array_equal(result, expected)
+
   def test_conv_1d(self):
     conv = functools.partial(
         jax.lax.conv_general_dilated,
