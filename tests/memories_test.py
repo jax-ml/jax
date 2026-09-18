@@ -1799,6 +1799,42 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     lowered_text = f.lower(inp).as_text()
     self.assertIn("_xla_compute_type", lowered_text)
 
+  @jtu.with_explicit_mesh((2, 2), ("x", "y"))
+  def test_compute_on_reduced_fwd_unreduced_bwd(self, mesh):
+    w = jax.device_put(np.arange(8.0), P("y", reduced={'x'}))
+    x = jax.device_put(np.ones(8), P(reduced={'x', 'y'}))
+
+    @compute_on(compute_type="tpu_sparsecore",
+                out_memory_spaces=jax.memory.Space.Device)
+    def ag(inp):
+      return jax.reshard(inp, P(reduced={"x", "y"}))
+
+    def loss(w, x):
+      w = ag(w)
+      out = w * x
+      return jnp.sum(jax.reshard(out, P()))
+
+    lowered_text = jax.jit(jax.grad(loss)).lower(w, x).as_text()
+    self.assertIn("unreduced", lowered_text)
+
+    dw = jax.jit(jax.grad(loss))(w, x)
+    self.assertEqual(dw.sharding, NamedSharding(mesh, P("y", unreduced={'x'})))
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_compute_on_unreduced_fwd(self, mesh):
+    np_inp = np.arange(4, dtype=np.float32).reshape(2, 2)
+    x = jax.device_put(np_inp, P(None, 'x'))
+    y = jax.device_put(np_inp, P('x', None))
+
+    @compute_on(compute_type='tpu_sparsecore',
+                out_memory_spaces=jax.memory.Space.Device)
+    def g(x, y):
+      return jnp.dot(x, y, out_sharding=P(None, None, unreduced={'x'}))
+
+    out = jax.jit(g)(x, y)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+
 
 class SparsecoreOffloadTest(jtu.JaxTestCase):
 
