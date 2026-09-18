@@ -51,6 +51,10 @@ Remember to align the itemized text with the first line of an item within a list
     dumps the constraint system built during layout inference. This is useful
     for debugging layout inference failures. Like the other dump variables, it
     is also enabled by `MOSAIC_GPU_DUMP_TO`.
+  * Added {func}`jax.experimental.pallas.mosaic_gpu.store`, the counterpart to
+    {func}`jax.experimental.pallas.mosaic_gpu.load`. Like `load`, it takes an
+    `optimized` argument that controls whether a conflict-free transfer is
+    required.
 
 * Deprecations
 

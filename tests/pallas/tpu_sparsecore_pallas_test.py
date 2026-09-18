@@ -266,16 +266,15 @@ class DebugPrintTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_vector_subcore(self, dtype):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("TODO(b/535267274): Fix logger.")
     x = jnp.arange(self.num_lanes, dtype=dtype)
     debug_int = 1234552
     debug_float = 12344.625
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_hbm_ref, _):
       pl.debug_print("Memref", x_hbm_ref)
       pl.debug_print("Sliced memref", x_hbm_ref.at[:self.num_lanes // 2])
@@ -838,17 +837,20 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x, indices), x[1, 8:][indices])
 
-  @parameterized.parameters(True, False)
-  def test_gather_2d_with_col_slice(self, use_num_lanes_indices):
+  @parameterized.parameters(None, 20, 12, 7, 25)
+  def test_gather_2d_with_col_slice(self, n_indices):
     if not self.USE_TC_TILING:
       self.skipTest("Test only works under TC tiling.")
-    if (not use_num_lanes_indices and jtu.is_device_tpu(7, "x")
-        and not jtu.is_libtpu_at_least("0.0.48")):
+    if (
+        n_indices is None
+        and jtu.is_device_tpu(7, "x")
+        and not jtu.is_libtpu_at_least("0.0.48")
+    ):
       self.skipTest(
           "20-index column-slice gather fails on TPU7x with libtpu < 0.0.48."
       )
 
-    n_indices = self.num_lanes if use_num_lanes_indices else 20
+    n_indices = self.num_lanes if n_indices is None else n_indices
     x = jnp.arange(n_indices * 4096, dtype=jnp.int32).reshape(n_indices, 4096)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(n_indices))
 
@@ -865,6 +867,34 @@ class VectorSubcoreTest(PallasSCTest):
       pltpu.sync_copy(x_hbm_ref.at[indices_ref, pl.ds(128, 1024)], o_ref)
 
     np.testing.assert_array_equal(kernel(x, indices), x[indices, 128:1152])
+
+  @parameterized.parameters(None, 20, 12, 7, 25)
+  def test_scatter_2d_with_col_slice(self, n_indices):
+    if not self.USE_TC_TILING:
+      self.skipTest("Test only works under TC tiling.")
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Test fails with libtpu < 0.0.48.")
+    n_indices = self.num_lanes if n_indices is None else n_indices
+    x = jnp.arange(n_indices * 1024, dtype=jnp.int32).reshape(n_indices, 1024)
+    indices = jax.random.permutation(jax.random.key(42), jnp.arange(n_indices))
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(
+            shape=(n_indices, 4096), dtype=jnp.int32
+        ),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_ref, indices_ref, o_hbm_ref):
+      pltpu.sync_copy(x_ref, o_hbm_ref.at[indices_ref, pl.ds(128, 1024)])
+
+    np.testing.assert_array_equal(
+        kernel(x, indices)[:, 128:1152],
+        jnp.empty_like(x).at[indices].set(x),
+    )
 
   def test_gather_1d_with_indexed_ref(self):
     if jtu.is_device_tpu(8, "i"):
@@ -1309,16 +1339,26 @@ class VectorSubcoreTest(PallasSCTest):
       dtype=[jnp.int32], new_dtype=[jnp.int8, jnp.int16, jnp.float32]
   )
   def test_bitcast(self, dtype, new_dtype):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
     self.skip_if_tc_tiling(
         "Fails due to incorrectly inferred tiling in tpu.memref_squeeze"
     )
     new_shape = (
         self.num_lanes * jnp.dtype(dtype).itemsize // jnp.dtype(new_dtype).itemsize,
     )
+    # TODO(b/562994815): Until bitwidth-changing plsc.bitcast is supported with
+    # layout passes, test_bitcast0/1 (i32 -> i8/i16 on 1D vectors) cannot move
+    # off needs_layout_passes=False.
+    changes_bitwidth = (
+        jnp.dtype(dtype).itemsize != jnp.dtype(new_dtype).itemsize
+    )
 
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(shape=new_shape, dtype=new_dtype),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=not changes_bitwidth
+        ),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = plsc.bitcast(x_ref[...], o_ref.dtype)
@@ -1930,6 +1970,8 @@ class VectorSubcoreTest(PallasSCTest):
       ("debug_print", lambda vec: pl.debug_print("test", vec)),
   )
   def test_effect_discharge(self, effectful_op):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
     x = jnp.arange(self.sc_info.num_lanes)
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
@@ -1939,7 +1981,6 @@ class VectorSubcoreTest(PallasSCTest):
         mesh=mesh,
         out_type=x,
         scratch_types=[pltpu.VMEM(x.shape, x.dtype)],
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def body(x_ref, o_ref, scratch_ref):
       pltpu.sync_copy(x_ref, scratch_ref)

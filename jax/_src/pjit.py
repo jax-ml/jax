@@ -2549,16 +2549,23 @@ program_order_p.multiple_results = True
 program_order_p.skip_canonicalization = True
 
 def program_order(f=None, *, enforce: bool,
+                  strict_in_out: bool | tuple[bool, bool] = False,
                   exclude_argnames: str | Sequence[str] | None = None):
   if enforce and exclude_argnames is not None:
     raise ValueError("exclude_argnames cannot be used with enforce=True.")
-  kwargs = dict(enforce=enforce, exclude_argnames=exclude_argnames)
+  if not enforce and strict_in_out:
+    raise ValueError('strict_in_out=True cannot be used with enforce=False')
+  if isinstance(strict_in_out, bool):
+    strict_in_out = (strict_in_out,) * 2
+  strict_in, strict_out = strict_in_out
+  kwargs = dict(enforce=enforce, strict_in=strict_in, strict_out=strict_out,
+                exclude_argnames=exclude_argnames)
   if f is None:
     return lambda g: _program_order(g, **kwargs)
   return _program_order(f, **kwargs)
 
 
-def _program_order(fun, *, enforce, exclude_argnames):
+def _program_order(fun, *, enforce, strict_in, strict_out, exclude_argnames):
   @wraps(fun)
   def wrapped(*args, **kwargs):
     if enforce:
@@ -2566,7 +2573,8 @@ def _program_order(fun, *, enforce, exclude_argnames):
       jaxpr = traced.jaxpr
       args_flat, _ = tree_flatten(args)
       flat_outputs = eval_jaxpr_program_order(
-          jaxpr, jaxpr.consts, *traced._consts, *args_flat)
+          strict_in, strict_out, jaxpr, jaxpr.consts, *traced._consts,
+          *args_flat)
       return tree_util.tree_unflatten(traced.out_tree, flat_outputs)
     else:
       args_flat, in_tree = tree_flatten((args, kwargs))
@@ -2611,7 +2619,7 @@ def insert_opt_barrier(prev_outvars, prev_outs, cur_invars, cur_inps):
   return prev_outs, cur_inps
 
 
-def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
+def eval_jaxpr_program_order(strict_in, strict_out, jaxpr, consts, *args):
   from jax._src.lax.lax import create_token, optimization_barrier  # type: ignore
 
   def read(v) -> Any:
@@ -2631,6 +2639,8 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
 
   env = {}
   foreach(write, jaxpr.constvars, consts)
+  if strict_in:
+    args = optimization_barrier(args)
   foreach(write, jaxpr.invars, args)
   last_used = core.last_used(jaxpr)
   prev_eqn = None
@@ -2678,6 +2688,8 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
     prev_eqn = cur_eqn
     core.clean_up_dead_vars(cur_eqn, env, last_used)
   outvals = map(read, jaxpr.outvars)
+  if strict_out:
+    outvals = optimization_barrier(outvals)
   return outvals
 
 # ----------------------------- explicit layout --------------------------------

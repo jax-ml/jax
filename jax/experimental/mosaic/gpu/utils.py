@@ -62,7 +62,7 @@ def dump_to_file_or_stdout(
     return
   filepath = os.path.join(path, name)
   try:
-    with open(filepath, "w") as f:
+    with open(filepath, "w", encoding="utf-8") as f:
       f.write(content)
       f.write("\n")
   except OSError as e:

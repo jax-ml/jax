@@ -142,6 +142,8 @@ class RemoteDMATest(parameterized.TestCase):
   @parameterized.product(src_is_hbm=[False, True])
   def test_scs_remote_dma_spmem(self, src_is_hbm):
     """Tests ScalarSubcore remote DMA to VMEM_SHARED from VMEM_SHARED or HBM."""
+    if not jtu.is_libtpu_at_least('0.0.48'):
+      self.skipTest('Requires libtpu >= 0.0.48')
     if src_is_hbm is False and not jtu.is_libtpu_at_least('0.45.0'):
       self.skipTest('VMEM_SHARED to VMEM_SHARED version is flaky.')
     num_devices = jax.device_count()
@@ -170,9 +172,6 @@ class RemoteDMATest(parameterized.TestCase):
         mesh=s_mesh,
         out_type=jax.ShapeDtypeStruct(local_out_shape, x.dtype),
         scratch_types=scratch_types,
-        compiler_params=pltpu.CompilerParams(
-            needs_layout_passes=False,
-        ),
     )
     def shift_kernel(x_ref, out_ref, *, scratch_recv, send_sem, recv_sem, scratch_send=None):
       assert x_ref.shape == (1, num_cores, num_subcores, sc_info.num_lanes)
@@ -222,6 +221,8 @@ class DistributedMpmdTest(parameterized.TestCase):
       self.skipTest('SparseCore only supported on TPU v5+')
 
   def test_mpmd_reduce_scatter(self):
+    if not jtu.is_libtpu_at_least('0.0.48'):
+      self.skipTest('Requires libtpu >= 0.0.48')
     P = jax.P
 
     mesh = jax.sharding.Mesh(jax.devices(), axis_names='x')
@@ -353,10 +354,6 @@ class DistributedMpmdTest(parameterized.TestCase):
               scs_to_vec=pltpu.SemaphoreType.REGULAR(()) @ vec_mesh,
               barrier_scs_sem=pltpu.SemaphoreType.REGULAR(()) @ scs_mesh,
               barrier_vec_sem=pltpu.SemaphoreType.REGULAR(()) @ vec_mesh,
-          ),
-          compiler_params=pltpu.CompilerParams(
-              # TODO(ivyzheng): Remove this when the layout pass flag is gone.
-              needs_layout_passes=False,
           ),
       )()
       actual = result.reshape(-1)

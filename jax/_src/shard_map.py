@@ -286,18 +286,21 @@ def _shard_map[F: Callable](
     _check_specs_vs_args(f, mesh, in_tree, in_specs, dyn_argnums,
                          in_specs_flat, dyn_args)
 
-    # TODO(yashkatariya): Add support for partial manual
     mesh_axis_names_wo_vmap = (
         frozenset(mesh.axis_names) - core.get_axis_env().explicit_mesh_axis_names)
-    if (mesh_axis_names_wo_vmap == axis_names and
-        all(mesh._name_to_type[a] == AxisType.Explicit for a in axis_names)):
+    if all(mesh._name_to_type[a] == AxisType.Explicit for a in axis_names):
       for a, s in zip(dyn_args, in_specs_flat):
-        if not isinstance(s, P): continue
+        if not isinstance(s, P):
+          continue
         arg_aval = typeof(a)
         s = s._normalized_spec_for_aval(arg_aval.ndim)
         if config.remove_size_one_mesh_axis_from_type.value:
           s = remove_size_one_mesh_axis_from_spec(s, mesh)
-        if arg_aval.sharding.spec != s:
+        if mesh_axis_names_wo_vmap != axis_names:  # partial manual
+          arg_spec = _manual_spec(axis_names, arg_aval.sharding.spec, mesh)
+        else:
+          arg_spec = arg_aval.sharding.spec
+        if arg_spec != s:
           raise ValueError(
               f"in_specs passed to shard_map: {s} does not match the specs of"
               f" the input: {arg_aval.sharding.spec} for arg: {typeof(a)}."
@@ -335,10 +338,9 @@ def _shard_map[F: Callable](
       return ans_ft.with_aux(out_specs_flat)
 
     try:
-      newly_manual_axes = axis_names - set(mesh.manual_axes)
       out_ft = shard_map_p.bind(
           *dyn_args, subfuns=(f_wrapped,), mesh=mesh, in_specs=in_specs_flat,
-          check_vma=check_vma, newly_manual_axes=newly_manual_axes, debug_info=dbg)
+          check_vma=check_vma, newly_manual_axes=axis_names, debug_info=dbg)
     except _SpecError as e:
       fails, out_tree = e.args
       msg = _spec_rank_error(SpecErrorType.out, f, out_tree, out_specs, fails)
@@ -398,6 +400,8 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _smap):
     raise ValueError(
         f"jax.shard_map requires axis_names={axis_names} to be a subset of "
         f"mesh.axis_names={mesh_axis_names_wo_vmap}")
+
+  axis_names = axis_names - set(mesh.manual_axes)
 
   if (in_specs is Infer and
       not all(mesh._name_to_type[a] == AxisType.Explicit for a in axis_names)):
@@ -969,21 +973,19 @@ def _valid_repeats(mesh: Mesh, mat: core.ManualAxisType, spec) -> bool:
 # Lowering
 
 def _shardy_shard_map_sharding(
-    ctx: mlir.LoweringRuleContext, mesh, manual_axes, spec, aval_in
+    ctx: mlir.LoweringRuleContext, mesh, manual_axes, spec, aval
 ) -> sharding_impls.SdyArray:
-  # TODO(yashkatariya): Under explicit mode (partial manual) we should use
-  # aval_in.sharding.spec instead and then revert back to
-  # `modify_wrt_axis_types=True`. Write tests and figure that out.
-  ns = _make_scoped_manual_sharding(ctx, mesh, spec)
-  if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
-    ns = sharding_impls.physical_sharding(aval_in, ns)
-    aval_in = core.physical_aval(aval_in)
-  sdy_sharding = ns._to_sdy_sharding(aval_in.ndim)
+  if aval.sharding.mesh.are_all_axes_explicit_or_manual:
+    ns = _make_scoped_manual_sharding(ctx, mesh, aval.sharding.spec)
+  else:
+    ns = _make_scoped_manual_sharding(ctx, mesh, spec)
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):
+    ns = sharding_impls.physical_sharding(aval, ns)
+    aval = core.physical_aval(aval)
   if len(manual_axes) < len(mesh.axis_names):
-    new_dim_shardings = tuple(d.replace(is_open=True)
-                              for d in sdy_sharding.dim_shardings)
-    sdy_sharding = sdy_sharding.replace(dim_shardings=new_dim_shardings)
-  return sdy_sharding
+    return ns._to_sdy_sharding(aval.ndim, modify_wrt_axis_types=True)
+  else:
+    return ns._to_sdy_sharding(aval.ndim)
 
 
 def _get_token_sharding(

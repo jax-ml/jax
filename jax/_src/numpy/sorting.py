@@ -27,6 +27,20 @@ from jax._src.typing import Array, ArrayLike, DTypeLike
 
 export = set_module('jax.numpy')
 
+def _order_reversing_invert(x: Array) -> Array:
+  """Map an array to one whose sort order is reversed."""
+  if dtypes.isdtype(x.dtype, ("bool", "integral")):
+    # For boolean and integer types, bitwise_not is order-reversing over the full domain
+    return lax.bitwise_not(x)
+  else:
+    # For inexact types, negation is order-reversing except in a few cases:
+    # - NaN, which lax.sort places at the end regardless of sign
+    # - signed/unsigned zero, which are always left in stable order regardless of sign.
+    # In places where this is important, these must be handled specially below.
+    return lax.neg(x)
+
+
+
 @export
 @api.jit(static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
 def sort(
@@ -54,6 +68,12 @@ def sort(
   Returns:
     Sorted array of shape ``a.shape`` (if ``axis`` is an integer) or of shape
     ``(a.size,)`` (if ``axis`` is None).
+
+  Note:
+    For descending sorts, ``NaN`` values are sorted to the beginning of the
+    array (whereas for ascending sorts they are sorted to the end). While this
+    differs from NumPy's behavior (which sorts NaNs to the end for both
+    orders), it conforms to the Python Array API specification.
 
   Examples:
     Simple 1-dimensional sort
@@ -118,6 +138,12 @@ def argsort(
   Returns:
     Array of indices that sort an array. Returned array will be of shape ``a.shape``
     (if ``axis`` is an integer) or of shape ``(a.size,)`` (if ``axis`` is None).
+
+  Note:
+    For descending sorts, ``NaN`` values are sorted to the beginning of the
+    array (whereas for ascending sorts they are sorted to the end). While this
+    differs from NumPy's behavior (which sorts NaNs to the end for both
+    orders), it conforms to the Python Array API specification.
 
   Examples:
     Simple 1-dimensional sort
@@ -237,11 +263,8 @@ def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   kth = canonicalize_axis(kth, arr.shape[axis])
 
   arr = arr.swapaxes(axis, -1)
-  if dtypes.isdtype(arr.dtype, "unsigned integer"):
-    # Here, we apply a trick to handle correctly 0 values for unsigned integers
-    bottom = -lax.top_k(-(arr + 1), kth + 1)[0] - 1
-  else:
-    bottom = -lax.top_k(-arr, kth + 1)[0]
+  bottom = _order_reversing_invert(
+      lax.top_k(_order_reversing_invert(arr), kth + 1)[0])
   top = lax.top_k(arr, arr.shape[-1] - kth - 1)[0]
   out = lax.concatenate([bottom, top], dimension=arr.ndim - 1)
   return out.swapaxes(-1, axis)
@@ -308,11 +331,7 @@ def argpartition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   kth = canonicalize_axis(kth, arr.shape[axis])
 
   arr = arr.swapaxes(axis, -1)
-  if dtypes.isdtype(arr.dtype, "unsigned integer"):
-    # Here, we apply a trick to handle correctly 0 values for unsigned integers
-    bottom_ind = lax.top_k(-(arr + 1), kth + 1)[1]
-  else:
-    bottom_ind = lax.top_k(-arr, kth + 1)[1]
+  bottom_ind = lax.top_k(_order_reversing_invert(arr), kth + 1)[1]
 
   # To avoid issues with duplicate values, we compute the top indices via a proxy
   set_to_zero = lambda a, i: a.at[i].set(0)
@@ -510,15 +529,5 @@ def top_k(
   axis = canonicalize_axis(axis, arr.ndim)
   if mode == "largest":
     return lax.top_k(arr, k, axis=axis)
-  elif dtypes.isdtype(arr.dtype, "bool"):
-    inv = lax.bitwise_not(arr)
-    vals, indices = lax.top_k(inv, k, axis=axis)
-    return lax.bitwise_not(vals), indices
-  elif dtypes.isdtype(arr.dtype, "unsigned integer"):
-    inv = -(arr + 1)
-    vals, indices = lax.top_k(inv, k, axis=axis)
-    return -(vals + 1), indices
-  else:
-    inv = -arr
-    vals, indices = lax.top_k(inv, k, axis=axis)
-    return -vals, indices
+  vals, indices = lax.top_k(_order_reversing_invert(arr), k, axis=axis)
+  return _order_reversing_invert(vals), indices

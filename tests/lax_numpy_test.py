@@ -4363,7 +4363,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   def testSortStableDescending(self):
-    # TODO(jakevdp): test directly against np.sort when descending is supported.
     x = jnp.array([0, 1, jnp.nan, 0, 2, jnp.nan, -jnp.inf, jnp.inf])
     x_sorted = jnp.array([-jnp.inf, 0, 0, 1, 2, jnp.inf, jnp.nan, jnp.nan])
     argsorted_stable = jnp.array([6, 0, 3, 1, 4, 7, 2, 5])
@@ -4476,7 +4475,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
      for shape in nonzerodim_shapes
      for axis in range(-len(shape), len(shape))
      for kth in range(-shape[axis], shape[axis])],
-    dtype=default_dtypes,
+    dtype=default_dtypes + bool_dtypes,
   )
   def testPartition(self, shape, dtype, axis, kth):
     rng = jtu.rand_default(self.rng())
@@ -4500,11 +4499,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._assertSamePartitionedArrays(jnp_output, np_output, axis, kth, shape)
 
   @jtu.sample_product(
+    kth=[-2, 2],
+    dtype=int_dtypes + unsigned_dtypes,
+  )
+  def testPartitionIntegerExtrema(self, kth, dtype):
+    min_val = np.iinfo(dtype).min
+    max_val = np.iinfo(dtype).max
+    arg = jnp.array([[6, max_val, min_val, 4, 3, 1, min_val, 7, 5, 2]], dtype=dtype)
+    axis = -1
+    shape = arg.shape
+    jnp_output = jnp.partition(arg, axis=axis, kth=kth)
+    np_output = np.partition(arg, axis=axis, kth=kth)
+    self._assertSamePartitionedArrays(jnp_output, np_output, axis, kth, shape)
+
+  @jtu.sample_product(
     [{'shape': shape, 'axis': axis, 'kth': kth}
      for shape in nonzerodim_shapes
      for axis in range(-len(shape), len(shape))
      for kth in range(-shape[axis], shape[axis])],
-    dtype=default_dtypes,
+    dtype=default_dtypes + bool_dtypes,
     use_method=[True, False]
   )
   def testArgpartition(self, shape, dtype, axis, kth, use_method):
@@ -4557,6 +4570,27 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._assertSamePartitionedArrays(jnp_values, np_values, axis, kth, shape)
 
   @jtu.sample_product(
+    kth=[-2, 2],
+    dtype=int_dtypes + unsigned_dtypes,
+  )
+  def testArgpartitionIntegerExtrema(self, kth, dtype):
+    min_val = np.iinfo(dtype).min
+    max_val = np.iinfo(dtype).max
+    arg = jnp.array([6, max_val, min_val, 4, 3, 1, min_val, 7, 5, 2, 3], dtype=dtype)
+    axis = -1
+    jnp_output = jnp.argpartition(arg, axis=axis, kth=kth)
+    np_output = np.argpartition(arg, axis=axis, kth=kth)
+
+    # Assert that all indices are present
+    self.assertArraysEqual(jnp.sort(jnp_output, axis), np.sort(np_output, axis), check_dtypes=False)
+
+    # Because JAX & numpy may treat duplicates differently, we must compare values
+    # rather than indices.
+    jnp_values = arg[jnp_output]
+    np_values = arg[np_output]
+    self._assertSamePartitionedArrays(jnp_values, np_values, axis, kth, arg.shape)
+
+  @jtu.sample_product(
     [dict(shape=shape, axis=axis, k=k)
      for shape in [(20,), (5, 8), (3, 4, 5)]
      for axis in range(-len(shape), len(shape))
@@ -4587,6 +4621,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertArraysEqual(gathered, jnp_vals)
 
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    dtype=int_dtypes,
+    k=[1, 2, 5],
+  )
+  def testTopKSmallestWithMinValue(self, dtype, k):
+    min_val = np.iinfo(dtype).min
+    max_val = np.iinfo(dtype).max
+    arg = jnp.array([6, max_val, min_val, 4, 3, 1, min_val, 7, 5, 2], dtype=dtype)
+    vals, indices = jnp.top_k(arg, k, mode='smallest')
+    self.assertArraysEqual(vals, jnp.sort(arg)[:k])
+    self.assertArraysEqual(jnp.take(arg, indices), vals)
 
   def testTopKErrors(self):
     x = jnp.arange(10)
@@ -6685,7 +6731,7 @@ class NumpyGradTests(jtu.JaxTestCase):
     pi_x = pi * x
     expected_sinc = jnp.sin(pi_x) / pi_x
     expected_grad = (jnp.cos(pi_x) - expected_sinc) / x
-    expected_hess = -pi ** 2 * expected_sinc - scalar(2.0) * expected_grad / x
+    expected_hess = scalar(-np.pi ** 2) * expected_sinc - scalar(2.0) * expected_grad / x
 
     self.assertAllClose(actual_sinc, expected_sinc, rtol=tol, atol=tol)
     self.assertAllClose(actual_grad, expected_grad, rtol=tol, atol=tol)

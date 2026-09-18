@@ -54,18 +54,6 @@ class TorchTest(jtu.JaxTestCase):
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("Only works on GPU with capability sm90a+")
 
-  def test_simple_pallas_call(self):
-    @plgpu.as_torch_kernel
-    @functools.partial(
-        pl.pallas_call, out_shape=jax.ShapeDtypeStruct([128], jnp.int32)
-    )
-    def kernel(x_ref, y_ref, o_ref):
-      o_ref[...] = x_ref[...] + y_ref[0]
-
-    x = torch.arange(128, dtype=torch.int32, device="cuda")
-    y = torch.arange(128, dtype=torch.int32, device="cuda")
-    np.testing.assert_array_equal(kernel(x, y).cpu(), (x + y[0]).cpu())
-
   def test_simple_plgpu_kernel(self):
     @plgpu.as_torch_kernel
     @functools.partial(
@@ -80,7 +68,7 @@ class TorchTest(jtu.JaxTestCase):
 
   def test_flip(self):
     @functools.partial(
-        pl.pallas_call, out_shape=(jax.ShapeDtypeStruct([128], jnp.int32),) * 2
+        plgpu.kernel, out_type=(jax.ShapeDtypeStruct([128], jnp.int32),) * 2
     )
     def kernel(x_ref, y_ref, x_o_ref, y_o_ref):
       x_o_ref[...] = x_ref[...]
@@ -94,7 +82,7 @@ class TorchTest(jtu.JaxTestCase):
 
   def test_not_all_returned(self):
     @functools.partial(
-        pl.pallas_call, out_shape=(jax.ShapeDtypeStruct([128], jnp.int32),) * 2
+        plgpu.kernel, out_type=(jax.ShapeDtypeStruct([128], jnp.int32),) * 2
     )
     def kernel(x_ref, y_ref, x_o_ref, y_o_ref):
       x_o_ref[...] = x_ref[...]
@@ -107,7 +95,7 @@ class TorchTest(jtu.JaxTestCase):
 
   def test_invalid(self):
     @functools.partial(
-        pl.pallas_call, out_shape=(jax.ShapeDtypeStruct([128], jnp.int32),) * 2
+        plgpu.kernel, out_type=(jax.ShapeDtypeStruct([128], jnp.int32),) * 2
     )
     def kernel(x_ref, y_ref, x_o_ref, y_o_ref):
       x_o_ref[...] = x_ref[...]

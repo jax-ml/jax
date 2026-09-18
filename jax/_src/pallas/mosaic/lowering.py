@@ -62,6 +62,7 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas.fuser import custom_fusion_lib
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
@@ -4761,6 +4762,30 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   lowering_context = ctx.lowering_context.replace(block_shapes=ctx.block_shapes)
   return jaxpr_subcomp(lowering_context, jaxpr, *args)
+
+
+# TODO(jburnim): Lowering rules for SC and Mosaic GPU.
+
+@register_lowering_rule(custom_fusion_lib.custom_fusion_p)
+def _custom_fusion_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    jaxpr: jax_core.Jaxpr,
+    num_consts: int,
+    pallas_jaxpr: jax_core.Jaxpr | None,
+    pallas_num_consts: int,
+    **_,
+):
+  consts, pallas_consts, args = split_list(
+      args, [num_consts, pallas_num_consts]
+  )
+  if pallas_jaxpr is None:
+    pallas_jaxpr = jaxpr
+    pallas_consts = consts
+  lowering_context = ctx.lowering_context.replace(block_shapes=ctx.block_shapes)
+  return jaxpr_subcomp(
+      lowering_context, pallas_jaxpr, *pallas_consts, *args
+  )
 
 
 @register_lowering_rule(jax_core.eval_jaxpr_p, kernel_types=[*tpu_core.CoreType])

@@ -51,12 +51,15 @@ def _allocate_bref(
       jax.ShapeDtypeStruct(buf_shape, input_val.dtype),
       memory_space=target_mem_space,
   )
-  sem_out = jax.empty_ref(
-      jax.ShapeDtypeStruct((bref.buffer_count,), tpu_core.DMASemaphore()),
-      memory_space=pallas_core.CoreMemorySpace(
-          tpu_core.MemorySpace.SEMAPHORE, mesh
-      ),
-  )
+  if bref.is_trivial_windowing and bref.prefetched_count == 0:
+    sem_out = None
+  else:
+    sem_out = jax.empty_ref(
+        jax.ShapeDtypeStruct((bref.buffer_count,), tpu_core.DMASemaphore()),
+        memory_space=pallas_core.CoreMemorySpace(
+            tpu_core.MemorySpace.SEMAPHORE, mesh
+        ),
+    )
   return dataclasses.replace(
       bref,
       window_ref=window_out,
@@ -121,6 +124,13 @@ def emit_pipeline_with_async_prefetch(
         jax.tree.structure(filt_in_specs), allocs_flat
     )
 
+    max_prefetch = max(
+        (b.prefetched_count for b in allocs_flat if b.is_buffered),
+        default=0,
+    )
+    if max_prefetch == 0:
+      return allocations
+
     def _prefetch_kernel(*in_refs):
       in_refs_list = jax.tree.leaves(in_refs)
       core_axis_ = core_axis_name if core_axis is None else core_axis
@@ -148,10 +158,6 @@ def emit_pipeline_with_async_prefetch(
           else b
           for b in allocs_flat
       ]
-      max_prefetch = max(
-          (b.prefetched_count for b in allocs_flat if b.is_buffered),
-          default=0,
-      )
       with scheduler.grid_env():
         for step in range(max_prefetch):
           for i, (b, orig_b, in_ref) in enumerate(

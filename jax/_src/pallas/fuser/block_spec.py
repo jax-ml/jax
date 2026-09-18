@@ -129,6 +129,7 @@ def _init_block_transforms(
               block_index_transform=_select_block_indices(
                   equivalent_bs_argnums[i]
               ),
+              memory_space=bs.memory_space,
               pipeline_mode=bs.pipeline_mode,
           )
       )
@@ -157,13 +158,16 @@ def _apply_block_transform(
 
   if isinstance(block_index_transform, NoBlockIndexTransform):
     return pallas_core.no_block_spec
-  else:
-    return pallas_core.BlockSpec(
-        block_shape=block_index_transform.block_shape,
-        index_map=make_new_idx_map(block_index_transform),
-        memory_space=block_index_transform.memory_space,
-        pipeline_mode=block_index_transform.pipeline_mode,
-    )
+  valid_block_specs = [
+      bs for bs in block_specs if bs is not pallas_core.no_block_spec
+  ]
+  assert len(valid_block_specs) >= 1
+  return valid_block_specs[0].replace(
+      block_shape=block_index_transform.block_shape,
+      index_map=make_new_idx_map(block_index_transform),
+      memory_space=block_index_transform.memory_space,
+      pipeline_mode=block_index_transform.pipeline_mode,
+  )
 
 
 @dataclasses.dataclass
@@ -318,6 +322,11 @@ def _sp_context(*scalar_prefetch):
 
 def _get_scalar_prefetch():
   return _sp_env.scalar_prefetch
+
+
+# TPU metadata (SMEM scalar prefetch) uses rank 1 (shape=(1,)), GPU uses rank 0.
+def _load_scalar_prefetch(a: Any) -> Any:
+  return a[0] if a.ndim > 0 else a[...]
 
 
 # Caching guarantees identity preservation for identical index maps across
@@ -590,7 +599,7 @@ def _pull_block_transform(
           raise ValueError('Grid must be provided to pull_block_spec.')
         args = scalar_prefetch_handler(*_get_scalar_prefetch())
         # Load from SMEM
-        args = [a[0] for a in args]
+        args = [_load_scalar_prefetch(a) for a in args]
         return core.eval_jaxpr(jaxpr, [], *args)
 
       scalar_prefetch_fn = functools.partial(
@@ -1017,7 +1026,7 @@ def _push_bcast_block_spec(
   new_block_shape = util.tuple_update(
       block_spec.block_shape, i, bcast_dim_block_shape
   )
-  return pallas_core.BlockSpec(new_block_shape, block_spec.index_map)
+  return block_spec.replace(block_shape=new_block_shape)
 
 
 def _binop_usage_rule(prim, ctx, used_out: set[Usage], **params):
@@ -1533,10 +1542,9 @@ def _dot_general_pull_rule(
     # Contraction dimension is full, so we use the full shape.
     block_shape[contraction_index] = contraction_shape
     block_shape[nc_index] = block_transform.block_shape[out_index]
-    return BlockIndexTransform(
+    return block_transform.replace(
         block_shape=tuple(block_shape),
         block_index_transform=transform,
-        pipeline_mode=block_transform.pipeline_mode,
     )
 
   lhs_block_transform = make_transform(block_transform, lc, 0)
@@ -2900,7 +2908,7 @@ def _push_block_spec_jaxpr(
           raise ValueError('Grid must be provided to push_block_spec.')
         args = scalar_prefetch_handler(*_get_scalar_prefetch())
         # Load from SMEM
-        args = [a[0] for a in args]
+        args = [_load_scalar_prefetch(a) for a in args]
         return core.eval_jaxpr(sp_jaxpr, [], *args)
 
       ctx.scalar_prefetch_fn = functools.partial(
@@ -3036,7 +3044,7 @@ def _transpose_push_rule(
     original_idxs = block_spec.index_map(*args)
     return tuple(original_idxs[i] for i in permutation)
 
-  return pallas_core.BlockSpec(new_shape, new_index_map)
+  return block_spec.replace(block_shape=new_shape, index_map=new_index_map)
 
 
 @register_push_block_spec_rule(lax.convert_element_type_p)
@@ -3207,7 +3215,9 @@ def _reshape_push_rule(
       *idx, last = block_spec.index_map(*args)
       return *idx, last, 0
 
-    return pallas_core.BlockSpec(new_block_shape, new_index_map)
+    return block_spec.replace(
+        block_shape=new_block_shape, index_map=new_index_map
+    )
   raise NotImplementedError(f'reshape not supported yet: {aval_in}, {aval_out}')
 
 
@@ -3280,7 +3290,9 @@ def _broadcast_in_dim_push_rule(
         idx[dim_map[i]] if i in dim_map else 0 for i in range(len(shape))
     )
 
-  return pallas_core.BlockSpec(tuple(new_block_shape), new_index_map)
+  return block_spec.replace(
+      block_shape=tuple(new_block_shape), index_map=new_index_map
+  )
 
 
 @register_push_block_spec_rule(lax.concatenate_p)
@@ -3332,7 +3344,9 @@ def _concatenate_push_rule(
       pallas_core.get_block_size(block_shape[dimension])
       for block_shape in block_shapes
   )
-  return pallas_core.BlockSpec(tuple(new_block_shape), _new_index_map)
+  return block_specs[0].replace(
+      block_shape=tuple(new_block_shape), index_map=_new_index_map
+  )
 
 
 @register_push_block_spec_rule(lax.dynamic_update_slice_p)
@@ -3426,7 +3440,9 @@ def _stack_push_rule(
   new_block_shape = list(block_specs[0].block_shape)
   new_block_shape.insert(axis, len(block_specs))
 
-  return pallas_core.BlockSpec(tuple(new_block_shape), _new_index_map)
+  return block_specs[0].replace(
+      block_shape=tuple(new_block_shape), index_map=_new_index_map
+  )
 
 
 @register_push_block_spec_rule(lax.unstack_p)
@@ -3454,7 +3470,9 @@ def _unstack_push_rule(
     idx.pop(axis)
     return tuple(idx)
 
-  out_block_spec = pallas_core.BlockSpec(tuple(new_block_shape), _new_index_map)
+  out_block_spec = block_spec.replace(
+      block_shape=tuple(new_block_shape), index_map=_new_index_map
+  )
   return [out_block_spec] * n
 
 

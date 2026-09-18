@@ -123,6 +123,8 @@ class DebugCheckTest(jtu.JaxTestCase):
 
   @parameterized.product(oob=[False, True])
   def test_trigger_bounds_checker(self, oob):
+    if not jtu.is_libtpu_at_least("0.0.48"):
+      self.skipTest("Requires libtpu >= 0.0.48")
     size = plsc.get_sparse_core_info().num_lanes
     x = jnp.arange(size, dtype=jnp.int32)
     indices = jnp.arange(size, dtype=jnp.int32) + jnp.astype(oob * 128, jnp.int32)
@@ -132,7 +134,6 @@ class DebugCheckTest(jtu.JaxTestCase):
         mesh=plsc.VectorSubcoreMesh(
             core_axis_name="core", subcore_axis_name="subcore", num_cores=1
         ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
         scratch_types=dict(
             x_ref=pltpu.VMEM.like(x),
             indices_ref=pltpu.VMEM.like(indices),

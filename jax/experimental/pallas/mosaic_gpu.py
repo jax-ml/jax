@@ -93,6 +93,7 @@ from jax._src.pallas.mosaic_gpu.primitives import semaphore_wait as semaphore_wa
 from jax._src.pallas.mosaic_gpu.primitives import SemaphoreSignal as SemaphoreSignal
 from jax._src.pallas.mosaic_gpu.primitives import set_max_registers as set_max_registers
 from jax._src.pallas.mosaic_gpu.primitives import ShapeDtypeStruct as ShapeDtypeStruct
+from jax._src.pallas.mosaic_gpu.primitives import store as store
 from jax._src.pallas.mosaic_gpu.primitives import tcgen05_commit_arrive as tcgen05_commit_arrive
 from jax._src.pallas.mosaic_gpu.primitives import tcgen05_mma as tcgen05_mma
 from jax._src.pallas.mosaic_gpu.primitives import try_cluster_cancel as try_cluster_cancel

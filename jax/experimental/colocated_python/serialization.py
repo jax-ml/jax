@@ -249,15 +249,22 @@ def _serialize(obj: Any) -> bytes:
     )
     dispatch = dispatch_table
 
-  assert _common_obj_state.common_obj_index is None, (
-      "_serialize() expects no recursive calls")
+  prev_common_obj_index = _common_obj_state.common_obj_index
   _common_obj_state.common_obj_index = {}
   try:
     with io.BytesIO() as file:
       _CustomPickler(file).dump(obj)
       return file.getvalue()
   finally:
-    _common_obj_state.common_obj_index = None
+    _common_obj_state.common_obj_index = prev_common_obj_index
+
+
+# NOTE: A reentrant lock is required since `loads` can trigger importing Python
+# modules, and doing so across multiple threads in parallel is not thread safe
+# and can lead to deadlocks. We specifically need a reentrant lock since
+# unpickling a payload can invoke `_deserialize()` again on the same thread to
+# unpickle nested payloads.
+_deserialize_lock = threading.RLock()
 
 
 def _deserialize(serialized: bytes) -> Any:
@@ -272,13 +279,13 @@ def _deserialize(serialized: bytes) -> Any:
   if cloudpickle is None:
     raise ModuleNotFoundError('No module named "cloudpickle"')
 
-  assert _common_obj_state.common_obj is None, (
-      "_deserialize() expects no recursive calls")
-  _common_obj_state.common_obj = []
-  try:
-    return cloudpickle.loads(serialized)
-  finally:
-    _common_obj_state.common_obj = None
+  with _deserialize_lock:
+    prev_common_obj = _common_obj_state.common_obj
+    _common_obj_state.common_obj = []
+    try:
+      return cloudpickle.loads(serialized)
+    finally:
+      _common_obj_state.common_obj = prev_common_obj
 
 
 def _make_specs_for_serialized_specs(
