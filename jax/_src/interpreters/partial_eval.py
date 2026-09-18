@@ -960,15 +960,31 @@ def _partial_eval_jaxpr_custom_cached(
 
 MemoryKind = str
 
-class RecomputeType: pass
+# What a remat policy returns instead of a bool. Truthiness is spelled out
+# because a policy result can reach raw boolean context: RematCases_ admits both
+# bools and these sentinels, and not every consumer routes through ensure_enum.
+# Left implicit, all three are truthy, so Recompute reads as "save" -- the
+# opposite of what it means.
+class RecomputeType:
+  def __bool__(self) -> bool:
+    return False
 Recompute = RecomputeType()
 
-class SaveableType: pass
+class SaveableType:
+  def __bool__(self) -> bool:
+    return True
 Saveable = SaveableType()
 
 class Offloadable(NamedTuple):
   src: MemoryKind
   dst: MemoryKind
+
+  def __bool__(self) -> bool:
+    # Offloading keeps the value rather than recomputing it, so this is truthy
+    # for the same reason Saveable is. Written out rather than inherited from
+    # tuple, whose truthiness is its length and would flip if a field were
+    # added or removed.
+    return True
 
 RematCases = RecomputeType | SaveableType | Offloadable
 RematCases_ = RematCases | bool
