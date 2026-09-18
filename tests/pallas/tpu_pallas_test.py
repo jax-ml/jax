@@ -14,6 +14,7 @@
 
 """Test TPU-specific extensions to pallas_call."""
 
+import base64
 from collections.abc import Callable
 import contextlib
 import functools
@@ -30,11 +31,15 @@ from absl.testing import parameterized
 import jax
 from jax import api_util
 from jax import lax
+from jax._src import compilation_cache
+from jax._src import config
 from jax._src import flattree as ft
 from jax._src import shard_map
 from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import pxla
+from jax._src.lib.mlir import ir
 from jax._src.pallas import pallas_test_util as ptu
 from jax._src.pallas.mosaic import error_handling
 from jax._src.pallas.mosaic import tpu_info
@@ -43,6 +48,7 @@ from jax._src.state import utils as state_utils
 from jax.experimental import mesh_utils
 from jax.experimental import mosaic
 from jax.experimental import pallas as pl
+from jax.experimental.mosaic.dialects import tpu
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas.ops.tpu import example_kernel
 import jax.numpy as jnp
@@ -6957,6 +6963,182 @@ class PallasTPUAutoCollectiveIdLimitTest(ptu.PallasTPUTest):
         r'exceeded the limit of 1',
     ):
       run_kernels.lower(jnp.zeros((8, 128), jnp.float32))
+
+
+class _CacheKeyFoo:
+
+  @staticmethod
+  def double(x_ref, out_ref):
+    out_ref[...] = x_ref[...] + x_ref[...]
+
+
+class _CacheKeyBar:
+
+  @staticmethod
+  def double(x_ref, out_ref):
+    out_ref[...] = x_ref[...] + x_ref[...]
+
+
+def _get_cache_key(lowered: jax.stages.Lowered) -> str:
+  lowering: Any = getattr(lowered, '_lowering')
+  device_list = lowering._device_list
+  in_shardings = tuple(
+      pxla.maybe_concretize_mesh(i, device_list)
+      for i in lowering.compile_args['in_shardings']
+  )
+  out_shardings = tuple(
+      pxla.maybe_concretize_mesh(o, device_list)
+      for o in lowering.compile_args['out_shardings']
+  )
+  allow_prop_to_inputs, allow_prop_to_outputs = pxla.get_prop_to_input_output(
+      in_shardings=in_shardings,
+      out_shardings=out_shardings,
+      num_ordered_effects=len(lowering.compile_args['ordered_effects']),
+  )
+  dev = np.array(device_list)
+  backend = lowering.compile_args['backend']
+  compile_options = pxla.create_compile_options(
+      computation=lowering._hlo,
+      tuple_args=lowering.compile_args['tuple_args'],
+      allow_prop_to_inputs=allow_prop_to_inputs,
+      allow_prop_to_outputs=allow_prop_to_outputs,
+      backend=backend,
+      np_dev=dev,
+      compiler_options=dict(lowering._compiler_options_kvs),
+  )
+  return compilation_cache.get_cache_key(
+      lowering._hlo, dev, compile_options, backend
+  )
+
+
+def _fingerprint(compiled: jax.stages.Compiled) -> str:
+  executable: Any = compiled.runtime_executable()
+  assert executable is not None
+  fp: Any = executable.fingerprint
+  return fp.hex() if hasattr(fp, 'hex') else str(fp)
+
+
+class TPUPallasCacheKeyTest(ptu.PallasTPUTest):
+
+  def setUp(self):
+    super().setUp()
+    if self.INTERPRET:
+      self.skipTest('Compilation-only test')
+    if not jtu.is_libtpu_at_least('0.0.49'):
+      self.skipTest('Separating debug locations requires libtpu >= 0.0.49')
+    self.enter_context(config.jax_mosaic_unzip_debug_locations(True))
+
+  def test_cache_key_collision_with_fingerprint_matching(self):
+    x = jnp.array([1.0], jnp.float32)
+
+    def make_fn(k):
+      @jax.jit
+      def fn(x: jax.Array) -> jax.Array:
+        out_shape = jax.ShapeDtypeStruct.like(x)
+        return pl.pallas_call(k, out_shape)(x)
+
+      return fn
+
+    f = make_fn(_CacheKeyFoo.double)
+    g = make_fn(_CacheKeyBar.double)
+
+    f_lowered = f.lower(x)
+    g_lowered = g.lower(x)
+
+    f_key = _get_cache_key(f_lowered)
+    g_key = _get_cache_key(g_lowered)
+
+    f_compiled = f_lowered.compile()
+    g_compiled = g_lowered.compile()
+
+    f_fp = _fingerprint(f_compiled)
+    g_fp = _fingerprint(g_compiled)
+
+    self.assertEqual(
+        f_key, g_key, 'Cache keys should collide under default config'
+    )
+    self.assertEqual(
+        f_fp,
+        g_fp,
+        'Executable fingerprints should match because functional bytecode is'
+        ' identical',
+    )
+    np.testing.assert_allclose(f(x), g(x))
+
+  def test_cache_key_differs_when_metadata_included(self):
+    with config.compilation_cache_include_metadata_in_key(True):
+      x = jnp.array([1.0], jnp.float32)
+
+      def make_fn(k):
+        @jax.jit
+        def fn(x: jax.Array) -> jax.Array:
+          out_shape = jax.ShapeDtypeStruct.like(x)
+          return pl.pallas_call(k, out_shape)(x)
+
+        return fn
+
+      f = make_fn(_CacheKeyFoo.double)
+      g = make_fn(_CacheKeyBar.double)
+
+      f_lowered = f.lower(x)
+      g_lowered = g.lower(x)
+
+      f_key = _get_cache_key(f_lowered)
+      g_key = _get_cache_key(g_lowered)
+
+      self.assertNotEqual(
+          f_key, g_key, 'Cache keys should differ when metadata is included'
+      )
+
+  def test_unzip_debug_locations_deduplication(self):
+    def kernel(x_ref, y_ref, out_ref):
+      out_ref[...] = (x_ref[...] + y_ref[...]) * 2.0
+
+    x = y = jnp.zeros((8, 128), dtype=jnp.float32)
+    lowered = jax.jit(
+        pl.pallas_call(kernel, out_shape=jax.ShapeDtypeStruct.like(x))
+    ).lower(x, y)
+
+    custom_call_config = None
+
+    def _find_custom_call_config(op: ir.Operation) -> ir.WalkResult:
+      nonlocal custom_call_config
+      if (
+          'call_target_name' in op.attributes
+          and ir.StringAttr(op.attributes['call_target_name']).value
+          == 'tpu_custom_call'
+      ):
+        custom_call_config = json.loads(
+            ir.StringAttr(op.attributes['backend_config']).value
+        )['custom_call_config']
+        return ir.WalkResult.INTERRUPT
+      return ir.WalkResult.ADVANCE
+
+    lowered.compiler_ir().operation.walk(_find_custom_call_config)
+    self.assertIsNotNone(custom_call_config)
+    debug_locations = custom_call_config['debug_locations']
+    locations = debug_locations['locations']
+    indices = debug_locations['indices']
+
+    # Verify deduplication: many operations share fewer unique location strings.
+    self.assertGreater(len(indices), len(locations))
+    self.assertTrue(all(0 <= idx < len(locations) for idx in indices))
+
+    # Verify that the bytecode in custom_call_config has had its debug
+    # locations stripped (all loc(unknown)).
+    body_bytes = base64.b64decode(custom_call_config['body'])
+    with ir.Context() as ctx:
+      tpu.register_dialect(ctx)
+      ctx.allow_unregistered_dialects = True
+      kernel_module = ir.Module.parse(body_bytes, context=ctx)
+
+      def check_unknown(op: ir.Operation) -> ir.WalkResult:
+        self.assertEqual(str(op.location), 'loc(unknown)')
+        return ir.WalkResult.ADVANCE
+
+      kernel_module.operation.walk(
+          check_unknown, walk_order=ir.WalkOrder.PRE_ORDER
+      )
 
 
 if __name__ == '__main__':
