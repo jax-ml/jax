@@ -1637,6 +1637,7 @@ _out_shape_to_aval_mapping: dict[
 def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
   match out_shape:
     case jax_core.ShapeDtypeStruct():
+      memory_space = out_shape._memory_space or jax_core.MemorySpace.Device
       if config._check_vma.value:
         if out_shape.manual_axis_type is None:
           raise ValueError(
@@ -1648,12 +1649,18 @@ def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
         return jax_core.ShapedArray(
             shape=out_shape.shape, dtype=out_shape.dtype,
             sharding=jax_core.get_cur_mesh_sharding(),
-            manual_axis_type=out_shape.manual_axis_type)
+            manual_axis_type=out_shape.manual_axis_type,
+            memory_space=memory_space)
       return jax_core.ShapedArray(
           shape=out_shape.shape, dtype=out_shape.dtype,
-          sharding=jax_core.get_cur_mesh_sharding())
+          sharding=jax_core.get_cur_mesh_sharding(),
+          memory_space=memory_space)
     case jax_core.ShapedArray():
       return out_shape
+    case state.AbstractRef():
+      return state_discharge.discharged_aval(
+          out_shape, discharge=True, strip_memory_space=False
+      )
     case MemoryRef():
       return out_shape.get_array_aval()
     case hijax.HiType():
