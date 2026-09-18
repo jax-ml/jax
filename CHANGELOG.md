@@ -16,6 +16,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.11.2 (September 17, 2026)
+
 * New features
   * Added {func}`jax.numpy.minmax` (and `jnp.minmax`), which returns both the
     minimum and maximum of an array, matching NumPy 2.3+ ({jax-issue}`#40089`).
@@ -49,7 +51,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 * Breaking changes
   * Removed deprecated `jax.experimental.shard_alike`. Use explicit sharding
-    mode instead (see {ref}`sharding`).
+    mode instead (see {ref}`jax-201-sharding`).
 
 * Changes
   * Optimized large JAX {class}`jax.sharding.Mesh` construction by avoiding

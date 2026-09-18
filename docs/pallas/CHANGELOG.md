@@ -13,6 +13,8 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+## Released with JAX 0.11.2 (September 17, 2026)
+
 * Deprecations
 
   * `pl.reciprocal` was moved into {mod}`jax.experimental.pallas.tpu`.

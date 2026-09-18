@@ -21,7 +21,7 @@ import os
 import pathlib
 import subprocess
 
-_version = "0.11.2"
+_version = "0.12.0"
 
 # The following line is overwritten by build scripts in distributions &
 # releases. Do not modify this manually, or jax/jaxlib build will fail.

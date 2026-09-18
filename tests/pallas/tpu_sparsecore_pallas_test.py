@@ -1970,8 +1970,8 @@ class VectorSubcoreTest(PallasSCTest):
       ("debug_print", lambda vec: pl.debug_print("test", vec)),
   )
   def test_effect_discharge(self, effectful_op):
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
+    if not jtu.is_libtpu_at_least("0.0.49"):
+      self.skipTest("Requires libtpu >= 0.0.49")
     x = jnp.arange(self.sc_info.num_lanes)
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
