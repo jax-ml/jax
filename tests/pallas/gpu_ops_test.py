@@ -445,11 +445,9 @@ class SoftmaxTest(PallasBaseTest):
         jnp.float32: (1e-7, 1e-6),
     }[dtype]
 
-    # We upcast to float32 because NumPy <2.0 does not handle custom dtypes
-    # properly. See https://github.com/jax-ml/jax/issues/11014.
     np.testing.assert_allclose(
-        softmax.softmax(x, axis=-1).astype(jnp.float32),
-        jax.nn.softmax(x, axis=-1).astype(jnp.float32),
+        softmax.softmax(x, axis=-1),
+        jax.nn.softmax(x, axis=-1),
         atol=atol,
         rtol=rtol,
     )

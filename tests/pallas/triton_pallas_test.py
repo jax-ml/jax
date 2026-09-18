@@ -356,11 +356,9 @@ class TritonPallasTest(PallasBaseTest):
       o_ref[...] = plgpu.approx_tanh(x_ref[...])
 
     x = jnp.asarray([-1, 0.42, 0.24, 1]).astype(dtype)
-    # We upcast to float32 because NumPy <2.0 does not handle custom dtypes
-    # properly. See https://github.com/jax-ml/jax/issues/11014.
     np.testing.assert_allclose(
-        kernel(x).astype(jnp.float32),
-        jnp.tanh(x).astype(jnp.float32),
+        kernel(x),
+        jnp.tanh(x),
         atol=5e-3,
         rtol=5e-3,
     )

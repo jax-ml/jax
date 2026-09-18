@@ -18,10 +18,10 @@ This means we support at least:
   * **Python 3.12** was released October 2023, and will be supported in new JAX releases at least until **July 2027**.
   * **Python 3.13** was released October 2024, and will be supported in new JAX releases at least until **July 2028**.
   * **Python 3.14** was released October 2025, and will be supported in new JAX releases at least until **July 2029**.
+  * **Python 3.15** will be released October 2026, and will be supported in new JAX releases at least until **July 2030**.
 
 * All NumPy feature releases in the 24 months prior to each JAX release. For example:
 
-  * **NumPy 2.1** was released August 2024, and will be supported in new JAX releases at least until **August 2026**.
   * **NumPy 2.2** was released December 2024, and will be supported in new JAX releases at least until **December 2026**.
   * **NumPy 2.3** was released June 2025, and will be supported in new JAX releases at least until **June 2027**.
   * **NumPy 2.4** was released December 2025, and will be supported in new JAX releases at least until **December 2027**.
