@@ -165,6 +165,26 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
   @jtu.sample_product(
+    window_length=[5, 7],
+    polyorder=[2, 4],
+    deriv=[0, 1, 2, 3],
+    delta=[1.0, 2.0],
+    pos=[None, 1],
+    use=['conv', 'dot'],
+  )
+  def testSavgolCoeffs(self, window_length, polyorder, deriv, delta, pos, use):
+    kwds = dict(window_length=window_length, polyorder=polyorder,
+                deriv=deriv, delta=delta, pos=pos, use=use)
+    osp_fun = partial(osp_signal.savgol_coeffs, **kwds)
+    jsp_fun = partial(jsp_signal.savgol_coeffs, **kwds)
+    args_maker = lambda: []
+
+    tol = {np.float32: 1e-5, np.float64: 1e-12}
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            tol=tol, check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
     [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis,
           nfft=nfft)
       for shape, nperseg, noverlap, timeaxis in stft_test_shapes
