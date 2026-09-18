@@ -566,21 +566,80 @@ def min(a: ArrayLike, axis: Axis = None, out: None = None,
   return _reduce_min(a, axis=_ensure_optional_axes(axis), out=out,
                      keepdims=keepdims, initial=initial, where=where)
 
+def _minmax_op(
+    a: tuple[Array, Array], b: tuple[Array, Array]
+) -> tuple[Array, Array]:
+  return lax.min(a[0], b[0]), lax.max(a[1], b[1])
+
+
 @api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=api.Inline.JAX_EARLY)
 def _reduce_minmax(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                    out: None = None, keepdims: bool = False,
                    init_min: ArrayLike | None = None, init_max: ArrayLike | None = None,
                    where: ArrayLike | None = None
                    ) -> tuple[Array, Array]:
-  # TODO(jakevdp): optimize this by lowering to a single ReduceOp with two outputs.
-  return (_reduce_min(a, axis=axis, out=out, keepdims=keepdims, initial=init_min, where=where),
-          _reduce_max(a, axis=axis, out=out, keepdims=keepdims, initial=init_max, where=where))
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.minmax is not supported.")
+  a = ensure_arraylike("minmax", a)
+  where = check_where("minmax", where)
+  axis = core.concrete_or_error(None, axis, "axis argument to jnp.minmax().")
+
+  if (init_min is None or init_max is None) and where is not None:
+    raise ValueError("reduction operation minmax does not have an identity, so to use a "
+                     "where mask one has to specify 'initial'")
+
+  pos_dims, dims = _reduction_dims(a, axis)
+
+  if init_min is None or init_max is None:
+    shape = np.shape(a)
+    if not _all(shape[d] >= 1 for d in pos_dims):
+      raise ValueError("zero-size array to reduction operation minmax which has no identity")
+
+  result_dtype: DType
+  if dtype is None:
+    result_dtype = a.dtype
+  else:
+    result_dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "minmax")
+
+  a = lax.convert_element_type(a, result_dtype)
+  init_val_min = _reduction_init_val(a, np.inf)
+  init_val_max = _reduction_init_val(a, -np.inf)
+  if where is not None:
+    a_min = _where(where, a, init_val_min)
+    a_max = _where(where, a, init_val_max)
+  else:
+    a_min = a_max = a
+  if pos_dims is not dims:
+    result_min = lax_parallel.pmin(a_min, dims)
+    result_max = lax_parallel.pmax(a_max, dims)
+  else:
+    result_min, result_max = lax.reduce(
+        (a_min, a_max), (init_val_min, init_val_max), _minmax_op, dims
+    )
+  if init_min is not None:
+    init_min_arr = lax.convert_element_type(init_min, lax.asarray(a).dtype)
+    if init_min_arr.shape != ():
+      raise ValueError("initial value must be a scalar. "
+                       f"Got array of shape {init_min_arr.shape}")
+    result_min = lax.min(init_min_arr, result_min)
+  if init_max is not None:
+    init_max_arr = lax.convert_element_type(init_max, lax.asarray(a).dtype)
+    if init_max_arr.shape != ():
+      raise ValueError("initial value must be a scalar. "
+                       f"Got array of shape {init_max_arr.shape}")
+    result_max = lax.max(init_max_arr, result_max)
+  if keepdims:
+    result_min = lax.expand_dims(result_min, pos_dims)
+    result_max = lax.expand_dims(result_max, pos_dims)
+  out_dtype = dtype or result_dtype
+  return (lax.convert_element_type(result_min, out_dtype),
+          lax.convert_element_type(result_max, out_dtype))
 
 @export
 def minmax(a: ArrayLike, axis: Axis = None, out: None = None,
            keepdims: bool = False,
            initial: ArrayLike | tuple[ArrayLike, ArrayLike] | None = None,
-           where: ArrayLike | None = None) -> Array:
+           where: ArrayLike | None = None) -> tuple[Array, Array]:
   r"""Return the minimum and maximum of array elements along a given axis.
 
   JAX implementation of :func:`numpy.minmax`.

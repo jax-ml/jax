@@ -476,9 +476,6 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
 
   @jtu.sample_product(rec=JAX_REDUCER_INITIAL_RECORDS)
   def testReducerWhereNonBooleanErrorInitial(self, rec):
-    if rec.name == "minmax":
-      # TODO(jakevdp): remove this skip
-      self.skipTest("error message doesn't match")
     dtype = rec.dtypes[0]
     x = jnp.zeros((10,), dtype)
     where = jnp.ones(10, dtype=int)
@@ -1200,6 +1197,12 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     jnp_fun = partial(jnp.minmax, initial=initial)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  def testMinmaxSinglePass(self):
+    x = jnp.arange(10)
+    jaxpr = jax.make_jaxpr(jnp.minmax)(x)
+    reduce_eqns = [eqn for eqn in jaxpr.eqns if eqn.primitive is jax.lax.reduce_p]
+    self.assertLen(reduce_eqns, 1)
 
 
 if __name__ == "__main__":
