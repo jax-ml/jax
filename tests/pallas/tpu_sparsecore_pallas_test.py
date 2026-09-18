@@ -195,6 +195,28 @@ class PallasSCTest(jtu.JaxTestCase):
     if self.USE_TC_TILING:
       self.skipTest(f"TC tiling is not supported. {reason}")
 
+  def test_sc_to_tc_vmem_scatter_lowering(self):
+    tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+    sc_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    shape = (self.num_lanes, 128)
+
+    @jax.jit
+    @pl.kernel(
+        out_type=pltpu.VMEM(shape, jnp.int32) @ tc_mesh,
+        mesh=sc_mesh,
+        scratch_types=[
+            pltpu.VMEM(shape, jnp.int32),
+            pltpu.SemaphoreType.DMA(()),
+        ],
+    )
+    def kernel(out_tc_vmem_ref, src_vmem_ref, sem):
+      indices = jnp.arange(shape[0], dtype=jnp.int32)
+      pltpu.async_copy(src_vmem_ref, out_tc_vmem_ref.at[indices], sem).wait()
+
+    kernel.trace().lower()
+
 
 @jtu.skip_under_pytest(
     "Requires pytest -s (no capture) to pass, which is not enabled in CI"

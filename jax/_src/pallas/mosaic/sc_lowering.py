@@ -384,7 +384,15 @@ def _prepare_dma_refs(
           src_ref, src_aval, src_aval.shape, src_transforms
       )
       indirect_offsets_ref_str = "src_ref"
-    case MemorySpace.VMEM, MemorySpace.HBM | MemorySpace.VMEM_SHARED:
+    case (
+        MemorySpace.VMEM,
+        MemorySpace.HBM
+        | MemorySpace.VMEM_SHARED
+        | CoreMemorySpace(memory_space=MemorySpace.VMEM),
+    ) if (
+        not isinstance(dst_memory_space, CoreMemorySpace)
+        or dst_memory_space.mesh.core_type is tpu_core.CoreType.TC
+    ):
       if _has_indirect_offsets(src_transforms, src_transforms_aval, core_type):
         raise ValueError(
             "Only the destination ref can be indexed when doing a scatter via"
