@@ -460,19 +460,26 @@ def _atomic_lowering_rule(
   if len(indexers) != 1:
     raise NotImplementedError("Only single indexer is supported.")
   idx = indexers[0]
-  ptr = lowering._compute_pointers_from_indices(ptr, block_info, idx)
-  val = lowering._ensure_ir_value(val, value_aval)
+  ptr, bounds_mask = lowering._compute_pointers_from_indices(
+      ptr, block_info, idx
+  )
+  shape = idx.get_indexer_shape_static()
+  val = lowering._bcast_to(lowering._ensure_ir_value(val, value_aval), shape)
   if mask is not None:
-    mask = lowering._ensure_ir_value(mask, mask_aval)
+    mask = lowering._bcast_to(lowering._ensure_ir_value(mask, mask_aval), shape)
+  if bounds_mask is not None:
+    mask = (
+        bounds_mask if mask is None else arith_dialect.andi(mask, bounds_mask)
+    )
   if atomic_type == AtomicOpType.XCHG:
     op = tt_dialect.RMWOp.XCHG
   elif atomic_type == AtomicOpType.ADD:
-    if isinstance(val.type, ir.IntegerType):
+    if isinstance(lowering._element_type(val.type), ir.IntegerType):
       op = tt_dialect.RMWOp.ADD
     else:
       op = tt_dialect.RMWOp.FADD
   elif atomic_type == AtomicOpType.MIN:
-    if isinstance(val.type, ir.IntegerType):
+    if isinstance(lowering._element_type(val.type), ir.IntegerType):
       op = (
         tt_dialect.RMWOp.MIN
         if jnp.issubdtype(value_aval.dtype, jnp.signedinteger)
@@ -481,7 +488,7 @@ def _atomic_lowering_rule(
     else:
       return _expand_atomic_fp_min_max(atomic_type, ptr, val, mask=mask)
   elif atomic_type == AtomicOpType.MAX:
-    if isinstance(val.type, ir.IntegerType):
+    if isinstance(lowering._element_type(val.type), ir.IntegerType):
       op = (
         tt_dialect.RMWOp.MAX
         if jnp.issubdtype(value_aval.dtype, jnp.signedinteger)
