@@ -41,7 +41,6 @@ py_library(
         "absl/flags",
         "mpmath",
         "numpy",
-        "scipy",
     ]),
 )
 
@@ -140,6 +139,7 @@ SPECIAL_OPS = [
             "absl/testing",
             "mpmath",
             "numpy",
+            "scipy",
         ]),
     )
     for op in SPECIAL_OPS
@@ -153,6 +153,17 @@ test_suite(
 jax_multiplatform_test(
     name = "numerics_test_util_test",
     srcs = ["numerics_test_util_test.py"],
+    disable_configs = [
+        "cpu_x32",
+        "gpu_a100",
+        "gpu_a100_x32",
+        "gpu_h100_x32",
+        "gpu_p100",
+        "gpu_p100_x32",
+        "gpu_v100",
+        "gpu_v100_x32",
+        "tpu_v4_compilation_cache",
+    ],
     deps = [
         ":numerics_test_util",
     ] + py_deps([

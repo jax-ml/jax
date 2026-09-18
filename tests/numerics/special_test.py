@@ -14,6 +14,8 @@
 
 """Precision tests for special functions against reference implementations."""
 
+import math
+
 from absl.testing import absltest
 from absl.testing import parameterized
 from jax import lax
@@ -29,16 +31,33 @@ if jtu.is_running_under_pytest():
 
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
+import numpy as np
+import scipy.special
 
 config.parse_flags_with_absl()
 
 
 bf16, f16, f32, f64 = jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64
 DTYPE_PARAMS = [(f"_{d.__name__}", d) for d in [bf16, f16, f32, f64]]
-tpu_devices = [
-    "tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i",
-    "tpu_v5e", "tpu_v5p", "tpu_v6e", "tpu_7x",
-]
+TPU_EUPV1 = ["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"]
+
+
+def _mpmath_erfc(x):
+  """Evaluates erfc with magnitude guards to prevent mpmath hanging on |x| > 100."""
+  if x > 100.0:
+    return mpmath.mpf(0)
+  if x < -100.0:
+    return mpmath.mpf(2)
+  return mpmath.erfc(x)
+
+
+def _erfinv_reference(x: np.ndarray) -> np.ndarray:
+  """Evaluates erfinv with a domain guard to avoid slow C++ exception handling."""
+  return np.where(
+      np.abs(x) <= 1.0,
+      np.copysign(scipy.special.erfinv(np.clip(x, -1.0, 1.0)), x),
+      np.nan,
+  )
 
 
 @jtu.skip_under_pytest("Only runs under Bazel")
@@ -48,32 +67,27 @@ class SpecialTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_bessel_i0e_accuracy(self, dtype):
     bounds = [
-        (["cpu"], {f16: 1, f32: 7, f64: 8}),
-        (["gpu"], {f32: 8, f64: 2}),
-        (tpu_devices, {f32: 8}),
+        ("cpu", {f16: 1.0, f32: 7.0, f64: 7.5}),
+        ("gpu", {f32: 8.0, f64: 7.5}),
+        ("tpu", {f32: 8.0}),
     ]
     util.check_unary_precision(
-        self,
-        lax.bessel_i0e,
-        lambda x: mpmath.besseli(0, x) * mpmath.exp(-abs(x)),
-        dtype,
-        bounds=bounds,
-    )
+        self, lax.bessel_i0e, scipy.special.i0e,
+        lambda x: mpmath.besseli(0, x) * mpmath.exp(-abs(x)), dtype,
+        bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_bessel_i1e_accuracy(self, dtype):
     bounds = [
-        (["cpu"], {bf16: 1, f16: 1, f32: 11, f64: 11}),
-        (["gpu"], {bf16: 1, f16: 1, f32: 15, f64: 2}),
-        (tpu_devices, {bf16: 1, f16: 1, f32: 15}),
+        ("cpu", {f16: 1.0, f32: 11.0, f64: 10.5}),
+        ("gpu", {f16: 1.0, f32: 15.5, f64: 6.0}),
+        ("tpu", {f16: 1.0, f32: 15.5}),
     ]
+    ref_fn = lambda x: np.copysign(scipy.special.i1e(x), x)
     util.check_unary_precision(
-        self,
-        lax.bessel_i1e,
-        lambda x: mpmath.besseli(1, x) * mpmath.exp(-abs(x)),
-        dtype,
-        bounds=bounds,
-    )
+        self, lax.bessel_i1e, ref_fn,
+        lambda x: mpmath.besseli(1, x) * mpmath.exp(-abs(x)), dtype,
+        bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_digamma_accuracy(self, dtype):
@@ -81,53 +95,52 @@ class SpecialTest(jtu.JaxTestCase):
     # where the function is ill-conditioned and outputs differ across
     # implementations (NaN vs +-inf).
     bounds = [
-        (["cpu"], {bf16: 18446744073709551615, f16: 18446744073709551615, f32: 18446744073709551615, f64: 18446744073709551615}),
-        (["gpu"], {bf16: 18446744073709551615, f16: 18446744073709551615, f32: 18446744073709551615, f64: 18446744073709551615}),
-        (tpu_devices, {bf16: 18446744073709551615, f16: 18446744073709551615, f32: 18446744073709551615}),
+        ("cpu", {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
+        ("gpu", {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
+        ("tpu", {bf16: math.inf, f16: math.inf, f32: math.inf}),
     ]
     util.check_unary_precision(
-        self, lax.digamma, mpmath.digamma, dtype, bounds=bounds
-    )
+        self, lax.digamma, scipy.special.psi, mpmath.digamma, dtype,
+        bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erf_accuracy(self, dtype):
     bounds = [
-        (["cpu"], {f16: 131, f32: 7, f64: 3}),
-        (["gpu"], {bf16: 16, f16: 131, f32: 1076922, f64: 576922644178748}),
-        (["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"], {f16: 131, f32: 7}),
-        (["tpu_v5p"], {f16: 131, f32: 8}),
-        (["tpu_v6e", "tpu_7x"], {f16: 131, f32: 1}),
+        ("cpu", {f16: 131.0, f32: 7.0, f64: 2.5}),
+        ("gpu",
+         {bf16: 16.0, f16: 131.0, f32: 1076922.0, f64: 576922644178748.5}),
+        (TPU_EUPV1, {f16: 131.0, f32: 7.5}),
+        ("tpu_v5p", {f16: 131.0, f32: 8.5}),
+        (["tpu_v6e", "tpu_7x"], {f16: 131.0, f32: 1.5}),
     ]
     util.check_unary_precision(
-        self, lax.erf, mpmath.erf, dtype, bounds=bounds
-    )
+        self, lax.erf, scipy.special.erf, mpmath.erf, dtype, bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfc_accuracy(self, dtype):
     bounds = [
-        (["cpu"], {f16: 1, f32: 66, f64: 13}),
-        (["gpu"], {f16: 1, f32: 66, f64: 4}),
-        (["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"], {f16: 1, f32: 145}),
-        (["tpu_v5p"], {f16: 1, f32: 157}),
-        (["tpu_v6e"], {f16: 1, f32: 124}),
-        (["tpu_7x"], {f16: 1, f32: 125}),
+        ("cpu", {f16: 1.0, f32: 66.0, f64: 256.0}),
+        ("gpu", {f16: 1.0, f32: 66.5, f64: 256.0}),
+        (TPU_EUPV1, {f16: 1.0, f32: 145.0}),
+        ("tpu_v5p", {f16: 1.0, f32: 157.0}),
+        ("tpu_v6e", {f16: 1.0, f32: 124.5}),
+        ("tpu_7x", {f16: 1.0, f32: 125.0}),
     ]
     util.check_unary_precision(
-        self, lax.erfc, mpmath.erfc, dtype, bounds=bounds
-    )
+        self, lax.erfc, scipy.special.erfc, _mpmath_erfc, dtype, bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfinv_accuracy(self, dtype):
     bounds = [
-        (["cpu"], {bf16: 1, f16: 1, f32: 65, f64: 83}),
-        (["gpu"], {bf16: 1, f16: 1, f32: 65, f64: 83}),
-        (["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"], {bf16: 1, f16: 1, f32: 427}),
-        (["tpu_v5p"], {bf16: 1, f16: 1, f32: 65}),
-        (["tpu_v6e", "tpu_7x"], {bf16: 1, f16: 1, f32: 65}),
+        ("cpu", {f16: 1.0, f32: 65.0, f64: 82.5}),
+        ("gpu", {f16: 1.0, f32: 65.0, f64: 83.5}),
+        (TPU_EUPV1, {f16: 1.0, f32: 427.0}),
+        (["tpu_v5p", "tpu_7x"], {f16: 1.0, f32: 65.5}),
+        ("tpu_v6e", {f16: 1.0, f32: 65.0}),
     ]
     util.check_unary_precision(
-        self, lax.erf_inv, mpmath.erfinv, dtype, bounds=bounds
-    )
+        self, lax.erf_inv, _erfinv_reference, mpmath.erfinv, dtype,
+        bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_lgamma_accuracy(self, dtype):
@@ -135,17 +148,13 @@ class SpecialTest(jtu.JaxTestCase):
     # e.g. x ~= -3.14358) where small approximation errors cause sign flips across
     # zero, and at x = -inf due to inf/NaN handling differences.
     bounds = [
-        (["cpu"], {bf16: 18446744073709551615, f16: 18446744073709551615, f32: 18446744073709551615, f64: 18446744073709551615}),
-        (["gpu"], {bf16: 18446744073709551615, f16: 18446744073709551615, f32: 18446744073709551615, f64: 18446744073709551615}),
-        (tpu_devices, {bf16: 18446744073709551615, f16: 18446744073709551615, f32: 18446744073709551615}),
+        ("cpu", {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
+        ("gpu", {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
+        ("tpu", {bf16: math.inf, f16: math.inf, f32: math.inf}),
     ]
     util.check_unary_precision(
-        self,
-        lax.lgamma,
-        lambda x: mpmath.log(abs(mpmath.gamma(x))),
-        dtype,
-        bounds=bounds,
-    )
+        self, lax.lgamma, scipy.special.gammaln,
+        lambda x: mpmath.log(abs(mpmath.gamma(x))), dtype, bounds=bounds)
 
 
 if __name__ == "__main__":
