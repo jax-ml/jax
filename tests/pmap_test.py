@@ -41,6 +41,7 @@ from jax._src import stages
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import parallel
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import IndivisibleError
 from jax._src.util import safe_map, safe_zip
 import jax.numpy as jnp
@@ -942,6 +943,106 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = np.zeros_like(x)
     expected[0] = device_count
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastDynamicRoot(self):
+    # Source given as a dynamic i32 scalar; uses has_dynamic_root=True.
+    device_count = jax.device_count()
+    # Broadcast from device 0 using a dynamic source array.
+    source_arr = np.int32(0)
+    f = lambda x: lax.pbroadcast(x, source=source_arr, axis_name='i')
+    f = pmap(f, 'i')
+    x = jnp.arange(4 * device_count).reshape((device_count, 4))
+    ans = f(x)
+    expected = np.take(x, [0] * device_count, axis=0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastDynamicRootNonzeroSource(self):
+    # Dynamic source selects a non-zero device.
+    device_count = jax.device_count()
+    if device_count < 2:
+      raise SkipTest("requires at least 2 devices")
+    source_arr = np.int32(1)
+    f = lambda x: lax.pbroadcast(x, source=source_arr, axis_name='i')
+    f = pmap(f, 'i')
+    x = jnp.arange(4 * device_count, dtype=np.float32).reshape((device_count, 4))
+    ans = f(x)
+    expected = np.take(x, [1] * device_count, axis=0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastDynamicRootGrad(self):
+    # Reverse-mode AD through pbroadcast with dynamic source.
+    device_count = jax.device_count()
+    source_arr = np.int32(0)
+    f = lambda x: lax.pbroadcast(x, source=source_arr, axis_name='i')
+    x = np.arange(device_count, dtype=np.float32)
+    ans = pmap(grad(f), 'i')(x)
+    expected = np.zeros_like(x)
+    expected[0] = device_count
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastDynamicRootAxisIndexAsSource(self):
+    # Source derived from axis_index (fully dynamic: different per device).
+    # Broadcast from device 0 by passing source = axis_index % 1 == 0 always.
+    device_count = jax.device_count()
+    def f(x):
+      # Each device computes source = 0 dynamically.
+      source = jnp.int32(0)
+      return lax.pbroadcast(x, source=source, axis_name='i')
+    f = pmap(f, 'i')
+    x = jnp.arange(4 * device_count).reshape((device_count, 4))
+    ans = f(x)
+    expected = np.take(x, [0] * device_count, axis=0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastDynamicRootBatcherConstantData(self):
+    # Exercises the batcher's d-is-None path: x is a constant (not batched
+    # over the vmap axis), so pbroadcast is a no-op and the batcher returns
+    # the original value unchanged.
+    batch_size = max(jax.device_count(), 2)
+    constant = jnp.ones((4,), dtype=jnp.float32)
+    def f(_ignored):
+      return lax.pbroadcast(constant, source=jnp.int32(1), axis_name='i')
+    ans = vmap(f, axis_name='i')(jnp.zeros((batch_size,)))
+    # Broadcasting a value that is the same across the batch is a no-op.
+    expected = jnp.broadcast_to(constant, (batch_size, 4))
+    self.assertAllClose(ans, expected)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastDynamicRootBatcherNonzeroSource(self):
+    # Exercises the batcher's d-is-not-None path with a non-zero dynamic
+    # source: verifies that dynamic_index_in_dim + broadcast_in_dim correctly
+    # tiles the selected slice across the batch dimension.
+    batch_size = max(jax.device_count(), 2)
+    x = jnp.arange(4 * batch_size, dtype=jnp.float32).reshape((batch_size, 4))
+    # Broadcast from batch index batch_size-1 using a dynamic source.
+    src = np.int32(batch_size - 1)
+    ans = vmap(lambda v: lax.pbroadcast(v, source=src, axis_name='i'),
+               axis_name='i')(x)
+    expected = jnp.broadcast_to(x[batch_size - 1], (batch_size, 4))
+    self.assertAllClose(ans, expected)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastDynamicRootVmapOuterAxis(self):
+    # Exercises the batcher's axis-not-in-axis_name pass-through: an outer
+    # vmap maps over a batch dimension independent of the collective axis, so
+    # the pbroadcast_dynamic is forwarded unchanged.
+    device_count = jax.device_count()
+    batch = 2
+    x = jnp.arange(batch * device_count * 4, dtype=jnp.float32).reshape(
+        (batch, device_count, 4))
+    def f_inner(v):
+      return lax.pbroadcast(v, source=jnp.int32(0), axis_name='i')
+    # vmap over the leading batch axis; pmap handles the collective axis.
+    f = jax.vmap(pmap(f_inner, 'i'), out_axes=0)
+    ans = f(x)
+    expected = jnp.stack([jnp.broadcast_to(x[b, 0], (device_count, 4))
+                          for b in range(batch)])
+    self.assertAllClose(ans, expected)
 
   def testCollectivePermute(self):
     device_count = jax.device_count()
@@ -2717,6 +2818,159 @@ class PmapShmapMergeTest(jtu.JaxTestCase):
     pmap_lib.host_local_array_to_global_array(
         dyn_args_flat, cached, True, donated_invars
     )
+
+
+class _FakeStablehloBackend:
+  """Minimal stand-in for an xla_client.Client, exposing only the attributes
+  `_stablehlo_has_dynamic_root` reads."""
+
+  def __init__(self, runtime_type='', stablehlo_current_version=None):
+    self.runtime_type = runtime_type
+    if stablehlo_current_version is not None:
+      self.stablehlo_current_version = stablehlo_current_version
+
+
+class _FakeStablehloModuleContext:
+
+  def __init__(self, backend):
+    self._backend = backend
+
+  def get_backend(self, optional=False):
+    return self._backend
+
+
+class _FakeStablehloLoweringCtx:
+  """Minimal stand-in for mlir.LoweringRuleContext, exposing only what
+  `_stablehlo_has_dynamic_root` reads."""
+
+  def __init__(self, forward_compat, backend=None):
+    self._forward_compat = forward_compat
+    self.module_context = _FakeStablehloModuleContext(backend)
+
+  def is_forward_compat(self):
+    return self._forward_compat
+
+
+class PbroadcastDynamicRootVersionGateTest(jtu.JaxTestCase):
+  """Regression tests for parallel._stablehlo_has_dynamic_root.
+
+  A prior version of this gate checked only the host jaxlib's in-process
+  StableHLO version (hlo.get_current_version()), which is not a reliable
+  signal for whatever will actually consume the serialized module: forward
+  compatibility export and IFRT proxy programs get downgraded to a
+  conservative default StableHLO version that may not understand has_dynamic_root, causing
+  "'stablehlo.collective_broadcast' op requires a single operand" errors at
+  verification time instead of correctly falling back to the software
+  emulation.
+  """
+
+  def test_forward_compat_disables_dynamic_root(self):
+    ctx = _FakeStablehloLoweringCtx(forward_compat=True)
+    self.assertFalse(parallel._stablehlo_has_dynamic_root(ctx))
+
+  def test_ifrt_proxy_backend_disables_dynamic_root(self):
+    backend = _FakeStablehloBackend(runtime_type='proxy/ifrt',
+                                    stablehlo_current_version=(1, 20, 0))
+    ctx = _FakeStablehloLoweringCtx(forward_compat=False, backend=backend)
+    self.assertFalse(parallel._stablehlo_has_dynamic_root(ctx))
+
+  def test_backend_old_stablehlo_version_disables_dynamic_root(self):
+    backend = _FakeStablehloBackend(runtime_type='pjrt_c_api',
+                                    stablehlo_current_version=(1, 16, 2))
+    ctx = _FakeStablehloLoweringCtx(forward_compat=False, backend=backend)
+    self.assertFalse(parallel._stablehlo_has_dynamic_root(ctx))
+
+  def test_backend_new_stablehlo_version_enables_dynamic_root(self):
+    backend = _FakeStablehloBackend(runtime_type='pjrt_c_api',
+                                    stablehlo_current_version=(1, 20, 0))
+    ctx = _FakeStablehloLoweringCtx(forward_compat=False, backend=backend)
+    self.assertTrue(parallel._stablehlo_has_dynamic_root(ctx))
+
+  def test_backend_without_stablehlo_version_falls_back_to_host_version(self):
+    # No stablehlo_current_version attribute set: mimics a backend that
+    # doesn't advertise a StableHLO version via the PJRT C API plugin
+    # attributes, in which case the gate must fall back to the host
+    # jaxlib's in-process version rather than silently disabling the
+    # feature.
+    backend = _FakeStablehloBackend(runtime_type='pjrt_c_api')
+    ctx = _FakeStablehloLoweringCtx(forward_compat=False, backend=backend)
+    expected = (
+        hlo.get_smaller_version(hlo.get_current_version(), '1.20.0')
+        == '1.20.0'
+    )
+    self.assertEqual(parallel._stablehlo_has_dynamic_root(ctx), expected)
+
+  def test_no_backend_falls_back_to_host_version(self):
+    ctx = _FakeStablehloLoweringCtx(forward_compat=False, backend=None)
+    expected = (
+        hlo.get_smaller_version(hlo.get_current_version(), '1.20.0')
+        == '1.20.0'
+    )
+    self.assertEqual(parallel._stablehlo_has_dynamic_root(ctx), expected)
+
+
+class PbroadcastDynamicRootDowngradeIntegrationTest(jtu.JaxTestCase):
+  """End-to-end regression test tying parallel._stablehlo_has_dynamic_root's
+  decision to the actual downstream failure: a
+  StableHLO legalization/verifier error when a module containing the
+  two-operand has_dynamic_root op is handed to a consumer pinned to a
+  StableHLO version that predates it (e.g. across an IFRT proxy boundary or
+  during forward-compatible export). We reproduce this directly by forcing
+  serialization of the lowered module to a StableHLO target version older
+  than 1.20.0.
+  """
+
+  # A StableHLO version predating 1.20.0 (has_dynamic_root support).
+  _OLD_TARGET = '1.16.0'
+
+  def setUp(self):
+    super().setUp()
+    if jax.default_backend() != 'gpu':
+      raise unittest.SkipTest('pbroadcast_dynamic is only lowered for gpu')
+
+  def _lower_module(self):
+    mesh = jax.sharding.Mesh([jax.local_devices()[0]], axis_names=('i',))
+    def body(xx, ss):
+      return lax.pbroadcast(xx, source=ss[0], axis_name='i')
+    def f(x, source):
+      return jax.shard_map(
+          body, mesh=mesh,
+          in_specs=(jax.sharding.PartitionSpec('i'),
+                   jax.sharding.PartitionSpec('i')),
+          out_specs=jax.sharding.PartitionSpec('i'))(x, source)
+    x = jnp.zeros((1, 4), dtype=jnp.float32)
+    src = jnp.zeros((1,), dtype=jnp.int32)
+    lowered = jax.jit(f).lower(x, src)
+    return lowered.compiler_ir(dialect='stablehlo')
+
+  def test_gate_disabled_downgrades_cleanly(self):
+    # When the gate correctly reports no support (e.g. for a
+    # forward-compatible / proxied target), the software fallback lowering
+    # is used, and the resulting module contains no has_dynamic_root op, so
+    # downgrading to an old StableHLO target succeeds.
+    orig = parallel._stablehlo_has_dynamic_root
+    parallel._stablehlo_has_dynamic_root = lambda ctx: False
+    try:
+      module = self._lower_module()
+    finally:
+      parallel._stablehlo_has_dynamic_root = orig
+    from jax._src.lib import _jax
+    _jax.mlir.serialize_portable_artifact(module, self._OLD_TARGET)
+
+  def test_gate_incorrectly_enabled_reproduces_original_crash(self):
+    # Reproduces the originally reported failure mode: a gate that ignores
+    # the target's actual capability (the pre-fix behavior) emits the
+    # two-operand has_dynamic_root op unconditionally, which fails to
+    # downgrade to an old StableHLO target.
+    orig = parallel._stablehlo_has_dynamic_root
+    parallel._stablehlo_has_dynamic_root = lambda ctx: True
+    try:
+      module = self._lower_module()
+    finally:
+      parallel._stablehlo_has_dynamic_root = orig
+    from jax._src.lib import _jax
+    with self.assertRaisesRegex(Exception, 'collective_broadcast'):
+      _jax.mlir.serialize_portable_artifact(module, self._OLD_TARGET)
 
 
 if __name__ == '__main__':
