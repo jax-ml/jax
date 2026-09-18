@@ -1243,13 +1243,15 @@ class VectorSubcoreTest(PallasSCTest):
     expected = jnp.zeros_like(x).at[mask].set(x[: mask.sum()])
     np.testing.assert_array_equal(kernel(x)[mask], expected[mask])
 
-  @parameterized.parameters(*MASK_FNS)
-  def test_store_compressed(self, mask_fn):
+  @parameterized.product(mask_fn=MASK_FNS, needs_layout_passes=[False, True])
+  def test_store_compressed(self, mask_fn, needs_layout_passes):
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(self.num_lanes,), dtype=jnp.int32
         ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=needs_layout_passes
+        ),
     )
     def kernel(x_ref, o_ref):
       x = x_ref[...]
@@ -1258,6 +1260,28 @@ class VectorSubcoreTest(PallasSCTest):
     x = jnp.arange(self.num_lanes)
     mask = mask_fn(x)
     np.testing.assert_array_equal(kernel(x)[: mask.sum()], x[mask])
+
+  @parameterized.parameters(*MASK_FNS)
+  def test_store_compressed_2d(self, mask_fn):
+    shape = (2, self.num_lanes)
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=shape, dtype=jnp.int32),
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.zeros_like(o_ref)
+      x = x_ref[...]
+      plsc.store_compressed(o_ref.at[...], x, mask=mask_fn(x))
+
+    x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
+    mask = mask_fn(x)
+    out = kernel(x)
+    # Every row is compacted independently of the others.
+    for row in range(shape[0]):
+      np.testing.assert_array_equal(
+          out[row, : mask[row].sum()], x[row][mask[row]]
+      )
 
   def test_addupdate(self):
     @self.vector_subcore_kernel(
@@ -1275,13 +1299,15 @@ class VectorSubcoreTest(PallasSCTest):
         jnp.full(self.num_lanes, jnp.arange(self.num_lanes).sum()),
     )
 
-  @parameterized.parameters(*MASK_FNS)
-  def test_addupdate_compressed(self, mask_fn):
+  @parameterized.product(mask_fn=MASK_FNS, needs_layout_passes=[False, True])
+  def test_addupdate_compressed(self, mask_fn, needs_layout_passes):
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(self.num_lanes,), dtype=jnp.int32
         ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=needs_layout_passes
+        ),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.zeros_like(o_ref)
@@ -1502,6 +1528,8 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
+        # TODO(b/517477562): Enable layout passes once splat i1 constants are
+        # supported.
         compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, o_ref):

@@ -266,9 +266,26 @@ def _store_lowering_rule(
   )
   if not ctx.lowering_context.needs_layout_passes:
     old_val = tpu.vector_load(out_vec_type, ref, starts, strides=[], mask=mask)
-    _ = tpu.vector_store(
-        val, ref, indices=starts, strides=[], mask=mask, add=add
-    )
+    if mask is not None:
+      # TODO(naumsmogers): once we support non-compress masked stores,
+      # differentiate ops here.
+      assert compress
+      if not ctx.forward_compatible and ctx.is_libtpu_at_least("0.0.49"):
+        tpu.compress_store_vreg(val, ref, indices=starts, mask=mask, add=add)  # pyrefly: ignore[missing-attribute]
+      else:
+        # TODO: b/481866110 - Remove tpu.vector_store in favor of
+        # tpu.compress_store_vreg above after 10/13/2026.
+        tpu.vector_store(
+            val, ref, indices=starts, strides=[], mask=mask, add=add
+        )
+    else:
+      tpu.store(
+          val,
+          ref,
+          indices=starts,
+          sublane_mask=[True] * sc_core.get_sparse_core_info().num_lanes,
+          add=add,
+      )
     return old_val
   # Load and store at the full memref rank, keeping integer-indexed dims as
   # size 1, because apply-vector-layout requires the vector rank to match
@@ -283,7 +300,36 @@ def _store_lowering_rule(
   old_val = tpu.vector_load(memref_vec_type, ref, starts, strides=[], mask=mask)
   old_val = vector.shape_cast(out_vec_type, old_val)
   val_memref_rank = vector.shape_cast(memref_vec_type, val)
-  tpu.vector_store(val_memref_rank, ref, starts, strides=[], mask=mask, add=add)
+  if mask is not None:
+    assert compress
+    mask_memref_type = ir.VectorType.get(
+        memref_vec_shape, ir.IntegerType.get_signless(1)
+    )
+    mask_memref_rank = vector.shape_cast(mask_memref_type, mask)
+    if not ctx.forward_compatible and ctx.is_libtpu_at_least("0.0.49"):
+      # TODO(naumsmogers): once we support non-compress masked stores,
+      # differentiate ops here.
+      tpu.vector_compress_store(  # pyrefly: ignore[missing-attribute]
+          val_memref_rank,
+          ref,
+          indices=starts,
+          mask=mask_memref_rank,
+          compress_dim=len(memref_vec_shape) - 1,
+          add=add,
+      )
+    else:
+      tpu.vector_store(
+          val_memref_rank,
+          ref,
+          starts,
+          strides=[],
+          mask=mask_memref_rank,
+          add=add,
+      )
+  else:
+    tpu.vector_store(
+        val_memref_rank, ref, starts, strides=[], mask=None, add=add
+    )
   return old_val
 
 
