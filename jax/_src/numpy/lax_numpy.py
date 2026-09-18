@@ -9473,8 +9473,7 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
     a = a[sorter]
   dtype = lax_utils.int_dtype_for_dim(a.shape[0], signed=True)
 
-  # TODO(jakevdp): fix hijax primitive corner cases and use hijax.searchsorted direcly.
-  return hijax.searchsorted_via_expand(a, v, side=side, method=method, dtype=dtype)
+  return hijax.searchsorted(a, v, side=side, method=method, dtype=dtype)
 
 
 @export
