@@ -1417,28 +1417,30 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           rtol=1e-5,
       )
 
-  def testAcoshGradLargeValues(self):
+  @parameterized.parameters(lax.asinh, lax.acosh)
+  def testAsinhAcoshGradLargeValues(self, fn):
     # float16: x^2 overflows for x > ~256
     x16 = jnp.float16(300.0)
-    g16 = jax.grad(lax.acosh)(x16)
-    _, t16 = jax.jvp(lax.acosh, (x16,), (jnp.ones_like(x16),))
+    g16 = jax.grad(fn)(x16)
+    _, t16 = jax.jvp(fn, (x16,), (jnp.ones_like(x16),))
     self.assertAllClose(g16, np.float16(1.0 / 300.0), rtol=1e-2)
     self.assertAllClose(t16, np.float16(1.0 / 300.0), rtol=1e-2)
 
     # float32: x^2 overflows for x > ~1.84e19
     x32 = jnp.float32(1e25)
-    g32 = jax.grad(lax.acosh)(x32)
-    _, t32 = jax.jvp(lax.acosh, (x32,), (jnp.ones_like(x32),))
+    g32 = jax.grad(fn)(x32)
+    _, t32 = jax.jvp(fn, (x32,), (jnp.ones_like(x32),))
     self.assertAllClose(g32, jnp.float32(1e-25), rtol=1e-5)
     self.assertAllClose(t32, jnp.float32(1e-25), rtol=1e-5)
 
+  @parameterized.parameters(lax.asinh, lax.acosh)
   @jtu.skip_on_devices("tpu")
-  def testAcoshGradLargeValuesFloat64(self):
+  def testAsinhAcoshGradLargeValuesFloat64(self, fn):
     # float64: x^2 overflows for x > ~1.34e154
     with jax.enable_x64():
       x64 = jnp.float64(1e200)
-      g64 = jax.grad(lax.acosh)(x64)
-      _, t64 = jax.jvp(lax.acosh, (x64,), (jnp.ones_like(x64),))
+      g64 = jax.grad(fn)(x64)
+      _, t64 = jax.jvp(fn, (x64,), (jnp.ones_like(x64),))
       self.assertAllClose(g64, jnp.float64(1e-200), rtol=1e-5)
       self.assertAllClose(t64, jnp.float64(1e-200), rtol=1e-5)
 
@@ -1463,6 +1465,45 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # 4. Second derivative
     d2 = jax.grad(jax.grad(lax.acosh))(jnp.float32(2.0))
     self.assertAllClose(d2, jnp.float32(-2.0 / 3.0 ** 1.5), rtol=1e-5)
+
+  def testAsinhDerivatives(self):
+    # 1. Near x = 0
+    self.assertAllClose(jax.grad(lax.asinh)(jnp.float32(0.0)), jnp.float32(1.0))
+    self.assertAllClose(jax.grad(lax.asinh)(jnp.float32(1e-10)), jnp.float32(1.0))
+
+    # 2. Large negative value
+    x32_neg = jnp.float32(-1e25)
+    self.assertAllClose(jax.grad(lax.asinh)(x32_neg), jnp.float32(1e-25), rtol=1e-5)
+
+    # 3. Large complex value (positive real part)
+    z_large = jnp.complex64(1e25 + 1e25j)
+    expected_large = 1.0 / complex(z_large)
+    _, t_large = jax.jvp(lax.asinh, (z_large,), (jnp.complex64(1.0),))
+    self.assertAllClose(t_large, expected_large, rtol=1e-5, check_dtypes=False)
+
+    # 4. Large complex value (negative real part)
+    z_neg = jnp.complex64(-1e25 + 1e25j)
+    expected_neg = -1.0 / complex(z_neg)
+    _, t_neg = jax.jvp(lax.asinh, (z_neg,), (jnp.complex64(1.0),))
+    self.assertAllClose(t_neg, expected_neg, rtol=1e-5, check_dtypes=False)
+
+    # 5. Second derivative
+    d2_zero = jax.grad(jax.grad(lax.asinh))(jnp.float32(0.0))
+    self.assertAllClose(d2_zero, jnp.float32(0.0), atol=1e-7)
+    d2_one = jax.grad(jax.grad(lax.asinh))(jnp.float32(1.0))
+    self.assertAllClose(d2_one, jnp.float32(-1.0 / 2.0 ** 1.5), rtol=1e-5)
+
+    # 6. Infinite values (real and complex)
+    for x_inf in [jnp.float32(jnp.inf), jnp.float32(-jnp.inf)]:
+      self.assertEqual(jax.grad(lax.asinh)(x_inf), jnp.float32(0.0))
+    for z_inf in [
+        jnp.complex64(complex(jnp.inf, 0.0)),
+        jnp.complex64(complex(-jnp.inf, 0.0)),
+        jnp.complex64(complex(0.0, jnp.inf)),
+        jnp.complex64(complex(jnp.inf, jnp.inf)),
+    ]:
+      _, t_inf = jax.jvp(lax.asinh, (z_inf,), (jnp.complex64(1.0),))
+      self.assertEqual(t_inf, jnp.complex64(0.0))
 
 
 if __name__ == '__main__':

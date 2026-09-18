@@ -443,7 +443,7 @@ def _one_minus_square_rule(primals_in, series_in):
 jet_rules[lax.one_minus_square_p] = _one_minus_square_rule
 
 def_comp(lax.rsqrt_p, lambda x: x ** -0.5)
-def_comp(lax.asinh_p, lambda x: lax.log(x + lax.sqrt(lax.square(x) + 1)))
+def_deriv(lax.asinh_p, lambda x: lax_internal._asinh_jvp(lax_internal._ones(x), x))
 def_comp(lax.acosh_p, lambda x: lax.log(x + lax.sqrt(x - 1) * lax.sqrt(x + 1)))
 def_comp(lax.atanh_p, lambda x: 0.5 * lax.log(lax.div(1 + x, 1 - x)))
 def_comp(lax.erfc_p, lambda x: 1 - lax.erf(x))
@@ -709,7 +709,7 @@ def _lax_max_taylor_rule(primal_in, series_in):
 jet_rules[lax.max_p] = _lax_max_taylor_rule
 
 def _lax_min_taylor_rule(primal_in, series_in):
-    x, y = primal_in
+    x, y = jnp.broadcast_arrays(*primal_in)
     xgy = x < y   # less than mask
     xey = x == y  # equal to mask
     primal_out = lax.select(xgy, x, y)
@@ -720,7 +720,7 @@ def _lax_min_taylor_rule(primal_in, series_in):
         min_i = lax.select(xey, (x_i + y_i)/2, min_i)
         return min_i
 
-    series_out = [select_min_and_avg_eq(*terms_in) for terms_in in zip(*series_in)]
+    series_out = [select_min_and_avg_eq(*jnp.broadcast_arrays(*terms_in)) for terms_in in zip(*series_in)]
     return primal_out, series_out
 jet_rules[lax.min_p] = _lax_min_taylor_rule
 
