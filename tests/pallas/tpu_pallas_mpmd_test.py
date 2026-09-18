@@ -142,6 +142,13 @@ class MpmdAsyncTest(jtu.JaxTestCase):
       )(tc_fn)(x_ref, out_ref, sem_ref)
       return jax.freeze(out_ref)
 
+    hlo_text = f.lower(x).as_text()
+    custom_calls = [
+        line for line in hlo_text.splitlines() if "@tpu_custom_call" in line
+    ]
+    self.assertLen(custom_calls, 2)
+    for call in custom_calls:
+      self.assertIn("output_memory_space_colors", call)
     out = f(x)
     np.testing.assert_array_equal(out, x + 1)
 
