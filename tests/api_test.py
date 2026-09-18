@@ -1335,7 +1335,7 @@ class JitTest(jtu.BufferDonationTestCase):
 
   def test_jit_lower_cost_analysis(self):
     # TODO(b/261771737): add support for uncompiled cost analysis in C API.
-    if "PJRT C API" in xla_bridge.get_backend().platform_version:
+    if xla_bridge.using_pjrt_c_api():
       raise unittest.SkipTest("C API does not support uncompiled cost analysis")
     f = jit(lambda x: x).lower(1.)
     g = jit(lambda x: x + 4).lower(1.)
