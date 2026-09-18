@@ -1574,9 +1574,11 @@ def _swap_pull_rule(
     block_transform: BlockIndexTransform,
     **kwargs,
 ):
-  del ctx, kwargs
+  del kwargs
   # The output and val block spec are the same.
-  return [block_transform, block_transform]
+  return [block_transform, block_transform] + [no_block_index_transform] * (
+      len(ctx.avals_in) - 2
+  )
 
 
 @register_eval_rule(state_primitives.swap_p)
@@ -1589,18 +1591,16 @@ def _swap_eval_rule(ctx: KernelEvalContext, ref, val, *idx, tree):
     raise NotImplementedError('swap not supported yet')
   if not indexers_avals:
     indexer_aval = indexing.NDIndexer.make_trivial_indexer(ref_aval.shape)
+    indexer = indexer_aval
   else:
+    indexer = indexers[0]
     indexer_aval = indexers_avals[0]
   for idx_aval, size in zip(indexer_aval.indices, ref_aval.shape, strict=True):
     if not isinstance(idx_aval, indexing.Slice):
       raise NotImplementedError('swap not supported yet')
-    if not isinstance(idx_aval.start, int):
-      raise NotImplementedError('swap not supported yet')
     if not isinstance(idx_aval.size, int):
       raise NotImplementedError('swap not supported yet')
     if idx_aval.stride != 1:
-      raise NotImplementedError('swap not supported yet')
-    if idx_aval.start != 0:
       raise NotImplementedError('swap not supported yet')
     if idx_aval.size != size:
       raise NotImplementedError('swap not supported yet')
@@ -1609,15 +1609,14 @@ def _swap_eval_rule(ctx: KernelEvalContext, ref, val, *idx, tree):
   block_spec = ctx.out_block_specs[0]
   block_idx = ctx.get_out_block_indices()[0]
 
-  def _slice(i, b):
+  def _slice(i, b, start):
     if not isinstance(b, int):
       raise NotImplementedError('swap not supported yet')
-    return i if b is None else indexing.ds(i * b, b)
+    _maybe_static_check(start % b == 0, f'{start=} is not a multiple of {b=}')
+    return i if b is None else indexing.ds(start + i * b, b)
 
-  indexer = tuple(
-      _slice(i, b)
-      for i, b in zip(block_idx, block_spec.block_shape, strict=True)
-  )
+  indexer = tuple(_slice(i, b, s.start) for i, b, s in zip(
+      block_idx, block_spec.block_shape, indexer.indices, strict=True))
   return ref.swap(val, idx=indexer)
 
 
@@ -1651,18 +1650,20 @@ def _get_pull_rule(
       assert hasattr(idx_aval, 'shape') and not idx_aval.shape
       block_shape.append(pallas_core.Squeezed())
       continue
-    if not isinstance(idx_aval.start, int):
-      raise NotImplementedError('get not supported yet')
     if not isinstance(idx_aval.size, int):
       raise NotImplementedError('get not supported yet')
     if idx_aval.stride != 1:
       raise NotImplementedError('get not supported yet')
-    if idx_aval.start != 0:
-      raise NotImplementedError('get not supported yet')
     if idx_aval.size != size:
       raise NotImplementedError('get not supported yet')
     bd = next(block_shape_iter)
-    block_shape.append(_block_size(bd))
+    block_size = _block_size(bd)
+    if isinstance(idx_aval.start, int) and block_size is not None:
+      _maybe_static_check(
+          idx_aval.start % block_size == 0,
+          f'{idx_aval.start=} is not a multiple of {block_size=}',
+      )
+    block_shape.append(block_size)
   assert next(block_shape_iter, None) is None
 
   def new_block_index_transform(*idxs):
@@ -1732,18 +1733,28 @@ def _get_eval_rule(ctx: KernelEvalContext, ref, *idx, tree):
       assert bd is None or isinstance(bd, pallas_core.Squeezed)
       block_indexer.append(idx)
       continue
-    if not isinstance(idx_aval.start, int):
-      raise NotImplementedError('get not supported yet')
     if not isinstance(idx_aval.size, int):
       raise NotImplementedError('get not supported yet')
     if idx_aval.stride != 1:
       raise NotImplementedError('get not supported yet')
-    if idx_aval.start != 0:
-      raise NotImplementedError('get not supported yet')
     if idx_aval.size != size:
       raise NotImplementedError('get not supported yet')
+    block_size = _block_size(bd)
+    if block_size is not None:
+      _maybe_static_check(
+          idx.start % block_size == 0,
+          f'{idx.start=} is not a multiple of {block_size=}',
+      )
     bidx = next(block_idx_iter)
-    block_indexer.append(_slice(bidx, bd))
+    match bd:
+      case int():
+        block_indexer.append(indexing.ds(idx.start + bidx * bd, bd))
+      case pallas_core.Blocked(bs):
+        block_indexer.append(indexing.ds(idx.start + bidx * bs, bs))
+      case pallas_core.Squeezed() | None:
+        block_indexer.append(idx.start + bidx)
+      case _:
+        raise NotImplementedError(f'get not supported yet for block shape {bd}')
   assert next(block_idx_iter, None) is None
   return ref.get(idx=tuple(block_indexer))
 

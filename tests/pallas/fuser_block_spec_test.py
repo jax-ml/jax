@@ -25,6 +25,7 @@ from jax._src.pallas import einshape as einshape_lib
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.fuser import block_spec as block_spec_lib
 from jax._src.pallas.fuser import custom_fusion_lib
+from jax.experimental import checkify
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -1591,6 +1592,106 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     y = jnp.zeros((256, 512), jnp.int32)
     _, y = pl.run_state(outer)((value, y))
     np.testing.assert_array_equal(y, value[3, :256, 512:1024])
+
+  def test_get_on_sliced_ref(self):
+    value = jnp.arange((512 * 1024), dtype=jnp.int32).reshape((512, 1024)) * 2
+
+    def outer(refs):
+      ref, y_ref = refs
+      i = jnp.int32(128)
+      sliced_ref = ref.at[pl.ds(i, 512), :]
+
+      def f():
+        return sliced_ref.get()
+
+      block_spec = pl.BlockSpec((128, 512), lambda i, j: (i, j))
+      kernel_fn, (), _ = block_spec_lib.pull_block_spec(
+          f,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )()
+      y_ref[...] = kernel_fn((0, 1), ())
+
+    y = jnp.zeros((128, 512), jnp.int32)
+    _, y = pl.run_state(outer)((value, y))
+    np.testing.assert_array_equal(y, value[128:256, 512:1024])
+
+  def test_get_on_sliced_ref_misaligned_raises(self):
+    value = jnp.arange((512 * 1024), dtype=jnp.int32).reshape((512, 1024)) * 2
+
+    def outer(refs):
+      ref, y_ref = refs
+      i = jnp.int32(5)
+      sliced_ref = ref.at[pl.ds(i, 512), :]
+
+      def f():
+        return sliced_ref.get()
+
+      block_spec = pl.BlockSpec((128, 512), lambda i, j: (i, j))
+      kernel_fn, (), _ = block_spec_lib.pull_block_spec(
+          f,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )()
+      err, _ = checkify.checkify(lambda: kernel_fn((0, 1), ()))()
+      err.throw()
+
+    y = jnp.zeros((128, 512), jnp.int32)
+    with self.assertRaises(checkify.JaxRuntimeError):
+      pl.run_state(outer)((value, y))
+
+  def test_swap_on_sliced_ref(self):
+    value = jnp.zeros((512, 1024), dtype=jnp.int32)
+    update = jnp.arange(128 * 512, dtype=jnp.int32).reshape((128, 512))
+    val_full = jax.core.ShapedArray((512, 1024), jnp.int32)
+
+    def outer(refs):
+      ref, _ = refs
+      i = jnp.int32(128)
+      sliced_ref = ref.at[pl.ds(i, 512), :]
+
+      def f(val):
+        return sliced_ref.swap(val)
+
+      block_spec = pl.BlockSpec((128, 512), lambda i, j: (i, j))
+      kernel_fn, (in_bs,), _ = block_spec_lib.pull_block_spec(
+          f,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )(val_full)
+      _ = kernel_fn((0, 1), (), update)
+
+    value_out, _ = pl.run_state(outer)((value, value))
+    np.testing.assert_array_equal(value_out[128:256, 512:1024], update)
+
+  def test_swap_on_sliced_ref_misaligned_raises(self):
+    value = jnp.zeros((512, 1024), dtype=jnp.int32)
+    update = jnp.arange(128 * 512, dtype=jnp.int32).reshape((128, 512))
+    val_full = jax.core.ShapedArray((512, 1024), jnp.int32)
+
+    def outer(refs):
+      ref, _ = refs
+      i = jnp.int32(5)
+      sliced_ref = ref.at[pl.ds(i, 512), :]
+
+      def f(val):
+        return sliced_ref.swap(val)
+
+      block_spec = pl.BlockSpec((128, 512), lambda i, j: (i, j))
+      kernel_fn, (in_bs,), _ = block_spec_lib.pull_block_spec(
+          f,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )(val_full)
+      err, _ = checkify.checkify(lambda: kernel_fn((0, 1), (), update))()
+      err.throw()
+
+    with self.assertRaises(checkify.JaxRuntimeError):
+      pl.run_state(outer)((value, value))
 
   def test_get_key_ref(self):
     """Tests get_p on a key ref (block_shape=None, MemorySpace.KEY).
