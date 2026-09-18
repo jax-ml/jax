@@ -21,6 +21,17 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     normal floating-point numbers, replacing floating-point arithmetic with
     bitwise operations. Subnormal inputs and underflowing outputs are flushed to
     signed zero.
+  * {obj}`jax.numpy.int32`, {obj}`jax.numpy.float32`, and other scalar constructors
+    now have proper type annotations; prior to v0.12.0 they were typed `Any`.
+    This may lead to new typecheck errors in cases where they were being misused;
+    for example, if they were assumed to be instances of `jnp.dtype` (which they
+    are not) or used as annotations for arrays of a given type (which is invalid).
+  * Several {mod}`jax.numpy` functions are now implemented in terms of HiJax
+    primitives (see {ref}`jax-301-hijax-types`). This includes
+    {func}`~jax.numpy.searchsorted`, {func}`~jax.numpy.nonzero`,
+    {func}`~jax.numpy.ldexp`, {func}`jax.numpy.frexp`. Typical users should not
+    see any change in behavior, but you may notice more efficient batching
+    and autodiff, and more concise representations in jaxprs.
 
 * Bug fixes
   * Fixed the gradient of {func}`jax.numpy.ldexp` at `x = 0.0`, which previously
