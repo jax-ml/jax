@@ -32,6 +32,7 @@ from jax import lax
 from jax._src import checkify
 from jax._src import config
 from jax._src import core as jax_core
+from jax._src import custom_derivatives
 from jax._src import debugging
 from jax._src import deprecations
 from jax._src import dtypes
@@ -316,6 +317,21 @@ def _pjit_resource_estimator(
 ) -> Resources:
   del args, params  # Unused.
   return _estimate_resources(ctx, jaxpr)
+
+
+@_register_resource_estimator(pe.eval_jaxpr_p)
+@_register_resource_estimator(custom_derivatives.custom_jvp_call_p)
+@_register_resource_estimator(custom_derivatives.custom_vjp_call_p)
+def _eval_jaxpr_resource_estimator(
+    ctx: ResourceEstimatorContext,
+    *args,
+    call_jaxpr: jax_core.Jaxpr,
+    **params,
+) -> Resources:
+  del args, params  # Unused.
+  if call_jaxpr.consts:
+    raise NotImplementedError
+  return _estimate_resources(ctx, call_jaxpr)
 
 
 @_register_resource_estimator(mpmd.mpmd_map_p)
@@ -2277,6 +2293,45 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **kwargs):
     raise NotImplementedError
   return lower_jaxpr_to_mosaic_gpu(
       ctx.module_ctx, ctx.launch_ctx, jaxpr, args,
+  )
+
+
+@register_lowering_rule(pe.eval_jaxpr_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(pe.eval_jaxpr_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(pe.eval_jaxpr_p, *gpu_core.LANExWARP_SEMANTICS)
+@register_lowering_rule(pe.eval_jaxpr_p, *gpu_core.WGxWARP_SEMANTICS)
+@register_lowering_rule(
+    custom_derivatives.custom_jvp_call_p, mgpu.LoweringSemantics.Lane
+)
+@register_lowering_rule(
+    custom_derivatives.custom_jvp_call_p, mgpu.LoweringSemantics.Warpgroup
+)
+@register_lowering_rule(
+    custom_derivatives.custom_jvp_call_p, *gpu_core.LANExWARP_SEMANTICS
+)
+@register_lowering_rule(
+    custom_derivatives.custom_jvp_call_p, *gpu_core.WGxWARP_SEMANTICS
+)
+@register_lowering_rule(
+    custom_derivatives.custom_vjp_call_p, mgpu.LoweringSemantics.Lane
+)
+@register_lowering_rule(
+    custom_derivatives.custom_vjp_call_p, mgpu.LoweringSemantics.Warpgroup
+)
+@register_lowering_rule(
+    custom_derivatives.custom_vjp_call_p, *gpu_core.LANExWARP_SEMANTICS
+)
+@register_lowering_rule(
+    custom_derivatives.custom_vjp_call_p, *gpu_core.WGxWARP_SEMANTICS
+)
+def _eval_jaxpr_lowering_rule(
+    ctx: LoweringRuleContext, *args, call_jaxpr: jax_core.Jaxpr, **kwargs
+):
+  del kwargs  # Unused.
+  if call_jaxpr.consts:
+    raise NotImplementedError
+  return lower_jaxpr_to_mosaic_gpu(
+      ctx.module_ctx, ctx.launch_ctx, call_jaxpr, args
   )
 
 

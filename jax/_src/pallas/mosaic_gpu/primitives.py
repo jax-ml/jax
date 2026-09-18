@@ -38,7 +38,6 @@ from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
-from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import utils as lax_utils
 from jax._src.layout import get_layout_mode, LayoutMode
 from jax._src.lib.mlir import ir
@@ -3395,21 +3394,6 @@ def broadcasted_iota(
   if layout is not None:
     result = gpu_core.layout_cast(result, layout)
   return result
-
-
-@lowering.register_lowering_rule(pe.eval_jaxpr_p, mgpu.LoweringSemantics.Lane)
-@lowering.register_lowering_rule(pe.eval_jaxpr_p, mgpu.LoweringSemantics.Warpgroup)
-def _eval_jaxpr_lowering_rule(ctx, *args, call_jaxpr: jax_core.Jaxpr):
-  if call_jaxpr.consts: raise NotImplementedError
-  return lowering.lower_jaxpr_to_mosaic_gpu(
-      ctx.module_ctx, ctx.launch_ctx, call_jaxpr, args)
-
-
-@lowering._register_resource_estimator(pe.eval_jaxpr_p)
-def _eval_jaxpr_resource_estimator(ctx, *args, call_jaxpr):
-  del args  # Unused.
-  if call_jaxpr.consts: raise NotImplementedError
-  return lowering._estimate_resources(ctx, call_jaxpr)
 
 
 @dataclasses.dataclass(frozen=True)

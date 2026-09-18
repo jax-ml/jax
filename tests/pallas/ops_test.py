@@ -680,7 +680,7 @@ class OpsTest(PallasBaseTest):
       ]
   )
   def test_unary_primitives(self, name, func, shape_dtype_strategy, data):
-    if name in ["abs", "log1p", "pow2", "reciprocal", "relu", "sin", "sqrt"]:
+    if name in ["abs", "log1p", "pow2", "reciprocal", "sin", "sqrt"]:
       self.skip_if_mosaic_gpu()
 
     if self.INTERPRET:

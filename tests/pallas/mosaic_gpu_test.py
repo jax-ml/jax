@@ -270,6 +270,31 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     self.assertEqual(ref.inner_aval.dtype, jnp.float32)
     self.assertEqual(ref.memory_space, gpu_core.MemorySpace.GMEM)
 
+  def test_custom_jvp_and_vjp(self):
+    @jax.custom_jvp
+    def my_jvp_fn(x):
+      def body(smem_ref):
+        smem_ref[...] = jax.nn.relu(x)
+        return smem_ref[...]
+      return pl.run_scoped(body, plgpu.SMEM(x.shape, x.dtype))
+
+    @my_jvp_fn.defjvp
+    def my_jvp_fn_jvp(primals, tangents):
+      return my_jvp_fn(*primals), tangents[0]
+
+    @jax.custom_vjp
+    def my_vjp_fn(x):
+      return x * 2.0
+
+    my_vjp_fn.defvjp(lambda x: (my_vjp_fn(x), None), lambda _, g: (g * 2.0,))
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct((128,), jnp.float32))
+    def kernel(x_ref, o_ref):
+      o_ref[...] = my_vjp_fn(my_jvp_fn(x_ref[...]))
+
+    x = jnp.linspace(-5.0, 5.0, 128, dtype=jnp.float32)
+    np.testing.assert_allclose(kernel(x), jax.nn.relu(x) * 2.0)
+
   def test_barrier_ref_shape(self):
     # A single barrier is referred to by a scalar reference, so that uses of a
     # barrier array can be told apart from uses of a single barrier.
