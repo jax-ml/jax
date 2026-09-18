@@ -203,6 +203,7 @@ def _mpmd_map_discharge_rule(
     jaxprs,
     meshes,
     input_output_aliases,
+    out_avals,
     debug,
     interpret,
     compiler_params,
@@ -243,7 +244,7 @@ def _mpmd_map_discharge_rule(
 
   write_indices = sorted(write_indices)
   num_in = len(ctx.in_avals)
-  num_out_orig = len(ctx.out_avals)
+  num_out_orig = len(out_avals)
   num_out_new = len(write_indices)
 
   new_jaxprs = []
@@ -293,7 +294,7 @@ def _mpmd_map_discharge_rule(
       )
       for i in write_indices
   ]
-  updated_out_avals = list(ctx.out_avals) + new_out_avals
+  updated_out_avals = list(out_avals) + new_out_avals
 
   new_aliases = dict(input_output_aliases)
   for out_idx, in_idx in enumerate(write_indices):
@@ -919,10 +920,6 @@ def _mpmd_map(
   out_paths, flat_out_types = util.unzip2(flat_out_types_with_paths)
   # TODO(sharadmv): Use out_paths for debugging info.
   del out_paths
-  flat_out_avals = tuple(
-      map(pallas_core._convert_out_shape_to_aval, flat_out_types)
-  )
-
   def wrapper(*args):
     flat_args_ft = ft.flatten(args)
     flat_args, in_tree = flat_args_ft.vals, flat_args_ft.tree
@@ -937,6 +934,17 @@ def _mpmd_map(
         seen_ref_ids.add(id(arg))
     # TODO(sharadmv): Use in_paths for debugging info.
     flat_avals = tuple(map(jax_core.typeof, flat_args))
+    outin_aliases = {
+        out_idx: in_idx for in_idx, out_idx in input_output_aliases.items()
+    }
+    flat_out_avals = tuple(
+        pallas_core._convert_out_shape_to_aval(
+            flat_avals[outin_aliases[out_idx]]
+            if out_idx in outin_aliases
+            else out_type
+        )
+        for out_idx, out_type in enumerate(flat_out_types)
+    )
 
     external_meshes = []
     meshes = tuple(mesh for mesh, _ in meshes_and_fns)
