@@ -1410,6 +1410,97 @@ class LaxTest(jtu.JaxTestCase):
         dot_general_result, dot_general_result_upcasted, rtol=1e-3, atol=1e-3)
 
   @jtu.sample_product(
+    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+     for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]],
+    [dict(dtype_lhs=dtype_lhs, dtype_rhs=dtype_rhs,
+          preferred_element_type=preferred_element_type)
+     for dtype_lhs, dtype_rhs, preferred_element_type in [
+         (np.int8, dtypes.bfloat16, np.int32),
+         (dtypes.bfloat16, np.int8, np.int32),
+         (np.int32, np.float32, np.int32),
+         (np.int16, np.float16, np.int32),
+         (dtypes.float8_e4m3fn, np.int8, np.int32),
+         (np.int64, np.float64, np.int64),
+     ]],
+  )
+  def test_mixed_float_int_dot_general_int_preferred_element(
+      self, lhs_shape, rhs_shape, dtype_lhs, dtype_rhs,
+      preferred_element_type):
+    # Regression test for https://github.com/jax-ml/jax/issues/40581: a float
+    # operand paired with an integer operand, accumulated into an integer
+    # output, used to CHECK-fail the TPU compiler instead of computing a
+    # result or raising a catchable error.
+    if (not config.enable_x64.value and
+        (dtype_lhs == np.int64 or dtype_rhs == np.float64 or
+         preferred_element_type == np.int64)):
+      raise SkipTest("64-bit mode disabled")
+    rng = jtu.rand_default(self.rng())
+    lhs = rng(lhs_shape, dtype_lhs)
+    rhs = rng(rhs_shape, dtype_rhs)
+    result = lax.dot(lhs, rhs, preferred_element_type=preferred_element_type)
+    expected = lax.dot(lhs.astype(preferred_element_type),
+                        rhs.astype(preferred_element_type))
+    self.assertArraysEqual(result, expected)
+
+  def test_mixed_float_int_dot_general_int_preferred_element_overflow(self):
+    # The cast-then-multiply semantics this fix relies on (matching the
+    # pre-existing CPU/GPU behavior for this dtype combination) saturate and
+    # map non-finite floats to 0/INT_MAX/INT_MIN on cast, rather than raising.
+    # Pin that down explicitly, since the parametrized test above only draws
+    # small finite values from jtu.rand_default and wouldn't otherwise
+    # exercise this.
+    lhs = jnp.array([1000.0, float('nan'), float('inf'), -float('inf')],
+                     dtype=np.float32)
+    rhs = jnp.ones((4,), dtype=np.int8)
+    result = lax.dot(lhs, rhs, preferred_element_type=np.int32)
+    expected = lax.dot(lhs.astype(np.int32), rhs.astype(np.int32))
+    self.assertArraysEqual(result, expected)
+
+  def test_mixed_float_int_dot_general_int_preferred_element_algorithm(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40581: the
+    # DotAlgorithmPreset.DEFAULT path (which an explicit precision= argument
+    # routes through, unlike the implicit default tested above) independently
+    # bypassed the fix, since its supported_lhs_types/supported_rhs_types are
+    # None and so leave lhs_dtype/rhs_dtype unmodified. TPU-only: CPU's
+    # DotAlgorithmPreset.DEFAULT path for this dtype combination has its own
+    # pre-existing, unrelated behavior (implicit float accumulation before
+    # the final cast) that numerically differs from the cast-first semantics
+    # used here to avoid the TPU compiler crash, so the two platforms are not
+    # expected to agree on this specific, unusual combination.
+    if not jtu.test_device_matches(["tpu"]):
+      raise SkipTest("Only tests a TPU-specific compiler workaround; CPU/GPU "
+                      "take a different, pre-existing code path here")
+    lhs = jnp.array([1.7, -2.5, 3.9], dtype=dtypes.bfloat16)
+    rhs = jnp.ones((3,), dtype=np.int8)
+    result = jax.jit(lambda a, b: lax.dot_general(
+        a, b, (((0,), (0,)), ((), ())),
+        precision=lax.DotAlgorithmPreset.DEFAULT,
+        preferred_element_type=np.int32))(lhs, rhs)
+    expected = lax.dot(lhs.astype(np.int32), rhs.astype(np.int32))
+    self.assertArraysEqual(result, expected)
+
+  def test_tpu_dot_algorithm_default_int_accum_cast_scoping(self):
+    # Regression guard for the DotAlgorithmPreset.DEFAULT-only scoping in
+    # _tpu_dot_algorithm_default_needs_int_accum_cast (see
+    # https://github.com/jax-ml/jax/issues/40581): this must stay True only
+    # for DEFAULT, never for another preset or a user-constructed
+    # DotAlgorithm, which can legitimately declare per-operand precision
+    # types that _convert_to_hlo_attr encodes verbatim regardless of any
+    # cast applied to operand storage. Runs everywhere (no lowering/HLO
+    # involved), unlike the TPU-only test above, so it can't be skipped past.
+    needs_cast = lax_internal._tpu_dot_algorithm_default_needs_int_accum_cast
+    self.assertTrue(needs_cast(
+        lax.DotAlgorithmPreset.DEFAULT, np.int8, dtypes.bfloat16, np.int32))
+    self.assertFalse(needs_cast(
+        lax.DotAlgorithmPreset.F32_F32_F32, np.int8, dtypes.bfloat16,
+        np.int32))
+    self.assertFalse(needs_cast(
+        lax.DotAlgorithm(lhs_precision_type=np.float32,
+                          rhs_precision_type=np.int8,
+                          accumulation_type=np.int32),
+        np.float32, np.int8, np.int32))
+
+  @jtu.sample_product(
       [
           dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
           for lhs_shape in [(3,), (4, 3)]

@@ -6278,6 +6278,33 @@ def accuracy_attr(accuracy) -> hlo.ResultAccuracyAttr | None:
     )
   raise NotImplementedError(f"Accuracy {accuracy} not supported")
 
+def _tpu_mixed_float_int_needs_int_accum_cast(
+    lhs_dtype: DTypeLike, rhs_dtype: DTypeLike, out_dtype: DTypeLike) -> bool:
+  # A float operand paired with an integer operand, accumulated into an
+  # integer output, CHECK-fails deep in the TPU compiler unless both
+  # operands are first unified to a common dtype
+  # (https://github.com/jax-ml/jax/issues/40581).
+  mixed_float_int = (dtypes.issubdtype(lhs_dtype, np.floating) !=
+                      dtypes.issubdtype(rhs_dtype, np.floating))
+  return mixed_float_int and dtypes.issubdtype(out_dtype, np.integer)
+
+
+def _tpu_dot_algorithm_default_needs_int_accum_cast(
+    precision: CanonicalPrecision, lhs_dtype: DTypeLike, rhs_dtype: DTypeLike,
+    out_dtype: DTypeLike) -> bool:
+  # Scoped to DotAlgorithmPreset.DEFAULT specifically, not DotAlgorithm or
+  # other presets: a raw DotAlgorithm can legitimately request mismatched
+  # per-operand precision types, and DotAlgorithm._convert_to_hlo_attr
+  # ignores lhs_dtype/rhs_dtype and always encodes self.lhs_precision_type/
+  # self.rhs_precision_type into the HLO algorithm attribute — casting the
+  # operand storage here without updating that attribute would desync the
+  # two. DEFAULT has no such user-specified precision to preserve. Other
+  # presets always force lhs_dtype == rhs_dtype before this is ever checked.
+  return (precision is DotAlgorithmPreset.DEFAULT and lhs_dtype != rhs_dtype
+          and _tpu_mixed_float_int_needs_int_accum_cast(
+              lhs_dtype, rhs_dtype, out_dtype))
+
+
 def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
   def _is_fp8_mixed_precision_matmul(_lhs_dtypes, _rhs_dtypes):
     fp8_dtypes = (dtypes.float8_e4m3fn, dtypes.float8_e5m2,
@@ -6319,6 +6346,15 @@ def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
         precision, lhs_dtype, rhs_dtype, aval_out.dtype)
     lhs = maybe_convert_dtype(lhs, lhs_aval, lhs_dtype)
     rhs = maybe_convert_dtype(rhs, rhs_aval, rhs_dtype)
+    if (platform == "tpu" and _tpu_dot_algorithm_default_needs_int_accum_cast(
+        precision, lhs_dtype, rhs_dtype, aval_out.dtype)):
+      lhs = mlir.convert_hlo(
+          ctx, lhs, core.ShapedArray(lhs_aval.shape, lhs_dtype),
+          core.ShapedArray(lhs_aval.shape, aval_out.dtype))
+      rhs = mlir.convert_hlo(
+          ctx, rhs, core.ShapedArray(rhs_aval.shape, rhs_dtype),
+          core.ShapedArray(rhs_aval.shape, aval_out.dtype))
+      lhs_dtype = rhs_dtype = aval_out.dtype
     if accumulation_dtype is not None:
       accumulation_aval = core.ShapedArray(aval_out.shape, accumulation_dtype)
 
@@ -6336,7 +6372,9 @@ def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
       if platform == "tpu":
         handled = lambda dt: (dtypes.issubdtype(dt, np.floating) or
                               dtypes.issubdtype(dt, np.integer))
-        if not (handled(lhs_dtype) and handled(rhs_dtype)):
+        if (not (handled(lhs_dtype) and handled(rhs_dtype)) or
+            _tpu_mixed_float_int_needs_int_accum_cast(
+                lhs_dtype, rhs_dtype, aval_out.dtype)):
           lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
                                  core.ShapedArray(lhs_aval.shape, aval_out.dtype))
           rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
