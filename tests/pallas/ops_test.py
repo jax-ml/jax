@@ -1151,11 +1151,6 @@ class OpsTest(PallasBaseTest):
   )
   @jtu.skip_on_devices("gpu")
   def test_reduce_precision(self, dtype, exponent_bits, mantissa_bits):
-    if not jtu.is_libtpu_at_least("0.0.47"):
-      self.skipTest("Requires libtpu 0.0.47 or later")
-    if jtu.jaxlib_version() < (0, 11, 2):
-      self.skipTest("Requires jaxlib 0.11.2 or later")
-
     shape = (64, 128)
 
     @functools.partial(

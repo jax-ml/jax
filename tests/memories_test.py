@@ -1732,8 +1732,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     jax.jit(fn2)(x_host)  # doesn't crash
 
   def test_compute_on_cache_miss(self):
-    if not jtu.is_libtpu_at_least('0.0.48'):
-      self.skipTest('Requires libtpu >= 0.0.48')
     def f(x):
       return x * 2
 
@@ -2066,8 +2064,6 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
         or jtu.is_device_tpu_at_least(6)
     ):
       self.skipTest("Does not have a sparsecore present")
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
 
     arr1 = jax.device_put(np.arange(64 * 128).reshape(64, 128), P("x", None))
     arr2 = jax.device_put(np.arange(128 * 128).reshape(128, 128), P("x", None))
@@ -2144,8 +2140,6 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
         or jtu.is_device_tpu_at_least(6)
     ):
       self.skipTest("Does not have a sparsecore present")
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
 
     arr1 = jax.device_put(np.arange(64 * 128).reshape(64, 128), P("x", None))
     arr2 = jax.device_put(np.arange(128 * 128).reshape(128, 128), P("x", None))
@@ -2256,8 +2250,6 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
   def test_sparsecore_two_rss(self):
     if not jtu.is_device_tpu_at_least(7):
       self.skipTest("Requires device with SC support and queuing enabled.")
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
 
     mesh = jtu.create_mesh((8,), "x")
     arr = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
@@ -2293,8 +2285,6 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
   def test_sparsecore_two_ars(self):
     if not jtu.is_device_tpu_at_least(7):
       self.skipTest("Requires device with SC support and queuing enabled.")
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
 
     mesh = jtu.create_mesh((8,), "x")
     arr = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
@@ -2356,8 +2346,6 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_compute_on_reshard_inside(self, mesh):
-    if not jtu.is_libtpu_at_least('0.0.48'):
-      self.skipTest('Requires libtpu >= 0.0.48')
     arr = jnp.ones((2, 8))
 
     @compute_on(compute_type="tpu_sparsecore",

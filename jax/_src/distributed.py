@@ -23,7 +23,7 @@ import warnings
 from jax._src import clusters
 from jax._src import config
 from jax._src import xla_bridge
-from jax._src.lib import _jax, jaxlib_extension_version
+from jax._src.lib import _jax
 
 logger = logging.getLogger(__name__)
 
@@ -77,13 +77,6 @@ def _get_mtls_kwargs(
           verify_secure_credentials,
           config.distributed_verify_secure_credentials),
   )
-  if jaxlib_extension_version < 483:
-    verify_secure_credentials = kwargs.pop('verify_secure_credentials')
-    if (verify_secure_credentials
-        or any(v is not None for v in kwargs.values())):
-      raise RuntimeError('mTLS for the JAX distributed service requires '
-                         'jaxlib 0.11.2 or newer.')
-    return {}
   return kwargs
 
 

@@ -47,7 +47,6 @@ from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.lib import ifrt_version
 from jax._src.typing import Array
 from jax._src.util import (canonicalize_axis, moveaxis, safe_map, safe_zip,
                            unzip2)
@@ -1389,12 +1388,6 @@ def _pbroadcast_lowering(ctx, x, *, axis_name, source):
     other_args: dict[str, Any] = dict(channel_handle=channel_handle)
   else:
     other_args = {}
-  if ifrt_version < 68:
-    return hlo.CollectiveBroadcastOp(
-        x,  # pyrefly: ignore[bad-argument-type]
-        replica_groups=_device_list_replica_groups_hlo(replica_groups),
-        **other_args,
-    ).results
   return hlo.CollectiveBroadcastOp(
       [x],  # pyrefly: ignore[bad-argument-type]
       replica_groups=_device_list_replica_groups_hlo(replica_groups),

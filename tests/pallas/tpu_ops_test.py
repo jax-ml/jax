@@ -472,8 +472,6 @@ class OpsTest(ptu.PallasTPUTest):
       dtype=[jnp.float32, jnp.bfloat16],
   )
   def test_top_k(self, k, in_shape, axis, dtype):
-    if not jtu.is_libtpu_at_least("0.0.47"):
-      self.skipTest("Requires libtpu >= 0.0.47")
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Requires TPUv4+")
     if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(6):
@@ -512,8 +510,6 @@ class OpsTest(ptu.PallasTPUTest):
       recall_target=[0.95, 0.99, 1.0],
   )
   def test_approx_max_k(self, k, in_shape, axis, dtype, recall_target):
-    if not jtu.is_libtpu_at_least("0.0.47"):
-      self.skipTest("Requires libtpu >= 0.0.47")
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Requires TPUv4+")
     if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(6):

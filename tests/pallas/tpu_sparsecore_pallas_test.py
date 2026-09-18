@@ -266,8 +266,6 @@ class DebugPrintTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_vector_subcore(self, dtype):
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("TODO(b/535267274): Fix logger.")
     x = jnp.arange(self.num_lanes, dtype=dtype)
@@ -312,8 +310,6 @@ class DebugPrintTest(PallasSCTest):
     self.assertIn("No values", get_output())
 
   def test_scalar_subcore(self):
-    if not jtu.is_libtpu_at_least("0.0.47"):
-      self.skipTest("Requires libtpu >= 0.0.47")
     nl = self.num_lanes
     int32s = jnp.arange(512, dtype=jnp.int32).reshape(-1, nl)
     int16s = jnp.arange(512, dtype=jnp.int16).reshape(-1, 2 * nl)
@@ -676,8 +672,6 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_addupdate_scatter_core_memory_space(self):
-    if not jtu.is_libtpu_at_least("0.0.47"):
-      self.skipTest("Requires libtpu >= 0.0.47")
 
     # Regression test ensuring that we can addupdate_scatter into a VMEM ref
     # associated to a vector subcore memory space.
@@ -841,14 +835,6 @@ class VectorSubcoreTest(PallasSCTest):
   def test_gather_2d_with_col_slice(self, n_indices):
     if not self.USE_TC_TILING:
       self.skipTest("Test only works under TC tiling.")
-    if (
-        n_indices is None
-        and jtu.is_device_tpu(7, "x")
-        and not jtu.is_libtpu_at_least("0.0.48")
-    ):
-      self.skipTest(
-          "20-index column-slice gather fails on TPU7x with libtpu < 0.0.48."
-      )
 
     n_indices = self.num_lanes if n_indices is None else n_indices
     x = jnp.arange(n_indices * 4096, dtype=jnp.int32).reshape(n_indices, 4096)
@@ -872,8 +858,6 @@ class VectorSubcoreTest(PallasSCTest):
   def test_scatter_2d_with_col_slice(self, n_indices):
     if not self.USE_TC_TILING:
       self.skipTest("Test only works under TC tiling.")
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Test fails with libtpu < 0.0.48.")
     n_indices = self.num_lanes if n_indices is None else n_indices
     x = jnp.arange(n_indices * 1024, dtype=jnp.int32).reshape(n_indices, 1024)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(n_indices))
@@ -1070,8 +1054,6 @@ class VectorSubcoreTest(PallasSCTest):
       kernel(x, indices)
 
   def test_load_gather_1d(self):
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
@@ -1084,8 +1066,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices), x[indices])
 
   def test_load_gather_2d(self):
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
     x = jnp.arange(self.num_lanes * self.num_lanes).reshape(self.num_lanes, -1)
     indices0 = indices1 = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
@@ -1104,8 +1084,6 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_load_gather_with_indexing(self):
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
     num_steps = 4
     x = jnp.arange(num_steps * self.num_lanes).reshape(num_steps, self.num_lanes)
     indices = jax.random.permutation(
@@ -1126,8 +1104,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(*MASK_FNS)
   def test_load_gather_masked(self, mask_fn):
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
@@ -1145,8 +1121,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices)[mask], x[indices][mask])
 
   def test_load_gather_invalid_mask_dtype(self):
-    if not jtu.is_libtpu_at_least("0.0.47"):
-      self.skipTest("Requires libtpu >= 0.0.47")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
@@ -1162,8 +1136,6 @@ class VectorSubcoreTest(PallasSCTest):
       kernel(x, indices)
 
   def test_store_scatter(self):
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
@@ -1181,8 +1153,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(*MASK_FNS)
   def test_store_scatter_masked(self, mask_fn):
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
@@ -1203,8 +1173,6 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_store_scatter_invalid_mask_dtype(self):
-    if not jtu.is_libtpu_at_least("0.0.47"):
-      self.skipTest("Requires libtpu >= 0.0.47")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
@@ -1218,8 +1186,6 @@ class VectorSubcoreTest(PallasSCTest):
       kernel(x, indices)
 
   def test_store_scatter_2d(self):
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
     num_steps = 4
     x = jnp.arange(num_steps * self.num_lanes).reshape(num_steps, self.num_lanes)
     indices = jax.random.permutation(
@@ -1243,8 +1209,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(*MASK_FNS)
   def test_addupdate_scatter(self, mask_fn):
-    if not jtu.is_libtpu_at_least("0.0.47"):
-      self.skipTest("Requires libtpu >= 0.0.47")
 
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
@@ -1339,8 +1303,6 @@ class VectorSubcoreTest(PallasSCTest):
       dtype=[jnp.int32], new_dtype=[jnp.int8, jnp.int16, jnp.float32]
   )
   def test_bitcast(self, dtype, new_dtype):
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
     self.skip_if_tc_tiling(
         "Fails due to incorrectly inferred tiling in tpu.memref_squeeze"
     )
@@ -1367,8 +1329,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x.view(new_dtype))
 
   def test_lax_bitcast(self):
-    if not jtu.is_libtpu_at_least("0.0.47"):
-      self.skipTest("Requires libtpu >= 0.0.47")
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct((self.num_lanes,), jnp.uint32),
     )
@@ -1509,8 +1469,6 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_population_count_invalid_reduce(self):
-    if not jtu.is_libtpu_at_least("0.0.47"):
-      self.skipTest("Requires libtpu >= 0.0.47")
     x = jnp.arange(self.num_lanes)
 
     @self.vector_subcore_kernel(out_shape=x)
@@ -1530,8 +1488,6 @@ class VectorSubcoreTest(PallasSCTest):
       kernel_indivisible(x)
 
   def test_iota(self):
-    if not jtu.is_libtpu_at_least("0.0.47"):
-      self.skipTest("Requires libtpu >= 0.0.47")
     key = jax.random.key(42)
     x = jax.random.randint(key, [self.num_lanes], 0, 100)
 
@@ -1790,8 +1746,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x)
 
   def test_scratch_tc_vmem(self):
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
 
     x = jnp.arange(self.num_lanes, dtype=jnp.int32)
     tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
@@ -2163,8 +2117,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_allclose(kernel(x), op(x))
 
   def test_parallel_loop_with_carry(self):
-    if not jtu.is_libtpu_at_least("0.0.47"):
-      self.skipTest("Requires libtpu >= 0.0.47")
     self.skip_if_tc_tiling("The test assumes SC tiling")
 
     chunk_size = self.num_lanes
@@ -2454,8 +2406,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[np.int32, np.float32])
   def test_vector_gather(self, dtype):
-    if not jtu.is_libtpu_at_least("0.0.47"):
-      self.skipTest("Requires libtpu >= 0.0.47")
     vec_dim = self.sc_info.num_lanes
     x = np.arange(vec_dim, dtype=dtype)
     indices = np.random.randint(0, vec_dim, size=vec_dim, dtype=np.int32)

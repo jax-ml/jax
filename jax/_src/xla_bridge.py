@@ -38,7 +38,6 @@ import warnings
 from jax._src import config
 from jax._src import distributed
 from jax._src import hardware_utils
-from jax._src import lib as jaxlib
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.cloud_tpu_init import get_tpu_library_path
@@ -1167,8 +1166,6 @@ def host_ids(
 
 
 def using_pjrt_c_api(backend=None):
-  if jaxlib.jaxlib_extension_version < 492:
-    return "PJRT C API" in get_backend(backend).platform_version
   return get_backend(backend).is_c_api
 
 def make_pjrt_topology(platform: str, topology_name='', **kwargs):

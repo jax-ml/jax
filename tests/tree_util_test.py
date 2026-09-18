@@ -20,7 +20,6 @@ import functools
 import pickle
 import re
 import sys
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -29,7 +28,6 @@ from jax import flatten_util
 from jax import tree_util
 from jax._src import flattree as ft
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.tree_util import (
     prefix_errors, broadcast_flattened_prefix_with_treedef,
     default_registry, dispatch_registry)
@@ -1302,10 +1300,6 @@ class StaticTest(parameterized.TestCase):
     )
     self.assertEqual(tree_structure, new_structure)
 
-  @unittest.skipIf(
-      jaxlib_extension_version < 488,
-      "Requires jaxlib_extension_version >= 488",
-  )
   def test_deserialize_malformed_treedef(self):
     # A single list node claiming a child that no earlier node supplies.
     # This used to segfault rather than raise.

@@ -23,7 +23,6 @@ from jax._src.lax import parallel
 from jax._src.compute_on import compute_on
 from jax.experimental.overlap import program_order
 from jax.sharding import PartitionSpec as P
-from jax._src.lib import ifrt_version
 
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -532,10 +531,6 @@ class OverlapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_nullary(self, mesh):
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
-    if ifrt_version < 69:
-      self.skipTest("Requires ifrt_version >= 69")
 
     x = jax.device_put(jnp.arange(8.0), P('x'))
     y = jax.device_put(jnp.arange(8.0), P('x'))

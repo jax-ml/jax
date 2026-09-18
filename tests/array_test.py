@@ -1735,10 +1735,6 @@ class RngShardingTest(jtu.JaxTestCase):
     self.assertTrue(abstract_mesh2.empty)
     self.assertEqual(abstract_mesh2.size, 0)
 
-  @unittest.skipIf(
-      jaxlib_extension_version < 487,
-      "Requires jaxlib_extension_version >= 487",
-  )
   def test_replace_with(self):
     a = jnp.array([1, 2, 3])
     b = jnp.array([4, 5, 6])

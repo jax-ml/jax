@@ -146,8 +146,6 @@ class MpmdAsyncTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(out, x + 1)
 
   def test_tc_vmem_to_sc_vmem_shared(self):
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu >= 0.0.48")
 
     mesh = from_core_type(SCV)
     tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)

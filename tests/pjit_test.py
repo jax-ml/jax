@@ -66,7 +66,6 @@ from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType, get_abstract_mesh
 from jax._src.interpreters import pxla
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.util import curry, unzip2
 from jax._src import tree_util
@@ -12102,10 +12101,6 @@ class PJitErrorTest(jtu.JaxTestCase):
       x.delete()
       _ = f(x)
 
-  @unittest.skipIf(
-      jaxlib_extension_version < 493,
-      "Requires jaxlib_extension_version >= 493",
-  )
   def test_compiled_with_deleted_input(self):
     shape = (8,)
     inp_data = np.arange(math.prod(shape)).reshape(shape)

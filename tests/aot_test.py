@@ -21,7 +21,6 @@ from jax import lax
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
 from jax.experimental.serialize_executable import (
@@ -385,10 +384,6 @@ class JaxAotTest(jtu.JaxTestCase):
     """Tests getting builtin topology, serializing, deserializing, compiling on it, and reloading executable on local devices."""
     if jtu.TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       raise unittest.SkipTest("Compilation caching not yet supported.")
-    if jaxlib_extension_version < 481:
-      raise unittest.SkipTest(
-          "Requires jaxlib_extension_version >= 481 (DeviceTopology.deserialize)"
-      )
 
     orig_topo = topologies.TopologyDescription(jax.devices())
     serialized_topo = orig_topo.serialize()
@@ -432,10 +427,6 @@ class JaxAotTest(jtu.JaxTestCase):
 
   def test_serialized_topology_invalid_bytes_raises_error(self):
     """Tests that passing invalid serialized protobuf bytes raises ValueError."""
-    if jaxlib_extension_version < 481:
-      raise unittest.SkipTest(
-          "Requires jaxlib_extension_version >= 481 (DeviceTopology.deserialize)"
-      )
     with self.assertRaisesRegex(
         ValueError,
         "Failed to parse PjRtTopologyDescriptionProto from serialized bytes",
@@ -444,11 +435,6 @@ class JaxAotTest(jtu.JaxTestCase):
 
   def test_get_executable_version(self):
     """Tests LoadedExecutable.get_executable_version() returns non-empty version bytes."""
-    if jaxlib_extension_version < 482:
-      raise unittest.SkipTest(
-          "Requires jaxlib_extension_version >= 482"
-          " (LoadedExecutable.get_executable_version)"
-      )
     x = jnp.ones((2, 2), dtype=jnp.float32)
     compiled = jax.jit(lambda x: x + 1).lower(x).compile()
     py_exec = compiled.runtime_executable()

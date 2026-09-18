@@ -4048,11 +4048,7 @@ def _logistic_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
 
-  if (
-      not hasattr(tpu, "logistic")
-      or ctx.forward_compatible
-      or not ctx.is_libtpu_at_least("0.0.47")
-  ):
+  if not hasattr(tpu, "logistic") or ctx.forward_compatible:
     neg_x = arith.negf(x)
     exp_neg_x = mlir_math.exp(neg_x)
     aval_out = ctx.avals_out[0]
@@ -4132,7 +4128,7 @@ def _log_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
 def _log2_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
-  if ctx.forward_compatible or not ctx.is_libtpu_at_least("0.0.48"):
+  if ctx.forward_compatible:
     aval_out = ctx.avals_out[0]
     out_type = ctx.aval_to_ir_type(aval_out)
     if not aval_out.shape:

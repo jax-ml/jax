@@ -2617,10 +2617,6 @@ class PallasCallTest(ptu.PallasTPUTest):
       dtype=[jnp.int4, jnp.uint4, jnp.int8, jnp.uint8, jnp.int16, jnp.uint16],
   )
   def test_int4_mask_ops_pallas_kernel(self, cmp_op, dtype):
-    if not jtu.is_libtpu_at_least('0.0.48'):
-      self.skipTest(
-          '4-bit integer boolean mask comparisons require libtpu >= 0.0.48'
-      )
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('i4 is not supported on TPU generations < 4')
 
@@ -4352,8 +4348,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       starts = (0,) * len(slice_sizes)
     if self.INTERPRET and 0 in strides:
       self.skipTest('Interpret mode does not support stride 0.')
-    if dtype != jnp.float32 and not jtu.is_libtpu_at_least('0.0.48'):
-      self.skipTest('Needs a newer libtpu')
     for start, sz, st, dim in zip(starts, slice_sizes, strides, shape[:-1]):
       max_idx = start + (sz - 1) * st if st > 0 else start
       if max_idx >= dim:
@@ -4903,8 +4897,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_row_merging_splitting_with_small_minor_dim(
       self, shapes, dtype
   ):
-    if not jtu.is_libtpu_at_least('0.0.47'):
-      self.skipTest('Needs a newer libtpu')
 
     input_shape, output_shape = shapes
     for in_shape, out_shape in [
@@ -4939,8 +4931,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_with_singleton_minor_dim(self, m, n, dtype, reshape_mode):
-    if not jtu.is_libtpu_at_least('0.0.47'):
-      self.skipTest('Needs a newer libtpu')
     if dtype in (jnp.bfloat16, jnp.int8) and not jtu.is_device_tpu_at_least(6):
       self.skipTest(
           'Insert singleton minor-most dimension for packed types is only'
@@ -5912,8 +5902,6 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       ('int4_transpose', jnp.int4, True),
   )
   def test_fifo(self, dtype, transpose):
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest('Test requires libtpu 0.0.48 or newer.')
     if jtu.is_device_tpu_at_least(7):
       if jnp.issubdtype(dtype, jnp.integer):
         self.skipTest('Test not relevant for TPU v7 and above.')
