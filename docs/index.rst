@@ -179,6 +179,7 @@ maintains an up-to-date list.
    :caption: Resources
 
    advanced_guides
+   accuracy
    jax
    api_compatibility
    deprecation

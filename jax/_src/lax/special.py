@@ -103,27 +103,48 @@ def zeta(x: ArrayLike, q: ArrayLike) -> Array:
 
 def bessel_i0e(x: ArrayLike) -> Array:
   r"""Exponentially scaled modified Bessel function of order 0:
+
   :math:`\mathrm{i0e}(x) = e^{-|x|} \mathrm{i0}(x)`
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
   """
   return bessel_i0e_p.bind(x)
 
 def bessel_i1e(x: ArrayLike) -> Array:
   r"""Exponentially scaled modified Bessel function of order 1:
+
   :math:`\mathrm{i1e}(x) = e^{-|x|} \mathrm{i1}(x)`
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
   """
   return bessel_i1e_p.bind(x)
 
 def erf(x: ArrayLike) -> Array:
-  r"""Elementwise error function: :math:`\mathrm{erf}(x)`."""
+  r"""Elementwise error function: :math:`\mathrm{erf}(x)`.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+  """
   return erf_p.bind(x)
 
 def erfc(x: ArrayLike) -> Array:
   r"""Elementwise complementary error function:
-    :math:`\mathrm{erfc}(x) = 1 - \mathrm{erf}(x)`."""
+
+    :math:`\mathrm{erfc}(x) = 1 - \mathrm{erf}(x)`.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+  """
   return erfc_p.bind(x)
 
 def erf_inv(x: ArrayLike) -> Array:
-  r"""Elementwise inverse error function: :math:`\mathrm{erf}^{-1}(x)`."""
+  r"""Elementwise inverse error function: :math:`\mathrm{erf}^{-1}(x)`.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+  """
   return erf_inv_p.bind(x)
 
 def ndtr(x: Array) -> Array:

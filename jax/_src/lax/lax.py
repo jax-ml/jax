@@ -489,6 +489,9 @@ def exp(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
     Array of the same shape and dtype as ``x`` containing the element-wise
     exponential.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.exp2`: elementwise base-2 exponentional: :math:`2^x`.
     - :func:`jax.lax.log`: elementwise natural logarithm: :math:`\mathrm{log}(x)`.
@@ -517,6 +520,9 @@ def exp2(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> A
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     base-2 exponential.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.exp`: elementwise exponentional: :math:`e^x`.
@@ -548,6 +554,9 @@ def expm1(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> 
     Array of the same shape and dtype as ``x`` containing the element-wise
     exponential minus 1.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.exp`: elementwise exponentional: :math:`e^x`.
     - :func:`jax.lax.log1p`: elementwise :math:`\mathrm{log}(1 + x)`.
@@ -574,6 +583,9 @@ def log(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     natural logarithm.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.exp`: elementwise exponentional: :math:`e^x`.
@@ -602,6 +614,9 @@ def log2(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> A
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     base-2 logarithm.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.exp2`: elementwise base-2 exponential: :math:`2^x`.
@@ -632,6 +647,9 @@ def log1p(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> 
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     natural logarithm of ``x + 1``.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.expm1`: elementwise :math:`e^x - 1`.
@@ -672,6 +690,9 @@ def tanh(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> A
     :math:`4 \, \mathrm{logistic}(2x) \, \mathrm{logistic}(-2x)`, preserving
     non-zero gradients in this region.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.atanh`: elementwise inverse hyperbolic tangent.
     - :func:`jax.lax.cosh`: elementwise hyperbolic cosine.
@@ -701,6 +722,9 @@ def logistic(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) 
     Array of the same shape and dtype as ``x`` containing the element-wise
     logistic/sigmoid function.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.nn.sigmoid`: an alternative API for this functionality.
   """
@@ -726,6 +750,9 @@ def sin(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     sine.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.cos`: elementwise cosine.
@@ -756,6 +783,9 @@ def cos(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     cosine.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.sin`: elementwise sine.
@@ -973,6 +1003,9 @@ def sqrt(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> A
   Returns:
     An array of the same shape and dtype as ``x`` containing the square root.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     :func:`jax.lax.pow`: Elementwise power.
     :func:`jax.lax.cbrt`: Elementwise cube root.
@@ -1001,6 +1034,9 @@ def rsqrt(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> 
     An array of the same shape and dtype as ``x`` containing the
     reciporical square root.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     :func:`jax.lax.pow`: Elementwise power.
     :func:`jax.lax.sqrt`: Elementwise square root.
@@ -1027,6 +1063,9 @@ def cbrt(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> A
 
   Returns:
     An array of the same shape and dtype as ``x`` containing the cube root.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     :func:`jax.lax.pow`: Elementwise power.
@@ -4040,7 +4079,12 @@ def batch_matmul(lhs: Array, rhs: Array,
 # as non-primitive to maintain a smaller set of autodiff primitives.
 
 def square(x: ArrayLike) -> Array:
-  r"""Elementwise square: :math:`x^2`."""
+  r"""Elementwise square: :math:`x^2`.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
+  """
   return square_p.bind(x)
 
 def one_minus_square(x: ArrayLike) -> Array:
@@ -4054,7 +4098,12 @@ def one_minus_square(x: ArrayLike) -> Array:
   return one_minus_square_p.bind(x)
 
 def reciprocal(x: ArrayLike) -> Array:
-  r"""Elementwise reciprocal: :math:`1 \over x`."""
+  r"""Elementwise reciprocal: :math:`1 \over x`.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
+  """
   return integer_pow(x, -1)
 
 @export
@@ -4075,6 +4124,9 @@ def tan(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     tangent.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.cos`: elementwise cosine.
@@ -4099,6 +4151,9 @@ def asin(x: ArrayLike) -> Array:
     Array of the same shape and dtype as ``x`` containing the
     element-wise arc sine.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.sin`: elementwise sine.
     - :func:`jax.lax.acos`: elementwise arc cosine.
@@ -4119,6 +4174,9 @@ def acos(x: ArrayLike) -> Array:
     Array of the same shape and dtype as ``x`` containing the
     element-wise arc cosine.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.cos`: elementwise cosine.
     - :func:`jax.lax.asin`: elementwise arc sine.
@@ -4138,6 +4196,9 @@ def atan(x: ArrayLike) -> Array:
   Returns:
     Array of the same shape and dtype as ``x`` containing the
     element-wise arc tangent.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.tan`: elementwise tangent.
@@ -4160,6 +4221,9 @@ def sinh(x: ArrayLike) -> Array:
     Array of the same shape and dtype as ``x`` containing the element-wise
     hyperbolic sine.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.asinh`: elementwise inverse hyperbolic sine.
     - :func:`jax.lax.cosh`: elementwise hyperbolic cosine.
@@ -4179,6 +4243,9 @@ def cosh(x: ArrayLike) -> Array:
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     hyperbolic cosine.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.acosh`: elementwise inverse hyperbolic cosine.
@@ -4200,6 +4267,9 @@ def asinh(x: ArrayLike) -> Array:
     Array of the same shape and dtype as ``x`` containing the element-wise
     inverse hyperbolic sine.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.acosh`: elementwise inverse hyperbolic cosine.
     - :func:`jax.lax.atanh`: elementwise inverse hyperbolic tangent.
@@ -4220,6 +4290,9 @@ def acosh(x: ArrayLike) -> Array:
     Array of the same shape and dtype as ``x`` containing the element-wise
     inverse hyperbolic cosine.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.asinh`: elementwise inverse hyperbolic sine.
     - :func:`jax.lax.atanh`: elementwise inverse hyperbolic tangent.
@@ -4239,6 +4312,9 @@ def atanh(x: ArrayLike) -> Array:
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     inverse hyperbolic tangent.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.acosh`: elementwise inverse hyperbolic cosine.

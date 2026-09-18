@@ -561,6 +561,9 @@ def erf(x: ArrayLike) -> Array:
   Notes:
      The JAX version only supports real-valued inputs.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.scipy.special.erfc`
     - :func:`jax.scipy.special.erfcx`
@@ -590,6 +593,9 @@ def erfc(x: ArrayLike) -> Array:
 
   Notes:
      The JAX version only supports real-valued inputs.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.scipy.special.erf`
@@ -687,6 +693,9 @@ def erfcx(x: ArrayLike) -> Array:
 
   Returns:
     array containing values of the scaled complementary error function.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.scipy.special.erfc`
@@ -1774,6 +1783,9 @@ def i0e(x: ArrayLike) -> Array:
   Returns:
     array of bessel function values.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.scipy.special.i0`
     - :func:`jax.scipy.special.i1`
@@ -1825,6 +1837,9 @@ def i1e(x: ArrayLike) -> Array:
 
   Returns:
     array of bessel function values
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.scipy.special.i0`

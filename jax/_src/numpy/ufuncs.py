@@ -435,18 +435,7 @@ def exp(x: ArrayLike, /) -> Array:
     inexact dtype.
 
   Numerical Precision:
-    Maximum error in units in the last place (ULPs):
-
-    ==============  ============  ===========  ===========
-    Platform        ``bfloat16``  ``float16``  ``float32``
-    ==============  ============  ===========  ===========
-    CPU             0             1            1
-    NVIDIA GPU      1             1            2
-    TPU v2–v5e      1             1            116
-    TPU v5p         1             1            109
-    TPU v6e         1             1            64
-    TPU 7x          1             1            65
-    ==============  ============  ===========  ===========
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.numpy.log`: Calculates element-wise logarithm of the input.
@@ -491,17 +480,7 @@ def log(x: ArrayLike, /) -> Array:
     dtype.
 
   Numerical Precision:
-    Maximum error in units in the last place (ULPs):
-
-    ==============  ============  ===========  ===========
-    Platform        ``bfloat16``  ``float16``  ``float32``
-    ==============  ============  ===========  ===========
-    CPU             0             1            1
-    NVIDIA GPU      0             1            1
-    TPU v2–v5e      1             1            4030
-    TPU v5p         0             1            62
-    TPU v6e, 7x     0             1            2
-    ==============  ============  ===========  ===========
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.numpy.exp`: Calculates element-wise exponential of the input.
@@ -632,15 +611,7 @@ def sin(x: ArrayLike, /) -> Array:
     dtype.
 
   Numerical Precision:
-    Maximum error in units in the last place (ULPs):
-
-    ==============  ============  ===========  ===========
-    Platform        ``bfloat16``  ``float16``  ``float32``
-    ==============  ============  ===========  ===========
-    CPU             1             1            1
-    NVIDIA GPU      0             1            1
-    TPU             1             1            3
-    ==============  ============  ===========  ===========
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.numpy.cos`: Computes a trigonometric cosine of each element of
@@ -677,15 +648,7 @@ def cos(x: ArrayLike, /) -> Array:
     dtype.
 
   Numerical Precision:
-    Maximum error in units in the last place (ULPs):
-
-    ==============  ============  ===========  ===========
-    Platform        ``bfloat16``  ``float16``  ``float32``
-    ==============  ============  ===========  ===========
-    CPU             0             1            1
-    NVIDIA GPU      0             1            2
-    TPU             0             1            3
-    ==============  ============  ===========  ===========
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.numpy.sin`: Computes a trigonometric sine of each element of input.
@@ -721,17 +684,7 @@ def tan(x: ArrayLike, /) -> Array:
     dtype.
 
   Numerical Precision:
-    Maximum error in units in the last place (ULPs):
-
-    ==============  ============  ===========  ===========
-    Platform        ``bfloat16``  ``float16``  ``float32``
-    ==============  ============  ===========  ===========
-    CPU             0             1            0
-    NVIDIA GPU      0             1            3
-    TPU v2–v5e      0             1            6
-    TPU v5p         0             1            7
-    TPU v6e, 7x     0             1            5
-    ==============  ============  ===========  ===========
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.numpy.sin`: Computes a trigonometric sine of each element of input.
@@ -906,17 +859,7 @@ def sinh(x: ArrayLike, /) -> Array:
     ``jnp.sinh`` is equivalent to computing ``-1j * jnp.sin(1j * x)``.
 
   Numerical Precision:
-    Maximum error in units in the last place (ULPs):
-
-    ==============  ============  ===========  ===========
-    Platform        ``bfloat16``  ``float16``  ``float32``
-    ==============  ============  ===========  ===========
-    CPU             0             1            24
-    NVIDIA GPU      0             0            3
-    TPU v2–v5e      1             1            1794
-    TPU v5p         1             1            1332
-    TPU v6e, 7x     1             1            59
-    ==============  ============  ===========  ===========
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.numpy.cosh`: Computes the element-wise hyperbolic cosine of the
@@ -974,17 +917,7 @@ def cosh(x: ArrayLike, /) -> Array:
     ``jnp.cosh`` is equivalent to computing ``jnp.cos(1j * x)``.
 
   Numerical Precision:
-    Maximum error in units in the last place (ULPs):
-
-    ==============  ============  ===========  ===========
-    Platform        ``bfloat16``  ``float16``  ``float32``
-    ==============  ============  ===========  ===========
-    CPU             0             1            24
-    NVIDIA GPU      0             1            2
-    TPU v2–v5e      0             1            93
-    TPU v5p         1             1            99
-    TPU v6e, 7x     1             1            59
-    ==============  ============  ===========  ===========
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.numpy.sinh`: Computes the element-wise hyperbolic sine of the input.
@@ -1156,17 +1089,7 @@ def tanh(x: ArrayLike, /) -> Array:
       use :func:`jax.lax.tanh` with ``accuracy=jax.lax.AccuracyMode.HIGHEST``.
 
   Numerical Precision:
-    Maximum error in units in the last place (ULPs):
-
-    ==============  ============  ===========  ===========
-    Platform        ``bfloat16``  ``float16``  ``float32``
-    ==============  ============  ===========  ===========
-    CPU             0             0            5
-    NVIDIA GPU      0             0            5
-    TPU v2–v5e      0             1            1365
-    TPU v5p         0             1            92
-    TPU v6e, 7x     0             0            1
-    ==============  ============  ===========  ===========
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.numpy.sinh`: Computes the element-wise hyperbolic sine of the input.
@@ -1297,6 +1220,9 @@ def cbrt(x: ArrayLike, /) -> Array:
 
   Returns:
     An array containing the cube root of the elements of ``x``.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.numpy.sqrt`: Calculates the element-wise non-negative square root
@@ -2923,6 +2849,9 @@ def log2(x: ArrayLike, /) -> Array:
     An array containing the base-2 logarithm of each element in ``x``, promotes
     to inexact dtype.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   Examples:
     >>> x1 = jnp.array([0.25, 0.5, 1, 2, 4, 8])
     >>> jnp.log2(x1)
@@ -2947,6 +2876,9 @@ def log10(x: ArrayLike, /) -> Array:
   Returns:
     An array containing the base-10 logarithm of each element in ``x``, promotes
     to inexact dtype.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   Examples:
     >>> x1 = jnp.array([0.01, 0.1, 1, 10, 100, 1000])
@@ -2980,6 +2912,9 @@ def exp2(x: ArrayLike, /) -> Array:
   Returns:
     An array containing the base-2 exponential of each element in ``x``, promotes
     to inexact dtype.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.numpy.log2`: Calculates base-2 logarithm of each element of input.
@@ -3481,6 +3416,9 @@ def square(x: ArrayLike, /) -> Array:
 
   Note:
     ``jnp.square`` is equivalent to computing ``jnp.power(x, 2)``.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.numpy.sqrt`: Calculates the element-wise non-negative square root
@@ -4064,6 +4002,9 @@ def reciprocal(x: ArrayLike, /) -> Array:
   Note:
     For integer inputs, ``np.reciprocal`` returns rounded integer output, while
     ``jnp.reciprocal`` promotes integer inputs to floating point.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   Examples:
     >>> jnp.reciprocal(2)
