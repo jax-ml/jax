@@ -16,20 +16,48 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.11.2 (September 17, 2026)
+
 * New features
+  * Added {func}`jax.numpy.minmax` (and `jnp.minmax`), which returns both the
+    minimum and maximum of an array, matching NumPy 2.3+ ({jax-issue}`#40089`).
   * Added {func}`jax.lax.log2` and primitive {data}`jax.lax.log2_p`, making
     `log2` a first-class primitive in JAX ({func}`jax.numpy.log2` now lowers via
     `jax.lax.log2`).
+  * Added {func}`jax.lax.one_minus_square` primitive to accurately compute
+    `1 - x^2` near $\pm 1$ and provide accurate derivatives near $0$.
   * Added {func}`jax.export.symbolic_dim_bounds` for querying conservative
     bounds on symbolic dimension expressions ({jax-issue}`#40006`).
+  * Added {class}`frozendict` support to JAX pytrees for Python 3.15 (PEP 814).
   * {func}`jax.distributed.initialize` can now secure the coordination service
     with mutual TLS via the new `mtls_cert_file`, `mtls_key_file`,
     `mtls_ca_file`, `mtls_peer_uri_prefix` and `verify_secure_credentials`
     arguments (or the `JAX_MTLS_CERT_FILE`, `JAX_MTLS_KEY_FILE`,
     `JAX_MTLS_CA_FILE`, `JAX_MTLS_PEER_URI_PREFIX` and
     `JAX_DISTRIBUTED_VERIFY_SECURE_CREDENTIALS` environment variables).
+  * Added cluster detection support for Open MPI 5 in
+    {func}`jax.distributed.initialize` ({jax-issue}`#40512`).
+  * Added support for reading `TPU_PROCESS_ADDRESSES_PATH` in GKE TPU clusters.
+  * Widened {func}`jax.random.generalized_normal`'s `p` parameter type from
+    `float` to `RealArray`, allowing array-valued shape parameters ({jax-issue}`#40126`).
+  * Added `exclude_argnames` argument to {func}`jax.experimental.program_order`.
+  * [oneAPI GPU] Added oneMKL LAPACK solver kernels for QR decomposition
+    (`geqrf`, `orgqr`/`ungqr`, `ormqr`/`unmqr`), LU decomposition (`getrf`),
+    symmetric/Hermitian eigenvalue decomposition (`syevd`/`heevd`), SVD
+    (`gesvd`), and hybrid solver kernels (`geqp3`, `eig`)
+    ({jax-issue}`#40000`, {jax-issue}`#40186`, {jax-issue}`#40543`).
+  * `jaxlib` wheels now ship C++ FFI extension headers (`collectives.h`,
+    `record.h`) to support out-of-tree plugins ({jax-issue}`#40333`).
+
+* Breaking changes
+  * Removed deprecated `jax.experimental.shard_alike`. Use explicit sharding
+    mode instead (see {ref}`jax-201-sharding`).
 
 * Changes
+  * Optimized large JAX {class}`jax.sharding.Mesh` construction by avoiding
+    redundant device array allocations and copies.
+  * Thread-safety improvements across JAX and `jaxlib` for free-threaded Python
+    (Python 3.13t, 3.14t, 3.15t).
   * `inline=True` in {func}`jax.jit` now corresponds to
     {attr}`jax.Inline.JAX_LATE` instead of {attr}`jax.Inline.JAX_EARLY`.
   * The minimum CuDNN version for CUDA 12 is v9.10.2.
@@ -43,14 +71,29 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     not change the result under NumPy's convention (only the last axis is
     assumed symmetric), so results are unchanged while the transform is
     ~1.4x faster at typical sizes.
+  * Re-enabled scan-based lowering of cumulative sums ({func}`jax.numpy.cumsum`)
+    on GPU, improving performance.
   * {func}`jax.numpy.tri` now returns an array with the default float dtype
     when the `dtype` argument is not specified. Previously it always returned
     `float32` ({jax-issue}`#40242`).
   * {func}`jax.numpy.unique` with `axis` specified now matches NumPy's output
     shape for arrays that are empty along the given axis, instead of
     fabricating a phantom slice for fully-empty inputs.
+  * Improved numerical accuracy of {func}`jax.numpy.log2` by pre-computing the
+    `1 / log(2)` constant factor ({jax-issue}`#40430`).
+  * Added `out_sharding` parameter to {func}`jax.numpy.histogram`.
+  * Updated {func}`jax.remat`'s `prevent_cse` argument signature to accept
+    `bool | Sequence[bool]`, matching {func}`jax.checkpoint`.
+  * Made {mod}`jax.experimental.checkify` error code assignment deterministic.
 
 * Bug fixes
+  * Fixed numerical overflow in {func}`jax.numpy.arccosh` and {func}`jax.lax.acosh`
+    gradients for large inputs ({jax-issue}`#40643`, {jax-issue}`#40634`).
+  * Fixed first-, second-, and higher-order autodiff gradients of
+    {func}`jax.lax.bessel_i0e` and {func}`jax.lax.bessel_i1e` at `0.0`
+    ({jax-issue}`#40640`, {jax-issue}`#40635`).
+  * Fixed {func}`jax.numpy.linalg.eigh` gradients producing NaN or incorrect
+    values for large eigenvalues ({jax-issue}`#40149`, {jax-issue}`#40141`).
   * {func}`jax.numpy.sinc` now uses a Taylor series near zero, giving
     accurate derivatives of all orders. Previously, autodiff of the
     `sin(πx)/(πx)` quotient suffered catastrophic cancellation near zero
@@ -64,6 +107,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Fixed a bug where {func}`jax.numpy.linalg.cond` returned NaN instead of
     infinity for singular matrices when `p` is `None` or `2`, matching NumPy
     and the other norms.
+  * Fixed {func}`jax.numpy.histogram` crashing on empty arrays
+    ({jax-issue}`#40025`, {jax-issue}`#40020`).
   * Fixed {func}`jax.numpy.intersect1d` and {func}`jax.numpy.setxor1d` with
     ``size=0``, which previously raised a ValueError; they now return empty
     arrays of the natural result dtype.
@@ -76,6 +121,23 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Fixed {func}`jax.numpy.median` on an input that is empty along the
     reduction axis, which previously raised an internal error from ``gather``;
     it now raises a ``ValueError``.
+  * Fixed a potential division-by-zero error in
+    {func}`jax.nn.initializers.variance_scaling` for zero-size inputs
+    ({jax-issue}`#35096`).
+  * Fixed {func}`jax.custom_root` tangents when auxiliary values are
+    integer-typed ({jax-issue}`#39913`, {jax-issue}`#24295`).
+  * Fixed color cycling in {func}`jax.debug.visualize_array_sharding`
+    ({jax-issue}`#39922`, {jax-issue}`#25695`).
+  * Adjusted JVP rule for {func}`jax.lax.min` and {func}`jax.lax.max` to not
+    depend on bitwise equivalence between forward and backward pass results
+    ({jax-issue}`#40578`).
+  * Fixed symbolic product bounds calculation in {mod}`jax.export` when
+    even-powered factor bounds cross zero or zero factors are paired with
+    infinite bounds ({jax-issue}`#40054`).
+  * Fixed state discharge accumulation (`ref_addupdate`) on indexed
+    `ReshapeTransform` views.
+  * [ROCm] Worked around a rocFFT twiddle cache bug in multi-dimensional real
+    FFTs ({jax-issue}`#40389`).
 
 ## JAX 0.11.1 (August 17, 2026)
 
