@@ -1104,6 +1104,12 @@ def parse_indices(
       slice_shape.append(1)
       is_squeezed.append(True)
     elif isinstance(idx, slice):
+      if any(isinstance(v, ir.Value) for v in (idx.start, idx.stop, idx.step)):
+        raise NotImplementedError(
+            f"Slice {idx} along axis {axis} has dynamic bounds. Use"
+            " ds(base, length) to slice at a dynamic offset with a"
+            " static length."
+        )
       if idx.step is not None and idx.step != 1:
         raise NotImplementedError("Strided slices not implemented")
       start = idx.start or 0

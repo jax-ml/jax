@@ -9532,6 +9532,13 @@ class UtilsTest(TestCase):
     with self.assertRaisesRegex(IndexError, "out of bounds"):
       utils.parse_indices(indices, (2, 3, 4))
 
+  def test_parse_indices_dynamic_slice(self):
+    i = c(0, ir.IndexType.get())
+    for s in (slice(i), slice(0, i), slice(0, 2, i)):
+      with self.subTest(s=s):
+        with self.assertRaisesRegex(NotImplementedError, "has dynamic bounds"):
+          utils.parse_indices(s, (2, 3, 4))
+
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_assert(self):
     if cf is None:
