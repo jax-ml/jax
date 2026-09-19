@@ -17,6 +17,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * Changes
+  * Improved the numerical accuracy of {func}`jax.numpy.sinc` across all
+    floating-point types (to $\le 0.5$ ULP for `bfloat16` and `float16`,
+    $\le 2.5\text{–}4.0$ ULPs for `float32`, and $\ge 2.0$ ULPs for `float64`).
   * {func}`jax.numpy.ldexp` and {func}`jax.numpy.frexp` are now bit-exact for
     normal floating-point numbers, replacing floating-point arithmetic with
     bitwise operations. Subnormal inputs and underflowing outputs are flushed to
