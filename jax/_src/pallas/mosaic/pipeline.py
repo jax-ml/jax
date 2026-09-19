@@ -523,10 +523,10 @@ class BufferedRef(BufferedRefBase):
       raise ValueError(
           f"buffer_count must be at least 1, got {self.buffer_count}"
       )
-    if self.is_output:
+    if self.is_input_output:
       if self.is_buffered and self.buffer_count > 2:
         raise NotImplementedError(
-            "Buffer count >2 not supported for output buffered refs."
+            "Buffer count >2 not supported for input_output buffered refs."
         )
 
   @property
@@ -1193,10 +1193,13 @@ class Scheduler:
         i + j for i, j in zip(indices, grid_offsets, strict=True)
     )
 
-    self.prev_indices = tuple(
-        i + j
-        for i, j in zip(_prev_index(indices, grid), grid_offsets, strict=True)
-    )
+    self.prev_indices = [self.indices]
+    prev_indices = indices
+    for _ in range(self.num_stages):
+      prev_indices = _prev_index(prev_indices, grid)
+      self.prev_indices.append(tuple(
+          i + j for i, j in zip(prev_indices, grid_offsets, strict=True)
+      ))
     next_indices = _next_index(indices, grid)
     self.next_indices = tuple(
         i + j
@@ -1250,13 +1253,13 @@ class Scheduler:
       return jnp.bool(False)
     return self.step >= (self.num_steps - buffered_ref.buffer_count + 1)
 
-  def has_changed(self, buffered_ref):
+  def has_changed(self, buffered_ref, step=1):
     if not buffered_ref.is_buffered or buffered_ref.is_trivial_windowing:
       return False
     if buffered_ref.has_indirect:
       return True
-    indices = self._compute_index(buffered_ref, *self.indices)
-    prev_indices = self._compute_index(buffered_ref, *self.prev_indices)
+    indices = self._compute_index(buffered_ref, *self.prev_indices[step - 1])
+    prev_indices = self._compute_index(buffered_ref, *self.prev_indices[step])
     return _tuples_differ(indices, prev_indices)
 
   def will_change_current(self, buffered_ref):
@@ -1400,9 +1403,10 @@ class Scheduler:
     return buffered_ref
 
   def wait_out(self, buffered_ref, dst_ref) -> BufferedRef:
-    if buffered_ref.is_trivial_windowing:
+    if buffered_ref.is_trivial_windowing or not buffered_ref.is_buffered:
       return buffered_ref
-    pred = self.has_changed(buffered_ref) & jnp.logical_not(self.first_step)
+    step = buffered_ref.buffer_count - 1
+    pred = self.has_changed(buffered_ref, step) & (self.step >= step)
     @when(pred)
     @self._named_scope("ep_wait_out")
     def _wait():
@@ -1413,7 +1417,7 @@ class Scheduler:
         # here. In the current schedule we always immediately wait_out
         # on the iteration after the copy_out, so the prev_indices is always
         # the correct grid index to wait on.
-        buffered_ref.wait_out(dst_ref, self.prev_indices)
+        buffered_ref.wait_out(dst_ref, self.prev_indices[step])
     return buffered_ref.advance_wait_out_slot(pred & buffered_ref.is_output)
 
   def copy_out(self, buffered_ref, dst_ref) -> BufferedRef:
@@ -1429,16 +1433,23 @@ class Scheduler:
 
     return buffered_ref.advance_copy_out_slot(pred & buffered_ref.is_output)
 
-  def finalize(self, buffered_ref, dst_ref):
-    if buffered_ref.is_trivial_windowing:
-      return
-    pred = self.last_step
+  def finalize_step(self, buffered_ref, dst_ref, step=0):
+    if (
+        buffered_ref.is_trivial_windowing
+        or not buffered_ref.is_buffered
+        or step >= buffered_ref.buffer_count - 1
+    ):
+      return buffered_ref
+    changed = True if step == 0 else self.has_changed(buffered_ref, step)
+    pred = self.last_step & (step < self.num_steps) & changed
 
     @when(pred)
-    @self._named_scope("ep_finalize")
+    @self._named_scope(f"ep_finalize_{step}")
     def _end():
       if buffered_ref.is_output:
-        buffered_ref.wait_out(dst_ref, self.indices)
+        buffered_ref.wait_out(dst_ref, self.prev_indices[step])
+
+    return buffered_ref.advance_wait_out_slot(pred & buffered_ref.is_output)
 
   def advance_slots(self, buffered_ref):
     if buffered_ref.is_input:
@@ -1969,7 +1980,10 @@ def _emit_pipeline(
         final_indices = _prev_index(next_indices, grid)
         scheduler = make_scheduler(num_steps - 1, final_indices)
         with scheduler.grid_env():
-          map_brefs(scheduler.finalize, brefs, refs)
+          for step in range(scheduler.num_stages - 2, -1, -1):
+            brefs = map_brefs(functools.partial(
+                scheduler.finalize_step, step=step),
+                brefs, refs)
 
         def _sync_copy_out(bref, ref):
           if bref.is_trivial_windowing and bref.window_ref is not None:
