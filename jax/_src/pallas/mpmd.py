@@ -203,6 +203,7 @@ def _mpmd_map_discharge_rule(
     jaxprs,
     meshes,
     input_output_aliases,
+    out_avals,
     debug,
     interpret,
     compiler_params,
@@ -243,7 +244,7 @@ def _mpmd_map_discharge_rule(
 
   write_indices = sorted(write_indices)
   num_in = len(ctx.in_avals)
-  num_out_orig = len(ctx.out_avals)
+  num_out_orig = len(out_avals)
   num_out_new = len(write_indices)
 
   new_jaxprs = []
@@ -285,15 +286,18 @@ def _mpmd_map_discharge_rule(
     with mpmd_map_tracing_context(mesh, all_meshes):
       new_jaxprs.append(_rewrite_to_include_new_outputs(jaxpr))
 
-  new_out_avals = [
-      state_discharge.discharged_aval(
-          ctx.in_avals[i],
-          discharge=True,
-          strip_memory_space=ctx.strip_memory_space,
-      )
-      for i in write_indices
+  outin_aliases = {o: i for i, o in input_output_aliases.items()}
+  orig_out_avals = [
+      ctx.in_avals[outin_aliases[i]] if i in outin_aliases else a
+      for i, a in enumerate(out_avals)
   ]
-  updated_out_avals = list(ctx.out_avals) + new_out_avals
+  new_out_avals = [ctx.in_avals[i] for i in write_indices]
+  updated_out_avals = [
+      state_discharge.discharged_aval(
+          a, discharge=True, strip_memory_space=ctx.strip_memory_space
+      )
+      for a in orig_out_avals + new_out_avals
+  ]
 
   new_aliases = dict(input_output_aliases)
   for out_idx, in_idx in enumerate(write_indices):
