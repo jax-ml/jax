@@ -555,5 +555,29 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jax.vmap(f), d_i1, args_maker, rtol=1e-5)
     self._CompileAndCheck(jax.vmap(f), args_maker, rtol=1e-5)
 
+  def test_betaln_subnormal_quotient_issue40653(self):
+    # Regression test for https://github.com/google/jax/issues/40653
+    # When min(a, b) / max(a, b) is subnormal, XLA flushes the quotient
+    # to zero. algdiv should not drop the linear term u = d * (a / b).
+    with jax.enable_x64():
+      cases = [
+          (1.0, 1e308),
+          (2.0, 1e308),
+          (1.5, 1e308),
+          (2.0, 8.99e307),
+          (2.0, 8.90e307),
+          (0.5, 1.7e308),
+      ]
+      for a, b in cases:
+        jax_val = lsp_special.betaln(a, b)
+        scipy_val = osp_special.betaln(a, b)
+        self.assertAllClose(jax_val, scipy_val, atol=1e-12, rtol=1e-12)
+        self.assertAllClose(
+            lsp_special.betaln(b, a), scipy_val, atol=1e-12, rtol=1e-12
+        )
+        grad_a = jax.grad(lsp_special.betaln, argnums=0)(a, b)
+        self.assertTrue(np.isfinite(grad_a))
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
