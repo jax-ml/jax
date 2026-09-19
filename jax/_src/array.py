@@ -145,6 +145,9 @@ def _cached_index_calc(s, shape):
 
 @cache(max_size=4096, trace_context_in_key=False)
 def _process_has_full_value_in_mcjax(s, shape):
+  if s.is_fully_replicated and s.has_addressable_devices:
+    return True
+
   # Return False for single host as a fast path.
   if xla_bridge.process_count() == 1:
     return False
