@@ -1422,6 +1422,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=5e-4)
 
+  def testMultinomialLogPmfBatched(self):
+    p = np.array([0.2, 0.3, 0.5], np.float32)
+    n = 10
+    xs = [
+      np.array([[10, 0, 0], [4, 3, 3]], np.int32),
+      np.array([[10, 0, 0], [8, 0, 0]], np.int32),
+      np.array([[10, 0, 0], [0, 0, 0]], np.int32),
+    ]
+    for x in xs:
+      self.assertAllClose(
+        osp_stats.multinomial.logpmf(x, n, p),
+        lsp_stats.multinomial.logpmf(x, n, p),
+        check_dtypes=False)
+
   @jtu.sample_product(
     [dict(x_shape=x_shape, mean_shape=mean_shape, cov_shape=cov_shape)
       for x_shape, mean_shape, cov_shape in [
