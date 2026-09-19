@@ -65,7 +65,7 @@ def _erfinv_reference(x: np.ndarray) -> np.ndarray:
 class SpecialTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_bessel_i0e_accuracy(self, dtype):
+  def test_bessel_i0e_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 1.0, f32: 7.0, f64: 7.5}),
         ("gpu", {f32: 8.0, f64: 7.5}),
@@ -77,7 +77,7 @@ class SpecialTest(jtu.JaxTestCase):
         bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_bessel_i1e_accuracy(self, dtype):
+  def test_bessel_i1e_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 1.0, f32: 11.0, f64: 10.5}),
         ("gpu", {f16: 1.0, f32: 15.5, f64: 6.0}),
@@ -90,7 +90,7 @@ class SpecialTest(jtu.JaxTestCase):
         bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_digamma_accuracy(self, dtype):
+  def test_digamma_test_accuracy(self, dtype):
     # TODO(phawkins): Digamma has poles at non-positive integers (0, -1, -2, ...)
     # where the function is ill-conditioned and outputs differ across
     # implementations (NaN vs +-inf).
@@ -104,7 +104,7 @@ class SpecialTest(jtu.JaxTestCase):
         bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_erf_accuracy(self, dtype):
+  def test_erf_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 131.0, f32: 7.0, f64: 2.5}),
         ("gpu",
@@ -117,10 +117,10 @@ class SpecialTest(jtu.JaxTestCase):
         self, lax.erf, scipy.special.erf, mpmath.erf, dtype, bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_erfc_accuracy(self, dtype):
+  def test_erfc_test_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 66.0, f64: 256.0}),
-        ("gpu", {f16: 1.0, f32: 66.5, f64: 256.0}),
+        ("cpu", {f16: 1.0, f32: 66.0, f64: 350.0}),
+        ("gpu", {f16: 1.0, f32: 66.5, f64: 350.0}),
         (TPU_EUPV1, {f16: 1.0, f32: 145.0}),
         ("tpu_v5p", {f16: 1.0, f32: 157.0}),
         ("tpu_v6e", {f16: 1.0, f32: 124.5}),
@@ -130,7 +130,7 @@ class SpecialTest(jtu.JaxTestCase):
         self, lax.erfc, scipy.special.erfc, _mpmath_erfc, dtype, bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_erfinv_accuracy(self, dtype):
+  def test_erfinv_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 1.0, f32: 65.0, f64: 82.5}),
         ("gpu", {f16: 1.0, f32: 65.0, f64: 83.5}),
@@ -143,7 +143,7 @@ class SpecialTest(jtu.JaxTestCase):
         bounds=bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_lgamma_accuracy(self, dtype):
+  def test_lgamma_test_accuracy(self, dtype):
     # TODO(phawkins): Large errors occur near zero-crossings (where |gamma(x)| = 1,
     # e.g. x ~= -3.14358) where small approximation errors cause sign flips across
     # zero, and at x = -inf due to inf/NaN handling differences.

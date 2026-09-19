@@ -442,6 +442,16 @@ def _one_minus_square_rule(primals_in, series_in):
   return lax.one_minus_square(x), [lax.neg(t) for t in series_out]
 jet_rules[lax.one_minus_square_p] = _one_minus_square_rule
 
+def _polynomial_jet_rule(primals_in, series_in, *, unroll):
+  del unroll
+  def _eval(x, *coeffs):
+    acc = coeffs[-1]
+    for c in reversed(coeffs[:-1]):
+      acc = lax.add(lax.mul(acc, x), c)
+    return acc
+  return jet2(_eval, primals_in, series_in)
+jet_rules[lax.polynomial_p] = _polynomial_jet_rule
+
 def_comp(lax.rsqrt_p, lambda x: x ** -0.5)
 def_comp(lax.asinh_p, lambda x: lax.log(x + lax.sqrt(lax.square(x) + 1)))
 def_comp(lax.acosh_p, lambda x: lax.log(x + lax.sqrt(x - 1) * lax.sqrt(x + 1)))
