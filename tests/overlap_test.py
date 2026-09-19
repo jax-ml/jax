@@ -269,8 +269,8 @@ class OverlapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((8,), ('x',))
   def test_unrolled_fsdp_pipeline_grad_program_order_async_decomp(self, mesh):
-    if not jtu.is_device_tpu_at_least(6):
-      self.skipTest("Requires TPU >= 6")
+    if jtu.device_under_test() != "gpu" and not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires GPU or TPU >= 6")
 
     def ag(x, axis):
       return jax.lax.all_gather(x, 'x', axis=axis, tiled=True)
@@ -326,14 +326,87 @@ class OverlapTest(jtu.JaxTestCase):
     w2s = jnp.ones((16, 2, 4096, 1024), dtype=jnp.bfloat16,
                    out_sharding=P(None, None, None, 'x'))
 
-    opts = dict(
-        xla_tpu_enable_sparse_core_collective_offload_all_gather='true',
-        xla_tpu_enable_sparse_core_collective_offload_2d_all_gather='true',
-        xla_tpu_enable_sparse_core_collective_offload_reduce_scatter='true',
-        xla_tpu_enable_sparse_core_offload_queuing_in_lhs='true',
-        xla_tpu_control_large_2nd_minor_layout_for_x16='true',
-        xla_msa_enable='false',
-    )
+    if jtu.device_under_test() == 'tpu':
+      opts = dict(
+          xla_tpu_enable_sparse_core_collective_offload_all_gather='true',
+          xla_tpu_enable_sparse_core_collective_offload_2d_all_gather='true',
+          xla_tpu_enable_sparse_core_collective_offload_reduce_scatter='true',
+          xla_tpu_enable_sparse_core_offload_queuing_in_lhs='true',
+          xla_tpu_control_large_2nd_minor_layout_for_x16='true',
+          xla_msa_enable='false',
+      )
+    else:
+      opts = {}
+
+    @jax.jit(compiler_options=opts)
+    @jax.shard_map(out_specs=P('x', None))
+    def g(x, w1s, w2s):
+      return fsdp_pipe(f, x, w1s, w2s)
+
+    jax.block_until_ready(g(x, w1s, w2s))
+
+  @jtu.with_explicit_mesh((8,), ('x',))
+  def test_fsdp_pipeline_explicit_async_collectives_strict_program_order(self, mesh):
+    if jtu.device_under_test() != "gpu" and not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires GPU or TPU >= 6")
+
+    def ag(x, axis):
+      return jax.lax.all_gather(x, 'x', axis=axis, tiled=True)
+
+    def ag_start(x, axis):
+      return parallel.all_gather_start(x, 'x', axis=axis, tiled=True)
+
+    def fsdp_pipe(f, x, w1s, w2s):
+      w1 = ag(w1s[0][0], 0)
+      w2 = ag(w2s[0][0], 1)
+      carry = (x, w1, w2)
+
+      @program_order(enforce=True)
+      def body(carry, w_n):
+        x, w1, w2 = carry
+        w1n, w2n = w_n
+
+        w1n_start = ag_start(w1n[0], 0)
+        w2n_start = ag_start(w2n[0], 1)
+        temp = f(x, w1, w2)
+        w1n_ = w1n_start.done()
+        w2n_ = w2n_start.done()
+
+        _w1n_start = ag_start(w1n[1], 0)
+        _w2n_start = ag_start(w2n[1], 1)
+        out = f(temp, w1n_, w2n_)
+        _w1n_ = _w1n_start.done()
+        _w2n_ = _w2n_start.done()
+
+        return (out, _w1n_, _w2n_), ()
+
+      (x, w1, w2), () = jax.lax.scan(body, carry, (w1s[1:], w2s[1:]))
+      x = f(x, w1, w2)
+      return x
+
+    def f(x, w1, w2):
+      temp = x @ w1
+      out = temp @ w2
+      return out
+
+    x = jnp.ones((32 * 512 * 2, 1024), dtype=jnp.bfloat16,
+                 out_sharding=P('x', None))
+    w1s = jnp.ones((16, 2, 1024, 4096), dtype=jnp.bfloat16,
+                   out_sharding=P(None, None, 'x', None))
+    w2s = jnp.ones((16, 2, 4096, 1024), dtype=jnp.bfloat16,
+                   out_sharding=P(None, None, None, 'x'))
+
+    if jtu.device_under_test() == 'tpu':
+      opts = dict(
+          xla_tpu_enable_sparse_core_collective_offload_all_gather='true',
+          xla_tpu_enable_sparse_core_collective_offload_2d_all_gather='true',
+          xla_tpu_enable_sparse_core_collective_offload_reduce_scatter='true',
+          xla_tpu_enable_sparse_core_offload_queuing_in_lhs='true',
+          xla_tpu_control_large_2nd_minor_layout_for_x16='true',
+          xla_msa_enable='false',
+      )
+    else:
+      opts = {}
 
     @jax.jit(compiler_options=opts)
     @jax.shard_map(out_specs=P('x', None))
@@ -360,6 +433,35 @@ class OverlapTest(jtu.JaxTestCase):
     self.assertEqual(str(jaxpr).count('optimization_barrier'), 5)
 
     f(x, y)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_explicit_async_collective_strict_program_order(self, mesh):
+    x = jax.device_put(jnp.arange(8), P('x'))
+    y = jax.device_put(10 * jnp.arange(8), P('x'))
+    z = jax.device_put(100 * jnp.arange(8), P('x'))
+
+    w_expected = jax.device_put(110 * jnp.arange(8), P('x'))
+    x_ag_expected = jax.device_put(jnp.arange(8), P())
+
+    def ag_start(a, axis):
+      return parallel.all_gather_start(a, 'x', axis=axis, tiled=True, to='reduced')
+
+    @jax.jit
+    @jax.shard_map(
+      in_specs=(P('x'), P('x'), P('x')),
+      out_specs=(P('x'), P(None, reduced={'x'})),
+    )
+    @program_order(enforce=True)
+    def f(a, b, c):
+      a_ag_future = ag_start(a, axis=0)
+      d = b + c
+      a_ag = a_ag_future.done()
+      return d, a_ag
+
+    w, x_ag = jax.block_until_ready(f(x, y, z))
+
+    self.assertAllClose(w, w_expected)
+    self.assertAllClose(x_ag, x_ag_expected)
 
   @config.numpy_dtype_promotion('standard')
   def test_avoid_excess_precision(self):
