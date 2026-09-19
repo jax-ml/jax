@@ -65,6 +65,25 @@ class BufferCallbackTest(jtu.JaxTestCase):
     )
     self.assertArraysEqual(fun(data), data)
 
+  @parameterized.parameters([True, False])
+  @jtu.run_on_devices("gpu")
+  def test_numpy_unsupported_on_gpu(self, command_buffer_compatible):
+    # https://github.com/jax-ml/jax/issues/38173
+    def callback(ctx, out, arg):
+      del ctx  # unused
+      np.asarray(out)[...] = np.asarray(arg) + 1
+
+    x = jnp.array(41, dtype=jnp.int32)
+    fun = buffer_callback.buffer_callback(
+        callback, jax.ShapeDtypeStruct.like(x),
+        command_buffer_compatible=command_buffer_compatible,
+    )
+    with self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError,
+        r"Buffer\.__array__ is only supported on CPU",
+    ):
+      jax.block_until_ready(fun(x))
+
   @parameterized.parameters(jtu.dtypes.all)
   @jtu.run_on_devices("cpu")
   def test_dlpack(self, dtype):
