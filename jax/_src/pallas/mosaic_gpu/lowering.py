@@ -1018,6 +1018,13 @@ def lower_jaxpr_to_module(
   dump_options = mgpu.dialect.get_or_set_dump_options(module)
   # TODO(bchetioui): clean up when the minimum jaxlib version is 0.11.2.
   if getattr(dump_options, "resources", False):
+    if params.profile_space > 0:
+      # add profiler smem allocations
+      num_threads = (block[0] * block[1] * block[2]) // 128
+      profile_smem = params.profile_space * 4 * 4 * num_threads
+      if params.profile_trace_scope == gpu_core.TraceScope.WARP:
+        profile_smem *= 4
+      rs += Resources(smem_scratch_bytes=profile_smem)
     mgpu_utils.dump_to_file_or_stdout(
         str(rs),
         f"{dump_options.module_basename}.resources.txt",
