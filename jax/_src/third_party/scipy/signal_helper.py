@@ -42,7 +42,10 @@ def _triage_segments(window: ArrayLike | str | tuple[Any, ...], nperseg: int | N
       256. If window is array_like, nperseg is set to the length of the window.
   """
   if isinstance(window, (str, tuple)):
-    nperseg_int = input_length if nperseg is None else int(nperseg)
+    if nperseg is None:
+      nperseg_int = 256
+    else:
+      nperseg_int = int(nperseg)
     if nperseg_int > input_length:
       warnings.warn(f'nperseg={nperseg_int} is greater than {input_length=},'
                     f' using nperseg={input_length}')
