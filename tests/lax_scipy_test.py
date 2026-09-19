@@ -550,6 +550,19 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       actual = lsp_special.spence(x)
       self.assertArraysEqual(actual, nan_array, check_dtypes=False)
 
+  @jtu.sample_product(dtype=float_dtypes)
+  def test_spence_large_inputs(self, dtype):
+    finfo = np.finfo(dtype)
+    threshold = dtype(1 / finfo.tiny)
+    x = np.array([np.nextafter(threshold, dtype(0)), threshold,
+                  np.nextafter(threshold, dtype(np.inf)), finfo.max, np.inf],
+                 dtype=dtype)
+    args_maker = lambda: [x]
+    rtol = 1e-5 if dtype == np.float32 else 1e-12
+    self._CheckAgainstNumpy(osp_special.spence, lsp_special.spence, args_maker,
+                            rtol=rtol, check_dtypes=False)
+    self._CompileAndCheck(lsp_special.spence, args_maker)
+
   @jtu.sample_product(
     [dict(yshape=yshape, xshape=xshape, dx=dx, axis=axis)
       for yshape, xshape, dx, axis in [
