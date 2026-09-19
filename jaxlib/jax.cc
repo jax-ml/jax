@@ -96,6 +96,7 @@ limitations under the License.
 #endif  // !_WIN32 && !PLATFORM_GOOGLE
 
 #include "jaxlib/call_location.h"
+#include "jaxlib/execution_options.h"
 #include "jaxlib/config.h"
 #include "jaxlib/custom_call_sharding.h"
 #include "jaxlib/dlpack.h"
@@ -737,6 +738,7 @@ NB_MODULE(_jax, m) {
         &jax::SetSendTracebackToRuntimeThreadLocal, nb::arg("mode").none());
 
   BuildConfigSubmodule(m);
+  BuildExecutionOptionsSubmodule(m);
   BuildIfrtProgramsSubmodule(m);
   BuildPytreeSubmodule(m);
   BuildGuardSubmodule(m);

@@ -408,6 +408,7 @@ nanobind_pywrap_extension(
         ":config",
         ":custom_call_sharding",
         ":dlpack",
+        ":execution_options",
         ":ffi",
         ":guard_lib",
         ":hash_util",
@@ -597,6 +598,25 @@ cc_library(
         "@xla//xla/python:nb_numpy",
         "@xla//xla/tsl/platform:statusor",
         "@xla//xla/tsl/python/lib/core:numpy",
+    ],
+)
+
+cc_library(
+    name = "execution_options",
+    srcs = ["execution_options.cc"],
+    hdrs = ["execution_options.h"],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@nanobind",
+        "@xla//xla/python/ifrt",
+        "@xla//xla/python/ifrt:attribute_map",
     ],
 )
 
@@ -980,6 +1000,7 @@ cc_library(
     deps = [
         ":call_location",
         ":config",
+        ":execution_options",
         ":free_threading",
         ":guard_lib",
         ":jax_jit",
@@ -1096,6 +1117,7 @@ cc_library(
         ":cached_py_object",
         ":call_location",
         ":config",
+        ":execution_options",
         ":free_threading",
         ":guard_lib",
         ":hash_util",
@@ -1290,6 +1312,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":execution_options",
         ":jax_jit",
         ":nb_class_ptr",
         ":py_client",
