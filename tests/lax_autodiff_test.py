@@ -642,6 +642,44 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(select, (on_true, on_false), 2, ["fwd", "rev"], eps=1.)
 
   @jtu.sample_product(
+      [
+          dict(arg_shape=arg_shape, pred_shape=pred_shape)
+          for arg_shape in [(), (3,), (2, 3)]
+          for pred_shape in ([(), arg_shape] if arg_shape else [()])
+      ],
+      [
+          dict(pred_dtype=pred_dtype, num_args=num_args)
+          for (pred_dtype, num_args) in (
+              list(
+                  itertools.product(
+                      [np.dtype(np.bool_), np.dtype(np.int32), np.dtype(np.uint32)],
+                      [1, 2],
+                  )
+              )
+              + [(np.dtype(np.int32), 6), (np.dtype(np.uint32), 6)]
+          )
+      ],
+      dtype=float_dtypes,
+  )
+  def testSelectNGrad(self, pred_dtype, pred_shape, arg_shape, dtype, num_args):
+    # Regression test for https://github.com/jax-ml/jax/issues/10993:
+    # select_n clamps out-of-range integer `which` indices to
+    # [0, len(cases) - 1] (matching np.choose(..., mode='clip')), so its
+    # transpose rule must also clamp `which` rather than dropping cotangents for
+    # out-of-range indices, and must handle len(cases) == 1 with boolean `which`.
+    if pred_dtype == np.bool_:
+      pred_rng = jtu.rand_default(self.rng())
+    elif np.issubdtype(pred_dtype, np.signedinteger):
+      pred_rng = jtu.rand_int(self.rng(), low=-1, high=num_args + 1)
+    else:
+      pred_rng = jtu.rand_int(self.rng(), low=0, high=num_args + 2)
+    rng = jtu.rand_default(self.rng())
+    pred = pred_rng(pred_shape, pred_dtype)
+    args = [rng(arg_shape, dtype) for _ in range(num_args)]
+    select_n = lambda *xs: lax.select_n(pred, *xs)
+    check_grads(select_n, args, 2, ["fwd", "rev"], eps=1.)
+
+  @jtu.sample_product(
     [dict(shape=shape, starts=start_indices, limits=limit_indices,
           strides=strides)
       for shape, start_indices, limit_indices, strides in [
