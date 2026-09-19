@@ -92,13 +92,70 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(data_out, data)
 
   @jtu.sample_product(
-    shape=[(5, 8), (8, 5), (5, 5), (8, 8)],
-    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+    shape=[(5, 8), (8, 5)],
+    dtype=jtu.dtypes.floating,
+    nse_padding=[0, 3],
   )
-  def test_csr_fromdense_ad(self, shape, dtype):
+  def test_csr_fromdense_ad_padding(self, shape, dtype, nse_padding):
+    # Padded entries are defined to equal zero, so they must not contribute
+    # to first- or higher-order derivatives: the second derivative of
+    # sum(data ** 2) should equal 2 on the true nonzero entries and 0 elsewhere.
     rng = sptu.rand_sparse(self.rng(), post=jnp.array)
     M = rng(shape, dtype)
-    nse = (M != 0).sum()
+    nnz = (M != 0).sum()
+    nse = nnz + nse_padding
+    f = lambda M: jnp.sum(sparse_csr._csr_fromdense(M, nse=nse)[0] ** 2)
+    hessian_at_ones = jax.grad(lambda M: jax.grad(f)(M).sum())(M)
+    self.assertAllClose(hessian_at_ones, jnp.where(M != 0, 2, 0).astype(hessian_at_ones.dtype),
+                        check_dtypes=False)
+
+  @jtu.sample_product(
+    shape=[(5, 8), (8, 5)],
+    dtype=jtu.dtypes.floating,
+    transpose=[False, True],
+  )
+  def test_csr_matvec_transpose_ad(self, shape, dtype, transpose):
+    rng = sptu.rand_sparse(self.rng(), post=jnp.array)
+    M = rng(shape, dtype)
+    data, indices, indptr = sparse_csr._csr_fromdense(M, nse=(M != 0).sum())
+    v = jnp.arange(shape[0] if transpose else shape[1], dtype=dtype) % 10
+    w = jnp.arange(shape[1] if transpose else shape[0], dtype=dtype) % 10
+    f = lambda data: jnp.sum(
+        w * sparse_csr._csr_matvec(data, indices, indptr, v, shape=shape, transpose=transpose))
+    f_dense = lambda M: jnp.sum(w * (M.T @ v if transpose else M @ v))
+    row, col = sparse_csr._csr_to_coo(indices, indptr)
+    self.assertAllClose(jax.grad(f)(data), jax.grad(f_dense)(M)[row, col],
+                        check_dtypes=False)
+
+  @jtu.sample_product(
+    shape=[(5, 8), (8, 5)],
+    dtype=jtu.dtypes.floating,
+    transpose=[False, True],
+  )
+  def test_csr_matmat_transpose_ad(self, shape, dtype, transpose):
+    rng = sptu.rand_sparse(self.rng(), post=jnp.array)
+    M = rng(shape, dtype)
+    data, indices, indptr = sparse_csr._csr_fromdense(M, nse=(M != 0).sum())
+    B = jnp.arange((shape[0] if transpose else shape[1]) * 3, dtype=dtype) % 10
+    B = B.reshape((shape[0] if transpose else shape[1]), 3)
+    w = jnp.arange((shape[1] if transpose else shape[0]) * 3, dtype=dtype) % 10
+    w = w.reshape((shape[1] if transpose else shape[0]), 3)
+    f = lambda data: jnp.sum(
+        w * sparse_csr._csr_matmat(data, indices, indptr, B, shape=shape, transpose=transpose))
+    f_dense = lambda M: jnp.sum(w * (M.T @ B if transpose else M @ B))
+    self.assertAllClose(jax.grad(f)(data), jax.grad(f_dense)(M)[sparse_csr._csr_to_coo(indices, indptr)],
+                        check_dtypes=False)
+
+  @jtu.sample_product(
+    shape=[(5, 8), (8, 5), (5, 5), (8, 8)],
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+    nse_padding=[0, 3],
+  )
+  def test_csr_fromdense_ad(self, shape, dtype, nse_padding):
+    rng = sptu.rand_sparse(self.rng(), post=jnp.array)
+    M = rng(shape, dtype)
+    nnz = (M != 0).sum()
+    nse = nnz + nse_padding
     f = lambda M: sparse_csr._csr_fromdense(M, nse=nse)
 
     # Forward-mode
@@ -106,7 +163,8 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(primals[0], f(M)[0])
     self.assertArraysEqual(primals[1], f(M)[1])
     self.assertArraysEqual(primals[2], f(M)[2])
-    self.assertArraysEqual(tangents[0], jnp.ones(nse, dtype=dtype))
+    self.assertArraysEqual(
+        tangents[0], jnp.where(jnp.arange(nse) < nnz, jnp.ones(nse, dtype=dtype), 0))
     self.assertEqual(tangents[1].dtype, dtypes.float0)
     self.assertEqual(tangents[2].dtype, dtypes.float0)
 
@@ -439,13 +497,71 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(data_out, data)
 
   @jtu.sample_product(
-    shape=[(5, 8), (8, 5), (5, 5), (8, 8)],
-    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+    shape=[(5, 8), (8, 5)],
+    dtype=jtu.dtypes.floating,
+    nse_padding=[0, 3],
   )
-  def test_coo_fromdense_ad(self, shape, dtype):
+  def test_coo_fromdense_ad_padding(self, shape, dtype, nse_padding):
+    # Padded entries are defined to equal zero, so they must not contribute
+    # to first- or higher-order derivatives: the second derivative of
+    # sum(data ** 2) should equal 2 on the true nonzero entries and 0 elsewhere.
     rng = sptu.rand_sparse(self.rng(), post=jnp.array)
     M = rng(shape, dtype)
-    nse = (M != 0).sum()
+    nnz = (M != 0).sum()
+    nse = nnz + nse_padding
+    f = lambda M: jnp.sum(sparse_coo._coo_fromdense(M, nse=nse)[0] ** 2)
+    hessian_at_ones = jax.grad(lambda M: jax.grad(f)(M).sum())(M)
+    self.assertAllClose(hessian_at_ones, jnp.where(M != 0, 2, 0).astype(hessian_at_ones.dtype),
+                        check_dtypes=False)
+
+  @jtu.sample_product(
+    shape=[(5, 8), (8, 5)],
+    dtype=jtu.dtypes.floating,
+    transpose=[False, True],
+  )
+  def test_coo_matvec_transpose_ad(self, shape, dtype, transpose):
+    rng = sptu.rand_sparse(self.rng(), post=jnp.array)
+    M = rng(shape, dtype)
+    data, row, col = sparse_coo._coo_fromdense(M, nse=(M != 0).sum())
+    spinfo = sparse_coo.COOInfo(shape=shape, rows_sorted=True)
+    v = jnp.arange(shape[0] if transpose else shape[1], dtype=dtype) % 10
+    w = jnp.arange(shape[1] if transpose else shape[0], dtype=dtype) % 10
+    f = lambda data: jnp.sum(
+        w * sparse_coo._coo_matvec(data, row, col, v, spinfo=spinfo, transpose=transpose))
+    f_dense = lambda M: jnp.sum(w * (M.T @ v if transpose else M @ v))
+    self.assertAllClose(jax.grad(f)(data), jax.grad(f_dense)(M)[row, col],
+                        check_dtypes=False)
+
+  @jtu.sample_product(
+    shape=[(5, 8), (8, 5)],
+    dtype=jtu.dtypes.floating,
+    transpose=[False, True],
+  )
+  def test_coo_matmat_transpose_ad(self, shape, dtype, transpose):
+    rng = sptu.rand_sparse(self.rng(), post=jnp.array)
+    M = rng(shape, dtype)
+    data, row, col = sparse_coo._coo_fromdense(M, nse=(M != 0).sum())
+    spinfo = sparse_coo.COOInfo(shape=shape, rows_sorted=True)
+    B = jnp.arange((shape[0] if transpose else shape[1]) * 3, dtype=dtype) % 10
+    B = B.reshape((shape[0] if transpose else shape[1]), 3)
+    w = jnp.arange((shape[1] if transpose else shape[0]) * 3, dtype=dtype) % 10
+    w = w.reshape((shape[1] if transpose else shape[0]), 3)
+    f = lambda data: jnp.sum(
+        w * sparse_coo._coo_matmat(data, row, col, B, spinfo=spinfo, transpose=transpose))
+    f_dense = lambda M: jnp.sum(w * (M.T @ B if transpose else M @ B))
+    self.assertAllClose(jax.grad(f)(data), jax.grad(f_dense)(M)[row, col],
+                        check_dtypes=False)
+
+  @jtu.sample_product(
+    shape=[(5, 8), (8, 5), (5, 5), (8, 8)],
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+    nse_padding=[0, 3],
+  )
+  def test_coo_fromdense_ad(self, shape, dtype, nse_padding):
+    rng = sptu.rand_sparse(self.rng(), post=jnp.array)
+    M = rng(shape, dtype)
+    nnz = (M != 0).sum()
+    nse = nnz + nse_padding
     f = lambda M: sparse_coo._coo_fromdense(M, nse=nse)
 
     # Forward-mode
@@ -453,7 +569,8 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(primals[0], f(M)[0])
     self.assertArraysEqual(primals[1], f(M)[1])
     self.assertArraysEqual(primals[2], f(M)[2])
-    self.assertArraysEqual(tangents[0], jnp.ones(nse, dtype=dtype))
+    self.assertArraysEqual(
+        tangents[0], jnp.where(jnp.arange(nse) < nnz, jnp.ones(nse, dtype=dtype), 0))
     self.assertEqual(tangents[1].dtype, dtypes.float0)
     self.assertEqual(tangents[2].dtype, dtypes.float0)
 
