@@ -488,7 +488,7 @@ def discover_pjrt_plugins() -> None:
                      "does not exist", plugin_module_name)
     except ImportError:
       logger.exception("Jax plugin configuration error: Plugin module %s "
-                       "could not be loaded")
+                       "could not be loaded", plugin_module_name)
 
     if plugin_module:
       try:
