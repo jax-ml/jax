@@ -130,6 +130,13 @@ def _get_cross_compile_backend(compile_only_backend):
   # to timeouts and hangs.
   if real_backend.platform_version != compile_only_backend.platform_version:
     return None
+
+  # b/563485832: Consider if this check should be done for TPU accelerators.
+  # NOTE: compare global device_count() only. A compile-only client has no
+  # addressable devices, so its local_device_count() is always 0 and comparing
+  # it would disable this path unconditionally.
+  if real_backend.device_count() != compile_only_backend.device_count():
+    return None
   return real_backend
 
 
