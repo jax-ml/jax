@@ -192,6 +192,49 @@ nanobind_pywrap_extension(
     ],
 )
 
+nanobind_pywrap_extension(
+    name = "_thunky_ext",
+    srcs = ["thunky_ext.cc"],
+    copts = COPTS,
+    pytype_srcs = ["_thunky_ext.pyi"],
+    deps = [
+        "//jaxlib/thunky/dialect:thunky_dialect",
+        "//jaxlib/thunky/dialect:thunky_dialect_capi",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:CAPIDebug",
+        "@llvm-project//mlir:CAPIIR",
+        "@llvm-project//mlir:CAPITransforms",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeadersAndDeps",
+        "@nanobind",
+        "@riegeli//riegeli/bytes:string_reader",
+        "@tsl//tsl/platform:protobuf",
+        "@xla//xla:shape_util",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/backends/gpu/codegen/kernels:custom_kernel_proto_cc",
+        "@xla//xla/backends/gpu/runtime:collective_thunk_proto_cc",
+        "@xla//xla/backends/gpu/runtime:copy_thunk_proto_cc",
+        "@xla//xla/backends/gpu/runtime:thunk_proto_cc",
+        "@xla//xla/core/collectives:reduction_kind_proto_cc",
+        "@xla//xla/ffi:attribute_map",
+        "@xla//xla/ffi:execution_state_proto_cc",
+        "@xla//xla/pjrt/proto:compile_options_proto_cc",
+        "@xla//xla/service:buffer_assignment_proto_cc",
+        "@xla//xla/service:collective_ops_utils",
+        "@xla//xla/service:shaped_slice_proto_cc",
+        "@xla//xla/service/gpu:dense_data_intermediate_proto_cc",
+        "@xla//xla/service/gpu:gpu_executable_proto_cc",
+        "@xla//xla/stream_executor:kernel_spec_proto_cc",
+        "@xla//xla/util/split_proto:split_proto_reader",
+    ],
+)
+
 # This is here, instead of in jaxlib/mosaic/python, so it's in the same
 # directory as libjaxlib_mlir_capi.so (produced by
 # :jaxlib_mlir_capi_shared_library). This ensures that the RPATH works correctly

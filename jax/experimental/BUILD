@@ -716,6 +716,17 @@ pytype_strict_library(
     ],
 )
 
+pytype_strict_library(
+    name = "thunky",
+    srcs = ["thunky.py"],
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("thunky"),
+    deps = [
+        "//jax/_src/thunky",
+    ],
+)
+
 # TODO(dsuo): Remove this once experimental aliases from jax/BUILD are removed.
 py_library_providing_imports_info(
     name = "experimental",
