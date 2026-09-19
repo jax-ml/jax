@@ -10,7 +10,7 @@ Implements the NumPy API, using the primitives in :mod:`jax.lax`.
 While JAX tries to follow the NumPy API as closely as possible, sometimes JAX
 cannot follow NumPy exactly.
 
-* Notably, since JAX arrays are immutable, NumPy APIs that mutate arrays
+* Notably, since JAX arrays (``jax.Array``) are immutable, NumPy APIs that mutate arrays
   in-place cannot be implemented in JAX. However, often JAX is able to provide
   an alternative API that is purely functional. For example, instead of in-place
   array updates (:code:`x[i] = y`), JAX provides an alternative pure indexed
@@ -29,6 +29,11 @@ cannot follow NumPy exactly.
   shapes to be known at compile time, such operations are not compatible with
   JIT. For this reason, JAX adds an optional ``size`` argument to such functions
   which may be specified statically in order to use them with JIT.
+
+You can learn more about ``jax.numpy`` in the Quickstart `[1]`_ and How to think in JAX `[2]`_ documentation.
+
+.. _[1] https://jax.readthedocs.io/en/latest/key-concepts.html#array-creation
+.. _[2] https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html#jax-vs-numpy
 
 Nearly all applicable NumPy functions are implemented in the ``jax.numpy``
 namespace; they are listed below.
