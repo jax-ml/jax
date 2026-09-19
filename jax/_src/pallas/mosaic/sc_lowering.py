@@ -167,13 +167,33 @@ def _swap_lowering_rule(
     ctx: LoweringRuleContext, ref, val, *flat_transforms, tree
 ):
   return _store_lowering_rule(
-      ctx, ref, val, None, *flat_transforms, tree=tree, add=False
+      ctx,
+      ref,
+      val,
+      None,
+      *flat_transforms,
+      tree=tree,
+      add=False,
+      compress=False,
   )
 
 
 def _store_lowering_rule(
-    ctx: LoweringRuleContext, ref, val, mask, *flat_transforms, tree, add
+    ctx: LoweringRuleContext,
+    ref,
+    val,
+    mask,
+    *flat_transforms,
+    tree,
+    add,
+    compress,
 ):
+  if compress and mask is None:
+    raise ValueError("Compress swap requires a mask")
+  if not compress and mask is not None:
+    # TODO(naumsmogers): Support non-compress masked stores.
+    raise NotImplementedError("Non-compress swap does not support masks")
+
   ref_aval, _, *_flat_index_avals = ctx.avals_in
   assert isinstance(ref_aval, state.AbstractRef)
   [out_aval] = ctx.avals_out
@@ -246,9 +266,24 @@ def _store_lowering_rule(
   )
   if not ctx.lowering_context.needs_layout_passes:
     old_val = tpu.vector_load(out_vec_type, ref, starts, strides=[], mask=mask)
-    _ = tpu.vector_store(
-        val, ref, indices=starts, strides=[], mask=mask, add=add
-    )
+    if mask is not None:
+      # TODO(naumsmogers): once we support non-compress masked stores,
+      # differentiate ops here.
+      assert compress
+      if ctx.is_libtpu_at_least("0.0.49"):
+        tpu.compress_store_vreg(val, ref, indices=starts, mask=mask, add=add)  # pyrefly: ignore[missing-attribute]
+      else:
+        tpu.vector_store(
+            val, ref, indices=starts, strides=[], mask=mask, add=add
+        )
+    else:
+      tpu.store(
+          val,
+          ref,
+          indices=starts,
+          sublane_mask=[True] * sc_core.get_sparse_core_info().num_lanes,
+          add=add,
+      )
     return old_val
   # Load and store at the full memref rank, keeping integer-indexed dims as
   # size 1, because apply-vector-layout requires the vector rank to match
