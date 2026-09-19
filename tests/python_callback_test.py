@@ -1039,6 +1039,59 @@ class PureCallbackTest(jtu.JaxTestCase):
     else:
       self.assertIn(f"{{maximal device={callback_device_index}}}", stablehlo_ir)
 
+  def test_pure_callback_single_device_sharding_same_device(self):
+    compute_device, callback_device = jax.devices("cpu")[:2]
+    self.assertIsNot(compute_device, callback_device)
+
+    def f(x):
+      sharding = make_single_device_sharding(callback_device)
+      return jax.pure_callback(
+          lambda y: y + 1,
+          jax.ShapeDtypeStruct(x.shape, x.dtype),
+          x,
+          sharding=sharding,
+      )
+
+    inp = jax.device_put(jnp.arange(3, dtype=jnp.float32), callback_device)
+    out = jax.jit(f)(inp)
+    np.testing.assert_allclose(out, np.arange(3, dtype=np.float32) + 1)
+
+  def test_pure_callback_single_device_sharding_missing_device_raises(self):
+    compute_device, callback_device = jax.devices("cpu")[:2]
+    self.assertIsNot(compute_device, callback_device)
+
+    def f(x):
+      sharding = make_single_device_sharding(callback_device)
+      return jax.pure_callback(
+          lambda y: y + 1,
+          jax.ShapeDtypeStruct(x.shape, x.dtype),
+          x,
+          sharding=sharding,
+      )
+
+    expected_message = (
+        "Sharding provided to pure_callback specifies a device"
+        f" {callback_device} that is not in the device assignment"
+        f" ({(compute_device,)})")
+    inp = jax.device_put(jnp.arange(3, dtype=jnp.float32), compute_device)
+    with self.assertRaises(ValueError) as ctx:
+      jax.jit(f)(inp)
+    self.assertEqual(str(ctx.exception), expected_message)
+
+  def test_pure_callback_without_explicit_sharding_uses_jit_device(self):
+    compute_device = jax.devices("cpu")[1]
+
+    def f(x):
+      return jax.pure_callback(
+          lambda y: y + 1,
+          jax.ShapeDtypeStruct(x.shape, x.dtype),
+          x,
+      )
+
+    inp = jax.device_put(jnp.arange(3, dtype=jnp.float32), compute_device)
+    out = jax.jit(f)(inp)
+    np.testing.assert_allclose(out, np.arange(3, dtype=np.float32) + 1)
+
   def test_can_shard_pure_callback_manually(self):
 
     mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
