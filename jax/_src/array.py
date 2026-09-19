@@ -37,7 +37,7 @@ from jax._src.op_shardings import are_hlo_shardings_equal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.layout import AutoLayoutSingleton, Format, Layout
-from jax._src.lib import _jax, jaxlib_extension_version
+from jax._src.lib import _jax, ifrt_version, jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import (empty_concrete_mesh, empty_abstract_mesh,
                            use_abstract_mesh)
@@ -613,6 +613,10 @@ class ArrayImpl(basearray.Array):
     ...
 
   @use_cpp_method()
+  def _to_np_array_did_copy(self) -> tuple[np.ndarray, bool]:
+    ...
+
+  @use_cpp_method()
   def _copy_single_device_array_to_host_async(self):
     self._arrays[0].copy_to_host_async()
 
@@ -620,11 +624,14 @@ class ArrayImpl(basearray.Array):
   def copy_to_host_async(self):
     self._check_if_deleted()
     if self._npy_value is None:
-      if self.is_fully_replicated and self.sharding.has_addressable_devices:
-        self._copy_single_device_array_to_host_async()
-        return
-      for i, _ in _cached_index_calc(self.sharding, self.shape):
-        self._arrays[i]._copy_single_device_array_to_host_async()
+      if jaxlib_extension_version >= 495 and ifrt_version >= 71:
+        _jax.batched_copy_to_host_async([self])
+      else:
+        if self.is_fully_replicated and self.sharding.has_addressable_devices:
+          self._copy_single_device_array_to_host_async()
+          return
+        for i, _ in _cached_index_calc(self.sharding, self.shape):
+          self._arrays[i]._copy_single_device_array_to_host_async()
 
   @property
   @functools.partial(profiler.annotate_function, name="np.asarray(jax.Array)")
@@ -632,13 +639,6 @@ class ArrayImpl(basearray.Array):
     self._check_if_deleted()
 
     if self._npy_value is None:
-      # addressable_device_list can be empty. If it's empty, we will error below
-      if self.is_fully_replicated and self.sharding.has_addressable_devices:
-        npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
-        if did_copy:
-          self._npy_value = npy_value
-        return npy_value
-
       # TODO(yashkatariya): Merge `_process_has_full_value_in_mcjax` with
       # is_fully_addressable.
       # is_fully_addressable return False if addressable_device_list is empty.
@@ -652,14 +652,29 @@ class ArrayImpl(basearray.Array):
             " inspect the addressable (process local) shards."
         )
 
-      for i, _ in _cached_index_calc(self.sharding, self.shape):
-        self._arrays[i]._copy_single_device_array_to_host_async()
+      if jaxlib_extension_version >= 495 and ifrt_version >= 71:
+        # Copy the entire array to host in one go.
+        npy_value, did_copy = self._to_np_array_did_copy()
+        npy_value.flags.writeable = False
+        if did_copy:
+          self._npy_value = npy_value
+        return npy_value
+      else:
+        if self.is_fully_replicated and self.sharding.has_addressable_devices:
+          npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
+          if did_copy:
+            self._npy_value = npy_value
+          return npy_value
 
-      npy_value = np.empty(self.shape, self.dtype)
-      for i, ind in _cached_index_calc(self.sharding, self.shape):
-        npy_value[ind], _ = self._arrays[i]._single_device_array_to_np_array_did_copy()
-      npy_value.flags.writeable = False
-      self._npy_value = npy_value
+        # Copy each unique shard to host.
+        for i, _ in _cached_index_calc(self.sharding, self.shape):
+          self._arrays[i]._copy_single_device_array_to_host_async()
+
+        npy_value = np.empty(self.shape, self.dtype)
+        for i, ind in _cached_index_calc(self.sharding, self.shape):
+          npy_value[ind], _ = self._arrays[i]._single_device_array_to_np_array_did_copy()
+        npy_value.flags.writeable = False
+        self._npy_value = npy_value
     return self._npy_value
 
 
