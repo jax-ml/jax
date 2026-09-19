@@ -167,13 +167,33 @@ def _swap_lowering_rule(
     ctx: LoweringRuleContext, ref, val, *flat_transforms, tree
 ):
   return _store_lowering_rule(
-      ctx, ref, val, None, *flat_transforms, tree=tree, add=False
+      ctx,
+      ref,
+      val,
+      None,
+      *flat_transforms,
+      tree=tree,
+      add=False,
+      compress=False,
   )
 
 
 def _store_lowering_rule(
-    ctx: LoweringRuleContext, ref, val, mask, *flat_transforms, tree, add
+    ctx: LoweringRuleContext,
+    ref,
+    val,
+    mask,
+    *flat_transforms,
+    tree,
+    add,
+    compress,
 ):
+  if compress and mask is None:
+    raise ValueError("Compress swap requires a mask")
+  if not compress and mask is not None:
+    # TODO(naumsmogers): Support non-compress masked stores.
+    raise NotImplementedError("Non-compress swap does not support masks")
+
   ref_aval, _, *_flat_index_avals = ctx.avals_in
   assert isinstance(ref_aval, state.AbstractRef)
   [out_aval] = ctx.avals_out
