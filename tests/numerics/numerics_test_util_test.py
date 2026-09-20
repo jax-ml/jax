@@ -273,7 +273,7 @@ class UlpDiffTest(jtu.JaxTestCase):
           )
       )
 
-    ulp_mp = util._ulp_diff_mpmath(c_arr, r_arr, dt, ftz=ftz)
+    ulp_mp = util.ulp_diff_mpmath(c_arr, r_arr, dt, ftz=ftz)
 
     np.testing.assert_allclose(ulp_jax, ulp_mp, rtol=1e-12, atol=1e-12)
 
