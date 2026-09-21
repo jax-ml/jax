@@ -39,6 +39,10 @@ DTYPE_PARAMS = [(f"_{d.__name__}", d) for d in [bf16, f16, f32, f64]]
 TPU_EUPV1 = ["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"]
 
 
+def _exp_highest(x):
+  return lax.exp(x, accuracy=lax.AccuracyMode.HIGHEST)
+
+
 @jtu.skip_under_pytest("Only runs under Bazel")
 @jtu.thread_unsafe_test_class()
 class ElementaryTest(jtu.JaxTestCase):
@@ -55,6 +59,23 @@ class ElementaryTest(jtu.JaxTestCase):
     ]
     util.check_unary_precision(
         self, jnp.exp, np.exp, mpmath.exp, dtype, bounds=bounds)
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_exp_highest_test_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f16: 1.0, f32: 1.5, f64: 1.0}),
+        ("gpu", {bf16: 1.0, f16: 1.0, f32: 2.0, f64: 1.5}),
+        ([*TPU_EUPV1, "tpu_v5p"], {bf16: 1.0, f16: 1.0, f32: 1.5}),
+        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 1.5}),
+    ]
+    util.check_unary_precision(
+        self,
+        _exp_highest,
+        np.exp,
+        mpmath.exp,
+        dtype,
+        bounds=bounds,
+    )
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_log_test_accuracy(self, dtype):

@@ -293,7 +293,9 @@ _MAX_ULP_BIN = 100000.0
 _POS_BIN_LABELS = (
     "(0, +0.5] ULP",
     "(+0.5, +1] ULP",
-    *(f"(+{i - 1}, +{i}] ULP" for i in range(2, 11)),
+    "(+1, +1.5] ULP",
+    "(+1.5, +2] ULP",
+    *(f"(+{i - 1}, +{i}] ULP" for i in range(3, 11)),
     "(+10, +100] ULP",
     "(+100, +1000] ULP",
     "(+1000, +10000] ULP",
@@ -306,7 +308,9 @@ _NEG_BIN_LABELS = (
     "[-10000, -1000) ULP",
     "[-1000, -100) ULP",
     "[-100, -10) ULP",
-    *(f"[-{i}, -{i - 1}) ULP" for i in range(10, 1, -1)),
+    *(f"[-{i}, -{i - 1}) ULP" for i in range(10, 2, -1)),
+    "[-2, -1.5) ULP",
+    "[-1.5, -1) ULP",
     "[-1, -0.5) ULP",
     "[-0.5, 0) ULP",
 )
@@ -317,7 +321,7 @@ def _map_to_bins(signed_ulp: jax.Array) -> jax.Array:
   """Maps signed real ULP distance to compact histogram bin indices."""
   ulp = jnp.abs(signed_ulp)
   decade = (
-      12
+      13
       + (ulp > 100.0).astype(jnp.int32)
       + (ulp > 1000.0).astype(jnp.int32)
       + (ulp > 10000.0).astype(jnp.int32)
@@ -325,12 +329,14 @@ def _map_to_bins(signed_ulp: jax.Array) -> jax.Array:
   )
   # Offset 0: exact 0.0
   # Offset 1: (0, 0.5] ULP
-  # Offset 2..11: (0.5, 1], (1, 2], ..., (9, 10] ULP
-  # Offset 12..16: decades (10, 100], ..., >=100000 ULP
-  small_offset = jnp.where(
-      ulp == 0.0,
-      0,
-      jnp.where(ulp <= 0.5, 1, jnp.ceil(ulp).astype(jnp.int32) + 1),
+  # Offset 2: (0.5, 1] ULP
+  # Offset 3: (1, 1.5] ULP
+  # Offset 4..12: (1.5, 2], (2, 3], ..., (9, 10] ULP
+  # Offset 13..17: decades (10, 100], ..., >=100000 ULP
+  small_offset = jnp.select(
+      [ulp == 0.0, ulp <= 0.5, ulp <= 1.0, ulp <= 1.5],
+      [0, 1, 2, 3],
+      default=jnp.ceil(ulp).astype(jnp.int32) + 2,
   )
   offset = jnp.where(ulp <= 10.0, small_offset, decade)
   pos = signed_ulp > 0.0
@@ -532,10 +538,12 @@ def _fail_precision(
 ):
   variant = get_hardware_variant()
   suffix = f" [{label}]" if label else ""
+  fn_name = getattr(jax_fn, "__name__", str(jax_fn))
   header = (
-      f"Max real ULP error for {jax_fn.__name__} on {variant}"
+      f"Max real ULP error for {fn_name} on {variant}"
       f" ({np.dtype(dtype).name}){suffix} exceeded bound: {max_diff:.4f} >"
-      f" {max_ulp}")
+      f" {max_ulp}"
+  )
   test_case.fail(f"{header}\n{worst_cases_str}")
 
 
@@ -551,8 +559,9 @@ def _fail_signed_zero(
   """Fails test_case when a function returns +0.0 instead of -0.0 or vice versa."""
   variant = get_hardware_variant()
   suffix = f" [{label}]" if label else ""
+  fn_name = getattr(jax_fn, "__name__", str(jax_fn))
   header = (
-      f"Signed zero mismatch for {jax_fn.__name__} on {variant}"
+      f"Signed zero mismatch for {fn_name} on {variant}"
       f" ({np.dtype(dtype).name}){suffix}:"
   )
   rows = []
@@ -800,10 +809,12 @@ def check_unary_precision(
   worst_cases_str = _format_worst_cases(
       top_k, udt, mpmath_fn, dtype, input_ftz=in_ftz
   )
+  fn_name = getattr(jax_fn, "__name__", str(jax_fn))
   output = (
-      f"[{variant}] {jax_fn.__name__} ({np.dtype(dtype).name}): max real ULP"
+      f"[{variant}] {fn_name} ({np.dtype(dtype).name}): max real ULP"
       f" error = {max_diff:.4f} (bound = {max_ulp},"
-      f" {label}{ignored_str})\n{hist_str}\n{worst_cases_str}\n")
+      f" {label}{ignored_str})\n{hist_str}\n{worst_cases_str}\n"
+  )
   print(output, end="", flush=True)
 
   expected_bound = (
@@ -820,6 +831,7 @@ def check_unary_precision(
         f"({min_ulp}, {max_ulp})" if min_ulp != max_ulp else f"{max_ulp}"
     )
     test_case.fail(
-        f"ULP bound for {jax_fn.__name__} on {variant} ({np.dtype(dtype).name})"
+        f"ULP bound for {fn_name} on {variant} ({np.dtype(dtype).name})"
         " is not tight in exhaustive run: observed max real ULP error"
-        f" {max_diff:.4f} (expected bound {expected_bound}, got {bound_str}).")
+        f" {max_diff:.4f} (expected bound {expected_bound}, got {bound_str})."
+    )

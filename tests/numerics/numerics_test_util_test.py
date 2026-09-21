@@ -143,6 +143,24 @@ class UlpDiffTest(jtu.JaxTestCase):
     for line, expected_label in zip(hist_lines, expected_labels):
       self.assertIn(expected_label, line)
 
+  def test_one_to_two_ulp_histogram_bins(self):
+    signed_ulps = jnp.array(
+        [-2.0, -1.75, -1.5, -1.25, 1.25, 1.5, 1.75, 2.0], dtype=jnp.float32
+    )
+    bins = np.asarray(util._map_to_bins(signed_ulps))
+    labels = [util._BIN_LABELS[b] for b in bins]
+    expected = [
+        "[-2, -1.5) ULP",
+        "[-2, -1.5) ULP",
+        "[-1.5, -1) ULP",
+        "[-1.5, -1) ULP",
+        "(+1, +1.5] ULP",
+        "(+1, +1.5] ULP",
+        "(+1.5, +2] ULP",
+        "(+1.5, +2] ULP",
+    ]
+    self.assertEqual(labels, expected)
+
   def test_eval_ulp_stats_large_k_fallback(self):
     n = 16384 * 20
     x = np.ones(n, dtype=np.float32)

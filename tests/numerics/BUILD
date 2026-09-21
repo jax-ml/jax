@@ -55,6 +55,7 @@ ELEMENTARY_OPS = [
     "cos",
     "cosh",
     "exp",
+    "exp_highest",
     "exp2",
     "expm1",
     "log",
