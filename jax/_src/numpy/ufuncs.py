@@ -4020,42 +4020,6 @@ def reciprocal(x: ArrayLike, /) -> Array:
   return lax.integer_pow(x, -1)
 
 
-def _sinc_complex(x: Array) -> Array:
-  # For complex inputs, fall back to direct evaluation of sin(pi*x)/(pi*x)
-  # outside the unit disk, and a Taylor series inside |pi*x| < 1 to avoid
-  # catastrophic cancellation near the origin. Both branches are kept finite
-  # everywhere so autodiff does not produce NaNs in the inactive branch.
-  eq_inf = lax.bitwise_and(
-      lax.eq(lax.abs(lax.real(x)), _lax_const(lax.real(x), np.inf)),
-      lax.is_finite(lax.imag(x)),
-  )
-  pi_x = lax.mul(_lax_const(x, np.pi), x)
-  safe_pi_x = _where(eq_inf, _lax_const(x, 1), pi_x)
-
-  abs_u = lax.abs(safe_pi_x)
-  use_series = lax.lt(abs_u, _lax_const(abs_u, 1.0))
-  radius = _lax_const(safe_pi_x, 1.0)
-  safe_u = radius
-  u_series = _where(use_series, safe_pi_x, _lax_const(safe_pi_x, 0))
-  u_direct = _where(use_series, safe_u, safe_pi_x)
-
-  coeffs = []
-  eps = float(dtypes.finfo(x.dtype).eps)
-  for k in range(100):
-    mag = 1.0 / math.factorial(2 * k + 1)
-    coeffs.insert(0, (-1)**k * mag)
-    if mag <= eps:
-      break
-
-  u_sq = lax.square(u_series)
-  series = _lax_const(safe_pi_x, coeffs[0])
-  for c in coeffs[1:]:
-    series = lax.add(lax.mul(series, u_sq), _lax_const(safe_pi_x, c))
-
-  result = _where(use_series, series, lax.div(lax.sin(u_direct), u_direct))
-  return _where(eq_inf, _lax_const(x, 0), result)
-
-
 @export
 @jit
 def sinc(x: ArrayLike, /) -> Array:
@@ -4076,9 +4040,6 @@ def sinc(x: ArrayLike, /) -> Array:
 
   Returns:
     An array of the same shape as ``x`` containing the result.
-
-  Numerical Precision:
-    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   Examples:
     >>> x = jnp.array([-1, -0.5, 0, 0.5, 1])
@@ -4103,102 +4064,44 @@ def sinc(x: ArrayLike, /) -> Array:
   x = ensure_arraylike("sinc", x)
   x, = promote_dtypes_inexact(x)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
-    return _sinc_complex(x)
-
-  # Overall scheme for real sinc(x) = sin(pi * x) / (pi * x):
-  #
-  # Evaluating sin(pi * x) / (pi * x) directly loses precision because
-  # multiplying x by pi introduces rounding error before sin() is called
-  # (especially near non-zero integer roots and for large |x|, where pi * x
-  # also overflows when |x| > max_float / pi).
-  #
-  # Instead, use exact additive range reduction:
-  #   1. Split x = n + r with n = round_to_even(x) and r = x - n in [-0.5, 0.5].
-  #      By Sterbenz's lemma, r = x - n is exact for all finite x.
-  #   2. Expand sin(pi * (n + r)) = (-1)^n * sin(pi * r):
-  #        sinc(n + r) = sin(pi * (n + r)) / (pi * (n + r))
-  #                    = (-1)^n * (sin(pi * r) / (pi * r)) * (r / (n + r))
-  #                    = (-1)^n * sinc(r) * (r / x)
-  #   3. The Taylor series of sin(pi * r) has only odd powers of r, so dividing
-  #      by pi * r leaves only even powers of r (i.e. powers of t = r^2):
-  #        sin(pi * r)            = pi*r - (pi*r)^3/3! + (pi*r)^5/5! - ...
-  #        sin(pi * r) / (pi * r) = 1 - (pi^2/3!)*r^2 + (pi^4/5!)*r^4 - ...
-  #                               = 1 - (pi^2/3!)*t   + (pi^4/5!)*t^2 - ...
-  #                               = 1 + t * Q(t)
-  #      with Q(t) = -pi^2/3! + (pi^4/5!)*t - ... evaluated by Horner's rule:
-  #      - When n == 0, r == x so sinc(x) = 1 + t * Q(t).
-  #      - When n != 0, sinc(x) = (-1)^n * (r + r * (t * Q(t))) / x.
-  #   4. For n != 0, divide r * sinc(r) by x, apply (-1)^n, and clamp |x|==inf.
-
-  orig_dtype = x.dtype
-  if dtypes.finfo(orig_dtype).bits < 32:
-    x = lax.convert_element_type(x, np.float32)
-
-  # Step 1: Exact range reduction x = n + r with n in Z and r in [-0.5, 0.5].
-  # Clamp r to 0 when |x| == inf to prevent inf - inf = NaN.
-  n = lax.stop_gradient(lax.round(x, lax.RoundingMethod.TO_NEAREST_EVEN))
-  is_inf = lax.abs(x) == np.inf
-  r = _where(is_inf, 0, x - n)
-  t = r * r
-
-  # Step 2: Taylor coefficients c_k = (-1)^k * pi^(2k) / (2k+1)! (high to low)
-  # for Q(t) in sin(pi * r) / (pi * r) ~= 1 + t * Q(t), t = r^2 in [0, 0.25].
-  #
-  # We use Taylor coefficients and higher degree (K=6 in float32, K=11 in
-  # float64) than needed for the primal alone (where K=4 / K=8 minimax
-  # polynomials suffice):
-  #   - At x = 0, the 2k-th derivative of 1 + t * Q(t) is (2k)! * c_k, so
-  #     minimax perturbations to c_k make derivatives at x = 0 inaccurate.
-  #   - Differentiating m times drops m orders of approximation and scales
-  #     term k by (2k)! / (2k - m)!, so extra terms keep 1st and 2nd
-  #     derivatives accurate across [-0.5, 0.5] and derivatives at x = 0
-  #     accurate through order 2K.
-  if x.dtype == np.float64:
-    q_coeffs = (
-        float.fromhex("-0x1.d7353939082fep-39"),
-        float.fromhex("0x1.79788684225eap-33"),
-        float.fromhex("-0x1.f5f9d970ca6dfp-28"),
-        float.fromhex("0x1.0fc992ff39e13p-22"),
-        float.fromhex("-0x1.d42498d1ce099p-18"),
-        float.fromhex("0x1.374719fab3915p-13"),
-        float.fromhex("-0x1.33816aa4607abp-9"),
-        float.fromhex("0x1.ac6805cf350a6p-6"),
-        float.fromhex("-0x1.86a8e4720db67p-3"),
-        float.fromhex("0x1.9f9cb402bc46cp-1"),
-        float.fromhex("-0x1.a51a6625307d3p0"),
+    eq_inf = lax.bitwise_and(
+        lax.eq(lax.abs(lax.real(x)), _lax_const(lax.real(x), np.inf)),
+        lax.is_finite(lax.imag(x)),
     )
   else:
-    q_coeffs = (
-        float.fromhex("0x1.37471ap-13"),
-        float.fromhex("-0x1.33816ap-9"),
-        float.fromhex("0x1.ac6806p-6"),
-        float.fromhex("-0x1.86a8e4p-3"),
-        float.fromhex("0x1.9f9cb4p-1"),
-        float.fromhex("-0x1.a51a66p0"),
+    eq_inf = lax.eq(lax.abs(x), _lax_const(x, np.inf))
+  pi_x = lax.mul(_lax_const(x, np.pi), x)
+  safe_pi_x = _where(eq_inf, _lax_const(x, 1), pi_x)
+
+  # Use a Taylor series when |u| < 1, where sin(u)/u loses precision.
+  # 1.0 may look arbitrary, but it has been carefully chosen.
+  abs_u = lax.abs(safe_pi_x)
+  use_series = lax.lt(abs_u, _lax_const(abs_u, 1.0))
+
+  # Keep both branches finite everywhere so autodiff does not produce NaNs.
+  radius = _lax_const(safe_pi_x, 1.0)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    safe_u = radius
+  else:
+    safe_u = _where(
+        lax.ge(safe_pi_x, _lax_const(safe_pi_x, 0)), radius, lax.neg(radius)
     )
+  u_series = _where(use_series, safe_pi_x, _lax_const(safe_pi_x, 0))
+  u_direct = _where(use_series, safe_u, safe_pi_x)
 
-  # Step 3: Evaluate Q(t) via Horner's method:
-  #   sinc_sin = 1 + t * Q(t)         ~= sin(pi * r) / (pi * r)  (for n == 0)
-  #   num      = r + r * (t * Q(t))   ~= sin(pi * r) / pi        (for n != 0)
-  q = _lax_const(x, q_coeffs[0])
-  for c in q_coeffs[1:]:
-    q = q * t + _lax_const(x, c)
-  tq = t * q
-  sinc_sin = 1 + tq
-  num = r + r * tq
+  # Taylor coefficients of sin(u)/u in u**2, descending to machine precision.
+  coeffs = []
+  eps = float(dtypes.finfo(x.dtype).eps)
+  for k in range(100):
+    mag = 1.0 / math.factorial(2 * k + 1)
+    coeffs.insert(0, (-1)**k * mag)
+    if mag <= eps:
+      break
 
-  # Step 4: Divide by (-1)^n * x (using 1 when n == 0 to avoid 0/0 in autodiff).
-  is_odd = 2 * lax.round(0.5 * n, lax.RoundingMethod.TO_NEAREST_EVEN) != n
-  eq_n_zero = n == 0
-  denom = _where(is_odd, -x, _where(eq_n_zero, 1, x))
-  signed_scaled = num / denom
-  # At r == 0 (non-zero integers and +/-inf), signed_scaled may be -0.0;
-  # y - stop_gradient(y) gives +0.0 in the primal pass while preserving
-  # derivatives (sinc'(n) = (-1)^n / n).
-  signed_scaled = _where(
-      r == 0, signed_scaled - lax.stop_gradient(signed_scaled), signed_scaled
-  )
-  result = _where(eq_n_zero, sinc_sin, signed_scaled)
-  if orig_dtype != x.dtype:
-    result = lax.convert_element_type(result, orig_dtype)
-  return result
+  u_sq = lax.square(u_series)
+  series = _lax_const(safe_pi_x, coeffs[0])
+  for c in coeffs[1:]:
+    series = lax.add(lax.mul(series, u_sq), _lax_const(safe_pi_x, c))
+
+  result = _where(use_series, series, lax.div(lax.sin(u_direct), u_direct))
+  return _where(eq_inf, _lax_const(x, 0), result)

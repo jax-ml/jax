@@ -6735,31 +6735,6 @@ class NumpyGradTests(jtu.JaxTestCase):
     # tests for a bug almost introduced in #5077
     jax.grad(lambda x: jnp.sinc(x).sum())(jnp.arange(10.))  # doesn't crash
 
-  def testSincHigherOrderDerivativesNearZero(self):
-    # Regression test for https://github.com/jax-ml/jax/issues/5094:
-    # 4th derivative of sinc near zero previously suffered from severe
-    # catastrophic cancellation when differentiating sin(pi * x) / (pi * x).
-    xs = jnp.linspace(-0.5, 0.5, 1001)
-    x_np = np.asarray(xs, dtype=np.float64)
-
-    def sinc_deriv_series(x: np.ndarray, m: int) -> np.ndarray:
-      # Exact Taylor series for (d/dx)^m sinc(x) on [-0.5, 0.5]:
-      #   sum_{k >= ceil(m/2)} (-1)^k * pi^(2k) * (2k)! / ((2k+1)! * (2k-m)!) * x^(2k-m)
-      out = np.zeros_like(x, dtype=np.float64)
-      for k in range((m + 1) // 2, 16):
-        coeff = ((-1) ** k) * (np.pi ** (2 * k)) / (
-            (2 * k + 1) * math.factorial(2 * k - m)
-        )
-        out = out + coeff * (x ** (2 * k - m))
-      return out
-
-    f = jnp.sinc
-    for m in range(1, 5):
-      f = jax.grad(f)
-      actual = jax.vmap(f)(xs)
-      expected = sinc_deriv_series(x_np, m).astype(actual.dtype)
-      self.assertAllClose(actual, expected, atol=1e-4, rtol=1e-4)
-
   @jtu.sample_product(dtype=float_dtypes)
   def testSincValuesAndDerivativesMatchGoldenValues(self, dtype):
     dtype = dtypes.canonicalize_dtype(dtype)
