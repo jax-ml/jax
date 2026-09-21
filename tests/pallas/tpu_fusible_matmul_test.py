@@ -1291,6 +1291,80 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     ):
       fused_fn(x, w)
 
+  @parameterized.named_parameters(
+      ('transpose', 'ab->ba', (512, 512), (128, 128), {}),
+      (
+          'bn_ct_to_bcnt',
+          '(bn)(ct)->bcnt',
+          (256, 512),
+          (128, 128),
+          {'b': 2, 'n': 128, 'c': 4, 't': 128},
+      ),
+      (
+          'split_dims',
+          'a(bc)->(ab)c',
+          (1, 16384),
+          (1, 128),
+          {'b': 128, 'c': 128},
+      ),
+      (
+          'merge_dims',
+          '(ab)c->abc',
+          (512, 512),
+          (128, 128),
+          {'a': 4, 'b': 128},
+      ),
+      (
+          'split_transpose_merge',
+          'c(ba)->a(bc)',
+          (128, 128),
+          (128, 128),
+          {'b': 2, 'a': 64},
+      ),
+      (
+          'multi_split_merge',
+          '(ac)(bd)->(ab)(cd)',
+          (16, 512),
+          (2, 512),
+          {'a': 2, 'b': 4, 'c': 8, 'd': 128},
+      ),
+  )
+  def test_einshape_in_output_fusion(
+      self, equation, matmul_out_shape, in_block_shape, sizes
+  ):
+    @jax.jit
+    @fuser.fuse
+    def fused_fn(x, w):
+      z = fusible_matmul(
+          x, w, bm=in_block_shape[0], bk=128, bn=in_block_shape[1]
+      )
+      return pltpu.einshape(equation, z, **sizes)
+
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (matmul_out_shape[0], 128), jnp.float32)
+    w = jax.random.normal(k1, (128, matmul_out_shape[1]), jnp.float32)
+
+    out = fused_fn(x, w)
+    ref_z = mm_ref(x, w)
+    ref_out = pltpu.einshape(equation, ref_z, **sizes)
+    np.testing.assert_allclose(out, ref_out, atol=0.5, rtol=1e-2)
+
+  def test_einshape_in_output_fusion_non_contiguous_raises(self):
+    @jax.jit
+    @fuser.fuse
+    def fused_fn(x, w):
+      z = fusible_matmul(x, w, bm=128, bk=128, bn=128)
+      return pltpu.einshape('a(bc)->(ab)c', z, b=4, c=128)
+
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (128, 128), jnp.float32)
+    w = jax.random.normal(k1, (128, 512), jnp.float32)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, 'SplitDims slice .* is non-contiguous'
+    ):
+      fused_fn(x, w)
+
   @parameterized.product(impl=list(KernelImpl))
   def test_matmul_with_dynamic_update_slice_raises(self, impl):
     k0, k1 = jax.random.split(jax.random.key(0))
