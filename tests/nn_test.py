@@ -523,6 +523,20 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(jax.grad(nn.relu6)(0.), 0., check_dtypes=False)
     self.assertAllClose(jax.grad(nn.relu6)(6.), 0., check_dtypes=False)
 
+  def testSiluGradLargeNegative(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/39798
+    # silu'(x) = sigmoid(x) * (1 + x * (1 - sigmoid(x))), which is still
+    # finite and representable at x = -709.  It used to evaluate to exactly
+    # 0.0 because exp(-709) is subnormal, so forming the product
+    # exp(-709) * (1 + x) underflowed (and is flushed to zero outright on
+    # backends that do not support subnormals).
+    with jax.enable_x64():
+      x = jnp.asarray(-709.0, dtype=jnp.float64)
+      actual = jax.grad(nn.silu)(x)
+      # Strict tolerance: before the fix `actual` was exactly 0.0.
+      self.assertAllClose(actual, -8.614807714413836e-306, rtol=1e-12,
+                          atol=0.0)
+
   def testSoftplusValue(self):
     val = nn.softplus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)

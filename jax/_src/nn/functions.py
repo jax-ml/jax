@@ -232,6 +232,7 @@ def sparse_sigmoid(x: ArrayLike) -> Array:
   """
   return 0.5 * jnp.clip(x + 1.0, 0.0, 2.0)
 
+@custom_derivatives.custom_jvp
 @api.jit
 def silu(x: ArrayLike) -> Array:
   r"""SiLU (aka swish) activation function.
@@ -254,6 +255,57 @@ def silu(x: ArrayLike) -> Array:
   """
   x_arr = numpy_util.ensure_arraylike("silu", x)
   return x_arr * sigmoid(x_arr)
+
+
+def _silu_grad(x):
+  r"""Derivative of :func:`silu`, evaluated without intermediate underflow.
+
+  :math:`\mathrm{silu}'(x) = s (1 + x (1 - s))` with :math:`s =
+  \mathrm{sigmoid}(x)`.
+
+  For :math:`x \ge 0` writing :math:`s = 1 / (1 + e^{-x})` is already accurate.
+  For :math:`x < 0` we instead substitute :math:`e = e^{x}`, so that :math:`s =
+  e / (1 + e)` and :math:`1 - s = 1 / (1 + e)`, giving
+
+  .. math::
+    \mathrm{silu}'(x) = \frac{e (1 + e + x)}{(1 + e)^2}
+
+  which never overflows. Forming :math:`e (1 + e + x)` directly still
+  underflows once :math:`e` becomes subnormal (it already is at
+  :math:`x = -709`), collapsing the gradient to exactly ``0.0`` even though the
+  true value is representable in ``float64``. We therefore build that product in
+  log space, which keeps every intermediate in normal range.
+  """
+  x_arr = numpy_util.ensure_arraylike("silu", x)
+  if jnp.iscomplexobj(x_arr):
+    # `silu` is holomorphic, so the real formula carries over unchanged. The
+    # stable form below relies on ordering comparisons, which complex inputs do
+    # not support; they are not at risk of the underflow either.
+    s = sigmoid(x_arr)
+    return s * (1 + x_arr * (1 - s))
+  # x >= 0 branch.
+  e_pos = jnp.exp(-jnp.where(x_arr < 0, 0.0, x_arr))
+  s_pos = 1.0 / (1.0 + e_pos)
+  grad_pos = s_pos * (1.0 + x_arr * (1.0 - s_pos))
+  # x < 0 branch. Both branch inputs are clamped so that the branch stays
+  # finite wherever it is not selected: inf/nan would otherwise leak into the
+  # gradient through the transpose of `where`.
+  x_neg = jnp.where(x_arr < 0, x_arr, 0.0)
+  e_neg = jnp.exp(x_neg)
+  denom = (1.0 + e_neg) ** 2
+  a = 1.0 + e_neg + x_neg
+  # `e (1 + e + x)` is accurate as long as `e` is a normal number. Once `e`
+  # becomes subnormal the product underflows (and backends that flush
+  # subnormals to zero lose it entirely), so fall back to building it in log
+  # space, where every intermediate stays in normal range.
+  grad_neg = jnp.where(
+      e_neg >= np.finfo(e_neg.dtype).tiny,
+      e_neg * a / denom,
+      jnp.sign(a) * jnp.exp(x_neg + jnp.log(jnp.abs(a))) / denom)
+  return jnp.where(x_arr < 0, grad_neg, grad_pos)
+
+
+silu.defjvps(lambda g, ans, x: g * _silu_grad(x))
 
 swish = silu
 
