@@ -1011,9 +1011,9 @@ def _cond_remat(trace, *args, branches, **params):
       branches_rem, merged_avals, branch_res_avals, dummy, len(jaxpr.in_avals))
   all_out = cond_p.bind(*args, branches=(*branches_fwd,), **params)
   primals_out, res = split_list(all_out, [len(jaxpr.out_avals)])
-  def rem(idx, *args):
+  def rem(res, idx, *args):
     return cond_p.bind(idx, *res, *args, branches=(*branches_rem,), **params)
-  return primals_out, rem
+  return primals_out, res, rem
 
 
 BranchesPlatforms = tuple[tuple[str, ...] | None, ...]

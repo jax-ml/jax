@@ -1544,10 +1544,10 @@ def _scan_remat(trace, *args, jaxpr, ft_in, ft_out, **params):
   jaxpr_rem = pe.move_binders_to_back(jaxpr_rem_, [True] * len(fwds))
   consts_g, carry_g, xs_g = ft_in.unpack()
   ft_in_rem = ft.pack((consts_g, carry_g, (xs_g, res_g)))
-  def rem(*args):
+  def rem(res, *args):
     return scan_p.bind(*args, *res, jaxpr=jaxpr_rem, ft_in=ft_in_rem,
                        ft_out=ft_out, **params)
-  return primals_out, rem
+  return primals_out, res, rem
 
 scan_p = core.Primitive("scan")
 scan_p.is_effectful = lambda params: bool(params['jaxpr'].effects)

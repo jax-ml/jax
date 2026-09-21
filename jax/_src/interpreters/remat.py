@@ -101,9 +101,9 @@ class RematTrace(core.Trace):
     in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
     if prim in rules:
       with core.set_current_trace(self.parent_trace):
-        out_primal, rem = rules[prim](self, *in_vals, **params)
+        out_primal, res, rem = rules[prim](self, *in_vals, **params)
       with core.set_current_trace(self.jaxpr_trace):
-        out_primal2 = rem(*in_vals2)
+        out_primal2 = rem(res, *in_vals2)
     else:  # default: full remat
       with core.set_current_trace(self.parent_trace):
         out_primal = prim.bind(*in_vals, **params)

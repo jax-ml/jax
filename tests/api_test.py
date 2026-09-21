@@ -60,7 +60,7 @@ from jax._src import xla_bridge
 from jax._src import debugging
 from jax._src import literals
 from jax._src import sharding_impls
-from jax._src.ad_checkpoint import saved_residuals, custom_remat, SaveOnlyTheseNames
+from jax._src.ad_checkpoint import saved_residuals, custom_remat
 from jax._src.interpreters import ad as ad_internal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -8228,7 +8228,7 @@ class Remat3Test(RematTest):
       return y
 
     def sin_fwd(policy, x):
-      if isinstance(policy, SaveOnlyTheseNames) and 'cos' in policy.saveable_names:
+      if policy is not None and policy(ad_checkpoint.name_p, core.typeof(x), name='cos'):
         return (jnp.sin(x), jnp.cos(x))
       else:
         return (jnp.sin(x), None)
@@ -8280,7 +8280,7 @@ class Remat3Test(RematTest):
       return lax.cond(x.sum() > -jnp.inf, f, lambda x: x, x)
 
     def sin_fwd(policy, x):
-      if isinstance(policy, SaveOnlyTheseNames) and 'cos' in policy.saveable_names:
+      if policy is not None and policy(ad_checkpoint.name_p, core.typeof(x), name='cos'):
         return (jnp.sin(x), jnp.cos(x))
       else:
         return (jnp.sin(x), None)
@@ -8332,7 +8332,7 @@ class Remat3Test(RematTest):
 
   def test_remat_of_cond_policy(self):
     def sin_fwd(policy, x):
-      if isinstance(policy, SaveOnlyTheseNames) and 'cos' in policy.saveable_names:
+      if policy is not None and policy(ad_checkpoint.name_p, core.typeof(x), name='cos'):
         return (jnp.sin(x), jnp.cos(x))
       else:
         assert False
@@ -8360,7 +8360,7 @@ class Remat3Test(RematTest):
 
   def test_remat_of_scan_policy(self):
     def sin_fwd(policy, x):
-      if isinstance(policy, SaveOnlyTheseNames) and 'cos' in policy.saveable_names:
+      if policy is not None and policy(ad_checkpoint.name_p, core.typeof(x), name='cos'):
         return (jnp.sin(x), jnp.cos(x))
       else:
         assert False
@@ -8612,8 +8612,7 @@ class Remat3Test(RematTest):
 
   def test_custom_remat_layered_outermost_policy_wins(self):
     def f_fwd(policy, x):
-      saveable = (isinstance(policy, SaveOnlyTheseNames) and
-                  'cos' in policy.saveable_names)
+      saveable = bool(policy and policy(ad_checkpoint.name_p, core.typeof(x), name='cos'))
       return jnp.sin(x), (jnp.cos(x) if saveable else None)
     def f_rem(res, x):
       return jnp.sin(x), (jnp.cos(x) if res is None else res)
@@ -8633,6 +8632,72 @@ class Remat3Test(RematTest):
         jax.remat(jax.remat(sin), policy=policy)))
     self.assertTrue(bwd_recomputes_cos(
         jax.remat(jax.remat(sin, policy=policy))))
+
+  @config.custom_vjp3(True)
+  def test_remat_combined_dots_and_names_policy(self):
+    policy = jax.checkpoint_policies.save_from_both_policies(
+        jax.checkpoint_policies.checkpoint_dots,
+        jax.checkpoint_policies.save_only_these_names('named_sin'))
+
+    @partial(jax.remat, policy=policy)
+    def f(x):
+      y = jnp.dot(x, x, precision=lax.Precision.HIGHEST)
+      z = checkpoint_name(jnp.sin(y), 'named_sin')
+      return jnp.dot(z, z, precision=lax.Precision.HIGHEST)
+
+    x = jnp.ones((2, 2))
+    out, f_vjp = jax.vjp(f, x)
+    bwd_jaxpr = jax.jit(f_vjp).trace(out).lojax.jaxpr
+    bwd_jaxpr, _ = pe.dce_jaxpr(bwd_jaxpr, True)
+    bwd_str = bwd_jaxpr.pretty_print(use_color=False)
+    # sin was saved by name, and the first dot was saved by checkpoint_dots
+    self.assertNotIn('= sin', bwd_str)
+    self.assertEqual(bwd_str.count('dot_general'), 4)
+    jtu.check_grads(f, (x,), order=2, modes=['rev'])
+
+  @config.custom_vjp3(True)
+  def test_remat_vmap_checkpoint_name_and_custom_vjp(self):
+    policy = jax.checkpoint_policies.save_only_these_names('cos')
+    xs = jnp.ones((4,))
+
+    @partial(jax.remat, policy=policy)
+    def f_name(xs):
+      return jax.vmap(lambda x: checkpoint_name(jnp.cos(x), 'cos') * x)(xs)
+
+    y, f_vjp = jax.vjp(f_name, xs)
+    bwd_jaxpr = jax.jit(f_vjp).trace(y).lojax.jaxpr
+    bwd_jaxpr, _ = pe.dce_jaxpr(bwd_jaxpr, True)
+    self.assertNotIn('= cos', bwd_jaxpr.pretty_print(use_color=False))
+    jtu.check_grads(f_name, (xs,), order=2, modes=['rev'])
+
+    sin = jax.custom_vjp(jnp.sin)
+    def fwd(x):
+      return jnp.sin(x), checkpoint_name_fwd(jnp.cos(x), 'cos')
+    def bwd(c, g):
+      return c * g,
+    sin.defvjp(fwd, bwd)
+
+    @partial(jax.remat, policy=policy)
+    def f_cvjp(xs):
+      return jax.vmap(sin)(xs)
+
+    y, f_vjp = jax.vjp(f_cvjp, xs)
+    bwd_jaxpr = jax.jit(f_vjp).trace(y).lojax.jaxpr
+    bwd_jaxpr, _ = pe.dce_jaxpr(bwd_jaxpr, True)
+    self.assertNotIn('= cos', bwd_jaxpr.pretty_print(use_color=False))
+    jtu.check_grads(f_cvjp, (xs,), order=2, modes=['rev'])
+
+    closed_jaxpr = jax.make_jaxpr(
+        lambda x: checkpoint_name(jnp.cos(x), 'cos') * x)(xs)
+    @partial(jax.remat, policy=policy)
+    def f_eval_jaxpr(xs):
+      y, = eval_jaxpr_p.bind(xs, call_jaxpr=closed_jaxpr)
+      return y
+    y, f_vjp = jax.vjp(f_eval_jaxpr, xs)
+    bwd_jaxpr = jax.jit(f_vjp).trace(y).lojax.jaxpr
+    bwd_jaxpr, _ = pe.dce_jaxpr(bwd_jaxpr, True)
+    self.assertNotIn('= cos', bwd_jaxpr.pretty_print(use_color=False))
+    jtu.check_grads(f_eval_jaxpr, (xs,), order=2, modes=['rev'])
 
   @config.custom_vjp3(True)
   def test_custom_vjp_layered_outermost_policy_wins(self):

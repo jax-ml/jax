@@ -1656,7 +1656,8 @@ def _pjit_remat(trace, *args, jaxpr, **params):
   res_ = iter(res)
   res_full = [primals_out[f] if f is not None else next(res_) for f in fwds]
   assert next(res_, None) is None
-  return primals_out, partial(jit_p.bind, *res_full, jaxpr=jaxpr_rem, **params_rem)
+  rem = lambda res_full, *args: jit_p.bind(*res_full, *args, jaxpr=jaxpr_rem, **params_rem)
+  return primals_out, res_full, rem
 remat.rules[jit_p] = _pjit_remat
 
 def _add_res_to_params(num_res_out, num_res_in, in_shardings, out_shardings,

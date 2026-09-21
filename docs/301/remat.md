@@ -493,10 +493,8 @@ Here's a `sin` that saves its cosine only when the ambient policy declares
 the name `'cos'` saveable, and otherwise defers to full recomputation:
 
 ```{code-cell}
-SaveOnlyTheseNames = jax.checkpoint_policies.SaveOnlyTheseNames
-
 def sin_fwd(policy, x):
-  if isinstance(policy, SaveOnlyTheseNames) and 'cos' in policy.saveable_names:
+  if policy is not None and policy(jax.ad_checkpoint.name_p, jax.typeof(x), name='cos'):
     return jnp.sin(x), jnp.cos(x)
   else:
     return jnp.sin(x), None

@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence, Iterable
-from dataclasses import dataclass
 from functools import partial
 import logging
 from typing import Any
@@ -76,43 +75,36 @@ def nothing_saveable(*_, **__) -> bool:
   This is the effective policy when using jax.remat without explicit policy."""
   return False
 
-@dataclass(frozen=True)
-class DotsSaveable:
-  only_if_no_batch_dims: bool
-  def __call__(self, prim, *args, **params):
-    if self.only_if_no_batch_dims:
-      if prim is lax_internal.dot_general_p:
-        (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
-        if not lhs_b and not rhs_b:
-          return True
-      if prim.name == "scaled_matmul_wrapper":  # avoid importing cudnn
-        return args[0].shape[0] == 1  # Only save the dot if batch dim size 1
-      return False
-    else:
-      ps = {lax_internal.dot_general_p, lax_convolution.conv_general_dilated_p}
-      return prim in ps or prim.name == "scaled_matmul_wrapper"
+def dots_saveable(prim, *_, **__) -> bool:
+  return (prim in {lax_internal.dot_general_p,
+                   lax_convolution.conv_general_dilated_p} or
+          prim.name == "scaled_matmul_wrapper")  # avoid cudnn import
+checkpoint_dots = dots_saveable
 
-checkpoint_dots = dots_saveable = DotsSaveable(False)
-dots_with_no_batch_dims_saveable = DotsSaveable(True)
+def dots_with_no_batch_dims_saveable(prim, *args, **params) -> bool:
+  """This is a useful heuristic for transformers."""
+  if prim is lax_internal.dot_general_p:
+    (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
+    if not lhs_b and not rhs_b:
+      return True
 
-@dataclass(frozen=True)
-class OffloadDotWithNoBatchDims:
-  offload_src: str
-  offload_dst: str
+  if prim.name == "scaled_matmul_wrapper":  # avoid cudnn import
+    return args[0].shape[0] == 1
 
-  def __call__(self, prim, *_, **params) -> Any:
-    if prim is lax_internal.dot_general_p:
-      (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
-      if not lhs_b and not rhs_b:
-        return pe.Offloadable(src=self.offload_src, dst=self.offload_dst)
-    return pe.Recompute
+  return False
 
 def offload_dot_with_no_batch_dims(offload_src, offload_dst):
   """Same as ``dots_with_no_batch_dims_saveable``, but offload to CPU memory
   instead of recomputing.
 
   This is a useful heuristic for transformers."""
-  return OffloadDotWithNoBatchDims(offload_src, offload_dst)
+  def policy(prim, *_, **params):
+    if prim is lax_internal.dot_general_p:
+      (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
+      if not lhs_b and not rhs_b:
+        return pe.Offloadable(src=offload_src, dst=offload_dst)
+    return pe.Recompute
+  return policy
 
 
 name_p = core.Primitive('name')
@@ -126,60 +118,44 @@ def save_anything_except_these_names(*names_not_to_save):
 def save_any_names_but_these(*names_not_to_save):
   """Save only named values, i.e. any outputs of `checkpoint_name`, excluding
   the names given."""
-  return SaveAnyNamesButThese(frozenset(names_not_to_save))
-
-@dataclass(frozen=True)
-class SaveOnlyTheseNames:
-  saveable_names: frozenset[str]
-  def __call__(self, prim, *_, **params):
+  names_not_to_save = frozenset(names_not_to_save)
+  def policy(prim, *_, **params):
     if prim is name_p:
-      return params['name'] in self.saveable_names
-    return False  # not saveable unless it's in the allow-list
-
-@dataclass(frozen=True)
-class SaveAnyNamesButThese:
-  names: frozenset[str]
-  def __call__(self, prim, *_, **params):
-    if prim is name_p:
-      return params['name'] not in self.names
+      return params['name'] not in names_not_to_save
     return False  # only allow saving named values
+  return policy
 
 def save_only_these_names(*names_which_can_be_saved):
   """Save only named values, and only among the names given."""
-  return SaveOnlyTheseNames(frozenset(names_which_can_be_saved))
-
-@dataclass(frozen=True)
-class SaveAndOffloadOnlyTheseNames:
-  names_which_can_be_saved: frozenset[str]
-  names_which_can_be_offloaded: frozenset[str]
-  offload_src: str
-  offload_dst: str
-
-  def __call__(self, prim, *_, **params) -> Any:
-    if prim is name_p and params['name'] in self.names_which_can_be_saved:
-      return pe.Saveable
-    if prim is name_p and params['name'] in self.names_which_can_be_offloaded:
-      return pe.Offloadable(src=self.offload_src, dst=self.offload_dst)
-    return pe.Recompute  # not saveable unless it's in the allow-list
+  names_which_can_be_saved = set(names_which_can_be_saved)
+  def policy(prim, *_, **params):
+    if prim is name_p:
+      return params['name'] in names_which_can_be_saved
+    return False  # not saveable unless it's in the allow-list
+  return policy
 
 def save_and_offload_only_these_names(
     *, names_which_can_be_saved, names_which_can_be_offloaded,
     offload_src, offload_dst):
   """Same as ``save_only_these_names``, but offload to CPU memory instead of
   recomputing."""
-  names_which_can_be_saved = frozenset(names_which_can_be_saved)
-  names_which_can_be_offloaded = frozenset(names_which_can_be_offloaded)
-  intersection = names_which_can_be_saved & names_which_can_be_offloaded
+  names_which_can_be_saved = set(names_which_can_be_saved)
+  names_which_can_be_offloaded = set(names_which_can_be_offloaded)
+  intersection = names_which_can_be_saved.intersection(names_which_can_be_offloaded)
   if intersection:
     raise ValueError(
         "The names should be exclusive and should not intersect in"
         " `names_which_can_be_saved` and `names_which_can_be_offloaded`. Got"
-        f" names_which_can_be_saved={set(names_which_can_be_saved)},"
-        f" names_which_can_be_offloaded={set(names_which_can_be_offloaded)} and"
-        f" the intersection={set(intersection)}")
-  return SaveAndOffloadOnlyTheseNames(
-      names_which_can_be_saved, names_which_can_be_offloaded,
-      offload_src, offload_dst)
+        f" names_which_can_be_saved={names_which_can_be_saved},"
+        f" names_which_can_be_offloaded={names_which_can_be_offloaded} and"
+        f" the intersection={intersection}")
+  def policy(prim, *_, **params):
+    if prim is name_p and params['name'] in names_which_can_be_saved:
+      return pe.Saveable
+    if prim is name_p and params['name'] in names_which_can_be_offloaded:
+      return pe.Offloadable(src=offload_src, dst=offload_dst)
+    return pe.Recompute  # not saveable unless it's in the allow-list
+  return policy
 
 
 def save_from_both_policies(policy_1, policy_2):
@@ -201,9 +177,6 @@ def save_from_both_policies(policy_1, policy_2):
 # Please update the file docs/gradient-checkpointing.md with any new
 # policies to keep the doc in sync.
 checkpoint_policies = types.SimpleNamespace(
-    SaveOnlyTheseNames=SaveOnlyTheseNames,
-    SaveAnyNamesButThese=SaveAnyNamesButThese,
-    SaveAndOffloadOnlyTheseNames=SaveAndOffloadOnlyTheseNames,
     everything_saveable=everything_saveable,
     nothing_saveable=nothing_saveable,
     dots_saveable=dots_saveable,
@@ -1203,11 +1176,11 @@ class RematTraced(HiPrim):
     out, rem_ = remat_transform(trace.policy, traced, *args,
                                 custom_vjp_rules=trace.custom_vjp_rules)
     (jaxpr, in_tree, out_tree), (res,) = rem_.func.args, rem_.args
-    def rem(*args_):
+    def rem(res, *args_):
       args_flat = tree_leaves_checked(in_tree, args_)
       out_flat = RematTraced(jaxpr, trace.policy)(*res, *args_flat)
       return tree_unflatten(out_tree, out_flat)
-    return out, rem
+    return out, res, rem
 
   def dce(self, used_outs):
     used_outs_flat = tree_leaves_checked(self.out_tree, used_outs)
@@ -1239,20 +1212,20 @@ class CheckpointName(HiPrim):
     policy = trace.policy
     x = CheckpointName(self.name, self.in_avals[0])(x)
     if policy is None:
-      return x, lambda x: x  # full remat
-    case = pe.ensure_enum(policy(name_p, name=self.name))
+      return x, (), lambda _, x: x  # full remat
+    case = pe.ensure_enum(policy(name_p, self.in_avals[0], name=self.name))
     if isinstance(case, pe.SaveableType):
-      return x, partial(primal_left_tangent_right, x)
+      return x, x, primal_left_tangent_right
     elif isinstance(case, pe.Offloadable):
       x_host = api.device_put(x, core.mem_kind_to_space(case.dst),
                               may_alias=False)
       src_space = core.mem_kind_to_space(case.src)
-      def rem(x_rem):
+      def rem(x_host, x_rem):
         x_dev = api.device_put(x_host, src_space, may_alias=False)
         return primal_left_tangent_right(x_dev, x_rem)
-      return x, rem
+      return x, x_host, rem
     else:
-      return x, lambda x: x  # full remat
+      return x, (), lambda _, x: x  # full remat
 
   def jvp(self, primals, tangents):
     (x,), (xdot,) = primals, tangents
@@ -1270,8 +1243,9 @@ class CheckpointName(HiPrim):
   def linearized(self, _, g):  # type: ignore
     return g
 
-  def batch_dim_rule(self, axis_data, dims, /):
-    return dims[0]
+  def batch(self, axis_data, args, dims):
+    (x,), (d,) = args, dims
+    return CheckpointName(self.name, typeof(x))(x), d
 
 class CheckpointNameFwd(HiPrim):
   name: str
@@ -1289,17 +1263,17 @@ class CheckpointNameFwd(HiPrim):
     policy = trace.policy
     x = CheckpointNameFwd(self.name, self.in_avals[0])(x)
     if policy is None:
-      return x, lambda x: x  # full remat
-    case = pe.ensure_enum(policy(name_p, name=self.name))
+      return x, (), lambda _, x: x  # full remat
+    case = pe.ensure_enum(policy(name_p, self.in_avals[0], name=self.name))
     if isinstance(case, pe.SaveableType):
-      return x, lambda _: x
+      return x, x, lambda x, _: x
     elif isinstance(case, pe.Offloadable):
       x_host = api.device_put(x, core.mem_kind_to_space(case.dst),
                               may_alias=False)
       src_space = core.mem_kind_to_space(case.src)
-      return x, lambda _: api.device_put(x_host, src_space, may_alias=False)
+      return x, x_host, lambda x_host, _: api.device_put(x_host, src_space, may_alias=False)
     else:
-      return x, lambda x: x  # full remat
+      return x, (), lambda _, x: x  # full remat
 
   def jvp(self, primals, tangents):
     (x,), (xdot,) = primals, tangents
@@ -1317,8 +1291,9 @@ class CheckpointNameFwd(HiPrim):
   def linearized(self, _, g):  # type: ignore
     return g
 
-  def batch_dim_rule(self, axis_data, dims, /):
-    return dims[0]
+  def batch(self, axis_data, args, dims):
+    (x,), (d,) = args, dims
+    return CheckpointNameFwd(self.name, typeof(x))(x), d
 
 class PrimalLeftTangentRight(HiPrim):
   def __init__(self, aval_x, aval__x):
@@ -1346,7 +1321,9 @@ class PrimalLeftTangentRight(HiPrim):
     assert False
 
   def batch(self, axis_data, args, dims):
-    assert False
+    (x, _x), (d1, d2) = args, dims
+    assert d1 == d2
+    return PrimalLeftTangentRight(typeof(x), typeof(_x))(x, _x), d1
 
 def primal_left_tangent_right(x, _x):
   return PrimalLeftTangentRight(typeof(x), typeof(_x))(x, _x)
@@ -1423,11 +1400,11 @@ class CustomRemat(HiPrim):
     args, kwargs = tree_unflatten(self._in_tree, args_flat)  # type: ignore
     out_primal, res = self.f1(trace.policy, *args, **kwargs)
     out_primal_flat = tree_leaves_checked(self._out_tree, out_primal)  # type: ignore
-    def rem_flat(*args_flat):
+    def rem_flat(res, *args_flat):
       args, kwargs = tree_unflatten(self._in_tree, args_flat)  # type: ignore
       out_primal = self.f2_fbwd(res, *args, **kwargs)
       return tree_leaves_checked(self._out_tree, out_primal)  # type: ignore
-    return out_primal_flat, rem_flat
+    return out_primal_flat, res, rem_flat
 
   def jvp(self, primals, tangents):
     traced = core.jaxpr_as_fun(self.jaxpr)

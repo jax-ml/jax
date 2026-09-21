@@ -742,8 +742,8 @@ def _state_remat(prim, trace, ref, *args, **params):
   if core.typeof(ref).kind == "no_grad_no_remat":
     # Run only in the fwd computation; any read value reaching the remnant
     # computation is saved as a residual rather than re-read.
-    return out, lambda *_: out
-  return out, lambda ref_, *args_: prim.bind(ref_, *args_, **params)
+    return out, out, lambda out, *_: out
+  return out, (), lambda _, ref_, *args_: prim.bind(ref_, *args_, **params)
 
 remat.rules[get_p] = partial(_state_remat, get_p)
 remat.rules[swap_p] = partial(_state_remat, swap_p)

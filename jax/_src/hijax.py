@@ -226,8 +226,9 @@ class HiPrim:
       return True, True, self
 
   # optional remat control
-  def remat(self, _trace, *args):
-    return self(*args), self  # full remat by default
+  def remat(self, trace, *args):
+    del trace
+    return self(*args), (), lambda _, *args: self(*args)  # full remat by default
 
   def __call__(self, *args):
     args_flat = tree_leaves_checked(self.in_tree, args)
@@ -320,6 +321,18 @@ class VmapOf(HiPrim):
     out_dim = self.prim.batch_dim_rule(axis_data, in_dims_)  # pyrefly: ignore[missing-attribute]
     unfix = lambda d, d_: d if (d is None or d_ is None) else d + (d_ < d)
     return tree_map(unfix, out_dim, self.out_dim, is_leaf=lambda x: x is None)
+
+  def remat(self, trace, *args):
+    store = lambda: None
+    def fwd(*args):
+      out, res, store.rem = self.prim.remat(trace, *args)  # pyrefly: ignore[missing-attribute]
+      return out, res
+    (out, res), (_, res_axes) = api.vmap(
+        fwd, in_axes=self.in_dims, out_axes=(self.out_dim, batching.infer),
+        **self._vmap_params)(*args)
+    rem = api.vmap(store.rem, in_axes=(res_axes, *self.in_dims),  # pyrefly: ignore[missing-attribute]
+                   out_axes=self.out_dim, **self._vmap_params)
+    return out, res, rem
 
 @contextmanager
 def _explain_overbatched_member(prim, member_name):
@@ -557,12 +570,12 @@ batching.fancy_primitive_batchers[call_hi_primitive_linearized_p] = ad.raise_cus
 
 def _call_hi_primitive_remat(trace, *args_flat, _prim):
   args = tree_unflatten(_prim.in_tree, args_flat)
-  out, rem_ = _prim.remat(trace, *args)
-  def rem(*args_flat):
+  out, res, rem_ = _prim.remat(trace, *args)
+  def rem(res, *args_flat):
     args = tree_unflatten(_prim.in_tree, args_flat)
-    out = rem_(*args)
+    out = rem_(res, *args)
     return tree_leaves_checked(_prim.out_tree, out)
-  return tree_leaves_checked(_prim.out_tree, out), rem
+  return tree_leaves_checked(_prim.out_tree, out), res, rem
 remat.rules[call_hi_primitive_p] = _call_hi_primitive_remat
 
 
@@ -893,10 +906,8 @@ class CustomVJPTraced(HiPrim):
       raise NotImplementedError(f'Effects not supported in `custom_jvp`: {disallowed}')
 
   def remat(self, trace, *args):  # type: ignore
-    if self.opt_remat:
-      return self(*args), self
-    if not trace.custom_vjp_rules:
-      return self(*args), self  # see https://github.com/jax-ml/jax/pull/38914
+    if self.opt_remat or not trace.custom_vjp_rules:
+      return self(*args), (), lambda _, *args: self(*args)  # see https://github.com/jax-ml/jax/pull/38914
     if not self.static_argnums:
       fwd, dyn_args = self.fwd, args
     else:
@@ -919,7 +930,7 @@ class CustomVJPTraced(HiPrim):
                 *self.in_avals[2:])
     helper = CustomVJPTraced(self.traced, fwd2, self.bwd, in_avals,
                              False, self.static_argnums, False, self.with_logs)
-    return out, lambda consts, fc, *rest: helper(consts, (fc, res), *rest)
+    return out, res, lambda res, consts, fc, *rest: helper(consts, (fc, res), *rest)
 
 
 def _vjp_primal_fwd_tree_mismatch_err(self, tree):

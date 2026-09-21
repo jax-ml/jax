@@ -27,6 +27,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.partial_eval import eval_jaxpr_p
+from jax._src.interpreters import remat
 from jax._src.state import discharge
 from jax._src.pjit import program_order_p
 from jax._src.tree_util import tree_leaves, tree_flatten, tree_unflatten
@@ -114,6 +115,18 @@ eval_jaxpr_linearize = _eval_jaxpr_linearize
 eval_jaxpr_transpose = _eval_jaxpr_transpose
 
 
+def _eval_jaxpr_remat(prim, trace, *args, call_jaxpr, **params):
+  jaxpr_fwd, jaxpr_rem, fwds = remat.remat_jaxpr(
+      call_jaxpr, trace.policy, trace.custom_vjp_rules, allow_fwds=True)
+  primals_res_out = prim.bind(*args, call_jaxpr=jaxpr_fwd, **params)
+  primals_out, res = split_list(primals_res_out, [len(call_jaxpr.outvars)])
+  res_ = iter(res)
+  res_full = [primals_out[f] if f is not None else next(res_) for f in fwds]
+  assert next(res_, None) is None
+  rem = lambda res_full, *args: prim.bind(*res_full, *args, call_jaxpr=jaxpr_rem, **params)
+  return primals_out, res_full, rem
+
+
 def register_call_primitive_rules(
     prim: core.Primitive, name: str | None = None, transpose_rule=None,
     inline_jax_late: bool = True):
@@ -130,6 +143,7 @@ def register_call_primitive_rules(
   pe.partial_eval_jaxpr_custom_rules[prim] = \
       pe.partial_eval_jaxpr_custom_rules[eval_jaxpr_p]
   pe.dce_rules[prim] = pe.dce_rules[eval_jaxpr_p]
+  remat.rules[prim] = partial(_eval_jaxpr_remat, prim)
   discharge.register_discharge_rule(prim)(partial(discharge._eval_jaxpr_discharge_rule, prim))
   if name is not None:
     lowering_rule = partial(
