@@ -783,6 +783,31 @@ def _copy_gmem_to_smem_abstract_eval(src, dst, *args, has_barrier, **params):
   src_shape = src_ref.shape
   dst_shape = dst_ref.shape
 
+  im2col_box = params.get("im2col_box", None)
+  if im2col_box is not None:
+    if len(src_shape) not in (3, 4, 5):
+      raise ValueError(
+          "im2col copy requires the source to have rank 3, 4 or 5, but got"
+          f" shape {src_shape}"
+      )
+    if len(dst_shape) != 2:
+      raise ValueError(
+          "im2col copy requires a 2D (pixels_per_column, channels) destination,"
+          f" but got shape {dst_shape}"
+      )
+    num_spatial = len(src_shape) - 2
+    if len(im2col_box) != num_spatial:
+      raise ValueError(
+          f"Expected {num_spatial} spatial bounding box intervals in"
+          f" `im2col_box`, but got {len(im2col_box)}"
+      )
+    if src_shape[-1] != dst_shape[-1]:
+      raise ValueError(
+          "im2col copy requires source and destination channels to match, but"
+          f" got {src_shape[-1]} and {dst_shape[-1]}"
+      )
+    return (), {state.ReadEffect(0), state.WriteEffect(1)}
+
   leader_tracked = params.get("leader_tracked", None)
   partition_axis = None
   if isinstance(leader_tracked, CopyPartition.PARTITIONED):
@@ -836,6 +861,17 @@ def _copy_gmem_to_smem_pp_eqn(
   if eqn.params["has_user_predicate"]:
     flat_args, user_predicate = flat_args[:-1], flat_args[-1]
     pp_params["user_predicate"] = user_predicate.pretty_print(context)
+  if im2col_box := eqn.params.get("im2col_box", None):
+    pp_params["im2col_box"] = im2col_box
+  if num_im2col_offsets := eqn.params.get("num_im2col_offsets", 0):
+    flat_args, im2col_offsets = (
+        flat_args[:-num_im2col_offsets],
+        flat_args[-num_im2col_offsets:],
+    )
+    offsets_str = ", ".join(o.pretty_print(context) for o in im2col_offsets)
+    pp_params["im2col_offsets"] = (
+        f"({offsets_str}{',' if len(im2col_offsets) == 1 else ''})"
+    )
   flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
       util.split_list(
           flat_args,
@@ -895,6 +931,8 @@ def _copy_gmem_to_smem_lowering(
     oob_mode,
     has_barrier,
     has_user_predicate,
+    im2col_box=None,
+    num_im2col_offsets=0,
 ):
   if has_barrier:
     barrier, *flat_args = flat_args
@@ -908,6 +946,17 @@ def _copy_gmem_to_smem_lowering(
     predicate = lowering._ensure_ir_value(user_predicate, jnp.bool)
   else:
     predicate = None
+
+  if num_im2col_offsets:
+    flat_args, flat_im2col_offsets = (
+        flat_args[:-num_im2col_offsets],
+        flat_args[-num_im2col_offsets:],
+    )
+    im2col_offsets = tuple(
+        lowering._ensure_ir_value(o, jnp.int32) for o in flat_im2col_offsets
+    )
+  else:
+    im2col_offsets = None
 
   flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
       util.split_list(
@@ -1112,10 +1161,16 @@ def _copy_gmem_to_smem_lowering(
             if is_cp_async
             else AsyncCopyImplementation.TMA
         ),
+        im2col_box=im2col_box,
+        im2col_offsets=im2col_offsets,
         **copy_params,
         **predicate_kwarg,  # pyrefly: ignore[bad-argument-type]
     )
     return ()
+  if im2col_box is not None:
+    raise NotImplementedError(
+        "im2col copies are only supported under Lane lowering semantics"
+    )
   if "gmem_slice" not in copy_params or not copy_params["gmem_slice"]:
     slice_lengths = ir.MemRefType(src.type).shape
     indices = [mgpu.utils.c(0, i32)] * len(slice_lengths)
@@ -1215,6 +1270,8 @@ def copy_gmem_to_smem(
     leader_tracked: CopyPartition | None = None,
     oob_mode: OOBFillMode | None = None,
     predicate: jax.Array | None = None,
+    im2col_box: tuple[tuple[int, int], ...] | None = None,
+    im2col_offsets: tuple[int | jax.Array, ...] | None = None,
 ) -> None:
   """Asynchronously copies a GMEM reference to a SMEM reference.
 
@@ -1266,6 +1323,14 @@ def copy_gmem_to_smem(
       ``OOBFillMode.PROMISE_IN_BOUNDS`` for the ``cp.async`` one.
     predicate: A boolean indicating whether the copy should be performed. If
       ``None``, the copy is always performed.
+    im2col_box: If specified, performs an im2col TMA load: ``src`` is a rank
+      3/4/5 GMEM ref ``(N, *spatial, C)`` and ``dst`` a 2D SMEM ref
+      ``(pixels_per_column, C)``. Each ``(lower, upper)`` interval bounds the
+      (signed) receptive field along a spatial dimension. TMA and ``Lane``
+      semantics only (Hopper and newer).
+    im2col_offsets: Per-spatial-dimension filter tap offsets (may be dynamic),
+      one per spatial dimension. Only valid with ``im2col_box``; defaults to
+      zeros.
 
   See also:
     :func:`jax.experimental.pallas.mosaic_gpu.barrier_arrive`
@@ -1302,6 +1367,14 @@ def copy_gmem_to_smem(
     raise ValueError(
         "`collective_axes` must be specified when `leader_tracked` is set"
     )
+  if im2col_offsets is not None and im2col_box is None:
+    raise ValueError(
+        "`im2col_box` must be specified when `im2col_offsets` is provided"
+    )
+  if im2col_offsets is None:
+    im2col_operands = []
+  else:
+    im2col_operands = list(im2col_offsets)
   copy_gmem_to_smem_p.bind(
       src,
       dst,
@@ -1309,6 +1382,7 @@ def copy_gmem_to_smem(
       *flat_src_transforms,
       *flat_dst_transforms,
       *flat_barrier_transforms,
+      *im2col_operands,
       *[] if predicate is None else [predicate],
       src_transforms_treedef=src_transforms_treedef,
       dst_transforms_treedef=dst_transforms_treedef,
@@ -1318,6 +1392,8 @@ def copy_gmem_to_smem(
       oob_mode=oob_mode,
       has_barrier=has_barrier,
       has_user_predicate=predicate is not None,
+      im2col_box=im2col_box,
+      num_im2col_offsets=len(im2col_operands),
   )
   return None
 
