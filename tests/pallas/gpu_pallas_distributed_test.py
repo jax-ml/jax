@@ -19,6 +19,7 @@ import dataclasses
 import functools
 import math
 import os
+import re
 import tempfile
 import types
 from typing import Any, ClassVar, TYPE_CHECKING
@@ -1279,6 +1280,100 @@ class PallasCallMultimemTest(TestCase):
         y.astype(jnp.float32),
         np.tile(np_reduction(x_local[16:64+16], x_local[64+48:128+48]), (2, 1)),
     )
+
+  def test_multimem_operand_is_placed_in_collective_memory(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+    devices = jax.devices()[:2]
+
+    def kernel(x_ref, y_ref, sem_ref):
+      y_ref[...] = plgpu.layout_cast(
+          plgpu.multimem_load_reduce(
+              x_ref.at[...], collective_axes="x", reduction_op="add"
+          ),
+          plgpu.Layout.WG_STRIDED((8, 128), vec_size=4),
+      )
+      other_device = 1 - lax.axis_index("x")
+      pl.semaphore_signal(sem_ref, 1, device_id=other_device)
+      pl.semaphore_wait(sem_ref)
+
+    mesh = jax.sharding.Mesh(devices, ("x",))
+    x = jnp.zeros((2 * 8, 128), jnp.float32)
+    f = jax.jit(
+        jax.shard_map(
+            self.kernel(
+                kernel,
+                out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+                scratch_types=[plgpu.SemaphoreType.REGULAR],
+                compiler_params=plgpu.CompilerParams(),
+            ),
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    lowered = f.lower(x).as_text()
+
+    # The multimem operand has to live in symmetric memory, so Mosaic asks XLA
+    # to place it in the collective memory space.
+    match = re.search(r'operands_memory_spaces = "\{([^}]*)\}"', lowered)
+    self.assertIsNotNone(match, lowered)
+    operand_memory_spaces = dict(
+        tuple(int(i) for i in pair.split(":"))
+        for pair in match.group(1).split(",")
+        if pair
+    )
+    collective_memory_space = 1
+    self.assertEqual(operand_memory_spaces.get(0), collective_memory_space)
+
+    if jax.process_count() == 1:
+      # Within a single process the multimem operand is the only buffer that
+      # has to be symmetric. Across processes all of them do.
+      self.assertEqual(operand_memory_spaces, {0: collective_memory_space})
+      self.assertNotIn("results_memory_spaces", lowered)
+
+    # And XLA has to honour the request by coloring the operand buffers S(1).
+    compiled = f.lower(x).compile().as_text()
+    custom_calls = [
+        line
+        for line in compiled.splitlines()
+        if 'custom_call_target="mosaic_gpu_v2"' in line
+    ]
+    self.assertLen(custom_calls, 1, compiled)
+    # Operands are printed by name only (and annotated with /*index=N*/ past
+    # the first few), e.g. `%custom-call = f32[8,128]{1,0} custom-call(%copy)`.
+    operands = re.search(r"custom-call\(([^)]*)\)", custom_calls[0])
+    self.assertIsNotNone(operands, custom_calls[0])
+    operand_names = [
+        re.sub(r"/\*.*?\*/", "", operand).strip()
+        for operand in operands.group(1).split(",")
+    ]
+
+    def memory_space(name: str) -> int:
+      # Definitions carry the memory space in the layout of their shape, e.g.
+      #   %copy = f32[16,128]{1,0:S(1)} copy(%param)
+      definition = re.search(
+          rf"^\s*{re.escape(name)} = (\S+)\s", compiled, re.MULTILINE
+      )
+      self.assertIsNotNone(
+          definition, f"No definition of {name} in:\n{compiled}"
+      )
+      space = re.search(r"S\((\d+)\)", definition.group(1))
+      return int(space.group(1)) if space else 0  # Default memory space.
+
+    # Note that XLA is free to place more buffers in collective memory than we
+    # asked for (it currently colors all buffers of a symmetric Mosaic kernel),
+    # so we only check that the buffers we did ask for got colored.
+    for index, requested_space in operand_memory_spaces.items():
+      self.assertLess(index, len(operand_names), compiled)
+      self.assertEqual(
+          memory_space(operand_names[index]),
+          requested_space,
+          f"Operand {index} ({operand_names[index]}) is not in memory space"
+          f" {requested_space}:\n{compiled}",
+      )
 
 
 @jtu.thread_unsafe_test_class()
