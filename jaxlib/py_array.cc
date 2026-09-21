@@ -2340,26 +2340,28 @@ PyArray::GetCopyToHostState(xla::ifrt::Client* client) {
           hold->external_reference_hold = *std::move(external_ref);
           void* data =
               hold->external_reference_hold->OpaqueDeviceMemoryDataPointer();
-          try {
-            nanobind::gil_scoped_acquire gil;
-            auto dtype = PrimitiveTypeToNbDtype(host_shape.element_type());
-            if (!dtype.ok()) {
-              promise.Set(dtype.status());
-              return;
+          absl::StatusOr<PyHostValue> host_value =
+              [&]() -> absl::StatusOr<PyHostValue> {
+            try {
+              nanobind::gil_scoped_acquire gil;
+              ABSL_ASSIGN_OR_RETURN(
+                  xla::nb_dtype dtype,
+                  PrimitiveTypeToNbDtype(host_shape.element_type()));
+              nb::capsule hold_capsule(new auto(hold), [](void* h) noexcept {
+                delete static_cast<std::shared_ptr<Hold>*>(h);
+              });
+              auto array = xla::nb_numpy_ndarray(
+                  dtype, host_shape.dimensions(),
+                  ByteStridesForShape(host_shape), data, hold_capsule);
+              array.attr("flags").attr("writeable") = nb::bool_(false);
+              return PyHostValue(std::move(array));
+            } catch (const std::exception& e) {
+              return absl::InternalError(absl::StrCat(
+                  "Failed to create numpy array from zero-copy buffer: ",
+                  e.what()));
             }
-            nb::capsule hold_capsule(new auto(hold), [](void* h) noexcept {
-              delete static_cast<std::shared_ptr<Hold>*>(h);
-            });
-            auto array = xla::nb_numpy_ndarray(*dtype, host_shape.dimensions(),
-                                               ByteStridesForShape(host_shape),
-                                               data, hold_capsule);
-            array.attr("flags").attr("writeable") = nb::bool_(false);
-            promise.Set(PyHostValue(std::move(array)));
-          } catch (const std::exception& e) {
-            promise.Set(absl::InternalError(absl::StrCat(
-                "Failed to create numpy array from zero-copy buffer: ",
-                e.what())));
-          }
+          }();
+          promise.Set(std::move(host_value));
         });
     return CopyToHostState{.result_future = std::move(result_future),
                            .copy_data = std::nullopt};
@@ -2555,25 +2557,24 @@ absl::Status PyArray::BatchedCopyToHostAsyncHelper(
                            *array_state.copy_data->string_array_contents);
           }
         }
-        try {
-          nanobind::gil_scoped_acquire gil;
-          xla::nb_numpy_ndarray result(
-              NumpyTypes::Get().string_dtype,
-              array_state.copy_data->ifrt_array->shape().dims(),
-              /*strides=*/std::nullopt);
-          absl::Status s = FillStringNumpyArray(
-              *array_state.copy_data->string_array_contents, result);
-          if (!s.ok()) {
-            array_state.copy_data->result_promise.Set(std::move(s));
-            return;
+        absl::StatusOr<PyHostValue> host_value =
+            [&]() -> absl::StatusOr<PyHostValue> {
+          try {
+            nanobind::gil_scoped_acquire gil;
+            xla::nb_numpy_ndarray result(
+                NumpyTypes::Get().string_dtype,
+                array_state.copy_data->ifrt_array->shape().dims(),
+                /*strides=*/std::nullopt);
+            ABSL_RETURN_IF_ERROR(FillStringNumpyArray(
+                *array_state.copy_data->string_array_contents, result));
+            result.attr("flags").attr("writeable") = nanobind::bool_(false);
+            return PyHostValue(std::move(result));
+          } catch (const std::exception& e) {
+            return absl::InternalError(absl::StrCat(
+                "Unable to create string NumPy Array: ", e.what()));
           }
-          result.attr("flags").attr("writeable") = nanobind::bool_(false);
-          array_state.copy_data->result_promise.Set(
-              PyHostValue(std::move(result)));
-        } catch (const std::exception& e) {
-          array_state.copy_data->result_promise.Set(absl::InternalError(
-              absl::StrCat("Unable to create string NumPy Array: ", e.what())));
-        }
+        }();
+        array_state.copy_data->result_promise.Set(std::move(host_value));
       });
     } else if (array_state.copy_data->is_contiguous) {
       // All shard data is copied directly into `contiguous_buffer`.
@@ -2586,28 +2587,30 @@ absl::Status PyArray::BatchedCopyToHostAsyncHelper(
             std::optional<std::vector<int64_t>> strides =
                 ByteStridesOrDefaultForShapeInt64(
                     array_state.copy_data->host_shape);
-            try {
-              nanobind::gil_scoped_acquire gil;
-              auto dtype = PrimitiveTypeToNbDtype(
-                  array_state.copy_data->host_shape.element_type());
-              if (!dtype.ok()) {
-                array_state.copy_data->result_promise.Set(dtype.status());
-                return;
+            absl::StatusOr<PyHostValue> host_value =
+                [&]() -> absl::StatusOr<PyHostValue> {
+              try {
+                nanobind::gil_scoped_acquire gil;
+                ABSL_ASSIGN_OR_RETURN(
+                    xla::nb_dtype dtype,
+                    PrimitiveTypeToNbDtype(
+                        array_state.copy_data->host_shape.element_type()));
+                char* data =
+                    array_state.copy_data->contiguous_buffer.release();
+                nb::capsule capsule(data, [](void* ptr) noexcept {
+                  delete[] static_cast<char*>(ptr);
+                });
+                xla::nb_numpy_ndarray result(
+                    dtype, array_state.copy_data->host_shape.dimensions(),
+                    strides, data, capsule);
+                result.attr("flags").attr("writeable") = nanobind::bool_(false);
+                return PyHostValue(std::move(result));
+              } catch (const std::exception& e) {
+                return absl::InternalError(
+                    absl::StrCat("Unable to create NumPy Array: ", e.what()));
               }
-              char* data = array_state.copy_data->contiguous_buffer.release();
-              nb::capsule capsule(data, [](void* ptr) noexcept {
-                delete[] static_cast<char*>(ptr);
-              });
-              xla::nb_numpy_ndarray result(
-                  *dtype, array_state.copy_data->host_shape.dimensions(),
-                  strides, data, capsule);
-              result.attr("flags").attr("writeable") = nanobind::bool_(false);
-              array_state.copy_data->result_promise.Set(
-                  PyHostValue(std::move(result)));
-            } catch (const std::exception& e) {
-              array_state.copy_data->result_promise.Set(absl::InternalError(
-                  absl::StrCat("Unable to create NumPy Array: ", e.what())));
-            }
+            }();
+            array_state.copy_data->result_promise.Set(std::move(host_value));
           });
     } else {
       // Shard data is copied into temporary dense buffers. Once the copy
@@ -2622,39 +2625,35 @@ absl::Status PyArray::BatchedCopyToHostAsyncHelper(
         std::optional<std::vector<int64_t>> strides =
             ByteStridesOrDefaultForShapeInt64(
                 array_state.copy_data->host_shape);
-        try {
-          nanobind::gil_scoped_acquire gil;
-          auto dtype = PrimitiveTypeToNbDtype(
-              array_state.copy_data->host_shape.element_type());
-          if (!dtype.ok()) {
-            array_state.copy_data->result_promise.Set(dtype.status());
-            return;
-          }
-          xla::nb_numpy_ndarray result(
-              *dtype, array_state.copy_data->host_shape.dimensions(), strides);
-          for (const auto& slice : array_state.copy_data->data_slices) {
-            CHECK(slice.temp_buffer != nullptr);
-            std::optional<absl::Span<const int64_t>> shard_byte_strides;
-            if (array_state.copy_data->shard_byte_strides.has_value()) {
-              shard_byte_strides = absl::MakeConstSpan(
-                  *array_state.copy_data->shard_byte_strides);
+        absl::StatusOr<PyHostValue> host_value =
+            [&]() -> absl::StatusOr<PyHostValue> {
+          try {
+            nanobind::gil_scoped_acquire gil;
+            ABSL_ASSIGN_OR_RETURN(
+                xla::nb_dtype dtype,
+                PrimitiveTypeToNbDtype(
+                    array_state.copy_data->host_shape.element_type()));
+            xla::nb_numpy_ndarray result(
+                dtype, array_state.copy_data->host_shape.dimensions(), strides);
+            for (const auto& slice : array_state.copy_data->data_slices) {
+              CHECK(slice.temp_buffer != nullptr);
+              std::optional<absl::Span<const int64_t>> shard_byte_strides;
+              if (array_state.copy_data->shard_byte_strides.has_value()) {
+                shard_byte_strides = absl::MakeConstSpan(
+                    *array_state.copy_data->shard_byte_strides);
+              }
+              ABSL_RETURN_IF_ERROR(SetSlice(result, dtype, slice.index_domain,
+                                            shard_byte_strides,
+                                            slice.temp_buffer->data()));
             }
-            absl::Status copy_status =
-                SetSlice(result, *dtype, slice.index_domain, shard_byte_strides,
-                         slice.temp_buffer->data());
-            if (!copy_status.ok()) {
-              array_state.copy_data->result_promise.Set(std::move(copy_status));
-              return;
-            }
+            result.attr("flags").attr("writeable") = nanobind::bool_(false);
+            return PyHostValue(std::move(result));
+          } catch (const std::exception& e) {
+            return absl::InternalError(absl::StrCat(
+                "Unable to assign to a slice of NumPy Array: ", e.what()));
           }
-          result.attr("flags").attr("writeable") = nanobind::bool_(false);
-          array_state.copy_data->result_promise.Set(
-              PyHostValue(std::move(result)));
-        } catch (const std::exception& e) {
-          array_state.copy_data->result_promise.Set(
-              absl::InternalError(absl::StrCat(
-                  "Unable to assign to a slice of NumPy Array: ", e.what())));
-        }
+        }();
+        array_state.copy_data->result_promise.Set(std::move(host_value));
       });
     }
   }
