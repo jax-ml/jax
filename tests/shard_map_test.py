@@ -1769,7 +1769,8 @@ class ShardMapTest(jtu.JaxTestCase):
       return jax.lax.cond(jnp.any(y > 0), true_fn, false_fun, x, y)
 
     shard_map(f, mesh=mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
-    shard_map(f, mesh=mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(f, mesh=mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
 
     # https://github.com/jax-ml/jax/issues/24418
     def f(a):
@@ -1779,6 +1780,111 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2,), ('x',))
     a = jnp.array([True, False])
     shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P('x'))(a)
+
+  @parameterized.product(primitive=[lax.cond, lax.switch], jit=[False, True],
+                         check_vma=[False, True])
+  def test_cond_varying_selector(self, primitive, jit, check_vma):
+    mesh = jtu.create_mesh((2,), ('i',))
+
+    def f(x):
+      if primitive is lax.cond:
+        y = lax.cond(x[0] == 0, lambda: True, lambda: False)
+      else:
+        y = lax.switch(x[0], [lambda: True, lambda: False])
+      return y[None]
+
+    mapped = shard_map(f, mesh=mesh, in_specs=P('i'), out_specs=P('i'),
+                       check_vma=check_vma)
+    replicated = shard_map(f, mesh=mesh, in_specs=P('i'), out_specs=P())
+    if jit:
+      mapped, replicated = map(jax.jit, (mapped, replicated))
+    x = jnp.arange(2)
+    self.assertArraysEqual(mapped(x), jnp.array([True, False]))
+    if check_vma:
+      with self.assertRaisesRegex(ValueError, "require replication"):
+        replicated(x)
+
+  @parameterized.product(captured=[False, True], nonlinear=[False, True],
+                         wrap=[lambda f: f, jax.jit, jax.checkpoint])
+  def test_cond_varying_selector_grad(self, captured, nonlinear, wrap):
+    mesh = jtu.create_mesh((2,), ('i',))
+
+    @partial(shard_map, mesh=mesh, in_specs=P(), out_specs=P('i'))
+    def f(x):
+      pred = lax.axis_index('i') == 0
+      @wrap
+      def true_fun(x):
+        return x * x if nonlinear else 2 * x
+      if captured:
+        y = lax.cond(pred, lambda: true_fun(x), lambda: 3 * x)
+      else:
+        y = lax.cond(pred, true_fun, lambda x: 3 * x, x)
+      return y[None]
+
+    self.assertAllClose(jax.jit(f)(2.), jnp.array([4., 6.]))
+    _, tangent = jax.jvp(f, (2.,), (1.,))
+    self.assertAllClose(tangent, jnp.array([4. if nonlinear else 2., 3.]))
+    self.assertAllClose(jax.jit(jax.grad(lambda x: f(x).sum()))(2.),
+                        7. if nonlinear else 5.)
+
+  @parameterized.parameters(False, True)
+  def test_cond_varying_selector_nested_shard_map(self, constant):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+
+    @partial(shard_map, mesh=mesh, axis_names={'x'},
+             in_specs=P(), out_specs=P('x'))
+    def f(x):
+      @partial(shard_map, axis_names={'y'}, in_specs=P(), out_specs=P())
+      def inner(x):
+        return jnp.array(4., dtype=x.dtype) if constant else x * x
+      return lax.cond(lax.axis_index('x') == 0, inner, lambda x: 3 * x, x)[None]
+
+    self.assertAllClose(jax.jit(f)(2.), jnp.array([4., 6.]))
+    self.assertAllClose(jax.jit(jax.grad(lambda x: f(x).sum()))(2.),
+                        3. if constant else 7.)
+
+  @parameterized.parameters(jax.custom_jvp, jax.custom_vjp)
+  def test_cond_varying_selector_custom_derivative(self, custom):
+    mesh = jtu.create_mesh((2,), ('i',))
+    square = custom(lambda x: x * x)
+    # Use a different derivative to check that cond preserves the custom rule.
+    if custom is jax.custom_jvp:
+      square.defjvp(lambda p, t: (p[0] * p[0], 5 * p[0] * t[0]))
+    else:
+      square.defvjp(lambda x: (x * x, x), lambda x, ct: (5 * x * ct,))
+
+    @partial(shard_map, mesh=mesh, in_specs=P(), out_specs=P('i'))
+    def f(x):
+      return lax.cond(lax.axis_index('i') == 0,
+                      lambda: square(x), lambda: 3 * x)[None]
+
+    loss = lambda x: f(x).sum()
+    self.assertAllClose(jax.jit(f)(2.), jnp.array([4., 6.]))
+    self.assertAllClose(jax.jit(jax.grad(loss))(2.), 13.)
+    self.assertAllClose(jax.jit(jax.grad(jax.grad(loss)))(2.), 5.)
+
+  def test_cond_varying_selector_preserves_casts(self):
+    mesh = jtu.create_mesh((2,), ('i',))
+
+    @partial(shard_map, mesh=mesh, in_specs=(P('i'), P()),
+             out_specs=(P(), P('i')))
+    def f(x, coefficient):
+      def branch(scale):
+        u = lax.pcast(x, 'i', to='unreduced')
+        r = lax.pcast(scale * coefficient, 'i', to='reduced')
+        return u * r, jnp.array(float(scale))
+      y, tag = lax.cond(lax.axis_index('i') == 0,
+                        lambda: branch(2), lambda: branch(3))
+      return lax.psum(y, 'i'), tag[None]
+
+    x = jnp.array([2., 3.])
+    y, tag = jax.jit(f)(x, 1.)
+    self.assertAllClose(y, jnp.array([13.]))
+    self.assertAllClose(tag, jnp.array([2., 3.]))
+    dx, dc = jax.jit(jax.grad(lambda x, c: f(x, c)[0].sum(),
+                             argnums=(0, 1)))(x, 1.)
+    self.assertAllClose(dx, jnp.array([2., 3.]))
+    self.assertAllClose(dc, 13.)
 
   def test_switch_rep_rule(self):
     mesh = jtu.create_mesh((2, 2,), ('x', 'y'))
@@ -4080,6 +4186,23 @@ class ShardMapTest(jtu.JaxTestCase):
         TypeError,
         r"applying `jax.lax.pcast\(..., \('y',\).*to the output of true_fun"):
       shard_map(f, mesh=mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
+
+  @parameterized.product(varying_pred=[False, True], varying_left=[False, True])
+  def test_cond_branch_variance_mismatch(self, varying_pred, varying_left):
+    mesh = jtu.create_mesh((2,), ('i',))
+
+    def f(x):
+      pred = lax.axis_index('i') == 0 if varying_pred else True
+      # Construct the constant independently of x's varying axes.
+      branches = (lambda: x, lambda: jnp.array([0], dtype=x.dtype))
+      if not varying_left:
+        branches = branches[::-1]
+      return lax.cond(pred, *branches)
+
+    x = jnp.array([1, 2])
+    mapped = shard_map(f, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    with self.assertRaisesRegex(TypeError, "branches must have equal output types"):
+      jax.jit(mapped)(x)
 
   def test_scan_pvary_errors(self):
     mesh = jtu.create_mesh((1, 1), ('i', 'j'))

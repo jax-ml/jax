@@ -34,8 +34,10 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import util
+from jax._src import tree_util as jtu
 from jax._src.state.discharge import register_discharge_rule, discharge_state
 from jax._src.state.types import AbstractRef, RefEffect
 from jax._src.core import replace_jaxpr_effects, typeof
@@ -45,6 +47,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import remat
 from jax._src.lax import lax
+from jax._src.lax import parallel
 from jax._src.traceback_util import api_boundary
 from jax._src.typing import ArrayLike
 from jax._src.util import (safe_map, safe_zip, split_list, partition_list,
@@ -427,6 +430,185 @@ def _join_cond_effects(branches: Sequence[core.Jaxpr]) -> effects.Effects:
         eff = eff.replace(eff.input + 1)
       joined_effects.add(eff)
   return joined_effects
+
+def _cond_cast_varying(value, axes):
+  aval = typeof(value)
+  if not isinstance(aval, core.ShapedArray):
+    return value
+  reduced_axes = tuple(axes & aval.mat.reduced)
+  if reduced_axes:
+    value = core.reduced_vary_cast(value, reduced_axes)
+  invariant_axes = tuple(axes - aval.mat.vur)
+  if invariant_axes:
+    value = core.pvary(value, invariant_axes)
+  return value
+
+class _CondVaryingTracer(core.Tracer):
+  # Keep the branch's original type visible to custom derivative validation,
+  # while carrying a value specialized to the selector's varying axes.
+  def __init__(self, trace, value, aval):
+    super().__init__(trace, aval)
+    self.value = value
+
+
+def _cond_specialized_aval(aval, axes):
+  if not isinstance(aval, core.ShapedArray):
+    return aval
+  mat = aval.mat
+  aval = aval.update(manual_axis_type=mat.update(
+      unreduced=mat.unreduced - axes,
+      unreduced_kind=mat.unreduced_kind if mat.unreduced - axes else None))
+  reduced_axes = tuple(axes & aval.mat.reduced)
+  if reduced_axes:
+    aval, _ = core.reduced_vary_cast_p.abstract_eval(aval, axes=reduced_axes)
+  invariant_axes = tuple(axes - aval.mat.varying)
+  if invariant_axes:
+    aval, _ = core.pvary_p.abstract_eval(aval, axes=invariant_axes)
+  return aval
+
+
+class _CondVaryingTrace(core.Trace):
+  def __init__(self, parent, axes):
+    super().__init__()
+    self.parent = parent
+    self.axes = axes
+    self.requires_low = False
+
+  def unwrap(self, x):
+    return x.value if isinstance(x, _CondVaryingTracer) and x._trace is self else x
+
+  def stage_value(self, val):
+    if isinstance(val, _CondVaryingTracer) and val._trace is self:
+      return val
+    return self.parent.stage_value(val)
+
+  def param(self, x):
+    if isinstance(x, core.Jaxpr):
+      return _cond_varying_jaxpr(x, self.axes)
+    if isinstance(x, core.AbstractValue):
+      return _cond_specialized_aval(x, self.axes)
+    if isinstance(x, tuple):
+      return tuple(map(self.param, x))
+    if isinstance(x, list):
+      return list(map(self.param, x))
+    if isinstance(x, dict):
+      return {k: self.param(v) for k, v in x.items()}
+    return x
+
+  def process_primitive(self, prim, args, params):
+    avals, _ = prim.abstract_eval(*map(core.typeof, args), **params)
+    if not prim.multiple_results:
+      avals = [avals]
+    with core.set_current_trace(self.parent):
+      vals = [_cond_cast_varying(self.unwrap(x), self.axes) for x in args]
+      params = self.param(params)
+      # These casts remain visible in the logical program, but are identities
+      # on the specialized values. Restore unreduced outputs at the boundary.
+      if prim in (core.pvary_p, parallel.preduced_p,
+                  core.reduced_vary_cast_p, parallel.vary_unreduced_cast_p):
+        params['axes'] = tuple(a for a in params['axes'] if a not in self.axes)
+        if not params['axes']:
+          return _CondVaryingTracer(self, vals[0], avals[0])
+      outs = prim.bind(*vals, **params)
+    if not prim.multiple_results:
+      outs = [outs]
+    result = [_CondVaryingTracer(self, x, a) for x, a in zip(outs, avals)]
+    return result if prim.multiple_results else result[0]
+
+  def process_custom_jvp_call(self, prim, fun, jvp, args, *, symbolic_zeros):
+    avals = list(map(core.typeof, args))
+    fun, out_avals1 = _cond_varying_subtrace(fun, self.axes, avals)
+    jvp, out_avals2 = _cond_varying_subtrace(
+        jvp, self.axes, avals + [a.to_tangent_aval() for a in avals])
+    with core.set_current_trace(self.parent):
+      outs = prim.bind(*map(self.unwrap, args), subfuns=(fun, jvp),
+                       symbolic_zeros=symbolic_zeros)
+    primal, out_avals = lu.merge_linear_aux(out_avals1, out_avals2)
+    if not primal:
+      out_avals = out_avals[:len(out_avals) // 2]
+    return [_CondVaryingTracer(self, x, a) for x, a in zip(outs, out_avals)]
+
+  def process_shard_map(self, prim, fun, args, **params):
+    from jax._src import shard_map as sm
+    axes = self.axes
+    avals = [sm.shard_aval(params['mesh'], params['newly_manual_axes'],
+                           params['check_vma'], spec, core.typeof(x))
+             for spec, x in zip(params['in_specs'], args)]
+    out_types = []
+    def inner(*vals):
+      with core.take_current_trace() as parent:
+        trace = _CondVaryingTrace(parent, axes)
+        with core.set_current_trace(trace):
+          out, specs = fun(*(_CondVaryingTracer(trace, x, a)
+                             for x, a in zip(vals, avals))).unpack_aux()
+        out_types[:] = [sm.unshard_aval(params['mesh'], params['check_vma'],
+                                       spec, core.typeof(x))
+                        for spec, x in zip(specs, out)]
+        return out.map(trace.unwrap).with_aux(specs)
+    with core.set_current_trace(self.parent):
+      outs = prim.bind(*map(self.unwrap, args), subfuns=(inner,), **params)
+    return outs.map2(out_types, lambda x, a: _CondVaryingTracer(self, x, a))
+
+  def process_custom_vjp_call(self, prim, fun, fwd, bwd, args, *, out_trees,
+                              symbolic_zeros):
+    avals = list(map(core.typeof, args))
+    fun, out_avals1 = _cond_varying_subtrace(fun, self.axes, avals)
+    fwd, out_avals2 = _cond_varying_subtrace(
+        fwd, self.axes, [a for aval in avals for a in (aval, None)])
+
+    def bwd_avals():
+      # The forward rule omits residuals forwarded from its inputs.
+      _, _, fwds = out_trees()
+      pruned = iter(out_avals2())
+      res = [next(pruned) if f is None else avals[f] for f in fwds]
+      return [*res, *(a.to_ct_aval() for a in pruned)]
+
+    original_bwd = bwd
+    axes = self.axes
+    def backward(*args):
+      transformed, _ = _cond_varying_subtrace(original_bwd, axes, bwd_avals)
+      return transformed.call_wrapped(*args)
+    bwd = lu.wrap_init(backward, debug_info=bwd.debug_info)
+    with core.set_current_trace(self.parent):
+      outs = prim.bind(*map(self.unwrap, args), subfuns=(fun, fwd, bwd),
+                       out_trees=out_trees, symbolic_zeros=symbolic_zeros)
+    primal, out_avals = lu.merge_linear_aux(out_avals1, out_avals2)
+    if not primal:
+      _, res_tree, fwds = out_trees()
+      out_avals = out_avals[res_tree.num_leaves - sum(f is not None for f in fwds):]
+    return [_CondVaryingTracer(self, x, a) for x, a in zip(outs, out_avals)]
+
+
+@lu.transformation_with_aux2
+def _cond_varying_subtrace(
+    fun, store, axes,
+    avals: Sequence[core.AbstractValue | None] |
+           Callable[[], Sequence[core.AbstractValue | None]], *args):
+  avals = avals() if callable(avals) else avals
+  with core.take_current_trace() as parent:
+    trace = _CondVaryingTrace(parent, axes)
+    wrapped = [_CondVaryingTracer(trace, x, a) if a is not None else x
+               for x, a in zip(args, avals)]
+    with core.set_current_trace(trace):
+      outs = fun(*wrapped)
+    store.store(jtu.tree_map(core.typeof, outs))
+    return jtu.tree_map(trace.unwrap, outs)
+
+
+@util.weakref_lru_cache
+def _cond_varying_jaxpr(jaxpr, axes, *, preserve_unreduced=False):
+  """Specialize a branch and its derivative functions to per-device values."""
+  fun = lu.wrap_init(core.jaxpr_as_fun(jaxpr), debug_info=jaxpr.debug_info)
+  fun, _ = _cond_varying_subtrace(fun, axes, jaxpr.in_avals)
+  def run(*args):
+    outs = [_cond_cast_varying(x, axes) for x in fun.call_wrapped(*args)]
+    if preserve_unreduced:
+      outs = [parallel.vary_unreduced_cast(x, tuple(a.mat.unreduced & axes))
+              if a.mat.unreduced & axes else x
+              for x, a in zip(outs, jaxpr.out_avals)]
+    return outs
+  avals = [_cond_specialized_aval(a, axes) for a in jaxpr.in_avals]
+  return _make_closed_jaxpr(run, avals, jaxpr.debug_info)
 
 def _cond_abstract_eval(*avals: core.AbstractValue,
                         branches: Sequence[core.Jaxpr], **_):
@@ -1028,6 +1210,26 @@ BranchesPlatforms = tuple[tuple[str, ...] | None, ...]
 cond_p = core.Primitive('cond')
 cond_p.multiple_results = True
 cond_p.skip_canonicalization = True
+
+@cond_p.def_bind_with_trace
+def _cond_bind(trace, args, avals, params):
+  if config._check_vma.value:
+    axes = avals[0].mat.varying | avals[0].mat.unreduced
+    branches = params['branches']
+    if any(isinstance(a, core.ShapedArray)
+           and axes - a.mat.varying - a.mat.unreduced
+           for a in branches[0].out_avals):
+      # Check the original branch types before adding selector variance.
+      _cond_abstract_eval(*avals, branches=branches)
+      with core.set_current_trace(trace):
+        # Casting outside cond puts the transpose's reduction outside it too.
+        args = [args[0], *(_cond_cast_varying(x, axes) for x in args[1:])]
+        params = dict(params, branches=tuple(
+            _cond_varying_jaxpr(branch, axes, preserve_unreduced=True)
+            for branch in branches))
+      avals = map(typeof, args)
+  return core.Primitive.bind_with_trace(cond_p, trace, args, avals, params)
+
 cond_p.def_impl(partial(dispatch.apply_primitive, cond_p))
 cond_p.def_effectful_abstract_eval(_cond_abstract_eval)
 ad.primitive_jvps[cond_p] = _cond_jvp
