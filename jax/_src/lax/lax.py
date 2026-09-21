@@ -4756,9 +4756,11 @@ core.pp_eqn_rules[tanh_p] = _unary_with_accuracy_pp_rule
 logistic_p = standard_unop(_float | _complex, 'logistic')
 ad.defjvp2(
     logistic_p,
-    lambda g, ans, x, accuracy: mul(g, mul(ans, logistic(neg(x))))
-    if accuracy is AccuracyMode.HIGHEST
-    else mul(g, mul(ans, sub(_one(ans), ans))),
+    # Use the stable form `sigmoid(x) * sigmoid(-x)` for every accuracy mode.
+    # The naive `sigmoid(x) * (1 - sigmoid(x))` cancellation-flushes to 0.0
+    # when `sigmoid(x)` rounds to 0.0 or 1.0 at extreme inputs, even though
+    # the true derivative is still finite and representable.
+    lambda g, ans, x, accuracy: mul(g, mul(ans, logistic(neg(x)))),
 )
 core.pp_eqn_rules[logistic_p] = _unary_with_accuracy_pp_rule
 

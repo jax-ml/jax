@@ -211,6 +211,19 @@ class LaxTest(jtu.JaxTestCase):
         actual, expected, atol=jtu.default_tolerance()[np.dtype(np.float32)], rtol=0.0
     )
 
+  def testLogisticGradLargePositive(self):
+    # Regression test for https://github.com/google/jax/issues/40385
+    # The naive derivative `sigmoid(x) * (1 - sigmoid(x))` cancellation-flushes
+    # to 0.0 when `sigmoid(x)` rounds to 1.0 at large-positive inputs, even
+    # though the true derivative is still finite. The stable form
+    # `sigmoid(x) * sigmoid(-x)` is used instead.
+    with jax.enable_x64():
+      x = jnp.asarray(37.42994775023705, dtype=jnp.float64)
+      actual = jax.grad(lambda z: lax.logistic(z))(x)
+      expected = lax.logistic(x) * lax.logistic(-x)
+      # Strict tolerance: before the fix `actual` was exactly 0.0.
+      self.assertAllClose(actual, expected, rtol=1e-12, atol=0.0)
+
   def testExp2(self):
     x = jnp.array([0.25, 0.5, 1.0, 2.0, 4.0], dtype=jnp.float32)
     ln2 = np.float32(np.log(2.0))
