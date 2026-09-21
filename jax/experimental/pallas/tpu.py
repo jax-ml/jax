@@ -109,33 +109,6 @@ _deprecations = {
         " Use pl.HOST instead.",
         None,
     ),
-    # Finalized in JAX v0.11.0
-    # TODO(jakevdp): remove these for JAX v0.12.0.
-    "semaphore": (
-        "pltpu.semaphore was deprecated in JAX v0.10.0, and removed in JAX"
-        " v0.11.0. Use pl.semaphore instead.",
-        None
-      ),
-    "DeviceIdType": (
-        "pltpu.DeviceIdType was deprecated in JAX v0.10.0, and removed in JAX"
-        " v0.11.0. Use pl.DeviceIdType instead.",
-        None,
-    ),
-    "semaphore_read": (
-        "pltpu.semaphore_read was deprecated in JAX v0.10.0, and removed in"
-        " JAX v0.11.0. Use pl.semaphore_read instead.",
-        None,
-    ),
-    "semaphore_signal": (
-        "pltpu.semaphore_signal was deprecated in JAX v0.10.0, and removed in"
-        " JAX v0.11.0. Use pl.semaphore_signal instead.",
-        None,
-    ),
-    "semaphore_wait": (
-        "pltpu.semaphore_wait was deprecated in JAX v0.10.0, and removed in"
-        " JAX v0.11.0. Use pl.semaphore_wait instead.",
-        None,
-    ),
 }
 
 if typing.TYPE_CHECKING:
