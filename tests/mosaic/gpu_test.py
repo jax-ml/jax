@@ -4235,6 +4235,62 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(y[:, 1, :], 0.0)
 
   @parameterized.product(
+      rank=(3, 4),
+      offset=(0, 1, 2),
+      swizzle=(None, 128),
+  )
+  def test_tma_load_im2col(self, rank, offset, swizzle):
+    dtype = jnp.float16
+    channels_per_pixel = 64 if swizzle == 128 else 16
+    pixels_per_column = 4
+    if rank == 3:
+      src_shape = (1, 8, channels_per_pixel)
+      im2col_box = ((-1, 1),)
+      im2col_offsets = (offset,)
+      gmem_slice = (slice(None), slice(2, None), slice(None))
+    elif rank == 4:
+      src_shape = (1, 4, 8, channels_per_pixel)
+      im2col_box = ((-1, 1), (-1, 1))
+      im2col_offsets = (0, offset)
+      gmem_slice = (slice(None), slice(None), slice(2, None), slice(None))
+    else:
+      raise ValueError(rank)
+
+    dst_shape = (pixels_per_column, channels_per_pixel)
+    i1 = ir.IntegerType.get_signless(1)
+
+    def kernel(ctx: launch_context.LaunchContext, src, dst, smem):
+      tmp, barrier = smem
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=tmp,
+          swizzle=swizzle,
+          barrier=barrier,
+          gmem_slice=gmem_slice,
+          im2col_box=im2col_box,
+          im2col_offsets=im2col_offsets,
+      )
+      barrier.wait_parity(c(0, i1))
+      copy(tmp, dst, swizzle=swizzle)
+
+    x = np.arange(np.prod(src_shape), dtype=dtype).reshape(src_shape) + 1.0
+    out_shape = jax.ShapeDtypeStruct(dst_shape, dtype)
+    smem = (out_shape, mgpu.TMABarrier())
+    y = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, out_shape, smem
+    )(x)
+
+    w = 2 + np.arange(pixels_per_column) + offset
+    valid = (w >= 0) & (w < src_shape[-2])
+    expected = np.zeros(dst_shape, dtype=dtype)
+    if rank == 3:
+      expected[valid] = x[0, w[valid]]
+    else:
+      expected[valid] = x[0, 0, w[valid]]
+
+    np.testing.assert_array_equal(y, expected)
+
+  @parameterized.product(
       swizzle=(None, 32, 64, 128),
       shape=((64, None), (5, None), (2, 3, 5, None)),
       dtype=(jnp.float32, jnp.float16, jnp.int4),
