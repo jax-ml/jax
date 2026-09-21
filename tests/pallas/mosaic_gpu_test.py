@@ -5119,6 +5119,25 @@ class PallasCallWGTest(
     self.assertIn(f"smem_scratch_bytes={expected_smem_bytes}", rs())
     self.assertIn(f"tmem_scratch_cols={expected_tmem_cols}", rs())
 
+  def test_identical_kernels_share_a_kernel_hash(self):
+    x = jnp.ones((64, 64), dtype=jnp.float32)
+
+    # Use a wrapper to avoid hitting a high-level lowering cache.
+    def make_kernel():
+      @self.kernel(out_type=jax.ShapeDtypeStruct(x.shape, x.dtype))
+      def kernel(x_gmem, o_gmem):
+        o_gmem[...] = plgpu.load(x_gmem, optimized=False)
+      return kernel
+
+    k1, k2 = make_kernel(), make_kernel()
+    ir_text = str(jax.jit(lambda x: (k1(x), k2(x))).lower(x).compiler_ir())
+
+    kernel_hashes = re.findall(
+        r'kernel_hash\s*=\s*"((?:[^"\\]|\\.)*)"', ir_text
+    )
+    self.assertLen(kernel_hashes, 2)
+    self.assertLen(set(kernel_hashes), 1)
+
 
 class PallasCallSm90ATest(PallasSm90ATest):
 

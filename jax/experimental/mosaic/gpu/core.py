@@ -262,6 +262,18 @@ def _mosaic_gpu_lowering_rule(
       serialize=True,
       ir_version=FWD_COMPAT_IR_VERSION if ctx.is_forward_compat() else None,
   )
+
+  # Prior to computing the kernel hash, we temporarily remove the dump basename
+  # attribute from the module. This ensures that modules with different dump
+  # basenames but otherwise identical will have the same kernel hash, and thus
+  # will share the same compiled kernel.
+  dump_basename_attr_name = "mosaic_gpu.dump_basename"
+  if dump_basename_attr_name in module.operation.attributes:
+    dump_basename_attr = module.operation.attributes[dump_basename_attr_name]
+  else:
+    dump_basename_attr = None
+  module.operation.attributes[dump_basename_attr_name] = ir.UnitAttr.get()
+
   bytecode_buffer = io.BytesIO()
   module.operation.write_bytecode(bytecode_buffer, desired_version=0)
   module_asm = bytecode_buffer.getvalue()
@@ -274,6 +286,9 @@ def _mosaic_gpu_lowering_rule(
       raise RuntimeError("Kernel hash collision!")
   else:
     KNOWN_KERNELS[kernel_id] = module_asm
+
+  if dump_basename_attr is not None:
+    module.operation.attributes[dump_basename_attr_name] = dump_basename_attr
 
   backend_config: dict[str, ir.Attribute] = dict(
       kernel_hash=ir.StringAttr.get(kernel_id),
