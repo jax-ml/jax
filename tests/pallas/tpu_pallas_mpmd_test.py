@@ -26,7 +26,6 @@ from jax._src import core as jax_core
 from jax._src import hijax
 from jax._src import test_util as jtu
 from jax._src.pallas.fuser import fusible_dtype
-from jax._src.state import primitives as state_primitives
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import fuser
 from jax.experimental.pallas import tpu as pltpu
@@ -144,6 +143,13 @@ class MpmdAsyncTest(jtu.JaxTestCase):
       )(tc_fn)(x_ref, out_ref, sem_ref)
       return jax.freeze(out_ref)
 
+    hlo_text = f.lower(x).as_text()
+    custom_calls = [
+        line for line in hlo_text.splitlines() if "@tpu_custom_call" in line
+    ]
+    self.assertLen(custom_calls, 2)
+    for call in custom_calls:
+      self.assertIn("output_memory_space_colors", call)
     out = f(x)
     np.testing.assert_array_equal(out, x + 1)
 
@@ -167,9 +173,7 @@ class MpmdAsyncTest(jtu.JaxTestCase):
           out_type=pltpu.VMEM(x.shape, x.dtype) @ tc_mesh,
           name=f"tc_stage_{x.shape[0]}",
       )(tc_fn)(x)
-      tc_vmem = state_primitives.with_memory_space_constraint(
-          tc_vmem, pltpu.VMEM @ tc_mesh
-      )
+      self.assertEqual(jax.typeof(tc_vmem).memory_space, pltpu.VMEM @ tc_mesh)
       return pl.kernel(
           mesh=mesh,
           out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
