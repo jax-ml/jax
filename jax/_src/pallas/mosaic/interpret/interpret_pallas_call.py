@@ -198,7 +198,7 @@ def _initialize_shared_memory(
   with _shared_memory_init_lock:
     if _shared_memory is None:
       vector_clock_size = interpret_params.get_vector_clock_size(num_devices)
-      races = RaceDetectionState(num_cores=num_cores)
+      races = RaceDetectionState(on_race=interpret_params.on_race)
       dma_id_counter = interpret_utils.Counter(100)
       _shared_memory = memory.SharedMemory(
           num_devices=num_devices,

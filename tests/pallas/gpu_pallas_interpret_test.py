@@ -52,6 +52,13 @@ class InterpretTest(jtu.JaxTestCase):
             message='jax.experimental.pallas.core_map is deprecated',
         )
     )
+    try:
+      # If an exception was thrown by a jitted computation during the
+      # previous test, we observe/consume exception here to avoid propagating
+      # it to the next test.
+      jax.effects_barrier()
+    except:
+      pass
     mosaic_interpret.gpu_callbacks.reset_gpu_interpret_mode_state()
 
     if not jtu.test_device_matches(['cpu']):
@@ -104,7 +111,6 @@ class InterpretTest(jtu.JaxTestCase):
       )()
 
     np.testing.assert_equal(kernel(), np.array([42], dtype=jnp.int32))
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   @jtu.parameterized.parameters(range(1, 17))
   def test_interpret_core_map(self, num_threads: int):
@@ -122,7 +128,6 @@ class InterpretTest(jtu.JaxTestCase):
 
     y = kernel(jnp.zeros((num_threads,), jnp.int32))
     np.testing.assert_equal(y, np.arange(num_threads, dtype=jnp.int32))
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   def test_interpret_core_map_with_race(self):
     @pl.run_state
@@ -137,8 +142,8 @@ class InterpretTest(jtu.JaxTestCase):
         thread_idx = jax.lax.axis_index('x')
         o_ref[...] = thread_idx
 
-    kernel(jnp.zeros((), jnp.int32))
-    self.assertTrue(mosaic_interpret.get_races().races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      kernel(jnp.zeros((), jnp.int32)).block_until_ready()
 
   @jtu.parameterized.parameters(range(1, 17))
   def test_interpret_kernel(self, num_threads):
@@ -155,7 +160,6 @@ class InterpretTest(jtu.JaxTestCase):
       o_ref[thread_idx] = thread_idx
 
     np.testing.assert_equal(jax.jit(_kernel)(), np.arange(num_threads))
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   def test_layout_cast(self):
     # the layout_cast is a no-op in interpret mode
@@ -205,8 +209,8 @@ class InterpretTest(jtu.JaxTestCase):
         interpret=InterpretParams(detect_races=True),
     )
 
-    kernel(jnp.arange(8, dtype=jnp.int32))
-    self.assertTrue(mosaic_interpret.get_races().races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      kernel(jnp.arange(8, dtype=jnp.int32)).block_until_ready()
 
   def test_store(self):
     @functools.partial(
@@ -253,10 +257,11 @@ class InterpretTest(jtu.JaxTestCase):
     )
 
     x = jnp.arange(8, dtype=jnp.int32)
-    out = kernel(x)
-    self.assertEqual(mosaic_interpret.get_races().races_found, with_race)
-    if not with_race:
-      np.testing.assert_array_equal(out, x)
+    if with_race:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        kernel(x).block_until_ready()
+    else:
+      np.testing.assert_array_equal(kernel(x), x)
 
   def test_ref_union_disjoint_group_lifetimes_are_allowed(self):
     # Each group is written before it is read, so their lifetimes do not
@@ -282,7 +287,6 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(
         jax.jit(_kernel)(), np.arange(128, dtype=np.float32) + 1.0
     )
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   def test_ref_union_disjoint_members_do_not_race(self):
     # Two refs in the *same* alias group are laid out disjointly, so writing
@@ -314,7 +318,6 @@ class InterpretTest(jtu.JaxTestCase):
         b[...] = jnp.ones((128,), jnp.float32)
 
     jax.jit(_kernel)()
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   def test_ref_union_member_transforms_are_logical(self):
     @functools.partial(
@@ -396,7 +399,6 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(
         jax.jit(_kernel)(), np.ones((128, 64), np.float32)
     )
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   def test_ref_union_member_as_mma_accumulator(self):
     # The product is formed at the member's dtype, not at the placeholder dtype
@@ -681,10 +683,11 @@ class InterpretTest(jtu.JaxTestCase):
           plgpu.barrier_wait(done)
         store(second, jnp.zeros(member.shape, member.dtype))
 
-    jax.jit(_kernel)()
-    self.assertEqual(
-        mosaic_interpret.get_races().races_found, not synchronized
-    )
+    if synchronized:
+      jax.jit(_kernel)()
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        jax.jit(_kernel)().block_until_ready()
 
   def test_ref_union_read_of_other_group_raises(self):
     @functools.partial(
@@ -863,7 +866,6 @@ class InterpretTest(jtu.JaxTestCase):
     y = jax.random.normal(k2, (1024, 1024))
     z = matmul(x, y)
     np.testing.assert_allclose(z, x @ y, atol=1e-3)
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   def test_run_scoped(self):
 
@@ -894,8 +896,8 @@ class InterpretTest(jtu.JaxTestCase):
           collective_axes=('n',),
       )
 
-    _ = f()
-    self.assertTrue(mosaic_interpret.get_races().races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      f().block_until_ready()
 
   @jtu.parameterized.parameters(
       ((),),
@@ -964,7 +966,6 @@ class InterpretTest(jtu.JaxTestCase):
         _ = f()
     else:
       y = f()
-      self.assertFalse(mosaic_interpret.get_races().races_found)
       expected = np.arange(2 ** len(collective_axes)).reshape(
           (1,) * len(non_collective_axis_names) + (2,) * len(collective_axes)
       )
@@ -1090,7 +1091,6 @@ class InterpretTest(jtu.JaxTestCase):
 
     y = _kernel(x)
     np.testing.assert_array_equal(y, x + 2)
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   @jtu.parameterized.product(with_race=[True, False])
   def test_barrier_multidimensional_1d(self, with_race):
@@ -1122,11 +1122,11 @@ class InterpretTest(jtu.JaxTestCase):
             plgpu.barrier_wait(barrier.at[i])
           out_ref[i] = smem_ref[i] + 1
 
-    y = _kernel(x)
     if with_race:
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel(x).block_until_ready()
     else:
-      self.assertFalse(mosaic_interpret.get_races().races_found)
+      y = _kernel(x)
       np.testing.assert_array_equal(y, x + 2)
 
   @jtu.parameterized.product(with_race=[True, False])
@@ -1160,11 +1160,11 @@ class InterpretTest(jtu.JaxTestCase):
               plgpu.barrier_wait(barrier.at[i, j])
             out_ref[i, j] = smem_ref[i, j] + 1
 
-    y = _kernel(x)
     if with_race:
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel(x).block_until_ready()
     else:
-      self.assertFalse(mosaic_interpret.get_races().races_found)
+      y = _kernel(x)
       np.testing.assert_array_equal(y, x + 2)
 
   @jtu.parameterized.product(with_race=[True, False])
@@ -1199,11 +1199,11 @@ class InterpretTest(jtu.JaxTestCase):
                 plgpu.barrier_wait(barrier.at[i, j, k])
               out_ref[i, j, k] = smem_ref[i, j, k] + 1
 
-    y = _kernel(x)
     if with_race:
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel(x).block_until_ready()
     else:
-      self.assertFalse(mosaic_interpret.get_races().races_found)
+      y = _kernel(x)
       np.testing.assert_array_equal(y, x + 2)
 
   @jtu.parameterized.parameters(range(2, 17))
@@ -1237,7 +1237,6 @@ class InterpretTest(jtu.JaxTestCase):
 
     y = _kernel()
     self.assertEqual(y, sum(range(num_threads)))
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   @jtu.parameterized.parameters(range(2, 17))
   def test_multiple_barriers_with_single_arrival(self, num_threads):
@@ -1270,7 +1269,6 @@ class InterpretTest(jtu.JaxTestCase):
 
     y = _kernel()
     self.assertEqual(y, sum(range(num_threads)))
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   @jtu.parameterized.parameters(1, 2)
   def test_barrier_arrive_with_predicate(self, arriving_thread):
@@ -1303,12 +1301,11 @@ class InterpretTest(jtu.JaxTestCase):
             barrier, predicate=thread_id == arriving_thread
         )
 
-    y = _kernel()
     if arriving_thread == 1:
-      self.assertFalse(mosaic_interpret.get_races().races_found)
-      self.assertEqual(y, 42)
+      self.assertEqual(_kernel(), 42)
     else:
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   # Test adapted from
   # https://docs.jax.dev/en/latest/pallas/gpu/reference.html#explicit-arrival-cross-thread-synchronization
@@ -1385,7 +1382,6 @@ class InterpretTest(jtu.JaxTestCase):
       )
 
     y = _kernel(x)
-    self.assertFalse(mosaic_interpret.get_races().races_found)
     if skip_floating_point_ops:
       np.testing.assert_array_equal(y, jnp.full_like(y, jnp.inf))
     else:
@@ -1465,7 +1461,6 @@ class InterpretTest(jtu.JaxTestCase):
 
     y = _kernel()
     self.assertEqual(y, 3)
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   def test_completing_barrier_twice_in_same_thread_raises(self):
     @functools.partial(
@@ -1682,7 +1677,6 @@ class InterpretTest(jtu.JaxTestCase):
         dtype=a.dtype,
     ).reshape(a.shape)
     np.testing.assert_array_equal(y, expected)
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   @jtu.parameterized.product(
       tile_x=[1, 2, 4],
@@ -1731,7 +1725,6 @@ class InterpretTest(jtu.JaxTestCase):
     expected = a + b
     y = kernel(a, b)
     np.testing.assert_array_equal(y, expected)
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   @jtu.parameterized.product(
       tile_m=[1, 2, 4],
@@ -1808,7 +1801,6 @@ class InterpretTest(jtu.JaxTestCase):
     expected = a @ b
     y = kernel(a, b)
     np.testing.assert_array_equal(y, expected)
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   def test_matmul_over_grid_with_race(self, tile_m=4, tile_k=2, tile_n=4):
     dtype = jnp.int32
@@ -1858,8 +1850,8 @@ class InterpretTest(jtu.JaxTestCase):
         interpret=InterpretParams(detect_races=True),
     )
 
-    kernel(a, b)
-    self.assertTrue(mosaic_interpret.get_races().races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      kernel(a, b).block_until_ready()
 
   @jtu.parameterized.product(with_race=[True, False])
   def test_copy_gmem_to_smem_single_thread(self, with_race):
@@ -1880,11 +1872,11 @@ class InterpretTest(jtu.JaxTestCase):
         ),
     )
 
-    y = kernel(x)
     if with_race:
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        kernel(x).block_until_ready()
     else:
-      self.assertFalse(mosaic_interpret.get_races().races_found)
+      y = kernel(x)
       np.testing.assert_array_equal(y, x)
 
   @jtu.parameterized.product(with_race=[True, False])
@@ -1916,11 +1908,11 @@ class InterpretTest(jtu.JaxTestCase):
         thread_name='t',
     )
 
-    y = kernel(x)
     if with_race:
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        kernel(x).block_until_ready()
     else:
-      self.assertFalse(mosaic_interpret.get_races().races_found)
+      y = kernel(x)
       np.testing.assert_array_equal(y, x)
 
   @jtu.parameterized.product(with_race=[True, False])
@@ -1954,11 +1946,11 @@ class InterpretTest(jtu.JaxTestCase):
         thread_name='t',
     )
 
-    y = kernel(x)
     if with_race:
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        kernel(x).block_until_ready()
     else:
-      self.assertFalse(mosaic_interpret.get_races().races_found)
+      y = kernel(x)
       np.testing.assert_array_equal(y, x)
 
   @jtu.parameterized.product(num_tma_threads_per_device=[2, 3, 4])
@@ -1988,9 +1980,8 @@ class InterpretTest(jtu.JaxTestCase):
         ),
     )
 
-    z = kernel(x, y)
-    z.block_until_ready()
-    self.assertTrue(mosaic_interpret.get_races().races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      kernel(x, y).block_until_ready()
 
   @jtu.parameterized.product(with_race=[True, False])
   def test_copy_gmem_to_smem_multiple_arrivals_at_barrier(self, with_race):
@@ -2015,11 +2006,11 @@ class InterpretTest(jtu.JaxTestCase):
         ),
     )
 
-    z = kernel(x, y)
     if with_race:
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        kernel(x, y).block_until_ready()
     else:
-      self.assertFalse(mosaic_interpret.get_races().races_found)
+      z = kernel(x, y)
       np.testing.assert_array_equal(z, x + y)
 
   def test_copy_smem_to_gmem(self):
@@ -2112,7 +2103,6 @@ class InterpretTest(jtu.JaxTestCase):
         math.prod(out_shape), dtype=jnp.int32
     ).reshape(out_shape)
     y = kernel()
-    self.assertFalse(mosaic_interpret.get_races().races_found)
     np.testing.assert_array_equal(y, expected)
 
   def test_different_blocks_dont_share_memory(self):
