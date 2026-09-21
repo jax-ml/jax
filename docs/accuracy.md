@@ -46,7 +46,7 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.lax.cbrt` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.cos` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.cosh` | 0.5 | 0.5 | 0.5 | 1.0 | 1.0 | 1.0 |
-| {func}`~jax.lax.erf` | 0.5 | 16.0 | 0.5 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.lax.erf` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.erf_inv` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.erfc` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.exp` | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
@@ -86,7 +86,7 @@ Maximum error in units in the last place (ULPs) for `float16`:
 | {func}`~jax.lax.cbrt` | 1.0 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.cos` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.cosh` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
-| {func}`~jax.lax.erf` | 131.0 | 131.0 | 131.0 | 131.0 | 131.0 | 131.0 |
+| {func}`~jax.lax.erf` | 1.0 | 0.5 | 0.5 | 0.5 | 1.0 | 1.0 |
 | {func}`~jax.lax.erf_inv` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.erfc` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.exp` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
@@ -126,7 +126,7 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.cbrt` | 0.5 | 1.5 | 4.5 | 4.5 | 1.5 | 1.5 | |
 | {func}`~jax.lax.cos` | 0.5 | 2.0 | 3.5 | 3.5 | 3.5 | 3.0 | |
 | {func}`~jax.lax.cosh` | 25.0 | 2.5 | 93.5 | 99.0 | 59.0 | 59.5 | |
-| {func}`~jax.lax.erf` | 7.0 | 1076922.0 | 7.5 | 8.5 | 1.5 | 1.5 | |
+| {func}`~jax.lax.erf` | 7.0 | 6.5 | 7.5 | 8.5 | 1.5 | 1.5 | |
 | {func}`~jax.lax.erf_inv` | 65.0 | 65.0 | 427.0 | 65.5 | 65.0 | 65.5 | |
 | {func}`~jax.lax.erfc` | 66.0 | 66.5 | 145.0 | 157.0 | 124.5 | 125.0 | |
 | {func}`~jax.lax.exp` | 1.5 | 2.0 | 116.0 | 109.5 | 64.5 | 65.0 | |
@@ -172,7 +172,7 @@ exhaustive, for float64 these are lower bounds.
 | {func}`~jax.lax.cbrt` | $\ge 0.5$ | $\ge 1.5$ |
 | {func}`~jax.lax.cos` | $\ge 0.5$ | $\ge 1.5$ |
 | {func}`~jax.lax.cosh` | $\ge 496.0$ | $\ge 2.5$ |
-| {func}`~jax.lax.erf` | $\ge 2.5$ | $\ge 576922644178748.5$ |
+| {func}`~jax.lax.erf` | $\ge 2.5$ | $\ge 2.5$ |
 | {func}`~jax.lax.erf_inv` | $\ge 82.5$ | $\ge 83.5$ |
 | {func}`~jax.lax.erfc` | $\ge 350.0$ | $\ge 350.0$ |
 | {func}`~jax.lax.exp` | $\ge 1.0$ | $\ge 1.5$ |

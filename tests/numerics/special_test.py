@@ -106,15 +106,20 @@ class SpecialTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erf_test_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 131.0, f32: 7.0, f64: 2.5}),
-        ("gpu",
-         {bf16: 16.0, f16: 131.0, f32: 1076922.0, f64: 576922644178748.5}),
-        (TPU_EUPV1, {f16: 131.0, f32: 7.5}),
-        ("tpu_v5p", {f16: 131.0, f32: 8.5}),
-        (["tpu_v6e", "tpu_7x"], {f16: 131.0, f32: 1.5}),
+        ("cpu", {f16: 1.0, f32: 7.0, f64: 2.5}),
+        ("gpu", {bf16: 0.5, f16: 0.5, f32: 6.5, f64: 2.5}),
+        (TPU_EUPV1, {f16: 0.5, f32: 7.5}),
+        ("tpu_v5p", {f16: 0.5, f32: 8.5}),
+        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 1.5}),
+    ]
+    input_ftz = [
+        ("cpu", {f16: False}),
+        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
+        ("tpu", {f16: False}),
     ]
     util.check_unary_precision(
-        self, lax.erf, scipy.special.erf, mpmath.erf, dtype, bounds=bounds)
+        self, lax.erf, scipy.special.erf, mpmath.erf, dtype,
+        bounds=bounds, input_ftz=input_ftz)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfc_test_accuracy(self, dtype):
