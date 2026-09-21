@@ -1848,6 +1848,8 @@ class LaunchContext:
       assert barrier is not None
       barrier_ptr = barrier.get_ptr()
       assert reduction_op is None
+      rank = len(slice_shape)
+      idx_operands = ",".join(f"${i}" for i in range(4, 4 + rank))
       if collective_size > 1 and leader_tracked is not None:
         assert collective_size == 2
         if arrive:
@@ -1858,8 +1860,6 @@ class LaunchContext:
           nvvm.mbarrier_arrive_expect_tx(
               barrier_ptr, transfer_bytes, predicate=arrive_predicate
           )
-        rank = len(slice_shape)
-        idx_operands = ",".join(f"${i}" for i in range(4, 4 + rank))
         if isinstance(leader_tracked, _Replicated):
           multicast_mask = (arith.trunci(
               i16, utils.cluster_collective_mask(self.cluster_size, collective)
@@ -1892,14 +1892,27 @@ class LaunchContext:
               barrier_ptr, transfer_bytes, predicate=predicate
           )
         if collective_size > 1:
-          multicast_mask = arith.trunci(
+          multicast_mask = (arith.trunci(
               i16, utils.cluster_collective_mask(self.cluster_size, collective)
-          )
+          ),)
+          smem_space = "shared::cluster"
+          multicast_mod = ".multicast::cluster"
+          multicast_operand = f", ${4 + rank}"
         else:
-          multicast_mask = None
-        nvvm.cp_async_bulk_tensor_shared_cluster_global(
-            smem_ptr, tma_desc, rev_dyn_base_indices, barrier_ptr, [],
-            multicast_mask=multicast_mask, predicate=predicate
+          multicast_mask = ()
+          smem_space = "shared::cta"
+          multicast_mod = ""
+          multicast_operand = ""
+        llvm.inline_asm(
+            ir.Type.parse("!llvm.void"),
+            [predicate, smem_ptr, tma_desc, barrier_ptr, *rev_dyn_base_indices, *multicast_mask],
+            (
+                f"@$0 cp.async.bulk.tensor.{rank}d"
+                f".{smem_space}.global.mbarrier::complete_tx::bytes{multicast_mod} "
+                f"[$1], [$2, {{{idx_operands}}}], [$3]{multicast_operand};"
+            ),
+            "b,r,l,r" + ",r" * rank + ",h" * len(multicast_mask),
+            has_side_effects=True,
         )
     else:
       if reduction_op is not None:

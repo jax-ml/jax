@@ -594,7 +594,8 @@ def warp_idx(sync=True):
 
 
 def warpgroup_idx(sync=True):
-  if get_arch().major < 9:  # Unlikely to have any benefit.
+  major = get_arch().major
+  if major < 9 or major == 12:  # Unlikely to have any benefit.
     sync = False
   i32 = ir.IntegerType.get_signless(32)
   wg_idx = arith.shrui(thread_idx(), c(7, i32))
