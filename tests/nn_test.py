@@ -552,6 +552,18 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.elu(1e4)
     self.assertAllClose(val, 1e4, check_dtypes=False)
 
+  def testEluGradLargeNegative(self):
+    # Regression test for https://github.com/google/jax/issues/39795
+    # The negative branch is expm1(x), so its gradient is exp(x). Previously
+    # expm1's JVP rule computed expm1(x) + 1, which cancellation-flushes to
+    # 0.0 once expm1(x) rounds to -1.0, so the gradient vanished.
+    with jax.enable_x64():
+      x = jnp.asarray(-40.0, dtype=jnp.float64)
+      g = jax.grad(nn.elu)(x)
+      expected = jnp.exp(jnp.asarray(-40.0, dtype=jnp.float64))
+      # Strict tolerance: before the fix `g` was exactly 0.0.
+      self.assertAllClose(g, expected, rtol=1e-12, atol=0.0)
+
   def testGluValue(self):
     val = nn.glu(jnp.array([1.0, 0.0]), axis=0)
     self.assertAllClose(val, jnp.array([0.5]))
