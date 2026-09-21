@@ -85,6 +85,11 @@ class PallasSCTest(jtu.JaxTestCase):
 # TODO(rdyro): A temporary workaround to avoid flakiness.
 @jtu.thread_unsafe_test_class()
 class MpmdAsyncTest(jtu.JaxTestCase):
+  sc_mpmd_compiler_options = dict(
+      xla_mosaic_unsafe_allow_multicore_remote_dma=True,
+      xla_msa_enable=False,
+      xla_tpu_vmem_scavenging_mode="NONE",
+  )
 
   def setUp(self):
     if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
@@ -96,9 +101,6 @@ class MpmdAsyncTest(jtu.JaxTestCase):
       source=[pltpu.HBM, pltpu.VMEM_SHARED],
   )
   def test_async_sc_tc_prefetch_vmem(self, sc_core_type, source):
-    # https://github.com/jax-ml/jax/issues/39621
-    if not jtu.is_libtpu_at_least("0.0.49"):
-      self.skipTest("Requires libtpu >= 0.0.49")
     mesh = from_core_type(sc_core_type)
     tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
     x = jnp.arange(8 * 128).reshape(8, 128)
@@ -122,7 +124,7 @@ class MpmdAsyncTest(jtu.JaxTestCase):
     if source == pltpu.VMEM_SHARED:
       scratch_types.append(pltpu.VMEM_SHARED(x.shape, x.dtype))
 
-    @jax.jit
+    @jax.jit(compiler_options=self.sc_mpmd_compiler_options)
     def f(x):
       x_ref = jax.new_ref(x)
       out, sem = pl.kernel(
@@ -146,9 +148,6 @@ class MpmdAsyncTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(out, x + 1)
 
   def test_tc_vmem_to_sc_vmem_shared(self):
-    if not jtu.is_libtpu_at_least("0.0.49"):
-      self.skipTest("Requires libtpu >= 0.0.49")
-
     mesh = from_core_type(SCV)
     tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
 
@@ -161,7 +160,7 @@ class MpmdAsyncTest(jtu.JaxTestCase):
       local_vmem_ref[...] += 1
       pltpu.sync_copy(local_vmem_ref, out_ref)
 
-    @jax.jit
+    @jax.jit(compiler_options=self.sc_mpmd_compiler_options)
     def f(x):
       tc_vmem = pl.kernel(
           mesh=tc_mesh,
