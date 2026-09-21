@@ -1509,6 +1509,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp.power, args_maker)
 
   @jtu.sample_product(
+    dtype=jtu.dtypes.all_integer,
+    op=['gcd', 'lcm'],
+    swap=[False, True],
+  )
+  def testGcdLcmIntMin(self, dtype, op, swap):
+    # Regression test for https://github.com/jax-ml/jax/issues/40840
+    info = np.iinfo(dtype)
+    x = np.array([info.min, info.min, info.min, -1, 12], dtype=dtype)
+    y = np.array([6, 0, info.min, info.min, 18], dtype=dtype)
+    args_maker = lambda: [y, x] if swap else [x, y]
+    self._CheckAgainstNumpy(getattr(np, op), getattr(jnp, op), args_maker)
+    self._CompileAndCheck(getattr(jnp, op), args_maker)
+
+  @jtu.sample_product(
     [dict(shape=shape, axis=axis)
       for shape in all_shapes
       for axis in [None] + list(range(len(shape)))

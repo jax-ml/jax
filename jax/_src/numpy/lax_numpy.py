@@ -8910,8 +8910,16 @@ def gcd(x1: ArrayLike, x2: ArrayLike) -> Array:
   if not issubdtype(x1.dtype, np.integer):
     raise ValueError("Arguments to jax.numpy.gcd must be integers.")
   x1, x2 = broadcast_arrays(x1, x2)
-  gcd, _ = control_flow.while_loop(_gcd_cond_fn, _gcd_body_fn, (ufuncs.abs(x1), ufuncs.abs(x2)))
-  return gcd
+  dtype, weak_type = x1.dtype, dtypes.is_weakly_typed(x1)
+  x1, x2 = ufuncs.abs(x1), ufuncs.abs(x2)
+  if issubdtype(dtype, np.signedinteger):
+    # abs(iinfo(dtype).min) is not representable in dtype, so the Euclidean
+    # loop runs on unsigned magnitudes and wraps back on exit, as NumPy does.
+    udtype = np.dtype(f'uint{dtypes.iinfo(dtype).bits}')
+    x1, x2 = (lax.convert_element_type(x1, udtype),
+              lax.convert_element_type(x2, udtype))
+  gcd, _ = control_flow.while_loop(_gcd_cond_fn, _gcd_body_fn, (x1, x2))
+  return lax._convert_element_type(gcd, dtype, weak_type)
 
 
 @export
