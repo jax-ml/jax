@@ -77,7 +77,9 @@ class ElementaryTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_sin_test_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0}),
+        # ARM has 1.0 ULP error at the smallest normal inputs (+-2^-126) where
+        # sin returns +-0.0, whereas Intel is correctly rounded (0.5 ULP).
+        ("cpu", {bf16: (0.5, 1.0), f16: 1.0, f32: (0.5, 1.0)}),
         ("gpu", {f16: 1.0, f32: 1.5, f64: 2.5}),
         ("tpu", {bf16: 1.0, f16: 1.0, f32: 3.5}),
     ]
