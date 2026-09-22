@@ -42,7 +42,6 @@ from jax._src import typing as jax_typing
 from jax._src import util
 from jax._src.api import jit
 from jax._src.export._export import export
-from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
@@ -362,8 +361,6 @@ _dynamic_shapes = config.config_ext.Config[bool](
 @dataclasses.dataclass
 class PallasTracingEnv(threading.local):
   grid_env_stack: list[GridEnv] = dataclasses.field(default_factory=list)
-  is_interpret_mode: bool = False
-  module_export_fn: Callable[[mlir.ir.Module], None] | None = None
 
 _pallas_tracing_env = PallasTracingEnv()
 
