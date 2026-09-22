@@ -4438,17 +4438,11 @@ def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval,
 def default_unop_reduced_rule(aval):
   return getr(aval)
 
-# Elementwise ops that are linear, so that applying them to unreduced inputs
-# could make sense, but that don't have an unreduced rule yet. Applying any
-# other elementwise op to an unreduced input is an error.
-_linear_elementwise_ops = frozenset({'neg', 'real', 'imag', 'conj', 'sub',
-                                     'complex'})
+# Unary elementwise ops that are linear, so that applying them to the partial
+# sums held on each device gives partial sums of the result.
+_linear_unops = frozenset({'neg', 'real', 'imag', 'conj'})
 
 def _unreduced_input_error(name, *avals):
-  if name in _linear_elementwise_ops:
-    return NotImplementedError(
-        f'unreduced rule for {name} is not implemented. Please'
-        ' file an issue at https://github.com/jax-ml/jax/issues')
   axes = tuple(sorted(frozenset().union(*map(getu, avals)), key=str))
   return core.ShardingTypeError(
       f'{name} got an input that is unreduced along mesh axes {axes}, but'
@@ -4459,8 +4453,11 @@ def _unreduced_input_error(name, *avals):
 
 def unop_ur_rule(name, aval, **kwargs):
   reduced = default_unop_reduced_rule(aval)
-  if any(getu(aval)):
-    raise _unreduced_input_error(name, aval)
+  unreduced = getu(aval)
+  if unreduced:
+    if name not in _linear_unops:
+      raise _unreduced_input_error(name, aval)
+    return unreduced, reduced, UnreducedKind.sum
   return frozenset(), reduced, None
 
 def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True):
@@ -4600,6 +4597,32 @@ def nary_ur_rule(name, *avals, **params):
   if any(getu(a) for a in avals):
     raise _unreduced_input_error(name, *avals)
   return frozenset(), reduced, None
+
+def _linear_binop_ur_rule(name, x, y):
+  # For binary ops that are linear in both arguments jointly, like add, sub, and
+  # complex, partial sums of the inputs give partial sums of the output.
+  out_reduced = default_nary_reduced_rule(x, y)
+  x_ur, y_ur = getu(x), getu(y)
+  if x_ur and y_ur:
+    if x_ur != y_ur:
+      raise core.ShardingTypeError(
+          f'lhs and rhs to `{name}` must be unreduced along the same mesh axes. '
+          f'Got lhs={x_ur}, rhs={y_ur}')
+    out_unreduced = x_ur
+  elif x_ur or y_ur:
+    if x_ur and not y_ur:
+      lhs_str, rhs_str = 'lhs', 'rhs'
+    else:
+      assert not x_ur and y_ur
+      lhs_str, rhs_str = 'rhs', 'lhs'
+    raise core.ShardingTypeError(
+        f'{lhs_str} is unreduced while {rhs_str} is not. `{name}` operation does'
+        ' not allow this because there will be implicit communication. Please'
+        f' reduce {lhs_str} via `reshard` before calling `{name}`.')
+  else:
+    out_unreduced = frozenset()
+  kind = UnreducedKind.sum if out_unreduced else None
+  return out_unreduced, out_reduced, kind
 
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
            require_same_dtypes=True, ur_rule=None):
@@ -4997,7 +5020,7 @@ def _complex_transpose_rule(t, x, y):
 def _complex_dtype(dtype, *args, **kwargs):
   return (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
 complex_p = naryop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
-                  'complex')
+                  'complex', ur_rule=partial(_linear_binop_ur_rule, 'complex'))
 ad.deflinear2(complex_p, _complex_transpose_rule)
 mlir.register_lowering(complex_p, partial(_nary_lower_hlo, hlo.complex))
 
@@ -5340,32 +5363,8 @@ def _add_transpose(t, x, y):
   else:
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, t)]
 
-def _add_ur_rule(x, y):
-  out_reduced = default_nary_reduced_rule(x, y)
-  x_ur, y_ur = getu(x), getu(y)
-  if x_ur and y_ur:
-    if x_ur != y_ur:
-      raise core.ShardingTypeError(
-          'lhs and rhs to `add` must be unreduced along the same mesh axes. '
-          f'Got lhs={x_ur}, rhs={y_ur}')
-    out_unreduced = x_ur
-  elif x_ur or y_ur:
-    if x_ur and not y_ur:
-      lhs_str, rhs_str = 'lhs', 'rhs'
-    else:
-      assert not x_ur and y_ur
-      lhs_str, rhs_str = 'rhs', 'lhs'
-    raise core.ShardingTypeError(
-        f'{lhs_str} is unreduced while {rhs_str} is not. `add` operation does'
-        ' not allow this because there will be implicit communication. Please'
-        f' reduce {lhs_str} via `reshard` before calling `add`.')
-  else:
-    out_unreduced = frozenset()
-  kind = UnreducedKind.sum if out_unreduced else None
-  return out_unreduced, out_reduced, kind
-
 add_p: Primitive = naryop(input_dtype, [_num, _num], 'add',
-                          ur_rule=_add_ur_rule)
+                          ur_rule=partial(_linear_binop_ur_rule, 'add'))
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
 mlir.register_lowering(add_p, partial(_nary_lower_hlo, hlo.add))
@@ -5396,7 +5395,8 @@ def _sub_transpose(t, x, y):
   else:
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, neg(t))]
 
-sub_p = standard_naryop([_num, _num], 'sub')
+sub_p = standard_naryop([_num, _num], 'sub',
+                        ur_rule=partial(_linear_binop_ur_rule, 'sub'))
 ad.primitive_jvps[sub_p] = _sub_jvp
 ad.primitive_transposes[sub_p] = _sub_transpose
 mlir.register_lowering(sub_p, partial(_nary_lower_hlo, hlo.subtract))
