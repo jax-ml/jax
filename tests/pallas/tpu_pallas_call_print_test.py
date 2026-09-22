@@ -170,6 +170,41 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
     self.assertLen(numbers, n)
     self.assertTrue(all(num == i for i, num in enumerate(numbers)))
 
+  @parameterized.named_parameters(
+      ("uint8", jnp.uint8),
+      ("uint16", jnp.uint16),
+      ("uint32", jnp.uint32),
+  )
+  def test_debug_print_vector_unsigned_values(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/40860: vector
+    # `debug_print` printed unsigned values above the signed range (e.g.
+    # 2**32 - 1 for uint32) as negative signed integers, even though the
+    # array returned by the kernel was correct.
+    bits = np.dtype(dtype).itemsize * 8
+    values = [0, 2 ** (bits - 1) - 1, 2 ** (bits - 1), 2**bits - 1]
+
+    @jax.jit(compiler_options={"xla_tpu_enable_log_recorder": "true"})
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((len(values),), dtype),
+    )
+    def kernel(x_ref, o_ref):
+      pl.debug_print("unsigned_values {}", x_ref[...])
+      o_ref[...] = x_ref[...]
+
+    x = jnp.array(values, dtype=dtype)
+    with jtu.capture_stderr() as get_output:
+      result = jax.block_until_ready(kernel(x))
+    output = get_output()
+
+    np.testing.assert_array_equal(np.asarray(result), values)
+    for value in values:
+      self.assertIn(str(value), output)
+      if value >= 2 ** (bits - 1):
+        # The same bit pattern reinterpreted as signed would print negative;
+        # make sure that's not what ended up in the log.
+        self.assertNotIn(str(value - 2**bits), output)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

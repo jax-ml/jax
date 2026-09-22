@@ -5649,7 +5649,21 @@ def _debug_print_rule(
     zero = arith.constant(index_type, 0)
     indices = [zero] * len(aval.shape)
     vector.store(arg, ref, indices)
-    tpu.log_buffer(ref, aval.shape, fmt)
+    log_ref = ref
+    if jnp.issubdtype(aval.dtype, jnp.unsignedinteger):
+      # `_dtype_to_ir_type` erases unsigned-ness above (Mosaic does not yet
+      # support unsigned arithmetic types generally), so `ref`'s element
+      # type is signless and `tpu.log_buffer` would print its contents as
+      # signed. Recover the correct signedness for printing purposes only,
+      # via a bitcast-like view; this does not affect the store above or
+      # any other use of `ref`.
+      assert isinstance(element_type, ir.IntegerType), element_type
+      unsigned_type = ir.IntegerType.get_unsigned(element_type.width)
+      unsigned_ref_type = ir.MemRefType.get(
+          aval.shape, unsigned_type, memory_space=ref_type.memory_space
+      )
+      log_ref = tpu.reinterpret_cast(unsigned_ref_type, ref, [])
+    tpu.log_buffer(log_ref, aval.shape, fmt)
     tpu.yield_([])
   return ()
 
