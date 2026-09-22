@@ -111,7 +111,7 @@ def elementwise_inline_asm(
   )
 
 
-elementwise_inline_asm_p = jax_core.Primitive("elementwise_inline_asm_p")
+elementwise_inline_asm_p = jax_core.Primitive("elementwise_inline_asm")
 elementwise_inline_asm_p.multiple_results = True
 
 
@@ -225,7 +225,7 @@ pallas_core.kernel_local_effects.add_type(BarrierEffect)
 effects.control_flow_allowed_effects.add_type(BarrierEffect)
 
 
-debug_barrier_p = jax_core.Primitive("debug_barrier_p")
+debug_barrier_p = jax_core.Primitive("debug_barrier")
 debug_barrier_p.multiple_results = True
 
 
