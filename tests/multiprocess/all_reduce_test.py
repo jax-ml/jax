@@ -18,6 +18,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 import numpy as np
 
 
@@ -141,6 +142,48 @@ class AllReduceTest(jt_multiprocess.MultiProcessTest):
       device_id = i + jax.process_index() * jax.local_device_count()
       expected = group0_expected if device_id % 2 == 0 else group1_expected
       np.testing.assert_array_equal(np.squeeze(shard.data), expected)
+
+  def test_psum_scatter_large(self):
+    if jaxlib_extension_version < 496:
+      self.skipTest("Requires jaxlib_extension_version >= 496")
+    n = jax.device_count()
+    mesh = jtu.create_mesh((n,), ("x",))
+    spec = jax.P("x", None)
+
+    c = 2 * 1024 * 1024  # 8 MiB float32 output shard per rank
+    global_shape = (n, n * c)
+    sharding = jax.NamedSharding(mesh, spec)
+
+    @jax.jit
+    def f(x):
+      return jax.shard_map(
+          lambda y: lax.psum_scatter(y, "x", scatter_dimension=1, tiled=True),
+          mesh=mesh,
+          in_specs=spec,
+          out_specs=spec,
+      )(x)
+
+    def shard_callback(index):
+      r = index[0].start or 0
+      chunks = [
+          np.full((1, c), 100.0 * (k + 1) + r, dtype=np.float32)
+          for k in range(n)
+      ]
+      return np.concatenate(chunks, axis=1)
+
+    rank_sum = n * (n - 1) / 2
+    for it in range(10):
+      x = jax.make_array_from_callback(global_shape, sharding, shard_callback)
+      got = f(x)
+      for shard in got.addressable_shards:
+        r = shard.index[0].start or 0
+        expected = n * 100.0 * (r + 1) + rank_sum
+        if not np.all(shard.data == expected):
+          wrong = np.flatnonzero(shard.data.ravel() != expected)
+          self.fail(
+              f"iteration {it}: rank {r}: {wrong.size} of {c} elements wrong,"
+              f" got {shard.data.ravel()[wrong[0]]}, want {expected}"
+          )
 
 
 if __name__ == "__main__":
