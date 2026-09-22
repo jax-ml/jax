@@ -21,7 +21,7 @@ export = set_module('jax.errors')
 
 class _JAXErrorMixin:
   """Mixin for JAX-specific errors"""
-  _error_page = 'https://docs.jax.dev/en/latest/errors.html'
+  _error_page = 'https://docs.jax.dev/en/latest/101/errors.html'
   _module_name = "jax.errors"
 
   def __init__(self, message: str):
