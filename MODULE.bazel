@@ -22,9 +22,9 @@ bazel_dep(name = "zlib", version = "1.3.2")
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-AD+fcA+AoQ9wvsdh0AUpI30WpuIMBjEkyf/6mKjArzU=",
-    strip_prefix = "rules_ml_toolchain-c0eb2743b7b12b2bbcf0e1888e26d36ba6b093de",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/c0eb2743b7b12b2bbcf0e1888e26d36ba6b093de.tar.gz"],
+    integrity = "sha256-XrL/AKDPawv6pfBMKS1QlceKHPIu1OXi0wfH42qmfe8=",
+    strip_prefix = "rules_ml_toolchain-cdfa52fa7e8bd9fb51cf66de1da166969d850edd",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/cdfa52fa7e8bd9fb51cf66de1da166969d850edd.tar.gz"],
 )
 
 # TODO: use a released version when available
@@ -75,7 +75,12 @@ use_repo(
 )
 
 rocm = use_extension("@xla//third_party/extensions:rocm_configure.bzl", "rocm_configure_ext")
-use_repo(rocm, "local_config_rocm")
+use_repo(rocm, "config_rocm_hipcc", "local_config_rocm")
+
+# rules_ml_toolchain's own config_rocm_hipcc is a fixed ROCm tarball it documents as
+# test-only, and its ROCm cc toolchain reads it. Point that toolchain at our ROCm.
+rocm_hermetic = use_extension("@rules_ml_toolchain//extensions:rocm_hermetic_download.bzl", "rocm_hermetic_download_ext")
+override_repo(rocm_hermetic, config_rocm_hipcc = "config_rocm_hipcc")
 
 python_version_ext = use_extension("@rules_ml_toolchain//extensions:python_version.bzl", "python_version_ext")
 use_repo(python_version_ext, "python_version_repo")
