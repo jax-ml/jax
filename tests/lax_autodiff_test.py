@@ -1379,6 +1379,23 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     self.assertAllClose(tx, expected_gx)
     self.assertAllClose(ty, expected_gy)
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{op.__name__}", "op": op}
+      for op in [lax.max, lax.min]
+  )
+  def test_max_min_jvp_python_scalar(self, op):
+    # Differentiating lax.max with respect to a Python scalar operand used to
+    # raise an AttributeError in its JVP rule.
+    arr = jnp.array([0.0, 1.0, 2.0])
+    if op is lax.max:
+      expected = jnp.array([1.0, 0.5, 0.0])
+    else:
+      expected = jnp.array([0.0, 0.5, 1.0])
+    _, t = jax.jvp(lambda s: op(s, arr), (1.0,), (1.0,))
+    self.assertAllClose(t, expected)
+    _, t = jax.jvp(lambda s: op(arr, s), (1.0,), (1.0,))
+    self.assertAllClose(t, expected)
+
   def testOneMinusSquareAccuracy(self):
     # 1. Near +/-1: evaluating 1 - x^2 as (1 + x) * (1 - x) avoids rounding away
     # lower bits of x^2 against 1.0 before subtraction.

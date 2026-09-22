@@ -9949,12 +9949,13 @@ def canonicalize_precision(precision: PrecisionLike) -> CanonicalPrecision:
 
 def _balanced_cmp(x, y):
   # 1.0 if x > y, 0.5 if x == y, 0.0 if x < y or NaN
-  gt_mask = gt(x, y)
-  eq_mask = eq(x, y)
-  ones = full_like(gt_mask, 1, dtype=x.dtype)
-  zeros = full_like(gt_mask, 0, dtype=x.dtype)
-  half = full_like(gt_mask, 0.5, dtype=x.dtype)
-  return select(gt_mask, ones, select(eq_mask, half, zeros))
+  # Built only from elementwise ops on the comparison masks, so the result
+  # always has the masks' sharding. Materializing constant arrays with
+  # `full_like` instead can lose the sharding when linearizing eagerly under
+  # explicit sharding, and then `select` rejects the mismatched operands.
+  gt_mask = convert_element_type(gt(x, y), _dtype(x))
+  eq_mask = convert_element_type(eq(x, y), _dtype(x))
+  return add(gt_mask, mul(eq_mask, _const(eq_mask, 0.5)))
 
 
 def _eq_meet(a, b):

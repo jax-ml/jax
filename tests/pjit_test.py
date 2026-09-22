@@ -5682,6 +5682,35 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         core.ShardingTypeError, "select cases must have the same shardings"):
       f(arr1 == arr2, arr1, arr3)
 
+  @parameterized.named_parameters(
+      ('max', lax.max),
+      ('min', lax.min),
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_max_min_grad(self, op, mesh):
+    # Eager (non-jit) reverse-mode AD of max/min used to fail with "select cases
+    # must have the same shardings".
+    np_x = np.array([[2., 0.], [np.nan, 1.], [1., 3.], [4., 4.]], np.float32)
+    np_y = np.array([[1., 0.], [1., np.nan], [3., 1.], [4., 5.]], np.float32)
+    s = NamedSharding(mesh, P('x', 'y'))
+    x = jax.device_put(np_x, s)
+    y = jax.device_put(np_y, s)
+
+    # The gradient is 1 for the selected operand, 0.5 for ties and 0 for NaNs.
+    x_wins = np_x > np_y if op is lax.max else np_x < np_y
+    y_wins = np_y > np_x if op is lax.max else np_y < np_x
+    ties = np_x == np_y
+    expected_gx = np.where(x_wins, 1., np.where(ties, .5, 0.)).astype(np.float32)
+    expected_gy = np.where(y_wins, 1., np.where(ties, .5, 0.)).astype(np.float32)
+
+    grad_f = jax.grad(lambda x, y: op(x, y).sum(), argnums=(0, 1))
+    for g in [grad_f, jax.jit(grad_f)]:
+      gx, gy = g(x, y)
+      self.assertEqual(gx.sharding, s)
+      self.assertEqual(gy.sharding, s)
+      self.assertArraysEqual(gx, expected_gx)
+      self.assertArraysEqual(gy, expected_gy)
+
   def test_explicit_mode_no_context_mesh(self):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'),
                            axis_types=(AxisType.Explicit,) * 2)
