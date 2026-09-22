@@ -113,7 +113,7 @@ def shard_map[F: Callable, G: Callable](
     ) -> F | Callable[[G], G]:
   """Map a function over shards of data using a mesh of devices.
 
-  See the docs at https://docs.jax.dev/en/latest/notebooks/shard_map.html.
+  See the docs at https://docs.jax.dev/en/latest/201/shard-map.html.
 
   Args:
     f: callable to be mapped. Each application of ``f``, or "instance" of ``f``,

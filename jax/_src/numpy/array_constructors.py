@@ -177,7 +177,7 @@ def array(object: Any, dtype: DTypeLike | None = None, *args, copy: bool = True,
     >>> jnp.array(pybuffer)
     Array([2, 3, 5, 7], dtype=int32)
 
-  .. _explicit sharding: https://docs.jax.dev/en/latest/parallel.html
+  .. _explicit sharding: https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
   """
   if args:
     if len(args) > 3:

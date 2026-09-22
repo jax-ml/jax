@@ -713,7 +713,7 @@ class LoweringParameters:
 
   # Signals that we are lowering for exporting.
   for_export: bool = False
-  # See usage in https://docs.jax.dev/en/latest/export/export.html#ensuring-forward-and-backward-compatibility
+  # See usage in https://docs.jax.dev/en/latest/501/export.html#ensuring-forward-and-backward-compatibility
   # We have this here to ensure it is reflected in the cache keys
   export_ignore_forward_compatibility: bool = False
   # During lowering hoist the core.Literal constants as args for the main MLIR
@@ -1446,7 +1446,7 @@ def lower_jaxpr_to_module(
           donated_args[input_id] = False
   if any(donated_args):
     unused_donations = [str(a) for a, d in zip(sharded_in_avals, donated_args) if d]
-    msg = "See an explanation at https://docs.jax.dev/en/latest/faq.html#buffer-donation."
+    msg = "See an explanation at https://docs.jax.dev/en/latest/201/jit.html#jax-201-buffer-donation."
     if not platforms_with_donation:
       msg = f"Donation is not implemented for {platforms}.\n{msg}"
     if unused_donations:

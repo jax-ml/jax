@@ -505,9 +505,9 @@ def result_type(*args: Any) -> DType:
     >>> jnp.result_type('float64')  # doctest: +SKIP
     dtype('float32')
 
-    For details on 64-bit values, refer to `Sharp bits - double precision`_:
+    For details on 64-bit values, refer to `Default dtypes and the X64 flag`_:
 
-    .. _Sharp bits - double precision: https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
+    .. _Default dtypes and the X64 flag: https://docs.jax.dev/en/latest/101/default_dtypes.html
   """
   return dtypes.result_type(*args)
 
@@ -1760,7 +1760,7 @@ def gradient(
   The gradient in ``jnp.gradient`` is computed using second-order finite
   differences across the array of sampled function values. This should not
   be confused with :func:`jax.grad`, which computes a precise gradient of
-  a callable function via :ref:`automatic differentiation <automatic-differentiation>`.
+  a callable function via :ref:`automatic differentiation <jax-101-transformations>`.
 
   Args:
     f: *N*-dimensional array of function values.
@@ -2929,7 +2929,7 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
       ``bincount`` to be used with :func:`jax.jit` and other JAX transformations.
     out_sharding: (optional) :class:`~jax.NamedSharding` or :class:`~jax.P` to
       which the created array will be committed. Use `out_sharding` argument,
-      if using explicit sharding (https://docs.jax.dev/en/latest/parallel.html).
+      if using explicit sharding (https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time).
 
   Returns:
     An array of counts or summed weights reflecting the number of occurrences of values
@@ -5539,15 +5539,15 @@ def fromfile(*args, **kwargs):
   unsafe for use with JIT and other JAX transformations. Consider using
   ``jnp.asarray(np.fromfile(...))`` instead, although care should be taken if ``np.fromfile``
   is used within jax transformations because of its potential side-effect of consuming the
-  file object; for more information see `Common Gotchas: Pure Functions
-  <https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions>`_.
+  file object; for more information see `Pure functions
+  <https://docs.jax.dev/en/latest/101/transformations.html#consequence-1-transformations-require-traceable-functions>`_.
   """
   raise NotImplementedError(
     "jnp.fromfile() is not implemented because it may be non-pure and thus unsafe for use "
     "with JIT and other JAX transformations. Consider using jnp.asarray(np.fromfile(...)) "
     "instead, although care should be taken if np.fromfile is used within a jax transformations "
     "because of its potential side-effect of consuming the file object; for more information see "
-    "https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions")
+    "https://docs.jax.dev/en/latest/101/transformations.html#consequence-1-transformations-require-traceable-functions")
 
 
 @export
@@ -5558,15 +5558,15 @@ def fromiter(*args, **kwargs):
   unsafe for use with JIT and other JAX transformations. Consider using
   ``jnp.asarray(np.fromiter(...))`` instead, although care should be taken if ``np.fromiter``
   is used within jax transformations because of its potential side-effect of consuming the
-  iterable object; for more information see `Common Gotchas: Pure Functions
-  <https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions>`_.
+  iterable object; for more information see `Pure functions
+  <https://docs.jax.dev/en/latest/101/transformations.html#consequence-1-transformations-require-traceable-functions>`_.
   """
   raise NotImplementedError(
     "jnp.fromiter() is not implemented because it may be non-pure and thus unsafe for use "
     "with JIT and other JAX transformations. Consider using jnp.asarray(np.fromiter(...)) "
     "instead, although care should be taken if np.fromiter is used within a jax transformations "
     "because of its potential side-effect of consuming the iterable object; for more information see "
-    "https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions")
+    "https://docs.jax.dev/en/latest/101/transformations.html#consequence-1-transformations-require-traceable-functions")
 
 
 @export
@@ -5895,7 +5895,7 @@ def arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
     out_sharding: (optional) :class:`~jax.NamedSharding` or :class:`~jax.P` to
       which the created array will be committed. Use `out_sharding` argument,
       if using explicit sharding
-      (https://docs.jax.dev/en/latest/parallel.html)
+      (https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time)
 
   Returns:
     Array of evenly-spaced values from ``start`` to ``stop``, separated by ``step``.

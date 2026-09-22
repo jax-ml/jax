@@ -429,7 +429,7 @@ def device_memory_profile(backend: str | None = None) -> bytes:
   allocation sites.
 
   For more information how to use the device memory profiler, see
-  :doc:`/device_memory_profiling`.
+  :ref:`jax-201-memory-profiling`.
 
   The profiling system works by instrumenting JAX on-device allocations,
   capturing a Python stack trace for each allocation. The instrumentation is

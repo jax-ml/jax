@@ -224,7 +224,7 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
     warnings.warn(
       f'TPU backend initialization is taking more than {timer_secs} seconds. '
       'Did you run your code on all TPU hosts? '
-      'See https://docs.jax.dev/en/latest/multi_process.html '
+      'See https://docs.jax.dev/en/latest/501/multiprocess.html '
       'for more information.')
 
   # Will log a warning after `timer_secs`.
@@ -868,7 +868,7 @@ def _suggest_missing_backends():
         warning_msg += (
           "This may be due to JAX pre-allocating too much device "
           "memory, leaving too little for CUDA library initialization. See "
-          "https://docs.jax.dev/en/latest/gpu_memory_allocation.html "
+          "https://docs.jax.dev/en/latest/201/gpu-memory.html "
           "for more details and potential workarounds."
         )
       warning_msg += "(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)"

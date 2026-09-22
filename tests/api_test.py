@@ -5245,7 +5245,7 @@ class APITest(jtu.JaxTestCase):
     msg = cm.output[0]
     self.assertIn("different input types", msg)
     self.assertIn("at x, now f32[]{weak_type=True} and before f32[]{weak_type=False}", msg)
-    self.assertIn("https://docs.jax.dev/en/latest/type_promotion.html#weak-types", msg)
+    self.assertIn("https://docs.jax.dev/en/latest/101/type_promotion.html#weak-types", msg)
     self.assertNotIn("explanation unavailable!", msg)
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe

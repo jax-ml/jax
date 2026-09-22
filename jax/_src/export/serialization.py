@@ -86,7 +86,7 @@ def _expired_error_msg(exp: ser_flatbuf.Exported) -> str:
   )
   if exp.JaxVersion() is not None:
     msg += f" It was created with JAX version {exp.JaxVersion().decode('utf-8')}."
-  msg += " See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees."
+  msg += " See https://docs.jax.dev/en/latest/501/export.html#compatibility-guarantees."
   return msg
 
 

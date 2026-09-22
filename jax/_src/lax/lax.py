@@ -1739,7 +1739,7 @@ def convert_element_type(operand: ArrayLike,
     - :func:`jax.lax.bitcast_convert_type`: cast bits directly to a new dtype.
 
   .. _stablehlo.convert: https://openxla.org/stablehlo/spec#convert
-  .. _x64 mode: https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
+  .. _x64 mode: https://docs.jax.dev/en/latest/101/default_dtypes.html
   """
   new_dtype = dtypes.check_and_canonicalize_user_dtype(
       new_dtype, 'convert_element_type')
@@ -3804,7 +3804,7 @@ def stop_gradient[T](x: T) -> T:
   gradients during forward or reverse-mode automatic differentiation. If there
   are multiple nested gradient computations, ``stop_gradient`` stops gradients
   for all of them. For some discussion of where this is useful, refer to
-  :ref:`stopping-gradients`.
+  :ref:`jax-301-stopping-gradients`.
 
   Args:
     x: array or pytree of arrays
@@ -3838,7 +3838,7 @@ def stop_gradient[T](x: T) -> T:
     This is used in a number of places within the JAX codebase; for example
     :func:`jax.nn.softmax` internally normalizes the input by its maximum
     value, and this maximum value is wrapped in ``stop_gradient`` for
-    efficiency. Refer to :ref:`stopping-gradients` for more discussion of
+    efficiency. Refer to :ref:`jax-301-stopping-gradients` for more discussion of
     the applicability of ``stop_gradient``.
   """
   return tree_util.tree_map(_stop_gradient, x)
@@ -10120,7 +10120,7 @@ def empty(shape, dtype, *, out_sharding=None):
     >>> lax.empty(3, jnp.float32)  # doctest: +SKIP
     Array([-5.7326739e+29 -7.7323739e+29 -3.14159256e-29], dtype=float32)
 
-  .. _explicit sharding: https://docs.jax.dev/en/latest/parallel.html
+  .. _explicit sharding: https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
   """
   out_sharding = canonicalize_sharding(out_sharding, 'lax.empty')
   return empty_p.bind(shape=shape, dtype=dtype, out_sharding=out_sharding)

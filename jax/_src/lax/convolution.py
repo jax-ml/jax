@@ -113,7 +113,7 @@ def conv_general_dilated(
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:

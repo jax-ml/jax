@@ -605,7 +605,7 @@ def _check_carry_type(name, body_fun, in_carry, out_carry):
                    '\n'.join(f'  * {d};\n' for d in pvary_applications[:-1])
                    + f'  * {pvary_applications[-1]}.\n')
     if pvary_msg:
-      pvary_msg += ("See https://docs.jax.dev/en/latest/notebooks/shard_map.html#scan-vma "
+      pvary_msg += ("See https://docs.jax.dev/en/latest/201/shard-map.html#scan-vma "
                     "for more information.\n\n")
 
     raise TypeError(

@@ -907,8 +907,8 @@ def checkpoint_name(x, name):
     >>> policy = jax.checkpoint_policies.save_only_these_names("my_intermediate")
     >>> f_checkpointed = jax.checkpoint(f, policy=policy)
 
-    For further examples, see the `remat example notebook
-    <https://docs.jax.dev/en/latest/notebooks/autodiff_remat.html>`_.
+    For further examples, see the `gradient checkpointing guide
+    <https://docs.jax.dev/en/latest/301/remat.html>`_.
   """
   if config.remat3.value:
     return tree_map(lambda x: checkpoint_name3(name, x), x)

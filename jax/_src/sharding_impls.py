@@ -941,7 +941,7 @@ def make_mesh(axis_sizes: Sequence[int], axis_names: Sequence[str],
   Returns:
     A :class:`jax.sharding.Mesh` object.
 
-  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/parallel.html
+  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
   """
   if devices is None:
     devices = xb.devices()
@@ -985,7 +985,7 @@ class set_mesh:
   When a mesh is in context via ``jax.set_mesh``, you can use pass
   raw PartitionSpecs to all APIs that accept sharding as an argument.
   Using ``jax.set_mesh`` is also required for enabling explicit sharding mode:
-  https://docs.jax.dev/en/latest/parallel.html
+  https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
 
   For example::
 

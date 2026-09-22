@@ -2501,7 +2501,7 @@ class ShapedArray(AbstractValue):
       assert manual_axis_type.empty, manual_axis_type
     else:
       sharding = get_sharding(sharding, shape)
-      # https://docs.jax.dev/en/latest/notebooks/shard_map.html#tracking-how-values-vary-over-manual-mesh-axes-and-check-vma-true
+      # https://docs.jax.dev/en/latest/201/shard-map.html#tracking-how-values-vary-over-manual-mesh-axes-and-check-vma-true
       manual_axis_type = get_mat(manual_axis_type, sharding.mesh)
     # See description of https://github.com/jax-ml/jax/pull/30556
     memory_space = get_memory_space(memory_space)
@@ -2855,7 +2855,7 @@ class Ref(metaclass=RefMeta):
   via :func:`jax.ref.new_ref`. For examples of how this can be
   used, refer to the `Ref guide`_.
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   _aval: AbstractValue
   _refs: PyTree  # list of ArrayRefImpl
@@ -2929,7 +2929,7 @@ def new_ref(init_val: Any, *, memory_space: Any = None, kind: Any = None,
   Returns:
     A :class:`jax.ref.Ref` containing a reference to a mutable buffer.
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   return ref_p.bind(init_val, memory_space=memory_space, kind=kind, pin=pin)
 ref_p = Primitive('new_ref')
@@ -3055,7 +3055,7 @@ def freeze(ref: Ref) -> Array:
     >>> jax.ref.freeze(ref)
     Array([  0,   1,   2, 100,   4], dtype=int32)
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   return freeze_p.bind(ref)
 freeze_p = Primitive('freeze')

@@ -722,7 +722,7 @@ def _pallas_call_batching_rule(
 
   # Avoid scaling the cost estimate by the batch size if the batch size is a
   # dynamic shape (DimExpr).
-  # https://docs.jax.dev/en/latest/export/shape_poly.html#computing-with-dimension-variables
+  # https://docs.jax.dev/en/latest/501/shape-polymorphism.html#computing-with-dimension-variables
   if cost_estimate is not None and not axis_size_is_dynamic:
     batched_cost_estimate = CostEstimate(
         flops=cost_estimate.flops * axis_size,

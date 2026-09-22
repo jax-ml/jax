@@ -2215,7 +2215,7 @@ def multi_dot(arrays: Sequence[ArrayLike], *, precision: lax.PrecisionLike = Non
   >>> jnp.allclose(result1, result3, atol=1E-4)
   Array(True, dtype=bool)
 
-  We can use JAX's :ref:`ahead-of-time-lowering` tools to estimate the total flops
+  We can use JAX's :ref:`ahead-of-time lowering <jax-201-aot>` tools to estimate the total flops
   of each approach, and confirm that ``multi_dot`` is choosing the more efficient
   option:
 
