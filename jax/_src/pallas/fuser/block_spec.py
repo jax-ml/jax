@@ -1192,15 +1192,28 @@ def _slice_eval_rule(ctx, x, **params):
   return x
 
 
-def _maybe_static_check(pred: bool, msg: str):
+def _maybe_static_check(pred: bool, msg: str, **fmt_kwargs):
   # Tries to emit a static error if possible, otherwise falls back to runtime.
+  #
+  # NOTE: When `pred` is a traced JAX value, this uses `checkify.check()`.
+  # The check is only enforced if the caller wraps execution with
+  # `checkify.checkify()`. Without checkify, violations (e.g. misaligned or
+  # out-of-bounds slice starts) will silently produce wrong results or
+  # undefined behavior. This is a known sharp edge until Fuser has its own
+  # validation pass.
   from jax.experimental import checkify
 
   if isinstance(pred, jax.Array):
-    checkify.check(pred, msg, debug=True)
+    static_kwargs = {k: v for k, v in fmt_kwargs.items()
+                     if not isinstance(v, (jax.Array, np.ndarray))}
+    dynamic_kwargs = {k: v for k, v in fmt_kwargs.items()
+                      if isinstance(v, (jax.Array, np.ndarray))}
+    for k, v in static_kwargs.items():
+      msg = msg.replace(f'{{{k}}}', str(v))
+    checkify.check(pred, msg, debug=True, **dynamic_kwargs)
   else:
     if not pred:
-      raise ValueError(msg)
+      raise ValueError(msg.format(**fmt_kwargs))
 
 
 def _check_slice_alignment(
@@ -1222,12 +1235,18 @@ def _check_slice_alignment(
       if slice_start is not None:
         _maybe_static_check(
             slice_start % block_size == 0,
-            f'{slice_start=} is not a multiple of {block_size=}',
+            'slice_start={slice_start} is not a multiple of'
+            ' block_size={block_size}',
+            slice_start=slice_start,
+            block_size=block_size,
         )
       if not skip_divisibility_check:
         _maybe_static_check(
             slice_size % block_size == 0,
-            f'{slice_size=} is not a multiple of {block_size=}',
+            'slice_size={slice_size} is not a multiple of'
+            ' block_size={block_size}',
+            slice_size=slice_size,
+            block_size=block_size,
         )
     case _:
       raise ValueError(f'Unsupported block size {bs}')
@@ -1574,9 +1593,11 @@ def _swap_pull_rule(
     block_transform: BlockIndexTransform,
     **kwargs,
 ):
-  del ctx, kwargs
+  del kwargs
   # The output and val block spec are the same.
-  return [block_transform, block_transform]
+  return [block_transform, block_transform] + [no_block_index_transform] * (
+      len(ctx.avals_in) - 2
+  )
 
 
 @register_eval_rule(state_primitives.swap_p)
@@ -1589,36 +1610,62 @@ def _swap_eval_rule(ctx: KernelEvalContext, ref, val, *idx, tree):
     raise NotImplementedError('swap not supported yet')
   if not indexers_avals:
     indexer_aval = indexing.NDIndexer.make_trivial_indexer(ref_aval.shape)
+    indexer = indexer_aval
   else:
+    indexer = indexers[0]
     indexer_aval = indexers_avals[0]
-  for idx_aval, size in zip(indexer_aval.indices, ref_aval.shape, strict=True):
+  # We have a pure slice (with optional scalar indices) so now we can just
+  # re-index the ref according to the block indices.
+  block_spec = ctx.out_block_specs[0]
+  block_idx = ctx.get_out_block_indices()[0]
+
+  def _slice(i, b, start, size, dim):
+    if not isinstance(b, int):
+      raise NotImplementedError('swap not supported yet')
+    _maybe_static_check(
+        start % b == 0,
+        'slice_start={slice_start} is not a multiple of'
+        ' block_size={block_size}',
+        slice_start=start,
+        block_size=b,
+    )
+    _maybe_static_check(
+        size % b == 0,
+        'slice_size={slice_size} is not a multiple of'
+        ' block_size={block_size}',
+        slice_size=size,
+        block_size=b,
+    )
+    _maybe_static_check(
+        start + size <= dim,
+        'slice_start={slice_start} + slice_size={slice_size} exceeds'
+        ' ref dimension={dim}',
+        slice_start=start,
+        slice_size=size,
+        dim=dim,
+    )
+    return i if b is None else indexing.ds(start + i * b, b)
+
+  block_idx_iter = iter(block_idx)
+  block_shape_iter = iter(block_spec.block_shape)
+  block_indexer = []
+  for idx_aval, s, dim in zip(
+      indexer_aval.indices, indexer.indices, ref_aval.shape, strict=True
+  ):
     if not isinstance(idx_aval, indexing.Slice):
-      raise NotImplementedError('swap not supported yet')
-    if not isinstance(idx_aval.start, int):
-      raise NotImplementedError('swap not supported yet')
+      assert hasattr(idx_aval, 'shape') and not idx_aval.shape, idx_aval
+      block_indexer.append(s)
+      continue
     if not isinstance(idx_aval.size, int):
       raise NotImplementedError('swap not supported yet')
     if idx_aval.stride != 1:
       raise NotImplementedError('swap not supported yet')
-    if idx_aval.start != 0:
-      raise NotImplementedError('swap not supported yet')
-    if idx_aval.size != size:
-      raise NotImplementedError('swap not supported yet')
-  # We have a pure slice so now we can just re-index the ref according to the
-  # block indices.
-  block_spec = ctx.out_block_specs[0]
-  block_idx = ctx.get_out_block_indices()[0]
-
-  def _slice(i, b):
-    if not isinstance(b, int):
-      raise NotImplementedError('swap not supported yet')
-    return i if b is None else indexing.ds(i * b, b)
-
-  indexer = tuple(
-      _slice(i, b)
-      for i, b in zip(block_idx, block_spec.block_shape, strict=True)
-  )
-  return ref.swap(val, idx=indexer)
+    i = next(block_idx_iter)
+    b = next(block_shape_iter)
+    block_indexer.append(_slice(i, b, s.start, s.size, dim))
+  assert next(block_idx_iter, None) is None
+  assert next(block_shape_iter, None) is None
+  return ref.swap(val, idx=tuple(block_indexer))
 
 
 @register_pull_block_spec_rule(state_primitives.get_p)
@@ -1646,33 +1693,55 @@ def _get_pull_rule(
       for bd in block_transform.block_shape
   ):
     raise NotImplementedError('get not supported yet')
+  dropped_by_scalar_index: list[bool] = []
   for idx_aval, size in zip(indexer_aval.indices, ref_aval.shape, strict=True):
     if not isinstance(idx_aval, indexing.Slice):
+      # Scalar indexing (e.g. ref[3]) drops the dimension from the output.
       assert hasattr(idx_aval, 'shape') and not idx_aval.shape
       block_shape.append(pallas_core.Squeezed())
+      dropped_by_scalar_index.append(True)
       continue
-    if not isinstance(idx_aval.start, int):
-      raise NotImplementedError('get not supported yet')
+    dropped_by_scalar_index.append(False)
     if not isinstance(idx_aval.size, int):
       raise NotImplementedError('get not supported yet')
     if idx_aval.stride != 1:
       raise NotImplementedError('get not supported yet')
-    if idx_aval.start != 0:
-      raise NotImplementedError('get not supported yet')
-    if idx_aval.size != size:
-      raise NotImplementedError('get not supported yet')
     bd = next(block_shape_iter)
-    block_shape.append(_block_size(bd))
+    block_size = _block_size(bd)
+    if block_size is not None:
+      _maybe_static_check(
+          idx_aval.size % block_size == 0,
+          'slice_size={slice_size} is not a multiple of'
+          ' block_size={block_size}',
+          slice_size=idx_aval.size,
+          block_size=block_size,
+      )
+      if isinstance(idx_aval.start, int):
+        _maybe_static_check(
+            idx_aval.start % block_size == 0,
+            'slice_start={slice_start} is not a multiple of'
+            ' block_size={block_size}',
+            slice_start=idx_aval.start,
+            block_size=block_size,
+        )
+        _maybe_static_check(
+            idx_aval.start + idx_aval.size <= size,
+            'slice_start={slice_start} + slice_size={slice_size} exceeds'
+            ' ref dimension={dim}',
+            slice_start=idx_aval.start,
+            slice_size=idx_aval.size,
+            dim=size,
+        )
+    block_shape.append(block_size)
   assert next(block_shape_iter, None) is None
 
   def new_block_index_transform(*idxs):
     idx = block_transform.block_index_transform(*idxs)
     idx_iter = iter(idx)
+    # Dimensions dropped by scalar indexing don't exist in idx, so pad with 0.
     indices = tuple(
-        0
-        if (bd is None or isinstance(bd, pallas_core.Squeezed))
-        else next(idx_iter)
-        for bd in range(len(block_shape))
+        0 if dropped else next(idx_iter)
+        for dropped in dropped_by_scalar_index
     )
     assert next(idx_iter, None) is None
     return indices
@@ -1702,14 +1771,14 @@ def _get_eval_rule(ctx: KernelEvalContext, ref, *idx, tree):
     indexer_aval = indexers_avals[0]
   block_indexer = []
 
-  def _slice(i, b):
+  def _slice(i, b, start):
     match b:
       case int():
-        return indexing.ds(i * b, b)
+        return indexing.ds(start + i * b, b)
       case pallas_core.Blocked(bs):
-        return indexing.ds(i * bs, bs)
+        return indexing.ds(start + i * bs, bs)
       case pallas_core.Squeezed() | None:
-        return i
+        return start + i
       case _:
         raise NotImplementedError(f'get not supported yet for block shape {b}')
 
@@ -1732,18 +1801,36 @@ def _get_eval_rule(ctx: KernelEvalContext, ref, *idx, tree):
       assert bd is None or isinstance(bd, pallas_core.Squeezed)
       block_indexer.append(idx)
       continue
-    if not isinstance(idx_aval.start, int):
-      raise NotImplementedError('get not supported yet')
     if not isinstance(idx_aval.size, int):
       raise NotImplementedError('get not supported yet')
     if idx_aval.stride != 1:
       raise NotImplementedError('get not supported yet')
-    if idx_aval.start != 0:
-      raise NotImplementedError('get not supported yet')
-    if idx_aval.size != size:
-      raise NotImplementedError('get not supported yet')
+    block_size = _block_size(bd)
+    if block_size is not None:
+      _maybe_static_check(
+          idx_aval.size % block_size == 0,
+          'slice_size={slice_size} is not a multiple of'
+          ' block_size={block_size}',
+          slice_size=idx_aval.size,
+          block_size=block_size,
+      )
+      _maybe_static_check(
+          idx.start % block_size == 0,
+          'slice_start={slice_start} is not a multiple of'
+          ' block_size={block_size}',
+          slice_start=idx.start,
+          block_size=block_size,
+      )
+      _maybe_static_check(
+          idx.start + idx_aval.size <= size,
+          'slice_start={slice_start} + slice_size={slice_size} exceeds'
+          ' ref dimension={dim}',
+          slice_start=idx.start,
+          slice_size=idx_aval.size,
+          dim=size,
+      )
     bidx = next(block_idx_iter)
-    block_indexer.append(_slice(bidx, bd))
+    block_indexer.append(_slice(bidx, bd, idx.start))
   assert next(block_idx_iter, None) is None
   return ref.get(idx=tuple(block_indexer))
 
@@ -3461,6 +3548,19 @@ def _dynamic_update_slice_push_rule(
     return tuple(out_idx)
 
   return update_block_spec.replace(index_map=new_index_map)
+
+
+@register_push_block_spec_rule(state_primitives.swap_p)
+def _swap_push_rule(
+    ctx: PushRuleContext,
+    ref_block_spec,
+    val_block_spec,
+    *indexer_block_specs,
+    tree,
+):
+  del ctx, ref_block_spec, indexer_block_specs, tree
+  # The output of swap has the same shape as val, so propagate val's block spec.
+  return val_block_spec
 
 
 @register_push_block_spec_rule(lax.stack_p)

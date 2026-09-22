@@ -53,6 +53,7 @@ def matmul_kernel(
     y_fn: Any,
     z_fn: Any,
     out_dtype: jnp.dtype,
+    bm_compute: int | None = None,
 ):
   @pl.when(pl.program_id(2) == 0)
   def _():
@@ -61,18 +62,68 @@ def matmul_kernel(
   pids = pl.program_id(0), pl.program_id(1), pl.program_id(2)
   scalar_prefetch = (x_scalar_prefetch, y_scalar_prefetch, z_scalar_prefetch)
 
-  x_values = jax.tree.map(lambda ref: ref.get(), x_value_refs)
-  x = x_fn(pids, scalar_prefetch, x_values)
   y_values = jax.tree.map(lambda ref: ref.get(), y_value_refs)
   y = y_fn(pids, scalar_prefetch, y_values)
-  acc_ref[...] += jnp.dot(x, y, preferred_element_type=jnp.float32)
 
-  @pl.when(pl.program_id(2) == pl.num_programs(2) - 1)
-  def _():
-    acc = acc_ref[...].astype(out_dtype)
-    z_values = jax.tree.map(lambda ref: ref.get(), z_value_refs)
-    out = z_fn(pids, scalar_prefetch, z_values, acc)
-    jax.tree.map(lambda ref, x: ref.set(x), o_ref, out)
+  if bm_compute is None:
+    x_values = jax.tree.map(lambda ref: ref.get(), x_value_refs)
+    x = x_fn(pids, scalar_prefetch, x_values)
+    acc_ref[...] += jnp.dot(x, y, preferred_element_type=jnp.float32)
+
+    @pl.when(pl.program_id(2) == pl.num_programs(2) - 1)
+    def _():
+      acc = acc_ref[...].astype(out_dtype)
+      z_values = jax.tree.map(lambda ref: ref.get(), z_value_refs)
+      out = z_fn(pids, scalar_prefetch, z_values, acc)
+      jax.tree.map(lambda ref, x: ref.set(x), o_ref, out)
+  else:
+    bm, bn = acc_ref.shape
+    bk = y.shape[0]
+    assert bm % bm_compute == 0
+
+    def read_and_eval_x():
+      x_values = jax.tree.map(lambda ref: ref.get(), x_value_refs)
+      return x_fn(pids, scalar_prefetch, x_values)
+
+    x_ubatch_fn, (), _ = fuser.pull_block_spec(
+        read_and_eval_x,
+        pl.BlockSpec((bm_compute, bk), lambda u: (u, 0)),
+        grid_len=1,
+        scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(),
+    )()
+
+    @pl.loop(0, bm // bm_compute)
+    def _x_loop(u):
+      x_u = x_ubatch_fn((u,), ())
+      acc_slice = acc_ref.at[pl.ds(u * bm_compute, bm_compute), :]
+      acc_slice[...] += jnp.dot(x_u, y, preferred_element_type=jnp.float32)
+
+    @pl.when(pl.program_id(2) == pl.num_programs(2) - 1)
+    def _():
+      def eval_and_write_z(acc_val):
+        z_values = jax.tree.map(lambda ref: ref.get(), z_value_refs)
+        out = z_fn(pids, scalar_prefetch, z_values, acc_val)
+        return jax.tree.map(lambda ref, x: ref.swap(x), o_ref, out)
+
+      acc_aval = jax.core.ShapedArray((bm, bn), out_dtype)
+      acc_ubatch_spec = pl.BlockSpec((bm_compute, bn), lambda u: (u, 0))
+      out_ubatch_spec = fuser.push_block_spec(
+          eval_and_write_z, acc_ubatch_spec
+      )(acc_aval)
+      z_ubatch_fn, (in_acc_spec,), _ = fuser.pull_block_spec(
+          eval_and_write_z,
+          out_ubatch_spec,
+          grid_len=1,
+          scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(),
+      )(acc_aval)
+      del in_acc_spec
+
+      @pl.loop(0, bm // bm_compute)
+      def _z_loop(u):
+        acc_u = acc_ref.at[pl.ds(u * bm_compute, bm_compute), :][...].astype(
+            out_dtype
+        )
+        z_ubatch_fn((u,), (), acc_u)
 
 
 class KernelImpl(enum.Enum):
@@ -89,6 +140,8 @@ def _fusible_matmul(
     bm: int,
     bk: int,
     bn: int,
+    bm_compute: int | None = None,
+    in_vmem: bool = False,
     interpret: bool,
     debug: bool,
     impl: KernelImpl,
@@ -234,6 +287,7 @@ def _fusible_matmul(
     return out
 
   elif impl == KernelImpl.CORE_MAP:
+    use_vmem = in_vmem and pltpu.get_tpu_info().num_cores == 1
     z_out_leaves, z_out_tree = jax.tree.flatten(z_out_type)
     out = z_out_tree.unflatten(
         z_values[z_output_input_aliases[i]] if i in z_output_input_aliases
@@ -249,10 +303,16 @@ def _fusible_matmul(
      ) = jax.tree.map(ref, (x_values, y_values, z_values, scalar_prefetch, out))
 
     @pl.core_map(pltpu.TensorCoreMesh(axis_name='core'),
-                  interpret=interpret, debug=debug)
+                 interpret=interpret, debug=debug)
     def _():
-      def _f(acc_ref, scalar_prefetch_smem_refs):
+      def _f(acc_ref, scalar_prefetch_smem_refs, x_vmem_refs, out_vmem_ref):
         pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
+        if use_vmem:
+          pltpu.sync_copy(x_values_refs, x_vmem_refs)
+          pltpu.sync_copy(out_ref, out_vmem_ref)
+          pipe_x_refs, pipe_out_ref = x_vmem_refs, out_vmem_ref
+        else:
+          pipe_x_refs, pipe_out_ref = x_values_refs, out_ref
 
         in_specs = (x_value_block_specs, y_value_block_specs,
                     z_value_block_specs)
@@ -270,16 +330,24 @@ def _fusible_matmul(
                 y_fn=y_fn,
                 z_fn=z_fn,
                 out_dtype=out_dtype,
+                bm_compute=bm_compute,
             ),
             grid=grid,
             in_specs=in_specs,
             out_specs=[z_out_block_spec_],
             core_axis_name='core',
             dimension_semantics=dimension_semantics,
-        )(x_values_refs, y_values_refs, z_values_refs, out_ref)
-      pl.run_scoped(_f,
-                    pltpu.VMEM((bm, bn), jnp.float32),
-                    jax.tree.map(pltpu.SMEM.like, scalar_prefetch))
+        )(pipe_x_refs, y_values_refs, z_values_refs, pipe_out_ref)
+        if use_vmem:
+          pltpu.sync_copy(out_vmem_ref, out_ref)
+      vmem_like = lambda v: pltpu.VMEM(v.shape, v.dtype)
+      pl.run_scoped(
+          _f,
+          pltpu.VMEM((bm, bn), jnp.float32),
+          jax.tree.map(pltpu.SMEM.like, scalar_prefetch),
+          jax.tree.map(vmem_like, x_values) if use_vmem else None,
+          jax.tree.map(vmem_like, out) if use_vmem else None,
+      )
 
     out = tuple(r.get() for o, r in enumerate(jax.tree.leaves(out_ref))
                 if o not in z_output_input_aliases)
@@ -289,6 +357,7 @@ def _fusible_matmul(
       return z_out_tree.unflatten(out)
 
   elif impl == KernelImpl.KERNEL:
+    use_vmem = in_vmem and pltpu.get_tpu_info().num_cores == 1
     z_out_leaves, z_out_tree = jax.tree.flatten(z_out_type)
     out = z_out_tree.unflatten(
         z_values[z_output_input_aliases[i]] if i in z_output_input_aliases
@@ -306,8 +375,20 @@ def _fusible_matmul(
     (x_values_refs, y_values_refs, z_values_refs, out_ref) = jax.tree.map(
         ref, (x_values, y_values, z_values, out))
 
-    def body(scalar_prefetch_refs, acc_vmem_ref, scalar_prefetch_smem_refs):
+    def body(
+        scalar_prefetch_refs,
+        acc_vmem_ref,
+        scalar_prefetch_smem_refs,
+        x_vmem_refs,
+        out_vmem_ref,
+    ):
       pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
+      if use_vmem:
+        pltpu.sync_copy(x_values_refs, x_vmem_refs)
+        pltpu.sync_copy(out_ref, out_vmem_ref)
+        pipe_x_refs, pipe_out_ref = x_vmem_refs, out_vmem_ref
+      else:
+        pipe_x_refs, pipe_out_ref = x_values_refs, out_ref
 
       in_specs = (x_value_block_specs, y_value_block_specs,
                   z_value_block_specs)
@@ -325,20 +406,26 @@ def _fusible_matmul(
               y_fn=y_fn,
               z_fn=z_fn,
               out_dtype=out_dtype,
+              bm_compute=bm_compute,
           ),
           grid=grid,
           in_specs=in_specs,
           out_specs=[z_out_block_spec_],
           core_axis_name='core',
           dimension_semantics=dimension_semantics,
-      )(x_values_refs, y_values_refs, z_values_refs, out_ref)
+      )(pipe_x_refs, y_values_refs, z_values_refs, pipe_out_ref)
+      if use_vmem:
+        pltpu.sync_copy(out_vmem_ref, out_ref)
 
+    vmem_like = lambda v: pltpu.VMEM(v.shape, v.dtype)
     pl.kernel(
         body,
         mesh=pltpu.TensorCoreMesh(axis_name='core'),
         scratch_types=[
             pltpu.VMEM((bm, bn), jnp.float32),
             jax.tree.map(pltpu.SMEM.like, scalar_prefetch),
+            jax.tree.map(vmem_like, x_values) if use_vmem else None,
+            jax.tree.map(vmem_like, out) if use_vmem else None,
         ],
         interpret=interpret,
         debug=debug,
@@ -362,6 +449,8 @@ def fusible_matmul(
     bm: int = 128,
     bk: int = 128,
     bn: int = 128,
+    bm_compute: int | None = None,
+    in_vmem: bool = False,
     debug: bool = False,
     interpret: bool = False,
     impl: KernelImpl = KernelImpl.CORE_MAP,
@@ -372,6 +461,8 @@ def fusible_matmul(
           bm=bm,
           bk=bk,
           bn=bn,
+          bm_compute=bm_compute,
+          in_vmem=in_vmem,
           interpret=interpret,
           debug=debug,
           impl=impl,
@@ -751,6 +842,107 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     self.assertArraysAllClose(
         run_matmul(x, y, "identity"), ref, atol=1e-4, rtol=1e-4
     )
+
+  @parameterized.product(
+      dtype=['float32', 'bfloat16'],
+      impl=[KernelImpl.CORE_MAP, KernelImpl.KERNEL],
+  )
+  def test_matmul_with_get_on_sliced_ref(self, dtype, impl):
+    k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
+    x = jax.random.normal(k0, (512, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+    # bias_full is larger than needed; we read a slice of it.
+    bias_full = jax.random.normal(k2, (768, 512), dtype)
+    OFFSET = 256
+
+    @jit_no_excess_precision(static_argnames=['fuse'])
+    def run_matmul(x, y, bias_full, fuse=True):
+      bias_ref = jax.new_ref(bias_full)
+
+      _fusible_matmul = functools.partial(
+          fusible_matmul,
+          bm=256,
+          bm_compute=128,
+          in_vmem=True,
+          impl=impl,
+      )
+      if not fuse:
+        _fusible_matmul = fuser.fuse(_fusible_matmul)
+
+      def matmul(x, y):
+        bias_slice = bias_ref.at[pl.ds(OFFSET, 512), :]
+        return _fusible_matmul(x + bias_slice[...], y).astype(dtype)
+
+      if fuse:
+        matmul = fuser.fuse(matmul)
+
+      return matmul(x, y)
+
+    @jit_no_excess_precision
+    def matmul_ref(x, y, bias_full):
+      return mm_ref(x + bias_full[OFFSET:OFFSET + 512, :], y).astype(dtype)
+
+    self.assertArraysEqual(run_matmul(x, y, bias_full, fuse=False),
+                           run_matmul(x, y, bias_full))
+
+    np.testing.assert_allclose(
+        run_matmul(x, y, bias_full),
+        matmul_ref(x, y, bias_full),
+        atol=5e-5 if dtype == 'float32' else 0.5,
+    )
+
+  @parameterized.product(
+      dtype=['float32', 'bfloat16'],
+      impl=[KernelImpl.CORE_MAP, KernelImpl.KERNEL],
+  )
+  def test_matmul_with_swap_on_sliced_ref(self, dtype, impl):
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, (512, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+    OFFSET = 256
+
+    @jit_no_excess_precision(static_argnames=['fuse'])
+    def run_matmul(x, y, fuse=True):
+      out_ref = jax.new_ref(jnp.zeros((768, 512), dtype))
+
+      _fusible_matmul = functools.partial(
+          fusible_matmul,
+          bm=256,
+          bm_compute=128,
+          in_vmem=True,
+          impl=impl,
+      )
+      if not fuse:
+        _fusible_matmul = fuser.fuse(_fusible_matmul)
+
+      def matmul(x, y):
+        result = _fusible_matmul(x, y).astype(dtype)
+        out_ref.at[pl.ds(OFFSET, 512), :].set(result)
+
+      if fuse:
+        matmul = fuser.fuse(matmul)
+
+      matmul(x, y)
+      return jax.ref.freeze(out_ref)
+
+    @jit_no_excess_precision
+    def matmul_ref(x, y):
+      return mm_ref(x, y).astype(dtype)
+
+    out = run_matmul(x, y)
+    out_fused = out[OFFSET:OFFSET + 512, :]
+
+    self.assertArraysEqual(
+        run_matmul(x, y, fuse=False)[OFFSET:OFFSET + 512, :],
+        out_fused)
+
+    np.testing.assert_allclose(
+        out_fused,
+        matmul_ref(x, y),
+        atol=5e-5 if dtype == 'float32' else 0.5,
+    )
+    # Verify the non-sliced region is zeros.
+    np.testing.assert_array_equal(out[:OFFSET, :], jnp.zeros((OFFSET, 512), dtype))
 
   @parameterized.product(dtype=['float32'], impl=list(KernelImpl))
   def test_nested_fuse(self, dtype, impl):

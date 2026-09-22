@@ -1388,6 +1388,7 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax/_src/pallas/fuser",
+        "//jax/experimental:checkify",
         "//jax/experimental:pallas",
     ] + py_deps([
         "absl/testing",
