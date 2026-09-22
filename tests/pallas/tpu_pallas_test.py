@@ -24,6 +24,7 @@ import math
 import operator
 import re
 from typing import Any, NamedTuple
+from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -37,6 +38,7 @@ from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import pallas_test_util as ptu
 from jax._src.pallas.mosaic import error_handling
+from jax._src.pallas.mosaic import lowering as mosaic_lowering
 from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import discharge as state_discharge
 from jax._src.state import utils as state_utils
@@ -2563,10 +2565,19 @@ class PallasCallTest(ptu.PallasTPUTest):
         y_ref[...] += i
       lax.fori_loop(0, 5, body, None, unroll=unroll)
 
-    with jtu.capture_stdout() as get_output:
+    with (
+        mock.patch.object(
+            mosaic_lowering,
+            'jaxpr_subcomp',
+            wraps=mosaic_lowering.jaxpr_subcomp,
+        ) as mock_subcomp,
+        jtu.capture_stdout() as get_output,
+    ):
       y = f(jnp.array([0], jnp.int32))
 
     self.assertEqual(y[0], 10)
+    # 1 call for the kernel body + 1 call for the detached loop body (not 5).
+    self.assertEqual(mock_subcomp.call_count, 2)
     self.assertNotIn('scf.for', get_output())
 
   @jtu.thread_unsafe_test()

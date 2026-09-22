@@ -4425,9 +4425,12 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
       raise ValueError(
         "Cannot fully unroll loop with dynamic number of steps (unroll=0)")
 
+  is_full_static_unroll = (
+      is_static_start and is_static_steps and num_steps == unroll
+  )
   supports_late_unroll = not ctx.forward_compatible
   # TODO(apaszke): Remove forward_compatible check and associated code after 20.08.2026
-  if unroll > 1 and not supports_late_unroll:
+  if unroll > 1 and (is_full_static_unroll or not supports_late_unroll):
     const_types = [val.type for val in consts]
     args_types = [val.type for val in args]
 
@@ -4484,7 +4487,7 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
         args = jaxpr_subcomp(lowering_context, jaxpr, *consts, *args)
       return args
 
-  if is_static_start and is_static_steps and num_steps == unroll:
+  if is_full_static_unroll:
     # No need for an scf.For. We can just unroll completely
     for i in range(start, start + num_steps):
       args = _run_body(
