@@ -4097,6 +4097,59 @@ def one_minus_square(x: ArrayLike) -> Array:
   """
   return one_minus_square_p.bind(x)
 
+def polynomial(
+    x: ArrayLike, coeffs: Sequence[ArrayLike], *, unroll: int | None = None
+) -> Array:
+  r"""Evaluates a polynomial using Horner's rule:
+
+  .. math::
+
+    P(x) = \sum_{k=0}^{N} a_k x^k = a_0 + x (a_1 + x (a_2 + \dots + x a_N))
+
+  The coefficients ``coeffs = (a_0, a_1, ..., a_N)`` are ordered from lowest
+  degree (:math:`a_0`, the constant term) to highest degree (:math:`a_N`, the
+  coefficient of :math:`x^N`).
+
+  Derivatives with respect to ``x`` are computed as lower-degree
+  polynomials (:math:`\sum_{k=1}^{N} k a_k x^{k-1}`), making first- and
+  higher-order differentiation cheaper than differentiating an open-coded
+  Horner loop.
+
+  Args:
+    x: Input array at which to evaluate the polynomial.
+    coeffs: Sequence of polynomial coefficients ``(a_0, a_1, ..., a_N)`` from
+      lowest to highest degree. Non-scalar coefficients must have the same rank
+      as ``x`` (or broadcastable size-1 dimensions).
+    unroll: Maximum number of terms to unroll directly in the lowered Horner
+      recurrence before falling back to :func:`jax.lax.scan`. Defaults to ``None``
+      (which uses an unroll threshold of 8).
+
+  Returns:
+    An array with the broadcast shape and dtype of ``x`` and ``coeffs``
+    containing the evaluated polynomial.
+
+  Examples:
+    Evaluate :math:`1 + 5x + 2x^2` at :math:`x = 3.0`:
+
+    >>> from jax import lax
+    >>> lax.polynomial(3.0, [1.0, 5.0, 2.0])
+    Array(34., dtype=float32, weak_type=True)
+  """
+  coeffs = tuple(coeffs)
+  dtype = typeof(x).dtype
+  c_args = [
+      _const(x, c) if not isinstance(c, core.Tracer) and np.ndim(c) == 0 else convert_element_type(c, dtype)
+      for c in coeffs
+  ]
+  if not c_args:
+    return _zeros(x)
+  if len(c_args) == 1:
+    out_shape = broadcasting_shape_rule('polynomial', typeof(x), typeof(c_args[0]))
+    out_sharding = broadcasting_sharding_rule('polynomial', typeof(x), typeof(c_args[0]))
+    return _maybe_broadcast(out_shape, c_args[0], out_sharding)
+  kwargs = {} if unroll is None else {'unroll': unroll}
+  return polynomial_p.bind(x, *c_args, **kwargs)
+
 def reciprocal(x: ArrayLike) -> Array:
   r"""Elementwise reciprocal: :math:`1 \over x`.
 
@@ -5025,6 +5078,86 @@ mlir.register_lowering(
         lambda x: mul(add(_one(x), x), sub(_one(x), x)),
         multiple_results=False,
     ),
+)
+
+def _polynomial_dtype_rule(*avals, **kwargs):
+  return naryop_dtype_rule(input_dtype, [_num] * len(avals), 'polynomial', *avals, **kwargs)
+
+polynomial_p = standard_primitive(
+    partial(broadcasting_shape_rule, 'polynomial'),
+    _polynomial_dtype_rule,
+    'polynomial',
+    sharding_rule=partial(broadcasting_sharding_rule, 'polynomial'),
+    vma_rule=partial(core.standard_vma_rule, 'polynomial'),
+    ur_rule=partial(nary_ur_rule, 'polynomial'),
+)
+batching.defbroadcasting(polynomial_p)
+
+def _polynomial_jvp(primals, tangents, *, unroll=None):
+  x, *coeffs = primals
+  dot_x, *dot_coeffs = tangents
+  kwargs = {} if unroll is None else {'unroll': unroll}
+  y = polynomial_p.bind(x, *coeffs, **kwargs)
+  dot_y = ad.Zero(core.typeof(y).to_tangent_aval())
+
+  if not isinstance(dot_x, ad.Zero):
+    deriv_coeffs = [mul(_const(c, k), c) for k, c in enumerate(coeffs[1:], 1)]
+    dy_dx = polynomial(x, deriv_coeffs, unroll=unroll)
+    dot_y = ad.add_tangents(dot_y, mul(dot_x, dy_dx))
+
+  if any(not isinstance(dc, ad.Zero) for dc in dot_coeffs):
+    concrete_dot_coeffs = [
+        _zeros(c) if isinstance(dc, ad.Zero) else dc
+        for c, dc in zip(coeffs, dot_coeffs)
+    ]
+    dy_dc = polynomial(x, concrete_dot_coeffs, unroll=unroll)
+    dot_y = ad.add_tangents(dot_y, dy_dc)
+
+  return y, dot_y
+
+ad.primitive_jvps[polynomial_p] = _polynomial_jvp
+
+def _polynomial_transpose(ct, x, *coeffs, unroll=None):
+  del unroll
+  assert not ad.is_undefined_primal(x)
+  if isinstance(ct, ad.Zero):
+    return [None] + [
+        ad.Zero(c.aval) if ad.is_undefined_primal(c) else None
+        for c in coeffs
+    ]
+  ct_bars = []
+  xk_ct = ct
+  for k, c in enumerate(coeffs):
+    ct_bars.append(_unbroadcast(c.aval, xk_ct) if ad.is_undefined_primal(c) else None)
+    if k + 1 < len(coeffs):
+      xk_ct = mul(xk_ct, x)
+  return [None] + ct_bars
+
+ad.primitive_transposes[polynomial_p] = _polynomial_transpose
+
+def _polynomial_lower(x, *coeffs, unroll=None):
+  unroll_threshold = 8 if unroll is None else unroll
+  if len(coeffs) <= unroll_threshold:
+    acc = coeffs[-1]
+    for c in reversed(coeffs[:-1]):
+      acc = add(mul(acc, x), c)
+    return acc
+  from jax._src.lax import control_flow  # pytype: disable=import-error
+  out_shape = broadcasting_shape_rule('polynomial', *(typeof(a) for a in (x, *coeffs)))
+  out_sharding = broadcasting_sharding_rule('polynomial', *(typeof(a) for a in (x, *coeffs)))
+  b_coeffs = [_maybe_broadcast(out_shape, c, out_sharding) for c in reversed(coeffs)]
+  b_x = _maybe_broadcast(out_shape, x, out_sharding)
+  y, _ = control_flow.scan(
+      lambda acc, c: (add(mul(acc, b_x), c), None),
+      full_like(b_x, 0, shape=out_shape),
+      stack(b_coeffs, axis=0),
+      unroll=unroll_threshold,
+  )
+  return y
+
+mlir.register_lowering(
+    polynomial_p,
+    mlir.lower_fun(_polynomial_lower, multiple_results=False),
 )
 
 def _pow_dtype_rule(x, y):

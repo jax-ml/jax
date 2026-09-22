@@ -1815,13 +1815,8 @@ def _loggamma_chisquare(key, a) -> Array:
   # x^k nu^(-k/2) = t^k, so the series is a degree-6 Horner polynomial in t.
   t = x * lax.rsqrt(nu)
 
-  def row_coef(c):
-    # Evaluate one coefficient row as a quadratic in 1 / nu, by Horner.
-    return c[0] + u * (c[1] + u * c[2])
-
-  poly = row_coef(_CHI2_QUANTILE_COEF[-1])
-  for row in reversed(_CHI2_QUANTILE_COEF[:-1]):
-    poly = poly * t + row_coef(row)
+  row_coeffs = [lax.polynomial(u, row) for row in _CHI2_QUANTILE_COEF]
+  poly = lax.polynomial(t, row_coeffs)
 
   # chi2 = nu poly^3 and Gamma(a, 1) = chi2 / 2 = a poly^3, so log gains log(a).
   # `poly` should never actually reach values <= 0, but clip just in case

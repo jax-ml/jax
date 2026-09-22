@@ -16,6 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New features
+  * Added {func}`jax.lax.polynomial` for polynomial evaluation. The polynomial
+    primitive is faster and uses less memory when computing gradients.
+
 * Changes
   * Improved the numerical accuracy of {func}`jax.numpy.sinc` across all
     floating-point types (to $\le 0.5$ ULP for `bfloat16` and `float16`,

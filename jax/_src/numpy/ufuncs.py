@@ -4043,14 +4043,12 @@ def _sinc_complex(x: Array) -> Array:
   eps = float(dtypes.finfo(x.dtype).eps)
   for k in range(100):
     mag = 1.0 / math.factorial(2 * k + 1)
-    coeffs.insert(0, (-1)**k * mag)
+    coeffs.append((-1)**k * mag)
     if mag <= eps:
       break
 
   u_sq = lax.square(u_series)
-  series = _lax_const(safe_pi_x, coeffs[0])
-  for c in coeffs[1:]:
-    series = lax.add(lax.mul(series, u_sq), _lax_const(safe_pi_x, c))
+  series = lax.polynomial(u_sq, coeffs)
 
   result = _where(use_series, series, lax.div(lax.sin(u_direct), u_direct))
   return _where(eq_inf, _lax_const(x, 0), result)
@@ -4141,7 +4139,7 @@ def sinc(x: ArrayLike, /) -> Array:
   r = _where(is_inf, 0, x - n)
   t = r * r
 
-  # Step 2: Taylor coefficients c_k = (-1)^k * pi^(2k) / (2k+1)! (high to low)
+  # Step 2: Taylor coefficients c_k = (-1)^k * pi^(2k) / (2k+1)! (low to high)
   # for Q(t) in sin(pi * r) / (pi * r) ~= 1 + t * Q(t), t = r^2 in [0, 0.25].
   #
   # We use Taylor coefficients and higher degree (K=6 in float32, K=11 in
@@ -4155,34 +4153,32 @@ def sinc(x: ArrayLike, /) -> Array:
   #     accurate through order 2K.
   if x.dtype == np.float64:
     q_coeffs = (
-        float.fromhex("-0x1.d7353939082fep-39"),
-        float.fromhex("0x1.79788684225eap-33"),
-        float.fromhex("-0x1.f5f9d970ca6dfp-28"),
-        float.fromhex("0x1.0fc992ff39e13p-22"),
-        float.fromhex("-0x1.d42498d1ce099p-18"),
-        float.fromhex("0x1.374719fab3915p-13"),
-        float.fromhex("-0x1.33816aa4607abp-9"),
-        float.fromhex("0x1.ac6805cf350a6p-6"),
-        float.fromhex("-0x1.86a8e4720db67p-3"),
-        float.fromhex("0x1.9f9cb402bc46cp-1"),
         float.fromhex("-0x1.a51a6625307d3p0"),
+        float.fromhex("0x1.9f9cb402bc46cp-1"),
+        float.fromhex("-0x1.86a8e4720db67p-3"),
+        float.fromhex("0x1.ac6805cf350a6p-6"),
+        float.fromhex("-0x1.33816aa4607abp-9"),
+        float.fromhex("0x1.374719fab3915p-13"),
+        float.fromhex("-0x1.d42498d1ce099p-18"),
+        float.fromhex("0x1.0fc992ff39e13p-22"),
+        float.fromhex("-0x1.f5f9d970ca6dfp-28"),
+        float.fromhex("0x1.79788684225eap-33"),
+        float.fromhex("-0x1.d7353939082fep-39"),
     )
   else:
     q_coeffs = (
-        float.fromhex("0x1.37471ap-13"),
-        float.fromhex("-0x1.33816ap-9"),
-        float.fromhex("0x1.ac6806p-6"),
-        float.fromhex("-0x1.86a8e4p-3"),
-        float.fromhex("0x1.9f9cb4p-1"),
         float.fromhex("-0x1.a51a66p0"),
+        float.fromhex("0x1.9f9cb4p-1"),
+        float.fromhex("-0x1.86a8e4p-3"),
+        float.fromhex("0x1.ac6806p-6"),
+        float.fromhex("-0x1.33816ap-9"),
+        float.fromhex("0x1.37471ap-13"),
     )
 
-  # Step 3: Evaluate Q(t) via Horner's method:
+  # Step 3: Evaluate Q(t) via lax.polynomial:
   #   sinc_sin = 1 + t * Q(t)         ~= sin(pi * r) / (pi * r)  (for n == 0)
   #   num      = r + r * (t * Q(t))   ~= sin(pi * r) / pi        (for n != 0)
-  q = _lax_const(x, q_coeffs[0])
-  for c in q_coeffs[1:]:
-    q = q * t + _lax_const(x, c)
+  q = lax.polynomial(t, q_coeffs)
   tq = t * q
   sinc_sin = 1 + tq
   num = r + r * tq

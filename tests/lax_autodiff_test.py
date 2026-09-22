@@ -1422,6 +1422,21 @@ class LaxAutodiffTest(jtu.JaxTestCase):
         rtol=1e-5,
     )
 
+  def testPolynomial(self):
+    coeffs = (1.0, -2.0, 3.0, -4.0)
+    f = lambda x: lax.polynomial(x, coeffs)
+    x = jnp.float32(0.5)
+    self.assertAllClose(jax.grad(jax.grad(jax.grad(f)))(x), -24.0, check_dtypes=False)
+    self.assertAllClose(jax.grad(jax.grad(jax.grad(jax.grad(f))))(x), 0.0, check_dtypes=False)
+    p = jnp.array(coeffs, dtype=jnp.float32)
+    jtu.check_grads(
+        lambda x_in, p_in: lax.polynomial(x_in, p_in),
+        (x, p),
+        order=2,
+        atol=1e-3,
+        rtol=1e-3,
+    )
+
   @parameterized.named_parameters(
       dict(testcase_name="tanh", fn=lax.tanh, x=5.0,
            d1=lambda x: (1 - lax.tanh(x)) * (1 + lax.tanh(x)), d2=lambda t: -2 * t),
