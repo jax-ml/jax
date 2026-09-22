@@ -1086,6 +1086,11 @@ class TMEMLayout(fa.TiledLayout):
   unsupported).
   """
 
+  def __post_init__(self, _check_canonical: bool = True):
+    super().__post_init__(_check_canonical)
+    if self.has_unreduced_dims:
+      raise ValueError("TMEMLayout does not support unreduced layouts")
+
   def check_type(self, shape: tuple[int, ...], bitwidth: int) -> None:
     if len(shape) != 2:
       raise ValueError(f"TMEM can only represent 2D shapes, got {shape}")

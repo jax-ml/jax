@@ -60,9 +60,13 @@ def _to_tiled_layout_attr(
   """Constructs a #mosaic_gpu.TiledLayout attribute from a TiledLayout."""
   i64 = ir.IntegerType.get_signless(64)
 
-  def _int_or_replicated(d: int | fa.Replicated) -> ir.Attribute:
+  def _int_or_replicated(d: int | fa.Replicated | fa.Unreduced) -> ir.Attribute:
     if isinstance(d, fa.Replicated):
       return mgpu.ReplicatedAttr.get(d.times)
+    if isinstance(d, fa.Unreduced):
+      raise NotImplementedError(
+          "Unreduced layout dimensions cannot be converted to TiledLayoutAttr"
+      )
     return ir.IntegerAttr.get(i64, d)
 
   def _tile_attr(tile):

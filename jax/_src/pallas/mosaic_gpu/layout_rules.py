@@ -36,6 +36,8 @@ def _from_fa_layout(layout: fa.FragmentedLayout):
     raise NotImplementedError(
         f"Unsupported layout type: {type(layout)}"
     )
+  if layout.has_unreduced_dims:
+    raise NotImplementedError("Unreduced layouts are not supported in Pallas")
   return GPUTiledLayout(
       layout.tiling, layout.warp_dims, layout.lane_dims, layout.vector_dim
   )
@@ -44,8 +46,8 @@ def _from_fa_layout(layout: fa.FragmentedLayout):
 @dataclasses.dataclass(frozen=True)
 class GPUTiledLayout:
   tiling: fa.Tiling
-  warp_dims: tuple[int | fa.Replicated, ...]  # major-to-minor
-  lane_dims: tuple[int | fa.Replicated, ...]  # major-to-minor
+  warp_dims: tuple[int | fa.Replicated | fa.Unreduced, ...]  # major-to-minor
+  lane_dims: tuple[int | fa.Replicated | fa.Unreduced, ...]  # major-to-minor
   vector_dim: int
 
   @staticmethod

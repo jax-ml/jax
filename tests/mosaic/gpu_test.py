@@ -5886,6 +5886,335 @@ class FragmentedArrayTest(TestCase):
     )(x)
     np.testing.assert_array_equal(result, x.sum(axis=axis))
 
+  def test_unreduced_layout_definitions(self):
+    def as_unreduced(layout, op):
+      """Returns `layout` with its `Replicated` dims marked `Unreduced`."""
+      unreduce = lambda ds: tuple(
+          fa.Unreduced(d.times) if isinstance(d, fa.Replicated) else d
+          for d in ds
+      )
+      return dataclasses.replace(
+          layout,
+          warp_dims=unreduce(layout.warp_dims),
+          lane_dims=unreduce(layout.lane_dims),
+          unreduced_operation=op,
+      )
+
+    layout = fa.WGMMA_LAYOUT
+    # Full reduction along axis 1 (lane_dims=(-5,), vector_dim)
+    r_normal = layout.reduce((1,))
+    self.assertFalse(r_normal.has_unreduced_dims)
+    self.assertIsNone(r_normal.unreduced_operation)
+    self.assertEqual(r_normal, fa.WGMMA_ROW_LAYOUT)
+
+    # Partial reduction along axis 1 leaves the lane dim unreduced.
+    r_partial_lane = layout.reduce((1,), local_only=True, op="add")
+    self.assertEqual(r_partial_lane, as_unreduced(fa.WGMMA_ROW_LAYOUT, "add"))
+
+    # Partial reduction along axis 0 leaves warp and lane dims unreduced.
+    r_partial = layout.reduce((0,), local_only=True, op="add")
+    self.assertEqual(r_partial, as_unreduced(layout.reduce((0,)), "add"))
+    self.assertIn(fa.Unreduced(times=4), r_partial.warp_dims)
+    self.assertIn(fa.Unreduced(times=8), r_partial.lane_dims)
+
+    r_completed = r_partial.reduce(())
+    self.assertFalse(r_completed.has_unreduced_dims)
+    self.assertEqual(r_completed, layout.reduce((0,)))
+
+    # A full reduction of an unreduced layout also completes the pending
+    # partial reduction.
+    self.assertEqual(r_partial.reduce((0,)), layout.reduce((0, 1)))
+
+  def test_partial_layout_reduction_of_register_only_dim(self):
+    # Dimension 0 is not tiled over warps or lanes, so reducing it partially
+    # is already complete: the resulting layout must have no unreduced
+    # dimensions and therefore no `unreduced_operation`.
+    layout = fa.TiledLayout(
+        tiling=fa.Tiling(tiles=((1, 2, 64), (2, 16), (8,), (4,), (2,), (1,))),
+        warp_dims=(-7,),
+        lane_dims=(-6, -5, -4, -3, -2),
+        vector_dim=-1,
+    )
+    reduced = layout.reduce((0,), local_only=True, op="add")
+    self.assertFalse(reduced.has_unreduced_dims)
+    self.assertIsNone(reduced.unreduced_operation)
+    self.assertEqual(reduced, layout.reduce((0,)))
+
+  @parameterized.named_parameters(
+      ("tiled_axis_warp", 0, (64, 32)),
+      ("untiled_and_tiled_axes", (0, 1), (2, 64, 32)),
+  )
+  def test_add_partially_reduced_arrays(self, axis, shape):
+    def kernel(ctx, inp1, inp2, dst, scratch):
+      arr1 = mgpu.FragmentedArray.load_untiled(
+          inp1, layout=mgpu.WGMMA_LAYOUT, optimized=False, is_signed=True
+      )
+      arr2 = mgpu.FragmentedArray.load_untiled(
+          inp2, layout=mgpu.WGMMA_LAYOUT, optimized=False, is_signed=True
+      )
+      axes = (axis,) if isinstance(axis, int) else axis
+      untiled_rank = len(shape) - len(arr1.layout.base_tile_shape)
+      tiled_axes = tuple(a - untiled_rank for a in axes if a >= untiled_rank)
+      partial_layout = arr1.layout.reduce(tiled_axes, local_only=True, op="add")
+      part1 = arr1.reduce("add", axis=axis, target_layout=partial_layout)
+      part2 = arr2.reduce("add", axis=axis, target_layout=partial_layout)
+      self.assertTrue(part1.is_unreduced)
+      self.assertTrue(part2.is_unreduced)
+      # Pointwise binary op between identical partially reduced layouts
+      part_sum = part1 + part2
+      self.assertTrue(part_sum.is_unreduced)
+      # Complete the remaining reduction across lanes and warps.
+      completed = part_sum.reduce("add", (), scratch)
+      self.assertFalse(completed.is_unreduced)
+      completed.store_untiled(dst, optimized=False)
+
+    in_shape = jax.ShapeDtypeStruct(shape, jnp.int32)
+    x1 = np.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
+    x2 = np.ones(shape, dtype=jnp.int32) * 5
+    axes = (axis,) if isinstance(axis, int) else axis
+    out_shape_tuple = tuple(d for i, d in enumerate(shape) if i not in axes)
+    out_shape = jax.ShapeDtypeStruct(out_shape_tuple, jnp.int32)
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        (in_shape, in_shape),
+        out_shape,
+        smem_scratch_shape=jax.ShapeDtypeStruct((256,), jnp.int32),
+    )(x1, x2)
+    expected = (x1 + x2).sum(axis=axis)
+    np.testing.assert_array_equal(result, expected)
+
+  def test_partial_reduce_across_lanes_only(self):
+    # Reducing axis 1 of WGMMA_LAYOUT only spans lanes, so completing the
+    # reduction uses warp shuffles and needs no SMEM scratch.
+    shape = (64, 32)
+    axis = 1
+
+    def kernel(ctx, inp, dst, _):
+      arr = mgpu.FragmentedArray.load_untiled(
+          inp, layout=mgpu.WGMMA_LAYOUT, optimized=False, is_signed=True
+      )
+      partial_layout = arr.layout.reduce((axis,), local_only=True, op="add")
+      # Phase 1: partial reduction that leaves the lanes unreduced.
+      part = arr.reduce("add", axis=axis, target_layout=partial_layout)
+      self.assertTrue(part.is_unreduced)
+      # Phase 2: complete the reduction across lanes, without scratch.
+      completed = part.reduce("add", ())
+      self.assertFalse(completed.is_unreduced)
+      completed.store_untiled(dst, optimized=False)
+
+    in_shape = jax.ShapeDtypeStruct(shape, jnp.int32)
+    x = np.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
+    out_shape_tuple = tuple(d for i, d in enumerate(shape) if i != axis)
+    out_shape = jax.ShapeDtypeStruct(out_shape_tuple, jnp.int32)
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        in_shape,
+        out_shape,
+        smem_scratch_shape=(),
+    )(x)
+    np.testing.assert_array_equal(result, x.sum(axis=axis))
+
+  def test_partial_reduce_lanes_leaving_warps_unreduced(self):
+    # Reducing axis 0 of WGMMA_LAYOUT spans both lanes and warps. Target a
+    # layout that reduces the lane dimensions (with warp shuffles) but leaves
+    # the warp dimensions unreduced, so that SMEM is only involved once the
+    # reduction is completed.
+    shape = (64, 32)
+
+    def kernel(ctx, inp, dst, scratch):
+      arr = mgpu.FragmentedArray.load_untiled(
+          inp, layout=mgpu.WGMMA_LAYOUT, optimized=False, is_signed=True
+      )
+      local_layout = arr.layout.reduce((0,), local_only=True, op="add")
+      full_layout = arr.layout.reduce((0,))
+      lanes_reduced_layout = dataclasses.replace(
+          local_layout, lane_dims=full_layout.lane_dims
+      )
+      self.assertTrue(lanes_reduced_layout.has_unreduced_dims)
+      # Phase 1: reduce across lanes only. No scratch is required.
+      part = arr.reduce("add", axis=0, target_layout=lanes_reduced_layout)
+      self.assertTrue(part.is_unreduced)
+      self.assertEqual(part.layout, lanes_reduced_layout)
+      # Phase 2: complete the reduction across warps.
+      completed = part.reduce("add", (), scratch)
+      self.assertFalse(completed.is_unreduced)
+      completed.store_untiled(dst, optimized=False)
+
+    in_shape = jax.ShapeDtypeStruct(shape, jnp.int32)
+    x = np.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
+    out_shape = jax.ShapeDtypeStruct((shape[1],), jnp.int32)
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        in_shape,
+        out_shape,
+        smem_scratch_shape=jax.ShapeDtypeStruct((256,), jnp.int32),
+    )(x)
+    np.testing.assert_array_equal(result, x.sum(axis=0))
+
+  def test_partial_reduce_chained(self):
+    def kernel(ctx, inp, dst, scratch):
+      arr = mgpu.FragmentedArray.load_untiled(
+          inp, layout=mgpu.WGMMA_LAYOUT, optimized=False, is_signed=True
+      )
+      # Reduce axis 2 (untiled_rank = 1, tiled axis 1) partially with "max"
+      partial_layout_1 = arr.layout.reduce((1,), local_only=True, op="max")
+      part_1 = arr.reduce("max", axis=2, target_layout=partial_layout_1)
+      self.assertTrue(part_1.is_unreduced)
+
+      # Reduce axis 1 (untiled_rank = 1, tiled axis 0) partially with "max"
+      partial_layout_2 = part_1.layout.reduce((0,), local_only=True, op="max")
+      part_2 = part_1.reduce("max", axis=1, target_layout=partial_layout_2)
+      self.assertTrue(part_2.is_unreduced)
+
+      # Complete reduction across lanes and warps
+      completed = part_2.reduce("max", (), scratch)
+      self.assertFalse(completed.is_unreduced)
+      completed.store_untiled(dst, optimized=False)
+
+    shape = (2, 64, 32)
+    in_shape = jax.ShapeDtypeStruct(shape, jnp.int32)
+    x = np.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
+    out_shape = jax.ShapeDtypeStruct((2,), jnp.int32)
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        in_shape,
+        out_shape,
+        smem_scratch_shape=jax.ShapeDtypeStruct((256,), jnp.int32),
+    )(x)
+    expected = x.max(axis=(1, 2))
+    np.testing.assert_array_equal(result, expected)
+
+  def test_partial_reduce_scalar_unsupported(self):
+    def kernel(ctx, src, scratch):
+      del ctx, scratch
+      arr = mgpu.FragmentedArray.load_untiled(
+          src, layout=mgpu.WGMMA_LAYOUT, optimized=False, is_signed=True
+      )
+      partial_layout = arr.layout.reduce((0, 1), local_only=True, op="add")
+      with self.assertRaises(NotImplementedError):
+        arr.reduce("add", axis=(0, 1), target_layout=partial_layout)
+
+    in_shape = jax.ShapeDtypeStruct((64, 32), jnp.int32)
+    mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        in_shape,
+        out_shape=(),
+        smem_scratch_shape=(),
+    )
+
+  def test_partial_reduce_pointwise_ops(self):
+    def kernel(ctx, inp1, inp2, scratch):
+      del ctx, scratch
+      arr1 = mgpu.FragmentedArray.load_untiled(
+          inp1, layout=mgpu.WGMMA_LAYOUT, optimized=False, is_signed=True
+      )
+      arr2 = mgpu.FragmentedArray.load_untiled(
+          inp2, layout=mgpu.WGMMA_LAYOUT, optimized=False, is_signed=True
+      )
+      add_layout = arr1.layout.reduce((0,), local_only=True, op="add")
+      part_add1 = arr1.reduce("add", axis=0, target_layout=add_layout)
+      part_add2 = arr2.reduce("add", axis=0, target_layout=add_layout)
+
+      # Matching pointwise op "add" works:
+      _ = part_add1 + part_add2
+
+      # Incompatible pointwise ops raise ValueError / NotImplementedError:
+      with self.assertRaises(ValueError):
+        _ = part_add1 * part_add2
+      with self.assertRaises(NotImplementedError):
+        _ = part_add1 - part_add2
+      # A unary op cannot distribute over the pending reduction, and has no
+      # other operand whose layout could flag it.
+      with self.assertRaises(NotImplementedError):
+        _ = part_add1.exp()
+      # `max` does not distribute over a pending `add` reduction.
+      with self.assertRaisesRegex(ValueError, "distribute over"):
+        _ = part_add1.max(part_add2)
+
+      one = utils.c(1, arr1.mlir_dtype)
+      splat = mgpu.FragmentedArray.splat(
+          one, shape=part_add1.shape, is_signed=True
+      )
+      # A scalar is splatted into the unreduced layout, which is rejected.
+      with self.assertRaisesRegex(ValueError, "unreduced dims"):
+        _ = part_add1 + 1
+      # A splat LHS must not bypass the check on the unreduced RHS.
+      with self.assertRaises(NotImplementedError):
+        _ = splat - part_add1
+      # A splat RHS is re-splatted into the unreduced layout.
+      with self.assertRaisesRegex(ValueError, "unreduced dims"):
+        _ = part_add1 + splat
+
+      max_layout = arr1.layout.reduce((0,), local_only=True, op="max")
+      part_max1 = arr1.reduce("max", axis=0, target_layout=max_layout)
+      part_max2 = arr2.reduce("max", axis=0, target_layout=max_layout)
+      # Matching pointwise op "max" works:
+      _ = part_max1.max(part_max2)
+      # Non-matching op raises:
+      with self.assertRaises(ValueError):
+        _ = part_max1 + part_max2
+
+      min_layout = arr1.layout.reduce((0,), local_only=True, op="min")
+      part_min1 = arr1.reduce("min", axis=0, target_layout=min_layout)
+      part_min2 = arr2.reduce("min", axis=0, target_layout=min_layout)
+      # Matching pointwise op "min" works:
+      _ = part_min1.min(part_min2)
+      with self.assertRaises(ValueError):
+        _ = part_min1 + part_min2
+
+      prod_layout = arr1.layout.reduce((0,), local_only=True, op="prod")
+      part_prod1 = arr1.reduce("prod", axis=0, target_layout=prod_layout)
+      part_prod2 = arr2.reduce("prod", axis=0, target_layout=prod_layout)
+      # Matching pointwise op "prod" works:
+      _ = part_prod1 * part_prod2
+      with self.assertRaises(ValueError):
+        _ = part_prod1 + part_prod2
+
+    in_shape = jax.ShapeDtypeStruct((64, 32), jnp.int32)
+    mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        (in_shape, in_shape),
+        out_shape=(),
+        smem_scratch_shape=(),
+    )
+
+  def test_splat_rejects_unreduced_layout(self):
+    def kernel(ctx, src, scratch):
+      del ctx, scratch
+      arr = mgpu.FragmentedArray.load_untiled(
+          src, layout=mgpu.WGMMA_LAYOUT, optimized=False, is_signed=True
+      )
+      unreduced_layout = arr.layout.reduce((0,), local_only=True, op="add")
+      with self.assertRaisesRegex(ValueError, "unreduced dims"):
+        mgpu.FragmentedArray.splat(
+            utils.c(1, arr.mlir_dtype),
+            shape=(32,),
+            layout=unreduced_layout,
+            is_signed=True,
+        )
+
+    in_shape = jax.ShapeDtypeStruct((64, 32), jnp.int32)
+    mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        in_shape,
+        out_shape=(),
+        smem_scratch_shape=(),
+    )
+
   @parameterized.product(
       vec_size=(4, 3, 1),
       dtype=(jnp.float32, jnp.float16, jnp.bfloat16,
