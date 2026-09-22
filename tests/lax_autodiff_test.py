@@ -156,6 +156,8 @@ LAX_GRAD_OPS = [
                    dtypes=grad_float_dtypes),
     grad_test_spec(lax.min, nargs=2, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_float_dtypes),
+    grad_test_spec(lax.nextafter, nargs=2, order=1, rng_factory=jtu.rand_default,
+                   dtypes=grad_float_dtypes),
     # TODO(mattjj): make some-equal checks more robust, enable second-order
     # grad_test_spec(lax.max, nargs=2, order=1, rng_factory=jtu.rand_some_equal,
     #                dtypes=grad_float_dtypes, name="MaxSomeEqual"),
