@@ -4438,12 +4438,29 @@ def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval,
 def default_unop_reduced_rule(aval):
   return getr(aval)
 
+# Elementwise ops that are linear, so that applying them to unreduced inputs
+# could make sense, but that don't have an unreduced rule yet. Applying any
+# other elementwise op to an unreduced input is an error.
+_linear_elementwise_ops = frozenset({'neg', 'real', 'imag', 'conj', 'sub',
+                                     'complex'})
+
+def _unreduced_input_error(name, *avals):
+  if name in _linear_elementwise_ops:
+    return NotImplementedError(
+        f'unreduced rule for {name} is not implemented. Please'
+        ' file an issue at https://github.com/jax-ml/jax/issues')
+  axes = tuple(sorted(frozenset().union(*map(getu, avals)), key=str))
+  return core.ShardingTypeError(
+      f'{name} got an input that is unreduced along mesh axes {axes}, but'
+      f' {name} is not linear, so applying it to the partial sums held on'
+      ' each device would compute the wrong result. Reduce the input first,'
+      ' for example with `jax.reshard` (or with `jax.lax.psum` inside'
+      ' `shard_map`).')
+
 def unop_ur_rule(name, aval, **kwargs):
   reduced = default_unop_reduced_rule(aval)
   if any(getu(aval)):
-    raise NotImplementedError(
-        f'unreduced rule for {name} is not implemented. Please'
-        ' file an issue at https://github.com/jax-ml/jax/issues')
+    raise _unreduced_input_error(name, aval)
   return frozenset(), reduced, None
 
 def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True):
@@ -4581,9 +4598,7 @@ def default_nary_reduced_rule(*avals, **params):
 def nary_ur_rule(name, *avals, **params):
   reduced = default_nary_reduced_rule(*avals, **params)
   if any(getu(a) for a in avals):
-    raise NotImplementedError(
-        f'unreduced rule for {name} is not implemented. Please'
-        ' file an issue at https://github.com/jax-ml/jax/issues')
+    raise _unreduced_input_error(name, *avals)
   return frozenset(), reduced, None
 
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
