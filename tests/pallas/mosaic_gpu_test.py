@@ -1174,7 +1174,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
     with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as output:
       x = jax.numpy.ones(gmem_shape, dtype=dtype)
-      kernel(x, 6000)
+      jax.jit(kernel).lower(x, 6000).compile()
 
     ptx = output()
 
