@@ -344,12 +344,25 @@ class PallasGridContext:
     return size
 
 
+_grid_context = config.config_ext.Config[PallasGridContext | None](
+    "pallas_grid_context",
+    None,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+_dynamic_shapes = config.config_ext.Config[bool](
+    "pallas_dynamic_shapes_export",
+    False,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+
 @dataclasses.dataclass
 class PallasTracingEnv(threading.local):
-  grid_context: PallasGridContext | None = None
   grid_env_stack: list[GridEnv] = dataclasses.field(default_factory=list)
   is_interpret_mode: bool = False
-  dynamic_shapes: bool = False
   module_export_fn: Callable[[mlir.ir.Module], None] | None = None
 
 _pallas_tracing_env = PallasTracingEnv()
@@ -359,9 +372,9 @@ def axis_frame() -> PallasGridContext:
   # This is like jax_core.axis_frame, except there should only ever be one
   # active PallasGridAxisName for a particular main_trace because we cannot
   # nest pallas_calls.
-  env = _pallas_tracing_env
-  assert env.grid_context is not None
-  return env.grid_context
+  grid_context = _grid_context.value
+  assert grid_context is not None
+  return grid_context
 
 
 @dataclasses.dataclass(frozen=True)
@@ -907,26 +920,26 @@ def tracing_grid_env(grid: GridMappingGrid, mapped_dims: tuple[int, ...]):
     assert all(i is dynamic_grid_dim or jax_core.is_dim(i) for i in grid)
   else:
     assert all(i is dynamic_grid_dim or isinstance(i, int) for i in grid)
-  old_grid_context = _pallas_tracing_env.grid_context
+  old_grid_context = _grid_context.swap_local(
+      PallasGridContext(tuple(grid), tuple(mapped_dims))
+  )
   try:
-    _pallas_tracing_env.grid_context = PallasGridContext(grid, mapped_dims)
     yield
   finally:
-    _pallas_tracing_env.grid_context = old_grid_context
+    _grid_context.set_local(old_grid_context)
 
 
 @contextlib.contextmanager
 def pallas_export_experimental(dynamic_shapes: bool):
-  old_dynamic_shapes = _pallas_tracing_env.dynamic_shapes
+  old_dynamic_shapes = _dynamic_shapes.swap_local(dynamic_shapes)
   try:
-    _pallas_tracing_env.dynamic_shapes = dynamic_shapes
     yield
   finally:
-    _pallas_tracing_env.dynamic_shapes = old_dynamic_shapes
+    _dynamic_shapes.set_local(old_dynamic_shapes)
 
 
 def dynamic_shapes_export_enabled() -> bool:
-  return _pallas_tracing_env.dynamic_shapes
+  return _dynamic_shapes.value
 
 
 def is_dynamic_dim(d) -> bool:

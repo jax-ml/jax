@@ -2162,18 +2162,25 @@ class OpsTest(PallasBaseTest):
   def test_num_programs(self):
     self.skip_if_mosaic_gpu()
 
-    @functools.partial(
-        self.pallas_call,
-        out_specs=pl.BlockSpec(memory_space=smem_on_tpu()),
-        out_shape=jax.ShapeDtypeStruct((4,), intx),
-        grid=4,
-    )
     def kernel(o_ref):
       o_ref[pl.program_id(0)] = pl.num_programs(0)
 
-    np.testing.assert_array_equal(
-        kernel(), jnp.array([4, 4, 4, 4], dtype=intx)
-    )
+    idx_map = lambda i: (0,)
+
+    grid_sizes = [4, 2, 5, 3]
+    for grid_size in grid_sizes:
+      # The loop also checks that the programs are not incorrectly cached.
+      out = self.pallas_call(
+          kernel,
+          out_specs=pl.BlockSpec(
+              (max(grid_sizes),), idx_map, memory_space=smem_on_tpu()
+          ),
+          out_shape=jax.ShapeDtypeStruct((max(grid_sizes),), intx),
+          grid=grid_size,
+      )()
+      np.testing.assert_array_equal(
+          out[:grid_size], jnp.full(grid_size, grid_size)
+      )
 
   def test_where_broadcasting(self):
     self.skip_if_mosaic_gpu()
