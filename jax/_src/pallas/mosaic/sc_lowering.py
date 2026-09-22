@@ -385,6 +385,12 @@ def _prepare_dma_refs(
       )
       indirect_offsets_ref_str = "src_ref"
     case MemorySpace.VMEM, MemorySpace.HBM | MemorySpace.VMEM_SHARED:
+      if is_add and dst_memory_space is not MemorySpace.VMEM_SHARED:
+        raise ValueError(
+            "Scatter from VMEM with `add=True` via `pltpu.async_copy` is only"
+            " supported when the destination is in VMEM_SHARED, got"
+            f" {dst_memory_space!r}"
+        )
       if _has_indirect_offsets(src_transforms, src_transforms_aval, core_type):
         raise ValueError(
             "Only the destination ref can be indexed when doing a scatter via"
@@ -415,8 +421,8 @@ def _prepare_dma_refs(
         )
       if is_add:
         raise ValueError(
-            "DMAs with `add=True` are only supported between VMEM and "
-            f"HBM/VMEM_SHARED."
+            "DMAs with `add=True` are only supported from HBM/VMEM_SHARED to "
+            "VMEM or from VMEM to VMEM_SHARED. "
             f"Got (src, dst)={(src_aval.memory_space, dst_aval.memory_space)}"
         )
       indirect_offsets = None

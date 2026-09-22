@@ -2324,6 +2324,22 @@ class VectorSubcoreTest(PallasSCTest):
     indices = 31 - jnp.arange(32)
     np.testing.assert_array_equal(kernel(x, indices), x[0] + x.sum(0)[::-1])
 
+  def test_scatter_add_hbm(self):
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(src_ref, idx_ref, out_hbm_ref):
+      pltpu.sync_copy(src_ref, out_hbm_ref.at[idx_ref], add=True)
+
+    x = jnp.ones((8, 128), dtype=jnp.int32)
+    indices = jnp.arange(8, dtype=jnp.int32)
+    with self.assertRaisesRegex(
+        ValueError,
+        "Scatter .* is only supported when the destination is in VMEM_SHARED",
+    ):
+      jax.jit(kernel).lower(x, indices)
+
   def test_shared_scratch(self):
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
