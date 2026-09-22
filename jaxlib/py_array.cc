@@ -18,6 +18,7 @@ limitations under the License.
 #include <Python.h>
 #include <structmember.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -47,6 +48,7 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -2152,7 +2154,7 @@ struct PyArray::CopyToHostState {
     xla::ifrt::IndexDomain index_domain;
     // In case the slice is non-contiguous in the destination buffer, temporary
     // buffers to copy the shard data into; nullptr otherwise.
-    std::unique_ptr<std::vector<char>> temp_buffer;
+    std::unique_ptr<char[]> temp_buffer;
     std::unique_ptr<std::vector<absl::Cord>> temp_string_buffer;
   };
 
@@ -2423,8 +2425,8 @@ PyArray::GetCopyToHostState(xla::ifrt::Client* client) {
       dst_ptr = reinterpret_cast<char*>(string_array_contents->data());
     } else if (is_contiguous) {
       int64_t total_bytes = ifrt_array->shape().num_elements() * elem_size;
-      contiguous_buffer =
-          std::make_unique<char[]>(std::max<int64_t>(1, total_bytes));
+      contiguous_buffer = absl::make_unique_for_overwrite<char[]>(
+          std::max<int64_t>(1, total_bytes));
       dst_ptr = contiguous_buffer.get();
     }
 
@@ -2500,9 +2502,9 @@ absl::Status PyArray::BatchedCopyToHostAsyncHelper(
               std::make_unique<std::vector<absl::Cord>>(shard_elements);
           data_ptr = slice.temp_string_buffer->data();
         } else {
-          slice.temp_buffer = std::make_unique<std::vector<char>>(
-              shard_elements * copy_data.elem_size);
-          data_ptr = slice.temp_buffer->data();
+          slice.temp_buffer = absl::make_unique_for_overwrite<char[]>(
+              std::max<int64_t>(1, shard_elements * copy_data.elem_size));
+          data_ptr = slice.temp_buffer.get();
         }
       }
       buffers.push_back(xla::ifrt::Client::MutableHostBuffer{
@@ -2644,7 +2646,7 @@ absl::Status PyArray::BatchedCopyToHostAsyncHelper(
               }
               ABSL_RETURN_IF_ERROR(SetSlice(result, dtype, slice.index_domain,
                                             shard_byte_strides,
-                                            slice.temp_buffer->data()));
+                                            slice.temp_buffer.get()));
             }
             result.attr("flags").attr("writeable") = nanobind::bool_(false);
             return PyHostValue(std::move(result));
