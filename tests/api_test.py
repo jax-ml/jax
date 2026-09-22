@@ -4324,13 +4324,13 @@ class APITest(jtu.JaxTestCase):
 
     # TODO(mattjj): full test msg below fails (harmlessly) on CI, investigate
     msg = (
-        r"This BatchTracer with object id [0-9]+ was created on line:\n"
+        r"This VmapTracer with object id [0-9]+ was created on line:\n"
         r"  .*\n"
         r"<BatchTracer [0-9]+> is referred to by"
     )
 
     # msg = (
-    #     r"This BatchTracer with object id [0-9]+ was created on line:\n"
+    #     r"This VmapTracer with object id [0-9]+ was created on line:\n"
     #     r"  .*\n"
     #     r"<BatchTracer [0-9]+> is referred to by <function [0-9]+> \(foo\) "
     #     r"closed-over variable x\n"
