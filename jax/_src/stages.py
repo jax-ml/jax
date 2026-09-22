@@ -927,7 +927,7 @@ class Compiled(Stage):
           raise TypeError(
               "Cannot apply JAX transformations to a function lowered and "
               "compiled for a particular signature. Detected argument of "
-              f"Tracer type {type(arg)}.")
+              f"Tracer type {core.type_name(arg)}.")
     lo_outs = params.executable.call(*params.const_args, *args_flat)
 
     if params.is_high:

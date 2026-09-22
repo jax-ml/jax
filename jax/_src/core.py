@@ -897,12 +897,17 @@ class Trace:
   def main(self):
     return getattr(self, "tag", None)
 
+def type_name(x: Any) -> str:
+  """The name of x's type for user-facing messages."""
+  t = type(x)
+  return getattr(t, '_user_facing_name', None) or t.__name__
+
 def escaped_tracer_error(tracer, detail=None):
   num_frames = _TRACER_ERROR_NUM_TRACEBACK_FRAMES.value
   msg = ('Encountered an unexpected tracer. A function transformed by JAX '
          'had a side effect, allowing for a reference to an intermediate value '
          f'with type {tracer.aval.str_short()} wrapped in a '
-         f'{type(tracer).__name__} to escape the scope of the transformation.\n'
+         f'{type_name(tracer)} to escape the scope of the transformation.\n'
          'JAX transformations require that functions explicitly return their '
          'outputs, and disallow saving intermediate values to global state.')
   dbg = getattr(tracer, '_debug_info', None)
@@ -992,6 +997,11 @@ class Tracer[TraceType: Trace](TracerBase, metaclass=TracerMeta):
   # None to avoid hitting the __getattr__ path, which constructs an error
   # message (and is therefore slow).
   dimension_as_value = None
+
+  # The name used for this kind of tracer in user-facing messages, when it
+  # differs from the class name (e.g. 'VmapTracer' for BatchTracer), to match
+  # what _short_repr prints.
+  _user_facing_name: str | None = None
 
   # We define __jax_array__ as a property to delegate to self.aval.__jax_array__
   # if it exists (e.g., for avals like Flax NNX variables).
@@ -1188,7 +1198,7 @@ class Tracer[TraceType: Trace](TracerBase, metaclass=TracerMeta):
       attr = getattr(self.aval, name)
     except AttributeError as err:
       raise AttributeError(
-          f"{self.__class__.__name__} has no attribute {name}"
+          f"{type_name(self)} has no attribute {name}"
       ) from err
     else:
       t = type(attr)
@@ -1629,7 +1639,7 @@ def leaked_tracer_error(name: str, t, tracers: list[Tracer]) -> Exception:
   msgs = []
   for tracer in tracers:  # not a genexpr: it'd be gc-visible and self-report
     chain = why(tracer)
-    label = f'<{type(tracer).__name__} {id(tracer)}>'
+    label = f'<{type_name(tracer)} {id(tracer)}>'
     chain += ''.join(f'\n{label} is referred to by {h}' for h in
                      _held_in_frame_locals(tracer, {id(tracers)}))
     if not chain:
@@ -1703,14 +1713,14 @@ def _why_alive(ignore_ids: set[int], x: Any) -> str:
       pass  # a referrer list can be empty, e.g. a container held only by a
             # live frame's local, since gc.get_referrers can't see live frames
 
-    line = f'<{type(child).__name__} {id(child)}> is referred to by '
+    line = f'<{type_name(child)} {id(child)}> is referred to by '
     lines.append(line + _why_alive_container_info(parent, id(child)))
     seen.add(id(child))
     child = parent
   return '\n' + '\n'.join(lines) if lines else ''
 
 def _why_alive_container_info(container, obj_id) -> str:
-  name = f'<{type(container).__name__} {id(container)}>'
+  name = f'<{type_name(container)} {id(container)}>'
   if type(container) is types.ModuleType:
     name = getattr(container, '__name__', name)
   if type(container) is types.FunctionType:

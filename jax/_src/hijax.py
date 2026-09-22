@@ -1326,7 +1326,7 @@ class custom_jvp3:
     if any(isinstance(x, core.Tracer) for x in traced._consts):
       t = next(x for x in traced._consts if isinstance(x, core.Tracer))
       raise UnexpectedTracerError(
-          f"custom_jvp-decorated function {self.f} closed over a {type(t).__name__} "
+          f"custom_jvp-decorated function {self.f} closed over a {core.type_name(t)} "
           f"of type {t.aval.str_short()}, but custom_jvp functions can't close "
           f"over Tracers. Rewrite {self.f} to take it as an explicit input.")
     args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))

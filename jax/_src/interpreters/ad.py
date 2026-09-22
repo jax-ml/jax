@@ -902,6 +902,8 @@ class LinearizeTracer(Tracer[LinearizeTrace]):
     self.primal = primal
     self.tangent = tangent
 
+  _user_facing_name = 'GradTracer'
+
   def _short_repr(self):
     pp = lambda x: x._short_repr() if isinstance(x, Tracer) else str(x)
     primal, tangent = pp(self.primal), typeof(self.tangent).str_short(True)
