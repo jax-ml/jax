@@ -8036,7 +8036,8 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
 
   Args:
     a: N-dimensional array. ``a.shape[axisa]`` indicates the dimension of
-       the cross product, and must be 2 or 3.
+       the cross product, and must be 3 (dimension 2 inputs were deprecated
+       in JAX v0.11.0, and disallowed in JAX v0.12.0).
     b: N-dimensional array. Must have ``b.shape[axisb] == a.shape[axisb]``,
       and other dimensions of ``a`` and ``b`` must be broadcast compatible.
     axisa: specicy the axis of ``a`` along which to compute the cross product.
@@ -8082,27 +8083,15 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
   a = moveaxis(a, axisa, -1)
   b = moveaxis(b, axisb, -1)
 
-  if a.shape[-1] not in (2, 3) or b.shape[-1] not in (2, 3):
-    raise ValueError("Dimension must be either 2 or 3 for cross product")
-
-  if a.shape[-1] == 2 or b.shape[-1] == 2:
-    deprecations.warn(
-        "jax-numpy-cross-2d-input",
-        "Support for 2-dimensional vectors in jnp.cross is deprecated and "
-        "will be removed in JAX 0.12.0. Use arrays of 3-dimensional "
-        "vectors instead.",
-        stacklevel=2,
-    )
-
-  if a.shape[-1] == 2 and b.shape[-1] == 2:
-    return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
+  if a.shape[-1] != 3 or b.shape[-1] != 3:
+    raise ValueError("Dimension must be 3 for cross product")
 
   a0 = a[..., 0]
   a1 = a[..., 1]
-  a2 = a[..., 2] if a.shape[-1] == 3 else array_creation.zeros_like(a0)
+  a2 = a[..., 2]
   b0 = b[..., 0]
   b1 = b[..., 1]
-  b2 = b[..., 2] if b.shape[-1] == 3 else array_creation.zeros_like(b0)
+  b2 = b[..., 2]
   c = array([a1 * b2 - a2 * b1, a2 * b0 - a0 * b2, a0 * b1 - a1 * b0])
   return moveaxis(c, 0, axisc)
 
