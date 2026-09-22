@@ -23,6 +23,7 @@ from .cluster import ClusterEnv as ClusterEnv
 from .ompi_cluster import OmpiCluster as OmpiCluster
 from .slurm_cluster import SlurmCluster as SlurmCluster
 from .mpi4py_cluster import Mpi4pyCluster as Mpi4pyCluster
+from .cloud_tpu_cluster import K8sTpuCluster as K8sTpuCluster
 from .cloud_tpu_cluster import GkeTpuCluster as GkeTpuCluster
 from .cloud_tpu_cluster import GceTpuCluster as GceTpuCluster
 from .k8s_cluster import K8sCluster as K8sCluster
