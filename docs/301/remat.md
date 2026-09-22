@@ -78,11 +78,10 @@ def f2(W1, W2, W3, x):
 print_saved_residuals(f2, W1, W2, W3, x)
 ```
 
-Here, the values of two `sin` applications are saved because they are
-arguments in subsequent applications of the
-{func}`jax.checkpoint`-decorated `g` function, and inputs to a
-{func}`jax.checkpoint`-decorated function may be saved. But no values of
-`cos` applications are saved.
+Here, the outputs of two `sin` applications are saved, because they're
+inputs to later applications of the checkpointed `g`, and inputs to a
+{func}`jax.checkpoint`-decorated function may be saved. But no `cos` outputs
+are saved.
 
 To control what's saved without editing the function to be differentiated,
 name the values you care about with
@@ -92,14 +91,14 @@ rematerialization *policy*:
 ```{code-cell}
 from jax.ad_checkpoint import checkpoint_name
 
-def f4(W1, W2, W3, x):
+def f3(W1, W2, W3, x):
   x = checkpoint_name(g(W1, x), name='a')
   x = checkpoint_name(g(W2, x), name='b')
   x = checkpoint_name(g(W3, x), name='c')
   return x
 
-f4 = jax.checkpoint(f4, policy=jax.checkpoint_policies.save_only_these_names('a'))
-print_saved_residuals(f4, W1, W2, W3, x)
+f3 = jax.checkpoint(f3, policy=jax.checkpoint_policies.save_only_these_names('a'))
+print_saved_residuals(f3, W1, W2, W3, x)
 ```
 
 When experimenting with these toy examples, you can get a closer look at
@@ -151,7 +150,7 @@ print_fwd_bwd(f, W1, W2, W3, x)
 
 ```{code-cell}
 # Using `jax.checkpoint` with a save-only-these-names policy:
-print_fwd_bwd(f4, W1, W2, W3, x)
+print_fwd_bwd(f3, W1, W2, W3, x)
 ```
 
 ## Let's think step by step
@@ -246,7 +245,7 @@ def f_checkpoint(x):
 
 In other words, you apply {func}`jax.checkpoint` to `g` — the first stage of
 `f` — rather than to `f` itself. This way, when you evaluate
-`jax.grad(f_checkpoint)(x)`, you'd get a computation like:
+`jax.grad(f_checkpoint)(x)`, you get a computation like:
 
 1. Run the forward pass of `g`, discarding residual values.
 2. Run the forward pass of `h`, saving residuals.
@@ -260,7 +259,7 @@ computation as:
 ```{code-cell}
 def f_checkpoint_grad(x):
   y = g(x)                  # step 1
-  _, h_vjp = jax.vjp(h)(y)  # step 2
+  z, h_vjp = jax.vjp(h, y)  # step 2
   y_bar, = h_vjp(1.0)       # step 3
   _, g_vjp = jax.vjp(g, x)  # step 4
   x_bar, = g_vjp(y_bar)     # step 5
@@ -271,7 +270,7 @@ In general, `jax.checkpoint(foo)` is a new function which has the same
 input-output behavior as `foo`, but behaves differently under autodiff,
 particularly under {func}`jax.linearize` and {func}`jax.vjp` (and their
 wrappers, like {func}`jax.grad`) but not {func}`jax.jvp`. When
-differentiated, only the input to a {func}`jax.checkpoint`-differentiated
+differentiated, only the input to a {func}`jax.checkpoint`-decorated
 function is stored on the forward pass. On the backward pass, the residuals
 (intermediates from `foo` and its Jacobian coefficient values needed for the
 backward pass) are recomputed.
@@ -324,9 +323,9 @@ Slightly more generally, if you had a chain composition of functions, such as
 `jax.grad(f)`, you could say that you:
 
 * Shouldn't apply {func}`jax.checkpoint` to the whole function `f`, since
-  that wouldn't save any memory (and will perform wasteful recomputation).
+  that wouldn't save any memory (and would perform wasteful recomputation).
 * Shouldn't apply {func}`jax.checkpoint` to the last sub-function `f3`, since
-  that wouldn't save any memory (and will perform wasteful recomputation).
+  that wouldn't save any memory (and would perform wasteful recomputation).
 * Could apply {func}`jax.checkpoint` to `f1`, `f2`, or their composition
   `lambda x: f2(f1(x))`, since any of those might save memory and would
   express different memory/recompute tradeoffs.
@@ -343,9 +342,9 @@ another:
   backward pass.
 
 To operate between these two extremes, saving some things and not others,
-you use the `policy` argument to {func}`jax.checkpoint`. A policy is *data*,
-not code: it names which values are allowed to be saved as residuals, and
-everything else is recomputed. There are two steps:
+you use the `policy` argument to {func}`jax.checkpoint`. A policy says
+which values are allowed to be saved as residuals, and everything else is
+recomputed. There are two steps:
 
 1. **Name values** in the function being differentiated with
    {func}`jax.ad_checkpoint.checkpoint_name`. By itself, `checkpoint_name`
@@ -361,8 +360,9 @@ everything else is recomputed. There are two steps:
      but some names are offloaded to another memory space instead of kept
      (more below);
    * `everything_saveable` and `nothing_saveable` — the two extremes, as
-     escape hatches (the former is the default behavior as if no policy were
-     given; the latter is like no policy but full rematerialization).
+     escape hatches: `everything_saveable` behaves as if there were no
+     `jax.checkpoint` at all, and `nothing_saveable` gives full
+     rematerialization, the same as `jax.checkpoint` with no policy.
 
 For example, consider this function to be differentiated, with named layer
 outputs:
@@ -404,24 +404,13 @@ calling code (such as a training script) while the names live with the model
 code. And policies only indicate what is *saveable*: a value is saved only if
 it's actually needed by the backward pass.
 
-```{note}
-In older versions of JAX, a policy could also be an arbitrary *callable*
-that inspected each primitive application and returned whether its outputs
-were saveable (e.g. `jax.checkpoint_policies.dots_with_no_batch_dims_saveable`).
-Under the new implementation, policies are defunctionalized into the
-name-based data described above, which keeps them simple, serializable, and
-predictable. For cases where a function's remat behavior should depend on
-more than a name, the function author can use `custom_remat`, described
-below.
-```
-
 (jax-301-remat-offload)=
 ### Offloading instead of recomputing
 
 Recomputation isn't the only alternative to keeping a residual in
 accelerator memory: a residual can also be *offloaded* to another memory
 space (typically host memory) on the forward pass and brought back when the
-backward pass needs it, trading transfer bandwidth instead of FLOPs.
+backward pass needs it, spending transfer bandwidth instead of FLOPs.
 
 The policy `jax.checkpoint_policies.save_and_offload_only_these_names` takes
 four arguments: `names_which_can_be_saved` (kept on device),
@@ -456,8 +445,7 @@ Name-based policies choose among values a function has named. Sometimes a
 function *author* knows something better: a specific quantity that's worth
 saving because it makes the backward pass cheap, or a way to restructure the
 recomputation entirely. `custom_remat` lets a function carry its own
-rematerialization behavior, including behavior that depends on the ambient
-policy.
+rematerialization behavior.
 
 {func}`jax.custom_remat`, called as `custom_remat(f, f_fwd, f_rem, f_bwd)`,
 takes four functions:
@@ -465,8 +453,8 @@ takes four functions:
 * `f` is the primal function, used everywhere outside of rematerialized
   differentiation;
 * `f_fwd(policy, *args) -> (out, res)` runs on the forward pass *inside a
-  rematerialized region*: it receives the ambient checkpoint policy, and
-  decides what residuals (if any) to keep;
+  rematerialized region*, and decides what residuals (if any) to keep (its
+  first argument is the ambient checkpoint policy);
 * `f_rem(res, *args) -> (out, res2)` runs on the backward pass to
   rematerialize: given whatever `f_fwd` kept, plus the original arguments,
   it (re)computes the output and the residuals the backward rule needs;
@@ -488,48 +476,17 @@ print(jax.grad(f)(1.0))
 print(jax.grad(jnp.sin)(jnp.sin(1.0)) * jnp.cos(1.0))  # chain rule, for reference
 ```
 
-Because `f_fwd` receives the policy, the behavior can also *respond* to it.
-Here's a `sin` that saves its cosine only when the ambient policy declares
-the name `'cos'` saveable, and otherwise defers to full recomputation:
-
-```{code-cell}
-def sin_fwd(policy, x):
-  if policy is not None and policy(jax.ad_checkpoint.name_p, jax.typeof(x), name='cos'):
-    return jnp.sin(x), jnp.cos(x)
-  else:
-    return jnp.sin(x), None
-
-def sin_rem(cos_x, x):
-  if cos_x is None:
-    cos_x = jnp.cos(x)
-  return jnp.sin(x), cos_x
-
-def sin_bwd(cos_x, g):
-  return cos_x * g,
-
-sin = jax.custom_remat(jnp.sin, sin_fwd, sin_rem, sin_bwd)
-
-save_cos = jax.checkpoint_policies.save_only_these_names('cos')
-f = jax.checkpoint(lambda x: sin(sin(x)), policy=save_cos)
-print(jax.grad(f)(3.0))
-
-f = jax.checkpoint(lambda x: sin(sin(x)),
-                   policy=jax.checkpoint_policies.nothing_saveable)
-print(jax.grad(f)(3.0))
-```
-
 `custom_remat` currently supports reverse-mode differentiation of the
 rematerialized function (which is where rematerialization matters).
 
 ## Advanced: recursive `jax.checkpoint`
 
-By applying {func}`jax.checkpoint` in the right way, there are many tradeoffs
-between memory usage and (re)computation that can be expressed. One
-surprising example is _recursive_ checkpointing, where you apply
-{func}`jax.checkpoint` to a function which itself calls
-{func}`jax.checkpoint`-decorated functions in a way so that memory usage from
-the chain composition of $D$ functions scales like $\mathcal{O}(\log_2 D)$
-rather than $\mathcal{O}(D)$.
+Applied in the right way, {func}`jax.checkpoint` can express many tradeoffs
+between memory usage and (re)computation. One surprising example is
+_recursive_ checkpointing, where you apply {func}`jax.checkpoint` to a
+function which itself calls {func}`jax.checkpoint`-decorated functions, so
+that memory usage from the chain composition of $D$ functions scales like
+$\mathcal{O}(\log_2 D)$ rather than $\mathcal{O}(D)$.
 
 As a toy example, consider the chain composition of multiple
 {func}`jax.numpy.sin` functions:
@@ -599,12 +556,12 @@ example by applying {func}`jax.jit` to a function which contains a
 {func}`jax.grad` call — XLA will automatically optimize the computation,
 including decisions about when to compute or rematerialize values. As a
 result, **{func}`jax.checkpoint` often isn't needed for differentiated
-functions under a {func}`jax.jit`**. XLA will optimize things for you.
+functions under a {func}`jax.jit`**.
 
 One exception is when using staged-out control flow, like
 {func}`jax.lax.scan`. Automatic compiler optimizations across multiple
 control flow primitives (for example, across a forward-pass `scan` and the
-corresponding backward-pass `scan`), typically aren't as thorough. As a
+corresponding backward-pass `scan`) typically aren't as thorough. As a
 result, it's often a good idea to use {func}`jax.checkpoint` on the body
 function passed to {func}`jax.lax.scan`.
 
@@ -615,10 +572,10 @@ reduce compilation times. That is, using a simple fully-connected network as
 an analogy, instead of writing something like this:
 
 ```{code-cell}
-LayerParam = tuple[jnp.ndarray, jnp.ndarray]  # Weights-bias pair for a layer.
+LayerParam = tuple[jax.Array, jax.Array]  # Weights-bias pair for a layer.
 ParamsList = list[LayerParam]
 
-def net(params: ParamsList, x: jnp.ndarray):
+def net(params: ParamsList, x: jax.Array):
   for W, b in params:
     x = jnp.maximum(jnp.dot(x, W) + b, 0.)
   return x
@@ -646,7 +603,7 @@ def net(all_weights, all_biases, x):
 This scan-over-layers version reduces compile times, but by foiling some
 compiler optimizations it can lead to inefficient computation of gradients.
 To mitigate the issue, you can use {func}`jax.checkpoint` on the scanned
-function, either plain or with a names-based policy to keep the residuals
+function, either plain or with a name-based policy to keep the residuals
 you know are worth their memory:
 
 ```{code-cell}

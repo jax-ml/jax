@@ -24,7 +24,7 @@ calling out to code JAX can't trace into, like an external solver or
 simulator. Or maybe the mathematically right derivative isn't the mechanical
 one, as with iterative fixed-point solvers, where implicit differentiation
 of the solution beats differentiating through the iterations. This page
-works examples of each.
+works through examples of each.
 
 The recommended way to define custom derivatives is with a *hijax primitive*. A
 hijax primitive is a unit of computation treated atomically by JAX's
@@ -32,7 +32,7 @@ higher-level transformations, namely autodiff and batching. Being atomic, a
 primitive needs a rule defining how it behaves under each transformation. But
 instead of carrying rules for lower-level transformations, like evaluation or
 translation to HLO or Mosaic, hijax primitives carry a Python implementation
-written with ordinary JAX operations and using ordinary JAX types. After
+written with ordinary JAX operations on ordinary JAX types. After
 higher-level transformations are finished, a hijax primitive is expanded into
 that Python implementation.
 
@@ -45,9 +45,9 @@ Hijax primitives are still experimental: expect imports from
 `jax.experimental.hijax`, and expect the APIs to evolve. JAX's classic tools
 for this job, the `jax.custom_jvp` and `jax.custom_vjp` decorators, remain
 fully supported and can be more convenient for simple cases; they're covered
-in {doc}`custom-jvp-vjp`. But hijax primitives allow for customizing both modes
-at once, as well as controlling interactions with custom types and other
-advanced autodiff features.
+in {doc}`custom-jvp-vjp`. But hijax primitives let you customize both modes
+at once, and control interactions with custom types and other advanced
+autodiff features.
 
 ## TL;DR
 
@@ -155,9 +155,9 @@ jit(grad(log1pexp)).trace(100.).jaxpr
 
 Stepping through how the jaxpr would be evaluated, we can see that the last
 line would involve multiplying values that floating point math will round to
-0 and $\infty$, respectively, which is never a good idea. That is, we're
-effectively evaluating `lambda x: (1 / (1 + jnp.exp(x))) * jnp.exp(x)` for
-large `x`, which effectively turns into `0. * jnp.inf`.
+0 and $\infty$, respectively, which is never a good idea. That is, for large
+`x` we're evaluating `lambda x: (1 / (1 + jnp.exp(x))) * jnp.exp(x)`, which
+effectively turns into `0. * jnp.inf`.
 
 Instead of generating such large and small values, hoping for a cancellation
 that floats can't always provide, we'd rather just express the derivative
@@ -248,7 +248,7 @@ exist from the left). Correspondingly, autodiff produces a `nan` value:
 print(grad(f)(0.))
 ```
 
-But mathematically if we think of $f$ as a function on $\mathbb{R}_+$ then it
+But mathematically, if we think of $f$ as a function on $\mathbb{R}_+$, then it
 is differentiable at 0 [Rudin's Principles of Mathematical Analysis
 Definition 5.1, or Tao's Analysis I 3rd ed. Definition 10.1.1 and Example
 10.1.6]. Alternatively, we might say as a convention we want to consider the
@@ -327,9 +327,11 @@ def clip_gradient(lo, hi, x):
 (Static parameters in `self.params` wouldn't work for the bounds: params
 are baked into the primitive instance when it's constructed, so they can't
 be traced values. Anything that might be dynamic data, like bounds passed
-as arguments to a `jit`-compiled function, should be an ordinary input.
+as arguments to a jitted function, should be an ordinary input.
 Save `self.params` for genuinely static data, like the Python function in
 the `fixed_point` example below.)
+
+Here's `jnp.sin` and its derivative, for comparison:
 
 ```{code-cell}
 import matplotlib.pyplot as plt
@@ -339,6 +341,9 @@ t = jnp.linspace(0, 10, 1000)
 plt.plot(jnp.sin(t))
 plt.plot(vmap(grad(jnp.sin))(t))
 ```
+
+And here's the version with clipped gradients, whose derivative saturates
+at $\pm 0.75$:
 
 ```{code-cell}
 def clip_sin(x):
@@ -356,7 +361,7 @@ numerics is to set a `pdb` debugger trace in the backward pass of
 reverse-mode autodiff.
 
 When trying to track down the source of a `nan` runtime error, or just
-examine carefully the cotangent (gradient) values being propagated, it can be
+carefully examine the cotangent (gradient) values being propagated, it can be
 useful to insert a debugger at a point in the backward pass that corresponds
 to a specific point in the primal computation:
 
@@ -400,6 +405,9 @@ Array(9., dtype=float32)
 Array(-0.91113025, dtype=float32)
 (Pdb) q
 ```
+
+(For a non-interactive way to observe backward-pass values, including under
+`jit`, see {ref}`jax-301-bwd-logging` below.)
 
 ### Example: Implicit function differentiation of iterative implementations
 
@@ -463,8 +471,8 @@ We can't apply reverse-mode automatic differentiation because of the
 `while_loop`, but it turns out we wouldn't want to anyway: instead of
 differentiating through the implementation of `fixed_point` and all its
 iterations, we can exploit the mathematical structure to do something that is
-much more memory-efficient (and FLOP-efficient in this case, too). We can
-instead use the implicit function theorem [Prop A.25 of Bertsekas's Nonlinear
+much more memory-efficient (and FLOP-efficient in this case, too). The tool
+is the implicit function theorem [Prop A.25 of Bertsekas's Nonlinear
 Programming, 2nd ed.], which guarantees (under some conditions) the existence
 of the mathematical objects we're about to use. In essence, we linearize at
 the solution and solve those linear equations iteratively to compute the
@@ -577,10 +585,10 @@ problem, and that the parameter `a` passed there is a pytree of arrays: the
 
 A limitation to this approach is that the argument `f` can't close over any
 values involved in differentiation, since it's a static parameter of the
-primitive. That is, you might notice that we kept the parameter `a` explicit
-in the argument list of `fixed_point`. For this use case, consider using the
-low-level primitive `lax.custom_root`, which allows for derivatives in
-closed-over variables with custom root-finding functions.
+primitive. That's why we kept the parameter `a` explicit in the argument
+list of `fixed_point`. If you need derivatives with respect to closed-over
+variables, consider the low-level `lax.custom_root`, which supports them with
+custom root-finding functions.
 
 ## Basic usage of `HiPrim`
 
@@ -694,7 +702,7 @@ print(grad(mul, 1)(2., 3.))
 
 ### The general backward API: `vjp_bwd` and gradient accumulators
 
-`vjp_bwd_retval` is actually a convenience wrapper. The more general API is
+`vjp_bwd_retval` is actually a convenience API. The more general one is
 `vjp_bwd`, with signature `vjp_bwd(self, res, outgrad, *arg_accums)`.
 Instead of returning cotangent values, it receives one *gradient
 accumulator* per primal input (matching the pytree structure of each entry
@@ -961,9 +969,10 @@ equation in jaxprs:
 jit(mul).trace(2., 3.).jaxpr
 ```
 
-It's only at lowering time that `expand` is traced and inlined. In an eager context, each call to the primitive calls
-`expand` again (so, like any JAX function, it's best to keep `expand` free of
-side effects, though harmless ones like `print` can be instructive):
+It's only at lowering time that `expand` is traced and inlined. In an eager
+context, each call to the primitive calls `expand` again (so, like any JAX
+function, it's best to keep `expand` free of side effects, though harmless
+ones like `print` can be instructive):
 
 ```{code-cell}
 class Noisy(HiPrim):
@@ -1027,8 +1036,8 @@ print(grad(g)(-1.))
 For `vmap` support, the easiest option is to define `batch_dim_rule`, which
 takes axis metadata and the batch dimension of each argument (`None` for
 unbatched arguments) and just returns the batch dimension of the output.
-Given that data movement answer, JAX derives the batched computation
-automatically by `vmap`-ing the primitive's other rules:
+From that alone, JAX derives the batched computation automatically, by
+`vmap`-ing the primitive's other rules:
 
 ```{code-cell}
 class MulV(Mul):
@@ -1214,8 +1223,8 @@ to exploit the sparsity, or clean them up with `instantiate_zeros`.
 ### Logging data out of the backward pass
 
 Backward rules get an output channel of their own: a `vjp_bwd` rule can
-return a dict of named pytrees to log out of the backward pass. To receive the logs, apply the VJP function
-via its `with_logs` method: `f_vjp.with_logs(out_ct)` returns a pair
+return a dict of named pytrees to log out of the backward pass. To receive
+the logs, apply the VJP function via its `with_logs` method: `f_vjp.with_logs(out_ct)` returns a pair
 `(arg_cts, logs)`, where `logs` merges the dicts returned by all the rules
 that ran. Logging is drop-by-default: a plain `f_vjp(out_ct)` call ignores
 the logs, and under `jit` the logging computation is dead-code-eliminated,
@@ -1376,9 +1385,7 @@ Retval-style hijax rules can opt in the same way: set
 `vjp_bwd_retval_logs = True` on the primitive class, and have
 `vjp_bwd_retval` return `(args_grad, logs)` instead of just `args_grad`.
 
-A rule's log return must be a dict (or `None`, meaning no logs). One
-transposed context, `lax.while_loop`, doesn't yet plumb logs through, and
-logs inside it are silently dropped, consistent with drop-by-default. For
+A rule's log return must be a dict (or `None`, meaning no logs). For
 plumbing data out of a backward pass with mutable refs instead, see
 {doc}`refs`.
 
@@ -1389,8 +1396,8 @@ plumbing data out of a backward pass with mutable refs instead, see
 The residuals a rule saves are normally flattened into an opaque list on
 the VJP object (`f_vjp.opaque_residuals`; see {doc}`vjp-objects`). A rule
 can instead direct residuals into a *structured* channel, where they remain
-a pytree of your choosing: visible on the VJP object as
-`f_vjp.structured_residuals`, and carried through transformations
+a pytree of your choosing. Structured residuals are visible on the VJP object
+as `f_vjp.structured_residuals`, and they're carried through transformations
 with structure intact: `scan` stacks entries across iterations, `cond`
 wraps its branches' entries in a tagged `CondSum` recording which branch
 ran (the same shape backward-pass logs take, above), and `shard_map`
@@ -1476,13 +1483,12 @@ residuals after the ordinary ones, as `linearized(res, sres, *tangents)`.
 Custom derivatives are only part of the hijax story. Hijax primitives can
 also:
 
-* introduce new types beyond arrays, by subclassing `HiType` (immutable) or
-  `MutableHiType` and registering them with `register_hitype`, with the
-  primitive's `in_avals`/`out_aval` mentioning the new types; see
-  {ref}`jax-301-hijax-types`;
+* introduce new types beyond arrays, by subclassing `HiType` and registering
+  them with `register_hitype`, with the primitive's `in_avals`/`out_aval`
+  mentioning the new types; see {ref}`jax-301-hijax-types`;
 * define a `transpose` rule, for primitives that are linear in some inputs;
 * customize rematerialization via a `remat` method, and dead code
   elimination via a `dce` method.
 
-Those deserve documents of their own. In the meantime, `tests/hijax_test.py`
-is a good source of worked examples.
+The last two deserve documents of their own. In the meantime,
+`tests/hijax_test.py` is a good source of worked examples.

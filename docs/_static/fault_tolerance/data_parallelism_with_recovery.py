@@ -25,7 +25,7 @@ from absl import app
 from absl import flags
 from collections.abc import Sequence
 from jax.experimental.multihost_utils import live_devices
-from jax.experimental import shard_map
+from jax import shard_map
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -74,7 +74,7 @@ def send(x: jax.Array, from_device: jax.Device, to_device: jax.Device):
   mesh = jax.make_mesh((2, ), ("i", ), devices=devices)
   spec = jax.sharding.PartitionSpec(None)
   x = replicated(x, [from_device, to_device])
-  shard_map.shard_map(psum, mesh=mesh, in_specs=spec, out_specs=spec)(x)
+  shard_map(psum, mesh=mesh, in_specs=spec, out_specs=spec)(x)
 
 
 def recv(x: jax.Array, from_device: jax.Device, to_device: jax.Device):
@@ -87,7 +87,7 @@ def recv(x: jax.Array, from_device: jax.Device, to_device: jax.Device):
   spec = jax.sharding.PartitionSpec(None)
   x = jnp.zeros_like(x)
   x = replicated(x, [from_device, to_device])
-  return shard_map.shard_map(psum, mesh=mesh, in_specs=spec, out_specs=spec)(x)
+  return shard_map(psum, mesh=mesh, in_specs=spec, out_specs=spec)(x)
 
 
 def allgather(x: float, devices: list[jax.Device]) -> list[float]:
@@ -96,7 +96,7 @@ def allgather(x: float, devices: list[jax.Device]) -> list[float]:
   mesh = jax.make_mesh((n, ), ("i", ), devices=devices)
   spec = jax.sharding.PartitionSpec('i')
   p = lambda x: jax.lax.all_gather(x, "i", tiled=True)
-  f = jax.shard_map(p, mesh=mesh, in_specs=spec, out_specs=spec)
+  f = shard_map(p, mesh=mesh, in_specs=spec, out_specs=spec)
   return jax.block_until_ready(f(np.array([x] * len(devices)))).addressable_shards[0].data
 
 

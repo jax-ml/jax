@@ -6,12 +6,12 @@ Transfer guard
 
 JAX may transfer data between the host and devices and between devices during
 type conversion and input sharding. To log or disallow any unintended
-transfers, the user may configure a JAX transfer guard.
+transfers, you can configure a JAX transfer guard.
 
 JAX transfer guards distinguish between two types of transfers:
 
 * Explicit transfers: ``jax.device_put*()`` and ``jax.device_get()`` calls.
-* Implicit transfers: Other transfers (e.g., printing a ``DeviceArray``).
+* Implicit transfers: Other transfers (e.g., printing a ``jax.Array``).
 
 A transfer guard can take an action based on its guard level:
 
@@ -38,9 +38,9 @@ will use the global option instead of any active thread-local option of the
 scope where the thread was spawned.
 
 The transfer guards can also be applied more selectively, based on the
-direction of transfer. The flag and context manager name is suffixed with a
+direction of transfer. The flag and context manager names are suffixed with the
 corresponding transfer direction (e.g., ``--jax_transfer_guard_host_to_device``
-and ``jax.config.transfer_guard_host_to_device``):
+and ``jax.transfer_guard_host_to_device``):
 
 * ``"host_to_device"``: Converting a Python value or NumPy array into a JAX
   on-device buffer.
@@ -50,7 +50,8 @@ and ``jax.config.transfer_guard_host_to_device``):
 Fetching a buffer on a CPU device is always allowed regardless of the transfer
 guard level.
 
-The following shows an example of using the transfer guard.
+The following shows an example of using the transfer guard on an accelerator.
+(On CPU, fetching ``z`` would be allowed, as noted above.)
 
 .. code-block:: python
 

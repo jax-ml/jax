@@ -32,27 +32,27 @@ You just ported a tricky function to JAX. Did that actually speed things up?
 Keep these JAX-specific behaviors in mind whenever you're timing JAX code,
 especially when comparing against any other system:
 
-1. **JAX code is Just-In-Time (JIT) compiled.** Most code written in JAX can be
-   written in such a way that it supports JIT compilation, which can make it run
-   *much faster* (see {doc}`jit`). To get maximum performance from JAX, you
-   should apply {func}`jax.jit` on your outer-most function calls.
+1. **JAX code is Just-In-Time (JIT) compiled.** Most JAX code can be written to
+   support JIT compilation, which can make it run *much faster* (see
+   {doc}`jit`). To get maximum performance from JAX, apply {func}`jax.jit` to
+   your outermost function calls.
 
    Keep in mind that the first time you run JAX code, it will be slower because
    it is being compiled. This is true even if you don't use `jit` in your own
-   code, because JAX's builtin functions are also JIT compiled.
+   code, because JAX's built-in functions are also JIT compiled.
 2. **JAX has asynchronous dispatch.** This means that you need to call
    `.block_until_ready()` to ensure that computation has actually happened
    (see {ref}`jax-201-async-dispatch`).
 3. **JAX by default only uses 32-bit dtypes.** Be mindful of dtypes when
    making performance comparisons: computing in 64-bit costs more than
    32-bit, so make sure any comparison runs at matched precision (see
-   {ref}`jax-101-arrays` for controlling JAX's defaults).
+   {ref}`default-dtypes` for controlling JAX's defaults).
 4. **Transferring data between CPUs and accelerators takes time.** If you only
    want to measure how long it takes to evaluate a function, you may want to
    transfer data to the device on which you want to run it first.
 
-Here's an example of how to put together all these tricks into a microbenchmark
-for comparing JAX versus NumPy, making use of IPython's convenient
+Here's how to put all these tricks together in a microbenchmark comparing JAX
+with NumPy, using IPython's convenient
 [`%time` and `%timeit` magics](https://ipython.readthedocs.io/en/stable/interactive/magics.html#magic-time):
 
 ```python
@@ -88,30 +88,28 @@ a trace, and NVIDIA's Nsight tools for GPU-specific analysis.
 (jax-201-xprof)=
 ### XProf (TensorBoard profiling)
 
-[XProf](https://openxla.org/xprof)
-can be used to profile JAX programs. XProf can acquire and
-visualize performance traces and profiles of your program, including activity
-on GPU and TPU. The end result looks something like this:
+XProf acquires and visualizes performance traces and profiles of your program,
+including activity on GPU and TPU. The end result looks something like this:
 
 ![XProf example](../_static/tensorboard_profiler.png)
 
 #### Installation
 
 XProf is available as a plugin to TensorBoard, as well as an independently
-run program.
+run program:
 ```shell
 pip install xprof
 ```
 
 If you have TensorBoard installed, the `xprof` pip package will also install
-the TensorBoard Profiler plugin. Be careful to only install one version of
-TensorFlow or TensorBoard, otherwise you may encounter the "duplicate plugins"
+the TensorBoard Profiler plugin. Be careful to install only one version of
+TensorFlow or TensorBoard; otherwise you may encounter the "duplicate plugins"
 error described {ref}`below <jax-201-multiple-installs>`. See
 <https://www.tensorflow.org/guide/profiler> for more information on installing
 TensorBoard.
 
 Profiling with the nightly version of TensorBoard requires the nightly
-XProf.
+XProf:
 ```shell
 pip install tb-nightly xprof-nightly
 ```
@@ -140,10 +138,10 @@ for easy setup and hosting of TensorBoard and XProf and storage of post-run anal
 #### Programmatic capture
 
 You can instrument your code to capture a profiler trace via the
-{func}`jax.profiler.start_trace` and {func}`jax.profiler.stop_trace` methods.
+{func}`jax.profiler.start_trace` and {func}`jax.profiler.stop_trace` functions.
 Call {func}`~jax.profiler.start_trace` with the directory to write trace files
 to. This should be the same `--logdir` directory used to start XProf.
-Then, you can XProf to view the traces.
+Then you can use XProf to view the traces.
 
 For example, to take a profiler trace:
 
@@ -161,7 +159,7 @@ y.block_until_ready()
 jax.profiler.stop_trace()
 ```
 
-Note the {func}`block_until_ready` call. We use this to make sure on-device
+Note the {func}`~jax.block_until_ready` call. We use this to make sure on-device
 execution is captured by the trace. See {ref}`jax-201-async-dispatch` for details on why
 this is necessary.
 
@@ -178,6 +176,7 @@ with jax.profiler.trace("/tmp/profile-data"):
   y.block_until_ready()
 ```
 
+(jax-201-viewing-trace)=
 #### Viewing the trace
 
 After capturing a trace, you can view it using the XProf UI.
@@ -200,13 +199,22 @@ Available traces appear in the "Runs" dropdown menu on the left. Select the
 run you're interested in, and then under the "Tools" dropdown, select
 trace_viewer. You should now see a timeline of the execution. You can use the
 WASD keys to navigate the trace, and click or drag to select events for more
-details. See
-[these TensorFlow docs](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras#use_the_tensorflow_profiler_to_profile_model_training_performance)
-for more details on using the trace viewer.
+details. See [the XProf trace viewer docs](https://openxla.org/xprof/trace_viewer)
+for more on using the trace viewer.
+
+Beyond the trace viewer, XProf has other tools for analyzing the same profile:
+
+- [Framework Op Stats](https://openxla.org/xprof/framework_op_stats)
+- [Graph Viewer](https://openxla.org/xprof/graph_viewer)
+- [HLO Op Stats](https://openxla.org/xprof/hlo_op_stats)
+- [Memory Profile](https://openxla.org/xprof/memory_profile)
+- [Memory Viewer](https://openxla.org/xprof/memory_viewer)
+- [HLO Op Profile](https://openxla.org/xprof/hlo_op_profile)
+- [Roofline Model](https://openxla.org/xprof/roofline_model)
 
 #### Manual capture via XProf
 
-The following are instructions for capturing a manually-triggered N-second trace
+The following are instructions for capturing a manually triggered N-second trace
 from a running program.
 
 1. Start an XProf server:
@@ -253,22 +261,8 @@ from a running program.
 1. After the capture finishes, XProf should automatically refresh. (Not
    all of the XProf profiling features are hooked up with JAX, so it may
    initially look like nothing was captured.) On the left under "Tools", select
-   `trace_viewer`.
-
-You should now see a timeline of the execution. You can use the WASD keys to
-navigate the trace, and click or drag to select events to see more details at
-the bottom. See [these XProf docs](https://openxla.org/xprof/trace_viewer)
-for more details on using the trace viewer.
-
-You can also use the following tools:
-
-- [Framework Op Stats](https://openxla.org/xprof/framework_op_stats)
-- [Graph Viewer](https://openxla.org/xprof/graph_viewer)
-- [HLO Op Stats](https://openxla.org/xprof/hlo_op_stats)
-- [Memory Profile](https://openxla.org/xprof/memory_profile)
-- [Memory Viewer](https://openxla.org/xprof/memory_viewer)
-- [HLO Op Profile](https://openxla.org/xprof/hlo_op_profile)
-- [Roofline Model](https://openxla.org/xprof/roofline_model)<br /><br />
+   `trace_viewer`, and explore the profile as described in
+   {ref}`jax-201-viewing-trace` above.
 
 #### Adding custom trace events
 
@@ -284,12 +278,12 @@ op-level views (and in compiler dumps), not just on the trace timeline.
 
 #### Configuring profiler options
 
-The `start_trace` method accepts an optional `profiler_options` parameter, which
+The `start_trace` function accepts an optional `profiler_options` parameter, which
 allows for fine-grained control over the profiler's behavior. This parameter
 should be an instance of `jax.profiler.ProfileOptions`.
 <!-- TODO: Add API documentation for jax.profiler.ProfileOptions -->
 
-For example, to disable all python and host traces:
+For example, to disable all Python and host traces:
 
 ```python
 import jax
@@ -324,21 +318,13 @@ jax.profiler.stop_trace()
     `3`: Includes level 2 traces plus more verbose, low-level program execution
     details such as cheap XLA operations.
 
-2. `device_tracer_level`: Controls whether device tracing is enabled.
+2.  `python_tracer_level`: Controls whether Python tracing is enabled.
 
     Supported Values:
 
-    `0`: Disables device tracing.
+    `0`: Disables Python function call tracing.
 
-    `1`: Enables device tracing (default).
-
-3.  `python_tracer_level`: Controls whether Python tracing is enabled.
-
-    Supported Values:
-
-    `0`: Disables Python function call tracing (default).
-
-    `1`: Enables Python tracing.
+    `1`: Enables Python tracing (default).
 
 ##### Advanced configuration options
 
@@ -359,8 +345,8 @@ jax.profiler.stop_trace()
     `TRACE_COMPUTE_AND_SYNC`: This traces both compute operations and
     synchronization events on the device.
 
-    If "tpu_trace_mode" is not provided the trace_mode defaults to
-    TRACE_ONLY_XLA.
+    If `tpu_trace_mode` is not provided, the trace mode defaults to
+    `TRACE_ONLY_XLA`.
 
 2.  `tpu_num_sparse_cores_to_trace`: Specifies the number of sparse cores to
     trace on the TPU.
@@ -411,12 +397,11 @@ The following options are available for GPU profiling:
 ###### Example
 
 ```python
-options = ProfileOptions()
+options = jax.profiler.ProfileOptions()
 options.advanced_configuration = {"tpu_trace_mode" : "TRACE_ONLY_HOST", "tpu_num_sparse_cores_to_trace" : 2}
 ```
 
-Returns `InvalidArgumentError` if any unrecognized keys or option values are
-found.
+Unrecognized keys or option values produce an `InvalidArgumentError`.
 
 #### Troubleshooting
 
@@ -426,32 +411,27 @@ Programs running on GPU should produce traces for the GPU streams near the top
 of the trace viewer. If you're only seeing the host traces, check your program
 logs and/or output for the following error messages.
 
-**If you get an error like: `Could not load dynamic library 'libcupti.so.10.1'`**<br />
-Full error:
-```
-W external/org_tensorflow/tensorflow/stream_executor/platform/default/dso_loader.cc:55] Could not load dynamic library 'libcupti.so.10.1'; dlerror: libcupti.so.10.1: cannot open shared object file: No such file or directory
-2020-06-12 13:19:59.822799: E external/org_tensorflow/tensorflow/core/profiler/internal/gpu/cupti_tracer.cc:1422] function cupti_interface_->Subscribe( &subscriber_, (CUpti_CallbackFunc)ApiCallback, this)failed with error CUPTI could not be loaded or symbol could not be found.
-```
+**If you get an error saying CUPTI or `libcupti.so` could not be loaded:**
+GPU tracing uses NVIDIA's CUPTI library.
 
-Add the path to `libcupti.so` to the environment variable `LD_LIBRARY_PATH`.
-(Try `locate libcupti.so` to find the path.) For example:
-```shell
-export LD_LIBRARY_PATH=/usr/local/cuda-10.1/extras/CUPTI/lib64/:$LD_LIBRARY_PATH
-```
+- With the recommended pip installation (`jax[cuda13]` or `jax[cuda12]`),
+  CUPTI comes from an `nvidia-cuda-cupti` wheel that JAX installs, so rerun
+  the installation command to restore it. Also make sure `LD_LIBRARY_PATH`
+  isn't set, since it can override the pip-installed CUDA libraries (see
+  {doc}`/installation`).
+- With a local CUDA installation (`jax[cuda13-local]` or
+  `jax[cuda12-local]`), add the directory containing `libcupti.so` to
+  `LD_LIBRARY_PATH`. It's usually under `extras/CUPTI/lib64` in the CUDA
+  installation; `find / -name 'libcupti.so*' 2>/dev/null` will locate it.
 
-If you still get the `Could not load dynamic library` message after doing this,
-check if the GPU trace shows up in the trace viewer anyway. This message
-sometimes occurs even when everything is working, since it looks for the
-`libcupti` library in multiple places.
+If the message persists, check whether the GPU streams show up in the trace
+viewer anyway: the library is looked for in several places, so the message
+sometimes appears even when everything is working.
 
 **If you get an error like: `failed with error CUPTI_ERROR_INSUFFICIENT_PRIVILEGES`**<br />
-Full error:
-```shell
-E external/org_tensorflow/tensorflow/core/profiler/internal/gpu/cupti_tracer.cc:1445] function cupti_interface_->EnableCallback( 0 , subscriber_, CUPTI_CB_DOMAIN_DRIVER_API, cbid)failed with error CUPTI_ERROR_INSUFFICIENT_PRIVILEGES
-2020-06-12 14:31:54.097791: E external/org_tensorflow/tensorflow/core/profiler/internal/gpu/cupti_tracer.cc:1487] function cupti_interface_->ActivityDisable(activity)failed with error CUPTI_ERROR_NOT_INITIALIZED
-```
-
-Run the following commands (note this requires a reboot):
+The NVIDIA driver is restricting GPU performance counters to admin users. To
+lift the restriction, run the following commands (note this requires a
+reboot):
 ```shell
 echo 'options nvidia "NVreg_RestrictProfilingToAdminUsers=0"' | sudo tee -a /etc/modprobe.d/nvidia-kernel-common.conf
 sudo update-initramfs -u
@@ -470,7 +450,8 @@ option is to run all the instructions above on the remote machine (in
 particular, start the TensorBoard server on the remote machine), then use SSH
 local port forwarding to access the TensorBoard web UI from your local
 machine. Use the following SSH command to forward the default TensorBoard port
-6006 from the local to the remote machine:
+6006 from the local to the remote machine (for standalone XProf, forward its
+port instead, 8791 by default):
 
 ```shell
 ssh -L 6006:localhost:6006 <remote server address>
@@ -490,8 +471,7 @@ plugins for name projector`**
 It's often because there are two versions of TensorBoard and/or TensorFlow
 installed (e.g. the `tensorflow`, `tf-nightly`, `tensorboard`, and `tb-nightly`
 pip packages all include TensorBoard). Uninstalling a single pip package can
-result in the `tensorboard` executable being removed which is then hard to
-replace, so it may be necessary to uninstall everything and reinstall a single
+remove the `tensorboard` executable, which is then hard to replace, so it may be necessary to uninstall everything and reinstall a single
 version:
 
 ```shell
@@ -575,24 +555,26 @@ $ gcloud compute ssh <machine-name> -- -L 9001:127.0.0.1:9001
 #### Manual capture
 
 Instead of capturing traces programmatically using `jax.profiler.trace`, you can
-instead start a profiling server in the script of interest by calling
+start a profiling server in the script of interest by calling
 `jax.profiler.start_server(<port>)`. If you only need the profiler server to be
 active for a portion of your script, you can shut it down by calling
 `jax.profiler.stop_server()`.
 
-Once the script is running and after the profiler server has started, we can
-manually capture and trace by running:
+Once the script is running and the profiler server has started, you can
+capture a trace manually by running:
 ```bash
 $ python -m jax.collect_profile <port> <duration_in_ms>
 ```
 
-By default, the resulting trace information is dumped into a temporary directory
-but this can be overridden by passing in `--log_dir=<directory of choice>`.
-Also, by default, the program will prompt you to open a link to
+By default, the resulting trace information is dumped into a temporary
+directory, but you can override this by passing `--log_dir=<directory of choice>`.
+Tracer levels can be passed as flags too, like `--host_tracer_level=2`,
+`--device_tracer_level=1`, and `--python_tracer_level=1` (the defaults);
+`--device_tracer_level=0` turns off device tracing.
+Also by default, the program will prompt you to open a link to
 `ui.perfetto.dev`. When you open the link, the Perfetto UI will load the trace
-file and open a visualizer. This feature is disabled by passing in
-`--no_perfetto_link` into the command. Alternatively, you can also point
-TensorBoard to the `log_dir` to analyze the trace (see the
+file and open a visualizer. To disable this, pass `--no_perfetto_link`.
+Alternatively, you can point TensorBoard to the `log_dir` to analyze the trace (see the
 "XProf (TensorBoard profiling)" section above).
 
 ### Nsight
@@ -624,11 +606,11 @@ references, accumulating across steps.
 
 The JAX device memory profiler emits output that can be interpreted using
 pprof (<https://github.com/google/pprof>). Start by installing `pprof`,
-by following its
+following its
 [installation instructions](https://github.com/google/pprof#building-pprof).
 At the time of writing, installing `pprof` requires first installing
-[Go](https://golang.org/) of version 1.16+,
-[Graphviz](http://www.graphviz.org/), and then running
+[Go](https://golang.org/) 1.16+ and
+[Graphviz](http://www.graphviz.org/), then running
 
 ```shell
 go install github.com/google/pprof@latest
@@ -646,7 +628,7 @@ The `gperftools` version of `pprof` will not work with JAX.
 ### Understanding how a JAX program is using GPU or TPU memory
 
 A common use of the device memory profiler is to figure out why a JAX program is
-using a large amount of GPU or TPU memory, for example if trying to debug an
+using a large amount of GPU or TPU memory, for example when debugging an
 out-of-memory problem.
 
 To capture a device memory profile to disk, use
@@ -688,7 +670,7 @@ The callgraph is a visualization of
 the Python stack at the point the allocation of each live buffer was made.
 For example, in this specific case, the visualization shows that
 `func2` and its callees were responsible for allocating 76.30MB, of which
-38.15MB was allocated inside the call from `func1` to `func2`.
+38.15MB was allocated inside the call from `func2` to `func1`.
 For more information about how to interpret callgraph visualizations, see the
 [pprof documentation](https://github.com/google/pprof/blob/master/doc/README.md#interpreting-the-callgraph).
 
@@ -705,12 +687,10 @@ completes before the device memory profile is collected. See
 For a quick first check at the REPL, {func}`jax.live_arrays` returns every
 array currently alive on the backend, which is often enough to spot an
 accumulating collection of arrays without any tooling. To attribute growing
-memory to the code responsible, use snapshots.
-
-We can also use the JAX device memory profiler to track down memory leaks by using
-`pprof` to visualize the change in memory usage between two device memory profiles
-taken at different times. For example, consider the following program which
-accumulates JAX arrays into a constantly-growing Python list.
+memory to the code responsible, use snapshots: `pprof` can visualize the
+change in memory usage between two device memory profiles taken at different
+times. For example, consider the following program, which accumulates JAX
+arrays into a constantly growing Python list:
 
 ```python
 import jax
@@ -755,7 +735,7 @@ program increases over time:
 pprof --http=: --diff_base memory1.prof memory9.prof
 ```
 
-![Device memory profile at end of execution](../_static/device_memory_profile_leak2.svg)
+![Device memory profile diff across loop iterations](../_static/device_memory_profile_leak2.svg)
 
 The visualization shows that the memory growth can be attributed to the call to
 `normal` inside `anotherfunc`.

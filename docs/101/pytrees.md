@@ -34,10 +34,10 @@ and patterns.
 
 ## What is a pytree?
 
-A pytree is a recursive structure: either a *leaf*, or a container of
-pytrees. Containers can be lists, tuples, and dicts, nested arbitrarily.
-A pytree *leaf* is anything that's not a container, like an array. A pytree
-*node* is anything that's not a leaf.
+A pytree is a recursive structure: either a *leaf*, or a container (a
+*node*) whose children are pytrees. Containers can be lists, tuples, and
+dicts, nested arbitrarily. A leaf is anything that's not a container, like an
+array.
 
 Here are some example pytrees, using {func}`jax.tree.leaves` to extract the
 flattened leaves from each:
@@ -82,9 +82,9 @@ print(jax.tree.unflatten(treedef, leaves))
 
 This flatten/unflatten decomposition is how JAX transformations support
 pytrees: internally they operate on the flat list of arrays, then reassemble
-your structure around the results. Pytrees are tree-like, rather than DAG-like
-or graph-like, in that we handle them assuming referential transparency and
-that they can't contain reference cycles.
+your structure around the results. Pytrees really are trees, not DAGs or
+general graphs: if the same object appears in two places, JAX treats the two
+occurrences as independent, and a pytree can't contain reference cycles.
 
 ## Common pytree functions
 
@@ -354,10 +354,10 @@ soon as a transformation tries to treat them as array data.
 ### Registering dataclasses
 
 Unlike `NamedTuple` subclasses, classes decorated with `@dataclass` are *not*
-automatically pytree nodes. But they're easy to register, with
-{func}`jax.tree_util.register_dataclass`, and it fixes the metadata problem
-above, too, by letting you say explicitly which fields are data and which are
-static metadata:
+automatically pytree nodes. But they're easy to register with
+{func}`jax.tree_util.register_dataclass`, which also fixes the metadata
+problem above by letting you say explicitly which fields are data and which
+are static metadata:
 
 ```{code-cell}
 from dataclasses import dataclass
@@ -380,11 +380,9 @@ jax.tree.leaves([
 
 The `name` field doesn't appear among the leaves: as a `meta_field`, it's
 carried in the treedef, like `aux_data` above (and so it must be hashable).
-This distinction matters again with `jax.jit`, where meta fields are
-automatically treated as static arguments; see
-{ref}`jax-201-jit-static-arguments`.
-Instances of `MyDataclassContainer` can be passed into JIT-ed functions, and
-`name` will be treated as static:
+This distinction matters again with `jax.jit`, which treats meta fields like
+static arguments ({ref}`jax-201-jit-static-arguments`). So a
+`MyDataclassContainer` can be passed straight into a jitted function:
 
 ```{code-cell}
 @jax.jit
@@ -396,8 +394,8 @@ mdc = MyDataclassContainer('mdc', 1, 2)
 y = f(mdc)
 ```
 
-Contrast this with `MyOtherContainer`, the `NamedTuple` subclass. Since the
-`name` field is a pytree leaf, JIT expects it to be convertible to
+Contrast this with `MyOtherContainer`, the `NamedTuple` subclass. Since its
+`name` field is a pytree leaf, `jit` expects it to be convertible to a
 {class}`jax.Array`, and the following raises an error:
 
 ```{code-cell}
@@ -433,11 +431,9 @@ Here the Jacobian of a function mapping a tree to a tree is defined as a tree
 of trees, and JAX's internals build that structure by calling the unflattening
 recipe with placeholder values, which reach `MyTree.__init__`.
 
-**Potential solution 1:**
-
-- The `__init__` and `__new__` methods of custom pytree classes should
-  generally avoid doing any array conversion or other input validation, or
-  else anticipate and handle these special cases. For example:
+There are two ways to avoid this. First, the `__init__` and `__new__`
+methods of custom pytree classes can skip array conversion and other input
+validation, or else anticipate and handle placeholder values:
 
 ```{code-cell}
 class MyTree:
@@ -447,12 +443,9 @@ class MyTree:
     self.a = a
 ```
 
-**Potential solution 2:**
-
-- Structure your custom `tree_unflatten` function so that it avoids calling
-  `__init__`. If you choose this route, make sure that your `tree_unflatten`
-  function stays in sync with `__init__` if and when the code is updated.
-  Example:
+Second, your `tree_unflatten` function can avoid calling `__init__`
+altogether. If you choose this route, make sure `tree_unflatten` stays in
+sync with `__init__` as the code changes:
 
 ```{code-cell}
 def tree_unflatten(aux_data, children):
@@ -479,8 +472,12 @@ jax.tree.map(jnp.ones, shapes)
 
 Instead of calling `jnp.ones` on `(2, 3)`, this called it on `2` and `3`
 separately, because the tuples became part of the tree structure. The fix
-depends on the goal: avoid the intermediate `tree.map`, or make the shape a
-leaf by converting it to an array.
+depends on the goal: avoid the intermediate `tree.map`, or tell `tree.map` to
+treat tuples as leaves with its `is_leaf` argument:
+
+```{code-cell}
+jax.tree.map(jnp.ones, shapes, is_leaf=lambda x: isinstance(x, tuple))
+```
 
 ### `None` is an empty node, not a leaf
 
@@ -490,7 +487,7 @@ leaf by converting it to an array.
 jax.tree.leaves([None, None, None])
 ```
 
-To treat `None` values as leaves, use the `is_leaf` argument:
+To treat `None` values as leaves, use `is_leaf` again:
 
 ```{code-cell}
 jax.tree.leaves([None, None, None], is_leaf=lambda x: x is None)
@@ -508,8 +505,8 @@ types with no ordering between them, like `int` and `str`, is an error:
 jax.tree.map(lambda x: x + 1, {1: 7, "y": 42})
 ```
 
-If you need unordered keys, `collections.OrderedDict` flattens in insertion
-order without sorting, or you can register a custom node type.
+If your keys can't be sorted, use `collections.OrderedDict`, which flattens
+in insertion order, or register a custom node type.
 
 ## Common pytree patterns
 

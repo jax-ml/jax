@@ -31,7 +31,7 @@ jax.config.update('jax_num_cpu_devices', 8)  # simulate 8 devices, for the shard
 
 <!--* freshness: { reviewed: '2026-07-10' } *-->
 
-This tutorial outlines how you can use various callback functions, which allow JAX runtimes to execute Python code on the host. Examples of JAX callbacks are `jax.pure_callback`, `jax.experimental.io_callback` and `jax.debug.callback`. You can use them even while running under JAX transformations, including {func}`~jax.jit`, {func}`~jax.vmap`, {func}`~jax.grad`.
+This page covers JAX's callbacks, which let compiled JAX code execute Python code on the host: {func}`jax.pure_callback`, {func}`jax.experimental.io_callback`, and {func}`jax.debug.callback`. You can use them even under JAX transformations like {func}`~jax.jit`, {func}`~jax.vmap`, and {func}`~jax.grad`, though each flavor supports a different set of transformations.
 
 ## Why callbacks?
 
@@ -51,7 +51,7 @@ def f(x):
 result = f(2)
 ```
 
-What is printed is not the runtime value, but the trace-time abstract value (if you're not familiar with *tracing* in JAX, a good primer can be found in {ref}`jax-101-tracing`.
+What is printed is not the runtime value, but the trace-time abstract value. (If you're not familiar with *tracing* in JAX, see {ref}`jax-101-tracing` for a primer.)
 
 To print the value at runtime, you need a callback, for example {func}`jax.debug.print` (you can learn more about debugging in {doc}`debugging`):
 
@@ -70,7 +70,7 @@ This works by passing the runtime value of `y` as a CPU {class}`jax.Array` back 
 (jax-201-callbacks-flavors)=
 ## Flavors of callback
 
-In earlier versions of JAX, there was only one kind of callback available, implemented in {func}`jax.experimental.host_callback`. The `host_callback` routines had some deficiencies, and are now deprecated in favor of several callbacks designed for different situations:
+JAX provides several callbacks, designed for different situations:
 
 - {func}`jax.pure_callback`: appropriate for pure functions: i.e. functions with no side effects.
   See {ref}`jax-201-pure-callback`.
@@ -79,7 +79,7 @@ In earlier versions of JAX, there was only one kind of callback available, imple
 - {func}`jax.debug.callback`: appropriate for functions that should reflect the execution behavior of the compiler.
   See {ref}`jax-201-debug-callback`.
 
-(The {func}`jax.debug.print` function you used previously is a wrapper around {func}`jax.debug.callback`).
+(The {func}`jax.debug.print` function you used previously is a wrapper around {func}`jax.debug.callback`.)
 
 From the user perspective, these three flavors of callback are mainly distinguished by what transformations and compiler optimizations they allow.
 
@@ -89,7 +89,7 @@ From the user perspective, these three flavors of callback are mainly distinguis
 |{func}`jax.experimental.io_callback` | ✅ | ✅ | ✅/❌² | ❌ | ✅³ | ✅ |
 |{func}`jax.debug.callback`           | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
 
-¹ `jax.pure_callback` can be used with `custom_jvp` to make it compatible with autodiff
+¹ `jax.pure_callback` can be used with `custom_jvp` to make it compatible with autodiff.
 
 ² `jax.experimental.io_callback` is compatible with `vmap` only if `ordered=False`.
 
@@ -98,7 +98,7 @@ From the user perspective, these three flavors of callback are mainly distinguis
 (jax-201-pure-callback)=
 ### Exploring `pure_callback`
 
-{func}`jax.pure_callback` is generally the callback function you should reach for when you want host-side execution of a pure function: i.e. a function that has no side-effects (such as printing values, reading data from disk, updating a global state, etc.).
+{func}`jax.pure_callback` is generally the callback function you should reach for when you want host-side execution of a pure function: i.e. a function that has no side effects (such as printing values, reading data from disk, updating a global state, etc.).
 
 The function you pass to {func}`jax.pure_callback` need not actually be pure, but it will be assumed pure by JAX's transformations and higher-order functions, which means that it may be silently elided or called multiple times.
 
@@ -119,7 +119,7 @@ x = jnp.arange(5.0)
 f(x)
 ```
 
-Because `pure_callback` can be elided or duplicated, it is compatible as-is with transformations like `jit` as well as higher-order primitives like `scan` and `while_loop`:
+Because JAX is free to elide or duplicate `pure_callback`, it is compatible as-is with transformations like `jit` as well as higher-order primitives like `scan` and `while_loop`:
 
 ```{code-cell}
 jax.jit(f)(x)
@@ -146,11 +146,9 @@ However, because there is no way for JAX to introspect the content of the callba
 jax.grad(f)(x)
 ```
 
-For an example of using `pure_callback` with {func}`jax.custom_jvp`, see *Example: `pure_callback` with `custom_jvp`* below.
+For an example of using `pure_callback` with {func}`jax.custom_jvp`, see {ref}`jax-201-callbacks-custom-jvp` below.
 
-
-
-By design functions passed to `pure_callback` are treated as if they have no side-effects: one consequence of this is that if the output of the function is not used, the compiler may eliminate the callback entirely:
+By design, functions passed to `pure_callback` are treated as if they have no side effects: one consequence of this is that if the output of the function is not used, the compiler may eliminate the callback entirely:
 
 ```{code-cell}
 def print_something():
@@ -172,11 +170,11 @@ f2();
 ```
 
 In `f1`, the output of the callback is used in the return value of the function, so the callback is executed and we see the printed output.
-In `f2` on the other hand, the output of the callback is unused, and so the compiler notices this and eliminates the function call. These are the correct semantics for a callback to a function with no side-effects.
+In `f2` on the other hand, the output of the callback is unused, and so the compiler notices this and eliminates the function call. These are the correct semantics for a callback to a function with no side effects.
 
 #### `pure_callback` and exceptions
 
-In the context of JAX transformations, Python runtime exceptions should be considered side-effects:
+In the context of JAX transformations, Python runtime exceptions should be considered side effects:
 this means that intentionally raising an error within a `pure_callback` breaks the API contract,
 and the behavior of the resulting program is undefined. In particular, the manner in which
 such a program halts will generally depend on the backend, and the details of that behavior may
@@ -193,7 +191,7 @@ import jax.numpy as jnp
 def raise_via_callback(x):
   def _raise(x):
     raise ValueError(f"value of x is {x}")
-  return jax.pure_callback(_raise, x, x)
+  return jax.pure_callback(_raise, x, x, vmap_method='sequential')
 
 def raise_if_negative(x):
   return jax.lax.cond(x < 0, raise_via_callback, lambda x: x, x)
@@ -202,18 +200,19 @@ x_batch = jnp.arange(4)
 
 [raise_if_negative(x) for x in x_batch]  # does not raise
 
-jax.vmap(raise_if_negative)(x_batch)  # ValueError: value of x is 0
+jax.vmap(raise_if_negative)(x_batch)  # raises: "ValueError: value of x is 0"
 ```
-To avoid this and similar unexpected behavior, we recommend not attempting to use
+Under `vmap`, the batched `cond` evaluates both branches, so the callback runs
+even for the non-negative entries. To avoid this and similar unexpected behavior, we recommend not attempting to use
 `pure_callback` to raise runtime errors.
 
 
 (jax-201-io-callback)=
 ### Exploring `io_callback`
 
-In contrast to {func}`jax.pure_callback`, {func}`jax.experimental.io_callback` is explicitly meant to be used with impure functions, i.e. functions that do have side-effects.
+In contrast to {func}`jax.pure_callback`, {func}`jax.experimental.io_callback` is explicitly meant to be used with impure functions, i.e. functions that do have side effects.
 
-As an example, here is a callback to a global host-side numpy random generator. This is an impure operation because a side-effect of generating a random number in numpy is that the random state is updated (Please note that this is meant as a toy example of `io_callback` and not necessarily a recommended way of generating random numbers in JAX!).
+As an example, here is a callback to a global host-side NumPy random generator. This is an impure operation because a side effect of generating a random number in NumPy is that the random state is updated. (This is a toy example of `io_callback`, not a recommended way to generate random numbers in JAX!)
 
 ```{code-cell}
 from jax.experimental import io_callback
@@ -223,7 +222,7 @@ global_rng = np.random.default_rng(0)
 
 def host_side_random_like(x):
   """Generate a random array like x using the global_rng state"""
-  # We have two side-effects here:
+  # We have two side effects here:
   # - printing the shape and dtype
   # - calling global_rng, thus updating its state
   print(f'generating {x.dtype}{list(x.shape)}')
@@ -290,7 +289,7 @@ Unlike `pure_callback`, the compiler will not remove the callback execution in t
 (jax-201-debug-callback)=
 ### Exploring `debug.callback`
 
-Both `pure_callback` and `io_callback` enforce some assumptions about the purity of the function they're calling, and limit in various ways what JAX transforms and compilation machinery may do. `debug.callback` essentially assumes *nothing* about the callback function, such that the action of the callback reflects exactly what JAX is doing during the course of a program. Further, `debug.callback` *cannot* return any value to the program.
+Both `pure_callback` and `io_callback` enforce some assumptions about the purity of the function they're calling, and limit in various ways what JAX's transformations and compilation machinery may do. `debug.callback` essentially assumes *nothing* about the callback function, such that the action of the callback reflects exactly what JAX is doing during the course of a program. Further, `debug.callback` *cannot* return any value to the program.
 
 ```{code-cell}
 from jax import debug
@@ -315,7 +314,7 @@ x = jnp.arange(5.0)
 jax.vmap(f)(x);
 ```
 
-And is also compatible with `grad` and other autodiff transformations
+And it's also compatible with `grad` and other autodiff transformations:
 
 ```{code-cell}
 jax.grad(f)(1.0);
@@ -330,7 +329,7 @@ with `jax.debug.print`, in {doc}`debugging`.
 
 Callbacks run on the host, outside the compiled computation. When the
 arguments are sharded across many devices ({doc}`sharding`), where the
-callback runs and what it sees depends on the mode.
+callback runs and what it sees depend on the mode.
 
 In the global-view modes (explicit or auto sharding), a callback behaves like
 the rest of the program: as if there were one big machine. The arguments are
@@ -371,13 +370,14 @@ This per-device behavior is the typical pattern: it keeps data local, and
 it's how you'd express shard-local logging or per-host data loading in a
 distributed program.
 
+(jax-201-callbacks-custom-jvp)=
 ## Example: `pure_callback` with `custom_jvp`
 
-One useful way to take advantage of {func}`jax.pure_callback` is to combine it with {class}`jax.custom_jvp`. (Refer to {ref}`jax-301-custom-jvp-vjp` for more details on {func}`jax.custom_jvp`).
+One useful way to take advantage of {func}`jax.pure_callback` is to combine it with {func}`jax.custom_jvp`. (Refer to {ref}`jax-301-custom-jvp-vjp` for more details on {func}`jax.custom_jvp`.)
 
-Suppose you want to create a JAX-compatible wrapper for a scipy or numpy function that is not yet available in the {mod}`jax.scipy` or {mod}`jax.numpy` wrappers.
+Suppose you want to create a JAX-compatible wrapper for a SciPy or NumPy function that is not yet available in {mod}`jax.scipy` or {mod}`jax.numpy`.
 
-Here, we'll consider creating a wrapper for the Bessel function of the first kind, available in {mod}`scipy.special.jv`.
+Here, we'll consider creating a wrapper for the Bessel function of the first kind, available as {func}`scipy.special.jv`.
 You can start by defining a straightforward {func}`~jax.pure_callback`:
 
 ```{code-cell}
@@ -443,7 +443,7 @@ jax.grad(j1)(z)
 Let's define a custom gradient rule for this. Looking at the definition of the [Bessel Function of the First Kind](https://en.wikipedia.org/?title=Bessel_function_of_the_first_kind), you find that there is a relatively straightforward recurrence relationship for the derivative with respect to the argument `z`:
 
 $$
-d J_\nu(z) = \left\{
+\frac{d}{dz} J_\nu(z) = \left\{
 \begin{eqnarray}
 -J_1(z),\ &\nu=0\\
 [J_{\nu - 1}(z) - J_{\nu + 1}(z)]/2,\ &\nu\ne 0
@@ -473,7 +473,7 @@ j1 = partial(jv, 1)
 print(jax.grad(j1)(2.0))
 ```
 
-Further, since we've defined your gradient in terms of `jv` itself, JAX's architecture means that you get second-order and higher derivatives for free:
+Further, since the JVP rule is defined in terms of `jv` itself, you get second-order and higher derivatives for free:
 
 ```{code-cell}
 jax.hessian(j1)(2.0)

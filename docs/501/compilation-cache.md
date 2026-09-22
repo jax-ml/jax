@@ -3,21 +3,24 @@
 
 <!--* freshness: { reviewed: '2024-11-07' } *-->
 
-JAX has an optional disk cache for compiled programs. If enabled, JAX will
-store copies of compiled programs on disk, which can save recompilation time
+JAX has an optional disk cache for compiled programs. If enabled, JAX
+stores copies of compiled programs on disk, which can save recompilation time
 when running the same or similar tasks repeatedly.
 
 Note: if the compilation cache is not on a local filesystem,
 [etils](https://pypi.org/project/etils/) needs to be installed.
 
-```python
+```sh
 pip install etils
 ```
 
 ```{warning}
-The compilation cache is considered trusted. Do not share a compilation cache with users you do not trust. For example, if you put the
-compilation cache in a directory to which others may write, those users can trigger your JAX process to run arbitrary code. Sharing
-a compilation cache is equivalent to allowing anyone who can write to the cache directory to run code on your machine.
+The compilation cache is considered trusted. Do not share a compilation cache
+with users you do not trust. For example, if you put the compilation cache in
+a directory to which others may write, those users can trigger your JAX
+process to run arbitrary code. Sharing a compilation cache is equivalent to
+allowing anyone who can write to the cache directory to run code on your
+machine.
 ```
 
 ## Usage
@@ -43,10 +46,9 @@ f(x)
 
 ### Setting cache directory
 
-The compilation cache is enabled when the
-[cache location](https://github.com/jax-ml/jax/blob/jax-v0.4.26/jax/_src/config.py#L1206)
-is set. This should be done prior to the first compilation. Set the location as
-follows:
+The compilation cache is enabled when the cache location
+(`jax_compilation_cache_dir`) is set. This should be done before the first
+compilation. Set the location in one of these ways:
 
 (1) Using environment variable
 
@@ -69,7 +71,7 @@ os.environ["JAX_COMPILATION_CACHE_DIR"] = "/tmp/jax_cache"
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 ```
 
-(3) Using [`set_cache_dir()`](https://github.com/jax-ml/jax/blob/jax-v0.4.26/jax/experimental/compilation_cache/compilation_cache.py#L18)
+(3) Using {func}`~jax.experimental.compilation_cache.compilation_cache.set_cache_dir`
 
 ```python
 from jax.experimental.compilation_cache import compilation_cache as cc
@@ -80,7 +82,7 @@ cc.set_cache_dir("/tmp/jax_cache")
 
 * `jax_persistent_cache_min_compile_time_secs`: A computation will only be
    written to the persistent cache if the compilation time is longer than
-   the specified value. It is defaulted to 1.0 second.
+   the specified value. The default is 1.0 second.
 
 * `jax_persistent_cache_min_entry_size_bytes`: The minimum size (in bytes)
    of an entry that will be cached in the persistent compilation cache:
@@ -97,8 +99,8 @@ Note that both criteria need to be satisfied for a function to be cached.
 
 ### Additional caching
 
-XLA supports additional caching mechanism which can be enabled alongside JAX's
-persistent compilation cache to further improve recompilation time.
+XLA supports additional caching mechanisms, which can be enabled alongside
+JAX's persistent compilation cache to further improve recompilation time.
 
 * `jax_persistent_cache_enable_xla_caches`: Possible values:
 
@@ -162,7 +164,7 @@ point:
 jax.config.update("jax_compilation_cache_dir", "/gcs/my-bucket/jax-cache")
 ```
 
-**Direct GCS access :**
+**Direct GCS access:**
 
 If you choose not to use GCSFuse, you can point the cache directly to a GCS
 bucket.
@@ -176,17 +178,19 @@ jax.config.update("jax_compilation_cache_dir", "gs://jax-cache")
 
 ## How it works
 
-The cache key is the signature for a compiled function containing the
-following parameters:
+The cache key is a hash of the following, which together identify a
+compiled program:
 
-*  The computation performed by the function captured by the non-optimized HLO of the JAX function being hashed
+*  The computation performed by the function, as captured by the
+   non-optimized HLO of the JAX function being hashed
 
-*  The jaxlib version
+*  The jaxlib version, and the version of the backend (platform)
 
-*  Relevant XLA compilation flags
+*  Relevant XLA compilation flags, and the compile options
 
-*  Device configuration captured in general, by the number of devices and the topology of the devices.
-   Currently for GPUs, the topology only contains a string representation of the GPU name
+*  The device configuration, captured by the number of devices and their
+   topology. Currently for GPUs, the topology only contains a string
+   representation of the GPU name
 
 *  Compression algorithm used to compress the compiled executable
 
@@ -196,12 +200,14 @@ following parameters:
 
 ## Caching on multiple nodes
 
-The first time a program is run (the persistent cache is cold / empty) all processes will compile,
-but only the process with rank 0 in the global communication group will write to the persistent cache.
-In subsequent runs, all processes will attempt to read from the persistent cache,
-so it is important for the persistent cache to be in a shared file system (eg: NFS) or remote storage (eg: GFS).
-If the persistent cache is local to rank 0, then all processes except rank 0 will once again compile
-in subsequent runs as a result of a compilation cache miss.
+The first time a program is run (when the persistent cache is cold or empty),
+all processes compile, but only the process with rank 0 in the global
+communication group writes to the persistent cache. In subsequent runs, all
+processes attempt to read from the persistent cache, so it's important for the
+persistent cache to be in a shared file system (e.g., NFS) or remote storage
+(e.g., GCS). If the persistent cache is local to rank 0, then all processes
+except rank 0 will compile again in subsequent runs, because they miss the
+cache.
 
 ### Pre-compiling multi-node programs on single node
 
@@ -224,7 +230,7 @@ one GPU per process.
 
 Important notes:
 
-* The process running the mocked program must have the same amount of GPUs
+* The process running the mocked program must have the same number of GPUs
   and the same GPU model as the nodes that would use the cache. For instance,
   a mocked topology `8x4x2` must run in a process with two GPUs.
 
@@ -235,17 +241,18 @@ Important notes:
 
 ## Logging cache activity
 
-It can be helpful to examine what exactly is happening with the persistent compilation cache for debugging.
-Here are a few suggestions on how to begin.
+When debugging, it can be helpful to examine exactly what the persistent
+compilation cache is doing. Here are a few suggestions for how to begin.
 
-Users can enable the logging of related source files by placing
+You can enable logging in the relevant source files by placing
 
 ```python
 import os
 os.environ["JAX_DEBUG_LOG_MODULES"] = "jax._src.compiler,jax._src.lru_cache"
 ```
 
-on the top of the script. Alternatively, you can change the global jax logging level with
+at the top of the script. Alternatively, you can change JAX's global logging
+level with
 
 ```python
 import os
@@ -256,10 +263,12 @@ jax.config.update("jax_logging_level", "DEBUG")
 
 ### Examining cache misses
 
-To examine and understand why there are cache misses, JAX includes a configuration flag that
-enables the logging of all cache misses (including persistent compilation cache misses) with their explanations.
-Although currently, this is only implemented for tracing cache misses, the eventual goal is to
-explain all cache misses. This can be enabled by setting the following configuration.
+To understand why there are cache misses, JAX includes a configuration flag
+that logs cache misses, with explanations for misses in the tracing cache.
+With the persistent cache enabled, it also logs each persistent compilation
+cache miss, and why a compiled program wasn't written to the cache (for
+example, because it compiled faster than the minimum compile time). Enable it
+with:
 
 ```python
 jax.config.update("jax_explain_cache_misses", True)
@@ -267,13 +276,20 @@ jax.config.update("jax_explain_cache_misses", True)
 
 ## Pitfalls
 
-* Currently the persistent cache doesn't work with a function that uses primitives that implement their own custom_partitioning.
-  - The HLO of the function contains a pointer to the custom_partitioning callback, and leads to different cache keys for the same computation across runs.
-  - In this situation, caching still proceeds, but a different key is produced every time, making the cache ineffective.
+* Currently the persistent cache doesn't work with a function that uses
+  primitives that implement their own `custom_partitioning`.
+  - The HLO of the function contains a pointer to the `custom_partitioning`
+    callback, which leads to different cache keys for the same computation
+    across runs.
+  - In this situation, caching still proceeds, but a different key is
+    produced every time, making the cache ineffective.
 
 ### Working around `custom_partitioning`
 
-As mentioned, the compilation cache doesn't work with a function that is composed of primitives that implement `custom_partitioning`. However, it is possible to use shard_map to circumvent `custom_partitioning` for those primitives that do implement it and make the compilation cache work as expected:
+As mentioned, the compilation cache doesn't work with a function that is
+composed of primitives that implement `custom_partitioning`. However, you can
+use `shard_map` to circumvent `custom_partitioning` for those primitives, and
+make the compilation cache work as expected.
 
 Let's pretend we have a function `F` that implements a layernorm followed by a matrix multiplication using a primitive `LayerNorm` that implements `custom_partitioning`:
 
@@ -284,19 +300,24 @@ def F(x1, x2, gamma, beta):
    ln_out = LayerNorm(x1, gamma, beta)
    return ln_out @ x2
 ```
-If we were to merely compile this function without shard_map, the cache key for `layernorm_matmul_without_shard_map` would be different every time we ran the same code:
+If we were to compile this function without `shard_map`, the cache key for
+`layernorm_matmul_without_shard_map` would be different every time we ran
+the same code:
 
 ```python
-layernorm_matmul_without_shard_map = jax.jit(F, in_shardings=(...), out_sharding=(...))(x1, x2, gamma, beta)
+layernorm_matmul_without_shard_map = jax.jit(F, in_shardings=(...), out_shardings=(...))(x1, x2, gamma, beta)
 ```
 
-However, if we were to wrap the layernorm primitive in shard_map and define a function G that performs the same computation, the cache key for `layernorm_matmul_with_shard_map` will be the same every time despite `LayerNorm` being implementing `custom_partitioning`:
+However, if we wrap the layernorm primitive in `shard_map` and define a
+function `G` that performs the same computation, the cache key for
+`layernorm_matmul_with_shard_map` will be the same every time, even though
+`LayerNorm` implements `custom_partitioning`:
 
 ```python
 import jax
 
 def G(x1, x2, gamma, beta, mesh, ispecs, ospecs):
-   ln_out = jax.shard_map(LayerNorm, mesh=mesh, in_specs=ispecs, out_specs=ospecs, check_vma=False)(x1, x2, gamma, beta)
+   ln_out = jax.shard_map(LayerNorm, mesh=mesh, in_specs=ispecs, out_specs=ospecs, check_vma=False)(x1, gamma, beta)
    return ln_out @ x2
 
 ispecs = jax.sharding.PartitionSpec(...)
@@ -305,4 +326,6 @@ mesh = jax.sharding.Mesh(...)
 layernorm_matmul_with_shard_map = jax.jit(G, static_argnames=['mesh', 'ispecs', 'ospecs'])(x1, x2, gamma, beta, mesh, ispecs, ospecs)
 ```
 
-Note that the primitive that implements `custom_partitioning` must be wrapped in shard_map for this work around. It is insufficient to wrap the outer function `F` in shard_map.
+Note that for this workaround, the primitive that implements
+`custom_partitioning` must itself be wrapped in `shard_map`. It is
+insufficient to wrap the outer function `F` in `shard_map`.

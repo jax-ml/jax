@@ -14,7 +14,8 @@ Pallas is JAX's kernel language: an extension of JAX that lets you write
 custom kernels for GPU and TPU, with fine-grained control over the generated
 code while keeping JAX tracing and the `jax.numpy` API. Kernels are written
 as functions over `Ref`s in fast on-chip memory, launched over a grid with
-`pl.kernel`, and they compose with the rest of JAX: you can `jit`, `vmap`,
+`pl.pallas_call` (or over a mesh of cores with `pl.kernel`), and they compose
+with the rest of JAX: you can `jit`, `vmap`,
 and differentiate around them.
 
 Pallas has its own extensive documentation site, which we won't duplicate
@@ -34,5 +35,5 @@ Good entry points:
   details, lowering paths, and platform-specific features.
 * The {mod}`jax.experimental.pallas` module API reference.
 
-Pallas is experimental and changes frequently; see the Pallas changelog
-for recent developments.
+Pallas is experimental and changes frequently; see the
+{ref}`Pallas changelog <pallas-changelog>` for recent developments.

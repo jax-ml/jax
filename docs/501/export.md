@@ -18,7 +18,7 @@ at a later time. This would allow you to:
     to the accelerator for which you want to later compile and execute
     the function.
   * archive a snapshot of a JAX function, e.g., to be able to
-    reproduce later your results. **Note:** check out the [compatibility
+    reproduce your results later. **Note:** check out the [compatibility
     guarantees](#compatibility-guarantees) for this use case.
 
 For more details see the {mod}`jax.export` API reference.
@@ -117,7 +117,7 @@ transformations, e.g., forward-mode AD (jvp), or {func}`jax.vmap`.
 
 ## Compatibility guarantees
 
-When you use the {class}`jax.export` module, you get the following export
+When you use the {mod}`jax.export` module, you get the following export
 compatibility guarantees:
 A JAX exported and serialized artifact supports `.deserialize` and `.call`
 (i.e. compilation and execution) by a compiler and JAX runtime system that are:
@@ -149,12 +149,12 @@ jaxlib**.
 The compatibility guarantees do not apply if you bypass the `jax.export` APIs
 to obtain the StableHLO code (e.g., by `jax.jit(f).lower(1.).compiler_ir()`)
 and then try to use it with a different build of JAX or jaxlib.
-Unlike direct lowering, the {class}`jax.export` module uses the
+Unlike direct lowering, the {mod}`jax.export` module uses the
 [portable-artifact feature of StableHLO](https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md)
 to deal with the possible evolution of the StableHLO opset.
 
-If you try to deserialize a model that is older than the backwards-compatibility
-window you may get an error from the JAX deserializer, or may simply get
+If you try to deserialize a model that is older than the backward-compatibility
+window, you may get an error from the JAX deserializer, or may simply get
 obscure errors or crashes from JAX or XLA. If you get a deserialization
 error you can try to use the `--jax_export_deserialize_expired_versions=1`
 flag (or the `JAX_EXPORT_DESERIALIZE_EXPIRED_VERSIONS=1` environment variable).
@@ -175,15 +175,15 @@ These do not fall under the compatibility guarantees for StableHLO.
 The C++ implementations of these functions change rarely, but they can change.
 
 In order to ensure forward compatibility, when we change the JAX lowering rules
-to use a new custom call target, JAX will refrain for 3 weeks to use the new
-target. To use the latest lowering rules, you can pass the
+to use a new custom call target, JAX will refrain from using the new target
+for 3 weeks. To use the latest lowering rules, you can pass the
 `--jax_export_ignore_forward_compatibility=1` configuration flag
 or the `JAX_EXPORT_IGNORE_FORWARD_COMPATIBILITY=1` environment variable.
 
 Only a subset of custom calls are guaranteed stable and have
 compatibility guarantees ([see list](https://github.com/search?q=repo%3Ajax-ml%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code)).
 We continuously
-add more custom call targets to the allowed list along with backwards
+add more custom call targets to the allowed list along with backward
 compatibility tests. If you try to serialize
 code that invokes other custom call targets you will get an error
 during exporting.
@@ -194,7 +194,7 @@ e.g., with target `my_target`, you can add
 `disabled_checks` parameter of the `export` method.
 
 Alternatively, `export.DisabledSafetyCheck.custom_call("ALL")` can be used to
-disable the check for all custom calls, this should only be used when export
+disable the check for all custom calls; this should only be used when export
 compatibility is not needed.
 
 The following example shows how to disable the check for a specific custom call:
@@ -220,7 +220,7 @@ module @jit_bind attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 
 >>> # If we try to export, we get an error
 >>> export.export(jax.jit(new_prim.bind))(1.)  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
-ValueError: Cannot serialize code with custom calls whose targets have no compatibility guarantees: my_new_bind
+ValueError: Cannot serialize code with custom calls whose targets have no compatibility guarantees. [...] stablehlo.custom_call @my_new_prim(%arg0) [...]
 
 >>> # We can avoid the error if we pass a `DisabledSafetyCheck.custom_call`
 >>> exp = export.export(
@@ -234,7 +234,7 @@ ensuring compatibility.
 
 ## Cross-platform and multi-platform export
 
-JAX lowering is platform specific for a small number of JAX primitives.
+JAX lowering is platform-specific for a small number of JAX primitives.
 By default, the code is lowered and exported for the accelerator
 present on the exporting machine:
 
@@ -269,7 +269,7 @@ on multiple platforms.
 >>> # on a machine that does not have TPUs.
 >>> exp.call(1.)  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
-ValueError: Function 'cos' was lowered for platforms '('tpu',)' but it is used on '('cpu',)'.
+ValueError: Function 'cos' was exported for platforms '('tpu',)' but it is used on '('cpu',)'.
 
 >>> # We can avoid the error if we pass a `DisabledSafetyCheck.platform`
 >>> # parameter to `export`, e.g., because you have reasons to believe
@@ -283,7 +283,7 @@ ValueError: Function 'cos' was lowered for platforms '('tpu',)' but it is used o
 >>> exp_unsafe.call(1.)
 Array(0.5403023, dtype=float32, weak_type=True)
 
-# and similarly with multi-platform lowering
+>>> # and similarly with multi-platform lowering
 >>> exp_multi = export.export(jax.jit(lax.cos),
 ...    platforms=['tpu', 'cpu', 'cuda'])(1.)
 >>> exp_multi.call(1.)
@@ -337,11 +337,11 @@ outputs and for some intermediates, but these annotations do not refer
 directly to the actual physical devices that existed at exporting time.
 Instead, the sharding annotations refer to logical devices. This
 means that you can compile and run the exported artifacts on different
-physical devices that were used for exporting.
+physical devices than were used for exporting.
 
 The cleanest way to achieve a device-polymorphic export is to
 use shardings constructed with a `jax.sharding.AbstractMesh`,
-which contains only the mesh shape and axis names. But,
+which contains only the mesh shape and axis names. But
 you can achieve the same results if you use shardings
 constructed for a mesh with concrete devices, since the actual
 devices in the mesh are ignored for tracing and lowering:
@@ -367,7 +367,7 @@ devices in the mesh are ignored for tracing and lowering:
 4
 
 >>> # and it knows the shardings for the inputs. These will be applied
->>> # when the exported is called.
+>>> # when `exp` is called.
 >>> exp.in_shardings_jax(export_mesh)
 (NamedSharding(mesh=AbstractMesh('a': 4, axis_types=(Explicit,)), spec=P('a',)),)
 
@@ -423,12 +423,12 @@ of devices than it was exported for:
 >>> arg = jnp.arange(4 * len(export_devices))
 >>> exp.call(arg)  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
-ValueError: Exported module f was lowered for 8 devices and is called in a context with 1 devices. This is disallowed because: the module was lowered for more than 1 device.
+ValueError: Function f was exported for 8 devices and is called in a context with 1 devices, which is not allowed.
 
 ```
 
 There are helper functions to shard the inputs for calling an exported
-artifacts using a new mesh constructed at the call site:
+artifact using a new mesh constructed at the call site:
 
 ```python
 >>> import jax
@@ -493,8 +493,8 @@ the function appropriately:
 The JAX export support has evolved over time, e.g., to support
 effects. In order to support compatibility (see [compatibility guarantees](#compatibility-guarantees))
 we maintain a calling convention version for each `Exported`.
-As of June 2024, all function exported with version 9
-(the latest, see [all calling convention versions](#calling-convention-versions)):
+Since July 2025 (JAX 0.7.0), functions are exported with version 10 by default
+(see {ref}`all calling convention versions <jax-501-export-calling-convention-version>`):
 
 ```python
 >>> from jax import export
@@ -532,7 +532,7 @@ platform index argument if the module supports multiple platforms
 (`len(platforms) > 1`), followed by the token arguments corresponding
 to the ordered effects, followed by the kept array
 arguments (corresponding to `module_kept_var_idx` and `in_avals`).
-The platform index is a i32 or i64 scalar encoding the index of the current
+The platform index is an i32 or i64 scalar encoding the index of the current
 compilation platform into the `platforms` sequence.
 
 Inner functions use a different calling convention: an optional
@@ -581,13 +581,13 @@ The signature of the `_wrapped_jax_export_main` is:
           arg: f32[?, ?]) -> (stablehlo.token, ...)
 ```
 
-Prior to calling convention version 9 the calling convention for effects was
-different: the `main` function does not take or return a token. Instead
-the function creates dummy tokens of type `i1[0]` and passes them to the
-`_wrapped_jax_export_main`. The `_wrapped_jax_export_main`
-takes dummy tokens of type `i1[0]` and will create internally real
-tokens to pass to the inner functions. The inner functions use real
-tokens (both before and after calling convention version 9)
+Prior to calling convention version 9, the calling convention for effects was
+different: the `main` function did not take or return a token. Instead
+the function created dummy tokens of type `i1[0]` and passed them to
+`_wrapped_jax_export_main`, which took dummy tokens of type `i1[0]` and
+created real tokens internally to pass to the inner functions. The inner
+functions use real tokens (both before and after calling convention
+version 9).
 
 Also starting with calling convention version 9, function arguments that contain
 the platform index or the dimension variable values have a
@@ -596,7 +596,7 @@ global constant, either `_platform_index` or a dimension variable name.
 The global constant name may be empty if it is not known.
 Some global constant computations use inner functions, e.g., for
 `floor_divide`. The arguments of such functions have a `jax.global_constant`
-attribute for all attributes, meaning that the result of the function is
+attribute for all arguments, meaning that the result of the function is
 also a global constant.
 
 Note that `main` contains a call to `_check_shape_assertions`.
@@ -616,11 +616,11 @@ scalar operands corresponding to the format specifiers.
          # Check that dim1 is even
          dim1 = hlo.get_dimension_size(arg, 1)
          custom_call @shape_assertion(dim1 % 2 == 0, dim1 % 2,
-            error_message="Division had remainder {0} when computing the value of 'h')
+            error_message="Division had remainder {0} when computing the value of 'h'")
          # Check that h >= 1
          arg_h = hlo.floordiv(dim1, 2)
          custom_call @shape_assertion(arg_h >= 1, arg_h,
-            error_message=""Dimension variable 'h' must have integer value >= 1. Found {0}")
+            error_message="Dimension variable 'h' must have integer value >= 1. Found {0}")
 ```
 
 (jax-501-export-calling-convention-version)=
@@ -667,8 +667,9 @@ We list here a history of the calling convention version numbers:
     Supported by XlaCallModule since October 27th, 2023,
     available in JAX since October 20th, 2023 (JAX 0.4.20),
     and the default since February 1st, 2024 (JAX 0.4.24).
-    This is the only supported version as of 27th of March, 2024.
-  * Version 10 propagate the `jax.config.use_shardy_partitioner` value to
+    It was the only supported version from March 27th, 2024 until version 10
+    was added.
+  * Version 10 propagates the `jax.config.use_shardy_partitioner` value to
     XlaCallModule. Supported by XlaCallModule since May 20th, 2025, and
     the default in JAX since July 14th, 2025 (JAX 0.7.0).
 
@@ -703,8 +704,8 @@ INFO     absl:_export.py:606 Exported JAX function: fun_name=sin version=9 lower
 INFO     absl:_export.py:607 The module was dumped to jax_ir0_jit_sin_export.mlir.
 ```
 
-You will see both the exported modules (named `..._export.mlir`
-and the JIT compiled modules (named `..._compile.mlir`):
+You will see both the exported modules (named `..._export.mlir`)
+and the JIT-compiled modules (named `..._compile.mlir`):
 ```shell
 $ ls -l /tmp/export.dumps/
 total 32
@@ -750,7 +751,7 @@ that live in jaxlib):
        * See the example [PR #20997](https://github.com/jax-ml/jax/pull/20997)
          implementing the steps below.
        * We add the custom call target `T_NEW`.
-       * We change the JAX lowering rules that were previous using `T`,
+       * We change the JAX lowering rules that were previously using `T`,
          to use `T_NEW`, conditionally as follows:
 
         ```python
@@ -845,8 +846,8 @@ in favor of `jax.export` APIs. There have been some minor changes:
   * `jax.experimental.export.serialize` is now a method of the
     {class}`jax.export.Exported`
     object. Instead of `export.serialize(exp)` you should use `exp.serialize()`.
-  * The configuration flag `--jax-serialization-version` is deprecated.
-    Use `--jax-export-calling-convention-version`.
+  * The configuration flag `--jax_serialization_version` is deprecated.
+    Use `--jax_export_calling_convention_version`.
   * The value `jax.experimental.export.minimum_supported_serialization_version`
     is now at `jax.export.minimum_supported_calling_convention_version`.
   * The following fields of {class}`jax.export.Exported` have been renamed

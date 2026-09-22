@@ -15,7 +15,7 @@ kernelspec:
 <!--* freshness: { reviewed: "2026-04-28" } *-->
 
 (jax-401-cute-dsl)=
-# Writing High-Performance GPU Kernels with CuTe DSL and JAX
+# Writing high-performance GPU kernels with CuTe DSL and JAX
 
 ## Overview
 
@@ -23,12 +23,12 @@ JAX has built-in GPU support through XLA, but sometimes you need to go beyond wh
 
 **What you'll do:**
 
-- Install CUTLASS 4.x and its CuTe DSL Python front-end
+- Install CUTLASS 4.4+ and its CuTe DSL Python front-end
 - Write a **Vector Add** kernel using `@cute.kernel` and launch it with `@cute.jit`
 - Integrate CuTe DSL kernels into JAX programs via `cutlass.jax.cutlass_call`
 - Implement **SAXPY** (`y = alpha * x + y`) with scalar kernel arguments
 - Write **ReLU** and **Fused Bias+ReLU** activation kernels for deep learning
-- Build a **tiled GEMM** using tensor core MMA instructions
+- Build a simple **tiled GEMM**
 - Shard CUTLASS kernels across multiple GPUs with `jax.shard_map`
 - **Export and serialize** JAX functions containing CUTLASS kernels with **`jax.export`**
 
@@ -55,7 +55,7 @@ CuTe is an index transformation DSL: it provides abstractions for mapping logica
 - A **block** is a group of threads (organized internally into warps) that share fast on-chip (shared) memory and can synchronize with each other.
 - The **grid** is the collection of all blocks launched by a kernel.
 
-CuTe shapes can nest to mirror this hierarchy. Such a hierarchical shape can be used to model a GPU execution hierarchy (for example, 32 threads per warp × 8 warps per block, across N blocks) when bound to CUDA’s thread and block indices.
+CuTe shapes can nest to mirror this hierarchy. Such a hierarchical shape can be used to model a GPU execution hierarchy (for example, 32 threads per warp × 8 warps per block, across N blocks) when bound to CUDA's thread and block indices.
 
 **Coordinate** is a position within a shape. For a shape `(4, 8)`, the coordinate `(2, 5)` identifies one element: row 2, column 5.
 
@@ -69,7 +69,7 @@ Although we think of tensors as multi-dimensional, GPU memory itself is just a l
 offset = coord[0] * stride[0] + coord[1] * stride[1] + ...
 ```
 
-In CuTe DSL, you can define layout using:
+In CuTe DSL, you can define a layout with:
 
 ```python
 cute.make_layout((...), stride=(...))
@@ -88,7 +88,7 @@ col_major = cute.make_layout((M, N), stride=(cutlass.Int32(1), M))
 
 This separation of logical structure from physical storage is CuTe's central idea. Algorithms operate on coordinates, while layouts decide how those coordinates map to memory. Change the stride, and you change the storage pattern without rewriting the algorithm.
 
-In the following examples, you won’t see `make_layout` because the kernels operate on `cute.Tensor` objects and use CuTe’s tensor / fragment helpers (`cute.size`, `cute.make_rmem_tensor`, `cute.autovec_copy`, `Tensor[...]`) which already encode the shape, stride and indexing semantics the kernel needs. The code stays higher-level and avoids manual offset arithmetic or explicit layout construction. That is deliberate: CuTe’s helpers exist so that kernels read like algorithms rather than pointer arithmetic.
+In the following examples, you won't see `make_layout` because the kernels operate on `cute.Tensor` objects and use CuTe's tensor / fragment helpers (`cute.size`, `cute.make_rmem_tensor`, `cute.autovec_copy`, `Tensor[...]`) which already encode the shape, stride and indexing semantics the kernel needs. The code stays higher-level and avoids manual offset arithmetic or explicit layout construction. That is deliberate: CuTe's helpers exist so that kernels read like algorithms rather than pointer arithmetic.
 
 +++
 
@@ -180,14 +180,14 @@ In CuTe DSL, kernels are defined in two layers:
 
 CuTe DSL lowers Python kernels to CUDA/CUTLASS code and compiles them just-in-time using the CUTLASS JIT toolchain.
 
-**Note:** CuTe DSL relies on Python source inspection `inspect.getsourcelines()` to parse kernel definitions. In many environments (including this notebook), defining `@cute.kernel` / `@cute.jit` functions directly in notebook cells works correctly. However, this is not consistently reliable across all interactive environments (e.g. plain Python REPL), where source inspection may fail with errors like `OSError: could not get source code`.
+**Note:** CuTe DSL relies on Python source inspection (`inspect.getsourcelines()`) to parse kernel definitions. In many environments (including this notebook), defining `@cute.kernel` / `@cute.jit` functions directly in notebook cells works correctly. However, this is not consistently reliable across all interactive environments (e.g. plain Python REPL), where source inspection may fail with errors like `OSError: could not get source code`.
 
 We show the executable kernel definitions inline in the notebook. We also keep equivalent definitions in a separate .py module, for reproducibility ([cute_dsl_jax_kernels.py](cute_dsl_jax/cute_dsl_jax_kernels.py)).
 
-Here, we import the pre-written kernel launch functions from [cute_dsl_jax_kernels.py](cute_dsl_jax/cute_dsl_jax_kernels.py).
+If you'd rather not define the kernels inline, you can import the same launch functions from [cute_dsl_jax_kernels.py](cute_dsl_jax/cute_dsl_jax_kernels.py) instead:
 
 ```{code-cell}
-# Optional, if you execute the equivalent kernel definitions further in the notebook
+# Optional: import the launch functions instead of defining them below
 
 # from cute_dsl_jax.cute_dsl_jax_kernels import (
 #     launch_vector_add, launch_saxpy, launch_gemm,
@@ -209,9 +209,9 @@ keys = iter(split_keys())
 
 ## Basic kernel: vector add
 
-We’ll start with the simplest GPU kernel, vector add: `c[i] = a[i] + b[i]`.
+We'll start with the simplest GPU kernel, vector add: `c[i] = a[i] + b[i]`.
 
-Each thread in the kernel below identifies itself using `thread_idx()` and `block_idx()`. Thread and block indices are accessed through `cute.arch` (e.g., `thread_idx`, `block_idx`), each returning `(x, y, z)` tuples, because CUDA’s execution and indexing are 3-dimensional by design. Since this kernel is launched in 1D, we only use the `x` component (`tidx` and `bidx`) and ignore the unused `y` and `z` values with `_`.
+Each thread in the kernel below identifies itself using `thread_idx()` and `block_idx()`. Thread and block indices are accessed through `cute.arch` (e.g., `thread_idx`, `block_idx`), each returning `(x, y, z)` tuples, because CUDA's execution and indexing are 3-dimensional by design. Since this kernel is launched in 1D, we only use the `x` component (`tidx` and `bidx`) and ignore the unused `y` and `z` values with `_`.
 
 ```python
 tidx, _, _ = cute.arch.thread_idx()
@@ -245,9 +245,9 @@ def vector_add_kernel(a: cute.Tensor, b: cute.Tensor, c: cute.Tensor):
   cute.autovec_copy(frgC, c[None, tidx, bidx])
 ```
 
-The `@cute.kernel` defines one thread’s work. The `@cute.jit` launcher decides how many threads run, and how they’re grouped. It must follow the signature convention `(stream, *inputs, *outputs, *, **kwargs)`, where `stream` is a CUDA stream managed by XLA, followed by input tensors, then output tensors.
+The `@cute.kernel` defines one thread's work. The `@cute.jit` launcher decides how many threads run, and how they're grouped. It must follow the signature convention `(stream, *inputs, *outputs, *, **kwargs)`, where `stream` is a CUDA stream managed by XLA, followed by input tensors, then output tensors.
 
-We launch `a.shape[-2]` threads per block and `a.shape[-1]` blocks, directly matching the tensor’s `(1, threads_per_block, num_blocks)` layout so that `threadIdx.x` indexes the thread dimension and `blockIdx.x` indexes the block dimension. We use -2 and -1 because they refer to the last two tensor dimensions (threads per block and number of blocks), so the launch configuration still works if additional leading dimensions are added.
+We launch `a.shape[-2]` threads per block and `a.shape[-1]` blocks, directly matching the tensor's `(1, threads_per_block, num_blocks)` layout so that `threadIdx.x` indexes the thread dimension and `blockIdx.x` indexes the block dimension. We use -2 and -1 because they refer to the last two tensor dimensions (threads per block and number of blocks), so the launch configuration still works if additional leading dimensions are added.
 
 > **Concept: Layout composition**
 >
@@ -288,7 +288,7 @@ a_3d = a_pad.reshape(1, BLOCK, padded // BLOCK)
 
 2. Wrap the launcher
 
-* This returns a callable that accepts JAX arrays (DeviceArrays) and will, when executed inside `@jax.jit`, lower to a JAX custom call that launches your compiled CUTLASS kernel.
+* This returns a callable that accepts JAX arrays and will, when executed inside `@jax.jit`, lower to a JAX custom call that launches your compiled CUTLASS kernel.
 * `output_shape_dtype` tells JAX/XLA what the kernel will produce so shapes and dtypes are known for compilation and graph building.
 * `use_static_tensors=True` asks the wrapper to treat the kernel tensors as static (compile-time) shapes where possible, which lets CuTe/CUTLASS generate code specialized to fixed shapes.
 
@@ -296,6 +296,7 @@ a_3d = a_pad.reshape(1, BLOCK, padded // BLOCK)
 call = cjax.cutlass_call(
     launch_fn,                    # The @cute.jit function
     output_shape_dtype=...,       # Shape/dtype of output(s)
+    use_static_tensors=True,      # Specialize to static shapes
 )
 result = call(*input_arrays)      # Pass JAX arrays here
 ```
@@ -320,7 +321,7 @@ return c_3d.reshape(-1)[:N]
 ```{code-cell}
 BLOCK = 256  # threads per block for vector add: 256 is a practical default:
 # large enough to expose parallelism, small enough to scale
-# well across different GPUs, and aligned with the hardware’s
+# well across different GPUs, and aligned with the hardware's
 # 32-thread warp execution model.
 
 
@@ -692,9 +693,9 @@ print(f"  Max error: {float(jnp.max(jnp.abs(result - ref))):.2e}")
 
 +++
 
-## Advanced: Tiled GEMM
+## Advanced: tiled GEMM
 
-This demonstrates a general matrix multiply (GEMM) kernel: `D = A @ B` where `A` is `(M, K)`, `B` is `(K, N)`, and `D` is `(M, N)`. Unlike the previous elementwise kernels, GEMM requires cooperation across data dimensions: each output element is a dot product over `K` values.
+This section builds a general matrix multiply (GEMM) kernel: `D = A @ B` where `A` is `(M, K)`, `B` is `(K, N)`, and `D` is `(M, N)`. Unlike the previous elementwise kernels, GEMM requires cooperation across data dimensions: each output element is a dot product over `K` values.
 
 > **Concept: Tiling**
 >
@@ -916,9 +917,7 @@ So with 8 devices and 128 total blocks, each device gets a tensor of shape `(1, 
 
 **3. Create sharded inputs.**
 
-With explicit mesh axes, inputs must already have a layout compatible with the mesh.
-
-We create them directly with the desired sharding:
+Since we won't pass `in_specs` to `shard_map`, it infers them from the inputs' shardings, so we create the inputs directly with the sharding we want:
 
 ```python
 a = jax.random.normal(
@@ -935,7 +934,7 @@ b = jax.random.normal(
 )
 ```
 
-This produces arrays with sharding P(None, None, "x"), matching the computation.
+This produces arrays with sharding `P(None, None, "x")`, matching the computation.
 
 An equivalent alternative is to create unsharded arrays and place them explicitly:
 
@@ -1024,24 +1023,24 @@ with jax.set_mesh(mesh):
 
 ## Exporting CUTLASS kernels with `jax.export`
 
-So far, every kernel we've written lives inside a `@jax.jit` function, compiled and run within the current Python process. `jax.export` lets you save a compiled JAX function containing a CUTLASS kernel, ship it to another machine, or load it in a non-Python runtime.
+So far, every kernel we've written lives inside a `@jax.jit` function, compiled and run within the current Python process. `jax.export` lets you serialize a JAX function containing a CUTLASS kernel, ship it to another machine, or load it in a non-Python runtime.
 
-It takes a JIT-compiled function and produces a standalone, serialized artifact that you can save to disk, send over the network, and reload later, even after the original Python program has exited. Without `jax.export`, JAX functions are only compiled and callable inside the same Python process through `jit`.
+It takes a jitted function and produces a standalone, serialized artifact that you can save to disk, send over the network, and reload later, even after the original Python program has exited. Without `jax.export`, JAX functions are only compiled and callable inside the same Python process through `jit`.
 
 With `jax.export` you get:
 
 - **Serialization** — turn your staged JAX computation into a blob that can be stored and reused
 - **Interoperability** — future tools could invoke this from non-Python runtimes (TensorFlow, C++, other frameworks)
-- **Stable HLO output** — useful for ahead-of-time (AOT) compilation, deployment, and cross-platform interoperability
+- **StableHLO output** — useful for ahead-of-time (AOT) compilation, deployment, and cross-platform interoperability
 
 For CUTLASS kernels specifically:
 
-- The exported function includes **custom calls** to CUTLASS kernels, which aren't part of JAX's built-in compilation pipeline. `get_export_disabled_safety_checks()` tells JAX that these custom calls are safe to include in the exported output.
-- With **symbolic shapes**, the exported artifact works for multiple input sizes without recompilation. The kernel doesn't have to be recompiled for new input shapes after export.
+- The exported function includes **custom calls** to CUTLASS kernels. `jax.export` normally refuses to serialize custom calls whose targets aren't known to be stable (see {ref}`jax-501-export`); `get_export_disabled_safety_checks()` returns the `disabled_checks` entries that allow CUTLASS's targets.
+- With **symbolic shapes**, one exported artifact works for many input sizes, without re-exporting. (Each new concrete shape is still compiled by XLA when it's first called.) The kernel doesn't have to be recompiled for new input shapes after export.
 
 ### What `jax.export` gives you
 
-- **A StableHLO representation** of the compiled function (the lowered intermediate representation)
+- **A StableHLO representation** of the function (the lowered intermediate representation)
 - **Metadata** about the function's inputs and outputs
 - **A serialized blob** you can save to disk or transmit over the network
 - **A callable object** (`rehydrated.call(...)`) that works independently of the code that built it
@@ -1162,7 +1161,7 @@ print(f"  Max error: {float(jnp.max(jnp.abs(c - c_ref))):.2e}")
 
 ### Exporting with symbolic shapes
 
-With concrete shapes, the exported artifact only works for the exact dimensions it was traced with. **Symbolic shapes** lift this restriction: you export once and call with any compatible dimensions, without recompilation.
+With concrete shapes, the exported artifact only works for the exact dimensions it was traced with. **Symbolic shapes** lift this restriction: you export once and call with any compatible dimensions, without re-exporting.
 
 `export.symbolic_shape("a, b")` creates symbolic dimension variables. The exported function is parameterized over these variables, so the same serialized blob works for `(512, 256)`, `(1024, 1024)`, or any other shape.
 
@@ -1185,7 +1184,7 @@ print(f"Serialized computation: {len(blob_sym):,} bytes")
 
 rehydrated_sym = export.deserialize(blob_sym)
 
-# Call with different shapes — no recompilation needed.
+# Call with different shapes, all from the same serialized blob.
 # The same serialized blob works for any (M, N) where M*N is a
 # multiple of the kernel's block size (256).
 for shape in [(512, 256), (1024, 512), (2048, 1024)]:

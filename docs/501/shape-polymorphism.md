@@ -5,8 +5,8 @@ When JAX is used in JIT mode, a function will be traced, lowered to StableHLO, a
 combination of input types and shapes. After exporting a function and
 deserializing it on another system we don't have the Python sources available anymore,
 so we cannot re-trace and re-lower it. **Shape polymorphism** is a feature of JAX export
-to allow some exported functions to be used for a whole family of input shapes.
-These functions are traced and lowered once, during exporting, and `Exported`
+that allows some exported functions to be used for a whole family of input shapes.
+These functions are traced and lowered once, during exporting, and the `Exported`
 object contains the information needed to be able to compile and execute the function
 on many concrete input shapes. We do this by specifying shapes that contain
 dimension variables (symbolic shapes) when exporting, as in the
@@ -46,17 +46,17 @@ Note that such functions are still re-compiled on demand for
 each concrete input shape they are invoked on. Only the
 tracing and the lowering are saved.
 
-The {func}`jax.export.symbolic_shape` is used in the above
-example to parse a string representation of a symbolic shape
-into dimension expressions objects (of type `_DimExpr`) that are usable in place of integer
+In the example above, {func}`jax.export.symbolic_shape` parses
+a string representation of a symbolic shape
+into dimension expression objects (of type `_DimExpr`) that are usable in place of integer
 constants to construct shapes. The dimension expression objects
 overload most integer operators, so you can use them as
 you'd use integer constants in most cases.
 See {ref}`jax-501-computing-with-dimension-variables` for more details.
 
-Additionally, we provide the {func}`jax.export.symbolic_args_specs` that
-can be used to construct pytrees of `jax.ShapeDtypeStruct` objects based
-on a polymorphic shape specification:
+Additionally, {func}`jax.export.symbolic_args_specs` constructs pytrees
+of `jax.ShapeDtypeStruct` objects based on a polymorphic shape
+specification:
 
 ```python
 >>> def f1(x, y): # x: f32[a, 1], y : f32[a, 4]
@@ -66,7 +66,7 @@ on a polymorphic shape specification:
 >>> x = np.ones((3, 1), dtype=np.int32)
 >>> y = np.ones((3, 4), dtype=np.int32)
 >>> args_specs = export.symbolic_args_specs((x, y), "a, ...")
->>> exp = export.export(jax.jit(f1))(* args_specs)
+>>> exp = export.export(jax.jit(f1))(*args_specs)
 >>> exp.in_avals
 (ShapedArray(int32[a,1]), ShapedArray(int32[a,4]))
 
@@ -74,11 +74,11 @@ on a polymorphic shape specification:
 
 Note how the polymorphic shape specification `"a, ..."` contains
 the placeholder `...` to be filled from the concrete shapes of
-the concrete shapes of the arguments `(x, y)`.
+the arguments `(x, y)`.
 The placeholder `...` stands for 0 or more dimensions, while the
 placeholder `_` stands for one dimension.
 The {func}`jax.export.symbolic_args_specs` supports pytrees of arguments,
-which are used to fill-in the dtypes and any placeholders.
+which are used to fill in the dtypes and any placeholders.
 The function will construct a pytree of
 argument specifications ({class}`jax.ShapeDtypeStruct`)
 matching the structure of the arguments passed to it.
@@ -125,21 +125,21 @@ while the execution of `exp.call(arg)` cannot use JAX tracing anymore
 of `f` is not available).
 
 Ensuring this form of correctness is hard, and in the hardest cases
-exporting fails. The rest of this chapter describes how to handle these failures.
+exporting fails. The rest of this page describes how to handle these failures.
 
 (jax-501-computing-with-dimension-variables)=
 
 ## Computing with dimension variables
 
 JAX keeps track of the shapes of all intermediate results. When those shapes depend
-on dimension variables JAX computes them as symbolic dimension expressions
+on dimension variables, JAX computes them as symbolic dimension expressions
 involving dimension variables.
-Dimension variables stand for integer values greater or equal to 1.
+Dimension variables stand for integer values greater than or equal to 1.
 The symbolic expressions can represent the result
 of applying arithmetic operators (add, sub, mul, floordiv, mod,
 including the NumPy variants `np.sum`, `np.prod`, etc.) **on dimension
-expressions and integers** (`int`, `np.int`, or anything convertible by `operator.index`).
-These symbolic dimensions can then be used in shape-parameters of JAX primitives
+expressions and integers** (`int`, NumPy integer scalars, or anything convertible by `operator.index`).
+These symbolic dimensions can then be used in shape parameters of JAX primitives
 and APIs, e.g., in `jnp.reshape`, `jnp.arange`, slicing indices, etc.
 
 For example, in the following code to flatten a 2D array, the computation
@@ -169,12 +169,12 @@ Array([3, 4, 5], dtype=int32)
 >>> exp = export.export(jax.jit(lambda x: x.reshape(jnp.array(x.shape[0]) + 2)))(
 ...     jax.ShapeDtypeStruct(export.symbolic_shape("b"), np.int32))  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
-TypeError: Shapes must be 1D sequences of concrete values of integer type, got [Traced<ShapedArray(int32[], weak_type=True)>with<DynamicJaxprTrace(level=1/0)>].
+TypeError: Shapes must be 1D sequences of concrete values of integer type, got [JitTracer(~int32[])].
 
 ```
 
 When a symbolic dimension is used in arithmetic operations with **non-integers**,
-e.g., `float`, `np.float`, `np.ndarray`, or JAX arrays, it is automatically
+e.g., `float`, NumPy floats, `np.ndarray`, or JAX arrays, it is automatically
 converted to a JAX array using `jnp.array`.
 For example, in the function below all occurrences of `x.shape[0]`
 are converted implicitly to `jnp.array(x.shape[0])` because
@@ -259,7 +259,7 @@ In cases where a comparison operation cannot be resolved to a boolean,
 we raise {class}`~jax.errors.InconclusiveDimensionOperation`. E.g.,
 
 ```python
-import jax
+>>> import jax
 >>> export.export(jax.jit(lambda x: 0 if x.shape[0] + 1 >= x.shape[1] else 1))(
 ...     jax.ShapeDtypeStruct(export.symbolic_shape("a, b"), dtype=np.int32))  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
@@ -270,17 +270,17 @@ a boolean value for all values of the symbolic dimensions involved.
 
 ```
 
-If you do get a `InconclusiveDimensionOperation`, you can try
+If you do get an `InconclusiveDimensionOperation`, you can try
 several strategies:
 
- * If your code uses the built-in `max` or `min`, or the
-   `np.max` or `np.min` then you can replace those with
-   `core.max_dim` and `core.min_dim`, which have the effect
-   of delaying the inequality comparison to the compilation
+ * If your code uses the built-in `max` or `min`, or
+   `np.max` or `np.min`, then you can replace those with
+   `jax.core.max_dim` and `jax.core.min_dim`, which have the effect
+   of delaying the inequality comparison to compilation
    time, when shapes become known.
- * Try to rewrite conditionals using `core.max_dim` and
-   `core.min_dim`, e.g., instead of `d if d > 0 else 0`
-   you can write `core.max_dim(d, 0)`.
+ * Try to rewrite conditionals using `jax.core.max_dim` and
+   `jax.core.min_dim`, e.g., instead of `d if d > 0 else 0`
+   you can write `jax.core.max_dim(d, 0)`.
  * Try to rewrite the code to be less dependent on the fact
    that dimensions should be integers, and rely on the fact
    that symbolic dimensions duck-type as integers for most
@@ -303,8 +303,8 @@ You can avoid some inequality comparison failures if you
 change the symbolic shape specifications to add **implicit** constraints
 for dimension sizes. E.g.,
 
-  * You can use `2*b` for a dimension to constrain it to be even and greater or equal
-    to 2.
+  * You can use `2*b` for a dimension to constrain it to be even and greater than
+    or equal to 2.
   * You can use `b + 15` for a dimension to constrain it to
     be at least 16. E.g., the following code would fail without
     the `+ 15` part, because JAX will want to verify that slice sizes
@@ -344,7 +344,7 @@ symbolic constraints:
   * You get limited power when the constraint involves
     more complex expressions, e.g., from `a >= b + 8` we
     can infer that `a - b >= 8` but not that `a >= 9`.
-    We may improve somewhat this area in the future.
+    We may improve this area somewhat in the future.
   * Equality constraints are treated as rewrite rules:
     whenever the symbolic expression on the left of `==`
     is encountered, it is rewritten to the expression on
@@ -352,8 +352,8 @@ symbolic constraints:
     E.g., `floordiv(a, b) == c` works by replacing all
     occurrences of `floordiv(a, b)` with `c`.
     Equality constraints must not contain addition or
-    subtraction at the top-level on the left-hand-side. Examples of
-    valid left-hand-sides are `a * b`, or `4 * a`, or
+    subtraction at the top level on the left-hand side. Examples of
+    valid left-hand sides are `a * b`, or `4 * a`, or
     `floordiv(a + c, b)`.
 
 ```python
@@ -372,13 +372,13 @@ The symbolic constraints can also help to work around the
 limitations in the JAX reasoning mechanisms.
 For example, in the code below JAX will attempt to prove that
 the slice size `x.shape[0] % 3`, which is the symbolic expression
-`mod(b, 3)`, is less or equal to the axis size, which is `b`.
+`mod(b, 3)`, is less than or equal to the axis size, which is `b`.
 This happens to be true for all strictly positive values of
 `b`, but it is not something JAX's symbolic comparison rules
 can prove. Hence, the following code raises an error:
 
 ```python
-from jax import lax
+>>> from jax import lax
 >>> b, = export.symbolic_shape("b")
 >>> f = lambda x: lax.slice_in_dim(x, 0, x.shape[0] % 3)
 >>> export.export(jax.jit(f))(
@@ -392,7 +392,7 @@ a boolean value for all values of the symbolic dimensions involved.
 ```
 
 One option here would be to restrict the code to work only on
-axis sizes that are multiple of `3` (by replacing
+axis sizes that are multiples of `3` (by replacing
 `b` with `3*b` in the shape). Then, JAX would be able
 to simplify the modulo operation `mod(3*b, 3)` to `0`.
 Another option is to add a symbolic constraint
@@ -436,7 +436,7 @@ mathematically unbounded.
 
 The symbolic constraints are stored in an
 {class}`jax.export.SymbolicScope` object, which is created implicitly
-for each call to {func}`jax.export.symbolic_shapes`. You must be careful
+for each call to {func}`jax.export.symbolic_shape`. You must be careful
 to not mix symbolic expressions that use different scopes.
 For example,
 the following code will fail because `a1` and `a2`
@@ -453,12 +453,13 @@ ValueError: Invalid mixing of symbolic scopes for linear combination.
 Expected  scope 4776451856 created at <doctest shape_poly.md[31]>:1:6 (<module>)
 and found for 'a' (unknown) scope 4776979920 created at <doctest shape_poly.md[32]>:1:6 (<module>) with constraints:
   a >= 8
+
 ```
 
 The symbolic expressions that originate from a single call
 to {func}`jax.export.symbolic_shape` share a scope and
-can be mixed up in arithmetic operations. The result would
-also share the same scope.
+can be mixed in arithmetic operations. The result
+shares the same scope.
 
 You can reuse scopes:
 
@@ -494,8 +495,8 @@ of the dimension variables),
 but also for `b == 1` and for `a == b`. This is unsound, and we
 ought to raise `core.InconclusiveDimensionOperation` because under
 some valuations the result should be `True` and under other
-valuations it should be `False`. We choose to make equality total
-thus allowing unsoundness because otherwise we may get spurious errors
+valuations it should be `False`. We choose to make equality total,
+thus allowing unsoundness, because otherwise we may get spurious errors
 in presence of hash collisions
 when hashing dimension expressions or objects that include
 them (shapes, `core.AbstractValue`, `core.Jaxpr`).
@@ -514,7 +515,7 @@ when an exported object is invoked is indirectly through the shapes
 of the array arguments. E.g., the value of `b` can be inferred at the
 call site from the shape of the first argument of type `f32[b]`.
 This works well for most use cases, and
-it mirrors the calling convention of JIT functions.
+it mirrors the calling convention of jitted functions.
 
 Sometimes you may want to export a function parameterized
 by an integer value that determines some shapes in the program.
@@ -549,7 +550,7 @@ Array([[ 9,  8,  7],
 >>> k, = export.symbolic_shape("k", constraints=["k <= 10"])
 >>> export.export(jax.jit(my_top_k, static_argnums=0))(k, x)  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
-UnexpectedDimVar: "Encountered dimension variable 'k' that is not appearing in the shapes of the function arguments
+UnexpectedDimVar: Encountered dimension variable 'k' that is not appearing in the shapes of the function arguments.
 
 ```
 
@@ -582,7 +583,7 @@ Array([[ 9,  8,  7],
 
 ```
 
-Another situation when you may get an error is when some dimension
+Another situation where you may get an error is when some dimension
 variables do appear in the input shapes, but in a non-linear
 expression that JAX cannot currently solve:
 
@@ -613,14 +614,14 @@ invoked with actual argument `arg`:
   * `arg.shape[2] % 2 == 0`
   * `arg.shape[2] // 2 >= 1`
 
-For example, here is the error we get when we call the exported
+For example, here is the error we get when we call the exported function
 on an argument of shape `(3, 3, 5)`:
 
 ```python
 >>> def f(x):  # x: f32[b, b, 2*d]
 ...   return x
 >>> exp = export.export(jax.jit(f))(
-...     jax.ShapeDtypeStruct(export.symbolic_shape("b, b, 2*d"), dtype=np.int32))   
+...     jax.ShapeDtypeStruct(export.symbolic_shape("b, b, 2*d"), dtype=np.int32))
 >>> exp.call(np.ones((3, 3, 5), dtype=np.int32))  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
 ValueError: Input shapes do not match the polymorphic shapes specification.

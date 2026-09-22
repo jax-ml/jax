@@ -43,7 +43,7 @@ called from inside another jitted function.
 
 Alongside XLA's debug-option flags, `compiler_options` also accepts XLA's
 [compilation-effort knobs](https://openxla.org/xla/effort_levels),
-`optimization_level` and `memory_fitting_level`, valued as
+`optimization_level` and `memory_fitting_level`, whose values are
 {class}`jax.CompilerEffortLevel` members or their string names, `"O0"`
 through `"O3"`:
 
@@ -238,8 +238,8 @@ manager (or decorator) that tags every operation traced under it.
 Both modes come with caveats that `xla_metadata_call` avoids:
 
 - The context manager works by setting ambient tracing state, which is part
-  of `jit`'s cache key. Any jit-compiled function called under it, including
-  library code that jits internally, is re-traced and re-compiled for each
+  of `jit`'s cache key. Any jitted function called under it, including
+  library code that jits internally, is retraced and recompiled for each
   distinct metadata context, rather than reusing its existing cache entries.
 - Value-tagging doesn't propagate through autodiff: differentiate `g` above
   and the backward-pass operations come out untagged.
