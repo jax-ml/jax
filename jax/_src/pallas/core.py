@@ -89,6 +89,8 @@ SEMAPHORE_INTERPRET_DTYPE = jnp.int16
 SEMAPHORE_MAX_VALUE = jnp.iinfo(SEMAPHORE_INTERPRET_DTYPE).max
 
 class AbstractSemaphoreTyRules:
+  allow_conversion: bool = True
+
   @staticmethod
   def pallas_interpret_element_aval(_) -> jax_core.ShapedArray:
     return jax_core.ShapedArray((), SEMAPHORE_INTERPRET_DTYPE)

@@ -987,6 +987,14 @@ def lower_jaxpr_to_module(
   else:
     base_loc = None
 
+  def _to_physical_shape(
+      s: jax.ShapeDtypeStruct | jax_core.ShapedArray,
+  ) -> jax.ShapeDtypeStruct:
+    dtype = s.dtype
+    if isinstance(dtype, dtypes.ExtendedDType):
+      dtype = jax_core.physical_element_aval(dtype).dtype
+    return jax.ShapeDtypeStruct(s.shape, dtype)
+
   # NOTE: new_out_shapes has out_shapes, then semaphores_shape and
   # optionally the profiler buffer.
   module, new_out_shapes, _, launch_ctx = mgpu_core._lower_as_gpu_kernel(
@@ -994,7 +1002,7 @@ def lower_jaxpr_to_module(
       grid=cuda_grid,
       cluster=cast(tuple[int, int, int], cluster),
       block=block,
-      in_shapes=(*in_shapes, *scoped_semaphores_shape),
+      in_shapes=tuple(_to_physical_shape(s) for s in (*in_shapes, *scoped_semaphores_shape)),
       out_shape=(*out_shapes, *scoped_semaphores_shape),
       inout_shape=(),
       smem_scratch_shape=scratch_buffers,
@@ -1086,7 +1094,10 @@ def lower_jaxpr_to_mosaic_gpu(
       if module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
         # Shaped arrays must be vectors if and only if their shape is non-empty.
         # Those with empty shapes should be represented by their scalar type.
-        mlir_dtype = mgpu_utils.dtype_to_ir_type(aval.dtype)
+        dtype = aval.dtype
+        if isinstance(dtype, dtypes.ExtendedDType):
+          dtype = jax_core.physical_element_aval(dtype).dtype
+        mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
         if not isinstance(val, ir.Value):
           if require_value:
             raise AssertionError(f"Shaped arrays must be represented by ir.Values, got: {val}")
