@@ -2275,9 +2275,14 @@ class VectorSubcoreTest(PallasSCTest):
     indices = jnp.arange(self.num_lanes) * (64 // self.num_lanes)
     np.testing.assert_array_equal(kernel(x, indices), x[:, :self.num_lanes] + x[:, indices])
 
-  @parameterized.parameters(jnp.int32, jnp.float32)
-  def test_scatter_add(self, dtype):
-    shape = (self.sc_info.num_subcores, 32)
+  @parameterized.product(
+      dtype=[jnp.int32, jnp.float32], trailing_shape=[(), (256,)]
+  )
+  def test_scatter_add(self, dtype, trailing_shape):
+    if trailing_shape and not jtu.is_libtpu_at_least("0.0.49"):
+      self.skipTest("Needs a newer libtpu")
+
+    shape = (self.sc_info.num_subcores, 32, *trailing_shape)
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(*shape)
 
     mesh = plsc.VectorSubcoreMesh(
