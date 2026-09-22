@@ -3896,6 +3896,62 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jax.random.uniform(jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
     np.testing.assert_allclose(kernel(x), jnp.sum(x, axis=0), atol=5e-5)
 
+  @parameterized.product(op_name=("sum", "max", "min"), axis=(0, 1))
+  def test_unreduced_layout(self, op_name, axis):
+    self.skip_if_wg_semantics()
+
+    reduce_fn, combine_fn = {
+        "sum": (lax.reduce_sum, lambda a, b: a + b),
+        "max": (lax.reduce_max, jnp.maximum),
+        "min": (lax.reduce_min, jnp.minimum),
+    }[op_name]
+    shape = (128, 128)
+    layout = plgpu.Layout.WGMMA
+    unreduced_layout = layout.reduce(axis, local_only=True)
+    reduced_layout = layout.reduce(axis)
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((shape[1 - axis],), jnp.float32),
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      x = plgpu.load(x_ref, layout=layout, optimized=False)
+      y = plgpu.load(y_ref, layout=layout, optimized=False)
+      # Only reduce locally, leaving the warps and lanes unreduced.
+      rx = reduce_fn(x, axes=(axis,))
+      rx = plgpu.layout_cast(rx, unreduced_layout)
+      ry = reduce_fn(y, axes=(axis,))
+      ry = plgpu.layout_cast(ry, unreduced_layout)
+      o = combine_fn(rx, ry)
+      o = plgpu.layout_cast(o, reduced_layout)  # Triggers full reduction.
+      plgpu.store(o_ref, o, optimized=False)
+
+    k1, k2 = jax.random.split(jax.random.key(0))
+    x = jax.random.uniform(k1, shape=shape, dtype=jnp.float32)
+    y = jax.random.uniform(k2, shape=shape, dtype=jnp.float32)
+    rx = reduce_fn(x, axes=(axis,))
+    ry = reduce_fn(y, axes=(axis,))
+    expected = combine_fn(rx, ry)
+    np.testing.assert_allclose(kernel(x, y), expected, atol=5e-5)
+
+  def test_unreduced_layout_cast_of_non_reduction_raises(self):
+    self.skip_if_wg_semantics()
+
+    layout = plgpu.Layout.WGMMA
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct((128,), jnp.float32))
+    def kernel(x_ref, o_ref):
+      # The value is not the result of a reduction, so the operation that the
+      # unreduced layout is pending on cannot be derived.
+      x = plgpu.load(x_ref, layout=layout.reduce(1), optimized=False)
+      x = plgpu.layout_cast(x, layout.reduce(1, local_only=True))
+      plgpu.store(o_ref, x, optimized=False)
+
+    in_ty = jax.ShapeDtypeStruct((128,), jnp.float32)
+    with self.assertRaisesRegex(
+        ValueError, "can only be derived from the context"
+    ):
+      jax.jit(kernel).lower(in_ty)
+
   def _test_broadcast_in_dim_base(self, shape, layout, *, axis, hint):
     assert len(shape) == 2
 

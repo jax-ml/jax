@@ -1157,7 +1157,18 @@ def lower_jaxpr_to_mosaic_gpu(
         # We provide the hint for the first output only.
         uses_eqn_output = lookahead_eqn.invars == eqn.outvars[:1]
         if is_layout_cast and uses_eqn_output:
-          out_layout_hint = lookahead_eqn.params["new_layout"].to_mgpu()
+          # Unreduced layouts don't record the operation of the reduction they
+          # are pending on, so we derive it from the primitive that produces
+          # the value being cast.
+          unreduced_op = {
+              lax.reduce_sum_p: "add",
+              lax.reduce_max_p: "max",
+              lax.reduce_min_p: "min",
+          }.get(eqn.primitive)
+          kwargs = {}
+          if unreduced_op is not None:
+            kwargs["unreduced_op"] = unreduced_op
+          out_layout_hint = lookahead_eqn.params["new_layout"].to_mgpu(**kwargs)
       rule_ctx = LoweringRuleContext(
           module_ctx,
           launch_ctx,
@@ -3193,6 +3204,35 @@ def _squeeze_lowering_rule_wg(ctx: LoweringRuleContext, x, dimensions):
     return vector_dialect.shape_cast(res_ty, x)
 
 
+def _reduces_across_warps(
+    layout: mgpu.TiledLayout, target_layout: mgpu.TiledLayout
+) -> bool:
+  """Returns whether reducing `layout` into `target_layout` spans warps."""
+  if len(layout.warp_dims) != len(target_layout.warp_dims):
+    return True  # Invalid target: let Mosaic GPU report the error.
+  # A warp dimension is reduced across warps if it becomes replicated in the
+  # target layout. Note that the source dimension can be `Unreduced`, in which
+  # case we are completing a reduction that was previously deferred.
+  return any(
+      isinstance(td, fa.Replicated) and not isinstance(d, fa.Replicated)
+      for d, td in zip(layout.warp_dims, target_layout.warp_dims)
+  )
+
+
+@contextlib.contextmanager
+def _reduction_scratch(
+    ctx: LoweringRuleContext, dtype: jnp.dtype
+) -> Generator[ir.Value]:
+  """Yields an SMEM view used to exchange partial reductions across warps."""
+  dtype_bitwidth = dtypes.itemsize_bits(dtype)
+  if dtype_bitwidth % 8:
+    raise NotImplementedError("Sub-byte dtypes not supported")
+  scratch_elems = ctx.module_ctx.reduction_scratch_bytes * 8 // dtype_bitwidth
+  scratch_ty = jax.ShapeDtypeStruct(shape=(scratch_elems,), dtype=dtype)
+  with ctx.module_ctx.scratch_view(scratch_ty) as scratch:
+    yield scratch
+
+
 def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
   [x_aval] = ctx.avals_in
   match x.layout:
@@ -3213,18 +3253,24 @@ def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
     case mgpu.TiledLayout():
       if len(axes) != 1:
         raise NotImplementedError("Multi-axis reductions not supported")
-      reduced_dim = x.layout.tiling.tile_dimension(axes[0])
-      if any(reduced_dim[d] for d in x.layout.partitioned_warp_dims):
-        dtype_bitwidth = dtypes.itemsize_bits(x_aval.dtype)
-        if dtype_bitwidth % 8:
-          raise NotImplementedError("Sub-byte dtypes not supported")
-        scratch_elems = ctx.module_ctx.reduction_scratch_bytes * 8 // dtype_bitwidth
-        scratch_ty = jax.ShapeDtypeStruct(shape=(scratch_elems,), dtype=x_aval.dtype)
-        scratch_ctx = ctx.module_ctx.scratch_view(scratch_ty)
+      # A hint with unreduced dimensions asks us to only perform the reduction
+      # local to each thread, leaving the cross-thread part to a later cast to
+      # the fully reduced layout.
+      hint = ctx.out_layout_hint
+      if isinstance(hint, mgpu.TiledLayout) and hint.has_unreduced_dims:
+        target_layout = hint
+      else:
+        untiled_rank = x_aval.ndim - len(x.layout.base_tile_shape)
+        tiled_axes = tuple(a - untiled_rank for a in axes if a >= untiled_rank)
+        target_layout = x.layout.reduce(tiled_axes)
+      if _reduces_across_warps(x.layout, target_layout):
+        scratch_ctx = _reduction_scratch(ctx, x_aval.dtype)
       else:
         scratch_ctx = contextlib.nullcontext(None)
       with scratch_ctx as scratch:
-        return x.reduce(op, axes[0], scratch=scratch)
+        return x.reduce(
+            op, axes[0], scratch=scratch, target_layout=target_layout
+        )
     case _:
       raise NotImplementedError(f"Unsupported layout {x.layout}")
 
@@ -4641,7 +4687,23 @@ def _relayout_lowering_wg(
 
 @register_lowering_rule(gpu_core.layout_cast_p, mgpu.LoweringSemantics.Lane)
 def _layout_cast_lowering(ctx: LoweringRuleContext, x, *, new_layout):
-  del ctx  # Unused.
+  assert isinstance(x, mgpu.FragmentedArray), x
+  if x.is_unreduced:
+    assert isinstance(x.layout, mgpu.TiledLayout)
+    op = x.layout.unreduced_operation
+    assert op is not None
+    target_layout = new_layout.to_mgpu(unreduced_op=op)
+    if target_layout == x.layout:
+      return x
+    # Casting away the unreduced dimensions completes the pending reduction.
+    # Note that we do not need to reserve the scratch here: an unreduced value
+    # can only be produced by a reduction, which always reserves enough SMEM.
+    if _reduces_across_warps(x.layout, target_layout):
+      scratch_ctx = _reduction_scratch(ctx, ctx.avals_in[0].dtype)
+    else:
+      scratch_ctx = contextlib.nullcontext(None)
+    with scratch_ctx as scratch:
+      return x.reduce(op, (), scratch=scratch, target_layout=target_layout)
   return x.to_layout(new_layout.to_mgpu())
 
 

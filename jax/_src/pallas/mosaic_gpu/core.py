@@ -1784,12 +1784,37 @@ def layout_cast(x: Any, new_layout: SomeLayout):
 
 class SomeLayout:
 
-  def reduce(self, axes: int | Sequence[int]) -> SomeLayout:
+  def reduce(
+      self, axes: int | Sequence[int], *, local_only: bool = False
+  ) -> SomeLayout:
+    """Returns the layout of the result of reducing ``axes`` out of this layout.
+
+    Args:
+      axes: The axes to reduce.
+      local_only: If true, only the reduction local to each thread is performed
+        and the resulting layout is *unreduced*: each warp or lane holds a
+        partial result. Unreduced values can take part in pointwise operations
+        that distribute over the pending reduction, which is completed by
+        casting the value to the fully reduced layout.
+    """
     if isinstance(axes, int):
       axes = (axes,)
-    return ReducedLayout(self, axes)
+    return ReducedLayout(self, axes, local_only=local_only)
 
-  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
+  def to_mgpu(
+      self, *args, unreduced_op: str | None = None, **kwargs
+  ) -> mgpu.FragmentedLayout:
+    """Returns the Mosaic GPU layout corresponding to this layout.
+
+    Args:
+      *args: Layout-specific parameters.
+      unreduced_op: The operation of the reduction unreduced layouts are
+        pending on. Unlike Mosaic GPU layouts, unreduced Pallas layouts do not
+        record it, so it has to be derived from the context in which they are
+        used (e.g. from the primitive that produced the value they are attached
+        to). Ignored by layouts that have no unreduced dimensions.
+      **kwargs: Layout-specific parameters.
+    """
     raise NotImplementedError
 
 
@@ -1803,7 +1828,10 @@ class ParameterizedLayout(SomeLayout):
     object.__setattr__(self, "args", tuple(self.args))
     object.__setattr__(self, "kwargs", frozen_dict.FrozenDict(self.kwargs))
 
-  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
+  def to_mgpu(
+      self, *args, unreduced_op: str | None = None, **kwargs
+  ) -> mgpu.FragmentedLayout:
+    del unreduced_op  # Only meaningful for `ReducedLayout`.
     if args or kwargs:
       raise ValueError(f"Can't instantiate {self} with arguments.")
     return self.layout_cls.to_mgpu(*self.args, **self.kwargs)
@@ -1813,14 +1841,34 @@ class ParameterizedLayout(SomeLayout):
 class ReducedLayout(SomeLayout):
   layout: SomeLayout
   axes: Sequence[int]
+  local_only: bool = False
 
-  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
+  def to_mgpu(
+      self, *args, unreduced_op: str | None = None, **kwargs
+  ) -> mgpu.FragmentedLayout:
     if args or kwargs:
       raise ValueError(f"Can't instantiate {self} with arguments.")
-    layout = self.layout.to_mgpu()
+    # When the operation is unknown, we use a placeholder: it only matters if
+    # the resulting layout has unreduced dimensions, which we reject below.
+    op = "add" if unreduced_op is None else unreduced_op
+    # `self.layout` may itself be unreduced (i.e. chained local-only
+    # reductions), in which case it is pending on the same operation.
+    layout = self.layout.to_mgpu(unreduced_op=op)
     if not isinstance(layout, mgpu.TiledLayout):
       raise ValueError("Only TiledLayout supports reductions.")
-    return layout.reduce(self.axes)
+    layout = layout.reduce(
+        self.axes,
+        local_only=self.local_only,
+        op=op if self.local_only else None,
+    )
+    if unreduced_op is None and layout.has_unreduced_dims:
+      raise ValueError(
+          f"{self} is unreduced and its Mosaic GPU layout depends on the"
+          " reduction operation, which can only be derived from the context."
+          " Unreduced layouts can only be used in a plgpu.layout_cast applied"
+          " to the result of a reduction."
+      )
+    return layout
 
 
 class Layout(SomeLayout, enum.Enum):
@@ -1856,7 +1904,11 @@ class Layout(SomeLayout, enum.Enum):
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
 
-  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
+  def to_mgpu(
+      self, *args, unreduced_op: str | None = None, **kwargs
+  ) -> mgpu.FragmentedLayout:
+    del unreduced_op  # Only meaningful for `ReducedLayout`.
+
     def check_no_args():
       if args or kwargs:
         raise ValueError(f"Can't instantiate {self} with arguments.")
