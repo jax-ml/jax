@@ -55,6 +55,7 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
 #include "llvm/ADT/SmallVector.h"
@@ -159,9 +160,12 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/cuda/cuda_kernel.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/collective_kernel_metadata.h"
+#include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
 #include "tsl/platform/path.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -936,9 +940,18 @@ absl::StatusOr<CompiledKernel*> GetOrCreateKernel(
 
 class KernelHandle {
  public:
-  KernelHandle(CUmodule module, CUfunction function, CUcontext ctx)
-      : module_(module), function_(function), ctx_(ctx) {}
+  KernelHandle(CUmodule module, CUfunction function, CUcontext ctx,
+               std::unique_ptr<se::Kernel> se_kernel)
+      : module_(module),
+        function_(function),
+        ctx_(ctx),
+        se_kernel_(std::move(se_kernel)) {}
+
   ~KernelHandle() {
+    if (se_kernel_ != nullptr) {
+      // unique_ptr<se::Kernel> will call Unload via CudaExecutor::UnloadKernel.
+      return;
+    }
     if (auto s = Unload(module_, ctx_); !s.ok()) {
       LOG(ERROR) << "Failed to unload GPU module: " << s;
     } else {
@@ -965,14 +978,17 @@ class KernelHandle {
   CUmodule module_;
   CUfunction function_;
   CUcontext ctx_;
+  std::unique_ptr<se::Kernel> se_kernel_;
 };
 
 struct InitResult {
   CUmodule module;
   CUfunction function;
+  std::unique_ptr<se::Kernel> se_kernel;
 };
 
-absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
+absl::StatusOr<InitResult> InitKernel(
+    const CompiledKernel& kernel, se::StreamExecutor* absl_nullable executor) {
   if (kernel.is_nvshmem_used &&
       !NvshmemApi::Default(/*assert_ok=*/false).is_loaded()) {
     return absl::InternalError(
@@ -1010,17 +1026,31 @@ absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
     }
   }
   CUmodule module = nullptr;
-  CUDA_RETURN_IF_ERROR(cuModuleLoadData(&module, kernel.gpu_binary.data()));
-  if (kernel.is_nvshmem_used) {
-    if (NvshmemApi::Default().cumodule_init(module) != NVSHMEM_SUCCESS) {
-      return absl::InternalError("nvshmemx_cumodule_init failed.");
-    }
-  }
   CUfunction function = nullptr;
-  // TODO(allanrenucci): We should unload the kernel if any of the following
-  // calls fail.
-  CUDA_RETURN_IF_ERROR(
-      cuModuleGetFunction(&function, module, kernel.kernel_name.c_str()));
+  std::unique_ptr<se::Kernel> se_kernel;
+  if (executor != nullptr) {  // Uses XLA Stream Executor to load the kernel.
+    se::KernelLoaderSpec spec =
+        se::KernelLoaderSpec::CreateCudaCubinInMemorySpec(
+            absl::MakeSpan(
+                reinterpret_cast<const uint8_t*>(kernel.gpu_binary.data()),
+                kernel.gpu_binary.size()),
+            kernel.kernel_name, /*arity=*/0);
+    ASSIGN_OR_RETURN(se_kernel, executor->LoadKernel(spec));
+    function = static_cast<const se::gpu::CudaKernel*>(se_kernel.get())
+                   ->gpu_function();
+  } else {  // Load kernel directly using CUDA APIs.
+    CUDA_RETURN_IF_ERROR(cuModuleLoadData(&module, kernel.gpu_binary.data()));
+    // NB: nvshmem exists only when the stream executor is not used.
+    if (kernel.is_nvshmem_used) {
+      if (NvshmemApi::Default().cumodule_init(module) != NVSHMEM_SUCCESS) {
+        return absl::InternalError("nvshmemx_cumodule_init failed.");
+      }
+    }
+    // TODO(allanrenucci): We should unload the kernel if any of the following
+    // calls fail.
+    CUDA_RETURN_IF_ERROR(
+        cuModuleGetFunction(&function, module, kernel.kernel_name.c_str()));
+  }
   if (kernel.smem_bytes) {
     CUDA_RETURN_IF_ERROR(cuFuncSetAttribute(
         function, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
@@ -1031,13 +1061,14 @@ absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
         function, CU_FUNC_ATTRIBUTE_NON_PORTABLE_CLUSTER_SIZE_ALLOWED, 1));
   }
   VLOG(5) << "Successfully initialized Mosaic GPU kernel";
-  return InitResult{module, function};
+  return InitResult{module, function, std::move(se_kernel)};
 }
 
 // Initializes the kernel in the current CUDA context and return a handle to the
 // kernel.
 absl::StatusOr<std::shared_ptr<KernelHandle>> CachedInit(
-    const CompiledKernel* absl_nonnull kernel) {
+    const CompiledKernel* absl_nonnull kernel,
+    se::StreamExecutor* absl_nullable executor) {
   using CacheKey = std::pair<const CompiledKernel*, uintptr_t>;
   struct Cache {
     absl::Mutex mutex;
@@ -1057,8 +1088,9 @@ absl::StatusOr<std::shared_ptr<KernelHandle>> CachedInit(
       return handle;
     }
   }
-  ASSIGN_OR_RETURN(InitResult res, InitKernel(*kernel));
-  auto handle = std::make_shared<KernelHandle>(res.module, res.function, ctx);
+  ASSIGN_OR_RETURN(InitResult res, InitKernel(*kernel, executor));
+  auto handle = std::make_shared<KernelHandle>(res.module, res.function, ctx,
+                                               std::move(res.se_kernel));
   cache->handles.insert_or_assign(key, handle);
   return handle;
 }
@@ -1397,6 +1429,7 @@ absl::Status MosaicGpuPrepare(
     se::DeviceAddressAllocator* absl_nullable allocator,
     CustomCallResources* resources, ffi::RemainingArgs inputs,
     ffi::RemainingRets results, xla::ffi::Dictionary attributes) {
+  TF_RET_CHECK(collective_params != nullptr);
   int device_ordinal = collective_params->global_device_id.value();
   XLA_VLOG_DEVICE(5, device_ordinal) << "MosaicGpuPrepare";
   // Module initialization calls cuModuleLoadData to load the PTX into the GPU.
@@ -1410,7 +1443,8 @@ absl::Status MosaicGpuPrepare(
   // rendez-vous between Prepare and Initialize, which we need here to make sure
   // that modules were loaded on all devices before the first execution.
   DeviceState& device_state = GetDeviceState(resources, collective_params);
-  ASSIGN_OR_RETURN(device_state.kernel_handle, CachedInit(resources->kernel));
+  ASSIGN_OR_RETURN(device_state.kernel_handle,
+                   CachedInit(resources->kernel, collective_params->executor));
   CHECK(device_state.kernel_handle != nullptr);
 
   if (!ModuleUsesCollectiveMetadata(attributes)) {
@@ -1829,7 +1863,7 @@ __attribute__((visibility("default"))) void** MosaicGpuCompile(
   if (!kernel.ok()) {
     return nullptr;
   }
-  absl::StatusOr<InitResult> init_res = InitKernel(**kernel);
+  absl::StatusOr<InitResult> init_res = InitKernel(**kernel, nullptr);
   if (!init_res.ok()) {
     return nullptr;
   }
