@@ -343,7 +343,7 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
       help="""
         What CPU features should we target? Release enables CPU features that
         should be enabled for a release build, which on x86-64 architectures
-        enables AVX. Native enables -march=native, which generates code targeted
+        enables Haswell (-march=haswell). Native enables -march=native, which generates code targeted
         to use all features of the current machine. Default means don't opt-in
         to any architectural features and use whatever the C compiler generates
         by default.

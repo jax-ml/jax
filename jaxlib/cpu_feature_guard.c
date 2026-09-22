@@ -34,6 +34,15 @@ limitations under the License.
 #if defined(_MSC_VER)
 #include <intrin.h>
 #endif
+#endif
+
+#if defined(__clang__)
+#pragma clang attribute push (__attribute__((target("arch=x86-64"))), apply_to=function)
+#elif defined(__GNUC__)
+#pragma GCC target("arch=x86-64")
+#endif
+
+#ifdef PLATFORM_WINDOWS
 
 // Visual Studio defines a builtin function for CPUID, so use that if possible.
 #define GETCPUID(a, b, c, d, a_inp, c_inp) \
@@ -68,10 +77,6 @@ static int GetXCR0EAX() {
 #endif
 #endif
 
-// TODO(phawkins): technically we should build this module without AVX support
-// and use configure-time tests instead of __AVX__, since there is a
-// possibility that the compiler will use AVX instructions before we reach this
-// point.
 #ifdef PLATFORM_IS_X86
 
 static void ReportMissingCpuFeature(const char* name) {
@@ -111,6 +116,7 @@ static PyObject *CheckCpuFeatures(PyObject *self, PyObject *args) {
       // Is AVX supported in hardware?
       ((ecx >> 28) & 0x1);
   const _Bool have_fma = have_avx && ((ecx >> 12) & 0x1);
+  const _Bool have_f16c = have_avx && ((ecx >> 29) & 0x1);
 
   // Get standard level 7 structured extension features (issue CPUID with
   // eax = 7 and ecx= 0), which is required to check for AVX2 support as
@@ -119,6 +125,8 @@ static PyObject *CheckCpuFeatures(PyObject *self, PyObject *args) {
   // Reference, A-M CPUID).
   GETCPUID(eax, ebx, ecx, edx, 7, 0);
   const _Bool have_avx2 = have_avx && ((ebx >> 5) & 0x1);
+  const _Bool have_bmi1 = (ebx >> 3) & 0x1;
+  const _Bool have_bmi2 = (ebx >> 8) & 0x1;
 
 #ifdef __AVX__
   if (!have_avx) {
@@ -141,14 +149,44 @@ static PyObject *CheckCpuFeatures(PyObject *self, PyObject *args) {
   }
 #endif  // __FMA__
 
-  Py_INCREF(Py_None);
+#ifdef __F16C__
+  if (!have_f16c) {
+    ReportMissingCpuFeature("F16C");
+    return NULL;
+  }
+#endif  // __F16C__
+
+#ifdef __BMI__
+  if (!have_bmi1) {
+    ReportMissingCpuFeature("BMI");
+    return NULL;
+  }
+#endif  // __BMI__
+
+#ifdef __BMI2__
+  if (!have_bmi2) {
+    ReportMissingCpuFeature("BMI2");
+    return NULL;
+  }
+#endif  // __BMI2__
+
+#ifdef __LZCNT__
+  GETCPUID(eax, ebx, ecx, edx, 0x80000001, 0);
+  const _Bool have_lzcnt = (ecx >> 5) & 0x1;
+  if (!have_lzcnt) {
+    ReportMissingCpuFeature("LZCNT");
+    return NULL;
+  }
+#endif  // __LZCNT__
+
+  Py_IncRef(Py_None);
   return Py_None;
 }
 
 #else  // PLATFORM_IS_X86
 
 static PyObject *CheckCpuFeatures(PyObject *self, PyObject *args) {
-  Py_INCREF(Py_None);
+  Py_IncRef(Py_None);
   return Py_None;
 }
 
@@ -181,3 +219,7 @@ EXPORT_SYMBOL PyMODINIT_FUNC PyInit_cpu_feature_guard(void) {
 #endif
   return module;
 }
+
+#if defined(PLATFORM_IS_X86) && defined(__clang__)
+#pragma clang attribute pop
+#endif

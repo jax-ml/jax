@@ -20,6 +20,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.lax.polynomial` for polynomial evaluation. The polynomial
     primitive is faster and uses less memory when computing gradients.
 
+* Breaking changes
+  * On x86-64, JAX and `jaxlib` now require an Intel Haswell or newer CPU
+    (roughly 2013 onwards, requiring AVX2 and FMA support). Older CPUs that
+    only support AVX are no longer supported, though you can still build from
+    source for older CPUs.
+
 * Changes
   * Improved the numerical accuracy of {func}`jax.numpy.sinc` across all
     floating-point types (to $\le 0.5$ ULP for `bfloat16` and `float16`,
