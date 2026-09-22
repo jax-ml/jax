@@ -5625,8 +5625,9 @@ class APITest(jtu.JaxTestCase):
                     modes=['rev'], atol=1e-3, rtol=1e-3)
 
   def test_remat_of_jit_input_to_output_forwarding(self):
-    # Old-remat-only: remat3 doesn't recognize bare-callable policies, treating
-    # them as full remat, under which this function saves no residuals.
+    # Old-remat-only: remat3 consults policies only at named values, dots, and
+    # convs, so on this function (just muls) the all-True policy acts as full
+    # remat, under which it saves no residuals.
     with config.remat3(False):
       @partial(jax.remat, policy=lambda *_, **__: True)
       def f(x):
@@ -7034,6 +7035,52 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' sin '), 2)
     self.assertEqual(jaxpr_text.count(' dot_general'), 9)
     jtu.check_grads(f, (jnp.ones((3, 2, 2)),), order=2, modes=['fwd', 'rev'])
+
+  def _conv_chain(self):
+    def conv(x, k):
+      return lax.conv_general_dilated(
+          x, k, (1, 1), 'SAME', dimension_numbers=('NHWC', 'HWIO', 'NHWC'),
+          precision=lax.Precision.HIGHEST)
+
+    def f(x, k):
+      x = jnp.sin(conv(x, k))
+      x = jnp.sin(conv(x, k))
+      return jnp.sum(x)
+
+    return f, jnp.ones((1, 4, 4, 2)), 0.1 * jnp.ones((3, 3, 2, 2))
+
+  def test_remat_checkpoint_dots_saves_convs(self):
+    f, x, k = self._conv_chain()
+    g = jax.checkpoint(f, policy=jax.checkpoint_policies.dots_saveable)
+    res = saved_residuals(g, x, k)
+    self.assertEqual(
+        sum('conv_general_dilated' in desc for _, desc in res), 2)
+    jtu.check_grads(g, (x, k), order=2, modes=['fwd', 'rev'])
+
+  def test_remat_checkpoint_dots_with_no_batch_dims_skips_convs(self):
+    f, x, k = self._conv_chain()
+    g = jax.checkpoint(
+        f, policy=jax.checkpoint_policies.dots_with_no_batch_dims_saveable)
+    res = saved_residuals(g, x, k)
+    self.assertEqual(
+        sum('conv_general_dilated' in desc for _, desc in res), 0)
+    jtu.check_grads(g, (x, k), order=2, modes=['fwd', 'rev'])
+
+  def test_remat_offload_convs(self):
+    f, x, k = self._conv_chain()
+
+    def policy(prim, *_, **__):
+      if prim is lax.conv_general_dilated_p:
+        return jax.ad_checkpoint.Offloadable(src='device', dst='pinned_host')
+      return jax.ad_checkpoint.Recompute
+
+    g = jax.checkpoint(f, policy=policy)
+    res = saved_residuals(g, x, k)
+    host_res = [aval for aval, _ in res
+                if aval.memory_space == core.MemorySpace.Host]
+    self.assertLen(host_res, 2)
+    self.assertAllClose(jax.grad(g, argnums=(0, 1))(x, k),
+                        jax.grad(f, argnums=(0, 1))(x, k))
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{remat_name}", "remat": remat}
