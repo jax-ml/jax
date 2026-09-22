@@ -230,6 +230,13 @@ def reduce_reshape_expression(
               )
           )
         case fa.TiledLayout() as tiled_layout:
+          # Reshapes that only add or remove size-1 dimensions are a pure
+          # relabeling of the layout, and are allowed to change the rank.
+          degenerate = fa.degenerate_reshape(
+              tiled_layout, reshape.source_shape, reshape.target_shape
+          )
+          if degenerate is not None:
+            return RegisterLayout(degenerate)
           tile_shape = tiled_layout.base_tile_shape
           if len(reshape.target_shape) < len(tile_shape):
             return dataclasses.replace(reshape, expression=reduced_expr)
