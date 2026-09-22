@@ -4497,7 +4497,9 @@ def tile(A: ArrayLike, reps: DimSize | Sequence[DimSize]) -> Array:
 
   Args:
     A: input array to be repeated. Can be of any shape or dimension.
-    reps: specifies the number of repetitions along each axis.
+    reps: specifies the number of repetitions along each axis. If
+      ``reps`` is a scalar or has ``len(reps) < ndim(A)``, then it
+      applies to the trailing dimension or dimensions of ``A``.
 
   Returns:
     a new array where the input array has been repeated according to ``reps``.
@@ -4517,6 +4519,9 @@ def tile(A: ArrayLike, reps: DimSize | Sequence[DimSize]) -> Array:
            [3, 4],
            [1, 2],
            [3, 4]], dtype=int32)
+    >>> jnp.tile(arr, 2)
+    Array([[1, 2, 1, 2],
+           [3, 4, 3, 4]], dtype=int32)
   """
   A = util.ensure_arraylike("tile", A)
   try:
