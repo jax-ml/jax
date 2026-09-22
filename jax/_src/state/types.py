@@ -457,7 +457,7 @@ class AbstractRef(core.AbstractValue):
 
   Refer to the `Ref guide`_ for more information.
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   __slots__ = ["inner_aval", "memory_space", "kind"]
 

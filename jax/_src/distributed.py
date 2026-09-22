@@ -345,7 +345,7 @@ def initialize(coordinator_address: str | None = None,
     mtls_cert_file: Path to this process' PEM-encoded certificate chain. When
       set (together with ``mtls_key_file`` and ``mtls_ca_file``), the
       coordination service and its clients authenticate each other with
-      mutual TLS; see :ref:`coordination-service-mtls` for what this does
+      mutual TLS; see :ref:`jax-501-coordination-service-mtls` for what this does
       and does not protect. The files are re-read periodically, so rotated
       certificates are picked up without a restart. If ``None``, falls
       back to the ``jax_mtls_cert_file`` config.

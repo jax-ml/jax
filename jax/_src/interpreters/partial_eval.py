@@ -2027,7 +2027,7 @@ def diff_types(dbg, new_leaves, old_leaves) -> tuple[int, int, str] | None:
       diffs.append(f"  * at {name}, now {new_str} and before {old_str}")
   msg = 'different input types:\n' + '\n'.join(diffs)
   if add_weak_type_hint:
-    msg += 'https://docs.jax.dev/en/latest/type_promotion.html#weak-types'
+    msg += 'https://docs.jax.dev/en/latest/101/type_promotion.html#weak-types'
   if diffs: return 3, len(diffs), msg
 
 

@@ -46,7 +46,7 @@ class JAXIndexError(_JAXErrorMixin, IndexError):
 class ConcretizationTypeError(JAXTypeError):
   """
   This error occurs when a JAX Tracer object is used in a context where a
-  concrete value is required (see :ref:`faq-different-kinds-of-jax-values`
+  concrete value is required (see :ref:`jax-101-tracing`
   for more on what a Tracer is). In some situations, it can be easily fixed by
   marking problematic values as static; in others, it may indicate that your
   program is doing operations that are not directly supported by JAX's JIT
@@ -125,7 +125,7 @@ class ConcretizationTypeError(JAXTypeError):
 
   To understand more subtleties having to do with tracers vs. regular values,
   and concrete vs. abstract values, you may want to read
-  :ref:`faq-different-kinds-of-jax-values`.
+  :ref:`jax-101-tracing`.
   """
   def __init__(self, tracer: core.Tracer, context: str = ""):
     super().__init__(
@@ -229,7 +229,7 @@ class NonConcreteBooleanIndexError(JAXIndexError):
 class TracerArrayConversionError(JAXTypeError):
   """
   This error occurs when a program attempts to convert a JAX Tracer object into
-  a standard NumPy array (see :ref:`faq-different-kinds-of-jax-values` for more
+  a standard NumPy array (see :ref:`jax-101-tracing` for more
   on what a Tracer is). It typically occurs in one of a few situations.
 
   Using non-JAX functions in JAX transformations
@@ -303,9 +303,9 @@ class TracerArrayConversionError(JAXTypeError):
 
   To understand more subtleties having to do with tracers vs. regular values,
   and concrete vs. abstract values, you may want to read
-  :ref:`faq-different-kinds-of-jax-values`.
+  :ref:`jax-101-tracing`.
 
-  .. _External Callbacks: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html
+  .. _External Callbacks: https://docs.jax.dev/en/latest/201/callbacks.html
   """
   def __init__(self, tracer: core.Tracer):
     super().__init__(
@@ -317,7 +317,7 @@ class TracerArrayConversionError(JAXTypeError):
 class TracerIntegerConversionError(JAXTypeError):
   """
   This error can occur when a JAX Tracer object is used in a context where a
-  Python integer is expected (see :ref:`faq-different-kinds-of-jax-values` for
+  Python integer is expected (see :ref:`jax-101-tracing` for
   more on what a Tracer is). It typically occurs in a few situations.
 
   Passing a tracer in place of an integer
@@ -401,7 +401,7 @@ class TracerIntegerConversionError(JAXTypeError):
 
   To understand more subtleties having to do with tracers vs. regular values,
   and concrete vs. abstract values, you may want to read
-  :ref:`faq-different-kinds-of-jax-values`.
+  :ref:`jax-101-tracing`.
   """
   def __init__(self, tracer: core.Tracer):
     super().__init__(
@@ -413,7 +413,7 @@ class TracerIntegerConversionError(JAXTypeError):
 class TracerBoolConversionError(ConcretizationTypeError):
   """
   This error occurs when a traced value in JAX is used in a context where a
-  boolean value is expected (see :ref:`faq-different-kinds-of-jax-values`
+  boolean value is expected (see :ref:`jax-101-tracing`
   for more on what a Tracer is).
 
   The boolean cast may be an explicit (e.g. ``bool(x)``) or implicit, through use of
@@ -513,7 +513,7 @@ class TracerBoolConversionError(ConcretizationTypeError):
 
   To understand more subtleties having to do with tracers vs. regular values,
   and concrete vs. abstract values, you may want to read
-  :ref:`faq-different-kinds-of-jax-values`.
+  :ref:`jax-101-tracing`.
   """
   def __init__(self, tracer: core.Tracer):
     JAXTypeError.__init__(self,
@@ -529,7 +529,7 @@ class UnexpectedTracerError(JAXTypeError):
   function ``f`` that stores, in some scope outside of ``f``, a reference to
   an intermediate value, that value is considered to have been leaked.
   Leaking values is a side effect. (Read more about avoiding side effects in
-  `Pure Functions <https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions>`_)
+  `Pure Functions <https://docs.jax.dev/en/latest/101/transformations.html#consequence-1-transformations-require-traceable-functions>`_)
 
   JAX detects leaks when you then use the leaked value in another
   operation later on, at which point it raises an ``UnexpectedTracerError``.
@@ -677,5 +677,5 @@ class KeyReuseError(JAXTypeError):
 
   This sort of key reuse is problematic because the JAX PRNG is stateless, and keys
   must be manually split; For more information on this see `the Pseudorandom Numbers
-  tutorial <https://docs.jax.dev/en/latest/random-numbers.html>`_.
+  tutorial <https://docs.jax.dev/en/latest/101/random.html>`_.
   """

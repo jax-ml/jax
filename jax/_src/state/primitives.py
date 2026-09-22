@@ -151,7 +151,7 @@ def ref_get(
     >>> ref[...]
     Array([0, 1, 2, 3, 4], dtype=int32)
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   if isinstance(ref, TransformedRef) and ref.multiref:
     raise NotImplementedError(
@@ -247,7 +247,7 @@ def ref_swap(
     >>> ref
     Ref(10, dtype=int32)
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   if isinstance(ref, TransformedRef) and ref.multiref:
     raise NotImplementedError(
@@ -317,7 +317,7 @@ def ref_set(
     >>> ref
     Ref(4, dtype=int32)
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   ref_swap(ref, idx, value, _function_name="ref_set")
 
@@ -383,7 +383,7 @@ def ref_addupdate(
     >>> ref
     Ref(12, dtype=int32)
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   ref, transforms = get_ref_and_transforms(ref, idx, "ref_addupdate")
   flat_transforms, tree = tree_util.tree_flatten(transforms)

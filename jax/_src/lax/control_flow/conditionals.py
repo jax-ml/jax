@@ -214,7 +214,7 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   the two branches is executed (up to compiler rewrites and optimizations).
   However, when transformed with :func:`~jax.vmap` to operate over a batch of
   predicates, ``cond`` is converted to :func:`~jax.lax.select`.
-  Both branches will be traced in all cases (see :ref:`Key concepts: tracing <key-concepts-tracing>`
+  Both branches will be traced in all cases (see :ref:`How transformations work: tracing <jax-101-tracing>`
   for a discussion of JAX's tracing model).
 
   Args:
@@ -403,7 +403,7 @@ def _check_branch_outputs(
                    '\n'.join(f'  * {d};' for d in pvary_applications[:-1])
                    + f'\n  * {pvary_applications[-1]}.\n')
     if pvary_msg:
-      pvary_msg += ("See https://docs.jax.dev/en/latest/notebooks/shard_map.html#scan-vma "
+      pvary_msg += ("See https://docs.jax.dev/en/latest/201/shard-map.html#scan-vma "
                     "for more information.\n\n")
 
     raise TypeError(

@@ -425,7 +425,7 @@ def ffi_call(
 ) -> Callable[..., Array | Sequence[Array]]:
   """Call a foreign function interface (FFI) target.
 
-  See the :ref:`ffi-tutorial` tutorial for more information.
+  See the :ref:`jax-401-ffi` tutorial for more information.
 
   Like :func:`~jax.pure_callback`, the behavior of ``ffi_call`` under
   :func:`~jax.vmap` depends on the value of ``vmap_method``. See the

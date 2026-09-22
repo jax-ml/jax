@@ -264,7 +264,7 @@ def register_pytree_node(
 ) -> None:
   """Extends the set of types that are considered internal nodes in pytrees.
 
-  See :ref:`example usage <pytrees>`.
+  See :ref:`example usage <jax-101-custom-pytrees>`.
 
   Args:
     nodetype: a Python type to register as a pytree.

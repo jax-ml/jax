@@ -436,7 +436,7 @@ def bits(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -489,7 +489,7 @@ def uniform(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -613,7 +613,7 @@ def randint(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -762,7 +762,7 @@ def permutation(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -934,7 +934,7 @@ def normal(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1011,7 +1011,7 @@ def multivariate_normal(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1103,7 +1103,7 @@ def truncated_normal(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1180,7 +1180,7 @@ def bernoulli(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1259,7 +1259,7 @@ def beta(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1331,7 +1331,7 @@ def cauchy(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1393,7 +1393,7 @@ def dirichlet(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1459,7 +1459,7 @@ def exponential(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1670,7 +1670,7 @@ def gamma(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1736,7 +1736,7 @@ def loggamma(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2184,7 +2184,7 @@ def poisson(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2253,7 +2253,7 @@ def gumbel(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2368,7 +2368,7 @@ def categorical(
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2450,7 +2450,7 @@ def laplace(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2499,7 +2499,7 @@ def logistic(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2553,7 +2553,7 @@ def pareto(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2609,7 +2609,7 @@ def t(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2681,7 +2681,7 @@ def chisquare(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2751,7 +2751,7 @@ def f(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2806,7 +2806,7 @@ def rademacher(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2854,7 +2854,7 @@ def maxwell(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -3014,7 +3014,7 @@ def orthogonal(
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -3082,7 +3082,7 @@ def generalized_normal(
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -3130,7 +3130,7 @@ def ball(
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -3184,7 +3184,7 @@ def rayleigh(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -3246,7 +3246,7 @@ def wald(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -3309,7 +3309,7 @@ def geometric(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -3381,7 +3381,7 @@ def triangular(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -3442,7 +3442,7 @@ def lognormal(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:

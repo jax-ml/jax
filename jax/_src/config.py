@@ -1118,7 +1118,7 @@ jax_export_calling_convention_version = int_state(
         'The calling convention version number to use for exporting. This must be '
         'within the range of versions supported by the tf.XlaCallModule '
         'used in your deployment environment. '
-        'See https://docs.jax.dev/en/latest/export/shape_poly.html#calling-convention-versions.'
+        'See https://docs.jax.dev/en/latest/501/export.html#calling-convention-versions.'
     )
 )
 
@@ -1127,7 +1127,7 @@ export_ignore_forward_compatibility = bool_state(
     default=bool_env('JAX_EXPORT_IGNORE_FORWARD_COMPATIBILIY', False),
     help=(
         'Whether to ignore the forward compatibility lowering rules. '
-        'See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees-for-custom-calls.'
+        'See https://docs.jax.dev/en/latest/501/export.html#compatibility-guarantees-for-custom-calls.'
     )
 )
 
@@ -1140,7 +1140,7 @@ export_deserialize_expired_versions = bool_state(
         'the compiler and runtime. Furthermore, you accept the fact that the '
         'behavior of the deserialized model may change at any time. '
         'Read carefully '
-        'https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees.'
+        'https://docs.jax.dev/en/latest/501/export.html#compatibility-guarantees.'
     )
 )
 
@@ -1284,7 +1284,7 @@ log_compiles = bool_state(
         'Log a message each time `jit` or `pmap` compiles an XLA computation.'
         ' Logging is performed with `logging`. When this option is set, the log'
         ' level is WARNING; otherwise the level is DEBUG.\n\nSee'
-        ' https://docs.jax.dev/en/latest/debugging/slow_tracing_compilation.html'
+        ' https://docs.jax.dev/en/latest/201/slow-compilation.html'
         ' for more details.'
     ),
 )
@@ -1297,7 +1297,7 @@ explain_cache_misses = bool_state(
         ' cache), log an explanation. Logging is performed with `logging`. When'
         ' this option is set, the log level is WARNING; otherwise the level is'
         ' DEBUG.\n\nSee'
-        ' https://docs.jax.dev/en/latest/debugging/slow_tracing_compilation.html'
+        ' https://docs.jax.dev/en/latest/201/slow-compilation.html'
         ' for more details.'
     ),
 )
@@ -2093,7 +2093,7 @@ def transfer_guard(new_val: str) -> Generator[None]:
   """A contextmanager to control the transfer guard level for all transfers.
 
   For more information, see
-  https://docs.jax.dev/en/latest/transfer_guard.html
+  https://docs.jax.dev/en/latest/501/transfer-guard.html
 
   Args:
     new_val: The new thread-local transfer guard level for all transfers.
