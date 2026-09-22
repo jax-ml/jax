@@ -115,8 +115,8 @@ side effects, use {func}`jax.check_tracer_leaks`.
 
 Recall from {ref}`jax-101-transformations` that traced code can't always
 specialize on data values, and `jit` is the extreme case: its tracers carry
-no values at all, only JAX types.
-Value-dependent Python control flow therefore fails:
+no values at all, only JAX types. Value-dependent Python control flow
+therefore fails:
 
 ```{code-cell}
 :tags: [raises-exception]
@@ -230,7 +230,7 @@ compiled and the resulting executable is cached. The cache key includes:
 
 That last point has a practical consequence: avoid calling `jax.jit` on
 temporary functions defined inside loops or other inner scopes. The cache
-relies on the object identity of the function, so freshly-created lambdas and
+relies on the object identity of the function, so freshly created lambdas and
 `partial` objects — even ones wrapping the same underlying code — look like new
 functions every time, and recompile every time:
 
@@ -559,14 +559,19 @@ Donation comes with rules and sharp edges:
   ```python
   z = jax.jit(add, donate_argnums=(1,))(x, y)
   w = y + 1  # Reuses `y`, whose buffer was donated above
-  # >> RuntimeError: Invalid argument: CopyToHostAsync() called on invalid buffer
+  # >> RuntimeError: Array has been deleted with shape=float32[2,3].
   ```
 
-- **Keyword arguments aren't donated** by `donate_argnums`. This code donates
-  nothing:
+- **Mixing `donate_argnums` and `donate_argnames` turns off name matching.**
+  On its own, `donate_argnums` also donates those parameters when they're
+  passed by keyword (JAX matches positions to names with
+  `inspect.signature`), and vice versa for `donate_argnames`. But if you
+  specify both, JAX donates only positional arguments listed in
+  `donate_argnums` and keyword arguments listed in `donate_argnames`. This
+  code donates `state` but not `params`:
 
   ```python
-  params, state = jax.jit(update_fn, donate_argnums=(0, 1))(params=params, state=state)
+  jax.jit(update_fn, donate_argnums=0, donate_argnames='state')(params=params, state=state)
   ```
 
 - **Pytree arguments donate all their buffers.** Donating an argument that's
@@ -591,7 +596,7 @@ immutable semantics, and it's possible to get subtly wrong. The promise is
 checked only partially, and only at runtime. When you have the freedom to
 restructure, refs ({ref}`jax-201-jit-refs` above) express the same intent
 with less to misuse. Donation remains the standard mechanism for
-functionally-written code, which is to say most JAX code today.
+functionally written code, which is to say most JAX code today.
 
 (jax-201-async-dispatch)=
 ## Asynchronous dispatch
@@ -616,8 +621,8 @@ we actually *look at* the value from the host (printing it, converting it to
 a NumPy array) does Python block until the computation is done. (The cell
 above shows values only because rendering the result forced the wait.)
 
-This is why asynchronous dispatch is valuable: Python "runs ahead" of the
-device, enqueueing work and staying off the critical path.
+The payoff is that Python "runs ahead" of the device, enqueueing work while
+earlier work executes, so Python overhead stays off the critical path.
 
 Asynchronous operations make timing a bit trickier. Time an operation naively
 and you measure only the dispatch:
@@ -628,7 +633,7 @@ and you measure only the dispatch:
 
 A fraction of a millisecond would be a suspiciously good time for a
 1000×1000 matrix multiplication. To measure the actual computation, force
-completion with {meth}`~jax.Array.block_until_ready`:
+completion with {func}`~jax.block_until_ready`:
 
 ```{code-cell}
 %time jnp.dot(x, x).block_until_ready()

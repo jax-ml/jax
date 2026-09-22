@@ -73,7 +73,7 @@ __What gives!?__
 Recall the tracing story from {ref}`jax-101-tracing` and {doc}`jit`: so that
 the compiled code can be cached and reused for many argument values, `jit`
 traces your function with tracers that carry only the JAX type, not any
-concrete value.  That generality is exactly what fails above: on a line like
+concrete value. That generality is exactly what fails above: on a line like
 `if x < 3` (or a short-circuiting `and`), Python demands a concrete value to
 choose a path, but we have no concrete value for `x < 3`.
 
@@ -122,7 +122,7 @@ here's a function whose output shape depends on the input value `length`:
 ```{code-cell}
 def example_fun(length, val):
   return jnp.ones((length,)) * val
-# un-jit'd works fine
+# works fine without jit
 print(example_fun(5, 4))
 ```
 
@@ -135,7 +135,7 @@ bad_example_jit(10, 4)
 ```
 
 ```{code-cell}
-# static_argnames tells JAX to recompile on changes at these argument positions:
+# static_argnames tells JAX to recompile when these arguments change:
 good_example_jit = jit(example_fun, static_argnames='length')
 # first compile
 print(good_example_jit(10, 4))
@@ -149,16 +149,14 @@ call to call, see the padding-to-buckets advice in {doc}`jit`.)
 
 ## Structured control flow primitives
 
-There are more options for control flow in JAX. Say you want to avoid
-re-compilations but still want to use control flow that's traceable, and that
-avoids unrolling large loops. Then you can use these four structured
-control-flow primitives:
+To avoid recompilation while still using traceable control flow, and without
+unrolling large loops, use JAX's four structured control-flow primitives:
 
- - `lax.cond`  _differentiable_
- - `lax.while_loop` __fwd-mode-differentiable__
- - `lax.fori_loop` __fwd-mode-differentiable__ in general; __fwd and
-   rev-mode differentiable__ if endpoints are static.
- - `lax.scan` _differentiable_
+ - `lax.cond`: _differentiable_
+ - `lax.while_loop`: _forward-mode differentiable_
+ - `lax.fori_loop`: _forward-mode differentiable_ in general; _forward- and
+   reverse-mode differentiable_ if endpoints are static
+ - `lax.scan`: _differentiable_
 
 ### `cond`
 
@@ -177,9 +175,7 @@ from jax import lax
 
 operand = jnp.array([0.])
 print(lax.cond(True, lambda x: x+1, lambda x: x-1, operand))
-# --> array([1.], dtype=float32)
 print(lax.cond(False, lambda x: x+1, lambda x: x-1, operand))
-# --> array([-1.], dtype=float32)
 ```
 
 Unlike a Python `if`, the predicate here can be a traced value. The choice of
@@ -194,12 +190,12 @@ predicates:
 - {func}`lax.switch <jax.lax.switch>` is like `lax.cond`, but allows
   switching between any number of callable choices.
 
-In addition, `jax.numpy` provides several numpy-style interfaces to these
+In addition, `jax.numpy` provides several NumPy-style interfaces to these
 functions:
 
-- {func}`jnp.where <jax.numpy.where>` with three arguments is the numpy-style
+- {func}`jnp.where <jax.numpy.where>` with three arguments is the NumPy-style
   wrapper of `lax.select`.
-- {func}`jnp.piecewise <jax.numpy.piecewise>` is a numpy-style wrapper of
+- {func}`jnp.piecewise <jax.numpy.piecewise>` is a NumPy-style wrapper of
   `lax.switch`, but switches on a list of boolean conditions rather than a
   single scalar index.
 - {func}`jnp.select <jax.numpy.select>` has an API similar to
@@ -224,7 +220,6 @@ init_val = 0
 cond_fun = lambda x: x < 10
 body_fun = lambda x: x + 1
 lax.while_loop(cond_fun, body_fun, init_val)
-# --> array(10, dtype=int32)
 ```
 
 Note the differentiability annotation above: `while_loop` is only
@@ -253,7 +248,6 @@ start = 0
 stop = 10
 body_fun = lambda i, x: x + i
 lax.fori_loop(start, stop, body_fun, init_val)
-# --> array(45, dtype=int32)
 ```
 
 ### `scan`
@@ -295,8 +289,8 @@ For fine-tuning that compile-time/run-time trade, `scan` takes an `unroll`
 parameter: `unroll=k` makes each iteration of the compiled loop perform `k`
 steps of the scan, and `unroll=True` unrolls the loop entirely. Larger unroll
 amounts give XLA more opportunity to fuse and parallelize across steps, at
-the cost of compile time and program size, which is often worthwhile when the
-body is small relative to per-iteration overhead. (`lax.fori_loop` accepts the
+the cost of compile time and program size; the trade is often worthwhile when
+the body is small relative to per-iteration overhead. (`lax.fori_loop` accepts the
 same parameter.)
 
 ## Logical operators
@@ -306,8 +300,8 @@ operate element-wise on arrays and can be evaluated under `jit` without
 recompiling. Like their NumPy counterparts, the binary operators do not
 short-circuit. Bitwise operators (`&`, `|`, `~`) can also be used with `jit`.
 
-For example, consider a function that checks if its input is a positive even
-integer. The pure Python and JAX versions give the same answer when the input
+For example, consider a function that checks whether its input is a positive
+even integer. The pure Python and JAX versions give the same answer when the input
 is scalar.
 
 ```{code-cell}

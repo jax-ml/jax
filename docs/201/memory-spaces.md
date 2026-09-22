@@ -106,7 +106,7 @@ def hybrid_scanned(w, x):
   result = jax.lax.scan(remat_layer, x, w)[0]
   return jnp.sum(result)
 
-input = jnp.ones((256, 256), dtype=jnp.float32) * 0.001
+inputs = jnp.ones((256, 256), dtype=jnp.float32) * 0.001
 w1 = jnp.ones((10, 256, 1024), dtype=jnp.float32) * 0.001
 w2 = jnp.ones((10, 1024, 256), dtype=jnp.float32) * 0.001
 
@@ -116,7 +116,7 @@ wh2 = jax.device_put(w2, s_host)
 
 # ...and the input stays on the device.
 f = jax.jit(jax.grad(hybrid_scanned))
-result = f((wh1, wh2), input)
+result = f((wh1, wh2), inputs)
 ```
 
 For this example, {func}`jax.stages.Compiled.memory_analysis` reports (on
@@ -138,10 +138,10 @@ memory. Three effects combine:
    rematerialization keeps JAX from holding on-device copies of the weights
    alive for the backward pass.
 
-Two limitations. The pattern depends on {func}`jax.lax.scan`: with an
-explicit Python loop, the parameters would continuously occupy device
-memory, giving no saving. And parameter offloading currently works only when
-scanning over axis 0. Other axes insert an expensive `transpose` when
+The pattern has two limitations. First, it depends on {func}`jax.lax.scan`:
+with an explicit Python loop, the parameters would continuously occupy device
+memory, giving no saving. Second, parameter offloading currently works only
+when scanning over axis 0. Other axes insert an expensive `transpose` when
 returning parameters to the device, and aren't supported on all platforms.
 
 ## Offloading optimizer state
@@ -176,7 +176,7 @@ step = jax.jit(
     donate_argnums=(0,),
     out_shardings=(s_dev, s_host),   # params to device, state back to host
 )
-new_params, new_opt_state = step(params, opt_state, input)
+new_params, new_opt_state = step(params, opt_state, inputs)
 ```
 
 For a four-layer 7168×7168 MLP with Adam, memory analysis reports 4.59 GB

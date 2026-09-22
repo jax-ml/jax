@@ -7,7 +7,7 @@ By reading this tutorial, you'll learn how to scale JAX computations to more
 devices than can fit in a single host machine, e.g. when running on a GPU
 cluster, Cloud TPU pod, or multiple CPU-only machines.
 
-The main idea
+The main ideas:
 
 - **Run multiple Python processes**, which we sometimes call "controllers." We
   can run one (or more) process per host machine.
@@ -29,13 +29,13 @@ This tutorial assumes you've read [Distributed arrays and automatic
 parallelization][distributed_arrays], which is about single-controller JAX.
 
 ```{figure} ../_static/multi_process/mcjax_overview.png
-:alt: Illustration of a multi-host TPU pod. Each host in the pod is attached via PCI to a board of four TPU chips. The TPUs chips themselves are connected via high-speed inter-chip interconnects.
+:alt: Illustration of a multi-host TPU pod. Each host in the pod is attached via PCI to a board of four TPU chips. The TPU chips themselves are connected via high-speed inter-chip interconnects.
 
 Illustration of a multi-host TPU pod. Each host in the pod (green) is attached
-via PCI to a board of four TPU chips (blue). The TPUs chips themselves are
+via PCI to a board of four TPU chips (blue). The TPU chips themselves are
 connected via high-speed inter-chip interconnects (ICI). JAX Python code runs on
 each host, e.g. via ssh. The JAX processes on each host are aware of each other,
-allowing you to orchestrate computation across the entire pods' worth of chips.
+allowing you to orchestrate computation across the entire pod's worth of chips.
 The principle is the same for GPU, CPU, and other platforms with JAX support.
 ```
 
@@ -91,7 +91,7 @@ devices from all processes.
 Every process must apply the same operations, in the same order, to
 `global_array`. XLA automatically partitions those computations, for example
 inserting communication collectives to compute the `jnp.sum` over the full
-array.  We can print the final result because its value is replicated across
+array. We can print the final result because its value is replicated across
 processes.
 
 We can run this code locally on CPU, e.g. using 4 processes and 2 CPU devices
@@ -120,23 +120,23 @@ Outputs:
 
 ```text
 =================== process 0 output ===================
-device TFRT_CPU_0 has local data [[0 1 2 3]]
-device TFRT_CPU_1 has local data [[4 5 6 7]]
+device cpu:0 has local data [[0 1 2 3]]
+device cpu:1 has local data [[4 5 6 7]]
 process=0 got result: -0.12398731708526611
 
 =================== process 1 output ===================
-device TFRT_CPU_131072 has local data [[ 8  9 10 11]]
-device TFRT_CPU_131073 has local data [[12 13 14 15]]
+device cpu:2048 has local data [[ 8  9 10 11]]
+device cpu:2049 has local data [[12 13 14 15]]
 process=1 got result: -0.12398731708526611
 
 =================== process 2 output ===================
-device TFRT_CPU_262144 has local data [[16 17 18 19]]
-device TFRT_CPU_262145 has local data [[20 21 22 23]]
+device cpu:4096 has local data [[16 17 18 19]]
+device cpu:4097 has local data [[20 21 22 23]]
 process=2 got result: -0.12398731708526611
 
 =================== process 3 output ===================
-device TFRT_CPU_393216 has local data [[24 25 26 27]]
-device TFRT_CPU_393217 has local data [[28 29 30 31]]
+device cpu:6144 has local data [[24 25 26 27]]
+device cpu:6145 has local data [[28 29 30 31]]
 process=3 got result: -0.12398731708526611
 ```
 
@@ -153,14 +153,14 @@ JAX_NUM_CPU_DEVICES=8 python toy.py 0 1
 Outputs:
 
 ```text
-device TFRT_CPU_0 has local data [[0 1 2 3]]
-device TFRT_CPU_1 has local data [[4 5 6 7]]
-device TFRT_CPU_2 has local data [[ 8  9 10 11]]
-device TFRT_CPU_3 has local data [[12 13 14 15]]
-device TFRT_CPU_4 has local data [[16 17 18 19]]
-device TFRT_CPU_5 has local data [[20 21 22 23]]
-device TFRT_CPU_6 has local data [[24 25 26 27]]
-device TFRT_CPU_7 has local data [[28 29 30 31]]
+device cpu:0 has local data [[0 1 2 3]]
+device cpu:1 has local data [[4 5 6 7]]
+device cpu:2 has local data [[ 8  9 10 11]]
+device cpu:3 has local data [[12 13 14 15]]
+device cpu:4 has local data [[16 17 18 19]]
+device cpu:5 has local data [[20 21 22 23]]
+device cpu:6 has local data [[24 25 26 27]]
+device cpu:7 has local data [[28 29 30 31]]
 process=0 got result: -0.12398731708526611
 ```
 
@@ -172,8 +172,8 @@ over the same data.
 
 Let's pin down some terminology.
 
-We sometimes call each Python process running JAX computations a **controller**,
-but the two terms are essentially synonymous.
+We sometimes call each Python process running JAX computations a
+**controller**; the two terms are essentially synonymous.
 
 Each process has a set of **local devices**, meaning it can transfer data to and
 from those devices' memories and run computation on those devices without
@@ -196,8 +196,8 @@ populated by running {func}`jax.distributed.initialize` on all processes, which
 sets up a simple distributed system connecting the processes.
 
 We often use the terms **global** and **local** to describe process-spanning and
-process-local concepts in general. For example, a "local array" could be a numpy
-array that's only visible to a single process, vs. a JAX "global array" is
+process-local concepts in general. For example, a "local array" could be a NumPy
+array that's only visible to a single process, whereas a JAX "global array" is
 conceptually visible to all processes.
 
 ## Setting up multiple JAX processes
@@ -207,13 +207,13 @@ toy example, which is run from a single host machine. We usually launch each
 process on a separate host, or have multiple hosts with multiple processes each.
 We can do that directly using `ssh`, or with a cluster manager like Slurm or
 Kubernetes. In any case, **you must manually run your JAX program on each
-host.** JAX doesn’t automatically start multiple processes from a single program
+host.** JAX doesn't automatically start multiple processes from a single program
 invocation.
 
 However they're launched, the Python processes need to run
 {func}`jax.distributed.initialize`. When using Slurm, Kubernetes, or any Cloud
-TPU deployment, we can run {func}`jax.distributed.initialize` with no arguments
-as they're automatically populated. Initializing the system means we can run
+TPU deployment, we can run {func}`jax.distributed.initialize` with no arguments,
+since they're populated automatically. Initializing the system means we can run
 {func}`jax.devices()` to report all devices across all processes.
 
 By default, connections to the coordination service that
@@ -224,17 +224,17 @@ authenticated; to secure them with mTLS, see {doc}`security`.
 {func}`jax.distributed.initialize` must be called before running
 {func}`jax.devices()`, {func}`jax.local_devices()`, or running any computations
 on devices (e.g. with {mod}`jax.numpy`). Otherwise the JAX process won't be
-aware of any non-local devices.  (Using {func}`jax.config` or other
+aware of any non-local devices. (Using {func}`jax.config` or other
 non-device-accessing functionality is ok.) {func}`jax.distributed.initialize`
 will raise an error if you accidentally call it after accessing any devices.
 ```
 
-### GPU Example
+### GPU example
 
 We can run multi-controller JAX on a cluster of [GPU machines][gpu_machines].
 For example, after creating four VMs on Google Cloud with two GPUs per VM, we
 can run the following JAX program on every VM. In this example, we provide
-arguments to {func}`jax.distributed.initialize` explicitly.  The coordinator
+arguments to {func}`jax.distributed.initialize` explicitly. The coordinator
 address, process id, and number of processes are read from the command line.
 
 ```python
@@ -279,7 +279,7 @@ local devices = [CudaDevice(id=2), CudaDevice(id=3)]
 
 This VM sees the same global devices, but has a different set of local devices.
 
-### TPU Example
+### TPU example
 
 As another example, we can run on [Cloud TPU][cloud_tpu]. After creating a
 `v5litepod-16` (which has 4 host machines), we might want to test that we can
@@ -312,18 +312,18 @@ what it prints:
 
 Woohoo, look at all those TPU cores!
 
-### Kubernetes Example
+### Kubernetes example
 
 Running multi-controller JAX on a Kubernetes cluster is almost identical in spirit to the GPU and TPU examples above: every pod runs the same Python program, JAX discovers its peers, and the cluster behaves like one giant machine.
 
-1. **Container image** - start from a JAX-enabled image, e.g. one of the public JAX AI images on Google Artifact Registry ([TPU][google-artifact-tpu] / [GPU][google-artifact-gpu]) or NVIDIA ([NGC][nvidia-ngc] / [JAX-Toolbox][nvidia-jax-toolbox]).
+1. **Container image**: start from a JAX-enabled image, e.g. one of the public JAX AI images on Google Artifact Registry ([TPU][google-artifact-tpu] / [GPU][google-artifact-gpu]) or NVIDIA ([NGC][nvidia-ngc] / [JAX-Toolbox][nvidia-jax-toolbox]).
 
-2. **Workload type** - use either a [JobSet][k8s-jobset] or an [indexed Job][k8s-indexed-job]. Each replica corresponds to one JAX process.
+2. **Workload type**: use either a [JobSet][k8s-jobset] or an [indexed Job][k8s-indexed-job]. Each replica corresponds to one JAX process.
 
-3. **Service Account** - JAX needs permission to list the pods that belong to the job so that processes discover their peers. A minimal RBAC setup is provided in [examples/k8s/svc-acct.yaml][rbac-svc-acct].
+3. **Service account**: JAX needs permission to list the pods that belong to the job so that processes discover their peers. A minimal RBAC setup is provided in [examples/k8s/svc-acct.yaml][rbac-svc-acct].
 
-Below is a [minimal JobSet][minimal-jobset] that launches two replicas. Replace the placeholders - 
-image, GPU count, and any private registry secrets - with values that match your environment.
+Below is a [minimal JobSet][minimal-jobset] that launches two replicas. Replace the placeholders
+(image, GPU count, and any private registry secrets) with values that match your environment.
 
 ```yaml
 apiVersion: jobset.x-k8s.io/v1alpha2
@@ -354,7 +354,7 @@ spec:
                   cpu: 1
                   # https://k8s.io/docs/tasks/manage-gpus/scheduling-gpus/
                   nvidia.com/gpu: null
-              command: 
+              command:
                 - python
               args:
                 - -c
@@ -404,7 +404,7 @@ look the same as their single-process counterparts. We'll go over some data
 loading fundamentals, i.e. how to create JAX Arrays from non-JAX sources, later
 in this doc.
 
-Recall a {class}`jax.sharding.Mesh` pairs an array of {class}`jax.Device`s with
+Recall that a {class}`jax.sharding.Mesh` pairs an array of {class}`jax.Device`s with
 a sequence of names, with one name per array axis.
 Here's an example that directly constructs a `Mesh` using {func}`jax.devices()`
 to get devices from all processes:
@@ -413,14 +413,15 @@ to get devices from all processes:
 from jax.sharding import Mesh
 mesh = Mesh(jax.devices(), ('a',))
 
-# in this case, the same as
+# much like
 mesh = jax.make_mesh((jax.device_count(),), ('a',))  # use this in practice
 ```
 
-You should probably use the {func}`jax.make_mesh` helper in practice, not only
-because it's simpler but also because it can choose more performant device
-orderings automatically, but we're spelling it out here. By default it includes
-all devices across processes, just like {func}`jax.devices()`.
+In practice you should use the {func}`jax.make_mesh` helper, not only because
+it's simpler but also because it can choose more performant device orderings
+automatically; we spell out the `Mesh` constructor here to show what's going
+on. By default, `make_mesh` draws on all devices across processes, just like
+{func}`jax.devices()`.
 
 ### Meshes can have non-uniform communication bandwidth
 
@@ -430,7 +431,7 @@ the mesh appropriately to ensure that the fastest, highest-bandwidth interconnec
 used for the most communication-intensive operations.
 
 JAX APIs use a TPU-derived nomenclature, with the fast interconnect between nearby chips
-denoted ICI (inter chip interconnect), a collection of chips that are connected by ICI
+denoted ICI (inter-chip interconnect), a collection of chips that are connected by ICI
 called a slice, and the slower interconnect used to communicate between slices called
 DCN (data-center network).
 All of these concepts apply equally to running on GPU, but the usual terminology on GPU is a little different:
@@ -441,7 +442,7 @@ All of these concepts apply equally to running on GPU, but the usual terminology
 | DCN     | InfiniBand (IB), Ethernet, EFA, TCPXO, ... |
 | Slice   | NVLink domain (e.g. 18 hosts with 4 GPUs each in a GB200-NVL72 rack-scale system, 1 host with 8 GPUs in an HGX B200 NVL8 system, ...) |
 
-JAX will automatically detect which devices belong to which slices  during
+JAX will automatically detect which devices belong to which slices during
 {func}`jax.distributed.initialize` and assign `slice_index` values to the
 devices accordingly.
 
@@ -450,11 +451,14 @@ If you are using devices within a single slice (NVLink domain), it is sufficient
 
 If you are using a larger mesh of devices that spans multiple slices, use
 {func}`jax.experimental.mesh_utils.create_hybrid_device_mesh`. For example:
-```
+
+```python
 Mesh(create_hybrid_device_mesh((1, devices_per_slice), (num_slices, 1)), axis_names=("dcn", "ici"))
 ```
+
 will produce a mesh that maps the `dcn` axis to DCN interconnect and the `ici` axis to
-ICI interconnect.
+ICI interconnect. ({func}`jax.make_mesh` raises an error for multi-slice topologies.)
+
 ```{warning}
 On popular GPU systems such as NVIDIA DGX H100 (A3 instances on GCP, P5 on AWS, ...),
 each node is a single NVLink domain, so even a two-node job is a multi-slice device mesh.
@@ -517,7 +521,9 @@ On process 0, this is printed:
 Let's try a slightly more interesting computation!
 
 ```python
-mesh = jax.make_mesh((jax.device_count() // 2, 2), ('a', 'b'))
+# Auto axis types: let the compiler choose shardings for intermediates
+mesh = jax.make_mesh((jax.device_count() // 2, 2), ('a', 'b'),
+                     axis_types=(jax.sharding.AxisType.Auto,) * 2)
 
 def device_put(x, spec):
   return jax.device_put(x, NamedSharding(mesh, spec))
@@ -557,13 +563,16 @@ On process 0, this is printed:
 │       TPU 14,15       │
 └───────────────────────┘
 
-NamedSharding(mesh=Mesh('a': 8, 'b': 2), spec=PartitionSpec('a',), memory_kind=device)
+NamedSharding(mesh=Mesh('a': 8, 'b': 2, axis_types=(Auto, Auto)), spec=P('a',), memory_kind=device)
 ```
 
 Here, just from evaluating `x @ y` on all processes, XLA is automatically
 generating and running a distributed matrix multiplication. The result is
 sharded against the mesh like `P('a', None)`, since in this case the matmul
-included a `psum` over the `'b'` axis.
+included a `psum` over the `'b'` axis. (With the default explicit axis types,
+`x @ y` would instead raise an error asking for an `out_sharding`, since both
+operands are sharded along the contracting dimension; see
+{ref}`jax-201-sharding`.)
 
 ```{warning}
 When applying JAX computations to process-spanning arrays, to avoid deadlocks
@@ -573,9 +582,9 @@ involve collective communication barriers. If a device over which an array is
 sharded does not join in the collective because its controller didn't issue the
 same computation, the other devices are left waiting. For example, if only the
 first three processes evaluated `x @ y`, while the last process evaluated `y @
-x`, the computation would likely hang indefinitely. This assumption,
+x`, the computation would likely hang indefinitely. This assumption (that
 computations on process-spanning arrays are run on all participating processes
-in the same order, is mostly unchecked.
+in the same order) is mostly unchecked.
 
 So the easiest way to avoid deadlocks in multi-process JAX is to run the same
 Python code on every process, and beware of any control flow that depends on
@@ -584,21 +593,24 @@ Python code on every process, and beware of any control flow that depends on
 
 If a process-spanning array is sharded over devices on different processes, it
 is an error to perform operations on the array that require the data to be
-available locally to a process, like printing. For example, if we run `print(z)`
-in the preceding example, we see
+available locally to a process, like converting it to a NumPy array. For
+example, if we run `np.asarray(z)` in the preceding example, we see
 
 ```
 RuntimeError: Fetching value for `jax.Array` that spans non-addressable (non process local) devices is not possible. You can use `jax.experimental.multihost_utils.process_allgather` to print the global array or use `.addressable_shards` method of jax.Array to inspect the addressable (process local) shards.
 ```
 
-To print the full array value, we must first ensure it's replicated over
+(Printing such an array doesn't raise an error, but shows only its shape and
+dtype, like `Array(shape=(4096, 4096), dtype=float32)`.)
+
+To fetch the full array value, we must first ensure it's replicated over
 processes (but not necessarily over each process's local devices), e.g. using
 `jax.device_put`. In the above example, we can write at the end:
 
-```
+```python
 w = device_put(z, P(None, None))
 if jax.process_index() == 0:
-  print(w)
+  print(np.asarray(w))
 ```
 
 Be careful not to write the {func}`jax.device_put` under the `if process_index()
@@ -668,7 +680,7 @@ The sharding, again on a four-host `v5litepod-16`, looks like this:
 │        TPU 12         │
 └───────────────────────┘
 
-NamedSharding(mesh=Mesh('a': 8, axis_types=(Explicit,)), spec=PartitionSpec('a',), memory_kind=device)
+NamedSharding(mesh=Mesh('a': 8, axis_types=(Explicit,)), spec=P('a',), memory_kind=device)
 ```
 
 Only processes 2 and 3 have local devices in the sharding; processes 0 and 1
@@ -686,7 +698,7 @@ the array's data on its local devices, so it prints the following:
 
 ```
 Devices attached to process 3: [TpuDevice(id=10, process_index=3, coords=(2,2,0), core_on_chip=0), TpuDevice(id=11, process_index=3, coords=(3,2,0), core_on_chip=0), TpuDevice(id=14, process_index=3, coords=(2,3,0), core_on_chip=0), TpuDevice(id=15, process_index=3, coords=(3,3,0), core_on_chip=0)]
-Addressable data for process 3
+Addressable data for process 3:
 device TPU_10(process=3,(2,2,0,0)) has local data [[16 17 18 19 20 21 22 23]]
 device TPU_11(process=3,(3,2,0,0)) has local data [[24 25 26 27 28 29 30 31]]
 device TPU_15(process=3,(3,3,0,0)) has local data [[32 33 34 35 36 37 38 39]]
@@ -700,7 +712,7 @@ those devices.
 
 ```python
 result = jnp.sum(jnp.sin(x))
-print(f"process={jax.process_index()} got result: {result}")
+print(f"process={jax.process_index()} got result: {result!r}")
 ```
 
 Process 2 (and 3) can print the result:
@@ -778,24 +790,30 @@ z = jax.device_put(y, sharding_second_half)
 result = g(z)
 ```
 
-Thanks to JAX's {ref}`jax-201-async-dispatch`, {func}`jax.jit` functions and/or
+Thanks to JAX's {ref}`asynchronous dispatch <jax-201-async-dispatch>`, {func}`jax.jit` functions and/or
 {func}`jax.device_put`s running on different devices will run in parallel if
 their inputs are ready. We can take advantage of this to implement a very
 simple example of microbatched pipeline parallelism:
 
 ```python
-# Pipeline stage functions. Each stage will run on a different device.
+# Pipeline stage functions. Each stage runs on the first local device of a
+# different process, so every hop between stages is a cross-process transfer.
+# (`jax.devices()` is sorted by process, so `jax.devices()[:4]` would typically
+# put all four stages on process 0.) Assumes at least 4 processes.
 pipeline_stages = [f, g, f, g]
-devices = jax.devices()[:4]
+devices = [jax.local_devices(process_index=i)[0]
+           for i in range(len(pipeline_stages))]
 
 microbatches = [np.arange(512**2).reshape((512, 512)) for _ in range(12)]
 
 # Each microbatch is enqueued on each device sequentially, but each device
 # conceptually has an independent queue of computations and transfers which can
 # run in parallel across queues. For example, because there are no data
-# dependencies between the microbatches, device 0 will immediately start a new
-# microbatch once the previous is finished, overlapping with the `device_put` to
-# device 1.
+# dependencies between the microbatches, the first stage's device will
+# immediately start a new microbatch once the previous is finished, overlapping
+# with the `device_put` to the second stage's device. Like any cross-process
+# `device_put`, this loop runs in every process, including processes that host
+# none of the stage devices.
 results = []
 for mb in microbatches:
   for d, s in zip(devices, pipeline_stages):
@@ -804,15 +822,17 @@ for mb in microbatches:
   results.append(mb)
 ```
 
-Cross-process {func}`jax.device_put` is currently supported only when the
-source and destination shardings contain the same number of devices and have
-the same shard shapes. If you're finding this overly restrictive, please file a
-[Github Issue](https://github.com/jax-ml/jax/issues).
+Cross-process {func}`jax.device_put` needs a backend that supports
+cross-host transfers, like TPU or GPU, or else DCN-based transfers enabled with
+the `jax_cross_host_transfer_socket_address` flag. It's also currently
+supported only when the source and destination shardings contain the same
+number of devices and have the same shard shapes. If you're finding this overly restrictive, please file a
+[GitHub issue](https://github.com/jax-ml/jax/issues).
 
 ## Making process-spanning arrays from external data
 
 There are three main ways to create process-spanning {class}`jax.Array`s from
-external data sources (e.g. numpy arrays from a data loader):
+external data sources (e.g. NumPy arrays from a data loader):
 
 1. Create or load the full array on all processes, then shard onto devices using
    {func}`jax.device_put`;
@@ -846,10 +866,10 @@ per_process_batch_size = batch_size // jax.process_count()
 per_device_batch_size = batch_size // jax.device_count()
 
 # make a data-parallel mesh and sharding
-mesh = jax.make_mesh((jax.device_count(),), ('batch'))
+mesh = jax.make_mesh((jax.device_count(),), ('batch',))
 sharding = NamedSharding(mesh, P('batch'))
 
-# our "data loader". each process loads a different set of "examples".
+# our "data loader": each process loads a different set of "examples".
 process_batch = np.random.rand(per_process_batch_size, 2048, 42)
 
 # assemble a global array containing the per-process batches from all processes

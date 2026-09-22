@@ -30,7 +30,7 @@ favor of `XLA_CLIENT_MEM_FRACTION`.)
 This makes JAX allocate exactly what is needed on demand, and deallocate
 memory that is no longer needed (note that this is the only configuration
 that will deallocate GPU memory, instead of reusing it). This is very slow,
-so is not recommended for general use, but may be useful for running with
+so it's not recommended for general use, but may be useful for running with
 the minimal possible GPU memory footprint or debugging OOM failures.
 
 ## Common causes of OOM failures
@@ -61,14 +61,13 @@ Use `XLA_CLIENT_MEM_FRACTION` or `XLA_PYTHON_CLIENT_PREALLOCATE`.
 
 **Poor choices by the automatic rematerialization pass.**
 
-Sometimes disabling XLA's automatic rematerialization HLO pass is
-favorable, to avoid poor remat choices by the compiler. The pass can be
-enabled or disabled by setting
-`jax.config.update('jax_compiler_enable_remat_pass', True)` (or `False`).
+Sometimes it's better to disable XLA's automatic rematerialization HLO pass,
+to avoid poor remat choices by the compiler. The pass is enabled by default;
+disable it with `jax.config.update('jax_compiler_enable_remat_pass', False)`.
 Enabling or disabling it produces different trade-offs between compute and
 memory; the algorithm is basic, and you can often get a better trade-off
 by disabling the pass and rematerializing manually with
-the `jax.remat` API (see {ref}`jax-301-remat`).
+{func}`jax.checkpoint` (also known as `jax.remat`; see {ref}`jax-301-remat`).
 
 ## Experimental allocator features
 
@@ -99,8 +98,8 @@ The risks are:
   at the start (and for benchmarks it will be even more important to
   ignore the first few iterations).
 
-The risks can be mitigated by preallocating a significant chunk and still
-getting the benefit of a growing memory pool, via
+You can mitigate these risks, while keeping the benefit of a growing memory
+pool, by preallocating a significant chunk with
 `TF_CUDA_MALLOC_ASYNC_SUPPORTED_PREALLOC=N`. If `N` is `-1`, it
 preallocates the same amount as the default; otherwise it's the size in
 bytes to preallocate.

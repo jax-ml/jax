@@ -78,8 +78,8 @@ print(d3fdx(1.0))  # 6
 
 By default `jax.grad` differentiates with respect to the first argument. The
 `argnums` parameter selects other arguments, or several at once. Here's a
-linear logistic regression model, where we might want gradients with respect
-to the weights `W`, the bias `b`, or both:
+logistic regression model, where we might want gradients with respect to the
+weights `W`, the bias `b`, or both:
 
 ```{code-cell}
 def sigmoid(x):
@@ -139,9 +139,8 @@ print(loss_value)
 ```
 
 And sometimes a function naturally computes intermediate results worth
-returning alongside the scalar being differentiated. Provide a function that
-produces a `(scalar_output, aux_data)` pair as output and pass
-`has_aux=True`:
+returning alongside the scalar being differentiated. Have the function return
+a `(scalar_output, aux_data)` pair, and pass `has_aux=True`:
 
 ```{code-cell}
 def loss_and_preds(W, b):
@@ -247,12 +246,12 @@ wst = jnp.transpose(ws)
 auto_batch_convolve_v2(xst, wst)
 ```
 
-An `in_axes` entry of `None` means "don't map this argument"; instead, it's
-broadcast to every call. Here we convolve a batch of `x`s against one shared
+An `in_axes` entry of `None` means "don't map this argument": the same value
+is passed to every call. Here we convolve a batch of `x`s against one shared
 `w`:
 
 ```{code-cell}
-batch_convolve_v3 = jax.vmap(convolve, in_axes=[0, None])
+batch_convolve_v3 = jax.vmap(convolve, in_axes=(0, None))
 
 batch_convolve_v3(xs, w)
 ```
@@ -300,7 +299,7 @@ single-example function, and build everything else out of transformations.
 
 To transform a function, JAX has to know what the function *does*. It learns
 this by **tracing**: calling your Python function with special *tracer* objects
-in place of arrays, and overloading every JAX operation applied to them.
+in place of arrays, which intercept every JAX operation applied to them.
 
 You can see tracers directly by printing an argument inside a transformed
 function:
@@ -343,9 +342,9 @@ jax.jit(g).trace(1.0).jaxpr
 We'll use this `.trace(...).jaxpr` idiom whenever we want to see what a
 function traces to. Notice what appears in the jaxpr: just the JAX operations,
 with every variable annotated with its JAX type (`f32[]` abbreviates
-`float32[]`). Anything else
-about your Python function (variable names, comments, and in particular any
-*non-JAX-intercepted* side effects) is not recorded.
+`float32[]`). Nothing else about your Python function is recorded: not
+variable names, not comments, and in particular not any side effects that JAX
+didn't intercept.
 
 Jaxprs also let us see precisely what a transformation does to a program.
 Here's the recording of `convolve` from earlier, applied to a single example:
@@ -362,11 +361,12 @@ jax.jit(jax.vmap(convolve)).trace(xs, ws).jaxpr
 ```
 
 This is the same program, operation for operation. The only change is that
-every operation gained a batch axis: each `f32[5]` became `f32[2,5]`, and each
-`dot_general` picked up a batch dimension. That's what "`vmap` replaces each
-intercepted operation with a batched version" means concretely: the batching
-happens *inside* each operation, where array-level hardware parallelism lives,
-and the program stays the same size no matter the batch.
+every operation gained a batch axis: `f32[5]` became `f32[2,5]`, each `f32[3]`
+became `f32[2,3]`, and each `dot_general` picked up a batch dimension. That's
+what "`vmap` replaces each intercepted operation with a batched version" means
+concretely: the batching happens *inside* each operation, where array-level
+hardware parallelism lives, and the program stays the same size no matter the
+batch.
 
 Compare the Python-loop version, `manually_batched_convolve`, whose recording
 contains a full copy of the body *per batch element*: six `dot_general`s, not
@@ -386,23 +386,21 @@ purity*: outputs depend only on inputs (arguments and closed-over values);
 outputs are produced by applying JAX operations; and no side effects occur.
 
 Purity is valuable even without a tracing implementation: it makes code easier
-for the user to reason about, and easier for the compiler to optimize,
-parallelize, and scale. It also gives the transformations simple, clear
-meanings. A pure function denotes a mathematical function, and the
-transformations are mathematical operators on it:
-`jax.grad(f)` means $\nabla f$; `jax.vmap(f)` means "$f$ applied to each
-element" without worrying about whether or in what order side-effects might
-occur; `jax.jit(f)` can promise to return exactly what `f` returns, while
-caching and optimizing freely.
+to reason about, and easier for the compiler to optimize, parallelize, and
+scale. It also gives the transformations simple, clear meanings. A pure
+function denotes a mathematical function, and the transformations are
+mathematical operators on it: `jax.grad(f)` means $\nabla f$; `jax.vmap(f)`
+means "$f$ applied to each element," with no question of which side effects
+happen or in what order; `jax.jit(f)` can promise to return exactly what `f`
+returns, while caching and optimizing freely.
 
 Tracing then turns this from good advice into a working requirement. Side
 effects in your function, like built-in Python `print` calls, happen at *trace
-time*, not when the transformed computation runs.
-Our `vmap` example above already showed this: the batch had three elements, but
-`print` ran only once, because `vmap` traces the function a single time,
-transforming each operation as it's intercepted. Under `jax.jit`, the effect
-is even sharper: traces are cached, so a side effect might happen on the first
-call and then never again.
+time*, not when the transformed computation runs. Our `vmap` example above
+already showed this: the batch had three elements, but `print` ran only once,
+because `vmap` traces the function a single time, transforming each operation
+as it's intercepted. Under `jax.jit`, the effect is even sharper: traces are
+cached, so a side effect might happen on the first call and then never again.
 If you want to print *runtime* values from transformed code, there's a
 purpose-built tool: {func}`jax.debug.print`; see {ref}`jax-201-debugging`.
 
@@ -410,7 +408,7 @@ Reading mutable state has the same problem in reverse: a global value is likely
 baked in at trace time, so later updates to it are silently ignored by
 transformed code.
 
-For more about traceability, see {ref}`jax-101-state`.
+For how to work with state in traceable code, see {ref}`jax-101-state`.
 
 ### Consequence 2: traced code can't always specialize on data values
 
@@ -423,10 +421,6 @@ the batch mid-trace, through the tracer's `.val` attribute:
 # warning: `.val` is unsupported internals, so don't rely on it in real code!
 jax.vmap(lambda x: print(x.val))(jnp.arange(3.0))
 ```
-
-(Reaching into a tracer's internals like `.val` is unsafe, since it's an
-implementation detail rather than an API; in real code you'd use
-{func}`jax.debug.print`. We're doing it here only for a look inside.)
 
 So the values may well be present. What traced code can't do is *specialize* on
 them. The operations applied must work for every element of the batch, so the
@@ -520,8 +514,8 @@ differentiating ordinary, idiomatic Python and NumPy code, including branches,
 loops, and closures.
 
 The constraints return the moment you compose with a transformation that traces
-abstractly: `jax.jit(jax.grad(f))` and `jax.vmap(jax.grad(f))` see the `if`
-above fail again, and want it rewritten with `jnp.where`, `lax.cond`, and
+abstractly: under `jax.jit(jax.grad(f))` or `jax.vmap(jax.grad(f))`, the `if`
+above fails again, and needs rewriting with `jnp.where`, `lax.cond`, and
 friends ({ref}`jax-201-control-flow`). That trade is this documentation's split
 in miniature: `grad` by itself maximizes what you can express, and it's
 compiling for speed that asks you to make control flow explicit.
@@ -543,10 +537,10 @@ sum_sq(jnp.arange(3.0))
 ```
 
 The first call with a given set of input JAX types pays for tracing and
-compilation; later calls skip straight to the compiled code. What's new with
-`jit` is performance: compilation, caching and retracing, static arguments,
-asynchronous dispatch. That is where the performance and scaling docs start;
-see {ref}`jax-201-jit`.
+compilation; later calls skip straight to the compiled code. The rest of the
+`jit` story is about performance (compilation, caching and retracing, static
+arguments, asynchronous dispatch), and it's where the performance and scaling
+docs start; see {ref}`jax-201-jit`.
 
 ## Next steps
 

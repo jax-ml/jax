@@ -19,14 +19,14 @@ kernelspec:
 
 There are two ways to define differentiation rules in JAX:
 
-1. using [`jax.custom_jvp`](https://docs.jax.dev/en/latest/_autosummary/jax.custom_jvp.html) and [`jax.custom_vjp`](https://docs.jax.dev/en/latest/_autosummary/jax.custom_vjp.html) to define custom differentiation rules for Python functions that are already JAX-transformable; and
-2. defining new `core.Primitive` instances along with all their transformation rules, for example to call into functions from other systems like solvers, simulators, or general numerical computing systems.
+1. using {func}`jax.custom_jvp` and {func}`jax.custom_vjp` to define custom differentiation rules for Python functions that are already JAX-transformable; and
+2. defining new primitives along with all their transformation rules, for example to call into functions from other systems like solvers, simulators, or general numerical computing systems.
 
-This notebook is about #1. To read instead about #2, see {doc}`custom-derivatives` and {doc}`hijax-types`.
+This page is about #1.
 
-Hijax primitives (see {doc}`custom-derivatives`) unify these two approaches, and are now the recommended approach: a hijax primitive carries a JAX-traceable Python implementation along with custom rules for differentiation and other transformations. The APIs here remain fully supported, and are often the most convenient for simple cases.
+Hijax primitives (see {doc}`custom-derivatives`, and {doc}`hijax-types` for new types) unify these two approaches, and are now the recommended approach: a hijax primitive carries a JAX-traceable Python implementation, as in #1, along with custom rules for differentiation and other transformations, as in #2. The APIs here remain fully supported, and are often the most convenient for simple cases.
 
-For an introduction to JAX's automatic differentiation API, see {doc}`cookbook`. This notebook assumes some familiarity with [jax.jvp](https://docs.jax.dev/en/latest/_autosummary/jax.jvp.html) and [jax.grad](https://docs.jax.dev/en/latest/_autosummary/jax.grad.html), and the mathematical meaning of JVPs and VJPs.
+For an introduction to JAX's automatic differentiation API, see {doc}`cookbook`. This page assumes some familiarity with {func}`jax.jvp` and {func}`jax.grad`, and the mathematical meaning of JVPs and VJPs.
 
 +++
 
@@ -104,7 +104,7 @@ print(grad(f)(2., 3.))
 
 ## Example problems
 
-To get an idea of what problems `jax.custom_jvp` and `jax.custom_vjp` are meant to solve, let's go over one example for each: a `custom_jvp` for numerical stability, and a `custom_vjp` for gradient clipping. (More example problems, including enforcing a differentiation convention at a boundary and efficient implicit differentiation of fixed points, are worked in {doc}`custom-derivatives`; each translates directly to these APIs.) A more thorough introduction to the `jax.custom_jvp` and `jax.custom_vjp` APIs is in the next section.
+To get an idea of what problems `jax.custom_jvp` and `jax.custom_vjp` are meant to solve, let's go over one example for each: a `custom_jvp` for numerical stability, and a `custom_vjp` for gradient clipping. (More example problems, including enforcing a differentiation convention at a boundary and efficient implicit differentiation of fixed points, are worked through in {doc}`custom-derivatives`; each translates directly to these APIs.) A more thorough introduction to the `jax.custom_jvp` and `jax.custom_vjp` APIs is in the next section.
 
 +++
 
@@ -147,13 +147,13 @@ We can get a bit more insight into what's going on by looking at the jaxpr for t
 jit(grad(log1pexp)).trace(100.).jaxpr
 ```
 
-Stepping through how the jaxpr would be evaluated, we can see that the last line would involve multiplying values that floating point math will round to 0 and $\infty$, respectively, which is never a good idea. That is, we're effectively evaluating `lambda x: (1 / (1 + jnp.exp(x))) * jnp.exp(x)` for large `x`, which effectively turns into `0. * jnp.inf`.
+Stepping through how the jaxpr would be evaluated, we can see that the last line would involve multiplying values that floating point math will round to 0 and $\infty$, respectively, which is never a good idea. That is, for large `x` we're evaluating `lambda x: (1 / (1 + jnp.exp(x))) * jnp.exp(x)`, which effectively turns into `0. * jnp.inf`.
 
 Instead of generating such large and small values, hoping for a cancellation that floats can't always provide, we'd rather just express the derivative function as a more numerically stable program. In particular, we can write a program that more closely evaluates the equal mathematical expression $1 - \frac{1}{1 + e^x}$, with no cancellation in sight.
 
-This problem is interesting because even though our definition of `log1pexp` could already be JAX-differentiated (and transformed with [`jit`](https://docs.jax.dev/en/latest/_autosummary/jax.jit.html), [`vmap`](https://docs.jax.dev/en/latest/_autosummary/jax.vmap.html), ...), we're not happy with the result of applying standard autodiff rules to the primitives comprising `log1pexp` and composing the result. Instead, we'd like to specify how the whole function `log1pexp` should be differentiated, as a unit, and thus arrange those exponentials better.
+This problem is interesting because even though our definition of `log1pexp` could already be JAX-differentiated (and transformed with {func}`~jax.jit`, {func}`~jax.vmap`, ...), we're not happy with the result of applying standard autodiff rules to the primitives comprising `log1pexp` and composing the result. Instead, we'd like to specify how the whole function `log1pexp` should be differentiated, as a unit, and thus arrange those exponentials better.
 
-This is one application of custom derivative rules for Python functions that are already JAX transformable: specifying how a composite function should be differentiated, while still using its original Python definition for other transformations (like `jit`, `vmap`, ...).
+This is one application of custom derivative rules for Python functions that are already JAX-transformable: specifying how a composite function should be differentiated, while still using its original Python definition for other transformations (like `jit`, `vmap`, ...).
 
 Here's a solution using `jax.custom_jvp`:
 
@@ -183,7 +183,7 @@ print(jit(grad(log1pexp))(3.))
 print(vmap(jit(grad(log1pexp)))(jnp.arange(3.)))
 ```
 
-Here's a [`defjvps`](https://docs.jax.dev/en/latest/_autosummary/jax.custom_jvp.defjvps.html) convenience wrapper to express the same thing:
+Here's the {func}`~jax.custom_jvp.defjvps` convenience wrapper expressing the same thing:
 
 ```{code-cell}
 @custom_jvp
@@ -204,7 +204,7 @@ print(vmap(jit(grad(log1pexp)))(jnp.arange(3.)))
 
 While in some cases we want to express a mathematical differentiation computation, in other cases we may even want to take a step away from mathematics to adjust the computation autodiff performs. One canonical example is reverse-mode gradient clipping.
 
-For gradient clipping, we can use [`jnp.clip`](https://docs.jax.dev/en/latest/_autosummary/jax.numpy.clip.html) together with a [`jax.custom_vjp`](https://docs.jax.dev/en/latest/_autosummary/jax.custom_vjp.html) reverse-mode-only rule:
+For gradient clipping, we can use {func}`jnp.clip <jax.numpy.clip>` together with a {func}`jax.custom_vjp` reverse-mode-only rule:
 
 ```{code-cell}
 from functools import partial
@@ -249,7 +249,7 @@ plt.plot(vmap(grad(clip_sin))(t))
 
 ### Use `jax.custom_jvp` to define forward-mode (and, indirectly, reverse-mode) rules
 
-Here's a canonical basic example of using [`jax.custom_jvp`](https://docs.jax.dev/en/latest/_autosummary/jax.custom_jvp.html), where the comments use
+Here's a canonical basic example of using {func}`jax.custom_jvp`, where the comments use
 [Haskell-like type signatures](https://wiki.haskell.org/Type_signature):
 
 ```{code-cell}
@@ -331,7 +331,7 @@ def f_jvp(primals, tangents):
 print(grad(f)(2., 3.))
 ```
 
-The [`defjvps`](https://docs.jax.dev/en/latest/_autosummary/jax.custom_jvp.defjvps.html) convenience wrapper lets us define a JVP for each argument separately, and the results are computed separately then summed:
+The {func}`~jax.custom_jvp.defjvps` convenience wrapper lets us define a JVP for each argument separately, and the results are computed separately then summed:
 
 ```{code-cell}
 @custom_jvp
@@ -388,12 +388,12 @@ When you're not performing differentiation, the function `f` is called just as i
 ```{code-cell}
 @custom_jvp
 def f(x):
-  print('called f!')  # a harmless side-effect
+  print('called f!')  # a harmless side effect
   return jnp.sin(x)
 
 @f.defjvp
 def f_jvp(primals, tangents):
-  print('called f_jvp!')  # a harmless side-effect
+  print('called f_jvp!')  # a harmless side effect
   x, = primals
   t, = tangents
   return f(x), jnp.cos(x) * t
@@ -455,7 +455,7 @@ print(grad(f)(-1.))
 
 ### Use `jax.custom_vjp` to define custom reverse-mode-only rules
 
-While `jax.custom_jvp` suffices for controlling both forward- and, via JAX's automatic transposition, reverse-mode differentiation behavior, in some cases we may want to directly control a VJP rule, for example in the latter two example problems presented above. We can do that with [`jax.custom_vjp`](https://docs.jax.dev/en/latest/_autosummary/jax.custom_vjp.html):
+While `jax.custom_jvp` suffices for controlling both forward- and, via JAX's automatic transposition, reverse-mode differentiation behavior, in some cases we may want to directly control a VJP rule, as in the gradient clipping example above. We can do that with {func}`jax.custom_vjp`:
 
 ```{code-cell}
 from jax import custom_vjp
@@ -484,7 +484,7 @@ print(f(3.))
 print(grad(f)(3.))
 ```
 
-In words, we again start with a primal function `f` that takes inputs of type `a` and produces outputs of type `b`. We associate with it two functions, `f_fwd` and `f_bwd`, which describe how to perform the forward- and backward-passes of reverse-mode autodiff, respectively.
+In words, we again start with a primal function `f` that takes inputs of type `a` and produces outputs of type `b`. We associate with it two functions, `f_fwd` and `f_bwd`, which describe how to perform the forward and backward passes of reverse-mode autodiff, respectively.
 
 The function `f_fwd` describes the forward pass, not only the primal computation but also what values to save for use on the backward pass. Its input signature is just like that of the primal function `f`, in that it takes a primal input of type `a`. But as output it produces a pair, where the first element is the primal output `b` and the second element is any "residual" data of type `c` to be stored for use by the backward pass. (This second output is analogous to [PyTorch's save_for_backward mechanism](https://pytorch.org/tutorials/beginner/examples_autograd/two_layer_net_custom_function.html).)
 
@@ -519,7 +519,7 @@ Calling a `jax.custom_vjp` function with keyword arguments, or writing a `jax.cu
 
 +++
 
-As with `jax.custom_jvp`, the custom VJP rule comprised by `f_fwd` and `f_bwd` is not invoked if differentiation is not applied. If function is evaluated, or transformed with `jit`, `vmap`, or other non-differentiation transformations, then only `f` is called.
+As with `jax.custom_jvp`, the custom VJP rule made up of `f_fwd` and `f_bwd` is invoked only under differentiation. If the function is evaluated, or transformed with `jit`, `vmap`, or other non-differentiation transformations, then only `f` is called.
 
 ```{code-cell}
 @custom_vjp
@@ -556,21 +556,6 @@ print(y)
 ```{code-cell}
 print(f_vjp(1.))
 ```
-
-**Forward-mode autodiff cannot be used on the** `jax.custom_vjp` **function** and will raise an error:
-
-```{code-cell}
-from jax import jvp
-
-try:
-  jvp(f, (3.,), (1.,))
-except TypeError as e:
-  print('ERROR! {}'.format(e))
-```
-
-If you want to use both forward- and reverse-mode, use `jax.custom_jvp` instead.
-
-+++
 
 We can use `jax.custom_vjp` together with `pdb` to insert a debugger trace in the backward pass:
 
@@ -646,7 +631,7 @@ can carry rules for both modes at once.
 
 ### Working with `list` / `tuple` / `dict` containers (and other pytrees)
 
-You should expect standard Python containers like lists, tuples, namedtuples, and dicts to just work, along with nested versions of those. In general, any {ref}`pytrees <jax-101-pytrees>` are permissible, so long as their structures are consistent according to the type constraints. 
+You should expect standard Python containers like lists, tuples, namedtuples, and dicts to just work, along with nested versions of those. In general, any {ref}`pytrees <jax-101-pytrees>` are permissible, so long as their structures are consistent according to the type constraints.
 
 Here's a contrived example with `jax.custom_jvp`:
 
@@ -723,7 +708,7 @@ print(grad(fun)(pt))
 
 +++
 
-Some use cases, like the final example problem, call for non-differentiable arguments like function-valued arguments to be passed to functions with custom differentiation rules, and for those arguments to also be passed to the rules themselves. In the case of `fixed_point`, the function argument `f` was such a non-differentiable argument. A similar situation arises with `jax.experimental.odeint`.
+Some use cases, like the `fixed_point` example in {doc}`custom-derivatives`, call for non-differentiable arguments like function-valued arguments to be passed to functions with custom differentiation rules, and for those arguments to also be passed to the rules themselves. In the case of `fixed_point`, the function argument `f` is such a non-differentiable argument. A similar situation arises with `jax.experimental.ode.odeint`.
 
 +++
 
@@ -779,7 +764,7 @@ print(grad(app2, 1)(lambda x: x ** 3, 3., lambda y: 5 * y))
 
 +++
 
-A similar option exists for `jax.custom_vjp`, and, similarly, the convention is that the non-differentiable arguments are passed as the first arguments to the `_bwd` rule, no matter where they appear in the signature of the original function. The signature of the `_fwd` rule remains unchanged - it is the same as the signature of the primal function. Here's an example:
+A similar option exists for `jax.custom_vjp`, and, similarly, the convention is that the non-differentiable arguments are passed as the first arguments to the `_bwd` rule, no matter where they appear in the signature of the original function. The signature of the `_fwd` rule remains unchanged: it's the same as the signature of the primal function. Here's an example:
 
 ```{code-cell}
 @partial(custom_vjp, nondiff_argnums=(0,))
@@ -803,6 +788,6 @@ print(app(lambda x: x ** 2, 4.))
 print(grad(app, 1)(lambda x: x ** 2, 4.))
 ```
 
-See `fixed_point` above for another usage example.
+(With a hijax primitive, the analogous move is to put such arguments in `params`, as the `fixed_point` example in {doc}`custom-derivatives` does.)
 
-**You don't need to use** `nondiff_argnums` **with array-valued arguments**, for example ones with integer dtype. Instead, `nondiff_argnums` should only be used for argument values that don't correspond to JAX types (essentially don't correspond to array types), like Python callables or strings. If JAX detects that an argument indicated by `nondiff_argnums` contains a JAX Tracer, then an error is raised. The `clip_gradient` function above is a good example of not using `nondiff_argnums` for integer-dtype array arguments.
+**You don't need to use** `nondiff_argnums` **with array-valued arguments**, for example ones with integer dtype. Instead, `nondiff_argnums` should only be used for argument values that don't correspond to JAX types (essentially don't correspond to array types), like Python callables or strings. If JAX detects that an argument indicated by a `custom_vjp` function's `nondiff_argnums` contains a tracer, it raises an error. The `clip_gradient` function above is a good example of not using `nondiff_argnums` for array arguments: its bounds `lo` and `hi` are ordinary inputs, with `None` cotangents.

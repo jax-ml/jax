@@ -13,7 +13,7 @@ kernelspec:
 ---
 
 (jax-301-cookbook)=
-# The Autodiff Cookbook with JVP and VJP
+# The autodiff cookbook: JVPs and VJPs
 
 <!--* freshness: { reviewed: '2026-07-16' } *-->
 
@@ -36,8 +36,8 @@ key = random.key(0)
 
 ## Setup: a running example
 
-As a running example, we'll use the same linear logistic regression model as
-the 101 docs:
+As a running example, we'll use the same logistic regression model as the
+101 docs:
 
 ```{code-cell}
 def sigmoid(x):
@@ -126,10 +126,11 @@ This shape makes sense: if we start with a function $f : \mathbb{R}^n \to \mathb
 
 and so on.
 
-To implement `hessian`, we could have used `jacfwd(jacrev(f))` or `jacrev(jacfwd(f))` or any other composition of the two. But forward-over-reverse is typically the most efficient. That's because in the inner Jacobian computation we're often differentiating a function wide Jacobian (maybe like a loss function $f : \mathbb{R}^n \to \mathbb{R}$), while in the outer Jacobian computation we're differentiating a function with a square Jacobian (since $\nabla f : \mathbb{R}^n \to \mathbb{R}^n$), which is where forward-mode wins out.
+To implement `hessian`, we could have used `jacfwd(jacrev(f))` or `jacrev(jacfwd(f))` or any other composition of the two. But forward-over-reverse is typically the most efficient. That's because in the inner Jacobian computation we're often differentiating a function with a wide Jacobian (maybe like a loss function $f : \mathbb{R}^n \to \mathbb{R}$), while in the outer Jacobian computation we're differentiating a function with a square Jacobian (since $\nabla f : \mathbb{R}^n \to \mathbb{R}^n$), which is where forward-mode wins out.
 
 +++
 
+(jax-301-stopping-gradients)=
 ## Stopping gradients
 
 Sometimes you want autodiff to treat a value as a constant: use it as usual
@@ -191,11 +192,11 @@ custom derivative behavior to functions or types, see
 
 ### Jacobian-Vector products (JVPs, aka forward-mode autodiff)
 
-JAX includes efficient and general implementations of both forward- and reverse-mode automatic differentiation. The familiar `grad` function is built on reverse-mode, but to explain the difference in the two modes, and when each can be useful, we need a bit of math background.
+JAX includes efficient and general implementations of both forward- and reverse-mode automatic differentiation. The familiar `grad` function is built on reverse-mode, but to explain the difference between the two modes, and when each can be useful, we need a bit of math background.
 
 #### JVPs in math
 
-Mathematically, given a function $f : \mathbb{R}^n \to \mathbb{R}^m$, the Jacobian of $f$ evaluated at an input point $x \in \mathbb{R}^n$, denoted $\partial f(x)$, is often thought of as a matrix in $\mathbb{R}^m \times \mathbb{R}^n$:
+Mathematically, given a function $f : \mathbb{R}^n \to \mathbb{R}^m$, the Jacobian of $f$ evaluated at an input point $x \in \mathbb{R}^n$, denoted $\partial f(x)$, is often thought of as a matrix:
 
 $\qquad \partial f(x) \in \mathbb{R}^{m \times n}$.
 
@@ -249,7 +250,7 @@ That memory complexity sounds pretty compelling! So why don't we see forward-mod
 
 To answer that, first think about how you could use a JVP to build a full Jacobian matrix. If we apply a JVP to a one-hot tangent vector, it reveals one column of the Jacobian matrix, corresponding to the nonzero entry we fed in. So we can build a full Jacobian one column at a time, and to get each column costs about the same as one function evaluation. That will be efficient for functions with "tall" Jacobians, but inefficient for "wide" Jacobians.
 
-If you're doing gradient-based optimization in machine learning, you probably want to minimize a loss function from parameters in $\mathbb{R}^n$ to a scalar loss value in $\mathbb{R}$. That means the Jacobian of this function is a very wide matrix: $\partial f(x) \in \mathbb{R}^{1 \times n}$, which we often identify with the Gradient vector $\nabla f(x) \in \mathbb{R}^n$. Building that matrix one column at a time, with each call taking a similar number of FLOPs to evaluate the original function, sure seems inefficient! In particular, for training neural networks, where $f$ is a training loss function and $n$ can be in the millions or billions, this approach just won't scale.
+If you're doing gradient-based optimization in machine learning, you probably want to minimize a loss function from parameters in $\mathbb{R}^n$ to a scalar loss value in $\mathbb{R}$. That means the Jacobian of this function is a very wide matrix: $\partial f(x) \in \mathbb{R}^{1 \times n}$, which we often identify with the gradient vector $\nabla f(x) \in \mathbb{R}^n$. Building that matrix one column at a time, with each call taking a similar number of FLOPs to evaluate the original function, sure seems inefficient! In particular, for training neural networks, where $f$ is a training loss function and $n$ can be in the millions or billions, this approach just won't scale.
 
 To do better for functions like this, we just need to use reverse-mode.
 
@@ -268,9 +269,9 @@ Starting from our notation for JVPs, the notation for VJPs is pretty simple:
 
 $\qquad (x, v) \mapsto v \partial f(x)$,
 
-where $v$ is an element of the cotangent space of $f$ at $x$ (isomorphic to another copy of $\mathbb{R}^m$). When being rigorous, we should think of $v$ as a linear map $v : \mathbb{R}^m \to \mathbb{R}$, and when we write $v \partial f(x)$ we mean function composition $v \circ \partial f(x)$, where the types work out because $\partial f(x) : \mathbb{R}^n \to \mathbb{R}^m$. But in the common case we can identify $v$ with a vector in $\mathbb{R}^m$ and use the two almost interchangeably, just like we might sometimes flip between "column vectors" and "row vectors" without much comment.
+where $v$ is an element of the cotangent space of the codomain of $f$ at $f(x)$ (isomorphic to another copy of $\mathbb{R}^m$). When being rigorous, we should think of $v$ as a linear map $v : \mathbb{R}^m \to \mathbb{R}$, and when we write $v \partial f(x)$ we mean function composition $v \circ \partial f(x)$, where the types work out because $\partial f(x) : \mathbb{R}^n \to \mathbb{R}^m$. But in the common case we can identify $v$ with a vector in $\mathbb{R}^m$ and use the two almost interchangeably, just like we might sometimes flip between "column vectors" and "row vectors" without much comment.
 
-With that identification, we can alternatively think of the linear part of a VJP as the transpose (or adjoint conjugate) of the linear part of a JVP:
+With that identification, we can alternatively think of the linear part of a VJP as the transpose (or adjoint) of the linear part of a JVP:
 
 $\qquad (x, v) \mapsto \partial f(x)^\mathsf{T} v$.
 
@@ -311,7 +312,7 @@ where we use `CT a` to denote the type for the cotangent space for `a`. In words
 
 This is great because it lets us build Jacobian matrices one row at a time, and the FLOP cost for evaluating $(x, v) \mapsto (f(x), v^\mathsf{T} \partial f(x))$ is only about three times the cost of evaluating $f$. In particular, if we want the gradient of a function $f : \mathbb{R}^n \to \mathbb{R}$, we can do it in just one call. That's how `grad` is efficient for gradient-based optimization, even for objectives like neural network training loss functions on millions or billions of parameters.
 
-There's a cost, though: though the FLOPs are friendly, memory scales with the depth of the computation. Also, the implementation is traditionally more complex than that of forward-mode, though JAX has a trick up its sleeve: as we'll see next, it builds reverse-mode out of forward-mode.
+There's a cost, though: while the FLOPs are friendly, memory scales with the depth of the computation. Also, the implementation is traditionally more complex than that of forward-mode, though JAX has a trick up its sleeve: as we'll see next, it builds reverse-mode out of forward-mode.
 
 For more on how reverse-mode works, see [this tutorial video from the Deep Learning Summer School in 2017](http://videolectures.net/deeplearning2017_johnson_automatic_differentiation/).
 
@@ -429,7 +430,7 @@ def hvp_revfwd(f, primals, tangents):
   return grad(g)(primals)
 ```
 
-That's not quite as good, though, because forward-mode has less overhead than reverse-mode, and since the outer differentiation operator here has to differentiate a larger computation than the inner one, keeping forward-mode on the outside works best:
+That's not quite as good, though, because forward-mode has less overhead than reverse-mode, and since the outer differentiation operator here has to differentiate a larger computation than the inner one, keeping forward-mode on the outside works best. For comparison, here's reverse-over-reverse too, with all three timed against materializing the full Hessian:
 
 ```{code-cell}
 # reverse-over-reverse, only works for single arguments
@@ -456,7 +457,7 @@ print("Naive full Hessian materialization")
 
 ### Jacobian-Matrix and Matrix-Jacobian products
 
-Now that we have `jvp` and `vjp` transformations that give us functions to push-forward or pull-back single vectors at a time, we can use JAX's `vmap` [transformation](https://github.com/jax-ml/jax#auto-vectorization-with-vmap) to push and pull entire bases at once. In particular, we can use that to write fast matrix-Jacobian and Jacobian-matrix products.
+Now that we have `jvp` and `vjp` transformations that give us functions to push forward or pull back one vector at a time, we can use JAX's `vmap` transformation ({ref}`jax-101-transformations`) to push and pull entire bases at once. In particular, we can use that to write fast matrix-Jacobian and Jacobian-matrix products.
 
 ```{code-cell}
 # Isolate the function from the weight matrix to the predictions
@@ -517,7 +518,7 @@ assert jnp.allclose(loop_vs, vmap_vs), 'Vmap and non-vmapped Jacobian-Matrix pro
 
 +++
 
-Now that we've seen fast Jacobian-matrix and matrix-Jacobian products, it's not hard to guess how to write `jacfwd` and `jacrev`. We just use the same technique to push-forward or pull-back an entire standard basis (isomorphic to an identity matrix) at once.
+Now that we've seen fast Jacobian-matrix and matrix-Jacobian products, it's not hard to guess how to write `jacfwd` and `jacrev`. We just use the same technique to push forward or pull back an entire standard basis (isomorphic to an identity matrix) at once.
 
 ```{code-cell}
 from jax import jacrev as builtin_jacrev
@@ -552,7 +553,7 @@ Interestingly, [Autograd](https://github.com/hips/autograd) couldn't do this. Ou
 
 +++
 
-Another thing that Autograd couldn't do is `jit`. Interestingly, no matter how much Python dynamism you use in your function to be differentiated, we could always use `jit` on the linear part of the computation. For example:
+Another thing that Autograd couldn't do is `jit`. No matter how much Python dynamism you use in the function being differentiated, we can always use `jit` on the linear part of the computation. For example:
 
 ```{code-cell}
 def f(x):
@@ -580,9 +581,10 @@ schedule them yourself, and control what gets saved. That's the subject of
 In JAX, differentiation of complex-valued functions is defined in terms of
 the underlying real derivatives. Jacobian-vector products (JVPs) and
 vector-Jacobian products (VJPs) operate on real-linear maps without requiring
-holomorphy. The only convention choice occurs in `grad`, where covectors are
-identified with vectors via a bilinear pairing rather than a sesquilinear
-one, producing a complex conjugate relative to the gradient vector.
+holomorphy. The only convention choice is how covectors are represented as
+complex numbers: JAX identifies them with vectors via a bilinear pairing
+rather than a sesquilinear one, which shows up in `grad` as a complex
+conjugate relative to the gradient vector.
 
 ### The unambiguous part: JVPs and VJPs
 
@@ -713,7 +715,7 @@ directly: they are always well-defined, for any function.
 ### `grad` at complex inputs
 
 For a scalar function $f : \mathbb{C} \to \mathbb{R}$ with $f(x + yi) = u(x,
-y)$, JAX defines `grad(f)(x)` as `vjp(f, x)[1](1.0)`. Applying the bilinear
+y)$, JAX defines `grad(f)(z)` as `vjp(f, z)[1](1.0)[0]`. Applying the bilinear
 transpose formula gives
 
 $\qquad \texttt{grad}(f)(z) = \partial_0 u(x, y) - \partial_1 u(x, y)\, i.$
@@ -839,10 +841,10 @@ f'(z)$. For a real-valued function $f$, JAX's `grad` computes
 $\texttt{grad}(f)(z) = 2\, \partial f/\partial z$, whereas the
 steepest-ascent vector is $2\, \partial f/\partial \bar z =
 \overline{\texttt{grad}(f)(z)}$. Other frameworks, including PyTorch and
-TensorFlow, define the gradient of a real-valued loss as $\partial L/\partial
-z^* = 2\, \partial L/\partial \bar z$, incorporating the conjugation into the
-returned derivative. Both approaches represent the same underlying real
-derivative under different identification conventions.
+TensorFlow, define the gradient of a real-valued loss $L$ as the
+steepest-ascent vector $2\, \partial L/\partial \bar z$, incorporating the
+conjugation into the returned derivative. Both approaches represent the same
+underlying real derivative under different identification conventions.
 
 ### Holomorphic functions and `grad(f, holomorphic=True)`
 
@@ -875,7 +877,11 @@ grad(f, holomorphic=True)(3. + 4j)
 ```
 
 Complex numbers are supported across JAX transformations and linear algebra
-operations, including matrix factorizations:
+operations, including matrix factorizations. Here's a real-valued loss
+computed through the Cholesky factorization of a complex Hermitian matrix.
+Cholesky isn't holomorphic (it involves conjugation), so this is a job for
+plain `grad`, and we can check the result against a finite difference using
+the directional-derivative identity from above, summed over matrix entries:
 
 ```{code-cell}
 A = jnp.array([[5.,    2.+3j,    5j],
@@ -883,10 +889,15 @@ A = jnp.array([[5.,    2.+3j,    5j],
               [-5j,  1.-7j,    12.]])
 
 def f(X):
-    L = jnp.linalg.cholesky(X)
-    return jnp.sum((L - jnp.sin(L))**2)
+  L = jnp.linalg.cholesky(X)
+  return jnp.sum(jnp.abs(L - jnp.sin(L))**2)   # real-valued
 
-grad(f, holomorphic=True)(A)
+G = grad(f)(A)
+
+T = jnp.array([[1., 1j, 0.], [-1j, 0., 2.], [0., 2., -1.]])  # a Hermitian direction
+eps = 1e-3
+print((f(A + eps * T) - f(A - eps * T)) / (2 * eps))  # finite difference
+print(jnp.real(jnp.sum(G * T)))                        # Re(grad(f)(A) · T)
 ```
 
 ## More advanced autodiff
@@ -896,6 +907,9 @@ applications of automatic differentiation in JAX. We hope you now feel that
 taking derivatives in JAX is easy and powerful. The rest of this
 documentation section goes deeper:
 
+- {doc}`vjp-objects` — the VJP object as a pytree: splitting the forward and
+  backward passes into separately compiled functions, run on your own
+  schedule.
 - {doc}`sharding-ad` — how autodiff interacts with sharding: the same
   cotangent-type reasoning as this page, extended to distributed arrays.
 - {doc}`custom-derivatives` — defining your own derivative rules with hijax

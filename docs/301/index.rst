@@ -16,7 +16,8 @@ memory/compute tradeoff of differentiation.
 2. :doc:`vjp-objects` — the VJP object as a pytree, splitting the forward
    and backward passes into separately compiled functions run on your own
    schedule, and excluding argument values (like weights) from the saved
-   state with ``saveable_args``.
+   state with ``saveable_args``, as in re-gathering FSDP-sharded weights
+   instead of saving them.
 3. :doc:`sharding-ad` — how autodiff interacts with sharding: cotangent
    shardings as a function of primal shardings, and controlling
    backward-pass communication with ``unreduced`` and ``reduced``, in both

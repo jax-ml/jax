@@ -18,9 +18,9 @@ kernelspec:
 <!--* freshness: { reviewed: '2026-07-09' } *-->
 
 Do you have exploding gradients? Are NaNs making you gnash your teeth? Just want
-to poke around the intermediate values in your computation? This section
-introduces you to a set of built-in JAX debugging methods that you can use with
-various JAX transformations.
+to poke around the intermediate values in your computation? This page
+introduces JAX's built-in debugging tools, which work with the various JAX
+transformations.
 
 **Summary:**
 
@@ -28,7 +28,7 @@ various JAX transformations.
   other transformation-decorated functions.
 - JAX offers config flags and context managers that enable catching errors more easily. For example, enable the
   `jax_debug_nans` flag to automatically detect when NaNs are produced in `jax.jit`-compiled code and enable the
-  `jax_disable_jit` flag to disable JIT-compilation.
+  `jax_disable_jit` flag to disable JIT compilation.
 
 ## `jax.debug.print` for simple inspection
 
@@ -39,8 +39,8 @@ Here is a rule of thumb:
 
 Recall from {doc}`jit` (and {ref}`jax-101-tracing`) that when transforming a function
 with {func}`jax.jit`, the Python code is executed with abstract tracers in place of
-your arrays. Because of this,
-the Python {func}`print` function will only print this tracer value:
+your arrays. Because of this, Python's {func}`print` function prints only the
+tracer:
 
 ```{code-cell}
 import jax
@@ -56,7 +56,7 @@ def f(x):
 result = f(2.)
 ```
 
-Python's `print` executes at trace-time, before the runtime values exist.
+Python's `print` executes at trace time, before the runtime values exist.
 If you want to print the actual runtime values, you can use {func}`jax.debug.print`:
 
 ```{code-cell}
@@ -94,7 +94,7 @@ result = jax.lax.map(f, xs)
 
 Notice the order is different, as {func}`jax.vmap` and {func}`jax.lax.map` compute the same results in different ways. When debugging, the evaluation order details are exactly what you may need to inspect.
 
-Below is an example with {func}`jax.grad`, where {func}`jax.debug.print` only prints the forward pass. In this case, the behavior is similar to Python's {func}`print`, but it's consistent if you apply {func}`jax.jit` during the call.
+Below is an example with {func}`jax.grad`, where {func}`jax.debug.print` only prints the forward pass. In this case, the behavior is similar to Python's {func}`print`, but unlike `print`, it stays the same if you also apply {func}`jax.jit`.
 
 ```{code-cell}
 def f(x):
@@ -104,7 +104,7 @@ def f(x):
 result = jax.grad(f)(1.)
 ```
 
-Sometimes, when the arguments don't depend on one another, calls to {func}`jax.debug.print` may print them in a different order when staged out with a JAX transformation. If you need the original order, such as `x: ...` first and then `y: ...` second, add the `ordered=True` parameter.
+When the printed values don't depend on one another, calls to {func}`jax.debug.print` may run in a different order once staged out by a JAX transformation. If you need the original order, such as `x: ...` first and then `y: ...` second, add the `ordered=True` parameter.
 
 For example:
 
@@ -206,7 +206,7 @@ def f(x):
 f(1.0);
 ```
 
-This callback is compatible with other transformations, including {func}`jax.vmap` and {func}`jax.grad`:
+It works under {func}`jax.vmap` and {func}`jax.grad` too:
 
 ```{code-cell}
 x = jnp.arange(5.0)
@@ -226,30 +226,31 @@ You can learn more about {func}`jax.debug.callback` and other kinds of JAX callb
 
 JAX offers flags and context managers that enable catching errors more
 easily: `jax_debug_nans` to automatically detect when NaNs are produced in
-`jax.jit`-compiled code, and `jax_disable_jit` to disable JIT-compilation,
+`jax.jit`-compiled code, and `jax_disable_jit` to disable JIT compilation,
 enabling the use of traditional Python debugging tools like `print` and
 `pdb`.
 
 ### `jax_debug_nans`
 
-`jax_debug_nans` is a JAX flag that when enabled, will cause computations to
-error-out immediately on production of a NaN. Switching this option on adds a
+`jax_debug_nans` is a JAX flag that, when enabled, makes computations raise an
+error as soon as a NaN is produced. Switching this option on adds a
 NaN check to every floating point type value produced by XLA. That means
 values are pulled back to the host and checked as ndarrays for every
 primitive operation not under an `@jax.jit`.
 
 For code under an `@jax.jit`, the output of every `@jax.jit` function is
-checked and if a NaN is present it will re-run the function in de-optimized
+checked, and if a NaN is present, JAX re-runs the function in de-optimized
 op-by-op mode, effectively removing one level of `@jax.jit` at a time.
 
-There could be tricky situations that arise, like NaNs that only occur under
-a `@jax.jit` but don't get produced in de-optimized mode. In that case you'll
-see a warning message print out but your code will continue to execute.
+Tricky situations can arise, like NaNs that only occur under a `@jax.jit`
+but don't get produced in de-optimized mode. In that case you'll see a warning
+message, but your code will continue to execute.
 
 If the NaNs are being produced in the backward pass of a gradient evaluation,
-when an exception is raised several frames up in the stack trace you will be
-in the `backward_pass` function, which is essentially a simple jaxpr
-interpreter that walks the sequence of primitive operations in reverse.
+then when an exception is raised, several frames up the stack trace you'll find
+JAX's backward pass (a function named like `backward_pass`), which is
+essentially a simple jaxpr interpreter that walks the sequence of primitive
+operations in reverse.
 
 To turn on the NaN-checker, do one of:
 
@@ -278,7 +279,7 @@ except FloatingPointError as e:
   print(traceback.format_exc(limit=2))
 ```
 
-The NaN generated was caught with an ordinary Python exception, so running
+The NaN was caught as an ordinary Python exception, so running
 `%debug` in IPython gives a post-mortem debugger at the fault. This also
 works with functions under `@jax.jit`:
 
@@ -318,13 +319,13 @@ the way NaNs do.
 
 ### `jax_disable_jit`
 
-`jax_disable_jit` is a JAX flag that when enabled, disables JIT-compilation
+`jax_disable_jit` is a JAX flag that, when enabled, disables JIT compilation
 throughout JAX (including in control flow functions like `jax.lax.cond` and
 `jax.lax.scan`). With compilation out of the picture, your function is plain
 Python running eagerly, so all the ordinary tools work: `print`, `pdb`,
 Python's built-in `breakpoint()`.
 
-You can disable JIT-compilation by:
+You can disable JIT compilation by:
 
 * running your code inside the `jax.disable_jit` context manager, using
   `with jax.disable_jit():`;
@@ -338,6 +339,7 @@ For example:
 
 ```python
 import jax
+import jax.numpy as jnp
 jax.config.update("jax_disable_jit", True)
 
 def f(x):
@@ -353,7 +355,7 @@ jax.jit(f)(-2.)  # ==> Enters PDB breakpoint!
 `print`; throws standard Python exceptions and is compatible with PDB
 postmortem.
 
-**Limitations:** running functions without JIT-compilation can be slow.
+**Limitations:** running functions without JIT compilation can be slow.
 
 ```{warning}
 These flags are best suited to single-process development, and don't work

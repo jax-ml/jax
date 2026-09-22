@@ -21,17 +21,17 @@ transit](https://docs.cloud.google.com/docs/security/encryption-in-transit#encry
 
 If you would like to directly secure the coordination service connections,
 `jax.distributed.initialize` has optional arguments and corresponding configs for
-enabling mutual TLS (mTLS). mTLS means that the client and service are both
-authenticated to each other by each presenting a certificate signed by a certificate
-authority (CA) verifying their identity, and encrypt subsequent traffic. (TLS is the
-same except only the server is authenticated; any client can connect.) In other words,
+enabling mutual TLS (mTLS). mTLS means that the client and service authenticate each
+other, each presenting a certificate signed by a certificate authority (CA) that
+verifies its identity, and then encrypt subsequent traffic. (TLS is the same except
+only the server is authenticated; any client can connect.) In other words,
 for each connection to the service, both the client and service authenticate their
 corresponding "peer" (the service or client, respectively).
 
 To enable mTLS, all of the following arguments must be provided:
-* `mtls_cert_file` (or env var `JAX_MTLS_CERT_FILE`): the process' signed certificate it
-  got from the CA that it'll send to its peer process
-* `mtls_key_file` (or env var `JAX_MTLS_KEY_FILE`): the process' private key, used to
+* `mtls_cert_file` (or env var `JAX_MTLS_CERT_FILE`): the process's certificate, signed
+  by the CA, which it sends to its peer
+* `mtls_key_file` (or env var `JAX_MTLS_KEY_FILE`): the process's private key, used to
   prove to its peer that it owns `mtls_cert_file`
 * `mtls_ca_file` (or env var `JAX_MTLS_CA_FILE`): the CA's certificate, used to verify the
   `mtls_cert_file` from its peer process
@@ -77,8 +77,8 @@ The TPU runtime starts its own internal services, e.g. for bootstrapping multi-h
 topologies and handling multi-slice network collectives. As of libtpu 0.0.46, you can
 enable mTLS for these services using the following env vars:
 
-* `TLS_CERT_FILE`: the process' signed certificate
-* `TLS_KEY_FILE`: the process' private key
+* `TLS_CERT_FILE`: the process's signed certificate
+* `TLS_KEY_FILE`: the process's private key
 * `TLS_CA_FILE`: the CA's certificate
 * `TLS_VERIFIER`: `noop`, `subject_prefix`, or `cel` (default `noop`). `noop` means both
   sides check for a valid certificate but don't do any identity verification.

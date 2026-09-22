@@ -63,7 +63,7 @@ If you use type annotations in your code, `jax.Array` is the appropriate
 annotation for JAX array values (see {mod}`jax.typing` for more discussion).
 
 Every JAX value also has a *JAX type*, which you can inspect with
-{func}`jax.typeof`. For an array, the JAX type roughly means its shape and
+{func}`jax.typeof`. For an array, the JAX type is, roughly, its shape and
 dtype:
 
 ```{code-cell}
@@ -121,13 +121,13 @@ print(x.at[:3].max(5))
 ```
 
 Writing updates functionally may look wasteful, as if every update copies the
-whole array. Outside of compiled code that's accurate, but inside
+whole array. Outside compiled code, it does. But inside
 {func}`jax.jit`-compiled functions, covered in {ref}`jax-201-jit`, the
-compiler can usually perform these updates in place. Other optimizations are possible too: for example,
-intermediates might not be materialized at all. In general, functional code is
-amenable to transformation, optimization, and parallelization.
+compiler can usually perform these updates in place, and it may not
+materialize some intermediates at all. More generally, code without mutation
+is easier to transform, optimize, and parallelize.
 
-For when mutable arrays are really necessary, JAX provides a distinct array
+When you really do need a mutable array, JAX provides a distinct array
 reference type, covered in {ref}`jax-101-refs`.
 
 ## Default dtypes and precision
@@ -153,11 +153,15 @@ For the full story, including how to control default dtypes more finely, see
 {doc}`default_dtypes`.
 
 When operations mix dtypes, JAX applies type promotion rules that are similar
-to NumPy's but not identical. In particular they're designed to avoid
-accidentally promoting everything to 64-bit:
+to NumPy's but not identical. In particular, they're designed to avoid
+promoting to wider types than you asked for. For example, NumPy promotes
+`int32` and `float16` to `float64`, while JAX keeps `float16`:
 
 ```{code-cell}
-(jnp.arange(3) + 1.5).dtype
+i = np.arange(3, dtype=np.int32)
+h = np.ones(3, dtype=np.float16)
+print((i + h).dtype)                             # NumPy
+print((jnp.asarray(i) + jnp.asarray(h)).dtype)   # JAX
 ```
 
 See {doc}`type_promotion` for the precise promotion semantics.
@@ -184,11 +188,10 @@ x.at[11].set(99)  # update is dropped
 ```
 
 Both behaviors can be adjusted with the `mode` argument to indexing
-operations; see {attr}`jax.numpy.ndarray.at` for the options.
+operations; see {attr}`jax.Array.at` for the options.
 
-Another small difference: `jax.numpy` functions require arrays (or values of
-Python's built-in numeric types) as inputs, rather than silently converting
-Python lists:
+Another small difference: `jax.numpy` functions require arrays (or Python
+scalars) as inputs, rather than silently converting Python lists:
 
 ```{code-cell}
 :tags: [raises-exception]
@@ -236,9 +239,7 @@ def sin(x):
   return lax.sin(x)
 ```
 
-The `jax.numpy` layer's job is NumPy-style argument handling (accepting
-built-in Python numbers, promoting dtypes) while the computation itself belongs
-to `jax.lax`. The `jax.lax` operations in turn correspond closely to [XLA HLO
+The `jax.lax` operations in turn correspond closely to [XLA HLO
 operations](https://openxla.org/xla/operation_semantics), the vocabulary of
 [XLA](https://www.openxla.org/xla/), the compiler that ultimately runs JAX
 computations: `lax.sin` maps essentially one-to-one onto XLA's `Sin`.

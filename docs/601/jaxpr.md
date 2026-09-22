@@ -17,11 +17,11 @@ kernelspec:
 
 <!--* freshness: { reviewed: '2024-05-03' } *-->
 
-Jaxprs are JAX’s internal intermediate representation (IR) of programs. They are explicitly typed, functional, first-order, and in algebraic normal form (ANF).
+Jaxprs are JAX's internal intermediate representation (IR) of programs. They are explicitly typed, functional, first-order, and in algebraic normal form (ANF).
 
 Conceptually, one can think of JAX transformations, such as {func}`jax.jit` or {func}`jax.grad`, as first trace-specializing the Python function to be transformed into a small and well-behaved intermediate form that is then interpreted with transformation-specific interpretation rules.
 
-One of the reasons JAX can pack so much power into such a small software package is that it starts with a familiar and flexible programming interface (Python with NumPy) and it uses the actual Python interpreter to do most of the heavy lifting to distill the essence of the computation into a simple statically-typed expression language with limited higher-order features.
+One of the reasons JAX can pack so much power into such a small software package is that it starts with a familiar and flexible programming interface (Python with NumPy) and it uses the actual Python interpreter to do most of the heavy lifting to distill the essence of the computation into a simple statically typed expression language with limited higher-order features.
 
 That language is the jaxpr language. The jaxpr term syntax looks as follows:
 
@@ -44,42 +44,43 @@ Not all Python programs can be processed this way, but it turns out that many sc
 
 Before you proceed, remember that not all JAX transformations literally materialize a jaxpr as described above. Some of them, such as differentiation or batching, will apply transformations incrementally during tracing. Nevertheless, if one wants to understand how JAX works internally, or to make use of the result of JAX tracing, it is useful to understand jaxprs.
 
-## `jax.core.ClosedJaxpr`
+## The `Jaxpr` class
 
-A jaxpr instance represents a function with one or more typed parameters (input variables) and one or more typed results. The results depend only on the input variables; there are no free variables captured from enclosing scopes. The inputs and outputs have types, which in JAX are represented as abstract values.
+A jaxpr represents a function with typed parameters (input variables) and typed results. The results depend only on the input variables; there are no free variables captured from enclosing scopes. The inputs and outputs have types, which in JAX are represented as abstract values.
 
-There are two related representations in the code for jaxprs, {class}`jax.core.Jaxpr` and {class}`jax.core.ClosedJaxpr`. A {class}`jax.core.ClosedJaxpr` represents a partially-applied {class}`jax.core.Jaxpr`, and is what you obtain when you use {func}`jax.make_jaxpr` to inspect jaxprs. It has the following fields:
+In the code, a jaxpr is an instance of {class}`jax.extend.core.Jaxpr`, which is what {func}`jax.make_jaxpr` returns. Along with the computation, it holds the values of any constants the computation uses, in its `consts` field (described below).
 
-- `jaxpr`: is a {class}`jax.core.Jaxpr` representing the actual computation content of the function (described below).
-- `consts` is a list of constants.
+```{note}
+Older versions of JAX had two classes here: `Jaxpr`, without constant values, and `ClosedJaxpr`, pairing a `Jaxpr` with its constants. They've been merged, so there's now just one class, called `Jaxpr`, that works like the old `ClosedJaxpr`. The name `ClosedJaxpr` remains as an alias.
+```
 
-The most interesting part of the `ClosedJaxpr` is the actual execution content, represented as a {class}`jax.core.Jaxpr` as printed using the following grammar:
+A jaxpr is printed using the following grammar:
 
 ```
-jaxpr ::= { lambda Var* ; Var+.
+jaxpr ::= { lambda Var* ; Var*.
             let Eqn*
-            in  [Expr+] }
+            in  ( Expr* ) }
 ```
 
 where:
 
 - The parameters of the jaxpr are shown as two lists of variables separated by `;`:
-    - The first set of variables are the ones that have been introduced to stand for constants that have been hoisted out. These are called the `constvars`, and in a {class}`jax.core.ClosedJaxpr` the `consts` field holds corresponding values.
-    - The second list of variables, called `invars`, correspond to the inputs of the traced Python function.
+    - The first set of variables are the ones that have been introduced to stand for constants that have been hoisted out. These are called the `constvars`, and the jaxpr's `consts` field holds their values.
+    - The second list of variables, called `invars`, corresponds to the inputs of the traced Python function.
 - `Eqn*` is a list of equations, defining intermediate variables referring to intermediate expressions. Each equation defines one or more variables as the result of applying a primitive on some atomic expressions. Each equation uses only input variables and intermediate variables defined by previous equations.
-- `Expr+`: is a list of output atomic expressions (literals or variables) for the jaxpr.
+- `Expr*` is a list of output atomic expressions (literals or variables) for the jaxpr.
 
 Equations are printed as follows:
 
 ```
-Eqn  ::= let Var+ = Primitive [ Param* ] Expr+
+Eqn  ::= Var+ = Primitive [ Param* ] Expr*
 ```
 
 where:
 
-- `Var+` are one or more intermediate variables to be defined as the output of a primitive invocation (some primitives can return multiple values).
-- `Expr+` are one or more atomic expressions, each either a variable or a literal constant. A special variable `unitvar` or literal `unit`, printed as `*`, represents a value that is not needed in the rest of the computation and has been elided. That is, units are just placeholders.
-- `Param*` are zero or more named parameters to the primitive, printed in square brackets. Each parameter is shown as `Name = Value`.
+- `Var+` are one or more intermediate variables to be defined as the output of a primitive invocation (some primitives can return multiple values). An output that's never used is printed as `_`.
+- `Expr*` are zero or more atomic expressions, each either a variable or a literal constant. Literals are printed with their types, like `3.0:f32[]`.
+- `Param*` are zero or more named parameters to the primitive, printed in square brackets. Each parameter is shown as `Name=Value`.
 
 Most jaxpr primitives are first-order (they take just one or more Expr as arguments):
 
@@ -102,7 +103,7 @@ def func1(first, second):
 print(make_jaxpr(func1)(jnp.zeros(8), jnp.ones(8)))
 ```
 
-Here there are no constvars, `a` and `b` are the input variables and they correspond respectively to `first` and `second` function parameters. The scalar literal `3.0` is kept inline. The `reduce_sum` primitive has named parameters `axes` and `input_shape`, in addition to the operand `e`.
+Here there are no constvars, `a` and `b` are the input variables and they correspond respectively to `first` and `second` function parameters. The scalar literal `3.0` is kept inline. The `reduce_sum` primitive has named parameters `axes` and `out_sharding`, in addition to the operand `e`.
 
 Note that even though execution of a program that calls into JAX builds a jaxpr, Python-level control-flow and Python-level functions execute normally. This means that just because a Python program contains functions and control-flow, the resulting jaxpr does not have to contain control-flow or higher-order features.
 
@@ -127,7 +128,7 @@ print(make_jaxpr(func3)(jnp.zeros(8), jnp.ones(8)))
 
 ## Handling pytrees
 
-In jaxpr there are no tuple types; instead primitives take multiple inputs and produce multiple outputs. When processing a function that has structured inputs or outputs, JAX will flatten those and in jaxpr they will appear as lists of inputs and outputs. For more details, refer to the {ref}`pytrees` tutorial.
+In jaxpr there are no tuple types; instead primitives take multiple inputs and produce multiple outputs. When processing a function that has structured inputs or outputs, JAX will flatten those and in jaxpr they will appear as lists of inputs and outputs. For more details, see {ref}`jax-101-pytrees`.
 
 For example, the following code produces an identical jaxpr to what you saw earlier (with two input vars, one for each element of the input tuple):
 
@@ -160,7 +161,7 @@ lax.switch(index: int, branches: Sequence[A -> B], operand: A) -> B
 lax.cond(pred: bool, true_body: A -> B, false_body: A -> B, operand: A) -> B
 ```
 
-Both of these will bind a primitive called `cond` internally. The `cond` primitive in jaxprs reflects the more general signature of {func}`lax.switch`: it takes an integer denoting the index of the branch to execute (clamped into valid indexing range).
+Both of these will bind a primitive called `cond` internally. The `cond` primitive in jaxprs reflects the more general signature of {func}`jax.lax.switch`: it takes an integer denoting the index of the branch to execute (clamped into the valid index range by a preceding `clamp`).
 
 For example:
 
@@ -176,10 +177,7 @@ def one_of_three(index, arg):
 print(make_jaxpr(one_of_three)(1, 5.))
 ```
 
-The `cond` primitive has a number of parameters:
-
-- `branches` are jaxprs that correspond to the branch functionals. In this example, those functionals each take one input variable, corresponding to `x`.
-- `linear` is a tuple of booleans that is used internally by the auto-differentiation machinery to encode which of the input parameters are used linearly in the conditional.
+The `cond` primitive has one parameter, `branches`: jaxprs that correspond to the branch functionals. In this example, those functionals each take one input variable, corresponding to `x`.
 
 The above instance of the cond primitive takes two operands. The first one (`d`) is the branch index, then `b` is the operand (`arg`) to be passed to whichever jaxpr in `branches` is selected by the branch index.
 
@@ -199,7 +197,7 @@ print(make_jaxpr(func7)(5.))
 
 In this case, the boolean predicate is converted to an integer index (0 or 1), and `branches` are jaxprs that correspond to the false and true branch functionals, in that order. Again, each function takes one input variable, corresponding to `xfalse` and `xtrue` respectively.
 
-The following example shows a more complicated situation when the input to the branch functionals is a tuple, and the `false` branch functional contains a constant `jnp.ones(1)` that is hoisted as a `constvar`.
+The following example shows a more complicated situation when the input to the branch functionals is a tuple, and the `false` branch functional contains a constant `jnp.array([1])` that is hoisted as a `constvar`.
 
 ```{code-cell}
 def func8(arg1, arg2):  # Where `arg2` is a pair.
@@ -213,14 +211,14 @@ print(make_jaxpr(func8)(5., (jnp.zeros(1), 2.)))
 
 ### `while` primitive
 
-Just like for conditionals, Python loops are inlined during tracing. If you want to capture a loop for dynamic execution, you must use one of several special operations, {func}`jax.lax.while_loop` (a primitive) and {func}`jax.lax.fori_loop` (a helper that generates a while_loop primitive):
+Just like for conditionals, Python loops are inlined during tracing. If you want to capture a loop for dynamic execution, you must use one of several special operations, {func}`jax.lax.while_loop` (a primitive) and {func}`jax.lax.fori_loop` (a helper that generates a `while` primitive, or a `scan` when its trip count is static):
 
 ```
 lax.while_loop(cond_fun: (C -> bool), body_fun: (C -> C), init: C) -> C
 lax.fori_loop(start: int, end: int, body: (int -> C -> C), init: C) -> C
 ```
 
-In the above signature, `C` stands for the type of the loop “carry” value. For example, here is an example `fori_loop`:
+In the above signature, `C` stands for the type of the loop "carry" value. For example, here's a `fori_loop` whose trip count `n` is an argument, and so isn't static:
 
 ```{code-cell}
 import numpy as np
@@ -266,7 +264,7 @@ def func11(arr, extra):
 print(make_jaxpr(func11)(np.ones(16), 5.))
 ```
 
-The `linear` parameter describes for each of the input variables whether they are guaranteed to be used linearly in the body. Once the `scan` goes through linearization, more arguments will be linear.
+The `jaxpr` parameter is the loop body, `length` is the number of iterations, `reverse` says whether to scan from the end, and `unroll` controls loop unrolling in the compiled code. The `ft_in` and `ft_out` parameters record how the operands and results are grouped: `ft_in` splits the operands into constants, initial carry values, and scanned-over arrays, and `ft_out` splits the results into final carry values and stacked outputs.
 
 The `scan` primitive takes 4 arguments: `b 0.0 a c`, of which:
 
@@ -275,9 +273,9 @@ The `scan` primitive takes 4 arguments: `b 0.0 a c`, of which:
 - The next 2 are the arrays over which the scan operates
 
 
-### `(p)jit` primitive
+### `jit` primitive
 
-The call primitive arises from JIT compilation, and it encapsulates a sub-jaxpr along with parameters that specify the backend and the device on which the computation should run. For example:
+The `jit` primitive arises from calling a {func}`jax.jit`-decorated function inside traced code. It encapsulates a sub-jaxpr, along with parameters like the function's `name` and its input and output shardings. (Parameters with default values, like the shardings here, aren't printed.) For example:
 
 ```{code-cell}
 from jax import jit

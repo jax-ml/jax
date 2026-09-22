@@ -58,9 +58,9 @@ needs random number generation that is **reproducible**, **parallelizable**,
 and **vectorizable**, which rules out sampling functions that secretly read
 and write shared state.
 
-The solution isn't to make the generator state an explicit argument that you
-shuttle in and out of functions. Instead, sampling is just a pure function of
-key values, and no updated state is threaded back out.
+JAX's solution isn't simply to make the generator state an explicit argument
+that you shuttle in and out of functions. Instead, sampling is a pure function
+of a key, and no updated state comes back out.
 
 ## Keys are values
 
@@ -99,13 +99,13 @@ leads to the one rule of JAX randomness:
 
 **Never reuse a key (unless you want identical outputs).** Feeding the same key
 to two different samplers produces correlated results, depriving your program
-of lifegiving chaos.
+of life-giving chaos.
 
 ## Deriving new keys
 
 To get fresh keys, derive them from a key you already have.
-{func}`jax.random.split` deterministically produces any number of new keys,
-each of which can be used to generate statistically independent samples:
+{func}`jax.random.split` deterministically derives new keys, each of which
+can be used to generate statistically independent samples:
 
 ```{code-cell}
 key = random.key(42)
@@ -122,8 +122,8 @@ subkeys = random.split(key, num=4)
 ```
 
 And {func}`jax.random.fold_in` derives a new key from a key and an integer,
-which is ideal for generating a per-step or per-example key without carrying
-any key-threading through your loop:
+which is ideal for generating a per-step or per-example key without threading
+a key through your loop:
 
 ```{code-cell}
 key = random.key(42)
@@ -186,15 +186,14 @@ print("all at once: ", random.normal(key, shape=(3,)))
 ```
 
 Sequential equivalence would impose the kind of ordering constraint JAX's
-design exists to avoid. Giving it up means samples drawn from independent
-keys don't depend on each other in any order, so generation can be freely
-vectorized and sharded.
+design exists to avoid. Without it, samples drawn from different keys have no
+ordering relationship at all, so generation can be freely vectorized and
+sharded.
 
 Since keys are just arrays, they compose with everything else in JAX. You can
 `vmap` a sampler over a batch of keys:
 
 ```{code-cell}
-import jax
 jax.vmap(random.normal)(subkeys)
 ```
 

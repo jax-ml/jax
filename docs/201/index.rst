@@ -22,10 +22,11 @@ device to programming many:
    (single-device meshes included), committed vs. uncommitted arrays, and
    moving data between meshes.
 5. :doc:`sharding` — the global-view programming model that scales one program
-   to many devices, sharding as distributed data layout, plus device-local layout.
-6. :doc:`shard-map` — the full tutorial for ``sharding``'s manual mode:
-   per-device programming with explicit collectives, for complete control
-   over how computation and communication are partitioned.
+   to many devices: sharding as distributed data layout, the explicit, auto,
+   and manual sharding modes, and device-local layout.
+6. :doc:`shard-map` — the full tutorial for manual mode: per-device
+   programming with explicit collectives, for complete control over how
+   computation and communication are partitioned.
 7. :doc:`callbacks` — calling back to host Python from compiled code with
    ``pure_callback`` and ``io_callback``, including how callbacks interact
    with sharded data.
@@ -44,8 +45,8 @@ order:
     global defaults.
 12. :doc:`controlling-xla` — XLA flags per function or process-wide, and
     attaching metadata to operations.
-13. :doc:`gpu-memory` — how the allocator works, and what to do about
-    out-of-memory failures.
+13. :doc:`gpu-memory` — how JAX's GPU memory allocator works, and what to do
+    about out-of-memory failures.
 14. :doc:`memory-spaces` — host offloading: parking parameters, activations,
     and optimizer state in host memory to save device memory.
 
