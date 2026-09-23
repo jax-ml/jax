@@ -485,7 +485,7 @@ class CustomErrorsTest(jtu.JaxTestCase):
     ErrorClass = getattr(jax.errors, errorclass)
     err = ErrorClass(FakeTracer(None))
 
-    self.assertIn(f'https://docs.jax.dev/en/latest/errors.html#jax.errors.{errorclass}', str(err))
+    self.assertIn(f'https://docs.jax.dev/en/latest/101/errors.html#jax.errors.{errorclass}', str(err))
 
 
 class TracerAttributeProbeTest(jtu.JaxTestCase):
