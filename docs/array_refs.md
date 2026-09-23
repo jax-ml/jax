@@ -155,9 +155,10 @@ vals = x_ref[jnp.array([0, 0, 1]), jnp.array([1, 2, 3])]
 x_ref[jnp.array([1, 2, 1]), jnp.array([0, 0, 1])] = vals
 ```
 
-As with `Array`s, indexing mostly follows NumPy behavior, except for
-out-of-bounds indexing which [behaves in the usual way for JAX
-`Array`s](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#out-of-bounds-indexing).
+As with `Array`s, indexing mostly follows NumPy behavior, except that an
+out-of-bounds index raises an error when its value is known in advance (unlike
+with `Array`s, where [out-of-bounds reads clamp and writes are
+dropped](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#out-of-bounds-indexing)).
 
 ### Pure and impure functions
 
