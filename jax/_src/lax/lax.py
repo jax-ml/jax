@@ -4797,11 +4797,7 @@ core.pp_eqn_rules[log2_p] = _unary_with_accuracy_pp_rule
 expm1_p = standard_unop(_float | _complex, 'expm1')
 ad.defjvp2(
     expm1_p,
-    lambda g, ans, x, accuracy: (
-        mul(g, exp(x, accuracy=accuracy))
-        if accuracy is AccuracyMode.HIGHEST
-        else mul(g, add(ans, _one(ans)))
-    ),
+    lambda g, ans, x, accuracy: mul(g, exp(x, accuracy=accuracy)),
 )
 mlir.register_lowering(expm1_p,
                        partial(_nary_lower_hlo, hlo.exponential_minus_one))
