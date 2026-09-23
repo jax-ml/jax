@@ -20,11 +20,13 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import config
+from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.pallas import einshape as einshape_lib
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.fuser import block_spec as block_spec_lib
 from jax._src.pallas.fuser import custom_fusion_lib
+from jax.experimental import checkify
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -1591,6 +1593,127 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     y = jnp.zeros((256, 512), jnp.int32)
     _, y = pl.run_state(outer)((value, y))
     np.testing.assert_array_equal(y, value[3, :256, 512:1024])
+
+  def test_get_with_squeezed_indexer_index_map(self):
+    ref_aval = state.AbstractRef(jax.core.ShapedArray((4, 512, 1024), jnp.int32))
+
+    def f(r):
+      return r[3]
+
+    block_spec = pl.BlockSpec((256, 512), lambda i, j: (i, j))
+    kernel_fn, (ref_bs,), _ = block_spec_lib.pull_block_spec(
+        f,
+        block_spec,
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(ref_aval)
+    self.assertEqual(tuple(ref_bs.block_shape), (pl.Squeezed(), 256, 512))
+    self.assertEqual(ref_bs.index_map(0, 1), (0, 0, 1))
+
+  def test_get_on_sliced_ref(self):
+    value = jnp.arange((640 * 1024), dtype=jnp.int32).reshape((640, 1024)) * 2
+
+    def outer(refs):
+      ref, y_ref = refs
+      i = jnp.int32(128)
+      sliced_ref = ref.at[pl.ds(i, 512), :]
+
+      def f():
+        return sliced_ref.get()
+
+      block_spec = pl.BlockSpec((128, 512), lambda i, j: (i, j))
+      kernel_fn, (), _ = block_spec_lib.pull_block_spec(
+          f,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )()
+      y_ref[...] = kernel_fn((0, 1), ())
+
+    y = jnp.zeros((128, 512), jnp.int32)
+    _, y = pl.run_state(outer)((value, y))
+    np.testing.assert_array_equal(y, value[128:256, 512:1024])
+
+  def test_get_on_sliced_ref_misaligned_raises(self):
+    value = jnp.arange((512 * 1024), dtype=jnp.int32).reshape((512, 1024)) * 2
+
+    def outer(refs):
+      ref, y_ref = refs
+      i = jnp.int32(5)
+      sliced_ref = ref.at[pl.ds(i, 512), :]
+
+      def f():
+        return sliced_ref.get()
+
+      block_spec = pl.BlockSpec((128, 512), lambda i, j: (i, j))
+      kernel_fn, (), _ = block_spec_lib.pull_block_spec(
+          f,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )()
+      err, _ = checkify.checkify(lambda: kernel_fn((0, 1), ()))()
+      err.throw()
+
+    y = jnp.zeros((128, 512), jnp.int32)
+    with self.assertRaisesRegex(
+        checkify.JaxRuntimeError,
+        "slice_start=5 is not a multiple of block_size=128",
+    ):
+      pl.run_state(outer)((value, y))
+
+  def test_swap_on_sliced_ref(self):
+    value = jnp.zeros((640, 1024), dtype=jnp.int32)
+    update = jnp.arange(128 * 512, dtype=jnp.int32).reshape((128, 512))
+    val_full = jax.core.ShapedArray((512, 1024), jnp.int32)
+
+    def outer(refs):
+      ref, _ = refs
+      i = jnp.int32(128)
+      sliced_ref = ref.at[pl.ds(i, 512), :]
+
+      def f(val):
+        return sliced_ref.swap(val)
+
+      block_spec = pl.BlockSpec((128, 512), lambda i, j: (i, j))
+      kernel_fn, (in_bs,), _ = block_spec_lib.pull_block_spec(
+          f,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )(val_full)
+      _ = kernel_fn((0, 1), (), update)
+
+    value_out, _ = pl.run_state(outer)((value, value))
+    np.testing.assert_array_equal(value_out[128:256, 512:1024], update)
+
+  def test_swap_with_squeezed_indexer(self):
+    value = jnp.zeros((2, 640, 1024), dtype=jnp.int32)
+    update = jnp.arange(128 * 512, dtype=jnp.int32).reshape((128, 512))
+    val_full = jax.core.ShapedArray((512, 1024), jnp.int32)
+
+    def outer(refs):
+      ref, _ = refs
+      slot = jnp.int32(1)
+      i = jnp.int32(128)
+      sliced_ref = ref.at[slot, pl.ds(i, 512), :]
+
+      def f(val):
+        return sliced_ref.swap(val)
+
+      block_spec = pl.BlockSpec((128, 512), lambda i, j: (i, j))
+      kernel_fn, (in_bs,), _ = block_spec_lib.pull_block_spec(
+          f,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )(val_full)
+      del in_bs
+      _ = kernel_fn((0, 1), (), update)
+
+    value_out, _ = pl.run_state(outer)((value, value))
+    np.testing.assert_array_equal(value_out[1, 128:256, 512:1024], update)
+    np.testing.assert_array_equal(value_out[0], jnp.zeros((640, 1024), jnp.int32))
 
   def test_get_key_ref(self):
     """Tests get_p on a key ref (block_shape=None, MemorySpace.KEY).
