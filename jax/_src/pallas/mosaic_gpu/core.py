@@ -126,7 +126,10 @@ class CompilerParams:
       WARPGROUP).
     profile_bounds_check: If True, profiler events past profile_space are
       dropped (the trace is truncated) instead of corrupting SMEM, at the cost
-      of a slightly higher per-event profiling overhead.
+      of a slightly higher per-event profiling overhead. Default is False to
+      prevent the overhead related to the bounds check which may lead to misleading
+      performances. If False, to avoid SMEM errors during the profiling it is advised to
+      reduce the grid size or other related parameters to collect less profiler events.
     skip_device_barrier: If True, skips the cross-device barrier before kernel
       launch. Improper use of this flag can lead to race conditions. !!!Use with
       caution!!! Defaults to False.
