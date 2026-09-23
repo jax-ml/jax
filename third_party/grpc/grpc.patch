@@ -1,29 +1,33 @@
 diff --git a/bazel/cc_grpc_library.bzl b/bazel/cc_grpc_library.bzl
+index 9c44faa..e65bb55 100644
 --- a/bazel/cc_grpc_library.bzl
 +++ b/bazel/cc_grpc_library.bzl
-@@ -28,6 +28,7 @@ def cc_grpc_library(
+@@ -29,6 +29,7 @@ def cc_grpc_library(
          allow_deprecated = False,
          use_external = False,  # @unused
          grpc_only = False,
 +        plugin_flags = [],
          **kwargs):
      """Generates C++ grpc classes for services defined in a proto file.
-
-@@ -109,6 +110,7 @@ def cc_grpc_library(
+ 
+@@ -110,6 +111,7 @@ def cc_grpc_library(
              well_known_protos = well_known_protos,
              generate_mocks = generate_mocks,
              allow_deprecated = allow_deprecated,
 +            flags = plugin_flags,
              **kwargs
          )
-
+ 
 diff --git a/bazel/grpc_build_system.bzl b/bazel/grpc_build_system.bzl
+index 83abb9b..1237fd1 100644
 --- a/bazel/grpc_build_system.bzl
 +++ b/bazel/grpc_build_system.bzl
-@@ -189,6 +189,4 @@ def grpc_cc_library(
+@@ -192,8 +192,6 @@ def grpc_cc_library(
+         linkopts = linkopts,
          includes = [
              include_prefix + "include",
 -            include_prefix + "src/core/ext/upb-gen",  # Once upb code-gen issue is resolved, remove this.
 -            include_prefix + "src/core/ext/upbdefs-gen",  # Once upb code-gen issue is resolved, remove this.
          ],
          alwayslink = alwayslink,
+         data = data,

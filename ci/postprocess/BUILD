@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-load("//third_party/bazel_rules/rules_shell/shell:sh_binary.bzl", "sh_binary")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(
     default_applicable_licenses = [],

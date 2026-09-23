@@ -30,6 +30,7 @@ Usage in BUILD files:
 """
 
 load("//jaxlib:jax.bzl", "if_oss", "nanobind_extension")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
 
 _ROCM_LINK_ONLY = "@local_config_rocm//rocm:link_only"
 
@@ -156,7 +157,7 @@ def rocm_cc_binary(name, features = [], linkopts = [], **kwargs):
         linkopts: Additional linkopts (wheel RPATHs are appended automatically).
         **kwargs: Passed through to native.cc_binary.
     """
-    native.cc_binary(
+    cc_binary(
         name = name,
         features = features + if_oss(_wheel_features()),
         linkopts = linkopts + if_oss(_wheel_linkopts()),

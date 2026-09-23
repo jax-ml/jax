@@ -21,6 +21,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     primitive is faster and uses less memory when computing gradients.
 
 * Changes
+  * JAX now uses Bazel 9.2.0 to build from source.
   * Improved the numerical accuracy of {func}`jax.numpy.sinc` across all
     floating-point types (to $\le 0.5$ ULP for `bfloat16` and `float16`,
     $\le 2.5\text{–}4.0$ ULPs for `float32`, and $\ge 2.0$ ULPs for `float64`).
