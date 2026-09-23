@@ -2744,6 +2744,29 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x)
 
+  @parameterized.parameters(jnp.int32, jnp.bfloat16, jnp.int16, jnp.int8)
+  def test_broadcast_scalar_bool_mask(self, dtype):
+    if not jtu.is_libtpu_at_least("0.0.49"):
+      self.skipTest("Requires libtpu >= 0.0.49")
+    packing = 32 // jax.dtypes.itemsize_bits(dtype)
+    if self.USE_TC_TILING:
+      shape = (8 * packing, 128)
+    else:
+      shape = (self.num_lanes,) if packing == 1 else (packing, self.num_lanes)
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    flag_true = jnp.zeros((self.num_lanes,), dtype=jnp.int32)
+    flag_false = jnp.ones((self.num_lanes,), dtype=jnp.int32)
+
+    @self.vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, flag_ref, o_ref):
+      val = x_ref[...]
+      cond = flag_ref[...][0] == 0
+      mask = jnp.broadcast_to(cond, shape)
+      o_ref[...] = jnp.where(mask, val, jnp.zeros_like(val))
+
+    np.testing.assert_array_equal(kernel(x, flag_true), x)
+    np.testing.assert_array_equal(kernel(x, flag_false), jnp.zeros_like(x))
+
 
 class VectorSubcoreTestWithTCTiling(VectorSubcoreTest):
   USE_TC_TILING = True
