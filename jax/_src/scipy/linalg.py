@@ -774,13 +774,16 @@ def _lu(a: ArrayLike, permute_l: bool) -> tuple[Array, Array] | tuple[Array, Arr
   a, = promote_dtypes_inexact(jnp.asarray(a))
   lu, _, permutation = lax_linalg.lu(a)
   dtype = lax.dtype(a)
-  m, n = np.shape(a)
-  p = jnp.real(jnp.array(permutation[None, :] == jnp.arange(m, dtype=permutation.dtype)[:, None], dtype=dtype))
+  *batch_shape, m, n = np.shape(a)
   k = min(m, n)
-  l = jnp.tril(lu, -1)[:, :k] + jnp.eye(m, k, dtype=dtype)
-  u = jnp.triu(lu)[:k, :]
+  rows = lax.broadcasted_iota(permutation.dtype, (*batch_shape, m, m),
+                              len(batch_shape))
+  p = jnp.real(jnp.array(permutation[..., None, :] == rows, dtype=dtype))
+  l = jnp.tril(lu, -1)[..., :, :k] + jnp.broadcast_to(
+      jnp.eye(m, k, dtype=dtype), (*batch_shape, m, k))
+  u = jnp.triu(lu)[..., :k, :]
   if permute_l:
-    return jnp.matmul(p, l, precision=lax.Precision.HIGHEST), u
+    return jnp.matmul(p.astype(dtype), l, precision=lax.Precision.HIGHEST), u
   else:
     return p, l, u
 
