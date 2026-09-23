@@ -2358,7 +2358,7 @@ def _wgmma_wait_lowering(ctx: lowering.LoweringRuleContext, *, n: int):
   return ()
 
 
-wgmma_accumulator_deref_p = jax_core.Primitive("wgmma_accumulator_deref_p")
+wgmma_accumulator_deref_p = jax_core.Primitive("wgmma_accumulator_deref")
 
 
 def wgmma_accumulator_load(acc, *, wait_n: int | None = 0):
@@ -2417,7 +2417,7 @@ def _wgmma_accumulator_deref_lowering(
 # accumulator ref and the return value is unused. After discharge, the ref is
 # replaced by a regular value: the discharge rule re-binds the primitive, and
 # the lowering wraps the value into a WGMMAAccumulator.
-wgmma_accumulator_store_p = jax_core.Primitive("wgmma_accumulator_store_p")
+wgmma_accumulator_store_p = jax_core.Primitive("wgmma_accumulator_store")
 
 
 def wgmma_accumulator_store(acc_ref, val):
@@ -3320,7 +3320,7 @@ def commit_tmem():
   commit_tmem_p.bind()
 
 
-set_max_registers_p = jax_core.Primitive("set_max_registers_p")
+set_max_registers_p = jax_core.Primitive("set_max_registers")
 set_max_registers_p.multiple_results = True
 
 
@@ -3477,7 +3477,7 @@ def griddepcontrol_launch_dependents():
   griddepcontrol_launch_dependents_p.bind()
 
 
-inline_mgpu_p = jax_core.Primitive("inline_mgpu_p")
+inline_mgpu_p = jax_core.Primitive("inline_mgpu")
 inline_mgpu_p.multiple_results = True
 
 
