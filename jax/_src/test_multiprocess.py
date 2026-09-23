@@ -186,119 +186,13 @@ class GracefulKiller:
     self.kill_now = True
 
 
-def _get_tpu_bounds(
-    tpu_version,
-    num_tpu_chips: int,
-    tpu_chips_per_process: int,
-):
-  """Returns (tpu_host_bounds, tpu_chips_per_host_bounds) for the given TPU config."""
-  if tpu_chips_per_process == 0 or num_tpu_chips == 0:
-    return "", ""
-
-  if num_tpu_chips == 1:
-    if tpu_chips_per_process != 1:
-      raise ValueError(
-          f"tpu_chips_per_process must be 1 when num_tpu_chips is 1, got {tpu_chips_per_process}"
-      )
-    return "1,1,1", "1,1,1"
-
-  if num_tpu_chips == 2:
-    if tpu_chips_per_process == 1:
-      if tpu_version in (
-          hardware_utils.TpuVersion.tpu8t,
-          hardware_utils.TpuVersion.v5p,
-      ):
-        return "1,2,1", "1,1,1"
-      return "2,1,1", "1,1,1"
-    elif tpu_chips_per_process == 2:
-      if tpu_version in (
-          hardware_utils.TpuVersion.tpu8t,
-          hardware_utils.TpuVersion.v5p,
-      ):
-        return "1,1,1", "1,2,1"
-      return "1,1,1", "2,1,1"
-    else:
-      raise ValueError(
-          f"Invalid tpu_chips_per_process {tpu_chips_per_process} for 2 TPU chips"
-      )
-
-  if num_tpu_chips == 4:
-    if tpu_version == hardware_utils.TpuVersion.tpu8i:
-      # tpu8i has 4x1x1 topology
-      if tpu_chips_per_process == 1:
-        return "4,1,1", "1,1,1"
-      elif tpu_chips_per_process == 2:
-        return "2,1,1", "2,1,1"
-      elif tpu_chips_per_process == 4:
-        return "1,1,1", "4,1,1"
-      else:
-        raise ValueError(
-            f"Invalid tpu_chips_per_process {tpu_chips_per_process} for 4 chips on tpu8i"
-        )
-    else:
-      # Standard 2x2x1 mesh for v2, v3, v4, v5p, v5e, v6e, tpu7x, tpu8t
-      if tpu_chips_per_process == 1:
-        return "2,2,1", "1,1,1"
-      elif tpu_chips_per_process == 2:
-        return "2,1,1", "1,2,1"
-      elif tpu_chips_per_process == 4:
-        return "1,1,1", "2,2,1"
-      else:
-        raise ValueError(
-            f"Invalid tpu_chips_per_process {tpu_chips_per_process} for 4 TPU chips"
-        )
-
-  if num_tpu_chips == 8:
-    if tpu_version == hardware_utils.TpuVersion.v6e:
-      # v6e 2x4x1 mesh
-      if tpu_chips_per_process == 1:
-        return "2,4,1", "1,1,1"
-      elif tpu_chips_per_process == 4:
-        return "1,2,1", "2,2,1"
-      elif tpu_chips_per_process == 8:
-        return "1,1,1", "2,4,1"
-      else:
-        raise ValueError(
-            f"Invalid tpu_chips_per_process {tpu_chips_per_process} for 8 chips on v6e"
-        )
-    elif tpu_version in (
-        hardware_utils.TpuVersion.v4,
-        hardware_utils.TpuVersion.tpu7x,
-    ):
-      # 2x2x2 3D mesh (v4, tpu7x)
-      if tpu_chips_per_process == 1:
-        return "2,2,2", "1,1,1"
-      elif tpu_chips_per_process == 4:
-        return "1,1,2", "2,2,1"
-      elif tpu_chips_per_process == 8:
-        return "1,1,1", "2,2,2"
-      else:
-        raise ValueError(
-            f"Invalid tpu_chips_per_process {tpu_chips_per_process} for 8 chips on {tpu_version.name}"
-        )
-    else:
-      # 4x2x1 mesh (v5e and default)
-      if tpu_chips_per_process == 1:
-        return "4,2,1", "1,1,1"
-      elif tpu_chips_per_process == 4:
-        return "2,1,1", "2,2,1"
-      elif tpu_chips_per_process == 8:
-        return "1,1,1", "4,2,1"
-      else:
-        raise ValueError(
-            f"Invalid tpu_chips_per_process {tpu_chips_per_process} for 8 TPU chips"
-        )
-
-  raise ValueError(f"Invalid number of TPU chips {num_tpu_chips}")
-
-
 def _main(argv, shard_main):
   # TODO(emilyaf): Enable multiprocess tests on Windows.
   if sys.platform == "win32":
     print("Multiprocess tests are not supported on Windows.")
     return
 
-  num_tpu_chips, tpu_version = hardware_utils.num_available_tpu_chips_and_device_id()
+  _, tpu_version = hardware_utils.num_available_tpu_chips_and_device_id()
   if running_in_cloud_tpu_vm and tpu_version in (
       hardware_utils.TpuVersion.v4,
       hardware_utils.TpuVersion.v5e,
@@ -326,26 +220,55 @@ def _main(argv, shard_main):
   if not argv[0].endswith(".py"):  # Skip the interpreter path if present.
     argv = argv[1:]
 
-  gpus_per_process = _GPUS_PER_PROCESS.value
-  tpu_chips_per_process = _TPU_CHIPS_PER_PROCESS.value
-
-  if tpu_chips_per_process > 0 and num_processes is None:
-    # If not explicitly specified, derive num_processes from available physical
-    # TPU chips so that the test matches the host topology:
-    num_processes = num_tpu_chips // tpu_chips_per_process
-
   if num_processes is None:
     raise ValueError("num_processes must be set")
-
-  if tpu_chips_per_process > 0 and num_tpu_chips != num_processes * tpu_chips_per_process:
-    raise ValueError(
-        f"num_tpu_chips ({num_tpu_chips}) must match "
-        f"num_processes * tpu_chips_per_process ({num_processes * tpu_chips_per_process})"
-    )
-
-  tpu_host_bounds, tpu_chips_per_host_bounds = _get_tpu_bounds(
-      tpu_version, num_tpu_chips, tpu_chips_per_process
-  )
+  gpus_per_process = _GPUS_PER_PROCESS.value
+  tpu_chips_per_process = _TPU_CHIPS_PER_PROCESS.value
+  num_tpu_chips = num_processes * tpu_chips_per_process
+  if num_tpu_chips == 0:
+    tpu_host_bounds = ""
+    tpu_chips_per_host_bounds = ""
+  elif num_tpu_chips == 1:
+    assert tpu_chips_per_process == 1
+    tpu_host_bounds = "1,1,1"
+    tpu_chips_per_host_bounds = "1,1,1"
+  elif num_tpu_chips == 4:
+    if tpu_chips_per_process == 1:
+      tpu_host_bounds = "2,2,1"
+      tpu_chips_per_host_bounds = "1,1,1"
+    elif tpu_chips_per_process == 2:
+      tpu_host_bounds = "2,1,1"
+      tpu_chips_per_host_bounds = "1,2,1"
+    elif tpu_chips_per_process == 4:
+      tpu_host_bounds = "1,1,1"
+      tpu_chips_per_host_bounds = "2,2,1"
+    else:
+      raise ValueError(
+          "Invalid number of TPU chips per worker {}".format(
+              tpu_chips_per_process
+          )
+      )
+  elif num_tpu_chips == 8:
+    if tpu_chips_per_process == 1:
+      tpu_host_bounds = "4,2,1"
+      tpu_chips_per_host_bounds = "1,1,1"
+    elif tpu_chips_per_process == 4:
+      # Note: this branch assumes we are using 2x4 v6e LitePod, and will not
+      # work with 4x2 v5e LitePod.
+      tpu_host_bounds = "1,2,1"
+      tpu_chips_per_host_bounds = "2,2,1"
+    elif tpu_chips_per_process == 8:
+      tpu_host_bounds = "1,1,1"
+      tpu_chips_per_host_bounds = "2,4,1"
+    else:
+      # TODO(phawkins): implement other cases.
+      raise ValueError(
+          "Invalid number of TPU chips per worker {}".format(
+              tpu_chips_per_process
+          )
+      )
+  else:
+    raise ValueError(f"Invalid number of TPU chips {num_tpu_chips}")
 
   slicebuilder_ports = [_pick_unused_port() for _ in range(num_processes)]
   slicebuilder_addresses = ",".join(
@@ -396,7 +319,7 @@ def _main(argv, shard_main):
         "--logtostderr",
     ]
 
-    if tpu_chips_per_process > 0:
+    if num_tpu_chips > 0:
       device_ids = range(
           i * tpu_chips_per_process, (i + 1) * tpu_chips_per_process)
       env["CLOUD_TPU_TASK_ID"] = str(i)
