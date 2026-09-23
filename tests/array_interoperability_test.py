@@ -30,8 +30,6 @@ import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 import numpy as np
 
-jaxlib_version = jtu.parse_version(jax.lib.__version__)
-
 
 def alloc_and_map(c_type, np_dtype, size):
   device = jax.devices("tpu")[0]
@@ -352,23 +350,6 @@ class DLPackTest(jtu.JaxTestCase):
     x = np.arange(4).reshape(2, 2).T
     self.assertAllClose(x, jax.dlpack.from_dlpack(x))
 
-  @unittest.skipIf(jaxlib_version < (0, 12, 0), "DLPack v1.0 not supported")
-  def testNumpyReadonlyToJax(self):
-    # Regression test for https://github.com/jax-ml/jax/issues/40789
-    x_np = np.arange(5, dtype=np.float32)
-    x_np.flags.writeable = False
-    x_jax = jnp.from_dlpack(x_np)
-    self.assertAllClose(x_np, x_jax)
-
-  @unittest.skipIf(jaxlib_version < (0, 12, 0), "DLPack v1.0 not supported")
-  @jtu.run_on_devices("cpu")  # NumPy only accepts cpu DLPacks
-  def testJaxToNumpyAsarrayToJax(self):
-    # Regression test for https://github.com/jax-ml/jax/issues/40789
-    y_jax = jnp.arange(5, dtype=jnp.float32)
-    y_np = np.asarray(y_jax)
-    self.assertFalse(y_np.flags.writeable)
-    self.assertAllClose(y_jax, jnp.from_dlpack(y_np))
-
   @jtu.sample_product(shape=all_shapes, dtype=numpy_dtypes)
   @jtu.run_on_devices("cpu")  # NumPy only accepts cpu DLPacks
   def testJaxToNumpy(self, shape, dtype):
@@ -376,16 +357,6 @@ class DLPackTest(jtu.JaxTestCase):
     x_jax = jnp.array(rng(shape, dtype))
     x_np = np.from_dlpack(x_jax)
     self.assertAllClose(x_np, x_jax)
-
-  @unittest.skipIf(jaxlib_version < (0, 12, 0), "DLPack v1.0 not supported")
-  @jtu.run_on_devices("cpu")
-  def testJaxToNumpyReadonly(self):
-    x_jax = jnp.arange(5, dtype=jnp.float32)
-    x_np = np.from_dlpack(x_jax)
-    self.assertFalse(x_np.flags.writeable)
-    self.assertAllClose(x_np, x_jax)
-    self.assertIn("dltensor_versioned", str(x_jax.__dlpack__(max_version=(1, 0))))
-    self.assertIn('"dltensor"', str(x_jax.__dlpack__()))
 
   @jtu.run_on_devices("tpu")
   def testTpuHostBufferDmaMap(self):

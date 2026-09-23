@@ -401,7 +401,6 @@ nanobind_pywrap_extension(
     stub_replacement_patterns = {
         "jax.jaxlib._jax.Array$": "Array: Any",
         "jax.jaxlib._jax.ArrayImpl$": "ArrayImpl: Any",
-        "jax.jaxlib._jax.dlpack_version$": "dlpack_version: tuple[int, int] = ...",
     },
     visibility = jax_visibility("jaxlib/_jax"),
     deps = [

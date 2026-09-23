@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
-#include <tuple>
 
 #include "absl/status/statusor.h"
 #include "include/dlpack/dlpack.h"
@@ -31,9 +30,6 @@ limitations under the License.
 
 namespace jax {
 
-inline constexpr std::tuple<int, int> kDlPackVersion =
-    std::make_tuple(DLPACK_MAJOR_VERSION, DLPACK_MINOR_VERSION);
-
 // If take_ownership is true, ownership of the buffer is handed to DLPack, and
 // the receiver may mutate the buffer as they see fit. Otherwise PjRt retains
 // ownership of the buffer and it should be immutable.
@@ -42,9 +38,7 @@ inline constexpr std::tuple<int, int> kDlPackVersion =
 // be synchronized to the buffer as per
 // https://dmlc.github.io/dlpack/latest/python_spec.html#python-specification-for-dlpack.
 absl::StatusOr<nanobind::capsule> BufferToDLPackManagedTensor(
-    nanobind::handle buffer, std::optional<std::intptr_t> stream,
-    std::optional<std::tuple<int64_t, int64_t>> max_version = std::nullopt,
-    bool copied = false);
+    nanobind::handle buffer, std::optional<std::intptr_t> stream);
 
 absl::StatusOr<nanobind::object> DLPackManagedTensorToBuffer(
     const nanobind::capsule& tensor, xla::ifrt::Device* device,

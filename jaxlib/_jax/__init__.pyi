@@ -1050,13 +1050,8 @@ class Executable:
       self,
   ) -> dict[str, str | bool | int | list[int] | float]: ...
 
-dlpack_version: tuple[int, int] = ...
-
 def buffer_to_dlpack_managed_tensor(
-    buffer: object,
-    stream: int | None = ...,
-    max_version: tuple[int, int] | None = ...,
-    copied: bool = ...,
+    buffer: object, stream: int | None = ...
 ) -> CapsuleType: ...
 def dlpack_managed_tensor_to_buffer(
     dlpack: CapsuleType,
