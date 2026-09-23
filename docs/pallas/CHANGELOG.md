@@ -13,6 +13,14 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+### Mosaic GPU
+
+* Removals
+
+  * Removed the previously deprecated `idx` parameter of
+    {func}`jax.experimental.pallas.mosaic_gpu.load`. Index the ref explicitly
+    via `ref.at[idx]` prior to loading from it.
+
 ## Released with JAX 0.11.2 (September 17, 2026)
 
 * Deprecations

@@ -27,10 +27,8 @@ import math
 from typing import Any, Literal, assert_never, overload
 
 import jax
-from jax._src import api
 from jax._src import core as jax_core
 from jax._src import debugging
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import lax
 from jax._src import literals
@@ -4031,17 +4029,12 @@ lowering.register_lowering_rule(load_p, *gpu_core.WGxWARP_SEMANTICS)(
 
 
 def load(
-    src: _Ref,
-    idx: Any = api.NotSpecified(),
-    *,
-    layout: SomeLayout | None = None,
-    optimized: bool = True,
+    src: _Ref, *, layout: SomeLayout | None = None, optimized: bool = True
 ) -> jax.Array:
   """Loads from a reference into an array with the specified layout.
 
   Args:
     src: The reference to load from. Can be either in SMEM or GMEM.
-    idx: The index to load from.
     layout: The optional layout to use for the resulting array.
     optimized: If True, a compilation error will be raised if no optimized
       implementation for the load is available.
@@ -4049,18 +4042,8 @@ def load(
   Returns:
     The loaded array.
   """
-  if not isinstance(idx, api.NotSpecified):
-    deprecations.warn(
-        "jax-pallas-mgpu-load-idx",
-        "Passing the index separately from the reference is deprecated. Please"
-        " index the reference via ``ref.at[idx]`` before passing it to"
-        " ``load``.",
-        stacklevel=2,
-    )
-  else:
-    idx = None
   src, src_transforms = state_primitives.get_ref_and_transforms(
-      src, idx, "load"
+      src, None, "load"
   )
   flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
       src_transforms
