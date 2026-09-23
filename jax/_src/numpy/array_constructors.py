@@ -181,6 +181,9 @@ def array(object: Any, dtype: DTypeLike | None = None, *, copy: bool = True,
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
 
+  if isinstance(object, core.Ref):
+    raise util._ref_arg_error("jnp.array", object)
+
   # Fast path: if we're not actually doing any conversion, in many cases we
   # can call lax.stage to lift the value into the trace.
   if dtype is None and device is None and out_sharding is None and ndmin == 0:
@@ -426,6 +429,8 @@ def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
     >>> jnp.asarray(pybuffer)
     Array([2, 3, 5, 7], dtype=int32)
   """
+  if isinstance(a, core.Ref):
+    raise util._ref_arg_error("jnp.asarray", a)
   # For copy=False, the array API specifies that we raise a ValueError if the input supports
   # the buffer protocol but a copy is required. Since array() supports the buffer protocol
   # via numpy, this is only the case when the default device is not 'cpu'

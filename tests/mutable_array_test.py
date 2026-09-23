@@ -1552,6 +1552,20 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
       x_ref = core.new_ref(jnp.arange(3))
       jax.jit(lambda: {'hi': x_ref})()
 
+  def test_jnp_function_on_ref_error(self):
+    x_ref = core.new_ref(jnp.arange(3.))
+    msg = "got a Ref of type .* can't be passed where an array is expected"
+    with self.assertRaisesRegex(TypeError, "sin " + msg):
+      jnp.sin(x_ref)
+    with self.assertRaisesRegex(TypeError, "sin " + msg):
+      jax.jit(jnp.sin)(x_ref)
+    with self.assertRaisesRegex(TypeError, "add " + msg):
+      jnp.add(1., x_ref)
+    with self.assertRaisesRegex(TypeError, "jnp.asarray " + msg):
+      jnp.asarray(x_ref)
+    with self.assertRaisesRegex(TypeError, "jnp.array " + msg):
+      jax.jit(jnp.array)(x_ref)
+
   def test_argument_aliases_jit(self):
     x_ref = core.new_ref(0.)
     with self.assertRaisesRegex(
