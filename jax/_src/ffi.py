@@ -432,10 +432,8 @@ def ffi_call(
   :func:`~jax.pure_callback` documentation for more details about the allowed
   values and examples of their behavior.
 
-  The current default behavior is to use ``vmap_method="sequential"`` when
-  not specified, but this behavior is deprecated, and in the future, the
-  default will be to raise a ``NotImplementedError`` unless ``vmap_method`` is
-  explicitly specified.
+  If ``vmap_method`` is not specified, applying :func:`~jax.vmap` to an
+  ``ffi_call`` raises a ``NotImplementedError``.
 
   Args:
     target_name: the name of the XLA FFI custom call target that was registered
@@ -647,14 +645,14 @@ def ffi_call_jvp(*args, target_name, **_):
   del args
   raise ValueError(
       f"The FFI call to `{target_name}` cannot be differentiated. "
-      "You can use `jax.custom_jvp` or `jax.custom_jvp` to add support.")
+      "You can use `jax.custom_jvp` or `jax.custom_vjp` to add support.")
 
 
 def ffi_call_transpose(*args, target_name, **_):
   del args
   raise ValueError(
       f"The FFI call to `{target_name}` cannot be differentiated. "
-      "You can use `jax.custom_jvp` or `jax.custom_jvp` to add support.")
+      "You can use `jax.custom_jvp` or `jax.custom_vjp` to add support.")
 
 
 def ffi_call_lowering(
