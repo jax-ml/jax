@@ -1159,7 +1159,7 @@ class IndexingTest(jtu.JaxTestCase):
     # vmap tracers report their creation site.
     with self.assertRaises(IndexError) as cm:
       jax.vmap(lambda i: x[i:i + 1])(jnp.arange(2))
-    self.assertIn("BatchTracer", str(cm.exception))
+    self.assertIn("VmapTracer", str(cm.exception))
 
     # The update path shares the same error.
     with self.assertRaises(IndexError) as cm:
