@@ -393,6 +393,7 @@ from jax._src.lax.parallel import (
   psum as psum,
   psum_p as psum_p,
   psum_scatter as psum_scatter,
+  psum_scatter_start as psum_scatter_start,
   pswapaxes as pswapaxes,
   ragged_all_to_all as ragged_all_to_all,
   ragged_all_to_all_p as ragged_all_to_all_p,
