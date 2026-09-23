@@ -383,7 +383,7 @@ def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
       msg = ("DCN-based cross-host transfers were requested with the "
              "jax_force_dcn_cross_host_transfers flag.")
     else:
-      msg = ("The backend ({backend.platform}, {backend.platform_version}) "
+      msg = (f"The backend ({backend.platform}, {backend.platform_version}) "
              "does not support cross-host device transfers.")
     raise ValueError(
         f"{msg} Please set jax_cross_host_transfer_socket_address and "
