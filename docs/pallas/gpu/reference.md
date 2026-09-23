@@ -1394,7 +1394,7 @@ issued or they have all completed.
 
 #### Only awaiting the read from SMEM
 
-Another option is that you can either await the copy being committed to GMEM
+Another option is that you can either await the copy being committed to GMEM.
 You can choose to wait until the copy is fully written into GMEM
 (in a way that will be visible to following reads), or you can only await the
 data being read from SMEM by specifying `wait_read_only` in the wait function.
@@ -1483,7 +1483,103 @@ TODO
 
 ## Compiler parameters
 
-TODO
+### Kernel Profiling
+
+When we develop a Mosaic GPU kernel we may want to profile it for better understanding of the hardware usage. We can use {py:class}`plgpu.CompilerParams <jax.experimental.pallas.mosaic_gpu.CompilerParams>` for this purpose: ``profile_space``, ``profile_dir``, ``profile_trace_scope``, ``profile_bounds_check``. Let's start with a quick example and explain the parameters. In the example, we would like to profile a simple kernel performing addition of two matrices:
+
+```python
+import os
+from jax import lax
+import jax.experimental.pallas as pl
+import jax.experimental.pallas.mosaic_gpu as plgpu
+import jax
+import jax.numpy as jnp
+
+
+m, n = 1024, 1024
+tile_m, tile_n = 64, 64
+m_iters = m // tile_m
+n_iters = n // tile_n
+dtype = jnp.float32
+
+
+@plgpu.kernel(
+  out_type=jax.ShapeDtypeStruct((m, n), dtype),
+  grid=(m_iters, n_iters),
+  grid_names=("m", "n"),
+  scratch_types=dict(
+    a_smem=plgpu.SMEM((tile_m, tile_n), dtype),
+    b_smem=plgpu.SMEM((tile_m, tile_n), dtype),
+    out_smem=plgpu.SMEM((tile_m, tile_n), dtype),
+    load_barrier=plgpu.Barrier(num_arrivals=2),
+  ),
+  compiler_params=plgpu.CompilerParams(
+      # The number of profiler events stored in SMEM. We can set it to approximate number of jax.named_scope in the code.
+      profile_space=50,
+      # Truncate the trace to the defined space.
+      # Otherwise, SMEM can be corrupted if more events than the defined space.
+      profile_bounds_check=True,
+      # The scope at which traces are collected (WARP or WARPGROUP).
+      profile_trace_scope=plgpu.TraceScope.WARPGROUP,
+      # Output folder to write the profiling trace file
+      profile_dir="./addition_kernel_profile",
+  )
+)
+def addition_kernel(
+    a_gmem,
+    b_gmem,
+    out_gmem,
+    a_smem,
+    b_smem,
+    out_smem,
+    load_barrier,
+):
+  mi = lax.axis_index("m")
+  ni = lax.axis_index("n")
+  m_slice = pl.ds(mi * tile_m, tile_m)
+  n_slice = pl.ds(ni * tile_n, tile_n)
+
+  # "Copy GMEM to SMEM" execution block to be visible in the trace
+  with jax.named_scope("Copy GMEM to SMEM"):
+    plgpu.copy_gmem_to_smem(
+        a_gmem.at[m_slice, n_slice], a_smem, load_barrier, oob_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS
+    )
+    plgpu.copy_gmem_to_smem(
+        b_gmem.at[m_slice, n_slice], b_smem, load_barrier, oob_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS
+    )
+
+  with jax.named_scope("Wait for copy"):
+    plgpu.barrier_wait(load_barrier)
+
+  with jax.named_scope("Computation"):
+    out_smem[...] = a_smem[...] + b_smem[...]
+
+  with jax.named_scope("Copy SMEM to GMEM"):
+    plgpu.commit_smem()
+    plgpu.copy_smem_to_gmem(out_smem, out_gmem.at[m_slice, n_slice])
+    plgpu.wait_smem_to_gmem(0)  # Wait for all copies to finish.
+
+os.makedirs("./addition_kernel_profile", exist_ok=True)
+k1, k2, = jax.random.split(jax.random.key(42), 2)
+a = jax.random.normal(k1, (m, n), dtype)
+b = jax.random.normal(k2, (m, n), dtype)
+c = addition_kernel(a, b)
+```
+We can run this example and it will produce a trace `.json` file (e.g. ``addition_kernel-1790344461219596875-trace.json``) in ``addition_kernel_profile`` folder.
+We can open it in [https://ui.perfetto.dev/](https://ui.perfetto.dev/) website using "Open trace file" button. The trace can look like this.
+
+
+<center><img alt="Profiling trace in Perfetto" src="../../_static/pallas/gpu/perfetto-profiling.png" style="height:60%; min-height: 250px;"></center>
+
+
+Let's consider in detail the profiling parameters:
+- ``profile_space`` defines the number of profiling events to be collected. We can set it approximatively to the number of ``jax.named_scope`` (2 events per named scope) we would enter (e.g. in the loops) during the invocation of the kernel with the threads. The profiling buffer is allocated directly in SMEM. Larger ``profile_space`` value would use more SMEM to record the events. Smaller value may lead to either a truncated trace if the number of events is greater than the value or to the SMEM corruption if ``profile_bounds_check=False``.
+
+- ``profile_bounds_check`` boolean flag helps to deal with the situation when larger number of profiler events and smaller ``profile_space``. If True, events exceeding ``profile_space`` are dropped (the trace is truncated) instead of corrupting SMEM, at the cost of a slightly higher per-event profiling overhead. We can set it to True for safety and if we are not sure about the value of profiling events and the profiling space we defined.
+
+- ``profile_trace_scope`` defines the scope of collected traces: warp or warp group. If scope is ``plgpu.TraceScope.WARP`` the trace file will show the blocks executed on SMs and the warps running the block. This can be helpful to investigate kernels with warp specialization. ``plgpu.TraceScope.WARP`` generates 4× more trace records than ``plgpu.TraceScope.WARPGROUP``. As a result, ``plgpu.TraceScope.WARP`` exhausts ``profile_space`` much faster.
+
+- ``profile_dir`` defines the output folder which should exist where the trace file is written.
 
 ## Debugging
 
