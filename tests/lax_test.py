@@ -211,6 +211,18 @@ class LaxTest(jtu.JaxTestCase):
         actual, expected, atol=jtu.default_tolerance()[np.dtype(np.float32)], rtol=0.0
     )
 
+  def testExpm1GradDefault(self):
+    # Regression test for https://github.com/google/jax/issues/39794
+    # The default (non-HIGHEST) gradient path computed `expm1(x) + 1`, which
+    # cancels to exactly 0.0 for large-negative x where expm1(x) rounds to -1.0.
+    # The analytic derivative is simply exp(x).
+    x = jnp.arange(-80.0, 80.0, 1.0, dtype=jnp.float32)
+    expected = jax.vmap(jax.grad(lax.exp))(x)
+    actual = jax.vmap(jax.grad(lax.expm1))(x)
+    self.assertAllClose(
+        actual, expected, atol=jtu.default_tolerance()[np.dtype(np.float32)], rtol=0.0
+    )
+
   def testExp2(self):
     x = jnp.array([0.25, 0.5, 1.0, 2.0, 4.0], dtype=jnp.float32)
     ln2 = np.float32(np.log(2.0))
