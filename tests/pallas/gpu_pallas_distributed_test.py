@@ -1284,6 +1284,10 @@ class PallasCallMultimemTest(TestCase):
   def test_multimem_operand_is_placed_in_collective_memory(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
+
+    # Temporary skip test until XLA switches to a different collective space
+    # coloring.
+    self.skipTest("Skip the test due to b/564807911.")
     devices = jax.devices()[:2]
 
     def kernel(x_ref, y_ref, sem_ref):
