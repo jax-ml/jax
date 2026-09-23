@@ -1084,7 +1084,11 @@ def memref_transpose(ref: ir.Value, permutation: Sequence[int]) -> ir.Value:
 
 
 def parse_indices(
-    index, shape: Sequence[int], *, check_oob: bool = True
+    index,
+    shape: Sequence[int],
+    *,
+    check_oob: bool = True,
+    wrap_negative: bool = True,
 ) -> tuple[list[ir.Value | int], list[int], list[bool]]:
   if not isinstance(index, tuple):
     index = (index,)
@@ -1097,11 +1101,13 @@ def parse_indices(
     if isinstance(idx, (ir.Operation, ir.OpView)):
       idx = idx.result
     if isinstance(idx, int):
-      if check_oob and (idx >= bound or (idx < 0 and -idx > bound)):
+      if idx < 0 and wrap_negative:
+        idx += bound
+      if check_oob and (idx < 0 or idx >= bound):
         raise IndexError(
             f"Index {idx} along axis {axis} is out of bounds for shape {shape}"
         )
-      base_indices.append(idx if idx >= 0 else bound + idx)
+      base_indices.append(idx)
       slice_shape.append(1)
       is_squeezed.append(True)
     elif isinstance(idx, slice):
@@ -1114,10 +1120,10 @@ def parse_indices(
       if idx.step is not None and idx.step != 1:
         raise NotImplementedError("Strided slices not implemented")
       start = idx.start or 0
-      if start < 0:
+      if start < 0 and wrap_negative:
         start = bound + start
       stop = idx.stop or bound
-      if stop < 0:
+      if stop < 0 and wrap_negative:
         stop = bound + stop
       if check_oob and (
           start < 0 or start >= bound or stop < 0 or stop > bound

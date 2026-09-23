@@ -9861,6 +9861,19 @@ class UtilsTest(TestCase):
     with self.assertRaisesRegex(IndexError, "out of bounds"):
       utils.parse_indices(indices, (2, 3, 4))
 
+  def test_parse_indices_no_wrap_negative(self):
+    base_indices, slice_shape, is_squeezed = utils.parse_indices(
+        (-1, slice(-2, -1)), (2, 3), check_oob=False, wrap_negative=False
+    )
+    self.assertEqual(base_indices, [-1, -2])
+    self.assertEqual(slice_shape, [1, 1])
+    self.assertEqual(is_squeezed, [True, False])
+
+    for indices in ((-1,), (slice(-1, 2),), (slice(0, -1),)):
+      with self.subTest(indices=indices):
+        with self.assertRaisesRegex(IndexError, "out of bounds"):
+          utils.parse_indices(indices, (2, 3, 4), wrap_negative=False)
+
   def test_parse_indices_dynamic_slice(self):
     i = c(0, ir.IndexType.get())
     for s in (slice(i), slice(0, i), slice(0, 2, i)):
