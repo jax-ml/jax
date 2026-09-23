@@ -578,12 +578,12 @@ class InterpretTest(jtu.JaxTestCase):
             barrier=plgpu.Barrier(), smem=plgpu.SMEM((4, 2), jnp.int32)
         ),
     )
-    def _kernel(in_gmem, out_gmem, barrier, smem):
-      plgpu.copy_gmem_to_smem(in_gmem.at[pl.ds(0, 4)], smem, barrier)
+    def _kernel(start_ref, in_gmem, out_gmem, barrier, smem):
+      plgpu.copy_gmem_to_smem(in_gmem.at[pl.ds(start_ref[0], 4)], smem, barrier)
       plgpu.barrier_wait(barrier)
       out_gmem[...] = smem[...]
 
-    y = np.asarray(_kernel(x))
+    y = np.asarray(_kernel(jnp.array([0], jnp.int32), x))
     np.testing.assert_array_equal(y[:3], x)
     np.testing.assert_array_equal(y[3], np.zeros((2,), np.int32))
 
@@ -1509,7 +1509,6 @@ class InterpretTest(jtu.JaxTestCase):
     x = jnp.arange(128 * 64, dtype=jnp.float32).reshape(128, 64)
     y = kernel(jnp.array([num_barriers - 1], jnp.int32), x)
     np.testing.assert_array_equal(y, np.asarray(x) + 1.0)
-
 
   def test_not_waiting_for_all_barrier_completions_in_thread_raises(self):
     @functools.partial(
@@ -2580,7 +2579,6 @@ class InterpretTest(jtu.JaxTestCase):
     a = jnp.full((128,128), 42, dtype=jnp.int32)
     output = kernel(a)
     self.assertArraysEqual(output, a)
-
 
   @jtu.parameterized.product(grid=[(4,), (2, 3)])
   def test_dynamic_scheduling_loop(self, grid):

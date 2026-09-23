@@ -814,12 +814,18 @@ class OpsTest(ptu.PallasTPUTest):
     tgt_shape = (16, 256)
 
     def kernel(src, tgt):
-      tgt[:] = src[tuple(pl.ds(d) for d in tgt.shape)]
+      tgt[:] = src[
+          tuple(
+              pl.ds(pl.program_id(0) * s, d)
+              for s, d in zip(src.shape, tgt.shape)
+          )
+      ]
 
     x = jnp.arange(np.prod(src_shape), dtype=jnp.float32).reshape(src_shape)
     run = pl.pallas_call(
         kernel,
         jax.ShapeDtypeStruct(tgt_shape, jnp.float32),
+        grid=(1,),
         compiler_params=pltpu.CompilerParams(disable_bounds_checks=True),
     )
     output = run(x)

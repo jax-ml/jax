@@ -74,6 +74,8 @@ def _maybe_concretize(x: Any):
   # This is roughly the same logic as core.concrete_or_error, but we avoid
   # calling that because constructing the ConcretizationTypeError can be
   # expensive as the size of the tracing context (i.e. the jaxpr) grows.
+  if core.is_symbolic_dim(x):
+    return None
   return core.to_concrete_value(x)
 
 # This registry is used to allow hitypes that are being indexed to register
@@ -99,8 +101,10 @@ class NDIndexer(state_types.Transform):
     # We validate integer indexing shapes here
     for idx, s in zip(self.indices, self.shape):
       if isinstance(idx, Slice):
+        if core.is_symbolic_dim(s):
+          continue
         start = idx.start
-        if value := _maybe_concretize(start):
+        if (value := _maybe_concretize(start)) is not None:
           if value >= s:
             raise ValueError(f"Out of bound slice: start={value}, dim={s}.")
           if size := _maybe_concretize(idx.size):
@@ -126,7 +130,11 @@ class NDIndexer(state_types.Transform):
           else core.typeof(flat_idx).shape
       )
       if not idx_shape:
-        if (value := _maybe_concretize(idx)) and value >= s:
+        if (
+            not core.is_symbolic_dim(s)
+            and (value := _maybe_concretize(idx)) is not None
+            and value >= s
+        ):
           raise ValueError(f"Out of bound indexer: idx={value}, dim={s}.")
         # For ()-shaped indexers, we can broadcast no problm.
         continue
