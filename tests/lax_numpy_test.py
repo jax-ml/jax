@@ -3568,27 +3568,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   def testArrayPositionalDeprecation(self):
-    x = jnp.array([1, 2, 3])
-
-    with self.assertDeprecationWarnsOrRaises(
-        'jax-array-positional-args',
-        'Passing the copy, order, and ndmin arguments to jnp.array',
-    ):
-      out = jnp.array(x, None, False)
-    self.assertIs(x, out)
-
-    with self.assertDeprecationWarnsOrRaises(
-        'jax-array-positional-args',
-        'Passing the copy, order, and ndmin arguments to jnp.array',
-    ):
-      out = jnp.array(x, None, True)
-    self.assertIsNot(x, out)
-
-    with self.assertRaisesRegex(TypeError, "array\\(\\) got multiple values for argument 'copy'"):
-      jnp.array(x, None, True, copy=False)
-
-    with self.assertRaisesRegex(TypeError, "array\\(\\) takes at most 5 positional arguments"):
-      jnp.array(x, None, True, "K", 0, "extra")
+    with self.assertRaisesRegex(TypeError, r"array\(\) takes from 1 to 2 positional arguments"):
+      _ = jnp.array([1, 2, 3], None, False)
 
   @jtu.sample_product(copy=[None, True, False])
   def testAsarrayCopy(self, copy):
@@ -7123,7 +7104,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
 
     extra_params = {
       'arange': ['start'],
-      'array': ['args', 'device', 'out_sharding'],
+      'array': ['device', 'out_sharding'],
       'compress': ['size', 'fill_value'],
       'einsum': ['subscripts', 'precision'],
       'einsum_path': ['subscripts'],

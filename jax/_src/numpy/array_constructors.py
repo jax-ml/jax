@@ -20,7 +20,6 @@ import numpy as np
 
 from jax._src import api
 from jax._src import config
-from jax._src import deprecations
 from jax._src import core
 from jax._src import dtypes
 from jax._src import literals
@@ -105,7 +104,7 @@ def _make_string_array(
 
 
 @export
-def array(object: Any, dtype: DTypeLike | None = None, *args, copy: bool = True,
+def array(object: Any, dtype: DTypeLike | None = None, *, copy: bool = True,
           order: str | None = "K", ndmin: int = 0,
           device: xc.Device | Sharding | None = None,
           out_sharding: NamedSharding | P | None = None) -> Array:
@@ -179,21 +178,6 @@ def array(object: Any, dtype: DTypeLike | None = None, *args, copy: bool = True,
 
   .. _explicit sharding: https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
   """
-  if args:
-    if len(args) > 3:
-      raise TypeError(f"array() takes at most 5 positional arguments but {len(args) + 2} were given")
-
-    for i, name in enumerate(["copy", "order", "ndmin"]):
-      if i < len(args) and [copy, order, ndmin][i] != [True, "K", 0][i]:
-        raise TypeError(f"array() got multiple values for argument '{name}'")
-    copy, order, ndmin = (list(args) + [copy, order, ndmin][len(args):])[:3]
-
-    deprecations.warn(
-        "jax-array-positional-args",
-        "Passing the copy, order, and ndmin arguments to jnp.array positionally "
-        "is deprecated. Use keyword arguments instead.",
-        stacklevel=2)
-
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
 
