@@ -17,6 +17,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added {func}`jax.execution_options` to pass runtime-defined custom options
+    to each execution of jitted and AOT-compiled functions without retracing or
+    recompiling. Nested contexts merge their options, with inner values taking
+    precedence.
   * Added {func}`jax.lax.polynomial` for polynomial evaluation. The polynomial
     primitive is faster and uses less memory when computing gradients.
 

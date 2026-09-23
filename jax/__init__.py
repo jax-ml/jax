@@ -91,6 +91,9 @@ from jax._src.core import (
     ShapeDtypeStruct as ShapeDtypeStruct,
 )
 from jax._src.compiler import CompilerEffortLevel as CompilerEffortLevel
+from jax._src.execution_options import (
+    execution_options as execution_options,
+)
 from jax._src.api import (
     effects_barrier as effects_barrier,
     block_until_ready as block_until_ready,

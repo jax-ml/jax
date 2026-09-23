@@ -2229,6 +2229,12 @@ jax_multiplatform_test(
     ]),
 )
 
+jax_py_test(
+    name = "execution_options_test",
+    srcs = ["execution_options_test.py"],
+    deps = ["//jax"] + py_deps("absl/testing"),
+)
+
 jax_multiplatform_test(
     name = "xla_metadata_test",
     srcs = ["xla_metadata_test.py"],
