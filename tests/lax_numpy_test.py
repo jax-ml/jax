@@ -6704,6 +6704,19 @@ class NumpyGradTests(jtu.JaxTestCase):
         op, (special_value,), order, ['fwd', 'rev'], atol={np.float32: 3.4e-3}
     )
 
+  def testArcsinhGradLargeFloat32(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40634
+    # When |x| > ~1.84e19 in float32, the naive JVP rsqrt(x²+1) overflows
+    # to rsqrt(inf)=0, silently zeroing every gradient.  The correct
+    # derivative 1/sqrt(x²+1) ≈ 1/|x| is representable down to |x| ≈ 10³⁸.
+    x = jnp.float32(1e22)
+    grad_f32 = jax.grad(jnp.arcsinh)(x)
+    expected = jnp.float32(1e-22)  # 1/x for large x
+    # Must be non-zero and within a factor of 2 of the true value.
+    self.assertFalse(grad_f32 == 0.0,
+                     "arcsinh JVP returned zero for large float32 input")
+    self.assertAllClose(grad_f32, expected, rtol=1.0)
+    
   def testSincAtZero(self):
     # Some manual tests for sinc at zero, since it doesn't have well-behaved
     # numerical derivatives at zero

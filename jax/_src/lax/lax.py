@@ -4953,7 +4953,12 @@ ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
 mlir.register_lowering(cosh_p, partial(_nary_lower_hlo, chlo.cosh))
 
 asinh_p = standard_unop(_float | _complex, 'asinh')
-ad.defjvp(asinh_p, lambda g, x: mul(g, rsqrt(add(square(x), _one(x)))))
+# Use 1/cosh(asinh(x)) instead of rsqrt(x²+1) to avoid float32 overflow:
+# when |x| > ~1.84e19, square(x) overflows to inf in float32, making
+# rsqrt(inf) = 0 and silently zeroing gradients.  The identity
+# cosh(asinh(x)) = sqrt(x²+1) holds for both real and complex inputs, and
+# JAX's chlo.asinh uses a log-based formula that is free of this overflow.
+ad.defjvp(asinh_p, lambda g, x: mul(g, reciprocal(cosh(asinh(x)))))
 mlir.register_lowering(asinh_p, partial(_nary_lower_hlo, chlo.asinh))
 
 acosh_p = standard_unop(_float | _complex, 'acosh')
