@@ -3588,7 +3588,13 @@ class CustomVJP3Test(CustomVJPTest):
     expected = textwrap.dedent(
         """
         { lambda ; a:f32[1]. let
-            b:f32[1] = call_hi_primitive[_prim=CustomVJPTraced] a
+            b:f32[1] = CustomVJPTraced[
+              name=f
+              call_jaxpr={ lambda ; c:f32[1]. let d:f32[1] = add c 1.0:f32[] in (d,) }
+              fwd=f_fwd
+              bwd=f_bwd
+              symbolic_zeros=False
+            ] a
           in (b,) }
         """).strip()
     self.assertEqual(actual, expected)
@@ -3612,11 +3618,9 @@ class CustomVJP3Test(CustomVJPTest):
     expected = textwrap.dedent(
         """
         { lambda ; a:f32[1]. let
-            b:f32[1] = call_hi_primitive_linearized[
-              _prim=CustomVJPTraced
+            b:f32[1] = CustomVJPTraced.linearized[
               nz_in_flat=(True,)
               nz_out_flat=(True,)
-              residuals_tree=...
             ] a
           in (b,) }
         """).strip()
@@ -4826,7 +4830,12 @@ class CustomJVP3Test(CustomJVPTest):
     expected = textwrap.dedent(
         """
         { lambda ; a:f32[1]. let
-            b:f32[1] = call_hi_primitive[_prim=CustomJVPTraced] a
+            b:f32[1] = CustomJVPTraced[
+              name=f
+              call_jaxpr={ lambda ; c:f32[1]. let d:f32[1] = add c 1.0:f32[] in (d,) }
+              jvp=f_jvp
+              symbolic_zeros=False
+            ] a
           in (b,) }
         """).strip()
     self.assertEqual(actual, expected)

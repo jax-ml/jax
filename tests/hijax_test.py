@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
 import itertools as it
+import textwrap
 import traceback
 from typing import Any
 import unittest
@@ -1205,6 +1206,77 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertEqual(jax.grad(f)(2.0), 12.0)
     self.assertEqual(jax.jvp(f, (2.0,), (1.0,)),
                      (8.0, 12.0))
+
+  def test_hiprimitive_pretty_print(self):
+
+    class RaiseToStaticPower(HiPrim):
+      def __init__(self, in_aval, *, power):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = dict(power=power)
+        super().__init__()
+
+      def expand(self, x):
+        return x ** self.power
+
+      def batch_dim_rule(self, axis_data, in_dims):
+        return in_dims[0]
+
+    class CallJaxpr(HiPrim):
+      def __init__(self, jaxpr):
+        self.in_avals = tuple(jaxpr.in_avals)
+        self.out_aval = jaxpr.out_avals
+        self.params = dict(jaxpr=jaxpr)
+        super().__init__()
+
+      def expand(self, *args):
+        return core.jaxpr_as_fun(self.jaxpr)(*args)
+
+    def cube(x):
+      return RaiseToStaticPower(jax.typeof(x), power=3)(x)
+
+    self.assertEqual(repr(RaiseToStaticPower(jax.typeof(2.), power=3)),
+                     'RaiseToStaticPower[power=3]')
+
+    jaxpr = jax.make_jaxpr(jax.vmap(cube))(jnp.arange(3, dtype='float32'))
+    self.assertEqual(jaxpr.pretty_print(use_color=False), textwrap.dedent("""
+        { lambda ; a:f32[3]. let
+            b:f32[3] = VmapOf[
+              prim=RaiseToStaticPower[power=3]
+              axis_size=3
+              in_dims=(0,)
+              out_dims=(0,)
+            ] a
+          in (b,) }
+        """).strip())
+
+    x = jnp.float32(2.)
+    inner = jax.make_jaxpr(lambda x: jnp.sin(cube(x)))(x)
+    jaxpr = jax.make_jaxpr(lambda x: CallJaxpr(inner)(x))(x)
+    self.assertEqual(jaxpr.pretty_print(use_color=False), textwrap.dedent("""
+        { lambda ; a:f32[]. let
+            b:f32[] = CallJaxpr[
+              jaxpr={ lambda ; c:f32[]. let
+                  d:f32[] = RaiseToStaticPower[power=3] c
+                  e:f32[] = sin d
+                in (e,) }
+            ] a
+          in (b,) }
+        """).strip())
+
+    # a jaxpr printed by more than one eqn is hoisted and printed once
+    jaxpr = jax.make_jaxpr(
+        lambda x: CallJaxpr(inner)(*CallJaxpr(inner)(x)))(x)
+    self.assertEqual(jaxpr.pretty_print(use_color=False), textwrap.dedent("""
+        let jaxpr = { lambda ; a:f32[]. let
+            b:f32[] = RaiseToStaticPower[power=3] a
+            c:f32[] = sin b
+          in (c,) } in
+        { lambda ; d:f32[]. let
+            e:f32[] = CallJaxpr[jaxpr=jaxpr] d
+            f:f32[] = CallJaxpr[jaxpr=jaxpr] e
+          in (f,) }
+        """).strip())
 
   @parameterized.parameters([False, True])
   def test_newstyle_hiprimitive_retval(self, jit):
