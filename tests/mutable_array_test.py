@@ -1548,7 +1548,7 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
   def test_return_from_jit_closure(self):
     with self.assertRaisesRegex(
         ValueError,
-        r"tree path result\['hi'\]"):
+        r"(?s)tree path result\['hi'\].*was closed over by the function"):
       x_ref = core.new_ref(jnp.arange(3))
       jax.jit(lambda: {'hi': x_ref})()
 

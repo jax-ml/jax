@@ -2199,7 +2199,9 @@ def _check_no_returned_refs(
         origin_info = ('\n\nThe returned mutable array was passed in as the '
                        f'argument {arg_name}.')
       else:
-        origin_info = ''
+        origin_info = ('\n\nThe returned mutable array was closed over by the '
+                       'function, rather than passed in as an argument or '
+                       'created inside it.')
       raise ValueError(
           f"function {dbg.func_src_info} traced for {dbg.traced_for} returned "
           f"a mutable array reference of type {a.str_short()}{loc}, but "
