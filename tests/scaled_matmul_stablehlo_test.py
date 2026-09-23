@@ -707,9 +707,7 @@ class ScaledMatmulTest(jtu.JaxTestCase):
     self.assertRegex(hlo_text, hlo_pattern)
 
     out = j_scaled_matmul(a_q, b_q, a_s, b_s)
-    out_ref = jnp.einsum(
-        "BMK,BNK->BMN", a_dq, b_dq
-    )
+    out_ref = jnp.einsum("BMK,BNK->BMN", a_dq, b_dq, precision="high")
     self.assertArraysAllClose(
         out, out_ref.astype(dtype), rtol=1e-2, atol=5e-2
     )
@@ -974,14 +972,21 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
     dimension_numbers = configs[2]
     is_training = configs[-1]
     def fwd(a, b, is_ref=False, use_normalized=False):
-      fn = jax.lax.dot_general if is_ref else scaled_dot_general
       if is_ref and use_normalized:
         dms = (([2], [2]), ([0], [0]))
       else:
         dms = dimension_numbers
 
-      y = fn(a, b, dms,
-             preferred_element_type=output_type)
+      if is_ref:
+        y = jax.lax.dot_general(
+            a,
+            b,
+            dms,
+            preferred_element_type=output_type,
+            precision=jax.lax.Precision.HIGH,
+        )
+      else:
+        y = scaled_dot_general(a, b, dms, preferred_element_type=output_type)
 
       return jnp.sum(y) if is_training else y
 

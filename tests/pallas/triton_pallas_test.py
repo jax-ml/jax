@@ -471,7 +471,8 @@ class TritonPallasTest(PallasBaseTest):
     out = matmul(x, y, bm=bm, bn=bn, bk=bk, gm=gm,
                  interpret=self.INTERPRET)
     expected = jnp.matmul(
-            x, y, preferred_element_type=jnp.float32).astype(dtype)
+        x, y, preferred_element_type=jnp.float32, precision="high"
+    ).astype(dtype)
     np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
 
   @parameterized.named_parameters(*(

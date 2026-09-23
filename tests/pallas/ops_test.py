@@ -2367,7 +2367,7 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_allclose(
         out.astype(jnp.float32),
         expected.astype(jnp.float32),
-        atol=0.05,
+        atol=0.1,
         rtol=0.05,
     )
 

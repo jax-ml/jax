@@ -2485,7 +2485,7 @@ class JaxExportTest(jtu.JaxTestCase):
     (placed_inputs, placed_weights) = jax.device_put((inputs, weights),
                                                       in_shardings)
     out = exp.call(placed_inputs, placed_weights)
-    self.assertAllClose(out, tuple(i @ w for i, w in zip(inputs, weights)))
+    self.assertAllClose(out, tuple(jax.lax.dot(i, w) for i, w in zip(inputs, weights)))
 
   def test_export_typed_prng_key(self):
     mesh = jtu.create_mesh((1,), "x")
