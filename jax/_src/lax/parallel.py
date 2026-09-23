@@ -2917,7 +2917,7 @@ def vary_unreduced_cast(x, axis_name):
   return tree_util.tree_map(
       lambda leaf: vary_unreduced_cast_p.bind(leaf, axes=new_axes), x)
 
-vary_unreduced_cast_p = core.Primitive('vary_unreduced_cast_p')
+vary_unreduced_cast_p = core.Primitive('vary_unreduced_cast')
 vary_unreduced_cast_p.def_impl(partial(_raise_valueerror, 'vary_unreduced_cast'))
 mlir.register_lowering(vary_unreduced_cast_p, lambda ctx, x, *, axes: [x])
 

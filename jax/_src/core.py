@@ -2737,7 +2737,7 @@ def reduced_vary_cast(x, axis_name):
   del axes
   return tree_map(lambda leaf: reduced_vary_cast_p.bind(leaf, axes=new_axes), x)
 
-reduced_vary_cast_p = Primitive('reduced_vary_cast_p')
+reduced_vary_cast_p = Primitive('reduced_vary_cast')
 
 #######################################################################
 
