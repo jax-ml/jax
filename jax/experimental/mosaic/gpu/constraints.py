@@ -1243,17 +1243,17 @@ def compute_transitively_equal_vars(
     if root1 != root2:
       parent[root2] = root1
 
-  all_vars: set[Variable] = set()
+  all_vars: dict[Variable, None] = {}
   for constraint in system.constraints:
     match constraint:
       case Equals(lhs=Variable() as lhs, rhs=Variable() as rhs):
-        all_vars.add(lhs)
-        all_vars.add(rhs)
+        all_vars[lhs] = None
+        all_vars[rhs] = None
         union(lhs, rhs)
 
   # Group variables by their component representative.
   components: dict[Variable, list[Variable]] = {}
-  for v in sorted(all_vars, key=str):
+  for v in all_vars:
     root = find(v)
     components.setdefault(root, []).append(v)
 
