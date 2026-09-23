@@ -23,6 +23,7 @@ limitations under the License.
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -46,6 +47,7 @@ limitations under the License.
 #include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "nanobind/stl/tuple.h"  // IWYU pragma: keep
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/unordered_map.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
@@ -691,9 +693,12 @@ NB_MODULE(_jax, m) {
   PyShardedToken::Register(m);
   PyExecutable::Register(m);
 
+  m.attr("dlpack_version") = kDlPackVersion;
   m.def("buffer_to_dlpack_managed_tensor",
         xla::ValueOrThrowWrapper(BufferToDLPackManagedTensor),
-        nb::arg("buffer"), nb::arg("stream").none() = nb::none());
+        nb::arg("buffer"), nb::arg("stream").none() = nb::none(),
+        nb::arg("max_version").none() = nb::none(),
+        nb::arg("copied") = false);
   m.def(
       "dlpack_managed_tensor_to_buffer",
       [](const nb::capsule& tensor, nb_class_ptr<PyDevice> device,
