@@ -1835,6 +1835,36 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(out.sharding,
                      NamedSharding(mesh, P(None, None, unreduced={'x'})))
 
+  @jtu.run_on_devices('tpu')
+  @jtu.with_explicit_mesh((2, 4), ("dcn", "ici"))
+  def test_compute_on_unreduced_single_dcn_all_reduce(self, mesh):
+    def collect_dcn(weight):
+      return jax.shard_map(
+          lambda x: jax.lax.pcast(x, "dcn", to="reduced"),
+          in_specs=P("ici"),
+          out_specs=P("ici", reduced={"dcn"}),
+      )(weight)
+
+    @compute_on(compute_type="tpu_sparsecore",
+                out_memory_spaces=jax.memory.Space.Device,
+                compiler_options={"sparse_core_config": {"core_ids": [1]}})
+    def collect_ici(weight_0, weight_1):
+      return (jax.reshard(weight_0, P(reduced={"dcn", "ici"})),
+              jax.reshard(weight_1, P(reduced={"dcn", "ici"})))
+
+    def loss(weight_0, weight_1, inputs):
+      weight_0, weight_1 = collect_ici(weight_0, collect_dcn(weight_1))
+      return jnp.sum(jax.reshard((weight_0 + weight_1) * inputs, P()))
+
+    weight_0 = jax.device_put(jnp.arange(8.), P("ici", reduced={"dcn"}))
+    weight_1 = jax.device_put(jnp.arange(8.), P("ici"))
+    inputs = jax.device_put(jnp.arange(8.), P(reduced={"dcn", "ici"}))
+
+    jf = jax.jit(jax.grad(loss, argnums=(0, 1)))
+    compiled_text = jf.lower(weight_0, weight_1, inputs).compile().as_text()
+    self.assertEqual(compiled_text.count('all-reduce('), 2)
+    jf(weight_0, weight_1, inputs)  # doesn't crash
+
 
 class SparsecoreOffloadTest(jtu.JaxTestCase):
 

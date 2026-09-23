@@ -1702,6 +1702,30 @@ class TokenSet:
         eff: tokens._tokens.get(eff, self._tokens[eff]) for eff in self._tokens
     })
 
+
+def _aval_unreduced_sharding(aval):
+  if isinstance(aval, core.ShapedArray) and aval.sharding.spec.unreduced:
+    return aval.sharding
+  return None
+
+def _get_arg_shardings(arg_shardings, in_avals, num_dim_vars, num_tokens):
+  prefix_shardings = [None] * (num_dim_vars + num_tokens)
+  if arg_shardings is None:
+    arg_shardings = [_aval_unreduced_sharding(a) for a in in_avals]
+    if all(s is None for s in arg_shardings):
+      return None
+  return [*prefix_shardings, *arg_shardings]
+
+def _get_res_shardings(result_shardings, out_avals, num_tokens):
+  token_shardings = [None] * num_tokens
+  if result_shardings is None:
+    result_shardings = [_aval_unreduced_sharding(o) for o in out_avals]
+    if all(s is None for s in result_shardings):
+      return None
+  return [*token_shardings, *result_shardings]
+
+
+
 def lower_jaxpr_to_fun(
     ctx: ModuleContext,
     name: str,
@@ -1810,12 +1834,9 @@ def lower_jaxpr_to_fun(
                             else a + num_tokens
                             for a in input_output_aliases]
 
-  if arg_shardings is not None:
-    prefix_shardings = [None] * (num_dim_vars + num_tokens)
-    arg_shardings = [*prefix_shardings, *arg_shardings]
-  if result_shardings is not None:
-    token_shardings = [None] * num_tokens
-    result_shardings = [*token_shardings, *result_shardings]
+  arg_shardings = _get_arg_shardings(arg_shardings, in_avals, num_dim_vars, num_tokens)
+  result_shardings = _get_res_shardings(result_shardings, out_avals, num_tokens)
+
   if replicated_args is not None:
     prefix_replicated_args = [False] * (num_dim_vars + num_tokens)
     replicated_args = [*prefix_replicated_args, *replicated_args]
@@ -1927,13 +1948,15 @@ def lower_jaxpr_to_fun(
         if replicated:
           attrs["mhlo.is_same_data_across_replicas"] = ir.BoolAttr.get(True)
 
-    if use_sharding_annotations and ir_arg_shardings is not None:
-      for attrs, sharding in zip(arg_attrs, ir_arg_shardings):
-        if sharding is not None:
+    if ir_arg_shardings is not None:
+      for attrs, ir_s, arg_s in zip(arg_attrs, ir_arg_shardings, arg_shardings):
+        if (ir_s is not None and
+            (use_sharding_annotations or
+            (isinstance(arg_s, NamedSharding) and arg_s.spec.unreduced))):
           if config.use_shardy_partitioner.value:
-            attrs["sdy.sharding"] = get_sharding_attr(ctx, sharding)
+            attrs["sdy.sharding"] = get_sharding_attr(ctx, ir_s)
           else:
-            attrs["mhlo.sharding"] = get_sharding_attr(ctx, sharding)
+            attrs["mhlo.sharding"] = get_sharding_attr(ctx, ir_s)
 
     if ir_arg_memory_kinds is not None:
       for attrs, memory_kind in zip(arg_attrs, ir_arg_memory_kinds):
@@ -2000,14 +2023,17 @@ def lower_jaxpr_to_fun(
       for attrs, name_ in zip(named_result_attrs, result_names):
         attrs['jax.result_info'] = ir.StringAttr.get(name_)
 
-  if use_sharding_annotations and ir_result_shardings is not None:
-    for attrs, sharding, cu in zip(result_attrs, ir_result_shardings,
-                                   sharding_contains_unconstrained):  # type: ignore
-      if sharding is not None and not cu:
+  if ir_result_shardings is not None:
+    for attrs, ir_s, res_s, cu in zip(
+        result_attrs, ir_result_shardings, result_shardings,
+        sharding_contains_unconstrained):  # type: ignore
+      if (ir_s is not None and not cu and
+          (use_sharding_annotations or
+          (isinstance(res_s, NamedSharding) and res_s.spec.unreduced))):
         if config.use_shardy_partitioner.value:
-          attrs["sdy.sharding"] = get_sharding_attr(ctx, sharding)
+          attrs["sdy.sharding"] = get_sharding_attr(ctx, ir_s)
         else:
-          attrs["mhlo.sharding"] = get_sharding_attr(ctx, sharding)
+          attrs["mhlo.sharding"] = get_sharding_attr(ctx, ir_s)
 
   if ir_result_memory_kinds is not None:
     for attrs, mem_kind in zip(result_attrs, ir_result_memory_kinds):
