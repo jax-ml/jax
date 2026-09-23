@@ -48,6 +48,8 @@ logger = logging.getLogger(__name__)
 
 class ProfileOptions(_profiler.ProfileOptions):
   """Profiler Options to configure the collectors for the profiler."""
+  # Reject unknown attributes (e.g. typos) rather than silently ignoring them.
+  __slots__ = ()
 
 
 def start_server(
