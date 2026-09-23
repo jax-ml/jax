@@ -79,7 +79,7 @@ def _load_lowering_rule(
   else:
     flat_transforms, mask = list(args), None
   return sc_lowering._load_lowering_rule(
-      ctx, ref, mask, *flat_transforms, tree=tree
+      ctx, ref, mask, *flat_transforms, tree=tree, expand=True
   )
 
 

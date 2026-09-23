@@ -69,12 +69,20 @@ register_lowering_rule = functools.partial(
 
 @register_lowering_rule(state_primitives.get_p)
 def _get_lowering_rule(ctx: LoweringRuleContext, ref, *flat_transforms, tree):
-  return _load_lowering_rule(ctx, ref, None, *flat_transforms, tree=tree)
+  return _load_lowering_rule(
+      ctx, ref, None, *flat_transforms, tree=tree, expand=False
+  )
 
 
 def _load_lowering_rule(
-    ctx: LoweringRuleContext, ref, mask, *flat_transforms, tree
+    ctx: LoweringRuleContext, ref, mask, *flat_transforms, tree, expand
 ):
+  if expand and mask is None:
+    raise ValueError("Expand load requires a mask")
+  if not expand and mask is not None:
+    # TODO(naumsmogers): Support non-expand masked loads.
+    raise NotImplementedError("Non-expand load does not support masks")
+
   ref_aval, *_flat_index_avals = ctx.avals_in
   assert isinstance(ref_aval, state.AbstractRef)
   [out_aval] = ctx.avals_out
