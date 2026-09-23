@@ -780,7 +780,7 @@ def matmul6(a, b, config: TuningConfig):
       num_threads=3, # Three warpgroups per block
       thread_name="wg",
       # compiler_params=plgpu.CompilerParams(
-      #   profile_space=256,
+      #   profile_space=62,
       #   profile_dir="/project/tmp/test_matmul6_new_prof",
       #   profile_trace_scope=plgpu.TraceScope.WARPGROUP,
       #   profile_bounds_check=True,
@@ -823,22 +823,20 @@ def matmul6(a, b, config: TuningConfig):
           def _await_consumed():
             plgpu.barrier_wait(consumed_barriers.at[slot])
 
-          @pl.when(ki < k_iters)
-          def _produce():
-            k_slice = pl.ds(ki * tile_k, tile_k)
-            with jax.named_scope("produce:copy g2s"):
-              plgpu.copy_gmem_to_smem(
-                  a_gmem.at[m_slice, k_slice],
-                  a_smem.at[slot],
-                  load_barriers.at[slot],
-                  oob_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS,
-              )
-              plgpu.copy_gmem_to_smem(
-                  b_gmem.at[k_slice, n_slice],
-                  b_smem.at[slot],
-                  load_barriers.at[slot],
-                  oob_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS,
-              )
+          k_slice = pl.ds(ki * tile_k, tile_k)
+          with jax.named_scope("produce:copy g2s"):
+            plgpu.copy_gmem_to_smem(
+                a_gmem.at[m_slice, k_slice],
+                a_smem.at[slot],
+                load_barriers.at[slot],
+                oob_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS,
+            )
+            plgpu.copy_gmem_to_smem(
+                b_gmem.at[k_slice, n_slice],
+                b_smem.at[slot],
+                load_barriers.at[slot],
+                oob_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS,
+            )
 
         lax.fori_loop(0, k_iters, _loop_body_mem, None)
 
@@ -861,10 +859,11 @@ def matmul6(a, b, config: TuningConfig):
             b = plgpu.load(
                 b_smem.at[slot], layout=plgpu.Layout.MMA_RHS(dtype), optimized=True
             )
+            # Signal to Warpgroup 0 that the SMEM read is complete
+            plgpu.barrier_arrive(consumed_barriers.at[slot])
+
             acc = plgpu.mma(acc, a, b)
 
-          # Signal to Warpgroup 0 that the SMEM read is complete
-          plgpu.barrier_arrive(consumed_barriers.at[slot])
           return acc
 
         # Initialize local register tiles
@@ -872,6 +871,174 @@ def matmul6(a, b, config: TuningConfig):
             jnp.zeros((comp_m, tile_n), jnp.float32), plgpu.Layout.MMA_ACC(dtype)
         )
         acc = lax.fori_loop(0, k_iters, _loop_body_comp, acc)
+
+        # Write out epilogue from Warpgroups 1, 2 (where registers are active)
+        out_m_slice = pl.ds(mi * tile_m + (wg_idx - 1) * comp_m, comp_m)
+        with jax.named_scope("epilogue"):
+          out_smem.at[wg_idx - 1][...] = acc.astype(dtype)
+          plgpu.commit_smem()
+          plgpu.copy_smem_to_gmem(
+              out_smem.at[wg_idx - 1],
+              out_gmem.at[out_m_slice, n_slice]
+          )
+    plgpu.wait_smem_to_gmem(0, wait_read_only=True)
+
+  return kernel(a, b)
+
+
+def matmul7(a, b, config: TuningConfig):
+  # use persistent kernel, grid tiling
+  # and warpgroup specialization
+  num_sms = backend.get_default_device().core_count
+
+  dtype = a.dtype
+  m, k = a.shape
+  _, n = b.shape
+  tile_m, tile_n, tile_k = config.tile_m, config.tile_n, config.tile_k
+
+  if m % tile_m != 0:
+    raise ValueError(f"{m=} must be divisible by {tile_m=}")
+  if n % tile_n != 0:
+    raise ValueError(f"{n=} must be divisible by {tile_n=}")
+  if k % tile_k != 0:
+    raise ValueError(f"{k=} must be divisible by {tile_k=}")
+
+  comp_m = tile_m // 2
+  comp_n = tile_n // 2
+  m_iters = m // tile_m
+  n_iters = n // tile_n
+  k_iters = k // tile_k
+  max_concurrent_steps = config.max_concurrent_steps
+
+  grid_size = min(num_sms * config.gs_num_sms_factor, m_iters * n_iters)
+
+  itemsize = jnp.dtype(dtype).itemsize  # in bytes
+  swizzle = plgpu.find_swizzle(tile_k * itemsize * 8)
+  a_transforms = (
+      plgpu.TilingTransform((8, swizzle // itemsize)),
+      plgpu.SwizzleTransform(swizzle),
+  )
+  swizzle = plgpu.find_swizzle(tile_n * itemsize * 8)
+  b_transforms = (
+      plgpu.TilingTransform((8, swizzle // itemsize)),
+      plgpu.SwizzleTransform(swizzle),
+  )
+
+  num_shards = 4
+  num_mmas = k_iters * num_shards
+  num_mmas_epi = num_mmas + num_shards
+
+
+  @plgpu.kernel(
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
+      grid=(grid_size,),
+      grid_names=("sm",),
+      scratch_types=dict(
+          a_smem=plgpu.SMEM((max_concurrent_steps, tile_m, tile_k), dtype, transforms=a_transforms),
+          b_smem=plgpu.SMEM((max_concurrent_steps, tile_k, tile_n), dtype, transforms=b_transforms),
+          out_smem=plgpu.SMEM((2, comp_m, tile_n), dtype, transforms=b_transforms),
+          load_barriers=plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
+          consumed_barriers=plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
+      ),
+      num_threads=4, # Four warpgroups per block
+      thread_name="wg",
+      # compiler_params=plgpu.CompilerParams(
+      #   profile_space=62,
+      #   profile_dir="/project/tmp/test_matmul7_new_prof",
+      #   profile_trace_scope=plgpu.TraceScope.WARPGROUP,
+      #   profile_bounds_check=True,
+      # )
+  )
+  def kernel(
+      a_gmem,
+      b_gmem,
+      out_gmem,
+      a_smem,
+      b_smem,
+      out_smem,
+      load_barriers,
+      consumed_barriers,
+  ):
+    @plgpu.nd_loop((m_iters * n_iters,), collective_axes="sm")
+    def _mn_loop(loop_info: plgpu.NDLoopInfo):
+      (lin_idx,) = loop_info.index
+      mi, ni = plgpu.planar_snake(
+          lin_idx,  # Linear index.
+          (m_iters, n_iters),  # The 2D iteration space.
+          config.grid_minor_dim,  # 0 or 1, indicates the fastest changing dim.
+          config.grid_tile_width,  # The width of tiles along the fastest changing dim.
+      )
+      m_slice = pl.ds(mi * tile_m, tile_m)
+      n_slice = pl.ds(ni * tile_n, tile_n)
+
+      wg_idx = lax.axis_index("wg")
+
+      # Warpgroup 0: Dedicated Memory Prefetcher
+      @pl.when(wg_idx == 0)
+      def _memory_wg():
+        plgpu.set_max_registers(40, action="decrease")
+
+        def _loop_body_mem(ki, _):
+          slot = lax.rem(ki, max_concurrent_steps)
+
+          # Wait for the Compute Warpgroup to complete its read cycle before overwriting
+          @pl.when(jnp.logical_or(ki >= max_concurrent_steps, loop_info.local_index > 0))
+          def _await_consumed():
+            plgpu.barrier_wait(consumed_barriers.at[slot])
+
+          k_slice = pl.ds(ki * tile_k, tile_k)
+          with jax.named_scope("produce:copy g2s"):
+            plgpu.copy_gmem_to_smem(
+                a_gmem.at[m_slice, k_slice],
+                a_smem.at[slot],
+                load_barriers.at[slot],
+                oob_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS,
+            )
+            plgpu.copy_gmem_to_smem(
+                b_gmem.at[k_slice, n_slice],
+                b_smem.at[slot],
+                load_barriers.at[slot],
+                oob_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS,
+            )
+
+        lax.fori_loop(0, k_iters, _loop_body_mem, None)
+
+      # Warpgroups 1, 2, 3: Dedicated Compute Engine
+      @pl.when(wg_idx > 0)
+      def _compute_wg():
+        plgpu.set_max_registers(152, action="increase")
+
+
+
+
+        def _loop_body_comp(ki, acc):
+          slot = lax.rem(ki, max_concurrent_steps)
+
+          m_subslice = pl.ds((wg_idx - 1) * comp_m, comp_m)
+          n_subslice = pl.ds((wg_idx - 1) * comp_m, comp_m)
+
+          # Wait for the Memory Warpgroup to populate the SMEM buffers
+          plgpu.barrier_wait(load_barriers.at[slot])
+
+          with jax.named_scope("compute:load + mma"):
+            a = plgpu.load(
+                a_smem.at[slot, m_subslice], layout=plgpu.Layout.MMA_LHS(dtype), optimized=True
+            )
+            b = plgpu.load(
+                b_smem.at[slot, n_subslice], layout=plgpu.Layout.MMA_RHS(dtype), optimized=True
+            )
+            # Signal to Warpgroup 0 that the SMEM read is complete
+            plgpu.barrier_arrive(consumed_barriers.at[slot])
+
+            acc = plgpu.mma(acc, a, b)
+
+          return acc
+
+        # Initialize local register tiles
+        acc = plgpu.layout_cast(
+            jnp.zeros((comp_m, comp_n), jnp.float32), plgpu.Layout.MMA_ACC(dtype)
+        )
+        acc = lax.fori_loop(0, k_iters_compute, _loop_body_comp, acc)
 
         # Write out epilogue from Warpgroups 1, 2 (where registers are active)
         out_m_slice = pl.ds(mi * tile_m + (wg_idx - 1) * comp_m, comp_m)
@@ -907,7 +1074,8 @@ class MatmulTutorialSM12XTest(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
 
     peak_flops_dict = {
       "NVIDIA GB10": 120e12,
-      "NVIDIA RTX PRO 6000 Blackwell": 250e12,
+      "NVIDIA RTX PRO 6000 Blackwell Workstation Edition": 505e12,
+      "NVIDIA RTX PRO 6000 Blackwell": 467e12,
       "NVIDIA RTX PRO 5000 Blackwell": 267e12,
       "NVIDIA RTX PRO 4500 Blackwell": 200e12,
     }
@@ -1060,7 +1228,7 @@ class MatmulTutorialSM12XTest(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
     example_config = TuningConfig(
         tile_m=128,
         tile_n=128,
-        tile_k=32,
+        tile_k=64,
         max_concurrent_steps=2,
         grid_minor_dim=0,
         grid_tile_width=8,
@@ -1076,6 +1244,27 @@ class MatmulTutorialSM12XTest(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
         "gs_num_sms_factor": (4, 2, 1),
     }
     self._test_matmul(matmul6, example_config, config_search_space)
+
+  def test_matmul7(self):
+    example_config = TuningConfig(
+        tile_m=128,
+        tile_n=128,
+        tile_k=64,
+        max_concurrent_steps=2,
+        grid_minor_dim=0,
+        grid_tile_width=8,
+        gs_num_sms_factor=1,
+    )
+    config_search_space = {
+        "tile_m": (128, 256),
+        "tile_n": (128,),
+        "tile_k": (64, ),
+        "max_concurrent_steps": (2, 3, 4),
+        "grid_minor_dim": (0, 1),
+        "grid_tile_width": (4, 6, 8, 12, 16),
+        "gs_num_sms_factor": (4, 2, 1),
+    }
+    self._test_matmul(matmul7, example_config, config_search_space)
 
 
 if __name__ == "__main__":
