@@ -22,6 +22,7 @@ import functools
 import hashlib
 import io
 import itertools
+import json
 import math
 import os
 import pathlib
@@ -220,6 +221,7 @@ def _mosaic_gpu_lowering_rule(
     out_types,
     inout_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
+    cost_estimate: Any = None,
     use_custom_barrier: bool = False,
     skip_device_barrier: bool = False,
 ):
@@ -305,6 +307,10 @@ def _mosaic_gpu_lowering_rule(
           launch_context.uses_collective_metadata(module)
       ),
   )
+  if cost_estimate is not None:
+    backend_config["cost_estimate_json"] = ir.StringAttr.get(
+        json.dumps(dataclasses.asdict(cost_estimate))
+    )
 
   frontend_attributes: dict[str, ir.Attribute] = {}
 

@@ -266,6 +266,7 @@ def kernel(
     out_type: object = (),
     scratch_types: ScratchShapeTree = (),
     compiler_params: pallas_core.CompilerParams | None = None,
+    cost_estimate: pallas_core.CostEstimate | None = None,
     # Mesh kwargs
     grid: tuple[int, ...] = (),
     grid_names: tuple[str, ...] = (),
@@ -291,6 +292,7 @@ def kernel(
       PyTree of ``jax.ShapeDtypeStruct`` or JAX types.
     compiler_params: Additional compiler options. See the `CompilerParams`
       dataclass for more details.
+    cost_estimate: The cost estimate of the function.
     grid: A tuple of integers specifying the size of the kernel grid.
     grid_names: The axis names of the grid. Must be the same length as `grid`.
     cluster: A tuple of integers specifying the size of the kernel cluster.
@@ -317,6 +319,7 @@ def kernel(
         out_type=out_type,
         scratch_types=scratch_types,
         compiler_params=compiler_params,
+        cost_estimate=cost_estimate,
         grid=grid,
         grid_names=grid_names,
         cluster=cluster,
@@ -369,6 +372,7 @@ def kernel(
           out_type=out_type,
           mesh=mesh,
           compiler_params=compiler_params,
+          cost_estimate=cost_estimate,
           interpret=interpret,
           name=name,
           debug=debug,
@@ -391,11 +395,23 @@ def kernel(
     out_type_ = out_type[0] if unwrap_out else out_type
     add_batch_dim = lambda x: x.update(shape=(axis_size, *x.shape))
     mesh_kwargs_ = dict(mesh_kwargs)
+    batched_cost_estimate = None
+    if cost_estimate is not None and jax_core.is_constant_dim(axis_size):
+      batched_cost_estimate = dataclasses.replace(
+          cost_estimate,
+          flops=cost_estimate.flops * axis_size,
+          bytes_accessed=cost_estimate.bytes_accessed * axis_size,
+          transcendentals=cost_estimate.transcendentals * axis_size,
+          remote_bytes_transferred=(
+              cost_estimate.remote_bytes_transferred * axis_size
+          ),
+      )
     out = kernel(
         batched_body,
         out_type=tree_util.tree_map(add_batch_dim, out_type_),
         scratch_types=scratch_types,
         compiler_params=compiler_params,
+        cost_estimate=batched_cost_estimate,
         grid=(axis_size,) + grid,
         grid_names=(axis_name,) + grid_names,  # pyrefly: ignore[bad-argument-type]
         cluster=cluster,

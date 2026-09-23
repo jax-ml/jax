@@ -17,6 +17,7 @@ import contextlib
 import dataclasses
 import functools
 import itertools
+import json
 import math
 import operator
 import os
@@ -42,6 +43,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
+from jax._src.pallas.mosaic.error_handling import VerificationError
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
@@ -49,7 +51,6 @@ from jax._src.state import types as state_types
 from jax.experimental import pallas as pl
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.pallas import mosaic_gpu as _plgpu
-from jax._src.pallas.mosaic.error_handling import VerificationError
 import jax.numpy as jnp
 import numpy as np
 
@@ -9722,6 +9723,73 @@ class PrettyPrintingTest(PallasTest):
             jax.ShapeDtypeStruct((64, 128), jnp.float16),
             jax.ShapeDtypeStruct((128, 192), jnp.float16),
         )
+    )
+
+
+class CostEstimateTest(PallasTest):
+
+  FLOPS = 1234
+  TRANSCENDENTALS = 21
+  BYTES_ACCESSED = 5678
+  REMOTE_BYTES_TRANSFERRED = 91
+
+  def cost_estimate(self):
+    return pl.CostEstimate(
+        flops=self.FLOPS,
+        transcendentals=self.TRANSCENDENTALS,
+        bytes_accessed=self.BYTES_ACCESSED,
+        remote_bytes_transferred=self.REMOTE_BYTES_TRANSFERRED,
+    )
+
+  def add_one_kernel(self, cost_estimate):
+    @functools.partial(
+        self.kernel,
+        out_type=jax.ShapeDtypeStruct((128, 128), jnp.float32),
+        cost_estimate=cost_estimate,
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.0
+
+    return kernel
+
+  def extract_cost_estimate(self, f, *args) -> dict[str, int] | None:
+    hlo = jax.jit(f).lower(*args).compiler_ir("hlo").as_hlo_text()
+    match = re.search(r'cost_estimate_json\s*=\s*"((?:[^"\\]|\\.)*)"', hlo)
+    if match is None:
+      return None
+    return json.loads(match.group(1).replace(r"\22", '"').replace(r"\"", '"'))
+
+  def test_cost_estimate_is_attached_to_the_custom_call(self):
+    x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
+    kernel = self.add_one_kernel(self.cost_estimate())
+
+    self.assertEqual(
+        self.extract_cost_estimate(kernel, x),
+        dataclasses.asdict(self.cost_estimate()),
+    )
+
+  def test_no_cost_estimate_by_default(self):
+    x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
+    kernel = self.add_one_kernel(None)
+
+    self.assertIsNone(self.extract_cost_estimate(kernel, x))
+
+  def test_cost_estimate_is_scaled_by_the_vmap_axis_size(self):
+    axis_size = 3
+    x = jnp.arange(axis_size * 128 * 128, dtype=jnp.float32).reshape(
+        axis_size, 128, 128
+    )
+    kernel = self.add_one_kernel(self.cost_estimate())
+    expected = pl.CostEstimate(
+        flops=axis_size * self.FLOPS,
+        transcendentals=axis_size * self.TRANSCENDENTALS,
+        bytes_accessed=axis_size * self.BYTES_ACCESSED,
+        remote_bytes_transferred=axis_size * self.REMOTE_BYTES_TRANSFERRED,
+    )
+
+    self.assertEqual(
+        self.extract_cost_estimate(jax.vmap(kernel), x),
+        dataclasses.asdict(expected),
     )
 
 

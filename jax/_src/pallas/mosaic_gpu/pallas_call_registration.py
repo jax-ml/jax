@@ -20,7 +20,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import os
 import time
-from typing import cast
+from typing import Any, cast
 import warnings
 
 import jax
@@ -40,6 +40,7 @@ def _emit_mosaic_gpu_custom_call(
     lowering_result: lowering.LoweringResult,
     input_output_aliases: tuple[tuple[int, int], ...],
     debug_info,
+    cost_estimate: Any = None,
     skip_device_barrier: bool = False,
 ):
   module = lowering_result.module
@@ -70,6 +71,7 @@ def _emit_mosaic_gpu_custom_call(
       out_types=lowering_result.new_out_shapes,
       inout_types=(),
       input_output_aliases=input_output_aliases,
+      cost_estimate=cost_estimate,
       # False until we add get_barrier_semaphore() feature.
       use_custom_barrier=False,
       skip_device_barrier=skip_device_barrier,
@@ -125,7 +127,7 @@ def mpmd_map_mgpu_lowering_rule(
     name,
     external_meshes,
 ):
-  del interpret, cost_estimate, metadata, name, out_avals  # Unused.
+  del interpret, metadata, name, out_avals  # Unused.
 
   if len(jaxprs) != 1:
     raise NotImplementedError(
@@ -193,5 +195,6 @@ def mpmd_map_mgpu_lowering_rule(
       lowering_result,
       tuple(input_output_aliases.items()),
       jaxpr.debug_info,
+      cost_estimate=cost_estimate,
       skip_device_barrier=gpu_params.skip_device_barrier,
   )
