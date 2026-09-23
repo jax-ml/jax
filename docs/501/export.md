@@ -1,7 +1,7 @@
 (jax-501-export)=
 # Exporting and serializing staged-out computations
 
-<!--* freshness: { owner: "necula" reviewed: "2024-06-26" } *-->
+<!--* freshness: { owner: "necula" reviewed: "2026-09-22" } *-->
 
 The {ref}`jax-201-aot` APIs produce
 objects that can be used for debugging or for compilation and
@@ -29,6 +29,7 @@ Here is an example:
 >>> import re
 >>> import numpy as np
 >>> import jax
+>>> import jax.numpy as jnp
 >>> from jax import export
 
 >>> def f(x): return 2 * x * x
@@ -59,9 +60,7 @@ Array(96., dtype=float32)
 Serialization is broken down into two stages:
    1. exporting to produce an {class}`jax.export.Exported` object that contains
      the StableHLO for the lowered function along with the metadata necessary to
-     call it from another JAX function. We have plans to add code to generate
-     `Exported` objects from TensorFlow, and to use `Exported` objects from
-     TensorFlow and PyTorch.
+     call it from another JAX function.
    2. the actual serialization to a byte array using the flatbuffers format.
      See [jax2tf](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md) for
      an alternative serialization to TensorFlow graph that can be used
@@ -140,11 +139,11 @@ consumer, e.g., the inference system.)
 
 What **matters is when the exporting and consuming components were built**,
 not the time when the exporting and the compilation happen.
-To reduce chances of incompatibility, internal JAX users should **rebuild and
-redeploy consumer systems as frequently as possible**.
+To reduce chances of incompatibility, if you build JAX from source, **rebuild
+and redeploy consumer systems as frequently as possible**.
 
-External users should export for archival **with the latest released version of
-jaxlib**.
+If you use released versions of JAX, export for archival **with the latest
+released version of jaxlib**.
 
 The compatibility guarantees do not apply if you bypass the `jax.export` APIs
 to obtain the StableHLO code (e.g., by `jax.jit(f).lower(1.).compiler_ir()`)

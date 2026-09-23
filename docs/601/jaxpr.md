@@ -15,7 +15,7 @@ kernelspec:
 (jax-internals-jaxpr)=
 # The jaxpr language
 
-<!--* freshness: { reviewed: '2024-05-03' } *-->
+<!--* freshness: { reviewed: '2026-09-22' } *-->
 
 Jaxprs are JAX's internal intermediate representation (IR) of programs. They are explicitly typed, functional, first-order, and in algebraic normal form (ANF).
 
