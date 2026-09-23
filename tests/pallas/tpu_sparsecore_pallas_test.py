@@ -2271,11 +2271,16 @@ class VectorSubcoreTest(PallasSCTest):
     expected = jnp.broadcast_to(expected[:, None], (mesh.num_subcores, vec_dim))
     np.testing.assert_array_equal(kernel(), expected)
 
-  @parameterized.parameters(jnp.int32, jnp.float32)
-  def test_gather_add(self, dtype):
-    self.skip_if_tc_tiling()
+  @parameterized.product(
+      dtype=[jnp.int32, jnp.float32], trailing_shape=[(), (128,), (256,)]
+  )
+  def test_gather_add(self, dtype, trailing_shape):
+    if not trailing_shape and jtu.is_device_tpu(8, "i"):
+      self.skipTest("Sub-32-byte HBM gather is not supported on TPU v8i")
+    if trailing_shape and not jtu.is_libtpu_at_least("0.0.49"):
+      self.skipTest("Needs a newer libtpu")
 
-    shape = (self.sc_info.num_subcores, 64, 32)
+    shape = (self.sc_info.num_subcores, 64, *trailing_shape)
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(*shape)
 
     @self.kernel(
@@ -2285,7 +2290,7 @@ class VectorSubcoreTest(PallasSCTest):
         ),
         scratch_types=dict(
             indices_vmem=pltpu.VMEM([self.num_lanes], jnp.int32),
-            scratch_ref=pltpu.VMEM([self.num_lanes, 32], dtype),
+            scratch_ref=pltpu.VMEM([self.num_lanes, *trailing_shape], dtype),
         ),
     )
     def kernel(x_ref, indices_ref, o_ref, indices_vmem, scratch_ref):
