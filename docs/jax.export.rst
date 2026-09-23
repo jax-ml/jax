@@ -6,7 +6,7 @@
 :mod:`jax.export` is a library for exporting and serializing JAX functions
 for persistent archival.
 
-See the :ref:`export` documentation.
+See the :ref:`jax-501-export` documentation.
 
 Classes
 -------
@@ -51,8 +51,8 @@ Constants
 
 .. data:: jax.export.minimum_supported_serialization_version
 
-   The minimum supported serialization version; see :ref:`export-calling-convention-version`.
+   The minimum supported serialization version; see :ref:`jax-501-export-calling-convention-version`.
 
 .. data:: jax.export.maximum_supported_serialization_version
 
-   The maximum supported serialization version; see :ref:`export-calling-convention-version`.
+   The maximum supported serialization version; see :ref:`jax-501-export-calling-convention-version`.
