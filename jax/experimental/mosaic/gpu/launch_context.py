@@ -1227,32 +1227,32 @@ class LaunchContext:
   ):
     """Initiates an async copy between GMEM and SMEM.
 
-    Exactly one of `src_ref` and `dst_ref` must be in GMEM and in SMEM, and the
-    SMEM reference must be contiguous. The GMEM window that is read or written
-    to is specified by the `gmem_slice`. The copy can change the order in which
-    the data appears in the window by applying a sequence of transforms to the
-    GMEM reference (as specified by `gmem_transform`).
+    Exactly one of ``src_ref`` and ``dst_ref`` must be in GMEM and in SMEM, and
+    the SMEM reference must be contiguous. The GMEM window that is read or
+    written to is specified by ``gmem_slice``. The copy can change the order in
+    which the data appears in the window by applying a sequence of transforms to
+    the GMEM reference (as specified by ``gmem_transform``).
 
-    When `collective` is specified (only allowed for GMEM -> SMEM copies), the
+    When ``collective`` is specified (only allowed for GMEM -> SMEM copies), the
     identical async_copy must be scheduled by all blocks that share the same
     coordinates along collective dimensions within a cluster. The behavior is
     undefined otherwise. The semantics of collective loads depend further on the
-    `leader_tracked` argument:
+    ``leader_tracked`` argument:
 
-    - If `leader_tracked` is not specified, all blocks load the same data into
+    - If ``leader_tracked`` is not specified, all blocks load the same data into
       their shared memory and all receive the update in their barriers, unless
-      `arrive` is False. If `arrive` is False, you should expect the barrier to
-      have expect_tx incremented by the same amount of bytes as if `collective`
-      was not specified.
-    - If `leader_tracked` is ``CopyPartition.PARTITIONED(axis)``, each block only loads a
-      separate slice of the data into SMEM, partitioned into equal tiles along
-      the given axis. Only the barrier of the first block in the collective
-      will have its expect_tx incremented by the total size of the transfer
-      across all blocks involved in the collective. Barriers supplied by other
-      blocks will be ignored (even if `arrive` is True).
-    - If `leader_tracked` is ``CopyPartition.REPLICATED``, all blocks load the same data
-      into their SMEM but only the first block in the collective tracks
-      progress via barrier arrivals. This uses the `cta_group::2` mode.
+      ``arrive`` is False. If ``arrive`` is False, you should expect the barrier
+      to have expect_tx incremented by the same amount of bytes as if
+      ``collective`` was not specified.
+    - If ``leader_tracked`` is ``CopyPartition.PARTITIONED(axis)``, each block
+      only loads a separate slice of the data into SMEM, partitioned into equal
+      tiles along the given axis. Only the barrier of the first block in the
+      collective will have its expect_tx incremented by the total size of the
+      transfer across all blocks involved in the collective. Barriers supplied
+      by other blocks will be ignored (even if ``arrive`` is True).
+    - If ``leader_tracked`` is ``CopyPartition.REPLICATED``, all blocks load the
+      same data into their SMEM but only the first block in the collective
+      tracks progress via barrier arrivals. This uses the ``cta_group::2`` mode.
     """
     index = ir.IndexType.get()
     i8 = ir.IntegerType.get_signless(8)
