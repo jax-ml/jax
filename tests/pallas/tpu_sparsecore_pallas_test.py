@@ -1326,26 +1326,22 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   @parameterized.product(
-      dtype=[jnp.int32], new_dtype=[jnp.int8, jnp.int16, jnp.float32]
+      dtype=[jnp.int32],
+      new_dtype=[jnp.int8, jnp.int16, jnp.float32],
+      needs_layout_passes=[False, True],
   )
-  def test_bitcast(self, dtype, new_dtype):
+  def test_bitcast(self, dtype, new_dtype, needs_layout_passes):
     self.skip_if_tc_tiling(
         "Fails due to incorrectly inferred tiling in tpu.memref_squeeze"
     )
     new_shape = (
         self.num_lanes * jnp.dtype(dtype).itemsize // jnp.dtype(new_dtype).itemsize,
     )
-    # TODO(b/562994815): Until bitwidth-changing plsc.bitcast is supported with
-    # layout passes, test_bitcast0/1 (i32 -> i8/i16 on 1D vectors) cannot move
-    # off needs_layout_passes=False.
-    changes_bitwidth = (
-        jnp.dtype(dtype).itemsize != jnp.dtype(new_dtype).itemsize
-    )
 
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(shape=new_shape, dtype=new_dtype),
         compiler_params=pltpu.CompilerParams(
-            needs_layout_passes=not changes_bitwidth
+            needs_layout_passes=needs_layout_passes
         ),
     )
     def kernel(x_ref, o_ref):
