@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import concurrent.futures
+import contextlib
 from functools import partial
 import unittest
 
@@ -1610,6 +1611,79 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     err_out, _ = checkify.checkify(outer)(err_inner, jnp.array(1.0))
     self.assertIsNotNone(err_out.get())
     self.assertStartsWith(err_out.get(), "post-while check")
+
+  def test_shard_map_with_preceding_check_and_mesh(self):
+    mesh = jax.make_mesh(
+        (2, 2),
+        ("a", "b"),
+        axis_types=(jax.sharding.AxisType.Auto, jax.sharding.AxisType.Auto),
+    )
+
+    def program(check_first: bool, manual: tuple[str, ...], context: bool):
+      spec = P(manual)
+
+      def f(x):
+        if check_first:
+          checkify.check(jnp.all(x > -1.0), "x must be above -1")
+        mapped = partial(
+            jax.shard_map, axis_names=set(manual), in_specs=spec, out_specs=spec
+        )
+        doubled = (
+            mapped
+            if context
+            else partial(mapped, mesh=mesh)
+        )(lambda y: y * 2.0)
+        return doubled(x)
+
+      return f
+
+    x = jnp.ones((8,), jnp.float32)
+    for context in (True, False):
+      for manual in (("b",), ("a", "b")):
+        with jax.set_mesh(mesh) if context else contextlib.nullcontext():
+          err, out = jax.jit(
+              checkify.checkify(program(True, manual, context))
+          )(x)
+          self.assertIsNone(err.get())
+          np.testing.assert_allclose(out, x * 2.0)
+
+  def test_shard_map_error_check_firing(self):
+    mesh = jax.make_mesh(
+        (2, 2),
+        ("a", "b"),
+        axis_types=(jax.sharding.AxisType.Auto, jax.sharding.AxisType.Auto),
+    )
+
+    def f(x):
+      checkify.check(jnp.all(x > 0.0), "x must be positive")
+      mapped = partial(
+          jax.shard_map,
+          mesh=mesh,
+          axis_names={"b"},
+          in_specs=P("b"),
+          out_specs=P("b"),
+      )
+
+      def g(y):
+        checkify.check(jnp.all(y < 10.0), "y must be below 10")
+        return y * 2.0
+
+      return mapped(g)(x)
+
+    # Test passing
+    err, out = jax.jit(checkify.checkify(f))(jnp.ones((8,), jnp.float32))
+    self.assertIsNone(err.get())
+    np.testing.assert_allclose(out, jnp.full((8,), 2.0, jnp.float32))
+
+    # Test failure before shard_map
+    err, _ = jax.jit(checkify.checkify(f))(-jnp.ones((8,), jnp.float32))
+    self.assertIsNotNone(err.get())
+    self.assertIn("x must be positive", err.get())
+
+    # Test failure inside shard_map
+    err, _ = jax.jit(checkify.checkify(f))(jnp.full((8,), 20.0, jnp.float32))
+    self.assertIsNotNone(err.get())
+    self.assertIn("y must be below 10", err.get())
 
 
 if __name__ == "__main__":
