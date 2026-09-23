@@ -402,6 +402,20 @@ def _traced_out_info(self):
       out.append(a)
   return tree_util.tree_unflatten(self.out_tree, out)
 
+# Cached on the jaxpr, which jit's tracing cache shares among Traceds of the same
+# function and argument types, so that those Traceds get the same `fun`, and
+# thus tracing cache hits when `fun` is traced (e.g. in `with_consts_as_arg`).
+@util.weakref_lru_cache
+def _closure_converted_fun(jaxpr, consts_tree, in_tree, out_tree):
+  jaxpr = jaxpr.replace(consts=None)
+  in_tree = tree_util.treedef_tuple_tracing_registry(
+      (consts_tree, *in_tree.children()))
+  def fun(consts, *args, **kwargs):
+    args_flat = tree_util.tree_leaves_checked(in_tree, (consts, args, kwargs))
+    out_flat = core.eval_jaxpr_p.bind(*args_flat, call_jaxpr=jaxpr)
+    return tree_unflatten(out_tree, out_flat)
+  return fun
+
 
 class Traced(Stage):
   """Traced form of a function specialized to argument types and values.
@@ -461,14 +475,8 @@ class Traced(Stage):
     if self._closure_converted is None:
       consts = [*self.jaxpr.consts, *self._consts]
       _, consts_tree = tree_util.tracing_registry.flatten(consts)
-      jaxpr = self.jaxpr.replace(consts=None)
-      in_tree = tree_util.treedef_tuple_tracing_registry(
-          (consts_tree, *self.in_tree.children()))
-      out_tree = self.out_tree
-      def fun(consts, *args, **kwargs):
-        args_flat = tree_util.tree_leaves_checked(in_tree, (consts, args, kwargs))
-        out_flat = core.eval_jaxpr_p.bind(*args_flat, call_jaxpr=jaxpr)
-        return tree_unflatten(out_tree, out_flat)
+      fun = _closure_converted_fun(self.jaxpr, consts_tree, self.in_tree,
+                                   self.out_tree)
       self._closure_converted = (consts, fun)
     return self._closure_converted
 

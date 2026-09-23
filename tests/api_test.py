@@ -4394,6 +4394,14 @@ class APITest(jtu.JaxTestCase):
     consts2, traced2 = traced.with_consts_as_arg()
     self.assertAllClose(traced2(consts2, jnp.float32(3.)), jnp.float32(18.))
 
+  def test_traced_with_consts_as_arg_cache_hit(self):
+    f = lambda y: y ** 2 * jnp.float32(2.)
+    _, traced1 = jit(f).trace(jnp.float32(3.)).with_consts_as_arg()
+    with jtu.count_jit_tracing_cache_miss() as count:
+      _, traced2 = jit(f).trace(jnp.float32(3.)).with_consts_as_arg()
+    self.assertEqual(count(), 0)
+    self.assertIs(traced1.jaxpr, traced2.jaxpr)
+
   def test_traced_effects(self):
     traced_pure = jit(lambda x: x * 2.0).trace(jnp.float32(3.0))
     self.assertEqual(traced_pure.effects, frozenset())

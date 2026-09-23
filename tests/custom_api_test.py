@@ -3064,6 +3064,24 @@ class CustomVJPTest(jtu.JaxTestCase):
     _ = jax.vjp(f_, 2., 3.)
     _ = jax.vjp(lambda x: f_(x, 3.), 2.)  # don't crash!
 
+  def test_no_retracing_per_call_site(self):
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x)
+    f.defvjp(lambda x: (f(x), jnp.cos(x)), lambda c, g: (c * g,))
+
+    def count_traces(num_calls):
+      def g(x):
+        for _ in range(num_calls):
+          x = f(x)
+        return x
+      with jtu.count_jit_tracing_cache_miss() as count:
+        jax.jit(jax.grad(g)).lower(1.)
+      return count()
+
+    count_traces(1)  # warm up
+    self.assertEqual(count_traces(2), count_traces(10))
+
   def test_run_rules_more_than_once(self):
     # https://github.com/jax-ml/jax/issues/16614
 
