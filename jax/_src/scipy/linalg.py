@@ -775,14 +775,14 @@ def _lu(a: ArrayLike, permute_l: bool) -> tuple[Array, Array] | tuple[Array, Arr
   lu, _, permutation = lax_linalg.lu(a)
   dtype = lax.dtype(a)
   m, n = np.shape(a)
-  p = jnp.real(jnp.array(permutation[None, :] == jnp.arange(m, dtype=permutation.dtype)[:, None], dtype=dtype))
+  p = jnp.array(permutation[None, :] == jnp.arange(m, dtype=permutation.dtype)[:, None], dtype=dtype)
   k = min(m, n)
   l = jnp.tril(lu, -1)[:, :k] + jnp.eye(m, k, dtype=dtype)
   u = jnp.triu(lu)[:k, :]
   if permute_l:
     return jnp.matmul(p, l, precision=lax.Precision.HIGHEST), u
   else:
-    return p, l, u
+    return jnp.real(p), l, u
 
 @overload
 def lu(a: ArrayLike, permute_l: Literal[False] = False, overwrite_a: bool = False,
@@ -866,7 +866,9 @@ def lu(a: ArrayLike, permute_l: bool = False, overwrite_a: bool = False,
     Array(True, dtype=bool)
   """
   del overwrite_a, check_finite  # unused
-  return _lu(a, permute_l)
+  signature = "(m,n)->(m,k),(k,n)" if permute_l else "(m,n)->(m,m),(m,k),(k,n)"
+  return jnp_vectorize.vectorize(
+      partial(_lu, permute_l=permute_l), signature=signature)(a)
 
 
 @overload
