@@ -1,7 +1,7 @@
 (jax-501-multiprocess)=
 # Introduction to multi-controller JAX (aka multi-process/multi-host JAX)
 
-<!--* freshness: { reviewed: '2025-04-09' } *-->
+<!--* freshness: { reviewed: '2026-09-22' } *-->
 
 By reading this tutorial, you'll learn how to scale JAX computations to more
 devices than can fit in a single host machine, e.g. when running on a GPU

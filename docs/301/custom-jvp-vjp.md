@@ -15,7 +15,7 @@ kernelspec:
 (jax-301-custom-jvp-vjp)=
 # Custom JVPs or VJPs with `custom_jvp` and `custom_vjp`
 
-<!--* freshness: { reviewed: '2025-12-10' } *-->
+<!--* freshness: { reviewed: '2026-09-22' } *-->
 
 There are two ways to define differentiation rules in JAX:
 

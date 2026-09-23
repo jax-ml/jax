@@ -1,7 +1,7 @@
 (jax-501-compilation-cache)=
 # Persistent compilation cache
 
-<!--* freshness: { reviewed: '2024-11-07' } *-->
+<!--* freshness: { reviewed: '2026-09-22' } *-->
 
 JAX has an optional disk cache for compiled programs. If enabled, JAX
 stores copies of compiled programs on disk, which can save recompilation time
@@ -194,9 +194,9 @@ compiled program:
 
 *  Compression algorithm used to compress the compiled executable
 
-*  A string produced by `jax._src.cache_key.custom_hook()`. This function can
-   be reassigned to a user-defined function, so that the resulting string can
-   be altered. By default, this function always returns an empty string.
+*  A string produced by `jax._src.cache_key.custom_hook()`, which returns an
+   empty string by default. This hook is private, not a supported extension
+   point, and may change without notice.
 
 ## Caching on multiple nodes
 

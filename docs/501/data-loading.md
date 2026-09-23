@@ -1,7 +1,7 @@
 (jax-501-data-loading)=
 # Distributed data loading
 
-<!--* freshness: { reviewed: '2024-05-16' } *-->
+<!--* freshness: { reviewed: '2026-09-22' } *-->
 
 This high-level guide demonstrates how you can perform distributed data loading — when you run JAX in a {doc}`multi-host or multi-process environment <./multiprocess>`, and the data required for the JAX computations is split across the multiple processes. This document covers the overall approach for how to think about distributed data loading, and then how to apply it to *data-parallel* (simpler) and *model-parallel* (more complicated) workloads.
 
@@ -389,3 +389,13 @@ To get the correct per-replica batch on each device, you need to represent the g
 ![Model parallelism across processes - example 3](../_static/distributed_data_loading/22.svg)
 
 </center>
+
+So each process must load the per-replica batches for exactly the replicas its
+devices belong to, and processes that share a replica must load the same
+batches. One way to arrange that is to key the input pipeline by model replica
+instead of by process: for example, shard the dataset by replica index, and have
+each process read the shards for its own replicas, in the same order. Then build
+the global array with {func}`jax.make_array_from_callback`. JAX calls your
+callback with the global index of each of the process's addressable shards, so
+the callback just returns the rows of the per-replica batch that the index
+selects.
