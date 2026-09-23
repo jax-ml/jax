@@ -161,16 +161,17 @@ common:posix --copt=-Wno-sign-compare
 common:posix --cxxopt=-std=c++17
 common:posix --host_cxxopt=-std=c++17
 
-common:avx_posix --copt=-mavx
-common:avx_posix --host_copt=-mavx
+common:avx_posix --copt=-march=haswell
+common:avx_posix --host_copt=-march=haswell
 
 common:native_arch_posix --copt=-march=native
 common:native_arch_posix --host_copt=-march=native
 
-common:avx_linux --copt=-mavx
-common:avx_linux --host_copt=-mavx
+common:avx_linux --copt=-march=haswell
+common:avx_linux --host_copt=-march=haswell
 
-common:avx_windows --copt=/arch:AVX
+common:avx_windows --copt=-march=haswell
+common:avx_windows --host_copt=-march=haswell
 
 common:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
 
