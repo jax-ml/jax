@@ -975,6 +975,12 @@ def _pallas_call_state_discharge_rule(
   ref_avals, rest_in_avals = split_list(ctx.in_avals, [num_refs])
   assert all(isinstance(ref_aval, state.AbstractRef) for ref_aval in ref_avals)
   ref_avals = cast(list[state.AbstractRef], ref_avals)
+  for ref_aval in ref_avals:
+    if not state_discharge.is_neutral_memory_space(ref_aval.memory_space):
+      raise NotImplementedError(
+          "pallas_call does not support closing over Refs in memory space "
+          f"{ref_aval.memory_space}. Use pl.kernel instead."
+      )
   ref_avals = [
       state.AbstractRef(
           ref_aval.inner_aval, pallas_core.MemorySpace.ANY

@@ -637,6 +637,22 @@ class CoreMapTest(jtu.JaxTestCase):
         jax_core.MemorySpace.Device,
     )
 
+  def test_pallas_call_raises_on_captured_ref_with_memory_space(self):
+    def kernel(x_ref):
+      x_ref[...] += 1.0
+
+    def f(x):
+      ref = jax.new_ref(x, memory_space=pltpu.VMEM)
+      pl.pallas_call(functools.partial(kernel, ref), out_shape=[])()
+      return ref[...]
+
+    x = jnp.empty((8, 128))
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "pallas_call does not support closing over Refs in memory space",
+    ):
+      discharge_state(jax.make_jaxpr(f)(x))
+
   def test_mpmd_map_with_memory_space_and_input_output_aliases(self):
     mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
 

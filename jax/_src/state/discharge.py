@@ -209,6 +209,9 @@ _neutral_memory_spaces: set[Any] = {
 def register_neutral_memory_space(ms):
   _neutral_memory_spaces.add(ms)
 
+def is_neutral_memory_space(ms) -> bool:
+  return ms in _neutral_memory_spaces
+
 def unconstrain(
     x, ms, strip: bool, *, neutral_ms: Sequence[Any] = ()
 ):
