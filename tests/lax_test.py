@@ -1981,7 +1981,7 @@ class LaxTest(jtu.JaxTestCase):
       lax.dynamic_slice_in_dim(x, jnp.array([2, 2]), 3)
 
   @unittest.skipIf(
-      jaxlib_extension_version < 497, "Requires jaxlib_extension_version >= 497"
+      jaxlib_extension_version < 498, "Requires jaxlib_extension_version >= 498"
   )
   def testNestedDynamicSliceOutOfBounds(self):
     # Regression test for https://github.com/jax-ml/jax/issues/40849
