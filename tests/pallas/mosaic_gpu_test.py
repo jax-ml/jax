@@ -5091,12 +5091,21 @@ class PallasCallWGTest(
       )
 
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
-  def test_dump_resources(self):
+  @parameterized.parameters(None, plgpu.TraceScope.WARP, plgpu.TraceScope.WARPGROUP)
+  def test_dump_resources(self, profile_trace_scope):
     # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.2.
     if not hasattr(mgpu.dialect.DumpOptions(), "resources"):
       self.skipTest("Test requires jaxlib with DumpOptions.resources")
 
     x = jax.ShapeDtypeStruct((64, 64), jnp.float32)
+
+    compiler_params = plgpu.CompilerParams()
+    if profile_trace_scope is not None:
+      compiler_params = plgpu.CompilerParams(
+        profile_space=128,
+        profile_dir="sponge",
+        profile_trace_scope=profile_trace_scope,
+      )
 
     @self.kernel(
         out_type=x,
@@ -5106,6 +5115,7 @@ class PallasCallWGTest(
             plgpu.TMEM((128, 32), jnp.float32),
             plgpu.TMEM((128, 1), jnp.float32),
         ],
+        compiler_params=compiler_params,
     )
     def kernel(x_gmem, o_gmem, *scratch_refs):
       del scratch_refs
@@ -5113,6 +5123,16 @@ class PallasCallWGTest(
 
     expected_smem_bytes = 64 * 64 * 4 + 32 * 32 * 4
     expected_tmem_cols = 40  # 32 + 1 = 33 padded to next multiple of 8
+
+    if profile_trace_scope is not None:
+      # For each range that we record, we need 2xi32 for each of the start and
+      # end of the range---i.e. 4xi32 in total per event.
+      profiler_smem_bytes = compiler_params.profile_space * 16
+      if profile_trace_scope == plgpu.TraceScope.WARP:
+        profiler_smem_bytes *= 4
+      align = 8
+      profiler_start = (expected_smem_bytes + align - 1) & ~(align - 1)
+      expected_smem_bytes = profiler_start + profiler_smem_bytes
 
     with (jtu.set_env(MOSAIC_GPU_DUMP_RESOURCES="1"),
           self.capture_stdout() as rs):
