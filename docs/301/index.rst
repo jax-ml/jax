@@ -34,7 +34,7 @@ memory/compute tradeoff of differentiation.
    differentiating with respect to refs.
 7. :doc:`remat` — gradient checkpointing with ``jax.checkpoint``: what
    autodiff saves versus recomputes, name-based policies, offloading, and
-   per-function control with ``custom_remat``.
+   per-function control with ``custom_vjp.defremat``.
 8. :doc:`hijax-types` — defining entirely new JAX types with hijax, with
    their own derivatives, batching, and sharding behavior.
 

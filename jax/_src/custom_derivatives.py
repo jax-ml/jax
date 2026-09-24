@@ -712,6 +712,42 @@ class custom_vjp[ReturnValue]:
                 optimize_remat=optimize_remat)
     self.with_logs = True
 
+  def defremat(self,
+               fwd: Callable[..., tuple[ReturnValue, Any]],
+               rem: Callable[..., tuple[ReturnValue, Any]],
+               bwd: Callable[..., tuple[Any, ...]],
+               ) -> None:
+    """Define custom rematerialization rules for this function.
+
+    The rules apply when this function is differentiated in reverse mode
+    under :func:`jax.remat`, where by default the ``fwd`` rule given to
+    :py:func:`~jax.custom_vjp.defvjp` is rematerialized according to the
+    ambient checkpoint policy. Outside of :func:`jax.remat`, unless a VJP is
+    also defined with ``defvjp``, the rules define the VJP too, by running
+    ``rem`` right after ``fwd`` on the forward pass. Requires the
+    ``jax_custom_vjp3`` and ``jax_remat3`` implementations.
+
+    Args:
+      fwd: forward-pass rule, with the same signature as the ``fwd`` rule of
+        :py:func:`~jax.custom_vjp.defvjp`: it takes the arguments of the
+        primal function, and returns the primal output paired with residuals
+        to save for the backward pass.
+      rem: rematerialization rule, of signature ``rem(res, *args) -> (out,
+        res2)``. On the backward pass it receives the residuals saved by
+        ``fwd`` and the arguments of the primal function, and recomputes the
+        primal output paired with the residuals ``res2`` for ``bwd``.
+      bwd: backward-pass rule, as in :py:func:`~jax.custom_vjp.defvjp`,
+        receiving ``res2`` as its residuals.
+
+    Returns:
+      None.
+    """
+    del fwd, rem, bwd
+    raise NotImplementedError(
+        "custom_vjp.defremat requires the jax_custom_vjp3 implementation, "
+        "enabled with jax.config.update('jax_custom_vjp3', True) before "
+        "applying the jax.custom_vjp decorator.")
+
   @partial(traceback_util.api_boundary,
            repro_api_name="jax.custom_vjp.__call__")
   def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:

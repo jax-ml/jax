@@ -19,8 +19,15 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * New features
   * Added {func}`jax.lax.polynomial` for polynomial evaluation. The polynomial
     primitive is faster and uses less memory when computing gradients.
+  * Added {func}`jax.custom_vjp.defremat`, which customizes how a
+    {func}`jax.custom_vjp` function is rematerialized when it's differentiated
+    under {func}`jax.remat`. It requires the `jax_custom_vjp3` and `jax_remat3`
+    implementations.
 
 * Breaking changes
+  * Removed `jax.custom_remat`. Use {func}`jax.custom_vjp.defremat` instead:
+    `custom_remat(f, f_fwd, f_rem, f_bwd)` becomes `f = jax.custom_vjp(f)`
+    followed by `f.defremat(f_fwd, f_rem, f_bwd)`.
   * On x86-64, JAX and `jaxlib` now require an Intel Haswell or newer CPU
     (roughly 2013 onwards, requiring AVX2 and FMA support). Older CPUs that
     only support AVX are no longer supported, though you can still build from
