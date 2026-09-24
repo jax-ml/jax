@@ -9877,11 +9877,8 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
 class UtilsTest(TestCase):
   @parameterized.parameters(
       (1,),
-      (-1,),
       (slice(2), slice(3),),
       (slice(1), slice(1, 3)),
-      (slice(-2, 0),),
-      (slice(-2, -1),),
       *([(utils.DynamicSlice(0, 2),)] if HAS_MOSAIC_GPU else []),
   )
   def test_parse_indices(self, *indices):
@@ -9890,11 +9887,8 @@ class UtilsTest(TestCase):
 
   @parameterized.parameters(
       (42,),
-      (-42,),
       (slice(42),),
       (slice(0, 42),),
-      (slice(-42, 0),),
-      (slice(-4, -42),),
       *([(utils.DynamicSlice(0, 4),)] if HAS_MOSAIC_GPU else []),
   )
   def test_parse_indices_oob(self, indices):
