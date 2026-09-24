@@ -41,8 +41,8 @@ from jax._src.pallas.mosaic.pipeline import BufferType as BufferType
 from jax._src.pallas.mosaic.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations as emit_pipeline_with_allocations
 from jax._src.pallas.mosaic.pipeline import PipelineStep as PipelineStep
-from jax._src.pallas.mosaic.primitives import annotate as annotate
 from jax._src.pallas.mosaic.prefetch import emit_pipeline_with_async_prefetch as emit_pipeline_with_async_prefetch
+from jax._src.pallas.mosaic.primitives import annotate as annotate
 from jax._src.pallas.mosaic.primitives import async_copy as async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy as async_remote_copy
 from jax._src.pallas.mosaic.primitives import bitcast as bitcast
@@ -60,6 +60,7 @@ from jax._src.pallas.mosaic.primitives import pack_elementwise as pack_elementwi
 from jax._src.pallas.mosaic.primitives import prng_random_bits as prng_random_bits
 from jax._src.pallas.mosaic.primitives import prng_seed as prng_seed
 from jax._src.pallas.mosaic.primitives import roll as roll
+from jax._src.pallas.mosaic.primitives import set_p_state as set_p_state
 from jax._src.pallas.mosaic.primitives import stochastic_round as stochastic_round
 from jax._src.pallas.mosaic.primitives import store as store
 from jax._src.pallas.mosaic.primitives import touch as touch

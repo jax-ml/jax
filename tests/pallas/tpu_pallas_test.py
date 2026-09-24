@@ -14,6 +14,7 @@
 
 """Test TPU-specific extensions to pallas_call."""
 
+import base64
 from collections.abc import Callable
 import contextlib
 import functools
@@ -6539,6 +6540,46 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       pl.pallas_call(
           kernel, out_shape=jax.ShapeDtypeStruct((8, 256), jnp.float32)
       )()
+
+
+class PallasTPUSetPStateTest(ptu.PallasTPUTest):
+
+  def test_set_p_state(self):
+    with self.assertRaisesRegex(TypeError, 'p_state must be an int'):
+      pltpu.set_p_state(jnp.int32(3))  # pytype: disable=wrong-arg-types
+    with self.assertRaisesRegex(TypeError, 'p_state must be an int'):
+      pltpu.set_p_state(True)
+
+    if self.INTERPRET:
+      self.skipTest('Compilation-only test')
+
+    def kernel(x_ref, y_ref):
+      pltpu.set_p_state(3)
+      y_ref[...] = x_ref[...]
+
+    @jax.jit
+    def run_kernel(x):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+      )(x)
+
+    if not jtu.is_device_tpu_at_least(7):
+      with self.assertRaisesRegex(
+          NotImplementedError, r'set_p_state is only supported on TPU v7\+'
+      ):
+        run_kernel.lower(jnp.zeros((8, 128), jnp.float32))
+      return
+
+    lowered = run_kernel.lower(jnp.zeros((8, 128), jnp.float32))
+    mlir_str = str(lowered.compiler_ir())
+    match = re.search(
+        r'body(?:\\22|\\\"|\"):\s*(?:\\22|\\\"|\")([A-Za-z0-9+/=]+)', mlir_str
+    )
+    self.assertIsNotNone(match)
+    self.assertIn(b'tpu.set_p_state', base64.b64decode(match.group(1)))
 
 
 @jtu.with_config(jax_pallas_auto_assign_collective_ids='yes')

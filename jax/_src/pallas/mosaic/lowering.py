@@ -5550,6 +5550,17 @@ def _delay_rule(ctx: LoweringRuleContext, nanos: ir.Value):
   return []
 
 
+@register_lowering_rule(
+    tpu_primitives.set_p_state_p, kernel_types=[*tpu_core.CoreType]
+)
+def _set_p_state_rule(ctx: LoweringRuleContext, *, p_state: int):
+  del ctx
+  if tpu_info.get_tpu_info().generation < 7:
+    raise NotImplementedError("set_p_state is only supported on TPU v7+")
+  tpu.set_p_state(p_state)
+  return []
+
+
 def _aval_to_log_format_spec(aval):
   if jnp.issubdtype(aval.dtype, jnp.floating):
     return "f"
