@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/gpu/triton_kernels.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -1217,33 +1218,41 @@ absl::Status TritonKernelCallFfi(
 
   JAX_ASSIGN_OR_RETURN(std::vector<void*> buffers, CombineBuffers(args, rets));
 
-  // Creates the KernelCall using GetOrCreateKernelCall so that results are
-  // cached.
-  auto create_kernel_call = [&]() -> absl::StatusOr<KernelCall> {
-    switch (instantiate_result->proto.call_case()) {
-      case jax_triton::TritonCustomCallStateProto::kKernelCall: {
+  KernelCall* kernel_call =
+      instantiate_result->cached_kernel_call.load(std::memory_order_acquire);
+
+  if (ABSL_PREDICT_FALSE(kernel_call == nullptr)) {
+    // Creates the KernelCall using GetOrCreateKernelCall so that results are
+    // cached.
+    auto create_kernel_call = [&]() -> absl::StatusOr<KernelCall> {
+      switch (instantiate_result->proto.call_case()) {
+        case jax_triton::TritonCustomCallStateProto::kKernelCall: {
           return KernelCall::FromProto(instantiate_result->proto.kernel_call());
+        }
+        case jax_triton::TritonCustomCallStateProto::
+            kAutotuningKernelCandidates: {
+          JAX_ASSIGN_OR_RETURN(
+              AutotunedKernelCall autotuned_call,
+              AutotunedKernelCall::FromProto(
+                  instantiate_result->proto.autotuning_kernel_candidates()));
+          // The returned KernelCall is fully compiled down to machine code, and
+          // thus ready to be executed.
+          return AutotunedKernelCall::Autotune(std::move(autotuned_call),
+                                               stream, buffers.data());
+        }
+        default:
+          return absl::InvalidArgumentError("Unknown kernel call type.");
       }
-      case jax_triton::TritonCustomCallStateProto::
-          kAutotuningKernelCandidates: {
-        JAX_ASSIGN_OR_RETURN(
-            AutotunedKernelCall autotuned_call,
-            AutotunedKernelCall::FromProto(
-                instantiate_result->proto.autotuning_kernel_candidates()));
-        // The returned KernelCall is fully compiled down to machine code, and
-        // thus ready to be executed.
-        return AutotunedKernelCall::Autotune(std::move(autotuned_call), stream,
-                                             buffers.data());
-      }
-      default:
-        return absl::InvalidArgumentError("Unknown kernel call type.");
-    }
-  };
-  // We only use opaque as a key for the kernel call cache.
-  JAX_ASSIGN_OR_RETURN(std::string_view opaque,
-                        attrs.get<std::string_view>("opaque"));
-  JAX_ASSIGN_OR_RETURN(KernelCall* kernel_call,
-                        GetOrCreateKernelCall(opaque, create_kernel_call));
+    };
+    // We only use opaque as a key for the kernel call cache.
+    JAX_ASSIGN_OR_RETURN(std::string_view opaque,
+                         attrs.get<std::string_view>("opaque"));
+    JAX_ASSIGN_OR_RETURN(kernel_call,
+                         GetOrCreateKernelCall(opaque, create_kernel_call));
+
+    instantiate_result->cached_kernel_call.store(kernel_call,
+                                                 std::memory_order_release);
+  }
 
   return kernel_call->Launch(stream, buffers.data());
 }
