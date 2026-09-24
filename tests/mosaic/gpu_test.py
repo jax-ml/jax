@@ -6179,6 +6179,12 @@ class FragmentedArrayTest(TestCase):
       with self.assertRaisesRegex(ValueError, "distribute over"):
         _ = part_add1.max(part_add2)
 
+      zero = utils.c(0, arr1.mlir_dtype)
+      zero_splat = mgpu.FragmentedArray.splat(
+          zero, shape=part_add1.shape, is_signed=True
+      )
+      _ = part_add1 + zero_splat
+
       one = utils.c(1, arr1.mlir_dtype)
       splat = mgpu.FragmentedArray.splat(
           one, shape=part_add1.shape, is_signed=True
@@ -6196,8 +6202,9 @@ class FragmentedArrayTest(TestCase):
       max_layout = arr1.layout.reduce((0,), local_only=True, op="max")
       part_max1 = arr1.reduce("max", axis=0, target_layout=max_layout)
       part_max2 = arr2.reduce("max", axis=0, target_layout=max_layout)
-      # Matching pointwise op "max" works:
+      # Matching pointwise op "max" works, including with a non-neutral splat:
       _ = part_max1.max(part_max2)
+      _ = part_max1.max(splat)
       # Non-matching op raises:
       with self.assertRaises(ValueError):
         _ = part_max1 + part_max2
@@ -6205,8 +6212,9 @@ class FragmentedArrayTest(TestCase):
       min_layout = arr1.layout.reduce((0,), local_only=True, op="min")
       part_min1 = arr1.reduce("min", axis=0, target_layout=min_layout)
       part_min2 = arr2.reduce("min", axis=0, target_layout=min_layout)
-      # Matching pointwise op "min" works:
+      # Matching pointwise op "min" works, including with a non-neutral splat:
       _ = part_min1.min(part_min2)
+      _ = part_min1.min(splat)
       with self.assertRaises(ValueError):
         _ = part_min1 + part_min2
 
@@ -6215,6 +6223,7 @@ class FragmentedArrayTest(TestCase):
       part_prod2 = arr2.reduce("prod", axis=0, target_layout=prod_layout)
       # Matching pointwise op "prod" works:
       _ = part_prod1 * part_prod2
+      _ = part_prod1 * splat
       with self.assertRaises(ValueError):
         _ = part_prod1 + part_prod2
 
@@ -6252,6 +6261,48 @@ class FragmentedArrayTest(TestCase):
         out_shape=(),
         smem_scratch_shape=(),
     )
+
+  @parameterized.product(
+      op=("add", "prod", "max", "min"),
+      dtype=(jnp.float32, jnp.float16, jnp.int32, jnp.int16, jnp.uint32),
+  )
+  def test_splat_unreduced_layout(self, op, dtype):
+    out_shape = (32,)
+    is_float = jnp.issubdtype(dtype, jnp.floating)
+    match op:
+      case "add":
+        neutral = 0.0 if is_float else 0
+      case "prod":
+        neutral = 1.0 if is_float else 1
+      case "max":
+        neutral = float("-inf") if is_float else int(jnp.iinfo(dtype).min)
+      case "min":
+        neutral = float("inf") if is_float else int(jnp.iinfo(dtype).max)
+
+    def kernel(ctx, dst, scratch):
+      del ctx
+      layout = mgpu.WGMMA_LAYOUT
+      unreduced_layout = layout.reduce((0,), local_only=True, op=op)
+      acc = mgpu.FragmentedArray.splat(
+          utils.c(neutral, utils.dtype_to_ir_type(dtype)),
+          shape=out_shape,
+          layout=unreduced_layout,
+          is_signed=utils.is_signed(dtype),
+      )
+      self.assertTrue(acc.is_unreduced)
+      acc = acc.reduce(op, (), scratch)
+      acc.store_untiled(dst, optimized=False)
+
+    kernel = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        (),
+        jax.ShapeDtypeStruct(out_shape, dtype),
+        smem_scratch_shape=jax.ShapeDtypeStruct((256,), dtype),
+    )
+    expected = np.full(out_shape, neutral, dtype=dtype)
+    np.testing.assert_array_equal(kernel(), expected)
 
   @parameterized.product(
       vec_size=(4, 3, 1),

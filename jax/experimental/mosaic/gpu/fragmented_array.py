@@ -1113,6 +1113,27 @@ def _int_pow(x: ir.Value, n: int) -> ir.Value:
   return result
 
 
+def _can_splat_unreduced(value: ir.Value, op: str) -> bool:
+  # Each unreduced thread holds a partial result, so splatting `value`
+  # across them would contribute it once per thread when the reduction is
+  # completed, unless `op` is idempotent (`min`, `max`) or `value` is the
+  # neutral element of the unreduced operation.
+  if op in ("min", "max"):
+    return True
+  if not isinstance(value, ir.OpResult):
+    return False
+  const = value.owner.opview
+  if not isinstance(const, arith.ConstantOp):
+    return False
+  if isinstance(value.type, (ir.FloatType, ir.IntegerType)):
+    match op:
+      case "add":
+        return const.literal_value == 0
+      case "prod":
+        return const.literal_value == 1
+  return False
+
+
 @jax.tree_util.register_pytree_node_class
 @dataclasses.dataclass(init=False, frozen=True, slots=True)
 class FragmentedArray:
@@ -1237,12 +1258,11 @@ class FragmentedArray:
   ) -> FragmentedArray:
     layout = layout or WGSplatFragLayout(shape)
     if isinstance(layout, TiledLayout) and layout.has_unreduced_dims:
-      # Each unreduced thread holds a partial result, so splatting `value`
-      # across them would contribute it once per thread when the reduction is
-      # completed.
-      # TODO(allanrenucci): Allow this when `value` is the neutral element of
-      # the unreduced operation.
-      raise ValueError("Cannot splat a value into a layout with unreduced dims")
+      assert layout.unreduced_operation is not None
+      if not _can_splat_unreduced(value, layout.unreduced_operation):
+        raise ValueError(
+            "Cannot splat a non-neutral value into a layout with unreduced dims"
+        )
     match layout:
       case WGSplatFragLayout():
         pass
