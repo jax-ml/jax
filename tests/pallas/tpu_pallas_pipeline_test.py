@@ -944,7 +944,7 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
 
   @parameterized.product(
       in_buffer_count=[2, 4],
-      out_buffer_count=[2],
+      out_buffer_count=[2, 3, 4],
   )
   def test_copy(self, in_buffer_count, out_buffer_count):
     x = jnp.reshape(jnp.arange(512 * 512), (512, 512))
@@ -972,10 +972,50 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
     result = fn(x)
     np.testing.assert_allclose(result, x)
 
+  def test_mixed_output_buffer_counts(self) -> None:
+    x = jnp.reshape(jnp.arange(512 * 512, dtype=jnp.float32), (512, 512))
+
+    @pl.kernel(
+        out_type=(jax.ShapeDtypeStruct.like(x), jax.ShapeDtypeStruct.like(x)),
+        mesh=pltpu.TensorCoreMesh(axis_name='core'),
+    )
+    def copy_kernel(x_hbm_ref, o1_hbm_ref, o2_hbm_ref):
+      def inner_kernel(x_ref, o1_ref, o2_ref):
+        o1_ref[...] = x_ref[...] + 1.0
+        o2_ref[...] = x_ref[...] + 2.0
+
+      pltpu.emit_pipeline(
+          inner_kernel,
+          grid=(4, 4),
+          in_specs=[
+              pl.BlockSpec(
+                  (128, 128),
+                  lambda i, j: (i, j),
+                  pipeline_mode=pl.Buffered(buffer_count=2),
+              ),
+          ],
+          out_specs=[
+              pl.BlockSpec(
+                  (128, 128),
+                  lambda i, j: (i, j),
+                  pipeline_mode=pl.Buffered(buffer_count=2),
+              ),
+              pl.BlockSpec(
+                  (128, 128),
+                  lambda i, j: (i, j),
+                  pipeline_mode=pl.Buffered(buffer_count=4),
+              ),
+          ],
+      )(x_hbm_ref, o1_hbm_ref, o2_hbm_ref)
+
+    res1, res2 = copy_kernel(x)
+    np.testing.assert_allclose(res1, x + 1.0)
+    np.testing.assert_allclose(res2, x + 2.0)
+
   @parameterized.product(
       x_buffer_count=[2, 4],
       y_buffer_count=[2, 4],
-      out_buffer_count=[2],
+      out_buffer_count=[2, 4],
   )
   def test_matmul(self, x_buffer_count, y_buffer_count, out_buffer_count):
     block_shape = (128, 128)
@@ -1027,7 +1067,7 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
   @parameterized.product(
       x_buffer_count=[2, 4],
       y_buffer_count=[2, 4],
-      out_buffer_count=[2],
+      out_buffer_count=[2, 4],
   )
   def test_matmul_megacore(self, x_buffer_count, y_buffer_count,
                            out_buffer_count):
@@ -1193,18 +1233,24 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
     expected = jnp.concatenate(expected, axis=0)
     np.testing.assert_allclose(result, expected)
 
-  def test_matmul_with_input_output(self):
+  @parameterized.parameters(2, 3)
+  def test_matmul_with_input_output(self, o_buffer_count: int) -> None:
     M, N, K = 512, 512, 512
     blk_m, blk_n, blk_k = 128, 128, 128
     nm, nn, nk = M // blk_m, N // blk_n, K // blk_k
     inner_allocs = [
         pltpu.BufferedRef.input(
-            pl.BlockSpec((blk_m, blk_k), lambda n, m, k: (m, k)), jnp.float32),
+            pl.BlockSpec((blk_m, blk_k), lambda n, m, k: (m, k)), jnp.float32
+        ),
         pltpu.BufferedRef.input(
-            pl.BlockSpec((blk_k, blk_n), lambda n, m, k: (k, n)), jnp.float32),
+            pl.BlockSpec((blk_k, blk_n), lambda n, m, k: (k, n)), jnp.float32
+        ),
         pltpu.BufferedRef.input_output(
-            pl.BlockSpec((blk_m, blk_n), lambda n, m, k: (m, n)), jnp.float32),
-        ]
+            pl.BlockSpec((blk_m, blk_n), lambda n, m, k: (m, n)),
+            jnp.float32,
+            buffer_count=o_buffer_count,
+        ),
+    ]
 
     def matmul_kernel(x_hbm, y_hbm, o_hbm, x_bref, y_bref, o_bref):
       def inner_kernel(x_ref, y_ref, o_ref):
@@ -1217,8 +1263,10 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
           inner_kernel,
           grid=(nm, nn, nk),
       )(
-        x_hbm, y_hbm, o_hbm,
-        allocations=[x_bref, y_bref, o_bref]
+          x_hbm,
+          y_hbm,
+          o_hbm,
+          allocations=[x_bref, y_bref, o_bref],
       )
 
     x = jax.random.uniform(jax.random.key(0), (M, K), jnp.float32)
@@ -1235,6 +1283,324 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
     )
     result = fn(x, y)
     np.testing.assert_allclose(result, x @ y, atol=5e-5)
+
+  def test_input_output_pipeline_pipelined_inplace(self) -> None:
+    M, N = 512, 512
+    blk_m, blk_n = 128, 128
+    nm, nn = M // blk_m, N // blk_n
+    x = jnp.arange(M * N, dtype=jnp.float32).reshape(M, N)
+
+    inner_allocs = [
+        pltpu.BufferedRef.input_output(
+            pl.BlockSpec((blk_m, blk_n), lambda i, j: (i, j)),
+            jnp.float32,
+            buffer_count=3,
+            prefetch_steps=1,
+            drain_steps=1,
+        ),
+    ]
+
+    def inplace_kernel(x_hbm, x_bref):
+      def inner_kernel(x_ref):
+        x_ref[...] = x_ref[...] + 10.0
+
+      pltpu.emit_pipeline(
+          inner_kernel,
+          grid=(nm, nn),
+      )(
+          x_hbm,
+          allocations=[x_bref],
+      )
+
+    fn = pl.pallas_call(
+        inplace_kernel,
+        out_shape=jax.ShapeDtypeStruct((M, N), jnp.float32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pl.ANY),
+        ],
+        input_output_aliases={0: 0},
+        scratch_shapes=inner_allocs,
+    )
+    result = fn(x)
+    np.testing.assert_allclose(result, x + 10.0)
+
+  def _run_reduction_pipeline(
+      self,
+      x: jax.Array,
+      w: jax.Array,
+      *,
+      b_block_size: int,
+      h_block_size: int,
+      v_block_size: int,
+      buffer_count: int = 3,
+      prefetch_steps: int | None = None,
+      drain_steps: int | None = None,
+  ) -> jax.Array:
+    """Computes sum_b (x[b]^T @ w[b]) using emit_pipeline with BufferedRef.input_output."""
+    b_dim, h_dim = x.shape
+    _, v_dim = w.shape
+
+    num_b_blocks = (b_dim + b_block_size - 1) // b_block_size
+    num_h_blocks = (h_dim + h_block_size - 1) // h_block_size
+    num_v_blocks = (v_dim + v_block_size - 1) // v_block_size
+
+    out_type = jax.ShapeDtypeStruct((h_dim, v_dim), dtype=jnp.float32)
+
+    def kernel_entry(
+        x_hbm_ref: jax.Array,
+        w_hbm_ref: jax.Array,
+        out_hbm_ref: jax.Array,
+    ) -> None:
+      grid = (num_b_blocks, num_v_blocks, num_h_blocks)
+
+      get_b_ds = lambda i: pl.ds(
+          i * b_block_size, jnp.minimum(b_block_size, b_dim - i * b_block_size)
+      )
+      get_h_ds = lambda k: pl.ds(
+          k * h_block_size, jnp.minimum(h_block_size, h_dim - k * h_block_size)
+      )
+      get_v_ds = lambda j: pl.ds(
+          j * v_block_size, jnp.minimum(v_block_size, v_dim - j * v_block_size)
+      )
+
+      in_specs = [
+          pl.BlockSpec(
+              (pl.BoundedSlice(b_block_size), pl.BoundedSlice(h_block_size)),
+              lambda i, j, k: (get_b_ds(i), get_h_ds(k)),
+              memory_space=pltpu.VMEM,
+          ),
+          pl.BlockSpec(
+              (pl.BoundedSlice(b_block_size), pl.BoundedSlice(v_block_size)),
+              lambda i, j, k: (get_b_ds(i), get_v_ds(j)),
+              memory_space=pltpu.VMEM,
+          ),
+      ]
+      out_specs = [
+          pl.BlockSpec(
+              (pl.BoundedSlice(h_block_size), pl.BoundedSlice(v_block_size)),
+              lambda i, j, k: (get_h_ds(k), get_v_ds(j)),
+              memory_space=pltpu.VMEM,
+          ),
+      ]
+
+      out_alloc = pltpu.BufferedRef.input_output(
+          out_specs[0],
+          jnp.float32,
+          buffer_count=buffer_count,
+          prefetch_steps=prefetch_steps,
+          drain_steps=drain_steps,
+      )
+
+      inner_allocs = [
+          pltpu.BufferedRef.input(in_specs[0], x.dtype),
+          pltpu.BufferedRef.input(in_specs[1], w.dtype),
+          out_alloc,
+      ]
+
+      def pipeline_body(
+          x_ref: jax.Array,
+          w_ref: jax.Array,
+          out_ref: jax.Array,
+      ) -> None:
+        b_index = pl.program_id(0)
+        v_index = pl.program_id(1)
+        h_index = pl.program_id(2)
+
+        # Mask out-of-bounds padding rows/cols in VMEM before dot product
+        x_val = x_ref[...]
+        if b_dim % b_block_size != 0:
+          row_idx = jax.lax.broadcasted_iota(
+              jnp.int32, (b_block_size, 1), dimension=0
+          )
+          x_val = jnp.where(
+              (b_index == num_b_blocks - 1)
+              & (row_idx >= (b_dim % b_block_size)),
+              0.0,
+              x_val,
+          )
+        if h_dim % h_block_size != 0:
+          col_idx = jax.lax.broadcasted_iota(
+              jnp.int32, (1, h_block_size), dimension=1
+          )
+          x_val = jnp.where(
+              (h_index == num_h_blocks - 1)
+              & (col_idx >= (h_dim % h_block_size)),
+              0.0,
+              x_val,
+          )
+
+        w_val = w_ref[...]
+        if b_dim % b_block_size != 0:
+          row_idx = jax.lax.broadcasted_iota(
+              jnp.int32, (b_block_size, 1), dimension=0
+          )
+          w_val = jnp.where(
+              (b_index == num_b_blocks - 1)
+              & (row_idx >= (b_dim % b_block_size)),
+              0.0,
+              w_val,
+          )
+        if v_dim % v_block_size != 0:
+          col_idx = jax.lax.broadcasted_iota(
+              jnp.int32, (1, v_block_size), dimension=1
+          )
+          w_val = jnp.where(
+              (v_index == num_v_blocks - 1)
+              & (col_idx >= (v_dim % v_block_size)),
+              0.0,
+              w_val,
+          )
+
+        contrib = jax.lax.dot_general(
+            x_val,
+            w_val,
+            dimension_numbers=(((0,), (0,)), ((), ())),
+            preferred_element_type=jnp.float32,
+        )
+
+        @pl.when(b_index == 0)
+        def _init() -> None:
+          out_ref[...] = contrib
+
+        @pl.when(b_index > 0)
+        def _accum() -> None:
+          out_ref[...] += contrib
+
+      def run_pipeline(allocations: list[pltpu.BufferedRef]) -> None:
+        pltpu.emit_pipeline(
+            pipeline_body,
+            grid=grid,
+            in_specs=in_specs,
+            out_specs=out_specs,
+        )(
+            x_hbm_ref,
+            w_hbm_ref,
+            out_hbm_ref,
+            allocations=allocations,
+        )
+
+      pl.run_scoped(run_pipeline, inner_allocs)
+
+    return pl.pallas_call(
+        kernel_entry,
+        out_shape=out_type,
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.HBM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )(x, w)
+
+  def test_input_output_reduction_triple_buffered(self) -> None:
+    """Verifies that triple buffering (buffer_count=3) eliminates the WAR hazard and passes."""
+    b_dim, h_dim, v_dim = 5136, 1288, 2664
+    b_block_size, h_block_size, v_block_size = 1024, 512, 512
+
+    k1, k2 = jax.random.split(jax.random.key(42))
+    x = jax.random.normal(k1, (b_dim, h_dim), dtype=jnp.float32)
+    w = jax.random.normal(k2, (b_dim, v_dim), dtype=jnp.float32)
+
+    # Reference outer product reduction across batch dimension:
+    # (H, B) @ (B, V) -> (H, V)
+    expected = jnp.dot(x.T, w, preferred_element_type=jnp.float32)
+
+    actual = self._run_reduction_pipeline(
+        x,
+        w,
+        b_block_size=b_block_size,
+        h_block_size=h_block_size,
+        v_block_size=v_block_size,
+        buffer_count=3,
+    )
+    np.testing.assert_allclose(actual, expected, atol=1e-2, rtol=1e-2)
+
+  def test_input_output_reduction_double_buffered(self) -> None:
+    """Verifies that double buffering (buffer_count=2) defaults to synchronous drain_steps=0, avoiding the WAR hazard."""
+    b_dim, h_dim, v_dim = 5136, 1288, 2664
+    b_block_size, h_block_size, v_block_size = 1024, 512, 512
+
+    k1, k2 = jax.random.split(jax.random.key(42))
+    x = jax.random.normal(k1, (b_dim, h_dim), dtype=jnp.float32)
+    w = jax.random.normal(k2, (b_dim, v_dim), dtype=jnp.float32)
+
+    expected = jnp.dot(x.T, w, preferred_element_type=jnp.float32)
+
+    actual = self._run_reduction_pipeline(
+        x,
+        w,
+        b_block_size=b_block_size,
+        h_block_size=h_block_size,
+        v_block_size=v_block_size,
+        buffer_count=2,
+    )
+    np.testing.assert_allclose(actual, expected, atol=1e-2, rtol=1e-2)
+
+  def test_input_output_reduction_single_buffered_fallback(self) -> None:
+    """Verifies that single buffering (buffer_count=1) passes via synchronous DMAs."""
+    b_dim, h_dim, v_dim = 5136, 1288, 2664
+    b_block_size, h_block_size, v_block_size = 1024, 512, 512
+
+    k1, k2 = jax.random.split(jax.random.key(42))
+    x = jax.random.normal(k1, (b_dim, h_dim), dtype=jnp.float32)
+    w = jax.random.normal(k2, (b_dim, v_dim), dtype=jnp.float32)
+
+    expected = jnp.dot(x.T, w, preferred_element_type=jnp.float32)
+
+    actual = self._run_reduction_pipeline(
+        x,
+        w,
+        b_block_size=b_block_size,
+        h_block_size=h_block_size,
+        v_block_size=v_block_size,
+        buffer_count=1,
+    )
+    np.testing.assert_allclose(actual, expected, atol=1e-2, rtol=1e-2)
+
+  def test_buffered_ref_schedule_depth_validation(self) -> None:
+    spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    # Valid: 1 + 1 + 1 <= 3
+    bref = pltpu.BufferedRef.input_output(
+        spec, jnp.float32, buffer_count=3, prefetch_steps=1, drain_steps=1
+    )
+    self.assertEqual(bref.prefetch_steps, 1)
+    self.assertEqual(bref.drain_steps, 1)
+    self.assertEqual(bref.buffer_count, 3)
+
+    # Invalid: 2 + 1 + 1 > 3
+    with self.assertRaisesRegex(
+        ValueError,
+        r'prefetch_steps \(2\) \+ 1 \+ drain_steps \(1\) cannot exceed'
+        r' buffer_count \(3\)',
+    ):
+      pltpu.BufferedRef.input_output(
+          spec, jnp.float32, buffer_count=3, prefetch_steps=2, drain_steps=1
+      )
+
+    # Invalid: 1 + 1 + 1 > 2
+    with self.assertRaisesRegex(
+        ValueError,
+        r'buffer_count \(2\) is too small for prefetch_steps=1 and'
+        r' drain_steps=1',
+    ):
+      pltpu.BufferedRef.input_output(
+          spec, jnp.float32, buffer_count=2, prefetch_steps=1, drain_steps=1
+      )
+
+    # Invalid: prefetch_steps < 0
+    with self.assertRaisesRegex(
+        ValueError, r'prefetch_steps must be non-negative'
+    ):
+      pltpu.BufferedRef.input(
+          spec, jnp.float32, buffer_count=2, prefetch_steps=-1
+      )
+
+    # Invalid: drain_steps < 0
+    with self.assertRaisesRegex(
+        ValueError, r'drain_steps must be non-negative'
+    ):
+      pltpu.BufferedRef.output(
+          spec, jnp.float32, buffer_count=2, drain_steps=-1
+      )
 
   def test_single_buffered_output(self):
     def body(o_ref):

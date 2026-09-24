@@ -233,6 +233,8 @@ class Buffered:
   use_lookahead: bool = False
   revisit: RevisitMode | None = None
   prefetched_count: int = 0
+  prefetch_steps: int | None = None
+  drain_steps: int | None = None
 
 
 @dataclasses.dataclass(frozen=True)
