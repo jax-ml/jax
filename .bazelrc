@@ -27,13 +27,6 @@ common --incompatible_enable_cc_toolchain_resolution
 common --incompatible_default_to_explicit_init_py
 common --repo_env USE_HERMETIC_CC_TOOLCHAIN=1
 
-# Needed for CUDA builds until @cuda_cudart//:headers declares "include/crt/**"
-# in @rules_ml_toolchain; otherwise enabling external_include_paths (-isystem)
-# resolves crt/host_defines.h and crt/host_config.h from @cuda_cudart where they
-# are undeclared.
-common --features=-external_include_paths
-common --host_features=-external_include_paths
-
 # Increase the timeout scaling factor
 common --http_timeout_scaling=3
 
