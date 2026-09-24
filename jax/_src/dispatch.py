@@ -581,7 +581,8 @@ def _device_put_impl(
   if isinstance(device, Format):
     l = device
     dll = l.layout
-    x_dll = x.format.layout if hasattr(x, 'format') else None
+    x_fmt = getattr(x, 'format', None)
+    x_dll = x_fmt.layout if isinstance(x_fmt, Format) else None
     if dll is None and l.sharding is None:
       return _device_put_sharding_impl(x, aval, l.sharding, copy)
     if (not isinstance(l.sharding, Sharding) or
@@ -589,7 +590,7 @@ def _device_put_impl(
       raise ValueError(
           "sharding and layout in `Layout` instance should be"
           f" concrete. Got layout: {l} for input {aval.str_short()}")
-    if (getattr(x, 'format', None) == l and getattr(x, '_committed', False) and
+    if (x_fmt == l and getattr(x, '_committed', False) and
         copy == ArrayCopySemantics.REUSE_INPUT):
       return x
     if x_dll is None and dll is None:

@@ -14,6 +14,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Final
+
 import numpy as np
 
 from jax._src import config
@@ -47,7 +50,11 @@ if dtypes.int1 is not None:
 
 core.literalable_scalar_types.update(numpy_scalar_types)
 
-array_types: set[type] = {literals.TypedNdArray, np.ndarray} | numpy_scalar_types
+array_types: set[type] = {
+    literals.TypedNdArray,
+    np.ndarray,
+    memoryview,
+} | numpy_scalar_types
 
 
 def masked_array_error(*args, **kwargs):
@@ -65,6 +72,27 @@ def _make_shaped_array_for_numpy_array(x: np.ndarray) -> ShapedArray:
 
 core.pytype_aval_mappings[np.ndarray] = _make_shaped_array_for_numpy_array
 core.pytype_aval_mappings[literals.TypedNdArray] = lambda x: x.aval
+
+
+_MEMORYVIEW_FORMAT_DTYPES: Final[Mapping[str, np.dtype]] = {
+    "n": np.dtype(np.intp),
+    "N": np.dtype(np.uintp),
+    "Zf": np.dtype(np.complex64),
+    "Zd": np.dtype(np.complex128),
+    "E": np.dtype(dtypes.bfloat16),
+    "bfloat16": np.dtype(dtypes.bfloat16),
+    "bf16": np.dtype(dtypes.bfloat16),
+}
+
+
+def _make_shaped_array_for_memoryview(x: memoryview) -> ShapedArray:
+  fmt = (x.format or "B").lstrip("@=<!>")
+  dtype = _MEMORYVIEW_FORMAT_DTYPES.get(fmt) or np.dtype(fmt)
+  dtypes.check_valid_dtype(dtype)
+  return ShapedArray(x.shape, dtypes.canonicalize_dtype(dtype), sharding=None)
+
+
+core.pytype_aval_mappings[memoryview] = _make_shaped_array_for_memoryview
 
 
 def _make_shaped_array_for_numpy_scalar(x: np.generic) -> ShapedArray:
