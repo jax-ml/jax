@@ -1993,6 +1993,8 @@ class LaxTest(jtu.JaxTestCase):
       jaxlib_extension_version < 498, "Requires jaxlib_extension_version >= 498"
   )
   def testNestedDynamicSliceOutOfBounds(self):
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Test requires libtpu >= 0.0.50')
     # Regression test for https://github.com/jax-ml/jax/issues/40849
     buf = jnp.arange(10, dtype=np.int32)
 
