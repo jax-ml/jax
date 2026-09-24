@@ -203,6 +203,7 @@ def _mpmd_map_discharge_rule(
     jaxprs,
     meshes,
     input_output_aliases,
+    out_avals,
     debug,
     interpret,
     compiler_params,
@@ -243,7 +244,7 @@ def _mpmd_map_discharge_rule(
 
   write_indices = sorted(write_indices)
   num_in = len(ctx.in_avals)
-  num_out_orig = len(ctx.out_avals)
+  num_out_orig = len(out_avals)
   num_out_new = len(write_indices)
 
   new_jaxprs = []
@@ -293,7 +294,7 @@ def _mpmd_map_discharge_rule(
       )
       for i in write_indices
   ]
-  updated_out_avals = list(ctx.out_avals) + new_out_avals
+  updated_out_avals = list(out_avals) + new_out_avals
 
   new_aliases = dict(input_output_aliases)
   for out_idx, in_idx in enumerate(write_indices):
