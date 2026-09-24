@@ -748,6 +748,18 @@ class custom_vjp[ReturnValue]:
         "enabled with jax.config.update('jax_custom_vjp3', True) before "
         "applying the jax.custom_vjp decorator.")
 
+  def defremat_with_logs(self,
+                         fwd: Callable[..., tuple[ReturnValue, Any]],
+                         rem: Callable[..., tuple[ReturnValue, Any]],
+                         bwd: Callable[..., tuple[tuple[Any, ...], dict | None]],
+                         ) -> None:
+    """Like :py:func:`~jax.custom_vjp.defremat`, but ``bwd`` can also log.
+
+    As with :py:func:`~jax.custom_vjp.defvjp_with_logs`, ``bwd`` must return a
+    pair ``(in_cts, logs)``.
+    """
+    self.defremat(fwd, rem, bwd)
+
   @partial(traceback_util.api_boundary,
            repro_api_name="jax.custom_vjp.__call__")
   def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
@@ -1257,9 +1269,8 @@ def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False):
       under :func:`jax.remat`, ``rem`` runs on the backward pass, and the
       values it closes over are saved from the forward pass (so it should use
       its own arguments rather than closing over those of ``fun``); otherwise,
-      it runs right after ``fun`` on the forward pass. Can't be combined with
-      ``with_logs``. Requires the ``jax_custom_vjp3`` and ``jax_remat3``
-      implementations.
+      it runs right after ``fun`` on the forward pass. Requires the
+      ``jax_custom_vjp3`` and ``jax_remat3`` implementations.
 
   Returns:
     A Python callable that accepts the same arguments as ``fun`` and returns the
@@ -1316,9 +1327,6 @@ def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False):
   """
   if fun is None:
     return lambda f: custom_gradient(f, with_logs=with_logs, remat=remat)
-  if with_logs and remat:
-    raise NotImplementedError(
-        "custom_gradient doesn't support with_logs=True and remat=True together")
 
   def wrapped_fun(*args, **kwargs):
     ans, _ = fun(*args, **kwargs)
@@ -1356,9 +1364,12 @@ def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False):
       @wraps(rem)
       def rem_(*args):
         ans, rule = rem(*args)
+        if with_logs:
+          rule = _custom_gradient_logs_rule(rule)
         return ans, _closure_residuals("custom_gradient fwd", rule, (ans,), ct=True)
       return ans, _closure_residuals("custom_gradient rem", rem_, args, ct=False)
-    wrapped_fun.defremat(remat_fwd, _apply_closure_residuals, bwd)
+    defremat = wrapped_fun.defremat_with_logs if with_logs else wrapped_fun.defremat
+    defremat(remat_fwd, _apply_closure_residuals, bwd)
   elif with_logs:
     wrapped_fun.defvjp_with_logs(fwd, bwd)
   else:

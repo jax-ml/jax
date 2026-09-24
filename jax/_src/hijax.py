@@ -796,7 +796,7 @@ class CustomVJPTraced(HiPrim):
   static_argnums: Any
   opt_remat: bool
   with_logs: bool
-  remat_rules: Any  # None, or the (fwd, rem, bwd) triple passed to defremat
+  remat_rules: Any  # None, or (fwd, rem, bwd, with_logs) from defremat
 
   @staticmethod
   def drop_fwd_consts(consts, fwd_consts, *args):
@@ -849,10 +849,10 @@ class CustomVJPTraced(HiPrim):
     if self.remat_rules is not None:
       # remat rules take the primal args without the consts and fwd_consts, and
       # the rem rule takes residuals before them
-      rfwd, rrem, rbwd = self.remat_rules
+      rfwd, rrem, rbwd, rlogs = self.remat_rules
       new_remat_rules = (physicalize_fwd(rfwd, which_static[2:]),
                          physicalize_fwd(rrem, [False, *which_static[2:]]),
-                         physicalize_bwd(rbwd))
+                         physicalize_bwd(rbwd), rlogs)
     return CustomVJPTraced(
         new_traced,
         physicalize_fwd(self.fwd, which_static),
@@ -987,10 +987,9 @@ class CustomVJPTraced(HiPrim):
     # On the rem side we apply a helper custom_vjp with the same primal, whose
     # fwd rule computes the residuals for bwd from the values `res` saved here.
     if self.remat_rules:
-      rfwd, rrem, bwd = self.remat_rules
+      rfwd, rrem, bwd, with_logs = self.remat_rules
       out, res = rfwd(*[x.val if isinstance(x, Static) else x for x in args[2:]])
       fwd2 = lambda consts, fc_res, *rest: rrem(fc_res[1], *rest)
-      with_logs = False
     else:
       if not self.static_argnums:
         fwd, dyn_args = self.fwd, args
@@ -1068,7 +1067,7 @@ class custom_vjp3:
   symz: bool = False
   opt_remat: bool = False
   with_logs: bool = False
-  remat_rules: tuple[Callable, Callable, Callable] | None = None
+  remat_rules: tuple[Callable, Callable, Callable, bool] | None = None
 
   def __init__(self, f, nondiff_argnums=(), nondiff_argnames=()):
     self.static_argnums = _set_up_nondiff(f, nondiff_argnums, nondiff_argnames)
@@ -1088,7 +1087,10 @@ class custom_vjp3:
     self.with_logs = True
 
   def defremat(self, fwd, rem, bwd):
-    self.remat_rules = (fwd, rem, bwd)
+    self.remat_rules = (fwd, rem, bwd, False)
+
+  def defremat_with_logs(self, fwd, rem, bwd):
+    self.remat_rules = (fwd, rem, bwd, True)
 
   @partial(traceback_util.api_boundary, repro_api_name="jax.custom_vjp.__call__")
   def __call__(self, *args, **kwargs):
@@ -1130,29 +1132,29 @@ class custom_vjp3:
       )
     args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
     consts, traced = traced.with_consts_as_arg()
-    fwd, bwd = self.fwd, self.bwd
+    fwd, bwd, with_logs = self.fwd, self.bwd, self.with_logs
     if fwd is None:
       assert self.remat_rules is not None  # checked above
-      fwd, bwd = _vjp_from_remat_rules(*self.remat_rules)
+      fwd, bwd, with_logs = _vjp_from_remat_rules(*self.remat_rules)
     fwd_ = update_wrapper(lambda _, __, *args: fwd(*args), fwd)
     static_argnums = frozenset(i + 2 for i in self.static_argnums)
     in_avals = tree_map(typeof, (consts, (), *args))
     prim = CustomVJPTraced(traced, fwd_, bwd, in_avals, self.symz,
-                           static_argnums, self.opt_remat, self.with_logs,
+                           static_argnums, self.opt_remat, with_logs,
                            self.remat_rules)
     return prim(consts, (), *args)
 
   def def_vmap(self, rule, /): return self.f.def_vmap(rule)
   def def_transpose(self, rule, /): return self.f.def_transpose(rule)
 
-def _vjp_from_remat_rules(remat_fwd, rem, bwd):
+def _vjp_from_remat_rules(remat_fwd, rem, bwd, with_logs):
   # Not under jax.remat, run rem right after fwd on the forward pass, saving what
   # bwd needs. (Running rem on the backward pass instead is what jax.remat does.)
   def fwd(*args):
     out, res = remat_fwd(*args)
     _, res2 = rem(res, *args)
     return out, res2
-  return update_wrapper(fwd, remat_fwd), bwd
+  return update_wrapper(fwd, remat_fwd), bwd, with_logs
 
 class OptRemat(HiPrim):
   orig: CustomVJPTraced

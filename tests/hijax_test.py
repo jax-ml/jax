@@ -3207,9 +3207,33 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
       self.assertAllClose(jax.grad(f_, (0, 1))(2., 3.),
                           jax.grad(lambda x, y: jnp.sin(x * y), (0, 1))(2., 3.))
 
-  def test_custom_gradient_remat_with_logs_error(self):
-    with self.assertRaisesRegex(NotImplementedError, "with_logs"):
-      jax.custom_gradient(lambda x: (x, None), remat=True, with_logs=True)
+  def test_custom_gradient_remat_with_logs(self):
+    # two args, so the (cts, logs) pair mustn't be mistaken for the cts
+    @jax.custom_gradient(remat=True, with_logs=True)
+    def mul(x, y):
+      def rem(x, y):
+        return x * y, lambda g: ((g * y, g * x), {'g': g})
+      return x * y, rem
+    x, y = jnp.arange(3.), jnp.ones(3)
+    for f in [mul, jax.remat(mul)]:
+      _, f_vjp = jax.vjp(f, x, y)
+      (x_ct, y_ct), logs = f_vjp.with_logs(2 * y)
+      self.assertArraysAllClose(x_ct, 2 * y)
+      self.assertArraysAllClose(y_ct, 2 * x)
+      self.assertArraysAllClose(logs['g'], 2 * y)
+
+  def test_defremat_with_logs(self):
+    # the plain and remat bwd rules each decide whether they log
+    f = jax.custom_vjp(jnp.sin)
+    f.defvjp(lambda x: (jnp.sin(x), jnp.cos(x)), lambda c, g: (c * g,))
+    f.defremat_with_logs(lambda x: (jnp.sin(x), jnp.cos(x)),
+                         lambda c, x: (jnp.sin(x), c),
+                         lambda c, g: ((c * g,), {'g': g}))
+    x = jnp.arange(3.)
+    _, f_vjp = jax.vjp(f, x)
+    self.assertEqual(f_vjp.with_logs(jnp.ones(3))[1], {})
+    _, f_vjp = jax.vjp(jax.remat(f), x)
+    self.assertEqual(list(f_vjp.with_logs(jnp.ones(3))[1]), ['g'])
 
   @config.custom_vjp3(False)
   def test_defremat_requires_custom_vjp3(self):
