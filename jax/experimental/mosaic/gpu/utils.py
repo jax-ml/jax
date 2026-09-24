@@ -1084,7 +1084,11 @@ def memref_transpose(ref: ir.Value, permutation: Sequence[int]) -> ir.Value:
 
 
 def parse_indices(
-    index, shape: Sequence[int], *, check_oob: bool = True
+    index,
+    shape: Sequence[int],
+    *,
+    check_oob: bool = True,
+    allow_negative: bool = False,
 ) -> tuple[list[ir.Value | int], list[int], list[bool]]:
   if not isinstance(index, tuple):
     index = (index,)
@@ -1097,10 +1101,10 @@ def parse_indices(
     if isinstance(idx, (ir.Operation, ir.OpView)):
       idx = idx.result
     if isinstance(idx, int):
-      if idx < 0:
+      if not allow_negative and idx < 0:
         raise NotImplementedError(
             f"Index {idx} along axis {axis} has negative bounds"
-          )
+        )
       if check_oob and idx >= bound:
         raise IndexError(
             f"Index {idx} along axis {axis} is out of bounds for shape {shape}"
@@ -1117,7 +1121,9 @@ def parse_indices(
         )
       if idx.step is not None and idx.step != 1:
         raise NotImplementedError("Strided slices not implemented")
-      if any(v is not None and v < 0 for v in (idx.start, idx.stop)):
+      if not allow_negative and any(
+          v is not None and v < 0 for v in (idx.start, idx.stop)
+      ):
         raise NotImplementedError(
             f"Slice {idx} along axis {axis} has negative bounds"
         )

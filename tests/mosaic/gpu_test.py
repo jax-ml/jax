@@ -9895,6 +9895,16 @@ class UtilsTest(TestCase):
     with self.assertRaisesRegex(IndexError, "out of bounds"):
       utils.parse_indices(indices, (2, 3, 4))
 
+  @parameterized.parameters(
+      (-1,),
+      (-42,),
+      (slice(-1, 0),),
+      (slice(-42, -1),),
+  )
+  def test_parse_indices_negative(self, indices):
+    with self.assertRaisesRegex(NotImplementedError, "has negative bounds"):
+      utils.parse_indices(indices, (2, 3, 4))
+
   def test_parse_indices_dynamic_slice(self):
     i = c(0, ir.IndexType.get())
     for s in (slice(i), slice(0, i), slice(0, 2, i)):
