@@ -447,9 +447,11 @@ def _manual_spec(manual_axes, spec: P, mesh) -> P:
 SpecErrorType = enum.Enum('SpecErrorType', ['input', 'out'])
 
 def _check_unreduced(error_type, mesh, manual_axes, specs):
+  manual_mesh = _as_manual_mesh(mesh, manual_axes)
+  del mesh
   from jax._src.hijax import HiPspec
   prefix = 'in' if error_type == SpecErrorType.input else 'out'
-  full_manual = frozenset(mesh.axis_names) == manual_axes
+  full_manual = manual_mesh.axis_names == manual_mesh.manual_axes
   specs_flat, _ = tree_flatten(specs)
   for s in specs_flat:
     if isinstance(s, HiPspec):
@@ -460,18 +462,18 @@ def _check_unreduced(error_type, mesh, manual_axes, specs):
       raise NotImplementedError(
           f"unreduced/reduced can only be passed to {prefix}_specs when"
           " shard_map is in full manual mode. Got mesh axis names"
-          f" {mesh.axis_names}, manual_axes: {manual_axes}, specs: {s}. Please"
-          " file a bug at https://github.com/jax-ml/jax/issues.")
-    if not all(mesh._name_to_type[u] == AxisType.Explicit for u in s.unreduced):
+          f" {manual_mesh.axis_names}, manual_axes: {manual_axes}, specs: {s}."
+          " Please file a bug at https://github.com/jax-ml/jax/issues.")
+    if not all(manual_mesh._name_to_type[u] == AxisType.Manual for u in s.unreduced):
       raise ValueError(
           f"unreduced in {prefix}_specs {s} can only be used when the mesh"
-          " passed to shard_map contains axis names all of type `Explicit`."
-          f" Got mesh {mesh}")
-    if not all(mesh._name_to_type[u] == AxisType.Explicit for u in s.reduced):
+          " passed to shard_map contains axis names of type `Manual`."
+          f" Got mesh {manual_mesh}")
+    if not all(manual_mesh._name_to_type[u] == AxisType.Manual for u in s.reduced):
       raise ValueError(
           f"reduced in {prefix}_specs {s} can only be used when the mesh"
-          " passed to shard_map contains axis names all of type `Explicit`."
-          f" Got mesh {mesh}")
+          " passed to shard_map contains axis names of type `Manual`."
+          f" Got mesh {manual_mesh}")
 
 
 def _check_specs(error_type: SpecErrorType, specs: Any, manual_axes) -> None:

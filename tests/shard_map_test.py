@@ -3027,10 +3027,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   def test_shmap_auto_unreduced_error(self):
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
-    with self.assertRaisesRegex(
-        ValueError,
-        'unreduced.*can only be used when the mesh passed to shard_map contains'
-        ' axis names all of type `Explicit`'):
+    with self.assertRaisesRegex(ValueError, 'in_specs containing unreduced'):
       shard_map(lambda x: x, mesh=mesh, in_specs=P(unreduced={'x'}),
                 out_specs=P())(np.arange(8))
 
