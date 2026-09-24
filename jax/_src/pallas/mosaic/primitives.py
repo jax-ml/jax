@@ -1004,6 +1004,29 @@ def unpack_elementwise(x, *, index, packed_dtype, unpacked_dtype):
   The function follows the *interleaved format* during unpacking, and it's the
   reverse of `pack_elementwise`.
 
+  The element bitwidth of `x` must equal that of `unpacked_dtype`. The packing
+  factor is the bitwidth of `unpacked_dtype` divided by the bitwidth of
+  `packed_dtype`, and `index` must be less than this factor. For example, an
+  `int4` to `int32` unpack uses eight 4-bit values per 32-bit word. Pack these
+  values into `uint32` source elements before unpacking. Here `v0` through
+  `v7` are `int32` arrays with the same shape:
+
+  ```python
+  packed = pltpu.pack_elementwise(
+      [v0, v1, v2, v3, v4, v5, v6, v7], packed_dtype=jnp.int4)
+  first = pltpu.unpack_elementwise(
+      packed, index=0, packed_dtype=jnp.int4, unpacked_dtype=jnp.int32)
+  ```
+
+  When a TPU `BlockSpec` supplies `x`, apply its tiling rules to the packed
+  array shape. For a block of rank at least two, the last block dimension must
+  equal the packed array's last dimension or be divisible by 128. The preceding
+  block dimension must equal the corresponding array dimension or be divisible
+  by 8. If eight adjacent logical values are packed per word along the last
+  axis, a logical width of 1024 uses 128 packed `uint32` elements. A packed
+  block width of 64 is valid only when it spans the entire packed array's last
+  dimension.
+
   For example, if `packed_dtype` is `int4`, `unpacked_dtype` is `int8`,
   and `x` is packed `int8` with x'y'z'w'm'n'i'j' in a word, where each
   character represents 4 bits:
@@ -1027,9 +1050,10 @@ def unpack_elementwise(x, *, index, packed_dtype, unpacked_dtype):
   ```
 
   Args:
-    x: The packed array.
-    index: The index of the element to unpack.
-    packed_dtype: Elements
+    x: The packed array, with element bitwidth equal to `unpacked_dtype`.
+    index: The index of the element to unpack, from zero to the packing factor
+      minus one.
+    packed_dtype: The dtype of each element within a packed word.
     unpacked_dtype: The dtype of the unpacked array.
 
   Returns:
@@ -1044,12 +1068,14 @@ def unpack_elementwise(x, *, index, packed_dtype, unpacked_dtype):
 def _unpack_elementwise_abstract_eval(
     x, *, index, packed_dtype, unpacked_dtype
 ):
-  if dtypes.itemsize_bits(x.dtype) != dtypes.itemsize_bits(unpacked_dtype):
-    raise ValueError(
-        "The bitwidth of `x` must match the bitwidth of `unpacked_dtype` for "
-        f"unpack_elementwise, but got {x.dtype} and {unpacked_dtype}"
-    )
   packing_factor = _get_elementwise_packing_factor(unpacked_dtype, packed_dtype)
+  unpacked_bitwidth = dtypes.itemsize_bits(unpacked_dtype)
+  if dtypes.itemsize_bits(x.dtype) != unpacked_bitwidth:
+    raise ValueError(
+        f"unpack_elementwise requires `x` to have {unpacked_bitwidth}-bit "
+        f"elements to unpack {packing_factor} {jnp.dtype(packed_dtype).name} "
+        f"values per word into {jnp.dtype(unpacked_dtype).name}; got {x.dtype}."
+    )
   if index < 0 or index >= packing_factor:
     raise ValueError(
         f"Index {index} is out of bounds for packing factor {packing_factor}")
