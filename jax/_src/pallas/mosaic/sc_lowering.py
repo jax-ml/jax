@@ -350,6 +350,7 @@ def _store_lowering_rule(
             val, ref, indices=starts, strides=[], mask=mask, add=add
         )
     else:
+      assert not compress
       tpu.store(
           val,
           ref,
@@ -400,6 +401,7 @@ def _store_lowering_rule(
           add=add,
       )
   else:
+    assert not compress
     tpu.vector_store(
         val_memref_rank, ref, starts, strides=[], mask=None, add=add
     )
