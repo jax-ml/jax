@@ -35,6 +35,8 @@ from jax._src.lax.linalg import (
   ormqr_p as ormqr_p,
   qr as qr,
   qr_p as qr_p,
+  qr_multiply as qr_multiply,
+  qr_multiply_p as qr_multiply_p,
   schur as schur,
   schur_p as schur_p,
   svd as svd,
