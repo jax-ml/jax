@@ -1580,6 +1580,7 @@ jax_multiplatform_test(
         "tpu_7x",
         "cpu",  # Just to make sure we at least check the shard_count in presubmit.
     ],
+    minimal_shard_count = 4,
     shard_count = 4,
     tags = ["sparsecore_test"],
     deps = [
