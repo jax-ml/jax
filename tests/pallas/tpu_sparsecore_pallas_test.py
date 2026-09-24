@@ -1227,21 +1227,41 @@ class VectorSubcoreTest(PallasSCTest):
         jnp.ones_like(x).at[indices[mask]].add(x[mask]),
     )
 
-  @parameterized.parameters(*MASK_FNS)
-  def test_load_expanded(self, mask_fn):
+  @parameterized.product(mask_fn=MASK_FNS, needs_layout_passes=[False, True])
+  def test_load_expanded(self, mask_fn, needs_layout_passes):
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(self.num_lanes,), dtype=jnp.int32
         ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=needs_layout_passes
+        ),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = plsc.load_expanded(x_ref.at[...], mask=mask_fn(x_ref[...]))
 
     x = jnp.arange(self.num_lanes)
     mask = mask_fn(x)
-    expected = jnp.zeros_like(x).at[mask].set(x[: mask.sum()])
-    np.testing.assert_array_equal(kernel(x)[mask], expected[mask])
+    np.testing.assert_array_equal(kernel(x)[mask], x[: mask.sum()])
+
+  @parameterized.parameters(*MASK_FNS)
+  def test_load_expanded_2d(self, mask_fn):
+    shape = (2, self.num_lanes)
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=shape, dtype=jnp.int32)
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = plsc.load_expanded(x_ref.at[...], mask=mask_fn(x_ref[...]))
+
+    x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
+    mask = mask_fn(x)
+    out = kernel(x)
+    # Every row is expanded independently of the others.
+    for row in range(shape[0]):
+      np.testing.assert_array_equal(
+          out[row][mask[row]], x[row, : mask[row].sum()]
+      )
 
   @parameterized.product(mask_fn=MASK_FNS, needs_layout_passes=[False, True])
   def test_store_compressed(self, mask_fn, needs_layout_passes):
@@ -1266,8 +1286,7 @@ class VectorSubcoreTest(PallasSCTest):
     shape = (2, self.num_lanes)
 
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(shape=shape, dtype=jnp.int32),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
+        out_shape=jax.ShapeDtypeStruct(shape=shape, dtype=jnp.int32)
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.zeros_like(o_ref)
@@ -1581,12 +1600,15 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(x)[5 : 5 + self.num_lanes], x[2 : 2 + self.num_lanes]
     )
 
-  def test_load_transformed_ref(self):
+  @parameterized.product(needs_layout_passes=[False, True])
+  def test_load_transformed_ref(self, needs_layout_passes):
     x = jnp.arange(2 * self.num_lanes)
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=needs_layout_passes
+        ),
     )
     def kernel(x_ref, o_ref):
       o_ref[pl.ds(5, self.num_lanes)] = plsc.load_expanded(

@@ -74,6 +74,73 @@ def _get_lowering_rule(ctx: LoweringRuleContext, ref, *flat_transforms, tree):
   )
 
 
+def _load_vreg(
+    ctx: LoweringRuleContext,
+    out_vec_type: ir.VectorType,
+    ref: ir.Value,
+    starts: Sequence[ir.Value],
+    mask: ir.Value | None,
+    expand: bool = False,
+) -> ir.Value:
+  if mask is not None:
+    # TODO(naumsmogers): once we support non-expand masked loads, differentiate
+    # ops here.
+    assert expand
+    if not ctx.forward_compatible and ctx.is_libtpu_at_least("0.0.49"):
+      return tpu.expand_load_vreg(out_vec_type, ref, indices=starts, mask=mask)  # pyrefly: ignore[missing-attribute]
+    # TODO: b/481866110 - Remove tpu.vector_load in favor of
+    # tpu.expand_load_vreg above after 10/20/2026.
+    return tpu.vector_load(
+        out_vec_type, ref, indices=starts, strides=[], mask=mask
+    )
+  assert not expand
+  return tpu.load(
+      out_vec_type,
+      ref,
+      indices=starts,
+      sublane_mask=[True] * sc_core.get_sparse_core_info().num_lanes,
+  )
+
+
+def _vector_load(
+    ctx: LoweringRuleContext,
+    memref_vec_type: ir.VectorType,
+    ref: ir.Value,
+    starts: Sequence[ir.Value],
+    mask: ir.Value | None,
+    expand: bool = False,
+) -> ir.Value:
+  if mask is not None:
+    # TODO(naumsmogers): once we support non-expand masked loads, differentiate
+    # ops here.
+    assert expand
+    mask_memref_type = ir.VectorType.get(
+        memref_vec_type.shape, ir.IntegerType.get_signless(1)
+    )
+    mask_memref_rank = vector.shape_cast(mask_memref_type, mask)
+    if not ctx.forward_compatible and ctx.is_libtpu_at_least("0.0.49"):
+      return tpu.vector_expand_load(  # pyrefly: ignore[missing-attribute]
+          result=memref_vec_type,
+          base=ref,
+          indices=starts,
+          mask=mask_memref_rank,
+          expand_dim=len(memref_vec_type.shape) - 1,
+      )
+    else:
+      return tpu.vector_load(
+          memref_vec_type,
+          ref,
+          indices=starts,
+          strides=[],
+          mask=mask_memref_rank,
+      )
+  else:
+    assert not expand
+    return tpu.vector_load(
+        memref_vec_type, ref, indices=starts, strides=[], mask=None
+    )
+
+
 def _load_lowering_rule(
     ctx: LoweringRuleContext, ref, mask, *flat_transforms, tree, expand
 ):
@@ -152,9 +219,7 @@ def _load_lowering_rule(
       out_aval.shape, _dtype_to_ir_type(out_aval.dtype)
   )
   if not ctx.lowering_context.needs_layout_passes:
-    return tpu.vector_load(
-        out_vec_type, ref, indices=starts, strides=[], mask=mask
-    )
+    return _load_vreg(ctx, out_vec_type, ref, starts, mask, expand)
   # Load at the full memref rank, keeping integer-indexed dims as size 1,
   # because apply-vector-layout requires the vector rank to match the memref.
   memref_vec_shape = cast(
@@ -164,9 +229,7 @@ def _load_lowering_rule(
   memref_vec_type = ir.VectorType.get(
       memref_vec_shape, _dtype_to_ir_type(out_aval.dtype)
   )
-  load_val = tpu.vector_load(
-      memref_vec_type, ref, indices=starts, strides=[], mask=mask
-  )
+  load_val = _vector_load(ctx, memref_vec_type, ref, starts, mask, expand)
   return vector.shape_cast(out_vec_type, load_val)
 
 
@@ -273,7 +336,7 @@ def _store_lowering_rule(
       out_aval.shape, _dtype_to_ir_type(out_aval.dtype)
   )
   if not ctx.lowering_context.needs_layout_passes:
-    old_val = tpu.vector_load(out_vec_type, ref, starts, strides=[], mask=mask)
+    old_val = _load_vreg(ctx, out_vec_type, ref, starts, mask, expand=compress)
     if mask is not None:
       # TODO(naumsmogers): once we support non-compress masked stores,
       # differentiate ops here.
@@ -305,7 +368,9 @@ def _store_lowering_rule(
   memref_vec_type = ir.VectorType.get(
       memref_vec_shape, _dtype_to_ir_type(out_aval.dtype)
   )
-  old_val = tpu.vector_load(memref_vec_type, ref, starts, strides=[], mask=mask)
+  old_val = _vector_load(
+      ctx, memref_vec_type, ref, starts, mask, expand=compress
+  )
   old_val = vector.shape_cast(out_vec_type, old_val)
   val_memref_rank = vector.shape_cast(memref_vec_type, val)
   if mask is not None:
