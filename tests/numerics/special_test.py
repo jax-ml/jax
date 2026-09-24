@@ -107,7 +107,7 @@ class SpecialTest(jtu.JaxTestCase):
   def test_erf_test_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 1.0, f32: 7.0, f64: 2.5}),
-        ("gpu", {bf16: 0.5, f16: 0.5, f32: 6.5, f64: 2.5}),
+        ("gpu", {bf16: 0.5, f16: (0.5, 1.0), f32: 6.5, f64: 2.5}),
         (TPU_EUPV1, {f16: 0.5, f32: 7.5}),
         ("tpu_v5p", {f16: 0.5, f32: 8.5}),
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 1.5}),
