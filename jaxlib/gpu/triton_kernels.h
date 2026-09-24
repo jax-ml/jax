@@ -75,20 +75,6 @@ struct TritonKernelInstantiateResult {
   }
 };
 
-// A thin wrapper around a `KernelCall` that is ready to be executed, needed
-// since we can't use the bare pointer as a state in FFI.
-//
-// Unlike TritonKernelInstantiateResult, this structure doesn't need to be
-// serialized.
-struct TritonKernelInitializeResult {
-  explicit TritonKernelInitializeResult(KernelCall* kernel_call = nullptr)
-      : kernel_call(kernel_call) {}
-
-  // The actual kernel call is owned by an static cache within
-  // triton_kernels.cc.
-  KernelCall* kernel_call = nullptr;
-};
-
 class Kernel {
  public:
   Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
@@ -142,12 +128,12 @@ class KernelCall {
     };
 
     struct TmaDescriptor {
-      uint32_t elem_type;   // CUtensorMapDataType enum value.
-      uint32_t swizzle;     // CUtensorMapSwizzle enum value.
+      uint32_t elem_type;  // CUtensorMapDataType enum value.
+      uint32_t swizzle;    // CUtensorMapSwizzle enum value.
       std::vector<uint64_t> shape;
-      std::vector<uint64_t> strides;       // Element strides.
+      std::vector<uint64_t> strides;  // Element strides.
       std::vector<uint32_t> block_shape;
-      uint32_t oob_fill;    // 0 = none, 1 = NaN-request-zero-FMA.
+      uint32_t oob_fill;  // 0 = none, 1 = NaN-request-zero-FMA.
     };
 
     static absl::StatusOr<Parameter> FromProto(

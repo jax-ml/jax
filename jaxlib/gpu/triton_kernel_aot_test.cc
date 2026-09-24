@@ -46,7 +46,7 @@ TEST_F(TritonKernelAotTest, TritonKernelCallFfiAotFromHloFile) {
   XLA_FFI_Handler_Bundle bundle = {
       /*instantiate=*/kTritonKernelCallFfiInstantiate,
       /*prepare=*/nullptr,
-      /*initialize=*/kTritonKernelCallFfiInitialize,
+      /*initialize=*/nullptr,
       /*execute=*/kTritonKernelCallFfi,
   };
   if (auto* error = xla::ffi::Ffi::RegisterStaticHandler(
