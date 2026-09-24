@@ -785,6 +785,11 @@ def jax_multiprocess_test(
         config_tags_overrides = None,
         tags = [],
         main = None):
+    # For TPU, we dynamically derive:
+    #   num_processes = num_tpu_chips // tpu_chips_per_process
+    # based on the number of physical TPU chips detected on the host machine.
+    # This automatically matches the host's physical topology (e.g. 4 chips on
+    # v4/v5p, 8 chips on v5e/v6e) without hardcoding process counts.
     # TODO(emilyaf): Avoid hard-coding the number of processes and chips/gpus per process.
     multiprocess_backend_args = {
         "cpu": backend_variant_args.get("cpu", []) + [
@@ -795,7 +800,6 @@ def jax_multiprocess_test(
             "--gpus_per_process=2",
         ],
         "tpu": backend_variant_args.get("tpu", []) + [
-            "--num_processes=4",
             "--tpu_chips_per_process=1",
         ],
     }
