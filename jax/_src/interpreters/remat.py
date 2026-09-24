@@ -58,7 +58,7 @@ def remat_transform(policy, f, *args, custom_vjp_rules):
     in_tree, out_tree = args_ft.tree, out_ft.tree
     del trace, in_tracers, out_tracer_ft
   rem = Partial(partial(_f_rem, jaxpr, in_tree, out_tree),
-                map(reduce_precision, res))
+                res)
   return out_ft.unflatten(), rem
 
 def _f_rem(jaxpr, in_tree, out_tree, res, *args):

@@ -36,7 +36,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters.remat import remat_transform
+from jax._src.interpreters.remat import remat_transform, reduce_precision as remat_reduce_precision
 from jax._src.hijax import HiPrim, call_hi_primitive_p, Static
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
@@ -162,6 +162,12 @@ def save_from_both_policies(policy_1, policy_2):
   """Logical OR of the given policies.
 
   A residual is saveable iff it is saveable according to either policy."""
+  if policy_1 is everything_saveable or policy_2 is everything_saveable:
+    return everything_saveable
+  if policy_1 is nothing_saveable:
+    return policy_2
+  if policy_2 is nothing_saveable:
+    return policy_1
   def policy(prim, *args, **params):
     out1 = policy_1(prim, *args, **params)
     out2 = policy_2(prim, *args, **params)
@@ -1086,7 +1092,7 @@ class RematTraced(HiPrim):
       primals_out, f_vjp = api.vjp(traced, *primals, in_nzs=in_nzs)
       out_nzs = f_vjp.out_nzs  # pyrefly: ignore[missing-attribute]
       rem = Partial(lambda res, *_: res, f_vjp)
-      return primals_out, (list(primals), Static(self.prevent_cse), rem), list(out_nzs)
+      return primals_out, ([], Static(False), rem), list(out_nzs)
     primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
                                         custom_vjp_rules=True)
     out_nzs_cell = []
@@ -1106,10 +1112,11 @@ class RematTraced(HiPrim):
     return primals_out, (primals_, Static(prevent_cse), rem), list(out_nzs)
 
   def vjp_bwd(self, primals_rem, outgrad, *arg_accums):
+    if all(isinstance(x, (ad_util.Zero, ad_util.SymbolicZero))
+           for x in tree_leaves(outgrad)):
+      return None
     primals, prevent_cse, rem = primals_rem
     prevent_cse = prevent_cse.val
-    outgrad = tree_map(ad_util.instantiate, outgrad,
-                       is_leaf=lambda x: isinstance(x, ad_util.Zero))
     if prevent_cse is not False:
       which = ([True] * len(primals) if prevent_cse is True else
                list(prevent_cse))
@@ -1140,7 +1147,7 @@ class RematTraced(HiPrim):
       primals_out, f_lin = api.linearize(traced, *primals, in_nzs=in_nzs)
       out_nzs = f_lin.out_nzs  # pyrefly: ignore[missing-attribute]
       rem = Partial(lambda res, *_: res, f_lin)
-      return primals_out, (list(primals), rem, tuple(out_nzs)), list(out_nzs)
+      return primals_out, ([], rem, tuple(out_nzs)), list(out_nzs)
     primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
                                         custom_vjp_rules=True)
     out_nzs_cell = []
@@ -1157,7 +1164,9 @@ class RematTraced(HiPrim):
 
   def linearized(self, primals_rem, *tangents):  # pyrefly: ignore[bad-param-name-override]
     primals, rem, out_nzs = primals_rem
-    lin = rem(*lax_internal.optimization_barrier(primals))
+    if primals and self.prevent_cse is not False:
+      primals = lax_internal.optimization_barrier(primals)
+    lin = rem(*primals)
     tangents = map(ad_util.instantiate, tangents)  # TODO
     outs = lin(*tangents)
     return [o if nz else ad_util.Zero(typeof(o))
@@ -1215,8 +1224,10 @@ class CheckpointName(HiPrim):
       return x, (), lambda _, x: x  # full remat
     case = pe.ensure_enum(policy(name_p, self.in_avals[0], name=self.name))
     if isinstance(case, pe.SaveableType):
+      x = remat_reduce_precision(x)
       return x, x, primal_left_tangent_right
     elif isinstance(case, pe.Offloadable):
+      x = remat_reduce_precision(x)
       x_host = api.device_put(x, core.mem_kind_to_space(case.dst),
                               may_alias=False)
       src_space = core.mem_kind_to_space(case.src)
@@ -1266,8 +1277,10 @@ class CheckpointNameFwd(HiPrim):
       return x, (), lambda _, x: x  # full remat
     case = pe.ensure_enum(policy(name_p, self.in_avals[0], name=self.name))
     if isinstance(case, pe.SaveableType):
+      x = remat_reduce_precision(x)
       return x, x, lambda x, _: x
     elif isinstance(case, pe.Offloadable):
+      x = remat_reduce_precision(x)
       x_host = api.device_put(x, core.mem_kind_to_space(case.dst),
                               may_alias=False)
       src_space = core.mem_kind_to_space(case.src)

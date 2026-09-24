@@ -6402,8 +6402,10 @@ def _dot_general_remat(trace, lhs, rhs, **params):
   case = pe.ensure_enum(
       trace.policy(dot_general_p, typeof(lhs), typeof(rhs), **params))
   if isinstance(case, pe.SaveableType):
+    out = remat.reduce_precision(out)
     return out, out, lambda out, lhs, rhs: primal_left_tangent_right(out, dot(lhs, rhs))
   if isinstance(case, pe.Offloadable):
+    out = remat.reduce_precision(out)
     from jax._src.api import device_put
     out_host = device_put(out, core.mem_kind_to_space(case.dst),
                           may_alias=False)
