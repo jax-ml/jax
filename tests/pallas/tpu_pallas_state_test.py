@@ -690,6 +690,35 @@ class CoreMapTest(jtu.JaxTestCase):
     self.assertLen(aliased_wmsc, 1)
     self.assertEqual(aliased_wmsc[0].params["memory_space"], pltpu.VMEM)
     self.assertEqual(aliased_wmsc[0].outvars[0].aval.memory_space, pltpu.VMEM)
+    self.assertIsInstance(
+        mpmd_map_eqns[0].params["out_avals"][0], jax_core.ShapedArray
+    )
+    self.assertEqual(
+        mpmd_map_eqns[0].params["out_avals"][0].memory_space, pltpu.VMEM
+    )
+
+  def test_mpmd_map_discharge_preserves_out_avals_memory_space(self):
+    mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def f(x):
+      ref = jax.new_ref(x)
+      out = pl.kernel(
+          mesh=mesh,
+          out_type=pltpu.VMEM(x.shape, x.dtype),
+      )(kernel)(ref)
+      return out, ref[...]
+
+    x = jnp.empty((8, 128), dtype=jnp.float32)
+    closed_jaxpr = jax.make_jaxpr(f)(x)
+    discharged_jaxpr = discharge_state(closed_jaxpr)
+    mpmd_eqn = [
+        eqn for eqn in discharged_jaxpr.jaxpr.eqns
+        if eqn.primitive == mpmd.mpmd_map_p
+    ][0]
+    self.assertEqual(mpmd_eqn.params["out_avals"][0].memory_space, pltpu.VMEM)
 
   def test_mpmd_map_array_input_output_aliases_not_constrained(self):
     mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)

@@ -15,6 +15,7 @@
 
 import dataclasses
 import functools
+import json
 import math
 import re
 
@@ -25,6 +26,8 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import hijax
 from jax._src import test_util as jtu
+from jax._src import tpu_custom_call
+from jax._src.lib.mlir import ir
 from jax._src.pallas.fuser import fusible_dtype
 from jax._src.state import primitives as state_primitives
 from jax.experimental import pallas as pl
@@ -61,6 +64,23 @@ def from_core_type(core_type):
       )
     case _:
       raise ValueError(f"Unsupported core type: {core_type}")
+
+
+def _tpu_custom_call_configs(lowered) -> list[dict[str, object]]:
+  """Returns the `custom_call_config` of every tpu_custom_call in `lowered`."""
+  configs = []
+
+  def visit(op: ir.Operation) -> ir.WalkResult:
+    if op.name == "stablehlo.custom_call" and (
+        ir.StringAttr(op.attributes["call_target_name"]).value
+        == "tpu_custom_call"
+    ):
+      config = json.loads(ir.StringAttr(op.attributes["backend_config"]).value)
+      configs.append(config["custom_call_config"])
+    return ir.WalkResult.ADVANCE
+
+  lowered.compiler_ir().operation.walk(visit)
+  return configs
 
 
 # TODO(rdyro): A temporary workaround to avoid flakiness.
@@ -144,6 +164,20 @@ class MpmdAsyncTest(jtu.JaxTestCase):
       )(tc_fn)(x_ref, out_ref, sem_ref)
       return jax.freeze(out_ref)
 
+    configs = _tpu_custom_call_configs(f.lower(x))
+    self.assertLen(configs, 2)
+    # Both kernels return an array in VMEM followed by a DMA semaphore, and the
+    # discharge rule must preserve those memory spaces.
+    expected_colors = [
+        {"color": tpu_custom_call.MemorySpace.VMEM.color, "shape_index": [0]},
+        {
+            "color": tpu_custom_call.MemorySpace.SEMAPHORE_MEM.color,
+            "shape_index": [1],
+        }
+    ]
+
+    for cfg in configs:
+      self.assertEqual(cfg.get("output_memory_space_colors"), expected_colors)
     out = f(x)
     np.testing.assert_array_equal(out, x + 1)
 
