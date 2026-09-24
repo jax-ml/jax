@@ -18,9 +18,7 @@ import functools
 import itertools
 
 import jax
-import os
 from jax import lax
-from jax.experimental import multihost_utils
 from jax.experimental import pallas as pl
 from jax.experimental.mosaic.gpu import profiler
 from jax.experimental.pallas import mosaic_gpu as plgpu
@@ -31,12 +29,6 @@ import jax.numpy as jnp
 MatmulDimension = hopper_matmul_mgpu.MatmulDimension
 TuningConfig = hopper_matmul_mgpu.TuningConfig
 
-
-def is_nvshmem_used() -> bool:
-  return (
-      "XLA_FLAGS" in os.environ
-      and "--xla_gpu_experimental_enable_nvshmem" in os.environ["XLA_FLAGS"]
-  )
 
 def all_gather_lhs_matmul(
     lhs: jax.Array,
@@ -180,12 +172,6 @@ def all_gather_lhs_matmul(
 
 
 def _min_results_across_devices(kernels_ms : list[tuple[str, float]]) -> float:
-  # We choose the minimum across processes to choose the runtime that didn't
-  # include devices waiting for other devices.
-  if is_nvshmem_used():
-    time_us = sum(t * 1e3 for _, t in kernels_ms)
-    return min(multihost_utils.process_allgather(time_us).tolist())
-
   # profiler.measures measures all devices visible to the process, so we
   # need to select the mimimum result of each kernel across devices.
   # This code relies on the fact that with collective metadata a single kernel
@@ -284,11 +270,7 @@ def _run_example():
 
 
 if __name__ == "__main__":
-  if is_nvshmem_used():
-    from jax._src import test_multiprocess as jt_multiprocess  # pyrefly: ignore[missing-module-attribute]
-    jt_multiprocess.main(shard_main=_run_example)
-  else:
-    from jax._src.config import config as jax_config
-    from absl import app
-    jax_config.config_with_absl()
-    app.run(lambda _: _run_example())
+  from jax._src.config import config as jax_config
+  from absl import app
+  jax_config.config_with_absl()
+  app.run(lambda _: _run_example())

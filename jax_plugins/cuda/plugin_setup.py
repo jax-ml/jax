@@ -34,7 +34,6 @@ nvidia_cusparse_version = ''  # placeholder
 nvidia_nccl_version = ''  # placeholder
 nvidia_nvjitlink_version = ''  # placeholder
 nvidia_cuda_nvrtc_version = ''  # placeholder
-nvidia_nvshmem_version = ''  # placeholder
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -86,9 +85,6 @@ setup(
           f"nvidia-nvjitlink{cuda_wheel_suffix}{nvidia_nvjitlink_version}",
           # nvrtc is a transitive and undeclared dep of cudnn.
           f"nvidia-cuda-nvrtc{cuda_wheel_suffix}{nvidia_cuda_nvrtc_version}",
-          # NVSHMEM is used by Mosaic GPU collectives and can be used by XLA to
-          # speed up collectives too.
-          f"nvidia-nvshmem-cu{cuda_version}{nvidia_nvshmem_version}",
       ] + (["nvidia-nvvm"] if cuda_version == 13 else []),
     },
     url="https://github.com/jax-ml/jax",

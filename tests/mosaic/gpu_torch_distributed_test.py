@@ -47,8 +47,6 @@ class TorchTest(parameterized.TestCase):
       raise unittest.SkipTest("Test requires torch")
     if jtu.test_device_matches(["rocm"]):
       raise unittest.SkipTest("Mosaic GPU is not supported on ROCm.")
-    torch.cuda.set_device("cuda:0")
-    torch.set_default_device("cuda")
     if not torch.cuda.is_available():
       raise unittest.SkipTest("Test requires torch with CUDA support")
     if (not jtu.test_device_matches(["cuda"]) or
@@ -64,16 +62,16 @@ class TorchTest(parameterized.TestCase):
     if jax.device_count() != jax.process_count():
       raise unittest.SkipTest("Need 1 device per process")
 
+    device = f"cuda:{jax.process_index()}"
+    torch.cuda.set_device(device)
+    torch.set_default_device(device)
+
     os.environ["RANK"] = str(jax.process_index())
     os.environ["WORLD_SIZE"] = str(jax.process_count())
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "5728"
     dist.init_process_group("nccl")
-    symm_mem.enable_symm_mem_for_group(dist.group.WORLD.group_name)
     assert dist.is_initialized()
-    assert symm_mem.is_nvshmem_available()
-    symm_mem.set_backend("NVSHMEM")
-    symm_mem.empty(1)  # Just to initialize NVSHMEM
 
   def setUp(self):
     self.prng = np.random.default_rng(1234)

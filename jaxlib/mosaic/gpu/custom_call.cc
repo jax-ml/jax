@@ -137,7 +137,6 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/launch_config.h"
 #include "jaxlib/mosaic/gpu/launch_lowering.h"
 #include "jaxlib/mosaic/gpu/mosaic_gpu.pb.h"
-#include "jaxlib/mosaic/gpu/nvshmem.h"
 #include "jaxlib/mosaic/gpu/passes.h"
 #include "jaxlib/mosaic/gpu/serde.h"
 #include "jaxlib/mosaic/gpu/target.h"
@@ -173,8 +172,6 @@ limitations under the License.
 #include "tsl/profiler/lib/traceme.h"
 
 namespace {
-
-using ::mosaic::gpu::NvshmemApi;
 
 namespace ffi = xla::ffi;
 namespace se = ::stream_executor;
@@ -227,8 +224,7 @@ absl::StatusOr<mlir::OpPassManager> GetPassPipeline(
     mlir::MLIRContext* ctx,
     const se::cuda::CompilationProvider* compilation_provider,
     const se::CudaComputeCapability& cc, const std::string& sm,
-    const std::string& ptx_isa, const std::string& nvshmem_path,
-    bool verify_target) {
+    const std::string& ptx_isa, bool verify_target) {
   static absl::once_flag register_passes_flag;
   absl::call_once(register_passes_flag, [&compilation_provider, &cc]() {
     mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
@@ -266,9 +262,6 @@ absl::StatusOr<mlir::OpPassManager> GetPassPipeline(
 
   std::vector<std::string> libraries_to_link{
       ::xla::gpu::nvptx::LibDevicePath(mosaic::gpu::kDefaultCudaDataDir)};
-  if (!nvshmem_path.empty()) {
-    libraries_to_link.push_back(nvshmem_path);
-  }
   std::string error;
   llvm::raw_string_ostream error_stream(error);
   auto passes = mlir::parsePassPipeline(
@@ -396,33 +389,8 @@ void LoadNvDialects(mlir::MLIRContext* context) {
   context->loadAllAvailableDialects();
 }
 
-bool is_nvshmem_used(mlir::ModuleOp module) {
-  constexpr std::string_view prefix1 = "nvshmem_";
-  constexpr std::string_view prefix2 = "nvshmemx_";
-  for (mlir::LLVM::LLVMFuncOp llvm_func :
-       module.getOps<mlir::LLVM::LLVMFuncOp>()) {
-    const auto& func_name = llvm_func.getName();
-    if (!func_name.starts_with(prefix1) && !func_name.starts_with(prefix2)) {
-      continue;
-    }
-    auto uses =
-        mlir::SymbolTable::getSymbolUses(llvm_func, module.getOperation());
-    if (uses && !uses->empty()) {
-      return true;
-    }
-  }
-  return false;
-}
-
 bool is_multimem_used(mlir::ModuleOp mod) {
   return static_cast<bool>(mod->getAttr("mosaic_gpu.multimem_used"));
-}
-
-absl::StatusOr<std::string> get_nvshmem_llvm_lib_path() {
-  const char* nvshmem_path_ptr = getenv("MOSAIC_GPU_NVSHMEM_BC_PATH");
-  if (!nvshmem_path_ptr)
-    return absl::InternalError("Failed to get MOSAIC_GPU_NVSHMEM_BC_PATH");
-  return nvshmem_path_ptr;
 }
 
 std::string CUDAErrorString(CUresult result) {
@@ -482,14 +450,12 @@ absl::StatusOr<std::string> GetHostFuncName(mlir::ModuleOp module_op) {
 
 struct CompiledKernel {
   CompiledKernel(std::unique_ptr<llvm::orc::LLJIT> lljit,
-                 MosaicHostFunc* host_func, bool is_nvshmem_used,
-                 bool is_multimem_used, std::string object_file,
-                 std::string host_func_name, std::string gpu_binary,
-                 std::string kernel_name, int32_t smem_bytes,
-                 int32_t cluster_size)
+                 MosaicHostFunc* host_func, bool is_multimem_used,
+                 std::string object_file, std::string host_func_name,
+                 std::string gpu_binary, std::string kernel_name,
+                 int32_t smem_bytes, int32_t cluster_size)
       : lljit(std::move(lljit)),
         host_func(host_func),
-        is_nvshmem_used(is_nvshmem_used),
         is_multimem_used(is_multimem_used),
         gpu_binary(std::move(gpu_binary)),
         kernel_name(std::move(kernel_name)),
@@ -505,7 +471,6 @@ struct CompiledKernel {
 
   std::unique_ptr<llvm::orc::LLJIT> lljit;
   const MosaicHostFunc* host_func;
-  bool is_nvshmem_used = false;
   bool is_multimem_used = false;
   std::string gpu_binary;
   std::string kernel_name;
@@ -587,7 +552,6 @@ absl::Status MosaicGpuLaunchKernel(CUfunction function, CUstream stream,
 }
 
 absl::Status RunMlirPasses(mlir::ModuleOp module, se::CudaComputeCapability cc,
-                           bool is_nvshmem_used,
                            const mosaic::gpu::DumpOptions& dump_opts) {
   ASSIGN_OR_RETURN(se::cuda::CompilationProvider * compilation_provider,
                    mosaic::gpu::GetAssemblyToBinaryCompilationProvider());
@@ -601,17 +565,13 @@ absl::Status RunMlirPasses(mlir::ModuleOp module, se::CudaComputeCapability cc,
   // potentially generating PTX that the compilation provider cannot handle.
   ASSIGN_OR_RETURN(std::string llvm_ptx_isa,
                    GetPtxIsaVersion(*compilation_provider));
-  std::string nvshmem_path = "";
-  if (is_nvshmem_used) {
-    ASSIGN_OR_RETURN(nvshmem_path, get_nvshmem_llvm_lib_path());
-  }
   // nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a; disable
   // verification on sm_103a, sm_110a etc. where we see spurious failures.
   bool verify_target = !((cc.major == 10 && cc.minor > 0) || cc.major == 11);
   ASSIGN_OR_RETURN(
       auto passes,
       GetPassPipeline(module.getContext(), compilation_provider, cc, sm,
-                      llvm_ptx_isa, nvshmem_path, verify_target));
+                      llvm_ptx_isa, verify_target));
   return RunPasses(std::move(passes), module, dump_opts);
 }
 
@@ -683,8 +643,8 @@ absl::StatusOr<std::unique_ptr<llvm::MemoryBuffer>> CompileModuleToObject(
 
 absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
     std::unique_ptr<llvm::MemoryBuffer> object_file, std::string host_func_name,
-    bool is_nvshmem_used, bool is_multimem_used, std::string gpu_binary,
-    std::string kernel_name, int32_t smem_bytes, int32_t cluster_size) {
+    bool is_multimem_used, std::string gpu_binary, std::string kernel_name,
+    int32_t smem_bytes, int32_t cluster_size) {
   EnsureLLVMisInitialized();
   std::string object_file_str = object_file->getBuffer().str();
   auto lljit_builder = llvm::orc::LLJITBuilder();
@@ -714,9 +674,6 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
         if (const char* runtime_lib_path =
                 getenv("MOSAIC_GPU_RUNTIME_LIB_PATH")) {
           runtime_libs.emplace_back(runtime_lib_path);
-        }
-        if (const char* nvshmem_path = getenv("MOSAIC_GPU_NVSHMEM_SO_PATH")) {
-          runtime_libs.emplace_back(nvshmem_path);
         }
 
         for (const auto& lib : runtime_libs) {
@@ -797,7 +754,7 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
   VLOG(5) << "Successfully JIT-linked Mosaic GPU kernel";
   MosaicHostFunc* host_func = host_sym->toPtr<MosaicHostFunc*>();
   return std::make_unique<CompiledKernel>(
-      std::move(lljit), host_func, is_nvshmem_used, is_multimem_used,
+      std::move(lljit), host_func, is_multimem_used,
       std::move(object_file_str), std::move(host_func_name),
       std::move(gpu_binary), std::move(kernel_name), smem_bytes, cluster_size);
 }
@@ -882,11 +839,10 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   xla::llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_cl_options);
   mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
 
-  bool use_nvshmem = is_nvshmem_used(*module);
   bool multimem_used = is_multimem_used(*module);
   mosaic::gpu::DumpOptions dump_opts =
       mosaic::gpu::GetOrSetDumpOptionsForModule(*module);
-  RETURN_IF_ERROR(RunMlirPasses(*module, cc, use_nvshmem, dump_opts));
+  RETURN_IF_ERROR(RunMlirPasses(*module, cc, dump_opts));
 
   auto gpu_binary_attr =
       (*module)->getAttrOfType<mlir::StringAttr>("mosaic_gpu.gpu_binary");
@@ -923,7 +879,7 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   ASSIGN_OR_RETURN(auto host_func_name, GetHostFuncName(*module));
 
   return CreateAndInitJIT(std::move(object_file), std::move(host_func_name),
-                          use_nvshmem, multimem_used, std::move(gpu_binary),
+                          multimem_used, std::move(gpu_binary),
                           std::move(kernel_name), smem_bytes, cluster_size);
 }
 
@@ -998,12 +954,6 @@ struct InitResult {
 };
 
 absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
-  if (kernel.is_nvshmem_used &&
-      !NvshmemApi::Default(/*assert_ok=*/false).is_loaded()) {
-    return absl::InternalError(
-        "Failed to load the NVSHMEM library. Make sure it is installed (e.g. "
-        "`pip install nvidia-nvshmem-cu12`).");
-  }
   if (kernel.is_multimem_used) {
     CUdevice device;
     CUDA_RETURN_IF_ERROR(cuCtxGetDevice(&device));
@@ -1015,32 +965,9 @@ absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
           "System does not support multicast memory; multimem instructions "
           "cannot be used.");
     }
-
-    if (kernel.is_nvshmem_used) {
-      int nvshmem_world_size = NvshmemApi::Default().n_pes();
-      // multimem instructions require multicast memory; mgpu will emit
-      // device-side calls to nvshmemx_mc_ptr to translate unicast->multicast
-      // addresses, which will return nullptr and lead to memory errors if
-      // multicast is not supported on the device
-      // https://docs.nvidia.com/nvshmem/api/using.html#communication-model
-      // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-multimem
-      // https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/virtual-memory-management.html#multicast-memory-sharing
-      if (nvshmem_world_size == 1) {
-        // There is only one device, so NVSHMEM will not configure multicast
-        // mappings and nvshmemx_mc_ptr will return nullptr.
-        return absl::FailedPreconditionError(
-            "Multicast memory mappings are not configured with only one "
-            "device; multimem instructions cannot be used.");
-      }
-    }
   }
   CUmodule module = nullptr;
   CUDA_RETURN_IF_ERROR(cuModuleLoadData(&module, kernel.gpu_binary.data()));
-  if (kernel.is_nvshmem_used) {
-    if (NvshmemApi::Default().cumodule_init(module) != NVSHMEM_SUCCESS) {
-      return absl::InternalError("nvshmemx_cumodule_init failed.");
-    }
-  }
   CUfunction function = nullptr;
   // TODO(allanrenucci): We should unload the kernel if any of the following
   // calls fail.
@@ -1136,7 +1063,6 @@ absl::StatusOr<std::string> CustomCallResources::Serialize(
   }
   kernel_proto.set_version(4);
   kernel_proto.set_object_file(kernel->object_file);
-  kernel_proto.set_is_nvshmem_used(kernel->is_nvshmem_used);
   kernel_proto.set_is_multimem_used(kernel->is_multimem_used);
   kernel_proto.set_kernel_hash(resources.hash.data(), sizeof(KernelHash));
   kernel_proto.set_host_func_name(kernel->host_func_name);
@@ -1152,9 +1078,6 @@ CustomCallResources::Deserialize(absl::string_view data) {
   mosaic::gpu::MosaicGpuKernelProto kernel_proto;
   if (!kernel_proto.ParseFromString(data)) {
     return absl::InternalError("Failed to parse MosaicGpuKernel proto");
-  }
-  if (kernel_proto.is_nvshmem_used()) {
-    return absl::UnimplementedError("NVSHMEM is not supported in XLA.");
   }
   auto resources = std::make_unique<CustomCallResources>();
   if (kernel_proto.kernel_hash().size() != sizeof(KernelHash)) {
@@ -1182,9 +1105,9 @@ CustomCallResources::Deserialize(absl::string_view data) {
             return CreateAndInitJIT(
                 llvm::MemoryBuffer::getMemBuffer(kernel_proto.object_file(),
                                                  "kernel"),
-                std::move(host_func_name), kernel_proto.is_nvshmem_used(),
-                kernel_proto.is_multimem_used(), std::move(gpu_binary),
-                std::move(kernel_name), smem_bytes, cluster_size);
+                std::move(host_func_name), kernel_proto.is_multimem_used(),
+                std::move(gpu_binary), std::move(kernel_name), smem_bytes,
+                cluster_size);
           }));
   return resources;
 }
@@ -1225,9 +1148,6 @@ absl::StatusOr<std::unique_ptr<CustomCallResources>> InstantiateResources(
             return Compile(module, *cc->cuda_compute_capability(),
                            *cpu_target_machine_options);
           }));
-  if (kernel->is_nvshmem_used) {
-    return absl::UnimplementedError("NVSHMEM is not supported in XLA.");
-  }
   return std::make_unique<CustomCallResources>(
       CustomCallResources{.kernel = kernel, .hash = hash});
 }
@@ -1504,16 +1424,6 @@ absl::Status MosaicGpuInitialize(
     return absl::OkStatus();
   }
 
-  const char* xla_flags = getenv("XLA_FLAGS");
-  if (xla_flags &&
-      absl::StrContains(xla_flags, "xla_gpu_experimental_enable_nvshmem") &&
-      !absl::StrContains(xla_flags,
-                         "xla_gpu_experimental_enable_nvshmem=false")) {
-    return absl::InvalidArgumentError(
-        "If you're using a single-process for multiple devices, you should "
-        "remove --xla_gpu_experimental_enable_nvshmem from your XLA flags.");
-  }
-
   if (stream == nullptr || collective_params == nullptr ||
       collective_cliques == nullptr || collective_memory == nullptr ||
       resources == nullptr) {
@@ -1700,8 +1610,7 @@ absl::Status MosaicGpuRecord(se::Stream* stream, ffi::RecordContext record_ctx,
   // Fall back to stream capture for paths the record API can't express as a
   // single graph node: namely multimem kernels, because they have barriers.
   // Execute then runs under stream capture.
-  if (ModuleUsesCollectiveMetadata(attributes) || kernel->is_nvshmem_used ||
-      kernel->is_multimem_used) {
+  if (ModuleUsesCollectiveMetadata(attributes) || kernel->is_multimem_used) {
     XLA_VLOG_DEVICE(5, device_ordinal)
         << "MosaicGpuRecord falling back to stream capture for "
         << kernel->kernel_name;

@@ -255,7 +255,6 @@ py_library_providing_imports_info(
     ),
     data = if_cuda_is_configured([
         "@local_config_cuda//cuda:runtime_nvdisasm",
-        "@nvidia_nvshmem//:libnvshmem_device",
         # OSS-only dependency.
         "@cuda_nvcc//:nvdisasm",
         "@cuda_nvvm//:nvvm",
