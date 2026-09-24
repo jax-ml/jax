@@ -2115,12 +2115,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
 
     f(arr1, arr2)  # doesn't crash
 
-    if jtu.is_device_tpu_at_least(7):
-      compiled_text = f.lower(arr1, arr2).compile().as_text()
-    else:
-      compiled_text = f.lower(arr1, arr2).compile(
-          {'xla_tpu_enable_sparse_core_collective_offload_all_gather': 'true'}
-          ).as_text()
+    compiled_text = f.lower(arr1, arr2).compile().as_text()
     self.assertIn('async_execution_thread="sparsecore"', compiled_text)
 
   @jtu.with_explicit_mesh((8,), "x")
@@ -2150,16 +2145,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
 
     f(arr1, arr2)  # doesn't crash
 
-    if jtu.is_device_tpu_at_least(7):
-      compiled_text = f.lower(arr1, arr2).compile().as_text()
-    else:
-      compiled_text = (
-          f.lower(arr1, arr2)
-          .compile({
-              "xla_tpu_enable_sparse_core_collective_offload_all_gather": "true"
-          })
-          .as_text()
-      )
+    compiled_text = f.lower(arr1, arr2).compile().as_text()
     self.assertNotIn('async_execution_thread="sparsecore"', compiled_text)
 
   @jtu.with_explicit_mesh((8,), "x")
@@ -2235,19 +2221,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
 
     f(arr1, arr2, arr3)  # doesn't crash
 
-    if jtu.is_device_tpu_at_least(7):
-      compiled_text = f.lower(arr1, arr2, arr3).compile().as_text()
-    else:
-      compiled_text = (
-          f.lower(arr1, arr2, arr3)
-          .compile({
-              "xla_tpu_enable_sparse_core_collective_offload_all_gather": (
-                  "true"
-              ),
-              "xla_tpu_enable_async_collective_fusion": "false",
-          })
-          .as_text()
-      )
+    compiled_text = f.lower(arr1, arr2, arr3).compile().as_text()
     self.assertRegex(compiled_text, r"all-gather.*all-gather.*dense")
     self.assertRegex(
         compiled_text, r"call-start.*async_execution_thread=\"sparsecore\""
@@ -2275,12 +2249,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
-    if jtu.is_device_tpu_at_least(7):
-      compiled_text = f.lower(arr).compile().as_text()
-    else:
-      compiled_text = f.lower(arr).compile(
-          {'xla_tpu_enable_sparse_core_collective_offload_reduce_scatter': 'true'}
-          ).as_text()
+    compiled_text = f.lower(arr).compile().as_text()
     self.assertIn('async_execution_thread="sparsecore"', compiled_text)
 
   def test_sparsecore_ar_offload(self):
