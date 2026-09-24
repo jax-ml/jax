@@ -23,6 +23,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.custom_vjp` function is rematerialized when it's differentiated
     under {func}`jax.remat`. It requires the `jax_custom_vjp3` and `jax_remat3`
     implementations.
+  * Added a `remat` option to {func}`jax.custom_gradient`, for writing
+    {func}`jax.custom_vjp.defremat` rules with closures.
 
 * Breaking changes
   * Removed `jax.custom_remat`. Use {func}`jax.custom_vjp.defremat` instead:

@@ -1208,7 +1208,7 @@ mlir.register_lowering(ad.custom_lin_p, ad.raise_custom_vjp_error_on_jvp,
                        cacheable=False)
 
 
-def custom_gradient(fun=None, *, with_logs: bool = False):
+def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False):
   """Convenience function for defining custom VJP rules (aka custom gradients).
 
   While the canonical way to define custom VJP rules is via ``jax.custom_vjp``,
@@ -1248,6 +1248,18 @@ def custom_gradient(fun=None, *, with_logs: bool = False):
       :py:meth:`jax.custom_vjp.defvjp_with_logs`.
       Log keys must be unique within a backward pass; repeated keys raise a
       ``ValueError``, even when the logs are ignored.
+    remat: optional bool, default ``False``. If ``True``, ``fun`` also
+      specifies custom rematerialization behavior, as with
+      :py:func:`jax.custom_vjp.defremat`. The second element of the pair it
+      returns is then a rematerialization function ``rem`` rather than a VJP
+      function. ``rem`` takes the same arguments as ``fun`` and returns a
+      pair of the output value and the VJP function. When differentiating
+      under :func:`jax.remat`, ``rem`` runs on the backward pass, and the
+      values it closes over are saved from the forward pass (so it should use
+      its own arguments rather than closing over those of ``fun``); otherwise,
+      it runs right after ``fun`` on the forward pass. Can't be combined with
+      ``with_logs``. Requires the ``jax_custom_vjp3`` and ``jax_remat3``
+      implementations.
 
   Returns:
     A Python callable that accepts the same arguments as ``fun`` and returns the
@@ -1290,9 +1302,23 @@ def custom_gradient(fun=None, *, with_logs: bool = False):
   >>> (x_ct,), logs = f_vjp.with_logs(1.)
   >>> print(logs['ct_out'])
   1.0
+
+  With ``remat=True``, ``fun`` returns a rematerialization function in place of
+  the VJP function. Here, under :func:`jax.remat`, the cosine is saved rather
+  than recomputed on the backward pass::
+
+    @jax.custom_gradient(remat=True)
+    def sin(x):
+      cos_x = jnp.cos(x)             # rem closes over it, so it's saved
+      def rem(x):                    # runs on the backward pass
+        return jnp.sin(x), lambda g: (g * cos_x,)
+      return jnp.sin(x), rem
   """
   if fun is None:
-    return lambda f: custom_gradient(f, with_logs=with_logs)
+    return lambda f: custom_gradient(f, with_logs=with_logs, remat=remat)
+  if with_logs and remat:
+    raise NotImplementedError(
+        "custom_gradient doesn't support with_logs=True and remat=True together")
 
   def wrapped_fun(*args, **kwargs):
     ans, _ = fun(*args, **kwargs)
@@ -1306,20 +1332,11 @@ def custom_gradient(fun=None, *, with_logs: bool = False):
     ans, rule = fun(*args, **kwargs)
     if with_logs:
       rule = _custom_gradient_logs_rule(rule)
-    ans_flat, out_tree = tracing_registry.flatten(((ans,), {}))
-    debug_fwd = debug_info("custom_gradient fwd", rule, (ans,), {})
-    ans_avals = [core.typeof(x).to_ct_aval() for x in ans_flat]
-    closed_jaxpr, rule_out = pe.trace_to_jaxpr(
-        rule, ft.treedef_args_to_ft(out_tree, ans_avals), debug_fwd)
-    jaxpr, consts = pe.separate_consts(closed_jaxpr)
-    return ans, Residuals(jaxpr, rule_out.tree, out_tree, consts)
+    return ans, _closure_residuals("custom_gradient fwd", rule, (ans,), ct=True)
 
   def bwd(res, cts):
-    jaxpr, in_tree, out_tree, consts = res
-    cts_flat, out_tree_ = tree_flatten(((cts,), {}))
-    if out_tree != out_tree_: raise TypeError(f'{out_tree}\n!=\n{out_tree_}')
-    cts_out = core.eval_jaxpr(jaxpr, consts, *cts_flat)
-    cts_out = tree_unflatten(in_tree, cts_out)
+    in_tree = res.in_tree
+    cts_out = _apply_closure_residuals(res, cts)
     if with_logs:
       cts_out, logs = cts_out
       cts_tree, _ = treedef_children(in_tree)
@@ -1330,11 +1347,40 @@ def custom_gradient(fun=None, *, with_logs: bool = False):
       cts_out = (cts_out,)
     return cts_out
 
-  if with_logs:
+  if remat:
+    # The residuals saved on the forward pass are the values `rem` closes over,
+    # and those for bwd are the values the VJP function closes over. Outside of
+    # jax.remat, the VJP is the one defremat derives from these rules.
+    def remat_fwd(*args):
+      ans, rem = fun(*args)
+      @wraps(rem)
+      def rem_(*args):
+        ans, rule = rem(*args)
+        return ans, _closure_residuals("custom_gradient fwd", rule, (ans,), ct=True)
+      return ans, _closure_residuals("custom_gradient rem", rem_, args, ct=False)
+    wrapped_fun.defremat(remat_fwd, _apply_closure_residuals, bwd)
+  elif with_logs:
     wrapped_fun.defvjp_with_logs(fwd, bwd)
   else:
     wrapped_fun.defvjp(fwd, bwd)
   return wrapped_fun
+
+def _closure_residuals(name, f, args, *, ct):
+  """Trace `f` on the types (or cotangent types) of `args` into a `Residuals`,
+  whose consts are the values `f` closes over."""
+  args_flat, args_tree = tracing_registry.flatten((args, {}))
+  avals = [core.typeof(x).to_ct_aval() if ct else core.typeof(x)
+           for x in args_flat]
+  closed_jaxpr, f_out = pe.trace_to_jaxpr(
+      f, ft.treedef_args_to_ft(args_tree, avals), debug_info(name, f, args, {}))
+  jaxpr, consts = pe.separate_consts(closed_jaxpr)
+  return Residuals(jaxpr, f_out.tree, args_tree, consts)
+
+def _apply_closure_residuals(res, *args):
+  jaxpr, out_tree, args_tree, consts = res
+  args_flat, args_tree_ = tree_flatten((args, {}))
+  if args_tree != args_tree_: raise TypeError(f'{args_tree}\n!=\n{args_tree_}')
+  return tree_unflatten(out_tree, core.eval_jaxpr(jaxpr, consts, *args_flat))
 
 def _custom_gradient_logs_rule(rule):
   @wraps(rule)

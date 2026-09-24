@@ -3163,6 +3163,54 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     x = jnp.arange(3.)
     self.assertArraysAllClose(jax.vmap(jax.grad(f))(x), 3. * jnp.cos(x))
 
+  def test_custom_gradient_remat(self):
+    @jax.custom_gradient(remat=True)
+    def sin_saving_cos(x):
+      cos_x = jnp.cos(x)
+      def rem(x):
+        return jnp.sin(x), lambda g: (g * cos_x,)
+      return jnp.sin(x), rem
+
+    @jax.custom_gradient(remat=True)
+    def sin_saving_nothing(x):
+      def rem(x):
+        cos_x = jnp.cos(x)
+        return jnp.sin(x), lambda g: (g * cos_x,)
+      return jnp.sin(x), rem
+
+    x = jnp.arange(3.)
+    for sin in [sin_saving_cos, sin_saving_nothing]:
+      self.assertArraysAllClose(sin(x), jnp.sin(x))
+      for f in [sin, jax.remat(sin), jax.remat(lambda x: sin(sin(x)))]:
+        jtu.check_grads(f, (x,), order=2, modes=['rev'])
+
+    def saved(f):
+      _, f_vjp = jax.vjp(f, x)
+      leaves = jax.tree.leaves(f_vjp)
+      self.assertLen(leaves, 1)
+      return leaves[0]
+    # outside of remat, rem runs right after the primal, so cos is saved
+    self.assertArraysAllClose(saved(sin_saving_cos), jnp.cos(x))
+    self.assertArraysAllClose(saved(sin_saving_nothing), jnp.cos(x))
+    # under remat, what's saved is what rem closes over (or else the input)
+    self.assertArraysAllClose(saved(jax.remat(sin_saving_cos)), jnp.cos(x))
+    self.assertArraysAllClose(saved(jax.remat(sin_saving_nothing)), x)
+
+  def test_custom_gradient_remat_two_args(self):
+    @jax.custom_gradient(remat=True)
+    def mul(x, y):
+      def rem(x, y):
+        return x * y, lambda g: (g * y, g * x)
+      return x * y, rem
+    f = lambda x, y: jnp.sin(mul(x, y))
+    for f_ in [f, jax.remat(f)]:
+      self.assertAllClose(jax.grad(f_, (0, 1))(2., 3.),
+                          jax.grad(lambda x, y: jnp.sin(x * y), (0, 1))(2., 3.))
+
+  def test_custom_gradient_remat_with_logs_error(self):
+    with self.assertRaisesRegex(NotImplementedError, "with_logs"):
+      jax.custom_gradient(lambda x: (x, None), remat=True, with_logs=True)
+
   @config.custom_vjp3(False)
   def test_defremat_requires_custom_vjp3(self):
     sin = jax.custom_vjp(jnp.sin)

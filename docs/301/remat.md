@@ -483,6 +483,25 @@ print(jax.grad(f)(1.0))
 print(jax.grad(jnp.sin)(jnp.sin(1.0)) * jnp.cos(1.0))  # chain rule, for reference
 ```
 
+With {func}`jax.custom_gradient`, you can write the same rules with closures
+instead of explicit residuals, by passing `remat=True`. The decorated function
+then returns a function `rem` along with its output, and `rem` takes the same
+arguments and returns the output along with the VJP function. Whatever `rem`
+closes over is saved on the forward pass, and whatever the VJP function closes
+over is what `rem` recomputes:
+
+```{code-cell}
+@jax.custom_gradient(remat=True)
+def sin(x):
+  cos_x = jnp.cos(x)             # rem closes over it, so it's saved
+  def rem(x):                    # runs on the backward pass
+    return jnp.sin(x), lambda g: (g * cos_x,)
+  return jnp.sin(x), rem
+
+f = jax.remat(lambda x: sin(sin(x)))
+print(jax.grad(f)(1.0))
+```
+
 ## Advanced: recursive `jax.checkpoint`
 
 Applied in the right way, {func}`jax.checkpoint` can express many tradeoffs
