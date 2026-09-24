@@ -4102,15 +4102,10 @@ def pp_toplevel_jaxpr(jaxpr_to_print: Jaxpr, *,
       if jaxpr is not jaxpr_to_print and len(jaxpr.eqns) > 10:
         jaxpr_counts[jaxpr] += 1
       for eqn in jaxpr.eqns:
-        # TODO(slebedev): Come up with a more elaborate heuristic for name=.
-        name = eqn.params.get("name")
-        if name is None:
-          s.extend(jaxprs_in_params(eqn.params))
-          continue
-        name = name.strip("<>")  # <lambda> -> lambda
-        for subjaxpr in jaxprs_in_params(eqn.params):
+        for name, subjaxpr in _pp_subjaxprs(eqn, settings):
           s.append(subjaxpr)
-          names.setdefault(subjaxpr, name)
+          if name is not None:
+            names.setdefault(subjaxpr, name.strip("<>"))  # <lambda> -> lambda
 
     # Pull jaxprs occurring more than once to the top-level, making sure
     # that their names are unique.
@@ -4135,6 +4130,21 @@ def pp_toplevel_jaxpr(jaxpr_to_print: Jaxpr, *,
       docs.append(pp_shared_jaxpr(name, jaxpr, context, settings))
     docs.append(pp_jaxpr(jaxpr_to_print, context, settings))
     return pp.concat(docs)
+
+
+# Rules giving the jaxprs an eqn prints, each paired with a name (or None) to use
+# if it's hoisted as a shared jaxpr, for primitives that print jaxprs other than
+# their Jaxpr-valued params (e.g. hijax primitives, which nest them in `_prim`).
+pp_subjaxprs_rules: dict[
+    Primitive, Callable[[JaxprEqn], Iterable[tuple[str | None, Jaxpr]]]] = {}
+
+def _pp_subjaxprs(eqn: JaxprEqn, settings: JaxprPpSettings
+                  ) -> Iterable[tuple[str | None, Jaxpr]]:
+  if settings.custom_pp_eqn_rules and eqn.primitive in pp_subjaxprs_rules:
+    return pp_subjaxprs_rules[eqn.primitive](eqn)
+  # TODO(slebedev): Come up with a more elaborate heuristic for name=.
+  name = eqn.params.get("name")
+  return [(name, j) for j in jaxprs_in_params(eqn.params)]
 
 
 class JaxprPpSettings(NamedTuple):
@@ -4227,6 +4237,8 @@ def pp_kv_pair(k:str, v: Any, context: JaxprPpContext, settings: JaxprPpSettings
     pp_v = pp_jaxpr(v, context, settings)
   elif isinstance(v, frozenset):
     pp_v = pp.text(f"frozenset({{{', '.join(repr(e) for e in sorted(v))}}})")
+  elif isinstance(v, pp.Doc):
+    pp_v = v
   else:
     s = str(v)
     s = re.sub(
@@ -4254,7 +4266,8 @@ def pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings
           else pp.source_map(doc, eqn.source_info.traceback))
 
 def _pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings,
-            params: Sequence[str] | None = None) -> pp.Doc:
+            params: Sequence[str] | None = None, name: str | None = None
+            ) -> pp.Doc:
   annotation = (source_info_util.summarize(eqn.source_info)
                 if settings.source_info else None)
   if params is None:
@@ -4262,7 +4275,7 @@ def _pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings,
   name_stack_annotation = f'[{eqn.source_info.name_stack}]' if settings.name_stack else None
   lhs = pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes,
                 is_binder=True)
-  rhs = [pp.text(eqn.primitive.name, annotation=name_stack_annotation),
+  rhs = [pp.text(name or eqn.primitive.name, annotation=name_stack_annotation),
          pp_kv_pairs([(p, eqn.params[p]) for p in params], context, settings),
          pp.text(" ") + pp_vars(eqn.invars, context)]
   if eqn.outvars:

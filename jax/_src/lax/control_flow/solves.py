@@ -126,6 +126,9 @@ class CustomRoot(hijax.HiPrim):
                        has_aux=has_aux)
     super().__init__()
 
+  def pp_params(self):  # f, solve, and tangent_solve are closure-converted
+    return dict(solve_jaxpr=self.solve_jaxpr, has_aux=self.has_aux)
+
   def check(self, *_):
     disallowed = effects.custom_derivatives_allowed_effects.filter_not_in(
         self.effects)

@@ -30,6 +30,8 @@ from jax._src.api_util import (
     resolve_kwargs, infer_argnums_and_argnames, debug_info, is_hashable,
     dyn_args_fun, WrapHashably)
 from jax._src import linear_util as lu
+from jax._src import pretty_printer as pp
+from jax._src import stages
 from jax._src import traceback_util
 from jax._src.core import typeof
 from jax._src.interpreters import ad
@@ -44,7 +46,8 @@ from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src import ad_util
 from jax._src.util import (
-    safe_zip, safe_map, split_list, unzip2, partition_list, merge_lists)
+    safe_zip, safe_map, split_list, unzip2, partition_list, merge_lists,
+    fun_name)
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
     broadcast_prefix, register_static, register_pytree_node, tree_map_with_path,
@@ -244,8 +247,12 @@ class HiPrim:
         call_hi_primitive_p, args_flat, dict(_prim=self), source_info)
     return tree_unflatten(self.out_tree, ans_flat)
 
+  # optional pretty-printing control: the params shown when printing jaxprs
+  def pp_params(self) -> dict[str, Any]:
+    return {k: v for k, v in self.params.items() if not k.startswith('_')}
+
   def __repr__(self):
-    return f"{self.__class__.__name__}[{self.params}]"
+    return str(_pp_hi_prim(self, core.JaxprPpContext(), core.JaxprPpSettings()))
 
   def __hash__(self):
     return hash((self.__class__.__name__, tuple(self.params.items()), self.effects))
@@ -275,6 +282,15 @@ class VmapOf(HiPrim):
   def _vmap_params(self):
     return dict(axis_size=self.axis_data.size, axis_name=self.axis_data.name,
                 spmd_axis_name=self.axis_data.spmd_name or self.axis_data.explicit_mesh_axis)
+
+  def pp_params(self):
+    # show one dim per operand/result, aligned with the eqn's invars/outvars
+    flat_dims = lambda dims: tuple(tree_leaves(dims, is_leaf=lambda x: x is None))
+    params = dict(prim=self.prim, **self._vmap_params,
+                  in_dims=flat_dims(self.in_dims), out_dims=flat_dims(self.out_dim))
+    if params['axis_name'] is core.no_axis_name: del params['axis_name']
+    if params['spmd_axis_name'] is None: del params['spmd_axis_name']
+    return params
 
   def expand(self, *args):
     return api.vmap(self.prim.expand, in_axes=self.in_dims, out_axes=self.out_dim,  # pyrefly: ignore[missing-attribute]
@@ -399,15 +415,52 @@ def _call_hi_primitive_to_lojax(*args_flat, _prim):
   return tree_leaves_checked(_prim.out_tree, ans)
 call_hi_primitive_p.to_lojax = _call_hi_primitive_to_lojax
 
+# print applications as `Name[k=v ...] args`, e.g. `Foo[power=3] a`, rather
+# than as `call_hi_primitive[_prim=...] args`
 def _call_hi_primitive_prettyprint(eqn, context, settings):
-  # print CustomVJPTraced/CustomJVPTraced tersely since their params reprs are
-  # noise (Traced objects, functions), but let prims like RematTraced print in
-  # full since their repr shows the inner jaxpr
-  if isinstance(eqn.params['_prim'], (CustomVJPTraced, CustomJVPTraced)):
-    params = dict(eqn.params, _prim=eqn.params['_prim'].__class__.__name__)
-    eqn = eqn.replace(params=params)
-  return core._pp_eqn(eqn, context, settings)
+  prim = eqn.params['_prim']
+  core.pp_vars(eqn.outvars, context)  # name outvars before any in params
+  params = _pp_hi_params(prim, context, settings)
+  return core._pp_eqn(eqn.replace(params=params), context, settings,
+                      params=list(params), name=type(prim).__name__)
 core.pp_eqn_rules[call_hi_primitive_p] = _call_hi_primitive_prettyprint
+
+def _pp_hi_prim(prim, context, settings):
+  params = _pp_hi_params(prim, context, settings)
+  return pp.text(type(prim).__name__) + core.pp_kv_pairs(
+      params.items(), context, settings)
+
+def _pp_hi_params(prim, context, settings):
+  return {k: _pp_hi_param(v, context, settings)
+          for k, v in prim.pp_params().items()}
+
+def _pp_hi_param(v, context, settings):
+  if isinstance(v, HiPrim):
+    return _pp_hi_prim(v, context, settings)
+  elif isinstance(v, stages.Traced):
+    return v.jaxpr
+  elif isinstance(v, core.AbstractValue):
+    return pp.text(core.pp_aval(v, context))
+  elif inspect.isfunction(v) or isinstance(v, partial):
+    return pp.text(fun_name(v))
+  else:
+    return v  # core.pp_kv_pair handles jaxprs and everything else
+
+# the jaxprs printed by the rule above, so that shared ones can be hoisted
+def _call_hi_primitive_pp_subjaxprs(eqn):
+  return _pp_hi_subjaxprs(eqn.params['_prim'])
+core.pp_subjaxprs_rules[call_hi_primitive_p] = _call_hi_primitive_pp_subjaxprs
+
+def _pp_hi_subjaxprs(prim):
+  params = prim.pp_params()
+  name = params.get('name') if isinstance(params.get('name'), str) else None
+  for k, v in params.items():
+    if isinstance(v, HiPrim):
+      yield from _pp_hi_subjaxprs(v)
+    elif isinstance(v, stages.Traced):
+      yield name, v.jaxpr
+    else:
+      yield from ((name, j) for j in core.jaxprs_in_params({k: v}))
 
 def _call_hi_primitive_batcher(axis_data, args_flat, dims_flat, _prim):
   args = tree_unflatten(_prim.in_tree, args_flat)
@@ -518,11 +571,13 @@ def _call_hi_primitive_linearized_transpose(
 ad.fancy_transposes[call_hi_primitive_linearized_p] = _call_hi_primitive_linearized_transpose
 
 def _call_hi_primitive_linearized_prettyprint(eqn, context, settings):
-  params = dict(eqn.params, _prim=eqn.params['_prim'].__class__.__name__,
-                residuals_tree='...')
-  if not params['has_sres']:
-    del params['has_sres']
-  return core._pp_eqn(eqn.replace(params=params), context, settings)
+  params = dict(nz_in_flat=eqn.params['nz_in_flat'],
+                nz_out_flat=eqn.params['nz_out_flat'])
+  if eqn.params['has_sres']:
+    params['has_sres'] = True
+  name = f"{type(eqn.params['_prim']).__name__}.linearized"
+  return core._pp_eqn(eqn.replace(params=params), context, settings,
+                      params=list(params), name=name)
 core.pp_eqn_rules[call_hi_primitive_linearized_p] = _call_hi_primitive_linearized_prettyprint
 
 def _call_hi_primitive_jvp(primals, tangents, *, _prim):
@@ -756,6 +811,14 @@ class CustomVJPTraced(HiPrim):
                        static_argnums=static_argnums, opt_remat=opt_remat,
                        with_logs=with_logs)
     super().__init__()
+
+  def pp_params(self):
+    params = dict(name=self.traced.fun_name, call_jaxpr=self.traced.jaxpr,
+                  fwd=fun_name(self.fwd), bwd=fun_name(self.bwd),
+                  symbolic_zeros=self.symbolic_zeros)
+    if self.opt_remat: params['optimize_remat'] = True
+    if self.with_logs: params['with_logs'] = True
+    return params
 
   def expand(self, *args):
     args = self.drop_fwd_consts(*args)
@@ -1061,6 +1124,10 @@ class OptRemat(HiPrim):
     self.params = dict(orig=orig, traced_fwd=traced_fwd)
     super().__init__()
 
+  def pp_params(self):
+    return dict(name=self.orig.traced.fun_name, fwd_jaxpr=self.traced_fwd.jaxpr,
+                bwd=fun_name(self.orig.bwd))
+
   def expand(self, *primals):
     return self.traced_fwd(*primals)
 
@@ -1108,6 +1175,10 @@ class CustomJVPTraced(HiPrim):
     self.params = dict(traced=traced, jvp_fun=jvp_fun, symbolic_zeros=sym_zeros,
                        static_argnums=static_argnums)
     super().__init__()
+
+  def pp_params(self):
+    return dict(name=self.traced.fun_name, call_jaxpr=self.traced.jaxpr,
+                jvp=fun_name(self.jvp_fun), symbolic_zeros=self.symbolic_zeros)
 
   def expand(self, *args):
     args = [x for x in args if not isinstance(x, Static)]

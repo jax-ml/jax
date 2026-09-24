@@ -49,7 +49,8 @@ from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
     tree_map, tree_leaves, tree_leaves_checked, Partial, tracing_registry)
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
-                           safe_zip, merge_lists, subs_list, weakref_lru_cache)
+                           safe_zip, merge_lists, subs_list, weakref_lru_cache,
+                           fun_name)
 from jax._src.core import typeof
 
 source_info_util.register_exclusion(__file__)
@@ -1405,6 +1406,10 @@ class CustomRemat(HiPrim):
     self.params = dict(jaxpr=jaxpr, f1=f1, f2_fbwd=f2_fbwd, _in_tree=in_tree,
                        _out_tree=out_tree)
     super().__init__()
+
+  def pp_params(self):
+    return dict(jaxpr=self.jaxpr, fwd=fun_name(self.f1),
+                rem=fun_name(self.f2_fbwd.fwd))  # pyrefly: ignore[missing-attribute]
 
   def expand(self, *args):
     return core.jaxpr_as_fun(self.jaxpr)(*args)
