@@ -19,19 +19,22 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping, Sequence
 import contextlib
 
-from jax._src import config
 from jax._src.lib import _jax
 from jax._src.lib import jaxlib_extension_version
 
 CustomOptionValue = bool | int | float | str | Sequence[int]
 
 
-def current_execution_options() -> _jax.ExecutionOptions:
-  """Returns the execution options in effect on the current thread."""
-  if jaxlib_extension_version < 500:
-    raise NotImplementedError(
-        "jax.execution_options requires jaxlib extension version 500 or newer.")
-  return config.execution_options_context_manager.value
+execution_options_context_manager = _jax.config.Config[
+    dict[str, CustomOptionValue] | None
+](
+    'execution_options_context_manager',
+    None,
+    include_in_jit_key=False,
+    include_in_trace_context=False,
+)
+if jaxlib_extension_version >= 500:
+  _jax.set_execution_options_state(execution_options_context_manager)
 
 
 @contextlib.contextmanager
@@ -54,11 +57,10 @@ def execution_options(
   if custom_options is None:
     yield
     return
-  merged = dict(current_execution_options().custom_options or {})
+  merged = dict(execution_options_context_manager.value or {})
   merged.update(custom_options)
-  options = _jax.ExecutionOptions(custom_options=merged)
-  previous = config.execution_options_context_manager.swap_local(options)
+  previous = execution_options_context_manager.swap_local(merged)
   try:
     yield
   finally:
-    config.execution_options_context_manager.set_local(previous)
+    execution_options_context_manager.set_local(previous)

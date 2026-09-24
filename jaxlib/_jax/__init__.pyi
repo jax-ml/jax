@@ -1085,12 +1085,6 @@ def set_send_traceback_to_runtime_global(
 def set_send_traceback_to_runtime_thread_local(
     mode: RuntimeTracebackMode | None,
 ) -> None: ...
-class ExecutionOptions:
-  def __init__(self, *, custom_options: dict[str, Any] | None = None) -> None: ...
-
-  @property
-  def custom_options(self) -> dict[str, Any] | None: ...
-
 def set_execution_options_state(state: config.Config) -> None:
   """Registers the config read on every execution dispatch."""
 

@@ -1621,7 +1621,7 @@ class JitTest(jtu.BufferDonationTestCase):
 
     with self.assertRaisesRegex(TypeError, "Unsupported custom option"):
       with jax.execution_options(custom_options={"bad": object()}):
-        pass
+        f(1)
 
 
 class APITest(jtu.JaxTestCase):

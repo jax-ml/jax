@@ -20,7 +20,7 @@ import unittest
 from absl.testing import absltest
 
 import jax
-from jax._src import config
+from jax._src import execution_options
 from jax._src.lib import jaxlib_extension_version
 
 
@@ -31,9 +31,9 @@ from jax._src.lib import jaxlib_extension_version
 class ExecutionOptionsTest(absltest.TestCase):
 
   def test_nested_context_restores_state(self):
-    state = config.execution_options_context_manager
+    state = execution_options.execution_options_context_manager
     original = state.get_local()
-    self.assertIsNone(state.value.custom_options)
+    self.assertIsNone(state.value)
     with jax.execution_options(custom_options={"count": 7, "mode": "fast"}):
       outer = state.value
       with jax.execution_options():
@@ -41,34 +41,39 @@ class ExecutionOptionsTest(absltest.TestCase):
       with self.assertRaisesRegex(RuntimeError, "test error"):
         with jax.execution_options(custom_options={"count": 8}):
           self.assertEqual(
-              state.value.custom_options, {"count": 8, "mode": "fast"})
+              state.value, {"count": 8, "mode": "fast"})
           raise RuntimeError("test error")
       self.assertIs(state.value, outer)
     self.assertIs(state.get_local(), original)
 
   def test_bytes_options_rejected(self):
-    for blob in (b"fast", b"\xff\xfe", b""):
-      with self.subTest(blob=blob):
-        with self.assertRaisesRegex(TypeError, "Unsupported custom option blob"):
+    f = jax.jit(lambda x: x + 1)
+    f(1)  # Populate the JIT cache before testing dispatch with invalid options.
+    compiled = f.lower(1).compile()
+    for execute in (f, compiled):
+      for blob in (b"fast", b"\xff\xfe", b""):
+        with self.subTest(execute=execute, blob=blob):
           with jax.execution_options(custom_options={"blob": blob}):
             with jax.execution_options(custom_options={"n": 1}):
-              pass
+              with self.assertRaisesRegex(
+                  TypeError, "Unsupported custom option blob"):
+                execute(1)
 
   def test_thread_isolation(self):
-    state = config.execution_options_context_manager
+    state = execution_options.execution_options_context_manager
 
     def worker():
-      self.assertIsNone(state.value.custom_options)
+      self.assertIsNone(state.value)
       with jax.execution_options(custom_options={"thread": "worker"}):
-        self.assertEqual(state.value.custom_options, {"thread": "worker"})
-      self.assertIsNone(state.value.custom_options)
+        self.assertEqual(state.value, {"thread": "worker"})
+      self.assertIsNone(state.value)
 
     with jax.execution_options(custom_options={"thread": "main"}):
       with futures.ThreadPoolExecutor(max_workers=1) as pool:
         pool.submit(worker).result()
         pool.submit(worker).result()
-      self.assertEqual(state.value.custom_options, {"thread": "main"})
-    self.assertIsNone(state.value.custom_options)
+      self.assertEqual(state.value, {"thread": "main"})
+    self.assertIsNone(state.value)
 
 
 if __name__ == "__main__":

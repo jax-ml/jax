@@ -30,7 +30,6 @@ from jax._src import logging_config
 from jax._src.lib import _jax
 from jax._src.lib import guard_lib
 from jax._src.lib import jax_jit
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 
 config_ext = _jax.config
@@ -1008,15 +1007,6 @@ pallas_tpu_interpret_mode_context_manager = config_ext.Config[Any](
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
-
-if TYPE_CHECKING or jaxlib_extension_version >= 500:
-  execution_options_context_manager = config_ext.Config[_jax.ExecutionOptions](
-      'execution_options_context_manager',
-      _jax.ExecutionOptions(),
-      include_in_jit_key=False,
-      include_in_trace_context=False,
-  )
-  _jax.set_execution_options_state(execution_options_context_manager)
 
 
 class UserContext:
