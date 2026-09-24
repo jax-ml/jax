@@ -1124,6 +1124,19 @@ def raise_custom_vjp_error_on_jvp(*_, **__):
                   "function.")
 custom_lin_p.def_impl(raise_custom_vjp_error_on_jvp)
 
+class CustomBwdWithAccums:
+  """A custom_vjp bwd rule that takes gradient accumulators.
+
+  Called as a function, it follows the usual protocol for bwd rules,
+  ``(*res, *cts_out) -> (cts_in, logs)``, so transformations that wrap bwd
+  rules (e.g. vmap) needn't know about accumulators. When a bwd rule reaches
+  the transpose of custom_lin unwrapped, it gets the accumulators instead.
+  """
+  def call_with_accums(self, res, cts_out, accums):
+    """Takes one accumulator per primal input (None for zero tangents), and
+    returns backward-pass logs (or None)."""
+    raise NotImplementedError
+
 def _custom_lin_transpose_fancy(cts_out, *invals, num_res,
                                 bwd: lu.WrappedFun, out_avals,
                                 symbolic_zeros, in_zeros):
@@ -1132,6 +1145,10 @@ def _custom_lin_transpose_fancy(cts_out, *invals, num_res,
     cts_out = map(replace_internal_symbolic_zeros, cts_out)
   else:
     cts_out = map(instantiate_zeros, cts_out)
+  if not bwd.transforms and isinstance(bwd.f, CustomBwdWithAccums):
+    accums_ = iter(accums)
+    all_accums = [None if z else next(accums_) for z in in_zeros]
+    return bwd.f.call_with_accums(res, cts_out, all_accums)
   cts_in, logs = bwd.call_wrapped(*res, *cts_out)
   cts_in = map(replace_rule_output_symbolic_zeros, cts_in)
   nz_cts_in, _ = partition_list(in_zeros, cts_in)

@@ -1086,6 +1086,12 @@ class custom_vjp3:
                 optimize_remat=optimize_remat)
     self.with_logs = True
 
+  def defvjp_with_accums(self, fwd, bwd, *, symbolic_zeros=False,
+                         optimize_remat=False):
+    del fwd, bwd, symbolic_zeros, optimize_remat
+    raise NotImplementedError(
+        "custom_vjp.defvjp_with_accums isn't yet supported with jax_custom_vjp3")
+
   def defremat(self, fwd, rem, bwd):
     self.remat_rules = (fwd, rem, bwd, False)
 

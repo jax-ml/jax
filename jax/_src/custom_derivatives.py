@@ -43,7 +43,7 @@ from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_map, treedef_is_leaf, treedef_tuple,
     register_pytree_node_class, tree_leaves, tree_flatten_with_path,
     tree_leaves_with_path, keystr, treedef_children, tree_structure, PyTreeDef,
-    tracing_registry)
+    tracing_registry, broadcast_prefix)
 from jax._src.util import (cache, safe_zip, safe_map, split_list, unzip2,
                            weakref_lru_cache)
 
@@ -588,6 +588,7 @@ class custom_vjp[ReturnValue]:
     self.symbolic_zeros = False
     self.optimize_remat = False
     self.with_logs = False
+    self.with_accums = False
 
   __getattr__ = custom_api_util.forward_attr
 
@@ -685,6 +686,7 @@ class custom_vjp[ReturnValue]:
     self.bwd = bwd
     self.symbolic_zeros = symbolic_zeros
     self.optimize_remat = optimize_remat
+    self.with_accums = False
     if self.symbolic_zeros and self.optimize_remat:
       raise NotImplementedError(
           "remat optimization for custom_vjp does not support symbolic zeros")
@@ -711,6 +713,31 @@ class custom_vjp[ReturnValue]:
     self.defvjp(fwd, bwd, symbolic_zeros=symbolic_zeros,
                 optimize_remat=optimize_remat)
     self.with_logs = True
+
+  def defvjp_with_accums(self,
+                         fwd: Callable[..., tuple[ReturnValue, Any]],
+                         bwd: Callable[..., Any],  # returns None or a dict of logs
+                         symbolic_zeros: bool = False,
+                         optimize_remat: bool = False,
+                         ) -> None:
+    """Like :py:func:`~jax.custom_vjp.defvjp`, but ``bwd`` takes gradient
+    accumulators.
+
+    Rather than returning a tuple of cotangents, ``bwd`` takes one gradient
+    accumulator per argument of the primal function (matching its pytree
+    structure) after its two usual arguments, as in ``bwd(res, g, *arg_accums)``,
+    and pushes each cotangent contribution into the corresponding accumulator.
+    It returns ``None``, or a dict of backward-pass logs as with
+    :py:func:`~jax.custom_vjp.defvjp_with_logs`. The accumulators are the
+    ``ValAccum``, ``RefAccum`` and ``NullAccum`` objects that the ``vjp_bwd``
+    method of a hijax primitive receives (see :ref:`jax-301-vjp-bwd-accums`).
+    Under transformations that wrap the backward rule, such as :func:`jax.vmap`
+    applied before differentiation, ``bwd`` receives a ``ValAccum`` in place of
+    a ``RefAccum``, and the result is added to the ``Ref`` afterward.
+    """
+    self.defvjp(fwd, bwd, symbolic_zeros=symbolic_zeros,
+                optimize_remat=optimize_remat)
+    self.with_accums = True
 
   def defremat(self,
                fwd: Callable[..., tuple[ReturnValue, Any]],
@@ -813,8 +840,16 @@ class custom_vjp[ReturnValue]:
     flat_fwd, out_trees = _flatten_fwd(
         fwd_, self.nondiff_argnums, self.symbolic_zeros, debug_fun,
         debug_fwd, in_tree, out_type)
-    flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees, self.fun,
-                            self.with_logs)
+    if self.with_accums:
+      bwd_ = self.bwd
+      if self.nondiff_argnums:
+        bwd_ = partial(self.bwd, *[args[i] for i in self.nondiff_argnums])
+      flat_bwd = lu.wrap_init(
+          _FlatBwdWithAccums(bwd_, in_tree, in_avals, out_trees),
+          debug_info=debug_bwd)
+    else:
+      flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees, self.fun,
+                              self.with_logs)
     out_flat = custom_vjp_call_p.bind(*args_flat, subfuns=(flat_fun, flat_fwd, flat_bwd),
                                       out_trees=out_trees,
                                       symbolic_zeros=self.symbolic_zeros)
@@ -974,6 +1009,37 @@ def _flatten_fwd(f: Callable, store: lu.EqualStore,
 def _filter_forwarded_inputs(outs, ins):
   idxs: dict[int, int] = {id(x): i for i, x in enumerate(ins)}
   return [o for o in outs if id(o) not in idxs], [idxs.get(id(o)) for o in outs]
+
+class _FlatBwdWithAccums(ad.CustomBwdWithAccums):
+  def __init__(self, bwd, in_tree, in_avals, out_trees):
+    self.bwd = bwd
+    self.in_tree = in_tree
+    self.ct_avals = [a.to_ct_aval() for a in in_avals]
+    self.out_trees = out_trees
+
+  def call_with_accums(self, res, cts_out, accums):
+    out_tree, res_tree, _ = self.out_trees()
+    accums = [acc if isinstance(acc, ad.GradAccum) else ad.NullAccum(a)
+              for a, acc in zip(self.ct_avals, accums)]
+    logs = self.bwd(tree_unflatten(res_tree, res),
+                    tree_unflatten(out_tree, cts_out),
+                    *tree_unflatten(self.in_tree, accums))
+    if logs is not None and type(logs) is not dict:
+      raise TypeError(
+          "Custom VJP bwd rule was registered with defvjp_with_accums, and so "
+          "must return None or a dict of backward-pass log entries, but got "
+          f"{type(logs).__name__}.")
+    return logs
+
+  def __call__(self, *res_and_cts):
+    _, res_tree, _ = self.out_trees()
+    res, cts_out = split_list(res_and_cts, [res_tree.num_leaves])
+    accums = [ad.NullAccum(a) if getattr(a, 'dtype', None) == dtypes.float0
+              else ad.ValAccum(a) for a in self.ct_avals]
+    logs = self.call_with_accums(res, cts_out, accums)
+    cts_in = [acc.freeze() if isinstance(acc, ad.ValAccum) else Zero(acc.aval)
+              for acc in accums]
+    return cts_in, logs
 
 @lu.transformation2
 def _flatten_bwd(f: Callable,
@@ -1220,7 +1286,8 @@ mlir.register_lowering(ad.custom_lin_p, ad.raise_custom_vjp_error_on_jvp,
                        cacheable=False)
 
 
-def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False):
+def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False,
+                    with_accums: Any = None):
   """Convenience function for defining custom VJP rules (aka custom gradients).
 
   While the canonical way to define custom VJP rules is via ``jax.custom_vjp``,
@@ -1271,6 +1338,24 @@ def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False):
       its own arguments rather than closing over those of ``fun``); otherwise,
       it runs right after ``fun`` on the forward pass. Requires the
       ``jax_custom_vjp3`` and ``jax_remat3`` implementations.
+    with_accums: optional, default ``None``. If given, the VJP function takes
+      gradient accumulators rather than returning cotangents, as with
+      :py:func:`jax.custom_vjp.defvjp_with_accums`: it's called as
+      ``vjp(g, *arg_accums)``, with one accumulator per argument of ``fun``
+      (matching its pytree structure), and returns ``None`` or a dict of
+      backward-pass logs. The VJP function is traced on the forward pass, so
+      ``with_accums`` declares which kinds of accumulators it gets: it's a
+      pytree prefix of the tuple of arguments of ``fun`` (like the
+      ``in_axes`` of :func:`jax.vmap`), with ``ValAccum`` or ``RefAccum``
+      leaves. For example, ``(ValAccum, RefAccum)`` declares a ``ValAccum``
+      for the first argument and a ``RefAccum`` for the second, and a single
+      ``RefAccum`` declares a ``RefAccum`` for every argument. Inputs that
+      aren't being differentiated, including any integer inputs, get a
+      ``NullAccum`` whatever is declared. On the backward pass, the caller of
+      autodiff must supply the declared kinds, except that it can discard the
+      cotangent of an argument declared as a ``ValAccum`` (with
+      ``jax.ad.DontWant()``); any other kind is an error. Can't yet be
+      combined with ``remat``, or with the ``jax_custom_vjp3`` implementation.
 
   Returns:
     A Python callable that accepts the same arguments as ``fun`` and returns the
@@ -1326,7 +1411,11 @@ def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False):
       return jnp.sin(x), rem
   """
   if fun is None:
-    return lambda f: custom_gradient(f, with_logs=with_logs, remat=remat)
+    return lambda f: custom_gradient(f, with_logs=with_logs, remat=remat,
+                                     with_accums=with_accums)
+  if with_accums is not None and remat:
+    raise NotImplementedError(
+        "custom_gradient doesn't yet support with_accums together with remat")
 
   def wrapped_fun(*args, **kwargs):
     ans, _ = fun(*args, **kwargs)
@@ -1355,7 +1444,19 @@ def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False):
       cts_out = (cts_out,)
     return cts_out
 
-  if remat:
+  if with_accums is not None:
+    # symbolic_zeros tells us on the forward pass which inputs are perturbed,
+    # and so will get NullAccums
+    def accums_fwd(*primals):
+      args = custom_vjp_primal_tree_values(primals)
+      perturbed = tree_map(lambda p: p.perturbed, primals)
+      ans, rule = fun(*args)
+      kinds = _accum_kinds(with_accums, args, perturbed)
+      return ans, _accums_closure_residuals(rule, ans, args, kinds)
+    wrapped_fun.defvjp_with_accums(
+        accums_fwd, partial(_apply_accums_closure_residuals, wrapped_fun.__name__),
+        symbolic_zeros=True)
+  elif remat:
     # The residuals saved on the forward pass are the values `rem` closes over,
     # and those for bwd are the values the VJP function closes over. Outside of
     # jax.remat, the VJP is the one defremat derives from these rules.
@@ -1393,6 +1494,67 @@ def _apply_closure_residuals(res, *args):
   if args_tree != args_tree_: raise TypeError(f'{args_tree}\n!=\n{args_tree_}')
   return tree_unflatten(out_tree, core.eval_jaxpr(jaxpr, consts, *args_flat))
 
+def _accum_kinds(spec, args, perturbed):
+  """The kind of accumulator the VJP function gets for each leaf of `args`: a
+  NullAccum if it isn't perturbed, and otherwise the kind `spec` declares."""
+  kinds = broadcast_prefix(spec, args)
+  for k in kinds:
+    if k not in (ad.ValAccum, ad.RefAccum):
+      raise TypeError(
+          "custom_gradient's with_accums must be a pytree prefix of the "
+          "function's arguments with ValAccum or RefAccum leaves, but got a "
+          f"leaf {k}.")
+  return tuple(k if p else ad.NullAccum
+               for k, p in zip(kinds, tree_leaves(perturbed)))
+
+def _accums_closure_residuals(rule, ans, args, kinds):
+  """Trace `rule(g, *arg_accums)` with accumulators of the given kinds into a
+  `Residuals`. The traced function returns logs, plus its ValAccums' values."""
+  args_flat, args_tree = tree_flatten(args)
+  ct_avals = [core.typeof(x).to_ct_aval() for x in args_flat]
+  ref_avals = [AbstractRef(a) for a, k in zip(ct_avals, kinds) if k is ad.RefAccum]
+  def rule_(g, refs):
+    refs_ = iter(refs)
+    accums = [ad.RefAccum(a, next(refs_)) if k is ad.RefAccum else k(a)
+              for a, k in zip(ct_avals, kinds)]
+    logs = rule(g, *tree_unflatten(args_tree, accums))
+    vals = [acc.freeze() for acc in accums if isinstance(acc, ad.ValAccum)]
+    return logs, [None if isinstance(v, Zero) else v for v in vals]
+  ans_flat, _ = tracing_registry.flatten(ans)
+  _, in_tree = tracing_registry.flatten(((ans, ref_avals), {}))
+  avals = [*(core.typeof(x).to_ct_aval() for x in ans_flat), *ref_avals]
+  closed_jaxpr, rule_out = pe.trace_to_jaxpr(
+      rule_, ft.treedef_args_to_ft(in_tree, avals),
+      debug_info("custom_gradient fwd", rule_, (ans, ref_avals), {}))
+  jaxpr, consts = pe.separate_consts(closed_jaxpr)
+  return Residuals(jaxpr, rule_out.tree, in_tree, consts, kinds)
+
+def _apply_accums_closure_residuals(name, res, cts, *accums):
+  jaxpr, out_tree, _, consts = res
+  cts = tree_map(lambda c: zeros_like_aval(c.aval)
+                 if isinstance(c, SymbolicZero) else c, cts)
+  refs, val_accums = [], []
+  for (path, acc), k in zip(tree_flatten_with_path(accums)[0], res.aux):
+    if k is ad.ValAccum and isinstance(acc, (ad.ValAccum, ad.NullAccum)):
+      val_accums.append(acc)  # a NullAccum here is from DontWant, and discards
+    elif k is ad.RefAccum and isinstance(acc, ad.RefAccum):
+      refs.append(acc.inst().ref)
+    elif k is not ad.NullAccum:
+      raise TypeError(
+          f"custom_gradient function {name} declared a {k.__name__} for its "
+          f"argument{keystr(path)} with with_accums, but its backward pass got "
+          f"a {type(acc).__name__}. (A ValAccum comes from jax.grad, a VJP "
+          "applied without with_refs, or transformations applied before "
+          "differentiation, like vmap. A RefAccum comes from passing a Ref to "
+          "a VJP's with_refs method, and a NullAccum from passing "
+          "jax.ad.DontWant() to it.)")
+  outs = core.eval_jaxpr(jaxpr, consts, *tree_leaves((cts, refs)))
+  logs, vals = tree_unflatten(out_tree, outs)
+  for acc, v in zip(val_accums, vals):
+    if v is not None:
+      acc.accum(v)
+  return logs
+
 def _custom_gradient_logs_rule(rule):
   @wraps(rule)
   def rule_with_logs(*cts):
@@ -1413,19 +1575,20 @@ def _custom_gradient_logs_rule(rule):
 
 @register_pytree_node_class
 class Residuals:
-  def __init__(self, jaxpr, in_tree, out_tree, consts):
+  def __init__(self, jaxpr, in_tree, out_tree, consts, aux=None):
     self.jaxpr = jaxpr
     self.in_tree = in_tree
     self.out_tree = out_tree
     self.consts = consts
+    self.aux = aux  # other static data
   def __iter__(self):
     return iter((self.jaxpr, self.in_tree, self.out_tree, self.consts))
   def tree_flatten(self):
-    return self.consts, (self.jaxpr, self.in_tree, self.out_tree)
+    return self.consts, (self.jaxpr, self.in_tree, self.out_tree, self.aux)
   @classmethod
   def tree_unflatten(cls, aux, consts):
-    jaxpr, in_tree, out_tree = aux
-    return cls(jaxpr, in_tree, out_tree, consts)
+    jaxpr, in_tree, out_tree, aux_ = aux
+    return cls(jaxpr, in_tree, out_tree, consts, aux_)
 
 
 def closure_convert(fun: Callable, *example_args) -> tuple[Callable, list[Any]]:
