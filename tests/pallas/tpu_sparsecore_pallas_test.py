@@ -1328,7 +1328,7 @@ class VectorSubcoreTest(PallasSCTest):
   @parameterized.product(
       dtype=[jnp.int32], new_dtype=[jnp.int8, jnp.int16, jnp.float32]
   )
-  def test_bitcast(self, dtype, new_dtype):
+  def test_plsc_bitcast(self, dtype, new_dtype):
     self.skip_if_tc_tiling(
         "Fails due to incorrectly inferred tiling in tpu.memref_squeeze"
     )
@@ -1353,6 +1353,44 @@ class VectorSubcoreTest(PallasSCTest):
 
     x = jnp.arange(self.num_lanes, dtype=dtype)
     np.testing.assert_array_equal(kernel(x), x.view(new_dtype))
+
+  BITCAST_DTYPES = [
+      jnp.float32,
+      jnp.bfloat16,
+      jnp.int32,
+      jnp.int16,
+      jnp.int8,
+  ]
+
+  @parameterized.product(
+      from_dtype=BITCAST_DTYPES,
+      to_dtype=BITCAST_DTYPES,
+  )
+  def test_pltpu_bitcast(self, from_dtype, to_dtype):
+    # This is similar to test_bitcast in tpu_ops_test.py
+    if from_dtype == to_dtype:
+      self.skipTest("No bitcast needed")
+
+    def body(x_ref, y_ref):
+      y_ref[...] = pltpu.bitcast(x_ref[...], to_dtype)
+
+    m, n = (1, 64)
+    in_packing = 32 // jax.dtypes.itemsize_bits(from_dtype)
+    out_packing = 32 // jax.dtypes.itemsize_bits(to_dtype)
+    in_shape = (m * in_packing, n)
+    out_shape = (m * out_packing, n)
+    inp = np.arange(np.prod(in_shape), dtype=from_dtype).reshape(in_shape)
+    out = self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(out_shape, to_dtype),
+    )(body)(inp)
+    out_interpret = pl.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(out_shape, to_dtype),
+        interpret=True,
+    )(inp)
+    # Do not use np.testing.assert_array_equal as it does not handle bfloat16
+    # nans correctly (per the function documentation, nan == nan should be true)
+    self.assertAllClose(out, out_interpret)
 
   def test_lax_bitcast(self):
     @self.vector_subcore_kernel(

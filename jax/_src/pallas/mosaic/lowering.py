@@ -5055,7 +5055,9 @@ def _unpack_elementwise_lowering_rule(
       out_type, x, source_type=_dtype_to_ir_type(packed_dtype), index=index)
 
 
-@register_lowering_rule(tpu_primitives.bitcast_p)
+@register_lowering_rule(
+    tpu_primitives.bitcast_p, kernel_types=tpu_core.CoreType
+)
 def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
   del ty
   (out_aval,) = ctx.avals_out
