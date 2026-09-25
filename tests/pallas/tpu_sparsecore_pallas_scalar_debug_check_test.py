@@ -11,9 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""SparseCore Pallas tests for vector debug check assertions."""
-
-import functools
+"""SparseCore Pallas tests for scalar debug check assertions."""
 
 from absl.testing import absltest
 import jax
@@ -27,7 +25,7 @@ import jax.numpy as jnp
 config.parse_flags_with_absl()
 
 
-class DebugCheckTest(jtu.JaxTestCase):
+class ScalarDebugCheckTest(jtu.JaxTestCase):
 
   def setUp(self):
     if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
@@ -35,13 +33,16 @@ class DebugCheckTest(jtu.JaxTestCase):
 
     super().setUp()
 
-  def test_vector_debug_check(self):
-    @functools.partial(
-        pl.kernel,
-        out_type=jax.ShapeDtypeStruct((8,), jnp.int32),
-        mesh=plsc.VectorSubcoreMesh(
-            core_axis_name="core", subcore_axis_name="subcore", num_cores=1
-        ),
+  def test_scalar_debug_check(self):
+    if not jtu.is_device_tpu_at_least(8):
+      # TODO: b/469486032 - Figure out why the test gets stuck on v5p, v6e, and v7.
+      self.skipTest("Fails on v5p, v6e, and v7.")
+
+    x = jnp.arange(8)
+
+    @pl.kernel(
+        out_type=x,
+        mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
     )
     def kernel(_):
       pl.debug_check(True, "Check success!")
@@ -52,14 +53,12 @@ class DebugCheckTest(jtu.JaxTestCase):
     ) as error:
       jax.block_until_ready(kernel())
 
-    # TODO(b/479427406): Remove this once the bug is fixed.
-    if not (jtu.is_cloud_tpu() and jtu.is_device_tpu_at_least(7)):
-      self.assertNotIn("Check success!", str(error.exception))
-      self.assertIn("Check failure!", str(error.exception))
-      self.assertIn(
-          "check at DebugCheckTest.test_vector_debug_check",
-          str(error.exception),
-      )
+    self.assertNotIn("Check success!", str(error.exception))
+    self.assertIn("Check failure!", str(error.exception))
+    self.assertIn(
+        "check at ScalarDebugCheckTest.test_scalar_debug_check",
+        str(error.exception),
+    )
 
 
 if __name__ == "__main__":

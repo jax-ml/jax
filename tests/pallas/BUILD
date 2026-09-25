@@ -1578,10 +1578,70 @@ jax_multiplatform_test(
         "tpu_v5p",
         "tpu_v6e",
         "tpu_7x",
-        "cpu",  # Just to make sure we at least check the shard_count in presubmit.
+        "cpu",
     ],
-    minimal_shard_count = 4,
-    shard_count = 4,
+    tags = ["sparsecore_test"],
+    deps = [
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_sc",
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+        "absl/flags",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_sparsecore_pallas_scalar_debug_check_test",
+    srcs = ["tpu_sparsecore_pallas_scalar_debug_check_test.py"],
+    backend_variant_args = {
+        "tpu": if_oss(
+            [],
+            google_value = [
+                "--xla_tpu_enable_mlir_verifier=ALL",
+                "--xla_sc_assert_level=san",
+            ],
+        ),
+    },
+    enable_backends = [],
+    enable_configs = [
+        "tpu_v5p",
+        "tpu_v6e",
+        "tpu_7x",
+        "cpu",
+    ],
+    tags = ["sparsecore_test"],
+    deps = [
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_sc",
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+        "absl/flags",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_sparsecore_pallas_bounds_check_test",
+    srcs = ["tpu_sparsecore_pallas_bounds_check_test.py"],
+    backend_variant_args = {
+        "tpu": if_oss(
+            [],
+            google_value = [
+                "--xla_tpu_enable_mlir_verifier=ALL",
+                "--xla_sc_assert_level=san",
+            ],
+        ),
+    },
+    enable_backends = [],
+    enable_configs = [
+        "tpu_v5p",
+        "tpu_v6e",
+        "tpu_7x",
+        "cpu",
+    ],
     tags = ["sparsecore_test"],
     deps = [
         "//jax/experimental:pallas",
