@@ -33,6 +33,8 @@ Name                                        | Default Value                     
 
 `JAXCI_TEST_ARTIFACTS_DIR` | "test-artifacts" | Controls the directory where test artifacts are written to. | [Usage](https://github.com/search?q=repo%3Ajax-ml%2Fjax%20JAXCI_TEST_ARTIFACTS_DIR&type=code)
 `JAXCI_EXTRA_TEST_ENV` | Empty String | Additional `--test_env` flags passed to Bazel test commands. | [Usage](https://github.com/search?q=repo%3Ajax-ml%2Fjax%20JAXCI_EXTRA_TEST_ENV&type=code)
+`JAXCI_IGNORE_TESTS` | Empty String | Additional single-accelerator test targets to exclude. | [Usage](https://github.com/search?q=repo%3Ajax-ml%2Fjax%20JAXCI_IGNORE_TESTS&type=code)
+`JAXCI_IGNORE_TESTS_MULTIPROCESS` | Empty String | Additional multi-accelerator test targets to exclude. | [Usage](https://github.com/search?q=repo%3Ajax-ml%2Fjax%20JAXCI_IGNORE_TESTS_MULTIPROCESS&type=code)
 
 ## Docker Specific Environment Variables
 
