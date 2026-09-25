@@ -370,7 +370,7 @@ naively, it misbehaves:
 
 ```{code-cell}
 class CustomClass:
-  def __init__(self, x: jax.Array, mul: bool):
+  def __init__(self, x: float, mul: bool):
     self.x = x
     self.mul = mul
 
@@ -400,7 +400,7 @@ of the object's contents, so that differing objects actually miss the cache:
 
 ```{code-cell}
 class CustomClass:
-  def __init__(self, x: jax.Array, mul: bool):
+  def __init__(self, x: float, mul: bool):
     self.x = x
     self.mul = mul
 
@@ -417,6 +417,14 @@ class CustomClass:
     return (isinstance(other, CustomClass) and
             (self.x, self.mul) == (other.x, other.mul))
 ```
+
+For this to work at all, every attribute used in `__hash__` and `__eq__`
+must be hashable and must compare with a plain boolean result. `jax.Array`
+and NumPy arrays are neither, which is why `x` is a `float` in this
+example. Array-valued attributes shouldn't be static in the first place: a
+static value is baked into the compiled program as a constant, so every new
+array would mean a recompile even if hashing worked. Classes that hold
+arrays belong in Strategy 1 or Strategy 3.
 
 This works with `jit` and other transformations **so long as you never
 mutate the object**: mutating a value that's in use as a hash key leads to
