@@ -1140,6 +1140,34 @@ class PureCallbackTest(jtu.JaxTestCase):
       f(x)
     self.assertEqual(count(), 1)
 
+  def test_pure_callback_exception_type_independent_of_cpp_cache(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/34083
+    if jtu.parse_version(jax.lib.__version__) < (0, 11, 1):
+      self.skipTest("Requires jaxlib 0.11.1 or newer.")
+
+    def cb(x):
+      if x > 0:
+        raise RuntimeError("test exception")
+      return np.asarray(x)
+
+    def make_f():
+      @jax.jit
+      def f(x):
+        return jax.pure_callback(cb, jax.ShapeDtypeStruct((), np.float32), x)
+      return f
+
+    # A raising first call reports the error via the Python slow path.
+    f = make_f()
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, "test exception"):
+      jax.block_until_ready(f(jnp.float32(1.)))
+
+    # A successful first call populates the C++ fastpath cache; errors raised
+    # through it must also surface as JaxRuntimeError, not ValueError.
+    f = make_f()
+    jax.block_until_ready(f(jnp.float32(-1.)))
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, "test exception"):
+      jax.block_until_ready(f(jnp.float32(1.)))
+
 
 class IOCallbackTest(jtu.JaxTestCase):
 
