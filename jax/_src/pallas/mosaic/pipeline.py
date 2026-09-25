@@ -1779,7 +1779,6 @@ def _emit_pipeline(
       *refs: Any,
       scratches=None,
       allocations=None,
-      body_prologue=None,
   ):
     """
     Run the pipeline.
@@ -1789,8 +1788,6 @@ def _emit_pipeline(
         pallas refs)
       scratches: scratch buffers for the inner kernel
       allocations: a list of BufferedRefs, one corresponding to each ref
-      body_prologue: For running code within the grid environment before the
-        body is run. Useful for updating manual refs.
     """
     if scratches is None:
       scratches = ()
@@ -1827,7 +1824,6 @@ def _emit_pipeline(
                 *refs,
                 scratches=scratches,
                 allocations=(*allocations, *out_allocations),
-                body_prologue=body_prologue,
             ),
             _make_pipeline_allocations(
                 *refs[len(in_specs):],
@@ -1861,8 +1857,6 @@ def _emit_pipeline(
         brefs = map_brefs(scheduler.wait_in, brefs, refs)
 
         # run the kernel!
-        if body_prologue is not None:
-          body_prologue()
         current_refs = map_brefs(lambda x: x.current_ref, brefs)
         with scheduler._named_scope("ep_run_kernel"):
           if _explicit_indices:
@@ -1900,8 +1894,6 @@ def _emit_pipeline(
           copy_in = lambda bref, ref: sync_copy(ref, bref, indices)
           map_inputs(copy_in, brefs, refs)
           # run the kernel!
-          if body_prologue is not None:
-            body_prologue()
           current_refs = map_brefs(lambda x: x.current_ref, brefs)
           with scheduler._named_scope("ep_run_kernel"):
             if _explicit_indices:
