@@ -658,7 +658,6 @@ class ArrayImpl(basearray.Array):
       if jaxlib_extension_version >= 495 and ifrt_version >= 71:
         # Copy the entire array to host in one go.
         npy_value, did_copy = self._to_np_array_did_copy()
-        npy_value.flags.writeable = False
         if did_copy:
           self._npy_value = npy_value
         return npy_value
