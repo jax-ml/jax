@@ -90,6 +90,7 @@ class ConstraintSystemTest(parameterized.TestCase):
       (mgpu.TCGEN05_LAYOUT, mgpu.TCGEN05_TRANSPOSED_LAYOUT),
       (mgpu.TCGEN05_TRANSPOSED_LAYOUT, mgpu.TCGEN05_LAYOUT),
       (mgpu.WGMMA_LAYOUT_UPCAST_2X, mgpu.WGMMA_LAYOUT),
+      (mgpu.WGMMA_LAYOUT, mgpu.WGMMA_LAYOUT_UPCAST_2X),
       (mgpu.WGMMA_LAYOUT_UPCAST_4X, mgpu.WGMMA_LAYOUT_UPCAST_2X),
       (mgpu.WGMMA_LAYOUT_UPCAST_4X, mgpu.WGMMA_LAYOUT),
       (mgpu.tmem_native_layout(2), mgpu.tmem_native_layout(1)),
@@ -844,9 +845,10 @@ class ConstraintSystemTest(parameterized.TestCase):
     )
 
   @parameterized.parameters(
-    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, 8),
-    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, 8),
-    (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, 32),
+      (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, 8),
+      (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, 8),
+      (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, 32),
+      (fa.WGMMA_LAYOUT, fa.WGMMA_LAYOUT_UPCAST_2X, 32),
   )
   def test_forcing_relayout_on_unsupported_bitwidth_raises(self, src, dst, bitwidth):
     self.assertFalse(cs.Relayout(cs.RegisterLayout(src), cs.RegisterLayout(dst), bitwidth).holds())
@@ -855,6 +857,7 @@ class ConstraintSystemTest(parameterized.TestCase):
       (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, 4),
       (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, 4),
       (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, 16),
+      (fa.WGMMA_LAYOUT, fa.WGMMA_LAYOUT_UPCAST_2X, 16),
   )
   def test_forcing_relayout_on_supported_bitwidth_succeeds(self, src, dst, bitwidth):
     self.assertTrue(cs.Relayout(cs.RegisterLayout(src), cs.RegisterLayout(dst), bitwidth).holds())

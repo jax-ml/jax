@@ -914,6 +914,7 @@ class WGMMALayoutTest(TestCase):
           ("WGMMA_LAYOUT_8BIT", "WGMMA_LAYOUT_8BIT"),
           ("WGMMA_LAYOUT_UPCAST_2X", "WGMMA_LAYOUT_UPCAST_2X"),
           ("WGMMA_LAYOUT_UPCAST_2X", "WGMMA_LAYOUT"),
+          ("WGMMA_LAYOUT", "WGMMA_LAYOUT_UPCAST_2X"),
           ("WGMMA_LAYOUT_UPCAST_4X", "WGMMA_LAYOUT_UPCAST_4X"),
           ("WGMMA_LAYOUT_UPCAST_4X", "WGMMA_LAYOUT_UPCAST_2X"),
           ("WGMMA_LAYOUT_UPCAST_4X", "WGMMA_LAYOUT"),
@@ -7310,8 +7311,17 @@ class LayoutTest(TestCase):
   @parameterized.parameters(
       (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, jnp.int8, jnp.int8, 1),
       (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, jnp.int8, jnp.int16, 1),
-      (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, jnp.int4, jnp.int4, 1),
+      (fa.WGMMA_LAYOUT, fa.WGMMA_LAYOUT_UPCAST_2X, jnp.int8, jnp.int8, 0.5),
+      (fa.WGMMA_LAYOUT, fa.WGMMA_LAYOUT_UPCAST_2X, jnp.int8, jnp.int16, 0.5),
+      (
+          fa.WGMMA_LAYOUT_UPCAST_4X,
+          fa.WGMMA_LAYOUT_UPCAST_2X,
+          jnp.int4,
+          jnp.int4,
+          1,
+      ),
       (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, jnp.int4, jnp.int4, 0.5),
+      (fa.WGMMA_LAYOUT, fa.WGMMA_LAYOUT_UPCAST_2X, jnp.int4, jnp.int4, 0.25),
       (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, jnp.int4, jnp.int4, 2),
   )
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
