@@ -1283,7 +1283,7 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertRaisesRegex(
         TypeError,
         "Cannot apply JAX transformations to a function lowered and compiled "
-        "for a particular signature. Detected .*BatchTracer",
+        "for a particular signature. Detected .*VmapTracer",
         err)
 
   def test_jit_lower_as_text(self):
@@ -4336,13 +4336,13 @@ class APITest(jtu.JaxTestCase):
     msg = (
         r"This VmapTracer with object id [0-9]+ was created on line:\n"
         r"  .*\n"
-        r"<BatchTracer [0-9]+> is referred to by"
+        r"<VmapTracer [0-9]+> is referred to by"
     )
 
     # msg = (
     #     r"This VmapTracer with object id [0-9]+ was created on line:\n"
     #     r"  .*\n"
-    #     r"<BatchTracer [0-9]+> is referred to by <function [0-9]+> \(foo\) "
+    #     r"<VmapTracer [0-9]+> is referred to by <function [0-9]+> \(foo\) "
     #     r"closed-over variable x\n"
     #     r"<function [0-9]+> is referred to by <list [0-9]+>\[0\]\n"
     #     r"<list [0-9]+> is referred to by <dict [0-9]+>\['hi'\]\n"
