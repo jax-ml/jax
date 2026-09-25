@@ -1999,13 +1999,13 @@ def _all_gather_is_async(x, axis_name, *, axis_index_groups=None, axis=0,
     raise ValueError(
         "Got unexpected `to` value for `jax.lax.all_gather`. Allowed `to`"
         f" values are: {_allowed_ag_to}")
-  if to == 'varying':
+  if to == 'varying' or not config._check_vma.value:
     return _all_gather(x, axis_name, axis_index_groups=axis_index_groups,
                        axis=axis, tiled=tiled, is_async=is_async)
   elif to == 'invarying':
     if axis_index_groups is not None:
       raise NotImplementedError
-    return all_gather_invariant(x, axis_name, axis=axis, tiled=tiled)
+    return _all_gather_invariant(x, axis_name, axis=axis, tiled=tiled)
   else:
     assert to == 'reduced'
     if axis_index_groups is not None:
@@ -2187,23 +2187,7 @@ batching.fancy_primitive_batchers[all_gather_p] = partial(
     _all_gather_batched_collective, all_gather_p)
 
 
-def all_gather_invariant(x, axis_name, *, axis: int = 0, tiled: bool = False):
-  """Gather values of x across all replicas.
-
-  If ``x`` is a pytree then the result is equivalent to mapping this function to
-  each leaf in the tree.
-
-  all_gather_invariant differs from all_gather in the following ways:
-
-  * all_gather_invariant is Varying -> Invariant.
-    For example: `out: f32[8] = all_gather_invariant(inp: f32[4]{V: x}, 'x')`
-    where the size of mesh axis `x` is 2.
-    While all_gather is Varying -> Varying.
-
-  * all_gather_invariant transposes to dynamic_slice which is
-    Invariant -> Varying. While all_gather transposes to reduce_scatter
-    which is Varying -> Varying.
-  """
+def _all_gather_invariant(x, axis_name, *, axis, tiled):
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if not axis_name:
