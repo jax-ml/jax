@@ -989,8 +989,7 @@ def fetch_with_lookahead(buffered_ref, src_ref,
                          grid,
                          grid_offsets,
                          predicate: jax.Array | bool = True,
-                         max_num_fetches: int | None = None,
-                         update_slots: bool = True):
+                         max_num_fetches: int | None = None):
   """Fetch future blocks using unbounded lookahead.
 
   Args:
@@ -1001,7 +1000,6 @@ def fetch_with_lookahead(buffered_ref, src_ref,
     predicate: a boolean predicate for whether to perform the fetch.
     max_num_fetches: the maximum number of fetches to perform. If None,
       this will continually fetch until all copy_in slots are full.
-    update_slots: whether to update the register slot indices.
   """
   assert buffered_ref.use_lookahead
   add_offset = lambda x: tuple(
@@ -1053,10 +1051,9 @@ def fetch_with_lookahead(buffered_ref, src_ref,
       _loop_cond, _loop_body,
       (current_indices, next_fetch, buffered_ref.cumulative_copy_in))
 
-  buffered_ref = buffered_ref.with_next_fetch(final_indices)
-  if update_slots:
-    buffered_ref = buffered_ref.with_slot_index(copy_in_slot=final_copy_in_slot)
-  return buffered_ref, final_copy_in_slot
+  return buffered_ref.with_next_fetch(final_indices).with_slot_index(
+      copy_in_slot=final_copy_in_slot
+  )
 
 
 # Helper to tree map over BufferedRefs as leaves.
@@ -1313,7 +1310,7 @@ class Scheduler:
               self.add_offset(buffered_ref.next_fetch_indices))
           buffered_ref = buffered_ref.advance_copy_in_slot(predicate)
         else:
-          buffered_ref, _ = fetch_with_lookahead(
+          buffered_ref = fetch_with_lookahead(
               buffered_ref,
               src_ref,
               self.grid,
@@ -1369,7 +1366,7 @@ class Scheduler:
       return buffered_ref
 
     if buffered_ref.use_lookahead:
-      buffered_ref, _ = fetch_with_lookahead(
+      buffered_ref = fetch_with_lookahead(
           buffered_ref, src_ref, self.grid, self.grid_offsets, predicate=True
       )
     else:
