@@ -3100,6 +3100,149 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     self.assertTrue(any("named 'saved'" in s for _, s in res),
                     msg=f'saved residuals: {[s for _, s in res]}')
 
+  def test_defremat_and_defvjp(self):
+    calls = []
+    @jax.custom_vjp
+    def sin(x):
+      return jnp.sin(x)
+    def sin_fwd(x):
+      calls.append('fwd')
+      return jnp.sin(x), jnp.cos(x)
+    def sin_remat_fwd(x):
+      calls.append('remat_fwd')
+      return jnp.sin(x), jnp.cos(x)
+    def sin_rem(cos_x, x):
+      calls.append('rem')
+      return jnp.sin(x), cos_x
+    def sin_bwd(cos_x, g):
+      return (cos_x * g,)
+    sin.defvjp(sin_fwd, sin_bwd)
+    sin.defremat(sin_remat_fwd, sin_rem, sin_bwd)
+    x = jnp.arange(3.)
+
+    # outside remat, the defvjp rules apply
+    self.assertArraysAllClose(jax.grad(lambda x: sin(x).sum())(x), jnp.cos(x))
+    self.assertEqual(calls, ['fwd'])
+
+    # under remat, the defremat rules apply
+    calls.clear()
+    loss = lambda x: jax.remat(sin)(x).sum()
+    self.assertArraysAllClose(jax.grad(loss)(x), jnp.cos(x))
+    self.assertEqual(calls, ['remat_fwd', 'rem'])
+
+    # the only residual is the one the remat fwd rule saves
+    _, f_vjp = jax.vjp(jax.remat(sin), x)
+    leaves = jax.tree.leaves(f_vjp)
+    self.assertLen(leaves, 1)
+    self.assertArraysAllClose(leaves[0], jnp.cos(x))
+
+  def test_defremat_without_defvjp(self):
+    # outside remat, rem runs right after fwd, so bwd's residuals are saved
+    sin = jax.custom_vjp(jnp.sin)
+    sin.defremat(lambda x: (jnp.sin(x), None),
+                 lambda _, x: (jnp.sin(x), jnp.cos(x)),
+                 lambda cos_x, g: (cos_x * g,))
+    x = jnp.arange(3.)
+    self.assertArraysAllClose(sin(x), jnp.sin(x))
+    self.assertArraysAllClose(jax.jit(sin)(x), jnp.sin(x))
+    for f in [sin, jax.remat(sin)]:
+      self.assertArraysAllClose(jax.grad(lambda x: f(x).sum())(x), jnp.cos(x))
+    _, f_vjp = jax.vjp(sin, x)
+    leaves = jax.tree.leaves(f_vjp)
+    self.assertLen(leaves, 1)
+    self.assertArraysAllClose(leaves[0], jnp.cos(x))
+
+  def test_defremat_nondiff_argnums_vmap(self):
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
+    def scale_sin(c, x):
+      return c * jnp.sin(x)
+    scale_sin.defremat(lambda c, x: (c * jnp.sin(x), jnp.cos(x)),
+                       lambda cos_x, c, x: (c * jnp.sin(x), cos_x),
+                       lambda c, cos_x, g: (c * cos_x * g,))
+    f = jax.remat(lambda x: scale_sin(3., x))
+    x = jnp.arange(3.)
+    self.assertArraysAllClose(jax.vmap(jax.grad(f))(x), 3. * jnp.cos(x))
+
+  def test_custom_gradient_remat(self):
+    @jax.custom_gradient(remat=True)
+    def sin_saving_cos(x):
+      cos_x = jnp.cos(x)
+      def rem(x):
+        return jnp.sin(x), lambda g: (g * cos_x,)
+      return jnp.sin(x), rem
+
+    @jax.custom_gradient(remat=True)
+    def sin_saving_nothing(x):
+      def rem(x):
+        cos_x = jnp.cos(x)
+        return jnp.sin(x), lambda g: (g * cos_x,)
+      return jnp.sin(x), rem
+
+    x = jnp.arange(3.)
+    for sin in [sin_saving_cos, sin_saving_nothing]:
+      self.assertArraysAllClose(sin(x), jnp.sin(x))
+      for f in [sin, jax.remat(sin), jax.remat(lambda x: sin(sin(x)))]:
+        jtu.check_grads(f, (x,), order=2, modes=['rev'])
+
+    def saved(f):
+      _, f_vjp = jax.vjp(f, x)
+      leaves = jax.tree.leaves(f_vjp)
+      self.assertLen(leaves, 1)
+      return leaves[0]
+    # outside of remat, rem runs right after the primal, so cos is saved
+    self.assertArraysAllClose(saved(sin_saving_cos), jnp.cos(x))
+    self.assertArraysAllClose(saved(sin_saving_nothing), jnp.cos(x))
+    # under remat, what's saved is what rem closes over (or else the input)
+    self.assertArraysAllClose(saved(jax.remat(sin_saving_cos)), jnp.cos(x))
+    self.assertArraysAllClose(saved(jax.remat(sin_saving_nothing)), x)
+
+  def test_custom_gradient_remat_two_args(self):
+    @jax.custom_gradient(remat=True)
+    def mul(x, y):
+      def rem(x, y):
+        return x * y, lambda g: (g * y, g * x)
+      return x * y, rem
+    f = lambda x, y: jnp.sin(mul(x, y))
+    for f_ in [f, jax.remat(f)]:
+      self.assertAllClose(jax.grad(f_, (0, 1))(2., 3.),
+                          jax.grad(lambda x, y: jnp.sin(x * y), (0, 1))(2., 3.))
+
+  def test_custom_gradient_remat_with_logs(self):
+    # two args, so the (cts, logs) pair mustn't be mistaken for the cts
+    @jax.custom_gradient(remat=True, with_logs=True)
+    def mul(x, y):
+      def rem(x, y):
+        return x * y, lambda g: ((g * y, g * x), {'g': g})
+      return x * y, rem
+    x, y = jnp.arange(3.), jnp.ones(3)
+    for f in [mul, jax.remat(mul)]:
+      _, f_vjp = jax.vjp(f, x, y)
+      (x_ct, y_ct), logs = f_vjp.with_logs(2 * y)
+      self.assertArraysAllClose(x_ct, 2 * y)
+      self.assertArraysAllClose(y_ct, 2 * x)
+      self.assertArraysAllClose(logs['g'], 2 * y)
+
+  def test_defremat_with_logs(self):
+    # the plain and remat bwd rules each decide whether they log
+    f = jax.custom_vjp(jnp.sin)
+    f.defvjp(lambda x: (jnp.sin(x), jnp.cos(x)), lambda c, g: (c * g,))
+    f.defremat_with_logs(lambda x: (jnp.sin(x), jnp.cos(x)),
+                         lambda c, x: (jnp.sin(x), c),
+                         lambda c, g: ((c * g,), {'g': g}))
+    x = jnp.arange(3.)
+    _, f_vjp = jax.vjp(f, x)
+    self.assertEqual(f_vjp.with_logs(jnp.ones(3))[1], {})
+    _, f_vjp = jax.vjp(jax.remat(f), x)
+    self.assertEqual(list(f_vjp.with_logs(jnp.ones(3))[1]), ['g'])
+
+  @config.custom_vjp3(False)
+  def test_defremat_requires_custom_vjp3(self):
+    sin = jax.custom_vjp(jnp.sin)
+    with self.assertRaisesRegex(NotImplementedError, "jax_custom_vjp3"):
+      sin.defremat(lambda x: (jnp.sin(x), None),
+                   lambda _, x: (jnp.sin(x), jnp.cos(x)),
+                   lambda cos_x, g: (cos_x * g,))
+
   def test_eager_call_not_traced(self):
     calls = 0
     @jax.custom_vjp

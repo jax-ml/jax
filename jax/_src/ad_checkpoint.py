@@ -31,7 +31,6 @@ from jax._src import effects
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import api_util
-from jax._src import custom_derivatives
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -49,8 +48,7 @@ from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
     tree_map, tree_leaves, tree_leaves_checked, Partial, tracing_registry)
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
-                           safe_zip, merge_lists, subs_list, weakref_lru_cache,
-                           fun_name)
+                           safe_zip, merge_lists, subs_list, weakref_lru_cache)
 from jax._src.core import typeof
 
 source_info_util.register_exclusion(__file__)
@@ -1341,102 +1339,3 @@ class PrimalLeftTangentRight(HiPrim):
 
 def primal_left_tangent_right(x, _x):
   return PrimalLeftTangentRight(typeof(x), typeof(_x))(x, _x)
-
-
-def custom_remat(f, f_fwd, f_rem, f_bwd, *, static_argnums=(),
-                 static_argnames=()):
-  """Wrap ``f`` with custom rematerialization behavior for reverse-mode AD.
-
-  Where :func:`jax.checkpoint` policies select saveable values by name, a
-  ``custom_remat``-wrapped function carries its own rematerialization rules,
-  which can depend on the ambient checkpoint policy. Requires the
-  ``jax_remat3`` implementation.
-
-  Args:
-    f: the function to wrap, called (or traced) for ordinary evaluation.
-    f_fwd: forward-pass rule under rematerialized differentiation, of
-      signature ``f_fwd(policy, *args) -> (out, res)``. It receives the
-      ambient checkpoint policy along with the arguments of ``f``, and
-      returns the primal output paired with residuals to save (which may be
-      ``None``, to save nothing).
-    f_rem: rematerialization rule, of signature
-      ``f_rem(res, *args) -> (out, res2)``. On the backward pass it receives
-      the residuals saved by ``f_fwd`` and the arguments of ``f``, and
-      recomputes the primal output paired with the residuals that ``f_bwd``
-      needs.
-    f_bwd: backward-pass rule, of signature
-      ``f_bwd(res2, out_ct) -> args_ct``, returning a tuple of cotangents
-      with one entry per argument of ``f``.
-    static_argnums: as in :func:`jax.jit`.
-    static_argnames: as in :func:`jax.jit`.
-
-  Returns:
-    A wrapped version of ``f`` with the same call behavior, but with the
-    given rules applied when it is differentiated in reverse mode under
-    rematerialization (e.g. under :func:`jax.checkpoint`). Forward-mode
-    differentiation falls back to differentiating ``f``.
-  """
-  # TODO reverse-mode only... use hijax instead of custom_vjp
-  helper = custom_derivatives.custom_vjp(lambda _, *args: f(*args))
-  helper.defvjp(f_rem, lambda res, g: (None, *f_bwd(res, g)))
-  static_argnums = api_util._ensure_index_tuple(static_argnums)
-  static_argnames = api_util._ensure_str_tuple(static_argnames)
-  def call(*args, **kwargs):
-    args_ft = ft.flatten_static_argnums_argnames(
-        args, kwargs, static_argnums, static_argnames)
-    avals_ft = args_ft.map(typeof)
-    dbg = api_util.debug_info(
-        'custom_remat', f, args, kwargs, static_argnums=static_argnums,
-        static_argnames=static_argnames)
-    jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
-    jaxpr, consts = pe.separate_consts(jaxpr_)
-    out_flat = CustomRemat(jaxpr, f_fwd, helper, args_ft.tree, out_avals_ft.tree)(*consts, *args_ft)
-    return out_avals_ft.update(out_flat).unflatten()
-  return call
-
-class CustomRemat(HiPrim):
-  skip_linearization_on_zero_tangents = True
-  jaxpr: core.Jaxpr
-  f1: Callable
-  f2_fbwd: Callable
-
-  def __init__(self, jaxpr, f1, f2_fbwd, in_tree, out_tree):
-    self.in_avals = tuple(jaxpr.in_avals)
-    self.out_aval = jaxpr.out_avals
-    self.params = dict(jaxpr=jaxpr, f1=f1, f2_fbwd=f2_fbwd, _in_tree=in_tree,
-                       _out_tree=out_tree)
-    super().__init__()
-
-  def pp_params(self):
-    return dict(jaxpr=self.jaxpr, fwd=fun_name(self.f1),
-                rem=fun_name(self.f2_fbwd.fwd))  # pyrefly: ignore[missing-attribute]
-
-  def expand(self, *args):
-    return core.jaxpr_as_fun(self.jaxpr)(*args)
-
-  def remat(self, trace, *args_flat):  # type: ignore
-    args, kwargs = tree_unflatten(self._in_tree, args_flat)  # type: ignore
-    out_primal, res = self.f1(trace.policy, *args, **kwargs)
-    out_primal_flat = tree_leaves_checked(self._out_tree, out_primal)  # type: ignore
-    def rem_flat(res, *args_flat):
-      args, kwargs = tree_unflatten(self._in_tree, args_flat)  # type: ignore
-      out_primal = self.f2_fbwd(res, *args, **kwargs)
-      return tree_leaves_checked(self._out_tree, out_primal)  # type: ignore
-    return out_primal_flat, res, rem_flat
-
-  def jvp(self, primals, tangents):
-    traced = core.jaxpr_as_fun(self.jaxpr)
-    tangents = tuple(map(ad_util.instantiate, tangents))  # TODO
-    return api.jvp(traced, primals, tangents)
-
-  def lin(self, nzs_in, *primals):
-    raise NotImplementedError  # TODO(mattjj)
-
-  def linearized(self, res, *tangents):  # pyrefly: ignore[bad-param-name-override]
-    raise NotImplementedError  # TODO(mattjj)
-
-  def vjp_fwd(self, in_nzs, *args_flat):  # type: ignore
-    raise NotImplementedError  # TODO(mattjj)
-
-  def vjp_bwd(self, res, ybar):  # type: ignore
-    raise NotImplementedError  # TODO(mattjj)
