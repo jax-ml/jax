@@ -67,6 +67,9 @@ def num_available_tpu_chips_and_device_id():
   num_chips = 0
   tpu_version = None
   for vendor_path in glob.glob('/sys/bus/pci/devices/*/vendor'):
+    pci_addr = os.path.basename(os.path.dirname(vendor_path))
+    if not pci_addr.endswith('.0'):
+      continue
     vendor_id = pathlib.Path(vendor_path).read_text().strip()
     if vendor_id != _GOOGLE_PCI_VENDOR_ID:
       continue

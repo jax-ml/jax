@@ -24,6 +24,7 @@ import io
 import itertools
 import math
 import platform
+import sys
 from typing import cast
 import unittest
 from unittest import SkipTest
@@ -2594,6 +2595,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with np.errstate(all="ignore"):
       m_np, e_np = np.frexp(x_ftz.astype(work_dtype))
       m_np = m_np.astype(dtype)
+
+    if sys.platform == "win32":
+      e_np = np.where(np.isfinite(x_ftz), e_np, 0)
 
     not_nan = ~np.isnan(m_np)
     uint_dtype = f"uint{info.bits}"
