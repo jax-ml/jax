@@ -73,6 +73,7 @@ Just-in-time compilation (:code:`jit`)
     ensure_compile_time_eval
     make_jaxpr
     eval_shape
+    execution_options
     ShapeDtypeStruct
     device_put
     device_get

@@ -65,6 +65,7 @@ from jax._src.interpreters import ad as ad_internal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.eval_jaxpr import eval_jaxpr_p
+from jax._src.lib import jaxlib_extension_version
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.sharding_impls import make_single_device_sharding
 import jax._src.util as jax_util
@@ -1590,6 +1591,37 @@ class JitTest(jtu.BufferDonationTestCase):
 
     with self.subTest("jit closure"):
       self.assertEqual(jax.jit(lambda: jnp.sum(mask))(), N)
+
+
+  @unittest.skipIf(
+      jaxlib_extension_version < 500,
+      "Requires jaxlib_extension_version >= 500",
+  )
+  def test_execution_options_custom_options(self):
+    traces = 0
+
+    @jax.jit
+    def f(x):
+      nonlocal traces
+      traces += 1
+      return x + 1
+
+    compiled = f.lower(1).compile()
+    self.assertEqual(f(1), 2)
+    with jax.execution_options(custom_options={"scale": 2.5, "count": 7,
+                                               "mode": "fast", "flag": True,
+                                               "ids": [1, 2, 3]}):
+      self.assertEqual(f(1), 2)
+      self.assertEqual(compiled(1), 2)
+      with jax.execution_options(custom_options={"count": 8}):
+        self.assertEqual(f(1), 2)
+        self.assertEqual(compiled(1), 2)
+    self.assertEqual(f(1), 2)
+    self.assertEqual(traces, 1)
+
+    with self.assertRaisesRegex(TypeError, "Unsupported custom option"):
+      with jax.execution_options(custom_options={"bad": object()}):
+        f(1)
 
 
 class APITest(jtu.JaxTestCase):
