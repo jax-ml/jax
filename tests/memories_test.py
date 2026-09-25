@@ -2282,6 +2282,39 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
           ).as_text()
     self.assertIn('async_execution_thread="sparsecore"', compiled_text)
 
+  def test_sparsecore_ar_offload_small_shape(self):
+    # Mirrors the torch_tpu repro in
+    # //third_party/py/torch_tpu/tests/distributed:sparse_core_collective_test:
+    # an f32[8] buffer per device, all-reduced across 8 devices, with nothing
+    # else in the module so the entire entry computation is offloaded to
+    # SparseCore.
+    if not jtu.is_device_tpu_at_least(7):
+      self.skipTest("Requires device with SC support and queuing enabled.")
+
+    mesh = jtu.create_mesh((8,), "x")
+    arr = jax.device_put(
+        jnp.arange(8, dtype=np.float32), NamedSharding(mesh, P())
+    )
+
+    @compute_on(compute_type="tpu_sparsecore",
+                 out_memory_spaces=jax.memory.Space.Device)
+    def sparsecore_psum(x):
+      return jax.lax.psum(x, "x")
+
+    @jax.jit
+    @jax.shard_map(mesh=mesh, in_specs=P(), out_specs=P())
+    def f(x):
+      return sparsecore_psum(x)
+
+    lowered_text = f.lower(arr).as_text("hlo")
+    self.assertIn('_xla_compute_type="sparseoffload"', lowered_text)
+
+    # f32[8] is 32 bytes, far below the 64KiB default offload threshold, so
+    # without preserving the attribute across intermediate passes, the
+    # collective silently stays on TensorCore.
+    compiled_text = f.lower(arr).compile().as_text()
+    self.assertIn('async_execution_thread="sparsecore"', compiled_text)
+
   def test_sparsecore_two_rss(self):
     if not jtu.is_device_tpu_at_least(7):
       self.skipTest("Requires device with SC support and queuing enabled.")
