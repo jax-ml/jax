@@ -237,6 +237,217 @@ class PullBlockSpecTest(jtu.JaxTestCase):
           scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
       )(new_values, in_type)
 
+  @parameterized.named_parameters(
+      ('transpose', 'ab->ba', (32, 32), (16, 16), {}, (16, 16)),
+      (
+          'bcnt_to_bn_ct',
+          'bcnt->(bn)(ct)',
+          (2, 4, 8, 16),
+          (1, 2, 8, 16),
+          {},
+          (8, 32),
+      ),
+      (
+          'split_dims',
+          '(ab)c->abc',
+          (32, 64),
+          (16, 16),
+          {'a': 4, 'b': 8},
+          (2, 8, 16),
+      ),
+      ('merge_dims', 'abc->(ab)c', (4, 8, 64), (2, 8, 16), {}, (16, 16)),
+      (
+          'split_transpose_merge',
+          'a(bc)->c(ba)',
+          (16, 32),
+          (16, 8),
+          {'b': 4, 'c': 8},
+          (8, 16),
+      ),
+      (
+          'multi_split_merge',
+          '(ab)(cd)->(ac)(bd)',
+          (8, 128),
+          (4, 32),
+          {'a': 2, 'b': 4, 'c': 8, 'd': 16},
+          (2, 64),
+      ),
+  )
+  def test_einshape_in_output_fusion(
+      self, equation, in_shape, in_block_shape, sizes, expected_out_block_shape
+  ):
+    def f(x):
+      return einshape_lib.einshape(equation, x, **sizes)
+
+    in_type = jax.ShapeDtypeStruct(in_shape, jnp.float32)
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f, in_type)
+
+    grid = tuple(s // bs for s, bs in zip(in_shape, in_block_shape))
+    block_spec = pl.BlockSpec(
+        block_shape=in_block_shape, index_map=lambda *pids: pids
+    )
+    _, _, _, _, out_block_spec = block_spec_lib.push_pull_block_spec(
+        f2,
+        block_spec,
+        grid_len=len(grid),
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values, in_type)
+
+    self.assertEqual(out_block_spec.block_shape, expected_out_block_shape)
+
+  def test_einshape_in_output_fusion_non_contiguous_raises(self):
+    def f(x):
+      return einshape_lib.einshape('abc->(ab)c', x)
+
+    in_type = jax.ShapeDtypeStruct((4, 8, 64), jnp.float32)
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f, in_type)
+
+    in_block_shape = (2, 4, 16)
+    block_spec = pl.BlockSpec(
+        block_shape=in_block_shape, index_map=lambda *pids: pids
+    )
+    with self.assertRaisesRegex(
+        NotImplementedError, 'SplitDims slice .* is non-contiguous'
+    ):
+      block_spec_lib.push_pull_block_spec(
+          f2,
+          block_spec,
+          grid_len=3,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )(new_values, in_type)
+
+  def test_einshape_in_output_fusion_unblocked_merge(self):
+    def f(x):
+      return einshape_lib.einshape('abc->(ab)c', x)
+
+    in_type = jax.ShapeDtypeStruct((4, 8, 64), jnp.float32)
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f, in_type)
+    in_block_shape = (None, None, 16)
+    block_spec = pl.BlockSpec(
+        block_shape=in_block_shape, index_map=lambda *pids: pids
+    )
+    _, _, _, _, out_block_spec = block_spec_lib.push_pull_block_spec(
+        f2,
+        block_spec,
+        grid_len=3,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values, in_type)
+
+    self.assertEqual(out_block_spec.block_shape, (None, 16))
+
+  def test_einshape_in_output_fusion_partial_unblocked_merge(self):
+    def f(x):
+      return einshape_lib.einshape('abc->(ab)c', x)
+
+    in_type = jax.ShapeDtypeStruct((4, 8, 64), jnp.float32)
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f, in_type)
+    in_block_shape = (None, 8, 16)
+    block_spec = pl.BlockSpec(
+        block_shape=in_block_shape, index_map=lambda *pids: pids
+    )
+    _, _, _, _, out_block_spec = block_spec_lib.push_pull_block_spec(
+        f2,
+        block_spec,
+        grid_len=3,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values, in_type)
+
+    self.assertEqual(out_block_spec.block_shape, (32, 16))
+
+  def test_einshape_in_output_fusion_invalid_split_block_size(self):
+    def f(x):
+      return einshape_lib.einshape('(ab)c->abc', x, a=4, b=8)
+
+    in_type = jax.ShapeDtypeStruct((32, 64), jnp.float32)
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f, in_type)
+    in_block_shape = (64, 16)
+    block_spec = pl.BlockSpec(
+        block_shape=in_block_shape, index_map=lambda *pids: pids
+    )
+    with self.assertRaises(NotImplementedError):
+      block_spec_lib.push_pull_block_spec(
+          f2,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )(new_values, in_type)
+
+  @parameterized.named_parameters(
+      ('transpose', 'ab->ba', (32, 32), (16, 16), {}, (16, 16)),
+      (
+          'bcnt_to_bn_ct',
+          'bcnt->(bn)(ct)',
+          (2, 4, 8, 16),
+          (1, 2, 8, 16),
+          {},
+          (8, 32),
+      ),
+      (
+          'split_dims',
+          '(ab)c->abc',
+          (32, 64),
+          (16, 16),
+          {'a': 4, 'b': 8},
+          (2, 8, 16),
+      ),
+      ('merge_dims', 'abc->(ab)c', (4, 8, 64), (2, 8, 16), {}, (16, 16)),
+      (
+          'split_transpose_merge',
+          'a(bc)->c(ba)',
+          (16, 32),
+          (16, 8),
+          {'b': 4, 'c': 8},
+          (8, 16),
+      ),
+      (
+          'multi_split_merge',
+          '(ab)(cd)->(ac)(bd)',
+          (8, 128),
+          (4, 32),
+          {'a': 2, 'b': 4, 'c': 8, 'd': 16},
+          (2, 64),
+      ),
+  )
+  def test_einshape_push_pull_round_trip(
+      self, equation, in_shape, in_block_shape, sizes, expected_out_block_shape
+  ):
+    def f(x):
+      return einshape_lib.einshape(equation, x, **sizes)
+
+    in_type = jax.ShapeDtypeStruct(in_shape, jnp.float32)
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f, in_type)
+    grid = tuple(s // bs for s, bs in zip(in_shape, in_block_shape))
+    in_block_spec = pl.BlockSpec(
+        block_shape=in_block_shape, index_map=lambda *pids: pids
+    )
+
+    kernel_fn, _, _, _, out_block_spec = block_spec_lib.push_pull_block_spec(
+        f2,
+        in_block_spec,
+        grid_len=len(grid),
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values, in_type)
+    self.assertEqual(out_block_spec.block_shape, expected_out_block_shape)
+
+    _, (_, round_trip_in_spec), _ = block_spec_lib.pull_block_spec(
+        f2,
+        out_block_spec,
+        grid_len=len(grid),
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values, in_type)
+    self.assertEqual(round_trip_in_spec.block_shape, in_block_shape)
+    for pids in np.ndindex(*grid):
+      self.assertEqual(
+          tuple(int(v) for v in round_trip_in_spec.index_map(*pids)),
+          pids,
+      )
+
+    x_tile = jnp.arange(
+        int(np.prod(in_block_shape)), dtype=jnp.float32
+    ).reshape(in_block_shape)
+    out_tile = kernel_fn((0,) * len(grid), (), new_values, x_tile)
+    self.assertEqual(out_tile.shape, expected_out_block_shape)
+
   def test_const(self):
 
     x = np.ones((512, 512), dtype=np.float32)
