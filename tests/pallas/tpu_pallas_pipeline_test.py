@@ -1704,6 +1704,56 @@ class PaddedPipelineEmitterTest(htu.HypothesisShardedTestCase):
 
 class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
 
+  @parameterized.product(buffer_count=[2, 3, 4])
+  def test_block_spec_bounded_slice_ragged(self, buffer_count):
+    if not jtu.is_device_tpu():
+      self.skipTest('Only works on TPU.')
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works on TPU v4+')
+
+    n = 20
+    bs = 8
+    shape = (24, 8, 128)
+    block_shape = (pl.BoundedSlice(bs), 8, 128)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1
+
+    x = jnp.arange(np.prod(shape), dtype=np.int32).reshape(shape)
+
+    @jax.jit
+    def f(x):
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name='core'),
+          out_type=x,
+      )
+      def kernel_fn(x_ref, y_ref):
+        def index_map(i):
+          start = i * bs
+          size = jnp.minimum(bs, n - start)
+          return (pl.ds(start, size), 0, 0)
+
+        in_block_spec = pl.BlockSpec(
+            block_shape,
+            index_map,
+            pipeline_mode=pl.Buffered(buffer_count=buffer_count),
+        )
+        out_block_spec = pl.BlockSpec(
+            block_shape,
+            index_map,
+        )
+        pltpu.emit_pipeline(
+            kernel,
+            grid=(3,),
+            in_specs=(in_block_spec,),
+            out_specs=out_block_spec,
+        )(x_ref, y_ref)
+
+      return kernel_fn(x)
+
+    out = f(x)
+    np.testing.assert_allclose(out[:n], x[:n] + 1)
+
   def test_block_spec_bounded_slice_invalid_index(self):
     if not jtu.is_device_tpu():
       self.skipTest('Only works on TPU.')

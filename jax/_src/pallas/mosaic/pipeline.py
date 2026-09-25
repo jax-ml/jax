@@ -181,11 +181,22 @@ def _or(a, b):
 
 def _tuples_differ(xs, ys):
   """Dynamic index-tuple comparison calculation."""
-  diffs = (
-      x is not y and x != y
-      for x, y in zip(jax.tree.leaves(xs), jax.tree.leaves(ys), strict=True)
+
+  # A Slice (jax.ds/pl.ds) keeps its static fields in the treedef, so compare it
+  # field by field rather than letting jax.tree.map descend into it.
+  _is_slice = lambda x: isinstance(x, Slice)
+  _differ = lambda x, y: x is not y and x != y
+  _slices_differ = lambda x, y: functools.reduce(
+      _or,
+      (_differ(x.start, y.start), _differ(x.size, y.size),
+       _differ(x.stride, y.stride)),
+      False,
   )
-  return functools.reduce(_or, diffs, False)
+  diffs = jax.tree.map(
+      lambda x, y: _slices_differ(x, y) if _is_slice(x) else _differ(x, y),
+      xs, ys, is_leaf=_is_slice
+  )
+  return functools.reduce(_or, jax.tree.leaves(diffs), False)
 
 
 def _tuple_all_binop(binop, xs, ys):
