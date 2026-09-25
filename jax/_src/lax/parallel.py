@@ -2051,6 +2051,11 @@ def all_gather_invariant(x, axis_name, *, axis: int = 0, tiled: bool = False):
     axis_name = (axis_name,)
   if not axis_name:
     return x
+  if not config._check_vma.value:
+    # Without vma tracking, outputs aren't known to be invariant, so (as with
+    # psum) we use the Varying -> Varying collective, whose transpose is
+    # consistent with shard_map's defensive transpose.
+    return all_gather(x, axis_name, axis=axis, tiled=tiled)
   axis_size = _axis_size(axis_name, None)
   axes_ = frozenset(axis_name)
   def bind(leaf):
