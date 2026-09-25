@@ -39,6 +39,7 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src.lib import utils as jaxlib_utils
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
@@ -4590,6 +4591,84 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         r" @mosaic_gpu_build_kernel_spec\(.*?, i32 1, i32 \d+, ptr %\w+, ptr %\w+\)"
     )
     self.assertRegex(ptx_output, re.compile(kernel_b_pattern, re.DOTALL))
+
+  @jtu.thread_unsafe_test()  # Captures stderr.
+  def test_pdl_overlap_command_buffer(self):
+    """Tests that PDL-enabled launches can overlap with other command buffers.
+
+    NB: On failure this test will deadlock instead so will end in a timeout.
+    """
+    @plgpu.inline_mgpu(arg_types=(plgpu.RefType(), plgpu.RefType()))
+    def wait_and_record(ctx, sem, ts):
+      del ctx
+      # Wait for the producer to signal the semaphore and then record the
+      # timestamp. This is the "end time" of the consumer.
+      mgpu.utils.SemaphoreRef(mgpu.utils.memref_ptr(sem)).wait()
+      memref_dialect.store(
+          mgpu.utils.globaltimer(), ts, [mgpu.c(0, ir.IndexType.get())]
+      )
+
+    @plgpu.inline_mgpu(arg_types=(plgpu.RefType(), plgpu.RefType()))
+    def record_and_signal(ctx, sem, ts):
+      del ctx
+      # Record the timestamp and then produce the signal. This is the
+      # "start time" of the producer.
+      memref_dialect.store(
+          mgpu.utils.globaltimer(), ts, [mgpu.c(0, ir.IndexType.get())]
+      )
+      mgpu.utils.SemaphoreRef(mgpu.utils.memref_ptr(sem)).signal(1)
+
+    @jax.jit(compiler_options=dict(xla_gpu_graph_min_graph_size=1))
+    def f(x):
+      sem_ref = jax.new_ref(jnp.zeros((1,), dtype=jnp.int32))
+      end_a_ref = jax.new_ref(jnp.zeros((1,), dtype=jnp.uint64))
+      start_b_ref = jax.new_ref(jnp.zeros((1,), dtype=jnp.uint64))
+
+      # Consumer.
+      def kernel_a(x_ref, out_ref):
+        plgpu.griddepcontrol_launch_dependents()
+        wait_and_record(sem_ref, end_a_ref)
+        out_ref[...] = x_ref[...] + 1.0
+
+      # Producer.
+      def kernel_b(in_ref, out_ref):
+        record_and_signal(sem_ref, start_b_ref)
+        plgpu.griddepcontrol_wait()
+        out_ref[...] = in_ref[...] * 2.0
+
+      y = self.kernel(kernel_a, out_type=x)(x)
+      out = self.kernel(kernel_b, out_type=x)(y)
+      return (
+          out,
+          jax.freeze(end_a_ref),
+          jax.freeze(start_b_ref),
+          jax.freeze(sem_ref),
+      )
+
+    jaxlib_utils.absl_set_vlog_level("custom_call", 5)
+    try:
+      x = jnp.arange(128, dtype=jnp.float32)
+      with jtu.capture_stderr() as stderr:
+        for _ in range(4):  # 0: warmup, 1: RecordCreate, 2..3: Graph Replay
+          out, end_a, start_b, _ = jax.block_until_ready(f(x))
+          np.testing.assert_allclose(out, (x + 1.0) * 2.0)
+          # Verify that the consumer (kernel_a) completes after the producer (kernel_b)
+          # starts.
+          self.assertGreater(end_a[0], start_b[0])
+      logs = stderr()
+      kernel_suffix = "mosaic_gpu_kernel"
+      self.assertIn(
+          f"MosaicGpuRecord creating launch for kernel_a_{kernel_suffix}"
+          " uses_pdl: false",
+          logs,
+      )
+      self.assertIn(
+          f"MosaicGpuRecord creating launch for kernel_b_{kernel_suffix}"
+          " uses_pdl: true",
+          logs,
+      )
+    finally:
+      jaxlib_utils.absl_set_vlog_level("custom_call", 0)
 
   def test_mlir_error_includes_mlir_error_callsites(self):
     class MockAttr:
