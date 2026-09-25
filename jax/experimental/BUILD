@@ -536,6 +536,9 @@ pytype_strict_library(
     srcs = ["profiler.py"],
     visibility = ["//visibility:public"],
     deps = [
+        "//jax",
+        "//jax/_src:api",
+        "//jax/_src:util",
         "//jax/_src/lib",
     ],
 )
