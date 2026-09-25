@@ -4688,6 +4688,84 @@ class ShardMapTest(jtu.JaxTestCase):
 
     self.assertAllClose(y, x, check_dtypes=False)
 
+  @parameterized.product(check_vma=[True, False], w_spec=[P('x'), P()])
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_vjp3_with_refs(self, check_vma, w_spec, mesh):
+    def f(w, x):
+      return shard_map(lambda w, x: jnp.sin(w).sum() * x,
+                       in_specs=(w_spec, P('x')), out_specs=P('x'),
+                       check_vma=check_vma)(w, x).sum()
+
+    w = jax.device_put(jnp.arange(4.), w_spec)
+    x = jax.device_put(jnp.arange(4.) + 1., P('x'))
+    w_bar, x_bar = jax.grad(f, argnums=(0, 1))(w, x)
+
+    def run(w, x):
+      _, f_vjp = jax.vjp(f, w, x)
+      w_ref = jax.new_ref(jnp.zeros_like(w))
+      _, x_bar = f_vjp.with_refs(w_ref, jax.ad.GradValue())(1.)
+      return jax.freeze(w_ref), x_bar
+
+    w_bar_, x_bar_ = jax.jit(run)(w, x)
+    self.assertAllClose(w_bar_, w_bar)
+    self.assertAllClose(x_bar_, x_bar)
+
+    # the grad ref is accumulated into in-place in the transposed body, unless
+    # w's per-shard cotangents must first be psummed (without check_vma)
+    in_place = check_vma or w_spec == P('x')
+    if in_place:
+      with self.assertRaisesRegex(
+          ValueError, "Eager shard_map doesn't yet support `jax.Ref`"):
+        run(w, x)
+    else:
+      self.assertAllClose(run(w, x)[0], w_bar)
+    jaxpr = jax.make_jaxpr(run)(w, x).jaxpr
+    bwd = [e for e in jaxpr.eqns if e.primitive.name == 'shard_map'][-1]
+    self.assertEqual('+=' in str(bwd.params['jaxpr']), in_place)
+    self.assertLen(bwd.outvars, 1 if in_place else 2)
+
+    def run2(w, x):
+      _, f_vjp = jax.vjp(f, w, x)
+      _, x_bar = f_vjp.with_refs(jax.ad.DontWant(), jax.ad.GradValue())(1.)
+      return x_bar
+
+    for run_ in [run2, jax.jit(run2)]:
+      self.assertAllClose(run_(w, x), x_bar)
+
+    # the unwanted gradient isn't an output of the transposed body
+    jaxpr = jax.make_jaxpr(run2)(w, x).jaxpr
+    bwd = [e for e in jaxpr.eqns if e.primitive.name == 'shard_map'][-1]
+    self.assertLen(bwd.outvars, 1)
+
+  @parameterized.product(check_vma=[True, False], r_spec=[P('x'), P()])
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_grad_mutable_array_arg(self, check_vma, r_spec, mesh):
+    @jax.jit
+    def f(x):
+      r = core.new_ref(jax.reshard(jnp.cos(x), r_spec))
+
+      @shard_map(in_specs=(P('x'), r_spec), out_specs=None,
+                 check_vma=check_vma)
+      def g(x, r):
+        s = jax.lax.psum(jnp.sin(x).sum(), 'x')
+        if check_vma and r_spec == P('x'):
+          s = jax.lax.pcast(s, 'x', to='varying')
+        r[...] = r[...] * s
+
+      g(x, r)
+      return (r[...] ** 2).sum()
+
+    x = jax.device_put(jnp.arange(4.) / 4, P('x'))
+    x_bar = jax.grad(f)(x)
+    e = lambda i: jax.device_put(jnp.eye(4)[i], P('x'))
+    expected = jnp.stack([jax.jvp(f, (x,), (e(i),))[1] for i in range(4)])
+    self.assertAllClose(x_bar, expected, check_dtypes=False)
+
+    _, f_vjp = jax.vjp(f, x)
+    x_ref = core.new_ref(jnp.zeros_like(x))
+    f_vjp.with_refs(x_ref)(1.)
+    self.assertAllClose(x_ref[...], expected, check_dtypes=False)
+
   def test_random_beta_vma(self):
     mesh = jtu.create_mesh((2,), 'dp')
 
