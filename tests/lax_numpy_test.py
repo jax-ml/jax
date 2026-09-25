@@ -497,23 +497,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape, axes=axes)
       for lhs_shape, rhs_shape, axes in [
-          [(2,), (2,), (-1, -1, -1, None)], # scalar output
-          [(2, 4), (2, 4), (-1, -1, -1, 0)], # 2D vectors
-          [(3, 4), (3, 4), (-1, -1, -1, 0)], # 3D vectors
+          [(3,), (3,), (-1, -1, -1, None)], # unbatched
+          [(3, 4), (3, 4), (-1, -1, -1, 0)], # batched
           [(3, 4), (3, 6, 5, 4), (-1, -1, -1, 0)], # broadcasting
           [(4, 3), (3, 6, 5, 4), (1, 0, -1, None)], # different axes
           [(6, 1, 3), (5, 3), (-1, -1, -1, None)], # more broadcasting
-          [(6, 1, 2), (5, 3), (-1, -1, -1, None)], # mixed 2D and 3D vectors
-          [(10, 5, 2, 8), (1, 5, 1, 3), (-2, -1, -3, None)], # axes/broadcasting
-          [(4, 5, 2), (4, 5, 2), (-1, -1, 0, None)], # axisc should do nothing
-          [(4, 5, 2), (4, 5, 2), (-1, -1, -1, None)] # same as before
+          [(10, 5, 3, 8), (1, 5, 1, 3), (-2, -1, -3, None)], # axes/broadcasting
       ]],
     lhs_dtype=number_dtypes,
     rhs_dtype=number_dtypes,
   )
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message="Support for 2-dimensional vectors in jnp.cross is deprecated")
   def testCross(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, axes):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
@@ -549,10 +543,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
       self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol)
 
-  def testCrossDeprecationWarning(self):
-    with jtu.test_warning_util.record_warnings() as w:
+  def testCross2DVectors(self):
+    with self.assertRaisesRegex(ValueError, "Dimension must be 3"):
       jnp.cross(jnp.ones(2), jnp.ones(2))
-    self.assertTrue(any("Support for 2-dimensional vectors" in str(warn.message) for warn in w))
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)

@@ -130,6 +130,5 @@ def warn(deprecation_id: str, message: str, stacklevel: int, *,
 register('jax-array-numpy-dtype')
 register('jax-nn-one-hot-float-input')
 register('jax-numpy-astype-complex-to-real')
-register('jax-numpy-cross-2d-input')
 register('jax-pallas-triton')
 register('jax-pallas-mgpu-program-id')
