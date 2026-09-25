@@ -1799,7 +1799,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     lowered_text = f.lower(inp).as_text()
     self.assertIn("_xla_compute_type", lowered_text)
 
-  @jtu.with_explicit_mesh((2, 2), ("x", "y"))
+  @jtu.with_explicit_mesh((4, 2), ("x", "y"))
   def test_compute_on_reduced_fwd_unreduced_bwd(self, mesh):
     w = jax.device_put(np.arange(8.0), P("y", reduced={'x'}))
     x = jax.device_put(np.ones(8), P(reduced={'x', 'y'}))
