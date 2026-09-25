@@ -1543,6 +1543,16 @@ class ShardMapTest(jtu.JaxTestCase):
     expected_out = jax.jit(g)()
     self.assertArraysEqual(out, expected_out)
 
+  def test_partial_auto_no_check_vma_eager(self):
+    mesh = jtu.create_mesh((2, 2), ('i', 'j'))
+    x = jnp.arange(8.)
+
+    f = jax.shard_map(lambda y: y * 2, mesh=mesh, in_specs=P('i'),
+                      out_specs=P('i'), axis_names={'i'}, check_vma=False)
+
+    self.assertArraysEqual(f(x), 2 * x)
+    self.assertArraysEqual(f(x), jax.jit(f)(x))
+
   def test_partial_eval_custom_axis_env(self):
     mesh = Mesh(jax.devices(), ('i',))
 
