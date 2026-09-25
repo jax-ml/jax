@@ -28,8 +28,12 @@ from jax._src.pallas.mosaic.core import SemaphoreType as SemaphoreType
 from jax._src.pallas.mosaic.core import SideEffectType as SideEffectType
 from jax._src.pallas.mosaic.core import TensorCoreMesh as TensorCoreMesh
 from jax._src.pallas.mosaic.helpers import core_barrier as core_barrier
+from jax._src.pallas.mosaic.helpers import join_bits as join_bits
+from jax._src.pallas.mosaic.helpers import pack_fp6 as pack_fp6
 from jax._src.pallas.mosaic.helpers import run_on_first_core as run_on_first_core
+from jax._src.pallas.mosaic.helpers import split_bits as split_bits
 from jax._src.pallas.mosaic.helpers import sync_copy as sync_copy
+from jax._src.pallas.mosaic.helpers import unpack_fp6 as unpack_fp6
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import force_tpu_interpret_mode as force_tpu_interpret_mode
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import reset_tpu_interpret_mode_state as reset_tpu_interpret_mode_state
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import set_tpu_interpret_mode as set_tpu_interpret_mode
@@ -41,8 +45,8 @@ from jax._src.pallas.mosaic.pipeline import BufferType as BufferType
 from jax._src.pallas.mosaic.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations as emit_pipeline_with_allocations
 from jax._src.pallas.mosaic.pipeline import PipelineStep as PipelineStep
-from jax._src.pallas.mosaic.primitives import annotate as annotate
 from jax._src.pallas.mosaic.prefetch import emit_pipeline_with_async_prefetch as emit_pipeline_with_async_prefetch
+from jax._src.pallas.mosaic.primitives import annotate as annotate
 from jax._src.pallas.mosaic.primitives import async_copy as async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy as async_remote_copy
 from jax._src.pallas.mosaic.primitives import bitcast as bitcast
