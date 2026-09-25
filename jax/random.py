@@ -259,6 +259,8 @@ from jax._src.random.core import (
   triangular as triangular,
   truncated_normal as truncated_normal,
   uniform as uniform,
+  vonmises as vonmises,
+  vonmises_fisher as vonmises_fisher,
   wald as wald,
   weibull_min as weibull_min,
   wrap_key_data as wrap_key_data,
