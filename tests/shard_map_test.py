@@ -5413,6 +5413,52 @@ class ShardMapTest(jtu.JaxTestCase):
     out = jax.shard_map(jax.jit(f), out_specs=P('x'), check_vma=False)(x)
     self.assertArraysEqual(out, x)
 
+  @parameterized.parameters(['set', 'addupdate'])
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_mutable_array_arg_write_varying_to_invariant_error(self, op, mesh):
+    x = jnp.arange(4., out_sharding=P('x'))
+
+    @jax.jit
+    def f(x):
+      r = core.new_ref(jnp.zeros(()))
+
+      @shard_map(in_specs=(P('x'), P()), out_specs=None)
+      def g(x, r):
+        if op == 'set':
+          r[...] = x.sum()
+        else:
+          jax.ref.addupdate(r, ..., x.sum())
+
+      g(x, r)
+      return r[...]
+
+    # caught at the write, while tracing, rather than when discharging refs
+    with self.assertRaisesRegex(ValueError, "varies over mesh axes 'x'"):
+      jax.make_jaxpr(f)(x)
+
+  @parameterized.parameters(['set', 'addupdate'])
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_mutable_array_arg_write_invariant_to_varying(self, op, mesh):
+    x = jnp.arange(1., 5., out_sharding=P('x'))
+
+    @jax.jit
+    def f(w, x):
+      r = core.new_ref(jnp.zeros(4, out_sharding=P('x')))
+
+      @shard_map(in_specs=(P(), P('x'), P('x')), out_specs=None)
+      def g(w, x, r):
+        if op == 'set':
+          r[...] = jnp.broadcast_to(w, r.shape)
+        else:
+          jax.ref.addupdate(r, ..., jnp.broadcast_to(w, r.shape))
+        r[...] = r[...] * x
+
+      g(w, x, r)
+      return r[...].sum()
+
+    self.assertAllClose(f(2., x), 20., check_dtypes=False)
+    self.assertIn('pvary', str(jax.make_jaxpr(f)(2., x)))
+
   @jtu.with_explicit_mesh((2,), 'x')
   def test_full_like_pvary_existing(self, mesh):
     @jax.shard_map(out_specs=P("x"))
