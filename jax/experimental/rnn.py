@@ -175,30 +175,114 @@ def init_lstm_weight(rng: PRNGKeyArray, input_size: int, hidden_size: int,
   return jax.random.uniform(
       rng, shape=(param_count,), dtype=jnp.float32, minval=-k, maxval=k)
 
-def swap_lstm_gates(weights, input_size, hidden_size, num_layers, bidirectional):
-  """Swaps the weights for the input and output gates for an LSTM model."""
-  weights = jnp.asarray(weights)  # Ensure weights are JAX arrays
-  flat_shapes = _get_params_shapes_in_lstm(input_size, hidden_size, num_layers, bidirectional)
+def _swap_lstm_io_gates(matrix: Array) -> Array:
+  """Swap input and output gate blocks (3rd and 4th quarters on axis 0)."""
+  gates = jnp.split(matrix, 4, axis=0)
+  return jnp.concatenate([gates[0], gates[1], gates[3], gates[2]], axis=0)
+
+
+def _lstm_split_shape_sequence(
+    flat_shapes: list[Shape],
+    num_linear_segments: int,
+    num_layers: int,
+    bidirectional: bool,
+    *,
+    input_is_miopen_layout: bool,
+) -> list[Shape]:
+  """Shape order for slicing the *input* 1D buffer (sizes from ``flat_shapes``).
+
+  cuDNN packing order is ``flat_shapes`` as returned by
+  :func:`_get_params_shapes_in_lstm`. For bidirectional MIOpen input, each
+  logical layer's four blocks appear as indices ``(0, 2, 1, 3)`` relative to
+  that layer's cuDNN block list.
+  """
+  if not bidirectional or not input_is_miopen_layout:
+    return list(flat_shapes)
+
+  def _permute_blocks(block: list[Shape]) -> list[Shape]:
+    assert len(block) == 4 * num_layers
+    permuted: list[Shape] = []
+    for layer in range(num_layers):
+      base = 4 * layer
+      for rel in (0, 2, 1, 3):
+        permuted.append(block[base + rel])
+    return permuted
+
+  linear = flat_shapes[:num_linear_segments]
+  bias = flat_shapes[num_linear_segments:]
+  return _permute_blocks(linear) + _permute_blocks(bias)
+
+
+def swap_lstm_gates(
+    weights,
+    input_size,
+    hidden_size,
+    num_layers,
+    bidirectional,
+    *,
+    to_miopen: bool = True,
+):
+  """Convert between cuDNN-style and MIOpen-style flat LSTM weights.
+
+  For each matrix (``W_ih``, ``W_hh``, ``b_ih``, ``b_hh``), swaps the input and
+  output gate blocks (3rd and 4th quarters on axis 0).
+
+  When ``bidirectional`` is True, also permutes the four blocks per logical layer.
+
+  Args:
+    weights: 1D packed weights; interpretation depends on ``to_miopen``.
+    to_miopen: If True (default), input is cuDNN layout (see module docstring);
+      output is MIOpen layout (``W_ih_fwd``, ``W_ih_rev``, ``W_hh_fwd``,
+      ``W_hh_rev`` per layer, then biases likewise). If False, input is MIOpen
+      layout and output is restored cuDNN layout (for gradients ``dw``, etc.).
+
+  Segment sizes always come from :func:`_get_params_shapes_in_lstm`; only the
+  order used to slice the input buffer differs for the inverse direction.
+  """
+  weights = jnp.asarray(weights)
+  flat_shapes = _get_params_shapes_in_lstm(
+      input_size, hidden_size, num_layers, bidirectional)
   num_directions = 2 if bidirectional else 1
+  num_pseudo_layers = num_layers * num_directions
+  num_linear_segments = 2 * num_pseudo_layers
 
-  w_offsets = 0
-  for l in range(num_layers):
-    for direction in range(num_directions):
-      # Iterate through all weight and bias gate names to swap gates in both weights and biases
-      for gate_name in ["W_ih", "W_hh", "b_ih", "b_hh"]:
-        shape = flat_shapes.pop(0)  # Get the current shape and remove it from the list
-        num_elems = math.prod(shape)
-        matrix = weights[w_offsets:w_offsets + num_elems].reshape(shape)
+  split_shapes = _lstm_split_shape_sequence(
+      flat_shapes,
+      num_linear_segments,
+      num_layers,
+      bidirectional,
+      input_is_miopen_layout=not to_miopen,
+  )
+  segments: list[Array] = []
+  offset = 0
+  for shape in split_shapes:
+    n = math.prod(shape)
+    segments.append(weights[offset:offset + n].reshape(shape))
+    offset += n
 
-        # Swap between the input and output gates (third and fourth gates)
-        gates = jnp.split(matrix, 4, axis=0)
-        swapped_matrix = jnp.concatenate([gates[0], gates[1], gates[3], gates[2]], axis=0)
+  linear_segs = segments[:num_linear_segments]
+  bias_segs = segments[num_linear_segments:]
+  n_lin = len(linear_segs)
+  assert len(bias_segs) == n_lin
 
-        # Update the weights with swapped matrix
-        weights = weights.at[w_offsets:w_offsets + num_elems].set(swapped_matrix.flatten())
-        w_offsets += num_elems
+  if bidirectional:
+    reorder_idx = tuple(
+        idx
+        for layer in range(num_layers)
+        for idx in (
+            4 * layer,
+            4 * layer + 2,
+            4 * layer + 1,
+            4 * layer + 3,
+        ))
+  else:
+    reorder_idx = tuple(range(n_lin))
 
-  return weights
+  out_parts: list[Array] = []
+  for segs in (linear_segs, bias_segs):
+    for idx in reorder_idx:
+      out_parts.append(_swap_lstm_io_gates(segs[idx]).reshape(-1))
+  return jnp.concatenate(out_parts, axis=0)
 
 
 def unpack_lstm_weights(
@@ -455,6 +539,85 @@ def rnn_abstract_eval(x_aval, h_0_aval, c_0_aval, w_aval, seq_lengths_aval,
   reserve_space_aval = core.ShapedArray((reserve_space_size,), jnp.float32)
   return output_aval, h_0_aval, c_0_aval, reserve_space_aval
 
+def _rnn_fwd_miopen_weights_reorder(ctx, input, h_0, c_0, weights, seq_lengths, *,
+    input_size: int, hidden_size: int, num_layers: int, dropout: float,
+    bidirectional: bool, cudnn_allow_tf32: bool):
+  """Lower ``rnn_fwd`` on ROCm: emit ``swap_lstm_gates``, then MIOpen custom call."""
+  w_aval = ctx.avals_in[3]
+
+  def _weight_reorder_ctx():
+    # Fresh context each time: ``lower_fun`` mutates ``tokens_out`` exactly once.
+    return ctx.replace(
+        avals_in=(w_aval,), avals_out=(w_aval,), tokens_out=None)
+
+  def _to_miopen_layout(w: Array) -> Array:
+    return swap_lstm_gates(
+        w, input_size, hidden_size, num_layers, bidirectional, to_miopen=True)
+
+  (weights_miopen,) = mlir.lower_fun(_to_miopen_layout, multiple_results=False)(
+      _weight_reorder_ctx(), weights)
+
+  def _miopen_fwd(input_, h0_, c0_, w_m, seq_lengths_):
+    return _miopen_rnn_fwd_p.bind(
+        input_, h0_, c0_, w_m, seq_lengths_,
+        input_size=input_size,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        dropout=dropout,
+        bidirectional=bidirectional,
+        cudnn_allow_tf32=cudnn_allow_tf32)
+
+  return mlir.lower_fun(_miopen_fwd, multiple_results=True)(
+      ctx, input, h_0, c_0, weights_miopen, seq_lengths)
+
+
+def _rnn_bwd_miopen_weights_reorder(
+    ctx, dy, dhn, dcn, x, h0, c0, w, y, reserve_space, seq_lengths, *,
+    input_size: int, hidden_size: int, num_layers: int, dropout: float,
+    bidirectional: bool, cudnn_allow_tf32: bool):
+  """Lower ``rnn_bwd`` on ROCm: cuDNN→MIOpen ``w``, MIOpen bwd, MIOpen→cuDNN ``dw``."""
+  w_aval = ctx.avals_in[6]
+
+  def _weight_reorder_ctx():
+    return ctx.replace(
+        avals_in=(w_aval,), avals_out=(w_aval,), tokens_out=None)
+
+  def _to_miopen_layout(w_):
+    return swap_lstm_gates(
+        w_, input_size, hidden_size, num_layers, bidirectional, to_miopen=True)
+
+  def _to_cudnn_layout(w_):
+    return swap_lstm_gates(
+        w_, input_size, hidden_size, num_layers, bidirectional, to_miopen=False)
+
+  (w_miopen,) = mlir.lower_fun(_to_miopen_layout, multiple_results=False)(
+      _weight_reorder_ctx(), w)
+
+  def _miopen_bwd(dy_, dhn_, dcn_, x_, h0_, c0_, w_m, y_, reserve_, seq_lengths_):
+    return _miopen_rnn_bwd_p.bind(
+        dy_, dhn_, dcn_, x_, h0_, c0_, w_m, y_, reserve_, seq_lengths_,
+        input_size=input_size,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        dropout=dropout,
+        bidirectional=bidirectional,
+        cudnn_allow_tf32=cudnn_allow_tf32)
+
+  dx, dh0, dc0, dw_miopen = mlir.lower_fun(_miopen_bwd, multiple_results=True)(
+      ctx, dy, dhn, dcn, x, h0, c0, w_miopen, y, reserve_space, seq_lengths)
+  (dw_cudnn,) = mlir.lower_fun(_to_cudnn_layout, multiple_results=False)(
+      _weight_reorder_ctx(), dw_miopen)
+  return dx, dh0, dc0, dw_cudnn
+
+
+# ROCm-only MIOpen RNN custom calls, reached from ``_rnn_*_miopen_weights_reorder``
+# via ``mlir.lower_fun`` so this module never references ``gpu_rnn.miopen_*`` directly
+# (keeps pytype happy when ``gpu_rnn`` is absent).
+_miopen_rnn_fwd_p = core.Primitive('miopen_rnn_fwd')
+_miopen_rnn_fwd_p.multiple_results = True
+_miopen_rnn_fwd_p.def_impl(partial(dispatch.apply_primitive, _miopen_rnn_fwd_p))
+_miopen_rnn_fwd_p.def_abstract_eval(rnn_abstract_eval)
+
 
 rnn_fwd_p = core.Primitive('rnn_fwd')
 rnn_fwd_p.multiple_results = True
@@ -463,7 +626,10 @@ rnn_fwd_p.def_abstract_eval(rnn_abstract_eval)
 if gpu_rnn:
   mlir.register_lowering(rnn_fwd_p, gpu_rnn.cudnn_rnn_lowering, platform='cuda')
   if hasattr(gpu_rnn, "miopen_rnn_lowering"):
-    mlir.register_lowering(rnn_fwd_p, gpu_rnn.miopen_rnn_lowering, platform='rocm')
+    mlir.register_lowering(
+        _miopen_rnn_fwd_p, gpu_rnn.miopen_rnn_lowering, platform='rocm')
+    mlir.register_lowering(
+        rnn_fwd_p, _rnn_fwd_miopen_weights_reorder, platform='rocm')
 
 
 def lstm_bwd(input_size: int, hidden_size: int, num_layers: int, dropout: float,
@@ -500,6 +666,12 @@ def rnn_bwd_abstract_eval(dy_aval, dhn_aval, dcn_aval, x_aval, h0_aval, c0_aval,
   return x_aval, h0_aval, c0_aval, w_aval
 
 
+_miopen_rnn_bwd_p = core.Primitive('miopen_rnn_bwd')
+_miopen_rnn_bwd_p.multiple_results = True
+_miopen_rnn_bwd_p.def_impl(partial(dispatch.apply_primitive, _miopen_rnn_bwd_p))
+_miopen_rnn_bwd_p.def_abstract_eval(rnn_bwd_abstract_eval)
+
+
 rnn_bwd_p = core.Primitive('rnn_bwd')
 rnn_bwd_p.multiple_results = True
 rnn_bwd_p.def_impl(partial(dispatch.apply_primitive, rnn_bwd_p))
@@ -509,6 +681,8 @@ if gpu_rnn:
       rnn_bwd_p, gpu_rnn.cudnn_rnn_bwd_lowering, platform='cuda')
   if hasattr(gpu_rnn, "miopen_rnn_bwd_lowering"):
     mlir.register_lowering(
-        rnn_bwd_p, gpu_rnn.miopen_rnn_bwd_lowering, platform='rocm')
+        _miopen_rnn_bwd_p, gpu_rnn.miopen_rnn_bwd_lowering, platform='rocm')
+    mlir.register_lowering(
+        rnn_bwd_p, _rnn_bwd_miopen_weights_reorder, platform='rocm')
 
 lstm.defvjp(lstm_fwd, lstm_bwd)
