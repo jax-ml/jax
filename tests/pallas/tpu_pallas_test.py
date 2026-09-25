@@ -3831,6 +3831,35 @@ class PallasCallRefTransformTest(ptu.PallasTPUTest):
     )(x)
     np.testing.assert_array_equal(y, x[8:16, :128])
 
+  def test_column_sliced_ref_unaligned_sublane_slice(self):
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Separating debug locations requires libtpu >= 0.0.50')
+
+    x = jnp.arange(16 * 256, dtype=jnp.float32).reshape((16, 256))
+
+    def load_kernel(x_ref, o_ref):
+      o_ref[...] = x_ref.at[:, 128:256].at[4:12][...]
+
+    got_load = self.pallas_call(
+        load_kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )(x)
+    np.testing.assert_array_equal(got_load, x[4:12, 128:256])
+
+    f = -x - 1
+    y = 100000 + jnp.arange(8 * 128, dtype=jnp.float32).reshape((8, 128))
+
+    def store_kernel(f_ref, y_ref, o_ref):
+      pltpu.sync_copy(f_ref, o_ref)
+      o_ref.at[:, 128:256].at[4:12][...] = y_ref[...]
+
+    got_store = self.pallas_call(
+        store_kernel,
+        out_shape=jax.ShapeDtypeStruct((16, 256), jnp.float32),
+    )(f, y)
+    expected_store = f.at[4:12, 128:256].set(y)
+    np.testing.assert_array_equal(got_store, expected_store)
+
 
 class PallasCallTraceTest(ptu.PallasTPUTest):
 
