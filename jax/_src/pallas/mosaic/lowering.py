@@ -5061,7 +5061,10 @@ def _unpack_elementwise_lowering_rule(
 def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
   del ty
   (out_aval,) = ctx.avals_out
-  return tpu.bitcast(ctx.aval_to_ir_type(out_aval), x)
+  out_type = ctx.aval_to_ir_type(out_aval)
+  if x.type == out_type:
+    return x
+  return tpu.bitcast(out_type, x)
 
 
 @register_lowering_rule(
@@ -5073,6 +5076,8 @@ def _bitcast_convert_type_lowering_rule(
   (in_aval, ) = ctx.avals_in
   (out_aval,) = ctx.avals_out
   out_type = ctx.aval_to_ir_type(out_aval)
+  if x.type == out_type:
+    return x
   old_bitwidth = dtypes.itemsize_bits(in_aval.dtype)
   new_bitwidth = dtypes.itemsize_bits(new_dtype)
   if old_bitwidth != new_bitwidth:
