@@ -1113,6 +1113,13 @@ def _int_pow(x: ir.Value, n: int) -> ir.Value:
   return result
 
 
+# Any non-decreasing unary function `f` satisfies `f(max(a, b)) ==
+# max(f(a), f(b))` and `f(min(a, b)) == min(f(a), f(b))`. Note that this
+# requires `f` to be defined everywhere: e.g. `log(max(-1, 1)) == 0` while
+# `max(log(-1), log(1))` is NaN, since our `max` propagates NaNs.
+_NON_DECREASING_DISTRIBUTES_OVER = ("max", "min")
+
+
 def _can_splat_unreduced(value: ir.Value, op: str) -> bool:
   # Each unreduced thread holds a partial result, so splatting `value`
   # across them would contribute it once per thread when the reduction is
@@ -1616,8 +1623,23 @@ class FragmentedArray:
       *other,
       output_is_signed: bool | None = None,
       restrict_bitwidth: bool = True,
-      unreduced_op: str | None = None,
+      distributes_over: Sequence[str] = (),
   ) -> FragmentedArray:
+    """Applies `op` elementwise to `self` and `other`.
+
+    Args:
+      op: The operation to apply to each register.
+      *other: The other operands. Scalars and splats are broadcast to the
+        layout of `self`.
+      output_is_signed: The signedness of the result, if it is an integer.
+      restrict_bitwidth: Whether to reject sub-16-bit operands.
+      distributes_over: The reductions (e.g. `"add"`) that `op` distributes
+        over, i.e. the reductions `r` such that for all `a`, `b`, `c`, `d`:
+        `op(r(a, b), r(c, d)) == r(op(a, c), op(b, d))` (and likewise for
+        other arities). `op` can only be applied to an unreduced array if it
+        distributes over the pending reduction, since it is then applied to
+        each partial result before the reduction is completed.
+    """
     if restrict_bitwidth:
       if (bitwidth := utils.bitwidth(self.mlir_dtype)) <= 8 and bitwidth != 1:
         raise NotImplementedError(
@@ -1627,16 +1649,17 @@ class FragmentedArray:
         )
     if self.is_unreduced:
       assert isinstance(self.layout, TiledLayout)
-      if unreduced_op is None:
+      if not distributes_over:
         raise NotImplementedError(
             "This operation is not supported on partially reduced"
             " FragmentedArrays"
         )
-      if self.layout.unreduced_operation != unreduced_op:
+      if self.layout.unreduced_operation not in distributes_over:
         raise ValueError(
             "Pointwise operations on partially reduced FragmentedArrays must"
-            f" distribute over the pending reduction, got {unreduced_op!r},"
-            f" expected {self.layout.unreduced_operation!r}"
+            " distribute over the pending reduction"
+            f" {self.layout.unreduced_operation!r}, but this operation only"
+            f" distributes over {tuple(distributes_over)!r}"
         )
     # If our layout is a splat, then we should either dispatch to a non-splat
     # layout, or broadcast ourselves to the output shape first.
@@ -1652,7 +1675,7 @@ class FragmentedArray:
               *other[:i],
               *other[i + 1 :],
               output_is_signed=output_is_signed,
-              unreduced_op=unreduced_op,
+              distributes_over=distributes_over,
           )
         else:
           output_shape = np.broadcast_shapes(output_shape, o.shape)
@@ -1662,7 +1685,7 @@ class FragmentedArray:
             op,
             *other,
             output_is_signed=output_is_signed,
-            unreduced_op=unreduced_op,
+            distributes_over=distributes_over,
         )
 
     other_arrs = []
@@ -1712,7 +1735,8 @@ class FragmentedArray:
 
   def __neg__(self):
     if isinstance(self.mlir_dtype, ir.FloatType):
-      return self._pointwise(arith.negf)
+      # -(a + b) = (-a) + (-b)
+      return self._pointwise(arith.negf, distributes_over=("add",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       return 0 - self
     else:
@@ -1720,9 +1744,9 @@ class FragmentedArray:
 
   def __add__(self, other):
     if isinstance(self.mlir_dtype, ir.FloatType):
-      return self._pointwise(addf, other, unreduced_op="add")
+      return self._pointwise(addf, other, distributes_over=("add",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
-      return self._pointwise(arith.addi, other, unreduced_op="add")
+      return self._pointwise(arith.addi, other, distributes_over=("add",))
     else:
       return NotImplemented
 
@@ -1731,9 +1755,9 @@ class FragmentedArray:
 
   def __mul__(self, other):
     if isinstance(self.mlir_dtype, ir.FloatType):
-      return self._pointwise(mulf, other, unreduced_op="prod")
+      return self._pointwise(mulf, other, distributes_over=("prod",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
-      return self._pointwise(arith.muli, other, unreduced_op="prod")
+      return self._pointwise(arith.muli, other, distributes_over=("prod",))
     else:
       return NotImplemented
 
@@ -1741,18 +1765,23 @@ class FragmentedArray:
     return self * other
 
   def __sub__(self, other):
+    # (a + b) - (c + d) = (a - c) + (b - d)
     if isinstance(self.mlir_dtype, ir.FloatType):
-      return self._pointwise(subf, other)
+      return self._pointwise(subf, other, distributes_over=("add",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
-      return self._pointwise(arith.subi, other)
+      return self._pointwise(arith.subi, other, distributes_over=("add",))
     else:
       return NotImplemented
 
   def __rsub__(self, other):
     if isinstance(self.mlir_dtype, ir.FloatType):
-      return self._pointwise(lambda s, o: subf(o, s), other)
+      return self._pointwise(
+          lambda s, o: subf(o, s), other, distributes_over=("add",)
+      )
     elif isinstance(self.mlir_dtype, ir.IntegerType):
-      return self._pointwise(lambda s, o: arith.subi(o, s), other)
+      return self._pointwise(
+          lambda s, o: arith.subi(o, s), other, distributes_over=("add",)
+      )
     else:
       return NotImplemented
 
@@ -1793,7 +1822,8 @@ class FragmentedArray:
         and FragmentedArray._is_e8m0_constant_one(self)
     ):
       return other._e8m0_reciprocal()
-    return self._pointwise(arith.divf, other)
+    # (a * b) / (c * d) = (a / c) * (b / d)
+    return self._pointwise(arith.divf, other, distributes_over=("prod",))
 
   def __rtruediv__(self, other):
     if not isinstance(self.mlir_dtype, ir.FloatType):
@@ -1802,7 +1832,9 @@ class FragmentedArray:
         self.mlir_dtype, ir.Float8E8M0FNUType
     ) and FragmentedArray._is_e8m0_constant_one(other):
       return self._e8m0_reciprocal()
-    return self._pointwise(lambda s, o: arith.divf(o, s), other)
+    return self._pointwise(
+        lambda s, o: arith.divf(o, s), other, distributes_over=("prod",)
+    )
 
   def __floordiv__(self, other):
     if isinstance(self.mlir_dtype, ir.FloatType):
@@ -1987,17 +2019,17 @@ class FragmentedArray:
         maximumf = self._lift_fast_packed_instr("max.NaN.f16x2", "max.NaN.f16")
       elif isinstance(self.mlir_dtype, ir.BF16Type):
         maximumf = self._lift_fast_packed_instr("max.NaN.bf16x2", "max.NaN.bf16")
-      return self._pointwise(maximumf, other, unreduced_op="max")
+      return self._pointwise(maximumf, other, distributes_over=("max",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       width = utils.bitwidth(self.mlir_dtype)
       if width == 16:
         sign = "s" if self.is_signed else "u"
         instr = self._lift_fast_packed_instr(f"max.{sign}16x2", f"max.{sign}16")
-        return self._pointwise(instr, other, unreduced_op="max")
+        return self._pointwise(instr, other, distributes_over=("max",))
       return self._pointwise(
           arith.maxsi if self.is_signed else arith.maxui,
           other,
-          unreduced_op="max",
+          distributes_over=("max",),
       )
     else:
       raise NotImplementedError
@@ -2011,17 +2043,17 @@ class FragmentedArray:
         minimumf = self._lift_fast_packed_instr("min.NaN.f16x2", "min.NaN.f16")
       elif isinstance(self.mlir_dtype, ir.BF16Type):
         minimumf = self._lift_fast_packed_instr("min.NaN.bf16x2", "min.NaN.bf16")
-      return self._pointwise(minimumf, other, unreduced_op="min")
+      return self._pointwise(minimumf, other, distributes_over=("min",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       width = utils.bitwidth(self.mlir_dtype)
       if width == 16:
         sign = "s" if self.is_signed else "u"
         instr = self._lift_fast_packed_instr(f"min.{sign}16x2", f"min.{sign}16")
-        return self._pointwise(instr, other, unreduced_op="min")
+        return self._pointwise(instr, other, distributes_over=("min",))
       return self._pointwise(
           arith.minsi if self.is_signed else arith.minui,
           other,
-          unreduced_op="min",
+          distributes_over=("min",),
       )
     else:
       raise NotImplementedError
@@ -2038,16 +2070,21 @@ class FragmentedArray:
       dtype = self.mlir_dtype
       log2e = arith.constant(dtype, ir.FloatAttr.get(dtype, 1.4426950408889634))
       return cast(FragmentedArray, self * log2e).exp2(approx=True)
-    return self._pointwise(mlir_math.exp)
+    return self._pointwise(
+        mlir_math.exp, distributes_over=_NON_DECREASING_DISTRIBUTES_OVER
+    )
 
   def exp2(self, *, approx: bool = False) -> FragmentedArray:
     if not isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
+    exp2f = mlir_math.exp2
     if approx:
       if not isinstance(self.mlir_dtype, ir.F32Type):
         raise NotImplementedError(self.mlir_dtype)
-      return self._pointwise(self._lift_fast_instr("ex2.approx.ftz.f32"))
-    return self._pointwise(mlir_math.exp2)
+      exp2f = self._lift_fast_instr("ex2.approx.ftz.f32")
+    return self._pointwise(
+        exp2f, distributes_over=_NON_DECREASING_DISTRIBUTES_OVER
+    )
 
   def log(self, *, approx: bool = False) -> FragmentedArray:
     if not isinstance(self.mlir_dtype, ir.FloatType):
@@ -2102,7 +2139,9 @@ class FragmentedArray:
         )
       else:
         raise NotImplementedError(self.mlir_dtype)
-    return self._pointwise(tanhf)
+    return self._pointwise(
+        tanhf, distributes_over=_NON_DECREASING_DISTRIBUTES_OVER
+    )
 
   def rsqrt(self, *, approx: bool = False) -> FragmentedArray:
     if not isinstance(self.mlir_dtype, ir.FloatType):
@@ -2151,18 +2190,24 @@ class FragmentedArray:
     """Same as `lax.round(..., AWAY_FROM_ZERO)`."""
     if not isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
-    return self._pointwise(mlir_math.round)
+    return self._pointwise(
+        mlir_math.round, distributes_over=_NON_DECREASING_DISTRIBUTES_OVER
+    )
 
   def round_even(self) -> FragmentedArray:
     """Same as `lax.round(..., TO_NEAREST_EVEN)`."""
     if not isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError
-    return self._pointwise(mlir_math.roundeven)
+    return self._pointwise(
+        mlir_math.roundeven, distributes_over=_NON_DECREASING_DISTRIBUTES_OVER
+    )
 
   def erf(self) -> FragmentedArray:
     if not isinstance(self.mlir_dtype, ir.FloatType):
       raise NotImplementedError(self.mlir_dtype)
-    return self._pointwise(mlir_math.erf)
+    return self._pointwise(
+        mlir_math.erf, distributes_over=_NON_DECREASING_DISTRIBUTES_OVER
+    )
 
   def atan2(self, other: FragmentedArray) -> FragmentedArray:
     if not isinstance(self.mlir_dtype, ir.FloatType):

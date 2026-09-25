@@ -6152,91 +6152,185 @@ class FragmentedArrayTest(TestCase):
     )
 
   def test_partial_reduce_pointwise_ops(self):
-    def kernel(ctx, inp1, inp2, scratch):
+    def kernel(ctx, inp, finp, scratch):
       del ctx, scratch
-      arr1 = mgpu.FragmentedArray.load_untiled(
-          inp1, layout=mgpu.WGMMA_LAYOUT, optimized=False, is_signed=True
+      arr = mgpu.FragmentedArray.load_untiled(
+          inp, layout=mgpu.WGMMA_LAYOUT, optimized=False, is_signed=True
       )
-      arr2 = mgpu.FragmentedArray.load_untiled(
-          inp2, layout=mgpu.WGMMA_LAYOUT, optimized=False, is_signed=True
+      farr = mgpu.FragmentedArray.load_untiled(
+          finp, layout=mgpu.WGMMA_LAYOUT, optimized=False
       )
-      add_layout = arr1.layout.reduce((0,), local_only=True, op="add")
-      part_add1 = arr1.reduce("add", axis=0, target_layout=add_layout)
-      part_add2 = arr2.reduce("add", axis=0, target_layout=add_layout)
 
+      def partial(arr, op):
+        layout = arr.layout.reduce((0,), local_only=True, op=op)
+        return arr.reduce(op, axis=0, target_layout=layout)
+
+      part_add = partial(arr, "add")
       # Matching pointwise op "add" works:
-      _ = part_add1 + part_add2
+      _ = part_add + part_add
+      # So do pointwise ops that distribute over "add":
+      _ = part_add - part_add
+      _ = -part_add
 
       # Incompatible pointwise ops raise ValueError / NotImplementedError:
       with self.assertRaises(ValueError):
-        _ = part_add1 * part_add2
+        _ = part_add * part_add
       with self.assertRaises(NotImplementedError):
-        _ = part_add1 - part_add2
-      # A unary op cannot distribute over the pending reduction, and has no
-      # other operand whose layout could flag it.
-      with self.assertRaises(NotImplementedError):
-        _ = part_add1.exp()
+        _ = part_add // part_add
       # `max` does not distribute over a pending `add` reduction.
       with self.assertRaisesRegex(ValueError, "distribute over"):
-        _ = part_add1.max(part_add2)
+        _ = part_add.max(part_add)
 
-      zero = utils.c(0, arr1.mlir_dtype)
+      zero = utils.c(0, arr.mlir_dtype)
       zero_splat = mgpu.FragmentedArray.splat(
-          zero, shape=part_add1.shape, is_signed=True
+          zero, shape=part_add.shape, is_signed=True
       )
-      _ = part_add1 + zero_splat
+      _ = part_add + zero_splat
+      _ = zero_splat - part_add
 
-      one = utils.c(1, arr1.mlir_dtype)
+      one = utils.c(1, arr.mlir_dtype)
       splat = mgpu.FragmentedArray.splat(
-          one, shape=part_add1.shape, is_signed=True
+          one, shape=part_add.shape, is_signed=True
       )
       # A scalar is splatted into the unreduced layout, which is rejected.
       with self.assertRaisesRegex(ValueError, "unreduced dims"):
-        _ = part_add1 + 1
+        _ = part_add + 1
       # A splat LHS must not bypass the check on the unreduced RHS.
       with self.assertRaises(NotImplementedError):
-        _ = splat - part_add1
+        _ = splat // part_add
+      with self.assertRaisesRegex(ValueError, "unreduced dims"):
+        _ = splat - part_add
       # A splat RHS is re-splatted into the unreduced layout.
       with self.assertRaisesRegex(ValueError, "unreduced dims"):
-        _ = part_add1 + splat
+        _ = part_add + splat
 
-      max_layout = arr1.layout.reduce((0,), local_only=True, op="max")
-      part_max1 = arr1.reduce("max", axis=0, target_layout=max_layout)
-      part_max2 = arr2.reduce("max", axis=0, target_layout=max_layout)
+      part_max = partial(arr, "max")
       # Matching pointwise op "max" works, including with a non-neutral splat:
-      _ = part_max1.max(part_max2)
-      _ = part_max1.max(splat)
+      _ = part_max.max(part_max)
+      _ = part_max.max(splat)
       # Non-matching op raises:
       with self.assertRaises(ValueError):
-        _ = part_max1 + part_max2
+        _ = part_max + part_max
+      # -max(a, b) = min(-a, -b), so negation does not distribute over "max".
+      with self.assertRaisesRegex(ValueError, "distribute over"):
+        _ = -part_max
+      with self.assertRaisesRegex(ValueError, "distribute over"):
+        _ = part_max - part_max
 
-      min_layout = arr1.layout.reduce((0,), local_only=True, op="min")
-      part_min1 = arr1.reduce("min", axis=0, target_layout=min_layout)
-      part_min2 = arr2.reduce("min", axis=0, target_layout=min_layout)
+      part_min = partial(arr, "min")
       # Matching pointwise op "min" works, including with a non-neutral splat:
-      _ = part_min1.min(part_min2)
-      _ = part_min1.min(splat)
+      _ = part_min.min(part_min)
+      _ = part_min.min(splat)
       with self.assertRaises(ValueError):
-        _ = part_min1 + part_min2
+        _ = part_min + part_min
 
-      prod_layout = arr1.layout.reduce((0,), local_only=True, op="prod")
-      part_prod1 = arr1.reduce("prod", axis=0, target_layout=prod_layout)
-      part_prod2 = arr2.reduce("prod", axis=0, target_layout=prod_layout)
+      part_prod = partial(arr, "prod")
       # Matching pointwise op "prod" works:
-      _ = part_prod1 * part_prod2
-      _ = part_prod1 * splat
+      _ = part_prod * part_prod
+      _ = part_prod * splat
       with self.assertRaises(ValueError):
-        _ = part_prod1 + part_prod2
+        _ = part_prod + part_prod
+
+      # Float-only pointwise ops.
+      fpart_add = partial(farr, "add")
+      _ = -fpart_add
+      # exp(a + b) = exp(a) * exp(b), which does not preserve the reduction.
+      with self.assertRaisesRegex(ValueError, "distribute over"):
+        _ = fpart_add.exp()
+      with self.assertRaisesRegex(ValueError, "distribute over"):
+        _ = fpart_add / fpart_add
+
+      fpart_prod = partial(farr, "prod")
+      _ = fpart_prod / fpart_prod
+      _ = 1.0 / fpart_prod
+      with self.assertRaisesRegex(ValueError, "distribute over"):
+        _ = -fpart_prod
+
+      fpart_max = partial(farr, "max")
+      _ = fpart_max.exp()
+      _ = fpart_max.tanh()
+      with self.assertRaisesRegex(ValueError, "distribute over"):
+        _ = -fpart_max
+      # `log` is non-decreasing, but it is not defined on negative numbers.
+      with self.assertRaises(NotImplementedError):
+        _ = fpart_max.log()
+      # `sin` is not monotonic.
+      with self.assertRaises(NotImplementedError):
+        _ = fpart_max.sin()
 
     in_shape = jax.ShapeDtypeStruct((64, 32), jnp.int32)
+    f_in_shape = jax.ShapeDtypeStruct((64, 32), jnp.float32)
     mgpu.as_gpu_kernel(
         kernel,
         (1, 1, 1),
         (128, 1, 1),
-        (in_shape, in_shape),
+        (in_shape, f_in_shape),
         out_shape=(),
         smem_scratch_shape=(),
     )
+
+  @parameterized.named_parameters(
+      ("neg_f32", "add", jnp.float32, operator.neg, np.negative),
+      ("neg_i32", "add", jnp.int32, operator.neg, np.negative),
+      ("sub_f32", "add", jnp.float32, operator.sub, np.subtract),
+      ("sub_i32", "add", jnp.int32, operator.sub, np.subtract),
+      ("truediv", "prod", jnp.float32, operator.truediv, np.divide),
+      ("exp_max", "max", jnp.float32, lambda x: x.exp(), np.exp),
+      ("exp_min", "min", jnp.float32, lambda x: x.exp(), np.exp),
+      ("tanh_max", "max", jnp.float32, lambda x: x.tanh(), np.tanh),
+      ("round_even_min", "min", jnp.float32, lambda x: x.round_even(), np.rint),
+  )
+  def test_distributive_pointwise_op_on_partially_reduced_arrays(
+      self, reduce_op, dtype, fa_fn, np_fn
+  ):
+    shape = (64, 32)
+    num_operands = np_fn.nin
+
+    def kernel(ctx, *refs):
+      del ctx
+      *inps, dst, scratch = refs
+      parts = []
+      for inp in inps:
+        arr = mgpu.FragmentedArray.load_untiled(
+            inp,
+            layout=mgpu.WGMMA_LAYOUT,
+            optimized=False,
+            is_signed=utils.is_signed(dtype),
+        )
+        partial_layout = arr.layout.reduce((0,), local_only=True, op=reduce_op)
+        part = arr.reduce(reduce_op, axis=0, target_layout=partial_layout)
+        self.assertTrue(part.is_unreduced)
+        parts.append(part)
+      result = fa_fn(*parts)
+      self.assertTrue(result.is_unreduced)
+      self.assertEqual(result.layout, parts[0].layout)
+      completed = result.reduce(reduce_op, (), scratch)
+      self.assertFalse(completed.is_unreduced)
+      completed.store_untiled(dst, optimized=False)
+
+    if reduce_op == "prod":
+      # Keep the products close to 1 to avoid overflow and underflow.
+      make = lambda: self.prng.uniform(0.9, 1.1, shape).astype(dtype)
+    elif jnp.issubdtype(dtype, jnp.integer):
+      make = lambda: self.prng.integers(-1000, 1000, shape).astype(dtype)
+    else:
+      make = lambda: self.prng.uniform(-4, 4, shape).astype(dtype)
+    inputs = [make() for _ in range(num_operands)]
+    np_reduce = {
+        "add": np.sum, "prod": np.prod, "max": np.max, "min": np.min
+    }[reduce_op]
+    expected = np_fn(*(np_reduce(x, axis=0) for x in inputs))
+
+    in_shape = jax.ShapeDtypeStruct(shape, dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        (in_shape,) * num_operands,
+        jax.ShapeDtypeStruct((shape[1],), dtype),
+        smem_scratch_shape=jax.ShapeDtypeStruct((256,), dtype),
+    )(*inputs)
+    np.testing.assert_allclose(result, expected, rtol=1e-5, atol=1e-4)
 
   def test_splat_rejects_unreduced_layout(self):
     def kernel(ctx, src, scratch):
