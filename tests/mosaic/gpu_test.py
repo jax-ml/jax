@@ -914,6 +914,7 @@ class WGMMALayoutTest(TestCase):
           ("WGMMA_LAYOUT_8BIT", "WGMMA_LAYOUT_8BIT"),
           ("WGMMA_LAYOUT_UPCAST_2X", "WGMMA_LAYOUT_UPCAST_2X"),
           ("WGMMA_LAYOUT_UPCAST_2X", "WGMMA_LAYOUT"),
+          ("WGMMA_LAYOUT", "WGMMA_LAYOUT_UPCAST_2X"),
           ("WGMMA_LAYOUT_UPCAST_4X", "WGMMA_LAYOUT_UPCAST_4X"),
           ("WGMMA_LAYOUT_UPCAST_4X", "WGMMA_LAYOUT_UPCAST_2X"),
           ("WGMMA_LAYOUT_UPCAST_4X", "WGMMA_LAYOUT"),
@@ -7309,14 +7310,31 @@ class LayoutTest(TestCase):
 
   @parameterized.parameters(
       (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, jnp.int8, jnp.int8, 1),
+      (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, jnp.int8, jnp.int8, 1, (2,)),
       (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, jnp.int8, jnp.int16, 1),
-      (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, jnp.int4, jnp.int4, 1),
+      (fa.WGMMA_LAYOUT, fa.WGMMA_LAYOUT_UPCAST_2X, jnp.int8, jnp.int8, 0.5),
+      (fa.WGMMA_LAYOUT, fa.WGMMA_LAYOUT_UPCAST_2X, jnp.int8, jnp.int8, 0.5, (2,)),
+      (fa.WGMMA_LAYOUT, fa.WGMMA_LAYOUT_UPCAST_2X, jnp.int8, jnp.int16, 0.5),
+      (
+          fa.WGMMA_LAYOUT_UPCAST_4X,
+          fa.WGMMA_LAYOUT_UPCAST_2X,
+          jnp.int4,
+          jnp.int4,
+          1,
+      ),
       (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, jnp.int4, jnp.int4, 0.5),
+      (fa.WGMMA_LAYOUT, fa.WGMMA_LAYOUT_UPCAST_2X, jnp.int4, jnp.int4, 0.25),
       (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, jnp.int4, jnp.int4, 2),
   )
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_upcast_to_wgmma(
-      self, start_layout, end_layout, in_dtype, cast_dtype, shfl_per_reg
+      self,
+      start_layout,
+      end_layout,
+      in_dtype,
+      cast_dtype,
+      shfl_per_reg,
+      leading_shape=(),
   ):
     in_dtype = jnp.dtype(in_dtype)
     out_dtype = jnp.dtype(jnp.int16)
@@ -7334,23 +7352,35 @@ class LayoutTest(TestCase):
       ctx.async_copy(src_ref=in_, dst_ref=smem_in, swizzle=swizzle, barrier=barrier)
       barrier.wait()
       t = mgpu.FragmentedArray.load_tiled(
-          smem_in, swizzle=swizzle, is_signed=True, layout=start_layout
+          smem_in,
+          swizzle=swizzle,
+          is_signed=True,
+          layout=start_layout,
+          tiling_rank=2,
       )
       regs_per_thread = t.registers.size
       t = t.astype(utils.dtype_to_ir_type(cast_dtype), is_signed=True)
       t = t.to_layout(end_layout)
       t = t.astype(out_dtype_mlir, is_signed=True)
-      t.store_tiled(smem_out, swizzle=swizzle)
+      t.store_tiled(smem_out, swizzle=swizzle, tiling_rank=2)
       mgpu.commit_shared()
       ctx.async_copy(src_ref=smem_out, dst_ref=out, swizzle=swizzle)
       ctx.await_async_copy(0)
     def tile(x, tiling):
       return x.reshape(
-          x.shape[0] // tiling[0], tiling[0], x.shape[1] // tiling[1], tiling[1]
-      ).transpose(0, 2, 1, 3)
+          *x.shape[:-2],
+          x.shape[-2] // tiling[0],
+          tiling[0],
+          x.shape[-1] // tiling[1],
+          tiling[1],
+      ).swapaxes(-3, -2)
     in_iinfo = jnp.iinfo(in_dtype)
     x = jax.random.randint(
-        jax.random.key(42), (m, n), in_iinfo.min, in_iinfo.max, dtype=jnp.int32
+        jax.random.key(42),
+        (*leading_shape, m, n),
+        in_iinfo.min,
+        in_iinfo.max,
+        dtype=jnp.int32,
     ).astype(in_dtype)
     xt = tile(x, in_tiling)
     y = x.astype(out_dtype)
