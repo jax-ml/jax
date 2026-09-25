@@ -2473,8 +2473,8 @@ class PallasCallTest(ptu.PallasTPUTest):
   ):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Large second minor layout requires TPU v4+')
-    if not jtu.is_libtpu_at_least('0.0.49'):
-      self.skipTest('Test requires libtpu >= 0.0.49')
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Test requires libtpu >= 0.0.50')
 
     sublane_count = pltpu.get_tpu_info().num_sublanes
     lane_count = pltpu.get_tpu_info().num_lanes

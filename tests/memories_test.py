@@ -1720,6 +1720,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(y_out, y1 + y1)
 
   def test_indexing_on_host(self):
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Test requires libtpu >= 0.0.50')
     @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Host)
     def fn2(x):
