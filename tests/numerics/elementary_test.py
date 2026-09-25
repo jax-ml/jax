@@ -66,7 +66,7 @@ class ElementaryTest(jtu.JaxTestCase):
         ("cpu", {f16: 1.0, f32: 1.5, f64: 1.0}),
         ("gpu", {bf16: 1.0, f16: 1.0, f32: 2.0, f64: 1.5}),
         ([*TPU_EUPV1, "tpu_v5p"], {bf16: 1.0, f16: 1.0, f32: 1.5}),
-        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 1.5}),
+        (["tpu_v6e", "tpu_7x"], {f32: 1.5}),
     ]
     util.check_unary_precision(
         self,

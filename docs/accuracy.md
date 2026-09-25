@@ -50,6 +50,7 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.lax.erf_inv` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.erfc` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.exp` | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.exp` (`highest`) | 0.5 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.exp2` | 101.0 | 101.0 | 44.0 | 44.0 | 44.0 | 75.0 |
 | {func}`~jax.lax.expm1` | 0.5 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.log` | 0.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
@@ -90,6 +91,7 @@ Maximum error in units in the last place (ULPs) for `float16`:
 | {func}`~jax.lax.erf_inv` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.erfc` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.exp` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.exp` (`highest`) | 1.0 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.exp2` | 14.0 | 14.0 | 7.5 | 7.5 | 7.5 | 7.5 |
 | {func}`~jax.lax.expm1` | 2.5 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.log` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
