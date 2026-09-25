@@ -379,6 +379,46 @@ class JetTest(jtu.JaxTestCase):
 
     self.unary_check(f, rtol=5e-4)
 
+  @jtu.sample_product(custom_derivative=['jvp', 'vjp'],
+                      transform=['eager', 'jit', 'vmap'])
+  def test_custom_derivative_call(self, custom_derivative, transform):
+    def f(x):
+      def inner(y):
+        return {'cubic': x * y ** 2, 'constant': jnp.ones_like(y)}
+
+      def unused_rule(*args):
+        self.fail('jet should differentiate the primal implementation')
+
+      if custom_derivative == 'jvp':
+        custom_inner = jax.custom_jvp(inner)
+        custom_inner.defjvp(unused_rule)
+      else:
+        custom_inner = jax.custom_vjp(inner)
+        custom_inner.defvjp(unused_rule, unused_rule)
+      return custom_inner(2 * x)
+
+    x = jnp.array([-2., 1., 3.])
+    ones, zeros = jnp.ones_like(x), jnp.zeros_like(x)
+    series = ([ones, zeros, zeros],)
+    fun = jax.vmap(f) if transform == 'vmap' else f
+
+    def run(x):
+      return jet(fun, (x,), series)
+
+    actual = jit(run)(x) if transform == 'jit' else run(x)
+    expected = ({'cubic': 4 * x ** 3, 'constant': ones},
+                {'cubic': [12 * x ** 2, 24 * x, 24 * ones],
+                 'constant': [zeros, zeros, zeros]})
+    self.assertAllClose(actual, expected, atol=1e-5, rtol=1e-5)
+
+  def test_relu(self):
+    # Regression for https://github.com/jax-ml/jax/issues/30352.
+    x = jnp.array([-1., 0., 1.])
+    series = ([jnp.ones_like(x), jnp.zeros_like(x)],)
+    expected = jet(lambda x: jnp.maximum(x, 0), (x,), series)
+    for fun in (jax.nn.relu, jit(jax.nn.relu), jax.vmap(jax.nn.relu)):
+      self.assertAllClose(jet(fun, (x,), series), expected)
+
   def test_select(self):
     M, K = 2, 3
     order = 3
