@@ -1066,7 +1066,8 @@ def _build_reducer_func_op(ctx, prim, aval_in):
 
 def _all_reduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups,
                          is_async=False):
-  aval_in, = ctx.avals_in
+  in_aval, = ctx.avals_in
+  out_aval, = ctx.avals_out
   if axis_index_groups is not None and ("tpu" in ctx.module_context.platforms):
     len_0 = len(axis_index_groups[0])
     if any(len(g) != len_0 for g in axis_index_groups):
@@ -1084,7 +1085,7 @@ def _all_reduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups,
       reducer_ctx = ctx.replace(primitive=None, avals_in=[aval], avals_out=[aval_out])
       out, = reducer(reducer_ctx, arg, axes=tuple(positional_axes))
       return out
-    arg = _positional_reduce(aval_in, arg)
+    arg = _positional_reduce(in_aval, arg)
   if not named_axes:
     return [arg]
 
@@ -1104,15 +1105,16 @@ def _all_reduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups,
     op = hlo.AllReduceOp(
         [arg.type], [arg], replica_groups=replica_groups, **other_args)
     scalar_aval = core.ShapedArray(
-        (), aval_in.dtype, sharding=NamedSharding(aval_in.sharding.mesh, P()))
+        (), in_aval.dtype, sharding=NamedSharding(in_aval.sharding.mesh, P()))
     scalar_type = mlir.aval_to_ir_type(ctx.module_context, scalar_aval)
     reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
     _lower_reducer_into_block(ctx, prim, scalar_aval, reducer_block)
-    return [op.result]
+    # For partial manual shard_map
+    return [mlir.lower_with_sharding_in_types(ctx, op.result, out_aval)]
   else:
     replica_groups = _replica_groups(
         ctx.module_context.axis_context, named_axes, axis_index_groups=None)
-    reducer = _build_reducer_func_op(ctx, prim, aval_in)
+    reducer = _build_reducer_func_op(ctx, prim, in_aval)
     return _emit_async_start_custom_call(
         "all-reduce-start", ctx, arg,
         {"replica_groups": replica_groups, **other_args},

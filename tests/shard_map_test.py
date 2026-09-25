@@ -46,6 +46,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.remat import remat_transform
 from jax._src import linear_util as lu
 from jax._src import tree_util
+from jax._src.lib import ifrt_version, jaxlib_extension_version
 from jax.custom_derivatives import SymbolicZero
 import jax.numpy as jnp
 
@@ -3041,13 +3042,6 @@ class ShardMapTest(jtu.JaxTestCase):
       shard_map(lambda x: x, mesh=mesh, in_specs=P(unreduced={'x'}),
                 out_specs=P())(np.arange(8))
 
-    with self.assertRaisesRegex(
-        NotImplementedError,
-        'unreduced.*can only be passed to in_specs when shard_map is in full'
-        ' manual mode'):
-      shard_map(lambda x: x, mesh=mesh, in_specs=P(unreduced={'x'}),
-                  out_specs=P(), axis_names={'x'})(np.arange(8))
-
   def test_partial_auto(self):
     mesh = jtu.create_mesh((2, 2), ('i', 'j'))
 
@@ -5683,6 +5677,71 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertIn('replica_group_mesh_axes', mlir)
     self.assertIn('axes = [#stablehlo.axis_ref<name = "x">]', mlir)
     self.assertRegex(mlir, r'mesh = (@mesh|#sdy\.mesh)')
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  @jax.default_matmul_precision('float32')
+  def test_reduced_shmap_inside_partially_manual_shmap(self, mesh):
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Requires libtpu >= 0.0.50')
+    if jaxlib_extension_version < 500:
+      self.skipTest('Requires jaxlib_extension_version >= 500')
+    if ifrt_version < 72:
+      self.skipTest('Requires ifrt_version >= 72')
+
+    np_x = np.arange(2 * 8 * 16, dtype=np.float32).reshape(2, 8, 16)
+    np_w = np.arange(16 * 32, dtype=np.float32).reshape(16, 32)
+    arr = jax.device_put(np_x, P('x', 'y', None))
+    w = jax.device_put(np_w, P('y', None))
+
+    @jax.jit
+    @jax.shard_map(in_specs=(P('x'), P()), out_specs=P('x'), axis_names={'x'})
+    def f(x, w):
+      @jax.shard_map(in_specs=P('y', None), out_specs=P(reduced={'y'}))
+      def ag(z):
+        return jax.lax.all_gather(z, 'y', tiled=True, to='reduced')
+      w_gathered = ag(w)
+      return jnp.einsum('sbd,df->sbf', x, w_gathered)
+
+    out = f(arr, w)
+    self.assertArraysAllClose(out, np_x @ np_w)
+
+    darr, dw = jax.jit(jax.grad(lambda x, w: f(x, w).sum(), argnums=(0, 1)))(arr, w)
+    self.assertEqual(darr.sharding, NamedSharding(mesh, P('x', 'y', None)))
+    self.assertEqual(dw.sharding, NamedSharding(mesh, P('y', None)))
+    expected_darr, expected_dw = jax.jit(jax.grad(lambda x, w: (x @ w).sum(),
+                                                  argnums=(0, 1)))(np_x, np_w)
+    self.assertArraysAllClose(darr, expected_darr)
+    self.assertArraysAllClose(dw, expected_dw)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_unreduced_partial_manual_basic(self, mesh):
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Requires libtpu >= 0.0.50')
+    if jaxlib_extension_version < 500:
+      self.skipTest('Requires jaxlib_extension_version >= 500')
+    if ifrt_version < 72:
+      self.skipTest('Requires ifrt_version >= 72')
+
+    arr = jax.device_put(jnp.arange(24).reshape(4, 6), P('x', 'y'))
+    arr1 = jax.lax.reduce_sum(arr, [1], out_sharding=P('x', unreduced={'y'}))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(unreduced={'x'}), axis_names={'x'})
+    def f(x):
+      self.assertEqual(x.aval.sharding.spec, P(None, unreduced={'y'}))
+      self.assertEqual(x.aval.mat.varying, {'x'})
+      out = jax.lax.reduce_sum(x, [0])
+      self.assertEqual(out.aval.sharding.spec, P(unreduced={'y'}))
+      self.assertEqual(out.aval.mat.varying, {'x'})
+      out2 = jax.lax.pcast(out, 'x', to='unreduced')
+      self.assertEqual(out2.aval.sharding.spec, P(unreduced={'y'}))
+      self.assertEqual(out2.aval.mat.varying, set())
+      self.assertEqual(out2.aval.mat.unreduced, {'x'})
+      return out2
+
+    out = f(arr1)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x', 'y'})))
+    self.assertArraysEqual(jax.reshard(out, P()), jax.lax.reduce_sum(arr, [0, 1]))
 
 
 class FunSpec(NamedTuple):

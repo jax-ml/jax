@@ -2203,8 +2203,7 @@ def getu(aval, kind=UnreducedKind.sum):
     return out_u
   # Revise this after partial manual unreduced is supported
   assert not aval.mat.unreduced
-  assert not aval.sharding.spec.unreduced
-  return frozenset()
+  return aval.sharding.spec.unreduced
 
 def getr(aval):
   if aval.sharding.mesh.are_all_axes_manual:
@@ -2213,8 +2212,7 @@ def getr(aval):
     return aval.sharding.spec.reduced
   # Revise this after partial manual reduced is supported
   assert not aval.mat.reduced
-  assert not aval.sharding.spec.reduced
-  return frozenset()
+  return aval.sharding.spec.reduced
 
 def _make_lengths_same(sharding, ndim):
   pspec = sharding.spec
@@ -2406,8 +2404,8 @@ class ManualAxisType:
 
   def __repr__(self):
     return (f"ManualAxisType(varying={self.varying}, "
-            f"unreduced={self.unreduced}, reduced={self.reduced}), "
-            f"unreduced_kind={self.unreduced_kind}")
+            f"unreduced={self.unreduced}, reduced={self.reduced}, "
+            f"unreduced_kind={self.unreduced_kind})")
 
   def __getnewargs_ex__(self):
     return (), {'varying': self.varying, 'unreduced': self.unreduced,

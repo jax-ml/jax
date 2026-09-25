@@ -424,8 +424,7 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _smap):
 
 
 def _manual_spec(manual_axes, spec: P, mesh) -> P:
-  out: list[str | tuple[str | None, ...] | None] = []
-  s: str | None | tuple[str, ...]
+  out = []
   for s in spec.partitions:
     if s is None:
       out.append(s)
@@ -438,8 +437,13 @@ def _manual_spec(manual_axes, spec: P, mesh) -> P:
       out.append(None if len(temp) == 0 else tuple(temp))
     else:
       out.append(s if s in manual_axes else None)
-  _check_unreduced(SpecErrorType.input, mesh, manual_axes, spec)
-  return spec.update(partitions=tuple(out))
+  out_u = frozenset(u for u in spec.unreduced if u in manual_axes)
+  out_r = frozenset(r for r in spec.reduced if r in manual_axes)
+  u_kind = spec.unreduced_kind if out_u else None
+  out_spec = spec.update(partitions=tuple(out), unreduced=out_u, reduced=out_r,
+                         unreduced_kind=u_kind)
+  _check_unreduced(SpecErrorType.input, mesh, manual_axes, out_spec)
+  return out_spec
 
 
 # Error checking and messages
@@ -451,19 +455,12 @@ def _check_unreduced(error_type, mesh, manual_axes, specs):
   del mesh
   from jax._src.hijax import HiPspec
   prefix = 'in' if error_type == SpecErrorType.input else 'out'
-  full_manual = manual_mesh.axis_names == manual_mesh.manual_axes
   specs_flat, _ = tree_flatten(specs)
   for s in specs_flat:
     if isinstance(s, HiPspec):
       continue  # TODO(mattjj,yashkatariya): add user validation method
     if not s.unreduced and not s.reduced:
       continue
-    if not full_manual:
-      raise NotImplementedError(
-          f"unreduced/reduced can only be passed to {prefix}_specs when"
-          " shard_map is in full manual mode. Got mesh axis names"
-          f" {manual_mesh.axis_names}, manual_axes: {manual_axes}, specs: {s}."
-          " Please file a bug at https://github.com/jax-ml/jax/issues.")
     if not all(manual_mesh._name_to_type[u] == AxisType.Manual for u in s.unreduced):
       raise ValueError(
           f"unreduced in {prefix}_specs {s} can only be used when the mesh"
@@ -857,17 +854,21 @@ def _spec_to_names(spec: PartitionSpec):
 def _shard_shaped_array(mesh: Mesh, manual_axes: frozenset, check_vma,
                         spec, aval: core.ShapedArray) -> core.ShapedArray:
   assert isinstance(aval, core.ShapedArray)
-  if spec.unreduced != aval.sharding.spec.unreduced:
+  manual_u = frozenset(u for u in aval.sharding.spec.unreduced if u in manual_axes)
+  manual_u_kind = aval.sharding.spec.unreduced_kind if manual_u else None
+  manual_r = frozenset(r for r in aval.sharding.spec.reduced if r in manual_axes)
+  if spec.unreduced != manual_u:
+    print(spec.unreduced, manual_u)
     raise ValueError(
         f"in_specs containing unreduced {spec} passed to shard_map should be"
         " equal to the unreduced present on the in_aval"
         f" {aval.str_short(True)}")
-  if spec.unreduced_kind is not aval.sharding.spec.unreduced_kind:
+  if spec.unreduced_kind is not manual_u_kind:
     raise ValueError(
         f"in_specs containing unreduced_kind {spec} passed to shard_map should"
         " be equal to the unreduced_kind present on the in_aval"
         f" {aval.str_short(True)}")
-  if spec.reduced != aval.sharding.spec.reduced:
+  if spec.reduced != manual_r:
     raise ValueError(
         f"in_specs containing reduced {spec} passed to shard_map should be"
         f" equal to the reduced present on the in_aval {aval.str_short(True)}")
@@ -879,9 +880,9 @@ def _shard_shaped_array(mesh: Mesh, manual_axes: frozenset, check_vma,
       mesh=manual_mesh,
       spec=core.modify_spec_for_auto_manual(aval.sharding.spec, manual_mesh))
   vma = (_spec_to_vma(spec) if check_vma else frozenset()) | aval.mat.varying
-  unreduced = aval.sharding.spec.unreduced if check_vma else frozenset()
-  reduced = aval.sharding.spec.reduced if check_vma else frozenset()
-  u_kind = aval.sharding.spec.unreduced_kind if check_vma else None
+  unreduced = (spec.unreduced if check_vma else frozenset()) | aval.mat.unreduced
+  reduced = (spec.reduced if check_vma else frozenset()) | aval.mat.reduced
+  u_kind = spec.unreduced_kind if check_vma else None
   mat = core.ManualAxisType(varying=vma, unreduced=unreduced, reduced=reduced,
                             unreduced_kind=u_kind)
   return aval.update(shape=new_shape, sharding=new_sharding,
@@ -901,6 +902,13 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.ShapedArray
         "out_specs passed to shard_map should be equal to the unreduced_kind"
         f" present on the out_aval. Got out_specs={spec} and"
         f" out_aval={aval.str_short(True)}")
+  if (check_vma and spec.unreduced_kind is not None and
+      aval.sharding.spec.unreduced_kind is not None and
+      spec.unreduced_kind is not aval.sharding.spec.unreduced_kind):
+    raise ValueError(
+        "out_specs passed to shard_map should be equal to the unreduced_kind"
+        f" present on the out_aval. Got out_specs={spec} and"
+        f" out_aval={aval.str_short(True)}")
   if check_vma and spec.reduced != aval.mat.reduced:
     raise ValueError(
         "out_specs passed to shard_map should be equal to the reduced present"
@@ -910,9 +918,11 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.ShapedArray
   new_shape = tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
                     for i, sz in enumerate(aval.shape))
   names_spec = spec._normalized_spec_for_aval(aval.ndim).partitions
+  unreduced = spec.unreduced | aval.sharding.spec.unreduced
+  reduced = spec.reduced | aval.sharding.spec.reduced
+  u_kind = spec.unreduced_kind or aval.sharding.spec.unreduced_kind
   if aval.ndim == 0:
-    out_spec = P(unreduced=spec.unreduced, reduced=spec.reduced,
-                 unreduced_kind=spec.unreduced_kind)
+    out_spec = P(unreduced=unreduced, reduced=reduced, unreduced_kind=u_kind)
   else:
     out_spec = []
     for name_s, aval_s in zip(names_spec, aval.sharding.spec.partitions):
@@ -927,14 +937,18 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.ShapedArray
         name_s = name_s if isinstance(name_s, tuple) else (name_s,)
         aval_s = aval_s if isinstance(aval_s, tuple) else (aval_s,)
         out_spec.append(name_s + aval_s)
-    out_spec = spec.update(partitions=tuple(out_spec))
+    out_spec = P(*out_spec, unreduced=unreduced, reduced=reduced,
+                 unreduced_kind=u_kind)
   new_mesh = (mesh.abstract_mesh if get_abstract_mesh().empty else
               get_abstract_mesh())
   new_sharding = NamedSharding(new_mesh, out_spec)
   manual_axes = set(new_mesh.manual_axes)
   vma = frozenset(v for v in aval.mat.varying if v in manual_axes)
-  # TODO(yashkatariya): Handle partial manual unreduced/reduced.
-  out_mat = core.ManualAxisType(varying=vma)
+  man_u = frozenset(u for u in aval.mat.unreduced if u in manual_axes)
+  man_r = frozenset(r for r in aval.mat.reduced if r in manual_axes)
+  man_ukind = aval.mat.unreduced_kind if man_u else None
+  out_mat = core.ManualAxisType(varying=vma, unreduced=man_u, reduced=man_r,
+                                unreduced_kind=man_ukind)
   return aval.update(shape=new_shape, sharding=new_sharding,
                      manual_axis_type=out_mat)
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
