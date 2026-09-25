@@ -26,6 +26,7 @@ import numpy as np
 from jax._src import api
 from jax._src import core
 from jax._src import config
+from jax._src import dtypes
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax
 from jax._src.lax import linalg as lax_linalg
@@ -1267,6 +1268,21 @@ def norm(x: ArrayLike, ord: int | str | float | None = None,
   """
   x = ensure_arraylike("jnp.linalg.norm", x)
   x, = promote_dtypes_inexact(x)
+  # Upcast half-precision inputs (float16/bfloat16) to float32 for the norm
+  # computation. The internal reduction accumulates in float32, but JAX
+  # downcasts the finite float32 sum back to the half precision before the
+  # final sqrt, producing `inf` (and a silent zero gradient) for norms that
+  # are representable in the original dtype (e.g. ||100*ones|| = 300 in
+  # float16). https://github.com/google/jax/issues/39899
+  out_dtype = x.dtype
+  if out_dtype in (np.float16, dtypes.bfloat16):
+    x = x.astype(np.float32)
+
+  def _finalize(result):
+    if out_dtype in (np.float16, dtypes.bfloat16):
+      return result.astype(out_dtype)
+    return result
+
   x_shape = np.shape(x)
   ndim = len(x_shape)
 
@@ -1274,7 +1290,7 @@ def norm(x: ArrayLike, ord: int | str | float | None = None,
     # NumPy has an undocumented behavior that admits arbitrary rank inputs if
     # `ord` is None: https://github.com/numpy/numpy/issues/14215
     if ord is None:
-      return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), keepdims=keepdims))
+      return _finalize(ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), keepdims=keepdims)))
     axis = tuple(range(ndim))
   elif isinstance(axis, tuple):
     axis = tuple(canonicalize_axis(x, ndim) for x in axis)
@@ -1283,31 +1299,31 @@ def norm(x: ArrayLike, ord: int | str | float | None = None,
 
   match axis:
     case [_]:
-      return vector_norm(x, ord=2 if ord is None else ord, axis=axis, keepdims=keepdims)
+      return _finalize(vector_norm(x, ord=2 if ord is None else ord, axis=axis, keepdims=keepdims))
     case [row_axis, col_axis]:
       if ord is None or ord in ('f', 'fro'):
-        return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
-                                        keepdims=keepdims))
+        return _finalize(ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
+                                        keepdims=keepdims)))
       elif ord == 1:
         if not keepdims and col_axis > row_axis:
           col_axis -= 1
-        return reductions.amax(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
-                              axis=col_axis, keepdims=keepdims, initial=0)
+        return _finalize(reductions.amax(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
+                              axis=col_axis, keepdims=keepdims, initial=0))
       elif ord == -1:
         if not keepdims and col_axis > row_axis:
           col_axis -= 1
-        return reductions.amin(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
-                              axis=col_axis, keepdims=keepdims)
+        return _finalize(reductions.amin(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
+                              axis=col_axis, keepdims=keepdims))
       elif ord == np.inf:
         if not keepdims and row_axis > col_axis:
           row_axis -= 1
-        return reductions.amax(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
-                      axis=row_axis, keepdims=keepdims, initial=0)
+        return _finalize(reductions.amax(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
+                      axis=row_axis, keepdims=keepdims, initial=0))
       elif ord == -np.inf:
         if not keepdims and row_axis > col_axis:
           row_axis -= 1
-        return reductions.amin(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
-                      axis=row_axis, keepdims=keepdims)
+        return _finalize(reductions.amin(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
+                      axis=row_axis, keepdims=keepdims))
       elif ord in ('nuc', 2, -2):
         x = jnp.moveaxis(x, axis, (-2, -1))
         s = svd(x, compute_uv=False)
@@ -1319,7 +1335,7 @@ def norm(x: ArrayLike, ord: int | str | float | None = None,
           y = reductions.sum(s, axis=-1)
         if keepdims:
           y = jnp.expand_dims(y, axis)
-        return y
+        return _finalize(y)
       else:
         raise ValueError(f"Invalid order '{ord}' for matrix norm.")
     case _:
