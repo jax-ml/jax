@@ -26,10 +26,9 @@ import math
 from typing import Any, Literal
 
 import jax
-from jax import core as jax_core
 from jax import lax
 from jax import tree_util
-from jax._src import core
+from jax._src import core as jax_core
 from jax._src import config
 from jax._src import flattree as ft
 from jax._src import state
@@ -86,11 +85,6 @@ SemaphoreTuple = jax.Array
 ArrayRef = REF | jax.Array
 Tiling = tpu_info.Tiling
 
-GridIndices = tuple[jax.Array, ...]
-CondVal = jax.Array | bool
-PipelineBlockSpecs = Sequence[pallas_core.BlockSpec] | Any
-PipelineRefs = Sequence[REF] | Any
-
 is_transformed_ref = lambda x: isinstance(x, state.TransformedRef)
 
 
@@ -110,10 +104,10 @@ def _create_blocked_slice(
   num_blocks = cdiv(dim_size, block_size)
   is_last = block_index == num_blocks - 1
   rounded_size = jnp.where(
-      is_last, align_to(dim_rem % block_size, tiling), block_size
+      is_last, align_to(dim_rem, tiling), block_size
   )
   rounded_size = multiple_of(rounded_size, tiling)
-  return ds(block_index * block_size, rounded_size)
+  return ds(block_start, rounded_size)
 
 
 def _create_bounded_slice(slice_start: jax.Array | int,
@@ -154,11 +148,9 @@ def _make_block_slice(
       return _create_blocked_slice(block_index, block_size.block_size, size, tiling)
     case int():
       return _create_blocked_slice(block_index, block_size, size, tiling)
-    case Element():
-      block_start = block_index
-      block_size = block_size.block_size
+    case Element(block_size):
       return _create_bounded_slice(
-          block_start, block_size, block_size, size, tiling
+          block_index, block_size, block_size, size, tiling
       )
     case BoundedSlice(block_size):
       if not isinstance(block_index, Slice):
@@ -198,7 +190,7 @@ def _tuples_differ(xs, ys):
 
 def _tuple_all_binop(binop, xs, ys):
   """Dynamic reduce_all calculation with a user-provided comparison op."""
-  differences = jax.tree.leaves(jax.tree.map(lambda x, y: binop(x, y), xs, ys))
+  differences = jax.tree.leaves(jax.tree.map(binop, xs, ys))
   return functools.reduce(lambda x, y: x & y, differences, True)
 
 _tuple_lt = functools.partial(_tuple_all_binop, lambda x, y: x < y)
@@ -227,8 +219,7 @@ def _spec_has_trivial_windowing(spec, grid, full_shape):
     return True
   static_dummy_grid = tuple(d if isinstance(d, int) else 2 for d in grid)
   with pallas_core.tracing_grid_env(static_dummy_grid, mapped_dims=()):
-    closed_jaxpr = jax.make_jaxpr(spec.index_map)(*[0] * len(grid))
-  jaxpr = closed_jaxpr
+    jaxpr = jax.make_jaxpr(spec.index_map)(*[0] * len(grid))
   # Refs can be mutated while the pipeline is running so we should not assume
   # that they are constant.
   if any(isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars):
@@ -740,10 +731,7 @@ class BufferedRef(BufferedRefBase):
             "Ensure .with_window_ref(...) is called on the BufferedRef in allocations."
         )
       raise ValueError("window_ref is None")
-    assert not (
-        self.window_ref is None
-        or isinstance(self.window_ref, state.AbstractRef)
-    )
+    assert not isinstance(self.window_ref, state.AbstractRef)
     if not self.is_buffered or self.is_trivial_windowing:
       return self.window_ref
     else:
@@ -1219,7 +1207,7 @@ class Scheduler:
     self._compute_index_cache = {}
 
   def _compute_index(self, buffered_ref, *indices):
-    _key = lambda x: (True, id(x)) if isinstance(x, core.Tracer) else (False, x)
+    _key = lambda x: (True, id(x)) if isinstance(x, jax_core.Tracer) else (False, x)
     key = (id(buffered_ref.spec.index_map), tuple(map(_key, indices)))
     if key in self._compute_index_cache:
       res, _, _ = self._compute_index_cache[key]
@@ -1247,7 +1235,7 @@ class Scheduler:
     # Currently this is based on the iteration, but if we want to support
     # lookahead this will depend on whether the lookahead reached the end.
     if not buffered_ref.is_buffered:
-      return jnp.bool(False)
+      return False
     return self.step >= (self.num_steps - buffered_ref.buffer_count + 1)
 
   def has_changed(self, buffered_ref):
@@ -1516,7 +1504,7 @@ def _make_pipeline_allocations(
       buffer_count = 1
 
     sms = (in_ref.memory_space if isinstance(in_ref, state.TransformedRef) else
-           core.typeof(in_ref).memory_space)
+           jax_core.typeof(in_ref).memory_space)
     return BufferedRef.input(
         in_spec,
         in_aval,
@@ -1541,7 +1529,7 @@ def _make_pipeline_allocations(
       buffer_count = 1
 
     sms = (out_ref.memory_space if isinstance(out_ref, state.TransformedRef)
-           else core.typeof(out_ref).memory_space)
+           else jax_core.typeof(out_ref).memory_space)
     return BufferedRef.output(
         out_spec,
         out_aval,
@@ -2157,7 +2145,7 @@ def emit_pipeline(
         not isinstance(x, state.TransformedRef) for x in flat_kernel_args)
 
     if _explicit_indices:
-      scalar_aval: Any = core.ShapedArray((), jnp.int32)
+      scalar_aval: Any = jax_core.ShapedArray((), jnp.int32)
       ps_aval = PipelineStep(
           index=tuple([scalar_aval] * len(grid)),
           local_index=scalar_aval,
@@ -2214,17 +2202,17 @@ def emit_pipeline(
   return wrapped
 
 
-emit_pipeline_p = core.Primitive("emit_pipeline")
+emit_pipeline_p = jax_core.Primitive("emit_pipeline")
 emit_pipeline_p.multiple_results = True
 
 @emit_pipeline_p.def_effectful_abstract_eval
 def _emit_pipeline_effectful_abstract_eval(
-    *avals, body_jaxpr: core.Jaxpr, args_tree, grid_mapping, refs_tree,
+    *avals, body_jaxpr: jax_core.Jaxpr, args_tree, grid_mapping, refs_tree,
     _explicit_indices, **params
 ):
   del params
   all_args = args_tree.unflatten(avals)
-  # Because we can have TransformedRefs as argumetns to the body, but the flat
+  # Because we can have TransformedRefs as arguments to the body, but the flat
   # arguments are flattened Refs and transforms, we unflatten the positional
   # indices to be able to identify the index of an n-th Ref from a positional
   # index.
@@ -2281,14 +2269,14 @@ def _emit_pipeline_effectful_abstract_eval(
   return (), frozenset(out_effects)
 
 # TODO(rdyro): Either generalize or merge with another primitive. This primitive
-# perfoms an "eval jaxpr" operation, but is currently tailored to calling the
-# pipeline body in the emit_pipeline primtiive - it resolves TransformedRefs and
+# performs an "eval jaxpr" operation, but is currently tailored to calling the
+# pipeline body in the emit_pipeline primitive - it resolves TransformedRefs and
 # binds the user grid indices to lowering.
 # This primitive is specialized to resolve TransformedRefs passed as arguments
 # and evaluate the body jaxpr with the resolved Refs because it assumes the body
 # was traced "generically" with Refs. However, the emit_pipeline is allowed to
 # pass in TransformedRefs as arguments to the body.
-pipeline_body_p = core.Primitive("pipeline_body")
+pipeline_body_p = jax_core.Primitive("pipeline_body")
 pipeline_body_p.multiple_results = True
 
 @pipeline_body_p.def_effectful_abstract_eval
@@ -2337,28 +2325,23 @@ def _pipeline_body_effectful_abstract_eval(
   return (), frozenset(out_effects)
 
 
-# TODO(rdyro): Both primtives require both memory pipeline and core grid
+# TODO(rdyro): Both primitives require both memory pipeline and core grid
 # information which the caching doesn't support yet.
 _uncacheable_primitives.add(pipeline_body_p)
 _uncacheable_primitives.add(emit_pipeline_p)
 
 def _emit_pipeline_physicalize_rule(
-    ctx, *args_flat, body_jaxpr: core.Jaxpr, args_tree, grid_mapping, refs_tree,
+    ctx, *args_flat, body_jaxpr: jax_core.Jaxpr, args_tree, grid_mapping, refs_tree,
     **params
 ):
   del ctx
   all_args: EmitPipelinePrimitiveArgs = args_tree.unflatten(args_flat)
   with grid_mapping.trace_env():
     new_closed = fusible_dtype.physicalize_closed_jaxpr(
-        core.ClosedJaxpr(body_jaxpr, all_args.body_consts)
+        jax_core.ClosedJaxpr(body_jaxpr, all_args.body_consts)
     )
-  new_args = EmitPipelinePrimitiveArgs(
-      all_index_map_consts=all_args.all_index_map_consts,
-      dynamic_grid_spec=all_args.dynamic_grid_spec,
-      core_id=all_args.core_id,
-      body_consts=tuple(new_closed.consts),
-      refs_flat=all_args.refs_flat,
-      allocations=all_args.allocations,
+  new_args = dataclasses.replace(
+      all_args, body_consts=tuple(new_closed.consts)
   )
   new_args_flat, new_args_tree = tracing_registry.flatten(new_args)
   return emit_pipeline_p.bind(*new_args_flat,
@@ -2431,7 +2414,7 @@ pipeline_body_p.is_high = _pipeline_body_is_high
 def pipeline_body_discharge_rule(
     ctx: state_discharge.DischargeContext,
     *invals,
-    jaxpr: core.Jaxpr,
+    jaxpr: jax_core.Jaxpr,
     in_tree,
     _explicit_indices: bool = False,
     **params,
@@ -2470,7 +2453,7 @@ def pipeline_body_discharge_rule(
         should_discharge=tuple(body_should_discharge),
         strip_memory_space=ctx.strip_memory_space,
     )
-    out = core.eval_jaxpr(
+    out = jax_core.eval_jaxpr(
         discharged_body_closed.jaxpr,
         discharged_body_closed.consts,
         *body_in_args,
@@ -2517,7 +2500,7 @@ def emit_pipeline_to_jaxpr(
     core_axis_name=None,
     _explicit_indices=False,
     **params,
-) -> core.ClosedJaxpr:
+) -> jax_core.ClosedJaxpr:
   del core_axis, core_axis_name
   index_map_consts_counts = tuple(
       len(bm.index_map_jaxpr.consts) for bm in grid_mapping.block_mappings)
@@ -2568,7 +2551,7 @@ def emit_pipeline_to_jaxpr(
 
     # re-create the pallas core grid env
     names = (None,) * len(grid_sizes) if grid_names is None else grid_names
-    axis_env_ctx = core.extend_axis_env_nd(
+    axis_env_ctx = jax_core.extend_axis_env_nd(
         [(name, size) for name, size in zip(names, grid_sizes)
         if name is not None and isinstance(size, int)]
     )
@@ -2604,7 +2587,7 @@ def _emit_pipeline_lowering_rule(
     ctx, *args_flat, grid_mapping, body_jaxpr, args_tree, refs_tree, num_cores,
     dimension_semantics, core_axis, core_axis_name, _explicit_indices, **params
 ):
-  closed_jaxpr = emit_pipeline_to_jaxpr(
+  jaxpr = emit_pipeline_to_jaxpr(
       ctx.avals_in,
       grid_mapping=grid_mapping,
       grid_names=ctx.lowering_context.grid_names,
@@ -2619,13 +2602,10 @@ def _emit_pipeline_lowering_rule(
       _explicit_indices=_explicit_indices,
       **params,
   )
-  jaxpr = closed_jaxpr
-  consts = closed_jaxpr.consts
-  assert not consts and not jaxpr.constvars, (
+  assert not jaxpr.consts and not jaxpr.constvars, (
       f"wrapped_pipeline_fun should not close over JAX constants, but found: "
-      f"{consts=} {jaxpr.constvars=}"
+      f"{jaxpr.consts=} {jaxpr.constvars=}"
   )
-  jaxpr = pe.convert_constvars_jaxpr(jaxpr)
 
   all_args = args_tree.unflatten(args_flat)
   grid_val_iter = iter(all_args.dynamic_grid_spec)
@@ -2642,7 +2622,7 @@ def _emit_pipeline_lowering_rule(
   if grid_names is None:
     grid_names = (None,) * len(ctx.lowering_context.grid_sizes)
   grid_names = (tuple(None for _ in grid_sizes)
-                + (tuple(grid_names or ())))
+                + (tuple(grid_names)))
   user_grid_indices = (tuple(g for i, g in enumerate(grid_indices)
                              if i not in grid_mapping.vmapped_dims)
                        + tuple(ctx.lowering_context.user_grid_indices))
@@ -2680,7 +2660,7 @@ def _emit_pipeline_to_lojax(
     *args_flat, body_jaxpr, grid_mapping, args_tree, refs_tree, **params
 ):
   all_args: EmitPipelinePrimitiveArgs = args_tree.unflatten(args_flat)
-  closed_hi_jaxpr = core.ClosedJaxpr(body_jaxpr, all_args.body_consts)
+  closed_hi_jaxpr = jax_core.ClosedJaxpr(body_jaxpr, all_args.body_consts)
   with grid_mapping.trace_env():
     closed_lo_jaxpr = pe.lower_jaxpr2(closed_hi_jaxpr)
 
@@ -2693,13 +2673,10 @@ def _emit_pipeline_to_lojax(
       is_transformed_ref,
   )
 
-  new_prim_args = EmitPipelinePrimitiveArgs(
-      all_index_map_consts=all_args.all_index_map_consts,
-      dynamic_grid_spec=all_args.dynamic_grid_spec,
-      core_id=all_args.core_id,
+  new_prim_args = dataclasses.replace(
+      all_args,
       body_consts=tuple(closed_lo_jaxpr.consts),
       refs_flat=tuple(lo_flat_refs),
-      allocations=all_args.allocations,
   )
   new_args_flat, new_args_tree = tracing_registry.flatten(new_prim_args)
   return emit_pipeline_p.bind(
@@ -2795,7 +2772,7 @@ def _emit_pipeline_discharge_rule(
       strip_memory_space=ctx.strip_memory_space,
   )
   ref_vals = iter(
-      core.eval_jaxpr(discharged.jaxpr, discharged.consts, *args_flat)
+      jax_core.eval_jaxpr(discharged.jaxpr, discharged.consts, *args_flat)
   )
   new_invals = [
       next(ref_vals) if should else None for should in ctx.should_discharge
