@@ -6474,6 +6474,12 @@ def get_algorithm_compute_types(
     out_dtype: DTypeLike,
 ) -> tuple[DTypeLike, DTypeLike, DTypeLike]:
   if isinstance(algorithm, DotAlgorithm):
+    if (
+        algorithm.lhs_precision_type == dtypes.float8_e4m3fn
+        and algorithm.rhs_precision_type == dtypes.float8_e4m3fn
+        and algorithm.num_primitive_operations in (3, 4)
+    ):
+      return (dtypes.bfloat16, dtypes.bfloat16, algorithm.accumulation_type)
     return (
         algorithm.lhs_precision_type,
         algorithm.rhs_precision_type,
