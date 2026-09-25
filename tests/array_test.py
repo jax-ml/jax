@@ -1477,6 +1477,42 @@ class ShardingTest(jtu.JaxTestCase):
         ValueError, 'Got invalid memory kind'):
       NamedSharding(abstract_mesh, P(), memory_kind='weird_device')
 
+  def test_device_put_collective_memory_not_all_participating_devices_error(
+      self,
+  ):
+    if jax.device_count() < 2:
+      self.skipTest('Test requires at least 2 devices')
+    abstract_mesh = AbstractMesh((1,), ('x',))
+    s_abstract = NamedSharding(abstract_mesh, P('x'), memory_kind='collective')
+    with self.assertRaisesRegex(
+        ValueError,
+        "When using `memory_kind='collective'`, memory must be placed in all"
+        ' participating devices',
+    ):
+      jax.device_put(np.ones((2,), dtype=np.float32), s_abstract)
+
+    if 'collective' in [
+        m.kind for m in jax.local_devices()[0].addressable_memories()
+    ]:
+      mesh_sub = Mesh(jax.devices()[:1], ('x',))
+      s_sub = NamedSharding(mesh_sub, P('x'), memory_kind='collective')
+      with self.assertRaisesRegex(
+          ValueError,
+          "When using `memory_kind='collective'`, memory must be placed in all"
+          ' participating devices',
+      ):
+        jax.device_put(np.ones((2,), dtype=np.float32), s_sub)
+
+      s_single = SingleDeviceSharding(
+          jax.devices()[0], memory_kind='collective'
+      )
+      with self.assertRaisesRegex(
+          ValueError,
+          "When using `memory_kind='collective'`, memory must be placed in all"
+          ' participating devices',
+      ):
+        jax.device_put(np.ones((2,), dtype=np.float32), s_single)
+
   def test_pspec_mix_axis_types(self):
     mesh = AbstractMesh(
         (2, 2, 2, 2), ('a', 'b', 'c', 'd'),
