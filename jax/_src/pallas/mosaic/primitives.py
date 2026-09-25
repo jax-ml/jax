@@ -855,6 +855,33 @@ def prng_seed(*seeds: int | jax.Array) -> None:
   """
   prng_seed_p.bind(*seeds)
 
+
+set_p_state_p = jax_core.Primitive("set_p_state")
+set_p_state_p.multiple_results = True
+
+
+class SetPStateEffect(effects.Effect):
+  pass
+
+
+set_p_state_effect = SetPStateEffect()
+effects.control_flow_allowed_effects.add_type(SetPStateEffect)
+pl_core.kernel_local_effects.add_type(SetPStateEffect)
+
+
+@set_p_state_p.def_effectful_abstract_eval
+def _set_p_state_abstract_eval(*, p_state: int):
+  del p_state
+  return [], {set_p_state_effect}
+
+
+def set_p_state(p_state: int) -> None:
+  """Sets the TPU P-state via vsetptstate."""
+  if not isinstance(p_state, int) or isinstance(p_state, bool):
+    raise TypeError(f"p_state must be an int, got {type(p_state).__name__}")
+  set_p_state_p.bind(p_state=p_state)
+
+
 prng_random_bits_p = jax_core.Primitive(
     'prng_random_bits')
 
