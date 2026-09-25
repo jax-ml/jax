@@ -288,6 +288,7 @@ class MemorySpace(enum.Enum):
   VMEM = "vmem"
   VMEM_SHARED = "vmem_shared"
   SMEM = "smem"
+  SREG = "sreg"
   CMEM = "cmem"
   SEMAPHORE = "semaphore_mem"
   HBM = "hbm"
