@@ -1069,6 +1069,11 @@ class JitTest(jtu.BufferDonationTestCase):
     assert argnums == (0,)
     assert argnames == ('y',)
 
+    argnums, argnames = api_util.infer_argnums_and_argnames(
+        sig, argnums=-1, argnames=None)  # no validation
+    assert argnums == (-1,)
+    assert argnames == ('y',)
+
     def g(x, y, *args):
       pass
 
@@ -1077,6 +1082,11 @@ class JitTest(jtu.BufferDonationTestCase):
     argnums, argnames = api_util.infer_argnums_and_argnames(
         sig, argnums=(1, 2), argnames=None)
     assert argnums == (1, 2)
+    assert argnames == ('y',)
+
+    argnums, argnames = api_util.infer_argnums_and_argnames(
+        sig, argnums=(1, -1), argnames=None)
+    assert argnums == (1, -1)
     assert argnames == ('y',)
 
     def h(x, y, **kwargs):
@@ -4962,10 +4972,13 @@ class APITest(jtu.JaxTestCase):
   def test_jit_negative_static_argnums(self):
     @jax.jit(static_argnums=-1)
     def g(x, y):
+      assert isinstance(x, jax.Array)
       assert isinstance(y, int)
       return x * y
     for i in range(3):  # Loop verifies we exercise both Python and C++ dispatch
-      self.assertEqual(2 * i, g(2, i), msg=i)
+      self.assertEqual(2 * i, g(2, i), msg=f"g(2, {i})")
+      self.assertEqual(2 * i, g(2, y=i), msg=f"g(2, y={i})")
+      self.assertEqual(2 * i, g(x=2, y=i), msg=f"g(x=2, y={i})")
 
   def test_make_jaxpr_static_argnums_order(self):
     # https://github.com/jax-ml/jax/issues/28065
