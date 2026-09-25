@@ -2,6 +2,7 @@ absl-py
 cloudpickle
 filelock
 flatbuffers
+google-benchmark
 hypothesis
 mpmath>=1.4.1
 pillow>=11.3
