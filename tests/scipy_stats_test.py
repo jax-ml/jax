@@ -1286,6 +1286,18 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=5e-4)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @jtu.ignore_warning(category=RuntimeWarning,
+                      message="divide by zero encountered.*")
+  @jtu.ignore_warning(category=RuntimeWarning,
+                      message="invalid value encountered.*")
+  def testChi2LogPdfBoundaryValues(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38316
+    x = np.array([0., 1., np.inf])[:, None]
+    df = np.array([1., 2., 4.])
+    self.assertAllClose(osp_stats.chi2.logpdf(x, df),
+                        lsp_stats.chi2.logpdf(x, df), atol=1e-6)
+    self.assertAllClose(osp_stats.chi2.pdf(0., 2.), lsp_stats.chi2.pdf(0., 2.),
+                        atol=1e-6)
 
   @genNamedParametersNArgs(4)
   def testChi2LogCdf(self, shapes, dtypes):
