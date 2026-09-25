@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import collections
 import collections.abc
+from collections.abc import Collection
 import concurrent.futures
 from contextlib import contextmanager
 import copy
+import ctypes
 import dataclasses
 import enum
 import functools
@@ -83,6 +85,100 @@ config.parse_flags_with_absl()
 
 def _check_instance(self, x):
   self.assertIsInstance(x, array.ArrayImpl)
+
+
+class _PyBuffer(ctypes.Structure):
+  _fields_ = [
+      ("buf", ctypes.c_void_p),
+      ("obj", ctypes.py_object),
+      ("len", ctypes.c_ssize_t),
+      ("itemsize", ctypes.c_ssize_t),
+      ("readonly", ctypes.c_int),
+      ("ndim", ctypes.c_int),
+      ("format", ctypes.c_char_p),
+      ("shape", ctypes.POINTER(ctypes.c_ssize_t)),
+      ("strides", ctypes.POINTER(ctypes.c_ssize_t)),
+      ("suboffsets", ctypes.POINTER(ctypes.c_ssize_t)),
+      ("internal", ctypes.c_void_p),
+  ]
+
+
+def _memory_view_stack(
+    memoryviews: Collection[memoryview], *, format: str | None = None
+) -> memoryview:
+  """Stacks a collection of memoryviews along axis 0 using PEP 3118 suboffsets.
+
+  Constructs an indirect `memoryview` whose top-level buffer is a pointer array
+  referencing each input `memoryview`'s underlying data (`suboffsets[0] == 0`),
+  without copying the element buffers. A `weakref.finalize` callback keeps the
+  exported buffers, pointer array, and format string alive for the lifetime of
+  the returned `memoryview`.
+
+  Args:
+    memoryviews: Non-empty collection of `memoryview` objects with matching
+      shape, strides, itemsize, and suboffsets.
+    format: Optional PEP 3118 format string override (e.g. `"E"` or `"bfloat16"`
+      when the input views were created with a surrogate integer format).
+
+  Returns:
+    An indirect `memoryview` with shape `(len(memoryviews), *first.shape)` and
+    `suboffsets == (0, *(first.suboffsets or (-1,) * first.ndim))`.
+  """
+  PyObject_GetBuffer = ctypes.pythonapi.PyObject_GetBuffer
+  PyObject_GetBuffer.argtypes = [
+      ctypes.py_object,
+      ctypes.POINTER(_PyBuffer),
+      ctypes.c_int,
+  ]
+  PyObject_GetBuffer.restype = ctypes.c_int
+  PyBuffer_Release = ctypes.pythonapi.PyBuffer_Release
+  PyBuffer_Release.argtypes = [ctypes.POINTER(_PyBuffer)]
+  PyBuffer_Release.restype = None
+  PyMemoryView_FromBuffer = ctypes.pythonapi.PyMemoryView_FromBuffer
+  PyMemoryView_FromBuffer.argtypes = [ctypes.POINTER(_PyBuffer)]
+  PyMemoryView_FromBuffer.restype = ctypes.py_object
+
+  mvs = tuple(memoryviews)
+  first = mvs[0]
+  ndim = first.ndim + 1
+  row_bufs = []
+  for mv in mvs:
+    b = _PyBuffer()
+    if PyObject_GetBuffer(mv, ctypes.byref(b), 0) != 0:
+      raise BufferError("Failed to get buffer from memoryview")
+    row_bufs.append(b)
+
+  row_ptrs = (ctypes.c_void_p * len(mvs))(*[b.buf for b in row_bufs])
+  fmt_bytes = (format or first.format).encode("ascii")
+  shape_arr = (ctypes.c_ssize_t * ndim)(len(mvs), *first.shape)
+  strides_arr = (ctypes.c_ssize_t * ndim)(
+      ctypes.sizeof(ctypes.c_void_p), *first.strides
+  )
+  suboffsets_arr = (ctypes.c_ssize_t * ndim)(
+      0, *(first.suboffsets or (-1,) * first.ndim)
+  )
+  py_buf = _PyBuffer(
+      buf=ctypes.addressof(row_ptrs),
+      obj=None,
+      len=len(mvs) * first.nbytes,
+      itemsize=first.itemsize,
+      readonly=int(any(mv.readonly for mv in mvs)),
+      ndim=ndim,
+      format=fmt_bytes,
+      shape=shape_arr,
+      strides=strides_arr,
+      suboffsets=suboffsets_arr,
+      internal=None,
+  )
+  stacked_mv = PyMemoryView_FromBuffer(ctypes.byref(py_buf))
+  weakref.finalize(
+      stacked_mv,
+      lambda *_: [PyBuffer_Release(ctypes.byref(b)) for b in row_bufs],
+      mvs,
+      row_ptrs,
+      fmt_bytes,
+  )
+  return stacked_mv
 
 
 class JitTest(jtu.BufferDonationTestCase):
@@ -1931,6 +2027,62 @@ class APITest(jtu.JaxTestCase):
     self.assertArraysEqual(y2[1][0], 2 * x)
     self.assertIsInstance(y2[1][1], np.ndarray)
     self.assertArraysEqual(y2[1][1], 3 * x)
+
+  @unittest.skipIf(
+      lib.jaxlib_extension_version < 500,
+      "Requires jaxlib_extension_version >= 500",
+  )
+  def test_device_put_memoryview(self):
+    x = np.arange(12, dtype=np.float32).reshape((3, 4))
+
+    with self.subTest("standard"):
+      mv = memoryview(x)
+      dx = api.device_put(mv)
+      self.assertArraysEqual(dx, x)
+      f_add = api.jit(lambda z: z + 1)
+      self.assertArraysEqual(f_add(mv), x + 1)
+      self.assertArraysEqual(f_add(mv), x + 1)
+
+    with self.subTest("unaligned"):
+      raw = bytearray(1 + x.nbytes)
+      raw[1:] = x.tobytes()
+      unaligned_mv = memoryview(raw)[1:].cast("f", shape=(3, 4))
+      du = api.device_put(unaligned_mv)
+      self.assertArraysEqual(du, x)
+      f_mul2 = api.jit(lambda z: z * 2)
+      self.assertArraysEqual(f_mul2(unaligned_mv), x * 2)
+      self.assertArraysEqual(f_mul2(unaligned_mv), x * 2)
+
+    f_mul3 = api.jit(lambda z: z * 3)
+
+    with self.subTest("suboffsets"):
+      unaligned_rows = [
+          memoryview(bytearray(b"\x00" + x[i].tobytes()))[1:].cast("f")
+          for i in range(3)
+      ]
+      indirect_mv = _memory_view_stack(unaligned_rows)
+      self.assertEqual(indirect_mv.suboffsets, (0, -1))
+      with self.assertRaises(BufferError):
+        np.asarray(indirect_mv)
+
+      di = api.device_put(indirect_mv)
+      self.assertArraysEqual(di, x)
+      self.assertArraysEqual(f_mul3(indirect_mv), x * 3)
+      self.assertArraysEqual(f_mul3(indirect_mv), x * 3)
+
+    x_bf16 = np.arange(12, dtype=jax.dtypes.bfloat16).reshape((3, 4))
+    unaligned_bf16_rows = [
+        memoryview(bytearray(b"\x00" + x_bf16[i].tobytes()))[1:].cast("H")
+        for i in range(3)
+    ]
+    for fmt in ("E", "bfloat16"):
+      with self.subTest("suboffsets_bfloat16", format=fmt):
+        bf16_mv = _memory_view_stack(unaligned_bf16_rows, format=fmt)
+        d_bf16 = api.device_put(bf16_mv)
+        self.assertEqual(d_bf16.dtype, jax.dtypes.bfloat16)
+        self.assertArraysEqual(d_bf16, x_bf16)
+        self.assertArraysEqual(f_mul3(bf16_mv), x_bf16 * 3)
+        self.assertArraysEqual(f_mul3(bf16_mv), x_bf16 * 3)
 
   def test_device_put_sharding(self):
     mesh = jax.sharding.Mesh(jax.devices(), ('x',))

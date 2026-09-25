@@ -20,9 +20,11 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <functional>
 #include <memory>
+#include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -48,6 +50,7 @@ limitations under the License.
 #include "absl/strings/cord.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/complex.h"  // IWYU pragma: keep
@@ -58,7 +61,6 @@ limitations under the License.
 #include "jaxlib/numpy.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/python_ref_manager.h"
-#include "jaxlib/sharding.h"
 #include "jaxlib/to_ifrt_sharding.h"
 #include "jaxlib/weak_key_weak_value_cache.h"
 #include "xla/primitive_util.h"
@@ -77,7 +79,6 @@ limitations under the License.
 #include "xla/python/version.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 #include "xla/types.h"
 #include "xla/util.h"
@@ -622,6 +623,259 @@ absl::StatusOr<ShardFn> HandleNumpyArray(nb::handle h, ifrt::Client* client,
   };
 }
 
+absl::StatusOr<xla::PrimitiveType> MemoryViewFormatToPrimitiveType(
+    const char* format, Py_ssize_t itemsize) {
+  absl::string_view fmt = format != nullptr ? format : "B";
+  fmt.remove_prefix(std::min(
+      fmt.find_first_not_of(itemsize > 1 ? "@=<" : "@=<>!"), fmt.size()));
+  if (!fmt.empty() && (fmt[0] == '>' || fmt[0] == '!')) {
+    return xla::InvalidArgument(
+        "Big-endian memoryview format '%s' is not supported.", fmt);
+  }
+  if (fmt.size() <= 1) {
+    switch (fmt.empty() ? 'B' : fmt[0]) {
+      case 'B':
+        return xla::U8;
+      case '?':
+        return xla::PRED;
+      case 'b':
+        return xla::S8;
+      case 'h':
+        return xla::S16;
+      case 'H':
+        return xla::U16;
+      case 'i':
+        return xla::S32;
+      case 'I':
+        return xla::U32;
+      case 'l':
+      case 'q':
+      case 'n':
+        return itemsize == 4 ? xla::S32 : xla::S64;
+      case 'L':
+      case 'Q':
+      case 'N':
+        return itemsize == 4 ? xla::U32 : xla::U64;
+      case 'e':
+        return xla::F16;
+      case 'E':
+        return xla::BF16;
+      case 'f':
+        return xla::F32;
+      case 'd':
+        return xla::F64;
+      default:
+        break;
+    }
+  } else {
+    static constexpr std::pair<absl::string_view, xla::PrimitiveType>
+        kMultiCharFormats[] = {
+            {"Zf", xla::C64},
+            {"Zd", xla::C128},
+            {"bfloat16", xla::BF16},
+            {"bf16", xla::BF16},
+            {"float8_e3m4", xla::F8E3M4},
+            {"float8_e4m3", xla::F8E4M3},
+            {"float8_e4m3fn", xla::F8E4M3FN},
+            {"float8_e4m3b11fnuz", xla::F8E4M3B11FNUZ},
+            {"float8_e4m3fnuz", xla::F8E4M3FNUZ},
+            {"float8_e5m2", xla::F8E5M2},
+            {"float8_e5m2fnuz", xla::F8E5M2FNUZ},
+            {"float8_e8m0fnu", xla::F8E8M0FNU},
+            {"float6_e2m3fn", xla::F6E2M3FN},
+            {"float6_e3m2fn", xla::F6E3M2FN},
+            {"float4_e2m1fn", xla::F4E2M1FN},
+        };
+    for (const auto& [name, type] : kMultiCharFormats) {
+      if (fmt == name) {
+        return type;
+      }
+    }
+  }
+  return xla::InvalidArgument("Unsupported memoryview format: '%s'", fmt);
+}
+
+template <typename Src, typename Dst>
+void CopyCast(const char* src, char* dst) {
+  Src v;
+  std::memcpy(&v, src, sizeof(Src));
+  Dst out = static_cast<Dst>(v);
+  std::memcpy(dst, &out, sizeof(Dst));
+}
+
+void SquashMemoryViewElement(const char* src, char* dst,
+                             xla::PrimitiveType src_type) {
+  switch (src_type) {
+    case xla::S64:
+      CopyCast<int64_t, int32_t>(src, dst);
+      return;
+    case xla::U64:
+      CopyCast<uint64_t, uint32_t>(src, dst);
+      return;
+    case xla::F64:
+      CopyCast<double, float>(src, dst);
+      return;
+    case xla::C128:
+      CopyCast<double, float>(src, dst);
+      CopyCast<double, float>(src + sizeof(double), dst + sizeof(float));
+      return;
+    default:
+      LOG(FATAL) << "Unexpected squashed type: "
+                 << xla::PrimitiveType_Name(src_type);
+  }
+}
+
+void GatherMemoryViewRecursive(
+    int dim, int contig_dim, const char* src_ptr, char*& dst_ptr,
+    absl::Span<const int64_t> dims, absl::Span<const int64_t> strides,
+    absl::Span<const int64_t> suboffsets, size_t contig_slice_bytes,
+    size_t dst_itemsize, xla::PrimitiveType src_type) {
+  if (dim == contig_dim) {
+    std::memcpy(dst_ptr, src_ptr, contig_slice_bytes);
+    dst_ptr += contig_slice_bytes;
+    return;
+  }
+  if (dim == static_cast<int>(dims.size())) {
+    SquashMemoryViewElement(src_ptr, dst_ptr, src_type);
+    dst_ptr += dst_itemsize;
+    return;
+  }
+  const int64_t extent = dims[dim];
+  const int64_t stride = strides[dim];
+  const int64_t suboffset =
+      dim < static_cast<int>(suboffsets.size()) ? suboffsets[dim] : -1;
+  for (int64_t i = 0; i < extent; ++i) {
+    const char* next_ptr = src_ptr + i * stride;
+    if (suboffset >= 0) {
+      next_ptr = *reinterpret_cast<const char* const*>(next_ptr) + suboffset;
+    }
+    GatherMemoryViewRecursive(dim + 1, contig_dim, next_ptr, dst_ptr, dims,
+                              strides, suboffsets, contig_slice_bytes,
+                              dst_itemsize, src_type);
+  }
+}
+
+absl::StatusOr<ShardFn> HandleMemoryView(nb::handle h, ifrt::Client* client,
+                                         ifrt::Device* to_device,
+                                         ifrt::MemoryKind to_memory_kind,
+                                         const DevicePutOptions& options) {
+  Py_buffer view;
+  if (PyObject_GetBuffer(h.ptr(), &view, PyBUF_FULL_RO) != 0) {
+    throw nb::python_error();
+  }
+  struct BufferCleanup {
+    Py_buffer* v;
+    ~BufferCleanup() { PyBuffer_Release(v); }
+  } cleanup{&view};
+
+  ABSL_ASSIGN_OR_RETURN(
+      xla::PrimitiveType type,
+      MemoryViewFormatToPrimitiveType(view.format, view.itemsize));
+  xla::PrimitiveType squashed_type =
+      options.squash_64bit_types ? Squash64BitType(type) : type;
+
+  const int ndim = view.ndim;
+  absl::InlinedVector<int64_t, 4> dims(view.shape, view.shape + ndim);
+  ifrt::Client::HostBuffer::ByteStrides byte_strides(view.strides,
+                                                     view.strides + ndim);
+  absl::InlinedVector<int64_t, 4> suboffsets;
+  if (view.suboffsets != nullptr &&
+      std::any_of(view.suboffsets, view.suboffsets + ndim,
+                  [](Py_ssize_t s) { return s >= 0; })) {
+    suboffsets.assign(view.suboffsets, view.suboffsets + ndim);
+  }
+
+  const void* data = view.buf;
+  const size_t src_itemsize = static_cast<size_t>(view.itemsize);
+  std::shared_ptr<PythonRefManager::ManagedPyObjects> py_buffer_ref =
+      GlobalPyRefManager()->ManageReference(nb::cast<nb::object>(h));
+  ABSL_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, ifrt::ToDType(squashed_type));
+
+  if (suboffsets.empty() && squashed_type == type) {
+    return [data, ifrt_dtype, dims = std::move(dims),
+            byte_strides = std::move(byte_strides),
+            py_buffer_ref = std::move(py_buffer_ref),
+            allow_zero_copy =
+                options.allow_zero_copy]() mutable -> absl::StatusOr<Shard> {
+      ifrt::Client::HostBufferSemantics host_buffer_semantics =
+          ifrt::Client::HostBufferSemantics::kImmutableOnlyDuringCall;
+      std::function<void()> on_done_with_host_buffer;
+      if (allow_zero_copy) {
+        on_done_with_host_buffer = [py_buffer_ref{std::move(py_buffer_ref)}]() {
+        };
+        host_buffer_semantics =
+            ifrt::Client::HostBufferSemantics::kImmutableZeroCopy;
+      }
+      ifrt::Client::HostBuffer ifrt_host_buffer{
+          data, ifrt_dtype, ifrt::Shape(dims), std::move(byte_strides),
+          std::move(on_done_with_host_buffer)};
+      return Shard(std::move(ifrt_host_buffer), /*weak_type=*/false,
+                   host_buffer_semantics);
+    };
+  }
+
+  return [data, type, squashed_type, src_itemsize, ifrt_dtype,
+          dims = std::move(dims), byte_strides = std::move(byte_strides),
+          suboffsets = std::move(suboffsets),
+          py_buffer_ref =
+              std::move(py_buffer_ref)]() mutable -> absl::StatusOr<Shard> {
+    const int ndim = static_cast<int>(dims.size());
+    const size_t dst_itemsize = xla::primitive_util::ByteWidth(squashed_type);
+    size_t num_elements = 1;
+    ifrt::Client::HostBuffer::ByteStrides dst_strides(ndim);
+    int64_t cur_dst_stride = static_cast<int64_t>(dst_itemsize);
+    for (int i = ndim - 1; i >= 0; --i) {
+      dst_strides[i] = cur_dst_stride;
+      cur_dst_stride *= dims[i];
+      num_elements *= static_cast<size_t>(dims[i]);
+    }
+    const size_t total_bytes = num_elements * dst_itemsize;
+
+    // Find the outermost dimension from which the source sub-slices are
+    // contiguous and free of suboffsets, so each slice is gathered with a
+    // single std::memcpy. When squashing 64-bit types, disable slice memcpy by
+    // setting contig_dim = ndim + 1.
+    int contig_dim = (type == squashed_type) ? ndim : ndim + 1;
+    size_t contig_slice_bytes = src_itemsize;
+    if (type == squashed_type) {
+      int64_t expected_stride = static_cast<int64_t>(src_itemsize);
+      for (int i = ndim - 1; i >= 0; --i) {
+        const int64_t suboff =
+            i < static_cast<int>(suboffsets.size()) ? suboffsets[i] : -1;
+        if (suboff < 0 &&
+            (dims[i] <= 1 || byte_strides[i] == expected_stride)) {
+          contig_dim = i;
+          contig_slice_bytes = static_cast<size_t>(expected_stride * dims[i]);
+          expected_stride *= dims[i];
+        } else {
+          break;
+        }
+      }
+    }
+
+    void* aligned_data =
+        ::operator new(std::max<size_t>(total_bytes, 1), std::align_val_t{64});
+    char* dst_cursor = static_cast<char*>(aligned_data);
+    if (total_bytes > 0) {
+      GatherMemoryViewRecursive(
+          /*dim=*/0, contig_dim, static_cast<const char*>(data), dst_cursor,
+          dims, byte_strides, suboffsets, contig_slice_bytes, dst_itemsize,
+          type);
+    }
+    // The gathered copy is complete; release the Python buffer reference now.
+    py_buffer_ref.reset();
+
+    std::function<void()> on_done_with_host_buffer = [aligned_data]() {
+      ::operator delete(aligned_data, std::align_val_t{64});
+    };
+    ifrt::Client::HostBuffer ifrt_host_buffer{
+        aligned_data, ifrt_dtype, ifrt::Shape(dims), std::move(dst_strides),
+        std::move(on_done_with_host_buffer)};
+    return Shard(std::move(ifrt_host_buffer), /*weak_type=*/false,
+                 ifrt::Client::HostBufferSemantics::kImmutableZeroCopy);
+  };
+}
+
 absl::StatusOr<ShardFn> HandleTypedInt(nb::handle h, ifrt::Client* client,
                                        ifrt::Device* to_device,
                                        ifrt::MemoryKind to_memory_kind,
@@ -802,6 +1056,7 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
       (*p)[typed_complex_type.ptr()] = HandleTypedComplex;
     }
     (*p)[reinterpret_cast<PyObject*>(&PyArray_Type)] = HandleNumpyArray;
+    (*p)[reinterpret_cast<PyObject*>(&PyMemoryView_Type)] = HandleMemoryView;
 
     if (typed_ndarray_type.ptr() != nullptr) {
       (*p)[typed_ndarray_type.ptr()] = HandleTypedNdArray;
@@ -1056,6 +1311,8 @@ void InitCanonicalizeValueHandlers() {
   RegisterCanonicalizeValueHandler(PyArray::type().ptr(), IdentityHandler);
   RegisterCanonicalizeValueHandler(reinterpret_cast<PyObject*>(&PyBool_Type),
                                    IdentityHandler);
+  RegisterCanonicalizeValueHandler(
+      reinterpret_cast<PyObject*>(&PyMemoryView_Type), IdentityHandler);
 }
 
 std::string PyArgSignature::DebugString() const {
@@ -1170,6 +1427,27 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
               /*weak_type=*/false);
         };
         (*p)[reinterpret_cast<PyObject*>(&PyArray_Type)] = numpy_handler;
+
+        ToPyArgSignatureHandler memoryview_handler =
+            [](nb::handle h,
+               bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
+          const Py_buffer* view = PyMemoryView_GET_BUFFER(h.ptr());
+          ABSL_ASSIGN_OR_RETURN(
+              xla::PrimitiveType dtype,
+              MemoryViewFormatToPrimitiveType(view->format, view->itemsize));
+          if (!jax_enable_x64) {
+            dtype = Squash64BitType(dtype);
+          }
+          static_assert(sizeof(int64_t) == sizeof(Py_ssize_t),
+                        "Code assumes Py_ssize_t is the same as int64_t");
+          return PyArgSignature(
+              dtype,
+              absl::MakeConstSpan(reinterpret_cast<const int64_t*>(view->shape),
+                                  view->ndim),
+              /*weak_type=*/false);
+        };
+        (*p)[reinterpret_cast<PyObject*>(&PyMemoryView_Type)] =
+            memoryview_handler;
 
         ToPyArgSignatureHandler typed_ndarray_handler =
             [](nb::handle h,

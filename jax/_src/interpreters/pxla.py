@@ -180,7 +180,7 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
   batch_xs, batch_cs, batch_shardings, batch_indices = [], [], [], []
   for i, (x, sharding, layout, cs) in enumerate(
       zip(xs, shardings, layouts, copy_semantics)):
-    if x.dtype == dtypes.float0:
+    if getattr(x, 'dtype', None) == dtypes.float0:
       x = np.zeros(x.shape, dtype=np.dtype(bool))
     if layout is not None:
       results.append(api.device_put(x, Format(layout, sharding)))
