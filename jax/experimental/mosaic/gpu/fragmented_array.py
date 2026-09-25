@@ -1097,7 +1097,7 @@ def can_relayout_wgmma_4x_to_wgmma_2x(bitwidth: int) -> bool:
 
 
 def can_relayout_wgmma_2x_to_wgmma(bitwidth: int) -> bool:
-  return bitwidth <= 16
+  return bitwidth in {4, 8, 16}
 
 
 def _int_pow(x: ir.Value, n: int) -> ir.Value:
@@ -1448,38 +1448,50 @@ class FragmentedArray:
           _registers=new_regs, _layout=new_layout, _is_signed=self.is_signed,
       )
     dtype_bitwidth = utils.bitwidth(self.mlir_dtype)
-    if (
-        self.layout == WGMMA_LAYOUT_UPCAST_2X
-        and new_layout == WGMMA_LAYOUT
-        and can_relayout_wgmma_2x_to_wgmma(dtype_bitwidth)
-    ):
-      assert shape[1] % 16 == 0  # Should be implied by the layout
+    if (self.layout, new_layout) in (
+        (WGMMA_LAYOUT_UPCAST_2X, WGMMA_LAYOUT),
+        (WGMMA_LAYOUT, WGMMA_LAYOUT_UPCAST_2X),
+    ) and can_relayout_wgmma_2x_to_wgmma(dtype_bitwidth):
+      assert isinstance(self.layout, TiledLayout)
+      assert isinstance(new_layout, TiledLayout)
+      assert shape[-1] % 16 == 0  # Should be implied by the layout
       new_registers = np.empty(new_layout.registers_shape(shape), dtype=object)
       is_even = arith.cmpi(
           arith.CmpIPredicate.eq, arith.remui(utils.thread_idx(), c(2)), c(0)
       )
+      col_dim = len(shape) - 1
       registers = self.registers
-      if dtype_bitwidth == 4:
-        if registers.shape[1] % 2:
+      reg_bitwidth = self.layout.vector_length * dtype_bitwidth
+      target_bitwidth = max(
+          32, WGMMA_LAYOUT_UPCAST_2X.vector_length * dtype_bitwidth
+      )
+      pack_factor = target_bitwidth // reg_bitwidth
+      if pack_factor > 1:
+        if registers.shape[col_dim] % pack_factor:
           raise NotImplementedError(
-              "This relayout implementation requires an even number of column"
-              " tiles (to pack pairs of them for efficiency)"
+              "This relayout implementation requires the number of column"
+              f" tiles to be divisible by {pack_factor} (to pack them for"
+              " efficiency)"
           )
-        # We pair up the consecutive column tiles, so each register is 32-bit.
+        # We pair up the consecutive column tiles, so each register is 32-bit
+        # (or 64-bit for 16-bit elements).
         # If this layout originated from a WGMMA_LAYOUT_UPCAST_4X layout,
         # LLVM will realize that the paired up vectors actually came from the
         # same 32-bit register and it will become a no-op.
-        col_minor_registers = np.moveaxis(registers, 1, -1)
+        col_minor_registers = np.moveaxis(registers, col_dim, -1)
         flat_registers = [
-            utils.vector_concat((l, h))
-            for l, h in zip(
-                col_minor_registers.flat[::2], col_minor_registers.flat[1::2]
-            )
+            utils.vector_concat(group)
+            for group in zip(*(
+                col_minor_registers.flat[i::pack_factor]
+                for i in range(pack_factor)
+            ))
         ]
         registers = np.asarray(flat_registers, dtype=object).reshape(
-            *col_minor_registers.shape[:-1], col_minor_registers.shape[-1] // 2
+            *col_minor_registers.shape[:-1],
+            col_minor_registers.shape[-1] // pack_factor,
         )
-        registers = np.moveaxis(registers, -1, 1)
+        registers = np.moveaxis(registers, -1, col_dim)
+      out_vec_len = new_layout.vector_length
       for idx, reg in np.ndenumerate(registers):
         if dtype_bitwidth == 16:
           assert reg.type.shape == [4]
@@ -1492,8 +1504,11 @@ class FragmentedArray:
           exchanged = utils.shfl_bfly(to_exchange, 1)
           low = arith.select(is_even, low, exchanged)
           high = arith.select(is_even, exchanged, high)
-          new_registers[(idx[0], idx[1] * 2, *idx[2:-1])] = low
-          new_registers[(idx[0], idx[1] * 2 + 1, *idx[2:-1])] = high
+          out_regs = (
+              (low, high)
+              if new_layout == WGMMA_LAYOUT
+              else (utils.vector_concat((low, high)),)
+          )
         elif dtype_bitwidth == 8:
           assert reg.type.shape == [4]
           # The vector is 32-bits, so we just shuffle the whole thing and
@@ -1514,9 +1529,14 @@ class FragmentedArray:
           # numeric constants are spelled in Python (LSB on the right).
           perm = arith.select(is_even, c(0x5410), c(0x3276))
           blend = utils.prmt(reg, exchanged, perm)
-          for i in range(2):
-            reg = utils.vector_slice(blend, slice(i * 2, i * 2 + 2))
-            new_registers[(idx[0], idx[1] * 2 + i, *idx[2:-1])] = reg
+          out_regs = (
+              tuple(
+                  utils.vector_slice(blend, slice(i * 2, i * 2 + 2))
+                  for i in range(2)
+              )
+              if new_layout == WGMMA_LAYOUT
+              else (blend,)
+          )
         else:
           assert dtype_bitwidth == 4
           assert reg.type.shape == [8]  # We paired up the registers above.
@@ -1530,9 +1550,24 @@ class FragmentedArray:
           #     prmt[0]:  -0- -4- --2-- --6--  prmt[1]:  -5- --1-- --7-- --3--
           perm = arith.select(is_even, c(0x6240), c(0x3715))
           blend = utils.prmt(reg, exchanged, perm)
-          for i in range(4):
-            reg = utils.vector_slice(blend, slice(i * 2, i * 2 + 2))
-            new_registers[(idx[0], idx[1] * 4 + i, *idx[2:-1])] = reg
+          out_regs = tuple(
+              utils.vector_slice(
+                  blend, slice(i * out_vec_len, (i + 1) * out_vec_len)
+              )
+              for i in range(8 // out_vec_len)
+          )
+        # WGMMA_LAYOUT_UPCAST_2X has one more tiled dimension of size 1.
+        rest_idx = (
+            idx[col_dim + 1 : -1]
+            if new_layout == WGMMA_LAYOUT
+            else (*idx[col_dim + 1 :], 0)
+        )
+        for i, out_reg in enumerate(out_regs):
+          new_registers[(
+              *idx[:col_dim],
+              idx[col_dim] * len(out_regs) + i,
+              *rest_idx,
+          )] = out_reg
       assert all(r is not None for r in new_registers)
       return FragmentedArray(
           _registers=new_registers, _layout=new_layout, _is_signed=self.is_signed,

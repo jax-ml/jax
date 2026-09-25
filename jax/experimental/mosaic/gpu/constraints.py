@@ -480,7 +480,10 @@ def _is_supported_tiled_relayout(
     case fa.TCGEN05_TRANSPOSED_LAYOUT, fa.TCGEN05_LAYOUT:
       return True
     # "Conversion-optimized" layouts.
-    case fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT:
+    case (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT) | (
+        fa.WGMMA_LAYOUT,
+        fa.WGMMA_LAYOUT_UPCAST_2X,
+    ):
       return fa.can_relayout_wgmma_2x_to_wgmma(bitwidth)
     case fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X:
       return fa.can_relayout_wgmma_4x_to_wgmma_2x(bitwidth)
@@ -874,8 +877,6 @@ class MinorDimDivisibleBy(_BaseConstraint):
 
   def __str__(self):
     return f"{self.expr}.tiling[-1] % {self.divisor} == 0"
-
-
 
 
 @dataclasses.dataclass(frozen=True)
