@@ -916,6 +916,25 @@ class DistributionsTest(RandomTestBase):
     cdf_probs = [x / (num_samples * num_groups) for x in pts]
     np.testing.assert_allclose(cdf_probs, probs, rtol=0.25, atol=0)
 
+  def testGumbelConfigUpdateInvalidatesJitCache(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40609:
+    # jax_high_dynamic_range_gumbel must be part of the JIT cache key, so
+    # changing it retraces callables that invoke jax.random.gumbel.
+    key = self.make_key(0)
+    with jtu.global_config_context(jax_high_dynamic_range_gumbel=False):
+      f = jax.jit(lambda k: random.gumbel(k, (4,)))
+      low = np.asarray(f(key))
+      self.assertEqual(f._cache_size(), 1)
+
+      jax.config.update("jax_high_dynamic_range_gumbel", True)
+      high = np.asarray(f(key))
+      self.assertEqual(f._cache_size(), 2)
+
+      # The recompiled callable must use the new sampling mode.
+      fresh_high = np.asarray(jax.jit(lambda k: random.gumbel(k, (4,)))(key))
+    self.assertFalse(np.array_equal(low, high))
+    self.assertTrue(np.array_equal(high, fresh_high))
+
   def testSafeIntToFloat(self):
     dtype = np.float32
     finfo = dtypes.finfo(dtype)
