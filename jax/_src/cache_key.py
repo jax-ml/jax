@@ -181,24 +181,34 @@ def _remove_custom_partitioning_callbacks(m: ir.Module):
 
 
 def _strip_mosaic_debug_info(m: ir.Module) -> None:
-  """Strips debug info from Mosaic kernel bytecode in tpu_custom_call ops.
-
-  The top-level strip-debuginfo pass does not reach into the serialized kernel
-  MLIR embedded in backend_config, so source file paths leak into the cache key.
-  """
+  """Strips debug info from Mosaic kernel config in tpu_custom_call ops."""
   try:
     from jax._src.lib import tpu
   except ImportError:
     return
 
   def _strip_kernel(op: ir.Operation) -> ir.WalkResult:
-    if (op.name != "stablehlo.custom_call"
-        or op.attributes["call_target_name"].value != "tpu_custom_call"):  # type: ignore
+    if (
+        op.name != "stablehlo.custom_call"
+        or "call_target_name" not in op.attributes
+        or op.attributes["call_target_name"]
+        != ir.StringAttr.get("tpu_custom_call")
+    ):
       return ir.WalkResult.ADVANCE
-    bc = json.loads(op.attributes["backend_config"].value)  # type: ignore
-    body = bc.get("custom_call_config", {}).get("body")
-    if not body:
+    bc = json.loads(ir.StringAttr(op.attributes["backend_config"]).value)
+    custom_call_config = bc["custom_call_config"]
+    if "debug_locations" in custom_call_config:
+      # We can safely remove debug locations since the module here is a clone of
+      # the original module.
+      del custom_call_config["debug_locations"]
+      op.attributes["backend_config"] = ir.StringAttr.get(
+          json.dumps(bc, separators=(",", ":"))
+      )
       return ir.WalkResult.ADVANCE
+
+    # Fallback for when debug_locations are still embedded in the kernel bytecode
+    # (e.g. when jax_mosaic_unzip_debug_locations is disabled).
+    body = custom_call_config["body"]
     ctx = m.context
     tpu.register_dialect(ctx)
     ctx.allow_unregistered_dialects = True
@@ -208,13 +218,14 @@ def _strip_mosaic_debug_info(m: ir.Module) -> None:
       except ir.MLIRError:
         return ir.WalkResult.ADVANCE
       pm.PassManager.parse("builtin.module(strip-debuginfo)").run(
-          kernel.operation)
+          kernel.operation
+      )
       out = io.BytesIO()
       kernel.operation.write_bytecode(out)
-    bc["custom_call_config"]["body"] = base64.b64encode(
-        out.getvalue()).decode()
+    custom_call_config["body"] = base64.b64encode(out.getvalue()).decode()
     op.attributes["backend_config"] = ir.StringAttr.get(
-        json.dumps(bc, separators=(",", ":")))
+        json.dumps(bc, separators=(",", ":"))
+    )
     return ir.WalkResult.ADVANCE
 
   m.operation.walk(_strip_kernel)

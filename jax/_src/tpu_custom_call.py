@@ -27,6 +27,7 @@ import logging
 from typing import Any, TypedDict
 
 from jax._src import api
+from jax._src import cloud_tpu_init
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -196,6 +197,7 @@ class CustomCallBackendConfig:
   shape_invariant_numerics: bool
   tiling: Tiling | None = None  # Only used for SparseCore.
   opt_level: OptLevel | None = None  # Only used for SparseCore.
+  debug_locations: bytes | None = None
 
   def __post_init__(self):
     if self.allow_input_fusion is not None:
@@ -336,6 +338,10 @@ class CustomCallBackendConfig:
     if self.skip_device_barrier:
       config.write(b', "skip_device_barrier": ')
       config.write(str(self.skip_device_barrier).lower().encode("ascii"))
+    if self.debug_locations:
+      config.write(b', "debug_locations": "')
+      config.write(base64.b64encode(self.debug_locations))
+      config.write(b'"')
     config.write(b"}")  # End of custom_call_config.
     if self.device_type == "sparsecore":
       config.write(b', "sparse_core_config": ')
@@ -486,7 +492,8 @@ def _lower_mosaic_module_to_asm(
     module: ir.Module,
     *,
     ir_version: int | None = None,
-) -> tuple[bytes, tuple[bool, bool]]:
+    unzip_debug_locations: bool = True,
+) -> tuple[bytes, tuple[bool, bool], bytes | None]:
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
   )
@@ -505,14 +512,24 @@ def _lower_mosaic_module_to_asm(
       )
       pipeline.enable_verifier(bool(config.enable_checks.value))
       pipeline.run(module_op)
+      if unzip_debug_locations and hasattr(
+          tpu, "private_unzip_debug_locations"
+      ):
+        debug_locations = tpu.private_unzip_debug_locations(module_op.operation)
+      else:
+        debug_locations = None
     finally:
       ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects
     bytecode_buffer = io.BytesIO()
     module_op.write_bytecode(bytecode_buffer, desired_version=0)
     asm = bytecode_buffer.getvalue()
-    return asm, (
-        has_communication,
-        has_custom_barrier,
+    return (
+        asm,
+        (
+            has_communication,
+            has_custom_barrier,
+        ),
+        debug_locations,
     )
 
 
@@ -657,12 +674,22 @@ def _lower_to_custom_call_config(
   needs_hlo_passes = config.jax_mosaic_allow_hlo.value
   # TC kernels always require layout passes.
   needs_layout_passes = needs_layout_passes or not device_type
-  lowered_module_asm, (
-      has_communication,
-      has_custom_barrier,
+  unzip_debug_locations = (
+      config.jax_mosaic_unzip_debug_locations.value
+      and (ctx is None or not ctx.is_forward_compat())
+      and cloud_tpu_init.is_libtpu_at_least("0.0.50")
+  )
+  (
+      lowered_module_asm,
+      (
+          has_communication,
+          has_custom_barrier,
+      ),
+      debug_locations,
   ) = _lower_mosaic_module_to_asm(
       module,
       ir_version=ir_version,
+      unzip_debug_locations=unzip_debug_locations,
   )
   active_core_count = _get_active_core_count(module)
   return _lowered_to_custom_call_config(
@@ -692,6 +719,7 @@ def _lower_to_custom_call_config(
       tiling=tiling,
       opt_level=opt_level,
       ctx=ctx,
+      debug_locations=debug_locations,
   )
 
 
@@ -724,6 +752,7 @@ def _lowered_to_custom_call_config(
     opt_level: OptLevel | None = None,
     kernel_name: str | None = None,
     ctx: mlir.LoweringRuleContext | None = None,
+    debug_locations: bytes | None = None,
 ):
   config_mode = config.jax_pallas_auto_assign_collective_ids.value
   id_limit = config.jax_pallas_auto_assign_collective_ids_limit.value
@@ -829,6 +858,7 @@ def _lowered_to_custom_call_config(
       shape_invariant_numerics=shape_invariant_numerics,
       tiling=tiling,
       opt_level=opt_level,
+      debug_locations=debug_locations,
   )
 
 

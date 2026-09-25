@@ -2370,6 +2370,13 @@ jax_mosaic_allow_hlo = bool_state(
     help='Allow hlo dialects in Mosaic',
 )
 
+# TODO(b/565931093): Remove this flag once the feature is enabled by default.
+jax_mosaic_unzip_debug_locations = bool_state(
+    name='jax_mosaic_unzip_debug_locations',
+    default=False,
+    help='Whether to unzip debug locations from Mosaic kernel bytecode.',
+)
+
 jax_pallas_poison_buffers = bool_state(
     name="jax_pallas_poison_buffers",
     default=False,
