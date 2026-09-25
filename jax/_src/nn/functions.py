@@ -1245,13 +1245,26 @@ def dot_product_attention(
         mask_type = MaskType.CAUSAL
       elif use_padding:
         mask_type = MaskType.PADDING
-      # CuDNN supports only the left window with an exclusive boundary when
-      # causal mask is enabled.
+      # cuDNN's sliding_window_length is an alias for the diagonal band's *left*
+      # bound only; the right bound comes from the causal mask. So a zero right
+      # window has to be requested as causal + left bound, otherwise the band is
+      # unbounded on the right and every query attends to its future.
       sliding_window = None
       if local_window_size is not None:
         l_window, r_window = local_window_size
-        if r_window == 0 or mask_type == MaskType.CAUSAL:
+        if (mask_type in (MaskType.CAUSAL, MaskType.PADDING_CAUSAL)
+            and r_window >= 0):
+          # A causal mask already clips at the diagonal, so a non-negative right
+          # window is subsumed by it. A negative one narrows the band further and
+          # cannot be expressed to cuDNN, so it falls through and raises.
           sliding_window = l_window + 1
+        elif r_window == 0:
+          sliding_window = l_window + 1
+          mask_type = (MaskType.PADDING_CAUSAL if mask_type == MaskType.PADDING
+                       else MaskType.CAUSAL)
+        elif r_window < 0:
+          raise ValueError(
+              f"cuDNN doesn't support a negative right window: {r_window}.")
         else:
           raise ValueError(f"cuDNN doesn't support right window: {r_window} "
                            "when causal mask is not used.")
