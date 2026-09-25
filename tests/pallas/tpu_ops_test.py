@@ -1279,6 +1279,39 @@ class OpsTest(ptu.PallasTPUTest):
         jnp.concatenate([x, y], axis=0),
     )
 
+  @parameterized.parameters(jnp.int16, jnp.uint16, jnp.bfloat16)
+  def test_concatenate_16bit_slices(self, dtype):
+    if jtu.is_device_tpu_at_least(version=5) and not jtu.is_libtpu_at_least(
+        "0.0.50"
+    ):
+      self.skipTest("Requires libtpu >= 0.0.50")
+    if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(version=4):
+      self.skipTest(
+          "v4- does not have native vpackc support, so subnormals will be"
+          " flushed to zero."
+      )
+
+    b, r, l = np.ogrid[0:2, 0:8, 0:128]
+    x_i16 = (1000 * (r - 2) + 100 * b + l).astype(np.int16)
+    x_np = x_i16.view(dtype)
+    x = jnp.asarray(x_np)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((2, 2, 100), dtype),
+    )
+    def kernel(x_ref, o_ref):
+      x_val = x_ref[...]
+      o_ref[...] = jnp.concatenate(
+          [x_val[:, 0:1, 0:100], x_val[:, 2:3, 20:120]], axis=1
+      )
+
+    out = np.asarray(kernel(x))
+    expected = np.concatenate(
+        [x_np[:, 0:1, 0:100], x_np[:, 2:3, 20:120]], axis=1
+    )
+    np.testing.assert_array_equal(out.view(np.uint16), expected.view(np.uint16))
+
   def test_fuse_transposed_lhs_in_matmul(self):
 
     lhs_shape = (512, 128)
