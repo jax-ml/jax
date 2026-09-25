@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import functools
 import math
 import sys
@@ -180,20 +181,29 @@ class OpsTest(ptu.PallasTPUTest):
     )(x, y)
     np.testing.assert_array_equal(out, inp.reshape(m * 2, n))
 
-  @parameterized.parameters(0, 1)
-  def test_bitcast_vmap(self, axis):
+  @parameterized.product(axis=(0, 1), ndim=(2, 3))
+  def test_bitcast_vmap(self, axis, ndim):
     def kernel(x_ref, out_ref):
       out_ref[...] = jax.vmap(functools.partial(pltpu.bitcast, ty=jnp.uint8),
                               in_axes=axis, out_axes=axis)(x_ref[...])
-    expected = np.random.randint(0, 255, size=(2, 16, 4, 128), dtype=np.uint8)
+    x = np.random.randint(0, 255, size=(2, 16, 4, 128), dtype=np.uint8)
     inp = np.ascontiguousarray(
-        expected.swapaxes(-1, -2)).view(np.uint32)[..., 0]
+        x.swapaxes(-1, -2)).view(np.uint32)[..., 0]
+    expected = x.reshape(2, 16 * 4, 128)
     assert inp.shape == (2, 16, 128), inp.shape
-    out = self.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct((2, 16 * 4, 128), jnp.uint8)
-    )(inp)
-    self.assertArraysEqual(out, expected.reshape(2, 16 * 4, 128))
+    if ndim == 2:
+      inp = inp[0]
+      ctx = self.assertRaisesRegex(ValueError, r".*bitcast 1D.*")
+    elif axis == ndim - 2:
+      ctx = self.assertRaisesRegex(ValueError, r".*bitcast.*second minor.*")
+    else:
+      ctx = contextlib.nullcontext()
+    with ctx:
+      out = self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.uint8)
+      )(inp)
+      self.assertArraysEqual(out, expected)
 
   @parameterized.parameters([jnp.int32, jnp.int16, jnp.int8, jnp.int4])
   def test_row_broadcast(self, dtype):
