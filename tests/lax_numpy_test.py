@@ -2590,7 +2590,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       m_np = m_np.astype(dtype)
 
     if sys.platform == "win32":
-      e_np = np.where(np.isfinite(x_ftz), e_np, 0)
+      e_np = np.where(np.isfinite(m_np), e_np, 0)
 
     not_nan = ~np.isnan(m_np)
     uint_dtype = f"uint{info.bits}"
