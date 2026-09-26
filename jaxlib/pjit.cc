@@ -488,8 +488,11 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
     const std::vector<nb::object>& in_device_local_layouts,
     const nb::callable& shard_arg_fallback,
     std::vector<nb::object>& keep_alive_objects) {
-  const auto& addressable_devices =
-      executable.ifrt_loaded_executable()->addressable_devices();
+  std::optional<xla::ifrt::DeviceListRef> devices =
+      executable.ifrt_loaded_executable()->devices();
+  const absl::Span<xla::ifrt::Device* const> addressable_devices =
+      devices.has_value() ? (*devices)->AddressableDeviceList()->devices()
+                          : absl::Span<xla::ifrt::Device* const>();
   const auto& num_global_devices =
       executable.ifrt_loaded_executable()->num_devices();
   int num_args = flat_dynamic_args.size();
