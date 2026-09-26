@@ -59,6 +59,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Bug fixes
   * Fixed the gradient of {func}`jax.numpy.ldexp` at `x = 0.0`, which previously
     returned `1.0` instead of `2**n`.
+  * {func}`jax.scipy.linalg.lu` now accepts batched inputs of shape
+    `(..., M, N)`, as documented; previously it raised a `ValueError` for any
+    input with more than two dimensions.
 
 
 ## JAX 0.11.2 (September 17, 2026)

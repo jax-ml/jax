@@ -1385,7 +1385,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jsp.linalg.block_diag, args_maker)
 
   @jtu.sample_product(
-    shape=[(1, 1), (4, 5), (10, 5), (50, 50)],
+    shape=[(1, 1), (4, 5), (10, 5), (50, 50), (0, 3, 3), (2, 4, 5),
+           (3, 2, 6, 6)],
     dtype=float_types + complex_types,
   )
   def testLu(self, shape, dtype):
@@ -1393,11 +1394,28 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     x, = args_maker()
     p, l, u = jsp.linalg.lu(x)
+    *batch, m, n = shape
+    k = min(m, n)
+    self.assertEqual(p.shape, (*batch, m, m))
+    self.assertEqual(l.shape, (*batch, m, k))
+    self.assertEqual(u.shape, (*batch, k, n))
     self.assertAllClose(x, np.matmul(p, np.matmul(l, u)),
                         rtol={np.float32: 1e-3, np.float64: 5e-12,
                               np.complex64: 1e-3, np.complex128: 1e-12},
                         atol={np.float32: 1e-5})
     self._CompileAndCheck(jsp.linalg.lu, args_maker)
+
+    pl, u2 = jsp.linalg.lu(x, permute_l=True)
+    self.assertAllClose(pl, np.matmul(p, l))
+    self.assertAllClose(u2, u)
+
+    if batch:
+      # Batched inputs must agree with mapping over the batch dimensions.
+      lu_fun = jsp.linalg.lu
+      for _ in batch:
+        lu_fun = vmap(lu_fun)
+      for actual, expected in zip((p, l, u), lu_fun(x)):
+        self.assertArraysEqual(actual, expected)
 
   def testLuOfSingularMatrix(self):
     x = jnp.array([[-1., 3./2], [2./3, -1.]], dtype=np.float32)
