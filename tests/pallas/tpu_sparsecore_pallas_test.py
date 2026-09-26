@@ -1229,7 +1229,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(mask_fn=MASK_FNS, needs_layout_passes=[False, True])
   def test_load_expanded(self, mask_fn, needs_layout_passes):
-    if needs_layout_passes and not jtu.is_libtpu_at_least("0.0.50"):
+    if not jtu.is_libtpu_at_least("0.0.50"):
       self.skipTest("Needs libtpu >= 0.0.50")
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(
@@ -1269,7 +1269,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(mask_fn=MASK_FNS, needs_layout_passes=[False, True])
   def test_store_compressed(self, mask_fn, needs_layout_passes):
-    if needs_layout_passes and not jtu.is_libtpu_at_least("0.0.50"):
+    if not jtu.is_libtpu_at_least("0.0.50"):
       self.skipTest("Needs libtpu >= 0.0.50")
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(
@@ -1328,7 +1328,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(mask_fn=MASK_FNS, needs_layout_passes=[False, True])
   def test_addupdate_compressed(self, mask_fn, needs_layout_passes):
-    if needs_layout_passes and not jtu.is_libtpu_at_least("0.0.50"):
+    if not jtu.is_libtpu_at_least("0.0.50"):
       self.skipTest("Needs libtpu >= 0.0.50")
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(
@@ -1591,6 +1591,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x + np.arange(self.num_lanes))
 
   def test_write_to_transformed_ref(self):
+    if not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Needs libtpu >= 0.0.50")
     x = jnp.arange(2 * self.num_lanes)
 
     @self.vector_subcore_kernel(
@@ -1612,7 +1614,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(needs_layout_passes=[False, True])
   def test_load_transformed_ref(self, needs_layout_passes):
-    if needs_layout_passes and not jtu.is_libtpu_at_least("0.0.50"):
+    if not jtu.is_libtpu_at_least("0.0.50"):
       self.skipTest("Needs libtpu >= 0.0.50")
     x = jnp.arange(2 * self.num_lanes)
 
@@ -2384,8 +2386,8 @@ class VectorSubcoreTest(PallasSCTest):
       dtype=[jnp.int32, jnp.float32], trailing_shape=[(), (256,)]
   )
   def test_scatter_add(self, dtype, trailing_shape):
-    if trailing_shape and not jtu.is_libtpu_at_least("0.0.49"):
-      self.skipTest("Needs a newer libtpu")
+    if not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Needs libtpu >= 0.0.50")
 
     shape = (self.sc_info.num_subcores, 32, *trailing_shape)
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(*shape)
