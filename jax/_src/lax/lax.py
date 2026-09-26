@@ -2655,6 +2655,15 @@ def dot(lhs: ArrayLike, rhs: ArrayLike, *,
       When ``precision`` is not a :class:`~jax.lax.DotAlgorithm` or
       :class:`~jax.lax.DotAlgorithmPreset`, ``preferred_element_type`` provides
       a hint to the compiler to accumulate the dot product using this data type.
+      Note that this is only a hint: as in XLA's ``DotGeneral``, the backend is
+      free to accumulate in a different type instead. When
+      ``preferred_element_type`` is not specified, the accumulation type is
+      entirely unspecified and can vary silently across hardware generations of
+      the same backend, changing numerics with no error or warning (e.g. a
+      ``bf16`` dot product accumulating in ``bf16`` on one generation and in a
+      higher precision on another). If you need exact, reproducible control of
+      the accumulation type, pass a :class:`~jax.lax.DotAlgorithm` or
+      :class:`~jax.lax.DotAlgorithmPreset` via the ``precision`` parameter.
     out_sharding: an optional sharding specification for the output. If not specified,
       it will be determined automatically by the compiler.
 
