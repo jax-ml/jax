@@ -416,9 +416,16 @@ PyLoadedExecutable::~PyLoadedExecutable() {
 
 std::vector<nb_class_ptr<PyDevice>> PyLoadedExecutable::AddressableDevices()
     const {
+  std::optional<ifrt::DeviceListRef> device_list =
+      ifrt_loaded_executable_->devices();
+  if (!device_list.has_value()) {
+    return {};
+  }
+  absl::Span<ifrt::Device* const> addressable_devices =
+      (*device_list)->AddressableDeviceList()->devices();
   std::vector<nb_class_ptr<PyDevice>> devices;
-  devices.reserve(ifrt_loaded_executable_->addressable_devices().size());
-  for (ifrt::Device* device : ifrt_loaded_executable_->addressable_devices()) {
+  devices.reserve(addressable_devices.size());
+  for (ifrt::Device* device : addressable_devices) {
     devices.push_back(client_->GetPyDevice(device));
   }
   return devices;
@@ -432,8 +439,10 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
     absl::Span<const PyArray> args,
     std::optional<std::vector<xla::Future<>>>& returned_futures) {
   std::vector<ifrt::ArrayRef> output_arrays;
-  std::unique_ptr<tsl::Future<>> returned_future;
-  int num_computations = ifrt_loaded_executable->addressable_devices().size();
+  std::optional<ifrt::DeviceListRef> devices =
+      ifrt_loaded_executable->devices();
+  int num_computations =
+      devices.has_value() ? (*devices)->AddressableDeviceList()->size() : 0;
   xla::Future<> result_status;
   {
     nb::gil_scoped_release gil_release;
