@@ -4700,7 +4700,26 @@ ad.deflinear2(neg_p, lambda t, operand: [neg(t)])
 mlir.register_lowering(neg_p, partial(_nary_lower_hlo, hlo.negate))
 
 sign_p = standard_unop(_num, 'sign')
-ad.defjvp_zero(sign_p)
+
+def _sign_jvp_rule(g, ans, x):
+  if not _iscomplex(x):
+    # sign is piecewise constant on the real line, so its derivative is zero
+    # (we also take it to be zero at the discontinuity at x == 0).
+    return ad_util.p2tz(ans)
+  # For complex inputs, sign(x) = x / |x| is not holomorphic. For x != 0,
+  # sign(x) = exp(i * theta) with theta = angle(x), so its differential is
+  #   d sign(x) = i * sign(x) * dtheta, where
+  #   dtheta = Im(dx / x) = Im(conj(sign(x)) * dx) / |x|.
+  # This is equivalent to the Wirtinger form
+  #   d sign(x) = (dx - sign(x)**2 * conj(dx)) / (2 * |x|),
+  # but does not rely on |sign(x)| == 1 (which holds only approximately in
+  # floating point) to cancel the component of dx parallel to x.
+  # sign is not differentiable at x == 0; there sign(x) == 0, so this evaluates
+  # to a zero tangent, matching the real case.
+  dtheta = div(imag(mul(conj(ans), g)), _replace_zero(abs(x)))
+  return mul(ans, complex(_zeros(dtheta), dtheta))
+
+ad.defjvp2(sign_p, _sign_jvp_rule)
 
 def _sign_lower_hlo(ctx, x):
   x_aval, = ctx.avals_in
