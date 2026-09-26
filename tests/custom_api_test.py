@@ -44,6 +44,7 @@ from jax._src import hijax
 from jax._src import literals
 from jax._src import custom_derivatives
 from jax._src import test_util as jtu
+from jax._src.interpreters import ad
 from jax._src.interpreters import partial_eval as pe
 
 config.parse_flags_with_absl()
@@ -2587,6 +2588,194 @@ class CustomVJPTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "None or a dict"):
       api.grad(e2)(1.)
 
+  def _take_with_accums(self, seen, i=3):
+    # the rule for x[i] that the docs on hijax's vjp_bwd use, recording the
+    # kinds of accumulators it's given
+    def accum(x_acc, g):
+      seen.append(type(x_acc).__name__)
+      if isinstance(x_acc, ad.RefAccum):
+        x_acc.ref[i] += g                     # sparse in-place update
+      else:                                   # dense for ValAccum; NullAccum drops it
+        x_acc.accum(jnp.zeros(x_acc.aval.shape, x_acc.aval.dtype).at[i].add(g))
+    return accum
+
+  def test_defvjp_with_accums(self):
+    seen = []
+    accum = self._take_with_accums(seen)
+
+    @jax.custom_vjp
+    def f(c, x):
+      return c * x[3]
+    def f_bwd(res, g, c_acc, x_acc):
+      c, x = res
+      c_acc.accum(g * x[3])
+      accum(x_acc, g * c)
+      return {'g': g}
+    f.defvjp_with_accums(lambda c, x: (f(c, x), (c, x)), f_bwd)
+
+    x = jnp.arange(10.)
+    expected = jnp.zeros(10).at[3].set(2.)
+    self.assertAllClose(api.grad(f, 1)(2., x), expected)
+    self.assertEqual(seen, ['ValAccum'])
+    seen.clear()
+    self.assertAllClose(api.grad(f)(2., x), 3.)
+    self.assertEqual(seen, ['NullAccum'])
+    seen.clear()
+
+    _, f_vjp = jax.vjp(f, 2., x)
+    ref = jax.new_ref(jnp.zeros(10))
+    _, logs = f_vjp.with_logs.with_refs(jax.ad.DontWant(), ref)(1.)
+    self.assertAllClose(ref[...], expected)
+    self.assertAllClose(logs, {'g': 1.})
+    self.assertEqual(seen, ['RefAccum'])
+
+    # with a ref, the backward pass updates just one element in place
+    def bwd(ref):
+      _, f_vjp = jax.vjp(lambda x: f(2., x), x)
+      f_vjp.with_refs(ref)(1.)
+    jaxpr = jax.jit(bwd).trace(jax.new_ref(jnp.zeros(10))).jaxpr
+    self.assertNotIn('f32[10] =', str(jaxpr))
+
+  def test_defvjp_with_accums_transformations(self):
+    seen = []
+    accum = self._take_with_accums(seen)
+
+    @partial(jax.custom_vjp, nondiff_argnums=(1,))
+    def take(x, i):
+      return x[i]
+    take.defvjp_with_accums(lambda x, i: (x[i], None),
+                            lambda i, _, g, x_acc: accum(x_acc, g))
+
+    xs = jnp.arange(20.).reshape(2, 10)
+    expected = jnp.zeros(10).at[3].set(1.)
+    self.assertAllClose(jax.vmap(api.grad(lambda x: take(x, 3)))(xs),
+                        jnp.stack([expected] * 2))
+    # vmap wraps the bwd rule, so it gets ValAccums in place of RefAccums
+    self.assertAllClose(api.grad(lambda xs: jax.vmap(take, (0, None))(xs, 3).sum())(xs),
+                        jnp.stack([expected] * 2))
+    scanned = lambda x: lax.scan(lambda c, _: (c + take(x, 3), None), 0.,
+                                 None, length=2)[0]
+    self.assertAllClose(api.grad(scanned)(xs[0]), 2 * expected)
+    self.assertAllClose(jax.jit(api.grad(jax.remat(lambda x: take(x, 3))))(xs[0]),
+                        expected)
+    self.assertNotIn('RefAccum', seen)
+
+  def test_custom_gradient_with_accums(self):
+    seen = []
+
+    # i is an integer, so it's never differentiated and gets a NullAccum
+    @partial(jax.custom_gradient,
+             with_accums=(ad.ValAccum, ad.RefAccum, ad.ValAccum))
+    def f(c, x, i):
+      def rule(g, c_acc, x_acc, i_acc):
+        seen.append(tuple(type(a).__name__ for a in (c_acc, x_acc, i_acc)))
+        c_acc.accum(g * x[i])
+        if isinstance(x_acc, ad.RefAccum):    # it's a NullAccum if x isn't perturbed
+          x_acc.ref[i] += g * c               # sparse in-place update
+        return {'g': g}
+      return c * x[i], rule
+
+    x = jnp.arange(10.)
+    expected = jnp.zeros(10).at[3].set(2.)
+    self.assertAllClose(f(2., x, 3), 6.)
+    _, f_vjp = jax.vjp(f, 2., x, 3)
+    ref = jax.new_ref(jnp.zeros(10))
+    (c_ct, _, _), logs = f_vjp.with_logs.with_refs(
+        jax.ad.GradValue(), ref, jax.ad.DontWant())(1.)
+    self.assertAllClose(c_ct, 3.)
+    self.assertAllClose(ref[...], expected)
+    self.assertAllClose(logs, {'g': 1.})
+    # the rule is traced on the forward pass, with the declared accumulators
+    # for inputs being differentiated, and NullAccums for the others
+    self.assertEqual(seen, [('ValAccum', 'RefAccum', 'NullAccum')])
+    seen.clear()
+    self.assertAllClose(api.grad(f)(2., x, 3), 3.)
+    self.assertEqual(seen, [('ValAccum', 'NullAccum', 'NullAccum')])
+
+    # the caller can discard a ValAccum's cotangent, but otherwise must supply
+    # the declared kinds
+    ref = jax.new_ref(jnp.zeros(10))
+    f_vjp.with_refs(jax.ad.DontWant(), ref, jax.ad.DontWant())(1.)
+    self.assertAllClose(ref[...], expected)
+    with self.assertRaisesRegex(
+        TypeError, r"declared a RefAccum for its argument\[1\].*got a ValAccum"):
+      api.grad(f, 1)(2., x, 3)
+    with self.assertRaisesRegex(
+        TypeError, r"declared a RefAccum for its argument\[1\].*got a NullAccum"):
+      f_vjp.with_refs(jax.ad.GradValue(), jax.ad.DontWant(), jax.ad.DontWant())(1.)
+    with self.assertRaisesRegex(
+        TypeError, r"declared a ValAccum for its argument\[0\].*got a RefAccum"):
+      f_vjp.with_refs(jax.new_ref(0.), ref, jax.ad.DontWant())(1.)
+
+    # with a ref, the backward pass updates just one element in place
+    def bwd(ref):
+      _, f_vjp = jax.vjp(lambda x: f(2., x, 3), x)
+      f_vjp.with_refs(ref)(1.)
+    jaxpr = jax.jit(bwd).trace(jax.new_ref(jnp.zeros(10))).jaxpr
+    self.assertNotIn('f32[10] =', str(jaxpr))
+
+  def test_custom_gradient_with_accums_transformations(self):
+    @partial(jax.custom_gradient, with_accums=ad.ValAccum)
+    def sin(x):
+      return jnp.sin(x), lambda g, x_acc: x_acc.accum(g * jnp.cos(x))
+
+    xs = jnp.arange(6.).reshape(2, 3)
+    loss = lambda x: sin(x).sum()
+    self.assertAllClose(jax.vmap(api.grad(loss))(xs), jnp.cos(xs))
+    self.assertAllClose(api.grad(lambda xs: jax.vmap(loss)(xs).sum())(xs),
+                        jnp.cos(xs))
+    self.assertAllClose(jax.jit(api.grad(loss))(xs), jnp.cos(xs))
+    scanned = lambda x: lax.scan(lambda c, _: (c + loss(x), None), 0.,
+                                 None, length=2)[0]
+    self.assertAllClose(api.grad(scanned)(xs), 2 * jnp.cos(xs))
+
+    # declarations can be pytree prefixes of the arguments
+    @partial(jax.custom_gradient,
+             with_accums=({'a': ad.ValAccum, 'b': ad.RefAccum},))
+    def g(d):
+      def rule(ct, d_accs):
+        d_accs['a'].accum(ct)
+        d_accs['b'].ref[...] += 2 * ct
+      return d['a'] + 2 * d['b'], rule
+    b_ref = jax.new_ref(0.)
+    (d_ct,) = jax.vjp(g, {'a': 1., 'b': 1.})[1].with_refs(
+        {'a': jax.ad.GradValue(), 'b': b_ref})(1.)
+    self.assertAllClose(d_ct['a'], 1.)
+    self.assertAllClose(b_ref[...], 2.)
+
+    # which inputs get NullAccums depends on the call, e.g. on whether y is
+    # data or depends on x, including under vmap before differentiation
+    @partial(jax.custom_gradient, with_accums=(ad.ValAccum, ad.ValAccum))
+    def mul(x, y):
+      def rule(g, x_acc, y_acc):
+        x_acc.accum(g * y)
+        y_acc.accum(g * x)
+      return x * y, rule
+    self.assertAllClose(api.grad(lambda x: mul(x, 2.))(1.), 2.)
+    self.assertAllClose(api.grad(lambda x: mul(x, jnp.sin(x)))(1.),
+                        jnp.sin(1.) + jnp.cos(1.))
+    self.assertAllClose(
+        api.grad(lambda x: jax.vmap(lambda x: mul(x, 2.))(x).sum())(xs[0]),
+        2 * jnp.ones(3))
+
+    # vmap before differentiation hands the rule ValAccums, even with refs
+    @partial(jax.custom_gradient, with_accums=ad.RefAccum)
+    def sin_ref(x):
+      def rule(g, x_acc):
+        x_acc.ref[...] += g * jnp.cos(x)
+      return jnp.sin(x), rule
+    _, f_vjp = jax.vjp(jax.vmap(sin_ref), xs)
+    with self.assertRaisesRegex(TypeError, "got a ValAccum"):
+      f_vjp.with_refs(jax.new_ref(jnp.zeros_like(xs)))(jnp.ones_like(xs))
+
+    for spec in [int, ad.NullAccum]:
+      bad = jax.custom_gradient(lambda x: (x, None), with_accums=spec)
+      with self.assertRaisesRegex(TypeError, "with_accums must be"):
+        api.grad(bad)(1.)
+    with self.assertRaisesRegex(NotImplementedError, "remat"):
+      jax.custom_gradient(lambda x: (x, None), with_accums=ad.ValAccum,
+                          remat=True)
+
   def test_closure_convert(self):
     def cos_after(fn, x):
       converted_fn, aux_args = jax.closure_convert(fn, x)
@@ -3587,6 +3776,12 @@ class CustomVJP3Test(CustomVJPTest):
   def test_symbolic_zero_custom_vjp_bwd_shape_error(self): pass
   def test_symbolic_zeros_remat(self): pass
   def test_dce(self): pass
+
+  # defvjp_with_accums isn't yet supported with custom_vjp3
+  def test_defvjp_with_accums(self): pass
+  def test_defvjp_with_accums_transformations(self): pass
+  def test_custom_gradient_with_accums(self): pass
+  def test_custom_gradient_with_accums_transformations(self): pass
 
   def test_pretty_print(self):
     @jax.custom_vjp
