@@ -216,7 +216,14 @@ void EnsureLLVMisInitialized() {
   });
 }
 
-mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
+auto AppendDiagnosticTo(std::string* diagnostic) {
+  return [diagnostic](mlir::Diagnostic& diag) {
+    absl::StrAppend(diagnostic, diag.str(), "\n");
+    return mlir::LogicalResult::failure();
+  };
+}
+
+absl::StatusOr<mlir::OpPassManager> GetPassPipeline(
     mlir::MLIRContext* ctx,
     const se::cuda::CompilationProvider* compilation_provider,
     const se::CudaComputeCapability& cc, const std::string& sm,
@@ -262,8 +269,11 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
   if (!nvshmem_path.empty()) {
     libraries_to_link.push_back(nvshmem_path);
   }
-  return mlir::parsePassPipeline(absl::StrFormat(
-      R"(
+  std::string error;
+  llvm::raw_string_ostream error_stream(error);
+  auto passes = mlir::parsePassPipeline(
+      absl::StrFormat(
+          R"(
         builtin.module(
           mosaic-gpu-resolve-trivial-locations,
           arith-expand,
@@ -299,14 +309,23 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
           reconcile-unrealized-casts
         )
       )",
-      sm, ptx_isa, absl::StrJoin(libraries_to_link, ","), verify_target));
+          sm, ptx_isa, absl::StrJoin(libraries_to_link, ","), verify_target),
+      error_stream);
+  if (mlir::failed(passes)) {
+    return absl::InternalError(
+        absl::StrCat("Failed to construct Mosaic GPU pass pipeline: ", error));
+  }
+  return std::move(*passes);
 }
 
-mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
-                              mlir::ModuleOp module,
-                              const mosaic::gpu::DumpOptions& dump_opts) {
+absl::Status RunPasses(mlir::OpPassManager&& passes,
+                       mlir::ModuleOp module,
+                       const mosaic::gpu::DumpOptions& dump_opts) {
   mlir::PassManager pm(module.getContext());
   *static_cast<mlir::OpPassManager*>(&pm) = std::move(passes);
+  std::string diagnostic;
+  mlir::ScopedDiagnosticHandler diagnostic_handler(
+      module.getContext(), AppendDiagnosticTo(&diagnostic));
   std::optional<llvm::raw_fd_ostream> dump_stream;
   if (dump_opts.mlir_passes) {
     if (!dump_opts.dump_path.empty()) {
@@ -332,7 +351,11 @@ mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
         dump_stream.has_value() ? *dump_stream : llvm::outs(),
         mlir::OpPrintingFlags().enableDebugInfo().printNameLocAsPrefix());
   }
-  return pm.run(module);
+  if (mlir::failed(pm.run(module))) {
+    return absl::InternalError(
+        absl::StrCat("Mosaic GPU pass pipeline failed: ", diagnostic));
+  }
+  return absl::OkStatus();
 }
 
 void InitContext(mlir::MLIRContext* context) {
@@ -584,15 +607,11 @@ absl::Status RunMlirPasses(mlir::ModuleOp module, se::CudaComputeCapability cc,
   // nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a; disable
   // verification on sm_103a, sm_110a etc. where we see spurious failures.
   bool verify_target = !((cc.major == 10 && cc.minor > 0) || cc.major == 11);
-  auto passes = GetPassPipeline(module.getContext(), compilation_provider, cc,
-                                sm, llvm_ptx_isa, nvshmem_path, verify_target);
-  if (mlir::failed(passes)) {
-    return absl::InternalError("Failed to construct pass pipeline");
-  }
-  if (RunPasses(std::move(*passes), module, dump_opts).failed()) {
-    return absl::InternalError("Pass pipeline failed");
-  }
-  return absl::OkStatus();
+  ASSIGN_OR_RETURN(
+      auto passes,
+      GetPassPipeline(module.getContext(), compilation_provider, cc, sm,
+                      llvm_ptx_isa, nvshmem_path, verify_target));
+  return RunPasses(std::move(passes), module, dump_opts);
 }
 
 // This function was inspired by mlir::ExecutionEngine::create. It takes an MLIR
@@ -807,18 +826,17 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   // burden.
   LoadNvDialects(&context);
 
-  std::string diagnostic;
-  mlir::ScopedDiagnosticHandler diagnostic_handler(
-      &context, [&](mlir::Diagnostic& diag) {
-        absl::StrAppend(&diagnostic, diag.str(), "\n");
-        return mlir::LogicalResult::failure();
-      });
-  auto manager = mlir::PassManager::on<mlir::ModuleOp>(module->getContext());
-  manager.addPass(mosaic::gpu::createSerdePass(
-      mosaic::gpu::SerdePassOptions{.serialize = false}));
-  if (manager.run(module.get()).failed()) {
-    return absl::InternalError(
-        absl::StrCat("Failed to deserialize Mosaic GPU module: ", diagnostic));
+  {
+    std::string diagnostic;
+    mlir::ScopedDiagnosticHandler diagnostic_handler(
+        &context, AppendDiagnosticTo(&diagnostic));
+    auto manager = mlir::PassManager::on<mlir::ModuleOp>(module->getContext());
+    manager.addPass(mosaic::gpu::createSerdePass(
+        mosaic::gpu::SerdePassOptions{.serialize = false}));
+    if (manager.run(module.get()).failed()) {
+      return absl::InternalError(absl::StrCat(
+          "Failed to deserialize Mosaic GPU module: ", diagnostic));
+    }
   }
 
   const char* dump_llvm = getenv("MOSAIC_GPU_DUMP_LLVM");
