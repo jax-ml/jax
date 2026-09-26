@@ -613,6 +613,53 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     norm = jnp.linalg.vector_norm(x, ord=ord)
     self.assertEqual(norm, 0)
 
+  @jtu.sample_product(
+      [dict(shape=shape, ord=ord)
+       for shape, ord in [((3,), None), ((3,), 2), ((2, 3), 'fro')]],
+      dtype=float_types,
+  )
+  def testNormGradAtZero(self, shape, ord, dtype):
+    # The L2/Frobenius norm uses the subgradient convention grad(0) = 0 consistently in forward and
+    # reverse mode.
+    x = jnp.zeros(shape, dtype)
+    norm = partial(jnp.linalg.norm, ord=ord)
+    for jac in [grad, jax.jacfwd, jax.jacrev]:
+      self.assertArraysEqual(jac(norm)(x), jnp.zeros_like(x))
+
+  @jtu.sample_product(dtype=complex_types)
+  def testNormComplexGradAtZero(self, dtype):
+    x = jnp.zeros(3, dtype)
+    self.assertArraysEqual(grad(jnp.linalg.norm)(x), jnp.zeros_like(x))
+
+  @jtu.sample_product(
+      [dict(shape=shape, ord=ord)
+       for shape, ord in [((3,), None), ((3,), 2), ((2, 3), 'fro')]],
+      dtype=float_types,
+  )
+  def testNormHessianAtZeroIsNan(self, shape, ord, dtype):
+    # The norm's second derivative is singular at the origin, so its Hessian is
+    # NaN there in every autodiff-mode composition.
+    x = jnp.zeros(shape, dtype)
+    norm = partial(jnp.linalg.norm, ord=ord)
+    hessians = [jax.hessian,
+                lambda f: jax.jacfwd(jax.jacrev(f)),
+                lambda f: jax.jacrev(jax.jacfwd(f)),
+                lambda f: jax.jacfwd(jax.jacfwd(f)),
+                lambda f: jax.jacrev(jax.jacrev(f))]
+    for hessian in hessians:
+      self.assertTrue(jnp.all(jnp.isnan(hessian(norm)(x))))
+
+  @jtu.sample_product(dtype=float_types)
+  def testNormGradOffZero(self, dtype):
+    # Away from the origin the gradient is the usual x / norm(x).
+    x = jnp.arange(1, 5, dtype=dtype)
+    self.assertAllClose(grad(jnp.linalg.norm)(x), x / jnp.linalg.norm(x))
+
+  def testNormGradHomogeneityAtZero(self):
+    # d/da norm(a * x) is well-defined (zero) at x = 0.
+    x = jnp.zeros(3)
+    self.assertEqual(grad(lambda a: jnp.linalg.norm(a * x))(1.3), 0)
+
   # jnp.linalg.vecdot is an alias of jnp.vecdot; do a minimal test here.
   @jtu.sample_product(
       [
