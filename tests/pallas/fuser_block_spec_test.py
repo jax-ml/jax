@@ -1495,26 +1495,24 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     def outer(refs):
       ref, y_ref = refs
 
-      def f(values, x):
-        ref, = values
+      def f(x):
         return ref.swap(x)
 
       in_type = jax.ShapeDtypeStruct((512, 1024), jnp.int32)
       scalar_prefetch_values = ()
       block_spec = pl.BlockSpec((256, 512), lambda i, j, k: (i, k))
-      kernel_fn, (value_block_specs, x_block_spec), _ = (
+      kernel_fn, (x_block_spec,), _ = (
           block_spec_lib.pull_block_spec(
               f,
               block_spec,
               grid_len=3,
               scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
-          )((ref,), in_type)
+          )(in_type)
       )
-      self.assertLen(value_block_specs, 1)
       self.assertEqual(x_block_spec.index_map(0, 1, 2), (0, 2))
       self.assertEqual(x_block_spec.index_map(3, 2, 1), (3, 1))
 
-      y_ref[...] = kernel_fn((0, 1, 1), scalar_prefetch_values, (ref,), x)
+      y_ref[...] = kernel_fn((0, 1, 1), scalar_prefetch_values, x)
 
     y = jnp.zeros((256, 512), jnp.int32)
     _, y = pl.run_state(outer)((value, y))

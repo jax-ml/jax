@@ -150,11 +150,6 @@ def _fusible_matmul(
     raise ValueError('fusible_matmul does not support an input fusion reading '
                      'from a Ref that is also written by the output fusion')
 
-  def types_without_refs(values):
-    return jax.tree.map(
-        lambda v: v.inner_aval if isinstance(v, jax.ref.AbstractRef) else v,
-        jax.tree.map(jax.typeof, values))
-
   # We construct the set of scalar prefetch arguments that will be passed to
   # the kernel.
   scalar_prefetch = (x_scalar_prefetch, y_scalar_prefetch, z_scalar_prefetch)
@@ -164,14 +159,14 @@ def _fusible_matmul(
       x_block_spec,
       scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(0),
       grid_len=len(grid),
-  )(types_without_refs(x_values))
+  )(x_values)
 
   y_fn, (y_value_block_specs,), _ = fuser.pull_block_spec(
       y_fn,
       y_block_spec,
       scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(1),
       grid_len=len(grid),
-  )(types_without_refs(y_values))
+  )(y_values)
 
   z_fn, z_value_block_specs, _, z_out_type, z_out_block_spec = (
       fuser.push_pull_block_spec(
@@ -179,7 +174,7 @@ def _fusible_matmul(
           z_block_spec,
           scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(2),
           grid_len=len(grid),
-      )(types_without_refs(z_values), z_type)
+      )(z_values, z_type)
   )
 
   # TODO(sharadmv): This is a hack. We should be able to pass in the scalar
