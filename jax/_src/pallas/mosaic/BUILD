@@ -201,6 +201,7 @@ pytype_strict_library(
         ":lowering",
         ":sc_core",
         ":sc_lowering",
+        ":tpu_info",
         "//jax",
         "//jax/_src:api_util",
         "//jax/_src:core",
