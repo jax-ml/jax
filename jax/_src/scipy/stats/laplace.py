@@ -104,6 +104,11 @@ def cdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   one = _lax_const(x, 1)
   zero = _lax_const(x, 0)
   diff = lax.div(lax.sub(x, loc), scale)
-  return lax.select(lax.le(diff, zero),
-                    lax.mul(half, lax.exp(diff)),
-                    lax.sub(one, lax.mul(half, lax.exp(lax.neg(diff)))))
+  is_left = lax.le(diff, zero)
+  # Evaluate exp only on the non-positive side of the argument (i.e.
+  # exp(-|diff|)). Computing both exp(diff) and exp(-diff) would overflow the
+  # branch that is not selected once |diff| is large, and that inf would turn
+  # the gradients of x, loc and scale into NaN. The select (rather than abs) is
+  # so that the derivative at diff == 0 follows the left branch.
+  tail = lax.mul(half, lax.exp(lax.select(is_left, diff, lax.neg(diff))))
+  return lax.select(is_left, tail, lax.sub(one, tail))
