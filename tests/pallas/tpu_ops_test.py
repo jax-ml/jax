@@ -2144,5 +2144,27 @@ class ConvTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(result, expected)
 
 
+class UnpackElementwiseContractTest(jtu.JaxTestCase):
+
+  def test_int4_to_int32_word(self):
+    if pltpu is None:
+      self.skipTest('Pallas TPU is unavailable on Windows')
+
+    source = jax.ShapeDtypeStruct((8, 128), jnp.uint32)
+    unpack = lambda x: pltpu.unpack_elementwise(
+        x, index=0, packed_dtype=jnp.int4, unpacked_dtype=jnp.int32)
+
+    result = jax.eval_shape(unpack, source)
+    self.assertEqual(result.shape, source.shape)
+    self.assertEqual(result.dtype, jnp.int32)
+
+    signed_source = jax.ShapeDtypeStruct(source.shape, jnp.int32)
+    self.assertEqual(jax.eval_shape(unpack, signed_source).dtype, jnp.int32)
+
+    narrow_source = jax.ShapeDtypeStruct(source.shape, jnp.int8)
+    with self.assertRaisesRegex(ValueError, '32-bit.*8 int4.*got int8'):
+      jax.eval_shape(unpack, narrow_source)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
