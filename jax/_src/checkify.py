@@ -1053,15 +1053,22 @@ def shard_map_error_check(
     errs = [lax.expand_dims(e, [0]) for e in errs]
     return *errs, *outs
 
-  with core.extend_axis_env_nd(mesh.shape.items()), config._check_vma(check_vma):
+  with (jshmap._extend_axis_env(mesh, manual_axes),
+        mesh_lib.use_abstract_mesh(jshmap._as_manual_mesh(mesh, manual_axes)),
+        config._check_vma(check_vma)):
     checked_jaxpr, _ = pe.trace_to_jaxpr(
         expand_errors_leading_dim,
         ft.flatten((tuple(checked_jaxpr.in_avals), {})),
         debug_info=checked_jaxpr.debug_info)
 
   # Update shard_map params to account for extra error values.
-  # Use fully sharded partitioning for out errors.
-  new_out_specs = (*([P(mesh.axis_names)] * num_out_error_vals), *out_specs)
+  # Use fully sharded partitioning for out errors along manual axes.
+  err_spec = (
+      P(tuple(a for a in mesh.axis_names if a in manual_axes))
+      if manual_axes is not None
+      else P(mesh.axis_names)
+  )
+  new_out_specs = (*([err_spec] * num_out_error_vals), *out_specs)
   new_params = dict(
       jaxpr=checked_jaxpr,
       in_specs=new_in_specs,
