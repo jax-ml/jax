@@ -242,6 +242,55 @@ class SemaphoreType(enum.Enum):
     return self(()).get_ref_aval()
 
 
+def _is_semaphore_dtype(dtype) -> bool:
+  return isinstance(dtype, pallas_core.AbstractSemaphoreTy) or dtypes.issubdtype(
+      dtype, pallas_core.semaphore_dtype
+  )
+
+
+def _check_no_semaphore_outputs(out_type) -> None:
+  """Raises if any kernel output is a semaphore or a semaphore Ref.
+
+  Semaphores may only be created by ``alloc_semaphore`` outside of a kernel and
+  passed into it as operands.
+  """
+  for leaf in tree_util.tree_leaves(out_type):
+    if isinstance(leaf, SemaphoreType):
+      dtype = leaf.get_array_aval().dtype
+    else:
+      dtype = getattr(leaf, "dtype", None)
+    if dtype is not None and _is_semaphore_dtype(dtype):
+      raise ValueError(
+          "Kernels cannot return semaphores or semaphore refs. Allocate them"
+          " outside the kernel with plgpu.alloc_semaphore(shape) and pass them"
+          f" in as operands instead. Got out_type leaf: {leaf}"
+      )
+
+def alloc_semaphore(shape: tuple[int, ...] = ()) -> Any:
+  """Allocates a zero-initialized GMEM semaphore Ref outside of a kernel.
+  This is the only way to create semaphores that outlive a single kernel.
+  This is the only way to create semaphores that outlive a single kernel
+  invocation. It performs *no* cross-device synchronization: the caller is
+  responsible for the initial sync, e.g. by running a kernel that is data
+  dependent on the returned refs with ``skip_device_barrier=False``.
+
+  Example::
+
+    sem1, sem2 = map(plgpu.alloc_semaphore, shapes)
+    buf = initial_alloc(sem1, sem2)  # synchronizes all devices
+    v = op1(sem1, buf)
+
+  Args:
+    shape: The shape of the semaphore array.
+
+  Returns:
+    A Ref to a zero-initialized semaphore array in GMEM.
+  """
+  zeros = lax.convert_element_type(
+      jnp.zeros(tuple(shape), jnp.int32), pallas_core.Semaphore()
+  )
+  return jax_core.new_ref(zeros, memory_space=MemorySpace.GMEM)
+
 class PrimitiveSemantics(enum.Enum):
   """Thread semantics for a primitives at the Pallas user-level."""
 
@@ -344,9 +393,22 @@ def kernel(
       **mesh_kwargs,
   )
 
+  _check_no_semaphore_outputs(out_type)
+
   # TODO(slebedev): Use mesh-specific batching rules in ``mpmd_map`` instead.
   @custom_batching.custom_vmap
   def wrapper(*operands):
+    for op in tree_util.tree_leaves(operands):
+      if not isinstance(op, state.AbstractRef):
+        aval = jax_core.typeof(op)
+        if isinstance(aval, jax_core.ShapedArray) and (
+            dtypes.issubdtype(aval.dtype, pallas_core.semaphore_dtype)
+            or isinstance(aval.dtype, pallas_core.AbstractSemaphoreTy)
+        ):
+          raise ValueError(
+              "Cannot pass semaphores into kernels as an array. Wrap them in"
+              f" jax.new_ref: {op}"
+          )
     thread_name = mesh.thread_name if mesh.thread_name is not None else ()
 
     def kernel_body(*refs):

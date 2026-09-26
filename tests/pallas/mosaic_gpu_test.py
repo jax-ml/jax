@@ -10168,6 +10168,53 @@ class SemaphoreTest(PallasTest):
     result = kernel()
     np.testing.assert_array_equal(result, jnp.ones((128,), jnp.float32))
 
+  def test_first_class_semaphore(self):
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((2,), jnp.int32),
+        grid=(2,),
+        grid_names=("x",),
+        num_threads=1,
+        thread_name="wg",
+    )
+    def kernel(sem_ref, out_ref):
+      self.assertTrue(jnp.issubdtype(sem_ref.dtype, pl.semaphore))
+      block_id = lax.axis_index("x")
+      init_val = pl.semaphore_read(sem_ref.at[0])
+      @pl.when(block_id == 0)
+      def _():
+        pl.semaphore_signal(sem_ref.at[0], inc=3)
+        pl.semaphore_signal(sem_ref.at[1], inc=7)
+      @pl.when(block_id == 1)
+      def _():
+        pl.semaphore_wait(sem_ref.at[0], value=3, decrement=False)
+        pl.semaphore_wait(sem_ref.at[1], value=7, decrement=False)
+        out_ref[0] = pl.semaphore_read(sem_ref.at[0]) + init_val
+        out_ref[1] = pl.semaphore_read(sem_ref.at[1])
+
+    @jax.jit
+    def run():
+      sem_ref = plgpu.alloc_semaphore((2,))
+      sem_aval = jax_core.typeof(sem_ref)
+      self.assertTrue(jnp.issubdtype(sem_aval.dtype, pl.semaphore))
+      return kernel(sem_ref)
+
+    np.testing.assert_array_equal(run(), jnp.array([3, 7], jnp.int32))
+
+  def test_kernel_cannot_return_semaphore(self):
+    with self.assertRaisesRegex(
+        ValueError, "Kernels cannot return semaphores"
+    ):
+
+      @self.kernel(
+          out_type=plgpu.SemaphoreType.REGULAR((2,)),
+          grid=(1,),
+          grid_names=("x",),
+          num_threads=1,
+          thread_name="wg",
+      )
+      def init_kernel(out_sem):
+        del out_sem
+
 
 class SemaphoreWGTest(
     SemaphoreTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
