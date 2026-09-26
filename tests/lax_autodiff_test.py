@@ -167,6 +167,11 @@ LAX_GRAD_OPS = [
     #                dtypes=grad_float_dtypes, name="MinSomeEqual"),
     grad_test_spec(lax.one_minus_square, nargs=1, order=2,
                    rng_factory=jtu.rand_default, dtypes=grad_inexact_dtypes),
+    # For real inputs, avoid finite differences across the discontinuity at 0.
+    grad_test_spec(lax.sign, nargs=1, order=2, rng_factory=jtu.rand_not_small,
+                   dtypes=grad_float_dtypes),
+    grad_test_spec(lax.sign, nargs=1, order=2, rng_factory=jtu.rand_default,
+                   dtypes=grad_complex_dtypes),
 ]
 
 GradSpecialValuesTestSpec = collections.namedtuple(
@@ -1518,6 +1523,35 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # 4. Second derivative
     d2 = jax.grad(jax.grad(lax.acosh))(jnp.float32(2.0))
     self.assertAllClose(d2, jnp.float32(-2.0 / 3.0 ** 1.5), rtol=1e-5)
+
+  @jtu.sample_product(dtype=grad_complex_dtypes)
+  def testSignGradComplex(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41000.
+    real_dtype = np.finfo(dtype).dtype
+    tol = {np.float32: 1e-5, np.float64: 1e-12}
+
+    def real_view(ab):
+      s = lax.sign(lax.complex(ab[0], ab[1]))
+      return jnp.stack([lax.real(s), lax.imag(s)])
+
+    # For z = a + ib != 0, sign(z) = z / |z|, so with r = |z|:
+    #   d(Re sign(z), Im sign(z)) / d(a, b) = [[b^2, -ab], [-ab, a^2]] / r^3.
+    a, b = 0.3, 0.4
+    ab = np.array([a, b], dtype=real_dtype)
+    expected = (np.array([[b * b, -a * b], [-a * b, a * a]])
+                / (a * a + b * b) ** 1.5).astype(real_dtype)
+    self.assertAllClose(jax.jacfwd(real_view)(ab), expected, atol=tol, rtol=tol)
+    self.assertAllClose(jax.jacrev(real_view)(ab), expected, atol=tol, rtol=tol)
+
+    # sign is discontinuous at z == 0, where (as for real inputs) we define the
+    # derivative to be zero. In particular, it should not be NaN.
+    zeros = np.zeros((2,), dtype=real_dtype)
+    self.assertAllClose(jax.jacfwd(real_view)(zeros),
+                        np.zeros((2, 2), real_dtype))
+    self.assertAllClose(jax.jacrev(real_view)(zeros),
+                        np.zeros((2, 2), real_dtype))
+    self.assertAllClose(jax.hessian(real_view)(zeros),
+                        np.zeros((2, 2, 2), real_dtype))
 
 
 if __name__ == '__main__':

@@ -59,6 +59,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Bug fixes
   * Fixed the gradient of {func}`jax.numpy.ldexp` at `x = 0.0`, which previously
     returned `1.0` instead of `2**n`.
+  * Fixed the derivative of {func}`jax.lax.sign` and {func}`jax.numpy.sign` for
+    complex inputs, which was previously always zero ({jax-issue}`#41000`).
 
 
 ## JAX 0.11.2 (September 17, 2026)
