@@ -140,7 +140,7 @@ def emit_pipeline_with_async_prefetch(
       )
 
       max_buffer_count = max(
-          (2, *(b.buffer_count for b in allocs_flat if b.is_buffered)),
+          (2, *(b.in_buffer_count for b in allocs_flat if b.is_buffered)),
           default=2,
       )
       scheduler = pipeline.Scheduler(
