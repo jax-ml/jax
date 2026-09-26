@@ -1181,8 +1181,12 @@ def qr_multiply(a: ArrayLike, c: ArrayLike, mode: str = 'right',
 
 @jit(static_argnames=('assume_a', 'lower'))
 def _solve(a: ArrayLike, b: ArrayLike, assume_a: str, lower: bool) -> Array:
-  if assume_a != 'pos':
+  if assume_a == 'gen':
     return jnp_linalg.solve(a, b)
+  elif assume_a in {'sym', 'her'}:
+    raise NotImplementedError(
+        f"{assume_a=!r} is not supported; only assume_a='gen' and"
+        " assume_a='pos' are supported.")
 
   a, b = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
   lax_linalg._check_solve_shapes(a, b)
@@ -1223,8 +1227,8 @@ def solve(a: ArrayLike, b: ArrayLike, lower: bool = False,
     assume_a: specify what properties of ``a`` can be assumed. Options are:
 
       - ``"gen"``: generic matrix (default)
-      - ``"sym"``: symmetric matrix
-      - ``"her"``: hermitian matrix
+      - ``"sym"``: symmetric matrix (not supported in JAX)
+      - ``"her"``: hermitian matrix (not supported in JAX)
       - ``"pos"``: positive-definite matrix
 
     overwrite_a: unused by JAX

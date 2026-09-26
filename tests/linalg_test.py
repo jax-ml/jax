@@ -1557,6 +1557,32 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker)
 
   @jtu.sample_product(
+    assume_a=['sym', 'her'],
+    lower=[False, True],
+    dtype=[np.float32, np.complex64],
+  )
+  def testSolveUnsupportedAssumeA(self, assume_a, lower, dtype):
+    rng = jtu.rand_default(self.rng())
+    a = rng((3, 3), dtype)
+    b = rng((3,), dtype)
+    msg = f"assume_a='{assume_a}' is not supported"
+    with self.assertRaisesRegex(NotImplementedError, msg):
+      jsp.linalg.solve(a, b, assume_a=assume_a, lower=lower)
+
+    @jax.jit
+    def f(a, b):
+      return jsp.linalg.solve(a, b, assume_a=assume_a, lower=lower)
+
+    with self.assertRaisesRegex(NotImplementedError, msg):
+      f(a, b)
+
+  def testSolveInvalidAssumeA(self):
+    a = np.eye(3, dtype=np.float32)
+    b = np.ones(3, dtype=np.float32)
+    with self.assertRaisesRegex(ValueError, "Expected assume_a to be one of"):
+      jsp.linalg.solve(a, b, assume_a='invalid')
+
+  @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
       for lhs_shape, rhs_shape in [
         ((4, 4), (4,)),
