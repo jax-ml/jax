@@ -1519,6 +1519,53 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     d2 = jax.grad(jax.grad(lax.acosh))(jnp.float32(2.0))
     self.assertAllClose(d2, jnp.float32(-2.0 / 3.0 ** 1.5), rtol=1e-5)
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{dtype.__name__}", "dtype": dtype}
+      for dtype in jtu.dtypes.supported([np.complex64, np.complex128])
+  )
+  def testSignComplexDerivatives(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41000
+    # For z = a + bj != 0, sign(z) = z / |z| is real-differentiable with
+    # d(Re(sign), Im(sign)) / d(a, b) =
+    #   [[b^2/r^3, -ab/r^3], [-ab/r^3, a^2/r^3]],  r = |z|.
+    # The old JVP rule silently returned a zero tangent for complex inputs.
+    real_dtype = np.float32 if dtype == np.complex64 else np.float64
+    def real_view(ab):
+      s = lax.sign(lax.complex(ab[0], ab[1]))
+      return jnp.stack([jnp.real(s), jnp.imag(s)])
+
+    a, b = 0.3, 0.4
+    r3 = (a * a + b * b) ** 1.5
+    expected_jac = np.array([[b * b / r3, -a * b / r3],
+                             [-a * b / r3, a * a / r3]])
+    ab = jnp.array([a, b], dtype=real_dtype)
+    self.assertEqual(real_view(ab)[0].dtype, np.dtype(real_dtype))
+
+    self.assertAllClose(jax.jacfwd(real_view)(ab), expected_jac, rtol=1e-5,
+                        check_dtypes=False)
+    self.assertAllClose(jax.jacrev(real_view)(ab), expected_jac, rtol=1e-5,
+                        check_dtypes=False)
+
+    tangent = np.array([0.7, -0.2])
+    _, t = jax.jvp(real_view, (ab,), (jnp.array(tangent, dtype=real_dtype),))
+    self.assertAllClose(t, expected_jac @ tangent, rtol=1e-5,
+                        check_dtypes=False)
+
+    cotangent = np.array([0.5, 0.25])
+    _, vjp_fun = jax.vjp(real_view, ab)
+    (ct,) = vjp_fun(jnp.array(cotangent, dtype=real_dtype))
+    self.assertAllClose(ct, expected_jac.T @ cotangent, rtol=1e-5,
+                        check_dtypes=False)
+
+    g = jax.grad(lambda ab: jnp.sum(real_view(ab) ** 2))(ab)
+    self.assertAllClose(g, 2 * expected_jac.T @ np.asarray(real_view(ab)),
+                        rtol=1e-5, check_dtypes=False)
+
+    # Real inputs keep the historical zero-tangent behavior.
+    _, t_real = jax.jvp(lax.sign, (jnp.array([1.5, -2.0]),),
+                        (jnp.array([1.0, 1.0]),))
+    self.assertAllClose(t_real, jnp.zeros(2), check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

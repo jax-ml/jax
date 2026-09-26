@@ -4700,7 +4700,23 @@ ad.deflinear2(neg_p, lambda t, operand: [neg(t)])
 mlir.register_lowering(neg_p, partial(_nary_lower_hlo, hlo.negate))
 
 sign_p = standard_unop(_num, 'sign')
-ad.defjvp_zero(sign_p)
+
+def _sign_jvp_rule(g, _, x):
+  if _iscomplex(x):
+    # sign(z) = z / |z| is real-differentiable (but not holomorphic) for
+    # z != 0, with differential
+    #   df = t / |z| - z * Re(conj(z) * t) / |z|^3
+    # (see https://github.com/jax-ml/jax/issues/41000). The derivative is
+    # undefined at z = 0, where this rule yields NaNs.
+    r = abs(x)
+    r3 = mul(mul(r, r), r)
+    x_dtype = _dtype(x)
+    return sub(div(g, convert_element_type(r, x_dtype)),
+               mul(x, convert_element_type(div(real(mul(conj(x), g)), r3),
+                                           x_dtype)))
+  else:
+    return ad_util.Zero(x.aval.to_tangent_aval())
+ad.defjvp2(sign_p, _sign_jvp_rule)
 
 def _sign_lower_hlo(ctx, x):
   x_aval, = ctx.avals_in
