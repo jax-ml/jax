@@ -67,6 +67,8 @@ class PrefetchScalarGridSpec:
 
 The `num_scalar_prefetch` parameter indicates the number of scalar prefetch values. When this is set to a non-zero value, it changes the call signature of the kernel and index maps to expect additional prefetch values. The prefetch `Ref`s passed in to the `index_map` and kernel are all allocated in SMEM and are not partitioned into blocks as they do not have a BlockSpec defined. Moreover, the order of arguments to both `index_map` and kernel are always fixed and described below:
 
+Kernels must not modify scalar prefetch `Ref`s. An index map can read these buffers while the kernel pipeline runs, including with `pl.Buffered(1)`. TPU interpret mode rejects kernel writes to scalar prefetch `Ref`s.
+
 - Each `BlockSpec`'s `index_map` now expects the prefetch `Ref`s to come after the grid indices:
 ```python
 def index_map(*grid_indices, *prefetch_refs):

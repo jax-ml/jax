@@ -1959,6 +1959,14 @@ def interpret_pallas_call(
   del debug, cost_estimate, out_avals, name
   del metadata  # TODO(sharadmv): Add metadata to HLO.
 
+  scalar_refs = set(jaxpr.invars[grid_mapping.slice_index_ops])
+  if any(
+      isinstance(effect, (state.WriteEffect, state.AccumEffect))
+      and effect.input in scalar_refs
+      for effect in jaxpr.effects
+  ):
+    raise ValueError('TPU scalar prefetch buffers must be read-only in kernels.')
+
   if compiler_params is None:
     mosaic_params = mosaic_core.CompilerParams()
   else:
