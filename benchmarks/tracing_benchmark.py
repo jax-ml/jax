@@ -229,7 +229,7 @@ def _trace_grad(state, loss, *args):
 def _fem_compliance(n):
   """Nested-scan FEM assembly, per-row constraints, dense solve."""
   n_dof = (n + 1) ** 2
-  # Element matrix for nodes [p, p + 1, q, q + 1], q = p + n + 1.
+  # Element stiffness matrix [p, p + 1, q, q + 1], q = p + n + 1.
   ke_ref = jnp.array([[4., -1., -1., -2.], [-1., 4., -2., -1.],
                       [-1., -2., 4., -1.], [-2., -1., -1., 4.]]) / 6
 
@@ -275,14 +275,13 @@ def test_fem_assembly_constrained_grad_trace(state):
 
 
 def _galerkin_rom_loss(n_steps, dt=1e-2):
-  """Einsums interleaved with nonlinear ops, as in scientific workloads."""
+  """Einsums interleaved with nonlinear ops."""
   def loss(params, a):
     phi, w, u1, u2, u3, core = params
 
     def step(a, _):
       u = jnp.einsum("qn,bn->bq", phi, a)
       proj = jnp.einsum("q,qn,bq->bn", w, phi, jnp.tanh(u) * u)
-      # sum_jk C_ijk a_j a_k with Tucker-factored C, never formed.
       triad = jnp.einsum("ix,jy,kz,xyz,bj,bk->bi", u1, u2, u3, core, a, a)
       jac = jnp.einsum("q,qi,qj,bq->bij", w, phi, phi, 1 - jnp.tanh(u)**2)
       damping = jax.nn.softplus(jnp.einsum("bi,bij,bj->b", a, jac, a)
