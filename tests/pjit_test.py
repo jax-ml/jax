@@ -8369,6 +8369,48 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         core.ShardingTypeError, "lhs is unreduced while rhs is not"):
       g.trace(x, y)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_linear_elementwise_ops_unreduced(self, mesh):
+    np_a = np.arange(8.).reshape(2, 4)
+    np_b = np.arange(8.).reshape(4, 2) / 3
+    a = jax.device_put(np_a, P(None, 'x'))
+    b = jax.device_put(np_b, P('x', None))
+    expected = np_a @ np_b
+
+    def mm(a, b, scale=1.):
+      return jnp.einsum('ij,jk->ik', scale * a, b,
+                        out_sharding=P(None, None, unreduced={'x'}))
+    reduce = lambda x: reshard(x, P(None, None))
+
+    @jax.jit
+    def f(a, b):
+      c1, c2 = mm(a, b), mm(a, b, 2.)
+      z = lax.complex(c1, c2)
+      outs = [-c1, c1 - c2, z, jnp.conj(z), jnp.real(z), jnp.imag(z)]
+      for o in outs:
+        self.assertEqual(o.aval.sharding.spec.unreduced, frozenset('x'))
+      return [reduce(o) for o in outs]
+
+    outs = f(a, b)
+    expected_outs = [-expected, expected - 2 * expected,
+                     expected + 2j * expected, expected - 2j * expected,
+                     expected, 2 * expected]
+    for out, exp in zip(outs, expected_outs):
+      self.assertAllClose(out, exp)
+
+    loss = lambda a, b: jnp.sum(reduce(mm(a, b) - mm(a, b, 2.)) ** 2)
+    loss_ref = lambda a, b: jnp.sum((a @ b - 2 * (a @ b)) ** 2)
+    self.assertAllClose(jax.jit(jax.grad(loss, argnums=(0, 1)))(a, b),
+                        jax.grad(loss_ref, argnums=(0, 1))(np_a, np_b),
+                        atol=1e-4, rtol=1e-4)
+
+    with self.assertRaisesRegex(
+        core.ShardingTypeError, "lhs is unreduced while rhs is not. `sub`"):
+      jax.jit(lambda a, b: mm(a, b) - reduce(mm(a, b))).trace(a, b)
+
+    with self.assertRaisesRegex(core.ShardingTypeError, "exp is not linear"):
+      jax.jit(lambda a, b: jnp.exp(mm(a, b))).trace(a, b)
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_eval_shape(self, mesh):
     np_inp = np.arange(16).reshape(8, 2)
