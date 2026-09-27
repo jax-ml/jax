@@ -4705,6 +4705,33 @@ class ShardMapTest(jtu.JaxTestCase):
     f(arr)  # doesn't crash
 
   @jtu.with_explicit_mesh((2,), 'x')
+  def test_mutable_array_arg_aliased_error(self, mesh):
+    x_ref = core.new_ref(jnp.zeros(4, 'float32', out_sharding=P('x')))
+
+    @jax.jit
+    def f(x_ref):
+      shard_map(lambda a, b: None, in_specs=(P('x'), P('x')),
+                out_specs=None)(x_ref, x_ref)
+
+    with self.assertRaisesRegex(ValueError, "only one reference to a mutable"):
+      f(x_ref)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_mutable_array_arg_aliased_typecheck_error(self, mesh):
+    a = core.new_ref(jnp.zeros(4, 'float32', out_sharding=P('x')))
+    b = core.new_ref(jnp.zeros(4, 'float32', out_sharding=P('x')))
+
+    def f(a, b):
+      shard_map(lambda a, b: None, in_specs=(P('x'), P('x')),
+                out_specs=None)(a, b)
+
+    jaxpr = jax.make_jaxpr(f)(a, b).jaxpr
+    eqn, = [e for e in jaxpr.eqns if e.primitive.name == 'shard_map']
+    bad = jaxpr.replace(eqns=[eqn.replace(invars=[eqn.invars[0]] * 2)])
+    with self.assertRaisesRegex(core.JaxprTypeError, "same Ref"):
+      core.check_jaxpr(bad)
+
+  @jtu.with_explicit_mesh((2,), 'x')
   def test_mutable_array_arg_basic(self, mesh):
     x_ref = core.new_ref(jnp.zeros(4, 'float32', out_sharding=P('x')))
 
