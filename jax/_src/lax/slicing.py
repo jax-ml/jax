@@ -1477,6 +1477,7 @@ slice_p = standard_primitive(_slice_shape_rule, input_dtype, 'slice',
                              vma_rule=partial(core.standard_vma_rule, 'slice'),
                              ur_rule=_slice_ur_rule)
 ad.primitive_jvps[slice_p] = _slice_jvp_rule
+ad.primitive_linearizations[slice_p] = partial(ad.linear_linearize, slice_p)
 ad.fancy_transposes[slice_p] = _slice_transpose_fancy
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 
