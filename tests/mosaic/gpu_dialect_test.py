@@ -2155,6 +2155,48 @@ ir.MLIRError,
     self.assertEqual(bcast_op.operand, block.arguments[0])
 
 
+  def test_scan_dimension_must_be_in_range(self):
+    with ir.InsertionPoint(self.module.body):
+      [source] = undefs(ir.VectorType.get([128, 128], ir.F32Type.get()))
+      mgpu.dialect.scan(
+          source,
+          kind=mgpu.dialect.ScanKind.Add,
+          dimension=2,
+          offset=0,
+          scratch_size=0,
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError, r"The scanned dimension must be in \[0, 2\) but got 2"
+    ):
+      self.module.operation.verify()
+
+  @parameterized.parameters(0, 1)
+  def test_scan_with_an_in_range_dimension_passes(self, dimension):
+    with ir.InsertionPoint(self.module.body):
+      [source] = undefs(ir.VectorType.get([128, 128], ir.F32Type.get()))
+      mgpu.dialect.scan(
+          source,
+          kind=mgpu.dialect.ScanKind.Add,
+          dimension=dimension,
+          offset=0,
+          scratch_size=0,
+      )
+    self.assertTrue(self.module.operation.verify())
+
+  def test_scan_accepts_a_rank_one_source(self):
+    with ir.InsertionPoint(self.module.body):
+      [source] = undefs(ir.VectorType.get([128], ir.F32Type.get()))
+      mgpu.dialect.scan(
+          source,
+          kind=mgpu.dialect.ScanKind.LogAddExp,
+          dimension=0,
+          offset=0,
+          scratch_size=0,
+      )
+    self.assertTrue(self.module.operation.verify())
+
+
 class DialectLoweringTest(MosaicGpuTest):
 
   def test_lowering_removes_mosaic_gpu_ops(self):
