@@ -943,9 +943,7 @@ def linear_jvp(primitive, primals, tangents, **params):
     return val_out, primitive.bind(*tangents, **params)
 
 def linear_linearize(primitive, _is_vjp, nzs, *primals, **params):
-  # The tangent map of a linear primitive is the primitive itself, so there is
-  # nothing to trace: this skips the jvp + partial eval that
-  # `fallback_linearize_rule` runs for every such primitive.
+  # Tangent of a linear primitive is the primitive itself -> fast path.
   primal_out = primitive.bind(*primals, **params)
   nz = any(nzs)
   nzs_out = [nz] * len(primal_out) if primitive.multiple_results else nz
