@@ -1081,6 +1081,16 @@ def _scan_accum_class(x: Array | core.Ref | ad.GradAccum) -> AccumClass:
   else:
     return AccumClass.No
 
+def _dedup_ref_accums(accums):
+  idx: dict[int, int] = {}
+  uniq, dups = [], []
+  for x in accums:
+    if (i := idx.get(id(core.get_referent(x.inst().ref)))) is None:
+      i = idx[id(core.get_referent(x.ref))] = len(uniq)
+      uniq.append(x)
+    dups.append(i)
+  return uniq, tuple(dups)
+
 @weakref_lru_cache
 def _rearrange_binders_for_transpose(
     jaxpr: Jaxpr, const_cls: tuple[AccumClass, ...], num_carry: int,
@@ -1133,6 +1143,14 @@ def _scan_transpose_fancy(cts, *args, reverse, length, ft_in, ft_out, jaxpr,
   mut_xs_bar   = [x for x, k in zip(xs, xs_cls) if k is AccumClass.Ref]
   immut_xs_dot = [x for x, k in zip(xs, xs_cls) if k is AccumClass.Val]
   eres         = [x for x, k in zip(xs, xs_cls) if k is AccumClass.No ]
+  mut_consts_bar, consts_dups = _dedup_ref_accums(mut_consts_bar)
+  mut_xs_bar, xs_dups = _dedup_ref_accums(mut_xs_bar)
+  referents = lambda accums: {id(core.get_referent(x.ref)) for x in accums}
+  if referents(mut_consts_bar) & referents(mut_xs_bar):
+    raise NotImplementedError(
+        "Differentiating a scan with respect to an array that is both a "
+        "constant and a scanned-over input, with its gradient accumulated into "
+        "a Ref (as with `with_refs`), isn't supported yet.")
   jaxpr = _rearrange_binders_for_transpose(jaxpr, const_cls, num_carry, xs_cls)
   del consts, xs, args
 
@@ -1158,7 +1176,8 @@ def _scan_transpose_fancy(cts, *args, reverse, length, ft_in, ft_out, jaxpr,
   trans_avals = trans_avals + [core.mapped_leading_aval(length, a) for a in ext_avals]
   xs_avals = tuple(core.mapped_leading_aval(length, accum_typeof(x)) for x in immut_xs_dot)
   jaxpr_trans, log_tree = _transpose_scan_jaxpr_fancy(
-      jaxpr, trans_tree, tuple(trans_avals), lin_refs, xs_avals)
+      jaxpr, trans_tree, tuple(trans_avals), lin_refs, xs_avals, consts_dups,
+      xs_dups)
 
   # run it; per-iteration log entries come out as extra ys outputs, stacked
   # index-aligned with the forward scan's iterations
@@ -1188,14 +1207,16 @@ def _scan_transpose_fancy(cts, *args, reverse, length, ft_in, ft_out, jaxpr,
 # only the pure tangents' cotangents appear as outputs.
 @weakref_lru_cache
 def _transpose_scan_jaxpr_fancy(
-    jaxpr, trans_tree, trans_avals, lin_refs, immut_xs_avals
-  ) -> tuple[core.Jaxpr, PyTreeDef]:
+    jaxpr, trans_tree, trans_avals, lin_refs, immut_xs_avals, consts_dups,
+    xs_dups) -> tuple[core.Jaxpr, PyTreeDef]:
   cell = lambda: None
   def transposed(*args):
     args = [ad.RefAccum(typeof(x).inner_aval, x) if l else x
             for l, x in zip(lin_refs, args)]
     ires, mut_consts_bar, ct_immut_consts, ct_carry, mut_xs_bar, ct_ys, eres = \
         tree_unflatten(trans_tree, args)
+    mut_consts_bar = [mut_consts_bar[i] for i in consts_dups]
+    mut_xs_bar = [mut_xs_bar[i] for i in xs_dups]
     immut_consts_dot = [ad.ValAccum(core.typeof(x), x) for x in ct_immut_consts]
     carry_dot = [ad.ValAccum(core.typeof(x)) for x in ct_carry]
     immut_xs_dot = [ad.ValAccum(a) for a in immut_xs_avals]
