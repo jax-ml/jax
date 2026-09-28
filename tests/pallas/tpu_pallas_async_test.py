@@ -506,7 +506,6 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
               sem0,
               1,
               device_id={'device': i, 'core': j},
-              device_id_type=pl.DeviceIdType.MESH,
           )
       pl.semaphore_wait(sem0, ddim * num_cores)
 
@@ -519,7 +518,6 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
           send_sem=send_sem,
           recv_sem=recv_sem,
           device_id={'core': 1},
-          device_id_type=pl.DeviceIdType.MESH,
       )
 
       @pl.when(core_index == 0)
