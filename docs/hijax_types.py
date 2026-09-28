@@ -33,7 +33,7 @@
 # and produce arrays out, and every intermediate the tracing machinery sees has
 # an array type like `f32[3,4]`. When you want to work with aggregate data, the
 # usual tool is a
-# [pytree](https://docs.jax.dev/en/latest/working-with-pytrees.html): you
+# [pytree](https://docs.jax.dev/en/latest/pytrees.html): you
 # bundle arrays into containers, and JAX transparently flattens the bundle
 # into its array leaves at every boundary.
 #

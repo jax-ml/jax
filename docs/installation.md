@@ -253,7 +253,7 @@ plugin/PJRT packages on top of it.
 Each JAX ROCm plugin release targets a specific ROCm version, so the installed
 ROCm must match the version the plugin was built against. AMD maintains the
 authoritative mapping in the
-[JAX on ROCm compatibility matrix](https://rocm.docs.amd.com/en/latest/compatibility/ml-compatibility/jax-compatibility.html);
+[JAX on ROCm compatibility matrix](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/3rd-party/jax-install.html);
 consult it to confirm which ROCm version your target JAX release requires before
 installing. The `rocm7` plugin packages require a ROCm 7.x installation.
 
@@ -319,7 +319,7 @@ See the [JAX on ROCm installation guide](https://rocm.docs.amd.com/projects/inst
 for the recommended `docker run` flags and for version-pinned image tags.
 
 **Note**: ROCm support on Windows WSL2 is experimental. For WSL installation, you may need to:
-1. Install [ROCm for WSL](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/tutorial/quick-start.html) following AMD's official guide
+1. Install [ROCm for WSL](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/) following AMD's official guide
 2. Follow the standard Linux ROCm JAX installation steps within your WSL environment
 3. Be aware that performance and stability may differ from native Linux installations
 

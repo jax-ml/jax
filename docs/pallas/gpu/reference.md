@@ -261,7 +261,7 @@ The available transforms are:
   `x.reshape(128 // 8, 128 // 64, 8, 64).transpose(0, 2, 1, 3)` in row-major order.
 * `plgpu.SwizzleTransform(swizzle_in_bytes)`, which transforms the data as described in the
   [PTX docs](https://docs.nvidia.com/cuda/parallel-thread-execution/#tensor-swizzling-modes) and
-  [CUDA docs](https://docs.nvidia.com/cuda/cuda-c-programming-guide/#the-swizzle-modes).
+  [CUDA docs](https://docs.nvidia.com/cuda/cuda-programming-guide/).
   Swizzling is useful, because it allows transferring data in MMA-related layouts
   between register and shared memory without bank conflicts. The exact details
   of how the memory looks like after swizzling _are not that important_, since
@@ -1140,7 +1140,7 @@ y = jax.jit(
 
 ## Cluster launch control
 
-[Cluster launch control](https://docs.nvidia.com/cutlass/media/docs/cpp/blackwell_cluster_launch_control.html#blackwell-cluster-launch-control)
+[Cluster launch control](https://docs.nvidia.com/cutlass/latest/media/docs/cpp/blackwell_cluster_launch_control.html#blackwell-cluster-launch-control)
 is a feature introduced in Blackwell GPUs (SM100A+) that enables work stealing
 or dynamic scheduling of the CUDA grid. This allows an SM
 (or cluster of SMs) that has finished its work to cancel the launch of block
