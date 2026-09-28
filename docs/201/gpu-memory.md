@@ -84,7 +84,7 @@ of GPU memory used.
 **`TF_GPU_ALLOCATOR=cuda_malloc_async`**
 
 This replaces XLA's own BFC memory allocator with
-[`cudaMallocAsync`](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY__POOLS.html).
+[`cudaMallocAsync`](https://docs.nvidia.com/cuda/cuda-runtime-api/cuda_runtime_api/group__CUDART__MEMORY__POOLS.html).
 This removes the big fixed preallocation and uses a memory pool that
 grows. The expected benefit is no need to set
 `XLA_CLIENT_MEM_FRACTION`.

@@ -691,7 +691,7 @@ print(f"Fused Bias+ReLU PASSED (batch={BATCH}, width={WIDTH})")
 print(f"  Max error: {float(jnp.max(jnp.abs(result - ref))):.2e}")
 ```
 
-> **Going further:** For a production-grade generalization of elementwise kernels — with optimized TV (thread-value) layouts, vectorized memory access, and support for arbitrary binary operators including custom ops like `leaky_relu` — see NVIDIA's [elementwise_apply_example.py](https://github.com/NVIDIA/cutlass/blob/main/examples/python/CuTeDSL/jax/elementwise_apply_example.py).
+> **Going further:** For a production-grade generalization of elementwise kernels — with optimized TV (thread-value) layouts, vectorized memory access, and support for arbitrary binary operators including custom ops like `leaky_relu` — see NVIDIA's [elementwise_apply_example.py](https://github.com/NVIDIA/cutlass/blob/main/examples/python/CuTeDSL/dsl_tutorials/jax/elementwise_apply_example.py).
 
 +++
 
@@ -1069,7 +1069,7 @@ rehydrated = export.deserialize(blob)
 result = rehydrated.call(a, b)
 ```
 
-The following example is adapted from [NVIDIA's official export example](https://github.com/NVIDIA/cutlass/blob/main/examples/python/CuTeDSL/jax/cutlass_call_export.py). It exports a function that adds two matrices with a CUTLASS kernel and applies `sigmoid`, then serializes, deserializes, and verifies the result.
+The following example is adapted from [NVIDIA's official export example](https://github.com/NVIDIA/cutlass/blob/main/examples/python/CuTeDSL/dsl_tutorials/jax/cutlass_call_export.py). It exports a function that adds two matrices with a CUTLASS kernel and applies `sigmoid`, then serializes, deserializes, and verifies the result.
 
 ```{code-cell}
 from cutlass.jax import get_export_disabled_safety_checks
