@@ -39,9 +39,11 @@ archive_override(
 )
 
 # flatbuffers transitively depends on aspect_rules_esbuild 0.21.0, which is incompatible with Bazel 9.
+# Pin to 0.25.1, the last Bazel 9-compatible release on aspect_rules_js 2.x (required by flatbuffers 25.2.10).
+# TODO: Remove this override once flatbuffers is upgraded to >= 25.12.19.
 single_version_override(
     module_name = "aspect_rules_esbuild",
-    version = "0.26.0",
+    version = "0.25.1",
 )
 
 # TODO: upstream, otherwise we have to duplicate the patches in jax
