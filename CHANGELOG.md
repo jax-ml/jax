@@ -55,6 +55,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`~jax.numpy.ldexp`, {func}`jax.numpy.frexp`. Typical users should not
     see any change in behavior, but you may notice more efficient batching
     and autodiff, and more concise representations in jaxprs.
+  * The "web" debugger now defaults to hostname "localhost", which is a safer
+    default that avoids inadvertently opening a port to the world.
 
 * Bug fixes
   * Fixed the gradient of {func}`jax.numpy.ldexp` at `x = 0.0`, which previously
