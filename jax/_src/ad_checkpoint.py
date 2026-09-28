@@ -808,7 +808,7 @@ def remat_dce(used_outputs: list[bool], live_ins: list[bool],
   new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs,
                                         live_inputs=live_ins)
   if (not any(used_inputs) and not any(used_outputs) and
-      _has_effects(new_jaxpr.effects)):
+      not _has_effects(new_jaxpr.effects)):
     return used_inputs, None
   if (new_jaxpr is eqn.params['jaxpr'] and
       all(used_inputs) and all(used_outputs)):
