@@ -1698,7 +1698,7 @@ def sync_copy(src: REF | BufferedRef, dst: REF | BufferedRef, indices):
     tpu_helpers.sync_copy(window_ref, hbm_ref)
 
 
-@tree_util.register_pytree_node_class
+@tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, eq=False)
 class PipelineStep:
   """Positional context for a single pipeline body invocation.
@@ -1710,26 +1710,8 @@ class PipelineStep:
       grid is partitioned along some ``core_axis``, each core has its own
       independent local index over its partition of the grid.
   """
-  index: tuple[int | jax.Array, ...]
+  index: tuple[jax.Array, ...]
   local_index: jax.Array
-
-  def tree_flatten(self):
-    children: list[jax.Array] = []
-    aux: list[int | None] = []
-    for v in (*self.index, self.local_index):
-      if isinstance(v, int):
-        aux.append(v)
-      else:
-        aux.append(None)
-        children.append(v)
-    return children, tuple(aux)
-
-  @classmethod
-  def tree_unflatten(cls, aux, children):
-    it = iter(children)
-    vals = [v if v is not None else next(it) for v in aux]
-    *index, local_index = vals
-    return cls(index=tuple(index), local_index=local_index)
 
 
 def _emit_pipeline(
@@ -1872,7 +1854,8 @@ def _emit_pipeline(
         with scheduler._named_scope("ep_run_kernel"):
           if _explicit_indices:
             pipeline_step = PipelineStep(
-                scheduler.indices, scheduler.step
+                tuple(jnp.asarray(i, jnp.int32) for i in scheduler.indices),
+                scheduler.step,
             )
             body(pipeline_step, *current_refs, *scratches)
           else:
@@ -1909,7 +1892,8 @@ def _emit_pipeline(
           with scheduler._named_scope("ep_run_kernel"):
             if _explicit_indices:
               pipeline_step = PipelineStep(
-                  scheduler.indices, scheduler.step
+                  tuple(jnp.asarray(i, jnp.int32) for i in scheduler.indices),
+                  scheduler.step,
               )
               body(pipeline_step, *current_refs, *scratches)
             else:
@@ -2530,8 +2514,7 @@ def emit_pipeline_to_jaxpr(
 
     def new_body(ps: PipelineStep, *args):
       original_indices = tuple(
-          jnp.array(idx) if isinstance(idx, int) else idx
-          for i, idx in enumerate(ps.index)
+          idx for i, idx in enumerate(ps.index)
           if i not in grid_mapping.vmapped_dims)
       ps = dataclasses.replace(ps, index=original_indices)
       indices_consts_args = (ps, all_args.body_consts, args)
