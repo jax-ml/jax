@@ -2994,7 +2994,8 @@ class ShardMapTest(jtu.JaxTestCase):
       z = jnp.einsum('ab,bc->ac', x, y, out_sharding=P(unreduced={'x'}))
       return shard_map(lambda x: jnp.sin(x), out_specs=P())(z)
 
-    with self.assertRaisesRegex(core.ShardingTypeError, "sin is not linear"):
+    with self.assertRaisesRegex(
+        core.ShardingTypeError, "sin is a non-linear operation"):
       f(arr1, arr2)
 
   @jtu.with_explicit_mesh((2,), 'x')
@@ -4529,7 +4530,8 @@ class ShardMapTest(jtu.JaxTestCase):
       out = jax.lax.pcast(x, 'x', to='unreduced')
       return jnp.sin(out)
 
-    with self.assertRaisesRegex(core.ShardingTypeError, "sin is not linear"):
+    with self.assertRaisesRegex(
+        core.ShardingTypeError, "sin is a non-linear operation"):
       g(arr)
 
   @jtu.with_explicit_mesh((2,), 'x')

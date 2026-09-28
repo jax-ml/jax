@@ -8340,8 +8340,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     expected_out = np.einsum("d,dh,d->h", n1, n2, n3)
     self.assertArraysEqual(reshard_out, expected_out)
 
+  @parameterized.named_parameters(
+      ('add', 'add', lax.add),
+      ('sub', 'sub', lax.sub),
+  )
   @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
-  def test_add_unreduced_error(self, mesh):
+  def test_add_unreduced_error(self, name, op, mesh):
     np_inp = np.arange(16).reshape(8, 2)
     x = jax.device_put(np_inp, P('x', 'y'))
     y = jax.device_put(np_inp.T, P('y', None))
@@ -8352,18 +8356,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     def f(x, y, a, b):
       m1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced={'y'}))
       m2 = jnp.einsum('xy,yz->xz', a, b, out_sharding=P('x', unreduced={'z'}))
-      return m1 + m2
+      return op(m1, m2)
 
     with self.assertRaisesRegex(
         core.ShardingTypeError,
-        "lhs and rhs to `add` must be unreduced along the same mesh axes"):
+        f"lhs and rhs to `{name}` must be unreduced along the same mesh axes"):
       f.trace(x, y, a, b)
 
     @jax.jit
     def g(x, y):
       m1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced={'y'}))
       m2 = jnp.einsum('xy,yz->xz', a, b, out_sharding=P('x'))
-      return m1 + m2
+      return op(m1, m2)
 
     with self.assertRaisesRegex(
         core.ShardingTypeError, "lhs is unreduced while rhs is not"):
@@ -9782,6 +9786,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       ('mul', jax.lax.mul),
       ('add', jax.lax.add),
+      ('sub', jax.lax.sub),
   )
   @jtu.with_explicit_mesh((2,), 'x')
   def test_both_inputs_reduced(self, func, mesh):
@@ -9805,9 +9810,55 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(reshard(out1, P()), ex_out1)
     self.assertArraysEqual(reshard(out2, P()), ex_out2)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_neg_and_sub_unreduced(self, mesh):
+    np_x = np.arange(16.).reshape(8, 2)
+    np_y = np.arange(16., 32.).reshape(2, 8)
+    x = jax.device_put(np_x, P('x', 'y'))
+    y = jax.device_put(np_y, P('y', None))
+    u_spec = P('x', None, unreduced={'y'})
+
+    @jax.jit
+    def f(x, y):
+      u1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=u_spec)
+      u2 = -u1
+      self.assertEqual(u2.aval.sharding.spec, u_spec)
+      u3 = u1 - u2
+      self.assertEqual(u3.aval.sharding.spec, u_spec)
+      return u2, u3
+
+    u2, u3 = f(x, y)
+    self.assertEqual(u2.sharding, NamedSharding(mesh, u_spec))
+    self.assertEqual(u3.sharding, NamedSharding(mesh, u_spec))
+    expected = jnp.dot(x, y, out_sharding=P('x', None))
+    self.assertArraysEqual(reshard(u2, P('x', None)), -expected)
+    self.assertArraysEqual(reshard(u3, P('x', None)), expected * 2)
+
+    @jax.jit
+    def loss(x, y):
+      _, u3 = f(x, y)
+      return reshard(u3, P('x', None)).sum()
+
+    gx, gy = jax.jit(jax.grad(loss, argnums=(0, 1)))(x, y)
+    ex_gx, ex_gy = jax.jit(
+        jax.grad(lambda a, b: ((a @ b) * 2).sum(), argnums=(0, 1))
+    )(np_x, np_y)
+    self.assertArraysAllClose(gx, ex_gx)
+    self.assertArraysAllClose(gy, ex_gy)
+
+    r_arr = jax.device_put(np.arange(8.), P(None, reduced={'x'}))
+    r_neg = jax.jit(lambda a: -a)(r_arr)
+    self.assertEqual(r_neg.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
+    r_grad = jax.jit(jax.grad(lambda a: (-a).sum()))(r_arr)
+    self.assertEqual(r_grad.sharding,
+                     NamedSharding(mesh, P(None, unreduced={'x'})))
+    self.assertArraysEqual(reshard(r_grad, P()), -np.ones((8,)),
+                           check_dtypes=False)
+
   @parameterized.named_parameters(
       ('mul', jax.lax.mul),
       ('add', jax.lax.add),
+      ('sub', jax.lax.sub),
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_one_input_reduced_another_replicated(self, func, mesh):
@@ -9904,6 +9955,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       ('mul', jax.lax.mul),
       ('add', jax.lax.add),
+      ('sub', jax.lax.sub),
   )
   @jtu.with_explicit_mesh((2,), 'x')
   def test_one_input_sharded_another_reduced(self, func, mesh):
