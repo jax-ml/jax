@@ -67,6 +67,7 @@ from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType, get_abstract_mesh
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
+from jax._src.lib import ifrt_version, jaxlib_extension_version
 from jax._src.util import curry, unzip2
 from jax._src import tree_util
 
@@ -11915,6 +11916,13 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_jnp_zeros_out_sharding_partial_manual_unreduced_reduced(self, mesh):
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Requires libtpu >= 0.0.50')
+    if jaxlib_extension_version < 500:
+      self.skipTest('Requires jaxlib_extension_version >= 500')
+    if ifrt_version < 72:
+      self.skipTest('Requires ifrt_version >= 72')
+
     @jax.jit
     @jax.shard_map(in_specs=(), out_specs=P(), axis_names={'x'})
     def f():
