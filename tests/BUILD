@@ -344,6 +344,9 @@ jax_multiplatform_test(
             "notsan",
         ],  # Times out on TPU with asan/tsan.
     },
+    env = {
+        "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
+    },
     shard_count = {
         "tpu": 5,
         "cpu": 5,
@@ -1447,6 +1450,9 @@ jax_multiplatform_test(
     disable_configs = [
         "gpu_h100",  # TODO(phawkins): numerical failure on h100
     ],
+    env = {
+        "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
+    },
     shard_count = {
         "cpu": 20,
         "gpu": 20,
