@@ -808,11 +808,11 @@ class custom_vjp[ReturnValue]:
     args_flat, in_tree = tree_flatten(dyn_args)
     in_avals = tuple(core.typeof(x) for x in args_flat)
     if config.mutable_array_checks.value:
-      f_ = _check_primal_refs(f_, self.nondiff_argnums, f_.debug_info)
+      _check_for_aliased_refs(self.fun, (), debug_fun, dyn_args)
+      f_ = _check_primal_refs(f_)
     flat_fun, out_type = _flatten_fun_nokwargs(f_, in_tree)
     flat_fwd, out_trees = _flatten_fwd(
-        fwd_, self.nondiff_argnums, self.symbolic_zeros, debug_fun,
-        debug_fwd, in_tree, out_type)
+        fwd_, self.symbolic_zeros, debug_fun, debug_fwd, in_tree, out_type)
     flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees, self.fun,
                             self.with_logs)
     out_flat = custom_vjp_call_p.bind(*args_flat, subfuns=(flat_fun, flat_fwd, flat_bwd),
@@ -822,9 +822,7 @@ class custom_vjp[ReturnValue]:
     return tree_unflatten(out_tree, out_flat)
 
 @lu.transformation2
-def _check_primal_refs(
-    f: Callable, nondiff_argnums: Sequence[int], debug: core.DebugInfo, *args):
-  _check_for_aliased_refs(f, nondiff_argnums, debug, args)
+def _check_primal_refs(f: Callable, *args):
   out = f(*args)
   _check_for_returned_refs(f, out, 'primal', [], 0)
   return out
@@ -901,7 +899,6 @@ def _check_for_tracers(x):
 
 @partial(lu.transformation_with_aux2, use_eq_store=True)
 def _flatten_fwd(f: Callable, store: lu.EqualStore,
-                 nondiff_argnums: Sequence[int],
                  symbolic_zeros: bool,
                  debug_primal: core.DebugInfo,
                  debug_fwd: core.DebugInfo,
@@ -913,8 +910,6 @@ def _flatten_fwd(f: Callable, store: lu.EqualStore,
   else:
     args = args[::2]
   py_args = tree_unflatten(in_tree, args)
-  if config.mutable_array_checks.value:
-    _check_for_aliased_refs(f, nondiff_argnums, debug_primal, py_args)
   pair_out = f(*py_args)
   if not isinstance(pair_out, (list, tuple)) or len(pair_out) != 2:
     msg = (f"Custom VJP fwd rule {fwd_name} for function {primal_name} "
@@ -1841,8 +1836,8 @@ def optimize_remat_of_custom_vjp_fwd[ReturnValue](
       fwd_ = lu.wrap_init(fwd, debug_info=debug_fwd)
     args_flat, in_tree = tree_flatten(dyn_args)
     flat_fun, out_type = _flatten_fun_nokwargs(f_, in_tree)
-    flat_fwd, out_trees = _flatten_fwd(fwd_, nondiff_argnums, False,
-                                       debug_fun, debug_fwd, in_tree, out_type)
+    flat_fwd, out_trees = _flatten_fwd(fwd_, False, debug_fun, debug_fwd,
+                                       in_tree, out_type)
     flat_fwd = _fix_fwd_args(flat_fwd)
 
     in_avals = [core.typeof(x) for x in args_flat]
