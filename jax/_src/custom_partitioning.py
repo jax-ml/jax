@@ -192,6 +192,8 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
     )
   axis_context = sharding_impls.SPMDAxisContext(mesh, frozenset(mesh.axis_names))
   with core.extend_axis_env_nd(mesh.shape.items()):
+    if closed_jaxpr.is_high:
+      closed_jaxpr = pe.lower_jaxpr2(closed_jaxpr)
     module = mlir.build_mlir_module_helper(
         closed_jaxpr,
         name="tmp_xla_computation",
@@ -248,8 +250,24 @@ def _custom_partitioning_impl(*args, call, in_tree, out_tree,
   return core.jaxpr_as_fun(call)(*args)
 
 
+def _custom_partitioning_to_lojax(*hi_args, call, **params):
+  lo_args_lol = [a.lower_val(x) for a, x in zip(call.in_avals, hi_args)]
+  lo_args = [x for xs in lo_args_lol for x in xs]
+  in_avals = ft.flatten(
+      ([[core.typeof(x) for x in xs] for xs in lo_args_lol], {})
+  )
+  mesh = mesh_lib.thread_resources.env.physical_mesh
+  with core.extend_axis_env_nd(mesh.shape.items()):
+    lo_call, out_avals = pe.lower_jaxpr(call, in_avals)
+  assert not lo_call.consts
+  all_outs = custom_partitioning_p.bind(*lo_args, call=lo_call, **params)
+  lo_outs = out_avals.update(all_outs)
+  return [a.raise_val2(y) for a, y in zip(call.out_avals, lo_outs.unpack())]
+
+
 custom_partitioning_p.def_abstract_eval(_custom_partitioning_abstract_eval)
 custom_partitioning_p.def_impl(_custom_partitioning_impl)
+custom_partitioning_p.to_lojax = _custom_partitioning_to_lojax
 
 
 def _check_for_tracers(x):
