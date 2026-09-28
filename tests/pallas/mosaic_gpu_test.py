@@ -4451,6 +4451,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       dtype=(
           jnp.bfloat16,
           jnp.float16,
+          jnp.float64,
           jnp.float8_e4m3fn,
           jnp.float8_e5m2,
           jnp.int8,
@@ -4461,8 +4462,15 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     m = k = 128
     n = 8
     dtype = jnp.dtype(dtype)
+    if dtype == jnp.float64 and not config.enable_x64.value:
+      self.skipTest("float64 requires x64 to be enabled")
     is_integer = jnp.issubdtype(dtype, jnp.integer)
-    acc_dtype = jnp.int32 if is_integer else jnp.float32
+    if is_integer:
+      acc_dtype = jnp.int32
+    elif dtype == jnp.float64:
+      acc_dtype = jnp.float64
+    else:
+      acc_dtype = jnp.float32
 
     @functools.partial(
         self.kernel,
@@ -4492,7 +4500,8 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     if is_integer:
       np.testing.assert_array_equal(res, ref)
     else:
-      np.testing.assert_allclose(res, ref, atol=1e-2, rtol=1e-2)
+      atol = rtol = 1e-12 if dtype == jnp.float64 else 1e-2
+      np.testing.assert_allclose(res, ref, atol=atol, rtol=rtol)
 
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_griddepcontrol_warp_mesh(self):

@@ -6797,15 +6797,31 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_array_equal(result, (iota > 10).astype(jnp.uint8))
 
   @parameterized.product(
-      dtype=(jnp.bfloat16, jnp.float16, jnp.float8_e4m3fn, jnp.float8_e5m2,
-             jnp.int8, jnp.uint8, jnp.int4, jnp.uint4),
+      dtype=(
+          jnp.float64,
+          jnp.bfloat16,
+          jnp.float16,
+          jnp.float8_e4m3fn,
+          jnp.float8_e5m2,
+          jnp.int8,
+          jnp.uint8,
+          jnp.int4,
+          jnp.uint4,
+      ),
       m_warps=(1, 2, 4),
   )
   def test_warp_mma(self, dtype, m_warps):
     m, n, k = 128, 128, 128
     dtype = jnp.dtype(dtype)
+    if dtype == jnp.float64 and not config.enable_x64.value:
+      self.skipTest("float64 requires x64 to be enabled")
     is_integer = jnp.issubdtype(dtype, jnp.integer)
-    acc_dtype = jnp.int32 if is_integer else jnp.float32
+    if is_integer:
+      acc_dtype = jnp.int32
+    elif dtype == jnp.float64:
+      acc_dtype = jnp.float64
+    else:
+      acc_dtype = jnp.float32
     def kernel(ctx, acc, a, b, out, _):
       mma_layouts = mgpu.MMALayouts(utils.dtype_to_ir_type(dtype), m_warps=m_warps)
       ab_is_signed = utils.is_signed(dtype)
@@ -6839,7 +6855,8 @@ class FragmentedArrayTest(TestCase):
     if is_integer:
       np.testing.assert_array_equal(result, expected)
     else:
-      np.testing.assert_allclose(result, expected, atol=1e-5)
+      atol = rtol = 1e-12 if dtype == jnp.float64 else 1e-5
+      np.testing.assert_allclose(result, expected, atol=atol, rtol=rtol)
 
   @parameterized.product(
       dtype=(jnp.float16, jnp.int8,),
