@@ -208,6 +208,56 @@ class InterpretTest(jtu.JaxTestCase):
     kernel(jnp.arange(8, dtype=jnp.int32))
     self.assertTrue(mosaic_interpret.get_races().races_found)
 
+  def test_store(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128, 64), jnp.float32),
+        scratch_types=dict(smem=plgpu.SMEM((128, 64), jnp.float32)),
+        interpret=InterpretParams(),
+    )
+    def _kernel(x_ref, o_ref, smem):
+      plgpu.store(smem, x_ref[...])
+      plgpu.store(o_ref, smem[...] * 2, optimized=False)
+      plgpu.store(o_ref.at[:16, 8:24], jnp.zeros((16, 16), jnp.float32))
+
+    x = jnp.arange(128 * 64, dtype=jnp.float32).reshape(128, 64)
+    np.testing.assert_array_equal(_kernel(x), (x * 2).at[:16, 8:24].set(0))
+
+  @jtu.parameterized.parameters(False, True)
+  def test_store_participates_in_race_detection(self, with_race):
+    def _kernel(x_ref, o_ref, smem, barrier):
+      thread_idx = jax.lax.axis_index('t')
+
+      @pl.when(thread_idx == 0)
+      def _():
+        plgpu.store(smem, x_ref[...])
+        if not with_race:
+          plgpu.barrier_arrive(barrier)
+
+      @pl.when(thread_idx == 1)
+      def _():
+        if not with_race:
+          plgpu.barrier_wait(barrier)
+        o_ref[...] = smem[...]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_type=jax.ShapeDtypeStruct((8,), jnp.int32),
+        scratch_types=dict(
+            smem=plgpu.SMEM((8,), jnp.int32),
+            barrier=plgpu.Barrier(num_arrivals=1),
+        ),
+        num_threads=2,
+        thread_name='t',
+        interpret=InterpretParams(detect_races=True),
+    )
+
+    x = jnp.arange(8, dtype=jnp.int32)
+    out = kernel(x)
+    self.assertEqual(mosaic_interpret.get_races().races_found, with_race)
+    if not with_race:
+      np.testing.assert_array_equal(out, x)
+
   def test_ref_union_disjoint_group_lifetimes_are_allowed(self):
     # Each group is written before it is read, so their lifetimes do not
     # overlap and every read sees what its own group wrote.
