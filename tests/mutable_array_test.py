@@ -1933,7 +1933,64 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "x_ref and y_ref"):
       jax.vjp(f, x_ref, x_ref)
 
-  # TODO(mattjj): add test test_closure_and_argument_aliases_custom_vjp
+  def test_argument_aliases_custom_vjp_under_jit(self):
+    @jax.custom_vjp
+    def f(x_ref, y_ref):
+      ...
+    f.defvjp(lambda x_ref, y_ref: (None, None), lambda _, g: (None, None))
+    @jax.jit
+    def g():
+      x_ref = core.new_ref(0.)
+      f(x_ref, x_ref)
+    with self.assertRaisesRegex(ValueError, "x_ref and y_ref"):
+      g()
+
+  def test_closure_and_argument_aliases_custom_vjp(self):
+    @jax.jit
+    def g():
+      x_ref = core.new_ref(0.)
+      @jax.custom_vjp
+      def f(y_ref):
+        return x_ref[...] + y_ref[...]
+      f.defvjp(lambda y_ref: (f(y_ref), None), lambda _, g: (None,))
+      return f(x_ref)
+    with self.assertRaisesRegex(
+        ValueError, "closed over and passed as the argument y_ref"):
+      g()
+
+  @parameterized.parameters([False, True])
+  def test_argument_aliases_checkpoint(self, jit):
+    f = jax.checkpoint(lambda x_ref, y_ref: x_ref[...] + y_ref[...])
+    g = lambda x_ref: f(x_ref, x_ref)
+    if jit:
+      g = jax.jit(g)
+    x_ref = core.new_ref(0.)
+    with self.assertRaisesRegex(ValueError, "at both x_ref and y_ref"):
+      g(x_ref)
+
+  @parameterized.parameters([False, True])
+  def test_closure_and_argument_aliases_checkpoint(self, jit):
+    def g():
+      x_ref = core.new_ref(0.)
+      f = jax.checkpoint(lambda y_ref: x_ref[...] + y_ref[...])
+      return f(x_ref)
+    if jit:
+      g = jax.jit(g)
+    with self.assertRaisesRegex(
+        ValueError, "closed over and passed as the argument y_ref"):
+      g()
+
+  def test_closure_and_argument_aliases_shard_map(self):
+    mesh = jax.make_mesh((1,), ('x',))
+    @jax.jit
+    def g():
+      x_ref = core.new_ref(0.)
+      f = jax.shard_map(lambda y_ref: x_ref[...] + y_ref[...],
+                        mesh=mesh, in_specs=P(), out_specs=P())
+      return f(x_ref)
+    with self.assertRaisesRegex(
+        ValueError, "closed over and passed as the argument y_ref"):
+      g()
 
   @parameterized.parameters([False, True])
   def test_cond_both_branches_close_over_same_mutable_array(self, jit):
