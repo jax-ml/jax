@@ -23,7 +23,6 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <tuple>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -57,38 +56,6 @@ struct TritonKernelInstantiateResult {
   std::atomic<KernelCall*> cached_kernel_call{nullptr};
 
   TritonKernelInstantiateResult() { proto.set_version(2); }
-
-  TritonKernelInstantiateResult(const TritonKernelInstantiateResult& other)
-      : proto(other.proto),
-        cached_kernel_call(
-            other.cached_kernel_call.load(std::memory_order_relaxed)) {}
-
-  TritonKernelInstantiateResult(TritonKernelInstantiateResult&& other) noexcept
-      : proto(std::move(other.proto)),
-        cached_kernel_call(
-            other.cached_kernel_call.load(std::memory_order_relaxed)) {}
-
-  TritonKernelInstantiateResult& operator=(
-      const TritonKernelInstantiateResult& other) {
-    if (this != &other) {
-      proto = other.proto;
-      cached_kernel_call.store(
-          other.cached_kernel_call.load(std::memory_order_relaxed),
-          std::memory_order_relaxed);
-    }
-    return *this;
-  }
-
-  TritonKernelInstantiateResult& operator=(
-      TritonKernelInstantiateResult&& other) noexcept {
-    if (this != &other) {
-      proto = std::move(other.proto);
-      cached_kernel_call.store(
-          other.cached_kernel_call.load(std::memory_order_relaxed),
-          std::memory_order_relaxed);
-    }
-    return *this;
-  }
 
   static absl::StatusOr<std::string> Serialize(
       const TritonKernelInstantiateResult& instantiate_result) {
