@@ -1222,6 +1222,44 @@ class InterpretTest(jtu.JaxTestCase):
     self.assertEqual(y, sum(range(num_threads)))
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
+  @jtu.parameterized.parameters(1, 2)
+  def test_barrier_arrive_with_predicate(self, arriving_thread):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            smem_ref=plgpu.SMEM((), jnp.int32),
+            barrier=plgpu.Barrier(num_arrivals=1),
+        ),
+        num_threads=3,
+        thread_name='t',
+        interpret=InterpretParams(detect_races=True),
+    )
+    def _kernel(out_ref, smem_ref, barrier):
+      thread_id = jax.lax.axis_index('t')
+
+      @pl.when(thread_id == 0)
+      def _():
+        plgpu.barrier_wait(barrier)
+        out_ref[...] = smem_ref[...]
+
+      @pl.when(thread_id > 0)
+      def _():
+        @pl.when(thread_id == 1)
+        def _():
+          smem_ref[...] = jnp.int32(42)
+
+        plgpu.barrier_arrive(
+            barrier, predicate=thread_id == arriving_thread
+        )
+
+    y = _kernel()
+    if arriving_thread == 1:
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      self.assertEqual(y, 42)
+    else:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+
   # Test adapted from
   # https://docs.jax.dev/en/latest/pallas/gpu/reference.html#explicit-arrival-cross-thread-synchronization
   #
