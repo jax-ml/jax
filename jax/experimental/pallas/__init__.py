@@ -55,7 +55,7 @@ from jax._src.pallas.pallas_call import pallas_call as pallas_call
 from jax._src.pallas.pallas_call import pallas_call_p as pallas_call_p
 from jax._src.pallas.primitives import debug_print as debug_print
 from jax._src.pallas.primitives import delay as delay
-from jax._src.pallas.primitives import DeviceIdType as _deprecated_DeviceIdType
+from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
 from jax._src.pallas.primitives import get_global as get_global
 from jax._src.pallas.primitives import multiple_of as multiple_of
 from jax._src.pallas.primitives import num_programs as num_programs
@@ -80,15 +80,6 @@ ANY = MemorySpace.ANY
 HOST = _jax_core.MemorySpace.Host
 
 _deprecations = {
-    # Added September 28, 2026
-    "DeviceIdType": (
-        (
-            "jax.experimental.pallas.DeviceIdType is deprecated and will be"
-            " removed along with the device_id_type= parameter in semaphore and"
-            " DMA operations."
-        ),
-        _deprecated_DeviceIdType,
-    ),
     # Added August 17, 2026
     "reciprocal": (
         (
@@ -127,7 +118,6 @@ _deprecations = {
 
 import typing
 if typing.TYPE_CHECKING:
-  DeviceIdType = _deprecated_DeviceIdType
   core_map = _deprecated_core_map
   reciprocal = _deprecated_reciprocal
 else:

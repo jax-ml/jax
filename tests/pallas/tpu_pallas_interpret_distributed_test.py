@@ -51,18 +51,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
             message='jax.experimental.pallas.core_map is deprecated',
         )
     )
-    self.enter_context(
-        jtu.ignore_warning(
-            category=DeprecationWarning,
-            message='jax.experimental.pallas.DeviceIdType is deprecated',
-        )
-    )
-    self.enter_context(
-        jtu.ignore_warning(
-            category=DeprecationWarning,
-            message='device_id_type is deprecated',
-        )
-    )
 
     if not jtu.test_device_matches(['cpu']):
       self.skipTest('CPU-only test')
