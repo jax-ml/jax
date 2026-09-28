@@ -22,7 +22,6 @@ from jax._src.pallas.mosaic.sc_primitives import addupdate_compressed as addupda
 from jax._src.pallas.mosaic.sc_primitives import addupdate_scatter as addupdate_scatter
 from jax._src.pallas.mosaic.sc_primitives import all_reduce_ffs as all_reduce_ffs
 from jax._src.pallas.mosaic.sc_primitives import all_reduce_population_count as all_reduce_population_count
-from jax._src.pallas.mosaic.sc_primitives import bitcast as bitcast
 from jax._src.pallas.mosaic.sc_primitives import cummax as cummax
 from jax._src.pallas.mosaic.sc_primitives import cumsum as cumsum
 from jax._src.pallas.mosaic.sc_primitives import fetch_and_add as fetch_and_add

@@ -44,7 +44,6 @@ from jax._src.state import types as state_types
 from jax.experimental.mosaic.dialects import tpu
 import jax.numpy as jnp
 
-
 _ensure_ir_value = tc_lowering._ensure_mlir_value
 
 TransformedRef = state_types.TransformedRef
@@ -59,7 +58,8 @@ load_p.is_effectful = lambda params: True
 def _load_abstract_eval(ref, *args, has_mask, tree):
   flat_transforms = args[:-1] if has_mask else args
   tref = state_types.TransformedRef(
-      ref, jax.tree.unflatten(tree, flat_transforms))
+      ref, jax.tree.unflatten(tree, flat_transforms)
+  )
   if has_mask:
     mask = args[-1]
     if mask.dtype != jnp.bool:
@@ -67,7 +67,9 @@ def _load_abstract_eval(ref, *args, has_mask, tree):
     if mask.shape != tref.shape:
       raise ValueError(f"Mask must have shape {tref.shape}, got {mask.shape}")
   return (
-      jax_core.ShapedArray(tref.shape, ref.dtype), {state_types.ReadEffect(0)})
+      jax_core.ShapedArray(tref.shape, ref.dtype),
+      {state_types.ReadEffect(0)},
+  )
 
 
 @sc_lowering.register_lowering_rule(load_p)
@@ -120,7 +122,8 @@ def _swap_abstract_eval(ref, x, *args, has_mask, tree, add, compress):
   del compress  # Only used during lowering.
   flat_transforms = args[:-1] if has_mask else args
   tref = state_types.TransformedRef(
-      ref, jax.tree.unflatten(tree, flat_transforms))
+      ref, jax.tree.unflatten(tree, flat_transforms)
+  )
   if has_mask:
     mask = args[-1]
     if mask.dtype != jnp.bool:
@@ -457,74 +460,6 @@ def addupdate_scatter(
   _ = scatter_p.bind(*flat_args, tree=tree, add=True)
 
 
-bitcast_p = jax_core.Primitive("bitcast")
-
-
-@bitcast_p.def_abstract_eval
-def _bitcast_abstract_eval(x, dtype):
-  old_bitwidth = dtypes.itemsize_bits(x.dtype)
-  new_bitwidth = dtypes.itemsize_bits(dtype)
-  if old_bitwidth == new_bitwidth:
-    return jax_core.ShapedArray(x.shape, dtype)
-  if x.ndim == 0:
-    raise ValueError(
-        "Cannot bitcast a ()-shaped array to a dtype with a different bitwidth:"
-        f" {old_bitwidth=} vs {new_bitwidth=}"
-    )
-  new_last_dim, rem = divmod(x.shape[-1] * old_bitwidth, new_bitwidth)
-  if rem:
-    raise ValueError(
-        f"Cannot bitcast from {x.dtype} ({old_bitwidth} bits) to"
-        f" {dtype} ({new_bitwidth} bits), because {x.shape[-1]=} *"
-        f" {old_bitwidth} is not divisible by {new_bitwidth}"
-    )
-  return jax_core.ShapedArray((*x.shape[:-1], new_last_dim), dtype)
-
-
-@sc_lowering.register_lowering_rule(bitcast_p)
-def _bitcast_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, *, dtype):
-  del dtype  # Unused.
-  [out_aval] = ctx.avals_out
-  [in_aval] = ctx.avals_in
-  out_type = ctx.aval_to_ir_type(out_aval)
-  if not ctx.lowering_context.needs_layout_passes:
-    return vector.bitcast(out_type, x)
-  # TODO(b/562994815): Support bitwidth-changing bitcasts with
-  # needs_layout_passes=True.
-  if dtypes.itemsize_bits(in_aval.dtype) != dtypes.itemsize_bits(
-      out_aval.dtype
-  ):
-    raise NotImplementedError(
-        "plsc.bitcast between different bitwidths is not supported with"
-        " needs_layout_passes=True. Pass"
-        " pltpu.CompilerParams(needs_layout_passes=False) to the kernel."
-    )
-  return tpu.bitcast(out_type, x)
-
-
-def bitcast(x: jax.Array, dtype: jax.typing.DTypeLike) -> jax.Array:
-  """Bitcasts an array to a different dtype.
-
-  Unlike ``lax.bitcast_convert_type``, this function returns an array of the
-  same rank as the input. The minormost dimension is expanded/shrunk to
-  account for the difference in the element bitwidth.
-
-  When the target dtype has a different bitwidth, the size of the minormost
-  dimension in bits (``x.shape[-1] * old_bitwidth``) must be divisible by the
-  target bitwidth.
-
-  Args:
-    x: The array to bitcast.
-    dtype: The target dtype.
-
-  Returns:
-    The bitcast array.
-  """
-  if x.dtype == dtype:
-    return x
-  return bitcast_p.bind(x, dtype=jnp.dtype(dtype))
-
-
 class MemoryEffect(jax_core.Effect):
   pass
 
@@ -536,6 +471,7 @@ _memory_effect = MemoryEffect()
 
 barrier_p = jax_core.Primitive("barrier")
 barrier_p.multiple_results = True
+
 
 @barrier_p.def_effectful_abstract_eval
 def _barrier_abstract_eval():
@@ -566,7 +502,8 @@ scan_count_p.multiple_results = True
 def _scan_count_abstract_eval(x, mask):
   if x.dtype not in (jnp.uint32, jnp.int32, jnp.float32):
     raise NotImplementedError(
-        f"x.dtype={x.dtype} must be uint32, int32 or float32")
+        f"x.dtype={x.dtype} must be uint32, int32 or float32"
+    )
   if not jnp.issubdtype(mask.dtype, jnp.bool):
     raise TypeError(f"mask.dtype={mask.dtype} is not a boolean dtype")
   if x.shape != mask.shape:
@@ -617,7 +554,8 @@ masked_cumsum_p.multiple_results = False
 def _masked_cummax_abstract_eval(x, mask):
   if x.dtype not in (jnp.uint32, jnp.int32, jnp.float32):
     raise NotImplementedError(
-        f"x.dtype={x.dtype} must be uint32, int32 or float32")
+        f"x.dtype={x.dtype} must be uint32, int32 or float32"
+    )
   if not jnp.issubdtype(mask.dtype, jnp.bool):
     raise TypeError(f"mask.dtype={mask.dtype} is not a boolean dtype")
   if x.shape != mask.shape:
@@ -625,15 +563,20 @@ def _masked_cummax_abstract_eval(x, mask):
   return x
 
 
-def _masked_cumop_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask,
-                                *, reduction_kind: str):
+def _masked_cumop_lowering_rule(
+    ctx: sc_lowering.LoweringRuleContext, x, mask, *, reduction_kind: str
+):
   sign_bit_vec = None
   # tpu.scan comparisons assume unsigned int predicates, so we compare
   # with the sign bit flipped.
-  if ctx.avals_in[0].dtype == jnp.dtype(jnp.int32) and reduction_kind in ("max", "min"):
+  if ctx.avals_in[0].dtype == jnp.dtype(jnp.int32) and reduction_kind in (
+      "max",
+      "min",
+  ):
     i32 = ir.IntegerType.get_signless(32)
     sign_bit_vec = vector.broadcast(
-        x.type, arith.constant(i32, ir.IntegerAttr.get(i32, 0x80000000)))
+        x.type, arith.constant(i32, ir.IntegerAttr.get(i32, 0x80000000))
+    )
     x = arith.xori(x, sign_bit_vec)
   result = tpu.scan(
       x.type,
@@ -648,19 +591,29 @@ def _masked_cumop_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask,
 
 
 sc_lowering.register_lowering_rule(masked_cummax_p)(
-    functools.partial(_masked_cumop_lowering_rule, reduction_kind="max"))
+    functools.partial(_masked_cumop_lowering_rule, reduction_kind="max")
+)
 sc_lowering.register_lowering_rule(masked_cummin_p)(
-    functools.partial(_masked_cumop_lowering_rule, reduction_kind="min"))
+    functools.partial(_masked_cumop_lowering_rule, reduction_kind="min")
+)
 sc_lowering.register_lowering_rule(masked_cumsum_p)(
-    functools.partial(_masked_cumop_lowering_rule, reduction_kind="sum"))
+    functools.partial(_masked_cumop_lowering_rule, reduction_kind="sum")
+)
 
 
-def _reduce_op_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axes,
-                             *, reduction_kind, out_sharding=None):
+def _reduce_op_lowering_rule(
+    ctx: sc_lowering.LoweringRuleContext,
+    x,
+    axes,
+    *,
+    reduction_kind,
+    out_sharding=None,
+):
   del out_sharding  # Unused.
   if axes != (0,):
     raise NotImplementedError(
-        f"reductions require axes to be (0,) on SparseCore, but got {axes}.")
+        f"reductions require axes to be (0,) on SparseCore, but got {axes}."
+    )
   vec_dim = ctx.avals_in[0].shape[0]
   i1t = ir.IntegerType.get_signless(1)
   c1 = arith.constant(i1t, ir.IntegerAttr.get(i1t, 1))
@@ -668,17 +621,20 @@ def _reduce_op_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axes,
   c1v = vector.broadcast(ir.VectorType.get(x_shp, c1.type), c1)
   return vector.extract(
       _masked_cumop_lowering_rule(ctx, x, c1v, reduction_kind=reduction_kind),
-      [], [vec_dim - 1])
+      [],
+      [vec_dim - 1],
+  )
+
 
 sc_lowering.register_lowering_rule(
-    lax.reduce_max_p, kernel_types=[tpu_core.CoreType.SC_VECTOR_SUBCORE])(
-    functools.partial(_reduce_op_lowering_rule, reduction_kind="max"))
+    lax.reduce_max_p, kernel_types=[tpu_core.CoreType.SC_VECTOR_SUBCORE]
+)(functools.partial(_reduce_op_lowering_rule, reduction_kind="max"))
 sc_lowering.register_lowering_rule(
-    lax.reduce_min_p, kernel_types=[tpu_core.CoreType.SC_VECTOR_SUBCORE])(
-    functools.partial(_reduce_op_lowering_rule, reduction_kind="min"))
+    lax.reduce_min_p, kernel_types=[tpu_core.CoreType.SC_VECTOR_SUBCORE]
+)(functools.partial(_reduce_op_lowering_rule, reduction_kind="min"))
 sc_lowering.register_lowering_rule(
-    lax.reduce_sum_p, kernel_types=[tpu_core.CoreType.SC_VECTOR_SUBCORE])(
-    functools.partial(_reduce_op_lowering_rule, reduction_kind="sum"))
+    lax.reduce_sum_p, kernel_types=[tpu_core.CoreType.SC_VECTOR_SUBCORE]
+)(functools.partial(_reduce_op_lowering_rule, reduction_kind="sum"))
 
 
 def cummax(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
@@ -722,8 +678,9 @@ def cummin(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
 
 
 @sc_lowering.register_lowering_rule(lax.cumsum_p)
-def _cumsum_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axis,
-                          reverse):
+def _cumsum_lowering_rule(
+    ctx: sc_lowering.LoweringRuleContext, x, axis, reverse
+):
   if axis != 0:
     raise NotImplementedError(f"SC cumsum: axis={axis} must be 0.")
   if len(ctx.avals_in[0].shape) != 1:
@@ -762,6 +719,7 @@ def cumsum(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
 masked_sort_p = jax_core.Primitive("masked_sort")
 masked_sort_p.multiple_results = True
 
+
 @masked_sort_p.def_abstract_eval
 def _masked_sort_abstract_eval(keys, values, *maybe_mask, descending):
   del descending  # Unused.
@@ -769,12 +727,14 @@ def _masked_sort_abstract_eval(keys, values, *maybe_mask, descending):
   if keys.dtype not in (jnp.uint32, jnp.int32, jnp.float32):
     raise NotImplementedError(
         f"sort_key_val: keys dtype {keys.dtype} should be uint32, int32 or"
-        " float32")
+        " float32"
+    )
   if keys.shape != supported_shape:
     raise ValueError(f"keys shape {keys.shape} must be {supported_shape}")
   if jnp.dtype(values.dtype).itemsize != 4:
     raise NotImplementedError(
-        f"sort_key_val: values dtype {values.dtype} should be 32 bits")
+        f"sort_key_val: values dtype {values.dtype} should be 32 bits"
+    )
   if values.shape != supported_shape:
     raise ValueError(f"values shape {values.shape} must be {supported_shape}")
   if maybe_mask:
@@ -785,28 +745,39 @@ def _masked_sort_abstract_eval(keys, values, *maybe_mask, descending):
       raise ValueError(f"mask shape {mask.shape} must be {supported_shape}")
   return keys, values, *maybe_mask
 
+
 @sc_lowering.register_lowering_rule(masked_sort_p)
 def _masked_sort_lowering_rule(
-    ctx: sc_lowering.LoweringRuleContext, keys, values, *maybe_mask, descending):
+    ctx: sc_lowering.LoweringRuleContext, keys, values, *maybe_mask, descending
+):
   if maybe_mask:
     [mask] = maybe_mask
   else:
     mask_type = ir.VectorType.get(
         [sc_core.get_sparse_core_info().num_lanes],
-        ir.IntegerType.get_signless(1))
-    mask = arith.constant(mask_type, ir.DenseElementsAttr.get_splat(
-        mask_type, ir.BoolAttr.get(True)))
+        ir.IntegerType.get_signless(1),
+    )
+    mask = arith.constant(
+        mask_type,
+        ir.DenseElementsAttr.get_splat(mask_type, ir.BoolAttr.get(True)),
+    )
   # tpu.sort comparisons assume unsigned int predicates, so we sort
   # with the sign bit flipped to get correct signed int32 ordering.
   sign_bit_vec = None
   if ctx.avals_in[0].dtype == jnp.dtype(jnp.int32):
     i32 = ir.IntegerType.get_signless(32)
     sign_bit_vec = vector.broadcast(
-        keys.type, arith.constant(i32, ir.IntegerAttr.get(i32, 0x80000000)))
+        keys.type, arith.constant(i32, ir.IntegerAttr.get(i32, 0x80000000))
+    )
     keys = arith.xori(keys, sign_bit_vec)
   out_mask, sorted_keys, sorted_values = tpu.sort(
-      mask.type, keys.type, values.type, keys, values, mask=mask,
-      descending=descending
+      mask.type,
+      keys.type,
+      values.type,
+      keys,
+      values,
+      mask=mask,
+      descending=descending,
   )
   if sign_bit_vec is not None:
     sorted_keys = arith.xori(sorted_keys, sign_bit_vec)
@@ -1002,6 +973,7 @@ def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
 
   def decorator(body):
     flat_carries, carry_tree = jax.tree.flatten(carry)
+
     def wrapped(idx, *carries):
       if carry is None:
         body(idx)
@@ -1366,8 +1338,12 @@ def _fetch_and_add_lowering_rule(ctx: sc_lowering.LoweringRuleContext, *args):
   x_ref, value, *indices, subcore_id = args
   kwargs: dict[str, Any] = {}
   if "core_type" in inspect.signature(tpu.fetch_and_add_sync).parameters:
-    kwargs = {"core_type": ir.Attribute.parse("#tpu.core_type<sc_vector_subcore>")}
-  return tpu.fetch_and_add_sync(x_ref, indices, value, core_id=subcore_id, **kwargs)
+    kwargs = {
+        "core_type": ir.Attribute.parse("#tpu.core_type<sc_vector_subcore>")
+    }
+  return tpu.fetch_and_add_sync(
+      x_ref, indices, value, core_id=subcore_id, **kwargs
+  )
 
 
 def fetch_and_add(
