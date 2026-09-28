@@ -605,6 +605,8 @@ def _call_hi_primitive_dce(used_outs_flat, eqn):
   used_out = tree_unflatten(_prim.out_tree, used_outs_flat)
   used_ins, produced_outs, new_prim = _prim.dce(used_out)
   if new_prim is None:
+    if pe.has_effects(eqn):
+      return [True] * len(eqn.invars), eqn
     return [False] * len(eqn.invars), None
   name = f'{type(_prim).__name__}.dce'
   used_ins_flat = api.tuptree_flags(
