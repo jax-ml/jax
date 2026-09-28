@@ -2214,7 +2214,7 @@ class Precision(enum.Enum):
 
   DEFAULT:
     Fastest mode, but least accurate. On TPU: performs float32 computations in
-    bfloat16. On GPU: uses tensorfloat32 if available (e.g. on A100 and H100
+    bfloat16. On GPU: uses bfloat16 if available (e.g. on A100 and H100
     GPUs), otherwise standard float32 (e.g. on V100 GPUs). Aliases:
     ``'default'``, ``'fastest'``.
   HIGH:
