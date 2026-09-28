@@ -55,7 +55,8 @@ from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
 from jax._src.lax import windowed_reductions
 from jax._src.lax.control_flow.common import (
-    _avals_short, _make_closed_jaxpr, _prune_zeros, _typecheck_param)
+    _avals_short, _make_closed_jaxpr, _merge_common_consts, _prune_zeros,
+    _typecheck_param)
 from jax._src.lax.eval_jaxpr import eval_jaxpr_p
 from jax._src.lax.other import logaddexp
 from jax._src.lib.mlir import ir
@@ -1720,6 +1721,17 @@ def while_loop[T](cond_fun: Callable[[T], BooleanNumeric],
     raise NotImplementedError(
         f'Effects not supported in `while`: {disallowed_effects}')
 
+  # If the cond writes a Ref, or reads a Ref that the body also uses, we carry
+  # the predicate: we evaluate the cond before the loop and at the end of each
+  # iteration of the body. That way only the body uses Refs, so each Ref is
+  # passed to while_p just once, and the cond and body see each other's effects.
+  init_vals = list(init_val_flat)
+  carry_pred = _cond_needs_carried_pred(cond_jaxpr, cond_consts, body_consts)
+  if carry_pred:
+    cond_jaxpr, body_jaxpr, body_consts, init_vals = _carry_pred(
+        cond_jaxpr, cond_consts, body_jaxpr, body_consts, init_vals)
+    cond_consts = []
+
   # If the body forwards an input carry to an output carry, *and* it's not used
   # by the cond fun, it can be moved to be a body const. Doing so can lead to
   # efficiency wins: if e.g. we vmap the loop with a batched predicate, we batch
@@ -1731,7 +1743,6 @@ def while_loop[T](cond_fun: Callable[[T], BooleanNumeric],
   _, keep_cond_carry = split_list(keep_cond, [len(cond_consts)])
   move_to_const = _map(operator.not_, keep_cond_carry)
 
-  init_vals = list(init_val_flat)
   new_body_consts: list[Any] = []
   if any(move_to_const):
     cond_jaxpr = cond_jaxpr_
@@ -1748,8 +1759,44 @@ def while_loop[T](cond_fun: Callable[[T], BooleanNumeric],
 
   if any(move_to_const):
     outs = pe.merge_lists(move_to_const, outs, new_body_consts)
+  if carry_pred:
+    _, *outs = outs
 
   return body_out_avals.update(outs).unflatten()
+
+def _cond_needs_carried_pred(cond_jaxpr, cond_consts, body_consts) -> bool:
+  if any(isinstance(e, (state.WriteEffect, state.AccumEffect))
+         for e in cond_jaxpr.effects):
+    return True
+  ref_ids = lambda xs: {id(core.get_referent(x)) for x in xs
+                        if isinstance(core.typeof(x), AbstractRef)}
+  return bool(ref_ids(cond_consts) & ref_ids(body_consts))
+
+def _carry_pred(cond_jaxpr, cond_consts, body_jaxpr, body_consts, init_vals):
+  (cond_jaxpr, body_jaxpr), consts = _merge_common_consts(
+      (cond_jaxpr, body_jaxpr), (cond_consts, body_consts))
+  num_consts = len(consts)
+  const_avals, carry_avals = split_list(body_jaxpr.in_avals, [num_consts])
+  pred_aval, = cond_jaxpr.out_avals
+
+  def new_cond(pred, *_):
+    return pred
+
+  def new_body(*args):
+    consts, (_, *carry) = split_list(args, [num_consts])
+    carry = core.eval_jaxpr(body_jaxpr, (), *consts, *carry)
+    pred, = core.eval_jaxpr(cond_jaxpr, (), *consts, *carry)
+    return [pred, *carry]
+
+  new_cond_jaxpr, _ = pe.trace_to_jaxpr(
+      new_cond, ft.flatten_args(pred_aval, *carry_avals),
+      debug_info=cond_jaxpr.debug_info.with_unknown_names())
+  new_body_jaxpr, _ = pe.trace_to_jaxpr(
+      new_body, ft.flatten_args(*const_avals, pred_aval, *carry_avals),
+      debug_info=body_jaxpr.debug_info.with_unknown_names())
+  new_body_jaxpr, new_consts = pe.separate_consts(new_body_jaxpr)
+  pred, = core.eval_jaxpr(cond_jaxpr, (), *consts, *init_vals)
+  return new_cond_jaxpr, new_body_jaxpr, [*new_consts, *consts], [pred, *init_vals]
 
 
 def _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts, cond_nconsts
