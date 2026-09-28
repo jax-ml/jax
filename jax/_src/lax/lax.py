@@ -4951,8 +4951,43 @@ cosh_p = standard_unop(_float | _complex, 'cosh')
 ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
 mlir.register_lowering(cosh_p, partial(_nary_lower_hlo, chlo.cosh))
 
+def _asinh_jvp(g, x):
+  # Computes g * rsqrt(x**2 + 1) while avoiding overflow, catastrophic cancellation,
+  # and branch-cut sign errors:
+  # 1. Scaling: We scale by s = clamp(1, |x|*inv_t, max_scale) with
+  #    inv_t = 2**-(maxexp//2 - 2). For |x| <= 1/inv_t, s = 1 exactly
+  #    (introducing no rounding error). For larger finite |x|, x/s <= 1/inv_t
+  #    so (x/s)**2 never overflows. Clamping to finite max_scale ensures
+  #    inv_scale = 1/s > 0 when |x| = inf, avoiding inf * 0 = NaN.
+  # 2. Complex domain: Evaluating Re(z_s**2 + inv_scale**2) as
+  #    rx_s**2 + one_minus_square(ix_s) avoids catastrophic cancellation near the
+  #    branch points z = +-i, while evaluating Im as 2 * rx_s * ix_s avoids adding
+  #    +0.0, preserving IEEE 754 signed zeros (-0.0) along the branch cuts.
+  inv_t = 2.0 ** -(dtypes.finfo(x.dtype).maxexp // 2 - 2)
+  max_scale = 2.0 ** (dtypes.finfo(x.dtype).maxexp // 2 + 2)
+  if _iscomplex(x):
+    rx, ix = real(x), imag(x)
+    scale = stop_gradient(
+        clamp(_one(rx), mul(max(abs(rx), abs(ix)), _const(rx, inv_t)), _const(rx, max_scale))
+    )
+    inv_scale = reciprocal(scale)
+    rx_s = mul(rx, inv_scale)
+    ix_s = mul(ix, inv_scale)
+    re_w = add(square(rx_s), one_minus_square(ix_s))
+    im_w = mul(_const(rx_s, 2), mul(rx_s, ix_s))
+    r = rsqrt(complex(re_w, im_w))
+    deriv = complex(mul(real(r), inv_scale), mul(imag(r), inv_scale))
+  else:
+    scale = stop_gradient(
+        clamp(_one(x), mul(abs(x), _const(x, inv_t)), _const(x, max_scale))
+    )
+    inv_scale = reciprocal(scale)
+    x_scaled = mul(x, inv_scale)
+    deriv = mul(inv_scale, rsqrt(add(square(x_scaled), square(inv_scale))))
+  return mul(g, deriv)
+
 asinh_p = standard_unop(_float | _complex, 'asinh')
-ad.defjvp(asinh_p, lambda g, x: mul(g, rsqrt(add(square(x), _one(x)))))
+ad.defjvp(asinh_p, _asinh_jvp)
 mlir.register_lowering(asinh_p, partial(_nary_lower_hlo, chlo.asinh))
 
 acosh_p = standard_unop(_float | _complex, 'acosh')
