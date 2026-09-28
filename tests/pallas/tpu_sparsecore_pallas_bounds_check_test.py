@@ -26,6 +26,7 @@ import jax.numpy as jnp
 config.parse_flags_with_absl()
 
 
+@jtu.skip_under_pytest("Tests can only be run with Bazel.")
 class BoundsCheckTest(jtu.JaxTestCase):
 
   def setUp(self):
