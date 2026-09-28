@@ -166,6 +166,24 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     x = jnp.arange(8 * 512).reshape(8, 512)
     np.testing.assert_allclose(kernel(x), x)
 
+  def test_hbm_block_spec_requires_hbm_source(self):
+    @functools.partial(
+        pl.pallas_call, out_shape=jax.ShapeDtypeStruct((8, 512), jnp.int32)
+    )
+    def kernel(o_ref):
+      pltpu.emit_pipeline(
+          pltpu.touch,
+          grid=(4,),
+          out_specs=pl.BlockSpec(
+              (8, 128), lambda i: (0, i), memory_space=pltpu.HBM
+          ),
+      )(o_ref)
+
+    with self.assertRaisesRegex(
+        ValueError, 'cannot request HBM block spec for a non-HBM source'
+    ):
+      kernel()
+
   def test_emit_pipeline_input_hbm_memory_space(self):
     def pipeline_body(x_ref, y_ref, z_ref, o_ref, scratch_ref):
       pltpu.sync_copy(y_ref, o_ref)
