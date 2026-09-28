@@ -775,9 +775,9 @@ batching.fancy_primitive_batchers[pallas_call_p] = _pallas_call_batching_rule
 
 
 def _pallas_call_dce_rule(
-    used_outs: list[bool], eqn: pe.JaxprEqn
+    used_outs: list[bool], live_ins: list[bool], eqn: pe.JaxprEqn
 ) -> tuple[list[bool], pe.JaxprEqn | None]:
-  del used_outs
+  del used_outs, live_ins
   return [True] * len(eqn.invars), eqn
 
 pe.dce_rules[pallas_call_p] = _pallas_call_dce_rule

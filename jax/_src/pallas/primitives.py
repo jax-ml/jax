@@ -854,6 +854,13 @@ def _get_global_abstract_eval(*, what):
   return what
 
 
+def _get_global_jvp(primals, tangents, *, what):
+  del primals, tangents
+  return get_global_p.bind(what=what), ad_util.Zero(what)
+
+ad.primitive_jvps[get_global_p] = _get_global_jvp
+
+
 def _get_global_discharge_rule(ctx, *, what):
   del ctx, what
   raise NotImplementedError(

@@ -400,13 +400,14 @@ def _compute_on_to_lojax(*hi_args, jaxpr, compute_type, out_memory_spaces,
   return [a.raise_val2(y) for a, y in zip(jaxpr.out_avals, lo_outs.unpack())]
 compute_on_p.to_lojax = _compute_on_to_lojax
 
-def dce_jaxpr_compute_on_rule(used_outputs: list[bool], eqn: pe.JaxprEqn
+def dce_jaxpr_compute_on_rule(used_outputs: list[bool], live_ins: list[bool],
+                              eqn: pe.JaxprEqn
                               ) -> tuple[list[bool], pe.JaxprEqn | None]:
-  if not any(used_outputs) and not pe.has_effects(eqn):
+  if not any(used_outputs) and not pe.has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
 
   dced_jaxpr, used_inputs = pe._cached_closed_call_dce(
-      eqn.params['jaxpr'], tuple(used_outputs))
+      eqn.params['jaxpr'], tuple(used_outputs), tuple(live_ins))
 
   def keep_where(xs, keeps):
     return tuple(x for x, keep in zip(xs, keeps) if keep)
