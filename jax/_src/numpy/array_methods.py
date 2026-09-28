@@ -1194,7 +1194,7 @@ class _IndexUpdateRef:
           unique_indices: bool = False,
           mode: str | lax_slicing.GatherScatterMode | None = None,
           out_sharding: NamedSharding | PartitionSpec | None = None,
-          wrap_negative_indices: bool = True) -> None:
+          wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] = y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
