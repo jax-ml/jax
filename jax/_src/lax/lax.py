@@ -7275,7 +7275,9 @@ def _broadcast_in_dim_sharding_rule(operand, *, shape, broadcast_dimensions,
       mesh=mesh, spec=operand.sharding.spec.update(partitions=new_spec))
 
 def _broadcast_in_dim_unreduced_rule(operand, sharding):
-  if sharding is not None and sharding.mesh.are_all_axes_explicit:
+  if (sharding is not None and sharding.mesh.explicit_axes and
+      sharding.mesh.are_all_axes_explicit_or_manual):
+    assert not operand.mat.unreduced
     out = sharding.spec.unreduced
     if out and sharding.spec.unreduced_kind is not UnreducedKind.sum:
       raise ValueError(
@@ -7287,7 +7289,9 @@ def _broadcast_in_dim_unreduced_rule(operand, sharding):
   return out, kind
 
 def _broadcast_in_dim_reduced_rule(operand, sharding):
-  if sharding is not None and sharding.mesh.are_all_axes_explicit:
+  if (sharding is not None and sharding.mesh.explicit_axes and
+      sharding.mesh.are_all_axes_explicit_or_manual):
+    assert not operand.mat.reduced
     return sharding.spec.reduced
   return getr(operand)
 

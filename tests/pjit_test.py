@@ -11861,6 +11861,25 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     f(positions, mask)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_jnp_zeros_out_sharding_partial_manual_unreduced_reduced(self, mesh):
+    @jax.jit
+    @jax.shard_map(in_specs=(), out_specs=P(), axis_names={'x'})
+    def f():
+      u = jnp.zeros((4, 2), out_sharding=P(unreduced={'y'}))
+      r = jnp.zeros((4, 2), out_sharding=P(reduced={'y'}))
+      self.assertEqual(u.aval.sharding.spec, P(None, None, unreduced={'y'}))
+      self.assertEqual(r.aval.sharding.spec, P(None, None, reduced={'y'}))
+      return u, r
+
+    u, r = f()
+    self.assertEqual(u.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'y'})))
+    self.assertEqual(r.sharding,
+                     NamedSharding(mesh, P(None, None, reduced={'y'})))
+    self.assertArraysEqual(reshard(u, P()), np.zeros((4, 2)), check_dtypes=False)
+    self.assertArraysEqual(r, np.zeros((4, 2)), check_dtypes=False)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
