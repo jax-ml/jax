@@ -1775,6 +1775,13 @@ def while_loop[T](cond_fun: Callable[[T], BooleanNumeric],
     raise NotImplementedError(
         f'Effects not supported in `while`: {disallowed_effects}')
 
+  init_vals = list(init_val_flat)
+  carry_pred = _cond_needs_carried_pred(cond_jaxpr, cond_consts, body_consts)
+  if carry_pred:
+    cond_jaxpr, body_jaxpr, body_consts, init_vals = _carry_pred(
+        cond_jaxpr, cond_consts, body_jaxpr, body_consts, init_vals)
+    cond_consts = []
+
   # If the body forwards an input carry to an output carry, *and* it's not used
   # by the cond fun, it can be moved to be a body const. Doing so can lead to
   # efficiency wins: if e.g. we vmap the loop with a batched predicate, we batch
@@ -1786,7 +1793,6 @@ def while_loop[T](cond_fun: Callable[[T], BooleanNumeric],
   _, keep_cond_carry = split_list(keep_cond, [len(cond_consts)])
   move_to_const = _map(operator.not_, keep_cond_carry)
 
-  init_vals = list(init_val_flat)
   new_body_consts: list[Any] = []
   if any(move_to_const):
     cond_jaxpr = cond_jaxpr_
@@ -1803,8 +1809,37 @@ def while_loop[T](cond_fun: Callable[[T], BooleanNumeric],
 
   if any(move_to_const):
     outs = pe.merge_lists(move_to_const, outs, new_body_consts)
+  if carry_pred:
+    _, *outs = outs
 
   return body_out_avals.update(outs).unflatten()
+
+def _cond_needs_carried_pred(cond_jaxpr, cond_consts, body_consts) -> bool:
+  if any(isinstance(e, (state.WriteEffect, state.AccumEffect))
+         for e in cond_jaxpr.effects):
+    return True
+  ref_ids = lambda xs: {id(core.get_referent(x)) for x in xs
+                        if isinstance(core.typeof(x), AbstractRef)}
+  return bool(ref_ids(cond_consts) & ref_ids(body_consts))
+
+def _carry_pred(cond_jaxpr, cond_consts, body_jaxpr, body_consts, init_vals):
+  carry_avals = body_jaxpr.in_avals[len(body_consts):]
+  pred_aval, = cond_jaxpr.out_avals
+
+  def new_body(pred, *carry):
+    carry = core.eval_jaxpr(body_jaxpr, (), *body_consts, *carry)
+    pred, = core.eval_jaxpr(cond_jaxpr, (), *cond_consts, *carry)
+    return [pred, *carry]
+
+  new_cond_jaxpr, _ = pe.trace_to_jaxpr(
+      lambda pred, *_: pred, ft.flatten_args(pred_aval, *carry_avals),
+      debug_info=cond_jaxpr.debug_info.with_unknown_names())
+  new_body_jaxpr, _ = pe.trace_to_jaxpr(
+      new_body, ft.flatten_args(pred_aval, *carry_avals),
+      debug_info=body_jaxpr.debug_info.with_unknown_names())
+  new_body_jaxpr, new_consts = pe.separate_consts(new_body_jaxpr)
+  pred, = core.eval_jaxpr(cond_jaxpr, (), *cond_consts, *init_vals)
+  return new_cond_jaxpr, new_body_jaxpr, new_consts, [pred, *init_vals]
 
 
 def _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts, cond_nconsts
@@ -2378,18 +2413,11 @@ def _while_discharge_rule(ctx, *args,
                                                                  [cond_nconsts,
                                                                   body_nconsts])
 
-  # Check if the same Ref is written to in both cond and body.
-  cond_write_ids = {id(cond_consts_avals[effect.input])
-    for effect in core.positional_effects(cond_jaxpr)
-    if isinstance(effect, state.WriteEffect)}
-  cond_has_writes = len(cond_write_ids) > 0
-  body_write_ids = {id(body_consts_avals[effect.input])
-    for effect in core.positional_effects(body_jaxpr)
-    if isinstance(effect, state.WriteEffect)}
-  write_to_both_ids = cond_write_ids & body_write_ids
-  if write_to_both_ids:
+  if any(isinstance(e, (state.WriteEffect, state.AccumEffect))
+         for e in cond_jaxpr.effects):
     raise NotImplementedError(
-        "Cannot write to the same ref in both cond and body of while loop.")
+        "Discharging a while_p whose cond writes a Ref. (lax.while_loop "
+        "carries the predicate instead.)")
 
   cond_is_ref = [
       isinstance(aval, state.AbstractRef) and should
@@ -2409,14 +2437,6 @@ def _while_discharge_rule(ctx, *args,
                                                          body_consts_avals)
   num_body_refs = sum(body_is_ref)
   num_remaining_body_consts = body_nconsts - num_body_refs
-  num_out_body_consts = num_remaining_body_consts
-  if cond_has_writes:
-    # If the cond has writes, we need to add the cond consts into the body
-    # consts since we need to evaluate the cond condition in the body.
-    remaining_body_consts = [*remaining_cond_consts, *remaining_body_consts]
-    remaining_body_const_avals = [*remaining_cond_const_avals,
-                                  *remaining_body_const_avals]
-    num_remaining_body_consts += num_remaining_cond_consts
 
   num_carry = len(ctx.in_avals) - body_nconsts - cond_nconsts
   if body_jaxpr.consts:
@@ -2449,30 +2469,9 @@ def _while_discharge_rule(ctx, *args,
     raise NotImplementedError
 
   def new_body(*consts_refs_carry):
-    consts, body_refs, cond_refs, carry = split_list(
+    body_consts, body_refs, cond_refs, carry = split_list(
         consts_refs_carry,
         [num_remaining_body_consts, num_body_refs, num_cond_refs])
-    if cond_has_writes:
-      # We run the cond jaxpr in the body so that Refs that are updated
-      # in the cond jaxpr are persisted via the carry.
-      cond_consts, body_consts = split_list(consts, [num_remaining_cond_consts])
-      cond_consts_and_refs = merge_lists(cond_is_ref, cond_consts, cond_refs)
-      cond_carry_refs = core.eval_jaxpr(
-          discharged_cond_jaxpr,
-          discharged_cond_jaxpr.consts,
-          *cond_consts_and_refs,
-          *carry,
-      )
-      # Note: in order to handle the same Ref being updated in both the cond
-      # and body, we would need to interleave the updated cond_carry_refs into
-      # body_refs here.
-      # Currently we disallow this so we don't need to handle it.
-      _, cond_refs_out = split_list(cond_carry_refs, [1])
-      assert len(cond_refs_out) == len(cond_refs)
-    else:
-      body_consts = consts
-      cond_refs_out = cond_refs
-
     body_consts_and_refs = merge_lists(body_is_ref, body_consts, body_refs)
     body_carry_refs = core.eval_jaxpr(
         discharged_body_jaxpr,
@@ -2481,7 +2480,7 @@ def _while_discharge_rule(ctx, *args,
         *carry,
     )
     carry, body_refs_out = split_list(body_carry_refs, [num_carry])
-    return [*body_refs_out, *cond_refs_out, *carry]
+    return [*body_refs_out, *cond_refs, *carry]
 
   new_body_jaxpr, _ = pe.trace_to_jaxpr(
       new_body,
@@ -2557,7 +2556,7 @@ def _while_discharge_rule(ctx, *args,
                                     [None] * num_remaining_cond_consts,
                                     cond_refs_out)
   updated_body_consts = merge_lists(body_is_ref,
-                                    [None] * num_out_body_consts,
+                                    [None] * num_remaining_body_consts,
                                     body_refs_out)
   invals_out = [
       *updated_cond_consts,
