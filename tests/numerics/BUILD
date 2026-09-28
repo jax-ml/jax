@@ -58,6 +58,7 @@ ELEMENTARY_OPS = [
     "exp_highest",
     "exp2",
     "expm1",
+    "expm1_highest",
     "log",
     "log10",
     "log1p",

@@ -52,7 +52,8 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.lax.exp` | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.exp` (`highest`) | 0.5 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.exp2` | 101.0 | 101.0 | 44.0 | 44.0 | 44.0 | 75.0 |
-| {func}`~jax.lax.expm1` | 0.5 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.expm1` | 0.5 | 0.5 | 1.0 | 1.0 | 0.5 | 0.5 |
+| {func}`~jax.lax.expm1` (`highest`) | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.log` | 0.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.numpy.log10` | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.log1p` | 0.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
@@ -94,6 +95,7 @@ Maximum error in units in the last place (ULPs) for `float16`:
 | {func}`~jax.lax.exp` (`highest`) | 1.0 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.exp2` | 14.0 | 14.0 | 7.5 | 7.5 | 7.5 | 7.5 |
 | {func}`~jax.lax.expm1` | 2.5 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
+| {func}`~jax.lax.expm1` (`highest`) | 2.5 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.log` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.numpy.log10` | 1.5 | 1.5 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.log1p` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
@@ -134,7 +136,8 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.exp` | 1.5 | 2.0 | 116.0 | 109.5 | 64.5 | 65.0 | |
 | {func}`~jax.lax.exp` (`highest`) | 1.5 | 2.0 | 1.5 | 1.5 | 1.5 | 1.5 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.exp2` | 68.5 | 69.0 | 141.5 | 133.0 | 90.0 | 90.0 | |
-| {func}`~jax.lax.expm1` | 6.5 | 1.5 | 1772.0 | 1357.5 | 64.0 | 63.5 | |
+| {func}`~jax.lax.expm1` | 6.5 | 1.5 | 1772.0 | 1357.5 | 3.5 | 3.5 | |
+| {func}`~jax.lax.expm1` (`highest`) | 6.5 | 1.5 | 2.0 | 2.0 | 2.0 | 2.0 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.log` | 1.5 | 1.0 | 4030.5 | 62.0 | 2.5 | 2.5 | |
 | {func}`~jax.numpy.log10` | 3.0 | 2.5 | 6213.0 | 57.0 | 3.0 | 3.0 | |
 | {func}`~jax.lax.log1p` | 3.0 | 1.0 | 4034.0 | 2082.5 | 2049.0 | 2049.0 | |
