@@ -498,12 +498,13 @@ pe.partial_eval_jaxpr_custom_rules[xla_metadata_call_p] = partial(
 )
 
 
-def dce_jaxpr_xla_metadata_rule(used_outputs: list[bool], eqn: pe.JaxprEqn
+def dce_jaxpr_xla_metadata_rule(used_outputs: list[bool], live_ins: list[bool],
+                                eqn: pe.JaxprEqn
                                 ) -> tuple[list[bool], pe.JaxprEqn | None]:
-  if not any(used_outputs) and not pe.has_effects(eqn):
+  if not any(used_outputs) and not pe.has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
   dced_jaxpr, used_inputs = pe._cached_closed_call_dce(
-      eqn.params['jaxpr'], tuple(used_outputs))
+      eqn.params['jaxpr'], tuple(used_outputs), tuple(live_ins))
   new_params = dict(eqn.params, jaxpr=dced_jaxpr)
   if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
     return used_inputs, None

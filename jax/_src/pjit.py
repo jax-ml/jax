@@ -1927,20 +1927,23 @@ ad.fancy_transposes[jit_p] = _pjit_transpose_fancy
 
 @weakref_lru_cache
 def _dce_jaxpr_pjit(
-    jaxpr: core.Jaxpr, used_outputs: tuple[bool, ...]
+    jaxpr: core.Jaxpr, used_outputs: tuple[bool, ...],
+    live_inputs: tuple[bool, ...],
 ) -> tuple[core.Jaxpr, list[bool]]:
   # dce_jaxpr preserves attached consts (constvars are never pruned).
   instantiate = [v.aval is core.abstract_token for v in jaxpr.invars]
-  return pe.dce_jaxpr(jaxpr, used_outputs, instantiate=instantiate)
+  return pe.dce_jaxpr(jaxpr, used_outputs, instantiate=instantiate,
+                      live_inputs=live_inputs)
 
 
-def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
+def dce_jaxpr_pjit_rule(used_outputs: list[bool], live_ins: list[bool],
+                        eqn: core.JaxprEqn
                         ) -> tuple[list[bool], core.JaxprEqn | None]:
-  if not any(used_outputs) and not pe.has_effects(eqn):
+  if not any(used_outputs) and not pe.has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
 
   dced_jaxpr, used_inputs = _dce_jaxpr_pjit(
-      eqn.params['jaxpr'], tuple(used_outputs))
+      eqn.params['jaxpr'], tuple(used_outputs), tuple(live_ins))
 
   def keep_where(xs, keeps):
     return tuple(x for x, keep in zip(xs, keeps) if keep)

@@ -319,7 +319,7 @@ def backward_pass3(
     if eqn.primitive.ref_primitive:
       v, = eqn.outvars
       lin_eqns.append(eqn)
-      if eqn.primitive is core.ref_p or eqn.primitive is core.empty_ref_p:
+      if eqn.primitive.ref_allocating:
         env[v] = RefAccum(v.aval.inner_aval.to_ct_aval())  # type: ignore
       elif eqn.primitive is core.freeze_p:
         env[v] = ValAccum(v.aval.to_ct_aval())
@@ -543,7 +543,7 @@ class JVPTrace(Trace):
   def process_primitive(self, primitive, tracers, params, /):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if (all(type(t) is Zero for t in tangents_in) and
-        primitive is not core.ref_p and primitive is not core.empty_ref_p and
+        not primitive.ref_allocating and
         not any(isinstance(typeof(x), AbstractRef) for x in primals_in)):
       avals = tuple(core.typeof(x) for x in primals_in)
       return primitive.bind_with_trace(self.parent_trace, primals_in, avals, params)

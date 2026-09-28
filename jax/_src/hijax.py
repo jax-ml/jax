@@ -221,7 +221,8 @@ class HiPrim:
                               "implement `batch` or `batch_dim_rule`")
 
   # optional dce control
-  def dce(self, used_outs):
+  def dce(self, used_outs, live_ins):
+    del live_ins
     used_outs_flat = tree_leaves_checked(self.out_tree, used_outs)
     if not any(used_outs_flat):
       return False, False, None
@@ -600,10 +601,11 @@ def _call_hi_primitive_transpose(cts_flat, *primals_flat, _prim):
   return log
 ad.fancy_transposes[call_hi_primitive_p] = _call_hi_primitive_transpose
 
-def _call_hi_primitive_dce(used_outs_flat, eqn):
+def _call_hi_primitive_dce(used_outs_flat, live_ins_flat, eqn):
   _prim = eqn.params['_prim']
   used_out = tree_unflatten(_prim.out_tree, used_outs_flat)
-  used_ins, produced_outs, new_prim = _prim.dce(used_out)
+  live_in = tree_unflatten(_prim.in_tree, live_ins_flat)
+  used_ins, produced_outs, new_prim = _prim.dce(used_out, live_in)
   if new_prim is None:
     return [False] * len(eqn.invars), None
   name = f'{type(_prim).__name__}.dce'
@@ -615,8 +617,9 @@ def _call_hi_primitive_dce(used_outs_flat, eqn):
       f'the second (produced outputs) return value of {name}')
   new_invars = [x for x, u in zip(eqn.invars, used_ins_flat) if u]
   new_outvars = [v for v, u in zip(eqn.outvars, produced_outs_flat) if u]
+  new_effs = core.resolve_input_effects(new_prim.effects, new_invars)
   new_eqn = eqn.replace(invars=new_invars, outvars=new_outvars,
-                        params=dict(_prim=new_prim))
+                        params=dict(_prim=new_prim), effects=new_effs)
   return used_ins_flat, new_eqn
 pe.dce_rules[call_hi_primitive_p] = _call_hi_primitive_dce
 
@@ -1180,7 +1183,8 @@ class OptRemat(HiPrim):
     new_prim = OptRemat(new_orig, new_traced_fwd)
     return call_hi_primitive_p.bind(*args, _prim=new_prim)
 
-  def dce(self, used_outs):
+  def dce(self, used_outs, live_ins):
+    del live_ins
     used_primals, used_res = used_outs
     if any(tree_leaves(used_res)):
       return True, (True, True), self  # if any res used, no dce at all

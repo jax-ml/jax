@@ -1256,24 +1256,30 @@ def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
   ys_bdims = [1 if b else None for b in ys_batched]
   return outs, carry_bdims + ys_bdims
 
-def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
+def _scan_dce_rule(used_outputs: list[bool], live_ins: list[bool],
+                   eqn: core.JaxprEqn
                    ) -> tuple[list[bool], core.JaxprEqn | None]:
-  if not any(used_outputs) and not pe.has_effects(eqn):
+  if not any(used_outputs) and not pe.has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
   jaxpr = eqn.params['jaxpr']
   ft_in, ft_out = eqn.params['ft_in'], eqn.params['ft_out']
   used_carry_out, used_extensive_out = ft_out.update(used_outputs).unpack()
   consts_g, _, xs_g = ft_in.unpack()
-  for i in range(1 + len(used_carry_out)):
+  live_body_ins = list(live_ins)
+  for i in range(1 + len(used_carry_out) + live_ins.count(False)):
     used_outputs = list(ft.pack((used_carry_out, used_extensive_out)))
     jaxpr_dce, used_inputs = pe.dce_jaxpr(
         jaxpr, used_outputs,
-        instantiate=list(ft.pack((consts_g, used_carry_out, xs_g)).map(bool)))
+        instantiate=list(ft.pack((consts_g, used_carry_out, xs_g)).map(bool)),
+        live_inputs=live_body_ins)
     _, used_carry_in, _ = ft_in.update(used_inputs).unpack()
-    if list(used_carry_in) == list(used_carry_out):
+    new_live_body_ins = _map(operator.or_, live_body_ins, used_inputs)
+    if (list(used_carry_in) == list(used_carry_out) and
+        new_live_body_ins == live_body_ins):
       break
     else:
       used_carry_out = used_carry_out.map2(used_carry_in, operator.or_)
+      live_body_ins = new_live_body_ins
   else:
     assert False, "Fixpoint not reached"
   if config.enable_checks.value: core.check_jaxpr(jaxpr)
