@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 import enum
 import functools
 from functools import partial
@@ -181,6 +181,25 @@ def _validate_shape_and_dtype_for_per_device_arrays(
       )
 
 
+def _iter(x: ArrayImpl, *, reverse: bool = False) -> Iterator[ArrayImpl]:
+  """Efficient chunked iteration over an Array.
+
+  This implements ArrayImpl.__iter__ and ArrayImpl.__reversed__
+  """
+  if x.ndim == 0:
+    raise TypeError("iteration over a 0-d array")  # same as numpy error
+  else:
+    assert x.is_fully_replicated or x.is_fully_addressable
+    if x.sharding.num_devices == 1 or x.is_fully_replicated:
+      return (sl for chunk in x._chunk_iter(100, reverse=reverse)  # pyrefly: ignore[missing-attribute]
+              for sl in (reversed(chunk._unstack()) if reverse else chunk._unstack()))
+    else:
+      # TODO(yashkatariya): Don't bounce to host and use `_chunk_iter` path
+      # here after uneven partitioning support is added.
+      indices = range(x.shape[0])[::-1] if reverse else range(x.shape[0])
+      return (api.device_put(x._value[i]) for i in indices)
+
+
 @use_cpp_class(xc.ArrayImpl)
 class ArrayImpl(basearray.Array):
   aval: core.ShapedArray
@@ -340,16 +359,10 @@ class ArrayImpl(basearray.Array):
     return indexing.rewriting_take(self, idx)
 
   def __iter__(self):
-    if self.ndim == 0:
-      raise TypeError("iteration over a 0-d array")  # same as numpy error
-    else:
-      assert self.is_fully_replicated or self.is_fully_addressable
-      if self.sharding.num_devices == 1 or self.is_fully_replicated:
-        return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # pyrefly: ignore[missing-attribute]
-      else:
-        # TODO(yashkatariya): Don't bounce to host and use `_chunk_iter` path
-        # here after uneven partitioning support is added.
-        return (api.device_put(self._value[i]) for i in range(self.shape[0]))
+    return _iter(self)
+
+  def __reversed__(self):
+    return _iter(self, reverse=True)
 
   @property
   def is_fully_replicated(self) -> bool:
