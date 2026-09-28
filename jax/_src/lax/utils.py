@@ -29,7 +29,7 @@ from jax._src import state
 from jax._src.named_sharding import DuplicateSpecError, NamedSharding
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.layout import (AutoLayoutSingleton, AutoLayout, get_layout_mode,
-                             LayoutMode, use_layout_mode)
+                             LayoutMode)
 from jax._src.util import safe_zip
 from jax._src.typing import DimSize, DType, Shape
 
@@ -149,11 +149,15 @@ def call_layout_rule(prim, layout_rule, in_avals, out_avals, **kwargs):
     return mgpu_layout_rule(prim, in_avals, out_avals, **kwargs)
 
   assert cur_layout_mode is LayoutMode.JAX
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  if not cur_mesh.empty and not cur_mesh.are_all_axes_explicit_or_manual:
+    raise ValueError('Layout in Types can only be used in Explicit mode or '
+                     'Manual mode.')
   if layout_rule is None:
     raise NotImplementedError(
         f'Missing layout rule for {prim}. Please file an issue at'
         ' https://github.com/jax-ml/jax/issues')
-  return layout_rule(prim, in_avals, out_avals, **kwargs)
+  return layout_rule(*in_avals, **kwargs)
 
 
 def _default_memory_space_rule(prim, *avals, **kwargs):
@@ -219,14 +223,9 @@ def standard_abstract_eval(
     out_mem_space = (_default_memory_space_rule(prim, *avals, **kwargs)
                      if memory_space_rule is None else
                      memory_space_rule(*avals, **kwargs))
-    # Enter temporarily into AUTO layout mode to bypass check in ShapedArray
-    # constructor since this aval is a temporary state until we run
-    # `call_layout_rule`. Another option is to create a `InferringLayout`
-    # singleton which is only used here.
-    with use_layout_mode(LayoutMode.AUTO):
-      out_aval = core.ShapedArray(
-          out_shape, out_dtype, weak_type=weak_type, sharding=out_sharding,
-          manual_axis_type=out_mat, memory_space=out_mem_space)
+    out_aval = core.ShapedArray(
+        out_shape, out_dtype, weak_type=weak_type, sharding=out_sharding,
+        manual_axis_type=out_mat, memory_space=out_mem_space)
     out_layout = call_layout_rule(
         prim, layout_rule, in_avals=avals, out_avals=[out_aval], **kwargs)
     out_aval = out_aval.update(layout=out_layout)
@@ -251,12 +250,11 @@ def standard_multi_result_abstract_eval(
     out_mem_spaces = multi_mem_space_rule(prim, len(out_shapes), *avals, **kwargs)
     if isinstance(weak_types, bool):
       weak_types = (weak_types,) * len(out_shapes)
-    with use_layout_mode(LayoutMode.AUTO):
-      out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh,
-                                    manual_axis_type=mat, memory_space=ms)
-                  for s, d, weak_type, sh, mat, ms in zip(
-                      out_shapes, out_dtypes, weak_types, out_shardings,
-                      out_mats, out_mem_spaces)]
+    out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh,
+                                  manual_axis_type=mat, memory_space=ms)
+                 for s, d, weak_type, sh, mat, ms in zip(
+                     out_shapes, out_dtypes, weak_types, out_shardings,
+                     out_mats, out_mem_spaces)]
     out_layouts = call_layout_rule(
         prim, layout_rule, in_avals=avals, out_avals=out_avals, **kwargs)
     out_avals = [o.update(layout=l) for o, l in zip(out_avals, out_layouts)]

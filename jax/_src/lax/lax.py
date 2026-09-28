@@ -4450,6 +4450,9 @@ def unop_ur_rule(name, aval, **kwargs):
         f' unreduced. Got {aval}')
   return frozenset(), reduced, None
 
+def unop_layout_rule(aval, **kwargs):
+  return aval.layout
+
 def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True,
          ur_rule=None):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name,
@@ -4458,7 +4461,8 @@ def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True,
       _attrgetter('shape'), dtype_rule, name,
       sharding_rule=_attrgetter('sharding'),
       vma_rule=lambda x, **kwargs: x.mat.varying,
-      ur_rule=partial(unop_ur_rule, name) if ur_rule is None else ur_rule)
+      ur_rule=partial(unop_ur_rule, name) if ur_rule is None else ur_rule,
+      layout_rule=unop_layout_rule)
   batching.defvectorized(prim)
   return prim
 
@@ -4663,7 +4667,7 @@ def _nary_lower_hlo(
   out = op(*args)
   if accuracy:
     out = op(*args, result_accuracy=accuracy_attr(accuracy))
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 def _unary_with_accuracy_pp_rule(eqn, context, settings):
   params = dict(eqn.params)

@@ -24,7 +24,8 @@ from jax._src import test_util as jtu
 from jax._src.layout import LayoutMode, use_layout_mode
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.util import safe_zip
-from jax.experimental.layout import Format, Layout, with_layout_constraint
+from jax.experimental.layout import (Format, Layout, with_layout_constraint,
+                                     explicit_layout)
 import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec as P
 import numpy as np
@@ -888,6 +889,24 @@ class LayoutTest(jtu.JaxTestCase):
       with use_layout_mode(LayoutMode.AUTO):
         f(x)
     self.assertEqual(count(), 1)
+
+
+class LayoutInTypesTest(jtu.JaxTestCase):
+
+  def test_unop_layout(self):
+    arr = jnp.arange(16.).reshape(2, 8)
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      self.assertEqual(x.aval.layout, arr.format.layout)
+      y = jnp.sin(x)
+      self.assertEqual(y.aval.layout, arr.format.layout)
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.format, arr.format)
+    self.assertArraysEqual(out, jnp.sin(arr))
 
 
 if __name__ == '__main__':

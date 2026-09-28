@@ -3263,6 +3263,11 @@ wrap_with_full_to_shard_op = partial(_wrap_with_spmd_op, "SPMDFullToShardShape")
 wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
 
+def lower_with_explicit_types(ctx, op, aval):
+  out = lower_with_sharding_in_types(ctx, op, aval)
+  out = lower_with_layout_in_types(ctx, out, aval)
+  return out
+
 def lower_with_sharding_in_types(ctx, op, aval):
   if aval.sharding.mesh.empty:
     return op
@@ -3284,6 +3289,15 @@ def lower_with_sharding_in_types(ctx, op, aval):
     if aval.sharding.mesh._any_axis_auto:
       unspecified_dims = set(range(aval.ndim))
     return wrap_with_sharding_op(ctx, op, aval, proto, unspecified_dims)
+
+
+def lower_with_layout_in_types(ctx, op, aval):
+  if isinstance(aval.layout, AutoLayoutSingleton):
+    return op
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):
+    aval = core.physical_aval(aval)
+  assert isinstance(aval.layout, Layout)
+  return wrap_with_layout_op(ctx, op, aval, aval.layout, ctx.avals_in[0])
 
 
 def set_sharding(ctx: ModuleContext, op,
@@ -3310,10 +3324,8 @@ def get_sharding_attr(
       return ir.StringAttr.get(repr(xc.HloSharding.from_proto(sharding)))
 
 
-def wrap_with_layout_op(ctx: LoweringRuleContext,
-                        x: ir.Value,
-                        aval_out: core.AbstractValue,
-                        layout: Layout,
+def wrap_with_layout_op(ctx: LoweringRuleContext, x: ir.Value,
+                        aval_out: core.AbstractValue, layout: Layout,
                         aval_in: core.AbstractValue):
   (result_type,) = aval_to_ir_types(ctx.module_context, aval_out)
   out_shape = core.physical_aval(aval_out).shape  # pyrefly: ignore[missing-attribute]

@@ -2756,7 +2756,8 @@ def _relayout_impl(x, *, dst_layout):
 relayout_p.def_impl(_relayout_impl)
 
 def _relayout_hlo_lowering(ctx, x_node, *, dst_layout):
-  raise NotImplementedError
+  aval_out, = ctx.avals_out
+  return [mlir.lower_with_explicit_types(ctx, x_node, aval_out)]
 mlir.register_lowering(relayout_p, _relayout_hlo_lowering)
 
 # ------------------------------- helpers --------------------------------------

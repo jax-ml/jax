@@ -2440,15 +2440,6 @@ class ManualAxisType:
   def vur(self) -> frozenset:
     return self.varying | self.unreduced | self.reduced
 
-def get_layout(layout):
-  cur_layout_mode = get_layout_mode()
-  if (cur_layout_mode is not LayoutMode.AUTO and
-      isinstance(layout, AutoLayoutSingleton)):
-    raise ValueError(
-        "The layout of ShapedArray should not be `AutoLayout` when layout mode"
-        f" is {cur_layout_mode}")
-  return layout
-
 
 empty_mat = ManualAxisType()
 
@@ -2503,7 +2494,6 @@ class ShapedArray(AbstractValue):
       manual_axis_type = get_mat(manual_axis_type, sharding.mesh)
     # See description of https://github.com/jax-ml/jax/pull/30556
     memory_space = get_memory_space(memory_space)
-    layout = get_layout(layout)
     return cls._create(shape, dtype, weak_type, sharding, manual_axis_type,
                        memory_space, layout)
 
