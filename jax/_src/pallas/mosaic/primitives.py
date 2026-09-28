@@ -22,6 +22,7 @@ from typing import Any
 
 import jax
 from jax._src import core as jax_core
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import flattree as ft
@@ -736,7 +737,7 @@ def make_async_remote_copy(
     send_sem,
     recv_sem,
     device_id: MultiDimDeviceId | IntDeviceId | None,
-    device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH,
+    device_id_type: primitives.DeviceIdType | None = None,
 ) -> AsyncCopyDescriptor:
   """Creates a description of a remote copy operation.
 
@@ -758,6 +759,14 @@ def make_async_remote_copy(
   Returns:
     An AsyncCopyDescriptor.
   """
+  if device_id_type is not None:
+    deprecations.warn(
+        "jax-pallas-device-id-type",
+        "device_id_type is deprecated and will be removed in a future release.",
+        stacklevel=2,
+    )
+  else:
+    device_id_type = primitives.DeviceIdType.MESH
   if device_id_type == primitives.DeviceIdType.LOGICAL:
     assert not isinstance(
         device_id, tuple | dict
@@ -779,7 +788,7 @@ def async_remote_copy(
     send_sem,
     recv_sem,
     device_id,
-    device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH,
+    device_id_type: primitives.DeviceIdType | None = None,
 ) -> AsyncCopyDescriptor:
   """Issues a remote DMA copying from src_ref to dst_ref."""
   copy_descriptor = make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem,

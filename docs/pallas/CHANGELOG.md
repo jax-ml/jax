@@ -13,13 +13,31 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* Deprecations
+
+  * {class}`jax.experimental.pallas.DeviceIdType` and the `device_id_type`
+    parameter of {func}`jax.experimental.pallas.semaphore_signal` are deprecated.
+
 ### Mosaic GPU
+
+* Deprecations
+
+  * The `device_id_type` parameter of
+    {func}`jax.experimental.pallas.mosaic_gpu.remote_ref` is deprecated.
 
 * Removals
 
   * Removed the previously deprecated `idx` parameter of
     {func}`jax.experimental.pallas.mosaic_gpu.load`. Index the ref explicitly
     via `ref.at[idx]` prior to loading from it.
+
+### TPU
+
+* Deprecations
+
+  * The `device_id_type` parameter of
+    {func}`jax.experimental.pallas.tpu.async_remote_copy` and
+    {func}`jax.experimental.pallas.tpu.make_async_remote_copy` is deprecated.
 
 ## Released with JAX 0.11.2 (September 17, 2026)
 

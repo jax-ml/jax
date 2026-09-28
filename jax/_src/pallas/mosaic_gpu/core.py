@@ -31,6 +31,7 @@ from jax._src import api
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_batching
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import frozen_dict
@@ -1043,9 +1044,17 @@ class MulticastRef(state_types.Transform):
 def remote_ref(
     ref: _Ref,
     device_id: jax.typing.ArrayLike,
-    device_id_type: pallas_primitives.DeviceIdType = pallas_primitives.DeviceIdType.MESH,
+    device_id_type: pallas_primitives.DeviceIdType | None = None,
 ) -> pallas_core.TransformedRef:
   """Translate memref to a symmetric memref on a peer device."""
+  if device_id_type is not None:
+    deprecations.warn(
+        "jax-pallas-device-id-type",
+        "device_id_type is deprecated and will be removed in a future release.",
+        stacklevel=2,
+    )
+  else:
+    device_id_type = pallas_primitives.DeviceIdType.MESH
   if not isinstance(ref, pallas_core.TransformedRef):
     if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
       raise TypeError("ref must be a reference")
