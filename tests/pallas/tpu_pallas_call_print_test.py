@@ -152,14 +152,15 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
         out_shape=jax.ShapeDtypeStruct(shape, dtype),
     )
     def kernel(x_ref, o_ref):
-      pl.debug_print("{}", x_ref[...])
+      pl.debug_print("vec: {}", x_ref[...])
       o_ref[...] = x_ref[...]
 
     n = np.prod(shape)
     x = jnp.arange(n, dtype=dtype).reshape(shape)
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(kernel(x))
-    output = get_output()
+    _, sep, output = get_output().partition("vec: ")
+    self.assertTrue(sep)
     numbers = [
         int(num)
         for line in output.splitlines()
