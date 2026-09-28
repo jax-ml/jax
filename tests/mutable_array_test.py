@@ -25,6 +25,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.util import safe_map, safe_zip
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax.sharding import NamedSharding, PartitionSpec as P, AxisType
 import jax.numpy as jnp
 
@@ -1416,6 +1417,147 @@ class MutableArrayTest(jtu.JaxTestCase):
       return x
     stable_hlo = f.lower(1, 2).as_text()
     self.assertNotIn("add", stable_hlo)
+
+  def test_dce_dead_ref_writes(self):
+    def f(x):
+      r = jax.new_ref(x)
+      r[...] = x + 1.
+      r[...] += x
+      return x * 2.
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(1.).jaxpr, [True])
+    self.assertEqual([e.primitive.name for e in jaxpr.eqns], ['mul'])
+
+  def test_dce_ref_write_after_last_read(self):
+    def f(x):
+      r = jax.new_ref(x)
+      r[...] = x + 1.  # live
+      y = r[...]
+      r[...] = y + 1.  # dead
+      return y
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(1.).jaxpr, [True])
+    self.assertLen([e for e in jaxpr.eqns if e.primitive.name == 'swap'], 1)
+    self.assertAllClose(core.jaxpr_as_fun(jaxpr)(1.)[0], 2.)
+
+  def test_dce_ref_write_in_jit(self):
+    def f(x):
+      r1 = jax.new_ref(x)
+      r2 = jax.new_ref(x)
+      @jax.jit
+      def g(r1, r2):
+        r1[...] = x + 1.
+        r2[...] = x + 2.
+      g(r1, r2)
+      return r1[...]
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(1.).jaxpr, [True])
+    self.assertLen([e for e in jaxpr.eqns if e.primitive is core.ref_p], 1)
+    jit_eqn, = [e for e in jaxpr.eqns if e.primitive.name == 'jit']
+    self.assertLen(jit_eqn.invars, 2)  # x and r1
+    self.assertAllClose(core.jaxpr_as_fun(jaxpr)(1.)[0], 2.)
+
+  def test_dce_ref_write_in_cond(self):
+    def f(p, x):
+      r = jax.new_ref(x)
+      jax.lax.cond(p, lambda: r.set(x + 1.), lambda: r.set(x - 1.))
+      return x
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(True, 1.).jaxpr, [True])
+    self.assertEmpty(jaxpr.eqns)
+
+  def test_dce_ref_write_in_one_cond_branch_read_in_other(self):
+    def f(p, x):
+      r = jax.new_ref(x)
+      r[...] = x + 1.  # read by false_fun
+      def true_fun():
+        r[...] = x * 5.  # never read
+        return 0.
+      def false_fun():
+        return r[...]
+      return jax.lax.cond(p, true_fun, false_fun)
+
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(True, 1.).jaxpr, [True])
+    self.assertLen([e for e in jaxpr.eqns if e.primitive.name == 'swap'], 1)
+    cond_eqn, = [e for e in jaxpr.eqns if e.primitive.name == 'cond']
+    branch_prims = [e.primitive.name for b in cond_eqn.params['branches']
+                    for e in b.eqns]
+    self.assertNotIn('swap', branch_prims)
+    for p in [True, False]:
+      self.assertAllClose(core.jaxpr_as_fun(jaxpr)(p, 1.)[0],
+                          jax.jit(f)(p, 1.))
+
+  @parameterized.parameters([True, False])
+  def test_dce_ref_write_in_scan(self, use_carry_out):
+    def f(x):
+      r = jax.new_ref(x)
+      def body(c, _):
+        r[...] = c
+        return c + 1., None
+      c, _ = jax.lax.scan(body, x, None, length=3)
+      return c if use_carry_out else x
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(1.).jaxpr, [True])
+    if use_carry_out:
+      scan_eqn, = jaxpr.eqns
+      self.assertEqual([e.primitive.name for e in scan_eqn.params['jaxpr'].eqns],
+                       ['add'])
+    else:
+      self.assertEmpty(jaxpr.eqns)
+
+  def test_dce_keeps_ref_write_read_by_next_scan_iteration(self):
+    def f(x):
+      r = jax.new_ref(0.)
+      def body(c, _):
+        y = r[...]
+        r[...] = c + 1.  # read by the next iteration
+        return c + y, None
+      c, _ = jax.lax.scan(body, x, None, length=3)
+      return c
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(1.).jaxpr, [True])
+    self.assertAllClose(core.jaxpr_as_fun(jaxpr)(1.)[0], f(1.))
+
+  def test_dce_scan_ref_liveness_fixpoint(self):
+    def f(x):
+      r1, r2, r3, r4 = [jax.new_ref(x) for _ in range(4)]
+      def body(c, _):
+        r1[...] = r2[...]
+        r2[...] = r3[...]
+        r3[...] = r4[...]
+        r4[...] = c
+        return c + 1., None
+      jax.lax.scan(body, x, None, length=5)
+      return r1[...]
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(1.).jaxpr, [True])
+    self.assertAllClose(core.jaxpr_as_fun(jaxpr)(1.)[0], f(1.))
+
+  @parameterized.parameters([True, False])
+  def test_dce_ref_write_in_remat(self, remat3):
+    def f(x, read_ref):
+      r = jax.new_ref(x)
+      @jax.checkpoint
+      def g(x):
+        r[...] = x * 3.
+        return jnp.sin(x)
+      y = g(x)
+      return y + r[...] if read_ref else y
+
+    with config.remat3(remat3):
+      jaxpr = jax.make_jaxpr(partial(f, read_ref=False))(1.)
+      dced, _ = pe.dce_jaxpr(jaxpr, [True])
+      self.assertNotIn('new_ref', str(dced))
+
+      jaxpr = jax.make_jaxpr(partial(f, read_ref=True))(1.)
+      dced, _ = pe.dce_jaxpr(jaxpr, [True])
+      self.assertAllClose(core.jaxpr_as_fun(dced)(1.)[0], f(1., True))
+
+  def test_dce_ref_input_liveness(self):
+    def f(r, x):
+      r[...] = x
+      return x
+    jaxpr = jax.make_jaxpr(f)(jax.new_ref(1.), 1.).jaxpr
+    jaxpr_, used_inputs = pe.dce_jaxpr(jaxpr, [True])
+    self.assertLen(jaxpr_.eqns, 2)
+    self.assertEqual(used_inputs, [True, True])
+    jaxpr_, used_inputs = pe.dce_jaxpr(jaxpr, [True],
+                                       live_inputs=[False, True])
+    self.assertEmpty(jaxpr_.eqns)
+    self.assertEqual(used_inputs, [False, True])
 
   def test_grad_of_constant_ref_set(self):
     # https://github.com/jax-ml/jax/issues/33987

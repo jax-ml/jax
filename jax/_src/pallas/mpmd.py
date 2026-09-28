@@ -345,7 +345,7 @@ state_discharge.register_discharge_rule(mpmd_map_p)(_mpmd_map_discharge_rule)
 
 
 def _mpmd_map_dce_rule(
-    used_outs: list[bool], eqn: pe.JaxprEqn
+    used_outs: list[bool], live_ins: list[bool], eqn: pe.JaxprEqn
 ) -> tuple[list[bool], pe.JaxprEqn | None]:
   return [True] * len(eqn.invars), eqn
 

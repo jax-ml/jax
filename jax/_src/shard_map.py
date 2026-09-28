@@ -2165,16 +2165,18 @@ def _all_newly_manual_mesh_names(
 # DCE
 
 # TODO(mattjj): de-duplicate with pe.dce_jaxpr_call_rule, and/or _pmap_dce_rule?
-def _shard_map_dce(used_outputs: list[bool], eqn: core.JaxprEqn
+def _shard_map_dce(used_outputs: list[bool], live_ins: list[bool],
+                   eqn: core.JaxprEqn
                    ) -> tuple[list[bool], core.JaxprEqn | None]:
-  if not any(used_outputs) and not pe.has_effects(eqn):
+  if not any(used_outputs) and not pe.has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
   mesh = eqn.params["mesh"]
   manual_axes = eqn.params["newly_manual_axes"]
   check_vma = eqn.params["check_vma"]
   with (_extend_axis_env(mesh, manual_axes), config._check_vma(check_vma),
         use_abstract_mesh(_as_manual_mesh(mesh, manual_axes))):
-    jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)
+    jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs,
+                                      live_inputs=live_ins)
   if not any(used_inputs) and not any(used_outputs) and not jaxpr.effects:
     return used_inputs, None
   else:

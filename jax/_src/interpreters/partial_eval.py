@@ -42,7 +42,7 @@ from jax._src.core import (
     get_referent, JaxprEqnContext, typeof)
 from jax._src.lib import _jax
 from jax._src.source_info_util import SourceInfo
-from jax._src.state.types import AbstractRef, ReadEffect
+from jax._src.state.types import AbstractRef, ReadEffect, RefEffect
 from jax._src import flattree as ft
 from jax._src.tree_util import PyTreeDef
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
@@ -1203,6 +1203,7 @@ def dedup_jaxpr_outputs(jaxpr: Jaxpr, num_kept_prefix: int,
 
 def dce_jaxpr(jaxpr: Jaxpr, used_outputs: bool | Sequence[bool],
               instantiate: bool | Sequence[bool] = False,
+              live_inputs: bool | Sequence[bool] = True,
               ) -> tuple[Jaxpr, list[bool]]:
   """Runs dead-code elementation on a given jaxpr.
 
@@ -1212,6 +1213,11 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: bool | Sequence[bool],
     instantiate: A bool or a list of bools indicating which inputs should be
       considered used, regardless of whether they are actually used in a jaxpr.
       If a bool, the same value is used for all inputs.
+    live_inputs: A bool or a list of bools indicating, for each Ref-typed
+      input, whether its contents may be read after the jaxpr returns (e.g. by
+      the caller). Writes to a Ref input marked False may be removed if nothing
+      in the jaxpr reads them. Entries for non-Ref inputs are ignored. If a
+      bool, the same value is used for all inputs.
 
   Returns:
     A tuple of ``(new_jaxpr, used_inputs)``.
@@ -1220,8 +1226,11 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: bool | Sequence[bool],
     used_outputs = (used_outputs,) * len(jaxpr.outvars)
   if type(instantiate) is bool:
     instantiate = (instantiate,) * len(jaxpr.invars)
+  if type(live_inputs) is bool:
+    live_inputs = (live_inputs,) * len(jaxpr.invars)
 
-  return _dce_jaxpr(jaxpr, tuple(used_outputs), tuple(instantiate))
+  return _dce_jaxpr(jaxpr, tuple(used_outputs), tuple(instantiate),
+                    tuple(live_inputs))
 
 
 def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
@@ -1236,9 +1245,9 @@ def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
 
 
 def _default_dce_rule(
-    used_outs: list[bool], eqn: JaxprEqn
+    used_outs: list[bool], live_ins: list[bool], eqn: JaxprEqn
   ) -> tuple[list[bool], JaxprEqn | None]:
-  if not any(used_outs) and not has_effects(eqn):
+  if not any(used_outs) and not has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
   return [True] * len(eqn.invars), eqn
 
@@ -1251,22 +1260,34 @@ dceable_effects.add_type(core.NamedAxisEffect)
 dceable_effects.add_type(core.InternalMutableArrayEffect)
 
 def _free_ref_dce_rule(
-    used_outs: list[bool], eqn: JaxprEqn
+    used_outs: list[bool], live_ins: list[bool], eqn: JaxprEqn
 ) -> tuple[list[bool], JaxprEqn | None]:
   # Never gonna DCE free_ref.
-  del used_outs
+  # TODO(mattjj): free_ref doesn't read its Ref, but returning True here marks
+  # the Ref live, so we keep any writes to it that precede the free_ref.
+  del used_outs, live_ins
   return [True] * len(eqn.invars), eqn
 dce_rules[core.free_ref_p] = _free_ref_dce_rule
 
 
-def has_effects(eqn: JaxprEqn) -> bool:
-  effs = {e for e in eqn.effects if not dceable_effects.contains(e)}
-  return bool(effs)
+def has_effects(eqn: JaxprEqn, live_ins: Sequence[bool] | None = None) -> bool:
+  """Whether ``eqn`` has effects that prevent it from being DCE'd.
+
+  If ``live_ins`` is given, Ref effects on inputs that aren't live (i.e. Refs
+  whose contents are never read after ``eqn``) don't count.
+  """
+  if live_ins is None or all(live_ins):
+    return any(not dceable_effects.contains(e) for e in eqn.effects)
+  dead = {v for v, live in zip(eqn.invars, live_ins)
+          if not live and type(v) is Var}
+  return any(not dceable_effects.contains(e) and
+             not (isinstance(e, RefEffect) and e.input in dead)
+             for e in eqn.effects)
 
 
 @weakref_lru_cache
 def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
-               instantiate: tuple[bool, ...]
+               instantiate: tuple[bool, ...], live_inputs: tuple[bool, ...]
                ) -> tuple[Jaxpr, list[bool]]:
   env: dict[Var, bool] = {}
 
@@ -1277,12 +1298,24 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
     if type(x) is Var:
       env[x] = read(x) or b
 
+  may_have_dead_refs = (core.internal_mutable_array_effect in jaxpr.effects or
+                        not all(live_inputs))
+  live_at_exit = ({*jaxpr.constvars,
+                   *(v for v, l in zip(jaxpr.invars, live_inputs) if l)}
+                  if may_have_dead_refs else set())
+
+  def live(x: Atom) -> bool:
+    return (type(x) is not Var or read(x) or x in live_at_exit or
+            not isinstance(x.aval, AbstractRef))
+
   new_eqns = []
   foreach(write, jaxpr.outvars, used_outputs)
   for eqn in jaxpr.eqns[::-1]:
     used_outs = map(read, eqn.outvars)
+    live_ins = (map(live, eqn.invars) if may_have_dead_refs
+                else [True] * len(eqn.invars))
     rule = dce_rules.get(eqn.primitive, _default_dce_rule)
-    used_ins, new_eqn = rule(used_outs, eqn)
+    used_ins, new_eqn = rule(used_outs, live_ins, eqn)
     if new_eqn is not None:
       new_eqns.append(new_eqn)
     foreach(write, eqn.invars, used_ins)
@@ -1304,23 +1337,26 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
 
   return new_jaxpr, used_inputs
 
-DCERule = Callable[[list[bool], JaxprEqn],
+DCERule = Callable[[list[bool], list[bool], JaxprEqn],
                    tuple[list[bool], JaxprEqn | None]]
 
 
 @weakref_lru_cache
-def _cached_closed_call_dce(jaxpr_, used_outputs: tuple[bool, ...]
+def _cached_closed_call_dce(jaxpr_, used_outputs: tuple[bool, ...],
+                            live_inputs: tuple[bool, ...] | bool = True,
                             ) -> tuple[Jaxpr, list[bool]]:
   # dce_jaxpr preserves attached consts (constvars are never pruned).
-  return dce_jaxpr(jaxpr_, used_outputs)
+  return dce_jaxpr(jaxpr_, used_outputs, live_inputs=live_inputs)
 
-def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
+def dce_jaxpr_closed_call_rule(used_outputs: list[bool], live_ins: list[bool],
+                               eqn: JaxprEqn
                                ) -> tuple[list[bool], JaxprEqn | None]:
   # TODO(mattjj): de-duplicate with above rule?
-  if not any(used_outputs) and not has_effects(eqn):
+  if not any(used_outputs) and not has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
   jaxpr_ = eqn.params['call_jaxpr']
-  closed_jaxpr, used_inputs = _cached_closed_call_dce(jaxpr_, tuple(used_outputs))
+  closed_jaxpr, used_inputs = _cached_closed_call_dce(
+      jaxpr_, tuple(used_outputs), tuple(live_ins))
   new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
   effects = core.eqn_effects(closed_jaxpr, new_invars)
   new_params = dict(eqn.params, call_jaxpr=closed_jaxpr)
@@ -2190,7 +2226,7 @@ def _check_no_returned_refs(
       # TODO(dougalm): something more efficient
       eqn = next((e for e in eqns if v in e.outvars), None)
       if eqn:
-        assert eqn.primitive in (core.ref_p, core.empty_ref_p)
+        assert eqn.primitive.ref_allocating
         origin_info = ('\n\nThe returned mutable array was created on line '
                        f'{source_info_util.summarize(eqn.source_info)}.')
       elif v in frame.invars:

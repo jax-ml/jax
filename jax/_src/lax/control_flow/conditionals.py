@@ -820,22 +820,26 @@ def _ordered_unique(xs):
   d = collections.OrderedDict((x, None) for x in xs)
   return list(d.keys())
 
-def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
+def _cond_dce_rule(used_outputs: list[bool], live_ins: list[bool],
+                   eqn: core.JaxprEqn,
                    ) -> tuple[list[bool], core.JaxprEqn | None]:
 
-  if not any(used_outputs) and not pe.has_effects(eqn):
+  if not any(used_outputs) and not pe.has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
 
   branches = eqn.params['branches']
+  _, live_ops = split_list(live_ins, [1])
 
   # First, compute which inputs are used in any branch (not including `pred`).
   used_inputs: list[bool] = [False] * (len(eqn.invars) - 1)  # -1 for pred
   for jaxpr in branches:
-    _, used_inputs_ = pe.dce_jaxpr(jaxpr, used_outputs, instantiate=False)
+    _, used_inputs_ = pe.dce_jaxpr(jaxpr, used_outputs, instantiate=False,
+                                   live_inputs=live_ops)
     used_inputs = map(operator.or_, used_inputs, used_inputs_)
 
   # Next, compute DCEd branches, instantiating according to used_inputs.
-  dce_branches = [pe.dce_jaxpr(jaxpr, used_outputs, instantiate=used_inputs)[0]
+  dce_branches = [pe.dce_jaxpr(jaxpr, used_outputs, instantiate=used_inputs,
+                               live_inputs=live_ops)[0]
                   for jaxpr in branches]
 
   # Finally, update parameters and form the new eqn.

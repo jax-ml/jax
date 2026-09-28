@@ -800,11 +800,13 @@ def remat_vmap(axis_data, args, dims, *, jaxpr, **params):
 batching.fancy_primitive_batchers[remat_p] = remat_vmap
 
 # TODO(mattjj,sharadmv): de-duplicate with pe.dce_jaxpr_call_rule
-def remat_dce(used_outputs: list[bool], eqn: core.JaxprEqn
+def remat_dce(used_outputs: list[bool], live_ins: list[bool],
+              eqn: core.JaxprEqn
               ) -> tuple[list[bool], core.JaxprEqn | None]:
-  if not any(used_outputs) and not pe.has_effects(eqn):
+  if not any(used_outputs) and not pe.has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
-  new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)
+  new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs,
+                                        live_inputs=live_ins)
   prevent_cse = eqn.params['prevent_cse']
   if isinstance(prevent_cse, tuple):
     prevent_cse = tuple(p for p, u in zip(prevent_cse, used_inputs) if u)
@@ -1190,12 +1192,14 @@ class RematTraced(HiPrim):
       return tree_unflatten(out_tree, out_flat)
     return out, res, rem
 
-  def dce(self, used_outs):
+  def dce(self, used_outs, live_ins):
     used_outs_flat = tree_leaves_checked(self.out_tree, used_outs)
+    live_ins_flat = tree_leaves_checked(self.in_tree, live_ins)
     if not any(used_outs_flat):
       return False, False, None
-    new_jaxpr, used_ins = pe.dce_jaxpr(self.jaxpr, used_outs_flat)
-    if all(used_ins) and all(used_outs_flat):
+    new_jaxpr, used_ins = pe.dce_jaxpr(self.jaxpr, used_outs_flat,
+                                       live_inputs=live_ins_flat)
+    if all(used_ins) and all(used_outs_flat) and all(live_ins_flat):
       return True, True, self
     if isinstance(self.prevent_cse, bool):
       prevent_cse = self.prevent_cse
