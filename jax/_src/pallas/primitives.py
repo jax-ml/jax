@@ -1237,9 +1237,7 @@ def _device_id_dict_to_mesh(mesh_context: pallas_utils.MeshInfo | None, device_i
           partial_device_idx = idx // inner_mesh_size
 
         if axis_size & (axis_size - 1) == 0:
-          device_idx = partial_device_idx & jnp.asarray(
-              axis_size - 1, dtype=partial_device_idx.dtype
-          )
+          device_idx = partial_device_idx & (axis_size - 1)
         else:
           device_idx = lax.rem(partial_device_idx, axis_size)
         physical_axis_dict[axis_name] = device_idx

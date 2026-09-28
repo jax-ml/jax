@@ -37,6 +37,7 @@ from jax._src.lax import convolution
 from jax._src.lax import lax
 from jax._src.pallas import core as pl_core
 from jax._src.pallas import primitives
+from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.random import prng as jax_prng
 from jax._src.state import discharge as state_discharge
@@ -418,8 +419,8 @@ def dma_start_discharge_rule(
   dst_sem, dst_sem_transforms = _get_ref_and_transforms(dst_sem)
   src_sem, src_sem_transforms = _get_ref_and_transforms(src_sem)
 
-  src_ref_aval, dst_ref_aval, dst_sem_aval, src_sem_aval, _ = _dma_unflatten(
-      tree, ctx.in_avals
+  src_ref_aval, dst_ref_aval, dst_sem_aval, src_sem_aval, device_id_aval = (
+      _dma_unflatten(tree, ctx.in_avals)
   )
 
   _, dst_discharge, dst_sem_discharge, *maybe_src_sem_discharge = (
@@ -451,41 +452,29 @@ def dma_start_discharge_rule(
     # the DMA then the devices that do will hang.
     # TODO(justinfu): Verify that code only works in SPMD mode.
     axis_env = jax_core.get_axis_env()
-    nonempty_axes = [name for name in axis_env.axis_sizes if name is not None]
-    if isinstance(device_id, dict):
-      if device_id_type is not primitives.DeviceIdType.MESH:
-        raise ValueError(
-            "`device_id_type` must be MESH if `device_id` is a dict,"
-            f" got: {device_id_type = }."
-        )
-      device_id_list = []
-      for axis in nonempty_axes:
-        device_id_list.append(device_id.get(axis, jax.lax.axis_index(axis)))
-      device_id = tuple(device_id_list)
-    if device_id_type == primitives.DeviceIdType.LOGICAL:
-      if len(nonempty_axes) > 1:
-        raise NotImplementedError("Sharding with more than one named axis not "
-                                  "implemented in dma_start_p for LOGICAL "
-                                  "device_id_type.")
-      shard_axis = nonempty_axes[0]
-      my_axis = jax.lax.axis_index(shard_axis)
-    elif device_id_type == primitives.DeviceIdType.MESH:
-      device_id_len = 1
-      if isinstance(device_id, jax.Array):
-        device_id_len = device_id.size
-      elif hasattr(device_id, '__len__'):
-        device_id_len = len(device_id)
-      if device_id_len != len(axis_env.axis_sizes):
-        raise ValueError(
-            f"device_id ({device_id_len}) and mesh ({len(axis_env.axis_sizes)}) "
-            "must have same length.")
-      if device_id_len > 1 or len(nonempty_axes) > 1:
-        raise NotImplementedError("Meshes with more than 1 named dimension not "
-                                  "implemented in dma_start_p")
-      shard_axis = nonempty_axes[0]
-      my_axis = jax.lax.axis_index(shard_axis)
-    else:
-      raise ValueError(f"Unknown device_id_type: {device_id_type}")
+    nonempty_axes = tuple(
+        name for name in axis_env.axis_sizes if name is not None
+    )
+    if len(nonempty_axes) > 1:
+      raise NotImplementedError(
+          "Meshes with more than 1 named dimension not implemented in"
+          " dma_start_p"
+      )
+    mesh_shape = tuple(axis_env.axis_sizes[a] for a in nonempty_axes)
+    mesh_context = pallas_utils.MeshInfo(
+        mesh_shape,
+        nonempty_axes,
+        pallas_utils.strides_from_shape(mesh_shape),
+    )
+    device_id, non_mesh_axes = primitives.device_id_to_logical(
+        mesh_context, device_id, device_id_type, jax.lax.axis_index
+    )
+    if non_mesh_axes:
+      raise NotImplementedError(
+          f"Non-mesh axes not implemented in dma_start_p: {non_mesh_axes}"
+      )
+    shard_axis = nonempty_axes[0]
+    my_axis = jax.lax.axis_index(shard_axis)
     # Compute the update that is being sent to the current device.
     who_copy_to_me = jax.lax.all_gather(device_id, shard_axis) == my_axis
     # TODO(justinfu): Add a checkify for verifying there is at most one source.
@@ -547,7 +536,7 @@ def dma_start_discharge_rule(
   if is_remote:
     new_vals += (do_discharge_src_sem() if src_sem_discharge else None,) # src_sem
     new_vals += (None,) * num_src_sem_transforms
-    new_vals += (None,)  # device_id
+    new_vals += (None,) * len(_dma_tree_leaves(device_id_aval))  # device_id
   assert (len(new_vals) ==
           len(ctx.in_avals)), f"{len(new_vals), new_vals} != {len(ctx.in_avals)}"
 

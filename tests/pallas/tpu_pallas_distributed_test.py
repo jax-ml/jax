@@ -953,15 +953,25 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
     if not jtu.is_device_tpu():
       self.skipTest('Test requires TPU')
 
-  @parameterized.parameters(('left',), ('right',))
-  def test_interpret_remote_dma_ppermute(self, permutation):
+  @parameterized.product(
+      permutation=['left', 'right', 'zero'],
+      device_id_fn=[
+          lambda x: x,
+          lambda x: (x,),
+          lambda x: {'x': x},
+          lambda x: {('x',): x},
+      ],
+  )
+  def test_interpret_remote_dma_ppermute(self, permutation, device_id_fn):
     if jax.device_count() <= 1:
       self.skipTest('Test requires multiple devices.')
     num_devices = jax.device_count()
     if permutation == 'left':
       permute_fn = lambda x: lax.rem(x + num_devices - 1, num_devices)
-    else:
+    elif permutation == 'right':
       permute_fn = lambda x: lax.rem(x + num_devices + 1, num_devices)
+    else:
+      permute_fn = lambda x: 0
 
     # Construct a kernel which performs a ppermute based on permute_fn.
     def test_kernel(x_ref,
@@ -971,7 +981,7 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
                 ):
       o_ref[...] = jnp.zeros_like(o_ref[...])
       my_id = lax.axis_index('x')
-      dst_device = permute_fn(my_id)
+      dst_device = device_id_fn(permute_fn(my_id))
       input_to_output_copy = pltpu.make_async_remote_copy(
           src_ref=x_ref,
           dst_ref=o_ref,
@@ -1014,14 +1024,17 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
       check_vma=False))
     result = compiled_func(sharded_arr)
 
-    perm = tuple((src, permute_fn(src)) for src in range(num_devices))
-    perm = jax.tree_util.tree_map(int, perm)
-    def lax_permute(x):
-      return lax.ppermute(x, 'x', perm)
-    expected = jax.jit(shard_map.shard_map(lax_permute,
-                                   mesh=mesh,
-                                   in_specs=P(None, 'x'),
-                                   out_specs=P(None, 'x')))(sharded_arr)
+    if permutation == 'zero':
+      expected = jnp.tile(unsharded_arr[:, :128], (1, num_devices))
+    else:
+      perm = tuple((src, permute_fn(src)) for src in range(num_devices))
+      perm = jax.tree_util.tree_map(int, perm)
+      def lax_permute(x):
+        return lax.ppermute(x, 'x', perm)
+      expected = jax.jit(shard_map.shard_map(lax_permute,
+                                     mesh=mesh,
+                                     in_specs=P(None, 'x'),
+                                     out_specs=P(None, 'x')))(sharded_arr)
     np.testing.assert_array_equal(result, expected)
 
   def test_interpret_remote_dma_asymmetrical_indexer(self):
