@@ -88,6 +88,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
@@ -488,8 +489,16 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
     const std::vector<nb::object>& in_device_local_layouts,
     const nb::callable& shard_arg_fallback,
     std::vector<nb::object>& keep_alive_objects) {
+#if JAX_IFRT_VERSION_NUMBER >= 73
+  std::optional<xla::ifrt::DeviceListRef> devices =
+      executable.ifrt_loaded_executable()->devices();
+  const absl::Span<xla::ifrt::Device* const> addressable_devices =
+      devices.has_value() ? (*devices)->AddressableDeviceList()->devices()
+                          : absl::Span<xla::ifrt::Device* const>();
+#else
   const auto& addressable_devices =
       executable.ifrt_loaded_executable()->addressable_devices();
+#endif
   const auto& num_global_devices =
       executable.ifrt_loaded_executable()->num_devices();
   int num_args = flat_dynamic_args.size();
