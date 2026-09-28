@@ -53,12 +53,10 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     def kernel(x_ref, y_ref):
       def body(ready_sem, send_sem, recv_sem):
         other_dev_id = 1 - lax.axis_index('x')
-        pl.semaphore_signal(ready_sem, device_id=other_dev_id,
-                               device_id_type=pl.DeviceIdType.LOGICAL)
+        pl.semaphore_signal(ready_sem, device_id=other_dev_id)
         pl.semaphore_wait(ready_sem)
         copy_done = pltpu.async_remote_copy(
-            x_ref, y_ref, send_sem, recv_sem, other_dev_id,
-            device_id_type=pl.DeviceIdType.LOGICAL,
+            x_ref, y_ref, send_sem, recv_sem, other_dev_id
         )
         copy_done.wait_send()
         copy_done.wait_recv()
@@ -101,12 +99,10 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     def kernel(x_ref, y_ref):
       def body(ready_sem, send_sem, recv_sem):
         other_dev_id = 1 - lax.axis_index('x')
-        pl.semaphore_signal(ready_sem, device_id=other_dev_id,
-                               device_id_type=pl.DeviceIdType.LOGICAL)
+        pl.semaphore_signal(ready_sem, device_id=other_dev_id)
         pl.semaphore_wait(ready_sem)
         copy_done = pltpu.async_remote_copy(
-            x_ref, y_ref, send_sem, recv_sem, other_dev_id,
-            device_id_type=pl.DeviceIdType.LOGICAL,
+            x_ref, y_ref, send_sem, recv_sem, other_dev_id
         )
         copy_done.wait_send()
         copy_done.wait_recv()
@@ -694,11 +690,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
 
       def body(ready_sem, send_sem, recv_sem):
         other_dev_id = 1 - lax.axis_index('x')
-        pl.semaphore_signal(
-            ready_sem,
-            device_id=other_dev_id,
-            device_id_type=pl.DeviceIdType.LOGICAL,
-        )
+        pl.semaphore_signal(ready_sem, device_id=other_dev_id)
         pl.semaphore_wait(ready_sem)
 
         @pl.loop(0, num_refs)
@@ -709,7 +701,6 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
               pl.select_ref(i % 2, send_sem.at[0], send_sem.at[1]),
               pl.select_ref(i % 2, recv_sem.at[0], recv_sem.at[1]),
               other_dev_id,
-              device_id_type=pl.DeviceIdType.LOGICAL,
           )
           copy_done.wait_send()
           copy_done.wait_recv()
@@ -761,20 +752,11 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     def kernel(idx_ref, x0_ref, x1_ref, y_ref):
       def body(ready_sem, send_sem, recv_sem):
         other_dev_id = 1 - lax.axis_index('x')
-        pl.semaphore_signal(
-            ready_sem,
-            device_id=other_dev_id,
-            device_id_type=pl.DeviceIdType.LOGICAL,
-        )
+        pl.semaphore_signal(ready_sem, device_id=other_dev_id)
         pl.semaphore_wait(ready_sem)
         x_ref = pl.select_ref(idx_ref[...], x0_ref, x1_ref)
         copy_done = pltpu.async_remote_copy(
-            x_ref,
-            y_ref,
-            send_sem,
-            recv_sem,
-            other_dev_id,
-            device_id_type=pl.DeviceIdType.LOGICAL,
+            x_ref, y_ref, send_sem, recv_sem, other_dev_id
         )
         copy_done.wait_send()
         copy_done.wait_recv()
@@ -996,7 +978,6 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
           send_sem=copy_send_sem,
           recv_sem=copy_recv_sem,
           device_id=dst_device,
-          device_id_type=pl.DeviceIdType.LOGICAL,
       )
       input_to_output_copy.start()
       input_to_output_copy.wait()
@@ -1172,7 +1153,6 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
             send_sem=send_sem,
             recv_sem=recv_sem,
             device_id=neighbor,
-            device_id_type=pl.DeviceIdType.LOGICAL,
         )
         remote_dma.start()
         remote_dma.wait()
@@ -1184,7 +1164,6 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
             send_sem=send_sem,
             recv_sem=recv_sem,
             device_id=neighbor,
-            device_id_type=pl.DeviceIdType.LOGICAL,
         )
         remote_dma.start()
         remote_dma.wait()
