@@ -42,6 +42,7 @@ limitations under the License.
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Casting.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -90,13 +91,23 @@ mlir::Value packKernelArgs(mlir::OpBuilder& builder,
       c1);
 
   for (auto [i, operand] : llvm::enumerate(launch.getKernelOperands())) {
-    mlir::Value storage_ptr = mlir::LLVM::GEPOp::create(
-        builder, launch.getLoc(), ptr_ty, kernel_args_struct_ty,
-        kernel_args_struct,
-        mlir::ArrayRef<mlir::LLVM::GEPArg>{mlir::LLVM::GEPArg(0),
-                                           mlir::LLVM::GEPArg(i)});
-    mlir::LLVM::StoreOp::create(builder, launch.getLoc(), operand, storage_ptr);
-    mlir::LLVM::GEPArg arr_gep_arg(i);
+    mlir::Value storage_ptr;
+    if (auto load_op = operand.getDefiningOp<mlir::LLVM::LoadOp>();
+        load_op &&
+        load_op.getAddr().getDefiningOp<mlir::LLVM::AllocaOp>() &&
+        llvm::none_of(load_op.getAddr().getUsers(),
+                      llvm::IsaPred<mlir::LLVM::LifetimeStartOp,
+                                    mlir::LLVM::LifetimeEndOp>)) {
+      storage_ptr = load_op.getAddr();
+    } else {
+      storage_ptr = mlir::LLVM::GEPOp::create(
+          builder, launch.getLoc(), ptr_ty, kernel_args_struct_ty,
+          kernel_args_struct,
+          mlir::ArrayRef<mlir::LLVM::GEPArg>{mlir::LLVM::GEPArg(0),
+                                             mlir::LLVM::GEPArg(i)});
+      mlir::LLVM::StoreOp::create(builder, launch.getLoc(), operand,
+                                  storage_ptr);
+    }
     mlir::Value array_slot_ptr = mlir::LLVM::GEPOp::create(
         builder, launch.getLoc(), ptr_ty, builder.getI64Type(),
         kernel_args_array, mlir::LLVM::GEPArg(i));
