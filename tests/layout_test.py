@@ -908,6 +908,37 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.format, arr.format)
     self.assertArraysEqual(out, jnp.sin(arr))
 
+  def test_naryop_layout(self):
+    arr1 = jnp.arange(16., dtype=np.float32).reshape(2, 8)
+    arr2 = jnp.arange(16., dtype=np.float32).reshape(2, 8)
+    l = arr1.format.layout
+
+    @jax.jit
+    @explicit_layout(in_layouts=(l, l))
+    def f(x, y):
+      self.assertEqual(x.aval.layout, l)
+      self.assertEqual(y.aval.layout, l)
+      z = x + y
+      self.assertEqual(z.aval.layout, l)
+      w = jax.lax.add(np.float32(1.0), z)
+      self.assertEqual(w.aval.layout, l)
+      return w
+
+    out = f(arr1, arr2)
+    self.assertEqual(out.format, arr1.format)
+    self.assertArraysEqual(out, arr1 + arr2 + 1.0)
+
+    l_transposed = Layout(l.major_to_minor[::-1], l.tiling)
+
+    @jax.jit
+    @explicit_layout(in_layouts=(l, l_transposed))
+    def g(x, y):
+      return x + y
+
+    with self.assertRaisesRegex(
+        ValueError, 'layout of all inputs passed to `add` must be the same'):
+      g(arr1, arr2)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

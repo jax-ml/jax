@@ -4596,6 +4596,23 @@ def nary_ur_rule(name, *avals, **params):
         f' unreduced. Got {avals}')
   return frozenset(), reduced, None
 
+
+def broadcasting_layout_rule(name, *avals, **kwargs):
+  prev_aval = None
+  for a in avals:
+    if not a.ndim:
+      continue
+    if prev_aval is not None and prev_aval.layout != a.layout:
+      raise ValueError(
+          f'layout of all inputs passed to `{name}` must be the same. Got one'
+          f' operand with layout: {prev_aval.layout} and another operand with'
+          f' layout: {a.layout}')
+    prev_aval = a
+  if prev_aval is None:
+    raise NotImplementedError
+  return prev_aval.layout
+
+
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
            require_same_dtypes=True, ur_rule=None):
   dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name,
@@ -4603,10 +4620,12 @@ def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
                        require_same=require_same_dtypes)
   shape_rule = partial(broadcasting_shape_rule, name)
   sharding_rule = partial(broadcasting_sharding_rule, name)
+  layout_rule = partial(broadcasting_layout_rule, name)
   prim = standard_primitive(
       shape_rule, dtype_rule, name, sharding_rule=sharding_rule,
       vma_rule=partial(core.standard_vma_rule, name),
-      ur_rule=partial(nary_ur_rule, name) if ur_rule is None else ur_rule)
+      ur_rule=partial(nary_ur_rule, name) if ur_rule is None else ur_rule,
+      layout_rule=layout_rule)
   batching.defbroadcasting(prim)
   return prim
 standard_naryop = partial(naryop, input_dtype)

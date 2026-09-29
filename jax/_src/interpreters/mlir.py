@@ -3022,7 +3022,7 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
       elif op_aval_sharding == out_sharding:
         out.append(op)
       else:
-        out.append(lower_with_sharding_in_types(ctx, op, out_aval))
+        out.append(lower_with_explicit_types(ctx, op, out_aval))
     else:
       if op_aval_sharding.spec.unreduced:
         raise NotImplementedError()
@@ -3030,7 +3030,7 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
       broadcast_dimensions = list(range(len(out_shape) - len(op_aval_shape), len(out_shape)))
       b_out = broadcast_in_dim(
           ctx, op, out_aval, broadcast_dimensions=broadcast_dimensions)
-      b_out = lower_with_sharding_in_types(ctx, b_out, out_aval)
+      b_out = lower_with_explicit_types(ctx, b_out, out_aval)
       out.append(b_out)
   return out
 
@@ -3297,7 +3297,7 @@ def lower_with_layout_in_types(ctx, op, aval):
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     aval = core.physical_aval(aval)
   assert isinstance(aval.layout, Layout)
-  return wrap_with_layout_op(ctx, op, aval, aval.layout, ctx.avals_in[0])
+  return wrap_with_layout_op(ctx, op, aval, aval.layout, aval)
 
 
 def set_sharding(ctx: ModuleContext, op,
