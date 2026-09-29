@@ -5271,6 +5271,7 @@ def _atomic_store(
     *,
     atomic_type: AtomicOpType,
 ):
+  # TODO(bchetioui): add an optimized kwarg to atomic store ops.
   x_ref, transforms = state_primitives.get_ref_and_transforms(
       x_ref_or_view, None, "atomic_store"
   )
@@ -5302,7 +5303,17 @@ def _atomic_store_lowering_rule_wg(
         f"Unsupported transforms for atomic_store: {remaining_transforms}"
     )
 
-  mgpu.dialect.vector_store(value, ref, atomic_type=_atomic_op_type_to_int(atomic_type))
+  mgpu.dialect.vector_store(
+      value,
+      ref,
+      # Force optimized transfers to SMEM.
+      # TODO(bchetioui): this is a temporary solution to avoid a regression, but
+      # should be handled by passing an optimized kwarg to atomic store ops.
+      # At the moment, lane semantics still models downgradable semantics for
+      # this.
+      optimized=ref_aval.memory_space != gpu_core.MemorySpace.GMEM,
+      atomic_type=_atomic_op_type_to_int(atomic_type),
+  )
   return ()
 
 

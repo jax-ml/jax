@@ -7573,7 +7573,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       del ctx
 
       # GMEM -> Registers
-      reg = mgpu_dialect.vector_load(param)
+      reg = mgpu_dialect.vector_load(param, optimized=False)
       reg = mgpu_dialect.layout_cast(reg, layout_attr)
 
       # Registers -> SMEM
@@ -7584,7 +7584,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       reg = mgpu_dialect.layout_cast(reg, layout_attr)
 
       # Registers -> GMEM
-      mgpu_dialect.vector_store(reg, result)
+      mgpu_dialect.vector_store(reg, result, optimized=False)
 
     jax_shape = jax.ShapeDtypeStruct(shape, dtype)
     kernel = mgpu.as_gpu_kernel(
@@ -7614,12 +7614,12 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         src_ref = utils.memref_transpose(src_ref, (1, 0))
       if is_transposed(dst_layout):
         dst_ref = utils.memref_transpose(dst_ref, (1, 0))
-      src_reg = mgpu_dialect.vector_load(src_ref)
+      src_reg = mgpu_dialect.vector_load(src_ref, optimized=False)
       src_layout_attr = layouts.to_layout_attr(src_layout)
       src_reg = mgpu_dialect.layout_cast(src_reg, src_layout_attr)
       dst_layout_attr = layouts.to_layout_attr(dst_layout)
       dst_reg = mgpu_dialect.layout_cast(src_reg, dst_layout_attr)
-      mgpu_dialect.vector_store(dst_reg, dst_ref)
+      mgpu_dialect.vector_store(dst_reg, dst_ref, optimized=False)
 
     shape = (128, 128)
     dtype = jnp.float32
@@ -7646,7 +7646,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
     def body(ctx, src_ref, dst_ref, scratch):
       del ctx, scratch
-      src_reg = mgpu_dialect.vector_load(src_ref)
+      src_reg = mgpu_dialect.vector_load(src_ref, optimized=False)
       src_layout_attr = layouts.to_layout_attr(fa.WGMMA_LAYOUT_UPCAST_2X)
       src_reg = mgpu_dialect.layout_cast(src_reg, src_layout_attr)
       dst_layout_attr = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
@@ -7655,7 +7655,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       bf16 = ir.BF16Type.get()
       out_vec_ty = ir.VectorType.get(ir.VectorType(dst_reg.type).shape, bf16)
       conv_reg = arith.sitofp(out_vec_ty, dst_reg)
-      mgpu_dialect.vector_store(conv_reg, dst_ref)
+      mgpu_dialect.vector_store(conv_reg, dst_ref, optimized=False)
 
     kernel = mgpu.as_gpu_kernel(
         body,
@@ -7679,14 +7679,14 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       del ctx, smem
 
       # GMEM -> registers
-      a = mgpu_dialect.vector_load(a)
-      b = mgpu_dialect.vector_load(b)
+      a = mgpu_dialect.vector_load(a, optimized=False)
+      b = mgpu_dialect.vector_load(b, optimized=False)
 
       # Computation
       add = arith.addf(a, b)
 
       # Registers -> GMEM
-      mgpu_dialect.vector_store(add, result)
+      mgpu_dialect.vector_store(add, result, optimized=False)
 
     dtype = jnp.bfloat16
     shape = (128, 128)
@@ -7935,7 +7935,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       expanded = mgpu_dialect.broadcast_in_dim(out_type, cast, bcast_dims)
 
       # Registers -> GMEM
-      mgpu_dialect.vector_store(expanded, result_gmem_ref)
+      mgpu_dialect.vector_store(expanded, result_gmem_ref, optimized=False)
 
     dtype = jnp.float32
     kernel = mgpu.as_gpu_kernel(
@@ -8004,7 +8004,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       reduced = vector.multi_reduction(kind, source, acc, red_dims)
 
       # Registers -> GMEM
-      mgpu_dialect.vector_store(reduced, result_gmem_ref)
+      mgpu_dialect.vector_store(reduced, result_gmem_ref, optimized=False)
 
     kernel = mgpu.as_gpu_kernel(
         body,
@@ -8232,9 +8232,9 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     def body(ctx, input, result, scratch):
       del scratch
       with ctx.named_region("load"):
-        reg = mgpu_dialect.vector_load(input)
+        reg = mgpu_dialect.vector_load(input, optimized=False)
       with ctx.named_region("store"):
-        mgpu_dialect.vector_store(reg, result)
+        mgpu_dialect.vector_store(reg, result, optimized=False)
 
     dtype = jnp.bfloat16
     shape = (128, 128)
@@ -8357,7 +8357,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
   def test_vector_extract_strided_slice(self):
     def body(ctx, src, dst, scratch):
       del ctx, scratch
-      src_vec = mgpu_dialect.vector_load(src)
+      src_vec = mgpu_dialect.vector_load(src, optimized=False)
       src_vec = mgpu_dialect.layout_cast(
           src_vec, layouts.to_layout_attr(fa.WGMMA_LAYOUT)
       )
@@ -8370,7 +8370,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           sizes=[64, 64],
           strides=[1, 1],
       )
-      mgpu_dialect.vector_store(sliced_vec, dst)
+      mgpu_dialect.vector_store(sliced_vec, dst, optimized=False)
 
     dtype = jnp.float32
     kernel = mgpu.as_gpu_kernel(
@@ -8395,7 +8395,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       del ctx, scratch
       result_type = ir.VectorType.get(out.type.shape, out.type.element_type)
       iota = mgpu_dialect.broadcasted_iota(result_type, dimension)
-      mgpu_dialect.vector_store(iota, out)
+      mgpu_dialect.vector_store(iota, out, optimized=False)
 
     shape = (128, 128)
     kernel = mgpu.as_gpu_kernel(
@@ -8786,7 +8786,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
       result = mgpu_dialect.wgmma(acc, lhs, rhs_smem)
       nvvm.wgmma_commit_group_sync_aligned()
       nvvm.wgmma_wait_group_sync_aligned(0)
-      mgpu_dialect.vector_store(result, result_gmem)
+      mgpu_dialect.vector_store(result, result_gmem, optimized=False)
 
     kernel = mgpu.as_gpu_kernel(
         body,
@@ -8901,7 +8901,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       del ctx
 
       # GMEM -> registers
-      r_in = mgpu_dialect.vector_load(input)
+      r_in = mgpu_dialect.vector_load(input, optimized=False)
 
       # registers -> TMEM
       mgpu_dialect.async_store_tmem(r_in, tmem)
@@ -8913,7 +8913,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       # https://docs.jax.dev/en/latest/pallas/gpu/reference.html#allocating-the-accumulator-using-tmem
 
       # Registers -> GMEM
-      mgpu_dialect.vector_store(r_out, result)
+      mgpu_dialect.vector_store(r_out, result, optimized=False)
 
     jax_shape = jax.ShapeDtypeStruct(shape, dtype)
     kernel = mgpu.as_gpu_kernel(
@@ -8940,7 +8940,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
     def body(ctx, gmem_in, gmem_out, scratch):
       del ctx
       smem, copy_barrier, tmem = scratch
-      reg_in = mgpu_dialect.vector_load(gmem_in)
+      reg_in = mgpu_dialect.vector_load(gmem_in, optimized=False)
       layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
       reg_in = mgpu_dialect.layout_cast(reg_in, layout)
       mgpu_dialect.vector_store(reg_in, smem, optimized=False)
@@ -9006,7 +9006,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
 
       reg_out = mgpu_dialect.async_load_tmem(tmem)
       sliced_result_gmem = memref_slice(gmem_out, ds(m_index, 128))
-      mgpu_dialect.vector_store(reg_out, sliced_result_gmem)
+      mgpu_dialect.vector_store(reg_out, sliced_result_gmem, optimized=False)
 
     gmem_shape = (256, 128)
     jax_shape = jax.ShapeDtypeStruct(gmem_shape, dtype)
@@ -9078,7 +9078,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
 
       if a_in_tmem:
         # GMEM -> Registers -> TMEM
-        reg = mgpu_dialect.vector_load(a_gmem)
+        reg = mgpu_dialect.vector_load(a_gmem, optimized=False)
         mgpu_dialect.async_store_tmem(reg, a_tmem)
         tcgen05.commit_tmem()
       else:
@@ -9105,7 +9105,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
 
       # TMEM -> Registers -> GMEM
       r_out = mgpu_dialect.async_load_tmem(acc_tmem)
-      mgpu_dialect.vector_store(r_out, result_gmem)
+      mgpu_dialect.vector_store(r_out, result_gmem, optimized=False)
 
     # Required order: SMEM -> Barrier -> TMEM.
     scratch_shape = [
@@ -9242,7 +9242,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
 
       # TMEM -> Registers -> GMEM
       r_out = mgpu_dialect.async_load_tmem(acc_tmem)
-      mgpu_dialect.vector_store(r_out, result_gmem)
+      mgpu_dialect.vector_store(r_out, result_gmem, optimized=False)
 
     scratch_shape = [
         jax.ShapeDtypeStruct(a_shape, ab_type),
@@ -9396,7 +9396,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       # TMEM -> Registers -> GMEM
       r_out = mgpu_dialect.async_load_tmem(acc_tmem)
       sliced_result_gmem = memref_slice(result_gmem, ds(m_index, m // 2))
-      mgpu_dialect.vector_store(r_out, sliced_result_gmem)
+      mgpu_dialect.vector_store(r_out, sliced_result_gmem, optimized=False)
 
     scratch_shape = [
         jax.ShapeDtypeStruct(a_block_shape, ab_type),
@@ -9518,7 +9518,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       if a_in_tmem:
         # GMEM -> Registers -> TMEM
         sliced_a_gmem = memref_slice(a_gmem, ds(m_index, m // 2))
-        reg = mgpu_dialect.vector_load(sliced_a_gmem)
+        reg = mgpu_dialect.vector_load(sliced_a_gmem, optimized=False)
         mgpu_dialect.async_store_tmem(reg, a_tmem)
         tcgen05.commit_tmem()
       else:
@@ -9558,7 +9558,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       # TMEM -> Registers -> GMEM
       r_out = mgpu_dialect.async_load_tmem(acc_tmem)
       sliced_result_gmem = memref_slice(result_gmem, ds(m_index, m // 2))
-      mgpu_dialect.vector_store(r_out, sliced_result_gmem)
+      mgpu_dialect.vector_store(r_out, sliced_result_gmem, optimized=False)
 
     # Required order: SMEM -> Barrier -> TMEM.
     scratch_shape = [
@@ -9680,7 +9680,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
 
       # TMEM -> Registers -> GMEM
       r_out = mgpu_dialect.async_load_tmem(acc_tmem)
-      mgpu_dialect.vector_store(r_out, result_gmem)
+      mgpu_dialect.vector_store(r_out, result_gmem, optimized=False)
 
     scratch_shape = [
         jax.ShapeDtypeStruct(a_shape, a_type),
@@ -9770,8 +9770,8 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       y_tmem = mgpu_dialect.tmem_layout_cast(y_tmem, y_layout)
 
       # GMEM -> Registers -> TMEM
-      x_reg = mgpu_dialect.vector_load(x)
-      y_reg = mgpu_dialect.vector_load(y)
+      x_reg = mgpu_dialect.vector_load(x, optimized=False)
+      y_reg = mgpu_dialect.vector_load(y, optimized=False)
       mgpu_dialect.async_store_tmem(x_reg, x_tmem)
       mgpu_dialect.async_store_tmem(y_reg, y_tmem)
       tcgen05.commit_tmem()
@@ -9779,8 +9779,8 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       # TMEM -> Registers -> GMEM
       x_reg = mgpu_dialect.async_load_tmem(x_tmem)
       y_reg = mgpu_dialect.async_load_tmem(y_tmem)
-      mgpu_dialect.vector_store(x_reg, x_out)
-      mgpu_dialect.vector_store(y_reg, y_out)
+      mgpu_dialect.vector_store(x_reg, x_out, optimized=False)
+      mgpu_dialect.vector_store(y_reg, y_out, optimized=False)
 
     in_out_shapes = (
         jax.ShapeDtypeStruct((128, 128), jnp.bfloat16),
@@ -9805,7 +9805,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
     def body(ctx, in_ref, out_ref, tmem):
       del ctx
       # GMEM -> Registers -> TMEM
-      in_reg = mgpu_dialect.vector_load(in_ref)
+      in_reg = mgpu_dialect.vector_load(in_ref, optimized=False)
       slice_in = memref.subview(
           tmem, offsets=[0, 8], sizes=[128, 200], strides=[1, 1]
       )
@@ -9827,7 +9827,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
           strides=[1, 1],
       )
       out_reg = mgpu_dialect.async_load_tmem(slice_out)
-      mgpu_dialect.vector_store(out_reg, out_ref)
+      mgpu_dialect.vector_store(out_reg, out_ref, optimized=False)
 
     kernel = mgpu.as_gpu_kernel(
         body,
@@ -9853,7 +9853,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       smem_ref, tma_barrier = smem
 
       # Load indices into registers
-      indices_vec = mgpu_dialect.vector_load(indices)
+      indices_vec = mgpu_dialect.vector_load(indices, optimized=False)
       i32 = ir.IntegerType.get_signless(32)
       zero = arith.constant(i32, 0)
 
@@ -10525,17 +10525,19 @@ if hp is not None:
         def body(ctx, input, result, smem):
           del ctx
           # GMEM -> Registers
-          reg = mgpu_dialect.vector_load(input)
+          reg = mgpu_dialect.vector_load(input, optimized=False)
           reg = mgpu_dialect.layout_cast(reg, layout_attr)
           # Registers -> SMEM
-          mgpu_dialect.vector_store(reg, smem)
+          # Use a non-optimized store to ensure that we don't fail due to
+          # unoptimizable stores.
+          mgpu_dialect.vector_store(reg, smem, optimized=False)
           # SMEM -> Registers
           # Use a non-optimized load to ensure that we don't fail due to
           # unoptimizable loads.
           reg = mgpu_dialect.vector_load(smem, optimized=False)
           reg = mgpu_dialect.layout_cast(reg, layout_attr)
           # Registers -> GMEM
-          mgpu_dialect.vector_store(reg, result)
+          mgpu_dialect.vector_store(reg, result, optimized=False)
 
         jax_shape = jax.ShapeDtypeStruct(shape, dtype)
         kernel = mgpu.as_gpu_kernel(
