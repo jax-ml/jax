@@ -34,6 +34,7 @@ def MosaicGPU_Dialect : Dialect {
   let cppNamespace = "::mosaic_gpu";
   let useDefaultTypePrinterParser = 1;
   let useDefaultAttributePrinterParser = 1;
+  let useStrictPropertiesInAssemblyFormat = 0;
 }
 
 class MosaicGPU_Type<string name, string mnemonic_, list<Trait> traits = []>
