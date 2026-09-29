@@ -559,6 +559,40 @@ class IndexingStrategyTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(err, msg):
       indexing.rewriting_take(arr, idx, strategy=indexing.IndexingStrategy.STATIC_SLICE)
 
+  @parameterized.parameters(
+    ("auto", lax.slice_p),
+    ("static_slice", lax.slice_p),
+    ("dynamic_slice", lax.dynamic_slice_p),
+    ("gather", lax.gather_p),
+  )
+  def test_at_get_strategy(self, strategy, expected_primitive):
+    arr = jnp.arange(10)
+    jaxpr = jax.make_jaxpr(lambda x: x.at[2:5].get(strategy=strategy))(arr)
+    self.assertIn(expected_primitive, [eqn.primitive for eqn in jaxpr.eqns])
+    res = arr.at[2:5].get(strategy=strategy)
+    np.testing.assert_array_equal(res, np.arange(2, 5))
+
+  @parameterized.parameters(
+    ("auto", lax.dynamic_slice_p),
+    ("dynamic_slice", lax.dynamic_slice_p),
+    ("gather", lax.gather_p),
+  )
+  def test_at_get_dynamic_slice(self, strategy, expected_primitive):
+    arr = jnp.arange(10)
+    jaxpr = jax.make_jaxpr(lambda x, i: x.at[jax.ds(i, 3)].get(strategy=strategy))(arr, 2)
+    self.assertIn(expected_primitive, [eqn.primitive for eqn in jaxpr.eqns])
+    res = arr.at[jax.ds(2, 3)].get(strategy=strategy)
+    np.testing.assert_array_equal(res, np.arange(2, 5))
+
+  def test_invalid_strategy(self):
+    arr = jnp.arange(10)
+    with self.assertRaisesRegex(ValueError, "Unknown indexing strategy: 'invalid'"):
+      arr.at[2:5].get(strategy="invalid")
+    with self.assertRaisesRegex(ValueError, "Indexing strategy IndexingStrategy.SCATTER is not supported for take"):
+      arr.at[2:5].get(strategy="scatter")
+    with self.assertRaisesRegex(TypeError, "static_slice: indices must be static scalars"):
+      jax.make_jaxpr(lambda x, i: x.at[jax.ds(i, 3)].get(strategy="static_slice"))(arr, 2)
+
 
 class IndexingTest(jtu.JaxTestCase):
   """Tests for Numpy indexing translation rules."""
