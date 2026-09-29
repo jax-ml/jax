@@ -68,6 +68,8 @@ With Dynamax parameters can be estimated using
 [Maximum Likelihood using Optax](https://probml.github.io/dynamax/notebooks/linear_gaussian_ssm/lgssm_learning.html)
 or full Bayesian Posterior can be estimating using [MCMC from Blackjax](https://probml.github.io/dynamax/notebooks/linear_gaussian_ssm/lgssm_hmc.html)
 
+Other examples include [JAX Privacy](https://github.com/google-deepmind/jax_privacy) for differentially private machine learning and [MBI](https://github.com/ryan112358/mbi) for noise-aware graphical model estimation.
+
 ### JAX totally hidden from users
 Other libraries opt to completely wrap JAX in their model specific API.
 An example is PyMC and [Pytensor](https://github.com/pymc-devs/pytensor),
