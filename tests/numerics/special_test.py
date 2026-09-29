@@ -18,10 +18,12 @@ import math
 
 from absl.testing import absltest
 from absl.testing import parameterized
+import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp
+import jax.scipy as jsp
 
 # Under pytest, tests run against an installed wheel that does not
 # include `jax.tests`, so skip before importing `jax.tests.numerics`.
@@ -49,6 +51,34 @@ def _mpmath_erfc(x):
   if x < -100.0:
     return mpmath.mpf(2)
   return mpmath.erfc(x)
+
+
+def _mpmath_erfcx(x):
+  if x < -30.0:
+    return mpmath.inf
+  if x < 1.0:
+    return mpmath.exp(x * x) * mpmath.erfc(x)
+  return mpmath.hyperu(0.5, 0.5, x * x) / mpmath.sqrt(mpmath.pi)
+
+
+def erfcx_grad(x):
+  return jax.vmap(jax.grad(jsp.special.erfcx))(x)
+
+
+def _mpmath_erfcx_grad(x):
+  if x < -30.0:
+    return -mpmath.inf
+  if x < 1.0:
+    return 2 * x * _mpmath_erfcx(x) - 2 / mpmath.sqrt(mpmath.pi)
+  return -mpmath.hyperu(1.0, 0.5, x * x) / mpmath.sqrt(mpmath.pi)
+
+
+def _erfcx_grad_reference(x: np.ndarray) -> np.ndarray:
+  sx = np.where(x >= 1.0, 0.0, x)
+  z = np.square(np.where(x >= 1.0, np.minimum(x, 1e75), 1.0))
+  direct = 2.0 * sx * scipy.special.erfcx(sx) - 2.0 / np.sqrt(np.pi)
+  asymp = -scipy.special.hyperu(1.0, 0.5, z) / np.sqrt(np.pi)
+  return np.where(x >= 1e75, -0.0, np.where(x >= 1.0, asymp, direct))
 
 
 def _erfinv_reference(x: np.ndarray) -> np.ndarray:
@@ -133,6 +163,62 @@ class SpecialTest(jtu.JaxTestCase):
     ]
     util.check_unary_precision(
         self, lax.erfc, scipy.special.erfc, _mpmath_erfc, dtype, bounds=bounds)
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_erfcx_test_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f16: 1.0, f32: 64.5, f64: 350.0}),
+        ("gpu", {f16: 1.0, f32: 65.0, f64: 350.0}),
+        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 214.0}),
+        ("tpu_v5p", {f16: 1.0, f32: 155.0}),
+        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 125.5}),
+    ]
+    # Ignore x = -9.382414: near the float32 overflow threshold, where the
+    # true value is finite (~3.40282e+38) but x^2 rounds up across
+    # log(fmax / 2), causing exp(x^2) * erfc(x) to overflow float32 to inf.
+    ignore_inputs = [
+        (["cpu", "gpu", "tpu"], {f32: [0xC1161E5E]}),
+    ]
+    util.check_unary_precision(
+        self, jsp.special.erfcx, scipy.special.erfcx, _mpmath_erfcx, dtype,
+        bounds=bounds, ignore_inputs=ignore_inputs)
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_erfcx_grad_test_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f16: 1.0, f32: 400.0, f64: 500.0}),
+        ("gpu", {f16: 1.0, f32: 400.0, f64: 500.0}),
+        (TPU_EUPV1, {bf16: 1.0, f16: 1.5, f32: 8000.0}),
+        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 6000.0}),
+        ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 350.0}),
+        ("tpu_7x", {f16: 1.0, f32: 350.0}),
+    ]
+    util.check_unary_precision(
+        self, erfcx_grad, _erfcx_grad_reference, _mpmath_erfcx_grad, dtype,
+        bounds=bounds)
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_erfcx_test_probes(self, dtype):
+    # Probe regime thresholds and erfc(x) underflow gaps that sampling may miss.
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    x = jnp.concatenate([
+        jnp.linspace(7.9, 8.1, 32, dtype=dtype),        # f32 regime threshold
+        jnp.linspace(9.195, 9.419, 32, dtype=dtype),    # f32 erfc underflow gap
+        jnp.linspace(11.9, 12.1, 32, dtype=dtype),      # f64 regime threshold
+        jnp.linspace(26.543, 26.642, 32, dtype=dtype),  # f64 erfc underflow gap
+    ])
+    x_np = np.asarray(x)
+    for jax_fn, mp_fn, max_ulp in [
+        (jsp.special.erfcx, _mpmath_erfcx, 350.0),
+        (erfcx_grad, _mpmath_erfcx_grad, 8000.0),
+    ]:
+      actual = np.asarray(jax.jit(jax_fn)(x))
+      ref = np.array(
+          [util.eval_mpmath(mp_fn, v.item(), dtype=dtype) for v in x_np],
+          dtype=object if dtype == f64 else np.float64,
+      )
+      self.assertLessEqual(np.max(util.ulp_diff(actual, ref, dtype)), max_ulp)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfinv_test_accuracy(self, dtype):

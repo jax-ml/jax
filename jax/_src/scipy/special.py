@@ -706,44 +706,71 @@ def erfcx(x: ArrayLike) -> Array:
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     iz = lax.complex(lax.neg(lax.imag(x)), lax.real(x))
     return _wofz(iz)
+  if dtypes.finfo(x.dtype).bits < 32:
+    return _erfcx(x.astype(np.float32)).astype(x.dtype)
   return _erfcx(x)
+
+
+# _erfcx computes exp(x^2) * erfc(x) directly for x < threshold, and uses the
+# asymptotic expansion erfcx(x) ~ (1/(sqrt(pi)*x)) * P(1/x^2) otherwise, where
+# P(t) = sum_{k=0}^{N-1} c_k * t^k with c_k = (-1)^k * (2k-1)!! / 2^k (from
+# https://dlmf.nist.gov/7.12.E1 for erfc, multiplied by exp(x^2)).
+# _ERFCX_COEFFS stores c_k / sqrt(pi) in descending order of degree (k=10..0)
+# for jnp.polyval; each c_k has denominator 2^k, so the unscaled literals are
+# exact in binary float.
+_ERFCX_COEFFS = np.array([
+    639383.8623046875, -67303.564453125, 7918.06640625, -1055.7421875,
+    162.421875, -29.53125, 6.5625, -1.875, .75, -.5, 1.,
+]) / np.sqrt(np.pi)
+
+# The direct formula's relative error grows like x^2 * eps (from rounding x^2)
+# until exp(x^2) overflows, so we want a low threshold, but the series is only
+# accurate for large x. We use threshold = sqrt(4 * log(1 / eps)) and the
+# fewest terms for which the first omitted term |c_N| / threshold^(2N), which
+# bounds the truncation error, is below eps.
+_ERFCX_PARAMS = {
+    #                       (threshold, nterms)
+    np.dtype(np.float32): (7.985583298138901, 5),  # |c_5|/x^10 ~ 3e-8 <= eps
+    np.dtype(np.float64): (12.00727336061225, 10),  # |c_10|/x^20 ~ 2e-16 <= eps
+}
 
 
 @custom_derivatives.custom_jvp
 def _erfcx(x: Array) -> Array:
-  if x.dtype == np.float64:
-    # At threshold ~26.6, first omitted term |c_9|/x^18 ~ 1e-21 << eps64 ~ 2e-16.
-    return _erfcx_impl(x, nterms=9)
-  elif x.dtype == np.float32:
-    # At threshold ~9.4, first omitted term |c_5|/x^10 ~ 5e-9 << eps32 ~ 1e-7.
-    return _erfcx_impl(x, nterms=5)
-  else:  # float16, bfloat16 — upcast to float32
-    return _erfcx_impl(x.astype(np.float32), nterms=5).astype(x.dtype)
+  threshold, nterms = _ERFCX_PARAMS[x.dtype]
+  coeffs = _ERFCX_COEFFS[-nterms:].astype(x.dtype)
+  is_large = x >= threshold
 
-_erfcx.defjvps(
-    lambda g, ans, x: g * (2 * x * ans - _lax_const(x, 2. / np.sqrt(np.pi))))
+  x_direct = lax.select(is_large, lax.full_like(x, 1.), x)
+  direct = lax.exp(lax.square(x_direct)) * lax.erfc(x_direct)
 
+  inv_x_asymp = 1. / lax.select(is_large, x, lax.full_like(x, 1.))
+  asymp = inv_x_asymp * jnp.polyval(coeffs, lax.square(inv_x_asymp))
 
-def _erfcx_asymptotic(x: Array, nterms: int) -> Array:
-  # Asymptotic expansion: erfcx(x) ~ (1/(sqrt(pi)*x)) * P(1/x^2)
-  # P(t) = sum_{k=0}^{N} c_k * t^k,  c_k = (-1)^k * (2k-1)!! / 2^k
-  # Coefficients in descending order of degree (k=8..0) for jnp.polyval.
-  _coeffs = [7918.06640625, -1055.7421875, 162.421875, -29.53125, 6.5625,
-             -1.875, .75, -.5, 1.]
-  t = _lax_const(x, 1.) / lax.square(x)
-  p = jnp.polyval(np.array(_coeffs[-nterms:], dtype=x.dtype), t)
-  return p / (x * _lax_const(x, np.sqrt(np.pi)))
+  return lax.select(is_large, asymp, direct)
 
 
-def _erfcx_impl(x: Array, nterms: int) -> Array:
-  # Switch to asymptotic expansion when exp(x^2) would overflow.
-  # Overflow occurs when x^2 > log(fmax), i.e. x > sqrt(log(fmax)).
-  threshold = np.sqrt(np.log(dtypes.finfo(x.dtype).max))
-  large = x > _lax_const(x, threshold)
-  safe_x = lax.select(large, lax.full_like(x, 1.), x)
-  direct = lax.exp(lax.square(safe_x)) * lax.erfc(safe_x)
-  asymp = _erfcx_asymptotic(x, nterms)
-  return lax.select(large, asymp, direct)
+# Below threshold, erfcx'(x) = 2*x*erfcx(x) - 2/sqrt(pi). Above threshold, that
+# identity cancels catastrophically, so we differentiate the asymptotic series
+# instead: d/dx [c_k/x^(2k+1)] = -(2k+1)*c_k/x^(2k+2) = 2*c_{k+1}/x^(2k+2).
+_ERFCX_DERIV_COEFFS = 2 * _ERFCX_COEFFS[:-1]
+
+
+@_erfcx.defjvp
+def _erfcx_jvp(primals, tangents):
+  (x,), (x_dot,) = primals, tangents
+  threshold, nterms = _ERFCX_PARAMS[x.dtype]
+  coeffs = _ERFCX_DERIV_COEFFS[-nterms:].astype(x.dtype)
+  ans = _erfcx(x)
+  is_large = x >= threshold
+
+  x_direct = lax.select(is_large, lax.full_like(x, 1.), x)
+  direct = 2 * x_direct * ans - float(2. / np.sqrt(np.pi))
+
+  inv_x2_asymp = lax.square(1. / lax.select(is_large, x, lax.full_like(x, 1.)))
+  asymp = inv_x2_asymp * jnp.polyval(coeffs, inv_x2_asymp)
+
+  return ans, x_dot * lax.select(is_large, asymp, direct)
 
 
 # Rational approximation coefficients for dawsn (Cody, Paciorek, Thacher 1970).

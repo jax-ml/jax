@@ -114,6 +114,8 @@ SPECIAL_OPS = [
     "digamma",
     "erf",
     "erfc",
+    "erfcx",
+    "erfcx_grad",
     "erfinv",
     "lgamma",
 ]

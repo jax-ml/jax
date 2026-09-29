@@ -49,6 +49,7 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.lax.erf` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.erf_inv` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.erfc` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.scipy.special.erfcx` | 0.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.exp` | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.exp` (`highest`) | 0.5 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.exp2` | 101.0 | 101.0 | 44.0 | 44.0 | 44.0 | 75.0 |
@@ -91,6 +92,7 @@ Maximum error in units in the last place (ULPs) for `float16`:
 | {func}`~jax.lax.erf` | 1.0 | 1.0 | 0.5 | 0.5 | 1.0 | 1.0 |
 | {func}`~jax.lax.erf_inv` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.erfc` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.scipy.special.erfcx` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.exp` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.exp` (`highest`) | 1.0 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.exp2` | 14.0 | 14.0 | 7.5 | 7.5 | 7.5 | 7.5 |
@@ -133,6 +135,7 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.erf` | 7.0 | 6.5 | 7.5 | 8.5 | 1.5 | 1.5 | |
 | {func}`~jax.lax.erf_inv` | 65.0 | 65.0 | 427.0 | 65.5 | 65.0 | 65.5 | |
 | {func}`~jax.lax.erfc` | 66.0 | 66.5 | 145.0 | 157.0 | 124.5 | 125.0 | |
+| {func}`~jax.scipy.special.erfcx` | 64.5 | 65.0 | 214.0 | 155.0 | 125.5 | 125.5 | |
 | {func}`~jax.lax.exp` | 1.5 | 2.0 | 116.0 | 109.5 | 64.5 | 65.0 | |
 | {func}`~jax.lax.exp` (`highest`) | 1.5 | 2.0 | 1.5 | 1.5 | 1.5 | 1.5 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.exp2` | 68.5 | 69.0 | 141.5 | 133.0 | 90.0 | 90.0 | |
@@ -180,6 +183,7 @@ exhaustive, for float64 these are lower bounds.
 | {func}`~jax.lax.erf` | $\ge 2.5$ | $\ge 2.5$ |
 | {func}`~jax.lax.erf_inv` | $\ge 82.5$ | $\ge 83.5$ |
 | {func}`~jax.lax.erfc` | $\ge 350.0$ | $\ge 350.0$ |
+| {func}`~jax.scipy.special.erfcx` | $\ge 350.0$ | $\ge 350.0$ |
 | {func}`~jax.lax.exp` | $\ge 1.0$ | $\ge 1.5$ |
 | {func}`~jax.lax.exp2` | $\ge 719.0$ | $\ge 719.0$ |
 | {func}`~jax.lax.expm1` | $\ge 4.5$ | $\ge 1.5$ |
