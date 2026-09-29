@@ -489,7 +489,7 @@ def _extract_smem_copy_params(aval, transforms):
 def copy_smem_to_gmem(
     src: _Ref,
     dst: _Ref,
-    predicate: jax.Array | None = None,
+    predicate: bool | jax.Array | None = None,
     *,
     commit_group: bool = True,
     reduction_op: mgpu.TMAReductionOp | None = None,
@@ -1187,7 +1187,7 @@ def copy_gmem_to_smem(
     collective_axes: str | tuple[str, ...] | None = None,
     leader_tracked: CopyPartition | None = None,
     oob_mode: OOBFillMode | None = None,
-    predicate: jax.Array | None = None,
+    predicate: bool | jax.Array | None = None,
 ) -> None:
   """Asynchronously copies a GMEM reference to a SMEM reference.
 
@@ -1455,7 +1455,7 @@ def async_prefetch(
     *,
     collective_axes: str | tuple[str, ...] | None = None,
     leader_tracked: CopyPartition | None = None,
-    predicate: jax.Array | None = None,
+    predicate: bool | jax.Array | None = None,
 ) -> None:
   """Asynchronously prefetches a GMEM reference to the L2 cache.
 
@@ -1630,7 +1630,7 @@ def _barrier_arrive_lowering(
 def barrier_arrive(
     barrier: state.AbstractRef,
     *,
-    predicate: jax.Array | None = None,
+    predicate: bool | jax.Array | None = None,
 ) -> None:
   """Arrives at the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(

@@ -1582,10 +1582,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         ],
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
-      plgpu.async_prefetch(
-          x_ref_gmem.at[indexer],
-          predicate=None if predicate is None else jnp.bool_(predicate),
-      )
+      plgpu.async_prefetch(x_ref_gmem.at[indexer], predicate=predicate)
       plgpu.copy_gmem_to_smem(
           x_ref_gmem.at[indexer], scratch_ref.at[indexer], barrier_ref
       )
