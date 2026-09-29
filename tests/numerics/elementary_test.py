@@ -19,6 +19,7 @@ from absl.testing import parameterized
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 
 # Under pytest, tests run against an installed wheel that does not
@@ -413,8 +414,12 @@ class ElementaryTest(jtu.JaxTestCase):
       check_signed_zeros = [
           ("tpu", False),
       ]
+    if jaxlib_extension_version >= 501:
+      cpu_bounds = ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0})
+    else:
+      cpu_bounds = ("cpu", {f16: 2.5, f32: 6.5, f64: 4.5})
     bounds = [
-        ("cpu", {f16: 2.5, f32: 6.5, f64: 4.5}),
+        cpu_bounds,
         ("gpu", {f16: 1.0, f32: 1.5, f64: 1.5}),
         *tpu_bounds,
     ]
@@ -426,8 +431,12 @@ class ElementaryTest(jtu.JaxTestCase):
   def test_expm1_highest_test_accuracy(self, dtype):
     if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.50"):
       self.skipTest("Requires libtpu >= 0.0.50")
+    if jaxlib_extension_version >= 501:
+      cpu_bounds = ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0})
+    else:
+      cpu_bounds = ("cpu", {f16: 2.5, f32: 6.5, f64: 3.5})
     bounds = [
-        ("cpu", {f16: 2.5, f32: 6.5, f64: 3.5}),
+        cpu_bounds,
         ("gpu", {f16: 1.0, f32: 1.5, f64: 1.5}),
         ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 2.0}),
         (["tpu_v6e", "tpu_7x"], {f32: 2.0}),
