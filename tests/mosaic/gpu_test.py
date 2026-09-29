@@ -5444,6 +5444,38 @@ class FragmentedArrayTest(TestCase):
           (1, 1, 1), (128, 1, 1), values, prev_pow2, ()
       )(values)
 
+  def test_gmem_transfer_simulator_and_col_inner_schedule(self):
+    def run_copy(x, layout, optimized):
+      def copy_kernel(ctx, inp, out, smem):
+        del ctx, smem
+        arr = fa.FragmentedArray.load_untiled(
+            inp, layout=layout, optimized=optimized
+        )
+        arr.store_untiled(out, optimized=optimized)
+
+      res = mgpu.as_gpu_kernel(copy_kernel, (1, 1, 1), (128, 1, 1), x, x, ())(x)
+      np.testing.assert_array_equal(res, x)
+
+    x_bf16 = jnp.arange(128 * 64, dtype=jnp.bfloat16).reshape(128, 64)
+    for lane_rows, lane_cols in ((1, 32), (2, 16), (4, 8)):
+      layout = fa.TiledLayout(
+          fa.Tiling((
+              (4 * lane_rows, lane_cols * 2),
+              (lane_rows, lane_cols * 2),
+              (2,),
+          )),
+          warp_dims=(-5,),
+          lane_dims=(-3, -2),
+          vector_dim=-1,
+          _check_canonical=False,
+      ).canonicalize()
+      run_copy(x_bf16, layout, optimized=True)
+
+    x_f32 = jnp.arange(128 * 64, dtype=jnp.float32).reshape(128, 64)
+    for layout in (fa.WGMMA_LAYOUT, fa.TCGEN05_LAYOUT):
+      run_copy(x_f32, layout, optimized=True)
+      run_copy(x_bf16, layout, optimized=False)
+
   def test_foreach_wgmma_row_array(self):
     def kernel(ctx, out, smem):
       del ctx, smem
