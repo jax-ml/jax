@@ -216,7 +216,7 @@ class AsyncManager:
         key_for_barrier = _get_key(self._count)
         logger.info('Key used for barrier is %s for process %s',
                     key_for_barrier, current_process)
-        self._client.wait_at_barrier(key_for_barrier, self._timeout_in_ms)
+        self._client.wait_at_barrier(key_for_barrier, self._timeout_in_ms)  # pyrefly: ignore[bad-argument-type]
         logger.info('Finished waiting at barrier for process %s',
                     current_process)
 

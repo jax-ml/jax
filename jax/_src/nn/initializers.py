@@ -113,7 +113,7 @@ def constant(value: ArrayLike,
            out_sharding: OutShardingType = None) -> Array:
     dtype = dtypes.default_float_dtype() if dtype is None else dtype
     out_sharding = canonicalize_sharding(out_sharding, 'nn.initializers.constant')
-    return jnp.full(shape, value, dtype=dtype, device=out_sharding)
+    return jnp.full(shape, value, dtype=dtype, device=out_sharding)  # pyrefly: ignore[bad-argument-type]
   return init
 
 @export

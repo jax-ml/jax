@@ -1949,7 +1949,7 @@ def lower_jaxpr_to_fun(
           attrs["mhlo.is_same_data_across_replicas"] = ir.BoolAttr.get(True)
 
     if ir_arg_shardings is not None:
-      for attrs, ir_s, arg_s in zip(arg_attrs, ir_arg_shardings, arg_shardings):
+      for attrs, ir_s, arg_s in zip(arg_attrs, ir_arg_shardings, arg_shardings):  # pyrefly: ignore[bad-argument-type]
         if (ir_s is not None and
             (use_sharding_annotations or
             (isinstance(arg_s, NamedSharding) and arg_s.spec.unreduced))):
@@ -2025,7 +2025,7 @@ def lower_jaxpr_to_fun(
 
   if ir_result_shardings is not None:
     for attrs, ir_s, res_s, cu in zip(
-        result_attrs, ir_result_shardings, result_shardings,
+        result_attrs, ir_result_shardings, result_shardings,  # pyrefly: ignore[bad-argument-type]
         sharding_contains_unconstrained):  # type: ignore
       if (ir_s is not None and not cu and
           (use_sharding_annotations or

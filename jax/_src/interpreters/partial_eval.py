@@ -2146,7 +2146,7 @@ def trace_to_jaxpr_nocache(
       debug_info = debug_info.resolve_result_paths()
       if debug_info.result_paths is not None:
         debug_info = debug_info._replace(result_paths=tuple(
-            path for aval, path in zip(out_avals, debug_info.result_paths)
+            path for aval, path in zip(out_avals, debug_info.result_paths)  # pyrefly: ignore[bad-argument-type]
             for _ in aval.lo_ty()))
     else:
       flat_out_tracers = [trace.to_jaxpr_tracer(x, source_info=source_info)

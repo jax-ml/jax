@@ -301,8 +301,8 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
   s_other = 0.5 - (f * cospi + g * sinpi) / t
 
   isinf = jnp.isinf(xxa)
-  small = x2 < 2.5625
-  large = x > 36974.0
+  small = x2 < 2.5625  # pyrefly: ignore[unsupported-operation]
+  large = x > 36974.0  # pyrefly: ignore[unsupported-operation]
   s = jnp.where(
     isinf, s_inf, jnp.where(small, s_small, jnp.where(large, s_large, s_other))
   )

@@ -395,7 +395,7 @@ def mma(
           f" {a_scale.shape[1]}"
       )
     scale_block = k // a_scale.shape[1]
-    k_group_elems = max(k_group_elems, 4 * scale_block)
+    k_group_elems = max(k_group_elems, 4 * scale_block)  # pyrefly: ignore[unsupported-operation]
   required_multiple = 16 if collective else 8
   mode_name = "2 CTA" if collective else "1 CTA"
   if d.dtype == s32:
