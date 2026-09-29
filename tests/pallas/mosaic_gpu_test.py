@@ -4540,21 +4540,28 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_atomic_add_gmem(self):
     m, n = 128, 64
-
-    def body(inp_ref, out_ref):
-      val = plgpu.load(
-          inp_ref, layout=plgpu.Layout.WGMMA, optimized=False
-      )
-      out_ref[...] = jnp.zeros_like(out_ref)
-      plgpu.atomic_add(out_ref, val)
-
     x = jnp.arange(1, m * n + 1, dtype=jnp.float32).reshape(m, n)
-    inp = x
-    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
-      result = self.kernel(
+
+    def run_kernel(optimized):
+      def body(inp_ref, out_ref):
+        val = plgpu.load(
+            inp_ref, layout=plgpu.Layout.WGMMA, optimized=False
+        )
+        out_ref[...] = jnp.zeros_like(out_ref)
+        plgpu.atomic_add(out_ref, val, optimized=optimized)
+
+      return self.kernel(
           body,
           out_type=jax.ShapeDtypeStruct([m, n], jnp.float32),
-      )(inp)
+      )(x)
+
+    with self.assertRaisesRegex(
+        Exception, "Only optimized transfers to SMEM supported"
+    ):
+      run_kernel(optimized=True)
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      result = run_kernel(optimized=False)
       jax.block_until_ready(result)
     self.assertArraysEqual(result, x)
     self.assertIn("red.global", ptx())

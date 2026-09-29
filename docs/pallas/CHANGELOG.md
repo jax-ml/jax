@@ -26,6 +26,16 @@ Remember to align the itemized text with the first line of an item within a list
     {func}`jax.experimental.pallas.mosaic_gpu.store` with `optimized=False` to
     opt out. This is necessary when storing to GMEM, since optimized transfers
     are currently only supported for SMEM.
+  * {func}`jax.experimental.pallas.mosaic_gpu.atomic_add`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_max`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_min`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_and`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_or`, and
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_xor` now take an
+    `optimized` argument (defaulting to `True`) that controls whether an
+    optimized transfer is required. Setting `optimized=False` is necessary when
+    storing to GMEM, since optimized transfers are currently only supported for
+    SMEM.
 
 * New features
 

@@ -5199,8 +5199,8 @@ atomic_store_p.multiple_results = True
 
 
 @atomic_store_p.def_effectful_abstract_eval
-def _atomic_store_abstract_eval(*avals_flat, args_tree, atomic_type):
-  del atomic_type
+def _atomic_store_abstract_eval(*avals_flat, args_tree, atomic_type, optimized):
+  del atomic_type, optimized
   ref, transforms, val = args_tree.unflatten(avals_flat)
   if transforms is not None:
     ref = pallas_core.TransformedRef(ref, transforms)
@@ -5219,8 +5219,9 @@ def _atomic_store_abstract_eval(*avals_flat, args_tree, atomic_type):
 
 @discharge.register_discharge_rule(atomic_store_p)
 def _atomic_store_discharge_rule(
-    ctx, *args_flat, args_tree, atomic_type: AtomicOpType
+    ctx, *args_flat, args_tree, atomic_type: AtomicOpType, optimized: bool
 ):
+  del optimized
   ref, transforms, val, mask = args_tree.unflatten(args_flat)
   *prev_transforms, idx = transforms
   ref = discharge.transform_array(ref, prev_transforms)
@@ -5270,14 +5271,17 @@ def _atomic_store(
     val,
     *,
     atomic_type: AtomicOpType,
+    optimized: bool = True,
 ):
-  # TODO(bchetioui): add an optimized kwarg to atomic store ops.
   x_ref, transforms = state_primitives.get_ref_and_transforms(
       x_ref_or_view, None, "atomic_store"
   )
   args_flat, args_tree = tree_util.tree_flatten((x_ref, transforms, val))
   atomic_store_p.bind(
-      *args_flat, args_tree=args_tree, atomic_type=atomic_type
+      *args_flat,
+      args_tree=args_tree,
+      atomic_type=atomic_type,
+      optimized=optimized,
   )
 
 
@@ -5289,6 +5293,7 @@ def _atomic_store_lowering_rule_wg(
     *args_flat,
     args_tree,
     atomic_type: AtomicOpType,
+    optimized: bool,
 ):
   ref, transforms, value = args_tree.unflatten(args_flat)
   ref_aval, transforms_avals, value_aval = args_tree.unflatten(ctx.avals_in)
@@ -5306,12 +5311,7 @@ def _atomic_store_lowering_rule_wg(
   mgpu.dialect.vector_store(
       value,
       ref,
-      # Force optimized transfers to SMEM.
-      # TODO(bchetioui): this is a temporary solution to avoid a regression, but
-      # should be handled by passing an optimized kwarg to atomic store ops.
-      # At the moment, lane semantics still models downgradable semantics for
-      # this.
-      optimized=ref_aval.memory_space != gpu_core.MemorySpace.GMEM,
+      optimized=optimized,
       atomic_type=_atomic_op_type_to_int(atomic_type),
   )
   return ()
@@ -5323,6 +5323,7 @@ def _atomic_store_lowering_rule(
     *args_flat,
     args_tree,
     atomic_type: AtomicOpType,
+    optimized: bool,
 ):
   ref, transforms, value = args_tree.unflatten(args_flat)
   ref_aval, transforms_avals, value_aval = args_tree.unflatten(ctx.avals_in)
@@ -5346,11 +5347,14 @@ def _atomic_store_lowering_rule(
             f"Only 2D tiling is supported, got: {tiling}"
         )
       value.store_tiled(
-          ref, swizzle=swizzle, tiling_rank=len(tiling),
+          ref,
+          swizzle=swizzle,
+          optimized=optimized,
+          tiling_rank=len(tiling),
           atomic=atomic_type.value,  # pyrefly: ignore[bad-argument-type]
       )
     case ():
-      value.store_untiled(ref, optimized=False, atomic=atomic_type.value)  # pyrefly: ignore[bad-argument-type]
+      value.store_untiled(ref, optimized=optimized, atomic=atomic_type.value)  # pyrefly: ignore[bad-argument-type]
     case _:
       raise NotImplementedError(
           f"Unsupported transforms for atomic_store: {remaining_transforms}"
@@ -5358,7 +5362,7 @@ def _atomic_store_lowering_rule(
   return ()
 
 
-def atomic_add(ref: _Ref, val) -> None:
+def atomic_add(ref: _Ref, val, *, optimized: bool = True) -> None:
   """Performs an atomic store-add of the value to the reference.
 
   Note that atomicity is only guaranteed on the element-level
@@ -5368,11 +5372,13 @@ def atomic_add(ref: _Ref, val) -> None:
   Args:
     ref: The reference to store the value to.
     val: The value to store.
+    optimized: If True, a compilation error will be raised if no optimized
+      implementation for the store is available.
   """
-  _atomic_store(ref, val, atomic_type=AtomicOpType.ADD)
+  _atomic_store(ref, val, atomic_type=AtomicOpType.ADD, optimized=optimized)
 
 
-def atomic_max(ref: _Ref, val) -> None:
+def atomic_max(ref: _Ref, val, *, optimized: bool = True) -> None:
   """Performs an atomic store-max of the value to the reference.
 
   Note that atomicity is only guaranteed on the element-level.
@@ -5380,11 +5386,13 @@ def atomic_max(ref: _Ref, val) -> None:
   Args:
     ref: The reference to store the value to.
     val: The value to store.
+    optimized: If True, a compilation error will be raised if no optimized
+      implementation for the store is available.
   """
-  _atomic_store(ref, val, atomic_type=AtomicOpType.MAX)
+  _atomic_store(ref, val, atomic_type=AtomicOpType.MAX, optimized=optimized)
 
 
-def atomic_min(ref: _Ref, val) -> None:
+def atomic_min(ref: _Ref, val, *, optimized: bool = True) -> None:
   """Performs an atomic store-min of the value to the reference.
 
   Note that atomicity is only guaranteed on the element-level.
@@ -5392,11 +5400,13 @@ def atomic_min(ref: _Ref, val) -> None:
   Args:
     ref: The reference to store the value to.
     val: The value to store.
+    optimized: If True, a compilation error will be raised if no optimized
+      implementation for the store is available.
   """
-  _atomic_store(ref, val, atomic_type=AtomicOpType.MIN)
+  _atomic_store(ref, val, atomic_type=AtomicOpType.MIN, optimized=optimized)
 
 
-def atomic_and(ref: _Ref, val) -> None:
+def atomic_and(ref: _Ref, val, *, optimized: bool = True) -> None:
   """Performs an atomic store-and of the value to the reference.
 
   Note that atomicity is only guaranteed on the element-level.
@@ -5404,11 +5414,13 @@ def atomic_and(ref: _Ref, val) -> None:
   Args:
     ref: The reference to store the value to.
     val: The value to store.
+    optimized: If True, a compilation error will be raised if no optimized
+      implementation for the store is available.
   """
-  _atomic_store(ref, val, atomic_type=AtomicOpType.AND)
+  _atomic_store(ref, val, atomic_type=AtomicOpType.AND, optimized=optimized)
 
 
-def atomic_or(ref: _Ref, val) -> None:
+def atomic_or(ref: _Ref, val, *, optimized: bool = True) -> None:
   """Performs an atomic store-or of the value to the reference.
 
   Note that atomicity is only guaranteed on the element-level.
@@ -5416,11 +5428,13 @@ def atomic_or(ref: _Ref, val) -> None:
   Args:
     ref: The reference to store the value to.
     val: The value to store.
+    optimized: If True, a compilation error will be raised if no optimized
+      implementation for the store is available.
   """
-  _atomic_store(ref, val, atomic_type=AtomicOpType.OR)
+  _atomic_store(ref, val, atomic_type=AtomicOpType.OR, optimized=optimized)
 
 
-def atomic_xor(ref: _Ref, val) -> None:
+def atomic_xor(ref: _Ref, val, *, optimized: bool = True) -> None:
   """Performs an atomic store-xor of the value to the reference.
 
   Note that atomicity is only guaranteed on the element-level.
@@ -5428,8 +5442,10 @@ def atomic_xor(ref: _Ref, val) -> None:
   Args:
     ref: The reference to store the value to.
     val: The value to store.
+    optimized: If True, a compilation error will be raised if no optimized
+      implementation for the store is available.
   """
-  _atomic_store(ref, val, atomic_type=AtomicOpType.XOR)
+  _atomic_store(ref, val, atomic_type=AtomicOpType.XOR, optimized=optimized)
 
 
 multimem_store_p = jax_core.Primitive("multimem_store")
