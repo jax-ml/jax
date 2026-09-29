@@ -40,8 +40,8 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import remat
 from jax._src.partition_spec import PartitionSpec
 from jax._src.custom_derivatives import (
-    CustomVJPPrimal, _temporary_dtype_exception, _check_for_returned_refs,
-    _check_for_aliased_refs)
+    custom_vjp, CustomVJPPrimal, _temporary_dtype_exception,
+    _check_for_returned_refs, _check_for_aliased_refs)
 from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src import ad_util
@@ -1070,7 +1070,7 @@ def _replace_none(primal_in_aval, maybe_ct):
   else:
     return maybe_ct
 
-class custom_vjp3:
+class custom_vjp3(custom_vjp):
   fwd: Callable | None = None
   bwd: Callable | None = None
   symz: bool = False
@@ -1081,7 +1081,7 @@ class custom_vjp3:
   def __init__(self, f, nondiff_argnums=(), nondiff_argnames=()):
     self.static_argnums = _set_up_nondiff(f, nondiff_argnums, nondiff_argnames)
     update_wrapper(self, f)
-    self.f = f
+    self.fun = self.f = f
 
   def defvjp(self, fwd, bwd, *, symbolic_zeros=False, optimize_remat=False):
     self.fwd = fwd
@@ -1101,8 +1101,7 @@ class custom_vjp3:
   def defremat_with_logs(self, fwd, rem, bwd):
     self.remat_rules = (fwd, rem, bwd, True)
 
-  @partial(traceback_util.api_boundary, repro_api_name="jax.custom_vjp.__call__")
-  def __call__(self, *args, **kwargs):
+  def _call(self, *args, **kwargs):
     if not (self.fwd and self.bwd) and not self.remat_rules:
       msg = (f"No VJP defined for custom_vjp function {self.f.__name__} using "
              "defvjp or defremat.")
