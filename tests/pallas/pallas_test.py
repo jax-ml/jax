@@ -33,6 +33,7 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import hijax
 from jax._src import test_util as jtu
+from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
 import jax.experimental.mosaic.gpu as mgpu
@@ -920,6 +921,60 @@ class PallasCallTest(ptu.PallasTest):
 
 class PallasCallInterpretTest(PallasCallTest):
   INTERPRET = True
+
+
+class PallasCallDCETest(jtu.JaxTestCase):
+
+  def add_one(self, x, compiler_params=None):
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.
+    return pl.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        interpret=True, compiler_params=compiler_params)(x)
+
+  def num_pallas_calls_after_dce(self, f, *args):
+    jaxpr = jax.make_jaxpr(f)(*args).jaxpr
+    dced, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars))
+    return sum(e.primitive.name == "pallas_call" for e in dced.eqns)
+
+  def test_dce_unused_outputs(self):
+    x = jnp.ones(8)
+    self.assertEqual(
+        self.num_pallas_calls_after_dce(lambda x: (self.add_one(x), x)[1], x), 0)
+    self.assertEqual(self.num_pallas_calls_after_dce(self.add_one, x), 1)
+
+  def test_dce_has_side_effects(self):
+    if not pltpu:
+      self.skipTest("Pallas TPU is not available")
+    x = jnp.ones(8)
+    for has_side_effects, expected in [
+        (False, 0), (True, 1),
+        (pltpu.SideEffectType.PURE, 0),
+        (pltpu.SideEffectType.DATAFLOW_SIDE_EFFECTING, 0),
+        (pltpu.SideEffectType.SIDE_EFFECTING, 1)]:
+      with self.subTest(has_side_effects=has_side_effects):
+        params = pltpu.CompilerParams(has_side_effects=has_side_effects)
+        f = lambda x: (self.add_one(x, compiler_params=params), x)[1]
+        self.assertEqual(self.num_pallas_calls_after_dce(f, x), expected)
+
+  @parameterized.parameters([False, True])
+  def test_dce_closed_over_ref(self, read_ref):
+    def f(x):
+      r = jax.new_ref(jnp.zeros_like(x))
+      def kernel(x_ref, o_ref):
+        r[...] = x_ref[...] * 2.
+        o_ref[...] = x_ref[...]
+      pl.pallas_call(kernel, out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+                     interpret=True)(x)
+      return r[...] if read_ref else x
+    jaxpr = jax.make_jaxpr(f)(jnp.ones(8)).jaxpr
+    eqn, = [e for e in jaxpr.eqns if e.primitive.name == "pallas_call"]
+    self.assertIsInstance(eqn.invars[0].aval, jax.ref.AbstractRef)
+    dced, _ = pe.dce_jaxpr(jaxpr, [True])
+    if read_ref:
+      self.assertIn("pallas_call", [e.primitive.name for e in dced.eqns])
+    else:
+      self.assertEmpty(dced.eqns)
 
 
 class PallasCallElementIndexingTest(ptu.PallasTest):

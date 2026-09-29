@@ -1418,6 +1418,19 @@ class MutableArrayTest(jtu.JaxTestCase):
     stable_hlo = f.lower(1, 2).as_text()
     self.assertNotIn("add", stable_hlo)
 
+    @jax.remat
+    def h(x, y):
+      y_ref = jax.empty_ref(jax.typeof(y))
+      y_ref[...] = jnp.sin(y)
+      unused = jax.freeze(y_ref)
+      return x * 2.0, unused
+
+    jaxpr = jax.make_jaxpr(
+      lambda x, y: jax.grad(lambda a, b: h(a, b)[0])(x, y))(1.0, 2.0)
+    jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [True])
+    self.assertNotIn('sin', str(jaxpr))
+    self.assertNotIn('empty_ref', str(jaxpr))
+
   def test_dce_dead_ref_writes(self):
     def f(x):
       r = jax.new_ref(x)

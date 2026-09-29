@@ -777,8 +777,20 @@ batching.fancy_primitive_batchers[pallas_call_p] = _pallas_call_batching_rule
 def _pallas_call_dce_rule(
     used_outs: list[bool], live_ins: list[bool], eqn: pe.JaxprEqn
 ) -> tuple[list[bool], pe.JaxprEqn | None]:
-  del used_outs, live_ins
+  if (not any(used_outs) and
+      not any(live for x, live in zip(eqn.invars, live_ins)
+              if isinstance(x.aval, state.AbstractRef)) and
+      not pe.has_effects(eqn, live_ins) and
+      not _has_side_effects(eqn.params['compiler_params'])):
+    return [False] * len(eqn.invars), None
   return [True] * len(eqn.invars), eqn
+
+def _has_side_effects(compiler_params) -> bool:
+  side_effects = getattr(compiler_params, 'has_side_effects', False)
+  if isinstance(side_effects, bool):
+    return side_effects
+  from jax._src.pallas.mosaic import core as tpu_core  # pyrefly: ignore[missing-import]
+  return side_effects is tpu_core.SideEffectType.SIDE_EFFECTING
 
 pe.dce_rules[pallas_call_p] = _pallas_call_dce_rule
 
