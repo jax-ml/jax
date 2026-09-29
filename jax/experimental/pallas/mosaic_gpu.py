@@ -85,6 +85,10 @@ from jax._src.pallas.mosaic_gpu.primitives import multimem_load_reduce as multim
 from jax._src.pallas.mosaic_gpu.primitives import multimem_store as multimem_store
 from jax._src.pallas.mosaic_gpu.primitives import print_layout as print_layout
 from jax._src.pallas.mosaic_gpu.primitives import query_cluster_cancel as query_cluster_cancel
+from jax._src.pallas.mosaic_gpu.primitives import max as max
+from jax._src.pallas.mosaic_gpu.primitives import min as min
+from jax._src.pallas.mosaic_gpu.primitives import prod as prod
+from jax._src.pallas.mosaic_gpu.primitives import sum as sum
 from jax._src.pallas.mosaic_gpu.primitives import RefType as RefType
 from jax._src.pallas.mosaic_gpu.primitives import semaphore_signal as semaphore_signal
 from jax._src.pallas.mosaic_gpu.primitives import semaphore_signal_multicast as semaphore_signal_multicast

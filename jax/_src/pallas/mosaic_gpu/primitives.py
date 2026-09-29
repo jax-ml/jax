@@ -36,6 +36,7 @@ from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
+from jax._src.interpreters import batching
 from jax._src.lax import utils as lax_utils
 from jax._src.layout import get_layout_mode, LayoutMode
 from jax._src.lib.mlir import ir
@@ -5978,3 +5979,77 @@ def _semaphore_wait_lowering_rule(
         val, decrement=decrement, scope=scope, memory_scope=memory_scope,
     )
   return ()
+
+
+reduce_sum_p = jax_core.Primitive("mosaic_gpu_reduce_sum")
+reduce_max_p = jax_core.Primitive("mosaic_gpu_reduce_max")
+reduce_min_p = jax_core.Primitive("mosaic_gpu_reduce_min")
+reduce_prod_p = jax_core.Primitive("mosaic_gpu_reduce_prod")
+
+
+def _reduce_abstract_eval(
+    x_aval: jax_core.ShapedArray,
+    *,
+    axes: tuple[int, ...],
+    accumulator_ilp: int | None = None,
+) -> jax_core.ShapedArray:
+  if accumulator_ilp is not None and (
+      not isinstance(accumulator_ilp, int)
+      or isinstance(accumulator_ilp, bool)
+      or accumulator_ilp <= 0
+  ):
+    raise ValueError(
+        f"accumulator_ilp must be a positive integer, got: {accumulator_ilp}"
+    )
+
+  out_shape = tuple(s for i, s in enumerate(x_aval.shape) if i not in axes)
+  return jax_core.ShapedArray(out_shape, x_aval.dtype)
+
+
+for prim, op in (
+    (reduce_sum_p, "add"),
+    (reduce_max_p, "max"),
+    (reduce_min_p, "min"),
+    (reduce_prod_p, "prod"),
+):
+  prim.def_abstract_eval(_reduce_abstract_eval)
+  batching.defreducer(prim)
+  lowering._register_resource_estimator(prim)(
+      lowering._reduce_resource_estimator
+  )
+  lowering.register_lowering_rule(prim, mgpu.LoweringSemantics.Lane)(
+      functools.partial(lowering._reduce_lowering_rule, op)
+  )
+
+lowering.register_lowering_rule(reduce_sum_p, mgpu.LoweringSemantics.Warpgroup)(
+    lowering._reduce_sum_lowering_rule_wg
+)
+lowering.register_lowering_rule(reduce_max_p, mgpu.LoweringSemantics.Warpgroup)(
+    lowering._reduce_max_lowering_rule_wg
+)
+lowering.register_lowering_rule(reduce_min_p, mgpu.LoweringSemantics.Warpgroup)(
+    lowering._reduce_min_lowering_rule_wg
+)
+lowering.register_lowering_rule(reduce_prod_p, mgpu.LoweringSemantics.Warpgroup)(
+    lowering._reduce_prod_lowering_rule_wg
+)
+
+
+def _reduce(
+    prim: jax_core.Primitive,
+    x: Any,
+    axis: int | Sequence[int] | None = None,
+    keepdims: bool = False,
+    *,
+    accumulator_ilp: int | None = None,
+) -> Any:
+  if keepdims:
+    raise NotImplementedError("keepdims=True is not yet supported.")
+  axes = util.canonicalize_axis_tuple(axis, x.ndim)
+  return prim.bind(x, axes=axes, accumulator_ilp=accumulator_ilp)
+
+
+sum = functools.partial(_reduce, reduce_sum_p)
+max = functools.partial(_reduce, reduce_max_p)
+min = functools.partial(_reduce, reduce_min_p)
+prod = functools.partial(_reduce, reduce_prod_p)

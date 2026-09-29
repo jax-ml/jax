@@ -20,6 +20,14 @@ Remember to align the itemized text with the first line of an item within a list
 
 ### Mosaic GPU
 
+* New features
+
+  * Added {func}`jax.experimental.pallas.mosaic_gpu.min`,
+  {func}`jax.experimental.pallas.mosaic_gpu.max`,
+  {func}`jax.experimental.pallas.mosaic_gpu.sum`, and
+  {func}`jax.experimental.pallas.mosaic_gpu.prod`. These mirror the equivalent
+  `jax.numpy` functions, but add an `accumulator_ilp` parameter.
+
 * Deprecations
 
   * The `device_id_type` parameter of
