@@ -261,6 +261,8 @@ def register_pytree_node(
     flatten_with_keys_func: (
         Callable[[T], tuple[KeyLeafPairs, _AuxData]] | None
     ) = None,
+    *,
+    _registry: pytree.PyTreeRegistry | None = None,
 ) -> None:
   """Extends the set of types that are considered internal nodes in pytrees.
 
@@ -276,6 +278,8 @@ def register_pytree_node(
       returned by ``flatten_func`` and stored in the treedef, and the
       unflattened children. The function should return an instance of
       ``nodetype``.
+    _registry: optional PyTreeRegistry to register with. This should only be
+      used internally.
 
   See also:
     - :func:`~jax.tree_util.register_static`: simpler API for registering a static pytree.
@@ -326,11 +330,12 @@ def register_pytree_node(
     >>> jax.jit(f)(m)
     Array([1., 2., 3., 4., 5.], dtype=float32)
   """
-  for registry in _all_registries:
-    registry.register_node(
+  registries = _all_registries if _registry is None else (_registry,)
+  for reg in registries:
+    reg.register_node(
         nodetype, flatten_func, unflatten_func, flatten_with_keys_func
     )
-  _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
+  _python_registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
 
 
 @export
@@ -438,6 +443,7 @@ _registry: dict[type[Any], _RegistryEntry] = {
                          lambda keys, xs: dict(zip(keys, xs))),
     type(None): _RegistryEntry(lambda z: ((), None), lambda _, xs: None),
 }
+_python_registry = _registry
 
 
 class Unspecified:
@@ -891,6 +897,8 @@ def register_pytree_with_keys(
     flatten_with_keys: Callable[[T], tuple[Iterable[KeyLeafPair], _AuxData]],
     unflatten_func: Callable[[_AuxData, Iterable[Any]], T],
     flatten_func: None | (Callable[[T], tuple[Iterable[Any], _AuxData]]) = None,
+    *,
+    _registry: pytree.PyTreeRegistry | None = None,
 ):
   """Extends the set of types that are considered internal nodes in pytrees.
 
@@ -912,6 +920,8 @@ def register_pytree_with_keys(
       in the same order as ``flatten_with_keys``, and return the same aux data.
       This argument is optional and only needed for faster traversal when
       calling functions without keys like ``tree_map`` and ``tree_flatten``.
+    _registry: optional PyTreeRegistry to register with. This should only be
+      used internally.
 
   Examples:
     First we'll define a custom type:
@@ -952,7 +962,11 @@ def register_pytree_with_keys(
     flatten_func = flatten_func_impl
 
   register_pytree_node(
-      nodetype, flatten_func, unflatten_func, flatten_with_keys
+      nodetype,
+      flatten_func,
+      unflatten_func,
+      flatten_with_keys,
+      _registry=_registry,
   )
 
 
@@ -1011,6 +1025,8 @@ def register_dataclass(
     data_fields: Sequence[str] | None = None,
     meta_fields: Sequence[str] | None = None,
     drop_fields: Sequence[str] = (),
+    *,
+    _registry: pytree.PyTreeRegistry | None = None,
 ) -> Typ:
   """Extends the set of types that are considered internal nodes in pytrees.
 
@@ -1043,6 +1059,8 @@ def register_dataclass(
     drop_fields: only referenced if ``nodetype`` is a dataclass. Specify a sequence of
       field names from among ``dataclasses.fields(nodetype)`` to be excluded from pytree
       registration.
+    _registry: optional PyTreeRegistry to register with. This should only be
+      used internally.
 
   Returns:
     The input class ``nodetype`` is returned unchanged after being added to JAX's
@@ -1173,9 +1191,10 @@ def register_dataclass(
     data = tuple(getattr(x, name) for name in data_fields)
     return data, meta
 
-  for registry in _all_registries:
-    registry.register_dataclass_node(nodetype, list(data_fields), list(meta_fields))
-  _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
+  registries = _all_registries if _registry is None else (_registry,)
+  for reg in registries:
+    reg.register_dataclass_node(nodetype, list(data_fields), list(meta_fields))
+  _python_registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
   return nodetype
 
 
@@ -1197,7 +1216,11 @@ register_pytree_with_keys(
 
 
 @export
-def register_static(cls: type[H]) -> type[H]:
+def register_static(
+    cls: type[H],
+    *,
+    _registry: pytree.PyTreeRegistry | None = None,
+) -> type[H]:
   """Registers `cls` as a pytree with no leaves.
 
   Instances are treated as static by :func:`jax.jit`, :func:`jax.pmap`, etc. This can
@@ -1207,6 +1230,8 @@ def register_static(cls: type[H]) -> type[H]:
   Args:
     cls: type to be registered as static. Must be hashable, as defined in
       https://docs.python.org/3/glossary.html#term-hashable.
+    _registry: optional PyTreeRegistry to register with. This should only be
+      used internally.
 
   Returns:
     The input class ``cls`` is returned unchanged after being added to JAX's
@@ -1230,7 +1255,7 @@ def register_static(cls: type[H]) -> type[H]:
   """
   flatten = lambda obj: ((), obj)
   unflatten = lambda obj, empty_iter_children: obj
-  register_pytree_with_keys(cls, flatten, unflatten)
+  register_pytree_with_keys(cls, flatten, unflatten, _registry=_registry)
   return cls
 
 
