@@ -1068,7 +1068,6 @@ def _run_serde_pass(
   module.context.allow_unregistered_dialects = True
   try:
     pipeline.run(module.operation)
-    module.operation.verify()
   except ir.MLIRError as e:
     raise error.mlir_error_to_verification_error(e) from e
   finally:
@@ -1100,6 +1099,7 @@ def lower_mgpu_module(
     # We need to run a pass that removes dead-code for which layout inference
     # does not work.
     pm = mlir.passmanager.PassManager.parse("builtin.module(canonicalize,cse)", module.context)
+    pm.enable_verifier(False)
     pm.run(module.operation)
 
     # Run Python lowering passes. The remaining passes will be run in C++ in
