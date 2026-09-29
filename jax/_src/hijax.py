@@ -988,7 +988,7 @@ class CustomVJPTraced(HiPrim):
     effs = self.traced.jaxpr.effects
     disallowed = effects.custom_derivatives_allowed_effects.filter_not_in(effs)
     if disallowed:
-      raise NotImplementedError(f'Effects not supported in `custom_jvp`: {disallowed}')
+      raise NotImplementedError(f'Effects not supported in `custom_vjp`: {disallowed}')
 
   def remat(self, trace, *args):  # type: ignore
     if not trace.custom_vjp_rules or (self.opt_remat and not self.remat_rules):
