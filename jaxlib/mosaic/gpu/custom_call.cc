@@ -322,6 +322,7 @@ absl::Status RunPasses(mlir::OpPassManager&& passes,
                        mlir::ModuleOp module,
                        const mosaic::gpu::DumpOptions& dump_opts) {
   mlir::PassManager pm(module.getContext());
+  pm.enableVerifier(false);
   *static_cast<mlir::OpPassManager*>(&pm) = std::move(passes);
   std::string diagnostic;
   mlir::ScopedDiagnosticHandler diagnostic_handler(
