@@ -485,21 +485,8 @@ def _bitcast_abstract_eval(x, dtype):
 def _bitcast_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, *, dtype):
   del dtype  # Unused.
   [out_aval] = ctx.avals_out
-  [in_aval] = ctx.avals_in
   out_type = ctx.aval_to_ir_type(out_aval)
-  if not ctx.lowering_context.needs_layout_passes:
-    return vector.bitcast(out_type, x)
-  # TODO(b/562994815): Support bitwidth-changing bitcasts with
-  # needs_layout_passes=True.
-  if dtypes.itemsize_bits(in_aval.dtype) != dtypes.itemsize_bits(
-      out_aval.dtype
-  ):
-    raise NotImplementedError(
-        "plsc.bitcast between different bitwidths is not supported with"
-        " needs_layout_passes=True. Pass"
-        " pltpu.CompilerParams(needs_layout_passes=False) to the kernel."
-    )
-  return tpu.bitcast(out_type, x)
+  return vector.bitcast(out_type, x)
 
 
 def bitcast(x: jax.Array, dtype: jax.typing.DTypeLike) -> jax.Array:
