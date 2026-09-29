@@ -6475,10 +6475,10 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       self.skipTest('TPU generation too old')
     shape = (8, 256)
     def kernel(out):
-      del out
       acc = jax.empty_ref(jax.ShapeDtypeStruct(shape, jnp.float32),
                           memory_space=pltpu.ACC(0))
       acc[...] = jnp.full(shape, 1.0, jnp.float32)
+      out[...] = pltpu.matmul_pop(acc)
     with self.assertRaisesRegex(
         ValueError, 'Storing into an accumulator is not supported'
     ):
