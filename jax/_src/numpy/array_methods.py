@@ -1104,6 +1104,13 @@ class _IndexUpdateHelper:
     unique_indices: If True, the implementation will assume that the (normalized) indices
       passed to ``at[]`` are unique, which can result in more efficient execution on some
       backends. If True but the indices are not actually unique, the output is undefined.
+    strategy: string specifying the indexing strategy. Only applies to the ``get()``
+      method. Options are:
+
+      - ``"auto"``: (default) choose the best strategy automatically.
+      - ``"gather"``: use XLA gather.
+      - ``"static_slice"``: use static slice if possible, otherwise error.
+      - ``"dynamic_slice"``: use dynamic slice if possible, otherwise error.
 
   Examples:
     >>> x = jnp.arange(5.0)
@@ -1176,13 +1183,14 @@ class _IndexUpdateRef:
           mode: str | lax_slicing.GatherScatterMode | None = None,
           fill_value: ArrayLike | None = None,
           out_sharding: NamedSharding | PartitionSpec | None = None,
-          wrap_negative_indices: bool = True):
+          wrap_negative_indices: bool = True,
+          strategy: str = "auto"):
     """Equivalent to ``x[idx]``.
 
     Returns the value of ``x`` that would result from the NumPy-style
-    :mod:indexing <numpy.doc.indexing>` ``x[idx]``. This function differs from
+    :mod:`indexing <numpy.doc.indexing>` ``x[idx]``. This function differs from
     the usual array indexing syntax in that it allows additional keyword
-    arguments ``indices_are_sorted`` and ``unique_indices`` to be passed.
+    arguments ``indices_are_sorted``, ``unique_indices``, and ``strategy`` to be passed.
 
     See :func:`jax.numpy.ndarray.at` for details.
     """
@@ -1194,7 +1202,8 @@ class _IndexUpdateRef:
                                    unique_indices=unique_indices, mode=mode,
                                    fill_value=fill_value,
                                    normalize_indices=wrap_negative_indices,
-                                   out_sharding=out_sharding)
+                                   out_sharding=out_sharding,
+                                   strategy=indexing.IndexingStrategy.from_any(strategy))
 
   def set(self, values: ArrayLike, *, indices_are_sorted: bool = False,
           unique_indices: bool = False,

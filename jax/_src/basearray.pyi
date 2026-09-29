@@ -293,10 +293,11 @@ class _IndexUpdateHelper:
   def __getitem__(self, index: Any) -> _IndexUpdateRef: ...
 
 class _IndexUpdateRef:
-  def get(self, indices_are_sorted: bool = False, unique_indices: bool = False,
+  def get(self, *, indices_are_sorted: bool = False, unique_indices: bool = False,
           mode: str | None = None, fill_value: StaticScalar | None = None,
           out_sharding: NamedSharding | P | None = None,
-          wrap_negative_indices: bool = True) -> Array: ...
+          wrap_negative_indices: bool = True,
+          strategy: str = "auto") -> Array: ...
   def set(self, values: Any,
           indices_are_sorted: bool = False, unique_indices: bool = False,
           mode: str | None = None, fill_value: StaticScalar | None = None,

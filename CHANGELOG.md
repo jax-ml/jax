@@ -25,6 +25,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     implementations.
   * Added a `remat` option to {func}`jax.custom_gradient`, for writing
     {func}`jax.custom_vjp.defremat` rules with closures.
+  * `arr.at[...].get()` now accepts a `strategy` argument that allows choosing
+    whether the operation lowers to `gather`, `dynamic_slice`, or `slice`.
 
 * Breaking changes
   * Removed `jax.custom_remat`. Use {func}`jax.custom_vjp.defremat` instead:

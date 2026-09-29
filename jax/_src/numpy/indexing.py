@@ -1098,6 +1098,17 @@ class IndexingStrategy(enum.Enum):
   STATIC_SLICE = 'static_slice'
   DYNAMIC_SLICE = 'dynamic_slice'
 
+  @classmethod
+  def from_any(cls, s: IndexingStrategy | str) -> IndexingStrategy:
+    if isinstance(s, cls):
+      return s
+    if isinstance(s, str):
+      try:
+        return cls(s)
+      except ValueError:
+        raise ValueError(f"Unknown indexing strategy: {s!r}") from None
+    raise TypeError(f"Expected strategy to be IndexingStrategy or str; got {s!r}")
+
 
 def rewriting_take(
     arr: Array,
@@ -1117,6 +1128,9 @@ def rewriting_take(
 
   if not isinstance(strategy, IndexingStrategy):
     raise TypeError(f"Expected strategy to be IndexingStrategy; got {strategy}")
+
+  if strategy == IndexingStrategy.SCATTER:
+    raise ValueError(f"Indexing strategy {strategy} is not supported for take.")
 
   if config.check_static_indices.value and (mode is None or slicing.GatherScatterMode.from_any(mode) == slicing.GatherScatterMode.PROMISE_IN_BOUNDS):
     indexer.validate_static_indices(normalize_indices=normalize_indices)
