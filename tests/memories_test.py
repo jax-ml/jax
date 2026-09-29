@@ -2274,12 +2274,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
 
-    if jtu.is_device_tpu_at_least(7):
-      compiled_text = f.lower(arr).compile().as_text()
-    else:
-      compiled_text = f.lower(arr).compile(
-          {'xla_tpu_enable_sparse_core_collective_offload_all_reduce': 'true'}
-          ).as_text()
+    compiled_text = f.lower(arr).compile().as_text()
     self.assertIn('async_execution_thread="sparsecore"', compiled_text)
 
   def test_sparsecore_two_rss(self):
