@@ -38,6 +38,7 @@ from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering as tc_lowering
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import sc_lowering
+from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
@@ -574,9 +575,15 @@ def _scan_count_abstract_eval(x, mask):
   return jax_core.ShapedArray(x.shape, jnp.int32), mask
 
 
+def _check_xpu_ops_supported(op_name: str):
+  if tpu_info.get_tpu_info().chip_version == tpu_info.ChipVersion.TPU_8I:
+    raise ValueError(f"{op_name} is not supported on TPU v8i.")
+
+
 @sc_lowering.register_lowering_rule(scan_count_p)
 def _scan_count_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask):
   del ctx  # Unused.
+  _check_xpu_ops_supported("scan_count")
   # Reverse, because the MLIR op returns the mask first.
   return tpu.scan_count(mask, x)[::-1]
 
@@ -627,6 +634,7 @@ def _masked_cummax_abstract_eval(x, mask):
 
 def _masked_cumop_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask,
                                 *, reduction_kind: str):
+  _check_xpu_ops_supported(f"cum{reduction_kind}")
   sign_bit_vec = None
   # tpu.scan comparisons assume unsigned int predicates, so we compare
   # with the sign bit flipped.
@@ -661,6 +669,7 @@ def _reduce_op_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axes,
   if axes != (0,):
     raise NotImplementedError(
         f"reductions require axes to be (0,) on SparseCore, but got {axes}.")
+  _check_xpu_ops_supported(f"reduce_{reduction_kind}")
   vec_dim = ctx.avals_in[0].shape[0]
   i1t = ir.IntegerType.get_signless(1)
   c1 = arith.constant(i1t, ir.IntegerAttr.get(i1t, 1))
@@ -694,8 +703,8 @@ def cummax(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
     mask: An optional array of booleans, which specifies which elements of `x`
       are eligible for the max. If `None`, all elements are eligible.
   """
-  if x.ndim != 1:
-    raise NotImplementedError(f"cummax: x={x.aval} must be rank 1")
+  if x.ndim < 1:
+    raise NotImplementedError(f"cummax: x={x.aval} must have rank >= 1")
   if mask is None:
     mask = lax.full(x.shape, True)
   return masked_cummax_p.bind(x, mask)
@@ -714,8 +723,8 @@ def cummin(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
     mask: An optional array of booleans, which specifies which elements of `x`
       are eligible for the min. If `None`, all elements are eligible.
   """
-  if x.ndim != 1:
-    raise NotImplementedError(f"cummin: x={x.aval} must be rank 1")
+  if x.ndim < 1:
+    raise NotImplementedError(f"cummin: x={x.aval} must have rank >= 1")
   if mask is None:
     mask = lax.full(x.shape, True)
   return masked_cummin_p.bind(x, mask)
@@ -724,12 +733,15 @@ def cummin(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
 @sc_lowering.register_lowering_rule(lax.cumsum_p)
 def _cumsum_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axis,
                           reverse):
-  if axis != 0:
-    raise NotImplementedError(f"SC cumsum: axis={axis} must be 0.")
-  if len(ctx.avals_in[0].shape) != 1:
-    raise NotImplementedError(f"SC cumsum: x={ctx.avals_in[0]} must be rank 1")
+  rank = len(ctx.avals_in[0].shape)
+  minor_axis = rank - 1
+  if axis != minor_axis:
+    raise NotImplementedError(
+        f"SC cumsum: axis={axis} must be the minor axis ({minor_axis})."
+    )
   if reverse:
     raise NotImplementedError("SC cumsum: reverse=True is not yet supported")
+  _check_xpu_ops_supported("cumsum")
   i1t = ir.IntegerType.get_signless(1)
   c1 = arith.constant(i1t, ir.IntegerAttr.get(i1t, 1))
   c1v = vector.broadcast(ir.VectorType.get(x.type.shape, c1.type), c1)
@@ -752,8 +764,8 @@ def cumsum(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
     mask: An optional array of booleans, which specifies which elements of `x`
       are eligible for summing. If `None`, all elements are eligible.
   """
-  if x.ndim != 1:
-    raise NotImplementedError(f"cumsum: x={x.aval} must be rank 1")
+  if x.ndim < 1:
+    raise NotImplementedError(f"cumsum: x={x.aval} must have rank >= 1")
   if mask is None:
     mask = lax.full(x.shape, True)
   return masked_cumsum_p.bind(x, mask)
@@ -788,6 +800,7 @@ def _masked_sort_abstract_eval(keys, values, *maybe_mask, descending):
 @sc_lowering.register_lowering_rule(masked_sort_p)
 def _masked_sort_lowering_rule(
     ctx: sc_lowering.LoweringRuleContext, keys, values, *maybe_mask, descending):
+  _check_xpu_ops_supported("sort_key_val")
   if maybe_mask:
     [mask] = maybe_mask
   else:
