@@ -34,7 +34,7 @@ def MosaicGPU_Dialect : Dialect {
   let cppNamespace = "::mosaic_gpu";
   let useDefaultTypePrinterParser = 1;
   let useDefaultAttributePrinterParser = 1;
-  let useStrictPropertiesInAssemblyFormat = 0;
+  let useStrictPropertiesInAssemblyFormat = 1;
 }
 
 class MosaicGPU_Type<string name, string mnemonic_, list<Trait> traits = []>
@@ -669,7 +669,7 @@ def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
 
   let results = (outs AnyVectorOfAnyRank);
 
-  let assemblyFormat = "`x` `(` $x `:` type($x) `)` attr-dict";
+  let assemblyFormat = "`x` `(` $x `:` type($x) `)` prop-dict attr-dict";
 }
 
 def MosaicGPU_TmemLayoutCastOp : Op<MosaicGPU_Dialect, "tmem_layout_cast",
@@ -710,7 +710,7 @@ def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", [Pure
 
   let results = (outs AnyVectorOfAnyRank);
   let assemblyFormat = [{
-    `(` $operand `:` type($operand) `)` attr-dict `->` type(results)
+    `(` $operand `:` type($operand) `)` prop-dict attr-dict `->` type(results)
   }];
   let hasVerifier = 1;
   let hasFolder = 1;
@@ -735,7 +735,7 @@ def MosaicGPU_VectorConcatOp : Op<MosaicGPU_Dialect, "vector_concat",
 
   let results = (outs AnyVectorOfNonZeroRank);
   let assemblyFormat = [{
-    `(` $operands `:` type($operands) `)` attr-dict `->` type(results)
+    `(` $operands `:` type($operands) `)` prop-dict attr-dict `->` type(results)
   }];
 }
 
@@ -1058,7 +1058,7 @@ def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
 
   let assemblyFormat = [{
     `smem_ptr` `(` $smem_ptr `:` type($smem_ptr) `)`
-    attr-dict `->` type(results)
+    prop-dict attr-dict `->` type(results)
   }];
 
   let hasVerifier = 1;
