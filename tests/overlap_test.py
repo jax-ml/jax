@@ -627,8 +627,8 @@ class OverlapTest(jtu.JaxTestCase):
   @jtu.run_on_devices('gpu', 'tpu')
   @jtu.with_explicit_mesh((8,), ('x',))
   def test_simple_fsdp_async_overlap_program_order(self, mesh):
-    if jtu.device_under_test() == 'tpu':
-      self.skipTest('Hangs on TPU execution')
+    if jtu.device_under_test() == 'tpu' and not jtu.is_device_tpu_at_least(6):
+      self.skipTest('Requires TPU >= 6')
 
     @jax.shard_map(out_specs=P(reduced={'x'}))
     def ag_start(x):
@@ -687,8 +687,8 @@ class OverlapTest(jtu.JaxTestCase):
   @jtu.run_on_devices('gpu', 'tpu')
   @jtu.with_explicit_mesh((8,), ('i',))
   def test_async_psum_scatter_opt_barrier(self, mesh):
-    if jtu.device_under_test() == 'tpu':
-      self.skipTest('Async reduce-scatter with optimization barrier crashes XLA TPU compiler')
+    if jtu.device_under_test() == 'tpu' and not jtu.is_device_tpu_at_least(6):
+      self.skipTest('Requires TPU >= 6')
 
     @jax.jit
     @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
