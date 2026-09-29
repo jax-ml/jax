@@ -50,8 +50,8 @@ from jax._src.util import (
     fun_name)
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
-    broadcast_prefix, register_static, register_pytree_node, tree_map_with_path,
-    keystr, tracing_registry)
+    broadcast_prefix, register_static, register_pytree_node,
+    tree_flatten_with_path, keystr, tracing_registry)
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
@@ -175,8 +175,10 @@ class HiPrim:
 
   def vjp_bwd(self, res, outgrad, /, *arg_accums):
     args_grad, logs = self.vjp_bwd_retval_logs(res, outgrad)
-    maybe_accum = lambda acc, v: isinstance(acc, ad.GradAccum) and acc.accum(v)
-    tree_map(maybe_accum, arg_accums, args_grad)
+    leaves, treedef = tree_flatten(arg_accums)
+    for acc, v in zip(leaves, treedef.flatten_up_to(args_grad)):
+      if isinstance(acc, ad.GradAccum):
+        acc.accum(v)
     return logs
 
   def vjp_bwd_retval_logs(self, res, outgrad, /):
@@ -900,7 +902,9 @@ class CustomVJPTraced(HiPrim):
                                self.out_tree.num_leaves)
     if ((tree := tracing_registry.flatten(out)[1]) != self.out_tree):
       raise TypeError(_vjp_primal_fwd_tree_mismatch_err(self, tree))
-    tree_map_with_path(_vjp_fwd_aval_mismatch_err, self.out_aval, out)
+    path_avals, treedef = tree_flatten_with_path(self.out_aval)
+    for (p, a), x in zip(path_avals, treedef.flatten_up_to(out)):
+      _vjp_fwd_aval_mismatch_err(p, a, x)
     if self.symbolic_zeros:
       out_pairs_flat = tree_leaves_checked(self.out_tree, out)
       out_flat, out_nzs_flat = unzip2(
@@ -947,8 +951,9 @@ class CustomVJPTraced(HiPrim):
                        f"length {len(in_cts)}")
     in_cts = broadcast_prefix(in_cts, in_avals_, is_leaf=lambda x: x is None)
     in_cts = tree_unflatten(self.in_tree, map(_replace_none, self.in_avals_flat, in_cts))
-    tree_map_with_path(partial(_vjp_bwd_aval_mismatch_err, self.traced._fun_sourceinfo),
-                               self.in_avals[2:], in_cts[2:])
+    path_avals, treedef = tree_flatten_with_path(self.in_avals[2:])
+    for (p, a), ct in zip(path_avals, treedef.flatten_up_to(in_cts[2:])):
+      _vjp_bwd_aval_mismatch_err(self.traced._fun_sourceinfo, p, a, ct)
     if self.symbolic_zeros:
       in_cts = tree_map(ad_util.replace_rule_output_symbolic_zeros, in_cts)
     return in_cts, logs

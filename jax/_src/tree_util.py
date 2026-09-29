@@ -622,7 +622,9 @@ def broadcast_prefix(prefix_tree: Any, full_tree: Any,
   num_leaves = lambda t: tree_structure(t).num_leaves
   add_leaves = lambda x, subtree: result.extend([x] * num_leaves(subtree))
   try:
-    tree_map(add_leaves, prefix_tree, full_tree, is_leaf=is_leaf)
+    leaves, treedef = tree_flatten(prefix_tree, is_leaf=is_leaf)
+    for x, subtree in zip(leaves, treedef.flatten_up_to(full_tree)):
+      add_leaves(x, subtree)
   except ValueError:
       e, *_ = prefix_errors(prefix_tree, full_tree)
       raise e('broadcast_prefix prefix_tree') from None
