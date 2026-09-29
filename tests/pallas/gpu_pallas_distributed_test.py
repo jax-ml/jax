@@ -1233,11 +1233,15 @@ class PallasCallMultimemTest(TestCase):
         )
       else:
         layout = plgpu.Layout.WG_STRIDED((64, 32), vec_size=vector_length)
-      y_ref[...] = plgpu.layout_cast(
-          plgpu.multimem_load_reduce(
-              x_ref.at[16:-16], collective_axes="x", reduction_op=reduction,
+      plgpu.store(
+          y_ref,
+          plgpu.layout_cast(
+              plgpu.multimem_load_reduce(
+                  x_ref.at[16:-16], collective_axes="x", reduction_op=reduction,
+              ),
+              layout
           ),
-          layout
+          optimized=False,
       )
       my_device = lax.axis_index("x")
       other_device = 1 - my_device
