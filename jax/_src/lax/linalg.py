@@ -2358,6 +2358,15 @@ def _svd_jvp_rule(
     raise NotImplementedError(
       "Singular value decomposition JVP not implemented for full matrices")
 
+  if compute_uv and not (
+      subset_by_index is None
+      or subset_by_index == (0, core.min_dim(A.shape[-2], A.shape[-1]))
+  ):
+    raise NotImplementedError(
+        "Singular value decomposition JVP not implemented for "
+        "subset_by_index with compute_uv=True"
+    )
+
   Ut, V = _H(U), _H(Vt)
   s_dim = s[..., None, :]
   dS = Ut @ dA @ V
