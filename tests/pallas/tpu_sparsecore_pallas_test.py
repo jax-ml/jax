@@ -1355,26 +1355,22 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   @parameterized.product(
-      dtype=[jnp.int32], new_dtype=[jnp.int8, jnp.int16, jnp.float32]
+      dtype=[jnp.int32],
+      new_dtype=[jnp.int8, jnp.int16, jnp.float32],
+      needs_layout_passes=[False, True],
   )
-  def test_plsc_bitcast(self, dtype, new_dtype):
+  def test_plsc_bitcast(self, dtype, new_dtype, needs_layout_passes):
     self.skip_if_tc_tiling(
         "Fails due to incorrectly inferred tiling in tpu.memref_squeeze"
     )
     new_shape = (
         self.num_lanes * jnp.dtype(dtype).itemsize // jnp.dtype(new_dtype).itemsize,
     )
-    # TODO(b/562994815): Until bitwidth-changing plsc.bitcast is supported with
-    # layout passes, test_bitcast0/1 (i32 -> i8/i16 on 1D vectors) cannot move
-    # off needs_layout_passes=False.
-    changes_bitwidth = (
-        jnp.dtype(dtype).itemsize != jnp.dtype(new_dtype).itemsize
-    )
 
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(shape=new_shape, dtype=new_dtype),
         compiler_params=pltpu.CompilerParams(
-            needs_layout_passes=not changes_bitwidth
+            needs_layout_passes=needs_layout_passes
         ),
     )
     def kernel(x_ref, o_ref):
@@ -1420,6 +1416,52 @@ class VectorSubcoreTest(PallasSCTest):
     # Do not use np.testing.assert_array_equal as it does not handle bfloat16
     # nans correctly (per the function documentation, nan == nan should be true)
     self.assertAllClose(out, out_interpret)
+
+  @parameterized.product(
+      from_dtype=BITCAST_DTYPES,
+      to_dtype=BITCAST_DTYPES,
+      leading_shape=[(), (2,)],
+  )
+  def test_pltpu_bitcast_minormost(self, from_dtype, to_dtype, leading_shape):
+    self.skip_if_tc_tiling(
+        "Fails due to incorrectly inferred tiling in tpu.memref_squeeze"
+    )
+    if from_dtype == to_dtype:
+      self.skipTest("No bitcast needed")
+
+    def body(x_ref, y_ref):
+      y_ref[...] = pltpu.bitcast(x_ref[...], to_dtype, dim=-1)
+
+    in_packing = 32 // jax.dtypes.itemsize_bits(from_dtype)
+    out_packing = 32 // jax.dtypes.itemsize_bits(to_dtype)
+    in_shape = (*leading_shape, self.num_lanes * in_packing)
+    out_shape = (*leading_shape, self.num_lanes * out_packing)
+    # Number of 16-bit bfloat16 elements needed to fill the input buffer.
+    num_bf16 = (
+        math.prod(in_shape)
+        * jnp.dtype(from_dtype).itemsize
+        // jnp.dtype(jnp.bfloat16).itemsize
+    )
+    # Initialize the buffer with positive bfloat16 values (1.0, 2.0, ...) to
+    # ensure non-zero exponent bits across all bitcast types. This guarantees
+    # no subnormal floats are generated, preventing TPU hardware flush-to-zero
+    # (FTZ) mismatches when comparing raw bits.
+    inp = (
+        np.arange(1, num_bf16 + 1, dtype=jnp.bfloat16)
+        .view(from_dtype)
+        .reshape(in_shape)
+    )
+    out = self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(out_shape, to_dtype),
+    )(body)(inp)
+    expected = inp.view(to_dtype)
+    if to_dtype == jnp.bfloat16:
+      # Compare raw bit representations for bfloat16 to avoid NaN mismatch
+      # issues, because ml_dtypes.bfloat16 is a custom dtype where
+      # assert_array_equal does not evaluate NaN == NaN as True.
+      out = out.view(np.uint16)
+      expected = expected.view(np.uint16)
+    np.testing.assert_array_equal(out, expected)
 
   def test_lax_bitcast(self):
     @self.vector_subcore_kernel(
