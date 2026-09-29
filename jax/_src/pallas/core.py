@@ -212,7 +212,12 @@ class Buffered:
   """Specifies how a block should be buffered for a pipeline.
 
   Attributes:
-    buffer_count: The number of buffers to use for multiple buffering.
+    buffer_count: The number of buffers to use for multiple buffering. For
+      input_output buffers, an int ``n`` means ``(n, 1)``: ``n``-deep input
+      prefetch with synchronous output writeback; pass an
+      ``(in_buffer_count, out_buffer_count)`` pair to also buffer outputs
+      (allocating ``in + out - 1`` slots). Only emit_pipeline input_output
+      BufferedRefs accept a pair.
     use_lookahead: optional bool, indicates whether to use lookahead on the
       buffer. Enabling lookahead allows the pipeline to begin fetching the next
       changed block as soon as a slot is available, no matter how many
@@ -229,7 +234,7 @@ class Buffered:
       pipeline expects the pre-populated buffer to be passed in via allocations
       and will skip internal allocation.
   """
-  buffer_count: int
+  buffer_count: int | tuple[int, int]
   use_lookahead: bool = False
   revisit: RevisitMode | None = None
   prefetched_count: int = 0
