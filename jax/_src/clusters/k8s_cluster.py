@@ -63,6 +63,8 @@ def retry(
 
 class K8sCluster(clusters.ClusterEnv):
 
+  name: str = 'k8s'
+  
   # Use an arbitrarily chosen port for the coordinator since we cannot
   # rely on communication to choose one in real time.
   _coordinator_port = '55527'
