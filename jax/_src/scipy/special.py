@@ -1332,7 +1332,20 @@ def _zeta_series_expansion(x: ArrayLike, q: ArrayLike | None = None) -> Array:
   T = T0 * (dtype(0.5) + T1.sum(-1))
   return S + I + T
 
-zeta.defjvp(partial(jvp, _zeta_series_expansion))
+
+@zeta.defjvp
+def _zeta_jvp(primals, tangents):
+  x, q = primals
+  # The primal output must come from the function itself: the series expansion
+  # is an analytic continuation that returns finite values where lax.zeta (and
+  # scipy.special.zeta) return nan, e.g. for x < 1.
+  primal_out = zeta(x, q)
+  _, tangent_out = jvp(_zeta_series_expansion, primals, tangents)
+  # Outside the domain of the function the derivative is not defined either.
+  # (A multiplicative mask, rather than jnp.where, keeps the rule linear in the
+  # tangent so that reverse mode also yields nan.)
+  tangent_out = tangent_out * jnp.where(jnp.isnan(primal_out), np.nan, 1.0)
+  return primal_out, tangent_out
 
 
 def polygamma(n: ArrayLike, x: ArrayLike) -> Array:
