@@ -20,6 +20,13 @@ Remember to align the itemized text with the first line of an item within a list
 
 ### Mosaic GPU
 
+* Changes
+
+  * `ref[...] = value` now always requires an optimized transfer; use
+    {func}`jax.experimental.pallas.mosaic_gpu.store` with `optimized=False` to
+    opt out. This is necessary when storing to GMEM, since optimized transfers
+    are currently only supported for SMEM.
+
 * New features
 
   * Added {func}`jax.experimental.pallas.mosaic_gpu.min`,

@@ -2105,7 +2105,7 @@ def _swap_lowering_rule(
     value,
     *leaves,
     tree,
-    optimized: bool | None = None,
+    optimized: bool = True,
     return_old: bool = True,
 ):
   if isinstance(x_ref, tcgen05.TMEMRef):
@@ -2113,13 +2113,6 @@ def _swap_lowering_rule(
         "Stores to TMEM are asynchronous operations and cannot be performed"
         " using the usual syntax. Please use plgpu.async_store_tmem instead."
     )
-  # `ref[...] = value` uses an optimized transfer for tiled references, and
-  # silently downgrades to an unoptimized one for untiled references.
-  # `optimized=None` preserves that behaviour, while `plgpu.store` always
-  # passes an explicit value.
-  # TODO(bchetioui): remove once the downgradable path is gone.
-  tiled_optimized = True if optimized is None else optimized
-  untiled_optimized = False if optimized is None else optimized
   v_aval = ctx.avals_in[1]
   barrier = mgpu.warpgroup_barrier
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
@@ -2201,13 +2194,13 @@ def _swap_lowering_rule(
             is_signed=mgpu_utils.is_signed(v_aval.dtype),
             swizzle=swizzle,
             layout=value.layout,
-            optimized=tiled_optimized,
+            optimized=optimized,
             tiling_rank=len(tiling),
         )
       value.store_tiled(
           x_smem,
           swizzle=swizzle,
-          optimized=tiled_optimized,
+          optimized=optimized,
           tiling_rank=len(tiling),
       )
     case ():
@@ -2219,10 +2212,10 @@ def _swap_lowering_rule(
                 layout=value.layout,
                 is_signed=mgpu_utils.is_signed(v_aval.dtype),
                 swizzle=swizzle or 16,
-                optimized=untiled_optimized,
+                optimized=optimized,
             )
           value.store_untiled(
-              x_smem, swizzle=swizzle or 16, optimized=untiled_optimized
+              x_smem, swizzle=swizzle or 16, optimized=optimized
           )
         case _:
           if swizzle is not None:
@@ -2249,7 +2242,7 @@ def _swap_lowering_rule_wg(
     value,
     *leaves,
     tree,
-    optimized: bool | None = None,
+    optimized: bool = True,
     return_old: bool = True,
 ):
   v_aval = ctx.avals_in[1]

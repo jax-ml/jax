@@ -3894,7 +3894,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       @self.kernel(out_type=jax.ShapeDtypeStruct((128,), jnp.float32))
       def kernel(x_ref, y_ref):
         x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
-        y_ref[...] = op(x_val, axis=-1, accumulator_ilp=ilp)
+        plgpu.store(
+            y_ref, op(x_val, axis=-1, accumulator_ilp=ilp), optimized=False
+        )
 
       return kernel
 
@@ -3919,7 +3921,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     @self.kernel(out_type=jax.ShapeDtypeStruct((128,), jnp.float32))
     def kernel(x_ref, y_ref):
       x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
-      y_ref[...] = pl_op(x_val, axis=axis, accumulator_ilp=ilp)
+      plgpu.store(
+          y_ref, pl_op(x_val, axis=axis, accumulator_ilp=ilp), optimized=False
+      )
 
     x = jax.random.uniform(jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
     if jnp_op == jnp.prod:
@@ -3953,7 +3957,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     @self.kernel(out_type=jax.ShapeDtypeStruct(out_shape, jnp.float32))
     def kernel(x_ref, y_ref):
       x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
-      y_ref[...] = pl_op(x_val, axis=axis, keepdims=keepdims)
+      plgpu.store(
+          y_ref, pl_op(x_val, axis=axis, keepdims=keepdims), optimized=False
+      )
 
     x = jax.random.uniform(jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
     if jnp_op == jnp.prod:
@@ -3985,7 +3991,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     @self.kernel(out_type=jax.ShapeDtypeStruct((128,), jnp.float32))
     def kernel(x_ref, y_ref):
       x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
-      y_ref[...] = pl_op(x_val, axis=axis)
+      plgpu.store(y_ref, pl_op(x_val, axis=axis), optimized=False)
 
     x = jax.random.uniform(jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
     if jnp_op == jnp.prod:
@@ -4008,7 +4014,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       @self.kernel(out_type=jax.ShapeDtypeStruct((128,), jnp.float32))
       def kernel(x_ref, y_ref):
         x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
-        y_ref[...] = op(x_val, axis=axis)
+        plgpu.store(y_ref, op(x_val, axis=axis), optimized=False)
 
       return kernel
 
