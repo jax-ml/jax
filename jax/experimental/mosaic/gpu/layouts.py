@@ -14,6 +14,7 @@
 
 """Layout utilities."""
 
+import functools
 from typing import assert_never
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu
@@ -87,6 +88,7 @@ def _to_tiled_layout_attr(
   )
 
 
+@functools.lru_cache
 def _from_tiled_layout_attr(
     attr: mgpu.TiledLayoutAttr,
 ) -> fa.TiledLayout:
