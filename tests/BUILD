@@ -37,7 +37,7 @@ jax_multiplatform_test(
     enable_configs = ["tpu_v3_x4"],
     shard_count = {
         "cpu": select({
-            "//tests/config:tsan_freethreading_rbe": 12,
+            "//tests/config:is_tsan": 12,
             "//conditions:default": 5,
         }),
         "gpu": 5,
@@ -732,6 +732,12 @@ jax_multiplatform_test(
         "cpu": ["noasan"],
         "gpu": ["noasan"],
         "tpu": ["noasan"],  # Times out.
+    },
+    shard_count = {
+        "cpu": select({
+            "//tests/config:is_tsan": 5,
+            "//conditions:default": 1,
+        }),
     },
     deps = py_deps([
         "absl/testing",
@@ -1955,7 +1961,10 @@ jax_multiplatform_test(
     name = "mutable_array_test",
     srcs = ["mutable_array_test.py"],
     shard_count = {
-        "cpu": 10,
+        "cpu": select({
+            "//tests/config:is_tsan": 20,
+            "//conditions:default": 10,
+        }),
     },
     deps = py_deps([
         "absl/testing",
