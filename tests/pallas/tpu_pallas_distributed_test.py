@@ -572,7 +572,6 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
           send_sem=send_sem,
           recv_sem=recv_sem,
           device_id=device_id,
-          device_id_type=pl.DeviceIdType.MESH,
       )
 
       @pl.when(device_index == 0)
