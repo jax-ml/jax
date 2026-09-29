@@ -309,6 +309,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     self.assertArraysAllClose(grads_ref[2], grads_ans[2], rtol=2e-1, atol=2e-1)
 
   def test_sdpa_flex_attention(self):
+    if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest("Requires at least Hopper arch")
     try:
       cudnn_version = check_cudnn_version()
     except RuntimeError as e:
@@ -349,6 +351,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   def test_sdpa_flex_attention_train(self):
     if len(jax.local_devices()) < 4:
       self.skipTest("Require at least 4 devices to run sharding tests.")
+    if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest("Requires at least Hopper arch")
     try:
       cudnn_version = check_cudnn_version()
     except RuntimeError as e:

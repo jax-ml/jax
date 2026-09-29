@@ -351,7 +351,8 @@ def check_layout(query, key, value, bias, q_seqlen, kv_seqlen,
 
 def check_is_flash_attention(
     query, key, value, layout: int, cudnn_version, has_bias, is_training,
-    is_packed=False, is_paged_attention=False, is_fp8=False):
+    is_packed=False, is_paged_attention=False, is_fp8=False,
+    is_score_mod=False):
     # Extract sequence length (T) and head dim (H) based on layout
     if layout == AttentionLayout.BNTH.value:
         _, _, T, qH = query.shape
@@ -399,6 +400,11 @@ def check_is_flash_attention(
           raise NotImplementedError(
             "mla requires cudnn version >= 9.10 and at least hopper arch.")
 
+        if is_score_mod and not is_hopper_or_later:
+          raise NotImplementedError(
+            "score_mod (flex attention) requires a GPU with at least "
+            "Hopper architecture.")
+
 def check_cudnn_version():
   # check if cuDNN is installed
   if cuda_versions is None:
@@ -429,7 +435,8 @@ def _dot_product_attention_fwd(
   # check if flash attention is supported for this attention pattern
   check_is_flash_attention(
       query, key, value, layout, cudnn_version, bias is not None, False,
-      get_max_seg_per_batch(q_offsets) > 1, check_is_paged_attention(page_table_k))
+      get_max_seg_per_batch(q_offsets) > 1, check_is_paged_attention(page_table_k),
+      is_score_mod=score_mod is not None)
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
       page_table_k, page_table_v, *score_mod_args, scale=scale, seed=seed,
@@ -449,7 +456,7 @@ def _dot_product_attention_fwd_rule(
   # check if flash attention is supported for this attention pattern
   check_is_flash_attention(
       query, key, value, layout, cudnn_version, bias is not None, True,
-      get_max_seg_per_batch(q_offsets) > 1)
+      get_max_seg_per_batch(q_offsets) > 1, is_score_mod=score_mod is not None)
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
       page_table_k, page_table_v, *score_mod_args, scale=scale, seed=seed,
