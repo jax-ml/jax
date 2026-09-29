@@ -1754,8 +1754,7 @@ def _async_load_tmem_constraint_system(
       source_variable: [source],
       destination_variable: [destination],
   }
-  # TODO(apaszke): Remove once 0.11.1 is the minimum jaxlib version.
-  if getattr(op, "reduce", None) is not None:
+  if op.reduce is not None:
     reduced = ValueSite(op, VariableType.RESULT, 1)
     reduced_variable = cs.Variable(reduced)
     operands_for_variable[reduced_variable] = [reduced]
@@ -1860,10 +1859,8 @@ def _slice_tmem_constraint_system(
   operand_variable = ctx.producer_ref(operand)
   result = ValueSite(op, VariableType.RESULT, 0)
   # TODO(bchetioui): enforce that the parent is a TmemAllocOp.
-  # TODO(allanrenucci): Use alias_id directly from SliceTmemOp after jaxlib
-  # v0.10.3 release.
-  if "alias_id" in op.attributes:
-    alias_id = ir.IntegerAttr(op.attributes["alias_id"]).value
+  if op.alias_id is not None:
+    alias_id = op.alias_id.value
     if (cached_variable := ctx.slice_tmem_aliases.get(alias_id)) is not None:
       result_variable = cached_variable
     else:
@@ -2814,9 +2811,8 @@ def infer_layout(
       global_constraint_system
   )
 
-  # TODO(bchetioui): Remove this fallback once minimum jaxlib version is 0.11.2.
   dump_options = mgpu.get_or_set_dump_options(module)  # pyrefly: ignore[missing-attribute]
-  if getattr(dump_options, "constraint_system", False):
+  if dump_options.constraint_system:
     utils.dump_to_file_or_stdout(
         str(global_constraint_system),
         f"{dump_options.module_basename}.constraint_system.txt",

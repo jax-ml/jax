@@ -1017,8 +1017,7 @@ def lower_jaxpr_to_module(
   )
 
   dump_options = mgpu.dialect.get_or_set_dump_options(module)
-  # TODO(bchetioui): clean up when the minimum jaxlib version is 0.11.2.
-  if getattr(dump_options, "resources", False):
+  if dump_options.resources:
     if prof_spec is not None:
       smem_scratch_bytes = rs.smem_scratch_bytes + prof_spec.smem_bytes(block)
       rs = dataclasses.replace(rs, smem_scratch_bytes=smem_scratch_bytes)

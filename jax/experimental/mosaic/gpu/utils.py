@@ -199,23 +199,13 @@ def inline_ptx(
   in_constraints = [_ptx_constraint(arg.type) for arg in args]
   constraints = ",".join(out_constraints + in_constraints)
 
-  # TODO(bchetioui): pass `convergent` unconditionally the minimum jaxlib
-  # version is 0.11.2.
-  extra_kwargs = {}
-  if hasattr(llvm.InlineAsmOp, "convergent"):
-    extra_kwargs["convergent"] = convergent
-  elif convergent:
-    raise NotImplementedError(
-        "Marking inline PTX as convergent requires a jaxlib >= 0.11.2"
-    )
-
   result = llvm.inline_asm(
       asm_ret_type,
       args,
       ptx,
       constraints,
       has_side_effects=has_side_effects,
-      **extra_kwargs,  # pyrefly: ignore[bad-argument-type]
+      convergent=convergent,
   )
   if result_types is None:
     return None
@@ -1517,16 +1507,11 @@ class DialectBarrierRef:
       predicate: ir.Value | None = None,
   ):
     assert self.orders_tensor_core == orders_tensor_core
-    # TODO(cjfj): remove when minimum jaxlib version is 0.11.2.
-    if hasattr(dialect.ArriveOp, "predicate"):
-      dialect.ArriveOp(
-          self.as_barrier_memref(),
-          orders_tensor_core=orders_tensor_core,
-          predicate=predicate,  # pyrefly: ignore[unexpected-keyword]
-      )
-    else:
-      with contextlib.nullcontext() if predicate is None else when(predicate):
-        dialect.ArriveOp(self.as_barrier_memref(), orders_tensor_core)
+    dialect.ArriveOp(
+        self.as_barrier_memref(),
+        orders_tensor_core=orders_tensor_core,
+        predicate=predicate,
+    )
 
   def arrive_expect_tx(self, tx_count: int | ir.Value):
     if isinstance(tx_count, int):

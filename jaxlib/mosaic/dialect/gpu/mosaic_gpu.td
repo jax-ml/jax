@@ -112,11 +112,6 @@ def MosaicGPU_ArriveExpectTxOp : Op<MosaicGPU_Dialect, "arrive_expect_tx", []> {
   }];
 }
 
-// TODO: Remove when the minimum jaxlib version is 0.11.1
-def ArriveDynExpectTxSupportedOp : Op<MosaicGPU_Dialect, "arrive_dyn_expect_tx_supported"> {
-  let summary = "Dummy op that will be removed. DO NOT USE.";
-}
-
 def MosaicGPU_WaitOp : Op<MosaicGPU_Dialect, "wait", []> {
   let summary = "Executes a wait operation on the given barrier.";
   let description = [{

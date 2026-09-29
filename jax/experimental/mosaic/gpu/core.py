@@ -83,7 +83,7 @@ FWD_COMPAT_IR_VERSION = 6
 # jaxlib 0.12.0 changes the Mosaic GPU C API (MosaicGpuLaunch takes kernel and
 # device_ordinal arguments).
 # TODO(sohaibiftikhar): Remove conditioning once the minimum jaxlib version is
-# >= 0.11.2.
+# >= 0.12.0.
 _ABI_V2 = lib.version >= (0, 12, 0)
 
 c = utils.c  # This is too common to fully qualify.
@@ -1095,11 +1095,7 @@ def lower_mgpu_module(
     auto_barriers: bool = True,
 ) -> None:
   if lowering_semantics == LoweringSemantics.Warpgroup:
-    # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.1.
-    if hasattr(dialect, "get_or_set_dump_options"):
-      dump_options = dialect.get_or_set_dump_options(module)
-    else:
-      dump_options = None
+    dump_options = dialect.get_or_set_dump_options(module)
 
     # We need to run a pass that removes dead-code for which layout inference
     # does not work.
@@ -1108,7 +1104,7 @@ def lower_mgpu_module(
 
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
-    if dump_options is not None and dump_options.mlir_passes:
+    if dump_options.mlir_passes:
       utils.dump_to_file_or_stdout(
           str(module),
           f"{dump_options.module_basename}.before_layout_inference.txt",
@@ -1117,7 +1113,7 @@ def lower_mgpu_module(
 
     layout_inference.infer_layout(module, arch=utils._infer_arch())
 
-    if dump_options is not None and dump_options.mlir_passes:
+    if dump_options.mlir_passes:
       utils.dump_to_file_or_stdout(
           str(module),
           f"{dump_options.module_basename}.after_layout_inference.txt",

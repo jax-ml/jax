@@ -21,7 +21,6 @@ import contextlib
 import dataclasses
 import enum
 import functools
-import inspect
 import itertools
 import math
 from typing import Any, Literal, assert_never, overload
@@ -1136,11 +1135,6 @@ def _copy_gmem_to_smem_lowering(
     )
     return ()
 
-  # TODO: Remove when the minimum jaxlib version is 0.11.1
-  if has_user_predicate and not hasattr(mgpu.dialect, "arrive_dyn_expect_tx_supported"):
-    raise NotImplementedError(
-        "predicate is not supported with Warpgroup lowering in jaxlib < 0.11.1"
-    )
   match leader_tracked:
     case CopyPartition.REPLICATED:
       leader_tracked_attr = mgpu.dialect.CopyReplicatedAttr.get()
@@ -1162,32 +1156,12 @@ def _copy_gmem_to_smem_lowering(
   else:
     arrive_ctx = contextlib.nullcontext()
 
-  # TODO: Remove when the minimum jaxlib version is 0.11.1
-  # keep the conversion of bytes from int into ir.Value
-  if hasattr(mgpu.dialect, "arrive_dyn_expect_tx_supported"):
-    bytes = mgpu.c(bytes, ir.IntegerType.get_signless(32))
-
+  bytes = mgpu.c(bytes, ir.IntegerType.get_signless(32))
   if predicate is not None:
-    # We can not enter this branch with bytes as int
-    # because NotImplementedError is raised earlier for
-    # jaxlib<0.11.1 and predicate is not None
-    assert isinstance(bytes, ir.Value)
     bytes = arith_dialect.select(predicate, bytes, mgpu.c(0, i32))
 
   with arrive_ctx:
     mgpu.dialect.arrive_expect_tx(barrier_ref, bytes)
-
-  peer_id = copy_params.get("gmem_peer_id")
-  # TODO(bchetioui): Remove once 0.11.1 is the minimum jaxlib version.
-  if "gmem_peer_id" in inspect.signature(mgpu.dialect.async_load).parameters:
-    peer_kwarg = dict(gmem_peer_id=peer_id)
-  else:
-    if peer_id is not None:
-      raise NotImplementedError(
-          "Loading from a remote ref is only supported in jaxlib version "
-          "0.11.1 or higher under Warpgroup lowering semantics"
-      )
-    peer_kwarg = {}
 
   mgpu.dialect.async_load(
       src,
@@ -1201,7 +1175,7 @@ def _copy_gmem_to_smem_lowering(
       ),
       leader_tracked=leader_tracked_attr,
       oob_fill_mode=ir.IntegerAttr.get(i32, oob_mode.value),
-      **peer_kwarg,  # pyrefly: ignore[bad-argument-type]
+      gmem_peer_id=copy_params.get("gmem_peer_id"),
   )
   return ()
 

@@ -1236,9 +1236,8 @@ def _mgpu_async_load_op_lowering_rule(
           if is_cp_async
           else lc.AsyncCopyImplementation.TMA
       ),
-      # TODO(bchetioui): Clean up once jaxlib 0.11.1 is the minimum version.
-      gmem_peer_id=load_op.gmem_peer_id if hasattr(load_op, "gmem_peer_id") else None,
-      **{}  if is_cp_async else predicate,  # pyrefly: ignore[bad-argument-type]
+      gmem_peer_id=load_op.gmem_peer_id,
+      **{} if is_cp_async else predicate,  # pyrefly: ignore[bad-argument-type]
   )
   return []
 
@@ -1740,8 +1739,7 @@ def _mgpu_arrive_op_lowering_rule(
 ) -> Sequence[ir.Value]:
   barrier = utils.DialectBarrierRef.from_barrier_memref(arrive_op.barrier)
   orders_tc = arrive_op.orders_tensor_core.value
-  # TODO(cjfj): simplify when minimum jaxlib version is 0.11.2.
-  predicate = getattr(arrive_op, "predicate", None)
+  predicate = arrive_op.predicate
   if orders_tc:
     # Barrier expects a single thread arrival.
     pred = ctx.single_lane_predicate
@@ -1775,41 +1773,26 @@ def _mgpu_arrive_expect_tx_op_lowering_rule(
       if ctx.thread_semantics == utils.ThreadSubset.WARPGROUP
       else utils.WARP_SIZE
   )
-  # TODO: Remove this branch when the minimum jaxlib version is 0.11.1
-  if not isinstance(arrive_expect_tx_op.expect_tx, ir.Value):
-    num_bytes = int(arrive_expect_tx_op.expect_tx)
-    if num_bytes % num_lanes == 0:
+  num_bytes = arrive_expect_tx_op.expect_tx
+  if isinstance(num_bytes.owner, arith.ConstantOp):
+    num_bytes_int = int(num_bytes.owner.value)
+    if num_bytes_int % num_lanes == 0:
       # Prefer uniform arrival whenever possible because it's more efficient.
       # We arrive uniformly from each lane in the WG/Warp, so we need to divide
       # the number of bytes by the number of lanes in the WG/Warp.
-      tx_bytes = utils.c(num_bytes // num_lanes, i32)
-    else:
-      tx_bytes = arith.select(
-          ctx.single_lane_predicate,
-          utils.c(num_bytes, i32),
-          utils.c(0, i32),
-      )
-  else:
-    num_bytes = arrive_expect_tx_op.expect_tx
-    if isinstance(num_bytes.owner, arith.ConstantOp):
-      num_bytes_int = int(num_bytes.owner.value)
-      if num_bytes_int % num_lanes == 0:
-        # Prefer uniform arrival whenever possible because it's more efficient.
-        # We arrive uniformly from each lane in the WG/Warp, so we need to divide
-        # the number of bytes by the number of lanes in the WG/Warp.
-        tx_bytes = utils.c(num_bytes_int // num_lanes, i32)
-      else:
-        tx_bytes = arith.select(
-            ctx.single_lane_predicate,
-            num_bytes,
-            utils.c(0, i32),
-        )
+      tx_bytes = utils.c(num_bytes_int // num_lanes, i32)
     else:
       tx_bytes = arith.select(
           ctx.single_lane_predicate,
           num_bytes,
           utils.c(0, i32),
       )
+  else:
+    tx_bytes = arith.select(
+        ctx.single_lane_predicate,
+        num_bytes,
+        utils.c(0, i32),
+    )
 
   barrier = utils.DialectBarrierRef.from_barrier_memref(
       arrive_expect_tx_op.barrier
@@ -2572,8 +2555,7 @@ def _async_load_tmem_op_lowering_rule(
   out_layout = layouts_lib.from_layout_attr(out_layout_attr)
   assert isinstance(out_layout, fa.TiledLayout)
   element_type = ir.MemRefType(op.source.type).element_type
-  # TODO(apaszke): Remove once 0.11.1 is the minimum jaxlib version.
-  if getattr(op, "reduce", None) is not None:
+  if op.reduce is not None:
     reduce_str = cast(
         tcgen05.LoadReduceOp, str(mgpu.TMEMLoadReduction(op.reduce.value))  # pyrefly: ignore[missing-attribute]
     )

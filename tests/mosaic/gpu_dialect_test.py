@@ -2820,9 +2820,6 @@ class DialectLoweringTest(MosaicGpuTest):
 
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_dump_layout_inference(self):
-    # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.1.
-    if not hasattr(mgpu.dialect, "get_or_set_dump_options"):
-      self.skipTest("Test requires jaxlib >= 0.11.1")
     def body(_, src, dst, scratch):
       del scratch
       mgpu.dialect.vector_store(mgpu.dialect.vector_load(src), dst)
@@ -2845,9 +2842,6 @@ class DialectLoweringTest(MosaicGpuTest):
 
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_dump_constraint_system(self):
-    # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.2.
-    if not hasattr(mgpu.dialect.DumpOptions(), "constraint_system"):
-      self.skipTest("Test requires jaxlib >= 0.11.2")
     def body(_, src, dst, scratch):
       del scratch
       mgpu.dialect.vector_store(mgpu.dialect.vector_load(src), dst)

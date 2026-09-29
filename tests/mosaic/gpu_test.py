@@ -8267,12 +8267,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       i1 = ir.IntegerType.get_signless(1)
       index = ir.IndexType.get()
 
-      # TODO: Remove when the minimum jaxlib version is 0.11.1
-      if hasattr(mgpu_dialect, "arrive_dyn_expect_tx_supported"):
-        bytes = c(16, i32)
-      else:
-        bytes = ir.IntegerAttr.get(i32, 16)
-      mgpu_dialect.arrive_expect_tx(barrier=mbar_ref, expect_tx=bytes)
+      mgpu_dialect.arrive_expect_tx(barrier=mbar_ref, expect_tx=c(16, i32))
 
       # Complete tx with CustomPrimitiveOp because there is no `complete_tx` op
       # in the dialect.

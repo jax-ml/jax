@@ -5214,9 +5214,6 @@ class PallasCallWGTest(
 
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_dump_layout_inference(self):
-    # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.1.
-    if not hasattr(mgpu.dialect, "get_or_set_dump_options"):
-      self.skipTest("Test requires jaxlib >= 0.11.1")
     x = jnp.ones((64, 64), dtype=jnp.float32)
 
     @self.kernel(out_type=jax.ShapeDtypeStruct(x.shape, x.dtype))
@@ -5237,10 +5234,6 @@ class PallasCallWGTest(
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   @parameterized.parameters(None, plgpu.TraceScope.WARP, plgpu.TraceScope.WARPGROUP)
   def test_dump_resources(self, profile_trace_scope):
-    # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.2.
-    if not hasattr(mgpu.dialect.DumpOptions(), "resources"):
-      self.skipTest("Test requires jaxlib with DumpOptions.resources")
-
     x = jax.ShapeDtypeStruct((64, 64), jnp.float32)
 
     compiler_params = plgpu.CompilerParams()
