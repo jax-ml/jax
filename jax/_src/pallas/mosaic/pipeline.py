@@ -536,7 +536,8 @@ class BufferedRef(BufferedRefBase):
   """
   _spec: pallas_core.BlockSpec = jax.tree.static()
   _buffer_type: BufferType = jax.tree.static()
-  _buffer_count: int = jax.tree.static()
+  _in_buffer_count: int = jax.tree.static()
+  _out_buffer_count: int = jax.tree.static()
   _grid_rank: int | None = jax.tree.static()
   window_ref: ArrayRef | None
   copy_in_slot: int | jax.Array | None
@@ -552,10 +553,6 @@ class BufferedRef(BufferedRefBase):
   prefetched_count: int = jax.tree.static(default=0)
   # New style prefetch with folded emit_pipeline await. New is False here.
   await_prefetch: bool = jax.tree.static(default=False)
-  # Number of the _buffer_count slots reserved for output write back. Zero
-  # means the default for the buffer type, i.e. all of them for an output and
-  # a single, synchronously written back slot for an input_output.
-  _out_buffer_count: int = jax.tree.static(default=0)
 
   @property
   def spec(self):
@@ -568,29 +565,20 @@ class BufferedRef(BufferedRefBase):
   @property
   def in_buffer_count(self) -> int:
     """Number of slots the pipeline prefetches inputs into."""
-    if not self.is_input:
-      return 0
-    if self.is_input_output:
-      # An input_output ref shares its slots: in + out - 1 of them in total.
-      return self._buffer_count - self.out_buffer_count + 1
-    return self._buffer_count
+    return self._in_buffer_count
 
   @property
   def out_buffer_count(self) -> int:
     """Number of slots the pipeline writes back from."""
-    if not self.is_output:
-      return 0
-    if self._out_buffer_count:
-      return self._out_buffer_count
-    return 1 if self.is_input_output else self._buffer_count
+    return self._out_buffer_count
 
   @property
   def is_buffered(self) -> bool:
     """Whether this buffer is multiple-buffered."""
-    # A buffer count of non-zero means we don't just synchronously load (or
-    # slice). We actually pipeline over it, potentially synchronously
-    # (buffer_count == 1).
-    return self._buffer_count > 0
+    # A buffer count of non-zero on either input or output means we don't just
+    # synchronously load (or slice). We actually pipeline over it, potentially
+    # synchronously (buffer_count == 1).
+    return self._in_buffer_count > 0 or self._out_buffer_count > 0
 
   @property
   def use_lookahead(self) -> bool:
@@ -602,7 +590,9 @@ class BufferedRef(BufferedRefBase):
     """Returns the number of buffers used for multiple buffering."""
     if not self.is_buffered:
       raise ValueError("buffer count is undefined")
-    return self._buffer_count
+    return _total_buffer_count(
+        self._in_buffer_count, self._out_buffer_count, self._buffer_type
+    )
 
   @classmethod
   def create(
@@ -663,7 +653,8 @@ class BufferedRef(BufferedRefBase):
       return cls(
           _spec=spec,
           _buffer_type=buffer_type,
-          _buffer_count=0,
+          _in_buffer_count=0,
+          _out_buffer_count=0,
           _grid_rank=None,
           window_ref=None,  # to be bound to existing ref by the pipeline routine
           copy_in_slot=None,
@@ -711,7 +702,7 @@ class BufferedRef(BufferedRefBase):
       return cls(
           _spec=spec,
           _buffer_type=buffer_type,
-          _buffer_count=total_buffer_count,
+          _in_buffer_count=in_buffer_count,
           _out_buffer_count=out_buffer_count,
           _grid_rank=grid_rank if use_lookahead else None,
           window_ref=window_ref,
