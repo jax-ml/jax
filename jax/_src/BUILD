@@ -1071,6 +1071,7 @@ pytype_strict_library(
         ":api_util",
         ":config",
         ":core",
+        ":dtypes",
         ":flattree",
         ":partial_eval",
         ":source_info_util",

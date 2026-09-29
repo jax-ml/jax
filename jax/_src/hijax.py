@@ -512,6 +512,7 @@ def fake_linear_op(prim, nz_in_flat, nz_out_flat, rs, sres, *tangents):
     return [ad_util.Zero(a.to_tangent_aval()) for a in prim.out_avals_flat]
   rs = rs if sres is None else (rs, sres)  # unpacked in the transpose rule
   residuals_flat, residuals_tree = tree_flatten(rs)
+  residuals_flat = map(dtypes.canonicalize_value, residuals_flat)
   assert nz_in_flat == [not isinstance(t, ad_util.Zero) for t in tangents]
   nz_tangents = tree_leaves(tangents)
   out_nz = call_hi_primitive_linearized_p.bind(

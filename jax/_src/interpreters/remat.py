@@ -18,6 +18,7 @@ from functools import partial
 from collections.abc import Callable
 
 from jax._src import core
+from jax._src import dtypes
 from jax._src import api_util
 from jax._src.util import (safe_map, safe_zip, unzip2, weakref_lru_cache,
                            partition_list)
@@ -49,7 +50,7 @@ def remat_transform(policy, f, *args, custom_vjp_rules):
       args = in_tracers.unflatten()
       ans_pytree = f(*args)
       dbg = dbg.set_result_paths(ans_pytree)
-      ans_ft = ft.flatten(ans_pytree)
+      ans_ft = ft.flatten(ans_pytree).map(dtypes.canonicalize_value)
       del ans_pytree, args
     out_ft, out_tracer_ft = ans_ft.map(trace.to_val_tracer_pair).unzip2()
     src = source_info_util.current()
@@ -144,7 +145,7 @@ def remat_subtrace(f: Callable, tag: core.TraceTag, policy,
     tracers = [RematTracer(trace, x, rem_trace.new_arg(typeof(x), source_info))
                for x in args]
     with core.set_current_trace(trace, check_leaks=True):
-      ans = f(*tracers)
+      ans = f(*tracers).map(dtypes.canonicalize_value)
       out_primals, out_rem = ans.map(trace.to_val_tracer_pair).unzip2()
       del trace, ans, tracers
   out_rem = map(partial(rem_trace.to_jaxpr_tracer, source_info=source_info), out_rem)
