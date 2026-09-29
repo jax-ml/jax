@@ -199,6 +199,7 @@ pytype_strict_library(
     deps = [
         ":core",
         ":lowering",
+        ":primitives",
         ":sc_core",
         ":sc_lowering",
         "//jax",
