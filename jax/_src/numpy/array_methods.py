@@ -435,7 +435,8 @@ def _sum(self: Array, axis: reductions.Axis = None, dtype: DTypeLike | None = No
   Refer to :func:`jax.numpy.sum` for full documentation.
   """
   return reductions.sum(self, axis=axis, dtype=dtype, out=out, keepdims=keepdims,
-                        where=where, promote_integers=promote_integers)
+                        initial=initial, where=where,
+                        promote_integers=promote_integers)
 
 def _swapaxes(self: Array, axis1: int, axis2: int) -> Array:
   """Swap two axes of an array.
