@@ -4067,22 +4067,6 @@ class LaxTest(jtu.JaxTestCase):
     y = lax_internal.stage(x)
     self.assertTrue(dtypes.is_weakly_typed(y))
 
-  def testIterUsesUnstack(self):
-    def f(x):
-      return list(x)
-    jaxpr = jax.make_jaxpr(f)(np.arange(3.))
-
-    # test under JIT
-    primitives = [eqn.primitive for eqn in jaxpr.eqns]
-    self.assertIn(lax_internal.unstack_p, primitives)
-
-  def testReversedUsesUnstack(self):
-    def f(x):
-      return list(reversed(x))
-    jaxpr = jax.make_jaxpr(f)(np.arange(3.))
-    primitives = [eqn.primitive for eqn in jaxpr.eqns]
-    self.assertIn(lax_internal.unstack_p, primitives)
-
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):

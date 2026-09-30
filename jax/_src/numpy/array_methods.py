@@ -1015,25 +1015,6 @@ def _multi_slice(self: Array,
     results.append(sliced)
   return results
 
-# The next two functions are related to iter(array), implemented here to
-# avoid circular imports.
-
-def _chunk_iter(x, size, *, reverse=False):
-  if size > x.shape[0]:
-    yield x
-    return
-  num_chunks, tail = divmod(x.shape[0], size)
-  if reverse:
-    if tail:
-      yield lax_slicing.dynamic_slice_in_dim(x, num_chunks * size, tail)
-    for i in reversed(range(num_chunks)):
-      yield lax_slicing.dynamic_slice_in_dim(x, i * size, size)
-  else:
-    for i in range(num_chunks):
-      yield lax_slicing.dynamic_slice_in_dim(x, i * size, size)
-    if tail:
-      yield lax_slicing.dynamic_slice_in_dim(x, num_chunks * size, tail)
-
 def _getitem(self, item):
   return indexing.rewriting_take(self, item)
 
@@ -1513,7 +1494,6 @@ _array_methods = {
 }
 
 _impl_only_array_methods = {
-  "_chunk_iter": _chunk_iter,
   "_unstack": lax.unstack,
 }
 

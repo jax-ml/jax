@@ -265,6 +265,7 @@ pytype_strict_library(
         ":dtypes",
         ":effects",
         ":flattree",
+        ":indexing",
         ":jaxpr_util",
         ":layout",
         ":literals",

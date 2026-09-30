@@ -1053,6 +1053,14 @@ class JaxArrayTest(jtu.JaxTestCase):
     x_jax = jnp.array(x_numpy)
     self.assertArraysEqual(list(reversed(x_jax)), list(reversed(x_numpy)))
 
+  @parameterized.parameters(iter, reversed)
+  def test_traced_iter_uses_unstack(self, iter_method):
+    def f(x):
+      return list(iter_method(x))
+    jaxpr = jax.make_jaxpr(f)(np.arange(3))
+    primitives = [eqn.primitive for eqn in jaxpr.eqns]
+    self.assertIn(jax.lax.unstack_p, primitives)
+
 
 class ShardingTest(jtu.JaxTestCase):
 
