@@ -183,15 +183,9 @@ class AsyncCopyDescriptor:
   )
 
   def __post_init__(self):
-    if self.device_id is None and self.src_sem is not None:
-      raise ValueError("`src_sem` can only be set when `device_id` is set.")
-    if self.device_id is not None and (
-        self.src_sem is None or self.dst_sem is None
-    ):
-      raise ValueError(
-          "Both `src_sem` and `dst_sem` (`sem`) must be set when `device_id` is"
-          " set."
-      )
+    if (self.src_sem is None) ^ (self.device_id is None):
+      raise ValueError("Either both or neither `src_sem` and `device_id` "
+                       "can be set.")
 
   def __del__(self):
     if not self._used:
@@ -237,18 +231,13 @@ class AsyncCopyDescriptor:
       self.wait_send()
     self.wait_recv()
 
-  def wait_write(self):
-    """Waits until writing to `dst_ref` has completed."""
+  def wait_recv(self):
     self._used = True
     flat_args, tree = self._get_args_and_tree()
     dma_wait_p.bind(
         *flat_args, tree=tree, device_id_type=self.device_id_type,
         is_wait_send=False
     )
-
-  def wait_recv(self):
-    """Waits until writing to `dst_ref` has completed. Alias of `wait_write`."""
-    self.wait_write()
 
   def wait_send(self):
     self._used = True
@@ -305,9 +294,8 @@ def _get_dma_effects(
   effs: set[jax_core.Effect] = {
       src_ref_effect,
       dst_ref_effect,
+      state.WriteEffect(dst_sem_index),  # Write to dst sem
   }
-  if dst_sem_aval is not None:
-    effs.add(state.WriteEffect(dst_sem_index))
   if src_sem_aval is not None:
     src_sem_index = n_src_transforms + n_dst_transforms + n_dst_sem_transforms
     effs.add(state.WriteEffect(src_sem_index))
@@ -337,9 +325,9 @@ def _dma_start_to_lojax(*args, tree, device_id_type, priority, add):
   dst_ref_aval = jax_core.typeof(_get_ref(dst_ref))
   if not (src_ref_aval.is_high and dst_ref_aval.is_high):
     raise NotImplementedError("dma_start not implemented in LoJAX yet.")
-  if _get_ref(dst_sem) is not None:
-    if jax_core.typeof(_get_ref(dst_sem)).is_high:
-      raise NotImplementedError("dma_start not implemented in LoJAX yet.")
+  dst_sem_aval = jax_core.typeof(_get_ref(dst_sem))
+  if dst_sem_aval.is_high:
+    raise NotImplementedError("dma_start not implemented in LoJAX yet.")
   if _get_ref(src_sem) is not None:
     if jax_core.typeof(_get_ref(src_sem)).is_high:
       raise NotImplementedError("dma_start not implemented in LoJAX yet.")
@@ -365,16 +353,15 @@ def _dma_start_abstract_eval(*args, tree, device_id_type, priority, add):
   )
   if not all(
       isinstance(x, (state.AbstractRef, state.TransformedRef))
-      for x in [src_ref_aval, dst_ref_aval]
+      for x in [src_ref_aval, dst_ref_aval, dst_sem_aval]
   ):
-    raise ValueError("DMA source/destination arguments must be Refs.")
-  if dst_sem_aval is not None:
-    if not isinstance(dst_sem_aval, (state.AbstractRef, state.TransformedRef)):
-      raise ValueError("DMA destination semaphore must be a Ref.")
-    if dst_sem_aval.shape:
-      raise ValueError(
-          f"Cannot signal on a non-()-shaped semaphore: {dst_sem_aval.shape}"
-      )
+    raise ValueError(
+        "DMA source/destination/semaphore arguments must be Refs.")
+  dst_sem_shape = dst_sem_aval.shape
+  if dst_sem_shape:
+    raise ValueError(
+        f"Cannot signal on a non-()-shaped semaphore: {dst_sem_shape}"
+    )
   if src_sem_aval is not None:
     if not isinstance(src_sem_aval, (state.AbstractRef, state.TransformedRef)):
       raise ValueError("DMA source semaphore must be a Ref.")
@@ -403,16 +390,15 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
   # TODO(sharadmv): pretty print source semaphores and device id
   if src_sem or device_id:
     return jax_core._pp_eqn(eqn, context, settings)
-  parts = [
+  return pp.concat([
       pp.text(f"dma_start(p{priority}{', add' if add else ''})"),
       pp.text(" "),
       sp.pp_ref_transforms(context, src_ref),
       pp.text(" -> "),
       sp.pp_ref_transforms(context, dst_ref),
-  ]
-  if dst_sem is not None:
-    parts.extend([pp.text(" "), sp.pp_ref_transforms(context, dst_sem)])
-  return pp.concat(parts)
+      pp.text(" "),
+      sp.pp_ref_transforms(context, dst_sem),
+  ])
 
 jax_core.pp_eqn_rules[dma_start_p] = _dma_start_pp_eqn
 
@@ -544,9 +530,8 @@ def dma_start_discharge_rule(
   new_vals += (None,) * num_src_transform_vals
   new_vals += (do_discharge_dst() if dst_discharge else None,)  # dst_val
   new_vals += (None,) * num_dst_transform_vals
-  if dst_sem_aval is not None:
-    val = do_discharge_dst_sem() if dst_sem_discharge else None
-    new_vals += (val,) + (None,) * num_dst_sem_transforms
+  new_vals += (do_discharge_dst_sem() if dst_sem_discharge else None,)  # dst_sem
+  new_vals += (None,) * num_dst_sem_transforms
   if is_remote:
     new_vals += (do_discharge_src_sem() if src_sem_discharge else None,) # src_sem
     new_vals += (None,) * num_src_sem_transforms
@@ -558,7 +543,7 @@ def dma_start_discharge_rule(
   # to the references that are left over.
   if not dst_discharge:
     sp.ref_set(dst_ref, None, do_discharge_dst(dst_ref=dst_ref[...]))
-  if dst_sem is not None and not dst_sem_discharge:
+  if not dst_sem_discharge:
     sp.ref_set(dst_sem, None, do_discharge_dst_sem(dst_sem=dst_sem[...]))
   if is_remote and not src_sem_discharge:
     sp.ref_set(src_sem, None, do_discharge_src_sem(src_sem=src_sem[...]))
@@ -581,9 +566,9 @@ def _dma_wait_to_lojax(*args, tree, device_id_type, is_wait_send: bool):
   dst_ref_aval = jax_core.typeof(_get_ref(dst_ref))
   if not (src_ref_aval.is_high and dst_ref_aval.is_high):
     raise NotImplementedError("dma_wait not implemented in LoJAX yet.")
-  if _get_ref(dst_sem) is not None:
-    if jax_core.typeof(_get_ref(dst_sem)).is_high:
-      raise NotImplementedError("dma_wait not implemented in LoJAX yet.")
+  dst_sem_aval = jax_core.typeof(_get_ref(dst_sem))
+  if dst_sem_aval.is_high:
+    raise NotImplementedError("dma_wait not implemented in LoJAX yet.")
   if _get_ref(src_sem) is not None:
     if jax_core.typeof(_get_ref(src_sem)).is_high:
       raise NotImplementedError("dma_wait not implemented in LoJAX yet.")
@@ -606,20 +591,19 @@ def _dma_wait_abstract_eval(
   src_ref_aval, dst_ref_aval, dst_sem_aval, src_sem_aval, device_id_aval = (
       _dma_unflatten(tree, args)
   )
-  if dst_sem_aval is not None:
-    if not isinstance(dst_sem_aval, (state.AbstractRef, state.TransformedRef)):
-      raise ValueError("Expected the destination semaphore to be a reference")
-    allowed_semaphore_types = {
-        tpu_core.dma_semaphore,
-        pl_core.SEMAPHORE_INTERPRET_DTYPE,
-    }
-    if not any(
-        jnp.issubdtype(dst_sem_aval.dtype, t) for t in allowed_semaphore_types
-    ):
-      raise ValueError(
-          "dma_wait requires a DMA semaphore, but got a regular semaphore."
-          " Use pl.semaphore_wait() instead."
-      )
+  if not isinstance(dst_sem_aval, (state.AbstractRef, state.TransformedRef)):
+    raise ValueError("Expected the destination semaphore to be a reference")
+  allowed_semaphore_types = {
+      tpu_core.dma_semaphore,
+      pl_core.SEMAPHORE_INTERPRET_DTYPE,
+  }
+  if not any(
+      jnp.issubdtype(dst_sem_aval.dtype, t) for t in allowed_semaphore_types
+  ):
+    raise ValueError(
+        "dma_wait requires a DMA semaphore, but got a regular semaphore."
+        " Use pl.semaphore_wait() instead."
+    )
   return [], _get_dma_effects(
       src_ref_aval,
       dst_ref_aval,
@@ -637,14 +621,13 @@ def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
   invars = eqn.invars
   tree = eqn.params["tree"]
   _, ref, sem, _, _ = _dma_unflatten(tree, invars)
-  parts = [
+  return pp.concat([
       pp.text("dma_wait"),
       pp.text(" "),
       sp.pp_ref_transforms(context, ref),
-  ]
-  if sem is not None:
-    parts.extend([pp.text(" "), sp.pp_ref_transforms(context, sem)])
-  return pp.concat(parts)
+      pp.text(" "),
+      sp.pp_ref_transforms(context, sem),
+  ])
 
 jax_core.pp_eqn_rules[dma_wait_p] = _dma_wait_pp_eqn
 
@@ -669,7 +652,7 @@ def dma_wait_discharge_rule(
   # buffers are only specified for their types and not their value so
   # it's completely irrelevant for us here if they are discharged.
   should_discharge_unflattened = _dma_unflatten(tree, ctx.should_discharge)
-  if dst_sem is None or not _get_ref(should_discharge_unflattened[2]):
+  if not _get_ref(should_discharge_unflattened[2]):
     return (None,) * len(ctx.in_avals), []
 
   num_sem_transforms = len(_dma_tree_leaves(dst_sem_aval)) - 1
@@ -704,13 +687,13 @@ def _get_ref(ref):
   return _get_ref_and_transforms(ref)[0]
 
 
-def make_async_copy(src_ref, dst_ref, sem=None) -> AsyncCopyDescriptor:
+def make_async_copy(src_ref, dst_ref, sem) -> AsyncCopyDescriptor:
   """Creates a description of an asynchronous copy operation.
 
   Args:
     src_ref: The source Reference.
     dst_ref: The destination Reference.
-    sem: Optional semaphore used to track completion of the copy.
+    sem: The semaphore used to track completion of the copy.
 
   Returns:
     An AsyncCopyDescriptor.
@@ -726,7 +709,7 @@ def make_async_copy(src_ref, dst_ref, sem=None) -> AsyncCopyDescriptor:
 
 
 def async_copy(
-    src_ref, dst_ref, sem=None, *, priority: int = 0, add: bool = False,
+    src_ref, dst_ref, sem, *, priority: int = 0, add: bool = False,
 ) -> AsyncCopyDescriptor:
   """Issues a DMA copying from src_ref to dst_ref."""
   copy_descriptor = make_async_copy(src_ref, dst_ref, sem)
