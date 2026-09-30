@@ -1425,6 +1425,55 @@ class VectorSubcoreTest(PallasSCTest):
     # nans correctly (per the function documentation, nan == nan should be true)
     self.assertAllClose(out, out_interpret)
 
+  @parameterized.parameters(
+      (jnp.int32, jnp.bfloat16),
+      (jnp.bfloat16, jnp.int32),
+  )
+  def test_pltpu_bitcast_subnormal_reproducer(self, from_dtype, to_dtype):
+    def body(x_ref, y_ref):
+      y_ref[...] = pltpu.bitcast(x_ref[...], to_dtype)
+
+    out_packing = 32 // jax.dtypes.itemsize_bits(to_dtype)
+    uint_dtype = np.dtype(f"u{jax.dtypes.itemsize_bits(to_dtype) // 8}")
+
+    for is_tc, (m, n) in ((False, (1, 64)), (True, (8, 128))):
+      out_shape = (m * out_packing, n)
+      raw_u16 = (np.arange(m * 2 * n, dtype=np.uint16) % 128).reshape(m, 2, n)
+      raw_i32 = (
+          raw_u16[:, 0, :].astype(np.uint32)
+          | (raw_u16[:, 1, :].astype(np.uint32) << 16)
+      ).view(np.int32)
+      raw_bf16 = raw_u16.reshape(m * 2, n).view(jnp.bfloat16)
+      inp = raw_i32 if from_dtype == jnp.int32 else raw_bf16
+      expected = raw_bf16 if to_dtype == jnp.bfloat16 else raw_i32
+      out_spec = jax.ShapeDtypeStruct(out_shape, to_dtype)
+
+      runner = (
+          pl.pallas_call(body, out_shape=out_spec)
+          if is_tc
+          else self.vector_subcore_kernel(out_shape=out_spec)(body)
+      )
+      # TODO(b/568395728): TensorCore fusions still flush bf16 subnormals when
+      # loading a bf16 operand, which affects the TC to SC layout conversion
+      # with SC tiling and interpret=True for bfloat16 inputs. Check those
+      # cases once fixed.
+      bf16_input_flushes_on_tc = from_dtype == jnp.bfloat16
+      if not (
+          bf16_input_flushes_on_tc and not is_tc and not self.USE_TC_TILING
+      ):
+        out = runner(inp)
+        np.testing.assert_array_equal(
+            np.asarray(out).view(uint_dtype), expected.view(uint_dtype)
+        )
+      if not bf16_input_flushes_on_tc:
+        out_interpret = pl.pallas_call(
+            body, out_shape=out_spec, interpret=True
+        )(inp)
+        np.testing.assert_array_equal(
+            np.asarray(out_interpret).view(uint_dtype),
+            expected.view(uint_dtype),
+        )
+
   def test_lax_bitcast(self):
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct((self.num_lanes,), jnp.uint32),
