@@ -627,6 +627,7 @@ def _call_hi_primitive_dce(used_outs_flat, live_ins_flat, eqn):
 pe.dce_rules[call_hi_primitive_p] = _call_hi_primitive_dce
 
 call_hi_primitive_linearized_p.to_lojax = ad.raise_custom_vjp_error_on_jvp
+call_hi_primitive_linearized_p.transpose_only = lambda *_, **__: True
 batching.fancy_primitive_batchers[call_hi_primitive_linearized_p] = ad.raise_custom_vjp_error_on_jvp
 
 def _call_hi_primitive_remat(trace, *args_flat, _prim):

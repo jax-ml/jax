@@ -331,6 +331,9 @@ def backward_pass3(
       for v in eqn.outvars:
         env[v] = ValAccum(v.aval.to_ct_aval())
       lin_eqns.append(eqn)
+    elif eqn.primitive.transpose_only(*(v.aval for v in eqn.invars), **eqn.params):
+      foreach(env.setdefault, eqn.outvars,
+              [zeros_like_aval(v.aval) for v in eqn.outvars])
     else:
       params = eqn.primitive.get_bind_params(eqn.params)
       with eqn.ctx.manager, _name_stack_ctx(eqn.source_info):
@@ -1123,6 +1126,7 @@ def raise_custom_vjp_error_on_jvp(*_, **__):
   raise TypeError("can't apply forward-mode autodiff (jvp) to a custom_vjp "
                   "function.")
 custom_lin_p.def_impl(raise_custom_vjp_error_on_jvp)
+custom_lin_p.transpose_only = lambda *_, **__: True
 
 def _custom_lin_transpose_fancy(cts_out, *invals, num_res,
                                 bwd: lu.WrappedFun, out_avals,
