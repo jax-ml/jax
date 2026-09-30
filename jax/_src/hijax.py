@@ -1293,7 +1293,7 @@ class CustomJVPTraced(HiPrim):
     return out, out_tangent
 
   lin, linearized = linearize_from_jvp
-  vjp_fwd, vjp_bwd_retval = vjp_from_jvp
+  vjp_fwd, vjp_bwd_retval = vjp_from_lin
 
   def transpose(self, out_ct, *args):
     # The application must be linear in the accumulated args

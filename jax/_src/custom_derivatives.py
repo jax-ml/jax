@@ -452,9 +452,8 @@ def _custom_jvp_vjp_call_lowering(ctx: mlir.LoweringRuleContext, *args,
   return out
 mlir.register_lowering(custom_jvp_call_p, _custom_jvp_vjp_call_lowering)
 
-def _custom_jvp_call_transpose_fancy(params, jaxpr, args, ct, _):
-  del params
-  return ad.backward_pass3(jaxpr, False, jaxpr.consts, args, ct)
+def _custom_jvp_call_transpose_fancy(cts, *args, call_jaxpr, **_):
+  return ad.backward_pass3(call_jaxpr, False, call_jaxpr.consts, args, cts)
 ad.fancy_transposes[custom_jvp_call_p] = _custom_jvp_call_transpose_fancy
 
 @weakref_lru_cache

@@ -216,11 +216,45 @@ class JaxprTrace(Trace):
       with core.set_current_trace(self.parent_trace):
         vals = [t.pval[1] for t in tracers]
         return prim.bind(*vals, subfuns=(fun, jvp), symbolic_zeros=symbolic_zeros)
-    # We assume non-trivial partial evaluation is only performed to build linear
-    # functions, and hence we don't need to keep the custom JVP rule around.
-    del jvp, symbolic_zeros
-    with core.set_current_trace(self):
-      return fun.call_wrapped(*tracers)
+
+    tracers = map(self.instantiate_const, tracers)
+    in_knowns = (False,) * len(tracers)
+    in_avals = tuple(t.aval for t in tracers)
+    in_tangent_avals = [a.to_tangent_aval() for a in in_avals]
+    fun_ = trace_to_subjaxpr_nounits2(fun, self.tag, fun.debug_info, True)
+    fun_, aux = partial_eval_wrapper_nounits(fun_, in_knowns, in_avals)
+    with core.set_current_trace(self.parent_trace):
+      res = fun_.call_wrapped()
+    out_knowns, out_avals, jaxpr, env = aux()
+    assert not any(out_knowns)
+    res_tracers = map(self.instantiate_const, map(self.new_const, res))
+    env_tracers = map(self.to_jaxpr_tracer, env)
+    out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
+                   for a in out_avals]
+    closed_jaxpr = convert_constvars_jaxpr(jaxpr)
+
+    @partial(lu.wrap_init, debug_info=jvp.debug_info)
+    @_memoize
+    def jvp_jaxpr_thunk(*in_zeros):
+      for store in jvp.stores: store and store.reset()
+      nz_tangent_avals, zero_avals = partition_list(in_zeros, in_tangent_avals)
+      jvp_, out_zeros = _jvp_jaxpr_zeros(jvp, in_zeros, tuple(zero_avals))
+      jvp_jaxpr, _, consts = trace_to_jaxpr_dynamic(
+          jvp_.with_unknown_names(), (*in_avals, *nz_tangent_avals))
+      return jvp_jaxpr, consts, out_zeros()
+
+    name_stack = self._current_truncated_name_stack()
+    source = source_info_util.current().replace(name_stack=name_stack)
+    params = dict(call_jaxpr=closed_jaxpr, jvp_jaxpr_fun=jvp_jaxpr_thunk,
+                  num_consts=len(res) + len(env), symbolic_zeros=symbolic_zeros)
+    in_tracers = [*res_tracers, *env_tracers, *tracers]
+    effs = core.positional_effects(closed_jaxpr)
+    eqn = new_eqn_recipe(self, in_tracers, out_tracers, prim, params, effs,
+                         source)
+    if effects.partial_eval_kept_effects.filter_in(effs):
+      self.effect_handles.append(EffectHandle(in_tracers, eqn))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+    for t in out_tracers: t.recipe = eqn
+    return out_tracers
 
   def process_custom_vjp_call(self, prim, f, fwd, bwd, tracers, /, *, out_trees, symbolic_zeros):
     tracers = map(self.to_jaxpr_tracer, tracers)
