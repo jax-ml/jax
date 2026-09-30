@@ -80,8 +80,7 @@ The `pltpu.make_async_remote_copy` function is used to create a remote DMA descr
      dst_ref: Ref,
      send_sem: Ref[SemaphoreType],
      recv_sem: Ref[SemaphoreType],
-     device_id: int | tuple[int, ...],
-     device_id_type: DeviceIdType
+     device_id: int | tuple[int, ...]
  ) -> AsyncCopyDescriptor:
 ```
 
@@ -90,7 +89,6 @@ The `pltpu.make_async_remote_copy` function is used to create a remote DMA descr
 - `send_sem` is a DMA semaphore used to block until all data has been sent from `src_ref`.
 - `recv_sem` is a DMA semaphore used to block until the expected number of bytes have been received at `dst_ref`. The sender of the DMA will write to the receiver's `recv_sem`.
 - `device_id` is the device ID of the target device to send to.
-- `device_id_type` specifies the format of `device_id`, which can either be in LOGICAL format (integer device ID), or in MESH format (an ND-tuple index into the logical device mesh). The default mode is MESH.
 
 `make_async_remote_copy` returns a descriptor object on which you use the `.start()` method to initiate the DMA, and the `.wait_send()` to block on `send_sem` and `.wait_recv()` to block on `recv_sem` (or `.wait()` to block on both). If a device is only expected to send data, it is sufficient to only call `.start()` and `.wait_send()`, and likewise if a device is only receiving it is sufficient to only call `.wait_recv()`. If using a SPMD pattern where all devices execute the DMA, each device will generally call both `.start()` and `.wait()`.
 ```python
@@ -224,7 +222,6 @@ def right_permute_kernel(input_ref, output_ref, send_sem, recv_sem):
       send_sem=send_sem,
       recv_sem=recv_sem,
       device_id=(right_neighbor,),
-      device_id_type=pl.DeviceIdType.MESH,
   )
   remote_copy_op.start()
   remote_copy_op.wait()
@@ -347,7 +344,6 @@ def all_gather_kernel(input_ref,
       send_sem=send_sem,
       recv_sem=recv_sems.at[outer_step],
       device_id=(right_neighbor,),
-      device_id_type=pl.DeviceIdType.MESH,
   )
   remote_copy_op.start()
   remote_copy_op.wait()
@@ -433,7 +429,6 @@ def semaphore_signal(
     sem: Ref[SemaphoreType],
     inc: int,
     device_id: int | tuple[int, ...],
-    device_id_type: DeviceIdType
 ) -> None:
   ... # Increments the semaphore `sem` on the target device `device_id` by `inc`.
 
@@ -475,11 +470,7 @@ def example_kernel(...):
   def _():
     barrier_sem = pltpu.get_barrier_semaphore()
     # Increment the semaphore of your right neighbor.
-    pl.semaphore_signal(
-          barrier_sem,
-          device_id=right_neighbor,
-          device_id_type=pl.DeviceIdType.LOGICAL,
-    )
+    pl.semaphore_signal(barrier_sem, device_id=right_neighbor)
     # Wait until your left neighbor has incremented your semaphore
     pl.semaphore_wait(barrier_sem, 1)
   # ...
@@ -522,7 +513,6 @@ def kernel(...):
     send_sem=send_sem,
     recv_sem=recv_sem,
     device_id=target_device,
-    device_id_type=pl.DeviceIdType.MESH,
   )
   remote_copy_op.start()
 
@@ -593,7 +583,6 @@ def local_barrier(left_neighbor, right_neighbor, double_barrier=True):
       barrier_sem,
       inc=1,
       device_id=(neighbor,),
-      device_id_type=pl.DeviceIdType.MESH,
     )
   pl.semaphore_wait(barrier_sem, 2)
   if double_barrier:
@@ -611,7 +600,6 @@ def local_barrier(left_neighbor, right_neighbor, double_barrier=True):
           second_barrier,
           inc=1,
           device_id=(neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
       pl.semaphore_wait(second_barrier, 2)
 
@@ -649,7 +637,6 @@ def all_reduce_kernel(
         send_sem=remote_send_sem,
         recv_sem=remote_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
     )
     initial_copy.start()
     initial_copy.wait()
@@ -657,12 +644,7 @@ def all_reduce_kernel(
   # Signal to our left neighbor that we are ready to receive.
   # Without this signal, our left neighbor can be >=1 iteration ahead,
   # meaning it could write into our working slot.
-  pl.semaphore_signal(
-      capacity_sem,
-      inc=1,
-      device_id=(left_neighbor,),
-      device_id_type=pl.DeviceIdType.MESH,
-  )
+  pl.semaphore_signal(capacity_sem, inc=1, device_id=(left_neighbor,))
 
   # Copy the partial result our left neighbor sent to us into VMEM for
   # computation.
@@ -682,7 +664,6 @@ def all_reduce_kernel(
       send_sem=remote_send_sem,
       recv_sem=remote_recv_sem,
       device_id=(right_neighbor,),
-      device_id_type=pl.DeviceIdType.MESH,
   )
   remote_copy.start()
   # Finish local copy and accumulate while remote_copy is happening.
@@ -835,7 +816,6 @@ def signal(left_or_right, semaphore):
       semaphore,
       inc=1,
       device_id=(neighbor,),
-      device_id_type=pl.DeviceIdType.MESH,
   )
 
 
@@ -876,7 +856,6 @@ def reduce_scatter_kernel(
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
       device_id=(left_neighbor,),
-      device_id_type=pl.DeviceIdType.MESH,
   )
 
   initial_right_copy = pltpu.make_async_remote_copy(
@@ -885,7 +864,6 @@ def reduce_scatter_kernel(
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
       device_id=(right_neighbor,),
-      device_id_type=pl.DeviceIdType.MESH,
   )
 
   left_copy = pltpu.make_async_remote_copy(
@@ -894,7 +872,6 @@ def reduce_scatter_kernel(
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
       device_id=(left_neighbor,),
-      device_id_type=pl.DeviceIdType.MESH,
   )
   right_copy = pltpu.make_async_remote_copy(
       # Note: Right copy is flipped with regards to slots since we are copying
@@ -904,7 +881,6 @@ def reduce_scatter_kernel(
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
       device_id=(right_neighbor,),
-      device_id_type=pl.DeviceIdType.MESH,
   )
 
   # --- Prologue ---
@@ -1271,7 +1247,6 @@ def reduce_scatter_kernel(
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
       device_id=(left_neighbor,),
-      device_id_type=pl.DeviceIdType.MESH,
   )
 
   initial_right_copy = pltpu.make_async_remote_copy(
@@ -1280,7 +1255,6 @@ def reduce_scatter_kernel(
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
       device_id=(right_neighbor,),
-      device_id_type=pl.DeviceIdType.MESH,
   )
 
   left_copy = pltpu.make_async_remote_copy(
@@ -1289,7 +1263,6 @@ def reduce_scatter_kernel(
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
       device_id=(left_neighbor,),
-      device_id_type=pl.DeviceIdType.MESH,
   )
   right_copy = pltpu.make_async_remote_copy(
       src_ref=hbm_scratch.at[receiving_slot, right_copy_slice],
@@ -1297,7 +1270,6 @@ def reduce_scatter_kernel(
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
       device_id=(right_neighbor,),
-      device_id_type=pl.DeviceIdType.MESH,
   )
 
   # --- Prologue ---
