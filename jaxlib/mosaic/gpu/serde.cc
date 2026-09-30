@@ -58,8 +58,6 @@ constexpr llvm::StringRef kMangledDialect = "stable_mosaic_gpu.";
 constexpr llvm::StringRef kVersionAttrName = "stable_mosaic_gpu.version";
 // When this is bumped, we should file a TODO to update the forward-compatible
 // version in Mosaic GPU lowering in a month!
-// TODO(bchetioui): Update the forward-compatible version to 7 in Mosaic GPU
-// lowering after 2026-08-31.
 // TODO(bchetioui): Update the forward-compatible version to 8 in Mosaic GPU
 // lowering after 2026-09-30.
 // TODO(bchetioui): Update the forward-compatible version to 9 in Mosaic GPU
