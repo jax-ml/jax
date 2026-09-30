@@ -236,7 +236,7 @@ class AsyncCopyDescriptor:
     flat_args, tree = self._get_args_and_tree()
     dma_wait_p.bind(
         *flat_args, tree=tree, device_id_type=self.device_id_type,
-        insert_dummy_device=False, is_wait_send=False
+        is_wait_send=False
     )
 
   def wait_send(self):
@@ -251,7 +251,6 @@ class AsyncCopyDescriptor:
     )
     dma_wait_p.bind(
         *flat_args, tree=tree, device_id_type=self.device_id_type,
-        insert_dummy_device=self.is_remote,
         is_wait_send=True,
     )
 
@@ -560,9 +559,8 @@ dma_wait_p.multiple_results = True
 
 dma_wait_p.is_high = _dma_is_high
 
-def _dma_wait_to_lojax(*args, tree, device_id_type, insert_dummy_device: bool,
-                       is_wait_send: bool):
-  del insert_dummy_device, is_wait_send
+def _dma_wait_to_lojax(*args, tree, device_id_type, is_wait_send: bool):
+  del is_wait_send
   src_ref, dst_ref, dst_sem, src_sem, device_id = _dma_unflatten(tree, args)
   src_ref_aval = jax_core.typeof(_get_ref(src_ref))
   dst_ref_aval = jax_core.typeof(_get_ref(dst_ref))
@@ -588,7 +586,7 @@ dma_wait_p.to_lojax = _dma_wait_to_lojax
 
 @dma_wait_p.def_effectful_abstract_eval
 def _dma_wait_abstract_eval(
-    *args, tree, device_id_type, insert_dummy_device: bool, is_wait_send: bool
+    *args, tree, device_id_type, is_wait_send: bool
 ):
   src_ref_aval, dst_ref_aval, dst_sem_aval, src_sem_aval, device_id_aval = (
       _dma_unflatten(tree, args)
@@ -639,11 +637,10 @@ def dma_wait_discharge_rule(
     *args,
     tree,
     device_id_type,
-    insert_dummy_device: bool,
     is_wait_send: bool = False,
 ):
   # TODO(b/370563115): perform ref update in dma_wait discharge rule instead of dma_start
-  del device_id_type, insert_dummy_device, is_wait_send
+  del device_id_type, is_wait_send
   _, dst_ref, dst_sem, _, _ = _dma_unflatten(tree, args)
   dst_ref, dst_ref_transforms = _get_ref_and_transforms(dst_ref)
   dst_sem, dst_sem_transforms = _get_ref_and_transforms(dst_sem)
