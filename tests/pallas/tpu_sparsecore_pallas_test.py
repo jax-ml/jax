@@ -1523,7 +1523,6 @@ class VectorSubcoreTest(PallasSCTest):
             jax.ShapeDtypeStruct(shape, jnp.int32),
             jax.ShapeDtypeStruct(shape, jnp.int32),
         ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, counts_ref, mask_ref):
       counts_ref[...], mask = plsc.scan_count(x_ref[...])
@@ -1597,12 +1596,7 @@ class VectorSubcoreTest(PallasSCTest):
       self.skipTest("Needs libtpu >= 0.0.50")
     x = jnp.arange(2 * self.num_lanes)
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        # TODO(b/517477562): Enable layout passes once splat i1 constants are
-        # supported.
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
       plsc.store_compressed(
           o_ref.at[pl.ds(5, self.num_lanes)],
@@ -2585,7 +2579,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=(keys, values, *maybe_mask_arg),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(*args):
       if use_mask:
@@ -2629,10 +2622,7 @@ class VectorSubcoreTest(PallasSCTest):
     keys = np.arange(vec_dim, dtype=dtype)
     np.random.shuffle(keys)
 
-    @self.vector_subcore_kernel(
-        out_shape=(keys, keys),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=(keys, keys))
     def kernel(x_ref, o1_ref, o2_ref):
       o1_ref[...] = jnp.sort(x_ref[...], descending=True)
       o2_ref[...] = jnp.flip(x_ref[...], axis=-1)
@@ -2655,10 +2645,7 @@ class VectorSubcoreTest(PallasSCTest):
     values = [np.arange(vec_dim, dtype=dtype) for dtype in values_dtypes]
     _ = [np.random.shuffle(v) for v in values]
 
-    @self.vector_subcore_kernel(
-        out_shape=(keys, *values),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=(keys, *values))
     def kernel(*args):
       keys_ref, *values_refs = args[: len(args) // 2]
       keys_out, *all_values_out = jax.lax.sort(
