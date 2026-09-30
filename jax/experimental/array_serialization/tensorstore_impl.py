@@ -323,7 +323,10 @@ async def _transfer_shard_to_host(shard: array.Shard) -> np.ndarray:
   data = shard.data
   has_pinned_host = any(
       m.kind == "pinned_host" for m in shard.device.addressable_memories())
-  if has_pinned_host:
+  # Only use pinned host memory on GPU. On TPU it is not zero-copy to numpy and
+  # each pinned_host allocation maps/unmaps DMA memory per shard, bypassing the
+  # premapped host buffer, which can be very slow on virtualized hosts.
+  if has_pinned_host and shard.device.platform == "gpu":
     # If available, transfer to pinned host memory
     sharding = make_single_device_sharding(shard.device,
         memory_kind="pinned_host")
