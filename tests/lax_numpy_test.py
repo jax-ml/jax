@@ -6973,6 +6973,30 @@ class NumpyGradTests(jtu.JaxTestCase):
     x_bar, = f_vjp((jnp.ones_like(m), jnp.zeros_like(e, dtype=dtypes.float0)))
     self.assertAllClose(x_bar, jnp.ldexp(jnp.ones_like(m), -e))
 
+  @parameterized.parameters(
+      [
+          (*parts, dtype)
+          for parts in [
+              ((0.0, 0.0), (1.0, 0.0)),
+              ((np.inf, 0.0), (1.0, 0.0)),
+              ((-np.inf, 0.0), (-1.0, 0.0)),
+              ((0.0, np.inf), (0.0, -1.0)),
+              ((0.0, -np.inf), (0.0, 1.0)),
+              ((np.inf, np.inf), (0.5 * np.sqrt(2), -0.5 * np.sqrt(2))),
+              ((np.inf, -np.inf), (0.5 * np.sqrt(2), 0.5 * np.sqrt(2))),
+              ((-np.inf, np.inf), (-0.5 * np.sqrt(2), -0.5 * np.sqrt(2))),
+              ((-np.inf, -np.inf), (-0.5 * np.sqrt(2), 0.5 * np.sqrt(2))),
+          ]
+          for dtype in complex_dtypes
+      ]
+  )
+  def testComplexAbsGradInf(self, input_parts, grad_parts, dtype):
+    # https://github.com/jax-ml/jax/issues/25681
+    x = jax.lax.complex(*input_parts).astype(dtype)
+    expected = jax.lax.complex(*grad_parts).astype(dtype)
+    g = jax.grad(jnp.abs)(x)
+    self.assertAllClose(g, expected)
+
 
 class NumpySignaturesTest(jtu.JaxTestCase):
 
