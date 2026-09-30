@@ -5371,9 +5371,6 @@ def _dma_start_lowering_rule(
   if add:
     raise NotImplementedError("DMA with add=True is not supported.")
   src_ref, dst_ref, sem, src_sem, device_id = _dma_unflatten(tree, args)
-  if sem is None:
-    raise NotImplementedError(
-        "Local DMA semaphore cannot be None on TensorCore.")
   src_ref_aval, dst_ref_aval, sem_aval, src_sem_aval, device_id_aval = (
       _dma_unflatten(tree, ctx.avals_in)
   )
@@ -5418,8 +5415,6 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                             device_id_type: primitives.DeviceIdType,
                             is_wait_send: bool = False):
   src, dst, sem, src_sem, device_id = _dma_unflatten(tree, args)
-  if sem is None:
-    raise NotImplementedError("DMA semaphore cannot be None on TensorCore.")
   src_aval, dst_aval, sem_aval, src_sem_aval, device_id_aval = _dma_unflatten(
       tree, ctx.avals_in
   )

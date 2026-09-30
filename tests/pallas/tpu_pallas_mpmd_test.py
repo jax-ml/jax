@@ -18,7 +18,6 @@ import functools
 import json
 import math
 import re
-import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -93,9 +92,6 @@ class PallasSCTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
       self.skipTest("SparseCore only supported on TPU v5p+")
     super().setUp()
-    self.enter_context(
-        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
-    )
 
   @property
   def num_lanes(self) -> int:
@@ -119,9 +115,6 @@ class MpmdAsyncTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
       self.skipTest("SparseCore only supported on TPU v5p+")
     super().setUp()
-    self.enter_context(
-        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
-    )
 
   @parameterized.product(
       sc_core_type=[SCS, SCV],
@@ -1200,303 +1193,6 @@ class MpmdTest(PallasSCTest):
           scratch_types=[pltpu.SemaphoreType.REGULAR(())],
       )()
 
-  @parameterized.named_parameters(
-      ("individual_wait", True, "wait"),
-      ("individual_wait_write", True, "wait_write"),
-      ("bulk_wait", False, "wait"),
-      ("bulk_wait_write", False, "wait_write"),
-  )
-  def test_async_copy_pull_stream_modes(self, use_dst_sem, wait_method):
-    v_mesh = plsc.VectorSubcoreMesh(
-        core_axis_name="c", subcore_axis_name="s", num_cores=1, num_subcores=1
-    )
-    x = jnp.arange(self.num_lanes, dtype=jnp.int32)
-
-    @pl.kernel(
-        mesh=v_mesh,
-        out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        scratch_types=[
-            pltpu.VMEM(x.shape, x.dtype),
-            pltpu.SemaphoreType.DMA(()) @ v_mesh,
-        ],
-    )
-    def kernel(x_ref, out_ref, vmem_ref, dma_sem):
-      sem = dma_sem if use_dst_sem else None
-      copy = pltpu.async_copy(x_ref, vmem_ref, sem=sem)
-      getattr(copy, wait_method)()
-      pltpu.async_copy(vmem_ref, out_ref, sem=None).wait()
-
-    np.testing.assert_array_equal(kernel(x), x)
-
-  @parameterized.named_parameters(
-      ("individual_wait", True, "wait"),
-      ("individual_wait_write", True, "wait_write"),
-      ("bulk_wait", False, "wait"),
-      ("bulk_wait_write", False, "wait_write"),
-  )
-  def test_async_copy_scs_vmem_shared_to_smem_stream(
-      self, use_dst_sem, wait_method
-  ):
-    self.skipTest(
-        "TODO(rdyro): Enable once the SparseCore compiler supports lowering"
-        " VMEM_SHARED to SMEM streams on the scalar subcore (b/565149365)."
-    )
-    s_mesh = plsc.ScalarSubcoreMesh(axis_name="c", num_cores=1)
-    shape = (32,)
-    x = jnp.arange(32, dtype=jnp.int32)
-
-    @pl.kernel(
-        mesh=s_mesh,
-        out_type=jax.ShapeDtypeStruct(shape, x.dtype),
-        scratch_types=[
-            pltpu.VMEM_SHARED(shape, x.dtype),
-            pltpu.SMEM(shape, x.dtype),
-            pltpu.SemaphoreType.DMA(()) @ s_mesh,
-        ],
-    )
-    def kernel(x_ref, out_ref, vmem_shd_ref, smem_ref, dma_sem):
-      pltpu.async_copy(x_ref, vmem_shd_ref, dma_sem).wait()
-      sem = dma_sem if use_dst_sem else None
-      copy = pltpu.async_copy(vmem_shd_ref, smem_ref, sem=sem)
-      getattr(copy, wait_method)()
-      # Reuses `dma_sem` (verifying it was drained when `use_dst_sem=True`).
-      pltpu.async_copy(smem_ref, out_ref, dma_sem).wait()
-
-    np.testing.assert_array_equal(kernel(x), x)
-
-  def test_async_copy_error_indirect_sem_none(self):
-    x = jnp.zeros((self.num_lanes,), dtype=jnp.int32)
-
-    @pl.kernel(
-        mesh=plsc.VectorSubcoreMesh(core_axis_name="c", subcore_axis_name="s",
-                                    num_cores=1, num_subcores=1),
-        out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        scratch_types=[
-            pltpu.VMEM(x.shape, x.dtype),
-            pltpu.HBM(x.shape, x.dtype),
-        ],
-    )
-    def body(_, out_ref, src_ref, dst_ref):
-      del out_ref
-      pltpu.async_copy(
-          src_ref, dst_ref.at[jnp.arange(src_ref.shape[0])], sem=None
-      )
-
-    with self.assertRaisesRegex(
-        NotImplementedError, "not yet implemented for scatters/gathers"
-    ):
-      body(x)
-
-  def test_async_copy_error_scs_non_stream_sem_none(self):
-    x = jnp.zeros((self.num_lanes,), dtype=jnp.int32)
-
-    @pl.kernel(
-        mesh=plsc.ScalarSubcoreMesh(axis_name="c", num_cores=1),
-        out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        scratch_types=[
-            pltpu.VMEM_SHARED(x.shape, x.dtype),
-            pltpu.HBM(x.shape, x.dtype),
-        ],
-    )
-    def body(_, out_ref, src_ref, dst_ref):
-      del out_ref
-      pltpu.async_copy(src_ref, dst_ref, sem=None)
-
-    with self.assertRaisesRegex(
-        jax.errors.JaxRuntimeError,
-        "DMA transfers require target sflag to be specified",
-    ):
-      body(x)
-
-  def test_async_copy_error_tc_sem_none(self):
-    x = jnp.zeros((self.num_lanes,), dtype=jnp.int32)
-
-    @pl.kernel(
-        mesh=pltpu.TensorCoreMesh(axis_name="c", num_cores=1),
-        out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        scratch_types=[
-            pltpu.VMEM(x.shape, x.dtype),
-            pltpu.HBM(x.shape, x.dtype),
-        ],
-    )
-    def body(_, out_ref, src_ref, dst_ref):
-      del out_ref
-      pltpu.async_copy(src_ref, dst_ref, sem=None)
-
-    with self.assertRaisesRegex(
-        NotImplementedError, "DMA semaphore cannot be None on TensorCore"
-    ):
-      body(x)
-
-  def test_async_copy_error_remote_dst_sem_none(self):
-    mesh = plsc.VectorSubcoreMesh(
-        core_axis_name="c", subcore_axis_name="s", num_cores=1, num_subcores=1
-    )
-    x = jnp.zeros((self.num_lanes,), dtype=jnp.int32)
-
-    @pl.kernel(
-        mesh=mesh,
-        out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        scratch_types=[
-            pltpu.VMEM(x.shape, x.dtype),
-            pltpu.HBM(x.shape, x.dtype),
-            pltpu.SemaphoreType.DMA(()) @ mesh,
-        ],
-    )
-    def body(_, out_ref, src_ref, dst_ref, sem):
-      del out_ref
-      pltpu.make_async_remote_copy(
-          src_ref, dst_ref, send_sem=sem, recv_sem=None,
-          device_id={"c": 0, "s": 0},
-      )
-
-    with self.assertRaisesRegex(
-        ValueError,
-        "Both `src_sem` and `dst_sem` .* must be set when `device_id` is set",
-    ):
-      body(x)
-
-  def test_push_stream_warning_and_sem_none(self):
-    v_mesh = plsc.VectorSubcoreMesh(
-        core_axis_name="c", subcore_axis_name="s", num_cores=1, num_subcores=1
-    )
-    shape = (1, 1, self.num_lanes)
-    x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
-
-    @pl.kernel(
-          mesh=v_mesh,
-          out_type=jax.ShapeDtypeStruct(shape, x.dtype),
-          scratch_types=[
-              pltpu.VMEM((self.num_lanes,), x.dtype),
-              pltpu.SemaphoreType.DMA(()) @ v_mesh,
-          ],
-    )
-    def body_warns(in_ref, out_ref, vmem_ref, dma_sem):
-      del in_ref
-      pltpu.async_copy(vmem_ref, out_ref.at[0, 0], sem=dma_sem).wait()
-
-    with self.assertWarnsRegex(
-        plsc.SparseCorePushStreamWarning,
-        "Destination semaphore is ignored for push streams",
-    ):
-      body_warns(x)
-
-    @pl.kernel(
-          mesh=v_mesh,
-          out_type=jax.ShapeDtypeStruct(shape, x.dtype),
-          scratch_types=[pltpu.VMEM((self.num_lanes,), x.dtype)],
-    )
-    def body_no_warn(in_ref, out_ref, vmem_ref):
-      del in_ref
-      pltpu.async_copy(vmem_ref, out_ref.at[0, 0], sem=None).wait()
-
-    with warnings.catch_warnings(record=True) as record:
-      warnings.simplefilter("always", plsc.SparseCorePushStreamWarning)
-      body_no_warn(x)
-
-    push_warnings = [
-        w
-        for w in record
-        if issubclass(w.category, plsc.SparseCorePushStreamWarning)
-    ]
-    self.assertEmpty(push_warnings)
-
-  def test_cross_subcore_handover_race(self):
-    if not jtu.is_libtpu_at_least("0.0.46"):
-      self.skipTest("Test requires libtpu 0.0.46 or newer.")
-    # Stress-test SparseCore producer-consumer handoffs between vector
-    # subcores and the scalar subcore. Waiting on a push stream without a
-    # destination semaphore waits for all HBM writes to retire, so the data is
-    # visible to the consumer before `scs_sem` is signaled.
-    num_iters = 50000
-    num_cores = self.sc_info.num_cores
-    tile_size = 128
-    v_mesh = plsc.VectorSubcoreMesh(
-        core_axis_name="s_core",
-        subcore_axis_name="subcore",
-        num_cores=num_cores,
-        num_subcores=2,
-    )
-    s_mesh = plsc.ScalarSubcoreMesh(
-        axis_name="s_core", num_cores=num_cores
-    )
-    slot_shape = (num_cores, 64, tile_size)
-    SDS = jax.ShapeDtypeStruct
-
-    def vector_subcore_fn(out_ref, hbm, s_dma, tec_sem, scs_sem):
-      del out_ref, s_dma
-      core_id = jax.lax.axis_index("s_core")
-      subcore_id = jax.lax.axis_index("subcore")
-      vmem_buf = jax.empty_ref(SDS((tile_size,), jnp.float32), pltpu.VMEM)
-
-      pl.semaphore_signal(
-          tec_sem.at[subcore_id],
-          device_id={"s_core": core_id, "subcore": subcore_id}
-      )
-
-      @pl.loop(0, num_iters)
-      def _(it):
-        slot = it % 64
-        tag_scale = jnp.where(subcore_id == 0, 10.0, 20.0)
-        tag_val = jnp.float32((it + 1) * tag_scale)
-        vmem_buf[pl.ds(0, tile_size)] = jnp.full((tile_size,), tag_val)
-
-        pl.semaphore_wait(tec_sem.at[subcore_id], 1)
-        pltpu.sync_copy(vmem_buf, hbm.at[subcore_id, core_id, slot])
-        pl.semaphore_signal(
-            scs_sem.at[subcore_id], device_id={"s_core": core_id}
-        )
-
-    def scalar_subcore_fn(out_ref, hbm, s_dma, tec_sem, scs_sem):
-      core_id = jax.lax.axis_index("s_core")
-      smem = jax.empty_ref(SDS((2, tile_size), jnp.float32), pltpu.SMEM)
-      errs = jax.empty_ref(SDS((8,), jnp.int32), pltpu.SMEM)
-      errs[0] = 0
-
-      @pl.loop(0, num_iters)
-      def _(it):
-        slot = it % 64
-        for i in range(2):
-          pl.semaphore_wait(scs_sem.at[i], 1)
-
-        for i in range(2):
-          pltpu.async_copy(hbm.at[i, core_id, slot], smem.at[i], s_dma.at[i])
-        for i in range(2):
-          pltpu.make_async_copy(
-              hbm.at[i, core_id, slot], smem.at[i], s_dma.at[i]
-          ).wait()
-
-        bad0 = jnp.abs(smem[0, 0] - jnp.float32((it + 1) * 10.0)) > 0.1
-        bad1 = jnp.abs(smem[1, 0] - jnp.float32((it + 1) * 20.0)) > 0.1
-        errs[0] = errs[0] + jnp.where(bad0 | bad1, 1, 0)
-
-        @pl.when(it + 1 < num_iters)
-        def _():
-          for i in range(2):
-            pl.semaphore_signal(
-                tec_sem.at[i], device_id={"s_core": core_id, "subcore": i}
-            )
-
-      pltpu.sync_copy(errs, out_ref.at[core_id])
-
-    @jax.jit
-    def run():
-      return pl.kernel(
-          body=[vector_subcore_fn, scalar_subcore_fn],
-          mesh=[v_mesh, s_mesh],
-          out_type=SDS((num_cores, 8), jnp.int32),
-          scratch_types=[
-              pltpu.HBM((2,) + slot_shape, jnp.float32),
-              pltpu.SemaphoreType.DMA((2,)) @ s_mesh,
-              pltpu.SemaphoreType.REGULAR((2,)) @ v_mesh,
-              pltpu.SemaphoreType.REGULAR((2,)) @ s_mesh,
-          ],
-      )()
-
-    mismatches = np.array(run())
-    total_mismatches = int(np.sum(mismatches[:, 0]))
-    np.testing.assert_equal(total_mismatches, 0)
-
 
 @dataclasses.dataclass(frozen=True)
 class WeirdTuple:
@@ -1599,9 +1295,6 @@ class MpmdHijaxTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu():
       self.skipTest("Only works on TPU.")
     super().setUp()
-    self.enter_context(
-        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
-    )
 
   def test_pass_weird_tuple_into_mpmd_map(self):
     xt = WeirdTuple(

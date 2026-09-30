@@ -40,9 +40,6 @@ class RemoteDMATest(parameterized.TestCase):
       self.skipTest('Only >=2 devices are supported.')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('SparseCore only supported on TPU v5+')
-    self.enter_context(
-        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
-    )
 
   @parameterized.product(direction=['left', 'right'], num_devices=[2, None])
   def test_collective_permute_1d(self, direction, num_devices):
@@ -220,9 +217,6 @@ class DistributedMpmdTest(parameterized.TestCase):
       self.skipTest('Only >=2 devices are supported.')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('SparseCore only supported on TPU v5+')
-    self.enter_context(
-        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
-    )
 
   def test_mpmd_reduce_scatter(self):
     P = jax.P
