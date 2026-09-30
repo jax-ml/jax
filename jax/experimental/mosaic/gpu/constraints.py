@@ -909,6 +909,9 @@ class OneOf(_BaseConstraint):
     allowed = tuple(dict.fromkeys(self.allowed))
     if len(allowed) == 1:
       return Equals(self.expr, allowed[0]).canonicalize()
+    # Short-circuit to avoid reconstructing the constraint.
+    if len(allowed) == len(self.allowed):
+      return self
     return OneOf(self.expr, allowed)
 
   def __str__(self):
@@ -944,6 +947,9 @@ def reduce_constraint(
       rhs_red = reduce_expression(rhs, assignments)
       if isinstance(rhs_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if lhs_red is lhs and rhs_red is rhs:
+        return constraint.canonicalize()
       return Equals(lhs_red, rhs_red).canonicalize()
     case Relayout(source=source, target=target) as relayout:
       source_red = reduce_expression(source, assignments)
@@ -952,6 +958,9 @@ def reduce_constraint(
           target_red, Unsatisfiable
       ):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if source_red is source and target_red is target:
+        return relayout.canonicalize()
       reduced = dataclasses.replace(
           relayout, source=source_red, target=target_red
       )
@@ -960,22 +969,34 @@ def reduce_constraint(
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if expr_red is expr:
+        return constraint
       return NotOfType(expr_red, ty)
     case IsTransferable(source=source, target=target) as transfer:
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
       if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if source_red is source and target_red is target:
+        return transfer
       return dataclasses.replace(transfer, source=source_red, target=target_red)
     case Divides(expr=expr, tiling_multiple=tiling_multiple):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if expr_red is expr:
+        return constraint
       return Divides(expr_red, tiling_multiple)
     case MinorDimDivisibleBy(expr=expr, divisor=divisor):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if expr_red is expr:
+        return constraint
       return MinorDimDivisibleBy(expr_red, divisor)
     case IsSupportedBroadcast(src=src, dst=dst, dims=dims):
       src_red = reduce_expression(src, assignments)
@@ -984,6 +1005,9 @@ def reduce_constraint(
           dst_red, Unsatisfiable
       ):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if src_red is src and dst_red is dst:
+        return constraint
       return IsSupportedBroadcast(src_red, dst_red, dims)
     case AlwaysTrue():
       return constraint
@@ -991,6 +1015,9 @@ def reduce_constraint(
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if expr_red is expr:
+        return oneof.canonicalize()
       return OneOf(expr_red, oneof.allowed).canonicalize()
     case _ as never:
       assert_never(never)
