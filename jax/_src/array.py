@@ -34,6 +34,7 @@ from jax._src import profiler
 from jax._src import util
 from jax._src import xla_bridge
 from jax._src.op_shardings import are_hlo_shardings_equal
+from jax._src.indexing import dslice
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.layout import AutoLayoutSingleton, Format, Layout
@@ -181,6 +182,28 @@ def _validate_shape_and_dtype_for_per_device_arrays(
       )
 
 
+def _chunk_iter(x: basearray.Array, size: int, *, reverse: bool = False) -> Iterator[basearray.Array]:
+  """Iterate over equally-sized chunks of an array.
+
+  This accesses chunks via dynamic_slice to avoid recompilation of
+  static slices for large arrays.
+  """
+  if size > x.shape[0]:
+    yield x
+    return
+  num_chunks, tail = divmod(x.shape[0], size)
+  if reverse:
+    if tail:
+      yield x.at[dslice(num_chunks * size, tail)].get(strategy="dynamic_slice")
+    for i in reversed(range(num_chunks)):
+      yield x.at[dslice(i * size, size)].get(strategy="dynamic_slice")
+  else:
+    for i in range(num_chunks):
+      yield x.at[dslice(i * size, size)].get(strategy="dynamic_slice")
+    if tail:
+      yield x.at[dslice(num_chunks * size, tail)].get(strategy="dynamic_slice")
+
+
 def _iter(x: ArrayImpl, *, reverse: bool = False) -> Iterator[ArrayImpl]:
   """Efficient chunked iteration over an Array.
 
@@ -191,8 +214,8 @@ def _iter(x: ArrayImpl, *, reverse: bool = False) -> Iterator[ArrayImpl]:
   else:
     assert x.is_fully_replicated or x.is_fully_addressable
     if x.sharding.num_devices == 1 or x.is_fully_replicated:
-      return (sl for chunk in x._chunk_iter(100, reverse=reverse)  # pyrefly: ignore[missing-attribute]
-              for sl in (reversed(chunk._unstack()) if reverse else chunk._unstack()))
+      return (sl for chunk in _chunk_iter(x, 100, reverse=reverse)
+              for sl in (reversed(chunk._unstack()) if reverse else chunk._unstack()))  # pyrefly: ignore[missing-attribute]
     else:
       # TODO(yashkatariya): Don't bounce to host and use `_chunk_iter` path
       # here after uneven partitioning support is added.
