@@ -579,8 +579,8 @@ def _prepare_dma_refs(
     )
   if indirect_offsets is None:
     # If typical DMA path, don't alter the refs.
-    return src_ref_orig, dst_ref_orig, None
-  return src_ref, dst_ref, indirect_offsets
+    return src_ref_orig, dst_ref_orig, None, False
+  return src_ref, dst_ref, indirect_offsets, indirect_offsets_ref_str == "dst_ref"
 
 
 def _is_push_stream(
@@ -620,7 +620,7 @@ def _dma_start_lowering_rule(
       tree, ctx.avals_in
   )
 
-  src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
+  src_ref, dst_ref, indirect_offsets, _ = _prepare_dma_refs(
       src_ref,
       dst_ref,
       src_aval,
@@ -660,6 +660,15 @@ def _dma_start_lowering_rule(
           "`sem=None` to `async_copy` to suppress this warning.",
           sc_core.SparseCorePushStreamWarning,
       )
+    if is_local and not is_push and src_sem is not None:
+      # Local non-stream DMAs have no source semaphore in Mosaic, so `src_sem`
+      # would have no effect, we reject it instead of silently ignoring it.
+      raise ValueError(
+          "Source semaphore (`src_sem`) on a local copy is only supported for "
+          "push streams (VMEM to HBM, VMEM_SHARED or SMEM, or VMEM_SHARED to "
+          "SMEM) on SparseCore; pass `src_sem=None` and use `wait()`, which "
+          "already guarantees completion of this transfer."
+      )
 
     def _dma_start(src_ref, dst_ref, sem, src_sem):
       tpu.enqueue_dma(
@@ -685,10 +694,10 @@ def _dma_start_lowering_rule(
         "Scatter/gather to or from a remote device via `pltpu.async_copy` is"
         " not supported"
     )
-  if sem is None:
+  if sem is None or src_sem is not None:
     raise NotImplementedError(
-        "Specifying `sem=None` in async_copy is not yet implemented for "
-        "scatters/gathers."
+        "Specifying `sem=None` or `src_sem` in async_copy is not yet "
+        "implemented for scatters/gathers."
     )
 
   offset_filter = None
@@ -731,13 +740,14 @@ def _dma_wait_lowering_rule(
     src_ref, dst_ref, src_aval, dst_aval = dst_ref, src_ref, dst_aval, src_aval
     sem, src_sem, sem_aval, src_sem_aval = src_sem, sem, src_sem_aval, sem_aval
 
-  src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
+  src_ref, dst_ref, indirect_offsets, is_scatter = _prepare_dma_refs(
       src_ref,
       dst_ref,
       src_aval,
       dst_aval,
       ctx.lowering_context.kernel_type,
   )
+  is_local = device_id is None
   core_id = None
   subcore_id = None
   if device_id is not None:
@@ -753,6 +763,16 @@ def _dma_wait_lowering_rule(
 
   # If not ``None``, we lower to an indirect DMA instead of a regular DMA.
   if indirect_offsets is None:
+    if is_local and is_wait_send and not _is_push_stream(
+        ctx, src_aval, dst_aval, is_local
+    ):
+      raise ValueError(
+          "`wait_read()` on a local copy is only supported for push streams "
+          "(VMEM to HBM, VMEM_SHARED or SMEM, or VMEM_SHARED to SMEM) on "
+          "SparseCore; use `wait()` to await this transfer and guarantee "
+          "both read and write completion."
+      )
+
     def _dma_wait(src_ref, dst_ref, sem, src_sem):
       # Mosaic's verifier temporarily requires any source semaphore passed to a
       # wait to live on the issuing core, which only holds for the enqueue.
@@ -781,8 +801,17 @@ def _dma_wait_lowering_rule(
     )
   if sem is None:
     raise NotImplementedError(
-        "Specifying `sem=None` in async_copy is not yet implemented for "
-        "scatters/gathers."
+        "Specifying `sem=None` in async_copy is not yet implemented for"
+        " scatters/gathers: the compiler requires a semaphore."
+    )
+  # Indirect transfers have one semaphore tracking only the local side: the
+  # source for scatters and destination for gathers. `wait_read()` is therefore
+  # valid for scatters, but unsupported for gathers.
+  # TODO(rdyro): Scatters lack a write fence; `wait()` only awaits the read.
+  if is_wait_send and not is_scatter:
+    raise ValueError(
+        "`wait_read()` is only supported for scatters, not gathers; use `wait()`"
+        " to await the write into the local destination."
     )
   sem_aval, _ = _get_ref_and_transforms(sem_aval)
   sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape)

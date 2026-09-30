@@ -183,8 +183,6 @@ class AsyncCopyDescriptor:
   )
 
   def __post_init__(self):
-    if self.device_id is None and self.src_sem is not None:
-      raise ValueError("`src_sem` can only be set when `device_id` is set.")
     if self.device_id is not None and (
         self.src_sem is None or self.dst_sem is None
     ):
@@ -203,7 +201,7 @@ class AsyncCopyDescriptor:
 
   @property
   def is_remote(self):
-    return self.src_sem is not None
+    return self.device_id is not None
 
   def _get_args_and_tree(
       self,
@@ -233,9 +231,16 @@ class AsyncCopyDescriptor:
     )
 
   def wait(self):
-    if self.is_remote:
-      self.wait_send()
-    self.wait_recv()
+    """Waits for both the read and write which the copy describes to complete.
+
+    Awaits the read from `src_ref` if a source semaphore was given, and always
+    awaits the write to `dst_ref`.
+    """
+    # TODO(rdyro): Consider disallowing calling `.wait()` on remote copies and
+    # asking the user to explicitly use `wait_send`/`wait_recv`.
+    if self.src_sem is not None:
+      self.wait_read()
+    self.wait_write()
 
   def wait_write(self):
     """Waits until writing to `dst_ref` has completed."""
@@ -250,20 +255,30 @@ class AsyncCopyDescriptor:
     """Waits until writing to `dst_ref` has completed. Alias of `wait_write`."""
     self.wait_write()
 
-  def wait_send(self):
+  def wait_read(self):
+    """Waits until reading from `src_ref` has completed."""
     self._used = True
-    if not self.is_remote:
-      raise ValueError("Cannot `wait_send` on a local copy.")
     # We swap src and dst since by default dma_wait_p waits on the dst_sem
     # TODO(rdyro): Update the lowering to use `is_wait_send` instead of
     # swapping src and dst.
-    flat_args, tree = self._get_args_and_tree(
-        swap_src_and_dst=True,
-    )
+    flat_args, tree = self._get_args_and_tree(swap_src_and_dst=True)
     dma_wait_p.bind(
         *flat_args, tree=tree, device_id_type=self.device_id_type,
-        is_wait_send=True,
+        is_wait_send=True
     )
+
+  def wait_send(self):
+    """Waits until reading from `src_ref` has completed.
+
+    Only valid on a remote copy; use `wait_read` for a local one.
+    """
+    self._used = True
+    if not self.is_remote:
+      raise RuntimeError(
+          "Cannot `wait_send` on a local copy. Use `wait_read()` to await "
+          "`src_ref` read, or `wait()` to also await the write to `dst_ref`."
+      )
+    self.wait_read()
 
 
 def _dma_flatten(*args):
@@ -287,7 +302,8 @@ def _get_dma_effects(
     device_id_aval,
     device_id_type,
     *,
-    is_wait_send: bool = False,
+    is_wait: bool = False,
+    src_dst_swapped: bool = False,
 ):
   n_src_transforms = len(_dma_tree_leaves(src_ref_aval))
   n_dst_transforms = len(_dma_tree_leaves(dst_ref_aval))
@@ -296,7 +312,7 @@ def _get_dma_effects(
   # TODO(rdyro): We swap read vs write effects when dma_wait is bound via
   # `wait_send`. `wait_send` swaps the src and dst args when binding dma_wait_p.
   # Consider handling this in a cleaner way.
-  if is_wait_send:
+  if src_dst_swapped:
     src_ref_effect = state.WriteEffect(0)
     dst_ref_effect = state.ReadEffect(n_src_transforms)
   else:
@@ -308,7 +324,12 @@ def _get_dma_effects(
   }
   if dst_sem_aval is not None:
     effs.add(state.WriteEffect(dst_sem_index))
-  if src_sem_aval is not None:
+  # A wait never touches the semaphore in the `src_sem` slot. For `wait_read`
+  # the args are pre-swapped, so the semaphore being awaited already sits in
+  # the `dst_sem` slot and `src_sem` holds the untouched `dst_sem`; for
+  # `wait_write` the slot holds the real source semaphore, which only the
+  # matching `wait_read` drains.
+  if not is_wait and src_sem_aval is not None:
     src_sem_index = n_src_transforms + n_dst_transforms + n_dst_sem_transforms
     effs.add(state.WriteEffect(src_sem_index))
   if device_id_aval is not None:
@@ -436,21 +457,13 @@ def dma_start_discharge_rule(
       _dma_unflatten(tree, ctx.in_avals)
   )
 
-  _, dst_discharge, dst_sem_discharge, *maybe_src_sem_discharge = (
-      _dma_unflatten(tree, ctx.should_discharge)
+  _, dst_discharge, dst_sem_discharge, src_sem_discharge, _ = _dma_unflatten(
+      tree, ctx.should_discharge
   )
   dst_discharge = _get_ref(dst_discharge)
   dst_sem_discharge = _get_ref(dst_sem_discharge)
+  src_sem_discharge = _get_ref(src_sem_discharge)
   is_remote = device_id is not None
-  src_sem_discharge = None
-
-  if is_remote:
-    src_sem_discharge = _get_ref(maybe_src_sem_discharge[0])
-
-  if not is_remote:
-    # Local async copies only use one semaphore.
-    assert src_sem is None
-    assert src_sem_transforms == ()
 
   num_src_sem_transforms = len(_dma_tree_leaves(src_sem_aval)) - 1
   num_dst_sem_transforms = len(_dma_tree_leaves(dst_sem_aval)) - 1
@@ -547,10 +560,10 @@ def dma_start_discharge_rule(
   if dst_sem_aval is not None:
     val = do_discharge_dst_sem() if dst_sem_discharge else None
     new_vals += (val,) + (None,) * num_dst_sem_transforms
-  if is_remote:
-    new_vals += (do_discharge_src_sem() if src_sem_discharge else None,) # src_sem
-    new_vals += (None,) * num_src_sem_transforms
-    new_vals += (None,) * len(_dma_tree_leaves(device_id_aval))  # device_id
+  if src_sem_aval is not None:
+    val = do_discharge_src_sem() if src_sem_discharge else None
+    new_vals += (val,) + (None,) * num_src_sem_transforms
+  new_vals += (None,) * len(_dma_tree_leaves(device_id_aval))  # device_id
   assert (len(new_vals) ==
           len(ctx.in_avals)), f"{len(new_vals), new_vals} != {len(ctx.in_avals)}"
 
@@ -560,7 +573,7 @@ def dma_start_discharge_rule(
     sp.ref_set(dst_ref, None, do_discharge_dst(dst_ref=dst_ref[...]))
   if dst_sem is not None and not dst_sem_discharge:
     sp.ref_set(dst_sem, None, do_discharge_dst_sem(dst_sem=dst_sem[...]))
-  if is_remote and not src_sem_discharge:
+  if src_sem is not None and not src_sem_discharge:
     sp.ref_set(src_sem, None, do_discharge_src_sem(src_sem=src_sem[...]))
 
   return new_vals, []
@@ -575,7 +588,9 @@ dma_wait_p.multiple_results = True
 dma_wait_p.is_high = _dma_is_high
 
 def _dma_wait_to_lojax(*args, tree, device_id_type, is_wait_send: bool):
-  del is_wait_send
+  if is_wait_send:
+    raise NotImplementedError(
+        "wait_read/wait_send not implemented in LoJAX yet.")
   src_ref, dst_ref, dst_sem, src_sem, device_id = _dma_unflatten(tree, args)
   src_ref_aval = jax_core.typeof(_get_ref(src_ref))
   dst_ref_aval = jax_core.typeof(_get_ref(dst_ref))
@@ -608,7 +623,8 @@ def _dma_wait_abstract_eval(
   )
   if dst_sem_aval is not None:
     if not isinstance(dst_sem_aval, (state.AbstractRef, state.TransformedRef)):
-      raise ValueError("Expected the destination semaphore to be a reference")
+      sem_name = "source" if is_wait_send else "destination"
+      raise ValueError(f"Expected the {sem_name} semaphore to be a reference")
     allowed_semaphore_types = {
         tpu_core.dma_semaphore,
         pl_core.SEMAPHORE_INTERPRET_DTYPE,
@@ -627,7 +643,8 @@ def _dma_wait_abstract_eval(
       src_sem_aval,
       device_id_aval,
       device_id_type,
-      is_wait_send=is_wait_send,
+      is_wait=True,
+      src_dst_swapped=is_wait_send,
   )
 
 def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
@@ -636,9 +653,11 @@ def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
   del settings
   invars = eqn.invars
   tree = eqn.params["tree"]
+  is_wait_send = eqn.params["is_wait_send"]
   _, ref, sem, _, _ = _dma_unflatten(tree, invars)
+  op_name = "dma_wait_read" if is_wait_send else "dma_wait"
   parts = [
-      pp.text("dma_wait"),
+      pp.text(op_name),
       pp.text(" "),
       sp.pp_ref_transforms(context, ref),
   ]
@@ -704,32 +723,31 @@ def _get_ref(ref):
   return _get_ref_and_transforms(ref)[0]
 
 
-def make_async_copy(src_ref, dst_ref, sem=None) -> AsyncCopyDescriptor:
+def make_async_copy(
+    src_ref, dst_ref, sem=None, *, src_sem=None
+) -> AsyncCopyDescriptor:
   """Creates a description of an asynchronous copy operation.
 
   Args:
     src_ref: The source Reference.
     dst_ref: The destination Reference.
-    sem: Optional semaphore used to track completion of the copy.
+    sem: Optional semaphore tracking completion of the write to `dst_ref`.
+    src_sem: Optional semaphore tracking completion of the read from `src_ref`.
 
   Returns:
     An AsyncCopyDescriptor.
   """
   return AsyncCopyDescriptor(
-      src_ref,
-      dst_ref,
-      sem,
-      None,
-      None,
-      primitives.DeviceIdType.MESH,
+      src_ref, dst_ref, sem, src_sem, None, primitives.DeviceIdType.MESH
   )
 
 
 def async_copy(
-    src_ref, dst_ref, sem=None, *, priority: int = 0, add: bool = False,
+    src_ref, dst_ref, sem=None, *,
+    src_sem=None, priority: int = 0, add: bool = False,
 ) -> AsyncCopyDescriptor:
   """Issues a DMA copying from src_ref to dst_ref."""
-  copy_descriptor = make_async_copy(src_ref, dst_ref, sem)
+  copy_descriptor = make_async_copy(src_ref, dst_ref, sem, src_sem=src_sem)
   copy_descriptor.start(priority=priority, add=add)
   return copy_descriptor
 
@@ -756,12 +774,19 @@ def make_async_remote_copy(
     send_sem: The semaphore on the source device.
     recv_sem: The semaphore on the destination device.
     device_id: The device id of the destination device. It could be a tuple, or
-      a dictionary specifying the communication axis and destination index.
+      a dictionary specifying the communication axis and destination index. It
+      is typed as optional only because callers commonly hold it in an optional
+      field, but `None` is rejected.
     device_id_type: The type of the device id.
 
   Returns:
     An AsyncCopyDescriptor.
   """
+  if device_id is None:
+    raise ValueError(
+        "`device_id` is required for a remote copy. Use `make_async_copy` for"
+        " a local one."
+    )
   if device_id_type is not None:
     deprecations.warn(
         "jax-pallas-device-id-type",

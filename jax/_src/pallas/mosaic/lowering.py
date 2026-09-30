@@ -5385,6 +5385,12 @@ def _dma_start_lowering_rule(
   else:
     dest_mesh = None
     dest_kernel_type = kernel_type
+  if (device_id is None and dest_kernel_type == kernel_type
+      and src_sem is not None):
+    raise NotImplementedError(
+        "Source semaphore (`src_sem`) on a local copy without device_id is not"
+        " implemented on TensorCore."
+    )
   core_id = None
   subcore_id = None
   if device_id is not None or dest_kernel_type != kernel_type:
@@ -5418,6 +5424,11 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                             device_id_type: primitives.DeviceIdType,
                             is_wait_send: bool = False):
   src, dst, sem, src_sem, device_id = _dma_unflatten(tree, args)
+  if is_wait_send and device_id is None:
+    raise NotImplementedError(
+        "`wait_read` on a local copy without device_id is not implemented on"
+        " TensorCore."
+    )
   if sem is None:
     raise NotImplementedError("DMA semaphore cannot be None on TensorCore.")
   src_aval, dst_aval, sem_aval, src_sem_aval, device_id_aval = _dma_unflatten(
