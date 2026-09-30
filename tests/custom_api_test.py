@@ -1509,6 +1509,206 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     # jax.grad(h)(0.)  # don't crash
 
+  def test_scan_custom_jvp_higher_order_compositions(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41140:
+    # Second derivatives through lax.scan silently ignored custom_jvp rules
+    # for forward-over-reverse and reverse-over-reverse.
+    @jax.custom_jvp
+    def g(theta, c):
+      return jnp.sin(theta * c)
+
+    @g.defjvp
+    def g_jvp(primals, tangents):
+      (theta, c), (theta_dot, _) = primals, tangents
+      y = g(theta, c)
+      return y, 2.0 * c * y * theta_dot
+
+    def loss_scan(theta, c_arr):
+      def body_fn(carry, c):
+        return carry, g(theta, c)
+      _, ys = lax.scan(body_fn, None, c_arr)
+      return jnp.sum(ys)
+
+    def loss_vmap(theta, c_arr):
+      ys = jax.vmap(lambda c: g(theta, c))(c_arr)
+      return jnp.sum(ys)
+
+    theta = 0.8
+    c_arr = jnp.array([0.5, 1.2, 1.7])
+
+    # 1. Primal evaluation must match
+    self.assertAllClose(loss_scan(theta, c_arr), loss_vmap(theta, c_arr))
+
+    # 2. First-order derivative must match
+    grad_scan = jax.grad(loss_scan)(theta, c_arr)
+    grad_vmap = jax.grad(loss_vmap)(theta, c_arr)
+    self.assertAllClose(grad_scan, grad_vmap)
+
+    # 3. All four second-order compositions must match between scan and vmap
+    fwd_fwd_scan = jax.jacfwd(jax.jacfwd(loss_scan))(theta, c_arr)
+    fwd_fwd_vmap = jax.jacfwd(jax.jacfwd(loss_vmap))(theta, c_arr)
+    self.assertAllClose(fwd_fwd_scan, fwd_fwd_vmap)
+
+    f_scan = lambda x: loss_scan(x, c_arr)
+    f_vmap = lambda x: loss_vmap(x, c_arr)
+    rev_fwd_scan = jax.grad(lambda x: jax.jvp(f_scan, (x,), (jnp.ones_like(x),))[1])(theta)
+    rev_fwd_vmap = jax.grad(lambda x: jax.jvp(f_vmap, (x,), (jnp.ones_like(x),))[1])(theta)
+    self.assertAllClose(rev_fwd_scan, rev_fwd_vmap)
+
+    fwd_rev_scan = jax.jacfwd(jax.grad(loss_scan))(theta, c_arr)
+    fwd_rev_vmap = jax.jacfwd(jax.grad(loss_vmap))(theta, c_arr)
+    self.assertAllClose(fwd_rev_scan, fwd_rev_vmap)
+
+    rev_rev_scan = jax.grad(jax.grad(loss_scan))(theta, c_arr)
+    rev_rev_vmap = jax.grad(jax.grad(loss_vmap))(theta, c_arr)
+    self.assertAllClose(rev_rev_scan, rev_rev_vmap)
+
+    # 4. All four second derivatives through scan must be mutually consistent
+    self.assertAllClose(fwd_fwd_scan, fwd_rev_scan)
+    self.assertAllClose(rev_fwd_scan, rev_rev_scan)
+    self.assertAllClose(fwd_rev_scan, rev_rev_scan)
+
+    # 5. jax.hessian must match vmap reference and not fall back to primal derivative
+    hess_scan = jax.hessian(loss_scan)(theta, c_arr)
+    hess_vmap = jax.hessian(loss_vmap)(theta, c_arr)
+    self.assertAllClose(hess_scan, hess_vmap)
+
+  def test_scan_custom_jvp_configurations(self):
+    @jax.custom_jvp
+    def g(theta, c):
+      return jnp.sin(theta * c)
+
+    @g.defjvp
+    def g_jvp(primals, tangents):
+      (theta, c), (theta_dot, _) = primals, tangents
+      y = g(theta, c)
+      return y, 2.0 * c * y * theta_dot
+
+    c_arr = jnp.array([0.5, 1.2, 1.7, 0.9])
+    theta = 0.8
+
+    for reverse in [False, True]:
+      for unroll in [1, 2]:
+        def loss(t):
+          def body(carry, c):
+            return carry, g(t, c)
+          _, ys = lax.scan(body, None, c_arr, reverse=reverse, unroll=unroll)
+          return jnp.sum(ys)
+
+        ref_val = jnp.sum(g(theta, c_arr))
+        self.assertAllClose(loss(theta), ref_val)
+
+        d2_fwd_rev = jax.jacfwd(jax.grad(loss))(theta)
+        d2_rev_rev = jax.grad(jax.grad(loss))(theta)
+        d2_fwd_fwd = jax.jacfwd(jax.jacfwd(loss))(theta)
+        self.assertAllClose(d2_fwd_rev, d2_rev_rev)
+        self.assertAllClose(d2_fwd_fwd, d2_rev_rev)
+
+        # Also under JIT
+        jit_d2 = jax.jit(jax.grad(jax.grad(loss)))(theta)
+        self.assertAllClose(jit_d2, d2_rev_rev)
+
+  def test_scan_custom_jvp_scanned_and_carry_arguments(self):
+    @jax.custom_jvp
+    def g(theta, x):
+      return theta * x * x
+
+    @g.defjvp
+    def g_jvp(primals, tangents):
+      (theta, x), (t_dot, x_dot) = primals, tangents
+      return g(theta, x), 3.0 * x * x * t_dot + 2.0 * theta * x * x_dot
+
+    # 1. theta in carry
+    def scan_carry(theta_init, xs):
+      def body(theta, x):
+        out = g(theta, x)
+        return theta + 0.1, out
+      _, ys = lax.scan(body, theta_init, xs)
+      return jnp.sum(ys)
+
+    xs = jnp.array([1.0, 2.0, 3.0])
+    theta0 = 0.5
+    d2_fwd_rev = jax.jacfwd(jax.grad(scan_carry))(theta0, xs)
+    d2_rev_rev = jax.grad(jax.grad(scan_carry))(theta0, xs)
+    self.assertAllClose(d2_fwd_rev, d2_rev_rev)
+
+    # 2. scanned xs argument differentiated
+    def scan_xs(xs):
+      def body(carry, x):
+        return carry, g(0.5, x)
+      _, ys = lax.scan(body, None, xs)
+      return jnp.sum(ys)
+
+    d2_xs_fwd_rev = jax.jacfwd(jax.grad(scan_xs))(xs)
+    d2_xs_rev_rev = jax.hessian(scan_xs)(xs)
+    self.assertAllClose(d2_xs_fwd_rev, d2_xs_rev_rev)
+
+  def test_scan_custom_jvp_multi_arg_and_symbolic_zeros(self):
+    @jax.custom_jvp
+    def step_fn(theta, c, bias):
+      return jnp.cos(theta * c) + bias
+
+    @step_fn.defjvp
+    def step_jvp(primals, tangents):
+      (theta, c, bias), (theta_dot, _c_dot, bias_dot) = primals, tangents
+      y = step_fn(theta, c, bias)
+      # Custom rule scales theta derivative by 3.0 and preserves bias derivative
+      theta_term = -3.0 * c * jnp.sin(theta * c) * theta_dot
+      return y, theta_term + bias_dot
+
+    def loss(theta, bias, c_arr):
+      def body(carry, c):
+        return carry, step_fn(theta, c, bias)
+      _, ys = lax.scan(body, None, c_arr)
+      return jnp.sum(ys)
+
+    theta = 1.2
+    bias = 0.5
+    c_arr = jnp.array([0.4, 0.8, 1.5])
+
+    # Differentiating wrt theta only (bias tangent is symbolic zero)
+    d2_theta_fwd_rev = jax.jacfwd(jax.grad(loss, argnums=0), argnums=0)(theta, bias, c_arr)
+    d2_theta_rev_rev = jax.grad(jax.grad(loss, argnums=0), argnums=0)(theta, bias, c_arr)
+    self.assertAllClose(d2_theta_fwd_rev, d2_theta_rev_rev)
+
+    # Differentiating wrt (theta, bias)
+    hess = jax.hessian(loss, argnums=(0, 1))(theta, bias, c_arr)
+    jac_grad = jax.jacfwd(jax.grad(loss, argnums=(0, 1)), argnums=(0, 1))(theta, bias, c_arr)
+    self.assertAllClose(hess, jac_grad)
+
+  def test_scan_custom_jvp_differential_validation(self):
+    @jax.custom_jvp
+    def g(theta, c):
+      return jnp.exp(theta * c)
+
+    @g.defjvp
+    def g_jvp(primals, tangents):
+      (theta, c), (theta_dot, _) = primals, tangents
+      y = g(theta, c)
+      return y, 2.5 * c * y * theta_dot
+
+    for n in [1, 4, 7]:
+      for theta_val in [0.3, -0.5, 1.1]:
+        c_vals = jnp.linspace(0.1, 0.9, n)
+
+        def scan_fn(t):
+          _, ys = lax.scan(lambda _, c: (None, g(t, c)), None, c_vals)
+          return jnp.sum(ys)
+
+        def vmap_fn(t):
+          return jnp.sum(jax.vmap(lambda c: g(t, c))(c_vals))
+
+        # Check primal
+        self.assertAllClose(scan_fn(theta_val), vmap_fn(theta_val))
+        # Check first derivative
+        self.assertAllClose(jax.grad(scan_fn)(theta_val), jax.grad(vmap_fn)(theta_val))
+        # Check second derivative (fwd-over-rev and rev-over-rev)
+        d2_scan_fwd_rev = jax.jacfwd(jax.grad(scan_fn))(theta_val)
+        d2_scan_rev_rev = jax.grad(jax.grad(scan_fn))(theta_val)
+        d2_vmap = jax.grad(jax.grad(vmap_fn))(theta_val)
+        self.assertAllClose(d2_scan_fwd_rev, d2_vmap)
+        self.assertAllClose(d2_scan_rev_rev, d2_vmap)
+
 
 @jtu.with_config(jax_custom_vjp3=False)
 class CustomVJPTest(jtu.JaxTestCase):
