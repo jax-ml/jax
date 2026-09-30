@@ -46,6 +46,14 @@ because compiled JAX code cannot perform checks of array values at runtime.
 """)
 _no_overwrite_and_chkfinite_doc = _no_chkfinite_doc + "\nDoes not support the Scipy argument ``overwrite_*=True``."
 
+def _check_linalg_supported_dtype(dtype, fn_name: str):
+  promoted_dtype = dtypes.to_inexact_dtype(dtype)
+  if promoted_dtype not in (np.dtype(np.float32), np.dtype(np.float64), np.dtype(np.complex64), np.dtype(np.complex128)):
+    raise TypeError(
+      f"{fn_name} does not support dtype {np.dtype(dtype)}. "
+      "Supported dtypes are float32, float64, complex64, complex128."
+    )
+  
 @jit(static_argnames=('lower',))
 def _cholesky(a: ArrayLike, lower: bool) -> Array:
   a, = promote_dtypes_inexact(jnp.asarray(a))
@@ -110,6 +118,7 @@ def cholesky(a: ArrayLike, lower: bool = False, overwrite_a: bool = False,
     Array(True, dtype=bool)
   """
   del overwrite_a, check_finite  # Unused
+  _check_linalg_supported_dtype(dtypes.dtype(a), "jax.scipy.linalg.cholesky")
   return _cholesky(a, lower)
 
 
@@ -630,6 +639,7 @@ def inv(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> A
      Array([ 0.  ,  1.25, -0.5 ], dtype=float32)
   """
   del overwrite_a, check_finite  # unused
+  _check_linalg_supported_dtype(dtypes.dtype(a), "jax.scipy.linalg.inv")
   return jnp_linalg.inv(a)
 
 
