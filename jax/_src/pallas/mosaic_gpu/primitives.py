@@ -99,6 +99,14 @@ def _check_layout_mode():
     )
 
 
+def _andi_maybe_none(a: ir.Value | None, b: ir.Value | None) -> ir.Value | None:
+  if a is None:
+    return b
+  if b is None:
+    return a
+  return arith_dialect.andi(a, b)
+
+
 print_layout_p = jax_core.Primitive("print_layout")
 print_layout_p.multiple_results = True
 
@@ -335,11 +343,7 @@ def _copy_smem_to_gmem_lowering(
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     if not is_scatter:
       lane_pred = ctx.module_ctx.single_lane_predicate
-      assert lane_pred is not None  # Satisfy pytype
-      if predicate is not None:
-        predicate = arith_dialect.andi(predicate, lane_pred)
-      else:
-        predicate = lane_pred
+      predicate = _andi_maybe_none(predicate, lane_pred)
 
     ctx.launch_ctx.async_copy(
         src_ref=src,
@@ -1080,11 +1084,7 @@ def _copy_gmem_to_smem_lowering(
           barrier.arrive_expect_tx(bytes)
 
     lane_pred = ctx.module_ctx.single_lane_predicate
-    if predicate is not None:
-      predicate = arith_dialect.andi(predicate, lane_pred)
-    else:
-      predicate = lane_pred
-
+    predicate = _andi_maybe_none(predicate, lane_pred)
     predicate_kwarg = (
         {}
         if is_cp_async
@@ -1404,11 +1404,9 @@ def _async_prefetch_lowering(
     )
 
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
-    pred = ctx.module_ctx.single_lane_predicate
-    if predicate is not None:
-      pred = arith_dialect.andi(predicate, pred)
-
-    predicate_kwarg: dict[str, Any] = dict(predicate=pred)
+    lane_pred = ctx.module_ctx.single_lane_predicate
+    predicate = _andi_maybe_none(predicate, lane_pred)
+    predicate_kwarg: dict[str, Any] = dict(predicate=predicate)
     if gmem_slice := copy_params.get("gmem_slice", ()):
       first_idx = gmem_slice[0]
       # Gathers are a warpgroup-level collective and can't take a predicate.
@@ -1616,12 +1614,10 @@ def _barrier_arrive_lowering(
       arrival_count = 1
 
     pred = ctx.module_ctx.single_lane_predicate if orders_tensor_core else None
-    if predicate is not None:
-      pred = predicate if pred is None else arith_dialect.andi(predicate, pred)
     barrier.arrive(
         arrival_count=arrival_count,
         orders_tensor_core=orders_tensor_core,
-        predicate=pred,
+        predicate=_andi_maybe_none(predicate, pred),
         scope=scope,
     )
   return ()
@@ -2902,13 +2898,9 @@ def _tcgen05_mma_lowering(
       )
 
   predicate = ctx.module_ctx.single_lane_predicate
-  if collective_axis is not None:
-    assert predicate is not None
+  if collective := collective_axis is not None:
     is_leader_block = _collective_mma_predicate(ctx, collective_axis)
-    predicate = arith_dialect.andi(predicate, is_leader_block)
-    collective = True
-  else:
-    collective = False
+    predicate = _andi_maybe_none(predicate, is_leader_block)
 
   with mgpu.when(predicate):
     tcgen05.mma(
@@ -2925,9 +2917,9 @@ def _tcgen05_mma_lowering(
     )
     if arrive:
       assert barrier_ref is not None
-      tcgen05.commit_arrive(barrier_ref,
-                            collective=collective,
-                            ctx=ctx.launch_ctx)
+      tcgen05.commit_arrive(
+          barrier_ref, collective=collective, ctx=ctx.launch_ctx
+      )
   return []
 
 
@@ -4538,13 +4530,9 @@ def _async_copy_to_tmem_lowering_rule(
     return ()
 
   predicate = ctx.module_ctx.single_lane_predicate
-  if collective_axis is not None:
-    assert predicate is not None
+  if collective := collective_axis is not None:
     is_leader_block = _collective_mma_predicate(ctx, collective_axis)
-    predicate = arith_dialect.andi(predicate, is_leader_block)
-    collective = True
-  else:
-    collective = False
+    predicate = _andi_maybe_none(predicate, is_leader_block)
 
   with mgpu.when(predicate):
     impl(smem_ref, tmem_ref, collective=collective)
@@ -4732,13 +4720,9 @@ def _async_copy_smem_to_tmem_lowering_rule(
     )
 
   predicate = ctx.module_ctx.single_lane_predicate
-  if collective_axis is not None:
-    assert predicate is not None
+  if collective := collective_axis is not None:
     is_leader_block = _collective_mma_predicate(ctx, collective_axis)
-    predicate = arith_dialect.andi(predicate, is_leader_block)
-    collective = True
-  else:
-    collective = False
+    predicate = _andi_maybe_none(predicate, is_leader_block)
 
   with mgpu.when(predicate):
     tcgen05.async_copy_smem_to_tmem(
