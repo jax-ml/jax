@@ -1085,6 +1085,8 @@ def set_send_traceback_to_runtime_global(
 def set_send_traceback_to_runtime_thread_local(
     mode: RuntimeTracebackMode | None,
 ) -> None: ...
+def set_execution_options_state(state: config.Config) -> None:
+  """Registers the config read on every execution dispatch."""
 
 class PjitFunctionCache:
   def __init__(self, capacity: int = ...) -> None: ...
