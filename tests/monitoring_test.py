@@ -17,7 +17,9 @@ Verify that callbacks are registered/uregistered and invoked correctly to record
 events.
 """
 from absl.testing import absltest
+import jax
 from jax import monitoring
+from jax._src import dispatch
 from jax._src import monitoring as jax_src_monitoring
 from jax._src import test_util as jtu
 
@@ -142,6 +144,125 @@ class MonitoringTest(absltest.TestCase):
 
     with self.assertRaises(AssertionError):
       jax_src_monitoring.unregister_event_listener(callback)
+
+  def test_jit_compilation_time_span_events_share_compilation_uuid(self):
+    spans = []
+
+    def listener(event, start_time, end_time, **kwargs):
+      del start_time, end_time
+      spans.append((event, kwargs))
+
+    monitoring.register_event_time_span_listener(listener)
+
+    def make_fn(scale):
+      def same_name(x):
+        return x * scale
+
+      return jax.jit(same_name)
+
+    fn1 = make_fn(2)
+    fn2 = make_fn(3)
+    fn1(1)
+    fn2(1)
+
+    compile_events = {
+        dispatch.JAXPR_TRACE_EVENT,
+        dispatch.JAXPR_TO_MLIR_MODULE_EVENT,
+        dispatch.BACKEND_COMPILE_EVENT,
+    }
+    recorded = [(ev, kw) for ev, kw in spans if ev in compile_events]
+    self.assertLen(recorded, 6)
+    for _, kw in recorded:
+      self.assertIsInstance(kw.get("compilation_uuid"), str)
+      self.assertNotEmpty(kw["compilation_uuid"])
+    fn1_uuids = {kw["compilation_uuid"] for _, kw in recorded[:3]}
+    fn2_uuids = {kw["compilation_uuid"] for _, kw in recorded[3:]}
+    self.assertLen(fn1_uuids, 1)
+    self.assertLen(fn2_uuids, 1)
+    self.assertNotEqual(fn1_uuids, fn2_uuids)
+
+  def test_aot_staged_and_transformed_compilations_share_compilation_uuid(self):
+    spans = []
+
+    def listener(event, start_time, end_time, **kwargs):
+      del start_time, end_time
+      spans.append((event, kwargs))
+
+    monitoring.register_event_time_span_listener(listener)
+    compile_events = {
+        dispatch.JAXPR_TRACE_EVENT,
+        dispatch.JAXPR_TO_MLIR_MODULE_EVENT,
+        dispatch.BACKEND_COMPILE_EVENT,
+    }
+
+    def take_compile_spans():
+      res = [(ev, kw) for ev, kw in spans if ev in compile_events]
+      spans.clear()
+      for _, kw in res:
+        self.assertIsInstance(kw.get("compilation_uuid"), str)
+        self.assertNotEmpty(kw["compilation_uuid"])
+      return res
+
+    # 1. 2-step staged AOT: jit(f).lower(x) -> lowered.compile()
+    lowered = jax.jit(lambda x: x + 1).lower(1)
+    lowered.compile()
+    rec_2step = take_compile_spans()
+    self.assertLen(rec_2step, 3)
+    uuids_2step = {kw["compilation_uuid"] for _, kw in rec_2step}
+    self.assertLen(uuids_2step, 1)
+
+    # 2. 3-step staged AOT: jit(f).trace(x) -> traced.lower() -> lowered.compile()
+    traced = jax.jit(lambda x: x + 2).trace(1)
+    lowered_3step = traced.lower()
+    lowered_3step.compile()
+    rec_3step = take_compile_spans()
+    self.assertLen(rec_3step, 3)
+    uuids_3step = {kw["compilation_uuid"] for _, kw in rec_3step}
+    self.assertLen(uuids_3step, 1)
+    self.assertNotEqual(uuids_2step, uuids_3step)
+
+    # 3. Interleaved staged AOT of two jit wrappers around the SAME function
+    # (hits pe.trace_to_jaxpr cache on the second trace).
+    def shared_fn(x):
+      return x * 5
+
+    t1 = jax.jit(shared_fn, donate_argnums=0).trace(1)
+    t2 = jax.jit(shared_fn).trace(1)
+    l1 = t1.lower()
+    l2 = t2.lower()
+    l1.compile()
+    l2.compile()
+    rec_interleaved = take_compile_spans()
+    self.assertLen(rec_interleaved, 6)
+    t1_uuids = {
+        rec_interleaved[0][1]["compilation_uuid"],
+        rec_interleaved[2][1]["compilation_uuid"],
+        rec_interleaved[4][1]["compilation_uuid"],
+    }
+    t2_uuids = {
+        rec_interleaved[1][1]["compilation_uuid"],
+        rec_interleaved[3][1]["compilation_uuid"],
+        rec_interleaved[5][1]["compilation_uuid"],
+    }
+    self.assertLen(t1_uuids, 1)
+    self.assertLen(t2_uuids, 1)
+    self.assertNotEqual(t1_uuids, t2_uuids)
+
+    # 4. Traced.with_consts_as_arg() transformation preserves compilation_uuid.
+    y = jax.numpy.asarray(3)
+    spans.clear()
+    traced_const = jax.jit(lambda x: x + y).trace(1)
+    _, traced_with_consts = traced_const.with_consts_as_arg()
+    traced_with_consts.lower().compile()
+    rec_consts = take_compile_spans()
+    self.assertGreaterEqual(len(rec_consts), 3)
+    self.assertLen({kw["compilation_uuid"] for _, kw in rec_consts}, 1)
+
+    # 5. Eager jit_p.bind via _pjit_call_impl (grad of jit).
+    jax.grad(jax.jit(lambda x: x * 2.0))(1.0)
+    rec_grad = take_compile_spans()
+    self.assertNotEmpty(rec_grad)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

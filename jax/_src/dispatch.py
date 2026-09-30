@@ -35,25 +35,27 @@ from jax._src import literals
 from jax._src import pjit
 from jax._src import traceback_util
 from jax._src import util
-
 from jax._src import xla_bridge as xb
 from jax._src.abstract_arrays import array_types
+from jax._src.api_util import InternalFloatingPointError
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval
 from jax._src.interpreters import pxla
-from jax._src.api_util import InternalFloatingPointError
-from jax._src.layout import Layout, Format
+from jax._src.layout import Format, Layout
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh, Mesh
-from jax._src.monitoring import record_scalar, record_event_duration_secs, record_event_time_span
+from jax._src.monitoring import record_event_duration_secs, record_event_time_span, record_scalar
 from jax._src.partition_spec import PartitionSpec, UnreducedKind
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    NamedSharding, make_single_device_sharding, GSPMDSharding)
-from jax._src.stages import SourceInfo
+    GSPMDSharding,
+    NamedSharding,
+    make_single_device_sharding,
+)
+from jax._src.stages import SourceInfo, _compilation_uuid
 import numpy as np
 
 
@@ -239,8 +241,11 @@ class LogElapsedTimeContextManager:
       record_event_duration_secs(
           self.event, elapsed_time, fun_name=self.fun_name
       )
+      span_kwargs: dict[str, str | int] = {"fun_name": self.fun_name}
+      if (compilation_uuid := _compilation_uuid.get()) is not None:
+        span_kwargs["compilation_uuid"] = compilation_uuid
       record_event_time_span(
-          self.event, self.start_time, end_time, fun_name=self.fun_name
+          self.event, self.start_time, end_time, **span_kwargs
       )
 
 log_elapsed_time = LogElapsedTimeContextManager

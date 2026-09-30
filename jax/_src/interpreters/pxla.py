@@ -1139,52 +1139,72 @@ def lower_sharding_computation(
   jaxpr_util.maybe_dump_jaxpr_to_file(fun_name, closed_jaxpr)
   module_name = util.wrap_name(api_name, fun_name)
 
-  (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
-   tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
-       closed_jaxpr, module_name, backend,
-       len(const_args), tuple(global_in_avals), tuple(global_out_avals),
-       semantic_in_shardings, semantic_out_shardings,
-       in_layouts, out_layouts, num_devices,
-       tuple(device_list) if prim_requires_devices else None,  # pyrefly: ignore[bad-argument-type]
-       donated_invars, all_default_mem_kind, inout_aliases,
-       propagated_out_mem_kinds, platforms,
-       lowering_parameters=lowering_parameters,
-       abstract_mesh=abstract_mesh)
+  with stages.set_compilation_uuid():
+    (
+        module,
+        keepalive,
+        host_callbacks,
+        unordered_effects,
+        ordered_effects,
+        tuple_args,
+        shape_poly_state,
+    ) = _cached_lowering_to_hlo(
+        closed_jaxpr,
+        module_name,
+        backend,
+        len(const_args),
+        tuple(global_in_avals),
+        tuple(global_out_avals),
+        semantic_in_shardings,
+        semantic_out_shardings,
+        in_layouts,
+        out_layouts,
+        num_devices,
+        tuple(device_list) if prim_requires_devices else None,  # pyrefly: ignore[bad-argument-type]
+        donated_invars,
+        all_default_mem_kind,
+        inout_aliases,
+        propagated_out_mem_kinds,
+        platforms,
+        lowering_parameters=lowering_parameters,
+        abstract_mesh=abstract_mesh,
+    )
 
-  # backend and device_assignment is passed through to MeshExecutable because
-  # if keep_unused=False and all in_shardings are pruned, then there is no way
-  # to get the device_assignment and backend. So pass it to MeshExecutable
-  # because we calculate the device_assignment and backend before in_shardings,
-  # etc are pruned.
-  return MeshComputation(
-      module_name,
-      module,
-      const_args,
-      donated_invars,
-      platforms,
-      compiler_options_kvs,
-      device_list,
-      global_in_avals=global_in_avals,
-      global_out_avals=global_out_avals,
-      in_shardings=in_shardings,
-      out_shardings=out_shardings,
-      tuple_args=tuple_args,
-      unordered_effects=unordered_effects,
-      ordered_effects=ordered_effects,
-      host_callbacks=host_callbacks,
-      keepalive=keepalive,
-      kept_var_idx=kept_var_idx,
-      mut=mut,
-      backend=backend,
-      num_devices=num_devices,
-      committed=committed,
-      in_layouts=in_layouts,
-      out_layouts=out_layouts,
-      shape_poly_state=shape_poly_state,
-      all_args_info=all_args_info,
-      pgle_profiler=pgle_profiler,
-      intermediate_shardings=unique_intermediate_shardings,
-      context_mesh=context_mesh)
+    # backend and device_assignment is passed through to MeshExecutable because
+    # if keep_unused=False and all in_shardings are pruned, then there is no way
+    # to get the device_assignment and backend. So pass it to MeshExecutable
+    # because we calculate the device_assignment and backend before in_shardings,
+    # etc are pruned.
+    return MeshComputation(
+        module_name,
+        module,
+        const_args,
+        donated_invars,
+        platforms,
+        compiler_options_kvs,
+        device_list,
+        global_in_avals=global_in_avals,
+        global_out_avals=global_out_avals,
+        in_shardings=in_shardings,
+        out_shardings=out_shardings,
+        tuple_args=tuple_args,
+        unordered_effects=unordered_effects,
+        ordered_effects=ordered_effects,
+        host_callbacks=host_callbacks,
+        keepalive=keepalive,
+        kept_var_idx=kept_var_idx,
+        mut=mut,
+        backend=backend,
+        num_devices=num_devices,
+        committed=committed,
+        in_layouts=in_layouts,
+        out_layouts=out_layouts,
+        shape_poly_state=shape_poly_state,
+        all_args_info=all_args_info,
+        pgle_profiler=pgle_profiler,
+        intermediate_shardings=unique_intermediate_shardings,
+        context_mesh=context_mesh,
+    )
 
 
 def _to_logical_sharding(
@@ -1220,6 +1240,7 @@ class MeshComputation(stages.Lowering):
     self._device_list = _create_device_list(device_assignment)
     self.compile_args = compile_args
     self._executable = None
+    self._compilation_uuid = stages._compilation_uuid.get()
 
   # -- stages.Lowering overrides
 
@@ -1256,10 +1277,14 @@ class MeshComputation(stages.Lowering):
     if use_cache and self._executable is not None:
       return self._executable
 
-    executable = UnloadedMeshExecutable.from_hlo(
-        self._name, self._hlo, **self.compile_args,
-        compiler_options_kvs=compiler_options_kvs,
-        device_list=compilation_device_list)
+    with stages.set_compilation_uuid(self._compilation_uuid):
+      executable = UnloadedMeshExecutable.from_hlo(
+          self._name,
+          self._hlo,
+          **self.compile_args,
+          compiler_options_kvs=compiler_options_kvs,
+          device_list=compilation_device_list,
+      )
     if use_cache:
       self._executable = executable
     return executable

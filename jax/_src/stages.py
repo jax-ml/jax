@@ -31,14 +31,18 @@ executable protocols described above.
 from __future__ import annotations
 
 from collections.abc import Sequence
+import contextlib
+import contextvars
 import dataclasses
 from dataclasses import dataclass
 import enum
 import itertools as it
 from typing import Any, NamedTuple, Protocol, runtime_checkable
+import uuid
 
 from jax._src import config
 from jax._src import core
+from jax._src import flattree as ft
 from jax._src import sharding as sharding_lib
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -53,9 +57,8 @@ from jax._src.lib import _jax
 from jax._src.lib import hlo
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
-from jax._src.sharding_impls import UnspecifiedValue
 from jax._src.mesh import AbstractMesh
-from jax._src import flattree as ft
+from jax._src.sharding_impls import UnspecifiedValue
 from jax._src.tree_util import tree_unflatten
 from jax._src.typing import ArrayLike
 
@@ -66,6 +69,20 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 CompilerOptions = dict[str, Any]
+
+_compilation_uuid: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_compilation_uuid", default=None
+)
+
+
+@contextlib.contextmanager
+def set_compilation_uuid(default: str | None = None):
+  val = _compilation_uuid.get() or default or str(uuid.uuid4())
+  token = _compilation_uuid.set(val)
+  try:
+    yield val
+  finally:
+    _compilation_uuid.reset(token)
 
 
 # -- Internal types
@@ -428,11 +445,28 @@ class Traced(Stage):
   Provides access to both the hijax (high-level) and lojax (low-level)
   representations via `.jaxpr` and `.lojax` properties respectively.
   """
-  __slots__ = ['_meta_tys_flat', '_params', '_in_tree', 'out_tree', '_consts',
-               '_fun_sourceinfo', '_lojax', '_closure_converted']
+  __slots__ = [
+      "_meta_tys_flat",
+      "_params",
+      "_in_tree",
+      "out_tree",
+      "_consts",
+      "_fun_sourceinfo",
+      "_lojax",
+      "_closure_converted",
+      "_compilation_uuid",
+  ]
 
-  def __init__(self, meta_tys_flat, params, in_tree, out_tree, consts,
-               fun_sourceinfo):
+  def __init__(
+      self,
+      meta_tys_flat,
+      params,
+      in_tree,
+      out_tree,
+      consts,
+      fun_sourceinfo,
+      compilation_uuid: str | None = None,
+  ):
     self._meta_tys_flat = meta_tys_flat
     self._params = params
     self._in_tree = in_tree
@@ -441,6 +475,7 @@ class Traced(Stage):
     self._fun_sourceinfo = fun_sourceinfo
     self._lojax = None
     self._closure_converted = None
+    self._compilation_uuid = compilation_uuid
 
   jaxpr = property(lambda self: self._params['jaxpr'])
   fun_name = property(lambda self: self._params['name'])
@@ -494,7 +529,8 @@ class Traced(Stage):
     consts, fun = self.closure_convert()
     arg_avals = self.jaxpr.in_avals[len(self._consts):]
     args, kwargs = tree_unflatten(self.in_tree, arg_avals)
-    traced = jit(fun).trace(consts, *args, **kwargs)
+    with set_compilation_uuid(self._compilation_uuid):
+      traced = jit(fun).trace(consts, *args, **kwargs)
     jaxpr = traced.jaxpr
     if (not jaxpr.consts and len(jaxpr.eqns) == 1 and
         (eqn := jaxpr.eqns[0]).primitive is core.eval_jaxpr_p and
@@ -512,8 +548,18 @@ class Traced(Stage):
     in_axes = (None,) * len(self._consts) + tuple(in_axes)
     new_jaxpr, out_axes = batching.batch_jaxpr2(self.jaxpr, axis_data, in_axes)
     new_params = dict(self._params, jaxpr=new_jaxpr)
-    return Traced(list(new_jaxpr.in_avals), new_params, self._in_tree,
-                  self.out_tree, self._consts, self._fun_sourceinfo), out_axes
+    return (
+        Traced(
+            list(new_jaxpr.in_avals),
+            new_params,
+            self._in_tree,
+            self.out_tree,
+            self._consts,
+            self._fun_sourceinfo,
+            self._compilation_uuid,
+        ),
+        out_axes,
+    )
 
   def physicalize(self, ctx) -> Traced:
     new_jaxpr = ctx.physicalize_closed_jaxpr(self.jaxpr)
@@ -525,6 +571,7 @@ class Traced(Stage):
         self.out_tree,
         self._consts,
         self._fun_sourceinfo,
+        self._compilation_uuid,
     )
 
   @property
@@ -576,9 +623,14 @@ class Traced(Stage):
       if (lowering_platforms is None and isinstance(ctx_mesh, AbstractMesh)
           and (abd := ctx_mesh.abstract_device) is not None):
         lowering_platforms = (abd.platform,)
-      lowering = _resolve_and_lower(
-          lo._meta_tys_flat, **lo._params, lowering_platforms=lowering_platforms,
-          lowering_parameters=_private_parameters, pgle_profiler=None)
+      with set_compilation_uuid(self._compilation_uuid):
+        lowering = _resolve_and_lower(
+            lo._meta_tys_flat,
+            **lo._params,
+            lowering_platforms=lowering_platforms,
+            lowering_parameters=_private_parameters,
+            pgle_profiler=None,
+        )
     except DeviceAssignmentMismatchError as e:
       fails, = e.args
       msg = _device_assignment_mismatch_error(

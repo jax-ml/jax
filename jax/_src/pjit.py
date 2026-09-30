@@ -268,9 +268,17 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
       raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
                          "`jit`, but 'no_tracing' is set")
     p, args_flat = _infer_params(fun, jit_info, args, kwargs)
-    (outs, out_flat, out_tree, args_flat, jaxpr,
-     executable, pgle_profiler, const_args) = _run_python_pjit(
-         p, args_flat, fun, args, kwargs)
+    with stages.set_compilation_uuid(p.compilation_uuid):
+      (
+          outs,
+          out_flat,
+          out_tree,
+          args_flat,
+          jaxpr,
+          executable,
+          pgle_profiler,
+          const_args,
+      ) = _run_python_pjit(p, args_flat, fun, args, kwargs)
 
     maybe_fastpath_data = _get_fastpath_data(
         executable, out_tree, args_flat, out_flat, jaxpr.effects, jaxpr.consts,
@@ -317,8 +325,15 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 def jit_trace(jit_func, *args, **kwargs) -> stages.Traced:
   p, args_flat = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs)
   arg_types = map(convert_to_metaty, args_flat)
-  return stages.Traced(arg_types, p.params, p.in_tree, p.out_tree, p.consts,
-                       jit_func._jit_info.fun_sourceinfo)
+  return stages.Traced(
+      arg_types,
+      p.params,
+      p.in_tree,
+      p.out_tree,
+      p.consts,
+      jit_func._jit_info.fun_sourceinfo,
+      p.compilation_uuid,
+  )
 
 @api_boundary
 def jit_lower(jit_func, *args, **kwargs):
@@ -486,6 +501,7 @@ class PjitParams(NamedTuple):
   in_tree: PyTreeDef  # Not including the const_args
   out_tree: PyTreeDef
   arg_names: tuple[str, ...]  # Not including the const_args
+  compilation_uuid: str | None = None
 
 
 def _trace_for_jit(
@@ -547,7 +563,7 @@ def _trace_for_jit(
           "Finished tracing {fun_name} for jit in {elapsed_time:.9f} sec",
           fun_name(fun), event=dispatch.JAXPR_TRACE_EVENT)
       if core.trace_ctx.is_top_level() else contextlib.nullcontext())
-  with elapsed_time_ctx:
+  with stages.set_compilation_uuid() as compilation_uuid, elapsed_time_ctx:
     if ji.use_resource_env:  # pjit
       with (_internal_use_concrete_mesh(ctx_mesh),
             mesh_lib.use_abstract_mesh(ctx_mesh.abstract_mesh)):
@@ -601,8 +617,15 @@ def _trace_for_jit(
       inline=ji.inline,
       compiler_options_kvs=ji.compiler_options_kvs,
   )
-  return PjitParams(consts, params, avals_ft.vals, in_tree_filtered,
-                    out_avals.tree, dbg.safe_arg_names(len(avals_ft)))
+  return PjitParams(
+      consts,
+      params,
+      avals_ft.vals,
+      in_tree_filtered,
+      out_avals.tree,
+      dbg.safe_arg_names(len(avals_ft)),
+      compilation_uuid,
+  )
 
 
 @dataclass(slots=True)
