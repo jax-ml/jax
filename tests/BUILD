@@ -812,6 +812,7 @@ jax_multiplatform_test(
     name = "lax_numpy_indexing_test",
     srcs = ["lax_numpy_indexing_test.py"],
     backend_tags = {
+        "cpu": ["noasan"],  # Times out.
         "tpu": ["noasan"],  # Times out.
     },
     shard_count = {
