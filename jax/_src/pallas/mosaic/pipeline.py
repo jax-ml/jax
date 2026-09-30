@@ -2674,9 +2674,6 @@ def _emit_pipeline_lowering_rule(
   )
 
   all_args = args_tree.unflatten(args_flat)
-  grid_val_iter = iter(all_args.dynamic_grid_spec)
-  grid_indices = tuple(next(grid_val_iter) if pallas_core.is_dynamic_dim(d)
-                       else ir_constant(d) for d in grid_mapping.grid)
   global_grid = _zip_grid(all_args.dynamic_grid_spec, grid_mapping.grid)
   grid_sizes = tuple(ir_constant(d) if isinstance(d, int) else d
                      for d in global_grid)
@@ -2689,9 +2686,9 @@ def _emit_pipeline_lowering_rule(
     grid_names = (None,) * len(ctx.lowering_context.grid_sizes)
   grid_names = (tuple(None for _ in grid_sizes)
                 + (tuple(grid_names)))
-  user_grid_indices = (tuple(g for i, g in enumerate(grid_indices)
-                             if i not in grid_mapping.vmapped_dims)
-                       + tuple(ctx.lowering_context.user_grid_indices))
+  user_grid_indices = tuple(
+      g for i, g in enumerate(grid_sizes) if i not in grid_mapping.vmapped_dims
+  ) + tuple(ctx.lowering_context.user_grid_indices)
   grid_sizes += tuple(ctx.lowering_context.grid_sizes)
 
   lowering_context = ctx.lowering_context.replace(
