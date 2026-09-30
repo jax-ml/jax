@@ -41,6 +41,7 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import hijax
+from jax._src import jaxpr_util
 from jax._src import literals
 from jax._src import custom_derivatives
 from jax._src import test_util as jtu
@@ -1508,6 +1509,49 @@ class CustomJVPTest(jtu.JaxTestCase):
     #   return hh()
 
     # jax.grad(h)(0.)  # don't crash
+
+  def test_higher_order_in_scan(self):
+    @jax.custom_jvp
+    def g(theta, c):
+      return jnp.sin(theta * c)
+
+    @g.defjvp
+    def g_jvp(primals, tangents):
+      (theta, c), (theta_dot, _) = primals, tangents
+      y = g(theta, c)
+      return y, 2 * c * y * theta_dot
+
+    c = jnp.array([0.3, 0.7, 1.1, 1.5])
+
+    def f(theta):
+      _, y = lax.scan(lambda _, ci: (None, g(theta, ci)), None, c)
+      return jnp.sum(y)
+
+    theta = 0.9
+    expected = jnp.sum(4 * c ** 2 * jnp.sin(theta * c))
+    rev_over_fwd = lambda f: jax.grad(lambda t: jax.jvp(f, (t,), (1.,))[1])
+    for d2 in [lambda f: jax.jacfwd(jax.grad(f)),
+               lambda f: jax.grad(jax.grad(f)),
+               rev_over_fwd,
+               lambda f: jax.jacfwd(jax.jacfwd(f))]:
+      self.assertAllClose(d2(f)(theta), expected, check_dtypes=False)
+      self.assertAllClose(d2(jax.checkpoint(f))(theta), expected,
+                          check_dtypes=False)
+
+  def test_value_and_grad_runs_primal_once(self):
+    @jax.custom_jvp
+    def f(x):
+      return jnp.sin(x)
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      (x,), (x_dot,) = primals, tangents
+      return f(x), jnp.cos(x) * x_dot
+
+    jaxpr = jax.make_jaxpr(jax.value_and_grad(f))(1.).jaxpr
+    self.assertEqual(jaxpr_util.primitives(pe.lower_jaxpr2(jaxpr))['sin'], 1)
+    value, grad = jax.jit(jax.value_and_grad(f))(1.)
+    self.assertAllClose((value, grad), (jnp.sin(1.), jnp.cos(1.)))
 
 
 @jtu.with_config(jax_custom_vjp3=False)
