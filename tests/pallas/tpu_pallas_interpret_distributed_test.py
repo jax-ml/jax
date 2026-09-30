@@ -57,12 +57,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
             message='jax.experimental.pallas.DeviceIdType is deprecated',
         )
     )
-    self.enter_context(
-        jtu.ignore_warning(
-            category=DeprecationWarning,
-            message='device_id_type is deprecated',
-        )
-    )
 
     if not jtu.test_device_matches(['cpu']):
       self.skipTest('CPU-only test')
@@ -91,14 +85,8 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       right_neighbor = lax.rem(my_id + 1, jnp.int32(num_devices))
 
       barrier_sem = pltpu.get_barrier_semaphore()
-      pl.semaphore_signal(
-          barrier_sem,
-          device_id=(left_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH)
-      pl.semaphore_signal(
-          barrier_sem,
-          device_id=(right_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH)
+      pl.semaphore_signal(barrier_sem, device_id=(left_neighbor,))
+      pl.semaphore_signal(barrier_sem, device_id=(right_neighbor,))
       pl.semaphore_wait(barrier_sem, 2)
 
       remote_copy_op = pltpu.make_async_remote_copy(
@@ -107,7 +95,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           send_sem=send_sem,
           recv_sem=recv_sem,
           device_id=(right_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
       )
       remote_copy_op.start()
       remote_copy_op.wait()
@@ -192,13 +179,11 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           barrier_sem,
           inc=1,
           device_id=(left_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
         pl.semaphore_signal(
           barrier_sem,
           inc=1,
           device_id=(right_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
         pl.semaphore_wait(barrier_sem, 2)
 
@@ -220,8 +205,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=send_sem,
         recv_sem=recv_sems.at[outer_step],
         device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
       remote_copy_op.start()
       remote_copy_op.wait()
 
@@ -319,13 +303,11 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           barrier_sem,
           inc=1,
           device_id=(left_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
         pl.semaphore_signal(
           barrier_sem,
           inc=1,
           device_id=(right_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
         pl.semaphore_wait(barrier_sem, 2)
 
@@ -338,7 +320,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           send_sem=remote_send_sem,
           recv_sem=remote_recv_sem,
           device_id=(right_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
         initial_copy.start()
         initial_copy.wait()
@@ -350,8 +331,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         capacity_sem,
         inc=1,
         device_id=(left_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
 
       # Copy the partial result our left neighbor sent to us into VMEM for
       # computation.
@@ -371,8 +351,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=remote_send_sem,
         recv_sem=remote_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
       remote_copy.start()
       # Finish local copy and accumulate while remote_copy is happening.
       local_copy.wait()
@@ -476,7 +455,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           semaphore,
           inc=1,
           device_id=(neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
       )
 
     def reduce_scatter_kernel(
@@ -519,13 +497,11 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           barrier_sem,
           inc=1,
           device_id=(left_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
         pl.semaphore_signal(
           barrier_sem,
           inc=1,
           device_id=(right_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
         pl.semaphore_wait(barrier_sem, 2)
 
@@ -535,8 +511,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=left_send_sem,
         recv_sem=left_recv_sem,
         device_id=(left_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
 
       initial_right_copy = pltpu.make_async_remote_copy(
         src_ref=x_ref.at[my_id, right_copy_slice],
@@ -544,8 +519,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=right_send_sem,
         recv_sem=right_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
 
       left_copy = pltpu.make_async_remote_copy(
         src_ref=hbm_scratch.at[working_slot, left_copy_slice],
@@ -553,8 +527,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=left_send_sem,
         recv_sem=left_recv_sem,
         device_id=(left_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
       right_copy = pltpu.make_async_remote_copy(
         # Note: Right copy is flipped with regards to slots since we are copying
         # to the next outer_step iteration.
@@ -563,8 +536,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=right_send_sem,
         recv_sem=right_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
 
       # --- Prologue ---
       @pl.when(is_start)
@@ -753,7 +725,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           barrier_sem,
           inc=1,
           device_id=(neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
       pl.semaphore_wait(barrier_sem, 2)
       if double_barrier:
@@ -771,8 +742,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
               second_barrier,
               inc=1,
               device_id=(neighbor,),
-              device_id_type=pl.DeviceIdType.MESH,
-            )
+                )
           pl.semaphore_wait(second_barrier, 2)
 
     # We pick a large outer kernel block size that we do not want to place
@@ -817,7 +787,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           semaphore,
           inc=1,
           device_id=(neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
       )
 
     def reduce_scatter_kernel(
@@ -857,8 +826,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=left_send_sem,
         recv_sem=left_recv_sem,
         device_id=(left_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
 
       initial_right_copy = pltpu.make_async_remote_copy(
         src_ref=x_ref.at[my_id, right_copy_slice],
@@ -866,8 +834,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=right_send_sem,
         recv_sem=right_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
 
       left_copy = pltpu.make_async_remote_copy(
         src_ref=hbm_scratch.at[working_slot, left_copy_slice],
@@ -875,16 +842,14 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=left_send_sem,
         recv_sem=left_recv_sem,
         device_id=(left_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
       right_copy = pltpu.make_async_remote_copy(
         src_ref=hbm_scratch.at[receiving_slot, right_copy_slice],
         dst_ref=hbm_scratch.at[working_slot, right_copy_slice],
         send_sem=right_send_sem,
         recv_sem=right_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
 
       # --- Prologue ---
       @pl.when(is_start)
@@ -1084,8 +1049,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
               send_sem=send_sem,
               recv_sem=recv_sem,
               device_id=(dst_id,),
-              device_id_type=pl.DeviceIdType.MESH,
-          )
+              )
           dma.start()
           dma.wait_send()
         recv_count += jnp.where(dst_id == my_id, 1, 0)
@@ -1099,8 +1063,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
             send_sem=send_sem,
             recv_sem=recv_sem,
             device_id=(my_id,),
-            device_id_type=pl.DeviceIdType.MESH,
-        )
+          )
         fake_dma.wait_recv()
 
     @jax.jit
@@ -1221,7 +1184,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           dma_sems.at[0],
           dma_sems.at[1],
           device_id=(left_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
       ).wait()
 
     run = shard_map.shard_map(
