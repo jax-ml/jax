@@ -2084,67 +2084,6 @@ def _while_transpose_error(*_, **kwargs):
                    "lax.while_loop or lax.fori_loop with dynamic start/stop values. "
                    "Try using lax.scan, or using fori_loop with static start/stop.")
 
-def _while_dce_rule(used_outputs: list[bool], live_ins: list[bool],
-                    eqn: core.JaxprEqn
-                    ) -> tuple[list[bool], core.JaxprEqn | None]:
-  if not any(used_outputs) and not pe.has_effects(eqn, live_ins):
-    return [False] * len(eqn.invars), None
-  cond_jaxpr, body_jaxpr = eqn.params['cond_jaxpr'], eqn.params['body_jaxpr']
-  cond_nconsts = eqn.params['cond_nconsts']
-  body_nconsts = eqn.params['body_nconsts']
-  cond_consts, body_consts, _ = split_list(
-      eqn.invars, [cond_nconsts, body_nconsts])
-  num_carry = len(eqn.outvars)
-
-  # A carry element is live if it's used as an output, read by the cond, or
-  # needed by the body to compute a live carry element. A Ref is live in the
-  # loop if it's live after the loop or used anywhere in it, since the cond and
-  # body run repeatedly. The same Ref can be both a cond const and a body const,
-  # so we track liveness by Var. We compute both with a fixpoint.
-  live_vars = {v for v, l in zip(eqn.invars, live_ins)
-               if l and type(v) is core.Var}
-  is_live = lambda v: type(v) is not core.Var or v in live_vars
-  used_carry = list(used_outputs)
-  for _ in range(1 + num_carry + live_ins.count(False)):
-    _, cond_used_inputs = pe.dce_jaxpr(
-        cond_jaxpr, [True],
-        live_inputs=[*_map(is_live, cond_consts), *[True] * num_carry])
-    used_cond_consts, cond_used_carry = split_list(
-        cond_used_inputs, [cond_nconsts])
-    used_carry = _map(operator.or_, used_carry, cond_used_carry)
-    body_jaxpr_dce, body_used_inputs = pe.dce_jaxpr(
-        body_jaxpr, used_carry, instantiate=[False] * body_nconsts + used_carry,
-        live_inputs=[*_map(is_live, body_consts), *[True] * num_carry])
-    used_body_consts, used_carry_in = split_list(
-        body_used_inputs, [body_nconsts])
-    new_live_vars = live_vars | {
-        v for v, used in zip([*cond_consts, *body_consts],
-                             [*used_cond_consts, *used_body_consts])
-        if used and type(v) is core.Var}
-    if used_carry_in == used_carry and new_live_vars == live_vars:
-      break
-    used_carry = _map(operator.or_, used_carry, used_carry_in)
-    live_vars = new_live_vars
-  else:
-    assert False, "Fixpoint not reached"
-  cond_jaxpr_dce, cond_used_inputs = pe.dce_jaxpr(
-      cond_jaxpr, [True], instantiate=[False] * cond_nconsts + used_carry,
-      live_inputs=[*_map(is_live, cond_consts), *[True] * num_carry])
-  used_cond_consts, _ = split_list(cond_used_inputs, [cond_nconsts])
-
-  new_params = dict(eqn.params, cond_jaxpr=cond_jaxpr_dce,
-                    body_jaxpr=body_jaxpr_dce,
-                    cond_nconsts=sum(used_cond_consts),
-                    body_nconsts=sum(used_body_consts))
-  used_inputs = [*used_cond_consts, *used_body_consts, *used_carry]
-  new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
-  new_outvars = [v for v, used in zip(eqn.outvars, used_carry) if used]
-  _, new_effects = eqn.primitive.abstract_eval(
-      *[v.aval for v in new_invars], **new_params)
-  new_eqn = pe.new_jaxpr_eqn(new_invars, new_outvars, eqn.primitive, new_params,
-                             new_effects, eqn.source_info, eqn.ctx)
-  return used_inputs, new_eqn
-
 # For a while loop with ordered effects in the cond, we need a special
 # lowering. Fundamentally, we'd like to rewrite a while loop that looks like
 # this:
@@ -2522,7 +2461,6 @@ pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 core.custom_typechecks[while_p] = _while_typecheck
 mlir.register_lowering(while_p, _while_lowering)
 state_discharge.register_discharge_rule(while_p)(_while_discharge_rule)
-pe.dce_rules[while_p] = _while_dce_rule
 
 def _while_is_high(*_, cond_jaxpr, body_jaxpr, **__):
   return cond_jaxpr.is_high or body_jaxpr.is_high
