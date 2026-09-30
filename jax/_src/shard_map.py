@@ -831,6 +831,7 @@ def _shard_map_staging(
   to_jaxpr_tracer = partial(trace.to_jaxpr_tracer, source_info=source_info)
   const_tracers = map(to_jaxpr_tracer, consts)
   trace.frame.is_high |= jaxpr.is_high
+  trace.frame.transpose_only |= jaxpr.transpose_only
   if trace.requires_low:
     in_tracers = [to_jaxpr_tracer(loval) for arg in args
                   for loval in typeof(arg).lower_val(arg)]

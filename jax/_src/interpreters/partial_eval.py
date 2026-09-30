@@ -614,7 +614,7 @@ def tracers_to_jaxpr(
 
   processed_eqn_ids = set()
   eqns: list[core.JaxprEqn] = []
-  is_high = False
+  is_high = transpose_only = False
 
   reachable = toposort
   tracers = reachable((*in_tracers, *out_tracers, *effect_handles))
@@ -635,6 +635,7 @@ def tracers_to_jaxpr(
                                   r.effects, r.source_info, r.ctx))
         in_avals = [x.aval for x in in_atoms]
         is_high |= r.primitive.is_high(*in_avals, **r.params)
+        transpose_only |= r.primitive.transpose_only(*in_avals, **r.params)
         processed_eqn_ids.add(r.eqn_id)
     elif isinstance(r, LambdaBinding):
       if not any(t is in_tracer for in_tracer in in_tracers):
@@ -662,7 +663,8 @@ def tracers_to_jaxpr(
   jaxpr_effects = make_jaxpr_effects(const_vars, invars, outvars, eqns)
   is_high |= any(x.aval.is_high for x in it.chain(const_vars, invars, outvars))
   jaxpr = Jaxpr(const_vars, invars,  # pyrefly: ignore[bad-argument-type]
-                outvars, eqns, jaxpr_effects, debug_info, is_high)
+                outvars, eqns, jaxpr_effects, debug_info, is_high,
+                transpose_only=transpose_only)
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   # del getvar  # needed to avoid cyclic-reference closure, apparently!
   return jaxpr, const_vals, env_vals
@@ -1552,7 +1554,8 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
 class JaxprStackFrame:
   __slots__ = (
       'gensym', 'constid_to_tracer', 'constvar_to_val', 'tracing_eqns',
-      'invars', 'effects', 'debug_info', 'is_high', 'auto_dce')
+      'invars', 'effects', 'debug_info', 'is_high', 'transpose_only',
+      'auto_dce')
 
   gensym: Callable[[AbstractValue], Var]
   constid_to_tracer: WeakValueDictionary[ConstId, DynamicJaxprTracer]
@@ -1562,6 +1565,7 @@ class JaxprStackFrame:
   effects: core.Effects
   debug_info: core.DebugInfo | None
   is_high: bool
+  transpose_only: bool
   auto_dce: bool
 
   def __init__(self, debug_info: core.DebugInfo | None, auto_dce: bool):
@@ -1573,6 +1577,7 @@ class JaxprStackFrame:
     self.effects = set()
     self.debug_info = debug_info
     self.is_high = False
+    self.transpose_only = False
     self.auto_dce = auto_dce
 
   def add_eqn(self, eqn: TracingEqn):
@@ -1613,7 +1618,8 @@ class JaxprStackFrame:
     all_vars = it.chain(constvars, self.invars, outvars)
     is_high = self.is_high or any(v.aval.is_high for v in all_vars)
 
-    jaxpr = Jaxpr(constvars, self.invars, outvars, eqns, effs, debug_info, is_high)
+    jaxpr = Jaxpr(constvars, self.invars, outvars, eqns, effs, debug_info, is_high,
+                  transpose_only=self.transpose_only)
     return jaxpr, list(constvals)
 
   def newvar(self, aval):
@@ -1812,7 +1818,9 @@ class DynamicJaxprTrace(core.Trace):
     return self.to_jaxpr_tracer(val, source_info=source_info)
 
   def process_primitive(self, primitive, tracers, params, /):
-    self.frame.is_high |= primitive.is_high(*map(typeof, tracers), **params)
+    in_avals = map(typeof, tracers)
+    self.frame.is_high |= primitive.is_high(*in_avals, **params)
+    self.frame.transpose_only |= primitive.transpose_only(*in_avals, **params)
     if config.eager_constant_folding.value and not any(isinstance(x, Tracer) for x in tracers):
       avals = tuple(core.typeof(x) for x in tracers)
       return primitive.bind_with_trace(core.eval_trace, tracers, avals, params)
@@ -1888,6 +1896,7 @@ class DynamicJaxprTrace(core.Trace):
     in_tangent_avals = [t.to_tangent_aval() for t in in_avals]
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun, in_avals, lower=self.requires_low)
     self.frame.is_high |= fun_jaxpr.is_high
+    self.frame.transpose_only |= fun_jaxpr.transpose_only
     closed_fun_jaxpr = convert_constvars_jaxpr(fun_jaxpr)
 
     @partial(lu.wrap_init, debug_info=jvp.debug_info)
@@ -1932,6 +1941,7 @@ class DynamicJaxprTrace(core.Trace):
     in_avals = [t.aval for t in tracers]
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun.with_unknown_names(), in_avals, lower=self.requires_low)
     self.frame.is_high |= fun_jaxpr.is_high
+    self.frame.transpose_only |= fun_jaxpr.transpose_only
     num_consts = len(consts)
     closed_fun_jaxpr = convert_constvars_jaxpr(fun_jaxpr)
 
