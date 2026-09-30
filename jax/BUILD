@@ -194,6 +194,7 @@ py_library_providing_imports_info(
         "//jax/_src:dtypes",
         "//jax/_src:earray",
         "//jax/_src:effects",
+        "//jax/_src:execution_options",
         "//jax/_src:environment_info",
         "//jax/_src:error_check",
         "//jax/_src:export",
