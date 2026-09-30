@@ -1065,8 +1065,13 @@ class ConstraintSystem:
   ) -> ConstraintSystem | Unsatisfiable:
     if isinstance(other, Unsatisfiable):
       return Unsatisfiable()
-    for variable, assignment in self.assignments.items():
-      if variable in other.assignments and assignment != other.assignments[variable]:
+    smaller, larger = (
+        (self.assignments, other.assignments)
+        if len(self.assignments) <= len(other.assignments)
+        else (other.assignments, self.assignments)
+    )
+    for variable, assignment in smaller.items():
+      if variable in larger and assignment != larger[variable]:
         return Unsatisfiable()
     return ConstraintSystem(
         assignments=self.assignments | other.assignments,

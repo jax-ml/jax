@@ -576,9 +576,7 @@ def find_assignments_for(
         "A satisfiable system should not have remaining unsatisfied"
         " constraints. This is a bug."
     )
-    return {
-        v: k for v, k in constraint_system.assignments.items() if v in unknowns
-    }, fuel
+    return {u: constraint_system.assignments[u] for u in unknowns}, fuel
 
   # If unknowns remain and we have fully reduced the system, we may still
   # be able to make progress by trying out potential assignments. These
