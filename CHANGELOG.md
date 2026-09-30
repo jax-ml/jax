@@ -36,6 +36,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     (roughly 2013 onwards, requiring AVX2 and FMA support). Older CPUs that
     only support AVX are no longer supported, though you can still build from
     source for older CPUs.
+  * {func}`jax.numpy.atleast_1d`, {func}`jax.numpy.atleast_2d`, and
+    {func}`jax.numpy.atleast_3d` now return tuples of arrays rather than
+    lists, matching the behavior in NumPy 2.0+.
 
 * Changes
   * JAX now uses Bazel 9.2.0 to build from source.
