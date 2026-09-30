@@ -15,9 +15,10 @@
 """Precision testing utilities for elementary floating-point functions."""
 
 import collections
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Sequence
 import concurrent.futures
 import os
+from typing import Any
 
 from absl import flags
 import jax
@@ -26,6 +27,24 @@ from jax._src import tpu_info
 import jax.numpy as jnp
 import mpmath
 import numpy as np
+
+
+class ClassShardedTestLoader(jtu.JaxTestLoader):
+  """Test loader that assigns each TestCase class to its own shard."""
+
+  def shardTestCaseNames(
+      self,
+      iterator: Iterator[Any],
+      ordered_names: Sequence[str],
+      shard_index: int,
+  ) -> Sequence[str]:
+    if not ordered_names:
+      return []
+    bucket = next(iterator)
+    if bucket == shard_index:
+      return ordered_names
+    return []
+
 
 
 def _default_num_workers() -> int:

@@ -14,6 +14,8 @@
 
 """Unit tests for numerics precision testing utilities."""
 
+import itertools
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -37,7 +39,6 @@ config.parse_flags_with_absl()
 bf16, f16, f32, f64 = jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64
 
 
-@jtu.skip_under_pytest("Only runs under Bazel")
 class UlpDiffTest(jtu.JaxTestCase):
 
   @parameterized.parameters(bf16, f16, f32, f64)
@@ -304,6 +305,47 @@ class UlpDiffTest(jtu.JaxTestCase):
     )
     self.assertIn("inf (0x7f800000)", out)
 
+  def test_class_sharded_test_loader(self):
+    loader = util.ClassShardedTestLoader()
+
+    # Shard 0 perspective
+    iter_0 = itertools.cycle(range(2))
+    self.assertEqual(
+        loader.shardTestCaseNames(iter_0, ["test_a1", "test_a2"], 0),
+        ["test_a1", "test_a2"],
+    )
+    self.assertEqual(
+        loader.shardTestCaseNames(iter_0, ["test_b1"], 0),
+        [],
+    )
+    self.assertEqual(
+        loader.shardTestCaseNames(iter_0, [], 0),
+        [],
+    )
+    self.assertEqual(
+        loader.shardTestCaseNames(iter_0, ["test_c1"], 0),
+        ["test_c1"],
+    )
+
+    # Shard 1 perspective
+    iter_1 = itertools.cycle(range(2))
+    self.assertEqual(
+        loader.shardTestCaseNames(iter_1, ["test_a1", "test_a2"], 1),
+        [],
+    )
+    self.assertEqual(
+        loader.shardTestCaseNames(iter_1, ["test_b1"], 1),
+        ["test_b1"],
+    )
+    self.assertEqual(
+        loader.shardTestCaseNames(iter_1, [], 1),
+        [],
+    )
+    self.assertEqual(
+        loader.shardTestCaseNames(iter_1, ["test_c1"], 1),
+        [],
+    )
+
 
 if __name__ == "__main__":
-  absltest.main(testLoader=jtu.JaxTestLoader())
+  absltest.main(testLoader=util.ClassShardedTestLoader())

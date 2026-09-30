@@ -29,6 +29,18 @@ package(
 
 jax_generate_backend_suites()
 
+DISABLED_CONFIGS = [
+    "cpu_x32",
+    "gpu_a100",
+    "gpu_a100_x32",
+    "gpu_h100_x32",
+    "gpu_p100",
+    "gpu_p100_x32",
+    "gpu_v100",
+    "gpu_v100_x32",
+    "tpu_v4_compilation_cache",
+]
+
 py_library(
     name = "numerics_test_util",
     testonly = True,
@@ -44,130 +56,133 @@ py_library(
     ]),
 )
 
-ELEMENTARY_OPS = [
-    "acos",
-    "acosh",
-    "asin",
-    "asinh",
-    "atan",
-    "atanh",
-    "cbrt",
-    "cos",
-    "cosh",
-    "exp",
-    "exp_highest",
-    "exp2",
-    "expm1",
-    "expm1_highest",
-    "log",
-    "log10",
-    "log1p",
-    "log2",
-    "logistic",
-    "reciprocal",
-    "rsqrt",
-    "sin",
-    "sinc",
-    "sinh",
-    "sqrt",
-    "square",
-    "tan",
-    "tanh",
-]
-
-[
-    jax_multiplatform_test(
-        name = "elementary_test_" + op,
-        srcs = ["elementary_test.py"],
-        args = ["--test_targets=ElementaryTest.test_" + op + "_test_"],
-        disable_configs = [
-            "cpu_x32",
-            "gpu_a100",
-            "gpu_a100_x32",
-            "gpu_h100_x32",
-            "gpu_p100",
-            "gpu_p100_x32",
-            "gpu_v100",
-            "gpu_v100_x32",
-            "tpu_v4_compilation_cache",
-        ],
-        tags = ["cpu:4"],
-        deps = [
-            ":numerics_test_util",
-        ] + py_deps([
-            "absl/testing",
-            "mpmath",
-            "numpy",
-        ]),
-    )
-    for op in ELEMENTARY_OPS
-]
-
-test_suite(
-    name = "elementary_test",
-    tests = [":elementary_test_" + op for op in ELEMENTARY_OPS],
+jax_multiplatform_test(
+    name = "bessel_test",
+    srcs = ["bessel_test.py"],
+    disable_configs = DISABLED_CONFIGS,
+    shard_count = 2,
+    tags = ["cpu:4"],
+    deps = [
+        ":numerics_test_util",
+    ] + py_deps([
+        "absl/testing",
+        "mpmath",
+        "numpy",
+        "scipy",
+    ]),
 )
 
-SPECIAL_OPS = [
-    "bessel_i0e",
-    "bessel_i1e",
-    "digamma",
-    "erf",
-    "erfc",
-    "erfcx",
-    "erfcx_grad",
-    "erfinv",
-    "lgamma",
-]
+jax_multiplatform_test(
+    name = "erf_test",
+    srcs = ["erf_test.py"],
+    disable_configs = DISABLED_CONFIGS,
+    shard_count = 5,
+    tags = ["cpu:4"],
+    deps = [
+        ":numerics_test_util",
+    ] + py_deps([
+        "absl/testing",
+        "mpmath",
+        "numpy",
+        "scipy",
+    ]),
+)
 
-[
-    jax_multiplatform_test(
-        name = "special_test_" + op,
-        srcs = ["special_test.py"],
-        args = ["--test_targets=SpecialTest.test_" + op + "_test_"],
-        disable_configs = [
-            "cpu_x32",
-            "gpu_a100",
-            "gpu_a100_x32",
-            "gpu_h100_x32",
-            "gpu_p100",
-            "gpu_p100_x32",
-            "gpu_v100",
-            "gpu_v100_x32",
-            "tpu_v4_compilation_cache",
-        ],
-        tags = ["cpu:4"],
-        deps = [
-            ":numerics_test_util",
-        ] + py_deps([
-            "absl/testing",
-            "mpmath",
-            "numpy",
-            "scipy",
-        ]),
-    )
-    for op in SPECIAL_OPS
-]
+jax_multiplatform_test(
+    name = "exp_test",
+    srcs = ["exp_test.py"],
+    disable_configs = DISABLED_CONFIGS,
+    shard_count = 4,
+    tags = ["cpu:4"],
+    deps = [
+        ":numerics_test_util",
+    ] + py_deps([
+        "absl/testing",
+        "mpmath",
+        "numpy",
+    ]),
+)
 
-test_suite(
-    name = "special_test",
-    tests = [":special_test_" + op for op in SPECIAL_OPS],
+jax_multiplatform_test(
+    name = "gamma_test",
+    srcs = ["gamma_test.py"],
+    disable_configs = DISABLED_CONFIGS,
+    shard_count = 2,
+    tags = ["cpu:4"],
+    deps = [
+        ":numerics_test_util",
+    ] + py_deps([
+        "absl/testing",
+        "mpmath",
+        "numpy",
+        "scipy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "hyperbolic_test",
+    srcs = ["hyperbolic_test.py"],
+    disable_configs = DISABLED_CONFIGS,
+    shard_count = 6,
+    tags = ["cpu:4"],
+    deps = [
+        ":numerics_test_util",
+    ] + py_deps([
+        "absl/testing",
+        "mpmath",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "log_test",
+    srcs = ["log_test.py"],
+    disable_configs = DISABLED_CONFIGS,
+    shard_count = 4,
+    tags = ["cpu:4"],
+    deps = [
+        ":numerics_test_util",
+    ] + py_deps([
+        "absl/testing",
+        "mpmath",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "power_test",
+    srcs = ["power_test.py"],
+    disable_configs = DISABLED_CONFIGS,
+    shard_count = 5,
+    tags = ["cpu:4"],
+    deps = [
+        ":numerics_test_util",
+    ] + py_deps([
+        "absl/testing",
+        "mpmath",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "trig_test",
+    srcs = ["trig_test.py"],
+    disable_configs = DISABLED_CONFIGS,
+    shard_count = 7,
+    tags = ["cpu:4"],
+    deps = [
+        ":numerics_test_util",
+    ] + py_deps([
+        "absl/testing",
+        "mpmath",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
     name = "numerics_test_util_test",
     srcs = ["numerics_test_util_test.py"],
-    disable_configs = [
-        "cpu_x32",
-        "gpu_a100",
-        "gpu_a100_x32",
-        "gpu_h100_x32",
-        "gpu_p100",
-        "gpu_p100_x32",
-        "gpu_v100",
-        "gpu_v100_x32",
-        "tpu_v4_compilation_cache",
-    ],
+    disable_configs = DISABLED_CONFIGS,
     deps = [
         ":numerics_test_util",
     ] + py_deps([
