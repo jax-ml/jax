@@ -1065,8 +1065,9 @@ def _vjp_bwd_aval_mismatch_err(primal_sourceinfo, path, primal_aval, ct):
         f" type {expected.str_short()}")
 
 def _replace_none(primal_in_aval, maybe_ct):
-  if maybe_ct is None:
-    return ad_util.Zero(primal_in_aval.to_ct_aval())
+  ct_aval = primal_in_aval.to_ct_aval()
+  if maybe_ct is None or getattr(ct_aval, 'dtype', None) is dtypes.float0:
+    return ad_util.Zero(ct_aval)
   else:
     return maybe_ct
 
