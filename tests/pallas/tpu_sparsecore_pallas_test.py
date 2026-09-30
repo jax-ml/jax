@@ -52,6 +52,9 @@ class PallasSCMeshTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
       self.skipTest("SparseCore only supported on TPU v5p+")
     super().setUp()
+    self.enter_context(
+        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
+    )
 
   def test_scalar_subcore_mesh(self):
     sc_info = plsc.get_sparse_core_info()
@@ -92,6 +95,9 @@ class PallasSCTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
       self.skipTest("SparseCore only supported on TPU v5p+")
     super().setUp()
+    self.enter_context(
+        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
+    )
 
   @property
   def sc_info(self):

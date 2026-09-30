@@ -30,6 +30,10 @@ from jax._src.pallas.mosaic import tpu_info
 import jax.numpy as jnp
 
 
+class SparseCorePushStreamWarning(UserWarning):
+  """Warns that destination semaphores are ignored for push streams."""
+
+
 def get_sparse_core_info() -> tpu_info.SparseCoreInfo:
   """Returns the SparseCore information for the current device.
 

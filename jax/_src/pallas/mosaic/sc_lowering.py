@@ -16,6 +16,7 @@
 from collections.abc import Sequence
 import functools
 from typing import Any, NoReturn, cast
+import warnings
 
 from jax._src import core as jax_core
 from jax._src import debugging
@@ -582,6 +583,25 @@ def _prepare_dma_refs(
   return src_ref, dst_ref, indirect_offsets
 
 
+def _is_push_stream(
+    ctx: LoweringRuleContext, src_aval: Any, dst_aval: Any, is_local: bool
+) -> bool:
+  """Returns whether a transfer is a SparseCore push stream (DMA)."""
+  core_type = ctx.lowering_context.kernel_type
+  src = tpu_core.memory_space_to_tpu_memory_space(
+      src_aval.memory_space, core_type)
+  dst = tpu_core.memory_space_to_tpu_memory_space(
+      dst_aval.memory_space, core_type)
+  if not is_local:
+    return False
+  if core_type == tpu_core.CoreType.SC_VECTOR_SUBCORE:
+    return (src == MemorySpace.VMEM and dst != MemorySpace.VMEM) or (
+        src == MemorySpace.VMEM_SHARED and dst == MemorySpace.SMEM)
+  if core_type == tpu_core.CoreType.SC_SCALAR_SUBCORE:
+    return src == MemorySpace.VMEM_SHARED and dst == MemorySpace.SMEM
+  return False
+
+
 # TODO(slebedev): Use the TC rule once we align the ``LoweringRuleContext``
 # with the TC lowering.
 @register_lowering_rule(tpu_primitives.dma_start_p)
@@ -616,10 +636,13 @@ def _dma_start_lowering_rule(
         "`pltpu.async_copy(..., dst_ref=ref.at[jnp.arange(vec_dim)], ...)` or "
         "`pltpu.async_copy(..., dst_ref=ref.at[iota_ref], ...)`."
     )
+  is_local = device_id is None
   core_index = None
   subcore_index = None
   if device_id is not None:
-    if isinstance(sem_aval.memory_space, pallas_core.CoreMemorySpace):
+    if sem_aval is not None and isinstance(
+        sem_aval.memory_space, pallas_core.CoreMemorySpace
+    ):
       dest_mesh = sem_aval.memory_space.mesh
     else:
       dest_mesh = None
@@ -629,6 +652,15 @@ def _dma_start_lowering_rule(
 
   # If not ``None``, we lower to an indirect DMA instead.
   if indirect_offsets is None:
+    is_push = _is_push_stream(ctx, src_aval, dst_aval, is_local)
+    if is_push and sem is not None:
+      warnings.warn(
+          "Destination semaphore is ignored for push streams (VMEM to HBM, "
+          "VMEM_SHARED or SMEM, or VMEM_SHARED to SMEM) on SparseCore; pass "
+          "`sem=None` to `async_copy` to suppress this warning.",
+          sc_core.SparseCorePushStreamWarning,
+      )
+
     def _dma_start(src_ref, dst_ref, sem, src_sem):
       tpu.enqueue_dma(
           source=src_ref,
@@ -652,6 +684,11 @@ def _dma_start_lowering_rule(
     raise NotImplementedError(
         "Scatter/gather to or from a remote device via `pltpu.async_copy` is"
         " not supported"
+    )
+  if sem is None:
+    raise NotImplementedError(
+        "Specifying `sem=None` in async_copy is not yet implemented for "
+        "scatters/gathers."
     )
 
   offset_filter = None
@@ -704,7 +741,9 @@ def _dma_wait_lowering_rule(
   core_id = None
   subcore_id = None
   if device_id is not None:
-    if isinstance(sem_aval.memory_space, pallas_core.CoreMemorySpace):
+    if sem_aval is not None and isinstance(
+        sem_aval.memory_space, pallas_core.CoreMemorySpace
+    ):
       dest_mesh = sem_aval.memory_space.mesh
     else:
       dest_mesh = None
@@ -739,6 +778,11 @@ def _dma_wait_lowering_rule(
     raise NotImplementedError(
         "Scatter/gather to or from a remote device via `pltpu.async_copy` is"
         " not supported"
+    )
+  if sem is None:
+    raise NotImplementedError(
+        "Specifying `sem=None` in async_copy is not yet implemented for "
+        "scatters/gathers."
     )
   sem_aval, _ = _get_ref_and_transforms(sem_aval)
   sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape)

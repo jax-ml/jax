@@ -35,6 +35,9 @@ class DebugCheckTest(jtu.JaxTestCase):
       self.skipTest("SparseCore only supported on TPU v5p+")
 
     super().setUp()
+    self.enter_context(
+        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
+    )
 
   def test_vector_debug_check(self):
     @functools.partial(
