@@ -40,7 +40,7 @@ jax_multiplatform_test(
             "//tests/config:is_tsan": 12,
             "//conditions:default": 5,
         }),
-        "gpu": 5,
+        "gpu": 10,
         "tpu": 5,
     },
     deps = [
@@ -414,7 +414,7 @@ jax_multiplatform_test(
     name = "svd_test",
     srcs = ["svd_test.py"],
     shard_count = {
-        "cpu": 10,
+        "cpu": 20,
         "gpu": 10,
         "tpu": 15,
     },
