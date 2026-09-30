@@ -2997,7 +2997,7 @@ def _expn3(x: Array, n: Array) -> Array:
   return (ans + one) * jnp.exp(-x) / xk
 
 
-@partial(custom_derivatives.custom_jvp, nondiff_argnums=(0,))
+@custom_derivatives.custom_jvp
 @jnp_vectorize.vectorize
 @jit
 def expn(n: ArrayLike, x: ArrayLike) -> Array:
@@ -3050,8 +3050,8 @@ def expn(n: ArrayLike, x: ArrayLike) -> Array:
 
 @expn.defjvp
 @jit
-def expn_jvp(n, primals, tangents):
-  (x,), (x_dot,) = primals, tangents
+def expn_jvp(primals, tangents):
+  (n, x), (_, x_dot) = primals, tangents
   return expn(n, x), lax.mul(
     lax.neg(x_dot), expn(lax.sub(n, _lax_const(n, 1)), x)
   )

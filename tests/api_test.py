@@ -6076,7 +6076,8 @@ class APITest(jtu.JaxTestCase):
     # Using jax.make_jaxpr or jax.jit forces JAX to build call_jaxpr and run
     # custom_derivatives_allowed_effects type-checking.
     jaxpr = jax.make_jaxpr(f_jvp)(x)
-    self.assertIn("custom_jvp_call", str(jaxpr))
+    needle = 'CustomJVPTraced' if config.custom_jvp3.value else 'custom_jvp_call'
+    self.assertIn(needle, str(jaxpr))
 
     # Test execution under jit
     primal_out, tangent_out = jax.jit(

@@ -1631,6 +1631,18 @@ class HijaxTest(jtu.JaxTestCase):
     result = jax.jit(partial(jax.lax.platform_dependent, cpu=square, default=square))(x)
     self.assertArraysAllClose(result, x ** 2)
 
+  def test_hijax_primitive_in_reduction_bodies(self):
+    x = jnp.arange(4.)
+    hypot = lambda a, b: jnp.sqrt(square(a) + square(b))
+    reduce = lambda x: jax.lax.reduce(x, 0., hypot, (0,))
+    self.assertAllClose(jax.jit(reduce)(x), jnp.sqrt(14.))
+    reduce_window = lambda x: jax.lax.reduce_window(
+        x, 0., hypot, (2,), (1,), 'VALID')
+    self.assertAllClose(jax.jit(reduce_window)(x),
+                        jnp.sqrt(jnp.array([1., 5., 13.])))
+    scatter = lambda x: x.at[1:3].apply(square)
+    self.assertAllClose(jax.jit(scatter)(x), jnp.array([0., 1., 4., 3.]))
+
   def test_hijax_primitive_under_remat(self):
     x = jnp.arange(10)
     expected = x ** 2

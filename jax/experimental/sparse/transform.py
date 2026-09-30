@@ -59,6 +59,7 @@ from jax._src import tree_util
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
+from jax._src import hijax
 from jax._src.custom_derivatives import lift_jvp
 from jax._src import linear_util as lu
 from jax._src import pjit
@@ -919,6 +920,21 @@ def _custom_jvp_sparse_rule(spenv, *spvalues, **params):
 
 sparse_rules_bcoo[jax.custom_derivatives.custom_jvp_call_p] = _custom_jvp_sparse_rule
 sparse_rules_bcsr[jax.custom_derivatives.custom_jvp_call_p] = _custom_jvp_sparse_rule
+
+def _call_hi_primitive_sparse_rule(spenv, *spvalues, _prim):
+  if not isinstance(_prim, hijax.CustomJVPTraced):
+    _raise_unimplemented_primitive(hijax.call_hi_primitive_p)
+  jaxpr = _prim.traced.jaxpr
+  return eval_sparse(jaxpr, jaxpr.consts, spvalues, spenv)
+
+sparse_rules_bcoo[hijax.call_hi_primitive_p] = _call_hi_primitive_sparse_rule
+sparse_rules_bcsr[hijax.call_hi_primitive_p] = _call_hi_primitive_sparse_rule
+
+def _eval_jaxpr_sparse_rule(spenv, *spvalues, call_jaxpr, **_):
+  return eval_sparse(call_jaxpr, call_jaxpr.consts, spvalues, spenv)
+
+sparse_rules_bcoo[core.eval_jaxpr_p] = _eval_jaxpr_sparse_rule
+sparse_rules_bcsr[core.eval_jaxpr_p] = _eval_jaxpr_sparse_rule
 
 
 # ------------------------------------------------------------------------------
