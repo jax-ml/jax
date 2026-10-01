@@ -1739,8 +1739,13 @@ class VectorSubcoreTest(PallasSCTest):
     ):
       _ = kernel()
 
-  @parameterized.parameters("mixed", "all_zero", "all_one")
-  def test_ffs(self, case):
+  @parameterized.product(
+      case=["mixed", "all_zero", "all_one"],
+      needs_layout_passes=[False, True],
+  )
+  def test_ffs(self, case, needs_layout_passes):
+    if needs_layout_passes and not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Needs libtpu >= 0.0.52")
     nl = self.num_lanes
     if case == "mixed":
       data = [0, 0, 1] + [0] * (nl - 3)
@@ -1757,7 +1762,9 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=needs_layout_passes
+        ),
     )
     def kernel(x_ref, o_ref):
       mask = x_ref[...] == 1
@@ -1765,6 +1772,49 @@ class VectorSubcoreTest(PallasSCTest):
       o_ref[...] = plsc.all_reduce_ffs(mask)
 
     np.testing.assert_array_equal(kernel(x), np.broadcast_to(expected, x.shape))
+
+  @parameterized.parameters(
+      (2, 0, 1),
+      (3, 0, 1),
+      (0, 5, 1),
+      (2, 3, 1),
+      (3, 3, 1),
+      (2, 0, 2),
+      (2, 2, 2),
+  )
+  def test_ffs_multi_vreg(self, num_vregs, remainder, reduce):
+    if not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Needs libtpu >= 0.0.52")
+    size = num_vregs * self.num_lanes + remainder
+    out_size = size // reduce
+    in_block_size = math.ceil(size / self.num_lanes) * self.num_lanes
+    out_block_size = math.ceil(out_size / self.num_lanes) * self.num_lanes
+    rows = size + 1
+    r = np.arange(rows, dtype=np.int32)[:, None]
+    # Row i has its first set bit at i. The last row has no set bits within
+    # [:size] and expects size. Padding columns past size are set and must be
+    # ignored. E.g. for num_lanes=8, size=5 (in_block_size=8, rows=6):
+    #   [[1 1 1 1 1 | 1 1 1]   -> 0
+    #    [0 1 1 1 1 | 1 1 1]   -> 1
+    #    [0 0 1 1 1 | 1 1 1]   -> 2
+    #    [0 0 0 1 1 | 1 1 1]   -> 3
+    #    [0 0 0 0 1 | 1 1 1]   -> 4
+    #    [0 0 0 0 0 | 1 1 1]]  -> 5
+    data = (np.arange(in_block_size) >= r).astype(np.int32)
+    expected = np.broadcast_to(r, (rows, out_size))
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct((rows, out_block_size), jnp.int32),
+        grid=(rows,),
+        in_specs=[pl.BlockSpec((None, in_block_size), lambda r: (r, 0))],
+        out_specs=pl.BlockSpec((None, out_block_size), lambda r: (r, 0)),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[:out_size] = plsc.all_reduce_ffs(x_ref[:size] > 0, reduce=reduce)
+
+    np.testing.assert_array_equal(
+        np.asarray(kernel(jnp.asarray(data)))[:, :out_size], expected
+    )
 
   def test_fetch_and_add(self):
     self.skip_if_tc_tiling("Needs a rewrite to support TC tiling")

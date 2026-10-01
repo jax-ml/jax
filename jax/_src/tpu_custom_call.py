@@ -1034,7 +1034,7 @@ def lowered_as_tpu_kernel(
     # We hardcode a specific version both here and below, since this path is
     # only used by some internal tests that don't need serialization, but we do
     # need a concrete version on the module.
-    current_ir_version = 19
+    current_ir_version = 20
     try:
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true"
