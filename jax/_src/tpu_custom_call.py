@@ -346,6 +346,8 @@ class CustomCallBackendConfig:
     if self.device_type == "sparsecore":
       config.write(b', "sparse_core_config": ')
       sparse_core_config: dict[str, Any] = {}
+      if self.active_core_count == 1:
+        sparse_core_config["core_ids"] = ["0"]
       tiling = self.tiling if self.tiling is not None else Tiling.COMPACT
       sparse_core_config["tiling"] = tiling.value
       if self.opt_level is not None:
@@ -386,6 +388,7 @@ class CustomCallBackendConfig:
         if i + 1 != len(self.flags):
           config.write(b",")
       config.write(b"]")
+    # TODO(b/536052236): Remove once minimum supported libtpu reads core_ids.
     if self.device_type == "sparsecore" and self.active_core_count == 1:
       config.write(b', "megachip_parallelism_config": {"cores": ["0"]}')
     config.write(b"}")
