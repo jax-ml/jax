@@ -556,7 +556,7 @@ class custom_vjp[ReturnValue]:
   """
 
   def __new__(cls, fun=None, nondiff_argnums=(), nondiff_argnames=()):
-    if fun is not None and config.custom_vjp3.value:
+    if cls is custom_vjp and fun is not None and config.custom_vjp3.value:
       from jax._src.hijax import custom_vjp3  # pyrefly: ignore[missing-import]
       return custom_vjp3(fun, nondiff_argnums, nondiff_argnames)
     else:
@@ -762,6 +762,8 @@ class custom_vjp[ReturnValue]:
   @partial(traceback_util.api_boundary,
            repro_api_name="jax.custom_vjp.__call__")
   def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
+    if hasattr(self, '_call'):
+      return self._call(*args, **kwargs)  # pyrefly: ignore[missing-attribute]
     debug_fun = debug_info("custom_vjp fun", self.fun, args, kwargs,
                            static_argnums=self.nondiff_argnums)
     if not self.fwd or not self.bwd:
