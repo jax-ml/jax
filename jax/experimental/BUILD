@@ -651,6 +651,7 @@ pytype_strict_library(
         "//jax/_src:dtypes",
         "//jax/_src:ffi",
         "//jax/_src:flattree",
+        "//jax/_src:hijax",
         "//jax/_src:lax",
         "//jax/_src:mlir",
         "//jax/_src:numpy",

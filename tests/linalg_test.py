@@ -1138,6 +1138,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         jnp.linalg.pinv(x, rtol=1E-2)
     )
 
+  def testPinvTracedRtol(self):
+    x = jnp.array([[1., 2.], [3., 4.], [5., 6.]])
+    f = jax.jit(lambda x, rtol: jnp.linalg.pinv(x, rtol=rtol))
+    self.assertAllClose(f(x, 1E-2), jnp.linalg.pinv(x, rtol=1E-2))
+    self.assertAllClose(jax.grad(lambda x: f(x, 1E-2).sum())(x),
+                        jax.grad(lambda x: jnp.linalg.pinv(x).sum())(x))
+
   def testPinvGradIssue2792(self):
     def f(p):
       a = jnp.array([[0., 0.],[-p, 1.]], jnp.float32) * 1 / (1 + p**2)

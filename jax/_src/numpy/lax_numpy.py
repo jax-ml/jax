@@ -6177,9 +6177,9 @@ def _i1_maclaurin_jvp(k: int, primals: tuple[Array], tangents: tuple[Array]) -> 
   return _i1_maclaurin(k, x), lax.mul(_i1_maclaurin(k + 1, x), t)
 
 
-@custom_jvp
-def i1_impl(x: Array) -> Array:
+def _i1(x: Array) -> Array:
   return lax.mul(lax.exp(lax.abs(x)), lax_special.bessel_i1e(x))
+i1_impl = custom_jvp(_i1)
 
 @i1_impl.defjvp
 def i1_impl_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
@@ -6191,7 +6191,7 @@ def i1_impl_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, A
   # We therefore use a recursive two-term Maclaurin series approximation for
   # |x| <= sqrt(eps), where the series truncation error is strictly below
   # machine precision.
-  primal_out, tangent_out = api.jvp(i1_impl.fun, primals, tangents)
+  primal_out, tangent_out = api.jvp(_i1, primals, tangents)
   x, = primals
   t, = tangents
   cutoff = math.sqrt(dtypes.finfo(x.dtype).eps)

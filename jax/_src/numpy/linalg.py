@@ -1077,7 +1077,7 @@ def pinv(a: ArrayLike, rtol: ArrayLike | None = None,
   return _pinv(a, rtol, hermitian)
 
 
-@partial(custom_jvp, nondiff_argnums=(1, 2))
+@partial(custom_jvp, nondiff_argnums=(2,))
 @api.jit(static_argnames=('hermitian'))
 def _pinv(a: ArrayLike, rtol: ArrayLike | None = None, hermitian: bool = False) -> Array:
   # Uses same algorithm as
@@ -1105,13 +1105,13 @@ def _pinv(a: ArrayLike, rtol: ArrayLike | None = None, hermitian: bool = False) 
 
 @_pinv.defjvp
 @config.default_matmul_precision("float32")
-def _pinv_jvp(rtol, hermitian, primals, tangents):
+def _pinv_jvp(hermitian, primals, tangents):
   # The Differentiation of Pseudo-Inverses and Nonlinear Least Squares Problems
   # Whose Variables Separate. Author(s): G. H. Golub and V. Pereyra. SIAM
   # Journal on Numerical Analysis, Vol. 10, No. 2 (Apr., 1973), pp. 413-432.
   # (via https://en.wikipedia.org/wiki/Moore%E2%80%93Penrose_inverse#Derivative)
-  a, = primals  # m x n
-  a_dot, = tangents
+  a, rtol = primals  # m x n
+  a_dot, _ = tangents
   p = pinv(a, rtol=rtol, hermitian=hermitian)  # n x m
   if hermitian:
     # svd(..., hermitian=True) symmetrizes its input, and the JVP must match.

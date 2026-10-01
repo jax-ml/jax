@@ -29,6 +29,7 @@ from jax._src.core import ShapedArray, jaxpr_as_fun
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import convolution
 from jax._src.lax import lax
 from jax._src.lax import slicing
@@ -469,6 +470,12 @@ reduce_window_p.multiple_results = True
 reduce_window_p.def_impl(partial(dispatch.apply_primitive, reduce_window_p))
 reduce_window_p.def_abstract_eval(_reduce_window_abstract_eval_rule)
 batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
+
+def _reduce_window_to_lojax(*args, jaxpr, consts, **params):
+  lo_jaxpr = pe.lower_jaxpr2(jaxpr)
+  return reduce_window_p.bind(*args, jaxpr=lo_jaxpr,
+                              consts=tuple(lo_jaxpr.consts), **params)
+reduce_window_p.to_lojax = _reduce_window_to_lojax
 
 
 def _generic_reduce_window_lower(

@@ -50,6 +50,7 @@ from jax._src.interpreters import partial_eval as pe
 config.parse_flags_with_absl()
 
 
+@jtu.with_config(jax_custom_jvp3=False)
 class CustomJVPTest(jtu.JaxTestCase):
 
   def test_basic(self):

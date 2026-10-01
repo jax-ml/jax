@@ -8843,6 +8843,10 @@ reduce_p.def_abstract_eval(
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
 
+def _reduce_to_lojax(*args, jaxpr, **params):
+  return reduce_p.bind(*args, jaxpr=pe.lower_jaxpr2(jaxpr), **params)
+reduce_p.to_lojax = _reduce_to_lojax
+
 def _reduce_lower(ctx: mlir.LoweringRuleContext, *values,
                   computation, jaxpr: core.Jaxpr, dimensions):
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in), ctx.avals_in
