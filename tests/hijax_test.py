@@ -1385,6 +1385,59 @@ class HijaxTest(jtu.JaxTestCase):
     f = jax.vmap(f, in_axes=(2, None), out_axes=2)
     self.assertAllClose(f(x, y), x * y[None, :, None])
 
+  def test_newstyle_hiprimitive_vmap_transpose_uses_own_rule(self):
+    class Neg(HiPrim):
+      def __init__(self, aval):
+        self.in_avals = (aval,)
+        self.out_aval = aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return -x
+
+      def transpose(self, out_bar, accum):
+        if isinstance(accum, ad.GradAccum):
+          accum.accum(neg(out_bar))
+
+      def batch_dim_rule(self, axis_data, in_dims):
+        return in_dims[0]
+
+    def neg(x):
+      return Neg(typeof(x))(x)
+
+    xs = jnp.arange(3.)
+    neg_t = jax.linear_transpose(jax.vmap(neg), xs)
+    self.assertAllClose(neg_t(xs)[0], -xs)
+    self.assertIn('VmapOf[prim=Neg', str(jax.make_jaxpr(neg_t)(xs)))
+
+  def test_newstyle_hiprimitive_vmap_linearize_uses_own_rule(self):
+    class Scale(HiPrim):
+      def __init__(self, aval):
+        self.in_avals = (aval,)
+        self.out_aval = aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return 2. * x
+
+      def lin(self, nzs_in, x):
+        return scale(x), None
+
+      def linearized(self, res, t):
+        return scale(t)
+
+      def batch_dim_rule(self, axis_data, in_dims):
+        return in_dims[0]
+
+    def scale(x):
+      return Scale(typeof(x))(x)
+
+    xs = jnp.arange(3.)
+    _, scale_lin = jax.linearize(jax.vmap(scale), xs)
+    self.assertAllClose(scale_lin(jnp.ones(3)), 2. * jnp.ones(3))
+
   def test_newstyle_hiprimitive_nested_vmap_unmapped_axis(self):
     class Id(HiPrim):
       def __init__(self, aval):

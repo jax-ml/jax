@@ -1010,6 +1010,29 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     self.assertEqual(grad(energy_fn)(scalar_box).shape, ())
 
+  def test_linearize_of_vmap(self):
+    @jax.custom_jvp
+    def f(x):
+      return jnp.sin(x)
+    f.defjvp(lambda p, t: (f(p[0]), jnp.cos(p[0]) * t[0]))
+
+    xs = jnp.arange(3.)
+    _, f_lin = jax.linearize(jax.vmap(f), xs)
+    self.assertAllClose(f_lin(jnp.ones(3)), jnp.cos(xs))
+
+  def test_linear_transpose_of_vmap(self):
+    @jax.custom_jvp
+    def scale(x):
+      return 2. * x
+    scale.defjvp(lambda p, t: (scale(p[0]), scale(t[0])))
+
+    xs = jnp.arange(3.)
+    ct, = jax.linear_transpose(jax.vmap(scale), xs)(jnp.ones(3))
+    self.assertAllClose(ct, 2. * jnp.ones(3))
+    _, scale_lin = jax.linearize(jax.vmap(scale), xs)
+    ct, = jax.linear_transpose(scale_lin, xs)(jnp.ones(3))
+    self.assertAllClose(ct, 2. * jnp.ones(3))
+
   def test_custom_jvp_implicit_broadcasting(self):
     # https://github.com/jax-ml/jax/issues/6357
     if config.enable_x64.value:

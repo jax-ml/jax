@@ -323,6 +323,54 @@ class VmapOf(HiPrim):
           **self._vmap_params)(*args)
     return primal_out, (res, Static(res_axes)), *store.out_nzs  # pyrefly: ignore[missing-attribute]
 
+  def lin(self, nzs_in, *primals):
+    store = lambda: None
+    def lin(*primals):
+      primal_out, res, *rest = self.prim.lin(nzs_in, *primals)  # pyrefly: ignore[missing-attribute]
+      store.rest = rest  # pyrefly: ignore[missing-attribute]
+      return primal_out, res
+    with _explain_overbatched_member(self.prim, 'lin rule'):
+      (primal_out, res), (_, res_axes) = api.vmap(
+          lin, in_axes=self.in_dims, out_axes=(self.out_dim, batching.infer),
+          **self._vmap_params)(*primals)
+    return primal_out, (res, Static(res_axes)), *store.rest  # pyrefly: ignore[missing-attribute]
+
+  def linearized(self, residuals, *tangents):
+    res, res_axes = residuals[0], residuals[1].val
+    tangents = tree_map(partial(map_zero, self.axis_data), self.in_dims,
+                        tangents, is_leaf=lambda x: x is None)
+    with _explain_overbatched_member(self.prim, 'linearized rule'):
+      out = api.vmap(
+          self.prim.linearized, in_axes=(res_axes, *self.in_dims),  # pyrefly: ignore[missing-attribute]
+          out_axes=self.out_dim, **self._vmap_params)(res, *tangents)
+    return tree_map(partial(unmap_zero, self.axis_data), self.out_dim, out,
+                    is_leaf=lambda x: x is None)
+
+  def transpose(self, out_ct, *maybe_accums):
+    args_flat = tree_leaves_checked(self.in_tree, maybe_accums)
+    dims_flat = tree_leaves(self.in_dims, is_leaf=lambda x: x is None)
+    is_lin = [isinstance(x, ad.GradAccum) for x in args_flat]
+    vals, accums = partition_list(is_lin, args_flat)
+    val_dims, lin_dims = partition_list(is_lin, dims_flat)
+    lin_avals = [a.to_ct_aval() for a, l in zip(self.prim.in_avals_flat, is_lin) if l]  # pyrefly: ignore[missing-attribute]
+
+    def transpose(ct, *vals):
+      accs = [ad.ValAccum(a) for a in lin_avals]
+      full = merge_lists(is_lin, list(vals), accs)
+      log = self.prim.transpose(ct, *tree_unflatten(self.prim.in_tree, full))  # pyrefly: ignore[missing-attribute]
+      return [acc.freeze() for acc in accs], log
+
+    out_ct = tree_map(partial(map_zero, self.axis_data), self.out_dim, out_ct,
+                      is_leaf=lambda x: x is None)
+    ct_dims = [batching.sum_axis if d is None else d for d in lin_dims]
+    with _explain_overbatched_member(self.prim, 'transpose rule'):
+      cts, log = api.vmap(
+          transpose, in_axes=(self.out_dim, *val_dims), out_axes=(ct_dims, 0),
+          **self._vmap_params, sum_match=True)(out_ct, *vals)
+    for acc, d, ct in zip(accums, lin_dims, cts):
+      acc.accum(unmap_zero(self.axis_data, d, ct))
+    return log
+
   def vjp_bwd_retval_logs(self, res_, g):
     # TODO probably gonna get non-pytree-prefix errors because of sym zeros...
     res, res_axes = res_[0], res_[1].val
