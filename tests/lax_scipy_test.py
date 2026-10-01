@@ -88,8 +88,9 @@ def _initialize_polar_test(rng, shape, n_zero_svs, degeneracy, geometric_spectru
 
   result = np.dot(left_vecs * svs, right_vecs.conj().T)
   result = jnp.array(result).astype(dtype)
-  spectrum = jnp.array(svs).astype(dtype)
-  return result, spectrum
+  return (result,
+          left_vecs[:, :num_nonzero_svs].astype(dtype),
+          right_vecs[:, :num_nonzero_svs].astype(dtype))
 
 
 class LaxBackedScipyTests(jtu.JaxTestCase):
@@ -472,8 +473,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                               (side == "right" and m < n))):
       raise unittest.SkipTest("method=qdwh does not support these sizes")
 
-    matrix, _ = _initialize_polar_test(self.rng(),
-      shape, n_zero_sv, degeneracy, geometric_spectrum, max_sv,
+    matrix, left_vecs, right_vecs = _initialize_polar_test(
+      self.rng(), shape, n_zero_sv, degeneracy, geometric_spectrum, max_sv,
       nonzero_condition_number, dtype)
     if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       self.assertRaises(
@@ -483,14 +484,16 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     unitary, posdef = jsp.linalg.polar(matrix, method=method, side=side)
     if shape[0] >= shape[1]:
-      should_be_eye = np.matmul(unitary.conj().T, unitary)
+      ub = np.matmul(unitary, right_vecs)
+      should_be_eye = np.matmul(ub.conj().T, ub)
     else:
-      should_be_eye = np.matmul(unitary, unitary.conj().T)
+      ub = np.matmul(left_vecs.conj().T, unitary)
+      should_be_eye = np.matmul(ub, ub.conj().T)
     tol = 650 * float(jnp.finfo(matrix.dtype).eps)
     eye_mat = np.eye(should_be_eye.shape[0], dtype=should_be_eye.dtype)
     with self.subTest('Test unitarity.'):
       self.assertAllClose(
-        eye_mat, should_be_eye, atol=tol * 1000 * min(shape))
+        eye_mat, should_be_eye, atol=tol * min(shape))
 
     with self.subTest('Test Hermiticity.'):
       self.assertAllClose(
