@@ -18,6 +18,7 @@ import functools
 import logging
 import threading
 import time
+import traceback
 import unittest
 
 from absl.testing import absltest
@@ -187,9 +188,11 @@ class PythonCallbackTest(jtu.JaxTestCase):
       return callback(lambda x: np.ones(4, np.float32),
                       core.ShapedArray((4,), np.float32))
 
-    with self.assertRaises(RuntimeError):
+    with self.assertRaises(Exception) as context:
       f()
       jax.effects_barrier()
+    self.assertIn("missing 1 required positional argument: 'x'",
+                  "".join(traceback.format_exception(context.exception)))
 
   @with_pure_and_io_callbacks
   def test_callback_with_wrong_number_of_returned_values(self, *, callback):
@@ -199,9 +202,11 @@ class PythonCallbackTest(jtu.JaxTestCase):
       # Calling a function with two return values that expects one return value
       return callback(lambda x: (x, np.ones(4, np.float32)), x, x)
 
-    with self.assertRaises(RuntimeError):
+    with self.assertRaises(Exception) as context:
       f(2.)
       jax.effects_barrier()
+    self.assertIn("Mismatched number of outputs from callback",
+                  "".join(traceback.format_exception(context.exception)))
 
     @jax.jit
     def g():
@@ -223,9 +228,11 @@ class PythonCallbackTest(jtu.JaxTestCase):
       return callback(lambda: np.float32(1.), core.ShapedArray((1,),
         np.float32))
 
-    with self.assertRaises(RuntimeError):
+    with self.assertRaises(Exception) as context:
       f()
       jax.effects_barrier()
+    self.assertIn("Incorrect output shape for return value #0",
+                  "".join(traceback.format_exception(context.exception)))
 
   @with_pure_and_io_callbacks
   def test_callback_with_wrong_dtype_outputs(self, *, callback):
@@ -573,6 +580,62 @@ class PythonCallbackTest(jtu.JaxTestCase):
       self.assertIn(f"jax.{api_name} failed", output)
       self.assertIn("Traceback (most recent call last)", output)
 
+  @jtu.thread_unsafe_test()
+  def test_sharded_ordered_callback_after_exception(self):
+    if jtu.test_device_matches(["cpu"]) and len(jax.devices()) < 2:
+      self.skipTest("Test requires 2 CPU devices.")
+
+    def fail(x):
+      raise RuntimeError("nope")
+
+    def add1(x):
+      return x + 1.0
+
+    num_devices = len(jax.devices())
+    mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
+
+    spec = jax.sharding.PartitionSpec('x')
+    sharding = jax.sharding.NamedSharding(mesh, spec)
+
+    @jax.jit(in_shardings=sharding, out_shardings=sharding)
+    @jax.shard_map(mesh=mesh, in_specs=spec, out_specs=spec)
+    def f(x):
+      return io_callback_ordered(fail, jax.ShapeDtypeStruct.like(x), x)
+
+    @jax.jit(in_shardings=sharding, out_shardings=sharding)
+    @jax.shard_map(mesh=mesh, in_specs=spec, out_specs=spec)
+    def g(x):
+      return io_callback_ordered(add1, jax.ShapeDtypeStruct.like(x), x)
+
+    x = jnp.zeros((num_devices, 4))
+    with self.assertRaises(Exception) as context:
+      f(x).block_until_ready()
+    self.assertIn("nope",
+                  "".join(traceback.format_exception(context.exception)))
+
+    with self.assertRaises(Exception) as context:
+      # The first attempt to run `g` after `f` will fail, re-raising the
+      # exception from running `f`.
+      g(x).block_until_ready()
+    self.assertIn("nope",
+                  "".join(traceback.format_exception(context.exception)))
+
+    np.testing.assert_array_equal(g(x), np.ones((num_devices, 4)))
+
+    with self.assertRaises(Exception) as context:
+      f(x).block_until_ready()
+    self.assertIn("nope",
+                  "".join(traceback.format_exception(context.exception)))
+
+    with self.assertRaises(Exception) as context:
+      # effects_barrier will re-raise the exception from running `f`.
+      jax.effects_barrier()
+      g(x).block_until_ready()
+    self.assertIn("nope",
+                  "".join(traceback.format_exception(context.exception)))
+
+    np.testing.assert_array_equal(g(x), np.ones((num_devices, 4)))
+
   @with_pure_and_io_callbacks
   @jtu.thread_unsafe_test()  # count_primitive_compiles isn't thread-safe
   def test_compilation_caching(self, *, callback):
@@ -833,6 +896,7 @@ class PureCallbackTest(jtu.JaxTestCase):
         ValueError, "Pure callbacks do not support JVP."):
       f(2.)
 
+  @jtu.thread_unsafe_test()
   def test_error_propagation(self):
     def throws_error_fn(x):
       raise RuntimeError("Errors should propagate.")

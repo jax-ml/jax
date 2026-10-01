@@ -19,6 +19,7 @@ import atexit
 from collections.abc import Sequence
 import dataclasses
 from functools import partial
+import itertools
 import logging
 import threading
 import time
@@ -132,24 +133,39 @@ class RuntimeTokenSet(threading.local):
   ) -> core.Token:
     tok = self.current_tokens.get(eff, np.zeros(0, np.bool_))
 
+    def _shard_new_token(tok):
+      # We only use replicated sharding for the first time when the token for
+      # the order effect hasn't been created.
+      s = GSPMDSharding.get_replicated(devices)
+      sharded_tok = core.Token(
+          pxla.shard_args(
+              [s], [None], [xc.ArrayCopySemantics.REUSE_INPUT], [tok]
+          )[0]
+      )
+      self.current_tokens[eff] = sharded_tok
+      return sharded_tok
+
     if isinstance(tok, core.Token):
       # The order of devices may change, so we need to reshard if necessary.
       # TODO(yueshengys): This might still be buggy in a multi-process SPMD
       # scenario. Revise the logic later. A distributed shutdown barrier inside
       # the XLA program may be needed.
-      return api.device_put(
-          tok, NamedSharding(Mesh(devices, 'x'), PartitionSpec('x')))
+      try:
+        return api.device_put(
+            tok, NamedSharding(Mesh(devices, 'x'), PartitionSpec('x')))
+      except _jax.JaxRuntimeError:
+        # This exception here indicates that, in attempting to reshard the
+        # token from the previous computation, we ran `tok.block_until_ready()`
+        # (in `_token_shard_arg`), which raised an exception.  Thus, the
+        # previous computation failed -- for example, by raising an exception
+        # in a callback.
+        #
+        # Because the previous computation has completed, it is safe to create
+        # a new token.
+        _shard_new_token(np.zeros(0, np.bool_))
+        raise
 
-    # We only use replicated sharding for the first time when the token for the
-    # order effect hasn't been created.
-    s = GSPMDSharding.get_replicated(devices)
-    sharded_tok = core.Token(
-        pxla.shard_args(
-            [s], [None], [xc.ArrayCopySemantics.REUSE_INPUT], [tok]
-        )[0]
-    )
-    self.current_tokens[eff] = sharded_tok
-    return sharded_tok
+    return _shard_new_token(tok)
 
   def set_token_result(self, eff: core.Effect, token: core.Token):
     self.current_tokens[eff] = token
@@ -165,11 +181,27 @@ class RuntimeTokenSet(threading.local):
     self.output_runtime_tokens = {}
 
   def block_until_ready(self):
-    for token in self.current_tokens.values():
-      token.block_until_ready()
-    for token in self.output_runtime_tokens.values():
-      token.block_until_ready()
+    exceptions = []
+    seen = []
+    for eff, token in itertools.chain(self.current_tokens.items(),
+                                      self.output_runtime_tokens.items()):
+      try:
+        token.block_until_ready()
+      except _jax.JaxRuntimeError as e:
+        key = (type(e), e.args)
+        if not key in seen:
+          seen.append(key)
+          exceptions.append(e)
+
     self.clear()
+
+    if exceptions:
+      if len(exceptions) == 1:
+        raise exceptions[0]
+      raise ExceptionGroup(
+          'One or more previous effectful computations failed.',
+          tuple(exceptions)
+      )
 
 runtime_tokens: RuntimeTokenSet = RuntimeTokenSet()
 
