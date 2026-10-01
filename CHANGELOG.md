@@ -43,6 +43,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `max_iterations` was silently ignored and any `eps` raised a `ValueError`.
     Both arguments are now static, so passing a traced value for either raises
     an error.
+  * Fixed {func}`jax.numpy.modf` returning `nan` as the fractional part for
+    infinite inputs; it now returns a signed zero, matching NumPy
+    ({jax-issue}`#41102`).
 
 ## JAX 0.12.0.1 (October 23, 2026)
 
