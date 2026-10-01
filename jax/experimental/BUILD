@@ -688,6 +688,7 @@ pytype_strict_library(
     deps = [
         ":mesh_utils",
         "//jax",
+        "//jax/_src:internal_mesh_utils",
         "//jax/_src:xla_bridge",
         "//jax/_src/lib",
     ],
@@ -749,6 +750,7 @@ filegroup(
         "pjit.py",
         "scheduling_groups.py",
         "shard_map.py",
+        "topologies.py",
         "xla_metadata.py",
     ],
     visibility = ["//jax:internal"],
