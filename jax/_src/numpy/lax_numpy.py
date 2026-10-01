@@ -5093,17 +5093,17 @@ def block(arrays: ArrayLike | list[Any]) -> Array:
 
 
 @overload
-def atleast_1d() -> tuple[()]:
+def atleast_1d() -> list[Array]:
   ...
 @overload
 def atleast_1d(x: ArrayLike, /) -> Array:
   ...
 @overload
-def atleast_1d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> tuple[Array, ...]:
+def atleast_1d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
   ...
 @export
 @api.jit
-def atleast_1d(*arys: ArrayLike) -> Array | tuple[Array, ...]:
+def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
   """Convert inputs to arrays with at least 1 dimension.
 
   JAX implementation of :func:`numpy.atleast_1d`.
@@ -5138,27 +5138,27 @@ def atleast_1d(*arys: ArrayLike) -> Array | tuple[Array, ...]:
     case a list of results is returned:
 
     >>> jnp.atleast_1d(x, y)
-    (Array([1.], dtype=float32), Array([0, 1, 2, 3], dtype=int32))
+    [Array([1.], dtype=float32), Array([0, 1, 2, 3], dtype=int32)]
   """
   util.check_arraylike("atleast_1d", *arys)
   if len(arys) == 1:
     return array(arys[0], copy=False, ndmin=1)
   else:
-    return tuple(array(arr, copy=False, ndmin=1) for arr in arys)
+    return [array(arr, copy=False, ndmin=1) for arr in arys]
 
 
 @overload
-def atleast_2d() -> tuple[()]:
+def atleast_2d() -> list[Array]:
   ...
 @overload
 def atleast_2d(x: ArrayLike, /) -> Array:
   ...
 @overload
-def atleast_2d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> tuple[Array, ...]:
+def atleast_2d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
   ...
 @export
 @api.jit
-def atleast_2d(*arys: ArrayLike) -> Array | tuple[Array, ...]:
+def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
   """Convert inputs to arrays with at least 2 dimensions.
 
   JAX implementation of :func:`numpy.atleast_2d`.
@@ -5201,27 +5201,27 @@ def atleast_2d(*arys: ArrayLike) -> Array | tuple[Array, ...]:
     case a list of results is returned:
 
     >>> jnp.atleast_2d(x, y)
-    (Array([[1.]], dtype=float32), Array([[0, 1, 2, 3]], dtype=int32))
+    [Array([[1.]], dtype=float32), Array([[0, 1, 2, 3]], dtype=int32)]
   """
   util.check_arraylike("atleast_2d", *arys)
   if len(arys) == 1:
     return array(arys[0], copy=False, ndmin=2)
   else:
-    return tuple(array(arr, copy=False, ndmin=2) for arr in arys)
+    return [array(arr, copy=False, ndmin=2) for arr in arys]
 
 
 @overload
-def atleast_3d() -> tuple[()]:
+def atleast_3d() -> list[Array]:
   ...
 @overload
 def atleast_3d(x: ArrayLike, /) -> Array:
   ...
 @overload
-def atleast_3d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> tuple[Array, ...]:
+def atleast_3d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
   ...
 @export
 @api.jit
-def atleast_3d(*arys: ArrayLike) -> Array | tuple[Array, ...]:
+def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
   """Convert inputs to arrays with at least 3 dimensions.
 
   JAX implementation of :func:`numpy.atleast_3d`.
@@ -5283,7 +5283,7 @@ def atleast_3d(*arys: ArrayLike) -> Array | tuple[Array, ...]:
       arr = lax.expand_dims(arr, dimensions=(2,))
     return arr
   else:
-    return tuple(atleast_3d(arr) for arr in arys)
+    return [atleast_3d(arr) for arr in arys]
 
 
 @export
