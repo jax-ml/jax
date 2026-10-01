@@ -69,6 +69,13 @@ class CustomJVPTest(jtu.JaxTestCase):
                         (jnp.sin(x), 2 * jnp.cos(x)))
     self.assertAllClose(api.grad(f)(x), 2 * jnp.cos(x))
 
+  def test_fun_attribute(self):
+    def f(x):
+      return x
+    g = jax.custom_jvp(f)
+    self.assertIsInstance(g, jax.custom_jvp)
+    self.assertIs(g.fun, f)
+
   def test_invariance(self):
     @jax.custom_jvp
     def f(x):
@@ -1573,6 +1580,13 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(api.grad(f)(x), 2 * jnp.cos(x))
     self.assertAllClose(api.value_and_grad(f)(x),
                         (jnp.sin(x), 2 * jnp.cos(x)))
+
+  def test_fun_attribute(self):
+    def f(x):
+      return x
+    g = jax.custom_vjp(f)
+    self.assertIsInstance(g, jax.custom_vjp)
+    self.assertIs(g.fun, f)
 
   def test_invariance(self):
     @jax.custom_vjp
@@ -4675,6 +4689,29 @@ class CustomApiTest(jtu.JaxTestCase):
       for methods in it.permutations(['defvjp', 'def_vmap']):
         for method in methods:
           self.assertIsInstance(getattr(f, method), Callable)
+
+  def test_flags_read_at_call_time(self):
+    @jax.custom_jvp
+    def f(x):
+      return x
+    f.defjvp(lambda p, t: (f(p[0]), t[0]))
+
+    @jax.custom_vjp
+    def g(x):
+      return x
+    g.defvjp(lambda x: (x, None), lambda _, ct: (ct,))
+
+    h = jax.checkpoint(jnp.sin)
+
+    for flag, fun, old, new in [
+        (config.custom_jvp3, f, 'custom_jvp_call', 'CustomJVPTraced'),
+        (config.custom_jvp3, jax.nn.relu, 'custom_jvp_call', 'CustomJVPTraced'),
+        (config.custom_vjp3, g, 'custom_vjp_call', 'CustomVJPTraced'),
+        (config.remat3, h, 'remat2', 'RematTraced')]:
+      with flag(False):
+        self.assertIn(old, str(jax.make_jaxpr(fun)(1.)))
+      with flag(True):
+        self.assertIn(new, str(jax.make_jaxpr(fun)(1.)))
 
 
 @jtu.with_config(jax_remat3=True)

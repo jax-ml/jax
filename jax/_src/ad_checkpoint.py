@@ -358,14 +358,14 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
     raise TypeError("prevent_cse must be a bool or tuple of bools, got "
                     f"{type(prevent_cse)=}")
 
-  if config.remat3.value:
-    policy = None if policy is nothing_saveable else policy
-    return remat3(fun, policy=policy, static_argnums=static_argnums,
-                  static_argnames=static_argnames, prevent_cse=prevent_cse)
-
   @wraps(fun)
   @api_boundary
   def fun_remat(*args, **kwargs):
+    if config.remat3.value:
+      return remat3(fun, policy=None if policy is nothing_saveable else policy,
+                    static_argnums=static_argnums,
+                    static_argnames=static_argnames,
+                    prevent_cse=prevent_cse)(*args, **kwargs)
     debug = api_util.debug_info(
         "checkpoint / remat", fun,
         args, kwargs, static_argnums=static_argnums)
