@@ -44,6 +44,7 @@ from jax._src import dispatch
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.lib import ifrt_version
 
 jax.config.parse_flags_with_absl()
 
@@ -3503,6 +3504,26 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     _, h_vjp = jax.vjp(h, 1.)
     g, = h_vjp(1.0)
     self.assertAllClose(g, jnp.cos(1.), check_dtypes=False)
+
+  def test_scan_counter_where(self):
+    # https://github.com/jax-ml/jax/issues/41027
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Requires libtpu >= 0.0.50')
+    if ifrt_version < 75:
+      self.skipTest('Requires ifrt_version >= 75')
+
+    @jax.jit
+    def gt_zero(x):
+      def body(carry, _):
+        i, x = carry
+        x = jnp.where(i > 0, x + 1.0, x)
+        return (i + 1, x), x
+
+      return lax.scan(body, (jnp.int32(0), x), None, length=3)[1]
+
+    ans = gt_zero(jnp.float32(0))
+    expected = np.array([0.0, 1.0, 2.0], dtype=np.float32)
+    self.assertArraysEqual(ans, expected)
 
 
 if __name__ == '__main__':
