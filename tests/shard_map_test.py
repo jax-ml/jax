@@ -550,6 +550,8 @@ class ShardMapTest(jtu.JaxTestCase):
       fwd(a)
 
   @jtu.run_on_devices('gpu')
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.psend is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.precv is deprecated")
   def test_psend_precv_basic_with_non_matching_source_target_pairs(self):
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
@@ -589,6 +591,8 @@ class ShardMapTest(jtu.JaxTestCase):
       fwd(a)
 
   @jtu.run_on_devices('gpu')
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.psend is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.precv is deprecated")
   def test_psend_precv_basic_with_duplicate_source_target_pairs(self):
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
