@@ -3005,6 +3005,15 @@ class LaxLinalgTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "Expected kind to be one of"):
       jsp.linalg.invpascal(3, kind='bad')
 
+  @jtu.sample_product(
+    func=[lax.linalg.cholesky, lax.linalg.eigh]
+  )
+  def test_non_square_error(self, func):
+    # Regression test for https://github.com/jax-ml/jax/issues/41204
+    x = jnp.zeros((1, 4))
+    with self.assertRaisesRegex(ValueError, f"The input to linalg.{func.__name__} must have shape"):
+      _ = func(x)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

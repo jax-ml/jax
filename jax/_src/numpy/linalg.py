@@ -144,6 +144,9 @@ def cholesky(a: ArrayLike, *, upper: bool = False, symmetrize_input: bool = True
     Array(True, dtype=bool)
   """
   a = ensure_arraylike("jnp.linalg.cholesky", a)
+  if a.ndim < 2 or a.shape[-1] != a.shape[-2]:
+    raise ValueError(
+      f"Argument to linalg.cholesky must have shape [..., n, n], got {a.shape}.")
   a, = promote_dtypes_inexact(a)
   L = lax_linalg.cholesky(a, symmetrize_input=symmetrize_input)
   return L.mT.conj() if upper else L
@@ -971,6 +974,9 @@ def eigh(a: ArrayLike, UPLO: str | None = None,
            [ 0.   +0.707j,  0.   -0.707j]], dtype=complex64)
   """
   a = ensure_arraylike("jnp.linalg.eigh", a)
+  if a.ndim < 2 or a.shape[-1] != a.shape[-2]:
+    raise ValueError(
+      f"Argument to linalg.eigh must have shape [..., n, n], got {a.shape}.")
   if UPLO is None or UPLO == "L":
     lower = True
   elif UPLO == "U":

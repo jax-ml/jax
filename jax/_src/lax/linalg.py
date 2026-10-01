@@ -108,6 +108,12 @@ def cholesky(x: Array, *, symmetrize_input: bool = True) -> Array:
     shape ``[..., n, n]``. If Cholesky decomposition fails, returns a matrix
     full of NaNs. The behavior on failure may change in the future.
   """
+  x = lax.asarray(x)
+  if x.ndim < 2 or x.shape[-1] != x.shape[-2]:
+    raise ValueError(
+        f"The input to linalg.cholesky must have shape [..., n, n], got shape {x.shape}"
+    )
+
   if symmetrize_input:
     x = symmetrize(x)
   return _tril(cholesky_p.bind(x))
@@ -285,6 +291,11 @@ def eigh(
     If ``subset_by_index`` is ``None`` then ``d`` is equal to ``n``. Otherwise
     ``d`` is equal to ``subset_by_index[1] - subset_by_index[0]``.
   """
+  x = lax.asarray(x)
+  if x.ndim < 2 or x.shape[-1] != x.shape[-2]:
+    raise ValueError(
+        f"The input to linalg.eigh must have shape [..., n, n], got shape {x.shape}"
+    )
   if symmetrize_input:
     x = symmetrize(x)
   v, w = eigh_p.bind(
