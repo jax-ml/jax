@@ -1369,6 +1369,83 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 class ScipyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
+      dtype=float_types + complex_types,
+      lower=[False, True],
+      eigvals_only=[False, True],
+      batch_shapes=[((), ()), ((2,), ()), ((2, 1), (1, 3))],
+  )
+  @jax.default_matmul_precision("float32")
+  @jax.numpy_rank_promotion("allow")
+  def testGeneralizedEigh(self, dtype, lower, eigvals_only, batch_shapes):
+    rng = jtu.rand_default(self.rng())
+    a = rng(batch_shapes[0] + (3, 3), dtype)
+    a = (a + T(a.conj())) / 2
+    b = rng(batch_shapes[1] + (3, 3), dtype)
+    b = b @ T(b.conj()) + 3 * np.eye(3, dtype=dtype)
+    fun = partial(jsp.linalg.eigh, lower=lower, eigvals_only=eigvals_only)
+    args_maker = lambda: (a, b)
+    result = fun(a, b)
+    w = result if eigvals_only else result[0]
+    expected = np.vectorize(
+        partial(osp.linalg.eigh, lower=lower, eigvals_only=True),
+        signature="(n,n),(n,n)->(n)")(a, b)
+    self.assertAllClose(w, expected, atol=1e-5, rtol=1e-5)
+    self._CompileAndCheck(fun, args_maker, atol=1e-5, rtol=1e-5)
+    if not eigvals_only:
+      _, v = result
+      self.assertAllClose(a @ v, (b @ v) * w.astype(v.dtype)[..., None, :],
+                          atol=1e-5, rtol=1e-5)
+      expected_identity = np.broadcast_to(np.eye(3, dtype=dtype), v.shape)
+      self.assertAllClose(T(v.conj()) @ b @ v, expected_identity,
+                          atol=1e-5, rtol=1e-5)
+
+  @jtu.sample_product(dtype=float_types + complex_types, lower=[False, True])
+  def testGeneralizedEighSymmetrizesInputs(self, dtype, lower):
+    rng = jtu.rand_default(self.rng())
+    a = rng((3, 3), dtype)
+    b = rng((3, 3), dtype)
+    b = b @ T(b.conj()) + 3 * np.eye(3, dtype=dtype)
+    perturbation = rng((3, 3), dtype)
+    b += perturbation - T(perturbation.conj())
+    expected = osp.linalg.eigh((a + T(a.conj())) / 2,
+                              (b + T(b.conj())) / 2, eigvals_only=True)
+    w, _ = jsp.linalg.eigh(a, b, lower=lower)
+    self.assertAllClose(w, expected, atol=1e-5, rtol=1e-5)
+
+  @jtu.sample_product(dtype=float_types + complex_types, lower=[False, True])
+  @jax.default_matmul_precision("float32")
+  def testGeneralizedEighGrad(self, dtype, lower):
+    rng = jtu.rand_default(self.rng())
+    a, b = rng((3, 3), dtype), rng((3, 3), dtype)
+    a = (a + T(a.conj())) / 2
+    b = b @ T(b.conj()) + 3 * np.eye(3, dtype=dtype)
+
+    def fun(a, b, eigvals_only):
+      if eigvals_only:
+        return jsp.linalg.eigh(a, b, lower=lower, eigvals_only=True)
+      _, v = jsp.linalg.eigh(a, b, lower=lower)
+      weights = jnp.array([1, 2, 3], dtype=dtype)
+      return (v * weights[None, :]) @ jnp.conj(v.T)
+
+    jtu.check_grads(partial(fun, eigvals_only=True), (a, b), order=2,
+                    atol=2e-2, rtol=2e-2)
+    jtu.check_grads(partial(fun, eigvals_only=False), (a, b), order=1,
+                    atol=2e-2, rtol=2e-2)
+
+  @jax.numpy_rank_promotion("allow")
+  def testGeneralizedEighVmap(self):
+    a = jnp.array([[[2., 1.], [1., 3.]], [[4., 1.], [1., 2.]]])
+    b = jnp.array([[2., 0.], [0., 1.]])
+    self.assertAllClose(jit(vmap(jsp.linalg.eigh, in_axes=(0, None)))(a, b),
+                        jsp.linalg.eigh(a, b))
+
+  @parameterized.parameters(((2, 3), (3, 3)), ((3, 3), (2, 2)), ((3, 3), (3,)))
+  def testGeneralizedEighInvalidShape(self, a_shape, b_shape):
+    with self.assertRaises(ValueError):
+      jsp.linalg.eigh(np.zeros(a_shape), np.zeros(b_shape))
+
+
+  @jtu.sample_product(
     args=[
       (),
       (1,),
