@@ -753,8 +753,11 @@ class OverlapTest(jtu.JaxTestCase):
   @jtu.run_on_devices('gpu', 'tpu')
   @jtu.with_explicit_mesh((8,), ('i',))
   def test_async_ppermute_opt_barrier(self, mesh):
-    if jtu.device_under_test() == 'tpu' and not jtu.is_device_tpu_at_least(5):
-      self.skipTest('Requires TPU >= 5')
+    if jtu.device_under_test() == 'tpu':
+      if not jtu.is_device_tpu_at_least(5):
+        self.skipTest('Requires TPU >= 5')
+      if not jtu.is_libtpu_at_least('0.0.50'):
+        self.skipTest('Requires libtpu >= 0.0.50')
 
     permutation = [(i, (i + 1) % 8) for i in range(8)]
 

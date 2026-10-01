@@ -758,6 +758,8 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("gpu")
   def test_pbroadcast_dynamic_root(self):
+    if jaxlib_extension_version < 502:
+      self.skipTest("Requires jaxlib_extension_version >= 502")
     # Test pbroadcast with dynamic source (has_dynamic_root=True) via shard_map.
     # The broadcast root is passed as a jitted function argument (not hardcoded),
     # exercising the has_dynamic_root path end-to-end.

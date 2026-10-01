@@ -1366,6 +1366,8 @@ class VectorSubcoreTest(PallasSCTest):
       needs_layout_passes=[False, True],
   )
   def test_plsc_bitcast(self, dtype, new_dtype, needs_layout_passes):
+    if not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Needs libtpu >= 0.0.50")
     self.skip_if_tc_tiling(
         "Fails due to incorrectly inferred tiling in tpu.memref_squeeze"
     )
@@ -1514,6 +1516,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(jnp.int32, jnp.float32)
   def test_scan_count(self, dtype):
+    if not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Needs libtpu >= 0.0.50")
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("scan is not supported on TPU v8i.")
     shape = [self.num_lanes]
@@ -2566,6 +2570,8 @@ class VectorSubcoreTest(PallasSCTest):
       descending=[False, True],
   )
   def test_sort_key_val(self, keys_dtype, values_dtype, use_mask, descending):
+    if not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Needs libtpu >= 0.0.50")
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("sort is not supported on TPU v8i.")
     vec_dim = self.sc_info.num_lanes
@@ -2616,6 +2622,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[np.int32, np.float32])
   def test_rev_and_sort_desc(self, dtype):
+    if not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Needs libtpu >= 0.0.50")
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("sort is not supported on TPU v8i.")
     vec_dim = self.sc_info.num_lanes
@@ -2637,6 +2645,8 @@ class VectorSubcoreTest(PallasSCTest):
       values_dtypes=[(), (np.int32,), (np.float32, np.int32)],
   )
   def test_sort(self, keys_dtype, values_dtypes):
+    if not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Needs libtpu >= 0.0.50")
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("sort is not supported on TPU v8i.")
     vec_dim = self.sc_info.num_lanes
