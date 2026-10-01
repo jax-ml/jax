@@ -68,6 +68,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     returned `1.0` instead of `2**n`.
   * Fixed the derivative of {func}`jax.lax.sign` and {func}`jax.numpy.sign` for
     complex inputs, which was previously always zero ({jax-issue}`#41000`).
+  * Fixed {func}`jax.numpy.modf` returning `nan` as the fractional part for
+    infinite inputs; it now returns a signed zero, matching NumPy
+    ({jax-issue}`#41102`).
   * {func}`jax.scipy.linalg.lu` now accepts batched inputs of shape
     `(..., M, N)`, as documented; previously it raised a `ValueError` for any
     input with more than two dimensions.
