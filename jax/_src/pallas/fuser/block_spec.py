@@ -432,6 +432,17 @@ def pull_block_spec(
         scalar_prefetch_handler,
         grid_len,
     )
+    # The scalars this fusion prefetches, in the order its index maps and body
+    # expect to be handed them back.
+    kernel_fn.scalar_prefetch = tuple(
+        c for c, sp in zip(consts, _scalar_prefetch_mask(jaxpr, read_usage_env),
+                           strict=True) if sp)
+    if non_scalars := [c for c in kernel_fn.scalar_prefetch if jnp.ndim(c) != 0]:
+      raise ValueError(
+          f'Fusion {jaxpr.debug_info.func_name} computes a block index from'
+          f' non-scalar values of shapes {[jnp.shape(c) for c in non_scalars]}.'
+          ' Only scalars can be prefetched; index into the array outside the'
+          ' fusion and close over the resulting scalar instead.')
     in_block_specs = jax.tree.unflatten(in_tree, in_block_specs)
     in_block_specs = jax.tree.map(
         functools.partial(
@@ -501,6 +512,29 @@ def _block_transforms_equal(
       )
     return True
   return False
+
+
+def _scalar_prefetch_mask(jaxpr, read_usage_env) -> list[bool]:
+  """Which of `jaxpr.constvars` are scalars prefetched for block indices."""
+  return [Usage.SCALAR_PREFETCH in read_usage_env(v) for v in jaxpr.constvars]
+
+
+def _select_scalar_prefetch(scalar_prefetch_handler, scalar_prefetch,
+                            num_expected: int, fusion_name: str):
+  """Picks one fusion's scalars out of `scalar_prefetch`.
+
+  Two calling conventions are supported. Without a handler, the fusion was
+  handed only its own scalars and they are used as is. With a handler,
+  `scalar_prefetch` is shared by every fusion in the kernel and the handler
+  selects this fusion's group out of it.
+  """
+  if scalar_prefetch_handler is not None:
+    scalar_prefetch = scalar_prefetch_handler(*scalar_prefetch)
+  if len(scalar_prefetch) != num_expected:
+    raise ValueError(
+        f'Fusion {fusion_name} prefetches {num_expected} scalars but was'
+        f' given {len(scalar_prefetch)}')
+  return scalar_prefetch
 
 
 def _pull_block_transform(
@@ -589,15 +623,20 @@ def _pull_block_transform(
           [True] * len(scalar_prefetch_jaxpr_no_dce.outvars),
       )
       assert not any(used_inputs[len(jaxpr.constvars):])
+      sp_mask = _scalar_prefetch_mask(jaxpr, read_usage_env)
       scalar_prefetch_jaxpr = scalar_prefetch_jaxpr.replace(
-          invars=jaxpr.constvars,
+          invars=[
+              v for v, sp in zip(jaxpr.constvars, sp_mask, strict=True) if sp
+          ],
           debug_info=scalar_prefetch_jaxpr.debug_info.with_unknown_names(),
       )
 
       def _scalar_prefetch_fn(jaxpr):
         if grid_len is None:
           raise ValueError('Grid must be provided to pull_block_spec.')
-        args = scalar_prefetch_handler(*_get_scalar_prefetch())
+        args = _select_scalar_prefetch(
+            scalar_prefetch_handler, _get_scalar_prefetch(),
+            len(jaxpr.invars), jaxpr.debug_info.func_name)
         # Load from SMEM
         args = [_load_scalar_prefetch(a) for a in args]
         return core.eval_jaxpr(jaxpr, [], *args)
@@ -709,7 +748,22 @@ def make_kernel_function(
     def write_env(var, val):
       env[var] = val
 
-    for const, constvar in zip(consts, jaxpr.constvars, strict=True):
+    # Consts are the values the fusion closed over; some are index scalars.
+    # If no scalar_prefetch is given, every const is bound as closed over
+    # (this happens when another pull traces this function).
+    # If scalar_prefetch is given, the index scalars are loaded from it
+    # instead. It holds either only this fusion's scalars (no handler), or
+    # every fusion's scalars, and the handler picks this fusion's.
+    sp_mask = _scalar_prefetch_mask(jaxpr, read_usage_env)
+    bound_consts = consts
+    if any(sp_mask) and scalar_prefetch:
+      sp = _select_scalar_prefetch(
+          scalar_prefetch_handler, scalar_prefetch, sum(sp_mask),
+          jaxpr.debug_info.func_name)
+      sp = iter(_load_scalar_prefetch(a) for a in sp)
+      bound_consts = [next(sp) if is_sp else c
+                      for c, is_sp in zip(consts, sp_mask, strict=True)]
+    for const, constvar in zip(bound_consts, jaxpr.constvars, strict=True):
       env[constvar] = const
     for invar, arg, usage in zip(
         jaxpr.invars, flat_args, invar_usages, strict=True
@@ -3020,15 +3074,20 @@ def _push_block_spec_jaxpr(
           [True] * len(scalar_prefetch_jaxpr_no_dce.outvars),
       )
       assert not any(used_inputs[len(jaxpr.constvars) :])
+      sp_mask = _scalar_prefetch_mask(jaxpr, read_usage_env)
       scalar_prefetch_jaxpr = scalar_prefetch_jaxpr.replace(
-          invars=jaxpr.constvars,
+          invars=[
+              v for v, sp in zip(jaxpr.constvars, sp_mask, strict=True) if sp
+          ],
           debug_info=scalar_prefetch_jaxpr.debug_info.with_unknown_names(),
       )
 
       def _scalar_prefetch_fn(sp_jaxpr):
         if grid_len is None:
           raise ValueError('Grid must be provided to push_block_spec.')
-        args = scalar_prefetch_handler(*_get_scalar_prefetch())
+        args = _select_scalar_prefetch(
+            scalar_prefetch_handler, _get_scalar_prefetch(),
+            len(sp_jaxpr.invars), sp_jaxpr.debug_info.func_name)
         # Load from SMEM
         args = [_load_scalar_prefetch(a) for a in args]
         return core.eval_jaxpr(sp_jaxpr, [], *args)
