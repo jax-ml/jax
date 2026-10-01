@@ -807,17 +807,51 @@ def _is_reduction_signed(kind: vector.CombiningKind) -> bool | None:
   return None
 
 
+def _reduction_scratch_bytes(
+    op: vector.ReductionOp | vector.MultiDimReductionOp,
+) -> int | None:
+  match op:
+    case vector.ReductionOp():
+      [in_layout_attr] = inference_utils.in_layouts(op)
+      in_layout = layouts_lib.from_layout_attr(in_layout_attr)
+      if isinstance(in_layout, fa.WGStridedFragLayout) or (
+          isinstance(in_layout, fa.TiledLayout)
+          and bool(in_layout.partitioned_warp_dims)
+      ):
+        return 4 * utils.bitwidth(op.vector.type.element_type) // 8
+      return None
+    case vector.MultiDimReductionOp():
+      if len(op.reduction_dims) != 1:
+        raise NotImplementedError("Only 1 reduction dimension is supported.")
+      [in_layout_attr, _] = inference_utils.in_layouts(op)
+      in_layout = layouts_lib.from_layout_attr(in_layout_attr)
+      if not isinstance(in_layout, fa.TiledLayout):
+        raise NotImplementedError(f"Unsupported layout: {in_layout}")
+      reduced_dim = in_layout.tiling.tile_dimension(op.reduction_dims[0])
+      if any(reduced_dim[d] for d in in_layout.partitioned_warp_dims):
+        return ir.IntegerAttr(op.attributes["scratch_size"]).value
+      return None
+    case _:
+      assert_never(op)
+
+
 @_register_lowering(vector.ReductionOp)
 def _vector_reduction_op_lowering_rule(
     ctx: LoweringContext, op: vector.ReductionOp
 ) -> Sequence[ir.Value]:
   [layout] = inference_utils.in_layouts(op)
-  element_type = op.vector.type.element_type
-  scratch = _slice_smem(
-      ir.MemRefType.get([4], element_type, memory_space=utils.smem()),
-      ir.IntegerAttr(op.attributes["offset"]).value,
-      ctx.smem_requested_bytes,
-  )
+  if (scratch_bytes := _reduction_scratch_bytes(op)) is not None:
+    element_type = op.vector.type.element_type
+    allocation_size = scratch_bytes * 8 // utils.bitwidth(element_type)
+    scratch = _slice_smem(
+        ir.MemRefType.get(
+            [allocation_size], element_type, memory_space=utils.smem()
+        ),
+        ir.IntegerAttr(op.attributes["offset"]).value,
+        ctx.smem_requested_bytes,
+    )
+  else:
+    scratch = None
   axes = range(op.vector.type.rank)
   op_kind = _combining_kind(op.kind)
   is_signed = _is_reduction_signed(op_kind)
@@ -859,13 +893,10 @@ def _vector_multi_dim_reduction_op_lowering_rule(
   src = _fragmented_array_from_ir(op.source, in_layout, is_signed)
   acc = _fragmented_array_from_ir(op.acc, acc_layout, is_signed)
 
-  if not isinstance(src.layout, fa.TiledLayout):
-    raise NotImplementedError(f"Unsupported layout: {src.layout}")
-  reduced_dim = src.layout.tiling.tile_dimension(op.reduction_dims[0])
-  if any(reduced_dim[d] for d in src.layout.partitioned_warp_dims):
+  if (scratch_bytes := _reduction_scratch_bytes(op)) is not None:
     # cross-warp reductions require scratch space.
     dtype = op.source.type.element_type
-    allocation_size = ir.IntegerAttr(op.attributes["scratch_size"]).value * 8 // utils.bitwidth(dtype)
+    allocation_size = scratch_bytes * 8 // utils.bitwidth(dtype)
     scratch = _slice_smem(
         ir.MemRefType.get([allocation_size], dtype, memory_space=utils.smem()),
         ir.IntegerAttr(op.attributes["offset"]).value,
@@ -2940,6 +2971,66 @@ def _gpu_launch_op(module: ir.Module) -> gpu.LaunchOp:
   raise ValueError("gpu.launch op not found.")
 
 
+def _finalize_smem(module: ir.Module):
+  """Infers scoped SMEM usage after layout inference and updates the launch op."""
+  gpu_launch_op = _gpu_launch_op(module)
+  scoped_smem_bytes = 0
+  launch_slices: list[mgpu.SliceSMEMOp] = []
+
+  def walk_ops(op: ir.Operation) -> ir.WalkResult:
+    nonlocal scoped_smem_bytes
+    match op.opview:
+      case mgpu.CustomPrimitiveOp():
+        return ir.WalkResult.SKIP
+      case mgpu.SliceSMEMOp() as slice_op:
+        if slice_op.alias_id is not None:
+          ref_ty = ir.MemRefType(slice_op.result.type)
+          size = (
+              math.prod(ref_ty.shape)
+              * utils.bitwidth(ref_ty.element_type)
+              // 8
+          )
+          scoped_smem_bytes = max(
+              scoped_smem_bytes, slice_op.offset.value + size
+          )
+        else:
+          launch_slices.append(slice_op)
+      case vector.ReductionOp() | vector.MultiDimReductionOp() as red_op:
+        if (size := _reduction_scratch_bytes(red_op)) is not None:
+          offset = ir.IntegerAttr(red_op.attributes["offset"]).value
+          scoped_smem_bytes = max(scoped_smem_bytes, offset + size)
+    return ir.WalkResult.ADVANCE
+
+  gpu_launch_op.operation.walk(walk_ops, walk_order=ir.WalkOrder.PRE_ORDER)
+
+  if scoped_smem_bytes > 0:
+    smem_size_val = gpu_launch_op.dynamicSharedMemorySize
+    assert smem_size_val is not None
+    assert isinstance(smem_size_val.owner, arith.ConstantOp)
+    launch_smem_bytes = int(smem_size_val.owner.literal_value)
+    i32 = ir.IntegerType.get_signless(32)
+    if launch_slices or launch_smem_bytes > 0:
+      # Launch-level SMEM slices (barriers, TMEM addr_ref, and on-device
+      # profiler storage) were initially placed starting at offset 0. Shift
+      # them past the scoped SMEM region, rounding the start offset up to a
+      # multiple of 8 bytes so barriers (MBARRIER_BYTES = 8) and the profiler
+      # buffer remain 8-byte aligned.
+      shift = (scoped_smem_bytes + 7) & ~7
+      for slice_op in launch_slices:
+        slice_op.attributes["offset"] = ir.IntegerAttr.get(
+            i32, slice_op.offset.value + shift
+        )
+      total_smem_bytes = shift + launch_smem_bytes
+    else:
+      total_smem_bytes = scoped_smem_bytes
+    with ir.InsertionPoint(gpu_launch_op):
+      new_smem_size = utils.c(total_smem_bytes, i32)
+    smem_operand_idx = list(gpu_launch_op.operation.operands).index(
+        smem_size_val
+    )
+    gpu_launch_op.operation.operands[smem_operand_idx] = new_smem_size
+
+
 def _lowering_context(
     module: ir.Module,
     launch_context: lc.LaunchContext,
@@ -2982,6 +3073,7 @@ def lower_mgpu_dialect(
   # kernel.
   module.context.append_dialect_registry(mlir_interpreter.upstream_dialects)
   module.context.load_all_available_dialects()
+  _finalize_smem(module)
   ctx = _lowering_context(module, launch_context, auto_barriers)
   with ir.InsertionPoint(module.body):
     for op in list(module.body):
