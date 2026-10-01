@@ -397,10 +397,15 @@ def _jaxpr_has_unbatchable_dataflow(
   for eqn in jaxpr.eqns:
     if eqn.primitive.name == "emit_pipeline":
       all_args = eqn.params["args_tree"].unflatten(eqn.invars)
-      if any(v in batched_vars for v in all_args.all_index_map_consts):
+      if any(
+          isinstance(v, jax_core.Var) and v in batched_vars
+          for v in all_args.all_index_map_consts
+      ):
         return True
     else:
-      if any(v in batched_vars for v in eqn.invars):
+      if any(
+          isinstance(v, jax_core.Var) and v in batched_vars for v in eqn.invars
+      ):
         return True
 
   return False
