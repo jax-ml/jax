@@ -1102,7 +1102,6 @@ class custom_vjp3:
   def defremat_with_logs(self, fwd, rem, bwd):
     self.remat_rules = (fwd, rem, bwd, True)
 
-  @partial(traceback_util.api_boundary, repro_api_name="jax.custom_vjp.__call__")
   def __call__(self, *args, **kwargs):
     if not (self.fwd and self.bwd) and not self.remat_rules:
       msg = (f"No VJP defined for custom_vjp function {self.f.__name__} using "
@@ -1153,9 +1152,6 @@ class custom_vjp3:
                            static_argnums, self.opt_remat, with_logs,
                            self.remat_rules)
     return prim(consts, (), *args)
-
-  def def_vmap(self, rule, /): return self.f.def_vmap(rule)
-  def def_transpose(self, rule, /): return self.f.def_transpose(rule)
 
 def _vjp_from_remat_rules(remat_fwd, rem, bwd, with_logs):
   # Not under jax.remat, run rem right after fwd on the forward pass, saving what

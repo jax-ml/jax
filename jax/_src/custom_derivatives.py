@@ -127,13 +127,6 @@ class custom_jvp[ReturnValue]:
   jvp: Callable[..., tuple[ReturnValue, ReturnValue]] | None = None
   symbolic_zeros: bool = False
 
-  def __new__(cls, fun=None, nondiff_argnums=(), nondiff_argnames=()):
-    if fun is not None and config.custom_jvp3.value:
-      from jax._src.hijax import custom_jvp3  # pyrefly: ignore[missing-import]
-      return custom_jvp3(fun, nondiff_argnums, nondiff_argnames)
-    else:
-      return super().__new__(cls)
-
   def __init__(self,
                fun: Callable[..., ReturnValue],
                nondiff_argnums: Sequence[int] = (),
@@ -255,6 +248,11 @@ class custom_jvp[ReturnValue]:
   @partial(traceback_util.api_boundary,
            repro_api_name="jax.custom_jvp.__call__")
   def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
+    if config.custom_jvp3.value:
+      from jax._src.hijax import custom_jvp3  # pyrefly: ignore[missing-import]
+      f = custom_jvp3(self.fun, self.nondiff_argnums)
+      f.defjvp(self.jvp, symbolic_zeros=self.symbolic_zeros)
+      return f(*args, **kwargs)
     debug = debug_info("custom_jvp fun", self.fun, args, kwargs,
                        static_argnums=self.nondiff_argnums)
     primal_name = debug.func_name
@@ -555,13 +553,6 @@ class custom_vjp[ReturnValue]:
   .. _tutorial: https://docs.jax.dev/en/latest/301/custom-jvp-vjp.html
   """
 
-  def __new__(cls, fun=None, nondiff_argnums=(), nondiff_argnames=()):
-    if fun is not None and config.custom_vjp3.value:
-      from jax._src.hijax import custom_vjp3  # pyrefly: ignore[missing-import]
-      return custom_vjp3(fun, nondiff_argnums, nondiff_argnames)
-    else:
-      return super().__new__(cls)
-
   def __init__(self,
                fun: Callable[..., ReturnValue],
                nondiff_argnums: Sequence[int] = (),
@@ -587,6 +578,7 @@ class custom_vjp[ReturnValue]:
     self.symbolic_zeros = False
     self.optimize_remat = False
     self.with_logs = False
+    self.remat_rules: tuple[Callable, Callable, Callable, bool] | None = None
 
   __getattr__ = custom_api_util.forward_attr
 
@@ -741,11 +733,7 @@ class custom_vjp[ReturnValue]:
     Returns:
       None.
     """
-    del fwd, rem, bwd
-    raise NotImplementedError(
-        "custom_vjp.defremat requires the jax_custom_vjp3 implementation, "
-        "enabled with jax.config.update('jax_custom_vjp3', True) before "
-        "applying the jax.custom_vjp decorator.")
+    self.remat_rules = (fwd, rem, bwd, False)
 
   def defremat_with_logs(self,
                          fwd: Callable[..., tuple[ReturnValue, Any]],
@@ -757,11 +745,24 @@ class custom_vjp[ReturnValue]:
     As with :py:func:`~jax.custom_vjp.defvjp_with_logs`, ``bwd`` must return a
     pair ``(in_cts, logs)``.
     """
-    self.defremat(fwd, rem, bwd)
+    self.remat_rules = (fwd, rem, bwd, True)
 
   @partial(traceback_util.api_boundary,
            repro_api_name="jax.custom_vjp.__call__")
   def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
+    if config.custom_vjp3.value:
+      from jax._src.hijax import custom_vjp3  # pyrefly: ignore[missing-import]
+      f = custom_vjp3(self.fun, self.nondiff_argnums)
+      if self.fwd is not None:
+        (f.defvjp_with_logs if self.with_logs else f.defvjp)(
+            self.fwd, self.bwd, symbolic_zeros=self.symbolic_zeros,
+            optimize_remat=self.optimize_remat)
+      f.remat_rules = self.remat_rules
+      return f(*args, **kwargs)
+    if self.remat_rules is not None and not (self.fwd and self.bwd):
+      raise NotImplementedError(
+          "custom_vjp.defremat requires the jax_custom_vjp3 implementation, "
+          "enabled with jax.config.update('jax_custom_vjp3', True).")
     debug_fun = debug_info("custom_vjp fun", self.fun, args, kwargs,
                            static_argnums=self.nondiff_argnums)
     if not self.fwd or not self.bwd:

@@ -3235,13 +3235,15 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     _, f_vjp = jax.vjp(jax.remat(f), x)
     self.assertEqual(list(f_vjp.with_logs(jnp.ones(3))[1]), ['g'])
 
-  @config.custom_vjp3(False)
   def test_defremat_requires_custom_vjp3(self):
     sin = jax.custom_vjp(jnp.sin)
-    with self.assertRaisesRegex(NotImplementedError, "jax_custom_vjp3"):
-      sin.defremat(lambda x: (jnp.sin(x), None),
-                   lambda _, x: (jnp.sin(x), jnp.cos(x)),
-                   lambda cos_x, g: (cos_x * g,))
+    sin.defremat(lambda x: (jnp.sin(x), None),
+                 lambda _, x: (jnp.sin(x), jnp.cos(x)),
+                 lambda cos_x, g: (cos_x * g,))
+    with config.custom_vjp3(False):
+      with self.assertRaisesRegex(NotImplementedError, "jax_custom_vjp3"):
+        sin(1.)
+    self.assertAllClose(sin(1.), jnp.sin(1.))
 
   def test_eager_call_not_traced(self):
     calls = 0
