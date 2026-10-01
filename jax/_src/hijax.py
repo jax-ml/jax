@@ -487,6 +487,7 @@ def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
     return ans_flat, [False] * len(ans_flat), None, None, linearized
   args = tree_unflatten(_prim.in_tree, args_flat)
   nzs_in = tree_unflatten(_prim.in_tree, nz_in_flat)
+  is_vjp = is_vjp and not isinstance(_prim, CustomJVPTraced)
   if is_vjp:
     ans, residuals, *rest = _prim.vjp_fwd(nzs_in, *args)
     linearized = partial(fake_linear_op, _prim, nz_in_flat)

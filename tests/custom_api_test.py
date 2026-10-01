@@ -4918,6 +4918,23 @@ class CustomJVP3Test(CustomJVPTest):
     self.assertIs(eqn.primitive, pe.eval_jaxpr_p)
     self.assertLen(eqn.params['call_jaxpr'].eqns, 10)
 
+  def test_grad_runs_linearization_forward(self):
+    @jax.custom_jvp
+    def f(x):
+      return jnp.sin(x)
+    f.defjvp(lambda p, t: (f(p[0]), jnp.cos(p[0]) * t[0]))
+
+    @jax.jit
+    def g(x):
+      ref = jax.new_ref(0.)
+      return f(ref[...] + lax.stop_gradient(x))
+
+    h = lambda x: g(x) + jnp.sin(x)
+    self.assertAllClose(jax.grad(h)(1.), jnp.cos(1.))
+    self.assertAllClose(jax.jit(jax.grad(h))(1.), jnp.cos(1.))
+    xs = jnp.arange(3.)
+    self.assertAllClose(jax.vmap(jax.grad(h))(xs), jnp.cos(xs))
+
 
 @jtu.with_config(jax_remat3=True)
 class CustomJVP3Remat3Test(CustomJVP3Test):
