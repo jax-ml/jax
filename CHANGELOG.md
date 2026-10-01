@@ -40,6 +40,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.numpy.atleast_3d` now return tuples of arrays rather than
     lists, matching the behavior in NumPy 2.0+.
 
+* Deprecations
+  * {func}`jax.lax.psend` and {func}`jax.lax.precv` are deprecated.
+
 * Changes
   * JAX now uses Bazel 9.2.0 to build from source.
   * Improved the numerical accuracy of {func}`jax.numpy.sinc` across all

@@ -387,8 +387,8 @@ from jax._src.lax.parallel import (
   pmin_p as pmin_p,
   ppermute as ppermute,
   ppermute_p as ppermute_p,
-  psend as psend,
-  precv as precv,
+  psend as _deprecated_psend,
+  precv as _deprecated_precv,
   pshuffle as pshuffle,
   psum as psum,
   psum_p as psum_p,
@@ -414,3 +414,27 @@ from jax._src.pjit import with_sharding_constraint as with_sharding_constraint
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
 from jax._src.lax.scaled_dot import scaled_dot as scaled_dot
+
+_deprecations = {
+    # Added Oct 1, 2026
+    "psend": (
+        "jax.lax.psend is deprecated.",
+        _deprecated_psend,
+    ),
+    "precv": (
+        "jax.lax.precv is deprecated.",
+        _deprecated_precv,
+    ),
+}
+
+import typing as _typing
+if _typing.TYPE_CHECKING:
+  psend = _deprecated_psend
+  precv = _deprecated_precv
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+  del _deprecated_psend
+  del _deprecated_precv
+del _typing

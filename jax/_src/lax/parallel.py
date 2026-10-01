@@ -427,6 +427,9 @@ def _ppermute_is_async(x, axis_name, perm, is_async=False):
 def psend(x, axis_name, perm):
   """Perform a collective send according to the permutation ``perm``.
 
+  .. deprecated:: 0.12.0
+    ``jax.lax.psend`` is deprecated.
+
   If ``x`` is a pytree then the result is equivalent to mapping this function to
   each leaf in the tree.
 
@@ -461,6 +464,9 @@ def psend(x, axis_name, perm):
 
 def precv(token, out_shape, axis_name, perm):
   """Perform a collective recv according to the permutation ``perm``.
+
+  .. deprecated:: 0.12.0
+    ``jax.lax.precv`` is deprecated.
 
   This function is an analog of the Recv HLO.
 

@@ -364,6 +364,8 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(c[1, :], a[0, :])
 
   @jtu.run_on_devices("gpu")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.psend is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.precv is deprecated")
   def test_psend_precv_basic_two_gpus(self):
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
@@ -410,6 +412,8 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(c.shape, a.shape)
 
   @jtu.run_on_devices("gpu")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.psend is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.precv is deprecated")
   def test_psend_precv_basic_with_no_deadlock_cycle(self):
     mesh = jtu.create_mesh((8,), 'x')
     a = jax.device_put(
@@ -472,6 +476,8 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(c.shape, a.shape)
 
   @jtu.run_on_devices('gpu')
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.psend is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.precv is deprecated")
   def test_psend_precv_basic_with_deadlock_cycle(self):
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
@@ -511,6 +517,8 @@ class ShardMapTest(jtu.JaxTestCase):
       fwd(a)
 
   @jtu.run_on_devices('gpu')
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.psend is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.precv is deprecated")
   def test_psend_precv_basic_with_dangling_recv(self):
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
@@ -620,6 +628,8 @@ class ShardMapTest(jtu.JaxTestCase):
       fwd(a)
 
   @jtu.run_on_devices("gpu")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.psend is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.precv is deprecated")
   def test_psend_precv_reverse_two_gpus(self):
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(

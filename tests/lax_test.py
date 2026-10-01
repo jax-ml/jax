@@ -1216,6 +1216,12 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, r"dot\(\) takes 2 positional arguments"):
       lax.dot(lhs, rhs, lax.Precision.DEFAULT)
 
+  def testPsendPrecvDeprecation(self):
+    with self.assertWarnsRegex(DeprecationWarning, "jax.lax.psend is deprecated."):
+      _ = lax.psend
+    with self.assertWarnsRegex(DeprecationWarning, "jax.lax.precv is deprecated."):
+      _ = lax.precv
+
   @parameterized.parameters([
       (algorithm, dtype)
       for algorithm, test_dtypes in [
