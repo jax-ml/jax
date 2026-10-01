@@ -1016,6 +1016,35 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
     self.assertIsInstance(assignments, cs.Unsatisfiable)
 
+  @parameterized.parameters(False, True)
+  def test_scavenge_diagnoses_unsupported_smem_registers_transfer(
+      self, optimized
+  ):
+    shape = (128, 128)
+    f32 = ir.F32Type.get()
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(
+          shape,
+          f32,
+          layout=ir.StridedLayoutAttr.get(0, [1, 128]),
+          memory_space=mgpu.utils.smem(),
+      )
+      vec_ty = ir.VectorType.get(shape, f32)
+      ref, val = undefs(ref_ty, vec_ty)
+      mgpu.dialect.with_transforms(
+          ref, [mgpu.dialect.TileTransformAttr.get((64, 64))]
+      )
+      val = layout_cast(val, mgpu.WGMMA_LAYOUT)
+      mgpu.dialect.VectorStoreOp(val, ref, optimized=optimized)
+
+    opt_str = "optimized " if optimized else ""
+    with self.assertRaisesRegex(
+        ValueError,
+        f"no {opt_str}SMEM <-> registers transfer plan.*register layout WGMMA "
+        r"and ref with transforms \(TilingTransform\(\(64, 64\)\),\)",
+    ):
+      mgpu.infer_layout(self.module)
+
   def test_vector_broadcast_from_scalar_infers_splat_layout(self):
     shape = (128,)
     f32 = ir.F32Type.get()

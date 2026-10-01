@@ -1476,7 +1476,7 @@ def _reduce_system_once(
     - None: if the constraint system is not known unsatisfiable, but hasn't been
       reduced.
   """
-  assignments = constraint_system.assignments
+  assignments = dict(constraint_system.assignments)
   constraints: list[Constraint] = []
   changed = False
 
@@ -1521,7 +1521,7 @@ def _reduce_system_once(
 
   if changed:
     return ConstraintSystem(
-        assignments=assignments | constraint_system.assignments,
+        assignments=assignments,
         constraints=constraints,
     )
   return None

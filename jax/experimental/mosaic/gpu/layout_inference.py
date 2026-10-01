@@ -642,6 +642,11 @@ class DerivationContext:
       default_factory=dict, init=False
   )
 
+  # For each constraint, records the operation it was derived from.
+  op_for_constraint: dict[cs.Constraint, ir.OpView] = dataclasses.field(
+      default_factory=dict, init=False
+  )
+
   def update(self, mapping: ValueSitesForVariable) -> None:
     for variable, value_sites in mapping.items():
       if variable in self.value_sites_for_variable:
@@ -2661,6 +2666,90 @@ def _check_unsatisfiable_divisibility_constraints(
           raise _construct_value_error_with_op_stacktrace(msg, idx)
 
 
+def try_raise_constraint_specific_error(op: ir.OpView, constraint: cs.Constraint):
+  # TODO(bchetioui): handle other constraint types.
+  match constraint:
+    case cs.IsTransferableSmemRegisters(
+        source=cs.RegisterLayout(value=reg_layout),
+        target=cs.SMEMTransforms() as smem_transforms,
+        optimized=optimized
+    ) | cs.IsTransferableSmemRegisters(
+        source=cs.SMEMTransforms() as smem_transforms,
+        target=cs.RegisterLayout(value=reg_layout),
+        optimized=optimized
+    ):
+      match smem_transforms:
+        case cs.SMEMTransforms(tiling=None, swizzle=None):
+          ref_str = "untransformed ref"
+        case cs.SMEMTransforms(tiling=lc.TileTransform() as t, swizzle=None):
+          ref_str = f"ref with transforms (TilingTransform({t.tiling}),)"
+        case cs.SMEMTransforms(tiling=None, swizzle=s) if s is not None:
+          ref_str = f"ref with transforms (SwizzleTransform({s}),)"
+        case cs.SMEMTransforms(tiling=t, swizzle=s):
+          assert t is not None and s is not None
+          ref_str = (
+              "ref with transforms "
+              f"(TilingTransform({t.tiling}), SwizzleTransform({s}))"
+          )
+      opt_str = "optimized " if optimized else ""
+      msg = (
+          f"Failed to infer a possible set of layouts: no {opt_str}"
+          "SMEM <-> registers transfer plan could be synthesized for "
+          f"register layout {layouts_lib.pprint_layout(reg_layout)} and "
+          f"{ref_str}"
+      )
+      raise _construct_value_error_with_op_stacktrace(msg, op)
+
+
+def diagnose_unsatisfiable_system(
+    ctx: DerivationContext, initial_system: cs.ConstraintSystem
+):
+  """Raises the most specific error message possible for an unsatisfiable system."""
+  # First, we deduce as many assignments as possible, until we reach the
+  # expected unsatisfiable state, or can not reduce further.
+  system = initial_system
+  unsatisfied_assignments: dict[cs.Variable, cs.Constant] | None = None
+  while True:
+    match cs._reduce_system_once(system):
+      case cs.Unsatisfiable():
+        unsatisfied_assignments = system.assignments
+        break
+      case cs.ConstraintSystem() as reduced:
+        system = reduced
+      case None:
+        break
+
+  # If the constraint system is already known to be unsatisfiable here, we can
+  # attempt to raise a specialized error message.
+  if unsatisfied_assignments is not None:
+    for constraint, op in ctx.op_for_constraint.items():
+      reduced = cs.reduce_constraint(constraint, unsatisfied_assignments)
+      if not isinstance(reduced, cs.Unsatisfiable) and reduced.holds() is False:
+        try_raise_constraint_specific_error(op, reduced)
+
+  # In the case below, we have not yet been able to find a single contradiction
+  # to point to as the culprit. We reuse the initial, unreduced constraint
+  # system to check for divisibility constraints.
+  #
+  # We saturate `cs.OneOf` constraints across equal variables to propagate
+  # layout candidates (e.g. from ops like WGMMA) to equal variables/subviews
+  # (e.g. created by slicing), allowing
+  # `_check_unsatisfiable_divisibility_constraints` to inspect all relevant
+  # candidate layouts for each variable when constructing error messages.
+  saturated_system = cs.saturate_one_of_constraints_for_equal_vars(
+      initial_system
+  )
+  if not isinstance(saturated_system, cs.Unsatisfiable):
+    _check_unsatisfiable_divisibility_constraints(ctx, saturated_system)
+
+  # TODO(bchetioui): add more error diagnostics.
+  raise ValueError(
+      "Failed to infer a possible set of layouts. This should only happen if "
+      "user-provided layout casts are unsatisfiable. To dump the constraint "
+      "system for debugging, use `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM=1`."
+  )
+
+
 def _is_expensive_relayout(
     layout1: fa.FragmentedLayout, layout2: fa.FragmentedLayout
 ) -> bool:
@@ -2766,6 +2855,10 @@ def infer_layout(
               f"Shape mismatch between variable and {site}:"
               f" {var.shape} != {site.shape}."
           )
+
+    for constraint in constraint_system.constraints:
+      ctx.op_for_constraint.setdefault(constraint, op)
+
     global_constraint_system &= constraint_system
     ctx.update(mapping)
 
@@ -2777,11 +2870,19 @@ def infer_layout(
       break
 
   if isinstance(global_constraint_system, cs.Unsatisfiable):
+    # TODO(bchetioui): rework this to raise a nicer error message here too. This
+    # case is only hit if there are directly conflicting assignments (not even
+    # constraints), so it should be easy.
     raise ValueError(
         "Failed to infer a possible set of layouts. This should only happen if "
-        "user-provided layout casts are unsatisfiable."
+        "user-provided layout casts are unsatisfiable. To dump the constraint "
+        "system for debugging, use `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM=1`."
     )
 
+  # TODO(bchetioui): we need to also insert these constraints into the
+  # `op_for_constraint` map, but it's not yet quite clear which operation to
+  # associate them with. Since we don't use them yet for precise error
+  # reporting, leave this for later.
   constraints = derive_relayout_constraints(ctx.value_sites_for_variable)
   global_constraint_system &= cs.ConstraintSystem(constraints=constraints)
   assert not isinstance(global_constraint_system, cs.Unsatisfiable)
@@ -2825,24 +2926,8 @@ def infer_layout(
     # At this point we know the system is unsatisfiable. We attempt to find
     # contradictions in the `cs.ConstraintSystem`, and raise a meaningful error
     # message.
-    # We saturate `cs.OneOf` constraints across equal variables to propagate
-    # layout candidates (e.g. from ops like WGMMA) to equal variables/subviews
-    # (e.g. created by slicing), allowing
-    # `_check_unsatisfiable_divisibility_constraints` to inspect all relevant
-    # candidate layouts for each variable when constructing error messages.
-    global_constraint_system = cs.saturate_one_of_constraints_for_equal_vars(
-        global_constraint_system
-    )
-    if not isinstance(global_constraint_system, cs.Unsatisfiable):
-      _check_unsatisfiable_divisibility_constraints(
-          ctx, global_constraint_system
-      )
-
-    raise ValueError(
-        "Failed to infer a possible set of layouts. This should only happen if "
-        "user-provided layout casts are unsatisfiable. To dump the constraint "
-        "system for debugging, use `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM=1`."
-    )
+    diagnose_unsatisfiable_system(ctx, global_constraint_system)
+    raise RuntimeError("Unreachable")
 
   layout_for_value_site: dict[ValueSite, cs.Constant] = {}
   for variable, value_sites in ctx.value_sites_for_variable.items():
