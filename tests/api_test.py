@@ -1714,6 +1714,22 @@ class APITest(jtu.JaxTestCase):
       y, residuals = fwd(x, W)
       cot_x, cot_W = bwd(residuals, cot_out)  # no recompilation
 
+  @jtu.sample_product(has_aux=[False, True], jitted=[False, True])
+  def test_fwd_and_bwd_kwargs(self, has_aux, jitted):
+    def f(x, *, scale=1.0, bias):
+      value = scale * jnp.sum(x) + bias
+      return (value, (scale, bias)) if has_aux else value
+
+    x = jnp.arange(1.0, 4.0)
+    kwargs = dict(scale=0.5, bias=2.0)
+    fwd, bwd = api.fwd_and_bwd(f, argnums=0, has_aux=has_aux, jitted=jitted)
+    value, residuals, *aux = fwd(x, **kwargs)
+    grads = bwd(residuals, jnp.ones(()))
+    expected_out, expected_grads = api.value_and_grad(
+        f, has_aux=has_aux)(x, **kwargs)
+    self.assertAllClose((value, *aux) if has_aux else value, expected_out)
+    self.assertAllClose(grads, expected_grads)
+
   @parameterized.named_parameters(
       {"testcase_name": f"_{transform.__name__}", "transform": transform}
       for transform in [grad, jacfwd, jacrev])

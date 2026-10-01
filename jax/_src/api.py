@@ -692,7 +692,7 @@ def fwd_and_bwd(
   argnums = _ensure_index(argnums)
 
   def fwd(*args, **kwargs):
-    f_partial, dyn_args = argnums_partial2(fun, argnums, args, {})
+    f_partial, dyn_args = argnums_partial2(fun, argnums, args, kwargs)
     return vjp(f_partial, *dyn_args, has_aux=has_aux)
   def bwd(f_vjp, outgrad):
     g = f_vjp(outgrad)
