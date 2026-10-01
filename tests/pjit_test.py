@@ -7752,6 +7752,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(key)
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
 
+  def test_fold_in_auto_different_meshes(self):
+    mesh1 = jtu.create_mesh((2,), ('x',))
+    mesh2 = jtu.create_mesh((2,), ('y',))
+    key = jax.device_put(jax.random.key(72), NamedSharding(mesh1, P()))
+    data = jax.device_put(1, NamedSharding(mesh2, P()))
+
+    @jax.jit
+    def f(key, data):
+      return jax.random.fold_in(key, data)
+
+    f(key, data)  # doesn't crash
+
   @parameterized.named_parameters(
       ("bits", partial(jax.random.bits, shape=(8, 12)), P('x', 'y')),
       ("uniform", partial(jax.random.uniform, shape=(8, 12)), P('x', 'y')),
