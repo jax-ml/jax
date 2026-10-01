@@ -2758,6 +2758,47 @@ class PallasCallTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(res_un, exp_un)
     np.testing.assert_array_equal(res_sel, exp_sel)
 
+  @parameterized.parameters(jnp.float32, jnp.bfloat16, jnp.int32)
+  def test_load_vmem_before_aliasing_store(self, dtype):
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Requires libtpu >= 0.0.50')
+
+    rows, lanes = 32, 256
+
+    def kernel(i_ref, a_ref, b_ref, v_ref, o_ref, t):
+      @pl.when(i_ref[1] == 0)  # always true at run time
+      def _():
+        for n in range(4):
+          t[n] = a_ref[...]
+
+      k = i_ref[0]
+      x = t[1]
+      t[k] = b_ref[...]
+      keep = jnp.broadcast_to(v_ref[0:1, 0:1], x.shape) > 0.0
+      o_ref[...] = jnp.where(keep, x, jnp.zeros_like(x))
+
+    fn = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((rows, lanes), dtype),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        scratch_shapes=[pltpu.VMEM((4, rows, lanes), dtype)],
+    )
+
+    rng = np.random.default_rng(0)
+    a = jnp.asarray(rng.integers(1, 50, (rows, lanes)), dtype)
+    b = jnp.asarray(rng.integers(50, 100, (rows, lanes)), dtype)
+    v = np.ones((8, 128), np.float32)
+
+    for k in (2, 1):
+      out = jax.jit(fn)(np.array([k, 0], np.int32), a, b, v)
+      np.testing.assert_array_equal(out, a)
+
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
 class PallasCallPoisonTest(ptu.PallasTPUTest):
