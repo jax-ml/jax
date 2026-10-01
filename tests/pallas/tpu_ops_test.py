@@ -467,6 +467,25 @@ class OpsTest(ptu.PallasTPUTest):
 
     np.testing.assert_array_equal(result, reduce_func(x, axis))
 
+  @parameterized.product(axis=[0, 1], reduce_func=[jnp.argmax, jnp.argmin])
+  def test_bf16_input_reduce_index_large_dim(self, axis, reduce_func):
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires TPUv6+")
+    # One extreme value per column / row, all >= 2^15, distinct (500 apart) and
+    # not aligned to a tile boundary (+7).
+    expected = jnp.arange(32775, 32775 + 16 * 500, 500, dtype=jnp.int32)
+    x = jax.nn.one_hot(expected, 40960, dtype=jnp.bfloat16, axis=axis)
+    if reduce_func is jnp.argmin:
+      x = -x
+
+    def kernel(x, out):
+      out[:] = reduce_func(x[:], axis)
+
+    result = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.int32)
+    )(x)
+    np.testing.assert_array_equal(result, expected)
+
   @parameterized.product(
       k=[1, 2, 4, 8],
       in_shape=[(13, 32, 512), (10, 16, 128)],
