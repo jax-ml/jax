@@ -467,6 +467,37 @@ class OpsTest(ptu.PallasTPUTest):
 
     np.testing.assert_array_equal(result, reduce_func(x, axis))
 
+  @parameterized.product(axis=[0, 1], reduce_func=[jnp.argmax, jnp.argmin])
+  def test_bf16_input_reduce_index_large_dim(self, axis, reduce_func):
+    # Indices >= 2^15 must not be sign-extended when widened from the native
+    # 16-bit indices to int32.
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires TPUv6+")
+    reduced_size, other_size = 40960, 16
+    in_shape = [other_size, other_size]
+    in_shape[axis] = reduced_size
+    # One extreme value per column / row, all >= 2^15, distinct (500 apart) and
+    # not aligned to a tile boundary (+7).
+    expected = 32768 + 500 * np.arange(other_size, dtype=np.int32) + 7
+    extreme = 1.0 if reduce_func is jnp.argmax else -1.0
+    x = np.zeros(in_shape, dtype=np.float32)
+    if axis == 0:
+      x[expected, np.arange(other_size)] = extreme
+    else:
+      x[np.arange(other_size), expected] = extreme
+    x = jnp.asarray(x, dtype=jnp.bfloat16)
+
+    def kernel(x, out):
+      out[:] = reduce_func(x[:], axis)
+
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((other_size,), dtype=jnp.int32),
+    )(x)
+
+    np.testing.assert_array_equal(result, expected)
+    np.testing.assert_array_equal(result, reduce_func(x, axis))
+
   @parameterized.product(
       k=[1, 2, 4, 8],
       in_shape=[(13, 32, 512), (10, 16, 128)],
