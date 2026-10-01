@@ -3183,18 +3183,16 @@ def _tcgen05_commit_arrive_lowering(
       barrier_ref = barrier_ref[base_index]
 
   predicate = ctx.module_ctx.single_lane_predicate
-  if collective_axis is not None:
-    assert predicate is not None
+  if collective := collective_axis is not None:
     is_leader_block = _collective_mma_predicate(ctx, collective_axis)
-    predicate = arith_dialect.andi(predicate, is_leader_block)
-    collective = True
-  else:
-    collective = False
+    predicate = _andi_maybe_none(predicate, is_leader_block)
 
-  with mgpu.when(predicate):
-    tcgen05.commit_arrive(barrier_ref,
-                          collective=collective,
-                          ctx=ctx.launch_ctx)
+  tcgen05.commit_arrive(
+      barrier_ref,
+      collective=collective,
+      ctx=ctx.launch_ctx,
+      predicate=predicate,
+  )
   return []
 
 

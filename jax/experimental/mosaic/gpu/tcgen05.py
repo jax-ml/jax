@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import functools
 import itertools
@@ -875,6 +876,8 @@ def commit_arrive(
     barrier: utils.BarrierRef | ir.Value,
     collective: bool = False,
     ctx: LaunchContext | None = None,
+    *,
+    predicate: ir.Value | None = None,
 ) -> None:
   if isinstance(barrier, utils.BarrierRef):
     barrier = barrier.get_ptr()
@@ -883,6 +886,10 @@ def commit_arrive(
         "barrier must be a Mosaic barrier or a SMEM pointer, got:"
         f" {barrier.type}"
     )
+  if predicate is None:
+    predicate_ctx = contextlib.nullcontext()
+  else:
+    predicate_ctx = utils.when(predicate)
   if collective:
     if ctx is None:
       raise ValueError("ctx must be provided for collective barriers")
@@ -907,21 +914,15 @@ def commit_arrive(
     #
     # While it seems like this shouldn't change anything, it appears that ptxas
     # messes up in that case, producing incorrect code.
-    llvm.call_intrinsic(
-        None,
-        "llvm.nvvm.tcgen05.commit.mc.cg2",
-        [barrier, mask],
-        [],
-        [],
-    )
+    with predicate_ctx:
+      llvm.call_intrinsic(
+          None, "llvm.nvvm.tcgen05.commit.mc.cg2", [barrier, mask], [], []
+      )
   else:
-    llvm.call_intrinsic(
-        None,
-        "llvm.nvvm.tcgen05.commit.cg1",
-        [barrier],
-        [],
-        [],
-    )
+    with predicate_ctx:
+      llvm.call_intrinsic(
+          None, "llvm.nvvm.tcgen05.commit.cg1", [barrier], [], []
+      )
 
 
 def tmem_alloc_exact_ncols(ncols: int, exact: bool) -> int:
