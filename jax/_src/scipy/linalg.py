@@ -380,6 +380,22 @@ def det(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> A
   return jnp_linalg.det(a)
 
 
+def _eigh_generalized(a: Array, b: Array, *, lower: bool,
+                      eigvals_only: bool) -> Array | tuple[Array, Array]:
+  # Reduce A v = w B v to a standard Hermitian problem using B = L L^H.
+  l = lax_linalg.cholesky(b)
+  a = (a + jnp.conj(a.mT)) / 2
+  c = lax_linalg.triangular_solve(l, a, left_side=True, lower=True)
+  c = lax_linalg.triangular_solve(l, c, left_side=False, lower=True,
+                                  transpose_a=True, conjugate_a=True)
+  v, w = lax_linalg.eigh(c, lower=lower)
+  if eigvals_only:
+    return w
+  v = lax_linalg.triangular_solve(l, v, left_side=True, lower=True,
+                                  transpose_a=True, conjugate_a=True)
+  return w, v
+
+
 @overload
 def _eigh(a: ArrayLike, b: ArrayLike | None, lower: bool, eigvals_only: Literal[True],
           eigvals: None, type: int) -> Array: ...
@@ -395,17 +411,22 @@ def _eigh(a: ArrayLike, b: ArrayLike | None, lower: bool, eigvals_only: bool,
 @jit(static_argnames=('lower', 'eigvals_only', 'eigvals', 'type'))
 def _eigh(a: ArrayLike, b: ArrayLike | None, lower: bool, eigvals_only: bool,
           eigvals: None, type: int) -> Array | tuple[Array, Array]:
-  if b is not None:
-    raise NotImplementedError("Only the b=None case of eigh is implemented")
   if type != 1:
     raise NotImplementedError("Only the type=1 case of eigh is implemented.")
   if eigvals is not None:
     raise NotImplementedError(
         "Only the eigvals=None case of eigh is implemented.")
 
+  if b is not None:
+    a, b = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
+    signature = ("(n,n),(n,n)->(n)" if eigvals_only else
+                 "(n,n),(n,n)->(n),(n,n)")
+    return jnp_vectorize.vectorize(
+        partial(_eigh_generalized, lower=lower, eigvals_only=eigvals_only),
+        signature=signature)(a, b)
+
   a, = promote_dtypes_inexact(jnp.asarray(a))
   v, w = lax_linalg.eigh(a, lower=lower)
-
   if eigvals_only:
     return w
   else:
@@ -443,18 +464,19 @@ def eigh(a: ArrayLike, b: ArrayLike | None = None, lower: bool = True,
 
   JAX implementation of :func:`scipy.linalg.eigh`.
 
-  Only the standard eigenvalue problem is supported: ``a @ v = lambda * v``.
-    The parameter `b` must be None; the generalized problem (``a @ v = lambda * b @ v``)
-    is not implemented.
+  Solves the standard eigenvalue problem ``a @ v = lambda * v``, or the
+  generalized problem ``a @ v = lambda * b @ v`` when `b` is specified.
 
   Args:
     a: Hermitian input array of shape ``(..., N, N)``
-    b: Must be None. The generalized eigenvalue problem is not supported.
-    lower: if True (default) access only the lower portion of the input matrix.
-      Otherwise access only the upper portion.
+    b: Optional positive-definite Hermitian array of shape ``(..., N, N)``.
+      Batch dimensions of `a` and `b` must be broadcast-compatible. If None,
+      the identity matrix is assumed.
+    lower: if True (default), use the lower triangle after symmetrization.
+      Otherwise use the upper triangle.
     eigvals_only: If True, compute only the eigenvalues. If False (default) compute
       both eigenvalues and eigenvectors.
-    type: Not used. Only type=1 is supported.
+    type: Only type=1 is supported, corresponding to ``a @ v = lambda * b @ v``.
 
     eigvals: Not used. Only eigvals=None is supported.
     overwrite_a: unused by JAX.
@@ -467,10 +489,14 @@ def eigh(a: ArrayLike, b: ArrayLike | None = None, lower: bool = True,
     an array ``eigvals``.
 
     - ``eigvals``: array of shape ``(..., N)`` containing the eigenvalues.
-    - ``eigvecs``: array of shape ``(..., N, N)`` containing the eigenvectors.
+    - ``eigvecs``: array of shape ``(..., N, N)`` containing the eigenvectors,
+      normalized such that ``v.conj().T @ b @ v`` is the identity matrix when
+      `b` is specified, or ``v.conj().T @ v`` otherwise.
 
-  Raise:
-    NotImplementedError: If `b` is not None.
+  Notes:
+    Inputs are symmetrized before computation, for correct autodiff behavior.
+    The generalized problem is solved using a Cholesky factorization of `b`.
+    If `b` is not positive definite, the result contains NaNs.
 
   See also:
     - :func:`jax.numpy.linalg.eigh`: NumPy-style eigh API.
@@ -498,6 +524,15 @@ def eigh(a: ArrayLike, b: ArrayLike | None = None, lower: bool = True,
     Solution satisfies the eigenvalue problem:
 
     >>> jnp.allclose(a @ eigvecs, eigvecs @ jnp.diag(eigvals))
+    Array(True, dtype=bool)
+
+    Solve a generalized eigenvalue problem with a positive-definite matrix `b`:
+
+    >>> b = jnp.diag(jnp.array([2., 1.]))
+    >>> eigvals, eigvecs = jax.scipy.linalg.eigh(a, b)
+    >>> jnp.allclose(a @ eigvecs, (b @ eigvecs) * eigvals, atol=1E-5)
+    Array(True, dtype=bool)
+    >>> jnp.allclose(eigvecs.T @ b @ eigvecs, jnp.eye(2), atol=1E-5)
     Array(True, dtype=bool)
   """
   del overwrite_a, overwrite_b, turbo, check_finite  # unused
