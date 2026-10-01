@@ -228,24 +228,33 @@ nb::tuple PyDeviceList::AsTuple() const {
   }
 }
 
+namespace {
+
+// Iterator whose dereference converts `xla::ifrt::Device*` into JAX
+// `PjRtDevice`.
+struct IfrtDeviceIterator {
+  void operator++() { ++it; }
+  bool operator==(const IfrtDeviceIterator& other) const {
+    return it == other.it;
+  }
+  nb_class_ptr<PyDevice> operator*() const {
+    return py_client->GetPyDevice(*it);
+  }
+  nb_class_ptr<PyClient> py_client;
+  absl::Span<xla::ifrt::Device* const>::const_iterator it;
+};
+
+}  // namespace
+
 nb::iterator PyDeviceList::Iter() {
   switch (device_list_.index()) {
     case 0: {
-      // Iterator whose deference converts `xla::ifrt::Device*` into JAX
-      // `PjRtDevice`.
-      struct Iterator {
-        void operator++() { ++it; }
-        bool operator==(const Iterator& other) const { return it == other.it; }
-        nb_class_ptr<PyDevice> operator*() const {
-          return py_client->GetPyDevice(*it);
-        }
-        nb_class_ptr<PyClient> py_client;
-        absl::Span<xla::ifrt::Device* const>::const_iterator it;
-      };
       return nb::make_iterator(
           nb::type<PyDeviceList>(), "ifrt_device_iterator",
-          Iterator{py_client_, std::get<0>(device_list_)->devices().cbegin()},
-          Iterator{py_client_, std::get<0>(device_list_)->devices().cend()});
+          IfrtDeviceIterator{py_client_,
+                             std::get<0>(device_list_)->devices().cbegin()},
+          IfrtDeviceIterator{py_client_,
+                             std::get<0>(device_list_)->devices().cend()});
     }
     case 1:
       return nb::make_iterator(
@@ -516,6 +525,17 @@ PyDeviceList::MemoryKinds(nb_class_ptr<PyDeviceList> self) {
                      return *kinds;
                    })
       .def_prop_ro("device_kind", &PyDeviceList::DeviceKind, nb::lock_self());
+
+  // Pre-register iterator types during module initialization so concurrent
+  // calls to PyDeviceList::Iter() do not race to register them lazily (which
+  // can release the GIL if a Python sys.addaudithook is installed).
+  absl::Span<xla::ifrt::Device* const> empty_ifrt_devices;
+  nb::make_iterator(nb::type<PyDeviceList>(), "ifrt_device_iterator",
+                    IfrtDeviceIterator{{}, empty_ifrt_devices.cbegin()},
+                    IfrtDeviceIterator{{}, empty_ifrt_devices.cend()});
+  nb::tuple empty_tuple;
+  nb::make_iterator(nb::type<PyDeviceList>(), "python_device_iterator",
+                    empty_tuple.begin(), empty_tuple.end());
 }
 
 }  // namespace jax
