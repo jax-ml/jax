@@ -1935,12 +1935,27 @@ def _poisson_knuth(key, lam, shape, dtype, max_iters) -> Array:
   return (k - 1).astype(dtype)
 
 
+def _poisson_log_pmf(k, lam):
+  """Stable log Poisson PMF for the transformed-rejection acceptance test."""
+  # For large lam, evaluating -lam + k * log(lam) - lgamma(k + 1)
+  # directly loses all useful digits in float32.  Rewrite the same quantity
+  # around k ~= lam and use the Stirling correction already used by BTRS.
+  safe_k = jnp.maximum(k, lax._const(k, 1.0))
+  delta = safe_k - lam
+  log_pmf = (
+      safe_k * lax.log1p(-delta / safe_k)
+      + delta
+      - 0.5 * lax.log(lax._const(k, 2 * np.pi) * safe_k)
+      - _stirling_approx_tail(safe_k - 1)
+  )
+  return jnp.where(k == 0, -lam, log_pmf)
+
+
 @jit(static_argnums=(2, 3, 4))
 def _poisson_rejection(key, lam, shape, dtype, max_iters) -> Array:
   # Transformed rejection due to Hormann.
   # Reference:
   # http://citeseer.ist.psu.edu/viewdoc/citations;jsessionid=1BEB35946CC807879F55D42512E5490C?doi=10.1.1.48.3054.
-  log_lam = lax.log(lam)
   b = 0.931 + 2.53 * lax.sqrt(lam)
   a = -0.059 + 0.02483 * b
   inv_alpha = 1.1239 + 1.1328 / (b - 3.4)
@@ -1956,7 +1971,7 @@ def _poisson_rejection(key, lam, shape, dtype, max_iters) -> Array:
 
     k = lax.floor((2 * a / u_shifted + b) * u + lam + 0.43)
     s = lax.log(v * inv_alpha / (a / (u_shifted * u_shifted) + b))
-    t = -lam + k * log_lam - lax_special.lgamma(k + 1)
+    t = _poisson_log_pmf(k, lam)
 
     accept1 = (u_shifted >= 0.07) & (v <= v_r)
     reject = (k < 0) | ((u_shifted < 0.013) & (v > u_shifted))
