@@ -253,7 +253,9 @@ class NDIndexer:
   @staticmethod
   def is_sharded(arr) -> bool:
     """Check whether the array is sharded."""
-    return isinstance(arr, array.ArrayImpl) and not arr.sharding.num_devices == 1
+    return isinstance(arr, array.ArrayImpl) and not (
+        arr.sharding.num_devices == 1 or arr.is_fully_replicated
+    )
 
   def has_partial_slices(self) -> bool:
     """Check whether the indexer contains partial slices.
