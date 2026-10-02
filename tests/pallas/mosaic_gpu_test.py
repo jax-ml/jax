@@ -3025,6 +3025,30 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape).T
     np.testing.assert_array_equal(kernel(), x)
 
+  @parameterized.parameters(plgpu.Layout.WGMMA, plgpu.Layout.TCGEN05)
+  @jtu.thread_unsafe_test()
+  def test_transposed_stmatrix(self, layout):
+    dtype = jnp.float16
+    shape = (256, 192)
+    transforms = self.default_transforms(dtype=dtype)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape[::-1], dtype),
+        out_specs=plgpu.BlockSpec(transforms=transforms),
+    )
+    def kernel(o_ref):
+      iota = plgpu.broadcasted_iota(dtype, shape, 0, layout=layout)
+      iota *= shape[1]
+      iota += plgpu.broadcasted_iota(dtype, shape, 1, layout=layout)
+      o_ref.T[...] = iota
+
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape).T
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      np.testing.assert_array_equal(kernel(), x)
+    self.assertIn("stmatrix.sync.aligned.m8n8.x4.trans.shared.b16", ptx())
+    self.assertNotIn("shfl.sync.bfly", ptx())
+
   def test_profiler(self):
     def kernel(x_ref, o_ref):
       with jax.named_scope("add"):
