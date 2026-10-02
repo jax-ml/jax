@@ -90,8 +90,11 @@ def estimate_cost(fun, *args, **kwargs) -> pallas_core.CostEstimate:
   """
   partial_fun = functools.partial(fun, **kwargs)
   in_args_ft = ft.flatten((args, {}))
+  # Abstract values (e.g. an ``AbstractRef`` for a body that reads or writes a
+  # Ref) are traced with as is.
   in_avals_ft = in_args_ft.map(
-      lambda x: jax_core.ShapedArray(x.shape, x.dtype)
+      lambda x: x if isinstance(x, jax_core.AbstractValue)
+      else jax_core.ShapedArray(x.shape, x.dtype)
   )
   debug_info = api_util.debug_info("cost_estimate", partial_fun, args, {})
   jaxpr, _ = pe.trace_to_jaxpr(partial_fun, in_avals_ft, debug_info)
