@@ -294,6 +294,16 @@ def _dma_tree_leaves(tree):
   return ft.flatten(tree).vals
 
 
+def _get_ref_effects(
+    ref_aval, effect_cls: type[state.RefEffect], offset: int
+) -> set[jax_core.Effect]:
+  return {
+      effect_cls(offset + i)
+      for i, leaf in enumerate(_dma_tree_leaves(ref_aval))
+      if isinstance(leaf, state.AbstractRef)
+  }
+
+
 def _get_dma_effects(
     src_ref_aval,
     dst_ref_aval,
@@ -313,17 +323,14 @@ def _get_dma_effects(
   # `wait_send`. `wait_send` swaps the src and dst args when binding dma_wait_p.
   # Consider handling this in a cleaner way.
   if src_dst_swapped:
-    src_ref_effect = state.WriteEffect(0)
-    dst_ref_effect = state.ReadEffect(n_src_transforms)
+    src_effect_cls, dst_effect_cls = state.WriteEffect, state.ReadEffect
   else:
-    src_ref_effect = state.ReadEffect(0)
-    dst_ref_effect = state.WriteEffect(n_src_transforms)
-  effs: set[jax_core.Effect] = {
-      src_ref_effect,
-      dst_ref_effect,
-  }
+    src_effect_cls, dst_effect_cls = state.ReadEffect, state.WriteEffect
+  effs: set[jax_core.Effect] = _get_ref_effects(
+      src_ref_aval, src_effect_cls, 0
+  ) | _get_ref_effects(dst_ref_aval, dst_effect_cls, n_src_transforms)
   if dst_sem_aval is not None:
-    effs.add(state.WriteEffect(dst_sem_index))
+    effs |= _get_ref_effects(dst_sem_aval, state.WriteEffect, dst_sem_index)
   # A wait never touches the semaphore in the `src_sem` slot. For `wait_read`
   # the args are pre-swapped, so the semaphore being awaited already sits in
   # the `dst_sem` slot and `src_sem` holds the untouched `dst_sem`; for
@@ -331,7 +338,7 @@ def _get_dma_effects(
   # matching `wait_read` drains.
   if not is_wait and src_sem_aval is not None:
     src_sem_index = n_src_transforms + n_dst_transforms + n_dst_sem_transforms
-    effs.add(state.WriteEffect(src_sem_index))
+    effs |= _get_ref_effects(src_sem_aval, state.WriteEffect, src_sem_index)
   if device_id_aval is not None:
     if device_id_type is primitives.DeviceIdType.MESH and isinstance(
         device_id_aval, dict

@@ -2072,6 +2072,40 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     y = kernel(*xs)
     np.testing.assert_array_equal(y[:, :128], x[:, :128])
 
+  def test_select_ref_dst(self):
+    num_refs = 4
+
+    @jax.jit
+    def fn(x):
+      y_refs = [
+          jax.new_ref(jnp.zeros((8, 128), jnp.int32)) for _ in range(num_refs)
+      ]
+
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+          scratch_types=(pltpu.SemaphoreType.DMA(2),),
+      )
+      def kernel(x_hbm_ref, *y_and_sem_refs):
+        *y_hbm_refs, sem = y_and_sem_refs
+
+        @pl.loop(0, num_refs)
+        def _(i):
+          pltpu.async_copy(
+              x_hbm_ref.at[pl.ds(8 * i, 8)],
+              pl.select_ref(i, *(r.at[pl.ds(0, 8)] for r in y_hbm_refs)),
+              pl.select_ref(i % 2, sem.at[0], sem.at[1]),
+          ).wait()
+
+      kernel(x, *y_refs)
+      return [jax.freeze(y_ref) for y_ref in y_refs]
+
+    x = jnp.arange(8 * num_refs * 128, dtype=jnp.int32).reshape(
+        (8 * num_refs, 128)
+    )
+    ys = fn(x)
+    for i, y in enumerate(ys):
+      np.testing.assert_array_equal(y, x[8 * i : 8 * (i + 1)])
+
   def test_single_element_input_output_dma(self):
     # Reproducer from https://github.com/jax-ml/jax/issues/39505.
     shape = (1, 1)
