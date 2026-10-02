@@ -1246,28 +1246,44 @@ class JaxprInterpreter:
       eqn,
       token: jax.Array,
       barrier,
-      *barrier_transforms_flat,
+      *flat_args,
       collective_axis,
       barrier_transforms_tree,
+      has_user_predicate: bool = False,
   ):
     assert eqn.primitive is gpu_primitives.tcgen05_commit_arrive_p
+    if has_user_predicate:
+      *flat_args, predicate = flat_args
+    else:
+      predicate = None
+
     barrier_key = _get_barrier_allocation_key_from_inval(
         barrier,
         barrier_transforms_tree,
-        barrier_transforms_flat,
+        flat_args,
     )
-    return callback.io_callback(
+    call_commit_arrive = functools.partial(
+        callback.io_callback,
         functools.partial(
             gpu_callbacks.tcgen05_commit_arrive,
             source_info=eqn.source_info,
             collective_axis=collective_axis,
         ),
         gpu_callbacks.TOKEN_SHAPE_DTYPE,
-        token=token,
         mesh_location=self.mesh_location,
         thread=self.thread,
         barrier_key_as_array=barrier_key,
-    ), []
+    )
+    if predicate is None:
+      token = call_commit_arrive(token=token)
+    else:
+      token = lax.cond(
+          predicate,
+          lambda tok: call_commit_arrive(token=tok),
+          lambda tok: tok,
+          token,
+      )
+    return token, []
 
   def _interpret_wait_smem_to_gmem_p(
       self, eqn, token: jax.Array, get_invals: Callable[[], Sequence[Any]]

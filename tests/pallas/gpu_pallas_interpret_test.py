@@ -421,8 +421,9 @@ class InterpretTest(jtu.JaxTestCase):
       b_smem[...] = b[...]
       plgpu.commit_smem()
       plgpu.tcgen05_mma(acc_ref, a_smem, b_smem, accumulate=False)
+      plgpu.tcgen05_commit_arrive(barrier, predicate=False)
       plgpu.tcgen05_mma(acc_ref, a_smem, b_smem, accumulate=True)
-      plgpu.tcgen05_commit_arrive(barrier)
+      plgpu.tcgen05_commit_arrive(barrier, predicate=True)
       plgpu.barrier_wait(barrier)
       out_ref[...] = plgpu.async_load_tmem(acc_ref)
 

@@ -3119,8 +3119,12 @@ tcgen05_commit_arrive_p = jax_core.Primitive("tcgen05_commit_arrive")
 tcgen05_commit_arrive_p.multiple_results = True
 
 
-def tcgen05_commit_arrive(barrier: _Ref,
-                          collective_axis: str | None = None):
+def tcgen05_commit_arrive(
+    barrier: _Ref,
+    collective_axis: str | None = None,
+    *,
+    predicate: bool | jax.Array | None = None,
+) -> None:
   """Tracks completion of all preceding ``tcgen05_mma`` and ``async_copy_smem_to_tmem`` calls.
 
   Args:
@@ -3129,6 +3133,8 @@ def tcgen05_commit_arrive(barrier: _Ref,
     collective_axis: The name of the cluster axis along which the
       operations were performed if it was collective. The cluster axis should
       have a size of exactly 2, and must be on the minormost cluster axis.
+    predicate: A boolean indicating whether the commit arrive should be
+      performed. If ``None``, the commit arrive is always performed.
 
   See also:
     - :func:`jax.experimental.pallas.mosaic_gpu.tcgen05_mma`
@@ -3143,17 +3149,24 @@ def tcgen05_commit_arrive(barrier: _Ref,
     barrier_transforms_leaves, barrier_transforms_tree = [], None
 
   tcgen05_commit_arrive_p.bind(
-      barrier, *barrier_transforms_leaves,
+      barrier,
+      *barrier_transforms_leaves,
+      *() if predicate is None else (predicate,),
       barrier_transforms_tree=barrier_transforms_tree,
-      collective_axis=collective_axis)
+      collective_axis=collective_axis,
+      has_user_predicate=predicate is not None,
+  )
 
 
 @tcgen05_commit_arrive_p.def_effectful_abstract_eval
-def _tcgen05_commit_arrive_abstract_eval(barrier,
-                               *barrier_transforms_leaves,
-                               barrier_transforms_tree,
-                               collective_axis):
-  del barrier_transforms_leaves, barrier_transforms_tree, collective_axis
+def _tcgen05_commit_arrive_abstract_eval(
+    barrier,
+    *args,
+    barrier_transforms_tree,
+    collective_axis,
+    has_user_predicate: bool = False,
+):
+  del args, barrier_transforms_tree, collective_axis, has_user_predicate
   orders_tensor_core = getattr(
       barrier.inner_aval.dtype, "orders_tensor_core", False)
   if not orders_tensor_core:
@@ -3165,78 +3178,60 @@ def _tcgen05_commit_arrive_abstract_eval(barrier,
     tcgen05_commit_arrive_p, *gpu_core.LANExWG_SEMANTICS)
 @lowering.register_lowering_rule(
     tcgen05_commit_arrive_p, *gpu_core.LANExWARP_SEMANTICS)
-def _tcgen05_commit_arrive_lowering(
-    ctx: lowering.LoweringRuleContext,
-    barrier_ref: mgpu.BarrierRef,
-    *barrier_transforms_leaves,
-    barrier_transforms_tree,
-    collective_axis,
-):
-  barrier_ref_aval = ctx.avals_in[0]
-  assert isinstance(barrier_ref_aval, state_types.AbstractRef)
-  if barrier_transforms_tree is not None:
-    barrier_transforms = barrier_transforms_tree.unflatten(
-        barrier_transforms_leaves
-    )
-    base_index = _get_barrier_base_index(barrier_ref_aval, barrier_transforms)
-    if base_index is not None:
-      barrier_ref = barrier_ref[base_index]
-
-  predicate = ctx.module_ctx.single_lane_predicate
-  if collective := collective_axis is not None:
-    is_leader_block = _collective_mma_predicate(ctx, collective_axis)
-    predicate = _andi_maybe_none(predicate, is_leader_block)
-
-  tcgen05.commit_arrive(
-      barrier_ref,
-      collective=collective,
-      ctx=ctx.launch_ctx,
-      predicate=predicate,
-  )
-  return []
-
-
 @lowering.register_lowering_rule(
     tcgen05_commit_arrive_p, mgpu.LoweringSemantics.Warpgroup
 )
 @lowering.register_lowering_rule(
     tcgen05_commit_arrive_p, *gpu_core.WGxWARP_SEMANTICS
 )
-def _tcgen05_commit_arrive_lowering_wg(
+def _tcgen05_commit_arrive_lowering(
     ctx: lowering.LoweringRuleContext,
-    barrier_ref: mgpu.DialectBarrierRef,
-    *barrier_transforms_leaves,
+    barrier_ref: mgpu.BarrierRef | mgpu.DialectBarrierRef,
+    *flat_args,
     barrier_transforms_tree,
     collective_axis,
+    has_user_predicate: bool = False,
 ):
+  if has_user_predicate:
+    *flat_args, user_predicate = flat_args
+    predicate = lowering._ensure_ir_value(user_predicate, jnp.bool)  # pylint: disable=protected-access
+  else:
+    predicate = None
+
   barrier_ref_aval = ctx.avals_in[0]
   assert isinstance(barrier_ref_aval, state_types.AbstractRef)
   if barrier_transforms_tree is not None:
-    barrier_transforms = barrier_transforms_tree.unflatten(
-        barrier_transforms_leaves
-    )
+    barrier_transforms = barrier_transforms_tree.unflatten(flat_args)
     base_index = _get_barrier_base_index(barrier_ref_aval, barrier_transforms)
     if base_index is not None:
       barrier_ref = barrier_ref[base_index]
 
-  if collective_axis is not None:
-    predicate = _collective_mma_predicate(ctx, collective_axis)
-    collective = True
-  else:
-    predicate = None
-    collective = False
+  if collective := collective_axis is not None:
+    is_leader_block = _collective_mma_predicate(ctx, collective_axis)
+    predicate = _andi_maybe_none(predicate, is_leader_block)
 
-  memref = barrier_ref.as_barrier_memref()
-  # TODO(cjfj): remove when minimum jaxlib version is 0.12.
-  if hasattr(mgpu.dialect.TcGen05CommitArriveOp, "predicate"):
-    mgpu.dialect.tcgen05_commit_arrive(
-        memref, collective=collective, predicate=predicate  # pyrefly: ignore[unexpected-keyword]
-    )
-  elif predicate is None:
-    mgpu.dialect.tcgen05_commit_arrive(memref, collective=collective)
-  else:
-    with mgpu.when(predicate):
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+    assert isinstance(barrier_ref, mgpu.DialectBarrierRef)
+    memref = barrier_ref.as_barrier_memref()
+    # TODO(cjfj): remove when minimum jaxlib version is 0.12.
+    if hasattr(mgpu.dialect.TcGen05CommitArriveOp, "predicate"):
+      mgpu.dialect.tcgen05_commit_arrive(
+          memref, collective=collective, predicate=predicate  # pyrefly: ignore[unexpected-keyword]
+      )
+    elif predicate is None:
       mgpu.dialect.tcgen05_commit_arrive(memref, collective=collective)
+    else:
+      with mgpu.when(predicate):
+        mgpu.dialect.tcgen05_commit_arrive(memref, collective=collective)
+  else:
+    assert isinstance(barrier_ref, mgpu.BarrierRef)
+    single_lane = ctx.module_ctx.single_lane_predicate
+    tcgen05.commit_arrive(
+        barrier_ref,
+        collective=collective,
+        ctx=ctx.launch_ctx,
+        predicate=_andi_maybe_none(predicate, single_lane),
+    )
   return []
 
 
