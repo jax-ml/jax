@@ -894,14 +894,21 @@ class LayoutTest(jtu.JaxTestCase):
 class LayoutInTypesTest(jtu.JaxTestCase):
 
   def test_unop_layout(self):
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Requires libtpu >= 0.0.50')
+
     arr = jnp.arange(16.).reshape(2, 8)
+    l = Layout.for_array(arr)
+    ex_l = (Layout((0, 1), ((2, 128),)) if jtu.test_device_matches(['tpu'])
+            else Layout((0, 1), ()))
+    self.assertEqual(l, ex_l)
 
     @jax.jit
-    @explicit_layout(in_layouts=arr.format.layout)
+    @explicit_layout(in_layouts=l)
     def f(x):
-      self.assertEqual(x.aval.layout, arr.format.layout)
+      self.assertEqual(x.aval.layout, l)
       y = jnp.sin(x)
-      self.assertEqual(y.aval.layout, arr.format.layout)
+      self.assertEqual(y.aval.layout, l)
       return y
 
     out = f(arr)
@@ -909,9 +916,15 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, jnp.sin(arr))
 
   def test_naryop_layout(self):
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Requires libtpu >= 0.0.50')
+
     arr1 = jnp.arange(16., dtype=np.float32).reshape(2, 8)
     arr2 = jnp.arange(16., dtype=np.float32).reshape(2, 8)
-    l = arr1.format.layout
+    l = Layout.for_array(arr1)
+    ex_l = (Layout((0, 1), ((2, 128),)) if jtu.test_device_matches(['tpu'])
+            else Layout((0, 1), ()))
+    self.assertEqual(l, ex_l)
 
     @jax.jit
     @explicit_layout(in_layouts=(l, l))
