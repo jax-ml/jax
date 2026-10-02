@@ -1043,6 +1043,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out_b3d.format.layout, l_012)
     self.assertArraysAllClose(out_b3d, jnp.einsum('bmk,bkn->bmn', arr3, arr3))
 
+  @jax.default_matmul_precision("float32")
   @jtu.with_explicit_mesh((2,), ('data',))
   def test_dot_4d_output_and_chained_layout(self, mesh):
     a, b, c, d, e, f, g = 4, 256, 256, 512, 4, 4, 256
