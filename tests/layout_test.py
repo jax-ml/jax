@@ -1214,6 +1214,40 @@ class LayoutInTypesTest(jtu.JaxTestCase):
         ' relative layout order'):
       bad_batch_order(arr4, arr4)
 
+  def test_transpose_layout(self):
+    arr = jnp.arange(64).reshape(8, 8)
+
+    @jax.jit
+    @explicit_layout(in_layouts=Layout((0, 1)))
+    def f(w):
+      w_t = w.T
+      self.assertEqual(w_t.aval.layout.major_to_minor, (1, 0))
+      return w_t
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn('LayoutConstraint', lowered_text)
+
+    w_t = f(arr)
+    self.assertEqual(w_t.format.layout.major_to_minor, (1, 0))
+    self.assertArraysAllClose(w_t, arr.T)
+
+    np_inp = np.arange(512).reshape(8, 8, 8)
+    arr2_102 = jax.device_put(np_inp, Format(Layout((1, 0, 2)), arr.sharding))
+
+    @jax.jit
+    @explicit_layout(in_layouts=(Layout((1, 0, 2))))
+    def g(x):
+      xT = jnp.transpose(x, (2, 0, 1))
+      self.assertEqual(xT.aval.layout.major_to_minor, (2, 1, 0))
+      return xT
+
+    xT = g(arr2_102)
+    self.assertEqual(xT.format.layout.major_to_minor, (2, 1, 0))
+    self.assertArraysAllClose(xT, np.transpose(np_inp, (2, 0, 1)))
+
+    lowered_text = g.lower(arr2_102).as_text()
+    self.assertEqual(lowered_text.count('LayoutConstraint'), 2)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
