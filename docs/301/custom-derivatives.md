@@ -1206,7 +1206,10 @@ The input-side report also has an output-side counterpart: `vjp_fwd` (and
 likewise `lin`) can return an optional *third* element, `nzs_out`, declaring
 symbolically which outputs have nonzero tangents. It's a pytree of booleans
 matching the output structure, or a prefix of one, like the default `True`,
-which broadcasts to mean "all of them". Declaring an output `False` marks
+which broadcasts to mean "all of them". Its containers are matched against
+the output's only by their number of children, so their types needn't match:
+nested tuples of booleans work too, as does the `out_nzs` that `jax.vjp`
+produces (see {ref}`jax-301-vjp-in-hiprim`). Declaring an output `False` marks
 its tangent as a symbolic zero, as for an output that isn't differentiable
 (an integer-valued output, say) or doesn't depend on the differentiated
 inputs; the backward rule then always sees a symbolic-zero cotangent for it.
@@ -1381,9 +1384,9 @@ The `jax.custom_gradient` convenience wrapper supports the same thing via
 `@custom_gradient(with_logs=True)`, with the returned VJP function producing
 a pair `(in_cts, logs)`.
 
-Retval-style hijax rules can opt in the same way: set
-`vjp_bwd_retval_logs = True` on the primitive class, and have
-`vjp_bwd_retval` return `(args_grad, logs)` instead of just `args_grad`.
+Retval-style hijax rules can log too: override `vjp_bwd_retval_logs`
+instead of `vjp_bwd_retval`, returning a pair `(args_grad, logs)` instead of
+just `args_grad`.
 
 A rule's log return must be a dict (or `None`, meaning no logs). For
 plumbing data out of a backward pass with mutable refs instead, see
@@ -1477,6 +1480,100 @@ extra outputs of the compiled forward pass at all.
 The same fourth slot works for linearization: `lin` may return `(ans, res,
 nzs_out, sres)`, in which case `linearized` receives the structured
 residuals after the ordinary ones, as `linearized(res, sres, *tangents)`.
+
+(jax-301-vjp-in-hiprim)=
+
+### Rules from `jax.vjp`
+
+A hijax primitive's reverse-mode rules and `jax.vjp` are equally
+expressive. Each part of the rules' interface has a counterpart on the VJP
+object that `jax.vjp` returns (see {doc}`vjp-objects`):
+
+| `vjp_fwd` / `vjp_bwd` rules | `jax.vjp` |
+|---|---|
+| `nzs_in` argument | `in_nzs` argument |
+| returned residuals | the VJP object `f_vjp`, a pytree |
+| returned `nzs_out` | `f_vjp.out_nzs` |
+| returned structured residuals | `f_vjp.structured_residuals` |
+| gradient accumulators | `f_vjp.with_refs(...)` |
+| returned logs | `f_vjp.with_logs(...)` |
+
+So a primitive's rules can just call `jax.vjp` on a function, saving the
+VJP object as residuals. Since the VJP object carries its own structured
+residuals, we split them off to return them in their own slot, and reattach
+them on the backward pass:
+
+```{code-cell}
+class VJPOf(HiPrim):
+  def __init__(self, f, *in_avals):
+    self.in_avals = in_avals
+    self.out_aval = jax.jit(f).trace(*in_avals).out_avals
+    self.params = dict(f=f)
+    super().__init__()
+
+  def expand(self, *args):
+    return self.f(*args)
+
+  def vjp_fwd(self, nzs_in, *args):
+    out, f_vjp = jax.vjp(self.f, *args, in_nzs=nzs_in)
+    sres = f_vjp.structured_residuals
+    return out, f_vjp.replace(structured_residuals=[]), f_vjp.out_nzs, sres
+
+  def vjp_bwd(self, f_vjp, sres, outgrad, *arg_accums):
+    f_vjp = f_vjp.replace(structured_residuals=sres)
+    _, logs = f_vjp.with_logs.with_refs(*arg_accums)(outgrad)
+    return logs
+
+def vjp_of(f):
+  return lambda *args: VJPOf(f, *map(jax.typeof, args))(*args)
+```
+
+The resulting primitive differentiates exactly like the function it wraps,
+down to symbolic zeros and logs:
+
+```{code-cell}
+@jax.custom_vjp
+def log_ct(x):
+  return x
+log_ct.defvjp_with_logs(lambda x: (x, None), lambda _, g: ((g,), {'ct': g}))
+
+def f(x, y):
+  return {'a': log_ct(jnp.sin(x)) * y, 'b': 2. * y}
+
+for fn in [f, vjp_of(f)]:
+  out, f_vjp = jax.vjp(fn, 1., 3., in_nzs=(True, False))
+  arg_cts, logs = f_vjp.with_logs({'a': 1., 'b': 1.})
+  print(f_vjp.out_nzs, arg_cts, logs)
+```
+
+Gradient refs pass through to the wrapped function's backward pass too:
+
+```{code-cell}
+x_grad = jax.new_ref(0.)
+_, f_vjp = jax.vjp(vjp_of(f), 1., 3.)
+f_vjp.with_refs(x_grad, jax.ad.DontWant())({'a': 1., 'b': 1.})
+print(x_grad)
+```
+
+That makes a primitive like `VJPOf` a starting point for customizing just
+part of a function's differentiation, like post-processing its cotangents in
+`vjp_bwd`, while keeping the rest.
+
+And the wrapped function's structured residuals come through, nested in one
+more list, the same way they come out of a `jit`. Using `square` and `cube`
+from {ref}`jax-301-structured-residuals`:
+
+```{code-cell}
+g = lambda x: square(x) + cube(x)
+print(jax.vjp(g, 3.)[1].structured_residuals)
+print(jax.vjp(vjp_of(g), 3.)[1].structured_residuals)
+```
+
+Splitting off the structured residuals is optional. A simpler version
+returns just `out, f_vjp, f_vjp.out_nzs` from `vjp_fwd`, and drops the
+`sres` argument of `vjp_bwd`. Derivatives come out the same, but the wrapped
+function's structured residuals are then saved inside `f_vjp` as ordinary
+residuals, so they're opaque to the caller.
 
 ### What we haven't covered
 
