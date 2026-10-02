@@ -2615,7 +2615,7 @@ def _expint7(x):
 def _expi_pos(x: Array) -> Array:
   # x >= 0
   _c = _lax_const
-  conds = [(_c(x, 0) < x) & (x <= _c(x, 2))] + [
+  conds = [(_c(x, 0) <= x) & (x <= _c(x, 2))] + [
     (_c(x, 2 ** i) < x) & (x <= _c(x, 2 ** (i + 1))) for i in range(1, 6)
   ]
   return jnp.piecewise(
