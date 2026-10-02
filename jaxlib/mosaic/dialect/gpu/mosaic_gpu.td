@@ -1227,7 +1227,8 @@ def MosaicGPU_TcGen05CommitArriveOp : Op<MosaicGPU_Dialect, "tcgen05_commit_arri
 
   let arguments = (ins
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
-    DefaultValuedAttr<BoolAttr, "false">:$collective
+    DefaultValuedAttr<BoolAttr, "false">:$collective,
+    PtxPredicate:$predicate
   );
 }
 

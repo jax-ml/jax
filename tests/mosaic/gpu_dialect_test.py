@@ -251,6 +251,16 @@ class DialectTest(MosaicGpuTest):
       )
     self.assertTrue(self.module.operation.verify())
 
+  def test_tcgen05_commit_arrive_op(self):
+    with ir.InsertionPoint(self.module.body):
+      barrier, pred = undefs(
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get(True)),
+          ir.IntegerType.get_signless(1),
+      )
+      mgpu.dialect.tcgen05_commit_arrive(barrier)
+      mgpu.dialect.tcgen05_commit_arrive(barrier, predicate=pred)
+    self.assertTrue(self.module.operation.verify())
+
   def test_async_load_op_source_and_dest_must_have_same_element_type(self):
     with ir.InsertionPoint(self.module.body):
       source, destination, barrier, *indices = undefs(

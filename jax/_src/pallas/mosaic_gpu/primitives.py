@@ -3219,18 +3219,24 @@ def _tcgen05_commit_arrive_lowering_wg(
     if base_index is not None:
       barrier_ref = barrier_ref[base_index]
 
-  predicate_ctx: contextlib.AbstractContextManager[None]
   if collective_axis is not None:
-    predicate_ctx = mgpu.when(_collective_mma_predicate(ctx, collective_axis))
+    predicate = _collective_mma_predicate(ctx, collective_axis)
     collective = True
   else:
-    predicate_ctx = contextlib.nullcontext()
+    predicate = None
     collective = False
 
-  with predicate_ctx:
+  memref = barrier_ref.as_barrier_memref()
+  # TODO(cjfj): remove when minimum jaxlib version is 0.12.
+  if hasattr(mgpu.dialect.TcGen05CommitArriveOp, "predicate"):
     mgpu.dialect.tcgen05_commit_arrive(
-        barrier_ref.as_barrier_memref(), collective=collective
+        memref, collective=collective, predicate=predicate  # pyrefly: ignore[unexpected-keyword]
     )
+  elif predicate is None:
+    mgpu.dialect.tcgen05_commit_arrive(memref, collective=collective)
+  else:
+    with mgpu.when(predicate):
+      mgpu.dialect.tcgen05_commit_arrive(memref, collective=collective)
   return []
 
 

@@ -2545,11 +2545,15 @@ def _tcgen05_commit_arrive_op_lowering_rule(
   """Lowering rule for mgpu.TcGen05CommitArriveOp."""
   ctx.check_collective(op)
   barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
+  predicate = ctx.single_lane_predicate
+  # TODO(cjfj): simplify when minimum jaxlib version is 0.12.
+  if (pred := getattr(op, "predicate", None)) is not None:
+    predicate = arith.andi(predicate, pred)
   tcgen05.commit_arrive(
       barrier.barrier_ref,
       op.collective.value,
       ctx.launch_context,
-      predicate=ctx.single_lane_predicate,
+      predicate=predicate,
   )
   return []
 
