@@ -249,6 +249,12 @@ class VectorizeTest(jtu.JaxTestCase):
     y = jnp.arange(10, 20)
     self.assertAllClose(f(x, y), x + y)
 
+  def test_none_arg_at_index_zero(self):
+    # Regression test for https://github.com/jax-ml/jax/pull/38117
+    f = jnp.vectorize(lambda y, x: x if y is None else x + y)
+    x = jnp.arange(10)
+    self.assertAllClose(f(None, x), x)
+
   def test_none_arg_bad_signature(self):
     f = jnp.vectorize(lambda x, y: x if y is None else x + y,
                       signature='(k),(k)->(k)')
