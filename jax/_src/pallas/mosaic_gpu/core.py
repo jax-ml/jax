@@ -1362,7 +1362,7 @@ class ExpandLeadingBatchDimensionsTransform(state_types.Transform):
 
     batch_idx = 0
     for idx, size in zip(batch_indices, batch_shape):
-      assert isinstance(idx, indexing.IntIndexer)
+      assert not isinstance(idx, indexing.Slice)
       batch_idx = batch_idx * size + idx
 
     if isinstance(col_idx, indexing.Slice):

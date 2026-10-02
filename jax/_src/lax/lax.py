@@ -3942,9 +3942,9 @@ def full_like(x: ArrayLike | DuckTypedArray,
   """
   fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)  # pyrefly: ignore[no-matching-overload]
   weak_type = dtype is None and dtypes.is_weakly_typed(x)
-  dtype = _dtype(dtype) if dtype is not None else _dtype(x)
-  if isinstance(dtype, dtypes.ExtendedDType):
-    return dtype._rules.full(fill_shape, fill_value, dtype)
+  dtype_ = _dtype(dtype) if dtype is not None else _dtype(x)
+  if isinstance(dtype_, dtypes.ExtendedDType):
+    return dtype_._rules.full(fill_shape, fill_value, dtype_)
 
   if sharding is None and shape is None and isinstance(x, core.Tracer):
     sharding = x.aval.sharding  # pyrefly: ignore[missing-attribute]
@@ -3967,7 +3967,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
     )
     if use_x_sharding:
       sharding = x.sharding  # pyrefly: ignore[missing-attribute]
-  val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
+  val = full(fill_shape, _convert_element_type(fill_value, dtype_, weak_type),
              sharding=sharding)
   val = _full_like_insert_pvary(val, x)
   return val
