@@ -504,6 +504,17 @@ class Traced(Stage):
     traced._fun_sourceinfo = self._fun_sourceinfo
     return consts, traced
 
+  def batch(self, axis_data, in_axes) -> tuple[Traced, tuple[Any, ...]]:
+    """Returns this Traced batched along `axis_data`, with its flattened
+    arguments batched along `in_axes` (one int or None each), and the batch
+    axes of its flattened results."""
+    from jax._src.interpreters import batching  # pyrefly: ignore[missing-import]
+    in_axes = (None,) * len(self._consts) + tuple(in_axes)
+    new_jaxpr, out_axes = batching.batch_jaxpr2(self.jaxpr, axis_data, in_axes)
+    new_params = dict(self._params, jaxpr=new_jaxpr)
+    return Traced(list(new_jaxpr.in_avals), new_params, self._in_tree,
+                  self.out_tree, self._consts, self._fun_sourceinfo), out_axes
+
   def physicalize(self, ctx) -> Traced:
     new_jaxpr = ctx.physicalize_closed_jaxpr(self.jaxpr)
     new_params = dict(self._params, jaxpr=new_jaxpr)
