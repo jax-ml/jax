@@ -14,7 +14,6 @@
 
 """Precision tests for logarithmic functions."""
 
-from absl.testing import absltest
 from absl.testing import parameterized
 from jax._src import config
 from jax._src import test_util as jtu
@@ -139,5 +138,11 @@ class Log1pTest(jtu.JaxTestCase):
     )
 
 
+util.register_benchmark(jnp.log)
+util.register_benchmark(jnp.log2)
+util.register_benchmark(jnp.log10)
+util.register_benchmark(jnp.log1p)
+
+
 if __name__ == "__main__":
-  absltest.main(testLoader=util.ClassShardedTestLoader())
+  util.main()

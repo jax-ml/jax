@@ -14,7 +14,6 @@
 
 """Precision tests for error functions against reference implementations."""
 
-from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
@@ -295,5 +294,12 @@ class ErfinvTest(jtu.JaxTestCase):
     )
 
 
+util.register_benchmark(lax.erf)
+util.register_benchmark(lax.erfc)
+util.register_benchmark(jsp.special.erfcx)
+util.register_benchmark(erfcx_grad)
+util.register_benchmark(lax.erf_inv)
+
+
 if __name__ == "__main__":
-  absltest.main(testLoader=util.ClassShardedTestLoader())
+  util.main()

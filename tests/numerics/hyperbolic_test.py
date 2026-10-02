@@ -14,7 +14,6 @@
 
 """Precision tests for hyperbolic and inverse hyperbolic functions."""
 
-from absl.testing import absltest
 from absl.testing import parameterized
 from jax._src import config
 from jax._src import test_util as jtu
@@ -187,5 +186,13 @@ class AtanhTest(jtu.JaxTestCase):
     )
 
 
+util.register_benchmark(jnp.sinh)
+util.register_benchmark(jnp.cosh)
+util.register_benchmark(jnp.tanh)
+util.register_benchmark(jnp.acosh)
+util.register_benchmark(jnp.asinh)
+util.register_benchmark(jnp.atanh)
+
+
 if __name__ == "__main__":
-  absltest.main(testLoader=util.ClassShardedTestLoader())
+  util.main()
