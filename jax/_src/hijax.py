@@ -175,13 +175,12 @@ class HiPrim:
 
   def vjp_bwd(self, res, outgrad, /, *arg_accums):
     args_grad, logs = self.vjp_bwd_retval_logs(res, outgrad)
-    leaves, treedef = tree_flatten(arg_accums)
-    for acc, v in zip(leaves, treedef.flatten_up_to(args_grad)):
-      if isinstance(acc, ad.GradAccum):
-        acc.accum(v)
+    _accum_args_grad(arg_accums, args_grad)
     return logs
 
   def vjp_bwd_retval_logs(self, res, outgrad, /):
+    if type(self).vjp_bwd is not HiPrim.vjp_bwd:
+      return _vjp_bwd_to_retval_logs(self, (res,), outgrad)
     return self.vjp_bwd_retval(res, outgrad), None
 
   def vjp_bwd_retval(self, res, outgrad, /):
@@ -314,14 +313,18 @@ class VmapOf(HiPrim):
   def vjp_fwd(self, in_nzs, *args):
     store = lambda: None
     def fwd(*args):
-      primal_out, res, *maybe_out_nzs = self.prim.vjp_fwd(in_nzs, *args)  # pyrefly: ignore[missing-attribute]
-      store.out_nzs = maybe_out_nzs  # pyrefly: ignore[missing-attribute]
-      return primal_out, res
+      primal_out, res, *rest = self.prim.vjp_fwd(in_nzs, *args)  # pyrefly: ignore[missing-attribute]
+      store.out_nzs = rest[:1]  # pyrefly: ignore[missing-attribute]
+      return primal_out, res, rest[1] if len(rest) > 1 else None
     with _explain_overbatched_member(self.prim, 'fwd rule'):
-      (primal_out, res), (_, res_axes) = api.vmap(
-          fwd, in_axes=self.in_dims, out_axes=(self.out_dim, batching.infer),
+      # structured residuals are stacked along a leading axis, as under scan
+      (primal_out, res, sres), (_, res_axes, _) = api.vmap(
+          fwd, in_axes=self.in_dims, out_axes=(self.out_dim, batching.infer, 0),
           **self._vmap_params)(*args)
-    return primal_out, (res, Static(res_axes)), *store.out_nzs  # pyrefly: ignore[missing-attribute]
+    res = (res, Static(res_axes), Static(sres is not None))
+    if sres is None:
+      return primal_out, res, *store.out_nzs  # pyrefly: ignore[missing-attribute]
+    return primal_out, res, *(store.out_nzs or [True]), sres  # pyrefly: ignore[missing-attribute]
 
   def vjp_bwd_retval_logs(self, res_, g):
     # TODO probably gonna get non-pytree-prefix errors because of sym zeros...
@@ -333,6 +336,21 @@ class VmapOf(HiPrim):
                          out_axes=(in_dims, 0), **self._vmap_params, sum_match=True)(res, g)
     out = tree_map(partial(unmap_zero, self.axis_data), self.in_dims, out, is_leaf=lambda x: x is None)
     return out, logs
+
+  def vjp_bwd(self, res_, *rest):
+    if not res_[2].val:  # no structured residuals
+      return super().vjp_bwd(res_, *rest)
+    res, res_axes = res_[0], res_[1].val
+    sres, g, *arg_accums = rest
+    bwd = lambda res, sres, g: _vjp_bwd_to_retval_logs(self.prim, (res, sres), g)
+    in_dims = tree_map(lambda x: batching.sum_axis if x is None else x, self.in_dims,
+                       is_leaf=lambda x: x is None)
+    g = tree_map(partial(map_zero, self.axis_data), self.out_dim, g, is_leaf=lambda x: x is None)
+    out, logs = api.vmap(bwd, in_axes=(res_axes, 0, self.out_dim),
+                         out_axes=(in_dims, 0), **self._vmap_params, sum_match=True)(res, sres, g)
+    out = tree_map(partial(unmap_zero, self.axis_data), self.in_dims, out, is_leaf=lambda x: x is None)
+    _accum_args_grad(tuple(arg_accums), out)
+    return logs
 
   def batch_dim_rule(self, axis_data, in_dims):
     fix = lambda d, d_: d if (d is None or d_ is None) else d - (d_ < d)
@@ -374,6 +392,24 @@ def _explain_overbatched_member(prim, member_name):
         "jax.experimental.hijax.HiPrim and override its "
         "`batch_dim_rule` (or `batch`) method to declare the batched "
         "outputs.") from e
+
+def _accum_args_grad(arg_accums, args_grad):
+  leaves, treedef = tree_flatten(arg_accums)
+  for acc, v in zip(leaves, treedef.flatten_up_to(args_grad)):
+    if isinstance(acc, ad.GradAccum):
+      acc.accum(v)
+
+def _vjp_bwd_to_retval_logs(prim, res_args, outgrad):
+  # Run an accumulator-style `vjp_bwd` rule as a retval-style one, returning
+  # the pair `(arg_cts, logs)`, by handing it value accumulators.
+  accums_flat = [ad.ValAccum(_ref_inner_aval(a).to_ct_aval())
+                 for a in prim.in_avals_flat]
+  logs = prim.vjp_bwd(*res_args, outgrad,
+                      *tree_unflatten(prim.in_tree, accums_flat))
+  return tree_unflatten(prim.in_tree, [a.freeze() for a in accums_flat]), logs
+
+def _ref_inner_aval(a):
+  return a.inner_aval if isinstance(a, AbstractRef) else a
 
 def map_zero(axis_data, d, ct):
   if isinstance(ct, ad_util.Zero):
@@ -501,7 +537,10 @@ def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
     raise TypeError(
         f"{type(_prim).__name__} returned structured residuals from `vjp_fwd`, "
         "which requires overriding `vjp_bwd(res, sres, outgrad, *arg_accums)`")
-  nzs_out_flat = broadcast_prefix(nzs_out, ans)
+  nzs_out_flat = api.tuptree_flags(
+      nzs_out, _prim.out_tree, 'nzs_out',
+      f'the nzs_out returned by {type(_prim).__name__}.'
+      f'{"vjp_fwd" if is_vjp else "lin"}')
   linearized = partial(linearized, nzs_out_flat) if is_vjp else linearized
   return ans_flat, nzs_out_flat, residuals, sres, linearized
 ad.primitive_linearizations[call_hi_primitive_p] = _call_hi_primitive_linearize
