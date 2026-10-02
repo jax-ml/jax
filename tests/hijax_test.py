@@ -3175,6 +3175,20 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     x = jnp.arange(3.)
     self.assertArraysAllClose(jax.vmap(jax.grad(f))(x), 3. * jnp.cos(x))
 
+  def test_defremat_remat_of_vmap(self):
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
+    def scale_sin(c, x):
+      return c * jnp.sin(x)
+    scale_sin.defremat(lambda c, x: (c * jnp.sin(x), jnp.cos(x)),
+                       lambda cos_x, c, x: (c * jnp.sin(x), cos_x),
+                       lambda c, cos_x, g: (c * cos_x * g,))
+    f = jax.remat(jax.vmap(partial(scale_sin, 3.)))
+    x = jnp.arange(3.)
+    self.assertArraysAllClose(jax.grad(lambda x: f(x).sum())(x), 3. * jnp.cos(x))
+    leaves = jax.tree.leaves(jax.vjp(f, x)[1])
+    self.assertLen(leaves, 1)
+    self.assertArraysAllClose(leaves[0], jnp.cos(x))
+
   def test_custom_gradient_remat(self):
     @jax.custom_gradient(remat=True)
     def sin_saving_cos(x):
