@@ -14,7 +14,6 @@
 
 """Precision tests for trigonometric and inverse trigonometric functions."""
 
-from absl.testing import absltest
 from absl.testing import parameterized
 from jax._src import config
 from jax._src import test_util as jtu
@@ -240,5 +239,14 @@ class AtanTest(jtu.JaxTestCase):
     )
 
 
+util.register_benchmark(jnp.sin)
+util.register_benchmark(jnp.cos)
+util.register_benchmark(jnp.tan)
+util.register_benchmark(jnp.sinc)
+util.register_benchmark(jnp.acos)
+util.register_benchmark(jnp.asin)
+util.register_benchmark(jnp.atan)
+
+
 if __name__ == "__main__":
-  absltest.main(testLoader=util.ClassShardedTestLoader())
+  util.main()

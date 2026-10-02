@@ -45,6 +45,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 * Changes
   * JAX now uses Bazel 9.2.0 to build from source.
+  * Improved the numerical accuracy of complex {func}`jax.numpy.abs` and
+    {func}`jax.lax.abs` by lowering through power-of-two scaled `hypot`.
+  * Improved the numerical accuracy of {func}`jax.numpy.hypot` and its
+    derivatives by replacing the division-based formula with power-of-two
+    scaling and a custom JVP rule, avoiding rounding errors for large inputs.
+    The derivative at `(0, 0)` now returns `NaN` (previously `±0.5`).
   * Improved the numerical accuracy of {func}`jax.numpy.sinc` across all
     floating-point types (to $\le 0.5$ ULP for `bfloat16` and `float16`,
     $\le 2.5\text{–}4.0$ ULPs for `float32`, and $\ge 2.0$ ULPs for `float64`).
