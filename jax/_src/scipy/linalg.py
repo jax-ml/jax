@@ -417,8 +417,16 @@ def _eigh(a: ArrayLike, b: ArrayLike | None, lower: bool, eigvals_only: bool,
     raise NotImplementedError(
         "Only the eigvals=None case of eigh is implemented.")
 
+  a = jnp.asarray(a)
+  if a.ndim < 2 or a.shape[-1] != a.shape[-2]:
+    raise ValueError(
+      f"Argument a to linalg.eigh must have shape [..., n, n], got {a.shape}.")
+
   if b is not None:
     a, b = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
+    if b.ndim < 2 or b.shape[-1] != b.shape[-2]:
+      raise ValueError(
+        f"Argument b to linalg.eigh must have shape [..., n, n], got {b.shape}.")
     signature = ("(n,n),(n,n)->(n)" if eigvals_only else
                  "(n,n),(n,n)->(n),(n,n)")
     return jnp_vectorize.vectorize(
