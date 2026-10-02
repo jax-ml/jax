@@ -1,0 +1,15 @@
+diff --git a/MODULE.bazel b/MODULE.bazel
+index bedd432..6ef1fdf 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -33,10 +33,5 @@ use_repo(
+ )
+ 
+ register_toolchains(
+-    "//fortran/toolchains:linux_x86_64_toolchain",
+-    "//fortran/toolchains:linux_aarch64_toolchain",
+-    "//fortran/toolchains:macos_x86_64_toolchain",
+-    "//fortran/toolchains:macos_aarch64_toolchain",
+     "//fortran/toolchains:windows_x86_64_toolchain",
+-    "//fortran/toolchains:emscripten_wasm32_toolchain",
+ )

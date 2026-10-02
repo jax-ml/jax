@@ -24,8 +24,12 @@ bazel_dep(name = "zlib", version = "1.3.2")
 bazel_dep(name = "rules_fortran")
 git_override(
     module_name = "rules_fortran",
-    commit = "830d3fb57abc1c94ca5fed2498cd6b1d2c667505",
+    commit = "f0cac73ebdcbda7bc01b38b8a4ee33869416c220",
     remote = "https://github.com/miinso/rules_fortran.git",
+    patch_strip = 1,
+    patches = [
+        "//third_party/rules_fortran:toolchains.patch",
+    ],
 )
 
 # TODO: use a released version when available
