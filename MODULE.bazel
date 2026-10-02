@@ -49,7 +49,7 @@ archive_override(
     strip_prefix = "xla-3fafe0ad1b37290f624c0e56262a4813fc05377e",
     patch_strip = 1,
     patches = [
-        "//jaxlib/cuda/eigen_archive.patch",
+        "//third_party/xla:eigen_archive.patch",
     ],
     urls = ["https://github.com/openxla/xla/archive/3fafe0ad1b37290f624c0e56262a4813fc05377e.tar.gz"],
 )
@@ -60,13 +60,6 @@ archive_override(
 single_version_override(
     module_name = "aspect_rules_esbuild",
     version = "0.25.1",
-    integrity = "sha256-TIns//WmYqbt+04tQD/t9VvkCjoAeePC+LpHs3wW6qs=",
-    patch_strip = 1,
-    patches = [
-        "//third_party/xla:eigen_archive.patch",
-    ],
-    strip_prefix = "xla-dcf304bc5dca1932b99f740b911dbd73631a1a69",
-    urls = ["https://github.com/openxla/xla/archive/dcf304bc5dca1932b99f740b911dbd73631a1a69.tar.gz"],
 )
 
 # TODO: upstream, otherwise we have to duplicate the patches in jax
