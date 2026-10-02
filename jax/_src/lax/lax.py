@@ -58,6 +58,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import remat
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
+from jax._src.layout import Layout
 from jax._src.mesh import get_abstract_mesh, get_concrete_mesh, use_abstract_mesh
 from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
@@ -6421,6 +6422,75 @@ def _dot_general_pp_rule(eqn, context, settings) -> pp.Doc:
   printed_params.pop('out_sharding', None)  # implied by the let binder type
   return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
 
+
+def _dot_general_layout_rule(lhs, rhs, *, dimension_numbers, **kwargs):
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  lhs_m2m = lhs.layout.major_to_minor
+  rhs_m2m = rhs.layout.major_to_minor
+
+  num_batch = len(lhs_batch)
+  if set(lhs_m2m[:num_batch]) != set(lhs_batch):
+    raise ValueError(
+        f'dot_general requires lhs batch dims {lhs_batch} to be most major in'
+        f' lhs layout, got {lhs.layout}')
+  if set(rhs_m2m[:num_batch]) != set(rhs_batch):
+    raise ValueError(
+        f'dot_general requires rhs batch dims {rhs_batch} to be most major in'
+        f' rhs layout, got {rhs.layout}')
+
+  lhs_batch_order = tuple(lhs_batch.index(d) for d in lhs_m2m[:num_batch])
+  rhs_batch_order = tuple(rhs_batch.index(d) for d in rhs_m2m[:num_batch])
+  if lhs_batch_order != rhs_batch_order:
+    raise ValueError(
+        'dot_general requires lhs and rhs batch dimensions to have the same'
+        f' relative layout order, got {lhs.layout} and {rhs.layout}')
+
+  lhs_cont_order = tuple(lhs_contract.index(d)
+                         for d in lhs_m2m if d in lhs_contract)
+  rhs_cont_order = tuple(rhs_contract.index(d)
+                         for d in rhs_m2m if d in rhs_contract)
+  if lhs_cont_order != rhs_cont_order:
+    raise ValueError(
+        'dot_general requires lhs and rhs contracting dimensions to have the'
+        f' same relative layout order, got {lhs.layout} and {rhs.layout}')
+
+  lhs_tensor = [d for d in range(lhs.ndim)
+                if d not in lhs_contract and d not in lhs_batch]
+  rhs_tensor = [d for d in range(rhs.ndim)
+                if d not in rhs_contract and d not in rhs_batch]
+
+  if lhs_tensor and lhs_contract:
+    if not (len({lhs_m2m[-2], lhs_m2m[-1]} & set(lhs_tensor)) == 1 and
+            len({lhs_m2m[-2], lhs_m2m[-1]} & set(lhs_contract)) == 1):
+      raise ValueError(
+          'dot_general requires the 2 minor-most dims of lhs to be one'
+          f' non-contracting and one contracting dim, got {lhs.layout}')
+  if rhs_tensor and rhs_contract:
+    if not (len({rhs_m2m[-2], rhs_m2m[-1]} & set(rhs_tensor)) == 1 and
+            len({rhs_m2m[-2], rhs_m2m[-1]} & set(rhs_contract)) == 1):
+      raise ValueError(
+          'dot_general requires the 2 minor-most dims of rhs to be one'
+          f' non-contracting and one contracting dim, got {rhs.layout}')
+
+  lhs_tensor_to_out = {d: num_batch + i for i, d in enumerate(lhs_tensor)}
+  rhs_tensor_to_out = {d: num_batch + len(lhs_tensor) + i
+                       for i, d in enumerate(rhs_tensor)}
+
+  out_batch_m2m = lhs_batch_order
+  out_lhs_tensor_m2m = tuple(lhs_tensor_to_out[d] for d in lhs_m2m
+                             if d in lhs_tensor_to_out)
+  out_rhs_tensor_m2m = tuple(rhs_tensor_to_out[d] for d in rhs_m2m
+                             if d in rhs_tensor_to_out)
+
+  out_m2m = (out_batch_m2m + out_lhs_tensor_m2m[:-1] + out_rhs_tensor_m2m[:-1]
+             + out_lhs_tensor_m2m[-1:] + out_rhs_tensor_m2m[-1:])
+  tiling = lhs.layout.tiling if lhs.layout.tiling == rhs.layout.tiling else None
+  sub_byte = (lhs.layout.sub_byte_element_size_in_bits
+              if lhs.layout.sub_byte_element_size_in_bits == rhs.layout.sub_byte_element_size_in_bits
+              else 0)
+  return Layout(out_m2m, tiling=tiling, sub_byte_element_size_in_bits=sub_byte)
+
+
 dot_general_p = standard_primitive(
     _dot_general_shape_rule,
     _dot_general_dtype_rule,
@@ -6428,6 +6498,7 @@ dot_general_p = standard_primitive(
     sharding_rule=_dot_general_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'dot_general'),
     ur_rule=_dot_general_ur_rule,
+    layout_rule=_dot_general_layout_rule,
 )
 
 
@@ -6640,7 +6711,7 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       **algorithm_kwarg,
   )
   aval_out, = ctx.avals_out
-  result = mlir.lower_with_sharding_in_types(ctx, result, aval_out)
+  result = mlir.lower_with_explicit_types(ctx, result, aval_out)
   if accumulation_aval.dtype != aval_out.dtype:
     result = mlir.convert_hlo(ctx, result, accumulation_aval, aval_out)
   return [result]

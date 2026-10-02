@@ -952,6 +952,267 @@ class LayoutInTypesTest(jtu.JaxTestCase):
         ValueError, 'layout of all inputs passed to `add` must be the same'):
       g(arr1, arr2)
 
+  def test_dot_2d_layout(self):
+    arr1 = jnp.arange(64.).reshape(8, 8)
+    arr2 = jnp.arange(64.).reshape(8, 8)
+    l = arr1.format.layout
+    self.assertEqual(l.major_to_minor, (0, 1))
+
+    l_t = Layout((1, 0), l.tiling)
+    arr2_t = jax.device_put(arr2, Format(l_t, arr2.sharding))
+
+    @jax.jit
+    @explicit_layout(in_layouts=(l, l_t))
+    def f(x, y):
+      self.assertEqual(x.aval.layout, Layout((0, 1), l.tiling))
+      self.assertEqual(y.aval.layout, Layout((1, 0), l.tiling))
+      z = x @ y
+      self.assertEqual(z.aval.layout, Layout((0, 1), l.tiling))
+      return z
+
+    lowered_text = f.lower(arr1, arr2_t).as_text()
+    self.assertEqual(lowered_text.count('LayoutConstraint'), 3)
+
+    out = f(arr1, arr2_t)
+    self.assertEqual(out.format.layout, Layout((0, 1), l.tiling))
+    self.assertArraysAllClose(out, arr1 @ arr2)
+
+  def test_dot_multiple_contracting_dims_layout(self):
+    # lhs (M=8, K1=8, K2=8) with layout (1, 0, 2) -> K1 major, (M, K2) minor
+    # rhs (K1=8, K2=8, N=8) with layout (0, 1, 2) or (0, 2, 1) -> K1 major,
+    # (K2, N) or (N, K2) minor
+    arr3 = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape(8, 8, 8)
+    tiling = arr3.format.layout.tiling
+    l_lhs = Layout((1, 0, 2), tiling)
+    lhs_3d = jax.device_put(arr3, Format(l_lhs, arr3.sharding))
+
+    for l_rhs in [Layout((0, 1, 2), tiling), Layout((0, 2, 1), tiling)]:
+      rhs_3d = jax.device_put(arr3, Format(l_rhs, arr3.sharding))
+
+      @jax.jit
+      @explicit_layout(in_layouts=(l_lhs, l_rhs))
+      def dot_2_contract(x, y):
+        out = jnp.einsum('mab,abn->mn', x, y)
+        self.assertEqual(out.aval.layout, Layout((0, 1), tiling))
+        return out
+
+      out_2c = dot_2_contract(lhs_3d, rhs_3d)
+      self.assertEqual(out_2c.format.layout, Layout((0, 1), tiling))
+      self.assertArraysAllClose(out_2c, jnp.einsum('mab,abn->mn', arr3, arr3))
+
+  def test_dot_3d_output_layout(self):
+    arr2 = jnp.arange(64., dtype=jnp.float32).reshape(8, 8)
+    arr3 = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape(8, 8, 8)
+    tiling = arr3.format.layout.tiling
+    l_2d = Layout((0, 1), tiling)
+    l_102 = Layout((1, 0, 2), tiling)
+    l_012 = Layout((0, 1, 2), tiling)
+    l_021 = Layout((0, 2, 1), tiling)
+
+    lhs_102 = jax.device_put(arr3, Format(l_102, arr3.sharding))
+    lhs_012 = jax.device_put(arr3, Format(l_012, arr3.sharding))
+    rhs_021 = jax.device_put(arr3, Format(l_021, arr3.sharding))
+
+    # 3D output from 2 non-contracting dims on lhs:
+    # lhs (M=8, P=8, K=8) with layout (1, 0, 2) -> P major, (M, K) minor
+    # rhs (K=8, N=8) with layout (0, 1) -> (K, N) minor
+    # out (M=8, P=8, N=8) -> P (dim 1) stays major, (M, N) (dims 0, 2) minor -> (1, 0, 2)
+    @jax.jit
+    @explicit_layout(in_layouts=(l_102, l_2d))
+    def dot_3d_out(x, y):
+      out = jnp.einsum('mpk,kn->mpn', x, y)
+      self.assertEqual(out.aval.layout, l_102)
+      return out
+
+    out_3d = dot_3d_out(lhs_102, arr2)
+    self.assertEqual(out_3d.format.layout, l_102)
+    self.assertArraysAllClose(out_3d, jnp.einsum('mpk,kn->mpn', arr3, arr2))
+
+    # 3D output with batch dim:
+    # lhs (B=8, M=8, K=8) with layout (0, 1, 2) -> B major, (M, K) minor
+    # rhs (B=8, K=8, N=8) with layout (0, 2, 1) -> B major, (N, K) minor
+    # out (B=8, M=8, N=8) -> B (dim 0) stays major, (M, N) (dims 1, 2) minor -> (0, 1, 2)
+    @jax.jit
+    @explicit_layout(in_layouts=(l_012, l_021))
+    def dot_batch_3d_out(x, y):
+      out = jnp.einsum('bmk,bkn->bmn', x, y)
+      self.assertEqual(out.aval.layout, l_012)
+      return out
+
+    out_b3d = dot_batch_3d_out(lhs_012, rhs_021)
+    self.assertEqual(out_b3d.format.layout, l_012)
+    self.assertArraysAllClose(out_b3d, jnp.einsum('bmk,bkn->bmn', arr3, arr3))
+
+  @jtu.with_explicit_mesh((2,), ('data',))
+  def test_dot_4d_output_and_chained_layout(self, mesh):
+    a, b, c, d, e, f, g = 4, 256, 256, 512, 4, 4, 256
+    x = jax.device_put(
+        jnp.arange(a * b * c, dtype=jnp.float32).reshape(a, b, c),
+        P(None, None, 'data'))
+    w1 = jax.device_put(
+        jnp.ones((e, b, d), dtype=jnp.float32), P(None, 'data', None))
+    w2 = jax.device_put(
+        jnp.ones((e, d, b), dtype=jnp.float32), P(None, 'data', None))
+    w3 = jax.device_put(
+        jnp.ones((f, d, g), dtype=jnp.float32), P(None, 'data', None))
+    tiling = x.format.layout.tiling
+    l_012 = Layout((0, 1, 2), tiling)
+    l_0213 = Layout((0, 2, 1, 3), tiling)
+    l_02314 = Layout((0, 2, 3, 1, 4), tiling)
+
+    # 1. Single matmul: (a, b, c) @ (e, b, d) -> (a, c, e, d)
+    # lhs (a, b, c) layout (0, 1, 2) -> a major, (b, c) minor (c is non-contracting)
+    # rhs (e, b, d) layout (0, 1, 2) -> e major, (b, d) minor (d is non-contracting)
+    # out (a, c, e, d) -> (a, e) (dims 0, 2) major, (c, d) (dims 1, 3) minor -> (0, 2, 1, 3)
+    @jax.jit
+    def single_without(x, w1):
+      return jnp.einsum('abc,ebd->aced', x, w1)
+
+    @jax.jit
+    @explicit_layout(in_layouts=(x.format.layout, w1.format.layout))
+    def single_with(x, w1):
+      out = jnp.einsum('abc,ebd->aced', x, w1)
+      self.assertEqual(out.aval.layout, l_0213)
+      return out
+
+    out_s_without = single_without(x, w1)
+    out_s_with = single_with(x, w1)
+    self.assertEqual(out_s_with.format.layout, l_0213)
+    self.assertArraysAllClose(out_s_with, out_s_without)
+
+    # 2. Chained matmul contracting (e, d) back down:
+    # (a, b, c) @ (e, b, d) -> (a, c, e, d) @ (e, d, b) -> (a, c, b)
+    @jax.jit
+    def chain_down_without(x, w1, w2):
+      y = jnp.einsum('abc,ebd->aced', x, w1)
+      return jnp.einsum('aced,edb->acb', y, w2, out_sharding=P(None, 'data'))
+
+    @jax.jit
+    @explicit_layout(
+        in_layouts=(x.format.layout, w1.format.layout, w2.format.layout)
+    )
+    def chain_down_with(x, w1, w2):
+      y = jnp.einsum('abc,ebd->aced', x, w1)
+      self.assertEqual(y.aval.layout, l_0213)
+      out = jnp.einsum('aced,edb->acb', y, w2, out_sharding=P(None, 'data'))
+      self.assertEqual(out.aval.layout, l_012)
+      return out
+
+    out_cd_without = chain_down_without(x, w1, w2)
+    out_cd_with = chain_down_with(x, w1, w2)
+    self.assertEqual(out_cd_with.format, out_cd_without.format)
+    self.assertArraysAllClose(out_cd_with, out_cd_without)
+
+    # 3. Chained matmul contracting only d and growing to 5D:
+    # (a, b, c) @ (e, b, d) -> (a, c, e, d) @ (f, d, g) -> (a, c, e, f, g)
+    # y (a, c, e, d) layout (0, 2, 1, 3) -> (a, e) major, (c, d) minor
+    # w3 (f, d, g) layout (0, 1, 2) -> f major, (d, g) minor
+    # out (a, c, e, f, g) -> (a, e, f) (dims 0, 2, 3) major, (c, g) (dims 1, 4) minor -> (0, 2, 3, 1, 4)
+    @jax.jit
+    def chain_grow_without(x, w1, w3):
+      y = jnp.einsum('abc,ebd->aced', x, w1)
+      return jnp.einsum('aced,fdg->acefg', y, w3, out_sharding=P(None, 'data'))
+
+    @jax.jit
+    @explicit_layout(
+        in_layouts=(x.format.layout, w1.format.layout, w3.format.layout)
+    )
+    def chain_grow_with(x, w1, w3):
+      y = jnp.einsum('abc,ebd->aced', x, w1)
+      self.assertEqual(y.aval.layout, l_0213)
+      out = jnp.einsum('aced,fdg->acefg', y, w3, out_sharding=P(None, 'data'))
+      self.assertEqual(out.aval.layout, l_02314)
+      return out
+
+    out_cg_without = chain_grow_without(x, w1, w3)
+    out_cg_with = chain_grow_with(x, w1, w3)
+    self.assertEqual(out_cg_with.format.layout, l_02314)
+    self.assertArraysAllClose(out_cg_with, out_cg_without)
+
+  def test_dot_layout_errors(self):
+    arr2 = jnp.arange(64., dtype=jnp.float32).reshape(8, 8)
+    arr3 = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape(8, 8, 8)
+    tiling = arr3.format.layout.tiling
+    l_2d = Layout((0, 1), tiling)
+    l_lhs_ok = Layout((1, 0, 2), tiling)
+    l_rhs_ok = Layout((0, 1, 2), tiling)
+
+    # Error 1: lhs 2 minor-most dims are both contracting ((1, 2) in (0, 1, 2))
+    @jax.jit
+    @explicit_layout(in_layouts=(Layout((0, 1, 2), tiling), l_rhs_ok))
+    def bad_lhs_minor(x, y):
+      return jnp.einsum('mab,abn->mn', x, y)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'dot_general requires the 2 minor-most dims of lhs to be one'
+        ' non-contracting and one contracting dim'):
+      bad_lhs_minor(arr3, arr3)
+
+    # Error 2: rhs 2 minor-most dims are both contracting ((0, 1) in (2, 0, 1))
+    @jax.jit
+    @explicit_layout(in_layouts=(l_lhs_ok, Layout((2, 0, 1), tiling)))
+    def bad_rhs_minor(x, y):
+      return jnp.einsum('mab,abn->mn', x, y)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'dot_general requires the 2 minor-most dims of rhs to be one'
+        ' non-contracting and one contracting dim'):
+      bad_rhs_minor(arr3, arr3)
+
+    # Error 3: lhs 2 minor-most dims are both non-contracting ((0, 1) in (2, 0, 1))
+    @jax.jit
+    @explicit_layout(in_layouts=(Layout((2, 0, 1), tiling), l_2d))
+    def bad_lhs_both_nc(x, y):
+      return jnp.einsum('mpk,kn->mpn', x, y)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'dot_general requires the 2 minor-most dims of lhs to be one'
+        ' non-contracting and one contracting dim'):
+      bad_lhs_both_nc(arr3, arr2)
+
+    # Error 4: mismatched relative order of contracting dims
+    # lhs has (1, 0, 2) -> contracting order (K1, K2)
+    # rhs has (1, 0, 2) -> contracting order (K2, K1)
+    @jax.jit
+    @explicit_layout(in_layouts=(l_lhs_ok, Layout((1, 0, 2), tiling)))
+    def bad_contract_order(x, y):
+      return jnp.einsum('mab,abn->mn', x, y)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'dot_general requires lhs and rhs contracting dimensions to have the'
+        ' same relative layout order'):
+      bad_contract_order(arr3, arr3)
+
+    # Error 5: batch dim not most major
+    @jax.jit
+    @explicit_layout(in_layouts=(Layout((1, 2, 0), tiling), l_rhs_ok))
+    def bad_batch_major(x, y):
+      return jnp.einsum('bmk,bkn->bmn', x, y)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r'dot_general requires lhs batch dims \(0,\) to be most major'):
+      bad_batch_major(arr3, arr3)
+
+    # Error 6: mismatched relative order of batch dims
+    arr4 = jnp.arange(8 * 8 * 8 * 8, dtype=jnp.float32).reshape(8, 8, 8, 8)
+    @jax.jit
+    @explicit_layout(
+        in_layouts=(Layout((0, 1, 2, 3), tiling), Layout((1, 0, 2, 3), tiling))
+    )
+    def bad_batch_order(x, y):
+      return jnp.einsum('abmk,abkn->abmn', x, y)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'dot_general requires lhs and rhs batch dimensions to have the same'
+        ' relative layout order'):
+      bad_batch_order(arr4, arr4)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
