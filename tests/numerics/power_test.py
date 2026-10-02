@@ -14,7 +14,6 @@
 
 """Precision tests for power, root, and reciprocal functions."""
 
-from absl.testing import absltest
 from absl.testing import parameterized
 from jax import lax
 from jax._src import config
@@ -160,5 +159,12 @@ class ReciprocalTest(jtu.JaxTestCase):
     )
 
 
+util.register_benchmark(jnp.sqrt)
+util.register_benchmark(lax.rsqrt)
+util.register_benchmark(jnp.cbrt)
+util.register_benchmark(jnp.square)
+util.register_benchmark(jnp.reciprocal)
+
+
 if __name__ == "__main__":
-  absltest.main(testLoader=util.ClassShardedTestLoader())
+  util.main()

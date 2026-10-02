@@ -51,6 +51,8 @@ py_library(
         "//jax/_src:test_util",
     ] + py_deps([
         "absl/flags",
+        "absl/testing",
+        "google_benchmark",
         "mpmath",
         "numpy",
     ]),

@@ -14,7 +14,6 @@
 
 """Precision tests for modified Bessel functions against reference implementations."""
 
-from absl.testing import absltest
 from absl.testing import parameterized
 from jax import lax
 from jax._src import config
@@ -80,5 +79,9 @@ class BesselI1eTest(jtu.JaxTestCase):
     )
 
 
+util.register_benchmark(lax.bessel_i0e)
+util.register_benchmark(lax.bessel_i1e)
+
+
 if __name__ == "__main__":
-  absltest.main(testLoader=util.ClassShardedTestLoader())
+  util.main()

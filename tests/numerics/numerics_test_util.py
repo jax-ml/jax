@@ -18,15 +18,22 @@ import collections
 from collections.abc import Callable, Iterator, Sequence
 import concurrent.futures
 import os
+import sys
 from typing import Any
 
 from absl import flags
+from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
 from jax._src import tpu_info
 import jax.numpy as jnp
 import mpmath
 import numpy as np
+
+try:
+  import google_benchmark
+except ImportError:
+  google_benchmark = None
 
 
 class ClassShardedTestLoader(jtu.JaxTestLoader):
@@ -854,3 +861,54 @@ def check_unary_precision(
         " is not tight in exhaustive run: observed max real ULP error"
         f" {max_diff:.4f} (expected bound {expected_bound}, got {bound_str})."
     )
+
+
+def register_benchmark(
+    jax_fn: Callable,
+    *,
+    name: str | None = None,
+    dtypes: Sequence[Any] = (
+        jnp.bfloat16,
+        jnp.float16,
+        jnp.float32,
+        jnp.float64,
+    ),
+    size: int = 10**6,
+) -> None:
+  """Registers google_benchmark microbenchmarks for `jax_fn` across `dtypes`."""
+  if google_benchmark is None:
+    return
+  fn_name = name or getattr(jax_fn, "__name__", str(jax_fn)).lstrip("_")
+  for dtype in dtypes:
+    dtype = np.dtype(dtype)
+
+    def _bench(state, dtype=dtype):
+      is_f64 = dtype == np.float64
+      if is_f64 and jtu.device_under_test() == "tpu":
+        state.skip_with_error("float64 on TPU is ef57 double-double")
+        return
+      with jax.enable_x64(is_f64):
+        rng = jtu.rand_fullrange(np.random.RandomState(0))
+        x = jax.device_put(rng((size,), dtype))
+        f = jax.jit(jax_fn)
+        f(x).block_until_ready()
+        while state:
+          f(x).block_until_ready()
+
+    google_benchmark.register(_bench, name=f"{fn_name}_{dtype.name}")
+
+
+def main() -> None:
+  """Runs google_benchmark if `--benchmark*` flags are passed, else absltest."""
+  if google_benchmark is not None and any(
+      arg.startswith("--benchmark") for arg in sys.argv[1:]
+  ):
+    shard_status_file = os.environ.get("TEST_SHARD_STATUS_FILE")
+    if shard_status_file:
+      with open(shard_status_file, "w"):
+        pass
+    if int(os.environ.get("TEST_SHARD_INDEX", "0")) != 0:
+      return
+    google_benchmark.main()
+  else:
+    absltest.main(testLoader=ClassShardedTestLoader())
