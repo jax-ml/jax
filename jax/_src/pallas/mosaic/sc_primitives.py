@@ -28,6 +28,7 @@ from jax._src import effects
 from jax._src import flattree as ft
 from jax._src.api_util import check_no_transformed_refs_args
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lib import ifrt_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
@@ -614,18 +615,54 @@ def _masked_cummax_abstract_eval(x, mask):
 
 def _masked_cumop_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask,
                                 *, reduction_kind: str):
+  dtype = ctx.avals_in[0].dtype
+  is_float = jnp.issubdtype(dtype, jnp.floating)
+  is_signed_int = jnp.issubdtype(dtype, jnp.signedinteger)
+  is_unsigned_int = jnp.issubdtype(dtype, jnp.unsignedinteger)
+  if not (is_float or is_signed_int or is_unsigned_int):
+    raise NotImplementedError(f"Unsupported dtype: {dtype}")
+
+  match reduction_kind:
+    case "max":
+      tpu_reduction_kind = (
+          "maxf" if is_float else "maxsi" if is_signed_int else "maxui"
+      )
+    case "min":
+      tpu_reduction_kind = (
+          "minf" if is_float else "minsi" if is_signed_int else "minui"
+      )
+    case "sum":
+      tpu_reduction_kind = "sum"
+    case _:
+      raise ValueError(f"Unsupported reduction kind: {reduction_kind}")
+
   sign_bit_vec = None
   # tpu.scan comparisons assume unsigned int predicates, so we compare
   # with the sign bit flipped.
-  if ctx.avals_in[0].dtype == jnp.dtype(jnp.int32) and reduction_kind in ("max", "min"):
+  # TODO(tlongeri): Have Mosaic handle this.
+  if tpu_reduction_kind in ("maxsi", "minsi"):
+    if jnp.iinfo(dtype).bits != 32:
+      raise NotImplementedError(
+          "Only 32-bit signed integers are supported for signed reductions."
+      )
     i32 = ir.IntegerType.get_signless(32)
     sign_bit_vec = vector.broadcast(
         x.type, arith.constant(i32, ir.IntegerAttr.get(i32, 0x80000000)))
     x = arith.xori(x, sign_bit_vec)
+    tpu_reduction_kind = "maxui" if tpu_reduction_kind == "maxsi" else "minui"
+
+  if ifrt_version < 76:
+    # Switch to the old enum names
+    match tpu_reduction_kind:
+      case "maxf" | "maxui":
+        tpu_reduction_kind = "max"
+      case "minf" | "minui":
+        tpu_reduction_kind = "min"
+
   result = tpu.scan(
       x.type,
       x,
-      ir.Attribute.parse(f"#tpu.reduction_kind<{reduction_kind}>"),
+      ir.Attribute.parse(f"#tpu.reduction_kind<{tpu_reduction_kind}>"),
       mask=mask,
       dimension=x.type.rank - 1,  # pyrefly: ignore[unexpected-keyword]
   )

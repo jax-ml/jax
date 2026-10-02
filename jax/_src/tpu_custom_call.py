@@ -76,6 +76,8 @@ def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
   if ctx.is_forward_compat() or backend is None:
     return _FWD_COMPAT_VERSION
+  if not cloud_tpu_init.is_libtpu_at_least("0.0.50"):
+    return 17
   if ir_version_override is not None:
     return ir_version_override()
   return None
@@ -1021,7 +1023,7 @@ def lowered_as_tpu_kernel(
     # We hardcode a specific version both here and below, since this path is
     # only used by some internal tests that don't need serialization, but we do
     # need a concrete version on the module.
-    current_ir_version = 17
+    current_ir_version = 18
     try:
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true"
