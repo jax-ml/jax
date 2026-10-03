@@ -256,7 +256,7 @@ def _estimate_resources(
     ctx: ResourceEstimatorContext, jaxpr: jax_core.Jaxpr
 ) -> Resources:
   """Estimates the resources required by the kernel."""
-  rs = Resources(smem_scratch_bytes=0)
+  rs = Resources()
   for eqn in jaxpr.eqns:
     # TODO(slebedev): Add support for other primitives, notably control flow.
     if rule := _resource_estimators.get(eqn.primitive):
@@ -396,9 +396,10 @@ def _run_scoped_resource_estimator(
       else:
         rs += Resources(tmem_scratch_cols=cols_used)
     elif aval.memory_space == gpu_core.SMEM:
-      rs += Resources(
-          smem_scratch_bytes=aval.size * dtypes.itemsize_bits(aval.dtype) // 8
-      )
+      if ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+        rs += Resources(
+            smem_scratch_bytes=aval.size * dtypes.itemsize_bits(aval.dtype) // 8
+        )
     elif aval.memory_space == gpu_core.REGS:
       # Don't need to allocate anything.
       pass
@@ -425,6 +426,8 @@ def _reduce_resource_estimator(
     **kwargs
 ) -> Resources:
   del x_aval, axes, kwargs  # Unused.
+  if ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+    return Resources()
   # We don't need SMEM for some reductions, but it depends on the layout, so we
   # conservatively request the maximum scratch space we might need.
   return Resources(smem_scratch_bytes=ctx.reduction_scratch_bytes)
@@ -458,7 +461,7 @@ class ModuleContext:
   approx_math: bool
   single_wg_lane_predicate: ir.Value
   single_warp_lane_predicate: ir.Value
-  smem_requested_bytes: int
+  smem_requested_bytes: int | None
   smem_used_bytes: int
   tmem_requested_cols: int
   tmem_used_cols: int
@@ -628,7 +631,8 @@ class ModuleContext:
         // 8,
         gpu_core.SMEM_ALIGNMENT,
     )
-    assert off <= self.smem_requested_bytes, "Ran out of scoped SMEM"
+    if self.smem_requested_bytes is not None:
+      assert off <= self.smem_requested_bytes, "Ran out of scoped SMEM"
     assert off % gpu_core.SMEM_ALIGNMENT == 0
 
     self.smem_used_bytes = off
@@ -891,7 +895,11 @@ def lower_jaxpr_to_module(
         approx_math,
         single_wg_lane_predicate,
         single_warp_lane_predicate,
-        smem_requested_bytes=math.prod(ir.MemRefType(runtime_smem.type).shape),
+        smem_requested_bytes=(
+            math.prod(ir.MemRefType(runtime_smem.type).shape)
+            if lowering_semantics == mgpu.LoweringSemantics.Lane
+            else None
+        ),
         smem_used_bytes=0,
         tmem_requested_cols=tmem_cols,
         tmem_used_cols=0,
@@ -916,10 +924,14 @@ def lower_jaxpr_to_module(
         module_ctx, launch_ctx, jaxpr, buffers_gmem, consts
     )
 
-  scratch_buffers: list[Any] = [
-      jax.ShapeDtypeStruct(shape=[rs.smem_scratch_bytes], dtype=np.int8),
-      rs.barriers,
-  ]
+  if lowering_semantics == mgpu.LoweringSemantics.Lane:
+    smem_scratch: Any = jax.ShapeDtypeStruct(
+        shape=[rs.smem_scratch_bytes], dtype=np.int8
+    )
+  else:
+    assert rs.smem_scratch_bytes == 0
+    smem_scratch = ()
+  scratch_buffers: list[Any] = [smem_scratch, rs.barriers]
   if rs.tmem_scratch_cols > 0 and rs.tmem_collective_scratch_cols > 0:
     raise ValueError(
         "Can't mix collective and non-collective TMEM allocations within the"
@@ -1009,7 +1021,7 @@ def lower_jaxpr_to_module(
       is_multi_process=params.is_multi_process,
   )
 
-  mgpu_core.lower_mgpu_module(
+  smem_size = mgpu_core.lower_mgpu_module(
       module,
       launch_ctx,
       lowering_semantics,
@@ -1018,7 +1030,9 @@ def lower_jaxpr_to_module(
 
   dump_options = mgpu.dialect.get_or_set_dump_options(module)
   if dump_options.resources:
-    if prof_spec is not None:
+    if lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+      rs = dataclasses.replace(rs, smem_scratch_bytes=smem_size)
+    elif prof_spec is not None:
       smem_scratch_bytes = rs.smem_scratch_bytes + prof_spec.smem_bytes(block)
       rs = dataclasses.replace(rs, smem_scratch_bytes=smem_scratch_bytes)
     mgpu_utils.dump_to_file_or_stdout(

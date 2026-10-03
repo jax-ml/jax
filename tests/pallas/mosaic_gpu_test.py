@@ -5288,11 +5288,15 @@ class PallasCallWGTest(
         ],
         compiler_params=compiler_params,
     )
-    def kernel(x_gmem, o_gmem, *scratch_refs):
-      del scratch_refs
+    def kernel(x_gmem, o_gmem, smem0, smem1, *tmem_refs):
+      del tmem_refs
+      smem0[...] = jnp.ones_like(smem0)
+      smem1[...] = jnp.ones_like(smem1)
       o_gmem[...] = plgpu.load(x_gmem, optimized=False)
 
     expected_smem_bytes = 64 * 64 * 4 + 32 * 32 * 4
+    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
+      expected_smem_bytes += 4  # TMEM address stored in SMEM.
     expected_tmem_cols = 40  # 32 + 1 = 33 padded to next multiple of 8
 
     if profile_trace_scope is not None:
@@ -5304,6 +5308,9 @@ class PallasCallWGTest(
       align = 8
       profiler_start = (expected_smem_bytes + align - 1) & ~(align - 1)
       expected_smem_bytes = profiler_start + profiler_smem_bytes
+    expected_smem_bytes = gpu_core.align_to(
+        expected_smem_bytes, gpu_core.SMEM_ALIGNMENT
+    )
 
     with (jtu.set_env(MOSAIC_GPU_DUMP_RESOURCES="1"),
           self.capture_stdout() as rs):
@@ -8264,7 +8271,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     grid_names = tuple("xyz"[: len(grid)])
     cluster_names = tuple("abc"[: len(cluster)])
 
-    def kernel(out_ref, cancel_result_ref, barrier, _):
+    def kernel(out_ref, cancel_result_ref, barrier, smem_ref):
+      smem_ref[0] = jnp.int8(0)
       if with_indexing:
         cancel_result_ref = cancel_result_ref.at[0]
       plgpu.try_cluster_cancel(

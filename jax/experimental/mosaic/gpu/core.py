@@ -763,20 +763,6 @@ def _launch(
     profiler_start = (smem_bytes + align - 1) & ~(align - 1)
     smem_bytes = profiler_start + profiler_spec.smem_bytes(block=block)
 
-  device = jax.local_devices()[0]
-  # For ahead-of-time compilation purposes, that is when a CUDA device
-  # isn't available to query directly, we default to 227 KB, the
-  # maximum amount of shared memory per thread block available in
-  # compute capabilities 9.0 and 10.x:
-  # https://docs.nvidia.com/cuda/cuda-c-programming-guide/#features-and-technical-specifications-technical-specifications-per-compute-capability
-  # Note in either case we assume all devices have the same amount of
-  # shared memory.
-  max_smem_bytes = getattr(device, "shared_memory_per_block_optin", 227 * 1024)
-  if _SMEM_SIZE_BOUND is not None:
-    max_smem_bytes = min(max_smem_bytes, _SMEM_SIZE_BOUND)
-  if smem_bytes > max_smem_bytes:
-    raise ValueError("Mosaic GPU kernel exceeds available shared memory: "
-                     f"{smem_bytes=} > {max_smem_bytes=}")
   if math.prod(cluster) != 1:
     if len(cluster) != 3:
       raise ValueError(f"Clusters must be 3D. Got: {cluster}")
@@ -1086,13 +1072,32 @@ def _declare_runtime_functions():
   )
 
 
+def _check_smem_size(smem_bytes: int) -> None:
+  device = jax.local_devices()[0]
+  # For ahead-of-time compilation purposes, that is when a CUDA device
+  # isn't available to query directly, we default to 227 KB, the
+  # maximum amount of shared memory per thread block available in
+  # compute capabilities 9.0 and 10.x:
+  # https://docs.nvidia.com/cuda/cuda-c-programming-guide/#features-and-technical-specifications-technical-specifications-per-compute-capability
+  # Note in either case we assume all devices have the same amount of
+  # shared memory.
+  max_smem_bytes = getattr(device, "shared_memory_per_block_optin", 227 * 1024)
+  if _SMEM_SIZE_BOUND is not None:
+    max_smem_bytes = min(max_smem_bytes, _SMEM_SIZE_BOUND)
+  if smem_bytes > max_smem_bytes:
+    raise ValueError(
+        "Mosaic GPU kernel exceeds available shared memory:"
+        f" {smem_bytes=} > {max_smem_bytes=}"
+    )
+
+
 def lower_mgpu_module(
     module: ir.Module,
     launch_ctx: launch_context.LaunchContext,
     lowering_semantics: LoweringSemantics,
     *,
     auto_barriers: bool = True,
-) -> None:
+) -> int:
   if lowering_semantics == LoweringSemantics.Warpgroup:
     dump_options = dialect.get_or_set_dump_options(module)
 
@@ -1129,6 +1134,13 @@ def lower_mgpu_module(
     module.operation.verify()
   except ir.MLIRError as e:
     raise error.mlir_error_to_verification_error(e) from e
+
+  smem_size = dialect_lowering._gpu_launch_op(module).dynamicSharedMemorySize
+  assert smem_size is not None
+  assert isinstance(smem_size.owner, arith.ConstantOp)
+  smem_bytes = int(smem_size.owner.literal_value)
+  _check_smem_size(smem_bytes)
+  return smem_bytes
 
 
 def _kernel_to_module(
