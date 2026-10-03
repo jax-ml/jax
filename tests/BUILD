@@ -2016,7 +2016,11 @@ jax_multiplatform_test(
         "gpu": 2,
     },
     tags = ["multiaccelerator"],
-    deps = ["//jax/experimental:overlap"] + py_deps([
+    deps = [
+        "//jax/experimental:checkify",
+        "//jax/experimental:hijax",
+        "//jax/experimental:overlap",
+    ] + py_deps([
         "absl/testing",
         "numpy",
     ]),

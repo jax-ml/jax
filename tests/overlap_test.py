@@ -12,15 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 from functools import partial
+import re
 from absl.testing import absltest, parameterized
 
 import jax
 import jax.numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.ad_checkpoint import saved_residuals
 from jax._src.lax import parallel
 from jax._src.compute_on import compute_on
+from jax.ad_checkpoint import checkpoint_name
+from jax.experimental import checkify
+from jax.experimental.hijax import HiPrim, HiType, ShapedArray, register_hitype
 from jax.experimental.overlap import program_order
 from jax.sharding import PartitionSpec as P
 
@@ -43,6 +49,13 @@ class OverlapTest(jtu.JaxTestCase):
     else:
       opts = {}
     return opts
+
+  def main_ops(self, lowered_text):
+    # Names of the ops in the lowered @main function, in order, skipping
+    # sharding annotations.
+    body = lowered_text.split('func.func public @main', 1)[1].split('\n  }', 1)[0]
+    ops = re.findall(r'^\s+(?:%\S+ = )?"?([a-z_]+\.[a-z_]+)', body, re.M)
+    return [op for op in ops if not op.startswith('sdy.')]
 
   @jtu.with_explicit_mesh((8,), ('x',))
   def test_fsdp_pipeline_grad(self, mesh):
@@ -360,8 +373,8 @@ class OverlapTest(jtu.JaxTestCase):
       y2 = jnp.cos(y1)
       return x2, y2
 
-    jaxpr = f.trace(x, y).jaxpr
-    self.assertEqual(str(jaxpr).count('optimization_barrier'), 5)
+    lowered_text = f.lower(x, y).as_text()
+    self.assertEqual(lowered_text.count('stablehlo.optimization_barrier'), 5)
 
     f(x, y)  # doesn't crash
 
@@ -493,12 +506,11 @@ class OverlapTest(jtu.JaxTestCase):
       z = op2(y, a, b)
       return z
 
-    jaxpr = f.trace(x, a, b).jaxpr
-    jaxpr_str = str(jaxpr)
-    self.assertIn('create_token', jaxpr_str)
+    lowered_text = f.lower(x, a, b).as_text()
+    self.assertIn('stablehlo.create_token', lowered_text)
     # sin -> op1: 1 token barrier + 0 per-input barrier = 1
     # op1 -> op2: 1 token barrier + 2 per-input barriers = 3
-    self.assertEqual(jaxpr_str.count('optimization_barrier'), 4)
+    self.assertEqual(lowered_text.count('stablehlo.optimization_barrier'), 4)
 
     f(x, a, b)  # doesn't crash
 
@@ -524,12 +536,11 @@ class OverlapTest(jtu.JaxTestCase):
       z = op2(y, a, b)
       return z
 
-    jaxpr = f.trace(x, a, b).jaxpr
-    jaxpr_str = str(jaxpr)
-    self.assertIn('create_token', jaxpr_str)
+    lowered_text = f.lower(x, a, b).as_text()
+    self.assertIn('stablehlo.create_token', lowered_text)
     # sin -> op1: 1 token barrier + 0 per-input barrier = 1
     # op1 -> op2: 1 token barrier + 2 per-input barriers = 3
-    self.assertEqual(jaxpr_str.count('optimization_barrier'), 4)
+    self.assertEqual(lowered_text.count('stablehlo.optimization_barrier'), 4)
 
     f(x, a, b)  # doesn't crash
 
@@ -550,9 +561,9 @@ class OverlapTest(jtu.JaxTestCase):
       y2 = jnp.cos(y1)
       return iota, iota2, x2, y2
 
-    jaxpr = f.trace(x, y).jaxpr
-    self.assertEqual(str(jaxpr).count('optimization_barrier'), 5)
-    self.assertEqual(str(jaxpr).count('create_token'), 2)
+    lowered_text = f.lower(x, y).as_text()
+    self.assertEqual(lowered_text.count('stablehlo.optimization_barrier'), 5)
+    self.assertEqual(lowered_text.count('stablehlo.create_token'), 2)
 
     f(x, y)  # doesn't crash
 
@@ -570,10 +581,11 @@ class OverlapTest(jtu.JaxTestCase):
       y2 = jnp.cos(y1)
       return x2, y2
 
-    jaxpr = f.trace(x, y).jaxpr
-    self.assertEqual(jaxpr.eqns[0].primitive.name, 'optimization_barrier')
-    self.assertEqual(jaxpr.eqns[-1].primitive.name, 'optimization_barrier')
-    self.assertEqual(str(jaxpr).count('optimization_barrier'), 5)
+    lowered_text = f.lower(x, y).as_text()
+    ops = self.main_ops(lowered_text)
+    self.assertEqual(ops[0], 'stablehlo.optimization_barrier')
+    self.assertEqual(ops[-1], 'stablehlo.optimization_barrier')
+    self.assertEqual(lowered_text.count('stablehlo.optimization_barrier'), 5)
 
     out_x, out_y = f(x, y)
     self.assertArraysEqual(out_x, jnp.sin(x))
@@ -616,13 +628,264 @@ class OverlapTest(jtu.JaxTestCase):
         return inner2(w)
       return op2(w)
 
-    jaxpr = f.trace(x, w).jaxpr
-    self.assertEqual(jaxpr.eqns[0].primitive.name, 'optimization_barrier')
-    self.assertEqual(jaxpr.eqns[-1].primitive.name, 'optimization_barrier')
     lowered_text = f.lower(x, w).as_text()
+    ops = self.main_ops(lowered_text)
+    self.assertEqual(ops[0], 'stablehlo.optimization_barrier')
+    self.assertEqual(ops[-1], 'stablehlo.optimization_barrier')
     self.assertNotIn('program_order', lowered_text)
 
     f(x, w)  # doesn't crash
+
+  def test_remat_no_extra_residuals(self):
+    # `b` only feeds a linear op, so the backward pass doesn't need it. When
+    # program_order inserted its barriers at trace time, recomputing `a` in the
+    # backward pass pulled in a barrier that also took `b`, so `b` was saved.
+    def f(x):
+      b = checkpoint_name(jnp.cos(x), 'b')
+      a = checkpoint_name(jnp.sin(x), 'a')
+      return a + b + jnp.sin(a)
+
+    policy = jax.checkpoint_policies.save_only_these_names('a', 'b')
+    x = jnp.arange(3.)
+    expected = saved_residuals(jax.remat(f, policy=policy), x)
+    actual = saved_residuals(
+        jax.remat(program_order(enforce=True)(f), policy=policy), x)
+    self.assertLen(actual, len(expected))
+
+  def test_remat_nested_no_extra_residuals(self):
+    # The overlap pattern: block 1 computes an activation h and prefetches the
+    # next weights p; block 2 uses h nonlinearly and p only linearly.
+    def f(x, w, wn, use_program_order):
+      po, po_f = ((program_order(enforce=True), program_order(enforce=False))
+                  if use_program_order else (lambda f: f, lambda f: f))
+      @po
+      def outer():
+        @po_f
+        def blk1():
+          p = checkpoint_name(jnp.cos(wn), 'b')
+          h = checkpoint_name(jnp.sin(x * w), 'a')
+          return h, p
+        h, p = blk1()
+        @po_f
+        def blk2():
+          return jnp.sin(h) + 2. * p
+        return blk2()
+      return outer()
+
+    policy = jax.checkpoint_policies.save_only_these_names('a', 'b')
+    args = jnp.arange(3.), jnp.arange(3.) + 1., jnp.arange(3.) + 2.
+    expected = saved_residuals(
+        jax.remat(partial(f, use_program_order=False), policy=policy), *args)
+    actual = saved_residuals(
+        jax.remat(partial(f, use_program_order=True), policy=policy), *args)
+    self.assertLen(actual, len(expected))
+
+  def test_vjp_no_extra_residuals_zero_tangent(self):
+    # z is only used through a comparison, so its tangent isn't needed. When
+    # program_order inserted its barriers at trace time, z's tangent was tied
+    # to x's by a barrier, so cos(x) was saved to compute it.
+    def f(x):
+      z = jnp.sin(x)
+      a = 2. * x
+      return a * (a > z).astype(a.dtype)
+
+    # Count array residuals only: without program_order a scalar literal is
+    # also saved.
+    num_array_residuals = lambda f, x: sum(
+        1 for aval, _ in saved_residuals(f, x) if aval.shape)
+    x = jnp.arange(3.)
+    self.assertEqual(num_array_residuals(f, x), 1)  # the mask
+    self.assertEqual(num_array_residuals(program_order(enforce=True)(f), x), 1)
+
+  def test_vjp_no_extra_residuals_multiple_outputs(self):
+    # Before a jit equation, all of the previous equation's outputs used to go
+    # through one barrier, tying z's (unneeded) tangent to y's.
+    @jax.jit
+    def g(x):
+      return 2. * x, jnp.sin(x)
+
+    @jax.jit
+    def h(y):
+      return 3. * y
+
+    def f(x):
+      y, z = g(x)
+      return h(y) + jnp.floor(z)
+
+    x = jnp.arange(3.)
+    self.assertEmpty(saved_residuals(f, x))
+    self.assertEmpty(saved_residuals(program_order(enforce=True)(f), x))
+
+  @parameterized.named_parameters(
+      ('enforce', True),
+      ('no_enforce', False),
+  )
+  def test_transformations(self, enforce):
+    def f(x):
+      b = jnp.cos(x)
+      a = jnp.sin(x)
+      return a * b + jnp.sin(a)
+
+    po_f = program_order(enforce=enforce)(f)
+    x = jnp.arange(3.)
+    xs = jnp.arange(6.).reshape(2, 3)
+    loss = lambda f: lambda x: jnp.sum(f(x) ** 2)
+    with config.enable_checks(True):
+      self.assertAllClose(jax.jit(po_f)(x), f(x))
+      self.assertAllClose(jax.jvp(po_f, (x,), (x,)), jax.jvp(f, (x,), (x,)))
+      self.assertAllClose(jax.vmap(po_f)(xs), jax.vmap(f)(xs))
+      self.assertAllClose(jax.jit(jax.grad(loss(po_f)))(x),
+                          jax.grad(loss(f))(x))
+      self.assertAllClose(jax.grad(lambda x: jax.grad(loss(po_f))(x).sum())(x),
+                          jax.grad(lambda x: jax.grad(loss(f))(x).sum())(x))
+      self.assertAllClose(jax.jit(jax.grad(loss(jax.remat(po_f))))(x),
+                          jax.grad(loss(f))(x))
+      self.assertAllClose(jax.jit(jax.vmap(jax.grad(loss(po_f))))(xs),
+                          jax.vmap(jax.grad(loss(f)))(xs))
+
+  def test_grad_nested_exclude_argnames(self):
+    # The enclosing enforce=True block is turned into barriers after AD (in
+    # to_lojax), so it reads exclude_mask on the program_order equations that
+    # AD produced. AD has to keep each of those masks in sync with its
+    # equation's inputs.
+    def f(x, w, po_t, po_f, po_f_excl):
+      x = jnp.exp(x)
+      w = jnp.exp(w)
+      @po_f
+      def op1(x):
+        x = jnp.cos(jnp.sin(x))
+        @po_t
+        def inner1(x):
+          return (x + 1.0) * 2.0
+        return inner1(x)
+      y = op1(x)
+      @po_f_excl
+      def op2(w):
+        @po_t
+        def inner2(w):
+          return y * w + 3.0
+        return inner2(w)
+      return op2(w)
+
+    po_t = program_order(enforce=True)
+    f_po = po_t(partial(f, po_t=po_t, po_f=program_order(enforce=False),
+                        po_f_excl=program_order(enforce=False,
+                                                exclude_argnames='w')))
+    f_ref = partial(f, po_t=lambda f: f, po_f=lambda f: f,
+                    po_f_excl=lambda f: f)
+    x, w = jnp.arange(8.) / 8., jnp.arange(8.) / 4.
+    loss = lambda f: lambda x, w: jnp.sum(f(x, w) ** 2)
+    with config.enable_checks(True):
+      self.assertAllClose(jax.jit(jax.grad(loss(f_po), (0, 1)))(x, w),
+                          jax.grad(loss(f_ref), (0, 1))(x, w))
+      self.assertAllClose(
+          jax.jit(jax.grad(loss(jax.remat(f_po)), (0, 1)))(x, w),
+          jax.grad(loss(f_ref), (0, 1))(x, w))
+
+  def test_program_order_on_custom_vjp_bwd(self):
+    def inner(x):
+      @program_order(enforce=False)
+      def blk(x):
+        return jnp.sin(x)
+      return blk(x) * 2.
+
+    @jax.custom_vjp
+    def f(x):
+      return inner(x)
+    f.defvjp(lambda x: jax.vjp(inner, x),
+             program_order(enforce=True)(lambda f_vjp, ct: f_vjp(ct)))
+
+    x = jnp.arange(3.)
+    with config.enable_checks(True):
+      self.assertAllClose(jax.jit(jax.grad(lambda x: f(x).sum()))(x),
+                          2. * jnp.cos(x))
+
+  def test_enforce_kwargs(self):
+    @jax.jit
+    def f(x, y):
+      return program_order(enforce=True)(
+          lambda x, *, y: jnp.sin(x) * y)(x, y=y)
+
+    x = jnp.arange(3.)
+    self.assertAllClose(f(x, x), jnp.sin(x) * x)
+
+  @parameterized.named_parameters(
+      ('enforce', True),
+      ('no_enforce', False),
+  )
+  def test_checkify(self, enforce):
+    @program_order(enforce=enforce)
+    def f(x):
+      checkify.check(jnp.all(x > 0), 'x must be positive')
+      return jnp.sin(x)
+
+    f = jax.jit(checkify.checkify(f))
+    x = jnp.arange(1., 4.)
+    err, out = f(x)
+    self.assertIsNone(err.get())
+    self.assertAllClose(out, jnp.sin(x))
+    err, _ = f(-x)
+    self.assertIn('x must be positive', err.get())
+
+  def test_hijax_values(self):
+    # Optimization barriers only take lojax values, so a hijax value goes
+    # through a barrier as its lojax components.
+    @dataclass(frozen=True)
+    class Box:
+      a: jax.Array
+
+    @dataclass(frozen=True)
+    class BoxTy(HiType):
+      shape: tuple
+      def lo_ty(self): return [ShapedArray(self.shape, jnp.dtype('float32'))]
+      def lower_val(self, b): return [b.a]
+      def raise_val(self, a): return Box(a)
+      def str_short(self, short_dtypes=False, **_): return f'box{list(self.shape)}'
+
+    register_hitype(Box, lambda b: BoxTy(b.a.shape))
+
+    class Wrap(HiPrim):
+      def __init__(self, aval):
+        self.in_avals, self.out_aval, self.params = (aval,), BoxTy(aval.shape), {}
+        super().__init__()
+      def expand(self, a): return Box(a)
+
+    class Unwrap(HiPrim):
+      def __init__(self, aval):
+        self.in_avals, self.params = (aval,), {}
+        self.out_aval = ShapedArray(aval.shape, jnp.dtype('float32'))
+        super().__init__()
+      def expand(self, b): return b.a
+
+    @program_order(enforce=True)
+    def f(x):
+      b = Wrap(jax.typeof(x))(jnp.sin(x))  # the next equation doesn't use b,
+      y = jnp.cos(x)                       # so b goes through its barrier
+      return Unwrap(jax.typeof(b))(b) + y
+
+    x = jnp.arange(3.)
+    self.assertAllClose(f(x), jnp.sin(x) + jnp.cos(x))
+    self.assertAllClose(jax.jit(f)(x), jnp.sin(x) + jnp.cos(x))
+
+  def test_dead_code_keeps_order_of_live_equations(self):
+    # The dead cos is removed, and exp is still ordered after sin. (When the
+    # barriers were inserted at trace time, exp's only barrier tied it to cos,
+    # and XLA dropped that operand along with the dead cos.)
+    @jax.jit
+    @program_order(enforce=True)
+    def f(x, y):
+      a = jnp.sin(x)
+      jnp.cos(x)  # dead
+      b = jnp.exp(y)
+      return a, b
+
+    x = jnp.arange(3.)
+    lowered_text = f.lower(x, x).as_text()
+    self.assertNotIn('stablehlo.cosine', lowered_text)
+    sin, = re.findall(r'(%\S+) = stablehlo.sine', lowered_text)
+    barrier, = re.findall(r'(%\S+):2 = stablehlo.optimization_barrier '
+                          rf'{sin}, %arg1\b', lowered_text)
+    self.assertRegex(lowered_text, rf'stablehlo.exponential {barrier}#1\b')
 
   @jtu.run_on_devices('gpu', 'tpu')
   @jtu.with_explicit_mesh((8,), ('x',))

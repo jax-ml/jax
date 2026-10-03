@@ -12,7 +12,7 @@
 # See the License for the ific language governing permissions and
 # limitations under the License.
 
-from jax._src.pjit import program_order as program_order
+from jax._src.lax.program_order import program_order as program_order
 
 
 def control_dep(src, dst):

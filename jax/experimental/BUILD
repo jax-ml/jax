@@ -163,6 +163,7 @@ pytype_strict_library(
     deps = [
         "//jax/_src:api",
         "//jax/_src:ffi",
+        "//jax/_src:lax",
     ],
 )
 

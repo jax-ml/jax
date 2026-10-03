@@ -46,6 +46,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lax.program_order import program_order_p
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.state.types import AbstractRef
 from jax._src.tree_util import tree_flatten
@@ -987,6 +988,22 @@ def pjit_error_check(ctx: CheckifyContext, error, enabled_errors, *vals_in,
   )
   return tree_unflatten(out_tree, err_and_out)
 error_checks[pjit.jit_p] = pjit_error_check
+
+
+def program_order_error_check(ctx: CheckifyContext, error, enabled_errors,
+                              *vals_in, call_jaxpr, exclude_mask, **params):
+  # Checkify the body, passing the error values through the block as extra
+  # inputs and outputs. (Inlining the body would drop its ordering.)
+  err_vals, err_tree = jtu.tree_flatten(error)
+  new_vals_in = [*err_vals, *vals_in]
+  in_avals = tuple(map(core.typeof, new_vals_in))
+  checked_jaxpr, out_tree, _ = jaxpr_to_checkify_jaxpr(
+      ctx, call_jaxpr, enabled_errors, err_tree, *in_avals)
+  err_and_out = program_order_p.bind(
+      *new_vals_in, call_jaxpr=checked_jaxpr,
+      exclude_mask=(False,) * len(err_vals) + exclude_mask, **params)
+  return tree_unflatten(out_tree, err_and_out)
+error_checks[program_order_p] = program_order_error_check
 
 
 def remat_error_check(ctx: CheckifyContext, error, enabled_errors, *vals_in,
