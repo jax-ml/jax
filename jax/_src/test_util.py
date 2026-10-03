@@ -217,6 +217,7 @@ def _capture_output(fp: TextIO) -> Generator[Callable[[], str]]:
     return captured
 
   with tempfile.NamedTemporaryFile(mode="w+", encoding='utf-8') as f:
+    fp.flush()
     original_fd = os.dup(fp.fileno())
     os.dup2(f.fileno(), fp.fileno())
     try:

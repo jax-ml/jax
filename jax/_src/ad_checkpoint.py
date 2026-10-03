@@ -812,7 +812,7 @@ def remat_dce(used_outputs: list[bool], live_ins: list[bool],
     prevent_cse = tuple(p for p, u in zip(prevent_cse, used_inputs) if u)
   new_params = dict(eqn.params, jaxpr=new_jaxpr, prevent_cse=prevent_cse)
   if (not any(used_inputs) and not any(used_outputs) and
-      _has_effects(new_jaxpr.effects)):
+      not _has_effects(new_jaxpr.effects)):
     return used_inputs, None
   else:
     new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]

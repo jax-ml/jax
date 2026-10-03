@@ -7462,6 +7462,19 @@ class RematTest(jtu.JaxTestCase):
 
     _ = jax.grad(f)(3.)  # doesn't crash
 
+  def test_dce_keeps_effects_with_no_used_inputs_or_outputs(self):
+    def f():
+      jax.checkpoint(lambda: jax.debug.print("hi"))()
+
+    jaxpr = jax.make_jaxpr(f)()
+    dced, _ = pe.dce_jaxpr(jaxpr, [])
+    self.assertLen(dced.eqns, 1)
+
+    with jtu.capture_stdout() as stdout:
+      jax.jit(f)()
+      jax.effects_barrier()
+    self.assertEqual(stdout(), "hi\n")
+
   def test_linearize_caching(self):
     # https://github.com/jax-ml/jax/issues/9661
     identity = jax.checkpoint(jax.jit(lambda x: 2 * x))
