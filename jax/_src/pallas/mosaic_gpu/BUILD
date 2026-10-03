@@ -46,6 +46,7 @@ pytype_strict_library(
         "//jax",
         "//jax/_src:config",
         "//jax/_src:core",
+        "//jax/_src:dtypes",
         "//jax/_src:frozen_dict",
         "//jax/_src:mlir",
         "//jax/_src:sharding_impls",
