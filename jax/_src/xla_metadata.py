@@ -444,6 +444,7 @@ def _transpose_jaxpr(jaxpr, in_tree, in_avals, specs):
 
 def _xla_metadata_call_transpose(cts_in, *args, jaxpr, xla_metadata,
                                  ad_metadata):
+  args, fixup = ad.unalias_ref_accums(args)
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
   in_avals = [core.typeof(x) for x in in_flat]
@@ -458,6 +459,7 @@ def _xla_metadata_call_transpose(cts_in, *args, jaxpr, xla_metadata,
   for x, ct in zip(args, cts_out):
     if isinstance(x, ad.ValAccum):
       x.accum(ct)
+  fixup()
   return logs
 
 

@@ -361,6 +361,7 @@ def _transpose_jaxpr(jaxpr, in_tree, in_avals, specs):
 
 def _compute_on_transpose(cts_in, *args, jaxpr, compute_type,
                           out_memory_spaces, compiler_options_json):
+  args, fixup = ad.unalias_ref_accums(args)
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
   in_avals = tuple(core.typeof(x) for x in in_flat)
@@ -379,6 +380,7 @@ def _compute_on_transpose(cts_in, *args, jaxpr, compute_type,
   for x, ct in zip(args, cts_out):
     if isinstance(x, ad.ValAccum):
       x.accum(ct)
+  fixup()
   return logs
 ad.fancy_transposes[compute_on_p] = _compute_on_transpose
 

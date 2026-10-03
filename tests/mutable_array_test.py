@@ -1082,6 +1082,28 @@ class MutableArrayTest(jtu.JaxTestCase):
     self.assertAllClose(v_ref[...], v_bar)
     self.assertAllClose(x_bar_, x_bar)
 
+  @parameterized.parameters(['jit', 'scan', 'cond'])
+  def test_vjp3_with_refs_aliased_args(self, hop):
+    # the same array is two arguments of a higher-order primitive
+    if hop == 'jit':
+      f = lambda w: jax.jit(lambda a, b: (a * b).sum())(w, w)
+    elif hop == 'scan':
+      f = lambda w: jax.lax.scan(
+          lambda c, ab: (c + ab[0] * ab[1], None), 0., (w, w))[0]
+    else:
+      f = lambda w: jax.lax.cond(
+          w[0] > 0, lambda a, b: (a * b).sum(), lambda a, b: 0., w, w)
+    w = jnp.arange(1., 4.)
+
+    @jax.jit
+    def run(w):
+      _, f_vjp = jax.vjp(f, w)
+      w_ref = jax.new_ref(jnp.zeros_like(w))
+      f_vjp.with_refs(w_ref)(1.)
+      return jax.freeze(w_ref)
+
+    self.assertAllClose(run(w), 2 * w)
+
   @jtu.sample_product(
       seed=range(20),
       num_params=[1, 2, 3, 4],

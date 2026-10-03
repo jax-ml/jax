@@ -873,6 +873,7 @@ class CondSum:
 
 def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
   assert not isinstance(index, ad.GradAccum)
+  args, fixup = ad.unalias_ref_accums(args)
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
   in_avals = tuple(typeof(x) for x in in_flat)
@@ -906,6 +907,7 @@ def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
   cts_out, logs = tree_unflatten(out_tree, outs)
   for x, ct in zip(args, cts_out):
     if isinstance(x, ad.ValAccum): x.accum(ct)
+  fixup()
   return {k: CondSum(index, slots) for k, slots in logs.items()}
 
 @util.weakref_lru_cache

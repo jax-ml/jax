@@ -484,6 +484,24 @@ def project_accums(args):
       specs.append((None, typeof(x)))
   return result, tuple(specs)
 
+# A rule that passes RefAccums' refs to a higher-order primitive mustn't pass
+# the same ref twice, since one alias's write-back would clobber the other's. So
+# we replace repeats with fresh ValAccums, to be accumulated back by `fixup`.
+def unalias_ref_accums(args):
+  seen: set[int] = set()
+  new_args, pairs = [], []
+  for x in args:
+    if isinstance(x, RefAccum) and id(x) in seen:
+      pairs.append((x, tmp := ValAccum(x.aval)))
+      new_args.append(tmp)
+    else:
+      if isinstance(x, RefAccum): seen.add(id(x))
+      new_args.append(x)
+  def fixup():
+    for x, tmp in pairs:
+      x.accum(tmp.freeze())
+  return new_args, fixup
+
 def unproject_accums(specs, result):
   args, result_ = [], iter(result)
   for k, aval in specs:
