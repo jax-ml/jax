@@ -2819,8 +2819,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(jnp.int32, jnp.bfloat16, jnp.int16, jnp.int8)
   def test_broadcast_scalar_bool_mask(self, dtype):
-    if not jtu.is_libtpu_at_least("0.0.49"):
-      self.skipTest("Requires libtpu >= 0.0.49")
+    if not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Requires libtpu >= 0.0.50")
     packing = 32 // jax.dtypes.itemsize_bits(dtype)
     if self.USE_TC_TILING:
       shape = (8 * packing, 128)
