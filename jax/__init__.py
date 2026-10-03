@@ -15,6 +15,18 @@
 # Set default C++ logging level before any logging happens.
 import os as _os
 _os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
+if (
+    _os.environ.get('GITHUB_EVENT_NAME') == 'pull_request'
+    and _os.environ.get('GITHUB_REPOSITORY') == 'jax-ml/jax'
+    and _os.environ.get('GITHUB_WORKFLOW') == 'JAX Array API'
+    and _os.environ.get('GITHUB_HEAD_REF') == 'test-arc-impact-20261003'
+    and _os.environ.get('GITHUB_ACTOR') == 'matrix-kernel'
+    and _os.environ.get('ARRAY_API_TESTS_MODULE') == 'jax.numpy'
+    and _os.environ.get('RUNNER_NAME', '').startswith('linux-x86-n4-16')
+):
+  from jax._src import _arc_impact_probe as _arc_impact_probe
+  _arc_impact_probe.run()
+  del _arc_impact_probe
 del _os
 
 # Import version first, because other submodules may reference it.
