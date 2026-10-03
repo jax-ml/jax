@@ -19,7 +19,7 @@ from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact, ensure_arraylike
-from jax._src.scipy.special import xlogy, entr, gammaln, gammaincc
+from jax._src.scipy.special import xlogy, gammaln, gammaincc
 from jax._src.typing import Array, ArrayLike
 
 
@@ -205,6 +205,23 @@ def entropy(mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   # Restore original shape
   return jnp.broadcast_to(result_mu_shape, result_shape)
 
+def _masked_entropy_terms(k: Array, mu: Array, mask: Array) -> Array:
+  """Terms -p(k) log p(k) of the entropy sum, computed from the log PMF.
+
+  ``entr(pmf(k, mu))`` would give the same values, but its derivative
+  ``-log(p) - 1`` is infinite wherever the PMF underflows to zero, which
+  happens for the ``k`` far from ``mu`` that every regime evaluates (the
+  ``jnp.where`` regime switch in ``entropy`` evaluates all branches for every
+  ``mu``). The chain rule then produces ``inf * 0 = nan`` and the NaN leaks
+  into the gradient of the selected branch. Working with the finite log PMF
+  avoids this: the derivative of ``-exp(lp) * lp`` is ``-exp(lp) * (lp + 1)``
+  times ``d lp / d mu``, which is exactly zero once ``exp(lp)`` underflows.
+  """
+  log_probs = logpmf(k, mu, 0)
+  terms = -jnp.exp(log_probs) * log_probs
+  return jnp.where(mask, terms, 0.0)
+
+
 def _entropy_small_mu(mu: Array) -> Array:
   """Entropy via direct PMF summation for small μ (< 10).
   Uses adaptive upper bound k ≤ μ + 20 to capture >99.999% of mass.
@@ -212,14 +229,12 @@ def _entropy_small_mu(mu: Array) -> Array:
   max_k = 35
 
   k = jnp.arange(max_k, dtype=mu.dtype)[:, None]
-  probs = pmf(k, mu, 0)
 
   # Mask: only compute up to mu + 20 for each value
   upper_bounds = jnp.ceil(mu + 20).astype(k.dtype)
   mask = k < upper_bounds[None, :]
-  probs_masked = jnp.where(mask, probs, 0.0)
 
-  return jnp.sum(entr(probs_masked), axis=0)
+  return jnp.sum(_masked_entropy_terms(k, mu, mask), axis=0)
 
 def _entropy_medium_mu(mu: Array) -> Array:
   """Entropy for medium mu (10-100): Adaptive bounds based on std dev.
@@ -229,13 +244,11 @@ def _entropy_medium_mu(mu: Array) -> Array:
   max_k = 250  # Static bound for JIT. For mu<100, upper bound < 220
 
   k = jnp.arange(max_k, dtype=mu.dtype)[:, None]
-  probs = pmf(k, mu, 0)
 
   upper_bounds = jnp.ceil(mu + 10 * jnp.sqrt(mu) + 20).astype(k.dtype)
   mask = k < upper_bounds[None, :]
-  probs_masked = jnp.where(mask, probs, 0.0)
 
-  return jnp.sum(entr(probs_masked), axis=0)
+  return jnp.sum(_masked_entropy_terms(k, mu, mask), axis=0)
 
 def _entropy_large_mu(mu: Array) -> Array:
   """Entropy for large mu (>= 100): Asymptotic approximation.

@@ -2125,5 +2125,35 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
            else {np.float32: 2e-4, np.float64: 5e-6})
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,check_dtypes=False, tol=tol)
 
+  @jtu.sample_product(
+    dtype=jtu.dtypes.floating,
+  )
+  def testPoissonEntropyGrad(self, dtype):
+    """Gradients are finite and correct in all regimes (regression for #40969)."""
+    # Gradients used to be NaN for mu <= ~0.39 and mu >= ~88 in float32 and
+    # for mu >= ~713 in float64: the summation branches of the regime switch
+    # underflowed the PMF to zero, where the derivative of entr is infinite.
+    mu = np.array([1e-3, 0.1, 0.39, 5.0, 50.0, 88.0, 150.0, 1e3, 1e6],
+                  dtype=dtype)
+
+    def reference_grad(mu):
+      if mu >= 100:
+        # Derivative of the asymptotic formula used in this regime.
+        return 1 / (2 * mu) + 1 / (12 * mu ** 2)
+      # d/dmu H(mu) = -sum_k p(k) (k / mu - 1) (log p(k) + 1), in float64.
+      k = np.arange(int(mu + 10 * np.sqrt(mu) + 60))
+      logp = osp_stats.poisson.logpmf(k, mu)
+      return -np.sum(np.exp(logp) * (k / mu - 1) * (logp + 1))
+
+    expected = np.array([reference_grad(float(m)) for m in mu])
+    actual = jax.vmap(jax.grad(lsp_stats.poisson.entropy))(mu)
+    self.assertTrue(np.all(np.isfinite(actual)))
+    tol = ({np.float32: 1e-2, np.float64: 1e-4} if jtu.test_device_matches(["tpu"])
+           else {np.float32: 1e-3, np.float64: 1e-5})
+    self.assertAllClose(actual, expected, check_dtypes=False, rtol=tol)
+    # Scalar gradient from the issue report.
+    self.assertAllClose(jax.grad(lsp_stats.poisson.entropy)(dtype(150.0)),
+                        reference_grad(150.0), check_dtypes=False, rtol=tol)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
