@@ -40,7 +40,7 @@ def algdiv(a: ArrayLike, b: ArrayLike) -> Array:
     w = ((((c5 * s11 * t + c4 * s9) * t + c3 * s7) * t + c2 * s5) * t + c1 * s3) * t + c0
     w = w * (c / b)
     # Combine the results
-    u = d * lax.log1p(a / b)
+    u = jnp.where(h == 0, a * (d / b), d * lax.log1p(h))
     v = a * (lax.log(b) - 1.0)
     return jnp.where(u <= v, (w - v) - u, (w - u) - v)
 
