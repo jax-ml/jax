@@ -342,13 +342,6 @@ def emit_pipeline[T](
           _maybe_promise_in_bounds(spec, ref.shape)
           for spec, ref in zip(in_specs, in_gmem_refs)
       )
-      for spec in effective_in_specs:
-        if spec.oob_fill_mode is not OOBFillMode.PROMISE_IN_BOUNDS:
-          raise NotImplementedError(
-              "emit_pipeline on pre-Hopper GPUs requires input accesses to be"
-              " provably in bounds, or oob_fill_mode="
-              "OOBFillMode.PROMISE_IN_BOUNDS to be set explicitly"
-          )
     in_smem_refs, out_smem_refs = util.split_list(
         [
             gpu_core.SMEM(
