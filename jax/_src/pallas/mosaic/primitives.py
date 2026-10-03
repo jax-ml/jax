@@ -112,7 +112,12 @@ mlir.register_lowering(bitcast_p, _bitcast_lowering_rule)
 
 
 def _bitcast_batch_rule(batched_args, batch_axes, *, ty):
-  return bitcast(*batched_args, ty=ty), batch_axes[0]
+  [x], [bdim] = batched_args, batch_axes
+  if bdim >= x.ndim - 2:
+    x = jnp.moveaxis(x, bdim, 0)
+    bdim = 0
+  return bitcast(x, ty=ty), bdim
+
 
 batching.primitive_batchers[bitcast_p] = _bitcast_batch_rule
 
