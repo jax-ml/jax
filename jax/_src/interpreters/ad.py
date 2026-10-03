@@ -929,6 +929,7 @@ linearize_on_zero_tangents: set[core.Primitive] = set()  # never skip these rule
 
 def deflinear(primitive, transpose_rule):
   primitive_jvps[primitive] = partial(linear_jvp, primitive)
+  primitive_linearizations[primitive] = partial(linear_linearize, primitive)
   primitive_transposes[primitive] = partial(linear_transpose, transpose_rule)
 
 def linear_jvp(primitive, primals, tangents, **params):
@@ -941,6 +942,15 @@ def linear_jvp(primitive, primals, tangents, **params):
     tangents = map(instantiate_zeros, tangents)
     return val_out, primitive.bind(*tangents, **params)
 
+def linear_linearize(primitive, _is_vjp, nzs, *primals, **params):
+  # Tangent of a linear primitive is the primitive itself -> fast path.
+  primal_out = primitive.bind(*primals, **params)
+  nz = any(nzs)
+  nzs_out = [nz] * len(primal_out) if primitive.multiple_results else nz
+  def linearized(_residuals, _structured_residuals, *tangents):
+    return primitive.bind(*map(instantiate_zeros, tangents), **params)
+  return primal_out, nzs_out, (), None, linearized
+
 def linear_transpose(transpose_rule, cotangent, *args, **kwargs):
   if type(cotangent) is Zero:
     return [Zero(x.aval.to_tangent_aval()) if isinstance(x, UndefinedPrimal)
@@ -951,6 +961,7 @@ def linear_transpose(transpose_rule, cotangent, *args, **kwargs):
 
 def deflinear2(primitive, transpose_rule):
   primitive_jvps[primitive] = partial(linear_jvp, primitive)
+  primitive_linearizations[primitive] = partial(linear_linearize, primitive)
   primitive_transposes[primitive] = partial(linear_transpose2, transpose_rule)
 
 def linear_transpose2(transpose_rule, cotangent, *args, **kwargs):
