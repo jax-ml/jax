@@ -1449,6 +1449,8 @@ class DynamicJaxprTracer(Tracer['DynamicJaxprTrace']):
     self.val = val
     self.parent = parent
 
+  _user_facing_name = 'JitTracer'
+
   def _short_repr(self):
     return f"JitTracer({self.aval})"
 
