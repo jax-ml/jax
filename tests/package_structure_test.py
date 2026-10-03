@@ -101,6 +101,12 @@ class PackageStructureTest(jtu.JaxTestCase):
   def test_jax_not_inadvertently_reexported_by_top_level(self):
     self.assertFalse(hasattr(jax, "jax"))
 
+  def test_pallas_lowerings_package_structure(self):
+    import setuptools
+    pkgs = setuptools.find_packages(include=["jax", "jax.*"])
+    self.assertIn("jax._src.lax.pallas_lowerings", pkgs)
+    self.assertIn("jax._src.lax.pallas_lowerings.gpu", pkgs)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
