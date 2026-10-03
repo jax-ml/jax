@@ -1407,10 +1407,11 @@ class StateControlFlowTest(jtu.JaxTestCase):
       return body(x)
     jaxpr = jax.make_jaxpr(f)(0, 5, 2).jaxpr
     self.assertEmpty(jaxpr.effects)
-    self.assertAllClose(jax.jit(f)(0, 5, 2), 10)
-    self.assertAllClose(jax.jit(f)(1, 2, 3), 7)
+    # The cond runs once more than the body.
+    self.assertAllClose(jax.jit(f)(0, 5, 2), 12)
+    self.assertAllClose(jax.jit(f)(1, 2, 3), 10)
 
-  def test_while_errors_if_same_ref_in_body_and_cond(self):
+  def test_while_with_same_ref_in_body_and_cond(self):
     def f(x, y, z):
       @run_state
       def body(x_ref):
@@ -1424,9 +1425,80 @@ class StateControlFlowTest(jtu.JaxTestCase):
       return body(x)
     jaxpr = jax.make_jaxpr(f)(0, 5, 2).jaxpr
     self.assertEmpty(jaxpr.effects)
-    with self.assertRaisesRegex(NotImplementedError,
-        "Cannot write to the same ref in both cond and body."):
-      jax.jit(f)(0, 5, 2)
+    self.assertAllClose(jax.jit(f)(0, 5, 2), 6 * 2 + 5 * 2)
+    self.assertAllClose(jax.jit(f)(1, 2, 3), 1 + 3 * 3 + 2 * 3)
+
+  @parameterized.parameters([False, True])
+  def test_while_cond_reads_ref_written_in_body(self, jit):
+    def f(n):
+      ref = jax.new_ref(0)
+      def body(i):
+        ref[...] += 1
+        return i + 1
+      # The bound on i just keeps a failure of this test from hanging.
+      i = lax.while_loop(lambda i: (ref[...] < n) & (i < 100), body, 0)
+      return ref[...], i
+    if jit:
+      f = jax.jit(f)
+    self.assertAllClose(f(4), (4, 4))
+
+  @parameterized.parameters([False, True])
+  def test_while_body_reads_ref_written_in_cond(self, jit):
+    def f(n):
+      ref = jax.new_ref(0)
+      def cond(c):
+        ref[...] += 1
+        return c[0] < n
+      def body(c):
+        i, acc = c
+        return i + 1, acc + ref[...]
+      _, acc = lax.while_loop(cond, body, (0, 0))
+      return ref[...], acc
+    if jit:
+      f = jax.jit(f)
+    self.assertAllClose(f(3), (4, 1 + 2 + 3))
+
+  @parameterized.parameters([False, True])
+  def test_while_refs_in_cond_and_body(self, jit):
+    # One Ref only read by the cond, one only written by the body, and one read
+    # by the cond and written by the body.
+    def f():
+      a, b, c = jax.new_ref(1), jax.new_ref(0), jax.new_ref(0)
+      def body(i):
+        b[...] += 1
+        c[...] += b[...]
+        return i + 1
+      # The bound on i just keeps a failure of this test from hanging.
+      i = lax.while_loop(lambda i: (a[...] + b[...] < 5) & (i < 100), body, 0)
+      return a[...], b[...], c[...], i
+    if jit:
+      f = jax.jit(f)
+    self.assertAllClose(f(), (1, 4, 1 + 2 + 3 + 4, 4))
+
+  def test_while_passes_ref_once(self):
+    # A Ref used by both the cond and body is passed to while_p only once, as a
+    # body const, and the predicate is carried.
+    def f(n):
+      ref = jax.new_ref(0)
+      def body(i):
+        ref[...] += 1
+        return i + 1
+      return lax.while_loop(lambda i: ref[...] < n, body, 0)
+    jaxpr = jax.make_jaxpr(f)(4).jaxpr
+    ref = jaxpr.eqns[0].outvars[0]
+    eqn, = [e for e in jaxpr.eqns if e.primitive is lax.while_p]
+    self.assertEqual(eqn.params['cond_nconsts'], 0)
+    self.assertEqual(eqn.invars.count(ref), 1)
+    self.assertLen(eqn.outvars, 2)
+
+    # A Ref only read by the cond doesn't need that.
+    def f(n):
+      ref = jax.new_ref(n)
+      return lax.while_loop(lambda i: i < ref[...], lambda i: i + 1, 0)
+    jaxpr = jax.make_jaxpr(f)(4).jaxpr
+    eqn, = [e for e in jaxpr.eqns if e.primitive is lax.while_p]
+    self.assertEqual(eqn.params['cond_nconsts'], 1)
+    self.assertLen(eqn.outvars, 1)
 
   def test_scan_with_state_in_body(self):
     def f(x, w, y, zs):
