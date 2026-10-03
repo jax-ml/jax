@@ -207,8 +207,8 @@ class NDIndexer:
   @classmethod
   def from_raw_indices(cls, indices: Index | tuple[Index, ...], shape: tuple[int, ...]) -> NDIndexer:
     """Create an NDIndexer object from raw user-supplied indices."""
-    indices = eliminate_deprecated_list_indexing(indices)
-    parsed = _parse_indices(indices, shape)
+    index_tuple = eliminate_deprecated_list_indexing(indices)
+    parsed = _parse_indices(index_tuple, shape)
     return cls(shape=shape, indices=parsed)
 
   def validate_static_indices(self, normalize_indices: bool = True) -> None:
@@ -253,7 +253,9 @@ class NDIndexer:
   @staticmethod
   def is_sharded(arr) -> bool:
     """Check whether the array is sharded."""
-    return isinstance(arr, array.ArrayImpl) and not arr.sharding.num_devices == 1
+    return isinstance(arr, array.ArrayImpl) and not (
+        arr.sharding.num_devices == 1 or arr.is_fully_replicated
+    )
 
   def has_partial_slices(self) -> bool:
     """Check whether the indexer contains partial slices.
@@ -1532,7 +1534,7 @@ def _should_unpack_list_index(x):
           or isinstance(x, (Sequence, slice))
           or x is Ellipsis or x is None)
 
-def eliminate_deprecated_list_indexing(idx):
+def eliminate_deprecated_list_indexing(idx: Any) -> tuple[Any, ...]:
   # "Basic slicing is initiated if the selection object is a non-array,
   # non-tuple sequence containing slice objects, [Ellipses, or newaxis
   # objects]". Detects this and raises a TypeError.

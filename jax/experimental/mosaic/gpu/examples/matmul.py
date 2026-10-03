@@ -82,7 +82,7 @@ class WGMMADefaultImpl:
       a_slice: SmemRef,
       b_slice: SmemRef,
       swizzle: int,
-  ) -> dict[str, WGMMAAccumulator]:
+  ) -> WGMMAAccumulator:
     """Perform a matrix multiplication.
 
     This function must guarantee that all WGMMA operations queued before it was

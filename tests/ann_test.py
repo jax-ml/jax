@@ -22,6 +22,7 @@ import numpy as np
 import jax
 from jax import lax
 from jax._src import test_util as jtu
+from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
 jax.config.parse_flags_with_absl()
 
@@ -150,6 +151,37 @@ class AnnTest(jtu.JaxTestCase):
     ann_args = lax.collapse(ann_args, 1, 3)
     ann_vals, ann_args = lax.sort_key_val(ann_vals, ann_args, dimension=1)
     ann_args = lax.slice_in_dim(ann_args, start_index=0, limit_index=k, axis=1)
+    ann_recall = compute_recall(np.asarray(ann_args), np.asarray(gt_args))
+    self.assertGreater(ann_recall, recall)
+
+  @jtu.sample_product(
+      is_max_k=[True, False],
+      aggregate_to_topk=[True, False],
+  )
+  def test_sharded_sorted_input(self, is_max_k, aggregate_to_topk):
+    if not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Requires libtpu >= 0.0.50")
+    num_devices = jax.device_count()
+    if num_devices % 2 != 0:
+      self.skipTest("Works only when number of devices is a multiple of 2.")
+    m, n, k = 4, 10000, 10
+    recall = 0.95
+    # Every row is monotonic so each row's top-k entries are in its last k
+    # columns (the last shard when sharded along dimension 1).
+    x = np.arange(m * n, dtype=np.float32).reshape(m, n)
+    _, gt_args = lax.top_k(x, k)
+    if not is_max_k:
+      x = -x
+    sharding = NamedSharding(
+        Mesh(np.array(jax.devices()), ("d",)), P(None, "d")
+    )
+    approx_top_k = lax.approx_max_k if is_max_k else lax.approx_min_k
+    f = jax.jit(
+        lambda a: approx_top_k(
+            a, k, recall_target=recall, aggregate_to_topk=aggregate_to_topk
+        )
+    )
+    _, ann_args = f(jax.device_put(x, sharding))
     ann_recall = compute_recall(np.asarray(ann_args), np.asarray(gt_args))
     self.assertGreater(ann_recall, recall)
 

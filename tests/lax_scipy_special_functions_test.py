@@ -383,6 +383,9 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       result_jit = lsp_special.expi(x)
     self.assertAllClose(result_jit, result_nojit)
 
+  def testExpiZero(self):
+    self.assertEqual(lsp_special.expi(0.0), -np.inf)
+
   def testGammaIncBoundaryValues(self):
     dtype = dtypes.default_float_dtype()
     nan = float('nan')

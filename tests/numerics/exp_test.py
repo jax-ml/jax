@@ -14,7 +14,6 @@
 
 """Precision tests for exponential and logistic functions."""
 
-from absl.testing import absltest
 from absl.testing import parameterized
 from jax import lax
 from jax._src import config
@@ -195,5 +194,13 @@ class LogisticTest(jtu.JaxTestCase):
     )
 
 
+util.register_benchmark(jnp.exp)
+util.register_benchmark(_exp_highest)
+util.register_benchmark(jnp.exp2)
+util.register_benchmark(jnp.expm1)
+util.register_benchmark(_expm1_highest)
+util.register_benchmark(lax.logistic)
+
+
 if __name__ == "__main__":
-  absltest.main(testLoader=util.ClassShardedTestLoader())
+  util.main()

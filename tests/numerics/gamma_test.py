@@ -16,7 +16,6 @@
 
 import math
 
-from absl.testing import absltest
 from absl.testing import parameterized
 from jax import lax
 from jax._src import config
@@ -86,5 +85,9 @@ class LgammaTest(jtu.JaxTestCase):
     )
 
 
+util.register_benchmark(lax.digamma)
+util.register_benchmark(lax.lgamma)
+
+
 if __name__ == "__main__":
-  absltest.main(testLoader=util.ClassShardedTestLoader())
+  util.main()

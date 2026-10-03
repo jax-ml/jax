@@ -1043,6 +1043,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out_b3d.format.layout, l_012)
     self.assertArraysAllClose(out_b3d, jnp.einsum('bmk,bkn->bmn', arr3, arr3))
 
+  @jax.default_matmul_precision("float32")
   @jtu.with_explicit_mesh((2,), ('data',))
   def test_dot_4d_output_and_chained_layout(self, mesh):
     a, b, c, d, e, f, g = 4, 256, 256, 512, 4, 4, 256
@@ -1212,6 +1213,38 @@ class LayoutInTypesTest(jtu.JaxTestCase):
         'dot_general requires lhs and rhs batch dimensions to have the same'
         ' relative layout order'):
       bad_batch_order(arr4, arr4)
+
+  def test_transpose_layout(self):
+    arr = jnp.arange(64).reshape(4, 16)
+    arr2 = jnp.arange(512).reshape(4, 8, 16)
+
+    @jax.jit
+    @explicit_layout(in_layouts=Layout((0, 1)))
+    def f(w):
+      w_t = w.T
+      self.assertEqual(w_t.aval.layout.major_to_minor, (1, 0))
+      return w_t
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn('LayoutConstraint', lowered_text)
+
+    w_t = f(arr)
+    self.assertEqual(w_t.format.layout.major_to_minor, (1, 0))
+    self.assertArraysAllClose(w_t, arr.T)
+
+    @jax.jit
+    @explicit_layout(in_layouts=(Layout((0, 1, 2))))
+    def g(x):
+      xT = jnp.transpose(x, (2, 0, 1))
+      self.assertEqual(xT.aval.layout.major_to_minor, (1, 2, 0))
+      return xT
+
+    xT = g(arr2)
+    self.assertEqual(xT.format.layout.major_to_minor, (1, 2, 0))
+    self.assertArraysAllClose(xT, np.transpose(arr2, (2, 0, 1)))
+
+    lowered_text = g.lower(arr2).as_text()
+    self.assertEqual(lowered_text.count('LayoutConstraint'), 2)
 
 
 if __name__ == '__main__':
