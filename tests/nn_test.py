@@ -553,6 +553,20 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.mish(1e3)
     self.assertAllClose(val, 1e3, check_dtypes=False, atol=1e-3)
 
+  def testSeluGradLargeNegative(self):
+    # Regression test for https://github.com/google/jax/issues/39796
+    # On the negative branch the derivative is scale * alpha * exp(x).
+    # Previously expm1's JVP rule computed expm1(x) + 1, which
+    # cancellation-flushes to 0.0 once expm1(x) rounds to -1.0, so the
+    # gradient vanished.
+    with jax.enable_x64():
+      x = jnp.asarray(-700.0, dtype=jnp.float64)
+      g = jax.grad(nn.selu)(x)
+      expected = 1.0507009873554805 * 1.6732632423543772 * jnp.exp(
+          jnp.asarray(-700.0, dtype=jnp.float64))
+      # Strict tolerance: before the fix `g` was exactly 0.0.
+      self.assertAllClose(g, expected, rtol=1e-12, atol=0.0)
+
   def testEluGrad(self):
     check_grads(nn.elu, (1e4,), order=4, eps=1., modes=["fwd"])
     check_grads(nn.elu, (1e4,), order=4, eps=1., modes=["rev"])
