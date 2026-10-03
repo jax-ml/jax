@@ -1256,6 +1256,22 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=1e-5)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @jtu.sample_product(
+      func=["cdf", "pdf", "logpdf"],
+      dtype=jtu.dtypes.floating)
+  def testUniformNanPropagation(self, func, dtype):
+    scipy_fun = getattr(osp_stats.uniform, func)
+    lax_fun = getattr(lsp_stats.uniform, func)
+    x = np.array([np.nan, 0.5, 0.5], dtype)
+    loc = np.array([0.0, np.nan, 0.0], dtype)
+    scale = np.array([1.0, 1.0, np.nan], dtype)
+    expected = scipy_fun(x, loc, scale)
+
+    self.assertAllClose(lax_fun(x, loc, scale), expected,
+                        check_dtypes=False)
+    self.assertAllClose(jax.jit(lax_fun)(x, loc, scale), expected,
+                        check_dtypes=False)
+
   @genNamedParametersNArgs(3)
   def testUniformPpf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
