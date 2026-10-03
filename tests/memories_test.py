@@ -130,6 +130,13 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
       assert name == "gspmd_sharding"
       GSPMDSharding.get_replicated(jax.devices(), memory_kind="unpinned_host")
 
+  def test_collective_memory_kind(self):
+    abstract_mesh = jax.sharding.AbstractMesh((1,), ("x",))
+    ns = NamedSharding(abstract_mesh, P("x"), memory_kind="collective")
+    self.assertEqual(ns.memory_kind, "collective")
+    ns2 = NamedSharding(abstract_mesh, P("x")).with_memory_kind("collective")
+    self.assertEqual(ns2.memory_kind, "collective")
+
   @parameterized.named_parameters(
       ("named_sharding", "named_sharding"),
       ("single_device_sharding", "single_device_sharding"),
