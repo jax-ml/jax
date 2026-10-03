@@ -1731,6 +1731,41 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=5e-3)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @jtu.sample_product(
+    dist_name=["gumbel_l", "gumbel_r"],
+    dtype=jtu.dtypes.floating,
+  )
+  def testGumbelPpfDomain(self, dist_name, dtype):
+    p = np.array([np.nan, -1., 0., 0.25, 0.5, 0.75, 1., 2.], dtype)
+    loc = np.array(2., dtype)
+    scale = np.array(3., dtype)
+    scipy_fun = getattr(osp_stats, dist_name).ppf
+    lax_fun = getattr(lsp_stats, dist_name).ppf
+
+    self.assertAllClose(
+      scipy_fun(p, loc, scale), lax_fun(p, loc, scale), check_dtypes=False)
+    self.assertAllClose(
+      scipy_fun(p, loc, scale), jax.jit(lax_fun)(p, loc, scale),
+      check_dtypes=False)
+
+  @jtu.sample_product(
+    dist_name=["gumbel_l", "gumbel_r"],
+    dtype=jtu.dtypes.floating,
+  )
+  def testGumbelPpfInvalidScale(self, dist_name, dtype):
+    p = np.array([0., 0.25, 0.5, 1.], dtype)
+    loc = np.array(2., dtype)
+    scale = np.array([0., -1., np.nan, 0.], dtype)
+    scipy_fun = getattr(osp_stats, dist_name).ppf
+    lax_fun = getattr(lsp_stats, dist_name).ppf
+    with np.errstate(invalid="ignore"):
+      expected = scipy_fun(p, loc, scale)
+
+    self.assertAllClose(
+      expected, lax_fun(p, loc, scale), check_dtypes=False)
+    self.assertAllClose(
+      expected, jax.jit(lax_fun)(p, loc, scale), check_dtypes=False)
+
   @genNamedParametersNArgs(3)
   def testGumbelLSf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
