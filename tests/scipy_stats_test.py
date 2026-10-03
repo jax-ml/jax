@@ -1347,6 +1347,25 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=5e-4)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  def testChi2BoundaryValues(self):
+    x = np.array([-1., 0., 5., np.inf], dtype=np.float32)
+    df = np.array([0.5, 1., 2., 3., 4.], dtype=np.float32)
+    xx = np.tile(x[:, None], (1, df.size))
+    dd = np.tile(df[None, :], (x.size, 1))
+    with np.errstate(divide='ignore', invalid='ignore'):
+      expected_logpdf = osp_stats.chi2.logpdf(xx, dd)
+      actual_logpdf = lsp_stats.chi2.logpdf(xx, dd)
+      expected_pdf = osp_stats.chi2.pdf(xx, dd)
+      actual_pdf = lsp_stats.chi2.pdf(xx, dd)
+    np.testing.assert_allclose(actual_logpdf, expected_logpdf, rtol=1e-5,
+                               equal_nan=True)
+    np.testing.assert_allclose(actual_pdf, expected_pdf, rtol=1e-5,
+                               equal_nan=True)
+    with np.errstate(divide='ignore', invalid='ignore'):
+      expected_logpdf = osp_stats.chi2.logpdf(0., 2., loc=1., scale=2.)
+      actual_logpdf = lsp_stats.chi2.logpdf(0., 2., loc=1., scale=2.)
+    self.assertEqual(actual_logpdf, expected_logpdf)
+
   @genNamedParametersNArgs(5)
   def testBetaBinomLogPmf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
