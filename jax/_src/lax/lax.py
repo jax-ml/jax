@@ -3942,9 +3942,9 @@ def full_like(x: ArrayLike | DuckTypedArray,
   """
   fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)  # pyrefly: ignore[no-matching-overload]
   weak_type = dtype is None and dtypes.is_weakly_typed(x)
-  dtype = _dtype(dtype) if dtype is not None else _dtype(x)
-  if isinstance(dtype, dtypes.ExtendedDType):
-    return dtype._rules.full(fill_shape, fill_value, dtype)
+  dtype_ = _dtype(dtype) if dtype is not None else _dtype(x)
+  if isinstance(dtype_, dtypes.ExtendedDType):
+    return dtype_._rules.full(fill_shape, fill_value, dtype_)
 
   if sharding is None and shape is None and isinstance(x, core.Tracer):
     sharding = x.aval.sharding  # pyrefly: ignore[missing-attribute]
@@ -3967,7 +3967,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
     )
     if use_x_sharding:
       sharding = x.sharding  # pyrefly: ignore[missing-attribute]
-  val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
+  val = full(fill_shape, _convert_element_type(fill_value, dtype_, weak_type),
              sharding=sharding)
   val = _full_like_insert_pvary(val, x)
   return val
@@ -8566,13 +8566,17 @@ def _transpose_shape_rule(operand, *, permutation):
 
 def _transpose_sharding_rule(operand, *, permutation):
   o_spec = operand.sharding.spec
-  new_spec = [o_spec.partitions[old_idx] for old_idx in permutation]
+  new_spec = [o_spec.partitions[idx] for idx in permutation]
   return operand.sharding.update(spec=o_spec.update(partitions=new_spec))
 
 def _transpose_ur_rule(operand, *, permutation):
   out_unreduced = core.getu(operand)
   kind = UnreducedKind.sum if out_unreduced else None
   return out_unreduced, core.getr(operand), kind
+
+def _transpose_layout_rule(operand, *, permutation):
+  out_m2m = tuple(permutation.index(d) for d in operand.layout.major_to_minor)
+  return operand.layout.update(major_to_minor=out_m2m)
 
 def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   operand, = batched_args
@@ -8588,13 +8592,14 @@ def _transpose_lower(ctx, x, *, permutation):
     trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
     permutation = [*permutation, *trailing_dims]
   out = hlo.transpose(x, mlir.dense_int_array(permutation))
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 transpose_p = standard_primitive(
     _transpose_shape_rule, input_dtype, 'transpose',
     sharding_rule=_transpose_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'transpose'),
-    ur_rule=_transpose_ur_rule)
+    ur_rule=_transpose_ur_rule,
+    layout_rule=_transpose_layout_rule)
 ad.deflinear2(transpose_p,
               lambda t, _, permutation: [transpose(t, np.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule

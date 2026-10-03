@@ -720,6 +720,8 @@ class OverlapTest(jtu.JaxTestCase):
   def test_async_all_to_all_opt_barrier(self, mesh):
     if jtu.device_under_test() == 'tpu' and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Requires TPU >= 5')
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Requires libtpu >= 0.0.50')
 
     @jax.jit
     @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))

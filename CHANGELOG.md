@@ -65,6 +65,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     and autodiff, and more concise representations in jaxprs.
   * The "web" debugger now defaults to hostname "localhost", which is a safer
     default that avoids inadvertently opening a port to the world.
+  * {func}`jax.numpy.lexsort` with many keys now uses a batched approach by
+    default, controlled by the new `batch_size` parameter (which defaults to
+    16). This avoids long compile times for sorts with many keys. Fixes the
+    poor performance of {func}`jax.numpy.unique` for high-dimensional arrays
+    ({jax-issue}`#17370`).
 
 * Bug fixes
   * Fixed the gradient of {func}`jax.numpy.ldexp` at `x = 0.0`, which previously

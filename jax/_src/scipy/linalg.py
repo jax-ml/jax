@@ -381,18 +381,27 @@ def det(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> A
 
 
 def _eigh_generalized(a: Array, b: Array, *, lower: bool,
-                      eigvals_only: bool) -> Array | tuple[Array, Array]:
-  # Reduce A v = w B v to a standard Hermitian problem using B = L L^H.
+                      eigvals_only: bool, type: int) -> Array | tuple[Array, Array]:
+  # Reduce the generalized problem using B = L L^H.
   l = lax_linalg.cholesky(b)
   a = (a + jnp.conj(a.mT)) / 2
-  c = lax_linalg.triangular_solve(l, a, left_side=True, lower=True)
-  c = lax_linalg.triangular_solve(l, c, left_side=False, lower=True,
-                                  transpose_a=True, conjugate_a=True)
+  if type == 1:
+    # A v = w B v: C = L^-1 A L^-H.
+    c = lax_linalg.triangular_solve(l, a, left_side=True, lower=True)
+    c = lax_linalg.triangular_solve(l, c, left_side=False, lower=True,
+                                    transpose_a=True, conjugate_a=True)
+  else:
+    # A B v = w v or B A v = w v: C = L^H A L.
+    c = jnp.matmul(jnp.conj(l.mT), a, precision=lax.Precision.HIGHEST)
+    c = jnp.matmul(c, l, precision=lax.Precision.HIGHEST)
   v, w = lax_linalg.eigh(c, lower=lower)
   if eigvals_only:
     return w
-  v = lax_linalg.triangular_solve(l, v, left_side=True, lower=True,
-                                  transpose_a=True, conjugate_a=True)
+  if type == 3:
+    v = jnp.matmul(l, v, precision=lax.Precision.HIGHEST)
+  else:
+    v = lax_linalg.triangular_solve(l, v, left_side=True, lower=True,
+                                    transpose_a=True, conjugate_a=True)
   return w, v
 
 
@@ -411,8 +420,8 @@ def _eigh(a: ArrayLike, b: ArrayLike | None, lower: bool, eigvals_only: bool,
 @jit(static_argnames=('lower', 'eigvals_only', 'eigvals', 'type'))
 def _eigh(a: ArrayLike, b: ArrayLike | None, lower: bool, eigvals_only: bool,
           eigvals: None, type: int) -> Array | tuple[Array, Array]:
-  if type != 1:
-    raise NotImplementedError("Only the type=1 case of eigh is implemented.")
+  if type not in (1, 2, 3):
+    raise ValueError("type must be 1, 2, or 3.")
   if eigvals is not None:
     raise NotImplementedError(
         "Only the eigvals=None case of eigh is implemented.")
@@ -430,7 +439,8 @@ def _eigh(a: ArrayLike, b: ArrayLike | None, lower: bool, eigvals_only: bool,
     signature = ("(n,n),(n,n)->(n)" if eigvals_only else
                  "(n,n),(n,n)->(n),(n,n)")
     return jnp_vectorize.vectorize(
-        partial(_eigh_generalized, lower=lower, eigvals_only=eigvals_only),
+        partial(_eigh_generalized, lower=lower, eigvals_only=eigvals_only,
+                type=type),
         signature=signature)(a, b)
 
   a, = promote_dtypes_inexact(jnp.asarray(a))
@@ -473,7 +483,7 @@ def eigh(a: ArrayLike, b: ArrayLike | None = None, lower: bool = True,
   JAX implementation of :func:`scipy.linalg.eigh`.
 
   Solves the standard eigenvalue problem ``a @ v = lambda * v``, or the
-  generalized problem ``a @ v = lambda * b @ v`` when `b` is specified.
+  generalized problem selected by ``type`` when `b` is specified.
 
   Args:
     a: Hermitian input array of shape ``(..., N, N)``
@@ -484,7 +494,10 @@ def eigh(a: ArrayLike, b: ArrayLike | None = None, lower: bool = True,
       Otherwise use the upper triangle.
     eigvals_only: If True, compute only the eigenvalues. If False (default) compute
       both eigenvalues and eigenvectors.
-    type: Only type=1 is supported, corresponding to ``a @ v = lambda * b @ v``.
+    type: Specifies the generalized eigenvalue problem:
+      ``1`` corresponds to ``a @ v = lambda * b @ v``,
+      ``2`` to ``a @ b @ v = lambda * v``, and
+      ``3`` to ``b @ a @ v = lambda * v``.
 
     eigvals: Not used. Only eigvals=None is supported.
     overwrite_a: unused by JAX.
@@ -498,8 +511,9 @@ def eigh(a: ArrayLike, b: ArrayLike | None = None, lower: bool = True,
 
     - ``eigvals``: array of shape ``(..., N)`` containing the eigenvalues.
     - ``eigvecs``: array of shape ``(..., N, N)`` containing the eigenvectors,
-      normalized such that ``v.conj().T @ b @ v`` is the identity matrix when
-      `b` is specified, or ``v.conj().T @ v`` otherwise.
+      normalized such that ``v.conj().T @ b @ v`` is the identity matrix for
+      ``type=1`` or ``type=2``, and ``v.conj().T @ inv(b) @ v`` for ``type=3``.
+      If `b` is None, ``v.conj().T @ v`` is the identity matrix.
 
   Notes:
     Inputs are symmetrized before computation, for correct autodiff behavior.
