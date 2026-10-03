@@ -26,7 +26,6 @@ import jax
 from jax import lax
 from jax._src import shard_map
 from jax._src import test_util as jtu
-from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_interpret
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
@@ -63,6 +62,16 @@ class InterpretDistributedTest(jtu.JaxTestCase):
 
     if jax.device_count() < 4:
       self.skipTest(f'requires at least 4 devices, found {jax.device_count()}')
+
+  def tearDown(self):
+    super().tearDown()
+    try:
+      # If an exception was thrown by a jitted computation during the test,
+      # we observe/consume exception here to avoid propagating it to the
+      # next test.
+      jax.effects_barrier()
+    except:
+      pass
 
   @parameterized.product(
       dma_execution_mode=['eager', 'on_wait'],
@@ -140,8 +149,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     )(input_arr)
 
     np.testing.assert_allclose(xla_result, pallas_result)
-    if detect_races:
-      self.assertFalse(mosaic_interpret.races.races_found)
 
   @parameterized.product(
       dma_execution_mode=['eager', 'on_wait'],
@@ -260,8 +267,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     )(input_arr)
 
     np.testing.assert_allclose(xla_result, pallas_result)
-    if detect_races:
-      self.assertFalse(mosaic_interpret.races.races_found)
 
   @parameterized.product(
       dma_execution_mode=['eager', 'on_wait'],
@@ -416,8 +421,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     )(input_arr)
 
     np.testing.assert_allclose(xla_result, pallas_result, atol=1e-5)
-    if detect_races:
-      self.assertFalse(mosaic_interpret.races.races_found)
 
   @parameterized.product(
       dma_execution_mode=['eager', 'on_wait'],
@@ -698,8 +701,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     )(input_arr)
 
     np.testing.assert_allclose(xla_result, pallas_result, atol=1e-5)
-    if detect_races:
-      self.assertFalse(mosaic_interpret.races.races_found)
 
   @parameterized.product(
       dma_execution_mode=['eager', 'on_wait'],
@@ -1022,8 +1023,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     )(input_arr)
 
     np.testing.assert_allclose(xla_result, pallas_result, atol=1e-5)
-    if detect_races:
-      self.assertFalse(mosaic_interpret.races.races_found)
 
   def test_race_detection(self):
     num_devices = 4
@@ -1090,11 +1089,12 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       )(src_dst_ids, input_arr)
 
     run(jnp.array([[0, 1], [1, 2], [2, 3]], jnp.int32)).block_until_ready()
-    self.assertFalse(mosaic_interpret.races.races_found)
 
     # Racing writes to device 2.
-    run(jnp.array([[0, 1], [1, 2], [3, 2], [3, 0]], jnp.int32)).block_until_ready()
-    self.assertTrue(mosaic_interpret.races.races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      run(
+          jnp.array([[0, 1], [1, 2], [3, 2], [3, 0]], jnp.int32)
+      ).block_until_ready()
 
   def test_that_barrier_does_not_hang_after_exception(self):
     num_devices = jax.device_count()

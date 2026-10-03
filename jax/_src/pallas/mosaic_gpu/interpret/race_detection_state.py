@@ -14,11 +14,14 @@
 
 import collections
 import dataclasses
+import logging
 
 from jax._src import source_info_util
 from jax._src.pallas.mosaic.interpret import race_detection_state
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic_gpu.interpret.shared_memory import HostAllocationKey
+
+logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
@@ -112,12 +115,14 @@ class GPURaceDetectionState(race_detection_state.RaceDetectionState):
             " using a different ref than the one that was used to write the"
             " data)."
         )
-      print(
-          f"RACE DETECTED\n  {describe(is_write, group, user_frame)} from"
-          f" {thread}\n  clock: {clock}\n "
-          f" {describe(other_write, other_group, other_frame)} from"
-          f" {other_thread}\n  clock: {other_clock}\n"
-      )
+      msg = (f"RACE DETECTED\n  {describe(is_write, group, user_frame)} from"
+             f" {thread}\n  clock: {clock}\n "
+             f" {describe(other_write, other_group, other_frame)} from"
+             f" {other_thread}\n  clock: {other_clock}\n")
+      if self.on_race == "raise":
+        raise RuntimeError(msg)
+      else:
+        logging.warning(msg)
       with self.lock:
         self.races_found = True
       return

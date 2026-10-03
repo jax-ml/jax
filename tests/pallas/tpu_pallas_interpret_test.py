@@ -123,6 +123,16 @@ class InterpretTest(jtu.JaxTestCase):
       # Workaround for https://github.com/jax-ml/jax/issues/25671
       self.skipTest(f'requires 1 device, found {self.num_devices}')
 
+  def tearDown(self):
+    super().tearDown()
+    try:
+      # If an exception was thrown by a jitted computation during the test,
+      # we observe/consume exception here to avoid propagating it to the
+      # next test.
+      jax.effects_barrier()
+    except:
+      pass
+
   @parameterized.parameters(pltpu.HBM, pl.ANY)
   def test_revisiting_is_an_error(self, memory_space):
     def kernel(x_ref, o1_ref, o2_ref):
@@ -676,22 +686,21 @@ class InterpretTest(jtu.JaxTestCase):
             detect_races=True, dma_execution_mode=dma_execution_mode
         ),
     )(x).block_until_ready()
-    self.assertFalse(mosaic_interpret.races.races_found)
     np.testing.assert_allclose(y, x + 1.0)
 
-    pl.pallas_call(
-        kernel_with_race,
-        out_shape=jax.ShapeDtypeStruct.like(x),
-        in_specs=[pl.BlockSpec(memory_space=hbm_memory_space)],
-        scratch_shapes=[
-            pltpu.VMEM(x.shape, x.dtype),
-            pltpu.SemaphoreType.DMA,
-        ],
-        interpret=pltpu.InterpretParams(
-            detect_races=True, dma_execution_mode=dma_execution_mode
-        ),
-    )(x).block_until_ready()
-    self.assertTrue(mosaic_interpret.races.races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      pl.pallas_call(
+          kernel_with_race,
+          out_shape=jax.ShapeDtypeStruct.like(x),
+          in_specs=[pl.BlockSpec(memory_space=hbm_memory_space)],
+          scratch_shapes=[
+              pltpu.VMEM(x.shape, x.dtype),
+              pltpu.SemaphoreType.DMA,
+          ],
+          interpret=pltpu.InterpretParams(
+              detect_races=True, dma_execution_mode=dma_execution_mode
+          ),
+      )(x).block_until_ready()
 
   def test_skip_floating_point_ops(self):
     def matmul_kernel(x_ref, y_ref, z_ref):
@@ -1073,7 +1082,6 @@ class InterpretTest(jtu.JaxTestCase):
     x = jnp.arange(16 * 128, dtype=jnp.int32).reshape((16, 128))
     y = f(x)
     np.testing.assert_array_equal(y, x)
-    self.assertFalse(mosaic_interpret.races.races_found)
 
   def test_grid_names(self):
     def kernel(x, y):
@@ -1124,6 +1132,7 @@ class InterpretTest(jtu.JaxTestCase):
                 detect_races=True,
                 allow_hbm_allocation_in_run_scoped=True,
                 dma_execution_mode=dma_execution_mode,
+                on_race='warn',
             ),
         )
         def _():
@@ -1198,7 +1207,6 @@ class InterpretTest(jtu.JaxTestCase):
       )(x)
 
     y = f(x).block_until_ready()
-    self.assertFalse(mosaic_interpret.races.races_found)
     np.testing.assert_allclose(y, 2.0 * x)
 
     with pltpu.force_tpu_interpret_mode(pltpu.InterpretParams(
@@ -1206,7 +1214,6 @@ class InterpretTest(jtu.JaxTestCase):
         detect_races=True,
     )):
       y = f(x).block_until_ready()
-    self.assertFalse(mosaic_interpret.races.races_found)
     np.testing.assert_allclose(y, 2.0 * x)
     self.assertEqual(trace_count[0], 2)
 
@@ -1214,9 +1221,8 @@ class InterpretTest(jtu.JaxTestCase):
         num_cores_or_threads=2,
         detect_races=True,
     )):
-      y = f(x).block_until_ready()
-    self.assertTrue(mosaic_interpret.races.races_found)
-    np.testing.assert_allclose(y, 2.0 * x)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        f(x).block_until_ready()
     self.assertEqual(trace_count[0], 3)
 
   def test_two_cores_along_parallel_dimension_no_race(self):
@@ -1250,7 +1256,6 @@ class InterpretTest(jtu.JaxTestCase):
             dimension_semantics=('parallel',)
         ),
     )(x).block_until_ready()
-    self.assertFalse(mosaic_interpret.races.races_found)
     np.testing.assert_allclose(y, 2.0 * x)
 
   def test_parallel_dimension_and_multiple_cores(self):
