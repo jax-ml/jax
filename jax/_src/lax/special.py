@@ -532,7 +532,11 @@ def _igammac_continued_fraction(ax, x, a, enabled, dtype, mode):
   vals = while_loop(cond_fn, body_fn, init_vals)
   ans = vals[1]
   if mode == IgammaMode.VALUE:
-    return ans *  ax
+    # If the loop exited because c >= 2000 (not because of convergence),
+    # the continued fraction did not converge — return NaN.
+    not_converged = bitwise_and(enabled, ge(c, _const(c, 2000)))
+    ans = select(not_converged, full_like(ans, float('nan')), ans)
+    return ans * ax
   dans_da = vals[14]
   dlogax_da = log(x) -  digamma(a)
 
