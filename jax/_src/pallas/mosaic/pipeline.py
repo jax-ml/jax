@@ -553,6 +553,7 @@ class BufferedRef(BufferedRefBase):
   prefetched_count: int = jax.tree.static(default=0)
   # New style prefetch with folded emit_pipeline await. New is False here.
   await_prefetch: bool = jax.tree.static(default=False)
+  output_wait_read_only: bool = jax.tree.static(default=False)
 
   @property
   def spec(self):
@@ -991,25 +992,30 @@ class BufferedRef(BufferedRefBase):
         self.sem_recvs.at[slot],
     ).start()
 
+  def _copy_out_at(self, slot, dst_ref, grid_indices):
+    """Describes the copy of the HBM dma slice out of ``slot``."""
+    assert self.sem_sends is not None
+    dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
+    src_ref = self._window_ref_at(slot, self._to_window_slice(dst_slice))
+    dst_ref, sem = dst_ref.at[dst_slice], self.sem_sends.at[slot]
+    if self.output_wait_read_only:  # The semaphore tracks the source read.
+      return tpu_primitives.make_async_copy(src_ref, dst_ref, src_sem=sem)
+    return tpu_primitives.make_async_copy(src_ref, dst_ref, sem)
+
+  def _wait_out_copy(self, copy):
+    if self.output_wait_read_only:
+      copy.wait_read()
+    else:
+      copy.wait()
+
   def copy_out(self, dst_ref, grid_indices):
     """Starts copy of HBM dma slice from the current slot."""
     assert self.is_output
     if not self.is_buffered: return
-    assert self.sem_sends is not None
-    slot = self.current_copy_out_slot
-    dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
-    src_slice = self._to_window_slice(dst_slice)
-    if self.out_buffer_count == 1:
-      tpu_helpers.sync_copy(
-          self._window_ref_at(slot, src_slice),
-          dst_ref.at[dst_slice],
-      )
-    else:
-      tpu_primitives.make_async_copy(
-          self._window_ref_at(slot, src_slice),
-          dst_ref.at[dst_slice],
-          self.sem_sends.at[slot],
-      ).start()
+    copy = self._copy_out_at(self.current_copy_out_slot, dst_ref, grid_indices)
+    copy.start()
+    if self.out_buffer_count == 1:  # Single-buffered outputs are synchronous.
+      self._wait_out_copy(copy)
 
   def wait_in(self, src_ref, grid_indices):
     """Waits for input copy to finish."""
@@ -1031,17 +1037,16 @@ class BufferedRef(BufferedRefBase):
     """Waits for output copy to finish."""
     assert self.is_output
     if not self.is_buffered: return
-    assert self.sem_sends is not None
-    wait_slot = self.current_wait_out_slot
-    dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
-    src_slice = self._to_window_slice(dst_slice)
     # Single-buffered outputs are synchronously copied.
     if self.out_buffer_count > 1:
-      tpu_primitives.make_async_copy(
-          self._window_ref_at(wait_slot, src_slice),  # nb: doesn't matter
-          dst_ref.at[dst_slice],  # only dst shape is important
-          self.sem_sends.at[wait_slot],
-      ).wait()
+      slot = self.current_wait_out_slot
+      self._wait_out_copy(self._copy_out_at(slot, dst_ref, grid_indices))
+
+  def wait_out_write(self, dst_ref, grid_indices):
+    """Waits until the output copies have been written to ``dst_ref``."""
+    if not self.is_buffered or self.is_trivial_windowing: return
+    copy = self._copy_out_at(self.current_wait_out_slot, dst_ref, grid_indices)
+    copy.wait_write()
 
   def advance_next_fetch(self, grid):
     if self.next_fetch is None:
@@ -1800,6 +1805,7 @@ def _emit_pipeline(
     dimension_semantics: tuple[GridDimensionSemantics, ...] | None = None,
     trace_scopes: bool = True,
     no_pipelining: bool = False,
+    output_wait_read_only: bool = False,
     num_cores: int | None = None,
     core_id: jax.Array | int | None = None,
     _explicit_indices: bool = False,
@@ -1822,6 +1828,9 @@ def _emit_pipeline(
       the pipeline using named_scope.
     no_pipelining: If True, turns off pipelining and all copies will be made
       synchronous. This is useful for debugging multiple-buffering related bugs.
+    output_wait_read_only: If True, output copies are only awaited for the read
+      of their source buffer and their writes are fenced once at the end. This
+      is for SparseCore push streams, whose write wait fences all streams.
     num_cores: If set, the number of cores to partition the grid over.
     core_id: If set, the core ID of the current core for partitioning the grid.
     _explicit_indices: If True, the body will receive the iteration indices as
@@ -1898,6 +1907,11 @@ def _emit_pipeline(
                 tiling=tiling,
             ),
         )
+
+    if output_wait_read_only:
+      allocations = map_brefs(
+          lambda b: dataclasses.replace(b, output_wait_read_only=True),
+          allocations)
 
     alloc_brefs = jax.tree.leaves(
         allocations, is_leaf=lambda x: isinstance(x, BufferedRefBase)
@@ -2032,6 +2046,10 @@ def _emit_pipeline(
 
         map_outputs(_sync_copy_out, brefs, refs)
 
+        if output_wait_read_only:  # Only the source reads were awaited so far.
+          fence = lambda bref, ref: bref.wait_out_write(ref, final_indices)
+          map_outputs(fence, brefs, refs)
+
   return pipeline
 
 
@@ -2111,6 +2129,7 @@ def emit_pipeline(
     dimension_semantics: tuple[GridDimensionSemantics, ...] | None = None,
     trace_scopes: bool = True,
     no_pipelining: bool = False,
+    output_wait_read_only: bool = False,
     _explicit_indices: bool = False,
 ):
   in_specs = _normalize_specs(in_specs)
@@ -2169,6 +2188,7 @@ def emit_pipeline(
           dimension_semantics=dimension_semantics,
           trace_scopes=trace_scopes,
           no_pipelining=no_pipelining,
+          output_wait_read_only=output_wait_read_only,
           _explicit_indices=_explicit_indices,
           num_cores=num_cores,
           core_id=core_id,
@@ -2263,6 +2283,7 @@ def emit_pipeline(
         dimension_semantics=dimension_semantics,
         trace_scopes=trace_scopes,
         no_pipelining=no_pipelining,
+        output_wait_read_only=output_wait_read_only,
         _explicit_indices=_explicit_indices,
         num_cores=num_cores,
     )
