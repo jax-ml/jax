@@ -548,6 +548,23 @@ class FusionTest(jtu.JaxTestCase):
     result = jax.jit(jax.grad(quantize))(x)
     np.testing.assert_allclose(result, jnp.full_like(x, 2.0))
 
+  def test_fusible_ref_arg_grad(self):
+    # A Ref passed as a fusible operand: its gradient is accumulated into the
+    # Ref's gradient ref and reaches the array it was created from.
+    @fuser.fusible
+    def scale(x_fn, y_ref_fn, out_fn):
+      del out_fn
+      return x_fn() * y_ref_fn()[...]
+
+    def loss(x, y):
+      return jnp.sum(scale(x, jax.new_ref(y)))
+
+    x = jnp.arange(16.0).reshape(4, 4)
+    y = jnp.full((4, 4), 3.0)
+    dx, dy = jax.jit(jax.grad(loss, argnums=(0, 1)))(x, y)
+    np.testing.assert_allclose(dx, y)
+    np.testing.assert_allclose(dy, x)
+
   def test_fusible_shard_map_jit(self):
     @fuser.fusible
     def quantize(x_fn, out_fn):
