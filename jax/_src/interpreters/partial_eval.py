@@ -28,6 +28,7 @@ from weakref import ReferenceType, WeakValueDictionary, finalize, ref
 import numpy as np
 
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
@@ -1923,6 +1924,8 @@ class DynamicJaxprTrace(core.Trace):
     tracers = map(to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun.with_unknown_names(), in_avals, lower=self.requires_low)
+    if config.mutable_array_checks.value:
+      api_util._check_no_aliased_closed_over_refs(fun.debug_info, consts, tracers)
     self.frame.is_high |= fun_jaxpr.is_high
     num_consts = len(consts)
     closed_fun_jaxpr = convert_constvars_jaxpr(fun_jaxpr)
