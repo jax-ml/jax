@@ -3668,7 +3668,9 @@ def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]:
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.modf is not supported.")
   whole = _where(lax.ge(x, lax._zero(x)), floor(x), ceil(x))
-  return x - whole, whole
+  # inf - inf is nan, but NumPy returns a signed zero as the fractional part.
+  frac = _where(isinf(x), copysign(lax._zero(x), x), x - whole)
+  return frac, whole
 
 
 @export
