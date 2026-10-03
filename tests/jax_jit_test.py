@@ -269,6 +269,13 @@ class JaxJitTest(jtu.JaxTestCase):
       with config.captured_constants_warn_bytes(-1):
         jit_maker()(x)
 
+    with self.assertWarnsRegex(
+        UserWarning,
+        r"(?s)Largest 1 allocation\(s\):.*captured at:\n.+jax_jit_test.py"):
+      with config.captured_constants_warn_bytes(y.nbytes):
+        with config.captured_constants_report_frames(-1):
+          jit_maker()(x)
+
   @jtu.skip_on_flag("jax_use_simplified_jaxpr_constants", False)
   def test_check_for_large_number_of_constants_new(self):
     self.enter_context(config.embedded_constants_max_bytes(4))
@@ -291,6 +298,11 @@ class JaxJitTest(jtu.JaxTestCase):
 
       with config.captured_constants_warn_bytes(-1):
         jit_maker()(x)
+
+    with self.assertWarnsRegex(UserWarning, r"(?s)used at:\n.+jax_jit_test.py"):
+      with config.captured_constants_warn_bytes(y.nbytes):
+        with config.captured_constants_report_frames(-1):
+          jit_maker()(x)
 
   def testParseArguments(self):
     pytree_registry = jaxlib.pytree.default_registry()
