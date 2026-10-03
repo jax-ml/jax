@@ -14,14 +14,20 @@
 
 import functools
 import traceback
+from types import SimpleNamespace
+from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import numpy as jnp
 from jax._src import config
+from jax._src import core as jax_core
 from jax._src import test_util as jtu
+from jax._src.lib.mlir import ir
 from jax._src.pallas.mosaic import error_handling
+from jax._src.pallas.mosaic import lowering as mosaic_lowering
+from jax._src.state import primitives as state_primitives
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import numpy as np
@@ -38,12 +44,92 @@ LOCATION_TEST_STRING = (
 )
 
 
+class PallasCachedTemplateLocationTest(jtu.JaxTestCase):
+
+  def test_cached_template_does_not_keep_first_equation_location(self):
+    primitive = jax_core.Primitive("location_test")
+    primitive.multiple_results = True
+    ctx = SimpleNamespace(user_grid_indices=None)
+    ctx.replace = lambda **_: ctx
+    rule_context = SimpleNamespace(
+        avals_out=(), aval_to_ir_type=lambda *_: None
+    )
+    rule_context.replace = lambda **_: rule_context
+
+    with ir.Context(), ir.Location.file("first_equation.py", 10, 1):
+      template = mosaic_lowering._emit_pallas_lowering_rule_as_fun(
+          ctx, primitive, lambda *_: (), rule_context, ()
+      )
+      for op in template.operation.regions[0].blocks[0]:
+        self.assertEqual(str(op.location), "loc(unknown)")
+      self.assertEqual(str(template.operation.location), "loc(unknown)")
+
+
 class PallasErrorHandlingTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Test only works on TPU.")
+
+  @parameterized.named_parameters(
+      ("cache_hit", 0, 1, "second", "first"),
+      ("cache_miss", 1, 0, "first", "second"),
+  )
+  def test_cached_lowering_reports_current_source(
+      self, first_offset, second_offset, expected, unexpected
+  ):
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        mesh=pltpu.TensorCoreMesh(axis_name="core", num_cores=1),
+        scratch_types=(
+            pltpu.VMEM((8, 256), jnp.float32),
+            pltpu.VMEM((8, 128), jnp.float32),
+        ),
+        compiler_params=pltpu.CompilerParams(
+            disable_bounds_checks=True, disable_semaphore_checks=True
+        ),
+    )
+    def kernel(x_hbm, o_hbm, x_ref, o_ref):
+      pltpu.sync_copy(x_hbm, x_ref)
+      start = jax.lax.axis_index("core") * 128
+      first = x_ref[:, pl.ds(start + first_offset, 128)]
+      second = x_ref[:, pl.ds(start + second_offset, 128)]
+      o_ref[...] = first + second
+      pltpu.sync_copy(o_ref, o_hbm)
+
+    original = mosaic_lowering._emit_pallas_lowering_rule_as_fun
+    emitted_get = 0
+
+    def count_get(ctx, primitive, *args, **kwargs):
+      nonlocal emitted_get
+      if primitive is state_primitives.get_p:
+        emitted_get += 1
+      return original(ctx, primitive, *args, **kwargs)
+
+    with mock.patch.object(
+        mosaic_lowering, "_emit_pallas_lowering_rule_as_fun", count_get
+    ):
+      try:
+        jax.jit(kernel)(jnp.zeros((8, 256), jnp.float32)).block_until_ready()
+      except error_handling.MosaicError as error:
+        self.assertIn(
+            "CompileTimeMosaicUnprovenMemoryAccessAlignment", str(error)
+        )
+        frames = "".join(traceback.format_tb(error.__traceback__))
+      else:
+        self.fail("Expected a Mosaic alignment error")
+
+    self.assertEqual(emitted_get, 1)
+    expected_line = (
+        f"{expected} = x_ref[:, pl.ds(start + {expected}_offset, 128)]"
+    )
+    unexpected_line = (
+        f"{unexpected} = x_ref[:, pl.ds(start + {unexpected}_offset, 128)]"
+    )
+    self.assertIn(expected_line, frames)
+    self.assertEqual(frames.count(expected_line), 1)
+    self.assertNotIn(unexpected_line, frames)
 
   def test_non_singular_stride(self):
     input_arr = jax.random.uniform(
