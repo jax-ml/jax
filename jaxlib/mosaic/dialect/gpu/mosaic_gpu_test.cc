@@ -25,6 +25,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "llvm/ADT/SmallVector.h"
@@ -52,7 +53,7 @@ namespace {
 
 using ::testing::HasSubstr;
 using ::testing::UnorderedElementsAre;
-using ::testing::status::StatusIs;
+using ::absl_testing::StatusIs;
 
 template <typename T1, typename T2, typename... Ts>
 absl::StatusOr<mlir::func::FuncOp> FromCppFunc(
@@ -162,7 +163,7 @@ TEST_F(MosaicGpuTest, InitTmaDescriptorProducesACallToRuntime) {
   absl::StatusOr<mlir::func::FuncOp> fn_or =
       FromCppFunc(*module_, mosaic_gpu::InitTmaDescriptor, pointer_type,
                   memref_type, mlir::ArrayRef<int64_t>(slice_shape));
-  ASSERT_OK(fn_or);
+  ASSERT_THAT(fn_or, absl_testing::IsOk());
 
   llvm::SmallVector<mlir::func::CallOp> call_ops =
       llvm::to_vector(fn_or->getBlocks().front().getOps<mlir::func::CallOp>());
