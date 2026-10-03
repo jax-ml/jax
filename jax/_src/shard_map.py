@@ -263,6 +263,9 @@ def _shard_map[F: Callable](
     dbg = api_util.debug_info("shard_map", f, args, {})
     args_flat = ft.flatten(args)
     api_util.check_no_transformed_refs_args(lambda: dbg, args_flat)
+    if config.mutable_array_checks.value:
+      avals = [typeof(x) if core.valid_jaxtype(x) else None for x in args_flat]
+      api_util.check_no_aliased_ref_args(lambda: dbg, avals, list(args_flat))
 
     try:
       in_specs_flat = broadcast_prefix(
