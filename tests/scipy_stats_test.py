@@ -768,6 +768,36 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol={np.float32: 1e-5, np.float64: 1e-6})
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testLaplaceCdfTailGradients(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/40966
+    # Previously laplace.cdf evaluated both exp(z) and exp(-z), so far in the
+    # tails the unselected branch overflowed and made the gradients NaN.
+    x = np.array([-1e3, -50., -1., 0., 1., 50., 1e3], dtype=dtype)
+    loc = dtype(0.5)
+    scale = dtype(2.0)
+    tol = jtu.tolerance(dtype, {np.float32: 1e-6, np.float64: 1e-12})
+
+    for args in [(x,), (x, loc, scale)]:
+      x64_args = [np.asarray(a, dtype=np.float64) for a in args]
+      self.assertAllClose(lsp_stats.laplace.cdf(*args),
+                          osp_stats.laplace.cdf(*x64_args),
+                          check_dtypes=False, rtol=tol, atol=tol)
+      # d/dx cdf(x) is the pdf, which is finite (0 in the far tails).
+      in_axes = (0,) + (None,) * (len(args) - 1)
+      grad = jax.vmap(jax.grad(lsp_stats.laplace.cdf), in_axes)(*args)
+      self.assertTrue(np.all(np.isfinite(grad)))
+      self.assertAllClose(grad, osp_stats.laplace.pdf(*x64_args),
+                          check_dtypes=False, rtol=tol, atol=tol)
+
+    # Gradients with respect to loc and scale are finite too. In float32 this
+    # was already NaN for loc=10, scale=0.1 at x=0 (the issue's example).
+    grads = jax.grad(lsp_stats.laplace.cdf, argnums=(0, 1, 2))(
+        dtype(0.), dtype(10.), dtype(0.1))
+    self.assertTrue(all(np.isfinite(g) for g in grads))
+    self.assertAllClose(grads[0], osp_stats.laplace.pdf(0., 10., 0.1),
+                        check_dtypes=False, rtol=tol, atol=tol)
+
   @genNamedParametersNArgs(3)
   def testLogisticCdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
