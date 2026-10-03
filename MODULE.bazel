@@ -21,12 +21,24 @@ bazel_dep(name = "rules_shell", version = "0.8.0")
 bazel_dep(name = "zlib", version = "1.3.2")
 
 # TODO: use a released version when available
+bazel_dep(name = "rules_fortran")
+git_override(
+    module_name = "rules_fortran",
+    commit = "f0cac73ebdcbda7bc01b38b8a4ee33869416c220",
+    remote = "https://github.com/miinso/rules_fortran.git",
+    patch_strip = 1,
+    patches = [
+        "//third_party/rules_fortran:toolchains.patch",
+    ],
+)
+
+# TODO: use a released version when available
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-Z38HhfFL91M5oxh8un+pXhofiIoYVo7cLl+sh9UT/Hw=",
-    strip_prefix = "rules_ml_toolchain-f56a19573fec3543050a5f4bcd9a07a1de08e8ee",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/f56a19573fec3543050a5f4bcd9a07a1de08e8ee.tar.gz"],
+    integrity = "sha256-glM6j6dbKlO4Ae4zfzl65xPEJiRQO4QVlTTAq4+5UkA=",
+    strip_prefix = "rules_ml_toolchain-53af4747550cd3614a045af4350a368181ae7de6",
+    urls = ["https://github.com/yuriivcs/rules_ml_toolchain/archive/53af4747550cd3614a045af4350a368181ae7de6.tar.gz"],
 )
 
 # TODO: use a released version when available
@@ -290,6 +302,16 @@ register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
 
+register_toolchains("@rules_ml_toolchain//fortran:linux_x86_64_linux_x86_64")
+
+register_toolchains("@rules_ml_toolchain//fortran:linux_x86_64_linux_aarch64")
+
+register_toolchains("@rules_ml_toolchain//fortran:linux_x86_64_darwin_aarch64")
+
+register_toolchains("@rules_ml_toolchain//fortran:linux_aarch64_linux_aarch64")
+
+register_toolchains("@rules_ml_toolchain//fortran:darwin_aarch64_darwin_aarch64")
+
 apple_cc_configure = use_extension("@apple_support//crosstool:setup.bzl", "apple_cc_configure_extension")
 use_repo(
     apple_cc_configure,
@@ -377,3 +399,10 @@ external_deps_repository(
         "@rocm_wheels//:rocm_plugin_py_import",
     ],
 )
+
+lapack = use_extension("//third_party/lapack:extension.bzl", "lapack_ext")
+use_repo(
+    lapack,
+    "lapack",
+)
+
