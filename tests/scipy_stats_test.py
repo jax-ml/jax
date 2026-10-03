@@ -609,6 +609,35 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           atol=1e-6,
         )
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testExponLogCdfSmallX(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/40965
+    # Previously expon.logcdf computed log1p(-exp(-x)), which rounds to log(0)
+    # = -inf (with an infinite gradient) once exp(-x) evaluates to exactly 1.
+    eps = np.finfo(dtype).eps
+    x = np.array([eps / 8, eps / 2, eps, 1e-3, 1.0, 40.0], dtype=dtype)
+    expected = osp_stats.expon.logcdf(x.astype(np.float64))
+    tol = jtu.tolerance(dtype, {np.float32: 1e-6, np.float64: 1e-12})
+
+    actual = lsp_stats.expon.logcdf(x)
+    self.assertTrue(np.all(np.isfinite(actual)))
+    self.assertAllClose(actual, expected, check_dtypes=False, rtol=tol, atol=tol)
+
+    # d/dx log(1 - exp(-x)) = 1 / expm1(x); finite for every x > 0.
+    grad = jax.vmap(jax.grad(lsp_stats.expon.logcdf))(x)
+    self.assertTrue(np.all(np.isfinite(grad)))
+    self.assertAllClose(grad, 1 / np.expm1(x.astype(np.float64)),
+                        check_dtypes=False, rtol=tol, atol=tol)
+
+    # scale is still applied, and x < loc still gives -inf.
+    scale = dtype(3.0)
+    self.assertAllClose(
+      lsp_stats.expon.logcdf(x * scale, scale=scale),
+      osp_stats.expon.logcdf((x * scale).astype(np.float64) / 3.0),
+      check_dtypes=False, rtol=tol, atol=tol,
+    )
+    self.assertArraysEqual(lsp_stats.expon.logcdf(-x), np.full_like(x, -np.inf))
+
   @genNamedParametersNArgs(4)
   def testGammaLogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
