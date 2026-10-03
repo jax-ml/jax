@@ -65,6 +65,13 @@ def rand_sym_pos_def(rng, shape, dtype):
   return matrix @ matrix.T.conj()
 
 
+def _single_iteration_solver(method):
+  if method == 'bicgstab':
+    return partial(jax.scipy.sparse.linalg.bicgstab, maxiter=1)
+  return partial(jax.scipy.sparse.linalg.gmres, restart=1, maxiter=1,
+                 solve_method=method.removeprefix('gmres_'))
+
+
 class CustomOperator:
   def __init__(self, A):
     self.A = A
@@ -467,6 +474,65 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   def test_gmres_weak_types(self):
     x, _ = jax.scipy.sparse.linalg.gmres(lambda x: x, 1.0)
     self.assertTrue(dtypes.is_weakly_typed(x))
+
+  @jtu.sample_product(
+    method=['bicgstab', 'gmres_incremental', 'gmres_batched'],
+    dtype=[np.float32, np.complex64],
+    preconditioner=['matrix', 'cg'],
+    b_scale=[1.0, 1e6],
+  )
+  def test_grad_with_nonsymmetric_preconditioner(
+      self, method, dtype, preconditioner, b_scale):
+    # See https://github.com/jax-ml/jax/issues/29449
+    rng = np.random.RandomState(0)
+    def rand(*shape):
+      x = rng.randn(*shape)
+      if np.issubdtype(dtype, np.complexfloating):
+        x = x + 1j * rng.randn(*shape)
+      return x.astype(dtype)
+
+    n = 5
+    A = n * np.eye(n, dtype=dtype) + rand(n, n)
+    # With the exact inverse of A as preconditioner, one iteration solves both
+    # the forward system and its transpose, provided the transpose uses M^T.
+    if preconditioner == 'matrix':
+      M = np.linalg.inv(A)
+    else:
+      Ah = A.T.conj()
+      M = lambda x: jax.scipy.sparse.linalg.cg(Ah @ A, Ah @ x)[0]
+    # The cotangent is much smaller than b when b_scale is large.
+    b = b_scale * rand(n)
+    ct = jnp.asarray(rand(n))
+    solve = _single_iteration_solver(method)
+
+    _, expected_vjp = jax.vjp(jnp.linalg.solve, A, b)
+    _, actual_vjp = jax.vjp(lambda A, b: solve(A, b, M=M)[0], A, b)
+    self.assertAllClose(actual_vjp(ct), expected_vjp(ct), atol=1e-3, rtol=1e-3)
+
+  @jtu.sample_product(
+    method=['bicgstab', 'gmres_incremental', 'gmres_batched'],
+  )
+  def test_grad_with_pytree_preconditioner(self, method):
+    # Python scalars make every leaf weakly typed.
+    A = lambda x: {'a': x['a'] + 0.5 * x['b'], 'b': -0.3 * x['a'] + x['b']}
+    (m00, m01), (m10, m11) = np.linalg.inv([[1.0, 0.5], [-0.3, 1.0]]).tolist()
+    M = lambda x: {'a': m00 * x['a'] + m01 * x['b'],
+                   'b': m10 * x['a'] + m11 * x['b']}
+    solve = _single_iteration_solver(method)
+    _, vjp = jax.vjp(lambda b: solve(A, b, M=M)[0], {'a': 1.0, 'b': 2.0})
+    (actual,) = vjp({'a': 1.0, 'b': -1.0})
+    expected = np.linalg.solve([[1.0, -0.3], [0.5, 1.0]], [1.0, -1.0])
+    self.assertAllClose(actual['a'], expected[0], check_dtypes=False)
+    self.assertAllClose(actual['b'], expected[1], check_dtypes=False)
+
+  def test_gmres_grad_zero_cotangent_with_x0(self):
+    A = np.array([[2.0, 1.0], [0.0, 3.0]], dtype=np.float32)
+    x0 = np.ones(2, dtype=np.float32)
+    solve = lambda b: jax.scipy.sparse.linalg.gmres(
+        A, b, x0=x0, solve_method='incremental')[0]
+    _, vjp = jax.vjp(solve, np.ones(2, dtype=np.float32))
+    (actual,) = vjp(jnp.zeros(2, dtype=np.float32))
+    self.assertAllClose(actual, np.zeros(2, dtype=np.float32), atol=1e-5)
 
   def test_linear_solve_batching_via_jacrev(self):
     # See https://github.com/jax-ml/jax/issues/14249

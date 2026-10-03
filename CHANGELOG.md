@@ -79,6 +79,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.scipy.linalg.lu` now accepts batched inputs of shape
     `(..., M, N)`, as documented; previously it raised a `ValueError` for any
     input with more than two dimensions.
+  * {func}`jax.scipy.sparse.linalg.gmres` and
+    {func}`jax.scipy.sparse.linalg.bicgstab` now use the transpose of the
+    preconditioner `M` when solving the transposed system for reverse-mode
+    derivatives, and {func}`~jax.scipy.sparse.linalg.gmres` computes the
+    tolerances of each solve from its own right-hand side. Previously,
+    gradients could be inaccurate for a nonsymmetric `M`. `M` must now be a
+    linear operator, and a function or matmul-compatible `M` must be
+    transposable with {func}`jax.linear_transpose` ({jax-issue}`#29449`).
 
 
 ## JAX 0.11.2 (September 17, 2026)
