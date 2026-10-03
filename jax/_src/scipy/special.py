@@ -2925,7 +2925,8 @@ def _expn1(x: Array, n: Array) -> Array:
     return d
 
   def cond(d):
-    return (d["x"] > _c(d["x"], 0.0)) & (d["t"] > MACHEP)
+    # jnp.piecewise evaluates every branch, so bound this one to its domain.
+    return (d["x"] > zero) & (d["x"] <= one) & (d["t"] > MACHEP)
 
   d = lax.while_loop(cond, body, init)
   t = n
@@ -2978,7 +2979,9 @@ def _expn2(x: Array, n: Array) -> Array:
     return d
 
   def cond(d):
-    return (d["x"] > _c(d["k"], 0)) & (d["t"] > MACHEP)
+    # The continued fraction only converges for x > 1, but jnp.piecewise also
+    # evaluates it on x <= 1 inputs, where it would loop forever.
+    return (d["x"] > one) & (d["t"] > MACHEP)
 
   d = lax.while_loop(cond, body, init)
   return d["ans"] * jnp.exp(-x)
