@@ -53,7 +53,7 @@ def logpmf(x: ArrayLike, n: ArrayLike, p: ArrayLike) -> Array:
   x = x.astype(p.dtype)
   n = n.astype(p.dtype)
   logprobs = gammaln(n + 1) + jnp.sum(xlogy(x, p) - gammaln(x + 1), axis=-1)
-  return jnp.where(jnp.equal(jnp.sum(x), n), logprobs, -np.inf)
+  return jnp.where(jnp.equal(jnp.sum(x, axis=-1), n), logprobs, -np.inf)
 
 
 def pmf(x: ArrayLike, n: ArrayLike, p: ArrayLike) -> Array:
