@@ -303,6 +303,11 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     self.assertEqual(plgpu.Barrier(num_barriers=1).get_ref_aval().shape, (1,))
     self.assertEqual(plgpu.Barrier(num_barriers=(2, 3)).get_ref_aval().shape,
                      (2, 3))
+    self.assertEqual(plgpu.CtaBarrier().get_ref_aval().shape, (1,))
+    self.assertEqual(plgpu.CtaBarrier(num_barriers=3).get_ref_aval().shape, (3,))
+    self.assertEqual(
+        plgpu.CtaBarrier().get_ref_aval().memory_space, plgpu.CTA_BARRIER
+    )
 
   def test_io_aliasing(self):
     @jax.jit
@@ -1629,6 +1634,213 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         test_barrier()
 
     np.testing.assert_array_equal(kernel(), np.array([0, 0, 1, 0, 1]))
+
+  def test_cta_barrier_basic(self):
+    @functools.partial(
+        self.kernel,
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_types=[
+            plgpu.SMEM((128,), jnp.float32),
+            plgpu.CtaBarrier(num_arrivals=2),
+        ],
+        num_threads=2,
+        thread_name="threads",
+    )
+    def kernel(o_ref, smem_ref, barrier):
+      t_idx = lax.axis_index("threads")
+
+      @pl.when(t_idx == 0)
+      def _():
+        smem_ref[...] = jnp.full((128,), 42.0, dtype=jnp.float32)
+        plgpu.barrier_arrive(barrier)
+
+      @pl.when(t_idx == 1)
+      def _():
+        plgpu.barrier_arrive_and_wait(barrier)
+        o_ref[...] = smem_ref[...]
+
+    np.testing.assert_array_equal(
+        kernel(), np.full((128,), 42.0, dtype=jnp.float32)
+    )
+
+  def test_cta_barrier_multiple(self):
+    @functools.partial(
+        self.kernel,
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_types=[
+            plgpu.SMEM((128,), jnp.float32),
+            plgpu.CtaBarrier(num_arrivals=2, num_barriers=3),
+        ],
+        num_threads=2,
+        thread_name="threads",
+    )
+    def kernel(o_ref, smem_ref, barrier_ref):
+      t_idx = lax.axis_index("threads")
+
+      @pl.when(t_idx == 0)
+      def _():
+        smem_ref[...] = jnp.full((128,), 99.0, dtype=jnp.float32)
+        plgpu.barrier_arrive(barrier_ref.at[1])
+
+      @pl.when(t_idx == 1)
+      def _():
+        plgpu.barrier_arrive_and_wait(barrier_ref.at[1])
+        o_ref[...] = smem_ref[...]
+
+    np.testing.assert_array_equal(
+        kernel(), np.full((128,), 99.0, dtype=jnp.float32)
+    )
+
+  def test_cta_barrier_run_scoped(self):
+    @functools.partial(
+        self.kernel,
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+        num_threads=2,
+        thread_name="threads",
+    )
+    def kernel(o_ref):
+      def scoped_body(smem_ref, barrier):
+        t_idx = lax.axis_index("threads")
+
+        @pl.when(t_idx == 0)
+        def _():
+          smem_ref[...] = jnp.full((128,), 123.0, dtype=jnp.float32)
+          plgpu.barrier_arrive(barrier)
+
+        @pl.when(t_idx == 1)
+        def _():
+          plgpu.barrier_arrive_and_wait(barrier)
+          o_ref[...] = smem_ref[...]
+
+      pl.run_scoped(
+          scoped_body,
+          plgpu.SMEM((128,), jnp.float32),
+          plgpu.CtaBarrier(num_arrivals=2),
+          collective_axes="threads",
+      )
+
+    np.testing.assert_array_equal(
+        kernel(), np.full((128,), 123.0, dtype=jnp.float32)
+    )
+
+  @jtu.thread_unsafe_test()
+  def test_cta_barrier_ptx_instructions(self):
+    @functools.partial(
+        self.kernel,
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_types=[
+            plgpu.CtaBarrier(num_arrivals=2),
+        ],
+        num_threads=2,
+        thread_name="threads",
+    )
+    def kernel(o_ref, barrier):
+      t_idx = lax.axis_index("threads")
+
+      @pl.when(t_idx == 0)
+      def _():
+        plgpu.barrier_arrive(barrier)
+
+      @pl.when(t_idx == 1)
+      def _():
+        plgpu.barrier_arrive_and_wait(barrier)
+        o_ref[...] = jnp.ones((128,), dtype=jnp.float32)
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as output:
+      _ = kernel()
+
+    ptx = output()
+    self.assertIn("bar.arrive", ptx)
+    self.assertIn("bar.sync", ptx)
+    self.assertIn("256", ptx)
+
+  def test_cta_barrier_invalid_ops_raise(self):
+    @functools.partial(
+        self.kernel,
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_types=[
+            plgpu.CtaBarrier(num_arrivals=1),
+        ],
+    )
+    def kernel_wait(o_ref, barrier):
+      plgpu.barrier_wait(barrier)
+
+    with self.assertRaisesRegex(
+        ValueError, "CTA barriers do not support waiting without arriving"
+    ):
+      _ = kernel_wait()
+
+    @functools.partial(
+        self.kernel,
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_types=[
+            plgpu.CtaBarrier(num_arrivals=1),
+        ],
+    )
+    def kernel_test(o_ref, barrier):
+      _ = plgpu.barrier_test(barrier)
+
+    with self.assertRaisesRegex(
+        ValueError, "CTA barriers do not support barrier_test"
+    ):
+      _ = kernel_test()
+
+  def test_cta_barrier_slice_indexing(self):
+    @functools.partial(
+        self.kernel,
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_types=[
+            plgpu.SMEM((128,), jnp.float32),
+            plgpu.CtaBarrier(num_arrivals=2, num_barriers=4),
+        ],
+        num_threads=2,
+        thread_name="threads",
+    )
+    def kernel(o_ref, smem_ref, barrier_ref):
+      t_idx = lax.axis_index("threads")
+      b = barrier_ref.at[2:4].at[1]
+
+      @pl.when(t_idx == 0)
+      def _():
+        smem_ref[...] = jnp.full((128,), 55.0, dtype=jnp.float32)
+        plgpu.barrier_arrive(b)
+
+      @pl.when(t_idx == 1)
+      def _():
+        plgpu.barrier_arrive_and_wait(b)
+        o_ref[...] = smem_ref[...]
+
+    np.testing.assert_array_equal(
+        kernel(), np.full((128,), 55.0, dtype=jnp.float32)
+    )
+
+  def test_cta_barrier_too_many_barriers_raise(self):
+    @functools.partial(
+        self.kernel,
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_types=[plgpu.CtaBarrier(num_arrivals=1, num_barriers=16)],
+        num_threads=2,
+        thread_name="threads",
+    )
+    def kernel(_, barrier_ref):
+      plgpu.barrier_arrive_and_wait(barrier_ref.at[0])
+
+    with self.assertRaisesRegex(ValueError, "Too many CTA barriers requested"):
+      _ = kernel()
+
+  def test_cta_barrier_index_out_of_bounds_raise(self):
+    @functools.partial(
+        self.kernel,
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_types=[
+            plgpu.CtaBarrier(num_arrivals=1, num_barriers=2),
+        ],
+    )
+    def kernel(_, barrier_ref):
+      plgpu.barrier_arrive_and_wait(barrier_ref.at[2])
+
+    with self.assertRaises(IndexError):
+      _ = kernel()
 
   @parameterized.named_parameters(
       {

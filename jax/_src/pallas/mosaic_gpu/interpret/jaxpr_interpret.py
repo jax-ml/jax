@@ -82,6 +82,7 @@ def _raise_if_unsupported_memory_space(
       mosaic_gpu_core.MemorySpace.SMEM,
       mosaic_gpu_core.MemorySpace.TMEM,
       mosaic_gpu_core.MemorySpace.REGS,
+      mosaic_gpu_core.MemorySpace.CTA_BARRIER,
   ]:
     raise NotImplementedError(f"Unsupported memory space: {space}")
 
@@ -504,11 +505,15 @@ class JaxprInterpreter:
             inner = apply_layout_transforms(transforms, inner)
           match inner:
             case jax_core.ShapedArray(shape=shape, dtype=dtype):
-              if isinstance(dtype, mosaic_gpu_core.BarrierType):
+              if isinstance(
+                  dtype,
+                  (mosaic_gpu_core.BarrierType, mosaic_gpu_core.CtaBarrierType),
+              ):
                 # A barrier is shared between the threads in a block. Hence its
                 # ref count, when computed based on the collective axes, should
                 # equal the number of threads in a block.
                 assert ref_count == self.num_threads_per_block
+                orders_tc = getattr(dtype, "orders_tensor_core", False)
                 # TODO(nrink): Simplify the interface to
                 # `call_allocate_barriers`. Consider making it similar to
                 # `call_allocate_buffer`, see below.
@@ -517,7 +522,7 @@ class JaxprInterpreter:
                     mesh_location=self.mesh_location,
                     thread=self.thread,
                     num_arrivals=jnp.int32(dtype.num_arrivals),
-                    orders_tensor_core=dtype.orders_tensor_core,
+                    orders_tensor_core=orders_tc,
                     flat_num_barriers=math.prod(shape),
                     ref_count=jnp.int32(ref_count),
                     source_info=eqn.source_info,
@@ -575,7 +580,10 @@ class JaxprInterpreter:
         case state_types.AbstractRef(inner_aval=inner, memory_space=_, kind=_):
           match inner:
             case jax_core.ShapedArray(shape=_, dtype=dtype):
-              is_barrier = isinstance(dtype, mosaic_gpu_core.BarrierType)
+              is_barrier = isinstance(
+                  dtype,
+                  (mosaic_gpu_core.BarrierType, mosaic_gpu_core.CtaBarrierType),
+              )
               is_cluster_barrier = isinstance(
                   dtype, mosaic_gpu_core.ClusterBarrierType
               )
@@ -771,7 +779,10 @@ class JaxprInterpreter:
   def _interpret_barrier_arrive_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
-    assert eqn.primitive is gpu_primitives.barrier_arrive_p
+    assert eqn.primitive in (
+        gpu_primitives.barrier_arrive_p,
+        gpu_primitives.barrier_arrive_and_wait_p,
+    )
     invals = get_invals()
     if eqn.params.get("has_user_predicate", False):
       *invals, predicate = invals
@@ -800,7 +811,10 @@ class JaxprInterpreter:
   def _interpret_barrier_wait_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
-    assert eqn.primitive is gpu_primitives.barrier_wait_p
+    assert eqn.primitive in (
+        gpu_primitives.barrier_wait_p,
+        gpu_primitives.barrier_arrive_and_wait_p,
+    )
     invals = get_invals()
     allocation_key_as_array = _get_barrier_allocation_key_from_inval(
         invals[0], eqn.params["transforms_treedef"], invals[1:]
@@ -1418,6 +1432,14 @@ class JaxprInterpreter:
           case gpu_primitives.barrier_arrive_p:
             token, out = self._interpret_barrier_arrive_p(
                 eqn, token, deferred_invals)
+          case gpu_primitives.barrier_arrive_and_wait_p:
+            invals = deferred_invals()
+            token, _ = self._interpret_barrier_arrive_p(
+                eqn, token, lambda: invals
+            )
+            token, out = self._interpret_barrier_wait_p(
+                eqn, token, lambda: invals
+            )
           case gpu_primitives.copy_gmem_to_smem_p:
             token, out = self._interpret_copy_gmem_to_smem_p(
                 eqn, token, deferred_invals)
