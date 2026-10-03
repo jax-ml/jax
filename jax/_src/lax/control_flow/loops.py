@@ -2354,6 +2354,22 @@ def _while_discharge_rule(ctx, *args,
   num_body_refs = sum(body_is_ref)
   num_remaining_body_consts = body_nconsts - num_body_refs
   num_out_body_consts = num_remaining_body_consts
+
+  # The same Ref can be both a cond const and a body const, e.g. if the cond
+  # reads a Ref the body writes. We carry each distinct Ref once so that the
+  # cond and body see each other's updates.
+  ref_slots: dict[int, int] = {}
+  refs, ref_avals = [], []
+  def get_slot(aval, ref):
+    if (slot := ref_slots.get(id(aval))) is None:
+      slot = ref_slots[id(aval)] = len(refs)
+      refs.append(ref)
+      ref_avals.append(aval)
+    return slot
+  body_ref_slots = _map(get_slot, body_ref_avals, body_refs)
+  cond_ref_slots = _map(get_slot, cond_ref_avals, cond_refs)
+  num_refs = len(refs)
+
   if cond_has_writes:
     # If the cond has writes, we need to add the cond consts into the body
     # consts since we need to evaluate the cond condition in the body.
@@ -2393,13 +2409,13 @@ def _while_discharge_rule(ctx, *args,
     raise NotImplementedError
 
   def new_body(*consts_refs_carry):
-    consts, body_refs, cond_refs, carry = split_list(
-        consts_refs_carry,
-        [num_remaining_body_consts, num_body_refs, num_cond_refs])
+    consts, refs, carry = split_list(
+        consts_refs_carry, [num_remaining_body_consts, num_refs])
     if cond_has_writes:
       # We run the cond jaxpr in the body so that Refs that are updated
       # in the cond jaxpr are persisted via the carry.
       cond_consts, body_consts = split_list(consts, [num_remaining_cond_consts])
+      cond_refs = [refs[i] for i in cond_ref_slots]
       cond_consts_and_refs = merge_lists(cond_is_ref, cond_consts, cond_refs)
       cond_carry_refs = core.eval_jaxpr(
           discharged_cond_jaxpr,
@@ -2407,16 +2423,13 @@ def _while_discharge_rule(ctx, *args,
           *cond_consts_and_refs,
           *carry,
       )
-      # Note: in order to handle the same Ref being updated in both the cond
-      # and body, we would need to interleave the updated cond_carry_refs into
-      # body_refs here.
-      # Currently we disallow this so we don't need to handle it.
       _, cond_refs_out = split_list(cond_carry_refs, [1])
-      assert len(cond_refs_out) == len(cond_refs)
+      for i, ref in zip(cond_ref_slots, cond_refs_out):
+        refs[i] = ref
     else:
       body_consts = consts
-      cond_refs_out = cond_refs
 
+    body_refs = [refs[i] for i in body_ref_slots]
     body_consts_and_refs = merge_lists(body_is_ref, body_consts, body_refs)
     body_carry_refs = core.eval_jaxpr(
         discharged_body_jaxpr,
@@ -2425,33 +2438,27 @@ def _while_discharge_rule(ctx, *args,
         *carry,
     )
     carry, body_refs_out = split_list(body_carry_refs, [num_carry])
-    return [*body_refs_out, *cond_refs_out, *carry]
+    for i, ref in zip(body_ref_slots, body_refs_out):
+      refs[i] = ref
+    return [*refs, *carry]
 
+  discharged_ref_avals = [
+      state_discharge.discharged_aval(
+          a, discharge=True, strip_memory_space=ctx.strip_memory_space)
+      for a in ref_avals]
   new_body_jaxpr, _ = pe.trace_to_jaxpr(
       new_body,
-      ft.flatten_args(
-          *remaining_body_const_avals,
-          *[
-              state_discharge.discharged_aval(
-                  a,
-                  discharge=True,
-                  strip_memory_space=ctx.strip_memory_space,
-              )
-              for a in body_ref_avals + cond_ref_avals
-          ],
-          *carry_avals,
-      ),
+      ft.flatten_args(*remaining_body_const_avals, *discharged_ref_avals,
+                      *carry_avals),
       debug_info=discharged_body_jaxpr.debug_info)
   if new_body_jaxpr.consts: raise NotImplementedError
 
   # Since some `Ref`s that were previously consts are now carries, we need to
-  # deal with them (i.e. ignore them) in the `cond`, so we need to rewrite the
-  # cond_jaxpr as well.
+  # deal with them in the `cond`, so we need to rewrite the cond_jaxpr as well.
   def new_cond(*consts_refs_carry):
-    consts, body_refs, cond_refs, carry = split_list(
-        consts_refs_carry, [num_remaining_cond_consts, num_body_refs, num_cond_refs])
-    # We don't use them here!
-    del body_refs
+    consts, refs, carry = split_list(
+        consts_refs_carry, [num_remaining_cond_consts, num_refs])
+    cond_refs = [refs[i] for i in cond_ref_slots]
     cond_consts_and_refs = merge_lists(cond_is_ref, consts, cond_refs)
     results = core.eval_jaxpr(
         discharged_cond_jaxpr,
@@ -2465,44 +2472,25 @@ def _while_discharge_rule(ctx, *args,
 
   new_cond_jaxpr, _ = pe.trace_to_jaxpr(
       new_cond,
-      ft.flatten_args(
-          *remaining_cond_const_avals,
-          *[
-              state_discharge.discharged_aval(
-                  a,
-                  discharge=True,
-                  strip_memory_space=ctx.strip_memory_space,
-              )
-              for a in body_ref_avals
-          ],
-          *[
-              state_discharge.discharged_aval(
-                  a,
-                  discharge=True,
-                  strip_memory_space=ctx.strip_memory_space,
-              )
-              for a in cond_ref_avals
-          ],
-          *carry_avals,
-      ),
+      ft.flatten_args(*remaining_cond_const_avals, *discharged_ref_avals,
+                      *carry_avals),
       debug_info=cond_jaxpr.debug_info.with_unknown_names(),
   )
   if new_cond_jaxpr.consts: raise NotImplementedError
 
   out = while_p.bind(*remaining_cond_consts, *remaining_body_consts,
-                     *body_refs, *cond_refs, *carry,
+                     *refs, *carry,
                      body_jaxpr=new_body_jaxpr,
                      cond_jaxpr=new_cond_jaxpr,
                      body_nconsts=num_remaining_body_consts,
                      cond_nconsts=num_remaining_cond_consts)
-  body_refs_out, cond_refs_out, carry_out = split_list(
-      out, [num_body_refs, num_cond_refs])
+  refs_out, carry_out = split_list(out, [num_refs])
   updated_cond_consts = merge_lists(cond_is_ref,
                                     [None] * num_remaining_cond_consts,
-                                    cond_refs_out)
+                                    [refs_out[i] for i in cond_ref_slots])
   updated_body_consts = merge_lists(body_is_ref,
                                     [None] * num_out_body_consts,
-                                    body_refs_out)
+                                    [refs_out[i] for i in body_ref_slots])
   invals_out = [
       *updated_cond_consts,
       *updated_body_consts,
