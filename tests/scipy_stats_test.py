@@ -1226,6 +1226,22 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             rtol={np.float64: 1e-14}, atol={np.float64: 1e-14})
 
 
+  @jtu.sample_product(
+      dtype=[np.float32, np.float64],
+      df=[30.0, 1e3, 1e5, 1e7],
+  )
+  def testTLogPdfLargeDf(self, dtype, df):
+    if dtype == np.float64 and not jax.config.x64_enabled:
+      self.skipTest("x64 is disabled")
+    x = dtype(0.0)
+    df = dtype(df)
+    expected = osp_stats.t.logpdf(x, df)
+    actual = lsp_stats.t.logpdf(x, df)
+    actual_jit = jax.jit(lsp_stats.t.logpdf)(x, df)
+    self.assertAllClose(actual, expected, rtol=2e-6, atol=2e-6)
+    self.assertAllClose(actual_jit, expected, rtol=2e-6, atol=2e-6)
+
+
   @genNamedParametersNArgs(3)
   def testUniformLogPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
