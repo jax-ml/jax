@@ -572,6 +572,44 @@ class InterpretTest(jtu.JaxTestCase):
     )
     np.testing.assert_allclose(result, ref)
 
+  @parameterized.named_parameters(
+      ('direct', 'direct'),
+      ('conditional', 'conditional'),
+      ('view', 'view'),
+  )
+  def test_scalar_prefetch_written_by_kernel(self, write_style):
+    def kernel(block_ids_ref, x_ref, o_ref):
+      if write_style == 'direct':
+        block_ids_ref[1] = 1
+      elif write_style == 'conditional':
+        @pl.when(pl.program_id(0) == 0)
+        def write_block_id():
+          block_ids_ref[1] = 1
+      else:
+        block_ids_ref.at[1][...] = 1
+      o_ref[...] = x_ref[...]
+
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+        num_scalar_prefetch=1,
+        grid=(2,),
+        in_specs=[pl.BlockSpec(
+            (None, 8, 128), lambda i, block_ids_ref: (block_ids_ref[i], 0, 0),
+            pipeline_mode=pl.Buffered(1))],
+        out_specs=pl.BlockSpec((None, 8, 128), lambda i, _: (i, 0, 0)),
+    )
+    f = pl.pallas_call(
+        kernel,
+        grid_spec=grid_spec,
+        out_shape=jax.ShapeDtypeStruct((2, 8, 128), jnp.int32),
+        interpret=pltpu.InterpretParams(),
+    )
+    block_ids = jnp.array([1, 0], dtype=jnp.int32)
+    x = jnp.broadcast_to(jnp.arange(2, dtype=jnp.int32)[:, None, None],
+                         (2, 8, 128))
+
+    with self.assertRaisesRegex(ValueError, 'scalar prefetch.*read-only'):
+      f(block_ids, x)
+
   def test_dynamic_grid_and_aliasing(self):
     def kernel(s1_ref, s2_ref, x_ref, o_ref):
       del s2_ref
