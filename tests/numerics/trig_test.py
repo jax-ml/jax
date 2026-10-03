@@ -239,6 +239,106 @@ class AtanTest(jtu.JaxTestCase):
     )
 
 
+def _mpmath_atan2(y, x):
+  if mpmath.isnan(y) or mpmath.isnan(x):
+    return mpmath.nan
+  fy, fx = float(y), float(x)
+  sy = -1 if np.signbit(fy) else 1
+  sx = -1 if np.signbit(fx) else 1
+  if y == 0:
+    return mpmath.mpf(0.0) if sx > 0 else sy * mpmath.pi
+  if x == 0:
+    return sy * (mpmath.pi / 2)
+  if mpmath.isinf(y) and mpmath.isinf(x):
+    return sy * (mpmath.pi / 4 if sx > 0 else 3 * mpmath.pi / 4)
+  if mpmath.isinf(y):
+    return sy * (mpmath.pi / 2)
+  if mpmath.isinf(x):
+    return mpmath.mpf(0.0) if sx > 0 else sy * mpmath.pi
+  return mpmath.atan2(y, x)
+
+
+@jtu.thread_unsafe_test_class()
+class Atan2Test(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_atan2_accuracy(self, dtype):
+    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Requires libtpu >= 0.0.50")
+    bounds = [
+        ("cpu", {bf16: 1.0, f16: 1.0}),
+        ("gpu", {bf16: 1.0, f16: 1.0, f32: 3.0, f64: 1.0}),
+        ("tpu", {bf16: 1.0, f16: 1.0, f32: 3.5}),
+    ]
+    input_ftz = [
+        ("cpu", {f16: False}),
+        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
+        ("tpu", {f16: False}),
+    ]
+    util.check_nary_precision(
+        self,
+        jnp.atan2,
+        np.arctan2,
+        _mpmath_atan2,
+        dtype,
+        nargs=2,
+        bounds=bounds,
+        input_ftz=input_ftz,
+    )
+
+
+@jtu.thread_unsafe_test_class()
+class Deg2radTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_deg2rad_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {bf16: 1.0, f16: 1.0, f32: 1.0, f64: 1.0}),
+        ("gpu", {bf16: 1.0, f16: 1.0, f32: 1.0, f64: 1.0}),
+        ("tpu", {bf16: 1.0, f16: 1.0, f32: 1.0}),
+    ]
+    input_ftz = [
+        ("cpu", {f16: False}),
+        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
+        ("tpu", {f16: False}),
+    ]
+    util.check_unary_precision(
+        self,
+        jnp.deg2rad,
+        np.deg2rad,
+        mpmath.radians,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+    )
+
+
+@jtu.thread_unsafe_test_class()
+class Rad2degTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_rad2deg_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {bf16: 1.0, f16: 1.5, f32: 1.0, f64: 1.0}),
+        ("gpu", {bf16: 1.0, f16: 1.5, f32: 1.0, f64: 1.0}),
+        ("tpu", {bf16: 1.0, f16: 1.5, f32: 1.0}),
+    ]
+    input_ftz = [
+        ("cpu", {f16: False}),
+        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
+        ("tpu", {f16: False}),
+    ]
+    util.check_unary_precision(
+        self,
+        jnp.rad2deg,
+        np.rad2deg,
+        mpmath.degrees,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+    )
+
+
 util.register_benchmark(jnp.sin)
 util.register_benchmark(jnp.cos)
 util.register_benchmark(jnp.tan)
@@ -246,6 +346,9 @@ util.register_benchmark(jnp.sinc)
 util.register_benchmark(jnp.acos)
 util.register_benchmark(jnp.asin)
 util.register_benchmark(jnp.atan)
+util.register_benchmark(jnp.atan2, nargs=2)
+util.register_benchmark(jnp.deg2rad)
+util.register_benchmark(jnp.rad2deg)
 
 
 if __name__ == "__main__":

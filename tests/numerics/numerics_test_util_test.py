@@ -35,6 +35,7 @@ import mpmath
 import numpy as np
 
 config.parse_flags_with_absl()
+config.update("jax_enable_x64", True)
 
 bf16, f16, f32, f64 = jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64
 
@@ -51,6 +52,8 @@ class UlpDiffTest(jtu.JaxTestCase):
     next_one = np.nextafter(one, dt(2.0))
     ulp_one = mpmath.mpf(float(next_one)) - mpmath.mpf(1.0)
     mant_bits = np.finfo(dtype).nmant
+    max_float = dt(np.finfo(dtype).max)
+    ulp_max = mpmath.ldexp(1, np.finfo(dtype).maxexp - 1 - mant_bits)
 
     def ref_val(v):
       return v if dtype == f64 else float(v)
@@ -71,6 +74,16 @@ class UlpDiffTest(jtu.JaxTestCase):
         (one, ref_val(mpmath.mpf(1.0) + 0.25 * ulp_one), 0.25, 0.25),
         (one, ref_val(mpmath.mpf(1.0) + 0.5 * ulp_one), 0.5, 0.5),
         (next_one, ref_val(mpmath.mpf(1.0) + 0.25 * ulp_one), 0.75, 0.75),
+        # Continuous ULP distance across the max_float / infinity boundary
+        (max_float, ref_val(mpmath.mpf(float(max_float)) + 0.5 * ulp_max),
+         0.5, 0.5),
+        (max_float, ref_val(mpmath.mpf(float(max_float)) + 0.75 * ulp_max),
+         0.75, 0.75),
+        (dt(np.inf), ref_val(mpmath.mpf(float(max_float)) + 0.5 * ulp_max),
+         0.0, 0.0),
+        (dt(np.inf), ref_val(mpmath.mpf(float(max_float)) + 0.25 * ulp_max),
+         0.75, 0.75),
+        (dt(np.inf), ref_val(float(max_float)), 1.0, 1.0),
     ]
     cases = base_cases + [
         (dt(-x), -y, exp_ftz, exp_no_ftz)
@@ -345,6 +358,207 @@ class UlpDiffTest(jtu.JaxTestCase):
         loader.shardTestCaseNames(iter_1, ["test_c1"], 1),
         [],
     )
+
+  def test_eval_mpmath_multi_arg(self):
+    # Test multi-argument eval_mpmath evaluation, subnormal flushing, and
+    # preservation of IEEE-754 signbit for -0.0 and signed NaN.
+    self.assertEqual(
+        util.eval_mpmath(lambda x, y: x + y, 1.0, 2.0), mpmath.mpf(3.0)
+    )
+    self.assertEqual(
+        util.eval_mpmath(lambda a, b, c: a * b + c, 2.0, 3.0, 4.0),
+        mpmath.mpf(10.0),
+    )
+    self.assertTrue(
+        mpmath.isnan(util.eval_mpmath(lambda x, y: x + y, float("nan"), 1.0))
+    )
+    self.assertTrue(
+        util.eval_mpmath(lambda x: bool(np.signbit(float(x))), -0.0)
+    )
+    pos_nan = np.uint64(0x7FF8000000000000).view(np.float64)
+    neg_nan = np.uint64(0xFFF8000000000000).view(np.float64)
+    self.assertFalse(
+        util.eval_mpmath(lambda x: bool(np.signbit(float(x))), pos_nan)
+    )
+    self.assertTrue(
+        util.eval_mpmath(lambda x: bool(np.signbit(float(x))), neg_nan)
+    )
+    self.assertEqual(util.eval_mpmath(lambda x: 1 / x, 0.0), mpmath.inf)
+    self.assertEqual(util.eval_mpmath(lambda x: 1 / x, -0.0), -mpmath.inf)
+    self.assertTrue(mpmath.isnan(util.eval_mpmath(mpmath.gamma, 0.0)))
+
+  def test_check_nary_precision_binary(self):
+    # Verify check_nary_precision correctly evaluates an exact binary op.
+    util.check_nary_precision(
+        self,
+        jnp.add,
+        np.add,
+        lambda x, y: x + y,
+        jnp.float32,
+        nargs=2,
+        bounds=0.5,
+        max_samples=1000,
+    )
+
+  def test_make_exhaustive_chunk_nary(self):
+    # Unary (nargs=1): bit patterns [0, 1, 2, 3]
+    (x1,) = util._make_exhaustive_chunk(0, 4, 1, jnp.float16)
+    np.testing.assert_array_equal(
+        x1.view(np.uint16), np.array([0, 1, 2, 3], dtype=np.uint16)
+    )
+
+    # Binary (nargs=2) on float16 across the 65536 rollover boundary:
+    # flat indices [65534, 65535, 65536, 65537] map to:
+    #   arg0 = [65534, 65535, 0, 1], arg1 = [0, 0, 1, 1]
+    a0, a1 = util._make_exhaustive_chunk(65534, 4, 2, jnp.float16)
+    np.testing.assert_array_equal(
+        a0.view(np.uint16), np.array([65534, 65535, 0, 1], dtype=np.uint16)
+    )
+    np.testing.assert_array_equal(
+        a1.view(np.uint16), np.array([0, 0, 1, 1], dtype=np.uint16)
+    )
+
+    # Aligned binary (nargs=2) fast-path on float16:
+    c0, c1 = util._make_exhaustive_chunk(65536, 2 * 65536, 2, jnp.float16)
+    self.assertEqual(c0.shape, (2 * 65536,))
+    self.assertEqual(c1.shape, (2 * 65536,))
+    np.testing.assert_array_equal(
+        c0.view(np.uint16)[:4], np.array([0, 1, 2, 3], dtype=np.uint16)
+    )
+    np.testing.assert_array_equal(
+        c1.view(np.uint16)[[0, 65535, 65536, 131071]],
+        np.array([1, 1, 2, 2], dtype=np.uint16),
+    )
+
+    # Ternary (nargs=3) on bfloat16 at flat index (1) + (2 << 16) + (3 << 32):
+    flat_idx = 1 + (2 << 16) + (3 << 32)
+    b0, b1, b2 = util._make_exhaustive_chunk(flat_idx, 1, 3, jnp.bfloat16)
+    self.assertEqual(int(b0.view(np.uint16)[0]), 1)
+    self.assertEqual(int(b1.view(np.uint16)[0]), 2)
+    self.assertEqual(int(b2.view(np.uint16)[0]), 3)
+
+  def test_check_nary_precision_signed_zero_mismatch(self):
+    # Verify that a signed-zero mismatch in a binary function is detected.
+    def bad_binary_neg_zero(x, y):
+      return jnp.zeros_like(x)
+
+    with self.assertRaises(AssertionError) as ctx:
+      util.check_nary_precision(
+          self,
+          bad_binary_neg_zero,
+          lambda x, y: np.full_like(x, -0.0),
+          lambda x, y: mpmath.mpf(0.0),
+          jnp.float16,
+          nargs=2,
+          max_samples=1000,
+      )
+    self.assertIn("Signed zero mismatch", str(ctx.exception))
+    self.assertIn("inputs =", str(ctx.exception))
+
+  def test_format_worst_cases_nary(self):
+    top_k = [(1.5, (1.0, 2.0), 3.0, 3.0)]
+    out = util._format_worst_cases(
+        top_k,
+        np.dtype("u4"),
+        lambda x, y: x + y,
+        jnp.float32,
+    )
+    self.assertIn("Inputs", out)
+    self.assertIn("(1, 2)", out)
+
+  def test_resolve_ignore_inputs_callable(self):
+    pred = lambda x, y: x == y
+    rule = [("cpu", {jnp.float32: pred})]
+    resolved = util.resolve_ignore_inputs(rule, "cpu", jnp.float32)
+    self.assertIs(resolved, pred)
+    self.assertIsNone(util.resolve_ignore_inputs(None, "cpu", jnp.float32))
+
+  def test_resolve_ignore_inputs_sequence(self):
+    rule = [("cpu", {jnp.float32: [0x1234]})]
+    pred = util.resolve_ignore_inputs(rule, "cpu", jnp.float32)
+    self.assertTrue(callable(pred))
+    self.assertTrue(pred(np.array([np.uint32(0x1234).view(np.float32)])))
+    self.assertFalse(pred(np.array([np.uint32(0x5678).view(np.float32)])))
+
+  def test_resolve_ignore_inputs_non_callable_error(self):
+    rule = [("cpu", {jnp.float32: 1234})]
+    with self.assertRaises(TypeError):
+      util.resolve_ignore_inputs(rule, "cpu", jnp.float32)
+
+  def test_check_nary_precision_with_ignore_inputs(self):
+    # Test that an intentionally inaccurate input region is ignored via callable mask.
+    def faulty_add(x, y):
+      return jnp.where(x > 0.0, x + y + 10.0, x + y)
+
+    # Without ignore_inputs, it fails.
+    with self.assertRaises(AssertionError):
+      util.check_nary_precision(
+          self,
+          faulty_add,
+          np.add,
+          lambda x, y: x + y,
+          jnp.float32,
+          nargs=2,
+          bounds=0.5,
+          max_samples=1000,
+      )
+
+    # With ignore_inputs callable predicate, it passes.
+    util.check_nary_precision(
+        self,
+        faulty_add,
+        np.add,
+        lambda x, y: x + y,
+        jnp.float32,
+        nargs=2,
+        bounds=0.5,
+        ignore_inputs=[
+            (["cpu", "gpu", "tpu"], {jnp.float32: lambda x, y: x > 0.0})
+        ],
+        max_samples=1000,
+    )
+
+  def test_check_precision_omitted_mpmath_fn(self):
+
+    # Verify that check_unary_precision and check_nary_precision succeed when
+    # mpmath_fn is omitted (falling back to ref_fn across all dtypes).
+    util.check_unary_precision(
+        self,
+        jnp.negative,
+        np.negative,
+        dtype=jnp.float64,
+        bounds=0.5,
+        max_samples=100,
+    )
+    util.check_unary_precision(
+        self,
+        jnp.negative,
+        np.negative,
+        jnp.float64,
+        bounds=0.5,
+        max_samples=100,
+    )
+    util.check_nary_precision(
+        self,
+        jnp.add,
+        np.add,
+        dtype=jnp.float64,
+        nargs=2,
+        bounds=0.5,
+        max_samples=100,
+    )
+    util.check_nary_precision(
+        self,
+        jnp.add,
+        np.add,
+        jnp.float64,
+        nargs=2,
+        bounds=0.5,
+        max_samples=100,
+    )
+
+  def test_register_benchmark_nary(self):
+    util.register_benchmark(jnp.add, nargs=2, name="test_add_nary")
 
 
 if __name__ == "__main__":
