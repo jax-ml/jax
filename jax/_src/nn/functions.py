@@ -323,9 +323,14 @@ def elu(x: ArrayLike, alpha: ArrayLike = 1.0) -> Array:
     :func:`selu`
   """
   x_arr = numpy_util.ensure_arraylike("elu", x)
+  # Use `exp(t) - 1` rather than `expm1(t)` on the negative branch. The two are
+  # numerically identical here (for large-negative t both evaluate to -1.0), but
+  # they have different gradients: `expm1`'s JVP rule evaluated `expm1(x) + 1`,
+  # which cancellation-flushes to 0.0 when expm1(x) rounds to -1.0, whereas
+  # `exp`'s JVP rule yields exp(x) directly.
   return jnp.where(x_arr > 0,
                    x_arr,
-                   alpha * jnp.expm1(jnp.where(x_arr > 0, 0., x_arr)))
+                   alpha * (jnp.exp(jnp.where(x_arr > 0, 0., x_arr)) - 1.0))
 
 @api.jit
 def leaky_relu(x: ArrayLike, negative_slope: ArrayLike = 1e-2) -> Array:
