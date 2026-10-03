@@ -225,13 +225,19 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_le(self):          self.binary_check_float0(lambda x, y: x <= y)
   @jtu.skip_on_devices("tpu")
+  def test_le_to(self):       self.binary_check_float0(lambda x, y: x <= y)
+  @jtu.skip_on_devices("tpu")
   def test_gt(self):          self.binary_check_float0(lambda x, y: x > y)
   @jtu.skip_on_devices("tpu")
   def test_lt(self):          self.binary_check_float0(lambda x, y: x < y)
   @jtu.skip_on_devices("tpu")
+  def test_lt_to(self):       self.binary_check_float0(lambda x, y: x < y)
+  @jtu.skip_on_devices("tpu")
   def test_ge(self):          self.binary_check_float0(lambda x, y: x >= y)
   @jtu.skip_on_devices("tpu")
   def test_eq(self):          self.binary_check_float0(lambda x, y: x == y)
+  @jtu.skip_on_devices("tpu")
+  def test_eq_to(self):       self.binary_check_float0(lambda x, y: x == y)
   @jtu.skip_on_devices("tpu")
   def test_ne(self):          self.binary_check_float0(lambda x, y: x != y)
   @jtu.skip_on_devices("tpu")
@@ -301,6 +307,16 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_rsqrt(self):      self.unary_check(lax.rsqrt, lims=[0, 5000.])
   @jtu.skip_on_devices("tpu")
+  def test_cbrt(self):       self.unary_check(lax.cbrt, lims=[0, 5.0])
+  @jtu.skip_on_devices("tpu")
+  def test_tan(self):        self.unary_check(lax.tan, lims=[-1.2, 1.2])
+  @jtu.skip_on_devices("tpu")
+  def test_asin(self):       self.unary_check(lax.asin, lims=[-1, 1])
+  @jtu.skip_on_devices("tpu")
+  def test_acos(self):       self.unary_check(lax.acos, lims=[-1, 1])
+  @jtu.skip_on_devices("tpu")
+  def test_atan(self):       self.unary_check(lax.atan, lims=[-100, 100])
+  @jtu.skip_on_devices("tpu")
   def test_asinh(self):      self.unary_check(lax.asinh, lims=[-100, 100])
   @jtu.skip_on_devices("tpu")
   def test_acosh(self):      self.unary_check(lax.acosh, lims=[-100, 100])
@@ -326,8 +342,30 @@ class JetTest(jtu.JaxTestCase):
   def test_dynamic_update_slice(self): self.unary_check(partial(lax.dynamic_update_slice, start_indices=(1,2), update=np.arange(6.0).reshape(2, 3)))
   @jtu.skip_on_devices("tpu")
   def test_copy(self):       self.unary_check(jnp.array)
-
-
+  @jtu.skip_on_devices("tpu")
+  def test_argmin(self): self.unary_check(lambda x: lax.argmin(x, axis=0, index_dtype=jnp.int32), dtype=jnp.float32)
+  @jtu.skip_on_devices("tpu")
+  def test_argmax(self): self.unary_check(lambda x: lax.argmax(x, axis=0, index_dtype=jnp.int32), dtype=jnp.float32)
+  @jtu.skip_on_devices("tpu")
+  def test_top_k(self):      self.unary_check(lambda x: lax.top_k(x, k=1))
+  @jtu.skip_on_devices("tpu")
+  def test_approx_top_k(self): self.unary_check(lambda x: lax.approx_min_k(x, k=1))
+  @jtu.skip_on_devices("tpu")
+  def test_sort(self):     self.unary_check(lambda x: lax.sort(x, dimension=0))
+  @jtu.skip_on_devices("tpu")
+  def test_clz(self):      self.unary_check_float0(lax.clz, dtype=jnp.int32)
+  @jtu.skip_on_devices("tpu")
+  def test_population_count(self): self.unary_check_float0(lax.population_count, dtype=np.int32)
+  @jtu.skip_on_devices("tpu")
+  def test_mulhi(self):    self.binary_check_float0(lax.mulhi, dtype=np.int32)
+  @jtu.skip_on_devices("tpu")
+  def test_reduce_and(self): self.unary_check_float0(lambda x: lax.reduce_and(x, axes=(0,)), dtype=jnp.bool)
+  @jtu.skip_on_devices("tpu")
+  def test_reduce_or(self): self.unary_check_float0(lambda x: lax.reduce_or(x, axes=(0,)), dtype=jnp.bool)
+  @jtu.skip_on_devices("tpu")
+  def test_reduce_xor(self): self.unary_check_float0(lambda x: lax.reduce_xor(x, axes=(0,)), dtype=jnp.bool)
+  @jtu.skip_on_devices("tpu")
+  def test_nextafter(self):   self.binary_check(lax.nextafter)
   @jtu.skip_on_devices("tpu")
   def test_div(self):         self.binary_check(lambda x, y: x / y, lims=[0.8, 4.0])
   @jtu.skip_on_devices("tpu")
@@ -349,6 +387,14 @@ class JetTest(jtu.JaxTestCase):
   def test_pow(self):         self.binary_check(lambda x, y: x ** y, lims=([0.2, 500], [-500, 500]), finite=False)
   @jtu.skip_on_devices("tpu")
   def test_atan2(self):       self.binary_check(lax.atan2, lims=[-40, 40])
+
+  @jtu.skip_on_devices("tpu")
+  def test_iota(self):
+    f = lambda: lax.iota(jnp.int32, size=5)
+
+    primal_out, series_out = jet(f, (), ())
+    self.assertArraysEqual(primal_out, jnp.arange(5, dtype=jnp.int32))
+    self.assertEqual(series_out, [])
 
   @jtu.skip_on_devices("tpu")
   def test_clamp(self):
@@ -439,6 +485,33 @@ class JetTest(jtu.JaxTestCase):
       return grad(jacfwd(F))(0.)
 
     self.check_jet(h, (0.,), ([1., 2., 3.],), rtol=1e-3)
+
+  @unittest.skipIf(
+    jtu.is_test_rbe() and jtu.is_gil_disabled() and jtu.is_tsan(),
+    "Consumes too much RAM under FT TSAN: b/456211935",
+  )
+  def test_scatter(self):
+    # adapted from test_scatter_add. ensures scatter is called by passing dynamic indices
+    def f2(x, indices, updates):
+      x = x.at[indices].set(updates)
+      return jnp.sum(x**2)
+
+    # without jit, jax bypasses the scatter primitive in this case
+    @jax.jit
+    def h2(eps, x, indices, updates):
+      mu = eps * x
+
+      def F(t):
+        return f2(x + t * mu, indices, updates)
+
+      return jax.grad(jax.jacfwd(F))(0.0)
+
+    eps = jnp.array(0.0)
+    x = jnp.ones(4) * 2
+    indices = jnp.arange(2)
+    updates = jnp.ones(2)
+    h2_partial = partial(h2, x=x, indices=indices, updates=updates)
+    self.check_jet(h2_partial, (eps,), ([1.0, 2.0, 3.0],), rtol=1e-3)
 
   def test_stack(self):
     order = 3
