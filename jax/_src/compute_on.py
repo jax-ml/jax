@@ -52,12 +52,45 @@ def extend_compute_type(c_type: str | None):
     config.compute_on_context_manager.set_local(prev)
 
 
+def _is_locality_domain_compute_type(compute_type: str) -> bool:
+  return compute_type.startswith("gpu_stream:locality_domain:")
+
+
+def _device_memory_aval(aval):
+  return (
+      aval.update(memory_space=core.MemorySpace.Device)
+      if isinstance(aval, core.ShapedArray)
+      else aval
+  )
+
+
 def _check_valid(c_type: str):
   if (c_type not in {'device_host', 'device', 'tpu_sparsecore'}
       and not c_type.startswith("gpu_stream:")):
     raise ValueError(
         f'Invalid compute type {c_type}. Current supported values '
         'are `device_host`, `device`, `tpu_sparsecore`, and `gpu_stream:#`.')
+  if c_type.startswith("gpu_stream:"):
+    stream_annotation = c_type.split(":", 1)[1]
+    if stream_annotation.startswith("locality_domain"):
+      prefix = "locality_domain:"
+      if not stream_annotation.startswith(prefix):
+        raise ValueError(
+            "Invalid locality-domain stream annotation: expected "
+            f"`gpu_stream:{prefix}<d>`, got `{c_type}`.")
+      domain_id = stream_annotation[len(prefix):]
+      if not domain_id or any(c < "0" or c > "9" for c in domain_id):
+        raise ValueError(
+            "Invalid locality-domain stream annotation: domain id must be a "
+            f"nonempty unsigned decimal integer, got `{domain_id}`.")
+      normalized_domain_id = domain_id.lstrip("0") or "0"
+      max_uint64 = "18446744073709551615"
+      if (len(normalized_domain_id) > len(max_uint64)
+          or (len(normalized_domain_id) == len(max_uint64)
+              and normalized_domain_id > max_uint64)):
+        raise ValueError(
+            "Invalid locality-domain stream annotation: domain id is out of "
+            f"uint64 range, got `{domain_id}`.")
 
 
 def compute_on(f=None, *, compute_type, out_memory_spaces,
@@ -79,9 +112,19 @@ def _compute_on(f, *, compute_type, out_memory_spaces, compiler_options):
     dbg = debug_info('compute_on', f, args, kwargs)
     args_flat, in_tree = tracing_registry.flatten((args, kwargs))
     in_avals = tuple(core.shaped_abstractify(x) for x in args_flat)
-    with extend_compute_type(compute_type):
+    # Locality-domain execution is represented by the non-inlineable call
+    # boundary emitted below. Propagating the annotation into the body would
+    # create nested locality annotations, which XLA currently rejects.
+    is_locality_domain = _is_locality_domain_compute_type(compute_type)
+    body_compute_type = None if is_locality_domain else compute_type
+    if is_locality_domain:
+      body_in_avals = tuple(_device_memory_aval(aval) for aval in in_avals)
+    else:
+      body_in_avals = in_avals
+
+    with extend_compute_type(body_compute_type):
       jaxpr, out_avals = pe.trace_to_jaxpr(
-          f, ft.treedef_args_to_ft(in_tree, in_avals), dbg)
+          f, ft.treedef_args_to_ft(in_tree, body_in_avals), dbg)
       out_tree = out_avals.tree
       if any(isinstance(c, core.Tracer) for c in jaxpr.consts):
         jaxpr, consts = pe.separate_consts(jaxpr)
@@ -147,7 +190,9 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
 
   if compute_type.startswith("gpu_stream:"):
     dict_attr = {
-        "_xla_stream_annotation": ir.StringAttr.get(compute_type.split(":")[1]),
+        "_xla_stream_annotation": ir.StringAttr.get(
+            compute_type.split(":", 1)[1]
+        ),
         "inlineable": ir.StringAttr.get("false"),
     }
   else:
@@ -361,9 +406,37 @@ def _transpose_jaxpr(jaxpr, in_tree, in_avals, specs):
 
 def _compute_on_transpose(cts_in, *args, jaxpr, compute_type,
                           out_memory_spaces, compiler_options_json):
+  is_locality_domain = _is_locality_domain_compute_type(compute_type)
+  if is_locality_domain:
+    # The outlined locality computation uses generic device avals internally,
+    # while its outputs can live in a locality-domain memory space.
+    # Normalize incoming cotangents back to the inner computation's device
+    # memory type before transposing the body Jaxpr.
+    cts_in = tuple(
+        ct
+        if isinstance(ct, ad.Zero)
+        or core.typeof(ct).memory_space == core.MemorySpace.Device
+        else dispatch.device_put_p.bind(
+            ct,
+            devices=(core.MemorySpace.Device,),
+            srcs=(None,),
+            copy_semantics=(dispatch.ArrayCopySemantics.REUSE_INPUT,),
+        )[0]
+        for ct in cts_in
+    )
   primals_ctrefs, specs = ad.project_accums(args)
+  if is_locality_domain:
+    # Inner backward rules produce generic-device cotangents. Use matching
+    # temporary accumulator types, then let the outer compute_on_p result
+    # memory spaces below restore each argument's locality placement.
+    specs = tuple(
+        (accum_type, _device_memory_aval(aval))
+        for accum_type, aval in specs
+    )
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
   in_avals = tuple(core.typeof(x) for x in in_flat)
+  if is_locality_domain:
+    in_avals = tuple(_device_memory_aval(aval) for aval in in_avals)
   trans_jaxpr, out_tree = _transpose_jaxpr(jaxpr, in_tree, in_avals, specs)
   cts_out_, logs_ = tree_unflatten(out_tree, trans_jaxpr.out_avals)
   arg_spaces = [x.aval.memory_space if isinstance(x, ad.GradAccum)  # type: ignore

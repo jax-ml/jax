@@ -555,6 +555,7 @@ pytype_strict_library(
         ":flattree",
         ":frozen_dict",
         ":layout",
+        ":localization",
         ":mesh",
         ":named_sharding",
         ":partition_spec",
@@ -1277,6 +1278,12 @@ pytype_strict_library(
         ":xla_metadata",
         "//jax/_src/lib",
     ],
+)
+
+pytype_strict_library(
+    name = "localization",
+    srcs = ["localization.py"],
+    type_checking = "pyrefly",
 )
 
 pytype_strict_library(
