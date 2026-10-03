@@ -70,8 +70,14 @@ def _rocm_wheel_rpaths():
     # `_rocm_sdk_core/lib` holds the non-arch runtime libs; `_rocm_sdk_libraries
     # [...]/lib` holds the math libs + per-arch kernel data. site_libs covers the
     # multi-arch + per-family packages; core_libs is the cross-Python/absolute
-    # fallback (package roots only).
-    core_libs = ["_rocm_sdk_core/lib", "_rocm_sdk_libraries/lib"]
+    # fallback (package roots only). `_rocm_sdk_core/lib/rocm_sysdeps/lib` holds
+    # TheRock's bundled system libs (librocm_sysdeps_{drm,drm_amdgpu,numa}),
+    # which the .so files can depend on directly (e.g. via libhsakmt.a).
+    core_libs = [
+        "_rocm_sdk_core/lib",
+        "_rocm_sdk_core/lib/rocm_sysdeps/lib",
+        "_rocm_sdk_libraries/lib",
+    ]
     site_libs = core_libs + [
         "_rocm_sdk_libraries_%s/lib" % f.replace("-", "_")
         for f in _THEROCK_TARGET_FAMILIES
@@ -87,7 +93,9 @@ def _rocm_wheel_rpaths():
     rpaths = [
         # TheRock tarball / extracted /opt/rocm-<ver> layout.
         "-Wl,-rpath,$$ORIGIN/../rocm/lib",
+        "-Wl,-rpath,$$ORIGIN/../rocm/lib/rocm_sysdeps/lib",
         "-Wl,-rpath,$$ORIGIN/../../rocm/lib",
+        "-Wl,-rpath,$$ORIGIN/../../rocm/lib/rocm_sysdeps/lib",
     ]
 
     # Pip layouts at each possible $ORIGIN-to-site depth: same-Python (TheRock
@@ -114,7 +122,10 @@ def _rocm_wheel_rpaths():
 
 # /opt/rocm is the legacy ROCm fallback for the transition period. Keep it last
 # so the wheel's own ROCm paths are always preferred over a system install.
-_WHEEL_RPATHS = _rocm_wheel_rpaths() + ["-Wl,-rpath,/opt/rocm/lib"]
+_WHEEL_RPATHS = _rocm_wheel_rpaths() + [
+    "-Wl,-rpath,/opt/rocm/lib",
+    "-Wl,-rpath,/opt/rocm/lib/rocm_sysdeps/lib",
+]
 
 def _wheel_features():
     return select({
