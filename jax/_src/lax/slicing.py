@@ -3102,10 +3102,10 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
     # tangents for the values in updates.
 
     initial_vals = gather(
-        operand, indices, gather_dnums, slice_sizes)
+        operand, indices, gather_dnums, slice_sizes, mode=mode)
 
     target_vals = gather(
-        val_out, indices, gather_dnums, slice_sizes)
+        val_out, indices, gather_dnums, slice_sizes, mode=mode)
 
     successful_updates = (updates == target_vals)
     retained_values = (initial_vals == target_vals)
@@ -3115,23 +3115,24 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
             lax._zeros(operand), indices,
             lax.select(successful_updates, lax._ones(updates),
                        lax._zeros(updates)),
-            scatter_dnums),
+            scatter_dnums, mode=mode),
         indices,
         gather_dnums,
-        slice_sizes)
+        slice_sizes, mode=mode)
 
     num_refs = gather(
         scatter_add(lax._zeros(operand),
                     indices,
                     lax._ones(updates),
-                    scatter_dnums),
+                    scatter_dnums, mode=mode),
         indices,
         gather_dnums,
-        slice_sizes)
+        slice_sizes, mode=mode)
 
+    safe_num_updates = lax.select(num_updates > 0, num_updates, lax._ones(num_updates))
     updates_normalizer = lax.select(retained_values,
                                     1.0 / (num_updates + 1),
-                                    1.0 / num_updates)
+                                    1.0 / safe_num_updates)
 
     updates_coef = lax.select(successful_updates,
                               updates_normalizer,
@@ -3141,11 +3142,14 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
                                     1.0 / (num_updates + 1),
                                     lax._zeros(num_updates))
 
-    operand_coef = (-1.0 + operand_normalizer) / num_refs
+    safe_num_refs = lax.select(num_refs > 0, num_refs, lax._ones(num_refs))
+    operand_coef = lax.select(num_refs > 0,
+                              (-1.0 + operand_normalizer) / safe_num_refs,
+                              lax._zeros(num_refs))
 
     # This can be simplified once scatter has transpose implemented
     target_tangents = gather(
-        g_operand, indices, gather_dnums, slice_sizes)
+        g_operand, indices, gather_dnums, slice_sizes, mode=mode)
 
     tangent_updates = (target_tangents * operand_coef +
                        g_updates * updates_coef)
