@@ -2126,6 +2126,69 @@ class PallasCallDMATest(ptu.PallasTPUTest):
       x = jnp.full(shape, i, dtype=jnp.int32)
       np.testing.assert_array_equal(fn(x), x)
 
+  @parameterized.product(
+      order=('wait_then_start', 'start_then_wait'),
+      reschedule_dma_dones=(False, True),
+  )
+  def test_reschedule_dma_dones_preserves_stores(
+      self, order, reschedule_dma_dones
+  ):
+    if (
+        reschedule_dma_dones
+        and order == 'wait_then_start'
+        and not jtu.is_libtpu_at_least('0.0.50')
+    ):
+      self.skipTest('Test requires libtpu >= 0.0.50')
+
+    m, n = 32, 128
+    factors = (2.0, 3.0, 4.0, 5.0, 7.0, 9.0)
+
+    def kernel(x_ref, out_ref, buf, sem):
+      x = x_ref[...]
+
+      def copy_out(half, k):
+        return pltpu.make_async_copy(buf.at[half], out_ref.at[k], sem.at[half])
+
+      buf[0] = x * 7.0
+      buf[1] = x * 9.0
+      in_flight = [copy_out(0, 4), None]
+      in_flight[0].start()
+      for k in range(4):
+        h = k % 2
+        other = copy_out(1 - h, 5 if k == 0 else k - 1)
+        if order == 'wait_then_start':
+          in_flight[h].wait()
+          other.start()
+        else:
+          other.start()
+          in_flight[h].wait()
+        in_flight[1 - h] = other
+        buf[h] = x * float(k + 2)
+      last = copy_out(1, 3)
+      last.start()
+      in_flight[0].wait()
+      last.wait()
+
+    params = (
+        pltpu.CompilerParams(flags={'XLA_TPU_RESCHEDULE_DMA_DONES': True})
+        if reschedule_dma_dones
+        else pltpu.CompilerParams()
+    )
+    x = (jnp.arange(m * n, dtype=jnp.float32).reshape(m, n) % 13.0) + 1.0
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((6, m, n), jnp.float32),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        scratch_shapes=[
+            pltpu.VMEM((2, m, n), jnp.float32),
+            pltpu.SemaphoreType.DMA((2,)),
+        ],
+        compiler_params=params,
+    )(x)
+    expected = jnp.stack([x * f for f in factors])
+    np.testing.assert_array_equal(out, expected)
+
 
 class PallasCallDMAInterpretTest(PallasCallDMATest):
   INTERPRET = True
