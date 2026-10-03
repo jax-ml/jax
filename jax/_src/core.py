@@ -106,6 +106,7 @@ class Jaxpr:
       "_effects",
       "_debug_info",
       "_is_high",
+      "_transpose_only",
       "_consts",
   ]
   _all_invars: list[Var]
@@ -114,6 +115,7 @@ class Jaxpr:
   _effects: Effects
   _debug_info: DebugInfo
   _is_high: bool
+  _transpose_only: bool
   _consts: list[Any]
 
   @property
@@ -168,6 +170,10 @@ class Jaxpr:
     return self._is_high
 
   @property
+  def transpose_only(self) -> bool:
+    return self._transpose_only
+
+  @property
   def in_avals(self):
     return [v.aval for v in self.invars]
 
@@ -188,6 +194,8 @@ class Jaxpr:
       debug_info: DebugInfo = None,  # pyrefly: ignore[bad-function-definition]
       is_high: bool = False,
       consts: Sequence[Any] | None = None,
+      *,
+      transpose_only: bool = False,
   ):
     if isinstance(constvars, Jaxpr):
       # Legacy ClosedJaxpr(jaxpr, consts) construction: share `jaxpr`'s
@@ -207,6 +215,7 @@ class Jaxpr:
       self._debug_info = _shift_arg_names(jaxpr._debug_info,
                                           len(jaxpr._consts) - len(consts))
       self._is_high = jaxpr._is_high
+      self._transpose_only = jaxpr._transpose_only
       self._consts = list(consts)
       return
     assert invars is not None and outvars is not None and eqns is not None
@@ -228,6 +237,7 @@ class Jaxpr:
     config.enable_checks.value and self._debug_info.assert_arg_names(len(self.invars))
     config.enable_checks.value and self._debug_info.assert_result_paths(len(outvars))
     self._is_high = is_high
+    self._transpose_only = transpose_only
 
   def __str__(self):
     return str(self.pretty_print())
@@ -260,6 +270,7 @@ class Jaxpr:
     new._debug_info = _shift_arg_names(self._debug_info,
                                        len(self._consts) - len(consts))
     new._is_high = self._is_high
+    new._transpose_only = self._transpose_only
     new._consts = consts
     return new
 
@@ -294,6 +305,7 @@ class Jaxpr:
         debug_info=kwargs.pop("debug_info", debug_default),
         is_high=kwargs.pop("is_high", self.is_high),
         consts=kwargs.pop("consts", consts_default),
+        transpose_only=kwargs.pop("transpose_only", self.transpose_only),
     )
     if kwargs:
       raise ValueError(f"Unknown keyword arguments: {kwargs}")
@@ -779,6 +791,9 @@ class Primitive:
       if isinstance(v, Jaxpr) and v.is_high:
         return True
     return False
+
+  def transpose_only(self, *avals, **params) -> bool:
+    return any(j.transpose_only for j in jaxprs_in_params(params))
 
 
 def _effect_free_abstract_eval(abstract_eval):
