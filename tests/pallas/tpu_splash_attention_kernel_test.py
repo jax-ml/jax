@@ -837,5 +837,51 @@ class SplashAttentionTest(PallasBaseTest):
     np.testing.assert_array_equal(shrink_out, no_shrink_out)
 
 
+class SplashAttentionPrecisionTest(jtu.JaxTestCase):
+
+  def test_splash_attention_dsinks_precision(self):
+    """Test that dsinks maintains high precision in bfloat16 (issue #40128)."""
+    H, D, S = 4, 128, 8192
+    rng = np.random.default_rng(0)
+    sinks = jnp.asarray(rng.normal(0, 1, (H,)), jnp.float32)
+    lse = jnp.full((H, S), np.log(S), jnp.float32)
+    o = jnp.asarray(rng.normal(0, 1, (H, S, D)), jnp.bfloat16)
+    do = jnp.asarray(rng.normal(0, 1, (H, S, D)), jnp.bfloat16)
+
+    # 1. Exact float32 analytical reference
+    w = jnp.exp(sinks[..., None].astype(jnp.float32) - lse.astype(jnp.float32))
+    di = jnp.einsum(
+        "hsd,hsd->hs", o.astype(jnp.float32), do.astype(jnp.float32)
+    )
+    exact = -jnp.sum(w * di, axis=-1)
+
+    # 2. Directly call _attention_reference_custom_bwd on actual runtime tensors
+    mask = jnp.ones((S, S), dtype=jnp.bool_)
+    q = jnp.zeros((S, D), dtype=jnp.bfloat16)
+    k = jnp.zeros((S, D), dtype=jnp.bfloat16)
+    v = jnp.zeros((S, D), dtype=jnp.bfloat16)
+
+    dsinks_actual = []
+    for h in range(H):
+      res = (mask, q, k, v, None, sinks[h], o[h], lse[h])
+      _, _, _, _, _, dsink_h = splash._attention_reference_custom_bwd(
+          mask_value=splash.DEFAULT_MASK_VALUE,
+          save_residuals=False,
+          custom_type="flash",
+          attn_logits_soft_cap=None,
+          res=res,
+          do=do[h],
+      )
+      dsinks_actual.append(dsink_h)
+    dsinks_actual = jnp.stack(dsinks_actual)
+
+    # 3. Verify actual dsinks achieves < 0.5% relative error
+    for h in range(H):
+      r = float(exact[h])
+      f = float(dsinks_actual[h])
+      rel_err = abs(f - r) / abs(r)
+      self.assertLess(rel_err, 0.005)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
