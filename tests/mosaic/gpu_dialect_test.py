@@ -2651,21 +2651,141 @@ class DialectLoweringTest(MosaicGpuTest):
     ]
     self.assertEqual(reassociation, [[0], [1, 2], [3, 4]])
 
-  def test_optimized_gmem_transfers_are_not_supported(self):
-    def body(ctx, input, output, scratch):
+  def test_optimized_gmem_transfers_simulator(self):
+    fa = mgpu.fragmented_array
+
+    def make_row_major_layout(lane_rows: int, lane_cols: int, vec_len: int = 2):
+      return fa.TiledLayout(
+          fa.Tiling((
+              (4 * lane_rows, lane_cols * vec_len),
+              (lane_rows, lane_cols * vec_len),
+              (vec_len,),
+          )),
+          warp_dims=(-5,),
+          lane_dims=(-3, -2),
+          vector_dim=-1,
+          _check_canonical=False,
+      ).canonicalize()
+
+    with self.kernel() as launch_ctx:
+      bf16 = ir.BF16Type.get()
+      f32 = ir.F32Type.get()
+      i8 = ir.IntegerType.get_signless(8)
+
+      ref_bf16_128x64 = llvm.mlir_undef(ir.MemRefType.get((128, 64), bf16))
+      ref_f32_128x64 = llvm.mlir_undef(ir.MemRefType.get((128, 64), f32))
+      ref_i8_128x64 = llvm.mlir_undef(ir.MemRefType.get((128, 64), i8))
+
+      # 1. (1, 32), (2, 16), (4, 8) layouts with bf16 (vec=2, 4B/thread)
+      # succeed for both load_untiled and store_untiled with optimized=True.
+      for lane_rows, lane_cols in ((1, 32), (2, 16), (4, 8)):
+        layout = make_row_major_layout(lane_rows, lane_cols, vec_len=2)
+        arr = fa.FragmentedArray.load_untiled(
+            ref_bf16_128x64, layout=layout, optimized=True
+        )
+        arr.store_untiled(ref_bf16_128x64, optimized=True)
+
+      # 2. WGMMA_LAYOUT and TCGEN05_LAYOUT ((8, 4)) with f32 (vec=2, 8B/thread)
+      # succeed for both load_untiled(optimized=True) and store_untiled(optimized=True).
+      for layout in (fa.WGMMA_LAYOUT, fa.TCGEN05_LAYOUT):
+        arr = fa.FragmentedArray.load_untiled(
+            ref_f32_128x64, layout=layout, optimized=True
+        )
+        arr.store_untiled(ref_f32_128x64, optimized=True)
+
+      # 3. WGMMA_LAYOUT and TCGEN05_LAYOUT ((8, 4)) with bf16 (vec=2, 4B/thread)
+      # on shape (128, 64) only cover 16B/row (< 32B sector):
+      # - both load_untiled(optimized=True) and store_untiled(optimized=True)
+      #   raise TransferPlanDerivationError.
+      # - optimized=False succeeds.
+      for layout in (fa.WGMMA_LAYOUT, fa.TCGEN05_LAYOUT):
+        with self.assertRaises(fa.TransferPlanDerivationError):
+          fa.FragmentedArray.load_untiled(
+              ref_bf16_128x64, layout=layout, optimized=True
+          )
+        arr = fa.FragmentedArray.load_untiled(
+            ref_bf16_128x64, layout=layout, optimized=False
+        )
+        with self.assertRaises(fa.TransferPlanDerivationError):
+          arr.store_untiled(ref_bf16_128x64, optimized=True)
+        arr.store_untiled(ref_bf16_128x64, optimized=False)
+
+      # 4. TMEM_NATIVE_LAYOUT ((32, 1)) with bf16 (vec=2, 4B/thread) only
+      # covers 16B/row even after 4x LLVM vector merging (< 32B sector), so
+      # both load_untiled(optimized=True) and store_untiled(optimized=True)
+      # raise TransferPlanDerivationError.
+      with self.assertRaises(fa.TransferPlanDerivationError):
+        fa.FragmentedArray.load_untiled(
+            ref_bf16_128x64, layout=fa.TMEM_NATIVE_LAYOUT, optimized=True
+        )
+      arr_tmem_64 = fa.FragmentedArray.load_untiled(
+          ref_bf16_128x64, layout=fa.TMEM_NATIVE_LAYOUT, optimized=False
+      )
+      with self.assertRaises(fa.TransferPlanDerivationError):
+        arr_tmem_64.store_untiled(ref_bf16_128x64, optimized=True)
+
+      # 5. Sub-32-bit transfers ((1, 32) with bf16 vec=1 or uint8 vec=1) raise
+      # TransferPlanDerivationError.
+      layout_1x32_vec1 = make_row_major_layout(1, 32, vec_len=1)
+      with self.assertRaises(fa.TransferPlanDerivationError):
+        fa.FragmentedArray.load_untiled(
+            ref_bf16_128x64, layout=layout_1x32_vec1, optimized=True
+        )
+      with self.assertRaises(fa.TransferPlanDerivationError):
+        fa.FragmentedArray.load_untiled(
+            ref_i8_128x64,
+            layout=layout_1x32_vec1,
+            is_signed=False,
+            optimized=True,
+        )
+
+      # 6. Non-32B-aligned GMEM row stride raises TransferPlanDerivationError.
+      unaligned_ref = mgpu_utils.memref_slice(
+          llvm.mlir_undef(ir.MemRefType.get((128, 72), bf16)),
+          (slice(None), slice(0, 64)),
+      )
+      with self.assertRaises(fa.TransferPlanDerivationError):
+        fa.FragmentedArray.load_untiled(
+            unaligned_ref,
+            layout=make_row_major_layout(4, 8, vec_len=2),
+            optimized=True,
+        )
+
+      # 7. Verify transfer_tiled on GMEM for WGMMA_LAYOUT yields col_tile steps
+      # consecutively before stepping to the second 8-row subtile.
+      tiled_gmem_ref = mgpu_utils.memref_reshape(
+          ref_bf16_128x64, (1, 1, 128, 64)
+      )
+      transfers = list(
+          fa.FragmentedArray.transfer_tiled(
+              tiled_gmem_ref,
+              swizzle=16,
+              layout=fa.WGMMA_LAYOUT,
+              shape=(128, 64),
+              optimized=False,
+          )
+      )
+      base_indices = [get_base_idx() for _, _, get_base_idx, _ in transfers]
+      expected_col_tiles = [(0, c * 8) for c in range(8)] + [
+          (8, c * 8) for c in range(8)
+      ]
+      self.assertEqual(base_indices[:16], expected_col_tiles)
+
+    # 8. Verify dialect lowering raises TransferPlanDerivationError when
+    # optimized=True on uncoalesced GMEM load/store.
+    shape = (128, 64)
+    dtype = jnp.bfloat16
+
+    def uncoalesced_load_body(ctx, input_ref, output_ref, scratch):
       del ctx, scratch
-      reg = mgpu.dialect.vector_load(input, optimized=True)
+      reg = mgpu.dialect.vector_load(input_ref, optimized=True)
       layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
       reg = mgpu.dialect.layout_cast(reg, layout)
-      mgpu.dialect.vector_store(reg, output, optimized=False)  # prevent DCE
+      mgpu.dialect.vector_store(reg, output_ref, optimized=False)
 
-    shape = (128, 128)
-    dtype = jnp.bfloat16
-    with self.assertRaisesRegex(
-        NotImplementedError, "Only optimized transfers to SMEM supported"
-    ):
+    with self.assertRaises(fa.TransferPlanDerivationError):
       mgpu.as_gpu_kernel(
-          body,
+          uncoalesced_load_body,
           grid=(1, 1, 1),
           block=(128, 1, 1),
           in_shape=jax.ShapeDtypeStruct(shape, dtype),
