@@ -219,5 +219,107 @@ def test_custom_root_grad_eager(state):
     jax.block_until_ready(fn(arg))
 
 
+def _trace_grad(state, loss, *args):
+  fn = jax.jit(jax.grad(loss))
+  while state:
+    _ = fn.trace(*args).lojax
+    clear_caches(state)
+
+
+def _fem_compliance(n):
+  """Nested-scan FEM assembly, per-row constraints, dense solve."""
+  n_dof = (n + 1) ** 2
+  # Element stiffness matrix [p, p + 1, q, q + 1], q = p + n + 1.
+  ke_ref = jnp.array([[4., -1., -1., -2.], [-1., 4., -2., -1.],
+                      [-1., -2., 4., -1.], [-2., -1., -1., 4.]]) / 6
+
+  def add_slice(x, start, update):
+    old = jax.lax.dynamic_slice(x, start, update.shape)
+    return jax.lax.dynamic_update_slice(x, old + update, start)
+
+  def compliance(theta):
+    def element_row(carry, row):
+      def element(carry, elem):
+        (K, f), j, t = carry, *elem
+        blocks = ((row[0] * (n + 1) + j, 0), ((row[0] + 1) * (n + 1) + j, 2))
+        for r, a in blocks:
+          for c, b in blocks:
+            K = add_slice(K, (r, c), jnp.exp(t) * ke_ref[a:a + 2, b:b + 2])
+          f = add_slice(f, (r,), jnp.full(2, 0.25 / n**2))
+        return (K, f), None
+      return jax.lax.scan(element, carry, (jnp.arange(n), row[1]))[0], None
+
+    init = (jnp.zeros((n_dof, n_dof)), jnp.zeros(n_dof))
+    K, f = jax.lax.scan(element_row, init, (jnp.arange(n), theta))[0]
+    for i in range(0, n_dof, n + 1):
+      K = K.at[i, :].set(0.0).at[:, i].set(0.0).at[i, i].set(1.0)
+      f = f.at[i].set(0.0)
+    C = jnp.zeros((n, n_dof))
+    for k in range(1, n + 1):
+      C = C.at[k - 1, k].set(1.0).at[k - 1, n * (n + 1) + k].set(-1.0)
+    A = jnp.block([[K, C.T], [C, jnp.zeros((n, n))]])
+    u = jnp.linalg.solve(A, jnp.concatenate([f, jnp.zeros(n)]))
+    return f @ u[:n_dof]
+  return compliance
+
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+@google_benchmark.option.arg(4)
+@google_benchmark.option.arg(16)
+@google_benchmark.option.arg(32)
+def test_fem_assembly_constrained_grad_trace(state):
+  n = state.range(0)
+  theta = jax.ShapeDtypeStruct((n, n), np.float32)
+  _trace_grad(state, _fem_compliance(n), theta)
+
+
+def _galerkin_rom_loss(n_steps, dt=1e-2):
+  """Einsums interleaved with nonlinear ops."""
+  def loss(params, a):
+    phi, w, u1, u2, u3, core = params
+
+    def step(a, _):
+      u = jnp.einsum("qn,bn->bq", phi, a)
+      proj = jnp.einsum("q,qn,bq->bn", w, phi, jnp.tanh(u) * u)
+      triad = jnp.einsum("ix,jy,kz,xyz,bj,bk->bi", u1, u2, u3, core, a, a)
+      jac = jnp.einsum("q,qi,qj,bq->bij", w, phi, phi, 1 - jnp.tanh(u)**2)
+      damping = jax.nn.softplus(jnp.einsum("bi,bij,bj->b", a, jac, a)
+                                - jnp.einsum("bii->b", jac))
+      return a + dt * (proj + triad - damping[:, None] * a), None
+
+    return jnp.sum(jax.lax.scan(step, a, length=n_steps)[0] ** 2)
+  return loss
+
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def test_einsum_galerkin_rom_grad_trace(state):
+  b, n, q, r = 16, 24, 32, 6
+  spec = lambda *shape: jax.ShapeDtypeStruct(shape, np.float32)
+  params = (spec(q, n), spec(q), spec(n, r), spec(n, r), spec(n, r),
+            spec(r, r, r))
+  _trace_grad(state, _galerkin_rom_loss(100), params, spec(b, n))
+
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+@google_benchmark.option.arg(1)
+@google_benchmark.option.arg(64)
+@google_benchmark.option.arg(512)
+def test_tree_stack_grad_trace(state):
+  leaf = lambda *shape: jax.ShapeDtypeStruct(shape, np.float32)
+  tree = {
+      "mass": leaf(),
+      "state": {"position": leaf(3), "velocity": leaf(3),
+                "modes": (leaf(8, 3), leaf(8, 3))},
+      "fields": [leaf(), leaf(), leaf(4)],
+  }
+
+  def loss(trees):
+    stacked = jax.tree.map(lambda *xs: jnp.stack(xs), *trees)
+    return sum(jnp.sum(x**2) for x in jax.tree.leaves(stacked))
+  _trace_grad(state, loss, [tree] * state.range(0))
+
 if __name__ == "__main__":
   google_benchmark.main()
