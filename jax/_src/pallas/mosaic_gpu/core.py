@@ -67,6 +67,16 @@ ScratchShapeTree = pallas_core.ScratchShapeTree
 SMEM_ALIGNMENT = 1024
 TMEM_COL_ALIGNMENT = 4
 
+# Comparator for sorting that treats NaN as greater than any other value,
+# ensuring NaN appears at the end (matching numpy/jnp.sort default)
+def _nan_aware_lt(a, b):
+  # NaN is considered greater than any non-NaN; if both NaN, treat as equal
+  a_nan = jnp.isnan(a)
+  b_nan = jnp.isnan(b)
+  # When a is NaN and b is not, a is not less than b
+  # When b is NaN and a is not, a is less than b (since NaN is greater)
+  return jnp.where(a_nan | b_nan, a_nan & ~b_nan, a < b)
+
 
 def is_trivial_index(idx, shape) -> bool:
   """Checks if the index selects the entire shape."""
