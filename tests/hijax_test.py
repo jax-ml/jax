@@ -872,6 +872,19 @@ class HijaxTest(jtu.JaxTestCase):
       f(x)
     self.assertEqual(count(), 1)
 
+  @config.numpy_dtype_promotion('standard')
+  def test_jit_cpp_dispatch_with_hijax_intermediates(self):
+    x = jnp.arange(6.).reshape(2, 3)
+
+    @jax.jit
+    def f(x):
+      return from_qarray(to_qarray(x))
+
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      f(x)
+      f(x)
+    self.assertEqual(count(), 1)
+
   def test_scan_mat(self):
     @dataclass(frozen=True)
     class Box:
