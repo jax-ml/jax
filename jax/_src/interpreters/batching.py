@@ -153,7 +153,8 @@ class BatchTracer(Tracer['BatchTrace']):
     elif type(batch_dim) is int:
       aval = core.mapped_aval(aval.shape[batch_dim], batch_dim, aval)
     elif isinstance(aval, hijax.HiType):
-      aval = aval.dec_rank(trace.axis_data.size, batch_dim)  # pyrefly: ignore[bad-argument-type]
+      aval = core.mapped_aval(
+        trace.axis_data.size, batch_dim, aval)  # pyrefly: ignore[bad-argument-type]
     else:
       raise Exception("batch dim should be int or `None`")
 
@@ -423,17 +424,25 @@ def _batch_jaxpr(closed_jaxpr, axis_data, in_batched, instantiate):
           all(isinstance(b, bool) for b in instantiate))
   if isinstance(instantiate, bool):
     instantiate = [instantiate] * len(closed_jaxpr.out_avals)
-  in_axes = [0 if b else None for b in in_batched]
-  out_axes_dest = [0 if inst else zero_if_mapped for inst in instantiate]
+  in_axes = [
+    aval.leading_axis_spec() if b else None
+    for aval, b in zip(closed_jaxpr.in_avals, in_batched)
+  ]
+  out_axes_dest = [
+    aval.leading_axis_spec() if inst else zero_if_mapped
+    for aval, inst in zip(closed_jaxpr.out_avals, instantiate)
+  ]
   return batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest)
 
 def batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest):
   return _batch_jaxpr_axes(closed_jaxpr, axis_data, tuple(in_axes), tuple(out_axes_dest))
 
 @weakref_lru_cache
-def _batch_jaxpr_axes(closed_jaxpr: core.Jaxpr,
-                      axis_data: AxisData,
-                      in_axes: Sequence[int], out_axes_dest: Sequence[int]):
+def _batch_jaxpr_axes(
+    closed_jaxpr: core.Jaxpr,
+    axis_data: AxisData,
+    in_axes: Sequence[MapSpec],
+    out_axes_dest: Sequence[MapSpec]):
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr),
                    debug_info=closed_jaxpr.debug_info)
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
@@ -717,12 +726,22 @@ def spmd_names_insert_pvary(*args):
 
 def matchaxis(axis_data, src, dst, x, sum_match=False):
   try:
-    _ = core.typeof(x)
+    aval = core.typeof(x)
   except TypeError as e:
-    raise TypeError(f"Output from batched function {x!r} with type "
-                    f"{type(x)} is not a valid JAX type") from e
+    raise TypeError(
+      f"Output from batched function {x!r} with type "
+      f"{type(x)} is not a valid JAX type") from e
+
+  if aval.is_high:
+    leading_axis_spec = aval.leading_axis_spec()
+    if type(src) is int and src == 0:
+      src = leading_axis_spec
+    if type(dst) is int and dst == 0:
+      dst = leading_axis_spec
+
   if src == dst or dst is infer:
     return x
+
   elif type(src) == type(dst) == int:
     return moveaxis(x, src, dst)
   elif src is None and type(dst) is int:
