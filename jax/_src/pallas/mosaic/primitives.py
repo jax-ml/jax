@@ -93,17 +93,28 @@ def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
   def _bitcast(x):
     src_bitwidth = dtypes.itemsize_bits(x.dtype)
     dst_bitwidth = dtypes.itemsize_bits(ty)
+    if jnp.issubdtype(x.dtype, jnp.floating):
+      x = jax.lax.bitcast_convert_type(x, jnp.dtype(f"uint{src_bitwidth}"))
+    dst_int_ty = (
+        jnp.dtype(f"uint{dst_bitwidth}")
+        if jnp.issubdtype(ty, jnp.floating)
+        else ty
+    )
     if src_bitwidth < dst_bitwidth:
       *leading, m, n = x.shape
       packing = dst_bitwidth // src_bitwidth
       x = x.reshape(*leading, m // packing, packing, n)
       x = jnp.swapaxes(x, -1, -2)
-      return jax.lax.bitcast_convert_type(x, ty)
-    if src_bitwidth > dst_bitwidth:
-      y = jax.lax.bitcast_convert_type(x, ty)
+      y = jax.lax.bitcast_convert_type(x, dst_int_ty)
+    elif src_bitwidth > dst_bitwidth:
+      y = jax.lax.bitcast_convert_type(x, dst_int_ty)
       *leading, m, n, packing = y.shape
-      return jnp.swapaxes(y, -1, -2).reshape(*leading, m * packing, n)
-    return jax.lax.bitcast_convert_type(x, ty)
+      y = jnp.swapaxes(y, -1, -2).reshape(*leading, m * packing, n)
+    else:
+      y = jax.lax.bitcast_convert_type(x, dst_int_ty)
+    if y.dtype != ty:
+      y = jax.lax.bitcast_convert_type(y, ty)
+    return y
 
   return mlir.lower_fun(_bitcast, multiple_results=False)(ctx, x)
 
