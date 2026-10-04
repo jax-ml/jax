@@ -22,6 +22,7 @@ import textwrap
 import traceback
 from typing import Any
 import unittest
+from unittest import mock
 import numpy as np
 
 from absl.testing import absltest, parameterized
@@ -33,6 +34,7 @@ from jax import typeof
 from jax._src import api
 from jax._src import config
 from jax._src import core
+from jax._src import pjit
 from jax._src import state
 from jax._src.ad_checkpoint import saved_residuals
 from jax.ad_checkpoint import checkpoint_name_fwd
@@ -871,6 +873,19 @@ class HijaxTest(jtu.JaxTestCase):
       f(x)
       f(x)
     self.assertEqual(count(), 1)
+
+  def test_jit_cpp_dispatch_with_hijax_intermediates(self):
+    # The inputs and outputs are lojax and only intermediates are hijax, so
+    # after the first call jit should dispatch from C++ without Python.
+    @jax.jit
+    def f(x):
+      return from_qarray(to_qarray(x))
+
+    x = jnp.arange(6.).reshape(2, 3) + 1.
+    f(x)
+    with mock.patch.object(pjit, '_run_python_pjit',
+                           side_effect=AssertionError('Python dispatch')):
+      f(x)
 
   def test_scan_mat(self):
     @dataclass(frozen=True)

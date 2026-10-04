@@ -134,13 +134,20 @@ def _run_python_pjit(p, args_flat, fun: Callable, args, kwargs):
   for arg in args_flat:
     dispatch.check_arg(arg)
 
+  jaxpr = p.params['jaxpr']
   try:
     if (core.trace_state_clean() and not config.debug_key_reuse.value
-        and not p.params['jaxpr'].is_high):
+        and not any(a.is_high for a in (*jaxpr.in_avals, *jaxpr.out_avals))):
+      params = p.params
+      if jaxpr.is_high:
+        # Only intermediates are hijax. Lower to lojax here so that we compile
+        # directly, which lets the C++ dispatch path call the executable.
+        params = dict(params, jaxpr=pe.lower_jaxpr2(jaxpr))
+        jaxpr = params['jaxpr']
       args_flat = map(core.full_lower, args_flat)
       core.check_eval_args(args_flat)
       out_flat, compiled, profiler, const_args = _pjit_call_impl_python(
-          *args_flat, **p.params)
+          *args_flat, **params)
     else:
       out_flat = jit_p.bind(*args_flat, **p.params)
       compiled = None
@@ -180,7 +187,7 @@ def _run_python_pjit(p, args_flat, fun: Callable, args, kwargs):
 
   outs = tree_unflatten(p.out_tree, out_flat)
   return (outs, out_flat, p.out_tree, args_flat,
-          p.params['jaxpr'], compiled, profiler, const_args)
+          jaxpr, compiled, profiler, const_args)
 
 
 def _need_to_rebuild_with_fdo(pgle_profiler):
