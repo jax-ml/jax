@@ -62,6 +62,7 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.lax.asin` | 128.0 | 0.5 | 128.0 | 128.0 | 128.0 | 128.0 |
 | {func}`~jax.lax.asinh` | 1.5 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.atan` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.lax.atan2` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.atanh` | 1.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.bessel_i0e` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.bessel_i1e` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
@@ -88,8 +89,10 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.lax.square` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.tan` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.tanh` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.numpy.deg2rad` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.numpy.hypot` | 1.5 | 1.5 | 1.0 | 1.0 | 0.5 | 1.0 |
 | {func}`~jax.numpy.log10` | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.numpy.rad2deg` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.numpy.sinc` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.scipy.special.erfcx` | 0.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
 
@@ -106,6 +109,7 @@ Maximum error in units in the last place (ULPs) for `float16`:
 | {func}`~jax.lax.asin` | 1.5 | 1.0 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.asinh` | 1.5 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.atan` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.atan2` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.atanh` | 1.5 | 0.5 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.bessel_i0e` | 1.0 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.bessel_i1e` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
@@ -132,8 +136,10 @@ Maximum error in units in the last place (ULPs) for `float16`:
 | {func}`~jax.lax.square` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.tan` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.tanh` | 0.5 | 0.5 | 1.0 | 1.0 | 0.5 | 0.5 |
+| {func}`~jax.numpy.deg2rad` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.numpy.hypot` | 1.5 | 1.5 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.numpy.log10` | 1.5 | 1.5 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.numpy.rad2deg` | 1.5 | 1.5 | 1.5 | 1.5 | 1.5 | 1.5 |
 | {func}`~jax.numpy.sinc` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.scipy.special.erfcx` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 
@@ -150,6 +156,7 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.asin` | 8388608.0 | 1.5 | 8388607.0 | 8388607.0 | 8388607.0 | 8388607.0 | |
 | {func}`~jax.lax.asinh` | 3.5 | 2.0 | 4034.5 | 2082.5 | 2049.0 | 2049.0 | |
 | {func}`~jax.lax.atan` | 4.0–5.5 | 1.5 | 2.5 | 2.5 | 2.5 | 2.5 | CPU bound depends on AMD vs Intel |
+| {func}`~jax.lax.atan2` | 0.5 | 3.0 | 3.5 | 3.5 | 3.5 | 3.5 | |
 | {func}`~jax.lax.atanh` | 3.0 | 3.5 | 2183.5 | 1061.5 | 1025.5 | 1025.5 | |
 | {func}`~jax.lax.bessel_i0e` | 7.0 | 8.0 | 8.0 | 8.0 | 8.0 | 8.0 | |
 | {func}`~jax.lax.bessel_i1e` | 11.0 | 15.5 | 15.5 | 15.5 | 15.5 | 15.5 | |
@@ -176,8 +183,10 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.square` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | |
 | {func}`~jax.lax.tan` | 0.5 | 3.5 | 6.5 | 7.0 | 5.5 | 5.5 | |
 | {func}`~jax.lax.tanh` | 5.0 | 5.5 | 1365.5 | 92.0 | 1.5 | 1.5 | |
+| {func}`~jax.numpy.deg2rad` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.numpy.hypot` | 1.5 | 2.0 | 3.5 | 3.5 | 2.5 | 2.5 | |
 | {func}`~jax.numpy.log10` | 3.0 | 2.5 | 6213.0 | 57.0 | 3.0 | 3.0 | |
+| {func}`~jax.numpy.rad2deg` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.numpy.sinc` | 2.5 | 3.5 | 4.0 | 4.0 | 4.0 | 3.5 | |
 | {func}`~jax.scipy.special.erfcx` | 64.5 | 65.0 | 214.0 | 155.0 | 125.5 | 125.5 | |
 
@@ -200,6 +209,7 @@ these are empirical bounds.
 | {func}`~jax.lax.asin` | 4503599627370496.0 | 2.5 |
 | {func}`~jax.lax.asinh` | 2.0 | 2.5 |
 | {func}`~jax.lax.atan` | 3.5 | 2.5 |
+| {func}`~jax.lax.atan2` | 0.5 | 1.0 |
 | {func}`~jax.lax.atanh` | 2.5 | 3.5 |
 | {func}`~jax.lax.bessel_i0e` | 7.5 | 7.5 |
 | {func}`~jax.lax.bessel_i1e` | 10.5 | 6.0 |
@@ -224,7 +234,9 @@ these are empirical bounds.
 | {func}`~jax.lax.square` | 0.5 | 0.5 |
 | {func}`~jax.lax.tan` | 0.5 | 2.5 |
 | {func}`~jax.lax.tanh` | 6.5 | 3.5 |
+| {func}`~jax.numpy.deg2rad` | 1.0 | 1.0 |
 | {func}`~jax.numpy.hypot` | 1.5 | 1.5 |
 | {func}`~jax.numpy.log10` | 2.0 | 2.5 |
+| {func}`~jax.numpy.rad2deg` | 1.0 | 1.0 |
 | {func}`~jax.numpy.sinc` | 2.0 | 2.0 |
 | {func}`~jax.scipy.special.erfcx` | 350.0 | 350.0 |
