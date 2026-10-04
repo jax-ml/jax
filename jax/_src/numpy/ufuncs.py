@@ -3984,33 +3984,7 @@ def hypot(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 @custom_jvp
 def _hypot(x1: Array, x2: Array) -> tuple[Array, Array, Array]:
   """Returns (r, x1 / r, x2 / r) where r = hypot(x1, x2)."""
-  # Rescale by a power of two so that (x1 * scale)^2 + (x2 * scale)^2 cannot
-  # overflow or underflow. This avoids the traditional x1 * sqrt(1 + (x2/x1)^2)
-  # formulation, which has larger rounding error from the division and fails on
-  # TPU for |x1| > 2^126 where 1/x1 underflows and flushes to zero.
-  m = maximum(lax.abs(x1), lax.abs(x2))
-  finfo = dtypes.finfo(x1.dtype)
-  k = (finfo.maxexp - 1) // 2 + 2
-  hi = m >= _lax_const(x1, 2.0 ** (k - 2))
-  lo = m <= _lax_const(x1, 2.0 ** ((finfo.minexp + finfo.nmant + 1) // 2))
-  s_down, s_up, one = (
-      _lax_const(x1, 2.0**-k), _lax_const(x1, 2.0**k), _lax_const(x1, 1.0)
-  )
-  # TODO(phawkins): Revert to `scale = _where(...)` and `x1 * scale, x2 * scale`
-  # after fixing XLA's algebraic simplifier not to reassociate `(x * scale)^2`
-  # into `(scale * scale) * (x * x)` when `x` is a compile-time constant (which
-  # overflows `scale^2` to `inf` and produces `inf * 0 = NaN` at `x = 0`).
-  y1 = _where(hi, x1 * s_down, _where(lo, x1 * s_up, x1))
-  y2 = _where(hi, x2 * s_down, _where(lo, x2 * s_up, x2))
-  inv_scale = _where(hi, s_up, _where(lo, s_down, one))
-  r_scaled = lax.sqrt(lax.square(y1) + lax.square(y2))
-  r = _where(
-      isinf(x1) | isinf(x2), _lax_const(x1, np.inf), r_scaled * inv_scale
-  )
-  # The unit vector (x1 / r, x2 / r) is computed from the scaled values, so it
-  # stays accurate when r is near the top of the floating-point range (where
-  # 1 / r is subnormal and flushed on TPU) or overflows to inf.
-  return r, y1 / r_scaled, y2 / r_scaled
+  return lax.hypot(x1, x2)
 
 
 @_hypot.defjvp

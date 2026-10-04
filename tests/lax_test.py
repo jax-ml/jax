@@ -4884,10 +4884,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
           regions_with_inaccuracies.remove(item)
 
     if name == 'absolute':
-      if is_cuda and dtype == np.complex128:
-        regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real')
-      else:
-        regions_with_inaccuracies.clear()
+      regions_with_inaccuracies.clear()
 
     elif name == 'sign':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4')

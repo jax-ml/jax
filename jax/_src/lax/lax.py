@@ -5059,9 +5059,50 @@ def _conj_transpose_rule(t, x, *, input_dtype):
 ad.primitive_jvps[conj_p] = partial(ad.linear_jvp, conj_p)
 ad.primitive_transposes[conj_p] = _conj_transpose_rule
 
+def hypot(x1: Array, x2: Array) -> tuple[Array, Array, Array]:
+  """Returns (r, x1 / r, x2 / r) where r = hypot(x1, x2)."""
+  # Rescale by a power of two so that (x1 * scale)^2 + (x2 * scale)^2 cannot
+  # overflow or underflow. This avoids the traditional x1 * sqrt(1 + (x2/x1)^2)
+  # formulation, which has larger rounding error from the division and fails on
+  # TPU for |x1| > 2^126 where 1/x1 underflows and flushes to zero.
+  a1, a2 = abs(x1), abs(x2)
+  m = max(a1, a2)
+  finfo = dtypes.finfo(x1.dtype)
+  k = (finfo.maxexp - 1) // 2 + 2
+  hi = m >= _const(x1, 2.0 ** (k - 2))
+  lo = m <= _const(x1, 2.0 ** ((finfo.minexp + finfo.nmant + 1) // 2))
+  s_down, s_up, one = (
+      full_like(x1, 2.0**-k), full_like(x1, 2.0**k), full_like(x1, 1.0)
+  )
+  # TODO(phawkins): Revert to `scale = select(...)` and `x1 * scale, x2 * scale`
+  # after fixing XLA's algebraic simplifier not to reassociate `(x * scale)^2`
+  # into `(scale * scale) * (x * x)` when `x` is a compile-time constant (which
+  # overflows `scale^2` to `inf` and produces `inf * 0 = NaN` at `x = 0`).
+  y1 = select(hi, x1 * s_down, select(lo, x1 * s_up, x1))
+  y2 = select(hi, x2 * s_down, select(lo, x2 * s_up, x2))
+  inv_scale = select(hi, s_up, select(lo, s_down, one))
+  r_scaled = sqrt(square(y1) + square(y2))
+  r = r_scaled * inv_scale
+  if dtypes.supports_inf(x1.dtype):
+    inf = full_like(x1, np.inf)
+    r = select((a1 == inf) | (a2 == inf), inf, r)
+  # The unit vector (x1 / r, x2 / r) is computed from the scaled values, so it
+  # stays accurate when r is near the top of the floating-point range (where
+  # 1 / r is subnormal and flushed on TPU) or overflows to inf.
+  return r, y1 / r_scaled, y2 / r_scaled
+
+
+def _abs_lowering(ctx, x):
+  if dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
+    return mlir.lower_fun(
+        lambda x: hypot(real(x), imag(x))[0], multiple_results=False
+    )(ctx, x)
+  return _nary_lower_hlo(hlo.abs, ctx, x)
+
+
 abs_p = unop(_complex_basetype, _signedint | _float | _complex, 'abs',
              supports_narrow_ints=False)
-mlir.register_lowering(abs_p, partial(_nary_lower_hlo, hlo.abs))
+mlir.register_lowering(abs_p, _abs_lowering)
 
 def _abs_jvp_rule(g, ans, x):
   if _iscomplex(x):
