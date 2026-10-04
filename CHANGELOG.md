@@ -72,6 +72,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     ({jax-issue}`#17370`).
 
 * Bug fixes
+  * {func}`jax.scipy.special.rel_entr` no longer cancels `p log(p) - p log(q)`,
+    which lost all precision for `p` near `q` and returned nan for large equal
+    inputs. {func}`jax.scipy.special.kl_div` stays nonnegative on those inputs
+    ({jax-issue}`#41200`).
   * Fixed the gradient of {func}`jax.numpy.ldexp` at `x = 0.0`, which previously
     returned `1.0` instead of `2**n`.
   * Fixed the derivative of {func}`jax.lax.sign` and {func}`jax.numpy.sign` for

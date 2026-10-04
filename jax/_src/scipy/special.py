@@ -1251,13 +1251,34 @@ def rel_entr(
   both_gt_zero_mask = lax.bitwise_and(lax.gt(p, zero), lax.gt(q, zero))
   one_zero_mask = lax.bitwise_and(lax.eq(p, zero), lax.ge(q, zero))
 
+  # Stand-ins keep the log path finite on the masked-off branch.
   safe_p = jnp.where(both_gt_zero_mask, p, 1)
   safe_q = jnp.where(both_gt_zero_mask, q, 1)
-  log_val = lax.sub(_xlogx(safe_p), xlogy(safe_p, safe_q))
+  # p*log(p) - p*log(q) cancels when p is near q, and is nan when both
+  # terms overflow. Match SciPy: p*log1p((p-q)/q) near a ratio of one, and
+  # p*(log(p)-log(q)) when p/q underflows or overflows.
+  ratio = lax.div(safe_p, safe_q)
+  close = lax.bitwise_and(
+      lax.gt(ratio, _lax_const(p, 0.5)), lax.lt(ratio, _lax_const(p, 2))
+  )
+  tiny = _lax_const(p, float(dtypes.finfo(p.dtype).tiny))
+  normal_ratio = lax.bitwise_and(
+      lax.gt(ratio, tiny), lax.lt(ratio, _lax_const(p, np.inf))
+  )
+  log1p_val = lax.mul(
+      safe_p, lax.log1p(lax.div(lax.sub(safe_p, safe_q), safe_q))
+  )
+  log_ratio_val = lax.mul(safe_p, lax.log(ratio))
+  log_diff_val = lax.mul(safe_p, lax.sub(lax.log(safe_p), lax.log(safe_q)))
+  log_val = jnp.where(
+      close, log1p_val, jnp.where(normal_ratio, log_ratio_val, log_diff_val)
+  )
   result = jnp.where(
       both_gt_zero_mask, log_val, jnp.where(one_zero_mask, zero, np.inf)
   )
-  return result
+  # Comparisons with nan are false, so the branches above would return inf.
+  nan_mask = lax.bitwise_or(jnp.isnan(p), jnp.isnan(q))
+  return jnp.where(nan_mask, jnp.full_like(result, jnp.nan), result)
 
 # coefs of (2k)! / B_{2k} where B are bernoulli numbers
 # those numbers are obtained using https://www.wolframalpha.com

@@ -361,6 +361,45 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_special.rel_entr, lsp_special.rel_entr, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.rel_entr, args_maker, rtol=rtol)
 
+  @jtu.run_on_devices("cpu")
+  def testRelEntrCancellation(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41200.
+    # p*log(p) - p*log(q) is 0 for p near q and nan when both terms overflow.
+    with jax.enable_x64():
+      close = lambda: [np.float64(1e15), np.float64(1e15 + 1)]
+      self._CheckAgainstNumpy(
+          osp_special.rel_entr, lsp_special.rel_entr, close,
+          atol=1e-12, rtol=1e-12)
+      self._CompileAndCheck(
+          lsp_special.rel_entr, close, atol=1e-12, rtol=1e-12)
+      self.assertEqual(
+          float(lsp_special.rel_entr(np.float64(1e308), np.float64(1e308))),
+          0.0)
+
+      p = np.float64(9.999999999999978e29)
+      q = np.float64(9.999998737240631e29)
+      got = float(lsp_special.kl_div(p, q))
+      # Was about -1.4e14. KL is nonnegative; SciPy returns about 7.9e15.
+      # The residual subtraction in kl_div is a couple percent off SciPy here.
+      self.assertGreaterEqual(got, 0.0)
+      self.assertAllClose(got, osp_special.kl_div(p, q), rtol=2e-2, atol=0.0)
+      self.assertGreaterEqual(float(jax.jit(lsp_special.kl_div)(p, q)), 0.0)
+
+      # p/q overflows or underflows, but both values stay normal.
+      overflow = lambda: [
+          np.array([1e300, 1e-200, 1e-10]),
+          np.array([1e-10, 1e200, 1e300]),
+      ]
+      self._CheckAgainstNumpy(
+          osp_special.rel_entr, lsp_special.rel_entr, overflow, rtol=1e-12)
+
+    # NaN inputs match SciPy. Comparisons would otherwise select +inf.
+    nan = np.float32(np.nan)
+    one = np.float32(1.0)
+    zero = np.float32(0.0)
+    for args in [(nan, one), (one, nan), (zero, nan), (nan, nan)]:
+      self.assertTrue(np.isnan(np.asarray(lsp_special.rel_entr(*args))))
+
   def testBetaParameterDeprecation(self):
     with self.assertNoWarnings():
       lsp_special.beta(1, 1)
