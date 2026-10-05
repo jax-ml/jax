@@ -17,6 +17,7 @@
 import math
 
 from absl.testing import parameterized
+import jax
 from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp
@@ -45,6 +46,14 @@ def _sinh_cosh_interesting_points(dtype):
   # _common_interesting_points).
   sinh_overflow = math.log(float(jnp.finfo(dtype).max)) + math.log(2.0)
   return [-sinh_overflow, sinh_overflow]
+
+
+def acosh_grad(x):
+  return jax.vmap(jax.grad(jnp.acosh))(x)
+
+
+def asinh_grad(x):
+  return jax.vmap(jax.grad(jnp.asinh))(x)
 
 
 @jtu.thread_unsafe_test_class()
@@ -181,6 +190,33 @@ class AcoshTest(jtu.JaxTestCase):
 
 
 @jtu.thread_unsafe_test_class()
+class AcoshGradTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_acosh_grad_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {bf16: 2.0, f16: 2.0, f32: 5.5, f64: 3.0}),
+        ("gpu", {bf16: 2.0, f16: 2.0, f32: 5.0, f64: 2.5}),
+        (TPU_EUPV1, {f32: 5.0}),
+        ("tpu_v5p", {f32: 5.0}),
+        ("tpu_v6e", {f32: 3.5}),
+        ("tpu_7x", {f32: 3.0}),
+    ]
+    util.check_unary_precision(
+        self,
+        acosh_grad,
+        lambda x: np.reciprocal(np.sqrt(x - 1.0) * np.sqrt(x + 1.0)),
+        lambda x: (
+            mpmath.nan
+            if x < 1
+            else (mpmath.inf if x == 1 else 1 / mpmath.sqrt(x * x - 1))
+        ),
+        dtype,
+        bounds=bounds,
+    )
+
+
+@jtu.thread_unsafe_test_class()
 class AsinhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
@@ -200,6 +236,29 @@ class AsinhTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         interesting_points=[-math.sinh(1.0), math.sinh(1.0)],
+    )
+
+
+@jtu.thread_unsafe_test_class()
+class AsinhGradTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_asinh_grad_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {bf16: 2.0, f16: 2.0, f32: 2.5, f64: 2.0}),
+        ("gpu", {bf16: 2.0, f16: 2.0, f32: 2.5, f64: 2.0}),
+        (TPU_EUPV1, {f16: 1.0, f32: 3.0}),
+        ("tpu_v5p", {f16: 1.0, f32: 3.0}),
+        ("tpu_v6e", {f16: 1.0, f32: 2.5}),
+        ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 2.0}),
+    ]
+    util.check_unary_precision(
+        self,
+        asinh_grad,
+        lambda x: np.reciprocal(np.sqrt(np.square(x) + 1.0)),
+        lambda x: 1 / mpmath.sqrt(x * x + 1),
+        dtype,
+        bounds=bounds,
     )
 
 
@@ -230,7 +289,9 @@ util.register_benchmark(jnp.sinh)
 util.register_benchmark(jnp.cosh)
 util.register_benchmark(jnp.tanh)
 util.register_benchmark(jnp.acosh)
+util.register_benchmark(acosh_grad)
 util.register_benchmark(jnp.asinh)
+util.register_benchmark(asinh_grad)
 util.register_benchmark(jnp.atanh)
 
 
