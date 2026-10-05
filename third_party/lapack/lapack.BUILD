@@ -122,7 +122,7 @@ SCLAUX_SRCS = [
     "SRC/slartgp.f",
     "SRC/slartgs.f",
     "INSTALL/sroundup_lwork.f",
-    "INSTALL/second_INT_ETIME.f",
+    "INSTALL/second_INT_CPU_TIME.f",
 ]
 
 # DZLAUX: Double/complex16 precision auxiliary routines
@@ -205,7 +205,7 @@ DZLAUX_SRCS = [
     "SRC/dlartgs.f",
     "INSTALL/droundup_lwork.f",
     "INSTALL/dlamch.f",
-    "INSTALL/dsecnd_INT_ETIME.f",
+    "INSTALL/dsecnd_INT_CPU_TIME.f",
 ]
 
 # SLASRC: Single precision LAPACK routines
