@@ -2222,7 +2222,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     f(arr1, arr2, arr3)  # doesn't crash
 
     compiled_text = f.lower(arr1, arr2, arr3).compile().as_text()
-    self.assertRegex(compiled_text, r"all-gather.*all-gather.*dense")
+    self.assertRegex(compiled_text, r"all[-_]gather.*all-gather.*dense")
     self.assertRegex(
         compiled_text, r"call-start.*async_execution_thread=\"sparsecore\""
     )
