@@ -1161,7 +1161,23 @@ class LayoutInferenceTest(parameterized.TestCase):
       mgpu.dialect.layout_cast(ref, wgmma_row_layout)
 
     with self.assertRaisesRegex(
-        ValueError, "user-provided layout casts are unsatisfiable"
+        ValueError, "cannot relayout from register layout WGMMA to WGMMA_ROW"
+    ):
+      mgpu.infer_layout(self.module)
+
+  def test_diagnoses_unsupported_strict_relayout(self):
+    shape = (64, 64)
+    bf16 = ir.BF16Type.get()
+    with ir.InsertionPoint(self.module.body):
+      vec_ty = ir.VectorType.get(shape, bf16)
+      ref_ty = ir.MemRefType.get(shape, bf16, memory_space=mgpu.utils.smem())
+      acc, a, b = undefs(vec_ty, vec_ty, ref_ty)
+      a = layout_cast(a, mgpu.WGMMA_TRANSPOSED_LAYOUT)
+      mgpu.dialect.WGMMAOp(acc, a, b)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "expected register layouts WGMMA_TRANSPOSED and WGMMA to be equal",
     ):
       mgpu.infer_layout(self.module)
 
