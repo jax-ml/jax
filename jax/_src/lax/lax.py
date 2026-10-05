@@ -4962,7 +4962,19 @@ core.pp_eqn_rules[tan_p] = _unary_with_accuracy_pp_rule
 
 asin_p = standard_unop(_float | _complex, 'asin')
 ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(one_minus_square(x))))
-mlir.register_lowering(asin_p, partial(_nary_lower_hlo, chlo.asin))
+
+# TODO(phawkins): Revert the default lowering to chlo.asin when
+# https://github.com/openxla/stablehlo/pull/3024 is integrated into XLA.
+def _asin_lowering(ctx, x, **params):
+  if dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
+    return _nary_lower_hlo(chlo.asin, ctx, x, **params)
+  def _asin_real(x):
+    one = _const(x, 1)
+    return atan2(x, sqrt(mul(sub(one, x), add(one, x))))
+  return mlir.lower_fun(_asin_real, multiple_results=False)(ctx, x, **params)
+
+mlir.register_lowering(asin_p, _asin_lowering)
+mlir.register_lowering(asin_p, partial(_nary_lower_hlo, chlo.asin), platform='gpu')
 
 acos_p = standard_unop(_float | _complex, 'acos')
 ad.defjvp(acos_p, lambda g, x: mul(g, neg(rsqrt(one_minus_square(x)))))
