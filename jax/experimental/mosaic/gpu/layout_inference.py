@@ -2540,14 +2540,12 @@ def traverse_op(
   Skips recursing into `mgpu.CustomPrimitiveOp`s, and assumes that the values
   iterated on are not being modified.
   """
-  callback(op)
-  # The block of a mosaic_gpu.custom_primitive op is already lowered so it
-  # should not be traversed.
-  if not isinstance(op, mgpu.CustomPrimitiveOp):
-    for region in op.operation.regions:
-      for block in region:
-        for block_op in block.operations:
-          traverse_op(block_op, callback)
+  def _walk(op: ir.Operation) -> ir.WalkResult:
+    callback(op.opview)
+    if isinstance(op.opview, mgpu.CustomPrimitiveOp):
+      return ir.WalkResult.SKIP
+    return ir.WalkResult.ADVANCE
+  op.operation.walk(_walk, walk_order=ir.WalkOrder.PRE_ORDER)
 
 
 def check_layout_assignment(var: cs.Variable, layout: cs.Constant) -> None:
