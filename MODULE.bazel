@@ -300,6 +300,8 @@ register_toolchains("@rules_ml_toolchain//fortran:linux_aarch64_linux_aarch64")
 
 register_toolchains("@rules_ml_toolchain//fortran:darwin_aarch64_darwin_aarch64")
 
+register_toolchains("@rules_ml_toolchain//fortran:windows_x86_64_windows_x86_64")
+
 apple_cc_configure = use_extension("@apple_support//crosstool:setup.bzl", "apple_cc_configure_extension")
 use_repo(
     apple_cc_configure,
