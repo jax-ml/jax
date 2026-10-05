@@ -687,8 +687,8 @@ class OverlapTest(jtu.JaxTestCase):
   @jtu.run_on_devices('gpu', 'tpu')
   @jtu.with_explicit_mesh((8,), ('i',))
   def test_async_psum_scatter_opt_barrier(self, mesh):
-    if jtu.device_under_test() == 'tpu' and not jtu.is_device_tpu_at_least(6):
-      self.skipTest('Requires TPU >= 6')
+    if jtu.device_under_test() == 'tpu' and not jtu.is_device_tpu_at_least(7):
+      self.skipTest('Requires TPU >= 7')
     if not jtu.is_libtpu_at_least('0.0.50'):
       self.skipTest('Requires libtpu >= 0.0.50')
 
