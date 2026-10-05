@@ -326,24 +326,8 @@ def register_pytree_node(
     >>> jax.jit(f)(m)
     Array([1., 2., 3., 4., 5.], dtype=float32)
   """
-  _register_pytree_node(
-      nodetype, flatten_func, unflatten_func, flatten_with_keys_func
-  )
-
-
-def _register_pytree_node(
-    nodetype: type[T],
-    flatten_func: Callable[[T], tuple[_Children, _AuxData]],
-    unflatten_func: Callable[[_AuxData, _Children], T],
-    flatten_with_keys_func: (
-        Callable[[T], tuple[KeyLeafPairs, _AuxData]] | None
-    ) = None,
-    *,
-    registry: pytree.PyTreeRegistry | None = None,
-) -> None:
-  registries = _all_registries if registry is None else (registry,)
-  for reg in registries:
-    reg.register_node(
+  for registry in _all_registries:
+    registry.register_node(
         nodetype, flatten_func, unflatten_func, flatten_with_keys_func
     )
   _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
@@ -961,31 +945,14 @@ def register_pytree_with_keys(
     >>> m = MyContainer(4)
     >>> leaves, treedef = jax.tree_util.tree_flatten_with_path(m)
   """
-  _register_pytree_with_keys(
-      nodetype, flatten_with_keys, unflatten_func, flatten_func
-  )
-
-
-def _register_pytree_with_keys(
-    nodetype: type[T],
-    flatten_with_keys: Callable[[T], tuple[Iterable[KeyLeafPair], _AuxData]],
-    unflatten_func: Callable[[_AuxData, Iterable[Any]], T],
-    flatten_func: None | (Callable[[T], tuple[Iterable[Any], _AuxData]]) = None,
-    *,
-    registry: pytree.PyTreeRegistry | None = None,
-):
   if not flatten_func:
     def flatten_func_impl(tree):
       key_children, treedef = flatten_with_keys(tree)
       return [c for _, c in key_children], treedef
     flatten_func = flatten_func_impl
 
-  _register_pytree_node(
-      nodetype,
-      flatten_func,
-      unflatten_func,
-      flatten_with_keys,
-      registry=registry,
+  register_pytree_node(
+      nodetype, flatten_func, unflatten_func, flatten_with_keys
   )
 
 
@@ -1145,17 +1112,6 @@ def register_dataclass(
     >>> compiled_func(m)
     Array([1., 2., 3.], dtype=float32)
   """
-  return _register_dataclass(nodetype, data_fields, meta_fields, drop_fields)
-
-
-def _register_dataclass(
-    nodetype: Typ,
-    data_fields: Sequence[str] | None = None,
-    meta_fields: Sequence[str] | None = None,
-    drop_fields: Sequence[str] = (),
-    *,
-    registry: pytree.PyTreeRegistry | None = None,
-) -> Typ:
   if data_fields is None or meta_fields is None:
     if (data_fields is None) != (meta_fields is None):
       raise TypeError("register_dataclass: data_fields and meta_fields must both be specified"
@@ -1217,9 +1173,8 @@ def _register_dataclass(
     data = tuple(getattr(x, name) for name in data_fields)
     return data, meta
 
-  registries = _all_registries if registry is None else (registry,)
-  for reg in registries:
-    reg.register_dataclass_node(nodetype, list(data_fields), list(meta_fields))
+  for registry in _all_registries:
+    registry.register_dataclass_node(nodetype, list(data_fields), list(meta_fields))
   _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
   return nodetype
 
@@ -1273,17 +1228,9 @@ def register_static(cls: type[H]) -> type[H]:
     >>> f(1, 2, StaticStr('add'))
     Array(3, dtype=int32, weak_type=True)
   """
-  return _register_static(cls)
-
-
-def _register_static(
-    cls: type[H],
-    *,
-    registry: pytree.PyTreeRegistry | None = None,
-) -> type[H]:
   flatten = lambda obj: ((), obj)
   unflatten = lambda obj, empty_iter_children: obj
-  _register_pytree_with_keys(cls, flatten, unflatten, registry=registry)
+  register_pytree_with_keys(cls, flatten, unflatten)
   return cls
 
 

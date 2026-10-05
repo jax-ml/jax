@@ -213,29 +213,6 @@ class PRNGTest(jtu.JaxTestCase):
     result_b = result[1]
     np.testing.assert_array_compare(np.not_equal, result_a, result_b)
 
-  @parameterized.parameters(True, False)
-  def test_key_in_unrolled_fori_loop(self, unroll: bool):
-    def body(key_ref, o_ref):
-      key = key_ref[...]
-
-      def loop_body(i, _):
-        k = jax_random.fold_in(key, i.astype(jnp.uint32))
-        o_ref[i, ...] = jax_random.uniform(
-            k, shape=o_ref.shape[1:], minval=0.0, maxval=1.0
-        )
-
-      jax.lax.fori_loop(0, 2, loop_body, None, unroll=unroll)
-
-    rbg_key = jax_random.key(0, impl="rbg")
-    key = pltpu.to_pallas_key(rbg_key)
-    o_shape = jax.ShapeDtypeStruct((2, 8, 128), jnp.float32)
-    result = pl.pallas_call(
-        body,
-        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
-        out_shape=o_shape,
-    )(key)
-    np.testing.assert_array_compare(np.not_equal, result[0], result[1])
-
   def test_key_in_core_map(self):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Fails on TPU <= v3")

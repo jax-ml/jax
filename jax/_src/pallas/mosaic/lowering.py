@@ -26,6 +26,7 @@ from typing import Any, Literal, Protocol, Self, TYPE_CHECKING, cast
 import jax
 from jax import api_util
 from jax import lax
+from jax import tree_util
 from jax._src import ad_util
 from jax._src import checkify
 from jax._src import config
@@ -40,7 +41,6 @@ from jax._src import pjit
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import traceback_util
-from jax._src import tree_util
 from jax._src import xla_bridge
 from jax._src.cloud_tpu_init import is_libtpu_at_least
 from jax._src.export import shape_poly
@@ -2263,12 +2263,6 @@ def _transform_ref(ref, ref_ty, ref_block_shape, transforms=()):
   return ref, ref_block_shape
 
 
-@functools.partial(
-    tree_util._register_dataclass,
-    data_fields=["scalars"],
-    meta_fields=["key_shape"],
-    registry=ft.tracing_registry,
-)
 @dataclasses.dataclass(frozen=True)
 class KeyScalarBundle:
   """A container class for PRNG key data.
@@ -4444,8 +4438,7 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
   supports_late_unroll = not ctx.forward_compatible
   # TODO(apaszke): Remove forward_compatible check and associated code after 20.08.2026
   if unroll > 1 and (is_full_static_unroll or not supports_late_unroll):
-    consts_ft = ft.flatten(consts)
-    const_types = [val.type for val in consts_ft.vals]
+    const_types = [val.type for val in consts]
     args_types = [val.type for val in args]
 
     user_grid_indices = ctx.lowering_context.user_grid_indices
@@ -4472,13 +4465,7 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
           block_shapes=ctx.block_shapes,
           user_grid_indices=block_grid_indices,
       )
-      block_consts, block_rest = split_list(block_rest, [len(consts_ft)])
-      return jaxpr_subcomp(
-          lowering_context,
-          jaxpr,
-          *consts_ft.update(block_consts).unflatten(),
-          *block_rest,
-      )
+      return jaxpr_subcomp(lowering_context, jaxpr, *block_rest)
 
     func_op = _emit_detached_func(
         "_unrolled_loop_body",
@@ -4491,7 +4478,7 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
       call_args = []
       if has_grid:
         call_args.extend(user_grid_indices)
-      call_args.extend(consts_ft.vals)
+      call_args.extend(consts)
       if has_loop_index:
         call_args.append(i)
       call_args.extend(args)
@@ -5757,16 +5744,7 @@ def random_bits_lowering(ctx: LoweringRuleContext, keys, *, bit_width, shape):
   assert isinstance(aval.dtype, prng.KeyTy)
   impl = aval.dtype._impl
   _proxy_fn = impl.random_bits
-  if isinstance(keys, KeyScalarBundle):
-    def _pallas_bits(key: KeyScalarBundle, bit_width, shape):
-      key = pl_random.wrap_pallas_seed(*key.scalars, impl=impl)
-      return impl.random_bits(key, bit_width, shape)
-    _proxy_fn = _pallas_bits
-    ctx = ctx.replace(
-        avals_in=[jax_core.ShapedArray((), jnp.uint32)] * len(keys.scalars),
-        block_shapes=[None] * len(keys.scalars),
-    )
-  elif not pl_random.is_pallas_impl(impl):
+  if not pl_random.is_pallas_impl(impl):
     def new_lowering(key, bit_width, shape):
       key = jax.random.key_data(key).astype(jnp.uint32)
       return impl.random_bits(key, bit_width, shape)
@@ -5782,17 +5760,7 @@ def random_fold_in_lowering(ctx: LoweringRuleContext, keys, msgs):
   impl = keys_aval.dtype._impl
   fold_in_lowering = lower_fun(impl.fold_in)
   if pl_random.is_pallas_impl(impl):
-    def _pallas_fold_in(key: KeyScalarBundle, msgs):
-      key = pl_random.wrap_pallas_seed(*key.scalars, impl=impl)
-      return impl.fold_in(key, msgs)
-    ctx = ctx.replace(
-        avals_in=[
-            *[jax_core.ShapedArray((), jnp.uint32)] * len(keys.scalars),
-            msgs_aval,
-        ],
-        block_shapes=[None] * (len(keys.scalars) + 1),
-    )
-    return lower_fun(_pallas_fold_in)(ctx, keys, msgs)
+    return fold_in_lowering(ctx, keys, msgs)
   else:
     ctx = dataclasses.replace(ctx,
                         avals_in=[_physical_aval(keys_aval), msgs_aval],
@@ -6001,7 +5969,6 @@ def _matmul_push_rhs_lowering_rule(
   return []
 
 
-@functools.partial(tree_util._register_static, registry=ft.tracing_registry)
 @dataclasses.dataclass(frozen=True)
 class AccRef:
   # The base address of an accumulator reference is an offset in units of
