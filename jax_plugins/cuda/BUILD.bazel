@@ -44,6 +44,7 @@ cc_binary(
     deps = [
         ":gpu_version_script.lds",
         "//jaxlib/mosaic/gpu:custom_call",
+        "//jaxlib/thunky:thunky_support",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu",
         "@xla//xla/service:gpu_plugin",
         "@xla//xla/stream_executor:cuda_platform",
