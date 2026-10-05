@@ -69,31 +69,23 @@ def program_order(f=None, *, enforce: bool,
 def _program_order(fun, *, enforce, strict_in, strict_out, exclude_argnames):
   @wraps(fun)
   def wrapped(*args, **kwargs):
-    if enforce:
-      traced = api.jit(fun).trace(*args, **kwargs)
-      jaxpr = traced.jaxpr
-      args_flat, _ = tree_flatten(args)
-      flat_outputs = eval_jaxpr_program_order(
-          strict_in, strict_out, jaxpr, jaxpr.consts, *traced._consts,
-          *args_flat)
-      return tree_unflatten(traced.out_tree, flat_outputs)
+    args_flat, in_tree = tree_flatten((args, kwargs))
+    if exclude_argnames is None:
+      arg_exclude_mask = (False,) * len(args_flat)
     else:
-      args_flat, in_tree = tree_flatten((args, kwargs))
-      if exclude_argnames is None:
-        arg_exclude_mask = (False,) * len(args_flat)
-      else:
-        fun_signature = inspect.signature(fun)
-        ex_argnums, ex_argnames, _, _ = resolve_argnums(
-            fun, fun_signature, None, exclude_argnames, None, None)
-        arg_exclude_mask = donation_vector(ex_argnums, ex_argnames, in_tree)
-      assert len(args_flat) == len(arg_exclude_mask)
-      traced = api.jit(fun).trace(*args, **kwargs)
-      assert in_tree == traced.in_tree
-      exclude_mask = (False,) * len(traced._consts) + arg_exclude_mask
-      out_flat = program_order_p.bind(
-          *traced._consts, *args_flat, call_jaxpr=traced.jaxpr,
-          exclude_mask=exclude_mask)
-      return tree_unflatten(traced.out_tree, out_flat)
+      fun_signature = inspect.signature(fun)
+      ex_argnums, ex_argnames, _, _ = resolve_argnums(
+          fun, fun_signature, None, exclude_argnames, None, None)
+      arg_exclude_mask = donation_vector(ex_argnums, ex_argnames, in_tree)
+    assert len(args_flat) == len(arg_exclude_mask)
+    traced = api.jit(fun).trace(*args, **kwargs)
+    assert in_tree == traced.in_tree
+    exclude_mask = (False,) * len(traced._consts) + arg_exclude_mask
+    out_flat = program_order_p.bind(
+        *traced._consts, *args_flat, call_jaxpr=traced.jaxpr,
+        enforce=enforce, strict_in=strict_in, strict_out=strict_out,
+        exclude_mask=exclude_mask)
+    return tree_unflatten(traced.out_tree, out_flat)
   return wrapped
 
 
@@ -162,7 +154,8 @@ def eval_jaxpr_program_order(strict_in, strict_out, jaxpr, consts, *args):
           cur_invars, _ = partition_list(is_literal, cur_eqn.invars)
           cur_inps, literal_inps = partition_list(is_literal, cur_inps)
           prev_outs = map(read, prev_eqn.outvars)
-          if cur_eqn.primitive is program_order_p:
+          if (cur_eqn.primitive is program_order_p and
+              not cur_eqn.params["enforce"]):
             exclude_mask = cur_eqn.params["exclude_mask"]
             barrier_inps, excluded_inps = partition_list(exclude_mask, cur_inps)
             if barrier_inps:
@@ -200,6 +193,31 @@ mlir.register_lowering(
 
 batching.fancy_primitive_batchers[program_order_p] = partial(
     eval_jaxpr_rules.eval_jaxpr_batch, program_order_p)
+
+
+def _program_order_is_high(*avals, call_jaxpr, enforce, **_) -> bool:
+  return enforce or call_jaxpr.is_high
+program_order_p.is_high = _program_order_is_high
+
+
+def _program_order_to_lojax(*hi_args, call_jaxpr, enforce, strict_in,
+                            strict_out, exclude_mask, **params):
+  if enforce:
+    call_jaxpr, _ = pe.dce_jaxpr(call_jaxpr, True, instantiate=True)
+    return eval_jaxpr_program_order(
+        strict_in, strict_out, call_jaxpr, call_jaxpr.consts, *hi_args)
+  else:
+    lo_jaxpr = pe.lower_jaxpr2(call_jaxpr)
+    lo_args, lo_mask = [], []
+    for aval, x, m in zip(call_jaxpr.in_avals, hi_args, exclude_mask):
+      lo_vals = aval.lower_val(x)
+      lo_args.extend(lo_vals)
+      lo_mask.extend([m] * len(lo_vals))
+    lo_outs = program_order_p.bind(
+        *lo_args, call_jaxpr=lo_jaxpr, enforce=enforce, strict_in=strict_in,
+        strict_out=strict_out, exclude_mask=tuple(lo_mask), **params)
+    return pe.raise_lo_outs(call_jaxpr.out_avals, lo_outs)
+program_order_p.to_lojax = _program_order_to_lojax
 
 
 def _program_order_typecheck(ctx_factory, *in_atoms, call_jaxpr, exclude_mask,
