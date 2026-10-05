@@ -17,6 +17,8 @@
 import collections
 from collections.abc import Callable, Iterator, Sequence
 import concurrent.futures
+import functools
+import math
 import os
 import sys
 from typing import Any
@@ -808,6 +810,292 @@ def render_histogram_from_counts(
   return "\n".join(lines)
 
 
+def _dedup_preserving_order(arr: np.ndarray, dtype) -> np.ndarray:
+  """Deduplicates `arr` by unsigned bit pattern while preserving first-seen order."""
+  udt = np.dtype(f"u{np.dtype(dtype).itemsize}")
+  u = arr.view(udt)
+  _, first_idx = np.unique(u, return_index=True)
+  return u[np.sort(first_idx)].view(dtype)
+
+
+@functools.cache
+def _common_interesting_points(dtype) -> tuple[float, ...]:
+  """Returns common interesting floating-point domain points for `dtype`."""
+  dt = np.dtype(dtype).type
+  finfo = np.finfo(dtype)
+  with np.errstate(all="ignore"):
+    min_subnormal = float(np.nextafter(dt(0.0), dt(1.0)))
+    max_subnormal = float(np.nextafter(dt(finfo.tiny), dt(0.0)))
+    tiny = float(finfo.tiny)
+    fmax = float(finfo.max)
+
+  pos_magnitudes = [
+      # Smallest and largest subnormal and normal values:
+      min_subnormal,
+      max_subnormal,
+      tiny,
+      fmax,
+      # Overflow/underflow boundaries for x^2, x^3, hypot, and roots:
+      math.sqrt(tiny),
+      math.sqrt(fmax),
+      math.cbrt(tiny),
+      math.cbrt(fmax),
+      # Overflow/underflow boundaries for exp and exp2:
+      math.log(fmax),
+      -math.log(tiny),
+      -math.log(min_subnormal),
+      math.log2(fmax),
+      -math.log2(tiny),
+      -math.log2(min_subnormal),
+      # Small integers and simple dyadic fractions:
+      0.25,
+      0.5,
+      0.75,
+      1.0,
+      1.5,
+      2.0,
+      2.5,
+      3.0,
+      4.0,
+      5.0,
+      6.0,
+      7.0,
+      8.0,
+      9.0,
+      10.0,
+      # Common mathematical constants:
+      math.e,
+      1.0 / math.e,
+      0.5 * math.log(2.0),
+      math.log(2.0),
+      math.log(10.0),
+      math.log2(math.e),
+      math.log10(math.e),
+      math.sqrt(2.0),
+      math.sqrt(0.5),
+      math.sqrt(3.0),
+      math.sqrt(math.pi),
+      2.0 / math.sqrt(math.pi),
+  ]
+
+  # Points approaching 1 from below and above (1 +- 2^-k):
+  for k in range(1, finfo.nmant + 1):
+    pos_magnitudes.append(1.0 - math.ldexp(1.0, -k))
+    pos_magnitudes.append(1.0 + math.ldexp(1.0, -k))
+
+  # Multiples of pi (quarter- and sixth-multiples near zero, plus large
+  # multiples for trigonometric range reduction).
+  for k in range(1, 17):
+    pos_magnitudes.append(k * (math.pi / 4.0))
+  for k in (1, 2, 4, 5):
+    pos_magnitudes.append(k * (math.pi / 6.0))
+  for k in range(1, 7):
+    pos_magnitudes.append((10.0**k) * math.pi)
+  for k in (10, 20, 30, 50):
+    pos_magnitudes.append(math.ldexp(math.pi, k))
+
+  # Powers of two: all exponents in [-32, 32], plus exponents across the
+  # full normal and subnormal range of dtype.
+  min_exp = finfo.minexp - finfo.nmant
+  max_exp = finfo.maxexp - 1
+  exp_step = max(1, (max_exp - min_exp) // 32)
+  exponents = (
+      set(range(max(-32, min_exp), min(32, max_exp) + 1))
+      | set(range(min_exp, max_exp + 1, exp_step))
+      | {
+          min_exp,
+          finfo.minexp - 1,
+          finfo.minexp,
+          finfo.minexp + 1,
+          -(max_exp // 2),
+          -finfo.nmant - 1,
+          -finfo.nmant,
+          -(finfo.nmant // 2),
+          finfo.nmant // 2,
+          finfo.nmant,
+          finfo.nmant + 1,
+          max_exp // 2,
+          max_exp - 1,
+          max_exp,
+      }
+  )
+  for k in sorted(exponents):
+    if min_exp <= k <= max_exp:
+      pos_magnitudes.append(math.ldexp(1.0, k))
+
+  pts = [0.0, -0.0, math.inf, -math.inf, math.nan]
+  for v in pos_magnitudes:
+    if v <= fmax:
+      pts.append(v)
+      pts.append(-v)
+  return tuple(pts)
+
+
+def _with_ulp_neighbors(
+    vals: Sequence[float],
+    dtype,
+    radius: int = 2,
+    max_points: int | None = None,
+    include_specials: bool = True,
+) -> np.ndarray:
+  """Returns `vals` and the floats within `radius` ULPs of each value."""
+  fmax = float(np.finfo(dtype).max)
+  valid = [
+      fv
+      for v in vals
+      if not math.isnan(fv := float(v)) and (math.isinf(fv) or abs(fv) <= fmax)
+  ]
+  with np.errstate(all="ignore"):
+    arr = _dedup_preserving_order(np.asarray(valid, dtype=dtype), dtype)
+    neg_inf = np.asarray(-np.inf, dtype=dtype)
+    pos_inf = np.asarray(np.inf, dtype=dtype)
+    if len(arr) > 0:
+      cols = [arr]
+      lo = hi = arr
+      for _ in range(radius):
+        lo = np.nextafter(lo, neg_inf)
+        hi = np.nextafter(hi, pos_inf)
+        cols.extend([lo, hi])
+      expanded = np.column_stack(cols).ravel()
+    else:
+      expanded = arr
+    if include_specials:
+      specials = np.array([0.0, -0.0, np.inf, -np.inf, np.nan], dtype=dtype)
+      expanded = np.concatenate([specials, expanded])
+    out = _dedup_preserving_order(expanded, dtype)
+  if max_points is not None and len(out) > max_points:
+    out = out[:max_points]
+  return out
+
+
+def _make_interesting_samples(
+    nargs: int,
+    dtype,
+    rng: np.random.RandomState,
+    max_points: int,
+    interesting_points: Sequence[Any] | None = None,
+) -> tuple[np.ndarray, ...]:
+  """Generates up to `max_points` test inputs at and near interesting values.
+
+  For a 1-argument function, this returns the common interesting values for
+  `dtype` (such as 0, +-1, +-inf, nan, and smallest/largest normal and
+  subnormal values), any extra values from `interesting_points`, and the floats
+  within 3 ULPs of each.
+
+  For a multi-argument function, testing every combination of 1D interesting
+  values would produce too many inputs. Instead, we combine:
+    1. Any explicit input tuples in `interesting_points` (and values within 1
+       ULP of each coordinate).
+    2. All combinations of a small list of key boundary values (0,
+       +-min_subnormal, +-tiny, +-0.5, +-1, +-2, +-max_float, +-inf, nan, and up
+       to 8 custom scalars).
+    3. Tuples where arguments are equal or 1 ULP apart, up to sign (`y = +-x`
+       or `y = +-(x +- 1 ULP)`).
+    4. Tuples where one argument is an interesting 1D value and the other
+       arguments are random floats.
+
+  Args:
+    nargs: Number of input arguments to the function under test.
+    dtype: Floating-point dtype of the generated arrays.
+    rng: Random number generator.
+    max_points: Maximum number of test inputs to return.
+    interesting_points: Optional extra test values. Each entry can be a scalar
+      float or a tuple/list of `nargs` floats.
+
+  Returns:
+    A tuple of `nargs` 1D arrays of `dtype`, each of length at most
+    `max_points`.
+  """
+  if max_points <= 0:
+    return tuple(np.empty((0,), dtype=dtype) for _ in range(nargs))
+
+  custom_scalars: list[float] = []
+  custom_tuples: list[tuple[float, ...]] = []
+  for item in interesting_points or ():
+    if isinstance(item, (tuple, list)):
+      if len(item) != nargs:
+        raise ValueError(
+            f"Tuple in interesting_points must have length nargs={nargs}, got"
+            f" {item!r}."
+        )
+      custom_tuples.append(tuple(float(x) for x in item))
+    else:
+      custom_scalars.append(float(item))
+
+  # Put caller-supplied scalars first so they are kept if `max_points` is small.
+  vals_1d = _with_ulp_neighbors(
+      (*custom_scalars, *_common_interesting_points(dtype)),
+      dtype,
+      radius=3,
+      max_points=max_points if nargs == 1 else max(256, max_points // (2 * nargs)),
+  )
+  if nargs == 1:
+    return (vals_1d,)
+
+  finfo = np.finfo(dtype)
+  fmax = float(finfo.max)
+  dt = np.dtype(dtype).type
+  with np.errstate(all="ignore"):
+    min_sub = float(np.nextafter(dt(0.0), dt(1.0)))
+    tiny = float(finfo.tiny)
+    neg_inf = dt(-np.inf)
+    pos_inf = dt(np.inf)
+
+  coords: list[list[np.ndarray]] = [[] for _ in range(nargs)]
+
+  def _add_grid(axes_1d: Sequence[np.ndarray]):
+    for i, g in enumerate(np.meshgrid(*axes_1d, indexing="ij")):
+      coords[i].append(g.ravel())
+
+  # 1. Explicit tuples from interesting_points, plus +-1 ULP on each coordinate.
+  for tup in custom_tuples:
+    if all(math.isnan(x) or math.isinf(x) or abs(x) <= fmax for x in tup):
+      axes = [
+          np.asarray([x], dtype=dtype)
+          if math.isnan(x)
+          else _with_ulp_neighbors([x], dtype, radius=1, include_specials=False)
+          for x in tup
+      ]
+      _add_grid(axes)
+
+  # 2. All combinations of a small set of boundary values.
+  max_cart = max(4, int(round((max_points // 2) ** (1.0 / nargs))))
+  core_1d = _with_ulp_neighbors(
+      custom_scalars[:8]
+      + [0.0, min_sub, tiny, 0.5, 1.0, 2.0, fmax, -min_sub, -tiny, -0.5, -1.0, -2.0, -fmax],
+      dtype,
+      radius=1,
+      max_points=max_cart,
+  )
+  _add_grid([core_1d] * nargs)
+  tier1_len = sum(len(c) for c in coords[0])
+
+  # 3. Tuples where arguments are equal or 1 ULP apart (up to sign).
+  non_nan = vals_1d[~np.isnan(vals_1d)]
+  with np.errstate(all="ignore"):
+    for shifted in (non_nan, np.nextafter(non_nan, pos_inf), np.nextafter(non_nan, neg_inf)):
+      for sign in (1, -1):
+        coords[0].append(non_nan)
+        for i in range(1, nargs):
+          coords[i].append(sign * shifted)
+
+  # 4. Tuples where one argument is an interesting 1D value and the rest are random.
+  rand_gen = jtu.rand_fullrange(rng)
+  for fixed_axis in range(nargs):
+    for i in range(nargs):
+      coords[i].append(vals_1d if i == fixed_axis else rand_gen((len(vals_1d),), dtype))
+
+  out = [np.concatenate(c) for c in coords]
+  if len(out[0]) > max_points:
+    if tier1_len < max_points:
+      perm = tier1_len + rng.permutation(len(out[0]) - tier1_len)
+      keep = np.concatenate([np.arange(tier1_len), perm[: max_points - tier1_len]])
+      out = [a[keep] for a in out]
+    else:
+      out = [a[:max_points] for a in out]
+  return tuple(out)
+
+
 def _make_exhaustive_chunk(
     start: int, count: int, nargs: int, dtype
 ) -> tuple[np.ndarray, ...]:
@@ -848,14 +1136,18 @@ def check_nary_precision(
     check_signed_zeros: bool | list = True,
     ref_dtype: object | None = None,
     max_samples: int | None = None,
+    interesting_points: Sequence[Any] | None = None,
 ):
   """Checks precision of n-ary `jax_fn` against reference implementations.
 
   Evaluates `jax_fn` across either all possible bit-pattern combinations of
   `dtype` (when `total_elements <= MAX_SAMPLES`, e.g. unary `bfloat16` and
   `float16` by default, or unary `float32` and binary `bfloat16`/`float16` when
-  `--jax_numerics_max_samples=4294967296`) or a uniform random sample of
-  `MAX_SAMPLES` (`MAX_F64_SAMPLES` for `float64`) inputs.
+  `--jax_numerics_max_samples=4294967296`) or a sample of `MAX_SAMPLES`
+  (`MAX_F64_SAMPLES` for `float64`) inputs consisting of values at and near
+  interesting points (such as 0, +-1, +-inf, smallest/largest normal and
+  subnormal values, poles, and approximation thresholds) together with random
+  floating-point values across all exponents.
 
   Args:
     test_case: The `jtu.JaxTestCase` instance running the test.
@@ -897,6 +1189,9 @@ def check_nary_precision(
     max_samples: Optional override for the maximum number of sample inputs to
       test. Defaults to `MAX_F64_SAMPLES.value` for float64 and
       `MAX_SAMPLES.value` otherwise.
+    interesting_points: Optional sequence of additional function-specific
+      test points (scalars, or `nargs`-tuples for n-ary functions) to sample at
+      and near during non-exhaustive runs.
   """
   if dtype is None:
     dtype = mpmath_fn
@@ -968,13 +1263,29 @@ def check_nary_precision(
   else:
     label = f"sampled {total_points} points"
     base_rng = test_case.rng()
+    max_interesting_cap = 4096 if is_f64 else 32768
     chunks = []
     for start in range(0, total_points, chunk_size):
       count = min(chunk_size, total_points - start)
       seed = int(base_rng.randint(0, 1 << 31))
+      is_first_chunk = start == 0
 
-      def _make_chunk(c=count, s=seed):
+      def _make_chunk(c=count, s=seed, first=is_first_chunk):
         rng = np.random.RandomState(s)
+        if first:
+          interesting_budget = min(max_interesting_cap, c // 2)
+          int_samples = _make_interesting_samples(
+              nargs, dtype, rng, interesting_budget, interesting_points
+          )
+          n_int = len(int_samples[0])
+          n_rand = c - n_int
+          rand_samples = tuple(
+              jtu.rand_fullrange(rng)((n_rand,), dtype) for _ in range(nargs)
+          )
+          return tuple(
+              np.concatenate([int_a, rand_a])
+              for int_a, rand_a in zip(int_samples, rand_samples)
+          )
         return tuple(jtu.rand_fullrange(rng)((c,), dtype) for _ in range(nargs))
 
       chunks.append(_make_chunk)
@@ -1131,6 +1442,7 @@ def check_unary_precision(
     ignore_inputs: list | None = None,
     check_signed_zeros: bool | list = True,
     max_samples: int | None = None,
+    interesting_points: Sequence[Any] | None = None,
 ):
   """Checks unary precision of `jax_fn` against reference implementations.
 
@@ -1154,6 +1466,7 @@ def check_unary_precision(
       ignore_inputs=ignore_inputs,
       check_signed_zeros=check_signed_zeros,
       max_samples=max_samples,
+      interesting_points=interesting_points,
   )
 
 

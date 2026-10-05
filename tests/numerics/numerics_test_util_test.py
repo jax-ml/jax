@@ -557,6 +557,126 @@ class UlpDiffTest(jtu.JaxTestCase):
   def test_register_benchmark_nary(self):
     util.register_benchmark(jnp.add, nargs=2, name="test_add_nary")
 
+  @parameterized.parameters(bf16, f16, f32, f64)
+  def test_with_ulp_neighbors(self, dtype):
+    dt = np.dtype(dtype).type
+    uint_dtype = np.dtype(f"u{np.dtype(dtype).itemsize}")
+    finfo = np.finfo(dtype)
+    min_sub = np.nextafter(dt(0.0), dt(1.0))
+    max_float = dt(finfo.max)
+
+    # Expanding around +0.0 and -0.0 with radius 2 must retain both signed
+    # zeros and step into positive and negative subnormals.
+    zeros_nb = util._with_ulp_neighbors([0.0, -0.0], dtype, radius=2)
+    zeros_bits = set(zeros_nb.view(uint_dtype).tolist())
+    self.assertIn(int(dt(0.0).view(uint_dtype)), zeros_bits)
+    self.assertIn(int(dt(-0.0).view(uint_dtype)), zeros_bits)
+    self.assertIn(int(min_sub.view(uint_dtype)), zeros_bits)
+    self.assertIn(int((-min_sub).view(uint_dtype)), zeros_bits)
+
+    # Expanding around max_float and inf must step across the max_float / inf
+    # boundary without wrapping into NaN or negative values.
+    edge_nb = util._with_ulp_neighbors(
+        [max_float, float("inf"), float("-inf"), float("nan")], dtype, radius=2
+    )
+    self.assertTrue(np.any(np.isnan(edge_nb)))
+    finite_or_inf = edge_nb[~np.isnan(edge_nb)]
+    self.assertIn(float(max_float), finite_or_inf.astype(np.float64))
+    self.assertIn(
+        float(np.nextafter(max_float, dt(0.0))),
+        finite_or_inf.astype(np.float64),
+    )
+    self.assertTrue(np.any(np.isposinf(finite_or_inf)))
+    self.assertTrue(np.any(np.isneginf(finite_or_inf)))
+
+    # Bit patterns (excluding NaN) must be unique.
+    non_nan_bits = finite_or_inf.view(uint_dtype).tolist()
+    self.assertLen(non_nan_bits, len(set(non_nan_bits)))
+
+    # Expanding around +inf alone must step down into max_float without wrapping
+    # into negative finite values.
+    pos_inf_nb = util._with_ulp_neighbors([float("inf")], dtype, radius=2)
+    finite_from_pos_inf = pos_inf_nb[np.isfinite(pos_inf_nb)]
+    self.assertTrue(np.all(finite_from_pos_inf >= 0.0))
+    self.assertIn(float(max_float), finite_from_pos_inf.astype(np.float64))
+
+    # Under a small max_points budget, the highest-priority center must retain
+    # its immediate +-1 ULP neighbors even when many centers follow.
+    lead = dt(3.25)
+    small_nb = util._with_ulp_neighbors(
+        [float(lead)] + [float(i) for i in range(10, 100)],
+        dtype,
+        max_points=12,
+        radius=2,
+    )
+    small_bits = set(small_nb.view(uint_dtype).tolist())
+    self.assertIn(int(lead.view(uint_dtype)), small_bits)
+    self.assertIn(
+        int(np.nextafter(lead, dt(np.inf)).view(uint_dtype)), small_bits
+    )
+    self.assertIn(
+        int(np.nextafter(lead, dt(-np.inf)).view(uint_dtype)), small_bits
+    )
+
+  def test_interesting_points_needle_detection_unary(self):
+    # A defect at a single float64 ULP neighbor of pi (common interesting point)
+    # and at a custom interesting point is caught even with a small sample budget.
+    pi_next = np.nextafter(np.float64(np.pi), np.float64(np.inf))
+
+    def buggy_at_pi_neighbor(x):
+      return jnp.where(x == pi_next, x + 1e-12, x)
+
+    with self.assertRaises(AssertionError):
+      util.check_unary_precision(
+          self,
+          buggy_at_pi_neighbor,
+          lambda x: x,
+          lambda x: x,
+          jnp.float64,
+          bounds=0.5,
+          max_samples=4096,
+      )
+
+    custom_pt = 12.3456789
+    custom_next = np.nextafter(np.float64(custom_pt), np.float64(-np.inf))
+
+    def buggy_at_custom_point(x):
+      return jnp.where(x == custom_next, x + 1e-12, x)
+
+    with self.assertRaises(AssertionError):
+      util.check_unary_precision(
+          self,
+          buggy_at_custom_point,
+          lambda x: x,
+          lambda x: x,
+          jnp.float64,
+          bounds=0.5,
+          max_samples=4096,
+          interesting_points=[custom_pt],
+      )
+
+  def test_interesting_points_needle_detection_binary(self):
+    # A defect at a binary pair adjacent to a custom 2-tuple is
+    # caught during non-exhaustive binary testing.
+    x_bad = np.nextafter(np.float32(7.25), np.float32(np.inf))
+    y_bad = np.nextafter(np.float32(-3.5), np.float32(-np.inf))
+
+    def buggy_binary(x, y):
+      return jnp.where((x == x_bad) & (y == y_bad), x + y + 1.0, x + y)
+
+    with self.assertRaises(AssertionError):
+      util.check_nary_precision(
+          self,
+          buggy_binary,
+          np.add,
+          lambda x, y: x + y,
+          jnp.float32,
+          nargs=2,
+          bounds=0.5,
+          max_samples=4096,
+          interesting_points=[(7.25, -3.5)],
+      )
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=util.ClassShardedTestLoader())

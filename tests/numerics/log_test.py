@@ -14,6 +14,8 @@
 
 """Precision tests for logarithmic functions."""
 
+import math
+
 from absl.testing import parameterized
 from jax._src import config
 from jax._src import test_util as jtu
@@ -35,6 +37,14 @@ config.parse_flags_with_absl()
 bf16, f16, f32, f64 = jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64
 DTYPE_PARAMS = [(f"_{d.__name__}", d) for d in [bf16, f16, f32, f64]]
 TPU_EUPV1 = ["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"]
+
+# Mantissa range-reduction breakpoints in [0.5, 2.0] for log implementations.
+_LOG_INTERESTING_POINTS = [
+    math.sqrt(0.5),
+    math.sqrt(2.0),
+    2.0 / 3.0,
+    4.0 / 3.0,
+]
 
 
 @jtu.thread_unsafe_test_class()
@@ -62,6 +72,7 @@ class LogTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         input_ftz=input_ftz,
+        interesting_points=_LOG_INTERESTING_POINTS,
     )
 
 
@@ -90,6 +101,7 @@ class Log2Test(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         input_ftz=input_ftz,
+        interesting_points=_LOG_INTERESTING_POINTS,
     )
 
 
@@ -118,6 +130,11 @@ class Log10Test(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         input_ftz=input_ftz,
+        interesting_points=[
+            *_LOG_INTERESTING_POINTS,
+            # Exact powers of 10 where log10(x) is an integer.
+            *(10.0**k for k in (-10, -3, -2, -1, 1, 2, 3, 10)),
+        ],
     )
 
 
@@ -133,8 +150,20 @@ class Log1pTest(jtu.JaxTestCase):
         ("tpu_v5p", {f16: 1.0, f32: 2082.5}),
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 2049.0}),
     ]
+    # Points where 1 + x crosses range-reduction thresholds in [0.5, 2.0] or e.
+    interesting_points = [
+        math.sqrt(0.5) - 1.0,
+        math.sqrt(2.0) - 1.0,
+        math.e - 1.0,
+    ]
     util.check_unary_precision(
-        self, jnp.log1p, np.log1p, mpmath.log1p, dtype, bounds=bounds
+        self,
+        jnp.log1p,
+        np.log1p,
+        mpmath.log1p,
+        dtype,
+        bounds=bounds,
+        interesting_points=interesting_points,
     )
 
 

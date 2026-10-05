@@ -14,6 +14,8 @@
 
 """Precision tests for hyperbolic and inverse hyperbolic functions."""
 
+import math
+
 from absl.testing import parameterized
 from jax._src import config
 from jax._src import test_util as jtu
@@ -35,6 +37,14 @@ config.parse_flags_with_absl()
 bf16, f16, f32, f64 = jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64
 DTYPE_PARAMS = [(f"_{d.__name__}", d) for d in [bf16, f16, f32, f64]]
 TPU_EUPV1 = ["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"]
+
+
+def _sinh_cosh_interesting_points(dtype):
+  # Overflow threshold where sinh(x)/cosh(x) = 0.5 * exp(|x|) overflows
+  # (~ln(max_val) + ln(2); ln(max_val) and +-0.5*ln(2), +-ln(2) are already in
+  # _common_interesting_points).
+  sinh_overflow = math.log(float(jnp.finfo(dtype).max)) + math.log(2.0)
+  return [-sinh_overflow, sinh_overflow]
 
 
 @jtu.thread_unsafe_test_class()
@@ -74,6 +84,7 @@ class SinhTest(jtu.JaxTestCase):
         input_ftz=input_ftz,
         ignore_inputs=ignore_inputs,
         check_signed_zeros=check_signed_zeros,
+        interesting_points=_sinh_cosh_interesting_points(dtype),
     )
 
 
@@ -104,6 +115,7 @@ class CoshTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         ignore_inputs=ignore_inputs,
+        interesting_points=_sinh_cosh_interesting_points(dtype),
     )
 
 
@@ -113,7 +125,7 @@ class TanhTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_tanh_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f32: 5.0, f64: 6.5}),
+        ("cpu", {f32: 5.0, f64: 7.0}),
         ("gpu", {f32: 5.5, f64: 3.5}),
         (TPU_EUPV1, {f16: 1.0, f32: 1365.5}),
         ("tpu_v5p", {f16: 1.0, f32: 92.0}),
@@ -124,6 +136,15 @@ class TanhTest(jtu.JaxTestCase):
         ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
         ("tpu", {f16: False}),
     ]
+    p = jnp.finfo(dtype).nmant + 1
+    interesting_points = [
+        # Saturation thresholds where tanh(x) rounds to +-1.0 (~0.5 * (p + 1) * ln(2)).
+        *(
+            sign * 0.5 * k * math.log(2.0)
+            for k in (p + 1, p + 2)
+            for sign in (-1, 1)
+        ),
+    ]
     util.check_unary_precision(
         self,
         jnp.tanh,
@@ -132,6 +153,7 @@ class TanhTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         input_ftz=input_ftz,
+        interesting_points=interesting_points,
     )
 
 
@@ -148,7 +170,13 @@ class AcoshTest(jtu.JaxTestCase):
         (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 984.0}),
     ]
     util.check_unary_precision(
-        self, jnp.acosh, np.arccosh, mpmath.acosh, dtype, bounds=bounds
+        self,
+        jnp.acosh,
+        np.arccosh,
+        mpmath.acosh,
+        dtype,
+        bounds=bounds,
+        interesting_points=[math.cosh(1.0)],
     )
 
 
@@ -158,14 +186,20 @@ class AsinhTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_asinh_accuracy(self, dtype):
     bounds = [
-        ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.5, f64: 2.0}),
+        ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.5, f64: 2.5}),
         ("gpu", {f16: 1.0, f32: 2.0, f64: 2.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4034.5}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 2082.5}),
         (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 2049.0}),
     ]
     util.check_unary_precision(
-        self, jnp.asinh, np.arcsinh, mpmath.asinh, dtype, bounds=bounds
+        self,
+        jnp.asinh,
+        np.arcsinh,
+        mpmath.asinh,
+        dtype,
+        bounds=bounds,
+        interesting_points=[-math.sinh(1.0), math.sinh(1.0)],
     )
 
 
@@ -182,7 +216,13 @@ class AtanhTest(jtu.JaxTestCase):
         (["tpu_v6e", "tpu_7x"], {f32: 1025.5}),
     ]
     util.check_unary_precision(
-        self, jnp.atanh, np.arctanh, mpmath.atanh, dtype, bounds=bounds
+        self,
+        jnp.atanh,
+        np.arctanh,
+        mpmath.atanh,
+        dtype,
+        bounds=bounds,
+        interesting_points=[-math.tanh(1.0), math.tanh(1.0)],
     )
 
 

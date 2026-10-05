@@ -64,6 +64,22 @@ class DigammaTest(jtu.JaxTestCase):
         ("gpu", {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
         ("tpu", {bf16: math.inf, f16: math.inf, f32: math.inf}),
     ]
+    interesting_points = [
+        # Non-positive integer poles of digamma(x):
+        *(float(-k) for k in range(21)),
+        -100.0,
+        -1000.0,
+        # Roots of digamma(x) = 0, computed via mpmath.findroot(mpmath.digamma, x0):
+        1.4616321449683623,  # unique positive root on (0, inf)
+        -0.5040830082644554,  # root in (-1, 0)
+        -1.5734984731623905,  # root in (-2, -1)
+        -2.6107208684441446,  # root in (-3, -2)
+        -3.635293366436901,  # root in (-4, -3)
+        -4.653237761743142,  # root in (-5, -4)
+        # Recurrence-to-asymptotic series switch thresholds:
+        8.0,
+        10.0,
+    ]
     util.check_unary_precision(
         self,
         lax.digamma,
@@ -71,6 +87,7 @@ class DigammaTest(jtu.JaxTestCase):
         _mpmath_digamma,
         dtype,
         bounds=bounds,
+        interesting_points=interesting_points,
     )
 
 
@@ -87,6 +104,33 @@ class LgammaTest(jtu.JaxTestCase):
         ("gpu", {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
         ("tpu", {bf16: math.inf, f16: math.inf, f32: math.inf}),
     ]
+    interesting_points = [
+        # Non-positive integer poles of gamma(x):
+        *(float(-k) for k in range(21)),
+        -100.0,
+        -1000.0,
+        # Positive zero crossings where gamma(1) = gamma(2) = 1:
+        1.0,
+        2.0,
+        # Local minimum of gamma(x) on (0, inf), where digamma(x) = 0
+        # (computed via mpmath.findroot(mpmath.digamma, 1.5)):
+        1.4616321449683623,
+        # Negative zero crossings where |gamma(x)| = 1 (lgamma(x) = 0), computed
+        # via mpmath.findroot(lambda x: abs(mpmath.gamma(x)) - 1, x0):
+        -2.151610527686942,  # first root in (-3, -2)
+        -2.8115278800280976,  # second root in (-3, -2)
+        -3.1435830219538416,  # first root in (-4, -3)
+        -3.9533289185258997,  # second root in (-4, -3)
+        -4.026705717226458,  # first root in (-5, -4)
+        -4.990151042516608,  # second root in (-5, -4)
+        # Stirling / Lanczos asymptotic switch thresholds:
+        8.0,
+        10.0,
+        # Overflow thresholds where lgamma(x) == finfo.max, computed via
+        # mpmath.findroot(lambda x: mpmath.loggamma(x) - finfo.max, x0):
+        2.556348e36,  # float32 overflow threshold
+        2.559983327851638e305,  # float64 overflow threshold
+    ]
     util.check_unary_precision(
         self,
         lax.lgamma,
@@ -94,6 +138,7 @@ class LgammaTest(jtu.JaxTestCase):
         _mpmath_lgamma,
         dtype,
         bounds=bounds,
+        interesting_points=interesting_points,
     )
 
 

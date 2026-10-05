@@ -28,13 +28,15 @@ This document summarizes the accuracy of JAX mathematical functions.
     types (`float32`), bounds are verified by exhaustive testing across all
     bit patterns (up to $2^{32}$ inputs).
   - For binary operations on `float32` and all operations on `float64`, bounds
-    are estimated by random sampling across the floating-point domain. Because
-    sampling cannot guarantee hitting the worst-case input, these values are
-    empirical bounds on the maximum error.
+    are estimated by testing a sample of inputs: values at and near special
+    points (such as 0, $\pm 1$, $\pm\infty$, subnormal/normal boundaries, poles,
+    and approximation thresholds) along with random floating-point values drawn
+    across all exponents. Because sampling cannot guarantee hitting the
+    worst-case input, these values are empirical bounds on the maximum error.
 - **Flush-To-Zero (FTZ) and Subnormals**: Subnormal floating-point inputs and
   outputs ($|v| < 2^{e_{\min}}$) are typically flushed to zero by default,
-  though some operations on types smaller than `float32` (and `float64` on CPU
-  and GPU) preserve gradual underflow.
+  though some operations on types smaller than `float32` (and `float64` on
+  GPU) preserve gradual underflow.
   - When gradual underflow is preserved (`ftz=False`), subnormal values are
     measured on the standard number line against the subnormal quantum
     $\operatorname{ulp}_{\text{tiny}} = 2^{e_{\min} - (p - 1)}$.
@@ -204,22 +206,22 @@ these are empirical bounds.
 
 | Function | CPU | NVIDIA GPU |
 |:---|:---:|:---:|
-| {func}`~jax.lax.acos` | 1.0 | 1.5 |
+| {func}`~jax.lax.acos` | 1.5 | 1.5 |
 | {func}`~jax.lax.acosh` | 3.5 | 2.5 |
 | {func}`~jax.lax.asin` | 4503599627370496.0 | 2.5 |
-| {func}`~jax.lax.asinh` | 2.0 | 2.5 |
+| {func}`~jax.lax.asinh` | 2.5 | 2.5 |
 | {func}`~jax.lax.atan` | 3.5 | 2.5 |
-| {func}`~jax.lax.atan2` | 0.5 | 1.0 |
+| {func}`~jax.lax.atan2` | 0.5 | 1.5 |
 | {func}`~jax.lax.atanh` | 2.5 | 3.5 |
 | {func}`~jax.lax.bessel_i0e` | 7.5 | 7.5 |
-| {func}`~jax.lax.bessel_i1e` | 10.5 | 6.0 |
+| {func}`~jax.lax.bessel_i1e` | 10.5 | 7.5 |
 | {func}`~jax.lax.cbrt` | 0.5 | 1.5 |
 | {func}`~jax.lax.cos` | 0.5 | 1.5 |
 | {func}`~jax.lax.cosh` | 496.0 | 2.5 |
 | {func}`~jax.lax.erf` | 2.5 | 2.5 |
-| {func}`~jax.lax.erf_inv` | 82.5 | 83.5 |
+| {func}`~jax.lax.erf_inv` | 500000.0 | 500000.0 |
 | {func}`~jax.lax.erfc` | 350.0 | 350.0 |
-| {func}`~jax.lax.exp` | 1.0 | 1.5 |
+| {func}`~jax.lax.exp` | 2.0 | 1.5 |
 | {func}`~jax.lax.exp2` | 719.0 | 719.0 |
 | {func}`~jax.lax.expm1` | 4.5 | 1.5 |
 | {func}`~jax.lax.log` | 0.5 | 1.5 |
@@ -233,10 +235,10 @@ these are empirical bounds.
 | {func}`~jax.lax.sqrt` | 0.5 | 0.5 |
 | {func}`~jax.lax.square` | 0.5 | 0.5 |
 | {func}`~jax.lax.tan` | 0.5 | 2.5 |
-| {func}`~jax.lax.tanh` | 6.5 | 3.5 |
+| {func}`~jax.lax.tanh` | 7.0 | 3.5 |
 | {func}`~jax.numpy.deg2rad` | 1.0 | 1.0 |
 | {func}`~jax.numpy.hypot` | 1.5 | 1.5 |
 | {func}`~jax.numpy.log10` | 2.0 | 2.5 |
 | {func}`~jax.numpy.rad2deg` | 1.0 | 1.0 |
 | {func}`~jax.numpy.sinc` | 2.0 | 2.0 |
-| {func}`~jax.scipy.special.erfcx` | 350.0 | 350.0 |
+| {func}`~jax.scipy.special.erfcx` | 500.0 | 500.0 |

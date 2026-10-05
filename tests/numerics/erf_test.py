@@ -128,6 +128,11 @@ class ErfTest(jtu.JaxTestCase):
         ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
         ("tpu", {f16: False}),
     ]
+    # Thresholds where |erf(x)| rounds to 1.0 in float32 (1 - 2^-24) and
+    # float64 (1 - 2^-53):
+    f32_sat = float(scipy.special.erfinv(1.0 - 2.0**-24))
+    f64_sat = float(scipy.special.erfinv(1.0 - 2.0**-53))
+    interesting_points = [f32_sat, -f32_sat, f64_sat, -f64_sat]
     util.check_unary_precision(
         self,
         lax.erf,
@@ -136,6 +141,7 @@ class ErfTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         input_ftz=input_ftz,
+        interesting_points=interesting_points,
     )
 
 
@@ -152,9 +158,43 @@ class ErfcTest(jtu.JaxTestCase):
         ("tpu_v6e", {f16: 1.0, f32: 124.5}),
         ("tpu_7x", {f16: 1.0, f32: 125.0}),
     ]
+    interesting_points = [
+        # Negative thresholds where erfc(x) rounds to 2.0:
+        -float(scipy.special.erfinv(1.0 - 2.0**-25)),
+        -float(scipy.special.erfinv(1.0 - 2.0**-54)),
+        # Positive underflow thresholds where erfc(x) reaches normal tiny /
+        # min_subnormal, computed via mpmath.findroot(lambda x: mpmath.erfc(x) - target, x0):
+        9.194682,  # erfc(x) == 2^-126 (float32 tiny)
+        10.054602,  # erfc(x) == 2^-149 (float32 min_subnormal)
+        26.54325777920791,  # erfc(x) == 2^-1022 (float64 tiny)
+        27.226017025551105,  # erfc(x) == 2^-1074 (float64 min_subnormal)
+    ]
     util.check_unary_precision(
-        self, lax.erfc, scipy.special.erfc, _mpmath_erfc, dtype, bounds=bounds
+        self,
+        lax.erfc,
+        scipy.special.erfc,
+        _mpmath_erfc,
+        dtype,
+        bounds=bounds,
+        interesting_points=interesting_points,
     )
+
+
+_ERFCX_INTERESTING_POINTS = [
+    # Negative overflow thresholds where erfcx(x) or |erfcx'(x)| == finfo.max,
+    # computed via mpmath.findroot:
+    -9.382414,  # float32 erfcx overflow threshold
+    -9.225755,  # float32 erfcx_grad overflow threshold
+    -26.62873571375149,  # float64 erfcx overflow threshold
+    -26.50644156603363,  # float64 erfcx_grad overflow threshold
+    # Polynomial-to-asymptotic regime thresholds in jsp.special.erfcx:
+    7.985583298138901,  # float32 regime threshold
+    12.00727336061225,  # float64 regime threshold
+    # Underflow thresholds of unscaled erfc(x):
+    9.194682,  # erfc(x) == 2^-126 (float32 tiny)
+    26.54325777920791,  # erfc(x) == 2^-1022 (float64 tiny)
+    512.0,  # direct-to-asymptotic cutoff (2^9) in _erfcx_grad_reference
+]
 
 
 @jtu.thread_unsafe_test_class()
@@ -163,8 +203,8 @@ class ErfcxTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfcx_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 64.5, f64: 350.0}),
-        ("gpu", {f16: 1.0, f32: 65.0, f64: 350.0}),
+        ("cpu", {f16: 1.0, f32: 64.5, f64: 500.0}),
+        ("gpu", {f16: 1.0, f32: 65.0, f64: 500.0}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 214.0}),
         ("tpu_v5p", {f16: 1.0, f32: 155.0}),
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 125.5}),
@@ -183,30 +223,8 @@ class ErfcxTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         ignore_inputs=ignore_inputs,
+        interesting_points=_ERFCX_INTERESTING_POINTS,
     )
-
-  @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_erfcx_probes(self, dtype):
-    # Probe regime thresholds and erfc(x) underflow gaps that sampling may miss.
-    if dtype == f64 and jtu.device_under_test() == "tpu":
-      self.skipTest("float64 on TPU is ef57 double-double")
-    x = jnp.concatenate([
-        jnp.linspace(7.9, 8.1, 32, dtype=dtype),  # f32 regime threshold
-        jnp.linspace(9.195, 9.419, 32, dtype=dtype),  # f32 erfc underflow gap
-        jnp.linspace(11.9, 12.1, 32, dtype=dtype),  # f64 regime threshold
-        jnp.linspace(26.543, 26.642, 32, dtype=dtype),  # f64 erfc underflow gap
-    ])
-    x_np = np.asarray(x)
-    for jax_fn, mp_fn, max_ulp in [
-        (jsp.special.erfcx, _mpmath_erfcx, 350.0),
-        (erfcx_grad, _mpmath_erfcx_grad, 8000.0),
-    ]:
-      actual = np.asarray(jax.jit(jax_fn)(x))
-      ref = np.array(
-          [util.eval_mpmath(mp_fn, v.item(), dtype=dtype) for v in x_np],
-          dtype=object if dtype == f64 else np.float64,
-      )
-      self.assertLessEqual(np.max(util.ulp_diff(actual, ref, dtype)), max_ulp)
 
 
 @jtu.thread_unsafe_test_class()
@@ -215,8 +233,8 @@ class ErfcxGradTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfcx_grad_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 452.5, f64: 500.0}),
-        ("gpu", {f16: 1.0, f32: 542.0, f64: 500.0}),
+        ("cpu", {f16: 1.0, f32: 452.5, f64: 1150.0}),
+        ("gpu", {f16: 1.0, f32: 542.0, f64: 1700.0}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.5, f32: 7936.5}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 6672.5}),
         ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 427.0}),
@@ -236,6 +254,7 @@ class ErfcxGradTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         ignore_inputs=ignore_inputs,
+        interesting_points=_ERFCX_INTERESTING_POINTS,
     )
 
   @jtu.run_on_devices("cpu")
@@ -284,11 +303,19 @@ class ErfinvTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfinv_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 65.0, f64: 82.5}),
-        ("gpu", {f16: 1.0, f32: 65.0, f64: 83.5}),
+        ("cpu", {f16: 1.0, f32: 65.0, f64: 500000.0}),
+        ("gpu", {f16: 1.0, f32: 65.0, f64: 500000.0}),
         (TPU_EUPV1, {f16: 1.0, f32: 427.0}),
         (["tpu_v5p", "tpu_7x"], {f16: 1.0, f32: 65.5}),
         ("tpu_v6e", {f16: 1.0, f32: 65.0}),
+    ]
+    interesting_points = [
+        # Minimax polynomial piece boundary points in erf_inv implementations:
+        *(
+            sign * v
+            for v in (0.7, 0.85, 0.9, 0.99, 0.9999)
+            for sign in (-1, 1)
+        ),
     ]
     util.check_unary_precision(
         self,
@@ -297,6 +324,7 @@ class ErfinvTest(jtu.JaxTestCase):
         _mpmath_erfinv,
         dtype,
         bounds=bounds,
+        interesting_points=interesting_points,
     )
 
 

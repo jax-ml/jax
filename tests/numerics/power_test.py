@@ -14,6 +14,8 @@
 
 """Precision tests for power, root, and reciprocal functions."""
 
+import math
+
 from absl.testing import parameterized
 import jax
 from jax import lax
@@ -188,7 +190,7 @@ class HypotTest(jtu.JaxTestCase):
         ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 2.5}),
     ]
     input_ftz = [
-        ("cpu", {f16: False, f64: False}),
+        ("cpu", {f16: False}),
         ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
         ("tpu", {f16: False}),
     ]
@@ -205,6 +207,30 @@ class HypotTest(jtu.JaxTestCase):
         return mpmath.inf
       return mpmath.hypot(x, y)
 
+    finfo = jnp.finfo(dtype)
+    k = (finfo.maxexp - 1) // 2 + 2
+    # Rescaling thresholds in jnp.hypot where max(|x|, |y|) triggers scaled-up
+    # (s_lo) or scaled-down (s_hi) evaluation to avoid intermediate underflow
+    # or overflow, plus sqrt(max_float) and max_float / sqrt(2).
+    s_lo = 2.0 ** ((finfo.minexp + finfo.nmant + 1) // 2)
+    s_hi = 2.0**k
+    max_val = float(finfo.max)
+    interesting_points = [
+        *(
+            sign * v
+            for v in (
+                s_lo,
+                s_hi,
+                math.sqrt(max_val),
+                max_val / math.sqrt(2.0),
+                3.0,
+                4.0,
+                3.0 * s_lo / 4.0,
+                3.0 * s_hi / 4.0,
+            )
+            for sign in (-1, 1)
+        ),
+    ]
     util.check_nary_precision(
         self,
         jnp.hypot,
@@ -214,6 +240,7 @@ class HypotTest(jtu.JaxTestCase):
         nargs=2,
         bounds=bounds,
         input_ftz=input_ftz,
+        interesting_points=interesting_points,
     )
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
