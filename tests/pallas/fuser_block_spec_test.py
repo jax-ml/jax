@@ -743,6 +743,54 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         kernel_fn((0, 0, 0), scalar_prefetch_values, (x,)), x
     )
 
+  def test_strict_mode_compares_index_maps_reading_prefetched_scalars(self):
+    x = jax.random.normal(jax.random.key(0), (3, 4, 512, 512), dtype=np.float32)
+    i = jnp.array(1, dtype=jnp.int32)
+    j = jnp.array(2, dtype=jnp.int32)
+
+    def f():
+      # `x` is sliced twice, so pulling compares the two index maps it arrives
+      # at, and both of them read the scalars `i` and `j`.
+      a = jax.lax.dynamic_slice(x, (i, j, 0, 0), (1, 1, 512, 512))
+      b = jax.lax.dynamic_slice(x, (i, j, 0, 0), (1, 1, 512, 512))
+      return a * b
+
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f)
+    block_spec = pl.BlockSpec(
+        (1, 1, 128, 128), lambda a, b, c, *_: (0, 0, a, b)
+    )
+    kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2, block_spec, grid_len=3
+    )(new_values)
+    self.assertLen(kernel_fn.scalar_prefetch, 2)
+
+    scalar_prefetch = jax.tree.map(lambda v: v[None], kernel_fn.scalar_prefetch)
+    self.assertEqual(
+        value_block_specs[0].index_map(0, 1, 2, *scalar_prefetch), (1, 2, 0, 1)
+    )
+    block = np.full((1, 1, 128, 128), 3.0, dtype=np.float32)
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0, 0), scalar_prefetch, (block,)), block * block
+    )
+
+  def test_strict_mode_rejects_differing_index_maps_reading_scalars(self):
+    x = jax.random.normal(jax.random.key(0), (3, 4, 512, 512), dtype=np.float32)
+    i = jnp.array(1, dtype=jnp.int32)
+    j = jnp.array(2, dtype=jnp.int32)
+
+    def f():
+      # As above, but the two slices disagree, so the comparison must say so.
+      a = jax.lax.dynamic_slice(x, (i, j, 0, 0), (1, 1, 512, 512))
+      b = jax.lax.dynamic_slice(x, (j, i, 0, 0), (1, 1, 512, 512))
+      return a * b
+
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f)
+    block_spec = pl.BlockSpec(
+        (1, 1, 128, 128), lambda a, b, c, *_: (0, 0, a, b)
+    )
+    with self.assertRaisesRegex(ValueError, "Fusion contains a DAG"):
+      block_spec_lib.pull_block_spec(f2, block_spec, grid_len=3)(new_values)
+
   def test_dynamic_slice_derived_scalar_prefetch(self):
     x = jax.random.normal(jax.random.key(0), (3, 4, 512, 512), dtype=np.float32)
     i = jnp.array(1, dtype=jnp.int32)
