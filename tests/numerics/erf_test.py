@@ -272,6 +272,12 @@ class ErfcxGradTest(jtu.JaxTestCase):
     self.assertTrue(np.isnan(_erfcx_grad_reference(np.array([np.nan]))[0]))
 
 
+def _mpmath_erfinv(x):
+  if not (-1 <= x <= 1):
+    return mpmath.nan
+  return mpmath.erfinv(x)
+
+
 @jtu.thread_unsafe_test_class()
 class ErfinvTest(jtu.JaxTestCase):
 
@@ -288,7 +294,7 @@ class ErfinvTest(jtu.JaxTestCase):
         self,
         lax.erf_inv,
         _erfinv_reference,
-        mpmath.erfinv,
+        _mpmath_erfinv,
         dtype,
         bounds=bounds,
     )

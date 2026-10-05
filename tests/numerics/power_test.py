@@ -65,6 +65,14 @@ class SqrtTest(jtu.JaxTestCase):
     )
 
 
+def _mpmath_rsqrt(x):
+  if x < 0:
+    return mpmath.nan
+  if x == 0:
+    return -mpmath.inf if np.signbit(float(x)) else mpmath.inf
+  return 1 / mpmath.sqrt(x)
+
+
 @jtu.thread_unsafe_test_class()
 class RsqrtTest(jtu.JaxTestCase):
 
@@ -88,7 +96,7 @@ class RsqrtTest(jtu.JaxTestCase):
         self,
         lax.rsqrt,
         lambda x: np.reciprocal(np.sqrt(x)),
-        lambda x: mpmath.nan if x < 0 else 1 / mpmath.sqrt(x),
+        _mpmath_rsqrt,
         dtype,
         bounds=bounds,
         input_ftz=input_ftz,
@@ -133,6 +141,12 @@ class SquareTest(jtu.JaxTestCase):
     )
 
 
+def _mpmath_reciprocal(x):
+  if x == 0:
+    return -mpmath.inf if np.signbit(float(x)) else mpmath.inf
+  return 1 / x
+
+
 @jtu.thread_unsafe_test_class()
 class ReciprocalTest(jtu.JaxTestCase):
 
@@ -153,7 +167,7 @@ class ReciprocalTest(jtu.JaxTestCase):
         self,
         jnp.reciprocal,
         np.reciprocal,
-        lambda x: 1 / x,
+        _mpmath_reciprocal,
         dtype,
         bounds=bounds,
         input_ftz=input_ftz,

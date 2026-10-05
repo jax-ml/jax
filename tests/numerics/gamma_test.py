@@ -39,6 +39,18 @@ bf16, f16, f32, f64 = jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64
 DTYPE_PARAMS = [(f"_{d.__name__}", d) for d in [bf16, f16, f32, f64]]
 
 
+def _mpmath_digamma(x):
+  if x <= 0 and mpmath.isint(x):
+    return mpmath.nan
+  return mpmath.digamma(x)
+
+
+def _mpmath_lgamma(x):
+  if (x <= 0 and mpmath.isint(x)) or x == -mpmath.inf:
+    return mpmath.inf
+  return mpmath.log(abs(mpmath.gamma(x)))
+
+
 @jtu.thread_unsafe_test_class()
 class DigammaTest(jtu.JaxTestCase):
 
@@ -56,7 +68,7 @@ class DigammaTest(jtu.JaxTestCase):
         self,
         lax.digamma,
         scipy.special.psi,
-        mpmath.digamma,
+        _mpmath_digamma,
         dtype,
         bounds=bounds,
     )
@@ -79,7 +91,7 @@ class LgammaTest(jtu.JaxTestCase):
         self,
         lax.lgamma,
         scipy.special.gammaln,
-        lambda x: mpmath.log(abs(mpmath.gamma(x))),
+        _mpmath_lgamma,
         dtype,
         bounds=bounds,
     )

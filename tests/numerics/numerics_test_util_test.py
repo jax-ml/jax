@@ -383,9 +383,6 @@ class UlpDiffTest(jtu.JaxTestCase):
     self.assertTrue(
         util.eval_mpmath(lambda x: bool(np.signbit(float(x))), neg_nan)
     )
-    self.assertEqual(util.eval_mpmath(lambda x: 1 / x, 0.0), mpmath.inf)
-    self.assertEqual(util.eval_mpmath(lambda x: 1 / x, -0.0), -mpmath.inf)
-    self.assertTrue(mpmath.isnan(util.eval_mpmath(mpmath.gamma, 0.0)))
 
   def test_check_nary_precision_binary(self):
     # Verify check_nary_precision correctly evaluates an exact binary op.

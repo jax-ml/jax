@@ -38,6 +38,18 @@ bf16, f16, f32, f64 = jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64
 DTYPE_PARAMS = [(f"_{d.__name__}", d) for d in [bf16, f16, f32, f64]]
 
 
+def _mpmath_i0e(x):
+  if mpmath.isinf(x):
+    return mpmath.mpf(0.0)
+  return mpmath.besseli(0, x) * mpmath.exp(-abs(x))
+
+
+def _mpmath_i1e(x):
+  if mpmath.isinf(x):
+    return mpmath.mpf(0.0)
+  return mpmath.besseli(1, x) * mpmath.exp(-abs(x))
+
+
 @jtu.thread_unsafe_test_class()
 class BesselI0eTest(jtu.JaxTestCase):
 
@@ -52,7 +64,7 @@ class BesselI0eTest(jtu.JaxTestCase):
         self,
         lax.bessel_i0e,
         scipy.special.i0e,
-        lambda x: mpmath.besseli(0, x) * mpmath.exp(-abs(x)),
+        _mpmath_i0e,
         dtype,
         bounds=bounds,
     )
@@ -73,7 +85,7 @@ class BesselI1eTest(jtu.JaxTestCase):
         self,
         lax.bessel_i1e,
         ref_fn,
-        lambda x: mpmath.besseli(1, x) * mpmath.exp(-abs(x)),
+        _mpmath_i1e,
         dtype,
         bounds=bounds,
     )

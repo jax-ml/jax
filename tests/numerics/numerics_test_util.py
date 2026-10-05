@@ -522,14 +522,7 @@ def eval_mpmath(mpmath_fn, *vals, dtype=None, input_ftz: bool = True):
         else v
         for v in vals
     )
-  try:
-    res = mpmath_fn(*(_FloatMpf(float(v)) for v in vals))
-  except ZeroDivisionError:
-    if len(vals) == 1:
-      return -mpmath.inf if np.signbit(vals[0]) else mpmath.inf
-    return mpmath.inf
-  except (ValueError, OverflowError):
-    return mpmath.nan
+  res = mpmath_fn(*(_FloatMpf(float(v)) for v in vals))
   if isinstance(res, mpmath.mpc):
     return mpmath.nan
   if isinstance(res, mpmath.ctx_mp_python.mpnumeric):
