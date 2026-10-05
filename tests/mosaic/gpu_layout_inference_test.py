@@ -1016,9 +1016,9 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
     self.assertIsInstance(assignments, cs.Unsatisfiable)
 
-  @parameterized.parameters(False, True)
+  @parameterized.product(is_store=(False, True), optimized=(False, True))
   def test_scavenge_diagnoses_unsupported_smem_registers_transfer(
-      self, optimized
+      self, is_store, optimized
   ):
     shape = (128, 128)
     f32 = ir.F32Type.get()
@@ -1034,8 +1034,19 @@ class LayoutInferenceTest(parameterized.TestCase):
       mgpu.dialect.with_transforms(
           ref, [mgpu.dialect.TileTransformAttr.get((64, 64))]
       )
-      val = layout_cast(val, mgpu.WGMMA_LAYOUT)
-      mgpu.dialect.VectorStoreOp(val, ref, optimized=optimized)
+      if is_store:
+        val = layout_cast(val, mgpu.WGMMA_LAYOUT)
+        mgpu.dialect.VectorStoreOp(val, ref, optimized=optimized)
+      else:
+        loaded = mgpu.dialect.VectorLoadOp(ref, optimized=optimized)
+        # TODO(bchetioui): use `layout_cast(..., strict=True)` once supported.
+        mgpu.dialect.custom_primitive(
+            result=[],
+            operands_=[loaded.result],
+            in_layouts=[layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)],
+            in_transforms=[],
+            out_layouts=[],
+        )
 
     opt_str = "optimized " if optimized else ""
     with self.assertRaisesRegex(
