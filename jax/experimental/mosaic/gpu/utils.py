@@ -2554,28 +2554,41 @@ def get_cluster_ref(
     ref: ir.Value, dim: gpu.Dimension, idx: ir.Value, generic: bool = True
 ):
   i32 = ir.IntegerType.get_signless(32)
-  # We replace the offset in the ref type by 0, because memref_ptr always
-  # folds the offset into the pointer.
+  i64 = ir.IntegerType.get_signless(64)
   ref_ty = ir.MemRefType(ref.type)
-  strides, offset = ref_ty.get_strides_and_offset()
-  if offset != 0:
-    new_layout = ir.StridedLayoutAttr.get(0, strides)
-  else:
-    new_layout = ref_ty.layout
+  if not is_smem_ref(ref_ty):
+    raise ValueError(f"Expected SMEM but got: {ref_ty.memory_space}")
   result_type = ir.MemRefType.get(
       ref_ty.shape,
       ref_ty.element_type,
-      new_layout,
+      ref_ty.layout,
       None if generic else ir.IntegerAttr.get(i32, 7),
   )
-  if not is_smem_ref(ref_ty):
-    raise ValueError(f"Expected SMEM but got: {ref_ty.memory_space}")
   idxs: list[ir.Value] = [gpu.cluster_block_id(d) for d in gpu.Dimension]
   idxs[dim] = idx
   flat_block = arith.index_cast(i32, cluster_idx(dim_idx=idxs))
-  return ptr_as_memref(
-      get_cluster_ptr(memref_ptr(ref), flat_block, generic), result_type
+  desc = to_memref_descriptor(ref)
+  aligned_ptr = llvm.extractvalue(
+      llvm.PointerType.get(WORKGROUP_NVPTX_ADDRESS_SPACE), desc, [1]
   )
+  cluster_ptr = get_cluster_ptr(aligned_ptr, flat_block, generic)
+  result_desc = llvm.mlir_undef(memref_descriptor_type(result_type))
+  result_desc = llvm.insertvalue(result_desc, cluster_ptr, [0])
+  result_desc = llvm.insertvalue(result_desc, cluster_ptr, [1])
+  result_desc = llvm.insertvalue(
+      result_desc, llvm.extractvalue(i64, desc, [2]), [2]
+  )
+  if ref_ty.rank > 0:
+    array_ty = llvm.ArrayType.get(i64, ref_ty.rank)
+    result_desc = llvm.insertvalue(
+        result_desc, llvm.extractvalue(array_ty, desc, [3]), [3]
+    )
+    result_desc = llvm.insertvalue(
+        result_desc, llvm.extractvalue(array_ty, desc, [4]), [4]
+    )
+  result = builtin.unrealized_conversion_cast([result_type], [result_desc])
+  assert isinstance(result, ir.Value)
+  return result
 
 
 def elements_to_bytes(offset: ir.Value, element_bitwidth: int) -> ir.Value:

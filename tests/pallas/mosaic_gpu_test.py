@@ -4399,7 +4399,11 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       plgpu.barrier_arrive(cluster_barrier)
       plgpu.barrier_wait(cluster_barrier)
       peer_scratch = plgpu.cluster_ref(scratch_ref, {axis_name: 1 - my_idx})
-      plgpu.store(dst_ref.at[my_idx], peer_scratch[...], optimized=False)
+      for i in range(2):
+        s = pl.ds(i * 64, 64)
+        plgpu.store(
+            dst_ref.at[my_idx, s], peer_scratch.at[s][...], optimized=False
+        )
 
     cluster_names = ("x", "y")
     if axis_name == "x":
@@ -4407,14 +4411,14 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     else:
       cluster = (1, 2)
 
-    x = jnp.arange(2 * 64 * 32, dtype=jnp.float32).reshape(2, 64, 32)
+    x = jnp.arange(2 * 128 * 32, dtype=jnp.float32).reshape(2, 128, 32)
     transforms = self.default_transforms(dtype=jnp.float32)
 
     y = self.kernel(
         kernel,
-        out_type=jax.ShapeDtypeStruct((2, 64, 32), jnp.float32),
+        out_type=jax.ShapeDtypeStruct((2, 128, 32), jnp.float32),
         scratch_types=[
-            plgpu.SMEM((64, 32), jnp.float32, transforms=transforms),
+            plgpu.SMEM((128, 32), jnp.float32, transforms=transforms),
             plgpu.Barrier(),
             plgpu.ClusterBarrier(collective_axes=(axis_name,)),
         ],
