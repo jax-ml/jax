@@ -161,8 +161,7 @@ pytype_strict_library(
     srcs = ["overlap.py"],
     visibility = ["//visibility:public"],
     deps = [
-        "//jax/_src:api",
-        "//jax/_src:ffi",
+        "//jax/_src:program_order",
     ],
 )
 

@@ -12,18 +12,4 @@
 # See the License for the ific language governing permissions and
 # limitations under the License.
 
-from jax._src.pjit import program_order as program_order
-
-
-def control_dep(src, dst):
-  """Adds a control dependency from src to dst."""
-  from jax._src.ffi import ffi_call
-  return ffi_call("control_dep", (), has_side_effect=True)(src, dst)
-
-def schedule(ops):
-  """Adds control dependencies to schedule the ops in the provided order.
-
-  For example, schedule([a, b, c]) adds control dependencies a->b and b->c.
-  """
-  for src, dst in zip(ops[:-1], ops[1:]):
-    control_dep(src, dst)
+from jax._src.program_order import program_order as program_order

@@ -1280,6 +1280,29 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "program_order",
+    srcs = ["program_order.py"],
+    deps = [
+        ":ad",
+        ":ad_util",
+        ":api",
+        ":api_util",
+        ":batching",
+        ":config",
+        ":core",
+        ":effects",
+        ":lax",
+        ":mlir",
+        ":partial_eval",
+        ":remat",
+        ":source_info_util",
+        ":state_types",
+        ":tree_util",
+        ":util",
+    ],
+)
+
+pytype_strict_library(
     name = "xla_metadata",
     srcs = ["xla_metadata.py"],
     deps = [
