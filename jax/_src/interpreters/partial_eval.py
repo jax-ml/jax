@@ -60,6 +60,7 @@ ConstId = int
 
 AttrKind = Any
 PyTree = Any
+HTLV = Any
 logger = logging.getLogger(__name__)
 
 TracebackScope = _jax.TracebackScope
@@ -2341,7 +2342,10 @@ def lower_jaxpr2(hi_jaxpr) -> Jaxpr:
 
 @weakref_lru_cache
 def lower_jaxpr(hi_jaxpr: Jaxpr, lo_avals) -> tuple[Jaxpr, ft.FlatTree]:
-  env: dict[Var, DynamicJaxprTracer | HTLV] = {}  # noqa # type:ignore
+  # TODO(yashkatariya): Remove this once we have XLA DCE opaque opt-barrier.
+  hi_jaxpr, _ = dce_jaxpr(hi_jaxpr, True, instantiate=True)
+
+  env: dict[Var, DynamicJaxprTracer | HTLV] = {}  # type:ignore
 
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(hi_jaxpr.debug_info.with_unknown_names(),

@@ -2979,6 +2979,39 @@ class HijaxTest(jtu.JaxTestCase):
     out_tangent = f_lin(jnp.ones((5,)))
     self.assertArraysEqual(out_tangent, jnp.zeros((5,)))
 
+  def test_lower_jaxpr_dce(self):
+    @jax.jit
+    def f(x):
+      _ = square(x)
+      return x + 1.0
+
+    traced = f.trace(jnp.float32(2.0))
+    self.assertLen(traced.jaxpr.eqns, 2)
+    self.assertEqual([e.primitive.name for e in traced.lojax.jaxpr.eqns], ['add'])
+
+    def g(x, y):
+      _ = square(y)
+      return jnp.sin(x)
+
+    traced_grad = jax.jit(jax.grad(g)).trace(jnp.float32(2.0), jnp.float32(3.0))
+    self.assertIn('Square', str(traced_grad.jaxpr))
+    self.assertEqual([e.primitive.name for e in traced_grad.lojax.jaxpr.eqns],
+                     ['cos', 'mul'])
+
+    with config.remat3(True):
+      @jax.remat
+      def r(x, y):
+        return jnp.sin(x), jnp.cos(y)
+
+      @jax.jit
+      def h(x, y):
+        a, _ = r(x, y)
+        return a
+
+      traced_h = h.trace(jnp.float32(2.0), jnp.float32(3.0))
+      self.assertIn('cos', str(traced_h.jaxpr))
+      self.assertNotIn('cos', str(traced_h.lojax.jaxpr))
+
 
 class RefTest(jtu.JaxTestCase):
 

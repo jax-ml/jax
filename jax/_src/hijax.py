@@ -225,7 +225,7 @@ class HiPrim:
   def dce(self, used_outs, live_ins):
     del live_ins
     used_outs_flat = tree_leaves_checked(self.out_tree, used_outs)
-    if not any(used_outs_flat):
+    if not any(used_outs_flat) and not self.effects:
       return False, False, None
     else:
       return True, True, self
