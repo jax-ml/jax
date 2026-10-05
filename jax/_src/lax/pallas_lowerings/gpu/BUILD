@@ -23,7 +23,10 @@ package(default_applicable_licenses = [])
 
 pytype_strict_library(
     name = "ragged_dot",
-    srcs = ["ragged_dot.py"],
+    srcs = [
+        "__init__.py",
+        "ragged_dot.py",
+    ],
     visibility = ["//jax:internal"],
     deps = if_building_jaxlib(
         if_building = [
