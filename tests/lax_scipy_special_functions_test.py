@@ -177,9 +177,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record(
         "expi", 1, [np.float32],
         functools.partial(jtu.rand_not_small, offset=0.1), True),
-    op_record("exp1", 1, [np.float32], jtu.rand_positive, True),
+    op_record("exp1", 1, float_dtypes, jtu.rand_positive, True),
     op_record(
-        "expn", 2, (int_dtypes, [np.float32]), jtu.rand_positive, True, (0,)),
+        "expn", 2, (int_dtypes, float_dtypes), jtu.rand_positive, True, (0,)),
     op_record("kl_div", 2, float_dtypes, jtu.rand_positive, True),
     op_record(
         "rel_entr", 2, float_dtypes, jtu.rand_positive, True,
@@ -249,6 +249,30 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       jtu.check_grads(partial_lax_op, diff_args, order=1,
                       atol=.1 if jtu.test_device_matches(["tpu"]) else 1e-3,
                       rtol=.1, eps=1e-3)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testExp1BranchesTerminate(self, dtype):
+    # jnp.piecewise evaluates expn's continued-fraction branch on x <= 1
+    # inputs, where it does not converge; this must not hang (#13543).
+    x = np.array([1e-8, 1e-6, 0.5, 1.0, np.nextafter(1.0, 2.0),
+                  np.nextafter(1.0, 0.0), 2.0, 100.0], dtype=dtype)
+    rtol = {np.float32: 1e-4, np.float64: 1e-5}[dtype]
+    atol = {np.float32: 1e-5, np.float64: 1e-6}[dtype]
+    self.assertAllClose(
+        lsp_special.exp1(x),
+        osp_special.exp1(x.astype(np.float64)).astype(dtype),
+        rtol=rtol, atol=atol)
+
+  @jtu.sample_product(dtype=float_dtypes, n=[0, 1, 2, 10])
+  def testExpnBranchesTerminate(self, dtype, n):
+    x = np.array([1e-8, 1e-6, 0.5, 1.0, np.nextafter(1.0, 2.0),
+                  np.nextafter(1.0, 0.0), 2.0, 100.0], dtype=dtype)
+    rtol = {np.float32: 1e-4, np.float64: 1e-5}[dtype]
+    atol = {np.float32: 1e-5, np.float64: 1e-6}[dtype]
+    self.assertAllClose(
+        lsp_special.expn(n, x),
+        osp_special.expn(n, x.astype(np.float64)).astype(dtype),
+        rtol=rtol, atol=atol)
 
   def testWofzAccuracy(self):
     # Verify wofz agrees with scipy over the full complex plane (float32).
