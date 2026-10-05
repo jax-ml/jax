@@ -1093,6 +1093,37 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(y, x + 2)
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
+  def test_producer_consumer_threads_with_cta_barrier(self):
+    x = jnp.arange(128, dtype=jnp.float32)
+
+    @functools.partial(
+        plgpu.kernel,
+        out_type=x,
+        scratch_types=dict(
+            smem_ref=plgpu.SMEM(x.shape, x.dtype),
+            barrier_ref=plgpu.CtaBarrier(num_arrivals=2),
+        ),
+        num_threads=2,
+        thread_name='t',
+        interpret=InterpretParams(detect_races=True),
+    )
+    def _kernel(x_ref, out_ref, smem_ref, barrier_ref):
+      thread_id = jax.lax.axis_index('t')
+
+      @pl.when(thread_id == 0)
+      def producer_thread():
+        smem_ref[...] = x_ref[...] + 1
+        plgpu.barrier_arrive(barrier_ref)
+
+      @pl.when(thread_id == 1)
+      def consumer_thread():
+        plgpu.barrier_arrive_and_wait(barrier_ref)
+        out_ref[...] = smem_ref[...] + 1
+
+    y = _kernel(x)
+    np.testing.assert_array_equal(y, x + 2)
+    self.assertFalse(mosaic_interpret.get_races().races_found)
+
   @jtu.parameterized.product(with_race=[True, False])
   def test_barrier_multidimensional_1d(self, with_race):
     shape = (2,)
