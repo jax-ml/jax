@@ -172,15 +172,9 @@ def _initialize_shared_memory(
   num_blocks_per_cluster_as_int = int(num_blocks_per_cluster)
   del num_gpus, num_threads_per_block, num_blocks_per_cluster
 
-  num_total_concurrent_threads = (
-      num_gpus_as_int
-      * num_threads_per_block_as_int
-      * num_blocks_per_cluster_as_int
-  )
-
   with _shared_memory_init_lock:
     if _shared_memory is None:
-      _races = GPURaceDetectionState(num_cores=num_total_concurrent_threads)
+      _races = GPURaceDetectionState(on_race=interpret_params.on_race)
       _shared_memory = memory.GPUSharedMemory(
           num_devices=num_gpus_as_int,
           num_threads_per_block=num_threads_per_block_as_int,
