@@ -1231,20 +1231,14 @@ def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
   # whose batch axis is the leading axis would need a transposed view of the
   # buffer, which a Ref cannot provide.
   xs_is_ref = [isinstance(typeof(x), AbstractRef) for x in xs]
-  xs_axes = []
-  for d, is_ref in zip(xs_bdims, xs_is_ref):
-    if d is None:
-      xs_axes.append(None)
-    elif not is_ref:
-      xs_axes.append(0)
-    elif d == 0:
-      raise NotImplementedError(
-          "vmap of a scan over a Ref batched along its leading axis is not "
-          "supported: that axis is the scan axis, and a Ref cannot be "
-          "transposed. Batch the Ref along another axis, or scan over an "
-          "array instead.")
-    else:
-      xs_axes.append(d - 1)
+  if any(r and d == 0 for r, d in zip(xs_is_ref, xs_bdims)):
+    raise NotImplementedError(
+        "vmap of a scan over a Ref batched along its leading axis is not "
+        "supported: that axis is the scan axis, and a Ref cannot be "
+        "transposed. Batch the Ref along another axis, or scan over an "
+        "array instead.")
+  xs_axes = [None if d is None else d - 1 if r else 0
+             for d, r in zip(xs_bdims, xs_is_ref)]
 
   # Fixpoint computation of which carry are batched: either
   # batched from init, or the carry out is batched. Each iteration promotes
