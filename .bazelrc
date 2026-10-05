@@ -121,6 +121,8 @@ common:windows --host_linkopt=/OPT:REF
 common:windows --linkopt=/OPT:ICF
 common:windows --host_linkopt=/OPT:ICF
 common:windows --incompatible_strict_action_env=true
+# LLVM for toolchain
+common:windows --repo_env=LLVM_VERSION=20
 
 # #############################################################################
 # Feature-specific configurations. These are used by the CI configs below
