@@ -3028,6 +3028,40 @@ class HijaxTest(jtu.JaxTestCase):
     dced_jaxpr, _ = pe.dce_jaxpr(clean_jaxpr, True, instantiate=True)
     self.assertIs(dced_jaxpr, clean_jaxpr)
 
+  def test_lower_jaxpr_dce_keeps_effectful_remat(self):
+    with config.remat3(True):
+      @jax.jit
+      def f():
+        x_ref = jax.new_ref(jnp.zeros(3, dtype=jnp.float32))
+        def body(r):
+          r[...] = jnp.ones_like(r)  # no outputs, only an effect
+        jax.remat(body)(x_ref)
+        return x_ref[...]
+
+      self.assertAllClose(f(), jnp.ones(3, dtype=jnp.float32))
+
+  def test_lower_jaxpr_dce_keeps_effectful_custom_vjp_optimize_remat(self):
+    with config.custom_vjp3(True):
+      @jax.custom_vjp
+      def f(x, x_ref):
+        x_ref[...] = x
+        return jnp.sin(x)
+      def f_fwd(x, x_ref):
+        x_ref[...] = x
+        return jnp.sin(x), jnp.cos(x)
+      def f_bwd(cos_x, g):
+        return (cos_x * g, None)
+      f.defvjp(f_fwd, f_bwd, optimize_remat=True)
+
+      @jax.jit
+      def g(x):
+        x_ref = jax.new_ref(jnp.zeros((), jnp.float32))
+        # outputs unused, only an effect
+        jax.jvp(lambda x: f(x, x_ref), (x,), (jnp.float32(1.0),))
+        return x_ref[...]
+
+      self.assertAllClose(g(jnp.float32(2.0)), jnp.float32(2.0))
+
 
 class RefTest(jtu.JaxTestCase):
 

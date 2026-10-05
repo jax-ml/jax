@@ -1197,7 +1197,7 @@ class RematTraced(HiPrim):
   def dce(self, used_outs, live_ins):
     used_outs_flat = tree_leaves_checked(self.out_tree, used_outs)
     live_ins_flat = tree_leaves_checked(self.in_tree, live_ins)
-    if not any(used_outs_flat):
+    if not any(used_outs_flat) and not self.effects:
       return False, False, None
     new_jaxpr, used_ins = pe.dce_jaxpr(self.jaxpr, used_outs_flat,
                                        live_inputs=live_ins_flat)
