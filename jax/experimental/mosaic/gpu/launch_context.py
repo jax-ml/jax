@@ -40,6 +40,8 @@ from . import profiler
 from . import utils
 TMA_DESCRIPTOR_BYTES = 128
 TMA_DESCRIPTOR_ALIGNMENT = 64
+# Matches `mosaic::gpu::kExpectedHbmAlignment`.
+HBM_ALIGNMENT = 256
 TMAReductionOp = Literal[
     "add",
     "min",
@@ -2126,31 +2128,27 @@ class LaunchContext:
     i32 = ir.IntegerType.get_signless(32)
     if isinstance(ref.type, ir.MemRefType):
       assert _kernel_arg_idx is None
-      # We replace the offset in the ref type by 0, because memref_ptr always
-      # folds the offset into the pointer.
       ref_ty = ir.MemRefType(ref.type)
-      strides, _ = ref_ty.get_strides_and_offset()
-      result_type = ir.MemRefType.get(
-          ref_ty.shape,
-          ref_ty.element_type,
-          ir.StridedLayoutAttr.get(0, strides),
-          ref_ty.memory_space,
-      )
+      ptr_ty = llvm.PointerType.get()
+      desc = utils.to_memref_descriptor(ref)
 
       arg_idx = None
       if collective_metadata is not None:
         arg_idx = self._find_kernel_argument_index(ref)
 
-      ref_ptr = utils.memref_ptr(ref)
-      remote_memref = utils.ptr_as_memref(
-          self.to_remote(
-              ref_ptr,
-              peer,
-              _kernel_arg_idx=arg_idx,
-              on_host=on_host,
-          ),
-          result_type,
+      # Extract the aligned base pointer, as we want to annotate it with the
+      # relevant alignment information.
+      aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
+      remote_ptr = self.to_remote(
+          aligned_ptr,
+          peer,
+          _kernel_arg_idx=arg_idx,
+          on_host=on_host,
       )
+      desc = llvm.insertvalue(desc, remote_ptr, [0])
+      desc = llvm.insertvalue(desc, remote_ptr, [1])
+      remote_memref = builtin.unrealized_conversion_cast([ref_ty], [desc])
+      assert isinstance(remote_memref, ir.Value)
 
       if collective_metadata is not None:
         remote_memref.owner.attributes[KERNEL_ARG_ID_ATTR] = ir.IntegerAttr.get(
@@ -2189,14 +2187,24 @@ class LaunchContext:
       parameter_on_current_device = self._get_parameter_address_on_peer(
           _kernel_arg_idx, current_device, on_host
       )
-      ref_offset = self._get_offset_to_parameter(
-          ref, parameter_on_current_device
-      )
       parameter_on_peer_device = self._get_parameter_address_on_peer(
           _kernel_arg_idx, peer, on_host
       )
-      ref_on_peer_device = arith.addi(parameter_on_peer_device, ref_offset)
-      return llvm.inttoptr(ref.type, ref_on_peer_device)
+      peer_offset = arith.subi(
+          parameter_on_peer_device, parameter_on_current_device
+      )
+      i64 = ir.IntegerType.get_signless(64)
+      # Enforce alignment to allow vectorized loads and stores to be generated
+      # whenever possible.
+      is_aligned = arith.cmpi(
+          arith.CmpIPredicate.eq,
+          arith.andi(peer_offset, c(HBM_ALIGNMENT - 1, i64)),
+          c(0, i64),
+      )
+      llvm.intr_assume(is_aligned, [], ir.DenseI32ArrayAttr.get([]))
+      return utils.getelementptr(
+          ref, [peer_offset], ir.IntegerType.get_signless(8)
+      )
 
   def to_remote_multicast(self, ref: ir.Value, on_host: bool = False):
     i32 = ir.IntegerType.get_signless(32)

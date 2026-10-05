@@ -220,6 +220,56 @@ class PallasCallRemoteDMATest(TestCase):
         y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
     )
 
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_remote_store_vectorized(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    def kernel(x_ref, y_ref, ready_sem, recv_sem):
+      other_dev_id = 1 - lax.axis_index("x")
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+      for i in range(2):
+        for j in range(2):
+          idx = (
+              pl.ds(lax.rem(other_dev_id + i, jnp.int32(2)) * 16, 16),
+              pl.ds(j * 64, 64),
+          )
+          plgpu.remote_ref(y_ref, other_dev_id)[idx] = x_ref[idx]
+      pl.semaphore_signal(recv_sem, device_id=other_dev_id)
+      pl.semaphore_wait(recv_sem)
+
+    x = jnp.arange(2 * 32 * 128, dtype=jnp.bfloat16).reshape((2 * 32, 128))
+    body = self.kernel(
+        kernel,
+        out_type=jax.ShapeDtypeStruct((32, 128), jnp.bfloat16),
+        scratch_types=[
+            plgpu.SemaphoreType.REGULAR,
+            plgpu.SemaphoreType.REGULAR,
+        ],
+    )
+    mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), jtu.capture_stdout() as ptx:
+      y = jax.block_until_ready(
+          jax.jit(
+              jax.shard_map(
+                  body,
+                  mesh=mesh,
+                  in_specs=P("x"),
+                  out_specs=P("x"),
+                  check_vma=False,
+              )
+          )(x)
+      )
+    self.assertIn("st.global.v2.b32", ptx())
+    self.assertNotIn("st.b16", ptx())
+    self.assertNotIn("st.global.b16", ptx())
+
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[32:] if dev_idx == 0 else x[:32]
+    )
+
   def test_skip_device_sync(self):
     if jax.process_index() > 2:
       self.monkey_patched_api_was_used = True

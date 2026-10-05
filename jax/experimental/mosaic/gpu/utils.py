@@ -236,6 +236,35 @@ WORKGROUP_NVPTX_ADDRESS_SPACE = gpu_address_space_to_nvptx(
 )
 
 
+def memref_descriptor_type(memref_ty: ir.MemRefType) -> llvm.StructType:
+  i64 = ir.IntegerType.get_signless(64)
+  rank = len(memref_ty.shape)
+  address_space = get_memref_llvm_address_space(memref_ty)
+  ptr_ty = llvm.PointerType.get(address_space)
+  desc_ty_fields = [ptr_ty, ptr_ty, i64]
+  if rank > 0:
+    desc_ty_fields += [llvm.ArrayType.get(i64, rank)] * 2
+  return llvm.StructType.get_literal(desc_ty_fields)
+
+
+def to_memref_descriptor(memref_arg: ir.Value) -> ir.Value:
+  """Casts a memref to its underlying LLVM struct descriptor.
+
+  The returned struct has the following fields (matching MLIR's MemRefToLLVM
+  lowering convention):
+    [0]: allocated pointer (!llvm.ptr)
+    [1]: aligned base pointer (!llvm.ptr)
+    [2]: offset in elements (i64)
+    [3]: sizes in elements (!llvm.array<rank x i64>, only if rank > 0)
+    [4]: strides in elements (!llvm.array<rank x i64>, only if rank > 0)
+  """
+  memref_ty = ir.MemRefType(memref_arg.type)
+  desc_ty = memref_descriptor_type(memref_ty)
+  desc = builtin.unrealized_conversion_cast([desc_ty], [memref_arg])
+  assert isinstance(desc, ir.Value)
+  return desc
+
+
 def ptr_as_memref(ptr, memref_ty: ir.MemRefType):
   ptr_ty = llvm.PointerType(ptr.type)
   if ptr_ty.address_space != (get_memref_llvm_address_space(memref_ty) or 0):
@@ -249,10 +278,7 @@ def ptr_as_memref(ptr, memref_ty: ir.MemRefType):
     raise ValueError("Non-zero offset is not supported for ptr_as_memref")
   i64 = ir.IntegerType.get_signless(64)
   rank = len(memref_ty.shape)
-  desc_ty_fields = [ptr_ty, ptr_ty, i64]
-  if rank > 0:
-    desc_ty_fields += [llvm.ArrayType.get(i64, rank)] * 2
-  desc_ty = llvm.StructType.get_literal(desc_ty_fields)
+  desc_ty = memref_descriptor_type(memref_ty)
   desc = llvm.UndefOp(desc_ty).result
   desc = llvm.InsertValueOp(desc, ptr, [0]).result  # Allocation
   desc = llvm.InsertValueOp(desc, ptr, [1]).result  # Aligned Base
@@ -1991,15 +2017,9 @@ def get_memref_llvm_address_space(memref_ty: ir.MemRefType) -> int | None:
 def memref_ptr(memref_arg) -> ir.Value:
   i64 = ir.IntegerType.get_signless(64)
   memref_ty = ir.MemRefType(memref_arg.type)
-  rank = len(memref_ty.shape)
   address_space = get_memref_llvm_address_space(memref_ty)
   ptr_ty = llvm.PointerType.get(address_space)
-  desc_ty_fields = [ptr_ty, ptr_ty, i64]
-  if rank > 0:
-    desc_ty_fields += [llvm.ArrayType.get(i64, rank)] * 2
-  desc_ty = llvm.StructType.get_literal(desc_ty_fields)
-  desc = builtin.unrealized_conversion_cast([desc_ty], [memref_arg])
-  assert isinstance(desc, ir.Value)
+  desc = to_memref_descriptor(memref_arg)
   aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
   offset_elems = llvm.extractvalue(i64, desc, [2])
 
