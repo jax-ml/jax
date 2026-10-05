@@ -656,7 +656,12 @@ def MosaicGPU_WGMMASupportedType : AnyTypeOf<[F16, BF16, F32],
 def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
     [SameOperandsAndResultType, Pure]> {
   let summary = "Casts a vector to a new layout.";
-  let description = [{Casts a vector value to a new strided or tiled layout.}];
+  let description = [{
+    Casts a vector value to a new strided or tiled layout.
+
+    If `strict` is true, only allows relayouts that are free at runtime and
+    forces layout equality otherwise.
+  }];
   let arguments = (ins
     AnyVectorOfAnyRank:$x,
 
@@ -664,7 +669,8 @@ def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
     AnyAttrOf<[
       MosaicGPU_WGStridedFragLayout,
       MosaicGPU_TiledLayout
-    ]>:$new_layout
+    ]>:$new_layout,
+    DefaultValuedAttr<BoolAttr, "false">:$strict
   );
 
   let results = (outs AnyVectorOfAnyRank);

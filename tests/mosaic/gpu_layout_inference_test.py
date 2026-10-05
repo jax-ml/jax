@@ -62,11 +62,19 @@ def _make_ir_context():
   return context
 
 
-def layout_cast(x: ir.Value, layout: mgpu.FragmentedLayout | ir.Attribute) -> ir.Value:
+def layout_cast(
+    x: ir.Value,
+    layout: mgpu.FragmentedLayout | ir.Attribute,
+    *,
+    strict: bool | None = None,
+) -> ir.Value:
   """Convenience wrapper around `mgpu.dialect.layout_cast`."""
   if isinstance(layout, mgpu.FragmentedLayout):
     layout = layouts.to_layout_attr(layout)
-  return mgpu.dialect.layout_cast(x, layout)
+  # TODO(bchetioui): pass `strict` unconditionally once minimum jaxlib version
+  # is 0.12.0.
+  kwargs = {} if strict is None else {"strict": strict}
+  return mgpu.dialect.layout_cast(x, layout, **kwargs)  # pyrefly: ignore[unexpected-keyword]
 
 
 def undefs(*tys: ir.Type) -> list[ir.Value]:
@@ -896,11 +904,17 @@ class LayoutInferenceTest(parameterized.TestCase):
     [out_transforms] = inference_utils.out_transforms(get_cluster_ref)
     self.assertEqual(out_transforms, transforms)
 
-  def test_constraint_extraction_works_correctly(self):
+  @parameterized.parameters(False, True)
+  def test_constraint_extraction_works_correctly(self, strict):
+    # TODO(bchetioui): remove this check once minimum jaxlib version is 0.12.0.
+    if strict and not hasattr(mgpu.dialect.LayoutCastOp, "strict"):
+      self.skipTest("Test requires jaxlib >= 0.12.0")
     layout = mgpu.WGMMA_ROW_LAYOUT
     with ir.InsertionPoint(self.module.body):
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
-      lcast = layout_cast(x.result, layouts.to_layout_attr(layout)).owner
+      lcast = layout_cast(
+          x.result, layouts.to_layout_attr(layout), strict=strict
+      ).owner
 
     ctx = layout_inference.DerivationContext()
     _, x_mapping = _undef_constraint_system(ctx, x)
@@ -914,7 +928,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     [lc_op_variable, lc_res_variable] = lc_mapping.keys()
     self.assertEqual(
         lc_cs.constraints,
-        [cs.Relayout(lc_op_variable, lc_res_variable, 16, strict=False)],
+        [cs.Relayout(lc_op_variable, lc_res_variable, 16, strict=strict)],
     )
     self.assertEqual(
         constraint, cs.Relayout(x_variable, lc_op_variable, 16, strict=True)
@@ -1020,6 +1034,9 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_scavenge_diagnoses_unsupported_smem_registers_transfer(
       self, is_store, optimized
   ):
+    # TODO(bchetioui): remove this check once minimum jaxlib version is 0.12.0.
+    if not is_store and not hasattr(mgpu.dialect.LayoutCastOp, "strict"):
+      self.skipTest("Test requires jaxlib >= 0.12.0")
     shape = (128, 128)
     f32 = ir.F32Type.get()
     with ir.InsertionPoint(self.module.body):
@@ -1039,14 +1056,7 @@ class LayoutInferenceTest(parameterized.TestCase):
         mgpu.dialect.VectorStoreOp(val, ref, optimized=optimized)
       else:
         loaded = mgpu.dialect.VectorLoadOp(ref, optimized=optimized)
-        # TODO(bchetioui): use `layout_cast(..., strict=True)` once supported.
-        mgpu.dialect.custom_primitive(
-            result=[],
-            operands_=[loaded.result],
-            in_layouts=[layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)],
-            in_transforms=[],
-            out_layouts=[],
-        )
+        layout_cast(loaded.result, mgpu.WGMMA_LAYOUT, strict=True)
 
     opt_str = "optimized " if optimized else ""
     with self.assertRaisesRegex(
