@@ -44,6 +44,8 @@ Remember to align the itemized text with the first line of an item within a list
   {func}`jax.experimental.pallas.mosaic_gpu.sum`, and
   {func}`jax.experimental.pallas.mosaic_gpu.prod`. These mirror the equivalent
   `jax.numpy` functions, but add an `accumulator_ilp` parameter.
+  * Added {func}`jax.experimental.pallas.mosaic_gpu.alloc_semaphore`, which
+    allocates GMEM semaphores that can be shared across kernel invocations.
 
 * Deprecations
 
