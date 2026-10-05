@@ -6,6 +6,7 @@
 //tests:backend_independent_tests
 //tests/pallas:gpu_tests
 //tests/pallas:backend_independent_tests
+//tests/pallas/lax_lowerings/gpu:ragged_dot_test_gpu
 //jaxlib/tools:check_gpu_wheel_sources_test
 
 -//tests/pallas:ops_test_mgpu_gpu

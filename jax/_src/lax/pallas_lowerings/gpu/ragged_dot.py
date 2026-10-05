@@ -444,7 +444,10 @@ def _backend_supports_triton(ctx) -> bool:
   ds = list(backend.devices())
   if not ds:
     return False
-  return tuple(int(x) for x in ds[0].compute_capability.split(".")) >= (8, 0)
+  compute_capability = ds[0].compute_capability
+  if compute_capability.startswith("gfx"):  # ROCm reports the gfx arch name.
+    return True
+  return tuple(int(x) for x in compute_capability.split(".")) >= (8, 0)
 
 
 def _pallas_ragged_dot_general_impl(

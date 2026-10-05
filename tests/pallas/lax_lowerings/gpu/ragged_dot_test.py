@@ -34,9 +34,9 @@ class RaggedDotGpuPallasTest(jtu.JaxTestCase):
   def setUp(self):
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("This test requires a GPU")
-    else:
-      if not jtu.is_cuda_compute_capability_at_least("8.0"):
-        self.skipTest("This test requires a GPU")
+    elif (not jtu.is_device_rocm() and
+          not jtu.is_cuda_compute_capability_at_least("8.0")):
+      self.skipTest("This test requires a GPU with compute capability >= 8.0")
     super().setUp()
     self.enter_context(
           jtu.ignore_warning(

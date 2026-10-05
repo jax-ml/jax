@@ -32,6 +32,5 @@ jax_multiplatform_test(
     deps = [
         "//jax/_src:lax_reference",
         "//jax/_src/lax/pallas_lowerings/gpu:ragged_dot",
-        "//third_party/py/numpy",
-    ] + py_deps("absl/testing"),
+    ] + py_deps("absl/testing") + py_deps("numpy"),
 )
