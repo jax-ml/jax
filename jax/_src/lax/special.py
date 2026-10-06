@@ -22,14 +22,14 @@ import numpy as np
 from functools import partial, reduce as _reduce
 
 from jax._src import core
-from jax._src.lax.erfc import erfc_impl, exp_neg_sq
 from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
                               broadcast_in_dim, broadcast_shapes,
                               convert_element_type, div, eq, exp, full_like, ge,
                               gt, le, log, log1p, lt, mul, ne, neg, reciprocal,
                               reduce, select, sign, sqrt, square,
-                              standard_naryop, standard_unop, sub, _const,
-                              _dtype, _float, _nary_lower_hlo, _ones, _isnan)
+                              standard_naryop, standard_unop, sub,
+                              _const, _dtype,
+                              _float, _nary_lower_hlo, _ones, _isnan)
 from jax._src.lax.control_flow.loops import while_loop
 
 from jax._src import dtypes
@@ -790,17 +790,13 @@ ad.defjvp2(bessel_i1e_p, _bessel_i1e_jvp)
 
 erf_p = standard_unop(_float, 'erf')
 ad.defjvp(erf_p, lambda g, x: mul(_const(x, 2. / np.sqrt(np.pi)),
-                                  mul(g, exp_neg_sq(x))))
+                                  mul(g, exp(neg(square(x))))))
 mlir.register_lowering(erf_p, partial(_nary_lower_hlo, chlo.erf))
 
 erfc_p = standard_unop(_float, 'erfc')
 ad.defjvp(erfc_p, lambda g, x: mul(_const(x, -2. / np.sqrt(np.pi)),
-                                   mul(g, exp_neg_sq(x))))
-def _erfc_lowering(ctx, x):
-  if ctx.avals_in[0].dtype in (np.float32, np.float64):
-    return mlir.lower_fun(erfc_impl, multiple_results=False)(ctx, x)
-  return _nary_lower_hlo(chlo.erfc, ctx, x)
-mlir.register_lowering(erfc_p, _erfc_lowering)
+                                   mul(g, exp(neg(square(x))))))
+mlir.register_lowering(erfc_p, partial(_nary_lower_hlo, chlo.erfc))
 
 erf_inv_p = standard_unop(_float, 'erf_inv')
 ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, np.sqrt(np.pi) / 2.),
