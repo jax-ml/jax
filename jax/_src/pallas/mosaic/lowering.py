@@ -5197,13 +5197,13 @@ def _device_id_to_logical(
   kernel_type = ctx.lowering_context.kernel_type
   if dest_mesh is None:
     dest_kernel_type = kernel_type
-    core_axis_names = set(ctx.lowering_context.grid_names or ())
+    core_axis_names = tuple(ctx.lowering_context.grid_names or ())
   else:
     dest_kernel_type = dest_mesh.core_type
-    core_axis_names = set(dest_mesh.shape.keys())
+    core_axis_names = tuple(dest_mesh.shape.keys())
 
   spmd_core_axis_names = set(ctx.lowering_context.grid_names or ())
-  mpmd_core_axis_names = core_axis_names - spmd_core_axis_names
+  mpmd_core_axis_names = set(core_axis_names) - spmd_core_axis_names
 
   def jax_fn(device_id_val):
     if device_id_val is None:
@@ -5237,26 +5237,40 @@ def _device_id_to_logical(
     # the required axis names are present in the current kernel type's mesh.
     subcore_index = None
     if dest_kernel_type == tpu_core.CoreType.SC_VECTOR_SUBCORE:
-      if not mpmd_core_axis_names and dest_kernel_type == kernel_type:
-        # short circuit for same core semaphores without a core type annotation
+      if (
+          not mpmd_core_axis_names
+          and dest_kernel_type == kernel_type
+          and not specified_core_axes
+      ):
+        # Short-circuit if targeting the same core type and no core axes were
+        # specified in device_id.
         return logical_device_id, None, None
-      assert isinstance(dest_mesh, sc_core.VectorSubcoreMesh), (
-          f"Unrecognized dest_mesh: {type(dest_mesh)} != VectorSubcoreMesh")
-      sc_info = tpu_info.get_tpu_info().sparse_core
-      assert isinstance(sc_info, tpu_info.SparseCoreInfo)
-      if (core_id := core_index_map[dest_mesh.core_axis_name]) is None:
-        core_id = lax.axis_index(dest_mesh.core_axis_name)
-      if (subcore_id := core_index_map[dest_mesh.subcore_axis_name]) is None:
-        subcore_id = lax.axis_index(dest_mesh.subcore_axis_name)
+      assert dest_mesh is None or isinstance(
+          dest_mesh, sc_core.VectorSubcoreMesh
+      ), f"Unrecognized dest_mesh: {type(dest_mesh)} != VectorSubcoreMesh"
+      # VectorSubcoreMesh always has two axes for (core, subcore).
+      core_axis_name, subcore_axis_name = core_axis_names
+      if (core_id := core_index_map[core_axis_name]) is None:
+        core_id = lax.axis_index(core_axis_name)
+      if (subcore_id := core_index_map[subcore_axis_name]) is None:
+        subcore_id = lax.axis_index(subcore_axis_name)
       core_index = core_id
       subcore_index = subcore_id
     elif dest_kernel_type == tpu_core.CoreType.SC_SCALAR_SUBCORE:
-      if not mpmd_core_axis_names and dest_kernel_type == kernel_type:
-        # short circuit for same core semaphores without a core type annotation
+      if (
+          not mpmd_core_axis_names
+          and dest_kernel_type == kernel_type
+          and not specified_core_axes
+      ):
+        # Short-circuit if targeting the same core type and no core axes were
+        # specified in device_id.
         return logical_device_id, None, None
-      assert isinstance(dest_mesh, sc_core.ScalarSubcoreMesh), (
-          f"Unrecognized dest_mesh: {type(dest_mesh)} != ScalarSubcoreMesh")
-      if (core_id := core_index_map[dest_mesh.axis_name]) is None:
+      assert dest_mesh is None or isinstance(
+          dest_mesh, sc_core.ScalarSubcoreMesh
+      ), f"Unrecognized dest_mesh: {type(dest_mesh)} != ScalarSubcoreMesh"
+      # ScalarSubcoreMesh always has one axis.
+      (axis_name,) = core_axis_names
+      if (core_id := core_index_map[axis_name]) is None:
         if kernel_type == tpu_core.CoreType.SC_VECTOR_SUBCORE:
           # TODO(rdyro): Mosaic requires resolving the core axis when the
           # target is the scalar subcore, but the source is not. Remove this
@@ -5264,7 +5278,7 @@ def _device_id_to_logical(
           # in our mesh.
           # TODO(rdyro): Consider removing this permissive cross-core
           # unspecified core axis special case.
-          core_id = lax.axis_index(dest_mesh.axis_name)
+          core_id = lax.axis_index(axis_name)
       core_index = core_id
     else:
       assert dest_kernel_type == tpu_core.CoreType.TC, (
@@ -5278,7 +5292,8 @@ def _device_id_to_logical(
             f"Expected zero or one core index, got {core_index_map=}.")
     return logical_device_id, core_index, subcore_index
 
-  return lower_fun(jax_fn, in_avals=(device_id_aval,))(ctx, device_id)
+  with ctx.lowering_context.grid_name_context():
+    return lower_fun(jax_fn, in_avals=(device_id_aval,))(ctx, device_id)
 
 
 @register_lowering_rule(
@@ -5330,11 +5345,9 @@ def _semaphore_signal_lowering_rule(
   subcore_index = None
   if device_id is not None or dest_kernel_type != kernel_type:
     # TODO(rdyro): Unify the `core_index` argument to use core meshes instead.
-    with ctx.lowering_context.grid_name_context():
-      device_id, core_id, subcore_index = _device_id_to_logical(
-          ctx, device_id, device_id_type, device_id_aval,
-          dest_mesh=dest_mesh
-      )
+    device_id, core_id, subcore_index = _device_id_to_logical(
+        ctx, device_id, device_id_type, device_id_aval, dest_mesh=dest_mesh
+    )
     if core_id is not None:
       if core_index is not None:
         raise ValueError(
@@ -5394,10 +5407,9 @@ def _dma_start_lowering_rule(
   core_id = None
   subcore_id = None
   if device_id is not None or dest_kernel_type != kernel_type:
-    with ctx.lowering_context.grid_name_context():
-      device_id, core_id, subcore_id = _device_id_to_logical(
-          ctx, device_id, device_id_type, device_id_aval, dest_mesh=dest_mesh
-      )
+    device_id, core_id, subcore_id = _device_id_to_logical(
+        ctx, device_id, device_id_type, device_id_aval, dest_mesh=dest_mesh
+    )
 
   def _dma_start(src_ref, dst_ref, sem, src_sem) -> list[ir.Value]:
     tpu.enqueue_dma(

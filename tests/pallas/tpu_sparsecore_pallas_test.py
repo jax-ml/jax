@@ -392,7 +392,7 @@ class DebugPrintTest(PallasSCTest):
 
     def vector_subcore_fn(x_hbm_ref, out_hbm_ref):
       del x_hbm_ref, out_hbm_ref
-      pl.debug_print("From TEC")
+      pl.debug_print("From SCV")
 
     def scalar_subcore_fn(x_hbm_ref, out_hbm_ref):
       del x_hbm_ref, out_hbm_ref
@@ -414,7 +414,7 @@ class DebugPrintTest(PallasSCTest):
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(x))
 
-    self.assertIn("From TEC", get_output())
+    self.assertIn("From SCV", get_output())
     self.assertIn("From SCS", get_output())
 
   @parameterized.parameters(1, 2, 4)
@@ -1851,7 +1851,7 @@ class VectorSubcoreTest(PallasSCTest):
 
     x = jnp.arange(self.num_lanes, dtype=jnp.int32)
     tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
-    tec_mesh = plsc.VectorSubcoreMesh(
+    scv_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core",
         subcore_axis_name="subcore",
         num_cores=1,
@@ -1859,7 +1859,7 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
     @pl.kernel(
-        mesh=tec_mesh,
+        mesh=scv_mesh,
         out_type=x,
         scratch_types=[pltpu.VMEM(x.shape, x.dtype) @ tc_mesh],
     )
@@ -2477,6 +2477,70 @@ class VectorSubcoreTest(PallasSCTest):
         pltpu.sync_copy(shared_scratch_ref, o_ref.at[subcore_id])
 
     np.testing.assert_array_equal(kernel(x)[0], x[0])
+
+  @parameterized.parameters(128, 256)
+  def test_tiled_dma_hbm_vector_subcore_vmem(self, n_pad):
+    if not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Requires libtpu >= 0.0.50")
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest(
+          "DMAs to vector subcore VMEM on the same chip are not supported on "
+          "v8i."
+      )
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    m = 8
+    shape = (mesh.num_subcores * m, n_pad)
+    x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
+
+    @self.kernel(
+        out_type=x,
+        mesh=mesh,
+        scratch_types=(
+            pltpu.VMEM(x.shape, jnp.int32),
+            pltpu.SemaphoreType.DMA(()),
+            pltpu.SemaphoreType.DMA(()),
+        ),
+    )
+    def kernel(x_ref, o_ref, scratch_vmem, send_sem, recv_sem):
+      subcore_id = lax.axis_index("subcore")
+      core_id = lax.axis_index("core")
+      is_primary = jnp.logical_and(subcore_id == 0, core_id == 0)
+      sl = pl.ds(subcore_id * m, m)
+
+      @pl.when(is_primary)
+      def _go_primary():
+        # Copy slice 0 locally
+        pltpu.sync_copy(x_ref.at[sl, :], scratch_vmem.at[sl, :])
+
+        # Wait for the non-primary cores to push their slice.
+        @pl.loop(1, mesh.num_subcores)
+        def _(s):
+          dma = pltpu.make_async_remote_copy(
+              x_ref.at[pl.ds(s * m, m), :],
+              scratch_vmem.at[pl.ds(s * m, m), :],
+              send_sem,
+              recv_sem,
+              device_id={"core": 0, "subcore": 0},
+          )
+          dma.wait_recv()
+
+        # Copy the completed VMEM buffer back to HBM output.
+        pltpu.sync_copy(scratch_vmem, o_ref)
+
+      @pl.when(~is_primary)
+      def _go_non_primary():
+        pltpu.async_remote_copy(
+            x_ref.at[sl, :],
+            scratch_vmem.at[sl, :],
+            send_sem,
+            recv_sem,
+            device_id={"core": 0, "subcore": 0},
+        ).wait_send()
+
+    actual = kernel(x)
+    np.testing.assert_array_equal(actual, x)
 
   def test_copy_in_shard_map(self):
     num_devices = len(jax.devices())
@@ -3449,6 +3513,98 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
     y1, y2 = f(x, y)
     np.testing.assert_array_equal(y1, x[0].T)
     np.testing.assert_array_equal(y2, x[1].T)
+
+  @parameterized.product(dtype=[jnp.int32, jnp.bfloat16])
+  def test_remote_dma_to_vector_subcore_vmem(self, dtype):
+    if not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Requires libtpu >= 0.0.50")
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("Scalar subcore mesh is not supported on TPU v8i.")
+
+    P = jax.P
+    shape = (8, 128)
+    mesh = jax.sharding.Mesh(jax.devices(), axis_names="x")
+
+    num_cores = 1
+    num_subcores = 1
+
+    scs_mesh = plsc.ScalarSubcoreMesh(axis_name="core", num_cores=num_cores)
+    scv_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+        num_cores=num_cores,
+        num_subcores=num_subcores,
+    )
+
+    @jax.shard_map(
+        mesh=mesh, in_specs=P("x"), out_specs=P("x"), check_vma=False
+    )
+    @jax.jit
+    def f(x):
+      # Scalar subcore sends to remote VMEM.
+      def go_scs(
+          x_ref,
+          recv_ref,
+          *,
+          vmem,
+          send_dma_sem,
+          recv_dma_sem,
+      ):
+        del recv_ref
+        my_id = lax.axis_index("x")
+        axis_size = lax.axis_size("x")
+        neighbor = lax.rem(my_id + 1, axis_size)
+        core_id = lax.axis_index("core")
+
+        dma = pltpu.make_async_remote_copy(
+            x_ref,
+            vmem,
+            send_dma_sem,
+            recv_dma_sem,
+            device_id={"x": neighbor, "core": core_id, "subcore": 0},
+        )
+        dma.start()
+        dma.wait_send()
+
+      # Vector subcore copies from local vmem to hbm output.
+      def go_scv(
+          x_ref,
+          recv_ref,
+          *,
+          vmem,
+          send_dma_sem,
+          recv_dma_sem,
+      ):
+        my_id = lax.axis_index("x")
+        core_id = lax.axis_index("core")
+
+        pltpu.make_async_remote_copy(
+            x_ref,
+            vmem,
+            send_dma_sem,
+            recv_dma_sem,
+            device_id={"x": my_id, "core": core_id, "subcore": 0},
+        ).wait_recv()
+        pltpu.sync_copy(vmem, recv_ref)
+
+      result = self.kernel(
+          mesh=[scs_mesh, scv_mesh],
+          out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          scratch_types=dict(
+              vmem=pltpu.VMEM(shape, dtype) @ scv_mesh,
+              send_dma_sem=pltpu.SemaphoreType.DMA(()) @ scs_mesh,
+              recv_dma_sem=pltpu.SemaphoreType.DMA(()) @ scv_mesh,
+          ),
+      )([go_scs, go_scv])(x)
+      return result
+
+    num_devices = jax.device_count()
+    x = jnp.arange(num_devices * math.prod(shape), dtype=dtype).reshape(
+        (-1, shape[-1])
+    )
+    y = jax.block_until_ready(f(x))
+    expected = jnp.concatenate([x[-8:], x[:-8]])
+    np.testing.assert_array_equal(y, expected)
 
 
 class PallasSparsecoreAsyncTestWithTCTiling(PallasSparsecoreAsyncTest):
