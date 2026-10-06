@@ -18,6 +18,7 @@ import math
 
 from absl.testing import parameterized
 import jax
+from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp
@@ -48,12 +49,43 @@ def _sinh_cosh_interesting_points(dtype):
   return [-sinh_overflow, sinh_overflow]
 
 
+def _tanh_interesting_points(dtype):
+  p = jnp.finfo(dtype).nmant + 1
+  return [
+      # Saturation thresholds where tanh(x) rounds to +-1.0 (~0.5 * (p + 1) * ln(2)).
+      *(
+          sign * 0.5 * k * math.log(2.0)
+          for k in (p + 1, p + 2)
+          for sign in (-1, 1)
+      ),
+  ]
+
+
+# Note: Separate gradient tests for sinh and cosh are omitted because
+# grad(sinh) lowers directly to cosh and grad(cosh) lowers directly to sinh,
+# which are already covered by CoshTest and SinhTest.
+
+
+def tanh_grad(x):
+  return jax.vmap(jax.grad(jnp.tanh))(x)
+
+
+def tanh_grad_highest(x):
+  return jax.vmap(
+      jax.grad(lambda x: lax.tanh(x, accuracy=lax.AccuracyMode.HIGHEST))
+  )(x)
+
+
 def acosh_grad(x):
   return jax.vmap(jax.grad(jnp.acosh))(x)
 
 
 def asinh_grad(x):
   return jax.vmap(jax.grad(jnp.asinh))(x)
+
+
+def atanh_grad(x):
+  return jax.vmap(jax.grad(jnp.atanh))(x)
 
 
 @jtu.thread_unsafe_test_class()
@@ -142,15 +174,6 @@ class TanhTest(jtu.JaxTestCase):
         ("cpu", {bf16: False, f32: False}),
         ("gpu", False),
     ]
-    p = jnp.finfo(dtype).nmant + 1
-    interesting_points = [
-        # Saturation thresholds where tanh(x) rounds to +-1.0 (~0.5 * (p + 1) * ln(2)).
-        *(
-            sign * 0.5 * k * math.log(2.0)
-            for k in (p + 1, p + 2)
-            for sign in (-1, 1)
-        ),
-    ]
     util.check_unary_precision(
         self,
         jnp.tanh,
@@ -159,7 +182,73 @@ class TanhTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         input_ftz=input_ftz,
-        interesting_points=interesting_points,
+        interesting_points=_tanh_interesting_points(dtype),
+    )
+
+
+@jtu.thread_unsafe_test_class()
+class TanhGradTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_tanh_grad_accuracy(self, dtype):
+    # By default, grad(tanh)(x) is evaluated from y = tanh(x) as
+    # (1 + y) * (1 - y), which suffers catastrophic cancellation as |y|
+    # approaches 1 and rounds to 0.0 once tanh(x) saturates to +-1.0 (~2^p ULPs).
+    bounds = [
+        (
+            "cpu",
+            {
+                bf16: 256.0,
+                f16: 2045.5,
+                f32: 16777206.5,
+                f64: 117093590311632992.0,
+            },
+        ),
+        (
+            "gpu",
+            {
+                bf16: 256.0,
+                f16: 2045.5,
+                f32: 16777206.5,
+                f64: 9007199254740964.5,
+            },
+        ),
+        (TPU_EUPV1, {bf16: 383.5, f16: 723.5, f32: 51270903.0}),
+        ("tpu_v5p", {bf16: 274.5, f16: 72.0, f32: 18925970.5}),
+        ("tpu_v6e", {bf16: 256.0, f16: 3.0, f32: 16777199.0}),
+        ("tpu_7x", {bf16: 256.0, f16: 2.5, f32: 16777199.0}),
+    ]
+    util.check_unary_precision(
+        self,
+        tanh_grad,
+        lambda x: np.square(np.reciprocal(np.cosh(x))),
+        lambda x: 1 / mpmath.cosh(x) ** 2,
+        dtype,
+        bounds=bounds,
+        interesting_points=_tanh_interesting_points(dtype),
+    )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_tanh_grad_highest_accuracy(self, dtype):
+    # With accuracy=AccuracyMode.HIGHEST, grad(tanh)(x) is evaluated as
+    # 4 * logistic(2 * x) * logistic(-2 * x). On CPU/TPU in FTZ mode (bf16/f32),
+    # the intermediate logistic(-2 * |x|) flushes to 0.0 before multiplying by 4
+    # once 2 * |x| >= -ln(tiny) (|x| >= 43.67), while the true derivative is
+    # still normal. In float16 on CPU/GPU, exp(2 * |x|) overflows for
+    # |x| >= 5.55 while the true derivative is subnormal (~1020.5 ULPs).
+    bounds = [
+        ("cpu", {bf16: 154.0, f16: 1020.5, f32: 12020967.5, f64: 3.0}),
+        ("gpu", {bf16: 3.5, f16: 1020.5, f32: 4.5, f64: 3.0}),
+        ("tpu", {bf16: 154.0, f16: 1.0, f32: 12020967.5}),
+    ]
+    util.check_unary_precision(
+        self,
+        tanh_grad_highest,
+        lambda x: np.square(np.reciprocal(np.cosh(x))),
+        lambda x: 1 / mpmath.cosh(x) ** 2,
+        dtype,
+        bounds=bounds,
+        interesting_points=_tanh_interesting_points(dtype),
     )
 
 
@@ -282,14 +371,43 @@ class AtanhTest(jtu.JaxTestCase):
     )
 
 
+@jtu.thread_unsafe_test_class()
+class AtanhGradTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_atanh_grad_accuracy(self, dtype):
+    # In float16 on CPU/GPU, (1 - x) * (1 + x) overflows to -inf for |x| >= 256,
+    # causing the reciprocal to evaluate to -0.0 while the true value is
+    # subnormal (~256 ULPs).
+    bounds = [
+        ("cpu", {bf16: 2.5, f16: 256.5, f32: 2.5, f64: 3.5}),
+        ("gpu", {bf16: 2.5, f16: 256.5, f32: 3.0, f64: 3.5}),
+        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 190.0}),
+        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 37.5}),
+        ("tpu_v6e", {f16: 1.0, f32: 3.5}),
+        ("tpu_7x", {bf16: 2.5, f16: 1.0, f32: 3.5}),
+    ]
+    util.check_unary_precision(
+        self,
+        atanh_grad,
+        lambda x: np.reciprocal((1.0 - x) * (1.0 + x)),
+        lambda x: mpmath.inf if abs(x) == 1 else 1 / (1 - x * x),
+        dtype,
+        bounds=bounds,
+    )
+
+
 util.register_benchmark(jnp.sinh)
 util.register_benchmark(jnp.cosh)
 util.register_benchmark(jnp.tanh)
+util.register_benchmark(tanh_grad)
+util.register_benchmark(tanh_grad_highest)
 util.register_benchmark(jnp.acosh)
 util.register_benchmark(acosh_grad)
 util.register_benchmark(jnp.asinh)
 util.register_benchmark(asinh_grad)
 util.register_benchmark(jnp.atanh)
+util.register_benchmark(atanh_grad)
 
 
 if __name__ == "__main__":
