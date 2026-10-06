@@ -1500,14 +1500,14 @@ def register_benchmark(
     nargs: int = 1,
     size: int = 10**6,
 ) -> None:
-  """Registers google_benchmark execution and compilation benchmarks for `jax_fn` across `dtypes`."""
+  """Registers google_benchmark microbenchmarks for `jax_fn` across `dtypes`."""
   if google_benchmark is None:
     return
   fn_name = name or getattr(jax_fn, "__name__", str(jax_fn)).lstrip("_")
   for dtype in dtypes:
     dtype = np.dtype(dtype)
 
-    def _bench_exec(state, dtype=dtype):
+    def _bench(state, dtype=dtype):
       is_f64 = dtype == np.float64
       if is_f64 and jtu.device_under_test() == "tpu":
         state.skip_with_error("float64 on TPU is ef57 double-double")
@@ -1520,26 +1520,7 @@ def register_benchmark(
         while state:
           f(*args).block_until_ready()
 
-    def _bench_compile(state, dtype=dtype):
-      is_f64 = dtype == np.float64
-      if is_f64 and jtu.device_under_test() == "tpu":
-        state.skip_with_error("float64 on TPU is ef57 double-double")
-        return
-      with jax.enable_x64(is_f64):
-        rng = jtu.rand_fullrange(np.random.RandomState(0))
-        args = tuple(jax.device_put(rng((size,), dtype)) for _ in range(nargs))
-        f = jax.jit(jax_fn)
-        f.lower(*args).compile()
-        while state:
-          state.pause_timing()
-          jax.clear_caches()
-          state.resume_timing()
-          f.lower(*args).compile()
-
-    google_benchmark.register(_bench_exec, name=f"{fn_name}_{dtype.name}")
-    google_benchmark.register(
-        _bench_compile, name=f"{fn_name}_{dtype.name}_compile"
-    )
+    google_benchmark.register(_bench, name=f"{fn_name}_{dtype.name}")
 
 
 def main() -> None:
