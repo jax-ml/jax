@@ -29,6 +29,7 @@ if jtu.is_running_under_pytest():
 
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
+import numpy as np
 import scipy.special
 
 config.parse_flags_with_absl()
@@ -58,18 +59,31 @@ class RelEntrTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_rel_entr_accuracy(self, dtype):
     # CPU bounds are the measured max ULP, rounded up to a multiple of 0.5.
-    # The float32 spike is p * log1p((p - q) / q) flushing to 0 when p - q is
-    # subnormal. TPU float32 log1p is thousands of ULPs, so that bound is wider.
+    # TPU float32 log1p is thousands of ULPs, so that bound is wider.
     bounds = [
-        ("cpu", {bf16: 19.5, f16: 2.5, f32: 78205.5, f64: 54.0}),
-        ("gpu", {bf16: 19.5, f16: 2.5, f32: 78205.5, f64: 54.0}),
-        (TPU_EUPV1, {bf16: 19.5, f16: 2.5, f32: 1.0e6}),
-        ("tpu_v5p", {bf16: 19.5, f16: 2.5, f32: 1.0e6}),
-        (["tpu_v6e", "tpu_7x"], {bf16: 19.5, f16: 2.5, f32: 1.0e6}),
+        ("cpu", {bf16: 3.0, f16: 2.5, f32: 2.5, f64: 54.0}),
+        ("gpu", {bf16: 3.0, f16: 2.5, f32: 2.5, f64: 54.0}),
+        (TPU_EUPV1, {bf16: 3.0, f16: 2.5, f32: 1.0e6}),
+        ("tpu_v5p", {bf16: 3.0, f16: 2.5, f32: 1.0e6}),
+        (["tpu_v6e", "tpu_7x"], {bf16: 3.0, f16: 2.5, f32: 1.0e6}),
     ]
     input_ftz = [
         ("gpu", False),
     ]
+    # p * log1p((p - q) / q) flushes to 0 when p - q is subnormal, so a pair
+    # of small normals comes back as 0 instead of a small normal. float16
+    # does not flush subnormals. Equal inputs (diff == 0) stay covered.
+    ignore_inputs = []
+    if dtype != f16:
+      tiny = float(jnp.finfo(dtype).tiny)
+
+      def _subnormal_diff(p, q):
+        diff = np.abs(p - q)
+        return (diff > 0) & (diff < tiny)
+
+      ignore_inputs = [
+          (["cpu", "gpu", "tpu"], _subnormal_diff),
+      ]
     util.check_nary_precision(
         self,
         jsp.special.rel_entr,
@@ -79,6 +93,7 @@ class RelEntrTest(jtu.JaxTestCase):
         nargs=2,
         bounds=bounds,
         input_ftz=input_ftz,
+        ignore_inputs=ignore_inputs,
     )
 
 
