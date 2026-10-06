@@ -5356,7 +5356,9 @@ class RaggedTest(jtu.JaxTestCase):
     else:
       self.assertIn('@Sharding', text)
 
-  def _test_ragged_dot(self, m, k, n, num_groups, dtype):
+  def _test_ragged_dot(
+      self, m, k, n, num_groups, dtype, num_rhs_groups=None, group_offset=None
+  ):
     """Tests ragged_dot.
 
     The ragged_dot is tested against numpy reference implementation, and by
@@ -5367,8 +5369,10 @@ class RaggedTest(jtu.JaxTestCase):
     """
     if (dtype == np.float16):
       raise SkipTest(f"unsupported dtype for ragged_dot: {dtype}")
+    if num_rhs_groups is None:
+      num_rhs_groups = num_groups
     lhs_shape = (m, k)
-    rhs_shape = (num_groups, k, n)
+    rhs_shape = (num_rhs_groups, k, n)
 
     def group_sizes(m, num_groups):
       ends_no_final = jnp.sort(self.rng().choice(m, size=num_groups - 1))
@@ -5383,10 +5387,12 @@ class RaggedTest(jtu.JaxTestCase):
         rng(lhs_shape, dtype),
         rng(rhs_shape, dtype),
         group_sizes(m, num_groups),
-    ]
-    self._CompileAndCheck(lax.ragged_dot, args_maker)
-    self._CheckAgainstNumpy(
-        lax_reference.ragged_dot, lax.ragged_dot, args_maker)
+    ] + ([] if group_offset is None else [jnp.array([group_offset], jnp.int32)])
+    fn = lambda lhs, rhs, gs, go=None: lax.ragged_dot(
+        lhs, rhs, gs, group_offset=go
+    )
+    self._CompileAndCheck(fn, args_maker)
+    self._CheckAgainstNumpy(lax_reference.ragged_dot, fn, args_maker)
 
   @jtu.sample_product(
       [
@@ -5397,6 +5403,48 @@ class RaggedTest(jtu.JaxTestCase):
   )
   def test_ragged_dot(self, m, k, n, num_groups, dtype):
     return self._test_ragged_dot(m, k, n, num_groups, dtype)
+
+  @jtu.sample_product(
+      [
+          {
+              "m": 64,
+              "k": 4,
+              "n": 3,
+              "num_groups": 3,
+              "num_rhs_groups": 2,
+              "group_offset": 0,
+          },
+          {
+              "m": 64,
+              "k": 9,
+              "n": 8,
+              "num_groups": 4,
+              "num_rhs_groups": 2,
+              "group_offset": 1,
+          },
+          {
+              "m": 64,
+              "k": 9,
+              "n": 8,
+              "num_groups": 3,
+              "num_rhs_groups": 3,
+              "group_offset": 1,
+          },
+      ],
+      dtype=jtu.dtypes.all_floating,
+  )
+  def test_ragged_dot_group_offset(
+      self, m, k, n, num_groups, num_rhs_groups, group_offset, dtype
+  ):
+    return self._test_ragged_dot(
+        m,
+        k,
+        n,
+        num_groups,
+        dtype,
+        num_rhs_groups=num_rhs_groups,
+        group_offset=group_offset,
+    )
 
   @parameterized.parameters([True, False])
   def test_ragged_dot_use_ragged_dot_instruction(self, use_instruction):
@@ -5636,6 +5684,31 @@ class RaggedTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, err_msg):
       lax.ragged_dot_general(lhs, rhs, group_sizes,
                              ragged_dot_dimension_numbers)
+
+  def test_ragged_dot_general_group_offset_errors(self):
+    lhs = jnp.ones((11, 5), dtype=jnp.float32)
+    rhs = jnp.ones((3, 5, 7), dtype=jnp.float32)
+    group_sizes = jnp.ones((2,), dtype=jnp.int32)
+    with self.assertRaisesRegex(
+        TypeError, "expected rhs group dimension size to be at most 2, got 3"
+    ):
+      lax.ragged_dot(
+          lhs, rhs, group_sizes, group_offset=jnp.zeros((1,), dtype=jnp.int32)
+      )
+    with self.assertRaisesRegex(
+        TypeError, r"expected group_offset to have shape \(1,\), got \(2,\)"
+    ):
+      lax.ragged_dot(
+          lhs, rhs, jnp.ones((3,), dtype=jnp.int32),
+          group_offset=jnp.zeros((2,), dtype=jnp.int32),
+      )
+    with self.assertRaisesRegex(
+        TypeError, "group_offset.dtype is subtype of np.integer"
+    ):
+      lax.ragged_dot(
+          lhs, rhs, jnp.ones((3,), dtype=jnp.int32),
+          group_offset=jnp.zeros((1,), dtype=jnp.float32),
+      )
 
   @parameterized.parameters(
       {
