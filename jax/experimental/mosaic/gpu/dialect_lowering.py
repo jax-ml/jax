@@ -1144,10 +1144,10 @@ def _mgpu_async_load_op_lowering_rule(
 
   gmem_slice, predicate = _gmem_slice_and_predicate(ctx, load_op)
 
-  collective = [
+  collective = tuple(
       gpu.Dimension(ir.IntegerAttr(axis).value)
       for axis in load_op.collective or []
-  ]
+  )
 
   match load_op.leader_tracked:
     case mgpu.CopyReplicatedAttr():

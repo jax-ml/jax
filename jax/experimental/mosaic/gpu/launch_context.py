@@ -937,7 +937,7 @@ class LaunchContext:
       gmem_ref: ir.Value,
       gmem_slice: Any,
       gmem_transform: tuple[MemRefTransform, ...],
-      collective: Sequence[gpu.Dimension] | None,
+      collective: tuple[gpu.Dimension, ...],
       leader_tracked: CopyPartition | None,
       implementation: AsyncCopyImplementation,
   ):
@@ -1067,7 +1067,7 @@ class LaunchContext:
       gather_indices,
       squeezed_dims: tuple[int, ...],
       gmem_transform: tuple[MemRefTransform, ...],
-      collective: Sequence[gpu.Dimension],
+      collective: tuple[gpu.Dimension, ...],
       leader_tracked: CopyPartition | None = None,
   ):
     """Finalizes setup specific to the TMA implementation of async_copy."""
@@ -1219,7 +1219,7 @@ class LaunchContext:
       barrier: utils.BarrierRef | None = None,
       swizzle: int | None = None,
       arrive: bool | None = None,
-      collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
+      collective: tuple[gpu.Dimension, ...] | gpu.Dimension | None = None,
       leader_tracked: CopyPartition | None = None,
       # Should select 0 or 1 threads from the WG.
       predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
@@ -1944,7 +1944,7 @@ class LaunchContext:
     gmem_transform: MemRefTransform | tuple[MemRefTransform, ...] = (),
     gmem_peer_id: int | ir.Value | None = None,
     swizzle: int | None = None,
-    collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
+    collective: tuple[gpu.Dimension, ...] | gpu.Dimension | None = None,
     leader_tracked: CopyPartition | None = None,
     # Should select 0 or 1 threads from the WG.
     predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
