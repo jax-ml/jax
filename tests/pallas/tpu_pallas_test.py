@@ -5090,6 +5090,9 @@ class MiscellaneousTest(ptu.PallasTPUTest):
           ((2, 3, 8, 15), (6, 2, 60)),
           ((2, 3, 4, 10), (24, 10)),
           ((2, 2, 6, 8), (4, 6, 8)),
+          # 1D <-> 2D / 1D <-> 3D
+          ((16,), (1, 4, 4)),
+          ((32,), (4, 8)),
       ],
       dtype=[
           jnp.float32,
@@ -5106,6 +5109,13 @@ class MiscellaneousTest(ptu.PallasTPUTest):
         (input_shape, output_shape),
         (output_shape, input_shape),
     ]:
+      if len(input_shape) == 1 or len(output_shape) == 1:
+        if not jtu.is_libtpu_at_least('0.0.50'):
+          self.skipTest('Requires libtpu >= 0.0.50')
+        if dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5):
+          self.skipTest('8-bit subelement masking requires TPU v5+')
+        if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4):
+          self.skipTest('16-bit subelement masking requires TPU v4+')
 
       def kernel(x_ref, y_ref):
         y_ref[...] = x_ref[...].reshape(out_shape)
