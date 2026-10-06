@@ -64,6 +64,7 @@ from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
   standard_primitive, standard_abstract_eval)
 from jax._src.core import typeof, getu, getr, stage_p
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -2411,6 +2412,19 @@ class DotAlgorithmPreset(enum.Enum):
   BF16_BF16_F32_X9 = enum.auto()
   """Like ``BF16_BF16_F32_X3``, but using 9 operations instead of 3."""
 
+  F8E4M3FN_F8E4M3FN_F32_X3 = enum.auto()
+  """Accepts ``bfloat16`` or ``float32`` inputs, splits each operand into two
+  ``float8_e4m3fn`` slices with per channel exponent scaling, and computes 3
+  ``float8_e4m3fn`` dot products accumulated in ``float32``.
+  """
+
+  F8E4M3FN_F8E4M3FN_F32_X4 = enum.auto()
+  """Accepts ``bfloat16`` or ``float32`` inputs, splits each operand into two
+  ``float8_e4m3fn`` slices with per channel exponent scaling, and computes 4
+  ``float8_e4m3fn`` dot products, including the low by low product for higher
+  accuracy, accumulated in ``float32``.
+  """
+
   TF32_TF32_F32 = enum.auto()
   TF32_TF32_F32_X3 = enum.auto()
   """The ``_X3`` suffix indicates that the algorithm uses 3 operations to
@@ -2441,9 +2455,11 @@ class DotAlgorithmPreset(enum.Enum):
         return (np.float16,)
       case (
           DotAlgorithmPreset.BF16_BF16_BF16 |
-          DotAlgorithmPreset.BF16_BF16_F32
+          DotAlgorithmPreset.BF16_BF16_F32 |
+          DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3 |
+          DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4
       ):
-        # These algorithms support either f32 or bf32 input storage types.
+        # These algorithms support either f32 or bf16 input storage types.
         # If either of those types are provided as input, we use the provided
         # type. If not, we explicitly cast to bfloat16.
         return (dtypes.bfloat16, np.float32)
@@ -2498,7 +2514,11 @@ class DotAlgorithmPreset(enum.Enum):
           return (np.float32, np.float16)
         else:
           return (np.float32,)
-      case DotAlgorithmPreset.BF16_BF16_F32:
+      case (
+          DotAlgorithmPreset.BF16_BF16_F32
+          | DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3
+          | DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4
+      ):
         # BF16 output is only supported with BF16 inputs.
         if dtypes.promote_types(lhs_dtype, rhs_dtype) == dtypes.bfloat16:
           return (np.float32, dtypes.bfloat16)
@@ -2563,6 +2583,20 @@ class DotAlgorithmPreset(enum.Enum):
         return hlo.DotAlgorithm.get(bf16, bf16, f32, 1, 1, 6, False)
       case DotAlgorithmPreset.BF16_BF16_F32_X9:
         return hlo.DotAlgorithm.get(bf16, bf16, f32, 1, 1, 9, False)
+      case (
+          DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3
+          | DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4
+      ):
+        if jaxlib_extension_version < 505:
+          raise ValueError(
+              f"The dot algorithm '{self}' requires jaxlib_extension_version "
+              '>= 505.'
+          )
+        f8 = ir.Float8E4M3FNType.get()
+        num_ops = (
+            3 if self == DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3 else 4
+        )
+        return hlo.DotAlgorithm.get(f8, f8, f32, 1, 1, num_ops, False)
       case DotAlgorithmPreset.TF32_TF32_F32:
         return hlo.DotAlgorithm.get(tf32, tf32, f32, 1, 1, 1, False)
       case DotAlgorithmPreset.TF32_TF32_F32_X3:
