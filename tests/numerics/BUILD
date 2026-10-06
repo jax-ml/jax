@@ -167,6 +167,21 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "rel_entr_test",
+    srcs = ["rel_entr_test.py"],
+    disable_configs = DISABLED_CONFIGS,
+    tags = ["cpu:4"],
+    deps = [
+        ":numerics_test_util",
+    ] + py_deps([
+        "absl/testing",
+        "mpmath",
+        "numpy",
+        "scipy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "trig_test",
     srcs = ["trig_test.py"],
     disable_configs = DISABLED_CONFIGS,
