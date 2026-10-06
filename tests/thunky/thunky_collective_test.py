@@ -47,6 +47,10 @@ class ThunkyCollectiveTest(jtu.JaxTestCase):
       self.skipTest("Requires jaxlib_extension_version >= 503")
     if jax.default_backend() != "gpu":
       self.skipTest("ThunkyCollectiveTest requires a GPU backend")
+    if jtu.test_device_matches(
+        ["cuda"]
+    ) and not jtu.is_cuda_compute_capability_at_least("8.0"):
+      self.skipTest("Only works on GPU with capability >= sm80")
     if len(jax.devices()) < 2:
       self.skipTest("Requires at least 2 GPUs")
 

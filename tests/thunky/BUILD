@@ -31,6 +31,12 @@ jax_generate_backend_suites()
 jax_multiplatform_test(
     name = "thunky_test",
     srcs = ["thunky_test.py"],
+    disable_configs = [
+        "gpu_p100",
+        "gpu_p100_x32",
+        "gpu_v100",
+        "gpu_v100_x32",
+    ],
     enable_backends = ["gpu"],
     shard_count = 8,
     deps = [

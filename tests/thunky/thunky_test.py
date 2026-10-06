@@ -104,6 +104,10 @@ class ThunkyJaxTest(jtu.JaxTestCase):
       self.skipTest("Requires jaxlib_extension_version >= 503")
     if jax.default_backend() != "gpu":
       self.skipTest("ThunkyJaxTest requires a GPU backend")
+    if jtu.test_device_matches(
+        ["cuda"]
+    ) and not jtu.is_cuda_compute_capability_at_least("8.0"):
+      self.skipTest("Only works on GPU with capability >= sm80")
 
   # ============================================================================
   # Core Primitives & Scratch Buffers
