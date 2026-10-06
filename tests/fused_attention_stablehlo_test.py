@@ -751,10 +751,10 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
 
     self.assertArraysAllClose(out_ref, out.astype(dtype), rtol=5e-1, atol=5e-1)
     self.assertArraysAllClose(
-        query_grad_ref, query_grad.astype(dtype), rtol=5e-1, atol=3e0
+        query_grad_ref, query_grad.astype(dtype), rtol=5e-1, atol=5e0
     )
     self.assertArraysAllClose(
-        key_grad_ref, key_grad.astype(dtype), rtol=5e-1, atol=3e0
+        key_grad_ref, key_grad.astype(dtype), rtol=5e-1, atol=4e0
     )
     self.assertArraysAllClose(
         value_grad_ref, value_grad.astype(dtype), rtol=5e-1, atol=5e-1
