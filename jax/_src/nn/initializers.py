@@ -30,6 +30,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import numpy as jnp
 from jax._src import random
+from jax._src.lax import special as lax_special
 from jax._src.named_sharding import NamedSharding
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding_impls import canonicalize_sharding
@@ -144,6 +145,21 @@ def uniform(scale: RealNumeric = 1e-2,
                           out_sharding=out_sharding) * jnp.array(scale, dtype)
   return init
 
+# TODO(phawkins): remove this helper and restore `random.normal(...) * stddev`
+# once downstream tests are updated for XLA's constant reassociation change.
+def _scaled_normal(key: Array,
+                   shape: core.Shape,
+                   dtype: DTypeLikeInexact,
+                   scale: Array,
+                   out_sharding: OutShardingType = None) -> Array:
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
+  if dtypes.issubdtype(dtype, np.floating):
+    lo = np.nextafter(np.array(-1., dtype), np.array(0., dtype), dtype=dtype)
+    hi = np.array(1., dtype)
+    u = random.uniform(key, shape, dtype, lo, hi, out_sharding=out_sharding)
+    return (jnp.array(np.sqrt(2), dtype) * scale) * lax_special.erf_inv(u)
+  return random.normal(key, shape, dtype, out_sharding=out_sharding) * scale
+
 @export
 def normal(stddev: RealNumeric = 1e-2,
            dtype: DTypeLikeInexact | None = None) -> Initializer:
@@ -168,8 +184,8 @@ def normal(stddev: RealNumeric = 1e-2,
            dtype: DTypeLikeInexact | None = dtype,
            out_sharding: OutShardingType = None) -> Array:
     dtype = dtypes.default_float_dtype() if dtype is None else dtype
-    return random.normal(key, shape, dtype,
-                         out_sharding=out_sharding) * jnp.array(stddev, dtype)
+    return _scaled_normal(key, shape, dtype, jnp.array(stddev, dtype),
+                          out_sharding=out_sharding)
   return init
 
 @export
@@ -359,8 +375,8 @@ def variance_scaling(
         stddev = jnp.sqrt(variance) / jnp.array(.95311164380491208, dtype)
         return _complex_truncated_normal(key, 2, shape, dtype) * stddev
     elif distribution == "normal":
-      return random.normal(key, shape, dtype,
-                           out_sharding=out_sharding) * jnp.sqrt(variance)
+      return _scaled_normal(key, shape, dtype, jnp.sqrt(variance),
+                            out_sharding=out_sharding)
     elif distribution == "uniform":
       if dtypes.issubdtype(dtype, np.floating):
         return random.uniform(key, shape, dtype, -1,
