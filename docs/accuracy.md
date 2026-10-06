@@ -96,7 +96,7 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.numpy.log10` | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.numpy.rad2deg` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.numpy.sinc` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
-| {func}`~jax.scipy.special.erfcx` | 0.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.scipy.special.erfcx` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 
 ---
 
@@ -168,6 +168,7 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.erf` | 7.0 | 6.5 | 7.5 | 8.5 | 1.5 | 1.5 | |
 | {func}`~jax.lax.erf_inv` | 65.0 | 65.0 | 427.0 | 65.5 | 65.0 | 65.5 | |
 | {func}`~jax.lax.erfc` | 66.0 | 66.5 | 145.0 | 157.0 | 124.5 | 125.0 | |
+| {func}`~jax.lax.erfc` (`highest`) | 4.0 | 5.0 | 5.5 | 5.0 | 5.0 | 5.0 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.exp` | 1.5 | 2.0 | 116.0 | 109.5 | 64.5 | 65.0 | |
 | {func}`~jax.lax.exp` (`highest`) | 1.5 | 2.0 | 1.5 | 1.5 | 1.5 | 1.5 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.exp2` | 68.5 | 69.0 | 141.5 | 133.0 | 90.0 | 90.0 | |
@@ -190,7 +191,7 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.numpy.log10` | 3.0 | 2.5 | 6213.0 | 57.0 | 3.0 | 3.0 | |
 | {func}`~jax.numpy.rad2deg` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.numpy.sinc` | 2.5 | 3.5 | 4.0 | 4.0 | 4.0 | 3.5 | |
-| {func}`~jax.scipy.special.erfcx` | 64.5 | 65.0 | 214.0 | 155.0 | 125.5 | 125.5 | |
+| {func}`~jax.scipy.special.erfcx` | 3.5 | 4.0 | 4.0 | 4.0 | 4.5 | 4.5 | |
 
 ---
 
@@ -221,6 +222,7 @@ these are empirical bounds.
 | {func}`~jax.lax.erf` | 2.5 | 2.5 |
 | {func}`~jax.lax.erf_inv` | 500000.0 | 500000.0 |
 | {func}`~jax.lax.erfc` | 350.0 | 350.0 |
+| {func}`~jax.lax.erfc` (`highest`) | 2.5 | 2.5 |
 | {func}`~jax.lax.exp` | 2.0 | 1.5 |
 | {func}`~jax.lax.exp2` | 719.0 | 719.0 |
 | {func}`~jax.lax.expm1` | 4.5 | 1.5 |
@@ -241,4 +243,4 @@ these are empirical bounds.
 | {func}`~jax.numpy.log10` | 2.0 | 2.5 |
 | {func}`~jax.numpy.rad2deg` | 1.0 | 1.0 |
 | {func}`~jax.numpy.sinc` | 2.0 | 2.0 |
-| {func}`~jax.scipy.special.erfcx` | 500.0 | 500.0 |
+| {func}`~jax.scipy.special.erfcx` | 3.0 | 3.0 |

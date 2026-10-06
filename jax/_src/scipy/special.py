@@ -30,6 +30,11 @@ from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.numpy.ufuncs import arctan, isposinf, isneginf, sinc
 from jax._src.api import jit, jvp, vmap
+from jax._src.lax.erfc import (
+    erfcx_grad_impl as _erfcx_grad_impl,
+    erfcx_grad_large,
+    erfcx_impl as _erfcx_impl,
+)
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.lax.special import ndtr as _ndtr
 from jax._src.numpy import einsum as jnp_einsum
@@ -711,66 +716,74 @@ def erfcx(x: ArrayLike) -> Array:
   return _erfcx(x)
 
 
-# _erfcx computes exp(x^2) * erfc(x) directly for x < threshold, and uses the
-# asymptotic expansion erfcx(x) ~ (1/(sqrt(pi)*x)) * P(1/x^2) otherwise, where
-# P(t) = sum_{k=0}^{N-1} c_k * t^k with c_k = (-1)^k * (2k-1)!! / 2^k (from
-# https://dlmf.nist.gov/7.12.E1 for erfc, multiplied by exp(x^2)).
-# _ERFCX_COEFFS stores c_k / sqrt(pi) in descending order of degree (k=10..0)
-# for jnp.polyval; each c_k has denominator 2^k, so the unscaled literals are
-# exact in binary float.
-_ERFCX_COEFFS = np.array([
-    639383.8623046875, -67303.564453125, 7918.06640625, -1055.7421875,
-    162.421875, -29.53125, 6.5625, -1.875, .75, -.5, 1.,
-]) / np.sqrt(np.pi)
-
-# The direct formula's relative error grows like x^2 * eps (from rounding x^2)
-# until exp(x^2) overflows, so we want a low threshold, but the series is only
-# accurate for large x. We use threshold = sqrt(4 * log(1 / eps)) and the
-# fewest terms for which the first omitted term |c_N| / threshold^(2N), which
-# bounds the truncation error, is below eps.
-_ERFCX_PARAMS = {
-    #                       (threshold, nterms)
-    np.dtype(np.float32): (7.985583298138901, 5),  # |c_5|/x^10 ~ 3e-8 <= eps
-    np.dtype(np.float64): (12.00727336061225, 10),  # |c_10|/x^20 ~ 2e-16 <= eps
-}
-
-
 @custom_derivatives.custom_jvp
 def _erfcx(x: Array) -> Array:
-  threshold, nterms = _ERFCX_PARAMS[x.dtype]
-  coeffs = _ERFCX_COEFFS[-nterms:].astype(x.dtype)
-  is_large = x >= threshold
-
-  x_direct = lax.select(is_large, lax.full_like(x, 1.), x)
-  direct = lax.exp(lax.square(x_direct)) * lax.erfc(x_direct)
-
-  inv_x_asymp = 1. / lax.select(is_large, x, lax.full_like(x, 1.))
-  asymp = inv_x_asymp * jnp.polyval(coeffs, lax.square(inv_x_asymp))
-
-  return lax.select(is_large, asymp, direct)
-
-
-# Below threshold, erfcx'(x) = 2*x*erfcx(x) - 2/sqrt(pi). Above threshold, that
-# identity cancels catastrophically, so we differentiate the asymptotic series
-# instead: d/dx [c_k/x^(2k+1)] = -(2k+1)*c_k/x^(2k+2) = 2*c_{k+1}/x^(2k+2).
-_ERFCX_DERIV_COEFFS = 2 * _ERFCX_COEFFS[:-1]
+  return _erfcx_impl(x)
 
 
 @_erfcx.defjvp
 def _erfcx_jvp(primals, tangents):
   (x,), (x_dot,) = primals, tangents
-  threshold, nterms = _ERFCX_PARAMS[x.dtype]
-  coeffs = _ERFCX_DERIV_COEFFS[-nterms:].astype(x.dtype)
   ans = _erfcx(x)
-  is_large = x >= threshold
+  return ans, x_dot * _erfcx_grad(x, ans)
 
-  x_direct = lax.select(is_large, lax.full_like(x, 1.), x)
-  direct = 2 * x_direct * ans - float(2. / np.sqrt(np.pi))
 
-  inv_x2_asymp = lax.square(1. / lax.select(is_large, x, lax.full_like(x, 1.)))
-  asymp = inv_x2_asymp * jnp.polyval(coeffs, inv_x2_asymp)
+# `_erfcx` has a custom JVP because letting AD differentiate `_erfcx_impl`
+# means differentiating its polynomial approximations. A polynomial can match a
+# function to within an ULP and still have a noticeably wrong slope. Also,
+# wherever `_erfcx_impl` switches from one polynomial to the next, the two
+# pieces agree in value but not exactly in slope, so the derivative would jump.
+#
+# The obvious JVP rule is the identity
+#   erfcx'(x) = 2 * x * erfcx(x) - 2 / sqrt(pi)
+# (`_wofz` uses the complex version of this rule). For `x < 0` both terms are
+# negative, so this is accurate. For `x > 0`, though, `2 * x * erfcx(x)` gets
+# closer to `2 / sqrt(pi)` as `x` grows, so the subtraction cancels more and
+# more bits. `_erfcx_grad_impl` therefore uses the identity only for `x < 0`,
+# and for `x >= 0` it evaluates polynomials fit directly to `erfcx'(x)`.
+@custom_derivatives.custom_jvp
+def _erfcx_grad(x: Array, ans: Array) -> Array:
+  return _erfcx_grad_impl(x, ans)
 
-  return ans, x_dot * lax.select(is_large, asymp, direct)
+
+# `_erfcx_grad` needs its own custom JVP for the same reason `_erfcx` does: for
+# `x >= 0`, `_erfcx_grad_impl` is made of polynomials, and AD would compute
+# `erfcx''` as the slope of those polynomials. Worse, exactly at `x = 0` and
+# `x = 1`, the `clamp` and `max` calls that pick the polynomial piece drop part
+# of the gradient, so plain AD there is not just slightly off but completely
+# wrong.
+#
+# Differentiating the identity above gives
+#   erfcx''(x) = 2 * erfcx(x) + 2 * x * erfcx'(x).
+# The constant is gone, and for `x <= 2.25` the cancellation between the two
+# terms is mild, so we use this formula there. For larger `x` the two terms
+# cancel badly, so instead we let AD differentiate `erfcx_grad_large`. That
+# brings back the slope-of-a-polynomial error described above, but for
+# `x > 2.25` that error is smaller than the cancellation error of the formula
+# (`test_erfcx_grad2_method_choice` in `tests/numerics/erf_test.py` checks
+# this).
+#
+# A third level of custom JVP is not needed. For `x <= 2.25` the rule is built
+# from `_erfcx` and `_erfcx_grad` using `+` and `*`, so differentiating it again
+# just calls their custom JVPs again. For `x > 2.25` we already use plain AD
+# through `erfcx_grad_large`, which works at any order.
+@_erfcx_grad.defjvp
+def _erfcx_grad_jvp(primals, tangents):
+  # `ans` is the cached primal `_erfcx(x)`, not an independent input, so the
+  # total derivative with respect to `x` only depends on `x_dot`.
+  (x, ans), (x_dot, _) = primals, tangents
+  grad_ans = _erfcx_grad(x, ans)
+  threshold = _lax_const(x, 2.25)
+  is_large = x > threshold
+  zeros = lax.full_like(x, 0.0)
+  x_small = lax.select(is_large, zeros, x)
+  ans_small = lax.select(is_large, zeros, ans)
+  grad_small = lax.select(is_large, zeros, grad_ans)
+  small_dot = x_dot * (2.0 * ans_small + 2.0 * x_small * grad_small)
+  _, large_dot = jvp(
+      erfcx_grad_large, (lax.select(is_large, x, threshold),), (x_dot,)
+  )
+  return grad_ans, lax.select(is_large, large_dot, small_dot)
 
 
 # Rational approximation coefficients for dawsn (Cody, Paciorek, Thacher 1970).
