@@ -990,6 +990,21 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker, rtol=3e-4, atol=3e-4)
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testNormIsfExtremeTails(self, dtype):
+    if dtype == np.float32:
+      quantiles = np.array([1e-5, 1e-10, 1e-15, 1e-20, 1e-30], dtype=dtype)
+    else:
+      quantiles = np.array(
+        [1e-10, 1e-16, 1e-17, 1e-20, 1e-50, 1e-100], dtype=dtype
+      )
+
+    def args_maker():
+      return quantiles, 3.5, 2.0
+
+    self._CheckAgainstNumpy(osp_stats.norm.isf, lsp_stats.norm.isf, args_maker, tol=1e-4)
+    self._CompileAndCheck(lsp_stats.norm.isf, args_maker, rtol=3e-4, atol=3e-4)
+
   @genNamedParametersNArgs(5)
   def testTruncnormLogPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
