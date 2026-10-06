@@ -1001,6 +1001,24 @@ class PureCallbackTest(jtu.JaxTestCase):
         out, np.arange(jax.local_device_count()) * 2
     )
 
+  def test_pure_callback_sharding_device_not_in_device_assignment(self):
+    if jax.device_count() < 2:
+      self.skipTest("Test requires at least 2 devices.")
+    mesh = Mesh(np.array(jax.devices()[:1]), axis_names=('x',))
+    sharding = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec('x'))
+    callback_device = jax.devices()[-1]
+
+    def f(x):
+      return jax.pure_callback(
+          lambda v: v * 2, x, x,
+          sharding=make_single_device_sharding(callback_device))
+
+    with self.assertRaisesRegex(
+        ValueError, "that is not in the device assignment"):
+      jax.jit(f, in_shardings=sharding, out_shardings=sharding)(
+          jnp.arange(1.0))
+
   def test_can_shard_pure_callback_maximally_with_sharding(self):
     mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
 
