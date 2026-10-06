@@ -716,7 +716,8 @@ def _dot_product_attention_fwd_cuda_lowering(
     operands += score_mod_args
     func_op = mlir.lower_jaxpr_to_fun(
         ctx.module_context, score_mod_name, score_mod_jaxpr,
-        effects=[], num_const_args=0, in_avals=score_mod_jaxpr.in_avals)
+        effects=[], num_const_args=0, in_avals=score_mod_jaxpr.in_avals,
+        out_avals=score_mod_jaxpr.out_avals)
     called_computations = [func_op.sym_name.value]
   else:
     called_computations = []
@@ -802,7 +803,8 @@ def _dot_product_attention_bwd_cuda_lowering(
     operands += score_mod_args
     func_op = mlir.lower_jaxpr_to_fun(
         ctx.module_context, score_mod_name, score_mod_jaxpr,
-        effects=[], num_const_args=0, in_avals=score_mod_jaxpr.in_avals)
+        effects=[], num_const_args=0, in_avals=score_mod_jaxpr.in_avals,
+        out_avals=score_mod_jaxpr.out_avals)
     called_computations = [func_op.sym_name.value]
   else:
     called_computations = []
