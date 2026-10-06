@@ -1996,14 +1996,13 @@ absl::Status SetSlice(nanobind::handle dst_array, xla::nb_dtype dtype,
                       const void* src_data) {
   const absl::Span<const int64_t>& dims = index_domain.shape().dims();
   const int ndim = dims.size();
-  nanobind::tuple index_tuple =
-      nanobind::steal<nanobind::tuple>(PyTuple_New(ndim));
+  nanobind::tuple_builder index_tuple_builder(ndim);
   for (int d = 0; d < ndim; ++d) {
     const int64_t start = index_domain.origin().elements()[d];
     const int64_t stop = start + dims[d];
-    PyTuple_SET_ITEM(index_tuple.ptr(), d,
-                     nanobind::slice(start, stop).release().ptr());
+    index_tuple_builder.put(nanobind::slice(start, stop));
   }
+  nanobind::tuple index_tuple = index_tuple_builder.commit();
   xla::nb_numpy_ndarray shard_array(dtype, dims, byte_strides, src_data);
   if (PyObject_SetItem(dst_array.ptr(), index_tuple.ptr(), shard_array.ptr()) <
       0) {

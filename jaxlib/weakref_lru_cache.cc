@@ -429,12 +429,11 @@ static nb::object WeakrefKeyToPython(absl::Span<PyObject* const> weakref_args) {
   if (weakref_args.size() == 1) {
     return nb::borrow<nb::object>(weakref_args[0]);
   }
-  nb::tuple keys = nb::steal<nb::tuple>(PyTuple_New(weakref_args.size()));
-  for (size_t i = 0; i < weakref_args.size(); ++i) {
-    PyTuple_SET_ITEM(keys.ptr(), i, weakref_args[i]);
-    Py_INCREF(weakref_args[i]);
+  nb::tuple_builder keys(weakref_args.size());
+  for (PyObject* arg : weakref_args) {
+    keys.put(nb::handle(arg));
   }
-  return keys;
+  return keys.commit();
 }
 
 static nb::object WeakrefKeyToPython(
@@ -442,12 +441,11 @@ static nb::object WeakrefKeyToPython(
   if (weakref_args.size() == 1) {
     return weakref_args[0];
   }
-  nb::tuple keys = nb::steal<nb::tuple>(PyTuple_New(weakref_args.size()));
-  for (size_t i = 0; i < weakref_args.size(); ++i) {
-    nb::object obj = nb::cast(weakref_args[i]);
-    PyTuple_SET_ITEM(keys.ptr(), i, obj.inc_ref().ptr());
+  nb::tuple_builder keys(weakref_args.size());
+  for (const nb::weakref& arg : weakref_args) {
+    keys.put(arg);
   }
-  return keys;
+  return keys.commit();
 }
 
 void WeakrefLRUCacheBase::EvictWeakKey(const WeakKey& search_key) {

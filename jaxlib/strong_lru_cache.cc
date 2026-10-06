@@ -197,11 +197,11 @@ bool StrongKey::operator==(const StrongKey& other) const {
 nb::object StrongKey::args() const {
   size_t num_kwargs = kwnames_.size();
   size_t num_pos = args_.size() - num_kwargs;
-  nb::tuple t = nb::steal<nb::tuple>(PyTuple_New(num_pos));
+  nb::tuple_builder t(num_pos);
   for (size_t i = 0; i < num_pos; ++i) {
-    PyTuple_SET_ITEM(t.ptr(), i, args_[i].inc_ref().ptr());
+    t.put(args_[i]);
   }
-  return t;
+  return t.commit();
 }
 
 nb::object StrongKey::kwargs() const {

@@ -435,17 +435,14 @@ void Traceback::Register(nb::module_& m) {
         // is cheaper to allocate only three Python objects for everything
         // rather than one per frame.
         absl::Span<const TracebackEntry> frames = tb.RawFrames();
-        nb::list out_code = nb::steal<nb::list>(PyList_New(frames.size()));
-        nb::list out_lasti = nb::steal<nb::list>(PyList_New(frames.size()));
-        for (size_t i = 0; i < frames.size(); ++i) {
-          const auto& frame = frames[i];
+        nb::list_builder out_code(frames.size());
+        nb::list_builder out_lasti(frames.size());
+        for (const auto& frame : frames) {
           PyObject* code = reinterpret_cast<PyObject*>(frame.code);
-          Py_INCREF(code);
-          PyList_SET_ITEM(out_code.ptr(), i, code);
-          PyList_SET_ITEM(out_lasti.ptr(), i,
-                          nb::int_(frame.lasti).release().ptr());
+          out_code.put(nb::handle(code));
+          out_lasti.put(frame.lasti);
         }
-        return nb::make_tuple(out_code, out_lasti);
+        return nb::make_tuple(out_code.commit(), out_lasti.commit());
       },
       nb::is_method(),
       nb::sig(
