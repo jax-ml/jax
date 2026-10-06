@@ -35,7 +35,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           python: ["3.14"]
-          runner: ["amd-do-linux.jax.gpu.gfx950.1"]
+          runner: ["amd-do-linux-xla-gpu-gfx950-dpx-1"]
           jaxlib-version: ["head", "pypi_latest"]
           enable-x64: [0]
           rocm-version: ["10"]
@@ -65,7 +65,7 @@ jobs:
       fail-fast: false
       matrix:
         python: ["3.12"]
-        runner: ["amd-do-linux.jax.gpu.gfx950.1"]
+        runner: ["amd-do-linux-xla-gpu-gfx950-dpx-1"]
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "ROCm blocking gate"
 # End Presubmit Naming Check github-rocm-blocking-presubmits
