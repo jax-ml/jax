@@ -1150,7 +1150,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     # TODO(jburnim): Check for 'o_ref[0, 0] = x_ref[100, 0]' and
     # 'Out-of-bounds read' in the error message once we can reliably propagate
     # the original exception.  (Currently, whether the final exception contains
-    # the original cause depends on the the thread order.)
+    # the original cause depends on the thread order.)
     with self.assertRaises(jax.errors.JaxRuntimeError):
       run(input_arr).block_until_ready()
 
