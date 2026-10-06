@@ -494,6 +494,28 @@ class FusionTest(jtu.JaxTestCase):
       gy = jax.grad(fusible_dtype.physicalize(f))(x)
       np.testing.assert_allclose(gy, 2.0)
 
+  @parameterized.parameters([False, True])
+  def test_fusible_physicalize_custom_vjp_grad_with_consts(self, cvjp3):
+    with config.custom_vjp3(cvjp3):
+      scale = jnp.array(2.0)  # Closed over, so a const of the call_jaxpr.
+
+      @jax.custom_vjp
+      def custom_fn(x):
+        return x * scale
+      def custom_fn_fwd(x):
+        return custom_fn(x), None
+      def custom_fn_bwd(res, g):
+        del res
+        return (g * scale,)
+      custom_fn.defvjp(custom_fn_fwd, custom_fn_bwd)
+
+      def f(x):
+        return custom_fn(x) + 1.0
+
+      x = jnp.array(3.0)
+      gy = jax.grad(fusible_dtype.physicalize(f))(x)
+      np.testing.assert_allclose(gy, 2.0)
+
   def test_fusible_outside_fuse(self):
     @fuser.fusible
     def f(x_fn, out_fn):
