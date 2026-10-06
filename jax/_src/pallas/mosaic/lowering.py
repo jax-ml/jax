@@ -5901,11 +5901,26 @@ def _pad_lowering_rule(ctx: LoweringRuleContext, *args, **kwargs):
         )
       return pad
 
-    if low != 0:
+    if low > 0:
       operand = tpu.concatenate([_pad(low), operand], dimension=axis)
 
-    if high != 0:
+    if high > 0:
       operand = tpu.concatenate([operand, _pad(high)], dimension=axis)
+
+    if low < 0 or high < 0:
+      assert isinstance(operand.type, ir.VectorType)
+      shape = list(operand.type.shape)
+      starts = [0] * len(shape)
+      strides = [1] * len(shape)
+      starts[axis] = max(0, -low)
+      shape[axis] += min(0, low) + min(0, high)
+      sliced_type = ir.VectorType.get(
+          ctx.lowering_context.dynamic_shape_replacement_fn(tuple(shape)),
+          operand.type.element_type,
+      )
+      operand = vector.extract_strided_slice(
+          sliced_type, operand, starts, shape, strides
+      )
 
     if interior > 0:
       raise NotImplementedError("Not implemented: interior padding")
