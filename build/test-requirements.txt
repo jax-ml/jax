@@ -2,7 +2,8 @@ absl-py
 cloudpickle
 filelock
 flatbuffers
-google-benchmark
+# TODO(phawkins): re-enable on 3.14+ once google-benchmark supports free-threaded Python
+google-benchmark; python_version<"3.14"
 hypothesis
 mpmath>=1.4.1
 pillow>=11.3
