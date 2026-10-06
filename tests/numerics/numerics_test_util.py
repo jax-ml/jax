@@ -104,6 +104,13 @@ def get_hardware_variant() -> str:
   return dut
 
 
+def _default_ftz(dtype) -> bool:
+  """Returns whether subnormals flush to zero by default for `dtype`."""
+  if dtype is not None and np.dtype(dtype) == np.float16:
+    return False
+  return True
+
+
 def _resolve_override(spec, variant: str, dtype, default):
   """Resolves a per-platform/per-dtype configuration override.
 
@@ -476,9 +483,11 @@ def ulp_diff(
     computed: np.ndarray,
     reference: np.ndarray,
     dtype,
-    ftz: bool = True,
+    ftz: bool | None = None,
 ) -> np.ndarray:
   """Computes real float64 ULP distance between computed (in dtype) and reference."""
+  if ftz is None:
+    ftz = _default_ftz(dtype)
   if np.dtype(dtype) == np.float64:
     return np.abs(ulp_diff_mpmath(computed, reference, dtype, ftz=ftz))
   cpu_dev = jax.devices("cpu")[0]
@@ -515,8 +524,10 @@ class _FloatMpf(mpmath.mpf):
     return self._orig_float
 
 
-def eval_mpmath(mpmath_fn, *vals, dtype=None, input_ftz: bool = True):
+def eval_mpmath(mpmath_fn, *vals, dtype=None, input_ftz: bool | None = None):
   """Evaluates scalar mpmath function at current mpmath precision."""
+  if input_ftz is None:
+    input_ftz = _default_ftz(dtype)
   if input_ftz and dtype is not None:
     vals = tuple(
         _flush_subnormals(np.array(v, dtype=dtype), dtype).item()
@@ -587,10 +598,12 @@ def eval_ulp_stats(
     computed,
     reference,
     dtype,
-    ftz: bool = True,
+    ftz: bool | None = None,
     k: int = 20,
 ) -> tuple[dict[str, int], list[tuple[float, ...]]]:
   """Computes signed ULP histogram counts and top-k worst cases for a chunk."""
+  if ftz is None:
+    ftz = _default_ftz(dtype)
   is_tuple_inputs = isinstance(inputs, (tuple, list))
   n = len(inputs[0]) if is_tuple_inputs else len(inputs)
   if n == 0:
@@ -1130,8 +1143,8 @@ def check_nary_precision(
     dtype=None,
     nargs: int = 2,
     bounds: float | tuple[float, float] | list | None = None,
-    input_ftz: bool | list = True,
-    output_ftz: bool | list = True,
+    input_ftz: bool | list | None = None,
+    output_ftz: bool | list | None = None,
     ignore_inputs: list | None = None,
     check_signed_zeros: bool | list = True,
     ref_dtype: object | None = None,
@@ -1174,9 +1187,12 @@ def check_nary_precision(
       different tight bounds. Defaults to 0.5 ULP (correctly rounded) if a
       platform/dtype combination is not listed.
     input_ftz: Whether subnormal inputs are flushed to zero before reference
-      evaluation (bool or per-variant override list).
+      evaluation (bool or per-variant override list). Defaults to False for
+      float16 (which does not flush subnormals on CPU, GPU, or TPU) and True
+      for other dtypes.
     output_ftz: Whether subnormal outputs are flushed to zero when computing ULP
-      distances (bool or per-variant override list).
+      distances (bool or per-variant override list). Defaults to False for
+      float16 and True for other dtypes.
     ignore_inputs: Optional per-variant list of callable predicates
       `ignore_fn(*args: np.ndarray) -> np.ndarray[bool]` where True indicates
       that the input should be excluded from accuracy checking.
@@ -1202,8 +1218,9 @@ def check_nary_precision(
     test_case.skipTest("float64 on TPU is ef57 double-double")
 
   variant = get_hardware_variant()
-  in_ftz = _resolve_override(input_ftz, variant, dtype, True)
-  out_ftz = _resolve_override(output_ftz, variant, dtype, True)
+  default_ftz = _default_ftz(dtype)
+  in_ftz = _resolve_override(input_ftz, variant, dtype, default_ftz)
+  out_ftz = _resolve_override(output_ftz, variant, dtype, default_ftz)
   chk_signed_zeros = _resolve_override(check_signed_zeros, variant, dtype, True)
   ignore_predicate = resolve_ignore_inputs(ignore_inputs, variant, dtype)
   raw_bound = _resolve_override(bounds, variant, dtype, 0.5)
@@ -1437,8 +1454,8 @@ def check_unary_precision(
     mpmath_fn: Callable | None = None,
     dtype=None,
     bounds: float | tuple[float, float] | list | None = None,
-    input_ftz: bool | list = True,
-    output_ftz: bool | list = True,
+    input_ftz: bool | list | None = None,
+    output_ftz: bool | list | None = None,
     ignore_inputs: list | None = None,
     check_signed_zeros: bool | list = True,
     max_samples: int | None = None,

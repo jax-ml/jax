@@ -70,9 +70,7 @@ class SinhTest(jtu.JaxTestCase):
         ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 59.5}),
     ]
     input_ftz = [
-        ("cpu", {f16: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("gpu", False),
     ]
     # Ignore x = +-89.415985: near the float32 overflow threshold, where the
     # true value is finite (~3.40282e+38) but XLA's lowering on CPU/TPU computes
@@ -141,9 +139,8 @@ class TanhTest(jtu.JaxTestCase):
         (["tpu_v6e", "tpu_7x"], {f32: 1.5}),
     ]
     input_ftz = [
-        ("cpu", {bf16: False, f16: False, f32: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("cpu", {bf16: False, f32: False}),
+        ("gpu", False),
     ]
     p = jnp.finfo(dtype).nmant + 1
     interesting_points = [

@@ -76,9 +76,8 @@ class SinTest(jtu.JaxTestCase):
         ("tpu", {bf16: 1.0, f16: 1.0, f32: 3.5}),
     ]
     input_ftz = [
-        ("cpu", {f16: False, f32: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("cpu", {f32: False}),
+        ("gpu", False),
     ]
     check_signed_zeros = [
         ("cpu", {bf16: False}),
@@ -124,9 +123,7 @@ class TanTest(jtu.JaxTestCase):
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 5.5}),
     ]
     input_ftz = [
-        ("cpu", {f16: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("gpu", False),
     ]
     util.check_unary_precision(
         self,
@@ -332,9 +329,7 @@ class Atan2Test(jtu.JaxTestCase):
         ("tpu", {bf16: 1.0, f16: 1.0, f32: 3.5}),
     ]
     input_ftz = [
-        ("cpu", {f16: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("gpu", False),
     ]
     tiny_f64 = float(np.finfo(np.float64).tiny)
     ignore_inputs = [
@@ -371,9 +366,7 @@ class Deg2radTest(jtu.JaxTestCase):
         ("tpu", {bf16: 1.0, f16: 1.0, f32: 1.0}),
     ]
     input_ftz = [
-        ("cpu", {f16: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("gpu", False),
     ]
     util.check_unary_precision(
         self,
@@ -397,9 +390,7 @@ class Rad2degTest(jtu.JaxTestCase):
         ("tpu", {bf16: 1.0, f16: 1.5, f32: 1.0}),
     ]
     input_ftz = [
-        ("cpu", {f16: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("gpu", False),
     ]
     util.check_unary_precision(
         self,

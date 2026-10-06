@@ -212,6 +212,12 @@ class LogisticTest(jtu.JaxTestCase):
         # -log(fmax) / -log(tiny) is already in _common_interesting_points).
         *(sign * k * math.log(2.0) for k in (p, p + 1) for sign in (-1, 1)),
     ]
+    # TODO(phawkins): lax.logistic lowers to 1 / (1 + exp(-x)), which prematurely
+    # underflows to 0.0 on CPU and GPU when exp(-x) overflows in float16 for
+    # x <= -11.09.
+    output_ftz = [
+        (["cpu", "gpu"], {f16: True}),
+    ]
     util.check_unary_precision(
         self,
         lax.logistic,
@@ -219,6 +225,7 @@ class LogisticTest(jtu.JaxTestCase):
         lambda x: 1 / (1 + mpmath.exp(-x)),
         dtype,
         bounds=bounds,
+        output_ftz=output_ftz,
         interesting_points=interesting_points,
     )
 

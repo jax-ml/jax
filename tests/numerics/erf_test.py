@@ -125,9 +125,7 @@ class ErfTest(jtu.JaxTestCase):
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 1.5}),
     ]
     input_ftz = [
-        ("cpu", {f16: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("gpu", False),
     ]
     # Thresholds where |erf(x)| rounds to 1.0 in float32 (1 - 2^-24) and
     # float64 (1 - 2^-53):

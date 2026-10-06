@@ -5125,9 +5125,15 @@ def hypot(x1: Array, x2: Array) -> tuple[Array, Array, Array]:
   a1, a2 = abs(x1), abs(x2)
   m = max(a1, a2)
   finfo = dtypes.finfo(x1.dtype)
-  k = (finfo.maxexp - 1) // 2 + 2
-  hi = m >= _const(x1, 2.0 ** (k - 2))
-  lo = m <= _const(x1, 2.0 ** ((finfo.minexp + finfo.nmant + 1) // 2))
+  # e_hi is the largest exponent where 2 * m**2 cannot overflow.
+  # k is large enough that (x * 2**k)**2 does not underflow even when x is the
+  # smallest subnormal (2**(minexp - nmant)). Scaling down by 2**-k for
+  # m >= 2**e_hi and up by 2**k for m <= 2**(e_hi - k) keeps y1**2 + y2**2
+  # from overflowing or underflowing in all regimes.
+  k = (finfo.nmant - finfo.minexp + 1) // 2
+  e_hi = (finfo.maxexp - 1) // 2
+  hi = m >= _const(x1, 2.0**e_hi)
+  lo = m <= _const(x1, 2.0 ** (e_hi - k))
   s_down, s_up, one = (
       full_like(x1, 2.0**-k), full_like(x1, 2.0**k), full_like(x1, 1.0)
   )

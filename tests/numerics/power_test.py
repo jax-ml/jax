@@ -52,9 +52,7 @@ class SqrtTest(jtu.JaxTestCase):
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 2.0}),
     ]
     input_ftz = [
-        ("cpu", {f16: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("gpu", False),
     ]
     util.check_unary_precision(
         self,
@@ -90,9 +88,7 @@ class RsqrtTest(jtu.JaxTestCase):
         ("tpu_7x", {f32: 1.0}),
     ]
     input_ftz = [
-        ("cpu", {f16: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("gpu", False),
     ]
     util.check_unary_precision(
         self,
@@ -117,9 +113,7 @@ class CbrtTest(jtu.JaxTestCase):
         (["tpu_v6e", "tpu_7x"], {f32: 1.5}),
     ]
     input_ftz = [
-        ("cpu", {f16: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("gpu", False),
     ]
     util.check_unary_precision(
         self,
@@ -161,9 +155,7 @@ class ReciprocalTest(jtu.JaxTestCase):
         (["tpu_v6e", "tpu_7x"], {f32: 1.5}),
     ]
     input_ftz = [
-        ("cpu", {f16: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("gpu", False),
     ]
     util.check_unary_precision(
         self,
@@ -190,9 +182,7 @@ class HypotTest(jtu.JaxTestCase):
         ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 2.5}),
     ]
     input_ftz = [
-        ("cpu", {f16: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("gpu", False),
     ]
 
     # _hypot_ref is evaluated in float64 for bf16/f16/f32 (f64 uses mpmath),
@@ -208,12 +198,13 @@ class HypotTest(jtu.JaxTestCase):
       return mpmath.hypot(x, y)
 
     finfo = jnp.finfo(dtype)
-    k = (finfo.maxexp - 1) // 2 + 2
+    k = (finfo.nmant - finfo.minexp + 1) // 2
+    e_hi = (finfo.maxexp - 1) // 2
     # Rescaling thresholds in jnp.hypot where max(|x|, |y|) triggers scaled-up
     # (s_lo) or scaled-down (s_hi) evaluation to avoid intermediate underflow
     # or overflow, plus sqrt(max_float) and max_float / sqrt(2).
-    s_lo = 2.0 ** ((finfo.minexp + finfo.nmant + 1) // 2)
-    s_hi = 2.0**k
+    s_lo = 2.0 ** (e_hi - k)
+    s_hi = 2.0**e_hi
     max_val = float(finfo.max)
     interesting_points = [
         *(
@@ -272,6 +263,12 @@ class HypotTest(jtu.JaxTestCase):
         (-big, big),
         (big, 1.0),
     ]
+    if dtype == f16:
+      subnormal = float(finfo.smallest_subnormal)
+      cases.extend([
+          (3.0 * subnormal, 4.0 * subnormal),
+          (-3.0 * subnormal, 4.0 * subnormal),
+      ])
     xs = jnp.array([c[0] for c in cases], dtype=dtype)
     ys = jnp.array([c[1] for c in cases], dtype=dtype)
 
@@ -301,11 +298,12 @@ class HypotTest(jtu.JaxTestCase):
     if dtype == f64 and jtu.device_under_test() == "tpu":
       self.skipTest("float64 on TPU is ef57 double-double")
     finfo = jnp.finfo(dtype)
-    k = (finfo.maxexp - 1) // 2 + 2
-    # (3 * s, 4 * s) with s chosen so max(|x|, |y|) = 4 * s lands exactly on
-    # the scaled-up (lo) and scaled-down (hi) thresholds in _hypot.
-    s_lo = 2.0 ** ((finfo.minexp + finfo.nmant + 1) // 2 - 2)
-    s_hi = 2.0 ** (k - 2)
+    k = (finfo.nmant - finfo.minexp + 1) // 2
+    e_hi = (finfo.maxexp - 1) // 2
+    # (3 * s, 4 * s) with s chosen so max(|x|, |y|) = 4 * s lands in
+    # the scaled-up (lo) and scaled-down (hi) regimes in _hypot.
+    s_lo = 2.0 ** (e_hi - k - 2)
+    s_hi = 2.0**e_hi
 
     hessian_fn = jax.jit(jax.hessian(jnp.hypot, argnums=(0, 1)))
     third_fn = jax.jit(jax.grad(jax.grad(jax.grad(jnp.hypot))))
@@ -358,9 +356,10 @@ class HypotTest(jtu.JaxTestCase):
     if dtype == f64 and jtu.device_under_test() == "tpu":
       self.skipTest("float64 on TPU is ef57 double-double")
     finfo = jnp.finfo(dtype)
-    k = (finfo.maxexp - 1) // 2 + 2
-    s_lo = 2.0 ** ((finfo.minexp + finfo.nmant + 1) // 2 - 2)
-    s_hi = 2.0 ** (k - 2)
+    k = (finfo.nmant - finfo.minexp + 1) // 2
+    e_hi = (finfo.maxexp - 1) // 2
+    s_lo = 2.0 ** (e_hi - k - 2)
+    s_hi = 2.0**e_hi
     tol = 4 * float(finfo.eps)
 
     for s in (0.0, 1.0, s_lo, s_hi):

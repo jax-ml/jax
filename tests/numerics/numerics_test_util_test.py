@@ -677,6 +677,36 @@ class UlpDiffTest(jtu.JaxTestCase):
           interesting_points=[(7.25, -3.5)],
       )
 
+  def test_f16_default_non_ftz(self):
+    # float16 defaults to non-FTZ mode across all platforms, while other
+    # floating-point dtypes default to FTZ.
+    self.assertFalse(util._default_ftz(jnp.float16))
+    self.assertFalse(util._default_ftz(np.float16))
+    self.assertTrue(util._default_ftz(jnp.bfloat16))
+    self.assertTrue(util._default_ftz(jnp.float32))
+    self.assertTrue(util._default_ftz(jnp.float64))
+
+    # _resolve_override falls back to _default_ftz for float16 when omitted.
+    self.assertFalse(
+        util._resolve_override(
+            None, "tpu", jnp.float16, util._default_ftz(jnp.float16)
+        )
+    )
+    self.assertFalse(
+        util._resolve_override(
+            [("gpu", {jnp.bfloat16: False})],
+            "gpu",
+            jnp.float16,
+            util._default_ftz(jnp.float16),
+        )
+    )
+    # Explicit scalar override is respected.
+    self.assertTrue(
+        util._resolve_override(
+            True, "tpu", jnp.float16, util._default_ftz(jnp.float16)
+        )
+    )
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=util.ClassShardedTestLoader())

@@ -60,9 +60,7 @@ class LogTest(jtu.JaxTestCase):
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 2.5}),
     ]
     input_ftz = [
-        ("cpu", {f16: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("gpu", False),
     ]
     util.check_unary_precision(
         self,
@@ -89,9 +87,7 @@ class Log2Test(jtu.JaxTestCase):
         (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 2.5}),
     ]
     input_ftz = [
-        ("cpu", {f16: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("gpu", False),
     ]
     util.check_unary_precision(
         self,
@@ -118,9 +114,7 @@ class Log10Test(jtu.JaxTestCase):
         (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 3.0}),
     ]
     input_ftz = [
-        ("cpu", {f16: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("gpu", False),
     ]
     util.check_unary_precision(
         self,
