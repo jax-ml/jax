@@ -580,13 +580,15 @@ def _async_store_smem_op_lowering_rule(
   cluster_idx = arith.index_cast(index, op.cluster_idx)
   cluster_barrier_ref = barrier_ref.remap_to_cluster(cluster_dim, cluster_idx)
 
-  total_bits = math.prod(value.shape) * utils.bitwidth(value.mlir_dtype)
-  if total_bits % (8 * utils.WARPGROUP_SIZE):
+  transfer_bytes = math.prod(value.shape) * utils.bitwidth(value.mlir_dtype)
+  assert transfer_bytes % 8 == 0
+  transfer_bytes //= 8
+  if transfer_bytes % utils.WARPGROUP_SIZE:
     raise NotImplementedError(
-        f"Transfer of {total_bits} bits is not divisible by "
-        f"{8 * utils.WARPGROUP_SIZE}"
+        f"Transfer of {transfer_bytes} bytes is not divisible by "
+        f"{utils.WARPGROUP_SIZE}"
     )
-  cluster_barrier_ref.arrive_expect_tx(total_bits // 8 // utils.WARPGROUP_SIZE)
+  cluster_barrier_ref.arrive_expect_tx(transfer_bytes // utils.WARPGROUP_SIZE)
 
   atomic = None
   if op.atomic_type is not None:
