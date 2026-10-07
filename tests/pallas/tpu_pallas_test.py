@@ -2226,6 +2226,38 @@ class PallasCallDMAInterpretTest(PallasCallDMATest):
 
 class PallasCallTest(ptu.PallasTPUTest):
 
+  def test_cond_extui(self):
+    # NOTE: If the ``cond`` lowering changes, we might need to also update
+    # the logic in the canonicalize-memory-space pass.
+    if self.INTERPRET:
+      self.skipTest('Not supported in interpret mode.')
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        grid=(1,),
+    )
+    def kernel(x_ref, y_ref):
+      @pl.when(pl.program_id(0) == 0)
+      def on_true():
+        y_ref[...] = x_ref[...]
+
+    with mock.patch.object(
+        mosaic,
+        'lower_module_to_custom_call',
+        wraps=mosaic.lower_module_to_custom_call,
+    ) as mock_lower:
+      jax.jit(kernel).lower(jax.ShapeDtypeStruct((8, 128), jnp.float32))
+
+    mock_lower.assert_called_once()
+    module = mock_lower.call_args.kwargs['module']
+    self.assertRegex(
+        str(module),
+        r'(?s)%(?P<ext>\d+) = arith\.extui %\d+ : i1 to i32.*'
+        r'%(?P<cmp>\d+) = arith\.cmpi ne, %(?P=ext), %c0_i32[^\s]* : i32.*'
+        r'scf\.if %(?P=cmp)',
+    )
+
   def test_memory_space_like(self):
     x = jax.ShapeDtypeStruct((2, 3), jnp.float32)
     ref = pltpu.VMEM.like(x)
