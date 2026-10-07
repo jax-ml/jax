@@ -5752,9 +5752,9 @@ class APITest(jtu.JaxTestCase):
                             recording_fallback),
           config.use_direct_linearize(True)):
       jax.grad(f)(x)
-    for name in ('broadcast_in_dim', 'slice', 'concatenate', 'transpose',
-                 'reshape', 'squeeze', 'neg', 'reduce_sum'):
-      self.assertNotIn(name, fallback_prims)
+    expected_not_in = {'broadcast_in_dim', 'slice', 'concatenate', 'transpose',
+                       'reshape', 'squeeze', 'neg', 'reduce_sum'}
+    self.assertEmpty(expected_not_in.intersection(fallback_prims))
     jtu.check_grads(f, (x,), order=2, modes=['fwd', 'rev'])
 
   def test_structured_residuals_deduped_by_jit(self):
