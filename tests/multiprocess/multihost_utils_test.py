@@ -292,13 +292,11 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
         np.testing.assert_array_equal(s.data, np_inp[s.index])
 
   def test_reshard_different_devices(self):
-    if jtu.is_device_tpu('5', 'e'):
-      raise unittest.SkipTest('Test fails on v5e')
     dev = jax.devices()
     if len(dev) < 8:
       raise unittest.SkipTest('Test requires 8 devices')
-    mesh1 = jax.sharding.Mesh([dev[0], dev[2], dev[4], dev[6]], 'x')
-    mesh2 = jax.sharding.Mesh(jax.devices(), 'x')
+    mesh1 = jax.sharding.Mesh(jax.devices(), 'x')
+    mesh2 = jax.sharding.Mesh([dev[0], dev[2], dev[4], dev[6]], 'x')
 
     shape = (8, 2)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -356,12 +354,14 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
     self.assertEqual(id(arr), id(out))
 
   def test_host_local_array_to_global_array_same_sharding_array(self):
-    if jtu.is_device_tpu('5', 'e'):
-      raise unittest.SkipTest('Test fails on v5e')
-    global_mesh = jtu.create_mesh((4, 2), ('x', 'y'), iota_order=True)
+    global_mesh = jtu.create_mesh(
+        (jax.process_count(), jax.local_device_count()),
+        ('x', 'y'),
+        iota_order=True,
+    )
     local_input_shape = (2, 2)
 
-    elems_per_host = 4
+    elems_per_host = math.prod(local_input_shape)
     local_input_data = (
         jnp.arange(elems_per_host) + jax.process_index() * elems_per_host
     ).reshape(local_input_shape)
@@ -376,7 +376,7 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
         arr, global_mesh, P('x', 'y')
     )
 
-    expected_global_shape = (8, 2)
+    expected_global_shape = (2 * jax.process_count(), 2)
     self.assertEqual(out.shape, expected_global_shape)
 
     global_data = np.arange(math.prod(expected_global_shape)).reshape(
@@ -389,12 +389,14 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
       np.testing.assert_array_equal(o.data, global_data[o.index])
 
   def test_host_local_to_global_reshard_committed_single_device_array(self):
-    if jtu.is_device_tpu('5', 'e'):
-      raise unittest.SkipTest('Test fails on v5e')
-    global_mesh = jtu.create_mesh((4, 2), ('x', 'y'), iota_order=True)
+    global_mesh = jtu.create_mesh(
+        (jax.process_count(), jax.local_device_count()),
+        ('x', 'y'),
+        iota_order=True,
+    )
     local_input_shape = (2, 2)
 
-    elems_per_host = 4
+    elems_per_host = math.prod(local_input_shape)
     local_input_data = (
         jnp.arange(elems_per_host) + jax.process_index() * elems_per_host
     ).reshape(local_input_shape)
@@ -409,7 +411,7 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
         arr, global_mesh, P('x', 'y')
     )
 
-    expected_global_shape = (8, 2)
+    expected_global_shape = (2 * jax.process_count(), 2)
     self.assertEqual(out.shape, expected_global_shape)
 
     global_data = np.arange(math.prod(expected_global_shape)).reshape(
@@ -464,10 +466,12 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
       np.testing.assert_array_equal(o.data, global_data[o.index])
 
   def test_global_array_to_host_local_array(self):
-    if jtu.is_device_tpu('5', 'e'):
-      raise unittest.SkipTest('Test fails on v5e')
-    global_mesh = jtu.create_mesh((4, 2), ('x', 'y'), iota_order=True)
-    global_shape = (8, 2)
+    global_mesh = jtu.create_mesh(
+        (jax.process_count(), jax.local_device_count()),
+        ('x', 'y'),
+        iota_order=True,
+    )
+    global_shape = (2 * jax.process_count(), 2)
     global_data = np.arange(math.prod(global_shape)).reshape(global_shape)
 
     arr = jax.make_array_from_callback(
@@ -485,15 +489,18 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
         out.sharding, jax.sharding.NamedSharding(global_mesh.local_mesh, P('x'))
     )
 
-    local_input_data = (np.arange(4) + jax.process_index() * 4).reshape(
-        out.shape
-    )
+    elems_per_host = math.prod(out.shape)
+    local_input_data = (
+        np.arange(elems_per_host) + jax.process_index() * elems_per_host
+    ).reshape(out.shape)
     for s in out.addressable_shards:
       np.testing.assert_array_equal(s.data, local_input_data)
 
   def test_host_local_array_to_global_array_none_error(self):
-    global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
-    global_shape = (8, 2)
+    global_mesh = jtu.create_mesh(
+        (jax.process_count(), jax.local_device_count()), ('x', 'y')
+    )
+    global_shape = (2 * jax.process_count(), 2)
     data = np.arange(math.prod(global_shape)).reshape(global_shape)
 
     with self.assertRaisesRegex(
