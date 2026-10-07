@@ -1437,6 +1437,8 @@ class VectorSubcoreTest(PallasSCTest):
       leading_shape=[(), (2,)],
   )
   def test_pltpu_bitcast_minormost(self, from_dtype, to_dtype, leading_shape):
+    if not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Needs libtpu >= 0.0.50")
     self.skip_if_tc_tiling(
         "Fails due to incorrectly inferred tiling in tpu.memref_squeeze"
     )
