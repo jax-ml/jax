@@ -66,44 +66,85 @@ def repeat(x: jax.Array, repeats: int, axis: int) -> jax.Array:
 bitcast_p = jax_core.Primitive("bitcast")
 
 
-def bitcast(x: jax.Array, ty: DTypeLike) -> jax.Array:
+def bitcast(x: jax.Array, ty: DTypeLike, dim: int = -2) -> jax.Array:
+  """Bitcasts an array to a different dtype, preserving its rank.
+
+  The size of dimension ``dim`` is scaled by the ratio of the source and target
+  bitwidths. The sizes of the other dimensions stay the same.
+
+  * When ``dim`` is the second minor dimension (the default), consecutive
+    elements along the second minor dimension are packed into (or unpacked
+    from) one element. E.g. for a 2D input and an output bitwidth of twice the
+    input bitwidth, ``output[a, b]`` is made up of ``input[2a, b]`` and
+    ``input[2a+1, b]``.
+  * When ``dim`` is the minormost dimension, the semantics match those of
+    ``numpy.ndarray.view``: consecutive elements along the minormost dimension
+    are packed into (or unpacked from) one element.
+
+  Args:
+    x: The array to bitcast.
+    ty: The target dtype.
+    dim: The dimension to scale. Must be the second minor or the minormost
+      dimension. Defaults to -2 (the second minor dimension).
+
+  Returns:
+    The bitcast array.
+  """
   ty = dtypes.check_and_canonicalize_user_dtype(ty)
-  if len(x.shape) < 2:
-    raise ValueError("Not implemented: bitcast 1D")
+  if dim == -2 and x.ndim < 2:
+    raise ValueError(
+        "Cannot bitcast a 1D array along the second minor dimension. Pass"
+        " dim=-1 to bitcast along the minormost dimension."
+    )
+  dim = util.canonicalize_axis(dim, x.ndim)
+  if dim < x.ndim - 2:
+    raise ValueError(
+        "Cannot bitcast along a dimension other than the second minor or the"
+        f" minormost one: {dim=}, {x.ndim=}"
+    )
   src_bitwidth = dtypes.itemsize_bits(x.dtype)
   dst_bitwidth = dtypes.itemsize_bits(ty)
-  if x.shape[-2] * src_bitwidth % dst_bitwidth:
+  if x.shape[dim] * src_bitwidth % dst_bitwidth:
     raise ValueError(
-        "Not implemented: the 2nd minor dim can not be perfectly packed or"
-        " unpacked"
+        f"dim {dim} of size {x.shape[dim]} cannot be perfectly packed or"
+        f" unpacked from {x.dtype} to {ty}"
     )
-  return bitcast_p.bind(x, ty=ty)
+  return bitcast_p.bind(x, ty=ty, dim=dim)
 
 
 @bitcast_p.def_abstract_eval
-def _bitcast_abstract_eval(x, *, ty):
+def _bitcast_abstract_eval(x, *, ty, dim):
   shape = list(x.shape)
   src_bitwidth = dtypes.itemsize_bits(x.dtype)
   dst_bitwidth = dtypes.itemsize_bits(ty)
-  shape[-2] = shape[-2] * src_bitwidth // dst_bitwidth
+  if shape[dim] * src_bitwidth % dst_bitwidth:
+    raise ValueError(
+        f"dim {dim} of size {shape[dim]} cannot be perfectly packed or"
+        f" unpacked from {x.dtype} to {ty}"
+    )
+  shape[dim] = shape[dim] * src_bitwidth // dst_bitwidth
   return jax_core.ShapedArray(shape, ty)
 
 
-def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
+def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty, dim):
   def _bitcast(x):
     src_bitwidth = dtypes.itemsize_bits(x.dtype)
     dst_bitwidth = dtypes.itemsize_bits(ty)
+    # With the scaled dim in the minormost position, the bitcast has the same
+    # semantics as numpy.ndarray.view.
+    x = jnp.moveaxis(x, dim, -1)
     if src_bitwidth < dst_bitwidth:
-      *leading, m, n = x.shape
+      *leading, n = x.shape
       packing = dst_bitwidth // src_bitwidth
-      x = x.reshape(*leading, m // packing, packing, n)
-      x = jnp.swapaxes(x, -1, -2)
-      return jax.lax.bitcast_convert_type(x, ty)
-    if src_bitwidth > dst_bitwidth:
+      x = x.reshape(*leading, n // packing, packing)
       y = jax.lax.bitcast_convert_type(x, ty)
-      *leading, m, n, packing = y.shape
-      return jnp.swapaxes(y, -1, -2).reshape(*leading, m * packing, n)
-    return jax.lax.bitcast_convert_type(x, ty)
+    elif src_bitwidth > dst_bitwidth:
+      y = jax.lax.bitcast_convert_type(x, ty)
+      *leading, n, packing = y.shape
+      y = y.reshape(*leading, n * packing)
+    else:
+      y = jax.lax.bitcast_convert_type(x, ty)
+    return jnp.moveaxis(y, -1, dim)
 
   return mlir.lower_fun(_bitcast, multiple_results=False)(ctx, x)
 
@@ -111,12 +152,12 @@ def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
 mlir.register_lowering(bitcast_p, _bitcast_lowering_rule)
 
 
-def _bitcast_batch_rule(batched_args, batch_axes, *, ty):
+def _bitcast_batch_rule(batched_args, batch_axes, *, ty, dim):
   [x], [bdim] = batched_args, batch_axes
-  if bdim >= x.ndim - 2:
+  if bdim > dim:
     x = jnp.moveaxis(x, bdim, 0)
     bdim = 0
-  return bitcast(x, ty=ty), bdim
+  return bitcast(x, ty=ty, dim=dim + 1), bdim
 
 
 batching.primitive_batchers[bitcast_p] = _bitcast_batch_rule

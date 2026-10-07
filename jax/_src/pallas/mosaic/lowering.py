@@ -5065,13 +5065,26 @@ def _unpack_elementwise_lowering_rule(
 @register_lowering_rule(
     tpu_primitives.bitcast_p, kernel_types=tpu_core.CoreType
 )
-def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
+def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty, dim):
   del ty
+  (in_aval,) = ctx.avals_in
   (out_aval,) = ctx.avals_out
   out_type = ctx.aval_to_ir_type(out_aval)
   if x.type == out_type:
     return x
-  return tpu.bitcast(out_type, x)
+  if dim == in_aval.ndim - 2:
+    return tpu.bitcast(out_type, x)
+  assert dim == in_aval.ndim - 1, (dim, in_aval.ndim)
+  if ctx.lowering_context.kernel_type == tpu_core.CoreType.TC:
+    if dtypes.itemsize_bits(in_aval.dtype) != dtypes.itemsize_bits(
+        out_aval.dtype
+    ):
+      raise NotImplementedError(
+          "Bitcasting along the minormost dimension between different"
+          " bitwidths is not supported on TensorCore."
+      )
+    return tpu.bitcast(out_type, x)
+  return vector.bitcast(out_type, x)
 
 
 @register_lowering_rule(

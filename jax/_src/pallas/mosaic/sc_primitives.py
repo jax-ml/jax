@@ -23,6 +23,7 @@ import jax
 from jax import api_util
 from jax import lax
 from jax._src import core as jax_core
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import flattree as ft
@@ -37,6 +38,7 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering as tc_lowering
+from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import sc_lowering
 from jax._src.state import indexing
@@ -458,48 +460,10 @@ def addupdate_scatter(
   _ = scatter_p.bind(*flat_args, tree=tree, add=True)
 
 
-bitcast_p = jax_core.Primitive("bitcast")
-
-
-@bitcast_p.def_abstract_eval
-def _bitcast_abstract_eval(x, dtype):
-  old_bitwidth = dtypes.itemsize_bits(x.dtype)
-  new_bitwidth = dtypes.itemsize_bits(dtype)
-  if old_bitwidth == new_bitwidth:
-    return jax_core.ShapedArray(x.shape, dtype)
-  if x.ndim == 0:
-    raise ValueError(
-        "Cannot bitcast a ()-shaped array to a dtype with a different bitwidth:"
-        f" {old_bitwidth=} vs {new_bitwidth=}"
-    )
-  new_last_dim, rem = divmod(x.shape[-1] * old_bitwidth, new_bitwidth)
-  if rem:
-    raise ValueError(
-        f"Cannot bitcast from {x.dtype} ({old_bitwidth} bits) to"
-        f" {dtype} ({new_bitwidth} bits), because {x.shape[-1]=} *"
-        f" {old_bitwidth} is not divisible by {new_bitwidth}"
-    )
-  return jax_core.ShapedArray((*x.shape[:-1], new_last_dim), dtype)
-
-
-@sc_lowering.register_lowering_rule(bitcast_p)
-def _bitcast_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, *, dtype):
-  del dtype  # Unused.
-  [out_aval] = ctx.avals_out
-  out_type = ctx.aval_to_ir_type(out_aval)
-  return vector.bitcast(out_type, x)
-
-
 def bitcast(x: jax.Array, dtype: jax.typing.DTypeLike) -> jax.Array:
-  """Bitcasts an array to a different dtype.
+  """Bitcasts an array to a different dtype along the minormost dimension.
 
-  Unlike ``lax.bitcast_convert_type``, this function returns an array of the
-  same rank as the input. The minormost dimension is expanded/shrunk to
-  account for the difference in the element bitwidth.
-
-  When the target dtype has a different bitwidth, the size of the minormost
-  dimension in bits (``x.shape[-1] * old_bitwidth``) must be divisible by the
-  target bitwidth.
+  Equivalent to ``pltpu.bitcast(x, dtype, dim=-1)``.
 
   Args:
     x: The array to bitcast.
@@ -508,9 +472,14 @@ def bitcast(x: jax.Array, dtype: jax.typing.DTypeLike) -> jax.Array:
   Returns:
     The bitcast array.
   """
-  if x.dtype == dtype:
-    return x
-  return bitcast_p.bind(x, dtype=jnp.dtype(dtype))
+  # TODO(b/562994815): Delete once all callers use pltpu.bitcast(dim=-1).
+  deprecations.warn(
+      "jax-pallas-sc-bitcast",
+      "plsc.bitcast is deprecated and will be removed in a future release. "
+      "Use pltpu.bitcast(x, dtype, dim=-1) instead.",
+      stacklevel=2,
+  )
+  return tpu_primitives.bitcast(x, dtype, dim=-1)
 
 
 class MemoryEffect(jax_core.Effect):

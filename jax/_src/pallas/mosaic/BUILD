@@ -199,11 +199,13 @@ pytype_strict_library(
     deps = [
         ":core",
         ":lowering",
+        ":primitives",
         ":sc_core",
         ":sc_lowering",
         "//jax",
         "//jax/_src:api_util",
         "//jax/_src:core",
+        "//jax/_src:deprecations",
         "//jax/_src:dtypes",
         "//jax/_src:effects",
         "//jax/_src:flattree",
