@@ -60,15 +60,7 @@ CommonTmaParams prepare_tma_params(const CUtensorMap* tma_desc,
   CUtensorMapDataType data_type;
   int64_t elem_bitwidth;
   // types are defined in: launch_context._tma_dma_type()
-  if (elem_type == 8) {
-    // this is for int2s
-    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
-    elem_bitwidth = 2;
-  } else if (elem_type == 0) {
-    // this is for int4s
-    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
-    elem_bitwidth = 4;
-  } else if (elem_type == 1) {
+  if (elem_type == 1) {
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
     elem_bitwidth = 8;
   } else if (elem_type == 2) {
@@ -100,25 +92,8 @@ CommonTmaParams prepare_tma_params(const CUtensorMap* tma_desc,
     abort();
   }
 
-  // Pack sub byte types in 8 bit pairs.
-  int64_t elem_bytewidth;
-  if (elem_bitwidth < 8) {
-    // Check that it's a power of 2.
-    assert((elem_bitwidth & (elem_bitwidth - 1)) == 0);
-    int packing = 8 / elem_bitwidth;
-    assert(sizes[rank - 1] % packing == 0);
-    assert(strides[rank - 1] == 1);
-
-    // TMA requires that the last dimension be the contiguous one so we pack the
-    // elements under that assumption.
-    sizes[rank - 1] /= packing;
-    for (int i = 0; i < rank - 1; i++) {
-      strides[i] /= packing;
-    }
-    elem_bytewidth = 1;
-  } else {
-    elem_bytewidth = elem_bitwidth / 8;
-  }
+  assert(elem_bitwidth >= 8);
+  int64_t elem_bytewidth = elem_bitwidth / 8;
 
   CUtensorMapSwizzle swizzle;
   if (swizzle_bytes == 16) {
@@ -182,13 +157,8 @@ void mosaic_gpu_init_tma_desc(CUtensorMap* tma_desc, void* base_addr,
                               int64_t elem_type, int64_t rank, int64_t* sizes,
                               int64_t* strides, int64_t swizzle_bytes,
                               int64_t* window_shape) {
-  CommonTmaParams params = prepare_tma_params(
-      tma_desc, elem_type, rank, sizes, strides, swizzle_bytes);
-  if (params.elem_bitwidth < 8) {
-    int packing = 8 / params.elem_bitwidth;
-    assert(window_shape[rank - 1] % packing == 0);
-    window_shape[rank - 1] /= packing;
-  }
+  CommonTmaParams params = prepare_tma_params(tma_desc, elem_type, rank, sizes,
+                                              strides, swizzle_bytes);
 
   cuuint32_t tma_window_shape[5] = {1, 1, 1, 1, 1};
   for (int64_t i = 0; i < rank; ++i) {
