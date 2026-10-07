@@ -202,6 +202,27 @@ class FusionTest(jtu.JaxTestCase):
     np.testing.assert_allclose(x_out, (x + z + 1.0))
     np.testing.assert_allclose(y_out, (y + z + 1.0) * 2)
 
+  def test_custom_fusion_errors(self):
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+
+    @fuser.custom_fusion
+    def missing_eval(x):
+      return x + 1.0
+
+    with self.assertRaisesRegex(ValueError, "missing an evaluation rule"):
+      missing_eval(x)
+
+    missing_eval.def_eval_rule(lambda _, x: (missing_eval(x),))
+    with self.assertRaisesRegex(ValueError, "missing a pull_block_spec rule"):
+      missing_eval(x)
+
+    missing_eval.def_pull_block_spec(lambda bss: (bss[0],))
+    missing_eval.def_pallas_impl(lambda x: jnp.ones((2, 2), dtype=jnp.float32))
+    with self.assertRaisesRegex(
+        ValueError, "mismatched output abstract values"
+    ):
+      jax.jit(missing_eval)(x)
+
   def test_separate_output_fusions_should_error_if_not_disjoint(self):
 
     @fuser.fusible(output_fusion_prefix=(True, True))
