@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>  // NOLINT
 #include <vector>
@@ -173,6 +174,23 @@ StrongKey::StrongKey(const StrongKeyView& lkey)
                             : std::nullopt),
       cached_hash_(lkey.cached_hash) {}
 
+namespace {
+
+bool SafeObjectEqual(nb::handle a, nb::handle b) {
+  try {
+    return a.equal(b);
+  } catch (const nb::python_error& e) {
+    throw std::invalid_argument(absl::StrCat(
+        "Cache keys should be comparable using __eq__. "
+        "The following error was raised when comparing two objects of "
+        "types ",
+        nb::str(a.type()).c_str(), " and ", nb::str(b.type()).c_str(),
+        ". The error was:\n", e.what()));
+  }
+}
+
+}  // namespace
+
 bool StrongKey::operator==(const StrongKey& other) const {
   // ReentrantHashMap, like absl::flat_hash_map, does not store or compare all
   // 64 bits of the hash directly. Since we have to store the hash anyway,
@@ -180,7 +198,7 @@ bool StrongKey::operator==(const StrongKey& other) const {
   // comparing the keys.
   if (cached_hash_ != other.cached_hash_) return false;
   if (treedef_ != other.treedef_) return false;
-  if (!context_.equal(other.context_)) return false;
+  if (!SafeObjectEqual(context_, other.context_)) return false;
 
   if (kwnames_.size() != other.kwnames_.size()) return false;
   for (size_t i = 0; i < kwnames_.size(); ++i) {
@@ -189,7 +207,7 @@ bool StrongKey::operator==(const StrongKey& other) const {
 
   if (args_.size() != other.args_.size()) return false;
   for (size_t i = 0; i < args_.size(); ++i) {
-    if (!args_[i].equal(other.args_[i])) return false;
+    if (!SafeObjectEqual(args_[i], other.args_[i])) return false;
   }
   return true;
 }
@@ -234,14 +252,14 @@ bool StrongKey::SafeEqual::operator()(StrongKey a,
   if (a.cached_hash() != b.cached_hash) return false;
   if (a.treedef_.has_value() != (b.treedef != nullptr)) return false;
   if (a.treedef_ && !(*a.treedef_ == *b.treedef)) return false;
-  if (!a.context_.equal(b.context)) return false;
+  if (!SafeObjectEqual(a.context_, b.context)) return false;
   if (a.kwnames_.size() != b.kwnames.size()) return false;
   for (size_t i = 0; i < a.kwnames_.size(); ++i) {
     if (a.kwnames_[i].ptr() != b.kwnames[i].ptr()) return false;
   }
   if (a.args_.size() != b.args.size()) return false;
   for (size_t i = 0; i < a.args_.size(); ++i) {
-    if (!a.args_[i].equal(b.args[i])) return false;
+    if (!SafeObjectEqual(a.args_[i], b.args[i])) return false;
   }
   return true;
 }
@@ -652,6 +670,9 @@ void StrongLRUCache::TpClear() {
     return self->Call(self_obj, args_span, nargsf, kwnames, key);
   } catch (nb::python_error& e) {
     e.restore();
+    return nullptr;
+  } catch (const std::invalid_argument& e) {
+    PyErr_SetString(PyExc_ValueError, e.what());
     return nullptr;
   } catch (const std::exception& e) {
     PyErr_SetString(PyExc_RuntimeError, e.what());

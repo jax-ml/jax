@@ -22,6 +22,7 @@ limitations under the License.
 #include <exception>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>  // NOLINT
 #include <utility>
@@ -146,8 +147,19 @@ struct WeakKey {
         return false;
       }
       for (size_t i = 0; i < a.refs.size(); ++i) {
-        if (!a.refs[i].equal(b.refs[i])) {
-          return false;
+        try {
+          if (!a.refs[i].equal(b.refs[i])) {
+            return false;
+          }
+        } catch (const nb::python_error& e) {
+          nb::object a_obj = a.refs[i]();
+          nb::object b_obj = b.refs[i]();
+          throw std::invalid_argument(absl::StrCat(
+              "WeakrefLRUCache keys should be comparable using __eq__. "
+              "The following error was raised when comparing two objects of "
+              "types ",
+              nb::str(a_obj.type()).c_str(), " and ",
+              nb::str(b_obj.type()).c_str(), ". The error was:\n", e.what()));
         }
       }
       return true;
@@ -866,6 +878,9 @@ PyObject* WeakrefLRUCache::VectorCall(PyObject* self_obj, PyObject* const* args,
   } catch (nb::python_error& e) {
     e.restore();
     return nullptr;
+  } catch (const std::invalid_argument& e) {
+    PyErr_SetString(PyExc_ValueError, e.what());
+    return nullptr;
   } catch (const std::exception& e) {
     PyErr_SetString(PyExc_RuntimeError, e.what());
     return nullptr;
@@ -1030,6 +1045,9 @@ PyObject* MultiWeakrefLRUCache::VectorCall(PyObject* self_obj,
                       std::move(wrcache_key), key);
   } catch (nb::python_error& e) {
     e.restore();
+    return nullptr;
+  } catch (const std::invalid_argument& e) {
+    PyErr_SetString(PyExc_ValueError, e.what());
     return nullptr;
   } catch (const std::exception& e) {
     PyErr_SetString(PyExc_RuntimeError, e.what());
