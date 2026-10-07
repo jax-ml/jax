@@ -31,6 +31,8 @@ exports_files([
     "plugin_pyproject.toml",
     "plugin_setup.py",
     "pyproject.toml",
+    "README.md",
+    "README-pjrt.md",
     "setup.py",
 ])
 

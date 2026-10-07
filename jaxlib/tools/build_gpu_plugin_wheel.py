@@ -203,6 +203,7 @@ def prepare_oneapi_plugin_wheel(
         src_files=[
           f"{source_file_prefix}jax_plugins/oneapi/pyproject.toml",
           f"{source_file_prefix}jax_plugins/oneapi/setup.py",
+          f"{source_file_prefix}jax_plugins/oneapi/README-pjrt.md",
       ],
   )
   write_setup_cfg(wheel_sources_path, cpu)
