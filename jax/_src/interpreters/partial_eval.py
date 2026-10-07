@@ -1264,8 +1264,9 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: bool | Sequence[bool],
   if type(live_inputs) is bool:
     live_inputs = (live_inputs,) * len(jaxpr.invars)
 
-  return _dce_jaxpr(jaxpr, tuple(used_outputs), tuple(instantiate),
-                    tuple(live_inputs))
+  new_jaxpr, used_inputs = _dce_jaxpr(jaxpr, tuple(used_outputs),
+                                      tuple(instantiate), tuple(live_inputs))
+  return (jaxpr if new_jaxpr is None else new_jaxpr), used_inputs
 
 
 def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
@@ -1323,7 +1324,7 @@ def has_effects(eqn: JaxprEqn, live_ins: Sequence[bool] | None = None) -> bool:
 @weakref_lru_cache
 def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
                instantiate: tuple[bool, ...], live_inputs: tuple[bool, ...]
-               ) -> tuple[Jaxpr, list[bool]]:
+               ) -> tuple[Jaxpr | None, list[bool]]:
   env: dict[Var, bool] = {}
 
   def read(v: Var) -> bool:
@@ -1361,6 +1362,11 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
   outvars = [v for v, b in zip(jaxpr.outvars, used_outputs) if b]
   eqns = new_eqns[::-1]
   jaxpr_effects = make_jaxpr_effects(jaxpr.constvars, invars, outvars, eqns)
+  if (all(used_inputs) and all(used_outputs) and
+      len(eqns) == len(jaxpr.eqns) and
+      all(new_eqn is eqn for new_eqn, eqn in zip(eqns, jaxpr.eqns)) and
+      jaxpr_effects == jaxpr.effects):
+    return None, used_inputs
 
   dbg = core.DebugInfo(
       jaxpr.debug_info.traced_for, jaxpr.debug_info.func_src_info,
@@ -1376,7 +1382,6 @@ DCERule = Callable[[list[bool], list[bool], JaxprEqn],
                    tuple[list[bool], JaxprEqn | None]]
 
 
-@weakref_lru_cache
 def _cached_closed_call_dce(jaxpr_, used_outputs: tuple[bool, ...],
                             live_inputs: tuple[bool, ...] | bool = True,
                             ) -> tuple[Jaxpr, list[bool]]:
@@ -1392,6 +1397,8 @@ def dce_jaxpr_closed_call_rule(used_outputs: list[bool], live_ins: list[bool],
   jaxpr_ = eqn.params['call_jaxpr']
   closed_jaxpr, used_inputs = _cached_closed_call_dce(
       jaxpr_, tuple(used_outputs), tuple(live_ins))
+  if closed_jaxpr is jaxpr_ and all(used_inputs) and all(used_outputs):
+    return used_inputs, eqn
   new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
   effects = core.eqn_effects(closed_jaxpr, new_invars)
   new_params = dict(eqn.params, call_jaxpr=closed_jaxpr)

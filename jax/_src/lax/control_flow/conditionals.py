@@ -841,6 +841,9 @@ def _cond_dce_rule(used_outputs: list[bool], live_ins: list[bool],
   dce_branches = [pe.dce_jaxpr(jaxpr, used_outputs, instantiate=used_inputs,
                                live_inputs=live_ops)[0]
                   for jaxpr in branches]
+  if (all(used_inputs) and all(used_outputs) and
+      all(d is b for d, b in zip(dce_branches, branches))):
+    return [True, *used_inputs], eqn
 
   # Finally, update parameters and form the new eqn.
   new_params = dict(eqn.params, branches=tuple(dce_branches))

@@ -364,6 +364,8 @@ pe.partial_eval_jaxpr_custom_rules[program_order_p] = partial(
 def _program_order_dce(used_outputs, live_ins, eqn):
   used_inputs, new_eqn = pe.dce_jaxpr_closed_call_rule(
       used_outputs, live_ins, eqn)
+  if new_eqn is eqn:
+    return used_inputs, eqn
   if new_eqn is not None:
     exclude_mask = tuple(m for m, used in
                          zip(eqn.params["exclude_mask"], used_inputs) if used)

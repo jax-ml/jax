@@ -42,6 +42,7 @@ from jax._src.custom_derivatives import custom_jvp_call_p
 from jax._src.custom_derivatives import custom_vjp_call_p
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import partial_eval as pe
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map
 from jax._src.state.discharge import run_state
@@ -3011,6 +3012,14 @@ class HijaxTest(jtu.JaxTestCase):
       traced_h = h.trace(jnp.float32(2.0), jnp.float32(3.0))
       self.assertIn('cos', str(traced_h.jaxpr))
       self.assertNotIn('cos', str(traced_h.lojax.jaxpr))
+
+    @jax.jit
+    def clean_fn(x):
+      return jnp.sin(x) + 1.0
+
+    clean_jaxpr = clean_fn.trace(jnp.float32(2.0)).jaxpr
+    dced_jaxpr, _ = pe.dce_jaxpr(clean_jaxpr, True, instantiate=True)
+    self.assertIs(dced_jaxpr, clean_jaxpr)
 
 
 class RefTest(jtu.JaxTestCase):
