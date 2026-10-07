@@ -104,7 +104,9 @@ def _create_blocked_slice(
   num_blocks = cdiv(dim_size, block_size)
   is_last = block_index == num_blocks - 1
   rounded_size = jnp.where(
-      is_last, align_to(dim_rem, tiling), block_size
+      is_last,
+      jnp.int32(align_to(dim_rem, tiling)),
+      jnp.int32(block_size),
   )
   rounded_size = multiple_of(rounded_size, tiling)
   return ds(block_start, rounded_size)
@@ -128,7 +130,7 @@ def _create_bounded_slice(slice_start: jax.Array | int,
   # nearest multiple of the tiling.
   is_oob = slice_start + slice_size > dim_size
   remaining = dim_size - slice_start
-  rounded_size = jnp.where(is_oob, remaining, slice_size)
+  rounded_size = jnp.where(is_oob, jnp.int32(remaining), jnp.int32(slice_size))
   rounded_size = align_to(rounded_size, tiling)
   rounded_size = multiple_of(rounded_size, tiling)
   return ds(slice_start, rounded_size)
@@ -230,7 +232,7 @@ def _spec_has_trivial_windowing(spec, grid, full_shape):
     return True
   static_dummy_grid = tuple(d if isinstance(d, int) else 2 for d in grid)
   with pallas_core.tracing_grid_env(static_dummy_grid, mapped_dims=()):
-    jaxpr = jax.make_jaxpr(spec.index_map)(*[0] * len(grid))
+    jaxpr = jax.make_jaxpr(spec.index_map)(*[jnp.int32(0)] * len(grid))
   # Refs can be mutated while the pipeline is running so we should not assume
   # that they are constant.
   if any(isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars):
@@ -1154,7 +1156,7 @@ def _filter_indices(
     indices: tuple[int | jax.Array, ...], grid: tuple[int | jax.Array, ...]
 ) -> tuple[int | jax.Array, ...]:
   return tuple(
-      0 if isinstance(g, int) and g == 1 else i
+      jnp.int32(0) if isinstance(g, int) and g == 1 else jnp.int32(i)
       for i, g in zip(indices, grid, strict=True)
   )
 
@@ -1180,12 +1182,12 @@ def _next_index(
   carry: bool | jax.Array = True
   for position, (i, g) in enumerate(
       reversed(list(zip(indices, grid, strict=True)))):
-    inc = jax.lax.select(carry, i + 1, i)
+    inc = jax.lax.select(carry, jnp.int32(i + 1), jnp.int32(i))
     if allow_overflow and (position == len(grid) - 1):
       carry = False
     else:
       carry = inc == g
-    out.append(jax.lax.select(carry, 0, inc))
+    out.append(jax.lax.select(carry, jnp.int32(0), inc))
   if allow_overflow:
     return tuple(reversed(out))
   else:
@@ -1198,9 +1200,9 @@ def _prev_index(
   out = []
   borrow: bool | jax.Array = True
   for i, g in reversed(list(zip(indices, grid, strict=True))):
-    dec = jax.lax.select(borrow, i - 1, i)
+    dec = jax.lax.select(borrow, jnp.int32(i - 1), jnp.int32(i))
     borrow = dec == -1
-    out.append(jax.lax.select(borrow, g - 1, dec))
+    out.append(jax.lax.select(borrow, jnp.int32(g - 1), dec))
   return _filter_indices(tuple(reversed(out)), grid)
 
 
@@ -1242,8 +1244,9 @@ class Scheduler:
     self.first_step = step == 0
     self.last_step = step == self.num_steps - 1
 
-    self.add_offset = lambda x: tuple(i + j for i, j in zip(x, grid_offsets,
-                                                            strict=True))
+    self.add_offset = lambda x: tuple(
+        jnp.int32(i + j) for i, j in zip(x, grid_offsets, strict=True)
+    )
 
     # Derived grid indices for present, previous, and next steps.
     self.indices = self.add_offset(indices)
@@ -1675,6 +1678,7 @@ def _partition_grid(
         f" {dimension_semantics=}"
     )
 
+  core_id = jnp.int32(core_id)
   # Try to find a divisible dimension to partition the grid on
   divisible_dimensions = {
       i
@@ -1732,7 +1736,11 @@ def _partition_grid(
   # We have some remainder iterations that we need to assign somewhere. We
   # know that rem < num_cores, so we can assign one extra iteration to each
   # core except for the last (num_cores - rem).
-  num_iters = jnp.where(core_id < rem, base_num_iters + 1, base_num_iters)
+  num_iters = jnp.where(
+      core_id < rem,
+      jnp.int32(base_num_iters + 1),
+      jnp.int32(base_num_iters),
+  )
   new_grid = jax_util.tuple_update(grid, partition_dimension, num_iters)
   # Ordinarily, we would compute the offset as:
   #   grid_offset = program_id(core_axis) * num_iters
@@ -1741,7 +1749,7 @@ def _partition_grid(
   grid_offset = jnp.where(
       core_id < rem,
       core_id * num_iters,
-      core_id * base_num_iters + rem,
+      jnp.int32(core_id * base_num_iters + rem),
   )
   offsets = jax_util.tuple_update(
       (0,) * len(grid),
@@ -1968,7 +1976,7 @@ def _emit_pipeline(
 
     if no_pipelining:
       # Debugging mode where all copies are synchronous.
-      initial_indices = (0,) * len(grid)
+      initial_indices = (jnp.int32(0),) * len(grid)
       brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
 
       def _loop_body(step, carry):
@@ -1987,7 +1995,7 @@ def _emit_pipeline(
             if _explicit_indices:
               pipeline_step = PipelineStep(
                   tuple(jnp.asarray(i, jnp.int32) for i in scheduler.indices),
-                  scheduler.step,
+                  jnp.asarray(scheduler.step, jnp.int32),
               )
               body(pipeline_step, *current_refs, *scratches)
             else:
@@ -1999,13 +2007,18 @@ def _emit_pipeline(
         return brefs, _next_index(indices, grid)
 
       with config.mutable_array_checks(False):
-        jax.lax.fori_loop(0, num_steps, _loop_body, (brefs, initial_indices))
+        jax.lax.fori_loop(
+            jnp.int32(0),
+            jnp.int32(num_steps),
+            _loop_body,
+            (brefs, initial_indices),
+        )
     else:
       @when(num_steps > 0)
       def _():
         # pipeline prologue
-        initial_indices = (0,) * len(grid)
-        scheduler = make_scheduler(0, initial_indices)
+        initial_indices = (jnp.int32(0),) * len(grid)
+        scheduler = make_scheduler(jnp.int32(0), initial_indices)
         brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
         def _sync_copy_in(bref, ref):
           if (
@@ -2028,12 +2041,15 @@ def _emit_pipeline(
         # pipeline loop
         with config.mutable_array_checks(False):
           brefs, next_indices = lax.fori_loop(
-              0, num_steps, loop_body, (brefs, initial_indices)
+              jnp.int32(0),
+              jnp.int32(num_steps),
+              loop_body,
+              (brefs, initial_indices),
           )
 
         # pipeline epilogue
         final_indices = _prev_index(next_indices, grid)
-        scheduler = make_scheduler(num_steps - 1, final_indices)
+        scheduler = make_scheduler(jnp.int32(num_steps - 1), final_indices)
         with scheduler.grid_env():
           for lag in range(scheduler.num_stages - 2, -1, -1):
             brefs = map_brefs(functools.partial(

@@ -1705,11 +1705,6 @@ class InterpretTest(jtu.JaxTestCase):
       ('interpret_true', True),
   )
   def test_emit_pipeline_in_kernel(self, interpret):
-    if jax.config.jax_enable_x64:
-      self.skipTest(
-          'emit_pipeline has a pre-existing int32/int64 while_loop carry'
-          ' mismatch when x64 is enabled'
-      )
     abstract_mesh = jax.sharding.AbstractMesh(
         (), (),
         abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu'),
@@ -1741,11 +1736,6 @@ class InterpretTest(jtu.JaxTestCase):
       ('interpret_true', True),
   )
   def test_emit_pipeline_in_kernel_with_program_id(self, interpret):
-    if jax.config.jax_enable_x64:
-      self.skipTest(
-          'emit_pipeline has a pre-existing int32/int64 while_loop carry'
-          ' mismatch when x64 is enabled'
-      )
     abstract_mesh = jax.sharding.AbstractMesh(
         (), (),
         abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu'),
@@ -1781,12 +1771,6 @@ class InterpretTest(jtu.JaxTestCase):
       ('interpret_true', True),
   )
   def test_vmap_emit_pipeline(self, interpret):
-    if jax.config.jax_enable_x64:
-      # TODO(ivyzheng, rdyro): Fix this.
-      self.skipTest(
-          'emit_pipeline has a pre-existing int32/int64 while_loop carry'
-          ' mismatch when x64 is enabled'
-      )
     abstract_mesh = jax.sharding.AbstractMesh(
         (), (),
         abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu'),
