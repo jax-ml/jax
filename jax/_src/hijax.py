@@ -657,6 +657,8 @@ def _call_hi_primitive_dce(used_outs_flat, live_ins_flat, eqn):
   produced_outs_flat = api.tuptree_flags(
       produced_outs, _prim.out_tree, 'produced_outs',
       f'the second (produced outputs) return value of {name}')
+  if new_prim is _prim and all(used_ins_flat) and all(produced_outs_flat):
+    return used_ins_flat, eqn
   new_invars = [x for x, u in zip(eqn.invars, used_ins_flat) if u]
   new_outvars = [v for v, u in zip(eqn.outvars, produced_outs_flat) if u]
   new_effs = core.resolve_input_effects(new_prim.effects, new_invars)

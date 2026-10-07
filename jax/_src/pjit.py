@@ -1931,7 +1931,6 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs):
   return trans_jaxpr, cell.out_tree  # pyrefly: ignore[missing-attribute]
 ad.fancy_transposes[jit_p] = _pjit_transpose_fancy
 
-@weakref_lru_cache
 def _dce_jaxpr_pjit(
     jaxpr: core.Jaxpr, used_outputs: tuple[bool, ...],
     live_inputs: tuple[bool, ...],
@@ -1950,6 +1949,11 @@ def dce_jaxpr_pjit_rule(used_outputs: list[bool], live_ins: list[bool],
 
   dced_jaxpr, used_inputs = _dce_jaxpr_pjit(
       eqn.params['jaxpr'], tuple(used_outputs), tuple(live_ins))
+  if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
+    return used_inputs, None
+  if (dced_jaxpr is eqn.params['jaxpr'] and
+      all(used_inputs) and all(used_outputs)):
+    return used_inputs, eqn
 
   def keep_where(xs, keeps):
     return tuple(x for x, keep in zip(xs, keeps) if keep)
@@ -1964,16 +1968,13 @@ def dce_jaxpr_pjit_rule(used_outputs: list[bool], live_ins: list[bool],
       out_layouts=keep_where(eqn_params["out_layouts"], used_outputs),
       donated_invars=keep_where(eqn_params["donated_invars"], used_inputs),
   )
-  if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
-    return used_inputs, None
-  else:
-    new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
-    new_effs = core.eqn_effects(dced_jaxpr, new_invars)
-    new_eqn = core.new_jaxpr_eqn(
-        new_invars,
-        [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
-    return used_inputs, new_eqn
+  new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
+  new_effs = core.eqn_effects(dced_jaxpr, new_invars)
+  new_eqn = core.new_jaxpr_eqn(
+      new_invars,
+      [v for v, used in zip(eqn.outvars, used_outputs) if used],
+      eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
+  return used_inputs, new_eqn
 
 pe.dce_rules[jit_p] = dce_jaxpr_pjit_rule
 

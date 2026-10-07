@@ -771,6 +771,34 @@ class OverlapTest(jtu.JaxTestCase):
     out = g(x)
     self.assertAllClose(out, jnp.cos(x) * 2.)
 
+  def test_program_order_dce_preserves_subfunction_deduplication(self):
+    @program_order(enforce=True)
+    def hi_step(x):
+      return jnp.sin(x) + jnp.cos(x)
+
+    @jax.jit
+    def prefill_layer(x):
+      r = jnp.remainder(jnp.arange(x.shape[0], dtype=jnp.int32), 2)
+      return hi_step(x) + r.astype(x.dtype)
+
+    @jax.jit
+    def make_fn(x, tokens):
+      x = prefill_layer(x)
+      r1 = jnp.remainder(jnp.ones((4,), dtype=jnp.int32), 2)
+      rolled = jnp.roll(tokens, r1[0])
+      return x.sum() + rolled.sum().astype(x.dtype)
+
+    mlir_text = make_fn.lower(
+        jnp.ones((8,), dtype=jnp.float32),
+        jnp.arange(16, dtype=jnp.int32),
+    ).as_text()
+    where_funcs = [
+        line.strip()
+        for line in mlir_text.splitlines()
+        if 'func.func private @_where' in line
+    ]
+    self.assertLen(where_funcs, 1)
+
   @jtu.run_on_devices('gpu', 'tpu')
   @jtu.with_explicit_mesh((8,), ('x',))
   def test_simple_fsdp_async_overlap_program_order(self, mesh):

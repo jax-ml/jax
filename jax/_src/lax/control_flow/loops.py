@@ -1307,6 +1307,8 @@ def _scan_dce_rule(used_outputs: list[bool], live_ins: list[bool],
   else:
     assert False, "Fixpoint not reached"
   if config.enable_checks.value: core.check_jaxpr(jaxpr)
+  if jaxpr_dce is jaxpr and all(used_inputs) and all(used_outputs):
+    return used_inputs, eqn
 
   new_params = dict[str, Any](
       eqn.params,
@@ -2156,11 +2158,14 @@ def _while_dce_rule(used_outputs: list[bool], live_ins: list[bool],
       live_inputs=[*_map(is_live, cond_consts), *[True] * num_carry])
   used_cond_consts, _ = split_list(cond_used_inputs, [cond_nconsts])
 
+  used_inputs = [*used_cond_consts, *used_body_consts, *used_carry]
+  if (cond_jaxpr_dce is cond_jaxpr and body_jaxpr_dce is body_jaxpr and
+      all(used_inputs) and all(used_carry)):
+    return used_inputs, eqn
   new_params = dict(eqn.params, cond_jaxpr=cond_jaxpr_dce,
                     body_jaxpr=body_jaxpr_dce,
                     cond_nconsts=sum(used_cond_consts),
                     body_nconsts=sum(used_body_consts))
-  used_inputs = [*used_cond_consts, *used_body_consts, *used_carry]
   new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
   new_outvars = [v for v, used in zip(eqn.outvars, used_carry) if used]
   _, new_effects = eqn.primitive.abstract_eval(
