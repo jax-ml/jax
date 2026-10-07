@@ -27,6 +27,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.custom_vjp.defremat` rules with closures.
   * `arr.at[...].get()` now accepts a `strategy` argument that allows choosing
     whether the operation lowers to `gather`, `dynamic_slice`, or `slice`.
+  * {func}`jax.nn.get_scaled_dot_general_config` accepts `'mxfp4'`: E2M1
+    elements with one E8M0 scale per block of 32, for
+    {func}`jax.nn.scaled_dot_general`. The quantization is executed natively
+    on AMD gfx950 GPUs and by a dequantize-and-dot fallback elsewhere.
 
 * Breaking changes
   * Removed `jax.custom_remat`. Use {func}`jax.custom_vjp.defremat` instead:
@@ -63,6 +67,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Bug fixes
   * Fixed the gradient of {func}`jax.numpy.ldexp` at `x = 0.0`, which previously
     returned `1.0` instead of `2**n`.
+  * {func}`jax.nn.scaled_dot_general` keeps its FP8/FP4 quantization when XLA
+    expands the scaled matmul into a dequantize-and-dot (previously the
+    rounding could be folded away under `xla_allow_excess_precision`) and
+    computes MX block scales in float32 regardless of the input dtype.
   * Fixed the derivative of {func}`jax.lax.sign` and {func}`jax.numpy.sign` for
     complex inputs, which was previously always zero ({jax-issue}`#41000`).
 
