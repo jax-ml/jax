@@ -112,27 +112,6 @@ def MosaicGPU_ArriveExpectTxOp : Op<MosaicGPU_Dialect, "arrive_expect_tx", []> {
   }];
 }
 
-def MosaicGPU_WaitOp : Op<MosaicGPU_Dialect, "wait", []> {
-  let summary = "Executes a wait operation on the given barrier.";
-  let description = [{
-    All threads in the warpgroup will block, waiting on the provided barrier
-    until:
-      - all pending threads have arrived on the barrier
-      - all expected byte transfers have been completed
-      - the barrier's parity matches the provided parity
-  }];
-
-  let arguments = (ins
-    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
-    I1:$parity
-  );
-  let assemblyFormat = [{
-    `barrier` `(` $barrier `:` type($barrier) `)`
-    `parity` `(` $parity `:` type($parity) `)`
-    attr-dict
-  }];
-}
-
 def MosaicGPU_TryClusterCancelOp : Op<MosaicGPU_Dialect, "try_cluster_cancel", []> {
   let summary = "Initiates an async request to claim a new work unit from the grid.";
   let description = [{

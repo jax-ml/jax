@@ -1755,17 +1755,6 @@ def _mgpu_arrive_expect_tx_op_lowering_rule(
   return []
 
 
-@_register_lowering(mgpu.WaitOp)
-def _mgpu_wait_op_lowering_rule(
-    _: LoweringContext, wait_op: mgpu.WaitOp
-) -> Sequence[ir.Value]:
-
-  barrier = utils.DialectBarrierRef.from_barrier_memref(wait_op.barrier)
-  barrier.wait_parity(wait_op.parity)
-
-  return []
-
-
 @_register_lowering(mgpu.SliceSMEMOp, support_warp_semantics=True)
 def _mgpu_slice_smem_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.SliceSMEMOp

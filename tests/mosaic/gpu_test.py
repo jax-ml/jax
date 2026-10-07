@@ -8284,7 +8284,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       [mbar] = scratch
       mbar_ref = mbar.as_barrier_memref()
       i32 = ir.IntegerType.get_signless(32)
-      i1 = ir.IntegerType.get_signless(1)
       index = ir.IndexType.get()
 
       mgpu_dialect.arrive_expect_tx(barrier=mbar_ref, expect_tx=c(16, i32))
@@ -8307,7 +8306,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         barrier.barrier_ref.complete_tx(tx, predicate=is_leader)
         mgpu_dialect.return_([])
 
-      mgpu_dialect.wait(barrier=mbar_ref, parity=arith.constant(i1, 0))
+      mbar.wait()
 
       is_leader_thread = single_thread_predicate()
       with when(is_leader_thread):
