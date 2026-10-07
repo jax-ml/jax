@@ -394,7 +394,8 @@ def _csr_fromdense_jvp(primals, tangents, *, nse, index_dtype):
   if type(Mdot) is ad.Zero:
     data_dot = ad.p2tz(data)
   else:
-    data_dot = _csr_extract(indices, indptr, Mdot)
+    true_nonzeros = jnp.arange(nse) < (M != 0).sum()
+    data_dot = jnp.where(true_nonzeros, _csr_extract(indices, indptr, Mdot), 0)
 
   tangents_out = (data_dot, ad.p2tz(indices), ad.p2tz(indptr))
 
@@ -512,6 +513,8 @@ def _csr_matvec_transpose(ct, data, indices, indptr, v, *, shape, transpose):
     # The following lines do this, but more efficiently.
     # return _csr_extract(indices, indptr, jnp.outer(ct, v)), indices, indptr, v
     row, col = _csr_to_coo(indices, indptr)
+    if transpose:
+      row, col = col, row
     return ct[row] * v[col], indices, indptr, v
 
 ad.defjvp(csr_matvec_p, _csr_matvec_jvp_mat, None, None, _csr_matvec_jvp_vec)
@@ -618,6 +621,8 @@ def _csr_matmat_transpose(ct, data, indices, indptr, B, *, shape, transpose):
   else:
     B = jnp.asarray(B)
     row, col = _csr_to_coo(indices, indptr)
+    if transpose:
+      row, col = col, row
     return (ct[row] * B[col]).sum(1), indices, indptr, B
 
 ad.defjvp(csr_matmat_p, _csr_matmat_jvp_left, None, None, _csr_matmat_jvp_right)
