@@ -56,6 +56,7 @@ from jax._src.interpreters import batching
 from jax._src.pallas.pallas_call import _batch_block_mapping
 from jax._src.pallas.fuser import fusible_dtype
 import jax.numpy as jnp
+import numpy as np
 
 cdiv = utils.cdiv
 contextmanager = contextlib.contextmanager
@@ -86,6 +87,45 @@ ArrayRef = REF | jax.Array
 Tiling = tpu_info.Tiling
 
 is_transformed_ref = lambda x: isinstance(x, state.TransformedRef)
+
+
+def _int32(x: Any) -> Any:
+  if jax_core.is_concrete(x) and np.ndim(x) == 0:
+    return int(x)
+  return jnp.asarray(x, jnp.int32)
+
+
+def _to_i32(x: Any) -> Any:
+  if jax_core.is_concrete(x):
+    return np.int32(x) if np.ndim(x) == 0 else np.asarray(x, np.int32)
+  return jnp.asarray(x, jnp.int32)
+
+
+def _fori_loop(lower, upper, body_fun, init_val):
+  to_i32 = lambda x: np.int32(x) if isinstance(x, int) else x
+  init_val = jax.tree.map(to_i32, init_val)
+  if jax_core.is_concrete(lower) and jax_core.is_concrete(upper):
+    length = max(int(upper) - int(lower), 0)
+    if config.disable_jit.value and length == 0:
+      return init_val
+
+    def scan_body(carry, _):
+      i, x = carry
+      return (i + 1, jax.tree.map(to_i32, body_fun(i, x))), None
+
+    (_, result), _ = lax.scan(
+        scan_body,
+        (np.int32(lower), init_val),
+        None,
+        length=length,
+    )
+    return result
+  return lax.fori_loop(
+      _to_i32(lower),
+      _to_i32(upper),
+      lambda i, x: jax.tree.map(to_i32, body_fun(i, x)),
+      init_val,
+  )
 
 
 def _create_blocked_slice(
@@ -414,9 +454,16 @@ class BufferedRefBase:
     """Returns True if the reference has an allocated buffer outside loop."""
     raise NotImplementedError()
 
-  @property
-  def compute_index(self):
-    return self.spec.index_map
+  def compute_index(self, *indices):
+    assert self.spec.index_map is not None
+    args = tuple(_to_i32(i) for i in indices)
+    out = self.spec.index_map(*args)
+    return tuple(
+        Slice(_int32(x.start), _int32(x.size), _int32(x.stride))
+        if isinstance(x, Slice)
+        else _int32(x)
+        for x in out
+    )
 
   def get_dma_slice(self, src_ty, grid_indices):
     # We need to handle blocks that might go OOB in the src array. An in bounds
@@ -1156,7 +1203,7 @@ def _filter_indices(
     indices: tuple[int | jax.Array, ...], grid: tuple[int | jax.Array, ...]
 ) -> tuple[int | jax.Array, ...]:
   return tuple(
-      jnp.int32(0) if isinstance(g, int) and g == 1 else jnp.int32(i)
+      _int32(0) if isinstance(g, int) and g == 1 else _int32(i)
       for i, g in zip(indices, grid, strict=True)
   )
 
@@ -1182,12 +1229,12 @@ def _next_index(
   carry: bool | jax.Array = True
   for position, (i, g) in enumerate(
       reversed(list(zip(indices, grid, strict=True)))):
-    inc = jax.lax.select(carry, jnp.int32(i + 1), jnp.int32(i))
+    inc = jax.lax.select(carry, _to_i32(i + 1), _to_i32(i))
     if allow_overflow and (position == len(grid) - 1):
       carry = False
     else:
       carry = inc == g
-    out.append(jax.lax.select(carry, jnp.int32(0), inc))
+    out.append(jax.lax.select(carry, _to_i32(0), inc))
   if allow_overflow:
     return tuple(reversed(out))
   else:
@@ -1200,9 +1247,9 @@ def _prev_index(
   out = []
   borrow: bool | jax.Array = True
   for i, g in reversed(list(zip(indices, grid, strict=True))):
-    dec = jax.lax.select(borrow, jnp.int32(i - 1), jnp.int32(i))
+    dec = jax.lax.select(borrow, _to_i32(i - 1), _to_i32(i))
     borrow = dec == -1
-    out.append(jax.lax.select(borrow, jnp.int32(g - 1), dec))
+    out.append(jax.lax.select(borrow, _to_i32(g - 1), dec))
   return _filter_indices(tuple(reversed(out)), grid)
 
 
@@ -1245,7 +1292,7 @@ class Scheduler:
     self.last_step = step == self.num_steps - 1
 
     self.add_offset = lambda x: tuple(
-        jnp.int32(i + j) for i, j in zip(x, grid_offsets, strict=True)
+        _int32(i + j) for i, j in zip(x, grid_offsets, strict=True)
     )
 
     # Derived grid indices for present, previous, and next steps.
@@ -1957,7 +2004,7 @@ def _emit_pipeline(
           if _explicit_indices:
             pipeline_step = PipelineStep(
                 tuple(jnp.asarray(i, jnp.int32) for i in scheduler.indices),
-                scheduler.step,
+                jnp.asarray(scheduler.step, jnp.int32),
             )
             body(pipeline_step, *current_refs, *scratches)
           else:
@@ -1976,7 +2023,7 @@ def _emit_pipeline(
 
     if no_pipelining:
       # Debugging mode where all copies are synchronous.
-      initial_indices = (jnp.int32(0),) * len(grid)
+      initial_indices = (_int32(0),) * len(grid)
       brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
 
       def _loop_body(step, carry):
@@ -2007,9 +2054,9 @@ def _emit_pipeline(
         return brefs, _next_index(indices, grid)
 
       with config.mutable_array_checks(False):
-        jax.lax.fori_loop(
-            jnp.int32(0),
-            jnp.int32(num_steps),
+        _fori_loop(
+            0,
+            num_steps,
             _loop_body,
             (brefs, initial_indices),
         )
@@ -2017,8 +2064,8 @@ def _emit_pipeline(
       @when(num_steps > 0)
       def _():
         # pipeline prologue
-        initial_indices = (jnp.int32(0),) * len(grid)
-        scheduler = make_scheduler(jnp.int32(0), initial_indices)
+        initial_indices = (_int32(0),) * len(grid)
+        scheduler = make_scheduler(_int32(0), initial_indices)
         brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
         def _sync_copy_in(bref, ref):
           if (
@@ -2040,16 +2087,16 @@ def _emit_pipeline(
 
         # pipeline loop
         with config.mutable_array_checks(False):
-          brefs, next_indices = lax.fori_loop(
-              jnp.int32(0),
-              jnp.int32(num_steps),
+          brefs, next_indices = _fori_loop(
+              0,
+              num_steps,
               loop_body,
               (brefs, initial_indices),
           )
 
         # pipeline epilogue
         final_indices = _prev_index(next_indices, grid)
-        scheduler = make_scheduler(jnp.int32(num_steps - 1), final_indices)
+        scheduler = make_scheduler(_int32(num_steps - 1), final_indices)
         with scheduler.grid_env():
           for lag in range(scheduler.num_stages - 2, -1, -1):
             brefs = map_brefs(functools.partial(
