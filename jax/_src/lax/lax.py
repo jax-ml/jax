@@ -2832,16 +2832,16 @@ def ragged_dot_general(
     extra leading dimension of size `g` in the case where the lhs ragged
     dimension is a contracting dimension.
   """
-  lhs, rhs, group_sizes = core.auto_insert_reshard(lhs, rhs, group_sizes)
+  args: tuple[Array, ...] = (lhs, rhs, group_sizes)
+  if group_offset is not None:
+    args += (group_offset,)
+  args = core.auto_insert_reshard(*args)
   out_sharding = canonicalize_sharding(out_sharding, 'ragged_dot_general')
   return ragged_dot_general_p.bind(
-      lhs,
-      rhs,
-      group_sizes,
+      *args,
       ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
       precision=canonicalize_precision(precision),
       preferred_element_type=preferred_element_type,
-      group_offset=group_offset,
       out_sharding=out_sharding,
   )
 
@@ -6888,11 +6888,11 @@ def _ragged_dot_general_shape_rule(
     lhs,
     rhs,
     group_sizes,
+    group_offset=None,
     *,
     ragged_dot_dimension_numbers,
     precision,
     preferred_element_type: DTypeLike | None,
-    group_offset,
     out_sharding,
 ):
   def _check_in_range(dim, rank, dim_name, arg_name):
@@ -6942,6 +6942,11 @@ def _ragged_dot_general_shape_rule(
         '(contracting).'
     )
 
+  if group_offset is not None and group_offset.shape != (1,):
+    raise TypeError(
+        f'expected group_offset to have shape (1,), got {group_offset.shape}.'
+    )
+
   # Validate properties of the rhs group dimension(s).
   rhs_group_dims = ragged_dot_dimension_numbers.rhs_group_dimensions
   match mode:
@@ -6964,9 +6969,15 @@ def _ragged_dot_general_shape_rule(
             'ragged_dot_general requires rhs group dimension numbers to be '
             'distinct from contracting and batch dimensions.'
         )
-      if rhs.shape[rhs_group_dim] != num_groups:
+      if group_offset is None:
+        if rhs.shape[rhs_group_dim] != num_groups:
+          raise TypeError(
+              'expected rhs group dimension size to be '
+              f'{num_groups}, got {rhs.shape[rhs_group_dim]}.'
+          )
+      elif rhs.shape[rhs_group_dim] > num_groups:
         raise TypeError(
-            'expected rhs group dimension size to be '
+            'expected rhs group dimension size to be at most '
             f'{num_groups}, got {rhs.shape[rhs_group_dim]}.'
         )
 
@@ -6987,11 +6998,11 @@ def _ragged_dot_general_dtype_rule(
     lhs: Array,
     rhs: Array,
     group_sizes: Array,
+    group_offset: Array | None = None,
     *,
     ragged_dot_dimension_numbers: RaggedDotDimensionNumbers,
     precision,
     preferred_element_type: DTypeLike | None,
-    group_offset,
     out_sharding,
 ) -> np.dtype:
   if not dtypes.issubdtype(group_sizes.dtype, np.integer):
@@ -6999,6 +7010,12 @@ def _ragged_dot_general_dtype_rule(
         'ragged_dot_general requires that '
         'group_sizes.dtype is subtype of np.integer.'
     )
+  if group_offset is not None:
+    if not dtypes.issubdtype(group_offset.dtype, np.integer):
+      raise TypeError(
+          'ragged_dot_general requires that group_offset.dtype is subtype of '
+          'np.integer.'
+      )
   # defer the output dtype to dot_general, which is part of the _ragged_dot_general_impl.
   return _dot_general_dtype_rule(
       lhs,
@@ -7012,15 +7029,17 @@ def _ragged_dot_general_dtype_rule(
 
 
 def _ragged_dot_general_jvp_rule(
-    primals, tangents, ragged_dot_dimension_numbers,
-    precision, preferred_element_type, group_offset, out_sharding
+    primals,
+    tangents,
+    *,
+    ragged_dot_dimension_numbers,
+    precision,
+    preferred_element_type,
+    out_sharding,
 ):
-  # note - we could ostensibly just get this by passing on the
-  # value to ragged_dot below, but, this feels cleaner.
-  if group_offset is not None:
-    raise NotImplementedError('Unimplemented group_offset support.')
-  x, y, gs = primals
-  dx, dy, _ = tangents  # no tan on the gs
+  x, y, gs, *go = primals
+  dx, dy, *_ = tangents  # no tan on the gs or go
+  group_offset = go[0] if go else None
 
   # primal
   primal_out = ragged_dot_general(
@@ -7030,6 +7049,7 @@ def _ragged_dot_general_jvp_rule(
       ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
       precision=precision,
       preferred_element_type=preferred_element_type,
+      group_offset=group_offset,
   )
 
   # tangent
@@ -7041,6 +7061,7 @@ def _ragged_dot_general_jvp_rule(
           ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
           precision=precision,
           preferred_element_type=preferred_element_type,
+          group_offset=group_offset,
       )
       if type(dx) is not ad_util.Zero
       else _zeros(primal_out)
@@ -7053,6 +7074,7 @@ def _ragged_dot_general_jvp_rule(
           ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
           precision=precision,
           preferred_element_type=preferred_element_type,
+          group_offset=group_offset,
       )
       if type(dy) is not ad_util.Zero
       else _zeros(primal_out)
@@ -7067,11 +7089,11 @@ def _ragged_dot_general_transpose_rule(
     x,
     y,
     group_sizes,
+    group_offset: Array | None = None,
     *,
     ragged_dot_dimension_numbers,
     precision,
     preferred_element_type: DTypeLike | None,
-    group_offset: Array | None,
     out_sharding: NamedSharding | P | None = None,
 ):
   if group_offset is not None:
@@ -7168,6 +7190,7 @@ def _ragged_dot_batch_unpack_dims(batch_dims):
 
 def _ragged_dot_general_invoke_prim(
     group_sizes,
+    group_offset,
     lhs,
     rhs,
     new_ragged_dot_dimension_numbers,
@@ -7183,6 +7206,7 @@ def _ragged_dot_general_invoke_prim(
       ragged_dot_dimension_numbers=new_ragged_dot_dimension_numbers,
       precision=precision,
       preferred_element_type=preferred_element_type,
+      group_offset=group_offset,
   )
 
 
@@ -7194,17 +7218,24 @@ def _ragged_dot_general_batch_rule(
     ragged_dot_dimension_numbers,
     precision,
     preferred_element_type: DTypeLike | None,
-    group_offset,
     out_sharding,
 ):
-  invoke = partial(_ragged_dot_general_invoke_prim, batched_args[2])
+  if len(batched_args) > 3:
+    if batch_dims[3] is not None:
+      raise NotImplementedError('Unimplemented group_offset support.')
+    group_offset = batched_args[3]
+  else:
+    group_offset = None
+  invoke = partial(
+      _ragged_dot_general_invoke_prim, batched_args[2], group_offset
+  )
   batched_out, result_batch_dim = _dot_batch_rule(
       _ragged_dot_batch_unpack_args,
       _ragged_dot_batch_unpack_dims,
       invoke,
       axis_data,
-      batched_args,
-      batch_dims,
+      batched_args[:3],
+      batch_dims[:3],
       dimension_numbers=ragged_dot_dimension_numbers,
       precision=precision,
       preferred_element_type=preferred_element_type,
@@ -7217,15 +7248,19 @@ def _ragged_dot_general_batch_rule(
 
 
 def _ragged_dot_general_sharding_rule(
-    lhs, rhs, group_sizes, *, ragged_dot_dimension_numbers, precision,
-    preferred_element_type: DTypeLike | None, group_offset, out_sharding):
-  mesh_set = {x.sharding.mesh for x in [lhs, rhs, group_sizes]
-              if not x.sharding.mesh.empty}
+    lhs, rhs, group_sizes, group_offset=None, *, ragged_dot_dimension_numbers,
+    precision, preferred_element_type: DTypeLike | None, out_sharding):
+  args = [lhs, rhs, group_sizes]
+  if group_offset is not None:
+    args.append(group_offset)
+  mesh_set = {x.sharding.mesh for x in args if not x.sharding.mesh.empty}
   if len(mesh_set) > 1:
     raise core.ShardingTypeError(
       'All argument meshes must be the same or unspecified, but got'
       f' lhs mesh = {lhs.sharding.mesh}, rhs mesh = {rhs.sharding.mesh},'
-      f' group_sizes mesh = {group_sizes.sharding.mesh}')
+      f' group_sizes mesh = {group_sizes.sharding.mesh}'
+      + (f', group_offset mesh = {group_offset.sharding.mesh}'
+         if group_offset is not None else ''))
 
   if out_sharding is None:
     raise NotImplementedError(
@@ -7250,39 +7285,48 @@ def _ragged_dot_general_impl(
     lhs: Array,
     rhs: Array,
     group_sizes: Array,
+    group_offset: Array | None = None,
+    *,
     ragged_dot_dimension_numbers: RaggedDotDimensionNumbers,
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
-    group_offset: Array | None = None,
     out_sharding: NamedSharding | P | None = None,
     ) -> Array:
-  if group_offset is not None:
-    raise NotImplementedError("Unimplemented group_offset support.")
-
-  def ragged_to_dense(x: Array, gs: Array, *, dim: int):
+  def ragged_to_dense(x: Array, gs: Array, *, dim: int, num_groups: int):
     from jax._src.lax import control_flow  # avoid circular imports
     assert gs.ndim == 1
-    shape = gs.shape + x.shape
+    shape = (num_groups,) + x.shape
     x = broadcast_in_dim(x, shape, list(range(1, len(shape))))
     iota = broadcasted_iota(gs.dtype, shape, dim+1)
     group_ends = control_flow.cumsum(gs)
-    group_starts = concatenate(
-        [_zeros(gs)[:1], group_ends[:-1]],
-        dimension=0,
-    )
+    group_starts = concatenate([_zeros(gs)[:1], group_ends[:-1]], dimension=0)
+    if group_offset is not None:
+      pad = _zeros(gs, shape=(num_groups,))
+      group_starts = slicing.dynamic_slice_in_dim(
+          concatenate([group_starts, pad], dimension=0),
+          group_offset[0],
+          num_groups,
+          axis=0,
+      )
+      group_ends = slicing.dynamic_slice_in_dim(
+          concatenate([group_ends, pad], dimension=0),
+          group_offset[0],
+          num_groups,
+          axis=0,
+      )
     group_ends = broadcast_in_dim(group_ends, shape, (0,))
     group_starts = broadcast_in_dim(group_starts, shape, (0,))
     mask = bitwise_and(group_starts <= iota, iota < group_ends)
     x = select(mask, x, _zeros(x))
     return x
 
-  def batched_ragged_to_dense(dim, *x_in_axes: int):
+  def batched_ragged_to_dense(dim, num_groups, *x_in_axes: int):
     if not x_in_axes:
-      return partial(ragged_to_dense, dim=dim)
+      return partial(ragged_to_dense, dim=dim, num_groups=num_groups)
     x_axis, *rest = x_in_axes
     decr = lambda d: d - 1 if d >= x_axis else d
     return api.vmap(
-        batched_ragged_to_dense(decr(dim), *[decr(ax) for ax in rest]),
+        batched_ragged_to_dense(decr(dim), num_groups, *map(decr, rest)),
         in_axes=(x_axis, 0),
     )
 
@@ -7291,10 +7335,10 @@ def _ragged_dot_general_impl(
   # Expand the ragged `dim` of `x`, given its batching `axes`.
   # The group axis from `gs` becomes the outermost axis of the result.
   # Some examples:
-  #   x: [m,k]      , gs: [g]       ==> expand(x, 0, gs): [g,m,k]
-  #   x: [b1,m,b2,k], gs: [b1,b2,g] ==> expand(x, 1, gs, 0, 2): [g,b1,m,b2,k]
-  def expand(x, dim, gs, *axes):
-    expanded = batched_ragged_to_dense(dim, *axes)(x, gs)
+  #   x: [m,k]      , gs: [g]       ==> expand(x, 0, gs, g): [g,m,k]
+  #   x: [b1,m,b2,k], gs: [b1,b2,g] ==> expand(x, 1, gs, g, 0, 2): [g,b1,m,b2,k]
+  def expand(x, dim, gs, num_groups, *axes):
+    expanded = batched_ragged_to_dense(dim, num_groups, *axes)(x, gs)
     unsorted_dims = incr(axes) + [0] + incr(remaining(range(x.ndim), axes))
     return transpose(expanded, np.argsort(unsorted_dims))
 
@@ -7321,8 +7365,9 @@ def _ragged_dot_general_impl(
     case RaggedDotMode.RAGGED_NONCONTRACTING:
       rhs_group_dims = ragged_dot_dimension_numbers.rhs_group_dimensions
       assert len(rhs_group_dims) == 1
+      num_groups = rhs.shape[rhs_group_dims[0]]
       return _dot_general(
-          expand(lhs, lhs_ragged_dim, group_sizes, *l_prefix),
+          expand(lhs, lhs_ragged_dim, group_sizes, num_groups, *l_prefix),
           rhs,
           dimension_numbers=(
               (incr(l_contract) + [0], list(r_contract) + [rhs_group_dims[0]]),
@@ -7335,9 +7380,10 @@ def _ragged_dot_general_impl(
       r_prefix = _ragged_dot_prefix_dims(
         mode, rhs.ndim, rhs_ragged_dim, r_batch, r_contract
       )
+      num_groups = group_sizes.shape[-1]
       return _dot_general(
-          expand(lhs, lhs_ragged_dim, group_sizes, *l_prefix),
-          expand(rhs, rhs_ragged_dim, group_sizes, *r_prefix),
+          expand(lhs, lhs_ragged_dim, group_sizes, num_groups, *l_prefix),
+          expand(rhs, rhs_ragged_dim, group_sizes, num_groups, *r_prefix),
           dimension_numbers=(
               (incr(l_contract), incr(r_contract)),
               ([0] + incr(l_batch), [0] + incr(r_batch)),
@@ -7345,6 +7391,8 @@ def _ragged_dot_general_impl(
           out_sharding=out_sharding,
       )
     case RaggedDotMode.RAGGED_BATCH:
+      if group_offset is not None:
+        raise NotImplementedError('Unimplemented group_offset support.')
       return _dot_general(
           lhs,
           rhs,
@@ -7358,24 +7406,26 @@ def _ragged_dot_general_lower(
     lhs,
     rhs,
     group_sizes,
+    group_offset: Array | None = None,
     *,
     ragged_dot_dimension_numbers,
     precision,
     preferred_element_type: np.dtype | None,
-    group_offset: Array | None = None,
     out_sharding=None,
     platform: str = 'default',
 ):
-  if group_offset is not None:
-    raise NotImplementedError('Unimplemented group_offset support.')
-
-  if not config.jax_ragged_dot_use_ragged_dot_instruction.value:
+  if (
+      not config.jax_ragged_dot_use_ragged_dot_instruction.value
+      or group_offset is not None
+  ):
+    args = (lhs, rhs, group_sizes)
+    if group_offset is not None:
+      args += (group_offset,)
     return mlir.lower_fun(_ragged_dot_general_impl, multiple_results=False)(
-        ctx, lhs, rhs, group_sizes,
+        ctx, *args,
         ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
         precision=precision,
         preferred_element_type=preferred_element_type,
-        group_offset=group_offset,
         out_sharding=out_sharding,
     )
 

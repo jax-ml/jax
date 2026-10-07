@@ -306,12 +306,19 @@ def ragged_dot(
     lhs,
     rhs,
     group_sizes,
+    group_offset=None,
 ):
   """Reference ragged dot implementation."""
   m, lk = lhs.shape
   group_count, rk, n = rhs.shape
   assert lk == rk
-  assert group_count == group_sizes.shape[0]
+  if group_offset is None:
+    assert group_count == group_sizes.shape[0]
+    offset = 0
+  else:
+    assert group_count <= group_sizes.shape[0]
+    assert group_offset.shape == (1,)
+    offset = int(group_offset[0])
   assert lhs.dtype == rhs.dtype
 
   out = np.zeros((m, n), dtype=lhs.dtype)
@@ -319,16 +326,17 @@ def ragged_dot(
   result_iota = result_iota.astype(group_sizes.dtype)
   start = np.asarray(0, dtype=group_sizes.dtype)
   for i, size in enumerate(group_sizes):
-    out += np.where(
-        np.logical_and(start <= result_iota, result_iota < (start + size)),
-        np.einsum(
-          "nk,km->nm",
-          lhs,
-          rhs[i, :, :],
-          dtype=np.float32 if lhs.dtype == dtypes.bfloat16 else None,
-        ),
-        np.zeros(out.shape, dtype=out.dtype),
-    )
+    if offset <= i < offset + group_count:
+      out += np.where(
+          np.logical_and(start <= result_iota, result_iota < (start + size)),
+          np.einsum(
+            "nk,km->nm",
+            lhs,
+            rhs[i - offset, :, :],
+            dtype=np.float32 if lhs.dtype == dtypes.bfloat16 else None,
+          ),
+          np.zeros(out.shape, dtype=out.dtype),
+      )
     start += size
   return out.astype(dtypes.bfloat16) if lhs.dtype == dtypes.bfloat16 else out
 
