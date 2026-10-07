@@ -1060,10 +1060,10 @@ def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
                      f"of {D} pairs or Nones; got {range=}")
 
   try:
-    bins_per_dimension = list(bins)  # pyrefly: ignore[bad-argument-type]
+    bins_per_dimension: Sequence[ArrayLike] = list(bins)  # pyrefly: ignore[bad-argument-type]
   except TypeError:
     # when bin_size is integer, the same bin is used for each dimension
-    bins_per_dimension: list[ArrayLike] = D * [bins]  # pyrefly: ignore[bad-assignment]
+    bins_per_dimension = D * [bins]  # pyrefly: ignore[bad-assignment]
   else:
     if len(bins_per_dimension) != D:
       raise ValueError("should be a bin for each dimension.")
