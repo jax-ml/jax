@@ -2716,7 +2716,7 @@ def ragged_dot(
     group_sizes: (g,) shaped array with integer element type, where g denotes   number of groups. The ith element indicates the size of ith group.
     precision: Optional. Consistent with precision argument for :func:`jax.lax.dot`.
     preferred_element_type: Optional. Consistent with precision argument for :func:`jax.lax.dot`.
-    group_offset: Optional. (1,) shaped array that indicates the group in group_sizes to start computing from. If not specified, defaults to [0].
+    group_offset: Optional. () shaped array that indicates the group in group_sizes to start computing from. If not specified, defaults to 0.
 
   Results:
     (m, n) shaped array with preferred_element_type element type.
@@ -2824,8 +2824,8 @@ def ragged_dot_general(
       :func:`jax.lax.dot`.
     preferred_element_type: Optional. Consistent with precision argument for
       :func:`jax.lax.dot`.
-    group_offset: Optional. (1,) shaped array that indicates the group in
-      group_sizes to start computing from. If not specified, defaults to [0].
+    group_offset: Optional. () shaped array that indicates the group in
+      group_sizes to start computing from. If not specified, defaults to 0.
 
   Results:
     An array whose shape is the same as that produced by `dot_general`, with an
