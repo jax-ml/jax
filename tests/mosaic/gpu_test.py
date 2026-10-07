@@ -32,6 +32,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
 from jax._src.interpreters import mlir
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager
 from jax._src.lib.mlir.dialects import arith
@@ -4272,6 +4273,142 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, out_shape, smem)(x)
     np.testing.assert_array_equal(y[:, 0, :], x[:, 0, :])
     np.testing.assert_array_equal(y[:, 1, :], 0.0)
+
+  @parameterized.product(
+      rank=(3, 4, 5),
+      offset=(0, 1),
+      swizzle=(None, 32, 64, 128),
+      dynamic=(False, True),
+  )
+  # TODO(slebedev): Remove once the minimum jaxlib version is 0.12.0.
+  @absltest.skipIf(jaxlib_version < (0, 12, 0), "Requires jaxlib >=0.12.0")
+  def test_tma_load_im2col(self, rank, offset, swizzle, dynamic):
+    dtype = jnp.int16
+    tiled = swizzle is not None
+    num_channels = 16 if swizzle is None else 8 * swizzle // 16
+    num_rows = 128
+    num_spatial = rank - 2
+    spatial_sizes = (3, 4, 5)[-num_spatial:]
+    grid_shape = (2, *spatial_sizes)
+    src_shape = (*grid_shape, 2 * num_channels)
+    first_channel = num_channels
+    # Bounds and offsets differ per dimension to pin each one to its dimension.
+    # Negative upper bounds are the common case, e.g. (-1, -1) for a 3x3 SAME
+    # convolution, so alternate their sign.
+    window_start_bounds = tuple(
+        (-(d + 1), (-1) ** (d + 1) * (d + 1)) for d in range(num_spatial)
+    )
+    filter_offsets = tuple(offset * (d + 1) for d in range(num_spatial))
+    windows = list(
+        itertools.product(
+            range(grid_shape[0]),
+            *(
+                range(lo, size + hi)
+                for (lo, hi), size in zip(window_start_bounds, spatial_sizes)
+            ),
+        )
+    )
+    # Start halfway through the first image, so that the copy wraps around
+    # into the second one and, if fewer than num_rows windows remain, runs past
+    # the end of the input.
+    first_window = len(windows) // grid_shape[0] // 2
+    start_indices = (*windows[first_window], first_channel)
+
+    dst_shape = (num_rows, num_channels)
+    if tiled:
+      smem_shape = (num_rows // 8, 1, 8, num_channels)
+    else:
+      smem_shape = dst_shape
+    i1 = ir.IntegerType.get_signless(1)
+
+    def kernel(ctx: launch_context.LaunchContext, src, dst, smem):
+      tmp, barrier = smem
+      indices, offsets = start_indices, filter_offsets
+      if dynamic:
+        index = ir.IndexType.get()
+        indices = [c(v, index) for v in indices]
+        offsets = [c(v, index) for v in offsets]
+      ctx.async_copy_im2col(
+          src_ref=src,
+          dst_ref=tmp,
+          swizzle=swizzle,
+          barrier=barrier,
+          window_start_bounds=window_start_bounds,
+          start_indices=indices,
+          filter_offsets=offsets,
+      )
+      barrier.wait_parity(c(0, i1))
+      copy(tmp, dst, swizzle=swizzle)
+
+    x = np.arange(math.prod(src_shape), dtype=dtype).reshape(src_shape)
+    out_shape = jax.ShapeDtypeStruct(smem_shape, dtype)
+    smem = (out_shape, mgpu.TMABarrier())
+    y = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, out_shape, smem
+    )(x).reshape(dst_shape)
+
+    channels = slice(first_channel, first_channel + num_channels)
+    expected = np.zeros(dst_shape, dtype=dtype)
+    for row, (n, *window) in enumerate(
+        windows[first_window : first_window + num_rows]
+    ):
+      pixel = (n, *(w + o for w, o in zip(window, filter_offsets)))
+      if all(0 <= p < s for p, s in zip(pixel, grid_shape)):
+        expected[row] = x[(*pixel, channels)]
+
+    np.testing.assert_array_equal(y, expected)
+
+  # TODO(slebedev): Remove once the minimum jaxlib version is 0.12.0.
+  @absltest.skipIf(jaxlib_version < (0, 12, 0), "Requires jaxlib >=0.12.0")
+  @jtu.thread_unsafe_test()
+  def test_tma_load_im2col_reuses_descriptor(self):
+    dtype = jnp.int16
+    h, w, num_channels = 8, 16, 16
+    num_rows = h * w
+    valid, same = ((0, 0), (0, 0)), ((-1, -1), (-1, -1))
+    copies = (
+        (valid, (0, 0, 0, 0), (0, 0)),
+        (valid, (0, 0, 0, 0), (1, 1)),
+        (same, (0, -1, -1, 0), (1, 1)),
+    )
+
+    def kernel(ctx: launch_context.LaunchContext, src, dst, smem):
+      tmp, barriers = smem
+      for i, (bounds, indices, offsets) in enumerate(copies):
+        ctx.async_copy_im2col(
+            src_ref=src,
+            dst_ref=memref_slice(tmp, i),
+            barrier=barriers[i],
+            window_start_bounds=bounds,
+            start_indices=indices,
+            filter_offsets=offsets,
+        )
+      for i in range(len(copies)):
+        barriers[i].wait()
+      copy(tmp, dst)
+
+    x = np.arange(1, h * w * num_channels + 1, dtype=dtype).reshape(
+        1, h, w, num_channels
+    )
+    out_shape = jax.ShapeDtypeStruct(
+        (len(copies), num_rows, num_channels), dtype
+    )
+    smem = (out_shape, mgpu.TMABarrier(len(copies)))
+    env_vars = {"MOSAIC_GPU_DUMP_HOST_LLVM": "1"}
+    with jtu.set_env(**env_vars), self.capture_stdout() as llvm_ir:
+      y = mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x, out_shape, smem
+      )(x)
+    self.assertEqual(
+        llvm_ir().count("call void @mosaic_gpu_init_tma_im2col_desc("), 2
+    )
+    image = x[0].reshape(num_rows, num_channels)
+    shifted = np.pad(x[0, 1:, 1:], ((0, 1), (0, 1), (0, 0)))
+    np.testing.assert_array_equal(y[0], image)
+    np.testing.assert_array_equal(
+        y[1], shifted.reshape(num_rows, num_channels)
+    )
+    np.testing.assert_array_equal(y[2], image)
 
   @parameterized.product(
       swizzle=(None, 32, 64, 128),
