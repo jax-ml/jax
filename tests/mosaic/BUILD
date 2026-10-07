@@ -124,6 +124,34 @@ jax_multiplatform_test(
     ]),
 )
 
+jax_multiplatform_test(
+    name = "gpu_torch_distributed_test",
+    srcs = ["gpu_torch_distributed_test.py"],
+    args = [
+        "--num_processes=2",
+        "--gpus_per_process=1",
+    ],
+    enable_backends = [],
+    enable_configs = [
+        "gpu_h100x2_full",
+        "gpu_b200x2",
+    ],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
+    tags = [
+        "multiaccelerator",
+        "noasan",  # ASAN is unsupported.
+    ],
+    deps = [
+        "//jax/_src:test_multiprocess",
+    ] + if_cuda_is_configured([
+        "//jax/experimental:mosaic_gpu",
+    ]) + py_deps([
+        "absl/testing",
+        "numpy",
+        "torch",
+    ]),
+)
+
 jax_py_test(
     name = "gpu_dialect_test",
     srcs = ["gpu_dialect_test.py"],
