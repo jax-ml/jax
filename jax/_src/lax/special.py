@@ -21,6 +21,7 @@ from enum import Enum
 import numpy as np
 from functools import partial, reduce as _reduce
 
+from jax._src import config
 from jax._src import core
 from jax._src.lax.erfc import erfc_impl, exp_neg_sq
 from jax._src.lax.lax import (AccuracyMode, Tolerance, add, bitwise_and,
@@ -825,4 +826,95 @@ core.pp_eqn_rules[erfc_p] = _unary_with_accuracy_pp_rule
 erf_inv_p = standard_unop(_float, 'erf_inv')
 ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, np.sqrt(np.pi) / 2.),
                                             mul(g, exp(square(ans)))))
-mlir.register_lowering(erf_inv_p, partial(_nary_lower_hlo, chlo.erf_inv))
+
+def _erf_inv_impl(x: Array) -> Array:
+  if x.dtype not in (np.float32, np.float64):
+    return convert_element_type(_erf_inv_impl(convert_element_type(x, np.float32)), x.dtype)
+  one = _const(x, 1.0)
+  w = neg(log(mul(sub(one, x), add(one, x))))
+  if x.dtype == np.float32:
+    w_lt_5_constants = (
+        2.81022636e-08, 3.43273939e-07, -3.5233877e-06,
+        -4.39150654e-06, 0.00021858087, -0.00125372503,
+        -0.00417768164, 0.246640727, 1.50140941,
+    )
+    w_gt_5_constants = (
+        -0.000200214257, 0.000100950558, 0.00134934322,
+        -0.00367342844, 0.00573950773, -0.0076224613,
+        0.00943887047, 1.00167406, 2.83297682,
+    )
+    w_lt_5 = lt(w, _const(x, 5.0))
+    w = select(w_lt_5, sub(w, _const(x, 2.5)), sub(sqrt(w), _const(x, 3.0)))
+    p = select(w_lt_5, full_like(x, w_lt_5_constants[0]), full_like(x, w_gt_5_constants[0]))
+    for c_lt, c_gt in zip(w_lt_5_constants[1:], w_gt_5_constants[1:]):
+      c = select(w_lt_5, full_like(x, c_lt), full_like(x, c_gt))
+      p = add(c, mul(p, w))
+  elif x.dtype == np.float64:
+    w_lt_625_constants = (
+        -3.6444120640178196996e-21, -1.685059138182016589e-19,
+        1.2858480715256400167e-18, 1.115787767802518096e-17,
+        -1.333171662854620906e-16, 2.0972767875968561637e-17,
+        6.6376381343583238325e-15, -4.0545662729752068639e-14,
+        -8.1519341976054721522e-14, 2.6335093153082322977e-12,
+        -1.2975133253453532498e-11, -5.4154120542946279317e-11,
+        1.051212273321532285e-09, -4.1126339803469836976e-09,
+        -2.9070369957882005086e-08, 4.2347877827932403518e-07,
+        -1.3654692000834678645e-06, -1.3882523362786468719e-05,
+        0.0001867342080340571352, -0.00074070253416626697512,
+        -0.0060336708714301490533, 0.24015818242558961693,
+        1.6536545626831027356,
+    )
+    w_lt_16_constants = (
+        2.2137376921775787049e-09, 9.0756561938885390979e-08,
+        -2.7517406297064545428e-07, 1.8239629214389227755e-08,
+        1.5027403968909827627e-06, -4.013867526981545969e-06,
+        2.9234449089955446044e-06, 1.2475304481671778723e-05,
+        -4.7318229009055733981e-05, 6.8284851459573175448e-05,
+        2.4031110387097893999e-05, -0.0003550375203628474796,
+        0.00095328937973738049703, -0.0016882755560235047313,
+        0.0024914420961078508066, -0.0037512085075692412107,
+        0.005370914553590063617, 1.0052589676941592334,
+        3.0838856104922207635,
+    )
+    w_gt_16_constants = (
+        -2.7109920616438573243e-11, -2.5556418169965252055e-10,
+        1.5076572693500548083e-09, -3.7894654401267369937e-09,
+        7.6157012080783393804e-09, -1.4960026627149240478e-08,
+        2.9147953450901080826e-08, -6.7711997758452339498e-08,
+        2.2900482228026654717e-07, -9.9298272942317002539e-07,
+        4.5260625972231537039e-06, -1.9681778105531670567e-05,
+        7.5995277030017761139e-05, -0.00021503011930044477347,
+        -0.00013871931833623122026, 1.0103004648645343977,
+        4.8499064014085844221,
+    )
+    w_lt_625 = lt(w, _const(x, 6.25))
+    w_lt_16 = lt(w, _const(x, 16.0))
+    def get_coeff(i):
+      c = full_like(x, w_lt_625_constants[i])
+      if i < 19:
+        c = select(w_lt_625, c, full_like(x, w_lt_16_constants[i]))
+      if i < 17:
+        c = select(w_lt_16, c, full_like(x, w_gt_16_constants[i]))
+      return c
+    w = select(
+        w_lt_625,
+        sub(w, _const(x, 3.125)),
+        sub(sqrt(w), select(w_lt_16, full_like(x, 3.25), full_like(x, 5.0))),
+    )
+    p = get_coeff(0)
+    for i in range(1, 17):
+      p = add(get_coeff(i), mul(p, w))
+    for i in range(17, 19):
+      p = select(w_lt_16, add(get_coeff(i), mul(p, w)), p)
+    for i in range(19, 23):
+      p = select(w_lt_625, add(get_coeff(i), mul(p, w)), p)
+  else:
+    raise NotImplementedError(f"Unsupported dtype for erf_inv: {x.dtype}")
+  return select(eq(abs(x), one), mul(x, _const(x, np.inf)), mul(p, x))
+
+def _erf_inv_lowering(ctx, x):
+  if config.jax_accurate_erf_inv.value:
+    return mlir.lower_fun(_erf_inv_impl, multiple_results=False)(ctx, x)
+  return _nary_lower_hlo(chlo.erf_inv, ctx, x)
+
+mlir.register_lowering(erf_inv_p, _erf_inv_lowering)

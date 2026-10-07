@@ -2424,3 +2424,14 @@ distributed_verify_secure_credentials = bool_state(
     default=False,
     help=('If true, jax.distributed.initialize() aborts instead of using '
           'insecure channels.'))
+
+jax_accurate_erf_inv = bool_state(
+    name='jax_accurate_erf_inv',
+    default=False,
+    help=(
+        'Temporary flag enabling more accurate erf_inv lowering near'
+        ' ``|x| = 1``.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
