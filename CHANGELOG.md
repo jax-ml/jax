@@ -214,6 +214,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     failed with ``AttributeError: 'Ref' object has no attribute 'transpose'``
     ({jax-issue}`#39288`).
 
+* Bug fixes
+  * {func}`jax.scipy.stats.chi2.logpdf` and {func}`jax.scipy.stats.chi2.pdf`
+    now evaluate the ``df == 2`` case correctly at the boundary points
+    ``x == 0`` and ``x = inf``, returning the finite scipy values instead of
+    ``nan``.
+
 ## JAX 0.11.1 (August 17, 2026)
 
 * New features
