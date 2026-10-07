@@ -4273,6 +4273,29 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(y[:, 0, :], x[:, 0, :])
     np.testing.assert_array_equal(y[:, 1, :], 0.0)
 
+  def test_tma_load_unrecomputable_peer_without_num_peers_raises(self):
+    # A block-derived peer id can't be replayed on the host and, without a
+    # multi-device mesh, num_peers == 0, so the per-peer descriptor table
+    # can't be sized.
+    i32 = ir.IntegerType.get_signless(32)
+    def kernel(ctx: launch_context.LaunchContext, src, dst, smem):
+      del dst  # Lowering fails before the output is written.
+      tmp, barrier = smem
+      peer = arith.index_cast(i32, gpu.block_id(gpu.Dimension.x))
+      # A swizzle rules out the contiguous bulk copy, forcing a TMA descriptor.
+      ctx.async_copy(
+          src_ref=src, dst_ref=tmp, swizzle=128, barrier=barrier,
+          gmem_peer_id=peer,
+      )
+    # A 128B swizzle over int32 requires a minor dimension of 32 elements.
+    x = np.arange(64 * 32, dtype=np.int32).reshape(64, 32)
+    smem = (x, mgpu.TMABarrier())
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Peer ids that can't be recomputed on the host are unsupported",
+    ):
+      mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)
+
   @parameterized.product(
       swizzle=(None, 32, 64, 128),
       shape=((64, None), (5, None), (2, 3, 5, None)),
