@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Precision tests for relative entropy."""
+"""Precision tests for entropy functions."""
 
 from absl.testing import parameterized
 from jax._src import config
@@ -61,14 +61,23 @@ class RelEntrTest(jtu.JaxTestCase):
     # CPU bounds are the measured max ULP, rounded up to a multiple of 0.5.
     # TPU float32 log1p is thousands of ULPs, so that bound is wider.
     bounds = [
-        ("cpu", {bf16: 3.0, f16: 2.5, f32: 2.5, f64: 54.0}),
-        ("gpu", {bf16: 3.0, f16: 2.5, f32: 2.5, f64: 54.0}),
+        ("cpu", {bf16: 3.0, f16: 2.5, f32: 3.5, f64: 54.0}),
+        ("gpu", {bf16: 3.0, f16: 2.5, f32: 3.5, f64: 54.0}),
         (TPU_EUPV1, {bf16: 3.0, f16: 2.5, f32: 1.0e6}),
         ("tpu_v5p", {bf16: 3.0, f16: 2.5, f32: 1.0e6}),
         (["tpu_v6e", "tpu_7x"], {bf16: 3.0, f16: 2.5, f32: 1.0e6}),
     ]
     input_ftz = [
         ("gpu", False),
+    ]
+    # Near-cancellation, large equal inputs, and ratios that overflow or
+    # underflow. Values outside the dtype range are skipped by the scaffold.
+    interesting_points = [
+        (1e15, 1e15 + 1.0),
+        (1e308, 1e308),
+        (1e300, 1e-10),
+        (1e-200, 1e200),
+        (1e-10, 1e300),
     ]
     # p * log1p((p - q) / q) flushes to 0 when p - q is subnormal, so a pair
     # of small normals comes back as 0 instead of a small normal. float16
@@ -94,6 +103,7 @@ class RelEntrTest(jtu.JaxTestCase):
         bounds=bounds,
         input_ftz=input_ftz,
         ignore_inputs=ignore_inputs,
+        interesting_points=interesting_points,
     )
 
 
