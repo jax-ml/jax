@@ -6505,8 +6505,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
           layout=plgpu.Layout.TCGEN05_TMEM_NATIVE,
           reduce=reduction,
       )
-      y_ref[...] = loaded
-      red_y_ref[...] = reduced
+      plgpu.store(y_ref, loaded, optimized=False)
+      plgpu.store(red_y_ref, reduced, optimized=False)
 
     prng = np.random.default_rng(0)
     if dtype == jnp.int32:
