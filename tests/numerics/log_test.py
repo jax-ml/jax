@@ -137,12 +137,14 @@ class Log1pTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_log1p_accuracy(self, dtype):
+    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Requires libtpu >= 0.0.50")
     bounds = [
         ("cpu", {f16: 1.0, f32: 3.0, f64: 2.0}),
         ("gpu", {f16: 1.0, f32: 1.0, f64: 1.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4034.0}),
-        ("tpu_v5p", {f16: 1.0, f32: 2082.5}),
-        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 2049.0}),
+        ("tpu_v5p", {f16: 1.0, f32: 63.0}),
+        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 3.0}),
     ]
     # Points where 1 + x crosses range-reduction thresholds in [0.5, 2.0] or e.
     interesting_points = [

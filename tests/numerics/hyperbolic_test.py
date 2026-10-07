@@ -257,12 +257,15 @@ class AcoshTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_acosh_accuracy(self, dtype):
+    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Requires libtpu >= 0.0.50")
     bounds = [
         ("cpu", {bf16: 2.0, f16: 2.0, f32: 4.5, f64: 3.5}),
         ("gpu", {f16: 1.0, f32: 2.5, f64: 2.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4031.0}),
-        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 1003.0}),
-        (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 984.0}),
+        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 61.0}),
+        ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 4.5}),
+        ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 5.0}),
     ]
     util.check_unary_precision(
         self,
@@ -307,12 +310,14 @@ class AsinhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_asinh_accuracy(self, dtype):
+    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Requires libtpu >= 0.0.50")
     bounds = [
         ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.5, f64: 2.5}),
         ("gpu", {f16: 1.0, f32: 2.0, f64: 2.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4034.5}),
-        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 2082.5}),
-        (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 2049.0}),
+        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 62.5}),
+        (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 3.5}),
     ]
     util.check_unary_precision(
         self,
@@ -353,12 +358,14 @@ class AtanhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_atanh_accuracy(self, dtype):
+    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.50"):
+      self.skipTest("Requires libtpu >= 0.0.50")
     bounds = [
         ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.0, f64: 2.5}),
         ("gpu", {f32: 3.5, f64: 3.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 2183.5}),
-        ("tpu_v5p", {f16: 1.0, f32: 1061.5}),
-        (["tpu_v6e", "tpu_7x"], {f32: 1025.5}),
+        ("tpu_v5p", {f16: 1.0, f32: 43.0}),
+        (["tpu_v6e", "tpu_7x"], {f32: 3.5}),
     ]
     util.check_unary_precision(
         self,

@@ -154,12 +154,12 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | Function | CPU | NVIDIA GPU | TPU v2–v5e | TPU v5p | TPU v6e | TPU 7x | Notes |
 |:---|:---:|:---:|:---:|:---:|:---:|:---:|:---|
 | {func}`~jax.lax.acos` | 1.5 | 1.5 | 5.0 | 5.0 | 4.0 | 5.0 | |
-| {func}`~jax.lax.acosh` | 4.5 | 2.5 | 4031.0 | 1003.0 | 984.0 | 984.0 | |
+| {func}`~jax.lax.acosh` | 4.5 | 2.5 | 4031.0 | 61.0 | 4.5 | 5.0 | |
 | {func}`~jax.lax.asin` | 2.0 | 1.5 | 5.0 | 5.0 | 4.5 | 4.5 | |
-| {func}`~jax.lax.asinh` | 3.5 | 2.0 | 4034.5 | 2082.5 | 2049.0 | 2049.0 | |
+| {func}`~jax.lax.asinh` | 3.5 | 2.0 | 4034.5 | 62.5 | 3.5 | 3.5 | |
 | {func}`~jax.lax.atan` | 4.0–5.5 | 1.5 | 2.5 | 2.5 | 2.5 | 2.5 | CPU bound depends on AMD vs Intel |
 | {func}`~jax.lax.atan2` | 0.5 | 3.0 | 3.5 | 3.5 | 3.5 | 3.5 | |
-| {func}`~jax.lax.atanh` | 3.0 | 3.5 | 2183.5 | 1061.5 | 1025.5 | 1025.5 | |
+| {func}`~jax.lax.atanh` | 3.0 | 3.5 | 2183.5 | 43.0 | 3.5 | 3.5 | |
 | {func}`~jax.lax.bessel_i0e` | 7.0 | 8.0 | 8.0 | 8.0 | 8.0 | 8.0 | |
 | {func}`~jax.lax.bessel_i1e` | 11.0 | 15.5 | 15.5 | 15.5 | 15.5 | 15.5 | |
 | {func}`~jax.lax.cbrt` | 0.5 | 1.5 | 4.5 | 4.5 | 1.5 | 1.5 | |
@@ -175,7 +175,7 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.expm1` | 6.5 | 1.5 | 1772.0 | 1357.5 | 3.5 | 3.5 | |
 | {func}`~jax.lax.expm1` (`highest`) | 6.5 | 1.5 | 2.0 | 2.0 | 2.0 | 2.0 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.log` | 1.5 | 1.0 | 4030.5 | 62.0 | 2.5 | 2.5 | |
-| {func}`~jax.lax.log1p` | 3.0 | 1.0 | 4034.0 | 2082.5 | 2049.0 | 2049.0 | |
+| {func}`~jax.lax.log1p` | 3.0 | 1.0 | 4034.0 | 63.0 | 3.0 | 3.0 | |
 | {func}`~jax.lax.log2` | 2.5 | 2.0 | 5159.0 | 57.5 | 2.5 | 2.5 | |
 | {func}`~jax.lax.logistic` | 2.5 | 4.0 | 243.0 | 124.0 | 65.5 | 64.0 | |
 | {func}`~jax.lax.reciprocal` | 0.5 | 1.0 | 198.0 | 40.0 | 1.5 | 1.5 | |
