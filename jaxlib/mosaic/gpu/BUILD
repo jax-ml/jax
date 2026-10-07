@@ -259,14 +259,6 @@ cc_library(
     # Linker may prune these symbols if they are not explicitly exported.
     linkopts = [
         "-Wl,--export-dynamic-symbol='mosaic_gpu_*'",
-        "-Wl,--export-dynamic-symbol='nvshmem_my_pe'",
-        "-Wl,--export-dynamic-symbol='nvshmem_n_pes'",
-        "-Wl,--export-dynamic-symbol='nvshmem_ptr'",
-        "-Wl,--export-dynamic-symbol='nvshmemx_barrier_all_on_stream'",
-        "-Wl,--export-dynamic-symbol='nvshmemx_cumodule_finalize'",
-        "-Wl,--export-dynamic-symbol='nvshmemx_cumodule_init'",
-        "-Wl,--export-dynamic-symbol='nvshmemx_init_status'",
-        "-Wl,--export-dynamic-symbol='nvshmemx_mc_ptr'",
     ],
     deps = [
         ":launch_config",
@@ -287,15 +279,6 @@ cc_test(
 )
 
 cc_library(
-    name = "nvshmem",
-    hdrs = ["nvshmem.h"],
-    deps = [
-        "@local_config_cuda//cuda:cuda_headers",
-        "@xla//xla/tsl/cuda:cudart",
-    ],
-)
-
-cc_library(
     name = "custom_call",
     srcs = ["custom_call.cc"],
     linkopts = if_oss(
@@ -312,7 +295,6 @@ cc_library(
         ":dump",
         ":launch_config",
         ":mosaic_gpu_cc_proto",
-        ":nvshmem",
         ":passes",
         ":serde",
         ":target",

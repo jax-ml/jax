@@ -26,6 +26,7 @@ import json
 import math
 import os
 import pathlib
+import sys
 import time
 from typing import Any
 import weakref
@@ -62,8 +63,6 @@ from . import utils
 # Point Mosaic GPU tools (like nvdisasm) to the CUDA path
 cuda_root = lib.cuda_path or "/usr/local/cuda"
 os.environ["MOSAIC_GPU_CUDA_ROOT"] = cuda_root
-PYTHON_RUNFILES = os.environ.get("PYTHON_RUNFILES")
-BAZEL_TEST = os.environ.get("BAZEL_TEST", "0")
 
 _SMEM_SIZE_BOUND = None  # For test purposes.
 
@@ -105,66 +104,17 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
   os.environ["MOSAIC_GPU_RUNTIME_LIB_PATH"] = str(RUNTIME_PATH)
 
 
-try:
-  from nvidia import nvshmem  # pyrefly: ignore[missing-import]
-except ImportError:
-  # Try to find the nvshmem library in Bazel test runfiles.
-  if BAZEL_TEST == "1" and PYTHON_RUNFILES:
-    libdevice_path = os.path.join(
-        PYTHON_RUNFILES, "nvidia_nvshmem", "lib", "libnvshmem_device.bc"
-    )
-    if os.path.exists(libdevice_path):
-      os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"] = libdevice_path
-    for solib_path in ["_solib_x86_64", "_solib_aarch64"]:
-      if not os.path.exists(
-          os.path.join(PYTHON_RUNFILES, "__main__", solib_path)
-      ):
-        continue
-      for root, _, files in os.walk(
-          os.path.join(PYTHON_RUNFILES, "__main__", solib_path)
-      ):
-        if "libnvshmem_host.so.3" in files:
-          os.environ["MOSAIC_GPU_NVSHMEM_SO_PATH"] = os.path.join(
-              root, "libnvshmem_host.so.3"
-          )
-          break
-      if "MOSAIC_GPU_NVSHMEM_SO_PATH" in os.environ:
-        break
-  else:
-    pass
-else:
-  if os.environ.get("MOSAIC_GPU_NVSHMEM_BC_PATH") is None:
-    os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"] = os.path.join(
-        nvshmem.__path__[0], "lib/libnvshmem_device.bc"
-    )
-  if os.environ.get("MOSAIC_GPU_NVSHMEM_SO_PATH") is None:
-    os.environ["MOSAIC_GPU_NVSHMEM_SO_PATH"] = os.path.join(
-        nvshmem.__path__[0], "lib/libnvshmem_host.so.3"
-    )
-
-
-def is_nvshmem_available():
-  try:
-    nvshmem_bc_path = os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"]
-  except KeyError:
-    return False
-  if nvshmem_so_path := os.environ.get("MOSAIC_GPU_NVSHMEM_SO_PATH", ""):
-    try:
-      # This both ensures that the file exists, and it populates the dlopen
-      # cache, helping XLA find the library even if the RPATH is not right...
-      ctypes.CDLL(nvshmem_so_path)
-    except OSError:
-      return False
-  xla_flags = os.environ.get("XLA_FLAGS", "")
-  return (
-      os.path.exists(nvshmem_bc_path)
-      and "--xla_gpu_experimental_enable_nvshmem" in xla_flags
-  )
-
-
 def is_single_process_multi_device_topology():
   return (jax.device_count() > 1
           and jax.device_count() == jax.local_device_count())
+
+
+def _get_torch_world_size() -> int:
+  if (torch := sys.modules.get("torch")) is not None:
+    if (dist := getattr(torch, "distributed", None)) is not None:
+      if dist.is_available() and dist.is_initialized():  # pyrefly: ignore[attribute-error]
+        return dist.get_world_size()  # pyrefly: ignore[attribute-error]
+  return 1
 
 
 mosaic_gpu_p = jax_core.Primitive("mosaic_gpu_p")
@@ -178,16 +128,6 @@ def _mosaic_gpu_abstract_eval(*_, module, out_types, inout_types):
       jax_core.ShapedArray(t.shape, t.dtype)
       for t in itertools.chain(out_types, inout_types)
   ]
-
-
-def _has_communication(module, **_):
-  if launch_context.uses_collective_metadata(module):
-    return True
-  empty_str_attr = ir.StringAttr.get("")
-  for op in module.body:
-    if "nvshmem" in getattr(op, "sym_name", empty_str_attr).value:
-      return True
-  return False
 
 
 # TODO(apaszke): Implement a proper system for managing kernel lifetimes
@@ -227,9 +167,9 @@ def _mosaic_gpu_lowering_rule(
 ):
   axis_context = ctx.module_context.axis_context
   replica_ids = []
-  if is_multi_device_module := _has_communication(module):
+  if is_multi_device_module := launch_context.uses_collective_metadata(module):
     # Those checks are trying to ensure that the logical device ids are
-    # consistent with the NVSHMEM PE ids that Mosaic will be using for
+    # consistent with the peer ids that Mosaic will be using for
     # communication. Any divergence here would require us to implement a logical
     # to physical translation, which is currently not implemented.
     if isinstance(axis_context, sharding_impls.SPMDAxisContext):
@@ -314,11 +254,7 @@ def _mosaic_gpu_lowering_rule(
 
   frontend_attributes: dict[str, ir.Attribute] = {}
 
-  # If NVSHMEM is available it will be used by default, otherwise we will use
-  # collective metadata.
-  if is_multi_device_module and (
-      is_single_process_multi_device_topology() or not is_nvshmem_available()
-  ):
+  if is_multi_device_module:
     backend_config["xla_replica_ids"] = ir.StringAttr.get(
         ",".join(map(str, replica_ids))
     )
@@ -936,6 +872,7 @@ def _lower_as_gpu_kernel(
     base_loc: ir.Location | None = None,
     uses_pdl: bool = False,
     is_multi_process: bool = False,
+    use_torch: bool = False,
 ):
   ptr_ty = llvm.PointerType.get()
   token_ty = gpu.AsyncTokenType.get()
@@ -998,18 +935,16 @@ def _lower_as_gpu_kernel(
         )
         arg_refs.append(arg_memref)
 
+      # TODO(bchetioui): using 0 as default is a little sketchy here, since
+      # in the collective case, this count includes the current device. Either
+      # use `1`, or make `num_peers` be `int | None`.
       num_peers = 0
-      num_params = 0
+      num_params = len(arg_refs) + len(inout_ref_tys)
 
-      if (
-          jax_mesh is not None
-          and jax_mesh.size > 1
-          and (
-              is_single_process_multi_device_topology()
-              or not is_nvshmem_available()
-          )
-      ):
-        num_params = len(arg_refs) + len(inout_ref_tys)
+      if use_torch:
+        if (torch_world_size := _get_torch_world_size()) > 1:
+          num_peers = torch_world_size
+      elif jax_mesh is not None and jax_mesh.size > 1:
         num_peers = jax_mesh.size
 
       prof_buffer = arg_refs.pop() if prof_spec is not None else None
@@ -1145,6 +1080,7 @@ def _kernel_to_module(
     thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
     inout_shape = (),
     is_multi_process: bool = False,
+    use_torch: bool = False,
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
@@ -1167,6 +1103,7 @@ def _kernel_to_module(
           body, grid, cluster, block, in_shape, out_shape, inout_shape,
           smem_scratch_shape, thread_semantics, module_name, kernel_name,
           prof_spec, jax_mesh=jax_mesh, is_multi_process=is_multi_process,
+          use_torch=use_torch,
       )
   )
 
@@ -1178,7 +1115,6 @@ def _kernel_to_module(
       inout_shape,
       out_shape,
       unwrap_output_tuple,
-      launch_ctx.is_device_collective,
   )
 
 
@@ -1198,7 +1134,7 @@ def as_gpu_kernel(
     inout_shape = (),
     is_multi_process: bool = False,
 ):
-  module, in_shape, inout_shape, out_shape, unwrap_output_tuple, is_device_collective = _kernel_to_module(
+  module, in_shape, inout_shape, out_shape, unwrap_output_tuple = _kernel_to_module(
       body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec,
       cluster, module_name, kernel_name, thread_semantics, inout_shape,
       is_multi_process=is_multi_process,
@@ -1279,7 +1215,6 @@ def as_torch_gpu_kernel(
       inout_shape,
       out_shape,
       unwrap_output_tuple,
-      is_device_collective,
   ) = _kernel_to_module(
       body,
       grid,
@@ -1293,7 +1228,9 @@ def as_torch_gpu_kernel(
       kernel_name,
       thread_semantics,
       inout_shape,
+      use_torch=True,
   )
+  uses_collective_metadata = launch_context.uses_collective_metadata(module)
   module = _run_serde_pass(module, serialize=True, ir_version=None)
   bytecode_buffer = io.BytesIO()
   module.operation.write_bytecode(bytecode_buffer)
@@ -1303,6 +1240,7 @@ def as_torch_gpu_kernel(
       out_shape,
       inout_shape,
       unwrap_output_tuple=unwrap_output_tuple,
+      uses_collective_metadata=uses_collective_metadata,
   )
 
 
@@ -1352,7 +1290,7 @@ def _compile_as_torch_gpu_kernel(module_asm: bytes):
     args = [
         kernel,
         function,
-        torch.cuda.default_stream(device)._as_parameter_,
+        torch.cuda.current_stream(device)._as_parameter_,
         arg_ptrs,
         device.index
         if device.index is not None
@@ -1365,6 +1303,44 @@ def _compile_as_torch_gpu_kernel(module_asm: bytes):
   return launch, functools.partial(unload_func, compiled)
 
 
+def _build_torch_collective_metadata(param_tensors, device):
+  import torch  # pyrefly: ignore[missing-import]
+  import torch.distributed as dist  # pyrefly: ignore[missing-import]
+  import torch.distributed._symmetric_memory as symm_mem  # pyrefly: ignore[missing-import]
+
+  if not (dist.is_available() and dist.is_initialized()):
+    raise RuntimeError(
+        "Collective Mosaic GPU kernel requires torch.distributed to be initialized."
+    )
+  rank = dist.get_rank()
+  num_peers = dist.get_world_size()
+  num_params = len(param_tensors)
+  host_metadata = np.zeros(
+      launch_context.get_collective_metadata_size(num_params, num_peers),
+      dtype=np.uint64,
+  )
+  host_metadata[0] = rank
+
+  for i, tensor in enumerate(param_tensors):
+    tensor_meta_base = launch_context.COLLECTIVE_METADATA_SIZE + i * num_peers
+    if not symm_mem._SymmetricMemory.is_symm_mem_tensor(tensor):
+      host_metadata[tensor_meta_base + rank] = tensor.data_ptr()
+      continue
+    # This is called "rendez-vous", but it turns out that calling this several
+    # times on the same tensor just returns a cached handle, and does not
+    # actually block. This is a "note" in the docstring, that does not appear
+    # when hovering over the function.
+    handle = symm_mem.rendezvous(tensor, dist.group.WORLD)
+    for p in range(num_peers):
+      host_metadata[tensor_meta_base + p] = handle.buffer_ptrs[p] + handle.offset
+    host_metadata[
+        launch_context.COLLECTIVE_METADATA_SIZE + num_peers * num_params + i
+    ] = handle.multicast_ptr
+
+  device_metadata = torch.from_numpy(host_metadata).to(device=device)
+  return device_metadata, host_metadata
+
+
 def _as_torch_gpu_kernel(
     module_asm: bytes,
     in_shape: Iterable[object],
@@ -1372,6 +1348,7 @@ def _as_torch_gpu_kernel(
     inout_shape: Iterable[object] = (),
     *,
     unwrap_output_tuple: bool = False,
+    uses_collective_metadata: bool = False,
     _prepare_args = None,
     _prepare_results = None,
 ):
@@ -1407,9 +1384,11 @@ def _as_torch_gpu_kernel(
         )
 
     # Construct a device pointer list like in the XLA calling convention
-    buffers = (ctypes.c_void_p * (arg_treedef.num_leaves + out_treedef.num_leaves))()
+    num_params = arg_treedef.num_leaves + out_treedef.num_leaves
+    num_params += 2 if uses_collective_metadata else 0
+    buffers = (ctypes.c_void_p * num_params)()
     i = -1  # Define i in case there are no args
-    device = 'cuda'
+    device = torch.device("cuda", torch.cuda.current_device())
     for i, arg in enumerate(flat_args):
       buffers[i] = arg.data_ptr()
       device = arg.device
@@ -1420,6 +1399,14 @@ def _as_torch_gpu_kernel(
       buffers[i] = out.data_ptr()
     if num_inout_args := jax.tree.structure(inout_shape).num_leaves:
       flat_outs += flat_args[-num_inout_args:]
+    if uses_collective_metadata:
+      import torch.distributed as dist  # pyrefly: ignore[missing-import]
+      device_metadata, host_metadata = _build_torch_collective_metadata(
+          [*flat_args, *flat_outs], device
+      )
+      buffers[-2] = device_metadata.data_ptr()
+      buffers[-1] = host_metadata.ctypes.data
+      dist.barrier()
     launch(buffers, device)
     out = jax.tree.unflatten(out_treedef, flat_outs)
     return out[0] if unwrap_output_tuple else out

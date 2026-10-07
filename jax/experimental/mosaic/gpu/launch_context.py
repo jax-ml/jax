@@ -714,7 +714,6 @@ class LaunchContext:
       tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...], Any, int],
       ir.Value,
   ] = dataclasses.field(default_factory=dict, init=False)
-  is_device_collective: bool = False
   multihost_kernel: bool = False
 
   @contextlib.contextmanager
@@ -815,16 +814,6 @@ class LaunchContext:
       assert len(new_op.results) == 1
       return new_op.result
 
-    # nvshmem_my_pe queries the device id of the current process and works on
-    # both the host and the device.
-    if (
-        isinstance(op, llvm.CallOp)
-        and op.callee is not None
-        and op.callee.value == "nvshmem_my_pe"
-    ):
-      i32 = ir.IntegerType.get_signless(32)
-      return cast(ir.Value, llvm.call(i32, [], [], [], callee="nvshmem_my_pe"))
-
     raise ReplicationError(
         f"Unrecognized op can't be recomputed on the host: {op}"
     )
@@ -890,18 +879,11 @@ class LaunchContext:
               ) from e
 
           if self.host_collective_metadata is None:
-            self._ensure_nvshmem_decls()
-            base_ptr = llvm.call(
-                base_ptr.type,
-                [base_ptr, peer_id],
-                [],
-                [],
-                callee="nvshmem_ptr",
+            raise RuntimeError(
+                "Collective TMA operations require collective metadata"
             )
-            assert isinstance(base_ptr, ir.Value)
-          else:
-            remote_ref = self.to_remote(ref, peer_id, on_host=True)
-            base_ptr = utils.memref_ptr(remote_ref)
+          remote_ref = self.to_remote(ref, peer_id, on_host=True)
+          base_ptr = utils.memref_ptr(remote_ref)
         rank = ref_ty.rank
         assert rank * 2 == len(sizes_and_strides)
         swizzle_arg = (
@@ -2030,26 +2012,6 @@ class LaunchContext:
     nvvm.cp_async_wait_group(allow_groups)
     utils.warpgroup_barrier()
 
-  def _ensure_nvshmem_decls(self):
-    if self.is_device_collective or self.device_collective_metadata is not None:
-      return
-    self.is_device_collective = True
-    with ir.InsertionPoint(self.module.body):
-      nvshmem_my_pe_type = ir.TypeAttr.get(ir.Type.parse("!llvm.func<i32()>"))
-      llvm.LLVMFuncOp(
-          "nvshmem_my_pe", nvshmem_my_pe_type, sym_visibility="private"
-      )
-      nvshmem_ptr_type = ir.TypeAttr.get(
-          ir.Type.parse("!llvm.func<!llvm.ptr(!llvm.ptr,i32)>")
-      )
-      llvm.LLVMFuncOp("nvshmem_ptr", nvshmem_ptr_type, sym_visibility="private")
-      nvshmemx_mc_ptr_type = ir.TypeAttr.get(
-          ir.Type.parse("!llvm.func<!llvm.ptr(i32,!llvm.ptr)>")
-      )
-      llvm.LLVMFuncOp(
-          "nvshmemx_mc_ptr", nvshmemx_mc_ptr_type, sym_visibility="private"
-      )
-
   def _find_kernel_argument_index(self, ref: ir.Value):
     """Finds the index of the kernel argument used to derive the given reference."""
     if not isinstance(ref.type, ir.MemRefType):
@@ -2157,58 +2119,53 @@ class LaunchContext:
       return remote_memref
 
     if collective_metadata is None:
-      self._ensure_nvshmem_decls()
-      if ref.type != llvm.PointerType.get():
-        raise ValueError(f"Unsupported type for to_remote: {ref.type}")
-      if peer.type != i32:
-        raise ValueError(f"peer index must be an i32, got {peer.type}")
-      return llvm.call(ref.type, [ref, peer], [], [], callee="nvshmem_ptr")
-    else:
-      self._mark_parameters_if_multiprocess()
+      raise RuntimeError(
+          "to_remote requires collective metadata (multiple devices or initialized distributed group)"
+      )
 
-      # Collective metadata contains pointers of kernel arguments for each peer
-      # device. The pointer has the following format:
-      # [
-      #   param0_peer0, param0_peer1, ..., param0_peerN,
-      #   param1_peer0, param1_peer1, ..., param1_peerN,
-      #   ...
-      # ]
-      # During the lowering we need to find the corresponding kernel argument
-      # for a given reference, load the corresponding pointer from the
-      # collective metadata and also compute the address of the given reference.
-      # As an example an address of signlas will have an offset from the first
-      # pointer of the kernel arguments defined with the memref.subview
-      # operation.
-      self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()
+    self._mark_parameters_if_multiprocess()
 
-      assert _kernel_arg_idx is not None
-      # TODO(apaszke): Just use the pointer directly. After all it is an arg.
-      current_device = self.device_id(on_host)
-      parameter_on_current_device = self._get_parameter_address_on_peer(
-          _kernel_arg_idx, current_device, on_host
-      )
-      parameter_on_peer_device = self._get_parameter_address_on_peer(
-          _kernel_arg_idx, peer, on_host
-      )
-      peer_offset = arith.subi(
-          parameter_on_peer_device, parameter_on_current_device
-      )
-      i64 = ir.IntegerType.get_signless(64)
-      # Enforce alignment to allow vectorized loads and stores to be generated
-      # whenever possible.
-      is_aligned = arith.cmpi(
-          arith.CmpIPredicate.eq,
-          arith.andi(peer_offset, c(HBM_ALIGNMENT - 1, i64)),
-          c(0, i64),
-      )
-      llvm.intr_assume(is_aligned, [], ir.DenseI32ArrayAttr.get([]))
-      return utils.getelementptr(
-          ref, [peer_offset], ir.IntegerType.get_signless(8)
-      )
+    # Collective metadata contains pointers of kernel arguments for each peer
+    # device. The pointer has the following format:
+    # [
+    #   param0_peer0, param0_peer1, ..., param0_peerN,
+    #   param1_peer0, param1_peer1, ..., param1_peerN,
+    #   ...
+    # ]
+    # During the lowering we need to find the corresponding kernel argument
+    # for a given reference, load the corresponding pointer from the
+    # collective metadata and also compute the address of the given reference.
+    # As an example an address of signlas will have an offset from the first
+    # pointer of the kernel arguments defined with the memref.subview
+    # operation.
+    self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()
+
+    assert _kernel_arg_idx is not None
+    # TODO(apaszke): Just use the pointer directly. After all it is an arg.
+    current_device = self.device_id(on_host)
+    parameter_on_current_device = self._get_parameter_address_on_peer(
+        _kernel_arg_idx, current_device, on_host
+    )
+    parameter_on_peer_device = self._get_parameter_address_on_peer(
+        _kernel_arg_idx, peer, on_host
+    )
+    peer_offset = arith.subi(
+        parameter_on_peer_device, parameter_on_current_device
+    )
+    i64 = ir.IntegerType.get_signless(64)
+    # Enforce alignment to allow vectorized loads and stores to be generated
+    # whenever possible.
+    is_aligned = arith.cmpi(
+        arith.CmpIPredicate.eq,
+        arith.andi(peer_offset, c(HBM_ALIGNMENT - 1, i64)),
+        c(0, i64),
+    )
+    llvm.intr_assume(is_aligned, [], ir.DenseI32ArrayAttr.get([]))
+    return utils.getelementptr(
+        ref, [peer_offset], ir.IntegerType.get_signless(8)
+    )
 
   def to_remote_multicast(self, ref: ir.Value, on_host: bool = False):
-    i32 = ir.IntegerType.get_signless(32)
-
     self._flag_multimem_usage()
     if not isinstance(ref.type, ir.MemRefType):
       raise ValueError(f"Unsupported type for to_remote_multicast: {ref.type}")
@@ -2225,13 +2182,9 @@ class LaunchContext:
 
     collective_metadata = self._get_collective_metadata(on_host)
     if collective_metadata is None:
-      self._ensure_nvshmem_decls()
-      world_team = arith.constant(i32, 0)
-      ptr = utils.memref_ptr(ref)
-      mc_ptr = llvm.call(
-          ptr.type, [world_team, ptr], [], [], callee="nvshmemx_mc_ptr"
+      raise RuntimeError(
+          "to_remote_multicast requires collective metadata (multiple devices or initialized distributed group)"
       )
-      return utils.MultimemRef(utils.ptr_as_memref(mc_ptr, result_type))
 
     parameter_id = self._find_kernel_argument_index(ref)
     # In multiprocess mode, all parameters should be allocated within collective
@@ -2280,18 +2233,19 @@ class LaunchContext:
     collective_metadata = self._get_collective_metadata(on_host)
     i32 = ir.IntegerType.get_signless(32)
     if collective_metadata is None:
-      self._ensure_nvshmem_decls()
-      return cast(ir.Value, llvm.call(i32, [], [], [], callee="nvshmem_my_pe"))
-    else:
-      self._mark_parameters_if_multiprocess()
+      raise RuntimeError(
+          "device_id requires collective metadata (multiple devices or initialized distributed group)"
+      )
 
-      # Rank id is stored as the first element of the collective metadata.
-      self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()
-      rank_offset_constant = arith.constant(ir.IndexType.get(), 0)
-      load_op = memref.load(collective_metadata, [rank_offset_constant])
-      device_rank = arith.trunci(i32, load_op)
-      device_rank.owner.attributes[DEVICE_ID_ATTR] = ir.UnitAttr.get()
-      return device_rank
+    self._mark_parameters_if_multiprocess()
+
+    # Rank id is stored as the first element of the collective metadata.
+    self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()
+    rank_offset_constant = arith.constant(ir.IndexType.get(), 0)
+    load_op = memref.load(collective_metadata, [rank_offset_constant])
+    device_rank = arith.trunci(i32, load_op)
+    device_rank.owner.attributes[DEVICE_ID_ATTR] = ir.UnitAttr.get()
+    return device_rank
 
 
 class ReplicationError(Exception):
