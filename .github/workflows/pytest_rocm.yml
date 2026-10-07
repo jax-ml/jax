@@ -39,9 +39,9 @@ on:
       rocm-tag:
         description: "TheRock release to install: therock-<X.Y> or therock-latest"
         type: string
-        default: "therock-10.0"
+        default: "therock-10.1"
       rocm-release-version:
-        description: "Release version for S3 path resolution (e.g., 7.2.0 or therock-latest)"
+        description: "Release version for S3 path resolution (e.g., 10.1.0 or therock-latest)"
         type: string
         default: ""
       jaxlib-version:
@@ -87,9 +87,9 @@ on:
       rocm-tag:
         description: "TheRock release to install: therock-<X.Y> or therock-latest"
         type: string
-        default: "therock-10.0"
+        default: "therock-10.1"
       rocm-release-version:
-        description: "Release version for S3 path resolution (e.g., 7.2.0 or therock-latest)"
+        description: "Release version for S3 path resolution (e.g., 10.1.0 or therock-latest)"
         type: string
         default: ""
       jaxlib-version:
