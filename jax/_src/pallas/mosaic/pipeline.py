@@ -56,6 +56,7 @@ from jax._src.interpreters import batching
 from jax._src.pallas.pallas_call import _batch_block_mapping
 from jax._src.pallas.fuser import fusible_dtype
 import jax.numpy as jnp
+import numpy as np
 
 cdiv = utils.cdiv
 contextmanager = contextlib.contextmanager
@@ -86,6 +87,22 @@ ArrayRef = REF | jax.Array
 Tiling = tpu_info.Tiling
 
 is_transformed_ref = lambda x: isinstance(x, state.TransformedRef)
+
+
+def _fori_loop(lower, upper, body_fun, init_val):
+  if jax_core.is_concrete(lower) and jax_core.is_concrete(upper):
+    if (length := int(upper) - int(lower)) <= 0:
+      return init_val
+    (_, result), _ = lax.scan(
+        lambda carry, _: ((carry[0] + 1, body_fun(*carry)), None),
+        (np.int32(lower), init_val),
+        None,
+        length=length,
+    )
+    return result
+  return lax.fori_loop(
+      jnp.int32(lower), jnp.int32(upper), body_fun, init_val
+  )
 
 
 def _create_blocked_slice(
@@ -2007,9 +2024,9 @@ def _emit_pipeline(
         return brefs, _next_index(indices, grid)
 
       with config.mutable_array_checks(False):
-        jax.lax.fori_loop(
-            jnp.int32(0),
-            jnp.int32(num_steps),
+        _fori_loop(
+            0,
+            num_steps,
             _loop_body,
             (brefs, initial_indices),
         )
@@ -2018,7 +2035,7 @@ def _emit_pipeline(
       def _():
         # pipeline prologue
         initial_indices = (jnp.int32(0),) * len(grid)
-        scheduler = make_scheduler(jnp.int32(0), initial_indices)
+        scheduler = make_scheduler(0, initial_indices)
         brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
         def _sync_copy_in(bref, ref):
           if (
@@ -2040,16 +2057,16 @@ def _emit_pipeline(
 
         # pipeline loop
         with config.mutable_array_checks(False):
-          brefs, next_indices = lax.fori_loop(
-              jnp.int32(0),
-              jnp.int32(num_steps),
+          brefs, next_indices = _fori_loop(
+              0,
+              num_steps,
               loop_body,
               (brefs, initial_indices),
           )
 
         # pipeline epilogue
         final_indices = _prev_index(next_indices, grid)
-        scheduler = make_scheduler(jnp.int32(num_steps - 1), final_indices)
+        scheduler = make_scheduler(num_steps - 1, final_indices)
         with scheduler.grid_env():
           for lag in range(scheduler.num_stages - 2, -1, -1):
             brefs = map_brefs(functools.partial(
