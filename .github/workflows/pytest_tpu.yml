@@ -123,7 +123,7 @@ jobs:
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Run Pytest TPU tests
-        timeout-minutes: ${{ github.event_name == 'pull_request' && 30 || 210 }}
+        timeout-minutes: ${{ github.event_name == 'pull_request' && (inputs.run-full-tpu-test-suite == '1' && 210 || 30) || 210 }}
         run: |
           ./ci/run_pytest_tpu.sh
         env:
