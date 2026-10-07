@@ -1642,6 +1642,76 @@ def barrier_arrive(
   )
 
 
+barrier_arrive_and_wait_p = jax_core.Primitive("barrier_arrive_and_wait")
+barrier_arrive_and_wait_p.multiple_results = True
+
+
+@barrier_arrive_and_wait_p.def_effectful_abstract_eval
+def _barrier_arrive_and_wait_abstract_eval(barrier, *args, **params):
+  del args, params  # Unused.
+  _check_ref(barrier, "barrier", gpu_core.SMEM)
+  return (), {gpu_core._memory_effect}
+
+
+def _barrier_arrive_and_wait_pp_eqn(
+    eqn: jax_core.JaxprEqn,
+    context: jax_core.JaxprPpContext,
+    settings: jax_core.JaxprPpSettings,
+):
+  del settings
+  barrier, *flat_transforms = eqn.invars
+  transforms_treedef = eqn.params["transforms_treedef"]
+  transforms = transforms_treedef.unflatten(flat_transforms)
+  return pp.concat([
+      pp.text("barrier_arrive_and_wait"),
+      pp.text(" "),
+      state_primitives.pp_ref_transforms(context, barrier, transforms),
+  ])
+
+
+jax_core.pp_eqn_rules[barrier_arrive_and_wait_p] = (
+    _barrier_arrive_and_wait_pp_eqn
+)
+
+
+@lowering.register_lowering_rule(
+    barrier_arrive_and_wait_p, mgpu.LoweringSemantics.Lane
+)
+@lowering.register_lowering_rule(
+    barrier_arrive_and_wait_p, *gpu_core.LANExWARP_SEMANTICS
+)
+@lowering.register_lowering_rule(
+    barrier_arrive_and_wait_p, mgpu.LoweringSemantics.Warpgroup
+)
+@lowering.register_lowering_rule(
+    barrier_arrive_and_wait_p, *gpu_core.WGxWARP_SEMANTICS
+)
+def _barrier_arrive_and_wait_lowering(
+    ctx: lowering.LoweringRuleContext,
+    barrier,
+    *flat_transforms,
+    transforms_treedef,
+):
+  _barrier_arrive_lowering(
+      ctx, barrier, *flat_transforms, transforms_treedef=transforms_treedef
+  )
+  _barrier_wait_lowering(
+      ctx, barrier, *flat_transforms, transforms_treedef=transforms_treedef
+  )
+  return ()
+
+
+def barrier_arrive_and_wait(barrier: state.AbstractRef) -> None:
+  """Arrives at and waits on the given barrier."""
+  barrier, transforms = state_primitives.get_ref_and_transforms(
+      barrier, None, "barrier_arrive_and_wait"
+  )
+  flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
+  barrier_arrive_and_wait_p.bind(
+      barrier, *flat_transforms, transforms_treedef=transforms_treedef
+  )
+
+
 barrier_test_p = jax_core.Primitive("barrier_test")
 barrier_test_p.multiple_results = False
 

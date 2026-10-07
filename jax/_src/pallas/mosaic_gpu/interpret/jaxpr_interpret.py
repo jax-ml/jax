@@ -771,7 +771,10 @@ class JaxprInterpreter:
   def _interpret_barrier_arrive_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
-    assert eqn.primitive is gpu_primitives.barrier_arrive_p
+    assert eqn.primitive in (
+        gpu_primitives.barrier_arrive_p,
+        gpu_primitives.barrier_arrive_and_wait_p,
+    )
     invals = get_invals()
     if eqn.params.get("has_user_predicate", False):
       *invals, predicate = invals
@@ -800,7 +803,10 @@ class JaxprInterpreter:
   def _interpret_barrier_wait_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
-    assert eqn.primitive is gpu_primitives.barrier_wait_p
+    assert eqn.primitive in (
+        gpu_primitives.barrier_wait_p,
+        gpu_primitives.barrier_arrive_and_wait_p,
+    )
     invals = get_invals()
     allocation_key_as_array = _get_barrier_allocation_key_from_inval(
         invals[0], eqn.params["transforms_treedef"], invals[1:]
@@ -1418,6 +1424,14 @@ class JaxprInterpreter:
           case gpu_primitives.barrier_arrive_p:
             token, out = self._interpret_barrier_arrive_p(
                 eqn, token, deferred_invals)
+          case gpu_primitives.barrier_arrive_and_wait_p:
+            invals = deferred_invals()
+            token, _ = self._interpret_barrier_arrive_p(
+                eqn, token, lambda: invals
+            )
+            token, out = self._interpret_barrier_wait_p(
+                eqn, token, lambda: invals
+            )
           case gpu_primitives.copy_gmem_to_smem_p:
             token, out = self._interpret_copy_gmem_to_smem_p(
                 eqn, token, deferred_invals)

@@ -640,6 +640,44 @@ class InterpretTest(jtu.JaxTestCase):
 
     _kernel()
 
+  @jtu.parameterized.product(
+      warp_specialize=[WarpSpecializeHelper(False), WarpSpecializeHelper(True)],
+      wait=[False, True],
+  )
+  def test_barrier_arrive_and_wait(self, warp_specialize, wait):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            smem_ref=plgpu.SMEM((), jnp.int32),
+            barrier=plgpu.Barrier(num_arrivals=2),
+        ),
+        interpret=InterpretParams(detect_races=True),
+        num_threads=warp_specialize.thread_count(2),
+        thread_name='t',
+    )
+    def _kernel(out_ref, smem_ref, barrier):
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
+        @pl.when(warp_id == 0)
+        def _():
+          smem_ref[...] = 42
+          plgpu.barrier_arrive(barrier)
+
+        @pl.when(warp_id == 1)
+        def _():
+          if wait:
+            plgpu.barrier_arrive_and_wait(barrier)
+          else:
+            plgpu.barrier_arrive(barrier)
+          out_ref[...] = smem_ref[...]
+
+    if wait:
+      self.assertEqual(_kernel(), 42)
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

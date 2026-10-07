@@ -69,6 +69,7 @@ from jax._src.pallas.mosaic_gpu.primitives import atomic_min as atomic_min
 from jax._src.pallas.mosaic_gpu.primitives import atomic_or as atomic_or
 from jax._src.pallas.mosaic_gpu.primitives import atomic_xor as atomic_xor
 from jax._src.pallas.mosaic_gpu.primitives import barrier_arrive as barrier_arrive
+from jax._src.pallas.mosaic_gpu.primitives import barrier_arrive_and_wait as barrier_arrive_and_wait
 from jax._src.pallas.mosaic_gpu.primitives import barrier_test as barrier_test
 from jax._src.pallas.mosaic_gpu.primitives import barrier_wait as barrier_wait
 from jax._src.pallas.mosaic_gpu.primitives import broadcasted_iota as broadcasted_iota
