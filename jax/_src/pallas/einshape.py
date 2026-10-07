@@ -75,7 +75,6 @@ from jax._src.interpreters import mlir
 from jax._src.lax import lax
 from jax._src.pallas import core as pallas_core
 import jax.numpy as jnp
-import numpy as np
 
 # TODO(slebedev): fix circular imports in the following:
 from jax._src.pallas.mosaic import lowering as tpu_lowering  # pyrefly: ignore[missing-import]
@@ -725,31 +724,6 @@ class Factor(NamedTuple):
   kind: Literal["outer", "sublane", "lane"]
 
 
-def _array_to_2d_tile_array(
-    x: jax_typing.Array, tiling: tuple[int, ...]
-) -> np.ndarray:
-  t1, t2 = tiling[-2:]
-  tiled_shape = tuple(x.shape[i] // tiling[i] for i in range(len(x.shape)))
-  # Allocate an empty object array to ensure Numpy doesn't coerce JAX tracers
-  tiles = np.empty(tiled_shape, dtype=object)
-  for idx in np.ndindex(*tiled_shape):
-    *leading, i1, i2 = idx
-    slices = tuple(leading) + (
-        slice(i1 * t1, (i1 + 1) * t1),
-        slice(i2 * t2, (i2 + 1) * t2),
-    )
-    # Standard Integer indexing inherently drops the outer dims -> returns strict 2D array
-    tiles[idx] = x[slices]
-  return tiles
-
-
-def _2d_tile_array_to_array(tiles: np.ndarray) -> jax_typing.Array:
-  raw_arrays = np.empty(tiles.shape, dtype=object)
-  for idx in np.ndindex(*tiles.shape):
-    raw_arrays[idx] = tiles[idx]
-  return jnp.block(raw_arrays.tolist())
-
-
 def _consolidate(factors: list[Factor]) -> list[Factor]:
   """Merges contiguous 'outer' factors to allow valid arbitrary outer-dimension reshapes."""
   res: list[Factor] = []
@@ -826,44 +800,6 @@ def _apply_split(
   return result
 
 
-def _tile_preserving_einshape_kernel(
-    equation: str, x: jax_typing.Array, **size_vars: int
-):
-  tiling = tpu_info.infer_tiling(jax_core.typeof(x))
-  assert tiling is not None
-  t1, t2 = tiling[-2:]
-
-  assert isinstance(t1, int)
-  assert isinstance(t2, int)
-  dims = _init_dims(x.shape, t1, t2)
-  tiles = _array_to_2d_tile_array(x, tiling)  # pyrefly: ignore[bad-argument-type]
-  transforms = get_einshape_transforms(equation, x.shape, **size_vars)
-
-  def get_outer_shape(dims_list: list[list[Factor]]) -> tuple[int, ...]:
-    return tuple(
-        math.prod([f.size for f in d if f.kind == "outer"]) for d in dims_list
-    )
-
-  for t in transforms:
-    match t:
-      case Transpose(permutation):
-        tiles = np.transpose(tiles, permutation)
-        dims = [dims[i] for i in permutation]
-      case SplitDims(index, sizes):
-        new_dims = _apply_split(dims[index], sizes)
-        assert (
-            new_dims is not None
-        ), "Tile preserving check passed but split failed."
-        dims = dims[:index] + new_dims + dims[index + 1 :]
-        tiles = tiles.reshape(get_outer_shape(dims))
-      case MergeDims(index, count):
-        merged = [b for d in dims[index : index + count] for b in d]
-        dims = dims[:index] + [_consolidate(merged)] + dims[index + count :]
-        tiles = tiles.reshape(get_outer_shape(dims))
-
-  return _2d_tile_array_to_array(tiles)
-
-
 def _is_tile_preserving(
     shape: tuple[int, ...],
     transforms: Sequence[Transform],
@@ -911,17 +847,14 @@ def _einshape_kernel(
     assert_is_tile_preserving: bool,
     **size_vars: int,
 ):
-  transforms = get_einshape_transforms(equation, x.shape, **dict(size_vars))
-  if len(transforms) <= 1:
-    return _default_einshape_kernel(equation, x, **size_vars)
-  tiling = tpu_info.infer_tiling(jax_core.ShapedArray(x.shape, x.dtype))
-  if _is_tile_preserving(x.shape, transforms, tiling[-2:]):  # pyrefly: ignore[bad-argument-type]
-    return _tile_preserving_einshape_kernel(equation, x, **size_vars)
-  elif assert_is_tile_preserving:
-    raise ValueError(
-        "Tile preserving check failed for einshape kernel with equation:"
-        f" {equation} and shape {x.shape} and tiling {tiling}."
-    )
+  if assert_is_tile_preserving:
+    transforms = get_einshape_transforms(equation, x.shape, **dict(size_vars))
+    tiling = tpu_info.infer_tiling(jax_core.ShapedArray(x.shape, x.dtype))
+    if not _is_tile_preserving(x.shape, transforms, tiling[-2:]):  # pyrefly: ignore[bad-argument-type]
+      raise ValueError(
+          "Tile preserving check failed for einshape kernel with equation:"
+          f" {equation} and shape {x.shape} and tiling {tiling}."
+      )
   return _default_einshape_kernel(equation, x, **size_vars)
 
 
