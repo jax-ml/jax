@@ -1197,6 +1197,23 @@ def warp_barrier():
   nvvm.bar_warp_sync(c(0xFFFFFFFF, ir.IntegerType.get_signless(32)))
 
 
+def before_thread_sync(
+    *,
+    sync_threads: bool,
+    scope: ThreadSubset = ThreadSubset.WARPGROUP,
+):
+  nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
+  if sync_threads:
+    # We need to synchronize the threads after `::before_thread_sync`, as
+    # not all threads arrive on the barrier.
+    if scope == ThreadSubset.WARPGROUP:
+      warpgroup_barrier()
+    elif scope == ThreadSubset.WARP:
+      warp_barrier()
+    else:
+      raise ValueError(f"Unsupported scope: {scope}")
+
+
 def prefetch_tensormap(
     desc_ptr: ir.Value[llvm.PointerType],
     predicate: ir.Value[ir.IntegerType] | None = None,
@@ -1367,16 +1384,7 @@ class BarrierRef:
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
   ):
     if orders_tensor_core:
-      nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
-      if predicate is not None:
-        # We need to synchronize the threads after `::before_thread_sync`, as
-        # not all threads arrive on the barrier.
-        if scope == ThreadSubset.WARPGROUP:
-          warpgroup_barrier()
-        elif scope == ThreadSubset.WARP:
-          warp_barrier()
-        else:
-          raise ValueError(f"Unsupported scope: {scope}")
+      before_thread_sync(sync_threads=predicate is not None, scope=scope)
 
     ptx_scope = self._ptx_scope
     if can_complete or ptx_scope != "cta":
@@ -1680,10 +1688,7 @@ class CollectiveBarrierRef:
       )
 
     if orders_tensor_core:
-      nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
-      # We need to synchronize the threads after `::before_thread_sync`, as not
-      # all threads arrive on the barrier.
-      warpgroup_barrier()
+      before_thread_sync(sync_threads=True)
 
     i32 = ir.IntegerType.get_signless(32)
     thread_in_warpgroup = arith.remui(thread_idx(), c(WARPGROUP_SIZE, i32))
