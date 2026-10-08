@@ -967,6 +967,12 @@ class JaxprInterpreter:
     src, src_transforms = resolve_ref(
         eqn.invars[0].aval, src, jax.tree.unflatten(
             eqn.params["src_transforms_treedef"], src_transforms_flat))
+    if any(
+        isinstance(t, mosaic_gpu_core.Im2ColTransform) for t in src_transforms
+    ):
+      raise NotImplementedError(
+          "Interpret mode does not support im2col copies."
+      )
     dst, dst_transforms = resolve_ref(
         eqn.invars[1].aval, dst, jax.tree.unflatten(
             eqn.params["dst_transforms_treedef"], dst_transforms_flat))

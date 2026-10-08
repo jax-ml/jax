@@ -640,6 +640,26 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(y[:3], x)
     np.testing.assert_array_equal(y[3], np.zeros((2,), np.int32))
 
+  def test_copy_gmem_to_smem_im2col_raises(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((8, 8), jnp.int16),
+        interpret=InterpretParams(),
+        scratch_types=dict(
+            barrier=plgpu.Barrier(), smem=plgpu.SMEM((8, 8), jnp.int16)
+        ),
+    )
+    def _kernel(in_gmem, out_gmem, barrier, smem):
+      in_im2col = plgpu.im2col_ref(in_gmem, window_shape=(3,))
+      plgpu.copy_gmem_to_smem(in_im2col.at[:, 0, :], smem, barrier)
+      plgpu.barrier_wait(barrier)
+      out_gmem[...] = smem[...]
+
+    with self.assertRaisesRegex(
+        NotImplementedError, 'does not support im2col copies'
+    ):
+      _kernel(jnp.zeros((1, 10, 8), jnp.int16))
+
   @jtu.parameterized.product(
       memory_space=['smem', 'tmem'], synchronized=[False, True]
   )

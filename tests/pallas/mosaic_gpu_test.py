@@ -39,6 +39,7 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
@@ -1347,6 +1348,234 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         ValueError,
         "Expected shapes to match, but src has shape \\(256,\\) and dst has shape \\(128,\\)",
     ):
+      jax.jit(kernel).lower()
+
+  # TODO(slebedev): Remove once the minimum jaxlib version is 0.12.0.
+  @absltest.skipIf(jaxlib_version < (0, 12, 0), "Requires jaxlib >=0.12.0")
+  @parameterized.product(
+      num_spatial=[1, 2, 3],
+      swizzle=[None, 32, 64, 128],
+      dynamic=[False, True],
+  )
+  def test_copy_gmem_to_smem_im2col(self, num_spatial, swizzle, dynamic):
+    dtype = jnp.int16
+    num_rows = 32
+    num_channels = 8 if swizzle is None else (8 * swizzle) // 16
+    batch_size = 6
+    spatial_sizes = (3, 4, 8)[-num_spatial:]
+    window_shape = tuple(d + 2 for d in range(num_spatial))
+    padding = tuple((d + 1, d) for d in range(num_spatial))
+    src_shape = (batch_size, *spatial_sizes, 2 * num_channels)
+    first_channel = num_channels
+    filter_offsets = tuple(k - 1 for k in window_shape)
+    spatial_out = tuple(
+        s + pad_lo + pad_hi - k + 1
+        for s, k, (pad_lo, pad_hi) in zip(spatial_sizes, window_shape, padding)
+    )
+    row_base = math.prod(spatial_out) // 2
+    dst_shape = (num_rows, num_channels)
+
+    smem_transforms = ()
+    if swizzle is not None:
+      smem_transforms = (
+          plgpu.TilingTransform((8, num_channels)),
+          plgpu.SwizzleTransform(swizzle),
+      )
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(dst_shape, dtype),
+        scratch_types=[
+            plgpu.SMEM(dst_shape, dtype, transforms=smem_transforms),
+            plgpu.Barrier(),
+        ],
+        grid=(1,),
+        grid_names=("g",),
+    )
+    def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
+      x_im2col = plgpu.im2col_ref(
+          x_ref_gmem, window_shape=window_shape, padding=padding
+      )
+      zero = jax.lax.axis_index("g") if dynamic else 0
+      r = row_base + zero
+      c = first_channel + zero
+      offsets = tuple(o + zero for o in filter_offsets)
+      plgpu.copy_gmem_to_smem(
+          x_im2col.at[pl.ds(r, num_rows), *offsets, pl.ds(c, num_channels)],
+          scratch_ref,
+          barrier_ref,
+      )
+      plgpu.barrier_wait(barrier_ref)
+      plgpu.copy_smem_to_gmem(scratch_ref, o_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(math.prod(src_shape), dtype=dtype).reshape(src_shape)
+    if self.is_wg_semantics():
+      with self.assertRaisesRegex(
+          NotImplementedError,
+          "im2col copies are not supported under Warpgroup lowering semantics",
+      ):
+        jax.jit(kernel).lower(x)
+      return
+
+    y = kernel(x)
+    x_padded = np.pad(x, ((0, 0), *padding, (0, 0)))
+    spatial_slices = tuple(
+        slice(o, o + s_out) for o, s_out in zip(filter_offsets, spatial_out)
+    )
+    channels = slice(first_channel, first_channel + num_channels)
+    expected = x_padded[(slice(None), *spatial_slices, channels)].reshape(
+        -1, num_channels
+    )[row_base : row_base + num_rows]
+    np.testing.assert_array_equal(y, expected)
+
+  # TODO(slebedev): Remove once the minimum jaxlib version is 0.12.0.
+  @absltest.skipIf(jaxlib_version < (0, 12, 0), "Requires jaxlib >=0.12.0")
+  def test_copy_gmem_to_smem_im2col_out_of_bounds(self):
+    self.skip_if_wg_semantics()
+    dtype = jnp.int16
+    src_shape = (2, 6, 6, 16)
+    window_shape = (3, 3)
+    filter_offsets = (1, 2)
+    row_base, first_channel = 16, 8
+    num_rows, num_channels = 32, 16
+    dst_shape = (num_rows, num_channels)
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(dst_shape, dtype),
+        scratch_types=[plgpu.SMEM(dst_shape, dtype), plgpu.Barrier()],
+        grid=(1,),
+        grid_names=("g",),
+    )
+    def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
+      x_im2col = plgpu.im2col_ref(x_ref_gmem, window_shape=window_shape)
+      # Slices running past the end of the view need a dynamic start.
+      zero = jax.lax.axis_index("g")
+      plgpu.copy_gmem_to_smem(
+          x_im2col.at[
+              pl.ds(row_base + zero, num_rows),
+              *filter_offsets,
+              pl.ds(first_channel + zero, num_channels),
+          ],
+          scratch_ref,
+          barrier_ref,
+      )
+      plgpu.barrier_wait(barrier_ref)
+      plgpu.copy_smem_to_gmem(scratch_ref, o_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(math.prod(src_shape), dtype=dtype).reshape(src_shape)
+    y = kernel(x)
+    spatial_slices = tuple(
+        slice(o, o + s - k + 1)
+        for o, s, k in zip(filter_offsets, src_shape[1:-1], window_shape)
+    )
+    windows = x[(slice(None), *spatial_slices)].reshape(-1, src_shape[-1])
+    expected = np.pad(windows, ((0, num_rows), (0, num_channels)))[
+        row_base : row_base + num_rows,
+        first_channel : first_channel + num_channels,
+    ]
+    np.testing.assert_array_equal(y, expected)
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="multiple_column_tiles",
+          index=lambda x: x.at[:, 0, 0],
+          dst_shape=(32, 16),
+          smem_transforms=(plgpu.TilingTransform((8, 8)),),
+          error_type=NotImplementedError,
+          error="single column tile",
+      ),
+      dict(
+          testcase_name="no_indexing",
+          index=lambda x: x,
+          dst_shape=(32, 16),
+          error_type=ValueError,
+          error="must be indexed",
+      ),
+      dict(
+          testcase_name="window_slice",
+          index=lambda x: x.at[:, :1, 0],
+          dst_shape=(32, 1, 16),
+          error_type=ValueError,
+          error="scalar filter offsets",
+      ),
+      dict(
+          testcase_name="strided_rows",
+          index=lambda x: x.at[:16:2, 0, 0],
+          dst_shape=(8, 16),
+          error_type=ValueError,
+          error="unit-stride row slice",
+      ),
+      dict(
+          testcase_name="reshape",
+          index=lambda x: x.at[:, 0, 0].reshape(16, 32),
+          dst_shape=(16, 32),
+          error_type=NotImplementedError,
+          error="Only indexing is supported",
+      ),
+  )
+  def test_copy_gmem_to_smem_im2col_unsupported(
+      self, index, dst_shape, error_type, error, smem_transforms=()
+  ):
+    self.skip_if_wg_semantics()
+    dtype = jnp.int16
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((2, 6, 6, 16), dtype),
+        scratch_types=[
+            plgpu.SMEM(dst_shape, dtype, transforms=smem_transforms),
+            plgpu.Barrier(),
+        ],
+    )
+    def kernel(o_ref, scratch_ref, barrier_ref):
+      o_im2col = plgpu.im2col_ref(o_ref, window_shape=(3, 3))
+      plgpu.copy_gmem_to_smem(index(o_im2col), scratch_ref, barrier_ref)
+
+    with self.assertRaisesRegex(error_type, error):
+      jax.jit(kernel).lower()
+
+  @parameterized.named_parameters(
+      ("wrong_rank", (3,), None, "requires a rank-3 .* reference"),
+      ("too_many_dims", (3, 3, 3, 3), None, "1, 2, or 3 spatial dimensions"),
+      ("padding_length", (3, 3), ((1, 1),), "Expected 2 .* pairs in padding"),
+      (
+          "negative_padding",
+          (3, 3),
+          ((0, 0), (-1, 0)),
+          r"padding\[1\] must be non-negative",
+      ),
+      (
+          "window_too_large",
+          (257, 3),
+          None,
+          r"window_shape\[0\] must be in \[1, 256\]",
+      ),
+      (
+          "pad_lo_too_large",
+          (3, 3),
+          ((129, 0), (0, 0)),
+          r"padding\[0\]\[0\] must be at most 128",
+      ),
+      (
+          "pad_hi_too_large",
+          (3, 3),
+          ((0, 0), (0, 130)),
+          r"padding\[1\]\[1\] must be in \[0, 129\]",
+      ),
+      (
+          "pad_hi_too_small",
+          (20, 3, 3),
+          None,
+          r"padding\[0\]\[1\] must be in \[3, 34\]",
+      ),
+      ("empty_output", (8, 3), None, "non-positive output size"),
+  )
+  def test_im2col_ref_invalid_args(self, window_shape, padding, error):
+    @self.kernel(out_type=jax.ShapeDtypeStruct((2, 6, 6, 16), jnp.int16))
+    def kernel(o_ref):
+      plgpu.im2col_ref(o_ref, window_shape=window_shape, padding=padding)
+
+    with self.assertRaisesRegex(ValueError, error):
       jax.jit(kernel).lower()
 
   def test_copy_gmem_to_smem_raises_on_mismatched_shapes_partitioned(self):
@@ -9000,6 +9229,64 @@ class PipelineTest(PallasTest):
 
     active_rows = ((jnp.arange(shape[0]) - 1) % 10 < 8).astype(x.dtype)
     np.testing.assert_array_equal(run(x), x + active_rows[..., None])
+
+  # TODO(slebedev): Remove once the minimum jaxlib version is 0.12.0.
+  @absltest.skipIf(jaxlib_version < (0, 12, 0), "Requires jaxlib >=0.12.0")
+  def test_emit_with_im2col_ref(self):
+    self.skip_if_wg_semantics()
+
+    dtype = jnp.float16
+    batch_size, h, w, channels = 2, 4, 8, 32
+    kh, kw = 3, 3
+    padding = ((1, 1), (1, 1))
+    num_windows = batch_size * h * w
+    tile_m = 32
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((num_windows, channels), dtype),
+        scratch_types=[plgpu.SMEM((tile_m, channels), dtype)],
+    )
+    def kernel(x_ref_gmem, o_ref_gmem, acc_smem):
+      x_im2col = plgpu.im2col_ref(
+          x_ref_gmem, window_shape=(kh, kw), padding=padding
+      )
+
+      @pl.loop(0, num_windows // tile_m)
+      def _(m_idx):
+        acc_smem[...] = jnp.zeros_like(acc_smem)
+
+        def body(indices, patch_smem):
+          del indices
+          acc_smem[...] += patch_smem[...]
+
+        plgpu.emit_pipeline(
+            body,
+            grid=(kh, kw),
+            in_specs=[
+                plgpu.BlockSpec(
+                    (tile_m, None, None, channels),
+                    lambda fh, fw: (m_idx, fh, fw, 0),
+                )
+            ],
+            max_concurrent_steps=2,
+        )(x_im2col)
+        plgpu.commit_smem()
+        plgpu.copy_smem_to_gmem(
+            acc_smem, o_ref_gmem.at[pl.ds(m_idx * tile_m, tile_m)]
+        )
+        plgpu.wait_smem_to_gmem(0)
+
+    x = jax.random.normal(
+        jax.random.key(0), (batch_size, h, w, channels), dtype=dtype
+    )
+    y = kernel(x)
+    x_padded = jnp.pad(x, ((0, 0), *padding, (0, 0)))
+    expected = sum(
+        x_padded[:, fh : fh + h, fw : fw + w]
+        for fh in range(kh)
+        for fw in range(kw)
+    ).reshape(num_windows, channels)
+    np.testing.assert_allclose(y, expected, rtol=1e-3, atol=1e-3)
 
 
 class PipelineWGTest(
