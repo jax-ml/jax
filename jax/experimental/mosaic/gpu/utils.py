@@ -2559,7 +2559,12 @@ def get_cluster_ptr(
   i32 = ir.IntegerType.get_signless(32)
   assert cluster_block.type == i32, cluster_block.type
   assert ptr.type == llvm.PointerType.get(3), ptr.type
-  mapped_smem_ptr = nvvm.mapa(llvm.PointerType.get(7), ptr, cluster_block)
+  mapped_smem_ptr = inline_ptx(
+      "mapa.shared::cluster.u32 $0, $1, $2;",
+      ptr,
+      cluster_block,
+      result_types=llvm.PointerType.get(7),
+  )
   if not generic:
     return mapped_smem_ptr
   return llvm.addrspacecast(llvm.PointerType.get(), mapped_smem_ptr)
