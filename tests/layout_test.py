@@ -22,6 +22,7 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.layout import LayoutMode, use_layout_mode
+from jax._src.pjit import relayout
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.util import safe_zip
 from jax.experimental.layout import (Format, Layout, with_layout_constraint,
@@ -1272,6 +1273,33 @@ class LayoutInTypesTest(jtu.JaxTestCase):
 
     with self.assertRaises(NotImplementedError):
       g(arr)
+
+  def test_relayout_transpose(self):
+    arr1 = jnp.arange(64, dtype=jnp.float32).reshape(4, 16)
+    arr2 = jnp.arange(64, dtype=jnp.float32).reshape(4, 16)
+
+    @explicit_layout(in_layouts=(Layout((0, 1)), Layout((1, 0))))
+    def f(x, y):
+      y = relayout(y, Layout((0, 1)))
+      z = x + y
+      self.assertEqual(z.aval.layout.major_to_minor, (0, 1))
+      return z
+
+    primal_out, tangent_out = jax.jit(
+        lambda x, y: jax.jvp(f, (x, y), (x, y))
+    )(arr1, arr2)
+    self.assertEqual(primal_out.format.layout.major_to_minor, (0, 1))
+    self.assertEqual(tangent_out.format.layout.major_to_minor, (0, 1))
+    self.assertArraysAllClose(primal_out, arr1 + arr2)
+    self.assertArraysAllClose(tangent_out, arr1 + arr2)
+
+    x_bar, y_bar = jax.jit(
+        jax.grad(lambda x, y: f(x, y).sum(), argnums=(0, 1))
+    )(arr1, arr2)
+    self.assertEqual(x_bar.format.layout.major_to_minor, (0, 1))
+    self.assertEqual(y_bar.format.layout.major_to_minor, (1, 0))
+    self.assertArraysAllClose(x_bar, jnp.ones_like(arr1))
+    self.assertArraysAllClose(y_bar, jnp.ones_like(arr1))
 
 
 if __name__ == '__main__':
