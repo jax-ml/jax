@@ -1462,7 +1462,7 @@ class BarrierRef:
     idxs: list[ir.Value] = [gpu.cluster_block_id(d) for d in gpu.Dimension]
     idxs[dim] = idx
     flat_block = arith.index_cast(i32, cluster_idx(dim_idx=idxs))
-    cptr = get_cluster_ptr(self.get_ptr(), flat_block, generic=False)
+    cptr = get_cluster_ptr(self.base_address, flat_block, generic=False)
     return BarrierRef(cptr, self.offset, self.phases, self.num_barriers)
 
 

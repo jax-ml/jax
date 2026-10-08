@@ -1027,37 +1027,39 @@ class LaunchContext:
         raise ValueError("Only the TMA implementation supports collective copies")
       if gather_indices is not None:
         raise NotImplementedError("Collective copies with gather/scatter unsupported")
-    if isinstance(leader_tracked, _Partitioned):
-      partitioned = leader_tracked.axis
-      # Increment partitioned by the number of preceding squeezed dimensions.
-      partitioned = np.where(
-          np.cumsum(~np.array(is_squeezed)) == partitioned+1)[0][0]
-      # Partitioning happens on the logical slice we extract from GMEM, so we do
-      # it before we apply transforms.
+    if leader_tracked is not None:
       if not collective:  # This implies non-gather TMA already.
-        raise ValueError("Only collective loads can be partitioned")
+        raise ValueError("Only collective loads can be leader-tracked")
       collective_size = math.prod(self.cluster_size[d] for d in collective)
       if collective_size > 1:
-        if math.prod(self.cluster_size) != 2:
+        if collective != (gpu.Dimension.x,) or collective_size != 2:
           raise NotImplementedError(
-              "Partitioned loads only supported for clusters of size 2"
+              "Leader-tracked loads only supported along the x dimension,"
+              " which must have size 2"
           )
-        if slice_shape[partitioned] % collective_size != 0:
-          raise ValueError(
-              f"The collective size ({collective_size}) must divide the slice"
-              " shape along the partitioned dimension, but it has size"
-              f" {slice_shape[partitioned]}"
+        if isinstance(leader_tracked, _Partitioned):
+          partitioned = leader_tracked.axis
+          # Increment partitioned by the number of preceding squeezed dimensions.
+          partitioned = np.where(
+              np.cumsum(~np.array(is_squeezed)) == partitioned+1)[0][0]
+          # Partitioning happens on the logical slice we extract from GMEM, so we do
+          # it before we apply transforms.
+          if slice_shape[partitioned] % collective_size != 0:
+            raise ValueError(
+                f"The collective size ({collective_size}) must divide the slice"
+                " shape along the partitioned dimension, but it has size"
+                f" {slice_shape[partitioned]}"
+            )
+          slice_shape[partitioned] //= collective_size
+          dyn_base_indices = list(dyn_base_indices)
+          dyn_base_indices[partitioned] = arith.addi(
+              dyn_base_indices[partitioned],
+              arith.muli(
+                  utils.cluster_idx(collective),
+                  c(slice_shape[partitioned], index),
+              ),
           )
-        slice_shape[partitioned] //= collective_size
-        dyn_base_indices = list(dyn_base_indices)
-        dyn_base_indices[partitioned] = arith.addi(
-            dyn_base_indices[partitioned],
-            arith.muli(
-                utils.cluster_idx(collective),
-                c(slice_shape[partitioned], index),
-            ),
-        )
-        dyn_base_indices = tuple(dyn_base_indices)
+          dyn_base_indices = tuple(dyn_base_indices)
 
     squeezed_dims = tuple(
         i for i, squeezed in enumerate(is_squeezed) if squeezed
@@ -1920,16 +1922,15 @@ class LaunchContext:
           smem_space = "shared::cta"
           multicast_mod = ""
           multicast_operand = ""
+        mapped_barrier_ptr = barrier.remap_to_cluster(
+            gpu.Dimension.x, c(0, index)
+        ).get_ptr()
         llvm.inline_asm(
             ir.Type.parse("!llvm.void"),
-            [predicate, smem_ptr, tma_desc, barrier_ptr, *rev_dyn_base_indices, *multicast_mask],
+            [predicate, smem_ptr, tma_desc, mapped_barrier_ptr, *rev_dyn_base_indices, *multicast_mask],
             f"""
-            {{
-            .reg .b32 mapped_addr;
-            @$0 mapa.shared::cluster.u32 mapped_addr, $3, 0;
             @$0 cp.async.bulk.tensor.{rank}d.{smem_space}.global.tile.mbarrier::complete_tx::bytes{multicast_mod}.cta_group::2
-                                  [$1], [$2, {{{idx_operands}}}], [mapped_addr]{multicast_operand};
-            }}
+                                  [$1], [$2, {{{idx_operands}}}], [$3]{multicast_operand};
             """,
             "b,r,l,r" + ",r" * rank + ",h" * len(multicast_mask),
             has_side_effects=True,
@@ -2219,6 +2220,8 @@ class LaunchContext:
       collective = (collective,)
     elif collective is None:
       collective = ()
+    else:
+      collective = tuple(collective)
     if not isinstance(gmem_transform, tuple):
       gmem_transform = (gmem_transform,)
     if not isinstance(gmem_slice, tuple):

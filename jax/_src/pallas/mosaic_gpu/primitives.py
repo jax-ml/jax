@@ -990,10 +990,16 @@ def _copy_gmem_to_smem_lowering(
       raise ValueError(
           f"Expected exactly one collective axis, got {collective_axes=}"
       )
-    if math.prod(ctx.launch_ctx.cluster_size) != 2:
+    if (
+        collective != (gpu_dialect.Dimension.x,)
+        or ctx.launch_ctx.cluster_size[0] != 2
+    ):
+      expected_axis = ctx.module_ctx.axis_names.cluster[-1]
+      row_major_cluster_size = tuple(ctx.launch_ctx.cluster_size[::-1])
       raise NotImplementedError(
-          "Partitioned loads only supported for clusters of size 2. Got"
-          f" cluster size {ctx.launch_ctx.cluster_size}."
+          "Partitioned loads only supported along the last cluster dimension "
+          f"{expected_axis} if it has size 2. Got {collective_axes=} and "
+          f"cluster size {row_major_cluster_size}."
       )
 
   # TMA is only available on Hopper and newer. On older architectures we fall

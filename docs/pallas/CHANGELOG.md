@@ -46,6 +46,11 @@ Remember to align the itemized text with the first line of an item within a list
   `jax.numpy` functions, but add an `accumulator_ilp` parameter.
   * Added {func}`jax.experimental.pallas.mosaic_gpu.alloc_semaphore`, which
     allocates GMEM semaphores that can be shared across kernel invocations.
+  * {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem` with
+    `leader_tracked=CopyPartition.PARTITIONED(...)` or
+    `leader_tracked=CopyPartition.REPLICATED` now support clusters of total size
+    greater than 2, provided the collective axis is the minormost cluster
+    dimension and has size 2.
 
 * Deprecations
 

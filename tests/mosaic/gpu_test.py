@@ -4705,21 +4705,25 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
   @parameterized.product(
       swizzle=(None, 128),
       dtype=(jnp.float16, jnp.float32),
+      cluster=((2, 1, 1), (2, 2, 1)),
   )
-  def test_tma_load_replicated(self, swizzle, dtype):
+  def test_tma_load_replicated(self, swizzle, dtype, cluster):
     self.skip_unless_tcgen05() # .cta_group::2 is not supported on sm_120, for example
     index = ir.IndexType.get()
     minor_size = 64 if swizzle is None else swizzle // jnp.dtype(dtype).itemsize
     shape = (8, minor_size)
+    cluster_y = cluster[1]
     def kernel(ctx, src, dst, scratch):
       tmp, barrier, cluster_barrier = scratch
-      block_id = gpu.cluster_block_id(gpu.Dimension.x)
+      block_id_x = gpu.cluster_block_id(gpu.Dimension.x)
+      block_id_y = gpu.cluster_block_id(gpu.Dimension.y)
       is_first_block = arith.cmpi(
-          arith.CmpIPredicate.eq, block_id, c(0, index)
+          arith.CmpIPredicate.eq, block_id_x, c(0, index)
       )
       ctx.async_copy(
           src_ref=src,
           dst_ref=tmp,
+          gmem_slice=(block_id_y, slice(None), slice(None)),
           swizzle=swizzle,
           barrier=barrier,
           collective=gpu.Dimension.x,
@@ -4729,8 +4733,8 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
         barrier.wait()
       cluster_barrier.arrive()
       cluster_barrier.wait()
-      copy(tmp, memref_slice(dst, (block_id,)), swizzle=swizzle)
-    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+      copy(tmp, memref_slice(dst, (block_id_y, block_id_x)), swizzle=swizzle)
+    x = np.arange(cluster_y * np.prod(shape), dtype=dtype).reshape(cluster_y, *shape)
     smem_shape = (
         jax.ShapeDtypeStruct(shape, dtype),
         mgpu.TMABarrier(),
@@ -4738,34 +4742,38 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     )
     with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
       y = mgpu.as_gpu_kernel(
-          kernel, (2, 1, 1), (128, 1, 1), x,
-          jax.ShapeDtypeStruct((2, *shape), dtype), smem_shape,
-          cluster=(2, 1, 1),
+          kernel, cluster, (128, 1, 1), x,
+          jax.ShapeDtypeStruct((cluster_y, 2, *shape), dtype), smem_shape,
+          cluster=cluster,
       )(x)
-    np.testing.assert_array_equal(y[0], x)
-    np.testing.assert_array_equal(y[1], x)
+    np.testing.assert_array_equal(y[:, 0], x)
+    np.testing.assert_array_equal(y[:, 1], x)
     self.assertIn("cta_group::2", ptx())
 
   @parameterized.product(
       swizzle=(None, 128),
       dtype=(jnp.float16, jnp.float32),
+      cluster=((2, 1, 1), (2, 2, 1)),
   )
-  def test_tma_load_partitioned(self, swizzle, dtype):
+  def test_tma_load_partitioned(self, swizzle, dtype, cluster):
     self.skip_unless_tcgen05() # .cta_group::2 is not supported on sm_120, for example
     index = ir.IndexType.get()
     minor_size = 64 if swizzle is None else swizzle // jnp.dtype(dtype).itemsize
     shape = (16, minor_size)
     half = shape[0] // 2
     smem_shape_val = (half, minor_size)
+    cluster_y = cluster[1]
     def kernel(ctx, src, dst, scratch):
       tmp, barrier, cluster_barrier = scratch
-      block_id = gpu.cluster_block_id(gpu.Dimension.x)
+      block_id_x = gpu.cluster_block_id(gpu.Dimension.x)
+      block_id_y = gpu.cluster_block_id(gpu.Dimension.y)
       is_first_block = arith.cmpi(
-          arith.CmpIPredicate.eq, block_id, c(0, index)
+          arith.CmpIPredicate.eq, block_id_x, c(0, index)
       )
       ctx.async_copy(
           src_ref=src,
           dst_ref=tmp,
+          gmem_slice=(block_id_y, slice(None), slice(None)),
           swizzle=swizzle,
           barrier=barrier,
           collective=gpu.Dimension.x,
@@ -4775,8 +4783,8 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
         barrier.wait()
       cluster_barrier.arrive()
       cluster_barrier.wait()
-      copy(tmp, memref_slice(dst, (block_id,)), swizzle=swizzle)
-    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+      copy(tmp, memref_slice(dst, (block_id_y, block_id_x)), swizzle=swizzle)
+    x = np.arange(cluster_y * np.prod(shape), dtype=dtype).reshape(cluster_y, *shape)
     smem_shape = (
         jax.ShapeDtypeStruct(smem_shape_val, dtype),
         mgpu.TMABarrier(),
@@ -4784,12 +4792,12 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     )
     with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
       y = mgpu.as_gpu_kernel(
-          kernel, (2, 1, 1), (128, 1, 1), x,
-          jax.ShapeDtypeStruct((2, *smem_shape_val), dtype), smem_shape,
-          cluster=(2, 1, 1),
+          kernel, cluster, (128, 1, 1), x,
+          jax.ShapeDtypeStruct((cluster_y, 2, *smem_shape_val), dtype), smem_shape,
+          cluster=cluster,
       )(x)
-    np.testing.assert_array_equal(y[0], x[:half])
-    np.testing.assert_array_equal(y[1], x[half:])
+    np.testing.assert_array_equal(y[:, 0], x[:, :half])
+    np.testing.assert_array_equal(y[:, 1], x[:, half:])
     self.assertIn("cta_group::2", ptx())
 
 
