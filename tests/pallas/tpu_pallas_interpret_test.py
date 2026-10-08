@@ -724,6 +724,24 @@ class InterpretTest(jtu.JaxTestCase):
     lowered = jax.jit(matmul).lower(x, y).as_text(dialect='stablehlo')
     self.assertNotIn('dot_general', lowered)
 
+  def test_trace_value(self):
+    def kernel(s_ref, x_ref, o_ref):
+      pltpu.trace_value('s', s_ref[0])
+      o_ref[...] = x_ref[...] + s_ref[0]
+
+    s = jnp.array([3], jnp.int32)
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+    y = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ],
+        interpret=pltpu.InterpretParams(),
+    )(s, x)
+    np.testing.assert_array_equal(y, x + 3)
+
   @parameterized.parameters('nan', 'zero')
   def test_uninitialized_memory(self, uninitialized_memory):
     def kernel(o1_ref, o2_ref, o3_ref, t1_ref, t2_ref):

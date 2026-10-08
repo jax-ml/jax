@@ -1390,6 +1390,11 @@ def _interpret_jaxpr(
         # TODO(jburnim): Implement this properly?
         out = []
 
+      elif prim is mosaic_primitives.trace_value_p:
+        # The value only annotates the xprof trace, which interpret mode does
+        # not produce.
+        out = []
+
       elif prim is mosaic_primitives.prng_random_bits_p:
         # TODO(jburnim): Implement this properly?
         out = jnp.zeros(eqn.params['shape'], jnp.int32)
