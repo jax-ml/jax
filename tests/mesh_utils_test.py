@@ -20,10 +20,11 @@ import dataclasses
 from absl import logging
 from absl.testing import absltest
 from absl.testing import parameterized
+import jax
 from jax._src import mesh as mesh_lib
 from jax._src import mesh_utils
 from jax._src import test_util as jtu
-from jax._src.sharding_impls import NamedSharding, PartitionSpec, local_to_global_shape
+from jax._src.sharding_impls import NamedSharding, PartitionSpec
 from jax.sharding import Mesh
 import numpy as np
 
@@ -400,13 +401,19 @@ class MeshUtilsTest(jtu.JaxTestCase):
                                            allow_split_physical_axes=True)
       mesh = mesh_lib.Mesh(mesh, ('a', 'b', 'c'))
       sharding = NamedSharding(mesh, PartitionSpec('a', 'b', 'c'))
-      computed_global_shape = local_to_global_shape(sharding, (1, 1, 1))
+      computed_global_shape = jax.local_to_global_shape(
+          sharding=sharding,
+          local_shape=(1, 1, 1),
+      )
       self.assertFalse(
           np.any([x is None for x in computed_global_shape]),
           f'{mesh_shape=}, {computed_global_shape=} is not uniform')
 
       sharding = NamedSharding(mesh, PartitionSpec(('a', 'c',), 'b'))
-      computed_global_shape = local_to_global_shape(sharding, (1, 1, 1))
+      computed_global_shape = jax.local_to_global_shape(
+          sharding=sharding,
+          local_shape=(1, 1, 1),
+      )
       self.assertFalse(
           np.any([x is None for x in computed_global_shape]),
           f'{mesh_shape=}, {computed_global_shape=} is not uniform')
