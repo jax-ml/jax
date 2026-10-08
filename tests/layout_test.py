@@ -1301,6 +1301,132 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     self.assertArraysAllClose(x_bar, jnp.ones_like(arr1))
     self.assertArraysAllClose(y_bar, jnp.ones_like(arr1))
 
+  @parameterized.parameters(
+      (src_shape, dst_shape, src_m2m, dst_m2m, fun)
+      for fun in [jnp.reshape, jax.lax.reshape]
+      for src_shape, dst_shape, src_m2m, dst_m2m in [
+          ((4, 8, 1), (1, 4, 8, 1), (0, 1, 2), (0, 3, 1, 2)),
+          ((4, 8, 1), (1, 4, 8, 1), (1, 0, 2), (0, 3, 2, 1)),
+          ((1, 4, 1, 8, 16, 1), (1, 4, 8, 16), (0, 2, 5, 3, 1, 4), (0, 2, 1, 3)),
+          ((4, 8), (4, 8), (1, 0), (1, 0)),
+          ((8, 4, 16), (4, 2, 4, 1, 1, 16), (0, 1, 2), (3, 4, 0, 1, 2, 5)),
+          ((8, 4, 16), (8, 1, 1, 4, 16), (1, 0, 2), (1, 2, 3, 0, 4)),
+          ((4, 8, 2, 1, 1, 16), (32, 2, 16), (0, 1, 2, 3, 4, 5), (0, 1, 2)),
+          ((4, 1, 8, 1, 16), (4, 1, 2, 4, 1, 16), (1, 3, 2, 0, 4), (1, 4, 2, 3, 0, 5)),
+          ((4, 1, 2, 4, 1, 16), (4, 1, 8, 1, 16), (1, 4, 2, 3, 0, 5), (1, 3, 2, 0, 4)),
+      ]
+  )
+  def test_reshape_layout(self, src_shape, dst_shape, src_m2m, dst_m2m, fun):
+    np_inp = np.arange(math.prod(src_shape), dtype=np.float32).reshape(src_shape)
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr = jax.device_put(np_inp, Format(Layout(src_m2m), s))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      y = fun(x, dst_shape)
+      self.assertEqual(y.aval.layout.major_to_minor, dst_m2m)
+      self.assertEqual(y.shape, dst_shape)
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.format.layout.major_to_minor, dst_m2m)
+    self.assertArraysEqual(out, np_inp.reshape(dst_shape))
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn('LayoutConstraint', lowered_text)
+
+  @parameterized.parameters(
+      # Splits on major dimensions
+      ((6, 4, 8), (2, 3, 4, 8), (0, 1, 2), (0, 1, 2, 3), None),
+      ((6, 4, 8), (2, 3, 4, 8), (0, 2, 1), (0, 1, 3, 2), None),
+      ((4, 6, 8), (4, 2, 3, 8), (1, 0, 2), (1, 2, 0, 3), None),
+      ((4, 6, 8), (4, 2, 3, 8), (1, 2, 0), (1, 2, 3, 0), None),
+      ((4, 12, 8, 16), (4, 2, 2, 3, 8, 16), (0, 1, 2, 3), (0, 1, 2, 3, 4, 5), None),
+      ((4, 12, 8, 16), (4, 2, 2, 3, 8, 16), (1, 0, 2, 3), (1, 2, 3, 0, 4, 5), None),
+      ((10, 4, 8, 1), (2, 5, 4, 8, 1), (3, 0, 1, 2), (4, 0, 1, 2, 3), None),
+      ((10, 4, 8, 1), (2, 5, 4, 8, 1, 1), (3, 0, 1, 2), (4, 5, 0, 1, 2, 3), None),
+      ((10, 4, 8, 1, 1), (2, 5, 4, 8, 1, 1), (3, 4, 0, 1, 2), (4, 5, 0, 1, 2, 3), None),
+      ((1, 10, 4, 8), (1, 2, 5, 4, 8), (0, 1, 2, 3), (0, 1, 2, 3, 4), None),
+      # Merges on major dimensions
+      ((2, 3, 4, 8), (6, 4, 8), (0, 1, 2, 3), (0, 1, 2), None),
+      ((2, 3, 4, 8), (6, 4, 8), (0, 1, 3, 2), (0, 2, 1), None),
+      ((4, 2, 3, 8), (4, 6, 8), (1, 2, 0, 3), (1, 0, 2), None),
+      ((4, 2, 3, 8), (4, 6, 8), (1, 2, 3, 0), (1, 2, 0), None),
+      ((4, 2, 2, 3, 8, 16), (4, 12, 8, 16), (0, 1, 2, 3, 4, 5), (0, 1, 2, 3), None),
+      ((4, 2, 2, 3, 8, 16), (4, 12, 8, 16), (1, 2, 3, 0, 4, 5), (1, 0, 2, 3), None),
+      ((4, 2, 2, 8, 16), (4, 4, 8, 16), (1, 2, 0, 3, 4), (1, 0, 2, 3), None),
+      ((2, 5, 4, 8, 1), (10, 4, 8, 1), (4, 0, 1, 2, 3), (3, 0, 1, 2), None),
+      ((16, 8, 4, 2, 8), (16, 32, 1, 2, 8), (0, 1, 2, 3, 4), (2, 0, 1, 3, 4), None),
+      ((16, 32, 1, 2, 8), (16, 8, 4, 2, 8), (2, 0, 1, 3, 4), (0, 1, 2, 3, 4), None),
+      # Splitting or merging the 2 minor-most dimensions (errors on TPU, succeeds on CPU/GPU)
+      ((4, 6, 8), (4, 2, 3, 8), (0, 1, 2), (0, 1, 2, 3),
+       'cannot split the 2 minor-most dimensions'),
+      ((4, 6, 8), (4, 6, 2, 2, 2), (0, 1, 2), (0, 1, 2, 3, 4),
+       'cannot split the 2 minor-most dimensions'),
+      ((4, 6, 8), (2, 2, 6, 8), (1, 0, 2), (2, 0, 1, 3),
+       'cannot split the 2 minor-most dimensions'),
+      ((4, 6, 8), (4, 6, 2, 4), (1, 0, 2), (1, 0, 2, 3),
+       'cannot split the 2 minor-most dimensions'),
+      ((4, 6, 8), (4, 48), (0, 1, 2), (0, 1),
+       'cannot merge the 2 minor-most dimensions'),
+      ((4, 2, 3, 8), (4, 6, 8), (0, 1, 2, 3), (0, 1, 2),
+       'cannot merge the 2 minor-most dimensions'),
+      # Error cases: merging out-of-order or non-contiguous physical dims, or multi-axis splits/merges
+      ((4, 2, 3, 8), (4, 6, 8), (2, 1, 0, 3), None,
+       'is not possible without a physical copy'),
+      ((4, 2, 3, 8), (8, 3, 8), (1, 0, 2, 3), None,
+       'is not possible without a physical copy'),
+      ((4, 6, 8, 16), (4, 2, 3, 4, 2, 16), (0, 1, 2, 3), None,
+       'is not possible without a physical copy'),
+      ((4, 6, 8, 16), (4, 4, 2, 6, 16), (0, 1, 2, 3), None,
+       'is not possible without a physical copy'),
+      ((4, 8, 9, 16), (4, 2, 2, 3, 3, 2, 16), (0, 1, 2, 3), None,
+       'is not possible without a physical copy'),
+      ((4, 2, 3, 2, 4, 16), (4, 6, 8, 16), (0, 1, 2, 3, 4, 5), None,
+       'is not possible without a physical copy'),
+      ((4, 2, 3, 8, 16), (4, 8, 6, 16), (0, 1, 2, 3, 4), None,
+       'is not possible without a physical copy'),
+  )
+  def test_reshape_split_merge_one_axis_layout(
+      self, src_shape, dst_shape, src_m2m, dst_m2m, error_msg):
+    np_inp = np.arange(math.prod(src_shape), dtype=np.float32).reshape(src_shape)
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr = jax.device_put(np_inp, Format(Layout(src_m2m), s))
+    should_error = (error_msg is not None and
+                    (dst_m2m is None or jtu.test_device_matches(['tpu'])))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      y = jax.lax.reshape(x, dst_shape)
+      if not should_error:
+        self.assertEqual(y.aval.layout.major_to_minor, dst_m2m)
+      return y
+
+    if should_error:
+      with self.assertRaisesRegex(ValueError, error_msg):
+        f(arr)
+    else:
+      out = f(arr)
+      self.assertEqual(out.format.layout.major_to_minor, dst_m2m)
+      self.assertArraysEqual(out, np_inp.reshape(dst_shape))
+
+      lowered_text = f.lower(arr).as_text()
+      self.assertIn('LayoutConstraint', lowered_text)
+
+  def test_reshape_dimensions_error_layout(self):
+    arr = jnp.arange(4 * 8 * 16, dtype=np.float32).reshape(4, 8, 16)
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      return jax.lax.reshape(x, (4, 2, 4, 16), dimensions=(1, 0, 2))
+
+    with self.assertRaisesRegex(
+        ValueError, 'is not possible without a physical copy'):
+      f(arr)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

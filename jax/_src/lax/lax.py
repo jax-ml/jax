@@ -8344,29 +8344,33 @@ def _split_on_one_axis(op_shape, new_sizes):
   new_sizes = [s for s in new_sizes if s != 1]
 
   if len(new_sizes) <= len(op_shape):
-    return False, []
+    return False, [], []
 
   i, j, count = 0, 0, 0
-  out = []
+  out, out_indices = [], []
 
   while j < len(new_sizes):
     if op_shape[i] == new_sizes[j]:
       out.append(op_shape[i])
+      out_indices.append(j)
     else:
       count += 1
       if count > 1:
         raise ReshapeExplicitError()
       temp = [new_sizes[j]]
+      temp_indices = [j]
       while math.prod(temp) != op_shape[i]:
         if math.prod(temp) > op_shape[i]:
-          return False, []
+          return False, [], []
         j += 1
         temp.append(new_sizes[j])
+        temp_indices.append(j)
       out.append(temp)
+      out_indices.append(temp_indices)
     i += 1
     j += 1
-  assert len(op_shape) == len(out)
-  return True, out
+  assert len(op_shape) == len(out) == len(out_indices)
+  return True, out, out_indices
 
 
 def _merge_on_one_axis(operand, new_sizes):
@@ -8392,7 +8396,7 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
     return _split_merge_singleton_dim_sharding_rule(operand, new_sizes)
 
   try:
-    is_split, out_split = _split_on_one_axis(operand.shape, new_sizes)
+    is_split, out_split, _ = _split_on_one_axis(operand.shape, new_sizes)
   except ReshapeExplicitError:
     raise_reshape_error(operand, new_sizes)
   if is_split:
@@ -8400,7 +8404,7 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
                                         dimensions)
 
   try:
-    is_merge, operand_merge = _merge_on_one_axis(operand, new_sizes)
+    is_merge, operand_merge, _ = _merge_on_one_axis(operand, new_sizes)
   except ReshapeExplicitError:
     raise_reshape_error(operand, new_sizes)
   if is_merge:
@@ -8550,6 +8554,101 @@ def _reshape_ur_rule(operand, *, new_sizes, dimensions, sharding):
       operand, new_sizes=new_sizes, dimensions=dimensions, sharding=sharding)
   return out_unreduced, out_reduced, kind
 
+def raise_reshape_layout_error(operand, new_sizes, msg=None) -> Never:
+  if msg is None:
+    msg = 'is not possible without a physical copy.'
+  raise ValueError(
+      f'reshape from {operand.shape} with layout {operand.layout} to'
+      f' {new_sizes} {msg}')
+
+
+def _restore_singleton_dims_layout(operand, simple_out_m2m, new_sizes):
+  # Re-insert singleton (size-1) dimensions of `new_sizes` at the most major
+  # positions, and map the non-1 indices in `simple_out_m2m` back to their
+  # positions in `new_sizes`.
+  # Example: new_sizes=(4, 1, 8, 1, 16), simple_out_m2m=[1, 0, 2]
+  #   -> singleton_dims = [1, 3], non_singleton_dims = [0, 2, 4]
+  #   -> singleton dims [1, 3] go first, followed by [2, 0, 4] -> (1, 3, 2, 0, 4)
+  singleton_dims = [i for i, s in enumerate(new_sizes) if s == 1]
+  non_singleton_dims = [i for i, s in enumerate(new_sizes) if s != 1]
+  out_m2m = (*singleton_dims, *(non_singleton_dims[d] for d in simple_out_m2m))
+  return operand.layout.update(major_to_minor=out_m2m)
+
+
+def _split_an_axis_layout_rule(operand, out_indices, phys_op_dims, new_sizes,
+                               num_tiles):
+  # `out_indices` has the dst dim index (int) or split dst dim indices (list)
+  # for each input dim. E.g. for (4, 12, 8, 16) -> (4, 2, 2, 3, 8, 16):
+  #   out_indices = [0, [1, 2, 3], 4, 5]
+  #   phys_op_dims = [1, 0, 2, 3] -> phys_dst_dims = [1, 2, 3, 0, 4, 5]
+  phys_dst_dims = []
+  for d in phys_op_dims:
+    out_d = out_indices[d]
+    if isinstance(out_d, list):
+      if num_tiles is not None and d in phys_op_dims[-num_tiles:]:
+        raise_reshape_layout_error(operand, new_sizes,
+                                   'cannot split the 2 minor-most dimensions.')
+      phys_dst_dims.extend(out_d)
+    else:
+      phys_dst_dims.append(out_d)
+  return _restore_singleton_dims_layout(operand, phys_dst_dims, new_sizes)
+
+
+def _merge_an_axis_layout_rule(operand, dst_dims, phys_op_dims, new_sizes,
+                               num_tiles):
+  # 1. `phys_op_dims` is the physical input dim order, e.g. [1, 2, 3, 0, 4, 5].
+  #    `dst_dims` (from `_merge_on_one_axis`) is the logical dst dims in terms
+  #    of input dims, e.g. [0, [1, 2, 3], 4, 5].
+  merged_dims = next(x for x in dst_dims if isinstance(x, list))
+  if any(num_tiles is not None and d in phys_op_dims[-num_tiles:]
+         for d in merged_dims):
+    raise_reshape_layout_error(operand, new_sizes,
+                               'cannot merge the 2 minor-most dimensions.')
+  pos = phys_op_dims.index(merged_dims[0])
+  if phys_op_dims[pos:pos+len(merged_dims)] != merged_dims:
+    raise_reshape_layout_error(operand, new_sizes)
+  # 2. Merge `merged_dims` in `phys_op_dims` -> `phys_dst_dims = [[1, 2, 3], 0, 4, 5]`.
+  phys_dst_dims = (
+      phys_op_dims[:pos] + [merged_dims] + phys_op_dims[pos+len(merged_dims):]
+  )
+  # 3. Look up each element of `phys_dst_dims` in `dst_dims` -> [1, 0, 2, 3].
+  out_m2m = [dst_dims.index(x) for x in phys_dst_dims]
+  return _restore_singleton_dims_layout(operand, out_m2m, new_sizes)
+
+
+def _reshape_layout_rule(operand, *, new_sizes, dimensions, sharding):
+  if dimensions is not None:
+    raise_reshape_layout_error(operand, new_sizes)
+  op_shape = operand.shape
+  op_m2m = operand.layout.major_to_minor
+
+  non_1_dims = [d for d, s in enumerate(op_shape) if s != 1]
+  phys_op_dims = [non_1_dims.index(m) for m in op_m2m if op_shape[m] != 1]
+  non_1s_op_shape = [s for s in op_shape if s != 1]
+  non_1s_new_shape = [s for s in new_sizes if s != 1]
+  if non_1s_op_shape == non_1s_new_shape:
+    return _restore_singleton_dims_layout(operand, phys_op_dims, new_sizes)
+
+  num_tiles = (None if not operand.layout.tiling else
+               len(operand.layout.tiling[0]))
+  try:
+    is_split, _, out_indices = _split_on_one_axis(op_shape, new_sizes)
+  except ReshapeExplicitError:
+    raise_reshape_layout_error(operand, new_sizes)
+  if is_split:
+    return _split_an_axis_layout_rule(operand, out_indices, phys_op_dims,
+                                      new_sizes, num_tiles)
+
+  try:
+    is_merge, _, dst_dims = _merge_on_one_axis(operand, new_sizes)
+  except ReshapeExplicitError:
+    raise_reshape_layout_error(operand, new_sizes)
+  if is_merge:
+    return _merge_an_axis_layout_rule(operand, dst_dims, phys_op_dims,
+                                      new_sizes, num_tiles)
+  raise_reshape_layout_error(operand, new_sizes)
+
+
 def _reshape_typecheck_rule(_, operand, new_sizes, dimensions,
                             sharding):
   out_aval, effects = reshape_p.abstract_eval(
@@ -8598,7 +8697,7 @@ def _reshape_lower(ctx, x, new_sizes, dimensions, sharding):
   if dimensions is not None:
     x = hlo.transpose(x, mlir.dense_int_array(dimensions))
   out = mlir.reshape(ctx, x, aval_out)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 def _reshape_staging_rule(
     trace, source_info, x, new_sizes, dimensions, sharding):
@@ -8610,7 +8709,7 @@ reshape_p = standard_primitive(
     _reshape_shape_rule, _reshape_dtype_rule, 'reshape',
     sharding_rule=_reshape_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reshape'),
-    ur_rule=_reshape_ur_rule)
+    ur_rule=_reshape_ur_rule, layout_rule=_reshape_layout_rule)
 ad.deflinear2(reshape_p, _reshape_transpose_rule)
 batching.fancy_primitive_batchers[reshape_p] = _reshape_batch_rule
 mlir.register_lowering(reshape_p, _reshape_lower)
