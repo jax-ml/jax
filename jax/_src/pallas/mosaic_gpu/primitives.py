@@ -957,9 +957,13 @@ def _copy_gmem_to_smem_lowering(
       **_extract_smem_copy_params(dst_ref_aval, dst_transforms),
       **_extract_gmem_copy_params(ctx, src_transforms, src_transform_avals),
   }
+  orders_tensor_core = False
   if barrier is not None:
     barrier_ref_aval = ctx.avals_in[2]
     assert isinstance(barrier_ref_aval, state_types.AbstractRef)
+    orders_tensor_core = getattr(
+        barrier_ref_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
+    )
     base_index = _get_barrier_base_index(
         barrier_ref_aval,
         barrier_transforms_treedef.unflatten(flat_barrier_transforms),
@@ -1056,18 +1060,32 @@ def _copy_gmem_to_smem_lowering(
 
     if not is_cp_async:
       assert barrier is not None
-      if bytes % WARPGROUP_SIZE:
+      if not orders_tensor_core and bytes % WARPGROUP_SIZE:
         raise NotImplementedError(
             "Only copies transferring a number of bytes divisible by the"
             f" warpgroup size are supported. Got {bytes=} but warpgroup size is"
             f" {WARPGROUP_SIZE}"
         )
-      if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup:
-        # We arrive uniformly from each thread in the WG, so we need to divide the
-        # number of bytes by the number of threads in the WG.
-        # TODO: apaszke - Relax this. We can just select the WG leader and have it
-        # arrive with the whole transfer size, while everyone else arrives with 0.
-        # But we should continue using this scheme as it's likely to be faster.
+      if orders_tensor_core:
+        if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+          scope = mgpu_utils.ThreadSubset.WARP
+        else:
+          scope = mgpu_utils.ThreadSubset.WARPGROUP
+        barrier.arrive_expect_tx(
+            bytes,
+            predicate=_andi_maybe_none(
+                arrive_predicate, ctx.module_ctx.single_lane_predicate
+            ),
+            tensor_core_order_scope=scope,
+        )
+      elif ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup:
+        # We arrive uniformly from each thread in the WG, so we need to divide
+        # the number of bytes by the number of threads in the WG.
+        # TODO: apaszke - Relax this. We can just select the WG leader and
+        # have it arrive with the whole transfer size, while everyone else
+        # arrives with 0.
+        # But we should continue using this scheme as it's likely to be
+        # faster.
         bytes //= WARPGROUP_SIZE
         barrier.arrive_expect_tx(bytes, predicate=arrive_predicate)
       else:

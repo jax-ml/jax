@@ -6165,6 +6165,43 @@ class PallasCallSm90AWGTest(
 
 class PallasCallTCGen05Test(PallasTCGen05Test):
 
+  @parameterized.product(
+      orders_tensor_core=(False, True),
+      single_warp=(False, True),
+  )
+  def test_copy_gmem_to_smem_orders_tc(self, orders_tensor_core, single_warp):
+    @self.kernel(
+        out_type=(
+            jax.ShapeDtypeStruct([256], jnp.float32),
+            jax.ShapeDtypeStruct([1], jnp.int32),
+        ),
+        scratch_types=[
+            plgpu.SMEM((256,), jnp.float32),
+            plgpu.Barrier(num_arrivals=2, orders_tensor_core=orders_tensor_core),
+        ],
+    )
+    def kernel(x_ref, o_ref, completed_early_ref, scratch_ref, barrier_ref):
+      def copy_to_smem():
+        plgpu.copy_gmem_to_smem(x_ref, scratch_ref, barrier_ref)
+
+      if single_warp:
+        plgpu.warp_map(lambda warp_id: pl.when(warp_id == 0)(copy_to_smem))
+      else:
+        copy_to_smem()
+      completed_early_ref[0] = plgpu.barrier_test(barrier_ref).astype(jnp.int32)
+      plgpu.barrier_arrive(barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      o_ref[...] = scratch_ref[...] + 1
+
+    x = jnp.arange(256).astype(jnp.float32)
+    out, completed_early = kernel(x)
+    np.testing.assert_array_equal(out, x + 1.0)
+    # Regression test to ensure we don't arrive more than expected when
+    # orders_tensor_core=True.
+    np.testing.assert_array_equal(
+        completed_early, jnp.zeros((1,), dtype=jnp.int32)
+    )
+
   def test_warp_specialized_tmem_slice(self):
     dtype = jnp.float32
 

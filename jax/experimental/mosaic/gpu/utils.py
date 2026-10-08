@@ -1410,10 +1410,18 @@ class BarrierRef:
       nvvm.mbarrier_arrive_nocomplete(self.get_ptr(), count)
 
   def arrive_expect_tx(
-      self, tx_count: int | ir.Value, predicate: ir.Value | None = None
+      self,
+      tx_count: int | ir.Value,
+      predicate: ir.Value | None = None,
+      tensor_core_order_scope: ThreadSubset | None = None,
   ):
     if get_arch().major < 9:
       raise NotImplementedError("arrive_expect_tx is only supported on Hopper+ hardware")
+
+    if tensor_core_order_scope is not None:
+      before_thread_sync(
+          sync_threads=predicate is not None, scope=tensor_core_order_scope
+      )
 
     i32 = ir.IntegerType.get_signless(32)
     if isinstance(tx_count, int):

@@ -1724,7 +1724,14 @@ def _mgpu_arrive_expect_tx_op_lowering_rule(
       else utils.WARP_SIZE
   )
   num_bytes = arrive_expect_tx_op.expect_tx
-  if isinstance(num_bytes.owner, arith.ConstantOp):
+  barrier = utils.DialectBarrierRef.from_barrier_memref(
+      arrive_expect_tx_op.barrier
+  )
+  orders_tc = barrier.orders_tensor_core
+
+  if orders_tc:
+    tx_bytes = num_bytes
+  elif isinstance(num_bytes.owner, arith.ConstantOp):
     num_bytes_int = int(num_bytes.owner.value)
     if num_bytes_int % num_lanes == 0:
       # Prefer uniform arrival whenever possible because it's more efficient.
@@ -1744,15 +1751,16 @@ def _mgpu_arrive_expect_tx_op_lowering_rule(
         utils.c(0, i32),
     )
 
-  barrier = utils.DialectBarrierRef.from_barrier_memref(
-      arrive_expect_tx_op.barrier
-  )
   # In Warp-level lowering, we arrive on each CUDA thread in a warp, but the
   # barrier still expects a full 128 arrivals so we arrive 4 times on each CUDA
   # thread instead.
-  if ctx.thread_semantics == utils.ThreadSubset.WARP:
+  if ctx.thread_semantics == utils.ThreadSubset.WARP and not orders_tc:
     barrier.barrier_ref.arrive(arrival_count=3, can_complete=False)
-  barrier.barrier_ref.arrive_expect_tx(tx_bytes)
+  barrier.barrier_ref.arrive_expect_tx(
+      tx_bytes,
+      predicate=ctx.single_lane_predicate if orders_tc else None,
+      tensor_core_order_scope=ctx.thread_semantics if orders_tc else None,
+  )
 
   return []
 
