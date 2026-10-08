@@ -316,7 +316,8 @@ def _attention_reference_custom_bwd(
   if sinks is not None:  # the gradient is ``sum(-exp(s) / exp(lse) * o * do)``
     sinks_exp = -jnp.exp(sinks[..., None, None].astype(jnp.float32)
                          - logsumexp[..., None].astype(jnp.float32))
-    dsinks = jnp.sum(sinks_exp.astype(o.dtype) * do * o)
+    dsinks = jnp.sum(sinks_exp * do.astype(jnp.float32)
+                     * o.astype(jnp.float32)).astype(o.dtype)
   return None, dq, dk, dv, None, dsinks
 
 
@@ -2357,7 +2358,8 @@ def _splash_attention_bwd(
   if sinks is not None:
     sinks_exp = -jnp.exp(sinks[..., None, None].astype(jnp.float32)
                          - logsumexp[..., None].astype(jnp.float32))
-    dsinks = jnp.sum(sinks_exp.astype(o.dtype) * o * do, axis=(-1, -2))
+    dsinks = jnp.sum(sinks_exp * o.astype(jnp.float32)
+                     * do.astype(jnp.float32), axis=(-1, -2)).astype(o.dtype)
   return (
       None,  # fwd_mask_info
       None,  # dq_mask_info
