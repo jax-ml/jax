@@ -1038,6 +1038,15 @@ def _copy_gmem_to_smem_lowering(
       )
 
   i32 = ir.IntegerType.get_signless(32)
+  arrive_predicate = predicate
+  if is_leader_tracked_copy:
+    first_block = arith_dialect.cmpi(
+        arith_dialect.CmpIPredicate.eq,
+        mgpu.utils.cluster_idx(collective[0]),
+        mgpu.c(0, ir.IndexType.get()),
+    )
+    arrive_predicate = _andi_maybe_none(arrive_predicate, first_block)
+
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     if (
         ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup
@@ -1060,17 +1069,7 @@ def _copy_gmem_to_smem_lowering(
         # arrive with the whole transfer size, while everyone else arrives with 0.
         # But we should continue using this scheme as it's likely to be faster.
         bytes //= WARPGROUP_SIZE
-        if predicate is not None:
-          bytes = arith_dialect.select(predicate, mgpu.c(bytes, i32), mgpu.c(0, i32))
-        if is_leader_tracked_copy:
-          first_block = arith_dialect.cmpi(
-              arith_dialect.CmpIPredicate.eq,
-              mgpu.utils.cluster_idx(collective[0]),
-              mgpu.c(0, ir.IndexType.get()),
-          )
-          barrier.arrive_expect_tx(bytes, predicate=first_block)
-        else:
-          barrier.arrive_expect_tx(bytes)
+        barrier.arrive_expect_tx(bytes, predicate=arrive_predicate)
       else:
         # In Warp-level lowering, we arrive on each CUDA thread in a warp, but
         # the barrier still expects a full 128 arrivals so we arrive 4 times
@@ -1078,18 +1077,11 @@ def _copy_gmem_to_smem_lowering(
         # TODO(justinfu): The arrival counts are wrong if called outside of a
         # single warp. Figure out how to guard against this in user code.
         bytes = bytes // WARP_SIZE
-        if predicate is not None:
-          bytes = arith_dialect.select(predicate, mgpu.c(bytes, i32), mgpu.c(0, i32))
-        if is_leader_tracked_copy:
-          first_block = arith_dialect.cmpi(
-              arith_dialect.CmpIPredicate.eq,
-              mgpu.utils.cluster_idx(collective[0]),
-              mgpu.c(0, ir.IndexType.get()),
-          )
-          with mgpu.when(first_block):
-            barrier.arrive(arrival_count=3, can_complete=False)
-            barrier.arrive_expect_tx(bytes)
+        if arrive_predicate is not None:
+          arrive_ctx = mgpu.when(arrive_predicate)
         else:
+          arrive_ctx = contextlib.nullcontext()
+        with arrive_ctx:
           barrier.arrive(arrival_count=3, can_complete=False)
           barrier.arrive_expect_tx(bytes)
 
@@ -1156,22 +1148,13 @@ def _copy_gmem_to_smem_lowering(
   assert barrier is not None
   barrier_ref = barrier.as_barrier_memref()
 
-  if is_leader_tracked_copy:
-    first_block = arith_dialect.cmpi(
-        arith_dialect.CmpIPredicate.eq,
-        mgpu.utils.cluster_idx(collective[0]),
-        mgpu.c(0, ir.IndexType.get()),
-    )
-    arrive_ctx = mgpu.when(first_block)
+  if arrive_predicate is not None:
+    arrive_ctx = mgpu.when(arrive_predicate)
   else:
     arrive_ctx = contextlib.nullcontext()
 
-  bytes = mgpu.c(bytes, ir.IntegerType.get_signless(32))
-  if predicate is not None:
-    bytes = arith_dialect.select(predicate, bytes, mgpu.c(0, i32))
-
   with arrive_ctx:
-    mgpu.dialect.arrive_expect_tx(barrier_ref, bytes)
+    mgpu.dialect.arrive_expect_tx(barrier_ref, mgpu.c(bytes, i32))
 
   mgpu.dialect.async_load(
       src,
@@ -1248,7 +1231,8 @@ def copy_gmem_to_smem(
       ``OOBFillMode.ZEROS`` for the TMA implementation, and only
       ``OOBFillMode.PROMISE_IN_BOUNDS`` for the ``cp.async`` one.
     predicate: A boolean indicating whether the copy should be performed. If
-      ``None``, the copy is always performed.
+      ``None``, the copy is always performed. If ``False``, neither the copy nor
+      the barrier arrival is performed.
 
   See also:
     :func:`jax.experimental.pallas.mosaic_gpu.barrier_arrive`

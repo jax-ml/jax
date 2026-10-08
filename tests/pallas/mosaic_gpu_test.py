@@ -1489,35 +1489,55 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     ):
       jax.eval_shape(kernel)
 
-  def test_copy_gmem_to_smem_predicate(self):
+  @parameterized.parameters(False, True)
+  def test_copy_gmem_to_smem_predicate(self, warp_level):
     @self.kernel(
-      out_type=jax.ShapeDtypeStruct([256], jnp.float32),
-      scratch_types=[
-          plgpu.SMEM([256], jnp.float32),
-          plgpu.Barrier(),
-      ],
-      grid=(2,),
-      grid_names=("block",),
+        out_type=(
+            jax.ShapeDtypeStruct([256], jnp.float32),
+            jax.ShapeDtypeStruct([2], jnp.int32),
+        ),
+        scratch_types=[
+            plgpu.SMEM([256], jnp.float32),
+            plgpu.Barrier(),
+        ],
+        grid=(2,),
+        grid_names=("block",),
     )
-    def kernel(x_ref, o_ref, scratch_ref, barrier_ref):
+    def kernel(x_ref, o_ref, completed_ref, scratch_ref, barrier_ref):
       scratch_ref[...] = jnp.zeros([256], dtype=jnp.float32)
-      block_id = jax.lax.axis_index('block')
+      block_id = jax.lax.axis_index("block")
       idx = pl.ds(block_id * 128, 128)
-      plgpu.copy_gmem_to_smem(
-          x_ref.at[idx],
-          scratch_ref.at[idx],
-          barrier_ref,
-          predicate=block_id == 0,
+      if warp_level:
+        @plgpu.warp_map
+        def _(warp_id):
+          plgpu.copy_gmem_to_smem(
+              x_ref.at[idx],
+              scratch_ref.at[idx],
+              barrier_ref,
+              predicate=jnp.logical_and(block_id == 0, warp_id == 0),
+          )
+      else:
+        plgpu.copy_gmem_to_smem(
+            x_ref.at[idx],
+            scratch_ref.at[idx],
+            barrier_ref,
+            predicate=block_id == 0,
+        )
+      @pl.when(block_id == 0)
+      def _():
+        plgpu.barrier_wait(barrier_ref)
+      completed_ref[block_id] = plgpu.barrier_test(barrier_ref).astype(
+          jnp.int32
       )
-      plgpu.barrier_wait(barrier_ref)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(scratch_ref.at[idx], o_ref.at[idx])
       plgpu.wait_smem_to_gmem(0)
 
     x = jnp.arange(256).astype(jnp.float32)
-    output = kernel(x)
+    output, completed = kernel(x)
     np.testing.assert_array_equal(output[:128], x[:128])
     np.testing.assert_array_equal(output[128:], jnp.zeros((128,)))
+    np.testing.assert_array_equal(completed, jnp.zeros((2,), dtype=jnp.int32))
 
   def test_collective_copy_gmem_to_smem(self):
 
