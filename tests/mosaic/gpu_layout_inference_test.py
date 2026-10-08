@@ -2650,6 +2650,33 @@ class LayoutInferenceTest(parameterized.TestCase):
         inference_utils.in_transforms(store), [expected_transforms]
     )
 
+  @parameterized.parameters(
+      (lambda: ir.F32Type.get(), fa.WGMMA_LAYOUT, None, True),
+      (lambda: ir.BF16Type.get(), fa.WGMMA_LAYOUT, None, False),
+      (lambda: ir.BF16Type.get(), fa.WGMMA_LAYOUT, True, False),
+      (lambda: ir.BF16Type.get(), fa.WGMMA_LAYOUT, False, True),
+      (lambda: ir.BF16Type.get(), fa.WGMMA_LAYOUT_UPCAST_2X, True, True),
+  )
+  def test_infer_layout_for_gmem_vector_load_and_store(
+      self, elt_ty_fn, layout, optimized, succeeds
+  ):
+    shape = (128, 128)
+    elt_ty = elt_ty_fn()
+    with ir.InsertionPoint(self.module.body):
+      gmem_ty = ir.MemRefType.get(shape, elt_ty)
+      [src_ref, dst_ref] = undefs(gmem_ty, gmem_ty)
+      load = mgpu.dialect.VectorLoadOp(src_ref, optimized=optimized)
+      cast = layout_cast(load.result, layout)
+      store = mgpu.dialect.VectorStoreOp(cast, dst_ref, optimized=optimized)
+
+    if succeeds:
+      mgpu.infer_layout(self.module)
+      self.checkOutLayouts(load, [layout])
+      self.checkInLayouts(store, [layout])
+    else:
+      with self.assertRaisesRegex(ValueError, "Failed to infer"):
+        mgpu.infer_layout(self.module)
+
   def test_slice_smem_gets_empty_by_default(self):
     with ir.InsertionPoint(self.module.body):
       shape = (64, 64)
