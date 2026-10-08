@@ -690,7 +690,23 @@ def _async_store_smem_lowering(
     raise NotImplementedError(f"Transfer is not a multiple of {WARPGROUP_SIZE} bytes")
 
   peer_barrier = barrier.remap_to_cluster(gpu_cluster_dim, cluster_idx_val)
-  peer_barrier.arrive_expect_tx(total_bytes // WARPGROUP_SIZE)
+  orders_tensor_core = getattr(
+      barrier_ref_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
+  )
+  if orders_tensor_core:
+    tx_bytes = total_bytes
+    predicate = ctx.module_ctx.single_lane_predicate
+    if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+      scope = mgpu_utils.ThreadSubset.WARP
+    else:
+      scope = mgpu_utils.ThreadSubset.WARPGROUP
+  else:
+    tx_bytes = total_bytes // WARPGROUP_SIZE
+    predicate = None
+    scope = None
+  peer_barrier.arrive_expect_tx(
+      tx_bytes, predicate=predicate, tensor_core_order_scope=scope
+  )
 
   lowering._ensure_fa(src, dtype).store_tiled_async(
       ref_smem,

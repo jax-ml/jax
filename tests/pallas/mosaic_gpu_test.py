@@ -4476,27 +4476,35 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     expected = jnp.flip(x, axis=0)
     np.testing.assert_array_equal(y, expected)
 
-  def test_cluster_ref_write(self):
+  @parameterized.parameters(False, True)
+  def test_cluster_ref_write(self, orders_tensor_core):
+    if orders_tensor_core:
+      self.skip_unless_tcgen05()
     dtype = jnp.float32
     logical_shape = (64, 32)
     x_shape = (2, 64, 32)
     transforms = self.default_transforms(dtype=dtype)
 
     @self.kernel(
-        out_type=jax.ShapeDtypeStruct(x_shape, dtype),
+        out_type=(
+            jax.ShapeDtypeStruct(x_shape, dtype),
+            jax.ShapeDtypeStruct((2,), jnp.int32),
+        ),
         scratch_types=[
             plgpu.SMEM(logical_shape, dtype, transforms=transforms),
-            plgpu.Barrier(num_arrivals=1),
+            plgpu.Barrier(num_arrivals=2, orders_tensor_core=orders_tensor_core),
         ],
         cluster=(2,),
         cluster_names=("c",),
     )
-    def kernel(x_ref, o_ref, smem_ref, barrier):
+    def kernel(x_ref, o_ref, completed_early_ref, smem_ref, barrier):
       my_idx = jax.lax.axis_index("c")
       x = plgpu.load(x_ref.at[my_idx], layout=plgpu.Layout.WGMMA, optimized=False)
       plgpu.async_store_smem(
         x, smem_ref, barrier, cluster_idx=1 - my_idx, cluster_dim="c"
       )
+      completed_early_ref[my_idx] = plgpu.barrier_test(barrier).astype(jnp.int32)
+      plgpu.barrier_arrive(barrier)
       plgpu.barrier_wait(barrier)
       plgpu.store(
           o_ref.at[my_idx],
@@ -4505,7 +4513,13 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       )
 
     x = jnp.arange(2 * 64 * 32, dtype=dtype).reshape(x_shape)
-    np.testing.assert_array_equal(kernel(x), np.flip(x, axis=0))
+    out, completed_early = kernel(x)
+    np.testing.assert_array_equal(out, np.flip(x, axis=0))
+    # Regression test to ensure we don't arrive more than expected when
+    # orders_tensor_core=True.
+    np.testing.assert_array_equal(
+        completed_early, jnp.zeros((2,), dtype=jnp.int32)
+    )
 
   def test_cluster_ref_write_atomic(self):
     dtype = jnp.int32

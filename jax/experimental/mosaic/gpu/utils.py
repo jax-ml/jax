@@ -1289,12 +1289,6 @@ class BarrierRef:
       return "cluster"
     return "cta"
 
-  @property
-  def _nvvm_scope(self) -> nvvm.MemScopeKind:
-    if self.base_address.type == ir.Type.parse("!llvm.ptr<7>"):
-      return nvvm.MemScopeKind.CLUSTER
-    return nvvm.MemScopeKind.CTA
-
   def test_parity(
       self,
       parity,
@@ -1428,8 +1422,14 @@ class BarrierRef:
       tx_count = c(tx_count, i32)
     elif isinstance(tx_count.type, ir.IndexType):
       tx_count = arith.index_cast(i32, tx_count)
-    nvvm.mbarrier_arrive_expect_tx(
-        self.get_ptr(), tx_count, predicate=predicate, scope=self._nvvm_scope
+    ptx_scope = self._ptx_scope
+    inline_ptx(
+        f"mbarrier.arrive.expect_tx.release.{ptx_scope}.shared::{ptx_scope}.b64 _, [$0], $1;",
+        self.get_ptr(),
+        tx_count,
+        predicate=predicate,
+        has_side_effects=True,
+        convergent=True
     )
 
   def complete_tx(
