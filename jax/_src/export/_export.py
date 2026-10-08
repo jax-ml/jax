@@ -1108,18 +1108,24 @@ _GPU_FFI_KERNELS = [
     # lu on GPU
     "cu_lu_pivots_to_permutation", "cusolver_getrf_ffi",
     "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",
+    "oneapi_lu_pivots_to_permutation", "oneapisolver_getrf_ffi",
     # qr on GPU
     "cusolver_geqrf_ffi", "cusolver_orgqr_ffi",
     "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi",
+    "oneapisolver_geqrf_ffi", "oneapisolver_orgqr_ffi",
     # cholesky on GPU
     "cusolver_potrf_ffi", "hipsolver_potrf_ffi",
+    "oneapisolver_potrf_ffi",
     # eigh on GPU
     "cusolver_syevd_ffi", "hipsolver_syevd_ffi",
+    "oneapisolver_syevd_ffi",
     # svd on GPU
     "cusolver_gesvd_ffi", "cusolver_gesvdj_ffi",
     "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi", "hipsolver_gesdd_ffi",
+    "oneapisolver_gesvd_ffi",
     # tridiagonal on GPU
     "cusolver_sytrd_ffi", "hipsolver_sytrd_ffi",
+    "oneapisolver_sytrd_ffi",
     # tridiagonal_solve on GPU
     "cusparse_gtsv2_ffi",
 ]
@@ -1132,6 +1138,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "annotate_device_placement",
     "cu_threefry2x32_ffi",
     "hip_threefry2x32_ffi",
+    "oneapi_threefry2x32_ffi",
     # Triton IR does not guarantee stability.
     # "__gpu$xla.gpu.triton",
     # eigh on TPU
