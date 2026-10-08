@@ -17,9 +17,10 @@ import functools
 
 import jax
 from jax._src import callback
+from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 import jax.core as jax_core
 import jax.numpy as jnp
-
 import numpy as np
 
 TOP_LEVEL_TOKEN_VALUE = 42
@@ -33,8 +34,18 @@ def _run(jaxpr, consts, *args):
 
 def _run_jaxpr(jaxpr, consts, *args):
   traced = jax.jit(_run, static_argnums=(0,)).trace(jaxpr, consts, *args)
-  traced.lower().compile()(consts, *args)
-  return
+  compiled = traced.lower().compile()
+  runs_on_cpu = all(
+      device.platform == 'cpu'
+      for sharding in jax.tree.leaves(compiled.input_shardings)
+      for device in sharding.device_set
+  )
+  if runs_on_cpu and jaxlib_extension_version >= 505:
+    # This thread works for the host callback that started it, so its CPU
+    # dispatches must not wait for computations that wait for that callback.
+    _jax.call_in_host_callback_scope(lambda: compiled(consts, *args))
+  else:
+    compiled(consts, *args)
 
 
 def _thread_map_callback(jaxpr, token, device_id, num_threads, consts, invals,
