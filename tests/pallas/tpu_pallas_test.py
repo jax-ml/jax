@@ -2226,6 +2226,7 @@ class PallasCallDMAInterpretTest(PallasCallDMATest):
 
 class PallasCallTest(ptu.PallasTPUTest):
 
+  @jtu.thread_unsafe_test()
   def test_cond_extui(self):
     # NOTE: If the ``cond`` lowering changes, we might need to also update
     # the logic in the canonicalize-memory-space pass.
