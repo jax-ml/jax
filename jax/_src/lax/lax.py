@@ -5790,6 +5790,12 @@ def _convert_element_type_weak_type_rule(operand, *, new_dtype, weak_type,
                                          sharding):
   return weak_type
 
+def _convert_element_type_layout_rule(operand, *, new_dtype, weak_type,
+                                      sharding):
+  if operand.layout.tiling is not None:
+    raise NotImplementedError()
+  return operand.layout
+
 def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type,
                                          sharding):
   assert ad.is_undefined_primal(operand)
@@ -5865,7 +5871,8 @@ convert_element_type_p = standard_primitive(
     'convert_element_type', weak_type_rule=_convert_element_type_weak_type_rule,
     sharding_rule=_convert_element_type_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'convert_element_type'),
-    ur_rule=_convert_element_type_ur_rule)
+    ur_rule=_convert_element_type_ur_rule,
+    layout_rule=_convert_element_type_layout_rule)
 
 # TODO(dougalm): I'm overriding bind_with_trace here because that's the closest thing to
 # the old "custom bind" but it might not be the best way to do this.
@@ -5913,7 +5920,7 @@ def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
     operand = hlo.real(operand)
     aval_in = aval_in.update(dtype=_real_dtype(aval_in.dtype))
   out = mlir.convert_hlo(ctx, operand, aval_in, aval_out)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 mlir.register_lowering(convert_element_type_p, _convert_element_type_lower)
 

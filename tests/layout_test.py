@@ -1246,6 +1246,33 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     lowered_text = g.lower(arr2).as_text()
     self.assertEqual(lowered_text.count('LayoutConstraint'), 2)
 
+  def test_convert_element_type_layout(self):
+    arr = jnp.arange(64, dtype=jnp.float32).reshape(4, 16)
+    arr_t = jax.device_put(arr, Format(Layout((1, 0)), arr.sharding))
+
+    @jax.jit
+    @explicit_layout(in_layouts=Layout((1, 0)))
+    def f(x):
+      y = jax.lax.convert_element_type(x, jnp.bfloat16)
+      self.assertEqual(y.aval.layout.major_to_minor, (1, 0))
+      return y
+
+    lowered_text = f.lower(arr_t).as_text()
+    self.assertEqual(lowered_text.count('LayoutConstraint'), 2)
+
+    out = f(arr_t)
+    self.assertEqual(out.format.layout.major_to_minor, (1, 0))
+    self.assertEqual(out.dtype, jnp.bfloat16)
+    self.assertArraysAllClose(out, arr.astype(jnp.bfloat16))
+
+    @jax.jit
+    @explicit_layout(in_layouts=Layout((0, 1), tiling=((8, 128),)))
+    def g(x):
+      return jax.lax.convert_element_type(x, jnp.bfloat16)
+
+    with self.assertRaises(NotImplementedError):
+      g(arr)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
