@@ -200,6 +200,7 @@ class CustomCallBackendConfig:
   tiling: Tiling | None = None  # Only used for SparseCore.
   opt_level: OptLevel | None = None  # Only used for SparseCore.
   debug_locations: bytes | None = None
+  vmem_alignment_bytes: int | None = None
 
   def __post_init__(self):
     if self.allow_input_fusion is not None:
@@ -367,6 +368,9 @@ class CustomCallBackendConfig:
       )
       config.write(str(self.vmem_limit_bytes).encode("ascii"))
       config.write(b'}]')
+    if self.vmem_alignment_bytes is not None:
+      config.write(b', "scoped_vmem_alignment_bytes": ')
+      config.write(str(self.vmem_alignment_bytes).encode("ascii"))
     if self.flags is not None:
       config.write(b', "flag_configs": [')
       for i, (flag, value) in enumerate(self.flags.items()):
@@ -671,6 +675,7 @@ def _lower_to_custom_call_config(
     tiling: Tiling | None = None,
     opt_level: OptLevel | None = None,
     ctx: mlir.LoweringRuleContext | None = None,
+    vmem_alignment_bytes: int | None = None,
 ) -> CustomCallBackendConfig:
   device_type = _get_device_type(module)
   needs_hlo_passes = config.jax_mosaic_allow_hlo.value
@@ -722,6 +727,7 @@ def _lower_to_custom_call_config(
       opt_level=opt_level,
       ctx=ctx,
       debug_locations=debug_locations,
+      vmem_alignment_bytes=vmem_alignment_bytes,
   )
 
 
@@ -755,6 +761,7 @@ def _lowered_to_custom_call_config(
     kernel_name: str | None = None,
     ctx: mlir.LoweringRuleContext | None = None,
     debug_locations: bytes | None = None,
+    vmem_alignment_bytes: int | None = None,
 ):
   config_mode = config.jax_pallas_auto_assign_collective_ids.value
   id_limit = config.jax_pallas_auto_assign_collective_ids_limit.value
@@ -829,6 +836,15 @@ def _lowered_to_custom_call_config(
         "vmem_limit_bytes must be an int: provided with a"
         f" {type(vmem_limit_bytes)}."
     )
+  if vmem_alignment_bytes is not None and (
+      not isinstance(vmem_alignment_bytes, int)
+      or vmem_alignment_bytes <= 0
+      or vmem_alignment_bytes & (vmem_alignment_bytes - 1)
+  ):
+    raise ValueError(
+        "vmem_alignment_bytes must be a positive power of two: provided"
+        f" {vmem_alignment_bytes!r}."
+    )
   if tiling is not None and  device_type != "sparsecore":
     raise ValueError(
         "explicit tiling is only supported for SparseCore kernels."
@@ -861,6 +877,7 @@ def _lowered_to_custom_call_config(
       tiling=tiling,
       opt_level=opt_level,
       debug_locations=debug_locations,
+      vmem_alignment_bytes=vmem_alignment_bytes,
   )
 
 
@@ -891,6 +908,7 @@ def lower_module_to_custom_call(
     needs_layout_passes: bool | None = None,
     tiling: Tiling | None = None,
     opt_level: OptLevel | None = None,
+    vmem_alignment_bytes: int | None = None,
 ) -> Sequence[ir.Value]:
   if isinstance(has_side_effects, bool):
     has_side_effects = (
@@ -920,6 +938,7 @@ def lower_module_to_custom_call(
       tiling=tiling,
       opt_level=opt_level,
       ctx=ctx,
+      vmem_alignment_bytes=vmem_alignment_bytes,
   )
   return _tpu_custom_call_lowering(
       ctx,

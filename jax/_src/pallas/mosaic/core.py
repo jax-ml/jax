@@ -125,6 +125,9 @@ class CompilerParams:
       profitable and therefore should be used sparingly.
     opt_level: Optimization level. This flag is only used for ``SC_*_SUBCORE``
       kernels and it implicitly defaults to O3.
+    vmem_alignment_bytes: If set, a power of two: the kernel's scoped VMEM
+      starts at a multiple of this many bytes, so its VMEM bank phase does not
+      depend on what XLA allocated below it.
   """
 
   dimension_semantics: tuple[DimensionSemantics, ...] | None = None
@@ -144,6 +147,7 @@ class CompilerParams:
   needs_layout_passes: bool = True
   fuse_transposed_lhs_in_matmul: bool = False
   opt_level: OptLevel | None = None
+  vmem_alignment_bytes: int | None = None
 
   def __init__(
       self,
@@ -164,6 +168,7 @@ class CompilerParams:
       needs_layout_passes: bool = True,
       fuse_transposed_lhs_in_matmul: bool = False,
       opt_level: OptLevel | None = None,
+      vmem_alignment_bytes: int | None = None,
   ):
     object.__setattr__(
         self,
@@ -206,6 +211,7 @@ class CompilerParams:
         fuse_transposed_lhs_in_matmul,
     )
     object.__setattr__(self, "opt_level", opt_level)
+    object.__setattr__(self, "vmem_alignment_bytes", vmem_alignment_bytes)
 
   # Replace is a method, not a field.
   replace = dataclasses.replace

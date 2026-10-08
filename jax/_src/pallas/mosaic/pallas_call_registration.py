@@ -358,6 +358,7 @@ def _lower_to_custom_call(
       kernel_name=mlir.sanitize_name(name),
       cost_estimate=mosaic_cost_estimate,
       vmem_limit_bytes=mosaic_params.vmem_limit_bytes,
+      vmem_alignment_bytes=mosaic_params.vmem_alignment_bytes,
       flags=mosaic_params.flags,
       allow_input_fusion=mosaic_params.allow_input_fusion,
       input_output_aliases=input_output_aliases,

@@ -65,6 +65,12 @@ Remember to align the itemized text with the first line of an item within a list
 
 ### TPU
 
+* New features
+
+  * Added a `vmem_alignment_bytes` field to
+    {class}`jax.experimental.pallas.tpu.CompilerParams`. It aligns the start of
+    the kernel's scoped VMEM.
+
 * Deprecations
 
   * The `device_id_type` parameter of
