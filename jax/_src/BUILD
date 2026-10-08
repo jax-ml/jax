@@ -1239,6 +1239,7 @@ pytype_strict_library(
     srcs = ["stages.py"],
     visibility = ["//jax:internal"] + jax_visibility("stages"),
     deps = [
+        ":batching",
         ":config",
         ":core",
         ":flattree",
