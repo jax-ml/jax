@@ -49,10 +49,11 @@ from jax._src.state.discharge import run_state
 
 from jax._src.hijax import (
     HiType, register_hitype, ShapedArray, Ty, MappingSpec,
-    HiPspec, vmap_rule)
+    HiPspec)
 from jax.experimental.hijax import (
-    HiPrim, Zero, instantiate_zeros, jvp_from_lin, linearize_from_jvp,
-    vjp_from_jvp, vjp_from_lin)
+    HiPrim, Zero, instantiate_zeros, bdims_at_front,
+    jvp_from_lin, linearize_from_jvp, vjp_from_jvp, vjp_from_lin,
+    vmap_rule)
 
 jtu.request_cpu_devices(8)
 
@@ -1416,8 +1417,7 @@ class HijaxTest(jtu.JaxTestCase):
         return x * y
 
       def batch(self, axis_data, args, dims):
-        x, y = (batching.bdim_at_front(a, d, axis_data.size)
-                for a, d in zip(args, dims))
+        x, y = bdims_at_front(axis_data, args, dims)
         return mul(x, y), 0
 
     def mul(x, y):
@@ -1472,8 +1472,7 @@ class HijaxTest(jtu.JaxTestCase):
         return x + y, y
 
       def batch(self, axis_data, args, dims):
-        x, y = (batching.bdim_at_front(a, d, axis_data.size)
-                for a, d in zip(args, dims))
+        x, y = bdims_at_front(axis_data, args, dims)
         return addsnd(x, y), (0, 0)
 
     def addsnd(x, y):
@@ -1519,8 +1518,7 @@ class HijaxTest(jtu.JaxTestCase):
         return mul(x, y), mul(x_dot, y) + mul(x, y_dot)
 
       def batch(self, axis_data, args, dims):
-        x, y = (batching.bdim_at_front(a, d, axis_data.size)
-                for a, d in zip(args, dims))
+        x, y = bdims_at_front(axis_data, args, dims)
         return mul(x, y), 0
 
     def mul(x, y):
