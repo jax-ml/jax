@@ -582,6 +582,16 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "aot_test",
     srcs = ["aot_test.py"],
+    config_tags_overrides = {
+        "tpu_v4_libtpu": {"ondemand": True},
+        "tpu_v5p_libtpu": {"ondemand": True},
+        "tpu_v6e_libtpu": {"ondemand": True},
+    },
+    enable_configs = [
+        "tpu_v4_libtpu",
+        "tpu_v5p_libtpu",
+        "tpu_v6e_libtpu",
+    ],
     tags = ["multiaccelerator"],
     deps = [
         "//jax/experimental:pjit",
