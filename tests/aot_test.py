@@ -13,13 +13,17 @@
 # limitations under the License.
 
 import contextlib
+import os
 import re
+import tempfile
 import unittest
 from absl.testing import absltest
 import jax
 from jax import lax
+from jax._src import compilation_cache
 from jax._src import config
 from jax._src import core
+from jax._src import monitoring
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
@@ -123,9 +127,97 @@ class JaxAotTest(jtu.JaxTestCase):
       raise unittest.SkipTest('PJRT Topology not supported')
 
     topo = xc.get_topology_for_devices(aot_topo.devices)
+    ref_topo = xc.get_topology_for_devices(jax.devices())
     self.assertEqual(
         topo.platform_version, aot_topo.devices[0].client.platform_version
     )
+    self.assertEqual(topo.platform_version, ref_topo.platform_version)
+    self.assertEqual(
+        aot_topo.devices[0].client.platform_version,
+        jax.devices()[0].client.platform_version,
+    )
+    self.assertFalse(topo.platform_version.startswith('PJRT C API'))
+    self.assertEqual(topo.fingerprint(), ref_topo.fingerprint())
+
+  @jtu.thread_unsafe_test()
+  def test_topology_persistent_compilation_cache(self):
+    try:
+      aot_topo = topologies.get_topology_desc(
+          platform=jax.devices()[0].platform
+      )
+    except (ValueError, NotImplementedError) as e:
+      assert ('topology_name is not specified' in str(e) or
+              'topology not implemented' in str(e))
+      raise unittest.SkipTest('PJRT Topology not supported')
+
+    self.assertEqual(
+        aot_topo.devices[0].client.runtime_type, 'compile_only_runtime'
+    )
+    self.assertIsNot(aot_topo.devices[0].client, jax.devices()[0].client)
+
+    compilation_cache.reset_cache()
+    self.addCleanup(compilation_cache.reset_cache)
+    cache_dir = self.enterContext(tempfile.TemporaryDirectory())
+
+    def set_cache_dir_permissions(mode: int):
+      os.chmod(cache_dir, mode)
+      for root, dirs, files in os.walk(cache_dir):
+        for d in dirs:
+          os.chmod(os.path.join(root, d), mode)
+        for f in files:
+          os.chmod(os.path.join(root, f), mode)
+
+    def restore_writable_permissions():
+      set_cache_dir_permissions(0o755)
+
+    self.addCleanup(restore_writable_permissions)
+
+    self.enterContext(config.enable_compilation_cache(True))
+    self.enterContext(config.raise_persistent_cache_errors(True))
+    self.enterContext(config.persistent_cache_min_compile_time_secs(0))
+    self.enterContext(config.persistent_cache_min_entry_size_bytes(0))
+    self.enterContext(config.compilation_cache_check_contents(False))
+    self.enterContext(config.compilation_cache_dir(cache_dir))
+
+    events = []
+
+    def record_event(event: str):
+      events.append(event)
+
+    monitoring.register_event_listener(record_event)
+    self.addCleanup(monitoring.unregister_event_listener, record_event)
+
+    @jax.jit
+    def fn(x):
+      return x * x + 1.0
+
+    ref_topo = topologies.get_attached_topology()
+    n = max(1, len(ref_topo.devices) // 2)
+    mesh_shape = (len(ref_topo.devices) // n, n)
+
+    aot_mesh = topologies.make_mesh(aot_topo, mesh_shape, ('x', 'y'))
+    ref_mesh = topologies.make_mesh(ref_topo, mesh_shape, ('x', 'y'))
+
+    aot_sharding = jax.sharding.NamedSharding(aot_mesh, P('x', 'y'))
+    x_shape = jax.ShapeDtypeStruct(
+        shape=(16, 16), dtype=jnp.float32, sharding=aot_sharding
+    )
+    fn.lower(x_shape).compile()
+    self.assertEqual(events.count('/jax/compilation_cache/cache_misses'), 1)
+    self.assertEqual(events.count('/jax/compilation_cache/cache_hits'), 0)
+    self.assertNotEmpty(os.listdir(cache_dir))
+
+    set_cache_dir_permissions(0o555)
+    fn.clear_cache()
+
+    ref_sharding = jax.sharding.NamedSharding(ref_mesh, P('x', 'y'))
+    x_np = np.arange(256, dtype=np.float32).reshape(16, 16)
+    expected = x_np * x_np + 1.0
+    x = jax.device_put(x_np, ref_sharding)
+    result = fn(x)
+    self.assertEqual(events.count('/jax/compilation_cache/cache_hits'), 1)
+    self.assertEqual(events.count('/jax/compilation_cache/cache_misses'), 1)
+    self.assertArraysEqual(result, expected)
 
   def test_lower_as_text_with_and_without_debug_info(self):
     def my_function(x):
