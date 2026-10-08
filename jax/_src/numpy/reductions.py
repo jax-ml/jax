@@ -2711,7 +2711,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     if weights is not None:
       a, weights = lax.sort_key_val(a, weights, dimension=axis)
     else:
-      a = lax.sort(a, dimension=axis)
+      a = lax.sort(a, dimension=axis, is_stable=False)
     counts = sum(lax.bitwise_not(lax._isnan(a)), axis=axis, dtype=q.dtype, keepdims=keepdims)
     shape_after_reduction = counts.shape
     q = lax.expand_dims(
@@ -2743,7 +2743,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     if weights is not None:
       a, weights = lax.sort_key_val(a, weights, dimension=axis)
     else:
-      a = lax.sort(a, dimension=axis)
+      a = lax.sort(a, dimension=axis, is_stable=False)
     n = lax.convert_element_type(a_shape[axis], lax._dtype(q))
     q = lax.mul(q, n - 1)
     low = lax.floor(q)
