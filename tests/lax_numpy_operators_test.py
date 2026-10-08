@@ -722,6 +722,33 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.divmod, jnp.divmod, args_maker)
     self._CompileAndCheck(jnp.divmod, args_maker)
 
+  @jtu.sample_product(jit=[False, True])
+  def test_float_divmod_quotient_precision(self, jit):
+    # Regression test for https://github.com/jax-ml/jax/issues/41206
+    x = jnp.array([1226, -1226, 1226, -1226], dtype=jnp.float16)
+    y = jnp.array([1.5, 1.5, -1.5, -1.5], dtype=jnp.float16)
+
+    fn = jax.jit(jnp.divmod) if jit else jnp.divmod
+    q, r = fn(x, y)
+
+    np.testing.assert_array_equal(q, [817, -818, -818, 817])
+    np.testing.assert_array_equal(r, [0.5, 1, -1, -0.5])
+    self.assertEqual(q.dtype, jnp.float16)
+    self.assertEqual(r.dtype, jnp.float16)
+
+  @jtu.sample_product(jit=[False, True])
+  def test_bfloat16_divmod_quotient_precision(self, jit):
+    # Regression test for https://github.com/jax-ml/jax/issues/41206
+    x = jnp.array([3632, 7328, 5728], dtype=jnp.bfloat16)
+    y = jnp.array([10.875, 28, 16.75], dtype=jnp.bfloat16)
+
+    fn = jax.jit(jnp.divmod) if jit else jnp.divmod
+    q, r = fn(x, y)
+
+    expected = jnp.array([333, 261, 341], dtype=jnp.bfloat16)
+    np.testing.assert_array_equal(q, expected)
+    self.assertEqual(q.dtype, jnp.bfloat16)
+    self.assertEqual(r.dtype, jnp.bfloat16)
   @jtu.sample_product(dtype=float_dtypes)
   @jtu.ignore_warning(category=RuntimeWarning, message="divide by zero*")
   @jtu.ignore_warning(category=RuntimeWarning, message="invalid value*")

@@ -2633,6 +2633,10 @@ def divmod(x1: ArrayLike, x2: ArrayLike, /) -> tuple[Array, Array]:
 
 def _float_divmod(x1: ArrayLike, x2: ArrayLike) -> tuple[Array, Array]:
   # see float_divmod in floatobject.c of CPython
+  dtype = x1.dtype
+  if dtype in (np.float16, dtypes.bfloat16):
+    x1, x2 = x1.astype(np.float32), x2.astype(np.float32)
+
   mod = lax.rem(x1, x2)
   x1_corrected = _where(x2 == 0, x1, lax.sub(x1, mod))
   div = lax.div(x1_corrected, x2)
@@ -2641,7 +2645,7 @@ def _float_divmod(x1: ArrayLike, x2: ArrayLike) -> tuple[Array, Array]:
   mod = lax.select(ind, mod + x2, mod)
   div = lax.select(ind, div - 1.0, div)
 
-  return lax.round(div), mod
+  return lax.round(div).astype(dtype), mod.astype(dtype)
 
 
 @export
