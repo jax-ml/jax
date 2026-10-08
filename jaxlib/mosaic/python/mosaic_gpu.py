@@ -36,6 +36,23 @@ _cext.globals.append_dialect_search_prefix(__name__[:__name__.rfind(".")])
 
 
 @_cext.register_operation(_mosaic_gpu_gen_ops._Dialect, replace=True)
+class AllocaScopeOp(_mosaic_gpu_gen_ops.AllocaScopeOp):  # noqa: F405
+  """An extension to the automatically generated AllocaScopeOp bindings."""
+
+  def __init__(self, result=(), *, loc=None, ip=None):
+    super().__init__(result, loc=loc, ip=ip)
+    self.regions[0].blocks.append()  # Append the block.
+
+  @property
+  def body(self):
+    return self.regions[0].blocks[0]
+
+
+def alloca_scope(result=(), *, loc=None, ip=None) -> AllocaScopeOp:
+  return AllocaScopeOp(result, loc=loc, ip=ip)
+
+
+@_cext.register_operation(_mosaic_gpu_gen_ops._Dialect, replace=True)
 class WarpMapOp(_mosaic_gpu_gen_ops.WarpMapOp):  # noqa: F405
   """An extension to the automatically generated WarpMapOp bindings."""
 

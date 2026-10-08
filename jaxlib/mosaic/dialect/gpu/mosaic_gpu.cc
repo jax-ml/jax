@@ -1463,6 +1463,45 @@ llvm::LogicalResult GetClusterRefOp::inferReturnTypes(
   return mlir::success();
 }
 
+llvm::LogicalResult AllocSmemOp::verify() {
+  if (!(*this)->getParentOfType<AllocaScopeOp>()) {
+    return emitOpError("requires an ancestor `mosaic_gpu.alloca_scope` op");
+  }
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  if (getResult().getType().getMemorySpace() != smem) {
+    return emitOpError("The result memref must be in SMEM.");
+  }
+  return llvm::success();
+}
+
+llvm::LogicalResult AllocaScopeOp::verify() {
+  for (mlir::Value result : getResults()) {
+    if (mlir::isa<mlir::MemRefType>(result.getType())) {
+      return emitOpError("alloca_scope cannot return memrefs.");
+    }
+  }
+  return llvm::success();
+}
+
+llvm::LogicalResult AllocaScopeReturnOp::verify() {
+  mlir::TypeRange results = getParentOp()->getResultTypes();
+  if (getNumOperands() != results.size()) {
+    return emitOpError("has ")
+           << getNumOperands() << " operands, but enclosing alloca_scope (@"
+           << getParentOp()->getName() << ") returns " << results.size();
+  }
+  for (unsigned i = 0, e = results.size(); i != e; ++i) {
+    if (getOperand(i).getType() != results[i]) {
+      return emitOpError() << "type of return operand " << i << " ("
+                           << getOperand(i).getType()
+                           << ") doesn't match the result type (" << results[i]
+                           << ") in alloca_scope @" << getParentOp()->getName();
+    }
+  }
+  return llvm::success();
+}
+
 void MosaicGPUDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST
@@ -1479,3 +1518,4 @@ void MosaicGPUDialect::initialize() {
 }
 
 }  // namespace mosaic_gpu
+
