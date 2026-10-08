@@ -1680,11 +1680,12 @@ absl::Status MosaicGpuInitialize(
   return absl::OkStatus();
 }
 
-absl::Status MosaicGpuRecord(se::Stream* stream, ffi::RecordContext record_ctx,
-                             ffi::RemainingArgs inputs,
-                             ffi::RemainingRets results,
-                             CustomCallResources* resources,
-                             xla::ffi::Dictionary attributes) {
+absl::Status MosaicGpuRecord(
+    se::Stream* stream, const xla::gpu::CollectiveParams* collective_params,
+    const xla::gpu::CollectiveCliques* collective_cliques,
+    ffi::RecordContext record_ctx, ffi::RemainingArgs inputs,
+    ffi::RemainingRets results, CustomCallResources* resources,
+    xla::ffi::Dictionary attributes) {
   tsl::profiler::TraceMe trace("MosaicGpuRecord");
   CompiledKernel* kernel = resources->kernel;
   const int device_ordinal = stream->parent()->device_ordinal();
@@ -1697,11 +1698,7 @@ absl::Status MosaicGpuRecord(se::Stream* stream, ffi::RecordContext record_ctx,
         << record_ctx.action();
   };
 
-  // Fall back to stream capture for paths the record API can't express as a
-  // single graph node: namely multimem kernels, because they have barriers.
-  // Execute then runs under stream capture.
-  if (ModuleUsesCollectiveMetadata(attributes) || kernel->is_nvshmem_used ||
-      kernel->is_multimem_used) {
+  if (kernel->is_nvshmem_used) {
     XLA_VLOG_DEVICE(5, device_ordinal)
         << "MosaicGpuRecord falling back to stream capture for "
         << kernel->kernel_name;
@@ -1710,10 +1707,39 @@ absl::Status MosaicGpuRecord(se::Stream* stream, ffi::RecordContext record_ctx,
 
   ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
                    GetBuffers(inputs, results));
+  bool uses_collective_metadata = ModuleUsesCollectiveMetadata(attributes);
   std::vector<void*> buffer_ptrs;
-  buffer_ptrs.reserve(buffers.size());
+  buffer_ptrs.reserve(buffers.size() + (uses_collective_metadata ? 2 : 0));
   for (const ffi::AnyBuffer& buffer : buffers) {
     buffer_ptrs.push_back(buffer.untyped_data());
+  }
+
+  DeviceState& device_state =
+      GetDeviceState(resources, collective_params->local_device_id.value());
+  bool record_device_barrier = false;
+  xla::gpu::GpuCommunicator* comm = nullptr;
+  if (uses_collective_metadata) {
+    ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
+                     GetCliqueKey(*collective_params, attributes));
+    auto current_rank =
+        clique_key.rank(collective_params->global_device_id).value();
+
+    se::DeviceAddressBase metadata_address =
+        device_state.metadata_handle.cref();
+    XLA_VLOG_DEVICE(6, device_ordinal)
+        << "Recording collective with metadata address: "
+        << metadata_address.opaque() << " clique_key: " << clique_key;
+
+    // Appending both the device and the host-side collective metadata.
+    // The host-side metadata is needed for TMA initialization.
+    buffer_ptrs.push_back(metadata_address.opaque());
+    buffer_ptrs.push_back(device_state.metadata_bytes.data());
+
+    record_device_barrier = !ModuleSkipsDeviceBarrier(attributes);
+    if (record_device_barrier) {
+      ASSIGN_OR_RETURN(comm,
+                       collective_cliques->GetComm(clique_key, current_rank));
+    }
   }
 
   TF_RET_CHECK(kernel->host_func != nullptr)
@@ -1746,10 +1772,16 @@ absl::Status MosaicGpuRecord(se::Stream* stream, ffi::RecordContext record_ctx,
        static_cast<int32_t>(cfg.cluster.z)}};
 
   if (record_ctx.action() == ffi::RecordAction::kCreate) {
-    const DeviceState& device_state = GetDeviceState(resources, device_ordinal);
     TF_RET_CHECK(device_state.kernel_handle != nullptr)
         << "InternalError: kernel_handle is null; MosaicGpuPrepare must run "
            "before MosaicGpuRecord";
+    llvm::SmallVector<const XLA_FFI_Command*, 1> dependencies;
+    if (record_device_barrier) {
+      ASSIGN_OR_RETURN(
+          const XLA_FFI_Command* barrier_cmd,
+          comm->RecordMultiGpuBarrier(record_ctx, /*cmd=*/nullptr));
+      dependencies.push_back(barrier_cmd);
+    }
     XLA_VLOG_DEVICE(5, device_ordinal)
         << "MosaicGpuRecord creating launch for " << kernel->kernel_name
         << " uses_pdl: " << cfg.uses_pdl << " grid: " << cfg.grid.x << ", "
@@ -1761,12 +1793,22 @@ absl::Status MosaicGpuRecord(se::Stream* stream, ffi::RecordContext record_ctx,
         .CreateLaunch(kernel->kernel_name.c_str(),
                       device_state.kernel_handle->function(),
                       /*kernel_size=*/0, ffi::SourceFormat::kFunctionPtr, dims,
-                      cfg.smem_bytes, /*uses_pdl=*/cfg.uses_pdl, kernel_args)
+                      cfg.smem_bytes, /*uses_pdl=*/cfg.uses_pdl, kernel_args,
+                      dependencies)
         .status();
   }
   TF_RET_CHECK(record_ctx.action() == ffi::RecordAction::kUpdate)
       << "InternalError: unexpected record action: "
       << static_cast<int>(record_ctx.action());
+  if (record_device_barrier) {
+    TF_RET_CHECK(record_ctx.commands().size() == 2)
+        << "InternalError: expected 2 commands in record context, got "
+        << record_ctx.commands().size();
+    RETURN_IF_ERROR(
+        comm->RecordMultiGpuBarrier(record_ctx, record_ctx.commands()[0])
+            .status());
+    return record_ctx.UpdateLaunch(record_ctx.commands()[1], kernel_args);
+  }
   TF_RET_CHECK(record_ctx.commands().size() == 1)
       << "InternalError: expected 1 command in record context, got "
       << record_ctx.commands().size();
@@ -1894,6 +1936,8 @@ XLA_FFI_DEFINE_HANDLER(
     kMosaicGpuRecord, MosaicGpuRecord,
     xla::ffi::Ffi::BindRecord()
         .Ctx<ffi::Stream>()
+        .Ctx<ffi::CollectiveParams>()
+        .Ctx<ffi::CollectiveCliques>()
         .Ctx<ffi::Extension<ffi::RecordExtension>>()
         .RemainingArgs()
         .RemainingRets()
