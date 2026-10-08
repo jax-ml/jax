@@ -579,6 +579,7 @@ class custom_vjp[ReturnValue]:
     self.optimize_remat = False
     self.with_logs = False
     self.with_accums = False
+    self.generic_batching = False
     self.remat_rules: tuple[Callable, Callable, Callable, bool] | None = None
 
   __getattr__ = custom_api_util.forward_attr
@@ -588,6 +589,7 @@ class custom_vjp[ReturnValue]:
              bwd: Callable[..., tuple[Any, ...]],
              symbolic_zeros: bool = False,
              optimize_remat: bool = False,
+             generic_batching: bool = False,
              ) -> None:
     """Define a custom VJP rule for the function represented by this instance.
 
@@ -648,6 +650,17 @@ class custom_vjp[ReturnValue]:
         optimization when this function is used under :func:`jax.remat`. This
         will be most useful when the ``fwd`` rule is an opaque call such as a
         Pallas kernel or a custom call. Default ``False``.
+      generic_batching: boolean, determining how ``vmap`` handles a primal
+        output that is shared across the batch. By default, when such an
+        output has a nonzero cotangent and ``bwd`` produces a batched
+        cotangent for an unbatched primal input, that raises an error, since
+        summing over the batch would count the shared output's cotangent once
+        per example. If ``True``, ``bwd`` instead runs with the shared output's
+        whole cotangent given to the first example, which is right for a
+        correct rule but does ``bwd``'s work on that cotangent once per
+        example. Likewise, an output of ``fwd`` that is batched where the
+        primal output is not takes the first example's value. See https://docs.jax.dev/en/latest/301/custom-derivatives.html#jax-301-vmap-shared-outputs.
+        Default ``False``.
 
     Returns:
       None.
@@ -678,6 +691,7 @@ class custom_vjp[ReturnValue]:
     self.symbolic_zeros = symbolic_zeros
     self.optimize_remat = optimize_remat
     self.with_accums = False
+    self.generic_batching = generic_batching
     if self.symbolic_zeros and self.optimize_remat:
       raise NotImplementedError(
           "remat optimization for custom_vjp does not support symbolic zeros")
@@ -687,6 +701,7 @@ class custom_vjp[ReturnValue]:
                        bwd: Callable[..., tuple[tuple[Any, ...], dict | None]],
                        symbolic_zeros: bool = False,
                        optimize_remat: bool = False,
+                       generic_batching: bool = False,
                        ) -> None:
     """Like :py:func:`~jax.custom_vjp.defvjp`, but ``bwd`` can also log.
 
@@ -702,7 +717,7 @@ class custom_vjp[ReturnValue]:
     repeated keys raise a ``ValueError``, even when the logs are ignored.
     """
     self.defvjp(fwd, bwd, symbolic_zeros=symbolic_zeros,
-                optimize_remat=optimize_remat)
+                optimize_remat=optimize_remat, generic_batching=generic_batching)
     self.with_logs = True
 
   def defvjp_with_accums(self,
@@ -710,6 +725,7 @@ class custom_vjp[ReturnValue]:
                          bwd: Callable[..., Any],  # returns None or a dict of logs
                          symbolic_zeros: bool = False,
                          optimize_remat: bool = False,
+                         generic_batching: bool = False,
                          ) -> None:
     """Like :py:func:`~jax.custom_vjp.defvjp`, but ``bwd`` takes gradient
     accumulators.
@@ -727,13 +743,14 @@ class custom_vjp[ReturnValue]:
     a ``RefAccum``, and the result is added to the ``Ref`` afterward.
     """
     self.defvjp(fwd, bwd, symbolic_zeros=symbolic_zeros,
-                optimize_remat=optimize_remat)
+                optimize_remat=optimize_remat, generic_batching=generic_batching)
     self.with_accums = True
 
   def defremat(self,
                fwd: Callable[..., tuple[ReturnValue, Any]],
                rem: Callable[..., tuple[ReturnValue, Any]],
                bwd: Callable[..., tuple[Any, ...]],
+               generic_batching: bool = False,
                ) -> None:
     """Define custom rematerialization rules for this function.
 
@@ -756,16 +773,19 @@ class custom_vjp[ReturnValue]:
         primal output paired with the residuals ``res2`` for ``bwd``.
       bwd: backward-pass rule, as in :py:func:`~jax.custom_vjp.defvjp`,
         receiving ``res2`` as its residuals.
+      generic_batching: as in :py:func:`~jax.custom_vjp.defvjp`.
 
     Returns:
       None.
     """
     self.remat_rules = (fwd, rem, bwd, False)
+    self.generic_batching = generic_batching
 
   def defremat_with_logs(self,
                          fwd: Callable[..., tuple[ReturnValue, Any]],
                          rem: Callable[..., tuple[ReturnValue, Any]],
                          bwd: Callable[..., tuple[tuple[Any, ...], dict | None]],
+                         generic_batching: bool = False,
                          ) -> None:
     """Like :py:func:`~jax.custom_vjp.defremat`, but ``bwd`` can also log.
 
@@ -773,11 +793,12 @@ class custom_vjp[ReturnValue]:
     pair ``(in_cts, logs)``.
     """
     self.remat_rules = (fwd, rem, bwd, True)
+    self.generic_batching = generic_batching
 
   @partial(traceback_util.api_boundary,
            repro_api_name="jax.custom_vjp.__call__")
   def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
-    if config.custom_vjp3.value:
+    if config.custom_vjp3.value or self.generic_batching:
       from jax._src.hijax import custom_vjp3  # pyrefly: ignore[missing-import]
       f = custom_vjp3(self.fun, self.nondiff_argnums)
       if self.fwd is not None:
@@ -786,6 +807,7 @@ class custom_vjp[ReturnValue]:
             self.fwd, self.bwd, symbolic_zeros=self.symbolic_zeros,
             optimize_remat=self.optimize_remat)
       f.remat_rules = self.remat_rules
+      f.generic_batching = self.generic_batching
       return f(*args, **kwargs)
     if self.remat_rules is not None and not (self.fwd and self.bwd):
       raise NotImplementedError(
@@ -846,11 +868,12 @@ class custom_vjp[ReturnValue]:
       if self.nondiff_argnums:
         bwd_ = partial(self.bwd, *[args[i] for i in self.nondiff_argnums])
       flat_bwd = lu.wrap_init(
-          _FlatBwdWithAccums(bwd_, in_tree, in_avals, out_trees),
+          _FlatBwdWithAccums(bwd_, in_tree, in_avals, out_trees,
+                             self.symbolic_zeros),
           debug_info=debug_bwd)
     else:
       flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees, self.fun,
-                              self.with_logs)
+                              self.symbolic_zeros, self.with_logs)
     out_flat = custom_vjp_call_p.bind(*args_flat, subfuns=(flat_fun, flat_fwd, flat_bwd),
                                       out_trees=out_trees,
                                       symbolic_zeros=self.symbolic_zeros)
@@ -1007,14 +1030,18 @@ def _filter_forwarded_inputs(outs, ins):
   return [o for o in outs if id(o) not in idxs], [idxs.get(id(o)) for o in outs]
 
 class _FlatBwdWithAccums(ad.CustomBwdWithAccums):
-  def __init__(self, bwd, in_tree, in_avals, out_trees):
+  def __init__(self, bwd, in_tree, in_avals, out_trees, symbolic_zeros):
     self.bwd = bwd
     self.in_tree = in_tree
     self.ct_avals = [a.to_ct_aval() for a in in_avals]
     self.out_trees = out_trees
+    self.symbolic_zeros = symbolic_zeros
 
   def call_with_accums(self, res, cts_out, accums):
     out_tree, res_tree, _ = self.out_trees()
+    if not self.symbolic_zeros:
+      cts_out = [zeros_like_aval(x.aval) if type(x) is SymbolicZero else x
+                 for x in cts_out]
     accums = [acc if isinstance(acc, ad.GradAccum) else ad.NullAccum(a)
               for a, acc in zip(self.ct_avals, accums)]
     logs = self.bwd(tree_unflatten(res_tree, res),
@@ -1042,10 +1069,13 @@ def _flatten_bwd(f: Callable,
                  in_tree: PyTreeDef,
                  in_avals: Sequence[core.AbstractValue],  # primal avals
                  out_trees: Callable[[], tuple[PyTreeDef, PyTreeDef, list[int | None]]],
-                 primal_fun, with_logs: bool, *args):
+                 primal_fun, symbolic_zeros: bool, with_logs: bool, *args):
   out_tree, res_tree, _ = out_trees()
   assert len(args) == res_tree.num_leaves + out_tree.num_leaves
   res, cts_out = split_list(args, [res_tree.num_leaves])
+  if not symbolic_zeros:
+    cts_out = [zeros_like_aval(x.aval) if type(x) is SymbolicZero else x
+               for x in cts_out]
   py_res = tree_unflatten(res_tree, res)
   py_cts_out = tree_unflatten(out_tree, cts_out)
   py_cts_in = f(py_res, py_cts_out)
@@ -1208,7 +1238,6 @@ def _custom_vjp_call_dce(
   fwd_jaxpr_thunk = eqn.params["fwd_jaxpr_thunk"]
   bwd: lu.WrappedFun = eqn.params["bwd"]
   out_trees: Callable[[], tuple[PyTreeDef, PyTreeDef, list[int | None]]] = eqn.params["out_trees"]
-  symbolic_zeros: bool = eqn.params["symbolic_zeros"]
   dce_call_jaxpr: core.Jaxpr
   used_ins: Sequence[bool]
   dce_call_jaxpr, used_ins = _cached_closed_call_dce_instantiate(
@@ -1235,11 +1264,7 @@ def _custom_vjp_call_dce(
       if used:
         all_cts.append(next(cts_))
       else:
-        ct_aval = aval.to_ct_aval()
-        if symbolic_zeros:
-          all_cts.append(SymbolicZero(ct_aval))
-        else:
-          all_cts.append(zeros_like_aval(ct_aval))
+        all_cts.append(SymbolicZero(aval.to_ct_aval()))
     assert next(cts_, None) is None
     return bwd.call_wrapped(*res, *all_cts)
 
