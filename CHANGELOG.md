@@ -39,6 +39,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.numpy.atleast_1d`, {func}`jax.numpy.atleast_2d`, and
     {func}`jax.numpy.atleast_3d` now return tuples of arrays rather than
     lists, matching the behavior in NumPy 2.0+.
+  * The `shape` argument of {func}`jax.random.multinomial` is now the batch
+    shape, as documented and as in NumPy: the result has shape
+    `(*shape, p.shape[-1])`. Previously `shape` had to include the outcome
+    axis. Code that passed the full output shape should drop its last entry.
 
 * Deprecations
   * {func}`jax.lax.psend` and {func}`jax.lax.precv` are deprecated.
