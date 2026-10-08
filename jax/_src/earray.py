@@ -66,6 +66,7 @@ class EArray(basearray.Array):
   ndim = property(lambda self: len(self.aval.shape))
   size = property(lambda self: math.prod(self.aval.shape))
   itemsize = property(lambda self: self.aval.dtype.itemsize)
+  nbytes = property(lambda self: self.itemsize * self.size)
   def __len__(self):
     if self.ndim == 0: raise TypeError('len() of unsized object')
     return self.shape[0]
