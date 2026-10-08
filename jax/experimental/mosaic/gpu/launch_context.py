@@ -842,6 +842,7 @@ class LaunchContext:
       reduction_op: TMAReductionOp | None,
       *,
       window_start_bounds: tuple[tuple[int, int], ...] | None = None,
+      window_strides: tuple[int, ...] | None = None,
   ):
     gmem_ref = _find_kernel_argument_for_gmem_ref(gmem_ref)
     tma_dtype = _tma_dma_type(ir.MemRefType(gmem_ref.type).element_type, reduction_op)
@@ -852,6 +853,7 @@ class LaunchContext:
         gmem_ref,
         transformed_slice_shape,
         window_start_bounds,
+        window_strides,
         swizzle,
         gmem_transform,
         gmem_peer_id,
@@ -932,6 +934,7 @@ class LaunchContext:
             c(swizzle_arg, i64),
         ]
         if window_start_bounds is not None:
+          assert window_strides is not None
           num_rows, num_channels = transformed_slice_shape
           lower, upper = zip(*window_start_bounds)
           func.call(
@@ -943,6 +946,7 @@ class LaunchContext:
                   utils.pack_array([c(v, i32) for v in upper]),
                   c(num_channels, i64),
                   c(num_rows, i64),
+                  utils.pack_array([c(v, i32) for v in window_strides]),
               ],
           )
         else:
@@ -1992,6 +1996,7 @@ class LaunchContext:
       window_start_bounds: Sequence[tuple[int, int]],
       start_indices: Sequence[int | ir.Value],
       filter_offsets: Sequence[int | ir.Value],
+      window_strides: Sequence[int] | None = None,
       swizzle: int | None = None,
       arrive: bool = True,
       # Should select 0 or 1 threads from the WG.
@@ -2007,8 +2012,9 @@ class LaunchContext:
     - ``dst_ref`` has shape ``(*rows, cols)``. Its leading dimensions are
       flattened into ``math.prod(rows)`` windows of ``cols`` channels each.
     - ``window_start_bounds`` gives, for each spatial dimension of size ``S``,
-      a ``(lo, hi)`` pair: windows start at positions ``lo`` through
-      ``S + hi - 1``, with the image implicitly zero-padded outside ``[0, S)``.
+      a ``(lo, hi)`` pair: windows start at positions ``lo``, ``lo + s``,
+      ``lo + 2 * s``, ... below ``S + hi``, where ``s`` is the corresponding
+      window stride, with the image implicitly zero-padded outside ``[0, S)``.
       For example, a 3x3 ``SAME`` convolution uses ``(-1, -1)`` in every
       spatial dimension.
     - ``start_indices`` is ``(n, *start, c)``: the batch index and start
@@ -2021,6 +2027,9 @@ class LaunchContext:
       ``[0, 2**(16 // (rank - 2)) - 1]``, i.e. ``[0, 65535]`` for rank 3,
       ``[0, 255]`` for rank 4 and ``[0, 31]`` for rank 5. Only static offsets
       are checked; out-of-range dynamic offsets give unspecified results.
+    - ``window_strides`` gives, for each spatial dimension, the step between
+      consecutive window start positions. Each stride must be in ``[1, 8]``;
+      defaults to 1 in every spatial dimension.
 
     ``barrier``, ``swizzle``, ``arrive`` and ``predicate`` work as in
     ``async_copy``.
@@ -2095,6 +2104,20 @@ class LaunchContext:
             f"window_start_bounds along spatial dim {i} give an empty range"
             f" [{lower}, {gmem_ref_ty.shape[i + 1] + upper}) of window start"
             " positions"
+        )
+
+    if window_strides is None:
+      window_strides = (1,) * num_spatial
+    window_strides = tuple(window_strides)
+    if len(window_strides) != num_spatial:
+      raise ValueError(
+          f"Expected {num_spatial} window_strides, got {len(window_strides)}"
+      )
+    for i, stride in enumerate(window_strides):
+      if not (1 <= stride <= 8):
+        raise ValueError(
+            f"window_strides along spatial dim {i} must be in [1, 8], but got"
+            f" {stride}"
         )
 
     if smem_ref_ty.rank < 2:
@@ -2172,6 +2195,7 @@ class LaunchContext:
         swizzle,
         reduction_op=None,
         window_start_bounds=window_start_bounds,
+        window_strides=window_strides,
     )
 
     barrier_ptr = barrier.get_ptr()

@@ -229,7 +229,8 @@ void mosaic_gpu_init_tma_im2col_desc(
     CUtensorMap* tma_desc, void* base_addr, int64_t elem_type, int64_t rank,
     int64_t* sizes, int64_t* strides, int64_t swizzle_bytes,
     int32_t* pixel_box_lower_corner, int32_t* pixel_box_upper_corner,
-    int64_t channels_per_pixel, int64_t pixels_per_column) {
+    int64_t channels_per_pixel, int64_t pixels_per_column,
+    int32_t* window_strides) {
   if (rank < 3 || rank > 5) {
     fprintf(stderr, "Rank must be in [3, 5], but got %ld\n", rank);
     abort();
@@ -260,13 +261,22 @@ void mosaic_gpu_init_tma_im2col_desc(
               i, sizes[i + 1], upper, lower);
       abort();
     }
+    if (window_strides[i] < 1 || window_strides[i] > 8) {
+      fprintf(stderr,
+              "Window stride at spatial dim %d must be in [1, 8], but got %d\n",
+              i, window_strides[i]);
+      abort();
+    }
   }
 
   int tma_lower_corner[3] = {0, 0, 0};
   int tma_upper_corner[3] = {0, 0, 0};
+  cuuint32_t element_strides[5] = {1, 1, 1, 1, 1};
   for (int i = 0; i < spatial_rank; ++i) {
     tma_lower_corner[i] = pixel_box_lower_corner[spatial_rank - i - 1];
     tma_upper_corner[i] = pixel_box_upper_corner[spatial_rank - i - 1];
+    element_strides[i + 1] =
+        static_cast<cuuint32_t>(window_strides[spatial_rank - i - 1]);
   }
 
   if (channels_per_pixel < 1 || channels_per_pixel > 256) {
@@ -287,7 +297,6 @@ void mosaic_gpu_init_tma_im2col_desc(
     abort();
   }
 
-  cuuint32_t element_strides[5] = {1, 1, 1, 1, 1};
   abort_on_error(
       cuTensorMapEncodeIm2col(
           tma_desc, params.data_type, rank, base_addr, params.sizes,

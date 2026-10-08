@@ -4277,12 +4277,13 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
   @parameterized.product(
       rank=(3, 4, 5),
       offset=(0, 1),
+      strided=(False, True),
       swizzle=(None, 32, 64, 128),
       dynamic=(False, True),
   )
   # TODO(slebedev): Remove once the minimum jaxlib version is 0.12.0.
   @absltest.skipIf(jaxlib_version < (0, 12, 0), "Requires jaxlib >=0.12.0")
-  def test_tma_load_im2col(self, rank, offset, swizzle, dynamic):
+  def test_tma_load_im2col(self, rank, offset, strided, swizzle, dynamic):
     dtype = jnp.int16
     tiled = swizzle is not None
     num_channels = 16 if swizzle is None else 8 * swizzle // 16
@@ -4292,19 +4293,26 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     grid_shape = (2, *spatial_sizes)
     src_shape = (*grid_shape, 2 * num_channels)
     first_channel = num_channels
-    # Bounds and offsets differ per dimension to pin each one to its dimension.
-    # Negative upper bounds are the common case, e.g. (-1, -1) for a 3x3 SAME
-    # convolution, so alternate their sign.
+    # Bounds, offsets, and strides differ per dimension to pin each one to its
+    # dimension. Negative upper bounds are the common case, e.g. (-1, -1) for a
+    # 3x3 SAME convolution, so alternate their sign.
     window_start_bounds = tuple(
         (-(d + 1), (-1) ** (d + 1) * (d + 1)) for d in range(num_spatial)
     )
     filter_offsets = tuple(offset * (d + 1) for d in range(num_spatial))
+    if strided:
+      window_strides = effective_strides = tuple(range(2, num_spatial + 2))
+    else:
+      window_strides = None
+      effective_strides = (1,) * num_spatial
     windows = list(
         itertools.product(
             range(grid_shape[0]),
             *(
-                range(lo, size + hi)
-                for (lo, hi), size in zip(window_start_bounds, spatial_sizes)
+                range(lo, size + hi, s)
+                for (lo, hi), size, s in zip(
+                    window_start_bounds, spatial_sizes, effective_strides
+                )
             ),
         )
     )
@@ -4336,6 +4344,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
           window_start_bounds=window_start_bounds,
           start_indices=indices,
           filter_offsets=offsets,
+          window_strides=window_strides,
       )
       barrier.wait_parity(c(0, i1))
       copy(tmp, dst, swizzle=swizzle)
@@ -4367,14 +4376,14 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     num_rows = h * w
     valid, same = ((0, 0), (0, 0)), ((-1, -1), (-1, -1))
     copies = (
-        (valid, (0, 0, 0, 0), (0, 0)),
-        (valid, (0, 0, 0, 0), (1, 1)),
-        (same, (0, -1, -1, 0), (1, 1)),
+        (valid, (0, 0, 0, 0), (0, 0), None),
+        (valid, (0, 0, 0, 0), (1, 1), (1, 1)),
+        (same, (0, -1, -1, 0), (1, 1), None),
     )
 
     def kernel(ctx: launch_context.LaunchContext, src, dst, smem):
       tmp, barriers = smem
-      for i, (bounds, indices, offsets) in enumerate(copies):
+      for i, (bounds, indices, offsets, strides) in enumerate(copies):
         ctx.async_copy_im2col(
             src_ref=src,
             dst_ref=memref_slice(tmp, i),
@@ -4382,6 +4391,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
             window_start_bounds=bounds,
             start_indices=indices,
             filter_offsets=offsets,
+            window_strides=strides,
         )
       for i in range(len(copies)):
         barriers[i].wait()
