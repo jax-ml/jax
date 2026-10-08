@@ -44,6 +44,7 @@ float_types = jtu.dtypes.floating
 complex_types = jtu.dtypes.complex
 int_types = jtu.dtypes.all_integer
 
+
 def _is_required_cuda_version_satisfied(cuda_version):
   version = xla_bridge.get_backend().platform_version
   if version == "<unknown>" or "rocm" in version.split():
@@ -2713,6 +2714,95 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     jnp_fun = partial(jsp.linalg.solve_sylvester, method=method)
     self._CheckAgainstNumpy(osp.linalg.solve_sylvester, jnp_fun, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    dtype=[np.float32, np.float64, np.complex64, np.complex128],
+    jacobian=['jacfwd', 'jacrev'],
+  )
+  def testEighGradLargeEigenvalues(self, dtype, jacobian):
+    # Regression test for https://github.com/jax-ml/jax/issues/40141.
+    # The eigh JVP builds the reciprocal eigenvalue-gap matrix. The identity
+    # guard that keeps its diagonal finite is only exact if the eigenvalue
+    # difference is computed first: once |w| >= 2^p (p = mantissa bits),
+    # `1 + w` rounds back to `w` in IEEE-754, so `eye + w_j - w_i` leaves
+    # zero (not one) on the diagonal and its reciprocal blows up to inf,
+    # NaNs the whole JVP.
+    real_dtype = jnp.finfo(dtype).dtype
+    if real_dtype == np.float64 and not config.enable_x64.value:
+      self.skipTest("Requires JAX_ENABLE_X64")
+    base = 2 ** (np.finfo(real_dtype).nmant + 1)
+    # base, base+2 and base+4 are exactly representable at the 2^p cliff.
+    a = jnp.diag(jnp.array([base, base + 2, base + 4], dtype=dtype))
+
+    def eigenvectors(x):
+      return jsp.linalg.eigh(x)[1]
+
+    _, tangent_out = jvp(eigenvectors, (a,), (a,))
+    self.assertTrue(np.isfinite(np.asarray(tangent_out)).all())
+    jac = getattr(jax, jacobian)(
+        eigenvectors, holomorphic=np.dtype(dtype).kind == "c")(a)
+    self.assertTrue(np.isfinite(np.asarray(jac)).all())
+
+  @jtu.sample_product(
+    dtype=[np.float32, np.float64, np.complex64, np.complex128],
+  )
+  def testEighGradIllConditioned(self, dtype):
+    # A very wide eigenvalue spread makes the eigenvector gradient entries
+    # span many orders of magnitude. Verify they stay finite and match the
+    # analytic perturbation-theory derivative.
+    real_dtype = jnp.finfo(dtype).dtype
+    if real_dtype == np.float64 and not config.enable_x64.value:
+      self.skipTest("Requires JAX_ENABLE_X64")
+    n = 3
+    if real_dtype == np.float32:
+      w = np.array([1.0, 1e5, 1e10], dtype=np.float64)
+    else:
+      w = np.array([1.0, 1e8, 1e16], dtype=np.float64)
+    u = jtu.eigh_givens(n, 0, 1, 0.3) @ jtu.eigh_givens(n, 1, 2, 0.5)
+    tangent = np.zeros((n, n))
+    tangent[0, 1] = tangent[1, 0] = 0.5
+    tangent[1, 2] = tangent[2, 1] = 0.3
+    tangent[0, 2] = tangent[2, 0] = 0.1
+    a = jnp.asarray(u @ np.diag(w) @ u.T, dtype=dtype)
+    d_a = jnp.asarray(u @ tangent @ u.T, dtype=dtype)
+
+    def eigenvectors(x):
+      return jsp.linalg.eigh(x)[1]
+
+    _, tangent_out = jvp(eigenvectors, (a,), (d_a,))
+    self.assertTrue(np.isfinite(np.asarray(tangent_out)).all())
+    ref = jtu.eigh_jvp_reference(u, w, tangent)
+    self.assertAllClose(np.abs(np.asarray(tangent_out)),
+                        np.abs(ref).astype(real_dtype),
+                        atol={np.float32: 1e-5, np.float64: 1e-11})
+
+  @jtu.sample_product(
+    dtype=[np.float32, np.float64, np.complex64, np.complex128],
+  )
+  def testEighGradDegenerate(self, dtype):
+    # For exactly repeated eigenvalues the eigenvector derivative is singular,
+    # but the rule must still emit finite (arbitrary but bounded) tangents
+    # instead of inf/NaN from a literal 1/0 reciprocal. Use large eigenvalues
+    # so the mantissa-cliff guard is exercised at the same time.
+    real_dtype = jnp.finfo(dtype).dtype
+    if real_dtype == np.float64 and not config.enable_x64.value:
+      self.skipTest("Requires JAX_ENABLE_X64")
+    n = 3
+    base = 2 ** (np.finfo(real_dtype).nmant + 1)
+    u = jtu.eigh_givens(n, 0, 1, 0.3) @ jtu.eigh_givens(n, 1, 2, 0.5)
+    w = np.array([base, base, 2 * base], dtype=np.float64)
+    tangent = np.zeros((n, n))
+    tangent[0, 1] = tangent[1, 0] = 0.5
+    tangent[1, 2] = tangent[2, 1] = 0.3
+    tangent[0, 2] = tangent[2, 0] = 0.1
+    a = jnp.asarray(u @ np.diag(w) @ u.T, dtype=dtype)
+    d_a = jnp.asarray(u @ tangent @ u.T, dtype=dtype)
+
+    def eigenvectors(x):
+      return jsp.linalg.eigh(x)[1]
+
+    _, tangent_out = jvp(eigenvectors, (a,), (d_a,))
+    self.assertTrue(np.isfinite(np.asarray(tangent_out)).all())
 
 
 class LaxLinalgTest(jtu.JaxTestCase):

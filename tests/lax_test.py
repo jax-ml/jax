@@ -4073,6 +4073,64 @@ class LaxTest(jtu.JaxTestCase):
     y = lax_internal.stage(x)
     self.assertTrue(dtypes.is_weakly_typed(y))
 
+  @jtu.sample_product(
+    dtype=[np.float32, np.float64, np.complex64, np.complex128],
+    jacobian=['jacfwd', 'jacrev'],
+  )
+  def testEighJvpFiniteLargeEigenvalues(self, dtype, jacobian):
+    # Regression test for https://github.com/jax-ml/jax/issues/40141.
+    # The eigh JVP inverts the eigenvalue-gap matrix; its diagonal guard is
+    # only exact if the difference is computed before the guard: once
+    # |w| >= 2^p (p = mantissa bits), `1 + w` rounds back to `w`, so the
+    # guarded diagonal collapses to zero and the reciprocal is infinite,
+    # NaNs the whole JVP.
+    real_dtype = jnp.finfo(dtype).dtype
+    if real_dtype == np.float64 and not config.enable_x64.value:
+      self.skipTest("Requires JAX_ENABLE_X64")
+    base = 2 ** (np.finfo(real_dtype).nmant + 1)
+    # base, base+2 and base+4 are exactly representable at the 2^p cliff.
+    a = jnp.diag(jnp.array([base, base + 2, base + 4], dtype=dtype))
+
+    def eigenvectors(x):
+      return lax.linalg.eigh(x)[0]
+
+    _, tangent_out = jvp(eigenvectors, (a,), (a,))
+    self.assertTrue(np.isfinite(np.asarray(tangent_out)).all())
+    jac = getattr(jax, jacobian)(
+        eigenvectors, holomorphic=np.dtype(dtype).kind == "c")(a)
+    self.assertTrue(np.isfinite(np.asarray(jac)).all())
+
+  @jtu.sample_product(
+    dtype=[np.float32, np.float64, np.complex64, np.complex128],
+  )
+  def testEighJvpLargeEigenvaluesAccuracy(self, dtype):
+    # With well-separated eigenvalues at the 2^p cliff the eigenvectors are
+    # numerically stable, so the JVP must match the closed-form
+    # perturbation-theory derivative.
+    real_dtype = jnp.finfo(dtype).dtype
+    if real_dtype == np.float64 and not config.enable_x64.value:
+      self.skipTest("Requires JAX_ENABLE_X64")
+    n = 3
+    base = 2 ** (np.finfo(real_dtype).nmant + 1)
+    gap = 2 ** (np.finfo(real_dtype).nmant - 3)
+    w = np.array([base, base + gap, base + 2 * gap], dtype=np.float64)
+    u = jtu.eigh_givens(n, 0, 1, 0.3) @ jtu.eigh_givens(n, 1, 2, 0.5)
+    tangent = np.zeros((n, n))
+    tangent[0, 1] = tangent[1, 0] = 0.5
+    tangent[1, 2] = tangent[2, 1] = 0.3
+    tangent[0, 2] = tangent[2, 0] = 0.1
+    a = jnp.asarray(u @ np.diag(w) @ u.T, dtype=dtype)
+    d_a = jnp.asarray(u @ tangent @ u.T, dtype=dtype)
+
+    def eigenvectors(x):
+      return lax.linalg.eigh(x)[0]
+
+    _, tangent_out = jvp(eigenvectors, (a,), (d_a,))
+    self.assertTrue(np.isfinite(np.asarray(tangent_out)).all())
+    ref = jtu.eigh_jvp_reference(u, w, tangent)
+    self.assertAllClose(np.abs(np.asarray(tangent_out)),
+                        np.abs(ref).astype(real_dtype),
+                        atol={np.float32: 1e-6, np.float64: 1e-12})
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):

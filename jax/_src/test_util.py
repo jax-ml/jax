@@ -1055,6 +1055,31 @@ def assert_dot_preferred_element_type(expected, fun, *args, **kwargs):
     msg = f"Unexpected preferred_element_type: {expected} != {pref_eltype}"
     assert expected == pref_eltype, msg
 
+def eigh_givens(n: int, p: int, q: int, theta: float) -> np.ndarray:
+  """Orthogonal matrix rotating the (p, q) plane by ``theta``."""
+  g = np.eye(n)
+  c, s = np.cos(theta), np.sin(theta)
+  g[p, p], g[p, q], g[q, p], g[q, q] = c, s, -s, c
+  return g
+
+def eigh_jvp_reference(u: np.ndarray, w: np.ndarray,
+                       tangent: np.ndarray) -> np.ndarray:
+  """Analytic eigenvector JVP reference for ``A = U diag(w) U^T``.
+
+  For distinct eigenvalues the eigenvector derivative of ``A = U diag(w) U^T``
+  is ``dV = U (F . T)`` where ``F[i, j] = 1 / (w[j] - w[i])`` for ``i != j``
+  and ``0`` on the diagonal, and ``T = U^T dA U`` is the tangent expressed in
+  the eigenbasis. The result is exact up to the (unobservable) column sign or
+  phase convention of the eigenvectors, so callers compare absolute values.
+  """
+  n = u.shape[0]
+  f = np.zeros((n, n))
+  for i in range(n):
+    for j in range(n):
+      if i != j:
+        f[i, j] = 1.0 / (w[j] - w[i])
+  return u @ (f * tangent)
+
 def cases_from_gens(*gens):
   sizes = [1, 3, 10]
   cases_per_size = int(NUM_GENERATED_CASES.value / len(sizes)) + 1
