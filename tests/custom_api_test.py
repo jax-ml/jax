@@ -3877,6 +3877,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     e2.defvjp_with_logs(lambda x: (e2(x), None), lambda _, ct: ((ct,), [1.0]))
     with self.assertRaisesRegex(TypeError, "None or a dict"):
       jax.grad(e2)(1.0)
+
   def test_linear_transpose_of_jvp_and_linearize_of_vmap(self):
     @jax.custom_vjp
     def f(x):
@@ -3889,6 +3890,63 @@ class CustomVJPTest(jtu.JaxTestCase):
     for g in [f_jvp, f_lin]:
       ct, = jax.linear_transpose(g, xs)(jnp.ones(3))
       self.assertAllClose(ct, jnp.cos(xs))
+
+  def _shared_output_fun(self, fwd_out0=lambda x, y: y, generic_batching=False):
+    @jax.custom_vjp
+    def f(x, y):
+      return y, x * y
+    f.defvjp(lambda x, y: ((fwd_out0(x, y), x * y), (x, y)),
+             lambda res, cts: (cts[1] * res[1], cts[0] + cts[1] * res[0]),
+             generic_batching=generic_batching)
+    return f
+
+  def test_vmap_shared_output_error(self):
+    f = self._shared_output_fun()
+    xs = jnp.arange(3.)
+    loss = lambda y: sum(o.sum() for o in jax.vmap(f, (0, None))(xs, y))
+    with self.assertRaisesRegex(ValueError, "shared across the batch"):
+      jax.grad(loss)(2.)
+    with self.assertRaisesRegex(ValueError, "shared across the batch"):
+      jax.jit(jax.grad(loss))(2.)
+    g = jax.grad(lambda y: jax.vmap(f, (0, None))(xs, y)[1].sum())
+    self.assertAllClose(g(2.), 3.)
+    self.assertAllClose(jax.jit(g)(2.), 3.)
+
+  def test_vmap_shared_output_generic_batching(self):
+    f = self._shared_output_fun(generic_batching=True)
+    xs = jnp.arange(3.)
+    loss = lambda y: sum(o.sum() for o in jax.vmap(f, (0, None))(xs, y))
+    self.assertAllClose(jax.grad(loss)(2.), 6.)
+    self.assertAllClose(jax.jit(jax.grad(loss))(2.), 6.)
+
+  def test_vmap_overbatched_fwd_generic_batching(self):
+    f = self._shared_output_fun(lambda x, y: y * (1. + 0. * x),
+                                generic_batching=True)
+    xs = jnp.arange(3.)
+    loss = lambda y: sum(o.sum() for o in jax.vmap(f, (0, None))(xs, y))
+    self.assertAllClose(jax.grad(loss)(2.), 6.)
+
+  def test_vmap_shared_output_with_accums(self):
+    def shared_output_fun(generic_batching):
+      @jax.custom_vjp
+      def f(x, y):
+        return y, x * y
+      def f_bwd(res, cts, x_acc, y_acc):
+        x_acc.accum(cts[1] * res[1])
+        y_acc.accum(cts[0] + cts[1] * res[0])
+      f.defvjp_with_accums(lambda x, y: ((y, x * y), (x, y)), f_bwd,
+                           generic_batching=generic_batching)
+      return f
+
+    xs = jnp.arange(3.)
+    f = shared_output_fun(generic_batching=False)
+    loss = lambda y: sum(o.sum() for o in jax.vmap(f, (0, None))(xs, y))
+    with self.assertRaisesRegex(ValueError, "shared across the batch"):
+      jax.grad(loss)(2.)
+    f = shared_output_fun(generic_batching=True)
+    loss = lambda y: sum(o.sum() for o in jax.vmap(f, (0, None))(xs, y))
+    self.assertAllClose(jax.grad(loss)(2.), 6.)
+    self.assertAllClose(jax.jit(jax.grad(loss))(2.), 6.)
 
 
 @jtu.with_config(jax_custom_vjp3=True)
