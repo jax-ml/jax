@@ -215,6 +215,10 @@ from jax._src.lax.lax import (
   transpose_p as transpose_p,
   xor_p as xor_p,
 )
+# Imported separately: adding a name to the sorted list above makes the
+# formatter re-sort and rewrite the whole block.
+from jax._src.lax.lax import BlockScaling as BlockScaling
+from jax._src.lax.lax import StructuredSparsity as StructuredSparsity
 from jax._src.lax.other import (
   conv_general_dilated_patches as conv_general_dilated_patches,
 )
