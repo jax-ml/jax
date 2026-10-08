@@ -2548,6 +2548,54 @@ class PallasCallTest(ptu.PallasTPUTest):
         compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(2**18)),
     )(x)
 
+  def test_scoped_vmem_alignment(self):
+    if not jtu.is_libtpu_at_least('0.0.52'):
+      self.skipTest('Requires libtpu >= 0.0.52')
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+
+    x = jnp.zeros((8, 128), dtype=jnp.float32)
+
+    def call(vmem_limit_bytes=None):
+      return jax.jit(
+          self.pallas_call(
+              kernel,
+              out_shape=x,
+              compiler_params=pltpu.CompilerParams(
+                  vmem_limit_bytes=vmem_limit_bytes
+              ),
+          )
+      )
+
+    def backend_config(f):
+      configs = []
+
+      def find_backend_config(op: ir.Operation) -> ir.WalkResult:
+        if (
+            'call_target_name' in op.attributes
+            and ir.StringAttr(op.attributes['call_target_name']).value
+            == 'tpu_custom_call'
+        ):
+          configs.append(
+              json.loads(ir.StringAttr(op.attributes['backend_config']).value)
+          )
+        return ir.WalkResult.ADVANCE
+
+      f.lower(x).compiler_ir().operation.walk(find_backend_config)
+      self.assertLen(configs, 1)
+      return configs[0]
+
+    self.assertEqual(
+        backend_config(call())['scoped_vmem_alignment_bytes'], 2**14
+    )
+    # The reservation keeps the whole limit after the alignment padding.
+    config = backend_config(call(vmem_limit_bytes=2**18))
+    self.assertEqual(config['scoped_memory_configs'][0]['size'], 2**18 + 2**14)
+    # Exported modules may run on older runtimes, which reject the field.
+    exported = jax.export.export(call())(x)
+    self.assertNotIn('scoped_vmem_alignment_bytes', exported.mlir_module())
+
   @parameterized.named_parameters(
       ('bf16_2x1_1x1', jnp.bfloat16, (2, 1), (1, 1)),
       ('bf16_4x2_1x1', jnp.bfloat16, (4, 2), (1, 1)),
