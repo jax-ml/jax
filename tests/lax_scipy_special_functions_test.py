@@ -274,6 +274,15 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         osp_special.expn(n, x.astype(np.float64)).astype(dtype),
         rtol=rtol, atol=atol)
 
+  @jtu.sample_product(dtype=float_dtypes, n=[0, 1, 2, 3, 4, 5, 10])
+  def testExpnAtZeroBoundary(self, dtype, n):
+    # Regression test for https://github.com/jax-ml/jax/issues/41205
+    x = np.array(0.0, dtype=dtype)
+    rtol = {np.float32: 1e-6, np.float64: 1e-14}[dtype]
+    atol = {np.float32: 1e-6, np.float64: 1e-14}[dtype]
+    expected = osp_special.expn(n, x.astype(np.float64)).astype(dtype)
+    self.assertAllClose(lsp_special.expn(n, x), expected, rtol=rtol, atol=atol)
+
   def testWofzAccuracy(self):
     # Verify wofz agrees with scipy over the full complex plane (float32).
     rng = jtu.rand_default(np.random.RandomState(0))

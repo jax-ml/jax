@@ -3050,11 +3050,11 @@ def expn(n: ArrayLike, x: ArrayLike) -> Array:
     (n >= _c(n, 5000)),
     (x > one),
   ]
-  n1 = jnp.where(n == _c(n, 1), n + n, n)
+  n_minus_one = jnp.where(n >= _c(n, 2), n - one, one)
   vals = [
     np.nan,
     np.inf,
-    one / n1,  # prevent div by zero
+    one / n_minus_one,  # safe denominator for n >= 2; guarded for n < 2
     jnp.exp(-x) / x,
     _expn3,
     _expn2,
