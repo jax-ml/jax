@@ -5304,11 +5304,12 @@ def _polynomial_lower(x, *coeffs, unroll=None):
   from jax._src.lax import control_flow  # pytype: disable=import-error
   out_shape = broadcasting_shape_rule('polynomial', *(typeof(a) for a in (x, *coeffs)))
   out_sharding = broadcasting_sharding_rule('polynomial', *(typeof(a) for a in (x, *coeffs)))
-  b_coeffs = [_maybe_broadcast(out_shape, c, out_sharding) for c in reversed(coeffs)]
-  b_x = _maybe_broadcast(out_shape, x, out_sharding)
+  coeff_shape = broadcasting_shape_rule('polynomial', *(typeof(c) for c in coeffs))
+  coeff_sharding = broadcasting_sharding_rule('polynomial', *(typeof(c) for c in coeffs))
+  b_coeffs = [_maybe_broadcast(coeff_shape, c, coeff_sharding) for c in reversed(coeffs)]
   y, _ = control_flow.scan(
-      lambda acc, c: (add(mul(acc, b_x), c), None),
-      full_like(b_x, 0, shape=out_shape),
+      lambda acc, c: (add(mul(acc, x), c), None),
+      full_like(x, 0, shape=out_shape, sharding=out_sharding),
       stack(b_coeffs, axis=0),
       unroll=unroll_threshold,
   )
