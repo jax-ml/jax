@@ -5601,7 +5601,8 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
   axis_index = axis_names.index(axis_name)
   axis_size = ir_constant(mesh_shape[axis_index])
   minor_divisor = ir_constant(math.prod(mesh_shape[axis_index + 1 :]))
-  return arith.remsi(arith.divsi(device_id, minor_divisor), axis_size)
+  # Unsigned variants are cheaper to evaluate.
+  return arith.remui(arith.divui(device_id, minor_divisor), axis_size)
 
 
 @register_lowering_rule(
