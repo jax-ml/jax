@@ -309,6 +309,11 @@ def unmap_avals(axis_data, avals, dims):
                                           axis_data.explicit_mesh_axis)
   return tree_map(unmap, avals, dims)
 
+def bdims_at_front(axis_data, args, dims):
+  bdim = lambda x, d: batching.bdim_at_front(x, d, axis_data.size,
+                                             axis_data.explicit_mesh_axis)
+  return tree_map(bdim, args, dims)
+
 def vmap_rule(axis_data, f, in_axes, out_axes, *, sum_match=False):
   """Returns ``f`` vmapped along ``axis_data``, as a ``batch`` rule needs it.
 
@@ -322,6 +327,7 @@ def vmap_rule(axis_data, f, in_axes, out_axes, *, sum_match=False):
   unmap_zero = lambda d, x: (ad_util.Zero(unmap_avals(axis_data, x.aval, d))
                              if zero(x) and d is not batching.sum_axis else x)
   infer = any(d is batching.infer for d in tree_leaves(out_axes))
+  assert not (axis_data.spmd_name and axis_data.explicit_mesh_axis)
   vmapped = api.vmap(f, in_axes=in_axes, out_axes=out_axes,
                      axis_size=axis_data.size, axis_name=axis_data.name,
                      spmd_axis_name=axis_data.spmd_name or axis_data.explicit_mesh_axis,
