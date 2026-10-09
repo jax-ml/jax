@@ -274,6 +274,54 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         osp_special.expn(n, x.astype(np.float64)).astype(dtype),
         rtol=rtol, atol=atol)
 
+  @jtu.sample_product(dtype=float_dtypes, n=[-1, 0, 1, 2, 3, 4, 5, 10, 50, 5000])
+  def testExpnAtZeroBoundary(self, dtype, n):
+    # Regression test for https://github.com/jax-ml/jax/issues/41205
+    x = np.array(0.0, dtype=dtype)
+    tol = {np.float32: 1e-6, np.float64: 1e-14}
+    expected = osp_special.expn(n, x.astype(np.float64)).astype(dtype)
+    self.assertAllClose(lsp_special.expn(n, x), expected, rtol=tol, atol=tol)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testExpnOutOfDomainAndInf(self, dtype):
+    n = np.array([-2, -1, -1, 0, 1, 5000, 0, 1, 2, 5000, 1, 2], dtype=dtype)
+    x = np.array([0.0, 0.5, 2.0, -1.0, -1.0, -1.0, np.inf, np.inf, np.inf,
+                  np.inf, 1e20, np.nan], dtype=dtype)
+    expected = osp_special.expn(n.astype(np.float64), x.astype(np.float64)).astype(dtype)
+    self.assertAllClose(lsp_special.expn(n, x), expected)
+    self.assertAllClose(lsp_special.exp1(np.array(np.inf, dtype=dtype)),
+                        np.array(0.0, dtype=dtype))
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testExpnFloatNTruncation(self, dtype):
+    # Verify non-integer float n is truncated to integer like scipy.special.expn
+    n_float = np.array([0.8, 1.8, 2.5, 3.9], dtype=dtype)
+    x_float = np.array([0.3, 0.3, 0.0, 2.0], dtype=dtype)
+    n_int = np.trunc(n_float)
+    self.assertAllClose(lsp_special.expn(n_float, x_float),
+                        lsp_special.expn(n_int, x_float))
+
+  @jtu.sample_product(dtype=float_dtypes, n=[40, 100, 200, 5000, 5001])
+  def testExpnLargeN(self, dtype, n):
+    x = np.array([0.0, 0.5, 1.0, 2.0, 10.0], dtype=dtype)
+    rtol = {np.float32: 1e-4, np.float64: 1e-5}
+    atol = {np.float32: 1e-5, np.float64: 1e-6}
+    expected = osp_special.expn(n, x.astype(np.float64)).astype(dtype)
+    self.assertAllClose(lsp_special.expn(n, x), expected, rtol=rtol, atol=atol)
+    self.assertAllClose(
+        lsp_special.expn(dtype(1e20), dtype(1.0)),
+        dtype(np.exp(-1.0) / 1e20), rtol=rtol, atol=atol)
+
+  @jtu.sample_product(dtype=float_dtypes, n=[0, 1, 2, 3])
+  def testExpnGrads(self, dtype, n):
+    x = np.array([0.5, 1.5, 3.0], dtype=dtype)
+    tol = 1e-2 if jtu.test_device_matches(["tpu"]) else 1e-3
+    jtu.check_grads(lambda x_: lsp_special.expn(n, x_), (x,), order=2,
+                    atol=tol, rtol=tol, eps=1e-3)
+    if n == 1:
+      jtu.check_grads(lsp_special.exp1, (x,), order=2,
+                      atol=tol, rtol=tol, eps=1e-3)
+
   def testWofzAccuracy(self):
     # Verify wofz agrees with scipy over the full complex plane (float32).
     rng = jtu.rand_default(np.random.RandomState(0))

@@ -2910,23 +2910,27 @@ def sici_jvp(primals, tangents):
 
 
 def _expn1(x: Array, n: Array) -> Array:
-  # exponential integral En
+  # 0 < x <= 1 and 1 <= n < 5000 (power series expansion, DLMF 8.19.8)
   _c = _lax_const
   MACHEP = dtypes.finfo(x.dtype).eps
 
   zero = _c(x, 0.0)
   one = _c(x, 1.0)
-  psi = -np.euler_gamma - jnp.log(x)
-  psi = lax.fori_loop(_c(n, 1), n, lambda i, psi: psi + one / i, psi)
-  n1 = jnp.where(n == _c(n, 1), one + one, n)
+  in_domain = (x > zero) & (x <= one) & (n >= one) & (n < _c(n, 5000))
+  x_safe = jnp.where(in_domain, x, one)
+  n_safe = jnp.where(in_domain, n, one)
+  psi = -np.euler_gamma - jnp.log(x_safe)
+  psi = lax.fori_loop(_c(n, 1), n_safe, lambda i, psi: psi + one / i, psi)
+  n1 = jnp.where(n_safe == _c(n, 1), one + one, n_safe)
   init = dict(
     x=x,
-    z=-x,
+    n=n,
+    z=-x_safe,
     xk=zero,
     yk=one,
-    pk=one - n,
-    ans=jnp.where(n == _c(n, 1), zero, one / (one - n1)),
-    t=np.inf,
+    pk=one - n_safe,
+    ans=jnp.where(n_safe == _c(n, 1), zero, one / (one - n1)),
+    t=_c(x, np.inf),
   )
 
   def body(d):
@@ -2939,36 +2943,49 @@ def _expn1(x: Array, n: Array) -> Array:
 
   def cond(d):
     # jnp.piecewise evaluates every branch, so bound this one to its domain.
-    return (d["x"] > zero) & (d["x"] <= one) & (d["t"] > MACHEP)
+    return (
+      (d["x"] > zero)
+      & (d["x"] <= one)
+      & (d["n"] >= one)
+      & (d["n"] < _c(d["n"], 5000))
+      & (d["t"] > MACHEP)
+    )
 
   d = lax.while_loop(cond, body, init)
-  t = n
-  r = n - _c(n, 1)
-  return d["z"] ** r * psi / jnp.exp(gammaln(t)) - d["ans"]
+  r = n_safe - one
+  sign = jnp.where(r % _c(r, 2) == zero, one, -one)
+  log_term = sign * jnp.exp(r * jnp.log(x_safe) - gammaln(n_safe)) * psi
+  return log_term - d["ans"]
 
 
 def _expn2(x: Array, n: Array) -> Array:
-  # x > 1.
+  # x > 1 and 1 <= n < 5000 (continued fraction, DLMF 8.19.17)
   _c = _lax_const
   BIG = _c(x, 1.44115188075855872e17)
   MACHEP = dtypes.finfo(x.dtype).eps
+  MAXLOG = _c(x, np.log(dtypes.finfo(x.dtype).max))
   zero = _c(x, 0.0)
   one = _c(x, 1.0)
+  in_domain = (x > one) & (x <= MAXLOG) & (n >= one) & (n < _c(n, 5000))
+  x_safe = jnp.where(in_domain, x, one + one)
+  n_safe = jnp.where(in_domain, n, one)
 
   init = dict(
     k=_c(n, 1),
     pkm2=one,
-    qkm2=x,
+    qkm2=x_safe,
     pkm1=one,
-    qkm1=x + n,
-    ans=one / (x + n),
+    qkm1=x_safe + n_safe,
+    ans=one / (x_safe + n_safe),
     t=_c(x, np.inf),
     r=zero,
     x=x,
+    n=n,
   )
 
   def body(d):
     x = d["x"]
+    n = d["n"]
     d["k"] += _c(d["k"], 1)
     k = d["k"]
     odd = k % _c(k, 2) == _c(k, 1)
@@ -2992,30 +3009,38 @@ def _expn2(x: Array, n: Array) -> Array:
     return d
 
   def cond(d):
-    # The continued fraction only converges for x > 1, but jnp.piecewise also
-    # evaluates it on x <= 1 inputs, where it would loop forever.
-    return (d["x"] > one) & (d["t"] > MACHEP)
+    # jnp.piecewise evaluates every branch, so bound this one to its domain.
+    return (
+      (d["x"] > one)
+      & (d["x"] <= MAXLOG)
+      & (d["n"] >= one)
+      & (d["n"] < _c(d["n"], 5000))
+      & (d["t"] > MACHEP)
+    )
 
   d = lax.while_loop(cond, body, init)
-  return d["ans"] * jnp.exp(-x)
+  return d["ans"] * jnp.exp(-x_safe)
 
 
 def _expn3(x: Array, n: Array) -> Array:
-  # n >= 5000
+  # n >= 5000 and 0 < x <= MAXLOG
   _c = _lax_const
+  zero = _c(x, 0.0)
   one = _c(x, 1.0)
-  xk = x + n
-  yk = one / (xk * xk)
-  t = n
-  ans = yk * t * (_c(x, 6) * x * x - _c(x, 8) * t * x + t * t)
-  ans = yk * (ans + t * (t - _c(x, 2) * x))
-  ans = yk * (ans + t)
-  return (ans + one) * jnp.exp(-x) / xk
+  MAXLOG = _c(x, np.log(dtypes.finfo(x.dtype).max))
+  in_domain = (x > zero) & (x <= MAXLOG) & (n >= _c(n, 5000))
+  x_safe = jnp.where(in_domain, x, one)
+  n_safe = jnp.where(in_domain, n, _c(n, 5000))
+  xk = x_safe + n_safe
+  lam = x_safe / n_safe
+  m = (n_safe / xk) / xk
+  ans = _c(x, 6) * lam * lam - _c(x, 8) * lam + one
+  ans = m * ans + (one - _c(x, 2) * lam)
+  ans = m * ans + one
+  ans = m * ans + one
+  return ans * jnp.exp(-x_safe) / xk
 
 
-@custom_derivatives.custom_jvp
-@jnp_vectorize.vectorize
-@jit
 def expn(n: ArrayLike, x: ArrayLike) -> Array:
   r"""Generalized exponential integral function.
 
@@ -3023,10 +3048,11 @@ def expn(n: ArrayLike, x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{expn}(n, x) = E_n(x) = x^{n-1}\int_x^\infty\frac{e^{-t}}{t^n}\mathrm{d}t
+     \mathrm{expn}(n, x) = E_n(x) = \int_1^\infty\frac{e^{-xt}}{t^n}\mathrm{d}t = x^{n-1}\int_x^\infty\frac{e^{-t}}{t^n}\mathrm{d}t
 
   Args:
-    n: arraylike, real-valued
+    n: arraylike, non-negative integer-valued (floating-point inputs are
+      truncated to integers)
     x: arraylike, real-valued
 
   Returns:
@@ -3039,23 +3065,40 @@ def expn(n: ArrayLike, x: ArrayLike) -> Array:
   n, x = promote_args_inexact("expn", n, x)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     raise ValueError("expn does not support complex-valued inputs.")
+  return _expn(n, x)
+
+
+@custom_derivatives.custom_jvp
+@jnp_vectorize.vectorize
+@jit
+def _expn(n: Array, x: Array) -> Array:
   _c = _lax_const
   zero = _c(x, 0)
   one = _c(x, 1)
+  MAXLOG = _c(x, np.log(dtypes.finfo(x.dtype).max))
+  # TODO(jakevdp): mark non-integers as invalid rather than truncating
+  n = jnp.floor(n)
+  invalid = (
+    (n < _c(n, 0)) | (x < zero) | jnp.isnan(n) | jnp.isnan(x) | jnp.isinf(n)
+  )
+  valid = ~invalid
   conds = [
-    (n < _c(n, 0)) | (x < zero),
-    (x == zero) & (n < _c(n, 2)),
-    (x == zero) & (n >= _c(n, 2)),
-    (n == _c(n, 0)) & (x >= zero),
-    (n >= _c(n, 5000)),
-    (x > one),
+    invalid,
+    valid & (x == zero) & (n < _c(n, 2)),
+    valid & (x == zero) & (n >= _c(n, 2)),
+    valid & (n == _c(n, 0)) & (x > zero),
+    valid & (n > _c(n, 0)) & (x > MAXLOG),
+    valid & (n >= _c(n, 5000)) & (x > zero) & (x <= MAXLOG),
+    valid & (n > _c(n, 0)) & (n < _c(n, 5000)) & (x > one) & (x <= MAXLOG),
   ]
-  n1 = jnp.where(n == _c(n, 1), n + n, n)
+  n_minus_one = jnp.where(valid & (n >= _c(n, 2)), n - one, one)
+  x_safe = jnp.where(valid & (x > zero), x, one)
   vals = [
     np.nan,
     np.inf,
-    one / n1,  # prevent div by zero
-    jnp.exp(-x) / x,
+    one / n_minus_one,  # safe denominator for n >= 2; guarded for n < 2
+    jnp.exp(-x_safe) / x_safe,
+    zero,
     _expn3,
     _expn2,
     _expn1,
@@ -3064,13 +3107,43 @@ def expn(n: ArrayLike, x: ArrayLike) -> Array:
   return ret
 
 
-@expn.defjvp
+@_expn.defjvp
 @jit
-def expn_jvp(primals, tangents):
+def _expn_jvp(primals, tangents):
   (n, x), (_, x_dot) = primals, tangents
-  return expn(n, x), lax.mul(
-    lax.neg(x_dot), expn(lax.sub(n, _lax_const(n, 1)), x)
+  _c = _lax_const
+  zero = _c(x, 0)
+  one = _c(x, 1)
+  MAXLOG = _c(x, np.log(dtypes.finfo(x.dtype).max))
+  n_trunc = jnp.floor(n)
+  primal_out = _expn(n_trunc, x)
+  invalid = (
+    (n_trunc < _c(n_trunc, 0))
+    | (x < zero)
+    | jnp.isnan(n_trunc)
+    | jnp.isnan(x)
+    | jnp.isinf(n_trunc)
   )
+  x_safe = jnp.where((x > zero) & (x <= MAXLOG), x, one)
+  deriv_n0 = jnp.where(
+    x == zero,
+    _c(x, -np.inf),
+    jnp.where(
+      x > MAXLOG,
+      zero,
+      -(x_safe + one) * jnp.exp(-x_safe) / (x_safe * x_safe),
+    ),
+  )
+  n_prev = jnp.where(
+    n_trunc >= _c(n_trunc, 1), n_trunc - _c(n_trunc, 1), _c(n_trunc, 0)
+  )
+  deriv_n_pos = -_expn(n_prev, x)
+  deriv = jnp.where(
+    invalid,
+    _c(x, np.nan),
+    jnp.where(n_trunc == _c(n_trunc, 0), deriv_n0, deriv_n_pos),
+  )
+  return primal_out, lax.mul(x_dot, deriv)
 
 
 def exp1(x: ArrayLike) -> Array:
