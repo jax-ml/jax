@@ -59,7 +59,6 @@ import jax.numpy as jnp
 import numpy as np
 
 cdiv = utils.cdiv
-contextmanager = contextlib.contextmanager
 align_to = utils.align_to
 program_id = primitives.program_id
 num_programs = primitives.num_programs
@@ -77,13 +76,11 @@ SMEM = tpu_core.MemorySpace.SMEM
 VMEM = tpu_core.MemorySpace.VMEM
 HBM = tpu_core.MemorySpace.HBM
 ANY = pallas_core.MemorySpace.ANY
-REF = jax.Ref
 GridDimensionSemantics = tpu_core.GridDimensionSemantics
 PARALLEL = tpu_core.PARALLEL
 ARBITRARY = tpu_core.ARBITRARY
 SemaphoreType = tpu_core.SemaphoreType
 SemaphoreTuple = jax.Array
-ArrayRef = REF | jax.Array
 Tiling = tpu_info.Tiling
 
 is_transformed_ref = lambda x: isinstance(x, state.TransformedRef)
@@ -558,7 +555,7 @@ class BufferedRef(BufferedRefBase):
   _in_buffer_count: int = jax.tree.static()
   _out_buffer_count: int = jax.tree.static()
   _grid_rank: int | None = jax.tree.static()
-  window_ref: ArrayRef | None
+  window_ref: jax.Ref | None
   copy_in_slot: int | jax.Array | None
   wait_in_slot: int | jax.Array | None
   copy_out_slot: int | jax.Array | None
@@ -782,7 +779,7 @@ class BufferedRef(BufferedRefBase):
   ):
     return dataclasses.replace(self, next_fetch=next_fetch)
 
-  def with_window_ref(self, window_ref: ArrayRef | None):
+  def with_window_ref(self, window_ref: jax.Ref | None):
     return dataclasses.replace(self, window_ref=window_ref)
 
   def with_slot_index(
@@ -1297,7 +1294,7 @@ class Scheduler:
     self._compute_index_cache[key] = (res, indices, buffered_ref.spec.index_map)
     return res
 
-  @contextmanager
+  @contextlib.contextmanager
   def _named_scope(self, name):
     if self.trace_scopes:
       with jax.named_scope(name):
@@ -1776,10 +1773,10 @@ def _partition_grid(
   return new_grid, offsets
 
 
-def sync_copy(src: REF | BufferedRef, dst: REF | BufferedRef, indices):
+def sync_copy(src: jax.Ref | BufferedRef, dst: jax.Ref | BufferedRef, indices):
   """Perform a synchronous copy from src to dst."""
   bref: BufferedRef
-  hbm_ref: REF
+  hbm_ref: jax.Ref
   if isinstance(src, BufferedRef):
     bref = src
     if isinstance(dst, BufferedRef):
