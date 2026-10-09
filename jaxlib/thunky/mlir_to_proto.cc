@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/core/collectives/reduction_kind.pb.h"
 #include "xla/ffi/attribute_map.h"
+#include "xla/ffi/attribute_map.pb.h"
 #include "xla/ffi/execution_state.pb.h"
 #include "xla/literal.h"
 #include "xla/mlir/utils/type_util.h"
