@@ -1560,6 +1560,34 @@ class CustomJVPTest(jtu.JaxTestCase):
       self.assertAllClose(d2(jax.checkpoint(f))(theta), expected,
                           check_dtypes=False)
 
+  def test_rule_ops_source_info_per_call_site(self):
+    @jax.custom_jvp
+    def f(x):
+      return jnp.sin(x)
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      (x,), (t,) = primals, tangents
+      return f(x), jnp.cos(x) * t
+
+    def site_a(x):
+      with jax.named_scope("A"):
+        return f(x)
+
+    def site_b(x):
+      with jax.named_scope("B"):
+        return f(x)
+
+    jaxpr = jax.make_jaxpr(jax.grad(lambda x: site_a(x) + site_b(x)))(1.).jaxpr
+    cos_eqns = [e for e in jaxpr.eqns if e.primitive.name == 'cos']
+    self.assertLen(cos_eqns, 2)
+    for e, site, scope in zip(cos_eqns, ['site_a', 'site_b'], ['A', 'B']):
+      frames = [fr.function_name.split('.')[-1]
+                for fr in e.source_info.traceback.frames]
+      self.assertIn('f_jvp', frames)
+      self.assertIn(site, frames)
+      self.assertIn(scope, str(e.source_info.name_stack))
+
   def test_value_and_grad_runs_primal_once(self):
     @jax.custom_jvp
     def f(x):

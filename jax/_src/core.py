@@ -800,7 +800,8 @@ def _generic_effectful_abstract_eval(abstract_eval, prim):
 
 # -------------------- lifting --------------------
 
-def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[Any]:
+def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True,
+               outer_traceback=None) -> list[Any]:
   def read(v: Atom) -> Any:
     return v.val if isinstance(v, Literal) else env[v]
 
@@ -816,6 +817,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
     bind_params = eqn.primitive.get_bind_params(eqn.params)
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
     traceback = eqn.source_info.traceback if propagate_source_info else None
+    if traceback is not None and outer_traceback is not None:
+      traceback = traceback + outer_traceback
     with (source_info_util.user_context(traceback, name_stack=name_stack),
           eqn.ctx.manager):
       ans = eqn.primitive.bind(*map(read, eqn.invars), **bind_params)
