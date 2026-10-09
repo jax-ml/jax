@@ -12,10 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Utilities for pseudo-random number generation.
+"""JAX utilities for pseudo-random number generation.
 
 The :mod:`jax.random` package provides a number of routines for deterministic
-generation of sequences of pseudorandom numbers.
+generation of sequences of pseudorandom numbers. You can learn more in the
+Pseudorandom numbers tutorial `[1]`_ and JAX - The sharp bits `[2]`_ documentation.
+
+.. _[1] https://jax.readthedocs.io/en/latest/random-numbers.html
+.. _[2] https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#random-numbers
 
 Basic usage
 -----------
