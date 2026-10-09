@@ -45,9 +45,10 @@ from jax._src.custom_derivatives import (
 from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src import ad_util
+from jax._src import source_info_util
 from jax._src.util import (
     safe_zip, safe_map, split_list, partition_list, merge_lists,
-    fun_name)
+    fun_name, weakref_lru_cache)
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
     broadcast_prefix, register_static, register_pytree_node,
@@ -628,10 +629,80 @@ register_pytree_node(DerivedLinearization,
                      lambda res: ((res.consts,), res.apply),
                      lambda apply, children: DerivedLinearization(children[0], apply))
 
+def _in_type(prim):
+  return tuple(prim.in_avals_flat), prim.in_tree
+
+class _JVPSplit(NamedTuple):
+  known: core.Jaxpr
+  unknown: core.Jaxpr
+  nzs_out: list[bool]
+  num_known_outs: int
+  apply: Callable
+
+@weakref_lru_cache
+def _jvp_split(prim, in_type, nzs_in):
+  nzs_out = []
+  def jvp_flat(*args):
+    primals, nz_tangents = split_list(args, [len(prim.in_avals_flat)])
+    nz_tangents = iter(nz_tangents)
+    tangents = [next(nz_tangents) if nz else ad_util.Zero(a.to_tangent_aval())
+                for a, nz in zip(prim.in_avals_flat, nzs_in)]
+    out, out_t = prim.jvp(tree_unflatten(prim.in_tree, primals),
+                          tree_unflatten(prim.in_tree, tangents))
+    out_t = prim.out_tree.flatten_up_to(out_t)
+    nzs_out[:] = [not isinstance(t, ad_util.Zero) for t in out_t]
+    return [*tree_leaves_checked(prim.out_tree, out),
+            *[t for t, nz in zip(out_t, nzs_out) if nz]]
+  in_avals = [*prim.in_avals_flat, *[a.to_tangent_aval() for a, nz
+                                     in zip(prim.in_avals_flat, nzs_in) if nz]]
+  dbg = debug_info('linearize_from_jvp', prim.jvp, tuple(in_avals), {})
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(lu.wrap_init(jvp_flat, debug_info=dbg),
+                                               in_avals)
+  if jaxpr.effects or any(isinstance(c, core.Tracer) for c in consts):
+    return None
+  num_out = len(prim.out_avals_flat)
+  known, unknown, out_uk, _ = pe.partial_eval_jaxpr_nounits(
+      jaxpr.with_consts(consts), [False] * len(prim.in_avals_flat) + [True] * sum(nzs_in),
+      instantiate=False)
+  if any(out_uk[:num_out]):
+    return None
+  out_uk = iter(out_uk[num_out:])
+  nzs_out = [nz and next(out_uk) for nz in nzs_out]
+  num_known_outs = len(known.out_avals) - len(unknown.in_avals) + sum(nzs_in)
+  def apply(residuals, _, *tangents):
+    nz_out = iter(core.eval_jaxpr(unknown, unknown.consts, *residuals,
+                                  *[t for t, nz in zip(tangents, nzs_in) if nz],
+                                  outer_traceback=source_info_util.current().traceback))
+    return [next(nz_out) if nz else ad_util.Zero(a.to_tangent_aval())
+            for a, nz in zip(prim.out_avals_flat, nzs_out)]
+  return _JVPSplit(known, unknown, nzs_out, num_known_outs, apply)
+
+@weakref_lru_cache
+def _transposed_split(prim, in_type, nzs_in):
+  unknown = _jvp_split(prim, in_type, nzs_in).unknown
+  num_res = len(unknown.in_avals) - sum(nzs_in)
+  def transposed(*args):
+    res, cts = split_list(args, [num_res])
+    lin = lambda *ts: core.eval_jaxpr(unknown, unknown.consts, *res, *ts)
+    return api.linear_transpose(lin, *unknown.in_avals[num_res:])(cts)
+  in_avals = [*unknown.in_avals[:num_res], *unknown.out_avals]
+  dbg = debug_info('transpose', transposed, tuple(in_avals), {})
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+      lu.wrap_init(transposed, debug_info=dbg), in_avals)
+  if jaxpr.effects or any(isinstance(c, core.Tracer) for c in consts):
+    return None
+  return jaxpr.with_consts(consts)
+
 def _lin_from_jvp(self, nzs_in, *primals):
   """The `lin` half of the `linearize_from_jvp` pair."""
   primals_flat = tree_leaves_checked(self.in_tree, primals)
   nzs_in_flat = tree_leaves_checked(self.in_tree, nzs_in)
+  if (split := _jvp_split(self, _in_type(self), tuple(nzs_in_flat))) is not None:
+    outs = core.eval_jaxpr(split.known, split.known.consts, *primals_flat,
+                           outer_traceback=source_info_util.current().traceback)
+    out_primals = tree_unflatten(self.out_tree, outs[:len(self.out_avals_flat)])
+    residuals = DerivedLinearization(outs[split.num_known_outs:], split.apply)
+    return out_primals, residuals, tree_unflatten(self.out_tree, split.nzs_out)
 
   def jvp_flat(primals_flat, tangents_flat):
     primals = tree_unflatten(self.in_tree, primals_flat)
@@ -708,6 +779,16 @@ def _transpose_linearized(self, residuals, out_ct):
   """The `vjp_bwd_retval` half of the `vjp_from_lin` pair."""
   res, nzs = residuals
   nzs_in = tree_leaves_checked(self.in_tree, nzs.val)
+  split = (isinstance(res, DerivedLinearization) and
+           _jvp_split(self, _in_type(self), tuple(nzs_in)) or None)
+  if (split is not None and res.apply is split.apply and
+      (trans := _transposed_split(self, _in_type(self), tuple(nzs_in))) is not None):
+    cts = [ad_util.instantiate(ct) for ct, nz in
+           zip(self.out_tree.flatten_up_to(out_ct), split.nzs_out) if nz]
+    in_cts = iter(core.eval_jaxpr(trans, trans.consts, *res.consts, *cts,
+                                  outer_traceback=source_info_util.current().traceback))
+    return tree_unflatten(self.in_tree, [next(in_cts) if nz else ad_util.a2tz(a)
+                                         for nz, a in zip(nzs_in, self.in_avals_flat)])
   inst = lambda x: tree_map(ad_util.instantiate, x,
                             is_leaf=lambda x: isinstance(x, ad_util.Zero))
 
@@ -1089,6 +1170,12 @@ class custom_vjp3:
         _check_for_returned_refs(self.f, out, 'primal', [], 0)
         return out
       return self.f(*args)
+    args_ = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
+    key, apps = _app_key(self.f, self.fwd, self.bwd, self.symz, self.opt_remat,
+                         self.with_logs, self.remat_rules, args=args_)
+    if key in apps:
+      prim, consts = apps[key]
+      return prim(consts, (), *args_)
     if all(is_hashable(args[i]) for i in self.static_argnums):
       traced = api.jit(self.f, static_argnums=(*self.static_argnums,)).trace(*args)
     else:
@@ -1106,13 +1193,12 @@ class custom_vjp3:
           " the check outside the custom_vjp decorator, or in the fwd/bwd"
           " rules."
       )
-    args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
     consts, traced = traced.with_consts_as_arg()
     fwd, bwd, with_logs = self.fwd, self.bwd, self.with_logs
     if fwd is None:
       assert self.remat_rules is not None  # checked above
       fwd, bwd, with_logs = _vjp_from_remat_rules(*self.remat_rules)
-    in_avals = tree_map(typeof, (consts, (), *args))
+    in_avals = tree_map(typeof, (consts, (), *args_))
     remat_rules = None
     if self.remat_rules is not None:
       rfwd, rrem, rbwd, rlogs = self.remat_rules
@@ -1125,7 +1211,9 @@ class custom_vjp3:
         traced, _custom_vjp_fwd(traced, fwd, self.symz),
         _custom_vjp_bwd(traced, bwd, in_avals, self.symz, with_logs), in_avals,
         self.symz, self.opt_remat, with_logs, remat_rules)
-    return prim(consts, (), *args)
+    if not any(isinstance(c, core.Tracer) for c in tree_leaves(consts)):
+      apps[key] = prim, consts
+    return prim(consts, (), *args_)
 
 def _vjp_from_remat_rules(remat_fwd, rem, bwd, with_logs):
   # Not under jax.remat, run rem right after fwd on the forward pass, saving what
@@ -1415,6 +1503,10 @@ class custom_jvp3:
     if any(isinstance(args[i], core.Tracer) for i in self.static_argnums):
       raise UnexpectedTracerError("custom_jvp inputs marked with nondiff_argnums "
                                   "must be static, not Tracers")
+    args_ = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
+    key, apps = _app_key(self.f, self.jvp_fun, self.symz, args=args_)
+    if key in apps:
+      return apps[key](*args_)
     if all(is_hashable(args[i]) for i in self.static_argnums):
       traced = api.jit(self.f, static_argnums=(*self.static_argnums,)).trace(*args)
     else:
@@ -1431,11 +1523,25 @@ class custom_jvp3:
           f"custom_jvp-decorated function {self.f} closed over a {type(t).__name__} "
           f"of type {t.aval.str_short()}, but custom_jvp functions can't close "
           f"over Tracers. Rewrite {self.f} to take it as an explicit input.")
-    args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
-    in_avals = tree_map(typeof, args)
-    prim = CustomJVPTraced(traced, _custom_jvp_rule(traced, self.jvp_fun, self.symz),
-                           in_avals, self.symz)
-    return prim(*args)
+    prim = apps[key] = CustomJVPTraced(
+        traced, _custom_jvp_rule(traced, self.jvp_fun, self.symz),
+        tree_map(typeof, args_), self.symz)
+    return prim(*args_)
+
+@weakref_lru_cache
+def _apps_of(f):
+  return {}
+
+def _app_key(f, *rules, args):
+  avals, tree = tree_flatten(tree_map(typeof, args))
+  key = (*rules, tuple(avals), tree)
+  try:
+    hash(key)
+    if all(is_hashable(x.val) for x in args if isinstance(x, Static)):
+      return key, _apps_of(f)
+  except TypeError:
+    pass
+  return None, {}
 
 
 class MappingSpec: pass
