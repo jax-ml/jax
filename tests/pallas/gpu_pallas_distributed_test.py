@@ -1338,10 +1338,6 @@ class PallasCallMultimemTest(TestCase):
   def test_multimem_operand_is_placed_in_collective_memory(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
-
-    # Temporary skip test until XLA switches to a different collective space
-    # coloring.
-    self.skipTest("Skip the test due to b/564807911.")
     devices = jax.devices()[:2]
 
     def kernel(x_ref, y_ref, sem_ref):
@@ -1383,7 +1379,7 @@ class PallasCallMultimemTest(TestCase):
         for pair in match.group(1).split(",")
         if pair
     )
-    collective_memory_space = 1
+    collective_memory_space = 7
     self.assertEqual(operand_memory_spaces.get(0), collective_memory_space)
 
     if jax.process_count() == 1:
@@ -1392,7 +1388,7 @@ class PallasCallMultimemTest(TestCase):
       self.assertEqual(operand_memory_spaces, {0: collective_memory_space})
       self.assertNotIn("results_memory_spaces", lowered)
 
-    # And XLA has to honour the request by coloring the operand buffers S(1).
+    # And XLA has to honour the request by coloring the operand buffers S(7).
     compiled = f.lower(x).compile().as_text()
     custom_calls = [
         line
@@ -1411,7 +1407,7 @@ class PallasCallMultimemTest(TestCase):
 
     def memory_space(name: str) -> int:
       # Definitions carry the memory space in the layout of their shape, e.g.
-      #   %copy = f32[16,128]{1,0:S(1)} copy(%param)
+      #   %copy = f32[16,128]{1,0:S(7)} copy(%param)
       definition = re.search(
           rf"^\s*{re.escape(name)} = (\S+)\s", compiled, re.MULTILINE
       )
