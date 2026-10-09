@@ -1597,34 +1597,74 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     y = kernel_fn((0, 1, 2), scalar_prefetch_values, (), x)
     np.testing.assert_array_equal(y, x.reshape((256, 1024)))
 
-  def test_basic_reshape_lanes_to_sublanes(self):
-
-    def f(x):
-      return x.reshape((512, 32, 128))
-
-    in_type = jax.ShapeDtypeStruct((512, 4096), jnp.float32)
+  @parameterized.parameters(
+      (
+          (4096,),
+          (32, 128),
+          pl.BlockSpec((8, 128), lambda i, j: (i, 0)),
+          (1024,),
+      ),
+      (
+          (512, 4096),
+          (512, 32, 128),
+          pl.BlockSpec((256, 8, 128), lambda i, j, k: (i, k, 0)),
+          (256, 1024),
+      ),
+      (
+          (512, 4096),
+          (512, 32, 128),
+          pl.BlockSpec((256, 8, 128), lambda i, j, k: (i, k, j)),
+          (256, 1024),
+      ),
+      (
+          (512, 4096),
+          (512, 16, 256),
+          pl.BlockSpec((256, 4, 256), lambda i, j, k: (i, k, 0)),
+          (256, 1024),
+      ),
+      (
+          (4, 512, 4096),
+          (4, 512, 32, 128),
+          pl.BlockSpec((2, 256, 8, 128), lambda b, i, j, k: (b, i, k, 0)),
+          (2, 256, 1024),
+      ),
+  )
+  def test_basic_reshape_lanes_to_sublanes(
+      self, in_shape, out_shape, out_block_spec, expected_in_block_shape
+  ):
+    in_type = jax.ShapeDtypeStruct(in_shape, jnp.float32)
     f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
-        f, in_type
+        lambda x: x.reshape(out_shape), in_type
     )
     self.assertEmpty(new_values)
     self.assertEmpty(scalar_prefetch_values)
 
-    block_spec = pl.BlockSpec((256, 8, 128), lambda i, j, k: (i, k, 0))
     kernel_fn, (value_block_specs, x_block_spec), _ = (
         block_spec_lib.pull_block_spec(
             f2,
-            block_spec,
-            grid_len=3,
+            out_block_spec,
+            grid_len=len(out_shape),
             scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
         )(new_values, in_type)
     )
     self.assertEmpty(value_block_specs)
-    self.assertEqual(x_block_spec.index_map(0, 1, 2), (0, 2))
-    self.assertEqual(x_block_spec.index_map(3, 2, 1), (3, 1))
+    self.assertEqual(x_block_spec.block_shape, expected_in_block_shape)
+    pids = (*range(1, len(out_shape) - 1), 0, 2)
+    expected_idx = (*range(1, len(out_shape) - 1), 2)
+    self.assertEqual(x_block_spec.index_map(*pids), expected_idx)
+    self.assertEqual(jax.jit(x_block_spec.index_map)(*pids), expected_idx)
 
-    x = jnp.arange((256 * 1024), dtype=jnp.float32).reshape((256, 1024))
-    y = kernel_fn((0, 1, 2), scalar_prefetch_values, (), x)
-    np.testing.assert_array_equal(y, x.reshape((256, 8, 128)))
+    x = jnp.arange(np.prod(expected_in_block_shape), dtype=jnp.float32).reshape(
+        expected_in_block_shape
+    )
+    y = kernel_fn(pids, scalar_prefetch_values, (), x)
+    np.testing.assert_array_equal(y, x.reshape(out_block_spec.block_shape))
+
+  def test_reshape_lanes_to_sublanes_errors(self):
+    in_type = jax.ShapeDtypeStruct((512, 4096), jnp.float32)
+    f2, new_values, _ = block_spec_lib.get_fusion_values(
+        lambda x: x.reshape((512, 32, 128)), in_type
+    )
 
     block_spec = pl.BlockSpec((256, 4, 256), lambda i, j, k: (i, j, k))
     with self.assertRaises(NotImplementedError):
@@ -1634,6 +1674,19 @@ class PullBlockSpecTest(jtu.JaxTestCase):
           grid_len=3,
           scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
       )(new_values, in_type)
+
+    block_spec = pl.BlockSpec((256, 8, 128), lambda i, j, k: (i, k, 1))
+    _, (_, x_block_spec), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        grid_len=3,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values, in_type)
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        'Must select entire block on last dimension for reshape',
+    ):
+      x_block_spec.index_map(0, 1, 2)
 
   def test_basic_swap(self):
     value = jnp.arange((512 * 1024), dtype=jnp.int32).reshape((512, 1024)) * 2
