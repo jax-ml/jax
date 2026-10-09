@@ -16,6 +16,11 @@
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.scipy.stats.geom import (
+  cdf as cdf,
+  logcdf as logcdf,
   logpmf as logpmf,
+  logsf as logsf,
   pmf as pmf,
+  ppf as ppf,
+  sf as sf,
 )
