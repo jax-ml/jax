@@ -115,9 +115,6 @@ class NNFunctionsTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Test requires GPU or CPU.")
     if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
-    # TODO: Re-enable once scaled dot is implemented for ROCm in XLA.
-    if jtu.is_device_rocm():
-      self.skipTest("Skipped on ROCm: scaled dot not yet supported in XLA.")
     # Check if float8_e8m0fnu is available
     configs = create_mx_configs_if_available(mode)
     batch, rhs_non_contract = 4, 256
@@ -144,9 +141,6 @@ class NNFunctionsTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Test requires GPU.")
     if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
-    # TODO: Re-enable once scaled dot is implemented for ROCm in XLA.
-    if jtu.is_device_rocm():
-      self.skipTest("Skipped on ROCm: scaled dot not yet supported in XLA.")
 
     configs = create_mx_configs_if_available(mode)
     cast_to_representable = partial(
@@ -225,7 +219,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertArraysEqual(scales.view(jnp.uint8).reshape(8),
                            (127 + exponents).astype(jnp.uint8))
     self.assertArraysEqual(x_q[0, :, 0].astype(jnp.float32),
-                           jnp.full((8,), max_value))
+                           jnp.full((8,), max_value, dtype=jnp.float32))
 
   @parameterized.product(mode=["mxfp8", "mxfp4"])
   def testScaledDotGeneralKeepsQuantization(self, mode):
@@ -265,6 +259,45 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertArraysAllClose(out, out_ref, rtol=2e-2, atol=2e-2)
     self.assertGreater(float(jnp.max(jnp.abs(out_ref - out_unquantized))),
                        0.1)
+
+  def testScaledDotGeneralMixedConfigsGrad(self):
+    # The mixed mxfp4/mxfp8 configs from the scaled_dot_general docstring.
+    if not jtu.test_device_matches(["gpu", "cpu"]):
+      raise unittest.SkipTest("Test requires GPU or CPU.")
+    mxfp4 = create_mx_configs_if_available("mxfp4")[0]
+    mxfp8 = create_mx_configs_if_available("mxfp8")[0]
+    configs = [mxfp4, mxfp4, mxfp8]
+
+    # Inputs on the e2m1 grid are quantized losslessly, so the results must
+    # match an unquantized float32 reference.
+    cast_to_e2m1 = partial(quantize_dequantize, q_dtype=jnp.float4_e2m1fn,
+                           scale=jnp.ones((1,)), compute_dtype=jnp.float32)
+    uniform = partial(jax.random.uniform, dtype=jnp.float32, minval=-6.0,
+                      maxval=6.0)
+    k1, k2, k3 = jax.random.split(jax.random.key(2), 3)
+    a = cast_to_e2m1(uniform(k1, (2, 64, 128)))
+    b = cast_to_e2m1(uniform(k2, (2, 96, 128)))
+    # The cotangent w is exact in e4m3 but not in e2m1, so quantizing it with
+    # mxfp4 instead of the mxfp8 gradient config would change the gradients.
+    w = 1.25 * cast_to_e2m1(uniform(k3, (2, 64, 96)))
+    dimension_numbers = (([2], [2]), ([0], [0]))
+
+    def loss(a, b, is_ref=False):
+      if is_ref:
+        out = jax.lax.dot_general(a, b, dimension_numbers,
+                                  precision=jax.lax.Precision.HIGHEST)
+      else:
+        out = nn.scaled_dot_general(a, b, dimension_numbers, configs=configs)
+      return jnp.sum(out * w)
+
+    value, (a_grad, b_grad) = jax.jit(
+        jax.value_and_grad(loss, argnums=(0, 1)))(a, b)
+    value_ref, (a_grad_ref, b_grad_ref) = jax.jit(
+        jax.value_and_grad(partial(loss, is_ref=True), argnums=(0, 1)))(a, b)
+
+    self.assertAllClose(value, value_ref, rtol=1e-5, atol=1e-5)
+    self.assertAllClose(a_grad, a_grad_ref, rtol=1e-5, atol=1e-5)
+    self.assertAllClose(b_grad, b_grad_ref, rtol=1e-5, atol=1e-5)
 
   @parameterized.product(
       dtype=[jnp.bfloat16, jnp.float16],
