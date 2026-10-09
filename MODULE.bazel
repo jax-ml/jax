@@ -19,6 +19,16 @@ bazel_dep(name = "rules_cc", version = "0.2.25")
 bazel_dep(name = "rules_python", version = "2.2.0")
 bazel_dep(name = "rules_shell", version = "0.8.0")
 bazel_dep(name = "zlib", version = "1.3.2")
+bazel_dep(name = "rules_fortran")
+git_override(
+    module_name = "rules_fortran",
+    commit = "f0cac73ebdcbda7bc01b38b8a4ee33869416c220",
+    patch_strip = 1,
+    patches = [
+        "//third_party/rules_fortran:toolchains.patch",
+    ],
+    remote = "https://github.com/miinso/rules_fortran.git",
+)
 
 # TODO: use a released version when available
 bazel_dep(name = "rules_ml_toolchain")
@@ -34,6 +44,10 @@ bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
     integrity = "sha256-gQjwT4t/HEnl1yamnKFCZAFKUuaxRNqJ2MYFByz3cG4=",
+    patch_strip = 1,
+    patches = [
+        "//third_party/xla:eigen_archive.patch",
+    ],
     strip_prefix = "xla-dad305c65acf8d2434d9f36cfaa10a110b43fbf1",
     urls = ["https://github.com/openxla/xla/archive/dad305c65acf8d2434d9f36cfaa10a110b43fbf1.tar.gz"],
 )
