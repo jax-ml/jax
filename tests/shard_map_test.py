@@ -134,6 +134,23 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, (8,))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
+  def test_all_gather_invariant_no_check_vma_grad(self):
+    mesh = jtu.create_mesh((4,), 'x')
+
+    @jax.jit
+    @shard_map(mesh=mesh, in_specs=P('x'), out_specs=P(), check_vma=False)
+    def f(a):
+      return jax.lax.all_gather(a, 'x', tiled=True, to='invarying')
+
+    arr = jnp.arange(8.)
+    self.assertArraysEqual(f(arr), arr)
+
+    ct = jnp.arange(8.) + 1.
+    _, f_vjp = jax.vjp(f, arr)
+    arr_bar, = f_vjp(ct)
+    self.assertAllClose(arr_bar, ct)
+    jtu.check_grads(f, (arr,), order=2)
+
   def test_all_gather_invariant_complex(self):
     mesh, a, _ = create_inputs(P('z', ('x', 'y')), P(None, None),
                                dtype=np.float32)
