@@ -618,6 +618,23 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           atol=1e-6,
         )
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testExponLogCdfSmallX(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/40965
+    # Previously logcdf returned -inf once exp(-x) rounded to 1.
+    x = np.array([-1.0, 1e-30, 1e-10, 1e-3, 1.0, 20.0], dtype=dtype)
+    tol = {np.float32: 5e-4, np.float64: 1e-12}
+
+    def args_maker():
+      return [x, 0.0, 2.0]
+
+    self._CheckAgainstNumpy(osp_stats.expon.logcdf, lsp_stats.expon.logcdf,
+                            args_maker, check_dtypes=False, tol=tol)
+    self._CompileAndCheck(lsp_stats.expon.logcdf, args_maker)
+    grads = jax.vmap(jax.grad(lsp_stats.expon.logcdf))(x)
+    self.assertAllClose(grads, np.where(x < 0, 0, 1 / np.expm1(x)),
+                        check_dtypes=False, rtol=tol)
+
   @genNamedParametersNArgs(4)
   def testGammaLogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
