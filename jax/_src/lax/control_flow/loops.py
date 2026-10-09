@@ -1123,6 +1123,7 @@ def _scan_transpose_fancy(cts, *args, reverse, length, ft_in, ft_out, jaxpr,
   #   * `T a` means the extensive (scanned over) input tangents;
   #   * `eres` means the extensive inputs needing no cotangent;
   #   * `T b` means the extensive tangent outputs.
+  args, fixup = ad.unalias_ref_accums(args)
   consts, carry_dot, xs = _map(list, ft_in.update(args).unpack())
   num_consts, num_carry = len(consts), len(carry_dot)
   const_cls = tuple(_map(_scan_accum_class, consts))
@@ -1174,6 +1175,7 @@ def _scan_transpose_fancy(cts, *args, reverse, length, ft_in, ft_out, jaxpr,
 
   for a, x in zip([*immut_consts_dot, *carry_dot, *immut_xs_dot], outs):
     if isinstance(a, ad.GradAccum): a.accum(x)
+  fixup()
   return tree_unflatten(log_tree, log_leaves)
 
 # _transpose_scan_jaxpr_fancy converts the jaxpr signature:

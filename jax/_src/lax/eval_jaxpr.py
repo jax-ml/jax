@@ -79,6 +79,7 @@ def _eval_jaxpr_linearize(prim, is_vjp, nzs, *primals_in, call_jaxpr, **params):
   return primals_out, nzs_out, res, sres, tangent_fun
 
 def _eval_jaxpr_transpose(prim, ct, *args, call_jaxpr, **params):
+  args, fixup = ad.unalias_ref_accums(args)
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, ct))
   in_avals = [core.typeof(x) for x in in_flat]
@@ -88,6 +89,7 @@ def _eval_jaxpr_transpose(prim, ct, *args, call_jaxpr, **params):
   for x, ct in zip(args, cts_out):
     if isinstance(x, ad.ValAccum):
       x.accum(ct)
+  fixup()
   return logs
 
 # TODO(mattjj): this is a copy of xla_metadata.py's _transpose_jaxpr, dedupe!

@@ -1868,6 +1868,7 @@ def _pjit_transpose_fancy(
     cts_in, *args, jaxpr, in_shardings, out_shardings, in_layouts,
     out_layouts, donated_invars, ctx_mesh, name, keep_unused, inline,
     compiler_options_kvs):
+  args, fixup = ad.unalias_ref_accums(args)
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
   in_avals = [typeof(x) for x in in_flat]
@@ -1913,6 +1914,7 @@ def _pjit_transpose_fancy(
   cts_out, logs = tree_unflatten(out_tree, cts_out)
   for x, ct in zip(args, cts_out):
     if isinstance(x, ad.ValAccum): x.accum(ct)
+  fixup()
   return logs
 
 @weakref_lru_cache
