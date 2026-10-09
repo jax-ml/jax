@@ -2748,28 +2748,19 @@ class DialectLoweringTest(MosaicGpuTest):
     ]
     self.assertEqual(reassociation, [[0], [1, 2], [3, 4]])
 
-  def test_optimized_gmem_transfers_are_not_supported(self):
-    def body(ctx, input, output, scratch):
-      del ctx, scratch
-      reg = mgpu.dialect.vector_load(input, optimized=True)
-      layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
-      reg = mgpu.dialect.layout_cast(reg, layout)
-      mgpu.dialect.vector_store(reg, output, optimized=False)  # prevent DCE
-
-    shape = (128, 128)
-    dtype = jnp.bfloat16
-    with self.assertRaisesRegex(
-        NotImplementedError, "Only optimized transfers to SMEM supported"
-    ):
-      mgpu.as_gpu_kernel(
-          body,
-          grid=(1, 1, 1),
-          block=(128, 1, 1),
-          in_shape=jax.ShapeDtypeStruct(shape, dtype),
-          out_shape=jax.ShapeDtypeStruct(shape, dtype),
-          smem_scratch_shape=(),
-          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+  def test_uncoalesced_optimized_gmem_transfer_raises(self):
+    with self.kernel() as launch_ctx:
+      ref_ty = ir.MemRefType.get((128, 128), ir.BF16Type.get())
+      ref = llvm.mlir_undef(ref_ty)
+      load = mgpu.dialect.VectorLoadOp(ref, optimized=True)
+      load.attributes["out_layouts"] = ir.ArrayAttr.get(
+          [layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)]
       )
+    with self.assertRaisesRegex(
+        mgpu.fragmented_array.TransferPlanDerivationError,
+        "GMEM transfer does not access",
+    ):
+      mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
   def test_inconsistent_collective_attributes_in_kernel_raise(self):
     def body(ctx, out, smem_ptr):

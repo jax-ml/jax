@@ -578,26 +578,28 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(math.prod(shape1)).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x.reshape(shape2))
 
-  def test_store_to_gmem_requires_unoptimized_transfer(self):
+  @parameterized.parameters(jnp.float32, jnp.bfloat16)
+  def test_optimized_store_to_gmem(self, dtype):
     shape = (128, 128)
-    x = jnp.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
 
     def run_kernel(optimized):
-      @self.kernel(out_type=jax.ShapeDtypeStruct(shape, jnp.float32))
+
+      @self.kernel(out_type=jax.ShapeDtypeStruct(shape, dtype))
       def kernel(x_ref, out_ref):
         x = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
         plgpu.store(out_ref, x + 1, optimized=optimized)
 
       return kernel(x)
 
-    # At the time of writing, optimized transfers are only supported for SMEM,
-    # so they can never be emitted for GMEM references.
-    with self.assertRaisesRegex(
-        Exception, "Only optimized transfers to SMEM supported"
-    ):
-      run_kernel(optimized=True)
-
-    np.testing.assert_array_equal(run_kernel(optimized=False), x + 1)
+    if dtype == jnp.float32:
+      np.testing.assert_array_equal(run_kernel(optimized=True), x + 1)
+    else:
+      # Storing WGMMA bf16 (16B/row) to GMEM touches partial 32B sectors and
+      # cannot use an optimized store transfer.
+      with self.assertRaisesRegex(Exception, "GMEM transfer does not access"):
+        run_kernel(optimized=True)
+      np.testing.assert_array_equal(run_kernel(optimized=False), x + 1)
 
   def test_reshape_tiled(self):
     shape1, shape2 = (6 * 64, 8), (2, 3, 64, 8)
@@ -4631,26 +4633,18 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     m, n = 128, 64
     x = jnp.arange(1, m * n + 1, dtype=jnp.float32).reshape(m, n)
 
-    def run_kernel(optimized):
-      def body(inp_ref, out_ref):
-        val = plgpu.load(
-            inp_ref, layout=plgpu.Layout.WGMMA, optimized=False
-        )
-        out_ref[...] = jnp.zeros_like(out_ref)
-        plgpu.atomic_add(out_ref, val, optimized=optimized)
+    def body(inp_ref, out_ref):
+      val = plgpu.load(
+          inp_ref, layout=plgpu.Layout.WGMMA, optimized=False
+      )
+      out_ref[...] = jnp.zeros_like(out_ref)
+      plgpu.atomic_add(out_ref, val, optimized=True)
 
-      return self.kernel(
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      result = self.kernel(
           body,
           out_type=jax.ShapeDtypeStruct([m, n], jnp.float32),
       )(x)
-
-    with self.assertRaisesRegex(
-        Exception, "Only optimized transfers to SMEM supported"
-    ):
-      run_kernel(optimized=True)
-
-    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
-      result = run_kernel(optimized=False)
       jax.block_until_ready(result)
     self.assertArraysEqual(result, x)
     self.assertIn("red.global", ptx())
