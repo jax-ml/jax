@@ -1414,8 +1414,6 @@ def _get_clamped_slice_starts(
     slice_sizes: tuple[int, ...],
     start_idx_offset: int = 2,
 ) -> tuple[Any, ...]:
-  static_clamped_starts = None
-
   # TODO(rdyro): Constant fold the static indices to skip scalar prefetch.
   # Ref-write discharge `convert_element_type` makes start indices dynamic.
   if ctx.scalar_prefetch_fn is not None:
@@ -1426,25 +1424,21 @@ def _get_clamped_slice_starts(
             slice_starts, operand_shape, slice_sizes, strict=True
         )
     )
-  else:
-    if static_clamped_starts is None:
-      assert (
-          ctx.invars is not None
-      ), 'ctx.invars required when scalar_prefetch_fn is None'
-      assert all(
-          isinstance(v, core.Literal) for v in ctx.invars[start_idx_offset:]
-      ), (
-          'All start indices must be static literals if scalar_prefetch_fn is'
-          ' None'
+
+  assert (
+      ctx.invars is not None
+  ), 'ctx.invars required when scalar_prefetch_fn is None'
+  assert all(
+      isinstance(v, core.Literal) for v in ctx.invars[start_idx_offset:]
+  ), 'All start indices must be static literals if scalar_prefetch_fn is None'
+  slice_starts = tuple(v.val for v in ctx.invars[start_idx_offset:])
+  static_clamped_starts = tuple(
+      int(np.clip(np.asarray(start), 0, op_dim - size))
+      for start, op_dim, size in zip(
+          slice_starts, operand_shape, slice_sizes, strict=True
       )
-      slice_starts = tuple(v.val for v in ctx.invars[start_idx_offset:])
-      static_clamped_starts = tuple(
-          int(np.clip(np.asarray(start), 0, op_dim - size))
-          for start, op_dim, size in zip(
-              slice_starts, operand_shape, slice_sizes, strict=True
-          )
-      )
-    return static_clamped_starts
+  )
+  return static_clamped_starts
 
 
 @register_usage_rule(lax.dynamic_slice_p)
