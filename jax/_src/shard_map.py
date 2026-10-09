@@ -983,13 +983,17 @@ def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_specs, out_specs,
       if isinstance(os, P) and not _valid_repeats(mesh, v.aval.mat, os):
         raise core.JaxprTypeError(
             "shard_map can't prove output is sufficiently replicated")
-  out_avals_sharded = [x.aval for x in jaxpr.outvars]
+  return _shard_map_abstract_eval(jaxpr=jaxpr, mesh=mesh, out_specs=out_specs,
+                                  check_vma=check_vma)
+core.custom_typechecks[shard_map_p] = _shard_map_typecheck
+
+def _shard_map_abstract_eval(*_, jaxpr, mesh, out_specs, check_vma, **__):
   out_avals = map(partial(unshard_aval, mesh, check_vma), out_specs,
-                  out_avals_sharded)
+                  jaxpr.out_avals)
   effs = core.filter_named_axis_effects(core.positional_effects(jaxpr),
                                         mesh.axis_names)
   return out_avals, effs
-core.custom_typechecks[shard_map_p] = _shard_map_typecheck
+shard_map_p.def_effectful_abstract_eval(_shard_map_abstract_eval)
 
 
 def _valid_repeats(mesh: Mesh, mat: core.ManualAxisType, spec) -> bool:
@@ -1869,9 +1873,9 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
 
   nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
   args = (*ures, *env, *nz_tangents_in, *sres_binders)
-  nz_tangents_out = shard_map_p.bind_with_trace(
-      trace.tangent_trace, args, map(typeof, args),
-      dict(tangent_params, subfuns=(f_tangent,)))
+  prim = ad.vjp_node(shard_map_p) if trace.is_vjp else shard_map_p
+  nz_tangents_out = trace.tangent_trace.process_shard_map(
+      prim, f_tangent, args, **tangent_params)
   nz_tangents_out_iter = iter(nz_tangents_out)
   tangents_out = [next(nz_tangents_out_iter) if nz else ad.p2tz(primal)
                   for nz, primal in zip(nzs_out, primals_out)]

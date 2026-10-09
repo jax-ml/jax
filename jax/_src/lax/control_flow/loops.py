@@ -896,7 +896,8 @@ def _scan_linearize(is_vjp, nzs, *primals_in, reverse: bool, length: int,
     int_res, ext_res = partition_list(res_to_move, ures)
     nz_tangents = [ad.instantiate_zeros(x) for nz, x in zip(nzs, tangents) if nz]
     nz_consts_g, nz_carry_g, nz_xs_g = ft_in.filter_with_mask(nzs).unpack()
-    nz_tangents_out = scan_p.bind(
+    prim = ad.vjp_node(scan_p) if is_vjp else scan_p
+    nz_tangents_out = prim.bind(
         *int_res, *nz_tangents, *ext_res, *sres_flat, jaxpr=tangent_jaxpr,
         reverse=reverse, length=length, unroll=unroll,
         ft_in=ft.pack(((ft.nones(len(int_res)), nz_consts_g), nz_carry_g,

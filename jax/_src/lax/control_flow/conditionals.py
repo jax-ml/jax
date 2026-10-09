@@ -560,8 +560,9 @@ def _cond_linearize(is_vjp, nzs, *primals_in, branches, **params):
       idx = sres.index
       sres_flat = tree_leaves(sres.branches)
     nz_tangents_in = [t for t in tangents_in if not isinstance(t, ad.Zero)]
-    nz_tangents_out = cond_p.bind(idx, *res, *nz_tangents_in, *sres_flat,
-                                  branches=(*tangent_jaxprs,), **params)
+    prim = ad.vjp_node(cond_p) if is_vjp else cond_p
+    nz_tangents_out = prim.bind(idx, *res, *nz_tangents_in, *sres_flat,
+                                branches=(*tangent_jaxprs,), **params)
     nz_tangents_out_ = iter(nz_tangents_out)
     tangents_out = [next(nz_tangents_out_) if nz else ad.Zero(aval)
                    for (aval, nz) in zip(tangent_avals_out, nzs_out)]
