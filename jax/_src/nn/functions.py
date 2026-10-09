@@ -431,7 +431,16 @@ def selu(x: ArrayLike) -> Array:
   """
   alpha = 1.6732632423543772848170429916717
   scale = 1.0507009873554804934193349852946
-  return scale * elu(x, alpha)
+  # Inlined from `elu` (rather than calling it) so the negative branch uses
+  # `exp(t) - 1`. `expm1`'s JVP rule evaluated `expm1(x) + 1`, which
+  # cancellation-flushes to 0.0 once expm1(x) rounds to -1.0, zeroing selu's
+  # gradient for large-negative x; `exp`'s JVP rule yields exp(x) directly.
+  # The value is identical on this branch: for large-negative t both
+  # `expm1(t)` and `exp(t) - 1` evaluate to -1.0.
+  x_arr = numpy_util.ensure_arraylike("selu", x)
+  return scale * jnp.where(x_arr > 0,
+                           x_arr,
+                           alpha * (jnp.exp(jnp.where(x_arr > 0, 0., x_arr)) - 1.0))
 
 # TODO(phawkins): this jit was found to change numerics in a test. Debug this.
 # @api.jit(static_argnames=("approximate",))
