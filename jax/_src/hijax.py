@@ -540,6 +540,20 @@ def _call_hi_primitive_linearized_prettyprint(eqn, context, settings):
                       params=list(params), name=name)
 core.pp_eqn_rules[call_hi_primitive_linearized_p] = _call_hi_primitive_linearized_prettyprint
 
+def _call_hi_primitive_linearized_dce(used_outs, live_ins, eqn):
+  if not any(used_outs) and not pe.has_effects(eqn, live_ins):
+    return [False] * len(eqn.invars), None
+  if all(used_outs):
+    return [True] * len(eqn.invars), eqn
+  used_iter = iter(used_outs)
+  nz_out_flat = tuple(nz and next(used_iter) for nz in eqn.params['nz_out_flat'])
+  assert next(used_iter, None) is None
+  new_outvars = [v for v, u in zip(eqn.outvars, used_outs) if u]
+  new_eqn = eqn.replace(outvars=new_outvars,
+                        params=dict(eqn.params, nz_out_flat=nz_out_flat))
+  return [True] * len(eqn.invars), new_eqn
+pe.dce_rules[call_hi_primitive_linearized_p] = _call_hi_primitive_linearized_dce
+
 def _call_hi_primitive_jvp(primals, tangents, *, _prim):
   primals = tree_unflatten(_prim.in_tree, primals)
   tangents = tree_unflatten(_prim.in_tree, tangents)
