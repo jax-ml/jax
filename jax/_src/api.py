@@ -1463,12 +1463,12 @@ def _jvp(fun: Callable, primals, tangents, has_aux=False):
     if core.primal_dtype_to_tangent_dtype(_dtype(p)) != _dtype(t):
       raise TypeError("primal and tangent arguments to jax.jvp do not match; "
                       "dtypes must be equal, or in case of int/bool primal dtype "
-                      "the tangent dtype must be float0."
+                      "the tangent dtype must be float0. "
                       f"Got primal dtype {_dtype(p)} and so expected tangent dtype "
                       f"{core.primal_dtype_to_tangent_dtype(_dtype(p))}, but got "
                       f"tangent dtype {_dtype(t)} instead.")
     if np.shape(p) != np.shape(t):
-      raise ValueError("jvp called with different primal and tangent shapes;"
+      raise ValueError("jvp called with different primal and tangent shapes; "
                        f"Got primal shape {np.shape(p)} and tangent shape as {np.shape(t)}")
 
   out_primals, out_tangents, *aux = ad.jvp(fun, ps_ft, ts_ft, has_aux=has_aux)

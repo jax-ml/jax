@@ -7462,6 +7462,22 @@ class RematTest(jtu.JaxTestCase):
 
     _ = jax.grad(f)(3.)  # doesn't crash
 
+  @parameterized.named_parameters(("remat", False), ("remat3", True))
+  def test_dce_keeps_effectful_remat_with_no_used_outputs(self, remat3):
+    x_ref = jax.new_ref(jnp.zeros(3, jnp.float32))
+    def f():
+      def body():
+        x_ref[...] = jnp.ones(3, jnp.float32)
+      jax.checkpoint(body)()
+
+    with config.remat3(remat3):
+      jaxpr = jax.make_jaxpr(f)()
+      dced, _ = pe.dce_jaxpr(jaxpr, [])
+      self.assertLen(dced.eqns, 1)
+
+      jax.jit(f)()
+    self.assertAllClose(x_ref[...], jnp.ones(3, jnp.float32))
+
   def test_linearize_caching(self):
     # https://github.com/jax-ml/jax/issues/9661
     identity = jax.checkpoint(jax.jit(lambda x: 2 * x))
