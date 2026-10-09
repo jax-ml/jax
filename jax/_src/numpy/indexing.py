@@ -45,7 +45,12 @@ from jax._src.numpy import util
 from jax._src.partition_spec import PartitionSpec
 from jax._src.pjit import auto_axes
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
-from jax._src.tree_util import tree_flatten, tree_unflatten, register_pytree_node_class
+from jax._src.tree_util import (
+    register_pytree_node_class,
+    tree_flatten,
+    tree_leaves,
+    tree_unflatten,
+)
 from jax._src.typing import Array, ArrayLike, Index, StaticScalar
 from jax._src.util import canonicalize_axis, safe_zip, set_module, tuple_update, unzip3
 
@@ -81,7 +86,9 @@ class IndexType(enum.Enum):
       return cls.INTEGER
     elif _is_boolean_index(idx):
       return cls.BOOLEAN
-    elif isinstance(idx, (Array, np.ndarray)):
+    elif isinstance(idx, (Array, np.ndarray, core.Ref)) or (
+        hasattr(idx, "dtype") and hasattr(idx, "shape") and hasattr(idx, "ref")
+    ):
       if dtypes.issubdtype(idx.dtype, np.integer):
         return cls.ARRAY
       else:
@@ -106,8 +113,21 @@ class IndexType(enum.Enum):
       raise TypeError(
         f"Indexer must have integer or boolean type, got indexer with type {np.dtype(type(idx))}")
     else:
-      raise IndexError("only integers, slices (`:`), ellipsis (`...`), newaxis (`None`)"
-                       f" and integer or boolean arrays are valid indices. Got {idx}")
+      # Support custom indexer types that are a pytree with a single leaf
+      # (e.g. SparseCore Indices).
+      try:
+        leaves = tree_leaves(idx)
+      except Exception:
+        leaves = None
+      if leaves is not None and len(leaves) == 1 and leaves[0] is not idx:
+        leaf_typ = cls.from_index(leaves[0])
+        if leaf_typ in (cls.INTEGER, cls.ARRAY, cls.BOOLEAN):
+          return leaf_typ
+      raise IndexError(
+          "only integers, slices (`:`), ellipsis (`...`), newaxis (`None`)"
+          " and integer or boolean arrays are valid indices. Got"
+          f" {idx}"
+      )
 
 
 class ParsedIndex(NamedTuple):
@@ -1560,12 +1580,18 @@ def eliminate_deprecated_list_indexing(idx: Any) -> tuple[Any, ...]:
   return idx
 
 def _is_boolean_index(i):
+  if hasattr(i, "dtype") and hasattr(i, "shape") and hasattr(i, "ref"):
+    return dtypes.issubdtype(i.dtype, np.bool_)
   try:
     abstract_i = core.typeof(i)
   except TypeError:
     abstract_i = None
-  return (isinstance(abstract_i, core.ShapedArray) and dtypes.issubdtype(abstract_i.dtype, np.bool_)
-          or isinstance(i, list) and i and all(_is_scalar(e)
+  if abstract_i is not None:
+    if isinstance(abstract_i, core.ShapedArray):
+      return dtypes.issubdtype(abstract_i.dtype, np.bool_)
+    if hasattr(abstract_i, "inner_aval") and hasattr(abstract_i.inner_aval, "dtype"):
+      return dtypes.issubdtype(abstract_i.inner_aval.dtype, np.bool_)
+  return (isinstance(i, list) and bool(i) and all(_is_scalar(e)
           and dtypes.issubdtype(dtypes.dtype(e), np.bool_) for e in i))
 
 

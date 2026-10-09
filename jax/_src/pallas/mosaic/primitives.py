@@ -623,11 +623,11 @@ def dma_start_discharge_rule(
   # If we didn't discharge everything we could we should keep writes
   # to the references that are left over.
   if not dst_discharge:
-    sp.ref_set(dst_ref, None, do_discharge_dst(dst_ref=dst_ref[...]))
+    sp.ref_set(dst_ref, (), do_discharge_dst(dst_ref=dst_ref[...]))
   if dst_sem is not None and not dst_sem_discharge:
-    sp.ref_set(dst_sem, None, do_discharge_dst_sem(dst_sem=dst_sem[...]))
+    sp.ref_set(dst_sem, (), do_discharge_dst_sem(dst_sem=dst_sem[...]))
   if src_sem is not None and not src_sem_discharge:
-    sp.ref_set(src_sem, None, do_discharge_src_sem(src_sem=src_sem[...]))
+    sp.ref_set(src_sem, (), do_discharge_src_sem(src_sem=src_sem[...]))
 
   return new_vals, []
 
@@ -1193,7 +1193,7 @@ def load(ref: Ref, *, mask: jax.Array | None = None) -> jax.Array:
   Returns:
     The loaded array.
   """
-  return primitives.load(ref, None, mask=mask)
+  return primitives.load(ref, (), mask=mask)
 
 
 def store(ref: Ref, val: jax.Array, *, mask: jax.Array | None = None) -> None:
@@ -1207,7 +1207,7 @@ def store(ref: Ref, val: jax.Array, *, mask: jax.Array | None = None) -> None:
     val: The value to store.
     mask: An optional boolean mask specifying which indices to store.
   """
-  return primitives.store(ref, None, val, mask=mask)
+  return primitives.store(ref, (), val, mask=mask)
 
 
 touch_p = jax_core.Primitive("add_dependency")
@@ -1367,7 +1367,7 @@ def matmul_acc_lhs(
   # probably not what you intended.
   if isinstance(load_staged_rhs, bool):
     raise TypeError("load_staged_rhs must be an integer or None.")
-  acc_ref, acc_transforms = sp.get_ref_and_transforms(acc, None, "matmul_acc_lhs")
+  acc_ref, acc_transforms = sp.get_ref_and_transforms(acc, (), "matmul_acc_lhs")
   flat_acc_transforms, acc_transforms_treedef = tree_util.tree_flatten(
       acc_transforms
   )
@@ -1421,7 +1421,7 @@ def matmul_pop(acc: Ref) -> jax.Array:
   Args:
     acc: The accumulator to pop.
   """
-  acc_ref, acc_transforms = sp.get_ref_and_transforms(acc, None, "matmul_pop")
+  acc_ref, acc_transforms = sp.get_ref_and_transforms(acc, (), "matmul_pop")
   flat_acc_transforms, acc_transforms_treedef = tree_util.tree_flatten(
       acc_transforms
   )

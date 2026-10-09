@@ -521,10 +521,10 @@ def copy_smem_to_gmem(
     :func:`jax.experimental.pallas.mosaic_gpu.commit_smem`
   """
   src, src_transforms = state_primitives.get_ref_and_transforms(
-      src, None, "copy_smem_to_gmem"
+      src, (), "copy_smem_to_gmem"
   )
   dst, dst_transforms = state_primitives.get_ref_and_transforms(
-      dst, None, "copy_smem_to_gmem"
+      dst, (), "copy_smem_to_gmem"
   )
   flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
       src_transforms
@@ -743,10 +743,10 @@ def async_store_smem(
     atomic: The reduction operation to apply instead of overwriting the data.
   """
   ref, ref_transforms = state_primitives.get_ref_and_transforms(
-      ref, None, "async_store_smem"
+      ref, (), "async_store_smem"
   )
   barrier, barrier_transforms = state_primitives.get_ref_and_transforms(
-      barrier, None, "async_store_smem"
+      barrier, (), "async_store_smem"
   )
   flat_ref_transforms, ref_transforms_treedef = tree_util.tree_flatten(
       ref_transforms
@@ -1274,10 +1274,10 @@ def copy_gmem_to_smem(
     :func:`jax.experimental.pallas.mosaic_gpu.wait_gmem_to_smem`
   """
   src, src_transforms = state_primitives.get_ref_and_transforms(
-      src, None, "copy_gmem_to_smem"
+      src, (), "copy_gmem_to_smem"
   )
   dst, dst_transforms = state_primitives.get_ref_and_transforms(
-      dst, None, "copy_gmem_to_smem"
+      dst, (), "copy_gmem_to_smem"
   )
   flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
       src_transforms
@@ -1288,7 +1288,7 @@ def copy_gmem_to_smem(
   has_barrier = barrier is not None
   if has_barrier:
     barrier, barrier_transforms = state_primitives.get_ref_and_transforms(
-        barrier, None, "copy_gmem_to_smem"
+        barrier, (), "copy_gmem_to_smem"
     )
     barrier_operands = [barrier]
   else:
@@ -1501,7 +1501,7 @@ def async_prefetch(
       ``None``, the prefetch is always performed.
   """
   ref, ref_transforms = state_primitives.get_ref_and_transforms(
-      ref, None, "async_prefetch"
+      ref, (), "async_prefetch"
   )
   flat_ref_transforms, ref_transforms_treedef = tree_util.tree_flatten(
       ref_transforms
@@ -1658,7 +1658,7 @@ def barrier_arrive(
 ) -> None:
   """Arrives at the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
-      barrier, None, "barrier_arrive"
+      barrier, (), "barrier_arrive"
   )
   flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
   barrier_arrive_p.bind(
@@ -1732,7 +1732,7 @@ def _barrier_arrive_and_wait_lowering(
 def barrier_arrive_and_wait(barrier: state.AbstractRef) -> None:
   """Arrives at and waits on the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
-      barrier, None, "barrier_arrive_and_wait"
+      barrier, (), "barrier_arrive_and_wait"
   )
   flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
   barrier_arrive_and_wait_p.bind(
@@ -1814,7 +1814,7 @@ def barrier_test(barrier: state.AbstractRef) -> jax.Array:
   `barrier_test` is only supported within a warp context.
   """
   barrier, transforms = state_primitives.get_ref_and_transforms(
-      barrier, None, "barrier_test"
+      barrier, (), "barrier_test"
   )
   flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
   return barrier_test_p.bind(
@@ -1880,7 +1880,7 @@ def _barrier_wait_lowering(
 def barrier_wait(barrier: state.AbstractRef) -> None:
   """Waits on the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
-      barrier, None, "barrier_wait"
+      barrier, (), "barrier_wait"
   )
   flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
   barrier_wait_p.bind(
@@ -4145,7 +4145,7 @@ def load(
     The loaded array.
   """
   src, src_transforms = state_primitives.get_ref_and_transforms(
-      src, None, "load"
+      src, (), "load"
   )
   flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
       src_transforms
@@ -4203,7 +4203,7 @@ def store(dst: _Ref, value: jax.Array, *, optimized: bool = True) -> None:
       implementation for the store is available.
   """
   dst, dst_transforms = state_primitives.get_ref_and_transforms(
-      dst, None, "store"
+      dst, (), "store"
   )
   flat_dst_transforms, dst_transforms_treedef = tree_util.tree_flatten(
       dst_transforms
@@ -4272,7 +4272,7 @@ def async_load_tmem(
       loaded data along the last dimension.
   """
   src, src_transforms = state_primitives.get_ref_and_transforms(
-      src, None, "async_load_tmem"
+      src, (), "async_load_tmem"
   )
   flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
       src_transforms
@@ -4435,7 +4435,7 @@ def async_store_tmem(ref: _Ref, value):
     value: The value to store.
   """
   ref, ref_transforms = state_primitives.get_ref_and_transforms(
-      ref, None, "async_store_tmem"
+      ref, (), "async_store_tmem"
   )
   flat_ref_transforms, ref_transforms_treedef = tree_util.tree_flatten(
       ref_transforms
@@ -4563,13 +4563,13 @@ def async_copy_scales_to_tmem(
   itself).
   """
   smem_ref, smem_transforms = state_primitives.get_ref_and_transforms(
-      smem_ref, None, "async_copy_scales_to_tmem"
+      smem_ref, (), "async_copy_scales_to_tmem"
   )
   flat_smem_transforms, smem_transforms_treedef = tree_util.tree_flatten(
       smem_transforms
   )
   tmem_ref, tmem_transforms = state_primitives.get_ref_and_transforms(
-      tmem_ref, None, "async_copy_scales_to_tmem"
+      tmem_ref, (), "async_copy_scales_to_tmem"
   )
   flat_tmem_transforms, tmem_transforms_treedef = tree_util.tree_flatten(
       tmem_transforms
@@ -4597,13 +4597,13 @@ def async_copy_sparse_metadata_to_tmem(
   itself).
   """
   smem_ref, smem_transforms = state_primitives.get_ref_and_transforms(
-      smem_ref, None, "async_copy_sparse_metadata_to_tmem"
+      smem_ref, (), "async_copy_sparse_metadata_to_tmem"
   )
   flat_smem_transforms, smem_transforms_treedef = tree_util.tree_flatten(
       smem_transforms
   )
   tmem_ref, tmem_transforms = state_primitives.get_ref_and_transforms(
-      tmem_ref, None, "async_copy_sparse_metadata_to_tmem"
+      tmem_ref, (), "async_copy_sparse_metadata_to_tmem"
   )
   flat_tmem_transforms, tmem_transforms_treedef = tree_util.tree_flatten(
       tmem_transforms
@@ -4753,13 +4753,13 @@ def async_copy_smem_to_tmem(
       size of exactly 2, and must be on the minormost cluster axis.
   """
   smem_ref, smem_transforms = state_primitives.get_ref_and_transforms(
-      smem_ref, None, "async_copy_smem_to_tmem"
+      smem_ref, (), "async_copy_smem_to_tmem"
   )
   flat_smem_transforms, smem_transforms_treedef = tree_util.tree_flatten(
       smem_transforms
   )
   tmem_ref, tmem_transforms = state_primitives.get_ref_and_transforms(
-      tmem_ref, None, "async_copy_smem_to_tmem"
+      tmem_ref, (), "async_copy_smem_to_tmem"
   )
   flat_tmem_transforms, tmem_transforms_treedef = tree_util.tree_flatten(
       tmem_transforms
@@ -5398,7 +5398,7 @@ def _atomic_store(
     optimized: bool = True,
 ):
   x_ref, transforms = state_primitives.get_ref_and_transforms(
-      x_ref_or_view, None, "atomic_store"
+      x_ref_or_view, (), "atomic_store"
   )
   args_flat, args_tree = tree_util.tree_flatten((x_ref, transforms, val))
   atomic_store_p.bind(
@@ -5805,7 +5805,7 @@ def multimem_load_reduce(
       well as and, or and xor (integer types only).
   """
   ref, ref_transforms = state_primitives.get_ref_and_transforms(
-      ref, None, "multimem_load_reduce"
+      ref, (), "multimem_load_reduce"
   )
   flat_ref_transforms, ref_transforms_treedef = tree_util.tree_flatten(
       ref_transforms

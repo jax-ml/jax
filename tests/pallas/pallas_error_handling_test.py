@@ -22,6 +22,7 @@ from jax import numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic import error_handling
+from jax._src.state import indexing
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import numpy as np
@@ -108,7 +109,10 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
     @functools.partial(pl.pallas_call, out_shape=out_shape, grid_spec=grid_spec)
     def test_kernel(input_ref, output_ref):
       idx = input_ref[0, 0]
-      output_ref[idx, 0] = input_ref[0, 0]
+      indexer = indexing.NDIndexer.from_indices_shape(
+          (idx, 0), output_ref.shape
+      )
+      output_ref[indexer] = input_ref[0, 0]
 
     # Test that a verification error is raised. This assert is a guard against
     # underlying changes in Pallas lowering.
@@ -128,7 +132,7 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
     except error_handling.MosaicError as e:
       tb_string = traceback.format_tb(e.__traceback__)
       tb_string = "".join(tb_string)
-    self.assertEndsWith(tb_string, "output_ref[idx, 0] = input_ref[0, 0]\n")
+    self.assertEndsWith(tb_string, "output_ref[indexer] = input_ref[0, 0]\n")
 
   @parameterized.parameters(
       ((128,), (64,), jnp.float32),
