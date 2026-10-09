@@ -3020,6 +3020,17 @@ class HijaxTest(jtu.JaxTestCase):
       self.assertIn('cos', str(traced_h.jaxpr))
       self.assertNotIn('cos', str(traced_h.lojax.jaxpr))
 
+      @jax.remat
+      def r_internal_dead(x):
+        _ = jnp.cos(x)
+        return jnp.sin(x)
+
+      jaxpr_r = jax.make_jaxpr(r_internal_dead)(jnp.float32(2.0)).jaxpr
+      dced_r, _ = pe.dce_jaxpr(jaxpr_r, True, instantiate=True)
+      self.assertNotIn('cos', str(dced_r))
+      dced_r2, _ = pe.dce_jaxpr(dced_r, True, instantiate=True)
+      self.assertIs(dced_r2, dced_r)
+
     @jax.jit
     def clean_fn(x):
       return jnp.sin(x) + 1.0

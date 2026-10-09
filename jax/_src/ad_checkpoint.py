@@ -1201,7 +1201,7 @@ class RematTraced(HiPrim):
       return False, False, None
     new_jaxpr, used_ins = pe.dce_jaxpr(self.jaxpr, used_outs_flat,
                                        live_inputs=live_ins_flat)
-    if all(used_ins) and all(used_outs_flat) and all(live_ins_flat):
+    if new_jaxpr is self.jaxpr and all(used_ins) and all(used_outs_flat):
       return True, True, self
     if isinstance(self.prevent_cse, bool):
       prevent_cse = self.prevent_cse
