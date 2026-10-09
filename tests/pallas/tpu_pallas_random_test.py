@@ -17,7 +17,9 @@ from absl.testing import parameterized
 import functools
 import jax
 from jax import random as jax_random
+from jax._src import core as jax_core
 from jax._src import test_util as jtu
+from jax._src.pallas.mosaic import lowering as mosaic_lowering
 from jax._src.pallas.mosaic import random as plrandom
 from jax.experimental import pallas as pl
 from jax._src import shard_map
@@ -30,6 +32,23 @@ import numpy as np
 P = jax.sharding.PartitionSpec
 
 jax.config.parse_flags_with_absl()
+
+
+# A primitive that consumes a Pallas PRNG key and whose Mosaic lowering rule is
+# a bare `lower_fun`, as some downstream kernels register their primitives.
+_uniform_from_key_p = jax_core.Primitive("_test_uniform_from_key")
+_uniform_from_key_p.def_abstract_eval(
+    lambda key, *, shape: jax_core.ShapedArray(shape, jnp.float32)
+)
+
+
+def _uniform_from_key(key, *, shape):
+  return jax_random.uniform(key, shape=shape, minval=0.0, maxval=1.0)
+
+
+mosaic_lowering.register_lowering_rule(_uniform_from_key_p)(
+    mosaic_lowering.lower_fun(_uniform_from_key)
+)
 
 
 class PRNGTest(jtu.JaxTestCase):
@@ -212,6 +231,51 @@ class PRNGTest(jtu.JaxTestCase):
     result_a = result[0]
     result_b = result[1]
     np.testing.assert_array_compare(np.not_equal, result_a, result_b)
+
+  @parameterized.parameters(True, False)
+  def test_key_in_unrolled_fori_loop(self, unroll: bool):
+    def body(key_ref, o_ref):
+      key = key_ref[...]
+
+      def loop_body(i, _):
+        k = jax_random.fold_in(key, i.astype(jnp.uint32))
+        o_ref[i, ...] = jax_random.uniform(
+            k, shape=o_ref.shape[1:], minval=0.0, maxval=1.0
+        )
+
+      jax.lax.fori_loop(0, 2, loop_body, None, unroll=unroll)
+
+    rbg_key = jax_random.key(0, impl="rbg")
+    key = pltpu.to_pallas_key(rbg_key)
+    o_shape = jax.ShapeDtypeStruct((2, 8, 128), jnp.float32)
+    result = pl.pallas_call(
+        body,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+        out_shape=o_shape,
+    )(key)
+    np.testing.assert_array_compare(np.not_equal, result[0], result[1])
+
+  def test_key_in_lower_fun_rule_under_cond(self):
+    def body(key_ref, o_ref):
+      key = key_ref[...]
+
+      @pl.when(pl.program_id(0) == 0)
+      def _():
+        o_ref[0, ...] = _uniform_from_key_p.bind(key, shape=o_ref.shape[1:])
+        o_ref[1, ...] = jax_random.uniform(
+            key, shape=o_ref.shape[1:], minval=0.0, maxval=1.0
+        )
+
+    rbg_key = jax_random.key(0, impl="rbg")
+    key = pltpu.to_pallas_key(rbg_key)
+    o_shape = jax.ShapeDtypeStruct((2, 8, 128), jnp.float32)
+    result = pl.pallas_call(
+        body,
+        grid=(1,),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+        out_shape=o_shape,
+    )(key)
+    np.testing.assert_array_equal(result[0], result[1])
 
   def test_key_in_core_map(self):
     if not jtu.is_device_tpu_at_least(4):

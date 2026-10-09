@@ -26,7 +26,6 @@ from typing import Any, Literal, Protocol, Self, TYPE_CHECKING, cast
 import jax
 from jax import api_util
 from jax import lax
-from jax import tree_util
 from jax._src import ad_util
 from jax._src import checkify
 from jax._src import config
@@ -41,6 +40,7 @@ from jax._src import pjit
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import traceback_util
+from jax._src import tree_util
 from jax._src import xla_bridge
 from jax._src.cloud_tpu_init import is_libtpu_at_least
 from jax._src.export import shape_poly
@@ -1698,11 +1698,19 @@ def lower_fun(
   """
 
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
-    args_ft = ft.flatten(args)
     if in_avals is None:
-      args_avals = args_ft.update(ctx.avals_in).unflatten()
+      # `args` correspond 1:1 to `ctx.avals_in`. Don't flatten them: lowering
+      # values such as `KeyScalarBundle` and `AccRef` are pytrees in the
+      # tracing registry, but each of them corresponds to a single aval.
+      if len(args) != len(ctx.avals_in):
+        raise ValueError(
+            f"Expected {len(ctx.avals_in)} arguments, got {len(args)}."
+        )
+      flat_args = args
+      args_avals = tuple(ctx.avals_in)
       sub_block_shapes = ctx.block_shapes
     else:
+      args_ft = ft.flatten(args)
       in_avals_ft = ft.flatten(in_avals)
       if args_ft.tree != in_avals_ft.tree:
         raise ValueError(
@@ -1710,13 +1718,14 @@ def lower_fun(
             f" {args_ft.tree}\\navals tree: {in_avals_ft.tree}\\nargs: {args}\\navals:"
             f" {in_avals}"
         )
+      flat_args = args_ft.vals
       args_avals = in_avals
-      sub_block_shapes = [None] * len(args_ft.vals)
+      sub_block_shapes = [None] * len(flat_args)
 
     in_avals_ft = ft.flatten_static_argnums_argnames(
         args_avals, params, (), params.keys())
     debug_info = api_util.debug_info(
-        "mosaic lower_fun", fun, args, params,
+        "mosaic lower_fun", fun, args_avals, params,
         static_argnames=tuple(params.keys())
     )
 
@@ -1730,7 +1739,7 @@ def lower_fun(
     sub_lowering_ctx = ctx.lowering_context.replace(
         block_shapes=sub_block_shapes
     )
-    out = jaxpr_subcomp(sub_lowering_ctx, jaxpr, *args_ft.vals)
+    out = jaxpr_subcomp(sub_lowering_ctx, jaxpr, *flat_args)
     return out_avals_ft.update(out).unflatten()
 
   return f_lowered
@@ -2352,6 +2361,12 @@ def _has_memory_space_lowering_rule(
   return tpu.memref_memory_space_is(ref, target_memory_space)
 
 
+@functools.partial(
+    tree_util._register_dataclass,
+    data_fields=["scalars"],
+    meta_fields=["key_shape"],
+    registry=ft.tracing_registry,
+)
 @dataclasses.dataclass(frozen=True)
 class KeyScalarBundle:
   """A container class for PRNG key data.
@@ -4539,7 +4554,8 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
   supports_late_unroll = not ctx.forward_compatible
   # TODO(apaszke): Remove forward_compatible check and associated code after 20.08.2026
   if unroll > 1 and (is_full_static_unroll or not supports_late_unroll):
-    const_types = [val.type for val in consts]
+    consts_ft = ft.flatten(consts)
+    const_types = [val.type for val in consts_ft.vals]
     args_types = [val.type for val in args]
 
     user_grid_indices = ctx.lowering_context.user_grid_indices
@@ -4566,7 +4582,13 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
           block_shapes=ctx.block_shapes,
           user_grid_indices=block_grid_indices,
       )
-      return jaxpr_subcomp(lowering_context, jaxpr, *block_rest)
+      block_consts, block_rest = split_list(block_rest, [len(consts_ft)])
+      return jaxpr_subcomp(
+          lowering_context,
+          jaxpr,
+          *consts_ft.update(block_consts).unflatten(),
+          *block_rest,
+      )
 
     func_op = _emit_detached_func(
         "_unrolled_loop_body",
@@ -4579,7 +4601,7 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
       call_args = []
       if has_grid:
         call_args.extend(user_grid_indices)
-      call_args.extend(consts)
+      call_args.extend(consts_ft.vals)
       if has_loop_index:
         call_args.append(i)
       call_args.extend(args)
@@ -6191,6 +6213,7 @@ def _matmul_push_rhs_lowering_rule(
   return []
 
 
+@functools.partial(tree_util._register_static, registry=ft.tracing_registry)
 @dataclasses.dataclass(frozen=True)
 class AccRef:
   # The base address of an accumulator reference is an offset in units of
