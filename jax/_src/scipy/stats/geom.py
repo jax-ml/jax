@@ -116,7 +116,8 @@ def cdf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
   zero = _lax_const(k, 0)
   one = _lax_const(k, 1)
   x = lax.floor(lax.sub(k, loc))
-  cdf_vals = lax.neg(lax.expm1(lax.mul(x, lax.log1p(lax.neg(p)))))
+  x_safe = jnp.where(lax.lt(x, one), zero, x)
+  cdf_vals = lax.neg(lax.expm1(lax.mul(x_safe, lax.log1p(lax.neg(p)))))
   return jnp.where(lax.lt(x, one), zero, cdf_vals)
 
 
@@ -196,7 +197,8 @@ def logsf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
   zero = _lax_const(k, 0)
   one = _lax_const(k, 1)
   x = lax.floor(lax.sub(k, loc))
-  logsf_vals = lax.mul(x, lax.log1p(lax.neg(p)))
+  x_safe = jnp.where(lax.lt(x, one), zero, x)
+  logsf_vals = lax.mul(x_safe, lax.log1p(lax.neg(p)))
   return jnp.where(lax.lt(x, one), zero, logsf_vals)
 
 

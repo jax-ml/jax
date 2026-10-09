@@ -350,6 +350,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
         osp_stats.geom.ppf(qs, p),
         check_dtypes=False)
 
+  def testGeomGradients(self):
+    k_neg = jnp.float32(-100.0)
+    p_val = jnp.float32(0.5)
+    self.assertAllClose(jax.grad(lsp_stats.geom.cdf, argnums=1)(k_neg, p_val), 0.0, check_dtypes=False)
+    self.assertAllClose(jax.grad(lsp_stats.geom.sf, argnums=1)(k_neg, p_val), 0.0, check_dtypes=False)
+    self.assertAllClose(jax.grad(lsp_stats.geom.logsf, argnums=1)(k_neg, p_val), 0.0, check_dtypes=False)
+
 
   @genNamedParametersNArgs(5)
   def testBetaLogPdf(self, shapes, dtypes):
