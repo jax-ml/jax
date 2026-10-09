@@ -752,13 +752,14 @@ ad.defbilinear(conv_general_dilated_p,
 
 batching.fancy_primitive_batchers[conv_general_dilated_p] = _conv_general_dilated_batch_rule
 
-def _conv_general_dilated_remat(trace, lhs, rhs, **params):
+def _conv_general_dilated_remat(_trace, lhs, rhs, **params):
   from jax._src.ad_checkpoint import primal_left_tangent_right
   conv = partial(conv_general_dilated_p.bind, **params)
   out = conv(lhs, rhs)
-  if trace.policy is None:
+  policy = remat.current_policy()
+  if policy is None:
     return out, (), lambda _, lhs, rhs: conv(lhs, rhs)  # full remat
-  case = pe.ensure_enum(trace.policy(
+  case = pe.ensure_enum(policy(
       conv_general_dilated_p, core.typeof(lhs), core.typeof(rhs), **params))
   if isinstance(case, pe.SaveableType):
     return out, out, lambda out, lhs, rhs: primal_left_tangent_right(out, conv(lhs, rhs))
