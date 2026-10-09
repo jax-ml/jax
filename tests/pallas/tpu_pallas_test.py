@@ -2548,6 +2548,42 @@ class PallasCallTest(ptu.PallasTPUTest):
         compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(2**18)),
     )(x)
 
+  def test_vmem_alignment(self):
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+
+    x = jnp.zeros((8, 128), dtype=jnp.float32)
+    f = self.pallas_call(
+        kernel,
+        out_shape=x,
+        compiler_params=pltpu.CompilerParams(vmem_alignment_bytes=2**14),
+    )
+    backend_configs = []
+
+    def find_backend_config(op: ir.Operation) -> ir.WalkResult:
+      if (
+          'call_target_name' in op.attributes
+          and ir.StringAttr(op.attributes['call_target_name']).value
+          == 'tpu_custom_call'
+      ):
+        backend_configs.append(
+            json.loads(ir.StringAttr(op.attributes['backend_config']).value)
+        )
+      return ir.WalkResult.ADVANCE
+
+    jax.jit(f).lower(x).compiler_ir().operation.walk(find_backend_config)
+    self.assertLen(backend_configs, 1)
+    self.assertEqual(backend_configs[0]['scoped_vmem_alignment_bytes'], 2**14)
+
+    with self.assertRaisesRegex(ValueError, 'power of two'):
+      jax.jit(
+          self.pallas_call(
+              kernel,
+              out_shape=x,
+              compiler_params=pltpu.CompilerParams(vmem_alignment_bytes=1000),
+          )
+      ).lower(x)
+
   @parameterized.named_parameters(
       ('bf16_2x1_1x1', jnp.bfloat16, (2, 1), (1, 1)),
       ('bf16_4x2_1x1', jnp.bfloat16, (4, 2), (1, 1)),
