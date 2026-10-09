@@ -100,6 +100,14 @@ def _normalize_matvec(f):
         f'linear operator must be either a function or ndarray: {f}')
 
 
+def _transpose_preconditioner(M, b):
+  """Returns the transpose of the linear preconditioner M."""
+  if M is _identity:
+    return M
+  M_transpose = api.linear_transpose(M, b)
+  return lambda x: M_transpose(x)[0]
+
+
 def _cg_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 
   # tolerance handling uses the "non-legacy" behavior of scipy.sparse.linalg.cg
@@ -194,7 +202,9 @@ def _isolve(_isolve_solve, A, b, x0=None, *, tol=1e-5, atol=0.0,
   if x0 is None:
     x0 = tree_map(jnp.zeros_like, b)
 
-  b, x0 = api.device_put((b, x0))
+  # Separate calls keep x0 independent of b under jax.linear_transpose.
+  b = api.device_put(b)
+  x0 = api.device_put(x0)
 
   if maxiter is None:
     size = sum(bi.size for bi in tree_leaves(b))
@@ -216,15 +226,18 @@ def _isolve(_isolve_solve, A, b, x0=None, *, tol=1e-5, atol=0.0,
         f'{_shapes(x0)} vs {_shapes(b)}')
 
   isolve_solve = partial(
-      _isolve_solve, x0=x0, tol=tol, atol=atol, maxiter=maxiter, M=M)
+      _isolve_solve, x0=x0, tol=tol, atol=atol, maxiter=maxiter)
 
   # real-valued positive-definite linear operators are symmetric
   def real_valued(x):
     return not issubclass(x.dtype.type, np.complexfloating)
   symmetric = all(map(real_valued, tree_leaves(b))) \
     if check_symmetric else False
+  # cg keeps its existing behavior and reuses M for the transpose solve.
+  M_transpose = M if check_symmetric else _transpose_preconditioner(M, b)
   x = lax.custom_linear_solve(
-      A, b, solve=isolve_solve, transpose_solve=isolve_solve,
+      A, b, solve=partial(isolve_solve, M=M),
+      transpose_solve=partial(isolve_solve, M=M_transpose),
       symmetric=symmetric)
   info = None
   return x, info
@@ -642,7 +655,10 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
       Preconditioner for A.  The preconditioner should approximate the
       inverse of A.  Effective preconditioning dramatically improves the
       rate of convergence, which implies that fewer iterations are needed
-      to reach a given error tolerance.
+      to reach a given error tolerance. ``M`` must be a linear operator. If
+      it is a function or matmul-compatible object, it must be transposable
+      with :func:`jax.linear_transpose`. Its transpose preconditions the
+      transposed system solved for reverse-mode derivatives.
   solve_method : 'incremental' or 'batched'
       The 'incremental' solve method builds a QR decomposition for the Krylov
       subspace incrementally during the GMRES process using Givens rotations.
@@ -665,7 +681,9 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   A = _normalize_matvec(A)
   M = _normalize_matvec(M)
 
-  b, x0 = api.device_put((b, x0))
+  # Separate calls keep x0 independent of b under jax.linear_transpose.
+  b = api.device_put(b)
+  x0 = api.device_put(x0)
   size = sum(bi.size for bi in tree_leaves(b))
 
   if maxiter is None:
@@ -677,12 +695,7 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
         'x0 and b must have matching tree structure: '
         f'{tree_structure(x0)} vs {tree_structure(b)}')
 
-  b_norm = _norm(b)
-  atol = jnp.maximum(tol * b_norm, atol)
-
-  Mb = M(b)
-  Mb_norm = _norm(Mb)
-  ptol = Mb_norm * jnp.minimum(1.0, atol / b_norm)
+  M_transpose = _transpose_preconditioner(M, b)
 
   if solve_method == 'incremental':
     gmres_func = _gmres_incremental
@@ -692,9 +705,16 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
     raise ValueError(f"invalid solve_method {solve_method}, must be either "
                      "'incremental' or 'batched'")
 
-  def _solve(A, b):
-    return _gmres_solve(A, b, x0, atol, ptol, restart, maxiter, M, gmres_func)
-  x = lax.custom_linear_solve(A, b, solve=_solve, transpose_solve=_solve)
+  # Tolerances are relative to the right-hand side each solve receives.
+  def _solve(A, b, M):
+    b_norm = _norm(b)
+    solve_atol = jnp.maximum(tol * b_norm, atol)
+    ptol = _norm(M(b)) * jnp.minimum(1.0, solve_atol / b_norm)
+    ptol = jnp.where(b_norm == 0, 0, ptol)  # avoid NaN from 0 / 0
+    return _gmres_solve(A, b, x0, solve_atol, ptol, restart, maxiter, M,
+                        gmres_func)
+  x = lax.custom_linear_solve(A, b, solve=partial(_solve, M=M),
+                              transpose_solve=partial(_solve, M=M_transpose))
 
   failed = jnp.isnan(_norm(x))
   info = jnp.where(failed, -1, 0)
@@ -748,7 +768,10 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
       Preconditioner for A.  The preconditioner should approximate the
       inverse of A.  Effective preconditioning dramatically improves the
       rate of convergence, which implies that fewer iterations are needed
-      to reach a given error tolerance.
+      to reach a given error tolerance. ``M`` must be a linear operator. If
+      it is a function or matmul-compatible object, it must be transposable
+      with :func:`jax.linear_transpose`. Its transpose preconditions the
+      transposed system solved for reverse-mode derivatives.
 
   See also
   --------
