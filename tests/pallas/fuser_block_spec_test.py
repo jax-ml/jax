@@ -2539,26 +2539,23 @@ class PushBlockSpecTest(parameterized.TestCase):
     out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
     self.assertEqual(out_block_spec.block_shape, block_spec.block_shape)
 
-  def test_push_reshape_lanes_to_sublanes(self):
-    def f(x):
-      return x.reshape((512, 32, 128))
-
-    x_type = jax.ShapeDtypeStruct((512, 4096), jnp.float32)
-    block_spec = pl.BlockSpec((256, 1024), lambda i, j, k: (i, k))
-    out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
-    self.assertEqual(out_block_spec.block_shape, (256, 8, 128))
-    self.assertTupleEqual(out_block_spec.index_map(0, 1, 2), (0, 2, 0))
-    self.assertEqual(out_block_spec.index_map(3, 2, 1), (3, 1, 0))
-
-    def f(x):
-      return x.reshape((512, 16, 256))
-
-    x_type = jax.ShapeDtypeStruct((512, 4096), jnp.float32)
-    block_spec = pl.BlockSpec((256, 1024), lambda i, j, k: (i, k))
-    out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
-    self.assertEqual(out_block_spec.block_shape, (256, 4, 256))
-    self.assertTupleEqual(out_block_spec.index_map(0, 1, 2), (0, 2, 0))
-    self.assertEqual(out_block_spec.index_map(3, 2, 1), (3, 1, 0))
+  @parameterized.parameters(
+      ((4096,), (32, 128), (1024,), (8, 128)),
+      ((512, 4096), (512, 32, 128), (256, 1024), (256, 8, 128)),
+      ((512, 4096), (512, 16, 256), (256, 1024), (256, 4, 256)),
+      ((4, 512, 4096), (4, 512, 32, 128), (2, 256, 1024), (2, 256, 8, 128)),
+  )
+  def test_push_reshape_lanes_to_sublanes(
+      self, in_shape, out_shape, in_block_shape, expected_block_shape
+  ):
+    x_type = jax.ShapeDtypeStruct(in_shape, jnp.float32)
+    block_spec = pl.BlockSpec(in_block_shape, lambda *pids: pids)
+    out_block_spec = block_spec_lib.push_block_spec(
+        lambda x: x.reshape(out_shape), block_spec
+    )(x_type)
+    self.assertEqual(out_block_spec.block_shape, expected_block_shape)
+    pids = tuple(range(1, len(in_shape) + 1))
+    self.assertEqual(out_block_spec.index_map(*pids), (*pids, 0))
 
   def test_custom_vjp(self):
     @jax.custom_vjp

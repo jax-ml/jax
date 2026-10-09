@@ -3405,7 +3405,7 @@ def _reshape_push_rule(
           f' {block_shape=}, {last_dim=}, {last_block_dim=}, {aval_out.shape=}'
       )
     num_last_dim_blocks = last_block_dim // last_dim
-    new_block_shape = block_shape[:1] + (num_last_dim_blocks, last_dim)
+    new_block_shape = block_shape[:-1] + (num_last_dim_blocks, last_dim)
 
     def new_index_map(*args):
       *idx, last = block_spec.index_map(*args)
