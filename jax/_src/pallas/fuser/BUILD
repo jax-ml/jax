@@ -123,6 +123,7 @@ pytype_strict_library(
     ],
     deps = [
         "//jax",
+        "//jax/_src:tree_util",
         "//jax/_src:util",
     ],
 )

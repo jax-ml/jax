@@ -29,6 +29,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.custom_vjp.defremat` rules with closures.
   * `arr.at[...].get()` now accepts a `strategy` argument that allows choosing
     whether the operation lowers to `gather`, `dynamic_slice`, or `slice`.
+  * Added the experimental {mod}`jax.experimental.rebindable` module: kernel calls
+    whose declared static hyperparameters (e.g. tile sizes) can be extracted
+    from a traced program and rebound without retracing it.
 
 * Breaking changes
   * Removed `jax.custom_remat`. Use {func}`jax.custom_vjp.defremat` instead:

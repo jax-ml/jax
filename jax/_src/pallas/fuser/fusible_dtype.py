@@ -192,7 +192,7 @@ def _physical_aval(aval):
   if isinstance(aval, core.ShapedArray):
     if isinstance(aval.dtype, FusionDType):
       return aval.dtype.abstract_unpack(aval)
-    return core.ShapedArray(aval.shape, aval.dtype)
+    return aval  # keep sharding/varying axes, e.g. for re-traced rebindables
   if isinstance(aval, state.AbstractRef):
     if _is_fusion_type(aval):
       unpacked = aval.dtype.abstract_unpack(aval.inner_aval)

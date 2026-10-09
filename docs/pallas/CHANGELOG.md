@@ -16,6 +16,14 @@ Remember to align the itemized text with the first line of an item within a list
 * New features
   * Added `ref.memory_space_cast` to cast the memory space of a reference.
 
+* Changes
+
+  * A fuser `Fusion` now flattens to the values it captures when it is traced
+    (e.g. as a {mod}`jax.experimental.rebindable` operand), so a rebindable kernel
+    called inside a `fuser.fusible` is tuned with its fused prologue and
+    epilogue. `jax.tree` functions still treat fusions as leaves. Fused kernels
+    also keep their operands' sharding and varying manual axes when re-traced.
+
 * Deprecations
 
   * {class}`jax.experimental.pallas.DeviceIdType` and the `device_id_type`
