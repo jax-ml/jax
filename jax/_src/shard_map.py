@@ -2181,19 +2181,21 @@ def _shard_map_dce(used_outputs: list[bool], live_ins: list[bool],
                                       live_inputs=live_ins)
   if not any(used_inputs) and not any(used_outputs) and not jaxpr.effects:
     return used_inputs, None
-  else:
-    _, in_specs = partition_list(used_inputs, eqn.params['in_specs'])
-    _, out_specs = partition_list(used_outputs, eqn.params['out_specs'])
-    new_params = dict(eqn.params, jaxpr=jaxpr, in_specs=tuple(in_specs),
-                      out_specs=tuple(out_specs))
-    new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
-    effs = core.filter_named_axis_effects(
-        core.eqn_effects(jaxpr, new_invars), mesh.axis_names)
-    new_eqn = pe.new_jaxpr_eqn(
-        new_invars,
-        [x for x, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, effs, eqn.source_info, eqn.ctx)
-    return used_inputs, new_eqn
+  if (jaxpr is eqn.params['jaxpr'] and
+      all(used_inputs) and all(used_outputs)):
+    return used_inputs, eqn
+  _, in_specs = partition_list(used_inputs, eqn.params['in_specs'])
+  _, out_specs = partition_list(used_outputs, eqn.params['out_specs'])
+  new_params = dict(eqn.params, jaxpr=jaxpr, in_specs=tuple(in_specs),
+                    out_specs=tuple(out_specs))
+  new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
+  effs = core.filter_named_axis_effects(
+      core.eqn_effects(jaxpr, new_invars), mesh.axis_names)
+  new_eqn = pe.new_jaxpr_eqn(
+      new_invars,
+      [x for x, used in zip(eqn.outvars, used_outputs) if used],
+      eqn.primitive, new_params, effs, eqn.source_info, eqn.ctx)
+  return used_inputs, new_eqn
 pe.dce_rules[shard_map_p] = _shard_map_dce
 
 # Mutable arrays / refs

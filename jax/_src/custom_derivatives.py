@@ -1991,6 +1991,9 @@ def _remat_opt_dce(used_outs: list[bool], live_ins: list[bool],
     new_jaxpr, used_ins = pe.dce_jaxpr(eqn.params["fwd_jaxpr"], used_outs,
                                        instantiate=instantiate)
     assert not new_jaxpr.constvars
+    if (new_jaxpr is eqn.params["fwd_jaxpr"] and
+        all(used_ins) and all(used_outs)):
+      return used_ins, eqn
     closed_jaxpr = new_jaxpr
     invars = [v for used, v in zip(used_ins, eqn.invars) if used]
     new_params = dict(eqn.params)
