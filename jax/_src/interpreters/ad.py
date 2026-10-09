@@ -1115,6 +1115,13 @@ def _interleave(xs, ys):
   return [e for pair in zip(xs, ys) for l in pair for e in l]
 
 
+vjp_node_p: core.Primitive = core.Primitive('vjp_node')
+vjp_node_p.multiple_results = True
+vjp_node_p.def_effectful_abstract_eval(
+    lambda *_, jaxpr, transpose: (jaxpr.out_avals, core.positional_effects(jaxpr)))
+fancy_transposes[vjp_node_p] = lambda cts, *args, jaxpr, transpose: transpose(
+    cts, *args, jaxpr=jaxpr)
+
 custom_lin_p: core.Primitive = core.Primitive('custom_lin')
 custom_lin_p.def_abstract_eval(lambda *_, out_avals, **__: out_avals)
 custom_lin_p.multiple_results = True
