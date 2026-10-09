@@ -20,7 +20,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 import inspect
 import weakref
-from typing import NamedTuple, Any
+from typing import NamedTuple, Any, cast
 import warnings
 
 import numpy as np
@@ -121,6 +121,7 @@ class PjitInfo(NamedTuple):
   inline: bool | api.Inline
   use_resource_env: bool  # False for jit, True for pjit
   compiler_options_kvs: tuple[tuple[str, Any], ...]
+  cache_key: str | None = None
 
   # Hash and compare PjitInfo by identity when used as a cache key.
   def __hash__(self):
@@ -258,6 +259,31 @@ def _get_cpp_global_cache(contains_explicit_attributes: bool):
     return _cpp_pjit_cache_fun_only
 
 
+def _compile_and_execute(
+    computation: pxla.MeshComputation, args: Sequence[Any],
+) -> tuple[list[Any], pxla.MeshExecutable, list[Any]]:
+  compiled = computation.compile()
+  sharded_const_args = compiled.shard_const_args(computation.const_args)
+
+  if config.distributed_debug.value:
+    fingerprint = None
+    if hasattr(compiled.runtime_executable(), "fingerprint"):
+      fingerprint = compiled.runtime_executable().fingerprint
+    if fingerprint is not None:
+      fingerprint = fingerprint.hex()
+    ca = getattr(computation, "compile_args", {})
+    distributed_debug_log(
+        ("Running pjit'd function", getattr(computation, "_name", "")),
+        ("in_shardings", ca.get("in_shardings")),
+        ("out_shardings", ca.get("out_shardings")),
+        ("in_layouts", ca.get("in_layouts")),
+        ("out_layouts", ca.get("out_layouts")),
+        ("abstract args", map(core.typeof, args)),
+        ("fingerprint", fingerprint))
+  out_flat = compiled.unsafe_call(*sharded_const_args, *args)
+  return out_flat, compiled, sharded_const_args
+
+
 def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
   @api_boundary
@@ -267,6 +293,17 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
     if config.no_tracing.value:
       raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
                          "`jit`, but 'no_tracing' is set")
+    if stages._get_active_cache(jit_info.cache_key) is not None:
+      lowered, dynargs = _get_lowered(fun, jit_info, args, kwargs)
+      if lowered.can_cache:
+        comp = cast(pxla.MeshComputation, lowered._lowering)
+        out_flat, compiled, sharded_consts = _compile_and_execute(comp, dynargs)
+        outs = tree_unflatten(lowered.out_tree, out_flat)
+        fastpath = _get_fastpath_data(
+            compiled, lowered.out_tree, dynargs, out_flat, (), [], None,
+            sharded_consts)
+        return outs, fastpath, False
+
     p, args_flat = _infer_params(fun, jit_info, args, kwargs)
     (outs, out_flat, out_tree, args_flat, jaxpr,
      executable, pgle_profiler, const_args) = _run_python_pjit(
@@ -321,8 +358,8 @@ def jit_trace(jit_func, *args, **kwargs) -> stages.Traced:
                        jit_func._jit_info.fun_sourceinfo)
 
 @api_boundary
-def jit_lower(jit_func, *args, **kwargs):
-  return jit_trace(jit_func, *args, **kwargs).lower()
+def jit_lower(jit_func, *args, **kwargs) -> stages.Lowered:
+  return _get_lowered(jit_func._fun, jit_func._jit_info, args, kwargs)[0]
 
 @api_boundary
 def jit_eval_shape(jit_func, *args, **kwargs):
@@ -373,7 +410,8 @@ def _parse_jit_arguments(fun: Callable, *, in_shardings: Any,
                          keep_unused: bool, device: xc.Device | None,
                          backend: str | None, inline: bool | api.Inline,
                          compiler_options: dict[str, Any] | None,
-                         use_resource_env: bool) -> PjitInfo:
+                         use_resource_env: bool,
+                         cache_key: str | None = None) -> PjitInfo:
   """Parses the arguments to jit/pjit.
 
   Performs any preprocessing and validation of the arguments that we can do
@@ -448,7 +486,8 @@ def _parse_jit_arguments(fun: Callable, *, in_shardings: Any,
         donate_argnames=donate_argnames, device=device, backend=backend,
         keep_unused=keep_unused, inline=inline,
         use_resource_env=use_resource_env,
-        compiler_options_kvs=compiler_options_kvs)
+        compiler_options_kvs=compiler_options_kvs,
+        cache_key=cache_key)
 
 def make_jit(fun: Callable,
              *,
@@ -463,7 +502,8 @@ def make_jit(fun: Callable,
              backend: str | None,
              inline: bool | api.Inline,
              compiler_options: dict[str, Any] | None,
-             use_resource_env: bool) -> Any:
+             use_resource_env: bool,
+             cache_key: str | None = None) -> Any:
   """jit() and pjit() are thin wrappers around this function."""
   jit_info = _parse_jit_arguments(
         fun, in_shardings=in_shardings, out_shardings=out_shardings,
@@ -471,7 +511,8 @@ def make_jit(fun: Callable,
         donate_argnums=donate_argnums, donate_argnames=donate_argnames,
         keep_unused=keep_unused, device=device, backend=backend, inline=inline,
         compiler_options=compiler_options,
-        use_resource_env=use_resource_env)
+        use_resource_env=use_resource_env,
+        cache_key=cache_key)
   return _cpp_pjit(fun, jit_info)
 
 
@@ -632,28 +673,6 @@ def get_ctx_mesh(use_resource_env):
         return abs_mesh
       return conc_mesh
 
-def _infer_params(
-    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
-  ) -> tuple[PjitParams, list[core.Value]]:
-  ctx_mesh = get_ctx_mesh(ji.use_resource_env)
-  dbg_fn = lambda: debug_info(
-      'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
-      static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,
-      signature=ji.fun_signature)
-  arg_signature, dynargs = jax_jit.parse_arguments(
-      args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
-      ji.static_argnames, tree_util.tracing_registry)
-  avals = _infer_input_type(fun, dbg_fn, dynargs)
-  entry = _infer_params_cached(fun, ji, arg_signature, avals, ctx_mesh)
-
-  if entry.pjit_params is not None:
-    return entry.pjit_params, entry.pjit_params.consts + dynargs
-
-  p = _trace_for_jit(fun, ji, ctx_mesh, dbg_fn(), avals, args, kwargs)
-  entry.pjit_params = p
-  return p, p.consts + dynargs
-
-
 def _infer_input_type(fun: Callable, dbg_fn: Callable[[], core.DebugInfo],
                       explicit_args) -> tuple[core.AbstractValue, ...]:
   avals = []
@@ -683,6 +702,66 @@ def _infer_input_type(fun: Callable, dbg_fn: Callable[[], core.DebugInfo],
   if config.mutable_array_checks.value:
     check_no_aliased_ref_args(dbg_fn, avals, explicit_args)
   return tuple(avals)
+
+
+def _parse_jit_inputs(
+    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
+):
+  ctx_mesh = get_ctx_mesh(ji.use_resource_env)
+  dbg_fn = lambda: debug_info(
+      'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
+      static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,
+      signature=ji.fun_signature)
+  arg_signature, dynargs = jax_jit.parse_arguments(
+      args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
+      ji.static_argnames, tree_util.tracing_registry)
+  avals = _infer_input_type(fun, dbg_fn, dynargs)
+  return (arg_signature, avals, ctx_mesh), dbg_fn, dynargs
+
+
+def _infer_params(
+    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any],
+    parsed: tuple[Any, Any, list[core.Value]] | None = None,
+) -> tuple[PjitParams, list[core.Value]]:
+  (arg_signature, avals, ctx_mesh), dbg_fn, dynargs = (
+      parsed or _parse_jit_inputs(fun, ji, args, kwargs))
+  if parsed is None and (cache := stages._get_active_cache(ji.cache_key)) is not None:
+    ji_fields = ji._replace(fun_sourceinfo="", fun_signature=None, cache_key=None)
+    cache_key = stages._compute_cache_key(
+        stages.Lowered, ji.cache_key,
+        (arg_signature, avals, ji_fields, ctx_mesh, mlir.LoweringParameters()))
+    if isinstance(cached_l := cache.get(cache_key), stages.Lowered):
+      p = PjitParams([], {'cached_lowered': cached_l}, avals,
+                     cached_l.in_tree, cached_l.out_tree, ())
+      return p, dynargs
+  entry = _infer_params_cached(fun, ji, arg_signature, avals, ctx_mesh)
+  if entry.pjit_params is None:
+    entry.pjit_params = _trace_for_jit(
+        fun, ji, ctx_mesh, dbg_fn(), avals, args, kwargs)
+  return entry.pjit_params, entry.pjit_params.consts + dynargs
+
+
+def _get_lowered(
+    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[stages.Lowered, list[core.Value]]:
+  parsed = _parse_jit_inputs(fun, ji, args, kwargs)
+  (arg_signature, avals, ctx_mesh), _, dynargs = parsed
+  cache = stages._get_active_cache(ji.cache_key)
+  cache_key = None
+  if cache is not None:
+    ji_fields = ji._replace(fun_sourceinfo="", fun_signature=None, cache_key=None)
+    cache_key = stages._compute_cache_key(
+        stages.Lowered, ji.cache_key,
+        (arg_signature, avals, ji_fields, ctx_mesh, mlir.LoweringParameters()))
+    if isinstance(cached_l := cache.get(cache_key), stages.Lowered):
+      return cached_l, dynargs
+  p, args_flat = _infer_params(fun, ji, args, kwargs, parsed)
+  lowered = stages.Traced(
+      map(convert_to_metaty, args_flat), p.params, p.in_tree, p.out_tree,
+      p.consts, ji.fun_sourceinfo).lower()
+  if cache is not None and cache_key is not None and lowered.can_cache:
+    cache.put(cache_key, lowered)
+  return lowered, dynargs
 
 
 class JitWrapped(stages.Wrapped):
@@ -1152,25 +1231,10 @@ def _pjit_call_impl_python(
       inline=inline, lowering_platforms=None,
       lowering_parameters=mlir.LoweringParameters(),
       pgle_profiler=pgle_profiler,
-      compiler_options_kvs=compiler_options_kvs,
-  )
-  compiled = computation.compile()
-  sharded_const_args = compiled.shard_const_args(computation.const_args)
+      compiler_options_kvs=compiler_options_kvs)
 
-  if config.distributed_debug.value:
-    # Defensively only perform fingerprint logic if debug logging is enabled
-    fingerprint = None
-    if hasattr(compiled.runtime_executable(), "fingerprint"):
-      fingerprint = compiled.runtime_executable().fingerprint
-    if fingerprint is not None:
-      fingerprint = fingerprint.hex()
-    distributed_debug_log(
-        ("Running pjit'd function", name), ("in_shardings", in_shardings),
-        ("out_shardings", out_shardings), ("in_layouts", in_layouts),
-        ("out_layouts", out_layouts), ("abstract args", map(core.typeof, args)),
-        ("fingerprint", fingerprint))
-  return (compiled.unsafe_call(*sharded_const_args, *args),
-          compiled, pgle_profiler, sharded_const_args)
+  out_flat, compiled, sharded_const_args = _compile_and_execute(computation, args)
+  return out_flat, compiled, pgle_profiler, sharded_const_args
 
 @weakref_lru_cache
 def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, in_layouts,

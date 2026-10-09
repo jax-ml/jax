@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import contextlib
+import functools
 import re
 import unittest
 from absl.testing import absltest
@@ -31,7 +32,35 @@ from jax.experimental.serialize_executable import (
 )
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
+from jax.stages import Cache, Lowered, Traced, set_cache
+from jax._src.stages import Stage
 import numpy as np
+
+
+class InMemoryCache(Cache):
+  """Simple in-memory cache for testing JAX stages."""
+
+  def __init__(self):
+    self._store: dict[str, Stage] = {}
+    self.hits: int = 0
+    self.misses: int = 0
+
+  def get(self, key: str) -> Stage | None:
+    if key in self._store:
+      self.hits += 1
+      return self._store[key]
+    self.misses += 1
+    return None
+
+  def put(self, key: str, value: Stage) -> None:
+    self._store[key] = value
+
+  def reset_stats(self) -> None:
+    self.hits = 0
+    self.misses = 0
+
+  def __len__(self) -> int:
+    return len(self._store)
 
 jax.config.parse_flags_with_absl()
 
@@ -515,6 +544,404 @@ class JaxAotTest(jtu.JaxTestCase):
     version_bytes = py_exec.get_executable_version()
     self.assertIsInstance(version_bytes, bytes)
     self.assertNotEmpty(version_bytes)
+
+
+class LoweredStageCacheTest(jtu.JaxTestCase):
+  """Tests for Lowered stage caching with @jax.jit(cache_key=...) and jax.stages.Cache."""
+
+  def test_lowered_cache_cold_start_and_hit(self):
+    trace_count = 0
+
+    @jax.jit(cache_key="my_func")
+    def f(x):
+      nonlocal trace_count
+      trace_count += 1
+      return x * 2.0 + 1.0
+
+    cache = InMemoryCache()
+    x = jnp.arange(4, dtype=jnp.float32)
+
+    with set_cache(cache):
+      # 1. Cold start: executes and caches Lowered
+      res1 = f(x)
+      self.assertArraysEqual(res1, x * 2.0 + 1.0)
+      self.assertEqual(trace_count, 1)
+      self.assertEqual(cache.hits, 0)
+      self.assertEqual(cache.misses, 1)
+
+      # 2. In-memory cache hit on the instance
+      res2 = f(x)
+      self.assertArraysEqual(res2, x * 2.0 + 1.0)
+      self.assertEqual(trace_count, 1)
+
+      # 3. New jit instance with same key: hits Lowered directly, skips tracing entirely!
+      trace_count_new = 0
+
+      @jax.jit(cache_key="my_func")
+      def f_new(x):
+        nonlocal trace_count_new
+        trace_count_new += 1
+        return x * 2.0 + 1.0
+
+      res3 = f_new(x)
+      self.assertArraysEqual(res3, x * 2.0 + 1.0)
+      self.assertEqual(trace_count_new, 0)  # Never traced!
+      self.assertEqual(cache.hits, 1)
+
+  def test_lowered_cache_lower_method_hit(self):
+    trace_count = 0
+
+    @jax.jit(cache_key="lower_method_func")
+    def f(x):
+      nonlocal trace_count
+      trace_count += 1
+      return x * 3.0
+
+    cache = InMemoryCache()
+    x = jnp.ones(4, dtype=jnp.float32)
+
+    with set_cache(cache):
+      # Run to populate Lowered cache
+      f(x)
+      self.assertEqual(trace_count, 1)
+
+      # Calling .lower() on a new function instance hits Lowered cache directly
+      @jax.jit(cache_key="lower_method_func")
+      def f_new(x):
+        raise RuntimeError("Should never trace on Lowered cache hit!")
+
+      lowered = f_new.lower(x)
+      self.assertIsInstance(lowered, Lowered)
+      self.assertEqual(cache.hits, 1)
+      compiled = lowered.compile()
+      self.assertArraysEqual(compiled(x), x * 3.0)
+
+  def test_lowered_cache_eval_shape_hit(self):
+    @jax.jit(cache_key="eval_shape_func")
+    def f(x):
+      return x * 3.0
+
+    cache = InMemoryCache()
+    x = jnp.ones((2, 3), dtype=jnp.float32)
+
+    with set_cache(cache):
+      # Run to populate Lowered cache
+      f(x)
+      self.assertEqual(cache.hits, 0)
+      self.assertEqual(cache.misses, 1)
+
+      # Calling .eval_shape() on a new function instance hits Lowered cache directly
+      @jax.jit(cache_key="eval_shape_func")
+      def f_new(x):
+        raise RuntimeError("Should never trace on Lowered cache hit!")
+
+      out_shape = f_new.eval_shape(x)
+      self.assertEqual(cache.hits, 1)
+      self.assertEqual(out_shape.shape, (2, 3))
+      self.assertEqual(out_shape.dtype, jnp.float32)
+
+  def test_grad_of_function_with_cached_lowered_does_not_fail(self):
+    @jax.jit(cache_key="grad_with_cached_lowered")
+    def f(x):
+      return jnp.sum(x**2)
+
+    cache = InMemoryCache()
+    x_shape = jax.ShapeDtypeStruct((3,), jnp.float32)
+    x = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32)
+
+    with set_cache(cache):
+      # Populate Lowered cache with ShapeDtypeStruct
+      lowered = f.lower(x_shape)
+      self.assertIsInstance(lowered, Lowered)
+      self.assertEqual(cache.hits, 0)
+      self.assertEqual(cache.misses, 1)
+
+      # Under jax.grad, trace_state_clean is False, so it must trace cleanly and not hit Lowered cache
+      @jax.jit(cache_key="grad_with_cached_lowered")
+      def f2(x):
+        return jnp.sum(x**2)
+
+      grad_f2 = jax.grad(f2)
+      res = grad_f2(x)
+      self.assertArraysAllClose(res, 2.0 * x)
+
+  def test_fingerprint_separation(self):
+    trace_count = 0
+
+    @jax.jit(cache_key="fp_sep", static_argnames=("k",))
+    def f(x, *, k: int = 1):
+      nonlocal trace_count
+      trace_count += 1
+      return x * k
+
+    cache = InMemoryCache()
+    x4 = jnp.ones(4, dtype=jnp.float32)
+    x8 = jnp.ones(8, dtype=jnp.float32)
+
+    with set_cache(cache):
+      f(x4, k=1)
+      self.assertEqual(trace_count, 1)
+
+      # Different shape -> cache miss, re-traces and caches separate Lowered
+      f(x8, k=1)
+      self.assertEqual(trace_count, 2)
+
+      # Different static arg -> cache miss, re-traces
+      f(x4, k=2)
+      self.assertEqual(trace_count, 3)
+
+      # New instance with (x4, k=1) hits cached Lowered
+      @jax.jit(cache_key="fp_sep", static_argnames=("k",))
+      def f_new(x, *, k: int = 1):
+        raise RuntimeError("Should not trace!")
+
+      self.assertArraysEqual(f_new(x4, k=1), x4)
+      self.assertEqual(cache.hits, 1)
+
+  def test_cold_start_lower_populates_cache_and_hits_subsequent(self):
+    trace_count = 0
+
+    @jax.jit(cache_key="cold_lower_test")
+    def f(x):
+      nonlocal trace_count
+      trace_count += 1
+      return x * 7.0
+
+    cache = InMemoryCache()
+    x = jnp.ones(4, dtype=jnp.float32)
+
+    with set_cache(cache):
+      # 1. Cold-start .lower(x) without f(x) first: must populate Lowered cache
+      lowered = f.lower(x)
+      self.assertIsInstance(lowered, Lowered)
+      self.assertEqual(trace_count, 1)
+      self.assertEqual(cache.hits, 0)
+      self.assertEqual(cache.misses, 1)
+
+      # 2. Subsequent call on new jit instance with same key hits cached Lowered
+      @jax.jit(cache_key="cold_lower_test")
+      def f_new(x):
+        raise RuntimeError("Should not trace!")
+
+      res = f_new(x)
+      self.assertArraysEqual(res, x * 7.0)
+      self.assertEqual(cache.hits, 1)
+
+      # 3. Subsequent .lower(x) on another jit instance also hits cached Lowered
+      @jax.jit(cache_key="cold_lower_test")
+      def f_lower_only(x):
+        raise RuntimeError("Should not trace!")
+
+      lowered2 = f_lower_only.lower(x)
+      self.assertIsInstance(lowered2, Lowered)
+      self.assertEqual(cache.hits, 2)
+
+  def test_call_then_lower_on_same_instance_hits_cache(self):
+    trace_count = 0
+
+    @jax.jit(cache_key="same_instance_test")
+    def f(x):
+      nonlocal trace_count
+      trace_count += 1
+      return x * 5.0
+
+    cache = InMemoryCache()
+    x = jnp.ones(4, dtype=jnp.float32)
+
+    with set_cache(cache):
+      # 1. f(x) runs, traces and populates Lowered cache
+      f(x)
+      self.assertEqual(trace_count, 1)
+      self.assertEqual(cache.hits, 0)
+      self.assertEqual(cache.misses, 1)
+
+      # 2. Calling f.lower(x) on the SAME instance hits Lowered cache
+      lowered = f.lower(x)
+      self.assertIsInstance(lowered, Lowered)
+      self.assertEqual(trace_count, 1)
+      self.assertEqual(cache.hits, 1)
+
+      # 3. Calling .lower(x) on a NEW instance with same key hits Lowered cache
+      @jax.jit(cache_key="same_instance_test")
+      def f_new(x):
+        return x * 5.0
+
+      lowered2 = f_new.lower(x)
+      self.assertIsInstance(lowered2, Lowered)
+      self.assertEqual(cache.hits, 2)
+
+  def test_closed_over_array_constants_cached(self):
+    const_arr = jnp.array([10.0, 20.0], dtype=jnp.float32)
+
+    @jax.jit(cache_key="closed_over_const_fn")
+    def f(x):
+      return x + const_arr
+
+    cache = InMemoryCache()
+    x = jnp.ones(2, dtype=jnp.float32)
+
+    with set_cache(cache):
+      res = f(x)
+      self.assertArraysEqual(res, jnp.array([11.0, 21.0], dtype=jnp.float32))
+      self.assertLen(cache, 1)
+
+      lowered = f.lower(x)
+      self.assertIsInstance(lowered, Lowered)
+      self.assertEqual(cache.hits, 1)
+
+  def test_donated_invars_and_shardings_preserved_on_cache_hit(self):
+    @functools.partial(jax.jit, donate_argnums=(0,), cache_key="donate_test")
+    def f(x, y):
+      return x + y
+
+    cache = InMemoryCache()
+    x = jnp.ones(4, dtype=jnp.float32)
+    y = jnp.ones(4, dtype=jnp.float32)
+
+    with set_cache(cache):
+      # First run lowers and caches
+      lowered1 = f.lower(x, y)
+      self.assertTrue(lowered1.args_info[0][0].donated)
+      self.assertFalse(lowered1.args_info[0][1].donated)
+      self.assertEqual(cache.hits, 0)
+      self.assertEqual(cache.misses, 1)
+
+      # Second run on a new jit instance with the same key
+      @functools.partial(jax.jit, donate_argnums=(0,), cache_key="donate_test")
+      def f2(x, y):
+        raise RuntimeError("Should hit cache!")
+
+      # Verify that Lowered cache hit preserves donated_invars
+      lowered2 = f2.lower(x, y)
+      self.assertTrue(lowered2.args_info[0][0].donated)
+      self.assertFalse(lowered2.args_info[0][1].donated)
+      self.assertEqual(cache.hits, 1)
+
+  def test_stage_compute_cache_key(self):
+    from jax._src.stages import _compute_cache_key
+    cache = InMemoryCache()
+    with set_cache(cache):
+      key = _compute_cache_key(Lowered, "my_user_key", ("meta1", 42))
+      self.assertIsNotNone(key)
+      self.assertTrue(key.startswith("my_user_key:Lowered:"))
+      self.assertIn("Lowered", key)
+
+  def test_stage_can_cache(self):
+    @jax.jit
+    def f(x):
+      return x * 2.0
+
+    x = jnp.ones(2, dtype=jnp.float32)
+    traced = f.trace(x)
+    self.assertFalse(traced.can_cache)
+
+    lowered = f.lower(x)
+    self.assertTrue(lowered.can_cache)
+
+    compiled = lowered.compile()
+    self.assertFalse(compiled.can_cache)
+
+  def test_cache_hit_then_grad_and_nested_jit(self):
+    @functools.partial(jax.jit, cache_key="grad_nested_test_fn")
+    def f(x):
+      return jnp.sum(x ** 2)
+
+    cache = InMemoryCache()
+    x = jnp.array([2.0, 3.0], dtype=jnp.float32)
+
+    with set_cache(cache):
+      # 1. First run populates the cache
+      res1 = f(x)
+      self.assertEqual(res1, 13.0)
+      self.assertIn(cache.misses, (1, 2))
+
+      # 2. Calling jax.grad(f)(x) on the same function instance must NOT reuse dummy Jaxpr!
+      grad_f = jax.grad(f)
+      df = grad_f(x)
+      self.assertArraysAllClose(df, jnp.array([4.0, 6.0], dtype=jnp.float32))
+
+      # 3. A new jit instance with the same key hits the Lowered stage cache
+      @functools.partial(jax.jit, cache_key="grad_nested_test_fn")
+      def f2(x):
+        raise RuntimeError("Should hit cache!")
+
+      lowered2 = f2.lower(x)
+      self.assertIsInstance(lowered2, Lowered)
+      self.assertEqual(cache.hits, 1)
+
+      # 4. Calling f inside an outer jit must also trace and succeed cleanly!
+      @jax.jit
+      def outer(x):
+        return f(x) + 1.0
+
+      self.assertEqual(outer(x), 14.0)
+
+  def test_infer_params_cache_frame_reuse(self):
+    @functools.partial(jax.jit, cache_key="infer_params_reuse_fn")
+    def f(x):
+      return x * 3.0
+
+    cache = InMemoryCache()
+    x = jnp.array([1.0, 2.0], dtype=jnp.float32)
+
+    with set_cache(cache):
+      # Case 1: eval_shape first, then call on the same instance
+      s = f.eval_shape(x)
+      self.assertEqual(s.shape, (2,))
+      res = f(x)
+      self.assertArraysEqual(res, jnp.array([3.0, 6.0], dtype=jnp.float32))
+
+      # Case 2: hit on new instance f2, then f2.lower(x) and f2.eval_shape(x)
+      @functools.partial(jax.jit, cache_key="infer_params_reuse_fn")
+      def f2(x):
+        raise RuntimeError("Should hit cache!")
+
+      res2 = f2(x)
+      self.assertArraysEqual(res2, jnp.array([3.0, 6.0], dtype=jnp.float32))
+      l2 = f2.lower(x)
+      self.assertIsInstance(l2, Lowered)
+      s2 = f2.eval_shape(x)
+      self.assertEqual(s2.shape, (2,))
+
+      # Verify that f2.trace(x) returns Traced carrying cached_lowered
+      traced2 = f2.trace(x)
+      self.assertIsInstance(traced2, Traced)
+      self.assertIs(traced2.cached_lowered, l2)
+      self.assertIs(traced2._params.get("cached_lowered"), l2)
+      self.assertEqual(traced2.out_info.shape, (2,))
+
+  def test_closed_over_tracer_under_cache(self):
+    cache = InMemoryCache()
+    @jax.jit(cache_key="closed_tracer_fn")
+    def inner(x, y):
+      return jnp.sum(x * y)
+
+    def outer(y):
+      return jax.jit(lambda x: inner(x, y), cache_key="inner_closure")(jnp.ones(2))
+
+    with set_cache(cache):
+      grad_val = jax.grad(outer)(3.0)
+      self.assertEqual(grad_val, 2.0)
+
+    with set_cache(cache):
+      grad_val = jax.grad(outer)(3.0)
+      self.assertEqual(grad_val, 2.0)
+
+  def test_set_cache_nesting_error(self):
+    cache1 = InMemoryCache()
+    cache2 = InMemoryCache()
+    msg = (
+        "Nesting set_cache contexts is not currently supported. If you need"
+        " this functionality, please contact dsuo@ or file an issue."
+    )
+    with set_cache(cache1):
+      with self.assertRaisesRegex(ValueError, re.escape(msg)):
+        with set_cache(cache2):
+          pass
+
+    # Verify that cache is reset after exiting the outer context
+    with set_cache(cache2):
+      pass
 
 
 if __name__ == '__main__':
