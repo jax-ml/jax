@@ -47,7 +47,7 @@ from jax._src.state.types import AbstractRef
 from jax._src import ad_util
 from jax._src.util import (
     safe_zip, safe_map, split_list, partition_list, merge_lists,
-    fun_name)
+    fun_name, cache, weakref_lru_cache)
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
     broadcast_prefix, register_static, register_pytree_node,
@@ -462,6 +462,91 @@ def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
   return ans_flat, nzs_out_flat, residuals, sres, linearized
 ad.primitive_linearizations[call_hi_primitive_p] = _call_hi_primitive_linearize
 ad.linearize_on_zero_tangents.add(call_hi_primitive_p)
+
+class JitVJP(HiPrim):
+  jaxpr: Any
+  nzs: tuple[bool, ...]
+  jit_params: tuple[tuple[str, Any], ...]
+
+  def __init__(self, jaxpr, nzs, jit_params):
+    self.in_avals = tuple(jaxpr.in_avals)
+    self.out_aval = list(jaxpr.out_avals)
+    self.effects = jaxpr.effects
+    self.params = dict(jaxpr=jaxpr, nzs=tuple(nzs),
+                       jit_params=tuple(jit_params.items()))
+    super().__init__()
+
+  def expand(self, *args):
+    from jax._src.pjit import jit_p  # pyrefly: ignore[missing-import]
+    return jit_p.bind(*args, jaxpr=self.jaxpr, **dict(self.jit_params))
+
+  def vjp_fwd(self, nzs_in, *args):
+    xs = (*self.jaxpr.consts, *args)
+    out, res = _jit_vjp_fwd(self.jaxpr, self.nzs, self.jit_params)(*xs)
+    tree, spec = res.aux
+    src = dict(a=xs, o=out, r=res.leaves)
+    f_vjp, sres = tree_unflatten(tree, [src[k][i] for k, i in spec])
+    args_res = [x if isinstance(r, api.NotSaveable) else r
+                for r, x in zip(f_vjp.args_res, xs)]
+    return out, f_vjp.replace(args_res=args_res), list(f_vjp.out_nzs), sres
+
+  def vjp_bwd(self, f_vjp, sres, outgrad, *arg_accums):  # pyrefly: ignore[bad-override]
+    zeros = tuple(isinstance(ct, ad_util.Zero) for ct in outgrad)
+    kinds = ('null',) * len(self.jaxpr.consts) + tuple(
+        'null' if isinstance(a, ad.NullAccum) or
+        getattr(a.aval, 'dtype', None) == dtypes.float0 else
+        'ref' if isinstance(a, ad.RefAccum) and a.ref is not None
+        else 'val' for a in arg_accums)
+    vals, logs = _jit_vjp_bwd(tuple(self.out_avals_flat), zeros, kinds,
+                              dict(self.jit_params)['inline'])(
+        f_vjp.replace(structured_residuals=sres),
+        [ct for ct in outgrad if not isinstance(ct, ad_util.Zero)],
+        [a.ref for a, k in zip(arg_accums, kinds[len(self.jaxpr.consts):])
+         if k == 'ref'])
+    vals_ = iter(vals)
+    for a, k in zip(arg_accums, kinds[len(self.jaxpr.consts):]):
+      if k == 'val': a.accum(next(vals_))
+    return logs
+
+class _JitVJPRes:
+  def __init__(self, leaves, aux):
+    self.leaves, self.aux = leaves, aux
+register_pytree_node(_JitVJPRes, lambda r: (r.leaves, r.aux),
+                     lambda aux, leaves: _JitVJPRes(list(leaves), aux))
+
+@weakref_lru_cache
+def _jit_vjp_fwd(jaxpr, nzs, jit_params):
+  n = len(jaxpr.consts)
+  body = lambda *xs: core.eval_jaxpr(jaxpr.jaxpr, xs[:n], *xs[n:])
+  def fwd(*xs):
+    out, f_vjp = api.vjp(body, *xs, saveable_args=False,
+                         in_nzs=(False,) * n + nzs)
+    leaves, tree = tree_flatten(
+        (f_vjp.replace(structured_residuals=[]), f_vjp.structured_residuals))  # pyrefly: ignore[missing-attribute]
+    known = {id(x): ('a', i) for i, x in enumerate(xs)}
+    for i, x in enumerate(out):
+      known.setdefault(id(x), ('o', i))
+    res = []
+    for l in leaves:
+      if id(l) not in known:
+        known[id(l)] = ('r', len(res))
+        res.append(l)
+    return out, _JitVJPRes(res, (tree, tuple(known[id(l)] for l in leaves)))
+  params = dict(jit_params)
+  fwd.__name__ = params['name']
+  return api.jit(fwd, inline=params['inline'], keep_unused=params['keep_unused'])
+
+@cache(trace_context_in_key=False)
+def _jit_vjp_bwd(out_avals, zeros, kinds, inline):
+  def bwd(f_vjp, nz_cts, refs):
+    nz_cts_, refs_ = iter(nz_cts), iter(refs)
+    cts = [ad_util.Zero(a.to_ct_aval()) if z else next(nz_cts_)
+           for a, z in zip(out_avals, zeros)]
+    with_refs = [next(refs_) if k == 'ref' else api.DontWant() if k == 'null'
+                 else api.GradValue() for k in kinds]
+    arg_cts, logs = f_vjp.with_logs.with_refs(*with_refs)(cts)
+    return [ct for ct, k in zip(arg_cts, kinds) if k == 'val'], logs
+  return api.jit(bwd, inline=inline)
 
 def fake_linear_op(prim, nz_in_flat, nz_out_flat, rs, sres, *tangents):
   if not any(nz_out_flat):

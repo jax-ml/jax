@@ -71,7 +71,7 @@ from jax._src.sharding_impls import (
 from jax._src.layout import (Format, Layout, AutoLayoutSingleton,
                              get_layout_for_vmap, AutoLayout, use_layout_mode,
                              LayoutMode)
-from jax._src.state.types import RefEffect
+from jax._src.state.types import AbstractRef, RefEffect
 from jax._src.traceback_util import api_boundary
 from jax._src import flattree as ft
 from jax._src.tree_util import (
@@ -1559,6 +1559,18 @@ ad.primitive_jvps[jit_p] = _pjit_jvp
 def _pjit_linearize(is_vjp, nzs, *primals_in, jaxpr, in_shardings, out_shardings,
                     in_layouts, out_layouts, donated_invars, ctx_mesh, name,
                     keep_unused, inline, compiler_options_kvs):
+  if (is_vjp and not any(donated_invars) and
+      not any(isinstance(core.typeof(x), AbstractRef) for x in primals_in) and
+      all(isinstance(s, UnspecifiedValue) for s in (*in_shardings, *out_shardings)) and
+      all(l is None for l in (*in_layouts, *out_layouts))):
+    from jax._src import hijax  # pyrefly: ignore[missing-import]
+    prim = hijax.JitVJP(jaxpr, nzs, dict(
+        in_shardings=in_shardings, out_shardings=out_shardings,
+        in_layouts=in_layouts, out_layouts=out_layouts,
+        donated_invars=donated_invars, ctx_mesh=ctx_mesh, name=name,
+        keep_unused=keep_unused, inline=inline,
+        compiler_options_kvs=compiler_options_kvs))
+    return hijax._call_hi_primitive_linearize(True, nzs, *primals_in, _prim=prim)
   fwd_jaxpr, fwd_out_tree, nzs_out, in_fwd_res, tangent_jaxpr = \
       ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
   primal_out_avals, ures_out_avals, sres_out_avals = fwd_out_tree.unpack()
