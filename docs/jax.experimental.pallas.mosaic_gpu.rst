@@ -49,6 +49,7 @@ Synchronization
    :toctree: _autosummary
 
    barrier_arrive
+   barrier_arrive_and_wait
    barrier_wait
    semaphore_signal_parallel
    SemaphoreSignal

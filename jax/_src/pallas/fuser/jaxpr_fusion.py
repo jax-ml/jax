@@ -17,7 +17,6 @@
 from collections.abc import Iterable, Sequence
 import contextlib
 import functools
-from typing import Any
 
 import jax
 from jax._src import api_util
@@ -149,9 +148,6 @@ def fuse(
   return decorator
 
 
-_fusible: dict[jax_core.Primitive, Any] = {}
-
-
 def _construct_fusion_jaxpr(
     candidate_values, jaxpr: jax_core.Jaxpr, outvars, *invars, **kwargs
 ):
@@ -212,7 +208,7 @@ def _find_downstream(
       ensure_out_inst=False,
       saveable=lambda *_, **__: False,
   )
-  # NOTE: out_used[:len(jaxpr.outvars)] reports whether or not the the original
+  # NOTE: out_used[:len(jaxpr.outvars)] reports whether or not the original
   # outputs depend on the inputs for which `in_used` is True.
   # out_used[len(jaxpr.outvars):] reports whether or not the new outputs
   # (updates for discharged Refs) depend on thse inputs.

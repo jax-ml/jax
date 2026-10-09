@@ -137,6 +137,15 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker, rtol={np.float64: 1e-14})
 
+  def testPoissonLogPmfFractionalLoc(self):
+    k = np.array([1.5, 2.0])
+    mu = 1.0
+    loc = 0.5
+    result = lsp_stats.poisson.logpmf(jnp.asarray(k), mu=mu, loc=loc)
+    expected = osp_stats.poisson.logpmf(k, mu=mu, loc=loc)
+    self.assertAllClose(result, expected, check_dtypes=False,
+                        atol=1e-3, rtol=1e-3)
+
   @genNamedParametersNArgs(3)
   def testPoissonPmf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
@@ -989,6 +998,21 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker, rtol=3e-4, atol=3e-4)
+
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testNormIsfExtremeTails(self, dtype):
+    if dtype == np.float32:
+      quantiles = np.array([1e-5, 1e-10, 1e-15, 1e-20, 1e-30], dtype=dtype)
+    else:
+      quantiles = np.array(
+        [1e-10, 1e-16, 1e-17, 1e-20, 1e-50, 1e-100], dtype=dtype
+      )
+
+    def args_maker():
+      return quantiles, 3.5, 2.0
+
+    self._CheckAgainstNumpy(osp_stats.norm.isf, lsp_stats.norm.isf, args_maker, tol=1e-4)
+    self._CompileAndCheck(lsp_stats.norm.isf, args_maker, rtol=3e-4, atol=3e-4)
 
   @genNamedParametersNArgs(5)
   def testTruncnormLogPdf(self, shapes, dtypes):

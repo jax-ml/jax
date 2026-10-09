@@ -100,9 +100,16 @@ class custom_fusion:
   def __call__(self, *args, **kwargs):
     debug_fun = api_util.debug_info("custom_fusion fun", self.fun, args, kwargs)
 
-    # TODO(jburnim): Better error messages here.
-    assert self.eval_rule is not None
-    assert self.pull_block_spec_rule is not None
+    if self.eval_rule is None:
+      raise ValueError(
+          f"custom_fusion-decorated function {debug_fun.func_name} is missing "
+          "an evaluation rule (use def_eval_rule to define one)."
+      )
+    if self.pull_block_spec_rule is None:
+      raise ValueError(
+          f"custom_fusion-decorated function {debug_fun.func_name} is missing "
+          "a pull_block_spec rule (use def_pull_block_spec to define one)."
+      )
 
     try:
       args = api_util.resolve_kwargs(self.fun, args, kwargs)
@@ -177,17 +184,25 @@ def _custom_fusion_effectful_abstract_eval(
     pallas_jaxpr: core.Jaxpr | None,
     **_):
   del args
-  # TODO(jburnim): Error if pallas_jaxpr has different number of outputs, or
-  # different shapes and types of outputs?
   if jaxpr.effects:
     raise NotImplementedError(
-        "custom_fusion-decorated function {jaxpr.debug_info.func_src_info} "
-        "has effects, which is not yet supported: {jaxpr.effects}")
-  if pallas_jaxpr is not None and pallas_jaxpr.effects:
-    raise NotImplementedError(
-        "custom_fusion-decorated function {jaxpr.debug_info.func_src_info} "
-        "has a pallas_impl with effects, which is not yet supported: "
-        f"{pallas_jaxpr.effects}")
+        f"custom_fusion-decorated function {jaxpr.debug_info.func_src_info} "
+        f"has effects, which is not yet supported: {jaxpr.effects}")
+  if pallas_jaxpr is not None:
+    if pallas_jaxpr.effects:
+      raise NotImplementedError(
+          f"custom_fusion-decorated function {jaxpr.debug_info.func_src_info} "
+          "has a pallas_impl with effects, which is not yet supported: "
+          f"{pallas_jaxpr.effects}")
+    if len(pallas_jaxpr.out_avals) != len(jaxpr.out_avals) or any(
+        p_aval.shape != j_aval.shape or p_aval.dtype != j_aval.dtype
+        for p_aval, j_aval in zip(pallas_jaxpr.out_avals, jaxpr.out_avals)
+    ):
+      raise ValueError(
+          f"custom_fusion-decorated function {jaxpr.debug_info.func_src_info} "
+          f"and its pallas_impl have mismatched output abstract values: "
+          f"{jaxpr.out_avals} vs {pallas_jaxpr.out_avals}"
+      )
   return jaxpr.out_avals, jaxpr.effects
 
 
@@ -224,11 +239,15 @@ def _custom_fusion_pull_block_spec_rule(
 def _custom_fusion_push_block_spec_rule(
     ctx : block_spec_lib.PushRuleContext,
     *block_specs : pallas_core.BlockSpec,
-    push_block_spec_rule : CustomPushBlockSpecRuleFn,
+    push_block_spec_rule : CustomPushBlockSpecRuleFn | None,
     **_
 ) -> tuple[pallas_core.BlockSpec, ...]:
   del ctx
-  # TODO(jburnim): Better error message if push_block_spec_rule is None.
+  if push_block_spec_rule is None:
+    raise ValueError(
+        "custom_fusion is missing a push_block_spec rule "
+        "(use def_push_block_spec to define one)."
+    )
   return push_block_spec_rule(block_specs)
 
 

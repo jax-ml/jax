@@ -694,12 +694,22 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   branches_known_ : list[core.Jaxpr] = []
   branches_staged_: list[core.Jaxpr] = []
   branch_res_avals: list[list[core.AbstractValue]] = []
+  num_known_outs = len(unks_out) - sum(unks_out)
   for jaxpr in branches:
     jaxpr_known, jaxpr_staged, _, inst_out, num_res = \
         pe.partial_eval_jaxpr_custom(
             jaxpr, in_unknowns=ops_uk, in_inst=True,
             ensure_out_unknowns=unks_out, ensure_out_inst=True,
             saveable=saveable)
+    # DCE each branch before merging residuals across branches: once
+    # _merge_branch_residuals aliases residuals of the same aval across
+    # branches, outer DCE cannot tell which branch actually uses a merged slot.
+    jaxpr_staged, in_used_staged = pe.dce_jaxpr(
+        jaxpr_staged, True, instantiate=[False] * num_res + [True] * len(ops_uk))
+    used_res = in_used_staged[:num_res]
+    jaxpr_known, _ = pe.dce_jaxpr(
+        jaxpr_known, [True] * num_known_outs + used_res, instantiate=True)
+    num_res = sum(used_res)
     branches_known_.append(jaxpr_known)
     branches_staged_.append(jaxpr_staged)
     branch_res_avals.append(branches_staged_[-1].in_avals[:num_res])
@@ -708,7 +718,6 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   # residuals to join the outputs of all branches to the same type.
   all_res_avals, res_avals_per_branch = _merge_branch_residuals(branch_res_avals)
   num_res = len(all_res_avals)
-  num_known_outs = len(unks_out) - sum(unks_out)
   dummy = ft.flatten([[]] * len(branches_known_))
   branches_known = _join_cond_outputs(
       branches_known_, all_res_avals, res_avals_per_branch, dummy, num_known_outs)
@@ -841,6 +850,9 @@ def _cond_dce_rule(used_outputs: list[bool], live_ins: list[bool],
   dce_branches = [pe.dce_jaxpr(jaxpr, used_outputs, instantiate=used_inputs,
                                live_inputs=live_ops)[0]
                   for jaxpr in branches]
+  if (all(used_inputs) and all(used_outputs) and
+      all(d is b for d, b in zip(dce_branches, branches))):
+    return [True, *used_inputs], eqn
 
   # Finally, update parameters and form the new eqn.
   new_params = dict(eqn.params, branches=tuple(dce_branches))

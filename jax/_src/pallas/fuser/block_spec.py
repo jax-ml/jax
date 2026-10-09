@@ -432,6 +432,17 @@ def pull_block_spec(
         scalar_prefetch_handler,
         grid_len,
     )
+    # The scalars this fusion prefetches, in the order its index maps and body
+    # expect to be handed them back.
+    kernel_fn.scalar_prefetch = tuple(
+        c for c, sp in zip(consts, _scalar_prefetch_mask(jaxpr, read_usage_env),
+                           strict=True) if sp)
+    if non_scalars := [c for c in kernel_fn.scalar_prefetch if jnp.ndim(c) != 0]:
+      raise ValueError(
+          f'Fusion {jaxpr.debug_info.func_name} computes a block index from'
+          f' non-scalar values of shapes {[jnp.shape(c) for c in non_scalars]}.'
+          ' Only scalars can be prefetched; index into the array outside the'
+          ' fusion and close over the resulting scalar instead.')
     in_block_specs = jax.tree.unflatten(in_tree, in_block_specs)
     in_block_specs = jax.tree.map(
         functools.partial(
@@ -474,18 +485,28 @@ def _block_shapes_equal(
   return all(_block_dim_equal(b1, b2) for b1, b2 in zip(bs1, bs2))
 
 
-def _compare_index_transforms(idx_map1, idx_map2, block_idxs_avals) -> bool:
+def _compare_index_transforms(
+    idx_map1, idx_map2, block_idxs_avals, scalar_prefetch_avals=()
+) -> bool:
   if idx_map1 is idx_map2:
     return True
-  idx_map_jaxpr1 = jax.make_jaxpr(idx_map1)(*block_idxs_avals)
-  idx_map_jaxpr2 = jax.make_jaxpr(idx_map2)(*block_idxs_avals)
-  return fuser_utils.compare_jaxprs(idx_map_jaxpr1, idx_map_jaxpr2)
+
+  # An index map may read the scalar prefetch; trace it on placeholders.
+  def to_jaxpr(idx_map):
+    def traced(idxs, scalar_prefetch):
+      with _sp_context(*scalar_prefetch):
+        return idx_map(*idxs)
+
+    return jax.make_jaxpr(traced)(block_idxs_avals, scalar_prefetch_avals)
+
+  return fuser_utils.compare_jaxprs(to_jaxpr(idx_map1), to_jaxpr(idx_map2))
 
 
 def _block_transforms_equal(
     bs1: BlockIndexTransform | NoBlockIndexTransform,
     bs2: BlockIndexTransform | NoBlockIndexTransform,
     block_idxs_avals: tuple[tuple[core.AbstractValue, ...], ...],
+    scalar_prefetch_avals: tuple[core.AbstractValue, ...] = (),
     strict_mode: bool = True,
 ) -> bool:
   if bs1 is bs2:
@@ -497,10 +518,36 @@ def _block_transforms_equal(
       return False
     if strict_mode:
       return _compare_index_transforms(
-          bs1.block_index_transform, bs2.block_index_transform, block_idxs_avals
+          bs1.block_index_transform,
+          bs2.block_index_transform,
+          block_idxs_avals,
+          scalar_prefetch_avals,
       )
     return True
   return False
+
+
+def _scalar_prefetch_mask(jaxpr, read_usage_env) -> list[bool]:
+  """Which of `jaxpr.constvars` are scalars prefetched for block indices."""
+  return [Usage.SCALAR_PREFETCH in read_usage_env(v) for v in jaxpr.constvars]
+
+
+def _select_scalar_prefetch(scalar_prefetch_handler, scalar_prefetch,
+                            num_expected: int, fusion_name: str):
+  """Picks one fusion's scalars out of `scalar_prefetch`.
+
+  Two calling conventions are supported. Without a handler, the fusion was
+  handed only its own scalars and they are used as is. With a handler,
+  `scalar_prefetch` is shared by every fusion in the kernel and the handler
+  selects this fusion's group out of it.
+  """
+  if scalar_prefetch_handler is not None:
+    scalar_prefetch = scalar_prefetch_handler(*scalar_prefetch)
+  if len(scalar_prefetch) != num_expected:
+    raise ValueError(
+        f'Fusion {fusion_name} prefetches {num_expected} scalars but was'
+        f' given {len(scalar_prefetch)}')
+  return scalar_prefetch
 
 
 def _pull_block_transform(
@@ -518,6 +565,13 @@ def _pull_block_transform(
   jaxpr_invar_usages = util.safe_map(read_usage_env, jaxpr.invars)
   env: dict[core.Var, BlockIndexTransform] = {}
   scalar_prefetch_fn_env = {}
+  scalar_prefetch_avals = tuple(
+      v.aval for v, sp in zip(
+          jaxpr.constvars,
+          _scalar_prefetch_mask(jaxpr, read_usage_env),
+          strict=True
+      ) if sp
+    )
 
   block_idxs_avals = tuple(
       None
@@ -589,15 +643,20 @@ def _pull_block_transform(
           [True] * len(scalar_prefetch_jaxpr_no_dce.outvars),
       )
       assert not any(used_inputs[len(jaxpr.constvars):])
+      sp_mask = _scalar_prefetch_mask(jaxpr, read_usage_env)
       scalar_prefetch_jaxpr = scalar_prefetch_jaxpr.replace(
-          invars=jaxpr.constvars,
+          invars=[
+              v for v, sp in zip(jaxpr.constvars, sp_mask, strict=True) if sp
+          ],
           debug_info=scalar_prefetch_jaxpr.debug_info.with_unknown_names(),
       )
 
       def _scalar_prefetch_fn(jaxpr):
         if grid_len is None:
           raise ValueError('Grid must be provided to pull_block_spec.')
-        args = scalar_prefetch_handler(*_get_scalar_prefetch())
+        args = _select_scalar_prefetch(
+            scalar_prefetch_handler, _get_scalar_prefetch(),
+            len(jaxpr.invars), jaxpr.debug_info.func_name)
         # Load from SMEM
         args = [_load_scalar_prefetch(a) for a in args]
         return core.eval_jaxpr(jaxpr, [], *args)
@@ -612,6 +671,7 @@ def _pull_block_transform(
           and v in env
           and not _block_transforms_equal(
               env[v], in_block_transform, block_idxs_avals,
+              scalar_prefetch_avals=scalar_prefetch_avals,
               strict_mode=strict_mode,
           )
       ):
@@ -709,7 +769,22 @@ def make_kernel_function(
     def write_env(var, val):
       env[var] = val
 
-    for const, constvar in zip(consts, jaxpr.constvars, strict=True):
+    # Consts are the values the fusion closed over; some are index scalars.
+    # If no scalar_prefetch is given, every const is bound as closed over
+    # (this happens when another pull traces this function).
+    # If scalar_prefetch is given, the index scalars are loaded from it
+    # instead. It holds either only this fusion's scalars (no handler), or
+    # every fusion's scalars, and the handler picks this fusion's.
+    sp_mask = _scalar_prefetch_mask(jaxpr, read_usage_env)
+    bound_consts = consts
+    if any(sp_mask) and scalar_prefetch:
+      sp = _select_scalar_prefetch(
+          scalar_prefetch_handler, scalar_prefetch, sum(sp_mask),
+          jaxpr.debug_info.func_name)
+      sp = iter(_load_scalar_prefetch(a) for a in sp)
+      bound_consts = [next(sp) if is_sp else c
+                      for c, is_sp in zip(consts, sp_mask, strict=True)]
+    for const, constvar in zip(bound_consts, jaxpr.constvars, strict=True):
       env[constvar] = const
     for invar, arg, usage in zip(
         jaxpr.invars, flat_args, invar_usages, strict=True
@@ -1084,7 +1159,6 @@ def register_binop_rule(prim: core.Primitive):
   register_eval_rule(prim)(functools.partial(_binop_eval_rule, prim))
 
 
-register_default_eval_rule(state_primitives.get_p)
 register_default_eval_rule(lax.axis_index_p)
 
 register_binop_rule(lax.mul_p)
@@ -1340,8 +1414,6 @@ def _get_clamped_slice_starts(
     slice_sizes: tuple[int, ...],
     start_idx_offset: int = 2,
 ) -> tuple[Any, ...]:
-  static_clamped_starts = None
-
   # TODO(rdyro): Constant fold the static indices to skip scalar prefetch.
   # Ref-write discharge `convert_element_type` makes start indices dynamic.
   if ctx.scalar_prefetch_fn is not None:
@@ -1352,25 +1424,21 @@ def _get_clamped_slice_starts(
             slice_starts, operand_shape, slice_sizes, strict=True
         )
     )
-  else:
-    if static_clamped_starts is None:
-      assert (
-          ctx.invars is not None
-      ), 'ctx.invars required when scalar_prefetch_fn is None'
-      assert all(
-          isinstance(v, core.Literal) for v in ctx.invars[start_idx_offset:]
-      ), (
-          'All start indices must be static literals if scalar_prefetch_fn is'
-          ' None'
+
+  assert (
+      ctx.invars is not None
+  ), 'ctx.invars required when scalar_prefetch_fn is None'
+  assert all(
+      isinstance(v, core.Literal) for v in ctx.invars[start_idx_offset:]
+  ), 'All start indices must be static literals if scalar_prefetch_fn is None'
+  slice_starts = tuple(v.val for v in ctx.invars[start_idx_offset:])
+  static_clamped_starts = tuple(
+      int(np.clip(np.asarray(start), 0, op_dim - size))
+      for start, op_dim, size in zip(
+          slice_starts, operand_shape, slice_sizes, strict=True
       )
-      slice_starts = tuple(v.val for v in ctx.invars[start_idx_offset:])
-      static_clamped_starts = tuple(
-          int(np.clip(np.asarray(start), 0, op_dim - size))
-          for start, op_dim, size in zip(
-              slice_starts, operand_shape, slice_sizes, strict=True
-          )
-      )
-    return static_clamped_starts
+  )
+  return static_clamped_starts
 
 
 @register_usage_rule(lax.dynamic_slice_p)
@@ -3020,15 +3088,20 @@ def _push_block_spec_jaxpr(
           [True] * len(scalar_prefetch_jaxpr_no_dce.outvars),
       )
       assert not any(used_inputs[len(jaxpr.constvars) :])
+      sp_mask = _scalar_prefetch_mask(jaxpr, read_usage_env)
       scalar_prefetch_jaxpr = scalar_prefetch_jaxpr.replace(
-          invars=jaxpr.constvars,
+          invars=[
+              v for v, sp in zip(jaxpr.constvars, sp_mask, strict=True) if sp
+          ],
           debug_info=scalar_prefetch_jaxpr.debug_info.with_unknown_names(),
       )
 
       def _scalar_prefetch_fn(sp_jaxpr):
         if grid_len is None:
           raise ValueError('Grid must be provided to push_block_spec.')
-        args = scalar_prefetch_handler(*_get_scalar_prefetch())
+        args = _select_scalar_prefetch(
+            scalar_prefetch_handler, _get_scalar_prefetch(),
+            len(sp_jaxpr.invars), sp_jaxpr.debug_info.func_name)
         # Load from SMEM
         args = [_load_scalar_prefetch(a) for a in args]
         return core.eval_jaxpr(sp_jaxpr, [], *args)

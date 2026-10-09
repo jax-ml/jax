@@ -17,6 +17,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added {func}`jax.scipy.special.erfcinv` for the inverse complementary
+    error function.
   * Added {func}`jax.lax.polynomial` for polynomial evaluation. The polynomial
     primitive is faster and uses less memory when computing gradients.
   * Added {func}`jax.custom_vjp.defremat`, which customizes how a
@@ -44,7 +46,16 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.lax.psend` and {func}`jax.lax.precv` are deprecated.
 
 * Changes
+  * Improved the numerical accuracy of {func}`jax.scipy.special.ndtri` and its
+    derivatives by replacing the piecewise rational approximations with
+    minimax polynomial approximations and a custom JVP rule.
   * JAX now uses Bazel 9.2.0 to build from source.
+  * Improved the numerical accuracy of complex {func}`jax.numpy.abs` and
+    {func}`jax.lax.abs` by lowering through power-of-two scaled `hypot`.
+  * Improved the numerical accuracy of {func}`jax.numpy.hypot` and its
+    derivatives by replacing the division-based formula with power-of-two
+    scaling and a custom JVP rule, avoiding rounding errors for large inputs.
+    The derivative at `(0, 0)` now returns `NaN` (previously `±0.5`).
   * Improved the numerical accuracy of {func}`jax.numpy.sinc` across all
     floating-point types (to $\le 0.5$ ULP for `bfloat16` and `float16`,
     $\le 2.5\text{–}4.0$ ULPs for `float32`, and $\ge 2.0$ ULPs for `float64`).
@@ -65,6 +76,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     and autodiff, and more concise representations in jaxprs.
   * The "web" debugger now defaults to hostname "localhost", which is a safer
     default that avoids inadvertently opening a port to the world.
+  * {func}`jax.numpy.lexsort` with many keys now uses a batched approach by
+    default, controlled by the new `batch_size` parameter (which defaults to
+    16). This avoids long compile times for sorts with many keys. Fixes the
+    poor performance of {func}`jax.numpy.unique` for high-dimensional arrays
+    ({jax-issue}`#17370`).
 
 * Bug fixes
   * Fixed the gradient of {func}`jax.numpy.ldexp` at `x = 0.0`, which previously
@@ -198,6 +214,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `ReshapeTransform` views.
   * [ROCm] Worked around a rocFFT twiddle cache bug in multi-dimensional real
     FFTs ({jax-issue}`#40389`).
+  * Fixed {func}`jax.vmap` of a {func}`jax.lax.scan` whose body closes over
+    or scans over a Ref batched along a non-leading axis, which previously
+    failed with ``AttributeError: 'Ref' object has no attribute 'transpose'``
+    ({jax-issue}`#39288`).
 
 ## JAX 0.11.1 (August 17, 2026)
 

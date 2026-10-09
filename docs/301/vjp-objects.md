@@ -20,12 +20,13 @@ kernelspec:
 The callable returned by `jax.vjp` is a *VJP object*, a first-class value.
 It's a pytree whose leaves are the residual values saved by the forward
 pass, so it can be passed into and out of compiled functions, serialized,
-or offloaded like any other data, and its saved state can be inspected and
-edited. This page covers what that enables: splitting the forward and
-backward passes into separately compiled functions run on your own schedule,
-and excluding argument values (like weights) from the saved state with
-`saveable_args`, for example to re-gather sharded weights on the backward
-pass instead of saving them.
+or offloaded like any other data (or even saved as the residuals of a
+custom derivative rule, as in {ref}`jax-301-vjp-in-hiprim`), and its saved
+state can be inspected and edited. This page covers what that enables:
+splitting the forward and backward passes into separately compiled
+functions run on your own schedule, and excluding argument values (like
+weights) from the saved state with `saveable_args`, for example to re-gather
+sharded weights on the backward pass instead of saving them.
 
 ```{code-cell}
 import jax

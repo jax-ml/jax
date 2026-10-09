@@ -131,12 +131,12 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
   nb::gil_scoped_acquire gil;
   auto callback = nb::borrow<nb::callable>(
       static_cast<PyObject*>(callbacks->callbacks[index]));
-  nb::tuple host_input_arrays = nb::steal<nb::tuple>(PyTuple_New(arity));
+  nb::tuple_builder host_input_arrays(arity);
   for (size_t i = 0; i < arity; ++i) {
     auto arg = args.get<xla::ffi::AnyBuffer>(i);
     auto ptype = static_cast<xla::PrimitiveType>(arg->element_type());
     if (ptype == xla::TOKEN) {
-      PyTuple_SET_ITEM(host_input_arrays.ptr(), i, nb::none().inc_ref().ptr());
+      host_input_arrays.put(nb::none());
       continue;
     }
     auto maybe_dtype = PrimitiveTypeToNbDtype(ptype);
@@ -171,7 +171,7 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
     auto array = xla::nb_numpy_ndarray(dtype, dims, std::nullopt,
                                        host_input_buffers[i], base);
     array.attr("flags").attr("writeable") = nb::bool_(false);
-    PyTuple_SET_ITEM(host_input_arrays.ptr(), i, array.inc_ref().ptr());
+    host_input_arrays.put(std::move(array));
   }
 
   // TODO(dsuo): Change this to use the Python vectorcall protocol, which allows
@@ -180,7 +180,8 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
   {
     xla::HostCallbackScope scope;
     try {
-      auto result_object = callback(*nb::borrow<nb::args>(host_input_arrays));
+      auto result_object =
+          callback(*nb::borrow<nb::args>(host_input_arrays.commit()));
       result_tuple = nb::cast<nb::tuple>(result_object);
     } catch (nb::python_error& e) {
       return xla::ffi::Error::Internal(

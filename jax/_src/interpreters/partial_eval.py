@@ -28,6 +28,7 @@ from weakref import ReferenceType, WeakValueDictionary, finalize, ref
 import numpy as np
 
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
@@ -60,6 +61,7 @@ ConstId = int
 
 AttrKind = Any
 PyTree = Any
+HTLV = Any
 logger = logging.getLogger(__name__)
 
 TracebackScope = _jax.TracebackScope
@@ -1263,8 +1265,9 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: bool | Sequence[bool],
   if type(live_inputs) is bool:
     live_inputs = (live_inputs,) * len(jaxpr.invars)
 
-  return _dce_jaxpr(jaxpr, tuple(used_outputs), tuple(instantiate),
-                    tuple(live_inputs))
+  new_jaxpr, used_inputs = _dce_jaxpr(jaxpr, tuple(used_outputs),
+                                      tuple(instantiate), tuple(live_inputs))
+  return (jaxpr if new_jaxpr is None else new_jaxpr), used_inputs
 
 
 def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
@@ -1322,7 +1325,7 @@ def has_effects(eqn: JaxprEqn, live_ins: Sequence[bool] | None = None) -> bool:
 @weakref_lru_cache
 def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
                instantiate: tuple[bool, ...], live_inputs: tuple[bool, ...]
-               ) -> tuple[Jaxpr, list[bool]]:
+               ) -> tuple[Jaxpr | None, list[bool]]:
   env: dict[Var, bool] = {}
 
   def read(v: Var) -> bool:
@@ -1360,6 +1363,11 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
   outvars = [v for v, b in zip(jaxpr.outvars, used_outputs) if b]
   eqns = new_eqns[::-1]
   jaxpr_effects = make_jaxpr_effects(jaxpr.constvars, invars, outvars, eqns)
+  if (all(used_inputs) and all(used_outputs) and
+      len(eqns) == len(jaxpr.eqns) and
+      all(new_eqn is eqn for new_eqn, eqn in zip(eqns, jaxpr.eqns)) and
+      jaxpr_effects == jaxpr.effects):
+    return None, used_inputs
 
   dbg = core.DebugInfo(
       jaxpr.debug_info.traced_for, jaxpr.debug_info.func_src_info,
@@ -1375,7 +1383,6 @@ DCERule = Callable[[list[bool], list[bool], JaxprEqn],
                    tuple[list[bool], JaxprEqn | None]]
 
 
-@weakref_lru_cache
 def _cached_closed_call_dce(jaxpr_, used_outputs: tuple[bool, ...],
                             live_inputs: tuple[bool, ...] | bool = True,
                             ) -> tuple[Jaxpr, list[bool]]:
@@ -1391,6 +1398,8 @@ def dce_jaxpr_closed_call_rule(used_outputs: list[bool], live_ins: list[bool],
   jaxpr_ = eqn.params['call_jaxpr']
   closed_jaxpr, used_inputs = _cached_closed_call_dce(
       jaxpr_, tuple(used_outputs), tuple(live_ins))
+  if closed_jaxpr is jaxpr_ and all(used_inputs) and all(used_outputs):
+    return used_inputs, eqn
   new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
   effects = core.eqn_effects(closed_jaxpr, new_invars)
   new_params = dict(eqn.params, call_jaxpr=closed_jaxpr)
@@ -1923,6 +1932,8 @@ class DynamicJaxprTrace(core.Trace):
     tracers = map(to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun.with_unknown_names(), in_avals, lower=self.requires_low)
+    if config.mutable_array_checks.value:
+      api_util._check_no_aliased_closed_over_refs(fun.debug_info, consts, tracers)
     self.frame.is_high |= fun_jaxpr.is_high
     num_consts = len(consts)
     closed_fun_jaxpr = convert_constvars_jaxpr(fun_jaxpr)
@@ -2341,7 +2352,10 @@ def lower_jaxpr2(hi_jaxpr) -> Jaxpr:
 
 @weakref_lru_cache
 def lower_jaxpr(hi_jaxpr: Jaxpr, lo_avals) -> tuple[Jaxpr, ft.FlatTree]:
-  env: dict[Var, DynamicJaxprTracer | HTLV] = {}  # noqa # type:ignore
+  # TODO(yashkatariya): Remove this once we have XLA DCE opaque opt-barrier.
+  hi_jaxpr, _ = dce_jaxpr(hi_jaxpr, True, instantiate=True)
+
+  env: dict[Var, DynamicJaxprTracer | HTLV] = {}  # type:ignore
 
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(hi_jaxpr.debug_info.with_unknown_names(),

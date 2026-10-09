@@ -27,6 +27,11 @@ different builds for different operating systems and accelerators.
   pip install -U "jax[tpu]"
   ```
 
+* **GPU (Intel, oneAPI)**
+  ```
+  pip install -U "jax[oneapi]"
+  ```
+
 (install-supported-platforms)=
 ## Supported platforms
 
@@ -334,13 +339,32 @@ which AMD monitors. For issues with JAX itself that are not ROCm-specific, use t
 (install-intel-gpu)=
 ## Intel GPU
 
-Intel provides an experimental OneAPI plugin: intel-extension-for-openxla for Intel GPU hardware. For more details and installation instructions, refer to one of the following two methods:
-1. Pip installation: [JAX acceleration on Intel GPU](https://github.com/intel/intel-extension-for-openxla/blob/main/docs/acc_jax.md).
-2. Using [Intel's XLA Docker container](https://hub.docker.com/r/intel/intel-optimized-xla).
+Intel provides experimental oneAPI PJRT and plugin wheels for JAX on PyPI. These enable JAX applications to run on Intel GPUs using XLA's SYCL platform support.
 
-Please report any issues related to:
-* JAX: [JAX issue tracker](https://github.com/jax-ml/jax/issues).
-* Intel's OpenXLA plugin: [Intel-extension-for-openxla issue tracker](https://github.com/intel/intel-extension-for-openxla/issues).
+Before installing JAX, install the `intel-gpu-compute` package in one of the following ways:
+
+- By following the [Intel GPU software installation guide](https://dgpu-docs.intel.com/installation-guides/installing-omix.html).
+- By using the [Intel Compute Runtime container](https://hub.docker.com/r/intel/compute-runtime) which already contains the
+  necessary driver components. Follow [Running the container](https://hub.docker.com/r/intel/compute-runtime#running-the-container) section
+  for more information.
+
+### pip installation: Intel GPU (oneAPI)
+
+Once the required GPU drivers are installed, the oneAPI PJRT and plugin wheels can be installed via:
+
+```bash
+pip install --upgrade "jax[oneapi]"
+```
+
+This automatically installs all required software dependencies. No further manual setup is needed beyond the GPU drivers installed above.
+
+```bash
+python3 -c "import jax; print(jax.devices())"
+```
+
+If the installation works correctly, this lists all the available oneAPI devices (e.g. `[OneapiDevice(id=0), OneapiDevice(id=1), ...]`).
+
+For supported platforms and required driver versions, see [oneAPI JAX release notes](https://github.com/Intel-tensorflow/jax/releases).
 
 ## Conda (community-supported)
 

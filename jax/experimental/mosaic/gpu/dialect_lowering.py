@@ -580,13 +580,26 @@ def _async_store_smem_op_lowering_rule(
   cluster_idx = arith.index_cast(index, op.cluster_idx)
   cluster_barrier_ref = barrier_ref.remap_to_cluster(cluster_dim, cluster_idx)
 
-  total_bits = math.prod(value.shape) * utils.bitwidth(value.mlir_dtype)
-  if total_bits % (8 * utils.WARPGROUP_SIZE):
+  transfer_bytes = math.prod(value.shape) * utils.bitwidth(value.mlir_dtype)
+  assert transfer_bytes % 8 == 0
+  transfer_bytes //= 8
+  if transfer_bytes % utils.WARPGROUP_SIZE:
     raise NotImplementedError(
-        f"Transfer of {total_bits} bits is not divisible by "
-        f"{8 * utils.WARPGROUP_SIZE}"
+        f"Transfer of {transfer_bytes} bytes is not divisible by "
+        f"{utils.WARPGROUP_SIZE}"
     )
-  cluster_barrier_ref.arrive_expect_tx(total_bits // 8 // utils.WARPGROUP_SIZE)
+
+  if (orders_tc := dialect_barrier.orders_tensor_core):
+    tx_count = transfer_bytes
+    predicate = ctx.single_lane_predicate
+  else:
+    tx_count = transfer_bytes // utils.WARPGROUP_SIZE
+    predicate = None
+
+  cluster_barrier_ref.arrive_expect_tx(
+      tx_count, predicate=predicate,
+      tensor_core_order_scope=ctx.thread_semantics if orders_tc else None,
+  )
 
   atomic = None
   if op.atomic_type is not None:
@@ -1144,10 +1157,10 @@ def _mgpu_async_load_op_lowering_rule(
 
   gmem_slice, predicate = _gmem_slice_and_predicate(ctx, load_op)
 
-  collective = [
+  collective = tuple(
       gpu.Dimension(ir.IntegerAttr(axis).value)
       for axis in load_op.collective or []
-  ]
+  )
 
   match load_op.leader_tracked:
     case mgpu.CopyReplicatedAttr():
@@ -1722,7 +1735,14 @@ def _mgpu_arrive_expect_tx_op_lowering_rule(
       else utils.WARP_SIZE
   )
   num_bytes = arrive_expect_tx_op.expect_tx
-  if isinstance(num_bytes.owner, arith.ConstantOp):
+  barrier = utils.DialectBarrierRef.from_barrier_memref(
+      arrive_expect_tx_op.barrier
+  )
+  orders_tc = barrier.orders_tensor_core
+
+  if orders_tc:
+    tx_bytes = num_bytes
+  elif isinstance(num_bytes.owner, arith.ConstantOp):
     num_bytes_int = int(num_bytes.owner.value)
     if num_bytes_int % num_lanes == 0:
       # Prefer uniform arrival whenever possible because it's more efficient.
@@ -1742,26 +1762,16 @@ def _mgpu_arrive_expect_tx_op_lowering_rule(
         utils.c(0, i32),
     )
 
-  barrier = utils.DialectBarrierRef.from_barrier_memref(
-      arrive_expect_tx_op.barrier
-  )
   # In Warp-level lowering, we arrive on each CUDA thread in a warp, but the
   # barrier still expects a full 128 arrivals so we arrive 4 times on each CUDA
   # thread instead.
-  if ctx.thread_semantics == utils.ThreadSubset.WARP:
+  if ctx.thread_semantics == utils.ThreadSubset.WARP and not orders_tc:
     barrier.barrier_ref.arrive(arrival_count=3, can_complete=False)
-  barrier.barrier_ref.arrive_expect_tx(tx_bytes)
-
-  return []
-
-
-@_register_lowering(mgpu.WaitOp)
-def _mgpu_wait_op_lowering_rule(
-    _: LoweringContext, wait_op: mgpu.WaitOp
-) -> Sequence[ir.Value]:
-
-  barrier = utils.DialectBarrierRef.from_barrier_memref(wait_op.barrier)
-  barrier.wait_parity(wait_op.parity)
+  barrier.barrier_ref.arrive_expect_tx(
+      tx_bytes,
+      predicate=ctx.single_lane_predicate if orders_tc else None,
+      tensor_core_order_scope=ctx.thread_semantics if orders_tc else None,
+  )
 
   return []
 
@@ -2545,11 +2555,15 @@ def _tcgen05_commit_arrive_op_lowering_rule(
   """Lowering rule for mgpu.TcGen05CommitArriveOp."""
   ctx.check_collective(op)
   barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
+  predicate = ctx.single_lane_predicate
+  # TODO(cjfj): simplify when minimum jaxlib version is 0.12.
+  if (pred := getattr(op, "predicate", None)) is not None:
+    predicate = arith.andi(predicate, pred)
   tcgen05.commit_arrive(
       barrier.barrier_ref,
       op.collective.value,
       ctx.launch_context,
-      predicate=ctx.single_lane_predicate,
+      predicate=predicate,
   )
   return []
 

@@ -7462,6 +7462,22 @@ class RematTest(jtu.JaxTestCase):
 
     _ = jax.grad(f)(3.)  # doesn't crash
 
+  @parameterized.named_parameters(("remat", False), ("remat3", True))
+  def test_dce_keeps_effectful_remat_with_no_used_outputs(self, remat3):
+    x_ref = jax.new_ref(jnp.zeros(3, jnp.float32))
+    def f():
+      def body():
+        x_ref[...] = jnp.ones(3, jnp.float32)
+      jax.checkpoint(body)()
+
+    with config.remat3(remat3):
+      jaxpr = jax.make_jaxpr(f)()
+      dced, _ = pe.dce_jaxpr(jaxpr, [])
+      self.assertLen(dced.eqns, 1)
+
+      jax.jit(f)()
+    self.assertAllClose(x_ref[...], jnp.ones(3, jnp.float32))
+
   def test_linearize_caching(self):
     # https://github.com/jax-ml/jax/issues/9661
     identity = jax.checkpoint(jax.jit(lambda x: 2 * x))
@@ -7623,6 +7639,19 @@ class RematTest(jtu.JaxTestCase):
                                                  jnp.ones((2, 4, 4))))
     self.assertEqual(jaxpr_text.count('MemorySpace.Host'), 1)
     self.assertEqual(jaxpr_text.count('MemorySpace.Device'), 1)
+
+  def test_remat_dce_unused_output(self):
+    @jax.remat
+    def f(x):
+      return jnp.sin(x), jnp.exp(x)
+
+    jaxpr = jax.jit(lambda x: f(x)[0]).trace(0.5).jaxpr
+    jaxpr_dce, _ = pe.dce_jaxpr(jaxpr.jaxpr, [True])
+    self.assertIn(' sin ', str(jaxpr_dce))
+    self.assertNotIn(' exp ', str(jaxpr_dce))
+
+    ans = api.grad(lambda x: f(x)[0])(0.5)
+    self.assertAllClose(ans, np.cos(0.5), check_dtypes=False)
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -10148,9 +10177,9 @@ class InputSavedVJPTest(jtu.JaxTestCase):
 
     d = {'hi': jnp.ones((4, 5)), 'bye': jnp.ones((3, 4))}
     _, f_vjp = api.vjp(f, d, saveable_args=((True, False),))
-    bye_res, hi_res = f_vjp.args_res[0]  # tuple-tree, dict flatten order
-    self.assertAllClose(bye_res, d['bye'])
-    self.assertIsInstance(hi_res, api.NotSaveable)
+    res = f_vjp.args_res[0]  # mirrors the dict argument
+    self.assertAllClose(res['bye'], d['bye'])
+    self.assertIsInstance(res['hi'], api.NotSaveable)
     with self.assertRaisesRegex(
         ValueError,
         re.compile(r"not-saveable.*args\[0\]\['hi'\]", re.DOTALL)):
@@ -10201,10 +10230,28 @@ class InputSavedVJPTest(jtu.JaxTestCase):
       api.vjp(f, x, w, saveable_args=(True,))
     with self.assertRaisesRegex(ValueError, "leaf"):
       api.vjp(f, x, w, saveable_args=(True, (True, True)))
-    with self.assertRaisesRegex(ValueError, "tuple-tree of bools"):
+    with self.assertRaisesRegex(ValueError, "tree of bools"):
       api.vjp(f, x, w, saveable_args=(1, True))
-    with self.assertRaisesRegex(ValueError, "tuple-tree of bools"):
-      api.vjp(f, x, w, saveable_args=[True, True])  # tuples only, not lists
+    with self.assertRaisesRegex(ValueError, "keys"):
+      api.vjp(lambda d: d['x'] @ d['w'], dict(x=x, w=w),
+              saveable_args=(dict(x=True, W=False),))
+
+  def test_saveable_args_isomorphic_trees(self):
+    # containers are matched by their number of children (and dict keys), so
+    # any isomorphic tree works, not just a tuple-tree or a pytree prefix
+    Pair = collections.namedtuple('Pair', ['x', 'w'])
+    f = lambda d, p: (d['x'] @ d['w']) @ (p.x @ p.w)
+    x, w = jnp.ones((3, 3)), 2. * jnp.ones((3, 3))
+    args = (dict(x=x, w=w), Pair(3. * x, 4. * w))
+    for saveable_args in [((False, True), (False, True)),  # dict order: w, x
+                          [dict(w=False, x=True), [False, True]],
+                          (dict(w=False, x=True), Pair(False, True))]:
+      _, f_vjp = api.vjp(f, *args, saveable_args=saveable_args)
+      d_res, p_res = f_vjp.args_res
+      self.assertIsInstance(d_res, dict)  # built-in containers are mirrored
+      self.assertIsInstance(d_res['w'], api.NotSaveable)
+      self.assertIs(type(p_res), tuple)  # other pytree nodes become tuples
+      self.assertIsInstance(p_res[0], api.NotSaveable)
 
 
 class TracebackTest(jtu.JaxTestCase):

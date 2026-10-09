@@ -236,6 +236,35 @@ WORKGROUP_NVPTX_ADDRESS_SPACE = gpu_address_space_to_nvptx(
 )
 
 
+def memref_descriptor_type(memref_ty: ir.MemRefType) -> llvm.StructType:
+  i64 = ir.IntegerType.get_signless(64)
+  rank = len(memref_ty.shape)
+  address_space = get_memref_llvm_address_space(memref_ty)
+  ptr_ty = llvm.PointerType.get(address_space)
+  desc_ty_fields = [ptr_ty, ptr_ty, i64]
+  if rank > 0:
+    desc_ty_fields += [llvm.ArrayType.get(i64, rank)] * 2
+  return llvm.StructType.get_literal(desc_ty_fields)
+
+
+def to_memref_descriptor(memref_arg: ir.Value) -> ir.Value:
+  """Casts a memref to its underlying LLVM struct descriptor.
+
+  The returned struct has the following fields (matching MLIR's MemRefToLLVM
+  lowering convention):
+    [0]: allocated pointer (!llvm.ptr)
+    [1]: aligned base pointer (!llvm.ptr)
+    [2]: offset in elements (i64)
+    [3]: sizes in elements (!llvm.array<rank x i64>, only if rank > 0)
+    [4]: strides in elements (!llvm.array<rank x i64>, only if rank > 0)
+  """
+  memref_ty = ir.MemRefType(memref_arg.type)
+  desc_ty = memref_descriptor_type(memref_ty)
+  desc = builtin.unrealized_conversion_cast([desc_ty], [memref_arg])
+  assert isinstance(desc, ir.Value)
+  return desc
+
+
 def ptr_as_memref(ptr, memref_ty: ir.MemRefType):
   ptr_ty = llvm.PointerType(ptr.type)
   if ptr_ty.address_space != (get_memref_llvm_address_space(memref_ty) or 0):
@@ -249,10 +278,7 @@ def ptr_as_memref(ptr, memref_ty: ir.MemRefType):
     raise ValueError("Non-zero offset is not supported for ptr_as_memref")
   i64 = ir.IntegerType.get_signless(64)
   rank = len(memref_ty.shape)
-  desc_ty_fields = [ptr_ty, ptr_ty, i64]
-  if rank > 0:
-    desc_ty_fields += [llvm.ArrayType.get(i64, rank)] * 2
-  desc_ty = llvm.StructType.get_literal(desc_ty_fields)
+  desc_ty = memref_descriptor_type(memref_ty)
   desc = llvm.UndefOp(desc_ty).result
   desc = llvm.InsertValueOp(desc, ptr, [0]).result  # Allocation
   desc = llvm.InsertValueOp(desc, ptr, [1]).result  # Aligned Base
@@ -1171,6 +1197,21 @@ def warp_barrier():
   nvvm.bar_warp_sync(c(0xFFFFFFFF, ir.IntegerType.get_signless(32)))
 
 
+def before_thread_sync(
+    *,
+    sync_threads: bool,
+    scope: ThreadSubset = ThreadSubset.WARPGROUP,
+):
+  nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
+  if sync_threads:
+    if scope == ThreadSubset.WARPGROUP:
+      warpgroup_barrier()
+    elif scope == ThreadSubset.WARP:
+      warp_barrier()
+    else:
+      raise ValueError(f"Unsupported scope: {scope}")
+
+
 def prefetch_tensormap(
     desc_ptr: ir.Value[llvm.PointerType],
     predicate: ir.Value[ir.IntegerType] | None = None,
@@ -1247,12 +1288,6 @@ class BarrierRef:
     if self.base_address.type == ir.Type.parse("!llvm.ptr<7>"):
       return "cluster"
     return "cta"
-
-  @property
-  def _nvvm_scope(self) -> nvvm.MemScopeKind:
-    if self.base_address.type == ir.Type.parse("!llvm.ptr<7>"):
-      return nvvm.MemScopeKind.CLUSTER
-    return nvvm.MemScopeKind.CTA
 
   def test_parity(
       self,
@@ -1341,16 +1376,9 @@ class BarrierRef:
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
   ):
     if orders_tensor_core:
-      nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
-      if predicate is not None:
-        # We need to synchronize the threads after `::before_thread_sync`, as
-        # not all threads arrive on the barrier.
-        if scope == ThreadSubset.WARPGROUP:
-          warpgroup_barrier()
-        elif scope == ThreadSubset.WARP:
-          warp_barrier()
-        else:
-          raise ValueError(f"Unsupported scope: {scope}")
+      # We need to synchronize the threads after `::before_thread_sync` if a
+      # predicate is used, as not all threads arrive on the barrier.
+      before_thread_sync(sync_threads=predicate is not None, scope=scope)
 
     ptx_scope = self._ptx_scope
     if can_complete or ptx_scope != "cta":
@@ -1376,18 +1404,32 @@ class BarrierRef:
       nvvm.mbarrier_arrive_nocomplete(self.get_ptr(), count)
 
   def arrive_expect_tx(
-      self, tx_count: int | ir.Value, predicate: ir.Value | None = None
+      self,
+      tx_count: int | ir.Value,
+      predicate: ir.Value | None = None,
+      tensor_core_order_scope: ThreadSubset | None = None,
   ):
     if get_arch().major < 9:
       raise NotImplementedError("arrive_expect_tx is only supported on Hopper+ hardware")
+
+    if tensor_core_order_scope is not None:
+      before_thread_sync(
+          sync_threads=predicate is not None, scope=tensor_core_order_scope
+      )
 
     i32 = ir.IntegerType.get_signless(32)
     if isinstance(tx_count, int):
       tx_count = c(tx_count, i32)
     elif isinstance(tx_count.type, ir.IndexType):
       tx_count = arith.index_cast(i32, tx_count)
-    nvvm.mbarrier_arrive_expect_tx(
-        self.get_ptr(), tx_count, predicate=predicate, scope=self._nvvm_scope
+    ptx_scope = self._ptx_scope
+    inline_ptx(
+        f"mbarrier.arrive.expect_tx.release.{ptx_scope}.shared::{ptx_scope}.b64 _, [$0], $1;",
+        self.get_ptr(),
+        tx_count,
+        predicate=predicate,
+        has_side_effects=True,
+        convergent=True
     )
 
   def complete_tx(
@@ -1428,7 +1470,7 @@ class BarrierRef:
     idxs: list[ir.Value] = [gpu.cluster_block_id(d) for d in gpu.Dimension]
     idxs[dim] = idx
     flat_block = arith.index_cast(i32, cluster_idx(dim_idx=idxs))
-    cptr = get_cluster_ptr(self.get_ptr(), flat_block, generic=False)
+    cptr = get_cluster_ptr(self.base_address, flat_block, generic=False)
     return BarrierRef(cptr, self.offset, self.phases, self.num_barriers)
 
 
@@ -1654,10 +1696,9 @@ class CollectiveBarrierRef:
       )
 
     if orders_tensor_core:
-      nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
-      # We need to synchronize the threads after `::before_thread_sync`, as not
-      # all threads arrive on the barrier.
-      warpgroup_barrier()
+      # We need to synchronize the threads after `::before_thread_sync`, as
+      # not all threads arrive on the barrier.
+      before_thread_sync(sync_threads=True)
 
     i32 = ir.IntegerType.get_signless(32)
     thread_in_warpgroup = arith.remui(thread_idx(), c(WARPGROUP_SIZE, i32))
@@ -1991,15 +2032,9 @@ def get_memref_llvm_address_space(memref_ty: ir.MemRefType) -> int | None:
 def memref_ptr(memref_arg) -> ir.Value:
   i64 = ir.IntegerType.get_signless(64)
   memref_ty = ir.MemRefType(memref_arg.type)
-  rank = len(memref_ty.shape)
   address_space = get_memref_llvm_address_space(memref_ty)
   ptr_ty = llvm.PointerType.get(address_space)
-  desc_ty_fields = [ptr_ty, ptr_ty, i64]
-  if rank > 0:
-    desc_ty_fields += [llvm.ArrayType.get(i64, rank)] * 2
-  desc_ty = llvm.StructType.get_literal(desc_ty_fields)
-  desc = builtin.unrealized_conversion_cast([desc_ty], [memref_arg])
-  assert isinstance(desc, ir.Value)
+  desc = to_memref_descriptor(memref_arg)
   aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
   offset_elems = llvm.extractvalue(i64, desc, [2])
 
@@ -2524,7 +2559,12 @@ def get_cluster_ptr(
   i32 = ir.IntegerType.get_signless(32)
   assert cluster_block.type == i32, cluster_block.type
   assert ptr.type == llvm.PointerType.get(3), ptr.type
-  mapped_smem_ptr = nvvm.mapa(llvm.PointerType.get(7), ptr, cluster_block)
+  mapped_smem_ptr = inline_ptx(
+      "mapa.shared::cluster.u32 $0, $1, $2;",
+      ptr,
+      cluster_block,
+      result_types=llvm.PointerType.get(7),
+  )
   if not generic:
     return mapped_smem_ptr
   return llvm.addrspacecast(llvm.PointerType.get(), mapped_smem_ptr)
@@ -2534,28 +2574,41 @@ def get_cluster_ref(
     ref: ir.Value, dim: gpu.Dimension, idx: ir.Value, generic: bool = True
 ):
   i32 = ir.IntegerType.get_signless(32)
-  # We replace the offset in the ref type by 0, because memref_ptr always
-  # folds the offset into the pointer.
+  i64 = ir.IntegerType.get_signless(64)
   ref_ty = ir.MemRefType(ref.type)
-  strides, offset = ref_ty.get_strides_and_offset()
-  if offset != 0:
-    new_layout = ir.StridedLayoutAttr.get(0, strides)
-  else:
-    new_layout = ref_ty.layout
+  if not is_smem_ref(ref_ty):
+    raise ValueError(f"Expected SMEM but got: {ref_ty.memory_space}")
   result_type = ir.MemRefType.get(
       ref_ty.shape,
       ref_ty.element_type,
-      new_layout,
+      ref_ty.layout,
       None if generic else ir.IntegerAttr.get(i32, 7),
   )
-  if not is_smem_ref(ref_ty):
-    raise ValueError(f"Expected SMEM but got: {ref_ty.memory_space}")
   idxs: list[ir.Value] = [gpu.cluster_block_id(d) for d in gpu.Dimension]
   idxs[dim] = idx
   flat_block = arith.index_cast(i32, cluster_idx(dim_idx=idxs))
-  return ptr_as_memref(
-      get_cluster_ptr(memref_ptr(ref), flat_block, generic), result_type
+  desc = to_memref_descriptor(ref)
+  aligned_ptr = llvm.extractvalue(
+      llvm.PointerType.get(WORKGROUP_NVPTX_ADDRESS_SPACE), desc, [1]
   )
+  cluster_ptr = get_cluster_ptr(aligned_ptr, flat_block, generic)
+  result_desc = llvm.mlir_undef(memref_descriptor_type(result_type))
+  result_desc = llvm.insertvalue(result_desc, cluster_ptr, [0])
+  result_desc = llvm.insertvalue(result_desc, cluster_ptr, [1])
+  result_desc = llvm.insertvalue(
+      result_desc, llvm.extractvalue(i64, desc, [2]), [2]
+  )
+  if ref_ty.rank > 0:
+    array_ty = llvm.ArrayType.get(i64, ref_ty.rank)
+    result_desc = llvm.insertvalue(
+        result_desc, llvm.extractvalue(array_ty, desc, [3]), [3]
+    )
+    result_desc = llvm.insertvalue(
+        result_desc, llvm.extractvalue(array_ty, desc, [4]), [4]
+    )
+  result = builtin.unrealized_conversion_cast([result_type], [result_desc])
+  assert isinstance(result, ir.Value)
+  return result
 
 
 def elements_to_bytes(offset: ir.Value, element_bitwidth: int) -> ir.Value:

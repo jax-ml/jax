@@ -198,7 +198,7 @@ def _initialize_shared_memory(
   with _shared_memory_init_lock:
     if _shared_memory is None:
       vector_clock_size = interpret_params.get_vector_clock_size(num_devices)
-      races = RaceDetectionState(num_cores=num_cores)
+      races = RaceDetectionState(on_race=interpret_params.on_race)
       dma_id_counter = interpret_utils.Counter(100)
       _shared_memory = memory.SharedMemory(
           num_devices=num_devices,
@@ -349,9 +349,10 @@ def _get_padded_shape(
 
 
 def _get_with_padding(
-    x: np.ndarray, uninitialized_memory: Literal['nan', 'zero']
+    x: np.ndarray,
+    padded_shape: tuple[int, ...],
+    uninitialized_memory: Literal['nan', 'zero'],
 ) -> np.ndarray:
-  padded_shape = _get_padded_shape(x.shape, x.dtype)
   uninitialized_value = interpret_utils.get_uninitialized_value(
       x.dtype, uninitialized_memory
   )
@@ -367,6 +368,7 @@ def _allocate_buffer(
     local_core_id: Array | None,
     memory_space: Array,
     val: Array,
+    padded_shape: tuple[int, ...] | None = None,
     source_info: source_info_util.SourceInfo | None = None,
 ):
   """Allocates a memory buffer on the device with id `device_id` and core with id `local_core_id`.
@@ -381,6 +383,7 @@ def _allocate_buffer(
       buffer in. If the corresponding memory space is "any" (i.e. HBM), at most
       one buffer will be allocated and it will belong to (local) core id 0.
     val: Array of values to initialize the allocated buffer with.
+    padded_shape: If not None, the shape to pad the buffer to.
     source_info: Information about the source code location of the allocation.
 
   Returns:
@@ -394,11 +397,10 @@ def _allocate_buffer(
   shared_memory = _get_shared_memory()
 
   logical_shape = value.shape
-  if (
-      shared_memory.buffer_bounds == 'padded'
-      and memory_space_str != mosaic_core.MemorySpace.SMEM.value
-  ):
-    value = _get_with_padding(value, shared_memory.uninitialized_memory)
+  if padded_shape is not None:
+    value = _get_with_padding(
+        value, padded_shape, shared_memory.uninitialized_memory
+    )
 
   if local_core_id is None:
     local_core_id_int = 0
@@ -449,6 +451,37 @@ def _allocate_buffer(
   )
   # TODO(jburnim): Raise an error if buffer_id is too big for int16.
   return token, np.int16(local_core_id_to_buffer_id[local_core_id_int])
+
+
+def _call_allocate_buffer(
+    token,
+    device_id,
+    local_core_id,
+    memory_space,
+    val,
+    interpret_params: InterpretParams,
+    source_info: source_info_util.SourceInfo | None = None,
+):
+  """Stages out a call to `_allocate_buffer` for a buffer holding `val`."""
+  # The padded shape depends on the TPU that the tracing context targets (see
+  # `InterpretParams.buffer_bounds`), which the callback does not see.
+  padded_shape = None
+  if (
+      interpret_params.buffer_bounds == 'padded'
+      and memory_space is not mosaic_core.MemorySpace.SMEM
+  ):
+    padded_shape = _get_padded_shape(val.shape, np.dtype(val.dtype))
+  return callback.io_callback(
+      functools.partial(
+          _allocate_buffer, padded_shape=padded_shape, source_info=source_info
+      ),
+      (TOKEN_SHAPE_DTYPE, jax.ShapeDtypeStruct((), jnp.int16)),
+      token,
+      device_id,
+      local_core_id,
+      TPU_MEMORY_SPACE_IDXS[memory_space],
+      val,
+  )
 
 
 def _local_core_id_or_zero_if_hbm(local_core_id: int, memory_space: str) -> int:
@@ -1057,6 +1090,7 @@ def dma_start(
     dst_sem_id,
     src_sem_id,
     dst_device_id,
+    dst_local_core_id=None,
     source_info=None,
 ):
   shared_memory = _get_shared_memory()
@@ -1075,8 +1109,12 @@ def dma_start(
     dst_device_id = int(dst_device_id)
   else:
     dst_device_id = device_id
+  if dst_local_core_id is not None:
+    dst_local_core_id = int(dst_local_core_id)
+  else:
+    dst_local_core_id = src_local_core_id  # Same core on destination device as on source.
   dst_global_core_id = shared_memory.get_global_core_id(
-      dst_device_id, src_local_core_id  # Same core on destination device as on source.
+      dst_device_id, dst_local_core_id
   )
 
   (src_sem, dst_sem), clock = shared_memory.get_semaphores_and_increment_clock(
@@ -1095,7 +1133,7 @@ def dma_start(
       src_id,
       src_transforms,
       dst_device_id,
-      src_local_core_id,  # Same core on destination device as on source.
+      dst_local_core_id,
       dst_memory_space,
       dst_id,
       dst_transforms,
@@ -1297,6 +1335,12 @@ class InterpretContext:
   def replace(self, **changes) -> 'InterpretContext':
     return dataclasses.replace(self, **changes)
 
+  @property
+  def core_axis_names(self) -> tuple[jax_core.AxisName, ...]:
+    if self.mesh is not None:
+      return tuple(self.mesh.shape.keys())
+    return ()
+
 
 def _interpret_jaxpr(
     jaxpr,
@@ -1388,6 +1432,11 @@ def _interpret_jaxpr(
 
       elif prim is mosaic_primitives.prng_seed_p:
         # TODO(jburnim): Implement this properly?
+        out = []
+
+      elif prim is mosaic_primitives.trace_value_p:
+        # The value only annotates the xprof trace, which interpret mode does
+        # not produce.
         out = []
 
       elif prim is mosaic_primitives.prng_random_bits_p:
@@ -1490,20 +1539,18 @@ def _interpret_jaxpr(
               )
             else:
               memory_space = _forward_any_to_hbm(v.aval.memory_space)
-            token, alloc = callback.io_callback(
-                functools.partial(
-                    _allocate_buffer, source_info=eqn.source_info
-                ),
-                (TOKEN_SHAPE_DTYPE, jax.ShapeDtypeStruct((), jnp.int16)),
+            token, alloc = _call_allocate_buffer(
                 token,
                 ctx.device_id,
                 ctx.local_core_id,
-                TPU_MEMORY_SPACE_IDXS[memory_space],
+                memory_space,
                 interpret_utils.get_uninitialized_array(
                     v.aval.shape,
                     v.aval.dtype,
                     ctx.interpret_params.uninitialized_memory,
                 ),
+                ctx.interpret_params,
+                source_info=eqn.source_info,
             )
             allocs.append(alloc)
 
@@ -1631,9 +1678,15 @@ def _interpret_jaxpr(
         src_sem, src_sem_transforms = mosaic_primitives._get_ref_and_transforms(
             src_sem
         )
-        target_device_id = interpret_utils._device_id_to_logical(
-            target_device_id, eqn.params['device_id_type'], ctx.axis_sizes,
-            ctx.axis_indices)
+        target_device_id, target_core_index = (
+            interpret_utils._device_id_to_logical(
+                target_device_id,
+                eqn.params['device_id_type'],
+                ctx.axis_sizes,
+                ctx.axis_indices,
+                core_axis_names=ctx.core_axis_names,
+            )
+        )
         orig_src_ref, orig_dst_ref, *_ = jax.tree.unflatten(
             eqn.params['tree'], eqn.invars
         )
@@ -1680,6 +1733,7 @@ def _interpret_jaxpr(
             state_discharge.transform_array(dst_sem, dst_sem_transforms),
             state_discharge.transform_array(src_sem, src_sem_transforms),
             target_device_id,
+            target_core_index,
         )
         out = []
 
@@ -1719,9 +1773,21 @@ def _interpret_jaxpr(
       elif prim is primitives.semaphore_signal_p:
         sem, sem_transforms, inc, target_device_id, core_index = (
             jax.tree.unflatten(eqn.params['args_tree'], deferred_invals()))
-        target_device_id = interpret_utils._device_id_to_logical(
-            target_device_id, eqn.params['device_id_type'], ctx.axis_sizes,
-            ctx.axis_indices)
+        target_device_id, dict_core_index = (
+            interpret_utils._device_id_to_logical(
+                target_device_id,
+                eqn.params['device_id_type'],
+                ctx.axis_sizes,
+                ctx.axis_indices,
+                core_axis_names=ctx.core_axis_names,
+            )
+        )
+        if dict_core_index is not None:
+          if core_index is not None:
+            raise ValueError(
+                'Cannot specify both core_index and a core axis in device_id.'
+            )
+          core_index = dict_core_index
         token = callback.io_callback(
             functools.partial(semaphore_signal, source_info=eqn.source_info),
             TOKEN_SHAPE_DTYPE,
@@ -2044,14 +2110,13 @@ def interpret_pallas_call(
   for i, var in enumerate(
       jaxpr.invars[grid_mapping.num_index_operands:][:grid_mapping.num_inputs]):
     assert var.aval.dtype == input_args[i].dtype  # pyrefly: ignore[missing-attribute]
-    token, buffer_id = callback.io_callback(
-        _allocate_buffer,
-        (TOKEN_SHAPE_DTYPE, jax.ShapeDtypeStruct((), jnp.int16)),
+    token, buffer_id = _call_allocate_buffer(
         token,
         device_id,
         None,  # local_core_id
-        TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.HBM],
+        mosaic_core.MemorySpace.HBM,
         input_args[i],
+        interpret_params,
     )
     input_buffer_ids.append(buffer_id)
 
@@ -2078,14 +2143,13 @@ def interpret_pallas_call(
       padded_val = interpret_utils.pad_to_block_dimension(
           out_val, output_block_shapes[i], interpret_params.uninitialized_memory
       )
-      token, buf_id = callback.io_callback(
-          _allocate_buffer,
-          (TOKEN_SHAPE_DTYPE, jax.ShapeDtypeStruct((), jnp.int16)),
+      token, buf_id = _call_allocate_buffer(
           token,
           device_id,
           None,  # local_core_id
-          TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.HBM],
+          mosaic_core.MemorySpace.HBM,
           padded_val,
+          interpret_params,
       )
       output_buffer_ids.append(buf_id)
       output_buffer_shapes.append(padded_val.shape)
@@ -2097,14 +2161,13 @@ def interpret_pallas_call(
   for var, val in zip(jaxpr.invars[grid_mapping.slice_index_ops], scalars):
     assert var.aval.shape == val.shape
     assert var.aval.dtype == val.dtype
-    token, buf_id = callback.io_callback(
-        _allocate_buffer,
-        (TOKEN_SHAPE_DTYPE, jax.ShapeDtypeStruct((), jnp.int16)),
+    token, buf_id = _call_allocate_buffer(
         token,
         device_id,
         None,  # local_core_id,
-        TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.SMEM],
+        mosaic_core.MemorySpace.SMEM,
         val,
+        interpret_params,
     )
     scalar_buffer_ids.append(buf_id)
 
@@ -2141,18 +2204,17 @@ def interpret_pallas_call(
       if is_output:
         kernel_buffer_ids.append(output_buffer_ids[output_idx])
     else:
-      token, buf_id = callback.io_callback(
-          _allocate_buffer,
-          (TOKEN_SHAPE_DTYPE, jax.ShapeDtypeStruct((), jnp.int16)),
+      token, buf_id = _call_allocate_buffer(
           token,
           device_id,
           None,  # local_core_id,
-          TPU_MEMORY_SPACE_IDXS[memory_space],
+          memory_space,
           interpret_utils.get_uninitialized_array(
               var.aval.shape,  # pyrefly: ignore[missing-attribute]
               var.aval.dtype,  # pyrefly: ignore[missing-attribute]
               interpret_params.uninitialized_memory,
           ),
+          interpret_params,
       )
       kernel_buffer_ids.append(buf_id)
 

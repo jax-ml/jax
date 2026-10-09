@@ -1285,13 +1285,24 @@ jax_multiplatform_test(
     ]),
 )
 
-jax_py_test(
+jax_multiplatform_test(
     name = "profiler_session_test",
     srcs = ["profiler_session_test.py"],
+    backend_tags = {
+        "gpu": [
+            # disable suspicious leaking in cupti/cuda,
+            # TODO: remove this once b/372714955 is resolved.
+            "noasan",
+        ],
+    },
+    enable_backends = [
+        "cpu",
+        "gpu",
+        "tpu",
+    ],
+    tags = ["multiaccelerator"],
     deps = [
-        "//jax",
         "//jax/_src:profiler",
-        "//jax/_src:test_util",
     ] + py_deps("absl/testing"),
 )
 

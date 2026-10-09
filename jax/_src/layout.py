@@ -71,8 +71,8 @@ class Layout:
   AUTO = AutoLayout
 
   def __init__(self, major_to_minor: tuple[int, ...],
-                tiling: tuple[tuple[int, ...], ...] | None = None,
-                sub_byte_element_size_in_bits: int = 0):
+               tiling: tuple[tuple[int, ...], ...] | None = None,
+               sub_byte_element_size_in_bits: int = 0):
     self.major_to_minor = tuple(major_to_minor)
     self.tiling = None if tiling is None else tuple(map(tuple, tiling))
     self.sub_byte_element_size_in_bits = sub_byte_element_size_in_bits
@@ -83,6 +83,31 @@ class Layout:
     return Layout(xla_layout.minor_to_major()[::-1],
                   xla_layout.tiling(),  # pyrefly: ignore[bad-argument-type]
                   xla_layout.element_size_in_bits())
+
+  @staticmethod
+  def for_array(x) -> Layout:
+    from jax._src import core  # pyrefly: ignore[missing-module-attribute]
+    from jax._src import tpu_info  # pyrefly: ignore[missing-module-attribute]
+
+    x_aval = core.typeof(x)
+    x_aval_mesh = x_aval.sharding.mesh
+    if x_aval_mesh.are_all_axes_auto:
+      raise ValueError(
+          'Cannot infer layout using `Layout.for_array` when all mesh axes are'
+          f' `Auto`. Got sharding {x_aval.sharding}')
+    if tpu_info.is_tpu_device():
+      from jax.experimental import topologies  # pyrefly: ignore[missing-import]
+
+      if x_aval_mesh.are_all_axes_manual or x_aval_mesh.empty:
+        shard_shape = x_aval.shape
+      else:
+        assert x_aval_mesh.are_all_axes_explicit
+        shard_shape = x_aval.sharding.shard_shape(x_aval.shape)
+      d = topologies._get_compile_only_device(tpu_info.get_device_kind())
+      return Layout.from_pjrt_layout(
+          d.client.get_default_layout(x_aval.dtype, shard_shape, d))
+    return Layout(tuple(range(x_aval.ndim)), tiling=(),
+                  sub_byte_element_size_in_bits=0)
 
   def __repr__(self):
     return (

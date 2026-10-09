@@ -251,6 +251,16 @@ class DialectTest(MosaicGpuTest):
       )
     self.assertTrue(self.module.operation.verify())
 
+  def test_tcgen05_commit_arrive_op(self):
+    with ir.InsertionPoint(self.module.body):
+      barrier, pred = undefs(
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get(True)),
+          ir.IntegerType.get_signless(1),
+      )
+      mgpu.dialect.tcgen05_commit_arrive(barrier)
+      mgpu.dialect.tcgen05_commit_arrive(barrier, predicate=pred)
+    self.assertTrue(self.module.operation.verify())
+
   def test_async_load_op_source_and_dest_must_have_same_element_type(self):
     with ir.InsertionPoint(self.module.body):
       source, destination, barrier, *indices = undefs(
@@ -1174,6 +1184,186 @@ ir.MLIRError,
       scalar, ref = undefs(ir.F32Type.get(), ref_ty)
       mgpu.dialect.warp_map(operands=[scalar, ref])
     self.assertTrue(self.module.operation.verify())
+
+  def test_smem_alloc_attr_bindings(self):
+    default_attr = mgpu.dialect.SmemAllocAttr.get()
+    self.assertIsInstance(default_attr, ir.Attribute)
+    self.assertIsInstance(default_attr, mgpu.dialect.SmemAllocAttr)
+    self.assertIsNone(default_attr.alignment)
+    self.assertEqual(ir.Attribute.parse("#mosaic_gpu.smem_alloc"), default_attr)
+
+    aligned_attr = mgpu.dialect.SmemAllocAttr.get(alignment=128)
+    self.assertIsInstance(aligned_attr, mgpu.dialect.SmemAllocAttr)
+    self.assertEqual(aligned_attr.alignment, 128)
+    self.assertEqual(
+        ir.Attribute.parse("#mosaic_gpu.smem_alloc<alignment = 128>"),
+        aligned_attr,
+    )
+
+    for invalid_alignment in (-4, 0, 3, 12):
+      with self.assertRaisesRegex(
+          ir.MLIRError,
+          "value is positive and whose value is a power of two > 0",
+      ):
+        mgpu.dialect.SmemAllocAttr.get(alignment=invalid_alignment)
+      with self.assertRaisesRegex(
+          ir.MLIRError,
+          "value is positive and whose value is a power of two > 0",
+      ):
+        ir.Attribute.parse(
+            f"#mosaic_gpu.smem_alloc<alignment = {invalid_alignment}>"
+        )
+
+  def test_run_scoped_op_ok(self):
+    with ir.InsertionPoint(self.module.body):
+      f32 = ir.F32Type.get()
+      smem_ty = ir.MemRefType.get(
+          [128, 64], f32, memory_space=mgpu_utils.smem()
+      )
+      barrier_ty = ir.MemRefType.get(
+          [1], mgpu.dialect.BarrierType.get(), memory_space=mgpu_utils.smem()
+      )
+      vec_ty = ir.VectorType.get([128, 64], f32)
+      [outer_val] = undefs(f32)
+
+      # Empty allocations and no results.
+      empty_scope = mgpu.dialect.run_scoped(buffer_types=[], buffer_attrs=[])
+      with ir.InsertionPoint(empty_scope.body):
+        mgpu.dialect.return_([])
+
+      # Scoped SMEM and barrier allocations with buffer_attrs, capturing an
+      # outer value and returning results.
+      scope = mgpu.dialect.run_scoped(
+          buffer_types=[smem_ty, barrier_ty],
+          buffer_attrs=[
+              mgpu.dialect.SmemAllocAttr.get(),
+              mgpu.dialect.SmemAllocAttr.get(alignment=16),
+          ],
+          results=[vec_ty, f32],
+      )
+      with ir.InsertionPoint(scope.body):
+        smem_ref, _ = scope.body.arguments
+        loaded = mgpu.dialect.vector_load(smem_ref)
+        mgpu.dialect.return_([loaded, outer_val])
+
+    self.assertTrue(self.module.operation.verify())
+
+  def test_run_scoped_op_non_memref_block_arg(self):
+    with ir.InsertionPoint(self.module.body):
+      vec_ty = ir.VectorType.get([128], ir.F32Type.get())
+      scope = mgpu.dialect.run_scoped(
+          buffer_types=[vec_ty],
+          buffer_attrs=[mgpu.dialect.SmemAllocAttr.get()],
+      )
+      with ir.InsertionPoint(scope.body):
+        mgpu.dialect.return_([])
+    with self.assertRaisesRegex(
+        ir.MLIRError, "Expected block argument 0 to be a memref"
+    ):
+      self.module.operation.verify()
+
+  def test_run_scoped_op_dynamic_shape_block_arg(self):
+    with ir.InsertionPoint(self.module.body):
+      dyn_smem_ty = ir.MemRefType.get(
+          [mgpu_utils.DYNAMIC, 64],
+          ir.F32Type.get(),
+          memory_space=mgpu_utils.smem(),
+      )
+      scope = mgpu.dialect.run_scoped(
+          buffer_types=[dyn_smem_ty],
+          buffer_attrs=[mgpu.dialect.SmemAllocAttr.get()],
+      )
+      with ir.InsertionPoint(scope.body):
+        mgpu.dialect.return_([])
+    with self.assertRaisesRegex(
+        ir.MLIRError, "Expected block argument 0 to have a static shape"
+    ):
+      self.module.operation.verify()
+
+  def test_run_scoped_op_invalid_memory_space_block_arg(self):
+    with ir.InsertionPoint(self.module.body):
+      gmem_ty = ir.MemRefType.get([128, 64], ir.F32Type.get())
+      scope = mgpu.dialect.run_scoped(
+          buffer_types=[gmem_ty],
+          buffer_attrs=[mgpu.dialect.SmemAllocAttr.get()],
+      )
+      with ir.InsertionPoint(scope.body):
+        mgpu.dialect.return_([])
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "Expected block argument 0 to be in SMEM memory space",
+    ):
+      self.module.operation.verify()
+
+  def test_run_scoped_op_buffer_attrs_count_mismatch(self):
+    with ir.InsertionPoint(self.module.body):
+      smem_ty = ir.MemRefType.get(
+          [128, 64], ir.F32Type.get(), memory_space=mgpu_utils.smem()
+      )
+      scope = mgpu.dialect.run_scoped(
+          buffer_types=[smem_ty, smem_ty],
+          buffer_attrs=[mgpu.dialect.SmemAllocAttr.get()],
+      )
+      with ir.InsertionPoint(scope.body):
+        mgpu.dialect.return_([])
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"Expected the number of buffer attributes \(1\) to match the number"
+        r" of block arguments \(2\)",
+    ):
+      self.module.operation.verify()
+
+  def test_run_scoped_op_invalid_buffer_attr(self):
+    with ir.InsertionPoint(self.module.body):
+      smem_ty = ir.MemRefType.get(
+          [128, 64], ir.F32Type.get(), memory_space=mgpu_utils.smem()
+      )
+      scope = mgpu.dialect.run_scoped(
+          buffer_types=[smem_ty],
+          buffer_attrs=[mgpu.dialect.CopyReplicatedAttr.get()],
+      )
+      with ir.InsertionPoint(scope.body):
+        mgpu.dialect.return_([])
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "Expected buffer attribute 0 for SMEM allocation to be a"
+        " #mosaic_gpu.smem_alloc attribute",
+    ):
+      self.module.operation.verify()
+
+  def test_run_scoped_op_return_operand_mismatch(self):
+    with ir.InsertionPoint(self.module.body):
+      f32 = ir.F32Type.get()
+      i32 = ir.IntegerType.get_signless(32)
+      [val] = undefs(i32)
+      scope = mgpu.dialect.run_scoped(
+          buffer_types=[], buffer_attrs=[], results=[f32]
+      )
+      with ir.InsertionPoint(scope.body):
+        mgpu.dialect.return_([val])
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"type of return operand 0 \('i32'\) doesn't match the result type"
+        r" \('f32'\) in run_scoped",
+    ):
+      self.module.operation.verify()
+
+  def test_run_scoped_op_returning_memref_rejected(self):
+    with ir.InsertionPoint(self.module.body):
+      smem_ty = ir.MemRefType.get(
+          [128, 64], ir.F32Type.get(), memory_space=mgpu_utils.smem()
+      )
+      scope = mgpu.dialect.run_scoped(
+          buffer_types=[smem_ty],
+          buffer_attrs=[mgpu.dialect.SmemAllocAttr.get()],
+          results=[smem_ty],
+      )
+      with ir.InsertionPoint(scope.body):
+        mgpu.dialect.return_([scope.body.arguments[0]])
+    with self.assertRaisesRegex(
+        ir.MLIRError, "run_scoped cannot return memref"
+    ):
+      self.module.operation.verify()
 
   def test_layout_to_and_from_attr(self):
     with ir.InsertionPoint(self.module.body):
@@ -2154,6 +2344,103 @@ ir.MLIRError,
     self.assertEqual(list(bcast_op.broadcast_dimensions), [3])
     self.assertEqual(bcast_op.operand, block.arguments[0])
 
+  def test_alloc_smem_and_alloca_scope_valid(self):
+    i32 = ir.IntegerType.get_signless(32)
+    f32 = ir.F32Type.get()
+    vec_ty = ir.VectorType.get((16,), f32)
+    smem_ref_ty1 = ir.MemRefType.get(
+        (8, 16), f32, memory_space=mgpu_utils.smem()
+    )
+    smem_ref_ty2 = ir.MemRefType.get(
+        (128, 32), f32, memory_space=mgpu_utils.smem()
+    )
+
+    with ir.InsertionPoint(self.module.body):
+      [outer_val] = undefs(vec_ty)
+      scope = mgpu.dialect.alloca_scope([i32, vec_ty])
+      with ir.InsertionPoint(scope.body):
+        ref1 = mgpu.dialect.alloc_smem(smem_ref_ty1)
+        ref2 = mgpu.dialect.alloc_smem(smem_ref_ty2, alignment=64)
+        c0 = arith.constant(i32, 0)
+        mgpu.dialect.alloca_scope_return([c0, outer_val])
+
+    self.assertTrue(self.module.operation.verify())
+    self.assertIsNone(ref1.owner.opview.alignment)
+    self.assertEqual(ref2.owner.opview.alignment.value, 64)
+    self.assertLen(scope.results, 2)
+
+  def test_alloc_smem_requires_alloca_scope_ancestor(self):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(
+          (8, 16), ir.F32Type.get(), memory_space=mgpu_utils.smem()
+      )
+      mgpu.dialect.alloc_smem(ref_ty)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"requires an ancestor `mosaic_gpu\.alloca_scope` op",
+    ):
+      self.module.operation.verify()
+
+  def test_alloc_smem_requires_smem_memory_space(self):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get((8, 16), ir.F32Type.get())
+      scope = mgpu.dialect.alloca_scope()
+      with ir.InsertionPoint(scope.body):
+        mgpu.dialect.alloc_smem(ref_ty)
+        mgpu.dialect.alloca_scope_return([])
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"The result memref must be in SMEM\.",
+    ):
+      self.module.operation.verify()
+
+  def test_alloca_scope_cannot_return_memrefs(self):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(
+          (8, 16), ir.F32Type.get(), memory_space=mgpu_utils.smem()
+      )
+      scope = mgpu.dialect.alloca_scope([ref_ty])
+      with ir.InsertionPoint(scope.body):
+        ref = mgpu.dialect.alloc_smem(ref_ty)
+        mgpu.dialect.alloca_scope_return([ref])
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"alloca_scope cannot return memrefs\.",
+    ):
+      self.module.operation.verify()
+
+  def test_alloca_scope_return_operand_count_must_match_scope_results(self):
+    with ir.InsertionPoint(self.module.body):
+      i32 = ir.IntegerType.get_signless(32)
+      scope = mgpu.dialect.alloca_scope([i32])
+      with ir.InsertionPoint(scope.body):
+        mgpu.dialect.alloca_scope_return([])
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"has 0 operands, but enclosing alloca_scope .* returns 1",
+    ):
+      self.module.operation.verify()
+
+  def test_alloca_scope_return_operand_types_must_match_scope_results(self):
+    with ir.InsertionPoint(self.module.body):
+      ty1 = ir.VectorType.get((128,), ir.F32Type.get())
+      ty2 = ir.VectorType.get((256,), ir.F32Type.get())
+      scope = mgpu.dialect.alloca_scope([ty1])
+      with ir.InsertionPoint(scope.body):
+        [v] = undefs(ty2)
+        mgpu.dialect.alloca_scope_return([v])
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"type of return operand 0 \('vector<256xf32>'\) doesn't match the"
+        r" result type \('vector<128xf32>'\) in alloca_scope",
+    ):
+      self.module.operation.verify()
+
 
 class DialectLoweringTest(MosaicGpuTest):
 
@@ -2641,28 +2928,19 @@ class DialectLoweringTest(MosaicGpuTest):
     ]
     self.assertEqual(reassociation, [[0], [1, 2], [3, 4]])
 
-  def test_optimized_gmem_transfers_are_not_supported(self):
-    def body(ctx, input, output, scratch):
-      del ctx, scratch
-      reg = mgpu.dialect.vector_load(input, optimized=True)
-      layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
-      reg = mgpu.dialect.layout_cast(reg, layout)
-      mgpu.dialect.vector_store(reg, output, optimized=False)  # prevent DCE
-
-    shape = (128, 128)
-    dtype = jnp.bfloat16
-    with self.assertRaisesRegex(
-        NotImplementedError, "Only optimized transfers to SMEM supported"
-    ):
-      mgpu.as_gpu_kernel(
-          body,
-          grid=(1, 1, 1),
-          block=(128, 1, 1),
-          in_shape=jax.ShapeDtypeStruct(shape, dtype),
-          out_shape=jax.ShapeDtypeStruct(shape, dtype),
-          smem_scratch_shape=(),
-          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+  def test_uncoalesced_optimized_gmem_transfer_raises(self):
+    with self.kernel() as launch_ctx:
+      ref_ty = ir.MemRefType.get((128, 128), ir.BF16Type.get())
+      ref = llvm.mlir_undef(ref_ty)
+      load = mgpu.dialect.VectorLoadOp(ref, optimized=True)
+      load.attributes["out_layouts"] = ir.ArrayAttr.get(
+          [layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)]
       )
+    with self.assertRaisesRegex(
+        mgpu.fragmented_array.TransferPlanDerivationError,
+        "GMEM transfer does not access",
+    ):
+      mgpu.lower_mgpu_dialect(self.module, launch_ctx)
 
   def test_inconsistent_collective_attributes_in_kernel_raise(self):
     def body(ctx, out, smem_ptr):

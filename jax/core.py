@@ -43,7 +43,6 @@ _deprecations = {
 import typing as _typing
 if _typing.TYPE_CHECKING:
   pytype_aval_mappings = _src_core.pytype_aval_mappings
-  trace_ctx = _src_core.trace_ctx
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

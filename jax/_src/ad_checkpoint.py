@@ -373,7 +373,11 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
     args_flat, in_tree = tracing_registry.flatten((args, kwargs))
     api_util.check_no_transformed_refs_args(lambda: debug, args_flat)
     in_avals = [core.shaped_abstractify(x) for x in args_flat]
+    if config.mutable_array_checks.value:
+      api_util.check_no_aliased_ref_args(lambda: debug, in_avals, args_flat)
     jaxpr, consts, out_tree = _trace_to_jaxpr(fun_, in_tree, tuple(in_avals), debug)
+    if config.mutable_array_checks.value:
+      api_util._check_no_aliased_closed_over_refs(debug, consts, args_flat)
     if isinstance(prevent_cse, tuple):
       cse_args = (tuple(args), kwargs) if kwargs else tuple(args)
       cse = (False,) * len(consts) + tuple(broadcast_prefix(prevent_cse, cse_args))
@@ -807,21 +811,23 @@ def remat_dce(used_outputs: list[bool], live_ins: list[bool],
     return [False] * len(eqn.invars), None
   new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs,
                                         live_inputs=live_ins)
+  if (not any(used_inputs) and not any(used_outputs) and
+      not _has_effects(new_jaxpr.effects)):
+    return used_inputs, None
+  if (new_jaxpr is eqn.params['jaxpr'] and
+      all(used_inputs) and all(used_outputs)):
+    return used_inputs, eqn
   prevent_cse = eqn.params['prevent_cse']
   if isinstance(prevent_cse, tuple):
     prevent_cse = tuple(p for p, u in zip(prevent_cse, used_inputs) if u)
   new_params = dict(eqn.params, jaxpr=new_jaxpr, prevent_cse=prevent_cse)
-  if (not any(used_inputs) and not any(used_outputs) and
-      _has_effects(new_jaxpr.effects)):
-    return used_inputs, None
-  else:
-    new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
-    new_eqn = pe.new_jaxpr_eqn(
-        new_invars,
-        [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, core.eqn_effects(new_jaxpr, new_invars),
-        eqn.source_info, eqn.ctx)
-    return used_inputs, new_eqn
+  new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
+  new_eqn = pe.new_jaxpr_eqn(
+      new_invars,
+      [v for v, used in zip(eqn.outvars, used_outputs) if used],
+      eqn.primitive, new_params, core.eqn_effects(new_jaxpr, new_invars),
+      eqn.source_info, eqn.ctx)
+  return used_inputs, new_eqn
 pe.dce_rules[remat_p] = remat_dce
 
 def _has_effects(effects) -> bool:
@@ -1005,8 +1011,13 @@ def _remat3(f, *, policy, static_argnums, static_argnames, prevent_cse=True):
     dbg = api_util.debug_info(
         'remat3', f, args, kwargs, static_argnums=static_argnums,
         static_argnames=static_argnames)
+    args_flat = list(args_ft)
+    if config.mutable_array_checks.value:
+      api_util.check_no_aliased_ref_args(lambda: dbg, list(avals_ft), args_flat)
     jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
     jaxpr, consts = pe.separate_consts(jaxpr_)
+    if config.mutable_array_checks.value:
+      api_util._check_no_aliased_closed_over_refs(dbg, consts, args_flat)
     if isinstance(prevent_cse, bool):
       prevent_cse_ = prevent_cse
     else:

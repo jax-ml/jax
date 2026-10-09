@@ -817,6 +817,8 @@ def _shard_map_staging(
   with (_extend_axis_env(mesh, newly_manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
     jaxpr, consts = pe.separate_consts(jaxpr)
+  if config.mutable_array_checks.value:
+    api_util._check_no_aliased_closed_over_refs(debug_info, consts, args)
   in_specs_staged = (*(_repspec(typeof(c)) for c in consts), *in_specs)
   if trace.requires_low:
     in_specs_staged = tuple(lo_spec for hi_spec in in_specs_staged

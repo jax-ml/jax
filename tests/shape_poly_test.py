@@ -3005,7 +3005,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
           lambda x: lax.linalg.eigh(x, symmetrize_input=False),
           arg_descriptors=[RandArg(shape, dtype)],
           polymorphic_shapes=[poly],
-          expect_error=(ValueError, "Argument to symmetric eigendecomposition"))
+          expect_error=(ValueError, "The input to linalg.eigh"))
       for dtype in {np.float32, np.float64, np.complex64, np.complex128}
       for shape, poly in [
           ((4, 5), "m, n"),

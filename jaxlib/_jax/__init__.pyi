@@ -1113,6 +1113,7 @@ class PjitFunction:
 
   def __get__(self, instance, owner=..., /):
     """Return an attribute of instance, which is of type owner."""
+
   __vectorcalloffset__: types.MemberDescriptorType = ...
 
   def __getstate__(self) -> dict: ...

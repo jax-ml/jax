@@ -82,7 +82,7 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
   nb::gil_scoped_acquire gil;
   auto callback = nb::borrow<nb::callable>(
       static_cast<PyObject*>(callbacks->callbacks[index]));
-  auto nb_args = nb::steal<nb::tuple>(PyTuple_New(args.size()));
+  nb::tuple_builder nb_args(args.size());
   for (size_t i = 0; i < args.size(); ++i) {
     auto arg = args.get<ffi::AnyBuffer>(i);
     auto ptype = static_cast<xla::PrimitiveType>(arg->element_type());
@@ -93,7 +93,7 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
                                         xla::PrimitiveType_Name(ptype)));
     }
     if (ptype == xla::TOKEN) {
-      PyTuple_SET_ITEM(nb_args.ptr(), i, nb::none().release().ptr());
+      nb_args.put(nb::none());
       continue;
     }
     auto maybe_dtype = xla::PrimitiveTypeToNbDtype(ptype);
@@ -124,7 +124,7 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
     // We pass in data using default numpy layout i.e., std::nullopt.
     auto array = xla::nb_numpy_ndarray(dtype, dims, std::nullopt, data);
     array.attr("flags").attr("writeable") = nb::bool_(false);
-    PyTuple_SET_ITEM(nb_args.ptr(), i, array.release().ptr());
+    nb_args.put(std::move(array));
   }
 
   // TODO(dsuo): Change this to use the Python vectorcall protocol, which allows
@@ -133,7 +133,7 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
   {
     xla::HostCallbackScope scope;
     try {
-      auto result_object = callback(*nb::borrow<nb::args>(nb_args));
+      auto result_object = callback(*nb::borrow<nb::args>(nb_args.commit()));
       result_tuple = nb::cast<nb::tuple>(result_object);
     } catch (nb::python_error& e) {
       return ffi::Error::Internal(

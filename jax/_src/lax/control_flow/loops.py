@@ -1215,7 +1215,30 @@ def _transpose_scan_jaxpr_fancy(
 def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
                         ft_in, ft_out, unroll):
   orig_batched = [d is not None for d in dims]
-  const_batched, init_batched, xs_batched = ft_in.update(orig_batched).unpack()
+  _, init_batched, _ = ft_in.update(orig_batched).unpack()
+  consts, init, xs = ft_in.update(args).unpack()
+  consts_bdims, init_bdims, xs_bdims = ft_in.update(dims).unpack()
+
+  # Batch the body jaxpr along whichever dimension each const already has,
+  # rather than moving them all to the front, the same way
+  # _while_loop_batching_rule does. A const which is a Ref could not be moved
+  # anyway, since that would mean transposing the underlying mutable memory.
+  const_axes = list(consts_bdims)
+
+  # An xs which is a Ref is left in place for the same reason. The scan
+  # indexes each xs along its leading axis before the body sees it, so a Ref
+  # xs batched along axis d is batched along axis d - 1 inside the body. A Ref
+  # whose batch axis is the leading axis would need a transposed view of the
+  # buffer, which a Ref cannot provide.
+  xs_is_ref = [isinstance(typeof(x), AbstractRef) for x in xs]
+  if any(r and d == 0 for r, d in zip(xs_is_ref, xs_bdims)):
+    raise NotImplementedError(
+        "vmap of a scan over a Ref batched along its leading axis is not "
+        "supported: that axis is the scan axis, and a Ref cannot be "
+        "transposed. Batch the Ref along another axis, or scan over an "
+        "array instead.")
+  xs_axes = [None if d is None else d - 1 if r else 0
+             for d, r in zip(xs_bdims, xs_is_ref)]
 
   # Fixpoint computation of which carry are batched: either
   # batched from init, or the carry out is batched. Each iteration promotes
@@ -1224,10 +1247,13 @@ def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
   # carry_batched.
   carry_batched = init_batched
   for _ in range(1 + len(carry_batched)):
-    batched = list(ft.pack((const_batched, carry_batched, xs_batched)))
-    jaxpr_batched, batched_out = batching.batch_jaxpr(
-        jaxpr, axis_data, batched,
-        instantiate=list(carry_batched) + [False] * len(ft_out.unpack()[1]))
+    in_axes = (const_axes + [0 if b else None for b in carry_batched]
+               + xs_axes)
+    instantiate = list(carry_batched) + [False] * len(ft_out.unpack()[1])
+    out_axes_dest = [0 if inst else batching.zero_if_mapped
+                     for inst in instantiate]
+    jaxpr_batched, batched_out = batching.batch_jaxpr_axes(
+        jaxpr, axis_data, in_axes, out_axes_dest)
     carry_batched_out, ys_batched = ft_out.update(batched_out).unpack()
     if list(carry_batched_out) == list(carry_batched):
       break
@@ -1236,17 +1262,15 @@ def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
   else:
     assert False, "Fixpoint not reached"
 
-  consts, init, xs = ft_in.update(args).unpack()
-  consts_bdims, init_bdims, xs_bdims = ft_in.update(dims).unpack()
-  new_consts = [batching.moveaxis(x, d, 0) if d is not None and d != 0
-                else x for x, d in zip(consts, consts_bdims)]
+  new_consts = list(consts)
   new_init = [batching.broadcast(x, axis_data.size, 0, axis_data.explicit_mesh_axis)
               if now_batched and not was_batched
               else batching.moveaxis(x, d, 0) if now_batched else x
               for x, d, was_batched, now_batched in
               zip(init, init_bdims, init_batched, carry_batched)]
-  new_xs = [batching.moveaxis(x, d, 1) if d is not None and d != 1
-            else x for x, d in zip(xs, xs_bdims)]
+  new_xs = [x if d is None or d == 1 or is_ref
+            else batching.moveaxis(x, d, 1)
+            for x, d, is_ref in zip(xs, xs_bdims, xs_is_ref)]
   new_args = new_consts + new_init + new_xs
 
   outs = scan_p.bind(
@@ -1283,6 +1307,8 @@ def _scan_dce_rule(used_outputs: list[bool], live_ins: list[bool],
   else:
     assert False, "Fixpoint not reached"
   if config.enable_checks.value: core.check_jaxpr(jaxpr)
+  if jaxpr_dce is jaxpr and all(used_inputs) and all(used_outputs):
+    return used_inputs, eqn
 
   new_params = dict[str, Any](
       eqn.params,
@@ -2132,11 +2158,14 @@ def _while_dce_rule(used_outputs: list[bool], live_ins: list[bool],
       live_inputs=[*_map(is_live, cond_consts), *[True] * num_carry])
   used_cond_consts, _ = split_list(cond_used_inputs, [cond_nconsts])
 
+  used_inputs = [*used_cond_consts, *used_body_consts, *used_carry]
+  if (cond_jaxpr_dce is cond_jaxpr and body_jaxpr_dce is body_jaxpr and
+      all(used_inputs) and all(used_carry)):
+    return used_inputs, eqn
   new_params = dict(eqn.params, cond_jaxpr=cond_jaxpr_dce,
                     body_jaxpr=body_jaxpr_dce,
                     cond_nconsts=sum(used_cond_consts),
                     body_nconsts=sum(used_body_consts))
-  used_inputs = [*used_cond_consts, *used_body_consts, *used_carry]
   new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
   new_outvars = [v for v, used in zip(eqn.outvars, used_carry) if used]
   _, new_effects = eqn.primitive.abstract_eval(

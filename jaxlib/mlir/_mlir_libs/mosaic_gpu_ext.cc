@@ -14,9 +14,11 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "mlir-c/BuiltinAttributes.h"
+#include "mlir-c/BuiltinTypes.h"
 #include "mlir-c/IR.h"
 #include "mlir-c/Support.h"
 #include "mlir/CAPI/IR.h"
@@ -27,6 +29,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"  // IWYU pragma: keep
 #include "nanobind/nanobind.h"
 #include "nanobind/operators.h"  // IWYU pragma: keep
+#include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/tuple.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
@@ -37,6 +40,7 @@ limitations under the License.
 namespace nb = nanobind;
 
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::DefaultingPyMlirContext;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::MLIRError;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyAttribute;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyInsertionPoint;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyLocation;
@@ -314,6 +318,37 @@ DEFINE_CONCRETE_ATTR(CopyPartitionedAttr, mlirMosaicGpuIsACopyPartitionedAttr,
   });
 }
 
+DEFINE_CONCRETE_ATTR(SmemAllocAttr, mlirMosaicGpuIsASmemAllocAttr,
+                     mlirMosaicGpuSmemAllocAttrGetTypeID, PyAttribute) {
+  cls.def_static(
+      "get",
+      [](std::optional<int64_t> alignment, DefaultingPyMlirContext ctx) {
+        PyMlirContext::ErrorCapture errors(ctx.resolve().getRef());
+        MlirContext mlir_ctx = ctx.resolve().get();
+        MlirAttribute alignment_attr = {nullptr};
+        if (alignment.has_value()) {
+          alignment_attr = mlirIntegerAttrGet(
+              mlirIntegerTypeGet(mlir_ctx, 64), *alignment);
+        }
+        MlirAttribute attr =
+            mlirMosaicGpuSmemAllocAttrGet(mlir_ctx, alignment_attr);
+        if (mlirAttributeIsNull(attr)) {
+          throw MLIRError("Invalid attribute", errors.take());
+        }
+        return PySmemAllocAttr(ctx.resolve().getRef(), attr);
+      },
+      nb::arg("alignment") = nb::none(), nb::arg("ctx") = nb::none());
+  cls.def_prop_ro(
+      "alignment",
+      [](PySmemAllocAttr& self) -> std::optional<int64_t> {
+        MlirAttribute attr = mlirMosaicGpuSmemAllocAttrGetAlignment(self.get());
+        if (mlirAttributeIsNull(attr)) {
+          return std::nullopt;
+        }
+        return mlirIntegerAttrGetValueInt(attr);
+      });
+}
+
 #undef DEFINE_CONCRETE_ATTR
 
 }  // namespace
@@ -371,4 +406,5 @@ NB_MODULE(_mosaic_gpu_ext, m) {
   PyCopyPartitionAttrInterface::bind(m);
   PyCopyReplicatedAttr::bind(m);
   PyCopyPartitionedAttr::bind(m);
+  PySmemAllocAttr::bind(m);
 }

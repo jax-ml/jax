@@ -202,6 +202,27 @@ class FusionTest(jtu.JaxTestCase):
     np.testing.assert_allclose(x_out, (x + z + 1.0))
     np.testing.assert_allclose(y_out, (y + z + 1.0) * 2)
 
+  def test_custom_fusion_errors(self):
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+
+    @fuser.custom_fusion
+    def missing_eval(x):
+      return x + 1.0
+
+    with self.assertRaisesRegex(ValueError, "missing an evaluation rule"):
+      missing_eval(x)
+
+    missing_eval.def_eval_rule(lambda _, x: (missing_eval(x),))
+    with self.assertRaisesRegex(ValueError, "missing a pull_block_spec rule"):
+      missing_eval(x)
+
+    missing_eval.def_pull_block_spec(lambda bss: (bss[0],))
+    missing_eval.def_pallas_impl(lambda x: jnp.ones((2, 2), dtype=jnp.float32))
+    with self.assertRaisesRegex(
+        ValueError, "mismatched output abstract values"
+    ):
+      jax.jit(missing_eval)(x)
+
   def test_separate_output_fusions_should_error_if_not_disjoint(self):
 
     @fuser.fusible(output_fusion_prefix=(True, True))
@@ -494,6 +515,28 @@ class FusionTest(jtu.JaxTestCase):
       gy = jax.grad(fusible_dtype.physicalize(f))(x)
       np.testing.assert_allclose(gy, 2.0)
 
+  @parameterized.parameters([False, True])
+  def test_fusible_physicalize_custom_vjp_grad_with_consts(self, cvjp3):
+    with config.custom_vjp3(cvjp3):
+      scale = jnp.array(2.0)  # Closed over, so a const of the call_jaxpr.
+
+      @jax.custom_vjp
+      def custom_fn(x):
+        return x * scale
+      def custom_fn_fwd(x):
+        return custom_fn(x), None
+      def custom_fn_bwd(res, g):
+        del res
+        return (g * scale,)
+      custom_fn.defvjp(custom_fn_fwd, custom_fn_bwd)
+
+      def f(x):
+        return custom_fn(x) + 1.0
+
+      x = jnp.array(3.0)
+      gy = jax.grad(fusible_dtype.physicalize(f))(x)
+      np.testing.assert_allclose(gy, 2.0)
+
   def test_fusible_outside_fuse(self):
     @fuser.fusible
     def f(x_fn, out_fn):
@@ -547,6 +590,23 @@ class FusionTest(jtu.JaxTestCase):
     x = jnp.ones((128, 128))
     result = jax.jit(jax.grad(quantize))(x)
     np.testing.assert_allclose(result, jnp.full_like(x, 2.0))
+
+  def test_fusible_ref_arg_grad(self):
+    # A Ref passed as a fusible operand: its gradient is accumulated into the
+    # Ref's gradient ref and reaches the array it was created from.
+    @fuser.fusible
+    def scale(x_fn, y_ref_fn, out_fn):
+      del out_fn
+      return x_fn() * y_ref_fn()[...]
+
+    def loss(x, y):
+      return jnp.sum(scale(x, jax.new_ref(y)))
+
+    x = jnp.arange(16.0).reshape(4, 4)
+    y = jnp.full((4, 4), 3.0)
+    dx, dy = jax.jit(jax.grad(loss, argnums=(0, 1)))(x, y)
+    np.testing.assert_allclose(dx, y)
+    np.testing.assert_allclose(dy, x)
 
   def test_fusible_shard_map_jit(self):
     @fuser.fusible

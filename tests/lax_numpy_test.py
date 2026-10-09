@@ -4482,6 +4482,43 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
+      for shape in [(20, 7), (25, 4, 5), (18, 3, 2, 4)]
+      for axis in (-1, *range(len(shape) - 1))
+    ],
+    dtype=all_dtypes,
+    batch_size=[1, 5, 16],
+  )
+  def testLexsortManyKeys(self, dtype, shape, axis, batch_size):
+    # With more keys than batch_size, lexsort sorts the keys in batches. Keys
+    # passed as one array and as a tuple of arrays take different code paths,
+    # so check both. Values in {0, 1} make every key matter.
+    args_maker = lambda: [self.rng().randint(0, 2, shape).astype(dtype)]
+    np_op = jtu.with_jax_dtype_defaults(lambda x: np.lexsort(x, axis=axis))
+    array_op = lambda x: jnp.lexsort(x, axis=axis, batch_size=batch_size)
+    tuple_op = lambda x: jnp.lexsort(tuple(x), axis=axis, batch_size=batch_size)
+    for jnp_op in [array_op, tuple_op]:
+      self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+      self._CompileAndCheck(jnp_op, args_maker)
+
+  @jtu.sample_product(axis=[0, 1, -1], batch_size=[1, 3, 16])
+  def testLexsortManyKeysMixedDtypes(self, axis, batch_size):
+    # Keys of different dtypes can only be passed as a tuple; they are batched
+    # without being stacked into a single array.
+    dtypes = [np.int32, np.float32, np.bool_]
+    def args_maker():
+      return [tuple(self.rng().randint(0, 2, (6, 7)).astype(dtypes[i % 3])
+                    for i in range(23))]
+    jnp_op = lambda x: jnp.lexsort(x, axis=axis, batch_size=batch_size)
+    np_op = jtu.with_jax_dtype_defaults(lambda x: np.lexsort(x, axis=axis))
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+
+  @jtu.sample_product(input_type=[jnp.asarray, tuple])
+  def testLexsortBatchSizeError(self, input_type):
+    with self.assertRaisesRegex(ValueError, "batch_size must be positive"):
+      jnp.lexsort(input_type(jnp.zeros((3, 4))), batch_size=0)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
       for shape in nonzerodim_shapes
       for axis in (NO_VALUE, None, *range(-len(shape), len(shape)))
     ],

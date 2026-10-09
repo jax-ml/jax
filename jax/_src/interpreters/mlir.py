@@ -3269,6 +3269,8 @@ def lower_with_explicit_types(ctx, op, aval):
   return out
 
 def lower_with_sharding_in_types(ctx, op, aval):
+  if aval is core.abstract_token:
+    return op
   if aval.sharding.mesh.empty:
     return op
   # Don't emit a wsc under full manual mode to avoid increasing HLO size.

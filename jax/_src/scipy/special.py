@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from functools import partial
+import math
 import operator
 from typing import Any
 
@@ -30,7 +31,14 @@ from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.numpy.ufuncs import arctan, isposinf, isneginf, sinc
 from jax._src.api import jit, jvp, vmap
-from jax._src.lax.lax import _const as _lax_const
+from jax._src.lax.erf import (
+    erf_inv_core,
+    erfcx_grad_impl as _erfcx_grad_impl,
+    erfcx_grad_large,
+    erfcx_impl as _erfcx_impl,
+    erfcx_large,
+)
+from jax._src.lax.lax import AccuracyMode, _const as _lax_const
 from jax._src.lax.special import ndtr as _ndtr
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import lax_numpy
@@ -625,9 +633,115 @@ def erfinv(x: ArrayLike) -> Array:
   See also:
     - :func:`jax.scipy.special.erf`
     - :func:`jax.scipy.special.erfc`
+    - :func:`jax.scipy.special.erfcinv`
   """
   x, = promote_args_inexact("erfinv", x)
   return lax.erf_inv(x)
+
+
+def erfcinv(y: ArrayLike) -> Array:
+  r"""The inverse of the complementary error function.
+
+  JAX implementation of :obj:`scipy.special.erfcinv`.
+
+  Returns the inverse of :func:`~jax.scipy.special.erfc` on ``(0, 2)``.
+
+  Args:
+    y: arraylike, real-valued.
+
+  Returns:
+    array containing values of the inverse complementary error function.
+
+  Notes:
+    The JAX version only supports real-valued inputs.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
+  Examples:
+    >>> y = jnp.array([0.0, 0.5, 1.0, 1.5, 2.0])
+    >>> jax.scipy.special.erfcinv(y)
+    Array([        inf,  0.47693628,  0.        , -0.47693628,        -inf], dtype=float32)
+
+  See also:
+    - :func:`jax.scipy.special.erfc`
+    - :func:`jax.scipy.special.erf`
+    - :func:`jax.scipy.special.erfinv`
+  """
+  y, = promote_args_inexact("erfcinv", y)
+  if dtypes.issubdtype(y.dtype, np.complexfloating):
+    raise ValueError("erfcinv does not support complex-valued inputs.")
+  if dtypes.finfo(y.dtype).bits < 32:
+    return _erfcinv(y.astype(np.float32)).astype(y.dtype)
+  return _erfcinv(y)
+
+
+@custom_derivatives.custom_jvp
+def _erfcinv(y: Array) -> Array:
+  return _erfcinv_impl(y)
+
+
+@jit
+def _erfcinv_impl(y: Array) -> Array:
+  out_of_bounds = (y < 0.0) | (y > 2.0) | jnp.isnan(y)
+  is_edge = (y == 0.0) | (y == 2.0)
+  y_safe = jnp.where(out_of_bounds | is_edge, 1.0, y)
+  q_safe = jnp.where(y_safe > 1.0, 2.0 - y_safe, y_safe)
+  x_safe = 1.0 - y_safe
+  z = erf_inv_core(x_safe, q_safe, has_far_tail=True)
+  return jnp.where(
+      out_of_bounds,
+      jnp.nan,
+      jnp.where(y == 0.0, jnp.inf, jnp.where(y == 2.0, -jnp.inf, z)),
+  )
+
+
+@_erfcinv.defjvp
+def _erfcinv_jvp(primals, tangents):
+  (y,), (y_dot,) = primals, tangents
+  z = _erfcinv(y)
+  return z, y_dot * _erfcinv_grad(y, z)
+
+
+@custom_derivatives.custom_jvp
+def _erfcinv_grad(y: Array, z: Array) -> Array:
+  # Evaluates `erfcinv'(y) = -sqrt(pi) / 2 * exp(z^2)` where `z = erfcinv(y)`:
+  # - For `|z| <= 1`, `z^2 <= 1`, so `-sqrt(pi) / 2 * exp(z^2)` has condition
+  #   number `<= 2` with respect to `z` and no `O(z^2)` rounding amplification.
+  # - For `|z| > 1`, computing `exp(z^2)` from `z` alone would amplify any 1 ULP
+  #   error in `z` by `~2 * z^2` ULPs (up to ~200 ULP in `float32` and ~1500 ULP
+  #   in `float64`). Using `min(y, 2 - y) = erfc(|z|) = exp(-z^2) * erfcx(|z|)`
+  #   gives the exact identity
+  #     `erfcinv'(y) = -sqrt(pi) / 2 * erfcx(|z|) / min(y, 2 - y)`,
+  #   where `min(y, 2 - y)` is exact by Sterbenz's lemma and `erfcx(|z|)` has
+  #   condition number `< 1` with respect to `z`.
+  q = jnp.where(y > 1.0, 2.0 - y, y)
+  u = lax.abs(z)
+  is_tail = u > 1.0
+
+  z_central = jnp.where(is_tail, 0.0, z)
+  central = -0.5 * math.sqrt(math.pi) * lax.exp(
+      lax.square(z_central), accuracy=AccuracyMode.HIGHEST
+  )
+
+  is_finite_tail = is_tail & (q > 0.0)
+  u_tail = jnp.where(is_finite_tail, u, 1.0)
+  q_safe = jnp.where(is_finite_tail, q, 1.0)
+  with config.debug_infs(False):
+    tail_num = -0.5 * math.sqrt(math.pi) * erfcx_large(u_tail)
+    tail = jnp.where(q == 0.0, -np.inf, tail_num / q_safe)
+
+  return jnp.where(is_tail, tail, central)
+
+
+@_erfcinv_grad.defjvp
+def _erfcinv_grad_jvp(primals, tangents):
+  # `z` is the cached primal `_erfcinv(y)`, not an independent input, so the
+  # total derivative with respect to `y` only depends on `y_dot`:
+  #   d/dy (-sqrt(pi) / 2 * exp(z^2)) = 2 * z * (erfcinv'(y))^2.
+  (y, z), (y_dot, _) = primals, tangents
+  g = _erfcinv_grad(y, z)
+  return g, y_dot * ((2.0 * z * g) * g)
 
 
 # Weideman (1994) N=32 rational approximation constants for the Faddeeva function.
@@ -711,66 +825,74 @@ def erfcx(x: ArrayLike) -> Array:
   return _erfcx(x)
 
 
-# _erfcx computes exp(x^2) * erfc(x) directly for x < threshold, and uses the
-# asymptotic expansion erfcx(x) ~ (1/(sqrt(pi)*x)) * P(1/x^2) otherwise, where
-# P(t) = sum_{k=0}^{N-1} c_k * t^k with c_k = (-1)^k * (2k-1)!! / 2^k (from
-# https://dlmf.nist.gov/7.12.E1 for erfc, multiplied by exp(x^2)).
-# _ERFCX_COEFFS stores c_k / sqrt(pi) in descending order of degree (k=10..0)
-# for jnp.polyval; each c_k has denominator 2^k, so the unscaled literals are
-# exact in binary float.
-_ERFCX_COEFFS = np.array([
-    639383.8623046875, -67303.564453125, 7918.06640625, -1055.7421875,
-    162.421875, -29.53125, 6.5625, -1.875, .75, -.5, 1.,
-]) / np.sqrt(np.pi)
-
-# The direct formula's relative error grows like x^2 * eps (from rounding x^2)
-# until exp(x^2) overflows, so we want a low threshold, but the series is only
-# accurate for large x. We use threshold = sqrt(4 * log(1 / eps)) and the
-# fewest terms for which the first omitted term |c_N| / threshold^(2N), which
-# bounds the truncation error, is below eps.
-_ERFCX_PARAMS = {
-    #                       (threshold, nterms)
-    np.dtype(np.float32): (7.985583298138901, 5),  # |c_5|/x^10 ~ 3e-8 <= eps
-    np.dtype(np.float64): (12.00727336061225, 10),  # |c_10|/x^20 ~ 2e-16 <= eps
-}
-
-
 @custom_derivatives.custom_jvp
 def _erfcx(x: Array) -> Array:
-  threshold, nterms = _ERFCX_PARAMS[x.dtype]
-  coeffs = _ERFCX_COEFFS[-nterms:].astype(x.dtype)
-  is_large = x >= threshold
-
-  x_direct = lax.select(is_large, lax.full_like(x, 1.), x)
-  direct = lax.exp(lax.square(x_direct)) * lax.erfc(x_direct)
-
-  inv_x_asymp = 1. / lax.select(is_large, x, lax.full_like(x, 1.))
-  asymp = inv_x_asymp * jnp.polyval(coeffs, lax.square(inv_x_asymp))
-
-  return lax.select(is_large, asymp, direct)
-
-
-# Below threshold, erfcx'(x) = 2*x*erfcx(x) - 2/sqrt(pi). Above threshold, that
-# identity cancels catastrophically, so we differentiate the asymptotic series
-# instead: d/dx [c_k/x^(2k+1)] = -(2k+1)*c_k/x^(2k+2) = 2*c_{k+1}/x^(2k+2).
-_ERFCX_DERIV_COEFFS = 2 * _ERFCX_COEFFS[:-1]
+  return _erfcx_impl(x)
 
 
 @_erfcx.defjvp
 def _erfcx_jvp(primals, tangents):
   (x,), (x_dot,) = primals, tangents
-  threshold, nterms = _ERFCX_PARAMS[x.dtype]
-  coeffs = _ERFCX_DERIV_COEFFS[-nterms:].astype(x.dtype)
   ans = _erfcx(x)
-  is_large = x >= threshold
+  return ans, x_dot * _erfcx_grad(x, ans)
 
-  x_direct = lax.select(is_large, lax.full_like(x, 1.), x)
-  direct = 2 * x_direct * ans - float(2. / np.sqrt(np.pi))
 
-  inv_x2_asymp = lax.square(1. / lax.select(is_large, x, lax.full_like(x, 1.)))
-  asymp = inv_x2_asymp * jnp.polyval(coeffs, inv_x2_asymp)
+# `_erfcx` has a custom JVP because letting AD differentiate `_erfcx_impl`
+# means differentiating its polynomial approximations. A polynomial can match a
+# function to within an ULP and still have a noticeably wrong slope. Also,
+# wherever `_erfcx_impl` switches from one polynomial to the next, the two
+# pieces agree in value but not exactly in slope, so the derivative would jump.
+#
+# The obvious JVP rule is the identity
+#   erfcx'(x) = 2 * x * erfcx(x) - 2 / sqrt(pi)
+# (`_wofz` uses the complex version of this rule). For `x < 0` both terms are
+# negative, so this is accurate. For `x > 0`, though, `2 * x * erfcx(x)` gets
+# closer to `2 / sqrt(pi)` as `x` grows, so the subtraction cancels more and
+# more bits. `_erfcx_grad_impl` therefore uses the identity only for `x < 0`,
+# and for `x >= 0` it evaluates polynomials fit directly to `erfcx'(x)`.
+@custom_derivatives.custom_jvp
+def _erfcx_grad(x: Array, ans: Array) -> Array:
+  return _erfcx_grad_impl(x, ans)
 
-  return ans, x_dot * lax.select(is_large, asymp, direct)
+
+# `_erfcx_grad` needs its own custom JVP for the same reason `_erfcx` does: for
+# `x >= 0`, `_erfcx_grad_impl` is made of polynomials, and AD would compute
+# `erfcx''` as the slope of those polynomials. Worse, exactly at `x = 0` and
+# `x = 1`, the `clamp` and `max` calls that pick the polynomial piece drop part
+# of the gradient, so plain AD there is not just slightly off but completely
+# wrong.
+#
+# Differentiating the identity above gives
+#   erfcx''(x) = 2 * erfcx(x) + 2 * x * erfcx'(x).
+# The constant is gone, and for `x <= 2.25` the cancellation between the two
+# terms is mild, so we use this formula there. For larger `x` the two terms
+# cancel badly, so instead we let AD differentiate `erfcx_grad_large`. That
+# brings back the slope-of-a-polynomial error described above, but for
+# `x > 2.25` that error is smaller than the cancellation error of the formula
+# (`test_erfcx_grad2_method_choice` in `tests/numerics/erf_test.py` checks
+# this).
+#
+# A third level of custom JVP is not needed. For `x <= 2.25` the rule is built
+# from `_erfcx` and `_erfcx_grad` using `+` and `*`, so differentiating it again
+# just calls their custom JVPs again. For `x > 2.25` we already use plain AD
+# through `erfcx_grad_large`, which works at any order.
+@_erfcx_grad.defjvp
+def _erfcx_grad_jvp(primals, tangents):
+  # `ans` is the cached primal `_erfcx(x)`, not an independent input, so the
+  # total derivative with respect to `x` only depends on `x_dot`.
+  (x, ans), (x_dot, _) = primals, tangents
+  grad_ans = _erfcx_grad(x, ans)
+  threshold = _lax_const(x, 2.25)
+  is_large = x > threshold
+  zeros = lax.full_like(x, 0.0)
+  x_small = lax.select(is_large, zeros, x)
+  ans_small = lax.select(is_large, zeros, ans)
+  grad_small = lax.select(is_large, zeros, grad_ans)
+  small_dot = x_dot * (2.0 * ans_small + 2.0 * x_small * grad_small)
+  _, large_dot = jvp(
+      erfcx_grad_large, (lax.select(is_large, x, threshold),), (x_dot,)
+  )
+  return grad_ans, lax.select(is_large, large_dot, small_dot)
 
 
 # Rational approximation coefficients for dawsn (Cody, Paciorek, Thacher 1970).
@@ -1527,9 +1649,6 @@ def ndtri(p: ArrayLike) -> Array:
   Returns `x` such that the area under the PDF from :math:`-\infty` to `x` is equal
   to `p`.
 
-  A piece-wise rational approximation is done for the function.
-  This is based on the implementation in netlib.
-
   Args:
     p: an array of type `float32`, `float64`.
 
@@ -1547,99 +1666,29 @@ def ndtri(p: ArrayLike) -> Array:
   return _ndtri(p)
 
 
+@custom_derivatives.custom_jvp
 def _ndtri(p: ArrayLike) -> Array:
   """Implements ndtri core logic."""
-  dtype = lax.dtype(p).type
-  shape = np.shape(p)
+  p_arr = jnp.asarray(p)
 
-  # Constants used in piece-wise rational approximations. Taken from the cephes
-  # library:
-  # https://root.cern.ch/doc/v608/SpecFuncCephesInv_8cxx_source.html
-  p0 = np.array([-5.99633501014107895267E1,
-                 9.80010754185999661536E1,
-                 -5.66762857469070293439E1,
-                 1.39312609387279679503E1,
-                 -1.23916583867381258016E0], dtype=dtype)
-  q0 = np.array([1.0,
-                 1.95448858338141759834E0,
-                 4.67627912898881538453E0,
-                 8.63602421390890590575E1,
-                 -2.25462687854119370527E2,
-                 2.00260212380060660359E2,
-                 -8.20372256168333339912E1,
-                 1.59056225126211695515E1,
-                 -1.18331621121330003142E0], dtype=dtype)
-  p1 = np.array([4.05544892305962419923E0,
-                 3.15251094599893866154E1,
-                 5.71628192246421288162E1,
-                 4.40805073893200834700E1,
-                 1.46849561928858024014E1,
-                 2.18663306850790267539E0,
-                 -1.40256079171354495875E-1,
-                 -3.50424626827848203418E-2,
-                 -8.57456785154685413611E-4], dtype=dtype)
-  q1 = np.array([1.0,
-                 1.57799883256466749731E1,
-                 4.53907635128879210584E1,
-                 4.13172038254672030440E1,
-                 1.50425385692907503408E1,
-                 2.50464946208309415979E0,
-                 -1.42182922854787788574E-1,
-                 -3.80806407691578277194E-2,
-                 -9.33259480895457427372E-4], dtype=dtype)
-  p2 = np.array([3.23774891776946035970E0,
-                 6.91522889068984211695E0,
-                 3.93881025292474443415E0,
-                 1.33303460815807542389E0,
-                 2.01485389549179081538E-1,
-                 1.23716634817820021358E-2,
-                 3.01581553508235416007E-4,
-                 2.65806974686737550832E-6,
-                 6.23974539184983293730E-9], dtype=dtype)
-  q2 = np.array([1.0,
-                 6.02427039364742014255E0,
-                 3.67983563856160859403E0,
-                 1.37702099489081330271E0,
-                 2.16236993594496635890E-1,
-                 1.34204006088543189037E-2,
-                 3.28014464682127739104E-4,
-                 2.89247864745380683936E-6,
-                 6.79019408009981274425E-9], dtype=dtype)
+  out_of_bounds = (p_arr < 0) | (p_arr > 1) | jnp.isnan(p_arr)
+  is_edge = (p_arr == 0) | (p_arr == 1)
+  p_safe = jnp.where(out_of_bounds | is_edge, 0.5, p_arr)
+  a_safe = jnp.where(p_safe > 0.5, 1 - p_safe, p_safe)
+  x_safe = 2 * (p_safe - 0.5)
+  q_safe = 2 * a_safe
+  x = erf_inv_core(x_safe, q_safe, has_far_tail=True, is_ndtri=True)
 
-  maybe_complement_p = jnp.where(p > dtype(-np.expm1(-2.)), dtype(1.) - p, p)
-  # Write in an arbitrary value in place of 0 for p since 0 will cause NaNs
-  # later on. The result from the computation when p == 0 is not used so any
-  # number that doesn't result in NaNs is fine.
-  sanitized_mcp = jnp.where(
-      maybe_complement_p == dtype(0.),
-      jnp.full(shape, dtype(0.5)),
-      maybe_complement_p)
-
-  # Compute x for p > exp(-2): x/sqrt(2pi) = w + w**3 P0(w**2)/Q0(w**2).
-  w = sanitized_mcp - dtype(0.5)
-  ww = lax.square(w)
-  x_for_big_p = w + w * ww * (jnp.polyval(p0, ww) / jnp.polyval(q0, ww))
-  x_for_big_p *= -dtype(np.sqrt(2. * np.pi))
-
-  # Compute x for p <= exp(-2): x = z - log(z)/z - (1/z) P(1/z) / Q(1/z),
-  # where z = sqrt(-2. * log(p)), and P/Q are chosen between two different
-  # arrays based on whether p < exp(-32).
-  z = lax.sqrt(dtype(-2.) * lax.log(sanitized_mcp))
-  first_term = z - lax.log(z) / z
-  second_term_small_p = jnp.polyval(p2, 1 / z) / jnp.polyval(q2, 1 / z) / z
-  second_term_otherwise = jnp.polyval(p1, 1 / z) / jnp.polyval(q1, 1 / z) / z
-  x_for_small_p = first_term - second_term_small_p
-  x_otherwise = first_term - second_term_otherwise
-
-  x = jnp.where(sanitized_mcp > dtype(np.exp(-2.)),
-                x_for_big_p,
-                jnp.where(z >= dtype(8.0), x_for_small_p, x_otherwise))
-
-  x = jnp.where(p > dtype(1. - np.exp(-2.)), x, -x)
-  with config.debug_infs(False):
-    infinity = jnp.full(shape, dtype(np.inf))
+  with config.debug_nans(False), config.debug_infs(False):
     x = jnp.where(
-        p == dtype(0.0), -infinity, jnp.where(p == dtype(1.0), infinity, x))
+        out_of_bounds,
+        jnp.nan,
+        jnp.where(
+            p_arr == 0,
+            -jnp.inf,
+            jnp.where(p_arr == 1, jnp.inf, x),
+        ),
+    )
   if not isinstance(x, core.Tracer):
     try:
       dispatch.check_special("ndtri", [x])
@@ -1647,6 +1696,56 @@ def _ndtri(p: ArrayLike) -> Array:
       raise FloatingPointError(
           f"invalid value ({e.ty}) encountered in ndtri.") from None
   return x
+
+
+@_ndtri.defjvp
+def _ndtri_jvp(primals, tangents):
+  (p,), (p_dot,) = primals, tangents
+  x = _ndtri(p)
+  return x, p_dot * _ndtri_grad(p, x)
+
+
+@custom_derivatives.custom_jvp
+def _ndtri_grad(p: ArrayLike, x: Array) -> Array:
+  # Evaluates `ndtri'(p) = sqrt(2*pi) * exp(0.5 * x^2)` where `x = ndtri(p)`:
+  # - For `|x| <= sqrt(2)` (`u = |x| / sqrt(2) <= 1`), `0.5 * x^2 <= 1`, so
+  #   `sqrt(2*pi) * exp(0.5 * x^2)` has condition number `<= 2` with respect to
+  #   `x` and no `O(x^2)` rounding amplification.
+  # - For `|x| > sqrt(2)` (`u > 1`), computing `exp(0.5 * x^2)` from `x` alone
+  #   would amplify any 1 ULP error in `x` by `~x^2` ULPs (up to ~200 ULP in
+  #   `float32` and ~2200 ULP in `float64`). Using `min(p, 1 - p) = 0.5 *
+  #   erfc(u) = 0.5 * exp(-0.5 * x^2) * erfcx(u)` gives the exact identity
+  #     `ndtri'(p) = sqrt(pi / 2) * erfcx(|x| / sqrt(2)) / min(p, 1 - p)`,
+  #   where `min(p, 1 - p)` is exact by Sterbenz's lemma and `erfcx(u)` has
+  #   condition number `< 1` with respect to `x`.
+  p_arr = jnp.asarray(p, dtype=x.dtype)
+  a = jnp.where(p_arr > 0.5, 1.0 - p_arr, p_arr)
+  u = lax.abs(x) * math.sqrt(0.5)
+  is_tail = u > 1.0
+
+  x_central = jnp.where(is_tail, 0.0, x)
+  central = math.sqrt(2.0 * math.pi) * lax.exp(
+      0.5 * lax.square(x_central), accuracy=AccuracyMode.HIGHEST
+  )
+
+  is_finite_tail = is_tail & (a > 0.0)
+  u_tail = jnp.where(is_finite_tail, u, 1.0)
+  a_safe = jnp.where(is_finite_tail, a, 0.5)
+  with config.debug_infs(False):
+    tail_num = math.sqrt(0.5 * math.pi) * erfcx_large(u_tail)
+    tail = jnp.where(a == 0.0, np.inf, tail_num / a_safe)
+
+  return jnp.where(is_tail, tail, central)
+
+
+@_ndtri_grad.defjvp
+def _ndtri_grad_jvp(primals, tangents):
+  # `x` is the cached primal `_ndtri(p)`, not an independent input, so the
+  # total derivative with respect to `p` only depends on `p_dot`:
+  #   d/dp (sqrt(2*pi) * exp(0.5 * x^2)) = x * (ndtri'(p))^2.
+  (p, x), (p_dot, _) = primals, tangents
+  g = _ndtri_grad(p, x)
+  return g, p_dot * ((x * g) * g)
 
 
 @partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))
@@ -2615,7 +2714,7 @@ def _expint7(x):
 def _expi_pos(x: Array) -> Array:
   # x >= 0
   _c = _lax_const
-  conds = [(_c(x, 0) < x) & (x <= _c(x, 2))] + [
+  conds = [(_c(x, 0) <= x) & (x <= _c(x, 2))] + [
     (_c(x, 2 ** i) < x) & (x <= _c(x, 2 ** (i + 1))) for i in range(1, 6)
   ]
   return jnp.piecewise(
@@ -2897,23 +2996,27 @@ def sici_jvp(primals, tangents):
 
 
 def _expn1(x: Array, n: Array) -> Array:
-  # exponential integral En
+  # 0 < x <= 1 and 1 <= n < 5000 (power series expansion, DLMF 8.19.8)
   _c = _lax_const
   MACHEP = dtypes.finfo(x.dtype).eps
 
   zero = _c(x, 0.0)
   one = _c(x, 1.0)
-  psi = -np.euler_gamma - jnp.log(x)
-  psi = lax.fori_loop(_c(n, 1), n, lambda i, psi: psi + one / i, psi)
-  n1 = jnp.where(n == _c(n, 1), one + one, n)
+  in_domain = (x > zero) & (x <= one) & (n >= one) & (n < _c(n, 5000))
+  x_safe = jnp.where(in_domain, x, one)
+  n_safe = jnp.where(in_domain, n, one)
+  psi = -np.euler_gamma - jnp.log(x_safe)
+  psi = lax.fori_loop(_c(n, 1), n_safe, lambda i, psi: psi + one / i, psi)
+  n1 = jnp.where(n_safe == _c(n, 1), one + one, n_safe)
   init = dict(
     x=x,
-    z=-x,
+    n=n,
+    z=-x_safe,
     xk=zero,
     yk=one,
-    pk=one - n,
-    ans=jnp.where(n == _c(n, 1), zero, one / (one - n1)),
-    t=np.inf,
+    pk=one - n_safe,
+    ans=jnp.where(n_safe == _c(n, 1), zero, one / (one - n1)),
+    t=_c(x, np.inf),
   )
 
   def body(d):
@@ -2925,36 +3028,50 @@ def _expn1(x: Array, n: Array) -> Array:
     return d
 
   def cond(d):
-    return (d["x"] > _c(d["x"], 0.0)) & (d["t"] > MACHEP)
+    # jnp.piecewise evaluates every branch, so bound this one to its domain.
+    return (
+      (d["x"] > zero)
+      & (d["x"] <= one)
+      & (d["n"] >= one)
+      & (d["n"] < _c(d["n"], 5000))
+      & (d["t"] > MACHEP)
+    )
 
   d = lax.while_loop(cond, body, init)
-  t = n
-  r = n - _c(n, 1)
-  return d["z"] ** r * psi / jnp.exp(gammaln(t)) - d["ans"]
+  r = n_safe - one
+  sign = jnp.where(r % _c(r, 2) == zero, one, -one)
+  log_term = sign * jnp.exp(r * jnp.log(x_safe) - gammaln(n_safe)) * psi
+  return log_term - d["ans"]
 
 
 def _expn2(x: Array, n: Array) -> Array:
-  # x > 1.
+  # x > 1 and 1 <= n < 5000 (continued fraction, DLMF 8.19.17)
   _c = _lax_const
   BIG = _c(x, 1.44115188075855872e17)
   MACHEP = dtypes.finfo(x.dtype).eps
+  MAXLOG = _c(x, np.log(dtypes.finfo(x.dtype).max))
   zero = _c(x, 0.0)
   one = _c(x, 1.0)
+  in_domain = (x > one) & (x <= MAXLOG) & (n >= one) & (n < _c(n, 5000))
+  x_safe = jnp.where(in_domain, x, one + one)
+  n_safe = jnp.where(in_domain, n, one)
 
   init = dict(
     k=_c(n, 1),
     pkm2=one,
-    qkm2=x,
+    qkm2=x_safe,
     pkm1=one,
-    qkm1=x + n,
-    ans=one / (x + n),
+    qkm1=x_safe + n_safe,
+    ans=one / (x_safe + n_safe),
     t=_c(x, np.inf),
     r=zero,
     x=x,
+    n=n,
   )
 
   def body(d):
     x = d["x"]
+    n = d["n"]
     d["k"] += _c(d["k"], 1)
     k = d["k"]
     odd = k % _c(k, 2) == _c(k, 1)
@@ -2978,28 +3095,38 @@ def _expn2(x: Array, n: Array) -> Array:
     return d
 
   def cond(d):
-    return (d["x"] > _c(d["k"], 0)) & (d["t"] > MACHEP)
+    # jnp.piecewise evaluates every branch, so bound this one to its domain.
+    return (
+      (d["x"] > one)
+      & (d["x"] <= MAXLOG)
+      & (d["n"] >= one)
+      & (d["n"] < _c(d["n"], 5000))
+      & (d["t"] > MACHEP)
+    )
 
   d = lax.while_loop(cond, body, init)
-  return d["ans"] * jnp.exp(-x)
+  return d["ans"] * jnp.exp(-x_safe)
 
 
 def _expn3(x: Array, n: Array) -> Array:
-  # n >= 5000
+  # n >= 5000 and 0 < x <= MAXLOG
   _c = _lax_const
+  zero = _c(x, 0.0)
   one = _c(x, 1.0)
-  xk = x + n
-  yk = one / (xk * xk)
-  t = n
-  ans = yk * t * (_c(x, 6) * x * x - _c(x, 8) * t * x + t * t)
-  ans = yk * (ans + t * (t - _c(x, 2) * x))
-  ans = yk * (ans + t)
-  return (ans + one) * jnp.exp(-x) / xk
+  MAXLOG = _c(x, np.log(dtypes.finfo(x.dtype).max))
+  in_domain = (x > zero) & (x <= MAXLOG) & (n >= _c(n, 5000))
+  x_safe = jnp.where(in_domain, x, one)
+  n_safe = jnp.where(in_domain, n, _c(n, 5000))
+  xk = x_safe + n_safe
+  lam = x_safe / n_safe
+  m = (n_safe / xk) / xk
+  ans = _c(x, 6) * lam * lam - _c(x, 8) * lam + one
+  ans = m * ans + (one - _c(x, 2) * lam)
+  ans = m * ans + one
+  ans = m * ans + one
+  return ans * jnp.exp(-x_safe) / xk
 
 
-@custom_derivatives.custom_jvp
-@jnp_vectorize.vectorize
-@jit
 def expn(n: ArrayLike, x: ArrayLike) -> Array:
   r"""Generalized exponential integral function.
 
@@ -3007,10 +3134,11 @@ def expn(n: ArrayLike, x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{expn}(n, x) = E_n(x) = x^{n-1}\int_x^\infty\frac{e^{-t}}{t^n}\mathrm{d}t
+     \mathrm{expn}(n, x) = E_n(x) = \int_1^\infty\frac{e^{-xt}}{t^n}\mathrm{d}t = x^{n-1}\int_x^\infty\frac{e^{-t}}{t^n}\mathrm{d}t
 
   Args:
-    n: arraylike, real-valued
+    n: arraylike, non-negative integer-valued (floating-point inputs are
+      truncated to integers)
     x: arraylike, real-valued
 
   Returns:
@@ -3023,23 +3151,40 @@ def expn(n: ArrayLike, x: ArrayLike) -> Array:
   n, x = promote_args_inexact("expn", n, x)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     raise ValueError("expn does not support complex-valued inputs.")
+  return _expn(n, x)
+
+
+@custom_derivatives.custom_jvp
+@jnp_vectorize.vectorize
+@jit
+def _expn(n: Array, x: Array) -> Array:
   _c = _lax_const
   zero = _c(x, 0)
   one = _c(x, 1)
+  MAXLOG = _c(x, np.log(dtypes.finfo(x.dtype).max))
+  # TODO(jakevdp): mark non-integers as invalid rather than truncating
+  n = jnp.floor(n)
+  invalid = (
+    (n < _c(n, 0)) | (x < zero) | jnp.isnan(n) | jnp.isnan(x) | jnp.isinf(n)
+  )
+  valid = ~invalid
   conds = [
-    (n < _c(n, 0)) | (x < zero),
-    (x == zero) & (n < _c(n, 2)),
-    (x == zero) & (n >= _c(n, 2)),
-    (n == _c(n, 0)) & (x >= zero),
-    (n >= _c(n, 5000)),
-    (x > one),
+    invalid,
+    valid & (x == zero) & (n < _c(n, 2)),
+    valid & (x == zero) & (n >= _c(n, 2)),
+    valid & (n == _c(n, 0)) & (x > zero),
+    valid & (n > _c(n, 0)) & (x > MAXLOG),
+    valid & (n >= _c(n, 5000)) & (x > zero) & (x <= MAXLOG),
+    valid & (n > _c(n, 0)) & (n < _c(n, 5000)) & (x > one) & (x <= MAXLOG),
   ]
-  n1 = jnp.where(n == _c(n, 1), n + n, n)
+  n_minus_one = jnp.where(valid & (n >= _c(n, 2)), n - one, one)
+  x_safe = jnp.where(valid & (x > zero), x, one)
   vals = [
     np.nan,
     np.inf,
-    one / n1,  # prevent div by zero
-    jnp.exp(-x) / x,
+    one / n_minus_one,  # safe denominator for n >= 2; guarded for n < 2
+    jnp.exp(-x_safe) / x_safe,
+    zero,
     _expn3,
     _expn2,
     _expn1,
@@ -3048,13 +3193,43 @@ def expn(n: ArrayLike, x: ArrayLike) -> Array:
   return ret
 
 
-@expn.defjvp
+@_expn.defjvp
 @jit
-def expn_jvp(primals, tangents):
+def _expn_jvp(primals, tangents):
   (n, x), (_, x_dot) = primals, tangents
-  return expn(n, x), lax.mul(
-    lax.neg(x_dot), expn(lax.sub(n, _lax_const(n, 1)), x)
+  _c = _lax_const
+  zero = _c(x, 0)
+  one = _c(x, 1)
+  MAXLOG = _c(x, np.log(dtypes.finfo(x.dtype).max))
+  n_trunc = jnp.floor(n)
+  primal_out = _expn(n_trunc, x)
+  invalid = (
+    (n_trunc < _c(n_trunc, 0))
+    | (x < zero)
+    | jnp.isnan(n_trunc)
+    | jnp.isnan(x)
+    | jnp.isinf(n_trunc)
   )
+  x_safe = jnp.where((x > zero) & (x <= MAXLOG), x, one)
+  deriv_n0 = jnp.where(
+    x == zero,
+    _c(x, -np.inf),
+    jnp.where(
+      x > MAXLOG,
+      zero,
+      -(x_safe + one) * jnp.exp(-x_safe) / (x_safe * x_safe),
+    ),
+  )
+  n_prev = jnp.where(
+    n_trunc >= _c(n_trunc, 1), n_trunc - _c(n_trunc, 1), _c(n_trunc, 0)
+  )
+  deriv_n_pos = -_expn(n_prev, x)
+  deriv = jnp.where(
+    invalid,
+    _c(x, np.nan),
+    jnp.where(n_trunc == _c(n_trunc, 0), deriv_n0, deriv_n_pos),
+  )
+  return primal_out, lax.mul(x_dot, deriv)
 
 
 def exp1(x: ArrayLike) -> Array:

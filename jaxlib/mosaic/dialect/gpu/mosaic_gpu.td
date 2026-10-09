@@ -112,27 +112,6 @@ def MosaicGPU_ArriveExpectTxOp : Op<MosaicGPU_Dialect, "arrive_expect_tx", []> {
   }];
 }
 
-def MosaicGPU_WaitOp : Op<MosaicGPU_Dialect, "wait", []> {
-  let summary = "Executes a wait operation on the given barrier.";
-  let description = [{
-    All threads in the warpgroup will block, waiting on the provided barrier
-    until:
-      - all pending threads have arrived on the barrier
-      - all expected byte transfers have been completed
-      - the barrier's parity matches the provided parity
-  }];
-
-  let arguments = (ins
-    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
-    I1:$parity
-  );
-  let assemblyFormat = [{
-    `barrier` `(` $barrier `:` type($barrier) `)`
-    `parity` `(` $parity `:` type($parity) `)`
-    attr-dict
-  }];
-}
-
 def MosaicGPU_TryClusterCancelOp : Op<MosaicGPU_Dialect, "try_cluster_cancel", []> {
   let summary = "Initiates an async request to claim a new work unit from the grid.";
   let description = [{
@@ -656,7 +635,12 @@ def MosaicGPU_WGMMASupportedType : AnyTypeOf<[F16, BF16, F32],
 def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
     [SameOperandsAndResultType, Pure]> {
   let summary = "Casts a vector to a new layout.";
-  let description = [{Casts a vector value to a new strided or tiled layout.}];
+  let description = [{
+    Casts a vector value to a new strided or tiled layout.
+
+    If `strict` is true, only allows relayouts that are free at runtime and
+    forces layout equality otherwise.
+  }];
   let arguments = (ins
     AnyVectorOfAnyRank:$x,
 
@@ -664,7 +648,8 @@ def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
     AnyAttrOf<[
       MosaicGPU_WGStridedFragLayout,
       MosaicGPU_TiledLayout
-    ]>:$new_layout
+    ]>:$new_layout,
+    DefaultValuedAttr<BoolAttr, "false">:$strict
   );
 
   let results = (outs AnyVectorOfAnyRank);
@@ -949,21 +934,25 @@ def MosaicGPU_OptimizationBarrierOp : Op<MosaicGPU_Dialect, "optimization_barrie
 }
 
 def MosaicGPU_ReturnOp : Op<MosaicGPU_Dialect, "return",
-    [Pure, ReturnLike, Terminator, HasParent<"CustomPrimitiveOp">]>
+    [Pure, ReturnLike, Terminator,
+     ParentOneOf<["CustomPrimitiveOp", "RunScopedOp"]>]>
 {
-  let summary = "Terminator for the region in a `CustomPrimitiveOp`";
+  let summary = "Terminator for a `CustomPrimitiveOp` or `RunScopedOp` region.";
   let description = [{
     The `return` op is a terminator that indicates the end of execution
-    within a `CustomPrimitiveOp`'s region. It can optionally return some values,
-    which become the results of the parent `CustomPrimitiveOp`.
+    within a `CustomPrimitiveOp` or `RunScopedOp` region. It can optionally
+    return some values, which become the results of the parent op.
 
-    The declared results of the parent `CustomPrimitiveOp` must match the
-    operand types of this op.
+    The declared results of the parent op must match the operand types of this
+    op.
   }];
 
-  // The operand's type must match the parent CustomPrimitiveOp's result type.
+  // The operand's type must match the parent op's result type.
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{ attr-dict ($operands^ `:` type($operands))? }];
+  let builders = [OpBuilder<(ins), [{
+    build($_builder, $_state, ::mlir::ValueRange());
+  }]>];
   let hasVerifier = 1;
 }
 
@@ -1002,6 +991,43 @@ def MosaicGPU_WarpMapOp : Op<MosaicGPU_Dialect, "warp_map",
   let regions = (region SizedRegion<1>:$region);
 
   let hasCanonicalizer = 1;
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_OptionalAlignmentParam :
+    OptionalParameter<"::mlir::IntegerAttr", "optional byte alignment">,
+    AttrConstraint<
+        Or<[IsNullAttr.predicate, IntValidAlignment<I64Attr>.predicate]>,
+        IntValidAlignment<I64Attr>.summary> {
+  let printer = "$_printer.printAttributeWithoutType($_self);";
+}
+
+def MosaicGPU_SmemAllocAttr : MosaicGPU_Attr<"SmemAlloc", "smem_alloc"> {
+  let summary = "Attributes for a scoped SMEM allocation.";
+  let parameters = (ins MosaicGPU_OptionalAlignmentParam:$alignment);
+  let assemblyFormat = "(`<` `alignment` `=` $alignment^ `>`)?";
+}
+
+def MosaicGPU_RunScopedOp : Op<MosaicGPU_Dialect, "run_scoped",
+    [SingleBlockImplicitTerminator<"ReturnOp">]> {
+  let summary = "Evaluates a region with scoped allocations.";
+  let description = [{
+    Evaluates a single-block region where block arguments represent scoped
+    allocations whose lifetimes are confined to the region.
+
+    Each block argument must be a statically shaped memref in SMEM, with a
+    corresponding `#mosaic_gpu.smem_alloc` entry in `buffer_attrs`.
+
+    The region may capture outer values and return non-memref results via
+    `mosaic_gpu.return`.
+  }];
+
+  let arguments = (ins
+    ArrayAttr:$buffer_attrs
+  );
+  let results = (outs Variadic<AnyType>:$results);
+  let regions = (region SizedRegion<1>:$region);
+
   let hasVerifier = 1;
 }
 
@@ -1227,7 +1253,8 @@ def MosaicGPU_TcGen05CommitArriveOp : Op<MosaicGPU_Dialect, "tcgen05_commit_arri
 
   let arguments = (ins
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
-    DefaultValuedAttr<BoolAttr, "false">:$collective
+    DefaultValuedAttr<BoolAttr, "false">:$collective,
+    PtxPredicate:$predicate
   );
 }
 
@@ -1300,4 +1327,63 @@ def MosaicGPU_AssumeMultipleOp : Op<MosaicGPU_Dialect, "assume_multiple", [Pure,
   let assemblyFormat = [{$value `,` $multiple attr-dict `:` type($result)}];
 }
 
+def MosaicGPU_AllocSmemOp : Op<MosaicGPU_Dialect, "alloc_smem", []> {
+  let summary = "Allocates a statically shaped SMEM memref within an `alloca_scope`.";
+  let description = [{
+    Allocates a statically shaped SMEM memref that is valid for the duration of
+    the enclosing `alloca_scope` operation.
+
+    An optional `alignment` attribute specifies the minimum byte alignment for
+    the allocation and must be a positive power of 2.
+  }];
+
+  let arguments = (ins
+    OptionalAttr<IntValidAlignment<I64Attr>>:$alignment
+  );
+  let results = (outs AnyStaticShapeMemRef:$result);
+  let assemblyFormat = [{ prop-dict attr-dict `:` type($result) }];
+
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_AllocaScopeOp : Op<MosaicGPU_Dialect, "alloca_scope",
+    [AutomaticAllocationScope,
+     SingleBlockImplicitTerminator<"AllocaScopeReturnOp">,
+     NoRegionArguments]> {
+  let summary = "Defines a scoped allocation region.";
+  let description = [{
+    Defines a single-block allocation scope for scoped allocation operations
+    (such as `mosaic_gpu.alloc_smem`). Any scoped allocations inside this region
+    are valid only for the duration of the region and may not escape.
+
+    `alloca_scope` can capture outer values directly and optionally return
+    non-memref results via `mosaic_gpu.alloca_scope.return`.
+  }];
+
+  let results = (outs Variadic<AnyType>);
+  let regions = (region SizedRegion<1>:$region);
+
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_AllocaScopeReturnOp : Op<MosaicGPU_Dialect, "alloca_scope.return",
+    [Pure, ReturnLike, Terminator, HasParent<"AllocaScopeOp">]> {
+  let summary = "Terminator for the region in an `AllocaScopeOp`.";
+  let description = [{
+    The `alloca_scope.return` op is a terminator that indicates the end of
+    execution within an `AllocaScopeOp`'s region. It can optionally return some
+    values, which become the results of the parent `AllocaScopeOp`.
+
+    The declared results of the parent `AllocaScopeOp` must match the operand
+    types of this op.
+  }];
+
+  let arguments = (ins Variadic<AnyType>:$operands);
+  let builders = [OpBuilder<(ins), [{ /*nothing to do */ }]>];
+  let assemblyFormat = [{ attr-dict ($operands^ `:` type($operands))? }];
+
+  let hasVerifier = 1;
+}
+
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_
+

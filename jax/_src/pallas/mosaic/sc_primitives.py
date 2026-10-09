@@ -23,11 +23,13 @@ import jax
 from jax import api_util
 from jax import lax
 from jax._src import core as jax_core
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import flattree as ft
 from jax._src.api_util import check_no_transformed_refs_args
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lib import ifrt_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
@@ -36,6 +38,7 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering as tc_lowering
+from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import sc_lowering
 from jax._src.state import indexing
@@ -297,21 +300,27 @@ def _gather_lowering_rule(
 ):
   ref, transforms, indices, mask = tree.unflatten(flat_args)
   ref_aval, *_ = tree.unflatten(ctx.avals_in)
-  if ref_aval.memory_space not in (
+  tref_aval = state_types.transform_type(transforms, ref_aval)
+  assert isinstance(tref_aval, state_types.AbstractRef)
+  if tref_aval.memory_space not in (
       tpu_core.MemorySpace.VMEM,
       pallas_core.MemorySpace.DEFAULT,
   ):
     raise ValueError(
-        f"Gather only supports loading from VMEM, got {ref_aval.memory_space}"
+        f"Gather only supports loading from VMEM, got {tref_aval.memory_space}"
     )
   if transforms:
     ref_block_shape, *_ = ctx.block_shapes
     ref, _ = tc_lowering._transform_ref(
-        ref, ref_aval, ref_block_shape, transforms
+        ref,
+        ref_aval,
+        ref_block_shape,
+        transforms,
+        kernel_type=ctx.lowering_context.kernel_type,
     )
   [out_aval] = ctx.avals_out
   vec_type = ir.VectorType.get(
-      out_aval.shape, sc_lowering._dtype_to_ir_type(ref_aval.dtype)
+      out_aval.shape, sc_lowering._dtype_to_ir_type(tref_aval.dtype)
   )
   return tpu.vector_load_idx(vec_type, ref, indices, mask=mask)
 
@@ -377,15 +386,17 @@ def _scatter_lowering_rule(
 ):
   ref, transforms, indices, x, mask = jax.tree.unflatten(tree, flat_args)
   ref_aval, *_ = tree.unflatten(ctx.avals_in)
-  if isinstance(ref_aval.memory_space, pallas_core.CoreMemorySpace):
-    if not isinstance(ref_aval.memory_space.mesh, sc_core.VectorSubcoreMesh):
+  tref_aval = state_types.transform_type(transforms, ref_aval)
+  assert isinstance(tref_aval, state_types.AbstractRef)
+  if isinstance(tref_aval.memory_space, pallas_core.CoreMemorySpace):
+    if not isinstance(tref_aval.memory_space.mesh, sc_core.VectorSubcoreMesh):
       raise ValueError(
           "Scatter only supports VectorSubcoreMesh, got"
-          f" {type(ref_aval.memory_space.mesh)}"
+          f" {type(tref_aval.memory_space.mesh)}"
       )
-    memory_space = ref_aval.memory_space.memory_space
+    memory_space = tref_aval.memory_space.memory_space
   else:
-    memory_space = ref_aval.memory_space
+    memory_space = tref_aval.memory_space
   if memory_space not in (
       tpu_core.MemorySpace.VMEM,
       pallas_core.MemorySpace.DEFAULT,
@@ -396,7 +407,11 @@ def _scatter_lowering_rule(
   if transforms:
     ref_block_shape, *_ = ctx.block_shapes
     ref, _ = tc_lowering._transform_ref(
-        ref, ref_aval, ref_block_shape, transforms
+        ref,
+        ref_aval,
+        ref_block_shape,
+        transforms,
+        kernel_type=ctx.lowering_context.kernel_type,
     )
   tpu.vector_store_idx(x, ref, indices, mask=mask, add=add)
   return ()
@@ -457,48 +472,10 @@ def addupdate_scatter(
   _ = scatter_p.bind(*flat_args, tree=tree, add=True)
 
 
-bitcast_p = jax_core.Primitive("bitcast")
-
-
-@bitcast_p.def_abstract_eval
-def _bitcast_abstract_eval(x, dtype):
-  old_bitwidth = dtypes.itemsize_bits(x.dtype)
-  new_bitwidth = dtypes.itemsize_bits(dtype)
-  if old_bitwidth == new_bitwidth:
-    return jax_core.ShapedArray(x.shape, dtype)
-  if x.ndim == 0:
-    raise ValueError(
-        "Cannot bitcast a ()-shaped array to a dtype with a different bitwidth:"
-        f" {old_bitwidth=} vs {new_bitwidth=}"
-    )
-  new_last_dim, rem = divmod(x.shape[-1] * old_bitwidth, new_bitwidth)
-  if rem:
-    raise ValueError(
-        f"Cannot bitcast from {x.dtype} ({old_bitwidth} bits) to"
-        f" {dtype} ({new_bitwidth} bits), because {x.shape[-1]=} *"
-        f" {old_bitwidth} is not divisible by {new_bitwidth}"
-    )
-  return jax_core.ShapedArray((*x.shape[:-1], new_last_dim), dtype)
-
-
-@sc_lowering.register_lowering_rule(bitcast_p)
-def _bitcast_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, *, dtype):
-  del dtype  # Unused.
-  [out_aval] = ctx.avals_out
-  out_type = ctx.aval_to_ir_type(out_aval)
-  return vector.bitcast(out_type, x)
-
-
 def bitcast(x: jax.Array, dtype: jax.typing.DTypeLike) -> jax.Array:
-  """Bitcasts an array to a different dtype.
+  """Bitcasts an array to a different dtype along the minormost dimension.
 
-  Unlike ``lax.bitcast_convert_type``, this function returns an array of the
-  same rank as the input. The minormost dimension is expanded/shrunk to
-  account for the difference in the element bitwidth.
-
-  When the target dtype has a different bitwidth, the size of the minormost
-  dimension in bits (``x.shape[-1] * old_bitwidth``) must be divisible by the
-  target bitwidth.
+  Equivalent to ``pltpu.bitcast(x, dtype, dim=-1)``.
 
   Args:
     x: The array to bitcast.
@@ -507,9 +484,14 @@ def bitcast(x: jax.Array, dtype: jax.typing.DTypeLike) -> jax.Array:
   Returns:
     The bitcast array.
   """
-  if x.dtype == dtype:
-    return x
-  return bitcast_p.bind(x, dtype=jnp.dtype(dtype))
+  # TODO(b/562994815): Delete once all callers use pltpu.bitcast(dim=-1).
+  deprecations.warn(
+      "jax-pallas-sc-bitcast",
+      "plsc.bitcast is deprecated and will be removed in a future release. "
+      "Use pltpu.bitcast(x, dtype, dim=-1) instead.",
+      stacklevel=2,
+  )
+  return tpu_primitives.bitcast(x, dtype, dim=-1)
 
 
 class MemoryEffect(jax_core.Effect):
@@ -614,18 +596,54 @@ def _masked_cummax_abstract_eval(x, mask):
 
 def _masked_cumop_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask,
                                 *, reduction_kind: str):
+  dtype = ctx.avals_in[0].dtype
+  is_float = jnp.issubdtype(dtype, jnp.floating)
+  is_signed_int = jnp.issubdtype(dtype, jnp.signedinteger)
+  is_unsigned_int = jnp.issubdtype(dtype, jnp.unsignedinteger)
+  if not (is_float or is_signed_int or is_unsigned_int):
+    raise NotImplementedError(f"Unsupported dtype: {dtype}")
+
+  match reduction_kind:
+    case "max":
+      tpu_reduction_kind = (
+          "maxf" if is_float else "maxsi" if is_signed_int else "maxui"
+      )
+    case "min":
+      tpu_reduction_kind = (
+          "minf" if is_float else "minsi" if is_signed_int else "minui"
+      )
+    case "sum":
+      tpu_reduction_kind = "sum"
+    case _:
+      raise ValueError(f"Unsupported reduction kind: {reduction_kind}")
+
   sign_bit_vec = None
   # tpu.scan comparisons assume unsigned int predicates, so we compare
   # with the sign bit flipped.
-  if ctx.avals_in[0].dtype == jnp.dtype(jnp.int32) and reduction_kind in ("max", "min"):
+  # TODO(tlongeri): Have Mosaic handle this.
+  if tpu_reduction_kind in ("maxsi", "minsi"):
+    if jnp.iinfo(dtype).bits != 32:
+      raise NotImplementedError(
+          "Only 32-bit signed integers are supported for signed reductions."
+      )
     i32 = ir.IntegerType.get_signless(32)
     sign_bit_vec = vector.broadcast(
         x.type, arith.constant(i32, ir.IntegerAttr.get(i32, 0x80000000)))
     x = arith.xori(x, sign_bit_vec)
+    tpu_reduction_kind = "maxui" if tpu_reduction_kind == "maxsi" else "minui"
+
+  if ifrt_version < 76:
+    # Switch to the old enum names
+    match tpu_reduction_kind:
+      case "maxf" | "maxui":
+        tpu_reduction_kind = "max"
+      case "minf" | "minui":
+        tpu_reduction_kind = "min"
+
   result = tpu.scan(
       x.type,
       x,
-      ir.Attribute.parse(f"#tpu.reduction_kind<{reduction_kind}>"),
+      ir.Attribute.parse(f"#tpu.reduction_kind<{tpu_reduction_kind}>"),
       mask=mask,
       dimension=x.type.rank - 1,  # pyrefly: ignore[unexpected-keyword]
   )
@@ -1396,3 +1414,17 @@ def fetch_and_add(
           f" indexer, but got {transforms}"
       )
   return fetch_and_add_p.bind(x_ref, value, *indices, subcore_id)
+
+
+def slice_subcore_vmem_from_shared(
+    ref: jax.Ref | state_types.TransformedRef,
+) -> state_types.TransformedRef:
+  """Slices the current vector subcore's local VMEM from a VMEM_SHARED ref."""
+  ref, transforms = state_primitives.get_ref_and_transforms(
+      ref, None, "slice_subcore_vmem_from_shared"
+  )
+  tref = state_types.TransformedRef(
+      ref, (*transforms, sc_core.SharedMemRefSliceTransform())
+  )
+  _ = tref.type  # Runs validation.
+  return tref

@@ -347,30 +347,28 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
     case PyTreeKind::kTuple: {
       if (with_keys) {
         auto size = PyTuple_GET_SIZE(x.ptr());
-        nb::object key_leaves = nb::steal(PyTuple_New(size));
+        nb::tuple_builder key_leaves(size);
         for (int i = 0; i < size; ++i) {
           nb::object key = make_nb_class<SequenceKey>(i);
           nb::object value =
               nb::borrow<nb::object>(PyTuple_GET_ITEM(x.ptr(), i));
-          PyTuple_SET_ITEM(key_leaves.ptr(), i,
-                           nb::make_tuple(key, value).release().ptr());
+          key_leaves.put(nb::make_tuple(std::move(key), std::move(value)));
         }
-        return nb::make_tuple(std::move(key_leaves), nb::none());
+        return nb::make_tuple(key_leaves.commit(), nb::none());
       }
       return nb::make_tuple(nb::borrow(x), nb::none());
     }
     case PyTreeKind::kList: {
       if (with_keys) {
         auto size = PyList_GET_SIZE(x.ptr());
-        nb::object key_leaves = nb::steal(PyTuple_New(size));
+        nb::tuple_builder key_leaves(size);
         for (int i = 0; i < size; ++i) {
           nb::object key = make_nb_class<SequenceKey>(i);
           nb::object value =
               nb::borrow<nb::object>(PyList_GET_ITEM(x.ptr(), i));
-          PyTuple_SET_ITEM(key_leaves.ptr(), i,
-                           nb::make_tuple(key, value).release().ptr());
+          key_leaves.put(nb::make_tuple(std::move(key), std::move(value)));
         }
-        return nb::make_tuple(std::move(key_leaves), nb::none());
+        return nb::make_tuple(key_leaves.commit(), nb::none());
       }
       return nb::make_tuple(nb::borrow(x), nb::none());
     }
@@ -378,18 +376,17 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
     case PyTreeKind::kFrozenDict: {
       nb::dict dict = nb::borrow<nb::dict>(x);
       std::vector<nb::object> sorted_keys = GetSortedPyDictKeys(dict.ptr());
-      nb::tuple keys = nb::steal<nb::tuple>(PyTuple_New(sorted_keys.size()));
-      nb::tuple values = nb::steal<nb::tuple>(PyTuple_New(sorted_keys.size()));
-      for (size_t i = 0; i < sorted_keys.size(); ++i) {
-        nb::object& key = sorted_keys[i];
+      nb::tuple_builder keys(sorted_keys.size());
+      nb::tuple_builder values(sorted_keys.size());
+      for (nb::object& key : sorted_keys) {
         nb::object value = nb::object(dict[key]);
         if (with_keys) {
-          value = nb::make_tuple(make_nb_class<DictKey>(key), value);
+          value = nb::make_tuple(make_nb_class<DictKey>(key), std::move(value));
         }
-        PyTuple_SET_ITEM(values.ptr(), i, value.release().ptr());
-        PyTuple_SET_ITEM(keys.ptr(), i, sorted_keys[i].release().ptr());
+        values.put(std::move(value));
+        keys.put(std::move(key));
       }
-      return nb::make_tuple(std::move(values), std::move(keys));
+      return nb::make_tuple(values.commit(), keys.commit());
     }
     case PyTreeKind::kNamedTuple: {
       nb::tuple in = nb::borrow<nb::tuple>(x);
@@ -426,23 +423,22 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
     }
     case PyTreeKind::kDataclass: {
       auto data_size = custom->data_fields.size();
-      nb::list leaves = nb::steal<nb::list>(PyList_New(data_size));
+      nb::list_builder leaves(data_size);
       for (int leaf = 0; leaf < data_size; ++leaf) {
         nb::object value = nb::getattr(x, custom->data_fields[leaf]);
         if (with_keys) {
           value = nb::make_tuple(
-              make_nb_class<GetAttrKey>(custom->data_fields[leaf]), value);
+              make_nb_class<GetAttrKey>(custom->data_fields[leaf]),
+              std::move(value));
         }
-        PyList_SET_ITEM(leaves.ptr(), leaf, value.release().ptr());
+        leaves.put(std::move(value));
       }
       auto meta_size = custom->meta_fields.size();
-      nb::object aux_data = nb::steal(PyTuple_New(meta_size));
+      nb::tuple_builder aux_data(meta_size);
       for (int meta_leaf = 0; meta_leaf < meta_size; ++meta_leaf) {
-        PyTuple_SET_ITEM(
-            aux_data.ptr(), meta_leaf,
-            nb::getattr(x, custom->meta_fields[meta_leaf]).release().ptr());
+        aux_data.put(nb::getattr(x, custom->meta_fields[meta_leaf]));
       }
-      return nb::make_tuple(std::move(leaves), std::move(aux_data));
+      return nb::make_tuple(leaves.commit(), aux_data.commit());
     }
     default:
       DCHECK(kind == PyTreeKind::kLeaf);
@@ -580,12 +576,11 @@ nanobind::tuple FlattenedIndexKey::MatchArgs(nanobind::handle unused) {
 
 /* static */ nb::object MakeKeyPathTuple(std::vector<nb::object>& keypath) {
   const std::vector<nb::object>& frozen_keypath = keypath;
-  nb::object kp_tuple = nb::steal(PyTuple_New(frozen_keypath.size()));
-  for (int i = 0; i < frozen_keypath.size(); ++i) {
-    PyTuple_SET_ITEM(kp_tuple.ptr(), i,
-                     nb::object(frozen_keypath[i]).release().ptr());
+  nb::tuple_builder kp_tuple(frozen_keypath.size());
+  for (const nb::object& key : frozen_keypath) {
+    kp_tuple.put(key);
   }
-  return kp_tuple;
+  return kp_tuple.commit();
 }
 
 template <typename T>
@@ -709,15 +704,12 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
       }
       case PyTreeKind::kDataclass: {
         auto meta_size = node.custom->meta_fields.size();
-        nb::object aux_data = nb::steal(PyTuple_New(meta_size));
+        nb::tuple_builder aux_data(meta_size);
         for (int meta_leaf = 0; meta_leaf < meta_size; ++meta_leaf) {
-          PyTuple_SET_ITEM(
-              aux_data.ptr(), meta_leaf,
-              nb::getattr(handle, node.custom->meta_fields[meta_leaf])
-                  .release()
-                  .ptr());
+          aux_data.put(
+              nb::getattr(handle, node.custom->meta_fields[meta_leaf]));
         }
-        node.node_data = std::move(aux_data);
+        node.node_data = aux_data.commit();
         auto data_size = node.custom->data_fields.size();
         node.arity = data_size;
         for (int leaf = 0; leaf < data_size; ++leaf) {
@@ -920,10 +912,11 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
 
     case PyTreeKind::kTuple:
     case PyTreeKind::kNamedTuple: {
-      nb::object tuple = nb::steal(PyTuple_New(node.arity));
+      nb::tuple_builder tuple_builder(node.arity);
       for (int i = 0; i < node.arity; ++i) {
-        PyTuple_SET_ITEM(tuple.ptr(), i, children[i].release().ptr());
+        tuple_builder.put(std::move(children[i]));
       }
+      nb::tuple tuple = tuple_builder.commit();
       if (node.kind == PyTreeKind::kNamedTuple) {
         return node.node_data(*tuple);
       } else {
@@ -932,11 +925,11 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
     }
 
     case PyTreeKind::kList: {
-      nb::object list = nb::steal(PyList_New(node.arity));
+      nb::list_builder list(node.arity);
       for (int i = 0; i < node.arity; ++i) {
-        PyList_SET_ITEM(list.ptr(), i, children[i].release().ptr());
+        list.put(std::move(children[i]));
       }
-      return list;
+      return list.commit();
     }
 
     case PyTreeKind::kDict: {
@@ -963,11 +956,11 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
 #endif
     }
     case PyTreeKind::kCustom: {
-      nb::object tuple = nb::steal(PyTuple_New(node.arity));
+      nb::tuple_builder tuple(node.arity);
       for (int i = 0; i < node.arity; ++i) {
-        PyTuple_SET_ITEM(tuple.ptr(), i, children[i].release().ptr());
+        tuple.put(std::move(children[i]));
       }
-      return node.custom->from_iterable(node.node_data, tuple);
+      return node.custom->from_iterable(node.node_data, tuple.commit());
     }
 
     case PyTreeKind::kDataclass: {
@@ -1009,7 +1002,7 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         if (leaf < 0) {
           throw std::logic_error("Leaf count mismatch.");
         }
-        PyList_SET_ITEM(leaves.ptr(), leaf, object.release().ptr());
+        PyList_SetItem(leaves.ptr(), leaf, object.release().ptr());
         --leaf;
         break;
 
@@ -1176,14 +1169,12 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
               nb::cast<std::string_view>(nb::repr(std::move(object)))));
         }
         auto meta_size = node.custom->meta_fields.size();
-        nb::object aux_data = nb::steal(PyTuple_New(meta_size));
+        nb::tuple_builder aux_data_builder(meta_size);
         for (int meta_leaf = 0; meta_leaf < meta_size; ++meta_leaf) {
-          PyTuple_SET_ITEM(
-              aux_data.ptr(), meta_leaf,
-              nb::getattr(object, node.custom->meta_fields[meta_leaf])
-                  .release()
-                  .ptr());
+          aux_data_builder.put(
+              nb::getattr(object, node.custom->meta_fields[meta_leaf]));
         }
+        nb::tuple aux_data = aux_data_builder.commit();
         if (node.node_data.not_equal(aux_data)) {
           throw std::invalid_argument(absl::StrFormat(
               "Mismatch custom dataclass node data: %s != %s; value: %s.",
@@ -1242,18 +1233,19 @@ nb::object PyTreeDef::Walk(const nb::callable& f_node, nb::handle f_leaf,
         if (agenda.size() < node.arity) {
           throw std::logic_error("Too few elements for custom type.");
         }
-        nb::object tuple = nb::steal(PyTuple_New(node.arity));
-        for (int i = node.arity - 1; i >= 0; --i) {
-          PyTuple_SET_ITEM(tuple.ptr(), i, agenda.back().release().ptr());
-          agenda.pop_back();
+        nb::tuple_builder tuple(node.arity);
+        for (auto it = agenda.end() - node.arity; it != agenda.end(); ++it) {
+          tuple.put(std::move(*it));
         }
+        agenda.resize(agenda.size() - node.arity);
         nb::object node_data = node.node_data;
         if (node.kind == PyTreeKind::kDict ||
             node.kind == PyTreeKind::kFrozenDict) {
           // Convert to a nb::list for f_node invocation.
           node_data = nb::cast(node.sorted_dict_keys);
         }
-        agenda.push_back(f_node(tuple, node_data ? node_data : nb::none()));
+        agenda.push_back(
+            f_node(tuple.commit(), node_data ? node_data : nb::none()));
       }
     }
   }

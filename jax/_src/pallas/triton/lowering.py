@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable, Hashable, Sequence
 import dataclasses
 import functools
+import inspect
 import math
 from typing import Any
 
@@ -2045,7 +2046,27 @@ def _get_lowering_rule(ctx: LoweringRuleContext, ptr, *idx, tree):
 
 
 _STR_TO_EVICTION_POLICY = {str(e): e for e in tt_dialect.EvictionPolicy}
-_STR_TO_CACHE_MODIFIER = {str(c): c for c in tt_dialect.CacheModifier}
+_STR_TO_CACHE_MODIFIER = {
+    str(c).removeprefix("."): c for c in tt_dialect.CacheModifier
+}
+
+
+def _get_cache_policy(
+    cache: tt_dialect.CacheModifier,
+    evict: tt_dialect.EvictionPolicy,
+    *,
+    context: ir.Context | None = None,
+) -> ir.Attribute | None:
+  if (
+      cache == tt_dialect.CacheModifier.NONE
+      and evict == tt_dialect.EvictionPolicy.NORMAL
+  ):
+    return None
+  cache_str = str(cache).removeprefix(".")
+  return ir.Attribute.parse(
+      f"#tt.cache_policy<cache_modifier = {cache_str}, eviction_policy = {evict}>",
+      context=context,
+  )
 
 
 def _load(
@@ -2060,7 +2081,7 @@ def _load(
   if cache_modifier is None:
     cache = tt_dialect.CacheModifier.NONE
   elif cache_modifier == ".ca" or cache_modifier == ".cg":
-    cache = _STR_TO_CACHE_MODIFIER[cache_modifier]
+    cache = _STR_TO_CACHE_MODIFIER[cache_modifier.removeprefix(".")]
   else:
     raise ValueError(f"unsupported cache modifier: {cache_modifier}")
   if eviction_policy is None:
@@ -2103,14 +2124,25 @@ def _load(
   if other is not None:
     other = _ir_cast(other, pointee_type, signed=False)
 
-  result = tt_dialect.load(
-      ptr,
-      mask=mask,
-      other=other,
-      cache=cache,
-      evict=evict,
-      is_volatile=is_volatile,
-  )
+  params = inspect.signature(tt_dialect.load).parameters
+  if "cache_policy" in params:
+    cache_policy = _get_cache_policy(cache, evict, context=ptr.context)
+    result = tt_dialect.load(
+        ptr,
+        mask=mask,
+        other=other,
+        cache_policy=cache_policy,  # pyrefly: ignore[unexpected-keyword]
+        is_volatile=is_volatile,
+    )
+  else:  # TODO(suvorovv): Remove this fallback once jax oss has been updated.
+    result = tt_dialect.load(
+        ptr,
+        mask=mask,
+        other=other,
+        cache=cache,  # pyrefly: ignore[unexpected-keyword]
+        evict=evict,  # pyrefly: ignore[unexpected-keyword]
+        is_volatile=is_volatile,
+    )
   return (
       result
       if not is_int1
@@ -2272,7 +2304,7 @@ def _store(
   if cache_modifier is None:
     cache = tt_dialect.CacheModifier.NONE
   elif cache_modifier != ".ca":
-    cache = _STR_TO_CACHE_MODIFIER[cache_modifier]
+    cache = _STR_TO_CACHE_MODIFIER[cache_modifier.removeprefix(".")]
   else:
     raise ValueError(f"unsupported cache modifier: {cache_modifier}")
   if eviction_policy is None:
@@ -2310,7 +2342,23 @@ def _store(
     )
 
   value = _ir_cast(value, pointee_type, signed=False)
-  tt_dialect.store(ptr, value, mask=mask, cache=cache, evict=evict)
+  params = inspect.signature(tt_dialect.store).parameters
+  if "cache_policy" in params:
+    cache_policy = _get_cache_policy(cache, evict, context=ptr.context)
+    tt_dialect.store(
+        ptr,
+        value,
+        mask=mask,
+        cache_policy=cache_policy,  # pyrefly: ignore[unexpected-keyword]
+    )
+  else:  # TODO(suvorovv): Remove this fallback once jax oss has been updated.
+    tt_dialect.store(
+        ptr,
+        value,
+        mask=mask,
+        cache=cache,  # pyrefly: ignore[unexpected-keyword]
+        evict=evict,  # pyrefly: ignore[unexpected-keyword]
+    )
 
 
 @register_lowering(primitives.swap_p)

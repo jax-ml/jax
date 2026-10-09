@@ -273,6 +273,23 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
       wheel_sources_map=wheel_sources_map,
   )
 
+  thunky_python_dir = jaxlib_dir / "thunky" / "python"
+  os.makedirs(thunky_python_dir)
+  copy_files(
+      dst_dir=thunky_python_dir,
+      src_files=[
+          f"{source_file_prefix}jaxlib/thunky/python/thunky.py",
+      ],
+  )
+  thunky_dialect_dir = jaxlib_dir / "thunky" / "dialect"
+  os.makedirs(thunky_dialect_dir)
+  patch_copy_mlir_import(
+      f"{source_file_prefix}jaxlib/thunky/dialect/_thunky_ops_gen.py",
+      dst_dir=thunky_dialect_dir,
+      runfiles=r,
+      wheel_sources_map=wheel_sources_map,
+  )
+
   copy_files(
       dst_dir=jaxlib_dir / "mlir",
       src_files=[
@@ -355,6 +372,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
       src_files=[
           f"{source_file_prefix}jaxlib/mlir/_mlir_libs/__init__.py",
           f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mosaic_gpu_ext.pyi",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_thunky_ext.pyi",
           f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_tpu_ext.pyi",
           f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_chlo.pyi",
           f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_jax_mlir_ext.pyi",
@@ -372,6 +390,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/_mlirDialectsSparseTensor.{pyext}",
           f"{source_file_prefix}jaxlib/_mlirSparseTensorPasses.{pyext}",
           f"{source_file_prefix}jaxlib/_mosaic_gpu_ext.{pyext}",
+          f"{source_file_prefix}jaxlib/_thunky_ext.{pyext}",
           f"{source_file_prefix}jaxlib/_tpu_ext.{pyext}",
           f"{source_file_prefix}jaxlib/_sdy.{pyext}",
           f"{source_file_prefix}jaxlib/_sdyMpmd.{pyext}",

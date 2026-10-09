@@ -1380,48 +1380,65 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       lower=[False, True],
       eigvals_only=[False, True],
       batch_shapes=[((), ()), ((2,), ()), ((2, 1), (1, 3))],
+      problem_type=[1, 2, 3],
   )
   @jax.default_matmul_precision("float32")
   @jax.numpy_rank_promotion("allow")
-  def testGeneralizedEigh(self, dtype, lower, eigvals_only, batch_shapes):
+  def testGeneralizedEigh(self, dtype, lower, eigvals_only, batch_shapes,
+                          problem_type):
     rng = jtu.rand_default(self.rng())
     a = rng(batch_shapes[0] + (3, 3), dtype)
     a = (a + T(a.conj())) / 2
     b = rng(batch_shapes[1] + (3, 3), dtype)
     b = b @ T(b.conj()) + 3 * np.eye(3, dtype=dtype)
-    fun = partial(jsp.linalg.eigh, lower=lower, eigvals_only=eigvals_only)
+    if problem_type != 1:
+      # Keep products well-scaled for absolute float32 residual checks.
+      b /= np.linalg.norm(b, axis=(-2, -1), keepdims=True)
+    fun = partial(jsp.linalg.eigh, lower=lower, eigvals_only=eigvals_only,
+                  type=problem_type)
     args_maker = lambda: (a, b)
     result = fun(a, b)
     w = result if eigvals_only else result[0]
     expected = np.vectorize(
-        partial(osp.linalg.eigh, lower=lower, eigvals_only=True),
+        partial(osp.linalg.eigh, lower=lower, eigvals_only=True, type=problem_type),
         signature="(n,n),(n,n)->(n)")(a, b)
     self.assertAllClose(w, expected, atol=1e-5, rtol=1e-5)
     self._CompileAndCheck(fun, args_maker, atol=1e-5, rtol=1e-5)
     if not eigvals_only:
       _, v = result
-      self.assertAllClose(a @ v, (b @ v) * w.astype(v.dtype)[..., None, :],
-                          atol=1e-5, rtol=1e-5)
+      if problem_type == 1:
+        lhs, rhs = a @ v, b @ v
+      else:
+        lhs, rhs = (a @ b @ v if problem_type == 2 else b @ a @ v), v
+      residual_tol = 2e-5 if jtu.test_device_matches(["tpu"]) else 1e-5
+      self.assertAllClose(lhs, rhs * w.astype(v.dtype)[..., None, :],
+                          atol=residual_tol, rtol=residual_tol)
       expected_identity = np.broadcast_to(np.eye(3, dtype=dtype), v.shape)
-      self.assertAllClose(T(v.conj()) @ b @ v, expected_identity,
+      bv = b @ v if problem_type != 3 else jnp.linalg.solve(b, v)
+      self.assertAllClose(T(v.conj()) @ bv, expected_identity,
                           atol=1e-5, rtol=1e-5)
 
-  @jtu.sample_product(dtype=float_types + complex_types, lower=[False, True])
-  def testGeneralizedEighSymmetrizesInputs(self, dtype, lower):
+  @jtu.sample_product(dtype=float_types + complex_types, lower=[False, True],
+                      problem_type=[1, 2, 3])
+  def testGeneralizedEighSymmetrizesInputs(self, dtype, lower, problem_type):
     rng = jtu.rand_default(self.rng())
     a = rng((3, 3), dtype)
     b = rng((3, 3), dtype)
     b = b @ T(b.conj()) + 3 * np.eye(3, dtype=dtype)
     perturbation = rng((3, 3), dtype)
     b += perturbation - T(perturbation.conj())
+    if problem_type != 1:
+      b /= np.linalg.norm(b)
     expected = osp.linalg.eigh((a + T(a.conj())) / 2,
-                              (b + T(b.conj())) / 2, eigvals_only=True)
-    w, _ = jsp.linalg.eigh(a, b, lower=lower)
+                              (b + T(b.conj())) / 2, eigvals_only=True,
+                              type=problem_type)
+    w, _ = jsp.linalg.eigh(a, b, lower=lower, type=problem_type)
     self.assertAllClose(w, expected, atol=1e-5, rtol=1e-5)
 
-  @jtu.sample_product(dtype=float_types + complex_types, lower=[False, True])
+  @jtu.sample_product(dtype=float_types + complex_types, lower=[False, True],
+                      problem_type=[1, 2, 3])
   @jax.default_matmul_precision("float32")
-  def testGeneralizedEighGrad(self, dtype, lower):
+  def testGeneralizedEighGrad(self, dtype, lower, problem_type):
     rng = jtu.rand_default(self.rng())
     a, b = rng((3, 3), dtype), rng((3, 3), dtype)
     a = (a + T(a.conj())) / 2
@@ -1429,22 +1446,42 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     def fun(a, b, eigvals_only):
       if eigvals_only:
-        return jsp.linalg.eigh(a, b, lower=lower, eigvals_only=True)
-      _, v = jsp.linalg.eigh(a, b, lower=lower)
+        return jsp.linalg.eigh(a, b, lower=lower, eigvals_only=True,
+                               type=problem_type)
+      _, v = jsp.linalg.eigh(a, b, lower=lower, type=problem_type)
       weights = jnp.array([1, 2, 3], dtype=dtype)
       return (v * weights[None, :]) @ jnp.conj(v.T)
 
+    # Avoid finite-difference cancellation for float32 matrix products.
+    eps = 1.0 / 128 if dtype in (np.float32, np.complex64) else 1.0 / 512
     jtu.check_grads(partial(fun, eigvals_only=True), (a, b), order=2,
-                    atol=2e-2, rtol=2e-2)
+                    atol=2e-2, rtol=2e-2, eps=eps)
     jtu.check_grads(partial(fun, eigvals_only=False), (a, b), order=1,
-                    atol=2e-2, rtol=2e-2)
+                    atol=2e-2, rtol=2e-2, eps=eps)
 
+  @parameterized.parameters(1, 2, 3)
   @jax.numpy_rank_promotion("allow")
-  def testGeneralizedEighVmap(self):
+  def testGeneralizedEighVmap(self, problem_type):
     a = jnp.array([[[2., 1.], [1., 3.]], [[4., 1.], [1., 2.]]])
     b = jnp.array([[2., 0.], [0., 1.]])
-    self.assertAllClose(jit(vmap(jsp.linalg.eigh, in_axes=(0, None)))(a, b),
-                        jsp.linalg.eigh(a, b))
+    fun = partial(jsp.linalg.eigh, type=problem_type)
+    self.assertAllClose(jit(vmap(fun, in_axes=(0, None)))(a, b), fun(a, b))
+
+  @parameterized.parameters(0, 4, -1)
+  def testGeneralizedEighInvalidType(self, problem_type):
+    with self.assertRaisesRegex(ValueError, "type must be 1, 2, or 3"):
+      jsp.linalg.eigh(np.eye(2), np.eye(2), type=problem_type)
+
+  @parameterized.product(problem_type=[1, 2, 3], eigvals_only=[False, True])
+  def testGeneralizedEighNonPositiveDefiniteB(self, problem_type, eigvals_only):
+    result = jsp.linalg.eigh(jnp.eye(2), jnp.diag(jnp.array([1., -1.])),
+                             type=problem_type, eigvals_only=eigvals_only)
+    if eigvals_only:
+      self.assertTrue(np.isnan(result).all())
+    else:
+      w, v = result
+      self.assertTrue(np.isnan(w).all())
+      self.assertTrue(np.isnan(v).all())
 
   @parameterized.parameters(((2, 3), (3, 3)), ((3, 3), (2, 2)), ((3, 3), (3,)))
   def testGeneralizedEighInvalidShape(self, a_shape, b_shape):
@@ -2743,6 +2780,10 @@ class LaxLinalgTest(jtu.JaxTestCase):
     if jtu.is_device_rocm() and not perturb_singular:
       self.skipTest(
           "Skipped on ROCm: hipsparseSgtsv2 numerical error on pivoting path.")
+    # OneAPI's non-perturbed path uses the non-pivoting Thomas decomposition.
+    if jtu.test_device_matches(["oneapi"]) and not perturb_singular:
+      self.skipTest(
+          "OneAPI non-perturbed path uses the non-pivoting fallback solver.")
     dl = np.array([0.0, 2.0, -2.0, 3.0], dtype=np.float32)
     d = np.array([1.0, 4.0, 1.0, -1.0], dtype=np.float32)
     du = np.array([2.0, -1.0, 1.0, 0.0], dtype=np.float32)
@@ -2756,6 +2797,10 @@ class LaxLinalgTest(jtu.JaxTestCase):
   def test_tridiagonal_solve_requiring_pivoting_last_rows(self, perturb_singular):
     if not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("Pivoting not supported in fallback tridiagonal solve")
+
+    if jtu.test_device_matches(["oneapi"]) and not perturb_singular:
+      self.skipTest(
+          "OneAPI non-perturbed path uses the non-pivoting fallback solver.")
 
     dl = np.array([0.0, 1.0, -6.0, 1.0], dtype=np.float32)
     d = np.array([1.0, -1.0, 2.0, 1.0], dtype=np.float32)
@@ -3010,6 +3055,15 @@ class LaxLinalgTest(jtu.JaxTestCase):
   def testInvpascalInvalidKind(self):
     with self.assertRaisesRegex(ValueError, "Expected kind to be one of"):
       jsp.linalg.invpascal(3, kind='bad')
+
+  @jtu.sample_product(
+    func=[lax.linalg.cholesky, lax.linalg.eigh]
+  )
+  def test_non_square_error(self, func):
+    # Regression test for https://github.com/jax-ml/jax/issues/41204
+    x = jnp.zeros((1, 4))
+    with self.assertRaisesRegex(ValueError, f"The input to linalg.{func.__name__} must have shape"):
+      _ = func(x)
 
 
 if __name__ == "__main__":

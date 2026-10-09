@@ -206,6 +206,16 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(f)(2.)
     self.assertSetEqual(jaxpr.effects, {remat_effect})
 
+  def test_remat_with_no_used_inputs_or_outputs_keeps_effects(self):
+    remat_effect = RematEffect()
+    def f():
+      jax.checkpoint(lambda: effect_p.bind(effect=remat_effect))()
+    for remat3 in [False, True]:
+      with self.subTest(remat3=remat3), config.remat3(remat3):
+        jaxpr = jax.make_jaxpr(f)()
+        dced, _ = pe.dce_jaxpr(jaxpr, [])
+        self.assertLen(dced.eqns, 1)
+
   def test_custom_jvp_primitive_inherits_effects(self):
 
     @jax.custom_jvp

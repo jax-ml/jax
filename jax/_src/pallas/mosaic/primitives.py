@@ -15,7 +15,7 @@
 """Module for Pallas:TPU-specific JAX primitives and functions."""
 from __future__ import annotations
 
-from collections.abc import Hashable, Sequence
+from collections.abc import Hashable, Mapping, Sequence
 import dataclasses
 import logging
 from typing import Any
@@ -53,7 +53,7 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 IntDeviceId = int | jax.Array
-MultiDimDeviceId = tuple[IntDeviceId, ...] | dict[str | tuple[str, ...], IntDeviceId]
+MultiDimDeviceId = tuple[IntDeviceId, ...] | Mapping[Any, IntDeviceId]
 Ref = state.AbstractRef | state.TransformedRef
 
 
@@ -66,44 +66,85 @@ def repeat(x: jax.Array, repeats: int, axis: int) -> jax.Array:
 bitcast_p = jax_core.Primitive("bitcast")
 
 
-def bitcast(x: jax.Array, ty: DTypeLike) -> jax.Array:
+def bitcast(x: jax.Array, ty: DTypeLike, dim: int = -2) -> jax.Array:
+  """Bitcasts an array to a different dtype, preserving its rank.
+
+  The size of dimension ``dim`` is scaled by the ratio of the source and target
+  bitwidths. The sizes of the other dimensions stay the same.
+
+  * When ``dim`` is the second minor dimension (the default), consecutive
+    elements along the second minor dimension are packed into (or unpacked
+    from) one element. E.g. for a 2D input and an output bitwidth of twice the
+    input bitwidth, ``output[a, b]`` is made up of ``input[2a, b]`` and
+    ``input[2a+1, b]``.
+  * When ``dim`` is the minormost dimension, the semantics match those of
+    ``numpy.ndarray.view``: consecutive elements along the minormost dimension
+    are packed into (or unpacked from) one element.
+
+  Args:
+    x: The array to bitcast.
+    ty: The target dtype.
+    dim: The dimension to scale. Must be the second minor or the minormost
+      dimension. Defaults to -2 (the second minor dimension).
+
+  Returns:
+    The bitcast array.
+  """
   ty = dtypes.check_and_canonicalize_user_dtype(ty)
-  if len(x.shape) < 2:
-    raise ValueError("Not implemented: bitcast 1D")
+  if dim == -2 and x.ndim < 2:
+    raise ValueError(
+        "Cannot bitcast a 1D array along the second minor dimension. Pass"
+        " dim=-1 to bitcast along the minormost dimension."
+    )
+  dim = util.canonicalize_axis(dim, x.ndim)
+  if dim < x.ndim - 2:
+    raise ValueError(
+        "Cannot bitcast along a dimension other than the second minor or the"
+        f" minormost one: {dim=}, {x.ndim=}"
+    )
   src_bitwidth = dtypes.itemsize_bits(x.dtype)
   dst_bitwidth = dtypes.itemsize_bits(ty)
-  if x.shape[-2] * src_bitwidth % dst_bitwidth:
+  if x.shape[dim] * src_bitwidth % dst_bitwidth:
     raise ValueError(
-        "Not implemented: the 2nd minor dim can not be perfectly packed or"
-        " unpacked"
+        f"dim {dim} of size {x.shape[dim]} cannot be perfectly packed or"
+        f" unpacked from {x.dtype} to {ty}"
     )
-  return bitcast_p.bind(x, ty=ty)
+  return bitcast_p.bind(x, ty=ty, dim=dim)
 
 
 @bitcast_p.def_abstract_eval
-def _bitcast_abstract_eval(x, *, ty):
+def _bitcast_abstract_eval(x, *, ty, dim):
   shape = list(x.shape)
   src_bitwidth = dtypes.itemsize_bits(x.dtype)
   dst_bitwidth = dtypes.itemsize_bits(ty)
-  shape[-2] = shape[-2] * src_bitwidth // dst_bitwidth
+  if shape[dim] * src_bitwidth % dst_bitwidth:
+    raise ValueError(
+        f"dim {dim} of size {shape[dim]} cannot be perfectly packed or"
+        f" unpacked from {x.dtype} to {ty}"
+    )
+  shape[dim] = shape[dim] * src_bitwidth // dst_bitwidth
   return jax_core.ShapedArray(shape, ty)
 
 
-def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
+def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty, dim):
   def _bitcast(x):
     src_bitwidth = dtypes.itemsize_bits(x.dtype)
     dst_bitwidth = dtypes.itemsize_bits(ty)
+    # With the scaled dim in the minormost position, the bitcast has the same
+    # semantics as numpy.ndarray.view.
+    x = jnp.moveaxis(x, dim, -1)
     if src_bitwidth < dst_bitwidth:
-      *leading, m, n = x.shape
+      *leading, n = x.shape
       packing = dst_bitwidth // src_bitwidth
-      x = x.reshape(*leading, m // packing, packing, n)
-      x = jnp.swapaxes(x, -1, -2)
-      return jax.lax.bitcast_convert_type(x, ty)
-    if src_bitwidth > dst_bitwidth:
+      x = x.reshape(*leading, n // packing, packing)
       y = jax.lax.bitcast_convert_type(x, ty)
-      *leading, m, n, packing = y.shape
-      return jnp.swapaxes(y, -1, -2).reshape(*leading, m * packing, n)
-    return jax.lax.bitcast_convert_type(x, ty)
+    elif src_bitwidth > dst_bitwidth:
+      y = jax.lax.bitcast_convert_type(x, ty)
+      *leading, n, packing = y.shape
+      y = y.reshape(*leading, n * packing)
+    else:
+      y = jax.lax.bitcast_convert_type(x, ty)
+    return jnp.moveaxis(y, -1, dim)
 
   return mlir.lower_fun(_bitcast, multiple_results=False)(ctx, x)
 
@@ -111,8 +152,13 @@ def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
 mlir.register_lowering(bitcast_p, _bitcast_lowering_rule)
 
 
-def _bitcast_batch_rule(batched_args, batch_axes, *, ty):
-  return bitcast(*batched_args, ty=ty), batch_axes[0]
+def _bitcast_batch_rule(batched_args, batch_axes, *, ty, dim):
+  [x], [bdim] = batched_args, batch_axes
+  if bdim > dim:
+    x = jnp.moveaxis(x, bdim, 0)
+    bdim = 0
+  return bitcast(x, ty=ty, dim=dim + 1), bdim
+
 
 batching.primitive_batchers[bitcast_p] = _bitcast_batch_rule
 
@@ -210,6 +256,7 @@ class AsyncCopyDescriptor:
   ):
     if device_id is None:
       device_id = self.device_id
+    device_id = primitives.canonicalize_device_id(device_id)
     if swap_src_and_dst:
       return _dma_flatten(
           self.dst_ref, self.src_ref, self.src_sem, self.dst_sem, device_id
@@ -294,6 +341,16 @@ def _dma_tree_leaves(tree):
   return ft.flatten(tree).vals
 
 
+def _get_ref_effects(
+    ref_aval, effect_cls: type[state.RefEffect], offset: int
+) -> set[jax_core.Effect]:
+  return {
+      effect_cls(offset + i)
+      for i, leaf in enumerate(_dma_tree_leaves(ref_aval))
+      if isinstance(leaf, state.AbstractRef)
+  }
+
+
 def _get_dma_effects(
     src_ref_aval,
     dst_ref_aval,
@@ -313,17 +370,14 @@ def _get_dma_effects(
   # `wait_send`. `wait_send` swaps the src and dst args when binding dma_wait_p.
   # Consider handling this in a cleaner way.
   if src_dst_swapped:
-    src_ref_effect = state.WriteEffect(0)
-    dst_ref_effect = state.ReadEffect(n_src_transforms)
+    src_effect_cls, dst_effect_cls = state.WriteEffect, state.ReadEffect
   else:
-    src_ref_effect = state.ReadEffect(0)
-    dst_ref_effect = state.WriteEffect(n_src_transforms)
-  effs: set[jax_core.Effect] = {
-      src_ref_effect,
-      dst_ref_effect,
-  }
+    src_effect_cls, dst_effect_cls = state.ReadEffect, state.WriteEffect
+  effs: set[jax_core.Effect] = _get_ref_effects(
+      src_ref_aval, src_effect_cls, 0
+  ) | _get_ref_effects(dst_ref_aval, dst_effect_cls, n_src_transforms)
   if dst_sem_aval is not None:
-    effs.add(state.WriteEffect(dst_sem_index))
+    effs |= _get_ref_effects(dst_sem_aval, state.WriteEffect, dst_sem_index)
   # A wait never touches the semaphore in the `src_sem` slot. For `wait_read`
   # the args are pre-swapped, so the semaphore being awaited already sits in
   # the `dst_sem` slot and `src_sem` holds the untouched `dst_sem`; for
@@ -331,7 +385,7 @@ def _get_dma_effects(
   # matching `wait_read` drains.
   if not is_wait and src_sem_aval is not None:
     src_sem_index = n_src_transforms + n_dst_transforms + n_dst_sem_transforms
-    effs.add(state.WriteEffect(src_sem_index))
+    effs |= _get_ref_effects(src_sem_aval, state.WriteEffect, src_sem_index)
   if device_id_aval is not None:
     if device_id_type is primitives.DeviceIdType.MESH and isinstance(
         device_id_aval, dict
@@ -1680,10 +1734,7 @@ def annotate(
     if not isinstance(jax_core.typeof(ref), state.AbstractRef):
       raise TypeError(f"ref must be a reference, got {ref}")
     ref = state_types.TransformedRef(ref, transforms=())
-  underlying_aval = ref.ref.aval
-  assert isinstance(underlying_aval, state.AbstractRef)
-  memory_space = underlying_aval.memory_space
-  if isinstance(memory_space, pl_core.CoreMemorySpace):
+  if isinstance(memory_space := ref.memory_space, pl_core.CoreMemorySpace):
     memory_space = memory_space.memory_space
   if assumption.no_hazard or assumption.no_hazard_no_deps:
     if memory_space != tpu_core.MemorySpace.VMEM:
@@ -1700,3 +1751,45 @@ def annotate(
   return state_types.TransformedRef(
       ref.ref, (*new_transforms, tpu_core.AccessAssumptionTransform(assumption))
   )
+
+
+has_memory_space_p = jax_core.Primitive("has_memory_space")
+
+
+def has_memory_space(
+    ref: jax.Ref | state.TransformedRef, memory_space: tpu_core.MemorySpace
+) -> jax.Array:
+  """Returns a dynamic boolean indicating whether ``ref`` is in ``memory_space``.
+
+  Unlike ``ref.memory_space``, which returns the trace-time memory space
+  annotation, this primitive emits a delayed check that is resolved against
+  the physical memory space of ``ref`` at compilation time.
+
+  Use this with :func:`jax.lax.cond` or :func:`jax.experimental.pallas.when`
+  to specialize kernel branches for :data:`jax.experimental.pallas.ANY`
+  references.
+  """
+  if isinstance(ref, state.TransformedRef):
+    if ref.multiref:
+      raise NotImplementedError(
+          "has_memory_space with multiref is not supported."
+      )
+    ref_memory_space = ref.memory_space
+  else:
+    ref_memory_space = jax.typeof(ref).memory_space
+  if ref_memory_space is not pl_core.MemorySpace.ANY:
+    raise ValueError(
+        f"Ref must have pl.ANY memory space, but got {ref_memory_space}"
+    )
+  if memory_space is pl_core.MemorySpace.ANY:
+    raise ValueError(
+        "has_memory_space(..., pl.ANY) is not supported. Please specify a"
+        " concrete memory space."
+    )
+  return has_memory_space_p.bind(_get_ref(ref), memory_space=memory_space)
+
+
+@has_memory_space_p.def_abstract_eval
+def _has_memory_space_abstract_eval(ref_aval, *, memory_space):
+  del ref_aval, memory_space
+  return jax_core.ShapedArray((), jnp.bool_)

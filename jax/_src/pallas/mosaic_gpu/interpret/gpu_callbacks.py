@@ -172,15 +172,9 @@ def _initialize_shared_memory(
   num_blocks_per_cluster_as_int = int(num_blocks_per_cluster)
   del num_gpus, num_threads_per_block, num_blocks_per_cluster
 
-  num_total_concurrent_threads = (
-      num_gpus_as_int
-      * num_threads_per_block_as_int
-      * num_blocks_per_cluster_as_int
-  )
-
   with _shared_memory_init_lock:
     if _shared_memory is None:
-      _races = GPURaceDetectionState(num_cores=num_total_concurrent_threads)
+      _races = GPURaceDetectionState(on_race=interpret_params.on_race)
       _shared_memory = memory.GPUSharedMemory(
           num_devices=num_gpus_as_int,
           num_threads_per_block=num_threads_per_block_as_int,
@@ -849,6 +843,7 @@ def _allocate_barriers(
 
     shared_memory.allocate_barrier(
         key,
+        thread,
         ref_count=ref_count_as_int,
         num_arrivals=num_arrivals_as_int,
         orders_tensor_core=orders_tensor_core_as_bool,
@@ -929,6 +924,7 @@ def _deallocate_barrier(
     barrier_allocation_key = HostAllocationKey.from_array(key)
     deallocate_fn(
         barrier_allocation_key,
+        thread,
         logging_info=memory.GPULoggingInfo(mesh_location, thread, source_info),
     )
   return token
@@ -1167,6 +1163,7 @@ def _allocate_cluster_barriers(
 
     shared_memory.allocate_cluster_barrier(
         key,
+        thread,
         axes_dims=axes_dims,
         is_axis_collective=is_axis_collective,
         ref_count=ref_count_as_int,

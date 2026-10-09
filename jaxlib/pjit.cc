@@ -901,11 +901,9 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // If there is a post-hook function, call it with the inputs and the outputs.
   std::optional<nb::object> post_hook = GetPostHook();
   if (post_hook) {
-    nb::tuple args_tuple =
-        nb::steal<nb::tuple>(PyTuple_New(num_positional_args));
+    nb::tuple_builder args_tuple(num_positional_args);
     for (size_t i = 0; i < num_positional_args; ++i) {
-      Py_INCREF(args[i]);
-      PyTuple_SET_ITEM(args_tuple.ptr(), i, args[i]);
+      args_tuple.put(nb::handle(args[i]));
     }
     nb::dict kwargs;
     if (kwnames) {
@@ -914,7 +912,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
             nb::borrow(args[num_positional_args + i]);
       }
     }
-    (*post_hook)(nb::handle(callable.ptr()), args_tuple, kwargs,
+    (*post_hook)(nb::handle(callable.ptr()), args_tuple.commit(), kwargs,
                  nb::handle(out.ptr()));
   }
 

@@ -4073,6 +4073,48 @@ class LaxTest(jtu.JaxTestCase):
     y = lax_internal.stage(x)
     self.assertTrue(dtypes.is_weakly_typed(y))
 
+  def test_polynomial_scan_no_prebroadcast(self):
+    # When lax.polynomial lowers via lax.scan (len(coeffs) > unroll),
+    # coefficients should only be broadcast to their joint coefficient shape
+    # before stacking, rather than pre-broadcast to the output shape outside the
+    # while loop.
+    def while_operand_shapes(lowered):
+      module = lowered.compiler_ir()
+      main = module.body.operations[0]
+      while_ops = [
+          op for op in main.body.blocks[0].operations
+          if op.operation.name == "stablehlo.while"
+      ]
+      self.assertLen(while_ops, 1)
+      return [tuple(v.type.shape) for v in while_ops[0].operands]
+
+    x = jnp.arange(100, dtype=jnp.float32)
+    coeffs = [1.0, 2.0, 3.0, 4.0]
+    fn_scan = jax.jit(lambda z: lax.polynomial(z, coeffs, unroll=1))
+    fn_unrolled = jax.jit(lambda z: lax.polynomial(z, coeffs, unroll=len(coeffs)))
+    self.assertAllClose(fn_scan(x), fn_unrolled(x))
+    # Operands are: stacked coeffs (4,), x (100,), loop index (), carry (100,).
+    self.assertCountEqual(
+        while_operand_shapes(fn_scan.lower(x)),
+        [(4,), (100,), (), (100,)],
+    )
+
+    # Mixed scalar and size-1 non-scalar coefficients with a (100, 5) input
+    # should stack to (4, 1, 5), not (4, 100, 5).
+    x2 = jnp.ones((100, 5), dtype=jnp.float32)
+    c_row = jnp.arange(5, dtype=jnp.float32)[None, :]
+    fn_scan2 = jax.jit(
+        lambda z, c: lax.polynomial(z, [1.0, c, 3.0, c], unroll=1)
+    )
+    fn_unrolled2 = jax.jit(
+        lambda z, c: lax.polynomial(z, [1.0, c, 3.0, c], unroll=4)
+    )
+    self.assertAllClose(fn_scan2(x2, c_row), fn_unrolled2(x2, c_row))
+    self.assertCountEqual(
+        while_operand_shapes(fn_scan2.lower(x2, c_row)),
+        [(4, 1, 5), (100, 5), (), (100, 5)],
+    )
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
@@ -4884,10 +4926,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
           regions_with_inaccuracies.remove(item)
 
     if name == 'absolute':
-      if is_cuda and dtype == np.complex128:
-        regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real')
-      else:
-        regions_with_inaccuracies.clear()
+      regions_with_inaccuracies.clear()
 
     elif name == 'sign':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4')

@@ -18,9 +18,12 @@ from absl.testing import absltest, parameterized
 import jax
 import jax.numpy as jnp
 from jax._src import config
+from jax._src import hijax
 from jax._src import test_util as jtu
+from jax._src.ad_checkpoint import saved_residuals
 from jax._src.lax import parallel
 from jax._src.compute_on import compute_on
+from jax.ad_checkpoint import checkpoint_name
 from jax.experimental.overlap import program_order
 from jax.sharding import PartitionSpec as P
 
@@ -360,8 +363,11 @@ class OverlapTest(jtu.JaxTestCase):
       y2 = jnp.cos(y1)
       return x2, y2
 
-    jaxpr = f.trace(x, y).jaxpr
-    self.assertEqual(str(jaxpr).count('optimization_barrier'), 5)
+    traced = f.trace(x, y)
+    self.assertEqual(str(traced.jaxpr).count('optimization_barrier'), 0)
+    self.assertIn('program_order', str(traced.jaxpr))
+    lo_jaxpr = traced.lojax.jaxpr
+    self.assertEqual(str(lo_jaxpr).count('optimization_barrier'), 5)
 
     f(x, y)  # doesn't crash
 
@@ -399,8 +405,10 @@ class OverlapTest(jtu.JaxTestCase):
         return y * w
       return op2(w)
 
-    jaxpr = f.trace(x, w).jaxpr
-    self.assertIn('program_order', str(jaxpr))
+    traced = f.trace(x, w)
+    self.assertIn('program_order', str(traced.jaxpr))
+    self.assertEqual(str(traced.jaxpr).count('optimization_barrier'), 0)
+    self.assertIn('program_order', str(traced.lojax.jaxpr))
     lowered_text = f.lower(x, w).as_text()
     self.assertNotIn('program_order', lowered_text)
     out = f(x, w)
@@ -464,8 +472,10 @@ class OverlapTest(jtu.JaxTestCase):
         return inner2(w)
       return op2(w)
 
-    jaxpr = f.trace(x, w).jaxpr
-    self.assertIn('program_order', str(jaxpr))
+    traced = f.trace(x, w)
+    self.assertIn('program_order', str(traced.jaxpr))
+    self.assertEqual(str(traced.jaxpr).count('optimization_barrier'), 0)
+    self.assertIn('program_order', str(traced.lojax.jaxpr))
     lowered_text = f.lower(x, w).as_text()
     self.assertNotIn('program_order', lowered_text)
 
@@ -493,8 +503,9 @@ class OverlapTest(jtu.JaxTestCase):
       z = op2(y, a, b)
       return z
 
-    jaxpr = f.trace(x, a, b).jaxpr
-    jaxpr_str = str(jaxpr)
+    traced = f.trace(x, a, b)
+    self.assertEqual(str(traced.jaxpr).count('optimization_barrier'), 0)
+    jaxpr_str = str(traced.lojax.jaxpr)
     self.assertIn('create_token', jaxpr_str)
     # sin -> op1: 1 token barrier + 0 per-input barrier = 1
     # op1 -> op2: 1 token barrier + 2 per-input barriers = 3
@@ -524,8 +535,9 @@ class OverlapTest(jtu.JaxTestCase):
       z = op2(y, a, b)
       return z
 
-    jaxpr = f.trace(x, a, b).jaxpr
-    jaxpr_str = str(jaxpr)
+    traced = f.trace(x, a, b)
+    self.assertEqual(str(traced.jaxpr).count('optimization_barrier'), 0)
+    jaxpr_str = str(traced.lojax.jaxpr)
     self.assertIn('create_token', jaxpr_str)
     # sin -> op1: 1 token barrier + 0 per-input barrier = 1
     # op1 -> op2: 1 token barrier + 2 per-input barriers = 3
@@ -550,7 +562,9 @@ class OverlapTest(jtu.JaxTestCase):
       y2 = jnp.cos(y1)
       return iota, iota2, x2, y2
 
-    jaxpr = f.trace(x, y).jaxpr
+    traced = f.trace(x, y)
+    self.assertEqual(str(traced.jaxpr).count('optimization_barrier'), 0)
+    jaxpr = traced.lojax.jaxpr
     self.assertEqual(str(jaxpr).count('optimization_barrier'), 5)
     self.assertEqual(str(jaxpr).count('create_token'), 2)
 
@@ -570,7 +584,9 @@ class OverlapTest(jtu.JaxTestCase):
       y2 = jnp.cos(y1)
       return x2, y2
 
-    jaxpr = f.trace(x, y).jaxpr
+    traced = f.trace(x, y)
+    self.assertEqual(str(traced.jaxpr).count('optimization_barrier'), 0)
+    jaxpr = traced.lojax.jaxpr
     self.assertEqual(jaxpr.eqns[0].primitive.name, 'optimization_barrier')
     self.assertEqual(jaxpr.eqns[-1].primitive.name, 'optimization_barrier')
     self.assertEqual(str(jaxpr).count('optimization_barrier'), 5)
@@ -616,13 +632,172 @@ class OverlapTest(jtu.JaxTestCase):
         return inner2(w)
       return op2(w)
 
-    jaxpr = f.trace(x, w).jaxpr
+    traced = f.trace(x, w)
+    self.assertEqual(str(traced.jaxpr).count('optimization_barrier'), 0)
+    jaxpr = traced.lojax.jaxpr
     self.assertEqual(jaxpr.eqns[0].primitive.name, 'optimization_barrier')
     self.assertEqual(jaxpr.eqns[-1].primitive.name, 'optimization_barrier')
     lowered_text = f.lower(x, w).as_text()
     self.assertNotIn('program_order', lowered_text)
 
     f(x, w)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_program_order_ad(self, mesh):
+    x = jax.device_put(jnp.arange(8.0), P('x'))
+    w = jax.device_put(jnp.arange(8.0) * 2.0, P('x'))
+
+    @program_order(enforce=True)
+    def f(x, w):
+      x1 = jnp.sin(x)
+      @program_order(enforce=False)
+      def inner(x1, w):
+        return x1 * w
+      y = inner(x1, w)
+      return jnp.cos(y)
+
+    @jax.jit
+    def grad_fn(x, w):
+      y, f_vjp = jax.vjp(f, x, w)
+      return y, f_vjp(jnp.ones_like(y))
+
+    traced = grad_fn.trace(x, w)
+    # HiJAX jaxpr has no optimization_barriers during AD
+    self.assertEqual(str(traced.jaxpr).count('optimization_barrier'), 0)
+    self.assertEqual(str(traced.jaxpr).count('program_order'), 4)
+    # LoJAX jaxpr has optimization_barriers in both primal and backward passes
+    self.assertEqual(str(traced.lojax.jaxpr).count('optimization_barrier'), 11)
+
+    y, (dx, dw) = grad_fn(x, w)
+    self.assertAllClose(y, jnp.cos(jnp.sin(x) * w))
+    expected_dx, expected_dw = jax.grad(
+        lambda x, w: jnp.cos(jnp.sin(x) * w).sum(), argnums=(0, 1))(x, w)
+    self.assertAllClose(dx, expected_dx)
+    self.assertAllClose(dw, expected_dw)
+
+  def test_program_order_opt_barrier_dce(self):
+    @jax.jit
+    @program_order(enforce=True)
+    def f(x, y):
+      a = jnp.sin(x)
+      _ = jnp.cos(x)
+      b = jnp.exp(y)
+      return a, b
+
+    traced = f.trace(jnp.arange(8.), jnp.arange(8.))
+    self.assertIn('cos', str(traced.jaxpr))
+    self.assertEqual(str(traced.jaxpr).count('optimization_barrier'), 0)
+
+    lo_jaxpr = traced.lojax.jaxpr
+    self.assertNotIn('cos', str(lo_jaxpr))
+    self.assertEqual([e.primitive.name for e in lo_jaxpr.eqns],
+                     ['sin', 'optimization_barrier', 'exp'])
+    self.assertLen(lo_jaxpr.eqns[1].invars, 2)
+    self.assertEqual(lo_jaxpr.eqns[1].invars[0], lo_jaxpr.eqns[0].outvars[0])
+    self.assertEqual(lo_jaxpr.eqns[1].outvars[1], lo_jaxpr.eqns[2].invars[0])
+
+  def test_program_order_unused_output_dce(self):
+    @program_order(enforce=True)
+    def f(x, y):
+      a = jnp.sin(x)
+      c = jnp.cos(x)
+      b = jnp.exp(y)
+      return a, c, b
+
+    @jax.jit
+    def g(x, y):
+      a, _, b = f(x, y)  # `c` is returned by `f`, but unused in `g`
+      return a, b
+
+    traced = g.trace(jnp.arange(8.), jnp.arange(8.))
+    self.assertIn('cos', str(traced.jaxpr))
+    self.assertEqual(str(traced.jaxpr).count('optimization_barrier'), 0)
+
+    lo_jaxpr = traced.lojax.jaxpr
+    self.assertNotIn('cos', str(lo_jaxpr))
+    self.assertEqual([e.primitive.name for e in lo_jaxpr.eqns],
+                     ['sin', 'optimization_barrier', 'exp'])
+    self.assertLen(lo_jaxpr.eqns[1].invars, 2)
+    self.assertEqual(lo_jaxpr.eqns[1].invars[0], lo_jaxpr.eqns[0].outvars[0])
+    self.assertEqual(lo_jaxpr.eqns[1].outvars[1], lo_jaxpr.eqns[2].invars[0])
+
+  def test_program_order_hiprim(self):
+    class SinCos(hijax.HiPrim):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return jnp.cos(jnp.sin(x))
+
+    @jax.jit
+    @program_order(enforce=True)
+    def f(x, y):
+      a = SinCos(jax.typeof(x))(x)
+      b = jnp.exp(y)
+      return a, b
+
+    x = jnp.arange(8.)
+    y = jnp.arange(8.)
+    traced = f.trace(x, y)
+    self.assertEqual(str(traced.jaxpr).count('optimization_barrier'), 0)
+
+    lo_jaxpr = traced.lojax.jaxpr
+    self.assertEqual([e.primitive.name for e in lo_jaxpr.eqns],
+                     ['sin', 'cos', 'optimization_barrier', 'exp'])
+
+    out_a, out_b = f(x, y)
+    self.assertAllClose(out_a, jnp.cos(jnp.sin(x)))
+    self.assertAllClose(out_b, jnp.exp(y))
+
+  def test_program_order_grad_enforce_false_in_true(self):
+    @program_order(enforce=True)
+    def f(x):
+      @program_order(enforce=False)
+      def blk(x):
+        return jnp.sin(x)
+      return blk(x) * 2.
+
+    x = jnp.arange(8.)
+    g = jax.jit(jax.grad(lambda x: f(x).sum()))
+    traced = g.trace(x)
+    self.assertIn('sin', str(traced.jaxpr))
+    self.assertEqual(str(traced.jaxpr).count('optimization_barrier'), 0)
+    self.assertNotIn('sin', str(traced.lojax.jaxpr))
+    self.assertEqual(str(traced.lojax.jaxpr).count('optimization_barrier'), 2)
+
+    out = g(x)
+    self.assertAllClose(out, jnp.cos(x) * 2.)
+
+  def test_program_order_dce_preserves_subfunction_deduplication(self):
+    @program_order(enforce=True)
+    def hi_step(x):
+      return jnp.sin(x) + jnp.cos(x)
+
+    @jax.jit
+    def prefill_layer(x):
+      r = jnp.remainder(jnp.arange(x.shape[0], dtype=jnp.int32), 2)
+      return hi_step(x) + r.astype(x.dtype)
+
+    @jax.jit
+    def make_fn(x, tokens):
+      x = prefill_layer(x)
+      r1 = jnp.remainder(jnp.ones((4,), dtype=jnp.int32), 2)
+      rolled = jnp.roll(tokens, r1[0])
+      return x.sum() + rolled.sum().astype(x.dtype)
+
+    mlir_text = make_fn.lower(
+        jnp.ones((8,), dtype=jnp.float32),
+        jnp.arange(16, dtype=jnp.int32),
+    ).as_text()
+    where_funcs = [
+        line.strip()
+        for line in mlir_text.splitlines()
+        if 'func.func private @_where' in line
+    ]
+    self.assertLen(where_funcs, 1)
 
   @jtu.run_on_devices('gpu', 'tpu')
   @jtu.with_explicit_mesh((8,), ('x',))
@@ -687,8 +862,10 @@ class OverlapTest(jtu.JaxTestCase):
   @jtu.run_on_devices('gpu', 'tpu')
   @jtu.with_explicit_mesh((8,), ('i',))
   def test_async_psum_scatter_opt_barrier(self, mesh):
-    if jtu.device_under_test() == 'tpu' and not jtu.is_device_tpu_at_least(6):
-      self.skipTest('Requires TPU >= 6')
+    if jtu.device_under_test() == 'tpu' and not jtu.is_device_tpu_at_least(7):
+      self.skipTest('Requires TPU >= 7')
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Requires libtpu >= 0.0.50')
 
     @jax.jit
     @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
@@ -720,6 +897,8 @@ class OverlapTest(jtu.JaxTestCase):
   def test_async_all_to_all_opt_barrier(self, mesh):
     if jtu.device_under_test() == 'tpu' and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Requires TPU >= 5')
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Requires libtpu >= 0.0.50')
 
     @jax.jit
     @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
@@ -785,6 +964,136 @@ class OverlapTest(jtu.JaxTestCase):
     y_async, a_ = ppermute_async_barrier(x, a)
     self.assertArraysEqual(y_sync, y_async)
     self.assertArraysEqual(a_sync, a_)
+
+  def test_program_order_grad_exclude_argnames(self):
+    @program_order(enforce=True)
+    def f(x, w):
+      @program_order(enforce=False)
+      def op1(x):
+        return jnp.sin(x)
+      y = op1(x)
+
+      @program_order(enforce=False, exclude_argnames='w')
+      def op2(w):
+        return y * w
+      return op2(w).sum()
+
+    x = jnp.arange(8.0)
+    w = jnp.arange(8.0) * 2.0
+    dx, dw = jax.jit(jax.grad(f, argnums=(0, 1)))(x, w)
+    self.assertAllClose(dx, jnp.cos(x) * w)
+    self.assertAllClose(dw, jnp.sin(x))
+
+    dx2, dw2 = jax.jit(
+        program_order(enforce=True)(jax.grad(f, argnums=(0, 1)))
+    )(x, w)
+    self.assertAllClose(dx2, jnp.cos(x) * w)
+    self.assertAllClose(dw2, jnp.sin(x))
+
+    dx3, dw3 = jax.jit(jax.grad(jax.remat(f), argnums=(0, 1)))(x, w)
+    self.assertAllClose(dx3, jnp.cos(x) * w)
+    self.assertAllClose(dw3, jnp.sin(x))
+
+    y, dy = jax.jit(lambda x, w: jax.jvp(f, (x, w), (x, w)))(x, w)
+    self.assertAllClose(y, (jnp.sin(x) * w).sum())
+    self.assertAllClose(dy, (jnp.cos(x) * x * w + jnp.sin(x) * w).sum())
+
+    # Also test DCE when an excluded or non-excluded argument is unused.
+    @jax.jit
+    @program_order(enforce=True)
+    def f_dce(x, w, unused):
+      @program_order(enforce=False, exclude_argnames='w')
+      def op(x, w, unused):
+        return x * w
+      return op(x, w, unused)
+
+    self.assertAllClose(f_dce(x, w, x), x * w)
+
+  def test_remat_no_extra_residuals(self):
+    # `b` only feeds a linear op, so the backward pass doesn't need it. When
+    # program_order inserted its barriers at trace time, recomputing `a` in the
+    # backward pass pulled in a barrier that also took `b`, so `b` was saved.
+    def f(x):
+      b = checkpoint_name(jnp.cos(x), 'b')
+      a = checkpoint_name(jnp.sin(x), 'a')
+      return a + b + jnp.sin(a)
+
+    policy = jax.checkpoint_policies.save_only_these_names('a', 'b')
+    x = jnp.arange(3.)
+    expected = saved_residuals(jax.remat(f, policy=policy), x)
+    actual = saved_residuals(
+        jax.remat(program_order(enforce=True)(f), policy=policy), x)
+    self.assertLen(actual, len(expected))
+
+  @parameterized.named_parameters(
+      ('program_order', program_order(enforce=True), program_order(enforce=False)),
+      ('no_program_order', lambda f: f, lambda f: f),
+  )
+  def test_remat_nested_no_extra_residuals(self, po, po_f):
+    # The overlap pattern: block 1 computes an activation h and prefetches the
+    # next weights p; block 2 uses h nonlinearly and p only linearly.
+    @po
+    def f(x, w, wn):
+      @po_f
+      def blk1():
+        p = checkpoint_name(jnp.cos(wn), 'b')
+        h = checkpoint_name(jnp.sin(x * w), 'a')
+        return h, p
+      h, p = blk1()
+      @po_f
+      def blk2():
+        return jnp.sin(h) + 2. * p
+      return blk2()
+
+    policy = jax.checkpoint_policies.save_only_these_names('a', 'b')
+    args = jnp.arange(3.), jnp.arange(3.) + 1., jnp.arange(3.) + 2.
+    res = saved_residuals(jax.remat(f, policy=policy), *args)
+    self.assertLen(res, 4)  # x, w, wn, and 'a' (not 'b')
+
+  def test_vjp_no_extra_residuals_zero_tangent(self):
+    # z is only used through a comparison, so its tangent isn't needed. When
+    # program_order inserted its barriers at trace time, z's tangent was tied
+    # to x's by a barrier, so cos(x) was saved to compute it.
+    def f(x):
+      z = jnp.sin(x)
+      a = 2. * x
+      return a * (a > z).astype(a.dtype)
+
+    # Count array residuals only: without program_order a scalar literal is
+    # also saved.
+    num_array_residuals = lambda f, x: sum(
+        1 for aval, _ in saved_residuals(f, x) if aval.shape)
+    x = jnp.arange(3.)
+    self.assertEqual(num_array_residuals(f, x), 1)  # the mask
+    self.assertEqual(num_array_residuals(program_order(enforce=True)(f), x), 1)
+
+  def test_vjp_no_extra_residuals_multiple_outputs(self):
+    # Before a jit equation, all of the previous equation's outputs used to go
+    # through one barrier, tying z's (unneeded) tangent to y's.
+    @jax.jit
+    def g(x):
+      return 2. * x, jnp.sin(x)
+
+    @jax.jit
+    def h(y):
+      return 3. * y
+
+    def f(x):
+      y, z = g(x)
+      return h(y) + jnp.floor(z)
+
+    x = jnp.arange(3.)
+    self.assertEmpty(saved_residuals(f, x))
+    self.assertEmpty(saved_residuals(program_order(enforce=True)(f), x))
+
+  def test_enforce_kwargs(self):
+    @jax.jit
+    def f(x, y):
+      return program_order(enforce=True)(
+          lambda x, *, y: jnp.sin(x) * y)(x, y=y)
+
+    x = jnp.arange(3.)
+    self.assertAllClose(f(x, x), jnp.sin(x) * x)
 
 
 class AsyncCollectivesTest(jtu.JaxTestCase):
@@ -1009,154 +1318,6 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
     for op in ['collective-permute-start(', 'collective-permute-done(']:
       if op in hlo_sync:
         self.assertIn(op, hlo_async)
-
-
-# class ControlDepsTest(jtu.JaxTestCase):
-
-#   def create_explicit_mesh(self, axes, names):
-#     axis_types = (jax.sharding.AxisType.Explicit,) * len(axes)
-#     return jtu.create_mesh(axes, names, iota_order=False, axis_types=axis_types)
-
-#   @jtu.run_on_devices("tpu", "cpu")
-#   def test_math(self):
-#     @jax.jit
-#     def f_math(x, y, z):
-#       a = jnp.sin(x @ x)
-#       b = jnp.cos(y @ y)
-#       c = jnp.exp(z @ z)
-#       schedule([c, b, a])
-#       return a + b + c
-
-#     x = jnp.ones((67, 67))
-#     hlo = f_math.lower(x, x, x).as_text(dialect="hlo")
-#     self.assertIn('custom_call_target="control_dep"', hlo)
-#     f_math(x, x, x)  # doesn't crash
-
-#   @jtu.run_on_devices("tpu", "cpu")
-#   def test_fsdp(self):
-#     k = 4
-#     n = jax.device_count()
-#     with jax.set_mesh(self.create_explicit_mesh((n,), ("i",))):
-#       @jax.jit
-#       @jax.shard_map(out_specs=(jax.P("i")), check_vma=False)
-#       def f_fsdp(x, ws):
-#         starts = []
-#         dones = []
-#         maths = []
-
-#         # This is a simple version of FSDP where x is like a set of activations
-#         # and ws is a list of weights, one per layer. We repeatedly all-gather
-#         # the weights for a layer and multiply with x.
-#         for w_shard in ws:
-#           fut = parallel.all_gather_start(w_shard, "i", tiled=True)
-#           w = fut.done()
-#           x = x @ w
-
-#           # Note that we pipe out the intermediate values.
-#           starts.append(fut)
-#           dones.append(w)
-#           maths.append(x)
-
-#         # Here we schedule the code to run in a smart FSDP order where the all
-#         # gather for the next layer is overlapped with the math for the current
-#         # layer.
-#         deps = []
-#         for i in range(k + 1):
-#           if i == 0:
-#             deps.append(starts[0])
-#             deps.append(dones[0])
-#           elif i < k:
-#             deps.append(starts[i])
-#             deps.append(maths[i - 1])
-#             deps.append(dones[i])
-#           else:
-#             deps.append(maths[i - 1])
-#         schedule(deps)
-
-#         return x
-
-#       N = 128 * n
-#       x = jnp.ones((n * N, N), out_sharding=jax.P("i", None))
-#       ws = [jnp.ones((N, N), out_sharding=jax.P("i", None)) for _ in range(k)]
-#       hlo = jax.jit(f_fsdp).lower(x, ws).as_text(dialect="hlo")
-#       self.assertIn('custom_call_target="control_dep"', hlo)
-#       f_fsdp(x, ws)  # doesn't crash
-
-#   @jtu.run_on_devices("tpu", "cpu")
-#   def test_scan_fsdp(self):
-#     k = 4
-#     n = jax.device_count()
-#     with jax.set_mesh(self.create_explicit_mesh((n,), ("i",))):
-#       # This test shows FSDP with scan.
-#       @jax.jit
-#       @jax.shard_map(out_specs=(jax.P("i")), check_vma=False)
-#       def f_scan_fsdp(x, ws):
-#         # Prologue.
-#         w_0 = jax.lax.all_gather(ws[0], "i", tiled=True)
-
-#         # Scan.
-#         def f(carry, w_shard):
-#           w, x = carry
-#           fut = parallel.all_gather_start(w_shard, "i", tiled=True)
-#           x = x @ w
-#           w_next = fut.done()
-#           schedule([fut, x, w_next])
-#           return (w_next, x), None
-#         (w, x), _ = jax.lax.scan(f, (w_0, x), ws[1:])
-
-#         # Epilogue.
-#         x = x @ w
-#         return x
-
-#       N = 128 * n
-#       x = jnp.ones((n * N, N), out_sharding=jax.P("i", None))
-#       ws = jnp.ones((k, N, N), out_sharding=jax.P(None, "i", None))
-#       hlo = jax.jit(f_scan_fsdp).lower(x, ws).as_text(dialect="hlo")
-#       self.assertIn('custom_call_target="control_dep"', hlo)
-#       f_scan_fsdp(x, ws)  # doesn't crash
-
-#   @jtu.run_on_devices("tpu", "cpu")
-#   def test_pipeline(self):
-#     if jtu.device_under_test() == "tpu" and not jtu.is_device_tpu_at_least(7):
-#       self.skipTest("Needs TPU >= 7")
-#     k = 4
-#     n = jax.device_count()
-#     with jax.set_mesh(self.create_explicit_mesh((n,), ("i",))):
-
-#       @jax.jit
-#       @jax.shard_map(out_specs=(jax.P("i")), check_vma=False)
-#       def f_pipeline(xs, ws):
-#         starts = []
-#         dones = []
-#         maths = []
-
-#         # This shows a form of pipelining across microbatches. xs and ws are the
-#         # same size. We need to run xs[i] @ ws[i] for every i.
-#         for x, w_shard in zip(xs, ws):
-#           f = parallel.all_gather_start(w_shard, "i", tiled=True)
-#           w = f.done()
-#           y = x @ w
-
-#           starts.append(f)
-#           dones.append(w)
-#           maths.append(y)
-
-#         # We schedule things to run all the starts, then done and math in the
-#         # right order.
-#         schedule(starts)
-#         schedule([starts[-1], dones[0]])
-#         schedule(maths)
-#         for i in range(k - 1):
-#           control_dep(maths[i], dones[i + 1])
-
-#         return reduce(lambda x, y: x + y, maths)
-
-#       N = 128 * n
-#       x = [jnp.ones((N, N), out_sharding=jax.P(None, None)) for _ in range(k)]
-#       ws = [jnp.ones((N, N), out_sharding=jax.P("i", None)) for _ in range(k)]
-#       hlo = jax.jit(f_pipeline).lower(x, ws).as_text(dialect="hlo")
-#       self.assertIn('custom_call_target="control_dep"', hlo)
-#       f_pipeline(x, ws)  # doesn't crash
 
 
 if __name__ == '__main__':

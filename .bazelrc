@@ -428,6 +428,9 @@ common:ci_rbe_cache --remote_upload_local_results=true
 common:ci_rbe_cache --bes_instance_name="ml-oss-rbe-testing"
 common:ci_rbe_cache --remote_cache="grpcs://remotebuildexecution.googleapis.com"
 common:ci_rbe_cache --remote_instance_name=projects/ml-oss-rbe-testing/instances/default_instance
+common:ci_rbe_cache --host_platform="@ml_build_config_platform//:platform"
+common:ci_rbe_cache --extra_execution_platforms="@ml_build_config_platform//:platform"
+common:ci_rbe_cache --platforms="@ml_build_config_platform//:platform"
 
 common:use_tar_archive_files --repo_env=USE_CUDA_TAR_ARCHIVE_FILES=1
 common:use_tar_archive_files --repo_env=USE_NVSHMEM_TAR_ARCHIVE_FILES=1

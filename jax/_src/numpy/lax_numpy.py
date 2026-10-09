@@ -866,7 +866,7 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
     >>> jnp.allclose(normed_sum, 1.0)
     Array(True, dtype=bool)
   """
-  out_sharding = canonicalize_sharding(out_sharding, 'jnp.histogram')
+  sharding = canonicalize_sharding(out_sharding, 'jnp.histogram')
   if weights is None:
     a, _ = util.ensure_arraylike("histogram", a, bins)
     a, = util.promote_dtypes_inexact(a)
@@ -877,10 +877,10 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
       raise ValueError("weights should have the same shape as a.")
     a, weights = util.promote_dtypes_inexact(a, weights)
 
-  if out_sharding is not None:
+  if sharding is not None:
     return auto_axes(partial(_histogram, bins=bins, density=density),
-                     out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes
+                     out_sharding=sharding,
+                     axes=sharding.mesh.explicit_axes
                      )(a, range, weights)
   else:
     return _histogram(a, range, weights, bins, density)
@@ -1060,10 +1060,10 @@ def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
                      f"of {D} pairs or Nones; got {range=}")
 
   try:
-    bins_per_dimension = list(bins)  # pyrefly: ignore[bad-argument-type]
+    bins_per_dimension: Sequence[ArrayLike] = list(bins)  # pyrefly: ignore[bad-argument-type]
   except TypeError:
     # when bin_size is integer, the same bin is used for each dimension
-    bins_per_dimension: list[ArrayLike] = D * [bins]  # pyrefly: ignore[bad-assignment]
+    bins_per_dimension = D * [bins]  # pyrefly: ignore[bad-assignment]
   else:
     if len(bins_per_dimension) != D:
       raise ValueError("should be a bin for each dimension.")
@@ -2998,13 +2998,13 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
           "type of weights must match type of x. Got"
           f" typeof(x)={core.typeof(x).str_short(True, True)} and"
           f" typeof(weights)={core.typeof(weights).str_short(True, True)}")
-  out_sharding = canonicalize_sharding(out_sharding, 'jnp.bincount')
-  if out_sharding is not None and not is_replicated_or_unreduced(out_sharding):
+  sharding = canonicalize_sharding(out_sharding, 'jnp.bincount')
+  if sharding is not None and not is_replicated_or_unreduced(sharding):
     raise core.ShardingTypeError(
         "out_sharding passed to `jnp.bincount` can only be fully replicated"
         " or fully unreduced along all mesh axes")
   return array_creation.zeros(length, _dtype(weights)).at[clip(x, 0)].add(
-      weights, mode='drop', out_sharding=out_sharding)
+      weights, mode='drop', out_sharding=sharding)
 
 
 @overload

@@ -617,10 +617,12 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
     # This approach recovers the endpoints with float32 arithmetic,
     # but can lead to rounding errors for integer outputs.
     real_dtype = dtypes.finfo(computation_dtype).dtype
-    step = lax.iota(real_dtype, div).reshape(iota_shape) / asarray(div, real_dtype)
+    iota = lax.iota(real_dtype, div).reshape(iota_shape)
+    step = iota / asarray(div, real_dtype)
     step = step.astype(computation_dtype)
     out = (broadcast_start.reshape(bounds_shape) * (1 - step) +
-      broadcast_stop.reshape(bounds_shape) * step)
+      (broadcast_stop.reshape(bounds_shape) / asarray(div, computation_dtype)) *
+      iota.astype(computation_dtype))
 
     if endpoint:
       out = lax.concatenate([out, lax.expand_dims(broadcast_stop, (axis,))],
