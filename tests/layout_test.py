@@ -1427,6 +1427,26 @@ class LayoutInTypesTest(jtu.JaxTestCase):
         ValueError, 'is not possible without a physical copy'):
       f(arr)
 
+  @jtu.with_explicit_mesh((2,), ('data',))
+  def test_reshape_sharded_layout(self, mesh):
+    src_shape = (3, 2, 8, 16, 32)
+    dst_shape = (2, 24, 16, 32)
+    np_inp = np.arange(math.prod(src_shape), dtype=np.float32).reshape(src_shape)
+    s = NamedSharding(mesh, P(None, 'data', None, None, None))
+    arr = jax.device_put(np_inp, Format(Layout((0, 1, 2, 3, 4)), s))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      y = jax.lax.reshape(
+          x, dst_shape, out_sharding=P('data', None, None, None))
+      self.assertEqual(y.aval.layout.major_to_minor, (0, 1, 2, 3))
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.format.layout.major_to_minor, (0, 1, 2, 3))
+    self.assertArraysEqual(out, np_inp.reshape(dst_shape))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

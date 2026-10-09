@@ -4451,7 +4451,7 @@ def unop_ur_rule(name, aval, **kwargs):
         f' unreduced. Got {aval}')
   return frozenset(), reduced, None
 
-def unop_layout_rule(aval, **kwargs):
+def unop_layout_rule(out_aval, aval, **kwargs):
   return aval.layout
 
 def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True,
@@ -4598,7 +4598,7 @@ def nary_ur_rule(name, *avals, **params):
   return frozenset(), reduced, None
 
 
-def broadcasting_layout_rule(name, *avals, **kwargs):
+def broadcasting_layout_rule(name, out_aval, *avals, **kwargs):
   prev_aval = None
   for a in avals:
     if not a.ndim:
@@ -5790,7 +5790,7 @@ def _convert_element_type_weak_type_rule(operand, *, new_dtype, weak_type,
                                          sharding):
   return weak_type
 
-def _convert_element_type_layout_rule(operand, *, new_dtype, weak_type,
+def _convert_element_type_layout_rule(out_aval, operand, *, new_dtype, weak_type,
                                       sharding):
   if operand.layout.tiling is not None:
     raise NotImplementedError()
@@ -6535,7 +6535,7 @@ def _dot_general_pp_rule(eqn, context, settings) -> pp.Doc:
   return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
 
 
-def _dot_general_layout_rule(lhs, rhs, *, dimension_numbers, **kwargs):
+def _dot_general_layout_rule(out_aval, lhs, rhs, *, dimension_numbers, **kwargs):
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_m2m = lhs.layout.major_to_minor
   rhs_m2m = rhs.layout.major_to_minor
@@ -8616,10 +8616,10 @@ def _merge_an_axis_layout_rule(operand, dst_dims, phys_op_dims, new_sizes,
   return _restore_singleton_dims_layout(operand, out_m2m, new_sizes)
 
 
-def _reshape_layout_rule(operand, *, new_sizes, dimensions, sharding):
+def _reshape_layout_rule(out_aval, operand, *, new_sizes, dimensions, sharding):
+  op_shape, new_sizes = operand.shape, out_aval.shape
   if dimensions is not None:
     raise_reshape_layout_error(operand, new_sizes)
-  op_shape = operand.shape
   op_m2m = operand.layout.major_to_minor
 
   non_1_dims = [d for d, s in enumerate(op_shape) if s != 1]
@@ -8772,7 +8772,7 @@ def _transpose_ur_rule(operand, *, permutation):
   kind = UnreducedKind.sum if out_unreduced else None
   return out_unreduced, core.getr(operand), kind
 
-def _transpose_layout_rule(operand, *, permutation):
+def _transpose_layout_rule(out_aval, operand, *, permutation):
   out_m2m = tuple(permutation.index(d) for d in operand.layout.major_to_minor)
   return operand.layout.update(major_to_minor=out_m2m)
 
