@@ -1414,3 +1414,17 @@ def fetch_and_add(
           f" indexer, but got {transforms}"
       )
   return fetch_and_add_p.bind(x_ref, value, *indices, subcore_id)
+
+
+def slice_subcore_vmem_from_shared(
+    ref: jax.Ref | state_types.TransformedRef,
+) -> state_types.TransformedRef:
+  """Slices the current vector subcore's local VMEM from a VMEM_SHARED ref."""
+  ref, transforms = state_primitives.get_ref_and_transforms(
+      ref, None, "slice_subcore_vmem_from_shared"
+  )
+  tref = state_types.TransformedRef(
+      ref, (*transforms, sc_core.SharedMemRefSliceTransform())
+  )
+  _ = tref.type  # Runs validation.
+  return tref

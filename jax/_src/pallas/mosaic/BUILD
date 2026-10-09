@@ -186,6 +186,8 @@ pytype_strict_library(
         ":tpu_info",
         "//jax",
         "//jax/_src:core",
+        "//jax/_src:pretty_printer",
+        "//jax/_src:state_types",
         "//jax/_src:tree_util",
         "//jax/_src/pallas",
     ],

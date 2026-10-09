@@ -2221,6 +2221,32 @@ def _memory_space_cast_memref(
   return memref.memory_space_cast(target_ref_ty, ref), ref_block_shape
 
 
+def _slice_shared_memref(
+    ref: ir.Value,
+    ref_aval: state.AbstractRef,
+    ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
+) -> tuple[ir.Value, tuple[int | pallas_core.Squeezed, ...]]:
+  if isinstance(ref_block_shape[-1], pallas_core.Squeezed):
+    raise NotImplementedError(
+        "Cannot slice subcore VMEM from a ref with a squeezed trailing"
+        " dimension."
+    )
+  ref_ty = ir.MemRefType(ref.type)
+  vmem_memory_space = ir.Attribute.parse("#tpu.memory_space<vmem>")
+  num_subcores = sc_core.get_sparse_core_info().num_subcores
+  vmem_shape = (*ref_ty.shape[:-1], ref_ty.shape[-1] // num_subcores)
+  target_ref_ty = ir.MemRefType.get(
+      vmem_shape,
+      _dtype_to_ir_type(ref_aval.dtype),
+      memory_space=vmem_memory_space,
+  )
+  new_block_shape = (
+      *ref_block_shape[:-1],
+      ref_block_shape[-1] // num_subcores,
+  )
+  return tpu.shared_memref_slice(target_ref_ty, ref), new_block_shape
+
+
 def _transform_ref(
     ref,
     ref_ty,
@@ -2256,6 +2282,15 @@ def _transform_ref(
       case state_types.MemorySpaceCastTransform():
         ref, ref_block_shape = _memory_space_cast_memref(
             ref, transform, ref_block_shape, kernel_type
+        )
+      case sc_core.SharedMemRefSliceTransform():
+        if kernel_type != tpu_core.CoreType.SC_VECTOR_SUBCORE:
+          raise ValueError(
+              "Slicing VMEM_SHARED to VMEM is supported only on"
+              f" SC_VECTOR_SUBCORE. Got {kernel_type}."
+          )
+        ref, ref_block_shape = _slice_shared_memref(
+            ref, ref_ty, ref_block_shape
         )
       case state_types.SelectTransform():
         raise NotImplementedError(
