@@ -254,6 +254,23 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     # Check that d/dx betaln(x, 1) = d/dx -log(x) = -1/x.
     self.assertAllClose(tangents_out, -1 / xs, atol=atol)
 
+  def testBetalnSubnormalRatio(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40653
+    # Float32 subnormal ratio test (1e-38 < finfo(float32).tiny)
+    a32 = jnp.float32(1.0)
+    b32 = jnp.float32(1e38)
+    expected32 = np.array(osp_special.betaln(float(a32), float(b32)), dtype=np.float32)
+    self.assertAllClose(lsp_special.betaln(a32, b32), expected32, rtol=1e-5)
+    self.assertAllClose(lsp_special.betaln(b32, a32), expected32, rtol=1e-5)
+
+    if jax.config.x64_enabled:
+      a64 = jnp.array([1.0, 2.0, 1.5, 2.0, 3.0], dtype=jnp.float64)
+      b64 = jnp.array([1e308, 1e308, 1e308, 8.99e307, 1e308], dtype=jnp.float64)
+      expected64 = osp_special.betaln(np.asarray(a64), np.asarray(b64))
+      actual64 = lsp_special.betaln(a64, b64)
+      self.assertAllClose(actual64, expected64, rtol=1e-12, atol=1e-12)
+      self.assertAllClose(lsp_special.betaln(b64, a64), expected64, rtol=1e-12, atol=1e-12)
+
   def testXlogyShouldReturnZero(self):
     self.assertAllClose(lsp_special.xlogy(0., 0.), 0., check_dtypes=False)
 
