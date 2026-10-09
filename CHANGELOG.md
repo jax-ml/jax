@@ -17,6 +17,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added {func}`jax.scipy.special.erfcinv` for the inverse complementary
+    error function.
   * Added {func}`jax.lax.polynomial` for polynomial evaluation. The polynomial
     primitive is faster and uses less memory when computing gradients.
   * Added {func}`jax.custom_vjp.defremat`, which customizes how a
@@ -44,6 +46,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.lax.psend` and {func}`jax.lax.precv` are deprecated.
 
 * Changes
+  * Improved the numerical accuracy of {func}`jax.scipy.special.ndtri` and its
+    derivatives by replacing the piecewise rational approximations with
+    minimax polynomial approximations and a custom JVP rule.
   * JAX now uses Bazel 9.2.0 to build from source.
   * Improved the numerical accuracy of complex {func}`jax.numpy.abs` and
     {func}`jax.lax.abs` by lowering through power-of-two scaled `hypot`.

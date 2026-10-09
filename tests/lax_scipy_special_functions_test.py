@@ -107,6 +107,10 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "erfc", 1, float_dtypes, jtu.rand_small_positive, True
     ),
     op_record(
+        "erfcinv", 1, float_dtypes,
+        functools.partial(jtu.rand_uniform, low=0.05, high=1.95), True
+    ),
+    op_record(
         "erfcx", 1, float_dtypes + jtu.dtypes.complex, jtu.rand_default, True
     ),
     op_record(
@@ -423,6 +427,23 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         f(1.0)
       with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
         f(0.0)
+
+  def testErfcinvExtremeValues(self):
+    dtype = jnp.zeros(0).dtype
+    args_maker = lambda: [np.array([-1.0, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0, np.nan], dtype=dtype)]
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(osp_special.erfcinv, lsp_special.erfcinv, args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.erfcinv, args_maker, rtol=rtol)
+
+  @parameterized.parameters([True, False])
+  def testErfcinvDebugInfs(self, with_jit):
+    f = jax.jit(lsp_special.erfcinv) if with_jit else lsp_special.erfcinv
+    with jax.debug_infs(True):
+      f(1.0)  # Doesn't crash
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
+        f(0.0)
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
+        f(2.0)
 
   def testRelEntrExtremeValues(self):
     # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).
