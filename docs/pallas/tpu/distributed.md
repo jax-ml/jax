@@ -80,7 +80,7 @@ The `pltpu.make_async_remote_copy` function is used to create a remote DMA descr
      dst_ref: Ref,
      send_sem: Ref[SemaphoreType],
      recv_sem: Ref[SemaphoreType],
-     device_id: int | tuple[int, ...]
+     device_id: dict[AxisName | tuple[AxisName, ...], int] | int | tuple[int, ...]
  ) -> AsyncCopyDescriptor:
 ```
 
@@ -122,21 +122,21 @@ def example_kernel(input_ref, output_ref, send_sem, recv_sem):
         dst_ref=output_ref,
         send_sem=send_sem,
         recv_sem=recv_sem,
-        device_id=1,
+        device_id={'x': 1},
     )
     copy_2_to_3 = pltpu.make_async_remote_copy(
         src_ref=input_ref,
         dst_ref=output_ref,
         send_sem=send_sem,
         recv_sem=recv_sem,
-        device_id=3,
+        device_id={'x': 3},
     )
     copy_3_to_2 = pltpu.make_async_remote_copy(
         src_ref=input_ref,
         dst_ref=output_ref,
         send_sem=send_sem,
         recv_sem=recv_sem,
-        device_id=2,
+        device_id={'x': 2},
     )
     @pl.when(device_id == 0)
     def _():
@@ -221,7 +221,7 @@ def right_permute_kernel(input_ref, output_ref, send_sem, recv_sem):
       dst_ref=output_ref,
       send_sem=send_sem,
       recv_sem=recv_sem,
-      device_id=(right_neighbor,),
+      device_id={'x': right_neighbor},
   )
   remote_copy_op.start()
   remote_copy_op.wait()
@@ -343,7 +343,7 @@ def all_gather_kernel(input_ref,
       dst_ref=output_ref.at[copy_slot],
       send_sem=send_sem,
       recv_sem=recv_sems.at[outer_step],
-      device_id=(right_neighbor,),
+      device_id={'x': right_neighbor},
   )
   remote_copy_op.start()
   remote_copy_op.wait()
@@ -428,7 +428,7 @@ The three main operations that can be used on regular semaphores are signal, wai
 def semaphore_signal(
     sem: Ref[SemaphoreType],
     inc: int,
-    device_id: int | tuple[int, ...],
+    device_id: dict[AxisName | tuple[AxisName, ...], int] | int | tuple[int, ...],
 ) -> None:
   ... # Increments the semaphore `sem` on the target device `device_id` by `inc`.
 
@@ -582,7 +582,7 @@ def local_barrier(left_neighbor, right_neighbor, double_barrier=True):
     pl.semaphore_signal(
       barrier_sem,
       inc=1,
-      device_id=(neighbor,),
+      device_id={'x': neighbor},
     )
   pl.semaphore_wait(barrier_sem, 2)
   if double_barrier:
@@ -599,7 +599,7 @@ def local_barrier(left_neighbor, right_neighbor, double_barrier=True):
         pl.semaphore_signal(
           second_barrier,
           inc=1,
-          device_id=(neighbor,),
+          device_id={'x': neighbor},
         )
       pl.semaphore_wait(second_barrier, 2)
 
@@ -636,7 +636,7 @@ def all_reduce_kernel(
         dst_ref=hbm_scratch.at[working_slot],
         send_sem=remote_send_sem,
         recv_sem=remote_recv_sem,
-        device_id=(right_neighbor,),
+        device_id={'x': right_neighbor},
     )
     initial_copy.start()
     initial_copy.wait()
@@ -644,7 +644,7 @@ def all_reduce_kernel(
   # Signal to our left neighbor that we are ready to receive.
   # Without this signal, our left neighbor can be >=1 iteration ahead,
   # meaning it could write into our working slot.
-  pl.semaphore_signal(capacity_sem, inc=1, device_id=(left_neighbor,))
+  pl.semaphore_signal(capacity_sem, inc=1, device_id={'x': left_neighbor})
 
   # Copy the partial result our left neighbor sent to us into VMEM for
   # computation.
@@ -663,7 +663,7 @@ def all_reduce_kernel(
       dst_ref=hbm_scratch.at[receiving_slot],
       send_sem=remote_send_sem,
       recv_sem=remote_recv_sem,
-      device_id=(right_neighbor,),
+      device_id={'x': right_neighbor},
   )
   remote_copy.start()
   # Finish local copy and accumulate while remote_copy is happening.
@@ -815,7 +815,7 @@ def signal(left_or_right, semaphore):
   pl.semaphore_signal(
       semaphore,
       inc=1,
-      device_id=(neighbor,),
+      device_id={'x': neighbor},
   )
 
 
@@ -855,7 +855,7 @@ def reduce_scatter_kernel(
       dst_ref=hbm_scratch.at[working_slot, left_copy_slice],
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
-      device_id=(left_neighbor,),
+      device_id={'x': left_neighbor},
   )
 
   initial_right_copy = pltpu.make_async_remote_copy(
@@ -863,7 +863,7 @@ def reduce_scatter_kernel(
       dst_ref=hbm_scratch.at[working_slot, right_copy_slice],
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
-      device_id=(right_neighbor,),
+      device_id={'x': right_neighbor},
   )
 
   left_copy = pltpu.make_async_remote_copy(
@@ -871,7 +871,7 @@ def reduce_scatter_kernel(
       dst_ref=hbm_scratch.at[receiving_slot, left_copy_slice],
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
-      device_id=(left_neighbor,),
+      device_id={'x': left_neighbor},
   )
   right_copy = pltpu.make_async_remote_copy(
       # Note: Right copy is flipped with regards to slots since we are copying
@@ -880,7 +880,7 @@ def reduce_scatter_kernel(
       dst_ref=hbm_scratch.at[working_slot, right_copy_slice],
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
-      device_id=(right_neighbor,),
+      device_id={'x': right_neighbor},
   )
 
   # --- Prologue ---
@@ -1246,7 +1246,7 @@ def reduce_scatter_kernel(
       dst_ref=hbm_scratch.at[working_slot, left_copy_slice],
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
-      device_id=(left_neighbor,),
+      device_id={'x': left_neighbor},
   )
 
   initial_right_copy = pltpu.make_async_remote_copy(
@@ -1254,7 +1254,7 @@ def reduce_scatter_kernel(
       dst_ref=hbm_scratch.at[working_slot, right_copy_slice],
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
-      device_id=(right_neighbor,),
+      device_id={'x': right_neighbor},
   )
 
   left_copy = pltpu.make_async_remote_copy(
@@ -1262,14 +1262,14 @@ def reduce_scatter_kernel(
       dst_ref=hbm_scratch.at[receiving_slot, left_copy_slice],
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
-      device_id=(left_neighbor,),
+      device_id={'x': left_neighbor},
   )
   right_copy = pltpu.make_async_remote_copy(
       src_ref=hbm_scratch.at[receiving_slot, right_copy_slice],
       dst_ref=hbm_scratch.at[working_slot, right_copy_slice],
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
-      device_id=(right_neighbor,),
+      device_id={'x': right_neighbor},
   )
 
   # --- Prologue ---

@@ -1090,6 +1090,7 @@ def dma_start(
     dst_sem_id,
     src_sem_id,
     dst_device_id,
+    dst_local_core_id=None,
     source_info=None,
 ):
   shared_memory = _get_shared_memory()
@@ -1108,8 +1109,12 @@ def dma_start(
     dst_device_id = int(dst_device_id)
   else:
     dst_device_id = device_id
+  if dst_local_core_id is not None:
+    dst_local_core_id = int(dst_local_core_id)
+  else:
+    dst_local_core_id = src_local_core_id  # Same core on destination device as on source.
   dst_global_core_id = shared_memory.get_global_core_id(
-      dst_device_id, src_local_core_id  # Same core on destination device as on source.
+      dst_device_id, dst_local_core_id
   )
 
   (src_sem, dst_sem), clock = shared_memory.get_semaphores_and_increment_clock(
@@ -1128,7 +1133,7 @@ def dma_start(
       src_id,
       src_transforms,
       dst_device_id,
-      src_local_core_id,  # Same core on destination device as on source.
+      dst_local_core_id,
       dst_memory_space,
       dst_id,
       dst_transforms,
@@ -1329,6 +1334,12 @@ class InterpretContext:
 
   def replace(self, **changes) -> 'InterpretContext':
     return dataclasses.replace(self, **changes)
+
+  @property
+  def core_axis_names(self) -> tuple[jax_core.AxisName, ...]:
+    if self.mesh is not None:
+      return tuple(self.mesh.shape.keys())
+    return ()
 
 
 def _interpret_jaxpr(
@@ -1667,9 +1678,15 @@ def _interpret_jaxpr(
         src_sem, src_sem_transforms = mosaic_primitives._get_ref_and_transforms(
             src_sem
         )
-        target_device_id = interpret_utils._device_id_to_logical(
-            target_device_id, eqn.params['device_id_type'], ctx.axis_sizes,
-            ctx.axis_indices)
+        target_device_id, target_core_index = (
+            interpret_utils._device_id_to_logical(
+                target_device_id,
+                eqn.params['device_id_type'],
+                ctx.axis_sizes,
+                ctx.axis_indices,
+                core_axis_names=ctx.core_axis_names,
+            )
+        )
         orig_src_ref, orig_dst_ref, *_ = jax.tree.unflatten(
             eqn.params['tree'], eqn.invars
         )
@@ -1716,6 +1733,7 @@ def _interpret_jaxpr(
             state_discharge.transform_array(dst_sem, dst_sem_transforms),
             state_discharge.transform_array(src_sem, src_sem_transforms),
             target_device_id,
+            target_core_index,
         )
         out = []
 
@@ -1755,9 +1773,21 @@ def _interpret_jaxpr(
       elif prim is primitives.semaphore_signal_p:
         sem, sem_transforms, inc, target_device_id, core_index = (
             jax.tree.unflatten(eqn.params['args_tree'], deferred_invals()))
-        target_device_id = interpret_utils._device_id_to_logical(
-            target_device_id, eqn.params['device_id_type'], ctx.axis_sizes,
-            ctx.axis_indices)
+        target_device_id, dict_core_index = (
+            interpret_utils._device_id_to_logical(
+                target_device_id,
+                eqn.params['device_id_type'],
+                ctx.axis_sizes,
+                ctx.axis_indices,
+                core_axis_names=ctx.core_axis_names,
+            )
+        )
+        if dict_core_index is not None:
+          if core_index is not None:
+            raise ValueError(
+                'Cannot specify both core_index and a core axis in device_id.'
+            )
+          core_index = dict_core_index
         token = callback.io_callback(
             functools.partial(semaphore_signal, source_info=eqn.source_info),
             TOKEN_SHAPE_DTYPE,

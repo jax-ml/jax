@@ -184,7 +184,7 @@ class PallasCallRemoteDMATest(TestCase):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       y_ref[...] = x_ref[...]
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
@@ -228,7 +228,8 @@ class PallasCallRemoteDMATest(TestCase):
 
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
       other_dev_id = 1 - lax.axis_index("x")
-      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      other_dev = {"x": other_dev_id}
+      pl.semaphore_signal(ready_sem, device_id=other_dev)
       pl.semaphore_wait(ready_sem)
       for i in range(2):
         for j in range(2):
@@ -236,8 +237,8 @@ class PallasCallRemoteDMATest(TestCase):
               pl.ds(lax.rem(other_dev_id + i, jnp.int32(2)) * 16, 16),
               pl.ds(j * 64, 64),
           )
-          plgpu.remote_ref(y_ref, other_dev_id)[idx] = x_ref[idx]
-      pl.semaphore_signal(recv_sem, device_id=other_dev_id)
+          plgpu.remote_ref(y_ref, other_dev)[idx] = x_ref[idx]
+      pl.semaphore_signal(recv_sem, device_id=other_dev)
       pl.semaphore_wait(recv_sem)
 
     x = jnp.arange(2 * 32 * 128, dtype=jnp.bfloat16).reshape((2 * 32, 128))
@@ -278,13 +279,13 @@ class PallasCallRemoteDMATest(TestCase):
     # Kernel with cross-device barrier which makes sure that the other device
     # has completed the previous kernel.
     def barrier_kernel(x_ref, y_ref):
-      other_dev_id = 1 - lax.axis_index("x")
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
       neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
       neighbor_ptr[...] = x_ref[...]
 
     # Kernel with no cross-device barrier.
     def skip_barrier_kernel(x_ref, y_ref):
-      other_dev_id = 1 - lax.axis_index("x")
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
       neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
       neighbor_ptr[...] = x_ref[...] * 2
 
@@ -322,7 +323,7 @@ class PallasCallRemoteDMATest(TestCase):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem, scratch_ref, barrier):
-      other_dev_id = 1 - lax.axis_index("x")
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
 
@@ -387,7 +388,7 @@ class PallasCallRemoteDMATest(TestCase):
     )
     def kernel(x_ref, other_dev_id_ref, y_ref, x_smem):
       x_smem[...] = x_ref[...]
-      other_dev_id = other_dev_id_ref[0]
+      other_dev_id = {"x": other_dev_id_ref[0]}
       remote_y_ref = plgpu.remote_ref(y_ref, other_dev_id)
       plgpu.copy_smem_to_gmem(x_smem, remote_y_ref)
       plgpu.wait_smem_to_gmem(0)
@@ -418,7 +419,7 @@ class PallasCallRemoteDMATest(TestCase):
       return  # Only 2 processes needed.
 
     def kernel(x_ref, y_ref, done_sem):
-      other_dev_id = 1 - lax.axis_index("x")
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
       pl.semaphore_signal(done_sem, device_id=other_dev_id)
       pl.semaphore_wait(done_sem)
       neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
@@ -427,7 +428,7 @@ class PallasCallRemoteDMATest(TestCase):
       pl.semaphore_wait(done_sem)
 
     def different_kernel(x_ref, y_ref, wait_sem, ready_sem):
-      other_dev_id = 1 - lax.axis_index("x")
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
       pl.semaphore_signal(wait_sem, device_id=other_dev_id)
       pl.semaphore_wait(wait_sem)
       neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
@@ -478,7 +479,7 @@ class PallasCallRemoteDMATest(TestCase):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
 
       @plgpu.inline_mgpu(arg_types=(plgpu.RefType(),))
@@ -508,7 +509,7 @@ class PallasCallRemoteDMATest(TestCase):
     if jax.process_index() > 2:
       self.skipTest("Needs at least two devices")
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       y_ref[...] = jnp.zeros_like(y_ref)
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
@@ -548,7 +549,7 @@ class PallasCallRemoteDMATest(TestCase):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       y_ref[...] = x_ref[...]
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
@@ -589,7 +590,7 @@ class PallasCallRemoteDMATest(TestCase):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       y_ref[...] = x_ref[...]
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
@@ -636,7 +637,7 @@ class PallasCallRemoteDMATest(TestCase):
 
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
       device_id = lax.axis_index('x')
-      other_dev_id = 1 - device_id
+      other_dev_id = {'x': 1 - device_id}
       neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
       def body(i, _):
         y_ref.at[0, i].set(x_ref.at[0, i].get())
@@ -676,7 +677,7 @@ class PallasCallRemoteDMATest(TestCase):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
-      other_dev_id = jnp.sum(x_ref[...] == 1, dtype=jnp.int32)
+      other_dev_id = {'x': jnp.sum(x_ref[...] == 1, dtype=jnp.int32)}
       y_ref[...] = x_ref[...]
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
@@ -755,7 +756,7 @@ class PallasCallRemoteDMATest(TestCase):
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 2, device_id=other_dev_id)
       pl.semaphore_wait(sem)
       pl.semaphore_wait(sem)
@@ -782,7 +783,7 @@ class PallasCallRemoteDMATest(TestCase):
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 2, device_id=other_dev_id)
       pl.semaphore_wait(sem, decrement=False)
       pl.semaphore_wait(sem, 2, decrement=False)
@@ -810,7 +811,7 @@ class PallasCallRemoteDMATest(TestCase):
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem, sem2):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       plgpu.semaphore_signal_parallel(
           plgpu.SemaphoreSignal(sem, device_id=other_dev_id),
           plgpu.SemaphoreSignal(sem2, device_id=other_dev_id),
@@ -935,7 +936,7 @@ class PallasCallRemoteDMATest(TestCase):
 
   def test_permuted_mesh(self):
     def kernel(y_ref, sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
@@ -1032,15 +1033,15 @@ class PallasCallRemoteDMATest(TestCase):
           y_slice = pl.ds(i * tile, tile)
           plgpu.copy_smem_to_gmem(
               smem_ref,
-              plgpu.remote_ref(y_ref, (zero, dev_id)).at[y_slice]
+              plgpu.remote_ref(y_ref, {"x": zero, "y": dev_id}).at[y_slice]
           )
           plgpu.copy_smem_to_gmem(
               smem_ref,
-              plgpu.remote_ref(y_ref, (zero, other_dev_id)).at[y_slice]
+              plgpu.remote_ref(y_ref, {"x": zero, "y": other_dev_id}).at[y_slice]
           )
           plgpu.wait_smem_to_gmem(0)
 
-      pl.semaphore_signal(sem, 1, device_id=(zero, other_dev_id))
+      pl.semaphore_signal(sem, 1, device_id={"x": zero, "y": other_dev_id})
       pl.semaphore_wait(sem)
 
     kernel_call = self.kernel(
@@ -1092,7 +1093,7 @@ class PallasCallMultimemTest(TestCase):
       def _store():
         output = plgpu.layout_cast(lax.broadcasted_iota(jnp.int32, (128, 128), 1), plgpu.Layout.WGMMA)
         plgpu.multimem_store(output, y_ref, 'x')
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
@@ -1120,7 +1121,7 @@ class PallasCallMultimemTest(TestCase):
       @pl.when(lax.axis_index('x') == 0)
       def _store():
         plgpu.multimem_store(jnp.int32(1), y_ref.at[0], 'x')
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
@@ -1151,7 +1152,7 @@ class PallasCallMultimemTest(TestCase):
         smem_ref[...] = output
         plgpu.copy_smem_to_gmem(smem_ref, plgpu.multicast_ref(y_ref, 'x'))
         plgpu.wait_smem_to_gmem(0)
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
@@ -1199,7 +1200,7 @@ class PallasCallMultimemTest(TestCase):
           )
           plgpu.wait_smem_to_gmem(0)
 
-      other_dev_id = 1 - lax.axis_index("x")
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
@@ -1294,7 +1295,7 @@ class PallasCallMultimemTest(TestCase):
           optimized=False,
       )
       my_device = lax.axis_index("x")
-      other_device = 1 - my_device
+      other_device = {"x": 1 - my_device}
       pl.semaphore_signal(sem_ref, 1, device_id=other_device)
       pl.semaphore_wait(sem_ref)
 
@@ -1351,7 +1352,7 @@ class PallasCallMultimemTest(TestCase):
           ),
           plgpu.Layout.WG_STRIDED((8, 128), vec_size=4),
       )
-      other_device = 1 - lax.axis_index("x")
+      other_device = {"x": 1 - lax.axis_index("x")}
       pl.semaphore_signal(sem_ref, 1, device_id=other_device)
       pl.semaphore_wait(sem_ref)
 

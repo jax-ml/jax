@@ -1106,7 +1106,7 @@ class MulticastRef(state_types.Transform):
 
 def remote_ref(
     ref: _Ref,
-    device_id: jax.typing.ArrayLike,
+    device_id: pallas_primitives.DeviceId,
     device_id_type: pallas_primitives.DeviceIdType | None = None,
 ) -> pallas_core.TransformedRef:
   """Translate memref to a symmetric memref on a peer device."""
@@ -1118,6 +1118,7 @@ def remote_ref(
     )
   else:
     device_id_type = pallas_primitives.DeviceIdType.MESH
+  device_id = pallas_primitives.canonicalize_device_id(device_id)
   if not isinstance(ref, pallas_core.TransformedRef):
     if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
       raise TypeError("ref must be a reference")

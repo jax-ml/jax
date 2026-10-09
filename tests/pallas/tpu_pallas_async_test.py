@@ -563,10 +563,10 @@ def make_async_remote_copy(axis_name: str, direction: str = 'right',
         src_neighbor = right_neighbor
         dst_neighbor = left_neighbor
       barrier_sem = pltpu.get_barrier_semaphore()
-      pl.semaphore_signal(barrier_sem, device_id=src_neighbor)
+      pl.semaphore_signal(barrier_sem, device_id={axis_name: src_neighbor})
       pl.semaphore_wait(barrier_sem, 1)
       pltpu.make_async_remote_copy(
-          x_ref, o_ref, send_sem, recv_sem, device_id=dst_neighbor,
+          x_ref, o_ref, send_sem, recv_sem, device_id={axis_name: dst_neighbor},
       ).start()
 
     x, out, send_sem, recv_sem = pl.pallas_call(
@@ -651,8 +651,8 @@ def make_bidi_collective_permute(axis_name: str):
           jax.lax.axis_index(axis_name) + 1, axis_size
       )
       barrier_sem = pltpu.get_barrier_semaphore()
-      pl.semaphore_signal(barrier_sem, device_id=left_neighbor)
-      pl.semaphore_signal(barrier_sem, device_id=right_neighbor)
+      pl.semaphore_signal(barrier_sem, device_id={axis_name: left_neighbor})
+      pl.semaphore_signal(barrier_sem, device_id={axis_name: right_neighbor})
       pl.semaphore_wait(barrier_sem, 2)
       assert x.shape[0] % 2 == 0, x.shape
       pltpu.make_async_remote_copy(
@@ -660,14 +660,14 @@ def make_bidi_collective_permute(axis_name: str):
           o_ref.at[pl.ds(0, x.shape[0] // 2)],
           right_sems[0],
           right_sems[1],
-          device_id=right_neighbor,
+          device_id={axis_name: right_neighbor},
       ).start()
       pltpu.make_async_remote_copy(
           x_ref.at[pl.ds(x.shape[0] // 2, x.shape[0] // 2)],
           o_ref.at[pl.ds(x.shape[0] // 2, x.shape[0] // 2)],
           left_sems[0],
           left_sems[1],
-          device_id=left_neighbor,
+          device_id={axis_name: left_neighbor},
       ).start()
 
     x, out, left_sems, right_sems = pl.pallas_call(

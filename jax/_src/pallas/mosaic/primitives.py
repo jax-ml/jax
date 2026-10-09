@@ -15,7 +15,7 @@
 """Module for Pallas:TPU-specific JAX primitives and functions."""
 from __future__ import annotations
 
-from collections.abc import Hashable, Sequence
+from collections.abc import Hashable, Mapping, Sequence
 import dataclasses
 import logging
 from typing import Any
@@ -53,7 +53,7 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 IntDeviceId = int | jax.Array
-MultiDimDeviceId = tuple[IntDeviceId, ...] | dict[str | tuple[str, ...], IntDeviceId]
+MultiDimDeviceId = tuple[IntDeviceId, ...] | Mapping[Any, IntDeviceId]
 Ref = state.AbstractRef | state.TransformedRef
 
 
@@ -256,6 +256,7 @@ class AsyncCopyDescriptor:
   ):
     if device_id is None:
       device_id = self.device_id
+    device_id = primitives.canonicalize_device_id(device_id)
     if swap_src_and_dst:
       return _dma_flatten(
           self.dst_ref, self.src_ref, self.src_sem, self.dst_sem, device_id

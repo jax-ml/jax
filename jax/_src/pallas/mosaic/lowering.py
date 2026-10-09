@@ -223,6 +223,7 @@ class LoweringContext:
   needs_layout_passes: bool = False
   fuse_transposed_lhs_in_matmul: bool = False
   emit_pipeline_mode: bool = False
+  core_axis_names: tuple[Hashable, ...] = ()
 
   replace = dataclasses.replace
 
@@ -323,6 +324,16 @@ class PipelinedLoweringContext(LoweringContext):
         *mgm.operand_block_shapes,
         *mgm.scratch_block_shapes,
     ]
+    if mgm.grid_names is not None:
+      core_axis_names = tuple(
+          n
+          for i, (n, s) in enumerate(
+              zip(mgm.grid_names, mgm._dimension_semantics)
+          )
+          if n is not None and i not in mgm.vmapped_dims and s != "arbitrary"
+      )
+    else:
+      core_axis_names = ()
     return cls(
         grid_sizes=cast(tuple[int, ...], mgm.grid),
         grid_names=mgm.grid_names,
@@ -339,6 +350,7 @@ class PipelinedLoweringContext(LoweringContext):
         fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
         lowering_cache=lowering_cache,
         dynamic_shape_env=dynamic_shape_env,
+        core_axis_names=core_axis_names,
     )
 
 
@@ -388,6 +400,7 @@ class UnpipelinedLoweringContext(LoweringContext):
         needs_layout_passes=needs_layout_passes,
         fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
         lowering_cache=lowering_cache,
+        core_axis_names=mesh_names,
     )
 
 
@@ -5298,12 +5311,12 @@ def _device_id_to_logical(
   kernel_type = ctx.lowering_context.kernel_type
   if dest_mesh is None:
     dest_kernel_type = kernel_type
-    core_axis_names = tuple(ctx.lowering_context.grid_names or ())
+    core_axis_names = ctx.lowering_context.core_axis_names
   else:
     dest_kernel_type = dest_mesh.core_type
     core_axis_names = tuple(dest_mesh.shape.keys())
 
-  spmd_core_axis_names = set(ctx.lowering_context.grid_names or ())
+  spmd_core_axis_names = set(ctx.lowering_context.core_axis_names)
   mpmd_core_axis_names = set(core_axis_names) - spmd_core_axis_names
 
   def jax_fn(device_id_val):
@@ -5384,10 +5397,11 @@ def _device_id_to_logical(
     else:
       assert dest_kernel_type == tpu_core.CoreType.TC, (
           f"Unrecognized destination kernel type: {dest_kernel_type} != TC")
-      if len(core_index_map) == 0:
+      core_indices = [v for v in core_index_map.values() if v is not None]
+      if len(core_indices) == 0:
         core_index = None
-      elif len(core_index_map) == 1:
-        (core_index,) = core_index_map.values()
+      elif len(core_indices) == 1:
+        (core_index,) = core_indices
       else:
         raise ValueError(
             f"Expected zero or one core index, got {core_index_map=}.")

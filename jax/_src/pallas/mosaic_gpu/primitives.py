@@ -4951,7 +4951,9 @@ def semaphore_signal_parallel(*signals: SemaphoreSignal):
   of an expensive fence for each signal).
   """
   semaphores = [s.ref for s in signals]
-  device_ids = [s.device_id for s in signals]
+  device_ids = [
+      pallas_primitives.canonicalize_device_id(s.device_id) for s in signals
+  ]
   incs = [jnp.asarray(s.inc, dtype=jnp.int32) for s in signals]
   refs, transforms = util.unzip2(
       map(pallas_primitives._get_ref_and_transforms, semaphores)
@@ -5938,6 +5940,7 @@ def semaphore_signal(
   """
   ref, transforms = pallas_primitives._get_ref_and_transforms(semaphore)
   value = jnp.asarray(inc, dtype=jnp.int32)
+  device_id = pallas_primitives.canonicalize_device_id(device_id)
   core_index = None
   args = [ref, transforms, value, device_id, core_index]
   flat_args, args_tree = tree_util.tree_flatten(args)
