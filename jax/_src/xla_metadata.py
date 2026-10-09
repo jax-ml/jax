@@ -402,10 +402,10 @@ def _xla_metadata_call_lin(is_vjp, nzs, *primals, jaxpr, xla_metadata,
             == len(tangent_jaxpr.invars)), (
         len(residuals), len(tangents_nz), len(sres_flat),
         len(tangent_jaxpr.invars))
-    nz_outs = xla_metadata_call_p.bind(*residuals, *tangents_nz, *sres_flat,
-                                       jaxpr=tangent_jaxpr,
-                                       xla_metadata=tangent_metadata,
-                                       ad_metadata='same')
+    prim = ad.vjp_node(xla_metadata_call_p) if is_vjp else xla_metadata_call_p
+    nz_outs = prim.bind(*residuals, *tangents_nz, *sres_flat,
+                        jaxpr=tangent_jaxpr, xla_metadata=tangent_metadata,
+                        ad_metadata='same')
     nz_outs_ = iter(nz_outs)
     outs = [next(nz_outs_) if nz else ad.Zero(a)
             for nz, a in zip(nzs_out, tangent_avals_out)]

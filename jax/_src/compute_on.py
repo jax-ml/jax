@@ -234,10 +234,11 @@ def _compute_on_lin(is_vjp, nzs, *primals, jaxpr, compute_type,
         len(residuals), len(tangents_nz), len(sres_flat),
         len(tangent_jaxpr.invars))
     tangent_out_mem_spaces = _filter_zeros(nzs_out, out_memory_spaces)
-    nz_outs = compute_on_p.bind(*residuals, *tangents_nz, *sres_flat,
-                                jaxpr=tangent_jaxpr, compute_type=compute_type,
-                                out_memory_spaces=tangent_out_mem_spaces,
-                                compiler_options_json=compiler_options_json)
+    prim = ad.vjp_node(compute_on_p) if is_vjp else compute_on_p
+    nz_outs = prim.bind(*residuals, *tangents_nz, *sres_flat,
+                        jaxpr=tangent_jaxpr, compute_type=compute_type,
+                        out_memory_spaces=tangent_out_mem_spaces,
+                        compiler_options_json=compiler_options_json)
     nz_outs_ = iter(nz_outs)
     outs = [next(nz_outs_) if nz else ad.Zero(a)
             for nz, a in zip(nzs_out, tangent_avals_out)]
