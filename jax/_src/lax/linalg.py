@@ -1830,19 +1830,81 @@ def lu_solve(lu: ArrayLike, permutation: ArrayLike, b: ArrayLike,
                    trans)
 
 
+def _conj(x: Array, conj: bool) -> Array:
+  if conj and dtypes.issubdtype(x.dtype, np.complexfloating):
+    return lax.conj(x)
+  return x
+
+
+def _forward_substitution(lu: Array, x: Array) -> Array:
+  """Solve `L x = b` for unit-lower-triangular `L` (the strict lower triangle of
+  the packed `lu`), unrolled over the small dimension."""
+  for i in range(1, lu.shape[0]):
+    acc = lax.dot(lu[i:i + 1, :i], x[:i], precision=lax.Precision.HIGHEST)
+    x = x.at[i].add(-acc[0])
+  return x
+
+
+def _back_substitution(lu: Array, x: Array) -> Array:
+  """Solve `U x = b` for upper-triangular `U` (the upper triangle of the packed
+  `lu`), unrolled over the small dimension."""
+  for i in range(lu.shape[0] - 1, -1, -1):
+    if i == lu.shape[0] - 1:
+      x = x.at[i].set(x[i] / lu[i, i])
+    else:
+      acc = lax.dot(lu[i:i + 1, i + 1:], x[i + 1:],
+                    precision=lax.Precision.HIGHEST)
+      x = x.at[i].set((x[i] - acc[0]) / lu[i, i])
+  return x
+
+
+def _forward_substitution_transpose(lu: Array, x: Array, conj: bool) -> Array:
+  """Solve `U^T x = b` for upper-triangular `U` (the upper triangle of the
+  packed `lu`), unrolled over the small dimension."""
+  for i in range(lu.shape[0]):
+    if i == 0:
+      x = x.at[i].set(x[i] / _conj(lu[i, i], conj))
+    else:
+      acc = lax.dot(_conj(lu[:i, i], conj), x[:i],
+                    precision=lax.Precision.HIGHEST)
+      x = x.at[i].set((x[i] - acc) / _conj(lu[i, i], conj))
+  return x
+
+
+def _back_substitution_transpose(lu: Array, x: Array, conj: bool) -> Array:
+  """Solve `L^T x = b` for unit-lower-triangular `L` (the strict lower triangle
+  of the packed `lu`), unrolled over the small dimension."""
+  for i in range(lu.shape[0] - 2, -1, -1):
+    acc = lax.dot(_conj(lu[i + 1:, i], conj), x[i + 1:],
+                  precision=lax.Precision.HIGHEST)
+    x = x.at[i].add(-acc)
+  return x
+
+
 def _lu_solve_core(lu: Array, permutation: Array, b: Array, trans: int) -> Array:
   m = lu.shape[0]
   x = lax.reshape(b, (m, math.prod(b.shape[1:])))
   if trans == 0:
     x = x[permutation, :]
-    x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True)
-    x = triangular_solve(lu, x, left_side=True, lower=False)
+    if m <= 6:
+      # Unrolled substitution for small systems, avoiding the batched LAPACK
+      # `trsm` call.
+      x = _forward_substitution(lu, x)
+      x = _back_substitution(lu, x)
+    else:
+      x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True)
+      x = triangular_solve(lu, x, left_side=True, lower=False)
   elif trans == 1 or trans == 2:
     conj = trans == 2
-    x = triangular_solve(lu, x, left_side=True, lower=False, transpose_a=True,
-                         conjugate_a=conj)
-    x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True,
-                         transpose_a=True, conjugate_a=conj)
+    if m <= 6:
+      x = _forward_substitution_transpose(lu, x, conj)
+      x = _back_substitution_transpose(lu, x, conj)
+    else:
+      x = triangular_solve(lu, x, left_side=True, lower=False,
+                           transpose_a=True, conjugate_a=conj)
+      x = triangular_solve(lu, x, left_side=True, lower=True,
+                           unit_diagonal=True, transpose_a=True,
+                           conjugate_a=conj)
     _, ind = lax.sort_key_val(permutation, lax.iota('int32', permutation.shape[0]))
     x = x[ind, :]
   else:
@@ -3120,8 +3182,132 @@ def _check_solve_shapes(a: Array, b: Array):
         "The arguments to solve must have shapes a=[..., m, m] and "
         f"b=[..., m, k] or b=[..., m]; got a={a.shape} and b={b.shape}")
 
+def _select(mask: Array, on_true: Array, on_false: Array) -> Array:
+  """`lax.select` with the predicate broadcast to the operands."""
+  mask = lax.broadcast_in_dim(mask, on_false.shape, range(mask.ndim))
+  return lax.select(mask, on_true, on_false)
+
+
+def _swap_rows(a0: Array, a1: Array, swap: Array) -> tuple[Array, Array]:
+  """Swaps two rows (or row-like tensors) wherever `swap` is true."""
+  mask = swap[..., None]
+  return _select(mask, a1, a0), _select(mask, a0, a1)
+
+
+def _pivot_rows3(a0: Array, a1: Array, a2: Array, swap_with_1: Array,
+                 swap_with_2: Array) -> tuple[Array, Array, Array]:
+  """Moves row 1 (if `swap_with_1`) or row 2 (if `swap_with_2`) to the front,
+  putting the old first row in its place."""
+  with_1 = swap_with_1[..., None]
+  with_2 = swap_with_2[..., None]
+  return (_select(with_1, a1, _select(with_2, a2, a0)),
+          _select(with_1, a0, a1),
+          _select(with_2, a0, a2))
+
+
+def _solve_2x2(a: Array, b: Array) -> Array:
+  """Solve batch of 2x2 systems; see `_solve_small`."""
+  row0, row1 = a[..., 0, :], a[..., 1, :]
+  x0, x1 = b[..., 0, :], b[..., 1, :]
+
+  swap = abs(row1[..., 0]) > abs(row0[..., 0])
+  row0, row1 = _swap_rows(row0, row1, swap)
+  x0, x1 = _swap_rows(x0, x1, swap)
+
+  # Eliminate the sub-diagonal, then the super-diagonal, then scale.
+  multiplier = row1[..., 0] / row0[..., 0]
+  row1 = row1 - multiplier[..., None] * row0
+  x1 = x1 - multiplier[..., None] * x0
+  multiplier = row0[..., 1] / row1[..., 1]
+  x0 = x0 - multiplier[..., None] * x1
+  x0 = x0 / row0[..., 0][..., None]
+  x1 = x1 / row1[..., 1][..., None]
+  return lax.concatenate([lax.expand_dims(x0, (-2,)),
+                          lax.expand_dims(x1, (-2,))], dimension=a.ndim - 2)
+
+
+def _solve_3x3(a: Array, b: Array) -> Array:
+  """Solve batch of 3x3 systems; see `_solve_small`."""
+  row0, row1, row2 = a[..., 0, :], a[..., 1, :], a[..., 2, :]
+  x0, x1, x2 = b[..., 0, :], b[..., 1, :], b[..., 2, :]
+
+  # Partial pivot column 0 across all three rows.
+  mag0, mag1, mag2 = abs(row0[..., 0]), abs(row1[..., 0]), abs(row2[..., 0])
+  swap_with_1 = (mag1 > mag0) & (mag1 > mag2)
+  swap_with_2 = (mag2 > mag0) & (mag2 > mag1)
+  row0, row1, row2 = _pivot_rows3(row0, row1, row2, swap_with_1, swap_with_2)
+  x0, x1, x2 = _pivot_rows3(x0, x1, x2, swap_with_1, swap_with_2)
+
+  # Eliminate column 0.
+  multiplier = row1[..., 0] / row0[..., 0]
+  row1 = row1 - multiplier[..., None] * row0
+  x1 = x1 - multiplier[..., None] * x0
+  multiplier = row2[..., 0] / row0[..., 0]
+  row2 = row2 - multiplier[..., None] * row0
+  x2 = x2 - multiplier[..., None] * x0
+
+  # Partial pivot column 1 across rows 1 and 2.
+  swap = abs(row2[..., 1]) > abs(row1[..., 1])
+  row1, row2 = _swap_rows(row1, row2, swap)
+  x1, x2 = _swap_rows(x1, x2, swap)
+
+  # Eliminate column 1.
+  multiplier = row0[..., 1] / row1[..., 1]
+  row0 = row0 - multiplier[..., None] * row1
+  x0 = x0 - multiplier[..., None] * x1
+  multiplier = row2[..., 1] / row1[..., 1]
+  row2 = row2 - multiplier[..., None] * row1
+  x2 = x2 - multiplier[..., None] * x1
+
+  # Eliminate column 2, then scale.
+  multiplier = row0[..., 2] / row2[..., 2]
+  x0 = x0 - multiplier[..., None] * x2
+  multiplier = row1[..., 2] / row2[..., 2]
+  x1 = x1 - multiplier[..., None] * x2
+  x0 = x0 / row0[..., 0][..., None]
+  x1 = x1 / row1[..., 1][..., None]
+  x2 = x2 / row2[..., 2][..., None]
+  return lax.concatenate([lax.expand_dims(x0, (-2,)),
+                          lax.expand_dims(x1, (-2,)),
+                          lax.expand_dims(x2, (-2,))], dimension=a.ndim - 2)
+
+
+def _solve_small(a: Array, b: Array) -> Array:
+  """Solve a batch of 1x1, 2x2, or 3x3 systems.
+
+  Unrolled Gauss-Jordan elimination of `[a | b]` with partial pivoting,
+  avoiding the batched LAPACK `getrf`/`getrs` calls.
+  """
+  n = a.shape[-1]
+  vector = b.ndim == a.ndim - 1
+  if vector:
+    b = b[..., None]
+  if n == 1:
+    x = b / a[..., 0, 0][..., None, None]
+  elif n == 2:
+    x = _solve_2x2(a, b)
+  else:
+    x = _solve_3x3(a, b)
+  return x[..., 0] if vector else x
+
+
 def _solve(a: Array, b: Array) -> Array:
   _check_solve_shapes(a, b)
+
+  # Small systems use an unrolled kernel, routed through custom_linear_solve
+  # like the LU path, which keeps the implicit-function gradient rule.
+  n = a.shape[-1]
+  small = (n in (1, 2, 3)
+           and a.dtype in (np.float32, np.float64, np.complex64, np.complex128)
+           and ((b.ndim == a.ndim - 1 and b.shape[:-1] == a.shape[:-2]) or
+                (b.ndim == a.ndim and b.shape[:-2] == a.shape[:-2])))
+  if small:
+    solve = lambda _, x: _solve_small(a, x)
+    transpose_solve = lambda _, x: _solve_small(_T(a), x)
+  else:
+    lu_, _, permutation = lu(lax.stop_gradient(a))
+    solve = lambda _, x: lu_solve(lu_, permutation, x, trans=0)
+    transpose_solve = lambda _, x: lu_solve(lu_, permutation, x, trans=1)
 
   # Broadcast leading dimensions of b to the shape of a, as is required by
   # custom_linear_solve.
@@ -3131,12 +3317,11 @@ def _solve(a: Array, b: Array) -> Array:
 
   # With custom_linear_solve, we can reuse the same factorization when
   # computing sensitivities. This is considerably faster.
-  lu_, _, permutation = lu(lax.stop_gradient(a))
   custom_solve = partial(
       control_flow.custom_linear_solve,
       lambda x: _broadcasted_matvec(a, x),
-      solve=lambda _, x: lu_solve(lu_, permutation, x, trans=0),
-      transpose_solve=lambda _, x: lu_solve(lu_, permutation, x, trans=1))
+      solve=solve,
+      transpose_solve=transpose_solve)
   if a.ndim == b.ndim + 1:
     # b.shape == [..., m]
     return custom_solve(b)

@@ -76,6 +76,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     16). This avoids long compile times for sorts with many keys. Fixes the
     poor performance of {func}`jax.numpy.unique` for high-dimensional arrays
     ({jax-issue}`#17370`).
+  * {func}`jax.numpy.linalg.solve` (and {func}`jax.numpy.linalg.inv`) now use
+    an unrolled Gauss-Jordan solver for 1x1, 2x2, and 3x3 systems and unrolled
+    substitution on the LU factors up to 6x6, avoiding the batched LAPACK
+    `getrf`/`getrs`/`trsm` calls when solving many small systems
+    ({jax-issue}`#11321`, {jax-issue}`#4258`).
 
 * Bug fixes
   * Fixed the gradient of {func}`jax.numpy.ldexp` at `x = 0.0`, which previously
