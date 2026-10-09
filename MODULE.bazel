@@ -19,14 +19,24 @@ bazel_dep(name = "rules_cc", version = "0.2.25")
 bazel_dep(name = "rules_python", version = "2.2.0")
 bazel_dep(name = "rules_shell", version = "0.8.0")
 bazel_dep(name = "zlib", version = "1.3.2")
+bazel_dep(name = "rules_fortran")
+git_override(
+    module_name = "rules_fortran",
+    commit = "f0cac73ebdcbda7bc01b38b8a4ee33869416c220",
+    patch_strip = 1,
+    patches = [
+        "//third_party/rules_fortran:toolchains.patch",
+    ],
+    remote = "https://github.com/miinso/rules_fortran.git",
+)
 
 # TODO: use a released version when available
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-9+4rpwQMv77PxA+AGMWpwcjioakWHi4nJ7UQ0iPHrJo=",
-    strip_prefix = "rules_ml_toolchain-3a4df0c8e9e51687ac4c62c793a00a27286e5e83",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/3a4df0c8e9e51687ac4c62c793a00a27286e5e83.tar.gz"],
+    integrity = "sha256-QXaXIdifM/Sxa5Md+HuXKLiw7Z2oVgFTSt6pBc3QDdg=",
+    strip_prefix = "rules_ml_toolchain-fb4e7404fa2fec0e894b429e0c188fc5540cc8ed",
+    urls = ["https://github.com/yuriivcs/rules_ml_toolchain/archive/fb4e7404fa2fec0e894b429e0c188fc5540cc8ed.tar.gz"],
 )
 
 # TODO: use a released version when available
@@ -34,6 +44,10 @@ bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
     integrity = "sha256-gQjwT4t/HEnl1yamnKFCZAFKUuaxRNqJ2MYFByz3cG4=",
+    patch_strip = 1,
+    patches = [
+        "//third_party/xla:eigen_archive.patch",
+    ],
     strip_prefix = "xla-dad305c65acf8d2434d9f36cfaa10a110b43fbf1",
     urls = ["https://github.com/openxla/xla/archive/dad305c65acf8d2434d9f36cfaa10a110b43fbf1.tar.gz"],
 )
@@ -91,7 +105,11 @@ use_repo(rocm, "config_rocm_hipcc", "local_config_rocm")
 # rules_ml_toolchain's own config_rocm_hipcc is a fixed ROCm tarball it documents as
 # test-only, and its ROCm cc toolchain reads it. Point that toolchain at our ROCm.
 rocm_hermetic = use_extension("@rules_ml_toolchain//extensions:rocm_hermetic_download.bzl", "rocm_hermetic_download_ext")
-override_repo(rocm_hermetic, config_rocm_hipcc = "config_rocm_hipcc")
+
+override_repo(
+    rocm_hermetic,
+    config_rocm_hipcc = "config_rocm_hipcc",
+)
 
 python_version_ext = use_extension("@rules_ml_toolchain//extensions:python_version.bzl", "python_version_ext")
 use_repo(python_version_ext, "python_version_repo")
@@ -291,6 +309,18 @@ register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
 
+register_toolchains("@rules_ml_toolchain//fortran:linux_x86_64_linux_x86_64")
+
+register_toolchains("@rules_ml_toolchain//fortran:linux_x86_64_linux_aarch64")
+
+register_toolchains("@rules_ml_toolchain//fortran:linux_x86_64_darwin_aarch64")
+
+register_toolchains("@rules_ml_toolchain//fortran:linux_aarch64_linux_aarch64")
+
+register_toolchains("@rules_ml_toolchain//fortran:windows_x86_64_windows_x86_64")
+
+register_toolchains("@rules_ml_toolchain//fortran:darwin_aarch64_darwin_aarch64")
+
 apple_cc_configure = use_extension("@apple_support//crosstool:setup.bzl", "apple_cc_configure_extension")
 use_repo(
     apple_cc_configure,
@@ -377,4 +407,10 @@ external_deps_repository(
         "@rocm_wheels//:rocm_pjrt_py_import",
         "@rocm_wheels//:rocm_plugin_py_import",
     ],
+)
+
+lapack = use_extension("//third_party/lapack:extension.bzl", "lapack_ext")
+use_repo(
+    lapack,
+    "lapack",
 )

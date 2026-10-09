@@ -60,7 +60,10 @@ cc_library(
     name = "lapack_kernels_using_lapack",
     srcs = ["lapack_kernels_using_lapack.cc"],
     # compatible with libtpu
-    deps = [":lapack_kernels"],
+    deps = [
+        ":lapack_kernels",
+        "@lapack",
+    ],
     alwayslink = 1,
 )
 
@@ -94,11 +97,11 @@ nanobind_extension(
     ],
     deps = [
         ":lapack_kernels",
+        ":lapack_kernels_using_lapack",
         ":tridiagonal_solve_kernels",
         "//jaxlib:kernel_nanobind_helpers",
         "@nanobind",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/python:safe_static_init",
     ],
 )
 

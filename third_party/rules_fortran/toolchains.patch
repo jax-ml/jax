@@ -1,0 +1,49 @@
+diff --git a/MODULE.bazel b/MODULE.bazel
+index bedd432..a53a08e 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -21,22 +21,10 @@ local_bazel_import(
+     dev_dependency = True,
+ )
+ 
+-flang = use_extension("//fortran:extensions.bzl", "flang")
+-use_repo(
+-    flang,
+-    "flang",
+-    "flang_linux_aarch64",
+-    "flang_linux_x86_64",
+-    "flang_macos_aarch64",
+-    "flang_macos_x86_64",
+-    "flang_windows_x86_64",
+-)
+-
+-register_toolchains(
+-    "//fortran/toolchains:linux_x86_64_toolchain",
+-    "//fortran/toolchains:linux_aarch64_toolchain",
+-    "//fortran/toolchains:macos_x86_64_toolchain",
+-    "//fortran/toolchains:macos_aarch64_toolchain",
+-    "//fortran/toolchains:windows_x86_64_toolchain",
+-    "//fortran/toolchains:emscripten_wasm32_toolchain",
++bazel_dep(name = "rules_ml_toolchain")
++archive_override(
++    module_name = "rules_ml_toolchain",
++    integrity = "sha256-QXaXIdifM/Sxa5Md+HuXKLiw7Z2oVgFTSt6pBc3QDdg=",
++    strip_prefix = "rules_ml_toolchain-fb4e7404fa2fec0e894b429e0c188fc5540cc8ed",
++    urls = ["https://github.com/yuriivcs/rules_ml_toolchain/archive/fb4e7404fa2fec0e894b429e0c188fc5540cc8ed.tar.gz"],
+ )
+diff --git a/fortran/BUILD.bazel b/fortran/BUILD.bazel
+index 63f9fa8..6a42b2c 100644
+--- a/fortran/BUILD.bazel
++++ b/fortran/BUILD.bazel
+@@ -5,7 +5,10 @@ load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+ package(default_visibility = ["//visibility:public"])
+ 
+ # Toolchain type for Fortran compilation
+-toolchain_type(name = "toolchain_type")
++alias(
++    name = "toolchain_type",
++    actual = "@rules_ml_toolchain//fortran:toolchain_type",
++)
+ 
+ # Public API
+ bzl_library(
