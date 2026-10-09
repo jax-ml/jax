@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
+
 from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
@@ -107,3 +110,67 @@ def cdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.select(lax.le(diff, zero),
                     lax.mul(half, lax.exp(diff)),
                     lax.sub(one, lax.mul(half, lax.exp(lax.neg(diff)))))
+
+
+def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  r"""Laplace percent point function.
+
+  JAX implementation of :obj:`scipy.stats.laplace` ``ppf``.
+
+  The percent point function is defined as the inverse of the
+  cumulative distribution function, :func:`jax.scipy.stats.laplace.cdf`.
+
+  Args:
+    q: arraylike, value at which to evaluate the PPF
+    loc: arraylike, distribution offset parameter
+    scale: arraylike, distribution scale parameter
+
+  Returns:
+    array of ppf values.
+
+  See Also:
+    - :func:`jax.scipy.stats.laplace.cdf`
+    - :func:`jax.scipy.stats.laplace.isf`
+    - :func:`jax.scipy.stats.laplace.logpdf`
+    - :func:`jax.scipy.stats.laplace.pdf`
+  """
+  q, loc, scale = promote_args_inexact("laplace.ppf", q, loc, scale)
+  half = _lax_const(q, 0.5)
+  one = _lax_const(q, 1)
+  two = _lax_const(q, 2)
+
+  q_left = jnp.where(lax.le(q, half), q, half)
+  q_right = jnp.where(lax.gt(q, half), lax.sub(one, q), half)
+
+  left = lax.add(loc, lax.mul(scale, lax.log(lax.mul(two, q_left))))
+  right = lax.sub(loc, lax.mul(scale, lax.log(lax.mul(two, q_right))))
+
+  res = jnp.where(lax.le(q, half), left, right)
+  return jnp.where(jnp.isnan(q) | (q < 0) | (q > 1), np.nan, res)
+
+
+def isf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  r"""Laplace inverse survival function.
+
+  JAX implementation of :obj:`scipy.stats.laplace` ``isf``.
+
+  Returns the inverse of the survival function.
+
+  Args:
+    q: arraylike, value at which to evaluate the ISF
+    loc: arraylike, distribution offset parameter
+    scale: arraylike, distribution scale parameter
+
+  Returns:
+    array of isf values.
+
+  See Also:
+    - :func:`jax.scipy.stats.laplace.cdf`
+    - :func:`jax.scipy.stats.laplace.logpdf`
+    - :func:`jax.scipy.stats.laplace.pdf`
+    - :func:`jax.scipy.stats.laplace.ppf`
+  """
+  q, loc, scale = promote_args_inexact("laplace.isf", q, loc, scale)
+  one = _lax_const(q, 1)
+  return ppf(lax.sub(one, q), loc, scale)
+
