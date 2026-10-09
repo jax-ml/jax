@@ -171,6 +171,7 @@ def isf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     - :func:`jax.scipy.stats.laplace.ppf`
   """
   q, loc, scale = promote_args_inexact("laplace.isf", q, loc, scale)
+  zero = _lax_const(q, 0)
   one = _lax_const(q, 1)
-  return ppf(lax.sub(one, q), loc, scale)
+  return lax.sub(loc, lax.mul(scale, ppf(q, zero, one)))
 

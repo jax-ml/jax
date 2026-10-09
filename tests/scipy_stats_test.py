@@ -812,7 +812,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CompileAndCheck(lax_fun, args_maker)
 
   def testLaplacePpfBoundaries(self):
-    qs = np.array([-0.5, 0.0, 0.25, 0.5, 0.75, 1.0, 1.5], dtype=np.float32)
+    qs = np.array([-0.5, 0.0, 1e-6, 0.25, 0.5, 0.75, 1.0 - 1e-6, 1.0, 1.5], dtype=np.float32)
     self.assertAllClose(
         lsp_stats.laplace.ppf(qs),
         osp_stats.laplace.ppf(qs),
