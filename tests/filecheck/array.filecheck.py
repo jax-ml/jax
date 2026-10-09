@@ -84,6 +84,13 @@ def main(_):
   # CHECK: tensor<2x7xi32>
   print_ir(np.empty([2, 7], np.int32))(lax.sort)
 
+  # CHECK-LABEL: TEST: sort float32[2,7]
+  # CHECK: hlo.sort
+  # CHECK: hlo.compare LT
+  # CHECK-SAME: WEAKORDER
+  # CHECK: tensor<2x7xf32>
+  print_ir(np.empty([2, 7], np.float32))(lax.sort)
+
   # CHECK-LABEL: TEST: squeeze int32[2,1,7]
   # CHECK: hlo.reshape
   # CHECK-SAME: tensor<2x7xi32>

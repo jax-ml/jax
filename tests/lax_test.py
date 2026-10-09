@@ -2753,6 +2753,9 @@ class LaxTest(jtu.JaxTestCase):
     argsort = lambda x: lax.sort_key_val(x, lax.iota(int, x.size), is_stable=True)[1]
     self.assertArraysEqual(argsort(x), index)
     self.assertArraysEqual(jax.jit(argsort)(x), index)
+    exported = export.export(jax.jit(argsort))(x)
+    self.assertIn("TOTALORDER", exported.mlir_module())
+    self.assertArraysEqual(exported.call(x), index)
 
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
