@@ -14,6 +14,8 @@
 
 """Precision tests for error functions against reference implementations."""
 
+import math
+
 from absl.testing import parameterized
 import jax
 from jax import lax
@@ -457,6 +459,40 @@ def _mpmath_erfinv(x):
   return mpmath.erfinv(x)
 
 
+def erfinv_grad(x):
+  return jax.vmap(jax.grad(lax.erf_inv))(x)
+
+
+def _erfinv_grad_reference(x: np.ndarray) -> np.ndarray:
+  out = np.full_like(x, np.nan, dtype=np.float64)
+  out[np.abs(x) == 1.0] = np.inf
+  interior = np.abs(x) < 1.0
+  if np.any(interior):
+    y = scipy.special.erfinv(x[interior])
+    out[interior] = 0.5 * np.sqrt(np.pi) * np.exp(np.square(y))
+  return out
+
+
+def _mpmath_erfinv_grad(x):
+  if mpmath.isnan(x) or x < -1 or x > 1:
+    return mpmath.nan
+  if x == -1 or x == 1:
+    return mpmath.inf
+  with mpmath.extraprec(20):
+    y = mpmath.erfinv(x)
+    return mpmath.sqrt(mpmath.pi) / 2 * mpmath.exp(y * y)
+
+
+_ERFINV_INTERESTING_POINTS = [
+    # Minimax polynomial piece boundary points in erf_inv implementations:
+    *(
+        sign * v
+        for v in (0.7, 0.85, 0.9, 0.99, 0.9999)
+        for sign in (-1, 1)
+    ),
+]
+
+
 @jtu.thread_unsafe_test_class()
 class ErfinvTest(jtu.JaxTestCase):
 
@@ -469,14 +505,6 @@ class ErfinvTest(jtu.JaxTestCase):
         (["tpu_v5p", "tpu_7x"], {f16: 1.0, f32: 65.5}),
         ("tpu_v6e", {f16: 1.0, f32: 65.0}),
     ]
-    interesting_points = [
-        # Minimax polynomial piece boundary points in erf_inv implementations:
-        *(
-            sign * v
-            for v in (0.7, 0.85, 0.9, 0.99, 0.9999)
-            for sign in (-1, 1)
-        ),
-    ]
     util.check_unary_precision(
         self,
         lax.erf_inv,
@@ -484,7 +512,176 @@ class ErfinvTest(jtu.JaxTestCase):
         _mpmath_erfinv,
         dtype,
         bounds=bounds,
-        interesting_points=interesting_points,
+        interesting_points=_ERFINV_INTERESTING_POINTS,
+    )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_erfinv_accurate_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f16: 1.0, f32: 4.0, f64: 2.5}),
+        ("gpu", {f16: 1.0, f32: 4.0, f64: 2.5}),
+        (TPU_EUPV1, {f16: 1.0, f32: 427.0}),
+        ("tpu_v5p", {f16: 1.0, f32: 6.5}),
+        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 4.0}),
+    ]
+    with jtu.global_config_context(jax_accurate_erf_inv=True):
+      util.check_unary_precision(
+          self,
+          lax.erf_inv,
+          _erfinv_reference,
+          _mpmath_erfinv,
+          dtype,
+          bounds=bounds,
+          interesting_points=_ERFINV_INTERESTING_POINTS,
+      )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_erfinv_grad_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {bf16: 6.5, f16: 9.5, f32: 57.5, f64: 137.0}),
+        ("gpu", {bf16: 6.5, f16: 9.5, f32: 58.5, f64: 175.5}),
+        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 1574.5}),
+        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 96.0}),
+        (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 79.5}),
+    ]
+    with jtu.global_config_context(jax_accurate_erf_inv=True):
+      util.check_unary_precision(
+          self,
+          erfinv_grad,
+          _erfinv_grad_reference,
+          _mpmath_erfinv_grad,
+          dtype,
+          bounds=bounds,
+          interesting_points=_ERFINV_INTERESTING_POINTS,
+      )
+
+
+def _ndtri_reference(p: np.ndarray) -> np.ndarray:
+  """Evaluates ndtri with a domain guard to avoid slow C++ error handling."""
+  out = np.full_like(p, np.nan, dtype=np.float64)
+  in_domain = (p >= 0.0) & (p <= 1.0)
+  if np.any(in_domain):
+    out[in_domain] = scipy.special.ndtri(p[in_domain])
+  return out
+
+
+def _mpmath_ndtri(p):
+  if mpmath.isnan(p) or p < 0 or p > 1:
+    return mpmath.nan
+  if p == 0:
+    return -mpmath.inf
+  if p == 1:
+    return mpmath.inf
+  with mpmath.extraprec(20):
+    if 0.05 <= p <= 0.95:
+      return mpmath.sqrt(2) * mpmath.erfinv(2 * p - 1)
+    q = p if p < 0.5 else 1 - p
+    target_ln = mpmath.ln(2 * q)
+    u = -mpmath.ln(2 * mpmath.pi * q * q)
+    t0 = mpmath.sqrt((u - mpmath.ln(u)) / 2)
+    t = mpmath.findroot(lambda t: mpmath.ln(mpmath.erfc(t)) - target_ln, t0)
+    res = mpmath.sqrt(2) * t
+    return -res if p < 0.5 else res
+
+
+def ndtri_grad(p):
+  return jax.vmap(jax.grad(jsp.special.ndtri))(p)
+
+
+def _ndtri_grad_reference(p: np.ndarray) -> np.ndarray:
+  out = np.full_like(p, np.nan, dtype=np.float64)
+  out[(p == 0.0) | (p == 1.0)] = np.inf
+  interior = (p > 0.0) & (p < 1.0)
+  if np.any(interior):
+    x = scipy.special.ndtri(p[interior])
+    out[interior] = np.sqrt(2.0 * np.pi) * np.exp(0.5 * np.square(x))
+  return out
+
+
+def _mpmath_ndtri_grad(p):
+  if mpmath.isnan(p) or p < 0 or p > 1:
+    return mpmath.nan
+  if p == 0 or p == 1:
+    return mpmath.inf
+  with mpmath.extraprec(20):
+    x = _mpmath_ndtri(p)
+    return mpmath.sqrt(2 * mpmath.pi) * mpmath.exp(x * x / 2)
+
+
+_NDTRI_INTERESTING_POINTS = [
+    # Piecewise rational approximation boundaries in cephes ndtri:
+    math.exp(-2.0),
+    -math.expm1(-2.0),
+    math.exp(-32.0),
+    1.0 - math.exp(-32.0),
+]
+
+
+@jtu.thread_unsafe_test_class()
+class NdtriTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_float32", "dtype": f32},
+      {"testcase_name": "_float64", "dtype": f64},
+  )
+  def test_ndtri_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f32: 4.5, f64: 3.0}),
+        ("gpu", {f32: 6.0, f64: 3.0}),
+        (TPU_EUPV1, {f32: 474.0}),
+        ("tpu_v5p", {f32: 10.0}),
+        ("tpu_v6e", {f32: 6.0}),
+        ("tpu_7x", {f32: 6.5}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    util.check_unary_precision(
+        self,
+        jsp.special.ndtri,
+        _ndtri_reference,
+        _mpmath_ndtri,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        interesting_points=_NDTRI_INTERESTING_POINTS,
+    )
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_float32", "dtype": f32},
+      {"testcase_name": "_float64", "dtype": f64},
+  )
+  def test_ndtri_grad_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f32: 21.5, f64: 21.5}),
+        ("gpu", {f32: 31.5, f64: 17.5}),
+        (TPU_EUPV1, {f32: 338.0}),
+        (["tpu_v5p", "tpu_v6e"], {f32: 31.5}),
+        ("tpu_7x", {f32: 32.0}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    # Without a custom JVP, autodiff through jnp.where(p == 0/1, +-inf, ...)
+    # produces 0.0 instead of +inf at p = 0 and p = 1 (and for subnormal p on
+    # CPU/TPU where subnormals flush to 0).
+    ignore_inputs = [
+        (
+            ["cpu", "tpu"],
+            lambda p: (np.abs(p) < np.finfo(dtype).tiny) | (p == 1.0),
+        ),
+        ("gpu", {f32: [0.0, -0.0, 1.0], f64: [0.0, -0.0, 1.0]}),
+    ]
+    util.check_unary_precision(
+        self,
+        ndtri_grad,
+        _ndtri_grad_reference,
+        _mpmath_ndtri_grad,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        ignore_inputs=ignore_inputs,
+        interesting_points=_NDTRI_INTERESTING_POINTS,
     )
 
 
@@ -494,6 +691,9 @@ util.register_benchmark(_erfc_highest)
 util.register_benchmark(jsp.special.erfcx)
 util.register_benchmark(erfcx_grad)
 util.register_benchmark(lax.erf_inv)
+util.register_benchmark(erfinv_grad)
+util.register_benchmark(jsp.special.ndtri, dtypes=(f32, f64))
+util.register_benchmark(ndtri_grad, dtypes=(f32, f64))
 
 
 if __name__ == "__main__":
