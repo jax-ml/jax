@@ -393,10 +393,6 @@ class Union[T]:
     return iter(self.members)
 
 @dataclasses.dataclass(frozen=True)
-class TMABarrier:
-  num_barriers: int = 1
-
-@dataclasses.dataclass(frozen=True)
 class Barrier:
   arrival_count: int
   num_barriers: int = 1
@@ -563,16 +559,6 @@ def _construct_smem_reftree(
         def ref(member_thunks=member_thunks):
           return Union([t() for t in member_thunks])
 
-      case TMABarrier(num_barriers):
-        init_fn: Callable[..., Any] = (
-            functools.partial(
-                utils.DialectBarrierRef.initialize,
-                orders_tensor_core=False,
-            )
-            if lowering_semantics == LoweringSemantics.Warpgroup
-            else utils.BarrierRef.initialize
-        )
-        ref = init_fn(barrier_memref(num_barriers), arrival_count=1)
       case Barrier(arrival_count, num_barriers, orders_tensor_core):
         init_fn = (
             functools.partial(
@@ -654,9 +640,8 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
       case Union(members):
         size += max(_smem_tree_size(s) for s in members)
       case (
-          TMABarrier(num_barriers)
+          Barrier(num_barriers=num_barriers)
           | ClusterBarrier(num_barriers=num_barriers)
-          | Barrier(num_barriers=num_barriers)
       ):
         if size % utils.MBARRIER_BYTES:
           raise NotImplementedError(

@@ -527,7 +527,7 @@ def build_kernel(
       kernel = compute_only_kernel
       smem_scratch_shape = (
           smem_buffers_shape,
-          TMABarrier(blocks.stages + compute_wgs_per_block),
+          Barrier(arrival_count=1, num_barriers=blocks.stages + compute_wgs_per_block),
           Barrier(arrival_count=256, num_barriers=1),
       )
     case Implementation.TWO_COMPUTE_ONE_TMA_WG:
@@ -535,9 +535,9 @@ def build_kernel(
       smem_scratch_shape = (
           smem_buffers_shape,
           (
-              TMABarrier(blocks.stages),
-              TMABarrier(blocks.stages),
-              TMABarrier(compute_wgs_per_block),
+              Barrier(arrival_count=1, num_barriers=blocks.stages),
+              Barrier(arrival_count=1, num_barriers=blocks.stages),
+              Barrier(arrival_count=1, num_barriers=compute_wgs_per_block),
           ),
           Barrier(arrival_count=256, num_barriers=2),
           Barrier(arrival_count=256, num_barriers=1),

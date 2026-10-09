@@ -1318,7 +1318,7 @@ class WGMMATest(TestCase):
     scratch_shape = [
         jax.ShapeDtypeStruct(lhs_smem_shape, in_jax_dtype),
         jax.ShapeDtypeStruct(rhs_smem_shape, rhs_in_jax_dtype),
-        mgpu.TMABarrier(2),
+        mgpu.Barrier(1, num_barriers=2),
     ]
     z = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape
@@ -1491,7 +1491,7 @@ class WGMMATest(TestCase):
         (k_steps, (n + n_tile - 1) // n_tile, n_tile, nk_tile), jax_dtype
     )
     z = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), y, out_shape, (rhs_scratch_shape, mgpu.TMABarrier()),
+        kernel, (1, 1, 1), (128, 1, 1), y, out_shape, (rhs_scratch_shape, mgpu.Barrier(1)),
     )(y)
     x = np.arange(m * k, dtype=jax_dtype).reshape(m, k)
     ref = jax.lax.dot(
@@ -2069,7 +2069,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     scratch_shape = [
         jax.ShapeDtypeStruct(lhs_smem_shape, in_jax_dtype),
         jax.ShapeDtypeStruct(rhs_smem_shape, in_jax_dtype),
-        mgpu.TMABarrier(2),
+        mgpu.Barrier(1, num_barriers=2),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), out_jax_dtype),
     ]
@@ -2159,7 +2159,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       self.skipTest("rhs tiling must divide y_shape")
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
-        mgpu.TMABarrier(),
+        mgpu.Barrier(1),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((128, n), out_jax_dtype),
         mgpu.TMEM((128, k), in_jax_dtype, packing=4 // bytewidth(in_mlir_dtype)),
@@ -2200,7 +2200,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     )
     scratch_shape = [
         x,
-        mgpu.TMABarrier(1),
+        mgpu.Barrier(1),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((128, 4), dtype, layout=tcgen05.scales_layout()),
     ]
@@ -2258,7 +2258,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     smem_shape = tile_shape((m, n), tiling)
     scratch_shape = [
         jax.ShapeDtypeStruct(smem_shape, jax_dtype),
-        mgpu.TMABarrier(),
+        mgpu.Barrier(1),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), jax_dtype, packing=packing),
     ]
@@ -2317,7 +2317,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     out_shape = jax.ShapeDtypeStruct((m, n), jax_dtype)
     scratch_shape = [
         jax.ShapeDtypeStruct(smem_shape, jax_dtype),
-        mgpu.TMABarrier(),
+        mgpu.Barrier(1),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
         mgpu.TMEM((m_block, n), jax_dtype, packing=packing, collective=True),
@@ -2445,7 +2445,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         jax.ShapeDtypeStruct(
             ((n + 127) // 128, k // (block_size * 4), 32, 16), scale_jax_dtype
         ),
-        mgpu.TMABarrier(4),
+        mgpu.Barrier(1, num_barriers=4),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), out_jax_dtype),
         mgpu.TMEM(
@@ -2620,7 +2620,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         jax.ShapeDtypeStruct(
             (1, k // (scale_block * 4), 64, 16), scale_jax_dtype
         ),
-        mgpu.TMABarrier(4),
+        mgpu.Barrier(1, num_barriers=4),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m_block, n), out_jax_dtype, collective=True),
         mgpu.TMEM(
@@ -2778,7 +2778,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         jax.ShapeDtypeStruct(
             ((n + 127) // 128, k // (scale_block * 4), 32, 16), scale_jax_dtype
         ),
-        mgpu.TMABarrier(4),
+        mgpu.Barrier(1, num_barriers=4),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m_block, n), out_jax_dtype, collective=True),
         mgpu.TMEM(
@@ -2919,7 +2919,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         jax.ShapeDtypeStruct(tile_shape(x_shape, lhs_tiling), a_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), b_dtype),
         jax.ShapeDtypeStruct((m // 128, k // 128, 128, 64), sparse_meta_dtype),
-        mgpu.TMABarrier(3),
+        mgpu.Barrier(1, num_barriers=3),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), out_jax_dtype),
         mgpu.TMEM((m, k // 2), sparse_meta_dtype, layout=tcgen05.sparse_meta_layout()),
@@ -3038,7 +3038,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
         jax.ShapeDtypeStruct((m // 128, k // 128, 128, 64), sparse_meta_dtype),
-        mgpu.TMABarrier(2),
+        mgpu.Barrier(1, num_barriers=2),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), out_jax_dtype),
         mgpu.TMEM((m, k // 2), in_jax_dtype, packing=2),
@@ -3163,7 +3163,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         jax.ShapeDtypeStruct(tile_shape((m_block, k // 2), lhs_tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape((k, n_block), rhs_tiling), in_jax_dtype),
         jax.ShapeDtypeStruct((m_block // 128, k // 128, 128, 64), sparse_meta_dtype),
-        mgpu.TMABarrier(3),
+        mgpu.Barrier(1, num_barriers=3),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m_block, n), out_jax_dtype, collective=True),
         mgpu.TMEM((m_block, k // 2), sparse_meta_dtype, layout=tcgen05.sparse_meta_layout(), collective=True),
@@ -3273,7 +3273,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         jax.ShapeDtypeStruct((m // 128, k // 128, 128, 64), sparse_meta_dtype),
         jax.ShapeDtypeStruct((m // 128, k // (block_size * 4), 32, 16), scale_jax_dtype),
         jax.ShapeDtypeStruct((n // 128, k // (block_size * 4), 32, 16), scale_jax_dtype),
-        mgpu.TMABarrier(5),
+        mgpu.Barrier(1, num_barriers=5),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), out_jax_dtype),
         mgpu.TMEM((m, k // 2), sparse_meta_dtype, layout=tcgen05.sparse_meta_layout()),
@@ -3401,7 +3401,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         jax.ShapeDtypeStruct((m // 128, meta_k // 64, 128, 64), sparse_meta_dtype),
         jax.ShapeDtypeStruct((m // 128, k // (block_size * 4), 32, 16), scale_jax_dtype),
         jax.ShapeDtypeStruct((n // 128, k // (block_size * 4), 32, 16), scale_jax_dtype),
-        mgpu.TMABarrier(5),
+        mgpu.Barrier(1, num_barriers=5),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), out_jax_dtype),
         mgpu.TMEM((m, meta_k), sparse_meta_dtype, layout=tcgen05.sparse_meta_layout()),
@@ -3548,7 +3548,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_block_shape, tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_block_shape, tiling), in_jax_dtype),
-        mgpu.TMABarrier(2),
+        mgpu.Barrier(1, num_barriers=2),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m_block_tile, n), out_jax_dtype, collective=True),
     ]
@@ -3638,7 +3638,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_block_shape, tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_block_shape, tiling), in_jax_dtype),
-        mgpu.TMABarrier(2),
+        mgpu.Barrier(1, num_barriers=2),
         mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m_block_tile, n), out_jax_dtype, collective=True),
@@ -3773,7 +3773,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_block_shape, tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_block_shape, tiling), in_jax_dtype),
-        mgpu.TMABarrier(2),
+        mgpu.Barrier(1, num_barriers=2),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
         mgpu.TMEM((128, n), out_jax_dtype, collective=True),
@@ -3953,7 +3953,7 @@ class Sm80Test(TestCase):
           kernel, (1, 1, 1), (128, 1, 1), x, out_shape,
           (
               jax.ShapeDtypeStruct(tile_shape(in_shape, (8, swizzle_elems)), dtype),
-              mgpu.TMABarrier(1)
+              mgpu.Barrier(1)
           ),
       )(x)
       expected = x.T if transpose else x
@@ -4251,7 +4251,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       barrier.wait_parity(c(0, i1))
       copy(tmp, dst, swizzle=swizzle)
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    smem = (x, mgpu.TMABarrier())
+    smem = (x, mgpu.Barrier(1))
     y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
     np.testing.assert_array_equal(y, x)
 
@@ -4269,7 +4269,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       copy(tmp, dst, swizzle=None)
     x = np.arange(np.prod(src_shape), dtype=jnp.float32).reshape(src_shape)
     out_shape = jax.ShapeDtypeStruct(dst_shape, jnp.float32)
-    smem = (out_shape, mgpu.TMABarrier())
+    smem = (out_shape, mgpu.Barrier(1))
     y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, out_shape, smem)(x)
     np.testing.assert_array_equal(y[:, 0, :], x[:, 0, :])
     np.testing.assert_array_equal(y[:, 1, :], 0.0)
@@ -4351,7 +4351,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
 
     x = np.arange(math.prod(src_shape), dtype=dtype).reshape(src_shape)
     out_shape = jax.ShapeDtypeStruct(smem_shape, dtype)
-    smem = (out_shape, mgpu.TMABarrier())
+    smem = (out_shape, mgpu.Barrier(1))
     y = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), x, out_shape, smem
     )(x).reshape(dst_shape)
@@ -4403,7 +4403,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     out_shape = jax.ShapeDtypeStruct(
         (len(copies), num_rows, num_channels), dtype
     )
-    smem = (out_shape, mgpu.TMABarrier(len(copies)))
+    smem = (out_shape, mgpu.Barrier(1, num_barriers=len(copies)))
     env_vars = {"MOSAIC_GPU_DUMP_HOST_LLVM": "1"}
     with jtu.set_env(**env_vars), self.capture_stdout() as llvm_ir:
       y = mgpu.as_gpu_kernel(
@@ -4437,7 +4437,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       barrier.wait_parity(c(0, i1))
       copy(tmp, dst, swizzle=swizzle)
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    smem = (x, mgpu.TMABarrier())
+    smem = (x, mgpu.Barrier(1))
     y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
     np.testing.assert_array_equal(y, x)
 
@@ -4476,7 +4476,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     num_items = 12 if idx_layout == fa.TMA_INDICES_4_LAYOUT else 48
     idx = jax.random.permutation(jax.random.key(1234), 48).astype(idx_dtype)[:num_items]
     out_type = jax.ShapeDtypeStruct((num_items, col_slice), dtype)
-    smem = (out_type, mgpu.TMABarrier())
+    smem = (out_type, mgpu.Barrier(1))
     y = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (x, idx), out_type, smem,
     )(x, idx)
@@ -4537,7 +4537,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       smem_shape = (smem_shape[1], smem_shape[0], *smem_shape[2:])
     smem = (
         jax.ShapeDtypeStruct(smem_shape, dtype),
-        mgpu.TMABarrier(),
+        mgpu.Barrier(1),
     )
     y = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (x, idx), out_type, smem,
@@ -4605,7 +4605,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     smem_shape = tile_shape(shape, tiling)
     if transpose_tiles:
       smem_shape = (smem_shape[1], smem_shape[0], *smem_shape[2:])
-    smem = (jax.ShapeDtypeStruct(smem_shape, dtype), mgpu.TMABarrier())
+    smem = (jax.ShapeDtypeStruct(smem_shape, dtype), mgpu.Barrier(1))
     y = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (x, idx), out_type, smem
     )(x, idx)
@@ -4706,7 +4706,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
           swizzle=swizzle,
       )
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    smem_shape = (jax.ShapeDtypeStruct(shape[1:], dtype), mgpu.TMABarrier())
+    smem_shape = (jax.ShapeDtypeStruct(shape[1:], dtype), mgpu.Barrier(1))
     y = mgpu.as_gpu_kernel(
         kernel, cluster, (128, 1, 1), x, x, smem_shape, cluster=cluster
     )(x)
@@ -4747,7 +4747,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     x = np.arange(cluster_y * np.prod(shape), dtype=dtype).reshape(cluster_y, *shape)
     smem_shape = (
         jax.ShapeDtypeStruct(shape, dtype),
-        mgpu.TMABarrier(),
+        mgpu.Barrier(1),
         mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
     )
     with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
@@ -4797,7 +4797,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     x = np.arange(cluster_y * np.prod(shape), dtype=dtype).reshape(cluster_y, *shape)
     smem_shape = (
         jax.ShapeDtypeStruct(smem_shape_val, dtype),
-        mgpu.TMABarrier(),
+        mgpu.Barrier(1),
         mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
     )
     with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
@@ -4843,7 +4843,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
     smem = (
         jax.ShapeDtypeStruct(tile_shape(shape, tiling), dtype),
-        mgpu.TMABarrier(),
+        mgpu.Barrier(1),
     )
     f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)
     y = f(x)
@@ -4885,7 +4885,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
     smem = (
         jax.ShapeDtypeStruct(tile_shape(shape, tiling), dtype),
-        mgpu.TMABarrier(),
+        mgpu.Barrier(1),
     )
     env_vars = {
         "MOSAIC_GPU_DUMP_HOST_LLVM": "1",
@@ -4931,7 +4931,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
         copy(memref_slice(tmp, idxs), memref_slice(dst, s), swizzle=swizzle)
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
     tmp_shape = jax.ShapeDtypeStruct(tile_shape(rounded_shape, tiling), dtype)
-    smem = (tmp_shape, mgpu.TMABarrier())
+    smem = (tmp_shape, mgpu.Barrier(1))
     out_shape = jax.ShapeDtypeStruct(rounded_shape, dtype)
     f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, out_shape, smem)
     y = f(x)
@@ -4955,7 +4955,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     x = np.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
     smem = (
         jax.ShapeDtypeStruct((4, 4, 32, 32), jnp.float32),
-        mgpu.TMABarrier(),
+        mgpu.Barrier(1),
     )
     out_shape = jax.ShapeDtypeStruct((128, 128), jnp.float32)
     f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, out_shape, smem)
@@ -4983,7 +4983,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
         barrier.wait()
       copy(tmp, dst, swizzle=swizzle)
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    smem = (x, mgpu.TMABarrier())
+    smem = (x, mgpu.Barrier(1))
     y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
     np.testing.assert_array_equal(y, x)
 
@@ -5001,7 +5001,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
         copy(tmp, memref_slice(dst, s))
     x = np.arange(np.prod(shape), dtype=jnp.float16).reshape(shape)
     y = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), x, x, (x[0:1], mgpu.TMABarrier())
+        kernel, (1, 1, 1), (128, 1, 1), x, x, (x[0:1], mgpu.Barrier(1))
     )(x)
     np.testing.assert_array_equal(y, x)
 
@@ -5046,7 +5046,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     x = np.arange(np.prod(shape), dtype=jnp.float16).reshape(shape)
     tiled = jax.ShapeDtypeStruct(tiled_shape, jnp.float16)
     y_tiled = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), x, tiled, (tiled, mgpu.TMABarrier()),
+        kernel, (1, 1, 1), (128, 1, 1), x, tiled, (tiled, mgpu.Barrier(1)),
     )(x)
     y = y_tiled.swapaxes(1, 2).reshape(padded_shape)
     # y should contain x and zero everywhere else.
@@ -5263,7 +5263,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
         out_shape=jax.ShapeDtypeStruct((2, 128), dtype),
         smem_scratch_shape=[
             jax.ShapeDtypeStruct((128,), dtype),
-            mgpu.TMABarrier(),
+            mgpu.Barrier(1),
         ],
     )
     x = jnp.arange(128, dtype=jnp.float32)
@@ -7080,7 +7080,7 @@ class FragmentedArrayTest(TestCase):
     smem_shapes = (
         jax.ShapeDtypeStruct(mgpu.tile_shape((m, k), a_tiling), dtype),
         jax.ShapeDtypeStruct(mgpu.tile_shape((n, k), b_tiling), dtype),
-        mgpu.TMABarrier(2),
+        mgpu.Barrier(1, num_barriers=2),
     )
 
     with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), self.capture_stdout() as sass:
@@ -7159,7 +7159,7 @@ class FragmentedArrayTest(TestCase):
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
     scratch_shape = [
         jax.ShapeDtypeStruct(mgpu.tile_shape(shape, tiling), dtype),
-        mgpu.TMABarrier(1),
+        mgpu.Barrier(1),
     ]
     y = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
@@ -7446,7 +7446,7 @@ class LayoutTest(TestCase):
     with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), self.capture_stdout() as sass:
       iota = mgpu.as_gpu_kernel(
           kernel, (1, 1, 1), (128, 1, 1), expected, expected,
-          [expected, expected, mgpu.TMABarrier()],
+          [expected, expected, mgpu.Barrier(1)],
       )(expected)
     np.testing.assert_array_equal(iota, expected)
 
@@ -7496,7 +7496,7 @@ class LayoutTest(TestCase):
         jax.random.key(42), tile_shape((m, n), tiling), -128, 127, dtype=dtype
     )
     f = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), x, x, [x, x, mgpu.TMABarrier()],
+        kernel, (1, 1, 1), (128, 1, 1), x, x, [x, x, mgpu.Barrier(1)],
     )
     np.testing.assert_array_equal(f(x), x)
 
@@ -7551,7 +7551,7 @@ class LayoutTest(TestCase):
     )
     with core.artificial_shared_memory_limit(None):
       y = mgpu.as_gpu_kernel(
-          kernel, (1, 1, 1), (128, 1, 1), x, y_ref, [x, y_ref, mgpu.TMABarrier()],
+          kernel, (1, 1, 1), (128, 1, 1), x, y_ref, [x, y_ref, mgpu.Barrier(1)],
       )(x)
     np.testing.assert_array_equal(y, y_ref)
 
@@ -7633,7 +7633,7 @@ class LayoutTest(TestCase):
     y = x.astype(out_dtype)
     yt = tile(y, out_tiling)
     f = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), xt, yt, [xt, yt, mgpu.TMABarrier()],
+        kernel, (1, 1, 1), (128, 1, 1), xt, yt, [xt, yt, mgpu.Barrier(1)],
     )
     with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), self.capture_stdout() as sass:
       yt_kernel = f(xt)
@@ -7671,7 +7671,7 @@ class LayoutTest(TestCase):
         jax.random.key(42), (128, 128), iinfo.min, iinfo.max, dtype=jnp.int16
     )
     f = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), x, x, [x, x, mgpu.TMABarrier()],
+        kernel, (1, 1, 1), (128, 1, 1), x, x, [x, x, mgpu.Barrier(1)],
     )
     y = f(x)
     np.testing.assert_array_equal(y, x)
@@ -7990,7 +7990,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         out_shape=jax_shape_sliced,
         smem_scratch_shape=[
             jax_shape_sliced,
-            core.TMABarrier(1),
+            mgpu.Barrier(1),
         ],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
@@ -8078,7 +8078,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
             spec,
             spec,
             spec,
-            core.TMABarrier(1),
+            mgpu.Barrier(1),
         ],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
@@ -8359,7 +8359,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         block=(128, 1, 1),
         in_shape=(full_jax_shape),
         out_shape=result_jax_shape,
-        smem_scratch_shape=[full_jax_shape, core.TMABarrier(1)],
+        smem_scratch_shape=[full_jax_shape, mgpu.Barrier(1)],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
     x = self.prng.uniform(0, 10, full_shape).astype(el_type)
@@ -8475,7 +8475,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         block=(128, 1, 1),
         in_shape=(),
         out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
-        smem_scratch_shape=[core.TMABarrier(1)],
+        smem_scratch_shape=[mgpu.Barrier(1)],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
     self.assertArraysEqual(kernel(), np.array([1], dtype=np.int32))
@@ -8521,7 +8521,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         out_shape=jax.ShapeDtypeStruct((2, *in_shape), dtype),
         smem_scratch_shape=[
             jax.ShapeDtypeStruct(in_shape, dtype),
-            mgpu.TMABarrier(),
+            mgpu.Barrier(1),
         ],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
@@ -8658,7 +8658,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         block=(128, 1, 1),
         in_shape=(in_jax_shape),
         out_shape=result_jax_shape,
-        smem_scratch_shape=[in_jax_shape, core.TMABarrier(1)],
+        smem_scratch_shape=[in_jax_shape, mgpu.Barrier(1)],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
     x = self.prng.uniform(0, 10, input_shape).astype(el_type)
@@ -8769,7 +8769,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         in_shape=(jax_shape),
         out_shape=(),
         inout_shape=(jax_shape,),
-        smem_scratch_shape=[jax_shape, core.TMABarrier(1)],
+        smem_scratch_shape=[jax_shape, mgpu.Barrier(1)],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 
@@ -8900,7 +8900,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
             lhs_jax_shape,
             rhs_jax_shape,
             result_jax_shape,
-            core.TMABarrier(1),
+            mgpu.Barrier(1),
         ],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
@@ -8974,7 +8974,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
         smem_scratch_shape=[
             jax.ShapeDtypeStruct((m, k), dtype),
             jax.ShapeDtypeStruct((n, k), dtype),
-            core.TMABarrier(1),
+            mgpu.Barrier(1),
         ],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
@@ -9285,7 +9285,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
     scratch_shape = [
         jax.ShapeDtypeStruct(a_shape, a_type) if not a_in_tmem else None,
         jax.ShapeDtypeStruct(b_shape, b_type),
-        core.TMABarrier(1),
+        mgpu.Barrier(1),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM(acc_shape, acc_type),
         mgpu.TMEM(a_shape, a_type, packing=a_packing) if a_in_tmem else None,
@@ -9422,7 +9422,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
         jax.ShapeDtypeStruct(a_shape, ab_type),
         jax.ShapeDtypeStruct(b_shape, ab_type),
         jax.ShapeDtypeStruct(meta_shape, sparse_meta_dtype),
-        core.TMABarrier(1),
+        mgpu.Barrier(1),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM(acc_shape, acc_type),
         mgpu.TMEM((m, k // 2), sparse_meta_dtype),
@@ -9576,7 +9576,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
         jax.ShapeDtypeStruct(a_block_shape, ab_type),
         jax.ShapeDtypeStruct(b_block_shape, ab_type),
         jax.ShapeDtypeStruct(meta_block_shape, sparse_meta_dtype),
-        core.TMABarrier(1),
+        mgpu.Barrier(1),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
         mgpu.TMEM(acc_block_shape, acc_type, collective=True),
@@ -9738,7 +9738,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
     scratch_shape = [
         jax.ShapeDtypeStruct(a_block_shape, ab_type) if not a_in_tmem else None,
         jax.ShapeDtypeStruct(b_block_shape, ab_type),
-        core.TMABarrier(1),
+        mgpu.Barrier(1),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
         mgpu.TMEM(acc_block_shape, acc_type, collective=True),
@@ -9861,7 +9861,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
         jax.ShapeDtypeStruct(b_shape, b_type),
         jax.ShapeDtypeStruct(scale_shape_a, scale_type),
         jax.ShapeDtypeStruct(scale_shape_b, scale_type),
-        mgpu.TMABarrier(1),
+        mgpu.Barrier(1),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM(acc_shape, acc_type),
         mgpu.TMEM((m, k_scales), scale_type),
@@ -10066,7 +10066,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
         out_shape=jax.ShapeDtypeStruct(dst_shape, dtype),
         smem_scratch_shape=[
             jax.ShapeDtypeStruct((32, 64), dtype),
-            core.TMABarrier(1),
+            mgpu.Barrier(1),
         ],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
@@ -10277,7 +10277,7 @@ class EndToEndTest(TestCase):
       barrier.wait_parity(c(0, i1))
       copy(tmp, dst, swizzle=swizzle)
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    smem = (x, mgpu.TMABarrier())
+    smem = (x, mgpu.Barrier(1))
     with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
       y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
       np.testing.assert_array_equal(y, x)
@@ -10671,7 +10671,7 @@ if hp is not None:
         x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
         scratch_shape = [
             jax.ShapeDtypeStruct(mgpu.tile_shape(shape, tiling), dtype),
-            mgpu.TMABarrier(1),
+            mgpu.Barrier(1),
         ]
         y = mgpu.as_gpu_kernel(
             kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape

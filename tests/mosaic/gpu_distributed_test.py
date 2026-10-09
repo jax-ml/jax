@@ -108,7 +108,7 @@ class ProfilerTest(TestCase):
       y, _ = jax.jit(
           jax.shard_map(
               lambda x, sem: mgpu.as_gpu_kernel(
-                  kernel, (1, 1, 1), (128, 1, 1), x, x, (x, mgpu.TMABarrier()), inout_shape=sem
+                  kernel, (1, 1, 1), (128, 1, 1), x, x, (x, mgpu.Barrier(1)), inout_shape=sem
               )(x, sem),
               in_specs=(P("x"), P(None)),
               out_specs=[P("x"), P(None)],
@@ -150,7 +150,7 @@ class ProfilerTest(TestCase):
       y, _ = jax.jit(
           jax.shard_map(
               lambda x, sem: mgpu.as_gpu_kernel(
-                  kernel, (1, 1, 1), (128, 1, 1), x, x, (x, mgpu.TMABarrier()), inout_shape=sem
+                  kernel, (1, 1, 1), (128, 1, 1), x, x, (x, mgpu.Barrier(1)), inout_shape=sem
               )(x, sem),
               in_specs=(P("x"), P(None)),
               out_specs=[P("x"), P(None)],
