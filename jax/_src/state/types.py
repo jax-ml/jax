@@ -731,6 +731,12 @@ def zeros_like_abstract_ref(aval: AbstractRef) -> core.Ref:
 # a distinct NotATangentType value instead.
 ad_util.aval_zeros_likers[AbstractRef] = zeros_like_abstract_ref  # pyrefly: ignore[unsupported-operation]
 
+def empty_like_abstract_ref(aval: AbstractRef) -> core.Ref:
+  val = ad_util.empty_like_aval(aval.inner_aval)
+  return core.new_ref(val)
+
+ad_util.aval_empty_likers[AbstractRef] = empty_like_abstract_ref  # pyrefly: ignore[unsupported-operation]
+
 # === pinned, chained LinearVals ===
 
 @dataclasses.dataclass(frozen=True, slots=True)

@@ -30,6 +30,7 @@ from jax import lax
 from jax import random
 from jax._src import config
 from jax._src import core
+from jax._src import ad_util
 from jax._src import dtypes
 from jax._src import hypothesis_test_util as htu
 from jax._src import linear_util as lu
@@ -2369,6 +2370,38 @@ class RefTransformTest(jtu.JaxTestCase):
 
     self.assertEqual(f().shape, (1,))
     self.assertAllClose(f(), jnp.array([5.0]))
+
+  def test_abstract_ref_empty_like(self):
+    ref_aval = AbstractRef(core.ShapedArray((2, 3), np.float32))
+    ref = ad_util.empty_like_aval(ref_aval)
+    self.assertIsInstance(ref, core.Ref)
+    self.assertEqual(ref.aval, ref_aval)
+
+  def test_abstract_ref_zeros_like(self):
+    ref_aval = AbstractRef(core.ShapedArray((2, 3), np.float32))
+    ref = ad_util.zeros_like_aval(ref_aval)
+    self.assertIsInstance(ref, core.Ref)
+    self.assertEqual(ref.aval, ref_aval)
+
+  def test_abstract_ref_empty_like_cond_differentiation(self):
+    def f(pred, x):
+      def true_fn(val):
+        ref = core.new_ref(val * 2.0)
+        return val * 3.0, ref
+
+      def false_fn(val):
+        ref = core.new_ref(val * 0.0)
+        return val * 5.0, ref
+
+      out, _ = jax.lax.cond(pred, true_fn, false_fn, x)
+      return out
+
+    # Differentiating through cond with mutable ref residuals uses ad_util.empty_like_aval
+    # for uninitialized branches.
+    grad_true = jax.grad(f, argnums=1)(True, 4.0)
+    self.assertEqual(grad_true, 3.0)
+    grad_false = jax.grad(f, argnums=1)(False, 4.0)
+    self.assertEqual(grad_false, 5.0)
 
 
 if __name__ == '__main__':
