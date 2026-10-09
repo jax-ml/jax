@@ -13,6 +13,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* New features
+  * Added `ref.memory_space_cast` to cast the memory space of a reference.
+
 * Deprecations
 
   * {class}`jax.experimental.pallas.DeviceIdType` and the `device_id_type`
@@ -64,6 +67,11 @@ Remember to align the itemized text with the first line of an item within a list
     via `ref.at[idx]` prior to loading from it.
 
 ### TPU
+
+* New features
+
+  * Added {func}`jax.experimental.pallas.tpu.has_memory_space` to dynamically
+    query the memory space of an `ANY` reference.
 
 * Deprecations
 

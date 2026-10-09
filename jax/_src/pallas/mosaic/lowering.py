@@ -2204,7 +2204,31 @@ def _reshape_memref(
   )
 
 
-def _transform_ref(ref, ref_ty, ref_block_shape, transforms=()):
+def _memory_space_cast_memref(
+    ref: ir.Value[ir.MemRefType],
+    caster: state_types.MemorySpaceCastTransform,
+    ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
+    kernel_type: tpu_core.CoreType,
+) -> tuple[ir.Value, tuple[int | pallas_core.Squeezed, ...]]:
+  target_memory_space = _memory_space_to_mosaic_attribute(
+      caster.memory_space, kernel_type
+  )
+  target_ref_ty = ir.MemRefType.get(
+      ref.type.shape,
+      ref.type.element_type,
+      memory_space=target_memory_space,
+  )
+  return memref.memory_space_cast(target_ref_ty, ref), ref_block_shape
+
+
+def _transform_ref(
+    ref,
+    ref_ty,
+    ref_block_shape,
+    transforms=(),
+    *,
+    kernel_type: tpu_core.CoreType = tpu_core.CoreType.TC,
+):
   # Unwrap the refs if they are TransformedRefs.
   if transforms == () and isinstance(ref, state.TransformedRef):
     ref, transforms = _get_ref_and_transforms(ref)
@@ -2228,6 +2252,10 @@ def _transform_ref(ref, ref_ty, ref_block_shape, transforms=()):
       case state_types.ReshapeTransform():
         ref, ref_block_shape = _reshape_memref(
             ref, transform, ref_ty, ref_block_shape
+        )
+      case state_types.MemorySpaceCastTransform():
+        ref, ref_block_shape = _memory_space_cast_memref(
+            ref, transform, ref_block_shape, kernel_type
         )
       case state_types.SelectTransform():
         raise NotImplementedError(
@@ -2261,6 +2289,19 @@ def _transform_ref(ref, ref_ty, ref_block_shape, transforms=()):
         no_hazard_no_deps=assumption.no_hazard_no_deps,
     )
   return ref, ref_block_shape
+
+
+@register_lowering_rule(
+    tpu_primitives.has_memory_space_p,
+    kernel_types=[*tpu_core.CoreType]
+)
+def _has_memory_space_lowering_rule(
+    ctx: LoweringRuleContext, ref, *, memory_space
+):
+  target_memory_space = _memory_space_to_mosaic_attribute(
+      memory_space, ctx.lowering_context.kernel_type
+  )
+  return tpu.memref_memory_space_is(ref, target_memory_space)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2321,7 +2362,11 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
 
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
-      ref, ref_aval, ref_block_shape, prev_transforms
+      ref,
+      ref_aval,
+      ref_block_shape,
+      prev_transforms,
+      kernel_type=ctx.lowering_context.kernel_type,
   )
   ref_type = ir.MemRefType(ref.type)
   is_smem_load = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
@@ -2423,7 +2468,11 @@ def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree
   ref_block_shape, *_ = ctx.block_shapes
   idx = cast(NDIndexer, idx)
   ref, ref_block_shape = _transform_ref(
-      ref, ref_aval, ref_block_shape, prev_transforms
+      ref,
+      ref_aval,
+      ref_block_shape,
+      prev_transforms,
+      kernel_type=ctx.lowering_context.kernel_type,
   )
 
   if len(key_shape) != 2:
@@ -2518,7 +2567,11 @@ def _masked_swap_lowering_rule(
 
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
-      ref, ref_aval, ref_block_shape, prev_transforms
+      ref,
+      ref_aval,
+      ref_block_shape,
+      prev_transforms,
+      kernel_type=ctx.lowering_context.kernel_type,
   )
 
   ref_type = ir.MemRefType(ref.type)
@@ -5330,7 +5383,13 @@ def _semaphore_read_lowering_rule(
       },
   )
   sem, transforms = tree_util.tree_unflatten(args_tree, args)
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, transforms)
+  sem, _ = _transform_ref(
+      sem,
+      sem_aval,
+      sem_aval.shape,
+      transforms,
+      kernel_type=ctx.lowering_context.kernel_type,
+  )
   return tpu.sem_read(sem)
 
 
@@ -5347,8 +5406,10 @@ def _semaphore_signal_lowering_rule(
   sem, transforms, value, device_id, core_index = tree_util.tree_unflatten(
       args_tree, args
   )
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, transforms)
   kernel_type = ctx.lowering_context.kernel_type
+  sem, _ = _transform_ref(
+      sem, sem_aval, sem_aval.shape, transforms, kernel_type=kernel_type
+  )
   if isinstance(sem_aval.memory_space, pallas_core.CoreMemorySpace):
     dest_mesh = sem_aval.memory_space.mesh
     dest_kernel_type = dest_mesh.core_type
@@ -5380,7 +5441,13 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem, transforms, value, decrement = tree_util.tree_unflatten(args_tree, args)
   if not decrement:
     raise NotImplementedError("Non-decrementing wait is not supported.")
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, transforms)
+  sem, _ = _transform_ref(
+      sem,
+      sem_aval,
+      sem_aval.shape,
+      transforms,
+      kernel_type=ctx.lowering_context.kernel_type,
+  )
   tpu.sem_wait(sem, value)
   return []
 
@@ -5441,7 +5508,9 @@ def _dma_start_lowering_rule(
       _dma_start,
       [src_ref, dst_ref, sem, src_sem],
       [src_ref_aval, dst_ref_aval, sem_aval, src_sem_aval],
-      block_shapes[:4],)
+      block_shapes[:4],
+      kernel_type=kernel_type,
+  )
 
 
 @register_lowering_rule(tpu_primitives.dma_wait_p)
@@ -5497,10 +5566,18 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
       [src, dst, sem, src_sem],
       [src_aval, dst_aval, sem_aval, src_sem_aval],
       block_shapes[:4],
+      kernel_type=ctx.lowering_context.kernel_type,
   )
 
 
-def lower_with_transformed_refs(f, args, avals, block_shapes=None):
+def lower_with_transformed_refs(
+    f,
+    args,
+    avals,
+    block_shapes=None,
+    *,
+    kernel_type: tpu_core.CoreType = tpu_core.CoreType.TC,
+):
   """Lower f with args as potentially nested TransformedRefs."""
   # If block_shapes is not provided, infer them from the avals.
   if block_shapes is None:
@@ -5508,27 +5585,49 @@ def lower_with_transformed_refs(f, args, avals, block_shapes=None):
     aval_shapes = jax.tree.map(lambda x: x.shape, aval_leaves)
     (block_shapes,) = _dma_unflatten(tree, aval_shapes)
   args = list(zip(args, avals, block_shapes))
-  return _lower_transformed_refs(f, [], args)
+  return _lower_transformed_refs(f, [], args, kernel_type=kernel_type)
 
 
-def _lower_transformed_refs(f, args, rest_args):
+def _lower_transformed_refs(
+    f,
+    args,
+    rest_args,
+    *,
+    kernel_type: tpu_core.CoreType = tpu_core.CoreType.TC,
+):
   """Recursively iterate through TransformedRefs and lower them in the call to f."""
   if rest_args == []:
     return f(*args)
   (ref, ref_ty, ref_block_shape), *rest_refs = rest_args
 
   if not isinstance(ref, state.TransformedRef):
-    return _lower_transformed_refs(f, args + [ref], rest_refs)
+    return _lower_transformed_refs(
+        f, args + [ref], rest_refs, kernel_type=kernel_type
+    )
   if not ref.multiref:
     return _lower_single_transformed_ref(
-        f, ref, ref_ty, ref_block_shape, args, rest_refs
+        f,
+        ref,
+        ref_ty,
+        ref_block_shape,
+        args,
+        rest_refs,
+        kernel_type=kernel_type,
     )
   return _lower_multiref_transformed_ref(
-      f, ref, ref_ty, ref_block_shape, args, rest_refs
+      f, ref, ref_ty, ref_block_shape, args, rest_refs, kernel_type=kernel_type
   )
 
-def _lower_single_transformed_ref(f, ref, ref_ty, ref_block_shape, prev_args,
-                                  rest_args):
+def _lower_single_transformed_ref(
+    f,
+    ref,
+    ref_ty,
+    ref_block_shape,
+    prev_args,
+    rest_args,
+    *,
+    kernel_type: tpu_core.CoreType = tpu_core.CoreType.TC,
+):
   """Let the lowering callback f run the single-ref transforms for `ref`."""
   assert isinstance(ref, state.TransformedRef) and not ref.multiref
   aval = ref_ty.ref
@@ -5537,41 +5636,74 @@ def _lower_single_transformed_ref(f, ref, ref_ty, ref_block_shape, prev_args,
 
   def new_f(*newf_args):
     prev, (x,), rest = split_list(newf_args, [len(prev_args), 1])
-    new_x, _ = _transform_ref(x, aval, ref_ty.ref.shape, ref.transforms)
+    new_x, _ = _transform_ref(
+        x, aval, ref_ty.ref.shape, ref.transforms, kernel_type=kernel_type
+    )
     return f(*prev, new_x, *rest)
 
   next_args = (ref.ref, ref_ty.ref, ref_block_shape.ref)
-  return _lower_transformed_refs(new_f, prev_args, [next_args] + rest_args)
+  return _lower_transformed_refs(
+      new_f, prev_args, [next_args] + rest_args, kernel_type=kernel_type
+  )
 
 
-def _lower_multiref_transformed_ref(f, ref, ref_ty, ref_block_shape, args,
-                                   rest_refs):
+def _lower_multiref_transformed_ref(
+    f,
+    ref,
+    ref_ty,
+    ref_block_shape,
+    args,
+    rest_refs,
+    *,
+    kernel_type: tpu_core.CoreType = tpu_core.CoreType.TC,
+):
   """Lower f with args as a multiref TransformedRef."""
   assert isinstance(ref, state.TransformedRef) and ref.multiref
   assert isinstance(ref.transforms[0], state_types.MultiRefTransform)
   match ref.transforms[0]:
     case state_types.SelectTransform(idx=idx):
       select_options = list(zip(ref.ref, ref_ty.ref, ref_block_shape.ref))
-      return _select_to_ifop(f, args, rest_refs, cast(Any, idx), select_options)
+      return _select_to_ifop(
+          f,
+          args,
+          rest_refs,
+          cast(Any, idx),
+          select_options,
+          kernel_type=kernel_type,
+      )
     case _:
       raise ValueError(f"Unsupported transform: {ref.transforms[0]}")
 
 
-def _select_to_ifop(f, prev_refs, rest_refs, idx, options):
+def _select_to_ifop(
+    f,
+    prev_refs,
+    rest_refs,
+    idx,
+    options,
+    *,
+    kernel_type: tpu_core.CoreType = tpu_core.CoreType.TC,
+):
   # TODO(b/502722198): Use IndexSwitchOp instead of nested IfOp if it's fixed.
   assert len(options) >= 2
   pred = arith.cmpi(arith.CmpIPredicate.eq, idx, ir_constant(0, idx.type))
   if_op = scf.IfOp(pred, [], has_else=True)
   with ir.InsertionPoint(if_op.then_block):
-    out = _lower_transformed_refs(f, prev_refs, [options[0]] + rest_refs)
+    out = _lower_transformed_refs(
+        f, prev_refs, [options[0]] + rest_refs, kernel_type=kernel_type
+    )
     scf.yield_(out)
   assert if_op.else_block is not None
   with ir.InsertionPoint(if_op.else_block):
     if len(options) > 2:
       idx = arith.subi(idx, ir_constant(1, idx.type))
-      out = _select_to_ifop(f, prev_refs, rest_refs, idx, options[1:])
+      out = _select_to_ifop(
+          f, prev_refs, rest_refs, idx, options[1:], kernel_type=kernel_type
+      )
     else:
-      out = _lower_transformed_refs(f, prev_refs, [options[1]] + rest_refs)
+      out = _lower_transformed_refs(
+          f, prev_refs, [options[1]] + rest_refs, kernel_type=kernel_type
+      )
     scf.yield_(out)
   return if_op.results
 

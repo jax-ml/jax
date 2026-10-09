@@ -2866,6 +2866,87 @@ class PallasCallTest(ptu.PallasTPUTest):
       out = jax.jit(fn)(np.array([k, 0], np.int32), a, b, v)
       np.testing.assert_array_equal(out, a)
 
+  @parameterized.parameters(pltpu.VMEM, pltpu.HBM)
+  def test_has_memory_space_and_cast(self, input_memory_space):
+    if not jtu.is_libtpu_at_least('0.0.51'):
+      self.skipTest('Requires libtpu >= 0.0.51')
+    if input_memory_space is pltpu.VMEM and not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Requires TPU V5+ for VMEM')
+
+    expected_offset = {pltpu.VMEM: 1.0, pltpu.HBM: 2.0}
+
+    def kernel(x_ref, y_ref):
+      def on_vmem():
+        x_vmem = x_ref.memory_space_cast(pltpu.VMEM)
+        self.assertEqual(x_vmem.memory_space, pltpu.VMEM)
+        y_ref[...] = x_vmem[...] + 1.0
+
+      def on_other():
+        x_hbm = x_ref.memory_space_cast(pltpu.HBM)
+        self.assertEqual(x_hbm.memory_space, pltpu.HBM)
+        pltpu.sync_copy(x_hbm, y_ref)
+        y_ref[...] += 2.0
+
+      lax.cond(pltpu.has_memory_space(x_ref, pltpu.VMEM), on_vmem, on_other)
+
+    @jax.jit
+    def f(x):
+      x = pltpu.with_memory_space_constraint(x, memory_space=input_memory_space)
+      return self.pallas_call(
+          kernel, out_shape=x, in_specs=[pl.BlockSpec(memory_space=pl.ANY)]
+      )(x)
+
+    x = jnp.ones((8, 128), dtype=jnp.float32)
+    np.testing.assert_array_equal(f(x), x + expected_offset[input_memory_space])
+
+  def test_memory_space_cast_errors(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(),
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+    )
+    def kernel(x_ref):
+      x_ref.memory_space_cast(pltpu.VMEM).memory_space_cast(pltpu.VMEM)
+
+    with self.assertRaisesRegex(
+        ValueError, 'Multiple memory_space_casts are not allowed'
+    ):
+      kernel(jnp.ones((8, 128), dtype=jnp.float32))
+
+  @parameterized.parameters(
+      (
+          pltpu.VMEM,
+          lambda r: r,
+          pltpu.VMEM,
+          'Ref must have pl.ANY memory space',
+      ),
+      (
+          pl.ANY,
+          lambda r: r.memory_space_cast(pltpu.VMEM),
+          pltpu.VMEM,
+          'Ref must have pl.ANY memory space',
+      ),
+      (
+          pl.ANY,
+          lambda r: r,
+          pl.ANY,
+          r'has_memory_space.*pl\.ANY.* is not supported',
+      ),
+  )
+  def test_has_memory_space_errors(
+      self, in_memory_space, transform, target_memory_space, error_regex
+  ):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(),
+        in_specs=[pl.BlockSpec(memory_space=in_memory_space)],
+    )
+    def kernel(x_ref):
+      pltpu.has_memory_space(transform(x_ref), target_memory_space)
+
+    with self.assertRaisesRegex(ValueError, error_regex):
+      kernel(jnp.ones((8, 128), dtype=jnp.float32))
+
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
 class PallasCallPoisonTest(ptu.PallasTPUTest):

@@ -300,21 +300,27 @@ def _gather_lowering_rule(
 ):
   ref, transforms, indices, mask = tree.unflatten(flat_args)
   ref_aval, *_ = tree.unflatten(ctx.avals_in)
-  if ref_aval.memory_space not in (
+  tref_aval = state_types.transform_type(transforms, ref_aval)
+  assert isinstance(tref_aval, state_types.AbstractRef)
+  if tref_aval.memory_space not in (
       tpu_core.MemorySpace.VMEM,
       pallas_core.MemorySpace.DEFAULT,
   ):
     raise ValueError(
-        f"Gather only supports loading from VMEM, got {ref_aval.memory_space}"
+        f"Gather only supports loading from VMEM, got {tref_aval.memory_space}"
     )
   if transforms:
     ref_block_shape, *_ = ctx.block_shapes
     ref, _ = tc_lowering._transform_ref(
-        ref, ref_aval, ref_block_shape, transforms
+        ref,
+        ref_aval,
+        ref_block_shape,
+        transforms,
+        kernel_type=ctx.lowering_context.kernel_type,
     )
   [out_aval] = ctx.avals_out
   vec_type = ir.VectorType.get(
-      out_aval.shape, sc_lowering._dtype_to_ir_type(ref_aval.dtype)
+      out_aval.shape, sc_lowering._dtype_to_ir_type(tref_aval.dtype)
   )
   return tpu.vector_load_idx(vec_type, ref, indices, mask=mask)
 
@@ -380,15 +386,17 @@ def _scatter_lowering_rule(
 ):
   ref, transforms, indices, x, mask = jax.tree.unflatten(tree, flat_args)
   ref_aval, *_ = tree.unflatten(ctx.avals_in)
-  if isinstance(ref_aval.memory_space, pallas_core.CoreMemorySpace):
-    if not isinstance(ref_aval.memory_space.mesh, sc_core.VectorSubcoreMesh):
+  tref_aval = state_types.transform_type(transforms, ref_aval)
+  assert isinstance(tref_aval, state_types.AbstractRef)
+  if isinstance(tref_aval.memory_space, pallas_core.CoreMemorySpace):
+    if not isinstance(tref_aval.memory_space.mesh, sc_core.VectorSubcoreMesh):
       raise ValueError(
           "Scatter only supports VectorSubcoreMesh, got"
-          f" {type(ref_aval.memory_space.mesh)}"
+          f" {type(tref_aval.memory_space.mesh)}"
       )
-    memory_space = ref_aval.memory_space.memory_space
+    memory_space = tref_aval.memory_space.memory_space
   else:
-    memory_space = ref_aval.memory_space
+    memory_space = tref_aval.memory_space
   if memory_space not in (
       tpu_core.MemorySpace.VMEM,
       pallas_core.MemorySpace.DEFAULT,
@@ -399,7 +407,11 @@ def _scatter_lowering_rule(
   if transforms:
     ref_block_shape, *_ = ctx.block_shapes
     ref, _ = tc_lowering._transform_ref(
-        ref, ref_aval, ref_block_shape, transforms
+        ref,
+        ref_aval,
+        ref_block_shape,
+        transforms,
+        kernel_type=ctx.lowering_context.kernel_type,
     )
   tpu.vector_store_idx(x, ref, indices, mask=mask, add=add)
   return ()

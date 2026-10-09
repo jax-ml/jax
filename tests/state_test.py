@@ -1581,7 +1581,7 @@ class StateControlFlowTest(jtu.JaxTestCase):
           transforms=(state_types.SelectTransform(idx),),
       )
       with self.assertRaisesRegex(
-          ValueError, "Found inconsistent memory spaces in multiref"
+          TypeError, "Cannot select from Refs of different types"
       ):
         _ = multi_ref.memory_space
     fn(0)
