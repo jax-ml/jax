@@ -1214,35 +1214,45 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     )
 
   def test_transpose_major(self):
-    x = jax.random.normal(jax.random.key(0), (2, 3, 512, 256), dtype=np.float32)
+    x = jax.random.normal(
+        jax.random.key(0), (2, 3, 4, 512, 256), dtype=np.float32
+    )
 
     def f():
-      return jax.lax.transpose(x, (1, 0, 2, 3))
+      return jax.lax.transpose(x, (1, 2, 0, 3, 4))
 
     f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(f)
     self.assertLen(new_values, 1)
     self.assertEmpty(scalar_prefetch_values)
 
     block_spec = pl.BlockSpec(
-        (None, None, 128, 128), lambda i, j, k, l: (i, j, k, l)
+        (None, 4, 2, 128, 128), lambda i, j, k, l, m: (i, j, k, l, m)
     )
     kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
         f2,
         block_spec,
-        grid_len=4,
+        grid_len=5,
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     self.assertLen(value_block_specs, 1)
     x_block_spec = value_block_specs[0]
-    self.assertEqual(x_block_spec.block_shape, (None, None, 128, 128))
+    self.assertEqual(x_block_spec.block_shape, (2, None, 4, 128, 128))
     self.assertEqual(
-        x_block_spec.index_map(0, 1, 2, 3, *scalar_prefetch_values),
-        (1, 0, 2, 3),
+        x_block_spec.index_map(0, 1, 2, 3, 4, *scalar_prefetch_values),
+        (2, 0, 1, 3, 4),
     )
 
-    x = jax.random.normal(jax.random.key(0), (128, 128), dtype=np.float32)
+    with self.assertRaisesRegex(
+        NotImplementedError, 'Cannot permute last two dimensions'
+    ):
+      block_spec_lib.pull_block_spec(
+          lambda x: jax.lax.transpose(x, (0, 1, 3, 2, 4)), block_spec
+      )(x)
+
+    x = jax.random.normal(jax.random.key(0), (2, 4, 128, 128), dtype=np.float32)
     np.testing.assert_array_equal(
-        kernel_fn((0, 0, 0, 0), scalar_prefetch_values, (x,)), x
+        kernel_fn((0, 0, 0, 0, 0), scalar_prefetch_values, (x,)),
+        x.swapaxes(0, 1),
     )
 
   def test_iota(self):
@@ -2768,6 +2778,22 @@ class PushBlockSpecTest(parameterized.TestCase):
         x_struct, y_struct
     )
     self.assertEqual(out_spec.block_shape, (128, 128))
+
+  def test_transpose_push(self):
+    x_type = jax.ShapeDtypeStruct((2, 3, 512, 256), jnp.float32)
+    block_spec = pl.BlockSpec((None, 3, 128, 256), lambda i, j, k, l: (i, j, k, l))
+    out_spec = block_spec_lib.push_block_spec(
+        lambda x: jax.lax.transpose(x, (1, 0, 3, 2)), block_spec
+    )(x_type)
+    self.assertEqual(out_spec.block_shape, (3, None, 256, 128))
+    self.assertEqual(out_spec.index_map(0, 1, 2, 3), (1, 0, 3, 2))
+
+    with self.assertRaisesRegex(
+        NotImplementedError, 'Cannot permute last two dimensions'
+    ):
+      block_spec_lib.push_block_spec(
+          lambda x: jax.lax.transpose(x, (0, 2, 1, 3)), block_spec
+      )(x_type)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
