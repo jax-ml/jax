@@ -2592,32 +2592,279 @@ CanonicalPrecision = (
 )
 
 
+# The `dot_general_p` params holding the block scaling / sparsity metadata.
+_EXTENSION_PARAMS = ('block_scaling_config', 'sparsity_config')
+
+
+def _has_dot_extensions(params: dict[str, Any]) -> bool:
+  """Returns whether `dot_general` params carry block scaling or sparsity."""
+  return any(params.get(name) for name in _EXTENSION_PARAMS)
+
+
+def _reject_dot_extensions(rule, rule_name='Gradient computation'):
+  """Wraps a `dot_general` rule to reject block scaled or sparse operands."""
+
+  def wrapper(*args, **params):
+    if _has_dot_extensions(params):
+      raise NotImplementedError(
+          f'{rule_name} for block scaled or structured sparse dot_general is '
+          'not supported.'
+      )
+    return rule(*args, **params)
+
+  return wrapper
+
+
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass(frozen=True)
+class StructuredSparsity:
+  """Structured `n:m` sparsity of one `dot_general` operand.
+
+  Attributes:
+    indices: the positions of the stored elements within each block.
+    n: the number of elements stored per block of `m` logical elements.
+    m: the number of logical elements per block.
+    stride: the distance between the stored elements of a block.
+    dimension: the contracting dimension that is stored compressed.
+  """
+
+  indices: ArrayLike
+  n: int
+  m: int
+  stride: int = 1
+  dimension: int = 0
+
+  def __post_init__(self) -> None:
+    if not 0 < self.n < self.m or self.stride <= 0 or self.dimension < 0:
+      raise ValueError(f'Invalid {self}: requires 0 < n < m and stride > 0.')
+
+  def tree_flatten(self):
+    return (self.indices,), (self.n, self.m, self.stride, self.dimension)
+
+  @classmethod
+  def tree_unflatten(cls, aux_data, children):
+    return cls(*children, *aux_data)
+
+  def validate(
+      self, name: str, shape: Sequence[int], contracting: Sequence[int]
+  ) -> None:
+    if self.indices is None:
+      raise ValueError(f'{name}_sparsity given without {name}_indices.')
+    indices_shape = getattr(self.indices, 'shape', None)
+    if indices_shape is not None and tuple(indices_shape) != tuple(shape):
+      raise ValueError(
+          f'{name}_indices shape {indices_shape} must match {name} {shape}.'
+      )
+    if self.dimension not in contracting:
+      raise ValueError(
+          f'{name}_sparsity must compress a contracting dimension.'
+      )
+    block = self.n * self.stride
+    if shape[self.dimension] % block != 0:
+      raise ValueError(f'{name} shape {shape} must be divisible by {block}.')
+
+  def dense_aval(self, aval):
+    shape = list(aval.shape)
+    shape[self.dimension] = shape[self.dimension] * self.m // self.n
+    return aval.update(shape=tuple(shape))
+
+  def to_attr(self) -> str:
+    return (
+        f'<num_non_zero = {self.n}, block_size = {self.m}, '
+        f'dimension = {self.dimension}, stride = {self.stride}, '
+        f'idx = {self.indices}>'
+    )
+
+
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass(frozen=True)
+class BlockScaling:
+  """Block scaling of one `dot_general` operand.
+
+  Attributes:
+    scale_factor: the per block scale factors.
+    zero_point: the optional per block zero points, shaped like `scale_factor`.
+    block_stride: the optional block stride of every contracting dimension.
+    block_steps: the optional number of blocks of every contracting dimension.
+  """
+
+  scale_factor: ArrayLike
+  zero_point: ArrayLike | None = None
+  block_stride: Sequence[int] | None = None
+  block_steps: Sequence[int] | None = None
+
+  def __post_init__(self) -> None:
+    if self.block_stride is not None:
+      object.__setattr__(self, 'block_stride', tuple(self.block_stride))
+    if self.block_steps is not None:
+      object.__setattr__(self, 'block_steps', tuple(self.block_steps))
+
+  def tree_flatten(self):
+    return (self.scale_factor, self.zero_point), (
+        self.block_stride,
+        self.block_steps,
+    )
+
+  @classmethod
+  def tree_unflatten(cls, aux_data, children):
+    return cls(*children, *aux_data)
+
+  def validate(
+      self, name: str, shape: Sequence[int], contracting: Sequence[int]
+  ) -> None:
+    if self.scale_factor is None:
+      raise ValueError(f'{name}_scale_factor is required by block scaling.')
+    scale_shape = getattr(self.scale_factor, 'shape', ())
+    if len(scale_shape) != len(shape):
+      raise ValueError(f'{name}_scale_factor must have rank {len(shape)}.')
+    if self.zero_point is not None:
+      zero_shape = getattr(self.zero_point, 'shape', ())
+      if zero_shape != scale_shape:
+        raise ValueError(f'{name}_zero_point must be shaped {scale_shape}.')
+    if any(s not in (1, d) and d % s != 0 for d, s in zip(shape, scale_shape)):
+      raise ValueError(
+          f'{name} size {shape} must be divisible by scale size {scale_shape}.'
+      )
+    for label, values in (
+        ('block_stride', self.block_stride),
+        ('block_steps', self.block_steps),
+    ):
+      if values is None:
+        continue
+      if len(values) != len(contracting):
+        raise ValueError(
+            f'{name}_{label} length must match '
+            f'{len(contracting)} contracting dims.'
+        )
+      for dim, value in zip(contracting, values):
+        if value <= 0 or shape[dim] % value != 0:
+          raise ValueError(f'{name}_{label} {values} must tile {shape}.')
+        scale = scale_shape[dim]
+        if (
+            label == 'block_stride'
+            and value % scale != 0
+            and scale % value != 0
+        ):
+          raise ValueError(f'{name}_{label} {values} must tile {scale_shape}.')
+
+  def to_attr(self) -> str:
+    parts = [f'scale_idx = {self.scale_factor}']
+    if self.zero_point is not None:
+      parts.append(f'zero_idx = {self.zero_point}')
+    if self.block_stride is not None:
+      parts.append(f'strides = [{", ".join(map(str, self.block_stride))}]')
+    if self.block_steps is not None:
+      parts.append(f'steps = [{", ".join(map(str, self.block_steps))}]')
+    return f'<{", ".join(parts)}>'
+
+
+def _dot_general_extensions(
+    lhs: ArrayLike,
+    rhs: ArrayLike,
+    contracting: Sequence[Sequence[int]],
+    scalings: Sequence[BlockScaling | None],
+    sparsities: Sequence[StructuredSparsity | None],
+):
+  """Validates and encodes the block scaling and sparsity options of `dot`."""
+  operands: list[ArrayLike] = [lhs, rhs]
+  scaling_configs = []
+  sparsity_configs = []
+  for name, shape, dims, scaling, sparsity in zip(
+      ('lhs', 'rhs'),
+      (np.shape(lhs), np.shape(rhs)),
+      contracting,
+      scalings,
+      sparsities,
+  ):
+    if scaling is not None:
+      scaling.validate(name, shape, dims)
+      scale_idx = len(operands)
+      operands.append(scaling.scale_factor)
+      zero_idx = None
+      if scaling.zero_point is not None:
+        zero_idx = len(operands)
+        operands.append(scaling.zero_point)
+      scatter = lambda vs: tuple(
+          dict(zip(dims, vs)).get(i, 0) for i in range(len(shape))
+      )
+      scaling_configs.append((
+          name,
+          dataclasses.replace(
+              scaling,
+              scale_factor=scale_idx,
+              zero_point=zero_idx,
+              block_stride=scatter(scaling.block_stride)
+              if scaling.block_stride
+              else None,
+              block_steps=scatter(scaling.block_steps)
+              if scaling.block_steps
+              else None,
+          ),
+      ))
+    if sparsity is not None:
+      sparsity.validate(name, shape, dims)
+      sparsity_configs.append(
+          (name, dataclasses.replace(sparsity, indices=len(operands)))
+      )
+      operands.append(sparsity.indices)
+  return operands, tuple(scaling_configs), tuple(sparsity_configs)
+
+
 DotDimensionNumbers = tuple[tuple[Sequence[int], Sequence[int]],
                             tuple[Sequence[int], Sequence[int]]]
 
 
 # TODO(jakevdp): consider deprecating jax.lax.dot_general.
-def dot_general(lhs: ArrayLike, rhs: ArrayLike,
-                dimension_numbers: DotDimensionNumbers,
-                precision: PrecisionLike = None,
-                preferred_element_type: DTypeLike | None = None,
-                *,
-                out_sharding=None) -> Array:
+def dot_general(
+    lhs: ArrayLike,
+    rhs: ArrayLike,
+    dimension_numbers: DotDimensionNumbers,
+    precision: PrecisionLike = None,
+    preferred_element_type: DTypeLike | None = None,
+    *,
+    out_sharding=None,
+    lhs_sparsity: StructuredSparsity | None = None,
+    rhs_sparsity: StructuredSparsity | None = None,
+    lhs_block_scaling: BlockScaling | None = None,
+    rhs_block_scaling: BlockScaling | None = None,
+) -> Array:
   """Alias of :func:`jax.lax.dot`.
 
   Prefer use of :func:`jax.lax.dot` directly, but note that it requires
   all arguments after ``lhs`` and ``rhs`` to be specified by keyword
   rather than position.
   """
-  return dot(lhs, rhs, dimension_numbers=dimension_numbers, precision=precision,
-             preferred_element_type=preferred_element_type, out_sharding=out_sharding)
+  return dot(
+      lhs,
+      rhs,
+      dimension_numbers=dimension_numbers,
+      precision=precision,
+      preferred_element_type=preferred_element_type,
+      out_sharding=out_sharding,
+      lhs_sparsity=lhs_sparsity,
+      rhs_sparsity=rhs_sparsity,
+      lhs_block_scaling=lhs_block_scaling,
+      rhs_block_scaling=rhs_block_scaling,
+  )
 
 
-def dot(lhs: ArrayLike, rhs: ArrayLike, *,
-        dimension_numbers: DotDimensionNumbers | None = None,
-        precision: PrecisionLike = None,
-        preferred_element_type: DTypeLike | None = None,
-        out_sharding=None) -> Array:
+def dot(
+    lhs: ArrayLike,
+    rhs: ArrayLike,
+    *,
+    dimension_numbers: DotDimensionNumbers | None = None,
+    precision: PrecisionLike = None,
+    preferred_element_type: DTypeLike | None = None,
+    out_sharding=None,
+    lhs_sparsity: StructuredSparsity | None = None,
+    rhs_sparsity: StructuredSparsity | None = None,
+    lhs_block_scaling: BlockScaling | None = None,
+    rhs_block_scaling: BlockScaling | None = None,
+) -> Array:
+  # Formatting any line of the docstring rewraps all of it, flattening the
+  # existing bullet list under `precision:` into a single paragraph. The
+  # guard covers the docstring only, not the signature or the body below.
+  # pyformat: disable
   """General dot product/contraction operator.
 
   This operation lowers directly to the `stablehlo.dot_general`_ operation.
@@ -2658,6 +2905,10 @@ def dot(lhs: ArrayLike, rhs: ArrayLike, *,
       a hint to the compiler to accumulate the dot product using this data type.
     out_sharding: an optional sharding specification for the output. If not specified,
       it will be determined automatically by the compiler.
+    lhs_sparsity: optional :class:`~jax.lax.StructuredSparsity` of ``lhs``.
+    rhs_sparsity: optional :class:`~jax.lax.StructuredSparsity` of ``rhs``.
+    lhs_block_scaling: optional :class:`~jax.lax.BlockScaling` of ``lhs``.
+    rhs_block_scaling: optional :class:`~jax.lax.BlockScaling` of ``rhs``.
 
   Returns:
     An array whose first dimensions are the (shared) batch dimensions, followed
@@ -2691,12 +2942,32 @@ def dot(lhs: ArrayLike, rhs: ArrayLike, *,
   preferred_element_type = (
       None if preferred_element_type is None else
       dtypes.check_and_canonicalize_user_dtype(preferred_element_type, 'dot'))
-  lhs, rhs = core.auto_insert_reshard(lhs, rhs)
-  return dot_general_p.bind(lhs, rhs,
-                            dimension_numbers=(cdims, bdims),
-                            precision=canonicalize_precision(precision),
-                            preferred_element_type=preferred_element_type,
-                            out_sharding=out_sharding)
+  # pyformat: enable
+  operands, block_scaling_config, sparsity_config = _dot_general_extensions(
+      lhs,
+      rhs,
+      cdims,
+      scalings=(lhs_block_scaling, rhs_block_scaling),
+      sparsities=(lhs_sparsity, rhs_sparsity),
+  )
+  if not block_scaling_config and not sparsity_config:
+    operands = list(core.auto_insert_reshard(lhs, rhs))
+    return dot_general_p.bind(
+        *operands,
+        dimension_numbers=(cdims, bdims),
+        precision=canonicalize_precision(precision),
+        preferred_element_type=preferred_element_type,
+        out_sharding=out_sharding,
+    )
+  return dot_general_p.bind(
+      *operands,
+      dimension_numbers=(cdims, bdims),
+      precision=canonicalize_precision(precision),
+      preferred_element_type=preferred_element_type,
+      out_sharding=out_sharding,
+      block_scaling_config=block_scaling_config,
+      sparsity_config=sparsity_config,
+  )
 
 
 def ragged_dot(
@@ -6147,9 +6418,25 @@ def _validate_preferred_element_type(input_dtype, preferred_element_type):
                     "original type.")
 
 
-def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
-                            preferred_element_type: DTypeLike | None,
-                            out_sharding):
+# pyformat: disable
+def _dot_general_shape_rule(
+    lhs,
+    rhs,
+    *extra_operands,
+    dimension_numbers,
+    precision,
+    preferred_element_type: DTypeLike | None,
+    out_sharding,
+    block_scaling_config=(),
+    sparsity_config=(),
+):
+  del extra_operands, block_scaling_config
+  for name, sparsity in sparsity_config:
+    if name == 'lhs':
+      lhs = sparsity.dense_aval(lhs)
+    elif name == 'rhs':
+      rhs = sparsity.dense_aval(rhs)
+  # pyformat: enable
   if out_sharding is not None and not isinstance(out_sharding, NamedSharding):
     raise NotImplementedError
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = _from_maybe_ragged(dimension_numbers)
@@ -6226,9 +6513,21 @@ def _dot_general_shape_computation(lhs_shape, rhs_shape, dimension_numbers):
   rhs_tensored_shape = tuple_delete(rhs_shape, rhs_contract_or_batch_or_group)
   return batch_shape + lhs_tensored_shape + rhs_tensored_shape
 
-def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
-                               preferred_element_type: DTypeLike | None,
-                               out_sharding):
+# pyformat: disable
+def _dot_general_sharding_rule(
+    lhs,
+    rhs,
+    *extra_operands,
+    dimension_numbers,
+    precision,
+    preferred_element_type: DTypeLike | None,
+    out_sharding,
+    **kwargs,
+):
+  # The scale factors, zero points and sparsity indices are elementwise
+  # metadata of `lhs`/`rhs`, so they do not affect the output sharding.
+  del extra_operands, kwargs
+  # pyformat: enable
   if (not lhs.sharding.mesh.empty and not rhs.sharding.mesh.empty and
       lhs.sharding.mesh != rhs.sharding.mesh):
     raise core.ShardingTypeError(
@@ -6309,20 +6608,34 @@ def _dot_general_unreduced_rule(lhs, rhs, dimension_numbers, out_sharding):
     return out_u, out_k
   return frozenset(), None
 
-def _dot_general_ur_rule(lhs, rhs, *, dimension_numbers, out_sharding, **kwargs):
+
+def _dot_general_ur_rule(
+    lhs, rhs, *extra_operands, dimension_numbers, out_sharding, **kwargs
+):
+  del extra_operands  # Extension metadata, irrelevant to the output sharding.
   out_unreduced, kind = _dot_general_unreduced_rule(lhs, rhs, dimension_numbers,
                                                     out_sharding)
   # TODO(yashkatariya): Propagate reduced and make checks like nary_reduced_rule
   return out_unreduced, frozenset(), kind
+
 
 def tuple_delete(tup, idx):
   idx_ = set(idx)
   return tuple(tup[i] for i in range(len(tup)) if i not in idx_)
 
 
-def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
-                            preferred_element_type: DTypeLike | None,
-                            out_sharding, name: str = 'lax.dot_general'):
+def _dot_general_dtype_rule(
+    lhs,
+    rhs,
+    *extra_operands,
+    dimension_numbers,
+    precision,
+    preferred_element_type: DTypeLike | None,
+    out_sharding,
+    block_scaling_config=(),
+    sparsity_config=(),
+    name: str = 'lax.dot_general',
+):
   if out_sharding is not None and not isinstance(out_sharding, NamedSharding):
     raise NotImplementedError
   del dimension_numbers  # unused
@@ -6342,12 +6655,21 @@ def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
   elif rhs_prop > lhs_prop:
     result_dtype = rhs.dtype
   else:
-    if lhs.dtype != rhs.dtype:
+    if not block_scaling_config and lhs.dtype != rhs.dtype:
       raise TypeError(f'{name} argument type error: {lhs.dtype}, {rhs.dtype}')
     result_dtype = lhs.dtype
+  if block_scaling_config:
+    # The result must also be wide enough to hold the scale factors.
+    all_operands = (lhs, rhs, *extra_operands)
+    scales = [
+        all_operands[c.scale_factor].dtype for _, c in block_scaling_config
+    ]
+    result_dtype = _max([result_dtype, *scales], key=type_properties)
+
   has_algorithm = isinstance(precision, (DotAlgorithm, DotAlgorithmPreset))
   return _maybe_upcast(result_dtype, preferred_element_type,
                        check_bit_width=not has_algorithm)
+
 
 def _bit_width(d):
   if dtypes.issubdtype(d, np.inexact): return dtypes.finfo(d).bits
@@ -6370,7 +6692,7 @@ def _maybe_upcast(result_dtype, preferred_element_type, check_bit_width):
 
 def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
                                preferred_element_type: DTypeLike | None,
-                               out_sharding, swap_ans=False):
+                               out_sharding, swap_ans=False, **_kwargs):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   x_ndim = x.aval.ndim
   x_kept = remaining(range(x_ndim), x_contract, x_batch)
@@ -6399,13 +6721,13 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
 
 def _dot_general_transpose_rhs(g, x, y, *, dimension_numbers, precision,
                                preferred_element_type: DTypeLike | None,
-                               out_sharding):
+                               out_sharding, **_kwargs):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
   return _dot_general_transpose_lhs(
     g, y, x, dimension_numbers=swapped_dimension_numbers, precision=precision,
     preferred_element_type=preferred_element_type, out_sharding=out_sharding,
-    swap_ans=True)
+    swap_ans=True, **_kwargs)
 
 
 def _dot_batch_rule(
@@ -6525,9 +6847,14 @@ def _dot_general_batch_dim_nums(ndims, batch_dims, dimension_numbers):
   return new_dimension_numbers, result_batch_dim
 
 def _dot_general_pp_rule(eqn, context, settings) -> pp.Doc:
-  # * suppress printing precision or preferred_element_type when None.
+  # * suppress printing precision or preferred_element_type when None, and the
+  #   block scaling and sparsity configs when they are empty.
   # * print dimension_numbers as list-of-lists to be shorter.
-  printed_params = {k: v for k, v in eqn.params.items() if v is not None}
+  printed_params = {
+      k: v
+      for k, v in eqn.params.items()
+      if v is not None and (v or k not in _EXTENSION_PARAMS)
+  }
   (lhs_cont, rhs_cont), (lhs_batch, rhs_batch) = eqn.params['dimension_numbers']
   printed_params['dimension_numbers'] = (
       (list(lhs_cont), list(rhs_cont)), (list(lhs_batch), list(rhs_batch)))
@@ -6614,9 +6941,14 @@ dot_general_p = standard_primitive(
 )
 
 
-def _dot_general_remat(trace, lhs, rhs, **params):
+# pyformat: disable
+def _dot_general_remat(trace, lhs, rhs, *extra_operands, **params):
   from jax._src.ad_checkpoint import primal_left_tangent_right
   dot = partial(dot_general_p.bind, **params)
+  if _has_dot_extensions(params):
+    # Extended dots have no remat policy support; bind them unconditionally.
+    return dot(lhs, rhs, *extra_operands), dot
+  # pyformat: enable
   out = dot(lhs, rhs)
   if trace.policy is None:
     return out, (), lambda _, lhs, rhs: dot(lhs, rhs)  # full remat
@@ -6650,10 +6982,21 @@ def _dot_general_batch_unpack_dims(batch_dims):
 
 ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
+ad.primitive_jvps[dot_general_p] = _reject_dot_extensions(
+    ad.primitive_jvps[dot_general_p]
+)
+ad.primitive_transposes[dot_general_p] = _reject_dot_extensions(
+    ad.primitive_transposes[dot_general_p]
+)
+ad.fancy_transposes[dot_general_p] = _reject_dot_extensions(
+    ad.fancy_transposes[dot_general_p]
+)
 _dot_general_batch_rule = functools.partial(
     _dot_batch_rule, _dot_general_batch_unpack_args,
     _dot_general_batch_unpack_dims, dot_general)
-batching.fancy_primitive_batchers[dot_general_p] = _dot_general_batch_rule
+batching.fancy_primitive_batchers[dot_general_p] = _reject_dot_extensions(
+    _dot_general_batch_rule, 'Batching rule'
+)
 core.pp_eqn_rules[dot_general_p] = _dot_general_pp_rule
 
 
@@ -6800,13 +7143,41 @@ def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
   return lhs, rhs, accumulation_aval, algorithm_kwarg
 
 
-def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
-                       precision, preferred_element_type: np.dtype | None,
-                       out_sharding, platform: str = "default"):
+# pyformat: disable
+def _dot_general_lower(
+    ctx,
+    lhs,
+    rhs,
+    *extra_operands,
+    dimension_numbers,
+    precision,
+    preferred_element_type: np.dtype | None,
+    out_sharding,
+    block_scaling_config=(),
+    sparsity_config=(),
+    platform: str = 'default',
+):
   del preferred_element_type  # Implied by the output aval
   lhs, rhs, accumulation_aval, algorithm_kwarg = _handle_dot_precision(
       ctx, lhs, rhs, precision, platform
   )
+  if extra_operands:
+    algorithm_kwarg['ext_operands'] = list(extra_operands)
+  if block_scaling_config:
+    entries = ', '.join(
+        f'{name} = {cfg.to_attr()}' for name, cfg in block_scaling_config
+    )
+    algorithm_kwarg['block_scaling_config'] = ir.Attribute.parse(
+        f'#stablehlo.block_scaling_config<{entries}>'
+    )
+  if sparsity_config:
+    entries = ', '.join(
+        f'{name} = {cfg.to_attr()}' for name, cfg in sparsity_config
+    )
+    algorithm_kwarg['sparsity_config'] = ir.Attribute.parse(
+        f'#stablehlo.sparsity_config<{entries}>'
+    )
+  # pyformat: enable
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   dot_dnums = hlo.DotDimensionNumbers.get(
       lhs_batching_dimensions=list(lhs_batch),

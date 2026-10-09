@@ -5893,5 +5893,206 @@ class LaxUtilsTest(jtu.JaxTestCase):
     )
 
 
+def _scaling(scale=None, zero_point=None, stride=None, steps=None, side="lhs"):
+  """Returns `<side>_block_scaling` kwargs; `scale`/`zero_point` are shapes."""
+  scaling = jax.lax.BlockScaling(
+      scale_factor=np.ones(scale, np.float32) if scale else None,
+      zero_point=np.zeros(zero_point, np.int8) if zero_point else None,
+      block_stride=stride,
+      block_steps=steps,
+  )
+  return {f"{side}_block_scaling": scaling}
+
+
+def _sparsity(indices=None, n=1, m=4, stride=1, dimension=1, side="lhs"):
+  """Returns `<side>_sparsity` kwargs; `indices` is a shape."""
+  sparsity = jax.lax.StructuredSparsity(
+      indices=np.zeros(indices, np.int32) if indices else None,
+      n=n,
+      m=m,
+      stride=stride,
+      dimension=dimension,
+  )
+  return {f"{side}_sparsity": sparsity}
+
+
+# Contract lhs dimension 1 with rhs dimension 0.
+_DNUMS = (((1,), (0,)), ((), ()))
+_EXTENSION_ATTRS = ["block_scaling_config", "sparsity_config"]
+
+
+class DotGeneralBlockScalingAndSparsityTest(jtu.JaxTestCase):
+  """Tests the block scaling and structured sparsity `dot_general` options."""
+
+  def _lower(self, lhs, rhs, dtype=np.float32, **kwargs) -> str:
+    fn = lambda a, b: jax.lax.dot_general(a, b, _DNUMS, **kwargs)
+    lowered = jax.jit(fn).lower(np.ones(lhs, dtype), np.ones(rhs, dtype))
+    return lowered.as_text(dialect="stablehlo")
+
+  @parameterized.named_parameters(
+      dict(testcase_name="plain", forbidden=_EXTENSION_ATTRS),
+      dict(
+          testcase_name="two_sided_scaling",
+          kwargs=_scaling(scale=(4, 2)) | _scaling(scale=(2, 8), side="rhs"),
+          expected=["block_scaling_config"],
+          forbidden=["zero_idx"],
+      ),
+      dict(
+          testcase_name="zero_points",
+          kwargs=_scaling(scale=(4, 4), zero_point=(4, 4))
+          | _scaling(scale=(4, 8), zero_point=(4, 8), side="rhs"),
+          expected=["block_scaling_config", "zero_idx"],
+      ),
+      dict(
+          testcase_name="block_steps",
+          kwargs=_scaling(scale=(4, 2), steps=[2]),
+          expected=["steps"],
+      ),
+      # 1 in 4 sparsity makes the stored (4, 16) lhs a dense (4, 64).
+      dict(
+          testcase_name="structured_sparsity",
+          rhs=(64, 8),
+          kwargs=_sparsity(indices=(4, 16)),
+          expected=["sparsity_config", "dimension"],
+      ),
+      dict(
+          testcase_name="scaling_and_sparsity",
+          rhs=(64, 8),
+          kwargs=_scaling(scale=(4, 2)) | _sparsity(indices=(4, 16)),
+          expected=_EXTENSION_ATTRS,
+      ),
+  )
+  def test_mlir_lowering(
+      self, kwargs=None, lhs=(4, 16), rhs=(16, 8), expected=(), forbidden=()
+  ):
+    mlir = self._lower(lhs, rhs, **(kwargs or {}))
+    for text in ("stablehlo.dot_general", *expected):
+      self.assertIn(text, mlir)
+    # The extensions must stay on `stablehlo.dot_general` itself; they must
+    # never be smuggled through a composite or a custom call.
+    for text in (*forbidden, "stablehlo.composite", "stablehlo.custom_call"):
+      self.assertNotIn(text, mlir)
+
+  def test_zero_point_widens_the_result_dtype(self):
+    kwargs = _scaling(scale=(16, 4), zero_point=(16, 4))
+    mlir = self._lower((16, 64), (64, 32), np.int8, **kwargs)
+    self.assertIn("f32", mlir)  # Widened from int8 by the f32 scale factor.
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="block_scaling",
+          lhs=(16, 64),
+          kwargs=_scaling(scale=(16, 4)) | _scaling(scale=(4, 32), side="rhs"),
+      ),
+      # 1 in 4 sparsity makes the stored (16, 16) lhs a dense (16, 64).
+      dict(
+          testcase_name="structured_sparsity",
+          lhs=(16, 16),
+          kwargs=_sparsity(indices=(16, 16)),
+      ),
+  )
+  def test_eval_shape(self, lhs, kwargs):
+    fn = lambda l, r: jax.lax.dot_general(l, r, _DNUMS, **kwargs)
+    lhs_aval = jax.ShapeDtypeStruct(lhs, np.float32)
+    rhs_aval = jax.ShapeDtypeStruct((64, 32), np.float32)
+    self.assertEqual(jax.eval_shape(fn, lhs_aval, rhs_aval).shape, (16, 32))
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="zero_point_without_scale",
+          kwargs=_scaling(zero_point=(16, 4)),
+          error="scale_factor is required",
+      ),
+      dict(
+          testcase_name="incompatible_scale_shape",
+          kwargs=_scaling(scale=(16, 5)),
+          error="must be divisible by scale size",
+      ),
+      dict(
+          testcase_name="block_stride_length",
+          kwargs=_scaling(scale=(16, 4), stride=[2, 2]),
+          error="lhs_block_stride length",
+      ),
+      dict(
+          testcase_name="block_steps_length",
+          kwargs=_scaling(scale=(16, 4), steps=[2, 2]),
+          error="lhs_block_steps length",
+      ),
+      dict(
+          testcase_name="sparsity_without_indices",
+          lhs=(16, 16),
+          kwargs=_sparsity(),
+          error="without lhs_indices",
+      ),
+      dict(
+          testcase_name="indices_shape_mismatch",
+          lhs=(16, 16),
+          kwargs=_sparsity(indices=(16, 8)),
+          error="shape .* must match",
+      ),
+      dict(
+          testcase_name="sparse_dimension_indivisible",
+          lhs=(8, 10),
+          rhs=(40, 8),
+          kwargs=_sparsity(indices=(8, 10), stride=4),
+          error="must be divisible by",
+      ),
+  )
+  def test_validation_error(self, kwargs, error, lhs=(16, 64), rhs=(64, 32)):
+    with self.assertRaisesRegex(ValueError, error):
+      jax.lax.dot_general(np.ones(lhs), np.ones(rhs), _DNUMS, **kwargs)
+
+  def test_invalid_structured_sparsity_dataclass(self):
+    with self.assertRaisesRegex(ValueError, "requires 0 < n < m"):
+      jax.lax.StructuredSparsity(np.zeros((4, 16), np.int32), n=4, m=1)
+
+  def test_differentiation_raises_not_implemented(self):
+    lhs = np.ones((16, 64), np.float32)
+    rhs = np.ones((64, 32), np.float32)
+    kwargs = _scaling(scale=(16, 4))
+    dot = lambda x: jax.lax.dot_general(x, rhs, _DNUMS, **kwargs)
+    gradient_error = "Gradient computation .* not supported"
+    with self.assertRaisesRegex(NotImplementedError, gradient_error):
+      jax.grad(lambda x: jnp.sum(dot(x)))(lhs)
+    with self.assertRaisesRegex(NotImplementedError, gradient_error):
+      jax.jvp(dot, (lhs,), (lhs,))
+    with self.assertRaisesRegex(NotImplementedError, gradient_error):
+      jax.vjp(dot, lhs)
+    with self.assertRaisesRegex(NotImplementedError, "Batching rule .* not"):
+      jax.vmap(dot)(np.ones((2, 16, 64), np.float32))
+
+  @jtu.with_explicit_mesh((1,), ("x",))
+  def test_explicit_sharding(self, mesh):
+    # The sharding rules must tolerate the extra block scaling operands.
+    del mesh  # The decorator has already installed it as the current mesh.
+    fn = lambda l, r: jax.lax.dot_general(
+        l, r, _DNUMS, **_scaling(scale=(16, 4))
+    )
+    lhs = jax.ShapeDtypeStruct((16, 64), np.float32)
+    rhs = jax.ShapeDtypeStruct((64, 32), np.float32)
+    self.assertEqual(jax.eval_shape(fn, lhs, rhs).shape, (16, 32))
+
+  def test_pytree_registration(self):
+    scale = np.ones((16, 4), np.float32)
+    zero_point = np.zeros((16, 4), np.int8)
+    scaling = jax.lax.BlockScaling(scale, zero_point, [2], [1])
+    leaves, treedef = jax.tree.flatten(scaling)
+    self.assertIs(leaves[0], scale)
+    self.assertIs(leaves[1], zero_point)
+    roundtrip = jax.tree.unflatten(treedef, leaves)
+    self.assertEqual(roundtrip.block_stride, (2,))
+    self.assertEqual(roundtrip.block_steps, (1,))
+    # A missing `zero_point` must survive the round trip as `None`.
+    bare_leaves, bare_treedef = jax.tree.flatten(jax.lax.BlockScaling(scale))
+    self.assertIsNone(jax.tree.unflatten(bare_treedef, bare_leaves).zero_point)
+    # The dataclasses must also survive crossing a `jax.jit` boundary as
+    # arguments, rather than only as closed over constants.
+    fn = lambda l, r, s: jax.lax.dot_general(l, r, _DNUMS, lhs_block_scaling=s)
+    lhs = np.ones((16, 64), np.float32)
+    rhs = np.ones((64, 32), np.float32)
+    mlir = jax.jit(fn).lower(lhs, rhs, scaling).as_text(dialect="stablehlo")
+    self.assertIn("block_scaling_config", mlir)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
