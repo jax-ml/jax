@@ -870,21 +870,25 @@ llvm::LogicalResult VectorConcatOp::inferReturnTypes(
 }
 
 llvm::LogicalResult ReturnOp::verify() {
-  // The operand number and types must match the custom primitive signature.
-  const auto& results = getParentOp()->getResultTypes();
-  if (getNumOperands() != results.size())
+  // The operand number and types must match the parent op signature.
+  mlir::Operation* parent = (*this)->getParentOp();
+  mlir::TypeRange results = parent->getResultTypes();
+  if (getNumOperands() != results.size()) {
     return emitOpError("has ")
-           << getNumOperands() << " operands, but enclosing custom_primitive (@"
-           << getParentOp()->getName() << ") returns " << results.size();
+           << getNumOperands() << " operands, but enclosing "
+           << parent->getName().stripDialect() << " (@" << parent->getName()
+           << ") returns " << results.size();
+  }
 
-  for (unsigned i = 0, e = results.size(); i != e; ++i)
-    if (getOperand(i).getType() != results[i])
+  for (unsigned i = 0, e = results.size(); i != e; ++i) {
+    if (getOperand(i).getType() != results[i]) {
       return emitOpError() << "type of return operand " << i << " ("
                            << getOperand(i).getType()
                            << ") doesn't match the result type (" << results[i]
-                           << ")"
-                           << " in custom_primitive @"
-                           << getParentOp()->getName();
+                           << ") in " << parent->getName().stripDialect()
+                           << " @" << parent->getName();
+    }
+  }
 
   return llvm::success();
 }
@@ -1308,6 +1312,52 @@ llvm::LogicalResult WarpMapOp::verify() {
       return emitOpError() << "Can only map over scalars and refs.";
     }
   }
+  return llvm::success();
+}
+
+llvm::LogicalResult RunScopedOp::verify() {
+  mlir::Block& body = getRegion().front();
+  if (getBufferAttrs().size() != body.getNumArguments()) {
+    return emitOpError() << "Expected the number of buffer attributes ("
+                         << getBufferAttrs().size()
+                         << ") to match the number of block arguments ("
+                         << body.getNumArguments() << ").";
+  }
+
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+
+  for (auto [arg, attr] :
+       llvm::zip_equal(body.getArguments(), getBufferAttrs())) {
+    auto memref_type = mlir::dyn_cast<mlir::MemRefType>(arg.getType());
+    if (!memref_type) {
+      return emitOpError() << "Expected block argument " << arg.getArgNumber()
+                           << " to be a memref, but got: " << arg.getType();
+    }
+    if (!memref_type.hasStaticShape()) {
+      return emitOpError()
+             << "Expected block argument " << arg.getArgNumber()
+             << " to have a static shape, but got: " << memref_type;
+    }
+    if (memref_type.getMemorySpace() != smem) {
+      return emitOpError()
+             << "Expected block argument " << arg.getArgNumber()
+             << " to be in SMEM memory space, but got: " << memref_type;
+    }
+    if (!mlir::isa<SmemAllocAttr>(attr)) {
+      return emitOpError() << "Expected buffer attribute " << arg.getArgNumber()
+                           << " for SMEM allocation to be a "
+                              "#mosaic_gpu.smem_alloc attribute, but got: "
+                           << attr;
+    }
+  }
+
+  for (mlir::Value result : getResults()) {
+    if (mlir::isa<mlir::MemRefType>(result.getType())) {
+      return emitOpError("run_scoped cannot return memref");
+    }
+  }
+
   return llvm::success();
 }
 

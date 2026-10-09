@@ -934,21 +934,25 @@ def MosaicGPU_OptimizationBarrierOp : Op<MosaicGPU_Dialect, "optimization_barrie
 }
 
 def MosaicGPU_ReturnOp : Op<MosaicGPU_Dialect, "return",
-    [Pure, ReturnLike, Terminator, HasParent<"CustomPrimitiveOp">]>
+    [Pure, ReturnLike, Terminator,
+     ParentOneOf<["CustomPrimitiveOp", "RunScopedOp"]>]>
 {
-  let summary = "Terminator for the region in a `CustomPrimitiveOp`";
+  let summary = "Terminator for a `CustomPrimitiveOp` or `RunScopedOp` region.";
   let description = [{
     The `return` op is a terminator that indicates the end of execution
-    within a `CustomPrimitiveOp`'s region. It can optionally return some values,
-    which become the results of the parent `CustomPrimitiveOp`.
+    within a `CustomPrimitiveOp` or `RunScopedOp` region. It can optionally
+    return some values, which become the results of the parent op.
 
-    The declared results of the parent `CustomPrimitiveOp` must match the
-    operand types of this op.
+    The declared results of the parent op must match the operand types of this
+    op.
   }];
 
-  // The operand's type must match the parent CustomPrimitiveOp's result type.
+  // The operand's type must match the parent op's result type.
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{ attr-dict ($operands^ `:` type($operands))? }];
+  let builders = [OpBuilder<(ins), [{
+    build($_builder, $_state, ::mlir::ValueRange());
+  }]>];
   let hasVerifier = 1;
 }
 
@@ -987,6 +991,43 @@ def MosaicGPU_WarpMapOp : Op<MosaicGPU_Dialect, "warp_map",
   let regions = (region SizedRegion<1>:$region);
 
   let hasCanonicalizer = 1;
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_OptionalAlignmentParam :
+    OptionalParameter<"::mlir::IntegerAttr", "optional byte alignment">,
+    AttrConstraint<
+        Or<[IsNullAttr.predicate, IntValidAlignment<I64Attr>.predicate]>,
+        IntValidAlignment<I64Attr>.summary> {
+  let printer = "$_printer.printAttributeWithoutType($_self);";
+}
+
+def MosaicGPU_SmemAllocAttr : MosaicGPU_Attr<"SmemAlloc", "smem_alloc"> {
+  let summary = "Attributes for a scoped SMEM allocation.";
+  let parameters = (ins MosaicGPU_OptionalAlignmentParam:$alignment);
+  let assemblyFormat = "(`<` `alignment` `=` $alignment^ `>`)?";
+}
+
+def MosaicGPU_RunScopedOp : Op<MosaicGPU_Dialect, "run_scoped",
+    [SingleBlockImplicitTerminator<"ReturnOp">]> {
+  let summary = "Evaluates a region with scoped allocations.";
+  let description = [{
+    Evaluates a single-block region where block arguments represent scoped
+    allocations whose lifetimes are confined to the region.
+
+    Each block argument must be a statically shaped memref in SMEM, with a
+    corresponding `#mosaic_gpu.smem_alloc` entry in `buffer_attrs`.
+
+    The region may capture outer values and return non-memref results via
+    `mosaic_gpu.return`.
+  }];
+
+  let arguments = (ins
+    ArrayAttr:$buffer_attrs
+  );
+  let results = (outs Variadic<AnyType>:$results);
+  let regions = (region SizedRegion<1>:$region);
+
   let hasVerifier = 1;
 }
 

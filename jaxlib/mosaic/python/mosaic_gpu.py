@@ -68,3 +68,41 @@ class WarpMapOp(_mosaic_gpu_gen_ops.WarpMapOp):  # noqa: F405
 
 def warp_map(operands, *, loc=None, ip=None) -> WarpMapOp:
   return WarpMapOp(operands, loc=loc, ip=ip)
+
+
+@_cext.register_operation(_mosaic_gpu_gen_ops._Dialect, replace=True)
+class RunScopedOp(_mosaic_gpu_gen_ops.RunScopedOp):  # noqa: F405
+  """An extension to the automatically generated RunScopedOp bindings."""
+
+  def __init__(
+      self,
+      buffer_types,
+      buffer_attrs,
+      *,
+      results=(),
+      loc=None,
+      ip=None,
+  ):
+    super().__init__(results, buffer_attrs, loc=loc, ip=ip)
+    self.regions[0].blocks.append(*buffer_types)  # Append the block.
+
+  @property
+  def body(self):
+    return self.regions[0].blocks[0]
+
+
+def run_scoped(
+    buffer_types,
+    buffer_attrs,
+    *,
+    results=(),
+    loc=None,
+    ip=None,
+) -> RunScopedOp:
+  return RunScopedOp(
+      buffer_types,
+      buffer_attrs,
+      results=results,
+      loc=loc,
+      ip=ip,
+  )
