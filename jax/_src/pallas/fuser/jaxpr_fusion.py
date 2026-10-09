@@ -17,7 +17,6 @@
 from collections.abc import Iterable, Sequence
 import contextlib
 import functools
-from typing import Any
 
 import jax
 from jax._src import api_util
@@ -147,9 +146,6 @@ def fuse(
   if f is not None:
     return decorator(f)
   return decorator
-
-
-_fusible: dict[jax_core.Primitive, Any] = {}
 
 
 def _construct_fusion_jaxpr(
