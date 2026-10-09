@@ -517,6 +517,13 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "rebindable",
+    srcs = ["rebindable.py"],
+    visibility = [":pallas_fuser_users"],
+    deps = ["//jax/_src:rebindable"],
+)
+
+pytype_strict_library(
     name = "hijax",
     srcs = ["hijax.py"],
     visibility = ["//visibility:public"],
