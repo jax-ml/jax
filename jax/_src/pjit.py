@@ -1612,8 +1612,7 @@ def _pjit_linearize(is_vjp, nzs, *primals_in, jaxpr, in_shardings, out_shardings
   def tangent_fun(residuals, structured_residuals, *tangents):
     tangents_nz = _filter_zeros(nzs, tangents)
     sres_flat = tree_leaves(structured_residuals)
-    nz_tangents_out = jit_p.bind(
-        *residuals, *tangents_nz, *sres_flat, jaxpr=tangent_jaxpr,
+    params = dict(
         in_shardings=_pad(nzs, in_shardings, UNSPECIFIED),
         in_layouts=_pad(nzs, in_layouts, None),
         donated_invars=_pad(nzs, donated_invars, False),
@@ -1621,6 +1620,12 @@ def _pjit_linearize(is_vjp, nzs, *primals_in, jaxpr, in_shardings, out_shardings
         out_layouts=_filter_zeros(nzs_out, out_layouts),
         ctx_mesh=ctx_mesh, name=name, keep_unused=keep_unused, inline=inline,
         compiler_options_kvs=compiler_options_kvs)
+    args = (*residuals, *tangents_nz, *sres_flat)
+    if is_vjp:
+      nz_tangents_out = ad.vjp_node_p.bind(
+          *args, jaxpr=tangent_jaxpr, transpose=partial(_pjit_transpose_fancy, **params))
+    else:
+      nz_tangents_out = jit_p.bind(*args, jaxpr=tangent_jaxpr, **params)
     nz_tangents_out_ = iter(nz_tangents_out)
     tangents_out = [next(nz_tangents_out_) if nz else ad.Zero(aval)
                    for (aval, nz) in zip(tangent_avals_out, nzs_out)]
