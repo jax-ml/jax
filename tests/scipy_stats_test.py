@@ -252,6 +252,105 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @genNamedParametersNArgs(3)
+  def testGeomCdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.geom.cdf
+    lax_fun = lsp_stats.geom.cdf
+
+    def args_maker():
+      x, logit, loc = map(rng, shapes, dtypes)
+      x = np.floor(x).astype(x.dtype)
+      p = np.clip(expit(logit), 0.05, 0.95).astype(logit.dtype)
+      loc = np.floor(loc).astype(loc.dtype)
+      return [x, p, loc]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol={np.float32: 1e-5, np.float64: 1e-6})
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGeomLogCdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.geom.logcdf
+    lax_fun = lsp_stats.geom.logcdf
+
+    def args_maker():
+      x, logit, loc = map(rng, shapes, dtypes)
+      x = np.floor(x).astype(x.dtype)
+      p = np.clip(expit(logit), 0.05, 0.95).astype(logit.dtype)
+      loc = np.floor(loc).astype(loc.dtype)
+      return [x, p, loc]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol={np.float32: 1e-5, np.float64: 1e-6})
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGeomSf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.geom.sf
+    lax_fun = lsp_stats.geom.sf
+
+    def args_maker():
+      x, logit, loc = map(rng, shapes, dtypes)
+      x = np.floor(x).astype(x.dtype)
+      p = np.clip(expit(logit), 0.05, 0.95).astype(logit.dtype)
+      loc = np.floor(loc).astype(loc.dtype)
+      return [x, p, loc]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol={np.float32: 1e-5, np.float64: 1e-6})
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGeomLogSf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.geom.logsf
+    lax_fun = lsp_stats.geom.logsf
+
+    def args_maker():
+      x, logit, loc = map(rng, shapes, dtypes)
+      x = np.floor(x).astype(x.dtype)
+      p = np.clip(expit(logit), 0.05, 0.95).astype(logit.dtype)
+      loc = np.floor(loc).astype(loc.dtype)
+      return [x, p, loc]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol={np.float32: 1e-5, np.float64: 1e-6})
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testGeomPpf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.geom.ppf
+    lax_fun = lsp_stats.geom.ppf
+
+    def args_maker():
+      q, logit, loc = map(rng, shapes, dtypes)
+      q = np.clip(expit(q), 1e-3, 1 - 1e-3).astype(q.dtype)
+      p = np.clip(expit(logit), 0.05, 0.95).astype(logit.dtype)
+      loc = np.floor(loc).astype(loc.dtype)
+      return [q, p, loc]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol={np.float32: 1e-5, np.float64: 1e-6})
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  def testGeomPpfBoundaries(self):
+    p = np.float32(0.3)
+    qs = np.array([-0.5, 0.0, 0.1, 0.3, 0.5, 0.75, 1.0, 1.5], dtype=np.float32)
+    self.assertAllClose(
+        lsp_stats.geom.ppf(qs, p),
+        osp_stats.geom.ppf(qs, p),
+        check_dtypes=False)
+
+
   @genNamedParametersNArgs(5)
   def testBetaLogPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
