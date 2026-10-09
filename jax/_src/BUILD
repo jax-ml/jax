@@ -360,6 +360,7 @@ pytype_strict_library(
         ":dtypes",
         ":effects",
         ":ffi",
+        ":mesh",
         ":mlir",
         ":pickle_util",
         ":sharding",
