@@ -57,6 +57,7 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
 #include "llvm/ADT/SmallVector.h"
@@ -320,8 +321,7 @@ absl::StatusOr<mlir::OpPassManager> GetPassPipeline(
   return std::move(*passes);
 }
 
-absl::Status RunPasses(mlir::OpPassManager&& passes,
-                       mlir::ModuleOp module,
+absl::Status RunPasses(mlir::OpPassManager&& passes, mlir::ModuleOp module,
                        const mosaic::gpu::DumpOptions& dump_opts) {
   mlir::PassManager pm(module.getContext());
   pm.enableVerifier(false);
@@ -1100,6 +1100,8 @@ struct DeviceState {
   // instructions.
   // Note: the collective metadata param to peers and multimem addresses are
   // pointing to the nullptr and should not be used during the lowering.
+  // Peer parameters contains pointers to memory ranges within which parameters
+  // are allocated.
   std::vector<std::byte> metadata_bytes;
 
   // The RAII handle of the buffer on the device which stores the structure
@@ -1405,6 +1407,57 @@ void* SubtractOffset(void* ptrs, int64_t offset) {
   return reinterpret_cast<void*>(reinterpret_cast<uint64_t>(ptrs) - offset);
 }
 
+intptr_t PtrDelta(const void* a, const void* b) {
+  return reinterpret_cast<uintptr_t>(a) - reinterpret_cast<uintptr_t>(b);
+}
+
+// Returns true if `device_state.metadata_bytes` already holds the same
+// metadata rank and per-parameter `(peer_addr - local_addr)` and
+// `(multimem_addr - local_addr)` deltas as `param_to_peers` and
+// `parameter_multimem_addresses`.
+bool HasMatchingCollectiveMetadataDeltas(
+    const DeviceState& device_state, size_t num_buffers, size_t num_devices,
+    xla::RankId rank, absl::Span<void* const> param_to_peers,
+    absl::Span<void* const> parameter_multimem_addresses) {
+  const size_t expected_size =
+      GetCollectiveMetadataSize(num_buffers, num_devices);
+  if (device_state.metadata_bytes.size() != expected_size) {
+    return false;
+  }
+  const auto* current_metadata =
+      reinterpret_cast<const CollectiveKernelMetadata*>(
+          device_state.metadata_bytes.data());
+  if (current_metadata->rank != static_cast<uint64_t>(rank.value())) {
+    return false;
+  }
+  const void* const* current_peers = reinterpret_cast<void* const*>(
+      device_state.metadata_bytes.data() + sizeof(CollectiveKernelMetadata));
+  const void* const* current_multimem =
+      current_peers + (num_buffers * num_devices);
+
+  for (size_t i = 0; i < num_buffers; ++i) {
+    const size_t base = i * num_devices;
+    const void* current_local = current_peers[base + rank.value()];
+    const void* new_local = param_to_peers[base + rank.value()];
+    for (size_t d = 0; d < num_devices; ++d) {
+      if (PtrDelta(current_peers[base + d], current_local) !=
+          PtrDelta(param_to_peers[base + d], new_local)) {
+        return false;
+      }
+    }
+    if ((current_multimem[i] == nullptr) !=
+        (parameter_multimem_addresses[i] == nullptr)) {
+      return false;
+    }
+    if (parameter_multimem_addresses[i] != nullptr &&
+        PtrDelta(current_multimem[i], current_local) !=
+            PtrDelta(parameter_multimem_addresses[i], new_local)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 DeviceState& GetDeviceState(CustomCallResources* resources,
                             int32_t device_ordinal) {
   CHECK(0 <= device_ordinal && device_ordinal < resources->device_states.size())
@@ -1528,15 +1581,11 @@ absl::Status MosaicGpuInitialize(
   ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
                    GetBuffers(inputs, results));
 
-  std::vector<void*> parameter_multimem_addresses(buffers.size(), nullptr);
   ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
                    GetCliqueKey(*collective_params, attributes));
 
-  std::vector<void*> param_to_peers(buffers.size() * clique_key.num_devices());
   ASSIGN_OR_RETURN(std::vector<bool> collective_memory_parameters,
                    ParseCollectiveMemoryParameters(attributes, buffers.size()));
-  bool is_multimem_used =
-      resources->kernel != nullptr && resources->kernel->is_multimem_used;
 
   const bool all_parameters_in_collective_memory = absl::c_all_of(
       collective_memory_parameters,
@@ -1546,6 +1595,11 @@ absl::Status MosaicGpuInitialize(
         "Non-local cliques are only supported when all parameters are allocated"
         " within the collective memory.");
   }
+
+  std::vector<void*> parameter_multimem_addresses(buffers.size(), nullptr);
+  std::vector<void*> param_to_peers(buffers.size() * clique_key.num_devices());
+  bool is_multimem_used =
+      resources->kernel != nullptr && resources->kernel->is_multimem_used;
 
   xla::RankId rank =
       clique_key.rank(collective_params->global_device_id).value();
@@ -1638,6 +1692,15 @@ absl::Status MosaicGpuInitialize(
 
   DeviceState& device_state =
       GetDeviceState(resources, collective_params->local_device_id.value());
+  if (all_parameters_in_collective_memory &&
+      HasMatchingCollectiveMetadataDeltas(
+          device_state, buffers.size(), clique_key.num_devices(), rank,
+          param_to_peers, parameter_multimem_addresses)) {
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "Skipping collective metadata copy since pointer deltas are "
+           "unchanged.";
+    return absl::OkStatus();
+  }
 
   // Construct the collective kernel metadata information.
   CollectiveKernelMetadata metadata;

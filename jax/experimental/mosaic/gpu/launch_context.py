@@ -2516,7 +2516,12 @@ class LaunchContext:
       self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()
 
       assert _kernel_arg_idx is not None
-      # TODO(apaszke): Just use the pointer directly. After all it is an arg.
+      # Collective metadata pointers cannot be used directly: for collective
+      # memory they point to the base of the allocation rather than the
+      # parameter, and runtime initialization skips updating metadata when
+      # pointer deltas are unchanged. Only `(peer_addr - local_addr)` and
+      # `(multimem_addr - local_addr)` deltas relative to the live kernel
+      # argument pointer (`ref`) may be used.
       current_device = self.device_id(on_host)
       parameter_on_current_device = self._get_parameter_address_on_peer(
           _kernel_arg_idx, current_device, on_host
