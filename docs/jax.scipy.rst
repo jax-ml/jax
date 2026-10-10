@@ -405,6 +405,7 @@ jax.scipy.stats.laplace
    cdf
    logpdf
    pdf
+   ppf
 
 jax.scipy.stats.logistic
 ~~~~~~~~~~~~~~~~~~~~~~~~
