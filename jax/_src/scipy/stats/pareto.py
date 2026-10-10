@@ -60,9 +60,10 @@ def logpdf(
   x, b, loc, scale = promote_args_inexact("pareto.logpdf", x, b, loc, scale)
   one = _lax_const(x, 1)
   scaled_x = lax.div(lax.sub(x, loc), scale)
+  scaled_x_safe = jnp.where(lax.lt(scaled_x, one), one, scaled_x)
   normalize_term = lax.log(lax.div(scale, b))
   log_probs = lax.neg(
-    lax.add(normalize_term, lax.mul(lax.add(b, one), lax.log(scaled_x)))
+    lax.add(normalize_term, lax.mul(lax.add(b, one), lax.log(scaled_x_safe)))
   )
   return jnp.where(lax.lt(scaled_x, one), -np.inf, log_probs)
 
@@ -144,7 +145,8 @@ def cdf(
   one = _lax_const(x, 1)
   zero = _lax_const(x, 0)
   scaled_x = lax.div(lax.sub(x, loc), scale)
-  cdf = lax.sub(one, lax.pow(scaled_x, lax.neg(b)))
+  scaled_x_safe = jnp.where(lax.lt(scaled_x, one), one, scaled_x)
+  cdf = lax.sub(one, lax.pow(scaled_x_safe, lax.neg(b)))
   return jnp.where(lax.lt(scaled_x, one), zero, cdf)
 
 
@@ -185,8 +187,10 @@ def logcdf(
   """
   x, b, loc, scale = promote_args_inexact("pareto.logcdf", x, b, loc, scale)
   one = _lax_const(x, 1)
+  two = _lax_const(x, 2)
   scaled_x = lax.div(lax.sub(x, loc), scale)
-  logcdf_val = lax.log1p(lax.neg(lax.pow(scaled_x, lax.neg(b))))
+  scaled_x_safe = jnp.where(lax.lt(scaled_x, one), two, scaled_x)
+  logcdf_val = lax.log1p(lax.neg(lax.pow(scaled_x_safe, lax.neg(b))))
   return jnp.where(lax.lt(scaled_x, one), -np.inf, logcdf_val)
 
 
@@ -229,7 +233,8 @@ def logsf(
   zero = _lax_const(x, 0)
   one = _lax_const(x, 1)
   scaled_x = lax.div(lax.sub(x, loc), scale)
-  logsf_val = lax.neg(lax.mul(b, lax.log(scaled_x)))
+  scaled_x_safe = jnp.where(lax.lt(scaled_x, one), one, scaled_x)
+  logsf_val = lax.neg(lax.mul(b, lax.log(scaled_x_safe)))
   return jnp.where(lax.lt(scaled_x, one), zero, logsf_val)
 
 
@@ -309,7 +314,10 @@ def ppf(
   """
   q, b, loc, scale = promote_args_inexact("pareto.ppf", q, b, loc, scale)
   one = _lax_const(q, 1)
+  zero = _lax_const(q, 0)
+  q_invalid = jnp.isnan(q) | (q < 0) | (q > 1)
+  q_safe = jnp.where(q_invalid, zero, q)
   ppf_val = lax.add(
-    loc, lax.mul(scale, lax.pow(lax.sub(one, q), lax.neg(lax.div(one, b))))
+    loc, lax.mul(scale, lax.pow(lax.sub(one, q_safe), lax.neg(lax.div(one, b))))
   )
-  return jnp.where(jnp.isnan(q) | (q < 0) | (q > 1), np.nan, ppf_val)
+  return jnp.where(q_invalid, np.nan, ppf_val)
