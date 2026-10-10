@@ -2302,7 +2302,8 @@ def _check_string_compatible_sharding(s):
 @util.cache(max_size=2048, trace_context_in_key=False)
 def _check_sharding(aval, s):
   if (s is not None and
-      not isinstance(s, (xc.Device, Sharding, Format, core.MemorySpace))):
+      not isinstance(s, (xc.Device, Sharding, Format)) and
+      not core.is_memory_space(s)):
     raise ValueError(
         "`jax.device_put` only accepts `None`, `jax.sharding.Sharding`,"
         " `jax.Device`, `Format`, `jax.memory.Space` or a pytree of these"
@@ -2329,19 +2330,93 @@ def pspec_to_sharding(name, val):
   return val
 
 
+def _device_put_memory_kind(memory_space) -> str:
+  if not core.is_memory_space(memory_space):
+    raise ValueError(
+        "`jax.device_put` memory_space must be `jax.memory.Space`, a "
+        "`jax.experimental.localization.LocalityDomain`, or a pytree of "
+        f"these values. Received invalid value: {memory_space}"
+    )
+  if memory_space is core.MemorySpace.Any:
+    raise ValueError(
+        "`jax.memory.Space.Any` is not a concrete memory space and cannot be "
+        "used with `jax.device_put`."
+    )
+  return core.mem_space_to_kind(memory_space)
+
+
+def _with_device_put_memory_kind(s: Sharding, memory_kind: str) -> Sharding:
+  current_kind = s.memory_kind
+  try:
+    default_kind = s._internal_device_list.default_memory_kind
+  except (AttributeError, ValueError):
+    default_kind = None
+  if default_kind is None:
+    default_kind = "device"
+  if current_kind is not None and current_kind != default_kind:
+    raise ValueError(
+        "`jax.device_put` memory_space cannot be specified when the destination "
+        f"sharding already has non-default memory kind {current_kind!r}."
+    )
+  return s.with_memory_kind(memory_kind)
+
+
+def _device_put_with_memory_space(x, device, memory_space):
+  # `jax.memory.Space` is historically accepted in the `device` position.
+  # Normalize that spelling through the same composition logic.
+  if core.is_memory_space(device):
+    if memory_space is None:
+      memory_space = device
+    else:
+      raise ValueError(
+          "`jax.device_put` memory space cannot be specified through both "
+          "device and memory_space."
+      )
+    device = None
+
+  if memory_space is None:
+    return device
+  memory_kind = _device_put_memory_kind(memory_space)
+
+  if isinstance(device, xc.Device):
+    s = sharding_impls.make_single_device_sharding(device)
+    return _with_device_put_memory_kind(s, memory_kind)
+  if isinstance(device, Format):
+    raise ValueError(
+        "`jax.device_put` memory_space cannot be combined with a `Format` "
+        "destination."
+    )
+  if isinstance(device, Sharding):
+    return _with_device_put_memory_kind(device, memory_kind)
+
+  if device is None:
+    if isinstance(x, array.ArrayImpl):
+      return x.sharding.with_memory_kind(memory_kind)
+    if isinstance(x, core.Tracer):
+      # Tracers do not carry a concrete device-local layout. Keeping the
+      # memory space as the primitive destination preserves their sharding.
+      return memory_space
+    s = sharding_impls.make_single_device_sharding(pxla.get_default_device())
+    return _with_device_put_memory_kind(s, memory_kind)
+  return device
+
+
 def device_put(
     x,
     device: None | xc.Device | Sharding | P | Format | Any = None,
     *, src: None | xc.Device | Sharding | P | Format | Any = None,
-    donate: bool | Any = False, may_alias: bool | None | Any = None):
+    donate: bool | Any = False, may_alias: bool | None | Any = None,
+    memory_space: core.MemorySpace | Any = None):
   """Transfers ``x`` to ``device``.
 
   Args:
     x: An array, scalar, or (nested) standard Python container thereof.
-    device: The (optional) :py:class:`Device`, :py:class:`Sharding`, or a
-      (nested) :py:class:`Sharding` in standard Python container (must be a tree
-      prefix of ``x``), representing the device(s) to which ``x`` should be
-      transferred. If given, then the result is committed to the device(s).
+    device: The optional :py:class:`Device`, :py:class:`Sharding`,
+      :class:`PartitionSpec`, :class:`jax.experimental.layout.Format`, or a
+      nested standard Python container thereof (which must be a tree prefix of
+      ``x``), representing the destination for ``x``. A
+      :class:`jax.memory.Space` is also accepted here for backwards
+      compatibility. If given, the result is committed to the destination.
     src: The (optional) :py:class:`Device`, :py:class:`Sharding`, or a (nested)
       :py:class:`Sharding` in standard Python container (must be a tree prefix
       of ``x``), representing the device(s) on which ``x`` belongs.
@@ -2352,13 +2427,24 @@ def device_put(
     may_alias: bool or None or a (nested) bool in standard Python container
       (must be a tree prefix of ``x``). If False, `x` will be copied. If true,
       `x` may be aliased depending on the runtime's implementation.
+    memory_space: An optional :class:`jax.memory.Space`,
+      :class:`jax.experimental.localization.LocalityDomain`, or a nested
+      standard Python container thereof (which must be a tree prefix of
+      ``x``). The memory space composes with a :class:`Device`,
+      :class:`Sharding`, or :class:`PartitionSpec` without changing its devices
+      or partitioning. It cannot be combined with a
+      :class:`jax.experimental.layout.Format`. If ``device`` is omitted,
+      existing JAX arrays retain their current sharding, while host values are
+      placed on the default device. If a destination sharding already has a
+      non-default memory kind, specifying ``memory_space`` raises
+      ``ValueError``.
 
   Returns:
     A copy of ``x`` that resides on ``device``.
 
-  If the ``device`` parameter is ``None``, then this operation behaves like the
-  identity function if the operand is on any device already, otherwise it
-  transfers the data to the default device, uncommitted.
+  If both ``device`` and ``memory_space`` are ``None``, then this operation
+  behaves like the identity function if the operand is on any device already,
+  otherwise it transfers the data to the default device, uncommitted.
 
   This function is always asynchronous, i.e. returns immediately without
   blocking the calling Python thread until any transfers are completed.
@@ -2381,6 +2467,16 @@ def device_put(
 
     device_flat = map(partial(pspec_to_sharding, 'device_put'), device_flat)
     src_flat = map(partial(pspec_to_sharding, 'device_put'), src_flat)
+
+    if memory_space is None or core.is_memory_space(memory_space):
+      memory_space_flat = [memory_space] * len(x_flat)
+    else:
+      memory_space_flat = flatten_axes(
+          "device_put memory_space", treedef, memory_space
+      )
+    device_flat = map(
+        _device_put_with_memory_space, x_flat, device_flat, memory_space_flat
+    )
 
     if isinstance(donate, bool):
       donate_flat = [donate] * len(x_flat)

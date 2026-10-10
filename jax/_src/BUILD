@@ -556,6 +556,7 @@ pytype_strict_library(
         ":flattree",
         ":frozen_dict",
         ":layout",
+        ":localization",
         ":mesh",
         ":named_sharding",
         ":partition_spec",
@@ -1302,6 +1303,11 @@ pytype_strict_library(
         ":tree_util",
         ":util",
     ],
+)
+
+pytype_strict_library(
+    name = "localization",
+    srcs = ["localization.py"],
 )
 
 pytype_strict_library(
