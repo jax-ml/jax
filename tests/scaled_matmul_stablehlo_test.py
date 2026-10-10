@@ -575,6 +575,21 @@ def create_mxfp8_configs():
 
   return [mxfp8_config for _ in range(3)]
 
+def create_mxfp4_configs():
+  if _dtypes.float8_e8m0fnu is None or _dtypes.float4_e2m1fn is None:
+    return None
+
+  mxfp4_config = BlockScaleConfig(
+        mode='mxfp4',
+        block_size=32,
+        data_type=jnp.float4_e2m1fn,
+        scale_type=jnp.float8_e8m0fnu,
+        global_scale=None,
+        infer_only=False
+  )
+
+  return [mxfp4_config for _ in range(3)]
+
 def get_hlo_text(in_shardings, block_scale_configs):
   mesh_names = ("dp", "tp")
   devices = np.array(jax.local_devices()[:4]).reshape((2, 2))
@@ -1040,9 +1055,14 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
           ),
       ],
       output_type=[jnp.float16, jnp.bfloat16, jnp.float32],
+      mode=["mxfp8", "mxfp4"],
   )
   @jtu.run_on_devices("gpu")
-  def test_dot_general(self, configs, output_type):
+  def test_dot_general(self, configs, output_type, mode):
+    # mxfp4 has no cuDNN kernel; on CUDA it exercises the dequantize-and-dot
+    # expansion of the block-scaled custom call.
+    block_scale_configs = (self.block_scale_configs if mode == "mxfp8"
+                           else create_mxfp4_configs())
     cast_to_representable = partial(
         quantize_dequantize,
         scale=jnp.ones((1,)),
@@ -1053,16 +1073,16 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
     a_shape, b_shape, dimension_numbers, is_training = configs
     a = cast_to_representable(
         jax.random.uniform(k1, a_shape, minval=-1.0, dtype=output_type),
-        self.block_scale_configs[0].data_type,
+        block_scale_configs[0].data_type,
     )
     b = cast_to_representable(
         jax.random.uniform(k2, b_shape, minval=-1.0, dtype=output_type),
-        self.block_scale_configs[1].data_type,
+        block_scale_configs[1].data_type,
     )
 
     scaled_dot_general = partial(
         scaled_dot_general_wrapper,
-        configs=self.block_scale_configs
+        configs=block_scale_configs
     )
     def fwd(a, b, is_ref=False):
       fn = jax.lax.dot_general if is_ref else scaled_dot_general
