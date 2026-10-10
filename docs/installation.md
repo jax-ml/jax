@@ -306,6 +306,11 @@ unzip it, and `pip install` the contained `jax-rocm7-pjrt` and `jax-rocm7-plugin
 wheels (the release notes give the exact commands for each version). This path is
 also a preview and intended for evaluation.
 
+When using these TheRock-based JAX wheels with a ROCm installation under
+`/opt/rocm`, `/opt/rocm` must also contain a TheRock-based ROCm distribution,
+including `lib/rocm_sysdeps/lib`. A classic ROCm installation does not provide
+the `librocm_sysdeps_*` libraries required by the plugin.
+
 For generally available releases, use the pre-installed-ROCm path
 [above](#pip-installation-amd-gpu-rocm-pre-installed).
 
