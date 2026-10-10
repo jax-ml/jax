@@ -283,7 +283,7 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
       output_core_dims = None
 
     none_args = {i for i, arg in enumerate(args) if arg is None}
-    if any(none_args):
+    if none_args:
       if any(input_core_dims[i] != () for i in none_args):
         raise ValueError(f"Cannot pass None at locations {none_args} with {signature=}")
       excluded_func, args, _ = _apply_excluded(excluded_func, none_args, args, {})
