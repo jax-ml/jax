@@ -7617,6 +7617,8 @@ broadcast_in_dim_p = standard_primitive(
     memory_space_rule=_broadcast_in_dim_memory_space_rule)
 broadcast_in_dim_p.def_impl(partial(dispatch.apply_primitive, broadcast_in_dim_p))
 ad.primitive_jvps[broadcast_in_dim_p] = _broadcast_in_dim_jvp_rule
+ad.primitive_linearizations[broadcast_in_dim_p] = partial(
+    ad.linear_linearize, broadcast_in_dim_p)
 ad.primitive_transposes[broadcast_in_dim_p] = _broadcast_in_dim_transpose_rule
 batching.fancy_primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
 pe.forwarding_rules[broadcast_in_dim_p] = _broadcast_in_dim_fwd_rule

@@ -38,6 +38,7 @@ import traceback
 import types
 from typing import NamedTuple
 import unittest
+from unittest import mock
 import weakref
 
 from absl import logging
@@ -5749,6 +5750,28 @@ class APITest(jtu.JaxTestCase):
 
     with config.use_direct_linearize(True):
       jax.grad(my_sin_p.bind)(1.0)  # doesn't crash
+
+  def test_linear_primitives_skip_fallback_linearize_rule(self):
+    def f(x):
+      y = jnp.broadcast_to(jnp.sin(x), (3, x.shape[0]))
+      z = jnp.concatenate([y[:, 1:], y[:, :1]], axis=1).T.reshape(-1)
+      return jnp.sum(-z * jnp.cumsum(z)) + jnp.squeeze(x[None, :1])
+
+    fallback_prims = []
+    fallback = ad_internal.fallback_linearize_rule
+    def recording_fallback(prim, *args, **kwargs):
+      fallback_prims.append(prim.name)
+      return fallback(prim, *args, **kwargs)
+
+    x = jnp.linspace(0.1, 1.3, 5)
+    with (mock.patch.object(ad_internal, 'fallback_linearize_rule',
+                            recording_fallback),
+          config.use_direct_linearize(True)):
+      jax.grad(f)(x)
+    expected_not_in = {'broadcast_in_dim', 'slice', 'concatenate', 'transpose',
+                       'reshape', 'squeeze', 'neg', 'reduce_sum'}
+    self.assertEmpty(expected_not_in.intersection(fallback_prims))
+    jtu.check_grads(f, (x,), order=2, modes=['fwd', 'rev'])
 
   def test_structured_residuals_deduped_by_jit(self):
     # Structured residuals can refer to the same value in multiple tree
