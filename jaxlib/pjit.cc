@@ -95,6 +95,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace jax {
 namespace {
@@ -631,6 +632,11 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
   }
 
   if (!copy_groups.empty() && !addressable_devices.empty()) {
+    tsl::profiler::TraceMe traceme([&] {
+      return tsl::profiler::TraceMeEncode(
+          "PrepareIfrtInputs::CopyArrays",
+          {{"num_copy_groups", copy_groups.size()}});
+    });
     xla::ifrt::Client* const ifrt_client =
         executable.ifrt_loaded_executable()->client();
     ABSL_ASSIGN_OR_RETURN(
@@ -680,6 +686,10 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // Calls the cache_miss_ function. This just calls the Python function; it may
   // return nullptr value if a Python exception is thrown.
   auto cache_miss = [&]() -> nb::tuple {
+    tsl::profiler::TraceMe traceme([&] {
+      return tsl::profiler::TraceMeEncode("PjitFunction::Call::CacheMissPython",
+                                          {{"function", function_name_}});
+    });
     return nb::steal<nb::tuple>(
         PyObject_Vectorcall(cache_miss_.ptr(), args, nargs, kwnames));
   };
@@ -687,7 +697,15 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // Call the cache_miss() function, extracting the output data and ignoring
   // the fastpath data. If the cache miss returns a Python error, returns
   // nullptr and leaves the Python error set.
-  auto fallback_to_cache_miss = [&]() {
+  //
+  // `reason` records why the C++ fastpath was abandoned, so that a profile
+  // makes it obvious which check pushed the call back into Python. Each caller
+  // passes a distinct, stable literal.
+  auto fallback_to_cache_miss = [&](std::string_view reason) {
+    tsl::profiler::TraceMe traceme([&] {
+      return tsl::profiler::TraceMeEncode(
+          "PjitFunction::Call::FallbackToPython", {{"reason", reason}});
+    });
     nb::tuple cache_miss_output = cache_miss();
     if (!cache_miss_output.ptr()) {
       return nb::object();
@@ -709,46 +727,59 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
       pytree_registry_.get(), call_signature.arg_signature, flat_dynamic_args);
   if (!status.ok()) {
     VLOG(2) << "ParseArguments failed: " << status;
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("parse_arguments_failed");
   }
 
   // Perform a few checks for the arguments. Currently we are only allowing
   // committed PyArray inputs. For other cases, e.g. Tracers or ShapedArray, it
   // will fallback to python. For jit, numpy arrays and scalars are also
   // allowed, which we will check later.
-  for (const auto& arg : flat_dynamic_args) {
-    if (arg.type().ptr() != PyArray::type().ptr()) {
-      continue;
-    }
+  {
+    tsl::profiler::TraceMe traceme([&] {
+      return tsl::profiler::TraceMeEncode(
+          "PjitFunction::Call::CheckArgs",
+          {{"num_args", flat_dynamic_args.size()}});
+    });
+    for (const auto& arg : flat_dynamic_args) {
+      if (arg.type().ptr() != PyArray::type().ptr()) {
+        continue;
+      }
 
-    PyArray py_array = nb::borrow<PyArray>(arg);
+      PyArray py_array = nb::borrow<PyArray>(arg);
 
-    // Only allow committed PyArray in cpp pjit for now as the logic on handling
-    // sharding for uncommitted PyArray is complicated and still under
-    // development.
-    //
-    // TODO(chky): Consider support uncommitted PyArray in cpp when the python
-    // side stabilizes.
-    int sharding_num_devices =
-        nb::cast<const Sharding*>(py_array.sharding())->num_devices();
-    if (!py_array.committed() && sharding_num_devices > 1) {
-      VLOG(2) << "PyArray argument is not committed and number of global "
-                 "devices is more than 1; fallback to python.";
-      return fallback_to_cache_miss();
+      // Only allow committed PyArray in cpp pjit for now as the logic on
+      // handling sharding for uncommitted PyArray is complicated and still
+      // under development.
+      //
+      // TODO(chky): Consider support uncommitted PyArray in cpp when the python
+      // side stabilizes.
+      int sharding_num_devices =
+          nb::cast<const Sharding*>(py_array.sharding())->num_devices();
+      if (!py_array.committed() && sharding_num_devices > 1) {
+        VLOG(2) << "PyArray argument is not committed and number of global "
+                   "devices is more than 1; fallback to python.";
+        return fallback_to_cache_miss("uncommitted_multi_device_array");
+      }
     }
   }
 
   bool enable_x64 = GetEnableX64();
-  status = ComputeCallSignature(flat_dynamic_args, enable_x64, call_signature);
+  {
+    tsl::profiler::TraceMe traceme("PjitFunction::Call::ComputeCallSignature");
+    status = ComputeCallSignature(flat_dynamic_args, enable_x64,
+                                  call_signature);
+  }
   if (!status.ok()) {
     VLOG(2) << "ComputeCallSignature failed: " << status;
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("compute_call_signature_failed");
   }
 
   VLOG(2) << "CallSignature:\n" << call_signature.DebugString();
   bool inserted = false;
   std::shared_ptr<PjitCacheEntry> cache_entry;
   {
+    tsl::profiler::TraceMe traceme(
+        "PjitFunction::Call::ExecutablesCacheLookup");
     nb::ft_object_guard lock(cache_);
     cache_entry = executables_->GetOrCreateIfAbsent(
         call_signature, [this, &inserted](const CallSignature& unused) {
@@ -761,6 +792,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     // In case of several threads attempting to compile the executable, only
     // the one that inserted the item will perform the compilation.
     if (inserted) {
+      tsl::profiler::TraceMe traceme("PjitFunction::Call::CacheMissCompile");
       nb::object out_and_fastpath_data;
       nb::tuple out_tuple;
       VLOG(2) << "Cache miss for " << call_signature.DebugString();
@@ -803,6 +835,8 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
         PyErr_SetString(PyExc_RecursionError, error_string.c_str());
         throw nb::python_error();
       }
+      tsl::profiler::TraceMe traceme(
+          "PjitFunction::Call::AwaitConcurrentCompile");
       // Release the GIL while we wait, making sure the compile thread can
       // lock it.
       nb::gil_scoped_release release;
@@ -812,56 +846,72 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
 
   if (cache_entry->fall_back_to_python) {
     VLOG(2) << "cpp pjit fallback to python.";
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("cache_entry_fall_back_to_python");
   }
 
   absl::InlinedVector<PyArgSignature, 2> dynamic_arg_signatures;
-  dynamic_arg_signatures.reserve(cache_entry->const_args.size() +
-                                 flat_dynamic_args.size());
-  if (!cache_entry->const_args.empty()) {
-    flat_dynamic_args.reserve(cache_entry->const_args.size() +
-                              flat_dynamic_args.size());
-    flat_dynamic_args.insert(flat_dynamic_args.begin(),
-                             cache_entry->const_args.begin(),
-                             cache_entry->const_args.end());
+  {
+    tsl::profiler::TraceMe traceme([&] {
+      return tsl::profiler::TraceMeEncode(
+          "PjitFunction::Call::BuildArgSignatures",
+          {{"num_const_args", cache_entry->const_args.size()},
+           {"num_dynamic_args", flat_dynamic_args.size()}});
+    });
+    dynamic_arg_signatures.reserve(cache_entry->const_args.size() +
+                                   flat_dynamic_args.size());
+    if (!cache_entry->const_args.empty()) {
+      flat_dynamic_args.reserve(cache_entry->const_args.size() +
+                                flat_dynamic_args.size());
+      flat_dynamic_args.insert(flat_dynamic_args.begin(),
+                               cache_entry->const_args.begin(),
+                               cache_entry->const_args.end());
 
-    for (nb::handle const_arg : cache_entry->const_args) {
-      ABSL_ASSIGN_OR_RETURN(auto const_arg_signature,
-                            PyArgSignatureOfValue(const_arg, enable_x64));
-      dynamic_arg_signatures.push_back(std::move(const_arg_signature));
+      for (nb::handle const_arg : cache_entry->const_args) {
+        ABSL_ASSIGN_OR_RETURN(auto const_arg_signature,
+                              PyArgSignatureOfValue(const_arg, enable_x64));
+        dynamic_arg_signatures.push_back(std::move(const_arg_signature));
+      }
     }
-  }
-  for (const auto& arg : call_signature.dynamic_arg_signatures) {
-    dynamic_arg_signatures.push_back(std::move(arg));
+    for (const auto& arg : call_signature.dynamic_arg_signatures) {
+      dynamic_arg_signatures.push_back(std::move(arg));
+    }
   }
 
   PyUserContextScope user_context_scope;
   // A vector of [num_inputs].
-  auto num_args_arrays = PrepareIfrtInputs(
-      *cache_entry->executable, flat_dynamic_args, dynamic_arg_signatures,
-      enable_x64, cache_entry->kept_var_bitvec, cache_entry->in_shardings,
-      cache_entry->in_device_local_layouts, shard_arg_fallback_,
-      keep_alive_objects);
+  absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> num_args_arrays;
+  {
+    tsl::profiler::TraceMe traceme("PjitFunction::Call::PrepareIfrtInputs");
+    num_args_arrays = PrepareIfrtInputs(
+        *cache_entry->executable, flat_dynamic_args, dynamic_arg_signatures,
+        enable_x64, cache_entry->kept_var_bitvec, cache_entry->in_shardings,
+        cache_entry->in_device_local_layouts, shard_arg_fallback_,
+        keep_alive_objects);
+  }
 
   if (!num_args_arrays.ok()) {
     VLOG(2) << "Failed to prepare IFRT inputs: " << num_args_arrays.status();
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("prepare_ifrt_inputs_failed");
   }
 
-  xla::ifrt::ExecuteOptions execute_options =
-      cache_entry->executable->options();
-  execute_options.launch_id = cache_entry->executable->GetNextLaunchId();
-  execute_options.execution_stream_id = GetExecutionStreamId();
-  if (execute_options.execution_stream_id == 0) {
-    execute_options.execution_stream_id =
-        tsl::Env::Default()->GetCurrentThreadId();
+  xla::ifrt::ExecuteOptions execute_options;
+  {
+    tsl::profiler::TraceMe traceme("PjitFunction::Call::PrepareExecuteOptions");
+    execute_options = cache_entry->executable->options();
+    execute_options.launch_id = cache_entry->executable->GetNextLaunchId();
+    execute_options.execution_stream_id = GetExecutionStreamId();
+    if (execute_options.execution_stream_id == 0) {
+      execute_options.execution_stream_id =
+          tsl::Env::Default()->GetCurrentThreadId();
+    }
+    PopulateCallLocation(execute_options,
+                         xla::ifrt::UserContextScope::current().get());
   }
-  PopulateCallLocation(execute_options,
-                       xla::ifrt::UserContextScope::current().get());
 
   // Check if the thread guard is active and should prevent execution.
   // Skipped for portable executables.
   if (cache_entry->executable->ifrt_executable()->devices().has_value()) {
+    tsl::profiler::TraceMe traceme("PjitFunction::Call::CheckThreadGuard");
     ABSL_RETURN_IF_ERROR(CheckThreadGuard(
         *cache_entry->executable->ifrt_executable()->devices()));
   }
@@ -869,6 +919,13 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // A vector of [num_outputs].
   std::vector<xla::ifrt::ArrayRef> output_arrays;
   {
+    tsl::profiler::TraceMe traceme([&] {
+      return tsl::profiler::TraceMeEncode(
+          "PjitFunction::Call::IfrtExecute",
+          {{"launch_id", execute_options.launch_id},
+           {"execution_stream_id", execute_options.execution_stream_id},
+           {"num_args", num_args_arrays->size()}});
+    });
     nb::gil_scoped_release gil_release;
     ABSL_ASSIGN_OR_RETURN(auto result,
                           cache_entry->executable->ifrt_executable()->Execute(
@@ -881,26 +938,38 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   int num_outputs = output_arrays.size();
   absl::InlinedVector<nb::object, 4> outputs;
   outputs.reserve(num_outputs);
-  for (int i = 0; i < num_outputs; ++i) {
-    // Creating the PyArray result. In addition to the IFRT arrays, the metadata
-    // like `aval` and `sharding` are retrieved from the cache for this
-    // function, which are produced by the python path in `cache_miss`.
-    PyArray py_array(cache_entry->out_avals[i], cache_entry->out_weak_types[i],
-                     cache_entry->out_dtypes[i], cache_entry->out_shapes[i],
-                     cache_entry->out_shardings[i],
-                     cache_entry->executable->client(),
-                     std::move(output_arrays[i]),
-                     /*committed=*/cache_entry->out_committed.at(i));
+  {
+    tsl::profiler::TraceMe traceme([&] {
+      return tsl::profiler::TraceMeEncode(
+          "PjitFunction::Call::BuildOutputPyArrays",
+          {{"num_outputs", num_outputs}});
+    });
+    for (int i = 0; i < num_outputs; ++i) {
+      // Creating the PyArray result. In addition to the IFRT arrays, the
+      // metadata like `aval` and `sharding` are retrieved from the cache for
+      // this function, which are produced by the python path in `cache_miss`.
+      PyArray py_array(
+          cache_entry->out_avals[i], cache_entry->out_weak_types[i],
+          cache_entry->out_dtypes[i], cache_entry->out_shapes[i],
+          cache_entry->out_shardings[i], cache_entry->executable->client(),
+          std::move(output_arrays[i]),
+          /*committed=*/cache_entry->out_committed.at(i));
 
-    outputs.push_back(std::move(py_array));
+      outputs.push_back(std::move(py_array));
+    }
   }
 
-  nb::object out = nb::steal<nb::object>(
-      cache_entry->out_pytree_def.Unflatten(outputs).release().ptr());
+  nb::object out;
+  {
+    tsl::profiler::TraceMe traceme("PjitFunction::Call::UnflattenOutputs");
+    out = nb::steal<nb::object>(
+        cache_entry->out_pytree_def.Unflatten(outputs).release().ptr());
+  }
 
   // If there is a post-hook function, call it with the inputs and the outputs.
   std::optional<nb::object> post_hook = GetPostHook();
   if (post_hook) {
+    tsl::profiler::TraceMe traceme("PjitFunction::Call::PostHook");
     nb::tuple_builder args_tuple(num_positional_args);
     for (size_t i = 0; i < num_positional_args; ++i) {
       args_tuple.put(nb::handle(args[i]));
