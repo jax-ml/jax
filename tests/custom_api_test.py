@@ -1576,6 +1576,26 @@ class CustomJVPTest(jtu.JaxTestCase):
     value, grad = jax.jit(jax.value_and_grad(f))(1.)
     self.assertAllClose((value, grad), (jnp.sin(1.), jnp.cos(1.)))
 
+  def test_grad_jit_reading_local_ref(self):
+    @jax.custom_jvp
+    def h(x):
+      return x
+    h.defjvp(lambda p, t: (h(p[0]), t[0]))
+
+    @jax.jit
+    def f(x):
+      ref = jax.new_ref(0.)
+      return h(ref[...])
+
+    g = lambda x: f(x) + jnp.sin(x)
+    self.assertAllClose(jax.grad(f)(1.), 0., check_dtypes=False)
+    self.assertAllClose(jax.jit(jax.grad(f))(1.), 0., check_dtypes=False)
+    self.assertAllClose(jax.grad(g)(1.), jnp.cos(1.), check_dtypes=False)
+    self.assertAllClose(jax.jit(jax.grad(g))(1.), jnp.cos(1.),
+                        check_dtypes=False)
+    self.assertAllClose(jax.grad(jax.remat(g))(1.), jnp.cos(1.),
+                        check_dtypes=False)
+
 
 @jtu.with_config(jax_custom_vjp3=False)
 class CustomVJPTest(jtu.JaxTestCase):
@@ -3890,6 +3910,53 @@ class CustomVJPTest(jtu.JaxTestCase):
       ct, = jax.linear_transpose(g, xs)(jnp.ones(3))
       self.assertAllClose(ct, jnp.cos(xs))
 
+
+  def test_grad_jit_reading_local_ref(self):
+    @jax.custom_vjp
+    def h(x):
+      return x
+    h.defvjp(lambda x: (x, None), lambda _, g: (g,))
+
+    @jax.jit
+    def f(x):
+      ref = jax.new_ref(0.)
+      return h(ref[...])
+
+    g = lambda x: f(x) + jnp.sin(x)
+    self.assertAllClose(jax.grad(f)(1.), 0., check_dtypes=False)
+    self.assertAllClose(jax.jit(jax.grad(f))(1.), 0., check_dtypes=False)
+    self.assertAllClose(jax.grad(g)(1.), jnp.cos(1.), check_dtypes=False)
+    self.assertAllClose(jax.jit(jax.grad(g))(1.), jnp.cos(1.),
+                        check_dtypes=False)
+    if config.remat3.value:
+      self.assertAllClose(jax.grad(jax.remat(g))(1.), jnp.cos(1.),
+                          check_dtypes=False)
+
+  def test_grad_hop_reading_local_ref(self):
+    @jax.custom_vjp
+    def h(x):
+      return x
+    h.defvjp(lambda x: (x, None), lambda _, g: (g,))
+    fresh = lambda: h(jax.new_ref(0.)[...])
+    sg = lax.stop_gradient
+
+    fs = dict(
+        cond=lambda x: lax.cond(sg(x) > 0, lambda x: fresh() + 0. * sg(x),
+                                lambda x: fresh() + 0. * sg(x), x),
+        scan_const=lambda x: lax.scan(lambda c, _: (c, fresh() + 0. * sg(x)),
+                                      0., None, length=2)[1].sum(),
+        scan_xs=lambda x: lax.scan(lambda c, xi: (c, fresh() + 0. * sg(xi)),
+                                   0., jnp.stack([x, x]))[1].sum(),
+        jit_in_shard_map=lambda x: jax.shard_map(
+            jax.jit(lambda x: fresh() + 0. * sg(x)),
+            mesh=jax.make_mesh((1,), ('i',)), in_specs=jax.P(),
+            out_specs=jax.P())(x))
+    for name, f in fs.items():
+      with self.subTest(name):
+        g = lambda x: f(x) + jnp.sin(x)
+        self.assertAllClose(jax.grad(g)(1.), jnp.cos(1.), check_dtypes=False)
+        self.assertAllClose(jax.jit(jax.grad(g))(1.), jnp.cos(1.),
+                            check_dtypes=False)
 
 @jtu.with_config(jax_custom_vjp3=True)
 class CustomVJP3Test(CustomVJPTest):
