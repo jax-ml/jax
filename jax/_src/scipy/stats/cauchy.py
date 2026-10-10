@@ -16,6 +16,7 @@
 import numpy as np
 
 from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.ufuncs import arctan
 from jax._src.numpy.util import promote_args_inexact
@@ -257,8 +258,11 @@ def isf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   q, loc, scale = promote_args_inexact("cauchy.isf", q, loc, scale)
   pi = _lax_const(q, np.pi)
   half_pi = _lax_const(q, np.pi / 2)
-  unscaled = lax.tan(lax.sub(half_pi, lax.mul(pi, q)))
-  return lax.add(lax.mul(unscaled, scale), loc)
+  safe_q = jnp.where((q <= 0) | (q >= 1) | jnp.isnan(q), _lax_const(q, 0.5), q)
+  unscaled = lax.tan(lax.sub(half_pi, lax.mul(pi, safe_q)))
+  unscaled = jnp.where(q == 0, np.inf, jnp.where(q == 1, -np.inf, unscaled))
+  res = lax.add(lax.mul(unscaled, scale), loc)
+  return jnp.where((q < 0) | (q > 1) | jnp.isnan(q), np.nan, res)
 
 
 def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
@@ -289,5 +293,8 @@ def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   q, loc, scale = promote_args_inexact("cauchy.ppf", q, loc, scale)
   pi = _lax_const(q, np.pi)
   half_pi = _lax_const(q, np.pi / 2)
-  unscaled = lax.tan(lax.sub(lax.mul(pi, q), half_pi))
-  return lax.add(lax.mul(unscaled, scale), loc)
+  safe_q = jnp.where((q <= 0) | (q >= 1) | jnp.isnan(q), _lax_const(q, 0.5), q)
+  unscaled = lax.tan(lax.sub(lax.mul(pi, safe_q), half_pi))
+  unscaled = jnp.where(q == 0, -np.inf, jnp.where(q == 1, np.inf, unscaled))
+  res = lax.add(lax.mul(unscaled, scale), loc)
+  return jnp.where((q < 0) | (q > 1) | jnp.isnan(q), np.nan, res)
