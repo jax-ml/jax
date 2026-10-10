@@ -45,6 +45,7 @@ from jax._src.pallas import helpers as pallas_helpers
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.state import indexing
+from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import tcgen05
@@ -1189,6 +1190,152 @@ def multicast_ref(
   return pallas_core.TransformedRef(
       ref.ref, (*ref.transforms, MulticastRef(collective_axes)),
   )
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class Im2ColTransform(state_types.Transform):
+  window_shape: tuple[int, ...] = jax.tree.static()
+  padding: tuple[tuple[int, int], ...] = jax.tree.static()
+
+  def __post_init__(self):
+    num_spatial = len(self.window_shape)
+    if num_spatial not in (1, 2, 3):
+      raise ValueError(
+          "im2col_ref requires 1, 2, or 3 spatial dimensions, got"
+          f" {num_spatial} ({self.window_shape})"
+      )
+    if len(self.padding) != num_spatial:
+      raise ValueError(
+          f"Expected {num_spatial} (pad_lo, pad_hi) pairs in padding, got"
+          f" {len(self.padding)}"
+      )
+    # Filter offsets must fit the im2col TMA offset range.
+    max_window_size = 1 << (16 // num_spatial)
+    for i, k in enumerate(self.window_shape):
+      if not 1 <= k <= max_window_size:
+        raise ValueError(
+            f"window_shape[{i}] must be in [1, {max_window_size}] with"
+            f" {num_spatial} spatial dims, got {k}"
+        )
+    # Window start bounds must fit the im2col TMA bounding box range.
+    max_bound = max_window_size // 2
+    for i, (k, (pad_lo, pad_hi)) in enumerate(
+        zip(self.window_shape, self.padding)
+    ):
+      if pad_lo < 0 or pad_hi < 0:
+        raise ValueError(
+            f"padding[{i}] must be non-negative, got ({pad_lo}, {pad_hi})"
+        )
+      if pad_lo > max_bound:
+        raise ValueError(
+            f"padding[{i}][0] must be at most {max_bound} with {num_spatial}"
+            f" spatial dims, got {pad_lo}"
+        )
+      min_pad_hi = max(0, k - 1 - max_bound)
+      max_pad_hi = k - 2 + max_bound
+      if not min_pad_hi <= pad_hi <= max_pad_hi:
+        raise ValueError(
+            f"padding[{i}][1] must be in [{min_pad_hi}, {max_pad_hi}] with"
+            f" window_shape[{i}]={k} and {num_spatial} spatial dims, got"
+            f" {pad_hi}"
+        )
+
+  @property
+  def window_start_bounds(self) -> tuple[tuple[int, int], ...]:
+    return tuple(
+        (-pad_lo, pad_hi - k + 1)
+        for k, (pad_lo, pad_hi) in zip(self.window_shape, self.padding)
+    )
+
+  def spatial_out_shape(self, gmem_shape: Sequence[int]) -> tuple[int, ...]:
+    spatial_in = gmem_shape[1:-1]
+    return tuple(
+        s + hi - lo
+        for s, (lo, hi) in zip(spatial_in, self.window_start_bounds, strict=True)
+    )
+
+  def transform_type(self, x):
+    match x:
+      case state_types.AbstractRef():
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
+      case jax_core.ShapedArray():
+        expected_ndim = len(self.window_shape) + 2
+        if x.ndim != expected_ndim:
+          raise ValueError(
+              f"im2col_ref with {len(self.window_shape)} spatial dims requires"
+              f" a rank-{expected_ndim} (N, *spatial, C) reference, got shape"
+              f" {x.shape}"
+          )
+        spatial_out = self.spatial_out_shape(x.shape)
+        for i, s_out in enumerate(spatial_out):
+          if s_out < 1:
+            raise ValueError(
+                f"im2col_ref spatial dim {i} has non-positive output size"
+                f" {s_out} for input size {x.shape[i + 1]}, window size"
+                f" {self.window_shape[i]}, and padding {self.padding[i]}"
+            )
+        num_windows = x.shape[0] * math.prod(spatial_out)
+        return x.update(shape=(num_windows, *self.window_shape, x.shape[-1]))
+      case _:
+        raise TypeError(f"Unsupported type: {x}")
+
+
+def im2col_ref(
+    ref: _Ref,
+    *,
+    window_shape: Sequence[int],
+    padding: Sequence[tuple[int, int]] | None = None,
+) -> pallas_core.TransformedRef:
+  """Returns an im2col view of a GMEM reference for TMA copies.
+
+  For ``ref`` of shape ``(N, *spatial_in, C)`` with 1, 2 or 3 spatial
+  dimensions, the view has shape
+  ``(N * math.prod(spatial_out), *window_shape, C)``, where
+  ``spatial_out[i] = spatial_in[i] + sum(padding[i]) - window_shape[i] + 1``
+  is the number of window positions along spatial dimension ``i``. Each row
+  ``view[r]`` is one window of the zero-padded input, ``padded``. With 2
+  spatial dimensions, for example::
+
+    n, h, w = np.unravel_index(r, (N, *spatial_out))
+    view[r, dh, dw, c] == padded[n, h + dh, w + dw, c]
+
+  The view can only be read by
+  :func:`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem`, and must be
+  indexed as ``view.at[rows, *window_offsets, channels]``, where:
+
+  * ``rows`` is a unit-stride slice selecting up to 1024 windows;
+  * ``window_offsets`` are scalars, one per spatial dimension, selecting the
+    pixel to load from each window;
+  * ``channels`` is a unit-stride slice selecting up to 256 channels of that
+    pixel.
+
+  The destination must be a 2D SMEM reference with one row per selected
+  window and one column per selected channel. If it is tiled, its tiles must
+  span all columns. Rows and channels past the end of the view read as zeros.
+
+  Args:
+    ref: A channels-last GMEM reference of shape ``(N, *spatial_in, C)``. Sliced
+      or otherwise transformed references and sub-byte dtypes are not supported.
+    window_shape: The window size along each spatial dimension.
+    padding: The ``(lo, hi)`` zero padding along each spatial dimension. Must be
+      non-negative. Defaults to no padding.
+  """
+  window_shape = tuple(int(k) for k in window_shape)
+  if padding is None:
+    padding = ((0, 0),) * len(window_shape)
+  else:
+    padding = tuple((int(lo), int(hi)) for lo, hi in padding)
+  ref, transforms = state_primitives.get_ref_and_transforms(
+      ref, None, "im2col_ref"
+  )
+  if transforms:
+    raise TypeError("im2col_ref must be applied to an untransformed reference")
+  res = pallas_core.TransformedRef(
+      ref, (Im2ColTransform(window_shape=window_shape, padding=padding),)
+  )
+  _ = res.type  # Eagerly validate the ref shape.
+  return res
 
 
 def transpose_ref(

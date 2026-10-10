@@ -64,6 +64,7 @@ Asynchronous copies
    copy_gmem_to_smem
    copy_smem_to_gmem
    wait_smem_to_gmem
+   im2col_ref
 
 Hopper-specific functions
 -------------------------

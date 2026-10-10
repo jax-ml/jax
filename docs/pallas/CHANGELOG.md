@@ -54,6 +54,9 @@ Remember to align the itemized text with the first line of an item within a list
     `leader_tracked=CopyPartition.REPLICATED` now support clusters of total size
     greater than 2, provided the collective axis is the minormost cluster
     dimension and has size 2.
+  * Added support for im2col TMA copies to
+    {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem` via the
+    {func}`jax.experimental.pallas.mosaic_gpu.im2col_ref` transformation.
 
 * Deprecations
 

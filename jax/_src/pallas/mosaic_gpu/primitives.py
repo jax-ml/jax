@@ -422,6 +422,61 @@ def _split_gmem_slice(gmem_slice):
   return indices, slice_lengths
 
 
+_IM2COL_INDEXING_ERROR = (
+    "im2col_ref must be indexed with a unit-stride row slice, scalar filter"
+    " offsets for each window dimension, and a unit-stride channel slice."
+)
+
+
+def _extract_im2col_copy_params(
+    gmem_shape: tuple[int, ...],
+    im2col_transform: gpu_core.Im2ColTransform,
+    indexers: Sequence[Any],
+) -> dict[str, Any]:
+  if not all(isinstance(t, indexing.NDIndexer) for t in indexers):
+    raise NotImplementedError(
+        f"Only indexing is supported on im2col-transformed refs, got {indexers}"
+    )
+  match lowering.merge_indexers(indexers) if indexers else None:
+    case indexing.NDIndexer(
+        indices=[
+            indexing.Slice(stride=1) as row_idx,
+            *filter_idxs,
+            indexing.Slice(stride=1) as col_idx,
+        ],
+        int_indexer_shape=(),
+    ) if not any(isinstance(idx, indexing.Slice) for idx in filter_idxs):
+      pass
+    case _:
+      raise ValueError(_IM2COL_INDEXING_ERROR)
+
+  row_base = lowering._as_index(row_idx.start)
+  col_base = lowering._as_index(col_idx.start)
+
+  spatial_out = im2col_transform.spatial_out_shape(gmem_shape)
+  window_start_bounds = im2col_transform.window_start_bounds
+  index_ty = ir.IndexType.get()
+  flat_idx = row_base
+  window_starts: list[ir.Value] = []
+  for s_out, (lo, _) in zip(
+      reversed(spatial_out), reversed(window_start_bounds)
+  ):
+    s_out_val = mgpu.c(s_out, index_ty)
+    window_starts.append(
+        arith_dialect.addi(
+            arith_dialect.remui(flat_idx, s_out_val), mgpu.c(lo, index_ty)
+        )
+    )
+    flat_idx = arith_dialect.divui(flat_idx, s_out_val)
+  window_starts.reverse()
+  n = flat_idx
+  return dict(
+      window_start_bounds=window_start_bounds,
+      start_indices=(n, *window_starts, col_base),
+      filter_offsets=tuple(map(lowering._as_index, filter_idxs)),
+  )
+
+
 def _extract_gmem_copy_params(
     ctx, transforms, transform_avals, supports_multicast=False
 ):
@@ -793,6 +848,10 @@ def _copy_gmem_to_smem_abstract_eval(src, dst, *args, has_barrier, **params):
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
 
+  match src_transforms:
+    case [gpu_core.Im2ColTransform()]:
+      raise ValueError(_IM2COL_INDEXING_ERROR)
+
   src_ref = pallas_core.TransformedRef(src, src_transforms)
   dst_ref = pallas_core.TransformedRef(dst, dst_transforms)
 
@@ -969,10 +1028,7 @@ def _copy_gmem_to_smem_lowering(
       ctx, dst_ref_aval, dst, dst_transform_avals, dst_transforms,
       handle_transposes=handle_transposes)
 
-  copy_params = {
-      **_extract_smem_copy_params(dst_ref_aval, dst_transforms),
-      **_extract_gmem_copy_params(ctx, src_transforms, src_transform_avals),
-  }
+  copy_params = _extract_smem_copy_params(dst_ref_aval, dst_transforms)
   orders_tensor_core = False
   if barrier is not None:
     barrier_ref_aval = ctx.avals_in[2]
@@ -1025,6 +1081,11 @@ def _copy_gmem_to_smem_lowering(
   # TMA is only available on Hopper and newer. On older architectures we fall
   # back to the cp.async implementation.
   if is_cp_async := mgpu.utils.get_arch().major < 9:
+    if any(isinstance(t, gpu_core.Im2ColTransform) for t in src_transforms):
+      raise ValueError(
+          "im2col copies are only supported on Hopper and newer GPUs, which"
+          " use TMA."
+      )
     if barrier is not None:
       raise ValueError(
           "copy_gmem_to_smem with a barrier is only supported Hopper and newer"
@@ -1055,6 +1116,37 @@ def _copy_gmem_to_smem_lowering(
       raise ValueError(
           "copy_gmem_to_smem without a barrier is only supported on pre-Hopper"
           " GPUs, which use the cp.async implementation"
+      )
+
+  match src_transforms:
+    case [gpu_core.Im2ColTransform() as im2col_transform, *indexers]:
+      if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+        raise NotImplementedError(
+            "im2col copies are not supported under Warpgroup lowering"
+            " semantics."
+        )
+      if collective_axes is not None:
+        raise NotImplementedError(
+            "im2col copies do not support collective_axes or leader_tracked."
+        )
+      match smem_transforms := copy_params.get("gmem_transform", ()):
+        case ():
+          pass
+        case (TileTransform(tiling=(_, _)),) if dst_ty.shape[-3] == 1:
+          pass
+        case _:
+          raise NotImplementedError(
+              "im2col copies only support untiled 2D SMEM refs or 2D-tiled SMEM"
+              f" refs with a single column tile, got transforms {smem_transforms}"
+              f" on SMEM shape {dst_ty.shape}."
+          )
+      im2col_params = _extract_im2col_copy_params(
+          src_ref_aval.shape, im2col_transform, indexers
+      )
+    case _:
+      im2col_params = None
+      copy_params.update(
+          _extract_gmem_copy_params(ctx, src_transforms, src_transform_avals)
       )
 
   i32 = ir.IntegerType.get_signless(32)
@@ -1121,6 +1213,18 @@ def _copy_gmem_to_smem_lowering(
 
     lane_pred = ctx.module_ctx.single_lane_predicate
     predicate = _andi_maybe_none(predicate, lane_pred)
+    if im2col_params is not None:
+      assert barrier is not None
+      ctx.launch_ctx.async_copy_im2col(
+          src_ref=src,
+          dst_ref=dst,
+          barrier=barrier,
+          **im2col_params,
+          swizzle=copy_params.get("swizzle"),
+          arrive=False,
+          predicate=predicate,
+      )
+      return ()
     predicate_kwarg = (
         {}
         if is_cp_async
@@ -1242,7 +1346,8 @@ def copy_gmem_to_smem(
     finished the copy.
 
   Args:
-    src: The source Ref. Must be in GMEM.
+    src: The source Ref. Must be in GMEM. Can be an im2col view created by
+      :func:`jax.experimental.pallas.mosaic_gpu.im2col_ref`.
     dst: The destination Ref. Must be in SMEM.
     barrier: The barrier to use for tracking completion of the copy. Required on
       Hopper and newer GPUs, which use the TMA implementation, and must be
