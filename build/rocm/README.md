@@ -5,8 +5,9 @@ JAX with ROCm support (Docker images, CI workflows, and from-source wheel builds
 
 If you just want to **install and run** JAX on ROCm, see the
 [AMD GPU (Linux) section of the JAX installation guide](../../docs/installation.md#amd-gpu-linux),
-which covers the `jax[rocm7-local]` pip extra, ROCm version compatibility, and the
-prebuilt `rocm/jax` Docker images. AMD's
+which covers the `jax[rocm7-device-gfxNNN]` / `jax[rocm10-device-gfxNNN]`
+TheRock extras, the `jax[rocm7-local]` system-ROCm extra, ROCm version
+compatibility, and the prebuilt `rocm/jax` Docker images. AMD's
 [JAX on ROCm installation guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/3rd-party/jax-install.html)
 has the authoritative, ROCm-version-specific instructions.
 
