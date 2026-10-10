@@ -28,6 +28,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
 from jax._src import config
+from jax._src import core
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lib import cuda_versions
 from jax._src import test_util as jtu
@@ -39,6 +40,20 @@ config.parse_flags_with_absl()
 scipy_version = jtu.parse_version(scipy.version.version)
 
 T = lambda x: np.swapaxes(x, -1, -2)
+
+
+def _jaxpr_primitive_names(jaxpr):
+  """Primitive names used by `jaxpr`, including those in nested jaxprs."""
+  jaxpr = jaxpr.jaxpr if isinstance(jaxpr, core.ClosedJaxpr) else jaxpr
+  names = set()
+  for eqn in jaxpr.eqns:
+    names.add(eqn.primitive.name)
+    for value in eqn.params.values():
+      for candidate in (value if isinstance(value, (tuple, list)) else (value,)):
+        if isinstance(candidate, (core.Jaxpr, core.ClosedJaxpr)):
+          names |= _jaxpr_primitive_names(candidate)
+  return names
+
 
 float_types = jtu.dtypes.floating
 complex_types = jtu.dtypes.complex
@@ -2859,6 +2874,92 @@ class LaxLinalgTest(jtu.JaxTestCase):
     f = lambda dl, d, du, b: lax.linalg.tridiagonal_solve(
       dl, d, du, b, perturb_singular=perturb_singular)
     jtu.check_grads(f, args, order=2, atol=1e-1, rtol=1e-1)
+
+  @jtu.sample_product(n=[1, 2, 3, 4, 5, 6, 7], trans=[0, 1, 2],
+                      dtype=float_types + complex_types)
+  def testLuSolveSmall(self, n, trans, dtype):
+    # Small systems are solved with unrolled substitution instead of the
+    # batched LAPACK `trsm` call, for forward, transpose, and adjoint solves.
+    rng = jtu.rand_default(self.rng())
+    a = rng((2, n, n), dtype) + (n * np.eye(n)).astype(dtype)
+    b = rng((2, n, 3), dtype)
+    lu, _, permutation = lax.linalg.lu(a)
+    x = lax_linalg.lu_solve(lu, permutation, b, trans)
+    if trans == 1:
+      op = np.swapaxes(a, -1, -2)
+    elif trans == 2:
+      op = np.conj(np.swapaxes(a, -1, -2))
+    else:
+      op = a
+    self.assertAllClose(x, np.linalg.solve(op, b), rtol=1e-3, atol=1e-3)
+
+    # The unrolled path must not lower to the `triangular_solve` primitive.
+    solve = lambda lu, perm, rhs: lax_linalg.lu_solve(lu, perm, rhs, trans)
+    names = _jaxpr_primitive_names(jax.make_jaxpr(solve)(lu, permutation, b))
+    if n <= 6:
+      self.assertNotIn("triangular_solve", names)
+    else:
+      self.assertIn("triangular_solve", names)
+
+  @jtu.sample_product(
+    [dict(a_shape=a_shape, b_shape=b_shape)
+     for a_shape, b_shape in [
+       # n = 1, 2
+       ((1, 1), (1, 1)),
+       ((2, 2), (2,)),
+       # unbatched, vector and matrix right-hand sides
+       ((3, 3), (3,)),
+       ((3, 3), (3, 2)),
+       # batched, unbatched vector (broadcast)
+       ((4, 3, 3), (3,)),
+       # batched, size-1 batch on the right-hand side
+       ((4, 3, 3), (1, 3, 2)),
+       # two batch dimensions
+       ((2, 4, 3, 3), (2, 4, 3, 2)),
+       # n = 4 takes the generic `lu` path
+       ((4, 4), (4,)),
+       ((1, 4, 4), (4, 2)),
+     ]],
+    dtype=float_types + complex_types,
+  )
+  @jax.numpy_rank_promotion('allow')  # exercises broadcast batch shapes
+  def testSolveSmall(self, a_shape, b_shape, dtype):
+    # n <= 3 uses an unrolled Gauss-Jordan elimination that avoids the batched
+    # LAPACK `getrf`/`getrs` calls; larger n uses `lu`.
+    n = a_shape[-1]
+    rng = jtu.rand_default(self.rng())
+    a = rng(a_shape, dtype) + (n * np.eye(n)).astype(dtype)
+    b = rng(b_shape, dtype)
+    expected = (np.linalg.solve(a, b[..., None])[..., 0] if b.ndim == 1
+                else np.linalg.solve(a, b))
+    self.assertAllClose(jnp.linalg.solve(a, b), expected, rtol=1e-3, atol=1e-3)
+    names = _jaxpr_primitive_names(jax.make_jaxpr(jnp.linalg.solve)(a, b))
+    if n <= 3:
+      self.assertNotIn("lu", names)
+      if n > 1:
+        self.assertIn("select_n", names)
+    else:
+      self.assertIn("lu", names)
+
+  @jtu.sample_product(n=[2, 3], dtype=float_types)
+  def testSolveSmallGrad(self, n, dtype):
+    # Gradients go through custom_linear_solve, not the unrolled pivoting.
+    rng = jtu.rand_default(self.rng())
+    a = rng((n, n), dtype) + (n * np.eye(n)).astype(dtype)
+    b = rng((n,), dtype)
+    jtu.check_grads(jnp.linalg.solve, (a, b), order=2, atol=1e-1, rtol=1e-1)
+
+  @jtu.sample_product(n=[2, 3])
+  def testSolveSmallIllScaled(self, n):
+    # Scale each row independently to change the partial pivot choice.
+    rng = jtu.rand_default(self.rng())
+    scales = np.geomspace(1e-3, 1e3, n, dtype=np.float32).reshape((n, 1))
+    a = rng((4, n, n), np.float32) + (n * np.eye(n)).astype(np.float32)
+    a = a * scales
+    b = rng((4, n), np.float32)
+    self.assertAllClose(jnp.linalg.solve(a, b[..., None])[..., 0],
+                        np.linalg.solve(a, b[..., None])[..., 0],
+                        rtol=1e-3, atol=1e-3)
 
   @jtu.sample_product(
     shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
