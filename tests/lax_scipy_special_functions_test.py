@@ -519,6 +519,20 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     )
     self._CompileAndCheck(lsp_special.gammaincc, args_maker, rtol=rtol)
 
+  @jtu.sample_product(dtype=float_dtypes)
+  def testBetaIncResultDoesNotDependOnBatch(self, dtype):
+    # Each element of the continued fraction should stop iterating once it has
+    # converged, so the result for an element must not depend on the other
+    # elements in the batch (#28547).
+    n = 20
+    a = jtu.rand_uniform(self.rng(), low=0.5, high=10.)((n,), dtype)
+    b = jtu.rand_uniform(self.rng(), low=0.5, high=10.)((n,), dtype)
+    x = jtu.rand_uniform(self.rng())((n,), dtype)
+    betainc = jax.jit(lsp_special.betainc)
+    expected = np.concatenate(
+        [betainc(a[i:i + 1], b[i:i + 1], x[i:i + 1]) for i in range(n)])
+    self.assertArraysEqual(betainc(a, b, x), expected)
+
   def testBetaIncBoundaryValues(self):
     dtype = dtypes.default_float_dtype()
     fi = jax.numpy.finfo(dtype)

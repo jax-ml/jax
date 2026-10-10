@@ -210,7 +210,7 @@ def polygamma_gradx(g, m, x):
 def lentz_thompson_barnett_algorithm(*,num_iterations, small, threshold, nth_partial_numerator, nth_partial_denominator, inputs):
   # Position in the evaluation.
   kIterationIdx = 0
-  # Whether or not we have reached the desired tolerance.
+  # Per-element mask of values that have not reached the desired tolerance.
   kValuesUnconvergedIdx = 1
   # Ratio between nth canonical numerator and the nth-1 canonical numerator.
   kCIdx = 2
@@ -222,11 +222,12 @@ def lentz_thompson_barnett_algorithm(*,num_iterations, small, threshold, nth_par
   def while_cond_fn(values):
     iteration = values[kIterationIdx]
     iterations_remain_cond = lt(iteration, num_iterations)
-    values_unconverged_cond = values[kValuesUnconvergedIdx]
+    values_unconverged_cond = _any(values[kValuesUnconvergedIdx])
     return bitwise_and(iterations_remain_cond, values_unconverged_cond)
 
   def while_body_fn(values):
     iteration = values[kIterationIdx]
+    unconverged = values[kValuesUnconvergedIdx]
     partial_numerator = nth_partial_numerator(iteration, *inputs)
     partial_denominator = nth_partial_denominator(iteration, *inputs)
 
@@ -239,21 +240,23 @@ def lentz_thompson_barnett_algorithm(*,num_iterations, small, threshold, nth_par
     delta = mul(c, d)
     h = mul(values[kHIdx], delta)
 
-    # Update values
+    # Update values. Elements that have already converged keep their state,
+    # so the result for each element does not depend on the other elements.
     values[kIterationIdx] = iteration + 1
-    values[kCIdx] = c
-    values[kDIdx] = d
-    values[kHIdx] = h
-    # If any values are greater than the tolerance, we have not converged.
+    values[kCIdx] = select(unconverged, c, values[kCIdx])
+    values[kDIdx] = select(unconverged, d, values[kDIdx])
+    values[kHIdx] = select(unconverged, h, values[kHIdx])
+    # An element stays unconverged while its delta is outside the tolerance.
     tolerance_comparison = ge(abs(sub(delta, _const(delta, 1.0))), threshold)
-    values[kValuesUnconvergedIdx] = _any(tolerance_comparison)
+    values[kValuesUnconvergedIdx] = bitwise_and(unconverged,
+                                                tolerance_comparison)
     return values
 
   partial_denominator = nth_partial_denominator(0, *inputs)
   h = select(lt(abs(partial_denominator), small),
              broadcast_in_dim(small, partial_denominator.shape, ()),
              partial_denominator)
-  values = [1,True,h,full_like(h,0),h]
+  values = [1,full_like(h,True,dtype=bool),h,full_like(h,0),h]
   values = while_loop(while_cond_fn, while_body_fn, values)
   return values[kHIdx]
 
