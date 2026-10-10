@@ -14,13 +14,17 @@
 
 import contextlib
 import re
+import tempfile
 import unittest
 from absl.testing import absltest
 import jax
 from jax import lax
+from jax._src import compilation_cache
 from jax._src import config
 from jax._src import core
+from jax._src import monitoring
 from jax._src import test_util as jtu
+from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
 from jax.experimental.serialize_executable import (
@@ -38,6 +42,42 @@ prev_xla_flags = None
 with contextlib.suppress(ImportError):
   import pytest
   pytestmark = pytest.mark.multiaccelerator
+
+
+def _get_compile_only_topology_for_attached_devices():
+  devices = jax.devices()
+  platform = devices[0].platform
+  if platform == 'tpu' and xb.make_pjrt_tpu_topology.__module__.endswith(
+      'xla_bridge'
+  ):
+    device_kind = devices[0].device_kind
+    topo_prefix = topologies._DEVICE_KIND_TO_TOPOLOGY[device_kind][0].split(
+        '='
+    )[0]
+    chips_per_host_bounds = tuple(
+        max(d.coords[i] for d in devices) + 1 for i in range(3)
+    )
+    num_chips = (
+        chips_per_host_bounds[0]
+        * chips_per_host_bounds[1]
+        * chips_per_host_bounds[2]
+    )
+    topology_name = (
+        f'{topo_prefix}:'
+        f'{chips_per_host_bounds[0]}x{chips_per_host_bounds[1]}x{chips_per_host_bounds[2]}'
+    )
+    kwargs = {'chips_per_host_bounds': chips_per_host_bounds}
+    # Match the chip_config_name that libtpu sets on live Cloud TPU hosts.
+    if device_kind == 'TPU v4' and len(devices) == num_chips:
+      kwargs['chip_config_name'] = 'megacore'
+    elif device_kind in ('TPU v5', 'TPU v5p', 'TPU v6 lite', 'TPU v6e'):
+      kwargs['chip_config_name'] = 'megachip_tccontrol'
+    return topologies.get_topology_desc(
+        topology_name=topology_name,
+        platform='tpu',
+        **kwargs,
+    )
+  return topologies.get_topology_desc(platform=platform)
 
 
 class JaxAotTest(jtu.JaxTestCase):
@@ -114,18 +154,84 @@ class JaxAotTest(jtu.JaxTestCase):
 
   def test_get_topology_from_devices(self):
     try:
-      aot_topo = topologies.get_topology_desc(
-          platform=jax.devices()[0].platform
-      )
+      aot_topo = _get_compile_only_topology_for_attached_devices()
     except (ValueError, NotImplementedError) as e:
       assert ('topology_name is not specified' in str(e) or
               'topology not implemented' in str(e))
       raise unittest.SkipTest('PJRT Topology not supported')
 
     topo = xc.get_topology_for_devices(aot_topo.devices)
+    ref_topo = xc.get_topology_for_devices(jax.devices())
     self.assertEqual(
         topo.platform_version, aot_topo.devices[0].client.platform_version
     )
+    self.assertEqual(topo.platform_version, ref_topo.platform_version)
+    self.assertEqual(
+        aot_topo.devices[0].client.platform_version,
+        jax.devices()[0].client.platform_version,
+    )
+    self.assertFalse(topo.platform_version.startswith('PJRT C API'))
+    self.assertEqual(topo.fingerprint(), ref_topo.fingerprint())
+
+  @jtu.run_on_devices('tpu')
+  @jtu.thread_unsafe_test()
+  def test_topology_persistent_compilation_cache(self):
+    compilation_cache.reset_cache()
+    self.addCleanup(compilation_cache.reset_cache)
+    cache_dir = self.enterContext(tempfile.TemporaryDirectory())
+    self.enterContext(config.enable_compilation_cache(True))
+    self.enterContext(config.raise_persistent_cache_errors(True))
+    self.enterContext(config.persistent_cache_min_compile_time_secs(0))
+    self.enterContext(config.persistent_cache_min_entry_size_bytes(0))
+    self.enterContext(config.compilation_cache_check_contents(False))
+    self.enterContext(config.compilation_cache_dir(cache_dir))
+
+    events = []
+    monitoring.register_event_listener(events.append)
+    self.addCleanup(monitoring.unregister_event_listener, events.append)
+
+    @jax.jit
+    def fn(x):
+      return x * x + 1.0
+
+    tpu_topo = topologies.get_attached_topology()
+    n = max(1, len(tpu_topo.devices) // 2)
+    mesh_shape = (len(tpu_topo.devices) // n, n)
+
+    # AOT compile on the CPU device targeting a compile-only TPU topology.
+    aot_topo = _get_compile_only_topology_for_attached_devices()
+    aot_mesh = topologies.make_mesh(aot_topo, mesh_shape, ('x', 'y'))
+    aot_sharding = jax.sharding.NamedSharding(aot_mesh, P('x', 'y'))
+    x_shape = jax.ShapeDtypeStruct(
+        shape=(16, 16), dtype=jnp.float32, sharding=aot_sharding
+    )
+    with jax.default_device(jax.devices('cpu')[0]):
+      compiled = fn.lower(x_shape).compile()
+
+    # Verify the executable targets the compile-only TPU devices and was cached.
+    self.assertEqual(aot_topo.devices[0].platform, 'tpu')
+    self.assertEqual(
+        aot_topo.devices[0].client.runtime_type, 'compile_only_runtime'
+    )
+    self.assertEqual(
+        compiled.output_shardings.device_set, set(aot_topo.devices)
+    )
+    self.assertEqual(events.count('/jax/compilation_cache/cache_misses'), 1)
+    self.assertEqual(events.count('/jax/compilation_cache/cache_hits'), 0)
+
+    # Clear the in-memory JIT cache and run on the real attached TPU devices.
+    fn.clear_cache()
+    tpu_mesh = topologies.make_mesh(tpu_topo, mesh_shape, ('x', 'y'))
+    tpu_sharding = jax.sharding.NamedSharding(tpu_mesh, P('x', 'y'))
+    x_np = np.arange(256, dtype=np.float32).reshape(16, 16)
+    x = jax.device_put(x_np, tpu_sharding)
+    result = fn(x)
+
+    # Verify the TPU run hit the persistent cache and executed on the TPUs.
+    self.assertEqual(events.count('/jax/compilation_cache/cache_hits'), 1)
+    self.assertEqual(events.count('/jax/compilation_cache/cache_misses'), 1)
+    self.assertEqual(result.sharding.device_set, set(jax.devices('tpu')))
+    self.assertArraysEqual(result, x_np * x_np + 1.0)
 
   def test_lower_as_text_with_and_without_debug_info(self):
     def my_function(x):
