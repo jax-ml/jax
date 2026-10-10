@@ -1249,6 +1249,30 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CompileAndCheck(lax_fun, args_maker,
                             rtol={np.float64: 1e-14}, atol={np.float64: 1e-14})
 
+  def testTLargeDf(self):
+    for dtype in [np.float32, np.float64]:
+      df_vals = np.array([10.0, 1e3, 1e5, 1e7, np.inf], dtype=dtype)
+      x_vals = np.array([-1.5, 0.0, 2.0], dtype=dtype)
+      for df in df_vals:
+        for x in x_vals:
+          actual_log = lsp_stats.t.logpdf(x, df)
+          tol = 2e-5 if actual_log.dtype == np.float32 else 1e-12
+          self.assertAllClose(
+            actual_log,
+            osp_stats.t.logpdf(x, df),
+            atol=tol,
+            rtol=tol,
+            check_dtypes=False,
+          )
+          actual_p = lsp_stats.t.pdf(x, df)
+          self.assertAllClose(
+            actual_p,
+            osp_stats.t.pdf(x, df),
+            atol=tol,
+            rtol=tol,
+            check_dtypes=False,
+          )
+
 
   @genNamedParametersNArgs(3)
   def testUniformLogPdf(self, shapes, dtypes):
