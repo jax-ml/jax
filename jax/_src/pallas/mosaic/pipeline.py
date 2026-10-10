@@ -2001,7 +2001,7 @@ def _emit_pipeline(
           # prepare any local VMEM aliases
           brefs = map_brefs(scheduler.alias_local_refs, brefs, refs)
           # loop input handling phase
-          copy_in = lambda bref, ref: sync_copy(ref, bref, indices)
+          copy_in = lambda bref, ref: sync_copy(ref, bref, scheduler.indices)
           map_inputs(copy_in, brefs, refs)
           # run the kernel!
           current_refs = map_brefs(lambda x: x.current_ref, brefs)
@@ -2015,7 +2015,7 @@ def _emit_pipeline(
             else:
               body(*current_refs, *scratches)
           # loop output handling phase
-          copy_out = lambda bref, ref: sync_copy(bref, ref, indices)
+          copy_out = lambda bref, ref: sync_copy(bref, ref, scheduler.indices)
           map_outputs(copy_out, brefs, refs)
         brefs = map_brefs(scheduler.unalias_local_refs, brefs)
         return brefs, _next_index(indices, grid)
