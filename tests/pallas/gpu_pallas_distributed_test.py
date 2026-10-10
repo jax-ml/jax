@@ -475,6 +475,79 @@ class PallasCallRemoteDMATest(TestCase):
         y, lambda dev_idx: x[:8] if dev_idx == 0 else x[8:]
     )
 
+  def test_remote_dma_several_mosaic_ops_with_cuda_graph(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    def kernel(x_ref, y_ref, done_sem):
+      other_dev_id = 1 - lax.axis_index("x")
+      pl.semaphore_signal(done_sem, device_id=other_dev_id)
+      pl.semaphore_wait(done_sem)
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(done_sem, device_id=other_dev_id)
+      pl.semaphore_wait(done_sem)
+
+    def different_kernel(x_ref, y_ref, wait_sem, ready_sem):
+      other_dev_id = 1 - lax.axis_index("x")
+      pl.semaphore_signal(wait_sem, device_id=other_dev_id)
+      pl.semaphore_wait(wait_sem)
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+
+    def body(x):
+      result = x
+      for _ in range(10):
+        result = self.kernel(
+            kernel,
+            out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+            scratch_types=[
+                plgpu.SemaphoreType.REGULAR,
+            ],
+        )(result)
+        result = result + 1.0
+
+        result = self.kernel(
+            different_kernel,
+            out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+            scratch_types=[
+                plgpu.SemaphoreType.REGULAR,
+                plgpu.SemaphoreType.REGULAR,
+            ],
+        )(result)
+        result = result * 2.0
+
+      return result
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    fn = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    # Run multiple iterations so CommandBufferThunk transitions from warmup
+    # (run 0) to CUDA graph recording/creation (run 1) and graph replay/update
+    # (runs 2+).
+    for step in range(4):
+      step_x = x + step
+      y = jax.block_until_ready(fn(step_x))
+      expected_x = step_x
+      for _ in range(10):
+        expected_x = (expected_x + 1.0) * 2.0
+      self.assert_arrays_equal_per_shard(
+          y,
+          lambda dev_idx, exp=expected_x: exp[:8] if dev_idx == 0 else exp[8:],
+      )
+
   def test_remote_dma_inline_mgpu(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
