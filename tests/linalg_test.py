@@ -556,6 +556,24 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             tol=1e-3)
     self._CompileAndCheck(jnp_fn, args_maker)
 
+  def testNormFloat16NoOverflow(self):
+    # Regression test for https://github.com/google/jax/issues/39899
+    # float16 inputs whose norm is representable in float16 previously
+    # returned inf (and a silent zero gradient) because the squared-sum
+    # accumulation was downcast back to float16 before the final sqrt.
+    x = jnp.full((3, 3), 100, dtype=jnp.float16)
+    norm = jnp.linalg.norm(x)
+    self.assertEqual(norm.dtype, jnp.float16)
+    self.assertAllClose(norm, jnp.float16(300.0), rtol=1e-3)
+    g = jax.grad(lambda z: jnp.linalg.norm(z))(x)
+    self.assertFalse(bool(jnp.any(g == 0)))
+    self.assertAllClose(g, jnp.full_like(x, jnp.float16(1.0 / 3.0)), rtol=1e-2)
+
+    # Matrix (Frobenius) norm must also stay finite and match the float32 value.
+    m = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 7.0]], dtype=jnp.float16)
+    expected = jnp.linalg.norm(m.astype(jnp.float32)).astype(jnp.float16)
+    self.assertAllClose(jnp.linalg.norm(m), expected, rtol=1e-3)
+
   def testStringInfNorm(self):
     err, msg = ValueError, r"Invalid order 'inf' for vector norm."
     with self.assertRaisesRegex(err, msg):
