@@ -47,7 +47,7 @@ from jax._src.state.types import AbstractRef
 from jax._src import ad_util
 from jax._src.util import (
     safe_zip, safe_map, split_list, partition_list, merge_lists,
-    fun_name)
+    fun_name, unzip2)
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
     broadcast_prefix, register_static, register_pytree_node,
@@ -261,25 +261,29 @@ class HiPrim:
 
 
 @contextmanager
-def _explain_overbatched_member(prim, member_name):
+def _explain_overbatched(err):
   try:
     yield
   except ValueError as e:
     if ('but output was batched' not in str(e) and
         'vmap has mapped output' not in str(e)):
       raise
-    name = getattr(getattr(prim, 'traced', None), 'fun_name',
-                   type(prim).__name__)
-    raise ValueError(
-        f"under vmap, the {member_name} of {name} produced an output batched "
-        "along the mapped axis where the application itself was inferred to "
-        "be unbatched. The batchedness of a custom_jvp/custom_vjp "
-        "application under vmap is inferred from its primal function alone, "
-        "but a rule may produce more-batched outputs (e.g. if a tangent "
-        "depends on a batched input that the primal output does not use). "
-        "To support that, define the operation as a "
-        "jax.experimental.hijax.HiPrim and override its `batch` method to "
-        "declare the batched outputs.") from e
+    raise err() from e
+
+def _overbatched_rule_error(prim, member_name):
+  fix = ("Pass generic_batching=True to defvjp to use the first example's "
+         "value, which is right for a correct bwd rule, or" if member_name == 'fwd rule'
+         else "If the tangent is the same for every example, compute it without "
+         "that input. Otherwise,")
+  return ValueError(
+      f"under vmap, the {member_name} of {prim.traced.fun_name} produced an "
+      "output batched along the mapped axis where the application itself was "
+      "inferred to be unbatched. The batchedness of a custom_jvp/custom_vjp "
+      "application under vmap is inferred from its primal function alone, but "
+      "a rule may produce more-batched outputs (e.g. if it uses a batched input "
+      f"that the primal function ignores). {fix} define the operation as a "
+      "jax.experimental.hijax.HiPrim with an explicit `batch` rule that declares "
+      f"the batched outputs. See {batching.SHARED_OUTPUTS_DOCS}")
 
 def check_custom_effects(effs, name):
   disallowed = effects.custom_derivatives_allowed_effects.filter_not_in(effs)
@@ -325,7 +329,8 @@ def vmap_rule(axis_data, f, in_axes, out_axes, *, sum_match=False):
   map_zero = lambda d, x: (ad_util.Zero(core.mapped_aval(axis_data.size, d, x.aval))
                            if zero(x) else x)
   unmap_zero = lambda d, x: (ad_util.Zero(unmap_avals(axis_data, x.aval, d))
-                             if zero(x) and d is not batching.sum_axis else x)
+                             if zero(x) and d is not batching.sum_axis
+                             and d is not batching.infer else x)
   infer = any(d is batching.infer for d in tree_leaves(out_axes))
   assert not (axis_data.spmd_name and axis_data.explicit_mesh_axis)
   vmapped = api.vmap(f, in_axes=in_axes, out_axes=out_axes,
@@ -338,6 +343,30 @@ def vmap_rule(axis_data, f, in_axes, out_axes, *, sum_match=False):
     out = tree_map(unmap_zero, out_axes, out, is_leaf=is_none)
     return (out, inferred) if infer else out
   return batched
+
+def _infer_shared(dims):
+  return tree_map(lambda d: batching.infer if d is None else d, dims,
+                  is_leaf=lambda x: x is None)
+
+def _take_first_example(dims, inferred, xs):
+  from jax._src.lax import slicing  # pyrefly: ignore[missing-import]
+  d_flat, tree = tree_flatten(dims, is_leaf=lambda x: x is None)
+  take = lambda d, i, x: (x if d is not None or i is None or isinstance(x, ad_util.Zero)
+                          else slicing.index_in_dim(x, 0, i, keepdims=False))
+  return tree_unflatten(tree, map(take, d_flat, tree.flatten_up_to(inferred),
+                                  tree.flatten_up_to(xs)))
+
+def _pad_first_example(axis_data, dims, xs):
+  from jax._src.lax import lax  # pyrefly: ignore[missing-import]
+  d_flat, tree = tree_flatten(dims, is_leaf=lambda x: x is None)
+  def pad(d, x):
+    if d is not None or isinstance(x, ad_util.Zero):
+      return x, d
+    x = lax.broadcast(x, (1,))
+    return lax.pad(x, lax._zero(x), [(0, axis_data.size - 1, 0)] +
+                   [(0, 0, 0)] * (x.ndim - 1)), 0
+  xs, ds = unzip2(map(pad, d_flat, tree.flatten_up_to(xs)))
+  return tree_unflatten(tree, xs), tree_unflatten(tree, ds)
 
 
 call_hi_primitive_p = core.Primitive("call_hi_primitive")
@@ -789,6 +818,7 @@ class CustomVJPTraced(HiPrim):
   with_logs: bool
   remat_rules: Any
   bwd_accums: Any
+  generic_batching: bool
 
   @staticmethod
   def drop_fwd_consts(consts, fwd_consts, *args):
@@ -796,13 +826,15 @@ class CustomVJPTraced(HiPrim):
     return (consts, *args)
 
   def __init__(self, traced, fwd, bwd, in_avals, sym_zeros, opt_remat,
-               with_logs=False, remat_rules=None, bwd_accums=None):
+               with_logs=False, remat_rules=None, bwd_accums=None,
+               generic_batching=False):
     self.in_avals = in_avals
     self.out_aval = traced.out_avals
     self.effects = traced.effects
     self.params = dict(traced=traced, fwd=fwd, bwd=bwd, symbolic_zeros=sym_zeros,
                        opt_remat=opt_remat, with_logs=with_logs,
-                       remat_rules=remat_rules, bwd_accums=bwd_accums)
+                       remat_rules=remat_rules, bwd_accums=bwd_accums,
+                       generic_batching=generic_batching)
     super().__init__()
 
   def pp_params(self):
@@ -812,6 +844,7 @@ class CustomVJPTraced(HiPrim):
     if self.opt_remat: params['optimize_remat'] = True
     if self.with_logs: params['with_logs'] = True
     if self.bwd_accums is not None: params['with_accums'] = True
+    if self.generic_batching: params['generic_batching'] = True
     return params
 
   def expand(self, *args):
@@ -827,7 +860,8 @@ class CustomVJPTraced(HiPrim):
     return CustomVJPTraced(
         self.traced.physicalize(ctx), new_fwd, phys(self.bwd),
         tree_map(ctx.physicalize_aval, self.in_avals), self.symbolic_zeros,
-        self.opt_remat, self.with_logs, remat_rules)
+        self.opt_remat, self.with_logs, remat_rules,
+        generic_batching=self.generic_batching)
 
   def physicalize(self, ctx, *args):
     new_prim = self.physicalize_self(ctx)
@@ -873,18 +907,29 @@ class CustomVJPTraced(HiPrim):
     out_dims = tree_unflatten(self.out_tree, out_dims_flat)
     ct_dims = tree_map(lambda d: batching.sum_axis if d is None else d, dims[2:],
                        is_leaf=lambda x: x is None)
+    take_first = self.generic_batching and None in out_dims_flat
 
     def vmap_fwd(f, in_dims, *args):
-      with _explain_overbatched_member(self, 'fwd rule'):
-        (out, res), (_, res_dims) = vmap_rule(
-            axis_data, f, in_dims, (out_dims, batching.infer))(*args)
+      out_axes = (_infer_shared(out_dims) if take_first else out_dims, batching.infer)
+      with _explain_overbatched(lambda: _overbatched_rule_error(self, 'fwd rule')):
+        (out, res), (out_dims_, res_dims) = vmap_rule(axis_data, f, in_dims, out_axes)(*args)
+      if take_first:
+        out = _take_first_example(out_dims, out_dims_, out)
       return out, (res, Static(res_dims))
 
     def vmap_bwd(bwd):
       def batched_bwd(res, out_ct):
-        res, res_dims = res
-        return vmap_rule(axis_data, bwd, (res_dims.val, out_dims), (ct_dims, 0),
-                         sum_match=True)(res, out_ct)
+        (res, res_dims), ct_in_dims, left_dims = res, out_dims, ct_dims
+        if any(d is None and not isinstance(ct, ad_util.Zero) for d, ct in
+               zip(out_dims_flat, self.out_tree.flatten_up_to(out_ct))):
+          if self.generic_batching:
+            out_ct, ct_in_dims = _pad_first_example(axis_data, out_dims, out_ct)
+          else:
+            left_dims = dims[2:]
+        with _explain_overbatched(
+            lambda: batching.shared_cotangent_error(self.traced.fun_name)):
+          return vmap_rule(axis_data, bwd, (res_dims.val, ct_in_dims), (left_dims, 0),
+                           sum_match=left_dims is ct_dims)(res, out_ct)
       return update_wrapper(batched_bwd, bwd)
 
     fwd = lambda nzs_in, *args: vmap_fwd(partial(self.fwd, nzs_in), dims, *args)
@@ -899,7 +944,8 @@ class CustomVJPTraced(HiPrim):
     new_prim = CustomVJPTraced(
         traced, update_wrapper(fwd, self.fwd), vmap_bwd(self.bwd),
         unmap_avals(axis_data, self.in_avals, dims), self.symbolic_zeros,
-        self.opt_remat, self.with_logs, remat_rules)
+        self.opt_remat, self.with_logs, remat_rules,
+        generic_batching=self.generic_batching)
     return new_prim(*args), out_dims
 
   def check(self, *_):
@@ -925,7 +971,7 @@ class CustomVJPTraced(HiPrim):
                 (self.in_avals[1], tree_map(typeof, res)),
                 *self.in_avals[2:])
     helper = CustomVJPTraced(self.traced, fwd2, bwd, in_avals, False, False,
-                             self.with_logs)
+                             self.with_logs, generic_batching=self.generic_batching)
     return out, res, lambda res, consts, fc, *rest: helper(consts, (fc, res), *rest)
 
 def _custom_vjp_fwd(traced, fwd, symbolic_zeros):
@@ -1076,6 +1122,7 @@ class custom_vjp3:
   with_logs: bool = False
   with_accums: bool = False
   remat_rules: tuple[Callable, Callable, Callable, bool] | None = None
+  generic_batching: bool = False
 
   def __init__(self, f, nondiff_argnums=(), nondiff_argnames=()):
     self.static_argnums = _set_up_nondiff(f, nondiff_argnums, nondiff_argnames)
@@ -1163,7 +1210,8 @@ class custom_vjp3:
     prim = CustomVJPTraced(
         traced, _custom_vjp_fwd(traced, fwd, self.symz),
         _custom_vjp_bwd(traced, bwd, in_avals, self.symz, with_logs, bwd_accums),
-        in_avals, self.symz, self.opt_remat, with_logs, remat_rules, bwd_accums)
+        in_avals, self.symz, self.opt_remat, with_logs, remat_rules, bwd_accums,
+        generic_batching=self.generic_batching)
     return prim(consts, (), *args)
 
 def _vjp_from_remat_rules(remat_fwd, rem, bwd, with_logs):
@@ -1291,7 +1339,7 @@ class CustomJVPTraced(HiPrim):
     out_dims = tree_unflatten(self.out_tree, out_dims_flat)
     jvp = vmap_rule(axis_data, self.jvp_rule, (dims, dims), (out_dims, out_dims))
     def jvp_rule(primals, tangents):
-      with _explain_overbatched_member(self, 'jvp rule'):
+      with _explain_overbatched(lambda: _overbatched_rule_error(self, 'jvp rule')):
         return jvp(primals, tangents)
     new_prim = CustomJVPTraced(
         traced, update_wrapper(jvp_rule, self.jvp_rule),
