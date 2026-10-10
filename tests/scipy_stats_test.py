@@ -618,6 +618,29 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           atol=1e-6,
         )
 
+  def testExponLogCdfSmallX(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40965
+    # Previously logcdf(x) = log1p(-sf(x)) cancelled catastrophically for
+    # small positive x, returning -inf (and inf gradients) instead of the
+    # finite log(-expm1(-x)).
+    x = np.array([0.0, 1e-12, 1e-8, 1e-7, 1e-4, 0.5, 1.0, 10.0, 40.0],
+                 dtype=np.float32)
+    with np.errstate(divide='ignore'):
+      expected = np.log(-np.expm1(-x.astype(np.float64))).astype(np.float32)
+      self.assertAllClose(lsp_stats.expon.logcdf(x), expected,
+                          rtol=1e-5, atol=1e-7)
+
+    expected_grad = (1.0 / np.expm1(x[1:].astype(np.float64))).astype(np.float32)
+    grad = jax.grad(lambda v: lsp_stats.expon.logcdf(v).sum())(
+        jnp.asarray(x[1:]))
+    self.assertAllClose(grad, expected_grad, rtol=1e-5)
+
+    # small offsets from a non-zero loc previously returned -inf as well
+    x_ls = np.float32(np.nextafter(np.float32(1.5), np.float32(2.0)))
+    expected_ls = np.log(-np.expm1(-(x_ls.astype(np.float64) - 1.5) / 100.0))
+    self.assertAllClose(lsp_stats.expon.logcdf(x_ls, loc=1.5, scale=100.0),
+                        expected_ls.astype(np.float32), rtol=1e-5)
+
   @genNamedParametersNArgs(4)
   def testGammaLogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
@@ -2148,6 +2171,27 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     tol = ({np.float32: 1e-2, np.float64: 1e-4} if jtu.test_device_matches(["tpu"])
            else {np.float32: 2e-4, np.float64: 5e-6})
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,check_dtypes=False, tol=tol)
+
+
+@jtu.with_config(jax_enable_x64=True)
+class ExponLogCdfX64Test(jtu.JaxTestCase):
+  """Float64 tests for jax.scipy.stats.expon.logcdf"""
+
+  def testExponLogCdfSmallX64(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40965
+    # Previously logcdf(x) = log1p(-sf(x)) returned -inf for x below
+    # about 1.1e-16 in float64.
+    x = np.array([1e-20, 1e-16, 1e-12, 1e-8, 1e-4, 0.5, 10.0], dtype=np.float64)
+    with np.errstate(divide='ignore'):
+      expected = np.log(-np.expm1(-x))
+      self.assertAllClose(lsp_stats.expon.logcdf(x), expected,
+                          rtol=1e-12, atol=1e-25)
+
+    expected_grad = 1.0 / np.expm1(x)
+    grad = jax.grad(lambda v: lsp_stats.expon.logcdf(v).sum())(
+        jnp.asarray(x))
+    self.assertAllClose(grad, expected_grad, rtol=1e-9)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
