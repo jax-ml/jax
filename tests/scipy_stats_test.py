@@ -1231,6 +1231,32 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       )
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testParetoGradientsOutsideSupport(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41445
+    # Evaluating inputs outside support should yield finite (0.0) gradients.
+    x = np.array(-1.0, dtype=dtype)
+    b = np.array(2.0, dtype=dtype)
+    loc = np.array(0.0, dtype=dtype)
+    scale = np.array(1.0, dtype=dtype)
+
+    for fn in [
+        lsp_stats.pareto.logpdf,
+        lsp_stats.pareto.pdf,
+        lsp_stats.pareto.cdf,
+        lsp_stats.pareto.logcdf,
+        lsp_stats.pareto.sf,
+        lsp_stats.pareto.logsf,
+    ]:
+      for argnum in [0, 1, 2, 3]:
+        g = jax.grad(fn, argnums=argnum)(x, b, loc, scale)
+        self.assertEqual(g, 0.0)
+
+    # Test ppf outside [0, 1] returns nan without runtime errors/crashes
+    q_out = np.array(1.5, dtype=dtype)
+    self.assertTrue(np.isnan(lsp_stats.pareto.ppf(q_out, b, loc, scale)))
+
+
   @genNamedParametersNArgs(4)
   def testTLogPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
