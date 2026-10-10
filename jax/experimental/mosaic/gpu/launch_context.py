@@ -975,6 +975,7 @@ class LaunchContext:
       collective: tuple[gpu.Dimension, ...],
       leader_tracked: CopyPartition | None,
       implementation: AsyncCopyImplementation,
+      is_padded: bool,
   ):
     """Performs setup common to TMA and CP_ASYNC implementations."""
     index = ir.IndexType.get()
@@ -1015,7 +1016,7 @@ class LaunchContext:
         gmem_slice,
         ir.MemRefType(gmem_ref.type).shape,
         # NOTE: TMA supports OOB indices, so we skip the check.
-        check_oob=implementation != AsyncCopyImplementation.TMA,
+        check_oob=implementation != AsyncCopyImplementation.TMA and not is_padded,
     )
     if gather_indices is not None:
       slice_shape = [gather_indices.shape[0], *slice_shape[1:]]
@@ -1074,7 +1075,7 @@ class LaunchContext:
     # transforms. For slicing this is done using transform_index and
     # transform_shape. For squeezing we actually move all the squeezed dims to
     # the front, and then batch each transform, making it ignore the extra dims.
-    if squeezed_dims and implementation != AsyncCopyImplementation.CP_ASYNC:
+    if squeezed_dims and (implementation != AsyncCopyImplementation.CP_ASYNC or gmem_transform):
       sliced_dims = [i for i, squeezed in enumerate(is_squeezed) if not squeezed]
       gmem_transform = (TransposeTransform((*squeezed_dims, *sliced_dims)),
                         *(t.batch(len(squeezed_dims)) for t in gmem_transform))
@@ -1278,6 +1279,7 @@ class LaunchContext:
       reduction_op: TMAReductionOp | None = None,
       implementation: AsyncCopyImplementation = AsyncCopyImplementation.TMA,
       oob_mode: OOBFillMode = OOBFillMode.ZEROS,
+      gmem_is_padded: bool = False,
   ):
     """Initiates an async copy between GMEM and SMEM.
 
@@ -1374,11 +1376,13 @@ class LaunchContext:
         collective,
         leader_tracked,
         implementation,
+        gmem_is_padded,
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
 
     gmem_ref_ty = ir.MemRefType(gmem_ref.type)
     smem_ref_ty = ir.MemRefType(smem_ref.type)
+    smem_shape = tuple(smem_ref_ty.shape)
     # We moved all squeezed dims to the front in _prepare_async_copy.
     assert all(d == 1 for d in slice_shape[:len(squeezed_dims)])
     if slice_shape[len(squeezed_dims):] != smem_ref_ty.shape:
@@ -1425,6 +1429,7 @@ class LaunchContext:
         gmem_offset = arith.divui(gmem_offset, c(offset_scale, index))
       gmem_offset = arith.index_castui(i64, gmem_offset)
 
+      sliced_dims: list[int] = []
       if squeezed_dims:
         sliced_dims = [
             i for i in range(gmem_ref_ty.rank) if i not in squeezed_dims
@@ -1486,7 +1491,25 @@ class LaunchContext:
           if offset_scale > 1:
             idx = arith.divui(idx, c(offset_scale, i32))
           smem_ptr = utils.getelementptr(smem_base_ptr, [idx], gep_type)
-          gmem_ptr = utils.getelementptr(gmem_base_ptr, [idx], gep_type)
+          # We have to adjust the stride of SMEM, otherwise we'll read the
+          # next row with undesireable (non-zero) offset for padded shape.
+          curr_idx = linear_idx
+          smem_idxs = []
+          for dim_sz in reversed(smem_shape):
+            dim_sz = c(dim_sz, index)
+            smem_idxs.append(arith.remui(curr_idx, dim_sz))
+            curr_idx = arith.divui(curr_idx, dim_sz)
+          smem_idxs = smem_idxs[::-1]
+
+          gmem_idx = c(0, index)
+          for coord, stride in zip(smem_idxs, gmem_strides, strict=True):
+            gmem_idx = arith.addi(
+                gmem_idx, arith.muli(coord, c(stride, index))
+            )
+          gmem_idx_i64 = arith.index_castui(i64, gmem_idx)
+          gmem_ptr = utils.getelementptr(
+              gmem_base_ptr, [gmem_idx_i64], gep_type
+          )
           nvvm.cp_async_shared_global(
               smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier
           )
@@ -1494,7 +1517,14 @@ class LaunchContext:
         assert swizzle is not None
         swizzle_elems = 8 * swizzle // element_bitwidth
         tiling = (8, swizzle_elems)
-        if gmem_transform != (TileTransform(tiling),):
+        if squeezed_dims:
+          expected_gmem_transform = (
+              TransposeTransform((*squeezed_dims, *sliced_dims)),
+              TileTransform(tiling),
+          )
+        else:
+          expected_gmem_transform = (TileTransform(tiling),)
+        if gmem_transform != expected_gmem_transform:
           raise NotImplementedError(gmem_transform)
         layout = fa.tiled_copy_smem_gmem_layout(
             *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth  # pyrefly: ignore[bad-argument-count]
@@ -1552,6 +1582,9 @@ class LaunchContext:
 
     assert implementation == AsyncCopyImplementation.TMA
     del smem_ref_ty
+
+    if gmem_is_padded:
+      raise NotImplementedError("Padded transform unsupported for TMA.")
 
     (smem_ref, slice_shape, dyn_base_indices, gmem_transform) = (
         self._prepare_tma(
@@ -2236,6 +2269,7 @@ class LaunchContext:
     leader_tracked: CopyPartition | None = None,
     # Should select 0 or 1 threads from the WG.
     predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
+    gmem_is_padded: bool = False,
   ):
 
     i32 = ir.IntegerType.get_signless(32)
@@ -2260,7 +2294,13 @@ class LaunchContext:
         gather_indices,
         gmem_transform,
     ) = self._prepare_async_copy(
-        gmem_ref, gmem_slice, gmem_transform, collective, leader_tracked, impl
+        gmem_ref,
+        gmem_slice,
+        gmem_transform,
+        collective,
+        leader_tracked,
+        impl,
+        gmem_is_padded,
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
 
