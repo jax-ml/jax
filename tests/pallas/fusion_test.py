@@ -23,6 +23,7 @@ from jax._src import core as jax_core
 from jax._src import hijax
 from jax._src import test_util as jtu
 from jax._src.pallas.fuser import fusible_dtype
+from jax.experimental import rebindable as rebindable_lib
 from jax.experimental.pallas import fuser
 import jax.numpy as jnp
 import numpy as np
@@ -1040,6 +1041,183 @@ class FusionHijaxTest(jtu.JaxTestCase):
     ot = f(xt)
     np.testing.assert_array_equal(ot.x0, xt.x0)
     np.testing.assert_array_equal(ot.x1, xt.x1)
+
+  def test_rebindable_inside_fusible(self):
+    traces = []
+
+    @functools.partial(rebindable_lib.rebindable, hyperparams=("bm", "bn"))
+    def matmul_kernel(x_fn, y_fn, out_fn, *, bm, bn):
+      traces.append((bm, bn, out_fn is not None))
+      acc = jnp.dot(x_fn(), y_fn())
+      return acc if out_fn is None else out_fn(acc)
+
+    @fuser.fusible
+    def matmul(x_fn, y_fn, out_fn):
+      return matmul_kernel(x_fn, y_fn, out_fn, bm=16, bn=32)
+
+    x = jnp.ones((32, 64), dtype=jnp.float32)
+    y = jnp.ones((64, 32), dtype=jnp.float32)
+    residual = jnp.full((32, 32), 2.0, dtype=jnp.float32)
+
+    def step(a, b, res):
+      @fuser.fuse
+      def _fused(a_in, b_in):
+        out = matmul(a_in * 2.0, b_in)
+        return out + res, jax.nn.relu(out)
+      return _fused(a, b)
+
+    traced = jax.jit(step).trace(x, y, residual)
+    [site] = rebindable_lib.extract_rebindables(traced)
+    self.assertEqual(site.rebindable.hyperparams, {"bm": 16, "bn": 32})
+    # The fused kernel's inputs are the leaves of its fusions: a, b and the
+    # residual closed over by the epilogue.
+    self.assertLen(site.rebindable.in_avals_flat, 3)
+
+    traces.clear()
+    rebound = rebindable_lib.rebind(traced, lambda t: dict(bm=32, bn=64))
+    self.assertEqual(traces, [])  # rebinding is lazy
+    out1, out2 = rebound.lower().compile()(x, y, residual)
+    self.assertEqual(traces, [(32, 64, True)])  # one trace, with fusions
+    expected = jnp.dot(x * 2.0, y)
+    np.testing.assert_allclose(out1, expected + residual)
+    np.testing.assert_allclose(out2, jax.nn.relu(expected))
+
+  def test_rebindable_captures_fused_kernel_not_identity_kernel(self):
+    """The tuned site must be the kernel with prologue/epilogue fused in.
+
+    `fusible` first traces its body with trivial (identity) fusions; `fuse`
+    then re-runs it with the real fusions. Only the latter may survive as the
+    rebindable site, otherwise a tuner would benchmark a bare matmul.
+    """
+    traces = []
+
+    @functools.partial(rebindable_lib.rebindable, hyperparams="bm")
+    def matmul_kernel(x_fn, y_fn, out_fn, *, bm):
+      traces.append((bm, out_fn is not None))
+      acc = jnp.dot(x_fn(), y_fn())
+      return acc if out_fn is None else out_fn(acc)
+
+    matmul = fuser.fusible(
+        lambda x_fn, y_fn, out_fn: matmul_kernel(x_fn, y_fn, out_fn, bm=16))
+
+    @fuser.fuse
+    def fused(a, b, res):
+      out = matmul(jnp.tanh(a), b)
+      return jnp.exp(out) + res, jnp.sin(out)
+
+    x = jnp.full((32, 64), 0.01, jnp.float32)
+    y = jnp.full((64, 32), 0.02, jnp.float32)
+    res = jnp.full((32, 32), 3.0, jnp.float32)
+    traced = jax.jit(fused).trace(x, y, res)
+
+    # The identity-fusion trace happened, but it is not what got staged.
+    self.assertIn((16, False), traces)
+    [site] = rebindable_lib.extract_rebindables(traced)
+    self.assertLen(site.rebindable.out_avals_flat, 2)  # both epilogue outputs
+    self.assertLen(site.rebindable.in_avals_flat, 3)  # a, b and the residual
+
+    def prims(jaxpr, into_rebindables):
+      names = set()
+      for eqn in jaxpr.eqns:
+        prim = eqn.params.get("_prim")
+        if isinstance(prim, rebindable_lib.Rebindable):
+          if into_rebindables:
+            names |= prims(prim.jaxpr, into_rebindables)
+          continue
+        names.add(eqn.primitive.name)
+        for sub in jax_core.jaxprs_in_params(eqn.params):
+          names |= prims(sub, into_rebindables)
+      return names
+
+    fused_ops = {"tanh", "dot_general", "exp", "add", "sin"}
+    self.assertLessEqual(fused_ops, prims(site.rebindable.jaxpr, True))
+    self.assertFalse(fused_ops & prims(traced.jaxpr, False),
+                     "prologue/epilogue ops leaked outside the rebindable site")
+
+    traces.clear()
+    rebound = rebindable_lib.rebind(traced, lambda s: dict(bm=32))
+    out1, out2 = rebound.lower().compile()(x, y, res)
+    self.assertEqual(traces, [(32, True)])  # retraced with the real fusions
+    acc = jnp.dot(jnp.tanh(x), y)
+    np.testing.assert_allclose(out1, jnp.exp(acc) + res, rtol=1e-6)
+    np.testing.assert_allclose(out2, jnp.sin(acc), rtol=1e-6)
+
+  def test_rebindable_in_fused_kernel_under_shard_map(self):
+    # The fused prologue/epilogue carry varying-axis types inside shard_map;
+    # re-tracing the rebindable (physicalization, rebinding) must keep them.
+    @functools.partial(rebindable_lib.rebindable, hyperparams="k")
+    def kernel(x_fn, out_fn, *, k):
+      y = x_fn() * k
+      return y if out_fn is None else out_fn(y)
+
+    scale = fuser.fusible(lambda x_fn, out_fn: kernel(x_fn, out_fn, k=2.0))
+    mesh = jax.make_mesh((1,), ("data",))
+    f = jax.jit(jax.shard_map(
+        fuser.fuse(lambda x: jnp.sin(scale(x * 3.0))), mesh=mesh,
+        in_specs=jax.P("data"), out_specs=jax.P("data")))
+    x = jax.device_put(jnp.arange(8.0), jax.NamedSharding(mesh, jax.P("data")))
+    traced = f.trace(x)
+    [site] = rebindable_lib.extract_rebindables(traced)
+    self.assertEqual(site.abstract_mesh.manual_axes, ("data",))
+    rebound = rebindable_lib.rebind(traced, lambda s: dict(k=5.0))
+    np.testing.assert_allclose(rebound.lower().compile()(x),
+                               jnp.sin(jnp.arange(8.0) * 15.0), rtol=1e-6)
+
+  def test_rebindable_inside_fusible_without_fuse(self):
+    @functools.partial(rebindable_lib.rebindable, hyperparams="bm")
+    def kernel(x_fn, out_fn, *, bm):
+      del bm
+      out = x_fn() * 3.0
+      return out if out_fn is None else out_fn(out)
+
+    f = fuser.fusible(lambda x_fn, out_fn: kernel(x_fn, out_fn, bm=8))
+    x = jnp.ones((8,), dtype=jnp.float32)
+    traced = jax.jit(f).trace(x)
+    rebound = rebindable_lib.rebind(traced, lambda t: dict(bm=16))
+    [site] = rebindable_lib.extract_rebindables(rebound)
+    self.assertEqual(site.rebindable.hyperparams, {"bm": 16})
+    np.testing.assert_allclose(rebound.lower().compile()(x), x * 3.0)
+
+  def test_rebindable_body_is_physicalized(self):
+    @dataclasses.dataclass(frozen=True)
+    class PairDType(fusible_dtype.FusionDType):
+
+      def __str__(self):
+        return "pair"
+
+      def abstract_unpack(self, x):
+        return (x.update(dtype=jnp.float32), x.update(dtype=jnp.float32))
+
+      def abstract_pack(self, x, y):
+        return x.update(dtype=self)
+
+      def pull_block_spec_one_step(self, aval_out, block_spec):
+        return block_spec, block_spec
+
+      def unpack_push_block_spec(self, aval_in, block_spec):
+        return block_spec, block_spec
+
+      def unpack_pull_block_spec(self, aval_in, block_spec1, block_spec2):
+        return (block_spec1,)
+
+    @functools.partial(rebindable_lib.rebindable, hyperparams="bm")
+    def add_kernel(p_fn, out_fn, *, bm):
+      del bm
+      x, y = fusible_dtype.unpack(p_fn())
+      return x + y if out_fn is None else out_fn(x + y)
+
+    add = fuser.fusible(lambda p_fn, out_fn: add_kernel(p_fn, out_fn, bm=8))
+
+    @jax.jit
+    @fuser.fuse
+    def f(x, y):
+      return add(fusible_dtype.pack(x, y, dtype=PairDType())) * 2.0
+
+    x, y = jnp.ones(8, jnp.float32), jnp.full(8, 2.0, jnp.float32)
+    traced = f.trace(x, y)
+    self.assertLen(rebindable_lib.extract_rebindables(traced), 1)
+    rebound = rebindable_lib.rebind(traced, lambda s: dict(bm=16))
+    np.testing.assert_allclose(rebound.lower().compile()(x, y), (x + y) * 2.0)
 
 
 @jtu.with_config(jax_custom_vjp3=True)

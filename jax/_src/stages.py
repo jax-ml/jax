@@ -515,6 +515,12 @@ class Traced(Stage):
     return Traced(list(new_jaxpr.in_avals), new_params, self._in_tree,
                   self.out_tree, self._consts, self._fun_sourceinfo), out_axes
 
+  def replace_jaxpr(self, jaxpr: core.Jaxpr) -> Traced:
+    """Returns this Traced with `jaxpr` (of the same type) swapped in."""
+    return Traced(self._meta_tys_flat, dict(self._params, jaxpr=jaxpr),
+                  self._in_tree, self.out_tree, self._consts,
+                  self._fun_sourceinfo)
+
   def physicalize(self, ctx) -> Traced:
     new_jaxpr = ctx.physicalize_closed_jaxpr(self.jaxpr)
     new_params = dict(self._params, jaxpr=new_jaxpr)

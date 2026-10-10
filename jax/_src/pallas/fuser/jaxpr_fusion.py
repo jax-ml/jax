@@ -186,11 +186,12 @@ def construct_input_fusion(
       candidate_values, jaxpr, outvars,
   )
 
-  def _fn():
-    out_flat = jax_core.eval_jaxpr(new_jaxpr, new_values)
+  def _fn(values):
+    out_flat = jax_core.eval_jaxpr(new_jaxpr, values)
     return tree_util.tree_unflatten(out_tree, out_flat)
 
-  return fusion_lib.Fusion(_fn, in_type, out_type)
+  return fusion_lib.Fusion(
+      tree_util.Partial(_fn, new_values), in_type, out_type)
 
 
 def _find_downstream(
@@ -329,7 +330,8 @@ def _construct_output_fusions(
       out_flat = jax_core.eval_jaxpr(jaxpr, vals, *flat_args)
       return tuple(out_flat)
 
-    fn = functools.partial(_fn, jaxpr_out_for_group, values_for_jaxpr)
+    fn = tree_util.Partial(functools.partial(_fn, jaxpr_out_for_group),
+                           values_for_jaxpr)
     in_type = jax.tree.map(lambda x: x.aval, outvars_group)
     out_type = tuple(v.aval for v in jaxpr_out_for_group.outvars)
     fusion = fusion_lib.Fusion(
