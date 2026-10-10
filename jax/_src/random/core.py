@@ -3726,9 +3726,12 @@ def multinomial(
   n, p = promote_dtypes_inexact(n, p)
 
   if shape is None:
-    shape = p.shape
-  n = jnp.broadcast_to(n, shape[:-1])
-  p = jnp.broadcast_to(p, shape)
+    shape = p.shape[:-1]
+  else:
+    shape = core.canonicalize_shape(shape)
+    _check_shape("multinomial", shape, np.shape(n), p.shape[:-1])
+  n = jnp.broadcast_to(n, shape)
+  p = jnp.broadcast_to(p, (*shape, p.shape[-1]))
 
   def f(remainder, ratio_key):
     ratio, key = ratio_key
