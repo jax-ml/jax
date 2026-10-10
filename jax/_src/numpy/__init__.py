@@ -56,6 +56,13 @@ from numpy import (
 )
 from jax._src import dtypes as dtypes
 from jax._src.numpy.scalar_types import (
+    ComplexFloating as ComplexFloating,
+    Floating as Floating,
+    Integer as Integer,
+    Number as Number,
+    RealFloating as RealFloating,
+    SignedInteger as SignedInteger,
+    UnsignedInteger as UnsignedInteger,
     bfloat16 as bfloat16,
     bool_ as bool,  # Array API alias for bool_  # noqa: F401
     bool_ as bool_,
