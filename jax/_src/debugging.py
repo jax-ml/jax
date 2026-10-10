@@ -243,7 +243,12 @@ def _debug_partial_eval_custom(saveable, unks_in, inst_in, eqn, primitive):
     # The usual case (if we have any unknowns, we need to stage it out)
     res = [v for v, inst in zip(eqn.invars, inst_in) if not inst]
     return None, eqn, [], [], res
-  if saveable(primitive, *[v.aval for v in eqn.invars], **eqn.params):
+  # A policy may return a RematCases sentinel rather than a bool, so normalise
+  # before deciding. Offloadable means "keep it", which for a callback with
+  # nothing to offload is the same decision as Saveable.
+  policy_result = pe.ensure_enum(
+      saveable(primitive, *[v.aval for v in eqn.invars], **eqn.params))
+  if policy_result is not pe.Recompute:
     # The policy is telling us we can save the debug callback.
     if all(inst_in):
       # If all of the inputs are instantiated, we also stage out the
