@@ -372,9 +372,11 @@ def _reduce_window_abstract_eval_rule(
   out_shape = _common_reduce_window_shape_rule(
       operand_avals[0], window_dimensions, window_strides, padding,
       base_dilation, window_dilation)
-  out_sharding = reduce_window_sharding_rule(
-      operand_avals[0], window_dimensions, window_strides, padding,
-      base_dilation, window_dilation)
+  out_sharding = lax.lax_utils.call_sharding_rule(
+      reduce_window_p, reduce_window_sharding_rule, None, None,
+      operand_avals[0], window_dimensions=window_dimensions,
+      window_strides=window_strides, padding=padding,
+      base_dilation=base_dilation, window_dilation=window_dilation)
   vma = core.standard_vma_rule('reduce_window', *operand_avals)
   if any(core.getu(a) or core.getr(a) for a in operand_avals):
     raise NotImplementedError
