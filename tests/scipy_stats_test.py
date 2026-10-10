@@ -470,6 +470,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=2e-4)
       self._CompileAndCheck(lax_fun, args_maker, rtol=3e-4)
 
+  def testCauchyPpfIsfDomainAndBoundaries(self):
+    for dtype in [np.float32, np.float64]:
+      q = np.array([-1.0, -0.1, 0.0, 0.25, 0.5, 0.75, 1.0, 1.1, np.nan], dtype=dtype)
+      self.assertAllClose(
+        osp_stats.cauchy.ppf(q),
+        lsp_stats.cauchy.ppf(q),
+        check_dtypes=False,
+      )
+      self.assertAllClose(
+        osp_stats.cauchy.isf(q),
+        lsp_stats.cauchy.isf(q),
+        check_dtypes=False,
+      )
+
   @jtu.sample_product(
     shapes=[
       [x_shape, alpha_shape]
@@ -1797,6 +1811,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     # Test at specific values
     self.assertAllClose(
       osp_stats.gumbel_l.pdf(0.0, 0.0, 1.0), lsp_stats.gumbel_l.pdf(0.0, 0.0, 1.0), atol=1E-6)
+
+  def testGumbelPpfDomainAndBoundaries(self):
+    for dtype in [np.float32, np.float64]:
+      p = np.array([-1.0, -0.1, 0.0, 0.25, 0.5, 0.75, 1.0, 1.1, np.nan], dtype=dtype)
+      self.assertAllClose(
+        osp_stats.gumbel_r.ppf(p),
+        lsp_stats.gumbel_r.ppf(p),
+        check_dtypes=False,
+      )
+      self.assertAllClose(
+        osp_stats.gumbel_l.ppf(p),
+        lsp_stats.gumbel_l.ppf(p),
+        check_dtypes=False,
+      )
 
   @jtu.sample_product(
     inshape=[(50,), (3, 50), (2, 12)],
