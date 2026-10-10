@@ -25,6 +25,8 @@ bazel_dep(name = "rules_ml_toolchain")
 archive_override(
     module_name = "rules_ml_toolchain",
     integrity = "sha256-9+4rpwQMv77PxA+AGMWpwcjioakWHi4nJ7UQ0iPHrJo=",
+    patch_strip = 1,
+    patches = ["//third_party/rules_ml_toolchain:cxx20.patch"],
     strip_prefix = "rules_ml_toolchain-3a4df0c8e9e51687ac4c62c793a00a27286e5e83",
     urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/3a4df0c8e9e51687ac4c62c793a00a27286e5e83.tar.gz"],
 )
