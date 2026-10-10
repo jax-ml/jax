@@ -797,19 +797,25 @@ def _vector_load_constraint_system(
   # An unset `optimized` attribute means that we require an optimized transfer.
   optimized = op.optimized is None or bool(op.optimized)
 
-  # SMEM
+  ref_ty = ir.MemRefType(op.source.type)
+  shape = tuple(ref_ty.shape)
+  strides, _ = ref_ty.get_strides_and_offset()
+  bitwidth = utils.bitwidth(ref_ty.element_type)
   if _is_smem_ref(op.source):
     source = ValueSite(op, VariableType.OPERAND, 0)
     source_var = ctx.producer_ref(source)
     value_sites_for_variable[source_var] = [source]
-    ref_ty = ir.MemRefType(op.source.type)
-    shape = tuple(ref_ty.shape)
-    strides, _ = ref_ty.get_strides_and_offset()
     constraints.append(
         cs.IsTransferableSmemRegisters(
             source_var, dest_var, shape, tuple(strides),
-            bitwidth=utils.bitwidth(ref_ty.element_type),
-            optimized=optimized
+            bitwidth=bitwidth, optimized=optimized,
+        )
+    )
+  elif ref_ty.memory_space is None:
+    constraints.append(
+        cs.IsTransferableGmemRegisters(
+            dest_var, shape, tuple(strides),
+            bitwidth=bitwidth, optimized=optimized,
         )
     )
 
@@ -843,20 +849,26 @@ def _vector_store_constraint_system(
   # An unset `optimized` attribute means that we require an optimized transfer.
   optimized = op.optimized is None or bool(op.optimized)
 
-  # SMEM
   constraints = []
+  ref_ty = ir.MemRefType(op.destination.type)
+  shape = tuple(ref_ty.shape)
+  strides, _ = ref_ty.get_strides_and_offset()
+  bitwidth = utils.bitwidth(ref_ty.element_type)
   if _is_smem_ref(op.destination):
     dest = ValueSite(op, VariableType.OPERAND, 1)
     dest_var = ctx.producer_ref(dest)
     value_sites_for_variable[dest_var] = [dest]
-    ref_ty = ir.MemRefType(op.destination.type)
-    shape = tuple(ref_ty.shape)
-    strides, _ = ref_ty.get_strides_and_offset()
     constraints.append(
         cs.IsTransferableSmemRegisters(
             value_var, dest_var, shape, tuple(strides),
-            bitwidth=utils.bitwidth(ref_ty.element_type),
-            optimized=optimized
+            bitwidth=bitwidth, optimized=optimized,
+        )
+    )
+  elif ref_ty.memory_space is None:
+    constraints.append(
+        cs.IsTransferableGmemRegisters(
+            value_var, shape, tuple(strides),
+            bitwidth=bitwidth, optimized=optimized,
         )
     )
 
