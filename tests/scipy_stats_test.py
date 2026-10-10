@@ -1250,6 +1250,36 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             rtol={np.float64: 1e-14}, atol={np.float64: 1e-14})
 
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testTLogPdfLargeDf(self, dtype):
+    scipy_fun = osp_stats.t.logpdf
+    lax_fun = lsp_stats.t.logpdf
+    args_maker = lambda: [
+        np.zeros(4, dtype=dtype),
+        np.array([30.0, 1e3, 1e5, 1e7], dtype=dtype),
+    ]
+    self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=2e-6)
+    self._CompileAndCheck(lax_fun, args_maker)
+
+
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testTLogPdfExtremeScale(self, dtype):
+    # Squaring extreme scales and multiplying by df may overflow or
+    # underflow float32 even though the log density itself is finite.
+    scipy_fun = osp_stats.t.logpdf
+    lax_fun = lsp_stats.t.logpdf
+    args_maker = lambda: [
+        np.zeros(6, dtype=dtype),
+        np.full(6, 1e7, dtype=dtype),
+        np.zeros(6, dtype=dtype),
+        np.array([1e-22, 1e-19, 1e-14, 1e16, 1e19, 1e22], dtype=dtype),
+    ]
+    self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=1e-5)
+    self._CompileAndCheck(lax_fun, args_maker)
+
+
   @genNamedParametersNArgs(3)
   def testUniformLogPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())

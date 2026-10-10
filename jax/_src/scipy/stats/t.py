@@ -13,11 +13,10 @@
 # limitations under the License.
 
 
-import numpy as np
-
 from jax._src import lax
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
+from jax._src.scipy.special import betaln
 from jax._src.typing import Array, ArrayLike
 
 
@@ -48,14 +47,13 @@ def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
     :func:`jax.scipy.stats.t.pdf`
   """
   x, df, loc, scale = promote_args_inexact("t.logpdf", x, df, loc, scale)
-  two = _lax_const(x, 2)
+  half = _lax_const(x, 0.5)
   scaled_x = lax.div(lax.sub(x, loc), scale)
-  df_over_two = lax.div(df, two)
-  df_plus_one_over_two = lax.add(df_over_two, _lax_const(x, 0.5))
-  normalize_term_const = lax.mul(lax.mul(scale, scale), _lax_const(x, np.pi))
-  normalize_term_tmp = lax.div(lax.log(lax.mul(normalize_term_const, df)), two)
-  normalize_term = lax.sub(lax.add(lax.lgamma(df_over_two), normalize_term_tmp),
-                           lax.lgamma(df_plus_one_over_two))
+  df_over_two = lax.mul(df, half)
+  df_plus_one_over_two = lax.add(df_over_two, half)
+  # Avoid under/overflow of scale**2 * df before taking its logarithm.
+  normalize_term_tmp = lax.add(lax.log(lax.abs(scale)), lax.mul(lax.log(df), half))
+  normalize_term = lax.add(betaln(df_over_two, half), normalize_term_tmp)
   quadratic = lax.div(lax.mul(scaled_x, scaled_x), df)
   return lax.neg(lax.add(normalize_term, lax.mul(df_plus_one_over_two, lax.log1p(quadratic))))
 
