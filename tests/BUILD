@@ -2055,6 +2055,16 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "rebindable_test",
+    srcs = ["rebindable_test.py"],
+    deps = [
+        "//jax/experimental:rebindable",
+    ] + py_deps([
+        "absl/testing",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "hijax_test",
     srcs = ["hijax_test.py"],
     deps = [
