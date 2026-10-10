@@ -519,6 +519,31 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     )
     self._CompileAndCheck(lsp_special.gammaincc, args_maker, rtol=rtol)
 
+  def testGammaIncCLargeA(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41201
+    # gammaincc(a, x) for large a near x should return ~0.5, not values far outside [0, 1].
+    dtype = dtypes.default_float_dtype()
+    a_samples = [1e3, 1e4, 1e5, 1e6, 1e7, 1e12]
+    x_samples = [1e3, 1e4, 1e5, 1e6, 1e7, 1e12]
+    args_maker = lambda: (np.array(a_samples, dtype=dtype), np.array(x_samples, dtype=dtype))
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(
+        osp_special.gammaincc, lsp_special.gammaincc, args_maker, rtol=rtol
+    )
+    self._CompileAndCheck(lsp_special.gammaincc, args_maker, rtol=rtol)
+
+  def testGammaIncCLargeAF32(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41201
+    # gammaincc(a, x) for large a near x in float32 should return ~0.5.
+    a_samples = [1e3, 1e4, 1e5, 1e6, 1e7]
+    x_samples = [1e3, 1e4, 1e5, 1e6, 1e7]
+    args_maker = lambda: (np.array(a_samples, dtype=np.float32), np.array(x_samples, dtype=np.float32))
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(
+        osp_special.gammaincc, lsp_special.gammaincc, args_maker, rtol=rtol
+    )
+    self._CompileAndCheck(lsp_special.gammaincc, args_maker, rtol=rtol)
+
   def testBetaIncBoundaryValues(self):
     dtype = dtypes.default_float_dtype()
     fi = jax.numpy.finfo(dtype)
