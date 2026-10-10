@@ -16,6 +16,7 @@ import numpy as np
 
 from jax._src import lax
 from jax._src import numpy as jnp
+from jax._src.nn.functions import log1mexp
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 
@@ -163,7 +164,12 @@ def logcdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     :func:`jax.scipy.stats.expon.logpdf`
     :func:`jax.scipy.stats.expon.logsf`
   """
-  return lax.log1p(lax.neg(sf(x, loc, scale)))
+  x, loc, scale = promote_args_inexact("expon.logcdf", x, loc, scale)
+  scaled_x = lax.div(lax.sub(x, loc), scale)
+  below_loc = lax.lt(x, loc)
+  # Use a safe input for x < loc so log1mexp doesn't produce NaN there.
+  safe_x = jnp.where(below_loc, 1, scaled_x)
+  return jnp.where(below_loc, -np.inf, log1mexp(safe_x))
 
 
 def logsf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
