@@ -1231,6 +1231,30 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       )
       self._CompileAndCheck(lax_fun, args_maker)
 
+  def testParetoOutsideSupportGradients(self):
+    x = jnp.float32(-1.0)
+    b = jnp.float32(2.0)
+    loc = jnp.float32(0.0)
+    scale = jnp.float32(1.0)
+
+    for fn in [
+        lsp_stats.pareto.logpdf,
+        lsp_stats.pareto.pdf,
+        lsp_stats.pareto.cdf,
+        lsp_stats.pareto.logcdf,
+        lsp_stats.pareto.sf,
+        lsp_stats.pareto.logsf,
+    ]:
+      grad_b = jax.grad(fn, argnums=1)(x, b, loc, scale)
+      grad_x = jax.grad(fn, argnums=0)(x, b, loc, scale)
+      self.assertTrue(jnp.isfinite(grad_b))
+      self.assertTrue(jnp.isfinite(grad_x))
+
+    grad_ppf = jax.grad(lsp_stats.pareto.ppf, argnums=1)(
+        jnp.float32(1.5), b, loc, scale
+    )
+    self.assertTrue(jnp.isfinite(grad_ppf))
+
   @genNamedParametersNArgs(4)
   def testTLogPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
