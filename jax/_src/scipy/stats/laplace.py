@@ -102,8 +102,10 @@ def cdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   x, loc, scale = promote_args_inexact("laplace.cdf", x, loc, scale)
   half = _lax_const(x, 0.5)
   one = _lax_const(x, 1)
-  zero = _lax_const(x, 0)
   diff = lax.div(lax.sub(x, loc), scale)
+  zero = lax.full_like(diff, 0)
+  left_diff = lax.select(lax.le(diff, zero), diff, zero)
+  right_diff = lax.select(lax.gt(diff, zero), diff, zero)
   return lax.select(lax.le(diff, zero),
-                    lax.mul(half, lax.exp(diff)),
-                    lax.sub(one, lax.mul(half, lax.exp(lax.neg(diff)))))
+                    lax.mul(half, lax.exp(left_diff)),
+                    lax.sub(one, lax.mul(half, lax.exp(lax.neg(right_diff)))))
