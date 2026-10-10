@@ -2932,10 +2932,9 @@ def double_sided_maxwell(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
 @jit(static_argnums=(3, 4))
 def _double_sided_maxwell(key: Key, loc, scale, shape, dtype) -> Array:
   params_shapes = lax.broadcast_shapes(np.shape(loc), np.shape(scale))
-  if not shape:
-    shape = params_shapes
-
   shape = shape + params_shapes
+  loc = jnp.broadcast_to(loc, shape)
+  scale = jnp.broadcast_to(scale, shape)
   maxwell_key, rademacher_key = _split(key)
   maxwell_rvs = maxwell(maxwell_key, shape=shape, dtype=dtype)
   # Generate random signs for the symmetric variates.
