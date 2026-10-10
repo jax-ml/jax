@@ -97,23 +97,10 @@ def _init_block_transforms(
 ) -> tuple[BlockIndexTransform | NoBlockIndexTransform, ...]:
   out = []
 
-  # BlockSpec wraps index_map in _IndexMapFunc, so use == to check underlying
-  # callable identity.
-  def compare(x, y):
-    if x is pallas_core.no_block_spec or y is pallas_core.no_block_spec:
-      return x is y
-    msg = (f'We can only compare {x=} and {y=} if their index_map is None.or'
-           ' already wrapped in _IndexMapFunc.')
-    assert (x.index_map is None
-            or isinstance(x.index_map, pallas_core._IndexMapFunc)), msg
-    assert (y.index_map is None
-            or isinstance(y.index_map, pallas_core._IndexMapFunc)), msg
-    return x == y
-
   equivalent_bs_argnums = []
   for i, bs in enumerate(block_specs):
     for j, equiv_idx in enumerate(equivalent_bs_argnums):
-      if compare(bs, block_specs[equiv_idx]):
+      if _block_specs_equal(bs, block_specs[equiv_idx]):
         equivalent_bs_argnums.append(equiv_idx)
         break
     else:
@@ -202,6 +189,24 @@ def make_scalar_prefetch_handler(*args):
     return result
 
   return scalar_prefetch_getter
+
+
+def _is_squeezed(dim: pallas_core.BlockDim | int | None) -> bool:
+  return dim is None or isinstance(dim, pallas_core.Squeezed)
+
+
+def _ref_block_shape(
+    block_shape: Sequence[pallas_core.BlockDim | int | None],
+) -> tuple[int, ...]:
+  return pallas_core._get_ref_block_shape(
+      pallas_core._canonicalize_block_shape(block_shape)
+  )
+
+
+def _ref_block_axis(
+    block_shape: Sequence[pallas_core.BlockDim | int | None], axis: int
+) -> int:
+  return axis - sum(map(_is_squeezed, block_shape[:axis]))
 
 
 def _block_size(dim: pallas_core.Element | int | None) -> int | None:
@@ -457,32 +462,38 @@ def pull_block_spec(
   return wrapped
 
 
-def _block_dim_equal(
-    b1: int | pallas_core.BlockDim | None, b2: int | pallas_core.BlockDim | None
-) -> bool:
-  block_size1 = pallas_core.get_block_size(b1)
-  block_size2 = pallas_core.get_block_size(b2)
-  match (b1, b2):
-    case (None, _) | (_, None):
-      return b1 == b2
-    case (
-        (pallas_core.Blocked(), int())
-        | (int(), pallas_core.Blocked())
-        | (pallas_core.Blocked(), pallas_core.Blocked())
-        | (int(), int())
-    ):
-      return block_size1 == block_size2
-    case _:
-      return type(b1) == type(b2) and (block_size1 == block_size2)
-
-
 def _block_shapes_equal(
-    bs1: tuple[int | pallas_core.BlockDim | None] | None,
-    bs2: tuple[int | pallas_core.BlockDim | None] | None,
+    bs1: Sequence[int | pallas_core.BlockDim | None] | None,
+    bs2: Sequence[int | pallas_core.BlockDim | None] | None,
 ) -> bool:
   if bs1 is None or bs2 is None:
     return bs1 == bs2
-  return all(_block_dim_equal(b1, b2) for b1, b2 in zip(bs1, bs2))
+  return (
+      pallas_core._canonicalize_block_shape(bs1)
+      == pallas_core._canonicalize_block_shape(bs2)
+  )
+
+
+# BlockSpec wraps index_map in _IndexMapFunc, so use == to check underlying
+# callable identity.
+def _block_specs_equal(
+    bs1: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
+    bs2: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
+) -> bool:
+  if bs1 is pallas_core.no_block_spec or bs2 is pallas_core.no_block_spec:
+    return bs1 is bs2
+  msg = (f'We can only compare {bs1=} and {bs2=} if their index_map is None.or'
+         ' already wrapped in _IndexMapFunc.')
+  assert (bs1.index_map is None
+          or isinstance(bs1.index_map, pallas_core._IndexMapFunc)), msg
+  assert (bs2.index_map is None
+          or isinstance(bs2.index_map, pallas_core._IndexMapFunc)), msg
+  return (
+      _block_shapes_equal(bs1.block_shape, bs2.block_shape)
+      and bs1.index_map == bs2.index_map
+      and bs1.memory_space == bs2.memory_space
+      and bs1.pipeline_mode == bs2.pipeline_mode
+  )
 
 
 def _compare_index_transforms(
@@ -1071,7 +1082,7 @@ def _pull_bcast_block_spec(
     idx = util.tuple_update(idx, i, 0)
     return idx
 
-  if block_transform.block_shape[i] is None:
+  if _is_squeezed(block_transform.block_shape[i]):
     return block_transform.replace(
         block_index_transform=new_block_index_transform)
 
@@ -1893,11 +1904,12 @@ def _concatenate_eval_rule(ctx: KernelEvalContext, *args, dimension):
     raise NotImplementedError(
         'Concatenation with Element indexing is not yet supported.'
     )
-  block_dim = block_shape[dimension]
-  if block_dim is None:
-    block_dim = 1
+  block_dim = pallas_core.get_block_size(block_shape[dimension])
 
-  if block_dim == sum(aval.shape[dimension] for aval in ctx.avals_in):
+  if (
+      not _is_squeezed(block_shape[dimension])
+      and block_dim == sum(aval.shape[dimension] for aval in ctx.avals_in)
+  ):
     # Handle special case if the block contains all of the concatenated
     # array.
     return jax.lax.concatenate(args, dimension=dimension)
@@ -1955,7 +1967,10 @@ def _concatenate_rule(
   block_dim = block_shape[dimension]
   if block_dim is None or isinstance(block_dim, pallas_core.Squeezed):
     block_dim = 1
-  if block_dim == sum(aval.shape[dimension] for aval in ctx.avals_in):
+  if (
+      not _is_squeezed(block_shape[dimension])
+      and block_dim == sum(aval.shape[dimension] for aval in ctx.avals_in)
+  ):
     # Handle special case if the block contains all of the concatenated
     # array.
     new_shapes = [
@@ -2143,13 +2158,13 @@ def _broadcast_in_dim_eval_rule(
   if in_shape == shape:
     # Dummy broadcast
     return x
-  shape = tuple(map(_block_size, eval_ctx.out_block_specs[0].block_shape))
+  block_shape = eval_ctx.out_block_specs[0].block_shape
   dims = tuple(
-      d - sum(s is None for s in shape[:d])
+      _ref_block_axis(block_shape, d)
       for d in broadcast_dimensions
-      if shape[d] is not None
+      if not _is_squeezed(block_shape[d])
   )
-  shape = tuple(s for s in shape if s is not None)
+  shape = _ref_block_shape(block_shape)
   return jax.lax.broadcast_in_dim(x, broadcast_dimensions=dims, shape=shape)
 
 
@@ -2176,7 +2191,7 @@ def _broadcast_in_dim_pull_rule(
     )
 
   new_block_shape = tuple(
-      b if ((b := block_transform.block_shape[i]) is None) or (d != 1) else 1
+      b if _is_squeezed(b := block_transform.block_shape[i]) or (d != 1) else 1
       for i, d in zip(broadcast_dimensions, shape, strict=True)
   )
   return [block_transform.replace(
@@ -2428,12 +2443,8 @@ def _iota_eval_rule(
   block_spec = eval_ctx.out_block_specs[0]
   block_idx = eval_ctx.get_out_block_indices()[0]
   assert len(block_idx) == len(shape)
-  iota_shape = tuple(
-      _block_size(s) for s in block_spec.block_shape if s is not None
-  )
-  dim_ = dimension - sum(
-      _block_size(s) is None for s in block_spec.block_shape[:dimension]
-  )
+  iota_shape = _ref_block_shape(block_spec.block_shape)
+  dim_ = _ref_block_axis(block_spec.block_shape, dimension)
   local_iota = jax.lax.broadcasted_iota(dtype, iota_shape, dim_)
   return local_iota + block_idx[dimension] * _block_size(
       block_spec.block_shape[dimension]
@@ -2451,9 +2462,10 @@ def _iota_pull_rule(
     sharding: jax.sharding.Sharding,
 ):
   del ctx, sharding, dtype, shape
-  if block_transform.block_shape[dimension] is None:
+  if _is_squeezed(block_transform.block_shape[dimension]):
     raise ValueError(
-        f'Cannot pull iota along dimension {dimension} with None block size.'
+        f'Cannot pull iota along dimension {dimension} with squeezed block'
+        ' size.'
     )
   return []
 
@@ -2524,7 +2536,7 @@ def _reshape_pull_rule(
 
       if len(merged) == 1:
         new_grids.append((merged[0] // bs,))
-        new_block_shape.append(bd if bd is not None else 1)
+        new_block_shape.append(1 if _is_squeezed(bd) else bd)
         continue
 
       if not isinstance(bd, (int, pallas_core.Blocked)):
@@ -2624,10 +2636,7 @@ def _reshape_eval_rule(
     eval_ctx: KernelEvalContext, x, *, dimensions, new_sizes, sharding
 ):
   del sharding, dimensions, new_sizes
-  out_shape_nones = tuple(
-      _block_size(s) for s in eval_ctx.out_block_specs[0].block_shape
-  )
-  out_shape = tuple(s for s in out_shape_nones if s is not None)
+  out_shape = _ref_block_shape(eval_ctx.out_block_specs[0].block_shape)
   # Because we have restricted the pull block spec rule, we can just apply a
   # basic reshape here.
   x = x.reshape(out_shape)
@@ -3176,7 +3185,7 @@ def _binop_push_rule(
   if not (lhs_has_block_spec ^ rhs_has_block_spec):
     # We can only do a push if one of the block specs is unspecified
     # or they are identical.
-    if left_block_spec == right_block_spec:
+    if _block_specs_equal(left_block_spec, right_block_spec):
       return left_block_spec
     raise ValueError('Illegal binary push. One of the block specs must be no_block_spec.')
   for l, r in zip(left_aval.shape, right_aval.shape, strict=True):
@@ -3186,10 +3195,7 @@ def _binop_push_rule(
       raise ValueError('Cannot propagate block spec through RHS broadcast.')
   if left_block_spec is pallas_core.no_block_spec:
     return right_block_spec
-  if right_block_spec is pallas_core.no_block_spec:
-    return left_block_spec
-  if right_block_spec != left_block_spec:
-    raise ValueError('Invalid block spec')
+  assert right_block_spec is pallas_core.no_block_spec
   return left_block_spec
 
 
