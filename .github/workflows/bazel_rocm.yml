@@ -28,7 +28,7 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: string
-        default: "amd-do-linux.jax.gpu.gfx950.1"
+        default: "amd-do-linux.jax.cpu"
       python:
         description: "Which python version to test?"
         type: string
@@ -127,12 +127,7 @@ jobs:
       image: ghcr.io/rocm/jax-base-ubu24.${{ inputs.rocm-tag }}:latest  # zizmor: ignore[unpinned-images]
       volumes:
         - /data:/data
-      options: >-
-        --device=/dev/kfd
-        --device=/dev/dri
-        --group-add video
-        --shm-size 64G
-        --env-file /etc/podinfo/gha-gpu-isolation-settings
+      options: --shm-size 64G
 
     env:
       JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
@@ -152,18 +147,6 @@ jobs:
         with:
           ref: ${{ inputs.git_commit }}
           persist-credentials: false
-      - name: ROCm Info
-        run: |
-          # TheRock (pip) ROCm images are /opt/rocm-less; rocminfo lives in the
-          # SDK bin dir, so put it on PATH via rocm-sdk. apt-ROCm images lack
-          # rocm-sdk and already have rocminfo on PATH.
-          if command -v rocm-sdk >/dev/null 2>&1; then
-            sdk_bin="$(rocm-sdk path --bin)"
-            if [[ -n "$sdk_bin" ]]; then
-              export PATH="$sdk_bin:$PATH"
-            fi
-          fi
-          rocminfo
       - name: Configure AWS Credentials
         if: inputs.build_jaxlib == 'false' && inputs.jaxlib-version == 'head'
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
@@ -219,7 +202,6 @@ jobs:
         run: |
           ./ci/run_bazel_test_rocm_rbe.sh  \
             --config="${GPU_CONFIG}" \
-            --local_test_jobs=4 \
             --//jax:build_jaxlib="${BUILD_JAXLIB}" \
             --//jax:build_jax="${BUILD_JAX}" \
             --repo_env=HERMETIC_PYTHON_VERSION="${PYTHON}" \
