@@ -524,7 +524,11 @@ def _emit_pallas_lowering_rule_as_fun(
     # Pyrefly can't tell that flat_outs is a list[ir.Value].
     return flat_outs  # pyrefly: ignore[bad-return]
 
-  return _emit_detached_func(func_name, input_types, output_types, body_builder)
+  # The cached template must not retain the first equation's source location.
+  with ir.Location.unknown():
+    return _emit_detached_func(
+        func_name, input_types, output_types, body_builder
+    )
 
 
 @dataclasses.dataclass
