@@ -707,8 +707,15 @@ class AbstractValue(object):
             return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
         return 0
 
+    # AbstractValue
+    def WeakType(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
 def AbstractValueStart(builder):
-    builder.StartObject(4)
+    builder.StartObject(5)
 
 def AbstractValueAddKind(builder, kind):
     builder.PrependInt8Slot(0, kind, 0)
@@ -724,6 +731,9 @@ def AbstractValueAddDtype(builder, dtype):
 
 def AbstractValueAddMemorySpace(builder, memorySpace):
     builder.PrependInt8Slot(3, memorySpace, 0)
+
+def AbstractValueAddWeakType(builder, weakType):
+    builder.PrependBoolSlot(4, weakType, 0)
 
 def AbstractValueEnd(builder):
     return builder.EndObject()
