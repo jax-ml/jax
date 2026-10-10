@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load(
     "//jaxlib:jax.bzl",
     "py_library_providing_imports_info",
     "pytype_library",
 )
+load("//jaxlib/oneapi:oneapi_rpath.bzl", "oneapi_cc_binary")
 
 licenses(["notice"])
 
@@ -34,7 +34,7 @@ exports_files([
     "setup.py",
 ])
 
-cc_binary(
+oneapi_cc_binary(
     name = "pjrt_c_api_gpu_plugin.so",
     linkopts = [
         "-Wl,--version-script,$(location :gpu_version_script.lds)",

@@ -19,8 +19,8 @@ load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "if_oneapi_is_configured",
-    "nanobind_extension",
 )
+load("//jaxlib/oneapi:oneapi_rpath.bzl", "oneapi_nanobind_extension")
 
 licenses(["notice"])
 
@@ -129,7 +129,7 @@ sycl_library(
     ],
 )
 
-nanobind_extension(
+oneapi_nanobind_extension(
     name = "_solver",
     srcs = ["//jaxlib/gpu:solver.cc"],
     copts = [
@@ -152,7 +152,7 @@ nanobind_extension(
     ],
 )
 
-nanobind_extension(
+oneapi_nanobind_extension(
     name = "_prng",
     srcs = ["//jaxlib/gpu:prng.cc"],
     copts = [
@@ -194,7 +194,7 @@ cc_library(
     ],
 )
 
-nanobind_extension(
+oneapi_nanobind_extension(
     name = "_hybrid",
     srcs = ["//jaxlib/gpu:hybrid.cc"],
     copts = [
@@ -255,7 +255,7 @@ sycl_library(
     ],
 )
 
-nanobind_extension(
+oneapi_nanobind_extension(
     name = "_linalg",
     srcs = ["//jaxlib/gpu:linalg.cc"],
     copts = [
@@ -325,7 +325,7 @@ sycl_library(
     ],
 )
 
-nanobind_extension(
+oneapi_nanobind_extension(
     name = "oneapi_plugin_extension",
     srcs = ["oneapi_plugin_extension.cc"],
     module_name = "oneapi_plugin_extension",
