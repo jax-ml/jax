@@ -777,6 +777,29 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol={np.float32: 1e-5, np.float64: 1e-6})
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testLaplaceCdfTailGradients(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/40966
+    # Gradients in the distribution tails should remain finite (0.0).
+    for x_val, loc_val, scale_val in [
+        (0.0, 10.0, 0.1),
+        (10.0, 0.0, 0.1),
+        (-1000.0, 0.0, 1.0),
+        (1000.0, 0.0, 1.0),
+    ]:
+      x = np.array(x_val, dtype=dtype)
+      loc = np.array(loc_val, dtype=dtype)
+      scale = np.array(scale_val, dtype=dtype)
+
+      gx, gloc, gscale = jax.grad(lsp_stats.laplace.cdf, argnums=(0, 1, 2))(x, loc, scale)
+      self.assertTrue(np.isfinite(gx))
+      self.assertTrue(np.isfinite(gloc))
+      self.assertTrue(np.isfinite(gscale))
+      if abs(x_val - loc_val) / scale_val > 500:
+        self.assertEqual(gx, 0.0)
+        self.assertEqual(gloc, 0.0)
+        self.assertEqual(gscale, 0.0)
+
   @genNamedParametersNArgs(3)
   def testLogisticCdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
