@@ -200,6 +200,10 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     ),
     op_record("log_softmax", 1, float_dtypes, jtu.rand_default, True),
     op_record("softmax", 1, float_dtypes, jtu.rand_default, True),
+    op_record(
+        "stdtr", 2, float_dtypes,
+        functools.partial(jtu.rand_uniform, low=0.5, high=30), True, (0,),
+    ),
     op_record("wofz", 1, jtu.dtypes.complex, jtu.rand_default, False),
 ]
 
@@ -637,6 +641,23 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       f = jax.grad(f)
     self._CheckAgainstNumpy(jax.vmap(f), d_i1, args_maker, rtol=1e-5)
     self._CompileAndCheck(jax.vmap(f), args_maker, rtol=1e-5)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testStdtrSpecialCases(self, dtype):
+    df = np.array([0.5, 1.0, 2.0, 5.0, 30.0, np.inf, 0.0, -1.0], dtype=dtype)
+    t = np.array([0.0, -1.5, 2.0, -np.inf, np.inf, 1.0, 1.0, 1.0], dtype=dtype)
+    expected = osp_special.stdtr(df.astype(np.float64), t.astype(np.float64)).astype(dtype)
+    self.assertAllClose(lsp_special.stdtr(df, t), expected, atol=1e-5, rtol=1e-5)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testStdtrGradAtZero(self, dtype):
+    # Regression test: betainc naive autodiff gives 0 * inf = NaN at t = 0
+    df = 3.0
+    grad_fn = jax.grad(lsp_special.stdtr, argnums=1)
+    g = grad_fn(dtype(df), dtype(0.0))
+    expected = osp_special.gamma((df + 1) / 2) / (np.sqrt(np.pi * df) * osp_special.gamma(df / 2))
+    self.assertAllClose(g, dtype(expected), atol=1e-5, rtol=1e-5)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

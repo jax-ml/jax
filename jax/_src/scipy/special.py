@@ -1905,6 +1905,81 @@ def _norm_logpdf(x):
   return lax.sub(lax.mul(neg_half, lax.square(x)), log_normalizer)
 
 
+def stdtr(df: ArrayLike, t: ArrayLike) -> Array:
+  r"""Student t distribution cumulative distribution function.
+
+  JAX implementation of :obj:`scipy.special.stdtr`.
+
+  .. math::
+
+     \mathrm{stdtr}(\nu, t) = \frac{\Gamma((\nu+1)/2)}{\sqrt{\pi\nu}\Gamma(\nu/2)}
+     \int_{-\infty}^t (1+x^2/\nu)^{-(\nu+1)/2}\,\mathrm{d}x
+
+  Args:
+    df: arraylike, real-valued. Degrees of freedom :math:`\nu > 0`.
+    t: arraylike, real-valued. Upper limit of the integral.
+
+  Returns:
+    array containing values of the Student t CDF.
+
+  See Also:
+    - :func:`jax.scipy.special.ndtr`
+    - :func:`jax.scipy.stats.t.cdf`
+  """
+  df, t = promote_args_inexact("stdtr", df, t)
+  if dtypes.issubdtype(df.dtype, np.complexfloating) or dtypes.issubdtype(t.dtype, np.complexfloating):
+    raise ValueError("stdtr does not support complex-valued inputs.")
+  return _stdtr(df, t)
+
+
+@partial(custom_derivatives.custom_jvp, nondiff_argnums=(0,))
+def _stdtr(df: Array, t: Array) -> Array:
+  half = _lax_const(df, 0.5)
+  one = _lax_const(df, 1.0)
+  zero = _lax_const(df, 0.0)
+  t_sq = lax.mul(t, t)
+  safe_df = jnp.where(isposinf(df), one, df)
+  w = jnp.where(lax.eq(t_sq, zero), one, lax.div(safe_df, lax.add(safe_df, t_sq)))
+  tail = lax.mul(half, lax.betainc(lax.mul(safe_df, half), half, w))
+  res = jnp.where(lax.lt(t, zero), tail, lax.sub(one, tail))
+  res = jnp.where(lax.eq(t, zero), half, res)
+  res = jnp.where(isneginf(t), zero, res)
+  res = jnp.where(isposinf(t), one, res)
+  res = jnp.where(isposinf(df), _ndtr(t), res)
+  res = jnp.where(lax.le(df, zero), np.nan, res)
+  return res
+
+
+def _stdtr_pdf(df: Array, t: Array) -> Array:
+  half = _lax_const(df, 0.5)
+  df_over_two = lax.mul(df, half)
+  df_plus_one_over_two = lax.add(df_over_two, half)
+  log_norm = lax.sub(
+      lax.sub(lax.lgamma(df_plus_one_over_two), lax.lgamma(df_over_two)),
+      lax.mul(half, lax.log(lax.mul(_lax_const(df, np.pi), df))),
+  )
+  log_p = lax.sub(
+      log_norm,
+      lax.mul(df_plus_one_over_two, lax.log1p(lax.div(lax.mul(t, t), df))),
+  )
+  return lax.exp(log_p)
+
+
+@_stdtr.defjvp
+def _stdtr_jvp(df, primals, tangents):
+  (t,), (t_dot,) = primals, tangents
+  ans = _stdtr(df, t)
+  norm_pdf = lax.div(
+      lax.exp(lax.mul(_lax_const(t, -0.5), lax.mul(t, t))),
+      _lax_const(t, np.sqrt(2 * np.pi)),
+  )
+  safe_df = jnp.where(isposinf(df) | lax.le(df, _lax_const(df, 0.0)), _lax_const(df, 1.0), df)
+  t_deriv = _stdtr_pdf(safe_df, t)
+  t_deriv = jnp.where(isposinf(df), norm_pdf, t_deriv)
+  t_deriv = jnp.where(lax.le(df, _lax_const(df, 0.0)), np.nan, t_deriv)
+  return ans, lax.mul(t_dot, t_deriv)
+
+
 def i0e(x: ArrayLike) -> Array:
   r"""Exponentially scaled modified bessel function of zeroth order.
 

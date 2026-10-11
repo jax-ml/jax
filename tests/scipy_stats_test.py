@@ -1249,6 +1249,108 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CompileAndCheck(lax_fun, args_maker,
                             rtol={np.float64: 1e-14}, atol={np.float64: 1e-14})
 
+  @genNamedParametersNArgs(4)
+  def testTPdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.t.pdf
+    lax_fun = lsp_stats.t.pdf
+
+    def args_maker():
+      x, df, loc, scale = map(rng, shapes, dtypes)
+      df = np.clip(np.abs(df), a_min=0.1, a_max=None).astype(df.dtype)
+      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
+      return [x, df, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker,
+                            rtol={np.float64: 1e-14}, atol={np.float64: 1e-14})
+
+  @genNamedParametersNArgs(4)
+  def testTCdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.t.cdf
+    lax_fun = lsp_stats.t.cdf
+
+    def args_maker():
+      x, df, loc, scale = map(rng, shapes, dtypes)
+      df = np.clip(np.abs(df), a_min=0.1, a_max=None).astype(df.dtype)
+      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
+      return [x, df, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker,
+                            rtol={np.float64: 1e-14}, atol={np.float64: 1e-14})
+
+  @genNamedParametersNArgs(4)
+  def testTSf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.t.sf
+    lax_fun = lsp_stats.t.sf
+
+    def args_maker():
+      x, df, loc, scale = map(rng, shapes, dtypes)
+      df = np.clip(np.abs(df), a_min=0.1, a_max=None).astype(df.dtype)
+      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
+      return [x, df, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker,
+                            rtol={np.float64: 1e-14}, atol={np.float64: 1e-14})
+
+  @genNamedParametersNArgs(4)
+  def testTLogCdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.t.logcdf
+    lax_fun = lsp_stats.t.logcdf
+
+    def args_maker():
+      x, df, loc, scale = map(rng, shapes, dtypes)
+      df = np.clip(np.abs(df), a_min=0.1, a_max=None).astype(df.dtype)
+      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
+      return [x, df, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker,
+                            rtol={np.float64: 1e-14}, atol={np.float64: 1e-14})
+
+  @genNamedParametersNArgs(4)
+  def testTLogSf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.t.logsf
+    lax_fun = lsp_stats.t.logsf
+
+    def args_maker():
+      x, df, loc, scale = map(rng, shapes, dtypes)
+      df = np.clip(np.abs(df), a_min=0.1, a_max=None).astype(df.dtype)
+      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
+      return [x, df, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker,
+                            rtol={np.float64: 1e-14}, atol={np.float64: 1e-14})
+
+  def testTCdfGradients(self):
+    df, loc, scale = 3.0, 1.0, 2.0
+    gx = jax.grad(lsp_stats.t.cdf, argnums=0)(loc, df, loc, scale)
+    expected_gx = osp_stats.t.pdf(loc, df, loc=loc, scale=scale)
+    self.assertAllClose(gx, expected_gx, atol=1e-5, rtol=1e-5)
+
+    gloc = jax.grad(lsp_stats.t.cdf, argnums=2)(loc, df, loc, scale)
+    self.assertAllClose(gloc, -expected_gx, atol=1e-5, rtol=1e-5)
+
+    gscale = jax.grad(lsp_stats.t.cdf, argnums=3)(loc, df, loc, scale)
+    self.assertAllClose(gscale, 0.0, atol=1e-5, rtol=1e-5)
+
 
   @genNamedParametersNArgs(3)
   def testUniformLogPdf(self, shapes, dtypes):
