@@ -60,7 +60,9 @@ isinstance(x, jax.Array)
 ```
 
 If you use type annotations in your code, `jax.Array` is the appropriate
-annotation for JAX array values (see {mod}`jax.typing` for more discussion).
+annotation for JAX array values (see {mod}`jax.typing` for the annotation
+helpers, and {ref}`type-checking-jax` for practical advice on static type
+checkers).
 
 Every JAX value also has a *JAX type*, which you can inspect with
 {func}`jax.typeof`. For an array, the JAX type is, roughly, its shape and

@@ -24,3 +24,9 @@ documentation levels (:ref:`101 <jax-101>` through :doc:`501 <501/index>`).
 
    gpu_performance_tips
 
+.. toctree::
+   :maxdepth: 1
+   :caption: Type checking
+
+   type_checking
+

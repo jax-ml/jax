@@ -333,6 +333,20 @@ reducing :code:`XLA_PYTHON_CLIENT_MEM_FRACTION` from the default of :code:`.75`,
 or setting :code:`XLA_PYTHON_CLIENT_PREALLOCATE=false`. For more details, please
 see the page on `JAX GPU memory allocation`_.
 
+.. _faq-type-checking:
+
+How do I type-check JAX code?
+-----------------------------
+
+Use :class:`jax.Array` for array values and :obj:`jax.typing.ArrayLike` for
+permissive array inputs. Static checkers such as pytype, mypy, and pyright
+are helpful for simple mistakes, but JAX transformations and pytrees limit
+how precise checking can be.
+
+See :ref:`type-checking-jax` for recommended patterns, workarounds around
+:func:`jax.jit` / :func:`jax.grad` / :func:`jax.vmap`, and pointers to
+ecosystem tools such as jaxtyping.
+
 .. _faq-benchmark:
 
 Benchmarking JAX code
