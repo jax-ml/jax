@@ -470,6 +470,18 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=2e-4)
       self._CompileAndCheck(lax_fun, args_maker, rtol=3e-4)
 
+  @jtu.sample_product(fun=["ppf", "isf"], dtype=jtu.dtypes.floating)
+  def testCauchyQuantileEdgeCases(self, fun, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/38318
+    finfo = np.finfo(dtype)
+    q = np.array(
+      [0.0, -0.0, 0.5, 1.0, -0.1, 1.1, np.nan, finfo.tiny, 1 - finfo.epsneg],
+      dtype,
+    )
+    scipy_fun = getattr(osp_stats.cauchy, fun)
+    lax_fun = getattr(lsp_stats.cauchy, fun)
+    self.assertAllClose(lax_fun(q), scipy_fun(q), check_dtypes=False, atol=0)
+
   @jtu.sample_product(
     shapes=[
       [x_shape, alpha_shape]
