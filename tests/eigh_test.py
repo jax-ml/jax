@@ -290,6 +290,23 @@ class EighTest(jtu.JaxTestCase):
     jtu.assert_dot_precision(
         lax.Precision.HIGHEST, partial(jvp, jnp.linalg.eigh), (a,), (a,))
 
+  def testEighGradLargeEigenvalues(self):
+    # At 2**24, float32 can no longer represent every consecutive integer.
+    a = jnp.diag(
+        jnp.array(
+            [2**24, 2**24 + 2, 2**24 + 4],
+            dtype=jnp.float32,
+        )
+    )
+
+    def eigenvectors(x):
+      return jnp.linalg.eigh(x)[1]
+
+    for jacobian in (jax.jacfwd, jax.jacrev):
+      with self.subTest(jacobian=jacobian.__name__):
+        jac = jacobian(eigenvectors)(a)
+        self.assertTrue(np.isfinite(np.asarray(jac)).all())
+
   def testEighGradRankPromotion(self):
     rng = jtu.rand_default(self.rng())
     a = rng((10, 3, 3), np.float32)
@@ -334,7 +351,7 @@ class LaxLinalgEighTest(jtu.JaxTestCase):
         continue
       if (
           implementation == lax.linalg.EighImplementation.JACOBI
-          and jtu.test_device_matches(["cpu"])
+          and jtu.test_device_matches(["cpu", "oneapi"])
       ):
         continue
       if (
@@ -398,8 +415,10 @@ class LaxLinalgEighTest(jtu.JaxTestCase):
 
         A = np.diag(np.real(alpha)) + np.diag(beta, 1) + np.diag(np.conj(beta), -1)
         self.assertAllClose(
-            A @ eigvecs, eigvecs * eigvals[None, :].astype(eigvecs.dtype),
-            atol=atol_eigvecs, rtol=rtol,
+            jnp.matmul(A, eigvecs, precision="high"),
+            eigvecs * eigvals[None, :].astype(eigvecs.dtype),
+            atol=atol_eigvecs,
+            rtol=rtol,
         )
 
   @jtu.sample_product(

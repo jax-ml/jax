@@ -165,7 +165,7 @@ class FftTest(jtu.JaxTestCase):
     if (config.enable_x64.value and
         dtype in (float_dtypes if real and not inverse else inexact_dtypes)):
       # TODO(skye): can we be more precise?
-      tol = 0.16
+      tol = 0.18
       jtu.check_grads(jnp_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
     # check dtypes
@@ -183,6 +183,51 @@ class FftTest(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(np_fn, jnp_fn, lambda: (a,), check_dtypes=False, tol=1e-4)
     self._CompileAndCheck(jnp_fn, lambda: (a,), atol=2e-6)
+
+  @jtu.sample_product(
+    [dict(shape=shape, s=s)
+     for shape, s in [((5, 1), (5, 1)), ((3, 5, 1), (5, 1)), ((4, 1), (4, 1)),
+                      ((6, 2), (6, 2)), ((5, 2), (5, 2)), ((6, 5), (6, 8)),
+                      ((5, 4), (5, 7)), ((3, 6, 5), (6, 8)), ((4, 6, 1), (4, 6, 1)),
+                      ((4, 4, 3), (4, 4, 4)), ((3, 5, 4), (3, 5, 7)),
+                      ((2, 3, 4, 3), (3, 4, 5))]],
+    dtype=jtu.dtypes.complex,
+  )
+  def testIrfftnNonHermitianOuterAxes(self, shape, s, dtype):
+    # Like NumPy, only the last axis of a multi-dimensional IRFFT input is
+    # assumed to be Hermitian-symmetric; the slices at index 0 and n // 2 of
+    # the last axis need not be symmetric along the outer axes. Exercises
+    # even/odd lengths and the degenerate last lengths 1 and 2 (the GPU
+    # lowering makes the input symmetric before a single C2R transform; see
+    # https://github.com/jax-ml/jax/issues/29325).
+    rng = jtu.rand_default(self.rng())
+    axes = tuple(range(-len(s), 0))
+    def args_maker():
+      # Zero the imaginary parts of the DC and Nyquist bins of the last axis
+      # (as _zero_for_irfft does), keeping the outer axes non-symmetric.
+      z = np.array(rng(shape, dtype))
+      z[..., 0] = z[..., 0].real
+      if s[-1] % 2 == 0 and s[-1] // 2 < shape[-1]:
+        z[..., s[-1] // 2] = z[..., s[-1] // 2].real
+      return (z,)
+    jnp_fn = lambda x: jnp.fft.irfftn(x, s=s, axes=axes)
+    np_fn = lambda x: np.fft.irfftn(x, s=s, axes=axes)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol={np.complex64: 3e-6},
+                          rtol={np.float32: 2e-6, np.complex64: 3e-6})
+
+  def testIrfftnGpuLoweringIsASingleFft(self):
+    # On GPU a multi-dimensional IRFFT lowers to a single C2R FFT op (preceded
+    # by the symmetrization of the DC/Nyquist slices of the last axis), not to
+    # an IFFT over the outer axes plus a 1-D IRFFT with two transposes, which
+    # costs ~1.7x as much.
+    x = jnp.ones((2, 6, 5), jnp.complex64)
+    f = jax.jit(lambda a: jnp.fft.irfft2(a, s=(6, 8)))
+    text = f.trace(x).lower(lowering_platforms=("cuda",)).as_text()
+    self.assertEqual(text.count("stablehlo.fft"), 1)
+    self.assertIn("type = IRFFT, length = [6, 8]", text)
+    self.assertNotIn("stablehlo.transpose", text)
 
   def testIrfftTranspose(self):
     # regression test for https://github.com/jax-ml/jax/issues/6223

@@ -17,6 +17,7 @@
 These APIs are highly unstable and can change weekly. Use at your own risk.
 """
 
+from jax._src.pallas.mosaic_gpu.core import alloc_semaphore as alloc_semaphore
 from jax._src.pallas.mosaic_gpu.core import Barrier as Barrier
 from jax._src.pallas.mosaic_gpu.core import BlockSpec as BlockSpec
 from jax._src.pallas.mosaic_gpu.core import cluster_ref as cluster_ref
@@ -36,8 +37,7 @@ from jax._src.pallas.mosaic_gpu.core import SwizzleTransform as SwizzleTransform
 from jax._src.pallas.mosaic_gpu.core import TilingTransform as TilingTransform
 from jax._src.pallas.mosaic_gpu.core import TMEMLayout as TMEMLayout
 from jax._src.pallas.mosaic_gpu.core import TraceScope as TraceScope
-from jax._src.pallas.mosaic_gpu.core import transform_ref as transform_ref
-from jax._src.pallas.mosaic_gpu.core import transpose_ref as transpose_ref
+from jax._src.pallas.mosaic_gpu.core import transpose_ref as _deprecated_transpose_ref
 from jax._src.pallas.mosaic_gpu.core import TryClusterCancelResult as TryClusterCancelResult
 from jax._src.pallas.mosaic_gpu.core import WarpMesh as WarpMesh
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as ACC  # noqa: F401
@@ -69,6 +69,7 @@ from jax._src.pallas.mosaic_gpu.primitives import atomic_min as atomic_min
 from jax._src.pallas.mosaic_gpu.primitives import atomic_or as atomic_or
 from jax._src.pallas.mosaic_gpu.primitives import atomic_xor as atomic_xor
 from jax._src.pallas.mosaic_gpu.primitives import barrier_arrive as barrier_arrive
+from jax._src.pallas.mosaic_gpu.primitives import barrier_arrive_and_wait as barrier_arrive_and_wait
 from jax._src.pallas.mosaic_gpu.primitives import barrier_test as barrier_test
 from jax._src.pallas.mosaic_gpu.primitives import barrier_wait as barrier_wait
 from jax._src.pallas.mosaic_gpu.primitives import broadcasted_iota as broadcasted_iota
@@ -86,6 +87,10 @@ from jax._src.pallas.mosaic_gpu.primitives import multimem_load_reduce as multim
 from jax._src.pallas.mosaic_gpu.primitives import multimem_store as multimem_store
 from jax._src.pallas.mosaic_gpu.primitives import print_layout as print_layout
 from jax._src.pallas.mosaic_gpu.primitives import query_cluster_cancel as query_cluster_cancel
+from jax._src.pallas.mosaic_gpu.primitives import max as max
+from jax._src.pallas.mosaic_gpu.primitives import min as min
+from jax._src.pallas.mosaic_gpu.primitives import prod as prod
+from jax._src.pallas.mosaic_gpu.primitives import sum as sum
 from jax._src.pallas.mosaic_gpu.primitives import RefType as RefType
 from jax._src.pallas.mosaic_gpu.primitives import semaphore_signal as semaphore_signal
 from jax._src.pallas.mosaic_gpu.primitives import semaphore_signal_multicast as semaphore_signal_multicast
@@ -94,6 +99,7 @@ from jax._src.pallas.mosaic_gpu.primitives import semaphore_wait as semaphore_wa
 from jax._src.pallas.mosaic_gpu.primitives import SemaphoreSignal as SemaphoreSignal
 from jax._src.pallas.mosaic_gpu.primitives import set_max_registers as set_max_registers
 from jax._src.pallas.mosaic_gpu.primitives import ShapeDtypeStruct as ShapeDtypeStruct
+from jax._src.pallas.mosaic_gpu.primitives import store as store
 from jax._src.pallas.mosaic_gpu.primitives import tcgen05_commit_arrive as tcgen05_commit_arrive
 from jax._src.pallas.mosaic_gpu.primitives import tcgen05_mma as tcgen05_mma
 from jax._src.pallas.mosaic_gpu.primitives import try_cluster_cancel as try_cluster_cancel
@@ -120,3 +126,26 @@ SMEM = MemorySpace.SMEM
 TMEM = MemorySpace.TMEM
 #: Alias of :data:`jax.experimental.pallas.mosaic_gpu.MemorySpace.REGS`.
 REGS = MemorySpace.REGS
+
+
+_deprecations = {
+    # Added August 17, 2026
+    "transpose_ref": (
+        (
+            "jax.experimental.pallas.mosaic_gpu.transpose_ref is deprecated."
+            " Use ref.transpose(...) directly instead."
+        ),
+        _deprecated_transpose_ref,
+    ),
+}
+
+import typing
+
+if typing.TYPE_CHECKING:
+  transpose_ref = _deprecated_transpose_ref
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing

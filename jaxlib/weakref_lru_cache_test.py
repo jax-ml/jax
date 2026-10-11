@@ -197,6 +197,39 @@ class WeakrefLRUCacheTest(absltest.TestCase):
       for _ in range(100):
         cache(wrkey, CrashingKey())
 
+  def testFailingEqKey(self):
+    class BadEqKey:
+
+      def __eq__(self, other):
+        raise RuntimeError("eq failed")
+
+      def __hash__(self):
+        return 42
+
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x, y: y, 2048
+    )
+
+    k1 = BadEqKey()
+    k2 = BadEqKey()
+    cache(k1, 1)
+    with self.assertRaisesRegex(
+        ValueError, r"(?s)should be comparable using __eq__.*eq failed"
+    ):
+      cache(k2, 1)
+
+    class WRKey:
+      pass
+
+    wrkey = WRKey()
+    s1 = BadEqKey()
+    s2 = BadEqKey()
+    cache(wrkey, s1)
+    with self.assertRaisesRegex(
+        ValueError, r"(?s)should be comparable using __eq__.*eq failed"
+    ):
+      cache(wrkey, s2)
+
   def testPrintingStats(self):
     class WRKey:
       pass
@@ -427,6 +460,31 @@ class WeakrefLRUCacheTest(absltest.TestCase):
     num_keys_should_be = 1
     b = A()
     cache(b)
+
+  def testExplainException(self):
+    should_raise = True
+
+    def raising_explain_factory():
+      if should_raise:
+        raise RuntimeError("explain factory error")
+      return None
+
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x: 42, explain=raising_explain_factory
+    )
+
+    class A:
+      pass
+
+    a = A()
+    with self.assertRaisesRegex(RuntimeError, "explain factory error"):
+      cache(a)
+
+    # Subsequent calls with the same key on the same thread or another thread
+    # must not raise RecursionError or deadlock.
+    should_raise = False
+    self.assertEqual(cache(a), 42)
+
 
   def testEvictionIsLRU(self):
     cache = weakref_lru_cache.weakref_lru_cache(lambda: None, lambda x, y: y, 2)

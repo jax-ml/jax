@@ -22,6 +22,7 @@ from jax._src import xla_bridge
 from jax._src.api import device_put
 from jax._src.lax.lax import _array_copy
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import scalar_types as jnp_types
@@ -30,7 +31,7 @@ from jax._src.typing import Array, DLDeviceType, DTypeLike
 
 import numpy as np
 
-DLPACK_VERSION = (0, 8)
+DLPACK_VERSION = _jax.dlpack_version if jaxlib_extension_version >= 499 else (0, 8)
 MIN_DLPACK_VERSION = (0, 5)
 
 # A set of dtypes that dlpack supports.
@@ -61,10 +62,12 @@ def is_supported_dtype(dtype: DTypeLike) -> bool:
 def _to_dlpack(x: Array, stream: int | Any | None,
                src_device: _jax.Device | None = None,
                device: _jax.Device | None = None,
-               copy: bool | None = None):
+               copy: bool | None = None,
+               max_version: tuple[int, int] | None = None):
 
   if src_device is None:
     src_device, = x.devices()
+  copied = False
   if device and (src_device is None or device != src_device):
     if copy is not None and not copy:
       raise ValueError(
@@ -74,8 +77,17 @@ def _to_dlpack(x: Array, stream: int | Any | None,
       )
     else:
       arr = device_put(x, device)
+      copied = True
+  elif copy:
+    arr = _array_copy(x)
+    copied = True
   else:
-    arr = _array_copy(x) if copy else x
+    arr = x
+  if jaxlib_extension_version >= 496:
+    return _jax.buffer_to_dlpack_managed_tensor(
+      arr.addressable_data(0), stream=stream, max_version=max_version,
+      copied=copied
+    )
   return _jax.buffer_to_dlpack_managed_tensor(
     arr.addressable_data(0), stream=stream
   )
@@ -121,12 +133,12 @@ def to_dlpack(x: Array, stream: int | Any | None = None,
     A DLPack PyCapsule object.
 
   Note:
-    While JAX arrays are always immutable, ``DLPackManagedTensor`` buffers
-    cannot be marked as immutable, and it is possible for processes external
-    to JAX to mutate them in-place. If a DLPack buffer derived from a JAX array
-    is mutated, it may lead to undefined behavior when using the associated JAX
-    array. When JAX eventually supports ``DLManagedTensorVersioned``
-    (DLPack 1.0), it will be possible to specify that a buffer is read-only.
+    JAX arrays are always immutable, but for DLPack version below v1.0, dlpack
+    buffers cannot be marked as immutable and it is possible for processes
+    external to JAX to mutate them in-place. If a DLPack buffer derived from a
+    JAX array is mutated, it may lead to undefined behavior when using the
+    associated JAX array. To prevent this, use DLPack version 1.0 or higher
+    (supported by JAX v0.12.0 and higher).
   """
   if not isinstance(x, array.ArrayImpl):
     raise TypeError("Argument to to_dlpack must be a jax.Array, "
@@ -149,16 +161,14 @@ def to_dlpack(x: Array, stream: int | Any | None = None,
 
   # As new versions are adopted over time, we can maintain some legacy paths
   # for compatibility mediated through the max_version parameter.
-  # TODO(micky774): Deprecate default usage of DLPackManagedTensor when XLA
-  # supports DLManagedTensorVersioned (DLPack version 1.0) and repurpose the
-  # current _to_dlpack as a legacy path for (0,5) <= max_version < (1,0).
   if max_version is None or max_version >= DLPACK_VERSION:
     # Latest
     return _to_dlpack(
       x, stream=stream,
       src_device=src_device,
       device=device,
-      copy=copy
+      copy=copy,
+      max_version=max_version,
     )
   elif max_version >= MIN_DLPACK_VERSION:
     # Oldest supported
@@ -166,7 +176,8 @@ def to_dlpack(x: Array, stream: int | Any | None = None,
       x, stream=stream,
       src_device=src_device,
       device=device,
-      copy=copy
+      copy=copy,
+      max_version=max_version,
     )
   else:
     raise BufferError(
@@ -274,7 +285,10 @@ def from_dlpack(external_array,
         stream = None
       else:
         raise
-  dlpack = external_array.__dlpack__(stream=stream)
+  try:
+    dlpack = external_array.__dlpack__(stream=stream, max_version=DLPACK_VERSION)
+  except TypeError:
+    dlpack = external_array.__dlpack__(stream=stream)
 
   try:
     arr = _jax.dlpack_managed_tensor_to_buffer(

@@ -123,7 +123,7 @@ no released `jax` version uses that API.
 and in the
 [XLA source tree, which lives inside the XLA repository](https://github.com/openxla/xla).
 The JAX-specific pieces inside XLA are primarily in the
-[`xla/python` subdirectory](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/compiler/xla/python).
+[`xla/python` subdirectory](https://github.com/openxla/xla/tree/main/xla/python).
 
 
 The reason that C++ pieces of JAX, such as Python bindings and runtime
@@ -146,9 +146,9 @@ level.
 
 `jaxlib` is built using Bazel out of the `jax` repository. The pieces of
 `jaxlib` from the XLA repository are incorporated into the build
-[as a Bazel submodule](https://github.com/jax-ml/jax/blob/main/WORKSPACE).
+[as a Bazel module dependency](https://github.com/jax-ml/jax/blob/main/MODULE.bazel).
 To update the version of XLA used during the build, one must update the pinned
-version in the Bazel `WORKSPACE`. This is done manually on an
+version in `MODULE.bazel`. This is done manually on an
 as-needed basis, but can be overridden on a build-by-build basis.
 
 

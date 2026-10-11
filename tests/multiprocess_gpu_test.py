@@ -14,6 +14,7 @@
 
 import functools
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -38,6 +39,17 @@ except ImportError:
   portpicker = None
 
 jax.config.parse_flags_with_absl()
+
+
+def _open_mpi_major_version() -> int | None:
+  result = subprocess.run(
+      ["mpirun", "--version"],
+      capture_output=True,
+      check=False,
+      text=True,
+  )
+  match = re.search(r"Open MPI\)?\s+v?(\d+)", result.stdout + result.stderr)
+  return int(match.group(1)) if match else None
 
 
 @unittest.skipIf(not portpicker, "Test requires portpicker")
@@ -143,6 +155,11 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
       raise unittest.SkipTest('Tests only for GPU.')
     if shutil.which('mpirun') is None:
       raise unittest.SkipTest('Tests only for MPI (mpirun not found).')
+    if (
+        importlib.util.find_spec("mpi4py") is None
+        and (_open_mpi_major_version() or 0) >= 5
+    ):
+      raise unittest.SkipTest('Open MPI 5 or newer requires mpi4py.')
 
     num_gpus = 4
     num_gpus_per_task = 1
@@ -164,14 +181,18 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
     # In case the job was launched via Slurm,
     # prevent OpenMPI from detecting Slurm environment
     env.pop('SLURM_JOBID', None)
+    env.pop('SLURM_JOB_ID', None)
     proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, universal_newlines=True)
     proc = self.enter_context(proc)
 
     try:
-      out, _ = proc.communicate()
-      self.assertEqual(proc.returncode, 0)
-      self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
+      out, err = proc.communicate()
+      self.assertEqual(
+          proc.returncode, 0, msg=f"Process failed:\n\n{out}\n\n{err}"
+      )
+      # MPI transports may emit diagnostics to stdout before the result.
+      self.assertRegex(out, rf'{num_gpus_per_task},{num_gpus}$')
     finally:
       proc.kill()
 
@@ -195,7 +216,7 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
         sys.executable,
         '-c',
         ('import jax, os; '
-        'jax.distributed.initialize(spec_detection_method="mpi4py"); '
+        'jax.distributed.initialize(cluster_detection_method="mpi4py"); '
         'print(f\'{jax.local_device_count()},{jax.device_count()}\' if jax.process_index() == 0 else \'\', end="")'
         )
     ]
@@ -208,9 +229,12 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
     proc = self.enter_context(proc)
 
     try:
-      out, _ = proc.communicate()
-      self.assertEqual(proc.returncode, 0)
-      self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
+      out, err = proc.communicate()
+      self.assertEqual(
+          proc.returncode, 0, msg=f"Process failed:\n\n{out}\n\n{err}"
+      )
+      # MPI transports may emit diagnostics to stdout before the result.
+      self.assertRegex(out, rf'{num_gpus_per_task},{num_gpus}$')
     finally:
       proc.kill()
 

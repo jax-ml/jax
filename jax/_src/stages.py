@@ -45,6 +45,7 @@ from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
 from jax._src.core import typeof
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.layout import AutoLayoutSingleton, Format, Layout
@@ -64,7 +65,7 @@ traceback_util.register_exclusion(__file__)
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
-CompilerOptions = dict[str, str | bool]
+CompilerOptions = dict[str, Any]
 
 
 # -- Internal types
@@ -390,7 +391,7 @@ def _traced_out_info(self):
   out = []
   for a, out_s, out_l in zip(self.jaxpr.out_avals, out_shardings, out_layouts):
     if isinstance(a, core.ShapedArray):
-      s = ((a.sharding if a.sharding.mesh._are_all_axes_explicit_or_manual
+      s = ((a.sharding if a.sharding.mesh.are_all_axes_explicit_or_manual
             else out_s) if out_s is None else out_s)
       out.append(
           core.ShapeDtypeStruct(
@@ -401,6 +402,20 @@ def _traced_out_info(self):
     else:
       out.append(a)
   return tree_util.tree_unflatten(self.out_tree, out)
+
+# Cached on the jaxpr, which jit's tracing cache shares among Traceds of the same
+# function and argument types, so that those Traceds get the same `fun`, and
+# thus tracing cache hits when `fun` is traced (e.g. in `with_consts_as_arg`).
+@util.weakref_lru_cache
+def _closure_converted_fun(jaxpr, consts_tree, in_tree, out_tree):
+  jaxpr = jaxpr.replace(consts=None)
+  in_tree = tree_util.treedef_tuple_tracing_registry(
+      (consts_tree, *in_tree.children()))
+  def fun(consts, *args, **kwargs):
+    args_flat = tree_util.tree_leaves_checked(in_tree, (consts, args, kwargs))
+    out_flat = core.eval_jaxpr_p.bind(*args_flat, call_jaxpr=jaxpr)
+    return tree_unflatten(out_tree, out_flat)
+  return fun
 
 
 class Traced(Stage):
@@ -437,6 +452,10 @@ class Traced(Stage):
   def out_avals(self):
     return tree_unflatten(self.out_tree, self.jaxpr.out_avals)
 
+  @property
+  def effects(self) -> frozenset[core.Effect]:
+    return frozenset(core.positional_effects(self.jaxpr))
+
   def __call__(self, *args, **kwargs):
     args_flat = tree_util.tree_leaves_checked(self.in_tree, (args, kwargs))
     out_flat = core.eval_jaxpr_p.bind(*args_flat, call_jaxpr=self.jaxpr)
@@ -457,14 +476,8 @@ class Traced(Stage):
     if self._closure_converted is None:
       consts = [*self.jaxpr.consts, *self._consts]
       _, consts_tree = tree_util.tracing_registry.flatten(consts)
-      jaxpr = self.jaxpr.replace(consts=None)
-      in_tree = tree_util.treedef_tuple_tracing_registry(
-          (consts_tree, *self.in_tree.children()))
-      out_tree = self.out_tree
-      def fun(consts, *args, **kwargs):
-        args_flat = tree_util.tree_leaves_checked(in_tree, (consts, args, kwargs))
-        out_flat = core.eval_jaxpr_p.bind(*args_flat, call_jaxpr=jaxpr)
-        return tree_unflatten(out_tree, out_flat)
+      fun = _closure_converted_fun(self.jaxpr, consts_tree, self.in_tree,
+                                   self.out_tree)
       self._closure_converted = (consts, fun)
     return self._closure_converted
 
@@ -491,6 +504,28 @@ class Traced(Stage):
     traced._params = dict(traced._params, name=self.fun_name)
     traced._fun_sourceinfo = self._fun_sourceinfo
     return consts, traced
+
+  def _batch(self, axis_data, in_axes) -> tuple[Traced, tuple[Any, ...]]:
+    """Returns this Traced batched along `axis_data`, with its flattened
+    arguments batched along `in_axes` (one int or None each), and the batch
+    axes of its flattened results."""
+    in_axes = (None,) * len(self._consts) + tuple(in_axes)
+    new_jaxpr, out_axes = batching.batch_jaxpr2(self.jaxpr, axis_data, in_axes)
+    new_params = dict(self._params, jaxpr=new_jaxpr)
+    return Traced(list(new_jaxpr.in_avals), new_params, self._in_tree,
+                  self.out_tree, self._consts, self._fun_sourceinfo), out_axes
+
+  def physicalize(self, ctx) -> Traced:
+    new_jaxpr = ctx.physicalize_closed_jaxpr(self.jaxpr)
+    new_params = dict(self._params, jaxpr=new_jaxpr)
+    return Traced(
+        list(new_jaxpr.in_avals),
+        new_params,
+        self._in_tree,
+        self.out_tree,
+        self._consts,
+        self._fun_sourceinfo,
+    )
 
   @property
   def lojax(self) -> LoJax:

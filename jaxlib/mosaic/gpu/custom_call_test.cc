@@ -44,6 +44,7 @@ namespace {
 using ::absl_testing::IsOk;
 using ::testing::_;
 using ::testing::HasSubstr;
+using ::testing::SizeIs;
 
 absl::Status ExecuteSync(xla::PjRtLoadedExecutable* executable) {
   std::vector<xla::PjRtBuffer*> no_buffers;
@@ -487,6 +488,166 @@ TEST_F(CustomCallTest, GPUModuleIsRecompiledAfterExpiration) {
     absl::ScopedMockLog log;
     EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
                          "Successfully initialized Mosaic GPU kernel"))
+        .Times(1);
+    log.StartCapturingLogs();
+    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  }
+}
+
+TEST_F(CustomCallTest, MosaicGpuRecordsIntoCommandBuffer) {
+  std::string module_str = TestMGPUHloModule();
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       xla::ParseAndReturnUnverifiedModule(module_str));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+  xla::CompileOptions compile_options;
+  compile_options.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_graph_min_graph_size(1);
+  absl::SetVLogLevel("custom_call", 5);
+  absl::SetVLogLevel("record_ffi", 3);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                             std::move(compile_options)));
+  // Warmup.
+  EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  // Create.
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    HasSubstr("MosaicGpuRecord called for "
+                              "kernel_mosaic_gpu_kernel with action=Create")))
+        .Times(1);
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         HasSubstr("FfiCreateLaunch for kernel: "
+                                   "kernel_mosaic_gpu_kernel")))
+        .Times(1);
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         HasSubstr("FfiKernelCache: created kernel")))
+        .Times(0);
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    HasSubstr("MosaicGpuExecute launching kernel with name: "
+                              "kernel_mosaic_gpu_kernel")))
+        .Times(0);
+    log.StartCapturingLogs();
+    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  }
+  // Launch graph. XLA only. No mosaic gpu logs expected.
+  // Keep `held_result` alive so the next execution allocates a new output
+  // buffer address and triggers `action=Update`.
+  std::vector<std::vector<std::unique_ptr<xla::PjRtBuffer>>> held_result;
+  {
+    absl::ScopedMockLog log;
+    // Neither MosaicGpuRecord nor MosaicGpuExecute should be called.
+    // XLA launches the graph directly.
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _, HasSubstr("MosaicGpuRecord")))
+        .Times(0);
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _, HasSubstr("MosaicGpuExecute")))
+        .Times(0);
+    log.StartCapturingLogs();
+    std::vector<xla::PjRtBuffer*> no_buffers;
+    ASSERT_OK_AND_ASSIGN(held_result,
+                         executable->Execute({no_buffers}, /*options=*/{}));
+    ASSERT_THAT(held_result, SizeIs(1));
+    ASSERT_THAT(held_result[0], SizeIs(1));
+    EXPECT_OK(held_result[0][0]->GetReadyFuture().Await());
+  }
+  // Update.
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    HasSubstr("MosaicGpuRecord called for "
+                              "kernel_mosaic_gpu_kernel with action=Update")))
+        .Times(1);
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    HasSubstr("MosaicGpuExecute launching kernel with name: "
+                              "kernel_mosaic_gpu_kernel")))
+        .Times(0);
+    log.StartCapturingLogs();
+    EXPECT_OK(ExecuteSync(executable.get()));
+  }
+}
+
+TEST_F(CustomCallTest, MosaicGpuCollectiveFallsBackToStreamCapture) {
+  std::string module_str = TestMGPUHloModule(
+      "uses_xla_collective_metadata = true, xla_replica_ids = \"0\"");
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       xla::ParseAndReturnUnverifiedModule(module_str));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+  xla::CompileOptions compile_options;
+  compile_options.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_graph_min_graph_size(1);
+  absl::SetVLogLevel("custom_call", 5);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                             std::move(compile_options)));
+  // Warmup.
+  EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  // Create
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    HasSubstr("MosaicGpuRecord called for "
+                              "kernel_mosaic_gpu_kernel with action=Create")))
+        .Times(1);
+    EXPECT_CALL(
+        log, Log(absl::LogSeverity::kInfo, _,
+                 HasSubstr("MosaicGpuRecord falling back to stream capture for "
+                           "kernel_mosaic_gpu_kernel")))
+        .Times(1);
+    // Execute called because we are tracing.
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    HasSubstr("MosaicGpuExecute launching kernel with name: "
+                              "kernel_mosaic_gpu_kernel")))
+        .Times(1);
+    log.StartCapturingLogs();
+    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  }
+  // Launch.
+  std::vector<std::vector<std::unique_ptr<xla::PjRtBuffer>>> held_result;
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _, HasSubstr("MosaicGpuRecord")))
+        .Times(0);
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _, HasSubstr("MosaicGpuExecute")))
+        .Times(0);
+    log.StartCapturingLogs();
+    std::vector<xla::PjRtBuffer*> no_buffers;
+    ASSERT_OK_AND_ASSIGN(held_result,
+                         executable->Execute({no_buffers}, /*options=*/{}));
+    ASSERT_THAT(held_result, SizeIs(1));
+    ASSERT_THAT(held_result[0], SizeIs(1));
+    EXPECT_THAT(held_result[0][0]->GetReadyFuture().Await(), IsOk());
+  }
+  // Update
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    HasSubstr("MosaicGpuRecord called for "
+                              "kernel_mosaic_gpu_kernel with action=Update")))
+        .Times(1);
+    EXPECT_CALL(
+        log, Log(absl::LogSeverity::kInfo, _,
+                 HasSubstr("MosaicGpuRecord falling back to stream capture for "
+                           "kernel_mosaic_gpu_kernel")))
+        .Times(1);
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    HasSubstr("MosaicGpuExecute launching kernel with name: "
+                              "kernel_mosaic_gpu_kernel")))
         .Times(1);
     log.StartCapturingLogs();
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());

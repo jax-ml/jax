@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 # Attaching XLA Metadata with `set_xla_metadata`
 
 <!--* freshness: { reviewed: '2025-08-20' } *-->

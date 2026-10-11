@@ -15,8 +15,10 @@ import dataclasses
 import functools
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
 from jax import lax
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import hijax
 from jax._src import test_util as jtu
@@ -43,6 +45,69 @@ class FusionTest(jtu.JaxTestCase):
 
     x = jax.random.normal(jax.random.key(0), (128, 128), dtype=jnp.float32)
     np.testing.assert_array_equal(f(x), x)
+
+  def test_nested_fuse(self):
+    @fuser.fusible
+    def f(x_fn, y_fn):
+      x = x_fn()
+      if y_fn is None:
+        y_fn = lambda x: x
+      return y_fn(x)
+
+    @fuser.fuse
+    def inner(x):
+      return f(x) + 1.0
+
+    @jax.jit
+    @fuser.fuse
+    def outer(x):
+      return inner(x) * 2.0
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    np.testing.assert_allclose(outer(x), (x + 1.0) * 2.0)
+    np.testing.assert_allclose(inner(x), x + 1.0)
+
+    @jax.jit
+    @fuser.fuse
+    @fuser.fuse
+    def double_fused(x):
+      return f(x) + 3.0
+
+    np.testing.assert_allclose(double_fused(x), x + 3.0)
+
+    # Pass fuse wrapper as an argument
+    @functools.partial(fuser.fuse, static_argnums=0)
+    def outer_with_fn_arg(fn, x):
+      return fn(x) * 2.0
+
+    np.testing.assert_allclose(
+        jax.jit(outer_with_fn_arg, static_argnums=0)(inner, x), (x + 1.0) * 2.0
+    )
+
+  def test_nested_fuse_cache(self):
+    @fuser.fusible
+    def f(x_fn, y_fn):
+      x = x_fn()
+      if y_fn is None:
+        y_fn = lambda x: x
+      return y_fn(x)
+
+    @fuser.fuse
+    def inner(x):
+      return f(x) + 1.0
+
+    @fusible_dtype.physicalize
+    def cached_inner(x):
+      return inner(x)
+
+    @jax.jit
+    @fuser.fuse
+    def outer_cached(x):
+      return cached_inner(x) * 2.0
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    np.testing.assert_allclose(cached_inner(x), x + 1.0)
+    np.testing.assert_allclose(outer_cached(x), (x + 1.0) * 2.0)
 
   def test_separate_output_fusions_trivial(self):
 
@@ -136,6 +201,27 @@ class FusionTest(jtu.JaxTestCase):
     x_out, y_out = g_fused(x, y, z)
     np.testing.assert_allclose(x_out, (x + z + 1.0))
     np.testing.assert_allclose(y_out, (y + z + 1.0) * 2)
+
+  def test_custom_fusion_errors(self):
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+
+    @fuser.custom_fusion
+    def missing_eval(x):
+      return x + 1.0
+
+    with self.assertRaisesRegex(ValueError, "missing an evaluation rule"):
+      missing_eval(x)
+
+    missing_eval.def_eval_rule(lambda _, x: (missing_eval(x),))
+    with self.assertRaisesRegex(ValueError, "missing a pull_block_spec rule"):
+      missing_eval(x)
+
+    missing_eval.def_pull_block_spec(lambda bss: (bss[0],))
+    missing_eval.def_pallas_impl(lambda x: jnp.ones((2, 2), dtype=jnp.float32))
+    with self.assertRaisesRegex(
+        ValueError, "mismatched output abstract values"
+    ):
+      jax.jit(missing_eval)(x)
 
   def test_separate_output_fusions_should_error_if_not_disjoint(self):
 
@@ -384,6 +470,73 @@ class FusionTest(jtu.JaxTestCase):
     y = fusible_dtype.physicalize(f)(x)
     np.testing.assert_allclose(y, 2.0)
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"cvjp3_{cvjp3}_remat3_{remat3}", "cvjp3": cvjp3, "remat3": remat3}
+      for cvjp3 in (False, True)
+      for remat3 in (False, True)
+  )
+  def test_fusible_physicalize_custom_vjp_and_remat(self, cvjp3, remat3):
+    with config.custom_vjp3(cvjp3), config.remat3(remat3):
+      @jax.custom_vjp
+      def custom_fn(x):
+        return x * 2.0
+      def custom_fn_fwd(x):
+        return custom_fn(x), None
+      def custom_fn_bwd(res, g):
+        return (g * 2.0,)
+      custom_fn.defvjp(custom_fn_fwd, custom_fn_bwd)
+
+      def f(x):
+        return jax.checkpoint(custom_fn)(x) + 1.0
+
+      x = jnp.array(3.0)
+      y = fusible_dtype.physicalize(f)(x)
+      np.testing.assert_allclose(y, 7.0)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"cvjp3_{cvjp3}", "cvjp3": cvjp3}
+      for cvjp3 in (False, True)
+  )
+  def test_fusible_physicalize_custom_vjp_grad(self, cvjp3):
+    with config.custom_vjp3(cvjp3):
+      @functools.partial(jax.custom_vjp, nondiff_argnums=(1,))
+      def custom_fn(x, scale):
+        return x * scale
+      def custom_fn_fwd(x, scale):
+        return custom_fn(x, scale), None
+      def custom_fn_bwd(scale, res, g):
+        return (g * scale,)
+      custom_fn.defvjp(custom_fn_fwd, custom_fn_bwd)
+
+      def f(x):
+        return custom_fn(x, 2.0) + 1.0
+
+      x = jnp.array(3.0)
+      gy = jax.grad(fusible_dtype.physicalize(f))(x)
+      np.testing.assert_allclose(gy, 2.0)
+
+  @parameterized.parameters([False, True])
+  def test_fusible_physicalize_custom_vjp_grad_with_consts(self, cvjp3):
+    with config.custom_vjp3(cvjp3):
+      scale = jnp.array(2.0)  # Closed over, so a const of the call_jaxpr.
+
+      @jax.custom_vjp
+      def custom_fn(x):
+        return x * scale
+      def custom_fn_fwd(x):
+        return custom_fn(x), None
+      def custom_fn_bwd(res, g):
+        del res
+        return (g * scale,)
+      custom_fn.defvjp(custom_fn_fwd, custom_fn_bwd)
+
+      def f(x):
+        return custom_fn(x) + 1.0
+
+      x = jnp.array(3.0)
+      gy = jax.grad(fusible_dtype.physicalize(f))(x)
+      np.testing.assert_allclose(gy, 2.0)
+
   def test_fusible_outside_fuse(self):
     @fuser.fusible
     def f(x_fn, out_fn):
@@ -437,6 +590,23 @@ class FusionTest(jtu.JaxTestCase):
     x = jnp.ones((128, 128))
     result = jax.jit(jax.grad(quantize))(x)
     np.testing.assert_allclose(result, jnp.full_like(x, 2.0))
+
+  def test_fusible_ref_arg_grad(self):
+    # A Ref passed as a fusible operand: its gradient is accumulated into the
+    # Ref's gradient ref and reaches the array it was created from.
+    @fuser.fusible
+    def scale(x_fn, y_ref_fn, out_fn):
+      del out_fn
+      return x_fn() * y_ref_fn()[...]
+
+    def loss(x, y):
+      return jnp.sum(scale(x, jax.new_ref(y)))
+
+    x = jnp.arange(16.0).reshape(4, 4)
+    y = jnp.full((4, 4), 3.0)
+    dx, dy = jax.jit(jax.grad(loss, argnums=(0, 1)))(x, y)
+    np.testing.assert_allclose(dx, y)
+    np.testing.assert_allclose(dy, x)
 
   def test_fusible_shard_map_jit(self):
     @fuser.fusible
@@ -722,6 +892,110 @@ class FusionTest(jtu.JaxTestCase):
     lowered = jax.jit(f).lower(x)
     self.assertIsNotNone(lowered)
 
+  @parameterized.parameters(
+      {"static_argnums": 1},
+      {"static_argnames": "mode"},
+  )
+  def test_fuse_static_args(self, **kwargs):
+    @fuser.fusible
+    def f(x_fn, y_fn):
+      x = x_fn()
+      if y_fn is None:
+        y_fn = lambda x: x
+      return y_fn(x)
+
+    @fuser.fuse(**kwargs)
+    def g(x, mode="identity"):
+      if mode == "double":
+        return f(x * 2)
+      elif mode == "negate":
+        return f(-x)
+      else:
+        return f(x)
+
+    x = jax.random.normal(jax.random.key(0), (4, 4), dtype=jnp.float32)
+    np.testing.assert_array_equal(g(x, mode="double"), x * 2)
+    np.testing.assert_array_equal(g(x, "negate"), -x)
+    np.testing.assert_array_equal(g(x), x)
+
+  def test_fusible_jvp_symbolic_zeros_jacfwd(self):
+    @fuser.fusible
+    def add_scaled(x_fn, y_fn, out_fn):
+      x, y = x_fn(), y_fn()
+      if out_fn is None:
+        out_fn = lambda v: v
+      return out_fn(x * 2.0 + y)
+
+    x = jnp.ones((4, 4))
+    y = jnp.ones((4, 4))
+
+    # Partial forward-mode differentiation: differentiating w.r.t. x leaves y
+    # with a symbolic zero tangent during JVP.
+    jac_x = jax.jacfwd(add_scaled, argnums=0)(x, y)
+    expected_jac = jnp.zeros((4, 4, 4, 4), dtype=x.dtype)
+    for i in range(4):
+      for j in range(4):
+        expected_jac = expected_jac.at[i, j, i, j].set(2.0)
+    np.testing.assert_allclose(jac_x, expected_jac)
+
+  def test_fusible_jvp_symbolic_zeros_scan(self):
+    @fuser.fusible
+    def add_scaled(x_fn, y_fn, out_fn):
+      x, y = x_fn(), y_fn()
+      if out_fn is None:
+        out_fn = lambda v: v
+      return out_fn(x * 2.0 + y)
+
+    x = jnp.ones((4, 4))
+    y = jnp.ones((4, 4))
+
+    # Forward-mode differentiation through jax.lax.scan:
+    # scan pushes tangents through the body using JVP, passing ad.Zero for
+    # constants like y.
+    def scan_body(carry, _):
+      return add_scaled(carry, y), None
+
+    def scan_loss(init_x):
+      final_carry, _ = jax.lax.scan(scan_body, init_x, None, length=2)
+      return jnp.sum(final_carry)
+
+    jac_x = jax.jacfwd(scan_loss)(x)
+    np.testing.assert_allclose(jac_x, jnp.full_like(x, 4.0))
+
+  def test_fusible_vjp_unused_output(self):
+    @fuser.fusible
+    def multi_out(x_fn, out_fn):
+      x = x_fn()
+      if out_fn is None:
+        out_fn = lambda a, b: (a, b)
+      return out_fn(x * 2.0, x * 3.0)
+
+    def loss(x):
+      y1, _ = multi_out(x)
+      return jnp.sum(y1)
+
+    x = jnp.ones((4, 4))
+    grad_x = jax.grad(loss)(x)
+    np.testing.assert_allclose(grad_x, jnp.full_like(x, 2.0))
+
+  def test_fusible_closed_over_constants(self):
+    c = jnp.array(3.0)
+
+    @fuser.fuse
+    def f(x):
+      @fuser.fusible
+      def inner(x_fn, out_fn):
+        x = x_fn()
+        if out_fn is None:
+          out_fn = lambda v: v
+        return out_fn(x * c)
+
+      return inner(x)
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    y = f(x)
+    np.testing.assert_allclose(y, x * 3.0)
+
 
 @dataclasses.dataclass(frozen=True)
 class ArrayTuple:
@@ -766,6 +1040,38 @@ class FusionHijaxTest(jtu.JaxTestCase):
     ot = f(xt)
     np.testing.assert_array_equal(ot.x0, xt.x0)
     np.testing.assert_array_equal(ot.x1, xt.x1)
+
+
+@jtu.with_config(jax_custom_vjp3=True)
+class FusibleCustomVJP3Test(jtu.JaxTestCase):
+
+  def test_fusible_custom_vjp3_grad(self):
+    @jax.custom_vjp
+    def scale(x):
+      return x * 2.0
+
+    def scale_fwd(x):
+      return scale(x), x
+
+    def scale_bwd(x, g):
+      # Intentionally different from fwd to verify custom vjp rule is preserved
+      # during expand().
+      return (g * 3.0,)
+
+    scale.defvjp(scale_fwd, scale_bwd)
+
+    @fuser.fusible
+    def f(x_fn, out_fn):
+      x = x_fn()
+      y = scale(x)
+      if out_fn is None:
+        out_fn = lambda v: v
+      return out_fn(y)
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    loss = lambda v: jnp.sum(f(v))
+    grad_x = jax.grad(loss)(x)
+    np.testing.assert_allclose(grad_x, jnp.full_like(x, 3.0))
 
 
 if __name__ == "__main__":

@@ -89,10 +89,10 @@ def ppermute_start_kernel(
   )
   right_neighbor = jax.lax.rem(jax.lax.axis_index(axis_name) + 1, axis_size)
   barrier_sem = pltpu.get_barrier_semaphore()
-  pltpu.semaphore_signal(barrier_sem, device_id=left_neighbor)
+  pltpu.semaphore_signal(barrier_sem, device_id={axis_name: left_neighbor})
   pltpu.semaphore_wait(barrier_sem, 1)
   pltpu.make_async_remote_copy(
-      in_ref, out_ref, send_sem, recv_sem, device_id=right_neighbor
+      in_ref, out_ref, send_sem, recv_sem, device_id={axis_name: right_neighbor}
   ).start()
 
 def ppermute_start(x, *, axis_name) -> tuple[Semaphore, Semaphore, Array]:
@@ -270,10 +270,10 @@ def ppermute_start_kernel(
   )
   right_neighbor = jax.lax.rem(jax.lax.axis_index(axis_name) + 1, axis_size)
   barrier_sem = pltpu.get_barrier_semaphore()
-  pltpu.semaphore_signal(barrier_sem, device_id=left_neighbor)
+  pltpu.semaphore_signal(barrier_sem, device_id={axis_name: left_neighbor})
   pltpu.semaphore_wait(barrier_sem, 1)
   pltpu.make_async_remote_copy(
-      in_ref, out_ref, send_sem, recv_sem, device_id=right_neighbor
+      in_ref, out_ref, send_sem, recv_sem, device_id={axis_name: right_neighbor}
   ).start()
 
 def ppermute_start(x, *, axis_name) -> tuple[Semaphore, Semaphore, Array, Array]:
@@ -394,7 +394,7 @@ def f(x):
   return y, z
 ```
 
-If we unpack the future into its components, we’ll see the the aliasing patterns:
+If we unpack the future into its components, we’ll see the aliasing patterns:
 
 ```py
 def f(x):

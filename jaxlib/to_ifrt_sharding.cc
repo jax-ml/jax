@@ -16,24 +16,31 @@ limitations under the License.
 #include "jaxlib/to_ifrt_sharding.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/base/const_init.h"
+#include "absl/base/no_destructor.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/synchronization/mutex.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_device_list.h"
 #include "jaxlib/sharding.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/pjrt/lru_cache.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/sharding_spec.h"
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
-#include "xla/python/pjrt_ifrt/xla_sharding.h"
+#include "xla/python/pjrt_ifrt/xla_sharding_spec.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
@@ -46,7 +53,9 @@ namespace nb = ::nanobind;
 // Gets `xla::HloSharding` from a JAX Sharding.
 xla::HloSharding GetXlaHloSharding(nb::handle sharding,
                                    int64_t num_dimensions) {
-  if (sharding.type().is(nb::handle(GSPMDSharding::type().ptr()))) {
+  if (sharding.type().is(SingleDeviceSharding::type())) {
+    return xla::HloSharding::Replicate();
+  } else if (sharding.type().is(nb::handle(GSPMDSharding::type().ptr()))) {
     return nb::cast<GSPMDSharding*>(nb::handle(sharding.ptr()))->hlo_sharding();
   } else {
     return nb::cast<xla::HloSharding>(
@@ -57,7 +66,7 @@ xla::HloSharding GetXlaHloSharding(nb::handle sharding,
 // Gets `xla::ifrt::DeviceList` from a JAX Sharding.
 absl::StatusOr<xla::ifrt::DeviceListRef> GetIfrtDeviceList(
     nb::handle sharding_py) {
-  TF_ASSIGN_OR_RETURN(auto py_device_list, GetPyDeviceList(sharding_py));
+  ABSL_ASSIGN_OR_RETURN(auto py_device_list, GetPyDeviceList(sharding_py));
   return py_device_list->ifrt_device_list();
 }
 
@@ -90,24 +99,43 @@ xla::ifrt::MemoryKind GetMemoryKind(nb::handle sharding) {
 // Converts a JAX Sharding into `xla::ifrt::HloSharding`.
 absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtHloSharding(
     nb::handle sharding, const xla::ifrt::Shape& shape) {
-  TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
-                      GetIfrtDeviceList(sharding));
+  using CacheT = xla::LRUCache<std::pair<int, xla::HloSharding>,
+                               xla::ifrt::ShardingSpecRef>;
+
+  static absl::Mutex mu(absl::kConstInit);
+  static absl::NoDestructor<CacheT::LRUList> lru_list(4096);
+  static absl::NoDestructor<CacheT> cache(lru_list.get());
+
+  ABSL_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
+                        GetIfrtDeviceList(sharding));
   xla::ifrt::MemoryKind memory_kind = GetMemoryKind(sharding.ptr());
+
   xla::HloSharding hlo_sharding =
       GetXlaHloSharding(sharding, shape.dims().size());
-  return xla::ifrt::HloSharding::Create(
-      std::move(device_list), std::move(memory_kind), std::move(hlo_sharding));
+  xla::ifrt::ShardingSpecRef sharding_spec;
+  {
+    absl::MutexLock l(mu);
+    sharding_spec = cache->GetOrCreateIfAbsent(
+        std::make_pair(device_list->size(), std::move(hlo_sharding)),
+        [](const std::pair<int, xla::HloSharding>& key)
+            -> xla::ifrt::ShardingSpecRef {
+          return xla::ifrt::HloShardingSpec::Create(key.first, key.second);
+        });
+  }
+
+  return sharding_spec->ToSharding(std::move(device_list),
+                                   std::move(memory_kind));
 }
 
 // Converts a JAX Sharding into `xla::ifrt::ConcreteEvenSharding`.
 absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtConcreteEvenSharding(
     nb::handle sharding, xla::ifrt::DType dtype,
     const xla::ifrt::Shape& shape) {
-  TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
-                      GetIfrtDeviceList(sharding));
+  ABSL_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
+                        GetIfrtDeviceList(sharding));
   xla::ifrt::MemoryKind memory_kind = GetMemoryKind(sharding.ptr());
-  TF_ASSIGN_OR_RETURN(xla::PrimitiveType xla_primitive_type,
-                      xla::ifrt::ToPrimitiveType(dtype));
+  ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType xla_primitive_type,
+                        xla::ifrt::ToPrimitiveType(dtype));
   // The XLA shape's layout is irrelevant because we only need to know the
   // tile shape, which is independent from the layout.
   xla::Shape xla_shape = xla::ShapeUtil::MakeShapeWithDescendingLayout(
@@ -126,8 +154,8 @@ absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtConcreteEvenSharding(
 absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtConcreteSharding(
     nb::handle sharding, const xla::ifrt::Shape& shape,
     std::vector<xla::ifrt::Shape> shard_shapes) {
-  TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
-                      GetIfrtDeviceList(sharding));
+  ABSL_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
+                        GetIfrtDeviceList(sharding));
   xla::ifrt::MemoryKind memory_kind = GetMemoryKind(sharding.ptr());
   return xla::ifrt::ConcreteSharding::Create(
       std::move(device_list), std::move(memory_kind), shape,

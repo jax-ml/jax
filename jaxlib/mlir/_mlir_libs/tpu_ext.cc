@@ -13,9 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstdint>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "mlir-c/BuiltinAttributes.h"
 #include "mlir-c/Dialect/Func.h"
 #include "mlir-c/IR.h"
 #include "mlir-c/Support.h"
@@ -79,6 +82,66 @@ NB_MODULE(_tpu_ext, m) {
     mlirTPUAnalyzePotentialCommunication(op.get(), &has_communication,
                                          &has_custom_barrier);
     return std::make_pair(has_communication, has_custom_barrier);
+  });
+
+  m.def("private_unzip_debug_locations", [](PyOperationBase& op) {
+    MlirOperation root_op = op.getOperation().get();
+    MlirContext ctx = mlirOperationGetContext(root_op);
+    MlirLocation unknown_loc = mlirLocationUnknownGet(ctx);
+
+    struct WalkState {
+      MlirLocation unknown_loc;
+      std::vector<MlirAttribute> loc_attrs;
+    } state;
+    state.unknown_loc = unknown_loc;
+
+    auto walk_fn = [](MlirOperation cur_op, void* user_data) -> MlirWalkResult {
+      auto* s = static_cast<WalkState*>(user_data);
+      MlirLocation loc = mlirOperationGetLocation(cur_op);
+      s->loc_attrs.push_back(mlirLocationGetAttribute(loc));
+      mlirOperationSetLocation(cur_op, s->unknown_loc);
+
+      intptr_t num_regions = mlirOperationGetNumRegions(cur_op);
+      for (intptr_t r = 0; r < num_regions; ++r) {
+        MlirRegion region = mlirOperationGetRegion(cur_op, r);
+        for (MlirBlock block = mlirRegionGetFirstBlock(region);
+             !mlirBlockIsNull(block); block = mlirBlockGetNextInRegion(block)) {
+          intptr_t num_args = mlirBlockGetNumArguments(block);
+          for (intptr_t a = 0; a < num_args; ++a) {
+            MlirValue arg = mlirBlockGetArgument(block, a);
+            s->loc_attrs.push_back(
+                mlirLocationGetAttribute(mlirValueGetLocation(arg)));
+            mlirBlockArgumentSetLocation(arg, s->unknown_loc);
+          }
+        }
+      }
+      return MlirWalkResultAdvance;
+    };
+
+    mlirOperationWalk(root_op, walk_fn, &state, MlirWalkPreOrder);
+
+    MlirModule debug_module = mlirModuleCreateEmpty(unknown_loc);
+    MlirOperation debug_module_op = mlirModuleGetOperation(debug_module);
+    MlirAttribute locs_attr =
+        mlirArrayAttrGet(ctx, state.loc_attrs.size(), state.loc_attrs.data());
+    mlirOperationSetAttributeByName(
+        debug_module_op, mlirStringRefCreateFromCString("tpu.locs"), locs_attr);
+
+    std::string bytecode;
+    auto print_cb = [](MlirStringRef str, void* data) {
+      static_cast<std::string*>(data)->append(str.data, str.length);
+    };
+    MlirBytecodeWriterConfig writer_config = mlirBytecodeWriterConfigCreate();
+    mlirBytecodeWriterConfigDesiredEmitVersion(writer_config, 0);
+    MlirLogicalResult res = mlirOperationWriteBytecodeWithConfig(
+        debug_module_op, writer_config, print_cb, &bytecode);
+    mlirBytecodeWriterConfigDestroy(writer_config);
+    mlirModuleDestroy(debug_module);
+    if (mlirLogicalResultIsFailure(res)) {
+      throw nb::value_error("mlirOperationWriteBytecodeWithConfig failed");
+    }
+
+    return nb::bytes(bytecode.data(), bytecode.size());
   });
 
   // TODO(apaszke): All of those should be upstreamed to MLIR Python bindings.

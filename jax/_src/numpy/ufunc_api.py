@@ -532,8 +532,8 @@ class ufunc:
       raise ValueError(f"reduceat: a must have 1 or more dimension, got {a.shape=}")
     if indices.ndim != 1:
       raise ValueError(f"reduceat: indices must be one-dimensional, got {indices.shape=}")
-    if dtype is None:
-      dtype = a.dtype
+    if dtype is not None:
+      a = a.astype(dtype)
     if axis is None or isinstance(axis, (tuple, list)):
       raise ValueError("reduceat requires a single integer axis.")
     axis = canonicalize_axis(axis, a.ndim)

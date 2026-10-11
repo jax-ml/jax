@@ -29,6 +29,7 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
@@ -91,7 +92,7 @@ class PyCustomCallPartitionerCallbacks {
     if (args->header.api_version != 0) {
       return absl::InternalError("API version mismatch.");
     }
-    TF_ASSIGN_OR_RETURN(auto args_tuple, ReadArgs(args));
+    ABSL_ASSIGN_OR_RETURN(auto args_tuple, ReadArgs(args));
     std::vector<xla::Shape> shapes = std::move(std::get<0>(args_tuple));
     std::vector<std::optional<xla::HloSharding>> shardings =
         std::move(std::get<1>(args_tuple));
@@ -136,7 +137,7 @@ class PyCustomCallPartitionerCallbacks {
     if (args->header.api_version != 0) {
       return absl::InternalError("API version mismatch.");
     }
-    TF_ASSIGN_OR_RETURN(auto args_tuple, ReadArgs(args));
+    ABSL_ASSIGN_OR_RETURN(auto args_tuple, ReadArgs(args));
     std::vector<xla::Shape> arg_shapes = std::move(std::get<0>(args_tuple));
     std::vector<std::optional<xla::HloSharding>> arg_shardings =
         std::move(std::get<1>(args_tuple));
@@ -163,7 +164,7 @@ class PyCustomCallPartitionerCallbacks {
     if (args->header.api_version != 0) {
       return absl::InternalError("API version mismatch.");
     }
-    TF_ASSIGN_OR_RETURN(auto args_tuple, ReadArgs(args));
+    ABSL_ASSIGN_OR_RETURN(auto args_tuple, ReadArgs(args));
     xla::HloSharding result_sharding = std::move(std::get<0>(args_tuple));
     xla::Shape result_shape = std::move(std::get<1>(args_tuple));
     std::string_view backend_config = std::move(std::get<2>(args_tuple));

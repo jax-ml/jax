@@ -53,6 +53,13 @@ class InterpretTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    try:
+      # If an exception was thrown by a jitted computation during the
+      # previous test, we observe/consume exception here to avoid propagating
+      # it to the next test.
+      jax.effects_barrier()
+    except:
+      pass
     mosaic_interpret.gpu_callbacks.reset_gpu_interpret_mode_state()
 
     if not jtu.test_device_matches(['cpu']):
@@ -82,13 +89,13 @@ class InterpretTest(jtu.JaxTestCase):
       plgpu.commit_smem()
       out_ref[...] = 42
 
-    out = _kernel()
     if wait_barrier:
+      out = _kernel()
       self.assertEqual(out, 42)
-      self.assertFalse(mosaic_interpret.get_races().races_found)
     else:
       self.skipTest('Need to implement gmem_commit_clock to detect this')
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
 
   @jtu.parameterized.product(
@@ -119,10 +126,12 @@ class InterpretTest(jtu.JaxTestCase):
 
     correct = b
 
-    out = _kernel(jnp.int32(42))
     if correct:
+      out = _kernel(jnp.int32(42))
       self.assertEqual(out, 42)
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel(jnp.int32(42)).block_until_ready()
 
 
   @jtu.parameterized.product(
@@ -147,10 +156,12 @@ class InterpretTest(jtu.JaxTestCase):
       out_ref[...] = smem_ref[...]
 
     correct = wait_barrier
-    out = _kernel()
     if correct:
+      out = _kernel()
       self.assertEqual(out, 42)
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   @jtu.parameterized.product(
       warp_specialize=[WarpSpecializeHelper(False), WarpSpecializeHelper(True)],
@@ -196,10 +207,12 @@ class InterpretTest(jtu.JaxTestCase):
           out_ref[...] = smem_ref[...]
 
     correct = b
-    out = _kernel(jnp.int32(42))
     if correct:
+      out = _kernel(jnp.int32(42))
       self.assertEqual(out, 42)
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel(jnp.int32(42)).block_until_ready()
 
   @jtu.parameterized.product(
       warp_specialize=[WarpSpecializeHelper(False), WarpSpecializeHelper(True)],
@@ -245,10 +258,12 @@ class InterpretTest(jtu.JaxTestCase):
           out_ref[...] = smem_ref[...]
 
     correct = b or d
-    out = _kernel(jnp.int32(42))
     if correct:
+      out = _kernel(jnp.int32(42))
       self.assertEqual(out, 42)
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel(jnp.int32(42)).block_until_ready()
 
 
   @jtu.parameterized.product(
@@ -276,10 +291,12 @@ class InterpretTest(jtu.JaxTestCase):
       out_ref[...] = gmem_ref[...]
 
     correct = b
-    out = _kernel()
     if correct:
+      out = _kernel()
       self.assertEqual(out, 42)
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
 
   def test_finds_races_in_non_fully_waited_smem_to_gmem_copy(self):
@@ -304,8 +321,8 @@ class InterpretTest(jtu.JaxTestCase):
       out_ref[...] = gmem1[...] + gmem2[...]
       plgpu.wait_smem_to_gmem(0)
 
-    _kernel()
-    self.assertTrue(mosaic_interpret.get_races().races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      _kernel().block_until_ready()
 
 
   def test_allows_rewaiting_smem_to_gmem_copies(self):
@@ -331,7 +348,6 @@ class InterpretTest(jtu.JaxTestCase):
       out_ref[...] = gmem_ref[0] + gmem_ref[1] + gmem_ref[2]
 
     _kernel(jnp.array([1, 2, 3], dtype=jnp.int32))
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
 
   @jtu.parameterized.product(
@@ -364,8 +380,6 @@ class InterpretTest(jtu.JaxTestCase):
 
       plgpu.wait_smem_to_gmem(0, wait_read_only=True)
 
-    _out = _kernel(jnp.array([1, 2], dtype=jnp.int32))
-
     skip = (wait_only_once and check_location == 1)
     if skip:
       self.skipTest("Not supported until gmem_commit clock is implemented.")
@@ -373,7 +387,11 @@ class InterpretTest(jtu.JaxTestCase):
     correct = (wait_only_once and check_location == 0) or (
         not wait_only_once and check_location in [0, 1]
     )
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    if correct:
+      _out = _kernel(jnp.array([1, 2], dtype=jnp.int32))
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel(jnp.array([1, 2], dtype=jnp.int32)).block_until_ready()
 
 
   @jtu.parameterized.product(
@@ -413,8 +431,8 @@ class InterpretTest(jtu.JaxTestCase):
             out_ref[...] = 43
           plgpu.barrier_arrive(cleanup_barrier)
 
-    _kernel()
-    self.assertTrue(mosaic_interpret.get_races().races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      _kernel().block_until_ready()
 
   @jtu.parameterized.product(
       warp_specialize=[WarpSpecializeHelper(False), WarpSpecializeHelper(True)],
@@ -448,7 +466,6 @@ class InterpretTest(jtu.JaxTestCase):
           out_ref[...] = gmem_ref[...]
 
     out = _kernel()
-    self.assertFalse(mosaic_interpret.get_races().races_found)
     self.assertEqual(out, 42)
 
   @jtu.parameterized.product(
@@ -473,9 +490,12 @@ class InterpretTest(jtu.JaxTestCase):
       plgpu.copy_gmem_to_smem(gmem_ref, smem_ref, barrier)
       plgpu.barrier_wait(barrier)
 
-    _kernel()
     correct = do_wait
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    if correct:
+      _kernel()
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
 
   def test_finds_race_in_double_smem_to_gmem(self):
@@ -494,8 +514,8 @@ class InterpretTest(jtu.JaxTestCase):
       plgpu.copy_smem_to_gmem(smem_ref, gmem_ref)
       plgpu.wait_smem_to_gmem(0)
 
-    _kernel()
-    self.assertTrue(mosaic_interpret.get_races().races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      _kernel().block_until_ready()
 
 
   def test_finds_exception_in_unawaited_smem_to_gmem(self):
@@ -545,8 +565,8 @@ class InterpretTest(jtu.JaxTestCase):
       plgpu.copy_smem_to_gmem(smem_ref, out_ref)
       plgpu.wait_smem_to_gmem(0)
 
-    _kernel()
-    self.assertTrue(mosaic_interpret.get_races().races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      _kernel().block_until_ready()
 
   def test_no_race_in_async_copy_gmem_to_smem_in_cluster(self):
     @functools.partial(
@@ -565,7 +585,6 @@ class InterpretTest(jtu.JaxTestCase):
       plgpu.barrier_wait(barrier)
 
     _kernel()
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   def test_race_in_sync_copy_smem_to_gmem_in_cluster(self):
     @functools.partial(
@@ -579,8 +598,8 @@ class InterpretTest(jtu.JaxTestCase):
     def _kernel(out_ref, smem_ref):
       out_ref[...] = smem_ref[...]
 
-    _kernel()
-    self.assertTrue(mosaic_interpret.get_races().races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      _kernel().block_until_ready()
 
   def test_no_race_in_sync_copy_gmem_to_smem_in_cluster(self):
     @functools.partial(
@@ -595,7 +614,6 @@ class InterpretTest(jtu.JaxTestCase):
       smem_ref[...] = in_ref[...]
 
     _kernel(jnp.int32(42))
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   def test_no_race_in_smem_across_clusters(self):
     @functools.partial(
@@ -621,7 +639,44 @@ class InterpretTest(jtu.JaxTestCase):
           smem_ref[...] = 43
 
     _kernel()
-    self.assertFalse(mosaic_interpret.get_races().races_found)
+
+  @jtu.parameterized.product(
+      warp_specialize=[WarpSpecializeHelper(False), WarpSpecializeHelper(True)],
+      wait=[False, True],
+  )
+  def test_barrier_arrive_and_wait(self, warp_specialize, wait):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            smem_ref=plgpu.SMEM((), jnp.int32),
+            barrier=plgpu.Barrier(num_arrivals=2),
+        ),
+        interpret=InterpretParams(detect_races=True),
+        num_threads=warp_specialize.thread_count(2),
+        thread_name='t',
+    )
+    def _kernel(out_ref, smem_ref, barrier):
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
+        @pl.when(warp_id == 0)
+        def _():
+          smem_ref[...] = 42
+          plgpu.barrier_arrive(barrier)
+
+        @pl.when(warp_id == 1)
+        def _():
+          if wait:
+            plgpu.barrier_arrive_and_wait(barrier)
+          else:
+            plgpu.barrier_arrive(barrier)
+          out_ref[...] = smem_ref[...]
+
+    if wait:
+      self.assertEqual(_kernel(), 42)
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
 
 if __name__ == '__main__':

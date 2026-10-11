@@ -27,6 +27,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.partial_eval import eval_jaxpr_p
+from jax._src.interpreters import remat
 from jax._src.state import discharge
 from jax._src.tree_util import tree_leaves, tree_flatten, tree_unflatten
 from jax._src.util import safe_map, safe_zip, split_list, subs_list, weakref_lru_cache
@@ -113,12 +114,21 @@ eval_jaxpr_linearize = _eval_jaxpr_linearize
 eval_jaxpr_transpose = _eval_jaxpr_transpose
 
 
+def _eval_jaxpr_remat(prim, trace, *args, call_jaxpr, **params):
+  jaxpr_fwd, jaxpr_rem, fwds = remat.remat_jaxpr(
+      call_jaxpr, trace.policy, trace.custom_vjp_rules, allow_fwds=True)
+  primals_res_out = prim.bind(*args, call_jaxpr=jaxpr_fwd, **params)
+  primals_out, res = split_list(primals_res_out, [len(call_jaxpr.outvars)])
+  res_ = iter(res)
+  res_full = [primals_out[f] if f is not None else next(res_) for f in fwds]
+  assert next(res_, None) is None
+  rem = lambda res_full, *args: prim.bind(*res_full, *args, call_jaxpr=jaxpr_rem, **params)
+  return primals_out, res_full, rem
+
+
 def register_call_primitive_rules(
-    prim: core.Primitive,
-    name: str | None = None,
-    transpose_rule=None,
-) -> None:
-  """Registers standard call transformation rules onto a Primitive."""
+    prim: core.Primitive, name: str | None = None, transpose_rule=None,
+    inline_jax_late: bool = True):
   prim.multiple_results = True
   prim.def_impl(eval_jaxpr_p.impl)
   prim.def_effectful_abstract_eval(eval_jaxpr_p.abstract_eval)
@@ -129,26 +139,21 @@ def register_call_primitive_rules(
   ad.fancy_transposes[prim] = transpose_rule or partial(_eval_jaxpr_transpose, prim)
   batching.fancy_primitive_batchers[prim] = partial(_eval_jaxpr_batch, prim)
   pe.custom_partial_eval_rules[prim] = partial(pe._eval_jaxpr_partial_eval, prim)
-  pe.partial_eval_jaxpr_custom_rules[prim] = (
+  pe.partial_eval_jaxpr_custom_rules[prim] = \
       pe.partial_eval_jaxpr_custom_rules[eval_jaxpr_p]
-  )
   pe.dce_rules[prim] = pe.dce_rules[eval_jaxpr_p]
-  discharge.register_discharge_rule(prim)(
-      partial(discharge._eval_jaxpr_discharge_rule, prim)
-  )
+  remat.rules[prim] = partial(_eval_jaxpr_remat, prim)
+  discharge.register_discharge_rule(prim)(partial(discharge._eval_jaxpr_discharge_rule, prim))
   if name is not None:
-    mlir.register_lowering(
-        prim,
-        partial(mlir.core_call_lowering, name=name),
-        cacheable=False,
-    )
+    lowering_rule = partial(
+        mlir.core_call_lowering, name=name, inline_jax_late=inline_jax_late)
+    mlir.register_lowering(prim, lowering_rule, cacheable=False)
 
-
-def create_call_primitive(name: str) -> core.Primitive:
-  """Creates a JAX Primitive with standard call rules registered."""
+def create_call_primitive(name: str, inline_jax_late: bool = True
+                          ) -> core.Primitive:
   prim = core.Primitive(name)
-  register_call_primitive_rules(prim, name=name)
+  register_call_primitive_rules(prim, name=name,
+                                inline_jax_late=inline_jax_late)
   return prim
 
-
-register_call_primitive_rules(eval_jaxpr_p, name="eval_jaxpr")
+register_call_primitive_rules(eval_jaxpr_p, name='eval_jaxpr')

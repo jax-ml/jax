@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 import dataclasses
 import json
 from typing import cast
@@ -24,12 +24,13 @@ from typing import cast
 import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src import flattree as ft
 from jax._src import frozen_dict
+from jax._src import jaxpr_util
 from jax._src import sharding_impls
 from jax._src import state
 from jax._src import tpu_custom_call
 from jax._src import xla_metadata
-from jax._src import flattree as ft
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
@@ -39,6 +40,7 @@ from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import helpers
 from jax._src.pallas.mosaic import lowering
+from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import sc_lowering  # noqa: F401
 from jax._src.pallas.mosaic import tpu_info
@@ -284,6 +286,7 @@ def _lower_to_custom_call(
     metadata: frozen_dict.FrozenDict[str, str] | None,
     name: str,
     jax_mesh,
+    collective_id_tag: Hashable | None = None,
 ):
   input_output_aliases = tuple(
       (a[0] + num_dynamic_grid_bounds, a[1]) for a in input_output_aliases
@@ -361,6 +364,7 @@ def _lower_to_custom_call(
       serialization_format=mosaic_params.serialization_format,
       internal_scratch_in_bytes=mosaic_params.internal_scratch_in_bytes,
       collective_id=mosaic_params.collective_id,
+      collective_id_tag=collective_id_tag,
       has_side_effects=_resolve_side_effect_type(
           mosaic_params.has_side_effects
       ),
@@ -388,6 +392,24 @@ def _lower_to_custom_call(
 
   cast_ctx = ctx.replace(avals_in=kernel_out_avals)
   return mlir.lower_fun(_maybe_cast_outputs)(cast_ctx, *out_nodes)
+
+
+def _extract_single_barrier_semaphore_tag(
+    jaxpr: jax_core.Jaxpr,
+) -> Hashable | None:
+  tags = {
+      eqn.params["tag"]
+      for _, eqn in jaxpr_util.all_eqns(jaxpr)
+      if eqn.primitive is tpu_primitives.get_barrier_semaphore_p
+      and eqn.params.get("tag") is not None
+  }
+  if len(tags) > 1:
+    raise ValueError(
+        "Cannot specify multiple distinct barrier semaphore tags within a"
+        f" single kernel: {tags}. XLA only supports one collective_id per"
+        " kernel."
+    )
+  return next(iter(tags)) if tags else None
 
 
 def pallas_call_tpu_lowering_rule(
@@ -418,6 +440,8 @@ def pallas_call_tpu_lowering_rule(
   else:
     assert isinstance(compiler_params, tpu_core.CompilerParams)
     mosaic_params = compiler_params
+
+  tag = _extract_single_barrier_semaphore_tag(jaxpr)
 
   jax_mesh = None
   axis_context = ctx.module_context.axis_context
@@ -463,6 +487,7 @@ def pallas_call_tpu_lowering_rule(
       metadata=metadata,
       name=name or debug_info.func_name,
       jax_mesh=jax_mesh,
+      collective_id_tag=tag,
   )
 
 
@@ -597,6 +622,18 @@ def mpmd_map_tpu_lowering_rule(
   else:
     assert isinstance(compiler_params, tpu_core.CompilerParams)
     mosaic_params = compiler_params
+
+  all_tags: set[Hashable] = set()
+  for j in jaxprs:
+    if (tag := _extract_single_barrier_semaphore_tag(j)) is not None:
+      all_tags.add(tag)
+  if len(all_tags) > 1:
+    raise ValueError(
+        "Cannot specify multiple distinct barrier semaphore tags across"
+        f" kernels in mpmd_map: {all_tags}. XLA only supports one"
+        " collective_id per custom call."
+    )
+  tag = next(iter(all_tags)) if all_tags else None
 
   # TODO(slebedev): Check kernel type and raise if it is set.
   if mosaic_params.dimension_semantics is not None:
@@ -746,6 +783,7 @@ def mpmd_map_tpu_lowering_rule(
       metadata=metadata,
       name=name,
       jax_mesh=jax_mesh,
+      collective_id_tag=tag,
   )
 
 

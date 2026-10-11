@@ -16,12 +16,11 @@
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
-# Placeholder: load proto_library
-
 load(
     "//jaxlib:jax.bzl",
     "cc_proto_library",
     "jax_visibility",
+    "proto_library",
     "xla_py_proto_library",
 )
 
@@ -48,6 +47,7 @@ exports_files(srcs = [
     "linalg_kernels.cc",
     "linalg_kernels.cu.cc",
     "linalg_kernels.h",
+    "linalg_kernels_oneapi.cc",
     "make_batch_pointers.cu.cc",
     "make_batch_pointers.h",
     "prng.cc",
@@ -128,6 +128,7 @@ cc_library(
     deps = [
         "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@nanobind",
@@ -139,8 +140,6 @@ cc_library(
         "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_helpers",
         "@xla//xla/pjrt/c:pjrt_c_api_status_utils",
-        "@xla//xla/pjrt/c:pjrt_c_api_triton_extension_hdrs",
-        "@xla//xla/tsl/platform:statusor",
         "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )

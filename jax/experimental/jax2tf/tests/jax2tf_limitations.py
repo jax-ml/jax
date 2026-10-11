@@ -131,7 +131,7 @@ class Jax2TfLimitation(test_harnesses.Limitation):
     return [
         # Even in compiled mode, for GPU we see a bit of discrepancy but
         # very minor.
-        custom_numeric(dtypes=[np.float32], devices="cpu",
+        custom_numeric(dtypes=[np.float32], devices=("cpu", "gpu"),
                        modes=("eager", "graph", "compiled"),
                        tol=1e-4),
     ]

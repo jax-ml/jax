@@ -983,34 +983,25 @@ def enum_flag(name, default, *args, **kwargs) -> Flag[str]:
 
 already_configured_with_absl = False
 
-mesh_context_manager = config_ext.Config(
+mesh_context_manager = config_ext.Config[Any](
     'mesh_context_manager',
     (),
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
-abstract_mesh_context_manager = config_ext.Config(
-    'abstract_mesh_context_manager',
-    None,
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
-device_context = config_ext.Config(
-    'device_context', None, include_in_jit_key=True
-)
-compute_on_context_manager = config_ext.Config(
+compute_on_context_manager = config_ext.Config[Any](
     'compute_on_context_manager',
     None,
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
-xla_metadata_context_manager = config_ext.Config(
+xla_metadata_context_manager = config_ext.Config[Any](
     'xla_metadata_context_manager',
     None,
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
-pallas_tpu_interpret_mode_context_manager = config_ext.Config(
+pallas_tpu_interpret_mode_context_manager = config_ext.Config[Any](
     'pallas_tpu_interpret_mode_context_manager',
     None,
     include_in_jit_key=True,
@@ -1127,7 +1118,7 @@ jax_export_calling_convention_version = int_state(
         'The calling convention version number to use for exporting. This must be '
         'within the range of versions supported by the tf.XlaCallModule '
         'used in your deployment environment. '
-        'See https://docs.jax.dev/en/latest/export/shape_poly.html#calling-convention-versions.'
+        'See https://docs.jax.dev/en/latest/501/export.html#calling-convention-versions.'
     )
 )
 
@@ -1136,7 +1127,7 @@ export_ignore_forward_compatibility = bool_state(
     default=bool_env('JAX_EXPORT_IGNORE_FORWARD_COMPATIBILIY', False),
     help=(
         'Whether to ignore the forward compatibility lowering rules. '
-        'See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees-for-custom-calls.'
+        'See https://docs.jax.dev/en/latest/501/export.html#compatibility-guarantees-for-custom-calls.'
     )
 )
 
@@ -1149,7 +1140,7 @@ export_deserialize_expired_versions = bool_state(
         'the compiler and runtime. Furthermore, you accept the fact that the '
         'behavior of the deserialized model may change at any time. '
         'Read carefully '
-        'https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees.'
+        'https://docs.jax.dev/en/latest/501/export.html#compatibility-guarantees.'
     )
 )
 
@@ -1293,7 +1284,7 @@ log_compiles = bool_state(
         'Log a message each time `jit` or `pmap` compiles an XLA computation.'
         ' Logging is performed with `logging`. When this option is set, the log'
         ' level is WARNING; otherwise the level is DEBUG.\n\nSee'
-        ' https://docs.jax.dev/en/latest/debugging/slow_tracing_compilation.html'
+        ' https://docs.jax.dev/en/latest/201/slow-compilation.html'
         ' for more details.'
     ),
 )
@@ -1306,7 +1297,7 @@ explain_cache_misses = bool_state(
         ' cache), log an explanation. Logging is performed with `logging`. When'
         ' this option is set, the log level is WARNING; otherwise the level is'
         ' DEBUG.\n\nSee'
-        ' https://docs.jax.dev/en/latest/debugging/slow_tracing_compilation.html'
+        ' https://docs.jax.dev/en/latest/201/slow-compilation.html'
         ' for more details.'
     ),
 )
@@ -2102,7 +2093,7 @@ def transfer_guard(new_val: str) -> Generator[None]:
   """A contextmanager to control the transfer guard level for all transfers.
 
   For more information, see
-  https://docs.jax.dev/en/latest/transfer_guard.html
+  https://docs.jax.dev/en/latest/501/transfer-guard.html
 
   Args:
     new_val: The new thread-local transfer guard level for all transfers.
@@ -2344,18 +2335,6 @@ jax_ragged_dot_use_ragged_dot_instruction = bool_state(
     ),
 )
 
-jax_ragged_dot_use_gpu_pallas_triton_lowering = bool_state(
-    name='jax_ragged_dot_use_gpu_pallas_triton_lowering',
-    default=False,
-    help=(
-        '(GPU only) If True, use Pallas Triton lowering for ragged_dot()'
-        ' lowering. Otherwise, rely on the default lowering for'
-        ' ragged_dot_general_p.'
-    ),
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
-
 jax_pallas_verbose_errors = bool_flag(
     'jax_pallas_verbose_errors',
     default=bool_env('JAX_PALLAS_VERBOSE_ERRORS', False),
@@ -2373,21 +2352,17 @@ jax_pallas_enable_debug_checks = bool_state(
     include_in_trace_context=True,
 )
 
-jax_pallas_use_mosaic_gpu = bool_state(
-    name='jax_pallas_use_mosaic_gpu',
-    default=bool_env('JAX_PALLAS_USE_MOSAIC_GPU', True),
-    help=(
-        'If True, lower Pallas kernels to the experimental Mosaic GPU'
-        ' dialect, instead of Triton IR.'
-    ),
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
-
 jax_mosaic_allow_hlo = bool_state(
     name='jax_mosaic_allow_hlo',
     default=False,
     help='Allow hlo dialects in Mosaic',
+)
+
+# TODO(b/565931093): Remove this flag once the feature is enabled by default.
+jax_mosaic_unzip_debug_locations = bool_state(
+    name='jax_mosaic_unzip_debug_locations',
+    default=False,
+    help='Whether to unzip debug locations from Mosaic kernel bytecode.',
 )
 
 jax_pallas_poison_buffers = bool_state(
@@ -2408,4 +2383,55 @@ jax_pallas_auto_assign_collective_ids = enum_state(
         ' auto-assigned ones, based on the serialized kernel (module) hash.'
     ),
     include_in_jit_key=True,
+)
+
+jax_pallas_auto_assign_collective_ids_limit = int_state(
+    name='jax_pallas_auto_assign_collective_ids_limit',
+    default=25,
+    help='Maximum number of auto-assigned collective IDs before erroring.',
+    include_in_jit_key=True,
+)
+
+mtls_cert_file = optional_string_state(
+    name='jax_mtls_cert_file',
+    default=None,
+    help=('Path to the PEM-encoded certificate chain used to secure the '
+          'jax.distributed coordination service with mutual TLS. Must be set '
+          'together with jax_mtls_key_file and jax_mtls_ca_file. See '
+          'jax.distributed.initialize().'))
+
+mtls_key_file = optional_string_state(
+    name='jax_mtls_key_file',
+    default=None,
+    help='Path to the PEM-encoded private key for jax_mtls_cert_file.')
+
+mtls_ca_file = optional_string_state(
+    name='jax_mtls_ca_file',
+    default=None,
+    help=('Path to the PEM-encoded CA bundle used to verify the peer when the '
+          'jax.distributed coordination service uses mutual TLS.'))
+
+mtls_peer_uri_prefix = optional_string_state(
+    name='jax_mtls_peer_uri_prefix',
+    default=None,
+    help=('If set, when the jax.distributed coordination service uses mutual '
+          'TLS, accept the peer if and only if a URI SAN of its certificate '
+          'starts with this prefix, instead of standard host name '
+          'verification. See jax.distributed.initialize().'))
+
+distributed_verify_secure_credentials = bool_state(
+    name='jax_distributed_verify_secure_credentials',
+    default=False,
+    help=('If true, jax.distributed.initialize() aborts instead of using '
+          'insecure channels.'))
+
+jax_accurate_erf_inv = bool_state(
+    name='jax_accurate_erf_inv',
+    default=False,
+    help=(
+        'Temporary flag enabling more accurate erf_inv lowering near'
+        ' ``|x| = 1``.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
 )

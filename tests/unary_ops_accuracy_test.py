@@ -218,14 +218,21 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
     # Input values that would cause large differences between the two
     # implementations.
     diff = abs(f_default(x) - f_accurate(x))
-    if jtu.get_tpu_version() >= 5 and op in [
-        lax.tanh,
-        jnp.tanh,
-        lax.log,
-        jnp.log,
-    ]:
+    if (
+        (
+            jtu.get_tpu_version() >= 5
+            and op in [lax.tanh, jnp.tanh, lax.log, jnp.log]
+        )
+        or (
+            jtu.get_tpu_version() >= 6
+            and jtu.is_libtpu_at_least("0.0.50")
+            and op in [lax.expm1, jnp.expm1]
+        )
+    ):
       # From tpu version 5 and onwards, even with tighter tolerance, the high performant
-      # implementation for tanh  is chosen because the chip implementation has improved accuracy.
+      # implementation for tanh and log is chosen because the chip implementation has improved accuracy.
+      # From tpu version 6 and onwards with libtpu >= 0.0.50, the high performant implementation for expm1
+      # also matches the accurate implementation for the tested range.
       self.assertTrue(jnp.all(diff == 0))
     else:
       self.assertTrue(jnp.any(diff > 0))
@@ -247,14 +254,21 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
     # diff(min_error_val) should be 0
     self.assertTrue(jnp.all(diff_x == 0))
     # diff(x) should be > 0
-    if jtu.get_tpu_version() >= 5 and op in [
-        lax.tanh,
-        jnp.tanh,
-        lax.log,
-        jnp.log,
-    ]:
+    if (
+        (
+            jtu.get_tpu_version() >= 5
+            and op in [lax.tanh, jnp.tanh, lax.log, jnp.log]
+        )
+        or (
+            jtu.get_tpu_version() >= 6
+            and jtu.is_libtpu_at_least("0.0.50")
+            and op in [lax.expm1, jnp.expm1]
+        )
+    ):
       # From tpu version 5 and onwards, even with tighter tolerance, the high performant
       # implementation for tanh and log is chosen because the chip implementation has improved accuracy.
+      # From tpu version 6 and onwards with libtpu >= 0.0.50, the high performant implementation for expm1
+      # also matches the accurate implementation for the tested range.
       self.assertTrue(jnp.all(diff_y == 0))
     else:
       self.assertTrue(jnp.any(diff_y > 0))

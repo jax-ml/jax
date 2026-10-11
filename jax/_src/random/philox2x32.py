@@ -92,7 +92,10 @@ def _philox2x32_abstract_eval(*args):
     raise TypeError(f"philox2x32_p expects 3 arguments, got {len(args)}.")
   if all(isinstance(arg, core.ShapedArray) for arg in args):
     shape = lax.broadcasting_shape_rule("philox2x32", *args)
-    sharding = lax.broadcasting_sharding_rule("philox2x32", *args)
+    sharding = lax.lax_utils.call_sharding_rule(
+        philox2x32_p,
+        functools.partial(lax.broadcasting_sharding_rule, "philox2x32"),
+        None, None, *args)
     aval = core.ShapedArray(shape, np.dtype("uint32"), sharding=sharding)
   else:
     raise TypeError(f"Arguments to philox2x32 must all be arrays, got {args}")
@@ -134,7 +137,7 @@ def philox2x32_seed(seed: typing.Array) -> typing.Array:
   return _philox2x32_seed(seed)
 
 
-@api.jit(inline=True)
+@api.jit(inline=api.Inline.JAX_EARLY)
 def _philox2x32_seed(seed: typing.Array) -> typing.Array:
   """Internal implementation of philox2x32_seed."""
   if seed.shape:
@@ -159,7 +162,7 @@ def philox2x32_split(key: typing.Array, shape: prng.Shape) -> typing.Array:
   return _philox2x32_split(key, shape)
 
 
-@api.jit(static_argnums=(1,), inline=True)
+@api.jit(static_argnums=(1,), inline=api.Inline.JAX_EARLY)
 def _philox2x32_split(key: typing.Array, shape: prng.Shape) -> typing.Array:
   """Internal implementation of philox2x32_split."""
   counts1, counts2 = prng.iota_2x32_shape(shape)
@@ -191,7 +194,7 @@ def philox2x32_random_bits(
   return _philox2x32_random_bits(key, bit_width, shape)
 
 
-@api.jit(static_argnums=(1, 2), inline=True)
+@api.jit(static_argnums=(1, 2), inline=api.Inline.JAX_EARLY)
 def _philox2x32_random_bits(
     key: typing.Array, bit_width: int, shape: tuple[int, ...]
 ) -> typing.Array:

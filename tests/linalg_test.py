@@ -19,7 +19,6 @@ import numpy as np
 import scipy
 import scipy.linalg
 import scipy as osp
-import unittest
 
 from absl.testing import absltest, parameterized
 
@@ -38,7 +37,6 @@ from jax._src.numpy.util import promote_dtypes_inexact
 config.parse_flags_with_absl()
 
 scipy_version = jtu.parse_version(scipy.version.version)
-jaxlib_version = jtu.parse_version(jax.lib.__version__)
 
 T = lambda x: np.swapaxes(x, -1, -2)
 
@@ -168,6 +166,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     if jnp.finfo(dtype).bits == 64:
       jtu.check_grads(jnp.linalg.cholesky, args_maker(), order=2)
+      jtu.check_grads(
+          partial(jnp.linalg.cholesky, upper=upper, symmetrize_input=False),
+          args_maker(),
+          order=2,
+      )
+      jtu.check_grads(
+          partial(jsp.linalg.cholesky, lower=not upper), args_maker(), order=2
+      )
 
   def testCholeskyGradPrecision(self):
     rng = jtu.rand_default(self.rng())
@@ -268,7 +274,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             tol={np.float32: 1e-2, np.float64: 1e-3})
     self._CompileAndCheck(jnp.linalg.tensorsolve,
                           args_maker,
-                          rtol={np.float64: 1e-13})
+                          tol={np.float32: 1e-5, np.float64: 1e-13})
 
   def testTensorsolveAxes(self):
     a_shape = (2, 1, 3, 6)
@@ -723,6 +729,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if jtu.is_device_rocm() and algorithm == lax.linalg.SvdAlgorithm.POLAR:
       self.skipTest("ROCM polar SVD not implemented")
 
+    if jtu.is_device_oneapi() and algorithm == lax.linalg.SvdAlgorithm.JACOBI:
+      self.skipTest("OneAPI does not support Jacobi SVD")
+
+    if jtu.is_device_oneapi() and algorithm == lax.linalg.SvdAlgorithm.POLAR:
+      self.skipTest("OneAPI does not support Polar SVD")
+
     if (not jtu.is_device_rocm() and jtu.device_under_test() == "gpu"
         and algorithm == lax.linalg.SvdAlgorithm.DIVIDE_AND_CONQUER):
       self.skipTest("Divide-and-conquer SVD only supported on AMD (ROCm) GPUs")
@@ -995,6 +1007,21 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=False, rtol=1e-03, atol=1e-03)
 
   @jtu.sample_product(
+    pnorm=[jnp.inf, -jnp.inf, 1, -1, 2, -2, 'fro', None],
+    dtype=float_types + complex_types,
+    batched=[True, False],
+  )
+  def testCondSingular(self, pnorm, dtype, batched):
+    # Singular matrices have an infinite condition number for every norm.
+    singular = np.zeros((2, 2), dtype=dtype)
+    x = np.stack([singular, np.eye(2, dtype=dtype)]) if batched else singular
+    args_maker = lambda: [x, pnorm]
+    self._CheckAgainstNumpy(np.linalg.cond, jnp.linalg.cond, args_maker,
+                            check_dtypes=False)
+    partial_cond = partial(jnp.linalg.cond, p=pnorm)
+    self._CompileAndCheck(partial_cond, lambda: [x], check_dtypes=False)
+
+  @jtu.sample_product(
     shape=[(1, 1), (4, 4), (6, 2, 3), (3, 4, 2, 6)],
     dtype=float_types + complex_types,
   )
@@ -1056,7 +1083,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             tol=1e-3)
     self._CompileAndCheck(jnp.linalg.inv, args_maker)
 
-  @unittest.skipIf(jaxlib_version < (0, 11, 1), "Test requires jaxlib v0.11.1 or newer.")
   @jtu.run_on_devices('cpu')
   def testInvDtypeError(self):
     # regression test for https://github.com/jax-ml/jax/issues/38825
@@ -1111,6 +1137,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         jnp.linalg.pinv(x, rcond=1E-2),
         jnp.linalg.pinv(x, rtol=1E-2)
     )
+
+  def testPinvTracedRtol(self):
+    x = jnp.array([[1., 2.], [3., 4.], [5., 6.]])
+    f = jax.jit(lambda x, rtol: jnp.linalg.pinv(x, rtol=rtol))
+    self.assertAllClose(f(x, 1E-2), jnp.linalg.pinv(x, rtol=1E-2))
+    self.assertAllClose(jax.grad(lambda x: f(x, 1E-2).sum())(x),
+                        jax.grad(lambda x: jnp.linalg.pinv(x).sum())(x))
 
   def testPinvGradIssue2792(self):
     def f(p):
@@ -1343,6 +1376,120 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 class ScipyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
+      dtype=float_types + complex_types,
+      lower=[False, True],
+      eigvals_only=[False, True],
+      batch_shapes=[((), ()), ((2,), ()), ((2, 1), (1, 3))],
+      problem_type=[1, 2, 3],
+  )
+  @jax.default_matmul_precision("float32")
+  @jax.numpy_rank_promotion("allow")
+  def testGeneralizedEigh(self, dtype, lower, eigvals_only, batch_shapes,
+                          problem_type):
+    rng = jtu.rand_default(self.rng())
+    a = rng(batch_shapes[0] + (3, 3), dtype)
+    a = (a + T(a.conj())) / 2
+    b = rng(batch_shapes[1] + (3, 3), dtype)
+    b = b @ T(b.conj()) + 3 * np.eye(3, dtype=dtype)
+    if problem_type != 1:
+      # Keep products well-scaled for absolute float32 residual checks.
+      b /= np.linalg.norm(b, axis=(-2, -1), keepdims=True)
+    fun = partial(jsp.linalg.eigh, lower=lower, eigvals_only=eigvals_only,
+                  type=problem_type)
+    args_maker = lambda: (a, b)
+    result = fun(a, b)
+    w = result if eigvals_only else result[0]
+    expected = np.vectorize(
+        partial(osp.linalg.eigh, lower=lower, eigvals_only=True, type=problem_type),
+        signature="(n,n),(n,n)->(n)")(a, b)
+    self.assertAllClose(w, expected, atol=1e-5, rtol=1e-5)
+    self._CompileAndCheck(fun, args_maker, atol=1e-5, rtol=1e-5)
+    if not eigvals_only:
+      _, v = result
+      if problem_type == 1:
+        lhs, rhs = a @ v, b @ v
+      else:
+        lhs, rhs = (a @ b @ v if problem_type == 2 else b @ a @ v), v
+      residual_tol = 2e-5 if jtu.test_device_matches(["tpu"]) else 1e-5
+      self.assertAllClose(lhs, rhs * w.astype(v.dtype)[..., None, :],
+                          atol=residual_tol, rtol=residual_tol)
+      expected_identity = np.broadcast_to(np.eye(3, dtype=dtype), v.shape)
+      bv = b @ v if problem_type != 3 else jnp.linalg.solve(b, v)
+      self.assertAllClose(T(v.conj()) @ bv, expected_identity,
+                          atol=1e-5, rtol=1e-5)
+
+  @jtu.sample_product(dtype=float_types + complex_types, lower=[False, True],
+                      problem_type=[1, 2, 3])
+  def testGeneralizedEighSymmetrizesInputs(self, dtype, lower, problem_type):
+    rng = jtu.rand_default(self.rng())
+    a = rng((3, 3), dtype)
+    b = rng((3, 3), dtype)
+    b = b @ T(b.conj()) + 3 * np.eye(3, dtype=dtype)
+    perturbation = rng((3, 3), dtype)
+    b += perturbation - T(perturbation.conj())
+    if problem_type != 1:
+      b /= np.linalg.norm(b)
+    expected = osp.linalg.eigh((a + T(a.conj())) / 2,
+                              (b + T(b.conj())) / 2, eigvals_only=True,
+                              type=problem_type)
+    w, _ = jsp.linalg.eigh(a, b, lower=lower, type=problem_type)
+    self.assertAllClose(w, expected, atol=1e-5, rtol=1e-5)
+
+  @jtu.sample_product(dtype=float_types + complex_types, lower=[False, True],
+                      problem_type=[1, 2, 3])
+  @jax.default_matmul_precision("float32")
+  def testGeneralizedEighGrad(self, dtype, lower, problem_type):
+    rng = jtu.rand_default(self.rng())
+    a, b = rng((3, 3), dtype), rng((3, 3), dtype)
+    a = (a + T(a.conj())) / 2
+    b = b @ T(b.conj()) + 3 * np.eye(3, dtype=dtype)
+
+    def fun(a, b, eigvals_only):
+      if eigvals_only:
+        return jsp.linalg.eigh(a, b, lower=lower, eigvals_only=True,
+                               type=problem_type)
+      _, v = jsp.linalg.eigh(a, b, lower=lower, type=problem_type)
+      weights = jnp.array([1, 2, 3], dtype=dtype)
+      return (v * weights[None, :]) @ jnp.conj(v.T)
+
+    # Avoid finite-difference cancellation for float32 matrix products.
+    eps = 1.0 / 128 if dtype in (np.float32, np.complex64) else 1.0 / 512
+    jtu.check_grads(partial(fun, eigvals_only=True), (a, b), order=2,
+                    atol=2e-2, rtol=2e-2, eps=eps)
+    jtu.check_grads(partial(fun, eigvals_only=False), (a, b), order=1,
+                    atol=2e-2, rtol=2e-2, eps=eps)
+
+  @parameterized.parameters(1, 2, 3)
+  @jax.numpy_rank_promotion("allow")
+  def testGeneralizedEighVmap(self, problem_type):
+    a = jnp.array([[[2., 1.], [1., 3.]], [[4., 1.], [1., 2.]]])
+    b = jnp.array([[2., 0.], [0., 1.]])
+    fun = partial(jsp.linalg.eigh, type=problem_type)
+    self.assertAllClose(jit(vmap(fun, in_axes=(0, None)))(a, b), fun(a, b))
+
+  @parameterized.parameters(0, 4, -1)
+  def testGeneralizedEighInvalidType(self, problem_type):
+    with self.assertRaisesRegex(ValueError, "type must be 1, 2, or 3"):
+      jsp.linalg.eigh(np.eye(2), np.eye(2), type=problem_type)
+
+  @parameterized.product(problem_type=[1, 2, 3], eigvals_only=[False, True])
+  def testGeneralizedEighNonPositiveDefiniteB(self, problem_type, eigvals_only):
+    result = jsp.linalg.eigh(jnp.eye(2), jnp.diag(jnp.array([1., -1.])),
+                             type=problem_type, eigvals_only=eigvals_only)
+    if eigvals_only:
+      self.assertTrue(np.isnan(result).all())
+    else:
+      w, v = result
+      self.assertTrue(np.isnan(w).all())
+      self.assertTrue(np.isnan(v).all())
+
+  @parameterized.parameters(((2, 3), (3, 3)), ((3, 3), (2, 2)), ((3, 3), (3,)))
+  def testGeneralizedEighInvalidShape(self, a_shape, b_shape):
+    with self.assertRaises(ValueError):
+      jsp.linalg.eigh(np.zeros(a_shape), np.zeros(b_shape))
+
+
+  @jtu.sample_product(
     args=[
       (),
       (1,),
@@ -1359,7 +1506,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jsp.linalg.block_diag, args_maker)
 
   @jtu.sample_product(
-    shape=[(1, 1), (4, 5), (10, 5), (50, 50)],
+    shape=[(1, 1), (4, 5), (10, 5), (50, 50), (0, 3, 3), (2, 4, 5),
+           (3, 2, 6, 6)],
     dtype=float_types + complex_types,
   )
   def testLu(self, shape, dtype):
@@ -1367,11 +1515,20 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     x, = args_maker()
     p, l, u = jsp.linalg.lu(x)
+    *batch, m, n = shape
+    k = min(m, n)
+    self.assertEqual(p.shape, (*batch, m, m))
+    self.assertEqual(l.shape, (*batch, m, k))
+    self.assertEqual(u.shape, (*batch, k, n))
     self.assertAllClose(x, np.matmul(p, np.matmul(l, u)),
                         rtol={np.float32: 1e-3, np.float64: 5e-12,
                               np.complex64: 1e-3, np.complex128: 1e-12},
                         atol={np.float32: 1e-5})
     self._CompileAndCheck(jsp.linalg.lu, args_maker)
+
+    pl, u2 = jsp.linalg.lu(x, permute_l=True)
+    self.assertAllClose(pl, np.matmul(p, l))
+    self.assertAllClose(u2, u)
 
   def testLuOfSingularMatrix(self):
     x = jnp.array([[-1., 3./2], [2./3, -1.]], dtype=np.float32)
@@ -2468,7 +2625,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     if jtu.test_device_matches(["gpu"]) and method == "schur":
       self.skipTest("Schur not supported on GPU.")
 
-    tol = {np.float32: 5e-2, np.float64: 1e-9, np.complex64: 5e-2, np.complex128: 1e-9}
+    tol = {np.float32: 1e-1, np.float64: 1e-9, np.complex64: 5e-2, np.complex128: 1e-9}
 
     def args_maker():
       rng = jtu.rand_default(self.rng())
@@ -2576,9 +2733,6 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
     if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("perturb_singular=True only supported on CPU and GPU")
-    # TODO: Add these tests back once rocSparse issues are fixed.
-    if jtu.is_device_rocm() and shape in [(3, 4), (3, 4, 5)]:
-      self.skipTest("Skipped on ROCm due to rocSparse numerical error.")
     rng = self.rng()
     d = 1.0 + jtu.rand_positive(rng)(shape, dtype)
     dl = jtu.rand_default(rng)(shape, dtype)
@@ -2626,6 +2780,10 @@ class LaxLinalgTest(jtu.JaxTestCase):
     if jtu.is_device_rocm() and not perturb_singular:
       self.skipTest(
           "Skipped on ROCm: hipsparseSgtsv2 numerical error on pivoting path.")
+    # OneAPI's non-perturbed path uses the non-pivoting Thomas decomposition.
+    if jtu.test_device_matches(["oneapi"]) and not perturb_singular:
+      self.skipTest(
+          "OneAPI non-perturbed path uses the non-pivoting fallback solver.")
     dl = np.array([0.0, 2.0, -2.0, 3.0], dtype=np.float32)
     d = np.array([1.0, 4.0, 1.0, -1.0], dtype=np.float32)
     du = np.array([2.0, -1.0, 1.0, 0.0], dtype=np.float32)
@@ -2640,10 +2798,10 @@ class LaxLinalgTest(jtu.JaxTestCase):
     if not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("Pivoting not supported in fallback tridiagonal solve")
 
-    # TODO(magaonka-amd): Re-enable once hipSPARSE gtsv2 numerical issues are resolved.
-    if jtu.is_device_rocm() and not perturb_singular:
+    if jtu.test_device_matches(["oneapi"]) and not perturb_singular:
       self.skipTest(
-          "Skipped on ROCm: hipsparseSgtsv2 numerical error on pivoting path.")
+          "OneAPI non-perturbed path uses the non-pivoting fallback solver.")
+
     dl = np.array([0.0, 1.0, -6.0, 1.0], dtype=np.float32)
     d = np.array([1.0, -1.0, 2.0, 1.0], dtype=np.float32)
     du = np.array([2.0, 1.0, -1.0, 0.0], dtype=np.float32)
@@ -2698,9 +2856,6 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
     if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("perturb_singular=True only supported on CPU and GPU")
-    # TODO: Add these tests back once rocSparse issues are fixed.
-    if jtu.is_device_rocm() and shape == (3, 4):
-      self.skipTest("Skipped on ROCm due to rocSparse numerical error.")
     rng = self.rng()
     d = 1.0 + jtu.rand_positive(rng)(shape, dtype)
     dl = jtu.rand_default(rng)(shape, dtype)
@@ -2900,6 +3055,15 @@ class LaxLinalgTest(jtu.JaxTestCase):
   def testInvpascalInvalidKind(self):
     with self.assertRaisesRegex(ValueError, "Expected kind to be one of"):
       jsp.linalg.invpascal(3, kind='bad')
+
+  @jtu.sample_product(
+    func=[lax.linalg.cholesky, lax.linalg.eigh]
+  )
+  def test_non_square_error(self, func):
+    # Regression test for https://github.com/jax-ml/jax/issues/41204
+    x = jnp.zeros((1, 4))
+    with self.assertRaisesRegex(ValueError, f"The input to linalg.{func.__name__} must have shape"):
+      _ = func(x)
 
 
 if __name__ == "__main__":

@@ -124,7 +124,7 @@ PyObject* SafeMap(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
     }
 
     if (n < length_hint) {
-      PyList_SET_ITEM(list.ptr(), n, out.release().ptr());
+      PyList_SetItem(list.ptr(), n, out.release().ptr());
     } else {
       if (PyList_Append(list.ptr(), out.ptr()) < 0) {
         return nullptr;
@@ -312,10 +312,8 @@ PyObject* SafeZip(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
     if (PyErr_Occurred()) return nullptr;
 
     if (v.ptr()) {
-      tuple = nb::steal<nb::object>(PyTuple_New(nargs));
-      if (!tuple.ptr()) return nullptr;
-
-      PyTuple_SET_ITEM(tuple.ptr(), 0, v.release().ptr());
+      nb::tuple_builder tuple_builder(nargs);
+      tuple_builder.put(std::move(v));
       for (size_t i = 1; i < iterators.size(); ++i) {
         v = nb::steal<nb::object>(PyIter_Next(iterators[i].ptr()));
         if (PyErr_Occurred()) return nullptr;
@@ -324,8 +322,9 @@ PyObject* SafeZip(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
           SetSafeZipLengthError(iterators, n, i, /*arg_is_longer=*/false);
           return nullptr;
         }
-        PyTuple_SET_ITEM(tuple.ptr(), i, v.release().ptr());
+        tuple_builder.put(std::move(v));
       }
+      tuple = tuple_builder.commit();
     } else {
       // No more elements should be left. Checks the other iterators are
       // exhausted.
@@ -349,7 +348,7 @@ PyObject* SafeZip(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
     }
 
     if (n < length_hint) {
-      PyList_SET_ITEM(list.ptr(), n, tuple.release().ptr());
+      PyList_SetItem(list.ptr(), n, tuple.release().ptr());
     } else {
       if (PyList_Append(list.ptr(), tuple.ptr()) < 0) {
         return nullptr;

@@ -41,6 +41,7 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import hijax
+from jax._src import jaxpr_util
 from jax._src import literals
 from jax._src import custom_derivatives
 from jax._src import test_util as jtu
@@ -49,6 +50,7 @@ from jax._src.interpreters import partial_eval as pe
 config.parse_flags_with_absl()
 
 
+@jtu.with_config(jax_custom_jvp3=False)
 class CustomJVPTest(jtu.JaxTestCase):
 
   def test_basic(self):
@@ -66,6 +68,13 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(api.jvp(f, (x,), (1.,)),
                         (jnp.sin(x), 2 * jnp.cos(x)))
     self.assertAllClose(api.grad(f)(x), 2 * jnp.cos(x))
+
+  def test_fun_attribute(self):
+    def f(x):
+      return x
+    g = jax.custom_jvp(f)
+    self.assertIsInstance(g, jax.custom_jvp)
+    self.assertIs(g.fun, f)
 
   def test_invariance(self):
     @jax.custom_jvp
@@ -1001,6 +1010,20 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     self.assertEqual(grad(energy_fn)(scalar_box).shape, ())
 
+  def test_linear_transpose_of_vmap(self):
+    @jax.custom_jvp
+    def scale(x):
+      return 2. * x
+    scale.defjvp(lambda p, t: (scale(p[0]), scale(t[0])))
+
+    xs = jnp.arange(3.)
+    ct, = jax.linear_transpose(jax.vmap(scale), xs)(jnp.ones(3))
+    self.assertAllClose(ct, 2. * jnp.ones(3))
+    _, scale_lin = jax.linearize(jax.vmap(scale), xs)
+    self.assertAllClose(scale_lin(jnp.ones(3)), 2. * jnp.ones(3))
+    ct, = jax.linear_transpose(scale_lin, xs)(jnp.ones(3))
+    self.assertAllClose(ct, 2. * jnp.ones(3))
+
   def test_custom_jvp_implicit_broadcasting(self):
     # https://github.com/jax-ml/jax/issues/6357
     if config.enable_x64.value:
@@ -1509,6 +1532,49 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     # jax.grad(h)(0.)  # don't crash
 
+  def test_higher_order_in_scan(self):
+    @jax.custom_jvp
+    def g(theta, c):
+      return jnp.sin(theta * c)
+
+    @g.defjvp
+    def g_jvp(primals, tangents):
+      (theta, c), (theta_dot, _) = primals, tangents
+      y = g(theta, c)
+      return y, 2 * c * y * theta_dot
+
+    c = jnp.array([0.3, 0.7, 1.1, 1.5])
+
+    def f(theta):
+      _, y = lax.scan(lambda _, ci: (None, g(theta, ci)), None, c)
+      return jnp.sum(y)
+
+    theta = 0.9
+    expected = jnp.sum(4 * c ** 2 * jnp.sin(theta * c))
+    rev_over_fwd = lambda f: jax.grad(lambda t: jax.jvp(f, (t,), (1.,))[1])
+    for d2 in [lambda f: jax.jacfwd(jax.grad(f)),
+               lambda f: jax.grad(jax.grad(f)),
+               rev_over_fwd,
+               lambda f: jax.jacfwd(jax.jacfwd(f))]:
+      self.assertAllClose(d2(f)(theta), expected, check_dtypes=False)
+      self.assertAllClose(d2(jax.checkpoint(f))(theta), expected,
+                          check_dtypes=False)
+
+  def test_value_and_grad_runs_primal_once(self):
+    @jax.custom_jvp
+    def f(x):
+      return jnp.sin(x)
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      (x,), (x_dot,) = primals, tangents
+      return f(x), jnp.cos(x) * x_dot
+
+    jaxpr = jax.make_jaxpr(jax.value_and_grad(f))(1.).jaxpr
+    self.assertEqual(jaxpr_util.primitives(pe.lower_jaxpr2(jaxpr))['sin'], 1)
+    value, grad = jax.jit(jax.value_and_grad(f))(1.)
+    self.assertAllClose((value, grad), (jnp.sin(1.), jnp.cos(1.)))
+
 
 @jtu.with_config(jax_custom_vjp3=False)
 class CustomVJPTest(jtu.JaxTestCase):
@@ -1528,6 +1594,13 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(api.grad(f)(x), 2 * jnp.cos(x))
     self.assertAllClose(api.value_and_grad(f)(x),
                         (jnp.sin(x), 2 * jnp.cos(x)))
+
+  def test_fun_attribute(self):
+    def f(x):
+      return x
+    g = jax.custom_vjp(f)
+    self.assertIsInstance(g, jax.custom_vjp)
+    self.assertIs(g.fun, f)
 
   def test_invariance(self):
     @jax.custom_vjp
@@ -1709,6 +1782,21 @@ class CustomVJPTest(jtu.JaxTestCase):
         TypeError,
         r"can't apply forward-mode autodiff \(jvp\) to a custom_vjp function.",
         lambda: api.jvp(jit(f), (3.,), (1.,)))
+
+  def test_jvp_error_symbolic_zeros(self):
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x)
+    def f_fwd(x):
+      return f(x.value), jnp.cos(x.value)
+    def f_rev(cos_x, g):
+      return (2 * cos_x * g,)
+    f.defvjp(f_fwd, f_rev, symbolic_zeros=True)
+
+    self.assertRaisesRegex(
+        TypeError,
+        r"can't apply forward-mode autodiff \(jvp\) to a custom_vjp function.",
+        lambda: api.jvp(f, (3.,), (1.,)))
 
   def test_kwargs(self):
     # from https://github.com/jax-ml/jax/issues/1938
@@ -2358,6 +2446,29 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     ans = api.grad(g)(xy)
     expected = {'a': np.cos(6.) * 3., 'b': np.cos(6.) * 2.}
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_unused_output(self):
+    # One output of the custom_vjp function is unused by the differentiated
+    # function, exercising dce of the staged linearized computation.
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x), jnp.exp(x)
+    def f_fwd(x):
+      return f(x), x
+    def f_bwd(x, gs):
+      g1, g2 = gs
+      return (2. * g1 * jnp.cos(x) + g2 * jnp.exp(x),)
+    f.defvjp(f_fwd, f_bwd)
+
+    g = jax.remat(lambda x: f(x)[0] * 3.)
+
+    ans = api.grad(g)(0.5)
+    expected = 3. * 2. * np.cos(0.5)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(api.grad(g))(0.5)
+    expected = 3. * 2. * -np.sin(0.5)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_remat_nondiff_argnums(self):
@@ -3064,6 +3175,24 @@ class CustomVJPTest(jtu.JaxTestCase):
     _ = jax.vjp(f_, 2., 3.)
     _ = jax.vjp(lambda x: f_(x, 3.), 2.)  # don't crash!
 
+  def test_no_retracing_per_call_site(self):
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x)
+    f.defvjp(lambda x: (f(x), jnp.cos(x)), lambda c, g: (c * g,))
+
+    def count_traces(num_calls):
+      def g(x):
+        for _ in range(num_calls):
+          x = f(x)
+        return x
+      with jtu.count_jit_tracing_cache_miss() as count:
+        jax.jit(jax.grad(g)).lower(1.)
+      return count()
+
+    count_traces(1)  # warm up
+    self.assertEqual(count_traces(2), count_traces(10))
+
   def test_run_rules_more_than_once(self):
     # https://github.com/jax-ml/jax/issues/16614
 
@@ -3559,15 +3688,25 @@ class CustomVJPTest(jtu.JaxTestCase):
     e2.defvjp_with_logs(lambda x: (e2(x), None), lambda _, ct: ((ct,), [1.0]))
     with self.assertRaisesRegex(TypeError, "None or a dict"):
       jax.grad(e2)(1.0)
+  def test_linear_transpose_of_jvp_and_linearize_of_vmap(self):
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x)
+    f.defvjp(lambda x: (jnp.sin(x), jnp.cos(x)), lambda c, g: (c * g,))
+
+    xs = jnp.arange(3.)
+    f_jvp = lambda t: jax.jvp(jax.vmap(f), (xs,), (t,))[1]
+    _, f_lin = jax.linearize(jax.vmap(f), xs)
+    for g in [f_jvp, f_lin]:
+      ct, = jax.linear_transpose(g, xs)(jnp.ones(3))
+      self.assertAllClose(ct, jnp.cos(xs))
+
 
 @jtu.with_config(jax_custom_vjp3=True)
 class CustomVJP3Test(CustomVJPTest):
 
   # regress these, hope no one cares
   def test_python_control_flow(self): pass
-  def test_pytrees_not_required_to_contain_nones(self): pass
-  def test_symbolic_zero_custom_vjp_bwd_shape_error(self): pass
-  def test_symbolic_zeros_remat(self): pass
   def test_dce(self): pass
 
   def test_pretty_print(self):
@@ -3588,7 +3727,13 @@ class CustomVJP3Test(CustomVJPTest):
     expected = textwrap.dedent(
         """
         { lambda ; a:f32[1]. let
-            b:f32[1] = call_hi_primitive[_prim=CustomVJPTraced] a
+            b:f32[1] = CustomVJPTraced[
+              name=f
+              call_jaxpr={ lambda ; c:f32[1]. let d:f32[1] = add c 1.0:f32[] in (d,) }
+              fwd=f_fwd
+              bwd=f_bwd
+              symbolic_zeros=False
+            ] a
           in (b,) }
         """).strip()
     self.assertEqual(actual, expected)
@@ -3612,11 +3757,9 @@ class CustomVJP3Test(CustomVJPTest):
     expected = textwrap.dedent(
         """
         { lambda ; a:f32[1]. let
-            b:f32[1] = call_hi_primitive_linearized[
-              _prim=CustomVJPTraced
+            b:f32[1] = CustomVJPTraced.linearized[
               nz_in_flat=(True,)
               nz_out_flat=(True,)
-              residuals_tree=...
             ] a
           in (b,) }
         """).strip()
@@ -3734,21 +3877,6 @@ class CustomVJP3Test(CustomVJPTest):
 
   # improved error message (classic raises "CustomVJPPrimal ... is not a valid
   # JAX type" here instead)
-  def test_jvp_error_symbolic_zeros(self):
-    @jax.custom_vjp
-    def f(x):
-      return jnp.sin(x)
-    def f_fwd(x):
-      return f(x), jnp.cos(x)
-    def f_rev(cos_x, g):
-      return (2 * cos_x * g.value,)
-    f.defvjp(f_fwd, f_rev, symbolic_zeros=True)
-
-    self.assertRaisesRegex(
-        TypeError,
-        r"can't apply forward-mode autodiff \(jvp\) to a custom_vjp function.",
-        lambda: api.jvp(f, (3.,), (1.,)))
-
   # improved error message
   def test_fwd_rule_primal_out_type_doesnt_match_primal_error_message(self):
     def scan_apply(f, x):
@@ -3826,7 +3954,7 @@ class CustomVJP3Test(CustomVJPTest):
         return PairTy(self.ty.to_tangent_aval())
     hijax.register_hitype(Pair, lambda p: PairTy(core.typeof(p.a)))
 
-    class PairProd(hijax.VJPHiPrimitive):
+    class PairProd(hijax.HiPrim):
       def __init__(self, pair_aval):
         self.in_avals = (pair_aval,)
         self.out_aval = pair_aval.ty
@@ -3836,7 +3964,7 @@ class CustomVJP3Test(CustomVJPTest):
       def expand(self, p):
         return p.a * p.b
 
-    class PairSwapScale(hijax.VJPHiPrimitive):
+    class PairSwapScale(hijax.HiPrim):
       def __init__(self, pair_aval, s_aval):
         self.in_avals = (pair_aval, s_aval)
         self.out_aval = pair_aval
@@ -3876,6 +4004,65 @@ class CustomVJP3Test(CustomVJPTest):
     for where, (ty, aval) in seen.items():
       self.assertIs(type(aval), PairTy, msg=where)
       self.assertTrue(issubclass(ty, core.Tracer), msg=f'{where}: {ty}')
+
+  def test_effects_preserved(self):
+    @jax.custom_vjp
+    def f(x):
+      r = jax.new_ref(x)
+      return r[...] * 2.0
+
+    def f_fwd(x):
+      r = jax.new_ref(x)
+      return r[...] * 2.0, (x,)
+
+    def f_bwd(res, g):
+      (x,) = res
+      return (g * 2.0,)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    jaxpr = jax.make_jaxpr(f)(1.0)
+    self.assertIn(core.internal_mutable_array_effect, jaxpr.effects)
+    self.assertAllClose(jax.jit(f)(2.0), 4.0, check_dtypes=False)
+
+  def test_staging_custom_pytree_trace_state(self):
+    class CustomNode:
+      def __init__(self, val):
+        self.val = val
+
+    def unflatten(aux, children):
+      core.get_opaque_trace_state()
+      return CustomNode(*children)
+
+    def flatten(node):
+      return (node.val,), None
+
+    jax.tree_util.register_pytree_node(CustomNode, flatten, unflatten)
+
+    @jax.custom_vjp
+    def f(node):
+      return node.val * 2.0
+
+    def f_fwd(node):
+      return f(node), node.val
+
+    def f_bwd(res, g):
+      return (CustomNode(g * 2.0),)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    out = jax.jit(f)(CustomNode(3.0))
+    self.assertEqual(out, 6.0)
+
+  def test_vmap_gives_custom_vjp(self):
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x)
+    f.defvjp(lambda x: (jnp.sin(x), jnp.cos(x)), lambda c, g: (c * g,))
+
+    eqn, = jax.make_jaxpr(jax.vmap(jax.vmap(f)))(jnp.ones((2, 3))).eqns
+    self.assertIsInstance(eqn.params['_prim'], hijax.CustomVJPTraced)
+
 
 class CustomVmapTest(jtu.JaxTestCase):
 
@@ -4560,6 +4747,29 @@ class CustomApiTest(jtu.JaxTestCase):
         for method in methods:
           self.assertIsInstance(getattr(f, method), Callable)
 
+  def test_flags_read_at_call_time(self):
+    @jax.custom_jvp
+    def f(x):
+      return x
+    f.defjvp(lambda p, t: (f(p[0]), t[0]))
+
+    @jax.custom_vjp
+    def g(x):
+      return x
+    g.defvjp(lambda x: (x, None), lambda _, ct: (ct,))
+
+    h = jax.checkpoint(jnp.sin)
+
+    for flag, fun, old, new in [
+        (config.custom_jvp3, f, 'custom_jvp_call', 'CustomJVPTraced'),
+        (config.custom_jvp3, jax.nn.relu, 'custom_jvp_call', 'CustomJVPTraced'),
+        (config.custom_vjp3, g, 'custom_vjp_call', 'CustomVJPTraced'),
+        (config.remat3, h, 'remat2', 'RematTraced')]:
+      with flag(False):
+        self.assertIn(old, str(jax.make_jaxpr(fun)(1.)))
+      with flag(True):
+        self.assertIn(new, str(jax.make_jaxpr(fun)(1.)))
+
 
 @jtu.with_config(jax_remat3=True)
 class CustomJVPRemat3Test(CustomJVPTest):
@@ -4591,10 +4801,10 @@ class CustomJVP3Test(CustomJVPTest):
   def test_nondiff_argnums_vmap_tracer(self): pass
 
   def test_hard_stuff2(self):
-    # Like the base test, except the last case: the batchedness of a
-    # custom_jvp application under vmap is inferred from its primal function
-    # alone, so a jvp rule whose tangent is more batched than the (constant,
-    # hence unbatched) primal output raises rather than working.
+    # Like the base test, except the differentiated cases: the batchedness of
+    # a custom_jvp application under vmap is inferred from its primal function
+    # alone, so differentiating through a jvp rule whose tangent is more
+    # batched than the (constant, hence unbatched) primal output raises.
     @jax.custom_jvp
     def f(x):
       return np.zeros(x.shape, x.dtype)
@@ -4608,16 +4818,18 @@ class CustomJVP3Test(CustomJVPTest):
     # don't crash
     jax.jit(jax.vmap(f))(jnp.arange(3.))
     jax.jit(jax.vmap(jax.grad(f)))(jnp.arange(3.))
-    jax.jit(jax.grad(lambda x: jax.vmap(f)(x).sum()))(jnp.arange(3.))
-    jax.grad(lambda x: jax.vmap(f)(x).sum())(jnp.arange(3.))
 
-    with self.assertRaisesRegex(ValueError, "batched along the mapped axis"):
-      jax.jvp(jax.vmap(f), (jnp.arange(3.),), (jnp.ones(3),))
+    for g in [jax.jit(jax.grad(lambda x: jax.vmap(f)(x).sum())),
+              jax.grad(lambda x: jax.vmap(f)(x).sum()),
+              jax.grad(lambda x: jax.jit(jax.vmap(f))(x).sum()),
+              lambda x: jax.jvp(jax.vmap(f), (x,), (jnp.ones(3),))]:
+      with self.assertRaisesRegex(ValueError, "batched along the mapped axis"):
+        g(jnp.arange(3.))
 
   def test_overbatched_rule_remedy(self):
-    # the remedy the error in test_hard_stuff2 recommends: a VJPHiPrimitive
-    # with a batch_dim_rule that declares the joined batchedness
-    class ZerosButTangent(hijax.VJPHiPrimitive):
+    # the remedy the error in test_hard_stuff2 recommends: a HiPrim
+    # with a batch rule that declares the joined batchedness
+    class ZerosButTangent(hijax.HiPrim):
       def __init__(self, in_aval):
         self.in_avals = (in_aval,)
         self.out_aval = in_aval
@@ -4631,10 +4843,9 @@ class CustomJVP3Test(CustomJVPTest):
         (x,), (t,) = primals, tangents
         return ZerosButTangent(core.typeof(x))(x), t
 
-      def batch_dim_rule(self, axis_data, in_dims):
-        del axis_data
-        d, = self.in_tree.flatten_up_to(in_dims)
-        return d
+      def batch(self, axis_data, args, dims):
+        (x,), (d,) = args, dims
+        return ZerosButTangent(core.typeof(x))(x), d
 
     f = lambda x: ZerosButTangent(core.typeof(x))(x)
     out, tangents = jax.jvp(jax.vmap(f), (jnp.arange(3.),), (jnp.ones(3),))
@@ -4777,7 +4988,12 @@ class CustomJVP3Test(CustomJVPTest):
     expected = textwrap.dedent(
         """
         { lambda ; a:f32[1]. let
-            b:f32[1] = call_hi_primitive[_prim=CustomJVPTraced] a
+            b:f32[1] = CustomJVPTraced[
+              name=f
+              call_jaxpr={ lambda ; c:f32[1]. let d:f32[1] = add c 1.0:f32[] in (d,) }
+              jvp=f_jvp
+              symbolic_zeros=False
+            ] a
           in (b,) }
         """).strip()
     self.assertEqual(actual, expected)
@@ -4797,6 +5013,15 @@ class CustomJVP3Test(CustomJVPTest):
     eqn, = lo.eqns
     self.assertIs(eqn.primitive, pe.eval_jaxpr_p)
     self.assertLen(eqn.params['call_jaxpr'].eqns, 10)
+
+  def test_vmap_gives_custom_jvp(self):
+    @jax.custom_jvp
+    def f(x):
+      return jnp.sin(x)
+    f.defjvp(lambda p, t: (f(p[0]), jnp.cos(p[0]) * t[0]))
+
+    eqn, = jax.make_jaxpr(jax.vmap(jax.vmap(f)))(jnp.ones((2, 3))).eqns
+    self.assertIsInstance(eqn.params['_prim'], hijax.CustomJVPTraced)
 
 
 @jtu.with_config(jax_remat3=True)

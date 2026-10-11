@@ -15,9 +15,7 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
-# Placeholder: load proto_library
-
-load("//jaxlib:jax.bzl", "cc_proto_library", "if_oss", "nanobind_extension", "py_library")
+load("//jaxlib:jax.bzl", "cc_proto_library", "if_oss", "nanobind_extension", "proto_library", "py_library")
 
 package(
     default_applicable_licenses = [],
@@ -146,14 +144,17 @@ cc_library(
     hdrs = ["serde.h"],
     deps = [
         "//jaxlib/mosaic:pass_boilerplate",
-        "//jaxlib/mosaic:serde",
+        "@com_google_absl//absl/log:check",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AsmParser",
         "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:NVVMDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:VectorDialect",
+        "@xla//xla/mosaic:serde",
     ],
 )
 
@@ -176,6 +177,7 @@ cc_library(
         "//jaxlib/mosaic:pass_boilerplate",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -246,6 +248,12 @@ cc_library(
 )
 
 cc_library(
+    name = "launch_config",
+    hdrs = ["launch_config.h"],
+    deps = ["@com_google_absl//absl/container:inlined_vector"],
+)
+
+cc_library(
     name = "runtime",
     srcs = ["runtime.cc"],
     # Linker may prune these symbols if they are not explicitly exported.
@@ -260,8 +268,22 @@ cc_library(
         "-Wl,--export-dynamic-symbol='nvshmemx_init_status'",
         "-Wl,--export-dynamic-symbol='nvshmemx_mc_ptr'",
     ],
-    deps = ["@local_config_cuda//cuda:cuda_headers"],
+    deps = [
+        ":launch_config",
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
     alwayslink = True,
+)
+
+cc_test(
+    name = "runtime_test",
+    srcs = ["runtime_test.cc"],
+    deps = [
+        ":launch_config",
+        ":runtime",  # buildcleaner: keep
+        "@com_google_googletest//:gtest_main",
+        "@xla//xla/stream_executor/cuda:all_runtime",  # buildcleaner: keep
+    ],
 )
 
 cc_library(
@@ -288,6 +310,7 @@ cc_library(
     ],
     deps = [
         ":dump",
+        ":launch_config",
         ":mosaic_gpu_cc_proto",
         ":nvshmem",
         ":passes",
@@ -300,6 +323,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:function_ref",
@@ -361,6 +385,7 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/profiler/lib:traceme",
         "@xla//xla:executable_run_options",
+        "@xla//xla:status_macros",
         "@xla//xla:util",
         "@xla//xla/backends/cpu:target_machine_options",
         "@xla//xla/backends/gpu:ffi",
@@ -376,7 +401,10 @@ cc_library(
         "@xla//xla/core/collectives:rank_id",
         "@xla//xla/core/collectives:symmetric_memory",
         "@xla//xla/ffi",
+        "@xla//xla/ffi:record_ffi",
         "@xla//xla/ffi:type_registry",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:record_api",
         "@xla//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
         "@xla//xla/service/llvm_ir:llvm_command_line_options",
         "@xla//xla/stream_executor:device_address_allocator",
@@ -436,6 +464,7 @@ nanobind_extension(
         "@com_google_absl//absl/strings",
         "@nanobind",
         "@xla//xla/tsl/cuda:cudart",
+        "@xla//xla/tsl/cuda:cupti",
     ],
 )
 
@@ -449,6 +478,7 @@ cc_binary(
         "notap",
     ],
     deps = [
+        ":launch_config",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/tsl/cuda:cudart",
     ],

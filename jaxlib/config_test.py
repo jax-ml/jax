@@ -13,6 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
+import gc
 import threading
 
 from absl.testing import absltest
@@ -20,6 +21,9 @@ from absl.testing import absltest
 from jax.jaxlib import _jax
 
 config = _jax.config
+
+
+test_race_config = config.Config("test_race", 1)
 
 
 class ConfigTest(absltest.TestCase):
@@ -62,6 +66,31 @@ class ConfigTest(absltest.TestCase):
         self.assertEqual(c.value, i)
 
     threads = [threading.Thread(target=Body) for _ in range(4)]
+    for t in threads:
+      t.start()
+    for t in threads:
+      t.join()
+
+  def testConcurrentGlobalStateRace(self):
+    def writer():
+      for _ in range(2000):
+        test_race_config.set_global(2)
+        test_race_config.set_global(1)
+
+    def reader():
+      for _ in range(2000):
+        _ = test_race_config.value
+
+    def collector():
+      for _ in range(50):
+        gc.collect()
+
+    threads = [
+        threading.Thread(target=writer),
+        threading.Thread(target=reader),
+        threading.Thread(target=reader),
+        threading.Thread(target=collector),
+    ]
     for t in threads:
       t.start()
     for t in threads:

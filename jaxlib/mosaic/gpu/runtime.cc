@@ -13,12 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <numeric>
 #include <utility>
 
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "jaxlib/mosaic/gpu/launch_config.h"
 
 namespace {
 template <typename... Args>
@@ -30,18 +33,29 @@ void abort_on_error(CUresult result, const char* fmt, Args&&... args) {
     abort();
   }
 }
-}  // namespace
+struct CommonTmaParams {
+  CUtensorMapDataType data_type;
+  cuuint64_t sizes[5] = {1, 1, 1, 1, 1};
+  cuuint64_t strides[5] = {1, 1, 1, 1, 1};
+  CUtensorMapSwizzle swizzle;
+  int64_t elem_bitwidth;
+  int64_t elem_bytewidth;
+};
 
-extern "C" {
-
-void mosaic_gpu_init_tma_desc(CUtensorMap* tma_desc, void* base_addr,
-                              int64_t elem_type, int64_t rank, int64_t* sizes,
-                              int64_t* strides, int64_t swizzle_bytes,
-                              int64_t* window_shape) {
+CommonTmaParams prepare_tma_params(const CUtensorMap* tma_desc,
+                                   int64_t elem_type, int64_t rank,
+                                   int64_t* sizes, int64_t* strides,
+                                   int64_t swizzle_bytes,
+                                   bool allow_sub_byte = true) {
   if (((uintptr_t)tma_desc) % 64 != 0) {
     fprintf(stderr,
             "TMA descriptor address must be 64 byte aligned, but got: %p\n",
             tma_desc);
+    abort();
+  }
+
+  if (rank < 1 || rank > 5) {
+    fprintf(stderr, "Rank must be in [1, 5], but got %ld\n", rank);
     abort();
   }
 
@@ -91,17 +105,19 @@ void mosaic_gpu_init_tma_desc(CUtensorMap* tma_desc, void* base_addr,
   // Pack sub byte types in 8 bit pairs.
   int64_t elem_bytewidth;
   if (elem_bitwidth < 8) {
+    if (!allow_sub_byte) {
+      fprintf(stderr, "Sub-byte types are not supported\n");
+      abort();
+    }
     // Check that it's a power of 2.
     assert((elem_bitwidth & (elem_bitwidth - 1)) == 0);
     int packing = 8 / elem_bitwidth;
     assert(sizes[rank - 1] % packing == 0);
-    assert(window_shape[rank - 1] % packing == 0);
     assert(strides[rank - 1] == 1);
 
     // TMA requires that the last dimension be the contiguous one so we pack the
     // elements under that assumption.
     sizes[rank - 1] /= packing;
-    window_shape[rank - 1] /= packing;
     for (int i = 0; i < rank - 1; i++) {
       strides[i] /= packing;
     }
@@ -110,60 +126,6 @@ void mosaic_gpu_init_tma_desc(CUtensorMap* tma_desc, void* base_addr,
     elem_bytewidth = elem_bitwidth / 8;
   }
 
-  if (rank < 1 || rank > 5) {
-    fprintf(stderr, "Rank must be in [1, 5], but got %ld\n", rank);
-    abort();
-  }
-  cuuint64_t tma_sizes[5] = {1, 1, 1, 1, 1};
-  for (int i = 0; i < rank; ++i) {
-    cuuint64_t tma_size_i = static_cast<cuuint64_t>(sizes[rank - i - 1]);
-    if (tma_size_i > static_cast<cuuint64_t>(1) << 32) {
-      fprintf(stderr,
-              "TMA size must be less than 2**32, but got %ld at index %ld\n",
-              tma_size_i, rank - i - 1);
-      abort();
-    }
-    tma_sizes[i] = tma_size_i;
-  }
-  cuuint64_t tma_strides[5] = {1, 1, 1, 1, 1};
-  if (strides[rank - 1] != 1) {
-    fprintf(stderr, "Minormost stride must be 1, but got %ld\n",
-            strides[rank - 1]);
-    abort();
-  }
-  for (int i = 0; i < rank - 1; ++i) {  // We skip the implicit minor stride.
-    cuuint64_t tma_stride_i =
-        static_cast<cuuint64_t>(strides[rank - i - 2] * elem_bytewidth);
-    if (tma_stride_i % 16 != 0 || tma_stride_i >= static_cast<cuuint64_t>(1)
-                                                      << 40) {
-      fprintf(stderr,
-              "Byte strides must be divisible by 16 and less than 2**40, but "
-              "got %ld (item stride = %ld, item size = %ld) at index %ld\n",
-              tma_stride_i, strides[rank - 1], elem_bytewidth, rank - i - 2);
-      abort();
-    }
-    tma_strides[i] = tma_stride_i;
-  }
-  cuuint32_t tma_window_shape[5] = {1, 1, 1, 1, 1};
-  for (int64_t i = 0; i < rank; ++i) {
-    cuuint32_t tma_window_shape_i =
-        static_cast<cuuint32_t>(window_shape[rank - i - 1]);
-    if (tma_window_shape_i > 256) {
-      fprintf(stderr,
-              "Window shape must be in [0, 256], but got %d at index %ld\n",
-              tma_window_shape_i, rank - i - 1);
-      abort();
-    }
-    if (i == 0 && (tma_window_shape_i * elem_bytewidth) % 16 != 0) {
-      fprintf(stderr,
-              "The last dimension of window shape must have a bytewidth "
-              "divisible by 16, but got %d*%ld at index %ld\n",
-              tma_window_shape_i, elem_bytewidth, rank - i - 1);
-      abort();
-    }
-    tma_window_shape[i] = tma_window_shape_i;
-  }
-  cuuint32_t element_strides[5] = {1, 1, 1, 1, 1};
   CUtensorMapSwizzle swizzle;
   if (swizzle_bytes == 16) {
     swizzle = CU_TENSOR_MAP_SWIZZLE_NONE;
@@ -177,67 +139,207 @@ void mosaic_gpu_init_tma_desc(CUtensorMap* tma_desc, void* base_addr,
     fprintf(stderr, "Unsupported swizzle: %ld\n", swizzle_bytes);
     abort();
   }
+
+  CommonTmaParams params{
+      .data_type = data_type,
+      .swizzle = swizzle,
+      .elem_bitwidth = elem_bitwidth,
+      .elem_bytewidth = elem_bytewidth,
+  };
+
+  for (int i = 0; i < rank; ++i) {
+    cuuint64_t tma_size_i = static_cast<cuuint64_t>(sizes[rank - i - 1]);
+    if (tma_size_i > static_cast<cuuint64_t>(1) << 32) {
+      fprintf(stderr,
+              "TMA size must be less than 2**32, but got %ld at index %ld\n",
+              tma_size_i, rank - i - 1);
+      abort();
+    }
+    params.sizes[i] = tma_size_i;
+  }
+
+  if (strides[rank - 1] != 1) {
+    fprintf(stderr, "Minormost stride must be 1, but got %ld\n",
+            strides[rank - 1]);
+    abort();
+  }
+  for (int i = 0; i < rank - 1; ++i) {  // We skip the implicit minor stride.
+    cuuint64_t tma_stride_i =
+        static_cast<cuuint64_t>(strides[rank - i - 2] * elem_bytewidth);
+    if (tma_stride_i % 16 != 0 ||
+        tma_stride_i >= static_cast<cuuint64_t>(1) << 40) {
+      fprintf(stderr,
+              "Byte strides must be divisible by 16 and less than 2**40, but "
+              "got %ld (item stride = %ld, item size = %ld) at index %ld\n",
+              tma_stride_i, strides[rank - i - 2], elem_bytewidth,
+              rank - i - 2);
+      abort();
+    }
+    params.strides[i] = tma_stride_i;
+  }
+
+  return params;
+}
+}  // namespace
+
+extern "C" {
+
+void mosaic_gpu_init_tma_desc(CUtensorMap* tma_desc, void* base_addr,
+                              int64_t elem_type, int64_t rank, int64_t* sizes,
+                              int64_t* strides, int64_t swizzle_bytes,
+                              int64_t* window_shape) {
+  CommonTmaParams params = prepare_tma_params(
+      tma_desc, elem_type, rank, sizes, strides, swizzle_bytes);
+  if (params.elem_bitwidth < 8) {
+    int packing = 8 / params.elem_bitwidth;
+    assert(window_shape[rank - 1] % packing == 0);
+    window_shape[rank - 1] /= packing;
+  }
+
+  cuuint32_t tma_window_shape[5] = {1, 1, 1, 1, 1};
+  for (int64_t i = 0; i < rank; ++i) {
+    cuuint32_t tma_window_shape_i =
+        static_cast<cuuint32_t>(window_shape[rank - i - 1]);
+    if (tma_window_shape_i > 256) {
+      fprintf(stderr,
+              "Window shape must be in [0, 256], but got %d at index %ld\n",
+              tma_window_shape_i, rank - i - 1);
+      abort();
+    }
+    if (i == 0 && (tma_window_shape_i * params.elem_bytewidth) % 16 != 0) {
+      fprintf(stderr,
+              "The last dimension of window shape must have a bytewidth "
+              "divisible by 16, but got %d*%ld at index %ld\n",
+              tma_window_shape_i, params.elem_bytewidth, rank - i - 1);
+      abort();
+    }
+    tma_window_shape[i] = tma_window_shape_i;
+  }
+  cuuint32_t element_strides[5] = {1, 1, 1, 1, 1};
   abort_on_error(
-      cuTensorMapEncodeTiled(tma_desc, data_type, rank, base_addr, tma_sizes,
-                             tma_strides, tma_window_shape, element_strides,
-                             CU_TENSOR_MAP_INTERLEAVE_NONE, swizzle,
-                             CU_TENSOR_MAP_L2_PROMOTION_NONE,
+      cuTensorMapEncodeTiled(tma_desc, params.data_type, rank, base_addr,
+                             params.sizes, params.strides, tma_window_shape,
+                             element_strides, CU_TENSOR_MAP_INTERLEAVE_NONE,
+                             params.swizzle, CU_TENSOR_MAP_L2_PROMOTION_NONE,
                              CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE),
       "cuTensorMapEncodeTiled failed: %s\n");
 }
 
-void mosaic_gpu_launch_kernel(CUfunction function, uint32_t grid_x,
-                              uint32_t grid_y, uint32_t grid_z,
-                              uint32_t cluster_x, uint32_t cluster_y,
-                              uint32_t cluster_z, uint32_t block_x,
-                              uint32_t block_y, uint32_t block_z,
-                              uint32_t smem_bytes, int32_t uses_pdl,
-                              CUstream stream, void** params) {
-  CUlaunchConfig config{
-      .gridDimX = grid_x,
-      .gridDimY = grid_y,
-      .gridDimZ = grid_z,
-      .blockDimX = block_x,
-      .blockDimY = block_y,
-      .blockDimZ = block_z,
-      .sharedMemBytes = smem_bytes,
-      .hStream = stream,
-      .attrs = nullptr,
-      .numAttrs = 0,
-  };
-  CUlaunchAttribute attrs[2];
-  int num_attrs = 0;
-  if (cluster_x != 0) {
-    attrs[num_attrs].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
-    attrs[num_attrs].value.clusterDim = {
-        .x = cluster_x,
-        .y = cluster_y,
-        .z = cluster_z,
-    };
-    num_attrs++;
-  }
-  if (uses_pdl) {
-    attrs[num_attrs].id = CU_LAUNCH_ATTRIBUTE_PROGRAMMATIC_STREAM_SERIALIZATION;
-    attrs[num_attrs].value.programmaticStreamSerializationAllowed = 1;
-    num_attrs++;
-  }
-  if (num_attrs > 0) {
-    config.attrs = attrs;
-    config.numAttrs = num_attrs;
-  }
-  CUresult result = cuLaunchKernelEx(&config, function, params, nullptr);
-  if (result == CUDA_ERROR_INVALID_CLUSTER_SIZE) {
-    int max_cluster_size;
-    abort_on_error(cuOccupancyMaxPotentialClusterSize(&max_cluster_size,
-                                                      function, &config),
-                   "cuOccupancyMaxPotentialClusterSize failed: %s\n");
-    fprintf(stderr,
-            "cuLaunchKernel failed with invalid cluster size (%d, %d, %d)"
-            ": maximum is %d\n",
-            cluster_x, cluster_y, cluster_z, max_cluster_size);
+void mosaic_gpu_init_tma_im2col_desc(
+    CUtensorMap* tma_desc, void* base_addr, int64_t elem_type, int64_t rank,
+    int64_t* sizes, int64_t* strides, int64_t swizzle_bytes,
+    int32_t* pixel_box_lower_corner, int32_t* pixel_box_upper_corner,
+    int64_t channels_per_pixel, int64_t pixels_per_column,
+    int32_t* window_strides) {
+  if (rank < 3 || rank > 5) {
+    fprintf(stderr, "Rank must be in [3, 5], but got %ld\n", rank);
     abort();
-  } else {
-    abort_on_error(result, "cuLaunchKernelEx: %s\n");
+  }
+  CommonTmaParams params =
+      prepare_tma_params(tma_desc, elem_type, rank, sizes, strides,
+                         swizzle_bytes, /*allow_sub_byte=*/false);
+
+  int spatial_rank = rank - 2;
+  int bits = 16 / spatial_rank;
+  int32_t min_corner = -(1 << (bits - 1));
+  int32_t max_corner = (1 << (bits - 1)) - 1;
+  for (int i = 0; i < spatial_rank; ++i) {
+    int32_t lower = pixel_box_lower_corner[i];
+    int32_t upper = pixel_box_upper_corner[i];
+    if (std::min(lower, upper) < min_corner ||
+        std::max(lower, upper) > max_corner) {
+      fprintf(stderr,
+              "Bounding box corners at spatial dim %d must be in [%d, %d] for "
+              "rank %ld, but got [%d, %d]\n",
+              i, min_corner, max_corner, rank, lower, upper);
+      abort();
+    }
+    if (int64_t extent = sizes[i + 1] + upper - lower; extent < 1) {
+      fprintf(stderr,
+              "Bounding box must have non-zero extent along spatial dim %d, "
+              "but got %ld + %d - %d\n",
+              i, sizes[i + 1], upper, lower);
+      abort();
+    }
+    if (window_strides[i] < 1 || window_strides[i] > 8) {
+      fprintf(stderr,
+              "Window stride at spatial dim %d must be in [1, 8], but got %d\n",
+              i, window_strides[i]);
+      abort();
+    }
+  }
+
+  int tma_lower_corner[3] = {0, 0, 0};
+  int tma_upper_corner[3] = {0, 0, 0};
+  cuuint32_t element_strides[5] = {1, 1, 1, 1, 1};
+  for (int i = 0; i < spatial_rank; ++i) {
+    tma_lower_corner[i] = pixel_box_lower_corner[spatial_rank - i - 1];
+    tma_upper_corner[i] = pixel_box_upper_corner[spatial_rank - i - 1];
+    element_strides[i + 1] =
+        static_cast<cuuint32_t>(window_strides[spatial_rank - i - 1]);
+  }
+
+  if (channels_per_pixel < 1 || channels_per_pixel > 256) {
+    fprintf(stderr, "channels_per_pixel must be in [1, 256], but got %ld\n",
+            channels_per_pixel);
+    abort();
+  }
+  if ((channels_per_pixel * params.elem_bytewidth) % 16 != 0) {
+    fprintf(stderr,
+            "channels_per_pixel must have a bytewidth divisible by 16, but got "
+            "%ld*%ld\n",
+            channels_per_pixel, params.elem_bytewidth);
+    abort();
+  }
+  if (pixels_per_column < 1 || pixels_per_column > 1024) {
+    fprintf(stderr, "pixels_per_column must be in [1, 1024], but got %ld\n",
+            pixels_per_column);
+    abort();
+  }
+
+  abort_on_error(
+      cuTensorMapEncodeIm2col(
+          tma_desc, params.data_type, rank, base_addr, params.sizes,
+          params.strides, tma_lower_corner, tma_upper_corner,
+          static_cast<cuuint32_t>(channels_per_pixel),
+          static_cast<cuuint32_t>(pixels_per_column), element_strides,
+          CU_TENSOR_MAP_INTERLEAVE_NONE, params.swizzle,
+          CU_TENSOR_MAP_L2_PROMOTION_NONE, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE),
+      "cuTensorMapEncodeIm2col failed: %s\n");
+}
+
+// Fills `cfg` with the kernel spec.
+// Called by the JIT'd host function.
+// arg_ptrs[i] points at the i-th kernel argument value slot.
+// arg_bytes[i] == 0 => device pointer argument; the slot holds the pointer.
+// arg_bytes[i]  > 0 => host (byval) argument; the slot holds the payload,
+//                      which is copied into `cfg->host_bytes`.
+// Pre: arg_ptrs.size() == arg_bytes.size() == num_args.
+void mosaic_gpu_build_kernel_spec(mosaic::gpu::MosaicKernelSpec* cfg,
+                                  uint32_t grid_x, uint32_t grid_y,
+                                  uint32_t grid_z, uint32_t cluster_x,
+                                  uint32_t cluster_y, uint32_t cluster_z,
+                                  uint32_t block_x, uint32_t block_y,
+                                  uint32_t block_z, uint32_t smem_bytes,
+                                  int32_t uses_pdl, int32_t num_args,
+                                  void** arg_ptrs, const int32_t* arg_bytes) {
+  cfg->grid = {grid_x, grid_y, grid_z};
+  cfg->block = {block_x, block_y, block_z};
+  cfg->cluster = {cluster_x, cluster_y, cluster_z};
+  cfg->smem_bytes = smem_bytes;
+  cfg->uses_pdl = uses_pdl;
+
+  cfg->Clear();
+  // Pre-allocate space for arguments.
+  cfg->Reserve(num_args,
+               std::accumulate(arg_bytes, arg_bytes + num_args, size_t{0}));
+
+  for (int32_t i = 0; i < num_args; ++i) {
+    if (arg_bytes[i] > 0) {  // Host (byval) argument: copy the blob.
+      cfg->AddHostArg(arg_ptrs[i], arg_bytes[i]);
+    } else {  // Device pointer argument: the slot holds the pointer value.
+      cfg->AddDeviceArg(*reinterpret_cast<void**>(arg_ptrs[i]));
+    }
   }
 }
 }

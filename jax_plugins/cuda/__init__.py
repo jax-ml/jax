@@ -21,7 +21,6 @@ import pathlib
 import traceback
 from typing import Any
 
-from jax._src.lib import triton
 from jax._src.lib import xla_client
 import jax._src.xla_bridge as xb
 
@@ -395,11 +394,5 @@ def initialize():
       xla_client.register_custom_call_target(
           _name, _value, platform='CUDA', api_version=1
       )
-    triton.register_compilation_handler(
-        "CUDA",
-        functools.partial(
-            cuda_plugin_extension.compile_triton_to_asm, c_api
-        ),
-    )
   else:
     logger.warning('cuda_plugin_extension is not found.')

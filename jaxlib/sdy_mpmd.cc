@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/IRCore.h"
@@ -49,7 +50,6 @@ limitations under the License.
 #include "shardy/dialect/mpmd/ir/utils.h"
 #include "shardy/dialect/mpmd/transforms/import/mesh_assignment_map.h"
 #include "shardy/integrations/python/jax/mpmd/jaxlib/mpmd_program.h"
-#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"
@@ -66,6 +66,7 @@ limitations under the License.
 #include "xla/python/ifrt/ir/ifrt_ir_program.h"
 #include "xla/python/ifrt/ir/program_memory_tracer.h"
 #include "xla/python/ifrt/mpmd_executable.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
@@ -173,8 +174,9 @@ CompileMpmdWithLoadedHostCallbacks(
 
   // Get IFRT client and construct an IFRT device list.
   xla::ifrt::Client* client = backend->ifrt_client();
-  TF_ASSIGN_OR_RETURN(const xla::ifrt::DeviceListRef device_list,
-                      MakeDeviceListFromPyDevices(backend, std::move(devices)));
+  ABSL_ASSIGN_OR_RETURN(
+      const xla::ifrt::DeviceListRef device_list,
+      MakeDeviceListFromPyDevices(backend, std::move(devices)));
 
   xla::ifrt::UserContextScope user_context_scope(jax::PyUserContext::Create());
   xla::ifrt::LoadedExecutableRef loaded_executable;
@@ -208,13 +210,13 @@ CompileMpmdWithLoadedHostCallbacks(
       compile_options);
 
   if (ifrt_ir_compile_options.has_value()) {
-    TF_RETURN_IF_ERROR(
+    ABSL_RETURN_IF_ERROR(
         ifrt_compile_options->SetOptionsFromMap(*ifrt_ir_compile_options));
   }
 
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         loaded_executable,
         client->GetDefaultCompiler()
             ->CompileAndLoad(std::make_unique<xla::ifrt::IfrtIRProgram>(

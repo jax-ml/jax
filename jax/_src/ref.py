@@ -36,6 +36,6 @@ def new_ref(
   Returns:
     A :class:`jax.ref.Ref` containing a reference to a mutable buffer.
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   return core.new_ref(init_val, memory_space=memory_space, kind=kind, pin=pin)

@@ -179,7 +179,7 @@ def soft_sign(x: ArrayLike) -> Array:
   x_arr = numpy_util.ensure_arraylike("soft_sign", x)
   return x_arr / (jnp.abs(x_arr) + 1)
 
-@api.jit(inline=True)
+@api.jit(inline=api.Inline.JAX_EARLY)
 def sigmoid(x: ArrayLike) -> Array:
   r"""Sigmoid activation function.
 

@@ -248,7 +248,7 @@ def evaluate_bias(
         else:
           se = 0.0 if emp_prob == ana_prob else np.nan
           z = 0.0 if emp_prob == ana_prob else np.nan
-      except Exception:  # pylint: disable=broad-exception-caught
+      except Exception:
         se = np.nan
         z = np.nan
       std_errors.append(se)
@@ -269,7 +269,7 @@ def evaluate_bias(
         else:
           se = np.nan
           z = np.nan
-      except Exception:  # pylint: disable=broad-exception-caught
+      except Exception:
         se = np.nan
         z = np.nan
       std_errors.append(se)

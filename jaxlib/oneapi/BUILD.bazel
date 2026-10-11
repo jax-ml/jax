@@ -14,9 +14,11 @@
 
 # INTEL ONEAPI plugin extension and GPU kernels
 load("@local_config_sycl//sycl:build_defs.bzl", "sycl_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
+    "if_oneapi_is_configured",
     "nanobind_extension",
 )
 
@@ -144,8 +146,8 @@ nanobind_extension(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
-        "@oneapi//:headers",
         "@nanobind",
+        "@oneapi//:headers",
         "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
@@ -157,8 +159,8 @@ nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
-    linkopts = ["-link_stage"],
     features = ["-use_header_modules"],
+    linkopts = ["-link_stage"],
     module_name = "_prng",
     deps = [
         ":oneapi_gpu_kernel_helpers",
@@ -169,9 +171,113 @@ nanobind_extension(
     ],
 )
 
+cc_library(
+    name = "oneapi_hybrid_kernels",
+    srcs = ["//jaxlib/gpu:hybrid_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:hybrid_kernels.h"],
+    features = ["-use_header_modules"],
+    deps = [
+        ":oneapi_gpu_kernel_helpers",
+        ":oneapi_gpu_runtime",
+        ":oneapi_vendor",
+        "//jaxlib:ffi_helpers",
+        "//jaxlib/cpu:lapack_kernels",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+nanobind_extension(
+    name = "_hybrid",
+    srcs = ["//jaxlib/gpu:hybrid.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    linkopts = ["-link_stage"],
+    module_name = "_hybrid",
+    deps = [
+        ":oneapi_gpu_kernel_helpers",
+        ":oneapi_hybrid_kernels",
+        ":oneapi_vendor",
+        "//jaxlib:kernel_nanobind_helpers",
+        "//jaxlib/cpu:lapack_kernels",
+        "@com_google_absl//absl/base",
+        "@nanobind",
+        "@oneapi//:headers",
+        "@xla//xla/ffi/api:ffi",
+        "@xla//xla/python:safe_static_init",
+    ],
+)
+
+sycl_library(
+    name = "oneapi_linalg_kernels_impl",
+    srcs = ["//jaxlib/gpu:linalg_kernels_oneapi.cc"],
+    hdrs = ["//jaxlib/gpu:linalg_kernels.h"],
+    local_defines = [
+        "EIGEN_USE_SYCL=1",
+        "EIGEN_DONT_VECTORIZE_SYCL=1",
+    ],
+    copts = [
+        "-U_FORTIFY_SOURCE",
+        "-D_FORTIFY_SOURCE=0",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        ":oneapi_gpu_kernel_helpers",
+        ":oneapi_vendor",
+        "//jaxlib:tridiagonal_solve_perturbed",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+sycl_library(
+    name = "oneapi_linalg_kernels",
+    srcs = ["//jaxlib/gpu:linalg_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:linalg_kernels.h"],
+    features = ["-use_header_modules"],
+    deps = [
+        ":oneapi_gpu_kernel_helpers",
+        ":oneapi_linalg_kernels_impl",
+        ":oneapi_vendor",
+        ":oneapi_gpu_runtime",
+        "//jaxlib:ffi_helpers",
+        "@com_google_absl//absl/strings:str_format",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+nanobind_extension(
+    name = "_linalg",
+    srcs = ["//jaxlib/gpu:linalg.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_linalg",
+    deps = [
+        ":oneapi_gpu_kernel_helpers",
+        ":oneapi_linalg_kernels",
+        ":oneapi_vendor",
+        "//jaxlib:kernel_nanobind_helpers",
+        "@nanobind",
+    ],
+)
+
 py_library(
     name = "oneapi_gpu_support",
     deps = [
+        ":_hybrid",
+        ":_linalg",
         ":_prng",
         ":_solver",
     ],
@@ -191,8 +297,10 @@ sycl_library(
         ":oneapi_gpu_runtime",
         ":oneapi_vendor",
         "//jaxlib:ffi",
+        "//jaxlib:free_threading",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -227,7 +335,16 @@ nanobind_extension(
         "//jaxlib/gpu:gpu_plugin_extension",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
-        "@oneapi//:headers",
         "@nanobind",
+        "@oneapi//:headers",
     ],
+)
+
+py_library(
+    name = "gpu_only_test_deps",
+    # `if_oneapi_is_configured` will default to `[]`.
+    deps = if_oneapi_is_configured([
+        ":oneapi_gpu_support",
+        ":oneapi_plugin_extension",
+    ]),
 )

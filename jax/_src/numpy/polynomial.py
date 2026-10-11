@@ -21,7 +21,6 @@ import numpy as np
 from jax._src import api
 from jax._src import dtypes
 from jax._src import core
-from jax._src.lax import control_flow
 from jax._src.lax import lax
 from jax._src.numpy.array_creation import full, ones, zeros
 from jax._src.numpy.lax_numpy import (
@@ -388,7 +387,7 @@ def poly(seq_of_zeros: ArrayLike) -> Array:
 
 @export
 @api.jit(static_argnames=['unroll'])
-def polyval(p: ArrayLike, x: ArrayLike, *, unroll: int = 16) -> Array:
+def polyval(p: ArrayLike, x: ArrayLike, *, unroll: int | None = None) -> Array:
   r"""Evaluates the polynomial at specific values.
 
   JAX implementations of :func:`numpy.polyval`.
@@ -445,9 +444,17 @@ def polyval(p: ArrayLike, x: ArrayLike, *, unroll: int = 16) -> Array:
   p_arr, x_arr = promote_dtypes(p, x)
   del p, x
   shape = lax.broadcast_shapes(p_arr.shape[1:], x_arr.shape)
-  y = lax.full_like(x_arr, 0, shape=shape, dtype=x_arr.dtype)
-  y, _ = control_flow.scan(lambda y, p: (y * x_arr + p, None), y, p_arr, unroll=unroll)
-  return y
+  if p_arr.shape[0] == 0:
+    return lax.full_like(x_arr, 0, shape=shape, dtype=x_arr.dtype)
+  if 0 < x_arr.ndim < len(shape):
+    x_arr = lax.broadcast_to_rank(x_arr, len(shape))
+  coeffs = [
+      lax.broadcast_to_rank(p_arr[i], len(shape))
+      if 0 < p_arr.ndim - 1 < len(shape)
+      else p_arr[i]
+      for i in reversed(range(p_arr.shape[0]))
+  ]
+  return lax.polynomial(x_arr, coeffs, unroll=unroll)
 
 
 @export

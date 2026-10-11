@@ -151,7 +151,7 @@ def ref_get(
     >>> ref[...]
     Array([0, 1, 2, 3, 4], dtype=int32)
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   if isinstance(ref, TransformedRef) and ref.multiref:
     raise NotImplementedError(
@@ -247,7 +247,7 @@ def ref_swap(
     >>> ref
     Ref(10, dtype=int32)
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   if isinstance(ref, TransformedRef) and ref.multiref:
     raise NotImplementedError(
@@ -317,7 +317,7 @@ def ref_set(
     >>> ref
     Ref(4, dtype=int32)
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   ref_swap(ref, idx, value, _function_name="ref_set")
 
@@ -383,7 +383,7 @@ def ref_addupdate(
     >>> ref
     Ref(12, dtype=int32)
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   ref, transforms = get_ref_and_transforms(ref, idx, "ref_addupdate")
   flat_transforms, tree = tree_util.tree_flatten(transforms)
@@ -679,13 +679,27 @@ batching.fancy_primitive_batchers[core.freeze_p] = _freeze_batched
 def _state_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   del saveable  # ignored, always full remat state ops on known inputs
                 # (except for no_grad_no_remat)
-  ref_unk, *_ = unks_in
+  ref_unk, *val_unks = unks_in
   ref_inst, *inst_in = inst_in
   _, *val_vars = eqn.invars
   assert ref_inst
   res = [v for v, inst in zip(val_vars, inst_in) if not inst]
   if ref_unk:
     return None, eqn, [True], [True], res  # tangent operation
+  elif any(val_unks):
+    raise NotImplementedError(
+        "Mutating a reference with unknown/differentiated values is not"
+        " supported.\nIf this occurred under `jax.checkpoint` and"
+        " `jax.config.jax_remat3 == False`, consider one of the following"
+        " options:\n\n"
+        "  * Enabling `jax_remat3` via `jax.config.update('jax_remat3',"
+        " True)`.\n"
+        "  * Creating the Ref outside the function being rematerialized and"
+        " passing it as an input.\n"
+        "  * Creating the Ref in a data-dependent way from a value being"
+        " differentiated, e.g.:\n\n"
+        "      ref = jax.new_ref(x * 0.0)  # instead of zeros_like(x)"
+    )
   elif eqn.invars[0].aval.kind == "no_grad_no_remat":
     return eqn, None, [False], [False], res
   else:
@@ -695,13 +709,27 @@ pe.partial_eval_jaxpr_custom_rules[swap_p] = _state_partial_eval_custom
 
 def _addupdate_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   del saveable  # ignored, always full remat state ops on known inputs
-  ref_unk, *_ = unks_in
+  ref_unk, *val_unks = unks_in
   ref_inst, *inst_in = inst_in
   _, *val_vars = eqn.invars
   assert ref_inst
   res = [v for v, inst in zip(val_vars, inst_in) if not inst]
   if ref_unk:
     return None, eqn, [], [], res  # tangent operation
+  elif any(val_unks):
+    raise NotImplementedError(
+        "Mutating a reference with unknown/differentiated values is not"
+        " supported.\nIf this occurred under `jax.checkpoint` and"
+        " `jax.config.jax_remat3 == False`, consider one of the following"
+        " options:\n\n"
+        "  * Enabling `jax_remat3` via `jax.config.update('jax_remat3',"
+        " True)`.\n"
+        "  * Creating the Ref outside the function being rematerialized and"
+        " passing it as an input.\n"
+        "  * Creating the Ref in a data-dependent way from a value being"
+        " differentiated, e.g.:\n\n"
+        "      ref = jax.new_ref(x * 0.0)  # instead of zeros_like(x)"
+    )
   else:
     return eqn, eqn, [], [], res  # full remat
 pe.partial_eval_jaxpr_custom_rules[addupdate_p] = _addupdate_partial_eval_custom
@@ -714,8 +742,8 @@ def _state_remat(prim, trace, ref, *args, **params):
   if core.typeof(ref).kind == "no_grad_no_remat":
     # Run only in the fwd computation; any read value reaching the remnant
     # computation is saved as a residual rather than re-read.
-    return out, lambda *_: out
-  return out, lambda ref_, *args_: prim.bind(ref_, *args_, **params)
+    return out, out, lambda out, *_: out
+  return out, (), lambda _, ref_, *args_: prim.bind(ref_, *args_, **params)
 
 remat.rules[get_p] = partial(_state_remat, get_p)
 remat.rules[swap_p] = partial(_state_remat, swap_p)
@@ -1147,6 +1175,7 @@ def _ref_lin(_is_vjp, nzs, x, *, memory_space, kind, pin):
 
 ad.primitive_jvps[core.ref_p] = _ref_jvp
 ad.primitive_linearizations[core.ref_p] = _ref_lin
+ad.linearize_on_zero_tangents.add(core.ref_p)
 # TODO(mattjj): lin rule for freeze and accum_grad_in_ref?
 ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))
 ad.defjvp(core.accum_grad_in_ref_p, lambda g, _: core.accum_grad_in_ref_p.bind(g))
@@ -1166,6 +1195,7 @@ def _empty_ref_lin(_is_vjp, nzs_in, *, ty, memory_space, pin):
                                  memory_space=memory_space, pin=pin)
   return primal_ref, True, None, None, lin
 ad.primitive_linearizations[core.empty_ref_p] = _empty_ref_lin
+ad.linearize_on_zero_tangents.add(core.empty_ref_p)
 
 def _free_ref_jvp(primals, tangents):
   [primal_ref], [tangent_ref] = primals, tangents
@@ -1263,3 +1293,64 @@ def _linval_to_mlir_type(a):
   return mlir.ir.MemRefType.get(a.shape, mlir.dtype_to_ir_type(a.dtype),
                                 memory_space=space)
 mlir.ir_type_handlers[AbstractLinVal] = _linval_to_mlir_type
+
+
+with_memory_space_constraint_p = core.Primitive(
+    'with_memory_space_constraint'
+)
+
+
+@with_memory_space_constraint_p.def_impl
+def _with_memory_space_constraint_impl(x, *, memory_space):
+  del memory_space
+  return x
+
+
+@with_memory_space_constraint_p.def_abstract_eval
+def _with_memory_space_constraint_abstract_eval(x, *, memory_space):
+  if not isinstance(x, core.ShapedArray):
+    raise NotImplementedError(
+        "with_memory_space_constraint only supports arrays."
+    )
+  return x.update(memory_space=memory_space)
+
+
+def _with_memory_space_constraint_lowering_rule(ctx, x, *, memory_space):
+  del ctx, memory_space
+  return [x]
+
+
+mlir.register_lowering(
+    with_memory_space_constraint_p, _with_memory_space_constraint_lowering_rule
+)
+batching.defvectorized(with_memory_space_constraint_p)
+ad.deflinear2(
+    with_memory_space_constraint_p,
+    lambda ct, _, **params: (
+        with_memory_space_constraint_p.bind(ct, **params),
+    ),
+)
+
+
+def with_memory_space_constraint(
+    x: Array, memory_space: Any
+) -> Array:
+  """Constrains the memory space of an array.
+
+  This primitive does not change the value of ``x``, but it constrains the
+  memory space where it should be allocated. This is useful to force
+  Pallas to allocate an array in a specific memory space.
+
+  As of now, this only operates on the inputs pallas_calls, as in you can
+  apply this to the arguments of a pallas_call and it will constrain them, but
+  not on intermediate values inside a pallas_call or values after a pallas_call.
+
+  Args:
+    x: An array.
+    memory_space: The memory space to constrain ``x`` to.
+
+  Returns:
+    An array with the same value as ``x``, but with the memory space
+    constrained.
+  """
+  return with_memory_space_constraint_p.bind(x, memory_space=memory_space)

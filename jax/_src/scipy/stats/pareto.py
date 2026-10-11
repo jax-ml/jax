@@ -64,7 +64,7 @@ def logpdf(
   log_probs = lax.neg(
     lax.add(normalize_term, lax.mul(lax.add(b, one), lax.log(scaled_x)))
   )
-  return jnp.where(lax.lt(x, lax.add(loc, scale)), -np.inf, log_probs)
+  return jnp.where(lax.lt(scaled_x, one), -np.inf, log_probs)
 
 
 def pdf(
@@ -145,7 +145,7 @@ def cdf(
   zero = _lax_const(x, 0)
   scaled_x = lax.div(lax.sub(x, loc), scale)
   cdf = lax.sub(one, lax.pow(scaled_x, lax.neg(b)))
-  return jnp.where(lax.lt(x, lax.add(loc, scale)), zero, cdf)
+  return jnp.where(lax.lt(scaled_x, one), zero, cdf)
 
 
 def logcdf(
@@ -184,9 +184,10 @@ def logcdf(
     - :func:`jax.scipy.stats.pareto.sf`
   """
   x, b, loc, scale = promote_args_inexact("pareto.logcdf", x, b, loc, scale)
+  one = _lax_const(x, 1)
   scaled_x = lax.div(lax.sub(x, loc), scale)
   logcdf_val = lax.log1p(lax.neg(lax.pow(scaled_x, lax.neg(b))))
-  return jnp.where(lax.lt(x, lax.add(loc, scale)), -np.inf, logcdf_val)
+  return jnp.where(lax.lt(scaled_x, one), -np.inf, logcdf_val)
 
 
 def logsf(
@@ -226,9 +227,10 @@ def logsf(
   """
   x, b, loc, scale = promote_args_inexact("pareto.logsf", x, b, loc, scale)
   zero = _lax_const(x, 0)
+  one = _lax_const(x, 1)
   scaled_x = lax.div(lax.sub(x, loc), scale)
   logsf_val = lax.neg(lax.mul(b, lax.log(scaled_x)))
-  return jnp.where(lax.lt(x, lax.add(loc, scale)), zero, logsf_val)
+  return jnp.where(lax.lt(scaled_x, one), zero, logsf_val)
 
 
 def sf(

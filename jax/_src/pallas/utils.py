@@ -19,6 +19,7 @@ from __future__ import annotations
 import dataclasses
 from typing import Any, overload
 
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import numpy as jnp
@@ -45,7 +46,7 @@ def cdiv(a: jax_typing.Array, b: jax_typing.Array) -> jax_typing.Array:
   ...
 
 def cdiv(a: int | jax_typing.Array, b: int | jax_typing.Array) -> int | jax_typing.Array:
-  """Computes the ceiling division of a divided by b.
+  """Computes the ceiling division of a divided by b, when a >= 0 and b > 0.
 
   Examples:
     >>> cdiv(8, 2)
@@ -54,7 +55,8 @@ def cdiv(a: int | jax_typing.Array, b: int | jax_typing.Array) -> int | jax_typi
     5
   """
   if jax_core.is_dim(a) and jax_core.is_dim(b):
-    return (a + b - 1) // b
+    # This expression is convoluted to match the semantics of lax.div below.
+    return -(-n // b) if ((n := a + b - 1) < 0) != (b < 0) else n // b
   return lax.div(a + (b - 1), b)
 
 
@@ -259,7 +261,10 @@ def _erf_inv_32_lowering_helper(x):
     0.00943887047,   1.00167406,     2.83297682,
   ]
 
-  w = -jnp.log1p(x * -x)
+  if config.jax_accurate_erf_inv.value:
+    w = -jnp.log((1 - x) * (1 + x))
+  else:
+    w = -jnp.log1p(x * -x)
   w_lt_5 = w < 5.0
 
   w = jnp.where(w_lt_5, w - 2.5, jnp.sqrt(w) - 3.0)
@@ -314,7 +319,10 @@ def _erf_inv_64_lowering_helper(x):
     4.8499064014085844221,
   ]  # should add "as jnp.float64 array"?
 
-  w = -jnp.log1p(x * -x)
+  if config.jax_accurate_erf_inv.value:
+    w = -jnp.log((1 - x) * (1 + x))
+  else:
+    w = -jnp.log1p(x * -x)
   w_lt_625 = w < 6.25
   w_lt_16 = w < 16.0
 

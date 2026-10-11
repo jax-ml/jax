@@ -14,8 +14,6 @@
 
 from __future__ import annotations
 
-import unittest
-
 from absl.testing import absltest
 from absl.testing import parameterized
 from functools import partial
@@ -27,6 +25,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.util import safe_map, safe_zip
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax.sharding import NamedSharding, PartitionSpec as P, AxisType
 import jax.numpy as jnp
 
@@ -340,6 +339,94 @@ class MutableArrayTest(jtu.JaxTestCase):
     ref = jax.new_ref(jnp.zeros((2, 3)))
     jax.vmap(f, in_axes=(1, 0))(ref, jnp.ones((3, 2)))  # don't crash
     self.assertAllClose(ref[...], jnp.ones((2, 3)), check_dtypes=False)
+
+  @parameterized.parameters([True, False])
+  def test_vmap_axes_scan_closed_over_ref(self, jit):
+    # https://github.com/jax-ml/jax/issues/39288
+    def f(r):
+      def body(carry, _):
+        r[0] += 1.
+        return carry + r[0], None
+      carry, _ = jax.lax.scan(body, 0., length=3)
+      return carry
+
+    def doit(ref):
+      return jax.vmap(f, in_axes=1)(ref)
+    if jit:
+      doit = jax.jit(doit)
+
+    ref = jax.new_ref(jnp.zeros((2, 3)))
+    out = doit(ref)
+    # Batching over axis 1 means each batch element sees ref[:, i], so the
+    # writes land in row 0 and the carry accumulates 1. + 2. + 3.
+    self.assertAllClose(ref[...], jnp.array([[3., 3., 3.], [0., 0., 0.]]),
+                        check_dtypes=False)
+    self.assertAllClose(out, jnp.full((3,), 6.), check_dtypes=False)
+
+  @parameterized.parameters([True, False])
+  def test_vmap_axes_scan_ref_extensive_inputs(self, jit):
+    # https://github.com/jax-ml/jax/issues/39288
+    def f(r, xs):
+      def body(carry, x):
+        r[...] += x
+        return carry, None
+      jax.lax.scan(body, None, xs)
+
+    def doit(ref, xs):
+      jax.vmap(f, in_axes=(1, 0))(ref, xs)
+    if jit:
+      doit = jax.jit(doit)
+
+    ref = jax.new_ref(jnp.zeros((2, 3)))
+    xs = jnp.arange(6.).reshape(3, 2)
+    doit(ref, xs)
+    self.assertAllClose(ref[...], jnp.tile(xs.sum(axis=1), (2, 1)),
+                        check_dtypes=False)
+
+  @parameterized.product(jit=[True, False], axis=[1, 2])
+  def test_vmap_axes_scan_over_ref(self, jit, axis):
+    # https://github.com/jax-ml/jax/issues/39288
+    # The Ref is the scanned-over input, batched along a non-leading axis.
+    def f(rs):
+      def body(carry, r):
+        r[0] += 1.
+        return carry + r[0], r[0]
+      return jax.lax.scan(body, 0., rs)
+
+    def doit(ref):
+      return jax.vmap(f, in_axes=axis)(ref)
+    if jit:
+      doit = jax.jit(doit)
+
+    # The same program written with arrays, for the expected values.
+    def f_array(xs):
+      def body(carry, r):
+        r = r.at[0].add(1.)
+        return carry + r[0], (r[0], r)
+      carry, (ys, new_xs) = jax.lax.scan(body, 0., xs)
+      return carry, ys, new_xs
+
+    x = jnp.arange(24.).reshape(4, 2, 3)
+    ref = jax.new_ref(x)
+    carry, ys = doit(ref)
+    carry_expected, ys_expected, x_expected = jax.vmap(
+        f_array, in_axes=axis, out_axes=(0, 0, axis))(x)
+    self.assertAllClose(carry, carry_expected, check_dtypes=False)
+    self.assertAllClose(ys, ys_expected, check_dtypes=False)
+    self.assertAllClose(ref[...], x_expected, check_dtypes=False)
+
+  def test_vmap_axes_scan_over_ref_leading_axis(self):
+    # Batching the scanned-over Ref along its leading axis would need a
+    # transposed view of the buffer, so it is rejected with a clear error.
+    def f(rs):
+      def body(carry, r):
+        r[0] += 1.
+        return carry + r[0], None
+      return jax.lax.scan(body, 0., rs)[0]
+
+    ref = jax.new_ref(jnp.zeros((4, 2, 3)))
+    with self.assertRaisesRegex(NotImplementedError, "leading axis"):
+      jax.vmap(f, in_axes=0)(ref)
 
   def test_vmap_extensive_inputs(self):
     def f(x_ref, val):
@@ -1419,6 +1506,160 @@ class MutableArrayTest(jtu.JaxTestCase):
     stable_hlo = f.lower(1, 2).as_text()
     self.assertNotIn("add", stable_hlo)
 
+    @jax.remat
+    def h(x, y):
+      y_ref = jax.empty_ref(jax.typeof(y))
+      y_ref[...] = jnp.sin(y)
+      unused = jax.freeze(y_ref)
+      return x * 2.0, unused
+
+    jaxpr = jax.make_jaxpr(
+      lambda x, y: jax.grad(lambda a, b: h(a, b)[0])(x, y))(1.0, 2.0)
+    jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [True])
+    self.assertNotIn('sin', str(jaxpr))
+    self.assertNotIn('empty_ref', str(jaxpr))
+
+  def test_dce_dead_ref_writes(self):
+    def f(x):
+      r = jax.new_ref(x)
+      r[...] = x + 1.
+      r[...] += x
+      return x * 2.
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(1.).jaxpr, [True])
+    self.assertEqual([e.primitive.name for e in jaxpr.eqns], ['mul'])
+
+  def test_dce_ref_write_after_last_read(self):
+    def f(x):
+      r = jax.new_ref(x)
+      r[...] = x + 1.  # live
+      y = r[...]
+      r[...] = y + 1.  # dead
+      return y
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(1.).jaxpr, [True])
+    self.assertLen([e for e in jaxpr.eqns if e.primitive.name == 'swap'], 1)
+    self.assertAllClose(core.jaxpr_as_fun(jaxpr)(1.)[0], 2.)
+
+  def test_dce_ref_write_in_jit(self):
+    def f(x):
+      r1 = jax.new_ref(x)
+      r2 = jax.new_ref(x)
+      @jax.jit
+      def g(r1, r2):
+        r1[...] = x + 1.
+        r2[...] = x + 2.
+      g(r1, r2)
+      return r1[...]
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(1.).jaxpr, [True])
+    self.assertLen([e for e in jaxpr.eqns if e.primitive is core.ref_p], 1)
+    jit_eqn, = [e for e in jaxpr.eqns if e.primitive.name == 'jit']
+    self.assertLen(jit_eqn.invars, 2)  # x and r1
+    self.assertAllClose(core.jaxpr_as_fun(jaxpr)(1.)[0], 2.)
+
+  def test_dce_ref_write_in_cond(self):
+    def f(p, x):
+      r = jax.new_ref(x)
+      jax.lax.cond(p, lambda: r.set(x + 1.), lambda: r.set(x - 1.))
+      return x
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(True, 1.).jaxpr, [True])
+    self.assertEmpty(jaxpr.eqns)
+
+  def test_dce_ref_write_in_one_cond_branch_read_in_other(self):
+    def f(p, x):
+      r = jax.new_ref(x)
+      r[...] = x + 1.  # read by false_fun
+      def true_fun():
+        r[...] = x * 5.  # never read
+        return 0.
+      def false_fun():
+        return r[...]
+      return jax.lax.cond(p, true_fun, false_fun)
+
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(True, 1.).jaxpr, [True])
+    self.assertLen([e for e in jaxpr.eqns if e.primitive.name == 'swap'], 1)
+    cond_eqn, = [e for e in jaxpr.eqns if e.primitive.name == 'cond']
+    branch_prims = [e.primitive.name for b in cond_eqn.params['branches']
+                    for e in b.eqns]
+    self.assertNotIn('swap', branch_prims)
+    for p in [True, False]:
+      self.assertAllClose(core.jaxpr_as_fun(jaxpr)(p, 1.)[0],
+                          jax.jit(f)(p, 1.))
+
+  @parameterized.parameters([True, False])
+  def test_dce_ref_write_in_scan(self, use_carry_out):
+    def f(x):
+      r = jax.new_ref(x)
+      def body(c, _):
+        r[...] = c
+        return c + 1., None
+      c, _ = jax.lax.scan(body, x, None, length=3)
+      return c if use_carry_out else x
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(1.).jaxpr, [True])
+    if use_carry_out:
+      scan_eqn, = jaxpr.eqns
+      self.assertEqual([e.primitive.name for e in scan_eqn.params['jaxpr'].eqns],
+                       ['add'])
+    else:
+      self.assertEmpty(jaxpr.eqns)
+
+  def test_dce_keeps_ref_write_read_by_next_scan_iteration(self):
+    def f(x):
+      r = jax.new_ref(0.)
+      def body(c, _):
+        y = r[...]
+        r[...] = c + 1.  # read by the next iteration
+        return c + y, None
+      c, _ = jax.lax.scan(body, x, None, length=3)
+      return c
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(1.).jaxpr, [True])
+    self.assertAllClose(core.jaxpr_as_fun(jaxpr)(1.)[0], f(1.))
+
+  def test_dce_scan_ref_liveness_fixpoint(self):
+    def f(x):
+      r1, r2, r3, r4 = [jax.new_ref(x) for _ in range(4)]
+      def body(c, _):
+        r1[...] = r2[...]
+        r2[...] = r3[...]
+        r3[...] = r4[...]
+        r4[...] = c
+        return c + 1., None
+      jax.lax.scan(body, x, None, length=5)
+      return r1[...]
+    jaxpr, _ = pe.dce_jaxpr(jax.make_jaxpr(f)(1.).jaxpr, [True])
+    self.assertAllClose(core.jaxpr_as_fun(jaxpr)(1.)[0], f(1.))
+
+  @parameterized.parameters([True, False])
+  def test_dce_ref_write_in_remat(self, remat3):
+    def f(x, read_ref):
+      r = jax.new_ref(x)
+      @jax.checkpoint
+      def g(x):
+        r[...] = x * 3.
+        return jnp.sin(x)
+      y = g(x)
+      return y + r[...] if read_ref else y
+
+    with config.remat3(remat3):
+      jaxpr = jax.make_jaxpr(partial(f, read_ref=False))(1.)
+      dced, _ = pe.dce_jaxpr(jaxpr, [True])
+      self.assertNotIn('new_ref', str(dced))
+
+      jaxpr = jax.make_jaxpr(partial(f, read_ref=True))(1.)
+      dced, _ = pe.dce_jaxpr(jaxpr, [True])
+      self.assertAllClose(core.jaxpr_as_fun(dced)(1.)[0], f(1., True))
+
+  def test_dce_ref_input_liveness(self):
+    def f(r, x):
+      r[...] = x
+      return x
+    jaxpr = jax.make_jaxpr(f)(jax.new_ref(1.), 1.).jaxpr
+    jaxpr_, used_inputs = pe.dce_jaxpr(jaxpr, [True])
+    self.assertLen(jaxpr_.eqns, 2)
+    self.assertEqual(used_inputs, [True, True])
+    jaxpr_, used_inputs = pe.dce_jaxpr(jaxpr, [True],
+                                       live_inputs=[False, True])
+    self.assertEmpty(jaxpr_.eqns)
+    self.assertEqual(used_inputs, [False, True])
+
   def test_grad_of_constant_ref_set(self):
     # https://github.com/jax-ml/jax/issues/33987
     @jax.jit
@@ -1541,20 +1782,32 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
         r".*was passed in as the argument x_ref"):
       jax.jit(lambda x_ref: x_ref)(core.new_ref(jnp.arange(3)))
 
-  @unittest.skip("regressed")  # TODO(mattjj): fix
   def test_return_from_jit_pytree(self):
     with self.assertRaisesRegex(
         ValueError,
         r"tree path result\['hi'\]"):
       jax.jit(lambda x_ref: {'hi': x_ref})(core.new_ref(jnp.arange(3)))
 
-  @unittest.skip("regressed")  # TODO(mattjj): fix
   def test_return_from_jit_closure(self):
     with self.assertRaisesRegex(
         ValueError,
-        r"tree path result\['hi'\]"):
+        r"(?s)tree path result\['hi'\].*was closed over by the function"):
       x_ref = core.new_ref(jnp.arange(3))
       jax.jit(lambda: {'hi': x_ref})()
+
+  def test_jnp_function_on_ref_error(self):
+    x_ref = core.new_ref(jnp.arange(3.))
+    msg = "got a Ref of type .* can't be passed where an array is expected"
+    with self.assertRaisesRegex(TypeError, "sin " + msg):
+      jnp.sin(x_ref)
+    with self.assertRaisesRegex(TypeError, "sin " + msg):
+      jax.jit(jnp.sin)(x_ref)
+    with self.assertRaisesRegex(TypeError, "add " + msg):
+      jnp.add(1., x_ref)
+    with self.assertRaisesRegex(TypeError, "jnp.asarray " + msg):
+      jnp.asarray(x_ref)
+    with self.assertRaisesRegex(TypeError, "jnp.array " + msg):
+      jax.jit(jnp.array)(x_ref)
 
   def test_argument_aliases_jit(self):
     x_ref = core.new_ref(0.)
@@ -1680,7 +1933,64 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "x_ref and y_ref"):
       jax.vjp(f, x_ref, x_ref)
 
-  # TODO(mattjj): add test test_closure_and_argument_aliases_custom_vjp
+  def test_argument_aliases_custom_vjp_under_jit(self):
+    @jax.custom_vjp
+    def f(x_ref, y_ref):
+      ...
+    f.defvjp(lambda x_ref, y_ref: (None, None), lambda _, g: (None, None))
+    @jax.jit
+    def g():
+      x_ref = core.new_ref(0.)
+      f(x_ref, x_ref)
+    with self.assertRaisesRegex(ValueError, "x_ref and y_ref"):
+      g()
+
+  def test_closure_and_argument_aliases_custom_vjp(self):
+    @jax.jit
+    def g():
+      x_ref = core.new_ref(0.)
+      @jax.custom_vjp
+      def f(y_ref):
+        return x_ref[...] + y_ref[...]
+      f.defvjp(lambda y_ref: (f(y_ref), None), lambda _, g: (None,))
+      return f(x_ref)
+    with self.assertRaisesRegex(
+        ValueError, "closed over and passed as the argument y_ref"):
+      g()
+
+  @parameterized.parameters([False, True])
+  def test_argument_aliases_checkpoint(self, jit):
+    f = jax.checkpoint(lambda x_ref, y_ref: x_ref[...] + y_ref[...])
+    g = lambda x_ref: f(x_ref, x_ref)
+    if jit:
+      g = jax.jit(g)
+    x_ref = core.new_ref(0.)
+    with self.assertRaisesRegex(ValueError, "at both x_ref and y_ref"):
+      g(x_ref)
+
+  @parameterized.parameters([False, True])
+  def test_closure_and_argument_aliases_checkpoint(self, jit):
+    def g():
+      x_ref = core.new_ref(0.)
+      f = jax.checkpoint(lambda y_ref: x_ref[...] + y_ref[...])
+      return f(x_ref)
+    if jit:
+      g = jax.jit(g)
+    with self.assertRaisesRegex(
+        ValueError, "closed over and passed as the argument y_ref"):
+      g()
+
+  def test_closure_and_argument_aliases_shard_map(self):
+    mesh = jax.make_mesh((1,), ('x',))
+    @jax.jit
+    def g():
+      x_ref = core.new_ref(0.)
+      f = jax.shard_map(lambda y_ref: x_ref[...] + y_ref[...],
+                        mesh=mesh, in_specs=P(), out_specs=P())
+      return f(x_ref)
+    with self.assertRaisesRegex(
+        ValueError, "closed over and passed as the argument y_ref"):
+      g()
 
   @parameterized.parameters([False, True])
   def test_cond_both_branches_close_over_same_mutable_array(self, jit):

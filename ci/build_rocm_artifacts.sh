@@ -15,7 +15,7 @@
 # ==============================================================================
 # Build ROCm JAX artifacts.
 # Usage: ./ci/build_rocm_artifacts.sh "<artifact>"
-# Supported artifact values are: jax-rocm-plugin, jax-rocm-pjrt
+# Supported artifact values are: jax-rocm-plugin, jax-rocm-pjrt, jax, jaxlib
 #
 # -e: abort script if one command fails
 # -u: error if undefined variable used
@@ -37,35 +37,25 @@ fi
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
 
-allowed_artifacts=("jax-rocm-plugin" "jax-rocm-pjrt")
+# "jax" and "jaxlib" are backend neutral; they are built here so that all four
+# wheels can come from one commit, stamped with one version.
+allowed_artifacts=("jax-rocm-plugin" "jax-rocm-pjrt" "jax" "jaxlib")
 
 if [[ ! " ${allowed_artifacts[*]} " =~ " ${artifact} " ]]; then
   echo "Error: Invalid artifact: $artifact. Allowed values are: ${allowed_artifacts[*]}"
   exit 1
 fi
 
-# Determine the artifact tag flags based on the artifact type, mirroring
-# ci/build_artifacts.sh.
-if [[ "$JAXCI_ARTIFACT_TYPE" == "release" ]]; then
-  artifact_tag_flags="--bazel_options=--repo_env=ML_WHEEL_TYPE=release --bazel_options=--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)"
-elif [[ "$JAXCI_ARTIFACT_TYPE" == "nightly" ]]; then
-  current_date=$(date +%Y%m%d)
-  artifact_tag_flags="--bazel_options=--repo_env=ML_WHEEL_BUILD_DATE=${current_date} --bazel_options=--repo_env=ML_WHEEL_TYPE=nightly --bazel_options=--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)"
-elif [[ "$JAXCI_ARTIFACT_TYPE" == "default" ]]; then
-  artifact_tag_flags="--bazel_options=--repo_env=ML_WHEEL_TYPE=custom --bazel_options=--repo_env=ML_WHEEL_BUILD_DATE=$(git show -s --format=%as HEAD) --bazel_options=--repo_env=ML_WHEEL_GIT_HASH=$(git rev-parse HEAD) --bazel_options=--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)"
-else
-  echo "Error: Invalid artifact type: $JAXCI_ARTIFACT_TYPE. Allowed values are: release, nightly, default"
-  exit 1
+# Determine the Bazel flags that stamp the wheel's version.
+source "ci/utilities/set_artifact_tag_flags.sh"
+
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t && "$JAXCI_HERMETIC_PYTHON_VERSION" != *"-ft" ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
 fi
 
 override_xla_repo=""
 if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
   override_xla_repo="--bazel_options=--override_repository=xla=${JAXCI_XLA_GIT_DIR} --bazel_options=--override_module=xla=${JAXCI_XLA_GIT_DIR}"
-fi
-
-wheel_version_suffix_flag=""
-if [[ -n "${JAXCI_WHEEL_VERSION_SUFFIX:-}" ]]; then
-  wheel_version_suffix_flag="--bazel_options=--repo_env=ML_WHEEL_VERSION_SUFFIX=${JAXCI_WHEEL_VERSION_SUFFIX}"
 fi
 
 bazel_startup_options=""
@@ -98,8 +88,9 @@ python build/build.py build --wheels="$artifact" \
   --output_path="$JAXCI_OUTPUT_DIR" \
   $artifact_tag_flags \
   $override_xla_repo \
-  $wheel_version_suffix_flag \
   "${rocm_path_flags[@]}"
 
-# Verify manylinux compliance.
-./ci/utilities/run_auditwheel.sh
+# Verify manylinux compliance. "jax" is pure Python, as in ci/build_artifacts.sh.
+if [[ "$artifact" != "jax" ]]; then
+  ./ci/utilities/run_auditwheel.sh
+fi

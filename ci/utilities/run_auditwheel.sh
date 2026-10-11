@@ -22,6 +22,8 @@ WHEELS=$(find "$JAXCI_OUTPUT_DIR/" -type f \( -name "*jaxlib*whl" -o -name "*jax
 
 if [[ -z "$WHEELS" ]]; then
   echo "ERROR: No wheels found under $JAXCI_OUTPUT_DIR"
+  echo "If the build succeeded, check the wheel version suffix flags: build.py"
+  echo "only copies out wheels whose version matches the one it expects."
   exit 1
 fi
 

@@ -31,7 +31,7 @@ XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "triton_kernel_call_ffi", "CUDA",
                          {
                              /*instantiate=*/kTritonKernelCallFfiInstantiate,
                              /*prepare=*/nullptr,
-                             /*initialize=*/kTritonKernelCallFfiInitialize,
+                             /*initialize=*/nullptr,
                              /*execute=*/kTritonKernelCallFfi,
                          });
 }  // namespace

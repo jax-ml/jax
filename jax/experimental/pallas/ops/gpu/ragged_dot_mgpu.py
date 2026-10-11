@@ -144,7 +144,7 @@ def ragged_dot(
             lambda _, lhs_smem, rhs_smem: plgpu.wgmma(
                 acc_ref,
                 lhs_smem,
-                plgpu.transpose_ref(rhs_smem, (1, 0)) if transpose_rhs else rhs_smem,
+                rhs_smem.transpose((1, 0)) if transpose_rhs else rhs_smem,
             ),
             grid=(k // block_k,),
             in_specs=[

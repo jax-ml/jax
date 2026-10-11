@@ -53,13 +53,15 @@ class BinaryDistribution(Distribution):
   def has_ext_modules(self):
     return True
 
+_description = f"JAX Plugin for AMD GPUs (ROCm:{rocm_detected_version})"
+
 setup(
     name=project_name,
     version=__version__,
     cmdclass=_cmdclass,
-    description=f"JAX Plugin for AMD GPUs (ROCm:{rocm_detected_version})",
-    long_description="",
-    long_description_content_type="text/markdown",
+    description=_description,
+    long_description=_description,
+    long_description_content_type="text/plain",
     author="ROCm JAX Devs",
     author_email="dl.dl-JAX@amd.com",
     packages=[package_name],

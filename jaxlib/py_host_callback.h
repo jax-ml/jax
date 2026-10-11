@@ -25,10 +25,10 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
-#include "jaxlib/ifrt_rtti.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/host_callback.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/pjrt_ifrt/pjrt_host_callback.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"
@@ -47,6 +47,7 @@ class PyFfiLoadedHostCallback final
       : xla::ifrt::RTTIExtends<PyFfiLoadedHostCallback,
                                xla::ifrt::PjRtFfiLoadedHostCallback>(
             ifrt_client, callable.ptr()),
+        ifrt_client_(ifrt_client),
         callable_(std::move(callable)) {}
   ~PyFfiLoadedHostCallback() override;
 

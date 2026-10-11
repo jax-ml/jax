@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 (persistent-compilation-cache)=
 # Persistent compilation cache
 

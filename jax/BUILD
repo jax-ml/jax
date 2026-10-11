@@ -145,7 +145,6 @@ py_library_providing_imports_info(
             "numpy/**/*.py",
             "ops/**/*.py",
             "scipy/**/*.py",
-            "third_party/**/*.py",
         ],
         exclude = [
             "*_test.py",
@@ -161,7 +160,6 @@ py_library_providing_imports_info(
             "numpy/*.pyi",
         ],
     ),
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         ":version",
@@ -225,11 +223,11 @@ py_library_providing_imports_info(
         "//jax/_src:pmap",
         "//jax/_src:pretty_printer",
         "//jax/_src:profiler",
+        "//jax/_src:program_order",
         "//jax/_src:public_test_util",
         "//jax/_src:random",
         "//jax/_src:ref",
         "//jax/_src:scipy",
-        "//jax/_src:shard_alike",
         "//jax/_src:shard_map",
         "//jax/_src:sharding",
         "//jax/_src:sharding_impls",
@@ -252,5 +250,4 @@ py_library_providing_imports_info(
 pytype_strict_library(
     name = "version",
     srcs = ["version.py"],
-    type_checking = "pyrefly",
 )

@@ -37,13 +37,16 @@ jax_multiplatform_test(
     enable_configs = ["tpu_v3_x4"],
     shard_count = {
         "cpu": select({
-            "//tests/config:tsan_freethreading_rbe": 12,
+            "//tests/config:is_tsan": 12,
             "//conditions:default": 5,
         }),
-        "gpu": 5,
+        "gpu": 10,
         "tpu": 5,
     },
-    deps = py_deps([
+    deps = [
+        "//jax/experimental:compute_on",
+        "//jax/experimental:custom_partitioning",
+    ] + py_deps([
         "absl/testing",
         "numpy",
     ]),
@@ -225,6 +228,10 @@ jax_multiplatform_test(
 jax_py_test(
     name = "distributed_initialize_test",
     srcs = ["distributed_initialize_test.py"],
+    data = [
+        "testdata/mtls_cert.pem",
+        "testdata/mtls_key.pem",
+    ],
     deps = [
         "//jax",
         "//jax/_src:test_util",
@@ -242,6 +249,15 @@ jax_multiplatform_test(
         "portpicker",
         "absl/testing",
     ]),
+)
+
+jax_py_test(
+    name = "cloud_tpu_cluster_test",
+    srcs = ["cloud_tpu_cluster_test.py"],
+    deps = [
+        "//jax",
+        "//jax/_src:test_util",
+    ] + py_deps("absl/testing"),
 )
 
 jax_py_test(
@@ -328,6 +344,9 @@ jax_multiplatform_test(
             "notsan",
         ],  # Times out on TPU with asan/tsan.
     },
+    env = {
+        "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
+    },
     shard_count = {
         "tpu": 5,
         "cpu": 5,
@@ -395,7 +414,7 @@ jax_multiplatform_test(
     name = "svd_test",
     srcs = ["svd_test.py"],
     shard_count = {
-        "cpu": 10,
+        "cpu": 20,
         "gpu": 10,
         "tpu": 15,
     },
@@ -489,18 +508,6 @@ jax_multiplatform_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax/experimental:layout",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "shard_alike_test",
-    srcs = ["shard_alike_test.py"],
-    tags = ["multiaccelerator"],
-    deps = [
-        "//jax/experimental:shard_alike",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -648,7 +655,7 @@ jax_multiplatform_test(
         "cpu": ["notsan"],
     },
     shard_count = {
-        "gpu": 2,
+        "gpu": 4,
         "cpu": select({
             "//tests/config:tsan_freethreading_rbe": 8,
             "//conditions:default": 1,
@@ -723,7 +730,14 @@ jax_multiplatform_test(
     srcs = ["lax_numpy_hijax_test.py"],
     backend_tags = {
         "cpu": ["noasan"],
+        "gpu": ["noasan"],
         "tpu": ["noasan"],  # Times out.
+    },
+    shard_count = {
+        "cpu": select({
+            "//tests/config:is_tsan": 5,
+            "//conditions:default": 1,
+        }),
     },
     deps = py_deps([
         "absl/testing",
@@ -1271,13 +1285,24 @@ jax_multiplatform_test(
     ]),
 )
 
-jax_py_test(
+jax_multiplatform_test(
     name = "profiler_session_test",
     srcs = ["profiler_session_test.py"],
+    backend_tags = {
+        "gpu": [
+            # disable suspicious leaking in cupti/cuda,
+            # TODO: remove this once b/372714955 is resolved.
+            "noasan",
+        ],
+    },
+    enable_backends = [
+        "cpu",
+        "gpu",
+        "tpu",
+    ],
+    tags = ["multiaccelerator"],
     deps = [
-        "//jax",
         "//jax/_src:profiler",
-        "//jax/_src:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -1441,6 +1466,9 @@ jax_multiplatform_test(
     disable_configs = [
         "gpu_h100",  # TODO(phawkins): numerical failure on h100
     ],
+    env = {
+        "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
+    },
     shard_count = {
         "cpu": 20,
         "gpu": 20,
@@ -1695,7 +1723,6 @@ jax_py_test(
 pytype_test(
     name = "typing_test",
     srcs = ["typing_test.py"],
-    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:test_util",
@@ -1944,7 +1971,10 @@ jax_multiplatform_test(
     name = "mutable_array_test",
     srcs = ["mutable_array_test.py"],
     shard_count = {
-        "cpu": 10,
+        "cpu": select({
+            "//tests/config:is_tsan": 20,
+            "//conditions:default": 10,
+        }),
     },
     deps = py_deps([
         "absl/testing",

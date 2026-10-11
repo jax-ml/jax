@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import atexit
 from collections.abc import Callable, Mapping
+from collections.abc import Sequence
 import dataclasses
 from functools import partial
 import importlib
@@ -32,7 +33,6 @@ import pkgutil
 import platform as py_platform
 import threading
 from typing import Any
-from collections.abc import Sequence
 import warnings
 
 from jax._src import config
@@ -41,9 +41,9 @@ from jax._src import hardware_utils
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.cloud_tpu_init import get_tpu_library_path
-from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib import _profiler
+from jax._src.lib import xla_client
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +224,7 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
     warnings.warn(
       f'TPU backend initialization is taking more than {timer_secs} seconds. '
       'Did you run your code on all TPU hosts? '
-      'See https://docs.jax.dev/en/latest/multi_process.html '
+      'See https://docs.jax.dev/en/latest/501/multiprocess.html '
       'for more information.')
 
   # Will log a warning after `timer_secs`.
@@ -868,7 +868,7 @@ def _suggest_missing_backends():
         warning_msg += (
           "This may be due to JAX pre-allocating too much device "
           "memory, leaving too little for CUDA library initialization. See "
-          "https://docs.jax.dev/en/latest/gpu_memory_allocation.html "
+          "https://docs.jax.dev/en/latest/201/gpu-memory.html "
           "for more details and potential workarounds."
         )
       warning_msg += "(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)"
@@ -1166,7 +1166,7 @@ def host_ids(
 
 
 def using_pjrt_c_api(backend=None):
-  return "PJRT C API" in get_backend(backend).platform_version
+  return get_backend(backend).is_c_api
 
 def make_pjrt_topology(platform: str, topology_name='', **kwargs):
   _discover_and_register_pjrt_plugins()

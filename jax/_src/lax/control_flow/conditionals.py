@@ -21,7 +21,7 @@ import functools
 from functools import partial
 import itertools
 import operator
-from typing import Any, TypeVar
+from typing import Any
 
 from jax._src import flattree as ft
 from jax._src.tree_util import (
@@ -214,7 +214,7 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   the two branches is executed (up to compiler rewrites and optimizations).
   However, when transformed with :func:`~jax.vmap` to operate over a batch of
   predicates, ``cond`` is converted to :func:`~jax.lax.select`.
-  Both branches will be traced in all cases (see :ref:`Key concepts: tracing <key-concepts-tracing>`
+  Both branches will be traced in all cases (see :ref:`How transformations work: tracing <jax-101-tracing>`
   for a discussion of JAX's tracing model).
 
   Args:
@@ -403,7 +403,7 @@ def _check_branch_outputs(
                    '\n'.join(f'  * {d};' for d in pvary_applications[:-1])
                    + f'\n  * {pvary_applications[-1]}.\n')
     if pvary_msg:
-      pvary_msg += ("See https://docs.jax.dev/en/latest/notebooks/shard_map.html#scan-vma "
+      pvary_msg += ("See https://docs.jax.dev/en/latest/201/shard-map.html#scan-vma "
                     "for more information.\n\n")
 
     raise TypeError(
@@ -694,12 +694,22 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   branches_known_ : list[core.Jaxpr] = []
   branches_staged_: list[core.Jaxpr] = []
   branch_res_avals: list[list[core.AbstractValue]] = []
+  num_known_outs = len(unks_out) - sum(unks_out)
   for jaxpr in branches:
     jaxpr_known, jaxpr_staged, _, inst_out, num_res = \
         pe.partial_eval_jaxpr_custom(
             jaxpr, in_unknowns=ops_uk, in_inst=True,
             ensure_out_unknowns=unks_out, ensure_out_inst=True,
             saveable=saveable)
+    # DCE each branch before merging residuals across branches: once
+    # _merge_branch_residuals aliases residuals of the same aval across
+    # branches, outer DCE cannot tell which branch actually uses a merged slot.
+    jaxpr_staged, in_used_staged = pe.dce_jaxpr(
+        jaxpr_staged, True, instantiate=[False] * num_res + [True] * len(ops_uk))
+    used_res = in_used_staged[:num_res]
+    jaxpr_known, _ = pe.dce_jaxpr(
+        jaxpr_known, [True] * num_known_outs + used_res, instantiate=True)
+    num_res = sum(used_res)
     branches_known_.append(jaxpr_known)
     branches_staged_.append(jaxpr_staged)
     branch_res_avals.append(branches_staged_[-1].in_avals[:num_res])
@@ -708,7 +718,6 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   # residuals to join the outputs of all branches to the same type.
   all_res_avals, res_avals_per_branch = _merge_branch_residuals(branch_res_avals)
   num_res = len(all_res_avals)
-  num_known_outs = len(unks_out) - sum(unks_out)
   dummy = ft.flatten([[]] * len(branches_known_))
   branches_known = _join_cond_outputs(
       branches_known_, all_res_avals, res_avals_per_branch, dummy, num_known_outs)
@@ -820,23 +829,30 @@ def _ordered_unique(xs):
   d = collections.OrderedDict((x, None) for x in xs)
   return list(d.keys())
 
-def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
+def _cond_dce_rule(used_outputs: list[bool], live_ins: list[bool],
+                   eqn: core.JaxprEqn,
                    ) -> tuple[list[bool], core.JaxprEqn | None]:
 
-  if not any(used_outputs) and not pe.has_effects(eqn):
+  if not any(used_outputs) and not pe.has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
 
   branches = eqn.params['branches']
+  _, live_ops = split_list(live_ins, [1])
 
   # First, compute which inputs are used in any branch (not including `pred`).
   used_inputs: list[bool] = [False] * (len(eqn.invars) - 1)  # -1 for pred
   for jaxpr in branches:
-    _, used_inputs_ = pe.dce_jaxpr(jaxpr, used_outputs, instantiate=False)
+    _, used_inputs_ = pe.dce_jaxpr(jaxpr, used_outputs, instantiate=False,
+                                   live_inputs=live_ops)
     used_inputs = map(operator.or_, used_inputs, used_inputs_)
 
   # Next, compute DCEd branches, instantiating according to used_inputs.
-  dce_branches = [pe.dce_jaxpr(jaxpr, used_outputs, instantiate=used_inputs)[0]
+  dce_branches = [pe.dce_jaxpr(jaxpr, used_outputs, instantiate=used_inputs,
+                               live_inputs=live_ops)[0]
                   for jaxpr in branches]
+  if (all(used_inputs) and all(used_outputs) and
+      all(d is b for d, b in zip(dce_branches, branches))):
+    return [True, *used_inputs], eqn
 
   # Finally, update parameters and form the new eqn.
   new_params = dict(eqn.params, branches=tuple(dce_branches))
@@ -1011,9 +1027,9 @@ def _cond_remat(trace, *args, branches, **params):
       branches_rem, merged_avals, branch_res_avals, dummy, len(jaxpr.in_avals))
   all_out = cond_p.bind(*args, branches=(*branches_fwd,), **params)
   primals_out, res = split_list(all_out, [len(jaxpr.out_avals)])
-  def rem(idx, *args):
+  def rem(res, idx, *args):
     return cond_p.bind(idx, *res, *args, branches=(*branches_rem,), **params)
-  return primals_out, rem
+  return primals_out, res, rem
 
 
 BranchesPlatforms = tuple[tuple[str, ...] | None, ...]
@@ -1135,7 +1151,8 @@ def _cond_state_discharge_rule(ctx, index, *args,
                                branches, **params):
   assert not ctx.should_discharge[0], "Can't discharge the index."
   discharged_branches = tuple(
-      discharge_state(branch, should_discharge=ctx.should_discharge[1:])
+      discharge_state(branch, should_discharge=ctx.should_discharge[1:],
+                      strip_memory_space=ctx.strip_memory_space)
       for branch in branches
   )
   # Don't thread the ref values through the cond if they never change.
@@ -1177,10 +1194,9 @@ def _cond_state_discharge_rule(ctx, index, *args,
   return new_invals, out_vals
 
 
-_T = TypeVar("_T")
-def platform_dependent(*args: Any,
-                       default: Callable[..., _T] | None = None,
-                       **per_platform: Callable[..., _T]):
+def platform_dependent[T](*args: Any,
+                          default: Callable[..., T] | None = None,
+                          **per_platform: Callable[..., T]):
   """Stages out platform-specific code.
 
   In JAX the actual platform on which a computation is run is determined
@@ -1233,7 +1249,8 @@ def platform_dependent(*args: Any,
       raise TypeError(f"lax.platform_dependent: the '{pname}' branch must "
                       "be a callable.")
     if pname == "gpu":
-      raise ValueError("Use 'cuda' or 'rocm' for lax.platform_dependent.")
+      raise ValueError(
+          "Use 'cuda', 'rocm', or 'oneapi' for lax.platform_dependent.")
     for ps, b in branches_platforms_list:
       if b == pbranch:
         ps.append(pname)

@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir-c/IR.h"
@@ -96,9 +97,9 @@ absl::StatusOr<nb::bytes> HloToStableHlo(const nb::bytes& hlo_module_proto) {
     return absl::InvalidArgumentError(
         "Failed to deserialize HloModuleProto");
   }
-  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      ConvertHloToStablehlo(context, &proto));
-  TF_ASSIGN_OR_RETURN(std::string bytecode, SerializeUsingBytecode(*module));
+  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                        ConvertHloToStablehlo(context, &proto));
+  ABSL_ASSIGN_OR_RETURN(std::string bytecode, SerializeUsingBytecode(*module));
   return nb::bytes(bytecode.data(), bytecode.size());
 }
 
@@ -110,20 +111,20 @@ absl::StatusOr<std::string> PyXlaComputationToMlirModule(
     const xla::XlaComputation& computation) {
   mlir::MLIRContext context;
   if (VLOG_IS_ON(3)) context.disableMultithreading();
-  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      ConvertHloToStablehlo(context, &computation.proto()));
+  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                        ConvertHloToStablehlo(context, &computation.proto()));
   return PrintModule(*module);
 }
 
 absl::StatusOr<xla::XlaComputation> PyMlirModuleToXlaComputation(
     std::string_view mlir_module, bool use_tuple_args, bool return_tuple) {
   mlir::MLIRContext context;
-  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      xla::ParseMlirModuleString(mlir_module, context));
+  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                        xla::ParseMlirModuleString(mlir_module, context));
   xla::XlaComputation computation;
-  TF_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation, use_tuple_args,
-                                          return_tuple,
-                                          /*exec_build_options=*/nullptr));
+  ABSL_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation,
+                                            use_tuple_args, return_tuple,
+                                            /*exec_build_options=*/nullptr));
   return computation;
 }
 
@@ -137,8 +138,8 @@ absl::StatusOr<nb::bytes> PyMhloToStablehlo(std::string_view mlir_module) {
   // everything else unchanged.
   // In order to achieve that, we're allowing unregistered dialects here.
   context.allowUnregisteredDialects(true);
-  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      xla::ParseMlirModuleString(mlir_module, context));
+  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                        xla::ParseMlirModuleString(mlir_module, context));
   mlir::PassManager pm(&context);
   if (VLOG_IS_ON(3)) EnablePrintBeforeAndAfter(pm);
   pm.addPass(mlir::mhlo::createHloLegalizeToStablehloPass());
@@ -147,7 +148,7 @@ absl::StatusOr<nb::bytes> PyMhloToStablehlo(std::string_view mlir_module) {
   }
   // Use bytecode, passing unregistered dialects with properties causes issues
   // when using textual assembly.
-  TF_ASSIGN_OR_RETURN(std::string bytecode, SerializeUsingBytecode(*module));
+  ABSL_ASSIGN_OR_RETURN(std::string bytecode, SerializeUsingBytecode(*module));
   return nb::bytes(bytecode.data(), bytecode.size());
 }
 
@@ -157,14 +158,14 @@ absl::StatusOr<nb::bytes> PySerializePortableArtifact(
   mlir::MLIRContext context;
   context.loadDialect<mlir::mpmd::MpmdDialect>();
   if (VLOG_IS_ON(3)) context.disableMultithreading();
-  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      xla::ParseMlirModuleString(mlir_module, context));
+  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                        xla::ParseMlirModuleString(mlir_module, context));
 
   // Serialize portable artifact
   std::string bytecode;
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         bytecode, xla::SerializeUsingVersionedStablehlo(
                       *module, target, sdy_version,
                       /*inplace=*/true,
@@ -180,7 +181,7 @@ absl::StatusOr<nb::bytes> PySerializePortableArtifact(
   std::string bytecode;
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         bytecode, xla::SerializeUsingVersionedStablehlo(
                       module_op, target, sdy_version,
                       /*inplace=*/false,

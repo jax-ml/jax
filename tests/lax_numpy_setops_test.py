@@ -30,7 +30,7 @@ config.parse_flags_with_absl()
 
 
 nonempty_array_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
-empty_array_shapes = [(0,), (0, 4), (3, 0),]
+empty_array_shapes = [(0,), (0, 4), (3, 0), (0, 0)]
 
 scalar_shapes = [jtu.NUMPY_SCALAR_SHAPE, jtu.PYTHON_SCALAR_SHAPE]
 array_shapes = nonempty_array_shapes + empty_array_shapes
@@ -132,6 +132,12 @@ class LaxNumpySetopsTest(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
       self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testSetdiff1dSizeZero(self):
+    # regression test for zero-sized result raising IndexError
+    ar1 = np.arange(3)
+    ar2 = np.array([2])
+    self.assertEqual(jnp.setdiff1d(ar1, ar2, size=0).shape, (0,))
+
   @jtu.sample_product(
       shape1=all_shapes,
       shape2=all_shapes,
@@ -213,6 +219,11 @@ class LaxNumpySetopsTest(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match([dtype1, dtype2]):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
+  def testSetxor1dSizeZero(self):
+    ar1 = np.array([1, 3, 5])
+    ar2 = np.array([2, 3, 4])
+    self.assertEqual(jnp.setxor1d(ar1, ar2, size=0).shape, (0,))
+
   @jtu.sample_product(
     dtype1=[s for s in default_dtypes if s != jnp.bfloat16],
     dtype2=[s for s in default_dtypes if s != jnp.bfloat16],
@@ -252,6 +263,11 @@ class LaxNumpySetopsTest(jtu.JaxTestCase):
 
     with jtu.strict_promotion_if_dtypes_match([dtype1, dtype2]):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+
+  def testIntersect1dSizeZero(self):
+    ar1 = np.array([1, 2, 3, 4])
+    ar2 = np.array([3, 4, 5])
+    self.assertEqual(jnp.intersect1d(ar1, ar2, size=0).shape, (0,))
 
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)

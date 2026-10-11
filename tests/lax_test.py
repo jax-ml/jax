@@ -43,6 +43,7 @@ from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src.errors import UnexpectedTracerError
 from jax._src.interpreters import mlir
+from jax._src.lib import jaxlib_extension_version
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
@@ -126,7 +127,7 @@ class LaxTest(jtu.JaxTestCase):
     if jtu.test_device_matches(["tpu"]):
       if dtype in (np.float32, np.complex64) and op_name in (
         "acosh", "asinh", "betainc", "cos", "cosh", "digamma", "exp", "exp2", "igamma",
-        "igammac", "log", "log1p", "logistic", "pow", "sin", "sinh", "tan"):
+        "igammac", "log", "log2", "log1p", "logistic", "pow", "sin", "sinh", "tan"):
         tol = jtu.join_tolerance(tol, 2e-4)
       elif op_name == "asinh" and dtype == np.float16:
         tol = jtu.join_tolerance(tol, 1e-3)
@@ -165,12 +166,80 @@ class LaxTest(jtu.JaxTestCase):
         grads, neg_grads, atol=jtu.default_tolerance()[np.dtype(np.float32)], rtol=0.0
     )
 
+  def testTanhSaturatedGrad(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40388.
+    # For x <= -9.0109138 in float32, tanh(x) rounds to -1.0. Because the default
+    # JVP rule computes the derivative from the forward output y = tanh(x) as
+    # (1 + y) * (1 - y), it suffers catastrophic cancellation and returns 0.0.
+    # With accuracy=AccuracyMode.HIGHEST, the derivative is computed directly
+    # from x as 4 * logistic(2x) * logistic(-2x), preserving the non-zero float32
+    # gradient in the saturated region.
+    x = jnp.float32(-9.010913848876953)
+    expected = jnp.float32(5.9604584379258085e-08)
+    default_grad = jax.grad(lax.tanh)(x)
+    self.assertEqual(default_grad, 0.0)
+    high_acc_grad = jax.grad(
+        lambda z: lax.tanh(z, accuracy=lax.AccuracyMode.HIGHEST)
+    )(x)
+    rtol = (
+        2e-6
+        if (
+            jtu.is_device_tpu()
+            and not jtu.is_device_tpu(5, "p")
+            and not jtu.is_device_tpu_at_least(6)
+        )
+        else 1e-6
+    )
+    self.assertAllClose(high_acc_grad, expected, atol=0.0, rtol=rtol)
+
+  def testTanhGradSymmetry(self):
+    # Because tanh(-x) == -tanh(x) and floating-point multiplication is
+    # commutative, g * ((1 + tanh(x)) * (1 - tanh(x))) is bit-for-bit identical
+    # for +x and -x for any x and any tangent/cotangent g.
+    x = jnp.linspace(0.1, 8.9, 100, dtype=jnp.float32)
+    g = jnp.full_like(x, 1.3)
+    _, jvp_pos = jax.jvp(lax.tanh, (x,), (g,))
+    _, jvp_neg = jax.jvp(lax.tanh, (-x,), (g,))
+    self.assertArraysEqual(jvp_pos, jvp_neg)
+    grad_fn = jax.vmap(jax.grad(lambda z: jnp.float32(1.3) * lax.tanh(z)))
+    self.assertArraysEqual(grad_fn(x), grad_fn(-x))
+
   def testExpm1Grad(self):
     x = jnp.arange(-80.0, 80.0, 1.0, dtype=jnp.float32)
     expected = jax.vmap(jax.grad(lambda x: lax.exp(x, accuracy=lax.AccuracyMode.HIGHEST)))(x)
     actual = jax.vmap(jax.grad(lambda x: lax.expm1(x, accuracy=lax.AccuracyMode.HIGHEST)))(x)
     self.assertAllClose(
         actual, expected, atol=jtu.default_tolerance()[np.dtype(np.float32)], rtol=0.0
+    )
+
+  def testExpm1GradDefault(self):
+    # Regression test for https://github.com/google/jax/issues/39794
+    # The default (non-HIGHEST) gradient path computed `expm1(x) + 1`, which
+    # cancels to exactly 0.0 for large-negative x where expm1(x) rounds to -1.0.
+    # The analytic derivative is simply exp(x).
+    x = jnp.arange(-80.0, 80.0, 1.0, dtype=jnp.float32)
+    expected = jax.vmap(jax.grad(lax.exp))(x)
+    actual = jax.vmap(jax.grad(lax.expm1))(x)
+    self.assertAllClose(
+        actual, expected, atol=jtu.default_tolerance()[np.dtype(np.float32)], rtol=0.0
+    )
+
+  def testExp2(self):
+    x = jnp.array([0.25, 0.5, 1.0, 2.0, 4.0], dtype=jnp.float32)
+    ln2 = np.float32(np.log(2.0))
+    self.assertAllClose(lax.exp2(x), np.exp2(x))
+    self.assertAllClose(
+        jax.grad(lambda z: jnp.sum(lax.exp2(z)))(x),
+        np.exp2(x) * ln2,
+    )
+
+  def testLog2(self):
+    x = jnp.array([0.25, 0.5, 1.0, 2.0, 4.0], dtype=jnp.float32)
+    ln2 = np.float32(np.log(2.0))
+    self.assertAllClose(lax.log2(x), np.log2(x))
+    self.assertAllClose(
+        jax.grad(lambda z: jnp.sum(lax.log2(z)))(x),
+        1.0 / (x * ln2),
     )
 
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
@@ -1147,6 +1216,12 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, r"dot\(\) takes 2 positional arguments"):
       lax.dot(lhs, rhs, lax.Precision.DEFAULT)
 
+  def testPsendPrecvDeprecation(self):
+    with self.assertWarnsRegex(DeprecationWarning, "jax.lax.psend is deprecated."):
+      _ = lax.psend
+    with self.assertWarnsRegex(DeprecationWarning, "jax.lax.precv is deprecated."):
+      _ = lax.precv
+
   @parameterized.parameters([
       (algorithm, dtype)
       for algorithm, test_dtypes in [
@@ -1196,6 +1271,15 @@ class LaxTest(jtu.JaxTestCase):
         raise SkipTest(
             f"The dot algorithm '{algorithm}' is not supported on CPU.")
     if jtu.test_device_matches(["gpu"]):
+      # TF32 presets are not currently supported on OneAPI.
+      # TODO(Intel-tf): Remove this skip once OneAPI supports TF32 presets.
+      if algorithm in {
+          lax.DotAlgorithmPreset.TF32_TF32_F32,
+          lax.DotAlgorithmPreset.TF32_TF32_F32_X3,
+      }:
+        if jtu.test_device_matches(["oneapi"]):
+          raise SkipTest(
+              f"The dot algorithm '{algorithm}' is not supported on OneAPI.")
       # GPU algorithm support is a little spotty. It is checked in
       # xla/service/algorithm_util.cc and the logic is copied here.
       if algorithm in {
@@ -1910,6 +1994,29 @@ class LaxTest(jtu.JaxTestCase):
     x = jnp.ones((6, 7), np.int32)
     with self.assertRaises(TypeError):
       lax.dynamic_slice_in_dim(x, jnp.array([2, 2]), 3)
+
+  @unittest.skipIf(
+      jaxlib_extension_version < 498, "Requires jaxlib_extension_version >= 498"
+  )
+  def testNestedDynamicSliceOutOfBounds(self):
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Test requires libtpu >= 0.0.50')
+    # Regression test for https://github.com/jax-ml/jax/issues/40849
+    buf = jnp.arange(10, dtype=np.int32)
+
+    @jax.jit
+    def f(x, i, j):
+      w = lax.dynamic_slice(x, (i,), (4,))
+      return lax.dynamic_slice(w, (j,), (1,))
+
+    for i, j, expected in [
+        (9, 0, 6),  # inner start index > 10 - 4
+        (3, 5, 6),  # outer start index > 4 - 1
+        (-12, 1, 1),  # inner start index < -10 (negative after normalization)
+        (3, -6, 3),  # outer start index < -4 (negative after normalization)
+        (6, 0, 6),  # in-bounds boundary
+    ]:
+      self.assertArraysEqual(f(buf, i, j), np.array([expected], dtype=np.int32))
 
   @jtu.sample_product(
       [
@@ -3757,6 +3864,51 @@ class LaxTest(jtu.JaxTestCase):
     not_nan = jax.grad(f)(0.)
     self.assertFalse(jnp.isnan(not_nan))
 
+  @jtu.sample_product(
+      use_jit=[True, False],
+      zero_all_val_cts=[True, False],
+  )
+  def test_optimization_barrier_grad_refs(self, use_jit, zero_all_val_cts):
+    x_ref = jax.new_ref(2.0)
+    y_ref = jax.new_ref(5.0)
+
+    def f(x, x_ref, y, y_ref, z):
+      x, x_ref, y, y_ref, z = jax.lax.optimization_barrier(
+          (x, x_ref, y, y_ref, z)
+      )
+      if zero_all_val_cts:
+        return x_ref[...] * y_ref[...]
+      return x * x_ref[...] + z * y_ref[...]
+
+    if use_jit:
+      f = jax.jit(f)
+
+    _, f_vjp = jax.vjp(f, 3.0, x_ref, 7.0, y_ref, 11.0)
+    x_grad_ref = jax.new_ref(0.0)
+    y_grad_ref = jax.new_ref(0.0)
+    f_vjp = f_vjp.with_refs(
+        jax.ad.GradValue(),
+        x_grad_ref,
+        jax.ad.GradValue(),
+        y_grad_ref,
+        jax.ad.GradValue(),
+    )
+    dx, dx_ref, dy, dy_ref, dz = f_vjp(1.0)
+    self.assertIsInstance(dx_ref, jax.ad.GradRef)
+    self.assertIsInstance(dy_ref, jax.ad.GradRef)
+    if zero_all_val_cts:
+      self.assertAllClose(dx, 0.0)
+      self.assertAllClose(dy, 0.0)
+      self.assertAllClose(dz, 0.0)
+      self.assertAllClose(x_grad_ref[...], 5.0)
+      self.assertAllClose(y_grad_ref[...], 2.0)
+    else:
+      self.assertAllClose(dx, 2.0)
+      self.assertAllClose(dy, 0.0)
+      self.assertAllClose(dz, 5.0)
+      self.assertAllClose(x_grad_ref[...], 3.0)
+      self.assertAllClose(y_grad_ref[...], 11.0)
+
   def test_shape_as_value_handles_static_shapes(self):
     result = lax.shape_as_value(())
     self.assertArraysEqual(result, lax.full((0,), np.array(0, np.int32)))
@@ -3855,15 +4007,15 @@ class LaxTest(jtu.JaxTestCase):
     # https://github.com/jax-ml/jax/issues/33689
     @jax.custom_gradient
     def f(x):
-        def fbwd(g):
-            return jnp.ones_like(x)
-        return (x, jnp.round(x).astype(jnp.int32)), fbwd
+      def fbwd(g):
+        return jnp.ones_like(x)
+      return (x, jnp.round(x).astype(jnp.int32)), fbwd
 
     def loss(x):
-        y, i = f(x)
-        y_nograd, i_nograd = jax.lax.stop_gradient((y, i))
-        self.assertEqual(type(y_nograd), type(i_nograd))
-        return jnp.sum(f(y)[0])
+      y, i = f(x)
+      y_nograd, i_nograd = jax.lax.stop_gradient((y, i))
+      self.assertEqual(type(y_nograd), type(i_nograd))
+      return jnp.sum(f(y)[0])
 
     jax.grad(loss)(jnp.ones((3,)))
 
@@ -3921,12 +4073,47 @@ class LaxTest(jtu.JaxTestCase):
     y = lax_internal.stage(x)
     self.assertTrue(dtypes.is_weakly_typed(y))
 
-  def testIterUsesUnstack(self):
-    def f(x):
-      return list(x)
-    jaxpr = jax.make_jaxpr(f)(np.arange(3.))
-    primitives = [eqn.primitive for eqn in jaxpr.eqns]
-    self.assertIn(lax_internal.unstack_p, primitives)
+  def test_polynomial_scan_no_prebroadcast(self):
+    # When lax.polynomial lowers via lax.scan (len(coeffs) > unroll),
+    # coefficients should only be broadcast to their joint coefficient shape
+    # before stacking, rather than pre-broadcast to the output shape outside the
+    # while loop.
+    def while_operand_shapes(lowered):
+      module = lowered.compiler_ir()
+      main = module.body.operations[0]
+      while_ops = [
+          op for op in main.body.blocks[0].operations
+          if op.operation.name == "stablehlo.while"
+      ]
+      self.assertLen(while_ops, 1)
+      return [tuple(v.type.shape) for v in while_ops[0].operands]
+
+    x = jnp.arange(100, dtype=jnp.float32)
+    coeffs = [1.0, 2.0, 3.0, 4.0]
+    fn_scan = jax.jit(lambda z: lax.polynomial(z, coeffs, unroll=1))
+    fn_unrolled = jax.jit(lambda z: lax.polynomial(z, coeffs, unroll=len(coeffs)))
+    self.assertAllClose(fn_scan(x), fn_unrolled(x))
+    # Operands are: stacked coeffs (4,), x (100,), loop index (), carry (100,).
+    self.assertCountEqual(
+        while_operand_shapes(fn_scan.lower(x)),
+        [(4,), (100,), (), (100,)],
+    )
+
+    # Mixed scalar and size-1 non-scalar coefficients with a (100, 5) input
+    # should stack to (4, 1, 5), not (4, 100, 5).
+    x2 = jnp.ones((100, 5), dtype=jnp.float32)
+    c_row = jnp.arange(5, dtype=jnp.float32)[None, :]
+    fn_scan2 = jax.jit(
+        lambda z, c: lax.polynomial(z, [1.0, c, 3.0, c], unroll=1)
+    )
+    fn_unrolled2 = jax.jit(
+        lambda z, c: lax.polynomial(z, [1.0, c, 3.0, c], unroll=4)
+    )
+    self.assertAllClose(fn_scan2(x2, c_row), fn_unrolled2(x2, c_row))
+    self.assertCountEqual(
+        while_operand_shapes(fn_scan2.lower(x2, c_row)),
+        [(4, 1, 5), (100, 5), (), (100, 5)],
+    )
 
 
 class LazyConstantTest(jtu.JaxTestCase):
@@ -4131,8 +4318,8 @@ class FooTyRules:
 
   @staticmethod
   def result_handler(sticky_device, aval):
+    del sticky_device
     def handler(_, buf):
-      buf.aval = core.ShapedArray(buf.shape, buf.dtype)
       return FooArray(aval.shape, buf)
     return handler
 
@@ -4587,7 +4774,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     'arccos', 'arccosh', 'arcsin', 'arcsinh',
     'arctan', 'arctanh', 'conjugate', 'cos',
     'cosh', 'exp', 'exp2', 'expm1', 'log',
-    'log10', 'log1p', 'sin', 'sinh', 'sqrt',
+    'log10', 'log1p', 'log2', 'sin', 'sinh', 'sqrt',
     'square', 'tan', 'tanh', 'sinc', 'positive',
     'negative', 'absolute', 'sign'
   ]
@@ -4739,18 +4926,12 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
           regions_with_inaccuracies.remove(item)
 
     if name == 'absolute':
-      if is_cuda and dtype == np.complex128:
-        regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real')
-      else:
-        regions_with_inaccuracies.clear()
+      regions_with_inaccuracies.clear()
 
     elif name == 'sign':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4')
 
-    elif name == 'log':
-      regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'ninf.imag', 'pinf.imag', 'ninfj.imag', 'pinfj.imag')
-
-    elif name == 'log10':
+    elif name in ('log', 'log2', 'log10'):
       regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'ninf.imag', 'pinf.imag', 'ninfj.imag', 'pinfj.imag')
 
     elif name == 'exp':
@@ -5067,6 +5248,67 @@ class CompositeTest(jtu.JaxTestCase):
         '-> (tensor<f32>, tensor<f32>, tensor<f32>)', mlir_module)
     self.assertIn('return %arg0, %arg1, %arg2 : tensor<f32>, tensor<f32>, tensor<f32>', mlir_module)
 
+  def test_composite_with_symbolic_shapes(self):
+    # Executing this export requires StableHLO shape refinement support for
+    # composite decompositions with dynamic shapes (see #40486).
+    @partial(lax.composite, name="my.square")
+    def my_square(x):
+      return x * x
+
+    exp = export.export(jax.jit(my_square))(
+        jax.ShapeDtypeStruct(export.symbolic_shape("b"), jnp.float32))
+    mlir_module = str(exp.mlir_module())
+    # The decomposition takes the dimension variable as its first argument, so
+    # the composite must pass it too.
+    self.assertRegex(
+        mlir_module,
+        r'stablehlo.composite "my.square" %arg0, %arg1 '
+        r'\{decomposition = @my.square\} : '
+        r'\(tensor<i..>, tensor<\?xf32>\) -> tensor<\?xf32>')
+    self.assertRegex(
+        mlir_module,
+        r'@my.square\(%arg0: tensor<i..>.*jax.global_constant = "b".*, '
+        r'%arg1: tensor<\?xf32>.*\) -> tensor<\?xf32>')
+
+  def test_composite_with_symbolic_shapes_execution(self):
+    @partial(lax.composite, name="my.square")
+    def my_square(x):
+      return x * x
+
+    # This decomposition accepts the enclosing export's dimension variables,
+    # but returns a scalar value so that it does not require shape refinement
+    # to execute
+    def f(x):
+      return my_square(x.sum())
+
+    exp = export.export(jax.jit(f))(
+        jax.ShapeDtypeStruct(export.symbolic_shape("b"), jnp.float32))
+    for b in (3, 5):
+      x = jnp.arange(b, dtype=jnp.float32)
+      self.assertArraysEqual(exp.call(x), x.sum() ** 2)
+
+  def test_composite_with_multiple_platforms(self):
+    @partial(lax.composite, name="my.square")
+    def my_square(x):
+      return x * x
+
+    x = jnp.arange(4, dtype=jnp.float32)
+    exp = export.export(jax.jit(my_square), platforms=("cpu", "tpu"))(x)
+    mlir_module = str(exp.mlir_module())
+    # Multi-platform lowering adds a platform index argument to every function,
+    # including the decomposition, so the composite must pass it too.
+    self.assertRegex(
+        mlir_module,
+        r'stablehlo.composite "my.square" %arg0, %arg1 '
+        r'\{decomposition = @my.square\} : '
+        r'\(tensor<i..>, tensor<4xf32>\) -> tensor<4xf32>')
+    self.assertRegex(
+        mlir_module,
+        r'@my.square\(%arg0: tensor<i..>.*jax.global_constant = "_platform_index".*, '
+        r'%arg1: tensor<4xf32>.*\) -> tensor<4xf32>')
+    x_cpu = jax.device_put(x, jax.devices("cpu")[0])
+    self.assertArraysEqual(exp.call(x_cpu), x * x)
+
   def test_composite_jvp(self):
     @partial(lax.composite, name="my.square")
     def my_square(x):
@@ -5130,6 +5372,22 @@ class CompositeTest(jtu.JaxTestCase):
         "Found a JAX Tracer as a constant in the decomposition for the "
         "composite op 'my.consts'."):
       jax.jit(fun)(x, scale)
+
+  def test_composite_custom_vjp(self):
+    with config.custom_vjp3(True):
+      @jax.custom_vjp
+      def f(x):
+        return 2.0 * x
+
+      f.defvjp(lambda x: (2.0 * x, ()), lambda res, g: (2.0 * g,))
+
+      @partial(lax.composite, name="my.custom_vjp")
+      def comp(x):
+        return f(x)
+
+      x = jnp.array(3.0)
+      self.assertEqual(comp(x), 6.0)
+      self.assertEqual(jax.jit(comp)(x), 6.0)
 
 
 class RaggedTest(jtu.JaxTestCase):

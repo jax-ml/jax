@@ -28,7 +28,6 @@ from jax._src.pallas.core import CompilerParams as CompilerParams
 from jax._src.pallas.core import core_map as _deprecated_core_map
 from jax._src.pallas.core import CostEstimate as CostEstimate
 from jax._src.pallas.core import debug_check as debug_check
-from jax._src.pallas.core import debug_checks_enabled as _deprecated_debug_checks_enabled
 from jax._src.pallas.core import Element as Element
 from jax._src.pallas.core import enable_debug_checks as enable_debug_checks
 from jax._src.pallas.core import enable_poison_buffers as enable_poison_buffers
@@ -56,13 +55,12 @@ from jax._src.pallas.pallas_call import pallas_call as pallas_call
 from jax._src.pallas.pallas_call import pallas_call_p as pallas_call_p
 from jax._src.pallas.primitives import debug_print as debug_print
 from jax._src.pallas.primitives import delay as delay
-from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
-from jax._src.pallas.primitives import dot as _deprecated_dot
+from jax._src.pallas.primitives import DeviceIdType as _deprecated_DeviceIdType
 from jax._src.pallas.primitives import get_global as get_global
 from jax._src.pallas.primitives import multiple_of as multiple_of
 from jax._src.pallas.primitives import num_programs as num_programs
 from jax._src.pallas.primitives import program_id as program_id
-from jax._src.pallas.primitives import reciprocal as reciprocal
+from jax._src.pallas.primitives import reciprocal as _deprecated_reciprocal
 from jax._src.pallas.primitives import run_scoped as run_scoped
 from jax._src.pallas.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
@@ -82,7 +80,25 @@ ANY = MemorySpace.ANY
 HOST = _jax_core.MemorySpace.Host
 
 _deprecations = {
-    # Added August 11th, 2026
+    # Added September 28, 2026
+    "DeviceIdType": (
+        (
+            "jax.experimental.pallas.DeviceIdType is deprecated and will be"
+            " removed along with the device_id_type= parameter in semaphore and"
+            " DMA operations."
+        ),
+        _deprecated_DeviceIdType,
+    ),
+    # Added August 17, 2026
+    "reciprocal": (
+        (
+            "jax.experimental.pallas.reciprocal was moved to"
+            " jax.experimental.pallas.tpu. Accessing it via"
+            " jax.experimental.pallas is deprecated."
+        ),
+        _deprecated_reciprocal,
+    ),
+    # Added August 11, 2026
     "core_map": (
         (
             "jax.experimental.pallas.core_map is deprecated, use"
@@ -90,32 +106,30 @@ _deprecations = {
         ),
         _deprecated_core_map,
     ),
-    # Added June 4, 2026
+    # Finalized in JAX v0.12.0
+    # TODO(slebedev): remove these for JAX v0.13.0.
     "dot": (
         (
-            "jax.experimental.pallas.dot was moved to"
-            " jax.experimental.pallas.triton. Accessing it via"
-            " jax.experimental.pallas is deprecated. You can use jax.numpy.dot,"
-            " jax.numpy.einsum or the @ operator instead in a TPU or MGPU"
-            " kernel."
+            "pl.dot was deprecated in JAX v0.11.0, and removed in JAX v0.12.0."
+            " Use jax.numpy.dot, jax.numpy.einsum or the @ operator instead in"
+            " TPU or MGPU kernels."
         ),
-        _deprecated_dot,
+        None,
     ),
-    # Added May 15, 2026
     "debug_checks_enabled": (
         (
-            "jax.experimental.pallas.debug_checks_enabled is deprecated, "
-            "use pl.enable_debug_checks.value instead."
+            "pl.debug_checks_enabled was deprecated in JAX v0.11.0, and removed"
+            " in JAX v0.12.0. Use pl.enable_debug_checks instead."
         ),
-        _deprecated_debug_checks_enabled,
+        None,
     ),
 }
 
 import typing
 if typing.TYPE_CHECKING:
+  DeviceIdType = _deprecated_DeviceIdType
   core_map = _deprecated_core_map
-  debug_checks_enabled = _deprecated_debug_checks_enabled
-  dot = _deprecated_dot
+  reciprocal = _deprecated_reciprocal
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

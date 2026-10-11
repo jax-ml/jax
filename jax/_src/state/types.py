@@ -28,6 +28,7 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import pretty_printer as pp
 from jax._src import traceback_util
+from jax._src import tree
 from jax._src import tree_util
 from jax._src.tree_util import tracing_registry, _registry, _RegistryEntry
 from jax._src.typing import Array
@@ -93,6 +94,9 @@ class Transform(Protocol):
   def transform_type(self, x: core.AbstractValue) -> core.AbstractValue:
     raise NotImplementedError(type(self))
 
+  def transform_array(self, x: Any) -> Any:
+    raise NotImplementedError(type(self))
+
   def undo(self, x: core.AbstractValue) -> Transform:
     raise NotImplementedError(type(self))
 
@@ -114,7 +118,7 @@ class MultiRefTransform(Transform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
 class BitcastTransform(Transform):
-  dtype: dtypes.DType = dataclasses.field(metadata=dict(static=True))
+  dtype: dtypes.DType = tree.static()
 
   def transform_type(self, x):
     match x:
@@ -164,7 +168,7 @@ def _canonicalize_reshape(
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
 class ReshapeTransform(Transform):
-  shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  shape: tuple[int, ...] = tree.static()
 
   def _validate_shape(self, input_shape: tuple[int, ...]):
     if np.prod(self.shape) != np.prod(input_shape):
@@ -203,7 +207,7 @@ def _perm_inverse(permutation: tuple[int, ...]) -> tuple[int, ...]:
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
 class TransposeTransform(Transform):
-  permutation: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  permutation: tuple[int, ...] = tree.static()
 
   def undo(self, x: core.AbstractValue) -> Transform:
     return TransposeTransform(_perm_inverse(self.permutation))
@@ -233,8 +237,29 @@ class TransposeTransform(Transform):
 
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
+class MemorySpaceCastTransform(Transform):
+  memory_space: Any = tree.static()
+
+  def transform_type(self, x):
+    match x:
+      case AbstractRef():
+        return x.update(memory_space=self.memory_space)
+      case core.ShapedArray():
+        return x
+      case _:
+        raise TypeError(
+            f"Cannot cast memory space of {x} to {self.memory_space}"
+        )
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    del context  # Unused.
+    return pp.text(f"{{memory_space_cast({self.memory_space})}}")
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
 class SelectTransform(MultiRefTransform):
-  idx: Array | int = dataclasses.field(metadata=dict(static=False))
+  idx: Array | int
 
   def transform_types(self, xs):
     def _type(ref):
@@ -379,6 +404,17 @@ class TransformedRef:
       return TransformedRef(self, (transposer,))
     return TransformedRef(self.ref, (*self.transforms, transposer))
 
+  def memory_space_cast(self, memory_space: Any):
+    if self.multiref:
+      raise NotImplementedError(
+          "memory_space_cast with multiref is not supported."
+      )
+    if any(isinstance(t, MemorySpaceCastTransform) for t in self.transforms):
+      raise ValueError("Multiple memory_space_casts are not allowed.")
+    return TransformedRef(
+        self.ref, (*self.transforms, MemorySpaceCastTransform(memory_space))
+    )
+
   def set(self, value, idx=()):
     from jax._src.state.primitives import ref_set  # pyrefly: ignore[missing-import]
     return ref_set(self, idx, value)
@@ -390,6 +426,12 @@ class TransformedRef:
   def get(self, idx=()):
     from jax._src.state.primitives import ref_get  # pyrefly: ignore[missing-import]
     return ref_get(self, idx)
+
+  @property
+  def memory_space(self):
+    if not hasattr(self.type, "memory_space"):
+      raise AttributeError(f"{self!r} has no `memory_space`.") from None
+    return self.type.memory_space
 
   def __getattr__(self, name):
     if self.multiref:
@@ -436,7 +478,7 @@ class AbstractRef(core.AbstractValue):
 
   Refer to the `Ref guide`_ for more information.
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   __slots__ = ["inner_aval", "memory_space", "kind"]
 
@@ -559,6 +601,10 @@ class AbstractRef(core.AbstractValue):
   @core.aval_method
   def transpose(self, *permutation):
     return TransformedRef(self, ()).transpose(*permutation)
+
+  @core.aval_method
+  def memory_space_cast(self, memory_space):
+    return TransformedRef(self, ()).memory_space_cast(memory_space)
 
   @core.aval_property
   def T(self):

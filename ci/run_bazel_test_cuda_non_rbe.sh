@@ -65,14 +65,9 @@ fi
 # End of test environment variables setup.
 
 if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-ft || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-nogil ]]; then
-  if [[ "${JAXCI_ENABLE_BZLMOD:-1}" == "1" ]]; then
-    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}
-    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-ft}
-    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}
-  else
-    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
-    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
-  fi
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-ft}
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}
   FREETHREADED_FLAG_VALUE="yes"
 else
   FREETHREADED_FLAG_VALUE="no"
@@ -107,7 +102,7 @@ common_bazel_test_args=(
   "--repo_env=HERMETIC_CUDA_UMD_VERSION=13.1.1"
   "--//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB"
   "--//jax:build_jax=$JAXCI_BUILD_JAX"
-  "--test_env=JAX_PORTSERVER_ADDRESS=@unittest-portserver"
+  "--test_env=PORTSERVER_ADDRESS=@unittest-portserver"
   "--test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform"
   "--test_env=TF_CPP_MIN_LOG_LEVEL=0"
   "--test_env=JAX_SKIP_SLOW_TESTS=true"
@@ -152,7 +147,7 @@ set +e
 # It appears --run_under needs an absolute path.
 # The product of the `JAX_ACCELERATOR_COUNT`` and `JAX_TESTS_PER_ACCELERATOR`
 # should match the VM's CPU core count (set in `--local_test_jobs`).
-TEST_ARTIFACTS_DIR="test-artifacts-single"
+TEST_ARTIFACTS_DIR="${JAXCI_TEST_ARTIFACTS_DIR}-single"
 mkdir -p "$TEST_ARTIFACTS_DIR"
 echo "::endgroup::" >&2
 
@@ -180,7 +175,7 @@ python3 ci/utilities/report_resultstore_link.py "CUDA single-accelerator tests" 
 ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
 # Runs multiaccelerator tests with all GPUs directly on the VM without RBE...
-TEST_ARTIFACTS_DIR="test-artifacts-multi"
+TEST_ARTIFACTS_DIR="${JAXCI_TEST_ARTIFACTS_DIR}-multi"
 mkdir -p "$TEST_ARTIFACTS_DIR"
 
 echo "::group::Bazel CUDA multi-accelerator tests" >&2
@@ -204,17 +199,17 @@ ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 echo "::group::Cleanup" >&2
 # Merge results with prefixes to avoid overwriting
 { set +x; } 2>/dev/null
-mkdir -p test-artifacts
-if [[ -d test-artifacts-single ]]; then
-  for f in test-artifacts-single/*; do
+mkdir -p "$JAXCI_TEST_ARTIFACTS_DIR"
+if [[ -d "${JAXCI_TEST_ARTIFACTS_DIR}-single" ]]; then
+  for f in "${JAXCI_TEST_ARTIFACTS_DIR}-single"/*; do
     [[ -e "$f" ]] || continue
-    cp "$f" "test-artifacts/single_$(basename "$f")"
+    cp "$f" "${JAXCI_TEST_ARTIFACTS_DIR}/single_$(basename "$f")"
   done
 fi
-if [[ -d test-artifacts-multi ]]; then
-  for f in test-artifacts-multi/*; do
+if [[ -d "${JAXCI_TEST_ARTIFACTS_DIR}-multi" ]]; then
+  for f in "${JAXCI_TEST_ARTIFACTS_DIR}-multi"/*; do
     [[ -e "$f" ]] || continue
-    cp "$f" "test-artifacts/multi_$(basename "$f")"
+    cp "$f" "${JAXCI_TEST_ARTIFACTS_DIR}/multi_$(basename "$f")"
   done
 fi
 set -x

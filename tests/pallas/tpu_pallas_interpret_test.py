@@ -26,6 +26,7 @@ from typing import Any
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_interpret
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
@@ -121,6 +122,16 @@ class InterpretTest(jtu.JaxTestCase):
     if self.num_devices > 1:
       # Workaround for https://github.com/jax-ml/jax/issues/25671
       self.skipTest(f'requires 1 device, found {self.num_devices}')
+
+  def tearDown(self):
+    super().tearDown()
+    try:
+      # If an exception was thrown by a jitted computation during the test,
+      # we observe/consume exception here to avoid propagating it to the
+      # next test.
+      jax.effects_barrier()
+    except:
+      pass
 
   @parameterized.parameters(pltpu.HBM, pl.ANY)
   def test_revisiting_is_an_error(self, memory_space):
@@ -534,6 +545,40 @@ class InterpretTest(jtu.JaxTestCase):
       self.assertTrue(np.isnan(out[2:, :]).all())
       self.assertTrue(np.isnan(out[:, 22:]).all())
 
+  def test_padded_buffer_bounds_do_not_depend_on_the_callers_mesh(self):
+    # The padding depends on the TPU that the lowering context targets, not on
+    # the context that runs the compiled kernel.
+    def kernel(i_ref, j_ref, x_ref, o_ref, s_ref):
+      # On TPU v6e, the padded shape of the (10, 150) scratch is (16, 256).
+      rows = pl.ds(pl.multiple_of(i_ref[0], 8), 8)
+      lanes = pl.ds(pl.multiple_of(j_ref[0], 128), 128)
+      s_ref[rows, lanes] = x_ref[...]
+      o_ref[...] = s_ref[rows, lanes]
+
+    @jax.jit
+    def f(i, j, x):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          scratch_shapes=[pltpu.VMEM((10, 150), jnp.float32)],
+          interpret=pltpu.InterpretParams(
+              buffer_bounds='padded', out_of_bounds_reads='uninitialized'
+          ),
+      )(i, j, x)
+
+    i = jnp.array([8], jnp.int32)
+    j = jnp.array([128], jnp.int32)
+    x = jnp.ones((8, 128), dtype=jnp.float32)
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (), abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu')
+    )
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+      compiled = f.lower(i, j, x).compile()
+    out = compiled(i, j, x)
+    np.testing.assert_array_equal(out[:2, :22], 1.0)
+    self.assertTrue(np.isnan(out[2:, :]).all())
+    self.assertTrue(np.isnan(out[:, 22:]).all())
+
   def test_scalar_prefetch_example(self):
     def dynamic_slice_kernel(indices, x_ref, o_ref):
       del indices
@@ -675,22 +720,21 @@ class InterpretTest(jtu.JaxTestCase):
             detect_races=True, dma_execution_mode=dma_execution_mode
         ),
     )(x).block_until_ready()
-    self.assertFalse(mosaic_interpret.races.races_found)
     np.testing.assert_allclose(y, x + 1.0)
 
-    pl.pallas_call(
-        kernel_with_race,
-        out_shape=jax.ShapeDtypeStruct.like(x),
-        in_specs=[pl.BlockSpec(memory_space=hbm_memory_space)],
-        scratch_shapes=[
-            pltpu.VMEM(x.shape, x.dtype),
-            pltpu.SemaphoreType.DMA,
-        ],
-        interpret=pltpu.InterpretParams(
-            detect_races=True, dma_execution_mode=dma_execution_mode
-        ),
-    )(x).block_until_ready()
-    self.assertTrue(mosaic_interpret.races.races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      pl.pallas_call(
+          kernel_with_race,
+          out_shape=jax.ShapeDtypeStruct.like(x),
+          in_specs=[pl.BlockSpec(memory_space=hbm_memory_space)],
+          scratch_shapes=[
+              pltpu.VMEM(x.shape, x.dtype),
+              pltpu.SemaphoreType.DMA,
+          ],
+          interpret=pltpu.InterpretParams(
+              detect_races=True, dma_execution_mode=dma_execution_mode
+          ),
+      )(x).block_until_ready()
 
   def test_skip_floating_point_ops(self):
     def matmul_kernel(x_ref, y_ref, z_ref):
@@ -713,6 +757,24 @@ class InterpretTest(jtu.JaxTestCase):
 
     lowered = jax.jit(matmul).lower(x, y).as_text(dialect='stablehlo')
     self.assertNotIn('dot_general', lowered)
+
+  def test_trace_value(self):
+    def kernel(s_ref, x_ref, o_ref):
+      pltpu.trace_value('s', s_ref[0])
+      o_ref[...] = x_ref[...] + s_ref[0]
+
+    s = jnp.array([3], jnp.int32)
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+    y = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ],
+        interpret=pltpu.InterpretParams(),
+    )(s, x)
+    np.testing.assert_array_equal(y, x + 3)
 
   @parameterized.parameters('nan', 'zero')
   def test_uninitialized_memory(self, uninitialized_memory):
@@ -1072,7 +1134,6 @@ class InterpretTest(jtu.JaxTestCase):
     x = jnp.arange(16 * 128, dtype=jnp.int32).reshape((16, 128))
     y = f(x)
     np.testing.assert_array_equal(y, x)
-    self.assertFalse(mosaic_interpret.races.races_found)
 
   def test_grid_names(self):
     def kernel(x, y):
@@ -1123,6 +1184,7 @@ class InterpretTest(jtu.JaxTestCase):
                 detect_races=True,
                 allow_hbm_allocation_in_run_scoped=True,
                 dma_execution_mode=dma_execution_mode,
+                on_race='warn',
             ),
         )
         def _():
@@ -1197,7 +1259,6 @@ class InterpretTest(jtu.JaxTestCase):
       )(x)
 
     y = f(x).block_until_ready()
-    self.assertFalse(mosaic_interpret.races.races_found)
     np.testing.assert_allclose(y, 2.0 * x)
 
     with pltpu.force_tpu_interpret_mode(pltpu.InterpretParams(
@@ -1205,7 +1266,6 @@ class InterpretTest(jtu.JaxTestCase):
         detect_races=True,
     )):
       y = f(x).block_until_ready()
-    self.assertFalse(mosaic_interpret.races.races_found)
     np.testing.assert_allclose(y, 2.0 * x)
     self.assertEqual(trace_count[0], 2)
 
@@ -1213,9 +1273,8 @@ class InterpretTest(jtu.JaxTestCase):
         num_cores_or_threads=2,
         detect_races=True,
     )):
-      y = f(x).block_until_ready()
-    self.assertTrue(mosaic_interpret.races.races_found)
-    np.testing.assert_allclose(y, 2.0 * x)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        f(x).block_until_ready()
     self.assertEqual(trace_count[0], 3)
 
   def test_two_cores_along_parallel_dimension_no_race(self):
@@ -1249,7 +1308,6 @@ class InterpretTest(jtu.JaxTestCase):
             dimension_semantics=('parallel',)
         ),
     )(x).block_until_ready()
-    self.assertFalse(mosaic_interpret.races.races_found)
     np.testing.assert_allclose(y, 2.0 * x)
 
   def test_parallel_dimension_and_multiple_cores(self):
@@ -1693,6 +1751,103 @@ class InterpretTest(jtu.JaxTestCase):
     self.assertEqual(
         interpret_utils.is_range_out_of_bounds_for_shape(rnge, shape), expected
     )
+
+  @parameterized.named_parameters(
+      ('interpret_params', pltpu.InterpretParams()),
+      ('interpret_true', True),
+  )
+  def test_emit_pipeline_in_kernel(self, interpret):
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (),
+        abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu'),
+    )
+    with config.use_emit_pipeline_primitive(True):
+      with jax.sharding.use_abstract_mesh(abstract_mesh):
+        def pipeline_body(x_ref, o_ref):
+          o_ref[...] = x_ref[...] + 1.0
+
+        @pl.kernel(
+            out_type=jax.ShapeDtypeStruct((4 * 8, 128), jnp.float32),
+            mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+            interpret=interpret,
+        )
+        def kernel(x_hbm_ref, o_hbm_ref):
+          pltpu.emit_pipeline(
+              pipeline_body,
+              grid=(4,),
+              in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+          )(x_hbm_ref, o_hbm_ref)
+
+        x = jnp.arange(4 * 8 * 128, dtype=jnp.float32).reshape(4 * 8, 128)
+        out = kernel(x)
+        np.testing.assert_array_equal(out, x + 1)
+
+  @parameterized.named_parameters(
+      ('interpret_params', pltpu.InterpretParams()),
+      ('interpret_true', True),
+  )
+  def test_emit_pipeline_in_kernel_with_program_id(self, interpret):
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (),
+        abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu'),
+    )
+    with config.use_emit_pipeline_primitive(True):
+      with jax.sharding.use_abstract_mesh(abstract_mesh):
+        def pipeline_body(x_ref, o_ref):
+          i = pl.program_id(0)
+          o_ref[...] = x_ref[...] + i
+
+        @pl.kernel(
+            out_type=jax.ShapeDtypeStruct((4 * 8, 128), jnp.int32),
+            mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+            interpret=interpret,
+        )
+        def kernel(x_hbm_ref, o_hbm_ref):
+          pltpu.emit_pipeline(
+              pipeline_body,
+              grid=(4,),
+              in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+          )(x_hbm_ref, o_hbm_ref)
+
+        x = jnp.zeros((4 * 8, 128), dtype=jnp.int32)
+        out = kernel(x)
+        expected = np.zeros((4 * 8, 128), dtype=np.int32)
+        for i in range(4):
+          expected[i * 8 : (i + 1) * 8, :] = i
+        np.testing.assert_array_equal(out, expected)
+
+  @parameterized.named_parameters(
+      ('interpret_params', pltpu.InterpretParams()),
+      ('interpret_true', True),
+  )
+  def test_vmap_emit_pipeline(self, interpret):
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (),
+        abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu'),
+    )
+    with config.use_emit_pipeline_primitive(True):
+      with jax.sharding.use_abstract_mesh(abstract_mesh):
+        def pipeline_body(x_ref, o_ref):
+          o_ref[...] = x_ref[...] + 1.0
+
+        @pl.kernel(
+            out_type=jax.ShapeDtypeStruct((4 * 8, 128), jnp.float32),
+            mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+            interpret=interpret,
+        )
+        def kernel(x_hbm_ref, o_hbm_ref):
+          pltpu.emit_pipeline(
+              pipeline_body,
+              grid=(4,),
+              in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+          )(x_hbm_ref, o_hbm_ref)
+
+        x = jnp.arange(1 * 4 * 8 * 128, dtype=jnp.float32).reshape(1, 4 * 8, 128)
+        out = jax.vmap(kernel)(x)
+        np.testing.assert_array_equal(out, x + 1)
 
 
 if __name__ == '__main__':

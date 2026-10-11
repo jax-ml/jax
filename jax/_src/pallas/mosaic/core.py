@@ -21,15 +21,18 @@ from collections.abc import Mapping, Sequence
 import contextlib
 import dataclasses
 import enum
+import math
 from typing import Any, Literal
 
 import jax
 from jax._src import core as jax_core
-from jax._src import deprecations
+from jax._src import pretty_printer as pp
 from jax._src import state
+from jax._src import tree_util
 from jax._src import util
 from jax._src.frozen_dict import FrozenDict
 from jax._src.pallas import core as pallas_core
+from jax._src.state import types as state_types
 from jax._src.tpu_custom_call import OptLevel
 import jax.numpy as jnp
 
@@ -208,6 +211,71 @@ class CompilerParams:
   replace = dataclasses.replace
 
 
+def check_accumulator_ref(shape: tuple[int, ...], dtype: jax.typing.DTypeLike, mxu_id: int):
+  from jax._src.pallas.mosaic import tpu_info  # pyrefly: ignore[missing-module-attribute]
+  if len(shape) < 2:
+    raise ValueError(f"Acc ref must be at least 2D, got shape {shape}")
+
+  if dtype not in (jnp.float32, jnp.int32):
+    raise ValueError(
+        f"Acc ref dtype must be float32 or int32, got {dtype}")
+
+  info = tpu_info.get_tpu_info()
+  if not info.num_accumulators:
+    raise ValueError(
+        f"Accumulators are not available on TPU {info.chip_version}"
+    )
+
+  if mxu_id < 0 or mxu_id >= info.num_mxus:
+    raise ValueError(f"mxu_id must be in [0, {info.num_mxus}), got {mxu_id=}")
+
+  m, n = math.prod(shape[:-1]), shape[-1]
+  if n != info.mxu_column_size:
+    raise ValueError(
+        f"The minor dimension size of an accumulator ref must be "
+        f"{info.mxu_column_size} but got {n}"
+    )
+  if m <= 0 or m % info.num_sublanes != 0:
+    raise ValueError(
+        f"The product of the major dimensions must be a multiple of "
+        f"{info.num_sublanes}, but got {m}"
+    )
+
+
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class AccessAssumption:
+  """Container holding access assumptions for Mosaic references."""
+
+  no_store: bool = jax.tree.static(default=False)
+  no_bank_conflict: bool = jax.tree.static(default=False)
+  no_hazard: bool = jax.tree.static(default=False)
+  no_hazard_no_deps: bool = jax.tree.static(default=False)
+
+  def __post_init__(self):
+    has_hazard = self.no_hazard or self.no_hazard_no_deps
+    if self.no_store and has_hazard:
+      raise ValueError(
+          "AccessAssumption contradiction: reference is marked 'no_store'"
+          " yet also specifies RAW hazard flags ('no_hazard' or"
+          " 'no_hazard_no_deps'). No-store memory slices cannot be written to."
+      )
+    if self.no_hazard and self.no_hazard_no_deps:
+      raise ValueError(
+          "AccessAssumption redundancy: reference specifies both 'no_hazard'"
+          " and 'no_hazard_no_deps'. 'no_hazard_no_deps' strictly subsumes"
+          " 'no_hazard'."
+      )
+
+  def union(self, other: AccessAssumption) -> AccessAssumption:
+    return AccessAssumption(
+        no_store=self.no_store or other.no_store,
+        no_bank_conflict=self.no_bank_conflict or other.no_bank_conflict,
+        no_hazard=self.no_hazard or other.no_hazard,
+        no_hazard_no_deps=self.no_hazard_no_deps or other.no_hazard_no_deps,
+    )
+
+
 class MemoryRef(pallas_core.MemoryRef):
 
   def __matmul__(self, other, /):
@@ -228,17 +296,6 @@ class MemorySpace(enum.Enum):
   def memory_kind(self) -> str:
     return "device"
 
-  def __getattr__(self, name):
-    if name == "HOST":
-      # Deprecated on June 4, 2026.
-      deprecations.warn(
-          "pltpu-memory-space-host",
-          "pltpu.MemorySpace.HOST is deprecated. Use pl.HOST instead.",
-          stacklevel=2,
-      )
-      return jax_core.MemorySpace.Host
-    super().__getattr__(name)  # pyrefly: ignore[missing-attribute]
-
   def __str__(self) -> str:
     return self.value
 
@@ -248,7 +305,7 @@ class MemorySpace(enum.Enum):
   def from_type(self, ty):
     return MemoryRef(ty, memory_space=self)
 
-  def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
+  def __call__(self, shape: Sequence[int], dtype: jax.typing.DTypeLike):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
     return self.from_type(jax_core.ShapedArray(tuple(shape), dtype))
 
@@ -261,6 +318,27 @@ class MemorySpace(enum.Enum):
     if not isinstance(other, pallas_core.Mesh):
       return NotImplemented
     return pallas_core.CoreMemorySpace(self, other)
+
+
+@dataclasses.dataclass(frozen=True)
+class AccMemorySpace:
+  mxu_id: int
+
+  def __call__(self, shape: Sequence[int], dtype: jax.typing.DTypeLike):
+    shape = tuple(shape)
+    check_accumulator_ref(shape, dtype, self.mxu_id)
+    return MemoryRef(
+        jax_core.ShapedArray(shape, dtype),
+        memory_space=self,
+    )
+
+  def __matmul__(self, other, /):
+    if not isinstance(other, pallas_core.Mesh):
+      return NotImplemented
+    return pallas_core.CoreMemorySpace(self, other)
+
+  def __str__(self) -> str:
+    return f"ACC(mxu_id={self.mxu_id})"
 
 
 class dma_semaphore(pallas_core.semaphore_dtype):
@@ -458,7 +536,30 @@ def memory_space_to_tpu_memory_space(
           if memory_space.mesh.core_type is core_type
           else memory_space
       )
+    case acc if isinstance(acc, AccMemorySpace):
+      return acc
     case MemorySpace():
       return memory_space
     case _:
       raise ValueError(f"Invalid memory space: {memory_space!r}")
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
+class AccessAssumptionTransform(state_types.Transform):
+  """A TPU-specific ref transform attaching memory access assumptions to a TransformedRef."""
+
+  assumption: AccessAssumption
+
+  def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
+    return x
+
+  def transform_array(self, x: Any) -> Any:
+    return x
+
+  def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
+    return self
+
+  def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
+    del context
+    return pp.text(f"{{annotate({self.assumption})}}")

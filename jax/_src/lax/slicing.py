@@ -3339,6 +3339,12 @@ ad.primitive_transposes[scatter_p] = _scatter_transpose_rule
 batching.fancy_primitive_batchers[scatter_p] = (
   partial(_scatter_batching_rule, scatter_p))
 
+def _scatter_to_lojax(*args, update_jaxpr, update_consts, **params):
+  lo_jaxpr = pe.lower_jaxpr2(update_jaxpr)
+  return scatter_p.bind(*args, update_jaxpr=lo_jaxpr,
+                        update_consts=tuple(lo_jaxpr.consts), **params)
+scatter_p.to_lojax = _scatter_to_lojax
+
 
 def _scatter_lower_opaque(ctx, operand, indices, updates, *,
                           update_jaxpr, update_consts, dimension_numbers,

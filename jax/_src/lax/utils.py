@@ -28,7 +28,8 @@ from jax._src import mesh as mesh_lib
 from jax._src import state
 from jax._src.named_sharding import DuplicateSpecError, NamedSharding
 from jax._src.partition_spec import PartitionSpec as P
-from jax._src.layout import AutoLayoutSingleton, AutoLayout
+from jax._src.layout import (AutoLayoutSingleton, AutoLayout, get_layout_mode,
+                             LayoutMode)
 from jax._src.util import safe_zip
 from jax._src.typing import DimSize, DType, Shape
 
@@ -45,14 +46,14 @@ def _argnum_weak_type(*argnums):
 
 def standard_primitive(shape_rule, dtype_rule, name,
                        weak_type_rule=None, sharding_rule=None, vma_rule=None,
-                       ur_rule=None, memory_space_rule=None):
+                       ur_rule=None, memory_space_rule=None, layout_rule=None):
   weak_type_rule = weak_type_rule or _standard_weak_type_rule
   prim = core.Primitive(name)
   prim.def_impl(partial(dispatch.apply_primitive, prim))
   prim.def_abstract_eval(
       partial(standard_abstract_eval, prim, shape_rule, dtype_rule,
               weak_type_rule, sharding_rule, vma_rule, ur_rule,
-              memory_space_rule))
+              memory_space_rule, layout_rule))
   return prim
 
 def _get_array_abstraction_level(a): return a.array_abstraction_level
@@ -136,17 +137,40 @@ def call_shape_dtype_sharding_rule(
 
 mosaic_tpu_layout_rule = None
 
-def call_layout_rule(prim, in_avals, out_avals, **kwargs):
-  if all(isinstance(a.layout, AutoLayoutSingleton) for a in in_avals):
+def _shard_aval(aval):
+  mesh = aval.sharding.mesh
+  if mesh.are_all_axes_manual or mesh.empty:
+    shard_shape = aval.shape
+  else:
+    assert mesh.are_all_axes_explicit
+    shard_shape = aval.sharding.shard_shape(aval.shape)
+  return aval.update(shape=shard_shape, sharding=None,
+                     manual_axis_type=core.empty_mat)
+
+def call_layout_rule(prim, layout_rule, in_avals, out_avals, **kwargs):
+  cur_layout_mode = get_layout_mode()
+  if cur_layout_mode is LayoutMode.AUTO:
+    assert all(isinstance(a.layout, AutoLayoutSingleton) for a in in_avals)
     return (AutoLayout,) * len(out_avals) if prim.multiple_results else AutoLayout
-  # TODO(yashkatariya): The dispatch needs to be jax/pallas backend dependent.
-  # We need to check that bit here. The bit would also need to be in JaxprEqnCtx
-  layout_rule = mosaic_tpu_layout_rule
+  if cur_layout_mode is LayoutMode.PALLAS_TPU:
+    return mosaic_tpu_layout_rule(prim, in_avals, out_avals, **kwargs)  # type: ignore
+  if cur_layout_mode is LayoutMode.PALLAS_GPU:
+    from jax._src.pallas.mosaic_gpu.layout_rules import mgpu_layout_rule
+    return mgpu_layout_rule(prim, in_avals, out_avals, **kwargs)
+
+  assert cur_layout_mode is LayoutMode.JAX
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  if not cur_mesh.empty and not cur_mesh.are_all_axes_explicit_or_manual:
+    raise ValueError('Layout in Types can only be used in Explicit mode or '
+                     'Manual mode.')
   if layout_rule is None:
     raise NotImplementedError(
         f'Missing layout rule for {prim}. Please file an issue at'
         ' https://github.com/jax-ml/jax/issues')
-  return layout_rule(prim, in_avals, out_avals, **kwargs)
+  in_avals = [_shard_aval(a) for a in in_avals]
+  out_avals = [_shard_aval(a) for a in out_avals]
+  return layout_rule(out_avals if prim.multiple_results else out_avals[0],
+                     *in_avals, **kwargs)
 
 
 def _default_memory_space_rule(prim, *avals, **kwargs):
@@ -192,7 +216,7 @@ def manual_rule(prim, vma_rule, ur_rule, multi_out, *avals, **kwargs):
 
 def standard_abstract_eval(
     prim, shape_rule, dtype_rule, weak_type_rule, sharding_rule, vma_rule,
-    ur_rule, memory_space_rule, *avals, **kwargs):
+    ur_rule, memory_space_rule, layout_rule, *avals, **kwargs):
   assert not prim.multiple_results
   for a in avals:
     if isinstance(a, state.AbstractRef):
@@ -216,7 +240,7 @@ def standard_abstract_eval(
         out_shape, out_dtype, weak_type=weak_type, sharding=out_sharding,
         manual_axis_type=out_mat, memory_space=out_mem_space)
     out_layout = call_layout_rule(
-        prim, in_avals=avals, out_avals=[out_aval], **kwargs)
+        prim, layout_rule, in_avals=avals, out_avals=[out_aval], **kwargs)
     out_aval = out_aval.update(layout=out_layout)
     core.check_avals_context_mesh([out_aval], prim.name)
     return out_aval
@@ -225,7 +249,7 @@ def standard_abstract_eval(
 
 def standard_multi_result_abstract_eval(
     prim, shape_rule, dtype_rule, weak_type_rule, sharding_rule, vma_rule,
-    ur_rule, *avals, **kwargs):
+    ur_rule, layout_rule, *avals, **kwargs):
   assert prim.multiple_results
   assert all(isinstance(aval, core.ShapedArray) for aval in avals), avals
   least_specialized = max(map(type, avals), key=_get_array_abstraction_level)
@@ -245,7 +269,7 @@ def standard_multi_result_abstract_eval(
                      out_shapes, out_dtypes, weak_types, out_shardings,
                      out_mats, out_mem_spaces)]
     out_layouts = call_layout_rule(
-        prim, in_avals=avals, out_avals=out_avals, **kwargs)
+        prim, layout_rule, in_avals=avals, out_avals=out_avals, **kwargs)
     out_avals = [o.update(layout=l) for o, l in zip(out_avals, out_layouts)]
     core.check_avals_context_mesh(out_avals, prim.name)
     return out_avals

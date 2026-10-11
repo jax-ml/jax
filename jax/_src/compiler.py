@@ -130,6 +130,13 @@ def _get_cross_compile_backend(compile_only_backend):
   # to timeouts and hangs.
   if real_backend.platform_version != compile_only_backend.platform_version:
     return None
+
+  # b/563485832: Consider if this check should be done for TPU accelerators.
+  # NOTE: compare global device_count() only. A compile-only client has no
+  # addressable devices, so its local_device_count() is always 0 and comparing
+  # it would disable this path unconditionally.
+  if real_backend.device_count() != compile_only_backend.device_count():
+    return None
   return real_backend
 
 
@@ -181,7 +188,7 @@ def get_compile_options(
     num_replicas: int,
     num_partitions: int,
     device_assignment=None,
-    env_options_overrides: dict[str, str] | None = None,
+    env_options_overrides: dict[str, Any] | None = None,
     fdo_profile: bytes | None = None,
     detailed_logging: bool = True,
     backend: xc.Client | None = None,
@@ -244,10 +251,14 @@ def get_compile_options(
   ).value
 
   if env_options_overrides is not None:
-    # Some overrides are passed directly on build_options.
+    # Some overrides are passed directly on compile_options or build_options.
+    overrides_on_compile_options = ["individually_defined_output_indices"]
     overrides_on_build_options = ["optimization_level", "memory_fitting_level"]
 
     env_options_overrides = dict(env_options_overrides)
+    for name in overrides_on_compile_options:
+      if name in env_options_overrides:
+        setattr(compile_options, name, env_options_overrides.pop(name))
     for name in overrides_on_build_options:
       if name in env_options_overrides:
         setattr(

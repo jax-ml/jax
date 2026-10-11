@@ -127,6 +127,15 @@ class CompilerParams:
     profile_bounds_check: If True, profiler events past profile_space are
       dropped (the trace is truncated) instead of corrupting SMEM, at the cost
       of a slightly higher per-event profiling overhead.
+    skip_device_barrier: If True, skips the cross-device barrier before kernel
+      launch. Improper use of this flag can lead to race conditions. !!!Use with
+      caution!!! Defaults to False.
+    is_multi_process: If True, indicates that the kernel runs in a multi-process
+      environment and performs cross-process device communication. This is
+      mostly needed when compiling distributed-over-processes code with an
+      AbstractMesh, as with a concrete Mesh in standard JIT compilation,
+      multi-process execution is detected automatically from the mesh devices.
+      Defaults to False.
   """
   approx_math: bool = False
   dimension_semantics: Sequence[DimensionSemantics] | None = None
@@ -138,6 +147,8 @@ class CompilerParams:
   profile_trace_scope: TraceScope = TraceScope.WARPGROUP
   profile_bounds_check: bool = False
   lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Warpgroup
+  skip_device_barrier: bool = False
+  is_multi_process: bool = False
 
   def __post_init__(self):
     if self.dimension_semantics is not None:
@@ -231,6 +242,56 @@ class SemaphoreType(enum.Enum):
   def get_ref_aval(self) -> _Ref:
     return self(()).get_ref_aval()
 
+def _check_no_semaphore_outputs(out_type) -> None:
+  """Raises if any kernel output is a semaphore or a semaphore Ref.
+
+  Semaphores may only be created by ``alloc_semaphore`` outside of a kernel and
+  passed into it as operands.
+  """
+  for leaf in tree_util.tree_leaves(out_type):
+    if isinstance(leaf, SemaphoreType):
+      dtype = leaf.get_array_aval().dtype
+    else:
+      dtype = getattr(leaf, "dtype", None)
+
+    if dtype is not None and (
+        isinstance(dtype, pallas_core.AbstractSemaphoreTy)
+        or dtypes.issubdtype(dtype, pallas_core.semaphore_dtype)
+    ):
+      raise ValueError(
+          "Kernels cannot return semaphores. Allocate them as scratch if only"
+          " used inside this kernel, or via plgpu.alloc_semaphore before the"
+          " kernels that use them."
+      )
+
+
+def alloc_semaphore(shape: tuple[int, ...] = ()) -> jax.Ref:
+  """Returns a zero-initialized GMEM semaphore Ref.
+
+  This function can only be used outside of a kernel; for semaphores scoped to
+  a single kernel, use ``scratch_types`` instead. It is the only way to create
+  semaphores that outlive a single kernel invocation. It performs *no*
+  cross-device synchronization: the caller is responsible for the initial
+  sync, e.g. by running a kernel that is data dependent on the returned refs
+  with ``skip_device_barrier=False``.
+
+  Example::
+
+    sem = plgpu.alloc_semaphore((num_devices,))
+    # The first kernel consuming ``sem`` must not skip the device barrier, so
+    # that all devices observe the zero-initialized semaphores before use.
+    out = plgpu.kernel(body, out_type=out_type, grid=grid, grid_names=names)(
+        sem, x
+    )
+
+  Args:
+    shape: The shape of the semaphore array.
+  """
+
+  zeros = lax.convert_element_type(
+      jnp.zeros(tuple(shape), jnp.int32), pallas_core.Semaphore()
+  )
+  return jax_core.new_ref(zeros, memory_space=MemorySpace.GMEM)
 
 class PrimitiveSemantics(enum.Enum):
   """Thread semantics for a primitives at the Pallas user-level."""
@@ -252,12 +313,11 @@ WGxWARP_SEMANTICS = (
 
 def kernel(
     body: Callable[..., None] | api.NotSpecified = api.NotSpecified(),
-    out_shape: object | api.NotSpecified = api.NotSpecified(),
     *,
-    out_type: object | api.NotSpecified = api.NotSpecified(),
-    scratch_types: ScratchShapeTree | api.NotSpecified = api.NotSpecified(),
-    scratch_shapes: ScratchShapeTree | api.NotSpecified = api.NotSpecified(),
+    out_type: object = (),
+    scratch_types: ScratchShapeTree = (),
     compiler_params: pallas_core.CompilerParams | None = None,
+    cost_estimate: pallas_core.CostEstimate | None = None,
     # Mesh kwargs
     grid: tuple[int, ...] = (),
     grid_names: tuple[str, ...] = (),
@@ -277,14 +337,13 @@ def kernel(
       arguments passed into kernel returned by this function. The number of
       output and scratch Refs are determined by `out_shape` and `scratch_shapes`
       respectively.
-    out_shape: A deprecated alias for ``out_type``.
     out_type: The type of the output. Should be a PyTree of
       ``jax.ShapeDtypeStruct`` or JAX types.
-    scratch_shapes: A deprecated alias for ``scratch_types``.
     scratch_types: The types of the scratch ``Ref``\s to allocate. Should be a
       PyTree of ``jax.ShapeDtypeStruct`` or JAX types.
     compiler_params: Additional compiler options. See the `CompilerParams`
       dataclass for more details.
+    cost_estimate: The cost estimate of the function.
     grid: A tuple of integers specifying the size of the kernel grid.
     grid_names: The axis names of the grid. Must be the same length as `grid`.
     cluster: A tuple of integers specifying the size of the kernel cluster.
@@ -308,11 +367,10 @@ def kernel(
   if isinstance(body, api.NotSpecified):
     return lambda fun: kernel(
         fun,
-        out_shape,
         out_type=out_type,
-        scratch_shapes=scratch_shapes,
         scratch_types=scratch_types,
         compiler_params=compiler_params,
+        cost_estimate=cost_estimate,
         grid=grid,
         grid_names=grid_names,
         cluster=cluster,
@@ -323,36 +381,6 @@ def kernel(
         debug=debug,
         **mesh_kwargs,
     )
-
-  if (
-      not isinstance(out_shape, api.NotSpecified)
-      or not isinstance(scratch_shapes, api.NotSpecified)
-  ):
-    deprecations.warn(
-        "jax-pallas-mgpu-shapes-types",
-        "The out_shape and scratch_shapes arguments to plgpu.kernel are"
-        " deprecated. Use out_type and scratch_types instead.",
-        stacklevel=2,
-    )
-
-  if not isinstance(out_shape, api.NotSpecified):
-    if not isinstance(out_type, api.NotSpecified):
-      raise ValueError(
-          "Cannot specify both out_shape and out_type. Use out_type."
-      )
-    out_type = out_shape
-  elif isinstance(out_type, api.NotSpecified):
-    out_type = ()
-
-  if not isinstance(scratch_shapes, api.NotSpecified):
-    if not isinstance(scratch_types, api.NotSpecified):
-      raise ValueError(
-          "Cannot specify both scratch_shapes and scratch_types. Use"
-          " scratch_types."
-      )
-    scratch_types = scratch_shapes
-  elif isinstance(scratch_types, api.NotSpecified):
-    scratch_types = ()
 
   if unwrap_out := not isinstance(out_type, (tuple, list)):
     out_type = (out_type,)
@@ -367,9 +395,22 @@ def kernel(
       **mesh_kwargs,
   )
 
+  _check_no_semaphore_outputs(out_type)
+
   # TODO(slebedev): Use mesh-specific batching rules in ``mpmd_map`` instead.
   @custom_batching.custom_vmap
   def wrapper(*operands):
+    for op in tree_util.tree_leaves(operands):
+      if not isinstance(op, state.AbstractRef):
+        aval = jax_core.typeof(op)
+        if isinstance(aval, jax_core.ShapedArray) and (
+            dtypes.issubdtype(aval.dtype, pallas_core.semaphore_dtype)
+            or isinstance(aval.dtype, pallas_core.AbstractSemaphoreTy)
+        ):
+          raise ValueError(
+              "Cannot pass semaphores into kernels as arrays. Wrap them in"
+              f" jax.new_ref: {op}"
+          )
     thread_name = mesh.thread_name if mesh.thread_name is not None else ()
 
     def kernel_body(*refs):
@@ -395,6 +436,7 @@ def kernel(
           out_type=out_type,
           mesh=mesh,
           compiler_params=compiler_params,
+          cost_estimate=cost_estimate,
           interpret=interpret,
           name=name,
           debug=debug,
@@ -417,11 +459,23 @@ def kernel(
     out_type_ = out_type[0] if unwrap_out else out_type
     add_batch_dim = lambda x: x.update(shape=(axis_size, *x.shape))
     mesh_kwargs_ = dict(mesh_kwargs)
+    batched_cost_estimate = None
+    if cost_estimate is not None and jax_core.is_constant_dim(axis_size):
+      batched_cost_estimate = dataclasses.replace(
+          cost_estimate,
+          flops=cost_estimate.flops * axis_size,
+          bytes_accessed=cost_estimate.bytes_accessed * axis_size,
+          transcendentals=cost_estimate.transcendentals * axis_size,
+          remote_bytes_transferred=(
+              cost_estimate.remote_bytes_transferred * axis_size
+          ),
+      )
     out = kernel(
         batched_body,
         out_type=tree_util.tree_map(add_batch_dim, out_type_),
         scratch_types=scratch_types,
         compiler_params=compiler_params,
+        cost_estimate=batched_cost_estimate,
         grid=(axis_size,) + grid,
         grid_names=(axis_name,) + grid_names,  # pyrefly: ignore[bad-argument-type]
         cluster=cluster,
@@ -508,7 +562,13 @@ def _ref_group_tmem_col_size(refs: _GPUMemoryRefTree) -> int:
   """
   ncols = 0
   for ref in jax.tree.leaves(refs):
-    ref_ncols = ref.layout.cols_in_shape(ref.shape,
+    # Refs with leading batch dimensions are collapsed to 2D in TMEM (see
+    # `CollapseLeadingBatchDimensionsTransform`), so we compute the column count
+    # on the collapsed shape.
+    shape = ref.shape
+    if len(shape) > 2:
+      shape = (shape[-2], math.prod(shape[:-2]) * shape[-1])
+    ref_ncols = ref.layout.cols_in_shape(shape,
                                          dtypes.itemsize_bits(ref.dtype))
     ncols += align_to(ref_ncols, TMEM_COL_ALIGNMENT)
   return ncols
@@ -534,7 +594,10 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
   This is the moral equivalent of `jax.tree.leaves` for aliased references.
   """
   flat_refs = []
-  if ref_union.memory_space == SMEM:
+  ref_union_mem_space = (ref_union.memory_space
+                         if isinstance(ref_union, AbstractRefUnion) else
+                         jax_core.typeof(ref_union).memory_space)
+  if ref_union_mem_space == SMEM:
     union_bytes = 0
     for group_idx, ref_group in enumerate(ref_union.refs):
       byte_offset = 0
@@ -567,7 +630,7 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
       flat_refs.append(jax.tree.map(unflatten, ref_group))
       union_bytes = max(union_bytes, byte_offset)
     assert union_bytes == ref_union.shape[0]
-  elif ref_union.memory_space == TMEM:
+  elif ref_union_mem_space == TMEM:
     union_cols = 0
     for group_idx, ref_group in enumerate(ref_union.refs):
       col_offset = 0
@@ -576,7 +639,9 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
         col_offset = align_to(col_offset, TMEM_COL_ALIGNMENT)
         if not isinstance(ref, pallas_core.TransformedRef):
           ref = pallas_core.TransformedRef(ref, transforms=())
-        ncols = ref.layout.cols_in_shape(ref.shape,
+        # `ref.ref.shape` is the physical (collapsed to 2D) TMEM shape, whereas
+        # `ref.shape` may carry leading batch dimensions.
+        ncols = ref.layout.cols_in_shape(ref.ref.shape,
                                          dtypes.itemsize_bits(ref.dtype))
         transform = ExtractAliasedRef.from_transformed_ref(
             ref, col_offset, group_idx, layout=ref.layout)
@@ -745,7 +810,7 @@ class TilingTransform(state_types.Transform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class UntilingTransform(state_types.Transform):
-  tiling: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  tiling: tuple[int, ...] = jax.tree.static()
 
   def transform_type(self, x):
     match x:
@@ -1008,9 +1073,7 @@ def commute_transpose_indexer(
 @dataclasses.dataclass
 class PeerMemRef(state_types.Transform):
   device_id: Any
-  device_id_type: pallas_primitives.DeviceIdType = dataclasses.field(
-      metadata=dict(static=True)
-  )
+  device_id_type: pallas_primitives.DeviceIdType = jax.tree.static()
 
   def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
     raise NotImplementedError()
@@ -1027,9 +1090,7 @@ class PeerMemRef(state_types.Transform):
 @tree_util.register_dataclass
 @dataclasses.dataclass
 class MulticastRef(state_types.Transform):
-  collective_axes: tuple[Hashable, ...] = dataclasses.field(
-      metadata=dict(static=True)
-  )
+  collective_axes: tuple[Hashable, ...] = jax.tree.static()
 
   def transform_type(self, x):
     return x
@@ -1045,10 +1106,19 @@ class MulticastRef(state_types.Transform):
 
 def remote_ref(
     ref: _Ref,
-    device_id: jax.typing.ArrayLike,
-    device_id_type: pallas_primitives.DeviceIdType = pallas_primitives.DeviceIdType.MESH,
+    device_id: pallas_primitives.DeviceId,
+    device_id_type: pallas_primitives.DeviceIdType | None = None,
 ) -> pallas_core.TransformedRef:
   """Translate memref to a symmetric memref on a peer device."""
+  if device_id_type is not None:
+    deprecations.warn(
+        "jax-pallas-device-id-type",
+        "device_id_type is deprecated and will be removed in a future release.",
+        stacklevel=2,
+    )
+  else:
+    device_id_type = pallas_primitives.DeviceIdType.MESH
+  device_id = pallas_primitives.canonicalize_device_id(device_id)
   if not isinstance(ref, pallas_core.TransformedRef):
     if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
       raise TypeError("ref must be a reference")
@@ -1063,9 +1133,7 @@ def remote_ref(
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class ClusterRefTransform(state_types.Transform):
-  dims: tuple[jax_core.AxisName, ...] = dataclasses.field(
-      metadata=dict(static=True)
-  )
+  dims: tuple[jax_core.AxisName, ...] = jax.tree.static()
   idxs: tuple[Any, ...]
 
   def __post_init__(self):
@@ -1123,18 +1191,6 @@ def multicast_ref(
   )
 
 
-def transform_ref(
-    ref: pallas_core.TransformedRef,
-    transform: state_types.Transform
-) -> pallas_core.TransformedRef:
-  if not isinstance(ref, pallas_core.TransformedRef):
-    if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
-      raise TypeError("ref must be a reference")
-    ref = pallas_core.TransformedRef(ref, transforms=())
-  return pallas_core.TransformedRef(
-      ref.ref, (*ref.transforms, transform),
-  )
-
 def transpose_ref(
     ref: pallas_core.TransformedRef | Any,
     permutation: tuple[int, ...],
@@ -1149,17 +1205,15 @@ def transpose_ref(
 @dataclasses.dataclass(frozen=True)
 class ExtractAliasedRef(state_types.Transform):
   """Bitcasts the underlying ref at the given offset to the given shape and dtype."""
-  dtype: dtypes.DType = dataclasses.field(metadata=dict(static=True))
-  shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
-  offset: int = dataclasses.field(metadata=dict(static=True))
+  dtype: dtypes.DType = jax.tree.static()
+  shape: tuple[int, ...] = jax.tree.static()
+  offset: int = jax.tree.static()
 
   # The index of the group of this aliased ref within the input RefUnion.
-  alias_group_idx: int = dataclasses.field(metadata=dict(static=True))
+  alias_group_idx: int = jax.tree.static()
 
   # TMEM-specific params
-  layout: tcgen05.TMEMLayout | None = dataclasses.field(
-      metadata=dict(static=True)
-  )
+  layout: tcgen05.TMEMLayout | None = jax.tree.static()
 
   @classmethod
   def from_transformed_ref(
@@ -1216,7 +1270,7 @@ class SwizzleTransform(state_types.Transform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class UnswizzleRef(state_types.Transform):
-  swizzle: int = dataclasses.field(metadata=dict(static=True))
+  swizzle: int = jax.tree.static()
 
   def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
     # Swizzling preserves the type
@@ -1322,7 +1376,7 @@ class ExpandLeadingBatchDimensionsTransform(state_types.Transform):
   n)`.
   """
 
-  batch_shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  batch_shape: tuple[int, ...] = jax.tree.static()
 
   def transform_type(
       self, x: jax_core.AbstractValue
@@ -1372,7 +1426,7 @@ class ExpandLeadingBatchDimensionsTransform(state_types.Transform):
 
     batch_idx = 0
     for idx, size in zip(batch_indices, batch_shape):
-      assert isinstance(idx, indexing.IntIndexer)
+      assert not isinstance(idx, indexing.Slice)
       batch_idx = batch_idx * size + idx
 
     if isinstance(col_idx, indexing.Slice):
@@ -1504,15 +1558,16 @@ class Barrier:
 
   Attributes:
     num_arrivals: The number of arrivals that will be recorded by this barrier.
-    num_barriers: The number of barriers that will be created. Individual
-      barriers can be accessed by indexing into the barrier Ref.
+    num_barriers: The shape of the barrier array to create. By default a single
+      barrier is created, and the reference to it has an empty shape. Individual
+      barriers of an array can be accessed by indexing into the barrier Ref.
     orders_tensor_core: If False, a successful wait from one thread does not
       guarantee that the TensorCore-related operations in other threads have
       completed. Similarly, when False any TensorCore operation in the waiting
       thread is allowed to begin before the wait succeeds.
   """
   num_arrivals: int = 1
-  num_barriers: int | Sequence[int] = 1
+  num_barriers: int | Sequence[int] = ()
   orders_tensor_core: bool = False
 
   def __post_init__(self):
@@ -1535,7 +1590,7 @@ class Barrier:
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class ClusterBarrier:
   collective_axes: tuple[str | tuple[str, ...], ...]
-  num_barriers: int | Sequence[int] = 1
+  num_barriers: int | Sequence[int] = ()
   num_arrivals: int = 1
   orders_tensor_core: bool = False
   leader_tracked: bool = False
@@ -1565,7 +1620,7 @@ class ClusterBarrier:
 @dataclasses.dataclass(frozen=True)
 class WGMMAAccumulatorRef:
   shape: tuple[int, int]
-  dtype: jnp.dtype = jnp.float32
+  dtype: jax.typing.DTypeLike = jnp.float32
   _init: Any = state_types.uninitialized
 
   def get_ref_aval(self) -> state.AbstractRef:
@@ -1800,6 +1855,8 @@ _pdl_effect = PdlEffect()
 
 # We define the layout_cast primitive here, because it needs to be available in
 # the lowering code (to provide layout hints to the rules).
+#
+# TODO(bchetioui): unify layout_cast_p with relayout_p
 layout_cast_p = jax_core.Primitive("layout_cast")
 
 
@@ -1944,17 +2001,17 @@ class Layout(SomeLayout, enum.Enum):
       case Layout.TMA_INDICES:
         return mgpu.TMA_INDICES_LAYOUT
       case Layout.MMA_LHS:
-        (dtype,) = args
-        element_type = mgpu_utils.dtype_to_ir_type(dtype)
-        return mgpu.MMALayouts(element_type).lhs
+        normalize_args = lambda dtype, *, m_warps=4: (dtype, m_warps)
+        dtype, m_warps = normalize_args(*args, **kwargs)
+        return mgpu.MMALayouts(dtype, m_warps=m_warps).lhs
       case Layout.MMA_RHS:
-        (dtype,) = args
-        element_type = mgpu_utils.dtype_to_ir_type(dtype)
-        return mgpu.MMALayouts(element_type).rhs
+        normalize_args = lambda dtype, *, m_warps=4: (dtype, m_warps)
+        dtype, m_warps = normalize_args(*args, **kwargs)
+        return mgpu.MMALayouts(dtype, m_warps=m_warps).rhs
       case Layout.MMA_ACC:
-        (dtype,) = args
-        element_type = mgpu_utils.dtype_to_ir_type(dtype)
-        return mgpu.MMALayouts(element_type).acc
+        normalize_args = lambda dtype, *, m_warps=4: (dtype, m_warps)
+        dtype, m_warps = normalize_args(*args, **kwargs)
+        return mgpu.MMALayouts(dtype, m_warps=m_warps).acc
       case Layout.TMA_INDICES_4:
         return mgpu.TMA_INDICES_4_LAYOUT
 

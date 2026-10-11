@@ -69,7 +69,8 @@ from jax._src.sharding_impls import (
     prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
     _internal_use_concrete_mesh)
 from jax._src.layout import (Format, Layout, AutoLayoutSingleton,
-                             get_layout_for_vmap, AutoLayout)
+                             get_layout_for_vmap, AutoLayout, use_layout_mode,
+                             LayoutMode)
 from jax._src.state.types import RefEffect
 from jax._src.traceback_util import api_boundary
 from jax._src import flattree as ft
@@ -80,7 +81,7 @@ from jax._src.typing import Array, ArrayLike
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps, distributed_debug_log,
     split_list, split_list_checked, weakref_lru_cache, merge_lists, subs_list,
-    fun_name, foreach)
+    fun_name)
 from jax._src.lib import jax_jit
 
 map, unsafe_map = safe_map, map
@@ -133,13 +134,20 @@ def _run_python_pjit(p, args_flat, fun: Callable, args, kwargs):
   for arg in args_flat:
     dispatch.check_arg(arg)
 
+  jaxpr = p.params['jaxpr']
   try:
     if (core.trace_state_clean() and not config.debug_key_reuse.value
-        and not p.params['jaxpr'].is_high):
+        and not any(a.is_high for a in (*jaxpr.in_avals, *jaxpr.out_avals))):
+      params = p.params
+      if jaxpr.is_high:
+        # Only intermediates are hijax. Lower to lojax here so that we compile
+        # directly, which lets the C++ dispatch path call the executable.
+        params = dict(params, jaxpr=pe.lower_jaxpr2(jaxpr))
+        jaxpr = params['jaxpr']
       args_flat = map(core.full_lower, args_flat)
       core.check_eval_args(args_flat)
       out_flat, compiled, profiler, const_args = _pjit_call_impl_python(
-          *args_flat, **p.params)
+          *args_flat, **params)
     else:
       out_flat = jit_p.bind(*args_flat, **p.params)
       compiled = None
@@ -176,10 +184,9 @@ def _run_python_pjit(p, args_flat, fun: Callable, args, kwargs):
           f"invalid value ({e.ty}) encountered in {fun.__qualname__}") from None
     api_util.maybe_recursive_nan_check(e, fun, args, kwargs)  # should always raise.
     raise RuntimeError("Internal error") from e  # fall-back error to be safe.
-
   outs = tree_unflatten(p.out_tree, out_flat)
-  return (outs, out_flat, p.out_tree, args_flat,
-          p.params['jaxpr'], compiled, profiler, const_args)
+  return (outs, out_flat, p.out_tree, args_flat, jaxpr, compiled, profiler,
+          const_args)
 
 
 def _need_to_rebuild_with_fdo(pgle_profiler):
@@ -351,7 +358,7 @@ def _canonicalize_inline(inline: bool | api.Inline) -> api.Inline:
   if isinstance(inline, api.Inline):
     return inline
   if inline is True:
-    return api.Inline.JAX_EARLY
+    return api.Inline.JAX_LATE
   if inline is False:
     return api.Inline.AUTO
   raise ValueError(f"Invalid inline option: {inline!r}")
@@ -1314,7 +1321,7 @@ class PjitLoweringResult:
 def _pjit_lower_jaxpr_to_fun(
     ctx: mlir.LoweringRuleContext, name: str, jaxpr: core.Jaxpr,
     in_shardings, out_shardings,
-    in_layouts, out_layouts) -> PjitLoweringResult:
+    in_layouts, out_layouts, *, detached: bool = False) -> PjitLoweringResult:
   effects = tuple(effects_lib.ordered_effects.filter_in(jaxpr.effects))
   const_args_and_avals = core.jaxpr_const_args(jaxpr)
   const_args, const_arg_avals = util.unzip2(const_args_and_avals)
@@ -1342,7 +1349,8 @@ def _pjit_lower_jaxpr_to_fun(
       out_avals=jaxpr.out_avals,
       arg_shardings=arg_shardings, result_shardings=result_shardings,
       use_sharding_annotations=False,
-      arg_layouts=in_layouts_expanded, result_layouts=out_layouts)
+      arg_layouts=in_layouts_expanded, result_layouts=out_layouts,
+      detached=detached)
   output_types = [mlir.aval_to_ir_types(mod_ctx, a) for a in ctx.avals_out]
   output_types = [mlir.token_type()] * len(effects) + output_types
   flat_output_types, output_treedef = mlir.ir_tree_registry.flatten(output_types)
@@ -1362,16 +1370,17 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
     num_devices = axis_ctx.num_devices
   elif isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
     num_devices = axis_ctx.mesh.size
+  is_jax_late = inline is api.Inline.JAX_LATE
   key = (jit_p, name, jaxpr, num_devices,
          pxla.SemanticallyEqualShardings(in_shardings, jaxpr.in_avals),
          pxla.SemanticallyEqualShardings(out_shardings, jaxpr.out_avals),
-         in_layouts, out_layouts)
+         in_layouts, out_layouts, is_jax_late)
 
   result = mod_ctx.cached_primitive_lowerings.get(key, None)
   if result is None:
     result = _pjit_lower_jaxpr_to_fun(
         ctx, name, jaxpr, in_shardings, out_shardings,
-        in_layouts, out_layouts)
+        in_layouts, out_layouts, detached=is_jax_late)
     mod_ctx.cached_primitive_lowerings[key] = result
 
   effects = result.effects
@@ -1388,7 +1397,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   with mlir.source_info_to_location(
       ctx.module_context, None,
       ctx.name_stack.extend(result.wrapped_name), ctx.traceback):
-    if inline is api.Inline.JAX_LATE:
+    if is_jax_late:
       results = jax_mlir_ext.inlined_func_call(result.func.operation, flat_args)
     else:
       call = func_dialect.CallOp(
@@ -1653,7 +1662,8 @@ def _pjit_remat(trace, *args, jaxpr, **params):
   res_ = iter(res)
   res_full = [primals_out[f] if f is not None else next(res_) for f in fwds]
   assert next(res_, None) is None
-  return primals_out, partial(jit_p.bind, *res_full, jaxpr=jaxpr_rem, **params_rem)
+  rem = lambda res_full, *args: jit_p.bind(*res_full, *args, jaxpr=jaxpr_rem, **params_rem)
+  return primals_out, res_full, rem
 remat.rules[jit_p] = _pjit_remat
 
 def _add_res_to_params(num_res_out, num_res_in, in_shardings, out_shardings,
@@ -1921,21 +1931,29 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs):
   return trans_jaxpr, cell.out_tree  # pyrefly: ignore[missing-attribute]
 ad.fancy_transposes[jit_p] = _pjit_transpose_fancy
 
-@weakref_lru_cache
 def _dce_jaxpr_pjit(
-    jaxpr: core.Jaxpr, used_outputs: tuple[bool, ...]
+    jaxpr: core.Jaxpr, used_outputs: tuple[bool, ...],
+    live_inputs: tuple[bool, ...],
 ) -> tuple[core.Jaxpr, list[bool]]:
   # dce_jaxpr preserves attached consts (constvars are never pruned).
-  return pe.dce_jaxpr(jaxpr, used_outputs)
+  instantiate = [v.aval is core.abstract_token for v in jaxpr.invars]
+  return pe.dce_jaxpr(jaxpr, used_outputs, instantiate=instantiate,
+                      live_inputs=live_inputs)
 
 
-def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
+def dce_jaxpr_pjit_rule(used_outputs: list[bool], live_ins: list[bool],
+                        eqn: core.JaxprEqn
                         ) -> tuple[list[bool], core.JaxprEqn | None]:
-  if not any(used_outputs) and not pe.has_effects(eqn):
+  if not any(used_outputs) and not pe.has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
 
   dced_jaxpr, used_inputs = _dce_jaxpr_pjit(
-      eqn.params['jaxpr'], tuple(used_outputs))
+      eqn.params['jaxpr'], tuple(used_outputs), tuple(live_ins))
+  if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
+    return used_inputs, None
+  if (dced_jaxpr is eqn.params['jaxpr'] and
+      all(used_inputs) and all(used_outputs)):
+    return used_inputs, eqn
 
   def keep_where(xs, keeps):
     return tuple(x for x, keep in zip(xs, keeps) if keep)
@@ -1950,16 +1968,13 @@ def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
       out_layouts=keep_where(eqn_params["out_layouts"], used_outputs),
       donated_invars=keep_where(eqn_params["donated_invars"], used_inputs),
   )
-  if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
-    return used_inputs, None
-  else:
-    new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
-    new_effs = core.eqn_effects(dced_jaxpr, new_invars)
-    new_eqn = core.new_jaxpr_eqn(
-        new_invars,
-        [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
-    return used_inputs, new_eqn
+  new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
+  new_effs = core.eqn_effects(dced_jaxpr, new_invars)
+  new_eqn = core.new_jaxpr_eqn(
+      new_invars,
+      [v for v, used in zip(eqn.outvars, used_outputs) if used],
+      eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
+  return used_inputs, new_eqn
 
 pe.dce_rules[jit_p] = dce_jaxpr_pjit_rule
 
@@ -2048,7 +2063,7 @@ def with_sharding_constraint(x, shardings):
   Returns:
     x_with_shardings: PyTree of jax.Arrays with specified sharding constraints.
 
-  .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/parallel.html
+  .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/201/sharding.html
   """
   x_flat, tree = tree_flatten(x)
   x_avals_flat = [core.shaped_abstractify(x) for x in x_flat]
@@ -2538,70 +2553,27 @@ def _layout_constraint_batcher(axis_data, vals_in, dims_in, layout):
   return y, d
 batching.fancy_primitive_batchers[layout_constraint_p] = _layout_constraint_batcher
 
-# ------------------------- program_order --------------------------------------
-
-def program_order(f=None, *, enforce: bool):
-  kwargs = dict(enforce=enforce)
-  if f is None:
-    return lambda g: _program_order(g, **kwargs)
-  return _program_order(f, **kwargs)
-
-def _program_order(fun, *, enforce):
-  @wraps(fun)
-  def wrapped(*args):
-    if not enforce:
-      return api.jit(fun)(*args)
-    traced = api.jit(fun).trace(*args)
-    jaxpr = traced.jaxpr
-    args_flat, _ = tree_flatten(args)
-    flat_outputs = eval_jaxpr_program_order(
-        jaxpr, jaxpr.consts, *traced._consts, *args_flat)
-    return tree_util.tree_unflatten(traced.out_tree, flat_outputs)
-  return wrapped
-
-def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
-  from jax._src.lax.lax import optimization_barrier  # type: ignore
-
-  def read(v) -> Any:
-    return v.val if isinstance(v, core.Literal) else env[v]
-
-  def write(v, val: Any) -> None:
-    if config.enable_checks.value:
-      assert core.typecheck(v.aval, val), (v.aval, typeof(val), val)
-    env[v] = val
-
-  def eqn_write(eqn, ans):
-    if eqn.primitive.multiple_results:
-      foreach(write, eqn.outvars, ans)
-    else:
-      ans = ans[0] if isinstance(ans, list) else ans
-      write(eqn.outvars[0], ans)
-
-  env = {}
-  foreach(write, jaxpr.constvars, consts)
-  foreach(write, jaxpr.invars, args)
-  last_used = core.last_used(jaxpr)
-  prev_eqn = None
-  for eqn in jaxpr.eqns:
-    bind_params = eqn.primitive.get_bind_params(eqn.params)
-    name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
-    traceback = eqn.source_info.traceback
-    with (source_info_util.user_context(traceback, name_stack=name_stack),
-          eqn.ctx.manager):
-      cur_inps = map(read, eqn.invars)
-      if prev_eqn is not None:
-        prev_outs = map(read, prev_eqn.outvars)
-        # TODO(yashkatariya): Maybe dedup prev_outs and cur_inps.
-        prev_outs, cur_inps = optimization_barrier((prev_outs, cur_inps))
-        eqn_write(prev_eqn, prev_outs)
-      ans = eqn.primitive.bind(*cur_inps, **bind_params)
-    eqn_write(eqn, ans)
-    prev_eqn = eqn
-    core.clean_up_dead_vars(eqn, env, last_used)
-  outvals = map(read, jaxpr.outvars)
-  return outvals
-
 # ----------------------------- explicit layout --------------------------------
+
+def get_layout_mode_from_layout(l):
+  if isinstance(l, Layout):
+    return LayoutMode.JAX
+  # TODO(yashkatariya): Replace this with `isinstance(l, ArrayLayout)`.
+  elif type(l).__name__ == 'ArrayLayout':
+    return LayoutMode.PALLAS_TPU
+  elif type(l).__name__ == 'GPUTiledLayout':
+    return LayoutMode.PALLAS_GPU
+  else:
+    return LayoutMode.AUTO
+
+def get_layout_mode_from_args(args):
+  layouts = [core.typeof(a).layout for a in args]
+  if not all(type(l) is type(layouts[0]) for l in layouts):
+    raise TypeError(
+        'All args passed to `explicit_layout` must have the same type of'
+        f' layout. Got {layouts=}')
+  return get_layout_mode_from_layout(layouts[0])
+
 
 def explicit_layout(f=None, /, *, in_layouts=None):
   kwargs = dict(in_layouts=in_layouts)
@@ -2619,7 +2591,9 @@ def _explicit_layout(fun, *, in_layouts):
     else:
       _in_layouts = in_layouts
     args = relayout(args, _in_layouts)
-    out = fun(*args)
+    mode = get_layout_mode_from_args(args)
+    with use_layout_mode(mode):
+      out = fun(*args)
     return relayout(out, AutoLayout)
   return decorator
 
@@ -2644,8 +2618,41 @@ def _relayout_impl(x, *, dst_layout):
 relayout_p.def_impl(_relayout_impl)
 
 def _relayout_hlo_lowering(ctx, x_node, *, dst_layout):
-  raise NotImplementedError
+  aval_out, = ctx.avals_out
+  return [mlir.lower_with_explicit_types(ctx, x_node, aval_out)]
 mlir.register_lowering(relayout_p, _relayout_hlo_lowering)
+
+def _relayout_jvp_rule(primals, tangents, *, dst_layout):
+  (p,), (t,) = primals, tangents
+  primal_out = relayout_p.bind(p, dst_layout=dst_layout)
+  if type(t) is ad.Zero:
+    return primal_out, ad.p2tz(primal_out)
+  else:
+    tangent_out = relayout_p.bind(t, dst_layout=dst_layout)
+    return primal_out, tangent_out
+ad.primitive_jvps[relayout_p] = _relayout_jvp_rule
+
+def _relayout_linearize(_, nzs, x, *, dst_layout):
+  (nz,) = nzs
+  primal_out = relayout_p.bind(x, dst_layout=dst_layout)
+
+  def linearized(residuals, _, tangent):
+    assert not residuals
+    return (relayout_p.bind(tangent, dst_layout=dst_layout)
+            if nz else ad.p2tz(tangent))
+  return primal_out, nz, (), None, linearized
+ad.primitive_linearizations[relayout_p] = _relayout_linearize
+
+def _relayout_transpose_fancy(ct, x, *, dst_layout):
+  assert isinstance(x, ad.GradAccum)
+  if type(ct) is ad.Zero or isinstance(x, ad.NullAccum):
+    return
+  out_layout = x.aval.layout  # type: ignore
+  mode = get_layout_mode_from_layout(out_layout)
+  with use_layout_mode(mode):
+    x_bar = relayout_p.bind(ct, dst_layout=out_layout)
+    x.accum(x_bar)
+ad.fancy_transposes[relayout_p] = _relayout_transpose_fancy
 
 # ------------------------------- helpers --------------------------------------
 

@@ -23,6 +23,7 @@ import logging
 import os
 import platform
 import sys
+import sysconfig
 import copy
 
 from tools import command, utils
@@ -72,12 +73,16 @@ WHEEL_BUILD_TARGET_DICT = {
     "jax-oneapi-pjrt": "//jaxlib/tools:jax_oneapi_pjrt_wheel",
 }
 
+
 def add_global_arguments(parser: argparse.ArgumentParser):
   """Adds all the global arguments that applies to all the CLI subcommands."""
+  default_python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+  if sysconfig.get_config_var("Py_GIL_DISABLED"):
+    default_python_version += "t"
   parser.add_argument(
       "--python_version",
       type=str,
-      default=f"{sys.version_info.major}.{sys.version_info.minor}",
+      default=default_python_version,
       help=
         """
         Hermetic Python version to use. Default is to use the version of the
@@ -343,7 +348,7 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
       help="""
         What CPU features should we target? Release enables CPU features that
         should be enabled for a release build, which on x86-64 architectures
-        enables AVX. Native enables -march=native, which generates code targeted
+        enables Haswell (-march=haswell). Native enables -march=native, which generates code targeted
         to use all features of the current machine. Default means don't opt-in
         to any architectural features and use whatever the C compiler generates
         by default.
@@ -362,7 +367,7 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
       default=os.environ.get("JAXCI_XLA_GIT_DIR", ""),
       help="""
         Path to local XLA repository to use. If not set, Bazel uses the XLA at
-        the pinned version in workspace.bzl.
+        the pinned version in MODULE.bazel.
         """,
   )
 
@@ -448,13 +453,15 @@ async def main():
         "Please use python_version to set hermetic python version instead of "
         "setting --repo_env=HERMETIC_PYTHON_VERSION=<python version> bazel option"
       )
-    python_version = args.python_version.removesuffix("-ft")
+    is_freethreaded = args.python_version.endswith(("-ft", "t"))
+    python_version = (
+        args.python_version.removesuffix("-ft").removesuffix("t")
+    )
     logging.debug("Hermetic Python version: %s", python_version)
     bazel_command_base.append(
         f"--repo_env=HERMETIC_PYTHON_VERSION={python_version}"
     )
-    # Let's interpret X.YY-ft version as free-threading python and set rules_python config flag:
-    if args.python_version.endswith("-ft"):
+    if is_freethreaded:
       bazel_command_base.append(
           '--@rules_python//python/config_settings:py_freethreaded="yes"'
       )

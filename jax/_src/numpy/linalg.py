@@ -144,6 +144,9 @@ def cholesky(a: ArrayLike, *, upper: bool = False, symmetrize_input: bool = True
     Array(True, dtype=bool)
   """
   a = ensure_arraylike("jnp.linalg.cholesky", a)
+  if a.ndim < 2 or a.shape[-1] != a.shape[-2]:
+    raise ValueError(
+      f"Argument to linalg.cholesky must have shape [..., n, n], got {a.shape}.")
   a, = promote_dtypes_inexact(a)
   L = lax_linalg.cholesky(a, symmetrize_input=symmetrize_input)
   return L.mT.conj() if upper else L
@@ -971,6 +974,9 @@ def eigh(a: ArrayLike, UPLO: str | None = None,
            [ 0.   +0.707j,  0.   -0.707j]], dtype=complex64)
   """
   a = ensure_arraylike("jnp.linalg.eigh", a)
+  if a.ndim < 2 or a.shape[-1] != a.shape[-2]:
+    raise ValueError(
+      f"Argument to linalg.eigh must have shape [..., n, n], got {a.shape}.")
   if UPLO is None or UPLO == "L":
     lower = True
   elif UPLO == "U":
@@ -1077,7 +1083,7 @@ def pinv(a: ArrayLike, rtol: ArrayLike | None = None,
   return _pinv(a, rtol, hermitian)
 
 
-@partial(custom_jvp, nondiff_argnums=(1, 2))
+@partial(custom_jvp, nondiff_argnums=(2,))
 @api.jit(static_argnames=('hermitian'))
 def _pinv(a: ArrayLike, rtol: ArrayLike | None = None, hermitian: bool = False) -> Array:
   # Uses same algorithm as
@@ -1105,13 +1111,13 @@ def _pinv(a: ArrayLike, rtol: ArrayLike | None = None, hermitian: bool = False) 
 
 @_pinv.defjvp
 @config.default_matmul_precision("float32")
-def _pinv_jvp(rtol, hermitian, primals, tangents):
+def _pinv_jvp(hermitian, primals, tangents):
   # The Differentiation of Pseudo-Inverses and Nonlinear Least Squares Problems
   # Whose Variables Separate. Author(s): G. H. Golub and V. Pereyra. SIAM
   # Journal on Numerical Analysis, Vol. 10, No. 2 (Apr., 1973), pp. 413-432.
   # (via https://en.wikipedia.org/wiki/Moore%E2%80%93Penrose_inverse#Derivative)
-  a, = primals  # m x n
-  a_dot, = tangents
+  a, rtol = primals  # m x n
+  a_dot, _ = tangents
   p = pinv(a, rtol=rtol, hermitian=hermitian)  # n x m
   if hermitian:
     # svd(..., hermitian=True) symmetrizes its input, and the JVP must match.
@@ -2215,7 +2221,7 @@ def multi_dot(arrays: Sequence[ArrayLike], *, precision: lax.PrecisionLike = Non
   >>> jnp.allclose(result1, result3, atol=1E-4)
   Array(True, dtype=bool)
 
-  We can use JAX's :ref:`ahead-of-time-lowering` tools to estimate the total flops
+  We can use JAX's :ref:`ahead-of-time lowering <jax-201-aot>` tools to estimate the total flops
   of each approach, and confirm that ``multi_dot`` is choosing the more efficient
   option:
 
@@ -2293,7 +2299,7 @@ def cond(x: ArrayLike, p=None):
     raise ValueError(f"jnp.linalg.cond: input array must not be empty; got {arr.shape=}")
   if p is None or p == 2:
     s = svdvals(x)
-    return s[..., 0] / s[..., -1]
+    r = s[..., 0] / s[..., -1]
   elif p == -2:
     s = svdvals(x)
     r = s[..., -1] / s[..., 0]

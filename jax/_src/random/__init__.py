@@ -18,6 +18,7 @@ from jax._src.random import rbg as rbg
 from jax._src.random import threefry2x32 as threefry2x32
 from jax._src.random import threefry4x32 as threefry4x32
 from jax._src.random.core import (
+    Key as Key,
     PRNGKey as PRNGKey,
     ball as ball,
     bernoulli as bernoulli,

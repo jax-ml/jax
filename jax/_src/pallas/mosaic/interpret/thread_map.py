@@ -22,7 +22,7 @@ import jax.numpy as jnp
 
 import numpy as np
 
-# Must be distinct from `TOP_LEVEL_TOKEN_VALUE` in `interpret_pallas_call.py`.
+TOP_LEVEL_TOKEN_VALUE = 42
 NESTED_TOKEN_VALUE = 1337
 
 
@@ -63,7 +63,7 @@ def _thread_map_callback(jaxpr, token, device_id, num_threads, consts, invals,
       except Exception as e:
         exceptions.append(e)
   if exceptions:
-    on_exception(exceptions[0], device_id=device_id)
+    on_exception(exceptions[0], device_id=device_id, token=token)
     # TODO(jburnim): Improve exception propagation here.  That is:
     #  - exceptions[0] might be an uninformative exception that just reports
     #    that the computation failed on a different device/core.

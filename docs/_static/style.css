@@ -307,3 +307,13 @@ html[data-theme="light"] .highlight span.gr {
 .bd-breadcrumbs {
   margin-bottom: 0;
 }
+
+/* Banner shown on superseded documentation pages (see conf.py). */
+.superseded-banner {
+  background-color: var(--pst-color-warning-bg, #fff3cd);
+  border-bottom: 1px solid var(--pst-color-warning, #ffa726);
+  color: var(--pst-color-text-base, #333);
+  padding: 0.5em 1em;
+  text-align: center;
+  font-size: 0.95em;
+}

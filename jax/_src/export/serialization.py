@@ -22,7 +22,7 @@ import dataclasses
 import itertools
 from functools import partial
 import types
-from typing import Any, TypeVar
+from typing import Any
 import warnings
 
 try:
@@ -46,9 +46,6 @@ from jax._src import tree_util
 
 from jax import version
 import numpy as np
-
-T = TypeVar("T")
-SerT = TypeVar("SerT")
 
 # The _SERIALIZATION_VERSION changes when we change the serialization schema
 # even if the change is backwards compatible.
@@ -89,7 +86,7 @@ def _expired_error_msg(exp: ser_flatbuf.Exported) -> str:
   )
   if exp.JaxVersion() is not None:
     msg += f" It was created with JAX version {exp.JaxVersion().decode('utf-8')}."
-  msg += " See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees."
+  msg += " See https://docs.jax.dev/en/latest/501/export.html#compatibility-guarantees."
   return msg
 
 
@@ -278,7 +275,7 @@ def _serialize_exported(
   return ser_flatbuf.ExportedEnd(builder)
 
 
-def _serialize_array(
+def _serialize_array[T](
     builder: flatbuffers.Builder,
     serialize_one: Callable[[flatbuffers.Builder, T], int],
     elements: Iterable[T],

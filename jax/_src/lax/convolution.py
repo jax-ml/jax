@@ -27,6 +27,8 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import remat
 from jax._src.sharding_impls import (
     NamedSharding, PartitionSpec as P, canonicalize_sharding)
 from jax._src.lax import lax
@@ -113,7 +115,7 @@ def conv_general_dilated(
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -333,8 +335,7 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
     transpose_kernel: if True flips spatial axes and swaps the input/output
       channel axes of the kernel. This makes the output of this function identical
       to the gradient-derived functions like keras.layers.Conv2DTranspose
-      applied to the same kernel. For typical use in neural nets this is completely
-      pointless and just makes input/output channel specification confusing.
+      applied to the same kernel.
     precision: Optional. Either ``None``, which means the default precision for
       the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
@@ -750,6 +751,28 @@ ad.defbilinear(conv_general_dilated_p,
                _conv_general_dilated_transpose_rhs)
 
 batching.fancy_primitive_batchers[conv_general_dilated_p] = _conv_general_dilated_batch_rule
+
+def _conv_general_dilated_remat(trace, lhs, rhs, **params):
+  from jax._src.ad_checkpoint import primal_left_tangent_right
+  conv = partial(conv_general_dilated_p.bind, **params)
+  out = conv(lhs, rhs)
+  if trace.policy is None:
+    return out, (), lambda _, lhs, rhs: conv(lhs, rhs)  # full remat
+  case = pe.ensure_enum(trace.policy(
+      conv_general_dilated_p, core.typeof(lhs), core.typeof(rhs), **params))
+  if isinstance(case, pe.SaveableType):
+    return out, out, lambda out, lhs, rhs: primal_left_tangent_right(out, conv(lhs, rhs))
+  if isinstance(case, pe.Offloadable):
+    from jax._src.api import device_put
+    out_host = device_put(out, core.mem_kind_to_space(case.dst),
+                          may_alias=False)
+    src_space = core.mem_kind_to_space(case.src)
+    def rem(out_host, lhs, rhs):
+      out_dev = device_put(out_host, src_space, may_alias=False)
+      return primal_left_tangent_right(out_dev, conv(lhs, rhs))
+    return out, out_host, rem
+  return out, (), lambda _, lhs, rhs: conv(lhs, rhs)  # full remat
+remat.rules[conv_general_dilated_p] = _conv_general_dilated_remat
 
 def _complex_mul(mul, x, y):
   # We use a trick for complex multiplication sometimes attributed to Gauss

@@ -19,6 +19,7 @@ import os
 import pathlib
 import re
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -131,6 +132,40 @@ _DUMP_HLO = absl.flags.DEFINE_bool(
 expect_failures_with_regex = None
 
 
+def _get_port_from_port_server(portserver_address):
+  """Requests a port from a portserver without requiring portpicker."""
+  if portserver_address.startswith("@"):
+    portserver_address = "\0" + portserver_address[1:]
+
+  with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+    sock.connect(portserver_address)
+    sock.sendall(f"{os.getpid()}\n".encode("ascii"))
+    response = sock.recv(32)
+
+  try:
+    port = int(response.splitlines()[0])
+  except (IndexError, ValueError) as err:
+    raise RuntimeError("Portserver returned an invalid response") from err
+  if port == 0:
+    raise RuntimeError("Portserver could not allocate a port")
+  return port
+
+
+def _pick_unused_port():
+  """Returns a port reserved for this process when a portserver is available."""
+  portserver_address = os.environ.get("PORTSERVER_ADDRESS")
+  if portpicker is not None:
+    return portpicker.pick_unused_port(portserver_address=portserver_address)
+  if portserver_address:
+    return _get_port_from_port_server(portserver_address)
+
+  # There is a small race between closing this socket and the caller binding
+  # the port. CI uses a portserver to avoid that race when tests run locally.
+  with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("localhost", 0))
+    return sock.getsockname()[1]
+
+
 def main(shard_main=None):
   config.config_with_absl()
   app.run(functools.partial(_main, shard_main=shard_main))
@@ -151,13 +186,119 @@ class GracefulKiller:
     self.kill_now = True
 
 
+def _get_tpu_bounds(
+    tpu_version,
+    num_tpu_chips: int,
+    tpu_chips_per_process: int,
+):
+  """Returns (tpu_host_bounds, tpu_chips_per_host_bounds) for the given TPU config."""
+  if tpu_chips_per_process == 0 or num_tpu_chips == 0:
+    return "", ""
+
+  if num_tpu_chips == 1:
+    if tpu_chips_per_process != 1:
+      raise ValueError(
+          f"tpu_chips_per_process must be 1 when num_tpu_chips is 1, got {tpu_chips_per_process}"
+      )
+    return "1,1,1", "1,1,1"
+
+  if num_tpu_chips == 2:
+    if tpu_chips_per_process == 1:
+      if tpu_version in (
+          hardware_utils.TpuVersion.tpu8t,
+          hardware_utils.TpuVersion.v5p,
+      ):
+        return "1,2,1", "1,1,1"
+      return "2,1,1", "1,1,1"
+    elif tpu_chips_per_process == 2:
+      if tpu_version in (
+          hardware_utils.TpuVersion.tpu8t,
+          hardware_utils.TpuVersion.v5p,
+      ):
+        return "1,1,1", "1,2,1"
+      return "1,1,1", "2,1,1"
+    else:
+      raise ValueError(
+          f"Invalid tpu_chips_per_process {tpu_chips_per_process} for 2 TPU chips"
+      )
+
+  if num_tpu_chips == 4:
+    if tpu_version == hardware_utils.TpuVersion.tpu8i:
+      # tpu8i has 4x1x1 topology
+      if tpu_chips_per_process == 1:
+        return "4,1,1", "1,1,1"
+      elif tpu_chips_per_process == 2:
+        return "2,1,1", "2,1,1"
+      elif tpu_chips_per_process == 4:
+        return "1,1,1", "4,1,1"
+      else:
+        raise ValueError(
+            f"Invalid tpu_chips_per_process {tpu_chips_per_process} for 4 chips on tpu8i"
+        )
+    else:
+      # Standard 2x2x1 mesh for v2, v3, v4, v5p, v5e, v6e, tpu7x, tpu8t
+      if tpu_chips_per_process == 1:
+        return "2,2,1", "1,1,1"
+      elif tpu_chips_per_process == 2:
+        return "2,1,1", "1,2,1"
+      elif tpu_chips_per_process == 4:
+        return "1,1,1", "2,2,1"
+      else:
+        raise ValueError(
+            f"Invalid tpu_chips_per_process {tpu_chips_per_process} for 4 TPU chips"
+        )
+
+  if num_tpu_chips == 8:
+    if tpu_version == hardware_utils.TpuVersion.v6e:
+      # v6e 2x4x1 mesh
+      if tpu_chips_per_process == 1:
+        return "2,4,1", "1,1,1"
+      elif tpu_chips_per_process == 4:
+        return "1,2,1", "2,2,1"
+      elif tpu_chips_per_process == 8:
+        return "1,1,1", "2,4,1"
+      else:
+        raise ValueError(
+            f"Invalid tpu_chips_per_process {tpu_chips_per_process} for 8 chips on v6e"
+        )
+    elif tpu_version in (
+        hardware_utils.TpuVersion.v4,
+        hardware_utils.TpuVersion.tpu7x,
+    ):
+      # 2x2x2 3D mesh (v4, tpu7x)
+      if tpu_chips_per_process == 1:
+        return "2,2,2", "1,1,1"
+      elif tpu_chips_per_process == 4:
+        return "1,1,2", "2,2,1"
+      elif tpu_chips_per_process == 8:
+        return "1,1,1", "2,2,2"
+      else:
+        raise ValueError(
+            f"Invalid tpu_chips_per_process {tpu_chips_per_process} for 8 chips on {tpu_version.name}"
+        )
+    else:
+      # 4x2x1 mesh (v5e and default)
+      if tpu_chips_per_process == 1:
+        return "4,2,1", "1,1,1"
+      elif tpu_chips_per_process == 4:
+        return "2,1,1", "2,2,1"
+      elif tpu_chips_per_process == 8:
+        return "1,1,1", "4,2,1"
+      else:
+        raise ValueError(
+            f"Invalid tpu_chips_per_process {tpu_chips_per_process} for 8 TPU chips"
+        )
+
+  raise ValueError(f"Invalid number of TPU chips {num_tpu_chips}")
+
+
 def _main(argv, shard_main):
   # TODO(emilyaf): Enable multiprocess tests on Windows.
   if sys.platform == "win32":
     print("Multiprocess tests are not supported on Windows.")
     return
 
-  _, tpu_version = hardware_utils.num_available_tpu_chips_and_device_id()
+  num_available_tpu_chips, tpu_version = hardware_utils.num_available_tpu_chips_and_device_id()
   if running_in_cloud_tpu_vm and tpu_version in (
       hardware_utils.TpuVersion.v4,
       hardware_utils.TpuVersion.v5e,
@@ -185,64 +326,30 @@ def _main(argv, shard_main):
   if not argv[0].endswith(".py"):  # Skip the interpreter path if present.
     argv = argv[1:]
 
-  if num_processes is None:
-    raise ValueError("num_processes must be set")
   gpus_per_process = _GPUS_PER_PROCESS.value
   tpu_chips_per_process = _TPU_CHIPS_PER_PROCESS.value
-  num_tpu_chips = num_processes * tpu_chips_per_process
-  if num_tpu_chips == 0:
-    tpu_host_bounds = ""
-    tpu_chips_per_host_bounds = ""
-  elif num_tpu_chips == 1:
-    assert tpu_chips_per_process == 1
-    tpu_host_bounds = "1,1,1"
-    tpu_chips_per_host_bounds = "1,1,1"
-  elif num_tpu_chips == 4:
-    if tpu_chips_per_process == 1:
-      tpu_host_bounds = "2,2,1"
-      tpu_chips_per_host_bounds = "1,1,1"
-    elif tpu_chips_per_process == 2:
-      tpu_host_bounds = "2,1,1"
-      tpu_chips_per_host_bounds = "1,2,1"
-    elif tpu_chips_per_process == 4:
-      tpu_host_bounds = "1,1,1"
-      tpu_chips_per_host_bounds = "2,2,1"
-    else:
-      raise ValueError(
-          "Invalid number of TPU chips per worker {}".format(
-              tpu_chips_per_process
-          )
-      )
-  elif num_tpu_chips == 8:
-    if tpu_chips_per_process == 1:
-      tpu_host_bounds = "4,2,1"
-      tpu_chips_per_host_bounds = "1,1,1"
-    elif tpu_chips_per_process == 4:
-      # Note: this branch assumes we are using 2x4 v6e LitePod, and will not
-      # work with 4x2 v5e LitePod.
-      tpu_host_bounds = "1,2,1"
-      tpu_chips_per_host_bounds = "2,2,1"
-    elif tpu_chips_per_process == 8:
-      tpu_host_bounds = "1,1,1"
-      tpu_chips_per_host_bounds = "2,4,1"
-    else:
-      # TODO(phawkins): implement other cases.
-      raise ValueError(
-          "Invalid number of TPU chips per worker {}".format(
-              tpu_chips_per_process
-          )
-      )
-  else:
-    raise ValueError(f"Invalid number of TPU chips {num_tpu_chips}")
 
-  if portpicker is None:
-    slicebuilder_ports = [10000 + i for i in range(num_processes)]
-  else:
-    portserver_address = os.environ.get("JAX_PORTSERVER_ADDRESS")
-    slicebuilder_ports = [
-        portpicker.pick_unused_port(portserver_address=portserver_address)
-        for _ in range(num_processes)
-    ]
+  if tpu_chips_per_process > 0 and num_processes is None:
+    # If not explicitly specified, derive num_processes from available physical
+    # TPU chips so that the test matches the host topology:
+    num_processes = num_available_tpu_chips // tpu_chips_per_process
+
+  if not num_processes:
+    raise ValueError("num_processes must be set and greater than 0")
+
+  num_tpu_chips = num_processes * tpu_chips_per_process
+  if tpu_chips_per_process > 0 and num_tpu_chips > num_available_tpu_chips:
+    raise ValueError(
+        f"Requested {num_tpu_chips} TPU chips ({num_processes} processes * "
+        f"{tpu_chips_per_process} chips/process), but only "
+        f"{num_available_tpu_chips} TPU chips are available on this host."
+    )
+
+  tpu_host_bounds, tpu_chips_per_host_bounds = _get_tpu_bounds(
+      tpu_version, num_tpu_chips, tpu_chips_per_process
+  )
+
+  slicebuilder_ports = [_pick_unused_port() for _ in range(num_processes)]
   slicebuilder_addresses = ",".join(
       f"localhost:{port}" for port in slicebuilder_ports
   )
@@ -261,13 +368,7 @@ def _main(argv, shard_main):
         )
         num_processes = local_device_count // gpus_per_process
 
-  if portpicker is None:
-    jax_port = 9876
-  else:
-    # TODO(emilyaf): Use a port server if there are flaky port collisions due
-    # to pick_unused_port() racing among tests.
-    portserver_address = os.environ.get("JAX_PORTSERVER_ADDRESS")
-    jax_port = portpicker.pick_unused_port(portserver_address=portserver_address)
+  jax_port = _pick_unused_port()
   subprocesses = []
   output_filenames = []
   output_files = []
@@ -297,7 +398,7 @@ def _main(argv, shard_main):
         "--logtostderr",
     ]
 
-    if num_tpu_chips > 0:
+    if tpu_chips_per_process > 0:
       device_ids = range(
           i * tpu_chips_per_process, (i + 1) * tpu_chips_per_process)
       env["CLOUD_TPU_TASK_ID"] = str(i)
@@ -322,13 +423,7 @@ def _main(argv, shard_main):
       )
 
     if _ENABLE_MEGASCALE.value or cpu_collectives_impl == "megascale":
-      if portpicker is None:
-        megascale_port = 9877
-      else:
-        portserver_address = os.environ.get("JAX_PORTSERVER_ADDRESS")
-        megascale_port = portpicker.pick_unused_port(
-            portserver_address=portserver_address
-        )
+      megascale_port = _pick_unused_port()
       if megascale_coordinator_port is None:
         megascale_coordinator_port = megascale_port
       args += [

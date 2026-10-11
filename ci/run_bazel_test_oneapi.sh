@@ -89,14 +89,9 @@ echo "=========================="
 # End of test environment variables setup.
 
 if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-ft || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-nogil ]]; then
-  if [[ "${JAXCI_ENABLE_BZLMOD:-1}" == "1" ]]; then
-    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}
-    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-ft}
-    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}
-  else
-    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
-    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
-  fi
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-ft}
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}
   FREETHREADED_FLAG_VALUE="yes"
 else
   FREETHREADED_FLAG_VALUE="no"
@@ -158,7 +153,7 @@ bazel test --config=$TEST_CONFIG \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --test_env=XLA_FLAGS \
       --test_output=errors \
-      --local_test_jobs=8 \
+      --local_test_jobs=1 \
       --test_tag_filters=multiaccelerator,multiaccelerator-only \
       --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
       --test_env=JAX_SKIP_SLOW_TESTS=true \

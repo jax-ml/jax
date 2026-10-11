@@ -23,6 +23,7 @@ limitations under the License.
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -31,6 +32,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
+#include "absl/log/absl_check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -45,6 +47,7 @@ limitations under the License.
 #include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "nanobind/stl/tuple.h"  // IWYU pragma: keep
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/unordered_map.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
@@ -59,9 +62,11 @@ limitations under the License.
 #include "xla/pjrt/cpu/cpu_client.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/distributed.h"
+#include "xla/pjrt/distributed/mtls.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/distributed/service.h"
 #include "xla/pjrt/pjrt_compiler.h"
+#include "xla/pjrt/pjrt_topology_description_registry.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
 #include "xla/pjrt/status_casters.h"
@@ -97,7 +102,6 @@ limitations under the License.
 #include "jaxlib/custom_call_sharding.h"
 #include "jaxlib/dlpack.h"
 #include "jaxlib/guard_lib.h"
-#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/jax_jit.h"
 #include "jaxlib/mlir.h"
 #include "jaxlib/nb_class_ptr.h"
@@ -125,6 +129,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/logging.h"  // IWYU pragma: keep
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
@@ -277,6 +282,33 @@ void translate_xla_runtime_error(const std::exception_ptr& p, void*) {
       py_err.restore();
     }
   }
+}
+
+// Returns an mTLS configuration for the coordination service if any of the
+// mtls_* arguments is set, or std::nullopt (insecure credentials) otherwise.
+std::optional<xla::MtlsConfig> BuildCoordinationMtlsConfig(
+    const std::optional<std::string>& mtls_cert_file,
+    const std::optional<std::string>& mtls_key_file,
+    const std::optional<std::string>& mtls_ca_file,
+    const std::optional<std::string>& mtls_peer_uri_prefix) {
+  if (!mtls_cert_file.has_value() && !mtls_key_file.has_value() &&
+      !mtls_ca_file.has_value() && !mtls_peer_uri_prefix.has_value()) {
+    return std::nullopt;
+  }
+  xla::MtlsConfig config;
+  if (mtls_cert_file.has_value()) {
+    config.cert_file = *mtls_cert_file;
+  }
+  if (mtls_key_file.has_value()) {
+    config.key_file = *mtls_key_file;
+  }
+  if (mtls_ca_file.has_value()) {
+    config.ca_file = *mtls_ca_file;
+  }
+  if (mtls_peer_uri_prefix.has_value()) {
+    config.peer_uri_prefix = *mtls_peer_uri_prefix;
+  }
+  return config;
 }
 
 }  // namespace
@@ -573,9 +605,14 @@ NB_MODULE(_jax, m) {
         [](nb::capsule c_api, std::string topology_name,
            const absl::flat_hash_map<std::string, xla::PjRtValueType>& options)
             -> std::shared_ptr<xla::ifrt::Topology> {
-          if (std::string_view(c_api.name()) != "pjrt_c_api") {
+          if (c_api.name() == nullptr ||
+              std::string_view(c_api.name()) != "pjrt_c_api") {
             throw nb::value_error(
                 "Argument to get_c_api_topology was not a pjrt_c_api capsule.");
+          }
+          if (c_api.data() == nullptr) {
+            throw nb::value_error(
+                "Argument to get_c_api_topology contained a null pointer.");
           }
           return std::make_shared<xla::ifrt::PjRtTopology>(xla::ValueOrThrow(
               xla::GetCApiTopology(static_cast<const PJRT_Api*>(c_api.data()),
@@ -604,7 +641,7 @@ NB_MODULE(_jax, m) {
               client->ifrt_client()->GetTopologyForDevices(device_list));
         });
 
-  TF_CHECK_OK(PyArray::Register(m));
+  ABSL_CHECK_OK(PyArray::Register(m));
   InitCanonicalizeValueHandlers();
   PyDeviceList::Register(m);
   RegisterSharding(m);
@@ -638,6 +675,12 @@ NB_MODULE(_jax, m) {
                    })
       .def_rw("peak_memory_in_bytes",
               &xla::CompiledMemoryStats::peak_memory_in_bytes)
+      .def_rw("total_allocation_bytes",
+              &xla::CompiledMemoryStats::total_allocation_bytes)
+      .def_rw("indefinite_allocations",
+              &xla::CompiledMemoryStats::indefinite_allocations)
+      .def_rw("peak_unpadded_heap_bytes",
+              &xla::CompiledMemoryStats::peak_unpadded_heap_bytes)
       .def("__str__", &xla::CompiledMemoryStats::DebugString);
 
   m.def("get_execution_stream_id", []() { return GetExecutionStreamId(); });
@@ -650,9 +693,12 @@ NB_MODULE(_jax, m) {
   PyShardedToken::Register(m);
   PyExecutable::Register(m);
 
+  m.attr("dlpack_version") = kDlPackVersion;
   m.def("buffer_to_dlpack_managed_tensor",
         xla::ValueOrThrowWrapper(BufferToDLPackManagedTensor),
-        nb::arg("buffer"), nb::arg("stream").none() = nb::none());
+        nb::arg("buffer"), nb::arg("stream").none() = nb::none(),
+        nb::arg("max_version").none() = nb::none(),
+        nb::arg("copied") = false);
   m.def(
       "dlpack_managed_tensor_to_buffer",
       [](const nb::capsule& tensor, nb_class_ptr<PyDevice> device,
@@ -903,7 +949,12 @@ NB_MODULE(_jax, m) {
       [](std::string address, int num_nodes,
          std::optional<int> heartbeat_timeout,
          std::optional<int> cluster_register_timeout,
-         std::optional<int> shutdown_timeout, std::optional<bool> recoverable)
+         std::optional<int> shutdown_timeout, std::optional<bool> recoverable,
+         std::optional<std::string> mtls_cert_file,
+         std::optional<std::string> mtls_key_file,
+         std::optional<std::string> mtls_ca_file,
+         std::optional<std::string> mtls_peer_uri_prefix,
+         std::optional<bool> verify_secure_credentials)
           -> std::unique_ptr<xla::DistributedRuntimeService> {
         xla::CoordinationServiceImpl::Options options;
         options.num_nodes = num_nodes;
@@ -920,6 +971,16 @@ NB_MODULE(_jax, m) {
         if (recoverable.has_value()) {
           options.recoverable = *recoverable;
         }
+        std::optional<xla::MtlsConfig> mtls_config =
+            BuildCoordinationMtlsConfig(mtls_cert_file, mtls_key_file,
+                                        mtls_ca_file, mtls_peer_uri_prefix);
+        if (mtls_config.has_value()) {
+          options.credentials =
+              xla::ValueOrThrow(xla::GetMtlsServerCredentials(*mtls_config));
+        }
+        if (verify_secure_credentials.has_value()) {
+          options.verify_secure_credentials = *verify_secure_credentials;
+        }
         std::unique_ptr<xla::DistributedRuntimeService> service =
             xla::ValueOrThrow(GetDistributedRuntimeService(address, options));
         return service;
@@ -928,7 +989,12 @@ NB_MODULE(_jax, m) {
       nb::arg("heartbeat_timeout").none() = std::nullopt,
       nb::arg("cluster_register_timeout").none() = std::nullopt,
       nb::arg("shutdown_timeout").none() = std::nullopt,
-      nb::arg("recoverable").none() = std::nullopt);
+      nb::arg("recoverable").none() = std::nullopt,
+      nb::arg("mtls_cert_file").none() = std::nullopt,
+      nb::arg("mtls_key_file").none() = std::nullopt,
+      nb::arg("mtls_ca_file").none() = std::nullopt,
+      nb::arg("mtls_peer_uri_prefix").none() = std::nullopt,
+      nb::arg("verify_secure_credentials").none() = std::nullopt);
 
   m.def(
       "get_distributed_runtime_client",
@@ -937,7 +1003,12 @@ NB_MODULE(_jax, m) {
          std::optional<int> heartbeat_timeout,
          std::optional<nb::callable> missed_heartbeat_callback,
          std::optional<bool> shutdown_on_destruction,
-         std::optional<bool> use_compression)
+         std::optional<bool> use_compression,
+         std::optional<std::string> mtls_cert_file,
+         std::optional<std::string> mtls_key_file,
+         std::optional<std::string> mtls_ca_file,
+         std::optional<std::string> mtls_peer_uri_prefix,
+         std::optional<bool> verify_secure_credentials)
           -> std::shared_ptr<xla::DistributedRuntimeClient> {
         bool compression = use_compression.value_or(false);
         xla::DistributedRuntimeClient::Options options;
@@ -962,6 +1033,16 @@ NB_MODULE(_jax, m) {
         if (shutdown_on_destruction.has_value()) {
           options.shutdown_on_destruction = *shutdown_on_destruction;
         }
+        std::optional<xla::MtlsConfig> mtls_config =
+            BuildCoordinationMtlsConfig(mtls_cert_file, mtls_key_file,
+                                        mtls_ca_file, mtls_peer_uri_prefix);
+        if (mtls_config.has_value()) {
+          options.credentials =
+              xla::ValueOrThrow(xla::GetMtlsClientCredentials(*mtls_config));
+        }
+        if (verify_secure_credentials.has_value()) {
+          options.verify_secure_credentials = *verify_secure_credentials;
+        }
         return GetDistributedRuntimeClient(address, options, compression);
       },
       nb::arg("address"), nb::arg("node_id"),
@@ -971,7 +1052,12 @@ NB_MODULE(_jax, m) {
       nb::arg("heartbeat_timeout").none() = std::nullopt,
       nb::arg("missed_heartbeat_callback").none() = std::nullopt,
       nb::arg("shutdown_on_destruction").none() = std::nullopt,
-      nb::arg("use_compression").none() = std::nullopt);
+      nb::arg("use_compression").none() = std::nullopt,
+      nb::arg("mtls_cert_file").none() = std::nullopt,
+      nb::arg("mtls_key_file").none() = std::nullopt,
+      nb::arg("mtls_ca_file").none() = std::nullopt,
+      nb::arg("mtls_peer_uri_prefix").none() = std::nullopt,
+      nb::arg("verify_secure_credentials").none() = std::nullopt);
 
   m.def("collect_garbage", []() { GlobalPyRefManager()->CollectGarbage(); });
 
@@ -998,6 +1084,42 @@ NB_MODULE(_jax, m) {
                             topology))
                  ->Devices();
            })
+      .def(
+          "serialize",
+          [](const xla::ifrt::Topology& topology) -> nb::bytes {
+            const auto* pjrt_topology =
+                dynamic_cast<const xla::ifrt::PjRtTopology*>(&topology);
+            if (pjrt_topology == nullptr) {
+              throw xla::XlaRuntimeError(
+                  "Only PjRtTopologies can be serialized.");
+            }
+            const auto& description = pjrt_topology->description();
+            if (description == nullptr) {
+              throw xla::XlaRuntimeError(
+                  "Topology description is null; cannot serialize.");
+            }
+            auto proto = xla::ValueOrThrow(description->ToProto());
+            std::string serialized = proto.SerializeAsString();
+            return nb::bytes(serialized.data(), serialized.size());
+          },
+          "Serializes the DeviceTopology to a PjRtTopologyDescriptionProto "
+          "bytes payload.")
+      .def_static(
+          "deserialize",
+          [](nb::bytes serialized) -> std::shared_ptr<xla::ifrt::Topology> {
+            xla::PjRtTopologyDescriptionProto proto;
+            if (!proto.ParseFromArray(serialized.data(),
+                                      static_cast<int>(serialized.size()))) {
+              throw nb::value_error(
+                  "Failed to parse PjRtTopologyDescriptionProto from "
+                  "serialized bytes.");
+            }
+            return std::make_shared<xla::ifrt::PjRtTopology>(xla::ValueOrThrow(
+                xla::PjRtTopologyDescriptionFromProto(proto)));
+          },
+          nb::arg("serialized"),
+          "Deserializes a DeviceTopology from a PjRtTopologyDescriptionProto "
+          "bytes payload.")
       .def_prop_ro("platform",
                    [](xla::ifrt::Topology& topology) {
                      return topology.platform_name();
@@ -1061,6 +1183,13 @@ NB_MODULE(_jax, m) {
   m.def("batched_block_until_ready", [](std::vector<nb::object> xs) {
     xla::ThrowIfError(PyArray::BatchedBlockUntilReady(std::move(xs)));
   });
+
+  m.def(
+      "batched_copy_to_host_async",
+      [](nanobind::sequence py_arrays) {
+        xla::ThrowIfError(PyArray::BatchedCopyToHostAsync(py_arrays));
+      },
+      nb::arg("arrays"));
 
   m.def("check_and_canonicalize_memory_kind", &CheckAndCanonicalizeMemoryKind,
         nb::arg("memory_kind").none(), nb::arg("device_list"));

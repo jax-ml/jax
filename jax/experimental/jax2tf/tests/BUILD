@@ -80,7 +80,7 @@ jax_multiplatform_test(
         "tpu_v3_x4",
     ],
     # On GPU, this test uses both TF and JAX and might OOM, see:
-    # https://docs.jax.dev/en/latest/gpu_memory_allocation.html
+    # https://docs.jax.dev/en/latest/201/gpu-memory.html
     env = {
         "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
     },
@@ -105,7 +105,7 @@ jax_multiplatform_test(
         "tpu_v4i",
     ],
     # On GPU, this test uses both TF and JAX and might OOM, see:
-    # https://docs.jax.dev/en/latest/gpu_memory_allocation.html
+    # https://docs.jax.dev/en/latest/201/gpu-memory.html
     env = {
         "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
     },
@@ -131,7 +131,7 @@ jax_multiplatform_test(
         "cpu_x32",
     ],
     # On GPU, this test uses both TF and JAX and might OOM, see:
-    # https://docs.jax.dev/en/latest/gpu_memory_allocation.html
+    # https://docs.jax.dev/en/latest/201/gpu-memory.html
     env = {
         "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
     },
@@ -162,7 +162,7 @@ jax_multiplatform_test(
         "tpu_v3": {"ondemand": False},
     },
     # On GPU, this test uses both TF and JAX and might OOM, see:
-    # https://docs.jax.dev/en/latest/gpu_memory_allocation.html
+    # https://docs.jax.dev/en/latest/201/gpu-memory.html
     env = {
         "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
     },
@@ -209,7 +209,7 @@ jax_multiplatform_test(
     name = "savedmodel_test",
     srcs = ["savedmodel_test.py"],
     # On GPU, this test uses both TF and JAX and might OOM, see:
-    # https://docs.jax.dev/en/latest/gpu_memory_allocation.html
+    # https://docs.jax.dev/en/latest/201/gpu-memory.html
     env = {
         "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
     },
@@ -246,7 +246,7 @@ jax_multiplatform_test(
     name = "call_tf_test",
     srcs = ["call_tf_test.py"],
     # On GPU, this test uses both TF and JAX and might OOM, see:
-    # https://docs.jax.dev/en/latest/gpu_memory_allocation.html
+    # https://docs.jax.dev/en/latest/201/gpu-memory.html
     env = {
         "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
     },
@@ -260,7 +260,7 @@ jax_multiplatform_test(
     name = "back_compat_tf_test",
     srcs = ["back_compat_tf_test.py"],
     # On GPU, this test uses both TF and JAX and might OOM, see:
-    # https://docs.jax.dev/en/latest/gpu_memory_allocation.html
+    # https://docs.jax.dev/en/latest/201/gpu-memory.html
     env = {
         "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
     },

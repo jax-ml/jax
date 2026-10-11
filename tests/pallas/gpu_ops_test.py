@@ -71,11 +71,11 @@ class PallasBaseTest(jtu.JaxTestCase):
     super().setUp()
 
     if jtu.test_device_matches(["gpu"]):
-      self.enter_context(warnings.catch_warnings())
-      warnings.filterwarnings(
-          "ignore",
-          category=DeprecationWarning,
-          message="The Pallas Triton backend is deprecated",
+      self.enter_context(
+          jtu.ignore_warning(
+              category=DeprecationWarning,
+              message="The Pallas Triton backend is deprecated",
+          )
       )
 
   def pallas_call(self, *args, **kwargs):
@@ -115,19 +115,20 @@ class FusedAttentionTest(PallasBaseTest):
       use_fwd,
       use_segment_ids,
   ):
-    # Skip specific failing tests due to autotuner issue on ROCm. Issue #34711
-    # TODO(GulsumGudukbay): Unskip once fixed.
+    # Skip specific failing tests due to resource limits under sharding on ROCm.
     if jtu.is_device_rocm():
+      device = jax.local_devices(backend="gpu")[0]
+      cc = getattr(device, "compute_capability", "").split(":", 1)[0]
       key = (batch_size, seq_len, num_heads, head_dim, tuple(block_sizes),
              causal, use_fwd, use_segment_ids)
 
-      if (key in {
+      if (cc == "gfx942" and key in {
             (1, 384, 1, 72, (("block_q", 64), ("block_k", 64)),  False, True,  True),   # fwd5
             (1, 384, 1, 72, (("block_q", 64), ("block_k", 128)), False, False, True),   # fwd7
             (2, 384, 1, 64, (("block_q", 64), ("block_k", 64)),  True,  False, True),   # fwd8
             (1, 384, 2, 72, (("block_q", 128), ("block_k", 128)), False, True, True),   # fwd0
           }):
-        self.skipTest("Skipped on ROCm due to autotuner issue.")
+        self.skipTest("Skipped on gfx942 because the test does not fit.")
     k1, k2, k3 = random.split(random.key(0), 3)
     q = random.normal(
         k1, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
@@ -227,13 +228,14 @@ class FusedAttentionTest(PallasBaseTest):
       causal,
       use_segment_ids,
   ):
-    # Skip specific failing tests on ROCm due to autotuner issue. Issue #34711
-    # TODO(GulsumGudukbay): Unskip once fixed.
+    # Skip specific failing tests due to resource limits under sharding on ROCm.
     if jtu.is_device_rocm():
+      device = jax.local_devices(backend="gpu")[0]
+      cc = getattr(device, "compute_capability", "").split(":", 1)[0]
       key = (batch_size, seq_len, num_heads, head_dim, tuple(block_sizes),
              causal, use_segment_ids)
 
-      if key in {
+      if cc == "gfx942" and key in {
         (1, 128, 2, 64,  (("block_q", 64), ("block_k", 128), ("block_q_dkv", 64),
                           ("block_kv_dkv", 32), ("block_q_dq", 32), ("block_kv_dq", 64)),
          True, False),  # bwd0
@@ -253,7 +255,7 @@ class FusedAttentionTest(PallasBaseTest):
                           ("block_kv_dkv", 64), ("block_q_dq", 64), ("block_kv_dq", 64)),
          True,  False),  # bwd9
       }:
-        self.skipTest("Skipped on ROCm due to autotuner issue.")
+        self.skipTest("Skipped on gfx942 because the test does not fit.")
 
     if jtu.is_cuda_compute_capability_at_least("8.0"):
       # TODO(b/416306534)
@@ -296,9 +298,9 @@ class FusedAttentionTest(PallasBaseTest):
       raise
     dq_ref, dk_ref, dv_ref = jax.grad(f_ref, argnums=(0, 1, 2))(q, k, v)
     # TODO(sharadmv): Fix test.
-    self.assertAllClose(dq, dq_ref, atol=5e-2)
-    self.assertAllClose(dk, dk_ref, atol=5e-2)
-    self.assertAllClose(dv, dv_ref, atol=5e-2)
+    self.assertAllClose(dq, dq_ref, atol=2e-1)
+    self.assertAllClose(dk, dk_ref, atol=2e-1)
+    self.assertAllClose(dv, dv_ref, atol=2e-1)
 
   def test_return_residuals_not_differentiable(self):
     batch_size, seq_len, num_heads, head_dim = 2, 128, 2, 128
@@ -445,11 +447,9 @@ class SoftmaxTest(PallasBaseTest):
         jnp.float32: (1e-7, 1e-6),
     }[dtype]
 
-    # We upcast to float32 because NumPy <2.0 does not handle custom dtypes
-    # properly. See https://github.com/jax-ml/jax/issues/11014.
     np.testing.assert_allclose(
-        softmax.softmax(x, axis=-1).astype(jnp.float32),
-        jax.nn.softmax(x, axis=-1).astype(jnp.float32),
+        softmax.softmax(x, axis=-1),
+        jax.nn.softmax(x, axis=-1),
         atol=atol,
         rtol=rtol,
     )

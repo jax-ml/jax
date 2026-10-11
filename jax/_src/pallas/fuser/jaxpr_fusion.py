@@ -14,11 +14,13 @@
 
 """Fuses a function."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+import contextlib
 import functools
-from typing import Any
+
 import jax
 from jax._src import api_util
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import flattree as ft
 from jax._src import hijax
@@ -32,6 +34,24 @@ from jax._src.state import types as state_types
 from jax._src.traceback_util import api_boundary
 
 
+_disable_nested_fuse = config.config_ext.Config[bool](
+    "pallas_fuser_disable_nested_fuse",
+    False,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+
+@contextlib.contextmanager
+def disable_nested_fuse(value: bool = True):
+  # A way to prevent nested fuse calls from fusing.
+  old_value = _disable_nested_fuse.swap_local(value)
+  try:
+    yield
+  finally:
+    _disable_nested_fuse.set_local(old_value)
+
+
 @functools.partial(api_boundary, repro_api_name="fuser.fuse")
 def fuse(
     f=None,
@@ -39,6 +59,8 @@ def fuse(
     resolve_fusion_dtypes: bool = True,
     debug: bool = False,
     strict_mode: bool = True,
+    static_argnums: int | Sequence[int] | None = None,
+    static_argnames: str | Iterable[str] | None = None,
 ):
   """Fuses a function into a single fusible.
 
@@ -49,6 +71,10 @@ def fuse(
     debug: Whether to print debug information.
     strict_mode: Whether to verify block index map equality in collisions during
       block spec propagations in output fusions.
+    static_argnums: An optional int or collection of ints that specify which
+      positional arguments to treat as static (compile-time constant).
+    static_argnames: An optional string or collection of strings specifying
+      which named arguments to treat as static (compile-time constant).
 
   There should be a single call to a `fusible` inside the body of `f`. `fuse`
   returns a transformed function that will fuse the surrounding computation into
@@ -56,20 +82,42 @@ def fuse(
   """
 
   def decorator(f):
+    sig = api_util.fun_signature(f)
+    _, _, static_argnums_, static_argnames_ = api_util.resolve_argnums(
+        f,
+        sig,
+        donate_argnums=None,
+        donate_argnames=None,
+        static_argnums=static_argnums,
+        static_argnames=static_argnames,
+    )
+
+    @functools.wraps(f)
     def wrapper(*args, **kwargs):
-      flat_args, _ = tree_util.tree_flatten((args, kwargs))
-      debug_info = api_util.debug_info("fuse", f, args, kwargs)
+      in_ft = ft.flatten_static_argnums_argnames(
+          args, kwargs, static_argnums_, static_argnames_
+      )
+      flat_args = in_ft.vals
+      debug_info = api_util.debug_info(
+          "fuse",
+          f,
+          args,
+          kwargs,
+          static_argnums=static_argnums_,
+          static_argnames=static_argnames_,
+      )
       ref_arg = next((v for v in flat_args if isinstance(v, jax.ref.Ref)), None)
       if ref_arg is not None:
         raise NotImplementedError(
             f"Fused function {debug_info.func_src_info} was passed an argument "
             f"of type {ref_arg}.  Fused functions cannot take Refs as "
             "arguments -- they must close over such Refs, instead.")
-      in_ft = ft.flatten((args, kwargs))
       in_avals_ft = in_ft.map(jax_core.typeof)
-      closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
-          f, in_avals_ft, debug_info
-      )
+      # Disable nested fuse so the outer fuse captures the full (unfused) jaxpr.
+      with disable_nested_fuse(True):
+        closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+            f, in_avals_ft, debug_info
+        )
       jaxpr = closed_jaxpr
       consts = closed_jaxpr.consts
       if debug:
@@ -81,15 +129,23 @@ def fuse(
       return tree_util.tree_unflatten(out_tree, out_flat)
 
     if resolve_fusion_dtypes:
-      wrapper = fusible_dtype.physicalize(wrapper)
-    return wrapper
+      wrapper = fusible_dtype.physicalize(
+          wrapper,
+          static_argnums=static_argnums_,
+          static_argnames=static_argnames_,
+      )
+
+    @functools.wraps(f)
+    def outer_wrapper(*args, **kwargs):
+      if _disable_nested_fuse.value:
+        return f(*args, **kwargs)
+      return wrapper(*args, **kwargs)
+
+    return outer_wrapper
 
   if f is not None:
     return decorator(f)
   return decorator
-
-
-_fusible: dict[jax_core.Primitive, Any] = {}
 
 
 def _construct_fusion_jaxpr(
@@ -152,7 +208,7 @@ def _find_downstream(
       ensure_out_inst=False,
       saveable=lambda *_, **__: False,
   )
-  # NOTE: out_used[:len(jaxpr.outvars)] reports whether or not the the original
+  # NOTE: out_used[:len(jaxpr.outvars)] reports whether or not the original
   # outputs depend on the inputs for which `in_used` is True.
   # out_used[len(jaxpr.outvars):] reports whether or not the new outputs
   # (updates for discharged Refs) depend on thse inputs.

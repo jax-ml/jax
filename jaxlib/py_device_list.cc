@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/util.h"
 
 namespace jax {
@@ -192,13 +193,12 @@ nb::object PyDeviceList::GetSlice(nb::slice slice) {
                                &step, &slicelength) != 0) {
         throw nb::python_error();
       }
-      nb::tuple out = nb::steal<nb::tuple>(PyTuple_New(slicelength));
+      nb::tuple_builder out(slicelength);
       for (size_t i = 0; i < slicelength; ++i) {
-        nb::object d = py_client_->GetPyDevice(devices[start]);
-        PyTuple_SET_ITEM(out.ptr(), i, d.release().ptr());
+        out.put(py_client_->GetPyDevice(devices[start]));
         start += step;
       }
-      return std::move(out);
+      return out.commit();
     }
     case 1:
       return std::get<1>(device_list_).attr("__getitem__")(slice);
@@ -211,14 +211,11 @@ nb::tuple PyDeviceList::AsTuple() const {
   switch (device_list_.index()) {
     case 0: {
       const xla::ifrt::DeviceListRef& device_list = std::get<0>(device_list_);
-      nb::tuple out = nb::steal<nb::tuple>(PyTuple_New(device_list->size()));
-      int i = 0;
+      nb::tuple_builder out(device_list->size());
       for (xla::ifrt::Device* device : device_list->devices()) {
-        nb::object d = py_client_->GetPyDevice(device);
-        PyTuple_SET_ITEM(out.ptr(), i, d.release().ptr());
-        ++i;
+        out.put(py_client_->GetPyDevice(device));
       }
-      return out;
+      return out.commit();
     }
     case 1:
       return std::get<1>(device_list_);
@@ -227,24 +224,33 @@ nb::tuple PyDeviceList::AsTuple() const {
   }
 }
 
+namespace {
+
+// Iterator whose dereference converts `xla::ifrt::Device*` into JAX
+// `PjRtDevice`.
+struct IfrtDeviceIterator {
+  void operator++() { ++it; }
+  bool operator==(const IfrtDeviceIterator& other) const {
+    return it == other.it;
+  }
+  nb_class_ptr<PyDevice> operator*() const {
+    return py_client->GetPyDevice(*it);
+  }
+  nb_class_ptr<PyClient> py_client;
+  absl::Span<xla::ifrt::Device* const>::const_iterator it;
+};
+
+}  // namespace
+
 nb::iterator PyDeviceList::Iter() {
   switch (device_list_.index()) {
     case 0: {
-      // Iterator whose deference converts `xla::ifrt::Device*` into JAX
-      // `PjRtDevice`.
-      struct Iterator {
-        void operator++() { ++it; }
-        bool operator==(const Iterator& other) const { return it == other.it; }
-        nb_class_ptr<PyDevice> operator*() const {
-          return py_client->GetPyDevice(*it);
-        }
-        nb_class_ptr<PyClient> py_client;
-        absl::Span<xla::ifrt::Device* const>::const_iterator it;
-      };
       return nb::make_iterator(
           nb::type<PyDeviceList>(), "ifrt_device_iterator",
-          Iterator{py_client_, std::get<0>(device_list_)->devices().cbegin()},
-          Iterator{py_client_, std::get<0>(device_list_)->devices().cend()});
+          IfrtDeviceIterator{py_client_,
+                             std::get<0>(device_list_)->devices().cbegin()},
+          IfrtDeviceIterator{py_client_,
+                             std::get<0>(device_list_)->devices().cend()});
     }
     case 1:
       return nb::make_iterator(
@@ -398,16 +404,22 @@ void PyDeviceList::PopulateMemoryKindInfo() {
     memory_kind_info_ = default_memory.status();
     return;
   }
-  info.default_memory_kind = nb::cast(*(*default_memory)->Kind().memory_kind());
-  nb::tuple memory_kinds =
-      nb::steal<nb::tuple>(PyTuple_New(device->Memories().size()));
-  for (size_t i = 0; i < device->Memories().size(); ++i) {
-    auto* memory = device->Memories()[i];
-    nb::str s = nb::str(memory->Kind().memory_kind()->data(),
-                        memory->Kind().memory_kind()->size());
-    PyTuple_SET_ITEM(memory_kinds.ptr(), i, s.release().ptr());
+#if JAX_IFRT_VERSION_NUMBER >= 64
+  info.default_memory_kind = nb::cast((*default_memory)->Kind().value());
+  nb::tuple_builder memory_kinds(device->Memories().size());
+  for (xla::ifrt::Memory* memory : device->Memories()) {
+    memory_kinds.put(
+        nb::str(memory->Kind().value().data(), memory->Kind().value().size()));
   }
-  info.memory_kinds = std::move(memory_kinds);
+#else
+  info.default_memory_kind = nb::cast(*(*default_memory)->Kind().memory_kind());
+  nb::tuple_builder memory_kinds(device->Memories().size());
+  for (xla::ifrt::Memory* memory : device->Memories()) {
+    memory_kinds.put(nb::str(memory->Kind().memory_kind()->data(),
+                             memory->Kind().memory_kind()->size()));
+  }
+#endif
+  info.memory_kinds = memory_kinds.commit();
   memory_kind_info_ = std::move(info);
 }
 
@@ -503,6 +515,17 @@ PyDeviceList::MemoryKinds(nb_class_ptr<PyDeviceList> self) {
                      return *kinds;
                    })
       .def_prop_ro("device_kind", &PyDeviceList::DeviceKind, nb::lock_self());
+
+  // Pre-register iterator types during module initialization so concurrent
+  // calls to PyDeviceList::Iter() do not race to register them lazily (which
+  // can release the GIL if a Python sys.addaudithook is installed).
+  absl::Span<xla::ifrt::Device* const> empty_ifrt_devices;
+  nb::make_iterator(nb::type<PyDeviceList>(), "ifrt_device_iterator",
+                    IfrtDeviceIterator{{}, empty_ifrt_devices.cbegin()},
+                    IfrtDeviceIterator{{}, empty_ifrt_devices.cend()});
+  nb::tuple empty_tuple;
+  nb::make_iterator(nb::type<PyDeviceList>(), "python_device_iterator",
+                    empty_tuple.begin(), empty_tuple.end());
 }
 
 }  // namespace jax

@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import builtins
 import collections
 from collections.abc import Hashable
 import dataclasses
 import functools
 import pickle
 import re
-import unittest
+import sys
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -31,8 +32,6 @@ from jax._src.tree_util import (
     prefix_errors, broadcast_flattened_prefix_with_treedef,
     default_registry, dispatch_registry)
 import jax.numpy as jnp
-
-jaxlib_version = jtu.jaxlib_version()
 
 # Easier to read.
 SequenceKey = tree_util.SequenceKey
@@ -322,6 +321,8 @@ class TreeTest(jtu.JaxTestCase):
   def testIsTreeNode(self):
     self.assertTrue(tree_util.is_tree_node(list))
     self.assertTrue(tree_util.is_tree_node(dict))
+    if sys.version_info >= (3, 15):
+      self.assertTrue(tree_util.is_tree_node(getattr(builtins, "frozendict")))
     self.assertTrue(tree_util.is_tree_node(tuple))
     self.assertTrue(tree_util.is_tree_node(type(None)))
 
@@ -336,6 +337,31 @@ class TreeTest(jtu.JaxTestCase):
     self.assertFalse(tree_util.is_tree_node(int))
     self.assertFalse(tree_util.is_tree_node(str))
     self.assertFalse(tree_util.is_tree_node(float))
+
+  def testFrozenDict(self):
+    if sys.version_info < (3, 15):
+      self.skipTest("frozendict requires Python 3.15+")
+    frozendict = getattr(builtins, "frozendict")
+    fd = frozendict({"b": 2, "a": 1})
+    leaves, treedef = tree_util.tree_flatten(fd)
+    self.assertEqual(leaves, [1, 2])
+    self.assertEqual(tree_util.tree_unflatten(treedef, leaves), fd)
+    self.assertIsInstance(tree_util.tree_unflatten(treedef, leaves), frozendict)
+
+    mapped = tree_util.tree_map(lambda x: x * 10, fd)
+    self.assertEqual(mapped, frozendict({"b": 20, "a": 10}))
+    self.assertIsInstance(mapped, frozendict)
+
+    key_leaves, treedef2 = tree_util.tree_flatten_with_path(fd)
+    self.assertEqual(treedef, treedef2)
+    self.assertEqual(
+        key_leaves,
+        [((DictKey("a"),), 1), ((DictKey("b"),), 2)],
+    )
+
+    one_level_leaves, aux = tree_util.flatten_one_level(fd)
+    self.assertEqual(list(one_level_leaves), [1, 2])
+    self.assertEqual(aux, ("a", "b"))
 
   @parameterized.parameters(*(TREES + LEAVES))
   def testRoundtripWithFlattenUpTo(self, inputs):
@@ -1008,11 +1034,10 @@ class TreeTest(jtu.JaxTestCase):
                                        (SequenceKey(1), tree1["sub"][1])])
     self.assertIsNone(meta)
 
-    if jaxlib_version >= (0, 11, 1):
-      children, meta = tree_util.flatten_one_level_with_keys(tree1["sub"][1])
-      self.assertEqual(list(children), [(GetAttrKey("foo"), ()),
-                                        (GetAttrKey("bar"), [None])])
-      self.assertEqual(meta, ATuple)
+    children, meta = tree_util.flatten_one_level_with_keys(tree1["sub"][1])
+    self.assertEqual(list(children), [(GetAttrKey("foo"), ()),
+                                      (GetAttrKey("bar"), [None])])
+    self.assertEqual(meta, ATuple)
 
     # Custom object with keys
     children, meta = tree_util.flatten_one_level_with_keys(tree1["obj"])
@@ -1184,8 +1209,6 @@ class TreeKeyTest(absltest.TestCase):
     with self.assertRaisesRegex(ValueError, msg):
       f(Tree(jnp.arange(4)))
 
-  @unittest.skipIf(jaxlib_version < (0, 11, 1),
-                    "Test requires jaxlib v0.11.1 or newer.")
   def testEqualityErrorNamesOffendingType(self):
     # Regression test for https://github.com/jax-ml/jax/issues/13027
     a = ArrayMetadataBox(jnp.arange(3))
@@ -1276,6 +1299,15 @@ class StaticTest(parameterized.TestCase):
       serialized
     )
     self.assertEqual(tree_structure, new_structure)
+
+  def test_deserialize_malformed_treedef(self):
+    # A single list node claiming a child that no earlier node supplies.
+    # This used to segfault rather than raise.
+    with self.assertRaisesRegex(ValueError, "Malformed PyTreeDef"):
+      jax.tree_util.PyTreeDef.deserialize_using_proto(
+        jax.tree_util.default_registry,
+        bytes.fromhex("0a0408011002")
+      )
 
   def test_compare_pytreedef_with_registries(self):
     class MyCustomType:
@@ -1776,7 +1808,7 @@ class RegistrationTest(jtu.JaxTestCase):
     @dataclasses.dataclass
     class Foo:
       x: int
-      y: int = dataclasses.field(metadata=dict(static=True))
+      y: int = jax.tree.static()
 
     f = Foo(2, 3)
     self.assertLen(jax.tree.leaves(f), 1)

@@ -92,7 +92,6 @@ def _fusible_matmul(
     interpret: bool,
     debug: bool,
     impl: KernelImpl,
-    output_pull_strict_mode: bool = True,
 ) -> jax.Array:
   m, k = x.shape
   k_, n = y.shape
@@ -103,10 +102,9 @@ def _fusible_matmul(
   if k != k_:
     raise ValueError(f'X and Y shapes must be compatible. Got {k} != {k_}')
 
-  assert m % bm == 0
   assert k % bk == 0
   assert n % bn == 0
-  grid = (m // bm, n // bn, k // bk)
+  grid = (pl.cdiv(m, bm), n // bn, k // bk)
 
   def x_index_map(i, j, k, *_):
     del j
@@ -157,8 +155,6 @@ def _fusible_matmul(
         lambda v: v.inner_aval if isinstance(v, jax.ref.AbstractRef) else v,
         jax.tree.map(jax.typeof, values))
 
-  z_out_type = jax.eval_shape(z_fn, types_without_refs(z_values), z_type)
-
   # We construct the set of scalar prefetch arguments that will be passed to
   # the kernel.
   scalar_prefetch = (x_scalar_prefetch, y_scalar_prefetch, z_scalar_prefetch)
@@ -177,20 +173,14 @@ def _fusible_matmul(
       grid_len=len(grid),
   )(types_without_refs(y_values))
 
-  z_out_block_spec = fuser.push_block_spec(
-      z_fn,
-      tuple([pl.no_block_spec] * len(z_values)),
-      z_block_spec,
-      scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(2),
-      grid_len=len(grid)
-  )(types_without_refs(z_values), z_type)
-  z_fn, (z_value_block_specs, _), _ = fuser.pull_block_spec(
-      z_fn,
-      z_out_block_spec,
-      scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(2),
-      grid_len=len(grid),
-      strict_mode=output_pull_strict_mode,
-  )(types_without_refs(z_values), z_type)
+  z_fn, z_value_block_specs, _, z_out_type, z_out_block_spec = (
+      fuser.push_pull_block_spec(
+          z_fn,
+          z_block_spec,
+          scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(2),
+          grid_len=len(grid),
+      )(types_without_refs(z_values), z_type)
+  )
 
   # TODO(sharadmv): This is a hack. We should be able to pass in the scalar
   # prefetch arguments directly to the kernel but don't have Mosaic support atm.
@@ -264,30 +254,25 @@ def _fusible_matmul(
       def _f(acc_ref, scalar_prefetch_smem_refs):
         pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
 
-        def block_spec_with_prefetch(bs):
-          if bs is pl.no_block_spec:
-            return pl.BlockSpec()
-          if bs.index_map is None:
-            return bs
-          return bs.replace(
-            index_map=lambda *args: bs.index_map(
-                *args, *scalar_prefetch_smem_refs))
+        in_specs = (x_value_block_specs, y_value_block_specs,
+                    z_value_block_specs)
+        in_specs = fuser.block_spec_with_prefetch(
+            in_specs, scalar_prefetch_smem_refs)
+        z_out_block_spec_ = fuser.block_spec_with_prefetch(
+            z_out_block_spec, scalar_prefetch_smem_refs)
 
-        in_specs_ = jax.tree.map(block_spec_with_prefetch, (
-            x_value_block_specs, y_value_block_specs, z_value_block_specs))
-        z_out_block_spec_ = jax.tree.map(
-            block_spec_with_prefetch, z_out_block_spec)
         pltpu.emit_pipeline(
             functools.partial(
-                    matmul_kernel,
-                    *scalar_prefetch_smem_refs,
-                    acc_ref=acc_ref,
-                    x_fn=x_fn,
-                    y_fn=y_fn,
-                    z_fn=z_fn,
-                    out_dtype=out_dtype),
+                matmul_kernel,
+                *scalar_prefetch_smem_refs,
+                acc_ref=acc_ref,
+                x_fn=x_fn,
+                y_fn=y_fn,
+                z_fn=z_fn,
+                out_dtype=out_dtype,
+            ),
             grid=grid,
-            in_specs=in_specs_,
+            in_specs=in_specs,
             out_specs=[z_out_block_spec_],
             core_axis_name='core',
             dimension_semantics=dimension_semantics,
@@ -324,19 +309,13 @@ def _fusible_matmul(
     def body(scalar_prefetch_refs, acc_vmem_ref, scalar_prefetch_smem_refs):
       pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
 
-      def block_spec_with_prefetch(bs):
-        if bs is pl.no_block_spec:
-          return pl.BlockSpec()
-        if bs.index_map is None:
-          return bs
-        return bs.replace(
-          index_map=lambda *args: bs.index_map(
-              *args, *scalar_prefetch_smem_refs))
+      in_specs = (x_value_block_specs, y_value_block_specs,
+                  z_value_block_specs)
+      in_specs = fuser.block_spec_with_prefetch(
+          in_specs, scalar_prefetch_smem_refs)
+      z_out_block_spec_ = fuser.block_spec_with_prefetch(
+          z_out_block_spec, scalar_prefetch_smem_refs)
 
-      in_specs_ = jax.tree.map(block_spec_with_prefetch, (
-          x_value_block_specs, y_value_block_specs, z_value_block_specs))
-      z_out_block_spec_ = jax.tree.map(
-          block_spec_with_prefetch, z_out_block_spec)
       pltpu.emit_pipeline(
           functools.partial(
               matmul_kernel,
@@ -345,12 +324,13 @@ def _fusible_matmul(
               x_fn=x_fn,
               y_fn=y_fn,
               z_fn=z_fn,
-              out_dtype=out_dtype),
+              out_dtype=out_dtype,
+          ),
           grid=grid,
-          in_specs=in_specs_,
+          in_specs=in_specs,
           out_specs=[z_out_block_spec_],
           core_axis_name='core',
-          dimension_semantics=dimension_semantics
+          dimension_semantics=dimension_semantics,
       )(x_values_refs, y_values_refs, z_values_refs, out_ref)
 
     pl.kernel(
@@ -385,7 +365,6 @@ def fusible_matmul(
     debug: bool = False,
     interpret: bool = False,
     impl: KernelImpl = KernelImpl.CORE_MAP,
-    output_pull_strict_mode: bool = True,
 ) -> jax.Array:
   return fuser.fusible(
       functools.partial(
@@ -396,7 +375,6 @@ def fusible_matmul(
           interpret=interpret,
           debug=debug,
           impl=impl,
-          output_pull_strict_mode=output_pull_strict_mode,
       )
   )(x, y)
 
@@ -601,6 +579,57 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     self.assertArraysAllClose(out, out_ref, atol=1e-5, rtol=1e-5)
 
   @parameterized.parameters(KernelImpl)
+  def test_matmul_with_non_block_aligned_slice(self, impl):
+    m, k, n = 12, 128, 128
+    bm, bk, bn = 8, 128, 128
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, (m, k), jnp.float32)
+    y = jax.random.normal(k1, (k, n), jnp.float32)
+    _fusible_matmul = functools.partial(
+        fusible_matmul, impl=impl, bm=bm, bk=bk, bn=bn
+    )
+
+    @jax.jit
+    def run_matmul(x_3d, y):
+      @fuser.fuse
+      def matmul(x_3d, y):
+        return _fusible_matmul(x_3d[0, ...], y)
+
+      return matmul(x_3d, y)
+
+    x_3d = jnp.broadcast_to(x, (1,) + x.shape)
+    out = run_matmul(x_3d, y)
+    out_ref = x @ y
+    self.assertArraysAllClose(out, out_ref, atol=1e-5, rtol=1e-5)
+
+  @parameterized.parameters(KernelImpl)
+  def test_matmul_with_non_block_aligned_dynamic_update_slice(self, impl):
+    m, k, n = 12, 128, 128
+    bm, bk, bn = 8, 128, 128
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, (m, k), jnp.float32)
+    y = jax.random.normal(k1, (k, n), jnp.float32)
+    _fusible_matmul = functools.partial(
+        fusible_matmul, impl=impl, bm=bm, bk=bk, bn=bn
+    )
+
+    @jax.jit
+    def run_matmul(x, y):
+      o_ref = jax.new_ref(jnp.empty((1, m, n), dtype=jnp.float32))
+
+      @fuser.fuse
+      def matmul(x, y):
+        z = _fusible_matmul(x, y)
+        o_ref[0] = z
+
+      matmul(x, y)
+      return jax.ref.freeze(o_ref)
+
+    out = run_matmul(x, y)[0]
+    out_ref = x @ y
+    self.assertArraysAllClose(out, out_ref, atol=1e-5, rtol=1e-5)
+
+  @parameterized.parameters(KernelImpl)
   def test_matmul_with_binop_push_and_sliced_update(self, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (512, 512), jnp.float32)
@@ -635,13 +664,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     y = jax.random.normal(k1, (512, 512), jnp.float32)
 
     OFFSET, SIZE, bm = 128, 128, 128
-    # When an output fusion writes to multiple references, pulling block specs
-    # backward reconverges on the shared matmul accumulator. Non-strict mode
-    # skips comparing index transformations across distinct output destinations
-    # because both branches originated from the same starting accumulator spec.
-    _fusible_matmul = functools.partial(
-        fusible_matmul, impl=impl, bm=bm, output_pull_strict_mode=False
-    )
+    _fusible_matmul = functools.partial(fusible_matmul, impl=impl, bm=bm)
 
     @jax.jit
     def run_matmul(x, y):
@@ -666,6 +689,89 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     self.assertArraysAllClose(
         out2[OFFSET:OFFSET + SIZE, :], jnp.sin(ref), atol=1e-4, rtol=1e-4)
 
+  @parameterized.parameters(KernelImpl)
+  def test_matmul_with_write_only_aliased_ref(self, impl):
+    # Uses a large (8192, 8192) shape to verify that unread write-only aliased
+    # refs (`pl.no_block_spec`) are filtered out from `emit_pipeline` rather
+    # than allocated un-windowed in VMEM (which would OOM).
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, (8192, 8192), jnp.float32)
+    y = jax.random.normal(k1, (8192, 8192), jnp.float32)
+
+    _fusible_matmul = functools.partial(fusible_matmul, impl=impl)
+
+    @jax.jit
+    def run_matmul(x, y):
+      out_ref = jax.new_ref(jax.lax.empty((x.shape[0], y.shape[1]), x.dtype))
+
+      @fuser.fuse
+      def matmul(x, y):
+        out_ref[...] = _fusible_matmul(x, y)
+
+      matmul(x, y)
+      return jax.freeze(out_ref)
+
+    self.assertArraysAllClose(run_matmul(x, y), x @ y, atol=1e-4, rtol=1e-4)
+
+  @parameterized.product(
+      impl=list(KernelImpl),
+      static_kwargs=[{"static_argnums": (2,)}, {"static_argnames": ("op",)}],
+  )
+  def test_matmul_with_static_args(self, impl, static_kwargs):
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, (512, 512), jnp.float32)
+    y = jax.random.normal(k1, (512, 512), jnp.float32)
+
+    _fusible_matmul = functools.partial(fusible_matmul, impl=impl)
+
+    @functools.partial(jax.jit, **static_kwargs)
+    def run_matmul(x, y, op):
+      out_ref = jax.new_ref(jax.lax.empty((x.shape[0], y.shape[1]), x.dtype))
+
+      @fuser.fuse(**static_kwargs)
+      def matmul(x, y, op):
+        out = _fusible_matmul(x, y)
+        if op == "relu":
+          out_ref[...] = jax.nn.relu(out)
+        elif op == "gelu":
+          out_ref[...] = jax.nn.gelu(out)
+        else:
+          out_ref[...] = out
+
+      matmul(x, y, op)
+      return jax.freeze(out_ref)
+
+    ref = x @ y
+    self.assertArraysAllClose(
+        run_matmul(x, y, "relu"), jax.nn.relu(ref), atol=1e-4, rtol=1e-4
+    )
+    self.assertArraysAllClose(
+        run_matmul(x, y, op="gelu"), jax.nn.gelu(ref), atol=1e-4, rtol=1e-4
+    )
+    self.assertArraysAllClose(
+        run_matmul(x, y, "identity"), ref, atol=1e-4, rtol=1e-4
+    )
+
+  @parameterized.product(dtype=['float32'], impl=list(KernelImpl))
+  def test_nested_fuse(self, dtype, impl):
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (512, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+
+    @fuser.fuse
+    def inner(x, y):
+      return fusible_matmul(x, y, impl=impl) + 1.0
+
+    @jax.jit
+    @fuser.fuse
+    def outer(x, y):
+      return jnp.maximum(inner(x, y), 0.0)
+
+    @jit_no_excess_precision
+    def ref(x, y):
+      return jax.nn.relu(mm_ref(x, y) + 1.0)
+
+    np.testing.assert_allclose(outer(x, y), ref(x, y), atol=5e-5)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

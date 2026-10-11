@@ -26,7 +26,8 @@ from jax._src import effects as effects_lib
 from jax._src import source_info_util
 from jax._src.interpreters import ad, batching, mlir, partial_eval as pe
 from jax._src import flattree as ft
-from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
+from jax._src.tree_util import (tree_flatten, tree_leaves, tree_unflatten,
+                                tracing_registry)
 from jax._src.util import (safe_map, safe_zip, weakref_lru_cache, unzip2,
                            split_list, subs_list, merge_lists)
 from jax._src.api_util import debug_info, flatten_axes
@@ -76,7 +77,7 @@ def _compute_on(f, *, compute_type, out_memory_spaces, compiler_options):
   def wrapped(*args, **kwargs):
     nonlocal compiler_options
     dbg = debug_info('compute_on', f, args, kwargs)
-    args_flat, in_tree = tree_flatten((args, kwargs))
+    args_flat, in_tree = tracing_registry.flatten((args, kwargs))
     in_avals = tuple(core.shaped_abstractify(x) for x in args_flat)
     with extend_compute_type(compute_type):
       jaxpr, out_avals = pe.trace_to_jaxpr(
@@ -155,8 +156,8 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
 
   if compiler_options_json is not None:
     dict_attr |= {'backend_config': ir.StringAttr.get(compiler_options_json)}
-  elif compute_type == 'device':
-    dict_attr |= {'inlineable': ir.StringAttr.get('false')}
+  elif compute_type in {'device', 'tpu_sparsecore'}:
+    dict_attr |= {'backend_config': ir.StringAttr.get('{}')}
 
   call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(dict_attr)  # type: ignore
 
@@ -164,11 +165,12 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
   tokens, out_nodes = split_list(out_nodes, [len(effects)])
   tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(effects, tokens))))
   ctx.set_tokens_out(tokens_out)
-  return [
-      mlir.wrap_with_memory_kind(ctx.module_context, on, core.mem_space_to_kind(oms), out_aval)
-      for on, out_aval, oms in zip(out_nodes, ctx.avals_out, out_memory_spaces)
-  ]
-
+  out = [mlir.lower_with_sharding_in_types(ctx, o, a)
+         if isinstance(a, core.ShapedArray) else o
+         for o, a in zip(out_nodes, ctx.avals_out)]
+  return [on if compute_type == 'tpu_sparsecore' and oms is core.MemorySpace.Device else
+          mlir.wrap_with_memory_kind(ctx.module_context, on, core.mem_space_to_kind(oms), a)
+          for on, a, oms in zip(out, ctx.avals_out, out_memory_spaces)]
 mlir.register_lowering(compute_on_p, _compute_on_lowering)
 
 
@@ -398,13 +400,14 @@ def _compute_on_to_lojax(*hi_args, jaxpr, compute_type, out_memory_spaces,
   return [a.raise_val2(y) for a, y in zip(jaxpr.out_avals, lo_outs.unpack())]
 compute_on_p.to_lojax = _compute_on_to_lojax
 
-def dce_jaxpr_compute_on_rule(used_outputs: list[bool], eqn: pe.JaxprEqn
+def dce_jaxpr_compute_on_rule(used_outputs: list[bool], live_ins: list[bool],
+                              eqn: pe.JaxprEqn
                               ) -> tuple[list[bool], pe.JaxprEqn | None]:
-  if not any(used_outputs) and not pe.has_effects(eqn):
+  if not any(used_outputs) and not pe.has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
 
   dced_jaxpr, used_inputs = pe._cached_closed_call_dce(
-      eqn.params['jaxpr'], tuple(used_outputs))
+      eqn.params['jaxpr'], tuple(used_outputs), tuple(live_ins))
 
   def keep_where(xs, keeps):
     return tuple(x for x, keep in zip(xs, keeps) if keep)

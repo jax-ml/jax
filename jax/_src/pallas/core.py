@@ -42,7 +42,6 @@ from jax._src import typing as jax_typing
 from jax._src import util
 from jax._src.api import jit
 from jax._src.export._export import export
-from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
@@ -89,6 +88,8 @@ SEMAPHORE_INTERPRET_DTYPE = jnp.int16
 SEMAPHORE_MAX_VALUE = jnp.iinfo(SEMAPHORE_INTERPRET_DTYPE).max
 
 class AbstractSemaphoreTyRules:
+  allow_conversion: bool = True
+
   @staticmethod
   def pallas_interpret_element_aval(_) -> jax_core.ShapedArray:
     return jax_core.ShapedArray((), SEMAPHORE_INTERPRET_DTYPE)
@@ -213,7 +214,12 @@ class Buffered:
   """Specifies how a block should be buffered for a pipeline.
 
   Attributes:
-    buffer_count: The number of buffers to use for multiple buffering.
+    buffer_count: The number of buffers to use for multiple buffering. For
+      input_output buffers, an int ``n`` means ``(n, 1)``: ``n``-deep input
+      prefetch with synchronous output writeback; pass an
+      ``(in_buffer_count, out_buffer_count)`` pair to also buffer outputs
+      (allocating ``in + out - 1`` slots). Only emit_pipeline input_output
+      BufferedRefs accept a pair.
     use_lookahead: optional bool, indicates whether to use lookahead on the
       buffer. Enabling lookahead allows the pipeline to begin fetching the next
       changed block as soon as a slot is available, no matter how many
@@ -230,24 +236,14 @@ class Buffered:
       pipeline expects the pre-populated buffer to be passed in via allocations
       and will skip internal allocation.
   """
-  buffer_count: int
+  buffer_count: int | tuple[int, int]
   use_lookahead: bool = False
   revisit: RevisitMode | None = None
   prefetched_count: int = 0
 
 
-@runtime_checkable
-class MemoryRefBase(Protocol):
-
-  def get_array_aval(self) -> jax_core.ShapedArray:
-    ...
-
-  def get_ref_aval(self) -> TransformedRef | state.AbstractRef:
-    ...
-
-
 @dataclasses.dataclass(frozen=True)
-class MemoryRef(MemoryRefBase):
+class MemoryRef:
   """Like jax.ShapeDtypeStruct but with memory spaces."""
   inner_aval: jax_core.AbstractValue
   # TODO(b/368122763): Unify memory space types across backends
@@ -297,13 +293,14 @@ class MemorySpace(enum.Enum):
   def from_type(self, type: jax_core.AbstractValue) -> MemoryRef:
     return MemoryRef(type, memory_space=self)
 
-  def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
+  def __call__(self, shape: tuple[int, ...], dtype: jax_typing.DTypeLike):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
     return self.from_type(jax_core.ShapedArray(shape, dtype))
 
   def __str__(self) -> str:
     return self.value
 
+state_discharge.register_neutral_memory_space(MemorySpace.ANY)
 
 @dataclasses.dataclass(frozen=True)
 class CoreMemorySpace:
@@ -319,7 +316,7 @@ class CoreMemorySpace:
           f" {self.mesh}"
       )
 
-  def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
+  def __call__(self, shape: Sequence[int], dtype: jax_typing.DTypeLike):
     return MemoryRef(jax_core.ShapedArray(tuple(shape), dtype), self)
 
   def __str__(self) -> str:
@@ -353,13 +350,24 @@ class PallasGridContext:
     return size
 
 
+_grid_context = config.config_ext.Config[PallasGridContext | None](
+    "pallas_grid_context",
+    None,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+_dynamic_shapes = config.config_ext.Config[bool](
+    "pallas_dynamic_shapes_export",
+    False,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+
 @dataclasses.dataclass
 class PallasTracingEnv(threading.local):
-  grid_context: PallasGridContext | None = None
   grid_env_stack: list[GridEnv] = dataclasses.field(default_factory=list)
-  is_interpret_mode: bool = False
-  dynamic_shapes: bool = False
-  module_export_fn: Callable[[mlir.ir.Module], None] | None = None
 
 _pallas_tracing_env = PallasTracingEnv()
 
@@ -368,9 +376,9 @@ def axis_frame() -> PallasGridContext:
   # This is like jax_core.axis_frame, except there should only ever be one
   # active PallasGridAxisName for a particular main_trace because we cannot
   # nest pallas_calls.
-  env = _pallas_tracing_env
-  assert env.grid_context is not None
-  return env.grid_context
+  grid_context = _grid_context.value
+  assert grid_context is not None
+  return grid_context
 
 
 @dataclasses.dataclass(frozen=True)
@@ -821,7 +829,7 @@ class BlockMapping:
     return TransformedRef(self.transformed_block_aval, reverse_transforms)
 
   def compute_start_indices_interpret(self, loop_idx, *args):
-    jaxpr = state_discharge.discharge_state(self.index_map_jaxpr)
+    jaxpr = state_discharge.discharge_state(self.index_map_jaxpr, strip_memory_space=True)
     block_indices_and_rest = jax_core.jaxpr_as_fun(jaxpr)(*loop_idx, *args)
     # Since we're passing in `Ref`s potentially, we need to split out their
     # updated values since we only care about the return values.
@@ -916,26 +924,26 @@ def tracing_grid_env(grid: GridMappingGrid, mapped_dims: tuple[int, ...]):
     assert all(i is dynamic_grid_dim or jax_core.is_dim(i) for i in grid)
   else:
     assert all(i is dynamic_grid_dim or isinstance(i, int) for i in grid)
-  old_grid_context = _pallas_tracing_env.grid_context
+  old_grid_context = _grid_context.swap_local(
+      PallasGridContext(tuple(grid), tuple(mapped_dims))
+  )
   try:
-    _pallas_tracing_env.grid_context = PallasGridContext(grid, mapped_dims)
     yield
   finally:
-    _pallas_tracing_env.grid_context = old_grid_context
+    _grid_context.set_local(old_grid_context)
 
 
 @contextlib.contextmanager
 def pallas_export_experimental(dynamic_shapes: bool):
-  old_dynamic_shapes = _pallas_tracing_env.dynamic_shapes
+  old_dynamic_shapes = _dynamic_shapes.swap_local(dynamic_shapes)
   try:
-    _pallas_tracing_env.dynamic_shapes = dynamic_shapes
     yield
   finally:
-    _pallas_tracing_env.dynamic_shapes = old_dynamic_shapes
+    _dynamic_shapes.set_local(old_dynamic_shapes)
 
 
 def dynamic_shapes_export_enabled() -> bool:
-  return _pallas_tracing_env.dynamic_shapes
+  return _dynamic_shapes.value
 
 
 def is_dynamic_dim(d) -> bool:
@@ -1184,7 +1192,7 @@ def _convert_block_spec_to_block_mapping(
     debug: bool = False,
 ) -> BlockMapping:
   if block_spec is no_block_spec:
-    block_spec = BlockSpec(None, None)
+    block_spec = BlockSpec(memory_space=MemorySpace.ANY)
   return block_spec.to_block_mapping(
       origin,
       array_aval,
@@ -1329,7 +1337,7 @@ def get_grid_mapping(
 
   def _with_default_memory_space(bs: BlockSpec):
     if bs is no_block_spec:
-      return BlockSpec(memory_space=MemorySpace.DEFAULT)
+      return BlockSpec(memory_space=MemorySpace.ANY)
     elif bs.memory_space is None:
       return bs.replace(memory_space=MemorySpace.DEFAULT)
     else:
@@ -1616,31 +1624,6 @@ class Mesh(Protocol):
   def tracing_context(self) -> Generator[None]:
     raise NotImplementedError()
     yield
-
-
-with_memory_space_constraint_p = jax_core.Primitive(
-    'with_memory_space_constraint')
-
-@with_memory_space_constraint_p.def_impl
-def with_memory_space_constraint_impl(x, *, memory_space):
-  del x, memory_space
-  raise ValueError("Cannot eagerly run with_memory_space_constraint.")
-
-
-@with_memory_space_constraint_p.def_abstract_eval
-def with_memory_space_constraint_abstract_eval(x, *, memory_space):
-  if not isinstance(x, jax_core.ShapedArray):
-    raise NotImplementedError("with_memory_space_constraint only supports "
-                              "arrays.")
-  return x.update(memory_space=memory_space)
-
-def with_memory_space_constraint_lowering_rule(ctx, x, *, memory_space):
-  del ctx, memory_space
-  return [x]
-mlir.register_lowering(
-    with_memory_space_constraint_p, with_memory_space_constraint_lowering_rule
-)
-
 
 def lower_as_mlir(
     f,

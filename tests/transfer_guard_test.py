@@ -14,15 +14,14 @@
 
 import contextlib
 import pickle
+import threading
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
-import numpy as np
-
 import jax
 import jax._src.test_util as jtu
 import jax.numpy as jnp
+import numpy as np
 
 jax.config.parse_flags_with_absl()
 
@@ -238,6 +237,45 @@ class TransferGuardTest(jtu.JaxTestCase):
       with jax_transfer_guard("disallow_explicit"):
         with self.assertDisallows(func_name):
           func()
+
+  @jtu.thread_unsafe_test()  # Mutates global transfer guard config.
+  def test_concurrent_global_state_tsan_race(self):
+    stop = threading.Event()
+    errors = []
+
+    def config_writer():
+      try:
+        while not stop.is_set():
+          jax.config.update("jax_transfer_guard_host_to_device", "log")
+          jax.config.update("jax_transfer_guard_host_to_device", "allow")
+      except Exception as e:
+        errors.append(e)
+
+    def reader():
+      try:
+        arr = np.ones(1)
+        for _ in range(2000):
+          jax.device_put(arr)
+      except Exception as e:
+        errors.append(e)
+
+    threads = [
+        threading.Thread(target=config_writer),
+        threading.Thread(target=reader),
+        threading.Thread(target=reader),
+    ]
+    try:
+      for t in threads:
+        t.start()
+      threads[1].join()
+      threads[2].join()
+    finally:
+      stop.set()
+      for t in threads:
+        t.join()
+      jax.config.update("jax_transfer_guard_host_to_device", None)
+
+    self.assertEmpty(errors)
 
 
 if __name__ == "__main__":

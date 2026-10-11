@@ -99,7 +99,7 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
   @wraps(fun, docstr=raw_value_and_grad_fun.__doc__, argnums=argnums)
   @api_boundary
   def value_and_grad_fun(*args, **kwargs):
-    fun_flat, argnums_flat, args_flat, postprocess_gradients = flatten_fun_for_sparse_ad(fun, argnums, args)
+    fun_flat, argnums_flat, args_flat, postprocess_gradients = flatten_fun_for_sparse_ad(fun, argnums, args)  # pyrefly: ignore[bad-argument-type]
     val_out, grad_out = jax.value_and_grad(fun_flat, argnums=argnums_flat, has_aux=has_aux, **kwargs)(*args_flat)
     return val_out, postprocess_gradients(grad_out)
   return value_and_grad_fun
@@ -127,7 +127,7 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
   @wraps(fun, docstr=raw_grad_fun.__doc__, argnums=argnums)
   @api_boundary
   def grad_fun(*args, **kwargs):
-    fun_flat, argnums_flat, args_flat, postprocess_gradients = flatten_fun_for_sparse_ad(fun, argnums, args)
+    fun_flat, argnums_flat, args_flat, postprocess_gradients = flatten_fun_for_sparse_ad(fun, argnums, args)  # pyrefly: ignore[bad-argument-type]
     out = jax.grad(fun_flat, argnums=argnums_flat, has_aux=has_aux, **kwargs)(*args_flat)
     if has_aux:
       return postprocess_gradients(out[0]), out[1]
@@ -150,7 +150,7 @@ def jacfwd(fun: Callable, argnums: int | Sequence[int] = 0,
   @wraps(fun, docstr=raw_jacfwd_fun.__doc__, argnums=argnums)
   @api_boundary
   def jacfwd_fun(*args, **kwargs):
-    fun_flat, argnums_flat, args_flat, postprocess_gradients = flatten_fun_for_sparse_ad(fun, argnums, args)
+    fun_flat, argnums_flat, args_flat, postprocess_gradients = flatten_fun_for_sparse_ad(fun, argnums, args)  # pyrefly: ignore[bad-argument-type]
     out = jax.jacfwd(fun_flat, argnums=argnums_flat, has_aux=has_aux, **kwargs)(*args_flat)
     if has_aux:
       return postprocess_gradients(out[0]), out[1]
@@ -173,7 +173,7 @@ def jacrev(fun: Callable, argnums: int | Sequence[int] = 0,
   @wraps(fun, docstr=raw_jacrev_fun.__doc__, argnums=argnums)
   @api_boundary
   def jacrev_fun(*args, **kwargs):
-    fun_flat, argnums_flat, args_flat, postprocess_gradients = flatten_fun_for_sparse_ad(fun, argnums, args)
+    fun_flat, argnums_flat, args_flat, postprocess_gradients = flatten_fun_for_sparse_ad(fun, argnums, args)  # pyrefly: ignore[bad-argument-type]
     out = jax.jacrev(fun_flat, argnums=argnums_flat, has_aux=has_aux, **kwargs)(*args_flat)
     if has_aux:
       return postprocess_gradients(out[0]), out[1]

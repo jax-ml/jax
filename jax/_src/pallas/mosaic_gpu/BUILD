@@ -30,7 +30,6 @@ package(
 pytype_strict_library(
     name = "mosaic_gpu",
     srcs = ["__init__.py"],
-    type_checking = "pyrefly",
     deps = [
         ":core",
         ":pallas_call_registration",
@@ -41,13 +40,13 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_call_registration",
     srcs = ["pallas_call_registration.py"],
-    type_checking = "pyrefly",
     deps = [
         ":core",
         ":lowering",
         "//jax",
         "//jax/_src:config",
         "//jax/_src:core",
+        "//jax/_src:dtypes",
         "//jax/_src:frozen_dict",
         "//jax/_src:mlir",
         "//jax/_src:sharding_impls",
@@ -59,7 +58,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "lowering",
     srcs = ["lowering.py"],
-    type_checking = "pyrefly",
     deps = [
         ":core",
         "//jax",
@@ -67,10 +65,13 @@ pytype_strict_library(
         "//jax/_src:checkify",
         "//jax/_src:config",
         "//jax/_src:core",
+        "//jax/_src:custom_derivatives",
         "//jax/_src:debugging",
+        "//jax/_src:deprecations",
         "//jax/_src:dtypes",
         "//jax/_src:flattree",
         "//jax/_src:lax",
+        "//jax/_src:layout",
         "//jax/_src:literals",
         "//jax/_src:mesh",
         "//jax/_src:mlir",
@@ -93,7 +94,6 @@ pytype_strict_library(
         # Avoid circular dependency.
         "ignore_for_dep=third_party.py.jax._src.pallas.mosaic_gpu.primitives.wgmma_accumulator_deref",
     ],
-    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:api",
@@ -117,21 +117,38 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "layout_rules",
+    srcs = ["layout_rules.py"],
+    deps = [
+        ":core",
+        ":lowering",
+        "//jax",
+        "//jax/_src:core",
+        "//jax/_src:mlir",
+        "//jax/_src:source_info_util",
+        "//jax/_src/lib",
+        "//jax/experimental:mosaic_gpu",
+        "//jaxlib/mlir:ir",
+        "//jaxlib/mlir:vector_dialect",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
     name = "primitives",
     srcs = ["primitives.py"],
-    type_checking = "pyrefly",
     deps = [
         ":core",
         ":lowering",
         "//jax",
         "//jax/_src:api",
+        "//jax/_src:batching",
         "//jax/_src:core",
         "//jax/_src:debugging",
         "//jax/_src:deprecations",
         "//jax/_src:dtypes",
         "//jax/_src:lax",
+        "//jax/_src:layout",
         "//jax/_src:literals",
-        "//jax/_src:partial_eval",
         "//jax/_src:pretty_printer",
         "//jax/_src:state_types",
         "//jax/_src:tree_util",
@@ -145,7 +162,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pipeline",
     srcs = ["pipeline.py"],
-    type_checking = "pyrefly",
     deps = [
         ":core",
         ":primitives",
@@ -164,7 +180,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "helpers",
     srcs = ["helpers.py"],
-    type_checking = "pyrefly",
     deps = [
         ":core",
         ":pipeline",
@@ -183,7 +198,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "torch",
     srcs = ["torch.py"],
-    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:dtypes",
@@ -196,7 +210,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_call",
     srcs = ["pallas_call.py"],
-    type_checking = "pyrefly",
     deps = [
         ":core",
         ":pipeline",

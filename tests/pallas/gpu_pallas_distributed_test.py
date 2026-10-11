@@ -14,14 +14,15 @@
 
 """Tests for distributed pallas GPU operations."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import math
 import os
+import re
 import tempfile
 import types
-from typing import ClassVar, TYPE_CHECKING
+from typing import Any, ClassVar, TYPE_CHECKING
 from unittest import mock
 
 from absl.testing import absltest
@@ -153,6 +154,25 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
         plgpu.SwizzleTransform(swizzle),
     )
 
+  def assert_arrays_equal_per_shard(
+      self,
+      y: jax.Array,
+      expected_fn: Callable[[int], Any],
+      **kwargs,
+  ):
+    if hasattr(y.sharding, "mesh"):
+      devices = list(y.sharding.mesh.devices.flat)
+    elif hasattr(y.sharding, "_internal_device_list"):
+      devices = list(y.sharding._internal_device_list)
+    else:
+      devices = list(y.sharding.device_set)
+    self.assertNotEmpty(y.addressable_shards)
+    if jax.process_count() == 1:
+      self.assertLen(y.addressable_shards, len(devices))
+    for shard in y.addressable_shards:
+      dev_idx = devices.index(shard.device)
+      np.testing.assert_array_equal(shard.data, expected_fn(dev_idx), **kwargs)
+
 
 class PallasCallRemoteDMATest(TestCase):
   def setUp(self):
@@ -164,7 +184,7 @@ class PallasCallRemoteDMATest(TestCase):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       y_ref[...] = x_ref[...]
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
@@ -196,14 +216,114 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[8:] if jax.process_index() == 0 else x[:8]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+    )
+
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_remote_store_vectorized(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    def kernel(x_ref, y_ref, ready_sem, recv_sem):
+      other_dev_id = 1 - lax.axis_index("x")
+      other_dev = {"x": other_dev_id}
+      pl.semaphore_signal(ready_sem, device_id=other_dev)
+      pl.semaphore_wait(ready_sem)
+      for i in range(2):
+        for j in range(2):
+          idx = (
+              pl.ds(lax.rem(other_dev_id + i, jnp.int32(2)) * 16, 16),
+              pl.ds(j * 64, 64),
+          )
+          plgpu.remote_ref(y_ref, other_dev)[idx] = x_ref[idx]
+      pl.semaphore_signal(recv_sem, device_id=other_dev)
+      pl.semaphore_wait(recv_sem)
+
+    x = jnp.arange(2 * 32 * 128, dtype=jnp.bfloat16).reshape((2 * 32, 128))
+    body = self.kernel(
+        kernel,
+        out_type=jax.ShapeDtypeStruct((32, 128), jnp.bfloat16),
+        scratch_types=[
+            plgpu.SemaphoreType.REGULAR,
+            plgpu.SemaphoreType.REGULAR,
+        ],
+    )
+    mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), jtu.capture_stdout() as ptx:
+      y = jax.block_until_ready(
+          jax.jit(
+              jax.shard_map(
+                  body,
+                  mesh=mesh,
+                  in_specs=P("x"),
+                  out_specs=P("x"),
+                  check_vma=False,
+              )
+          )(x)
+      )
+    self.assertIn("st.global.v2.b32", ptx())
+    self.assertNotIn("st.b16", ptx())
+    self.assertNotIn("st.global.b16", ptx())
+
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[32:] if dev_idx == 0 else x[:32]
+    )
+
+  def test_skip_device_sync(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    # Kernel with cross-device barrier which makes sure that the other device
+    # has completed the previous kernel.
+    def barrier_kernel(x_ref, y_ref):
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+
+    # Kernel with no cross-device barrier.
+    def skip_barrier_kernel(x_ref, y_ref):
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...] * 2
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+
+    # The first kernel is executed with a device barrier, the second without.
+    def body(x):
+      y = self.kernel(
+          barrier_kernel,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+      )(x)
+      y_ref = jax.new_ref(y)
+      self.kernel(
+          skip_barrier_kernel,
+          compiler_params=plgpu.CompilerParams(skip_device_barrier=True),
+      )(x, y_ref)
+      return jax.freeze(y_ref)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    sharded_fn = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    hlo = sharded_fn.lower(x).compile().as_text()
+    self.assertIn("skip_device_barrier = true", hlo)
 
   def test_remote_dma_tma_load(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem, scratch_ref, barrier):
-      other_dev_id = 1 - lax.axis_index("x")
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
 
@@ -242,8 +362,9 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[8:] if jax.process_index() == 0 else x[:8]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+    )
 
   def test_remote_dma_dynamic_other_device_id(self):
     # Regression test for device_collective_metadata being DCE'd under
@@ -267,7 +388,7 @@ class PallasCallRemoteDMATest(TestCase):
     )
     def kernel(x_ref, other_dev_id_ref, y_ref, x_smem):
       x_smem[...] = x_ref[...]
-      other_dev_id = other_dev_id_ref[0]
+      other_dev_id = {"x": other_dev_id_ref[0]}
       remote_y_ref = plgpu.remote_ref(y_ref, other_dev_id)
       plgpu.copy_smem_to_gmem(x_smem, remote_y_ref)
       plgpu.wait_smem_to_gmem(0)
@@ -286,8 +407,9 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x, other_dev_ids)
 
-    expected = x[8:] if jax.process_index() == 0 else x[:8]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+    )
 
   # Test verifies an execution of HLO with several slightly different mosaic
   # custom calls. The difference is needed to validate correct initialization
@@ -297,7 +419,7 @@ class PallasCallRemoteDMATest(TestCase):
       return  # Only 2 processes needed.
 
     def kernel(x_ref, y_ref, done_sem):
-      other_dev_id = 1 - lax.axis_index("x")
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
       pl.semaphore_signal(done_sem, device_id=other_dev_id)
       pl.semaphore_wait(done_sem)
       neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
@@ -306,7 +428,7 @@ class PallasCallRemoteDMATest(TestCase):
       pl.semaphore_wait(done_sem)
 
     def different_kernel(x_ref, y_ref, wait_sem, ready_sem):
-      other_dev_id = 1 - lax.axis_index("x")
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
       pl.semaphore_signal(wait_sem, device_id=other_dev_id)
       pl.semaphore_wait(wait_sem)
       neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
@@ -349,14 +471,15 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[:8] if jax.process_index() == 0 else x[8:]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[:8] if dev_idx == 0 else x[8:]
+    )
 
   def test_remote_dma_inline_mgpu(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
 
       @plgpu.inline_mgpu(arg_types=(plgpu.RefType(),))
@@ -386,7 +509,7 @@ class PallasCallRemoteDMATest(TestCase):
     if jax.process_index() > 2:
       self.skipTest("Needs at least two devices")
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       y_ref[...] = jnp.zeros_like(y_ref)
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
@@ -418,14 +541,15 @@ class PallasCallRemoteDMATest(TestCase):
     )(x)
     y.block_until_ready()
 
-    expected = x[128:] if jax.process_index() == 0 else x[:128]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[128:] if dev_idx == 0 else x[:128]
+    )
 
   def test_remote_dma_with_retries(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       y_ref[...] = x_ref[...]
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
@@ -458,14 +582,15 @@ class PallasCallRemoteDMATest(TestCase):
     for _ in range(51):
       y = jit_body(y)
 
-    expected = x[8:] if jax.process_index() == 0 else x[:8]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+    )
 
   def test_remote_dma_with_profiler(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       y_ref[...] = x_ref[...]
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
@@ -502,8 +627,9 @@ class PallasCallRemoteDMATest(TestCase):
             )
         )(x)
 
-      expected = x[8:] if jax.process_index() == 0 else x[:8]
-      np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+      self.assert_arrays_equal_per_shard(
+          y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+      )
 
   def test_remote_dma_in_loop(self):
     if jax.process_index() > 2:
@@ -511,7 +637,7 @@ class PallasCallRemoteDMATest(TestCase):
 
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
       device_id = lax.axis_index('x')
-      other_dev_id = 1 - device_id
+      other_dev_id = {'x': 1 - device_id}
       neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
       def body(i, _):
         y_ref.at[0, i].set(x_ref.at[0, i].get())
@@ -543,14 +669,15 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[1:] if jax.process_index() == 0 else x[:1]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[1:] if dev_idx == 0 else x[:1]
+    )
 
   def test_remote_dma_dynamic_index(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
-      other_dev_id = jnp.sum(x_ref[...] == 1, dtype=jnp.int32)
+      other_dev_id = {'x': jnp.sum(x_ref[...] == 1, dtype=jnp.int32)}
       y_ref[...] = x_ref[...]
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
@@ -580,8 +707,9 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[1:] if jax.process_index() == 0 else x[:1]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[1:] if dev_idx == 0 else x[:1]
+    )
 
   @parameterized.parameters(('x',), ('y',))
   def test_remote_dma_2d_mesh(self, axis):
@@ -615,15 +743,20 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[8:] if jax.process_index() == 0 else x[:8]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    axis_idx = ["x", "y"].index(axis)
+    self.assert_arrays_equal_per_shard(
+        y,
+        lambda dev_idx: (
+            x[8:] if np.unravel_index(dev_idx, (2, 2))[axis_idx] == 0 else x[:8]
+        ),
+    )
 
   def test_wait_twice(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 2, device_id=other_dev_id)
       pl.semaphore_wait(sem)
       pl.semaphore_wait(sem)
@@ -650,7 +783,7 @@ class PallasCallRemoteDMATest(TestCase):
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 2, device_id=other_dev_id)
       pl.semaphore_wait(sem, decrement=False)
       pl.semaphore_wait(sem, 2, decrement=False)
@@ -678,7 +811,7 @@ class PallasCallRemoteDMATest(TestCase):
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem, sem2):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       plgpu.semaphore_signal_parallel(
           plgpu.SemaphoreSignal(sem, device_id=other_dev_id),
           plgpu.SemaphoreSignal(sem2, device_id=other_dev_id),
@@ -704,6 +837,10 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
   def test_semaphore_signal_collective_axes(self):
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.process_index() > 2:
       self.monkey_patched_api_was_used = True
       return  # Only 2 processes needed.
@@ -744,6 +881,10 @@ class PallasCallRemoteDMATest(TestCase):
         raise
 
   def test_semaphore_signal_multicast_collective_axes_warp_level(self):
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.process_index() > 2:
       self.monkey_patched_api_was_used = True
       return  # Only 2 processes needed.
@@ -795,7 +936,7 @@ class PallasCallRemoteDMATest(TestCase):
 
   def test_permuted_mesh(self):
     def kernel(y_ref, sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
@@ -892,15 +1033,15 @@ class PallasCallRemoteDMATest(TestCase):
           y_slice = pl.ds(i * tile, tile)
           plgpu.copy_smem_to_gmem(
               smem_ref,
-              plgpu.remote_ref(y_ref, (zero, dev_id)).at[y_slice]
+              plgpu.remote_ref(y_ref, {"x": zero, "y": dev_id}).at[y_slice]
           )
           plgpu.copy_smem_to_gmem(
               smem_ref,
-              plgpu.remote_ref(y_ref, (zero, other_dev_id)).at[y_slice]
+              plgpu.remote_ref(y_ref, {"x": zero, "y": other_dev_id}).at[y_slice]
           )
           plgpu.wait_smem_to_gmem(0)
 
-      pl.semaphore_signal(sem, 1, device_id=(zero, other_dev_id))
+      pl.semaphore_signal(sem, 1, device_id={"x": zero, "y": other_dev_id})
       pl.semaphore_wait(sem)
 
     kernel_call = self.kernel(
@@ -929,6 +1070,11 @@ class PallasCallRemoteDMATest(TestCase):
 class PallasCallMultimemTest(TestCase):
   def setUp(self):
     super().setUp()
+    # TODO: b/541298091 - Skip when NCCL_NVLS_ENABLE='0' until b/541298091 is resolved.
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
     if any(
@@ -947,7 +1093,7 @@ class PallasCallMultimemTest(TestCase):
       def _store():
         output = plgpu.layout_cast(lax.broadcasted_iota(jnp.int32, (128, 128), 1), plgpu.Layout.WGMMA)
         plgpu.multimem_store(output, y_ref, 'x')
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
@@ -975,7 +1121,7 @@ class PallasCallMultimemTest(TestCase):
       @pl.when(lax.axis_index('x') == 0)
       def _store():
         plgpu.multimem_store(jnp.int32(1), y_ref.at[0], 'x')
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
@@ -1006,7 +1152,7 @@ class PallasCallMultimemTest(TestCase):
         smem_ref[...] = output
         plgpu.copy_smem_to_gmem(smem_ref, plgpu.multicast_ref(y_ref, 'x'))
         plgpu.wait_smem_to_gmem(0)
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
@@ -1054,7 +1200,7 @@ class PallasCallMultimemTest(TestCase):
           )
           plgpu.wait_smem_to_gmem(0)
 
-      other_dev_id = 1 - lax.axis_index("x")
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
@@ -1138,14 +1284,18 @@ class PallasCallMultimemTest(TestCase):
         )
       else:
         layout = plgpu.Layout.WG_STRIDED((64, 32), vec_size=vector_length)
-      y_ref[...] = plgpu.layout_cast(
-          plgpu.multimem_load_reduce(
-              x_ref.at[16:-16], collective_axes="x", reduction_op=reduction,
+      plgpu.store(
+          y_ref,
+          plgpu.layout_cast(
+              plgpu.multimem_load_reduce(
+                  x_ref.at[16:-16], collective_axes="x", reduction_op=reduction,
+              ),
+              layout
           ),
-          layout
+          optimized=False,
       )
       my_device = lax.axis_index("x")
-      other_device = 1 - my_device
+      other_device = {"x": 1 - my_device}
       pl.semaphore_signal(sem_ref, 1, device_id=other_device)
       pl.semaphore_wait(sem_ref)
 
@@ -1186,6 +1336,104 @@ class PallasCallMultimemTest(TestCase):
         np.tile(np_reduction(x_local[16:64+16], x_local[64+48:128+48]), (2, 1)),
     )
 
+  def test_multimem_operand_is_placed_in_collective_memory(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    # Temporary skip test until XLA switches to a different collective space
+    # coloring.
+    self.skipTest("Skip the test due to b/564807911.")
+    devices = jax.devices()[:2]
+
+    def kernel(x_ref, y_ref, sem_ref):
+      y_ref[...] = plgpu.layout_cast(
+          plgpu.multimem_load_reduce(
+              x_ref.at[...], collective_axes="x", reduction_op="add"
+          ),
+          plgpu.Layout.WG_STRIDED((8, 128), vec_size=4),
+      )
+      other_device = {"x": 1 - lax.axis_index("x")}
+      pl.semaphore_signal(sem_ref, 1, device_id=other_device)
+      pl.semaphore_wait(sem_ref)
+
+    mesh = jax.sharding.Mesh(devices, ("x",))
+    x = jnp.zeros((2 * 8, 128), jnp.float32)
+    f = jax.jit(
+        jax.shard_map(
+            self.kernel(
+                kernel,
+                out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+                scratch_types=[plgpu.SemaphoreType.REGULAR],
+                compiler_params=plgpu.CompilerParams(),
+            ),
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    lowered = f.lower(x).as_text()
+
+    # The multimem operand has to live in symmetric memory, so Mosaic asks XLA
+    # to place it in the collective memory space.
+    match = re.search(r'operands_memory_spaces = "\{([^}]*)\}"', lowered)
+    self.assertIsNotNone(match, lowered)
+    operand_memory_spaces = dict(
+        tuple(int(i) for i in pair.split(":"))
+        for pair in match.group(1).split(",")
+        if pair
+    )
+    collective_memory_space = 1
+    self.assertEqual(operand_memory_spaces.get(0), collective_memory_space)
+
+    if jax.process_count() == 1:
+      # Within a single process the multimem operand is the only buffer that
+      # has to be symmetric. Across processes all of them do.
+      self.assertEqual(operand_memory_spaces, {0: collective_memory_space})
+      self.assertNotIn("results_memory_spaces", lowered)
+
+    # And XLA has to honour the request by coloring the operand buffers S(1).
+    compiled = f.lower(x).compile().as_text()
+    custom_calls = [
+        line
+        for line in compiled.splitlines()
+        if 'custom_call_target="mosaic_gpu_v2"' in line
+    ]
+    self.assertLen(custom_calls, 1, compiled)
+    # Operands are printed by name only (and annotated with /*index=N*/ past
+    # the first few), e.g. `%custom-call = f32[8,128]{1,0} custom-call(%copy)`.
+    operands = re.search(r"custom-call\(([^)]*)\)", custom_calls[0])
+    self.assertIsNotNone(operands, custom_calls[0])
+    operand_names = [
+        re.sub(r"/\*.*?\*/", "", operand).strip()
+        for operand in operands.group(1).split(",")
+    ]
+
+    def memory_space(name: str) -> int:
+      # Definitions carry the memory space in the layout of their shape, e.g.
+      #   %copy = f32[16,128]{1,0:S(1)} copy(%param)
+      definition = re.search(
+          rf"^\s*{re.escape(name)} = (\S+)\s", compiled, re.MULTILINE
+      )
+      self.assertIsNotNone(
+          definition, f"No definition of {name} in:\n{compiled}"
+      )
+      space = re.search(r"S\((\d+)\)", definition.group(1))
+      return int(space.group(1)) if space else 0  # Default memory space.
+
+    # Note that XLA is free to place more buffers in collective memory than we
+    # asked for (it currently colors all buffers of a symmetric Mosaic kernel),
+    # so we only check that the buffers we did ask for got colored.
+    for index, requested_space in operand_memory_spaces.items():
+      self.assertLess(index, len(operand_names), compiled)
+      self.assertEqual(
+          memory_space(operand_names[index]),
+          requested_space,
+          f"Operand {index} ({operand_names[index]}) is not in memory space"
+          f" {requested_space}:\n{compiled}",
+      )
+
 
 @jtu.thread_unsafe_test_class()
 class PallasCallMultimemThreadUnsafeTest(TestCase):
@@ -1195,6 +1443,11 @@ class PallasCallMultimemThreadUnsafeTest(TestCase):
 
   def setUp(self):
     super().setUp()
+    # TODO: b/541298091 - Skip when NCCL_NVLS_ENABLE='0' until b/541298091 is resolved.
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
     if any(

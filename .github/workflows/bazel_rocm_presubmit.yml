@@ -38,7 +38,7 @@ jobs:
           runner: ["amd-do-linux.jax.gpu.gfx950.1"]
           jaxlib-version: ["head", "pypi_latest"]
           enable-x64: [0]
-          rocm-version: ["7"]
+          rocm-version: ["10"]
     name: "${{ matrix.runner && 'Test' }}"
 # End Presubmit Naming Check github-rocm-presubmits
     with:
@@ -49,8 +49,8 @@ jobs:
       jaxlib-version: ${{ matrix.jaxlib-version }}
       halt-for-connection: ${{ inputs.halt-for-connection }}
       rocm-version: ${{ matrix.rocm-version }}
-      rocm-tag: "therock-7.14"
-      rocm-release-version: "7.14.0"
+      rocm-tag: "therock-10.0"
+      rocm-release-version: "10.0.0"
       enable-x64:  ${{ matrix.enable-x64 }}
       build_jaxlib: ${{ (matrix.jaxlib-version == 'head' && 'wheel') || 'false' }}
       build_jax: ${{ 'true' }}
@@ -72,9 +72,9 @@ jobs:
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
-      rocm-version: "7"
-      rocm-tag: "therock-7.14"
-      rocm-release-version: "7.14.0"
+      rocm-version: "10"
+      rocm-tag: "therock-10.0"
+      rocm-release-version: "10.0.0"
       download-jax-from-gcs: 0
       jaxlib-version: "head"
       build_jaxlib: ${{ 'true' }}

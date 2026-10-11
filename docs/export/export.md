@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 <!--* freshness: { owner: "necula" reviewed: "2024-06-26" } *-->
 
 # Exporting and serializing staged-out computations

@@ -82,7 +82,7 @@ def zeros(shape: Any, dtype: DTypeLike | None = None, *,
     Array([[False, False, False],
            [False, False, False]], dtype=bool)
 
-  .. _explicit sharding: https://docs.jax.dev/en/latest/parallel.html
+  .. _explicit sharding: https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
   """
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
@@ -131,7 +131,7 @@ def ones(shape: Any, dtype: DTypeLike | None = None, *,
     Array([[ True,  True,  True],
            [ True,  True,  True]], dtype=bool)
 
-  .. _explicit sharding: https://docs.jax.dev/en/latest/parallel.html
+  .. _explicit sharding: https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
   """
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
@@ -183,7 +183,7 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
     Array([[False, False, False],
            [False, False, False]], dtype=bool)
 
-  .. _explicit sharding: https://docs.jax.dev/en/latest/parallel.html
+  .. _explicit sharding: https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
   """
   if (m := _check_forgot_shape_tuple("empty", shape, dtype)): raise TypeError(m)
   dtype = dtypes.check_and_canonicalize_user_dtype(
@@ -617,10 +617,12 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
     # This approach recovers the endpoints with float32 arithmetic,
     # but can lead to rounding errors for integer outputs.
     real_dtype = dtypes.finfo(computation_dtype).dtype
-    step = lax.iota(real_dtype, div).reshape(iota_shape) / asarray(div, real_dtype)
+    iota = lax.iota(real_dtype, div).reshape(iota_shape)
+    step = iota / asarray(div, real_dtype)
     step = step.astype(computation_dtype)
     out = (broadcast_start.reshape(bounds_shape) * (1 - step) +
-      broadcast_stop.reshape(bounds_shape) * step)
+      (broadcast_stop.reshape(bounds_shape) / asarray(div, computation_dtype)) *
+      iota.astype(computation_dtype))
 
     if endpoint:
       out = lax.concatenate([out, lax.expand_dims(broadcast_stop, (axis,))],

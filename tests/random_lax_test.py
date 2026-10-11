@@ -348,6 +348,16 @@ class RandomShapeTest(RandomTestBase):
     jit_result = jax.jit(fn, static_argnums=(1,))(key, shape)
     self.assertEqual(jit_result.shape, shape)
 
+  def test_f_broadcasted_parameters(self):
+    key = random.key(0)
+    shape = (3, 4)
+    dfnum = jnp.ones(shape[-1:])
+    f_jit = jax.jit(random.f, static_argnames=['shape'])
+
+    with jax.numpy_rank_promotion('allow'):
+      self.assertEqual(random.f(key, dfnum, 1., shape=shape).shape, shape)
+      self.assertEqual(f_jit(key, dfnum, 1., shape=shape).shape, shape)
+
 
 class DistributionsTest(RandomTestBase):
   """

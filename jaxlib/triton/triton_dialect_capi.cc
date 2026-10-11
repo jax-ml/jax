@@ -33,9 +33,21 @@ extern "C" {
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Triton, triton,
                                       mlir::triton::TritonDialect);
 
+#if defined(__has_include) && \
+    (__has_include("third_party/triton/include/triton/Dialect/Triton/IR/TypesEnums.h.inc") || \
+     __has_include("triton/Dialect/Triton/IR/TypesEnums.h.inc"))
+#define JAX_TRITON_HAS_PTR_ADDR_SPACE 1
+#endif
+
 MlirType mlirTritonPointerTypeGet(MlirType pointeeType, int addressSpace) {
+#if defined(JAX_TRITON_HAS_PTR_ADDR_SPACE)
+  return wrap(mlir::triton::PointerType::get(
+      unwrap(pointeeType),
+      static_cast<mlir::triton::PtrAddrSpace>(addressSpace)));
+#else
   return wrap(
       mlir::triton::PointerType::get(unwrap(pointeeType), addressSpace));
+#endif
 }
 
 bool mlirTritonIsAPointer(MlirType type) {
@@ -48,8 +60,14 @@ MlirType mlirTritonPointerTypeGetPointeeType(MlirType pointerType) {
 }
 
 int mlirTritonPointerTypeGetAddressSpace(MlirType pointerType) {
+#if defined(JAX_TRITON_HAS_PTR_ADDR_SPACE)
+  return static_cast<int>(
+      llvm::cast<mlir::triton::PointerType>(unwrap(pointerType))
+          .getAddressSpace());
+#else
   return llvm::cast<mlir::triton::PointerType>(unwrap(pointerType))
       .getAddressSpace();
+#endif
 }
 
 MlirAttribute mlirTritonInferReduceOpEncoding(MlirAttribute operandEncoding,

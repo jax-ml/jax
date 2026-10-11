@@ -17,6 +17,7 @@ limitations under the License.
 #define THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_GPU_SERDE_H_
 
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "llvm/ADT/StringRef.h"
@@ -28,6 +29,13 @@ limitations under the License.
 #include "jaxlib/mosaic/pass_boilerplate.h"
 
 namespace mosaic::gpu {
+
+// Rewrites attribute spellings that MLIR is no longer able to parse in a
+// serialized (textual or bytecode) Mosaic GPU module, and returns the result.
+//
+// Upgrade rules can't be used for this, since they only run once the module has
+// been parsed successfully.
+std::string UpgradeLegacyAttributeSyntax(llvm::StringRef serialized_module);
 
 struct SerdePassOptions {
   bool serialize;

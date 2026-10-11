@@ -1,3 +1,5 @@
+:nosearch:
+
 Transfer guard
 ==============
 

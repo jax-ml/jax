@@ -129,6 +129,8 @@ from jax._src.lax.lax import (
   log as log,
   log1p as log1p,
   log1p_p as log1p_p,
+  log2 as log2,
+  log2_p as log2_p,
   log_p as log_p,
   logistic as logistic,
   logistic_p as logistic_p,
@@ -150,12 +152,16 @@ from jax._src.lax.lax import (
   nextafter as nextafter,
   nextafter_p as nextafter_p,
   not_p as not_p,
+  one_minus_square as one_minus_square,
+  one_minus_square_p as one_minus_square_p,
   optimization_barrier as optimization_barrier,
   optimization_barrier_p as optimization_barrier_p,
   or_p as or_p,
   pad as pad,
   pad_p as pad_p,
   padtype_to_pads as padtype_to_pads,
+  polynomial as polynomial,
+  polynomial_p as polynomial_p,
   population_count as population_count,
   population_count_p as population_count_p,
   pow as pow,
@@ -381,12 +387,13 @@ from jax._src.lax.parallel import (
   pmin_p as pmin_p,
   ppermute as ppermute,
   ppermute_p as ppermute_p,
-  psend as psend,
-  precv as precv,
+  psend as _deprecated_psend,
+  precv as _deprecated_precv,
   pshuffle as pshuffle,
   psum as psum,
   psum_p as psum_p,
   psum_scatter as psum_scatter,
+  psum_scatter_start as psum_scatter_start,
   pswapaxes as pswapaxes,
   ragged_all_to_all as ragged_all_to_all,
   ragged_all_to_all_p as ragged_all_to_all_p,
@@ -407,3 +414,27 @@ from jax._src.pjit import with_sharding_constraint as with_sharding_constraint
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
 from jax._src.lax.scaled_dot import scaled_dot as scaled_dot
+
+_deprecations = {
+    # Added Oct 1, 2026
+    "psend": (
+        "jax.lax.psend is deprecated.",
+        _deprecated_psend,
+    ),
+    "precv": (
+        "jax.lax.precv is deprecated.",
+        _deprecated_precv,
+    ),
+}
+
+import typing as _typing
+if _typing.TYPE_CHECKING:
+  psend = _deprecated_psend
+  precv = _deprecated_precv
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+  del _deprecated_psend
+  del _deprecated_precv
+del _typing

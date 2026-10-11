@@ -18,6 +18,7 @@ from functools import partial
 from collections.abc import Callable
 
 from jax._src import core
+from jax._src import dtypes
 from jax._src import api_util
 from jax._src.util import (safe_map, safe_zip, unzip2, weakref_lru_cache,
                            partition_list)
@@ -49,7 +50,7 @@ def remat_transform(policy, f, *args, custom_vjp_rules):
       args = in_tracers.unflatten()
       ans_pytree = f(*args)
       dbg = dbg.set_result_paths(ans_pytree)
-      ans_ft = ft.flatten(ans_pytree)
+      ans_ft = ft.flatten(ans_pytree).map(dtypes.canonicalize_value)
       del ans_pytree, args
     out_ft, out_tracer_ft = ans_ft.map(trace.to_val_tracer_pair).unzip2()
     src = source_info_util.current()
@@ -58,7 +59,7 @@ def remat_transform(policy, f, *args, custom_vjp_rules):
     in_tree, out_tree = args_ft.tree, out_ft.tree
     del trace, in_tracers, out_tracer_ft
   rem = Partial(partial(_f_rem, jaxpr, in_tree, out_tree),
-                map(reduce_precision, res))
+                res)
   return out_ft.unflatten(), rem
 
 def _f_rem(jaxpr, in_tree, out_tree, res, *args):
@@ -101,9 +102,9 @@ class RematTrace(core.Trace):
     in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
     if prim in rules:
       with core.set_current_trace(self.parent_trace):
-        out_primal, rem = rules[prim](self, *in_vals, **params)
+        out_primal, res, rem = rules[prim](self, *in_vals, **params)
       with core.set_current_trace(self.jaxpr_trace):
-        out_primal2 = rem(*in_vals2)
+        out_primal2 = rem(res, *in_vals2)
     else:  # default: full remat
       with core.set_current_trace(self.parent_trace):
         out_primal = prim.bind(*in_vals, **params)
@@ -144,7 +145,7 @@ def remat_subtrace(f: Callable, tag: core.TraceTag, policy,
     tracers = [RematTracer(trace, x, rem_trace.new_arg(typeof(x), source_info))
                for x in args]
     with core.set_current_trace(trace, check_leaks=True):
-      ans = f(*tracers)
+      ans = f(*tracers).map(dtypes.canonicalize_value)
       out_primals, out_rem = ans.map(trace.to_val_tracer_pair).unzip2()
       del trace, ans, tracers
   out_rem = map(partial(rem_trace.to_jaxpr_tracer, source_info=source_info), out_rem)
@@ -218,4 +219,7 @@ def _remat_jaxpr(jaxpr, policy, custom_vjp_rules, allow_fwds):
       [*out_primals, *rem_consts], dbg.with_unknown_names(), src)
   fwd_trace.invalidate()
 
-  return fwd_jaxpr_.with_consts(fwd_consts), rem_jaxpr, fwds
+  # Drop primal computation that feeds neither an output nor a residual.
+  fwd_jaxpr, _ = pe.dce_jaxpr(fwd_jaxpr_.with_consts(fwd_consts), True,
+                             instantiate=True)
+  return fwd_jaxpr, rem_jaxpr, fwds

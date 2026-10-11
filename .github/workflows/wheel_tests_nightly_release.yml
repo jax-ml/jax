@@ -37,6 +37,21 @@ on:
         required: false
         default: 'no'
         type: string
+      git_commit:
+        description: "Commit SHA to check out for running tests"
+        required: false
+        default: ""
+        type: string
+      artifact-type:
+        description: "Version scheme for the wheels this workflow builds: default, nightly or release."
+        required: false
+        default: 'default'
+        type: string
+      wheel-version-suffix:
+        description: "Custom wheel version suffix, e.g. rc1 (needs artifact-type release) or .post1. Empty for normal builds."
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -61,6 +76,8 @@ jobs:
           exclude:
             - runner: "windows-x86-n2-64"
               python: "3.14t"
+            - runner: "windows-x86-n2-64"
+              python: "3.15t"
     name: "Pytest CPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.runner }}
@@ -72,6 +89,7 @@ jobs:
       # TODO(b/456203132): Increase to more than 16 processes if this works
       #  (56 prior to this).
       max-processes: ${{ contains(matrix.runner, 'windows-x86') && '16' || '' }}
+      git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-cpu:
     if: github.repository_owner == 'jax-ml'
@@ -94,6 +112,7 @@ jobs:
       build_jaxlib: ${{ 'false' }}
       build_jax: ${{ 'false' }}
       clone_main_xla: 0
+      git_commit: ${{ inputs.git_commit }}
 
   run-pytest-cuda:
     if: github.repository_owner == 'jax-ml'
@@ -146,6 +165,7 @@ jobs:
       skip-download-jaxlib-and-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
+      git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-cuda:
     if: github.repository_owner == 'jax-ml'
@@ -174,6 +194,7 @@ jobs:
       run_tests_with_rbe: ${{ 'false' }}
       build_artifacts_with_rbe: ${{ 'false' }}
       clone_main_xla: 0
+      git_commit: ${{ inputs.git_commit }}
 
   build-rocm-artifacts:
     if: github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm'
@@ -186,18 +207,34 @@ jobs:
         fail-fast: false
         matrix:
           runner: ["amd-do-linux.jax.cpu"]
-          artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
-          python: ["3.12", "3.13", "3.14"]
+          # Where the ROCm runners are the only build capacity available, build the base wheels
+          # here too, so the test legs below get all four wheels from one commit, stamped alike.
+          # The GCS nightlies they would otherwise use are whatever the last nightly published,
+          # and on a release branch cannot satisfy jax's exact jaxlib pin at all.
+          artifact: ${{ (github.repository_owner == 'ROCm' && fromJSON('["jax-rocm-plugin", "jax-rocm-pjrt", "jax", "jaxlib"]')) || fromJSON('["jax-rocm-plugin", "jax-rocm-pjrt"]') }}
+          python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "TheRock 7.14.0", wheel-version: "7", release-version: "7.14.0", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-7.14:latest" },
-            {label: "TheRock latest", wheel-version: "10", release-version: "therock-latest", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-latest:latest"},
+            {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-10.0:latest" },
+            {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-latest:latest"},
           ]
           exclude:
+            # pjrt and jax are not per-Python; one build per ROCm variant covers every version.
             - artifact: "jax-rocm-pjrt"
               python: "3.13"
             - artifact: "jax-rocm-pjrt"
               python: "3.14"
-    name: "Build ROCm artifacts (${{ matrix.rocm.label }})"
+            - artifact: "jax-rocm-pjrt"
+              python: "3.15"
+            - artifact: "jax"
+              python: "3.13"
+            - artifact: "jax"
+              python: "3.14"
+            - artifact: "jax"
+              python: "3.15"
+            # Release runs test only the ROCm that ships with them, not the moving pre-release.
+            - rocm:
+                release-version: ${{ (startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'rocm-jaxlib-v') || inputs.artifact-type == 'release') && 'therock-latest' }}
+    name: "Build ROCm artifacts ${{ matrix.rocm.label }}"
     with:
       runner: ${{ matrix.runner }}
       artifact: ${{ matrix.artifact }}
@@ -208,6 +245,9 @@ jobs:
       clone_main_xla: 0
       upload_artifacts_to_s3: true
       s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-nightly/${{ github.run_number }}/${{ github.run_attempt }}'
+      git_commit: ${{ inputs.git_commit }}
+      artifact-type: ${{ inputs.artifact-type }}
+      wheel-version-suffix: ${{ inputs.wheel-version-suffix }}
 
   run-pytest-rocm:
     if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
@@ -221,12 +261,16 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           runner: ["amd-do-linux.jax.gpu.gfx950.1", "amd-do-linux.jax.gpu.gfx950.4", "amd-do-linux.jax.gpu.gfx950.8"]
-          python: ["3.12", "3.13", "3.14"]
+          python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "TheRock 7.14.0", wheel-version: "7", release-version: "7.14.0", tag: "therock-7.14"},
-            {label: "TheRock latest", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
+            {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", tag: "therock-10.0"},
+            {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
           ]
-    name: "Pytest ROCm (${{ matrix.rocm.label }})"
+          exclude:
+            # Release runs test only the ROCm that ships with them, not the moving pre-release.
+            - rocm:
+                release-version: ${{ (startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'rocm-jaxlib-v') || inputs.artifact-type == 'release') && 'therock-latest' }}
+    name: "Pytest ROCm ${{ matrix.rocm.label }}"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
@@ -237,6 +281,9 @@ jobs:
       skip-download-jaxlib-and-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-nightly/${{ github.run_number }}/${{ github.run_attempt }}'
+      git_commit: ${{ inputs.git_commit }}
+      # Must match the artifact list of the build job above.
+      jax-jaxlib-source: ${{ github.repository_owner == 'ROCm' && 'vendor' || 'upstream' }}
 
   run-bazel-test-rocm:
     if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
@@ -249,13 +296,17 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           runner: ["amd-do-linux.jax.gpu.gfx950.1"]
-          python: ["3.12", "3.13", "3.14"]
+          python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "TheRock 7.14.0", wheel-version: "7", release-version: "7.14.0", tag: "therock-7.14"},
-            {label: "TheRock latest", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
+            {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", tag: "therock-10.0"},
+            {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
           ]
           enable-x64: [0]
-    name: "Bazel ROCm (${{ matrix.rocm.label }})"
+          exclude:
+            # Release runs test only the ROCm that ships with them, not the moving pre-release.
+            - rocm:
+                release-version: ${{ (startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'rocm-jaxlib-v') || inputs.artifact-type == 'release') && 'therock-latest' }}
+    name: "Bazel ROCm ${{ matrix.rocm.label }}"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
@@ -272,6 +323,9 @@ jobs:
       write_to_bazel_remote_cache: 1
       run_multiaccelerator_tests: ${{ 'true' }}
       clone_main_xla: 0
+      git_commit: ${{ inputs.git_commit }}
+      # Must match the artifact list of the build job above.
+      jax-jaxlib-source: ${{ github.repository_owner == 'ROCm' && 'vendor' || 'upstream' }}
 
   run-pytest-tpu:
     if: github.repository_owner == 'jax-ml'
@@ -335,6 +389,7 @@ jobs:
       skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
+      git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-tpu:
     if: github.repository_owner == 'jax-ml'
@@ -408,6 +463,7 @@ jobs:
       build_jax: ${{ 'false' }}
       jaxlib-version: "head"
       clone_main_xla: 0
+      git_commit: ${{ inputs.git_commit }}
 
   verify-release-wheels-install:
     if: ${{ startsWith(github.ref_name, 'release/') && github.repository_owner == 'jax-ml' }}

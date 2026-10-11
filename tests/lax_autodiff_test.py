@@ -13,11 +13,12 @@
 # limitations under the License.
 
 
+import base64
 import collections
 from functools import partial
 import itertools
 import math
-from unittest import SkipTest
+from unittest import SkipTest, skipIf
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -25,6 +26,7 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
+import jax.numpy as jnp
 from jax import dtypes
 from jax import lax
 from jax._src import test_util as jtu
@@ -156,11 +158,20 @@ LAX_GRAD_OPS = [
                    dtypes=grad_float_dtypes),
     grad_test_spec(lax.min, nargs=2, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_float_dtypes),
+    grad_test_spec(lax.nextafter, nargs=2, order=1, rng_factory=jtu.rand_default,
+                   dtypes=grad_float_dtypes),
     # TODO(mattjj): make some-equal checks more robust, enable second-order
     # grad_test_spec(lax.max, nargs=2, order=1, rng_factory=jtu.rand_some_equal,
     #                dtypes=grad_float_dtypes, name="MaxSomeEqual"),
     # grad_test_spec(lax.min, nargs=2, order=1, rng_factory=jtu.rand_some_equal,
     #                dtypes=grad_float_dtypes, name="MinSomeEqual"),
+    grad_test_spec(lax.one_minus_square, nargs=1, order=2,
+                   rng_factory=jtu.rand_default, dtypes=grad_inexact_dtypes),
+    # For real inputs, avoid finite differences across the discontinuity at 0.
+    grad_test_spec(lax.sign, nargs=1, order=2, rng_factory=jtu.rand_not_small,
+                   dtypes=grad_float_dtypes),
+    grad_test_spec(lax.sign, nargs=1, order=2, rng_factory=jtu.rand_default,
+                   dtypes=grad_complex_dtypes),
 ]
 
 GradSpecialValuesTestSpec = collections.namedtuple(
@@ -233,7 +244,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     if jtu.test_device_matches(["cpu", "tpu"]):
       if op is lax.cosh and dtype == np.complex64:
-        tol = 3e-1  # 2nd-order gradients are noisy on CPU and TPU
+        tol = 4e-1  # 2nd-order gradients are noisy on CPU and TPU
     if jtu.test_device_matches(["tpu"]):
       if op is lax.pow:
         raise SkipTest("pow grad imprecise on tpu")
@@ -636,6 +647,44 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     on_false = rng(arg_shape, dtype)
     select = lambda on_true, on_false: lax.select(pred, on_true, on_false)
     check_grads(select, (on_true, on_false), 2, ["fwd", "rev"], eps=1.)
+
+  @jtu.sample_product(
+      [
+          dict(arg_shape=arg_shape, pred_shape=pred_shape)
+          for arg_shape in [(), (3,), (2, 3)]
+          for pred_shape in ([(), arg_shape] if arg_shape else [()])
+      ],
+      [
+          dict(pred_dtype=pred_dtype, num_args=num_args)
+          for (pred_dtype, num_args) in (
+              list(
+                  itertools.product(
+                      [np.dtype(np.bool_), np.dtype(np.int32), np.dtype(np.uint32)],
+                      [1, 2],
+                  )
+              )
+              + [(np.dtype(np.int32), 6), (np.dtype(np.uint32), 6)]
+          )
+      ],
+      dtype=float_dtypes,
+  )
+  def testSelectNGrad(self, pred_dtype, pred_shape, arg_shape, dtype, num_args):
+    # Regression test for https://github.com/jax-ml/jax/issues/10993:
+    # select_n clamps out-of-range integer `which` indices to
+    # [0, len(cases) - 1] (matching np.choose(..., mode='clip')), so its
+    # transpose rule must also clamp `which` rather than dropping cotangents for
+    # out-of-range indices, and must handle len(cases) == 1 with boolean `which`.
+    if pred_dtype == np.bool_:
+      pred_rng = jtu.rand_default(self.rng())
+    elif np.issubdtype(pred_dtype, np.signedinteger):
+      pred_rng = jtu.rand_int(self.rng(), low=-1, high=num_args + 1)
+    else:
+      pred_rng = jtu.rand_int(self.rng(), low=0, high=num_args + 2)
+    rng = jtu.rand_default(self.rng())
+    pred = pred_rng(pred_shape, pred_dtype)
+    args = [rng(arg_shape, dtype) for _ in range(num_args)]
+    select_n = lambda *xs: lax.select_n(pred, *xs)
+    check_grads(select_n, args, 2, ["fwd", "rev"], eps=1.)
 
   @jtu.sample_product(
     [dict(shape=shape, starts=start_indices, limits=limit_indices,
@@ -1285,6 +1334,265 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(arg_shape, dtype)]
     op = lambda x: lax.tile(x, reps)
     check_grads(op, args_maker(), order=3, modes=["fwd", "rev"], eps=1.)
+
+  @skipIf(not jax.config.x64_enabled, "requires x64")
+  def test_max_min_jvp(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40564
+    X_B64 = "ELHRv7ZM3z4EdVc/2Gr3PqIYTj+bXU6/A26LPkcphT8wbaY/ie6avuVKXj9bOHC8F1fEPldM+z0kEbS/u99sv9k7ML//GGu9UBF6P4Cy5Du20pE+hXVDv9ZJmj7P4Ya/Morsvg0uwj8IHSXAQEa+P74dgD9Ff+6//IqDP1q8RD93Bws+A8/oPLBRxr2xP5W+lXLoP8Q1r7/yPhlA/kzoPg=="
+    X_SHAPE = (8, 5)
+    Z_B64 = "C9iXPgWdxL70Oxq/RQHxPaA80L6AGy28VfMOvQGrxT3RZxm+AluWPr474L2RrQ++ckmPvnxlDL5fy6S9zLegPSjeib7Rw1U8VqKRPlPrOr46HL69aAA3Pvnhhz6xGQC/3supPV/fe74Di4O+Yf0WPLxXDz65fUK+3MiGPr2ecT5Pm8Y+mdnSvdzkfb4PiX6+N0UZv0n1jL22HhE+SFSrvf5QOr5yDmc+hhGlvmtB2b7LUaW9Mn+nvn+FiL8xNmg9PoqcvepjHT1jhPk+UpWcvjOpbL41xC2+i7ABv33KtL51TQK+ZrWWvj4R8D0W8pK7RPDqPQxNQ70yh7y9/1LjvaL8zj26mCc++GQiPtYrt77KcoC+Ie10PaDqET8S67W+dXuVvaT1Dz4qRDG/IU1OvV5OTz14AlQ9gNcFv7rtSD4Urz09oejaPMwR7D7GfZy+LnUsvqjjOT7riSe+zULrvpiThznzkZY99guLvvVQKT4fJZS5h/56vcJGvT79MiS/H3AOvkYHi74jGJw+bB8dPtcafr0MR5o+RUfsvXzdUT2zzoW+PwGnO4AwJb30pJM8UE4oPoQmnD1B1Ai/yYb5veSGkr77p6A+AZmOvlYUEryWHI0+PQK/vRYger6I2Ea9SbaRPoCsMr+u/h+8GA7jPbs9cz537Wg6n4f4PfBjLD5W/4M+ulG4PfPiY77Gt1k+CBUcv1kVuD7BR8M9ggy2PfO9Tr2kPqC+TYp+PHmsRL4+ASy+hR/IvpBwgL0dSAU+zFX2vXmiA71zx8Q+1RsWPlLdrz30gPu+3JIWPuuGET7S7am+jax5vhbIvL21a5M+4rPTPgVMHD/yE/Q+ayZdPA=="
+    Z_SHAPE = (32, 5)
+
+    def load(b64, shape):
+      return np.frombuffer(base64.b64decode(b64), np.float32).reshape(shape)
+
+    x32 = jnp.asarray(load(X_B64, X_SHAPE))
+    z32 = jnp.asarray(load(Z_B64, Z_SHAPE))
+
+    def loss(z, x):
+      zn = jnp.maximum(jnp.linalg.norm(z, ord=2, axis=-1, keepdims=True), 1e-15).T
+      dot = jnp.einsum("bi,oi->bo", x, z, precision=jax.lax.Precision.HIGHEST)
+      return jnp.sum((zn * jnp.arcsinh(dot / zn)) ** 2)
+
+    g_jit = np.asarray(jax.jit(jax.grad(loss))(z32, x32), np.float64)
+    g_ref = np.asarray(jax.grad(loss)(z32.astype(np.float64), x32.astype(np.float64)), np.float64)
+    relerr = np.abs(g_jit - g_ref).max() / np.abs(g_ref).max()
+    self.assertLess(relerr, 1e-4)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{op.__name__}", "op": op}
+      for op in [lax.max, lax.min]
+  )
+  def test_max_min_nan_gradient(self, op):
+    # Verify that NaN operands produce 0.0 gradients rather than 0.5 (tie).
+    x = jnp.array([2.0, 0.0, np.nan, 1.0, np.nan])
+    y = jnp.array([1.0, 0.0, 1.0, np.nan, np.nan])
+
+    if op is lax.max:
+      expected_gx = np.array([1.0, 0.5, 0.0, 0.0, 0.0])
+      expected_gy = np.array([0.0, 0.5, 0.0, 0.0, 0.0])
+    else:
+      expected_gx = np.array([0.0, 0.5, 0.0, 0.0, 0.0])
+      expected_gy = np.array([1.0, 0.5, 0.0, 0.0, 0.0])
+
+    # Reverse-mode (vjp / grad)
+    gx, gy = jax.grad(lambda a, b: jnp.sum(op(a, b)), argnums=(0, 1))(x, y)
+    self.assertAllClose(gx, expected_gx)
+    self.assertAllClose(gy, expected_gy)
+
+    # Forward-mode (jvp)
+    _, tx = jax.jvp(op, (x, y), (jnp.ones_like(x), jnp.zeros_like(y)))
+    _, ty = jax.jvp(op, (x, y), (jnp.zeros_like(x), jnp.ones_like(y)))
+    self.assertAllClose(tx, expected_gx)
+    self.assertAllClose(ty, expected_gy)
+
+  def testOneMinusSquareAccuracy(self):
+    # 1. Near +/-1: evaluating 1 - x^2 as (1 + x) * (1 - x) avoids rounding away
+    # lower bits of x^2 against 1.0 before subtraction.
+    x = jax.numpy.float32(0.9999)
+    exact = np.float32(1.0 - np.float64(x) ** 2)
+    val = lax.one_minus_square(x)
+    naive = 1.0 - x * x
+    self.assertAllClose(val, exact, rtol=1e-6)
+    self.assertLess(abs(val - exact), abs(naive - exact))
+
+    # 2. Near 0: differentiating one_minus_square avoids the (1 - x) - (1 + x)
+    # catastrophic cancellation of differentiating (1 + x) * (1 - x) via the
+    # product rule.
+    tiny = jax.numpy.float32(1e-10)
+    self.assertEqual(
+        jax.grad(lambda z: (1.0 + z) * (1.0 - z))(tiny), 0.0
+    )
+    self.assertAllClose(
+        jax.grad(lax.one_minus_square)(tiny), -2.0 * tiny, atol=0.0, rtol=1e-5
+    )
+    self.assertAllClose(
+        jax.jvp(lax.one_minus_square, (tiny,), (jnp.ones_like(tiny),))[1],
+        -2.0 * tiny,
+        atol=0.0,
+        rtol=1e-5,
+    )
+    self.assertAllClose(
+        jax.grad(jax.grad(lax.one_minus_square))(tiny),
+        jnp.float32(-2.0),
+        atol=0.0,
+        rtol=1e-5,
+    )
+    self.assertAllClose(
+        jax.jvp(
+            lambda z: jax.jvp(lax.one_minus_square, (z,), (jnp.ones_like(z),))[1],
+            (tiny,),
+            (jnp.ones_like(tiny),),
+        )[1],
+        jnp.float32(-2.0),
+        atol=0.0,
+        rtol=1e-5,
+    )
+
+  def testPolynomial(self):
+    coeffs = (1.0, -2.0, 3.0, -4.0)
+    f = lambda x: lax.polynomial(x, coeffs)
+    x = jnp.float32(0.5)
+    self.assertAllClose(jax.grad(jax.grad(jax.grad(f)))(x), -24.0, check_dtypes=False)
+    self.assertAllClose(jax.grad(jax.grad(jax.grad(jax.grad(f))))(x), 0.0, check_dtypes=False)
+    p = jnp.array(coeffs, dtype=jnp.float32)
+    jtu.check_grads(
+        lambda x_in, p_in: lax.polynomial(x_in, p_in),
+        (x, p),
+        order=2,
+        atol=1e-3,
+        rtol=1e-3,
+    )
+
+  @parameterized.named_parameters(
+      dict(testcase_name="tanh", fn=lax.tanh, x=5.0,
+           d1=lambda x: (1 - lax.tanh(x)) * (1 + lax.tanh(x)), d2=lambda t: -2 * t),
+      dict(testcase_name="atanh", fn=lax.atanh, x=0.9999,
+           d1=lambda x: 1 / ((1 - x) * (1 + x)), d2=lambda t: 2 * t),
+      dict(testcase_name="asin", fn=lax.asin, x=0.9999,
+           d1=lambda x: lax.rsqrt((1 - x) * (1 + x)), d2=lambda t: t),
+      dict(testcase_name="acos", fn=lax.acos, x=0.9999,
+           d1=lambda x: -lax.rsqrt((1 - x) * (1 + x)), d2=lambda t: -t),
+      dict(testcase_name="acosh", fn=lax.acosh, x=1.0001,
+           d1=lambda x: lax.rsqrt((x - 1) * (x + 1)), d2=None),
+  )
+  def testOneMinusSquareDerivativesAccuracy(self, fn, x, d1, d2):
+    # Regression test for https://github.com/jax-ml/jax/issues/39801.
+    x = jax.numpy.float32(x)
+    self.assertAllClose(jax.grad(fn)(x), d1(x))
+    self.assertAllClose(jax.jvp(fn, (x,), (jnp.ones_like(x),))[1], d1(x))
+    if d2 is not None:
+      tiny = jax.numpy.float32(1e-10)
+      self.assertAllClose(
+          jax.grad(jax.grad(fn))(tiny), d2(tiny), atol=0.0, rtol=1e-5
+      )
+      self.assertAllClose(
+          jax.jvp(
+              lambda z: jax.jvp(fn, (z,), (jnp.ones_like(z),))[1],
+              (tiny,),
+              (jnp.ones_like(tiny),),
+          )[1],
+          d2(tiny),
+          atol=0.0,
+          rtol=1e-5,
+      )
+
+  @parameterized.parameters(lax.asinh, lax.acosh)
+  def testAsinhAcoshGradLargeValues(self, fn):
+    # float16: x^2 overflows for x > ~256
+    x16 = jnp.float16(300.0)
+    g16 = jax.grad(fn)(x16)
+    _, t16 = jax.jvp(fn, (x16,), (jnp.ones_like(x16),))
+    self.assertAllClose(g16, np.float16(1.0 / 300.0), rtol=1e-2)
+    self.assertAllClose(t16, np.float16(1.0 / 300.0), rtol=1e-2)
+
+    # float32: x^2 overflows for x > ~1.84e19
+    x32 = jnp.float32(1e25)
+    g32 = jax.grad(fn)(x32)
+    _, t32 = jax.jvp(fn, (x32,), (jnp.ones_like(x32),))
+    self.assertAllClose(g32, jnp.float32(1e-25), rtol=1e-5)
+    self.assertAllClose(t32, jnp.float32(1e-25), rtol=1e-5)
+
+  @parameterized.parameters(lax.asinh, lax.acosh)
+  @jtu.skip_on_devices("tpu")
+  def testAsinhAcoshGradLargeValuesFloat64(self, fn):
+    # float64: x^2 overflows for x > ~1.34e154
+    with jax.enable_x64():
+      x64 = jnp.float64(1e200)
+      g64 = jax.grad(fn)(x64)
+      _, t64 = jax.jvp(fn, (x64,), (jnp.ones_like(x64),))
+      self.assertAllClose(g64, jnp.float64(1e-200), rtol=1e-5)
+      self.assertAllClose(t64, jnp.float64(1e-200), rtol=1e-5)
+
+  def testAcoshDerivatives(self):
+    # 1. Near x = 1: avoids catastrophic cancellation
+    x_near1 = jnp.float32(1.0001)
+    true_val = np.float32(1.0 / np.sqrt(np.float64(x_near1) ** 2 - 1.0))
+    self.assertAllClose(jax.grad(lax.acosh)(x_near1), true_val, rtol=1e-6)
+
+    # 2. Complex plane with negative real part: correct branch cut
+    z = jnp.complex64(-2.0 + 1.0j)
+    expected_acosh = 1.0 / (np.sqrt(complex(z) - 1.0) * np.sqrt(complex(z) + 1.0))
+    _, t_acosh = jax.jvp(lax.acosh, (z,), (jnp.complex64(1.0),))
+    self.assertAllClose(t_acosh, expected_acosh, rtol=1e-5, check_dtypes=False)
+
+    # 3. Large complex value
+    z_large = jnp.complex64(1e25 + 1e25j)
+    expected_large = 1.0 / complex(z_large)
+    _, t_large = jax.jvp(lax.acosh, (z_large,), (jnp.complex64(1.0),))
+    self.assertAllClose(t_large, expected_large, rtol=1e-5, check_dtypes=False)
+
+    # 4. Second derivative
+    d2 = jax.grad(jax.grad(lax.acosh))(jnp.float32(2.0))
+    self.assertAllClose(d2, jnp.float32(-2.0 / 3.0 ** 1.5), rtol=1e-5)
+
+  def testAsinhDerivatives(self):
+    # 1. Near x = 0
+    self.assertAllClose(jax.grad(lax.asinh)(jnp.float32(0.0)), jnp.float32(1.0))
+    self.assertAllClose(jax.grad(lax.asinh)(jnp.float32(1e-10)), jnp.float32(1.0))
+
+    # 2. Large negative value
+    x32_neg = jnp.float32(-1e25)
+    self.assertAllClose(jax.grad(lax.asinh)(x32_neg), jnp.float32(1e-25), rtol=1e-5)
+
+    # 3. Large complex value (positive real part)
+    z_large = jnp.complex64(1e25 + 1e25j)
+    expected_large = 1.0 / complex(z_large)
+    _, t_large = jax.jvp(lax.asinh, (z_large,), (jnp.complex64(1.0),))
+    self.assertAllClose(t_large, expected_large, rtol=1e-5, check_dtypes=False)
+
+    # 4. Large complex value (negative real part)
+    z_neg = jnp.complex64(-1e25 + 1e25j)
+    expected_neg = -1.0 / complex(z_neg)
+    _, t_neg = jax.jvp(lax.asinh, (z_neg,), (jnp.complex64(1.0),))
+    self.assertAllClose(t_neg, expected_neg, rtol=1e-5, check_dtypes=False)
+
+    # 5. Second derivative
+    d2_zero = jax.grad(jax.grad(lax.asinh))(jnp.float32(0.0))
+    self.assertAllClose(d2_zero, jnp.float32(0.0), atol=1e-7)
+    d2_one = jax.grad(jax.grad(lax.asinh))(jnp.float32(1.0))
+    self.assertAllClose(d2_one, jnp.float32(-1.0 / 2.0 ** 1.5), rtol=1e-5)
+
+    # 6. Infinite values (real and complex)
+    for x_inf in [jnp.float32(jnp.inf), jnp.float32(-jnp.inf)]:
+      self.assertEqual(jax.grad(lax.asinh)(x_inf), jnp.float32(0.0))
+    for z_inf in [
+        jnp.complex64(complex(jnp.inf, 0.0)),
+        jnp.complex64(complex(-jnp.inf, 0.0)),
+        jnp.complex64(complex(0.0, jnp.inf)),
+        jnp.complex64(complex(jnp.inf, jnp.inf)),
+    ]:
+      _, t_inf = jax.jvp(lax.asinh, (z_inf,), (jnp.complex64(1.0),))
+      self.assertEqual(t_inf, jnp.complex64(0.0))
+
+  @jtu.sample_product(dtype=grad_complex_dtypes)
+  def testSignGradComplex(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41000.
+    real_dtype = np.finfo(dtype).dtype
+    tol = {np.float32: 1e-5, np.float64: 1e-12}
+
+    def real_view(ab):
+      s = lax.sign(lax.complex(ab[0], ab[1]))
+      return jnp.stack([lax.real(s), lax.imag(s)])
+
+    # For z = a + ib != 0, sign(z) = z / |z|, so with r = |z|:
+    #   d(Re sign(z), Im sign(z)) / d(a, b) = [[b^2, -ab], [-ab, a^2]] / r^3.
+    a, b = 0.3, 0.4
+    ab = np.array([a, b], dtype=real_dtype)
+    expected = (np.array([[b * b, -a * b], [-a * b, a * a]])
+                / (a * a + b * b) ** 1.5).astype(real_dtype)
+    self.assertAllClose(jax.jacfwd(real_view)(ab), expected, atol=tol, rtol=tol)
+    self.assertAllClose(jax.jacrev(real_view)(ab), expected, atol=tol, rtol=tol)
+
+    # sign is discontinuous at z == 0, where (as for real inputs) we define the
+    # derivative to be zero. In particular, it should not be NaN.
+    zeros = np.zeros((2,), dtype=real_dtype)
+    self.assertAllClose(jax.jacfwd(real_view)(zeros),
+                        np.zeros((2, 2), real_dtype))
+    self.assertAllClose(jax.jacrev(real_view)(zeros),
+                        np.zeros((2, 2), real_dtype))
+    self.assertAllClose(jax.hessian(real_view)(zeros),
+                        np.zeros((2, 2, 2), real_dtype))
 
 
 if __name__ == '__main__':

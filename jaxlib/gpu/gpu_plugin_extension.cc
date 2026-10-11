@@ -16,12 +16,10 @@ limitations under the License.
 #include "jaxlib/gpu/gpu_plugin_extension.h"
 
 #include <cstddef>
-#include <cstdint>
-#include <string>
-#include <string_view>
 #include <utility>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "nanobind/nanobind.h"
@@ -34,9 +32,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_gpu_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_status_utils.h"
-#include "xla/pjrt/c/pjrt_c_api_triton_extension.h"
 #include "xla/pjrt/status_casters.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 #include "xla/util.h"
 
@@ -45,49 +41,6 @@ namespace nb = nanobind;
 namespace jax {
 
 namespace {
-
-struct TritonCompilationResult {
-  std::string asm_text;
-  std::string hsaco_path;
-  int64_t smem_bytes;
-};
-
-absl::StatusOr<TritonCompilationResult> CompileTritonToASM(
-    const PJRT_Api* c_api, std::string_view module, std::string_view arch_name,
-    int num_warps, int num_ctas, int num_stages) {
-  const PJRT_Triton_Extension* triton_ext =
-      pjrt::FindExtension<PJRT_Triton_Extension>(
-          c_api, PJRT_Extension_Type::PJRT_Extension_Type_Triton);
-  if (triton_ext == nullptr) {
-    return xla::Unimplemented("The plugin does not have a Triton extension.");
-  }
-  PJRT_Triton_Compile_Args args;
-  args.struct_size = PJRT_Triton_Compile_Args_STRUCT_SIZE;
-  args.module = module.data();
-  args.module_size = module.size();
-  args.arch_name = arch_name.data();
-  args.arch_name_size = arch_name.size();
-  args.num_warps = num_warps;
-  args.num_ctas = num_ctas;
-  args.num_stages = num_stages;
-  RETURN_STATUS_IF_PJRT_ERROR(triton_ext->compile(&args), c_api);
-  std::string asm_text;
-  std::string hsaco_path;
-  if (args.out_asm && args.out_asm_size > 0) {
-    asm_text.assign(args.out_asm, args.out_asm_size);
-    delete[] args.out_asm;
-    args.out_asm = nullptr;
-  } else if (args.out_path && args.out_path_size > 0) {
-    hsaco_path.assign(args.out_path, args.out_path_size);
-    delete[] args.out_path;
-    args.out_path = nullptr;
-  }
-  return TritonCompilationResult{
-      .asm_text = std::move(asm_text),
-      .hsaco_path = std::move(hsaco_path),
-      .smem_bytes = args.out_smem_bytes,
-  };
-}
 
 absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
                                       const char* fn_name_c_str,
@@ -136,7 +89,7 @@ absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
   };
 
 #if PJRT_API_GPU_EXTENSION_VERSION <= 1
-  TF_ASSIGN_OR_RETURN(nb::capsule fn_execute, as_capsule(fn));
+  ABSL_ASSIGN_OR_RETURN(nb::capsule fn_execute, as_capsule(fn));
   args.custom_call_function = fn_execute.data();
   RETURN_STATUS_IF_PJRT_ERROR(register_custom_call(&args), c_api);
   return absl::OkStatus();
@@ -148,7 +101,7 @@ absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
 
   // Register legacy custom call target (untyped void* API).
   if (api_version == 0) {
-    TF_ASSIGN_OR_RETURN(nb::capsule capsule_execute, as_capsule(fn));
+    ABSL_ASSIGN_OR_RETURN(nb::capsule capsule_execute, as_capsule(fn));
     args.handler_execute = capsule_execute.data();
     RETURN_STATUS_IF_PJRT_ERROR(register_custom_call(&args), c_api);
     return absl::OkStatus();
@@ -167,14 +120,14 @@ absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
     if (nb::try_cast<nb::dict>(fn, bundle)) {
       auto handler = [&](const char* name) -> absl::StatusOr<void*> {
         if (!bundle.contains(name)) return nullptr;
-        TF_ASSIGN_OR_RETURN(nb::capsule capsule, as_capsule(bundle[name]));
+        ABSL_ASSIGN_OR_RETURN(nb::capsule capsule, as_capsule(bundle[name]));
         return capsule.data();
       };
 
-      TF_ASSIGN_OR_RETURN(args.handler_instantiate, handler("instantiate"));
-      TF_ASSIGN_OR_RETURN(args.handler_prepare, handler("prepare"));
-      TF_ASSIGN_OR_RETURN(args.handler_initialize, handler("initialize"));
-      TF_ASSIGN_OR_RETURN(args.handler_execute, handler("execute"));
+      ABSL_ASSIGN_OR_RETURN(args.handler_instantiate, handler("instantiate"));
+      ABSL_ASSIGN_OR_RETURN(args.handler_prepare, handler("prepare"));
+      ABSL_ASSIGN_OR_RETURN(args.handler_initialize, handler("initialize"));
+      ABSL_ASSIGN_OR_RETURN(args.handler_execute, handler("execute"));
       RETURN_STATUS_IF_PJRT_ERROR(register_custom_call(&args), c_api);
       return absl::OkStatus();
     }
@@ -221,12 +174,12 @@ absl::Status RegisterCustomType(const PJRT_Api* c_api,
         "optional pointer to a XLA_FFI_TypeInfo in `type_info` fields.");
   }
 
-  TF_ASSIGN_OR_RETURN(auto type_id_capsule, as_capsule(type_dict["type_id"]));
+  ABSL_ASSIGN_OR_RETURN(auto type_id_capsule, as_capsule(type_dict["type_id"]));
   type_id = static_cast<XLA_FFI_TypeId*>(type_id_capsule.data());
 
   if (type_dict.contains("type_info")) {
-    TF_ASSIGN_OR_RETURN(auto type_info_capsule,
-                        as_capsule(type_dict["type_info"]));
+    ABSL_ASSIGN_OR_RETURN(auto type_info_capsule,
+                          as_capsule(type_dict["type_info"]));
     type_info = static_cast<XLA_FFI_TypeInfo*>(type_info_capsule.data());
   }
 
@@ -251,21 +204,6 @@ absl::Status RegisterCustomType(const PJRT_Api* c_api,
 
 void BuildGpuPluginExtension(nanobind::module_& m) {
   tsl::ImportNumpy();
-
-  nb::class_<TritonCompilationResult>(m, "TritonCompilationResult")
-      .def_ro("asm", &TritonCompilationResult::asm_text)
-      .def_ro("hsaco_path", &TritonCompilationResult::hsaco_path)
-      .def_ro("smem_bytes", &TritonCompilationResult::smem_bytes);
-
-  m.def("compile_triton_to_asm",
-        [](nb::capsule c_api, nb::bytes module, std::string_view arch_name,
-           int num_warps, int num_ctas, int num_stages) {
-          return xla::ValueOrThrow(CompileTritonToASM(
-              static_cast<const PJRT_Api*>(c_api.data()),
-              std::string_view(static_cast<const char*>(module.data()),
-                               module.size()),
-              arch_name, num_warps, num_ctas, num_stages));
-        });
 
   m.def(
       "register_custom_call_target",

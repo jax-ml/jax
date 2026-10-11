@@ -90,24 +90,24 @@ enum class TransferGuardAction {
 
 // Guards a host-to-device transfer. formatter is called to describe the
 // transfer in a log message or error status.
-// REQUIRES: Python GIL.
+// Protected by the GIL in GIL mode, and by ft_mutex in free-threaded mode.
 absl::Status ApplyTransferGuardToHostToDevice(
     absl::FunctionRef<std::string()> formatter);
 
 // Guards a device-to-device transfer. formatter is called to describe the
 // transfer in a log message or error status.
-// REQUIRES: Python GIL.
+// Protected by the GIL in GIL mode, and by ft_mutex in free-threaded mode.
 absl::Status ApplyTransferGuardToDeviceToDevice(
     absl::FunctionRef<std::string()> formatter);
 
 // Guards a device-to-host transfer. formatter is called to describe the
 // transfer in a log message or error status.
-// REQUIRES: Python GIL.
+// Protected by the GIL in GIL mode, and by ft_mutex in free-threaded mode.
 absl::Status ApplyTransferGuardToDeviceToHost(
     absl::FunctionRef<std::string()> formatter);
 
 // Returns the garbage collection guard level for "jax.Array" objects.
-// REQUIRES: Python GIL.
+// Protected by the GIL in GIL mode, and by ft_mutex in free-threaded mode.
 GarbageCollectionGuardLevel GetGarbageCollectArrayGuard();
 
 // Updates the global thread guard state. If `set_thread_id` is true, the global

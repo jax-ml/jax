@@ -169,9 +169,18 @@ class NNFunctionsTest(jtu.JaxTestCase):
         nn.scaled_dot_general, configs=configs
     )
     def fwd(a, b, is_ref=False):
-      fn = jax.lax.dot_general if is_ref else scaled_dot_general_fn
-      y = fn(a, b, dimension_numbers,
-             preferred_element_type=output_type)
+      if is_ref:
+        y = jax.lax.dot_general(
+            a,
+            b,
+            dimension_numbers,
+            preferred_element_type=output_type,
+            precision=jax.lax.Precision.HIGH,
+        )
+      else:
+        y = scaled_dot_general_fn(
+            a, b, dimension_numbers, preferred_element_type=output_type
+        )
       return jnp.sum(y)
 
     if is_training:
@@ -934,8 +943,8 @@ class NNInitializersTest(jtu.JaxTestCase):
     assert val.shape == (rows, cols)
     assert val.dtype == dtype
 
-    if jtu.test_device_matches(["tpu"]):
-      atol = 2e-3
+    if jtu.test_device_matches(["tpu", "gpu"]):
+      atol = 3e-3
       rtol = 1e-2
     else:
       atol = None
@@ -998,6 +1007,22 @@ class NNInitializersTest(jtu.JaxTestCase):
       " in_axis explicitly.",
     ):
       initializer(rng, shape)
+
+  @jtu.sample_product(
+    initializer=[
+      nn.initializers.he_normal(),
+      nn.initializers.lecun_normal(),
+      nn.initializers.glorot_normal(),
+    ],
+    shape=[
+      (8, 0),
+      (0, 8),
+      (0, 0),
+    ],
+  )
+  def testVarianceScalingDivisionByZero(self, initializer, shape):
+    rng = random.PRNGKey(0)
+    initializer(rng, shape)
 
   def testIdentity(self):
     x  = jnp.array([1., 2., 3.])

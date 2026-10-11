@@ -435,7 +435,8 @@ def _sum(self: Array, axis: reductions.Axis = None, dtype: DTypeLike | None = No
   Refer to :func:`jax.numpy.sum` for full documentation.
   """
   return reductions.sum(self, axis=axis, dtype=dtype, out=out, keepdims=keepdims,
-                        where=where, promote_integers=promote_integers)
+                        initial=initial, where=where,
+                        promote_integers=promote_integers)
 
 def _swapaxes(self: Array, axis1: int, axis2: int) -> Array:
   """Swap two axes of an array.
@@ -1015,19 +1016,6 @@ def _multi_slice(self: Array,
     results.append(sliced)
   return results
 
-# The next two functions are related to iter(array), implemented here to
-# avoid circular imports.
-
-def _chunk_iter(x, size):
-  if size > x.shape[0]:
-    yield x
-  else:
-    num_chunks, tail = divmod(x.shape[0], size)
-    for i in range(num_chunks):
-      yield lax_slicing.dynamic_slice_in_dim(x, i * size, size)
-    if tail:
-      yield lax_slicing.dynamic_slice_in_dim(x, num_chunks * size, tail)
-
 def _getitem(self, item):
   return indexing.rewriting_take(self, item)
 
@@ -1098,6 +1086,13 @@ class _IndexUpdateHelper:
     unique_indices: If True, the implementation will assume that the (normalized) indices
       passed to ``at[]`` are unique, which can result in more efficient execution on some
       backends. If True but the indices are not actually unique, the output is undefined.
+    strategy: string specifying the indexing strategy. Only applies to the ``get()``
+      method. Options are:
+
+      - ``"auto"``: (default) choose the best strategy automatically.
+      - ``"gather"``: use XLA gather.
+      - ``"static_slice"``: use static slice if possible, otherwise error.
+      - ``"dynamic_slice"``: use dynamic slice if possible, otherwise error.
 
   Examples:
     >>> x = jnp.arange(5.0)
@@ -1170,13 +1165,14 @@ class _IndexUpdateRef:
           mode: str | lax_slicing.GatherScatterMode | None = None,
           fill_value: ArrayLike | None = None,
           out_sharding: NamedSharding | PartitionSpec | None = None,
-          wrap_negative_indices: bool = True):
+          wrap_negative_indices: bool = True,
+          strategy: str = "auto"):
     """Equivalent to ``x[idx]``.
 
     Returns the value of ``x`` that would result from the NumPy-style
-    :mod:indexing <numpy.doc.indexing>` ``x[idx]``. This function differs from
+    :mod:`indexing <numpy.doc.indexing>` ``x[idx]``. This function differs from
     the usual array indexing syntax in that it allows additional keyword
-    arguments ``indices_are_sorted`` and ``unique_indices`` to be passed.
+    arguments ``indices_are_sorted``, ``unique_indices``, and ``strategy`` to be passed.
 
     See :func:`jax.numpy.ndarray.at` for details.
     """
@@ -1188,13 +1184,14 @@ class _IndexUpdateRef:
                                    unique_indices=unique_indices, mode=mode,
                                    fill_value=fill_value,
                                    normalize_indices=wrap_negative_indices,
-                                   out_sharding=out_sharding)
+                                   out_sharding=out_sharding,
+                                   strategy=indexing.IndexingStrategy.from_any(strategy))
 
   def set(self, values: ArrayLike, *, indices_are_sorted: bool = False,
           unique_indices: bool = False,
           mode: str | lax_slicing.GatherScatterMode | None = None,
           out_sharding: NamedSharding | PartitionSpec | None = None,
-          wrap_negative_indices: bool = True) -> None:
+          wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] = y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -1498,7 +1495,6 @@ _array_methods = {
 }
 
 _impl_only_array_methods = {
-  "_chunk_iter": _chunk_iter,
   "_unstack": lax.unstack,
 }
 

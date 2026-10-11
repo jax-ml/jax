@@ -20,11 +20,13 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import config
+from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.pallas import einshape as einshape_lib
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.fuser import block_spec as block_spec_lib
 from jax._src.pallas.fuser import custom_fusion_lib
+from jax.experimental import checkify
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -71,6 +73,30 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         kernel_fn((0, 0, 0), scalar_prefetch_values, new_values, x),
         x,
     )
+
+  def test_pull_block_spec_with_none_in_pytree(self):
+    def f(vals, g):
+      x, none_val = vals
+      assert none_val is None
+      return g + x
+
+    in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    out_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    kernel_fn, (in_specs, g_spec), _ = block_spec_lib.pull_block_spec(
+        f,
+        out_spec,
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )((in_type, None), in_type)
+
+    self.assertEqual(in_specs[0].block_shape, (128, 128))
+    self.assertIsNone(in_specs[1])
+    self.assertEqual(g_spec.block_shape, (128, 128))
+
+    x = np.ones((128, 128), dtype=np.float32)
+    g = 2.0 * np.ones((128, 128), dtype=np.float32)
+    out = kernel_fn((0, 0), (), (x, None), g)
+    np.testing.assert_array_equal(out, x + g)
 
   @parameterized.named_parameters(
       ('transpose', 'ab->ba', (32, 32), (16, 16), {}, (16, 16)),
@@ -518,6 +544,100 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         kernel_fn((0, 0, 0), scalar_prefetch_values, (x,)), x
     )
 
+  def test_slice_non_multiple_block_size(self):
+    x = jax.random.normal(jax.random.key(0), (1, 12, 128), dtype=np.float32)
+
+    def f():
+      return jax.lax.slice(x, (0, 0, 0), (1, 12, 128))
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(f)
+    block_spec = pl.BlockSpec((1, 8, 128), lambda i, j: (0, i, j))
+    kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(0),
+    )(new_values)
+
+    self.assertLen(value_block_specs, 1)
+    x_block_spec = value_block_specs[0]
+    self.assertEqual(x_block_spec.block_shape, (1, 8, 128))
+    self.assertEqual(x_block_spec.index_map(1, 0), (0, 1, 0))
+
+    tile = np.ones((1, 8, 128), dtype=np.float32)
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0), scalar_prefetch_values, (tile,)), tile
+    )
+
+  def test_dynamic_slice_non_multiple_block_size(self):
+    x = jnp.zeros((1, 12, 128), dtype=jnp.float32)
+    i, j, k = jnp.int32(0), jnp.int32(0), jnp.int32(0)
+
+    def f():
+      return jax.lax.dynamic_slice(x, (i, j, k), (1, 12, 128))
+
+    f2, new_values, sp = block_spec_lib.get_fusion_values(f)
+    block_spec = pl.BlockSpec((1, 8, 128), lambda a, b, *_: (a, b, 0))
+    _, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values)
+    x_bs = value_block_specs[0]
+    self.assertEqual(x_bs.block_shape, (1, 8, 128))
+    sp_mem = jax.tree.map(lambda v: v[None], sp)
+    self.assertEqual(x_bs.index_map(0, 1, *sp_mem), (0, 1, 0))
+
+  def test_partial_slice_non_multiple_block_size_fails(self):
+    x = jnp.zeros((1, 20, 128), dtype=jnp.float32)
+    block_spec = pl.BlockSpec((1, 8, 128), lambda i, j: (0, i, j))
+
+    # Static slice fails at pull_block_spec call time
+    def f_static():
+      return jax.lax.slice(x, (0, 0, 0), (1, 12, 128))
+
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f_static)
+    with self.assertRaisesRegex(ValueError, 'not a multiple of block_size'):
+      block_spec_lib.pull_block_spec(
+          f2,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )(new_values)
+
+    # Dynamic slice with literal 0 start
+    def f_dynamic():
+      return jax.lax.dynamic_slice(x, (0, 0, 0), (1, 12, 128))
+
+    f2_dyn, new_vals_dyn, _ = block_spec_lib.get_fusion_values(f_dynamic)
+    _, (val_bs,), _ = block_spec_lib.pull_block_spec(
+        f2_dyn,
+        block_spec,
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_vals_dyn)
+    with self.assertRaisesRegex(ValueError, 'not a multiple of block_size'):
+      val_bs[0].index_map(0, 0)
+
+  def test_slice_block_size_larger_than_full_size(self):
+    x = jnp.zeros((1, 4, 128), dtype=jnp.float32)
+
+    def f():
+      return jax.lax.slice(x, (0, 0, 0), (1, 4, 128))
+
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f)
+    block_spec = pl.BlockSpec((1, 8, 128), lambda i, j: (0, i, j))
+    kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values)
+    self.assertEqual(value_block_specs[0].block_shape, (1, 8, 128))
+    tile = np.ones((1, 8, 128), dtype=np.float32)
+    np.testing.assert_array_equal(kernel_fn((0, 0), (), (tile,)), tile)
+
   def test_squeeze(self):
 
     x = jax.random.normal(jax.random.key(0), (1, 512, 512), dtype=np.float32)
@@ -623,6 +743,153 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         kernel_fn((0, 0, 0), scalar_prefetch_values, (x,)), x
     )
 
+  def test_strict_mode_compares_index_maps_reading_prefetched_scalars(self):
+    x = jax.random.normal(jax.random.key(0), (3, 4, 512, 512), dtype=np.float32)
+    i = jnp.array(1, dtype=jnp.int32)
+    j = jnp.array(2, dtype=jnp.int32)
+
+    def f():
+      # `x` is sliced twice, so pulling compares the two index maps it arrives
+      # at, and both of them read the scalars `i` and `j`.
+      a = jax.lax.dynamic_slice(x, (i, j, 0, 0), (1, 1, 512, 512))
+      b = jax.lax.dynamic_slice(x, (i, j, 0, 0), (1, 1, 512, 512))
+      return a * b
+
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f)
+    block_spec = pl.BlockSpec(
+        (1, 1, 128, 128), lambda a, b, c, *_: (0, 0, a, b)
+    )
+    kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2, block_spec, grid_len=3
+    )(new_values)
+    self.assertLen(kernel_fn.scalar_prefetch, 2)
+
+    scalar_prefetch = jax.tree.map(lambda v: v[None], kernel_fn.scalar_prefetch)
+    self.assertEqual(
+        value_block_specs[0].index_map(0, 1, 2, *scalar_prefetch), (1, 2, 0, 1)
+    )
+    block = np.full((1, 1, 128, 128), 3.0, dtype=np.float32)
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0, 0), scalar_prefetch, (block,)), block * block
+    )
+
+  def test_strict_mode_rejects_differing_index_maps_reading_scalars(self):
+    x = jax.random.normal(jax.random.key(0), (3, 4, 512, 512), dtype=np.float32)
+    i = jnp.array(1, dtype=jnp.int32)
+    j = jnp.array(2, dtype=jnp.int32)
+
+    def f():
+      # As above, but the two slices disagree, so the comparison must say so.
+      a = jax.lax.dynamic_slice(x, (i, j, 0, 0), (1, 1, 512, 512))
+      b = jax.lax.dynamic_slice(x, (j, i, 0, 0), (1, 1, 512, 512))
+      return a * b
+
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f)
+    block_spec = pl.BlockSpec(
+        (1, 1, 128, 128), lambda a, b, c, *_: (0, 0, a, b)
+    )
+    with self.assertRaisesRegex(ValueError, "Fusion contains a DAG"):
+      block_spec_lib.pull_block_spec(f2, block_spec, grid_len=3)(new_values)
+
+  def test_dynamic_slice_derived_scalar_prefetch(self):
+    x = jax.random.normal(jax.random.key(0), (3, 4, 512, 512), dtype=np.float32)
+    i = jnp.array(1, dtype=jnp.int32)
+    j = jnp.array(2, dtype=jnp.int32)
+
+    def f():
+      return jax.lax.dynamic_slice(x, (i, j, 0, 0), (1, 1, 512, 512))
+
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f)
+    block_spec = pl.BlockSpec(
+        (1, 1, 128, 128), lambda i, j, k, *_: (0, 0, i, j)
+    )
+    # No handler: the fusion is handed only its own scalars, which the pull
+    # derives and exposes as kernel_fn.scalar_prefetch.
+    kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2, block_spec, grid_len=3
+    )(new_values)
+    self.assertLen(kernel_fn.scalar_prefetch, 2)
+    self.assertEqual(kernel_fn.scalar_prefetch[0], 1)
+    self.assertEqual(kernel_fn.scalar_prefetch[1], 2)
+
+    scalar_prefetch = jax.tree.map(lambda x: x[None], kernel_fn.scalar_prefetch)
+    self.assertEqual(
+        value_block_specs[0].index_map(0, 1, 2, *scalar_prefetch), (1, 2, 0, 1)
+    )
+    x = np.ones((1, 1, 128, 128), dtype=np.float32)
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0, 0), scalar_prefetch, (x,)), x
+    )
+
+  def test_scalar_prefetch_used_in_body_is_read_from_smem_dedup(self):
+    x = jnp.zeros((512, 512), dtype=np.float32)
+    i = jnp.array(1, dtype=jnp.int32)
+
+    def f():
+      return jax.lax.dynamic_slice(x, (i, 0), (128, 512)) + i.astype(x.dtype)
+
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f)
+    block_spec = pl.BlockSpec((128, 128), lambda i, j, *_: (0, j))
+    kernel_fn, _, _ = block_spec_lib.pull_block_spec(
+        f2, block_spec, grid_len=2
+    )(new_values)
+    self.assertLen(kernel_fn.scalar_prefetch, 1)
+
+    # The body sees the staged value, not the one the fusion closed over.
+    staged = (jnp.array([7], dtype=jnp.int32),)
+    x = np.zeros((128, 128), dtype=np.float32)
+    np.testing.assert_array_equal(kernel_fn((0, 0), staged, (x,)), x + 7)
+
+  def test_scalar_prefetch_with_closed_over_body_scalar(self):
+    x = jnp.zeros((3, 512), dtype=np.float32)
+    i = jnp.array(1, dtype=jnp.int32)
+    scale = jnp.array(5.0, dtype=np.float32)
+
+    def f(values):
+      (x_,) = values
+      return jax.lax.dynamic_slice(x_, (i, 0), (1, 512)) * scale
+
+    block_spec = pl.BlockSpec((1, 128), lambda i, *_: (0, i))
+    kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f, block_spec, grid_len=1
+    )((x,))
+    self.assertLen(kernel_fn.scalar_prefetch, 1)
+    self.assertEqual(kernel_fn.scalar_prefetch[0], 1)
+
+    staged = (jnp.array([2], dtype=jnp.int32),)
+    self.assertEqual(value_block_specs[0].index_map(0, *staged), (2, 0))
+    blk = np.ones((1, 128), dtype=np.float32)
+    np.testing.assert_array_equal(kernel_fn((0,), staged, (blk,)), blk * 5.0)
+
+  def test_scalar_prefetch_wrong_count_raises(self):
+    x = jax.random.normal(jax.random.key(0), (3, 512), dtype=np.float32)
+    i = jnp.array(1, dtype=jnp.int32)
+
+    def f():
+      return jax.lax.dynamic_slice(x, (i, 0), (1, 512))
+
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f)
+    block_spec = pl.BlockSpec((1, 128), lambda i, *_: (0, i))
+    kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2, block_spec, grid_len=1
+    )(new_values)
+    with self.assertRaisesRegex(ValueError, 'prefetches 1 scalars but was'):
+      value_block_specs[0].index_map(0)
+    with self.assertRaisesRegex(ValueError, 'prefetches 1 scalars but was'):
+      kernel_fn((0,), (), (np.ones((1, 128), np.float32),))
+
+  def test_non_scalar_prefetch_raises(self):
+    x = jax.random.normal(jax.random.key(0), (3, 512), dtype=np.float32)
+    i = jnp.array([1], dtype=jnp.int32)
+
+    def f():
+      return jax.lax.dynamic_slice(x, (i[0], 0), (1, 512))
+
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f)
+    block_spec = pl.BlockSpec((1, 128), lambda i, *_: (0, i))
+    with self.assertRaisesRegex(ValueError, 'Only scalars can be prefetched'):
+      block_spec_lib.pull_block_spec(f2, block_spec, grid_len=1)(new_values)
+
   def test_dynamic_update_slice_pull(self):
     operand = jax.random.normal(
         jax.random.key(0), (3, 4, 512, 512), dtype=np.float32
@@ -652,9 +919,8 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     scalar_prefetch = jax.tree.map(lambda x: x[None], scalar_prefetch)
     self.assertLen(value_block_specs, 2)
     op_bs, up_bs = value_block_specs
-    self.assertEqual(op_bs.block_shape, (1, 1, 128, 128))
+    self.assertEqual(op_bs, pl.no_block_spec)
     self.assertEqual(up_bs.block_shape, (1, 1, 128, 128))
-    self.assertEqual(op_bs.index_map(2, 2, 2, *scalar_prefetch), (2, 2, 2, 0))
     self.assertEqual(up_bs.index_map(2, 2, 2, *scalar_prefetch), (1, 0, 1, 0))
 
     op_tile = np.zeros((1, 1, 128, 128), dtype=np.float32)
@@ -687,7 +953,8 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
     )(new_values)
     scalar_prefetch = jax.tree.map(lambda x: x[None], scalar_prefetch)
-    up_bs = value_block_specs[1]
+    op_bs, up_bs = value_block_specs
+    self.assertEqual(op_bs, pl.no_block_spec)
     # For output block (2, 2), corresponding update block is:
     # (2 - 2, 2 - 2) = (0, 0).
     self.assertEqual(up_bs.index_map(2, 2, *scalar_prefetch), (0, 0))
@@ -697,6 +964,38 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     up_tile = update[0:128, 0:128]
     out_tile = kernel_fn((2, 2), scalar_prefetch, (op_tile, up_tile))
     np.testing.assert_array_equal(out_tile, expected[256:384, 256:384])
+
+  def test_dynamic_update_slice_non_multiple_block_size(self):
+    operand = jnp.zeros((1, 12, 128), dtype=np.float32)
+    update = jnp.ones((1, 12, 128), dtype=np.float32)
+    i, j, k = jnp.int32(0), jnp.int32(0), jnp.int32(0)
+
+    def f():
+      return jax.lax.dynamic_update_slice(operand, update, (i, j, k))
+
+    f2, new_values, scalar_prefetch = (
+        block_spec_lib.get_stateful_input_fusion_values(f)
+    )
+    block_spec = pl.BlockSpec((1, 8, 128), lambda a, b, *_: (a, b, 0))
+    _, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values)
+    scalar_prefetch_mem = jax.tree.map(lambda x: x[None], scalar_prefetch)
+    _, up_bs = value_block_specs
+    self.assertEqual(up_bs.block_shape, (1, 8, 128))
+    self.assertEqual(up_bs.index_map(0, 1, *scalar_prefetch_mem), (0, 1, 0))
+
+    out_bs = block_spec_lib.push_block_spec(
+        f2,
+        (pl.no_block_spec, up_bs),
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+        grid_len=2,
+    )(new_values)
+    self.assertEqual(out_bs.block_shape, (1, 8, 128))
+    self.assertEqual(out_bs.index_map(0, 1, *scalar_prefetch_mem), (0, 1, 0))
 
   def test_dynamic_update_slice_pull_unaligned(self):
     from jax.experimental import checkify
@@ -1441,6 +1740,127 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     y = jnp.zeros((256, 512), jnp.int32)
     _, y = pl.run_state(outer)((value, y))
     np.testing.assert_array_equal(y, value[3, :256, 512:1024])
+
+  def test_get_with_squeezed_indexer_index_map(self):
+    ref_aval = state.AbstractRef(jax.core.ShapedArray((4, 512, 1024), jnp.int32))
+
+    def f(r):
+      return r[3]
+
+    block_spec = pl.BlockSpec((256, 512), lambda i, j: (i, j))
+    kernel_fn, (ref_bs,), _ = block_spec_lib.pull_block_spec(
+        f,
+        block_spec,
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(ref_aval)
+    self.assertEqual(tuple(ref_bs.block_shape), (pl.Squeezed(), 256, 512))
+    self.assertEqual(ref_bs.index_map(0, 1), (0, 0, 1))
+
+  def test_get_on_sliced_ref(self):
+    value = jnp.arange((640 * 1024), dtype=jnp.int32).reshape((640, 1024)) * 2
+
+    def outer(refs):
+      ref, y_ref = refs
+      i = jnp.int32(128)
+      sliced_ref = ref.at[pl.ds(i, 512), :]
+
+      def f():
+        return sliced_ref.get()
+
+      block_spec = pl.BlockSpec((128, 512), lambda i, j: (i, j))
+      kernel_fn, (), _ = block_spec_lib.pull_block_spec(
+          f,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )()
+      y_ref[...] = kernel_fn((0, 1), ())
+
+    y = jnp.zeros((128, 512), jnp.int32)
+    _, y = pl.run_state(outer)((value, y))
+    np.testing.assert_array_equal(y, value[128:256, 512:1024])
+
+  def test_get_on_sliced_ref_misaligned_raises(self):
+    value = jnp.arange((512 * 1024), dtype=jnp.int32).reshape((512, 1024)) * 2
+
+    def outer(refs):
+      ref, y_ref = refs
+      i = jnp.int32(5)
+      sliced_ref = ref.at[pl.ds(i, 512), :]
+
+      def f():
+        return sliced_ref.get()
+
+      block_spec = pl.BlockSpec((128, 512), lambda i, j: (i, j))
+      kernel_fn, (), _ = block_spec_lib.pull_block_spec(
+          f,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )()
+      err, _ = checkify.checkify(lambda: kernel_fn((0, 1), ()))()
+      err.throw()
+
+    y = jnp.zeros((128, 512), jnp.int32)
+    with self.assertRaisesRegex(
+        checkify.JaxRuntimeError,
+        "slice_start=5 is not a multiple of block_size=128",
+    ):
+      pl.run_state(outer)((value, y))
+
+  def test_swap_on_sliced_ref(self):
+    value = jnp.zeros((640, 1024), dtype=jnp.int32)
+    update = jnp.arange(128 * 512, dtype=jnp.int32).reshape((128, 512))
+    val_full = jax.core.ShapedArray((512, 1024), jnp.int32)
+
+    def outer(refs):
+      ref, _ = refs
+      i = jnp.int32(128)
+      sliced_ref = ref.at[pl.ds(i, 512), :]
+
+      def f(val):
+        return sliced_ref.swap(val)
+
+      block_spec = pl.BlockSpec((128, 512), lambda i, j: (i, j))
+      kernel_fn, (in_bs,), _ = block_spec_lib.pull_block_spec(
+          f,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )(val_full)
+      _ = kernel_fn((0, 1), (), update)
+
+    value_out, _ = pl.run_state(outer)((value, value))
+    np.testing.assert_array_equal(value_out[128:256, 512:1024], update)
+
+  def test_swap_with_squeezed_indexer(self):
+    value = jnp.zeros((2, 640, 1024), dtype=jnp.int32)
+    update = jnp.arange(128 * 512, dtype=jnp.int32).reshape((128, 512))
+    val_full = jax.core.ShapedArray((512, 1024), jnp.int32)
+
+    def outer(refs):
+      ref, _ = refs
+      slot = jnp.int32(1)
+      i = jnp.int32(128)
+      sliced_ref = ref.at[slot, pl.ds(i, 512), :]
+
+      def f(val):
+        return sliced_ref.swap(val)
+
+      block_spec = pl.BlockSpec((128, 512), lambda i, j: (i, j))
+      kernel_fn, (in_bs,), _ = block_spec_lib.pull_block_spec(
+          f,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )(val_full)
+      del in_bs
+      _ = kernel_fn((0, 1), (), update)
+
+    value_out, _ = pl.run_state(outer)((value, value))
+    np.testing.assert_array_equal(value_out[1, 128:256, 512:1024], update)
+    np.testing.assert_array_equal(value_out[0], jnp.zeros((640, 1024), jnp.int32))
 
   def test_get_key_ref(self):
     """Tests get_p on a key ref (block_shape=None, MemorySpace.KEY).

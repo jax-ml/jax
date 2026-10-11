@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 (shape_poly)=
 
 # Shape polymorphism
@@ -257,7 +261,7 @@ as follows:
     `a >= b`, `a - b >= 0` are inconclusive and result in an exception.
 
 In cases where a comparison operation cannot be resolved to a boolean,
-we raise {class}`InconclusiveDimensionOperation`. E.g.,
+we raise {class}`~jax.errors.InconclusiveDimensionOperation`. E.g.,
 
 ```python
 import jax
@@ -412,6 +416,26 @@ is attempting to prove:
 Just like the implicit constraints, the explicit
 symbolic constraints are checked at compile time,
 using the same mechanism as explained [below](#shape-assertion-errors).
+
+#### Inspecting symbolic dimension bounds
+
+You can inspect the inclusive bounds that JAX can prove for a symbolic
+dimension or an expression derived from symbolic dimensions. The bounds are
+conservative and may not be tight. An infinite bound means that JAX could not
+establish a finite bound; it does not prove that the dimension is
+mathematically unbounded.
+
+```python
+>>> batch, free = export.symbolic_shape(
+...     "batch, free", constraints=("batch >= 128", "batch <= 1024"))
+>>> export.symbolic_dim_bounds(batch)
+(128, 1024)
+>>> export.symbolic_dim_bounds(2 * batch + 1)
+(257, 2049)
+>>> export.symbolic_dim_bounds(free)
+(1, inf)
+
+```
 
 #### Symbolic dimension scopes
 

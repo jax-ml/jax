@@ -293,7 +293,13 @@ class CoreTest(jtu.JaxTestCase):
   def test_reference_cycles(self):
     if jtu.TEST_NUM_THREADS.value > 1:
       self.skipTest("Test does not work with multiple threads")
-    gc.collect()
+    jax.clear_caches()
+    # Weak reference callbacks or outer finalizers triggered during garbage
+    # collection can drop the last external reference to other cyclic garbage,
+    # requiring multiple collection passes to drain the heap before testing.
+    for _ in range(10):
+      if not gc.collect():
+        break
 
     def f(x):
       return x.sum()
@@ -308,12 +314,19 @@ class CoreTest(jtu.JaxTestCase):
       self.assertEqual(gc.collect(), 0, msg=str(gc.garbage))
     finally:
       gc.set_debug(debug)
+      gc.garbage.clear()
 
   @jtu.thread_unsafe_test()  # gc isn't predictable when threaded
   def test_reference_cycles_jit(self):
     if jtu.TEST_NUM_THREADS.value > 1:
       self.skipTest("Test does not work with multiple threads")
-    gc.collect()
+    jax.clear_caches()
+    # Weak reference callbacks or outer finalizers triggered during garbage
+    # collection can drop the last external reference to other cyclic garbage,
+    # requiring multiple collection passes to drain the heap before testing.
+    for _ in range(10):
+      if not gc.collect():
+        break
 
     def f(x):
       return x.sum()
@@ -328,6 +341,7 @@ class CoreTest(jtu.JaxTestCase):
       self.assertEqual(gc.collect(), 0, msg=str(gc.garbage))
     finally:
       gc.set_debug(debug)
+      gc.garbage.clear()
 
   def test_invalid_shape_error_with_jit_tracer_passed(self):
     @jax.jit
@@ -346,7 +360,7 @@ class CoreTest(jtu.JaxTestCase):
       g_jit(1)
 
     with self.assertRaisesRegex(TypeError,
-          'This BatchTracer with object id'):
+          'This VmapTracer with object id'):
       g_vmap(jnp.ones((1, )))
 
   def test_aval_str_short_mem_space(self):

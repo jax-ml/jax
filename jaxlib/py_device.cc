@@ -26,6 +26,7 @@ limitations under the License.
 #include <variant>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
@@ -35,7 +36,6 @@ limitations under the License.
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
-#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_memory_space.h"
@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/nb_helpers.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
@@ -71,7 +72,8 @@ std::string_view PyDevice::platform() const {
   // expect "gpu". Migrate users and remove this
   // code.
   absl::string_view platform_name = device_->PlatformName();
-  if (platform_name == "cuda" || platform_name == "rocm") {
+  if (platform_name == "cuda" || platform_name == "rocm" ||
+      platform_name == "oneapi") {
     return std::string_view("gpu");
   } else {
     return platform_name;
@@ -101,13 +103,21 @@ absl::StatusOr<nb_class_ptr<PyMemorySpace>> PyDevice::Memory(
     std::string_view kind) const {
   ifrt::Memory* result_memory_space = nullptr;
   for (auto* memory_space : device_->Memories()) {
+#if JAX_IFRT_VERSION_NUMBER >= 64
+    if (memory_space->Kind().value() == kind) {
+#else
     if (memory_space->Kind().memory_kind() == kind) {
+#endif
       if (result_memory_space != nullptr) {
-        std::string memories = absl::StrJoin(
-            device_->Memories(), ", ",
-            [](std::string* out, const auto& memory_space) {
+        std::string memories =
+            absl::StrJoin(device_->Memories(), ", ",
+                          [](std::string* out, const auto& memory_space) {
+#if JAX_IFRT_VERSION_NUMBER >= 64
+                            absl::StrAppend(out, memory_space->Kind().value());
+#else
               absl::StrAppend(out, *memory_space->Kind().memory_kind());
-            });
+#endif
+                          });
         auto device_kind = device_->Kind();
         return xla::InvalidArgument(
             "Found more than one addressable memory for "
@@ -121,11 +131,15 @@ absl::StatusOr<nb_class_ptr<PyMemorySpace>> PyDevice::Memory(
     }
   }
   if (result_memory_space == nullptr) {
-    std::string memories = absl::StrJoin(
-        device_->Memories(), ", ",
-        [](std::string* out, const auto& memory_space) {
+    std::string memories =
+        absl::StrJoin(device_->Memories(), ", ",
+                      [](std::string* out, const auto& memory_space) {
+#if JAX_IFRT_VERSION_NUMBER >= 64
+                        absl::StrAppend(out, memory_space->Kind().value());
+#else
           absl::StrAppend(out, *memory_space->Kind().memory_kind());
-        });
+#endif
+                      });
     auto device_kind = device_->Kind();
     return xla::InvalidArgument(
         "Could not find memory addressable by device %s. Device %s "
@@ -137,7 +151,7 @@ absl::StatusOr<nb_class_ptr<PyMemorySpace>> PyDevice::Memory(
 }
 
 absl::StatusOr<nb_class_ptr<PyMemorySpace>> PyDevice::DefaultMemory() const {
-  TF_ASSIGN_OR_RETURN(auto* memory_space, device_->DefaultMemory());
+  ABSL_ASSIGN_OR_RETURN(auto* memory_space, device_->DefaultMemory());
   return client_->GetPyMemorySpace(memory_space);
 }
 

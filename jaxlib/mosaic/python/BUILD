@@ -97,7 +97,6 @@ pytype_strict_library(
     srcs = [
         "layout_defs.py",
     ],
-    type_checking = "pyrefly",
     visibility = [
         "//visibility:public",
     ],

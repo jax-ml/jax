@@ -38,6 +38,18 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+# How a ref is laid out rather than what it contains. Applying these to a ref's
+# physical aval gives its logical one, and since every buffer is allocated at
+# that logical shape they are identities at every use site.
+LAYOUT_TRANSFORMS = (
+    mosaic_gpu_core.UnswizzleRef,
+    mosaic_gpu_core.UntilingTransform,
+    # A TMEM ref of rank > 2 is stored as `(m, prod(batch) * n)` and carries
+    # this transform back to `(*batch, m, n)`.
+    mosaic_gpu_core.ExpandLeadingBatchDimensionsTransform,
+)
+
+
 IDX_BY_GPU_MEMORY_SPACE: collections.abc.Mapping[
     mosaic_gpu_core.MemorySpace, int
 ]
@@ -160,6 +172,15 @@ class Warpgroup:
         warpgroup_id=self.warpgroup_id,
         warp_id=warp_id,
     )
+
+  def warps(self) -> list[Warp]:
+    return [
+        self.warp(i)
+        for i in range(mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP)
+    ]
+
+  def warpgroup(self) -> Warpgroup:
+    return self
 
   def __repr__(self) -> str:
     return (
@@ -450,6 +471,10 @@ class GPUSharedMemory(
 
   num_pallas_threads_per_block: int
 
+  # Hardware named barriers (`bar.sync` / `bar.arrive`), keyed by
+  # `(device, block, barrier id)`. See `named_barrier`.
+  named_barriers: dict[tuple[int, int, int], Barrier]
+
   # thread -> next available REGS buffer ID.
   #
   # NOTE: We use negative integers so that, when debugging, it is easy to
@@ -475,6 +500,8 @@ class GPUSharedMemory(
 
   pending_tmem_stores: dict[Thread, VectorClock]
   pending_tmem_loads: dict[Thread, VectorClock]
+
+  reallocation_checker: BarrierReallocationChecker
 
   def __init__(
       self,
@@ -556,11 +583,70 @@ class GPUSharedMemory(
     self.num_pallas_threads_per_block = num_threads_per_block
     self.reset_per_cluster_state()
 
+  def buffer_shape_and_dtype(self, key: MemKey) -> memory.ShapeAndDtype:
+    """The logical shape and dtype of `key`'s buffer."""
+    with self.lock:
+      buff = self.mem[key]
+    if not isinstance(buff, memory.Buffer):
+      raise ValueError(f"Allocation with key `{key}` is not a `Buffer`.")
+    return memory.ShapeAndDtype(buff.logical_shape, buff.dtype)
+
+  def access(self, key: MemKey, transforms) -> interpret_utils.Access:
+    """What `transforms` touches of `key`'s buffer, in its coordinates."""
+    return interpret_utils.to_access(
+        transforms, self.buffer_shape_and_dtype(key).shape
+    )
+
+  # The accessors below take an `interpret_utils.Access` (a range in the
+  # buffer's coordinates plus an axis permutation) where the base class takes
+  # a plain range. The range is handed down as is and only the value crossing
+  # the boundary is reordered, so the shared layer never sees a transpose.
+
+  def get_buffer_content(
+      self, key, access: interpret_utils.Access, *args, **kwargs
+  ):
+    result, shape_and_dtype, clock = super().get_buffer_content(
+        key, access.range, *args, **kwargs
+    )
+    if result is not None and access.permutation is not None:
+      result = result.transpose(access.permutation)
+    return result, shape_and_dtype, clock
+
+  def store_buffer_content(
+      self, key, access: interpret_utils.Access, value, *args, **kwargs
+  ):
+    if access.permutation is not None:
+      value = value.transpose(access.inverse_permutation)
+    in_bounds, shape_and_dtype, clock = super().store_buffer_content(
+        key, access.range, value, *args, **kwargs
+    )
+    if not in_bounds:
+      raise IndexError(
+          f"Out-of-bounds store of {key}: writing [{access}] but buffer has"
+          f" shape {shape_and_dtype.shape}."
+      )
+    return in_bounds, shape_and_dtype, clock
+
+  def swap_buffer_content(
+      self, key, access: interpret_utils.Access, value, mask, *args, **kwargs
+  ):
+    if access.permutation is not None:
+      value = value.transpose(access.inverse_permutation)
+      if mask is not None:
+        mask = mask.transpose(access.inverse_permutation)
+    result, shape_and_dtype, clock = super().swap_buffer_content(
+        key, access.range, value, mask, *args, **kwargs
+    )
+    if result is not None and access.permutation is not None:
+      result = result.transpose(access.permutation)
+    return result, shape_and_dtype, clock
+
   def reset_per_cluster_state(self):
     """Resets the per-cluster state of the shared memory."""
     with self.lock:
       self.next_tma_thread_id = 0
       self.next_regs_id = collections.defaultdict(lambda: -100)
+      self.named_barriers = {}
       self.clocks = {
           thread: self.VectorClock(self.vector_clock_size)
           for thread in self.all_concurrent_threads
@@ -581,6 +667,14 @@ class GPUSharedMemory(
       )
       self.pending_tmem_stores = {}
       self.pending_tmem_loads = {}
+      self.reallocation_checker = BarrierReallocationChecker()
+
+  def _abort_waiters(self):
+    # Called by `set_failed` while `self.lock` is held. Acquiring a barrier's
+    # `cv` lock while holding `self.lock` is allowed (see `Barrier.__init__`).
+    for alloc in self.mem.values():
+      if isinstance(alloc, (Barrier, ClusterBarrier)):
+        alloc.abort()
 
   def thread_to_vc_position(self, thread: ThreadKey) -> int:
     return self.all_concurrent_threads[thread]
@@ -603,6 +697,7 @@ class GPUSharedMemory(
   def allocate_barrier(
       self,
       key: MemKey,
+      thread: ThreadKey,
       ref_count: int,
       num_arrivals: int,
       orders_tensor_core: bool,
@@ -610,6 +705,7 @@ class GPUSharedMemory(
   ):
     """Allocates a barrier with the given key unless it already exists."""
     with self.lock:
+      self.reallocation_checker.on_allocate(thread)
       if key not in self.mem:
         barrier = Barrier(
             self,
@@ -653,6 +749,40 @@ class GPUSharedMemory(
 
     return barrier, clock
 
+  def named_barrier(
+      self, thread: Thread, barrier_id: int, num_arrivals: int
+  ) -> Barrier:
+    """Named barrier `barrier_id` of `thread`'s block, created on first use.
+
+    Named barriers are hardware resources rather than program allocations, so
+    they live outside `self.mem` and need no deallocation.
+    """
+    # We model a named barrier with `n` arrivals as a `Barrier` with `n/128`
+    # arrivals, since for now a warpgroup is the smallest unit of threads that
+    # can use a named barrier.
+    key = (thread.device_id, thread.block_id, barrier_id)
+    with self.lock:
+      barrier = self.named_barriers.get(key)
+      if barrier is None:
+        barrier = Barrier(
+            self,
+            num_pallas_threads_per_block=self.num_pallas_threads_per_block,
+            ref_count=0,
+            num_arrivals=num_arrivals,
+            orders_tensor_core=False,
+            enable_logging=(
+                self.logging_mode is not None
+                and params.LoggingMode.BARRIER in self.logging_mode
+            ),
+        )
+        self.named_barriers[key] = barrier
+    if barrier.num_arrivals != num_arrivals:
+      raise ValueError(
+          f"Named barrier {barrier_id} is used with {num_arrivals} arrivals"
+          f" but was first used with {barrier.num_arrivals}."
+      )
+    return barrier
+
   def get_barrier(self, key: MemKey) -> Barrier:
     with self.lock:
       barrier = self.mem[key]
@@ -666,6 +796,7 @@ class GPUSharedMemory(
   def deallocate_barrier(
       self,
       key: MemKey,
+      thread: ThreadKey,
       logging_info: GPULoggingInfo | None = None,
   ):
     with self.lock:
@@ -685,9 +816,11 @@ class GPUSharedMemory(
             )
         )
 
+      self.reallocation_checker.on_deallocate(barrier, thread)
       barrier.deallocate()
 
       if barrier.has_zero_ref_count():
+        self.reallocation_checker.on_final_deallocate(barrier)
         if self.enable_logging and logging_info is not None:
           self._log(
               logging_info.format(
@@ -701,6 +834,7 @@ class GPUSharedMemory(
   def allocate_cluster_barrier(
       self,
       key: MemKey,
+      thread: ThreadKey,
       axes_dims: tuple[int, ...],
       is_axis_collective: tuple[bool, ...],
       ref_count: int,
@@ -709,6 +843,7 @@ class GPUSharedMemory(
   ):
     """Allocates a cluster barrier with the given key unless it already exists."""
     with self.lock:
+      self.reallocation_checker.on_allocate(thread)
       if key not in self.mem:
         barrier = ClusterBarrier(
             self,
@@ -736,6 +871,7 @@ class GPUSharedMemory(
   def deallocate_cluster_barrier(
       self,
       key: MemKey,
+      thread: ThreadKey,
       logging_info: GPULoggingInfo | None = None,
   ):
     with self.lock:
@@ -755,9 +891,15 @@ class GPUSharedMemory(
             )
         )
 
+      # A thread only waits on the barrier of its own block.
+      self.reallocation_checker.on_deallocate(
+          barrier.block_barrier(thread), thread
+      )
       barrier.deallocate()
 
       if barrier.has_zero_ref_count():
+        for block_barrier in barrier.barriers:
+          self.reallocation_checker.on_final_deallocate(block_barrier)
         if self.enable_logging and logging_info is not None:
           self._log(
               logging_info.format(
@@ -951,6 +1093,75 @@ class GPUSharedMemory(
       self.clocks[dest].update(self.clocks[source])
 
 
+class _BarrierAborted(Exception):
+  pass
+
+
+class BarrierReallocationChecker:
+  """Ensures threads observe all barrier completions before allocating a new barrier.
+
+  A thread that observes any completion of a barrier must observe all of its
+  completions, except that it may skip the final completions if the thread does
+  not allocate another barrier afterwards.
+  This is hard to check, because other threads may still arrive at a barrier
+  after a thread deallocates it (and even after it exits), so we need to check
+  validity whenever threads allocate new barriers and also when barriers are
+  fully deallocated.
+
+  The methods must be called while holding `GPUSharedMemory.lock`.
+  """
+  # This class is a bit messy and needs to use some hard-to-reason about state
+  # in the name of better error reporting: we could simply record all barrier
+  # alloc/dealloc/wait/arrive events and then see if there were any violations
+  # at the end of kernel execution. However, this would be less helpful to a user.
+  # Instead, we try to report errors as soon as they can be detected.
+
+  # For each warpgroup, the barriers that it waited on and then deallocated
+  # since it last allocated a barrier.
+  deallocated: dict[Warpgroup, list[Barrier]]
+  # For each barrier that some threads still hold, the warpgroups that waited
+  # on it, deallocated it, and then allocated another barrier. Keyed by
+  # `id(barrier)`.
+  reallocated: dict[int, set[Warpgroup]]
+
+  def __init__(self):
+    self.deallocated = collections.defaultdict(list)
+    self.reallocated = collections.defaultdict(set)
+
+  def on_deallocate(self, barrier: Barrier, thread: Thread):
+    """Called when `thread` deallocates `barrier`."""
+    warpgroup = thread.warpgroup()
+    _, observed_phases = barrier.observed_phases(warpgroup)
+    if observed_phases:
+      self.deallocated[warpgroup].append(barrier)
+
+  def on_allocate(self, thread: Thread):
+    """Called when `thread` allocates a barrier."""
+    warpgroup = thread.warpgroup()
+    for barrier in self.deallocated.pop(warpgroup, ()):
+      self._check(barrier, warpgroup)
+      if not barrier.has_zero_ref_count():
+        self.reallocated[id(barrier)].add(warpgroup)
+
+  def on_final_deallocate(self, barrier: Barrier):
+    """Called when the last thread holding `barrier` deallocates it."""
+    for warpgroup in self.reallocated.pop(id(barrier), ()):
+      self._check(barrier, warpgroup)
+
+  def _check(self, barrier: Barrier, warpgroup: Warpgroup):
+    phase, observed_phases = barrier.observed_phases(warpgroup)
+    for thread, observed_phase in observed_phases.items():
+      if observed_phase != phase:
+        raise ValueError(
+            f"Thread {warpgroup} allocated a barrier after deallocating barrier"
+            f" {id(barrier)}, but thread {thread} had only observed that"
+            f" barrier up to phase {observed_phase - 1}, while it completed up"
+            f" to phase {phase - 1}. A thread that waits on a barrier must"
+            " observe all of its completions if it allocates another barrier"
+            " afterwards."
+        )
+
+
 class Barrier(memory.Allocation):
 
   VectorClock = GPUSharedMemory.VectorClock
@@ -1009,9 +1220,15 @@ class Barrier(memory.Allocation):
     # NOTE: the underlying hardware uses a single bit to track only the polarity
     # of the barrier. We track the full phase number in order to catch violations
     # of Pallas-specific invariants:
-    # 1. A thread that waits on any phase must wait on all phases.
+    # 1. A thread that waits on any phase must wait on all phases (it may skip
+    #    the final completions if it does not allocate another barrier
+    #    afterwards).
     # 2. At least one thread must observe each barrier completion.
     self.phase: int = 0  # Protected by `self.cv`'s lock.
+    # Set once the interpreted kernel has failed. Threads waiting on the barrier
+    # check this flag (instead of `shared_memory.check_failed`, which requires
+    # `shared_memory.lock`) and, if it is set, raise instead of waiting.
+    self.aborted: bool = False  # Protected by `self.cv`'s lock.
     # Last observed phase by each thread. Note that not every thread has to
     # participate in the barrier, and we don't know ahead of time which ones
     # will, so we lazily initialize this dict the first time a thread waits on
@@ -1080,13 +1297,27 @@ class Barrier(memory.Allocation):
             f"Barrier deallocated with {self.arrivals_count} arrivals pending."
         )
 
-      for tid, x in self.last_observed_phase_by_thread.items():
-        if x != self.phase:
-          raise ValueError(
-              f"When barrier {id(self)} was deallocated, thread {tid} had only"
-              f" observed barrier up to phase {x-1}, but barrier completed"
-              f" up to phase {self.phase - 1}."
-          )
+  def observed_phases(
+      self, warpgroup: Warpgroup
+  ) -> tuple[int, dict[Thread, int]]:
+    """Returns `self.phase` and the observed phases of `warpgroup`'s threads.
+
+    The threads are `warpgroup` and its warps, if they have waited on the
+    barrier.
+    """
+    with self.cv:
+      return self.phase, {
+          t: self.last_observed_phase_by_thread[t]
+          for t in [warpgroup, *warpgroup.warps()]
+          if t in self.last_observed_phase_by_thread
+      }
+
+  def abort(self):
+    """Aborts the `Barrier`, waking up and failing all current waiters."""
+    with self.cv:
+      self.aborted = True
+      # just notifying is enough since the waiters will check the aborted flag
+      self.cv.notify_all()
 
   def arrive(
       self,
@@ -1146,7 +1377,23 @@ class Barrier(memory.Allocation):
       thread: Thread,
       logging_info: GPULoggingInfo | None = None,
   ):
+    # Fail early if the kernel has already failed. This cannot be done while
+    # holding the lock on `self.cv`, so the below loop checks `self.aborted`
+    # and we only call `check_failed` again once `self.cv` has been released.
+    self.shared_memory.check_failed()
+    try:
+      self._wait(thread, logging_info)
+    except _BarrierAborted:
+      self.shared_memory.check_failed()
+      raise RuntimeError(
+          f"Barrier {id(self)} was aborted, but no failure was recorded."
+      ) from None
 
+  def _wait(
+      self,
+      thread: Thread,
+      logging_info: GPULoggingInfo | None = None,
+  ):
     with self.cv:
       last_observed_phase = self.last_observed_phase_by_thread.get(
           thread, None
@@ -1214,6 +1461,9 @@ class Barrier(memory.Allocation):
         # Case 3: we're attempting to observe phase `p+1`, which has not completed yet.
         # We must wait.
         while last_observed_phase == self.phase:
+          if self.aborted:
+            # Raise after releasing the lock on `self.cv`, see `wait`.
+            raise _BarrierAborted()
           if self.enable_logging and logging_info is not None:
             self._log(
                 logging_info.format(
@@ -1234,7 +1484,8 @@ class Barrier(memory.Allocation):
           )
         # It's possible for us to wake up and find that the barrier has
         # completed multiple phases while we slept. This is fine: if it caused
-        # us to miss a phase we'll catch it the next time we wait or on deallocation.
+        # us to miss a phase we'll catch it the next time we wait or when we
+        # next allocate a barrier.
       else:
         assert False, "Unreachable"
 
@@ -1364,6 +1615,12 @@ class ClusterBarrier(memory.Allocation):
     with self.lock:
       return self.ref_count == 0
 
+  def abort(self):
+    """Aborts the `ClusterBarrier`."""
+    with self.lock:
+      for barrier in self.barriers:
+        barrier.abort()
+
   def arrive(
       self,
       *,
@@ -1384,9 +1641,7 @@ class ClusterBarrier(memory.Allocation):
     # Arrive at the barrier for the block that `thread` belongs to. Note that
     # this is the barrier for the block whose coordinate do *not* differ (along
     # any collective axis) from `block_coords`.
-    with self.lock:
-      barrier = self.barriers[thread.block_id]
-    barrier.arrive(thread, clock, logging_info)
+    self.block_barrier(thread).arrive(thread, clock, logging_info)
 
     # Arrive at the barriers for those blocks whose coordinates differ from
     # `block_coords` along *exactly one* collective axis.
@@ -1431,10 +1686,12 @@ class ClusterBarrier(memory.Allocation):
             )
         )
 
-    with self.lock:
-      barrier = self.barriers[thread.block_id]
+    self.block_barrier(thread).wait(thread, logging_info)
 
-    barrier.wait(thread, logging_info)
+  def block_barrier(self, thread: Thread) -> Barrier:
+    """The barrier for the block that `thread` belongs to."""
+    with self.lock:
+      return self.barriers[thread.block_id]
 
   def deallocate(self):
     """Deallocates the `ClusterBarrier`."""

@@ -38,10 +38,15 @@ from jax._src import flattree as ft
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import types as state_types
 from jax._src.state.discharge import (
-                                      discharge_state,run_state, run_state_reference)
+    discharged_aval,
+    discharge_state,
+    run_state,
+    run_state_reference,
+)
 from jax._src.state.primitives import ( addupdate_p,get_p, pin,
                                        ref_addupdate, ref_get, ref_set,
-                                       ref_swap, swap_p, unpin)
+                                       ref_swap, swap_p, unpin,
+                                       with_memory_space_constraint)
 from jax._src.state.types import ( AbstractRef,
                                   AccumEffect, ReadEffect, WriteEffect,shaped_array_ref)
 from jax._src.util import tuple_insert
@@ -1506,6 +1511,24 @@ class StateControlFlowTest(jtu.JaxTestCase):
     out = f(4.)
     np.testing.assert_array_equal(out, jnp.exp(4.))
 
+  def test_checkpoint_internal_ref_mutation_grad(self):
+    x = jnp.ones((4, 4))
+
+    def f(x):
+      ref = jax.new_ref(jnp.zeros_like(x))
+      ref[...] = x + 1.0
+      return jax.ref.freeze(ref)
+
+    with config.remat3(False), self.assertRaisesRegex(
+        NotImplementedError,
+        "Mutating a reference with unknown/differentiated values",
+    ):
+      jax.grad(lambda x: jnp.sum(jax.checkpoint(f)(x)))(x)
+
+    with config.remat3(True):
+      grad = jax.grad(lambda x: jnp.sum(jax.checkpoint(f)(x)))(x)
+      np.testing.assert_allclose(grad, jnp.ones((4, 4)))
+
   def test_transformed_ref_is_a_pytree_node(self):
     @jax.jit
     def fn():
@@ -1516,6 +1539,53 @@ class StateControlFlowTest(jtu.JaxTestCase):
         self.assertIsInstance(x, state_types.TransformedRef)
       jax.tree.map(assert_fn, x_ref_view)
     fn()
+
+  def test_transformed_ref_memory_space(self):
+    @jax.jit
+    def fn(i):
+      x_ref = jax.new_ref(jnp.zeros((7, 8)), memory_space=core.MemorySpace.Device)
+      self.assertEqual(x_ref.at[1:6].memory_space, core.MemorySpace.Device)
+      self.assertEqual(x_ref.at[i].memory_space, core.MemorySpace.Device)
+      self.assertEqual(x_ref.at[i, 0].memory_space, core.MemorySpace.Device)
+    fn(0)
+
+  def test_tracer_memory_space_raises_value_error(self):
+    @jax.jit
+    def f(x):
+      return x.memory_space
+
+    with self.assertRaisesRegex(
+        ValueError, "The 'memory_space' attribute is not available on"
+    ):
+      f(jnp.zeros((2, 3)))
+
+  def test_transformed_multiref_memory_space(self):
+    @jax.jit
+    def fn(idx):
+      x_ref = jax.new_ref(jnp.zeros((7, 8)), memory_space=core.MemorySpace.Device)
+      y_ref = jax.new_ref(jnp.zeros((7, 8)), memory_space=core.MemorySpace.Device)
+      multi_ref = state_types.TransformedRef(
+          ref=(x_ref, y_ref),
+          transforms=(state_types.SelectTransform(idx),),
+      )
+      self.assertEqual(multi_ref.memory_space, core.MemorySpace.Device)
+    fn(0)
+
+  def test_transformed_multiref_inconsistent_memory_space_error(self):
+    @jax.jit
+    def fn(idx):
+      x_ref = jax.new_ref(jnp.zeros((7, 8)), memory_space=core.MemorySpace.Device)
+      y_ref = jax.new_ref(jnp.zeros((7, 8)), memory_space=None)
+      multi_ref = state_types.TransformedRef(
+          ref=(x_ref, y_ref),
+          transforms=(state_types.SelectTransform(idx),),
+      )
+      with self.assertRaisesRegex(
+          TypeError, "Cannot select from Refs of different types"
+      ):
+        _ = multi_ref.memory_space
+    fn(0)
+
 
   @parameterized.named_parameters(
     ("scan", "scan"), ("while_loop", "while_loop"))
@@ -2059,6 +2129,246 @@ class PinnedBuffersTest(jtu.JaxTestCase):
   def test_new_ref_pinned_eager_error(self):
     with self.assertRaises(NotImplementedError):
       jax.new_ref(jnp.arange(3.), pin=True)
+
+  def test_discharged_aval_non_ref_preserves_memory_space(self):
+    aval = core.ShapedArray((3,), jnp.float32, memory_space=core.MemorySpace.Host)
+    discharged = discharged_aval(aval, discharge=True, strip_memory_space=True)
+    self.assertEqual(discharged.memory_space, core.MemorySpace.Host)
+    self.assertEqual(discharged, aval)
+
+    discharged_no_strip = discharged_aval(
+        aval, discharge=False, strip_memory_space=True
+    )
+    self.assertEqual(discharged_no_strip, aval)
+
+  def test_discharge_state_preserves_pure_input_memory_space(self):
+    def f(pure_x, ref_init):
+      ref = jax.new_ref(ref_init)
+      ref[...] += 1.0
+      return pure_x, ref[...]
+
+    x_aval = core.ShapedArray(
+        (4,), jnp.float32, memory_space=core.MemorySpace.Host
+    )
+    ref_init_aval = core.ShapedArray((4,), jnp.float32)
+    closed_jaxpr = jax.make_jaxpr(f)(x_aval, ref_init_aval)
+    discharged_jaxpr = discharge_state(closed_jaxpr, strip_memory_space=True)
+    self.assertEqual(
+        discharged_jaxpr.jaxpr.invars[0].aval.memory_space,
+        core.MemorySpace.Host,
+    )
+
+
+class WithMemorySpaceConstraintTest(jtu.JaxTestCase):
+
+  def test_basic_and_jaxpr(self):
+    x = jnp.ones((2, 3), jnp.float32)
+    def f(x):
+      return with_memory_space_constraint(x, core.MemorySpace.Device)
+    jaxpr = jax.make_jaxpr(f)(x)
+    self.assertEqual(jaxpr.out_avals[0].memory_space, core.MemorySpace.Device)
+    np.testing.assert_array_equal(jax.jit(f)(x), x)
+
+  def test_vmap(self):
+    x = jnp.ones((4, 2, 3), jnp.float32)
+    def f(x):
+      return with_memory_space_constraint(x, core.MemorySpace.Device)
+    out = jax.vmap(f)(x)
+    np.testing.assert_array_equal(out, x)
+
+  def test_grad(self):
+    def f(x):
+      y = with_memory_space_constraint(x, core.MemorySpace.Device)
+      return jnp.sum(y ** 2)
+    x = jnp.array([2.0, 3.0], jnp.float32)
+    grad = jax.grad(f)(x)
+    np.testing.assert_array_equal(grad, 2.0 * x)
+
+
+class RefTransformTest(jtu.JaxTestCase):
+
+  def test_swap_reshape(self):
+    @jax.jit
+    def f():
+      x = jnp.arange(12, dtype=jnp.float32).reshape((4, 3))
+      ref = jax.new_ref(x)
+      old_val = ref.reshape(6, 2).swap(jnp.zeros((6, 2), dtype=jnp.float32))
+      return old_val, ref[...]
+    old_val, new_val = f()
+    self.assertEqual(old_val.shape, (6, 2))
+    self.assertAllClose(old_val, jnp.arange(12, dtype=jnp.float32).reshape((6, 2)))
+    self.assertEqual(new_val.shape, (4, 3))
+    self.assertAllClose(new_val, jnp.zeros((4, 3), dtype=jnp.float32))
+
+  def test_set_reshape(self):
+    @jax.jit
+    def f():
+      x = jnp.zeros((4, 3))
+      ref = jax.new_ref(x)
+      ref.reshape(2, 6)[...] = jnp.ones((2, 6))
+      return ref[...]
+    self.assertAllClose(f(), jnp.ones((4, 3)))
+
+  def test_bitcast_swap_and_set(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.array([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32))
+      old_val = ref.bitcast(jnp.int32).swap(jnp.zeros((2, 2), dtype=jnp.int32))
+      ref.bitcast(jnp.int32)[...] = jnp.ones((2, 2), dtype=jnp.int32)
+      return old_val, ref[...]
+    old_val, new_val = f()
+    self.assertEqual(old_val.dtype, jnp.int32)
+    self.assertArraysEqual(
+        old_val,
+        lax.bitcast_convert_type(
+            jnp.array([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32), jnp.int32
+        ),
+    )
+    self.assertEqual(new_val.dtype, jnp.float32)
+    self.assertArraysEqual(
+        new_val,
+        lax.bitcast_convert_type(jnp.ones((2, 2), dtype=jnp.int32), jnp.float32),
+    )
+
+  def test_set_reshaped_slice(self):
+    @jax.jit
+    def f():
+      x = jnp.zeros((4, 3), dtype=jnp.float32)
+      ref = jax.new_ref(x)
+      ref.reshape(2, 6)[0, :3] = jnp.ones(3, dtype=jnp.float32)
+      return ref[...]
+    expected = jnp.array([[1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], dtype=jnp.float32)
+    self.assertAllClose(f(), expected)
+
+  def test_swap_reshaped_slice(self):
+    @jax.jit
+    def f():
+      x = jnp.arange(12, dtype=jnp.float32).reshape((4, 3))
+      ref = jax.new_ref(x)
+      old_val = ref.reshape(2, 6).at[0, :3].swap(jnp.zeros(3, dtype=jnp.float32))
+      return old_val, ref[...]
+    old_val, new_val = f()
+    self.assertEqual(old_val.shape, (3,))
+    self.assertAllClose(old_val, jnp.arange(3, dtype=jnp.float32))
+    expected = jnp.arange(12, dtype=jnp.float32).reshape((4, 3))
+    expected = expected.reshape(2, 6).at[0, :3].set(0.0).reshape(4, 3)
+    self.assertAllClose(new_val, expected)
+
+  def test_bitcast_slice_set(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.array([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32))
+      ref.bitcast(jnp.int32)[0, :] = jnp.zeros(2, dtype=jnp.int32)
+      return ref[...]
+    expected = jnp.array([[0.0, 0.0], [3.0, 4.0]], dtype=jnp.float32)
+    self.assertArraysEqual(f(), expected)
+
+  def test_addupdate_on_reshaped_view(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 3)))
+      ref_addupdate(ref.reshape(2, 6), (), jnp.ones((2, 6)))
+      return ref[...]
+
+    expected = jnp.ones((4, 3))
+    self.assertAllClose(f(), expected)
+
+  def test_addupdate_on_reshaped_slice(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 3), dtype=jnp.float32))
+      ref_addupdate(ref.reshape(2, 6), (0, slice(0, 3)), jnp.ones(3, dtype=jnp.float32))
+      return ref[...]
+
+    expected = jnp.array(
+        [[1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    self.assertAllClose(f(), expected)
+
+  def test_addupdate_on_reshaped_view_slice(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 3), dtype=jnp.float32))
+      view = ref.reshape(2, 6).at[0, :3]
+      ref_addupdate(view, (), jnp.ones(3, dtype=jnp.float32))
+      return ref[...]
+
+    expected = jnp.array(
+        [[1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    self.assertAllClose(f(), expected)
+
+  def test_addupdate_on_sliced_ref_reshape(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 6), dtype=jnp.float32))
+      ref_addupdate(ref.at[0].reshape(2, 3), (), jnp.ones((2, 3), dtype=jnp.float32))
+      return ref[...]
+
+    expected = jnp.zeros((4, 6), dtype=jnp.float32).at[0].set(1.0)
+    self.assertAllClose(f(), expected)
+
+  def test_addupdate_on_reshaped_sliced_reshaped(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 3), dtype=jnp.float32))
+      view = ref.reshape(2, 6).at[0].reshape(3, 2)
+      ref_addupdate(view, (), jnp.ones((3, 2), dtype=jnp.float32))
+      return ref[...]
+
+    expected = jnp.array(
+        [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    self.assertAllClose(f(), expected)
+  def test_addupdate_on_multiple_indexers_raises_error(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 3), dtype=jnp.float32))
+      ref_addupdate(ref.at[0].at[0], (), jnp.array(1.0, dtype=jnp.float32))
+      return ref[...]
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "Multiple indexers are not supported"
+    ):
+      f()
+  def test_addupdate_on_bitcast_raises_error(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((2, 2), dtype=jnp.float32))
+      ref_addupdate(ref.bitcast(jnp.int32), (), jnp.ones((2, 2), dtype=jnp.int32))
+      return ref[...]
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "not supported on bitcast views"
+    ):
+      f()
+
+  def test_addupdate_on_unsupported_transform_raises_error(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((2, 3), dtype=jnp.float32))
+      view = state_types.TransformedRef(
+          ref, (state_types.TransposeTransform((1, 0)),)
+      )
+      ref_addupdate(view, (), jnp.ones((3, 2), dtype=jnp.float32))
+      return ref[...]
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "Unsupported transform for `addupdate`"
+    ):
+      f()
+
+  def test_scalar_ref_reshape(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.array(5.0))
+      return ref.reshape(1)[...]
+
+    self.assertEqual(f().shape, (1,))
+    self.assertAllClose(f(), jnp.array([5.0]))
 
 
 if __name__ == '__main__':

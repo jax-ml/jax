@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -209,9 +210,9 @@ absl::Status InitTmaDescriptor(mlir::OpBuilder& builder,
     slice_as_i64.push_back(Constant(b, slice_dim, b.getI64Type()));
   }
 
-  TF_ASSIGN_OR_RETURN(Pointer sizes_array, ToLLVMArray(b, sizes_as_i64));
-  TF_ASSIGN_OR_RETURN(Pointer strides_array, ToLLVMArray(b, strides_as_i64));
-  TF_ASSIGN_OR_RETURN(Pointer slice_array, ToLLVMArray(b, slice_as_i64));
+  ABSL_ASSIGN_OR_RETURN(Pointer sizes_array, ToLLVMArray(b, sizes_as_i64));
+  ABSL_ASSIGN_OR_RETURN(Pointer strides_array, ToLLVMArray(b, strides_as_i64));
+  ABSL_ASSIGN_OR_RETURN(Pointer slice_array, ToLLVMArray(b, slice_as_i64));
 
   IntegerType i64 = b.getI64Type();
 
@@ -869,21 +870,25 @@ llvm::LogicalResult VectorConcatOp::inferReturnTypes(
 }
 
 llvm::LogicalResult ReturnOp::verify() {
-  // The operand number and types must match the custom primitive signature.
-  const auto& results = getParentOp()->getResultTypes();
-  if (getNumOperands() != results.size())
+  // The operand number and types must match the parent op signature.
+  mlir::Operation* parent = (*this)->getParentOp();
+  mlir::TypeRange results = parent->getResultTypes();
+  if (getNumOperands() != results.size()) {
     return emitOpError("has ")
-           << getNumOperands() << " operands, but enclosing custom_primitive (@"
-           << getParentOp()->getName() << ") returns " << results.size();
+           << getNumOperands() << " operands, but enclosing "
+           << parent->getName().stripDialect() << " (@" << parent->getName()
+           << ") returns " << results.size();
+  }
 
-  for (unsigned i = 0, e = results.size(); i != e; ++i)
-    if (getOperand(i).getType() != results[i])
+  for (unsigned i = 0, e = results.size(); i != e; ++i) {
+    if (getOperand(i).getType() != results[i]) {
       return emitOpError() << "type of return operand " << i << " ("
                            << getOperand(i).getType()
                            << ") doesn't match the result type (" << results[i]
-                           << ")"
-                           << " in custom_primitive @"
-                           << getParentOp()->getName();
+                           << ") in " << parent->getName().stripDialect()
+                           << " @" << parent->getName();
+    }
+  }
 
   return llvm::success();
 }
@@ -1310,6 +1315,52 @@ llvm::LogicalResult WarpMapOp::verify() {
   return llvm::success();
 }
 
+llvm::LogicalResult RunScopedOp::verify() {
+  mlir::Block& body = getRegion().front();
+  if (getBufferAttrs().size() != body.getNumArguments()) {
+    return emitOpError() << "Expected the number of buffer attributes ("
+                         << getBufferAttrs().size()
+                         << ") to match the number of block arguments ("
+                         << body.getNumArguments() << ").";
+  }
+
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+
+  for (auto [arg, attr] :
+       llvm::zip_equal(body.getArguments(), getBufferAttrs())) {
+    auto memref_type = mlir::dyn_cast<mlir::MemRefType>(arg.getType());
+    if (!memref_type) {
+      return emitOpError() << "Expected block argument " << arg.getArgNumber()
+                           << " to be a memref, but got: " << arg.getType();
+    }
+    if (!memref_type.hasStaticShape()) {
+      return emitOpError()
+             << "Expected block argument " << arg.getArgNumber()
+             << " to have a static shape, but got: " << memref_type;
+    }
+    if (memref_type.getMemorySpace() != smem) {
+      return emitOpError()
+             << "Expected block argument " << arg.getArgNumber()
+             << " to be in SMEM memory space, but got: " << memref_type;
+    }
+    if (!mlir::isa<SmemAllocAttr>(attr)) {
+      return emitOpError() << "Expected buffer attribute " << arg.getArgNumber()
+                           << " for SMEM allocation to be a "
+                              "#mosaic_gpu.smem_alloc attribute, but got: "
+                           << attr;
+    }
+  }
+
+  for (mlir::Value result : getResults()) {
+    if (mlir::isa<mlir::MemRefType>(result.getType())) {
+      return emitOpError("run_scoped cannot return memref");
+    }
+  }
+
+  return llvm::success();
+}
+
 llvm::LogicalResult ReinterpretCastOp::verify() {
   auto source_type = getSource().getType();
   auto result_type = getResult().getType();
@@ -1376,39 +1427,24 @@ void ReinterpretCastOp::getCanonicalizationPatterns(
   patterns.add<FoldMGPUReinterpretCastOfSliceSMEM>(context);
 }
 
-namespace {
-
-struct FuseChainedBroadcastInDims
-    : public mlir::OpRewritePattern<BroadcastInDimOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  mlir::LogicalResult matchAndRewrite(
-      BroadcastInDimOp op, mlir::PatternRewriter& rewriter) const override {
-    auto parent_bcast = op.getOperand().getDefiningOp<BroadcastInDimOp>();
-    if (!parent_bcast) {
-      return mlir::failure();
-    }
-
-    llvm::ArrayRef<int64_t> dims1 = parent_bcast.getBroadcastDimensions();
-    llvm::ArrayRef<int64_t> dims2 = op.getBroadcastDimensions();
-
-    llvm::SmallVector<int64_t> new_dims;
-    new_dims.reserve(dims1.size());
-    for (int64_t dim : dims1) {
-      new_dims.push_back(dims2[dim]);
-    }
-
-    rewriter.replaceOpWithNewOp<BroadcastInDimOp>(
-        op, op.getType(), parent_bcast.getOperand(), new_dims);
-    return mlir::success();
+mlir::OpFoldResult BroadcastInDimOp::fold(FoldAdaptor) {
+  // Fold chains: broadcast_in_dim(broadcast_in_dim(x)) -> broadcast_in_dim(x).
+  auto parent_bcast = getOperand().getDefiningOp<BroadcastInDimOp>();
+  if (!parent_bcast) {
+    return {};
   }
-};
+  llvm::ArrayRef<int64_t> dims1 = parent_bcast.getBroadcastDimensions();
+  llvm::ArrayRef<int64_t> dims2 = getBroadcastDimensions();
 
-}  // namespace
+  llvm::SmallVector<int64_t> new_dims;
+  new_dims.reserve(dims1.size());
+  for (int64_t dim : dims1) {
+    new_dims.push_back(dims2[dim]);
+  }
 
-void BroadcastInDimOp::getCanonicalizationPatterns(
-    mlir::RewritePatternSet& patterns, mlir::MLIRContext* context) {
-  patterns.add<FuseChainedBroadcastInDims>(context);
+  getOperandMutable().assign(parent_bcast.getOperand());
+  setBroadcastDimensions(new_dims);
+  return getResult();
 }
 
 namespace {
@@ -1477,6 +1513,45 @@ llvm::LogicalResult GetClusterRefOp::inferReturnTypes(
   return mlir::success();
 }
 
+llvm::LogicalResult AllocSmemOp::verify() {
+  if (!(*this)->getParentOfType<AllocaScopeOp>()) {
+    return emitOpError("requires an ancestor `mosaic_gpu.alloca_scope` op");
+  }
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  if (getResult().getType().getMemorySpace() != smem) {
+    return emitOpError("The result memref must be in SMEM.");
+  }
+  return llvm::success();
+}
+
+llvm::LogicalResult AllocaScopeOp::verify() {
+  for (mlir::Value result : getResults()) {
+    if (mlir::isa<mlir::MemRefType>(result.getType())) {
+      return emitOpError("alloca_scope cannot return memrefs.");
+    }
+  }
+  return llvm::success();
+}
+
+llvm::LogicalResult AllocaScopeReturnOp::verify() {
+  mlir::TypeRange results = getParentOp()->getResultTypes();
+  if (getNumOperands() != results.size()) {
+    return emitOpError("has ")
+           << getNumOperands() << " operands, but enclosing alloca_scope (@"
+           << getParentOp()->getName() << ") returns " << results.size();
+  }
+  for (unsigned i = 0, e = results.size(); i != e; ++i) {
+    if (getOperand(i).getType() != results[i]) {
+      return emitOpError() << "type of return operand " << i << " ("
+                           << getOperand(i).getType()
+                           << ") doesn't match the result type (" << results[i]
+                           << ") in alloca_scope @" << getParentOp()->getName();
+    }
+  }
+  return llvm::success();
+}
+
 void MosaicGPUDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST
@@ -1493,3 +1568,4 @@ void MosaicGPUDialect::initialize() {
 }
 
 }  // namespace mosaic_gpu
+

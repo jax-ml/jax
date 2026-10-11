@@ -480,7 +480,10 @@ def _is_supported_tiled_relayout(
     case fa.TCGEN05_TRANSPOSED_LAYOUT, fa.TCGEN05_LAYOUT:
       return True
     # "Conversion-optimized" layouts.
-    case fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT:
+    case (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT) | (
+        fa.WGMMA_LAYOUT,
+        fa.WGMMA_LAYOUT_UPCAST_2X,
+    ):
       return fa.can_relayout_wgmma_2x_to_wgmma(bitwidth)
     case fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X:
       return fa.can_relayout_wgmma_4x_to_wgmma_2x(bitwidth)
@@ -650,27 +653,6 @@ class IsTransferableTmemRegisters(IsTransferable):
     return f"IsTransferableTmemRegisters({self.source} ⟶ {self.target})"
 
 
-class OptimizedTransferKind(enum.Enum):
-  """A classification of the type of SMEM <-> Registers transfer.
-
-  Specifically, this refers to whether the transfer should be optimized to
-  avoid bank conflicts, if optimization is not requested, or if optimization
-  should be done, but downgrading is acceptable.
-  """
-  # Denotes a conflict-free transfer.
-  OPTIMIZED = enum.auto()
-  # Denotes an unoptimized transfer.
-  UNOPTIMIZED = enum.auto()
-  # Denotes a transfer that we are willing to downgrade to UNOPTIMIZED in
-  # certain circumstances. This mode is necessary to accurately model the
-  # Pallas behavior for SMEM stores with certain combinations of layouts and
-  # transforms.
-  #
-  # TODO(bchetioui): implement symmetric default behaviours for load/store in
-  # Pallas, and remove/harden this mode.
-  DOWNGRADABLE = enum.auto()
-
-
 @dataclasses.dataclass(frozen=True)
 class IsTransferableSmemRegisters(IsTransferable):
   """States that `source` layout must be transferable across memory spaces to `target` layout.
@@ -680,7 +662,7 @@ class IsTransferableSmemRegisters(IsTransferable):
   """
   strides: tuple[int, ...]
   bitwidth: int
-  optimized: OptimizedTransferKind
+  optimized: bool
 
   def _is_supported_smem_transfer(
       self,
@@ -695,18 +677,11 @@ class IsTransferableSmemRegisters(IsTransferable):
     tiling = tiling_transform.tiling if tiling_transform is not None else ()
     tiling_rank = len(tiling)
 
-    is_untiled = tiling_rank == 0
     # If `tiling_rank` is 0, then we tile by the shape. This is the logic that
     # is implemented in `load_untiled` and `store_untiled`.
-    if is_untiled:
+    if tiling_rank == 0:
       tiling = self.shape
       tiling_rank = len(tiling)
-
-    optimized = self.optimized != OptimizedTransferKind.UNOPTIMIZED
-    if is_untiled and self.optimized == OptimizedTransferKind.DOWNGRADABLE:
-      # Model the Pallas behavior of downgrading to unoptimized transfers in
-      # this case.
-      optimized = False
 
     int_ty = ir.IntegerType.get_signless(self.bitwidth)
     layout = ir.StridedLayoutAttr.get(0, lowering.tile_strides(self.strides, tiling))
@@ -727,7 +702,7 @@ class IsTransferableSmemRegisters(IsTransferable):
                     swizzle or 16,
                     reg_layout,
                     self.shape,
-                    optimized=optimized,
+                    optimized=self.optimized,
                     ref_tiling_rank=tiling_rank,
                     use_txmatrix=use_txmatrix,
                 )
@@ -877,46 +852,6 @@ class MinorDimDivisibleBy(_BaseConstraint):
 
 
 @dataclasses.dataclass(frozen=True)
-class IsValidMmaTiling(_BaseConstraint):
-  """States that the `expr` SMEM tiling must be compatible with MMA requirements.
-
-  For both tcgen05.mma and wgmma, tiling is valid if it is of the form
-  (8, swizzle_elems), with
-      swizzle_elems in {s * 8 // dtype_bitwidth for s in [32, 64, 128]},
-  as support for unswizzled tilings is not yet supported.
-
-  If `allow_unswizzled` is True, then we additionally accept
-  (8, 16 * 8 // dtype_bitwidth) as a valid tiling.
-  """
-  expr: Expression
-  bitwidth: int
-  allow_unswizzled: bool = False
-
-  @property
-  def _is_constant(self) -> bool:
-    return isinstance(self.expr, Constant)
-
-  def _constant_holds(self) -> bool:
-    assert isinstance(self.expr, Constant)
-    match self.expr:
-      case SMEMTransforms(tiling=None):
-        return False
-      case SMEMTransforms(tiling=lc.TileTransform(tiling=t), swizzle=None):
-        no_swizzle = 16
-        return self.allow_unswizzled and t == (8, no_swizzle * 8 // self.bitwidth)
-      case SMEMTransforms(tiling=lc.TileTransform(tiling=t), swizzle=swizzle):
-        assert swizzle is not None  # satisfy the type checker
-        return t == (8, swizzle * 8 // self.bitwidth)
-      case RegisterLayout() | TMEMLayout() | SMEMTransforms():
-        raise ValueError(f"Unexpected value {self.expr} in IsValidMmaTiling constraint")
-      case _ as never:
-        assert_never(never)
-
-  def __str__(self):
-    return f"IsValidMMATiling({self.expr}, {self.bitwidth}, allow_unswizzled={self.allow_unswizzled})"
-
-
-@dataclasses.dataclass(frozen=True)
 class IsSupportedBroadcast(_BaseConstraint):
   """States that `src` can be broadcasted to `dst`.
 
@@ -974,6 +909,9 @@ class OneOf(_BaseConstraint):
     allowed = tuple(dict.fromkeys(self.allowed))
     if len(allowed) == 1:
       return Equals(self.expr, allowed[0]).canonicalize()
+    # Short-circuit to avoid reconstructing the constraint.
+    if len(allowed) == len(self.allowed):
+      return self
     return OneOf(self.expr, allowed)
 
   def __str__(self):
@@ -985,7 +923,6 @@ Constraint = (
     | Relayout
     | NotOfType
     | IsTransferable
-    | IsValidMmaTiling
     | Divides
     | IsSupportedBroadcast
     | MinorDimDivisibleBy
@@ -1010,6 +947,9 @@ def reduce_constraint(
       rhs_red = reduce_expression(rhs, assignments)
       if isinstance(rhs_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if lhs_red is lhs and rhs_red is rhs:
+        return constraint.canonicalize()
       return Equals(lhs_red, rhs_red).canonicalize()
     case Relayout(source=source, target=target) as relayout:
       source_red = reduce_expression(source, assignments)
@@ -1018,6 +958,9 @@ def reduce_constraint(
           target_red, Unsatisfiable
       ):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if source_red is source and target_red is target:
+        return relayout.canonicalize()
       reduced = dataclasses.replace(
           relayout, source=source_red, target=target_red
       )
@@ -1026,27 +969,34 @@ def reduce_constraint(
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if expr_red is expr:
+        return constraint
       return NotOfType(expr_red, ty)
     case IsTransferable(source=source, target=target) as transfer:
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
       if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if source_red is source and target_red is target:
+        return transfer
       return dataclasses.replace(transfer, source=source_red, target=target_red)
-    case IsValidMmaTiling(expr=expr) as is_valid_mma_tiling:
-      expr_red = reduce_expression(expr, assignments)
-      if isinstance(expr_red, Unsatisfiable):
-        return Unsatisfiable()
-      return dataclasses.replace(is_valid_mma_tiling, expr=expr_red)
     case Divides(expr=expr, tiling_multiple=tiling_multiple):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if expr_red is expr:
+        return constraint
       return Divides(expr_red, tiling_multiple)
     case MinorDimDivisibleBy(expr=expr, divisor=divisor):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if expr_red is expr:
+        return constraint
       return MinorDimDivisibleBy(expr_red, divisor)
     case IsSupportedBroadcast(src=src, dst=dst, dims=dims):
       src_red = reduce_expression(src, assignments)
@@ -1055,6 +1005,9 @@ def reduce_constraint(
           dst_red, Unsatisfiable
       ):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if src_red is src and dst_red is dst:
+        return constraint
       return IsSupportedBroadcast(src_red, dst_red, dims)
     case AlwaysTrue():
       return constraint
@@ -1062,6 +1015,9 @@ def reduce_constraint(
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if expr_red is expr:
+        return oneof.canonicalize()
       return OneOf(expr_red, oneof.allowed).canonicalize()
     case _ as never:
       assert_never(never)
@@ -1116,8 +1072,6 @@ class ConstraintSystem:
         case IsTransferable(source=source, target=target):
           extract_variables(source)
           extract_variables(target)
-        case IsValidMmaTiling(expr=expr):
-          extract_variables(expr)
         case Divides(expr=expr):
           extract_variables(expr)
         case MinorDimDivisibleBy(expr=expr):
@@ -1138,8 +1092,13 @@ class ConstraintSystem:
   ) -> ConstraintSystem | Unsatisfiable:
     if isinstance(other, Unsatisfiable):
       return Unsatisfiable()
-    for variable, assignment in self.assignments.items():
-      if variable in other.assignments and assignment != other.assignments[variable]:
+    smaller, larger = (
+        (self.assignments, other.assignments)
+        if len(self.assignments) <= len(other.assignments)
+        else (other.assignments, self.assignments)
+    )
+    for variable, assignment in smaller.items():
+      if variable in larger and assignment != larger[variable]:
         return Unsatisfiable()
     return ConstraintSystem(
         assignments=self.assignments | other.assignments,
@@ -1289,17 +1248,17 @@ def compute_transitively_equal_vars(
     if root1 != root2:
       parent[root2] = root1
 
-  all_vars: set[Variable] = set()
+  all_vars: dict[Variable, None] = {}
   for constraint in system.constraints:
     match constraint:
       case Equals(lhs=Variable() as lhs, rhs=Variable() as rhs):
-        all_vars.add(lhs)
-        all_vars.add(rhs)
+        all_vars[lhs] = None
+        all_vars[rhs] = None
         union(lhs, rhs)
 
   # Group variables by their component representative.
   components: dict[Variable, list[Variable]] = {}
-  for v in sorted(all_vars, key=str):
+  for v in all_vars:
     root = find(v)
     components.setdefault(root, []).append(v)
 
@@ -1320,14 +1279,66 @@ def saturate_divides_constraints_for_equal_vars(
   for constraint in system.constraints:
     new_constraints.append(constraint)
     match constraint:
-      case Divides(expr=expr, tiling_multiple=tiling_multiple):
-        if isinstance(expr, Variable):
-          for equal_var in equal_vars.get(expr, []):
-            new_constraints.append(Divides(equal_var, tiling_multiple))
+      case Divides(expr=Variable() as expr, tiling_multiple=tiling_multiple):
+        for equal_var in equal_vars.get(expr, []):
+          new_constraints.append(Divides(equal_var, tiling_multiple))
       case _:
         pass
   new_constraints = _merge_all_divides_constraints(new_constraints)
   return dataclasses.replace(system, constraints=new_constraints)
+
+
+def saturate_one_of_constraints_for_equal_vars(
+    system: ConstraintSystem,
+) -> ConstraintSystem | Unsatisfiable:
+  """Saturates OneOf constraints between all transitively equal vars."""
+  equal_vars = compute_transitively_equal_vars(system)
+  new_constraints: list[Constraint] = []
+  for constraint in system.constraints:
+    new_constraints.append(constraint)
+    match constraint:
+      case OneOf(expr=Variable() as expr, allowed=allowed):
+        for equal_var in equal_vars.get(expr, []):
+          new_constraints.append(OneOf(equal_var, allowed))
+      case _:
+        pass
+  merged_constraints = _merge_all_one_of_constraints(new_constraints)
+  if isinstance(merged_constraints, Unsatisfiable):
+    return Unsatisfiable()
+  return dataclasses.replace(system, constraints=merged_constraints)
+
+
+def _merge_all_one_of_constraints(
+    constraints: Sequence[Constraint],
+) -> list[Constraint] | Unsatisfiable:
+  """Merges OneOf constraints associated to the same variable."""
+  result: list[Constraint] = []
+  var_to_one_of: dict[Variable, OneOf] = {}
+  for constraint in constraints:
+    match constraint:
+      case OneOf(expr=Variable() as v) as o1:
+        if (o0 := var_to_one_of.get(v)) is None:
+          var_to_one_of[v] = o1
+          continue
+        merged = _merge_one_of_constraints(o0, o1)
+        if isinstance(merged, Unsatisfiable):
+          return Unsatisfiable()
+        var_to_one_of[v] = merged
+      case _:
+        result.append(constraint)
+  result.extend(var_to_one_of.values())
+  return result
+
+
+def _merge_one_of_constraints(o0: OneOf, o1: OneOf) -> OneOf | Unsatisfiable:
+  if o0.expr != o1.expr:
+    raise ValueError("OneOf constraints must apply to the same expression.")
+  allowed_set = set(o1.allowed)
+  # Preserve order from o0 while intersecting with o1.
+  merged_allowed = tuple(c for c in o0.allowed if c in allowed_set)
+  if not merged_allowed:
+    return Unsatisfiable()
+  return OneOf(o0.expr, merged_allowed)
 
 
 def _merge_all_divides_constraints(constraints: Sequence[Constraint]) -> list[Constraint]:
@@ -1465,7 +1476,7 @@ def _reduce_system_once(
     - None: if the constraint system is not known unsatisfiable, but hasn't been
       reduced.
   """
-  assignments = constraint_system.assignments
+  assignments = dict(constraint_system.assignments)
   constraints: list[Constraint] = []
   changed = False
 
@@ -1510,7 +1521,7 @@ def _reduce_system_once(
 
   if changed:
     return ConstraintSystem(
-        assignments=assignments | constraint_system.assignments,
+        assignments=assignments,
         constraints=constraints,
     )
   return None

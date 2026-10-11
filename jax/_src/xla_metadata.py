@@ -299,13 +299,14 @@ def _xla_metadata_call(fun, metadata, ad_metadata):
 
 xla_metadata_call_p = core.Primitive('xla_metadata_call')
 xla_metadata_call_p.multiple_results = True
+xla_metadata_call_p.is_effectful = lambda params: bool(params['jaxpr'].effects)
 dispatch.simple_impl(xla_metadata_call_p)
 
 
 def _xla_metadata_call_abstract_eval(*in_avals, jaxpr, xla_metadata,
                                      ad_metadata):
-  return jaxpr.out_avals
-xla_metadata_call_p.def_abstract_eval(_xla_metadata_call_abstract_eval)
+  return jaxpr.out_avals, core.positional_effects(jaxpr)
+xla_metadata_call_p.def_effectful_abstract_eval(_xla_metadata_call_abstract_eval)
 
 
 def _resolve_ad_metadata(xla_metadata, ad_metadata):
@@ -497,12 +498,13 @@ pe.partial_eval_jaxpr_custom_rules[xla_metadata_call_p] = partial(
 )
 
 
-def dce_jaxpr_xla_metadata_rule(used_outputs: list[bool], eqn: pe.JaxprEqn
+def dce_jaxpr_xla_metadata_rule(used_outputs: list[bool], live_ins: list[bool],
+                                eqn: pe.JaxprEqn
                                 ) -> tuple[list[bool], pe.JaxprEqn | None]:
-  if not any(used_outputs) and not pe.has_effects(eqn):
+  if not any(used_outputs) and not pe.has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
   dced_jaxpr, used_inputs = pe._cached_closed_call_dce(
-      eqn.params['jaxpr'], tuple(used_outputs))
+      eqn.params['jaxpr'], tuple(used_outputs), tuple(live_ins))
   new_params = dict(eqn.params, jaxpr=dced_jaxpr)
   if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
     return used_inputs, None

@@ -35,7 +35,7 @@ _VERY_LARGE_NUMBER = 512 * 1024
 
 def create_inputs(
   *shardings: P,
-  dtype: jnp.dtype = jnp.float32,
+  dtype: jax.typing.DTypeLike = jnp.float32,
   mesh_shape: tuple[int, ...] = (2, 2, 2),
 ) -> tuple[jax.sharding.Mesh, tuple[jax.ShapeDtypeStruct, ...]]:
   mesh = jtu.create_mesh(mesh_shape, ("x", "y", "z"))
@@ -91,7 +91,7 @@ def fake_jax_primitive_function(x):
   return fake_jax_primitive_p.bind(x)
 
 
-class DummyDotHiPrimitive(hijax.VJPHiPrimitive):
+class DummyDotHiPrimitive(hijax.HiPrim):
   def __init__(self, x_aval, y_aval):
     self.in_avals = (x_aval, y_aval)
     self.out_aval = core.ShapedArray((x_aval.shape[0], y_aval.shape[1]), x_aval.dtype)

@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 # Debugging runtime values
 
 <!--* freshness: { reviewed: '2024-04-11' } *-->

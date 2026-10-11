@@ -197,7 +197,7 @@ def set_cache_dir(path) -> None:
   do not need be recompiled if the process is restarted or otherwise run again.
   This also tells Jax where to look for compiled functions before compiling.
 
-  For more information, see the :ref:`persistent compilation cache guide <persistent-compilation-cache>`.
+  For more information, see the :ref:`persistent compilation cache guide <jax-501-compilation-cache>`.
 
   .. warning::
      The compilation cache is considered trusted. Do not share a compilation
@@ -216,7 +216,7 @@ def initialize_cache(path) -> None:
   Set the path. To take effect, should be called prior to any calls to
   get_executable_and_time() and put_executable_and_time().
 
-  For more information, see the :ref:`persistent compilation cache guide <persistent-compilation-cache>`.
+  For more information, see the :ref:`persistent compilation cache guide <jax-501-compilation-cache>`.
 
   .. warning::
      The compilation cache is considered trusted. Do not share a compilation
@@ -402,7 +402,7 @@ def put_executable_and_time(
           f"PERSISTENT CACHE WRITE with key {cache_key}, this is unexpected because "
           "JAX_COMPILATION_CACHE_EXPECT_PGLE is set. The execution that populated the "
           "cache may lack coverage, "
-          "https://docs.jax.dev/en/latest/persistent_compilation_cache.html may "
+          "https://docs.jax.dev/en/latest/501/compilation-cache.html may "
           "help debug why this has happened")
 
     cache.put(cache_key, executable_and_time)
@@ -439,7 +439,7 @@ def is_initialized() -> bool:
 def reset_cache() -> None:
   """Get back to pristine, uninitialized state.
 
-  For more information, see the :ref:`persistent compilation cache guide <persistent-compilation-cache>`.
+  For more information, see the :ref:`persistent compilation cache guide <jax-501-compilation-cache>`.
   """
   global _cache
   global _cache_initialized

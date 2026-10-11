@@ -37,7 +37,7 @@ echo "Installed packages:"
 
 "$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
 
-rocm-smi
+amd-smi list
 
 source ./ci/utilities/rocm_test_env.sh
 

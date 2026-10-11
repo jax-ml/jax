@@ -1,3 +1,5 @@
+:nosearch:
+
 .. _async-dispatch:
 
 Asynchronous dispatch

@@ -35,7 +35,7 @@ def _validate_args(
     rhs: jnp.ndarray,
     group_sizes: jnp.ndarray,
     expected_rhs_dims: int = 3,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.dtype]:
+) -> tuple[jnp.ndarray, jnp.ndarray, jax.typing.DTypeLike]:
   """Validates the arguments for the gmm function."""
   # Validate 'lhs'.
   if lhs.ndim != 2:
@@ -315,7 +315,7 @@ def gmm(
     lhs: jnp.ndarray,
     rhs: jnp.ndarray,
     group_sizes: jnp.ndarray,
-    preferred_element_type: jnp.dtype = jnp.float32,
+    preferred_element_type: jax.typing.DTypeLike = jnp.float32,
     tiling: tuple[int, int, int] | LutFn | None = (128, 128, 128),
     group_offset: jnp.ndarray | None = None,
     existing_out: jnp.ndarray | None = None,
@@ -574,7 +574,7 @@ def tgmm(
     lhs: jnp.ndarray,
     rhs: jnp.ndarray,
     group_sizes: jnp.ndarray,
-    preferred_element_type: jnp.dtype = jnp.float32,
+    preferred_element_type: jax.typing.DTypeLike = jnp.float32,
     tiling: tuple[int, int, int] | LutFn | None = (128, 128, 128),
     group_offset: jnp.ndarray | None = None,
     num_actual_groups: int | None = None,

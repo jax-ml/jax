@@ -1,7 +1,7 @@
 #
 # runtime deps
 #
-numpy~=2.1.0; python_version<="3.13"
+numpy~=2.2.0; python_version<="3.13"
 numpy>=2.3.2; python_version>="3.14"
 scipy>=1.15.0; python_version<="3.12"
 scipy>=1.15.2; python_version>="3.13"
@@ -29,14 +29,12 @@ wheel
 # bazel test without building jaxlib and without manually updating the
 # the requirements files.
 jax
-# TODO(phawkins): update to include Python 3.15 once jaxlib 3.15 wheels are published
-jaxlib; python_version<="3.14"
+jaxlib
 
-# TODO(phawkins): update to include Python 3.15 once CUDA plugin wheels are published for 3.15
-jax-cuda12-plugin; sys_platform == "linux" and python_version<="3.14"
-jax-cuda13-plugin; python_version<="3.14"
-jax-cuda12-pjrt; sys_platform == "linux" and python_version<="3.14"
-jax-cuda13-pjrt; python_version<="3.14"
+jax-cuda12-plugin; sys_platform == "linux"
+jax-cuda13-plugin
+jax-cuda12-pjrt; sys_platform == "linux"
+jax-cuda13-pjrt
 
 # TPU dependencies
 libtpu; sys_platform == "linux" and platform_machine == "x86_64"

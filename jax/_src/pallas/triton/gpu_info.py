@@ -14,10 +14,10 @@
 
 """Exposes GPU hardware information."""
 
+from collections.abc import Callable
 import dataclasses
 import enum
 import re
-from collections.abc import Callable
 
 from jax._src import mesh as mesh_lib
 from jax._src import util as jax_util
@@ -47,23 +47,33 @@ class GpuVersion(enum.Enum):
   RTX_PRO_5000 = "NVIDIA RTX PRO 5000"
   RTX_PRO_6000 = "NVIDIA RTX PRO 6000"
   THOR = "NVIDIA Thor"
+  VR200 = "NVIDIA VR200"
 
   def __str__(self) -> str:
     return self.value
 
 
-_GPU_VERSION_RE = re.compile(r"\b(" + "|".join(e.value for e in GpuVersion) + r")\b")
+# Longer names first so e.g. "NVIDIA A100" wins over "NVIDIA A10".
+_GPU_VERSION_RE = re.compile(
+    r"\b("
+    + "|".join(
+        re.escape(e.value)
+        for e in sorted(GpuVersion, key=lambda e: len(e.value), reverse=True)
+    )
+    + r")\b"
+)
 
 
 def gpu_version_from_device_kind(device_kind: str) -> GpuVersion | None:
-  if m := _GPU_VERSION_RE.match(device_kind):
-    return GpuVersion(m.group())
+  if m := _GPU_VERSION_RE.search(device_kind):
+    return GpuVersion(m.group(1))
   return None
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class GpuInfo:
   """GPU hardware information"""
+
   # None when device_kind does not map to a known GpuVersion but arch_name is
   # still a valid backend target (e.g. a ROCm GPU with a marketing device_kind).
   gpu_version: GpuVersion | None
@@ -128,7 +138,17 @@ def _get_gpu_info_impl(gpu_version: GpuVersion) -> GpuInfo:
           arch_name="10.3",
           compute_capability=103,
       )
-    case GpuVersion.RTX_PRO_4500 | GpuVersion.RTX_PRO_5000 | GpuVersion.RTX_PRO_6000:
+    case GpuVersion.VR200:
+      return GpuInfo(
+          gpu_version=gpu_version,
+          arch_name="10.7",
+          compute_capability=107,
+      )
+    case (
+        GpuVersion.RTX_PRO_4500
+        | GpuVersion.RTX_PRO_5000
+        | GpuVersion.RTX_PRO_6000
+    ):
       return GpuInfo(
           gpu_version=gpu_version,
           arch_name="12.0",
@@ -160,7 +180,18 @@ def get_gpu_info() -> GpuInfo:
 
   if get_device_platform() == "gpu" and device_kind.startswith("gfx"):
     return GpuInfo(
-        gpu_version=None, arch_name=device_kind, compute_capability=0)
+        gpu_version=None, arch_name=device_kind, compute_capability=0
+    )
+
+  # generic NVIDIA GPU device without GpuVersion entry
+  if get_device_platform() == "gpu" and device_kind.startswith("NVIDIA"):
+    gpu_arch_name = _get_device_arch_name(device_kind)
+    gpu_compute_capability = int(gpu_arch_name.replace(".", ""))
+    return GpuInfo(
+        gpu_version=None,
+        arch_name=gpu_arch_name,
+        compute_capability=gpu_compute_capability,
+    )
 
   if device_kind in registry:
     return registry[device_kind]()
@@ -168,15 +199,24 @@ def get_gpu_info() -> GpuInfo:
 
 
 @jax_util.cache(trace_context_in_key=True)
-def get_gpu_info_from_version(
-    gpu_version: GpuVersion
-) -> GpuInfo:
+def get_gpu_info_from_version(gpu_version: GpuVersion) -> GpuInfo:
   """Returns the GPU hardware info for the given GPU version.
 
   Args:
     gpu_version: The GPU version.
   """
   return _get_gpu_info_impl(gpu_version)
+
+
+def _get_device_arch_name(device_kind: str) -> str:
+  concrete_device = pxla.get_default_device()
+
+  if device_kind != concrete_device.device_kind:
+    raise ValueError(
+        f"Cannot infer architecture of an unknown abstract GPU {device_kind!r}"
+    )
+
+  return concrete_device.compute_capability
 
 
 def get_device_kind() -> str:

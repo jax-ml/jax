@@ -28,12 +28,14 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "jaxlib/free_threading.h"
 #include "jaxlib/python_ref_manager.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/transpose.h"
@@ -64,25 +66,25 @@ absl::Status CpuCallback::PrepareAndCall(void** result, void** arg_ptrs) {
   absl::Span<void* const> outputs(result, results_.size());
 
   nb::gil_scoped_acquire gil;
-  nb::tuple args = nb::steal<nb::tuple>(PyTuple_New(inputs.size()));
+  nb::tuple_builder args(inputs.size());
   for (size_t i = 0; i < inputs.size(); ++i) {
     if (args_[i].type == xla::TOKEN) {
-      PyTuple_SET_ITEM(args.ptr(), i, nb::none().release().ptr());
+      args.put(nb::none());
     } else {
       xla::nb_numpy_ndarray array =
           xla::nb_numpy_ndarray(args_[i].dtype, args_[i].dims, args_[i].strides,
                                 const_cast<void*>(inputs[i]));
       array.attr("flags").attr("writeable") = nb::bool_(false);
-      PyTuple_SET_ITEM(args.ptr(), i, array.release().ptr());
+      args.put(std::move(array));
     }
   }
 
   absl::StatusOr<nb::tuple> maybe_result_tuple;
   {
     xla::HostCallbackScope scope;
-    maybe_result_tuple = Call(std::move(args));
+    maybe_result_tuple = Call(args.commit());
   }
-  TF_ASSIGN_OR_RETURN(auto result_tuple, maybe_result_tuple);
+  ABSL_ASSIGN_OR_RETURN(auto result_tuple, maybe_result_tuple);
 
   for (size_t i = 0; i < results_.size(); ++i) {
     if (results_[i].type == xla::TOKEN) {
@@ -105,8 +107,11 @@ absl::Status CpuCallback::PrepareAndCall(void** result, void** arg_ptrs) {
       options.dims = dims;
       options.permutation = results_[i].reversed_layout;
       options.input_striding = xla::TransposePlan::Striding{strides};
-      absl::StatusOr<std::shared_ptr<xla::TransposePlan>> plan =
-          transpose_cache_.GetOrCreate(options);
+      absl::StatusOr<std::shared_ptr<xla::TransposePlan>> plan;
+      {
+        ft_lock_guard lock(transpose_cache_mu_);
+        plan = transpose_cache_.GetOrCreate(options);
+      }
       if (!plan.ok()) {
         return std::move(plan).status();
       }

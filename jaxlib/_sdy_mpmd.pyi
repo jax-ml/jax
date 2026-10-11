@@ -168,6 +168,7 @@ def get_compile_options(
     arg1: Mapping[str, Sequence[tuple[str, str | bool | int | float]]],
     /,
 ) -> dict: ...
+
 @overload
 def compile_mpmd(
     backend: object,

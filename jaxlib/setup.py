@@ -71,6 +71,7 @@ setup(
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
         "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
         "Programming Language :: Python :: Free Threading :: 3 - Stable",
     ],
     package_data={
@@ -107,6 +108,9 @@ setup(
             'triton/*.pyi',
             'triton/*.pyd',
             'triton/*.so',
+            'thunky/*.py',
+            'thunky/dialect/*.py',
+            'thunky/python/*.py',
             'include/xla/ffi/api/*.h',
         ],
     },

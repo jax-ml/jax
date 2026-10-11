@@ -31,6 +31,7 @@ limitations under the License.
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/typing.h"
+#include "jaxlib/free_threading.h"
 #include "jaxlib/python_ref_manager.h"
 
 namespace jax {
@@ -104,7 +105,8 @@ class GlobalConfigState {
 
   // Python GC helpers. These are called from the tp_traverse and tp_clear
   // methods of the Config class.
-  int tp_traverse(int key, PyObject* self, visitproc visit, void* arg);
+  int tp_traverse(int key, PyObject* self, visitproc visit, void* arg)
+      ABSL_NO_THREAD_SAFETY_ANALYSIS;
   int tp_clear(int key, PyObject* self);
 
   // Returns the singleton object representing "value not set".
@@ -132,7 +134,8 @@ class GlobalConfigState {
   absl::flat_hash_set<ThreadLocalConfigState*> thread_local_states_
       ABSL_GUARDED_BY(mu_);
   std::vector<std::string> names_;
-  std::vector<nb::object> entries_;
+  mutable ft_mutex entries_mu_;
+  std::vector<nb::object> entries_ ABSL_GUARDED_BY(entries_mu_);
   std::vector<int> include_in_jit_key_;
   std::vector<int> include_in_trace_context_;
   nb::object unset_ = UnsetObject();
@@ -161,19 +164,30 @@ void ThreadLocalConfigState::Set(int key, nb::object value) {
 
 nb::object GlobalConfigState::Get(int key) const {
   DCHECK_GE(key, 0);
+  ft_lock_guard lock(entries_mu_);
   DCHECK_LT(key, entries_.size());
   return entries_[key];
 }
 
 void GlobalConfigState::Set(int key, nb::object value) {
   DCHECK_GE(key, 0);
-  DCHECK_LT(key, entries_.size());
-  std::swap(entries_[key], value);
+  nb::object old_value;
+  {
+    ft_lock_guard lock(entries_mu_);
+    DCHECK_LT(key, entries_.size());
+    old_value = std::move(entries_[key]);
+    entries_[key] = std::move(value);
+  }
 }
 
 int GlobalConfigState::tp_traverse(int key, PyObject* self, visitproc visit,
                                    void* arg) {
   DCHECK_GE(key, 0);
+  // Do not lock entries_mu_ (an ft_mutex / PyMutex) here. Python GC is
+  // stop-the-world even under free-threading, so no attached Python thread can
+  // mutate entries_ concurrently. Moreover, acquiring a PyMutex during
+  // tp_traverse deadlocks if another thread was unparked on that PyMutex while
+  // detached and is waiting in tstate_wait_attach for GC to finish.
   if (key < entries_.size()) {
     PyObject* value = entries_[key].ptr();
     Py_VISIT(value);
@@ -189,9 +203,12 @@ int GlobalConfigState::tp_traverse(int key, PyObject* self, visitproc visit,
 }
 
 int GlobalConfigState::tp_clear(int key, PyObject* self) {
-  if (key < entries_.size()) {
-    nb::object tmp;
-    std::swap(entries_[key], tmp);
+  nb::object old_value;
+  {
+    ft_lock_guard lock(entries_mu_);
+    if (key < entries_.size()) {
+      old_value = std::move(entries_[key]);
+    }
   }
   // We destroy the python objects outside of the lock out of an abundance of
   // caution.
@@ -211,6 +228,7 @@ int GlobalConfigState::tp_clear(int key, PyObject* self) {
 Config::Config(std::string name, nb::object value, bool include_in_jit_key,
                bool include_in_trace_context) {
   auto& instance = GlobalConfigState::Instance();
+  ft_lock_guard lock(instance.entries_mu_);
   key_ = instance.entries_.size();
   instance.names_.push_back(std::move(name));
   instance.entries_.push_back(std::move(value));
@@ -328,33 +346,25 @@ std::vector<std::string> JitConfigNames() {
 nanobind::tuple TraceContext() {
   auto& instance = GlobalConfigState::Instance();
   auto& thread_local_instance = ThreadLocalConfigState::Instance();
-  nb::tuple result = nb::steal<nb::tuple>(
-      PyTuple_New(instance.include_in_trace_context().size()));
-  int pos = 0;
+  nb::tuple_builder result(instance.include_in_trace_context().size());
   for (int i : instance.include_in_trace_context()) {
     nb::object local = thread_local_instance.Get(i);
     if (local.is_valid()) {
-      PyTuple_SET_ITEM(result.ptr(), pos, local.release().ptr());
+      result.put(std::move(local));
     } else {
-      nb::object global = instance.Get(i);
-      PyTuple_SET_ITEM(result.ptr(), pos, global.release().ptr());
+      result.put(instance.Get(i));
     }
-    ++pos;
   }
-  return result;
+  return result.commit();
 }
 
 nanobind::tuple TraceContextNames() {
   auto& instance = GlobalConfigState::Instance();
-  nb::tuple result = nb::steal<nb::tuple>(
-      PyTuple_New(instance.include_in_trace_context().size()));
-  int pos = 0;
+  nb::tuple_builder result(instance.include_in_trace_context().size());
   for (int i : instance.include_in_trace_context()) {
-    PyTuple_SET_ITEM(result.ptr(), pos,
-                     nb::cast(instance.name(i)).release().ptr());
-    ++pos;
+    result.put(instance.name(i));
   }
-  return result;
+  return result.commit();
 }
 
 void BuildConfigSubmodule(nanobind::module_& m) {
@@ -362,11 +372,9 @@ void BuildConfigSubmodule(nanobind::module_& m) {
 
   config_module.attr("unset") = GlobalConfigState::Instance().unset();
 
-  config_module.attr("_T") = nb::type_var("_T");
-
   nb::class_<Config> config(config_module, "Config",
                             nb::type_slots(Config::slots_), nb::is_generic(),
-                            nb::sig("class Config(typing.Generic[_T])"));
+                            nb::sig("class Config[T]"));
   config.def(nb::init<std::string, nb::object, bool, bool>(), nb::arg("name"),
              nb::arg("value").none(), nb::kw_only(),
              nb::arg("include_in_jit_key") = false,
@@ -376,25 +384,24 @@ void BuildConfigSubmodule(nanobind::module_& m) {
         "def __init__("
         "self, "
         "name: str, "
-        "value: _T, *, "
+        "value: T, *, "
         "include_in_jit_key: bool = ..., "
         "include_in_trace_context: bool = ..."
         ") -> None"
                  // clang-format on
                  ));
-  config.def_prop_ro("value", &Config::Get, nb::sig("def value(self) -> _T"));
+  config.def_prop_ro("value", &Config::Get, nb::sig("def value(self) -> T"));
   config.def_prop_ro("name", &Config::Name);
-  // TODO(slebedev): All getters and setters should be using _T.
   config.def("get_local", &Config::GetLocal,
-             nb::sig("def get_local(self) -> typing.Any"));
+             nb::sig("def get_local(self) -> T"));
   config.def("get_global", &Config::GetGlobal,
-             nb::sig("def get_global(self) -> _T"));
+             nb::sig("def get_global(self) -> T"));
   config.def("set_local", &Config::SetLocal, nb::arg("value").none(),
-             nb::sig("def set_local(self, value: Any | None) -> None"));
+             nb::sig("def set_local(self, value: T) -> None"));
   config.def("swap_local", &Config::SwapLocal, nb::arg("value").none(),
-             nb::sig("def swap_local(self, value: Any | None) -> Any"));
+             nb::sig("def swap_local(self, value: T) -> T"));
   config.def("set_global", &Config::SetGlobal, nb::arg("value").none(),
-             nb::sig("def set_global(self, value: Any | None) -> None"));
+             nb::sig("def set_global(self, value: T) -> None"));
 
   config_module.def("trace_context", &TraceContext);
   config_module.def("trace_context_names", &TraceContextNames);

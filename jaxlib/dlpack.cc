@@ -23,19 +23,20 @@ limitations under the License.
 #include <numeric>
 #include <optional>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "include/dlpack/dlpack.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/ndarray.h"
-#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
@@ -51,6 +52,7 @@ limitations under the License.
 #include "xla/python/dlpack_types.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
@@ -69,7 +71,9 @@ namespace jax {
 namespace {
 
 const char* const kDlTensorCapsuleName = "dltensor";
+const char* const kDlTensorVersionedCapsuleName = "dltensor_versioned";
 
+template <typename ManagedTensor>
 struct DLPackTensor {
   ~DLPackTensor();
 
@@ -81,10 +85,11 @@ struct DLPackTensor {
 
   std::vector<int64_t> shape;
   std::vector<int64_t> strides;
-  DLManagedTensor tensor;
+  ManagedTensor tensor;
 };
 
-DLPackTensor::~DLPackTensor() {
+template <typename ManagedTensor>
+DLPackTensor<ManagedTensor>::~DLPackTensor() {
   // We must release the external reference first before deleting the array.
   external_reference.reset();
   if (buffer_reference) {
@@ -93,9 +98,10 @@ DLPackTensor::~DLPackTensor() {
   }
 }
 
-void DLPackTensorDeleter(DLManagedTensor* t) {
+template <typename ManagedTensor>
+void DLPackTensorDeleter(ManagedTensor* t) {
   if (t) {
-    delete static_cast<DLPackTensor*>(t->manager_ctx);
+    delete static_cast<DLPackTensor<ManagedTensor>*>(t->manager_ctx);
   }
 }
 
@@ -161,8 +167,8 @@ absl::StatusOr<DLDevice> DLDeviceForBuffer(const xla::PjRtBuffer& buffer) {
              buffer.device()->client()->platform_id() == xla::RocmId()) {
     context.device_type = kDLROCMHost;
   } else {
-    TF_ASSIGN_OR_RETURN(context.device_type,
-                        DLDeviceTypeForDevice(*buffer.device()));
+    ABSL_ASSIGN_OR_RETURN(context.device_type,
+                          DLDeviceTypeForDevice(*buffer.device()));
   }
   context.device_id = buffer.device()->local_hardware_id().value();
   return context;
@@ -186,7 +192,7 @@ absl::Status VerifyDType(const DLTensor& dl_tensor) {
 }
 
 absl::StatusOr<std::vector<int64_t>> GetByteStrides(const DLTensor& dl_tensor) {
-  TF_RETURN_IF_ERROR(VerifyDType(dl_tensor));
+  ABSL_RETURN_IF_ERROR(VerifyDType(dl_tensor));
 
   // Convert element strides from the number of elements to the number of bytes.
   std::vector<int64_t> strides;
@@ -200,19 +206,14 @@ absl::StatusOr<std::vector<int64_t>> GetByteStrides(const DLTensor& dl_tensor) {
 // Makes a PjRtBuffer from a DLPack tensor. Returns a pair where the second
 // element is true if a copy actually happened.
 absl::StatusOr<std::pair<std::unique_ptr<xla::PjRtBuffer>, bool>>
-MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
+MakePjrtBuffer(xla::PjRtDevice& device, const DLTensor& dl_tensor,
+               std::function<void()> on_delete_callback,
                const xla::Shape& shape, xla::PrimitiveType element_type,
                absl::Span<int64_t const> dimensions,
                std::optional<bool> copy = std::nullopt,
                std::optional<std::intptr_t> stream = std::nullopt,
                std::optional<DLDeviceType> dl_device_type = std::nullopt) {
-  std::function<void()> on_delete_callback;
-  if (dlmt->deleter) {
-    on_delete_callback = [dlmt]() { dlmt->deleter(dlmt); };
-  }
-
-  void* data =
-      static_cast<char*>(dlmt->dl_tensor.data) + dlmt->dl_tensor.byte_offset;
+  void* data = static_cast<char*>(dl_tensor.data) + dl_tensor.byte_offset;
 
   // DLPack producers advertise the tensor device type via __dlpack_device__()
   // but the corresponding __dlpack__() call might return a capsule with a
@@ -221,15 +222,15 @@ MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
   // explicitly override the capsule's device type and pick the correct
   // destination memory space, i.e. pinned_host in the above example.
   DLDeviceType effective_device_type =
-      dl_device_type.value_or(dlmt->dl_tensor.device.device_type);
+      dl_device_type.value_or(dl_tensor.device.device_type);
   xla::PjRtMemorySpace* memory_space;
   if (effective_device_type == kDLCUDAHost ||
       effective_device_type == kDLROCMHost ||
       effective_device_type == kDLTPUHost) {
-    TF_ASSIGN_OR_RETURN(memory_space, device.memory_space_by_kind(
-                                          xla::PinnedHostMemorySpace::kKind));
+    ABSL_ASSIGN_OR_RETURN(memory_space, device.memory_space_by_kind(
+                                            xla::PinnedHostMemorySpace::kKind));
   } else {
-    TF_ASSIGN_OR_RETURN(memory_space, device.default_memory_space());
+    ABSL_ASSIGN_OR_RETURN(memory_space, device.default_memory_space());
   }
 
   // On CPU, creating a view may fail because of unaligned data buffer
@@ -247,19 +248,19 @@ MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
         data, shape, memory_space, on_delete_callback, stream);
     if (!(result.status().code() == absl::StatusCode::kInvalidArgument &&
           fallback_to_copy)) {
-      TF_RETURN_IF_ERROR(result.status());
+      ABSL_RETURN_IF_ERROR(result.status());
       return std::make_pair(*std::move(result), false);
     }
   }
 
   // Convert tensor strides (expressed in number of elements) to byte strides.
   std::optional<std::vector<int64_t>> byte_strides;
-  if (dlmt->dl_tensor.strides) {
-    TF_ASSIGN_OR_RETURN(byte_strides, GetByteStrides(dlmt->dl_tensor));
+  if (dl_tensor.strides) {
+    ABSL_ASSIGN_OR_RETURN(byte_strides, GetByteStrides(dl_tensor));
   }
 
   // Create a copy.
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto buffer,
       device.client()->BufferFromHostBuffer(
           data, element_type, dimensions, byte_strides,
@@ -268,17 +269,17 @@ MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
   return std::make_pair(std::move(buffer), true);
 }
 
-}  // namespace
-
-absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
+template <typename ManagedTensor>
+absl::StatusOr<std::unique_ptr<DLPackTensor<ManagedTensor>>> PackDLPackTensor(
     nb::handle py_buffer, std::optional<std::intptr_t> stream) {
-  ifrt::Array* ifrt_array = nb::cast<PyArray>(py_buffer).ifrt_array();
+  xla::ifrt::ArrayRef ifrt_array =
+      nb::cast<PyArray>(py_buffer).ifrt_array_ref();
   if (ifrt_array == nullptr) {
     return xla::Unimplemented(
         "BufferToDLPackManagedTensor called on deleted array.");
   }
   auto* arr =
-      xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(ifrt_array);
+      xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(ifrt_array.get());
   if (arr == nullptr) {
     throw xla::XlaRuntimeError(
         "This operation is implemented for a PjRt-compatible backend only.");
@@ -294,31 +295,32 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
     return xla::Unimplemented("DynamicShape is not implemented in DLPack.");
   }
 
-  auto pack = std::make_unique<DLPackTensor>();
+  auto pack = std::make_unique<DLPackTensor<ManagedTensor>>();
   DLTensor& dt = pack->tensor.dl_tensor;
   {
     // AcquireExternalReference may block; there are no API guarantees.
     GlobalPyRefManager()->CollectGarbage();
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(pack->external_reference,
-                        pjrt_buffer->AcquireExternalReference());
+    ABSL_ASSIGN_OR_RETURN(pack->external_reference,
+                          pjrt_buffer->AcquireExternalReference());
     if (stream) {
-      TF_RETURN_IF_ERROR(
+      ABSL_RETURN_IF_ERROR(
           pack->external_reference->WaitUntilBufferReadyOnStream(*stream));
     } else {
-      TF_RETURN_IF_ERROR(
-          AwaitBuffersReady(absl::MakeConstSpan(&ifrt_array, 1)));
+      xla::ifrt::Array* ifrt_array_ptr = ifrt_array.get();
+      ABSL_RETURN_IF_ERROR(
+          AwaitBuffersReady(absl::MakeConstSpan(&ifrt_array_ptr, 1)));
     }
   }
   pack->buffer_reference = nb::borrow<nb::object>(py_buffer);
 
   dt.data = pack->external_reference->OpaqueDeviceMemoryDataPointer();
   pack->tensor.manager_ctx = pack.get();
-  pack->tensor.deleter = DLPackTensorDeleter;
-  TF_ASSIGN_OR_RETURN(dt.device, DLDeviceForBuffer(*pjrt_buffer));
+  pack->tensor.deleter = DLPackTensorDeleter<ManagedTensor>;
+  ABSL_ASSIGN_OR_RETURN(dt.device, DLDeviceForBuffer(*pjrt_buffer));
   dt.ndim = pjrt_buffer->dimensions().size();
-  TF_ASSIGN_OR_RETURN(dt.dtype,
-                      PrimitiveTypeToDLDataType(pjrt_buffer->element_type()));
+  ABSL_ASSIGN_OR_RETURN(dt.dtype,
+                        PrimitiveTypeToDLDataType(pjrt_buffer->element_type()));
 
   pack->shape = std::vector<int64_t>(pjrt_buffer->dimensions().begin(),
                                      pjrt_buffer->dimensions().end());
@@ -331,7 +333,44 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
   dt.shape = reinterpret_cast<std::int64_t*>(pack->shape.data());
   dt.strides = reinterpret_cast<std::int64_t*>(pack->strides.data());
   dt.byte_offset = 0;
+  return pack;
+}
 
+}  // namespace
+
+absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
+    nb::handle py_buffer, std::optional<std::intptr_t> stream,
+    std::optional<std::tuple<int64_t, int64_t>> max_version, bool copied) {
+  if (max_version && std::get<0>(*max_version) >= 1) {
+    ABSL_ASSIGN_OR_RETURN(
+        auto pack,
+        PackDLPackTensor<DLManagedTensorVersioned>(py_buffer, stream));
+    pack->tensor.version =
+        DLPackVersion{DLPACK_MAJOR_VERSION, DLPACK_MINOR_VERSION};
+    pack->tensor.flags = DLPACK_FLAG_BITMASK_READ_ONLY;
+    if (copied) {
+      pack->tensor.flags |= DLPACK_FLAG_BITMASK_IS_COPIED;
+    }
+    nb::capsule capsule = nb::steal<nb::capsule>(PyCapsule_New(
+        &pack.release()->tensor, kDlTensorVersionedCapsuleName,
+        [](PyObject* obj) noexcept {
+          PyObject* exc = PyErr_GetRaisedException();
+          DLManagedTensorVersioned* dlmt =
+              static_cast<DLManagedTensorVersioned*>(
+                  PyCapsule_GetPointer(obj, kDlTensorVersionedCapsuleName));
+          if (dlmt) {
+            DLPackTensorDeleter(dlmt);
+          }
+          PyErr_SetRaisedException(exc);
+        }));
+    if (!capsule.ptr()) {
+      throw nb::python_error();
+    }
+    return capsule;
+  }
+
+  ABSL_ASSIGN_OR_RETURN(auto pack,
+                        PackDLPackTensor<DLManagedTensor>(py_buffer, stream));
   // We cannot use nanobind's capsule object constructor because we need to
   // detect if the capsule name has been changed in the deleter, but nanobind
   // hides the underlying Python object from the deleter.
@@ -369,41 +408,66 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
         "DLPack is only supported for devices addressable by the current "
         "process.");
   }
-  if (std::string_view(tensor.name()) != kDlTensorCapsuleName) {
+  std::string_view capsule_name(tensor.name());
+  const DLTensor* dl_tensor = nullptr;
+  std::function<void()> on_delete_callback;
+  const char* used_capsule_name = nullptr;
+  if (capsule_name == kDlTensorVersionedCapsuleName) {
+    DLManagedTensorVersioned* dlmt =
+        static_cast<DLManagedTensorVersioned*>(tensor.data());
+    if (dlmt->version.major > DLPACK_MAJOR_VERSION) {
+      return xla::InvalidArgument(
+          "Unsupported DLPack version: major version %u > %u",
+          dlmt->version.major, DLPACK_MAJOR_VERSION);
+    }
+    dl_tensor = &dlmt->dl_tensor;
+    if (dlmt->deleter) {
+      on_delete_callback = [dlmt]() { dlmt->deleter(dlmt); };
+    }
+    used_capsule_name = "used_dltensor_versioned";
+  } else if (capsule_name == kDlTensorCapsuleName) {
+    DLManagedTensor* dlmt = static_cast<DLManagedTensor*>(tensor.data());
+    dl_tensor = &dlmt->dl_tensor;
+    if (dlmt->deleter) {
+      on_delete_callback = [dlmt]() { dlmt->deleter(dlmt); };
+    }
+    used_capsule_name = "used_dltensor";
+  } else {
     return xla::InvalidArgument(
-        "DLPack tensor must be a capsule with name \"dltensor\", got \"%s\". "
+        "DLPack tensor must be a capsule with name \"dltensor\" or "
+        "\"dltensor_versioned\", got \"%s\". "
         "Note that a DLPack tensor may be consumed at most once.",
-        std::string_view(tensor.name()));
+        capsule_name);
   }
-  DLManagedTensor* dlmt = static_cast<DLManagedTensor*>(tensor.data());
-  if (dlmt->dl_tensor.ndim < 0) {
+  if (dl_tensor->ndim < 0) {
     return xla::InvalidArgument(
         "Number of dimensions in DLManagedTensor must be nonnegative, got %d",
-        dlmt->dl_tensor.ndim);
+        dl_tensor->ndim);
   }
   absl::Span<int64_t const> dimensions(
-      reinterpret_cast<int64_t*>(dlmt->dl_tensor.shape), dlmt->dl_tensor.ndim);
-  TF_ASSIGN_OR_RETURN(xla::PrimitiveType element_type,
-                      xla::DLDataTypeToPrimitiveType(dlmt->dl_tensor.dtype));
+      reinterpret_cast<int64_t*>(dl_tensor->shape), dl_tensor->ndim);
+  ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType element_type,
+                        xla::DLDataTypeToPrimitiveType(dl_tensor->dtype));
 
-  bool has_custom_layout = dlmt->dl_tensor.strides != nullptr;
+  bool has_custom_layout = dl_tensor->strides != nullptr;
   std::vector<int64_t> minor_to_major;
-  if (dlmt->dl_tensor.strides &&
+  if (dl_tensor->strides &&
       absl::c_find(dimensions, 0) == dimensions.end()) {
     absl::Span<int64_t const> strides(
-        reinterpret_cast<int64_t*>(dlmt->dl_tensor.strides),
-        dlmt->dl_tensor.ndim);
-    TF_ASSIGN_OR_RETURN(minor_to_major, StridesToLayout(dimensions, strides));
+        reinterpret_cast<int64_t*>(dl_tensor->strides),
+        dl_tensor->ndim);
+    ABSL_ASSIGN_OR_RETURN(minor_to_major, StridesToLayout(dimensions, strides));
   } else {
-    minor_to_major.resize(dlmt->dl_tensor.ndim);
+    minor_to_major.resize(dl_tensor->ndim);
     std::iota(minor_to_major.rbegin(), minor_to_major.rend(), 0);
   }
   xla::Shape shape = xla::ShapeUtil::MakeShapeWithDenseLayout(
       element_type, dimensions, minor_to_major);
 
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto pjrt_buffer_and_copied,
-      MakePjrtBuffer(*device->pjrt_device(), dlmt, shape, element_type,
+      MakePjrtBuffer(*device->pjrt_device(), *dl_tensor,
+                     std::move(on_delete_callback), shape, element_type,
                      dimensions, copy, stream, dl_device_type));
   if (pjrt_buffer_and_copied.second) {
     // A PjRtBuffer uses a default layout if it has been created using copy.
@@ -412,7 +476,7 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
 
   // We have taken ownership of the array inside the capsule; make sure the
   // capsule it cannot be used again.
-  PyCapsule_SetName(tensor.ptr(), "used_dltensor");
+  PyCapsule_SetName(tensor.ptr(), used_capsule_name);
   PyCapsule_SetDestructor(tensor.ptr(), nullptr);
 
   auto* ifrt_client = xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleClient>(
@@ -422,7 +486,7 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
         "This operation is implemented for a PjRt-compatible backend only.");
   }
   PyUserContextScope user_context_scope;
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto ifrt_array,
       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer_and_copied.first),
                                    has_custom_layout));
@@ -432,7 +496,7 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
 
 absl::StatusOr<nanobind::dlpack::dtype> PrimitiveTypeToNbDLDataType(
     xla::PrimitiveType type) {
-  TF_ASSIGN_OR_RETURN(DLDataType dl_type, PrimitiveTypeToDLDataType(type));
+  ABSL_ASSIGN_OR_RETURN(DLDataType dl_type, PrimitiveTypeToDLDataType(type));
 
   nanobind::dlpack::dtype nb_type;
   nb_type.lanes = dl_type.lanes;

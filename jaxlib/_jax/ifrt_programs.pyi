@@ -35,6 +35,7 @@ class CompileOptions:
 def make_hlo_program(mlir_module: str) -> Program: ...
 @overload
 def make_hlo_program(mlir_module: bytes) -> Program: ...
+
 def make_colocated_python_program(
     name: str,
     picked_function: bytes,
@@ -42,10 +43,12 @@ def make_colocated_python_program(
     input_avals: Sequence[Any],
     output_avals: Sequence[Any],
 ) -> Program: ...
+
 @overload
 def make_plugin_program(data: str) -> Program: ...
 @overload
 def make_plugin_program(data: bytes) -> Program: ...
+
 def make_xla_compile_options(
     options: _CompileOptions,
     executable_devices: Sequence[_Device],

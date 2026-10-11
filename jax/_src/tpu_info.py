@@ -626,11 +626,20 @@ class Tiling(enum.Enum):
 
   @property
   def shape(self) -> tuple[int, ...]:
-    # TODO(slebedev): Use ``get_tpu_info()`` instead of hardcoding the values.
     match self:
       case Tiling.COMPACT:
-        return (8, 128)
+        try:
+          info = get_tpu_info()
+          return (info.num_sublanes, info.num_lanes)
+        except (ValueError, RuntimeError):
+          return (8, 128)
       case Tiling.SPARSE_CORE:
+        try:
+          info = get_tpu_info()
+          if info.sparse_core:
+            return (info.sparse_core.num_lanes,)
+        except (ValueError, RuntimeError):
+          pass
         return (8,)
 
 

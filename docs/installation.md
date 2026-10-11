@@ -27,6 +27,11 @@ different builds for different operating systems and accelerators.
   pip install -U "jax[tpu]"
   ```
 
+* **GPU (Intel, oneAPI)**
+  ```
+  pip install -U "jax[oneapi]"
+  ```
+
 (install-supported-platforms)=
 ## Supported platforms
 
@@ -149,20 +154,20 @@ JAX currently ships two CUDA wheel variants: CUDA 12 and CUDA 13:
 
 The CUDA 12 wheel is:
 
-| Built with | Compatible with    |
-|------------|--------------------|
-| CUDA 12.3  | CUDA >=12.1        |
-| CUDNN 9.8  | CUDNN >=9.8, <10.0 |
-| NCCL 2.19  | NCCL >=2.18        |
+| Built with | Compatible with       |
+|------------|-----------------------|
+| CUDA 12.3  | CUDA >=12.1           |
+| CUDNN 9.10 | CUDNN >=9.10.2, <10.0 |
+| NCCL 2.19  | NCCL >=2.18           |
 
 
 The CUDA 13 wheel is:
 
-| Built with | Compatible with    |
-|------------|--------------------|
-| CUDA 13.0  | CUDA >=13.0        |
-| CUDNN 9.8  | CUDNN >=9.8, <10.0 |
-| NCCL 2.19  | NCCL >=2.18        |
+| Built with | Compatible with     |
+|------------|---------------------|
+| CUDA 13.0  | CUDA >=13.0         |
+| CUDNN 9.12 | CUDNN >=9.12, <10.0 |
+| NCCL 2.19  | NCCL >=2.18         |
 
 
 JAX checks the versions of your libraries, and will report an error if they are
@@ -180,11 +185,11 @@ To install, run:
 pip install --upgrade pip
 
 
-# Installs the wheel compatible with NVIDIA CUDA 13 and cuDNN 9.8 or newer.
+# Installs the wheel compatible with NVIDIA CUDA 13 and cuDNN 9.12 or newer.
 # Note: wheels only available on linux.
 pip install --upgrade "jax[cuda13-local]"
 
-# Installs the wheel compatible with NVIDIA CUDA 12 and cuDNN 9.8 or newer.
+# Installs the wheel compatible with NVIDIA CUDA 12 and cuDNN 9.10 or newer.
 # Note: wheels only available on linux.
 # pip install --upgrade "jax[cuda12-local]"
 ```
@@ -253,7 +258,7 @@ plugin/PJRT packages on top of it.
 Each JAX ROCm plugin release targets a specific ROCm version, so the installed
 ROCm must match the version the plugin was built against. AMD maintains the
 authoritative mapping in the
-[JAX on ROCm compatibility matrix](https://rocm.docs.amd.com/en/latest/compatibility/ml-compatibility/jax-compatibility.html);
+[JAX on ROCm compatibility matrix](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/3rd-party/jax-install.html);
 consult it to confirm which ROCm version your target JAX release requires before
 installing. The `rocm7` plugin packages require a ROCm 7.x installation.
 
@@ -319,7 +324,7 @@ See the [JAX on ROCm installation guide](https://rocm.docs.amd.com/projects/inst
 for the recommended `docker run` flags and for version-pinned image tags.
 
 **Note**: ROCm support on Windows WSL2 is experimental. For WSL installation, you may need to:
-1. Install [ROCm for WSL](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/tutorial/quick-start.html) following AMD's official guide
+1. Install [ROCm for WSL](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/) following AMD's official guide
 2. Follow the standard Linux ROCm JAX installation steps within your WSL environment
 3. Be aware that performance and stability may differ from native Linux installations
 
@@ -334,13 +339,32 @@ which AMD monitors. For issues with JAX itself that are not ROCm-specific, use t
 (install-intel-gpu)=
 ## Intel GPU
 
-Intel provides an experimental OneAPI plugin: intel-extension-for-openxla for Intel GPU hardware. For more details and installation instructions, refer to one of the following two methods:
-1. Pip installation: [JAX acceleration on Intel GPU](https://github.com/intel/intel-extension-for-openxla/blob/main/docs/acc_jax.md).
-2. Using [Intel's XLA Docker container](https://hub.docker.com/r/intel/intel-optimized-xla).
+Intel provides experimental oneAPI PJRT and plugin wheels for JAX on PyPI. These enable JAX applications to run on Intel GPUs using XLA's SYCL platform support.
 
-Please report any issues related to:
-* JAX: [JAX issue tracker](https://github.com/jax-ml/jax/issues).
-* Intel's OpenXLA plugin: [Intel-extension-for-openxla issue tracker](https://github.com/intel/intel-extension-for-openxla/issues).
+Before installing JAX, install the `intel-gpu-compute` package in one of the following ways:
+
+- By following the [Intel GPU software installation guide](https://dgpu-docs.intel.com/installation-guides/installing-omix.html).
+- By using the [Intel Compute Runtime container](https://hub.docker.com/r/intel/compute-runtime) which already contains the
+  necessary driver components. Follow [Running the container](https://hub.docker.com/r/intel/compute-runtime#running-the-container) section
+  for more information.
+
+### pip installation: Intel GPU (oneAPI)
+
+Once the required GPU drivers are installed, the oneAPI PJRT and plugin wheels can be installed via:
+
+```bash
+pip install --upgrade "jax[oneapi]"
+```
+
+This automatically installs all required software dependencies. No further manual setup is needed beyond the GPU drivers installed above.
+
+```bash
+python3 -c "import jax; print(jax.devices())"
+```
+
+If the installation works correctly, this lists all the available oneAPI devices (e.g. `[OneapiDevice(id=0), OneapiDevice(id=1), ...]`).
+
+For supported platforms and required driver versions, see [oneAPI JAX release notes](https://github.com/Intel-tensorflow/jax/releases).
 
 ## Conda (community-supported)
 

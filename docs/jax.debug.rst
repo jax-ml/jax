@@ -9,7 +9,7 @@
 Runtime value debugging utilities
 ---------------------------------
 
-:doc:`debugging/print_breakpoint` describes how to make use of JAX's runtime value
+:doc:`/201/debugging` describes how to make use of JAX's runtime value
 debugging features.
 
 .. autosummary::

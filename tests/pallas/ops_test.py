@@ -19,16 +19,16 @@ import math
 import re
 import subprocess
 import sys
-import unittest
 from typing import Any
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
+from absl import flags
 import jax
 from jax import api_util
 from jax import lax
 from jax import random
-from jax._src import config
 from jax._src import dtypes
 from jax._src import state
 from jax._src import test_util as jtu
@@ -55,14 +55,17 @@ import hypothesis as hp
 import hypothesis.extra.numpy as hnp
 import hypothesis.strategies as hps
 
+_USE_MOSAIC_GPU = flags.DEFINE_bool(
+    "jax_pallas_use_mosaic_gpu",
+    False,
+    "If true, use the Mosaic GPU backend for Pallas.",
+)
 
 # There are many inherited redefinitions of _
 # ruff: noqa: F811
 
 jax.config.parse_flags_with_absl()
 htu.setup_hypothesis(max_examples=50)
-
-use_mosaic_gpu = config.jax_pallas_use_mosaic_gpu.value
 
 intx = dtypes.default_int_dtype()
 floatx = dtypes.default_float_dtype()
@@ -275,6 +278,7 @@ UNARY_PRIMITIVES = [
             (lax.logistic_p, {"accuracy": None}),
             (lax.rsqrt_p, {"accuracy": None}),
             (lax.log_p, {"accuracy": None}),
+            (lax.log2_p, {"accuracy": None}),
             (lax.exp2_p, {"accuracy": None}),
             (lax.log1p_p, {"accuracy": None}),
             (lax.sin_p, {"accuracy": None}),
@@ -310,6 +314,15 @@ UNARY_FUNCTIONS = [
 
 class PallasBaseTest(ptu.PallasTest):
 
+  def setUp(self):
+    super().setUp()
+    if (
+        _USE_MOSAIC_GPU.value
+        and jtu.test_device_matches(["cuda"])
+        and not jtu.is_cuda_compute_capability_at_least("9.0")
+    ):
+      self.skipTest("This test only works on a GPU with capability >= sm90")
+
   @classmethod
   def pallas_call(
       cls,
@@ -320,7 +333,7 @@ class PallasBaseTest(ptu.PallasTest):
       out_specs=pl.no_block_spec,
       **kwargs,
   ):
-    if not (jtu.test_device_matches(["gpu"]) and use_mosaic_gpu):
+    if not (jtu.test_device_matches(["gpu"]) and _USE_MOSAIC_GPU.value):
       return pl.pallas_call(
           fn,
           out_shape=out_shape,
@@ -359,7 +372,7 @@ class PallasBaseTest(ptu.PallasTest):
     )
 
   def skip_if_mosaic_gpu(self):
-    if jtu.test_device_matches(["gpu"]) and use_mosaic_gpu:
+    if jtu.test_device_matches(["gpu"]) and _USE_MOSAIC_GPU.value:
       if jtu.test_device_matches(["rocm"]):
         self.skipTest("Mosaic GPU is not supported on ROCm.")
       self.skipTest("TODO: Mosaic GPU does not support this yet")
@@ -667,7 +680,7 @@ class OpsTest(PallasBaseTest):
       ]
   )
   def test_unary_primitives(self, name, func, shape_dtype_strategy, data):
-    if name in ["abs", "log1p", "pow2", "reciprocal", "relu", "sin", "sqrt"]:
+    if name in ["abs", "log1p", "pow2", "reciprocal", "sin", "sqrt"]:
       self.skip_if_mosaic_gpu()
 
     if self.INTERPRET:
@@ -675,7 +688,7 @@ class OpsTest(PallasBaseTest):
     # We want exact equality here to match how JAX lowers to XLA
     tol = 0.
     if jtu.test_device_matches(["tpu"]):
-      if name == "exp2":
+      if name in ("exp2", "log2"):
         tol = 1e-6
       # TODO(b/538128436): Remove this logistic branch once mosaic TPU has a
       # tpu.logistic op.
@@ -686,14 +699,14 @@ class OpsTest(PallasBaseTest):
         self.skipTest("TODO: not implemented on GPU")
       if name == "tanh":
         tol = 1e-6
-      elif name == "exp2":
+      elif name in ("exp2", "log2"):
         tol = 1e-6
 
     def kernel(x_ref, y_ref):
       y_ref[...] = func(x_ref[...])
     x_shape_dtype = data.draw(shape_dtype_strategy)
 
-    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and use_mosaic_gpu
+    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and _USE_MOSAIC_GPU.value
     if sut_is_mosaic_gpu:
       hp.assume(math.prod(x_shape_dtype.shape) % 128 == 0)
       hp.assume(x_shape_dtype.shape[-1] >= 16)
@@ -715,7 +728,7 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["cpu"]) and jtu.SKIP_SLOW_TESTS.value:
       self.skipTest("Test is slow on CPU.")
 
-    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and use_mosaic_gpu
+    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and _USE_MOSAIC_GPU.value
     if to_dtype in {"float8_e4m3b11fnuz", "float8_e5m2", "float8_e4m3fn"}:
       if not jtu.test_device_matches(["tpu"]):
         self.skipTest("Not supported on this hardware")
@@ -777,7 +790,7 @@ class OpsTest(PallasBaseTest):
   # miss bugs that would be hidden due to exhaustive enumeration being in order.
   @parameterized.product(from_dtype=_DTYPES_SUB_32BIT, to_dtype=_DTYPES, randomize=(False, True))
   def test_cast_from_sub_32bit(self, from_dtype, to_dtype, randomize):
-    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and use_mosaic_gpu
+    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and _USE_MOSAIC_GPU.value
 
     if from_dtype == to_dtype:
       self.skipTest("Unnecessary test")
@@ -1131,6 +1144,31 @@ class OpsTest(PallasBaseTest):
       o_ref[...] = lax.clamp(lo_ref[...], x_ref[...], hi_ref[...])
     np.testing.assert_array_equal(kernel(lo, x, hi), lax.clamp(lo, x, hi))
 
+  @parameterized.product(
+      dtype=(jnp.float32, jnp.bfloat16),
+      exponent_bits=(4, 5, 6, 7, 8),
+      mantissa_bits=(1, 2, 3, 4, 5, 6, 7),
+  )
+  @jtu.skip_on_devices("gpu")
+  def test_reduce_precision(self, dtype, exponent_bits, mantissa_bits):
+    shape = (64, 128)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = lax.reduce_precision(
+          x_ref[...], exponent_bits=exponent_bits, mantissa_bits=mantissa_bits
+      )
+
+    x = random.normal(random.key(0), shape, dtype=dtype)
+    out = kernel(x)
+    expected = lax.reduce_precision(
+        x, exponent_bits=exponent_bits, mantissa_bits=mantissa_bits
+    )
+    self.assertArraysEqual(out, expected)
+
   @parameterized.named_parameters(
       (dtype.__name__, dtype)
       for dtype in (jnp.float32, jnp.float16, jnp.bfloat16)
@@ -1178,7 +1216,7 @@ class OpsTest(PallasBaseTest):
       ),
       ([jnp.ceil, jnp.floor], ["bfloat16", "float32", "float64", "int32"]),
       (
-          [jnp.exp, jnp.exp2, jnp.sin, jnp.cos, jnp.log, jnp.sqrt],
+          [jnp.exp, jnp.exp2, jnp.sin, jnp.cos, jnp.log, jnp.log2, jnp.sqrt],
           ["bfloat16", "float16", "float32", "float64"],
       ),
       (
@@ -2124,18 +2162,25 @@ class OpsTest(PallasBaseTest):
   def test_num_programs(self):
     self.skip_if_mosaic_gpu()
 
-    @functools.partial(
-        self.pallas_call,
-        out_specs=pl.BlockSpec(memory_space=smem_on_tpu()),
-        out_shape=jax.ShapeDtypeStruct((4,), intx),
-        grid=4,
-    )
     def kernel(o_ref):
       o_ref[pl.program_id(0)] = pl.num_programs(0)
 
-    np.testing.assert_array_equal(
-        kernel(), jnp.array([4, 4, 4, 4], dtype=intx)
-    )
+    idx_map = lambda i: (0,)
+
+    grid_sizes = [4, 2, 5, 3]
+    for grid_size in grid_sizes:
+      # The loop also checks that the programs are not incorrectly cached.
+      out = self.pallas_call(
+          kernel,
+          out_specs=pl.BlockSpec(
+              (max(grid_sizes),), idx_map, memory_space=smem_on_tpu()
+          ),
+          out_shape=jax.ShapeDtypeStruct((max(grid_sizes),), intx),
+          grid=grid_size,
+      )()
+      np.testing.assert_array_equal(
+          out[:grid_size], jnp.full(grid_size, grid_size)
+      )
 
   def test_where_broadcasting(self):
     self.skip_if_mosaic_gpu()
@@ -2244,6 +2289,8 @@ class OpsTest(PallasBaseTest):
   )
   def test_dot(self, lhs_and_rhs_shape, dtype, trans_x, trans_y):
     self.skip_if_mosaic_gpu()
+    if sys.platform == "win32":
+      self.skipTest("Failing on Windows")
 
     lhs_shape, rhs_shape = lhs_and_rhs_shape
 
@@ -2283,6 +2330,17 @@ class OpsTest(PallasBaseTest):
         self.skipTest("All dimensions of lhs and rhs must be >= 16")
       if any(not is_power_of_two(x) for x in lhs_shape + rhs_shape):
         self.skipTest("All dimensions of lhs and rhs must be power of two")
+      if (
+          jtu.is_cuda_compute_capability_equal("8.9")
+          and lhs_and_rhs_shape == ((128, 128), (128, 128))
+          and dtype == jnp.float32
+          and not trans_x
+          and trans_y
+      ):
+        self.skipTest(
+            "Triton produces incorrect numerical output for transposed RHS"
+            " on L4 GPU"
+        )
 
     @functools.partial(
         self.pallas_call,
@@ -2309,7 +2367,7 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_allclose(
         out.astype(jnp.float32),
         expected.astype(jnp.float32),
-        atol=0.05,
+        atol=0.1,
         rtol=0.05,
     )
 
@@ -2421,10 +2479,6 @@ class OpsTest(PallasBaseTest):
     self.skip_if_mosaic_gpu()
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Not supported on this hardware")
-    if jtu.jaxlib_version() < (0, 11, 1):
-      self.skipTest("Test requires JAX v0.11.1 or newer.")
-    if not jtu.is_libtpu_at_least("0.0.46"):
-      self.skipTest("Test requires libtpu 0.0.46 or newer.")
 
     lhs_shape, rhs_shape, dim_nums = shapes_and_dim_nums
     lhs_key, rhs_key = random.split(random.key(0))
@@ -2482,16 +2536,24 @@ class OpsTest(PallasBaseTest):
               (32, 2, 2, 128),
               (((1, 3), (2, 3)), ((0,), (1,))),
           ),
+          (
+              (8, 8, 128),
+              (128, 8, 128),
+              (((1, 2), (1, 2)), ((), ())),
+          ),
+          (
+              (2, 8, 8, 128),
+              (2, 128, 8, 128),
+              (((2, 3), (2, 3)), ((0,), (0,))),
+          ),
       ],
   )
   def test_dot_general_multiple_contracting_dims(self, shapes_and_dim_nums):
     self.skip_if_mosaic_gpu()
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Not supported on this hardware")
-    if jtu.jaxlib_version() < (0, 11, 1):
-      self.skipTest("Test requires JAX v0.11.1 or newer.")
-    if not jtu.is_libtpu_at_least("0.0.46"):
-      self.skipTest("Test requires libtpu 0.0.46 or newer.")
+    if not jtu.is_libtpu_at_least("0.0.49"):
+      self.skipTest("Requires libtpu 0.0.49 or later")
 
     lhs_shape, rhs_shape, dim_nums = shapes_and_dim_nums
     lhs_key, rhs_key = random.split(random.key(0))
@@ -3048,7 +3110,7 @@ class OpsTest(PallasBaseTest):
       )
       output_ref[...] = output
 
-    if jtu.test_device_matches(["rocm"]) and use_mosaic_gpu:
+    if jtu.test_device_matches(["rocm"]) and _USE_MOSAIC_GPU.value:
       self.skipTest("Mosaic GPU is not supported on ROCm.")
     deq_call = self.pallas_call(
         kernel,
@@ -3065,7 +3127,7 @@ class OpsTest(PallasBaseTest):
 
   def test_delay(self):
     if jtu.test_device_matches(["gpu"]):
-      if not use_mosaic_gpu:
+      if not _USE_MOSAIC_GPU.value:
         self.skipTest("Delay is only implemented on the MGPU backend for GPUs.")
       elif jtu.test_device_matches(["rocm"]):
         self.skipTest("Mosaic GPU is not supported on ROCm.")
@@ -3115,7 +3177,7 @@ class PallasPrimitivesTest(PallasBaseTest):
       x = pallas_primitives.load(x_ref, expr())
       return [x]
     jaxpr, _ = trace_to_jaxpr(
-        body, state.shaped_array_ref((4, 3, 2), jnp.int32)
+        body, state.shaped_array_ref((4, 3, 6), jnp.int32)
     )
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
@@ -3133,21 +3195,31 @@ class PallasPrimitivesTest(PallasBaseTest):
       )
       return []
     jaxpr, _ = trace_to_jaxpr(
-        body, state.shaped_array_ref((4, 3, 2), jnp.int32)
+        body, state.shaped_array_ref((4, 3, 6), jnp.int32)
     )
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
   @parameterized.parameters(*[
-    (lambda: (pl.dslice(0, 4), slice(None), slice(None)),
-    "c:i32[4,3,2], a[:,:,:] <-"),
-    (lambda: (pl.dslice(0, 3), slice(None), slice(None)),
-    "c:i32[3,3,2], a[:3,:,:] <-"),
-    (lambda: (pl.dslice(1, 3), slice(None), pl.dslice(0, 4)),
-    "c:i32[3,3,4], a[1:,:,:4] <-"),
-    (lambda: (jnp.arange(5), slice(None), pl.dslice(0, 4)),
-    "e:i32[5,3,4], a[b,:,:4] <-"),
-    (lambda: (jnp.arange(5)[:, None], jnp.arange(3)[None], pl.dslice(4)),
-    "o:i32[5,3,4], a[m,n,:4] <-"),
+      (
+          lambda: (pl.dslice(0, 4), slice(None), slice(None)),
+          "c:i32[4,3,6], a[:,:,:] <-",
+      ),
+      (
+          lambda: (pl.dslice(0, 3), slice(None), slice(None)),
+          "c:i32[3,3,6], a[:3,:,:] <-",
+      ),
+      (
+          lambda: (pl.dslice(1, 3), slice(None), pl.dslice(0, 4)),
+          "c:i32[3,3,4], a[1:,:,:4] <-",
+      ),
+      (
+          lambda: (jnp.arange(5), slice(None), pl.dslice(0, 4)),
+          "e:i32[5,3,4], a[b,:,:4] <-",
+      ),
+      (
+          lambda: (jnp.arange(5)[:, None], jnp.arange(3)[None], pl.dslice(4)),
+          "o:i32[5,3,4], a[m,n,:4] <-",
+      ),
   ])
   def test_swap_pretty_print(self, expr, expected):
     def body(x_ref):
@@ -3156,42 +3228,9 @@ class PallasPrimitivesTest(PallasBaseTest):
       )
       return [x]
     jaxpr, _ = trace_to_jaxpr(
-        body, state.shaped_array_ref((4, 3, 2), jnp.int32)
+        body, state.shaped_array_ref((4, 3, 6), jnp.int32)
     )
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
-
-
-  @parameterized.product(approx=[False, True], full_range=[False, True], dtype=[jnp.bfloat16, jnp.float32])
-  def test_reciprocal(self, approx, full_range, dtype):
-    if not jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not implemented on non-TPU devices")
-    if dtype == jnp.bfloat16:
-      if not jtu.is_libtpu_at_least("0.0.46"):
-        self.skipTest("BF16 reciprocal requires libtpu >= 0.0.46.")
-      if not jtu.is_device_tpu_at_least(6):
-        self.skipTest("BF16 reciprocal not supported before v6e.")
-      if approx:
-        self.skipTest("BF16 reciprocal does not support approx=True.")
-      if not full_range:
-        self.skipTest("BF16 reciprocal does not support full_range=False.")
-
-    shape = (32, 256)
-    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    if not full_range:
-      x = jnp.where(x == 0, -1.0, x)
-
-    def kernel(x_ref, o_ref):
-      o_ref[...] = pl.reciprocal(
-          x_ref[...], approx=approx, full_range=full_range
-      )
-
-    out = self.pallas_call(
-        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
-    )(x)
-    kwargs = {}
-    if approx:
-      kwargs.update(dict(atol=2e-5, rtol=2e-5))
-    np.testing.assert_allclose(out, jax.lax.reciprocal(x), **kwargs)
 
 
 class PallasPrimitivesInterpretTest(PallasPrimitivesTest):

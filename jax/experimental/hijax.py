@@ -35,16 +35,18 @@ from jax._src.effects import (
     control_flow_allowed_effects as control_flow_allowed_effects,
 )
 from jax._src.hijax import (
-    HiPrimitive as HiPrimitive,
+    HiPrim as HiPrim,
     HiPspec as HiPspec,
     HiType as HiType,
     MappingSpec as MappingSpec,
-    VJPHiPrimitive as VJPHiPrimitive,
+    bdims_at_front as bdims_at_front,
     jvp_from_lin as jvp_from_lin,
     linearize_from_jvp as linearize_from_jvp,
     register_hitype as register_hitype,
+    unmap_avals as unmap_avals,
     vjp_from_jvp as vjp_from_jvp,
     vjp_from_lin as vjp_from_lin,
+    vmap_rule as vmap_rule,
 )
 from jax._src.state import (
     AbstractRef as AbstractRef,

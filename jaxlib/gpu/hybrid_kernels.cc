@@ -279,6 +279,8 @@ class PivotingQrFactorizationHost {
       jpvt_tmp = std::make_unique<IntType[]>(n);
     }
 
+    FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
+
     for (int64_t i = 0; i < batch; ++i) {
       IntType info_v;
       if constexpr (std::is_same_v<IntType, int32_t>) {

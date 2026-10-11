@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import concurrent.futures
 import contextlib
 import math
 import unittest
@@ -26,6 +27,7 @@ from jax._src import core
 from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
 from jax._src.mesh import AxisType, AbstractMesh, Mesh
@@ -268,6 +270,9 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertTrue(arr.sharding.num_devices == 1)
     self.assertEqual(arr._committed, False)
     self.assertFalse(arr.weak_type)
+    if jaxlib_extension_version >= 490:
+      with self.assertRaises(AttributeError):
+        arr.aval = arr.aval
 
   def test_jnp_array_jit_add(self):
     a = jnp.array([1, 2, 3])
@@ -485,9 +490,12 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertIsInstance(i, array.ArrayImpl)
       self.assertArraysEqual(i, j)
 
-  def test_array_iter_replicated_multi_device(self):
+  @parameterized.parameters(
+      dict(input_shape=(8, 2)),  # < 100: single-chunk path in _chunk_iter
+      dict(input_shape=(150, 2)),  # >= 100: multi-chunk dynamic_slice path
+  )
+  def test_array_iter_replicated_multi_device(self, input_shape):
     global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
-    input_shape = (8, 2)
     arr, input_data = create_array(
         input_shape, jax.sharding.NamedSharding(global_mesh, P(None)))
 
@@ -788,6 +796,105 @@ class JaxArrayTest(jtu.JaxTestCase):
     x.copy_to_host_async()  # doesn't crash
     self.assertArraysEqual(np.arange(8.), x)
 
+  def test_array_copy_to_host_async_concurrent(self):
+    def worker(arr: jax.Array) -> None:
+      for _ in range(10):
+        arr.copy_to_host_async()
+        _ = np.asarray(arr)
+        _ = arr._single_device_array_to_np_array_did_copy()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+      for dtype in (jnp.float32, jnp.int4):
+        for _ in range(10):
+          arr = jnp.zeros((128,), dtype=dtype)
+          futures = [executor.submit(worker, arr) for _ in range(8)]
+          for f in futures:
+            f.result()
+
+  def test_array_concurrent_shards_and_transfers(self):
+    def worker_sharded(arr: jax.Array) -> None:
+      for _ in range(10):
+        _ = arr._arrays
+        arr.copy_to_host_async()
+        _ = np.asarray(arr)
+
+    def worker_replicated(arr: jax.Array) -> None:
+      for _ in range(10):
+        _ = arr._arrays
+        _ = arr._fully_replicated_shard()
+        arr.copy_to_host_async()
+        _ = np.asarray(arr)
+        _ = arr._single_device_array_to_np_array_did_copy()
+
+    global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+      for _ in range(5):
+        arr_sharded, _ = create_array(
+            (8, 4), jax.sharding.NamedSharding(global_mesh, P('x', 'y'))
+        )
+        futures = [
+            executor.submit(worker_sharded, arr_sharded) for _ in range(8)
+        ]
+        for f in futures:
+          f.result()
+
+        arr_replicated, _ = create_array(
+            (8, 4), jax.sharding.NamedSharding(global_mesh, P())
+        )
+        futures = [
+            executor.submit(worker_replicated, arr_replicated) for _ in range(8)
+        ]
+        for f in futures:
+          f.result()
+
+  def test_copy_to_host_async_fully_sharded(self):
+    global_mesh = jtu.create_mesh((2,), ('x',))
+    x = jax.jit(lambda: jnp.arange(16.).reshape((4, 4)),
+                out_shardings=jax.NamedSharding(global_mesh, P('x', None)))()
+    x.copy_to_host_async()
+    self.assertArraysEqual(np.arange(16.).reshape((4, 4)), x)
+
+  def test_copy_to_host_async_partially_replicated(self):
+    global_mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    x = jax.jit(lambda: jnp.arange(8.),
+                out_shardings=jax.NamedSharding(global_mesh, P('x')))()
+    x.copy_to_host_async()
+    self.assertArraysEqual(np.arange(8.), x)
+
+  def test_copy_to_host_async_fully_replicated(self):
+    global_mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    x = jax.jit(lambda: jnp.arange(8.),
+                out_shardings=jax.NamedSharding(global_mesh, P(None)))()
+    x.copy_to_host_async()
+    self.assertArraysEqual(np.arange(8.), x)
+
+  def test_copy_to_host_async_non_contiguous_sharding(self):
+    global_mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    x = jax.jit(lambda: jnp.arange(16.).reshape((4, 4)),
+                out_shardings=jax.NamedSharding(global_mesh, P(None, 'y')))()
+    x.copy_to_host_async()
+    self.assertArraysEqual(np.arange(16.).reshape((4, 4)), x)
+
+  def test_copy_to_host_async_string_array(self):
+    cpu_devices = jax.devices('cpu')
+    if len(cpu_devices) < 4:
+      self.skipTest(
+          f'Need at least 4 CPU devices, got {len(cpu_devices)}'
+    )
+    global_mesh = jax.sharding.Mesh(
+        np.array(cpu_devices[:4]).reshape((2, 2)), ('x', 'y')
+    )
+    sharding = jax.sharding.NamedSharding(
+        global_mesh, jax.sharding.PartitionSpec('x', 'y')
+    )
+    np_strings = np.array(
+        [['foo', 'bar'], ['baz', 'qux']], dtype=np.dtypes.StringDType()
+    )
+    arr = jax.device_put(np_strings, sharding)
+    arr.copy_to_host_async()
+    self.assertEqual(arr.dtype, np.dtypes.StringDType())
+    np.testing.assert_array_equal(np_strings, np.asarray(arr))
+
   def test_array_fully_replicated_shard(self):
 
     global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
@@ -942,6 +1049,20 @@ class JaxArrayTest(jtu.JaxTestCase):
     x = jax.device_put(jnp.arange(8), NamedSharding(mesh, P('x')))
     with jax.set_mesh(mesh):
       f(x)
+
+  @jtu.sample_product(size=[50, 100, 150])  # _chunk_iter hard-codes size=100
+  def test_array_reversed(self, size):
+    x_numpy = np.arange(size, dtype='int32')
+    x_jax = jnp.array(x_numpy)
+    self.assertArraysEqual(list(reversed(x_jax)), list(reversed(x_numpy)))
+
+  @parameterized.parameters(iter, reversed)
+  def test_traced_iter_uses_unstack(self, iter_method):
+    def f(x):
+      return list(iter_method(x))
+    jaxpr = jax.make_jaxpr(f)(np.arange(3))
+    primitives = [eqn.primitive for eqn in jaxpr.eqns]
+    self.assertIn(jax.lax.unstack_p, primitives)
 
 
 class ShardingTest(jtu.JaxTestCase):
@@ -1678,6 +1799,72 @@ class RngShardingTest(jtu.JaxTestCase):
     abstract_mesh2 = jax.sharding.AbstractMesh((), ())
     self.assertTrue(abstract_mesh2.empty)
     self.assertEqual(abstract_mesh2.size, 0)
+
+  def test_replace_with(self):
+    a = jnp.array([1, 2, 3])
+    b = jnp.array([4, 5, 6])
+    a._replace_with(b)
+    self.assertArraysEqual(a, [4, 5, 6])
+
+    # weak_type mismatch
+    w1 = jnp.array(1.0)
+    w2 = jnp.array(1.0, dtype=w1.dtype)
+    self.assertTrue(w1.weak_type)
+    self.assertFalse(w2.weak_type)
+    self.assertEqual(w1.dtype, w2.dtype)
+    with self.assertRaisesRegex(RuntimeError, "different weak_type"):
+      w1._replace_with(w2)
+
+    # dtype mismatch
+    c = jnp.array([1.0, 2.0, 3.0], dtype=np.float32)
+    with self.assertRaisesRegex(RuntimeError, "different dtype"):
+      a._replace_with(c)
+
+    # shape mismatch
+    d = jnp.array([1, 2])
+    with self.assertRaisesRegex(RuntimeError, "different shape"):
+      a._replace_with(d)
+
+    # committed mismatch
+    committed_arr = jax.device_put(jnp.array([1, 2, 3]), jax.devices()[0])
+    uncommitted_arr = jnp.array([1, 2, 3])
+    self.assertTrue(committed_arr._committed)
+    self.assertFalse(uncommitted_arr._committed)
+    with self.assertRaisesRegex(RuntimeError, "different committed"):
+      committed_arr._replace_with(uncommitted_arr)
+
+    # new_ref buffer is committed
+    ref = jax.new_ref(jnp.zeros(3))
+    self.assertTrue(ref._refs._buf._committed)
+
+    # sharding mismatch
+    mesh = jax.sharding.Mesh(np.array(jax.devices()[:1]), ("x",))
+    s1 = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
+    s2 = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    x1 = jax.device_put(jnp.array([1, 2, 3]), s1)
+    x2 = jax.device_put(jnp.array([1, 2, 3]), s2)
+    with self.assertRaisesRegex(RuntimeError, "different sharding"):
+      x1._replace_with(x2)
+
+    del_arr1 = jnp.array([1, 2, 3])
+    del_arr2 = jnp.array([4, 5, 6])
+    del_arr1.delete()
+    with self.assertRaises(Exception):
+      del_arr1._replace_with(del_arr2)
+    with self.assertRaises(Exception):
+      del_arr2._replace_with(del_arr1)
+
+  def test_deleted_array_accessors(self):
+    arr = jnp.arange(8)
+    arr.delete()
+    with self.assertRaises(Exception):
+      arr.unsafe_buffer_pointer()
+    with self.assertRaises(Exception):
+      arr.unsafe_raw_buffer()
+    with self.assertRaises(Exception):
+      jax.make_array_from_single_device_arrays(
+          arr.shape, arr.sharding, [arr]
+      )
 
 
 if __name__ == '__main__':

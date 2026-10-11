@@ -28,6 +28,7 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
@@ -199,10 +200,10 @@ absl::Status PyRegisterCustomCallTarget(const std::string& fn_name,
       };
 
       XLA_FFI_Handler_Bundle bundle;
-      TF_ASSIGN_OR_RETURN(bundle.instantiate, handler("instantiate"));
-      TF_ASSIGN_OR_RETURN(bundle.prepare, handler("prepare"));
-      TF_ASSIGN_OR_RETURN(bundle.initialize, handler("initialize"));
-      TF_ASSIGN_OR_RETURN(bundle.execute, handler("execute"));
+      ABSL_ASSIGN_OR_RETURN(bundle.instantiate, handler("instantiate"));
+      ABSL_ASSIGN_OR_RETURN(bundle.prepare, handler("prepare"));
+      ABSL_ASSIGN_OR_RETURN(bundle.initialize, handler("initialize"));
+      ABSL_ASSIGN_OR_RETURN(bundle.execute, handler("execute"));
 
       return ffi::TakeStatus(ffi::Ffi::RegisterStaticHandler(
           xla::ffi::GetXlaFfiApi(), fn_name, platform, bundle, traits));
@@ -241,12 +242,12 @@ absl::Status PyRegisterCustomType(std::string_view type_name, nb::object type) {
         "optional pointer to a XLA_FFI_TypeInfo in `type_info` fields.");
   }
 
-  TF_ASSIGN_OR_RETURN(auto type_id_capsule, as_capsule(type_dict["type_id"]));
+  ABSL_ASSIGN_OR_RETURN(auto type_id_capsule, as_capsule(type_dict["type_id"]));
   type_id = static_cast<XLA_FFI_TypeId*>(type_id_capsule.data());
 
   if (type_dict.contains("type_info")) {
-    TF_ASSIGN_OR_RETURN(auto type_info_capsule,
-                        as_capsule(type_dict["type_info"]));
+    ABSL_ASSIGN_OR_RETURN(auto type_info_capsule,
+                          as_capsule(type_dict["type_info"]));
     type_info = static_cast<XLA_FFI_TypeInfo*>(type_info_capsule.data());
   }
 
@@ -317,7 +318,7 @@ absl::StatusOr<xla::nb_numpy_ndarray> PyFfiAnyBuffer::NumpyArray() const {
         "Buffer.__array__ is only supported on CPU.");
   }
 
-  TF_ASSIGN_OR_RETURN(auto dtype, this->dtype());
+  ABSL_ASSIGN_OR_RETURN(auto dtype, this->dtype());
   xla::nb_numpy_ndarray array(dtype, dimensions_, /* strides= */ std::nullopt,
                               data_, nb::cast(this));
 
@@ -336,8 +337,8 @@ absl::StatusOr<nb::dict> PyFfiAnyBuffer::CudaArrayInterface() const {
 
   nb::dict result;
   result["shape"] = xla::SpanToNbTuple(dimensions_);
-  TF_ASSIGN_OR_RETURN(result["typestr"],
-                      TypeDescriptorForPrimitiveType(element_type_));
+  ABSL_ASSIGN_OR_RETURN(result["typestr"],
+                        TypeDescriptorForPrimitiveType(element_type_));
   result["data"] = nb::make_tuple(
       nb::int_(absl::bit_cast<std::uintptr_t>(data_)), !writeable_);
   result["version"] = nb::int_(2);
@@ -353,7 +354,8 @@ absl::StatusOr<nb::capsule> PyFfiAnyBuffer::DLPack() const {
   dt.data = data_;
   dt.device = DLDevice{device_type_, device_ordinal_};
   dt.ndim = dimensions_.size();
-  TF_ASSIGN_OR_RETURN(dt.dtype, xla::PrimitiveTypeToDLDataType(element_type_));
+  ABSL_ASSIGN_OR_RETURN(dt.dtype,
+                        xla::PrimitiveTypeToDLDataType(element_type_));
   pack->shape = std::vector<int64_t>(dimensions_.begin(), dimensions_.end());
   dt.shape = reinterpret_cast<std::int64_t*>(pack->shape.data());
   dt.strides = nullptr;
@@ -394,7 +396,8 @@ absl::StatusOr<nb::capsule> PyFfiAnyBuffer::DLPackVersioned() const {
   dt.data = data_;
   dt.device = DLDevice{device_type_, device_ordinal_};
   dt.ndim = dimensions_.size();
-  TF_ASSIGN_OR_RETURN(dt.dtype, xla::PrimitiveTypeToDLDataType(element_type_));
+  ABSL_ASSIGN_OR_RETURN(dt.dtype,
+                        xla::PrimitiveTypeToDLDataType(element_type_));
   pack->shape = std::vector<int64_t>(dimensions_.begin(), dimensions_.end());
   dt.shape = reinterpret_cast<std::int64_t*>(pack->shape.data());
   dt.strides = nullptr;

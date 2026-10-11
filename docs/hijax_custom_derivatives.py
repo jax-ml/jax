@@ -19,11 +19,13 @@
 #   jupytext:
 #     cell_metadata_filter: -all
 #     formats: ipynb,md:myst,py:light
+#     notebook_metadata_filter: nosearch
 #     text_representation:
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
 #       jupytext_version: 1.16.4
+#   nosearch: true
 # ---
 
 # (hijax-custom-derivatives)=
@@ -63,7 +65,7 @@
 #
 # ### TL;DR
 #
-# Subclass `VJPHiPrimitive`, declare the input and output types, and define an
+# Subclass `HiPrim`, declare the input and output types, and define an
 # `expand` method giving the implementation. Then attach the derivative rules
 # you need: `vjp_fwd`/`vjp_bwd_retval` for reverse mode, `jvp` for forward
 # mode:
@@ -71,9 +73,9 @@
 # +
 import jax
 import jax.numpy as jnp
-from jax.experimental.hijax import VJPHiPrimitive
+from jax.experimental.hijax import HiPrim
 
-class SinTimesY(VJPHiPrimitive):
+class SinTimesY(HiPrim):
   def __init__(self, x_aval, y_aval):
     self.in_avals = (x_aval, y_aval)  # input types
     self.out_aval = x_aval            # output type
@@ -123,7 +125,7 @@ print(grad(f)(2., 3.))
 #
 # To get an idea of what problems hijax custom derivatives are meant to solve,
 # let's go over a few examples. A more thorough introduction to the
-# `VJPHiPrimitive` API is in the next section.
+# `HiPrim` API is in the next section.
 #
 # ### Example: Numerical stability
 #
@@ -186,7 +188,7 @@ jit(grad(log1pexp)).trace(100.).jaxpr
 # Here's a solution using a hijax primitive:
 
 # +
-class Log1pExp(VJPHiPrimitive):
+class Log1pExp(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -206,8 +208,9 @@ class Log1pExp(VJPHiPrimitive):
     (x,), (x_dot,) = primals, tangents
     return self(x), (1 - 1/(1 + jnp.exp(x))) * x_dot
 
-  def batch_dim_rule(self, axis_data, in_dims):
-    return in_dims[0]
+  def batch(self, axis_data, args, dims):
+    (x,), (x_dim,) = args, dims
+    return log1pexp(x), x_dim
 
 def log1pexp(x):
   return Log1pExp(jax.typeof(x))(x)
@@ -224,9 +227,9 @@ print(vmap(jit(grad(log1pexp)))(jnp.arange(3.)))
 # The `expand` method plays the role of the original Python function: it's
 # what runs when we evaluate `log1pexp` eagerly, and it's what gets traced when
 # we apply `jit`. The `vjp_fwd`/`vjp_bwd_retval` pair defines reverse-mode
-# differentiation, and `jvp` defines forward-mode. (The `batch_dim_rule` method
-# is a one-liner that tells `vmap` where the batch dimension of the output is;
-# more on that below.)
+# differentiation, and `jvp` defines forward-mode. (The `batch` method tells
+# `vmap` how to batch the primitive: here it applies the primitive to the
+# batched argument, whose batch dimension carries through. More on that below.)
 #
 # We can inspect the jaxpr of the gradient computation to confirm the stable
 # formula is what runs:
@@ -268,7 +271,7 @@ print(grad(f)(0.))
 # 1)^2}$ on $\mathbb{R}_+$:
 
 # +
-class FOnRPlus(VJPHiPrimitive):
+class FOnRPlus(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -307,7 +310,12 @@ print(grad(f)(0.))
 # and the backward rule returns `None` for their cotangents:
 
 # +
-class ClipGradient(VJPHiPrimitive):
+def batch_dims_at_front(axis_data, args, dims):
+  return [jnp.moveaxis(a, d, 0) if d is not None
+          else jnp.broadcast_to(a, (axis_data.size, *jnp.shape(a)))
+          for a, d in zip(args, dims)]
+
+class ClipGradient(HiPrim):
   def __init__(self, lo_aval, hi_aval, x_aval):
     self.in_avals = (lo_aval, hi_aval, x_aval)
     self.out_aval = x_aval
@@ -324,8 +332,11 @@ class ClipGradient(VJPHiPrimitive):
     lo, hi = res
     return (None, None, jnp.clip(g, lo, hi))  # None: zero cotangents for lo, hi
 
-  def batch_dim_rule(self, axis_data, in_dims):
-    return in_dims[2]
+  def batch(self, axis_data, args, dims):
+    lo, hi, x = batch_dims_at_front(axis_data, args, dims)
+    lo, hi = (b.reshape(b.shape[:1] + (1,) * (x.ndim - b.ndim) + b.shape[1:])
+              for b in (lo, hi))
+    return clip_gradient(lo, hi, x), 0
 
 def clip_gradient(lo, hi, x):
   return ClipGradient(jax.typeof(lo), jax.typeof(hi), jax.typeof(x))(lo, hi, x)
@@ -339,6 +350,14 @@ def clip_gradient(lo, hi, x):
 # as arguments to a `jit`-compiled function — should be an ordinary input.
 # Save `self.params` for genuinely static data, like the Python function in
 # the `fixed_point` example below.)
+#
+# The `batch` method, for `vmap`, applies the primitive to the batched
+# arguments. It moves every batch dimension to the front, broadcasting
+# unbatched arguments, and then gives the bounds singleton axes after the
+# batch axis, so that `jnp.clip` still lines up each example's bounds with
+# that example's `x`. Broadcasting an unbatched `x` keeps the output batched,
+# so each example's cotangent gets clipped by that example's bounds. (More
+# on `batch` below.)
 
 # +
 import matplotlib.pyplot as plt
@@ -372,7 +391,7 @@ plt.plot(vmap(grad(clip_sin))(t))
 # +
 import pdb
 
-class Debug(VJPHiPrimitive):
+class Debug(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -520,7 +539,7 @@ print(jit(vmap(newton_sqrt))(jnp.array([1., 2., 3., 4.])))
 from functools import partial
 from jax import vjp
 
-class FixedPoint(VJPHiPrimitive):
+class FixedPoint(HiPrim):
   def __init__(self, a_aval, x_aval, *, f):
     self.in_avals = (a_aval, x_aval)
     self.out_aval = x_aval
@@ -587,11 +606,11 @@ print(grad(grad(jnp.sqrt))(2.))
 # low-level primitive `lax.custom_root`, which allows for derivatives in
 # closed-over variables with custom root-finding functions.
 #
-# ## Basic usage of `VJPHiPrimitive`
+# ## Basic usage of `HiPrim`
 #
 # ### Anatomy of a hijax primitive
 #
-# A hijax primitive is a subclass of `VJPHiPrimitive`. Its `__init__` must set
+# A hijax primitive is a subclass of `HiPrim`. Its `__init__` must set
 # three attributes before calling `super().__init__()`:
 #
 # * `in_avals`, a tuple with one entry per positional argument, giving each
@@ -607,7 +626,7 @@ print(grad(grad(jnp.sqrt))(2.))
 # using `jax.typeof`, and immediately applies it:
 
 # +
-class Square(VJPHiPrimitive):
+class Square(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -640,7 +659,7 @@ print(square(3.))
 # | `vjp_fwd` and `vjp_bwd_retval` (or `vjp_bwd`) | reverse-mode autodiff (`grad`, `vjp`) |
 # | `jvp` | forward-mode autodiff (`jvp`) |
 # | `lin` and `linearized` | `jax.linearize` |
-# | `batch_dim_rule` (or `batch`) | `vmap` |
+# | `batch` | `vmap` |
 # | `transpose` | transposition, for primitives linear in some inputs |
 #
 # If you apply a transformation without having defined the corresponding
@@ -672,7 +691,7 @@ print(square(3.))
 # with one entry per primal input.
 
 # +
-class Mul(VJPHiPrimitive):
+class Mul(HiPrim):
   def __init__(self, x_aval, y_aval):
     self.in_avals = (x_aval, y_aval)
     self.out_aval = x_aval
@@ -706,7 +725,7 @@ print(grad(mul, 1)(2., 3.))
 # some cases; see the symbolic zeros section below.)
 
 # +
-class Sin(VJPHiPrimitive):
+class Sin(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -796,7 +815,7 @@ jit(mul).trace(2., 3.).jaxpr
 # side effects, though harmless ones like `print` can be instructive):
 
 # +
-class Noisy(VJPHiPrimitive):
+class Noisy(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -822,7 +841,7 @@ print(jit(noisy)(3.))  # tracing is cached: no more 'called expand!'
 # rules then see concrete values:
 
 # +
-class G(VJPHiPrimitive):
+class G(HiPrim):
   def __init__(self, x_aval):
     self.in_avals = (x_aval,)
     self.out_aval = x_aval
@@ -853,19 +872,24 @@ print(grad(g)(-1.))
 
 # -
 
-# ### `vmap` with `batch_dim_rule`
+# ### `vmap` with `batch`
 #
-# For `vmap` support, the easiest option is to define `batch_dim_rule`, which
-# takes axis metadata and the batch dimension of each argument (`None` for
-# unbatched arguments) and just returns the batch dimension of the output.
-# Given that data movement answer, JAX derives the batched computation
-# automatically by `vmap`-ing the primitive's other rules:
+# For `vmap` support, define the `batch` method. It takes the axis metadata,
+# the batched argument values, and their batch dimensions (`None` for
+# unbatched arguments), and returns the batched output paired with its batch
+# dimension, computed however you like in ordinary JAX operations. Often the
+# simplest way is to apply the primitive itself to the batched arguments, after
+# moving their batch dimensions to the front with a helper like
+# `batch_dims_at_front` from the gradient clipping example. That works when the
+# primitive's rules also handle arrays with an extra leading axis, as
+# elementwise ones do, and it keeps the batched computation a single
+# application of the primitive, with the primitive's own rules for autodiff:
 
 # +
 class MulV(Mul):
-  def batch_dim_rule(self, axis_data, in_dims):
-    x_dim, y_dim = in_dims
-    return y_dim if x_dim is None else x_dim
+  def batch(self, axis_data, args, dims):
+    x, y = batch_dims_at_front(axis_data, args, dims)
+    return mul(x, y), 0
 
 def mul(x, y):
   return MulV(jax.typeof(x), jax.typeof(y))(x, y)
@@ -877,8 +901,8 @@ print(vmap(mul, in_axes=(0, None))(x, 2.))
 print(vmap(grad(mul))(x, y))
 # -
 
-# (For full control over the batched computation itself, you can instead
-# override the `batch` method.)
+# `batch` can also compute the batched result some other way, for example by
+# calling a hand-written kernel's dedicated batched variant.
 #
 # ## More features and details
 #
@@ -894,7 +918,7 @@ Point = namedtuple("Point", ["x", "y"])
 
 from jax.experimental.hijax import Zero, instantiate_zeros
 
-class FPt(VJPHiPrimitive):
+class FPt(HiPrim):
   def __init__(self, pt_aval):
     self.in_avals = (pt_aval,)
     self.out_aval = {'a': pt_aval.x, 'b': (pt_aval.x, pt_aval.y)}
@@ -951,7 +975,7 @@ print(grad(fun)(pt))
 # residuals:
 
 # +
-class Mul2(VJPHiPrimitive):
+class Mul2(HiPrim):
   def __init__(self, x_aval, y_aval):
     self.in_avals = (x_aval, y_aval)
     self.out_aval = x_aval
@@ -997,7 +1021,7 @@ print(grad(mul2, 1)(2., 3.))  # nzs_in == (False, True), saves only x
 # `.accum(...)`:
 
 # +
-class Mul3(VJPHiPrimitive):
+class Mul3(HiPrim):
   def __init__(self, x_aval, y_aval):
     self.in_avals = (x_aval, y_aval)
     self.out_aval = x_aval

@@ -21,7 +21,6 @@ import math
 import os
 import re
 import sys
-import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -34,6 +33,7 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import hijax
 from jax._src import test_util as jtu
+from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
 import jax.experimental.mosaic.gpu as mgpu
@@ -100,15 +100,6 @@ class PallasTest(ptu.PallasTest):
   def setUp(self):
     if type(self) is PallasTest:
       self.skipTest("Base class for Pallas tests")
-    if jtu.test_device_matches(["gpu"]):
-      self.enter_context(warnings.catch_warnings())
-      warnings.filterwarnings(
-          "ignore",
-          category=DeprecationWarning,
-          message=(
-              "Using ``pl.pallas_call`` for Mosaic GPU kernels is deprecated"
-          ),
-      )
 
     super().setUp()
 
@@ -300,6 +291,20 @@ class PallasTest(ptu.PallasTest):
     self.assertEqual(o_ref_shape, (128,))
     self.assertAllClose(pids, jnp.zeros(o_ref_shape, dtype=np.int32))
 
+  def test_store_reshaped_ref(self):
+    shape1, shape2 = (4, 3), (2, 6)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape1, jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref.reshape(shape2)[...] = x_ref.reshape(shape2)[...]
+
+    x = jnp.arange(12, dtype=jnp.float32).reshape(shape1)
+    y = kernel(x)
+    np.testing.assert_array_equal(y, x)
+
 
 class PallasTritonTest(PallasTest):
 
@@ -315,6 +320,12 @@ class PallasTritonTest(PallasTest):
     return super().pallas_call(
         *args, compiler_params=pltriton.CompilerParams(), **kwargs
     )
+
+  def test_store_reshaped_ref(self):
+    with self.assertRaisesRegex(
+        AttributeError, "object has no attribute 'get_indexer_shape_static'"
+    ):
+      super().test_store_reshaped_ref()
 
   def test_array_indexing(self):
     x = jnp.arange(128, dtype=floatx)
@@ -342,6 +353,11 @@ class PallasTPUTest(PallasTest):
       self.skipTest("Pallas TPU is not available")
     super().setUp()
 
+  def test_store_reshaped_ref(self):
+    if not self.INTERPRET:
+      self.skipTest("Requires TPU sublane tiling (tested in tpu_pallas_test.py)")
+    super().test_store_reshaped_ref()
+
 
 class PallasMGPUTest(PallasTest):
 
@@ -367,6 +383,13 @@ class PallasMGPUTest(PallasTest):
   def skip_if_x64(self):
     if floatx == jnp.float64:
       self.skipTest("Mosaic GPU does not support float64.")
+
+  def test_store_reshaped_ref(self):
+    self.skipTest(
+      "Mosaic GPU layout inference does not support this reshape."
+    )
+    self.skip_if_x64()
+    super().test_store_reshaped_ref()
 
   def test_add_one(self):
     self.skip_if_x64()
@@ -397,57 +420,7 @@ class PallasCallTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
     self.enter_context(mgpu.core.artificial_shared_memory_limit(jtu._SMEM_SIZE_BOUND_FOR_TESTS))
-
-  @jtu.ignore_warning(
-      category=DeprecationWarning,
-      message="Using .*pl.pallas_call.* for Mosaic GPU kernels is "
-      "deprecated",
-  )
-  def test_pallas_call_infers_backend_from_compiler_params(self):
-    if not jtu.test_device_matches(["gpu"]):
-      self.skipTest("Only works on GPU.")
-    if jtu.test_device_matches(["rocm"]):
-      self.skipTest("Mosaic GPU is not supported on ROCm.")
-    if not jtu.is_cuda_compute_capability_at_least("9.0"):
-      self.skipTest("Only works on a GPU with capability >= sm90")
-
-    triton_params = pltriton.CompilerParams(
-        num_warps=2,
-        num_stages=1,
-    )
-    mosaic_gpu_params = plmgpu.CompilerParams()
-
-    pallas_call = functools.partial(
-        pl.pallas_call,
-        grid=(1,),
-        out_shape=jax.ShapeDtypeStruct((128, 64), jnp.float32),
-    )
-    def add_one(x_ref, o_ref):
-      x = x_ref[:]
-      # Use a Pallas/Mosaic GPU-specific primitive to trigger a failure when
-      # using a different backend.
-      plmgpu.print_layout("x: {}", x)
-      o_ref[:] = x + 1
-
-    add_one_mgpu = pallas_call(add_one, compiler_params=mosaic_gpu_params)
-    add_one_triton = pallas_call(add_one, compiler_params=triton_params)
-
-    x = jnp.ones((128, 64), jnp.float32)
-
-    # Running on the Mosaic GPU backend should be fine.
-    self.assertArraysEqual(add_one_mgpu(x), x + 1)
-
-    # But Triton doesn't have the required primitive, so it should fail to
-    # lower.
-    with self.assertRaisesRegex(
-        NotImplementedError,
-        "Unimplemented primitive in Pallas Triton lowering: print_layout."
-    ):
-      add_one_triton(x)
 
   @jtu.skip_on_devices("gpu")  # TODO: RET_CHECK failure
   def test_block_spec_with_padding(self):
@@ -691,7 +664,8 @@ class PallasCallTest(ptu.PallasTest):
     out = matmul_block_spec(x, y, bm=bm, bn=bn, bk=bk,
                             interpret=self.INTERPRET)
     expected = jnp.matmul(
-            x, y, preferred_element_type=jnp.float32).astype(dtype)
+        x, y, preferred_element_type=jnp.float32, precision="high"
+    ).astype(dtype)
     np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
 
   def test_unused_ref(self):
@@ -949,12 +923,63 @@ class PallasCallInterpretTest(PallasCallTest):
   INTERPRET = True
 
 
+class PallasCallDCETest(jtu.JaxTestCase):
+
+  def add_one(self, x, compiler_params=None):
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.
+    return pl.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        interpret=True, compiler_params=compiler_params)(x)
+
+  def num_pallas_calls_after_dce(self, f, *args):
+    jaxpr = jax.make_jaxpr(f)(*args).jaxpr
+    dced, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars))
+    return sum(e.primitive.name == "pallas_call" for e in dced.eqns)
+
+  def test_dce_unused_outputs(self):
+    x = jnp.ones(8)
+    self.assertEqual(
+        self.num_pallas_calls_after_dce(lambda x: (self.add_one(x), x)[1], x), 0)
+    self.assertEqual(self.num_pallas_calls_after_dce(self.add_one, x), 1)
+
+  def test_dce_has_side_effects(self):
+    if not pltpu:
+      self.skipTest("Pallas TPU is not available")
+    x = jnp.ones(8)
+    for has_side_effects, expected in [
+        (False, 0), (True, 1),
+        (pltpu.SideEffectType.PURE, 0),
+        (pltpu.SideEffectType.DATAFLOW_SIDE_EFFECTING, 0),
+        (pltpu.SideEffectType.SIDE_EFFECTING, 1)]:
+      with self.subTest(has_side_effects=has_side_effects):
+        params = pltpu.CompilerParams(has_side_effects=has_side_effects)
+        f = lambda x: (self.add_one(x, compiler_params=params), x)[1]
+        self.assertEqual(self.num_pallas_calls_after_dce(f, x), expected)
+
+  @parameterized.parameters([False, True])
+  def test_dce_closed_over_ref(self, read_ref):
+    def f(x):
+      r = jax.new_ref(jnp.zeros_like(x))
+      def kernel(x_ref, o_ref):
+        r[...] = x_ref[...] * 2.
+        o_ref[...] = x_ref[...]
+      pl.pallas_call(kernel, out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+                     interpret=True)(x)
+      return r[...] if read_ref else x
+    jaxpr = jax.make_jaxpr(f)(jnp.ones(8)).jaxpr
+    eqn, = [e for e in jaxpr.eqns if e.primitive.name == "pallas_call"]
+    self.assertIsInstance(eqn.invars[0].aval, jax.ref.AbstractRef)
+    dced, _ = pe.dce_jaxpr(jaxpr, [True])
+    if read_ref:
+      self.assertIn("pallas_call", [e.primitive.name for e in dced.eqns])
+    else:
+      self.assertEmpty(dced.eqns)
+
+
 class PallasCallElementIndexingTest(ptu.PallasTest):
   def setUp(self):
     super().setUp()
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_block_spec_element(self):
     def show_program_ids(
@@ -1124,9 +1149,6 @@ class ApiErrorTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_pallas_call_kernel_args_mismatch(self):
     a = np.arange(256, dtype=np.int32)
@@ -1383,15 +1405,12 @@ class PallasCallInputOutputAliasingTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_vector_input_output_aliasing(self):
     # Input needs to be big so it doesn't fit in VMEM
     size = 1024
-    if jtu.is_device_cuda():
-      # Reduce the size on CUDA to avoid OOM.
+    if jtu.is_device_cuda() or jtu.is_device_rocm():
+      # Reduce the size on GPU to avoid OOM.
       size = 256
     x = jnp.ones((32, size, size))
     expected = x + 1
@@ -1496,9 +1515,6 @@ class PallasControlFlowTest(ptu.PallasTest):
     super().setUp()
     if self.INTERPRET:
       self.skipTest("Control flow not supported in interpret mode yet.")
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_loop_with_unused_i_no_int(self):
     @functools.partial(
@@ -2374,9 +2390,6 @@ class PallasCallAutodifferentiationTest(ptu.PallasTest):
     # TODO: improve tolerance setting
     self.tol = 1e-5
     self.grad_tol = jtu.default_gradient_tolerance[np.dtype(jnp.float32)]
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   @parameterized.named_parameters(*AD_TEST_CASES)
   def test_jvp(self, impl):
@@ -2604,9 +2617,6 @@ class PallasCallNamedGridTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_named_grid(self):
 
@@ -2850,9 +2860,6 @@ class PallasHiJaxTest(ptu.PallasTest):
 
   def setUp(self):
     super().setUp()
-    # TODO(bchetioui): Remove this once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_pass_weird_tuple_into_pallas_call(self):
 
@@ -2907,6 +2914,112 @@ class PallasHiJaxTest(ptu.PallasTest):
     os = f(xs)
     self.assertArraysEqual(os.x, xs.x)
     self.assertArraysEqual(os.s, xs.s)
+
+
+class PallasDeviceIdTest(jtu.JaxTestCase):
+
+  def test_mixed_str_and_tuple_keys_in_device_id(self):
+    from jax._src.pallas import primitives as pallas_primitives
+    from jax._src.pallas import utils as pallas_utils
+    from jax._src.pallas.mosaic.interpret import utils as interpret_utils
+
+    raw_device_id = {("x", "y"): 3, "core": 1}
+    canonical = pallas_primitives.canonicalize_device_id(raw_device_id)
+    self.assertEqual(canonical, {("x", "y"): 3, ("core",): 1})
+    leaves, treedef = jax.tree.flatten(canonical)
+    reconstructed = jax.tree.unflatten(treedef, leaves)
+
+    mesh_info = pallas_utils.MeshInfo(
+        mesh_shape=(2, 2), axis_names=("x", "y"), mesh_strides=(2, 1)
+    )
+    mesh_coords, non_mesh_axes = pallas_primitives._device_id_dict_to_mesh(
+        mesh_info,
+        reconstructed,
+        lambda axis: 0,
+    )
+    self.assertEqual(mesh_coords, (1, 1))
+    self.assertEqual(non_mesh_axes, {"core": 1})
+
+    interpret_coords, interpret_non_mesh = (
+        interpret_utils._device_id_dict_to_mesh(
+            reconstructed,
+            {"x": 2, "y": 2},
+            {"x": 0, "y": 0},
+        )
+    )
+    self.assertEqual(interpret_coords, (1, 1))
+    self.assertEqual(interpret_non_mesh, {"core": 1})
+
+  def test_core_barrier_x64(self):
+    if not pltpu:
+      self.skipTest("Pallas TPU is not available")
+    if not jtu.test_device_matches(["cpu"]):
+      self.skipTest("TPU interpret mode for pl.kernel only runs on CPU")
+    with jax.enable_x64(True):
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name="core", num_cores=2),
+          scratch_types=[pltpu.SemaphoreType.REGULAR],
+          interpret=pltpu.InterpretParams(),
+      )
+      def kernel(sem):
+        pltpu.core_barrier(sem, core_axis_name="core")
+
+      kernel()
+
+  def test_core_barrier_multi_axis_grid_lowering(self):
+    if not pltpu:
+      self.skipTest("Pallas TPU is not available")
+    with jax.enable_x64(False):
+      def kernel(o_ref, sem):
+        pltpu.core_barrier(sem, core_axis_name="core")
+        o_ref[...] = jnp.zeros_like(o_ref)
+
+      f = jax.jit(pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=0,
+              grid=(("core", 2), ("i", 2)),
+              scratch_shapes=[pltpu.SemaphoreType.REGULAR],
+          ),
+          compiler_params=pltpu.CompilerParams(
+              dimension_semantics=("parallel", "arbitrary")
+          ),
+      ))
+      abstract_mesh = jax.sharding.AbstractMesh(
+          (1,), ("x",), (jax.sharding.AxisType.Explicit,),
+          abstract_device=jax.sharding.AbstractDevice("TPU v5p", 2, "tpu"),
+      )
+      with jax.sharding.use_abstract_mesh(abstract_mesh):
+        f.trace().lower()
+
+  def test_interpret_non_core_grid_axis_in_device_id_rejected(self):
+    if not pltpu:
+      self.skipTest("Pallas TPU is not available")
+
+    def kernel(o_ref, sem):
+      pl.semaphore_signal(sem, 1, device_id={"i": jnp.int32(0)})
+      pl.semaphore_wait(sem, 1)
+      o_ref[...] = jnp.zeros_like(o_ref)
+
+    call = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            grid=(("i", 1),),
+            scratch_shapes=[pltpu.SemaphoreType.REGULAR],
+        ),
+        interpret=pltpu.InterpretParams(),
+    )
+    with self.assertRaises((ValueError, NotImplementedError)):
+      call()
+
+  def test_canonicalize_device_id_duplicate_axis_key(self):
+    from jax._src.pallas import primitives as pallas_primitives
+
+    with self.assertRaises(ValueError):
+      pallas_primitives.canonicalize_device_id({"x": 0, ("x",): 1})
 
 
 if __name__ == "__main__":

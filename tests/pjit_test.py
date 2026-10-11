@@ -66,7 +66,8 @@ from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType, get_abstract_mesh
 from jax._src.interpreters import pxla
-from jax._src.lib import xla_client as xc, ifrt_version
+from jax._src.lib import xla_client as xc
+from jax._src.lib import ifrt_version, jaxlib_extension_version
 from jax._src.util import curry, unzip2
 from jax._src import tree_util
 
@@ -2772,12 +2773,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(f)(3)
     self.assertIn('jit', str(jaxpr))
 
-    @partial(pjit, inline=True)
+    @partial(pjit, inline=jax.Inline.JAX_EARLY)
     def g(x):
       return x * 2
 
     jaxpr = jax.make_jaxpr(g)(3)
     self.assertNotIn('jit', str(jaxpr))
+
+    # inline=True means JAX_LATE, which is preserved in make_jaxpr
+    @partial(pjit, inline=True)
+    def h(x):
+      return x * 2
+
+    jaxpr = jax.make_jaxpr(h)(3)
+    self.assertIn('jit', str(jaxpr))
 
   def test_pjit_inline_literal(self):
     # https://github.com/jax-ml/jax/issues/27545
@@ -7671,9 +7680,22 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out_mesh = jax.sharding.get_mesh()
       self.assertEqual(out_mesh, mesh)
     finally:
-      config.abstract_mesh_context_manager.set_local(
+      mesh_lib.abstract_mesh_context_manager.set_local(
           mesh_lib.empty_abstract_mesh)
-      config.device_context.set_local(None)
+      mesh_lib.device_context.set_local(mesh_lib.empty_concrete_mesh)
+
+  def test_trace_cache_hit_default_abs_mesh_ctx(self):
+    x = jnp.arange(4.0)
+
+    @jax.jit
+    def f(x):
+      return x
+
+    with jtu.count_jit_tracing_cache_miss() as count:
+      f(x)
+      with jax.sharding.use_abstract_mesh(mesh_lib.empty_abstract_mesh):
+        f(x)
+    self.assertEqual(count(), 1)
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_auto_axes_late_bind(self, mesh):
@@ -7729,6 +7751,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = f(key)
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+
+  def test_fold_in_auto_different_meshes(self):
+    mesh1 = jtu.create_mesh((2,), ('x',))
+    mesh2 = jtu.create_mesh((2,), ('y',))
+    key = jax.device_put(jax.random.key(72), NamedSharding(mesh1, P()))
+    data = jax.device_put(1, NamedSharding(mesh2, P()))
+
+    @jax.jit
+    def f(key, data):
+      return jax.random.fold_in(key, data)
+
+    f(key, data)  # doesn't crash
 
   @parameterized.named_parameters(
       ("bits", partial(jax.random.bits, shape=(8, 12)), P('x', 'y')),
@@ -8319,8 +8353,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     expected_out = np.einsum("d,dh,d->h", n1, n2, n3)
     self.assertArraysEqual(reshard_out, expected_out)
 
+  @parameterized.named_parameters(
+      ('add', 'add', lax.add),
+      ('sub', 'sub', lax.sub),
+  )
   @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
-  def test_add_unreduced_error(self, mesh):
+  def test_add_unreduced_error(self, name, op, mesh):
     np_inp = np.arange(16).reshape(8, 2)
     x = jax.device_put(np_inp, P('x', 'y'))
     y = jax.device_put(np_inp.T, P('y', None))
@@ -8331,18 +8369,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     def f(x, y, a, b):
       m1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced={'y'}))
       m2 = jnp.einsum('xy,yz->xz', a, b, out_sharding=P('x', unreduced={'z'}))
-      return m1 + m2
+      return op(m1, m2)
 
     with self.assertRaisesRegex(
         core.ShardingTypeError,
-        "lhs and rhs to `add` must be unreduced along the same mesh axes"):
+        f"lhs and rhs to `{name}` must be unreduced along the same mesh axes"):
       f.trace(x, y, a, b)
 
     @jax.jit
     def g(x, y):
       m1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced={'y'}))
       m2 = jnp.einsum('xy,yz->xz', a, b, out_sharding=P('x'))
-      return m1 + m2
+      return op(m1, m2)
 
     with self.assertRaisesRegex(
         core.ShardingTypeError, "lhs is unreduced while rhs is not"):
@@ -9528,14 +9566,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     step(ws, xs)  # doesn't crash
 
     compiled_text = step.lower(ws, xs).compile().as_text()
-    if jtu.test_device_matches(['gpu']):
-      if ifrt_version >= 66:
-        self.assertEqual(compiled_text.count('all-reduce('), 1)
-      else:
-        self.assertEqual(compiled_text.count('all-reduce-start('), 1)
-        self.assertEqual(compiled_text.count('all-reduce-done('), 1)
-    else:
-      self.assertEqual(compiled_text.count('all-reduce('), 1)
+    self.assertEqual(compiled_text.count('all-reduce('), 1)
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_vmap_mapped_input_sharding_error(self, mesh):
@@ -9619,14 +9650,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     step(stacked_ws, xs)  # doesn't crash
 
     compiled_text = step.lower(stacked_ws, xs).compile().as_text()
-    if jtu.test_device_matches(['gpu']):
-      if ifrt_version >= 66:
-        self.assertEqual(compiled_text.count('all-reduce('), 1)
-      else:
-        self.assertEqual(compiled_text.count('all-reduce-start('), 1)
-        self.assertEqual(compiled_text.count('all-reduce-done('), 1)
-    else:
-      self.assertEqual(compiled_text.count('all-reduce('), 1)
+    self.assertEqual(compiled_text.count('all-reduce('), 1)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_jacrev_sharded_broadcast(self, mesh):
@@ -9775,6 +9799,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       ('mul', jax.lax.mul),
       ('add', jax.lax.add),
+      ('sub', jax.lax.sub),
   )
   @jtu.with_explicit_mesh((2,), 'x')
   def test_both_inputs_reduced(self, func, mesh):
@@ -9798,9 +9823,55 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(reshard(out1, P()), ex_out1)
     self.assertArraysEqual(reshard(out2, P()), ex_out2)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_neg_and_sub_unreduced(self, mesh):
+    np_x = np.arange(16.).reshape(8, 2)
+    np_y = np.arange(16., 32.).reshape(2, 8)
+    x = jax.device_put(np_x, P('x', 'y'))
+    y = jax.device_put(np_y, P('y', None))
+    u_spec = P('x', None, unreduced={'y'})
+
+    @jax.jit
+    def f(x, y):
+      u1 = jnp.einsum('xy,yz->xz', x, y, out_sharding=u_spec)
+      u2 = -u1
+      self.assertEqual(u2.aval.sharding.spec, u_spec)
+      u3 = u1 - u2
+      self.assertEqual(u3.aval.sharding.spec, u_spec)
+      return u2, u3
+
+    u2, u3 = f(x, y)
+    self.assertEqual(u2.sharding, NamedSharding(mesh, u_spec))
+    self.assertEqual(u3.sharding, NamedSharding(mesh, u_spec))
+    expected = jnp.dot(x, y, out_sharding=P('x', None))
+    self.assertArraysEqual(reshard(u2, P('x', None)), -expected)
+    self.assertArraysEqual(reshard(u3, P('x', None)), expected * 2)
+
+    @jax.jit
+    def loss(x, y):
+      _, u3 = f(x, y)
+      return reshard(u3, P('x', None)).sum()
+
+    gx, gy = jax.jit(jax.grad(loss, argnums=(0, 1)))(x, y)
+    ex_gx, ex_gy = jax.jit(
+        jax.grad(lambda a, b: ((a @ b) * 2).sum(), argnums=(0, 1))
+    )(np_x, np_y)
+    self.assertArraysAllClose(gx, ex_gx)
+    self.assertArraysAllClose(gy, ex_gy)
+
+    r_arr = jax.device_put(np.arange(8.), P(None, reduced={'x'}))
+    r_neg = jax.jit(lambda a: -a)(r_arr)
+    self.assertEqual(r_neg.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
+    r_grad = jax.jit(jax.grad(lambda a: (-a).sum()))(r_arr)
+    self.assertEqual(r_grad.sharding,
+                     NamedSharding(mesh, P(None, unreduced={'x'})))
+    self.assertArraysEqual(reshard(r_grad, P()), -np.ones((8,)),
+                           check_dtypes=False)
+
   @parameterized.named_parameters(
       ('mul', jax.lax.mul),
       ('add', jax.lax.add),
+      ('sub', jax.lax.sub),
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_one_input_reduced_another_replicated(self, func, mesh):
@@ -9897,6 +9968,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       ('mul', jax.lax.mul),
       ('add', jax.lax.add),
+      ('sub', jax.lax.sub),
   )
   @jtu.with_explicit_mesh((2,), 'x')
   def test_one_input_sharded_another_reduced(self, func, mesh):
@@ -11531,11 +11603,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2,), 'x')
   def test_reduce_max_min_unreduced_basic(self, lax_op, jnp_op, p_op, u_kind,
                                           unreduced_vals, mesh):
-    if ifrt_version < 60:
-      self.skipTest('Requires ifrt_version >= 60')
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest("Requires libtpu 0.0.45 or newer.")
-
     np_inp = np.arange(8.).reshape(4, 2)
     arr = jax.device_put(np_inp, P('x', None))
     out_spec = P(None, unreduced={'x'}, unreduced_kind=u_kind)
@@ -11584,11 +11651,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   ])
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_max_min_unreduced_complex(self, lax_op, jnp_op, u_kind, mesh):
-    if ifrt_version < 60:
-      self.skipTest('Requires ifrt_version >= 60')
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest("Requires libtpu 0.0.45 or newer.")
-
     np_inp = np.arange(16).reshape(4, 2, 2)
     arr = jax.device_put(np_inp, P('x', 'y', None))
     out_spec = P(None, unreduced={'x'}, unreduced_kind=u_kind)
@@ -11609,11 +11671,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_max_unreduced_partial_reduction(self, mesh):
-    if ifrt_version < 60:
-      self.skipTest('Requires ifrt_version >= 60')
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest("Requires libtpu 0.0.45 or newer.")
-
     arr = jax.device_put(np.arange(8).reshape(4, 2), P('x', 'y'))
 
     @jax.jit
@@ -11690,11 +11747,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_reduce_max_unreduced_reduce_scatter(self, mesh):
-    if ifrt_version < 60:
-      self.skipTest('Requires ifrt_version >= 60')
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest("Requires libtpu 0.0.45 or newer.")
-
     arr = jax.device_put(np.arange(8).reshape(4, 2), P('x'))
 
     @jax.jit
@@ -11854,6 +11906,51 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, "The denominator cannot be unreduced passed to `div`"):
       f(arr1, arr1)
+
+  @config.numpy_dtype_promotion('standard')
+  @jtu.with_explicit_mesh((2, 2, 2), ('replica', 'data', 'seq'))
+  def test_histogram_flattened_multi_axis_sharding_error(self, mesh):
+    positions = jax.device_put(
+        jnp.broadcast_to(jnp.arange(16, dtype=jnp.int32), (8, 16)),
+        P(('replica', 'data'), 'seq'))
+
+    mask = jax.device_put(jnp.ones((8, 16), dtype=jnp.bool_),
+                          P(('replica', 'data'), 'seq'))
+
+    @jax.jit
+    def f(positions, mask):
+      flat = positions.flatten()
+      self.assertEqual(flat.aval.sharding.spec, P(('replica', 'data', 'seq')))
+      return jnp.histogram(flat, bins=4, range=(0, 16),
+                           weights=mask.flatten(), out_sharding=P())[0]
+
+    f(positions, mask)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_jnp_zeros_out_sharding_partial_manual_unreduced_reduced(self, mesh):
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Requires libtpu >= 0.0.50')
+    if jaxlib_extension_version < 500:
+      self.skipTest('Requires jaxlib_extension_version >= 500')
+    if ifrt_version < 72:
+      self.skipTest('Requires ifrt_version >= 72')
+
+    @jax.jit
+    @jax.shard_map(in_specs=(), out_specs=P(), axis_names={'x'})
+    def f():
+      u = jnp.zeros((4, 2), out_sharding=P(unreduced={'y'}))
+      r = jnp.zeros((4, 2), out_sharding=P(reduced={'y'}))
+      self.assertEqual(u.aval.sharding.spec, P(None, None, unreduced={'y'}))
+      self.assertEqual(r.aval.sharding.spec, P(None, None, reduced={'y'}))
+      return u, r
+
+    u, r = f()
+    self.assertEqual(u.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'y'})))
+    self.assertEqual(r.sharding,
+                     NamedSharding(mesh, P(None, None, reduced={'y'})))
+    self.assertArraysEqual(reshard(u, P()), np.zeros((4, 2)), check_dtypes=False)
+    self.assertArraysEqual(r, np.zeros((4, 2)), check_dtypes=False)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
@@ -12093,6 +12190,16 @@ class PJitErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex((RuntimeError, ValueError),
                                 '.*(Array|buffer|Buffer) has been deleted.*'):
       x.delete()
+      _ = f(x)
+
+  def test_compiled_with_deleted_input(self):
+    shape = (8,)
+    inp_data = np.arange(math.prod(shape)).reshape(shape)
+    x = jax.device_put(inp_data)
+    f = jax.jit(lambda x: x + 1).lower(x).compile()
+    x.delete()
+    with self.assertRaisesRegex((RuntimeError, ValueError),
+                                '.*(Array|buffer|Buffer) has been deleted.*'):
       _ = f(x)
 
   def test_aot_error_on_dced_avals_mismatch(self):

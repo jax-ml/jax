@@ -19,7 +19,7 @@ import dataclasses
 from functools import partial
 import math
 import operator
-from typing import Any, Protocol, TypeVar
+from typing import Any, Protocol
 
 from jax._src import ad_util
 from jax._src import api_util
@@ -38,7 +38,9 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.state import indexing
-from jax._src.state.primitives import addupdate_p, get_p, swap_p, pin, unpin
+from jax._src.state.primitives import (
+    addupdate_p, get_p, swap_p, pin, unpin, with_memory_space_constraint
+)
 from jax._src.state.types import (
     AbstractLinVal, AbstractRef, BitcastTransform, RefEffect, ReshapeTransform,
     get_ref_aval_from_value, uninitialized,)
@@ -66,25 +68,13 @@ def discharged_aval(
     discharge: Whether to discharge `AbstractRef`s into their inner array
       values. Has no effect on `ShapedArray`s.
     strip_memory_space: Whether to strip non-default memory spaces on
-      `ShapedArray`s (and inner arrays of discharged `AbstractRef`s) to
-      `core.MemorySpace.Device`. Has no effect on `AbstractRef`s if
-      `discharge=False`.
+      inner arrays of discharged `AbstractRef`s to `core.MemorySpace.Device`.
+      Has no effect on `AbstractRef`s if `discharge=False`.
   """
-  if not isinstance(aval, AbstractRef):
-    if (
-        strip_memory_space
-        and isinstance(aval, core.ShapedArray)
-        and getattr(aval, "memory_space", None) is not None
-    ):
-      return aval.update(memory_space=core.MemorySpace.Device)
+  if not isinstance(aval, AbstractRef) or not discharge:
     return aval
 
-  if not discharge:
-    return aval
-
-  inner = discharged_aval(
-      aval.inner_aval, discharge=False, strip_memory_space=strip_memory_space
-  )
+  inner = aval.inner_aval
   if isinstance(inner, core.ShapedArray) and aval.memory_space is not None:
     if strip_memory_space:
       return inner.update(memory_space=core.MemorySpace.Device)
@@ -97,7 +87,7 @@ def discharge_state(
     *,
     should_discharge: bool | Sequence[bool] = True,
     lower: bool = True,
-    strip_memory_space: bool = True,
+    strip_memory_space: bool = False,
 ) -> core.Jaxpr:
   """Converts a stateful jaxpr into a pure one.
 
@@ -210,6 +200,36 @@ def register_discharge_rule(prim: core.Primitive):
   return register
 
 
+_neutral_memory_spaces: set[Any] = {
+    None,
+    core.MemorySpace.Device,
+    core.MemorySpace.Any,
+}
+
+def register_neutral_memory_space(ms):
+  _neutral_memory_spaces.add(ms)
+
+def is_neutral_memory_space(ms) -> bool:
+  return ms in _neutral_memory_spaces
+
+def unconstrain(
+    x, ms, strip: bool, *, neutral_ms: Sequence[Any] = ()
+):
+  if not isinstance(core.typeof(x), core.ShapedArray):
+    return x
+  if strip or ms in _neutral_memory_spaces or ms in neutral_ms:
+    return x
+  return with_memory_space_constraint(x, core.MemorySpace.Device)
+
+def constrain(
+    x, ms, strip: bool, *, neutral_ms: Sequence[Any] = ()
+):
+  if not isinstance(core.typeof(x), core.ShapedArray):
+    return x
+  if strip or ms in _neutral_memory_spaces or ms in neutral_ms:
+    return x
+  return with_memory_space_constraint(x, ms)
+
 def _eval_jaxpr_discharge_state(
     jaxpr: core.Jaxpr, should_discharge: Sequence[bool], consts: Sequence[Any],
     strip_memory_space: bool, *args: Any):
@@ -234,6 +254,9 @@ def _eval_jaxpr_discharge_state(
         ans = env.read(invar)
         if eqn.params['pin']:
           ans = pin(ans)
+        else:
+          ms = getattr(outvar.aval, "memory_space", None)
+          ans = constrain(ans, ms, strip_memory_space)
         refs_to_discharge.add(id(outvar.aval))
       elif eqn.primitive is core.empty_ref_p:
         [], [outvar] = eqn.invars, eqn.outvars
@@ -246,6 +269,9 @@ def _eval_jaxpr_discharge_state(
           # TODO(mattjj,yashkatariya): switch to create_linear once the
           # CreateBuffer custom call is implemented in the runtime
           ans = pin(ans)
+        else:
+          ms = getattr(outvar.aval, "memory_space", None)
+          ans = constrain(ans, ms, strip_memory_space)
         refs_to_discharge.add(id(outvar.aval))
       elif eqn.primitive is core.free_ref_p:
         [invar], [] = eqn.invars, eqn.outvars
@@ -262,6 +288,9 @@ def _eval_jaxpr_discharge_state(
         # unpinned.
         if isinstance(core.typeof(ans), AbstractLinVal):
           ans = unpin(ans)
+        else:
+          ms = getattr(invar.aval, "memory_space", None)
+          ans = unconstrain(ans, ms, strip_memory_space)
         refs_to_discharge.remove(id(invar.aval))
       elif any(should_discharge) or core.internal_mutable_array_effect in eqn.effects:
         if eqn.primitive in _discharge_rules:
@@ -275,8 +304,7 @@ def _eval_jaxpr_discharge_state(
         ctx = DischargeContext(
             in_avals, out_avals, should_discharge, strip_memory_space
         )
-        new_invals, ans = rule(
-            ctx, *invals, **eqn.params)
+        new_invals, ans = rule(ctx, *invals, **eqn.params)
         for invar, should, new_inval in zip(eqn.invars, should_discharge, new_invals):
           if new_inval is not None:
             if not should:
@@ -470,7 +498,8 @@ def _convert_to_gather_arrays(indexer: indexing.NDIndexer) -> tuple[Array, ...]:
 def _get_discharge_rule(
     ctx: DischargeContext, x, *idx,
     tree):
-  del ctx
+  ms = getattr(ctx.in_avals[0], 'memory_space', None)
+  x = unconstrain(x, ms, ctx.strip_memory_space)
   y = _get_discharge(x, idx, tree)
   return (None,) * (len(idx) + 1), y
 
@@ -511,12 +540,14 @@ def transform_array(x, transforms):
       case BitcastTransform():
         result = bitcast(result, transform.dtype)
       case ReshapeTransform():
-        result = result.reshape(transform.shape)
+        result = lax.reshape(result, transform.shape)
       case _:
-        raise NotImplementedError(f"Unsupported transform: {transform}")
+        result = transform.transform_array(result)
   return result
 
 def transform_swap_array(x, transforms, val):
+  from jax._src.numpy import lax_numpy  # pyrefly: ignore[missing-import]
+
   if transforms is None:
     transforms = []
 
@@ -555,11 +586,14 @@ def transform_swap_array(x, transforms, val):
           # was indexed into.
         intermediates.append(new_val)
       case BitcastTransform():
-        intermediates.append(bitcast(new_val, transform.dtype))
+        new_val = bitcast(new_val, transform.dtype)
+        intermediates.append(new_val)
       case ReshapeTransform():
-        intermediates.append(new_val.reshape(transform.shape))
+        new_val = lax.reshape(new_val, transform.shape)
+        intermediates.append(new_val)
       case _:
-        raise NotImplementedError(f"Unsupported transform: {transform}")
+        new_val = transform.transform_array(new_val)
+        intermediates.append(new_val)
 
   # Will hold the final state of the `x` after `val` has been written to the
   # transformed location, and will have the same shape as `x`.
@@ -583,12 +617,19 @@ def transform_swap_array(x, transforms, val):
               intermediate, indexer, transpose_order
           )
         arrays = _convert_to_gather_arrays(indexer)
-        new_x = intermediate.at[arrays].set(new_x)
+        # `asarray` ensures `intermediate` has an `.at` attribute; it may be a
+        # plain value (e.g. after a reshape/bitcast reverse) rather than a
+        # jax array.
+        new_x = lax_numpy.asarray(intermediate).at[arrays].set(new_x)
         if transpose_order is not None:
           transpose_order_inversed = np.argsort(transpose_order)
           new_x = new_x.transpose(transpose_order_inversed)
+    elif isinstance(transform, ReshapeTransform):
+      new_x = lax.reshape(new_x, np.shape(intermediate))
+    elif isinstance(transform, BitcastTransform):
+      new_x = bitcast(new_x, intermediate.dtype)
     else:
-      raise NotImplementedError(f"Unsupported transform: {transform}")
+      new_x = transform.undo(intermediate).transform_array(new_x)
 
   return new_val, new_x
 
@@ -601,8 +642,10 @@ def _get_discharge(x, idx, tree):
 def _swap_discharge_rule(
     ctx: DischargeContext, x, val, *idx,
     tree):
-  del ctx
+  ms = getattr(ctx.in_avals[0], 'memory_space', None)
+  x = unconstrain(x, ms, ctx.strip_memory_space)
   z, x_new = _swap_discharge(x, val, idx, tree)
+  x_new = constrain(x_new, ms, ctx.strip_memory_space)
   return (x_new, None) + (None,) * len(idx), z
 
 def _swap_discharge(x, val, idx, tree):
@@ -613,8 +656,10 @@ def _swap_discharge(x, val, idx, tree):
 def _addupdate_discharge_rule(
     ctx: DischargeContext, x, val, *idx,
     tree):
-  del ctx
+  ms = getattr(ctx.in_avals[0], 'memory_space', None)
+  x = unconstrain(x, ms, ctx.strip_memory_space)
   ans = _addupdate_discharge(x, val, idx, tree)
+  ans = constrain(ans, ms, ctx.strip_memory_space)
   return (ans, None) + (None,) * len(idx), []
 
 @register_discharge_rule(lax.optimization_barrier_p)
@@ -628,35 +673,77 @@ def _optimization_barrier_discharge_rule(
   return new_invals, [o for o, r in zip(outs, is_ref) if not r]
 
 def _addupdate_discharge(x, val, idx, tree):
-  transforms = tree_util.tree_unflatten(tree, idx)
-  if not transforms:
+  from jax._src.numpy import lax_numpy  # pyrefly: ignore[missing-import]
+
+  transforms = list(tree_util.tree_unflatten(tree, idx))
+  if any(isinstance(t, BitcastTransform) for t in transforms):
+    raise NotImplementedError(
+        "`addupdate` (`+=`) is not supported on bitcast views. Use explicit"
+        " read-modify-write (`ref.bitcast(...)[...] = ...`) or `.swap(...)`"
+        " instead."
+    )
+
+  for t in transforms:
+    if not isinstance(t, (ReshapeTransform, indexing.NDIndexer)):
+      raise NotImplementedError(
+          f"Unsupported transform for `addupdate`: {t}"
+      )
+
+  indexer_indices = [
+      i for i, t in enumerate(transforms) if isinstance(t, indexing.NDIndexer)
+  ]
+  if len(indexer_indices) > 1:
+    raise NotImplementedError(
+        f"Multiple indexers are not supported for `addupdate`, got {transforms}."
+    )
+
+  if not indexer_indices:
+    if transforms:
+      val = lax_numpy.broadcast_to(val, transforms[-1].shape)
+      val = lax.reshape(val, x.shape)
     return x + val
-  if len(transforms) > 1:
-    raise NotImplementedError("Only single indexer is supported.")
-  indexer = transforms[0]
+
+  (indexer_idx,) = indexer_indices
+  indexer: indexing.NDIndexer = transforms[indexer_idx]
+  leading_reshapes = transforms[:indexer_idx]
+  trailing_reshapes = transforms[indexer_idx + 1 :]
+
+  # Reshape x to match the domain expected by the indexer.
+  x_reshaped = (
+      lax.reshape(x, leading_reshapes[-1].shape) if leading_reshapes else x
+  )
+
+  # Reshape val to match the slice shape produced by the indexer.
+  if trailing_reshapes:
+    val = lax_numpy.broadcast_to(val, trailing_reshapes[-1].shape)
+    val = lax.reshape(val, indexer.get_indexer_shape())
 
   if _is_trivial_indexer(indexer):
-    return x + val
-
-  # If everything in the indexer is a slice or ()-shaped, we can also
-  # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
-  # We need to squeeze out the 1-sized slices at the end.
-  if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
+    x_updated = x_reshaped + val
+  elif maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
     starts, sizes, squeeze_dims = maybe_slice
-    x_old = lax_slicing.dynamic_slice(x, starts, sizes)
+    x_old = lax_slicing.dynamic_slice(x_reshaped, starts, sizes)
     val = lax.expand_dims(val, squeeze_dims)
-    y = lax_slicing.dynamic_update_slice(x, x_old + val, starts)
-    return y
+    x_updated = lax_slicing.dynamic_update_slice(x_reshaped, x_old + val, starts)
+  else:
+    transpose_order = _maybe_transpose_before_gather(indexer)
+    if transpose_order is not None:
+      x_reshaped, indexer = _perform_transpose_before_gather(
+          x_reshaped, indexer, transpose_order
+      )
+    arrays = _convert_to_gather_arrays(indexer)
+    # `asarray` ensures `x_reshaped` has an `.at` attribute; it may be a plain
+    # value rather than a jax array.
+    x_updated = lax_numpy.asarray(x_reshaped).at[arrays].add(val)
+    if transpose_order is not None:
+      transpose_order_inversed = np.argsort(transpose_order)
+      x_updated = x_updated.transpose(transpose_order_inversed)
 
-  transpose_order = _maybe_transpose_before_gather(indexer)
-  if transpose_order is not None:
-    x, indexer = _perform_transpose_before_gather(x, indexer, transpose_order)
-  arrays = _convert_to_gather_arrays(indexer)
-  x = x.at[arrays].add(val)
-  if transpose_order is not None:
-    transpose_order_inversed = np.argsort(transpose_order)
-    x = x.transpose(transpose_order_inversed)
-  return x
+  # Invert leading reshapes back to original x shape.
+  if leading_reshapes:
+    x_updated = lax.reshape(x_updated, x.shape)
+
+  return x_updated
 
 
 @weakref_lru_cache
@@ -836,11 +923,10 @@ def _initial_style_jaxpr(fun: Callable,
   return jaxpr
 
 
-T = TypeVar('T')
-def run_state(f: Callable[..., None]) -> Callable[[T], T]:
+def run_state[T](f: Callable[..., None]) -> Callable[[T], T]:
   def wrapped(args):
     dbg = api_util.debug_info("run_state", f, (args,), {})
-    flat_args, in_tree = tree_util.tree_flatten(args)
+    flat_args, in_tree = tree_util.tracing_registry.flatten(args)
     ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
     # There may be some uninitialized values here in ref_args.
     jaxpr_ = initial_style_jaxpr(f, in_tree, ref_avals, dbg)
@@ -861,7 +947,7 @@ def run_state(f: Callable[..., None]) -> Callable[[T], T]:
 def run_state_reference(f: Callable[..., None]):
   def wrapped(args):
     dbg = api_util.debug_info("run_state", f, (args,), {})
-    flat_args, in_tree = tree_util.tree_flatten(args)
+    flat_args, in_tree = tree_util.tracing_registry.flatten(args)
     ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
     jaxpr_ = initial_style_jaxpr(f, in_tree, ref_avals, dbg)
     consts = jaxpr_.consts

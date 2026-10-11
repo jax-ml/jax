@@ -28,7 +28,7 @@ the numbers for yourself by running [our test file](https://github.com/jax-ml/ja
 | cuBLAS                          | 63.38%                 | 100.0%                  |
 | CUTLASS                         | 69.30%                 | 109.3%                  |
 
-The cuBLAS baseline is obtained by measuring the performace of `jax.dot`. The
+The cuBLAS baseline is obtained by measuring the performance of `jax.dot`. The
 CUTLASS performance is measured by taking the best result from the following
 `cutlass_profiler` invocation (excluding sparse matmuls):
 ```
@@ -544,7 +544,7 @@ def matmul4(a, b, config):
 
 The change is relatively simple. We utilize the {py:func}`plgpu.nd_loop <jax.experimental.pallas.mosaic_gpu.nd_loop>`
 helper to specify that our iteration space is `(m_iters, n_iters)`, but we also
-request that it should be split accross the cluster grid using the `collective_axes=`
+request that it should be split across the cluster grid using the `collective_axes=`
 argument.
 
 ```python

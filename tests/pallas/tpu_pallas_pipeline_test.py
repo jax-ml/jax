@@ -166,6 +166,24 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     x = jnp.arange(8 * 512).reshape(8, 512)
     np.testing.assert_allclose(kernel(x), x)
 
+  def test_hbm_block_spec_requires_hbm_source(self):
+    @functools.partial(
+        pl.pallas_call, out_shape=jax.ShapeDtypeStruct((8, 512), jnp.int32)
+    )
+    def kernel(o_ref):
+      pltpu.emit_pipeline(
+          pltpu.touch,
+          grid=(4,),
+          out_specs=pl.BlockSpec(
+              (8, 128), lambda i: (0, i), memory_space=pltpu.HBM
+          ),
+      )(o_ref)
+
+    with self.assertRaisesRegex(
+        ValueError, 'cannot request HBM block spec for a non-HBM source'
+    ):
+      kernel()
+
   def test_emit_pipeline_input_hbm_memory_space(self):
     def pipeline_body(x_ref, y_ref, z_ref, o_ref, scratch_ref):
       pltpu.sync_copy(y_ref, o_ref)
@@ -196,6 +214,66 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     z = jnp.arange(8 * 8 * 128, dtype=jnp.float32).reshape((8, 8, 128))
     out = kernel(x, y, z)
     np.testing.assert_allclose(out, x + y + 2 * z.reshape((8 * 8, 128)))
+
+  def test_emit_pipeline_filter_no_block_spec(self):
+    test_self = self
+    def pipeline_body(x_ref, y_ref, o_ref):
+      test_self.assertIsNone(y_ref)
+      o_ref[...] = x_ref[...] + 1
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 512), jnp.int32),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM),
+                  pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_hbm_ref, y_hbm_ref, o_hbm_ref):
+      pltpu.emit_pipeline(
+          pipeline_body,
+          grid=(4,),
+          in_specs=[pl.BlockSpec((8, 128), lambda i: (0, i)),
+                    pl.no_block_spec],
+          out_specs=pl.BlockSpec((8, 128), lambda i: (0, i)),
+      )(x_hbm_ref, y_hbm_ref, o_hbm_ref)
+
+    x = jnp.arange(8 * 512, dtype=jnp.int32).reshape(8, 512)
+    y = jnp.zeros_like(x)
+    out = kernel(x, y)
+    np.testing.assert_allclose(out, x + 1)
+
+  def test_emit_pipeline_with_allocations_filter_no_block_spec(self):
+    test_self = self
+    def pipeline_body(x_ref, y_ref, o_ref):
+      test_self.assertIsNone(y_ref)
+      o_ref[...] = x_ref[...] + 2
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 512), jnp.int32),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM),
+                  pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_hbm_ref, y_hbm_ref, o_hbm_ref):
+      pipeline, make_allocs = pltpu.emit_pipeline_with_allocations(
+          pipeline_body,
+          grid=(4,),
+          in_specs=[pl.BlockSpec((8, 128), lambda i: (0, i)),
+                    pl.no_block_spec],
+          out_specs=pl.BlockSpec((8, 128), lambda i: (0, i)),
+      )
+      @functools.partial(
+          pl.run_scoped, allocs=make_allocs(x_hbm_ref, y_hbm_ref, o_hbm_ref)
+      )
+      def _(allocs):
+        test_self.assertIsNone(allocs[1])
+        return pipeline(x_hbm_ref, y_hbm_ref, o_hbm_ref, allocations=allocs)
+
+    x = jnp.arange(8 * 512, dtype=jnp.int32).reshape(8, 512)
+    y = jnp.zeros_like(x)
+    out = kernel(x, y)
+    np.testing.assert_allclose(out, x + 2)
 
   def test_emit_pipeline_correct_dma_effects(self):
     def pipeline_body(x_ref, y_ref, o_ref, scratch_ref):
@@ -688,7 +766,6 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
       self.skipTest(
           'allocations are not yet supported by the emit_pipeline primitive.'
       )
-
     def pipeline_body(x_ref, o_ref):
       o_ref[...] = x_ref[...]
 
@@ -784,11 +861,6 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     np.testing.assert_allclose(out, x)
 
   def test_prefetched_input_unbound_error(self):
-    if config.use_emit_pipeline_primitive.value:
-      self.skipTest(
-          'allocations are not yet supported by the emit_pipeline primitive.'
-      )
-
     def pipeline_body(x_ref, o_ref):
       o_ref[...] = x_ref[...]
 
@@ -890,7 +962,7 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
 
   @parameterized.product(
       in_buffer_count=[2, 4],
-      out_buffer_count=[2],
+      out_buffer_count=[2, 3, 4],
   )
   def test_copy(self, in_buffer_count, out_buffer_count):
     x = jnp.reshape(jnp.arange(512 * 512), (512, 512))
@@ -918,10 +990,126 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
     result = fn(x)
     np.testing.assert_allclose(result, x)
 
+  def test_mixed_output_buffer_counts(self):
+    x = jnp.reshape(jnp.arange(512 * 512, dtype=jnp.float32), (512, 512))
+
+    @pl.kernel(
+        out_type=(jax.ShapeDtypeStruct.like(x), jax.ShapeDtypeStruct.like(x)),
+        mesh=pltpu.TensorCoreMesh(axis_name='core'),
+    )
+    def copy_kernel(x_hbm_ref, o1_hbm_ref, o2_hbm_ref):
+      def inner_kernel(x_ref, o1_ref, o2_ref):
+        o1_ref[...] = x_ref[...] + 1.0
+        o2_ref[...] = x_ref[...] + 2.0
+      pltpu.emit_pipeline(
+          inner_kernel,
+          grid=(4, 4),
+          core_axis_name='core',
+          dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL),
+          in_specs=[
+              pl.BlockSpec((128, 128), lambda i, j: (i, j),
+                pipeline_mode=pl.Buffered(buffer_count=2)),
+          ],
+          out_specs=[
+              pl.BlockSpec((128, 128), lambda i, j: (i, j),
+                pipeline_mode=pl.Buffered(buffer_count=2)),
+              pl.BlockSpec((128, 128), lambda i, j: (i, j),
+                pipeline_mode=pl.Buffered(buffer_count=4)),
+          ],
+      )(x_hbm_ref, o1_hbm_ref, o2_hbm_ref)
+
+    res1, res2 = copy_kernel(x)
+    np.testing.assert_allclose(res1, x + 1.0)
+    np.testing.assert_allclose(res2, x + 2.0)
+
+  def test_buffer_counts_come_from_the_allocations(self):
+    # The pipeline must take its lookahead depth from the allocations: the
+    # block specs are absent here, so deriving it from them would under-size
+    # the scheduler's grid index lookahead.
+    x = jnp.reshape(jnp.arange(512 * 512, dtype=jnp.float32), (512, 512))
+    spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    allocs = [
+        pltpu.BufferedRef.input(spec, jnp.float32, buffer_count=4),
+        pltpu.BufferedRef.output(spec, jnp.float32, buffer_count=4),
+    ]
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct.like(x),
+        mesh=pltpu.TensorCoreMesh(axis_name='core'),
+        scratch_types=allocs,
+    )
+    def add_kernel(x_hbm_ref, o_hbm_ref, x_bref, o_bref):
+      def inner_kernel(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + 1.0
+
+      pltpu.emit_pipeline(
+          inner_kernel,
+          grid=(4, 4),
+          core_axis_name='core',
+          dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL),
+      )(x_hbm_ref, o_hbm_ref, allocations=[x_bref, o_bref])
+
+    np.testing.assert_allclose(add_kernel(x), x + 1.0)
+
+  def test_output_copies_are_always_awaited(self):
+    # A single output buffer means the base BufferedRef writes back
+    # synchronously, but subclasses may still issue an async copy, so the
+    # pipeline must always give them the chance to wait on it.
+    copies, waits = [], []
+
+    @jax.tree_util.register_dataclass
+    @dataclasses.dataclass(frozen=True)
+    class CountingRef(pltpu.BufferedRef):
+
+      def copy_out(self, dst_ref, grid_indices):
+        copies.append(grid_indices)
+        super().copy_out(dst_ref, grid_indices)
+
+      def wait_out(self, dst_ref, grid_indices):
+        waits.append(grid_indices)
+        super().wait_out(dst_ref, grid_indices)
+
+    x = jnp.reshape(jnp.arange(512 * 512, dtype=jnp.float32), (512, 512))
+    spec = pl.BlockSpec((128, 128), lambda i, j, k: (i, j))
+    allocs = [
+        pltpu.BufferedRef.input(spec, jnp.float32),
+        # buffer_count=2 is (in=2, out=1), i.e. a synchronous writeback.
+        CountingRef.input_output(spec, jnp.float32, buffer_count=2),
+    ]
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct.like(x),
+        mesh=pltpu.TensorCoreMesh(axis_name='core'),
+        scratch_types=allocs,
+    )
+    def add_kernel(x_hbm_ref, o_hbm_ref, x_bref, o_bref):
+      # Each block spans 2 grid steps, so it is incremented twice.
+      def inner_kernel(x_ref, o_ref):
+        @pl.when(pl.program_id(2) == 0)
+        def _():
+          o_ref[...] = x_ref[...]
+        o_ref[...] += 1.0
+
+      pltpu.emit_pipeline(
+          inner_kernel,
+          grid=(4, 4, 2),
+          core_axis_name='core',
+          dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL, pltpu.ARBITRARY),
+      )(x_hbm_ref, o_hbm_ref, allocations=[x_bref, o_bref])
+
+    np.testing.assert_allclose(add_kernel(x), x + 2.0)
+    # The loop body issues one copy_out and awaits the copy issued one step
+    # earlier; the epilogue awaits the copy issued on the last step. The
+    # indices are loop carries, so only their structure is known at trace time.
+    self.assertLen(copies, 1)
+    self.assertLen(waits, 2)
+    for grid_indices in copies + waits:
+      self.assertLen(grid_indices, 3)
+
   @parameterized.product(
       x_buffer_count=[2, 4],
       y_buffer_count=[2, 4],
-      out_buffer_count=[2],
+      out_buffer_count=[2, 4],
   )
   def test_matmul(self, x_buffer_count, y_buffer_count, out_buffer_count):
     block_shape = (128, 128)
@@ -973,7 +1161,7 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
   @parameterized.product(
       x_buffer_count=[2, 4],
       y_buffer_count=[2, 4],
-      out_buffer_count=[2],
+      out_buffer_count=[2, 4],
   )
   def test_matmul_megacore(self, x_buffer_count, y_buffer_count,
                            out_buffer_count):
@@ -1088,7 +1276,7 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
 
   @parameterized.product(
       in_buffer_count=[2, 4],
-      out_buffer_count=[2],
+      out_buffer_count=[2, 4],
       out_block_indices=[
         [0, 0, 2, 2, 2, 5, 3, 3],
         [5, 5, 5, 5, 5, 5, 5, 5],
@@ -1139,11 +1327,12 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
     expected = jnp.concatenate(expected, axis=0)
     np.testing.assert_allclose(result, expected)
 
-  def test_matmul_with_input_output(self):
-    if config.use_emit_pipeline_primitive.value:
-      self.skipTest(
-          'allocations are not yet supported by the emit_pipeline primitive.')
-
+  # An int n means (n, 1), so 1/2 cover the synchronous writeback and the
+  # pairs cover asynchronous writeback with symmetric and skewed depths.
+  @parameterized.product(
+      buffer_count=[1, 2, (2, 2), (2, 4), (4, 2), (1, 2)],
+  )
+  def test_matmul_with_input_output(self, buffer_count):
     M, N, K = 512, 512, 512
     blk_m, blk_n, blk_k = 128, 128, 128
     nm, nn, nk = M // blk_m, N // blk_n, K // blk_k
@@ -1153,7 +1342,8 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
         pltpu.BufferedRef.input(
             pl.BlockSpec((blk_k, blk_n), lambda n, m, k: (k, n)), jnp.float32),
         pltpu.BufferedRef.input_output(
-            pl.BlockSpec((blk_m, blk_n), lambda n, m, k: (m, n)), jnp.float32),
+            pl.BlockSpec((blk_m, blk_n), lambda n, m, k: (m, n)), jnp.float32,
+            buffer_count=buffer_count),
         ]
 
     def matmul_kernel(x_hbm, y_hbm, o_hbm, x_bref, y_bref, o_bref):
@@ -1185,6 +1375,67 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
     )
     result = fn(x, y)
     np.testing.assert_allclose(result, x @ y, atol=5e-5)
+
+  @parameterized.product(
+      buffer_count=[1, 2, 3, (2, 2), (2, 3), (3, 2)],
+  )
+  def test_input_output_new_block_every_step(self, buffer_count):
+    # Every grid step starts a new block, unlike the other input_output tests
+    # which keep a block for several steps.
+    x = jnp.reshape(jnp.arange(512 * 512, dtype=jnp.float32), (512, 512))
+    spec = pl.BlockSpec((128, 128), lambda r, i, j: (i, j))
+    allocs = [
+        pltpu.BufferedRef.input(spec, jnp.float32),
+        pltpu.BufferedRef.input_output(
+            spec, jnp.float32, buffer_count=buffer_count),
+    ]
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct.like(x),
+        mesh=pltpu.TensorCoreMesh(axis_name='core'),
+        scratch_types=allocs,
+    )
+    def add_kernel(x_hbm_ref, o_hbm_ref, x_bref, o_bref):
+      # Each block is visited twice, so it is copied in, out and back in.
+      def inner_kernel(x_ref, o_ref):
+        @pl.when(pl.program_id(0) == 0)
+        def _():
+          o_ref[...] = x_ref[...]
+        o_ref[...] += 1.0
+
+      pltpu.emit_pipeline(
+          inner_kernel,
+          grid=(2, 4, 4),
+          core_axis_name='core',
+          dimension_semantics=(pltpu.ARBITRARY, pltpu.PARALLEL, pltpu.PARALLEL),
+      )(x_hbm_ref, o_hbm_ref, allocations=[x_bref, o_bref])
+
+    np.testing.assert_allclose(add_kernel(x), x + 2.0)
+
+  @parameterized.product(buffer_count=[0, (0, 2), (2, 0)])
+  def test_input_output_buffer_count_must_be_positive(self, buffer_count):
+    spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    with self.assertRaisesRegex(ValueError, 'must be at least 1'):
+      pltpu.BufferedRef.input_output(
+          spec, jnp.float32, buffer_count=buffer_count)
+
+  @parameterized.product(buffer_count=[(2, 3, 4), (2.0, 2)])
+  def test_input_output_buffer_count_must_be_an_int_pair(self, buffer_count):
+    spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    with self.assertRaisesRegex(ValueError, 'must be a static int'):
+      pltpu.BufferedRef.input_output(
+          spec, jnp.float32, buffer_count=buffer_count)
+
+  def test_buffer_count_must_be_static(self):
+    spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    with self.assertRaisesRegex(ValueError, 'must be a static int'):
+      pltpu.BufferedRef.input_output(
+          spec, jnp.float32, buffer_count=jnp.int32(2))
+
+  def test_input_buffer_count_cannot_be_a_pair(self):
+    spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    with self.assertRaisesRegex(ValueError, 'must be a static int'):
+      pltpu.BufferedRef.input(spec, jnp.float32, buffer_count=(2, 2))
 
   def test_single_buffered_output(self):
     def body(o_ref):
@@ -1653,6 +1904,56 @@ class PaddedPipelineEmitterTest(htu.HypothesisShardedTestCase):
 
 
 class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
+
+  @parameterized.product(buffer_count=[2, 3, 4])
+  def test_block_spec_bounded_slice_ragged(self, buffer_count):
+    if not jtu.is_device_tpu():
+      self.skipTest('Only works on TPU.')
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works on TPU v4+')
+
+    n = 20
+    bs = 8
+    shape = (24, 8, 128)
+    block_shape = (pl.BoundedSlice(bs), 8, 128)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1
+
+    x = jnp.arange(np.prod(shape), dtype=np.int32).reshape(shape)
+
+    @jax.jit
+    def f(x):
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name='core'),
+          out_type=x,
+      )
+      def kernel_fn(x_ref, y_ref):
+        def index_map(i):
+          start = i * bs
+          size = jnp.minimum(bs, n - start)
+          return (pl.ds(start, size), 0, 0)
+
+        in_block_spec = pl.BlockSpec(
+            block_shape,
+            index_map,
+            pipeline_mode=pl.Buffered(buffer_count=buffer_count),
+        )
+        out_block_spec = pl.BlockSpec(
+            block_shape,
+            index_map,
+        )
+        pltpu.emit_pipeline(
+            kernel,
+            grid=(3,),
+            in_specs=(in_block_spec,),
+            out_specs=out_block_spec,
+        )(x_ref, y_ref)
+
+      return kernel_fn(x)
+
+    out = f(x)
+    np.testing.assert_allclose(out[:n], x[:n] + 1)
 
   def test_block_spec_bounded_slice_invalid_index(self):
     if not jtu.is_device_tpu():
@@ -2683,12 +2984,6 @@ class EmitPipelineVmapTest(jtu.JaxTestCase):
 
   @parameterized.product(dynamic_grid=[True, False])
   def test_copy_with_allocations(self, dynamic_grid):
-    if not jax.config.jax_use_emit_pipeline_primitive:
-      self.skipTest('vmap requires jax_use_emit_pipeline_primitive == True.')
-    if jax.config.jax_use_emit_pipeline_primitive:
-      # TODO(rdyro): Add support for this.
-      self.skipTest('allocations require jax_use_emit_pipeline_primitive'
-                    ' == False.')
     out_type = jax.ShapeDtypeStruct((512,), jnp.float32)
 
     def body(x_ref, o_ref):
@@ -2703,7 +2998,10 @@ class EmitPipelineVmapTest(jtu.JaxTestCase):
           out_specs=[pl.BlockSpec((256,), lambda i: (i,))],
       )
       allocations = make_allocations(x_ref, o_ref)
-      pipeline_func(x_ref, o_ref, allocations=allocations)
+
+      @functools.partial(pl.run_scoped, allocs=allocations)
+      def _(allocs):
+        pipeline_func(x_ref, o_ref, allocations=allocs)
 
     x = jnp.arange(512, dtype=jnp.float32)
     out = run_kernel(x)
@@ -2920,6 +3218,26 @@ class PallasCallPipelineEffectsTest(jtu.JaxTestCase):
                         state.WriteEffect(o)}
     self.assertSetEqual(jaxpr.effects, expected_effects)
 
+  def test_no_block_spec_pipeline_effects(self):
+    def body(x, y, o):
+      o[...] = x[...]
+
+    def kernel(x_ref, y_ref, o_ref):
+      pltpu.emit_pipeline(
+          body, grid=(2,),
+          in_specs=[pl.BlockSpec((256,), lambda i: (i,)), pl.no_block_spec],
+          out_specs=[pl.BlockSpec((256,), lambda i: (i,))],
+      )(x_ref, y_ref, o_ref)
+
+    jaxpr = jax.make_jaxpr(kernel)(
+        state.shaped_array_ref((512,), jnp.float32),
+        state.shaped_array_ref((512,), jnp.float32),
+        state.shaped_array_ref((512,), jnp.float32),
+    )
+    x, y, o = jaxpr.invars
+    expected_effects = {state.ReadEffect(x), state.WriteEffect(o)}
+    self.assertSetEqual(jaxpr.effects, expected_effects)
+
   def test_dynamic_grid_and_consts_effects(self):
     c = jnp.array(1.5, dtype=jnp.float32)
     def body(x, o):
@@ -3024,6 +3342,509 @@ class PallasCallPipelineNonFlatArgsPrimitiveTest(
 
 
 class EmitPipelineVmapPrimitiveTest(EmitPipelineVmapTest):
+  def setUp(self):
+    super().setUp()
+    self.enter_context(config.use_emit_pipeline_primitive(True))
+
+
+class EmitPipelinePrefetchTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Only works with TPU v5+')
+    super().setUp()
+
+  def test_matmul_prefetch(self):
+    M, N, K = 512, 512, 512
+    blk_m, blk_n, blk_k = 128, 128, 128
+    nm, nn, nk = M // blk_m, N // blk_n, K // blk_k
+    mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+
+    @jax.jit
+    def run(x, y):
+      lhs_spec = pl.BlockSpec(
+          (blk_m, blk_k),
+          lambda m, n, k: (m, k),
+          pipeline_mode=pl.Buffered(
+              buffer_count=2, prefetched_count=2, use_lookahead=True
+          ),
+          memory_space=pltpu.VMEM,
+      )
+      rhs_spec = pl.BlockSpec(
+          (blk_k, blk_n),
+          lambda m, n, k: (k, n),
+          pipeline_mode=pl.Buffered(
+              buffer_count=2, prefetched_count=2, use_lookahead=True
+          ),
+          memory_space=pltpu.VMEM,
+      )
+      out_spec = pl.BlockSpec(
+          (blk_m, blk_n),
+          lambda m, n, k: (m, n),
+          pipeline_mode=pl.Buffered(buffer_count=2),
+          memory_space=pltpu.VMEM,
+      )
+
+      def pipeline_body(x_ref, y_ref, o_ref):
+        @pl.when(pl.program_id(2) == 0)
+        def _():
+          o_ref[...] = jnp.zeros_like(o_ref)
+        o_ref[...] += x_ref[...] @ y_ref[...]
+
+      pipeline, async_prefetch = pltpu.emit_pipeline_with_async_prefetch(
+          pipeline_body,
+          grid=(nm, nn, nk),
+          in_specs=[lhs_spec, rhs_spec],
+          out_specs=out_spec,
+          mesh=mesh,
+      )
+      pref = async_prefetch(x, y)
+
+      def matmul_kernel(x_hbm_ref, y_hbm_ref, o_hbm_ref):
+        pipeline(x_hbm_ref, y_hbm_ref, o_hbm_ref, allocations=pref)
+
+      run_kernel = pl.kernel(
+          matmul_kernel,
+          out_type=jax.ShapeDtypeStruct((M, N), jnp.float32),
+          mesh=mesh,
+      )
+      return run_kernel(x, y)
+
+    x = jax.random.uniform(jax.random.key(0), (M, K), jnp.float32)
+    y = jax.random.uniform(jax.random.key(1), (K, N), jnp.float32)
+    result = run(x, y)
+    np.testing.assert_allclose(result, x @ y, atol=5e-5, rtol=5e-5)
+
+  @parameterized.named_parameters(
+      ('basic', 2, False, False, False, False),
+      ('bfloat16', 2, False, False, False, False, jnp.bfloat16),
+      ('lookahead', 2, True, False, False, False),
+      ('constant_index', 2, False, True, False, False),
+      ('dynamic_grid_and_scalar', 2, False, False, True, False),
+      ('multicore', 2, False, False, False, True),
+      ('multicore_lookahead', 2, True, False, False, True),
+  )
+  def test_1d_copy_prefetch(
+      self,
+      prefetched_count: int,
+      use_lookahead: bool,
+      constant_index: bool,
+      dynamic: bool,
+      multicore: bool,
+      dtype: jnp.dtype = jnp.float32,
+  ):
+    if multicore:
+      num_cores = pltpu.get_tpu_info().num_cores
+      if num_cores < 2:
+        self.skipTest('Multi-core prefetch test requires at least 2 cores.')
+      mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=num_cores)
+      dim_semantics = (pltpu.PARALLEL,)
+      core_axis_name = 'core'
+      total_chunks = 4 * num_cores
+    else:
+      num_cores = 1
+      mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+      dim_semantics = None
+      core_axis_name = None
+      total_chunks = 4
+
+    def run(x, *extra_args):
+      if dynamic:
+        d_grid, tile_offset = extra_args
+        index_map = lambda i: (((i + tile_offset) % total_chunks), 0)
+        grid = (d_grid,)
+      elif constant_index:
+        index_map = lambda i: (0, 0)
+        grid = (total_chunks,)
+      else:
+        index_map = lambda i: (i, 0)
+        grid = (total_chunks,)
+
+      in_spec = pl.BlockSpec(
+          (8, 128),
+          index_map,
+          pipeline_mode=pl.Buffered(
+              buffer_count=2,
+              prefetched_count=prefetched_count,
+              use_lookahead=use_lookahead,
+          ),
+          memory_space=pltpu.VMEM,
+      )
+      out_spec = pl.BlockSpec(
+          (8, 128),
+          lambda i: (i, 0),
+          pipeline_mode=pl.Buffered(buffer_count=2),
+          memory_space=pltpu.VMEM,
+      )
+
+      def pipeline_body(x_ref, o_ref):
+        o_ref[...] = x_ref[...]
+
+      pipeline, async_prefetch = pltpu.emit_pipeline_with_async_prefetch(
+          pipeline_body,
+          grid=grid,
+          in_specs=[in_spec],
+          out_specs=out_spec,
+          dimension_semantics=dim_semantics,
+          core_axis_name=core_axis_name,
+          mesh=mesh,
+      )
+      pref = async_prefetch(x)
+
+      def copy_kernel(x_hbm_ref, o_hbm_ref):
+        pipeline(x_hbm_ref, o_hbm_ref, allocations=pref)
+
+      run_kernel = pl.kernel(
+          copy_kernel,
+          out_type=jax.ShapeDtypeStruct(
+              (8 * total_chunks, 128), dtype
+          ),
+          mesh=mesh,
+      )
+      return run_kernel(x)
+
+    run = jax.jit(run)
+    x = jnp.arange(8 * total_chunks * 128, dtype=dtype).reshape(
+        (8 * total_chunks, 128)
+    )
+    if dynamic:
+      result = run(x, jnp.int32(total_chunks), jnp.int32(1))
+      expected = np.roll(np.asarray(x), -1 * 8, axis=0)
+    elif constant_index:
+      result = run(x)
+      expected = np.broadcast_to(
+          np.asarray(x[:8, :]), (total_chunks, 8, 128)
+      ).reshape((8 * total_chunks, 128))
+    else:
+      result = run(x)
+      expected = x
+
+    np.testing.assert_allclose(result, expected)
+
+  def test_pytree_inputs(self):
+    grid = (4,)
+    mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+
+    @jax.jit
+    def run(x, y1, y2):
+      in_specs = (
+          pl.BlockSpec(
+              (8, 128),
+              lambda i: (i, 0),
+              pipeline_mode=pl.Buffered(buffer_count=2, prefetched_count=1),
+              memory_space=pltpu.VMEM,
+          ),
+          (
+              pl.BlockSpec(
+                  (8, 128),
+                  lambda i: (i, 0),
+                  pipeline_mode=pl.Buffered(buffer_count=2, prefetched_count=1),
+                  memory_space=pltpu.VMEM,
+              ),
+              pl.BlockSpec(
+                  (8, 128),
+                  lambda i: (i, 0),
+                  pipeline_mode=pl.Buffered(buffer_count=2, prefetched_count=1),
+                  memory_space=pltpu.VMEM,
+              ),
+          ),
+      )
+      out_spec = pl.BlockSpec(
+          (8, 128),
+          lambda i: (i, 0),
+          pipeline_mode=pl.Buffered(buffer_count=2),
+          memory_space=pltpu.VMEM,
+      )
+
+      def pipeline_body(x_ref, y_refs, o_ref):
+        y1_ref, y2_ref = y_refs
+        o_ref[...] = x_ref[...] + y1_ref[...] + y2_ref[...]
+
+      pipeline, async_prefetch = pltpu.emit_pipeline_with_async_prefetch(
+          pipeline_body,
+          grid=grid,
+          in_specs=in_specs,
+          out_specs=out_spec,
+          mesh=mesh,
+      )
+      pref = async_prefetch(x, (y1, y2))
+
+      def add_kernel(x_hbm_ref, y1_hbm_ref, y2_hbm_ref, o_hbm_ref):
+        pipeline(
+            x_hbm_ref, (y1_hbm_ref, y2_hbm_ref), o_hbm_ref, allocations=pref
+        )
+
+      run_kernel = pl.kernel(
+          add_kernel,
+          out_type=jax.ShapeDtypeStruct((32, 128), jnp.float32),
+          mesh=mesh,
+      )
+      return run_kernel(x, y1, y2)
+
+    x = jnp.arange(32 * 128, dtype=jnp.float32).reshape((32, 128))
+    y1 = jnp.ones((32, 128), dtype=jnp.float32)
+    y2 = jnp.full((32, 128), 2.0, dtype=jnp.float32)
+    result = run(x, y1, y2)
+    np.testing.assert_allclose(result, x + y1 + y2)
+
+  def test_no_block_spec_prefetch(self):
+    grid = (4,)
+    mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+    test_self = self
+
+    @jax.jit
+    def run(x, y):
+      in_specs = (
+          pl.BlockSpec(
+              (8, 128),
+              lambda i: (i, 0),
+              pipeline_mode=pl.Buffered(buffer_count=2, prefetched_count=1),
+              memory_space=pltpu.VMEM,
+          ),
+          pl.no_block_spec,
+      )
+      out_spec = pl.BlockSpec(
+          (8, 128),
+          lambda i: (i, 0),
+          pipeline_mode=pl.Buffered(buffer_count=2),
+          memory_space=pltpu.VMEM,
+      )
+
+      def pipeline_body(x_ref, y_ref, o_ref):
+        test_self.assertIsNone(y_ref)
+        o_ref[...] = x_ref[...] + 1
+
+      pipeline, async_prefetch = pltpu.emit_pipeline_with_async_prefetch(
+          pipeline_body,
+          grid=grid,
+          in_specs=in_specs,
+          out_specs=out_spec,
+          mesh=mesh,
+      )
+      pref = async_prefetch(x, y)
+      self.assertIsNone(pref[1])
+
+      def copy_kernel(x_hbm_ref, y_hbm_ref, o_hbm_ref):
+        pipeline(x_hbm_ref, y_hbm_ref, o_hbm_ref, allocations=pref)
+
+      run_kernel = pl.kernel(
+          copy_kernel,
+          out_type=jax.ShapeDtypeStruct((32, 128), jnp.float32),
+          mesh=mesh,
+      )
+      return run_kernel(x, y)
+
+    x = jnp.arange(32 * 128, dtype=jnp.float32).reshape((32, 128))
+    y = jnp.zeros_like(x)
+    result = run(x, y)
+    np.testing.assert_allclose(result, x + 1)
+
+  def test_pytree_with_no_block_spec_prefetch(self):
+    grid = (4,)
+    mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+    test_self = self
+
+    @jax.jit
+    def run(x, y1, y2):
+      in_specs = (
+          pl.BlockSpec(
+              (8, 128),
+              lambda i: (i, 0),
+              pipeline_mode=pl.Buffered(buffer_count=2, prefetched_count=1),
+              memory_space=pltpu.VMEM,
+          ),
+          (
+              pl.BlockSpec(
+                  (8, 128),
+                  lambda i: (i, 0),
+                  pipeline_mode=pl.Buffered(buffer_count=2, prefetched_count=1),
+                  memory_space=pltpu.VMEM,
+              ),
+              pl.no_block_spec,
+          ),
+      )
+      out_spec = pl.BlockSpec(
+          (8, 128),
+          lambda i: (i, 0),
+          pipeline_mode=pl.Buffered(buffer_count=2),
+          memory_space=pltpu.VMEM,
+      )
+
+      def pipeline_body(x_ref, y_refs, o_ref):
+        y1_ref, y2_ref = y_refs
+        test_self.assertIsNone(y2_ref)
+        o_ref[...] = x_ref[...] + y1_ref[...] + 1
+
+      pipeline, async_prefetch = pltpu.emit_pipeline_with_async_prefetch(
+          pipeline_body,
+          grid=grid,
+          in_specs=in_specs,
+          out_specs=out_spec,
+          mesh=mesh,
+      )
+      pref = async_prefetch(x, (y1, y2))
+      self.assertIsNone(pref[1][1])
+
+      def add_kernel(x_hbm_ref, y1_hbm_ref, y2_hbm_ref, o_hbm_ref):
+        pipeline(
+            x_hbm_ref, (y1_hbm_ref, y2_hbm_ref), o_hbm_ref, allocations=pref
+        )
+
+      run_kernel = pl.kernel(
+          add_kernel,
+          out_type=jax.ShapeDtypeStruct((32, 128), jnp.float32),
+          mesh=mesh,
+      )
+      return run_kernel(x, y1, y2)
+
+    x = jnp.arange(32 * 128, dtype=jnp.float32).reshape((32, 128))
+    y1 = jnp.ones((32, 128), dtype=jnp.float32)
+    y2 = jnp.zeros_like(x)
+    result = run(x, y1, y2)
+    np.testing.assert_allclose(result, x + y1 + 1)
+
+  def test_transformed_ref_prefetch(self):
+    grid = (4,)
+    mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+
+    @jax.jit
+    def run(x):
+      in_spec = pl.BlockSpec(
+          (8, 128),
+          lambda i: (i, 0),
+          pipeline_mode=pl.Buffered(buffer_count=2, prefetched_count=1),
+          memory_space=pltpu.VMEM,
+      )
+      out_spec = pl.BlockSpec(
+          (8, 128),
+          lambda i: (i, 0),
+          pipeline_mode=pl.Buffered(buffer_count=2),
+          memory_space=pltpu.VMEM,
+      )
+
+      def pipeline_body(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + 1
+
+      pipeline, async_prefetch = pltpu.emit_pipeline_with_async_prefetch(
+          pipeline_body,
+          grid=grid,
+          in_specs=[in_spec],
+          out_specs=out_spec,
+          mesh=mesh,
+      )
+      x_ref = jax.new_ref(x).at[8:40, :]
+      pref = async_prefetch(x_ref)
+
+      def copy_kernel(x_hbm_ref, o_hbm_ref):
+        pipeline(x_hbm_ref.at[8:40, :], o_hbm_ref, allocations=pref)
+
+      run_kernel = pl.kernel(
+          copy_kernel,
+          out_type=jax.ShapeDtypeStruct((32, 128), jnp.float32),
+          mesh=mesh,
+      )
+      return run_kernel(x)
+
+    x = jnp.arange(48 * 128, dtype=jnp.float32).reshape((48, 128))
+    result = run(x)
+    expected = x[8:40] + 1
+    np.testing.assert_allclose(result, expected)
+
+  @parameterized.product(
+      windowing=['non_trivial', 'trivial_grid1', 'trivial_const_idx'],
+      buf_and_pref=[(1, 0), (1, 1), (2, 0), (2, 1), (2, 2), (3, 0), (3, 1), (3, 2)],
+      has_out_specs=[False, True],
+  )
+  def test_no_out_specs_prefetch(self, windowing, buf_and_pref, has_out_specs):
+    buffer_count, prefetched_count = buf_and_pref
+    if windowing == 'non_trivial':
+      grid, in_block_rows, out_block_rows = (4,), 8, 8
+      in_index_map = lambda i: (i, 0)
+    elif windowing == 'trivial_grid1':
+      grid, in_block_rows, out_block_rows = (1,), 32, 32
+      in_index_map = lambda i: (i, 0)
+    else:
+      grid, in_block_rows, out_block_rows = (4,), 32, 8
+      in_index_map = lambda i: (0, 0)
+
+    mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+
+    @jax.jit
+    def run(x):
+      in_spec = pl.BlockSpec(
+          (in_block_rows, 128),
+          in_index_map,
+          pipeline_mode=pl.Buffered(
+              buffer_count=buffer_count, prefetched_count=prefetched_count
+          ),
+          memory_space=pltpu.VMEM,
+      )
+      out_specs = (
+          [
+              pl.BlockSpec(
+                  (out_block_rows, 128),
+                  lambda i: (i, 0),
+                  memory_space=pltpu.VMEM,
+              )
+          ]
+          if has_out_specs
+          else ()
+      )
+
+      o_vmem_ref = jax.empty_ref(
+          jax.ShapeDtypeStruct((32, 128), jnp.float32),
+          memory_space=pltpu.VMEM @ mesh,
+      )
+
+      def get_x_val(x_ref):
+        if windowing == 'trivial_const_idx':
+          return x_ref[pl.ds(pl.program_id(0) * 8, 8), :]
+        return x_ref[...]
+
+      if has_out_specs:
+        def pipeline_body(x_ref, o_ref):
+          o_ref[...] = get_x_val(x_ref) + 1
+      else:
+        def pipeline_body(x_ref):
+          i = pl.program_id(0)
+          o_vmem_ref[pl.ds(i * out_block_rows, out_block_rows), :] = (
+              get_x_val(x_ref) + 1
+          )
+
+      pipeline, async_prefetch = pltpu.emit_pipeline_with_async_prefetch(
+          pipeline_body,
+          grid=grid,
+          in_specs=[in_spec],
+          out_specs=out_specs,
+          mesh=mesh,
+      )
+      pref = async_prefetch(x)
+
+      if has_out_specs:
+        @pl.kernel(
+            out_type=jax.ShapeDtypeStruct((32, 128), jnp.float32),
+            mesh=mesh,
+        )
+        def kernel(x_hbm_ref, o_hbm_ref):
+          pipeline(x_hbm_ref, o_hbm_ref, allocations=pref)
+      else:
+        @pl.kernel(
+            out_type=jax.ShapeDtypeStruct((32, 128), jnp.float32),
+            mesh=mesh,
+        )
+        def kernel(x_hbm_ref, o_hbm_ref):
+          pipeline(x_hbm_ref, allocations=pref)
+          pltpu.sync_copy(o_vmem_ref, o_hbm_ref)
+
+      return kernel(x)
+
+    x = jnp.arange(32 * 128, dtype=jnp.float32).reshape((32, 128))
+    res = run(x)
+    np.testing.assert_allclose(res, x + 1)
+
+
+class EmitPipelinePrefetchPrimitiveTest(EmitPipelinePrefetchTest):
+
   def setUp(self):
     super().setUp()
     self.enter_context(config.use_emit_pipeline_primitive(True))

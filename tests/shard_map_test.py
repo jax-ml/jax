@@ -46,6 +46,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.remat import remat_transform
 from jax._src import linear_util as lu
 from jax._src import tree_util
+from jax._src.lib import ifrt_version, jaxlib_extension_version
 from jax.custom_derivatives import SymbolicZero
 import jax.numpy as jnp
 
@@ -363,6 +364,8 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(c[1, :], a[0, :])
 
   @jtu.run_on_devices("gpu")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.psend is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.precv is deprecated")
   def test_psend_precv_basic_two_gpus(self):
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
@@ -409,6 +412,8 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(c.shape, a.shape)
 
   @jtu.run_on_devices("gpu")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.psend is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.precv is deprecated")
   def test_psend_precv_basic_with_no_deadlock_cycle(self):
     mesh = jtu.create_mesh((8,), 'x')
     a = jax.device_put(
@@ -471,6 +476,8 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(c.shape, a.shape)
 
   @jtu.run_on_devices('gpu')
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.psend is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.precv is deprecated")
   def test_psend_precv_basic_with_deadlock_cycle(self):
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
@@ -510,6 +517,8 @@ class ShardMapTest(jtu.JaxTestCase):
       fwd(a)
 
   @jtu.run_on_devices('gpu')
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.psend is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.precv is deprecated")
   def test_psend_precv_basic_with_dangling_recv(self):
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
@@ -541,6 +550,8 @@ class ShardMapTest(jtu.JaxTestCase):
       fwd(a)
 
   @jtu.run_on_devices('gpu')
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.psend is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.precv is deprecated")
   def test_psend_precv_basic_with_non_matching_source_target_pairs(self):
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
@@ -580,6 +591,8 @@ class ShardMapTest(jtu.JaxTestCase):
       fwd(a)
 
   @jtu.run_on_devices('gpu')
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.psend is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.precv is deprecated")
   def test_psend_precv_basic_with_duplicate_source_target_pairs(self):
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
@@ -619,6 +632,8 @@ class ShardMapTest(jtu.JaxTestCase):
       fwd(a)
 
   @jtu.run_on_devices("gpu")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.psend is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.precv is deprecated")
   def test_psend_precv_reverse_two_gpus(self):
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
@@ -744,6 +759,35 @@ class ShardMapTest(jtu.JaxTestCase):
 
     c = fwd(a)  # Don't crash
     self.assertAllClose(c, a + 1)
+
+  @jtu.run_on_devices("gpu")
+  def test_pbroadcast_dynamic_root(self):
+    if jaxlib_extension_version < 502:
+      self.skipTest("Requires jaxlib_extension_version >= 502")
+    # Test pbroadcast with dynamic source (has_dynamic_root=True) via shard_map.
+    # The broadcast root is passed as a jitted function argument (not hardcoded),
+    # exercising the has_dynamic_root path end-to-end.
+    mesh = jtu.create_mesh((4,), ('x',))
+    in_out_sharding = jax.sharding.NamedSharding(mesh, P('x', None))
+    scalar_sharding = jax.sharding.NamedSharding(mesh, P())
+    a = jax.device_put(jnp.arange(16).reshape((4, 4)), in_out_sharding)
+
+    @jax.jit
+    @partial(
+        shard_map,
+        mesh=mesh,
+        in_specs=(in_out_sharding.spec, P()),
+        out_specs=in_out_sharding.spec,
+    )
+    def fwd(x, root):
+      return lax.pbroadcast(x, 'x', source=root)
+
+    for root in range(4):
+      root_arr = jax.device_put(jnp.int32(root), scalar_sharding)
+      c = fwd(a, root_arr)
+      # Every device should receive the shard held by device `root`.
+      expected = jnp.broadcast_to(a[root:root + 1], a.shape)
+      self.assertAllClose(c, expected)
 
   def test_all_to_all_with_axis_index_groups(self):
     mesh = jtu.create_mesh((4,), ('x',))
@@ -1096,7 +1140,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(g2, jnp.cos(jnp.sin(x)) * jnp.cos(x),
                         check_dtypes=False, atol=1e-3, rtol=1e-3)
     saved_res = saved_residuals(f2, x)
-    self.assertLen(saved_res, 1 if config.remat3.value else 2)
+    self.assertLen(saved_res, 2)
 
   @jtu.with_explicit_mesh((2,), ('i',), axis_types=(AxisType.Auto,))
   def test_remat_transform(self, mesh):
@@ -1542,6 +1586,16 @@ class ShardMapTest(jtu.JaxTestCase):
     out = g()
     expected_out = jax.jit(g)()
     self.assertArraysEqual(out, expected_out)
+
+  def test_partial_auto_no_check_vma_eager(self):
+    mesh = jtu.create_mesh((2, 2), ('i', 'j'))
+    x = jnp.arange(8.)
+
+    f = jax.shard_map(lambda y: y * 2, mesh=mesh, in_specs=P('i'),
+                      out_specs=P('i'), axis_names={'i'}, check_vma=False)
+
+    self.assertArraysEqual(f(x), 2 * x)
+    self.assertArraysEqual(f(x), jax.jit(f)(x))
 
   def test_partial_eval_custom_axis_env(self):
     mesh = Mesh(jax.devices(), ('i',))
@@ -2455,10 +2509,6 @@ class ShardMapTest(jtu.JaxTestCase):
 
     x = jnp.arange(16.)
     jaxpr_ = jax.make_jaxpr(jax.grad(g))(x)
-    if remat and config.remat3.value:
-      # remat3 doesn't support everything_saveable, which these assertions need
-      # (they check out_fwd forwarding of a saved primal output)
-      return
     jaxpr, _ = pe.dce_jaxpr(jaxpr_, [True] * len(jaxpr_.out_avals))
     e1, *_, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 1)  # only primal output
@@ -2494,10 +2544,6 @@ class ShardMapTest(jtu.JaxTestCase):
 
     x = jnp.arange(16.)
     jaxpr_ = jax.make_jaxpr(jax.grad(g))(x)
-    if remat and config.remat3.value:
-      # remat3 doesn't support everything_saveable, which these assertions need
-      # (they check out_fwd forwarding of a saved primal output)
-      return
     jaxpr, _ = pe.dce_jaxpr(jaxpr_, [True] * len(jaxpr_.out_avals))
     e1, *_, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 2)  # one primal and one res output
@@ -2991,7 +3037,8 @@ class ShardMapTest(jtu.JaxTestCase):
       z = jnp.einsum('ab,bc->ac', x, y, out_sharding=P(unreduced={'x'}))
       return shard_map(lambda x: jnp.sin(x), out_specs=P())(z)
 
-    with self.assertRaisesRegex(NotImplementedError, "unreduced rule for sin"):
+    with self.assertRaisesRegex(
+        core.ShardingTypeError, "sin is a non-linear operation"):
       f(arr1, arr2)
 
   @jtu.with_explicit_mesh((2,), 'x')
@@ -3035,19 +3082,9 @@ class ShardMapTest(jtu.JaxTestCase):
 
   def test_shmap_auto_unreduced_error(self):
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
-    with self.assertRaisesRegex(
-        ValueError,
-        'unreduced.*can only be used when the mesh passed to shard_map contains'
-        ' axis names all of type `Explicit`'):
+    with self.assertRaisesRegex(ValueError, 'in_specs containing unreduced'):
       shard_map(lambda x: x, mesh=mesh, in_specs=P(unreduced={'x'}),
                 out_specs=P())(np.arange(8))
-
-    with self.assertRaisesRegex(
-        NotImplementedError,
-        'unreduced.*can only be passed to in_specs when shard_map is in full'
-        ' manual mode'):
-      shard_map(lambda x: x, mesh=mesh, in_specs=P(unreduced={'x'}),
-                  out_specs=P(), axis_names={'x'})(np.arange(8))
 
   def test_partial_auto(self):
     mesh = jtu.create_mesh((2, 2), ('i', 'j'))
@@ -4181,6 +4218,7 @@ class ShardMapTest(jtu.JaxTestCase):
     np_inp = np.arange(16).reshape(8, 2)
     arr = jax.device_put(np_inp, P('x', 'y'))
 
+    @jax.jit
     @partial(jax.shard_map, axis_names=frozenset('x'), out_specs=P('x'))
     def f(x):
       self.assertEqual(get_abstract_mesh().manual_axes, ('x',))
@@ -4192,9 +4230,53 @@ class ShardMapTest(jtu.JaxTestCase):
       self.assertEqual(out.aval.mat.varying, {'x'})
       return out
 
-    out = jax.jit(f)(arr)
+    out = f(arr)
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn('[{"x"}, {"y"}]', lowered_text)
     self.assertArraysEqual(out, np_inp * 2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_partial_manual_explicit_nested(self, mesh):
+    np_inp = np.arange(128).reshape(8, 4, 4)
+    arr = jax.device_put(np_inp, P('x', 'y', 'z'))
+
+    @jax.shard_map(in_specs=P(None, None, 'z'), out_specs=P(None, None, 'z'))
+    def h(x):
+      self.assertEqual(x.aval.sharding.spec, P(None, None, None))
+      self.assertEqual(x.aval.mat.varying, {'x', 'y', 'z'})
+      out = jnp.cos(x)
+      self.assertEqual(out.aval.sharding.spec, P(None, None, None))
+      self.assertEqual(out.aval.mat.varying, {'x', 'y', 'z'})
+      return out
+
+    @jax.shard_map(in_specs=P(None, 'y'), out_specs=P(None, 'y'), axis_names={'y'})
+    def g(x):
+      self.assertEqual(x.aval.sharding.spec, P(None, None, 'z'))
+      self.assertEqual(x.aval.mat.varying, {'x', 'y'})
+      out = jnp.sin(x)
+      self.assertEqual(out.aval.sharding.spec, P(None, None, 'z'))
+      self.assertEqual(out.aval.mat.varying, {'x', 'y'})
+      out2 = h(out)
+      self.assertEqual(out2.aval.sharding.spec, P(None, None, 'z'))
+      self.assertEqual(out2.aval.mat.varying, {'x', 'y'})
+      return out2
+
+    @jax.jit
+    @partial(jax.shard_map, out_specs=P('x'), axis_names={'x'})
+    def f(x):
+      self.assertEqual(x.aval.sharding.spec, P(None, 'y', 'z'))
+      self.assertEqual(x.aval.mat.varying, {'x'})
+      out = x * 2
+      self.assertEqual(out.aval.sharding.spec, P(None, 'y', 'z'))
+      self.assertEqual(out.aval.mat.varying, {'x'})
+      out2 = g(x)
+      self.assertEqual(out2.aval.sharding.spec, P(None, 'y', 'z'))
+      self.assertEqual(out2.aval.mat.varying, {'x'})
+      return out2
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y', 'z')))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
   def test_shmap_full_manual_context_auto(self, mesh):
@@ -4349,7 +4431,7 @@ class ShardMapTest(jtu.JaxTestCase):
       self.assertEqual(get_abstract_mesh().manual_axes, ('x',))
       self.assertEqual(get_abstract_mesh().explicit_axes, ('y', 'z'))
       self.assertEqual(x.aval.mat.varying, {'x'})
-      out = jax.smap(g, in_axes=0, out_axes=0, axis_name='y')(x)
+      out = jax.smap(g, in_axes=1, out_axes=1, axis_name='y')(x)
       self.assertEqual(out.aval.mat.varying, {'x'})
       return out
 
@@ -4492,7 +4574,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return jnp.sin(out)
 
     with self.assertRaisesRegex(
-        NotImplementedError, "unreduced rule for sin is not implemented"):
+        core.ShardingTypeError, "sin is a non-linear operation"):
       g(arr)
 
   @jtu.with_explicit_mesh((2,), 'x')
@@ -4535,6 +4617,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(a):
       self.assertEqual(a.aval.mat.varying, {'y'})
       b = a * 2
+      b = jax.reshard(b, P(None, 'x'))
       return jax.smap(g, in_axes=1, out_axes=1, axis_name='x')(b)
 
     arr = jax.device_put(np.arange(16).reshape(8, 2), P('y'))
@@ -4576,6 +4659,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(a):
       self.assertEqual(a.aval.mat.varying, {'y'})
       b = a * 2
+      b = jax.reshard(b, P(None, 'x'))
       return g(b)
 
     if jit:
@@ -5639,6 +5723,71 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertIn('axes = [#stablehlo.axis_ref<name = "x">]', mlir)
     self.assertRegex(mlir, r'mesh = (@mesh|#sdy\.mesh)')
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  @jax.default_matmul_precision('float32')
+  def test_reduced_shmap_inside_partially_manual_shmap(self, mesh):
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Requires libtpu >= 0.0.50')
+    if jaxlib_extension_version < 500:
+      self.skipTest('Requires jaxlib_extension_version >= 500')
+    if ifrt_version < 72:
+      self.skipTest('Requires ifrt_version >= 72')
+
+    np_x = np.arange(2 * 8 * 16, dtype=np.float32).reshape(2, 8, 16)
+    np_w = np.arange(16 * 32, dtype=np.float32).reshape(16, 32)
+    arr = jax.device_put(np_x, P('x', 'y', None))
+    w = jax.device_put(np_w, P('y', None))
+
+    @jax.jit
+    @jax.shard_map(in_specs=(P('x'), P()), out_specs=P('x'), axis_names={'x'})
+    def f(x, w):
+      @jax.shard_map(in_specs=P('y', None), out_specs=P(reduced={'y'}))
+      def ag(z):
+        return jax.lax.all_gather(z, 'y', tiled=True, to='reduced')
+      w_gathered = ag(w)
+      return jnp.einsum('sbd,df->sbf', x, w_gathered)
+
+    out = f(arr, w)
+    self.assertArraysAllClose(out, np_x @ np_w)
+
+    darr, dw = jax.jit(jax.grad(lambda x, w: f(x, w).sum(), argnums=(0, 1)))(arr, w)
+    self.assertEqual(darr.sharding, NamedSharding(mesh, P('x', 'y', None)))
+    self.assertEqual(dw.sharding, NamedSharding(mesh, P('y', None)))
+    expected_darr, expected_dw = jax.jit(jax.grad(lambda x, w: (x @ w).sum(),
+                                                  argnums=(0, 1)))(np_x, np_w)
+    self.assertArraysAllClose(darr, expected_darr)
+    self.assertArraysAllClose(dw, expected_dw)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_unreduced_partial_manual_basic(self, mesh):
+    if not jtu.is_libtpu_at_least('0.0.50'):
+      self.skipTest('Requires libtpu >= 0.0.50')
+    if jaxlib_extension_version < 500:
+      self.skipTest('Requires jaxlib_extension_version >= 500')
+    if ifrt_version < 72:
+      self.skipTest('Requires ifrt_version >= 72')
+
+    arr = jax.device_put(jnp.arange(24).reshape(4, 6), P('x', 'y'))
+    arr1 = jax.lax.reduce_sum(arr, [1], out_sharding=P('x', unreduced={'y'}))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(unreduced={'x'}), axis_names={'x'})
+    def f(x):
+      self.assertEqual(x.aval.sharding.spec, P(None, unreduced={'y'}))
+      self.assertEqual(x.aval.mat.varying, {'x'})
+      out = jax.lax.reduce_sum(x, [0])
+      self.assertEqual(out.aval.sharding.spec, P(unreduced={'y'}))
+      self.assertEqual(out.aval.mat.varying, {'x'})
+      out2 = jax.lax.pcast(out, 'x', to='unreduced')
+      self.assertEqual(out2.aval.sharding.spec, P(unreduced={'y'}))
+      self.assertEqual(out2.aval.mat.varying, set())
+      self.assertEqual(out2.aval.mat.unreduced, {'x'})
+      return out2
+
+    out = f(arr1)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x', 'y'})))
+    self.assertArraysEqual(jax.reshard(out, P()), jax.lax.reduce_sum(arr, [0, 1]))
+
 
 class FunSpec(NamedTuple):
   name: str
@@ -5961,7 +6110,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     else:
       slices = map(jnp.stack, zip(*expected_slices))
       expected = jax.tree.unflatten(treedef, slices)
-    tol = 1e-2 if jtu.test_device_matches(['tpu']) else None
+    tol = 1e-2 if jtu.test_device_matches(['tpu', 'gpu']) else None
     self.assertAllClose(ans, expected, check_dtypes=False, atol=tol, rtol=tol)
 
   @parameterized.parameters(

@@ -6,16 +6,18 @@ module(name = "jax")
 
 bazel_dep(name = "abseil-cpp", version = "20260526.0", repo_name = "com_google_absl")
 bazel_dep(name = "apple_support", version = "2.8.0")
+bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")
 bazel_dep(name = "bazel_features", version = "1.50.0")
 bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
 bazel_dep(name = "googletest", version = "1.17.0.bcr.2", repo_name = "com_google_googletest")
-bazel_dep(name = "grpc", version = "1.78.0", repo_name = "com_github_grpc_grpc")
+bazel_dep(name = "grpc", version = "1.83.0", repo_name = "com_github_grpc_grpc")
 bazel_dep(name = "platforms", version = "1.1.0")
-bazel_dep(name = "protobuf", version = "32.1", repo_name = "com_google_protobuf")
+bazel_dep(name = "protobuf", version = "35.1", repo_name = "com_google_protobuf")
 bazel_dep(name = "pybind11_bazel", version = "3.0.0")
-bazel_dep(name = "rules_cc", version = "0.2.20")
+bazel_dep(name = "rules_cc", version = "0.2.25")
 bazel_dep(name = "rules_python", version = "2.2.0")
+bazel_dep(name = "rules_shell", version = "0.8.0")
 bazel_dep(name = "zlib", version = "1.3.2")
 
 # TODO: use a released version when available
@@ -30,22 +32,30 @@ git_override(
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-dcy3xNxpk0PwLQLwtbqm2sCcAT1GuStg8YVjRI6lnnc=",
-    strip_prefix = "rules_ml_toolchain-73cb731fed3ccf7551beac710bf1c5dbeb8be298",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/73cb731fed3ccf7551beac710bf1c5dbeb8be298.tar.gz"],
+    integrity = "sha256-9+4rpwQMv77PxA+AGMWpwcjioakWHi4nJ7UQ0iPHrJo=",
+    strip_prefix = "rules_ml_toolchain-3a4df0c8e9e51687ac4c62c793a00a27286e5e83",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/3a4df0c8e9e51687ac4c62c793a00a27286e5e83.tar.gz"],
 )
 
 # TODO: use a released version when available
 bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
-    integrity = "sha256-TIns//WmYqbt+04tQD/t9VvkCjoAeePC+LpHs3wW6qs=",
+    integrity = "sha256-gQjwT4t/HEnl1yamnKFCZAFKUuaxRNqJ2MYFByz3cG4=",
     patch_strip = 1,
     patches = [
         "//third_party/xla:eigen_archive.patch",
     ],
-    strip_prefix = "xla-dcf304bc5dca1932b99f740b911dbd73631a1a69",
-    urls = ["https://github.com/openxla/xla/archive/dcf304bc5dca1932b99f740b911dbd73631a1a69.tar.gz"],
+    strip_prefix = "xla-dad305c65acf8d2434d9f36cfaa10a110b43fbf1",
+    urls = ["https://github.com/openxla/xla/archive/dad305c65acf8d2434d9f36cfaa10a110b43fbf1.tar.gz"],
+)
+
+# flatbuffers transitively depends on aspect_rules_esbuild 0.21.0, which is incompatible with Bazel 9.
+# Pin to 0.25.1, the last Bazel 9-compatible release on aspect_rules_js 2.x (required by flatbuffers 25.2.10).
+# TODO: Remove this override once flatbuffers is upgraded to >= 25.12.19.
+single_version_override(
+    module_name = "aspect_rules_esbuild",
+    version = "0.25.1",
 )
 
 # TODO: upstream, otherwise we have to duplicate the patches in jax
@@ -53,8 +63,11 @@ single_version_override(
     module_name = "grpc",
     patch_strip = 1,
     patches = ["//third_party/grpc:grpc.patch"],  # upstreaming in cl/822016400
-    version = "1.81.0",
+    version = "1.83.0",
 )
+
+# Fix transitive dependency graph error breaking `bazel mod show_repo --all_repos`
+bazel_dep(name = "envoy_api", version = "0.0.0-20260130-84e8436")
 
 ##############################################################
 # Dependencies defined in XLA via module extensions
@@ -78,13 +91,23 @@ use_repo(
     "eigen_archive",
     "gloo",
     "nanobind",
+    "riegeli",
     "shardy",
     "stablehlo",
     "triton",
 )
 
 rocm = use_extension("@xla//third_party/extensions:rocm_configure.bzl", "rocm_configure_ext")
-use_repo(rocm, "local_config_rocm")
+use_repo(rocm, "config_rocm_hipcc", "local_config_rocm")
+
+# rules_ml_toolchain's own config_rocm_hipcc is a fixed ROCm tarball it documents as
+# test-only, and its ROCm cc toolchain reads it. Point that toolchain at our ROCm.
+rocm_hermetic = use_extension("@rules_ml_toolchain//extensions:rocm_hermetic_download.bzl", "rocm_hermetic_download_ext")
+
+override_repo(
+    rocm_hermetic,
+    config_rocm_hipcc = "config_rocm_hipcc",
+)
 
 python_version_ext = use_extension("@rules_ml_toolchain//extensions:python_version.bzl", "python_version_ext")
 use_repo(python_version_ext, "python_version_repo")
@@ -106,11 +129,13 @@ use_repo(remote_execution_configure, "local_config_remote_execution")
 single_version_override(
     module_name = "rules_python",
     patch_strip = 1,
+    # Remove the upstreamed patches (if any) when updating to a version that includes their PRs:
+    # https://rules-python.readthedocs.io/en/latest/changelog.html
     patches = [
         "//third_party/py:rules_python_whl_abi_tags.patch",
         # Upstreamed at https://github.com/bazel-contrib/rules_python/pull/3768
         "//third_party/py:rules_python_local_wheel.patch",
-        "//third_party/py:rules_python_cpython_3_15.patch",
+        # Upstreamed: https://github.com/bazel-contrib/rules_python/pull/4071
         "//third_party/py:rules_python_windows_long_paths.patch",
     ],
     version = "2.2.0",
@@ -121,9 +146,8 @@ single_version_override(
     patch_strip = 1,
     patches = [
         "//third_party/protobuf:protobuf_arena.patch",
-        "//third_party/protobuf:fix_message_lite_incomplete_type.patch",
     ],
-    version = "32.1",
+    version = "35.1",
 )
 
 single_version_override(
@@ -138,14 +162,18 @@ single_version_override(
 
 ### Toolchains
 
-# TODO: Support HERMETIC_PYTHON_URL, etc to allow specifying a custom built
-# python version.
 # Keep in sync with jax/version.py (_version) and python.defaults below.
 DEFAULT_PYTHON_VERSION = "3.12"
 
 JAXLIB_VERSION = "0.9.2"
 
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.override(
+    add_runtime_manifest_files = ["//third_party/py:rules_python_cpython_3_15.txt"],
+    minor_mapping = {
+        "3.15": "3.15.0rc1",
+    },
+)
 python.defaults(
     # The environment variable takes precedence if set.
     python_version = DEFAULT_PYTHON_VERSION,
@@ -190,7 +218,8 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_depen
         # Explicitly list both x86_64 and aarch64 to ensure cross-compilation works.
         "{os}_x86_64",
         "{os}_aarch64",
-        "{os}_{arch}_freethreaded",
+        "{os}_x86_64_freethreaded",
+        "{os}_aarch64_freethreaded",
     ],
     whl_modifications = {
         "//build:numpy.json": "numpy",  # @pypi_mods is defined in XLA's MODULE.bazel
@@ -371,4 +400,3 @@ use_repo(
     lapack,
     "lapack",
 )
-

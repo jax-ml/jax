@@ -31,11 +31,11 @@ pytype_strict_library(
     srcs = [
         "__init__.py",
     ],
-    type_checking = "pyrefly",
     deps = [
         ":block_spec",
         ":custom_evaluate",
         ":custom_fusion",
+        ":fuser_utils",
         ":fusible",
         ":fusion",
         ":jaxpr_fusion",
@@ -47,7 +47,6 @@ pytype_strict_library(
     srcs = [
         "block_spec.py",
     ],
-    type_checking = "pyrefly",
     visibility = [
         "//jax:internal",
     ] + jax_visibility("pallas/fuser/block_spec"),
@@ -76,7 +75,6 @@ pytype_strict_library(
     srcs = [
         "custom_fusion_lib.py",
     ],
-    type_checking = "pyrefly",
     deps = [
         ":block_spec",
         "//jax/_src:api_util",
@@ -90,7 +88,6 @@ pytype_strict_library(
         "//jax/_src:tree_util",
         "//jax/_src:util",
         "//jax/_src/pallas",
-        "//jax/_src/pallas/mosaic:lowering",
     ],
 )
 
@@ -99,11 +96,11 @@ pytype_strict_library(
     srcs = [
         "fusible.py",
     ],
-    type_checking = "pyrefly",
     deps = [
         ":fusible_dtype",
         ":fusion",
         "//jax",
+        "//jax/_src:ad",
         "//jax/_src:api_util",
         "//jax/_src:batching",
         "//jax/_src:core",
@@ -124,7 +121,6 @@ pytype_strict_library(
     srcs = [
         "fusion.py",
     ],
-    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:util",
@@ -136,7 +132,6 @@ pytype_strict_library(
     srcs = [
         "jaxpr_fusion.py",
     ],
-    type_checking = "pyrefly",
     deps = [
         ":fuser_utils",
         ":fusible",
@@ -144,6 +139,7 @@ pytype_strict_library(
         ":fusion",
         "//jax",
         "//jax/_src:api_util",
+        "//jax/_src:config",
         "//jax/_src:core",
         "//jax/_src:flattree",
         "//jax/_src:hijax",
@@ -159,7 +155,6 @@ pytype_strict_library(
     srcs = [
         "fusible_dtype.py",
     ],
-    type_checking = "pyrefly",
     visibility = [
         "//jax:internal",
     ] + jax_visibility("pallas/fuser/fusible_dtype"),
@@ -184,7 +179,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "custom_evaluate",
     srcs = ["custom_evaluate.py"],
-    type_checking = "pyrefly",
     deps = [
         ":fuser_utils",
         "//jax",
@@ -198,7 +192,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "fuser_utils",
     srcs = ["fuser_utils.py"],
-    type_checking = "pyrefly",
     deps = [
         "//jax/_src:api_util",
         "//jax/_src:core",
@@ -208,5 +201,6 @@ pytype_strict_library(
         "//jax/_src:partial_eval",
         "//jax/_src:tree_util",
         "//jax/_src:util",
+        "//jax/_src/pallas",
     ] + py_deps("numpy"),
 )

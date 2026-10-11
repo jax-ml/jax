@@ -16,6 +16,7 @@
 from jax._src.pallas.mosaic.sc_core import get_sparse_core_info as get_sparse_core_info
 from jax._src.pallas.mosaic.sc_core import Indices as Indices
 from jax._src.pallas.mosaic.sc_core import ScalarSubcoreMesh as ScalarSubcoreMesh
+from jax._src.pallas.mosaic.sc_core import SparseCorePushStreamWarning as SparseCorePushStreamWarning
 from jax._src.pallas.mosaic.sc_core import VectorSubcoreMesh as VectorSubcoreMesh
 from jax._src.pallas.mosaic.sc_primitives import addupdate as addupdate
 from jax._src.pallas.mosaic.sc_primitives import addupdate_compressed as addupdate_compressed
@@ -32,6 +33,7 @@ from jax._src.pallas.mosaic.sc_primitives import pack as pack
 from jax._src.pallas.mosaic.sc_primitives import PackFormat as PackFormat
 from jax._src.pallas.mosaic.sc_primitives import parallel_loop as parallel_loop
 from jax._src.pallas.mosaic.sc_primitives import scan_count as scan_count
+from jax._src.pallas.mosaic.sc_primitives import slice_subcore_vmem_from_shared as slice_subcore_vmem_from_shared
 from jax._src.pallas.mosaic.sc_primitives import sort_key_val as sort_key_val
 from jax._src.pallas.mosaic.sc_primitives import store_compressed as store_compressed
 from jax._src.pallas.mosaic.sc_primitives import store_scatter as store_scatter

@@ -44,7 +44,7 @@ def bytecount(shape, dtype):
 
 def build_kernel(
     m, k, n,
-    dtype: jnp.dtype,
+    dtype: jax.typing.DTypeLike,
     tile_m: int = 128,
     tile_n: int = 128,
     grid_tile_m: int = 1,

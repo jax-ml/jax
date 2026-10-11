@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -89,9 +90,10 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       xla::ValueOrThrowWrapper([](jax::PyClient* client,
                                   const HloModule& module)
                                    -> absl::StatusOr<nb::dict> {
-        TF_ASSIGN_OR_RETURN(auto analysis,
-                            client->pjrt_client()->GetHloCostAnalysis());
-        TF_RETURN_IF_ERROR(module.entry_computation()->Accept(analysis.get()));
+        ABSL_ASSIGN_OR_RETURN(auto analysis,
+                              client->pjrt_client()->GetHloCostAnalysis());
+        ABSL_RETURN_IF_ERROR(
+            module.entry_computation()->Accept(analysis.get()));
 
         // Convert from HloCostAnalysis::Properties to a standard map.
         nb::dict ret;
@@ -189,6 +191,19 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def_rw("argument_layouts", &CompileOptions::argument_layouts)
       .def_rw("parameter_is_tupled_arguments",
               &CompileOptions::parameter_is_tupled_arguments)
+      .def_prop_rw(
+          "individually_defined_output_indices",
+          [](const CompileOptions& options) {
+            std::vector<int> indices(
+                options.individually_defined_output_indices.begin(),
+                options.individually_defined_output_indices.end());
+            return indices;
+          },
+          [](CompileOptions& options, std::vector<int> indices) {
+            options.individually_defined_output_indices.clear();
+            options.individually_defined_output_indices.insert(indices.begin(),
+                                                               indices.end());
+          })
       .def_rw("compile_portable_executable",
               &CompileOptions::compile_portable_executable)
       .def_ro("executable_build_options",

@@ -13,13 +13,18 @@
 # limitations under the License.
 
 from __future__ import annotations
-
+from contextlib import contextmanager
+import enum
+from typing import Any
 
 import numpy as np
 from jax._src.dtypes import iinfo, issubdtype
 from jax._src.sharding import Sharding
 from jax._src.util import tuple_insert
+from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
+
+config_ext = _jax.config
 
 Shape = tuple[int, ...]
 
@@ -30,6 +35,34 @@ class AutoLayoutSingleton:
 AutoLayout = AutoLayoutSingleton()
 
 
+class LayoutMode(enum.Enum):
+  AUTO = enum.auto()
+  JAX = enum.auto()
+  PALLAS_TPU = enum.auto()
+  PALLAS_GPU = enum.auto()
+
+layout_tracing_mode = config_ext.Config[Any](
+    'layout_tracing_mode',
+    LayoutMode.AUTO,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+def get_layout_mode():
+  return layout_tracing_mode.value
+
+@contextmanager
+def use_layout_mode(mode):
+  if not isinstance(mode, LayoutMode):
+    raise TypeError(
+        f'Expected mode of type `LayoutMode`. Got type: {type(mode)}')
+  prev_mode = layout_tracing_mode.swap_local(mode)
+  try:
+    yield
+  finally:
+    layout_tracing_mode.set_local(prev_mode)
+
+
 class Layout:
   major_to_minor: tuple[int, ...]
   tiling: tuple[tuple[int, ...], ...] | None
@@ -38,8 +71,8 @@ class Layout:
   AUTO = AutoLayout
 
   def __init__(self, major_to_minor: tuple[int, ...],
-                tiling: tuple[tuple[int, ...], ...] | None = None,
-                sub_byte_element_size_in_bits: int = 0):
+               tiling: tuple[tuple[int, ...], ...] | None = None,
+               sub_byte_element_size_in_bits: int = 0):
     self.major_to_minor = tuple(major_to_minor)
     self.tiling = None if tiling is None else tuple(map(tuple, tiling))
     self.sub_byte_element_size_in_bits = sub_byte_element_size_in_bits
@@ -50,6 +83,31 @@ class Layout:
     return Layout(xla_layout.minor_to_major()[::-1],
                   xla_layout.tiling(),  # pyrefly: ignore[bad-argument-type]
                   xla_layout.element_size_in_bits())
+
+  @staticmethod
+  def for_array(x) -> Layout:
+    from jax._src import core  # pyrefly: ignore[missing-module-attribute]
+    from jax._src import tpu_info  # pyrefly: ignore[missing-module-attribute]
+
+    x_aval = core.typeof(x)
+    x_aval_mesh = x_aval.sharding.mesh
+    if x_aval_mesh.are_all_axes_auto:
+      raise ValueError(
+          'Cannot infer layout using `Layout.for_array` when all mesh axes are'
+          f' `Auto`. Got sharding {x_aval.sharding}')
+    if tpu_info.is_tpu_device():
+      from jax.experimental import topologies  # pyrefly: ignore[missing-import]
+
+      if x_aval_mesh.are_all_axes_manual or x_aval_mesh.empty:
+        shard_shape = x_aval.shape
+      else:
+        assert x_aval_mesh.are_all_axes_explicit
+        shard_shape = x_aval.sharding.shard_shape(x_aval.shape)
+      d = topologies._get_compile_only_device(tpu_info.get_device_kind())
+      return Layout.from_pjrt_layout(
+          d.client.get_default_layout(x_aval.dtype, shard_shape, d))
+    return Layout(tuple(range(x_aval.ndim)), tiling=(),
+                  sub_byte_element_size_in_bits=0)
 
   def __repr__(self):
     return (

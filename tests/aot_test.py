@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import contextlib
+import re
 import unittest
 from absl.testing import absltest
 import jax
@@ -62,7 +63,6 @@ class JaxAotTest(jtu.JaxTestCase):
         jax.pmap(lambda x: x * x).lower(
             np.zeros((len(jax.devices()), 4), dtype=np.float32)))
 
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): This test is segfaulting on TPU
   def test_topology_jit_serialize(self):
     try:
       aot_topo = topologies.get_topology_desc(
@@ -75,8 +75,6 @@ class JaxAotTest(jtu.JaxTestCase):
 
     if jtu.TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       raise unittest.SkipTest('Compilation caching not yet supported.')
-    if jtu.test_device_matches(['gpu']):
-      raise unittest.SkipTest('Broken on GPU: b/442353988')
 
     @jax.jit
     def fn(x):
@@ -99,8 +97,19 @@ class JaxAotTest(jtu.JaxTestCase):
 
     ref_mesh = topologies.make_mesh(ref_topo, mesh_shape, ('x', 'y'))
     aot_mesh = topologies.make_mesh(aot_topo, mesh_shape, ('x', 'y'))
+
+    # Unlike CPU and GPU, TPU lowerings retain debug info in text format. We'll
+    # keep function-level info since that gives us confidence that things match,
+    # but line/column level will never match so let's rip them out.
+    def normalize_mlir_locations(ir_text: str) -> str:
+      lines_removed = re.sub(r'line=(\d+)', 'line=stripped', ir_text)
+      columns_removed = re.sub(
+          r'column=(\d+)', 'column=stripped', lines_removed)
+      return columns_removed
+
     self.assertEqual(
-        lower_and_load(ref_mesh).as_text(), lower_and_load(aot_mesh).as_text()
+        normalize_mlir_locations(lower_and_load(ref_mesh).as_text()),
+        normalize_mlir_locations(lower_and_load(aot_mesh).as_text())
     )
 
   def test_get_topology_from_devices(self):
@@ -369,6 +378,69 @@ class JaxAotTest(jtu.JaxTestCase):
     )
     result = compiled(input)
     self.assertEqual(result, 14.)
+
+  @jtu.run_on_devices("tpu", "gpu")
+  def test_topology_serialize_deserialize_aot_compile_reload(self):
+    """Tests getting builtin topology, serializing, deserializing, compiling on it, and reloading executable on local devices."""
+    if jtu.TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
+      raise unittest.SkipTest("Compilation caching not yet supported.")
+
+    orig_topo = topologies.TopologyDescription(jax.devices())
+    serialized_topo = orig_topo.serialize()
+    self.assertIsInstance(serialized_topo, bytes)
+    self.assertNotEmpty(serialized_topo)
+
+    restored_topo = topologies.TopologyDescription.deserialize(serialized_topo)
+    self.assertLen(restored_topo.devices, len(orig_topo.devices))
+    self.assertEqual(
+        restored_topo.devices[0].client.runtime_type, "compile_only_runtime"
+    )
+    self.assertEqual(
+        [d.id for d in restored_topo.devices],
+        [d.id for d in orig_topo.devices],
+    )
+
+    mesh = jax.sharding.Mesh(np.array(restored_topo.devices[:1]), ("x",))
+    x = jax.ShapeDtypeStruct(
+        shape=(2, 2),
+        dtype=jnp.float32,
+        sharding=jax.sharding.NamedSharding(
+            mesh, jax.sharding.PartitionSpec("x")
+        ),
+    )
+    compiled = jax.jit(lambda x: jnp.sum(x * x)).lower(x).compile()
+    serialized_exec, in_tree, out_tree = serialize(compiled)
+
+    reloaded = deserialize_and_load(
+        serialized_exec,
+        in_tree,
+        out_tree,
+        backend=jax.devices()[0].platform,
+        execution_devices=jax.devices()[:1],
+    )
+
+    inp = jnp.array(
+        [[0.0, 1.0], [2.0, 3.0]], dtype=jnp.float32, device=jax.devices()[0]
+    )
+    result = reloaded(inp)
+    self.assertEqual(result, 14.0)
+
+  def test_serialized_topology_invalid_bytes_raises_error(self):
+    """Tests that passing invalid serialized protobuf bytes raises ValueError."""
+    with self.assertRaisesRegex(
+        ValueError,
+        "Failed to parse PjRtTopologyDescriptionProto from serialized bytes",
+    ):
+      topologies.TopologyDescription.deserialize(b"invalid_proto_bytes")
+
+  def test_get_executable_version(self):
+    """Tests LoadedExecutable.get_executable_version() returns non-empty version bytes."""
+    x = jnp.ones((2, 2), dtype=jnp.float32)
+    compiled = jax.jit(lambda x: x + 1).lower(x).compile()
+    py_exec = compiled.runtime_executable()
+    version_bytes = py_exec.get_executable_version()
+    self.assertIsInstance(version_bytes, bytes)
+    self.assertNotEmpty(version_bytes)
 
 
 if __name__ == '__main__':

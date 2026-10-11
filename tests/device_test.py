@@ -36,8 +36,8 @@ class DeviceTest(jtu.JaxTestCase):
           repr(device),
           'TpuDevice(id=0, process_index=0, coords=(0,0,0), core_on_chip=0)',
       )
-    elif jtu.test_device_matches(['oneapi']):
-      self.assertEqual(device.platform, 'oneapi')
+    elif jtu.is_device_oneapi():
+      self.assertEqual(device.platform, 'gpu')
       self.assertEqual(repr(device), 'OneapiDevice(id=0)')
     elif jtu.test_device_matches(['cpu']):
       self.assertEqual(device.platform, 'cpu')

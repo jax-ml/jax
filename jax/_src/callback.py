@@ -27,6 +27,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import ffi
+from jax._src import mesh as mesh_lib
 from jax._src import pickle_util
 from jax._src import sharding_impls
 from jax._src import tree_util
@@ -38,8 +39,8 @@ from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.sharding_impls import SdyArray, SdyArrayList, SdyDim, SingleDeviceSharding
 from jax._src.sharding import Sharding
+from jax._src.sharding_impls import SdyArray, SdyArrayList, SdyDim, SingleDeviceSharding
 from jax._src.typing import Array
 import numpy as np
 
@@ -88,7 +89,12 @@ def pure_callback_impl(
         " JAX_PLATFORMS environment variable."
     ) from e
   args = api.device_put(args, cpu_device)
-  with config.default_device(cpu_device):
+  # The callback may run on the dispatching thread; ignore that thread's mesh.
+  with (
+      config.default_device(cpu_device),
+      sharding_impls._internal_use_concrete_mesh(mesh_lib.empty_concrete_mesh),
+      mesh_lib.use_abstract_mesh(mesh_lib.empty_abstract_mesh),
+  ):
     try:
       return tree_util.tree_map(np.asarray, callback(*args))
     except BaseException:
@@ -188,7 +194,7 @@ def _callback_op_sharding(
             "Please file a bug at https://github.com/jax-ml/jax/issues")
       try:
         device_index = device_assignment.index(device)
-      except IndexError as e:
+      except ValueError as e:
         raise ValueError(
             "Sharding provided to pure_callback specifies a device"
             f" {device} that is not in the device assignment"
@@ -368,7 +374,7 @@ def pure_callback(
     (4,) (4,)
     Array([1., 2., 3., 4.], dtype=float32)
 
-  .. _External Callbacks: https://docs.jax.dev/en/latest/external-callbacks.html
+  .. _External Callbacks: https://docs.jax.dev/en/latest/201/callbacks.html
   """
 
   allowed_vmap_methods = ["sequential", "sequential_unrolled", "expand_dims",
@@ -411,6 +417,8 @@ effects.lowerable_effects.add_type(IOEffect)
 effects.lowerable_effects.add_type(OrderedIOEffect)
 effects.control_flow_allowed_effects.add_type(IOEffect)
 effects.control_flow_allowed_effects.add_type(OrderedIOEffect)
+effects.custom_derivatives_allowed_effects.add_type(IOEffect)
+effects.custom_derivatives_allowed_effects.add_type(OrderedIOEffect)
 effects.ordered_effects.add_type(OrderedIOEffect)
 effects.shardable_ordered_effects.add_type(OrderedIOEffect)
 
@@ -432,7 +440,12 @@ def io_callback_impl(
         " JAX_PLATFORMS environment variable."
     ) from e
   args = api.device_put(args, cpu_device)
-  with config.default_device(cpu_device):
+  # The callback may run on the dispatching thread; ignore that thread's mesh.
+  with (
+      config.default_device(cpu_device),
+      sharding_impls._internal_use_concrete_mesh(mesh_lib.empty_concrete_mesh),
+      mesh_lib.use_abstract_mesh(mesh_lib.empty_abstract_mesh),
+  ):
     try:
       return tree_util.tree_map(np.asarray, callback(*args))
     except BaseException:
@@ -569,7 +582,7 @@ def io_callback(
     - :func:`jax.debug.callback`: callback designed for general-purpose debugging.
     - :func:`jax.debug.print`: callback designed for printing.
 
-  .. _External Callbacks: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html
+  .. _External Callbacks: https://docs.jax.dev/en/latest/201/callbacks.html
   """
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
   tree_util.tree_map(_check_shape_dtype, result_shape_dtypes)

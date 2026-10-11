@@ -782,6 +782,9 @@ class EinsumTest(jtu.JaxTestCase):
     actual = hijax.einsum("...jk,kl->...jl", x, y)
     self.assertAllClose(expected, actual, atol=1e-5, rtol=1e-5)
 
+  # Set the highest precision here so that on platforms like ROCm we avoid one
+  # dot compiling to xf32 and the other to FMA, which makes the results disagree.
+  @jax.default_matmul_precision("float32")
   def test_vmap_ellipsis(self):
     x = self.rng().uniform(size=(5, 2, 3, 4))
     y = self.rng().uniform(size=(4, 5))

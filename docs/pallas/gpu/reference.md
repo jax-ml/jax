@@ -261,7 +261,7 @@ The available transforms are:
   `x.reshape(128 // 8, 128 // 64, 8, 64).transpose(0, 2, 1, 3)` in row-major order.
 * `plgpu.SwizzleTransform(swizzle_in_bytes)`, which transforms the data as described in the
   [PTX docs](https://docs.nvidia.com/cuda/parallel-thread-execution/#tensor-swizzling-modes) and
-  [CUDA docs](https://docs.nvidia.com/cuda/cuda-c-programming-guide/#the-swizzle-modes).
+  [CUDA docs](https://docs.nvidia.com/cuda/cuda-programming-guide/).
   Swizzling is useful, because it allows transferring data in MMA-related layouts
   between register and shared memory without bank conflicts. The exact details
   of how the memory looks like after swizzling _are not that important_, since
@@ -359,7 +359,7 @@ input data. For example, the `A` reference is allowed to be of shape `(K, M)`, b
 has to be transposed before passing it into the mma function. For example:
 ```python
 assert acc_ref.shape == (M, N) and a_ref.shape == (K, M) and b_ref.shape == (K, N)
-a_ref_t = plgpu.transpose_ref(a_ref, (1, 0))
+a_ref_t = a_ref.transpose((1, 0))
 assert a_ref_t.shape == (M, K)  # The shape expected by plgpu.wgmma
 plgpu.wgmma(acc, a_ref_t, b_ref)
 ```
@@ -1140,7 +1140,7 @@ y = jax.jit(
 
 ## Cluster launch control
 
-[Cluster launch control](https://docs.nvidia.com/cutlass/media/docs/cpp/blackwell_cluster_launch_control.html#blackwell-cluster-launch-control)
+[Cluster launch control](https://docs.nvidia.com/cutlass/latest/media/docs/cpp/blackwell_cluster_launch_control.html#blackwell-cluster-launch-control)
 is a feature introduced in Blackwell GPUs (SM100A+) that enables work stealing
 or dynamic scheduling of the CUDA grid. This allows an SM
 (or cluster of SMs) that has finished its work to cancel the launch of block
@@ -1457,7 +1457,7 @@ Asynchronous copies in either direction support GMEM references returned from
 def exchange_shards(x_ref, y_ref, smem_ref, local_barrier, done_sem):
   plgpu.copy_gmem_to_smem(x_ref, smem_ref, local_barrier)  # Local copy
   plgpu.barrier_wait(local_barrier)
-  other_dev_id = 1 - lax.axis_index("x")  # We assume two devices
+  other_dev_id = {"x": 1 - lax.axis_index("x")}  # We assume two devices
   neighbor_ref = plgpu.remote_ref(y_ref, other_dev_id)
   plgpu.copy_smem_to_gmem(smem_ref, neighbor_ref)
   plgpu.wait_smem_to_gmem(0)  # Wait for the asynchronous write to complete
@@ -1501,6 +1501,11 @@ generated low-level code:
 * `MOSAIC_GPU_DUMP_SASS_CTRL` allows dumping the SASS control codes following
   [NervanaSystems/maxas](https://github.com/NervanaSystems/maxas) to standard
   output;
+* `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM` allows dumping the constraint system built
+  during layout inference to standard output, which is useful for debugging
+  layout inference failures;
+* `MOSAIC_GPU_DUMP_RESOURCES` allows dumping the estimated resources (such
+  as TMEM columns and SMEM bytes) to standard output;
 * `MOSAIC_GPU_DUMP_TO` allows specifying a directory path (that must exist)
   where all of the above will be dumped as files.
 * `MOSAIC_GPU_LLVM_DEBUG_ONLY` allows specifying a comma-separated list of

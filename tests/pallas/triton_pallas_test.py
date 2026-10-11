@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import functools
+import io
 import sys
 import unittest
-import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -54,11 +55,11 @@ class PallasBaseTest(jtu.JaxTestCase):
         self.skipTest("Only works on GPU with capability >= sm80")
       if plgpu is None:
         self.skipTest("plgpu not available on this platform")
-      self.enter_context(warnings.catch_warnings())
-      warnings.filterwarnings(
-          "ignore",
-          category=DeprecationWarning,
-          message="The Pallas Triton backend is deprecated",
+      self.enter_context(
+          jtu.ignore_warning(
+              category=DeprecationWarning,
+              message="The Pallas Triton backend is deprecated",
+          )
       )
     else:
       self.skipTest("Test only works on CPU and GPU")
@@ -355,11 +356,9 @@ class TritonPallasTest(PallasBaseTest):
       o_ref[...] = plgpu.approx_tanh(x_ref[...])
 
     x = jnp.asarray([-1, 0.42, 0.24, 1]).astype(dtype)
-    # We upcast to float32 because NumPy <2.0 does not handle custom dtypes
-    # properly. See https://github.com/jax-ml/jax/issues/11014.
     np.testing.assert_allclose(
-        kernel(x).astype(jnp.float32),
-        jnp.tanh(x).astype(jnp.float32),
+        kernel(x),
+        jnp.tanh(x),
         atol=5e-3,
         rtol=5e-3,
     )
@@ -472,7 +471,8 @@ class TritonPallasTest(PallasBaseTest):
     out = matmul(x, y, bm=bm, bn=bn, bk=bk, gm=gm,
                  interpret=self.INTERPRET)
     expected = jnp.matmul(
-            x, y, preferred_element_type=jnp.float32).astype(dtype)
+        x, y, preferred_element_type=jnp.float32, precision="high"
+    ).astype(dtype)
     np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
 
   @parameterized.named_parameters(*(
@@ -547,9 +547,9 @@ class TritonPallasTest(PallasBaseTest):
 
     jitted = jax.jit(softmax)
     with jax.sharding.use_abstract_mesh(abstract_mesh):
-        abstract_arr = jax.ShapeDtypeStruct((batch_size, size), jnp.float32)
-        traced = jitted.trace(abstract_arr)
-        lowered = traced.lower()
+      abstract_arr = jax.ShapeDtypeStruct((batch_size, size), jnp.float32)
+      traced = jitted.trace(abstract_arr)
+      lowered = traced.lower()
 
     compiled = lowered.compile(device_assignment=tuple(jax.devices()))
     key = jax.random.key(0)
@@ -636,6 +636,113 @@ class TritonPallasTest(PallasBaseTest):
 
         with self.assertRaisesRegex(ValueError, err_msg):
           dot_kernel(x, y)
+
+  def test_block_shape_larger_than_shape_masked(self):
+    shape = (1, 128)
+    block_shape = (4, 128)
+    x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(shape)
+
+    @jax.jit
+    def copy_add(x):
+      def kernel(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + 1
+
+      return self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
+          grid=(1, 1),
+          in_specs=[pl.BlockSpec(block_shape, lambda i, j: (i, j))],
+          out_specs=pl.BlockSpec(block_shape, lambda i, j: (i, j)),
+          debug=True,
+      )(x)
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+      copy_add.lower(x)
+    triton_ir = buf.getvalue()
+    self.assertIn("arith.cmpi ult", triton_ir)
+    self.assertRegex(triton_ir, r"tt\.load\s+%[^,]+,\s+%[^:]+\s*:")
+    self.assertRegex(triton_ir, r"tt\.store\s+%[^,]+,\s+%[^,]+,\s+%[^:]+\s*:")
+
+    out = copy_add(x)
+    self.assertArraysEqual(out, x + 1)
+
+    @jax.jit
+    def atomic_add_fn(x):
+      def kernel(x_ref, o_ref):
+        plgpu.atomic_add(o_ref, (slice(None), slice(None)), x_ref[...])
+
+      return self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
+          grid=(1, 1),
+          in_specs=[pl.BlockSpec(block_shape, lambda i, j: (i, j))],
+          out_specs=pl.BlockSpec(block_shape, lambda i, j: (i, j)),
+          input_output_aliases={0: 0},
+          debug=True,
+      )(x)
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+      atomic_add_fn.lower(x)
+    atomic_triton_ir = buf.getvalue()
+    self.assertIn("arith.cmpi ult", atomic_triton_ir)
+    self.assertIn("tensor<4x128xi1>", atomic_triton_ir)
+
+    atomic_out = atomic_add_fn(x)
+    self.assertArraysEqual(atomic_out, x * 2)
+
+    # Test non-divisible array shape (dim_size % dim_block_size != 0)
+    non_div_shape = (100, 128)
+    non_div_block_shape = (64, 128)
+    x_non_div = jnp.arange(np.prod(non_div_shape), dtype=jnp.int32).reshape(
+        non_div_shape
+    )
+
+    @jax.jit
+    def non_div_copy_add(x):
+      def kernel(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + 1
+
+      return self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(non_div_shape, jnp.int32),
+          grid=(2, 1),
+          in_specs=[pl.BlockSpec(non_div_block_shape, lambda i, j: (i, j))],
+          out_specs=pl.BlockSpec(non_div_block_shape, lambda i, j: (i, j)),
+          debug=True,
+      )(x)
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+      non_div_copy_add.lower(x_non_div)
+    non_div_ir = buf.getvalue()
+    self.assertIn("arith.cmpi ult", non_div_ir)
+    self.assertArraysEqual(non_div_copy_add(x_non_div), x_non_div + 1)
+
+    # Test scalar values broadcast under bounds_mask (store, addupdate, atomic_max)
+    x_float = jnp.full(shape, -5.0, dtype=jnp.float32)
+
+    @jax.jit
+    def scalar_ops(x):
+      def kernel(x_ref, o_ref):
+        o_ref[...] = x_ref[...]
+        o_ref[0, 0] = 7.0
+        jax.ref.addupdate(o_ref, (0, 0), jnp.float32(3.0))
+        plgpu.atomic_max(o_ref, (0, 0), jnp.float32(12.0))
+
+      return self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+          grid=(1, 1),
+          in_specs=[pl.BlockSpec(block_shape, lambda i, j: (i, j))],
+          out_specs=pl.BlockSpec(block_shape, lambda i, j: (i, j)),
+      )(x)
+
+    expected_scalar_out = (
+        jnp.full(shape, -5.0, dtype=jnp.float32).at[0, 0].set(12.0)
+    )
+    self.assertArraysEqual(scalar_ops(x_float), expected_scalar_out)
 
 
 @functools.partial(

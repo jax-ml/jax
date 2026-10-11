@@ -25,7 +25,8 @@
 #
 # Environment variables:
 #     JAX_ACCELERATOR_COUNT = Number of accelerators (GPUs/TPUs) available.
-#     JAX_TESTS_PER_ACCELERATOR = Number of accelerators (GPUs/TPUs) available.
+#     JAX_TESTS_PER_ACCELERATOR = Number of tests to run concurrently on each
+#                                 accelerator.
 
 JAX_ACCELERATOR_COUNT=${JAX_ACCELERATOR_COUNT:-4}
 JAX_TESTS_PER_ACCELERATOR=${JAX_TESTS_PER_ACCELERATOR:-8}
@@ -77,7 +78,8 @@ for j in `seq 0 $((JAX_TESTS_PER_ACCELERATOR-1))`; do
         export TPU_VISIBLE_CHIPS=$i
         export CUDA_VISIBLE_DEVICES=$i
         export ROCR_VISIBLE_DEVICES=$i
-        export ONEAPI_VISIBLE_DEVICES=$i
+        # oneAPI/Level Zero equivalent of the *_VISIBLE_DEVICES variables above.
+        export ZE_AFFINITY_MASK=$i
         echo "Running test $TEST_BINARY $* on accelerator $i"
         "$TEST_BINARY" $@
       )

@@ -24,8 +24,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -37,7 +39,6 @@ limitations under the License.
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
-#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
@@ -53,6 +54,7 @@ limitations under the License.
 #include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/memory.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/nb_numpy.h"
@@ -87,6 +89,29 @@ absl::StatusOr<xla::PjRtMemorySpace*> MemorySpaceFromSharding(
         sharding);
   }
   auto* device = sharding.devices()->devices()[0];
+#if JAX_IFRT_VERSION_NUMBER >= 64
+  if (!sharding.memory_kind().is_default()) {
+    // Find `PjRtMemorySpace` that is associated with the sharding's device
+    // and matches the sharding's memory_kind.
+    xla::ifrt::Memory* memory = nullptr;
+    for (xla::ifrt::Memory* ms : device->Memories()) {
+      if (ms->Kind() == sharding.memory_kind()) {
+        memory = ms;
+        break;
+      }
+    }
+    if (memory == nullptr) {
+      return xla::InvalidArgument(
+          "Invalid memory kind: %s; available memory kinds: %s",
+          sharding.memory_kind().value(),
+          absl::StrJoin(sharding.devices()->devices().front()->Memories(), ", ",
+                        [](std::string* out, xla::ifrt::Memory* ms) {
+                          absl::StrAppend(out, ms->Kind().value());
+                        }));
+    }
+    return absl::down_cast<xla::ifrt::PjRtMemory*>(memory)->pjrt_memory();
+  } else {
+#else
   if (sharding.memory_kind().memory_kind().has_value()) {
     // Find `PjRtMemorySpace` that is associated with the sharding's device
     // and matches the sharding's memory_kind.
@@ -108,6 +133,7 @@ absl::StatusOr<xla::PjRtMemorySpace*> MemorySpaceFromSharding(
     }
     return tensorflow::down_cast<xla::ifrt::PjRtMemory*>(memory)->pjrt_memory();
   } else {
+#endif
     if (!device->IsAddressable()) {
       return xla::InvalidArgument(
           "Cannot copy array to non-addressable device %s",
@@ -133,9 +159,9 @@ absl::StatusOr<tsl::RCReference<PullTable::Entry>> CreatePullEntry(
             "Cannot remote transfer non-pjrt arrays.");
       }
       for (auto& pjrt_buf : pjrt_arr->pjrt_buffers()) {
-        TF_ASSIGN_OR_RETURN(size_t buf_size,
-                            pjrt_buf->GetOnDeviceSizeInBytes());
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(size_t buf_size,
+                              pjrt_buf->GetOnDeviceSizeInBytes());
+        ABSL_ASSIGN_OR_RETURN(
             auto raw_buffer,
             xla::PjRtRawBuffer::CreateRawAliasOfBuffer(pjrt_buf.get()));
         refs.push_back(
@@ -154,7 +180,8 @@ absl::StatusOr<tsl::RCReference<PullTable::Entry>> CreatePullEntry(
           "Cannot remote transfer non-pjrt arrays.");
     }
     for (auto& pjrt_buf : pjrt_arr->pjrt_buffers()) {
-      TF_ASSIGN_OR_RETURN(size_t buf_size, pjrt_buf->GetOnDeviceSizeInBytes());
+      ABSL_ASSIGN_OR_RETURN(size_t buf_size,
+                            pjrt_buf->GetOnDeviceSizeInBytes());
       refs.push_back({pjrt_buf, buf_size});
     }
   }
@@ -229,7 +256,7 @@ class PyTransferServer {
 
     server_ = std::make_shared<SocketServer>();
 
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         auto mem, AllocateAndMapPjrtMemory(
                       pjrt_client, max_num_parallel_copies * xfer_size * 2));
     premapped_copier_ = std::make_shared<PremappedCopierState>(
@@ -270,14 +297,14 @@ class PyTransferServer {
 
 absl::StatusOr<xla::ifrt::ArraySpec> ArraySpecFromShapeDtypeStruct(
     nb::handle aval) {
-  TF_ASSIGN_OR_RETURN(xla::ifrt::DType dtype,
-                      xla::DtypeToIfRtDType(
-                          nb::borrow<xla::nb_dtype>(aval.attr("dtype").ptr())));
+  ABSL_ASSIGN_OR_RETURN(xla::ifrt::DType dtype,
+                        xla::DtypeToIfRtDType(nb::borrow<xla::nb_dtype>(
+                            aval.attr("dtype").ptr())));
   auto shape_dims = nb::cast<std::vector<int64_t>>(aval.attr("shape"));
   auto shape = xla::ifrt::Shape(
       xla::ifrt::Shape::Dimensions(shape_dims.begin(), shape_dims.end()));
-  TF_ASSIGN_OR_RETURN(auto sharding,
-                      jax::GetIfrtHloSharding(aval.attr("sharding"), shape));
+  ABSL_ASSIGN_OR_RETURN(auto sharding,
+                        jax::GetIfrtHloSharding(aval.attr("sharding"), shape));
   return xla::ifrt::ArraySpec{dtype, std::move(shape), std::move(sharding)};
 }
 
@@ -427,7 +454,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
             for (const jax::PyArray& dest : dests) {
               arrs.push_back(tsl::FormRef(
                   tensorflow::down_cast<xla::ifrt::PjRtCompatibleArray*>(
-                      dest.ifrt_array())));
+                      dest.ifrt_array_ref().get())));
             }
             uint64_t uuid_cpp;
             try {
@@ -487,7 +514,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
             std::vector<xla::ifrt::ArrayRef> arrs;
             arrs.reserve(inputs.size());
             for (const jax::PyArray& input : inputs) {
-              arrs.push_back(tsl::FormRef(input.ifrt_array()));
+              arrs.push_back(input.ifrt_array_ref());
             }
             uint64_t uuid_cpp;
             try {

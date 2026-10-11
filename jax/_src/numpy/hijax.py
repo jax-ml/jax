@@ -33,7 +33,7 @@ from jax._src import tree_util
 from jax._src.hijax import (
     linearize_from_jvp,
     vjp_from_jvp,
-    VJPHiPrimitive,
+    HiPrim,
 )
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.interpreters import ad
@@ -44,7 +44,7 @@ from jax._src.numpy.einsum import _einsum as einsum_impl, Unoptimized
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
 
-class SearchSorted(VJPHiPrimitive):
+class SearchSorted(HiPrim):
   """HiJAX primitive for binary search."""
   valid_methods = ("compare_all", "scan", "scan_unrolled", "sort")
 
@@ -179,7 +179,7 @@ class SearchSorted(VJPHiPrimitive):
   lin, linearized = linearize_from_jvp
 
 
-class Nonzero(VJPHiPrimitive):
+class Nonzero(HiPrim):
   """HiJAX primitive for nonzero."""
 
   size: int
@@ -199,8 +199,6 @@ class Nonzero(VJPHiPrimitive):
       size = operator.index(size)
       if size < 0:
         raise ValueError(f"size must be a positive integer; got {size=}")
-    if not dtypes.issubdtype(out_dtype, np.integer):
-      raise ValueError(f"out_dtype must be integer typed; got {out_dtype=}")
     if not all(0 <= ax < a_aval.ndim for ax in axes):
       raise ValueError(f"axes out of range for array with {a_aval.ndim} dimensions:  {axes=}")
     if len(axes) != len(set(axes)):
@@ -315,7 +313,7 @@ class Nonzero(VJPHiPrimitive):
   lin, linearized = linearize_from_jvp
 
 
-class Einsum(VJPHiPrimitive):
+class Einsum(HiPrim):
   """HiJAX primitive for einstein summation.
 
   Parameters:
@@ -675,33 +673,6 @@ def searchsorted(
     out_dtype=out_dtype,
   )
   return prim(sorted_arr, query)
-
-
-# TODO(jakevdp): delete this function when hijax is finalized.
-def searchsorted_via_expand(
-    sorted_arr: ArrayLike,
-    query: ArrayLike,
-    /,
-    *,
-    side: str = "left",
-    dimension: int = 0,
-    batch_dims: int = 0,
-    method: str = "scan",
-    dtype: DTypeLike = "int32",
-):
-  """Compute searchsorted() without binding the hijax primitive."""
-  sorted_arr, query = core.auto_insert_reshard(sorted_arr, query)
-  out_dtype = dtypes._maybe_canonicalize_explicit_dtype(np.dtype(dtype), "searchsorted")
-  prim = SearchSorted(
-    core.typeof(sorted_arr),
-    core.typeof(query),
-    side=side,
-    dimension=dimension,
-    batch_dims=batch_dims,
-    method=method,
-    out_dtype=out_dtype,
-  )
-  return prim.expand(sorted_arr, query)
 
 
 def nonzero(

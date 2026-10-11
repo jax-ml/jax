@@ -100,7 +100,7 @@ def pallas_call(
 
     @functools.partial(
         pipeline.emit_pipeline,
-        grid=sequential_grid,
+        grid=sequential_grid,  # pyrefly: ignore[bad-argument-type]
         in_specs=[
             _make_pipeline_spec(s)
             for s in _normalize_specs(in_specs, in_shapes)

@@ -197,7 +197,7 @@ class MatmulTestCase(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
     a = jax.random.normal(key=ka, shape=(m, k), dtype=dtype)
     b = jax.random.normal(key=kb, shape=(n, k), dtype=dtype)
     out = kernel(a, b)
-    out_ref = jnp.dot(a, b.T)
+    out_ref = jnp.dot(a, b.T, precision="high")
     np.testing.assert_allclose(
         out, out_ref, atol=2e-3, rtol=1e-2
     )

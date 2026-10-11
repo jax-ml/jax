@@ -97,6 +97,15 @@ class BinaryUfunc(Protocol):
                out: None = None) -> Array: ...
   def outer(self, a: ArrayLike, b: ArrayLike, /) -> Array: ...
 
+class _ScalarType(Protocol):
+  @property
+  def dtype(self) -> _np.dtype: ...
+  @property
+  def __numpy_dtype__(self) -> _np.dtype: ...
+  def __call__(self, x: Any, /) -> Array: ...
+  def __hash__(self, /) -> int: ...
+  def __eq__(self, other: Any, /) -> bool: ...
+
 __array_api_version__: str
 def __array_namespace_info__() -> ArrayNamespaceInfo: ...
 
@@ -200,25 +209,25 @@ def atan(x: ArrayLike, /) -> Array: ...
 def atan2(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def atanh(x: ArrayLike, /) -> Array: ...
 @overload
-def atleast_1d() -> list[Array]: ...
+def atleast_1d() -> tuple[()]: ...
 @overload
 def atleast_1d(x: ArrayLike, /) -> Array: ...
 @overload
-def atleast_1d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]: ...
+def atleast_1d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> tuple[Array, ...]: ...
 
 @overload
-def atleast_2d() -> list[Array]: ...
+def atleast_2d() -> tuple[()]: ...
 @overload
 def atleast_2d(x: ArrayLike, /) -> Array: ...
 @overload
-def atleast_2d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]: ...
+def atleast_2d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> tuple[Array, ...]: ...
 
 @overload
-def atleast_3d() -> list[Array]: ...
+def atleast_3d() -> tuple[()]: ...
 @overload
 def atleast_3d(x: ArrayLike, /) -> Array: ...
 @overload
-def atleast_3d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]: ...
+def atleast_3d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> tuple[Array, ...]: ...
 
 @overload
 def average(a: ArrayLike, axis: _Axis = ..., weights: ArrayLike | None = ...,
@@ -231,7 +240,7 @@ def average(a: ArrayLike, axis: _Axis = ..., weights: ArrayLike | None = ...,
             returned: builtins.bool = False, keepdims: builtins.bool = False) -> Array | tuple[Array, Array]: ...
 
 def bartlett(M: int) -> Array: ...
-bfloat16: Any
+bfloat16: _ScalarType
 def bincount(x: ArrayLike, weights: ArrayLike | None = ...,
              minlength: int = ..., *, length: int | None = ...,
              out_sharding: NamedSharding | P | None = ...) -> Array: ...
@@ -245,8 +254,8 @@ def bitwise_right_shift(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 bitwise_xor: BinaryUfunc
 def blackman(M: int) -> Array: ...
 def block(arrays: ArrayLike | Sequence[ArrayLike] | Sequence[Sequence[ArrayLike]]) -> Array: ...
-bool: Any
-bool_: Any
+bool: _ScalarType
+bool_: _ScalarType
 def broadcast_arrays(*args: ArrayLike) -> tuple[Array, ...]: ...
 
 @overload
@@ -261,7 +270,7 @@ def broadcast_to(array: ArrayLike, shape: DimSize | Shape, *,
 c_: _CClass
 can_cast = _np.can_cast
 def cbrt(x: ArrayLike, /) -> Array: ...
-cdouble: Any
+cdouble: _ScalarType
 def ceil(x: ArrayLike, /) -> Array: ...
 character = _np.character
 def choose(a: ArrayLike, choices: Array | _np.ndarray | Sequence[ArrayLike],
@@ -279,9 +288,9 @@ def clip(
 def column_stack(
     tup: _np.ndarray | Array | Sequence[ArrayLike]
 ) -> Array: ...
-complex128: Any
-complex64: Any
-complex_: Any
+complex128: _ScalarType
+complex64: _ScalarType
+complex_: _ScalarType
 complexfloating = _np.complexfloating
 def compress(condition: ArrayLike, a: ArrayLike, axis: int | None = ..., *,
              size: int | None = ..., fill_value: ArrayLike = ..., out: None = ...) -> Array: ...
@@ -322,7 +331,7 @@ def cross(
     axisc: int = -1,
     axis: int | None = ...,
 ) -> Array: ...
-csingle: Any
+csingle: _ScalarType
 def cumprod(a: ArrayLike, axis: int | None = ..., dtype: DTypeLike | None = ...,
             out: None = ...) -> Array: ...
 def cumsum(a: ArrayLike, axis: int | None = ..., dtype: DTypeLike | None = ...,
@@ -361,7 +370,7 @@ def dot(
     a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = ...,
     preferred_element_type: DTypeLike | None = ...,
     out_sharding: NamedSharding | P | None = ...) -> Array: ...
-double: Any
+double: _ScalarType
 def dsplit(
     ary: ArrayLike, indices_or_sections: int | ArrayLike
 ) -> list[Array]: ...
@@ -461,19 +470,21 @@ def flip(
 
 def fliplr(m: ArrayLike) -> Array: ...
 def flipud(m: ArrayLike) -> Array: ...
-float16: Any
-float32: Any
-float4_e2m1fn: Any
-float64: Any
-float8_e3m4: Any
-float8_e4m3: Any
-float8_e4m3b11fnuz: Any
-float8_e4m3fn: Any
-float8_e4m3fnuz: Any
-float8_e5m2: Any
-float8_e5m2fnuz: Any
-float8_e8m0fnu: Any
-float_: Any
+float16: _ScalarType
+float32: _ScalarType
+float4_e2m1fn: _ScalarType
+float6_e2m3fn: _ScalarType
+float6_e3m2fn: _ScalarType
+float64: _ScalarType
+float8_e3m4: _ScalarType
+float8_e4m3: _ScalarType
+float8_e4m3b11fnuz: _ScalarType
+float8_e4m3fn: _ScalarType
+float8_e4m3fnuz: _ScalarType
+float8_e5m2: _ScalarType
+float8_e5m2fnuz: _ScalarType
+float8_e8m0fnu: _ScalarType
+float_: _ScalarType
 def float_power(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 floating = _np.floating
 def floor(x: ArrayLike, /) -> Array: ...
@@ -526,7 +537,8 @@ def heaviside(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def histogram(a: ArrayLike, bins: ArrayLike = ...,
               range: Sequence[ArrayLike] | None = ...,
               weights: ArrayLike | None = ...,
-              density: builtins.bool | None = ...) -> tuple[Array, Array]: ...
+              density: builtins.bool | None = ...,
+              out_sharding: NamedSharding | P | None = ...) -> tuple[Array, Array]: ...
 def histogram2d(
     x: ArrayLike,
     y: ArrayLike,
@@ -574,13 +586,13 @@ def inner(
     preferred_element_type: DTypeLike | None = ...) -> Array: ...
 def insert(arr: ArrayLike, obj: ArrayLike | slice, values: ArrayLike,
            axis: int | None = ...) -> Array: ...
-int16: Any
-int2: Any
-int32: Any
-int4: Any
-int64: Any
-int8: Any
-int_: Any
+int16: _ScalarType
+int2: _ScalarType
+int32: _ScalarType
+int4: _ScalarType
+int64: _ScalarType
+int8: _ScalarType
+int_: _ScalarType
 integer = _np.integer
 def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
            left: ArrayLike | str | None = ...,
@@ -681,6 +693,10 @@ mgrid: _Mgrid
 def min(a: ArrayLike, axis: _Axis = ..., out: None = ...,
         keepdims: builtins.bool = ..., initial: ArrayLike | None = ...,
         where: ArrayLike | None = ...) -> Array: ...
+def minmax(a: ArrayLike, axis: _Axis = ..., out: None = ...,
+           keepdims: builtins.bool = ...,
+           initial: ArrayLike | tuple[ArrayLike, ArrayLike] | None = ...,
+           where: ArrayLike | None = ...) -> tuple[Array, Array]: ...
 minimum: BinaryUfunc
 def mod(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]: ...
@@ -809,7 +825,7 @@ def ptp(a: ArrayLike, axis: _Axis = ..., out: None = ...,
 def put(a: ArrayLike, ind: ArrayLike, v: ArrayLike,
         mode: str | None = ..., *, inplace: builtins.bool = ...) -> Array: ...
 def put_along_axis(arr: ArrayLike, indices: ArrayLike, values: ArrayLike,
-        axis: int | None, inplace: bool = True, *, mode: str | None = None) -> Array: ...
+        axis: int | None, inplace: builtins.bool = True, *, mode: str | None = None) -> Array: ...
 def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = ...,
              out: None = ..., overwrite_input: builtins.bool = ..., method: str = ...,
              keepdims: builtins.bool = ..., *, interpolation: DeprecatedArg | str = ...) -> Array: ...
@@ -827,7 +843,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = ..., *,
            total_repeat_length: int | None = ...,
            out_sharding: NamedSharding | P | None = None) -> Array: ...
 def reshape(
-    a: ArrayLike, shape: DimSize | Shape, order: str = ..., *, copy: bool | None = ...,
+    a: ArrayLike, shape: DimSize | Shape, order: str = ..., *, copy: builtins.bool | None = ...,
     out_sharding: NamedSharding | P | None = ...,
 ) -> Array: ...
 
@@ -868,7 +884,7 @@ def signbit(x: ArrayLike, /) -> Array: ...
 signedinteger = _np.signedinteger
 def sin(x: ArrayLike, /) -> Array: ...
 def sinc(x: ArrayLike, /) -> Array: ...
-single: Any
+single: _ScalarType
 def sinh(x: ArrayLike, /) -> Array: ...
 def size(a: ArrayLike | SupportsSize, axis: _Axis = None) -> int: ...
 def sort(
@@ -972,13 +988,13 @@ def triu_indices(
 def triu_indices_from(arr: ArrayLike | SupportsShape, k: int = ...) -> tuple[Array, Array]: ...
 def true_divide(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def trunc(x: ArrayLike, /) -> Array: ...
-uint: Any
-uint16: Any
-uint2: Any
-uint32: Any
-uint4: Any
-uint64: Any
-uint8: Any
+uint: _ScalarType
+uint16: _ScalarType
+uint2: _ScalarType
+uint32: _ScalarType
+uint4: _ScalarType
+uint64: _ScalarType
+uint8: _ScalarType
 def union1d(
     ar1: ArrayLike,
     ar2: ArrayLike,
@@ -1000,7 +1016,7 @@ class _UniqueInverseResult(NamedTuple):
 def unique(ar: ArrayLike, return_index: builtins.bool = ..., return_inverse: builtins.bool = ...,
            return_counts: builtins.bool = ..., axis: int | None = ...,
            *, equal_nan: builtins.bool = ..., size: int | None = ...,
-           fill_value: ArrayLike | None = ..., sorted: bool = ...,
+           fill_value: ArrayLike | None = ..., sorted: builtins.bool = ...,
 ): ...
 def unique_all(x: ArrayLike, /, *, size: int | None = ...,
                fill_value: ArrayLike | None = ...) -> _UniqueAllResult: ...

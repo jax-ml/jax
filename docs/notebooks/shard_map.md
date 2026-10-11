@@ -2,6 +2,7 @@
 jupytext:
   cell_metadata_filter: -all
   formats: ipynb,md:myst,py
+  notebook_metadata_filter: nosearch
   text_representation:
     extension: .md
     format_name: myst
@@ -11,6 +12,7 @@ kernelspec:
   display_name: Python 3
   language: python
   name: python3
+nosearch: true
 ---
 
 ```{raw-cell}

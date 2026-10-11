@@ -47,6 +47,7 @@ from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
+from jax._src import xla_bridge as xb
 from jax._src.typing import Array
 from jax._src.util import (canonicalize_axis, moveaxis, safe_map, safe_zip,
                            unzip2)
@@ -366,13 +367,20 @@ def pbroadcast(x, axis_name, source):
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       :func:`jax.pmap` documentation for more details).
-    source: int, representing which index into ``axis_name`` that should be copied.
+    source: int or i32 scalar array, representing which index into ``axis_name``
+      that should be copied. When ``source`` is a JAX array the broadcast uses
+      the StableHLO ``has_dynamic_root`` feature; the value is the in-group
+      index of the root process within each replica group.
 
   Returns:
     Array(s) with ``x`` being copied from the ``source`` index slice of ``axis_name``.
   """
-  return tree_util.tree_map(
-      partial(pbroadcast_p.bind, axis_name=axis_name, source=source), x)
+  if isinstance(source, int):
+    return tree_util.tree_map(
+        partial(pbroadcast_p.bind, axis_name=axis_name, source=source), x)
+  else:
+    return tree_util.tree_map(
+        lambda leaf: pbroadcast_dynamic_p.bind(leaf, source, axis_name=axis_name), x)
 
 
 def ppermute(x, axis_name, perm):
@@ -419,6 +427,9 @@ def _ppermute_is_async(x, axis_name, perm, is_async=False):
 def psend(x, axis_name, perm):
   """Perform a collective send according to the permutation ``perm``.
 
+  .. deprecated:: 0.12.0
+    ``jax.lax.psend`` is deprecated.
+
   If ``x`` is a pytree then the result is equivalent to mapping this function to
   each leaf in the tree.
 
@@ -453,6 +464,9 @@ def psend(x, axis_name, perm):
 
 def precv(token, out_shape, axis_name, perm):
   """Perform a collective recv according to the permutation ``perm``.
+
+  .. deprecated:: 0.12.0
+    ``jax.lax.precv`` is deprecated.
 
   This function is an analog of the Recv HLO.
 
@@ -1066,7 +1080,8 @@ def _build_reducer_func_op(ctx, prim, aval_in):
 
 def _all_reduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups,
                          is_async=False):
-  aval_in, = ctx.avals_in
+  in_aval, = ctx.avals_in
+  out_aval, = ctx.avals_out
   if axis_index_groups is not None and ("tpu" in ctx.module_context.platforms):
     len_0 = len(axis_index_groups[0])
     if any(len(g) != len_0 for g in axis_index_groups):
@@ -1084,7 +1099,7 @@ def _all_reduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups,
       reducer_ctx = ctx.replace(primitive=None, avals_in=[aval], avals_out=[aval_out])
       out, = reducer(reducer_ctx, arg, axes=tuple(positional_axes))
       return out
-    arg = _positional_reduce(aval_in, arg)
+    arg = _positional_reduce(in_aval, arg)
   if not named_axes:
     return [arg]
 
@@ -1104,15 +1119,16 @@ def _all_reduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups,
     op = hlo.AllReduceOp(
         [arg.type], [arg], replica_groups=replica_groups, **other_args)
     scalar_aval = core.ShapedArray(
-        (), aval_in.dtype, sharding=NamedSharding(aval_in.sharding.mesh, P()))
+        (), in_aval.dtype, sharding=NamedSharding(in_aval.sharding.mesh, P()))
     scalar_type = mlir.aval_to_ir_type(ctx.module_context, scalar_aval)
     reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
     _lower_reducer_into_block(ctx, prim, scalar_aval, reducer_block)
-    return [op.result]
+    # For partial manual shard_map
+    return [mlir.lower_with_sharding_in_types(ctx, op.result, out_aval)]
   else:
     replica_groups = _replica_groups(
         ctx.module_context.axis_context, named_axes, axis_index_groups=None)
-    reducer = _build_reducer_func_op(ctx, prim, aval_in)
+    reducer = _build_reducer_func_op(ctx, prim, in_aval)
     return _emit_async_start_custom_call(
         "all-reduce-start", ctx, arg,
         {"replica_groups": replica_groups, **other_args},
@@ -1265,7 +1281,8 @@ core.effects.control_flow_allowed_effects.add_type(SingleSideCollectiveEffect)
 
 def _psend_lowering_gpu(ctx, x, *, axis_name, perm):
   if ("cuda" not in ctx.module_context.platforms and
-      "rocm" not in ctx.module_context.platforms):
+      "rocm" not in ctx.module_context.platforms and
+      "oneapi" not in ctx.module_context.platforms):
     raise NotImplementedError("psend is currently only implemented on GPUs")
 
   full_perm, other_args = _pcollectives_lowering_common(
@@ -1389,7 +1406,7 @@ def _pbroadcast_lowering(ctx, x, *, axis_name, source):
   else:
     other_args = {}
   return hlo.CollectiveBroadcastOp(
-      x,
+      [x],  # pyrefly: ignore[bad-argument-type]
       replica_groups=_device_list_replica_groups_hlo(replica_groups),
       **other_args,
   ).results
@@ -1399,6 +1416,149 @@ pbroadcast_p.def_abstract_eval(_raise_to_shaped_abstract_eval)
 ad.deflinear2(pbroadcast_p, _pbroadcast_transpose_rule)
 mlir.register_lowering(pbroadcast_p, _pbroadcast_lowering, platform='gpu')
 batching.fancy_primitive_batchers[pbroadcast_p] = _pbroadcast_batcher
+
+
+# Dynamic-root variant: source is a traced i32 scalar operand.
+
+def _pbroadcast_dynamic_abstract_eval(x, source, *, axis_name):
+  if source.dtype != np.dtype('int32'):
+    raise TypeError(
+        f"pbroadcast dynamic source must be an i32 array, got {source.dtype}")
+  if source.shape != ():
+    raise ValueError(
+        f"pbroadcast dynamic source must be a scalar, got shape {source.shape}")
+  _check_axis_names(axis_name, 'pbroadcast')
+  collective_vma_rule('pbroadcast', axis_name, x)
+  check_unreduced_args([x], axis_name, 'pbroadcast')
+  return x
+
+def _pbroadcast_dynamic_jvp(primals, tangents, *, axis_name):
+  (x, source) = primals
+  (t_x, _t_source) = tangents  # source is not differentiable
+  val_out = pbroadcast_dynamic_p.bind(x, source, axis_name=axis_name)
+  if isinstance(t_x, ad.Zero):
+    t_out = ad.Zero(val_out.aval)
+  else:
+    t_out = pbroadcast_dynamic_p.bind(t_x, source, axis_name=axis_name)
+  return val_out, t_out
+
+def _pbroadcast_dynamic_transpose_rule(ct, x, source, *, axis_name):
+  assert ad.is_undefined_primal(x)
+  if type(ct) is ad.Zero:
+    return [ad.Zero(x.aval.to_ct_aval()), None]
+  # Gradient of broadcast: only the source device accumulates the sum.
+  is_source = axis_index(axis_name) == source
+  tsum = psum(ct, axis_name)
+  return [lax.select(is_source, lax.full_like(ct, tsum), lax.full_like(ct, 0)),
+          None]
+
+def _pbroadcast_dynamic_batcher(axis_data, vals_in, dims_in, *, axis_name):
+  (v, src), (d, d_src) = vals_in, dims_in
+  if d_src is not None:
+    raise NotImplementedError(
+        "vmap of pbroadcast where the dynamic source itself varies across the "
+        "vmap batch is not supported")
+  if not isinstance(axis_name, (tuple, list)):
+    axis_name = (axis_name,)
+  if axis_data.name not in axis_name:
+    # vmap over an axis unrelated to the collective: pass through unchanged.
+    return pbroadcast_dynamic_p.bind(v, src, axis_name=axis_name), d
+  # vmap over the collective axis: simulate the broadcast by selecting the
+  # src-th slice and tiling it across the batch dimension.
+  remaining_axes = tuple(ax for ax in axis_name if ax != axis_data.name)
+  if remaining_axes:
+    raise NotImplementedError(
+        "vmap of pbroadcast with dynamic source over multiple axes is not supported")
+  if d is None:
+    # v is the same for all vmap instances; broadcast from src is a no-op.
+    return v, None
+  # Select the src-th slice along dim d and broadcast it to all positions.
+  selected = slicing.dynamic_index_in_dim(v, src, d, keepdims=True)
+  result = lax.broadcast_in_dim(selected, v.shape, list(range(v.ndim)))
+  return result, d
+
+def _pbroadcast_dynamic_software_fallback(x, source, *, axis_name):
+  # Software emulation: mask the source device's value and all-reduce sum.
+  # Semantically identical to the collective_broadcast with has_dynamic_root.
+  masked = lax.select(axis_index(axis_name) == source, x, lax._zeros(x))
+  return psum(masked, axis_name)
+
+_pbroadcast_dynamic_fallback_lowering = mlir.lower_fun(
+    _pbroadcast_dynamic_software_fallback, multiple_results=False
+)
+
+# has_dynamic_root (variadic collective_broadcast) requires StableHLO >= 1.20.0.
+_STABLEHLO_DYNAMIC_ROOT_MIN_VERSION = "1.20.0"
+
+def _stablehlo_has_dynamic_root(ctx: mlir.LoweringRuleContext) -> bool:
+  """Whether whatever will consume this lowering understands the
+  has_dynamic_root variant of stablehlo.collective_broadcast.
+
+  The local jaxlib's in-process StableHLO version is not a reliable signal:
+  i.e. forward-compatible or IFRT-proxy-serialized programs get downgraded to a
+  conservative default StableHLO version (xla::GetDefaultStablehloVersion(),
+  always >=12 weeks old) before being handed to whatever actually runs them,
+  which may not contain this attribute.
+  """
+  if ctx.is_forward_compat():
+    return False
+
+  backend = ctx.module_context.get_backend(optional=True)
+  if backend is not None:
+    runtime_type = getattr(backend, "runtime_type", "") or ""
+    if runtime_type.startswith("proxy/"):
+      return False
+    plugin_version = xb.backend_stablehlo_version(backend)
+    if plugin_version is not None:
+      return hlo.get_smaller_version(
+          ".".join(map(str, plugin_version)),
+          _STABLEHLO_DYNAMIC_ROOT_MIN_VERSION,
+      ) == _STABLEHLO_DYNAMIC_ROOT_MIN_VERSION
+
+  return hlo.get_smaller_version(
+      hlo.get_current_version(), _STABLEHLO_DYNAMIC_ROOT_MIN_VERSION
+  ) == _STABLEHLO_DYNAMIC_ROOT_MIN_VERSION
+
+def _pbroadcast_dynamic_lowering(ctx, x, source, *, axis_name):
+  if not _stablehlo_has_dynamic_root(ctx):
+    return _pbroadcast_dynamic_fallback_lowering(ctx, x, source, axis_name=axis_name)
+
+  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name, None)
+  is_spmd = isinstance(
+      ctx.module_context.axis_context,
+      (SPMDAxisContext, ShardingContext),
+  )
+  attributes: dict[str, ir.Attribute] = {
+      "replica_groups": _device_list_replica_groups_hlo(replica_groups),
+      "has_dynamic_root": ir.UnitAttr.get(),
+  }
+  if is_spmd:
+    channel_handle = hlo.ChannelHandle.get(mlir.COLLECTIVE_CHANNEL_ID,
+                                           mlir.DEVICE_TO_DEVICE_TYPE)
+    attributes["channel_handle"] = channel_handle
+
+  # StableHLO requires the root tensor to be rank-1 with one element per data
+  # operand.  JAX passes a scalar i32; reshape it to tensor<1xi32>.
+  i32_type = ir.IntegerType.get_signless(32)
+  source_1d = hlo.ReshapeOp(
+      ir.RankedTensorType.get([1], i32_type), source).result
+
+  result_type = ir.RankedTensorType(x.type)
+  op = ir.Operation.create(
+      "stablehlo.collective_broadcast",
+      results=[result_type],
+      operands=[x, source_1d],
+      attributes=attributes,
+  )
+  return op.results
+
+pbroadcast_dynamic_p = core.Primitive('pbroadcast_dynamic')
+pbroadcast_dynamic_p.def_abstract_eval(_pbroadcast_dynamic_abstract_eval)
+ad.primitive_jvps[pbroadcast_dynamic_p] = _pbroadcast_dynamic_jvp
+ad.primitive_transposes[pbroadcast_dynamic_p] = _pbroadcast_dynamic_transpose_rule
+mlir.register_lowering(pbroadcast_dynamic_p, _pbroadcast_dynamic_lowering,
+                       platform='gpu')
+batching.fancy_primitive_batchers[pbroadcast_dynamic_p] = _pbroadcast_dynamic_batcher
 
 
 def _moveaxis(src, dst, x):
@@ -2917,7 +3077,7 @@ def vary_unreduced_cast(x, axis_name):
   return tree_util.tree_map(
       lambda leaf: vary_unreduced_cast_p.bind(leaf, axes=new_axes), x)
 
-vary_unreduced_cast_p = core.Primitive('vary_unreduced_cast_p')
+vary_unreduced_cast_p = core.Primitive('vary_unreduced_cast')
 vary_unreduced_cast_p.def_impl(partial(_raise_valueerror, 'vary_unreduced_cast'))
 mlir.register_lowering(vary_unreduced_cast_p, lambda ctx, x, *, axes: [x])
 

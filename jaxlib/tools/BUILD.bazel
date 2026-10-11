@@ -566,6 +566,16 @@ py_import(
     deps = [":rocm_pjrt_libs"],
 )
 
+py_import(
+    name = "jax_oneapi_plugin_py_import",
+    wheel = ":jax_oneapi_plugin_wheel",
+)
+
+py_import(
+    name = "jax_oneapi_pjrt_py_import",
+    wheel = ":jax_oneapi_pjrt_wheel",
+)
+
 # The targets below are used for GPU tests with `--//jax:build_jaxlib=false`.
 py_import(
     name = "pypi_jax_cuda_plugin_with_cuda_deps",
@@ -747,6 +757,8 @@ _IGNORED_INIT_PY_FILES = [
     # These files do not exist in JAX sources.
     "jaxlib/mosaic/dialect/gpu/__init__.py",
     "jaxlib/mosaic/python/__init__.py",
+    "jaxlib/thunky/dialect/__init__.py",
+    "jaxlib/thunky/python/__init__.py",
 ]
 
 compare_srcs_and_test_deps_test(

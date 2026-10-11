@@ -13,12 +13,12 @@
 # limitations under the License.
 
 
+import functools
 import itertools
 import math
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
-from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_interpret
 from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams as InterpretParams
 import jax.experimental.pallas as pl
 from jax.experimental.pallas import mosaic_gpu as plgpu
@@ -44,6 +44,14 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
     super().setUp()
     if not jtu.test_device_matches(["cpu"]):
       self.skipTest("CPU-only test")
+
+    try:
+      # If an exception was thrown by a jitted computation during the
+      # previous test, we observe/consume exception here to avoid propagating
+      # it to the next test.
+      jax.effects_barrier()
+    except:
+      pass
 
   @jtu.parameterized.product(with_race=[True, False])
   def test_cluster_barrier_peer_communication_through_gmem(self, with_race):
@@ -76,11 +84,11 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
     )
 
     scratch_init = jnp.zeros_like(x)
-    y = kernel(x, scratch_init)
     if with_race:
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        kernel(x, scratch_init).block_until_ready()
     else:
-      self.assertFalse(mosaic_interpret.get_races().races_found)
+      y = kernel(x, scratch_init)
       expected = jnp.flip(x, axis=0)
       np.testing.assert_array_equal(y, expected)
 
@@ -128,11 +136,11 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
     )
 
     scratch_init = jnp.zeros((num_barriers + 1, num_barriers, 16), dtype=jnp.int32)
-    y = kernel(x, scratch_init)
     if with_race_in_round is not None and num_barriers > 1:
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        kernel(x, scratch_init).block_until_ready()
     else:
-      self.assertFalse(mosaic_interpret.get_races().races_found)
+      y = kernel(x, scratch_init)
       expected = x + num_barriers
       np.testing.assert_array_equal(y, expected)
 
@@ -182,8 +190,8 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
         cluster_names=("c0", "c1"),
     )
 
-    _ = kernel(x, s)
-    self.assertTrue(mosaic_interpret.get_races().races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      kernel(x, s).block_until_ready()
 
   @jtu.parameterized.product(
       with_race=[True, False],
@@ -277,12 +285,12 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
         **mesh_kwargs,
     )
 
-    y = kernel(x, s)
     expect_race = with_race or (len(collective_axes) > 1)
     if expect_race:
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        kernel(x, s).block_until_ready()
     else:
-      self.assertFalse(mosaic_interpret.get_races().races_found)
+      y = kernel(x, s)
       expected = np.zeros(out_shape, dtype=np.int32)
       for my_idx in itertools.product(*(range(d) for d in in_shape)):
         read_slice = tuple(
@@ -291,6 +299,36 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
         ) + (slice(None),)
         expected[my_idx] = x[read_slice]
       np.testing.assert_array_equal(y, expected)
+
+  def test_cluster_barrier_not_awaiting_final_phase_then_reallocating_raises(
+      self,
+  ):
+    barrier_type = plgpu.ClusterBarrier(collective_axes=("c",), num_arrivals=1)
+
+    def _kernel(out_gmem):
+      @functools.partial(pl.run_scoped, cluster_barrier=barrier_type)
+      def _(cluster_barrier):
+        plgpu.barrier_arrive(cluster_barrier)
+        plgpu.barrier_wait(cluster_barrier)
+        plgpu.barrier_arrive(cluster_barrier)
+
+      @functools.partial(pl.run_scoped, cluster_barrier=barrier_type)
+      def _(cluster_barrier):
+        del cluster_barrier  # Unused.
+
+      out_gmem[jax.lax.axis_index("c")] = 42
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_type=jax.ShapeDtypeStruct((2,), jnp.int32),
+        interpret=InterpretParams(),
+        cluster=(2,),
+        cluster_names=("c",),
+    )
+    with self.assertRaisesRegex(
+        Exception, r"allocated a barrier after deallocating barrier"
+    ):
+      kernel()
 
   @jtu.parameterized.product(with_race=[True, False])
   def test_cluster_barrier_multidimensional_1d(self, with_race):
@@ -321,11 +359,11 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
     )
 
     scratch_init = jnp.zeros((2, 2, 16), dtype=jnp.int32)
-    y = kernel(x, scratch_init)
     if with_race:
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        kernel(x, scratch_init).block_until_ready()
     else:
-      self.assertFalse(mosaic_interpret.get_races().races_found)
+      y = kernel(x, scratch_init)
       expected = jnp.broadcast_to(
           jnp.flip(x, axis=0)[jnp.newaxis, :, :], out_shape
       )
@@ -361,11 +399,11 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
     )
 
     scratch_init = jnp.zeros((2, 3, 2, 16), dtype=jnp.int32)
-    y = kernel(x, scratch_init)
     if with_race:
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        kernel(x, scratch_init).block_until_ready()
     else:
-      self.assertFalse(mosaic_interpret.get_races().races_found)
+      y = kernel(x, scratch_init)
       expected = jnp.broadcast_to(
           jnp.flip(x, axis=0)[jnp.newaxis, jnp.newaxis, :, :], out_shape
       )
@@ -402,11 +440,11 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
     )
 
     scratch_init = jnp.zeros((2, 1, 3, 2, 16), dtype=jnp.int32)
-    y = kernel(x, scratch_init)
     if with_race:
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        kernel(x, scratch_init).block_until_ready()
     else:
-      self.assertFalse(mosaic_interpret.get_races().races_found)
+      y = kernel(x, scratch_init)
       expected = jnp.broadcast_to(
           jnp.flip(x, axis=0)[jnp.newaxis, jnp.newaxis, jnp.newaxis, :, :],
           out_shape,
