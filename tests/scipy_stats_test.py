@@ -1457,19 +1457,24 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     [dict(x_dtype=x_dtype, p_dtype=p_dtype)
      for x_dtype, p_dtype in itertools.product(jtu.dtypes.integer, jtu.dtypes.floating)
     ],
-    shape=[(2), (4,), (1, 5)],
+    [dict(x_shape=x_shape, p_shape=p_shape)
+     for x_shape, p_shape in [((4,), (4,)), ((3, 5), (5,)), ((5,), (3, 5)),
+                              ((2, 3, 4), (3, 4))]
+    ],
   )
-  def testMultinomialLogPmf(self, shape, x_dtype, p_dtype):
+  def testMultinomialLogPmf(self, x_shape, p_shape, x_dtype, p_dtype):
     rng = jtu.rand_positive(self.rng())
     scipy_fun = osp_stats.multinomial.logpmf
     lax_fun = lsp_stats.multinomial.logpmf
 
     def args_maker():
-      x = rng(shape, x_dtype)
-      n = np.sum(x, dtype=x.dtype)
-      p = rng(shape, p_dtype)
+      x = rng(x_shape, x_dtype)
+      n = np.sum(x, axis=-1, dtype=x.dtype)
+      if n.ndim > 0:
+        n[0] += 1
+      p = rng(p_shape, p_dtype)
       # Normalize the array such that it sums it's entries sum to 1 (or close enough to)
-      p = p / np.sum(p)
+      p = p / np.sum(p, axis=-1, keepdims=True)
       return [x, n, p]
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
