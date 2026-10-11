@@ -109,7 +109,7 @@ def logpdf(
 
   x_scaled = lax.div(lax.sub(x, loc), scale)
   val = jnp.where((x_scaled < a) | (x_scaled > b), -np.inf, val)
-  val = jnp.where(a >= b, np.nan, val)
+  val = jnp.where(a < b, val, np.nan)  # NaN if a >= b or a or b is NaN.
   return val
 
 
@@ -287,9 +287,10 @@ def logcdf(
   logcdf = jnp.select(
     # third condition: avoid catastrophic cancellation (from scipy)
     [x >= b, x <= a, logcdf > -0.1, x > a],
-    [0, -np.inf, jnp.log1p(-jnp.exp(logsf)), logcdf]
+    [0, -np.inf, jnp.log1p(-jnp.exp(logsf)), logcdf],
+    np.nan,  # NaN x matches no condition.
   )
-  logcdf = jnp.where(a >= b, np.nan, logcdf)
+  logcdf = jnp.where(a < b, logcdf, np.nan)  # NaN if a >= b or a or b is NaN.
   return logcdf
 
 @api.jit

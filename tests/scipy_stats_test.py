@@ -1118,6 +1118,22 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
 
+  @jtu.sample_product(
+    fun=["logpdf", "pdf", "cdf", "sf", "logcdf", "logsf"],
+    dtype=jtu.dtypes.floating,
+  )
+  def testTruncnormNanPropagation(self, fun, dtype):
+    # https://github.com/jax-ml/jax/issues/38606: NaN in any argument -> NaN.
+    x = np.array([np.nan, 3, -3, 0.5, 0.5, 0.5], dtype)
+    a = np.array([-1, np.nan, -1, -1, -1, -1], dtype)
+    b = np.array([2, 2, np.nan, 2, 2, 2], dtype)
+    loc = np.array([0, 0, 0, np.nan, 0, 0], dtype)
+    scale = np.array([1, 1, 1, 1, np.nan, 1], dtype)
+    self._CheckAgainstNumpy(getattr(osp_stats.truncnorm, fun),
+                            getattr(lsp_stats.truncnorm, fun),
+                            lambda: [x, a, b, loc, scale],
+                            check_dtypes=False, tol=1e-3)
+
   @genNamedParametersNArgs(4)
   def testParetoLogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
@@ -1294,6 +1310,19 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-5)
       self._CompileAndCheck(lax_fun, args_maker)
+
+  @jtu.sample_product(
+    fun=["logpdf", "pdf", "cdf"],
+    dtype=jtu.dtypes.floating,
+  )
+  def testUniformNanPropagation(self, fun, dtype):
+    # https://github.com/jax-ml/jax/issues/38317: NaN in any argument -> NaN.
+    x = np.array([np.nan, -1, 2, 0.5, 0.5], dtype)
+    loc = np.array([0, 0, 0, np.nan, 0], dtype)
+    scale = np.array([1, np.nan, np.nan, 1, 1], dtype)
+    self._CheckAgainstNumpy(getattr(osp_stats.uniform, fun),
+                            getattr(lsp_stats.uniform, fun),
+                            lambda: [x, loc, scale], check_dtypes=False)
 
   @genNamedParametersNArgs(4)
   def testChi2LogPdf(self, shapes, dtypes):
