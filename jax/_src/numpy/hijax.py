@@ -29,7 +29,6 @@ from jax._src import api
 from jax._src import core
 from jax._src import dtypes
 from jax._src import numpy as jnp
-from jax._src import tree_util
 from jax._src.hijax import (
     linearize_from_jvp,
     vjp_from_jvp,
@@ -97,12 +96,25 @@ class SearchSorted(HiPrim):
       raise ValueError(f"out_dtype should be an integer type; got {out_dtype}")
     # Attempt this here to catch overflow errors early.
     out_dtype.type(sorted_arr_aval.shape[dimension])
+    out_dtype = dtypes._maybe_canonicalize_explicit_dtype(
+        out_dtype, "searchsorted"
+    )
+    out_shape = (
+        *sorted_arr_aval.shape[:dimension],
+        *sorted_arr_aval.shape[dimension + 1 :],
+        *query_aval.shape[batch_dims:],
+    )
+    out_vma = core.standard_vma_rule(
+        "searchsorted", sorted_arr_aval, query_aval
+    )
     self.in_avals = (sorted_arr_aval, query_aval)
-    self.out_aval = core.typeof(api.eval_shape(
-      functools.partial(_searchsorted_impl,
-        dimension=dimension, batch_dims=batch_dims, side=side,
-        dtype=out_dtype, method=method),
-        sorted_arr_aval, query_aval))
+    self.out_aval = sorted_arr_aval.update(
+        shape=out_shape,
+        dtype=out_dtype,
+        weak_type=False,
+        sharding=sorted_arr_aval.sharding.update(spec=P()),
+        manual_axis_type=sorted_arr_aval.mat.update(varying=out_vma),
+    )
     self.params = dict(
       side=side,
       dimension=dimension,
@@ -224,11 +236,16 @@ class Nonzero(HiPrim):
             f"batch shape {batch_shape} without expanding it."
         )
     self.in_avals = (a_aval, *fill_value_avals)
-
-    # Evaluate shape to set out_aval
-    self.out_aval = tree_util.tree_map(core.typeof, api.eval_shape(
-        functools.partial(_nonzero_impl, size=size, axes=axes, out_dtype=out_dtype),
-        a_aval, *fill_value_avals))
+    out_dtype = dtypes._maybe_canonicalize_explicit_dtype(out_dtype, "nonzero")
+    out_vma = frozenset.union(*(aval.mat.varying for aval in self.in_avals))
+    out_aval = a_aval.update(
+        shape=(*batch_shape, size),
+        dtype=out_dtype,
+        weak_type=False,
+        sharding=a_aval.sharding.update(spec=P()),
+        manual_axis_type=a_aval.mat.update(varying=out_vma),
+    )
+    self.out_aval = tuple(out_aval for _ in axes)
 
     self.params = dict(
         size=size,
