@@ -691,7 +691,7 @@ def shaped_array_ref(
 
 def _shard_ref(mesh, auto, check_rep, names, ref_aval: AbstractRef):
   aval = core.shard_aval(mesh, auto, check_rep, names, ref_aval.inner_aval)
-  return AbstractRef(aval)
+  return AbstractRef(aval, ref_aval.memory_space, ref_aval.kind)
 core.shard_aval_handlers[AbstractRef] = _shard_ref
 
 def _unshard_ref(mesh, check_rep, names, ref_aval: AbstractRef):
