@@ -7648,17 +7648,22 @@ def _tile_lower(ctx, x, reps) -> Sequence[ir.Value]:
   out = mlir.reshape(ctx, broadcasted, aval_out)
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
-def _tile_abstract_eval(x, reps):
-  if x.ndim != len(reps):
-    raise TypeError(
-        f"reps length must be equal to the ndim of x, got {len(reps)=} "
-        f"and {x.ndim=}.")
+def _tile_sharding_rule(x, *, reps):
   for i, (r, sh) in enumerate(zip(reps, x.sharding.spec)):
     if r != 1 and sh is not None:
       raise core.ShardingTypeError(
           f'Operand cannot be sharded on dimension {i} when the tiling is'
           f' non-trivial. Got input type: {x} with reps: {reps}')
-  return x.update(shape=tuple(np.multiply(x.shape, reps)))
+  return x.sharding
+
+def _tile_abstract_eval(x, reps):
+  if x.ndim != len(reps):
+    raise TypeError(
+        f"reps length must be equal to the ndim of x, got {len(reps)=} "
+        f"and {x.ndim=}.")
+  out_s = lax_utils.call_sharding_rule(
+      tile_p, _tile_sharding_rule, None, None, x, reps=reps)
+  return x.update(shape=tuple(np.multiply(x.shape, reps)), sharding=out_s)
 
 def _tile_transpose_rule(ct, operand, *, reps):
   if type(ct) is ad_util.Zero:
@@ -9501,11 +9506,7 @@ _INT_DTYPES = {
 }
 
 
-def _sort_abstract_eval(*avals, dimension, is_stable, num_keys):
-  avals = tuple(avals)
-  if any(arg.shape != avals[0].shape for arg in avals[1:]):
-    shapes = " ".join(str(a.shape) for a in avals)
-    raise TypeError(f"Arguments to sort must have equal shapes, got: {shapes}")
+def _sort_sharding_rule(*avals, dimension, is_stable, num_keys):
   non_empty_s = [
       a.sharding for a in avals
       if not a.sharding.mesh.empty and a.sharding.mesh._any_axis_explicit]
@@ -9518,7 +9519,17 @@ def _sort_abstract_eval(*avals, dimension, is_stable, num_keys):
       shardings = " ".join(str(s) for s in non_empty_s)
       raise core.ShardingTypeError(
           f'Arguments to sort must have equal shardings, got: {shardings}')
-  return avals
+  return [a.sharding for a in avals]
+
+def _sort_abstract_eval(*avals, dimension, is_stable, num_keys):
+  avals = tuple(avals)
+  if any(arg.shape != avals[0].shape for arg in avals[1:]):
+    shapes = " ".join(str(a.shape) for a in avals)
+    raise TypeError(f"Arguments to sort must have equal shapes, got: {shapes}")
+  out_shardings = lax_utils.call_sharding_rule(
+      sort_p, _sort_sharding_rule, None, len(avals), *avals,
+      dimension=dimension, is_stable=is_stable, num_keys=num_keys)
+  return tuple(a.update(sharding=s) for a, s in zip(avals, out_shardings))
 
 
 def _canonicalize_float_for_sort(x):
@@ -9665,6 +9676,13 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
 mlir.register_lowering(sort_p, _sort_lower)
 
 
+def _top_k_sharding_rule(operand, *, k, axis, is_stable):
+  if operand.sharding.spec[axis] is not None:
+    raise core.ShardingTypeError(
+        'The input should be unsharded over the axis along which to compute the'
+        f' top_k values. Got input type={operand} and axis={axis}')
+  return (operand.sharding, operand.sharding)
+
 def _top_k_abstract_eval(operand, *, k, axis, is_stable):
   if dtypes.issubdtype(operand.dtype, np.complexfloating):
     raise ValueError("top_k is not compatible with complex inputs.")
@@ -9691,12 +9709,11 @@ def _top_k_abstract_eval(operand, *, k, axis, is_stable):
           f' dimensions larger than the maximum int32 ({int32_max}). Got'
           f' {operand.shape=}')
   shape[axis] = k
-  if operand.sharding.spec[axis] is not None:
-    raise core.ShardingTypeError(
-        'The input should be unsharded over the axis along which to compute the'
-        f' top_k values. Got input type={operand} and axis={axis}')
-  return (operand.update(shape=shape),
-          operand.update(shape=shape, dtype=np.dtype(np.int32)))
+  s0, s1 = lax_utils.call_sharding_rule(
+      top_k_p, _top_k_sharding_rule, None, 2, operand, k=k, axis=axis,
+      is_stable=is_stable)
+  return (operand.update(shape=shape, sharding=s0),
+          operand.update(shape=shape, dtype=np.dtype(np.int32), sharding=s1))
 
 def _top_k_jvp(primals, tangents, *, k, axis, is_stable):
   operand, = primals

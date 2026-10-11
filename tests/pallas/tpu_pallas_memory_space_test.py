@@ -22,6 +22,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import core as jax_core
 from jax._src import test_util as jtu
+from jax._src.pallas.mosaic import sc_core
 from jax._src.state import primitives as state_primitives
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
@@ -478,6 +479,52 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
 
     np.testing.assert_array_equal(
         f(), np.arange(num_cores * n).reshape((num_cores, 1, n)) + 1
+    )
+
+  @parameterized.parameters('tc', 'sc')
+  def test_host_ref_memory_space_preserved_across_shard_map_and_cond(
+      self, mesh_kind
+  ):
+    if jax.device_count() > 1:
+      self.skipTest('Test only works with a single device.')
+    mesh = jax.sharding.Mesh(jax.devices(), ('x',))
+    host_sharding = jax.sharding.NamedSharding(
+        mesh, P(), memory_kind='pinned_host'
+    )
+    if mesh_kind == 'tc':
+      pallas_mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+    else:
+      pallas_mesh = sc_core.ScalarSubcoreMesh(axis_name='core', num_cores=1)
+
+    @partial(jax.jit, out_shardings=host_sharding, donate_argnums=(0,))
+    def f(out_h):
+      out_host_ref = jax.new_ref(out_h)
+
+      @jax.shard_map(
+          mesh=mesh,
+          in_specs=(P(), P()),
+          out_specs=(),
+          check_vma=False,
+      )
+      def _push(vals, out_r):
+        self.assertEqual(jax.typeof(out_r).memory_space, pl.HOST)
+        hbm_ref = jax.new_ref(vals)
+        pl.kernel(
+            lambda: pltpu.sync_copy(hbm_ref, out_r),
+            mesh=pallas_mesh,
+        )()
+        return ()
+
+      vals = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+      _push(vals, out_host_ref)
+      return out_host_ref[...]
+
+    out_init = jax.device_put(
+        jnp.zeros((8, 128), dtype=jnp.int32), host_sharding
+    )
+    res = f(out_init)
+    np.testing.assert_array_equal(
+        res, np.arange(8 * 128, dtype=np.int32).reshape((8, 128))
     )
 
 

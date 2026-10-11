@@ -527,30 +527,36 @@ def _cond_batching_rule(axis_data, args, dims, *, branches, **params):
 def _cond_linearize(is_vjp, nzs, *primals_in, branches, **params):
   idx_nz, *nzs = nzs
   assert not idx_nz
-  nzs_out = [ad.linearize_jaxpr(jaxpr, nzs, allow_fwds=False, is_vjp=is_vjp)[2]
+  nzs_out = [ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)[2]
              for jaxpr in branches]
   nzs_out = map(any, zip(*nzs_out))
   fwd_jaxprs, tangent_jaxprs, branch_ures_avals, branch_sres_avals = [], [], [], []
+  branch_in_fwd_res = []
   for jaxpr in branches:
-    fwd_jaxpr, fwd_out_tree, _, _, tangent_jaxpr = \
-        ad.linearize_jaxpr(jaxpr, nzs, instantiate=nzs_out, allow_fwds=False, is_vjp=is_vjp)
+    fwd_jaxpr, fwd_out_tree, _, in_fwd_res, tangent_jaxpr = \
+        ad.linearize_jaxpr(jaxpr, nzs, instantiate=nzs_out, is_vjp=is_vjp)
     _, ures_avals, sres_avals = fwd_out_tree.unpack()
     fwd_jaxprs.append(fwd_jaxpr)
     tangent_jaxprs.append(tangent_jaxpr)
     branch_ures_avals.append(ures_avals.unflatten())
     branch_sres_avals.append(sres_avals)
+    branch_in_fwd_res.append(in_fwd_res)
   branch_sres_avals = ft.pack(tuple(branch_sres_avals))
 
   merged_ures_avals, ures_aval_indices = _merge_branch_residuals(branch_ures_avals)
   fwd_jaxprs = _join_cond_outputs(
       fwd_jaxprs, merged_ures_avals, ures_aval_indices, branch_sres_avals, len(nzs_out))
+  fwd_vals, tangent_ures_indices = _join_cond_fwd_res(
+      branches, branch_in_fwd_res, ures_aval_indices, len(merged_ures_avals), primals_in[1:])
+  all_ures_avals = [*merged_ures_avals, *map(typeof, fwd_vals)]
   tangent_jaxprs = _join_cond_pe_staged_jaxpr_inputs(
-      tangent_jaxprs, merged_ures_avals, ures_aval_indices, branch_sres_avals, sum(nzs))
+      tangent_jaxprs, all_ures_avals, tangent_ures_indices, branch_sres_avals, sum(nzs))
   tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
 
   primals_res_out = cond_p.bind(*primals_in, branches=(*fwd_jaxprs,), **params)
   primals, res = split_list(primals_res_out, [len(nzs_out)])
   ures, sres_flat = split_list_checked(res, [len(merged_ures_avals), len(branch_sres_avals)])
+  ures = [*ures, *fwd_vals]
 
   def tangent_fun(res, sres, *tangents_in):
     if sres is None:
@@ -617,18 +623,20 @@ def _cond_partial_eval(trace, *tracers, branches, **params):
 
   branches_out_uks = []
   for branch_jaxpr in branches:
-    _, _, out_uks, _ = pe.partial_eval_jaxpr_nounits(
+    _, _, out_uks, _, _ = pe.partial_eval_jaxpr_nounits_fwd(
         branch_jaxpr, ops_uk, instantiate=False)
     branches_out_uks.append(out_uks)
   out_uks = [any(uks) for uks in zip(*branches_out_uks)]
 
   branches_known, branches_unknown, branch_res_avals = [], [], []
+  branch_in_fwd_res = []
   for branch_jaxpr in branches:
-    branch_jaxpr_known, branch_jaxpr_unknown, _, res_avals = \
-        pe.partial_eval_jaxpr_nounits(branch_jaxpr, ops_uk, instantiate=out_uks)
+    branch_jaxpr_known, branch_jaxpr_unknown, _, res_avals, in_fwd_res = \
+        pe.partial_eval_jaxpr_nounits_fwd(branch_jaxpr, ops_uk, instantiate=out_uks)
     branches_known.append(branch_jaxpr_known)
     branches_unknown.append(branch_jaxpr_unknown)
     branch_res_avals.append(res_avals)
+    branch_in_fwd_res.append(in_fwd_res)
 
   all_res_avals, res_avals_per_branch = _merge_branch_residuals(branch_res_avals)
   num_res = len(all_res_avals)
@@ -637,15 +645,19 @@ def _cond_partial_eval(trace, *tracers, branches, **params):
   dummy = ft.flatten([[]] * len(branches_known))
   branches_known = _join_cond_outputs(
       branches_known, all_res_avals, res_avals_per_branch, dummy, num_known_outs)
+  in_consts = [t.pval.get_known() for t in tracers if t.pval.is_known()]
+  fwd_vals, unknown_res_indices = _join_cond_fwd_res(
+      branches, branch_in_fwd_res, res_avals_per_branch, num_res, in_consts[1:])
+  all_unknown_res_avals = [*all_res_avals, *map(typeof, fwd_vals)]
   branches_unknown = _join_cond_pe_staged_jaxpr_inputs(
-      branches_unknown, all_res_avals, res_avals_per_branch, dummy, sum(ops_uk))
+      branches_unknown, all_unknown_res_avals, unknown_res_indices, dummy, sum(ops_uk))
   assert all(all(map(core.typematch, j.out_avals, branches_known[0].out_avals))
              for j in branches_known[1:])
 
-  in_consts = [t.pval.get_known() for t in tracers if t.pval.is_known()]
   out_consts_res = cond_p.bind(*in_consts, branches=(*branches_known,),
                                **params)
   out_consts, res = split_list(out_consts_res, [len(out_consts_res) - num_res])
+  res = [*res, *fwd_vals]
 
   idx_tracer = trace.instantiate_const(tracers[0])
   ops_tracers = [trace.instantiate_const(t)
@@ -785,6 +797,30 @@ def _merge_branch_residuals(branch_ures_avals):
       [indices[aval] for aval in avals] for avals in branch_res_tagged_avals]
   all_avals = [x for x, _ in all_tagged_avals]
   return all_avals, branch_indices
+
+def _join_cond_fwd_res(branches, branch_in_fwd_res, ures_aval_indices,
+                       num_merged_ures, shared_ins):
+  fwd_vals: list[Any] = []
+  fwd_key_to_idx: dict[tuple[int | None, int], int] = {}
+  res_indices: list[list[int]] = []
+  for b_idx, (jaxpr, in_fwd_res, ures_idxs) in enumerate(
+      zip(branches, branch_in_fwd_res, ures_aval_indices)):
+    ures_idxs_iter = iter(ures_idxs)
+    t_idxs: list[int] = []
+    num_consts = len(jaxpr.consts)
+    for f in in_fwd_res:
+      if f is None:
+        t_idxs.append(next(ures_idxs_iter))
+      else:
+        key = (b_idx, f) if f < num_consts else (None, f - num_consts)
+        if (idx := fwd_key_to_idx.get(key)) is None:
+          idx = fwd_key_to_idx[key] = num_merged_ures + len(fwd_vals)
+          val = jaxpr.consts[f] if f < num_consts else shared_ins[f - num_consts]
+          fwd_vals.append(val)
+        t_idxs.append(idx)
+    assert next(ures_idxs_iter, None) is None
+    res_indices.append(t_idxs)
+  return fwd_vals, res_indices
 
 # This function augments branch outputs to agree with the merged residual
 # format: each branch is made to return zero-filled values in the places of

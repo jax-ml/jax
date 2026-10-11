@@ -759,12 +759,11 @@ def _transpose_jaxpr(jaxpr: core.Jaxpr,
     ins_flat, out_cts_flat = split_list(args_flat, [len(in_lin) - sum(in_lin)])
 
     # Evaluate nonlinear parts using partial evaluation to get a linear jaxpr.
-    # TODO(mattjj): revise not to require disabling checks
-    with config.mutable_array_checks(False):
-      jaxpr_rematted, lin_jaxpr, out_uk, res_avals = \
-          pe.partial_eval_jaxpr_nounits(jaxpr, in_lin, False)
+    jaxpr_rematted, lin_jaxpr, out_uk, res_avals, in_fwd_res = \
+        pe.partial_eval_jaxpr_nounits_fwd(jaxpr, in_lin, False)
     with source_info_util.extend_name_stack('rematted_computation'):
       consts = core.jaxpr_as_fun(jaxpr_rematted)(*ins_flat)
+    consts = subs_list(in_fwd_res, [*jaxpr.consts, *ins_flat], consts)
 
     # Transpose the linear jaxpr (which only has linear inputs).
     out_cts_iter = iter(out_cts_flat)

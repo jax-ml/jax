@@ -595,6 +595,38 @@ class MutableArrayTest(jtu.JaxTestCase):
     jax.grad(primal, argnums=1)(grads_ref, jnp.float32(1.0))
     self.assertAllClose(grads_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
 
+  @parameterized.parameters(it.product([False, True], repeat=2))
+  def test_custom_vjp_grad_stats_plumbing_cond(self, jit, remat):
+    def primal(grads_ref, x):  # note: jit-abstracted!
+      def true_fn(x):
+        x = jnp.sin(x)
+        x = stash_grads(grads_ref, x)
+        x = jnp.sin(x)
+        return x
+      def false_fn(x):
+        return x * 3.0
+      f = lambda x: jax.lax.cond(True, true_fn, false_fn, x)
+      if remat:
+        f = jax.remat(f)
+      return f(x)
+
+    if jit:
+      primal = jax.jit(primal)
+
+    @jax.custom_vjp
+    def stash_grads(grads_ref, x):
+      return x
+    def stash_grads_fwd(grads_ref, x):
+      return x, grads_ref
+    def stash_grads_bwd(grads_ref, g):
+      grads_ref[...] = g
+      return None, g
+    stash_grads.defvjp(stash_grads_fwd, stash_grads_bwd)
+
+    grads_ref = core.new_ref(jnp.float32(0.))
+    jax.grad(primal, argnums=1)(grads_ref, jnp.float32(1.0))
+    self.assertAllClose(grads_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
+
   @parameterized.product(jit=[False, True], has_aux=[False, True])
   def test_custom_vjp_grad_stats_plumbing_basic_vjp3(self, jit, has_aux):
     def primal(grads_ref, x):  # note: abstracts over jit and has_aux!

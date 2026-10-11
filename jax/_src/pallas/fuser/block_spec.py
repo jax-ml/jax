@@ -2188,7 +2188,7 @@ def _broadcast_in_dim_pull_rule(
 def _transpose_eval_rule(
     eval_ctx: KernelEvalContext, x, permutation: tuple[int, ...]
 ):
-  block_spec = eval_ctx.out_block_specs[0]
+  block_spec = eval_ctx.in_block_specs[0]
   block_shape = block_spec.block_shape
   block_shape_no_nones = tuple(
       bs
@@ -2217,18 +2217,19 @@ def _transpose_pull_rule(
 ):
 
   block_shape = block_transform.block_shape
-  new_shape = tuple(block_shape[i] for i in permutation)
+  inv_perm = tuple(np.argsort(permutation))
+  new_shape = tuple(block_shape[i] for i in inv_perm)
   aval_in = ctx.avals_in[0]
   assert isinstance(aval_in, core.ShapedArray)
   assert len(block_shape) == len(aval_in.shape)
-  if set(permutation[-2:]) != {permutation[-1], permutation[-2]}:
+  if set(permutation[-2:]) != set(range(len(permutation))[-2:]):
     raise NotImplementedError(
         'Cannot permute last two dimensions with leading dimensions.'
     )
 
   def new_block_index_transform(*idxs):
     original_idxs = block_transform.block_index_transform(*idxs)
-    return tuple(original_idxs[i] for i in permutation)
+    return tuple(original_idxs[i] for i in inv_perm)
 
   return [block_transform.replace(
       block_shape=new_shape,
@@ -2605,7 +2606,7 @@ def _reshape_pull_rule(
     def new_block_index_transform(*idxs):
       *idx, second_to_last, last = block_transform.block_index_transform(*idxs)
       # last should always be 0
-      if not isinstance(last, int) and last != 0:
+      if isinstance(last, int) and last != 0:
         raise NotImplementedError(
             'Must select entire block on last dimension for reshape'
         )
@@ -3230,7 +3231,7 @@ def _transpose_push_rule(
   del ctx
   block_shape = block_spec.block_shape
   new_shape = tuple(block_shape[i] for i in permutation)
-  if set(permutation[-2:]) != {permutation[-1], permutation[-2]}:
+  if set(permutation[-2:]) != set(range(len(permutation))[-2:]):
     raise NotImplementedError(
         'Cannot permute last two dimensions with leading dimensions.'
     )
@@ -3404,7 +3405,7 @@ def _reshape_push_rule(
           f' {block_shape=}, {last_dim=}, {last_block_dim=}, {aval_out.shape=}'
       )
     num_last_dim_blocks = last_block_dim // last_dim
-    new_block_shape = block_shape[:1] + (num_last_dim_blocks, last_dim)
+    new_block_shape = block_shape[:-1] + (num_last_dim_blocks, last_dim)
 
     def new_index_map(*args):
       *idx, last = block_spec.index_map(*args)

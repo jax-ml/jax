@@ -470,6 +470,18 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=2e-4)
       self._CompileAndCheck(lax_fun, args_maker, rtol=3e-4)
 
+  @jtu.sample_product(fun=["ppf", "isf"], dtype=jtu.dtypes.floating)
+  def testCauchyQuantileEdgeCases(self, fun, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/38318
+    finfo = np.finfo(dtype)
+    q = np.array(
+      [0.0, -0.0, 0.5, 1.0, -0.1, 1.1, np.nan, finfo.tiny, 1 - finfo.epsneg],
+      dtype,
+    )
+    scipy_fun = getattr(osp_stats.cauchy, fun)
+    lax_fun = getattr(lsp_stats.cauchy, fun)
+    self.assertAllClose(lax_fun(q), scipy_fun(q), check_dtypes=False, atol=0)
+
   @jtu.sample_product(
     shapes=[
       [x_shape, alpha_shape]
@@ -1118,6 +1130,22 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
 
+  @jtu.sample_product(
+    fun=["logpdf", "pdf", "cdf", "sf", "logcdf", "logsf"],
+    dtype=jtu.dtypes.floating,
+  )
+  def testTruncnormNanPropagation(self, fun, dtype):
+    # https://github.com/jax-ml/jax/issues/38606: NaN in any argument -> NaN.
+    x = np.array([np.nan, 3, -3, 0.5, 0.5, 0.5], dtype)
+    a = np.array([-1, np.nan, -1, -1, -1, -1], dtype)
+    b = np.array([2, 2, np.nan, 2, 2, 2], dtype)
+    loc = np.array([0, 0, 0, np.nan, 0, 0], dtype)
+    scale = np.array([1, 1, 1, 1, np.nan, 1], dtype)
+    self._CheckAgainstNumpy(getattr(osp_stats.truncnorm, fun),
+                            getattr(lsp_stats.truncnorm, fun),
+                            lambda: [x, a, b, loc, scale],
+                            check_dtypes=False, tol=1e-3)
+
   @genNamedParametersNArgs(4)
   def testParetoLogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
@@ -1295,6 +1323,19 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=1e-5)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @jtu.sample_product(
+    fun=["logpdf", "pdf", "cdf"],
+    dtype=jtu.dtypes.floating,
+  )
+  def testUniformNanPropagation(self, fun, dtype):
+    # https://github.com/jax-ml/jax/issues/38317: NaN in any argument -> NaN.
+    x = np.array([np.nan, -1, 2, 0.5, 0.5], dtype)
+    loc = np.array([0, 0, 0, np.nan, 0], dtype)
+    scale = np.array([1, np.nan, np.nan, 1, 1], dtype)
+    self._CheckAgainstNumpy(getattr(osp_stats.uniform, fun),
+                            getattr(lsp_stats.uniform, fun),
+                            lambda: [x, loc, scale], check_dtypes=False)
+
   @genNamedParametersNArgs(4)
   def testChi2LogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
@@ -1428,19 +1469,24 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     [dict(x_dtype=x_dtype, p_dtype=p_dtype)
      for x_dtype, p_dtype in itertools.product(jtu.dtypes.integer, jtu.dtypes.floating)
     ],
-    shape=[(2), (4,), (1, 5)],
+    [dict(x_shape=x_shape, p_shape=p_shape)
+     for x_shape, p_shape in [((4,), (4,)), ((3, 5), (5,)), ((5,), (3, 5)),
+                              ((2, 3, 4), (3, 4))]
+    ],
   )
-  def testMultinomialLogPmf(self, shape, x_dtype, p_dtype):
+  def testMultinomialLogPmf(self, x_shape, p_shape, x_dtype, p_dtype):
     rng = jtu.rand_positive(self.rng())
     scipy_fun = osp_stats.multinomial.logpmf
     lax_fun = lsp_stats.multinomial.logpmf
 
     def args_maker():
-      x = rng(shape, x_dtype)
-      n = np.sum(x, dtype=x.dtype)
-      p = rng(shape, p_dtype)
+      x = rng(x_shape, x_dtype)
+      n = np.sum(x, axis=-1, dtype=x.dtype)
+      if n.ndim > 0:
+        n[0] += 1
+      p = rng(p_shape, p_dtype)
       # Normalize the array such that it sums it's entries sum to 1 (or close enough to)
-      p = p / np.sum(p)
+      p = p / np.sum(p, axis=-1, keepdims=True)
       return [x, n, p]
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
