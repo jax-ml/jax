@@ -61,6 +61,7 @@ def _mpmath_erfcx(x):
   return mpmath.hyperu(0.5, 0.5, x * x) / mpmath.sqrt(mpmath.pi)
 
 
+@jax.jit
 def erfcx_grad(x):
   return jax.vmap(jax.grad(jsp.special.erfcx))(x)
 
@@ -146,6 +147,7 @@ class ErfTest(jtu.JaxTestCase):
     )
 
 
+@jax.jit
 def _erfc_highest(x):
   return lax.erfc(x, accuracy=lax.AccuracyMode.HIGHEST)
 
@@ -293,7 +295,7 @@ class ErfcxTest(jtu.JaxTestCase):
     ]
     util.check_unary_precision(
         self,
-        jsp.special.erfcx,
+        jax.jit(jsp.special.erfcx),
         scipy.special.erfcx,
         _mpmath_erfcx,
         dtype,
@@ -461,6 +463,7 @@ def _mpmath_erfinv(x):
   return mpmath.erfinv(x)
 
 
+@jax.jit
 def erfinv_grad(x):
   return jax.vmap(jax.grad(lax.erf_inv))(x)
 
@@ -760,6 +763,7 @@ def _mpmath_ndtri(p):
     return -res if p < 0.5 else res
 
 
+@jax.jit
 def ndtri_grad(p):
   return jax.vmap(jax.grad(jsp.special.ndtri))(p)
 
@@ -814,7 +818,7 @@ class NdtriTest(jtu.JaxTestCase):
     ]
     util.check_unary_precision(
         self,
-        jsp.special.ndtri,
+        jax.jit(jsp.special.ndtri),
         _ndtri_reference,
         _mpmath_ndtri,
         dtype,

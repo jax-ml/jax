@@ -1241,7 +1241,6 @@ def check_nary_precision(
   is_exhaustive = total_elements <= max_samples
   total_points = min(total_elements, max_samples)
 
-  jitted_jax_fn = jax.jit(jax_fn)
   k = NUM_WORST_CASES.value
   eval_k = max(k, 1)
 
@@ -1320,7 +1319,7 @@ def check_nary_precision(
       else:
         idxs = ()
 
-      chunk_computed = np.asarray(jitted_jax_fn(*chunk_inputs))
+      chunk_computed = np.asarray(jax_fn(*chunk_inputs))
       chunk_ref = _compute_reference(chunk_inputs)
 
       if len(idxs) > 0:
