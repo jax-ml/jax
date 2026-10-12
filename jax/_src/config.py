@@ -2300,6 +2300,22 @@ use_high_dynamic_range_gumbel = bool_state(
     include_in_trace_context=True,
 )
 
+random_uniform_mode = enum_state(
+    name='jax_random_uniform_mode',
+    enum_values=['low', 'high', 'highest'],
+    default='low',
+    help='Default precision mode for jax.random.uniform.',
+    include_in_trace_context=True,
+)
+
+random_normal_mode = enum_state(
+    name='jax_random_normal_mode',
+    enum_values=['low', 'high', 'highest'],
+    default='low',
+    help='Default precision mode for jax.random.normal.',
+    include_in_trace_context=True,
+)
+
 jax_dump_ir_to = string_flag(
     name='jax_dump_ir_to',
     default=os.getenv('JAX_DUMP_IR_TO', ''),
