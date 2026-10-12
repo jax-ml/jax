@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, overload
+from typing import Any, Protocol, Self, overload
 
 from jax._src import config
 from jax._src import core as jax_core
@@ -474,3 +474,23 @@ class MeshInfo:
     ))
     mesh_shape = tuple(mesh.shape.values())
     return MeshInfo(mesh_shape, mesh.axis_names, mesh_strides)
+
+
+# This is morally ``ShapedArray | state.AbstractRef``, but Pyrefly does not
+# allow calling methods on a union type, making ``update`` non-callable, so
+# we use a protocol instead of a union.
+class ShapedAbstractValue(Protocol):
+  shape: tuple[jax_core.DimSize, ...]
+  dtype: jnp.dtype
+  weak_type: bool
+
+  @property
+  def ndim(self) -> int:
+    ...
+
+  @property
+  def size(self) -> int:
+    ...
+
+  def update(self, **kwargs: Any) -> Self:
+    raise NotImplementedError

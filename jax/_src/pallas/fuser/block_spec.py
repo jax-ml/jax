@@ -55,6 +55,9 @@ import jax.numpy as jnp
 import numpy as np
 
 
+type ShapedAbstractValue = pallas_utils.ShapedAbstractValue
+
+
 pull_block_spec_rules: dict[core.Primitive, PullBlockSpecRuleFn] = {}
 stateful_primitives: set[core.Primitive] = {
     lax.dynamic_update_slice_p,
@@ -171,8 +174,8 @@ def _apply_block_transform(
 
 @dataclasses.dataclass
 class PullRuleContext:
-  avals_in: tuple[core.AbstractValue, ...]
-  avals_out: tuple[core.AbstractValue, ...]
+  avals_in: tuple[ShapedAbstractValue, ...]
+  avals_out: tuple[ShapedAbstractValue, ...]
   out_usages: tuple[set[Usage], ...]
   scalar_prefetch_fn: Any = dataclasses.field(default=None, init=False)
   scalar_prefetch_handler: Any | None
@@ -183,8 +186,8 @@ class PullRuleContext:
 
 @dataclasses.dataclass
 class PushRuleContext:
-  avals_in: tuple[core.AbstractValue, ...]
-  avals_out: tuple[core.AbstractValue, ...]
+  avals_in: tuple[ShapedAbstractValue, ...]
+  avals_out: tuple[ShapedAbstractValue, ...]
   invars: tuple[core.Atom, ...] | None = None
   scalar_prefetch_fn: Any = dataclasses.field(default=None, init=False)
   scalar_prefetch_handler: Any | None = None
@@ -219,8 +222,8 @@ def _block_size(dim: pallas_core.Element | int | None) -> int | None:
 
 @dataclasses.dataclass
 class UsageRuleContext:
-  avals_in: tuple[core.AbstractValue, ...]
-  avals_out: tuple[core.AbstractValue, ...]
+  avals_in: tuple[ShapedAbstractValue, ...]
+  avals_out: tuple[ShapedAbstractValue, ...]
 
 
 def compute_usage(jaxpr: core.Jaxpr, jaxpr_out_usages):
@@ -265,8 +268,8 @@ def compute_usage(jaxpr: core.Jaxpr, jaxpr_out_usages):
 class KernelEvalContext:
   scalar_prefetch: Any | None
   program_ids: tuple[int | jax.Array, ...] | None
-  avals_in: tuple[core.AbstractValue, ...] | None
-  avals_out: tuple[core.AbstractValue, ...] | None
+  avals_in: tuple[ShapedAbstractValue, ...] | None
+  avals_out: tuple[ShapedAbstractValue, ...] | None
   in_block_specs: tuple[pallas_core.BlockSpec, ...]
   out_block_specs: tuple[pallas_core.BlockSpec, ...]
   grid_len: int | None
@@ -504,8 +507,8 @@ def _compare_index_transforms(
 def _block_transforms_equal(
     bs1: BlockIndexTransform | NoBlockIndexTransform,
     bs2: BlockIndexTransform | NoBlockIndexTransform,
-    block_idxs_avals: tuple[tuple[core.AbstractValue, ...], ...],
-    scalar_prefetch_avals: tuple[core.AbstractValue, ...] = (),
+    block_idxs_avals: tuple[tuple[ShapedAbstractValue, ...], ...],
+    scalar_prefetch_avals: tuple[ShapedAbstractValue, ...] = (),
     strict_mode: bool = True,
 ) -> bool:
   if bs1 is bs2:
@@ -579,8 +582,7 @@ def _pull_block_transform(
       None
       if out_block_transform is no_block_index_transform
       else (
-          (jax._src.core.ShapedArray((), jnp.int32),)
-          * len(out_block_transform.block_shape)
+          (core.ShapedArray((), jnp.int32),) * len(out_block_transform.block_shape)
       )
       for out_block_transform in out_block_transforms
   )
@@ -1138,8 +1140,6 @@ def _binop_pull_rule(prim, ctx: PullRuleContext, block_transform, **params):
   l_block_transform = block_transform
   r_block_transform = block_transform
   left_aval, right_aval = ctx.avals_in
-  assert isinstance(left_aval, core.ShapedArray)
-  assert isinstance(right_aval, core.ShapedArray)
 
   if not right_aval.shape:
     return [block_transform, no_block_index_transform]
@@ -1202,7 +1202,6 @@ def _select_n_pull_block_spec_rule(
     ctx: PullRuleContext, block_transform: BlockIndexTransform,
 ) -> Sequence[BlockIndexTransform | NoBlockIndexTransform]:
   in_aval = ctx.avals_in[0]
-  assert isinstance(in_aval, core.ShapedArray)
   if in_aval.shape:
     return [block_transform] * len(ctx.avals_in)
   return [no_block_index_transform, *[block_transform] * (len(ctx.avals_in) - 1)]
@@ -1608,8 +1607,6 @@ def _dot_general_pull_rule(
     return [no_block_index_transform, no_block_index_transform]
 
   lhs_aval, rhs_aval = ctx.avals_in
-  assert isinstance(lhs_aval, core.ShapedArray)
-  assert isinstance(rhs_aval, core.ShapedArray)
 
   # Check assumptions: strictly 2D and no batch dimensions
   if not lhs_aval.ndim == 2 or not rhs_aval.ndim == 2:
@@ -1915,7 +1912,6 @@ def _concatenate_eval_rule(ctx: KernelEvalContext, *args, dimension):
 
   num_blocks = []
   for aval in ctx.avals_in:
-    assert isinstance(aval, core.ShapedArray)
     if aval.shape[dimension] % block_dim != 0:
       raise ValueError(
           f'Shape along concat dimension {dimension} must be divisible by the'
@@ -1983,7 +1979,6 @@ def _concatenate_rule(
   # We now handle the case where each of the concatenated array dimensions
   # divides the block size.
   for aval in ctx.avals_in:
-    assert isinstance(aval, core.ShapedArray)
     if aval.shape[dimension] % block_dim != 0:
       raise ValueError(
           f'Shape along concat dimension {dimension} must be divisible by the'
@@ -2096,8 +2091,6 @@ def _split_pull_rule(
     axis: int,
 ):
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
-  assert all(isinstance(aval, core.ShapedArray) for aval in ctx.avals_out)
 
   # turn numpy ints into ints
   sizes = [int(s) for s in sizes]
@@ -2231,7 +2224,6 @@ def _transpose_pull_rule(
   inv_perm = tuple(np.argsort(permutation))
   new_shape = tuple(block_shape[i] for i in inv_perm)
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   assert len(block_shape) == len(aval_in.shape)
   if set(permutation[-2:]) != set(range(len(permutation))[-2:]):
     raise NotImplementedError(
@@ -2290,7 +2282,6 @@ def _tile_pull_rule(
   del reps
   block_shape = block_transform.block_shape
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   assert len(block_shape) == len(aval_in.shape)
   if not all(isinstance(dim, (int, pallas_core.Squeezed))
              for dim in block_shape):
@@ -2500,9 +2491,7 @@ def _reshape_pull_rule(
   if dimensions is not None:
     raise NotImplementedError('reshape with None dimensions not supported yet')
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   aval_out = ctx.avals_out[0]
-  assert isinstance(aval_out, core.ShapedArray)
 
   block_shape = block_transform.block_shape
   shape_in = aval_in.shape
@@ -2655,7 +2644,6 @@ def _reduce_sum_pull_rule(
 ):
   del out_sharding
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   new_block_shape = []
   block_shape = iter(block_transform.block_shape)
   for i, d in enumerate(aval_in.shape):
@@ -2694,7 +2682,6 @@ def _reduce_sum_eval_rule(
 ):
   del out_sharding
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   block_shape = tuple(ctx.in_block_specs[0].block_shape)
   for i in axes:
     if _block_size(block_shape[i]) != aval_in.shape[i]:
@@ -3176,8 +3163,6 @@ def _binop_push_rule(
 ) -> pallas_core.BlockSpec | tuple[pallas_core.BlockSpec, ...]:
   del prim, params
   left_aval, right_aval = ctx.avals_in
-  assert isinstance(left_aval, core.ShapedArray)
-  assert isinstance(right_aval, core.ShapedArray)
   if not right_aval.shape:
     return left_block_spec
   if not left_aval.shape:
@@ -3395,9 +3380,7 @@ def _reshape_push_rule(
   if dimensions is not None:
     raise NotImplementedError('reshape with None dimensions not supported yet')
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   aval_out = ctx.avals_out[0]
-  assert isinstance(aval_out, core.ShapedArray)
   if _pattern_match_lanes_to_sublanes_reshape(aval_in, aval_out):
     block_shape = tuple(block_spec.block_shape)
     if not isinstance(block_shape[-1], (int, pallas_core.Blocked)):
@@ -3438,7 +3421,6 @@ def _reduce_sum_push_rule(
 ):
   del out_sharding
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   if not all(
       aval_in.shape[i] == pallas_core.get_block_size(block_spec.block_shape[i])
       for i in axes
@@ -3471,7 +3453,6 @@ def _broadcast_in_dim_push_rule(
 ):
   del sharding
   in_aval = ctx.avals_in[0]
-  assert isinstance(in_aval, core.ShapedArray)
   in_shape = in_aval.shape
 
   dim_map = {
@@ -3660,7 +3641,6 @@ def _unstack_push_rule(
     axis: int,
 ):
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   block_shape = pallas_core._canonicalize_block_shape(block_spec.block_shape)
 
   n = aval_in.shape[axis]
@@ -3692,7 +3672,6 @@ def _split_push_rule(
     axis: int,
 ):
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   block_shape = pallas_core._canonicalize_block_shape(block_spec.block_shape)
 
   if aval_in.shape[axis] != sum(sizes):

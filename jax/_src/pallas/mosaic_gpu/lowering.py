@@ -24,7 +24,7 @@ import functools
 import itertools
 import math
 import operator
-from typing import Any, Protocol, Self, assert_never, cast, overload
+from typing import Any, Protocol, assert_never, cast, overload
 
 import jax
 from jax import api_util
@@ -84,26 +84,7 @@ partial = functools.partial
 SMEM = gpu_core.SMEM
 WARPGROUP_SIZE = 128
 
-
-# This is morally ``ShapedArray | state.AbstractRef``, but pytype does not
-# allow calling methods on a union type, making ``update`` non-callable, so
-# we use a protocol instead of a union.
-class ShapedAbstractValue(Protocol):
-  shape: tuple[jax_core.DimSize, ...]
-  dtype: jnp.dtype
-  weak_type: bool
-
-  @property
-  def ndim(self) -> int:
-    ...
-
-  @property
-  def size(self) -> int:
-    ...
-
-  def update(self, **kwargs: Any) -> Self:
-    raise NotImplementedError
-
+type ShapedAbstractValue = pallas_utils.ShapedAbstractValue
 
 # TODO(slebedev): The type argument should also be comparable.
 CollectiveAxesType = Sequence[Hashable]
