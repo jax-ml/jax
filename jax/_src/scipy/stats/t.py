@@ -77,11 +77,18 @@ def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
     )
     return jnp.where(abs_delta == 0, 0, stable_tail)
 
-  use_stable = jnp.any(
-      (lax.abs(scale) < _lax_const(x, 1e-16))
-      | (lax.abs(delta) > lax.mul(lax.abs(scale), _lax_const(x, 1e12)))
-      | (df < _lax_const(x, 1e-5))
-  )
+  # In float16, even a standardized coordinate around 300 has a
+  # finite log-density but its square overflows. The ordinary float32/64
+  # threshold (1e12) itself overflows float16, so always take the stable
+  # tail path for half-precision inputs, without materializing that constant.
+  if x.dtype == jnp.float16:
+    use_stable = jnp.asarray(True)
+  else:
+    use_stable = jnp.any(
+        (lax.abs(scale) < _lax_const(x, 1e-16))
+        | (lax.abs(delta) > lax.mul(lax.abs(scale), _lax_const(x, 1e12)))
+        | (df < _lax_const(x, 1e-5))
+    )
   log_one_plus_quadratic = lax.cond(
       use_stable, stable_quadratic, regular_quadratic, operand=None
   )
