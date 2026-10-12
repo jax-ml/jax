@@ -1490,6 +1490,43 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
 
     super().setUp()
 
+  @parameterized.named_parameters(
+      ('single_core_no_pipelining', 1, True),
+      ('two_core_pipelining', 2, False),
+      ('two_core_no_pipelining', 2, True),
+  )
+  def test_pipeline_copy_core_offsets(self, cores, no_pipelining):
+    if pltpu.get_tpu_info().num_cores < cores:
+      self.skipTest(f'Requires at least {cores} TensorCores per chip.')
+
+    @jax.jit
+    def copy(x):
+      y = jax.new_ref(jnp.full_like(x, -1))
+      spec = pl.BlockSpec((8, 128), lambda i: (i, 0))
+
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=cores)
+      )
+      def kernel(x_ref, y_ref):
+        def body(x_tile, y_tile):
+          y_tile[...] = x_tile[...]
+
+        pltpu.emit_pipeline(
+            body,
+            grid=(2,),
+            in_specs=(spec,),
+            out_specs=(spec,),
+            core_axis_name='core',
+            dimension_semantics=(pltpu.PARALLEL,),
+            no_pipelining=no_pipelining,
+        )(x_ref, y_ref)
+
+      kernel(x, y)
+      return y[...]
+
+    x = jnp.arange(16 * 128, dtype=jnp.int32).reshape(16, 128)
+    np.testing.assert_array_equal(copy(x), x)
+
   def test_can_partition_nondivisible_grid_with_dynamic_dimensions(
       self):
 
