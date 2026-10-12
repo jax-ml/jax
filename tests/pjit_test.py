@@ -9030,6 +9030,40 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       jaxpr = jax.jit(f).trace(jnp.arange(8)).jaxpr
       self.assertEqual(str(jaxpr).count('reshard'), 2)
 
+  def test_explicit_axes_no_op(self):
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'),
+                           axis_types=(AxisType.Explicit, AxisType.Explicit))
+    with jax.set_mesh(mesh):
+      @jax.jit
+      @explicit_axes(in_sharding=P('x'))
+      def f(x):
+        return x * 2
+      out = f(jnp.arange(8))  # doesn't crash
+      self.assertArraysEqual(out, np.arange(8) * 2)
+      jaxpr = f.trace(jnp.arange(8)).jaxpr
+      self.assertNotIn('reshard', str(jaxpr))
+
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'),
+                           axis_types=(AxisType.Auto, AxisType.Explicit))
+    with jax.set_mesh(mesh):
+      @jax.jit
+      @explicit_axes(in_sharding=P('x'), axes='y')
+      def f(x):
+        return x * 2
+      out = f(jnp.arange(8))  # doesn't crash
+      self.assertArraysEqual(out, np.arange(8) * 2)
+      jaxpr = f.trace(jnp.arange(8)).jaxpr
+      self.assertNotIn('reshard', str(jaxpr))
+
+      @jax.jit
+      @explicit_axes(in_sharding=P('x'))
+      def f(x):
+        return x * 2
+      out = f(jnp.arange(8))  # doesn't crash
+      self.assertArraysEqual(out, np.arange(8) * 2)
+      jaxpr = f.trace(jnp.arange(8)).jaxpr
+      self.assertEqual(str(jaxpr).count('reshard'), 2)
+
   @jtu.with_explicit_mesh((2,), 'x')
   def test_nary_op_input_constraint(self, mesh):
     arr = jax.device_put(np.arange(16).reshape(8, 2), P('x'))

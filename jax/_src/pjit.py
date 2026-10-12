@@ -2494,6 +2494,8 @@ def _explicit_axes(fun, *, axes, in_sharding):
       raise ValueError(
           'Context mesh cannot be empty. Please use `jax.set_mesh` API to enter'
           ' into a mesh context when using `explicit_axes` API.')
+    if set(mesh_info.prev.explicit_axes) == set(mesh_info.axes):
+      return fun(*args, **kwargs)
     with mesh_lib.use_abstract_mesh(mesh_info.new):
       args = reshard(args, _in_sharding)
       out = fun(*args, **kwargs)
