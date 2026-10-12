@@ -57,7 +57,7 @@ pack_dtype_p = core.Primitive("pack_dtype")
 def pack_dtype_abstract_eval(*xs, dtype):
   if dtypes.issubdtype(dtype, FusibleElementDType):
     return dtype.abstract_pack(*xs)
-  raise ValueError("Attempted to pack non-fusion dtype: {dtype}")
+  raise ValueError(f"Attempted to pack non-fusion dtype: {dtype}")
 
 
 def pack(*xs, dtype):
@@ -72,9 +72,7 @@ unpack_dtype_p.multiple_results = True
 def unpack_dtype_abstract_eval(x):
   if dtypes.issubdtype(x.dtype, FusibleElementDType):
     return x.dtype.abstract_unpack(x)
-  elif isinstance(x.dtype, state.AbstractRef):
-    raise NotImplementedError()
-  raise ValueError("Attempted to unpack non-fusion dtype: {dtype}")
+  raise ValueError(f"Attempted to unpack non-fusion dtype: {x.dtype}")
 
 
 def unpack(x):
@@ -92,9 +90,16 @@ class FusibleTyRules:
 class FusionDType(dtypes.ExtendedDType, util.StrictABC):
   """Base class for fusible extended dtypes."""
 
-  _op_registry = {}
+  # Per-subclass registry.
+  _op_registry: dict[core.Primitive, Callable[..., Any]] = {}
+
   _rules = FusibleTyRules
   type = FusibleElementDType
+
+  def __init_subclass__(cls, **kwargs):
+    super().__init_subclass__(**kwargs)
+
+    cls._op_registry = {}
 
   @abc.abstractmethod
   def abstract_unpack(self, x) -> Sequence[Any]:
@@ -108,6 +113,7 @@ class FusionDType(dtypes.ExtendedDType, util.StrictABC):
   def register_op(cls, primitive):
     def _register_fn(fn):
       cls._op_registry[primitive] = fn
+      return fn
 
     return _register_fn
 

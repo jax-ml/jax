@@ -996,6 +996,43 @@ class FusionTest(jtu.JaxTestCase):
     y = f(x)
     np.testing.assert_allclose(y, x * 3.0)
 
+  def test_fusion_dtype_op_registry_isolation(self):
+    class DTypeA(fusible_dtype.FusionDType):
+      abstract_unpack = None
+      abstract_pack = None
+      pull_block_spec_one_step = None
+      unpack_push_block_spec = None
+      unpack_pull_block_spec = None
+
+    class DTypeB(fusible_dtype.FusionDType):
+      abstract_unpack = None
+      abstract_pack = None
+      pull_block_spec_one_step = None
+      unpack_push_block_spec = None
+      unpack_pull_block_spec = None
+
+    @DTypeA.register_op(lax.neg_p)
+    def neg_rule(ctx, x):
+      del ctx
+      return x
+
+    self.assertIsNotNone(neg_rule)
+    self.assertIs(DTypeA.get_op_rule(lax.neg_p), neg_rule)
+    self.assertIsNone(DTypeB.get_op_rule(lax.neg_p))
+    self.assertIsNone(fusible_dtype.FusionDType.get_op_rule(lax.neg_p))
+
+  def test_pack_unpack_dtype_abstract_eval_errors(self):
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    with self.assertRaisesRegex(
+        ValueError, "Attempted to pack non-fusion dtype:.*float32"
+    ):
+      jax.jit(lambda x: fusible_dtype.pack(x, dtype=jnp.float32))(x)
+
+    with self.assertRaisesRegex(
+        ValueError, "Attempted to unpack non-fusion dtype: float32"
+    ):
+      jax.jit(fusible_dtype.unpack)(x)
+
 
 @dataclasses.dataclass(frozen=True)
 class ArrayTuple:
