@@ -628,11 +628,6 @@ def _pull_block_transform(
         strict_mode=strict_mode,
         invars=tuple(eqn.invars),
     )
-    if eqn.primitive.multiple_results:
-      in_block_transforms = rule(ctx, eqn_out_block_transforms, **eqn.params)
-    else:
-      in_block_transforms = rule(ctx, eqn_out_block_transforms[0], **eqn.params)
-
     eqn_invar_usages = [
         read_usage_env(v) if not isinstance(v, core.Literal) else set()
         for v in eqn.invars
@@ -650,7 +645,7 @@ def _pull_block_transform(
           jaxpr.constvars,
           jaxpr.invars,
           needed_invars,
-          jaxpr.eqns[: jaxpr.eqns.index(eqn)],
+          jaxpr.eqns[:i],
           debug_info=jaxpr.debug_info._replace(result_paths=None),
       )
       scalar_prefetch_jaxpr, used_inputs = pe.dce_jaxpr(
@@ -680,6 +675,11 @@ def _pull_block_transform(
           _scalar_prefetch_fn, scalar_prefetch_jaxpr
       )
       ctx.scalar_prefetch_fn = scalar_prefetch_fn_env[i] = scalar_prefetch_fn
+
+    if eqn.primitive.multiple_results:
+      in_block_transforms = rule(ctx, eqn_out_block_transforms, **eqn.params)
+    else:
+      in_block_transforms = rule(ctx, eqn_out_block_transforms[0], **eqn.params)
     for v, in_block_transform in zip(eqn.invars, in_block_transforms, strict=True):
       if (
           not isinstance(v, core.Literal)
