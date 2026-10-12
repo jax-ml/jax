@@ -31,8 +31,12 @@ from jax import random
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
-from jax._src.random.core import (_safe_int_to_float, _check_broadcast_shapes,
-                                  _poisson_from_normal)
+from jax._src.random.core import (
+    _bits_to_uniform,
+    _check_broadcast_shapes,
+    _poisson_from_normal,
+    _safe_int_to_float,
+)
 from jax._src import test_util as jtu
 from jax import vmap
 
@@ -136,13 +140,14 @@ class CommonRandomTest(RandomTestBase):
         lambda: lax.bitcast_convert_type(np.array(1., dtype), bits_dtype))()
     self.assertEqual(numpy_bits, xla_bits)
 
-  @jtu.sample_product(dtype=float_dtypes, use_jit=[False, True])
-  def testRngUniform(self, dtype, use_jit):
+  @jtu.sample_product(dtype=float_dtypes, use_jit=[False, True], mode=['low', 'high', 'highest'])
+  def testRngUniform(self, dtype, use_jit, mode):
     key = self.make_key(0)
     rand = random.uniform if not use_jit else jax.jit(
-        random.uniform, static_argnames=['shape', 'dtype'])
-    samples = rand(key, shape=(10000,), dtype=dtype)
-    self._CheckCollisions(samples, jnp.finfo(dtype).nmant)
+        random.uniform, static_argnames=['shape', 'dtype', 'mode'])
+    samples = rand(key, shape=(10000,), dtype=dtype, mode=mode)
+    if mode == 'low':
+      self._CheckCollisions(samples, jnp.finfo(dtype).nmant)
     self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf)
 
   @jtu.sample_product(dtype=int_dtypes + uint_dtypes, use_jit=[False, True])
@@ -391,6 +396,110 @@ class DistributionsTest(RandomTestBase):
     self._CheckKolmogorovSmirnovCDF(jnp.real(samples), scipy.stats.norm(scale=1/np.sqrt(2)).cdf)
     self._CheckKolmogorovSmirnovCDF(jnp.imag(samples), scipy.stats.norm(scale=1/np.sqrt(2)).cdf)
     self.assertEqual(dtype, samples.dtype)
+
+  def testSamplingModeConfigFlags(self):
+    key = self.make_key(42)
+    u_low = random.uniform(key, shape=(128,), dtype=np.float32, mode='low')
+    u_high = random.uniform(key, shape=(128,), dtype=np.float32, mode='high')
+    u_highest = random.uniform(key, shape=(128,), dtype=np.float32, mode='highest')
+
+    self.assertArraysEqual(random.uniform(key, shape=(128,), dtype=np.float32), u_low)
+
+    for mode, expected in [('high', u_high), ('highest', u_highest)]:
+      with config.random_uniform_mode(mode):
+        self.assertArraysEqual(random.uniform(key, shape=(128,), dtype=np.float32), expected)
+
+  def testBitsToUniformNearZero(self):
+    low_bits = jnp.arange(4096, dtype=jnp.uint32)
+    u_low = np.asarray(_bits_to_uniform(low_bits, np.float32, mode='low'))
+    u_high = np.asarray(_bits_to_uniform(low_bits, np.float32, mode='high'))
+    u_highest = np.asarray(
+        _bits_to_uniform((jnp.zeros_like(low_bits), low_bits), np.float32, mode='highest')
+    )
+
+    # mode="low" drops the bottom 9 bits, so every 512 consecutive integers map
+    # to the same float and nothing between 0 and 2^-23 can be produced.
+    self.assertEqual(len(np.unique(u_low)), 4096 // 512)
+    self.assertEqual(u_low[511], 0.0)
+    self.assertEqual(u_low[512], np.float32(2.0 ** -23))
+
+    # mode="high" uses all 32 input bits, stepping from 0 by 2^-32.
+    self.assertEqual(len(np.unique(u_high)), 4096)
+    self.assertTrue(np.all(np.diff(u_high) > 0))
+    self.assertEqual(u_high[1], np.float32(2.0 ** -32))
+
+    # mode="highest" uses two 32-bit words, stepping from 0 by 2^-64.
+    self.assertEqual(len(np.unique(u_highest)), 4096)
+    self.assertTrue(np.all(np.diff(u_highest) > 0))
+    self.assertEqual(u_highest[1], np.float32(2.0 ** -64))
+
+  def testBitsToUniformFloatSpacing(self):
+    # In [2^-k, 2^-(k-1)), subtracting 1.0 in mode="low" cancels k bits, so
+    # adjacent outputs jump by 2^k adjacent floats instead of 1.
+    for k in (1, 5, 10, 20, 22):
+      step_inputs = jnp.array([1 << (32 - k), (1 << (32 - k)) + 512], dtype=jnp.uint32)
+      low_vals = np.asarray(_bits_to_uniform(step_inputs, np.float32, mode='low'))
+      self.assertEqual(low_vals.view(np.uint32)[1] - low_vals.view(np.uint32)[0], 1 << k)
+
+    # In mode="high", adjacent outputs are consecutive floats down to 2^-9.
+    high_step = jnp.array([1 << 24, (1 << 24) + 2], dtype=jnp.uint32)
+    high_vals = np.asarray(_bits_to_uniform(high_step, np.float32, mode='high'))
+    self.assertEqual(high_vals.view(np.uint32)[1] - high_vals.view(np.uint32)[0], 1)
+
+  def testBitsToUniformUpperHalf(self):
+    # In [0.5, 1.0), subtracting 1.0 in mode="low" always leaves the bottom
+    # mantissa bit zero; mode="high" fills it half the time.
+    upper_bits = jnp.uint32(0x80000000) + jnp.arange(1024, dtype=jnp.uint32) * jnp.uint32(256)
+    u_low = np.asarray(_bits_to_uniform(upper_bits, np.float32, mode='low'))
+    u_high = np.asarray(_bits_to_uniform(upper_bits, np.float32, mode='high'))
+    self.assertEqual(np.sum(u_low.view(np.uint32) & 1), 0)
+    self.assertEqual(np.sum(u_high.view(np.uint32) & 1), 512)
+
+    # All-ones inputs stay strictly below 1.0 instead of rounding up to 1.0.
+    max_high = float(
+        _bits_to_uniform(jnp.array([0xFFFFFFFF], dtype=jnp.uint32), np.float32, mode='high')[0]
+    )
+    self.assertEqual(max_high, float(np.nextafter(np.float32(1.0), np.float32(0.0))))
+    max_highest = float(
+        _bits_to_uniform(
+            (jnp.array([0xFFFFFFFF], dtype=jnp.uint32),
+             jnp.array([0xFFFFFFFF], dtype=jnp.uint32)),
+            np.float32, mode='highest')[0]
+    )
+    self.assertEqual(max_highest, float(np.nextafter(np.float32(1.0), np.float32(0.0))))
+
+  def testBitsToUniform16Bit(self):
+    # Check all 2^16 uint16 inputs: mode="low" only reaches 2^nmant distinct
+    # outputs, whereas mode="high" uses the remaining bits for small values.
+    all_u16 = jnp.arange(1 << 16, dtype=jnp.uint16)
+    bf16_low = np.asarray(_bits_to_uniform(all_u16, jnp.bfloat16, mode='low'))
+    bf16_high = np.asarray(_bits_to_uniform(all_u16, jnp.bfloat16, mode='high'))
+    self.assertEqual(len(np.unique(bf16_low)), 1 << 7)
+    self.assertGreater(len(np.unique(bf16_high)), 1000)
+    self.assertLess(float(np.max(bf16_high)), 1.0)
+
+    f16_low = np.asarray(_bits_to_uniform(all_u16, np.float16, mode='low'))
+    f16_high = np.asarray(_bits_to_uniform(all_u16, np.float16, mode='high'))
+    self.assertEqual(len(np.unique(f16_low)), 1 << 10)
+    self.assertGreater(len(np.unique(f16_high)), 6000)
+    self.assertLess(float(np.max(f16_high)), 1.0)
+
+  def testBitsToUniformFloat64(self):
+    with jax.enable_x64():
+      low_bits = jnp.arange(8192, dtype=jnp.uint64)
+      u_low = np.asarray(_bits_to_uniform(low_bits, np.float64, mode='low'))
+      u_high = np.asarray(_bits_to_uniform(low_bits, np.float64, mode='high'))
+      u_highest = np.asarray(
+          _bits_to_uniform(
+              (jnp.zeros_like(low_bits), low_bits), np.float64, mode='highest'
+          )
+      )
+      # mode="low" drops 64 - 52 = 12 bits (4096 inputs per output value).
+      self.assertEqual(len(np.unique(u_low)), 8192 // 4096)
+      self.assertEqual(len(np.unique(u_high)), 8192)
+      self.assertEqual(u_high[1], np.float64(2.0 ** -64))
+      self.assertEqual(len(np.unique(u_highest)), 8192)
+      self.assertEqual(u_highest[1], np.float64(2.0 ** -128))
 
   @jtu.sample_product(dtype=float_dtypes, use_jit=[False, True])
   def testTruncatedNormal(self, dtype, use_jit):

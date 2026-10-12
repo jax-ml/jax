@@ -480,6 +480,7 @@ def uniform(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
             minval: RealArray = 0.,
             maxval: RealArray = 1.,
             *,
+            mode: str | None = None,
             out_sharding: NamedSharding | P | None = None) -> Array:
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
@@ -491,6 +492,9 @@ def uniform(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
       jax_enable_x64 is true, otherwise float32).
     minval: optional, a minimum (inclusive) value broadcast-compatible with shape for the range (default 0).
     maxval: optional, a maximum (exclusive) value broadcast-compatible with shape for the range (default 1).
+    mode: optional, "low", "high", or "highest" for how many bits of entropy to
+      convert into floating-point samples. Defaults to ``jax_random_uniform_mode``
+      config ("low").
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -507,16 +511,159 @@ def uniform(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   shape = core.canonicalize_shape(shape)
+  if mode is None:
+    mode = config.random_uniform_mode.value
+  if mode not in ("low", "high", "highest"):
+    raise ValueError(f"Must provide valid mode for uniform, got: {mode}")
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "uniform", shape)
 
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
                      f"got {dtype}")
   return maybe_auto_axes(_uniform, out_sharding,
-                         shape=shape, dtype=dtype)(key, minval, maxval)
+                         shape=shape, dtype=dtype, mode=mode)(key, minval, maxval)
 
-@jit(static_argnums=(3, 4))
-def _uniform(key: Key, minval, maxval, shape, dtype) -> Array:
+
+def _bits_to_uniform(
+    bits: Array | tuple[Array, Array], dtype: DType, mode: str = "low"
+) -> Array:
+  """Convert unsigned integer bit patterns into uniform samples in [0, 1)."""
+  finfo = dtypes.finfo(dtype)
+  nbits, nmant = finfo.bits, finfo.nmant
+  uint_dtype = UINT_DTYPES[nbits]
+  if mode == "low":
+    assert not isinstance(bits, tuple)
+    input_bits = dtypes.iinfo(bits.dtype).bits
+    # Put random bits into the mantissa of 1.0 to produce a float in [1, 2),
+    # then subtract 1.0 to map into [0, 1).
+    bits_u = lax.convert_element_type(bits, uint_dtype)
+    float_bits = lax.shift_right_logical(
+        bits_u, jnp.array(input_bits - nmant, uint_dtype))
+    float_bits = lax.bitwise_or(
+        float_bits,
+        # The double cast is because the TPU backend does not implement `view`
+        # on float64 values => do the `view` in NumPy first, but then ensure
+        # that we have a JAX array that won't be canonicalized further.
+        jnp.asarray(np.array(1.0, dtype).view(float_bits.dtype),
+                    dtype=float_bits.dtype))
+    return lax.bitcast_convert_type(float_bits, dtype) - jnp.array(1., dtype)
+  elif mode == "high":
+    assert not isinstance(bits, tuple)
+    input_bits = dtypes.iinfo(bits.dtype).bits
+    # Treat `bits` as the binary fraction `0.<bits>_2` in [0, 1):
+    # - `lz = clz(bits)` is the number of leading 0s before the first 1 bit,
+    #   which sets the float exponent (`0` leading zeros -> [0.5, 1),
+    #   `1` leading zero -> [0.25, 0.5), ..., biased exponent = -minexp - lz).
+    # - The `nmant` bits right after that first 1 bit fill the mantissa.
+    #   Truncating instead of rounding prevents values near 1 from rounding up
+    #   to 1.0.
+    if -finfo.minexp >= input_bits and input_bits == nbits:
+      # Exponent range is wide enough (float32, bfloat16, float64) that every
+      # nonzero integer is a normal float (no subnormals), so pack the exponent
+      # and mantissa bits directly.
+      lz = lax.clz(bits)
+      mantissa = lax.bitwise_and(
+          lax.shift_right_logical(
+              lax.shift_left(bits, lz),
+              np.array(nbits - 1 - nmant, dtype=uint_dtype),
+          ),
+          np.array((1 << nmant) - 1, dtype=uint_dtype),
+      )
+      exp = lax.shift_left(
+          np.array(-finfo.minexp, dtype=uint_dtype) - lz,
+          np.array(nmant, dtype=uint_dtype),
+      )
+      float_bits = jnp.where(
+          bits == 0,
+          np.array(0, dtype=uint_dtype),
+          lax.bitwise_or(exp, mantissa),
+      )
+      return lax.bitcast_convert_type(float_bits, dtype)
+    else:
+      # Narrow exponent types (float16, float8_*): 32 bits can land in the
+      # subnormal range. Clear bits after the first `1 + nmant` significant bits
+      # in uint32, scale by 2^-32 in float32, and cast to `dtype`.
+      u32 = lax.shift_left(
+          lax.convert_element_type(bits, np.uint32), np.uint32(32 - input_bits)
+      )
+      lz = lax.clz(u32)
+      sig_mask = np.uint32(~((1 << (31 - nmant)) - 1) & 0xFFFFFFFF)
+      u32_trunc = lax.shift_right_logical(
+          lax.bitwise_and(lax.shift_left(u32, lz), sig_mask), lz
+      )
+      floats_f32 = (
+          lax.convert_element_type(u32_trunc, np.float32) * np.float32(2.0 ** -32)
+      )
+      return lax.min(
+          lax.convert_element_type(floats_f32, dtype),
+          np.nextafter(np.array(1.0, dtype), np.array(0.0, dtype)),
+      )
+  elif mode == "highest":
+    assert isinstance(bits, tuple) and len(bits) == 2
+    hi, lo = bits
+    w_bits = dtypes.iinfo(hi.dtype).bits
+    w_uint = UINT_DTYPES[w_bits]
+    # Same binary-fraction logic as mode="high", but across two `W`-bit words
+    # `(hi, lo)` (2x32=64 bits for float32/bfloat16; 2x64=128 bits for float64):
+    if -finfo.minexp >= 2 * w_bits:
+      hi_zero = hi == 0
+      both_zero = hi_zero & (lo == 0)
+      lz_hi = lax.clz(hi)
+      lz_lo = lax.clz(lo)
+      lz = jnp.where(hi_zero, np.array(w_bits, dtype=w_uint) + lz_lo, lz_hi)
+      # Shift the first `1` bit to the top of `top_w`, pulling in high bits of
+      # `lo` to fill the bottom of `hi << lz_hi`. Use two shifts (`>> 1` then
+      # `>> (w_bits - 1 - lz_hi)`) because shifting by `w_bits` in one step when
+      # `lz_hi == 0` wraps modulo the word width.
+      hi_norm = lax.bitwise_or(
+          lax.shift_left(hi, lz_hi),
+          lax.shift_right_logical(
+              lax.shift_right_logical(lo, np.array(1, dtype=w_uint)),
+              np.array(w_bits - 1, dtype=w_uint) - lz_hi,
+          ),
+      )
+      top_w = jnp.where(hi_zero, lax.shift_left(lo, lz_lo), hi_norm)
+      mantissa = lax.convert_element_type(
+          lax.bitwise_and(
+              lax.shift_right_logical(
+                  top_w, np.array(w_bits - 1 - nmant, dtype=w_uint)
+              ),
+              np.array((1 << nmant) - 1, dtype=w_uint),
+          ),
+          uint_dtype,
+      )
+      exp = lax.shift_left(
+          np.array(-finfo.minexp, dtype=uint_dtype)
+          - lax.convert_element_type(lz, uint_dtype),
+          np.array(nmant, dtype=uint_dtype),
+      )
+      float_bits = jnp.where(
+          both_zero,
+          np.array(0, dtype=uint_dtype),
+          lax.bitwise_or(exp, mantissa),
+      )
+      return lax.bitcast_convert_type(float_bits, dtype)
+    else:
+      # Small-exponent types (float16, float8_*): 32 bits in `hi` exceeds the
+      # entire subnormal dynamic range (-minexp + nmant <= 24).
+      lz = lax.clz(hi)
+      sig_mask = np.uint32(~((1 << (31 - nmant)) - 1) & 0xFFFFFFFF)
+      u32_trunc = lax.shift_right_logical(
+          lax.bitwise_and(lax.shift_left(hi, lz), sig_mask), lz
+      )
+      floats_f32 = (
+          lax.convert_element_type(u32_trunc, np.float32) * np.float32(2.0 ** -32)
+      )
+      return lax.min(
+          lax.convert_element_type(floats_f32, dtype),
+          np.nextafter(np.array(1.0, dtype), np.array(0.0, dtype)),
+      )
+  else:
+    raise ValueError(f"Unsupported mode for _bits_to_uniform: {mode}")
+
+
+@jit(static_argnums=(3, 4, 5))
+def _uniform(key: Key, minval, maxval, shape, dtype, mode: str = "low") -> Array:
   _check_shape("uniform", shape)
   if not dtypes.issubdtype(dtype, np.floating):
     raise TypeError("uniform only accepts floating point dtypes.")
@@ -534,28 +681,17 @@ def _uniform(key: Key, minval, maxval, shape, dtype) -> Array:
         f"uniform only accepts 8-, 16-, 32-, or 64-bit dtypesgot {dtype}."
     )
 
-  rng_bits = nbits
-  if nmant < 8:
-    rng_bits = 8
-  bits = _random_bits(key, rng_bits, shape)
-  uint_dtype = UINT_DTYPES[nbits]
-  if rng_bits != nbits:
-    bits = lax.convert_element_type(bits, uint_dtype)
-
-  # The strategy here is to randomize only the mantissa bits with an exponent of
-  # 1 (after applying the bias), then shift and scale to the desired range. The
-  # bit-level transformation we use relies on Numpy and XLA having bit-for-bit
-  # equivalent float representations, which might not be true on all platforms.
-  float_bits = lax.shift_right_logical(
-      bits, jnp.array(rng_bits - nmant, uint_dtype))
-  float_bits = lax.bitwise_or(
-      float_bits,
-      # The double cast is because the TPU backend does not implement `view` on
-      # float64 values => do the `view` in NumPy first, but then ensure that
-      # we have a JAX array that won't be canonicalized further.
-      jnp.asarray(np.array(1.0, dtype).view(float_bits.dtype),
-                  dtype=float_bits.dtype))
-  floats = lax.bitcast_convert_type(float_bits, dtype) - jnp.array(1., dtype)
+  if mode == "highest":
+    word_bits = 64 if nbits == 64 else 32
+    k1, k2 = _split(key)
+    bits: Array | tuple[Array, Array] = (
+        _random_bits(k1, word_bits, shape),
+        _random_bits(k2, word_bits, shape),
+    )
+  else:
+    rng_bits = 8 if (mode == "low" and nmant < 8) else nbits
+    bits = _random_bits(key, rng_bits, shape)
+  floats = _bits_to_uniform(bits, dtype, mode=mode)
   return lax.max(
       minval,
       lax.reshape(floats * (maxval - minval) + minval, shape))
