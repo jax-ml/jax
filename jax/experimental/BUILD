@@ -482,19 +482,20 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "pallas_tpu_ops",
-    srcs = glob(["pallas/ops/tpu/**/*.py"]),
     visibility = [
         ":pallas_tpu_ops_users",
     ],
     deps = [
-        ":pallas",
-        ":pallas_tpu",
-        "//jax",
-        "//jax/_src:dtypes",
-        "//jax/_src:random",
-        "//jax/_src:shard_map",
-        "//jax/_src:util",
-    ] + py_deps("numpy"),
+        "//jax/experimental/pallas/ops/tpu:all_gather",
+        "//jax/experimental/pallas/ops/tpu:example_kernel",
+        "//jax/experimental/pallas/ops/tpu:flash_attention",
+        "//jax/experimental/pallas/ops/tpu:matmul",
+        "//jax/experimental/pallas/ops/tpu:megablox",
+        "//jax/experimental/pallas/ops/tpu:paged_attention",
+        "//jax/experimental/pallas/ops/tpu:ragged_paged_attention",
+        "//jax/experimental/pallas/ops/tpu:random",
+        "//jax/experimental/pallas/ops/tpu:splash_attention",
+    ],
 )
 
 pytype_strict_library(
