@@ -21,6 +21,42 @@ from jax._src.scipy.special import betaln
 from jax._src.typing import Array, ArrayLike
 
 
+# Keep both lax.cond branches at module scope. Defining fresh closures inside
+# logpdf makes the eager (op-by-op) cond primitive recompile on every call,
+# violating the existing JAX _CompileAndCheck no-extra-cache-miss contract.
+def _t_regular_quadratic(operand):
+  _, df, _, scale, delta = operand
+  scaled_x = lax.div(delta, scale)
+  return lax.log1p(lax.div(lax.mul(scaled_x, scaled_x), df))
+
+def _t_stable_quadratic(operand):
+  x, df, loc, scale, delta = operand
+  abs_delta = lax.abs(delta)
+  safe_abs_delta = jnp.where(abs_delta == 0, 1, abs_delta)
+  # A subtraction of finite, opposite-signed inputs can overflow even when
+  # (x - loc) / scale and the final log-density are finite. In this case
+  # |x - loc| = |x| + |loc|, so recover its log magnitude with logaddexp.
+  overflowed_subtraction = (
+      jnp.isinf(delta) & jnp.isfinite(x) & jnp.isfinite(loc)
+  )
+  safe_abs_x = jnp.where(x == 0, 1, lax.abs(x))
+  safe_abs_loc = jnp.where(loc == 0, 1, lax.abs(loc))
+  log_abs_delta = jnp.where(
+      overflowed_subtraction,
+      jnp.logaddexp(lax.log(safe_abs_x), lax.log(safe_abs_loc)),
+      lax.log(safe_abs_delta),
+  )
+  log_abs_scaled = lax.sub(log_abs_delta, lax.log(lax.abs(scale)))
+  log_quadratic = lax.sub(
+      lax.mul(_lax_const(x, 2), log_abs_scaled), lax.log(df)
+  )
+  stable_tail = lax.add(
+      jnp.maximum(log_quadratic, 0),
+      lax.log1p(lax.exp(lax.neg(lax.abs(log_quadratic)))),
+  )
+  return jnp.where(abs_delta == 0, 0, stable_tail)
+
+
 def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   r"""Student's T log probability distribution function.
 
@@ -60,35 +96,6 @@ def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
   # can overflow while the log density remains finite. Preserve the fast
   # ordinary-input path; use a log-domain formula only if the batch contains
   # an extreme standardized input or a scale/df that risks overflow.
-  def regular_quadratic(_):
-    scaled_x = lax.div(delta, scale)
-    return lax.log1p(lax.div(lax.mul(scaled_x, scaled_x), df))
-
-  def stable_quadratic(_):
-    abs_delta = lax.abs(delta)
-    safe_abs_delta = jnp.where(abs_delta == 0, 1, abs_delta)
-    # A subtraction of finite, opposite-signed inputs can overflow even when
-    # (x - loc) / scale and the final log-density are finite. In this case
-    # |x - loc| = |x| + |loc|, so recover its log magnitude with logaddexp.
-    overflowed_subtraction = (
-        jnp.isinf(delta) & jnp.isfinite(x) & jnp.isfinite(loc)
-    )
-    safe_abs_x = jnp.where(x == 0, 1, lax.abs(x))
-    safe_abs_loc = jnp.where(loc == 0, 1, lax.abs(loc))
-    log_abs_delta = jnp.where(
-        overflowed_subtraction,
-        jnp.logaddexp(lax.log(safe_abs_x), lax.log(safe_abs_loc)),
-        lax.log(safe_abs_delta),
-    )
-    log_abs_scaled = lax.sub(log_abs_delta, lax.log(lax.abs(scale)))
-    log_quadratic = lax.sub(
-        lax.mul(_lax_const(x, 2), log_abs_scaled), lax.log(df)
-    )
-    stable_tail = lax.add(
-        jnp.maximum(log_quadratic, 0),
-        lax.log1p(lax.exp(lax.neg(lax.abs(log_quadratic)))),
-    )
-    return jnp.where(abs_delta == 0, 0, stable_tail)
 
   # In float16, even a standardized coordinate around 300 has a
   # finite log-density but its square overflows. The ordinary float32/64
@@ -104,7 +111,8 @@ def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
         | (df < _lax_const(x, 1e-5))
     )
   log_one_plus_quadratic = lax.cond(
-      use_stable, stable_quadratic, regular_quadratic, operand=None
+      use_stable, _t_stable_quadratic, _t_regular_quadratic,
+      operand=(x, df, loc, scale, delta),
   )
   return lax.neg(lax.add(
       normalize_term, lax.mul(df_plus_one_over_two, log_one_plus_quadratic)
