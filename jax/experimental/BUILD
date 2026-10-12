@@ -728,6 +728,13 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "protobuf",
+    srcs = ["protobuf.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//jax/_src:protobuf"],
+)
+
+pytype_strict_library(
     name = "thunky",
     srcs = ["thunky.py"],
     visibility = [

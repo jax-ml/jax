@@ -1338,6 +1338,13 @@ pytype_strict_library(
     ],
 )
 
+# protobuf is an optional dependency, checked for at runtime.
+pytype_strict_library(
+    name = "protobuf",
+    srcs = ["protobuf.py"],
+    deps = ["//jax/_src/lib"],
+)
+
 pytype_strict_library(
     name = "layout",
     srcs = ["layout.py"],
