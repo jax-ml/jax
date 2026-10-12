@@ -83,6 +83,7 @@ Miscellaneous
    core_barrier
    get_barrier_semaphore
    get_tpu_info
+   has_memory_space
    is_tpu_device
    run_on_first_core
    with_memory_space_constraint

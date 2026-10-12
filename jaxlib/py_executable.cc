@@ -307,17 +307,14 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
               ifrt::ArrayCopySemantics::kReuseInput,
               ifrt::SingleDeviceShardSemantics::kAddressableShards);
       ABSL_CHECK_OK(disassembled_arrays.status());
-      nb::list bufs =
-          nb::steal<nb::list>(PyList_New(disassembled_arrays->size()));
-      int i = 0;
+      nb::list_builder bufs(disassembled_arrays->size());
       for (auto& disassembled_array : *disassembled_arrays) {
         nb::object array = PyArray::MakeFromSingleDeviceArray(
             client_, std::move(disassembled_array), false, true,
             result_status_.IsValid() ? result_status_ : xla::Future<>());
-        PyList_SET_ITEM(bufs.ptr(), i, array.release().ptr());
-        ++i;
+        bufs.put(std::move(array));
       }
-      outputs.push_back(std::get<nb::object>(handler)(std::move(bufs)));
+      outputs.push_back(std::get<nb::object>(handler)(bufs.commit()));
     }
   }
   return outputs;

@@ -56,9 +56,9 @@ from jax._src.interpreters import batching
 from jax._src.pallas.pallas_call import _batch_block_mapping
 from jax._src.pallas.fuser import fusible_dtype
 import jax.numpy as jnp
+import numpy as np
 
 cdiv = utils.cdiv
-contextmanager = contextlib.contextmanager
 align_to = utils.align_to
 program_id = primitives.program_id
 num_programs = primitives.num_programs
@@ -76,16 +76,30 @@ SMEM = tpu_core.MemorySpace.SMEM
 VMEM = tpu_core.MemorySpace.VMEM
 HBM = tpu_core.MemorySpace.HBM
 ANY = pallas_core.MemorySpace.ANY
-REF = jax.Ref
 GridDimensionSemantics = tpu_core.GridDimensionSemantics
 PARALLEL = tpu_core.PARALLEL
 ARBITRARY = tpu_core.ARBITRARY
 SemaphoreType = tpu_core.SemaphoreType
 SemaphoreTuple = jax.Array
-ArrayRef = REF | jax.Array
 Tiling = tpu_info.Tiling
 
 is_transformed_ref = lambda x: isinstance(x, state.TransformedRef)
+
+
+def _fori_loop(lower, upper, body_fun, init_val):
+  if jax_core.is_concrete(lower) and jax_core.is_concrete(upper):
+    if (length := int(upper) - int(lower)) <= 0:
+      return init_val
+    (_, result), _ = lax.scan(
+        lambda carry, _: ((carry[0] + 1, body_fun(*carry)), None),
+        (np.int32(lower), init_val),
+        None,
+        length=length,
+    )
+    return result
+  return lax.fori_loop(
+      jnp.int32(lower), jnp.int32(upper), body_fun, init_val
+  )
 
 
 def _create_blocked_slice(
@@ -104,7 +118,9 @@ def _create_blocked_slice(
   num_blocks = cdiv(dim_size, block_size)
   is_last = block_index == num_blocks - 1
   rounded_size = jnp.where(
-      is_last, align_to(dim_rem, tiling), block_size
+      is_last,
+      jnp.int32(align_to(dim_rem, tiling)),
+      jnp.int32(block_size),
   )
   rounded_size = multiple_of(rounded_size, tiling)
   return ds(block_start, rounded_size)
@@ -128,7 +144,7 @@ def _create_bounded_slice(slice_start: jax.Array | int,
   # nearest multiple of the tiling.
   is_oob = slice_start + slice_size > dim_size
   remaining = dim_size - slice_start
-  rounded_size = jnp.where(is_oob, remaining, slice_size)
+  rounded_size = jnp.where(is_oob, jnp.int32(remaining), jnp.int32(slice_size))
   rounded_size = align_to(rounded_size, tiling)
   rounded_size = multiple_of(rounded_size, tiling)
   return ds(slice_start, rounded_size)
@@ -230,7 +246,7 @@ def _spec_has_trivial_windowing(spec, grid, full_shape):
     return True
   static_dummy_grid = tuple(d if isinstance(d, int) else 2 for d in grid)
   with pallas_core.tracing_grid_env(static_dummy_grid, mapped_dims=()):
-    jaxpr = jax.make_jaxpr(spec.index_map)(*[0] * len(grid))
+    jaxpr = jax.make_jaxpr(spec.index_map)(*[jnp.int32(0)] * len(grid))
   # Refs can be mutated while the pipeline is running so we should not assume
   # that they are constant.
   if any(isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars):
@@ -539,7 +555,7 @@ class BufferedRef(BufferedRefBase):
   _in_buffer_count: int = jax.tree.static()
   _out_buffer_count: int = jax.tree.static()
   _grid_rank: int | None = jax.tree.static()
-  window_ref: ArrayRef | None
+  window_ref: jax.Ref | None
   copy_in_slot: int | jax.Array | None
   wait_in_slot: int | jax.Array | None
   copy_out_slot: int | jax.Array | None
@@ -553,6 +569,7 @@ class BufferedRef(BufferedRefBase):
   prefetched_count: int = jax.tree.static(default=0)
   # New style prefetch with folded emit_pipeline await. New is False here.
   await_prefetch: bool = jax.tree.static(default=False)
+  output_wait_read_only: bool = jax.tree.static(default=False)
 
   @property
   def spec(self):
@@ -762,7 +779,7 @@ class BufferedRef(BufferedRefBase):
   ):
     return dataclasses.replace(self, next_fetch=next_fetch)
 
-  def with_window_ref(self, window_ref: ArrayRef | None):
+  def with_window_ref(self, window_ref: jax.Ref | None):
     return dataclasses.replace(self, window_ref=window_ref)
 
   def with_slot_index(
@@ -991,25 +1008,30 @@ class BufferedRef(BufferedRefBase):
         self.sem_recvs.at[slot],
     ).start()
 
+  def _copy_out_at(self, slot, dst_ref, grid_indices):
+    """Describes the copy of the HBM dma slice out of ``slot``."""
+    assert self.sem_sends is not None
+    dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
+    src_ref = self._window_ref_at(slot, self._to_window_slice(dst_slice))
+    dst_ref, sem = dst_ref.at[dst_slice], self.sem_sends.at[slot]
+    if self.output_wait_read_only:  # The semaphore tracks the source read.
+      return tpu_primitives.make_async_copy(src_ref, dst_ref, src_sem=sem)
+    return tpu_primitives.make_async_copy(src_ref, dst_ref, sem)
+
+  def _wait_out_copy(self, copy):
+    if self.output_wait_read_only:
+      copy.wait_read()
+    else:
+      copy.wait()
+
   def copy_out(self, dst_ref, grid_indices):
     """Starts copy of HBM dma slice from the current slot."""
     assert self.is_output
     if not self.is_buffered: return
-    assert self.sem_sends is not None
-    slot = self.current_copy_out_slot
-    dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
-    src_slice = self._to_window_slice(dst_slice)
-    if self.out_buffer_count == 1:
-      tpu_helpers.sync_copy(
-          self._window_ref_at(slot, src_slice),
-          dst_ref.at[dst_slice],
-      )
-    else:
-      tpu_primitives.make_async_copy(
-          self._window_ref_at(slot, src_slice),
-          dst_ref.at[dst_slice],
-          self.sem_sends.at[slot],
-      ).start()
+    copy = self._copy_out_at(self.current_copy_out_slot, dst_ref, grid_indices)
+    copy.start()
+    if self.out_buffer_count == 1:  # Single-buffered outputs are synchronous.
+      self._wait_out_copy(copy)
 
   def wait_in(self, src_ref, grid_indices):
     """Waits for input copy to finish."""
@@ -1031,17 +1053,16 @@ class BufferedRef(BufferedRefBase):
     """Waits for output copy to finish."""
     assert self.is_output
     if not self.is_buffered: return
-    assert self.sem_sends is not None
-    wait_slot = self.current_wait_out_slot
-    dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
-    src_slice = self._to_window_slice(dst_slice)
     # Single-buffered outputs are synchronously copied.
     if self.out_buffer_count > 1:
-      tpu_primitives.make_async_copy(
-          self._window_ref_at(wait_slot, src_slice),  # nb: doesn't matter
-          dst_ref.at[dst_slice],  # only dst shape is important
-          self.sem_sends.at[wait_slot],
-      ).wait()
+      slot = self.current_wait_out_slot
+      self._wait_out_copy(self._copy_out_at(slot, dst_ref, grid_indices))
+
+  def wait_out_write(self, dst_ref, grid_indices):
+    """Waits until the output copies have been written to ``dst_ref``."""
+    if not self.is_buffered or self.is_trivial_windowing: return
+    copy = self._copy_out_at(self.current_wait_out_slot, dst_ref, grid_indices)
+    copy.wait_write()
 
   def advance_next_fetch(self, grid):
     if self.next_fetch is None:
@@ -1149,7 +1170,7 @@ def _filter_indices(
     indices: tuple[int | jax.Array, ...], grid: tuple[int | jax.Array, ...]
 ) -> tuple[int | jax.Array, ...]:
   return tuple(
-      0 if isinstance(g, int) and g == 1 else i
+      jnp.int32(0) if isinstance(g, int) and g == 1 else jnp.int32(i)
       for i, g in zip(indices, grid, strict=True)
   )
 
@@ -1175,12 +1196,12 @@ def _next_index(
   carry: bool | jax.Array = True
   for position, (i, g) in enumerate(
       reversed(list(zip(indices, grid, strict=True)))):
-    inc = jax.lax.select(carry, i + 1, i)
+    inc = jax.lax.select(carry, jnp.int32(i + 1), jnp.int32(i))
     if allow_overflow and (position == len(grid) - 1):
       carry = False
     else:
       carry = inc == g
-    out.append(jax.lax.select(carry, 0, inc))
+    out.append(jax.lax.select(carry, jnp.int32(0), inc))
   if allow_overflow:
     return tuple(reversed(out))
   else:
@@ -1193,9 +1214,9 @@ def _prev_index(
   out = []
   borrow: bool | jax.Array = True
   for i, g in reversed(list(zip(indices, grid, strict=True))):
-    dec = jax.lax.select(borrow, i - 1, i)
+    dec = jax.lax.select(borrow, jnp.int32(i - 1), jnp.int32(i))
     borrow = dec == -1
-    out.append(jax.lax.select(borrow, g - 1, dec))
+    out.append(jax.lax.select(borrow, jnp.int32(g - 1), dec))
   return _filter_indices(tuple(reversed(out)), grid)
 
 
@@ -1237,8 +1258,9 @@ class Scheduler:
     self.first_step = step == 0
     self.last_step = step == self.num_steps - 1
 
-    self.add_offset = lambda x: tuple(i + j for i, j in zip(x, grid_offsets,
-                                                            strict=True))
+    self.add_offset = lambda x: tuple(
+        jnp.int32(i + j) for i, j in zip(x, grid_offsets, strict=True)
+    )
 
     # Derived grid indices for present, previous, and next steps.
     self.indices = self.add_offset(indices)
@@ -1272,7 +1294,7 @@ class Scheduler:
     self._compute_index_cache[key] = (res, indices, buffered_ref.spec.index_map)
     return res
 
-  @contextmanager
+  @contextlib.contextmanager
   def _named_scope(self, name):
     if self.trace_scopes:
       with jax.named_scope(name):
@@ -1670,6 +1692,7 @@ def _partition_grid(
         f" {dimension_semantics=}"
     )
 
+  core_id = jnp.int32(core_id)
   # Try to find a divisible dimension to partition the grid on
   divisible_dimensions = {
       i
@@ -1727,7 +1750,11 @@ def _partition_grid(
   # We have some remainder iterations that we need to assign somewhere. We
   # know that rem < num_cores, so we can assign one extra iteration to each
   # core except for the last (num_cores - rem).
-  num_iters = jnp.where(core_id < rem, base_num_iters + 1, base_num_iters)
+  num_iters = jnp.where(
+      core_id < rem,
+      jnp.int32(base_num_iters + 1),
+      jnp.int32(base_num_iters),
+  )
   new_grid = jax_util.tuple_update(grid, partition_dimension, num_iters)
   # Ordinarily, we would compute the offset as:
   #   grid_offset = program_id(core_axis) * num_iters
@@ -1736,7 +1763,7 @@ def _partition_grid(
   grid_offset = jnp.where(
       core_id < rem,
       core_id * num_iters,
-      core_id * base_num_iters + rem,
+      jnp.int32(core_id * base_num_iters + rem),
   )
   offsets = jax_util.tuple_update(
       (0,) * len(grid),
@@ -1746,10 +1773,10 @@ def _partition_grid(
   return new_grid, offsets
 
 
-def sync_copy(src: REF | BufferedRef, dst: REF | BufferedRef, indices):
+def sync_copy(src: jax.Ref | BufferedRef, dst: jax.Ref | BufferedRef, indices):
   """Perform a synchronous copy from src to dst."""
   bref: BufferedRef
-  hbm_ref: REF
+  hbm_ref: jax.Ref
   if isinstance(src, BufferedRef):
     bref = src
     if isinstance(dst, BufferedRef):
@@ -1800,6 +1827,7 @@ def _emit_pipeline(
     dimension_semantics: tuple[GridDimensionSemantics, ...] | None = None,
     trace_scopes: bool = True,
     no_pipelining: bool = False,
+    output_wait_read_only: bool = False,
     num_cores: int | None = None,
     core_id: jax.Array | int | None = None,
     _explicit_indices: bool = False,
@@ -1822,6 +1850,9 @@ def _emit_pipeline(
       the pipeline using named_scope.
     no_pipelining: If True, turns off pipelining and all copies will be made
       synchronous. This is useful for debugging multiple-buffering related bugs.
+    output_wait_read_only: If True, output copies are only awaited for the read
+      of their source buffer and their writes are fenced once at the end. This
+      is for SparseCore push streams, whose write wait fences all streams.
     num_cores: If set, the number of cores to partition the grid over.
     core_id: If set, the core ID of the current core for partitioning the grid.
     _explicit_indices: If True, the body will receive the iteration indices as
@@ -1899,6 +1930,11 @@ def _emit_pipeline(
             ),
         )
 
+    if output_wait_read_only:
+      allocations = map_brefs(
+          lambda b: dataclasses.replace(b, output_wait_read_only=True),
+          allocations)
+
     alloc_brefs = jax.tree.leaves(
         allocations, is_leaf=lambda x: isinstance(x, BufferedRefBase)
     )
@@ -1954,7 +1990,7 @@ def _emit_pipeline(
 
     if no_pipelining:
       # Debugging mode where all copies are synchronous.
-      initial_indices = (0,) * len(grid)
+      initial_indices = (jnp.int32(0),) * len(grid)
       brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
 
       def _loop_body(step, carry):
@@ -1973,7 +2009,7 @@ def _emit_pipeline(
             if _explicit_indices:
               pipeline_step = PipelineStep(
                   tuple(jnp.asarray(i, jnp.int32) for i in scheduler.indices),
-                  scheduler.step,
+                  jnp.asarray(scheduler.step, jnp.int32),
               )
               body(pipeline_step, *current_refs, *scratches)
             else:
@@ -1985,12 +2021,17 @@ def _emit_pipeline(
         return brefs, _next_index(indices, grid)
 
       with config.mutable_array_checks(False):
-        jax.lax.fori_loop(0, num_steps, _loop_body, (brefs, initial_indices))
+        _fori_loop(
+            0,
+            num_steps,
+            _loop_body,
+            (brefs, initial_indices),
+        )
     else:
       @when(num_steps > 0)
       def _():
         # pipeline prologue
-        initial_indices = (0,) * len(grid)
+        initial_indices = (jnp.int32(0),) * len(grid)
         scheduler = make_scheduler(0, initial_indices)
         brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
         def _sync_copy_in(bref, ref):
@@ -2013,8 +2054,11 @@ def _emit_pipeline(
 
         # pipeline loop
         with config.mutable_array_checks(False):
-          brefs, next_indices = lax.fori_loop(
-              0, num_steps, loop_body, (brefs, initial_indices)
+          brefs, next_indices = _fori_loop(
+              0,
+              num_steps,
+              loop_body,
+              (brefs, initial_indices),
           )
 
         # pipeline epilogue
@@ -2031,6 +2075,10 @@ def _emit_pipeline(
             sync_copy(bref, ref, initial_indices)
 
         map_outputs(_sync_copy_out, brefs, refs)
+
+        if output_wait_read_only:  # Only the source reads were awaited so far.
+          fence = lambda bref, ref: bref.wait_out_write(ref, final_indices)
+          map_outputs(fence, brefs, refs)
 
   return pipeline
 
@@ -2111,6 +2159,7 @@ def emit_pipeline(
     dimension_semantics: tuple[GridDimensionSemantics, ...] | None = None,
     trace_scopes: bool = True,
     no_pipelining: bool = False,
+    output_wait_read_only: bool = False,
     _explicit_indices: bool = False,
 ):
   in_specs = _normalize_specs(in_specs)
@@ -2169,6 +2218,7 @@ def emit_pipeline(
           dimension_semantics=dimension_semantics,
           trace_scopes=trace_scopes,
           no_pipelining=no_pipelining,
+          output_wait_read_only=output_wait_read_only,
           _explicit_indices=_explicit_indices,
           num_cores=num_cores,
           core_id=core_id,
@@ -2263,6 +2313,7 @@ def emit_pipeline(
         dimension_semantics=dimension_semantics,
         trace_scopes=trace_scopes,
         no_pipelining=no_pipelining,
+        output_wait_read_only=output_wait_read_only,
         _explicit_indices=_explicit_indices,
         num_cores=num_cores,
     )

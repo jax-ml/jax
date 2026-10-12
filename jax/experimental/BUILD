@@ -161,8 +161,7 @@ pytype_strict_library(
     srcs = ["overlap.py"],
     visibility = ["//visibility:public"],
     deps = [
-        "//jax/_src:api",
-        "//jax/_src:ffi",
+        "//jax/_src:program_order",
     ],
 )
 
@@ -715,6 +714,17 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax/_src:xla_metadata",
+    ],
+)
+
+pytype_strict_library(
+    name = "thunky",
+    srcs = ["thunky.py"],
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("thunky"),
+    deps = [
+        "//jax/_src/thunky",
     ],
 )
 

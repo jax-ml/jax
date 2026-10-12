@@ -1457,7 +1457,7 @@ Asynchronous copies in either direction support GMEM references returned from
 def exchange_shards(x_ref, y_ref, smem_ref, local_barrier, done_sem):
   plgpu.copy_gmem_to_smem(x_ref, smem_ref, local_barrier)  # Local copy
   plgpu.barrier_wait(local_barrier)
-  other_dev_id = 1 - lax.axis_index("x")  # We assume two devices
+  other_dev_id = {"x": 1 - lax.axis_index("x")}  # We assume two devices
   neighbor_ref = plgpu.remote_ref(y_ref, other_dev_id)
   plgpu.copy_smem_to_gmem(smem_ref, neighbor_ref)
   plgpu.wait_smem_to_gmem(0)  # Wait for the asynchronous write to complete

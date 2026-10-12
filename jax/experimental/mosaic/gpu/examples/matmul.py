@@ -307,7 +307,7 @@ def build_kernel(
       jax.ShapeDtypeStruct((m, n), out_dtype),
       (
           smem_shape,
-          TMABarrier(num_barriers=stages),
+          Barrier(arrival_count=1, num_barriers=stages),
           ClusterBarrier(
               collective_dims=((gpu.Dimension.x, gpu.Dimension.z), gpu.Dimension.y),
               num_barriers=stages,

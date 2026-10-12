@@ -242,6 +242,56 @@ class SemaphoreType(enum.Enum):
   def get_ref_aval(self) -> _Ref:
     return self(()).get_ref_aval()
 
+def _check_no_semaphore_outputs(out_type) -> None:
+  """Raises if any kernel output is a semaphore or a semaphore Ref.
+
+  Semaphores may only be created by ``alloc_semaphore`` outside of a kernel and
+  passed into it as operands.
+  """
+  for leaf in tree_util.tree_leaves(out_type):
+    if isinstance(leaf, SemaphoreType):
+      dtype = leaf.get_array_aval().dtype
+    else:
+      dtype = getattr(leaf, "dtype", None)
+
+    if dtype is not None and (
+        isinstance(dtype, pallas_core.AbstractSemaphoreTy)
+        or dtypes.issubdtype(dtype, pallas_core.semaphore_dtype)
+    ):
+      raise ValueError(
+          "Kernels cannot return semaphores. Allocate them as scratch if only"
+          " used inside this kernel, or via plgpu.alloc_semaphore before the"
+          " kernels that use them."
+      )
+
+
+def alloc_semaphore(shape: tuple[int, ...] = ()) -> jax.Ref:
+  """Returns a zero-initialized GMEM semaphore Ref.
+
+  This function can only be used outside of a kernel; for semaphores scoped to
+  a single kernel, use ``scratch_types`` instead. It is the only way to create
+  semaphores that outlive a single kernel invocation. It performs *no*
+  cross-device synchronization: the caller is responsible for the initial
+  sync, e.g. by running a kernel that is data dependent on the returned refs
+  with ``skip_device_barrier=False``.
+
+  Example::
+
+    sem = plgpu.alloc_semaphore((num_devices,))
+    # The first kernel consuming ``sem`` must not skip the device barrier, so
+    # that all devices observe the zero-initialized semaphores before use.
+    out = plgpu.kernel(body, out_type=out_type, grid=grid, grid_names=names)(
+        sem, x
+    )
+
+  Args:
+    shape: The shape of the semaphore array.
+  """
+
+  zeros = lax.convert_element_type(
+      jnp.zeros(tuple(shape), jnp.int32), pallas_core.Semaphore()
+  )
+  return jax_core.new_ref(zeros, memory_space=MemorySpace.GMEM)
 
 class PrimitiveSemantics(enum.Enum):
   """Thread semantics for a primitives at the Pallas user-level."""
@@ -345,9 +395,22 @@ def kernel(
       **mesh_kwargs,
   )
 
+  _check_no_semaphore_outputs(out_type)
+
   # TODO(slebedev): Use mesh-specific batching rules in ``mpmd_map`` instead.
   @custom_batching.custom_vmap
   def wrapper(*operands):
+    for op in tree_util.tree_leaves(operands):
+      if not isinstance(op, state.AbstractRef):
+        aval = jax_core.typeof(op)
+        if isinstance(aval, jax_core.ShapedArray) and (
+            dtypes.issubdtype(aval.dtype, pallas_core.semaphore_dtype)
+            or isinstance(aval.dtype, pallas_core.AbstractSemaphoreTy)
+        ):
+          raise ValueError(
+              "Cannot pass semaphores into kernels as arrays. Wrap them in"
+              f" jax.new_ref: {op}"
+          )
     thread_name = mesh.thread_name if mesh.thread_name is not None else ()
 
     def kernel_body(*refs):
@@ -1043,7 +1106,7 @@ class MulticastRef(state_types.Transform):
 
 def remote_ref(
     ref: _Ref,
-    device_id: jax.typing.ArrayLike,
+    device_id: pallas_primitives.DeviceId,
     device_id_type: pallas_primitives.DeviceIdType | None = None,
 ) -> pallas_core.TransformedRef:
   """Translate memref to a symmetric memref on a peer device."""
@@ -1055,6 +1118,7 @@ def remote_ref(
     )
   else:
     device_id_type = pallas_primitives.DeviceIdType.MESH
+  device_id = pallas_primitives.canonicalize_device_id(device_id)
   if not isinstance(ref, pallas_core.TransformedRef):
     if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
       raise TypeError("ref must be a reference")

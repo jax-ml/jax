@@ -80,8 +80,8 @@ class Fusible(hijax.HiPrim):
     out, vjp_fun = jax.vjp(self.inline, *args)
     return out, vjp_fun
 
-  def vjp_bwd_retval(self, vjp_fun, outgrad):
-    return vjp_fun(outgrad)
+  def vjp_bwd(self, vjp_fun, outgrad, *arg_accums):
+    vjp_fun.with_refs(*arg_accums)(outgrad)
 
   def jvp(self, primals, tangents):
     ps_ft = ft.flatten(primals)

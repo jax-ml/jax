@@ -21,7 +21,6 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import core
-from jax._src import effects
 from jax._src import hijax
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -130,11 +129,7 @@ class CustomRoot(hijax.HiPrim):
     return dict(solve_jaxpr=self.solve_jaxpr, has_aux=self.has_aux)
 
   def check(self, *_):
-    disallowed = effects.custom_derivatives_allowed_effects.filter_not_in(
-        self.effects)
-    if disallowed:
-      raise NotImplementedError(
-          f'Effects not supported in `custom_root`: {disallowed}')
+    hijax.check_custom_effects(self.effects, 'custom_root')
 
   def expand(self, solve_consts, guess, f_consts, tangent_consts):  # pyrefly: ignore[bad-override]
     return self.solve(solve_consts, guess)
@@ -162,16 +157,25 @@ class CustomRoot(hijax.HiPrim):
   jvp = hijax.jvp_from_lin
   vjp_fwd, vjp_bwd_retval = hijax.vjp_from_lin
 
-  def batch_dim_rule(self, axis_data, dims):
-    in_dims = tree_leaves(dims[:2], is_leaf=lambda x: x is None)
+  def batch(self, axis_data, args, dims):
+    solve_dims, guess_dims, f_dims, tangent_dims = dims
+    is_none = lambda x: x is None
+    in_dims = tree_leaves(dims[:2], is_leaf=is_none)
     _, out_dims = batching.batch_jaxpr2(self.solve_jaxpr, axis_data, tuple(in_dims))
     out_dims = self.out_tree.unflatten(out_dims)
-    root_dims, aux_dims = out_dims if self.has_aux else (out_dims, ())
-    # Implicit derivatives may vary even when the primal root is constant.
-    if any(d is not None for d in tree_leaves(dims, is_leaf=lambda x: x is None)):
+    root_dims = out_dims[0] if self.has_aux else out_dims
+    if any(d is not None for d in tree_leaves(dims, is_leaf=is_none)):
       root_avals = self.out_aval[0] if self.has_aux else self.out_aval
       root_dims = tree_map(lambda a: a.leading_axis_spec(), root_avals)
-    return (root_dims, aux_dims) if self.has_aux else root_dims
+    sol_dims = (root_dims, out_dims[1]) if self.has_aux else root_dims
+    solve = hijax.vmap_rule(axis_data, self.solve, (solve_dims, guess_dims), sol_dims)
+    f = hijax.vmap_rule(axis_data, self.f, (f_dims, root_dims), root_dims)
+    tangent_solve = hijax.vmap_rule(axis_data, self.tangent_solve,
+                                    (tangent_dims, root_dims, root_dims), root_dims)
+    in_avals = hijax.unmap_avals(axis_data, self.in_avals, dims)
+    solve_traced = api.jit(solve).trace(*in_avals[:2])
+    prim = CustomRoot(f, solve, tangent_solve, solve_traced, in_avals, self.has_aux)
+    return prim(*args), sol_dims
 
 
 class _RootLinearMap(hijax.HiPrim):
@@ -227,9 +231,20 @@ class _RootLinearMap(hijax.HiPrim):
   lin, linearized = hijax.linearize_from_jvp
   vjp_fwd, vjp_bwd_retval = hijax.vjp_from_lin
 
-  def batch_dim_rule(self, axis_data, dims):
-    mapped = any(d is not None for d in tree_leaves(dims, is_leaf=lambda x: x is None))
-    return tree_map(lambda a: a.leading_axis_spec() if mapped else None, self.out_aval)
+  def batch(self, axis_data, args, dims):
+    if all(d is None for d in tree_leaves(dims, is_leaf=lambda x: x is None)):
+      return self(*args), tree_map(lambda _: None, self.out_aval)
+    consts, x, v = args
+    const_dims, x_dims, v_dims = dims
+    lead = lambda avals: tree_map(lambda a: a.leading_axis_spec(), avals)
+    x_lead, v_lead, out_dims = lead(self.in_avals[1]), lead(self.in_avals[2]), lead(self.out_aval)
+    align = lambda y, src, dst: hijax.vmap_rule(axis_data, lambda y: y, (src,), dst)(y)
+    f = hijax.vmap_rule(axis_data, self.f, (const_dims, x_lead),
+                        v_lead if self.transposed else out_dims)
+    in_avals = hijax.unmap_avals(axis_data, self.in_avals, (const_dims, x_lead, v_lead))
+    out_aval = hijax.unmap_avals(axis_data, self.out_aval, out_dims)
+    prim = _RootLinearMap(f, in_avals, out_aval, self.effects, self.transposed)
+    return prim(consts, align(x, x_dims, x_lead), align(v, v_dims, v_lead)), out_dims
 
 
 class _LinearSolveTuple(NamedTuple):

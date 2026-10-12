@@ -214,10 +214,10 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
           neighbor = lax.rem(my_id - 1, num_devices)
           # Neighbor might be negative here so we add num_devices in case
           neighbor = jnp.where(neighbor < 0, neighbor + num_devices, neighbor)
-        pl.semaphore_signal(ready_sem, device_id=neighbor)
+        pl.semaphore_signal(ready_sem, device_id={'x': neighbor})
         pl.semaphore_wait(ready_sem)
         copy_done = pltpu.async_remote_copy(
-            x_ref, y_ref, send_sem, recv_sem, device_id=neighbor
+            x_ref, y_ref, send_sem, recv_sem, device_id={'x': neighbor}
         )
         copy_done.wait_send()
         copy_done.wait_recv()
@@ -268,10 +268,16 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
           neighbor = lax.rem(my_id - 1, axis_size)
           # Neighbor might be negative here so we add num_devices in case
           neighbor = jnp.where(neighbor < 0, neighbor + axis_size, neighbor)
-        pl.semaphore_signal(ready_sem, device_id=(my_other_id, neighbor))
+        pl.semaphore_signal(
+            ready_sem, device_id={'y': my_other_id, 'x': neighbor}
+        )
         pl.semaphore_wait(ready_sem)
         copy_done = pltpu.async_remote_copy(
-            x_ref, y_ref, send_sem, recv_sem, device_id=(my_other_id, neighbor)
+            x_ref,
+            y_ref,
+            send_sem,
+            recv_sem,
+            device_id={'y': my_other_id, 'x': neighbor},
         )
         copy_done.wait_send()
         copy_done.wait_recv()
@@ -430,12 +436,12 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
         num_devices = lax.axis_size('x')
         neighbor = lax.rem(my_id + 1, num_devices)
         barrier_sem = pltpu.get_barrier_semaphore()
-        pl.semaphore_signal(barrier_sem, device_id=neighbor)
+        pl.semaphore_signal(barrier_sem, device_id={'x': neighbor})
         pl.semaphore_wait(barrier_sem)
-        pl.semaphore_signal(ready_sem, device_id=neighbor)
+        pl.semaphore_signal(ready_sem, device_id={'x': neighbor})
         pl.semaphore_wait(ready_sem)
         pltpu.async_remote_copy(
-            x_ref, y_ref, send_sem, recv_sem, device_id=neighbor
+            x_ref, y_ref, send_sem, recv_sem, device_id={'x': neighbor}
         ).wait()
 
       pl.run_scoped(
@@ -639,13 +645,13 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
       num_devices = lax.axis_size('x')
       barrier_sem = pltpu.get_barrier_semaphore()
       for i in range(num_devices):
-        pl.semaphore_signal(barrier_sem, device_id=i)
+        pl.semaphore_signal(barrier_sem, device_id={'x': i})
       pl.semaphore_wait(barrier_sem, num_devices)
 
     def barrier_kernel(x_ref, sem_ref, out_ref):
       num_devices = lax.axis_size('x')
       for i in range(num_devices):
-        pl.semaphore_signal(sem_ref, device_id=i)
+        pl.semaphore_signal(sem_ref, device_id={'x': i})
       pl.semaphore_wait(sem_ref, num_devices)
       out_ref[...] = x_ref[...] + 1
 
@@ -688,7 +694,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
       *x_refs, y_ref = refs
 
       def body(ready_sem, send_sem, recv_sem):
-        other_dev_id = 1 - lax.axis_index('x')
+        other_dev_id = {'x': 1 - lax.axis_index('x')}
         pl.semaphore_signal(ready_sem, device_id=other_dev_id)
         pl.semaphore_wait(ready_sem)
 
@@ -750,7 +756,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
 
     def kernel(idx_ref, x0_ref, x1_ref, y_ref):
       def body(ready_sem, send_sem, recv_sem):
-        other_dev_id = 1 - lax.axis_index('x')
+        other_dev_id = {'x': 1 - lax.axis_index('x')}
         pl.semaphore_signal(ready_sem, device_id=other_dev_id)
         pl.semaphore_wait(ready_sem)
         x_ref = pl.select_ref(idx_ref[...], x0_ref, x1_ref)
@@ -1073,7 +1079,7 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
             dst_ref=output_ref.at[1],
             send_sem=send_sem,
             recv_sem=recv_sem,
-            device_id=next_device,
+            device_id={'x': next_device},
         )
         remote_dma.start()
         remote_dma.wait()
@@ -1084,7 +1090,7 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
             dst_ref=output_ref.at[0],
             send_sem=send_sem,
             recv_sem=recv_sem,
-            device_id=next_device,
+            device_id={'x': next_device},
         )
         remote_dma.start()
         remote_dma.wait()
@@ -1164,7 +1170,7 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
             dst_ref=even_output,
             send_sem=send_sem,
             recv_sem=recv_sem,
-            device_id=neighbor,
+            device_id={'x': neighbor},
         )
         remote_dma.start()
         remote_dma.wait()
@@ -1175,7 +1181,7 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
             dst_ref=odd_output,
             send_sem=send_sem,
             recv_sem=recv_sem,
-            device_id=neighbor,
+            device_id={'x': neighbor},
         )
         remote_dma.start()
         remote_dma.wait()
@@ -1238,7 +1244,13 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
 class PallasKernelMetadataDistributedTest(parameterized.TestCase):
 
   @parameterized.product(
-      axis_names=[['x', 'y'], [('x', 'y')], ['x'], ['y']],
+      axis_names=[
+          ['x', 'y'],
+          [('x', 'y')],
+          [('x', 'y'), 'z'],
+          ['x'],
+          ['y'],
+      ],
       op=['copy', 'signal'],
   )
   def test_mesh_axes_metadata_is_preserved(self, axis_names, op):
@@ -1246,8 +1258,8 @@ class PallasKernelMetadataDistributedTest(parameterized.TestCase):
       self.skipTest('Remote async copy only supported on TPU v4+')
     if len(jax.devices()) < 4:
       self.skipTest('Not enough devices')
-    devices = np.array(jax.devices()[:4]).reshape((2, 2))
-    mesh = jax.sharding.Mesh(devices, ('x', 'y'))
+    devices = np.array(jax.devices()[:4]).reshape((2, 2, 1))
+    mesh = jax.sharding.Mesh(devices, ('x', 'y', 'z'))
 
     def kernel(x_ref, out_ref):
       def body(send_sem, recv_sem, sem):
@@ -1275,14 +1287,14 @@ class PallasKernelMetadataDistributedTest(parameterized.TestCase):
     @functools.partial(
         jax.jit,
         out_shardings=jax.sharding.NamedSharding(
-            mesh, jax.sharding.PartitionSpec('x', 'y')
+            mesh, jax.sharding.PartitionSpec('x', 'y', 'z')
         ),
     )
     @functools.partial(
         jax.shard_map,
         mesh=mesh,
-        in_specs=jax.sharding.PartitionSpec('x', 'y'),
-        out_specs=jax.sharding.PartitionSpec('x', 'y'),
+        in_specs=jax.sharding.PartitionSpec('x', 'y', 'z'),
+        out_specs=jax.sharding.PartitionSpec('x', 'y', 'z'),
         check_vma=False,
     )
     def f(x):

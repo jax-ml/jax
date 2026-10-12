@@ -23,10 +23,12 @@ from typing import Any
 
 import jax
 from jax._src import core as jax_core
+from jax._src import pretty_printer as pp
 from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import tpu_info
+from jax._src.state import types as state_types
 import jax.numpy as jnp
 
 
@@ -240,3 +242,45 @@ class Indices:
     if self.ignored_value is None:
       return values
     return f"{values}~{self.ignored_value}"
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
+class SharedMemRefSliceTransform(state_types.Transform):
+  """Slices a VMEM_SHARED ref along its minor dimension into subcore VMEM."""
+
+  def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
+    match x:
+      case state_types.AbstractRef():
+        memory_space = x.memory_space
+        if isinstance(memory_space, pallas_core.CoreMemorySpace):
+          memory_space = memory_space.memory_space
+        if memory_space != tpu_core.MemorySpace.VMEM_SHARED:
+          raise ValueError(
+              "slice_subcore_vmem_from_shared requires a VMEM_SHARED"
+              f" reference, got memory space: {x.memory_space}"
+          )
+        return x.update(
+            inner_aval=self.transform_type(x.inner_aval),
+            memory_space=tpu_core.MemorySpace.VMEM,
+        )
+      case jax_core.ShapedArray():
+        if not x.shape:
+          raise ValueError(
+              "Cannot slice subcore VMEM from a 0D VMEM_SHARED reference."
+          )
+        num_subcores = get_sparse_core_info().num_subcores
+        if x.shape[-1] % num_subcores != 0:
+          raise ValueError(
+              f"VMEM_SHARED last dimension ({x.shape[-1]}) must be divisible "
+              "by the total number of physical subcores, including inactive "
+              f"ones ({num_subcores})."
+          )
+        new_shape = (*x.shape[:-1], x.shape[-1] // num_subcores)
+        return x.update(shape=new_shape)
+      case _:
+        raise TypeError(f"Cannot slice subcore VMEM from {x}")
+
+  def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
+    del context
+    return pp.text("{shared_memref_slice}")

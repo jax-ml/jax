@@ -340,6 +340,94 @@ class MutableArrayTest(jtu.JaxTestCase):
     jax.vmap(f, in_axes=(1, 0))(ref, jnp.ones((3, 2)))  # don't crash
     self.assertAllClose(ref[...], jnp.ones((2, 3)), check_dtypes=False)
 
+  @parameterized.parameters([True, False])
+  def test_vmap_axes_scan_closed_over_ref(self, jit):
+    # https://github.com/jax-ml/jax/issues/39288
+    def f(r):
+      def body(carry, _):
+        r[0] += 1.
+        return carry + r[0], None
+      carry, _ = jax.lax.scan(body, 0., length=3)
+      return carry
+
+    def doit(ref):
+      return jax.vmap(f, in_axes=1)(ref)
+    if jit:
+      doit = jax.jit(doit)
+
+    ref = jax.new_ref(jnp.zeros((2, 3)))
+    out = doit(ref)
+    # Batching over axis 1 means each batch element sees ref[:, i], so the
+    # writes land in row 0 and the carry accumulates 1. + 2. + 3.
+    self.assertAllClose(ref[...], jnp.array([[3., 3., 3.], [0., 0., 0.]]),
+                        check_dtypes=False)
+    self.assertAllClose(out, jnp.full((3,), 6.), check_dtypes=False)
+
+  @parameterized.parameters([True, False])
+  def test_vmap_axes_scan_ref_extensive_inputs(self, jit):
+    # https://github.com/jax-ml/jax/issues/39288
+    def f(r, xs):
+      def body(carry, x):
+        r[...] += x
+        return carry, None
+      jax.lax.scan(body, None, xs)
+
+    def doit(ref, xs):
+      jax.vmap(f, in_axes=(1, 0))(ref, xs)
+    if jit:
+      doit = jax.jit(doit)
+
+    ref = jax.new_ref(jnp.zeros((2, 3)))
+    xs = jnp.arange(6.).reshape(3, 2)
+    doit(ref, xs)
+    self.assertAllClose(ref[...], jnp.tile(xs.sum(axis=1), (2, 1)),
+                        check_dtypes=False)
+
+  @parameterized.product(jit=[True, False], axis=[1, 2])
+  def test_vmap_axes_scan_over_ref(self, jit, axis):
+    # https://github.com/jax-ml/jax/issues/39288
+    # The Ref is the scanned-over input, batched along a non-leading axis.
+    def f(rs):
+      def body(carry, r):
+        r[0] += 1.
+        return carry + r[0], r[0]
+      return jax.lax.scan(body, 0., rs)
+
+    def doit(ref):
+      return jax.vmap(f, in_axes=axis)(ref)
+    if jit:
+      doit = jax.jit(doit)
+
+    # The same program written with arrays, for the expected values.
+    def f_array(xs):
+      def body(carry, r):
+        r = r.at[0].add(1.)
+        return carry + r[0], (r[0], r)
+      carry, (ys, new_xs) = jax.lax.scan(body, 0., xs)
+      return carry, ys, new_xs
+
+    x = jnp.arange(24.).reshape(4, 2, 3)
+    ref = jax.new_ref(x)
+    carry, ys = doit(ref)
+    carry_expected, ys_expected, x_expected = jax.vmap(
+        f_array, in_axes=axis, out_axes=(0, 0, axis))(x)
+    self.assertAllClose(carry, carry_expected, check_dtypes=False)
+    self.assertAllClose(ys, ys_expected, check_dtypes=False)
+    self.assertAllClose(ref[...], x_expected, check_dtypes=False)
+
+  def test_vmap_axes_scan_over_ref_leading_axis(self):
+    # Batching the scanned-over Ref along its leading axis would need a
+    # transposed view of the buffer, so it is rejected with a clear error.
+    def f(rs):
+      def body(carry, r):
+        r[0] += 1.
+        return carry + r[0], None
+      return jax.lax.scan(body, 0., rs)[0]
+
+    ref = jax.new_ref(jnp.zeros((4, 2, 3)))
+    with self.assertRaisesRegex(NotImplementedError, "leading axis"):
+      jax.vmap(f, in_axes=0)(ref)
+
   def test_vmap_extensive_inputs(self):
     def f(x_ref, val):
       x_ref[...] += val
@@ -489,6 +577,38 @@ class MutableArrayTest(jtu.JaxTestCase):
         body = jax.remat(body)
       x, () = jax.lax.scan(body, x, None, length=1)
       return x
+
+    if jit:
+      primal = jax.jit(primal)
+
+    @jax.custom_vjp
+    def stash_grads(grads_ref, x):
+      return x
+    def stash_grads_fwd(grads_ref, x):
+      return x, grads_ref
+    def stash_grads_bwd(grads_ref, g):
+      grads_ref[...] = g
+      return None, g
+    stash_grads.defvjp(stash_grads_fwd, stash_grads_bwd)
+
+    grads_ref = core.new_ref(jnp.float32(0.))
+    jax.grad(primal, argnums=1)(grads_ref, jnp.float32(1.0))
+    self.assertAllClose(grads_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
+
+  @parameterized.parameters(it.product([False, True], repeat=2))
+  def test_custom_vjp_grad_stats_plumbing_cond(self, jit, remat):
+    def primal(grads_ref, x):  # note: jit-abstracted!
+      def true_fn(x):
+        x = jnp.sin(x)
+        x = stash_grads(grads_ref, x)
+        x = jnp.sin(x)
+        return x
+      def false_fn(x):
+        return x * 3.0
+      f = lambda x: jax.lax.cond(True, true_fn, false_fn, x)
+      if remat:
+        f = jax.remat(f)
+      return f(x)
 
     if jit:
       primal = jax.jit(primal)
@@ -1845,7 +1965,64 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "x_ref and y_ref"):
       jax.vjp(f, x_ref, x_ref)
 
-  # TODO(mattjj): add test test_closure_and_argument_aliases_custom_vjp
+  def test_argument_aliases_custom_vjp_under_jit(self):
+    @jax.custom_vjp
+    def f(x_ref, y_ref):
+      ...
+    f.defvjp(lambda x_ref, y_ref: (None, None), lambda _, g: (None, None))
+    @jax.jit
+    def g():
+      x_ref = core.new_ref(0.)
+      f(x_ref, x_ref)
+    with self.assertRaisesRegex(ValueError, "x_ref and y_ref"):
+      g()
+
+  def test_closure_and_argument_aliases_custom_vjp(self):
+    @jax.jit
+    def g():
+      x_ref = core.new_ref(0.)
+      @jax.custom_vjp
+      def f(y_ref):
+        return x_ref[...] + y_ref[...]
+      f.defvjp(lambda y_ref: (f(y_ref), None), lambda _, g: (None,))
+      return f(x_ref)
+    with self.assertRaisesRegex(
+        ValueError, "closed over and passed as the argument y_ref"):
+      g()
+
+  @parameterized.parameters([False, True])
+  def test_argument_aliases_checkpoint(self, jit):
+    f = jax.checkpoint(lambda x_ref, y_ref: x_ref[...] + y_ref[...])
+    g = lambda x_ref: f(x_ref, x_ref)
+    if jit:
+      g = jax.jit(g)
+    x_ref = core.new_ref(0.)
+    with self.assertRaisesRegex(ValueError, "at both x_ref and y_ref"):
+      g(x_ref)
+
+  @parameterized.parameters([False, True])
+  def test_closure_and_argument_aliases_checkpoint(self, jit):
+    def g():
+      x_ref = core.new_ref(0.)
+      f = jax.checkpoint(lambda y_ref: x_ref[...] + y_ref[...])
+      return f(x_ref)
+    if jit:
+      g = jax.jit(g)
+    with self.assertRaisesRegex(
+        ValueError, "closed over and passed as the argument y_ref"):
+      g()
+
+  def test_closure_and_argument_aliases_shard_map(self):
+    mesh = jax.make_mesh((1,), ('x',))
+    @jax.jit
+    def g():
+      x_ref = core.new_ref(0.)
+      f = jax.shard_map(lambda y_ref: x_ref[...] + y_ref[...],
+                        mesh=mesh, in_specs=P(), out_specs=P())
+      return f(x_ref)
+    with self.assertRaisesRegex(
+        ValueError, "closed over and passed as the argument y_ref"):
+      g()
 
   @parameterized.parameters([False, True])
   def test_cond_both_branches_close_over_same_mutable_array(self, jit):

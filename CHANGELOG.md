@@ -17,6 +17,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added {func}`jax.scipy.special.erfcinv` for the inverse complementary
+    error function.
   * Added {func}`jax.lax.polynomial` for polynomial evaluation. The polynomial
     primitive is faster and uses less memory when computing gradients.
   * Added {func}`jax.custom_vjp.defremat`, which customizes how a
@@ -39,12 +41,25 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.numpy.atleast_1d`, {func}`jax.numpy.atleast_2d`, and
     {func}`jax.numpy.atleast_3d` now return tuples of arrays rather than
     lists, matching the behavior in NumPy 2.0+.
+  * The `shape` argument of {func}`jax.random.multinomial` is now the batch
+    shape, as documented and as in NumPy: the result has shape
+    `(*shape, p.shape[-1])`. Previously `shape` had to include the outcome
+    axis. Code that passed the full output shape should drop its last entry.
 
 * Deprecations
   * {func}`jax.lax.psend` and {func}`jax.lax.precv` are deprecated.
 
 * Changes
+  * Improved the numerical accuracy of {func}`jax.scipy.special.ndtri` and its
+    derivatives by replacing the piecewise rational approximations with
+    minimax polynomial approximations and a custom JVP rule.
   * JAX now uses Bazel 9.2.0 to build from source.
+  * Improved the numerical accuracy of complex {func}`jax.numpy.abs` and
+    {func}`jax.lax.abs` by lowering through power-of-two scaled `hypot`.
+  * Improved the numerical accuracy of {func}`jax.numpy.hypot` and its
+    derivatives by replacing the division-based formula with power-of-two
+    scaling and a custom JVP rule, avoiding rounding errors for large inputs.
+    The derivative at `(0, 0)` now returns `NaN` (previously `±0.5`).
   * Improved the numerical accuracy of {func}`jax.numpy.sinc` across all
     floating-point types (to $\le 0.5$ ULP for `bfloat16` and `float16`,
     $\le 2.5\text{–}4.0$ ULPs for `float32`, and $\ge 2.0$ ULPs for `float64`).
@@ -203,6 +218,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `ReshapeTransform` views.
   * [ROCm] Worked around a rocFFT twiddle cache bug in multi-dimensional real
     FFTs ({jax-issue}`#40389`).
+  * Fixed {func}`jax.vmap` of a {func}`jax.lax.scan` whose body closes over
+    or scans over a Ref batched along a non-leading axis, which previously
+    failed with ``AttributeError: 'Ref' object has no attribute 'transpose'``
+    ({jax-issue}`#39288`).
 
 ## JAX 0.11.1 (August 17, 2026)
 

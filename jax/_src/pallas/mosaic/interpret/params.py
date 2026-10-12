@@ -48,6 +48,10 @@ class SharedInterpretParams:
       detected, a message will be printed and `races.races_found` will be set to
       True.
       Default: False.
+    on_race: If "raise", an exception will be raised when a race is detected.
+      If "warn", a warning will be printed when a race is detected, but
+      interpretation will continue.
+      Default: "raise".
     out_of_bounds_reads: If "raise", an exception will be raised on any
       out-of-bounds read of a buffer.  If "uninitialized_value", any parts of
       the read that are out-of-bounds will return the value used to fill
@@ -82,6 +86,7 @@ class SharedInterpretParams:
   """
 
   detect_races: bool = False
+  on_race: Literal["raise", "warn"] = "raise"
   out_of_bounds_reads: Literal["raise", "uninitialized"] = "raise"
   skip_floating_point_ops: bool = False
   uninitialized_memory: Literal["nan", "zero"] = "nan"

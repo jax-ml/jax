@@ -45,6 +45,7 @@ from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
 from jax._src.core import typeof
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.layout import AutoLayoutSingleton, Format, Layout
@@ -503,6 +504,16 @@ class Traced(Stage):
     traced._params = dict(traced._params, name=self.fun_name)
     traced._fun_sourceinfo = self._fun_sourceinfo
     return consts, traced
+
+  def _batch(self, axis_data, in_axes) -> tuple[Traced, tuple[Any, ...]]:
+    """Returns this Traced batched along `axis_data`, with its flattened
+    arguments batched along `in_axes` (one int or None each), and the batch
+    axes of its flattened results."""
+    in_axes = (None,) * len(self._consts) + tuple(in_axes)
+    new_jaxpr, out_axes = batching.batch_jaxpr2(self.jaxpr, axis_data, in_axes)
+    new_params = dict(self._params, jaxpr=new_jaxpr)
+    return Traced(list(new_jaxpr.in_avals), new_params, self._in_tree,
+                  self.out_tree, self._consts, self._fun_sourceinfo), out_axes
 
   def physicalize(self, ctx) -> Traced:
     new_jaxpr = ctx.physicalize_closed_jaxpr(self.jaxpr)

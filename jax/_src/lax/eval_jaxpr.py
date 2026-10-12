@@ -29,7 +29,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.partial_eval import eval_jaxpr_p
 from jax._src.interpreters import remat
 from jax._src.state import discharge
-from jax._src.pjit import program_order_p
 from jax._src.tree_util import tree_leaves, tree_flatten, tree_unflatten
 from jax._src.util import safe_map, safe_zip, split_list, subs_list, weakref_lru_cache
 
@@ -158,4 +157,3 @@ def create_call_primitive(name: str, inline_jax_late: bool = True
   return prim
 
 register_call_primitive_rules(eval_jaxpr_p, name='eval_jaxpr')
-register_call_primitive_rules(program_order_p, name='program_order')

@@ -193,6 +193,27 @@ nanobind_pywrap_extension(
     ],
 )
 
+nanobind_pywrap_extension(
+    name = "_thunky_ext",
+    srcs = ["thunky_ext.cc"],
+    copts = COPTS,
+    pytype_srcs = ["_thunky_ext.pyi"],
+    deps = [
+        "//jaxlib/thunky:mlir_to_proto",
+        "//jaxlib/thunky/dialect:thunky_dialect_capi",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//mlir:CAPIDebug",
+        "@llvm-project//mlir:CAPIIR",
+        "@llvm-project//mlir:CAPITransforms",
+        "@llvm-project//mlir:FuncExtensions",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeadersAndDeps",
+        "@nanobind",
+        "@xla//xla/service/gpu:gpu_executable_proto_cc",
+    ],
+)
+
 # This is here, instead of in jaxlib/mosaic/python, so it's in the same
 # directory as libjaxlib_mlir_capi.so (produced by
 # :jaxlib_mlir_capi_shared_library). This ensures that the RPATH works correctly

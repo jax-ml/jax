@@ -82,6 +82,7 @@ from jax._src.numpy.indexing import take_along_axis
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.lax import utils as lax_utils
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func
@@ -221,6 +222,15 @@ def approx_min_k(operand: Array,
       aggregate_to_topk=aggregate_to_topk)
 
 
+def _approx_top_k_sharding_rule(operand, *, reduction_dimension):
+  operand_s = operand.sharding
+  if operand_s.spec[reduction_dimension] is not None:
+    raise core.ShardingTypeError(
+        f"reduction dimension {reduction_dimension} in operand"
+        f" {operand.str_short()} should be unsharded i.e. the spec of that dim"
+        " should be `None`.")
+  return (operand_s, operand_s)
+
 def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
                                 recall_target, is_max_k,
                                 reduction_input_size_override,
@@ -249,17 +259,14 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
          "approx_top_k with aggregate_to_topk=False not yet implemented when "
          f"either the `k` ({k}) or the "
          f" reduction dimension size ({reduction_input_size}) are symbolic")
-  operand_s = operand.sharding
-  if operand_s.spec[reduction_dimension] is not None:
-    raise core.ShardingTypeError(
-        f"reduction dimension {reduction_dimension} in operand"
-        f" {operand.str_short()} should be unsharded i.e. the spec of that dim"
-        " should be `None`.")
+  s0, s1 = lax_utils.call_sharding_rule(
+      approx_top_k_p, _approx_top_k_sharding_rule, None, 2, operand,
+      reduction_dimension=reduction_dimension)
   return (operand.update(shape=dims, dtype=operand.dtype,
                          weak_type=operand.weak_type,
-                         manual_axis_type=operand.mat, sharding=operand_s),
+                         manual_axis_type=operand.mat, sharding=s0),
           operand.update(shape=dims, dtype=np.dtype(np.int32),
-                         manual_axis_type=operand.mat, sharding=operand_s))
+                         manual_axis_type=operand.mat, sharding=s1))
 
 def _get_init_val_literal(op_type, is_max_k):
   return np.array(-np.inf if is_max_k else np.inf, dtype=op_type)

@@ -13,6 +13,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* New features
+  * Added `ref.memory_space_cast` to cast the memory space of a reference.
+
 * Deprecations
 
   * {class}`jax.experimental.pallas.DeviceIdType` and the `device_id_type`
@@ -44,6 +47,13 @@ Remember to align the itemized text with the first line of an item within a list
   {func}`jax.experimental.pallas.mosaic_gpu.sum`, and
   {func}`jax.experimental.pallas.mosaic_gpu.prod`. These mirror the equivalent
   `jax.numpy` functions, but add an `accumulator_ilp` parameter.
+  * Added {func}`jax.experimental.pallas.mosaic_gpu.alloc_semaphore`, which
+    allocates GMEM semaphores that can be shared across kernel invocations.
+  * {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem` with
+    `leader_tracked=CopyPartition.PARTITIONED(...)` or
+    `leader_tracked=CopyPartition.REPLICATED` now support clusters of total size
+    greater than 2, provided the collective axis is the minormost cluster
+    dimension and has size 2.
 
 * Deprecations
 
@@ -57,6 +67,11 @@ Remember to align the itemized text with the first line of an item within a list
     via `ref.at[idx]` prior to loading from it.
 
 ### TPU
+
+* New features
+
+  * Added {func}`jax.experimental.pallas.tpu.has_memory_space` to dynamically
+    query the memory space of an `ANY` reference.
 
 * Deprecations
 

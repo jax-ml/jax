@@ -14,31 +14,31 @@
 
 load(
     "//jaxlib:jax.bzl",
-    "if_building_jaxlib",
     "py_deps",
     "pytype_strict_library",
 )
 
-package(default_applicable_licenses = [])
+package(
+    default_applicable_licenses = [],
+    default_visibility = [
+        "//jax:internal",
+    ],
+)
 
 pytype_strict_library(
-    name = "ragged_dot",
-    srcs = ["ragged_dot.py"],
-    visibility = ["//jax:internal"],
-    deps = if_building_jaxlib(
-        if_building = [
-            "//jax/_src:api",
-            "//jax/_src:lax",
-            "//jax/_src:core",
-            "//jax/_src:tree_util",
-            "//jax/_src:typing",
-            "//jax/_src:xla_bridge",
-            "//jax/_src:numpy",
-        ],
-        if_not_building = [],
-    ) + py_deps("numpy") + [
-        "//jax/_src:init",
-        "//jax/experimental:pallas",
-        "//jax/experimental:pallas_triton",
-    ],
+    name = "thunky",
+    srcs = ["thunky.py"],
+    deps = [
+        "//jax",
+        "//jax/_src:api",
+        "//jax/_src:core",
+        "//jax/_src:dtypes",
+        "//jax/_src:flattree",
+        "//jax/_src:lax",
+        "//jax/_src:mlir",
+        "//jax/_src:partial_eval",
+        "//jax/_src:state_types",
+        "//jax/_src:tree_util",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )

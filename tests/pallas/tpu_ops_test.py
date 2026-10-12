@@ -189,11 +189,13 @@ class OpsTest(ptu.PallasTPUTest):
     inp = np.ascontiguousarray(
         expected.swapaxes(-1, -2)).view(np.uint32)[..., 0]
     assert inp.shape == (2, 16, 128), inp.shape
+    inp = np.moveaxis(inp, 0, axis)
+    expected = np.moveaxis(expected.reshape(2, 16 * 4, 128), 0, axis)
     out = self.pallas_call(
         kernel,
-        out_shape=jax.ShapeDtypeStruct((2, 16 * 4, 128), jnp.uint8)
+        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.uint8)
     )(inp)
-    self.assertArraysEqual(out, expected.reshape(2, 16 * 4, 128))
+    self.assertArraysEqual(out, expected)
 
   @parameterized.parameters([jnp.int32, jnp.int16, jnp.int8, jnp.int4])
   def test_row_broadcast(self, dtype):

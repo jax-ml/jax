@@ -22,7 +22,6 @@ from . import wgmma as _wgmma  # noqa: F401
 from .core import (
     Barrier as Barrier,
     ClusterBarrier as ClusterBarrier,
-    TMABarrier as TMABarrier,
     LoweringSemantics as LoweringSemantics,
     TMEM as TMEM,
     Union as Union,

@@ -1114,11 +1114,13 @@ def _layout_cast_constraint_system(
         f"compatible with the operand shape {operand.shape} in {op}."
     )
   bitwidth = utils.bitwidth(op.x.type.element_type)
+  # TODO(bchetioui): remove `getattr` once minimum jaxlib version is 0.12.0.
+  strict = bool(getattr(op, "strict", False))
   return (
       cs.ConstraintSystem(
           assignments={result_var: out_layout},
           constraints=[
-              cs.Relayout(operand_var, result_var, bitwidth, strict=False),
+              cs.Relayout(operand_var, result_var, bitwidth, strict=strict),
           ],
       ),
       {operand_var: [operand], result_var: [result]},
@@ -2668,6 +2670,7 @@ def _check_unsatisfiable_divisibility_constraints(
 
 def try_raise_constraint_specific_error(op: ir.OpView, constraint: cs.Constraint):
   # TODO(bchetioui): handle other constraint types.
+  msg: str | None = None
   match constraint:
     case cs.IsTransferableSmemRegisters(
         source=cs.RegisterLayout(value=reg_layout),
@@ -2693,12 +2696,33 @@ def try_raise_constraint_specific_error(op: ir.OpView, constraint: cs.Constraint
           )
       opt_str = "optimized " if optimized else ""
       msg = (
-          f"Failed to infer a possible set of layouts: no {opt_str}"
-          "SMEM <-> registers transfer plan could be synthesized for "
-          f"register layout {layouts_lib.pprint_layout(reg_layout)} and "
+          f"no {opt_str}SMEM <-> registers transfer plan could be synthesized "
+          f"for register layout {layouts_lib.pprint_layout(reg_layout)} and "
           f"{ref_str}"
       )
-      raise _construct_value_error_with_op_stacktrace(msg, op)
+    case cs.Relayout(
+        source=cs.RegisterLayout(value=source_layout),
+        target=cs.RegisterLayout(value=target_layout),
+    ):
+      msg = (
+          "cannot relayout from register layout "
+          f"{layouts_lib.pprint_layout(source_layout)} to "
+          f"{layouts_lib.pprint_layout(target_layout)}"
+      )
+    case cs.Equals(
+        lhs=cs.RegisterLayout(value=lhs_layout),
+        rhs=cs.RegisterLayout(value=rhs_layout),
+    ):
+      msg = (
+          "expected register layouts "
+          f"{layouts_lib.pprint_layout(lhs_layout)} and "
+          f"{layouts_lib.pprint_layout(rhs_layout)} to be equal"
+      )
+
+  if msg is not None:
+    raise _construct_value_error_with_op_stacktrace(
+        f"Failed to infer a possible set of layouts: {msg}", op
+    )
 
 
 def diagnose_unsatisfiable_system(
@@ -2879,11 +2903,12 @@ def infer_layout(
         "system for debugging, use `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM=1`."
     )
 
-  # TODO(bchetioui): we need to also insert these constraints into the
-  # `op_for_constraint` map, but it's not yet quite clear which operation to
-  # associate them with. Since we don't use them yet for precise error
-  # reporting, leave this for later.
   constraints = derive_relayout_constraints(ctx.value_sites_for_variable)
+  for constraint in constraints:
+    assert isinstance(constraint.target, cs.Variable)
+    ctx.op_for_constraint.setdefault(
+        constraint, constraint.target.key.operation
+    )
   global_constraint_system &= cs.ConstraintSystem(constraints=constraints)
   assert not isinstance(global_constraint_system, cs.Unsatisfiable)
 

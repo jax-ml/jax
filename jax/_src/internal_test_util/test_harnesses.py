@@ -451,7 +451,7 @@ for dtype in jtu.dtypes.all_floating:
   _make_unary_elementwise_harness(prim=lax.ceil_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.erf_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.erf_inv_p, dtype=dtype)
-  _make_unary_elementwise_harness(prim=lax.erfc_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.erfc_p, dtype=dtype, accuracy=None)
   _make_unary_elementwise_harness(prim=lax.floor_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.is_finite_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.lgamma_p, dtype=dtype)

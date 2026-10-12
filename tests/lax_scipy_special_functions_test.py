@@ -107,6 +107,10 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "erfc", 1, float_dtypes, jtu.rand_small_positive, True
     ),
     op_record(
+        "erfcinv", 1, float_dtypes,
+        functools.partial(jtu.rand_uniform, low=0.05, high=1.95), True
+    ),
+    op_record(
         "erfcx", 1, float_dtypes + jtu.dtypes.complex, jtu.rand_default, True
     ),
     op_record(
@@ -177,9 +181,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record(
         "expi", 1, [np.float32],
         functools.partial(jtu.rand_not_small, offset=0.1), True),
-    op_record("exp1", 1, [np.float32], jtu.rand_positive, True),
+    op_record("exp1", 1, float_dtypes, jtu.rand_positive, True),
     op_record(
-        "expn", 2, (int_dtypes, [np.float32]), jtu.rand_positive, True, (0,)),
+        "expn", 2, (int_dtypes, float_dtypes), jtu.rand_positive, True, (0,)),
     op_record("kl_div", 2, float_dtypes, jtu.rand_positive, True),
     op_record(
         "rel_entr", 2, float_dtypes, jtu.rand_positive, True,
@@ -249,6 +253,78 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       jtu.check_grads(partial_lax_op, diff_args, order=1,
                       atol=.1 if jtu.test_device_matches(["tpu"]) else 1e-3,
                       rtol=.1, eps=1e-3)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testExp1BranchesTerminate(self, dtype):
+    # jnp.piecewise evaluates expn's continued-fraction branch on x <= 1
+    # inputs, where it does not converge; this must not hang (#13543).
+    x = np.array([1e-8, 1e-6, 0.5, 1.0, np.nextafter(1.0, 2.0),
+                  np.nextafter(1.0, 0.0), 2.0, 100.0], dtype=dtype)
+    rtol = {np.float32: 1e-4, np.float64: 1e-5}[dtype]
+    atol = {np.float32: 1e-5, np.float64: 1e-6}[dtype]
+    self.assertAllClose(
+        lsp_special.exp1(x),
+        osp_special.exp1(x.astype(np.float64)).astype(dtype),
+        rtol=rtol, atol=atol)
+
+  @jtu.sample_product(dtype=float_dtypes, n=[0, 1, 2, 10])
+  def testExpnBranchesTerminate(self, dtype, n):
+    x = np.array([1e-8, 1e-6, 0.5, 1.0, np.nextafter(1.0, 2.0),
+                  np.nextafter(1.0, 0.0), 2.0, 100.0], dtype=dtype)
+    rtol = {np.float32: 1e-4, np.float64: 1e-5}[dtype]
+    atol = {np.float32: 1e-5, np.float64: 1e-6}[dtype]
+    self.assertAllClose(
+        lsp_special.expn(n, x),
+        osp_special.expn(n, x.astype(np.float64)).astype(dtype),
+        rtol=rtol, atol=atol)
+
+  @jtu.sample_product(dtype=float_dtypes, n=[-1, 0, 1, 2, 3, 4, 5, 10, 50, 5000])
+  def testExpnAtZeroBoundary(self, dtype, n):
+    # Regression test for https://github.com/jax-ml/jax/issues/41205
+    x = np.array(0.0, dtype=dtype)
+    tol = {np.float32: 1e-6, np.float64: 1e-14}
+    expected = osp_special.expn(n, x.astype(np.float64)).astype(dtype)
+    self.assertAllClose(lsp_special.expn(n, x), expected, rtol=tol, atol=tol)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testExpnOutOfDomainAndInf(self, dtype):
+    n = np.array([-2, -1, -1, 0, 1, 5000, 0, 1, 2, 5000, 1, 2], dtype=dtype)
+    x = np.array([0.0, 0.5, 2.0, -1.0, -1.0, -1.0, np.inf, np.inf, np.inf,
+                  np.inf, 1e20, np.nan], dtype=dtype)
+    expected = osp_special.expn(n.astype(np.float64), x.astype(np.float64)).astype(dtype)
+    self.assertAllClose(lsp_special.expn(n, x), expected)
+    self.assertAllClose(lsp_special.exp1(np.array(np.inf, dtype=dtype)),
+                        np.array(0.0, dtype=dtype))
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testExpnFloatNTruncation(self, dtype):
+    # Verify non-integer float n is truncated to integer like scipy.special.expn
+    n_float = np.array([0.8, 1.8, 2.5, 3.9], dtype=dtype)
+    x_float = np.array([0.3, 0.3, 0.0, 2.0], dtype=dtype)
+    n_int = np.trunc(n_float)
+    self.assertAllClose(lsp_special.expn(n_float, x_float),
+                        lsp_special.expn(n_int, x_float))
+
+  @jtu.sample_product(dtype=float_dtypes, n=[40, 100, 200, 5000, 5001])
+  def testExpnLargeN(self, dtype, n):
+    x = np.array([0.0, 0.5, 1.0, 2.0, 10.0], dtype=dtype)
+    rtol = {np.float32: 1e-4, np.float64: 1e-5}
+    atol = {np.float32: 1e-5, np.float64: 1e-6}
+    expected = osp_special.expn(n, x.astype(np.float64)).astype(dtype)
+    self.assertAllClose(lsp_special.expn(n, x), expected, rtol=rtol, atol=atol)
+    self.assertAllClose(
+        lsp_special.expn(dtype(1e20), dtype(1.0)),
+        dtype(np.exp(-1.0) / 1e20), rtol=rtol, atol=atol)
+
+  @jtu.sample_product(dtype=float_dtypes, n=[0, 1, 2, 3])
+  def testExpnGrads(self, dtype, n):
+    x = np.array([0.5, 1.5, 3.0], dtype=dtype)
+    tol = 1e-2 if jtu.test_device_matches(["tpu"]) else 1e-3
+    jtu.check_grads(lambda x_: lsp_special.expn(n, x_), (x,), order=2,
+                    atol=tol, rtol=tol, eps=1e-3)
+    if n == 1:
+      jtu.check_grads(lsp_special.exp1, (x,), order=2,
+                      atol=tol, rtol=tol, eps=1e-3)
 
   def testWofzAccuracy(self):
     # Verify wofz agrees with scipy over the full complex plane (float32).
@@ -351,6 +427,23 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         f(1.0)
       with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
         f(0.0)
+
+  def testErfcinvExtremeValues(self):
+    dtype = jnp.zeros(0).dtype
+    args_maker = lambda: [np.array([-1.0, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0, np.nan], dtype=dtype)]
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(osp_special.erfcinv, lsp_special.erfcinv, args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.erfcinv, args_maker, rtol=rtol)
+
+  @parameterized.parameters([True, False])
+  def testErfcinvDebugInfs(self, with_jit):
+    f = jax.jit(lsp_special.erfcinv) if with_jit else lsp_special.erfcinv
+    with jax.debug_infs(True):
+      f(1.0)  # Doesn't crash
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
+        f(0.0)
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
+        f(2.0)
 
   def testRelEntrExtremeValues(self):
     # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).

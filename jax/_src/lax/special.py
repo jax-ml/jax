@@ -21,15 +21,17 @@ from enum import Enum
 import numpy as np
 from functools import partial, reduce as _reduce
 
+from jax._src import config
 from jax._src import core
-from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
-                              broadcast_in_dim, broadcast_shapes,
-                              convert_element_type, div, eq, exp, full_like, ge,
-                              gt, le, log, log1p, lt, mul, ne, neg, reciprocal,
-                              reduce, select, sign, sqrt, square,
-                              standard_naryop, standard_unop, sub,
-                              _const, _dtype,
-                              _float, _nary_lower_hlo, _ones, _isnan)
+from jax._src.lax.erf import erf_inv_core, erfc_impl, exp_neg_sq
+from jax._src.lax.lax import (AccuracyMode, Tolerance, add, bitwise_and,
+                              bitwise_not, bitwise_or, broadcast_in_dim,
+                              broadcast_shapes, convert_element_type, div, eq,
+                              exp, full_like, ge, gt, le, log, log1p, lt, mul,
+                              ne, neg, reciprocal, reduce, select, sign, sqrt,
+                              square, standard_naryop, standard_unop, sub,
+                              _const, _dtype, _float, _nary_lower_hlo, _ones,
+                              _isnan, _unary_with_accuracy_pp_rule)
 from jax._src.lax.control_flow.loops import while_loop
 
 from jax._src import dtypes
@@ -129,15 +131,26 @@ def erf(x: ArrayLike) -> Array:
   """
   return erf_p.bind(x)
 
-def erfc(x: ArrayLike) -> Array:
+def erfc(
+    x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None
+) -> Array:
   r"""Elementwise complementary error function:
 
     :math:`\mathrm{erfc}(x) = 1 - \mathrm{erf}(x)`.
 
+  Args:
+    x: input array. Must have floating-point type.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object that
+      selects the implementation of the op based on the requested accuracy. If
+      the implementation cannot satisfy the requested tolerance, the
+      compiler will return an error. If mode is specified and there are no
+      multiple implementations available, the default implementation will be
+      used.
+
   Numerical Precision:
     For accuracy bounds, see :ref:`numerical-accuracy`.
   """
-  return erfc_p.bind(x)
+  return erfc_p.bind(x, accuracy=accuracy)
 
 def erf_inv(x: ArrayLike) -> Array:
   r"""Elementwise inverse error function: :math:`\mathrm{erf}^{-1}(x)`.
@@ -790,15 +803,49 @@ ad.defjvp2(bessel_i1e_p, _bessel_i1e_jvp)
 
 erf_p = standard_unop(_float, 'erf')
 ad.defjvp(erf_p, lambda g, x: mul(_const(x, 2. / np.sqrt(np.pi)),
-                                  mul(g, exp(neg(square(x))))))
+                                  mul(g, exp_neg_sq(x))))
 mlir.register_lowering(erf_p, partial(_nary_lower_hlo, chlo.erf))
 
 erfc_p = standard_unop(_float, 'erfc')
-ad.defjvp(erfc_p, lambda g, x: mul(_const(x, -2. / np.sqrt(np.pi)),
-                                   mul(g, exp(neg(square(x))))))
-mlir.register_lowering(erfc_p, partial(_nary_lower_hlo, chlo.erfc))
+ad.defjvp(
+    erfc_p,
+    lambda g, x, **kwargs: mul(
+        _const(x, -2.0 / np.sqrt(np.pi)), mul(g, exp_neg_sq(x))
+    ),
+)
+def _erfc_lowering(ctx, x, *, accuracy=None):
+  if (
+      accuracy is AccuracyMode.HIGHEST
+      and ctx.avals_in[0].dtype in (np.float32, np.float64)
+  ):
+    return mlir.lower_fun(erfc_impl, multiple_results=False)(ctx, x)
+  return _nary_lower_hlo(chlo.erfc, ctx, x)
+mlir.register_lowering(erfc_p, _erfc_lowering)
+core.pp_eqn_rules[erfc_p] = _unary_with_accuracy_pp_rule
 
 erf_inv_p = standard_unop(_float, 'erf_inv')
 ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, np.sqrt(np.pi) / 2.),
                                             mul(g, exp(square(ans)))))
-mlir.register_lowering(erf_inv_p, partial(_nary_lower_hlo, chlo.erf_inv))
+
+def _erf_inv_impl(x: Array) -> Array:
+  if x.dtype not in (np.float32, np.float64):
+    return convert_element_type(_erf_inv_impl(convert_element_type(x, np.float32)), x.dtype)
+  ax = abs(x)
+  one = _const(x, 1.0)
+  out_of_bounds = bitwise_or(gt(ax, one), _isnan(x))
+  is_one = eq(ax, one)
+  x_safe = select(bitwise_or(out_of_bounds, is_one), full_like(x, 0.0), x)
+  q_safe = sub(one, abs(x_safe))
+  res = erf_inv_core(x_safe, q_safe, has_far_tail=False)
+  return select(
+      out_of_bounds,
+      full_like(x, np.nan),
+      select(is_one, mul(x, _const(x, np.inf)), res),
+  )
+
+def _erf_inv_lowering(ctx, x):
+  if config.jax_accurate_erf_inv.value:
+    return mlir.lower_fun(_erf_inv_impl, multiple_results=False)(ctx, x)
+  return _nary_lower_hlo(chlo.erf_inv, ctx, x)
+
+mlir.register_lowering(erf_inv_p, _erf_inv_lowering)

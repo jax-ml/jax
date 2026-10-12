@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Sequence
+from collections.abc import Callable, Hashable, Mapping, Sequence
 import enum
 import functools
 import math
@@ -968,8 +968,27 @@ DeviceId = (
     | jax_typing.Array
     | None
     | tuple[int | jax_typing.Array, ...]
-    | dict[Any, int | jax_typing.Array]
+    | Mapping[Any, int | jax_typing.Array]
 )
+
+
+def canonicalize_device_id(device_id: DeviceId) -> DeviceId:
+  """Normalizes dict keys when single-axis and tuple keys are mixed."""
+  if (
+      isinstance(device_id, dict)
+      and any(isinstance(k, tuple) for k in device_id)
+      and not all(isinstance(k, tuple) for k in device_id)
+  ):
+    canonical = {
+        k if isinstance(k, tuple) else (k,): v for k, v in device_id.items()
+    }
+    if len(canonical) != len(device_id):
+      raise ValueError(
+          f"Duplicate axis key in device_id: {list(device_id.keys())}"
+      )
+    return canonical
+  return device_id
+
 
 class SemaphoreEffect(effects.Effect):
   pass
@@ -1019,6 +1038,7 @@ def semaphore_signal(
     device_id_type = DeviceIdType.MESH
   ref, transforms = _get_ref_and_transforms(sem_or_view)
   inc = jnp.asarray(inc, dtype=jnp.int32)
+  device_id = canonicalize_device_id(device_id)
   args = [ref, transforms, inc, device_id, core_index]
   flat_args, args_tree = tree_util.tree_flatten(args)
   semaphore_signal_p.bind(
@@ -1224,6 +1244,8 @@ def _device_id_dict_to_mesh(mesh_context: pallas_utils.MeshInfo | None, device_i
   physical_axis_dict = {}
   # Handle joint axes (i.e., one logical axis over >1 physical axes)
   for axis_name, idx in device_id_dict.items():
+    if isinstance(axis_name, tuple) and len(axis_name) == 1:
+      axis_name = axis_name[0]
     if isinstance(axis_name, tuple) and any(
         a in mesh_axis_sizes for a in axis_name
     ):

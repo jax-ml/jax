@@ -14,6 +14,8 @@
 
 """Precision tests for exponential and logistic functions."""
 
+import math
+
 from absl.testing import parameterized
 from jax import lax
 from jax._src import config
@@ -46,13 +48,24 @@ def _expm1_highest(x):
   return lax.expm1(x, accuracy=lax.AccuracyMode.HIGHEST)
 
 
+# Additional range-reduction boundaries (k * ln(2)) beyond +-0.5*ln(2) and
+# +-ln(2) (which are already in _common_interesting_points).
+_EXP_INTERESTING_POINTS = [k * math.log(2.0) for k in (-10, -2, 2, 10)]
+
+
+def _expm1_interesting_points(dtype):
+  # Thresholds where expm1(x) saturates to -1.0 for `dtype`.
+  p = jnp.finfo(dtype).nmant + 1
+  return [-p * math.log(2.0), -(p + 1) * math.log(2.0)]
+
+
 @jtu.thread_unsafe_test_class()
 class ExpTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 1.5, f64: 1.0}),
+        ("cpu", {f16: 1.0, f32: 1.5, f64: 2.0}),
         ("gpu", {bf16: 1.0, f16: 1.0, f32: 2.0, f64: 1.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 116.0}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 109.5}),
@@ -60,13 +73,19 @@ class ExpTest(jtu.JaxTestCase):
         ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 65.0}),
     ]
     util.check_unary_precision(
-        self, jnp.exp, np.exp, mpmath.exp, dtype, bounds=bounds
+        self,
+        jnp.exp,
+        np.exp,
+        mpmath.exp,
+        dtype,
+        bounds=bounds,
+        interesting_points=_EXP_INTERESTING_POINTS,
     )
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp_highest_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 1.5, f64: 1.0}),
+        ("cpu", {f16: 1.0, f32: 1.5, f64: 2.0}),
         ("gpu", {bf16: 1.0, f16: 1.0, f32: 2.0, f64: 1.5}),
         ([*TPU_EUPV1, "tpu_v5p"], {bf16: 1.0, f16: 1.0, f32: 1.5}),
         (["tpu_v6e", "tpu_7x"], {f32: 1.5}),
@@ -78,6 +97,7 @@ class ExpTest(jtu.JaxTestCase):
         mpmath.exp,
         dtype,
         bounds=bounds,
+        interesting_points=_EXP_INTERESTING_POINTS,
     )
 
 
@@ -149,6 +169,7 @@ class Expm1Test(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         check_signed_zeros=check_signed_zeros,
+        interesting_points=_expm1_interesting_points(dtype),
     )
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
@@ -168,6 +189,7 @@ class Expm1Test(jtu.JaxTestCase):
         mpmath.expm1,
         dtype,
         bounds=bounds,
+        interesting_points=_expm1_interesting_points(dtype),
     )
 
 
@@ -184,6 +206,18 @@ class LogisticTest(jtu.JaxTestCase):
         ("tpu_v6e", {f16: 1.0, f32: 65.5}),
         ("tpu_7x", {bf16: 63.0, f16: 1.0, f32: 64.0}),
     ]
+    p = jnp.finfo(dtype).nmant + 1
+    interesting_points = [
+        # Saturation to 1.0 thresholds for `dtype` (underflow to 0.0 at
+        # -log(fmax) / -log(tiny) is already in _common_interesting_points).
+        *(sign * k * math.log(2.0) for k in (p, p + 1) for sign in (-1, 1)),
+    ]
+    # TODO(phawkins): lax.logistic lowers to 1 / (1 + exp(-x)), which prematurely
+    # underflows to 0.0 on CPU and GPU when exp(-x) overflows in float16 for
+    # x <= -11.09.
+    output_ftz = [
+        (["cpu", "gpu"], {f16: True}),
+    ]
     util.check_unary_precision(
         self,
         lax.logistic,
@@ -191,6 +225,8 @@ class LogisticTest(jtu.JaxTestCase):
         lambda x: 1 / (1 + mpmath.exp(-x)),
         dtype,
         bounds=bounds,
+        output_ftz=output_ftz,
+        interesting_points=interesting_points,
     )
 
 

@@ -16,6 +16,7 @@ load(
     "//jaxlib:jax.bzl",
     "jax_generate_backend_suites",
     "jax_multiplatform_test",
+    "jax_py_test",
     "py_deps",
     "py_library",
 )
@@ -78,7 +79,7 @@ jax_multiplatform_test(
     name = "erf_test",
     srcs = ["erf_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 5,
+    shard_count = 7,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
@@ -125,7 +126,7 @@ jax_multiplatform_test(
     name = "hyperbolic_test",
     srcs = ["hyperbolic_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 6,
+    shard_count = 10,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
@@ -155,7 +156,7 @@ jax_multiplatform_test(
     name = "power_test",
     srcs = ["power_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 5,
+    shard_count = 6,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
@@ -170,7 +171,7 @@ jax_multiplatform_test(
     name = "trig_test",
     srcs = ["trig_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 7,
+    shard_count = 10,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
@@ -181,10 +182,10 @@ jax_multiplatform_test(
     ]),
 )
 
-jax_multiplatform_test(
+jax_py_test(
     name = "numerics_test_util_test",
     srcs = ["numerics_test_util_test.py"],
-    disable_configs = DISABLED_CONFIGS,
+    args = ["--jax_enable_x64=true"],
     deps = [
         ":numerics_test_util",
     ] + py_deps([

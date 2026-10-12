@@ -360,6 +360,7 @@ pytype_strict_library(
         ":dtypes",
         ":effects",
         ":ffi",
+        ":mesh",
         ":mlir",
         ":pickle_util",
         ":sharding",
@@ -1239,6 +1240,7 @@ pytype_strict_library(
     srcs = ["stages.py"],
     visibility = ["//jax:internal"] + jax_visibility("stages"),
     deps = [
+        ":batching",
         ":config",
         ":core",
         ":flattree",
@@ -1276,6 +1278,29 @@ pytype_strict_library(
         ":util",
         ":xla_metadata",
         "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
+    name = "program_order",
+    srcs = ["program_order.py"],
+    deps = [
+        ":ad",
+        ":ad_util",
+        ":api",
+        ":api_util",
+        ":batching",
+        ":config",
+        ":core",
+        ":effects",
+        ":lax",
+        ":mlir",
+        ":partial_eval",
+        ":remat",
+        ":source_info_util",
+        ":state_types",
+        ":tree_util",
+        ":util",
     ],
 )
 

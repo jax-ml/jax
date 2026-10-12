@@ -1004,6 +1004,9 @@ mlir.register_lowering(
     cholesky_update_p, partial(_cholesky_update_gpu_lowering_rule, "cu"),
     platform="cuda")
 mlir.register_lowering(
+    cholesky_update_p, partial(_cholesky_update_gpu_lowering_rule, "oneapi"),
+    platform="oneapi")
+mlir.register_lowering(
     cholesky_update_p,
     mlir.lower_fun(_cholesky_update_jax_fn, multiple_results=False))
 
@@ -1970,7 +1973,7 @@ mlir.register_lowering(
     mlir.lower_fun(_generic_lu_pivots_to_permutation, multiple_results=False))
 register_cpu_gpu_lowering(
     lu_pivots_to_permutation_p, _lu_pivots_to_permutation_gpu_lowering,
-    ("cuda", "rocm"))
+    ("cuda", "rocm", "oneapi"))
 
 
 # QR decomposition
@@ -2963,7 +2966,8 @@ def _tridiagonal_solve_gpu_lowering(ctx, dl, d, du, b, *, target_name_prefix,
     return rule(ctx, dl, d, du, b)
 
   # The cusolver implementation requires m >= 3.
-  if m <= 2:
+  # OneAPI uses the JAX decomposition for non-perturbed solves.
+  if m <= 2 or target_name_prefix == "oneapi":
     return mlir.lower_fun(_tridiagonal_solve_jax, multiple_results=False)(
         ctx, dl, d, du, b, perturb_singular=perturb_singular)
   target_name = f"{target_name_prefix}sparse_gtsv2_ffi"
@@ -3095,6 +3099,10 @@ mlir.register_lowering(
     tridiagonal_solve_p,
     partial(_tridiagonal_solve_gpu_lowering, target_name_prefix='hip'),
     platform='rocm')
+mlir.register_lowering(
+    tridiagonal_solve_p,
+  partial(_tridiagonal_solve_gpu_lowering, target_name_prefix='oneapi'),
+    platform='oneapi')
 mlir.register_lowering(tridiagonal_solve_p, mlir.lower_fun(
     _tridiagonal_solve_jax, multiple_results=False))
 

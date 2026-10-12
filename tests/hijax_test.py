@@ -42,6 +42,7 @@ from jax._src.custom_derivatives import custom_jvp_call_p
 from jax._src.custom_derivatives import custom_vjp_call_p
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import partial_eval as pe
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map
 from jax._src.state.discharge import run_state
@@ -50,8 +51,9 @@ from jax._src.hijax import (
     HiType, register_hitype, ShapedArray, Ty, MappingSpec,
     HiPspec)
 from jax.experimental.hijax import (
-    HiPrim, Zero, instantiate_zeros, jvp_from_lin, linearize_from_jvp,
-    vjp_from_jvp, vjp_from_lin)
+    HiPrim, Zero, instantiate_zeros, bdims_at_front,
+    jvp_from_lin, linearize_from_jvp, vjp_from_jvp, vjp_from_lin,
+    vmap_rule)
 
 jtu.request_cpu_devices(8)
 
@@ -572,8 +574,10 @@ class VJPOf(HiPrim):
     _, logs = f_vjp.with_logs.with_refs(*arg_accums)(outgrad)
     return logs
 
-  def batch_dim_rule(self, axis_data, in_dims):
-    return jax.tree.map(lambda _: 0, self.out_aval)
+  def batch(self, axis_data, args, dims):
+    out_dims = jax.tree.map(lambda _: 0, self.out_aval)
+    f = vmap_rule(axis_data, self.f, dims, out_dims)
+    return vjp_of(f, cls=type(self))(*args), out_dims
 
 class VJPOfWithSres(VJPOf):
   # also passes the VJP's structured residuals through as structured residuals
@@ -868,6 +872,19 @@ class HijaxTest(jtu.JaxTestCase):
       return square(x)
 
     with jtu.count_infer_params_cache_miss() as count:
+      f(x)
+      f(x)
+    self.assertEqual(count(), 1)
+
+  @config.numpy_dtype_promotion('standard')
+  def test_jit_cpp_dispatch_with_hijax_intermediates(self):
+    x = jnp.arange(6.).reshape(2, 3)
+
+    @jax.jit
+    def f(x):
+      return from_qarray(to_qarray(x))
+
+    with jtu.count_pjit_cpp_cache_miss() as count:
       f(x)
       f(x)
     self.assertEqual(count(), 1)
@@ -1257,8 +1274,9 @@ class HijaxTest(jtu.JaxTestCase):
       def expand(self, x):
         return x ** self.power
 
-      def batch_dim_rule(self, axis_data, in_dims):
-        return in_dims[0]
+      def batch(self, axis_data, args, dims):
+        (x,), (d,) = args, dims
+        return RaiseToStaticPower(jax.typeof(x), power=self.power)(x), d
 
     class CallJaxpr(HiPrim):
       def __init__(self, jaxpr):
@@ -1277,16 +1295,9 @@ class HijaxTest(jtu.JaxTestCase):
                      'RaiseToStaticPower[power=3]')
 
     jaxpr = jax.make_jaxpr(jax.vmap(cube))(jnp.arange(3, dtype='float32'))
-    self.assertEqual(jaxpr.pretty_print(use_color=False), textwrap.dedent("""
-        { lambda ; a:f32[3]. let
-            b:f32[3] = VmapOf[
-              prim=RaiseToStaticPower[power=3]
-              axis_size=3
-              in_dims=(0,)
-              out_dims=(0,)
-            ] a
-          in (b,) }
-        """).strip())
+    self.assertEqual(jaxpr.pretty_print(use_color=False),
+                     '{ lambda ; a:f32[3]. let '
+                     'b:f32[3] = RaiseToStaticPower[power=3] a in (b,) }')
 
     x = jnp.float32(2.)
     inner = jax.make_jaxpr(lambda x: jnp.sin(cube(x)))(x)
@@ -1405,8 +1416,9 @@ class HijaxTest(jtu.JaxTestCase):
       def expand(self, x, y):
         return x * y
 
-      def batch_dim_rule(self, axis_data, in_dims):
-        return in_dims[1] if in_dims[0] is None else in_dims[0]
+      def batch(self, axis_data, args, dims):
+        x, y = bdims_at_front(axis_data, args, dims)
+        return mul(x, y), 0
 
     def mul(x, y):
       return Mul(typeof(x))(x, y)
@@ -1434,8 +1446,9 @@ class HijaxTest(jtu.JaxTestCase):
       def expand(self, x):
         return x
 
-      def batch_dim_rule(self, axis_data, in_dims):
-        return in_dims[0]
+      def batch(self, axis_data, args, dims):
+        (x,), (d,) = args, dims
+        return ident(x), d
 
     def ident(x): return Id(typeof(x))(x)
 
@@ -1447,7 +1460,7 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(g(x), jnp.tile(x[:, None], (1, 2)))
 
     # multiple args and a tuple output, so that None dims appear inside the
-    # in_dims/out_dim pytrees (mixed with ints) at each level of nesting
+    # dims pytrees (mixed with ints) at each level of nesting
     class AddSnd(HiPrim):
       def __init__(self, x_aval, y_aval):
         self.in_avals = (x_aval, y_aval)
@@ -1458,9 +1471,9 @@ class HijaxTest(jtu.JaxTestCase):
       def expand(self, x, y):
         return x + y, y
 
-      def batch_dim_rule(self, axis_data, in_dims):
-        d = in_dims[0] if in_dims[0] is not None else in_dims[1]
-        return (d, in_dims[1])
+      def batch(self, axis_data, args, dims):
+        x, y = bdims_at_front(axis_data, args, dims)
+        return addsnd(x, y), (0, 0)
 
     def addsnd(x, y):
       return AddSnd(typeof(x), typeof(y))(x, y)
@@ -1504,8 +1517,9 @@ class HijaxTest(jtu.JaxTestCase):
         x_dot, y_dot = map(instantiate_zeros, (x_dot, y_dot))
         return mul(x, y), mul(x_dot, y) + mul(x, y_dot)
 
-      def batch_dim_rule(self, axis_data, in_dims):
-        return in_dims[1] if in_dims[0] is None else in_dims[0]
+      def batch(self, axis_data, args, dims):
+        x, y = bdims_at_front(axis_data, args, dims)
+        return mul(x, y), 0
 
     def mul(x, y):
       return Mul(typeof(x))(x, y)
@@ -1754,8 +1768,9 @@ class HijaxTest(jtu.JaxTestCase):
       lin, linearized = linearize_from_jvp
       vjp_fwd, vjp_bwd_retval = vjp_from_jvp
 
-      def batch_dim_rule(self, _axis_data, in_dims):
-        return in_dims[0]
+      def batch(self, _axis_data, args, dims):
+        (x,), (d,) = args, dims
+        return sin(x), d
 
     def sin(x):
       return Sin(jax.typeof(x))(x)
@@ -1899,10 +1914,14 @@ class HijaxTest(jtu.JaxTestCase):
       lin, linearized = linearize_from_jvp
       vjp_fwd, vjp_bwd_retval = vjp_from_lin
 
-      def batch_dim_rule(self, axis_data, dims):
-        x, scale, n = dims
-        return {'value': 0 if x is not None or scale is not None else None,
-                'aux': n}
+      def batch(self, axis_data, args, dims):
+        (x, scale, n), (dx, dscale, dn) = args, dims
+        if dx is not None or dscale is not None:
+          x, scale = (batching.bdim_at_front(a, d, axis_data.size)
+                      for a, d in [(x, dx), (scale, dscale)])
+        out = WithAux(*map(jax.typeof, (x, scale, n)))(x, scale, n)
+        return out, {'value': None if dx is None and dscale is None else 0,
+                     'aux': dn}
 
     def f(x, scale, n):
       return WithAux(*map(jax.typeof, (x, scale, n)))(x, scale, n)
@@ -2557,8 +2576,9 @@ class HijaxTest(jtu.JaxTestCase):
         x_acc.accum(2. * sres['x'] * g)
         return {'sq': {'x': sres['x'], 'ct': g}}
 
-      def batch_dim_rule(self, axis_data, in_dims):
-        return in_dims[0]
+      def batch(self, axis_data, args, dims):
+        (x,), (d,) = args, dims
+        return Square(typeof(x))(x), d
 
     def f(x, yz):
       y, z = yz
@@ -2688,8 +2708,9 @@ class HijaxTest(jtu.JaxTestCase):
       jvp = jvp_from_lin
       vjp_fwd, vjp_bwd_retval = vjp_from_lin
 
-      def batch_dim_rule(self, _axis_data, in_dims):
-        return in_dims[0]
+      def batch(self, _axis_data, args, dims):
+        (x,), (d,) = args, dims
+        return raise_to_static_power(x, self.power), d
 
     def raise_to_static_power(x, power):
       return RaiseToStaticPower(jax.typeof(x), power=power)(x)
@@ -2965,6 +2986,81 @@ class HijaxTest(jtu.JaxTestCase):
     _, f_lin = jax.linearize(f, jnp.ones((5,)))
     out_tangent = f_lin(jnp.ones((5,)))
     self.assertArraysEqual(out_tangent, jnp.zeros((5,)))
+
+  def test_lower_jaxpr_dce(self):
+    @jax.jit
+    def f(x):
+      _ = square(x)
+      return x + 1.0
+
+    traced = f.trace(jnp.float32(2.0))
+    self.assertLen(traced.jaxpr.eqns, 2)
+    self.assertEqual([e.primitive.name for e in traced.lojax.jaxpr.eqns], ['add'])
+
+    def g(x, y):
+      _ = square(y)
+      return jnp.sin(x)
+
+    traced_grad = jax.jit(jax.grad(g)).trace(jnp.float32(2.0), jnp.float32(3.0))
+    self.assertIn('Square', str(traced_grad.jaxpr))
+    self.assertEqual([e.primitive.name for e in traced_grad.lojax.jaxpr.eqns],
+                     ['cos', 'mul'])
+
+    with config.remat3(True):
+      @jax.remat
+      def r(x, y):
+        return jnp.sin(x), jnp.cos(y)
+
+      @jax.jit
+      def h(x, y):
+        a, _ = r(x, y)
+        return a
+
+      traced_h = h.trace(jnp.float32(2.0), jnp.float32(3.0))
+      self.assertIn('cos', str(traced_h.jaxpr))
+      self.assertNotIn('cos', str(traced_h.lojax.jaxpr))
+
+    @jax.jit
+    def clean_fn(x):
+      return jnp.sin(x) + 1.0
+
+    clean_jaxpr = clean_fn.trace(jnp.float32(2.0)).jaxpr
+    dced_jaxpr, _ = pe.dce_jaxpr(clean_jaxpr, True, instantiate=True)
+    self.assertIs(dced_jaxpr, clean_jaxpr)
+
+  def test_lower_jaxpr_dce_keeps_effectful_remat(self):
+    with config.remat3(True):
+      @jax.jit
+      def f():
+        x_ref = jax.new_ref(jnp.zeros(3, dtype=jnp.float32))
+        def body(r):
+          r[...] = jnp.ones_like(r)  # no outputs, only an effect
+        jax.remat(body)(x_ref)
+        return x_ref[...]
+
+      self.assertAllClose(f(), jnp.ones(3, dtype=jnp.float32))
+
+  def test_lower_jaxpr_dce_keeps_effectful_custom_vjp_optimize_remat(self):
+    with config.custom_vjp3(True):
+      @jax.custom_vjp
+      def f(x, x_ref):
+        x_ref[...] = x
+        return jnp.sin(x)
+      def f_fwd(x, x_ref):
+        x_ref[...] = x
+        return jnp.sin(x), jnp.cos(x)
+      def f_bwd(cos_x, g):
+        return (cos_x * g, None)
+      f.defvjp(f_fwd, f_bwd, optimize_remat=True)
+
+      @jax.jit
+      def g(x):
+        x_ref = jax.new_ref(jnp.zeros((), jnp.float32))
+        # outputs unused, only an effect
+        jax.jvp(lambda x: f(x, x_ref), (x,), (jnp.float32(1.0),))
+        return x_ref[...]
+
+      self.assertAllClose(g(jnp.float32(2.0)), jnp.float32(2.0))
 
 
 class RefTest(jtu.JaxTestCase):
@@ -3349,6 +3445,20 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     f = jax.remat(lambda x: scale_sin(3., x))
     x = jnp.arange(3.)
     self.assertArraysAllClose(jax.vmap(jax.grad(f))(x), 3. * jnp.cos(x))
+
+  def test_defremat_remat_of_vmap(self):
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
+    def scale_sin(c, x):
+      return c * jnp.sin(x)
+    scale_sin.defremat(lambda c, x: (c * jnp.sin(x), jnp.cos(x)),
+                       lambda cos_x, c, x: (c * jnp.sin(x), cos_x),
+                       lambda c, cos_x, g: (c * cos_x * g,))
+    f = jax.remat(jax.vmap(partial(scale_sin, 3.)))
+    x = jnp.arange(3.)
+    self.assertArraysAllClose(jax.grad(lambda x: f(x).sum())(x), 3. * jnp.cos(x))
+    leaves = jax.tree.leaves(jax.vjp(f, x)[1])
+    self.assertLen(leaves, 1)
+    self.assertArraysAllClose(leaves[0], jnp.cos(x))
 
   def test_custom_gradient_remat(self):
     @jax.custom_gradient(remat=True)

@@ -346,33 +346,25 @@ std::vector<std::string> JitConfigNames() {
 nanobind::tuple TraceContext() {
   auto& instance = GlobalConfigState::Instance();
   auto& thread_local_instance = ThreadLocalConfigState::Instance();
-  nb::tuple result = nb::steal<nb::tuple>(
-      PyTuple_New(instance.include_in_trace_context().size()));
-  int pos = 0;
+  nb::tuple_builder result(instance.include_in_trace_context().size());
   for (int i : instance.include_in_trace_context()) {
     nb::object local = thread_local_instance.Get(i);
     if (local.is_valid()) {
-      PyTuple_SET_ITEM(result.ptr(), pos, local.release().ptr());
+      result.put(std::move(local));
     } else {
-      nb::object global = instance.Get(i);
-      PyTuple_SET_ITEM(result.ptr(), pos, global.release().ptr());
+      result.put(instance.Get(i));
     }
-    ++pos;
   }
-  return result;
+  return result.commit();
 }
 
 nanobind::tuple TraceContextNames() {
   auto& instance = GlobalConfigState::Instance();
-  nb::tuple result = nb::steal<nb::tuple>(
-      PyTuple_New(instance.include_in_trace_context().size()));
-  int pos = 0;
+  nb::tuple_builder result(instance.include_in_trace_context().size());
   for (int i : instance.include_in_trace_context()) {
-    PyTuple_SET_ITEM(result.ptr(), pos,
-                     nb::cast(instance.name(i)).release().ptr());
-    ++pos;
+    result.put(instance.name(i));
   }
-  return result;
+  return result.commit();
 }
 
 void BuildConfigSubmodule(nanobind::module_& m) {

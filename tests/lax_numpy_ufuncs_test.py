@@ -577,6 +577,13 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jnp_fun_reduceat, np_fun_reduceat, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun_reduceat, args_maker)
 
-
+  @jtu.sample_product(name=["add", "multiply"])
+  def test_binary_ufunc_reduceat_dtype(self, name):
+    x = np.array([100] * 4, np.int8)
+    i = np.array([0], np.int32)
+    self.assertArraysEqual(
+        getattr(jnp, name).reduceat(x, i, dtype=jnp.int32),
+        getattr(np, name).reduceat(x, i, dtype=np.int32),
+        check_dtypes=True)
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
