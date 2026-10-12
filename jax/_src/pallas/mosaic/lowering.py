@@ -5990,17 +5990,21 @@ def random_seed_lowering(ctx: LoweringRuleContext, seeds, *, impl):
 
 
 @register_lowering_rule(prng.random_bits_p)
-def random_bits_lowering(ctx: LoweringRuleContext, keys, *, bit_width, shape):
+def random_bits_lowering(ctx: LoweringRuleContext, keys, *, bit_width, shape,
+                         num_streams=1):
   assert bit_width == 32, "Only 32-bit PRNG supported."
   aval, = ctx.avals_in
   assert isinstance(aval.dtype, prng.KeyTy)
   impl = aval.dtype._impl
-  _proxy_fn = impl.random_bits
-  if not pl_random.is_pallas_impl(impl):
-    def new_lowering(key, bit_width, shape):
+  if pl_random.is_pallas_impl(impl):
+    if num_streams != 1:
+      raise NotImplementedError("Pallas PRNG only supports num_streams=1.")
+    def _proxy_fn(key, bit_width, shape):
+      return (impl.random_bits(key, bit_width, shape),)
+  else:
+    def _proxy_fn(key, bit_width, shape):
       key = jax.random.key_data(key).astype(jnp.uint32)
-      return impl.random_bits(key, bit_width, shape)
-    _proxy_fn = new_lowering
+      return prng._call_impl_random_bits(impl, key, bit_width, shape, num_streams)
   bits_lowering = lower_fun(_proxy_fn)
   return bits_lowering(ctx, keys, bit_width=bit_width, shape=shape)
 
