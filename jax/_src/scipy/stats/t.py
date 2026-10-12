@@ -14,6 +14,7 @@
 
 
 from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.scipy.special import betaln
@@ -48,14 +49,39 @@ def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
   """
   x, df, loc, scale = promote_args_inexact("t.logpdf", x, df, loc, scale)
   half = _lax_const(x, 0.5)
-  scaled_x = lax.div(lax.sub(x, loc), scale)
+  delta = lax.sub(x, loc)
   df_over_two = lax.mul(df, half)
   df_plus_one_over_two = lax.add(df_over_two, half)
   # Avoid under/overflow of scale**2 * df before taking its logarithm.
   normalize_term_tmp = lax.add(lax.log(lax.abs(scale)), lax.mul(lax.log(df), half))
   normalize_term = lax.add(betaln(df_over_two, half), normalize_term_tmp)
-  quadratic = lax.div(lax.mul(scaled_x, scaled_x), df)
-  return lax.neg(lax.add(normalize_term, lax.mul(df_plus_one_over_two, lax.log1p(quadratic))))
+
+  # Even with stable normalization, ((x - loc) / scale)**2 can overflow
+  # float32 when the true log density is finite. Keep the direct expression
+  # for ordinary inputs, and use log(1 + exp(log_quadratic)) in the tail.
+  # Mask the inactive direct path *before* dividing so its autodiff does not
+  # inherit an overflow from an unselected branch.
+  abs_delta = lax.abs(delta)
+  safe_abs_delta = jnp.where(abs_delta == 0, 1, abs_delta)
+  log_abs_scaled = lax.sub(lax.log(safe_abs_delta), lax.log(lax.abs(scale)))
+  use_direct = log_abs_scaled < _lax_const(x, 35)
+  safe_scaled = lax.div(
+      jnp.where(use_direct, delta, 0),
+      jnp.where(use_direct, scale, 1),
+  )
+  quadratic = lax.div(lax.mul(safe_scaled, safe_scaled), df)
+  log_quadratic = lax.sub(lax.mul(_lax_const(x, 2), log_abs_scaled), lax.log(df))
+  stable_tail = lax.add(
+      jnp.maximum(log_quadratic, 0),
+      lax.log1p(lax.exp(lax.neg(lax.abs(log_quadratic)))),
+  )
+  stable_tail = jnp.where(abs_delta == 0, 0, stable_tail)
+  log_one_plus_quadratic = jnp.where(
+      use_direct, lax.log1p(quadratic), stable_tail
+  )
+  return lax.neg(lax.add(
+      normalize_term, lax.mul(df_plus_one_over_two, log_one_plus_quadratic)
+  ))
 
 
 def pdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
