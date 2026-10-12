@@ -267,61 +267,6 @@ LogicalResult nvvm_cp_async_bulk_tensor_global_shared_cta_upgrade(
   return success();
 }
 
-LogicalResult nvvm_attrs_downgrade(Operation* op, int version, bool& erased) {
-  if (version < 8) {
-    for (auto named_attr : op->getAttrs()) {
-      auto attr = named_attr.getValue();
-      if (auto opaque = mlir::dyn_cast<mlir::OpaqueAttr>(attr);
-          !opaque || opaque.getDialectNamespace() != "nvvm") {
-        continue;
-      }
-
-      std::string attr_str;
-      llvm::raw_string_ostream os(attr_str);
-      attr.print(os);
-      // Ensure that the attribute can be represented as parsable attributes,
-      // and error otherwise.
-      if (!llvm::StringRef(attr_str).contains('<') ||
-          !llvm::StringRef(attr_str).contains('>')) {
-        return op->emitOpError(
-                   "Can't downgrade: NVVM attribute cannot be serialized to "
-                   "pre-v8 "
-                   "format: ")
-               << attr_str;
-      }
-    }
-  }
-  return success();
-}
-
-LogicalResult nvvm_cp_async_bulk_tensor_global_shared_cta_downgrade(
-    Operation* op, int version, bool& erased) {
-  if (failed(nvvm_attrs_downgrade(op, version, erased))) {
-    return mlir::failure();
-  }
-  // A new operand was added in
-  // https://github.com/llvm/llvm-project/pull/155435/commits/216550ca2169677dd6fc33bc47c3e1ba6d93fc20
-  if (version < 3) {
-    auto sizes_attr =
-        op->getAttrOfType<mlir::DenseI32ArrayAttr>("operandSegmentSizes");
-    if (!sizes_attr) {
-      return op->emitOpError(
-          "Missing or invalid operandSegmentSizes attribute");
-    }
-    if (sizes_attr.getSize() != 5) {
-      return op->emitOpError("operandSegmentSizes attribute has wrong size");
-    }
-    auto new_sizes = sizes_attr.asArrayRef().vec();
-    if (*(new_sizes.end() - 2) != 0) {
-      return op->emitOpError("Can't downgrade: l2 hint operand is present");
-    }
-    new_sizes.erase(new_sizes.end() - 2);
-    op->setAttr("operandSegmentSizes",
-                mlir::DenseI32ArrayAttr::get(op->getContext(), new_sizes));
-  }
-  return success();
-}
-
 LogicalResult vector_splat_upgrade(Operation* op, int version, bool& erased) {
   if (version < 4) {
     // vector.splat was removed in
@@ -418,51 +363,6 @@ LogicalResult gpu_launch_upgrade(Operation* op, int version, bool& erased) {
   return success();
 }
 
-LogicalResult gpu_launch_downgrade(Operation* op, int version, bool& erased) {
-  // https://github.com/llvm/llvm-project/commit/056dae16f7d219f0dc943828dccd6cc3773d2674
-  if (version < 7) {
-    auto sizes_attr =
-        op->getAttrOfType<mlir::DenseI32ArrayAttr>("operandSegmentSizes");
-    if (!sizes_attr) {
-      return op->emitOpError(
-          "Missing or invalid operandSegmentSizes attribute");
-    }
-
-    if (sizes_attr.getSize() != 12) {
-      return op->emitOpError("operandSegmentSizes attribute has wrong size");
-    }
-    auto new_sizes = sizes_attr.asArrayRef().vec();
-    if (new_sizes.back() != 0) {
-      return op->emitOpError("Can't downgrade: asyncObject operand is present");
-    }
-    new_sizes.pop_back();
-    op->setAttr("operandSegmentSizes",
-                mlir::DenseI32ArrayAttr::get(op->getContext(), new_sizes));
-  }
-  return success();
-}
-
-LogicalResult gpu_dimension_downgrade(Operation* op, int version,
-                                      bool& erased) {
-  // https://github.com/llvm/llvm-project/pull/220608
-  if (version < 9) {
-    auto dimension = op->getAttrOfType<mlir::gpu::DimensionAttr>("dimension");
-    if (!dimension) {
-      return op->emitOpError("Missing or invalid dimension attribute");
-    }
-    auto* ctx = op->getContext();
-    op->setAttr(
-        "dimension",
-        mlir::OpaqueAttr::get(
-            mlir::StringAttr::get(ctx,
-                                  mlir::gpu::GPUDialect::getDialectNamespace()),
-            ("dim " + mlir::gpu::stringifyDimension(dimension.getValue()))
-                .str(),
-            mlir::NoneType::get(ctx)));
-  }
-  return success();
-}
-
 const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
   static auto rules = new llvm::StringMap<SerdeRuleType>{
       {::llvm::StringLiteral("vector.extractelement"),
@@ -511,47 +411,7 @@ const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
 }
 
 const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
-  static auto rules = new llvm::StringMap<SerdeRuleType>{
-      {::llvm::StringLiteral("nvvm.cp.async.bulk.tensor.global.shared.cta"),
-       nvvm_cp_async_bulk_tensor_global_shared_cta_downgrade},
-      {::llvm::StringLiteral("gpu.launch"), gpu_launch_downgrade},
-      {::llvm::StringLiteral("gpu.block_dim"), gpu_dimension_downgrade},
-      {::llvm::StringLiteral("gpu.block_id"), gpu_dimension_downgrade},
-      {::llvm::StringLiteral("gpu.cluster_block_id"), gpu_dimension_downgrade},
-      {::llvm::StringLiteral("gpu.cluster_dim_blocks"),
-       gpu_dimension_downgrade},
-      {::llvm::StringLiteral("gpu.grid_dim"), gpu_dimension_downgrade},
-      {::llvm::StringLiteral("gpu.thread_id"), gpu_dimension_downgrade},
-      // TODO(bchetioui): delete nvvm ops out of the Mosaic GPU codebase, and
-      // get rid of the downgrade rules.
-      {::llvm::StringLiteral("nvvm.shfl.sync"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.vote.sync"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.fence.proxy"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.cp.async.bulk.tensor.shared.cluster.global"),
-       nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.mbarrier.init"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.mbarrier.arrive.expect_tx"),
-       nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.mbarrier.test.wait"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.mbarrier.try_wait.parity"),
-       nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.tcgen05.alloc"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.tcgen05.dealloc"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.tcgen05.relinquish_alloc_permit"),
-       nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.tcgen05.commit"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.tcgen05.cp"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.tcgen05.ld"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.tcgen05.st"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.stmatrix"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.ldmatrix"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.setmaxregister"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.tcgen05.fence"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.tcgen05.wait"), nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.cp.async.shared.global"),
-       nvvm_attrs_downgrade},
-      {::llvm::StringLiteral("nvvm.redux.sync"), nvvm_attrs_downgrade},
-  };
+  static auto rules = new llvm::StringMap<SerdeRuleType>{};
   return *rules;
 }
 
