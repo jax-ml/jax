@@ -208,54 +208,61 @@ def polygamma_gradx(g, m, x):
 # We try to follow the corresponding functions as closely as possible, so that
 # we can quickly incorporate changes.
 def lentz_thompson_barnett_algorithm(*,num_iterations, small, threshold, nth_partial_numerator, nth_partial_denominator, inputs):
-  # Position in the evaluation.
-  kIterationIdx = 0
-  # Whether or not we have reached the desired tolerance.
-  kValuesUnconvergedIdx = 1
-  # Ratio between nth canonical numerator and the nth-1 canonical numerator.
-  kCIdx = 2
-  # Ratio between nth-1 canonical denominator and the nth canonical denominator.
-  kDIdx = 3
-  # Computed approximant in the evaluation.
-  kHIdx = 4
+  # Loop state:
+  #   iteration: position in the evaluation.
+  #   unconverged: per-element mask of values that have not reached the
+  #     desired tolerance.
+  #   c: ratio between nth canonical numerator and the nth-1 canonical
+  #     numerator.
+  #   d: ratio between nth-1 canonical denominator and the nth canonical
+  #     denominator.
+  #   h: computed approximant in the evaluation.
 
-  def while_cond_fn(values):
-    iteration = values[kIterationIdx]
-    iterations_remain_cond = lt(iteration, num_iterations)
-    values_unconverged_cond = values[kValuesUnconvergedIdx]
+  def while_cond_fn(state):
+    iterations_remain_cond = lt(state["iteration"], num_iterations)
+    values_unconverged_cond = _any(state["unconverged"])
     return bitwise_and(iterations_remain_cond, values_unconverged_cond)
 
-  def while_body_fn(values):
-    iteration = values[kIterationIdx]
+  def while_body_fn(state):
+    iteration = state["iteration"]
+    unconverged = state["unconverged"]
     partial_numerator = nth_partial_numerator(iteration, *inputs)
     partial_denominator = nth_partial_denominator(iteration, *inputs)
 
-    c = add(partial_denominator, div(partial_numerator, values[kCIdx]))
+    c = add(partial_denominator, div(partial_numerator, state["c"]))
     small_constant = full_like(c, small)
     c = select(lt(abs(c), small_constant), small_constant, c)
-    d = add(partial_denominator, mul(partial_numerator, values[kDIdx]))
+    d = add(partial_denominator, mul(partial_numerator, state["d"]))
     d = select(lt(abs(d), small_constant), small_constant, d)
     d = reciprocal(d)
     delta = mul(c, d)
-    h = mul(values[kHIdx], delta)
+    h = mul(state["h"], delta)
 
-    # Update values
-    values[kIterationIdx] = iteration + 1
-    values[kCIdx] = c
-    values[kDIdx] = d
-    values[kHIdx] = h
-    # If any values are greater than the tolerance, we have not converged.
+    # Elements that have already converged keep their state, so the result
+    # for each element does not depend on the other elements.
+    # An element stays unconverged while its delta is outside the tolerance.
     tolerance_comparison = ge(abs(sub(delta, _const(delta, 1.0))), threshold)
-    values[kValuesUnconvergedIdx] = _any(tolerance_comparison)
-    return values
+    return {
+        "iteration": iteration + 1,
+        "unconverged": bitwise_and(unconverged, tolerance_comparison),
+        "c": select(unconverged, c, state["c"]),
+        "d": select(unconverged, d, state["d"]),
+        "h": select(unconverged, h, state["h"]),
+    }
 
   partial_denominator = nth_partial_denominator(0, *inputs)
   h = select(lt(abs(partial_denominator), small),
              broadcast_in_dim(small, partial_denominator.shape, ()),
              partial_denominator)
-  values = [1,True,h,full_like(h,0),h]
-  values = while_loop(while_cond_fn, while_body_fn, values)
-  return values[kHIdx]
+  state = {
+      "iteration": 1,
+      "unconverged": full_like(h, True, dtype=bool),
+      "c": h,
+      "d": full_like(h, 0),
+      "h": h,
+  }
+  state = while_loop(while_cond_fn, while_body_fn, state)
+  return state["h"]
 
 
 def regularized_incomplete_beta_impl(a, b, x, *, dtype):
