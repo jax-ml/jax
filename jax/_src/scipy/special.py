@@ -1336,7 +1336,7 @@ def kl_div(
   p, q = promote_args_inexact("kl_div", p, q)
   if dtypes.issubdtype(p.dtype, np.complexfloating):
     raise ValueError("kl_div does not support complex-valued inputs.")
-  return rel_entr(p, q) - p + q
+  return _rel_entr(p, q, True)
 
 
 def rel_entr(
@@ -1369,17 +1369,130 @@ def rel_entr(
   p, q = promote_args_inexact("rel_entr", p, q)
   if dtypes.issubdtype(p.dtype, np.complexfloating):
     raise ValueError("rel_entr does not support complex-valued inputs.")
+  return _rel_entr(p, q, False)
+
+
+def _log_p_over_q(
+    safe_p: Array, safe_q: Array
+) -> tuple[Array, Array, Array, Array, Array]:
+  # Following scipy: compute log(p/q) via log1p((p - q) / q) when 0.5 < p/q < 2
+  # to avoid cancellation near 1, log(p/q) when tiny < p/q < inf, and
+  # log(p) - log(q) otherwise to avoid overflow/underflow in p/q.
+  ratio = lax.div(safe_p, safe_q)
+  near_one = lax.bitwise_and(
+      lax.gt(ratio, _lax_const(safe_p, 0.5)),
+      lax.lt(ratio, _lax_const(safe_p, 2.0)),
+  )
+  tiny = _lax_const(safe_p, dtypes.finfo(safe_p.dtype).tiny)
+  normal_ratio = lax.bitwise_and(
+      lax.gt(ratio, tiny), lax.lt(ratio, _lax_const(safe_p, np.inf))
+  )
+  near_one_p = jnp.where(near_one, safe_p, 1)
+  near_one_q = jnp.where(near_one, safe_q, 1)
+  near_one_delta = lax.sub(near_one_p, near_one_q)
+  safe_rel_diff = lax.div(near_one_delta, near_one_q)
+  safe_ratio = jnp.where(normal_ratio, ratio, 1)
+  log_p_over_q = jnp.where(
+      near_one,
+      lax.log1p(safe_rel_diff, accuracy=AccuracyMode.HIGHEST),
+      jnp.where(
+          normal_ratio,
+          lax.log(safe_ratio, accuracy=AccuracyMode.HIGHEST),
+          lax.sub(
+              lax.log(safe_p, accuracy=AccuracyMode.HIGHEST),
+              lax.log(safe_q, accuracy=AccuracyMode.HIGHEST),
+          ),
+      ),
+  )
+  return log_p_over_q, ratio, near_one, near_one_delta, safe_rel_diff
+
+
+@partial(custom_derivatives.custom_jvp, nondiff_argnums=(2,))
+@partial(jit, static_argnums=(2,))
+def _rel_entr(p: Array, q: Array, kl: bool) -> Array:
+  """Shared implementation of rel_entr and kl_div, matching scipy."""
   zero = _lax_const(p, 0.0)
+  nan_mask = lax.bitwise_or(jnp.isnan(p), jnp.isnan(q))
   both_gt_zero_mask = lax.bitwise_and(lax.gt(p, zero), lax.gt(q, zero))
   one_zero_mask = lax.bitwise_and(lax.eq(p, zero), lax.ge(q, zero))
 
   safe_p = jnp.where(both_gt_zero_mask, p, 1)
   safe_q = jnp.where(both_gt_zero_mask, q, 1)
-  log_val = lax.sub(_xlogx(safe_p), xlogy(safe_p, safe_q))
-  result = jnp.where(
-      both_gt_zero_mask, log_val, jnp.where(one_zero_mask, zero, np.inf)
+  log_p_over_q, _, near_one, near_one_delta, u = _log_p_over_q(safe_p, safe_q)
+  log_val = lax.mul(safe_p, log_p_over_q)
+  if kl:
+    # For |u| = |(p - q) / q| < 0.05, evaluate the Taylor series
+    # p * log(1 + u) - (p - q) = (p - q) * u * (1/2 - u/6 + u^2/12 - u^3/20 + u^4/30 - ...)
+    # directly to avoid catastrophic cancellation and negative values near p ≈ q.
+    c1 = _lax_const(p, 1 / 2)
+    c2 = _lax_const(p, 1 / 6)
+    c3 = _lax_const(p, 1 / 12)
+    c4 = _lax_const(p, 1 / 20)
+    c5 = _lax_const(p, 1 / 30)
+    poly = c1 - u * (c2 - u * (c3 - u * (c4 - u * c5)))
+    series_val = lax.mul(lax.mul(near_one_delta, u), poly)
+    small_u = lax.bitwise_and(
+        near_one, lax.lt(lax.abs(u), _lax_const(p, 0.05))
+    )
+    pos_val = jnp.where(
+        small_u, series_val, lax.sub(log_val, lax.sub(safe_p, safe_q))
+    )
+  else:
+    pos_val = log_val
+  return jnp.where(
+      nan_mask,
+      _lax_const(p, np.nan),
+      jnp.where(
+          both_gt_zero_mask,
+          pos_val,
+          jnp.where(one_zero_mask, q if kl else zero, _lax_const(p, np.inf)),
+      ),
   )
-  return result
+
+
+@_rel_entr.defjvp
+@partial(jit, static_argnums=(0,))
+def _rel_entr_jvp(kl: bool, primals, tangents):
+  (p, q), (p_dot, q_dot) = primals, tangents
+  ans = _rel_entr(p, q, kl)
+  zero = _lax_const(p, 0.0)
+  nan_mask = lax.bitwise_or(jnp.isnan(p), jnp.isnan(q))
+  both_gt_zero_mask = lax.bitwise_and(lax.gt(p, zero), lax.gt(q, zero))
+  one_zero_mask = lax.bitwise_and(lax.eq(p, zero), lax.ge(q, zero))
+
+  safe_p = jnp.where(both_gt_zero_mask, p, 1)
+  safe_q = jnp.where(both_gt_zero_mask, q, 1)
+  log_p_over_q, ratio, _, _, _ = _log_p_over_q(safe_p, safe_q)
+  if kl:
+    not_posinf_q = lax.lt(safe_q, _lax_const(p, np.inf))
+    finite_p = jnp.where(not_posinf_q, safe_p, 1)
+    finite_q = jnp.where(not_posinf_q, safe_q, 1)
+    rel_diff = jnp.where(
+        not_posinf_q,
+        lax.div(lax.sub(finite_p, finite_q), finite_q),
+        _lax_const(p, -1.0),
+    )
+    dp_pos = log_p_over_q
+    dq_pos = lax.neg(rel_diff)
+  else:
+    dp_pos = lax.add(log_p_over_q, _lax_const(p, 1.0))
+    dq_pos = lax.neg(ratio)
+  dp = jnp.where(
+      nan_mask,
+      _lax_const(p, np.nan),
+      jnp.where(both_gt_zero_mask, dp_pos, zero),
+  )
+  dq = jnp.where(
+      nan_mask,
+      _lax_const(p, np.nan),
+      jnp.where(
+          both_gt_zero_mask,
+          dq_pos,
+          jnp.where(one_zero_mask, _lax_const(p, 1.0 if kl else 0.0), zero),
+      ),
+  )
+  ans_dot = lax.add(lax.mul(p_dot, dp), lax.mul(q_dot, dq))
+  return ans, ans_dot.astype(ans.dtype)
 
 # coefs of (2k)! / B_{2k} where B are bernoulli numbers
 # those numbers are obtained using https://www.wolframalpha.com

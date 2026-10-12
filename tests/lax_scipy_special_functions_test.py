@@ -445,14 +445,101 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
         f(2.0)
 
-  def testRelEntrExtremeValues(self):
-    # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).
+  @parameterized.parameters("rel_entr", "kl_div")
+  def testRelEntrExtremeValues(self, op):
+    # Testing at the extreme values, including inf and nan inputs (see
+    # https://github.com/jax-ml/jax/issues/38262 and
+    # https://github.com/jax-ml/jax/issues/38239).
     dtype = jnp.zeros(0).dtype  # default float dtype.
-    args_maker = lambda: [np.array([-2, -2, -2, -1, -1, -1, 0, 0, 0]).astype(dtype),
-                          np.array([-1, 0, 1, -1, 0, 1, -1, 0, 1]).astype(dtype)]
+    vals = np.array([np.nan, -np.inf, -2, -1, 0, 1, np.inf], dtype=dtype)
+    args_maker = lambda: [vals[:, None], vals[None, :]]
+    scipy_op, lax_op = getattr(osp_special, op), getattr(lsp_special, op)
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
-    self._CheckAgainstNumpy(osp_special.rel_entr, lsp_special.rel_entr, args_maker, rtol=rtol)
-    self._CompileAndCheck(lsp_special.rel_entr, args_maker, rtol=rtol)
+    self._CheckAgainstNumpy(scipy_op, lax_op, args_maker, rtol=rtol)
+    self._CompileAndCheck(lax_op, args_maker, rtol=rtol)
+
+  @parameterized.parameters("rel_entr", "kl_div")
+  def testRelEntrPrecision(self, op):
+    # Regression test for https://github.com/jax-ml/jax/issues/41200: p close
+    # to q must not lose precision or produce negative kl_div, and large p must
+    # not overflow to nan.
+    dtype = jnp.zeros(0).dtype  # default float dtype.
+    finfo = jnp.finfo(dtype)
+    big = finfo.max / 4  # p * log(p) overflows for p this large.
+    args_maker = lambda: [
+        np.array([2 ** 20 * (1 + finfo.eps), big, big], dtype=dtype),
+        np.array([2 ** 20, big, big / 2], dtype=dtype),
+    ]
+    if op == "rel_entr":
+      expected_fn = osp_special.rel_entr
+    else:
+      expected_fn = lambda p, q: np.array(
+          [0.5 * 2 ** 20 * finfo.eps ** 2, 0.0, big * (np.log(2.0) - 0.5)],
+          dtype=dtype,
+      )
+    lax_op = getattr(lsp_special, op)
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(expected_fn, lax_op, args_maker, atol=0, rtol=rtol)
+    self._CompileAndCheck(lax_op, args_maker, atol=0, rtol=rtol)
+
+    p32, q32 = np.float32(7.742924), np.float32(7.7429233)
+    delta32 = p32 - q32
+    expected32 = (
+        delta32 if op == "rel_entr" else np.float32(0.5) * delta32 * (delta32 / q32)
+    )
+    self.assertAllClose(lax_op(p32, q32), expected32, atol=0, rtol=1e-6)
+
+    if dtype == np.float64:
+      p64 = np.float64(9.999999999999978e29)
+      q64 = np.float64(9.999998737240631e29)
+      expected64 = (
+          osp_special.rel_entr(p64, q64)
+          if op == "rel_entr"
+          else np.float64(7.972806512934917e15)
+      )
+      self.assertAllClose(lax_op(p64, q64), expected64, atol=0, rtol=1e-15)
+
+  @jtu.sample_product(
+      op=["rel_entr", "kl_div"],
+      dtype=float_dtypes,
+  )
+  def testRelEntrSmallQGrad(self, op, dtype):
+    # Differentiating at 0 < q < finfo(dtype).max**(-0.5) must not overflow
+    # 1 / q^2 to inf or nan.
+    lax_op = getattr(lsp_special, op)
+    small = {
+        np.float16: 2e-3,
+        dtypes.bfloat16: 1e-20,
+        np.float32: 1e-20,
+        np.float64: 1e-160,
+    }[dtype]
+    p = jnp.array([small, 2 * small], dtype=dtype)
+    q = jnp.array([small, small], dtype=dtype)
+    dp, dq = jax.grad(lambda p, q: lax_op(p, q).sum(), argnums=(0, 1))(p, q)
+    if op == "rel_entr":
+      expected_dp = np.array([1.0, np.log(2.0) + 1.0], dtype=dtype)
+      expected_dq = np.array([-1.0, -2.0], dtype=dtype)
+    else:
+      expected_dp = np.array([0.0, np.log(2.0)], dtype=dtype)
+      expected_dq = np.array([0.0, -1.0], dtype=dtype)
+    rtol = 1e-2 if dtypes.finfo(dtype).bits < 32 else 1e-5
+    self.assertAllClose(dp, expected_dp, atol=0, rtol=rtol)
+    self.assertAllClose(dq, expected_dq, atol=0, rtol=rtol)
+
+  @parameterized.product(op=["rel_entr", "kl_div"], with_jit=[True, False])
+  def testRelEntrDebugNansAndInfs(self, op, with_jit):
+    lax_op = getattr(lsp_special, op)
+    f = jax.jit(lax_op) if with_jit else lax_op
+    with jax.debug_nans(True), jax.debug_infs(True):
+      f(1.0, 2.0)  # Doesn't crash
+      jax.grad(f, argnums=(0, 1))(1.0, 2.0)
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
+        f(1.0, 0.0)
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(nan\\)"):
+        f(np.nan, 1.0)
+    if op == "rel_entr":
+      with jax.debug_nans(True):
+        self.assertEqual(f(1.0, np.inf), -np.inf)
 
   def testBetaParameterDeprecation(self):
     with self.assertNoWarnings():
