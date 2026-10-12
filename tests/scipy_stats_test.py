@@ -64,8 +64,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
   @genNamedParametersNArgs(2)
   def testVonMisesLogPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
-    scipy_fun = osp_stats.vonmises.pdf
-    lax_fun = lsp_stats.vonmises.pdf
+    scipy_fun = osp_stats.vonmises.logpdf
+    lax_fun = lsp_stats.vonmises.logpdf
 
     def args_maker():
       x, kappa = map(rng, shapes, dtypes)
@@ -76,6 +76,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
+
+  def testVonMisesPdfKappaZero(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38621
+    x = np.array([-np.pi, 0.0, 1.0, np.inf])
+    self.assertAllClose(lsp_stats.vonmises.pdf(x, 0.0),
+                        osp_stats.vonmises.pdf(x, 0.0), check_dtypes=False,
+                        atol=1e-5)
+    self.assertAllClose(lsp_stats.vonmises.logpdf(x, 0.0),
+                        osp_stats.vonmises.logpdf(x, 0.0), check_dtypes=False,
+                        atol=1e-5)
+    grad_fn = jax.vmap(jax.grad(lsp_stats.vonmises.logpdf, argnums=1),
+                       in_axes=(0, None))
+    self.assertAllClose(grad_fn(x[:3], 0.0), np.cos(x[:3]),
+                        check_dtypes=False, atol=1e-5)
 
   @genNamedParametersNArgs(2)
   def testWrappedCauchyPdf(self, shapes, dtypes):
@@ -1375,6 +1389,12 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=5e-4)
       self._CompileAndCheck(lax_fun, args_maker)
+
+  def testChi2LogPdfBoundary(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38316
+    x = np.array([0.0, np.inf])
+    self.assertAllClose(lsp_stats.chi2.logpdf(x, 2.0),
+                        np.array([-np.log(2.0), -np.inf]), check_dtypes=False)
 
 
   @genNamedParametersNArgs(4)
