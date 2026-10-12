@@ -2195,5 +2195,27 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
            else {np.float32: 2e-4, np.float64: 5e-6})
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,check_dtypes=False, tol=tol)
 
+  @jtu.sample_product(
+    dtype=jtu.dtypes.floating,
+  )
+  def testPoissonEntropyGrad(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/40969
+    mu = np.array([0.0, 1e-25, 1e-3, 0.1, 5.0, 50.0, 150.0, 1e3, 1e6], dtype=dtype)
+
+    def expected_grad(mu):
+      if mu == 0:
+        return 0.0
+      if mu >= 100:  # Derivative of the asymptotic expansion.
+        return 1 / (2 * mu) + 1 / (12 * mu ** 2)
+      k = np.arange(250)
+      logp = osp_stats.poisson.logpmf(k, mu)
+      return -np.sum(np.exp(logp) * (k / mu - 1) * logp)
+
+    expected = np.array([expected_grad(float(m)) for m in mu])
+    actual = jax.vmap(jax.grad(lsp_stats.poisson.entropy))(mu)
+    tol = ({np.float32: 1e-2, np.float64: 1e-4} if jtu.test_device_matches(["tpu"])
+           else {np.float32: 1e-3, np.float64: 1e-5})
+    self.assertAllClose(actual, expected, check_dtypes=False, rtol=tol)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
