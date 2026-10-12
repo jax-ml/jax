@@ -4614,13 +4614,16 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
   unroll_attr = None
 
   # TODO(apaszke): Remove forward_compatible check after 12.08.2026
-  if unroll > 1 and supports_late_unroll:
+  if (unroll > 1 and supports_late_unroll) or (
+      unroll == 1 and not is_static_steps
+  ):
     num_steps_val = _ensure_mlir_value(
         num_steps, pallas_core.index_map_grid_aval
     )
     main_ubd = ubd = arith.addi(lbd, num_steps_val)
-    unroll_attr = ir.IntegerAttr.get(ir.IntegerType.get_signless(32), unroll)
-    unroll = 1  # The attr takes over unrolling.
+    if unroll > 1:
+      unroll_attr = ir.IntegerAttr.get(ir.IntegerType.get_signless(32), unroll)
+      unroll = 1  # The attr takes over unrolling.
 
     has_main = True
     has_static_remainder = False
