@@ -1250,6 +1250,10 @@ class LaxTest(jtu.JaxTestCase):
           (lax.DotAlgorithmPreset.BF16_BF16_F32_X3, [np.float32]),
           (lax.DotAlgorithmPreset.BF16_BF16_F32_X6, [np.float32]),
           (lax.DotAlgorithmPreset.BF16_BF16_F32_X9, [np.float32]),
+          (lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3,
+           [dtypes.bfloat16, np.float32]),
+          (lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4,
+           [dtypes.bfloat16, np.float32]),
           (lax.DotAlgorithmPreset.TF32_TF32_F32, [np.float32]),
           (lax.DotAlgorithmPreset.TF32_TF32_F32_X3, [np.float32]),
           (lax.DotAlgorithmPreset.F32_F32_F32, [np.float32]),
@@ -1294,6 +1298,11 @@ class LaxTest(jtu.JaxTestCase):
           raise SkipTest(
               f"The dot algorithm '{algorithm}' requires CUDA compute "
               "capability >= 8.0.")
+      elif algorithm in {
+          lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3,
+          lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4,
+      }:
+        self._skipIfF8E4M3FNDotAlgorithmUnsupported(algorithm)
       elif algorithm not in {
           lax.DotAlgorithmPreset.DEFAULT,
           lax.DotAlgorithmPreset.ANY_F8_ANY_F8_F32,
@@ -1304,7 +1313,12 @@ class LaxTest(jtu.JaxTestCase):
         raise SkipTest(
             f"The dot algorithm '{algorithm}' is not supported on GPU.")
     if jtu.test_device_matches(["tpu"]):
-      if algorithm not in {
+      if algorithm in {
+          lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3,
+          lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4,
+      }:
+        self._skipIfF8E4M3FNDotAlgorithmUnsupported(algorithm)
+      elif algorithm not in {
           lax.DotAlgorithmPreset.DEFAULT,
           lax.DotAlgorithmPreset.BF16_BF16_F32,
           lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
@@ -1320,6 +1334,74 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(partial(lax.dot, precision=algorithm), args_maker,
                           rtol={np.float64: 3e-15})
     self.assertEqual(lax.dot(*args_maker(), precision=algorithm).dtype, dtype)
+
+  def _skipIfF8E4M3FNDotAlgorithmUnsupported(self, algorithm):
+    if jaxlib_extension_version < 505:
+      raise SkipTest(
+          f"The dot algorithm '{algorithm}' requires jaxlib_extension_version "
+          ">= 505."
+      )
+    if jtu.test_device_matches(["cuda"]):
+      if not jtu.is_cuda_compute_capability_at_least("8.9"):
+        raise SkipTest(
+            f"The dot algorithm '{algorithm}' requires CUDA compute "
+            "capability >= 8.9."
+        )
+    elif jtu.test_device_matches(["tpu"]):
+      # float8_e4m3fn dots require TPU v5+, and StableHLO 1.21.0 is required
+      # for verifier support.
+      if not (
+          jtu.is_device_tpu_at_least(5)
+          and jtu.stablehlo_version_at_least("1.21.0")
+          and jtu.is_libtpu_at_least("0.0.50")
+      ):
+        raise SkipTest(
+            f"The dot algorithm '{algorithm}' requires TPU v5+, StableHLO "
+            ">= 1.21.0 and libtpu >= 0.0.50."
+        )
+    else:
+      raise SkipTest(
+          f"The dot algorithm '{algorithm}' is only supported on CUDA and TPU."
+      )
+
+  @jtu.sample_product(dtype=[dtypes.bfloat16, np.float32])
+  def testF8E4M3FNDotAlgorithmAccuracy(self, dtype):
+    x3 = lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3
+    x4 = lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4
+    self._skipIfF8E4M3FNDotAlgorithmUnsupported(x3)
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng((64, 512), dtype), rng((512, 64), dtype)
+    ref = np.dot(lhs.astype(np.float64), rhs.astype(np.float64))
+
+    def rel_err(algorithm):
+      out = lax.dot(
+          lhs, rhs, precision=algorithm, preferred_element_type=np.float32
+      )
+      self.assertEqual(out.dtype, np.float32)
+      out = np.asarray(out, np.float64)
+      return np.linalg.norm(out - ref) / np.linalg.norm(ref)
+
+    err_x3 = rel_err(x3)
+    err_x4 = rel_err(x4)
+    if jtu.is_device_tpu_at_least(7):
+      # On TPU7x, the FP8 MXU accumulates each 256 element tile in
+      # E8M8 (8 fraction bits) before summing across tiles in float32.
+      self.assertLess(err_x3, 5e-3)
+      self.assertLess(err_x4, err_x3)
+      return
+    # X3 drops the low by low product, about 2**-10 relative to the result.
+    self.assertLess(err_x3, 4e-3)
+    if dtype == dtypes.bfloat16:
+      # Two float8_e4m3fn slices hold all 8 bfloat16 significand bits for
+      # operands near the per channel max, so X4 matches BF16_BF16_F32.
+      self.assertLess(err_x4, 1e-5)
+      self.assertLess(err_x4, err_x3 / 100)
+    else:
+      # float32 inputs lose the bits below the low slice; both presets should
+      # still beat a single bfloat16 pass, and X4 should beat X3.
+      err_bf16 = rel_err(lax.DotAlgorithmPreset.BF16_BF16_F32)
+      self.assertLess(err_x3, err_bf16)
+      self.assertLess(err_x4, err_x3)
 
   def testDotAlgorithmInvalidFloat8Type(self):
     if jtu.test_device_matches(["cpu"]):
@@ -1366,6 +1448,18 @@ class LaxTest(jtu.JaxTestCase):
     with jax.default_matmul_precision("F32_F32_F32"):
       hlo = jax.jit(lax.dot).lower(lhs, rhs).as_text()
       self.assertRegex(hlo, expected)
+
+    if jaxlib_extension_version >= 505:
+      for num_ops in (3, 4):
+        expected = (
+            "algorithm = <lhs_precision_type = f8E4M3FN, rhs_precision_type = "
+            "f8E4M3FN, accumulation_type = f32, lhs_component_count = 1, "
+            f"rhs_component_count = 1, num_primitive_operations = {num_ops}")
+        with jax.default_matmul_precision(f"F8E4M3FN_F8E4M3FN_F32_X{num_ops}"):
+          # CPU rejects these presets, so lower for TPU.
+          hlo = jax.jit(lax.dot).trace(lhs, rhs).lower(
+              lowering_platforms=("tpu",)).as_text()
+          self.assertIn(expected, hlo)
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)

@@ -45,7 +45,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 504  # asin precision improvement
+_version = 505  # StableHLO 1.21.0 F8E4M3FN_F8E4M3FN_F32_X{3,4} dot algorithms
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
