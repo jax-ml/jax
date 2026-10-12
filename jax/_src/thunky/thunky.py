@@ -553,7 +553,7 @@ def _call_jax_abstract_eval(
       lu.wrap_init(fn, debug_info=dbg), in_tree
   )
   jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(flat_fn, flat_avals)
-  closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
+  closed_jaxpr = jaxpr.with_consts(consts)
   var_to_idx = {v: i for i, v in enumerate(closed_jaxpr.invars)}
   effs: set[Any] = {thunk_effect}
   for eff in closed_jaxpr.effects:
@@ -630,7 +630,7 @@ def _call_thunky_nested_abstract_eval(
     *unique_buffers: AbstractRef,
     arg_to_unique_idx: tuple[int, ...],
     slice_specs: tuple[SliceSpec, ...],
-    jaxpr: core.ClosedJaxpr,
+    jaxpr: core.Jaxpr,
 ) -> tuple[list[Any], set[Any]]:
   for b in unique_buffers:
     if not _is_buffer_aval(b):
@@ -1882,7 +1882,7 @@ def _trace_thunk_jaxpr(
     fn: Callable[..., Any],
     in_avals: Sequence[AbstractRef],
     scratch_shapes: Any,
-) -> core.ClosedJaxpr:
+) -> core.Jaxpr:
   def _to_ref_aval(s: Any) -> AbstractRef:
     if _is_buffer_aval(s):
       return s
@@ -1917,9 +1917,9 @@ def _trace_thunk_jaxpr(
 
 
 def jaxpr_to_mlir(
-    closed_jaxpr: core.ClosedJaxpr, ctx: ir.Context | None = None
+    closed_jaxpr: core.Jaxpr, ctx: ir.Context | None = None
 ) -> ir.Module:
-  """Translates a thunky ClosedJaxpr into an ir.Module in the thunky dialect."""
+  """Translates a thunky Jaxpr into an ir.Module in the thunky dialect."""
   if ctx is None:
     ctx = make_ir_context()
   with ctx, ir.Location.unknown():
@@ -1951,7 +1951,7 @@ def _build_call_thunky_mlir_module(
     unique_avals: Sequence[Any],
     arg_to_unique_idx: tuple[int, ...],
     slice_specs: tuple[SliceSpec, ...],
-    closed_jaxpr: core.ClosedJaxpr,
+    closed_jaxpr: core.Jaxpr,
     ctx: ir.Context | None = None,
 ) -> ir.Module:
   if ctx is None:
@@ -2036,7 +2036,7 @@ def _call_thunky_discharge_rule(
     *args: Any,
     arg_to_unique_idx: tuple[int, ...],
     slice_specs: tuple[SliceSpec, ...],
-    jaxpr: core.ClosedJaxpr,
+    jaxpr: core.Jaxpr,
 ) -> tuple[Sequence[Any | None], Sequence[Any]]:
   body_jaxpr = jaxpr.jaxpr
   var_to_idx = {

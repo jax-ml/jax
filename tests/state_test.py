@@ -814,7 +814,7 @@ class StateDischargeTest(jtu.JaxTestCase):
     jaxpr, _ = trace_to_jaxpr(f, scalar_ref_1, scalar_ref_2)
 
     discharged_jaxpr = discharge_state(
-        core.ClosedJaxpr(jaxpr, ()), should_discharge=[False, True]
+        jaxpr, should_discharge=[False, True]
     )
     prim_count = lambda p, j: sum(eqn.primitive == p for eqn in j.eqns)
     self.assertEqual(
@@ -1273,7 +1273,7 @@ class StateControlFlowTest(jtu.JaxTestCase):
       return run_state(body)((1., 0., 2.))
     jaxpr = jax.make_jaxpr(f)(True).jaxpr
     [run_state_eqn] = jaxpr.eqns
-    *_, cond_eqn = discharge_state(core.ClosedJaxpr(run_state_eqn.params["jaxpr"], ())).eqns
+    *_, cond_eqn = discharge_state(run_state_eqn.params["jaxpr"]).eqns
     self.assertIs(cond_eqn.primitive, lax.cond_p)
     self.assertLen(cond_eqn.invars, 4)  # pred + 3x ref values
     self.assertLen(cond_eqn.outvars, 1)  # only the updated ref value

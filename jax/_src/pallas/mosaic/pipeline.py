@@ -2456,7 +2456,7 @@ def _emit_pipeline_physicalize_rule(
   all_args: EmitPipelinePrimitiveArgs = args_tree.unflatten(args_flat)
   with grid_mapping.trace_env():
     new_closed = fusible_dtype.physicalize_closed_jaxpr(
-        jax_core.ClosedJaxpr(body_jaxpr, all_args.body_consts)
+        body_jaxpr.with_consts(all_args.body_consts)
     )
   new_args = dataclasses.replace(
       all_args, body_consts=tuple(new_closed.consts)
@@ -2618,7 +2618,7 @@ def emit_pipeline_to_jaxpr(
     core_axis_name=None,
     _explicit_indices=False,
     **params,
-) -> jax_core.ClosedJaxpr:
+) -> jax_core.Jaxpr:
   del core_axis, core_axis_name
   index_map_consts_counts = tuple(
       len(bm.index_map_jaxpr.consts) for bm in grid_mapping.block_mappings)
@@ -2774,7 +2774,7 @@ def _emit_pipeline_to_lojax(
     *args_flat, body_jaxpr, grid_mapping, args_tree, refs_tree, **params
 ):
   all_args: EmitPipelinePrimitiveArgs = args_tree.unflatten(args_flat)
-  closed_hi_jaxpr = jax_core.ClosedJaxpr(body_jaxpr, all_args.body_consts)
+  closed_hi_jaxpr = body_jaxpr.with_consts(all_args.body_consts)
   with grid_mapping.trace_env():
     closed_lo_jaxpr = pe.lower_jaxpr2(closed_hi_jaxpr)
 

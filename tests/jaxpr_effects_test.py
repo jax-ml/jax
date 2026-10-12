@@ -927,8 +927,6 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
 
   def assertInputEffect(self, jaxpr, index):
     # An InputEffect on the index-th input (constvars + invars) of jaxpr.
-    if isinstance(jaxpr, core.ClosedJaxpr):
-      jaxpr = jaxpr
     inputs = [*jaxpr.constvars, *jaxpr.invars]
     self.assertIn(InputEffect(inputs[index]), jaxpr.effects)
 

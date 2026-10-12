@@ -5954,7 +5954,7 @@ class APITest(jtu.JaxTestCase):
     # otherwise the jnp.array(...) calls will induce constant duplication.
     c = np.ones(3).astype(np.float32)
 
-    def find_constants(jaxpr: core.ClosedJaxpr):
+    def find_constants(jaxpr: core.Jaxpr):
       for j in it.chain([jaxpr], core.subjaxprs(jaxpr)):
         for eq in j.eqns:
           for inv in eq.invars:

@@ -115,7 +115,7 @@ class Fusible(hijax.HiPrim):
     del ctx
     consts = args[: self.num_consts]
     new_jaxpr = fusible_dtype.physicalize_closed_jaxpr(
-        jax_core.ClosedJaxpr(self.jaxpr, list(consts))
+        self.jaxpr.with_consts(consts)
     )
 
     const_avals = tuple(map(jax_core.typeof, new_jaxpr.consts))

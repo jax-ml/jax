@@ -51,7 +51,7 @@ def _normalize_mlir(mlir_text: str) -> str:
   return text.strip()
 
 
-def _trace_jaxpr(fn, *args) -> core.ClosedJaxpr:
+def _trace_jaxpr(fn, *args) -> core.Jaxpr:
   avals = [
       AbstractRef(
           core.ShapedArray(tuple(int(d) for d in a.shape), np.dtype(a.dtype))

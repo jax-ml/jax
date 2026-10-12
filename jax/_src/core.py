@@ -330,14 +330,6 @@ def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
     yield from jaxprs_in_params(eqn.params)
 
 
-# ClosedJaxpr and Jaxpr have been merged into a single class: a Jaxpr carries
-# a possibly-empty list of constant argument values, `consts`. The name
-# ClosedJaxpr remains as an alias for callers that construct closed jaxprs via
-# ClosedJaxpr(jaxpr, consts) or use it in isinstance checks and annotations.
-# TODO(dougalm): migrate users and remove the alias.
-ClosedJaxpr = Jaxpr
-
-
 @curry
 def jaxpr_as_fun(closed_jaxpr: Jaxpr, *args):
   # TODO(dougalm): remove this hack when we add contexts to jaxpr.
