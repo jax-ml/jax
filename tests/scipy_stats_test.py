@@ -1256,6 +1256,37 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker)
 
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testTLogPdfStandardizedSquareOverflow(self, dtype):
+    # At scale=1e-22 and x=1, float32 squaring the standardized
+    # coordinate overflows, yet the Student-t log density is finite.
+    scipy_fun = osp_stats.t.logpdf
+    lax_fun = lsp_stats.t.logpdf
+    args_maker = lambda: [
+        np.array([0.0, 1e-22, 1e-10, 1.0], dtype=dtype),
+        np.full(4, 1e7, dtype=dtype),
+        np.zeros(4, dtype=dtype),
+        np.full(4, 1e-22, dtype=dtype),
+    ]
+    self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=2e-5)
+    self._CompileAndCheck(lax_fun, args_maker)
+
+  def testTLogPdfStandardizedSquareOverflowGrad(self):
+    # Masking the inactive direct path must preserve gradients at the mode
+    # and in tails that otherwise overflow the squared ratio.
+    df = jnp.float32(1e7)
+    scale = jnp.float32(1e-22)
+    logpdf = lambda x: lsp_stats.t.logpdf(x, df, 0, scale)
+    for x, expected_grad in [(0.0, 0.0), (1.0, -1e7)]:
+      actual = np.asarray(jax.grad(logpdf)(jnp.float32(x)))
+      compiled = np.asarray(jax.jit(jax.grad(logpdf))(jnp.float32(x)))
+      self.assertTrue(np.isfinite(actual))
+      self.assertAllClose(actual, expected_grad, rtol=2e-5, atol=1e-4,
+                          check_dtypes=False)
+      self.assertAllClose(compiled, expected_grad, rtol=2e-5, atol=1e-4,
+                          check_dtypes=False)
+
   @genNamedParametersNArgs(3)
   def testUniformLogPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
