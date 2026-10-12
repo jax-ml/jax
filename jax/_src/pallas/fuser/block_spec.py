@@ -29,6 +29,7 @@ import dataclasses
 import enum
 import functools
 import threading
+import types
 from typing import Any, Protocol, cast
 
 import jax
@@ -80,10 +81,8 @@ class BlockIndexTransform:
     return dataclasses.replace(self, **kwargs)
 
 
-class NoBlockIndexTransform:
-  def __repr__(self):
-    return "NoBlockIndexTransform"
-no_block_index_transform = NoBlockIndexTransform()
+NoBlockIndexTransform = types.NoneType
+no_block_index_transform = None
 
 
 def _select_block_indices(i):
@@ -156,7 +155,7 @@ def _apply_block_transform(
 
     return new_idx_map
 
-  if isinstance(block_index_transform, NoBlockIndexTransform):
+  if block_index_transform is no_block_index_transform:
     return pallas_core.no_block_spec
   valid_block_specs = [
       bs for bs in block_specs if bs is not pallas_core.no_block_spec
@@ -552,18 +551,21 @@ def _select_scalar_prefetch(scalar_prefetch_handler, scalar_prefetch,
 
 def _pull_block_transform(
     jaxpr: core.Jaxpr,
-    out_block_transforms: tuple[BlockIndexTransform, ...],
+    out_block_transforms: tuple[BlockIndexTransform | NoBlockIndexTransform, ...],
     *,
     read_usage_env: Callable[[core.Var], set[Usage]],
     scalar_prefetch_handler: Any | None = None,
     grid_len: int,
     strict_mode: bool = True,
 ) -> tuple[
-    tuple[BlockIndexTransform, ...],
-    tuple[dict[core.Var, BlockIndexTransform], dict[int, Any]],
+    tuple[BlockIndexTransform | NoBlockIndexTransform, ...],
+    tuple[
+        dict[core.Var, BlockIndexTransform | NoBlockIndexTransform],
+        dict[int, Any],
+    ],
 ]:
   jaxpr_invar_usages = util.safe_map(read_usage_env, jaxpr.invars)
-  env: dict[core.Var, BlockIndexTransform] = {}
+  env: dict[core.Var, BlockIndexTransform | NoBlockIndexTransform] = {}
   scalar_prefetch_fn_env = {}
   scalar_prefetch_avals = tuple(
       v.aval for v, sp in zip(
@@ -575,7 +577,7 @@ def _pull_block_transform(
 
   block_idxs_avals = tuple(
       None
-      if isinstance(out_block_transform, NoBlockIndexTransform)
+      if out_block_transform is no_block_index_transform
       else (
           (jax._src.core.ShapedArray((), jnp.int32),)
           * len(out_block_transform.block_shape)
@@ -587,12 +589,17 @@ def _pull_block_transform(
     assert isinstance(outvar, core.Var)
     env[outvar] = bs
 
-  def _read_block_spec(atom: core.Atom) -> BlockIndexTransform | Any:
+  def _read_block_spec(
+      atom: core.Atom,
+  ) -> BlockIndexTransform | NoBlockIndexTransform:
     if isinstance(atom, core.Literal):
       return no_block_index_transform
     return env.get(atom, no_block_index_transform)
 
-  def _write_block_spec(atom: core.Atom, block_transform: BlockIndexTransform):
+  def _write_block_spec(
+      atom: core.Atom,
+      block_transform: BlockIndexTransform | NoBlockIndexTransform,
+  ):
     if isinstance(atom, core.Literal):
       return
     env[atom] = block_transform
@@ -1018,9 +1025,13 @@ class PullBlockSpecRuleFn(Protocol):
   def __call__(
       self,
       ctx: PullRuleContext,
-      block_spec: BlockIndexTransform | tuple[BlockIndexTransform, ...],
+      block_spec: (
+          BlockIndexTransform
+          | NoBlockIndexTransform
+          | tuple[BlockIndexTransform | NoBlockIndexTransform, ...]
+      ),
       **params: Any,
-  ) -> Sequence[BlockIndexTransform]:
+  ) -> Sequence[BlockIndexTransform | NoBlockIndexTransform]:
     ...
 
 
@@ -1050,7 +1061,7 @@ def _eltwise_pull_rule(
     ctx: PullRuleContext,
     block_transform: BlockIndexTransform,
     **params,
-) -> Sequence[BlockIndexTransform]:
+) -> Sequence[BlockIndexTransform | NoBlockIndexTransform]:
   del prim, ctx, params
   return [block_transform]
 
@@ -1189,7 +1200,7 @@ def _select_n_eval_rule(ctx: KernelEvalContext, *args):
 @register_pull_block_spec_rule(lax.select_n_p)
 def _select_n_pull_block_spec_rule(
     ctx: PullRuleContext, block_transform: BlockIndexTransform,
-) -> Sequence[BlockIndexTransform]:
+) -> Sequence[BlockIndexTransform | NoBlockIndexTransform]:
   in_aval = ctx.avals_in[0]
   assert isinstance(in_aval, core.ShapedArray)
   if in_aval.shape:
@@ -1207,7 +1218,7 @@ def _clamp_eval_rule(
 @register_pull_block_spec_rule(lax.clamp_p)
 def _clamp_pull_block_spec_rule(
     ctx: PullRuleContext, block_transform: BlockIndexTransform,
-) -> Sequence[BlockIndexTransform]:
+) -> Sequence[BlockIndexTransform | NoBlockIndexTransform]:
   min_aval, _, max_aval = ctx.avals_in
   assert hasattr(min_aval, 'shape')
   assert hasattr(max_aval, 'shape')
@@ -1229,10 +1240,10 @@ def _squeeze_eval_rule(ctx: KernelEvalContext, x: jax.Array, **params: Any):
 @register_pull_block_spec_rule(lax.squeeze_p)
 def _squeeze_block_spec(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transform: BlockIndexTransform | NoBlockIndexTransform,
     *,
     dimensions: tuple[int, ...],
-) -> Sequence[BlockIndexTransform]:
+) -> Sequence[BlockIndexTransform | NoBlockIndexTransform]:
   del ctx
   if block_transform is no_block_index_transform:
     return [no_block_index_transform]
@@ -1588,11 +1599,11 @@ def _dynamic_update_slice_rule(
 @register_pull_block_spec_rule(lax.dot_general_p)
 def _dot_general_pull_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transform: BlockIndexTransform | NoBlockIndexTransform,
     *,
     dimension_numbers,
     **_,
-) -> Sequence[BlockIndexTransform]:
+) -> Sequence[BlockIndexTransform | NoBlockIndexTransform]:
   if block_transform is no_block_index_transform:
     return [no_block_index_transform, no_block_index_transform]
 
@@ -2048,7 +2059,7 @@ def _stack_pull_rule(
 @register_pull_block_spec_rule(lax.unstack_p)
 def _unstack_pull_rule(
     ctx: PullRuleContext,
-    out_block_transforms: tuple[BlockIndexTransform, ...],
+    out_block_transforms: tuple[BlockIndexTransform | NoBlockIndexTransform, ...],
     *,
     axis: int,
 ):
@@ -2079,7 +2090,7 @@ def _unstack_pull_rule(
 @register_pull_block_spec_rule(lax.split_p)
 def _split_pull_rule(
     ctx: PullRuleContext,
-    out_block_transforms: tuple[BlockIndexTransform, ...],
+    out_block_transforms: tuple[BlockIndexTransform | NoBlockIndexTransform, ...],
     *,
     sizes: Sequence[int],
     axis: int,
