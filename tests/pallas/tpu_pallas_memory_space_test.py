@@ -487,6 +487,8 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
   ):
     if jax.device_count() > 1:
       self.skipTest('Test only works with a single device.')
+    if mesh_kind == 'sc' and pltpu.get_tpu_info().sparse_core is None:
+      self.skipTest('SparseCore not supported on this device.')
     mesh = jax.sharding.Mesh(jax.devices(), ('x',))
     host_sharding = jax.sharding.NamedSharding(
         mesh, P(), memory_kind='pinned_host'
