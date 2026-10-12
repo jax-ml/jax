@@ -241,6 +241,8 @@ class ErfcTest(jtu.JaxTestCase):
 
   @config.explicit_x64_dtypes("allow")
   def test_explicit_x64_dtypes(self):
+    if jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
     fns = [
         lax.erfc,
         _erfc_highest,

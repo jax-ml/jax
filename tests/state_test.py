@@ -2158,6 +2158,43 @@ class PinnedBuffersTest(jtu.JaxTestCase):
         core.MemorySpace.Host,
     )
 
+  def test_shard_map_ref_preserves_memory_space_and_kind(self):
+    mesh = jtu.create_mesh((1,), ("x",))
+    ref_aval = AbstractRef(
+        core.ShapedArray((4,), jnp.int32),
+        memory_space=core.MemorySpace.Host,
+        kind="custom_kind",
+    )
+    sharded = core.shard_aval(
+        mesh, frozenset({"x"}), False, jax.sharding.PartitionSpec(), ref_aval
+    )
+    self.assertIsInstance(sharded, AbstractRef)
+    self.assertEqual(sharded.memory_space, core.MemorySpace.Host)
+    self.assertEqual(sharded.kind, "custom_kind")
+
+    with jax.set_mesh(mesh):
+
+      def f(x):
+        host_ref = jax.new_ref(x, memory_space=core.MemorySpace.Host)
+
+        @jax.shard_map(
+            in_specs=(
+                jax.sharding.PartitionSpec(),
+                jax.sharding.PartitionSpec(),
+            ),
+            out_specs=(),
+            check_vma=False,
+        )
+        def _write(v, r):
+          self.assertEqual(jax.typeof(r).memory_space, core.MemorySpace.Host)
+          r[...] = v
+          return ()
+
+        _write(jnp.ones((4,), dtype=jnp.int32), host_ref)
+        return host_ref[...]
+
+      jax.make_jaxpr(f)(jnp.zeros((4,), dtype=jnp.int32))
+
 
 class WithMemorySpaceConstraintTest(jtu.JaxTestCase):
 
@@ -2369,6 +2406,29 @@ class RefTransformTest(jtu.JaxTestCase):
 
     self.assertEqual(f().shape, (1,))
     self.assertAllClose(f(), jnp.array([5.0]))
+
+  def test_new_ref_host_memory_space_outside_jit(self):
+    ref1 = jax.new_ref(
+        jnp.ones((4,), dtype=jnp.int32), memory_space=core.MemorySpace.Host
+    )
+    self.assertEqual(core.typeof(ref1).memory_space, core.MemorySpace.Host)
+    self.assertEqual(
+        core.typeof(ref1).inner_aval.memory_space, core.MemorySpace.Device
+    )
+    self.assertEqual(ref1.sharding.memory_kind, "pinned_host")
+
+    host_arr = jax.device_put(
+        jnp.arange(4, dtype=jnp.int32), core.MemorySpace.Host
+    )
+    ref2 = jax.new_ref(host_arr)
+    self.assertEqual(core.typeof(ref2).memory_space, core.MemorySpace.Host)
+    self.assertEqual(
+        core.typeof(ref2).inner_aval.memory_space, core.MemorySpace.Device
+    )
+    self.assertEqual(ref2.sharding.memory_kind, "pinned_host")
+    np.testing.assert_array_equal(
+        np.asarray(jax.freeze(ref2)), np.arange(4, dtype=np.int32)
+    )
 
 
 if __name__ == '__main__':

@@ -21,7 +21,7 @@ import dataclasses
 import functools
 import math
 import string
-from typing import Any, Literal, Protocol, Self, TYPE_CHECKING, cast
+from typing import Any, Literal, TYPE_CHECKING, cast
 
 import jax
 from jax import api_util
@@ -105,6 +105,8 @@ SEMAPHORE = tpu_core.MemorySpace.SEMAPHORE
 ANY = pallas_core.MemorySpace.ANY
 # Booleans are stored as the following type in memrefs.
 BOOL_MEMREF_TYPE = np.dtype('int32')
+
+type ShapedAbstractValue = pallas_utils.ShapedAbstractValue
 
 # The value interpreted as a dynamic dimension by MLIR.
 MLIR_DYNAMIC = -9223372036854775808
@@ -402,26 +404,6 @@ class UnpipelinedLoweringContext(LoweringContext):
         lowering_cache=lowering_cache,
         core_axis_names=mesh_names,
     )
-
-
-# This is morally ``ShapedArray | state.AbstractRef``, but pytype does not
-# allow calling methods on a union type, making ``update`` non-callable, so
-# we use a protocol instead of a union.
-class ShapedAbstractValue(Protocol):
-  shape: tuple[jax_core.DimSize, ...]
-  dtype: jnp.dtype
-  weak_type: bool
-
-  @property
-  def ndim(self) -> int:
-    ...
-
-  @property
-  def size(self) -> int:
-    ...
-
-  def update(self, **kwargs: Any) -> Self:
-    raise NotImplementedError
 
 
 def _physical_aval(aval: ShapedAbstractValue) -> ShapedAbstractValue:
@@ -4632,13 +4614,16 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
   unroll_attr = None
 
   # TODO(apaszke): Remove forward_compatible check after 12.08.2026
-  if unroll > 1 and supports_late_unroll:
+  if (unroll > 1 and supports_late_unroll) or (
+      unroll == 1 and not is_static_steps
+  ):
     num_steps_val = _ensure_mlir_value(
         num_steps, pallas_core.index_map_grid_aval
     )
     main_ubd = ubd = arith.addi(lbd, num_steps_val)
-    unroll_attr = ir.IntegerAttr.get(ir.IntegerType.get_signless(32), unroll)
-    unroll = 1  # The attr takes over unrolling.
+    if unroll > 1:
+      unroll_attr = ir.IntegerAttr.get(ir.IntegerType.get_signless(32), unroll)
+      unroll = 1  # The attr takes over unrolling.
 
     has_main = True
     has_static_remainder = False
