@@ -56,28 +56,34 @@ def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
   normalize_term_tmp = lax.add(lax.log(lax.abs(scale)), lax.mul(lax.log(df), half))
   normalize_term = lax.add(betaln(df_over_two, half), normalize_term_tmp)
 
-  # Even with stable normalization, ((x - loc) / scale)**2 can overflow
-  # float32 when the true log density is finite. Keep the direct expression
-  # for ordinary inputs, and use log(1 + exp(log_quadratic)) in the tail.
-  # Mask the inactive direct path *before* dividing so its autodiff does not
-  # inherit an overflow from an unselected branch.
-  abs_delta = lax.abs(delta)
-  safe_abs_delta = jnp.where(abs_delta == 0, 1, abs_delta)
-  log_abs_scaled = lax.sub(lax.log(safe_abs_delta), lax.log(lax.abs(scale)))
-  use_direct = log_abs_scaled < _lax_const(x, 35)
-  safe_scaled = lax.div(
-      jnp.where(use_direct, delta, 0),
-      jnp.where(use_direct, scale, 1),
+  # Even when the normalization is stable, ((x - loc) / scale)**2
+  # can overflow while the log density remains finite. Preserve the fast
+  # ordinary-input path; use a log-domain formula only if the batch contains
+  # an extreme standardized input or a scale/df that risks overflow.
+  def regular_quadratic(_):
+    scaled_x = lax.div(delta, scale)
+    return lax.log1p(lax.div(lax.mul(scaled_x, scaled_x), df))
+
+  def stable_quadratic(_):
+    abs_delta = lax.abs(delta)
+    safe_abs_delta = jnp.where(abs_delta == 0, 1, abs_delta)
+    log_abs_scaled = lax.sub(lax.log(safe_abs_delta), lax.log(lax.abs(scale)))
+    log_quadratic = lax.sub(
+        lax.mul(_lax_const(x, 2), log_abs_scaled), lax.log(df)
+    )
+    stable_tail = lax.add(
+        jnp.maximum(log_quadratic, 0),
+        lax.log1p(lax.exp(lax.neg(lax.abs(log_quadratic)))),
+    )
+    return jnp.where(abs_delta == 0, 0, stable_tail)
+
+  use_stable = jnp.any(
+      (lax.abs(scale) < _lax_const(x, 1e-16))
+      | (lax.abs(delta) > lax.mul(lax.abs(scale), _lax_const(x, 1e12)))
+      | (df < _lax_const(x, 1e-5))
   )
-  quadratic = lax.div(lax.mul(safe_scaled, safe_scaled), df)
-  log_quadratic = lax.sub(lax.mul(_lax_const(x, 2), log_abs_scaled), lax.log(df))
-  stable_tail = lax.add(
-      jnp.maximum(log_quadratic, 0),
-      lax.log1p(lax.exp(lax.neg(lax.abs(log_quadratic)))),
-  )
-  stable_tail = jnp.where(abs_delta == 0, 0, stable_tail)
-  log_one_plus_quadratic = jnp.where(
-      use_direct, lax.log1p(quadratic), stable_tail
+  log_one_plus_quadratic = lax.cond(
+      use_stable, stable_quadratic, regular_quadratic, operand=None
   )
   return lax.neg(lax.add(
       normalize_term, lax.mul(df_plus_one_over_two, log_one_plus_quadratic)
