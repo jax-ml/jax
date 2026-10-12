@@ -840,6 +840,26 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     x = np.zeros((128, 128), dtype=np.float32)
     np.testing.assert_array_equal(kernel_fn((0, 0), staged, (x,)), x + 7)
 
+  @parameterized.parameters(True, False)
+  def test_scalar_prefetch_mixed_operands(self, use_literal):
+    i = jnp.array(3.0, dtype=jnp.float32)
+
+    def f():
+      a = 10.0 if use_literal else i
+      return jax.jit(lambda a, b: a + jnp.broadcast_to(b, (128, 128)))(
+          a, i * 2.0
+      )
+
+    block_spec = pl.BlockSpec((128, 128), lambda *ij: ij)
+    kernel_fn, (), _ = block_spec_lib.pull_block_spec(
+        f, block_spec, grid_len=2
+    )()
+    staged = (jnp.array([3.0], dtype=jnp.float32),)
+    expected = 16.0 if use_literal else 9.0
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0), staged), jnp.full((128, 128), expected)
+    )
+
   def test_scalar_prefetch_with_closed_over_body_scalar(self):
     x = jnp.zeros((3, 512), dtype=np.float32)
     i = jnp.array(1, dtype=jnp.int32)

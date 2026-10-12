@@ -832,10 +832,12 @@ def make_kernel_function(
               for v in eqn.invars
           ]
           sp_iter = iter(scalar_prefetch_vals)
-          for i, usage in enumerate(eqn_invar_usages):
-            if usage == {Usage.SCALAR_PREFETCH}:
-              if not isinstance(eqn.invars[i], core.Literal):
-                in_vals[i] = next(sp_iter)
+          for j, usage in enumerate(eqn_invar_usages):
+            if Usage.SCALAR_PREFETCH in usage:
+              sp_val = next(sp_iter)
+              if not isinstance(eqn.invars[j], core.Literal):
+                in_vals[j] = sp_val
+          assert next(sp_iter, None) is None
         eval_ctx = KernelEvalContext(
             prim=eqn.primitive,
             avals_in=tuple(v.aval for v in eqn.invars),
