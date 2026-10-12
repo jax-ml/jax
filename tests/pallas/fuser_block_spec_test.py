@@ -2757,6 +2757,37 @@ class PullBlockSpecHOPTest(jtu.JaxTestCase):
         kernel_fn((0, 0, 0, 0), scalar_prefetch_values, (), x), relu_x_x
     )
 
+  @parameterized.parameters('jit', 'custom_jvp', 'custom_vjp')
+  def test_higher_order_pull_and_eval_usage(self, wrapper):
+    def dus_pair(operand, update):
+      dus = jax.lax.dynamic_update_slice(operand + 1.0, update, (0, 0))
+      return dus, update * 2.0
+
+    if wrapper == 'jit':
+      dus_pair = jax.jit(dus_pair)
+    elif wrapper == 'custom_jvp':
+      dus_pair = jax.custom_jvp(dus_pair)
+      dus_pair.defjvp(lambda p, t: (dus_pair(*p), t))
+    elif wrapper == 'custom_vjp':
+      dus_pair = jax.custom_vjp(dus_pair)
+      dus_pair.defvjp(lambda *args: (dus_pair(*args), ()), lambda _, g: g)
+
+    def f(operand, update):
+      a, b = dus_pair(operand, update)
+      return a + b
+
+    in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    kernel_fn, (op_bs, up_bs), _ = block_spec_lib.pull_block_spec(
+        f, block_spec, grid_len=2
+    )(in_type, in_type)
+    self.assertIs(op_bs, pl.no_block_spec)
+    self.assertEqual(up_bs.block_shape, (128, 128))
+    update_blk = np.full((128, 128), 3.0, dtype=np.float32)
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0), (), None, update_blk), update_blk + update_blk * 2.0
+    )
+
   def test_pull_block_spec_handles_closed_over_constants(self):
     x = jnp.ones((2, 512, 512))
     i = jnp.array(1)
