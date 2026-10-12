@@ -2845,5 +2845,19 @@ class PushBlockSpecTest(parameterized.TestCase):
           lambda x: jax.lax.transpose(x, (0, 2, 1, 3)), block_spec
       )(x_type)
 
+  def test_no_block_spec_for_output_raises(self):
+    x_type = jax.ShapeDtypeStruct((128, 128), jnp.float32)
+    y_type = jax.ShapeDtypeStruct((64,), jnp.float32)
+    block_spec = pl.BlockSpec((64, 64), lambda i, j: (i, j))
+
+    with self.assertRaisesRegex(ValueError, 'No block spec found for output'):
+      block_spec_lib.push_block_spec(lambda x: x, pl.no_block_spec)(x_type)
+
+    with self.assertRaisesRegex(ValueError, 'No block spec found for output'):
+      block_spec_lib.push_block_spec(
+          lambda x, y: (x + 1, y + 1), block_spec, pl.no_block_spec
+      )(x_type, y_type)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

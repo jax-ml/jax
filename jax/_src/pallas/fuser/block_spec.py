@@ -2999,13 +2999,6 @@ def _push_block_spec_jaxpr(
 
     util.safe_map(_write_block_spec, eqn.outvars, out_block_specs)
   out_block_specs = tuple(util.safe_map(_read_block_spec, jaxpr.outvars))
-  valid_block_spec = [
-      bs for bs in flat_block_specs if bs is not pallas_core.no_block_spec
-  ][0]
-  out_block_specs = tuple(
-      valid_block_spec if obs is pallas_core.no_block_spec else obs
-      for obs in out_block_specs
-  )
   if any(bs is pallas_core.no_block_spec for bs in out_block_specs):
     raise ValueError('No block spec found for output')
   return out_block_specs
