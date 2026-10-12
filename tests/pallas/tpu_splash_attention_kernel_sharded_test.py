@@ -277,6 +277,79 @@ class SplashAttentionShardingTest(PallasBaseTest):
     with jax.set_mesh(mesh):
       step(x_seq)  # doesn't crash
 
+  @parameterized.product(
+      topology=[(2, 1), (1, 2), (2, 2)],
+      seg_sharded=[False, True],
+  )
+  def test_segmented_attention_manual_partitioning_mha_bwd(
+      self, topology, seg_sharded
+  ):
+    head_shards, q_seq_shards = topology
+    if not seg_sharded and q_seq_shards == 1:
+      self.skipTest("Global vs local segment_ids only differ when q_seq_shards > 1.")
+    seq_len, num_heads, head_dim = 512, 4, 128
+    k1, k2, k3, k4 = random.split(random.key(0), 4)
+    q = random.uniform(k1, (num_heads, seq_len, head_dim), dtype=jnp.bfloat16)
+    k = random.uniform(k2, (num_heads, seq_len, head_dim), dtype=jnp.bfloat16)
+    v = random.uniform(k3, (num_heads, seq_len, head_dim), dtype=jnp.bfloat16)
+    do = random.uniform(k4, (num_heads, seq_len, head_dim), dtype=jnp.bfloat16)
+    seg = jnp.repeat(jnp.arange(4, dtype=jnp.int32), seq_len // 4)
+    segment_ids = SegmentIds(q=seg, kv=seg)
+    mask = MultiHeadMask([CausalMask((seq_len, seq_len)) for _ in range(num_heads)])
+
+    devices = np.asarray(jax.devices()[: math.prod(topology)]).reshape(
+        head_shards, q_seq_shards
+    )
+    mesh = jax.sharding.Mesh(devices, ("heads", "q_seq"))
+    q_spec = PartitionSpec(
+        "heads" if head_shards > 1 else None,
+        "q_seq" if q_seq_shards > 1 else None,
+    )
+    kv_spec = PartitionSpec("heads" if head_shards > 1 else None, None)
+    seg_q_spec = PartitionSpec(
+        "q_seq" if (seg_sharded and q_seq_shards > 1) else None
+    )
+    seg_spec = SegmentIds(q=seg_q_spec, kv=PartitionSpec(None))
+    kernel = make_splash_mha(
+        mask, head_shards=head_shards, q_seq_shards=q_seq_shards
+    )
+    kernel_spec = kernel.manual_sharding_spec(
+        jax.sharding.NamedSharding(mesh, q_spec)
+    )
+
+    @partial(
+        shard_map,
+        mesh=mesh,
+        in_specs=(kernel_spec, q_spec, kv_spec, kv_spec, seg_spec),
+        out_specs=q_spec,
+        check_vma=False,
+    )
+    def f(kernel, q, k, v, seg_ids):
+      if not seg_sharded and q_seq_shards > 1:
+        q_idx = jax.lax.axis_index("q_seq")
+        shard_len = seq_len // q_seq_shards
+        seg_ids = SegmentIds(
+            q=jax.lax.dynamic_slice_in_dim(
+                seg_ids.q, q_idx * shard_len, shard_len
+            ),
+            kv=seg_ids.kv,
+        )
+      return kernel(q, k, v, segment_ids=seg_ids)
+
+    np_mask = np.stack([np.array(m[:, :]) for m in mask.masks], axis=0)
+    f_ref = jax.vmap(
+        partial(splash.attention_reference, segment_ids=segment_ids),
+        in_axes=(0, 0, 0, 0),
+    )
+    out, out_vjp = jax.vjp(f, kernel, q, k, v, segment_ids)
+    out_ref, out_vjp_ref = jax.vjp(f_ref, np_mask, q, k, v)
+    self._assert_allclose(out, out_ref, rtol=3e-3, atol=3e-3)
+    _, dq, dk, dv, _ = out_vjp(do)
+    _, dq_ref, dk_ref, dv_ref = out_vjp_ref(do.astype(jnp.float32))
+    self.assertAllClose(dq, dq_ref, atol=5e-2)
+    self.assertAllClose(dk, dk_ref, atol=5e-2)
+    self.assertAllClose(dv, dv_ref, atol=5e-2)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

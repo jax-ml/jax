@@ -836,6 +836,460 @@ class SplashAttentionTest(PallasBaseTest):
 
     np.testing.assert_array_equal(shrink_out, no_shrink_out)
 
+  def _segmented_vjp_reference(
+      self, mask, q, k, v, segment_ids, do, out, sinks=None, soft_cap=None
+  ):
+    is_mqa = k.ndim == 2
+    ref_fn = (
+        splash.make_masked_mqa_reference
+        if is_mqa
+        else splash.make_masked_mha_reference
+    )
+    attn_ref = ref_fn(mask, backward_impl="custom")
+    num_q_heads = q.shape[0]
+    num_kv_heads = 1 if is_mqa else k.shape[0]
+    head_mult = num_q_heads // num_kv_heads
+    q32, k32, v32, s32 = jax.tree.map(
+        lambda x: None if x is None else x.astype(jnp.float32),
+        (q, k, v, sinks),
+    )
+    ref_o, (lse,) = attn_ref(
+        q32,
+        k32,
+        v32,
+        segment_ids,
+        sinks=s32,
+        save_residuals=True,
+        attn_logits_soft_cap=soft_cap,
+    )
+    bwd = jax.vmap(
+        lambda m, q_h, k_h, v_h, s_h, o_h, lse_h, do_h: (
+            splash._attention_reference_custom_bwd(
+                splash.DEFAULT_MASK_VALUE,
+                False,
+                "flash",
+                soft_cap,
+                (m, q_h, k_h, v_h, segment_ids, s_h, o_h, lse_h),
+                do_h,
+            )
+        ),
+        in_axes=(
+            0,
+            0,
+            None if is_mqa else 0,
+            None if is_mqa else 0,
+            None if s32 is None else 0,
+            0,
+            0,
+            0,
+        ),
+    )
+    mask_arr = mask if isinstance(mask, jax.Array) else mask[:, :, :]
+    _, ref_dq, ref_dk, ref_dv, _, ref_dsinks = bwd(
+        mask_arr,
+        q32,
+        k32 if is_mqa else jnp.repeat(k32, head_mult, axis=0),
+        v32 if is_mqa else jnp.repeat(v32, head_mult, axis=0),
+        s32,
+        out.astype(jnp.float32),
+        lse,
+        do.astype(jnp.float32),
+    )
+    if is_mqa:
+      ref_dk, ref_dv = ref_dk.sum(axis=0), ref_dv.sum(axis=0)
+    elif head_mult > 1:
+      ref_dk = ref_dk.reshape(num_kv_heads, head_mult, *ref_dk.shape[1:]).sum(1)
+      ref_dv = ref_dv.reshape(num_kv_heads, head_mult, *ref_dv.shape[1:]).sum(1)
+    return ref_o, ref_dq, ref_dk, ref_dv, ref_dsinks
+
+  def test_refine_lowers_without_gather(self):
+    seq_len, bq, bkv = 512, 128, 128
+    seg = jnp.repeat(jnp.arange(4, dtype=jnp.int32), seq_len // 4)
+    segment_ids = splash.SegmentIds(seg, seg)
+    np_causal = np.tril(np.ones((seq_len, seq_len), dtype=np.bool_))
+    mask = mask_lib.MultiHeadMask(
+        [mask_lib.NumpyMask(np_causal) for _ in range(2)]
+    )
+    block_sizes = splash.BlockSizes(
+        block_q=bq,
+        block_kv=bkv,
+        block_kv_compute=bkv,
+        block_q_dkv=bq,
+        block_kv_dkv=bkv,
+        block_kv_dkv_compute=bkv,
+        block_q_dq=bq,
+        block_kv_dq=bkv,
+    )
+    kernel = splash.make_splash_mha_single_device(
+        mask, block_sizes=block_sizes, interpret=self.INTERPRET
+    )
+    for is_dkv, m_info in (
+        (False, kernel.fwd_mask_info),
+        (True, kernel.dkv_mask_info),
+    ):
+      self.assertIsNotNone(m_info)
+      fn = jax.jit(
+          lambda m, s, dkv=is_dkv: splash._refine_mask_info_with_segments(
+              m, s, bq, bkv, is_dkv=dkv
+          )
+      )
+      hlo = fn.lower(m_info, segment_ids).compiler_ir("stablehlo")
+      self.assertNotIn("gather", str(hlo))
+      refined = fn(m_info, segment_ids)
+      self.assertIsNotNone(refined.block_mask)
+      self.assertEqual(
+          int(jnp.sum(refined.block_mask > 0)),
+          refined.block_mask.shape[0] * (seq_len // bq),
+      )
+
+    # Unaligned sequence length returns mask_info unchanged.
+    unaligned_seg = splash.SegmentIds(seg[:500], seg[:500])
+    unchanged = splash._refine_mask_info_with_segments(
+        kernel.fwd_mask_info, unaligned_seg, bq, bkv, is_dkv=False
+    )
+    self.assertIs(unchanged, kernel.fwd_mask_info)
+
+    # Sequence-sharded MaskInfo (fewer Q blocks than segment_ids.q) returns
+    # mask_info unchanged when global segment_ids are passed, while local-shard
+    # segment_ids refine the shard's MaskInfo.
+    sharded_kernel = splash.make_splash_mha(
+        mask,
+        block_sizes=block_sizes,
+        head_shards=1,
+        q_seq_shards=2,
+        interpret=self.INTERPRET,
+    )
+    ShardMaskInfo = type(sharded_kernel.fwd_mask_info)
+    shard0_mask_info = ShardMaskInfo(
+        *[
+            x[:, :2, :] if x is not None and x.ndim == 3 and x.shape[1] == 4 else x
+            for x in sharded_kernel.fwd_mask_info
+        ]
+    )
+    unchanged_sharded = splash._refine_mask_info_with_segments(
+        shard0_mask_info, segment_ids, bq, bkv, is_dkv=False
+    )
+    self.assertIs(unchanged_sharded, shard0_mask_info)
+    shard0_seg = splash.SegmentIds(seg[: seq_len // 2], seg)
+    refined_shard0 = splash._refine_mask_info_with_segments(
+        shard0_mask_info, shard0_seg, bq, bkv, is_dkv=False
+    )
+    self.assertIsNotNone(refined_shard0.block_mask)
+    self.assertEqual(
+        int(jnp.sum(refined_shard0.block_mask > 0)),
+        refined_shard0.block_mask.shape[0] * (seq_len // (2 * bq)),
+    )
+
+  def test_segmented_attention_vmap_vjp_matches_reference(self):
+    seq_len, bq, bkv, head_dim = 512, 128, 128, 128
+    k1, k2, k3, k4 = random.split(random.key(0), 4)
+    q = random.uniform(k1, (2, 2, seq_len, head_dim), dtype=jnp.bfloat16)
+    k = random.uniform(k2, (2, 2, seq_len, head_dim), dtype=jnp.bfloat16)
+    v = random.uniform(k3, (2, 2, seq_len, head_dim), dtype=jnp.bfloat16)
+    do = random.uniform(k4, (2, 2, seq_len, head_dim), dtype=jnp.bfloat16)
+
+    seg_1d = jnp.repeat(jnp.arange(4, dtype=jnp.int32), seq_len // 4)
+    seg_batch = jnp.broadcast_to(seg_1d[None, :], (2, seq_len))
+    segment_ids = splash.SegmentIds(seg_batch, seg_batch)
+
+    mask = mask_lib.MultiHeadMask(
+        [mask_lib.CausalMask((seq_len, seq_len)) for _ in range(2)]
+    )
+    block_sizes = splash.BlockSizes(
+        block_q=bq,
+        block_kv=bkv,
+        block_kv_compute=bkv,
+        block_q_dkv=bq,
+        block_kv_dkv=bkv,
+        block_kv_dkv_compute=bkv,
+        block_q_dq=bq,
+        block_kv_dq=bkv,
+    )
+    kernel = splash.make_splash_mha_single_device(
+        mask, block_sizes=block_sizes, interpret=self.INTERPRET
+    )
+    refined_fwd = splash._refine_mask_info_with_segments(
+        kernel.fwd_mask_info,
+        splash.SegmentIds(seg_1d, seg_1d),
+        bq,
+        bkv,
+        is_dkv=False,
+    )
+    self.assertIsNotNone(refined_fwd.block_mask)
+    self.assertEqual(int(jnp.sum(refined_fwd.block_mask > 0)), seq_len // bq)
+
+    out, vjp_fn = jax.vjp(
+        lambda q_in, k_in, v_in: jax.vmap(kernel)(
+            q_in, k_in, v_in, segment_ids
+        ),
+        q,
+        k,
+        v,
+    )
+    dq, dk, dv = vjp_fn(do)
+    for b in range(2):
+      seg_b = splash.SegmentIds(seg_batch[b], seg_batch[b])
+      ref_o, ref_dq, ref_dk, ref_dv, _ = self._segmented_vjp_reference(
+          mask, q[b], k[b], v[b], seg_b, do[b], out[b]
+      )
+      self._assert_allclose(out[b], ref_o, atol=3e-3, rtol=3e-3)
+      self._assert_allclose(dv[b], ref_dv, atol=2e-2, rtol=3e-2)
+      self._assert_allclose(dq[b], ref_dq, atol=2e-2, rtol=3e-2)
+      self._assert_allclose(dk[b], ref_dk, atol=2e-2, rtol=3e-2)
+
+  def test_segmented_attention_mixed_block_sizes_and_empty_rows_no_nan(self):
+    seq_len, head_dim = 512, 128
+    k1, k2, k3, k4 = random.split(random.key(1), 4)
+    q = random.uniform(k1, (2, seq_len, head_dim), dtype=jnp.bfloat16)
+    k = random.uniform(k2, (2, seq_len, head_dim), dtype=jnp.bfloat16)
+    v = random.uniform(k3, (2, seq_len, head_dim), dtype=jnp.bfloat16)
+    do = random.uniform(k4, (2, seq_len, head_dim), dtype=jnp.bfloat16)
+
+    # Query block 0 has segment id 5, which is absent from kv_seg ([1, 2, 3, 4]),
+    # so all kv blocks in query block 0's row are pruned in fwd (bq=128), while
+    # coarser backward blocks (block_q_dkv=256, block_kv_dq=256) remain active.
+    kv_seg = jnp.repeat(jnp.array([1, 2, 3, 4], dtype=jnp.int32), 128)
+    q_seg = jnp.concatenate([
+        jnp.full((128,), 5, dtype=jnp.int32),
+        jnp.repeat(jnp.array([1, 2, 3], dtype=jnp.int32), 128),
+    ])
+    segment_ids = splash.SegmentIds(q_seg, kv_seg)
+
+    mask = mask_lib.MultiHeadMask(
+        [mask_lib.FullMask((seq_len, seq_len)) for _ in range(2)]
+    )
+    active_mask = mask_lib.MultiHeadMask(
+        [mask_lib.FullMask((384, 384)) for _ in range(2)]
+    )
+    active_seg = splash.SegmentIds(q_seg[128:], kv_seg[:384])
+
+    for use_fused_bwd, bkv_dkv_compute in ((False, 128), (True, 128), (True, 256)):
+      block_sizes = splash.BlockSizes(
+          block_q=128,
+          block_kv=128,
+          block_kv_compute=128,
+          block_q_dkv=256,
+          block_kv_dkv=256,
+          block_kv_dkv_compute=bkv_dkv_compute,
+          block_q_dq=None if use_fused_bwd else 128,
+          block_kv_dq=None if use_fused_bwd else 256,
+          use_fused_bwd_kernel=use_fused_bwd,
+      )
+      out_with_res, (lse,) = splash.make_splash_mha_single_device(
+          mask,
+          block_sizes=block_sizes,
+          save_residuals=True,
+          interpret=self.INTERPRET,
+      )(q, k, v, segment_ids)
+      self.assertTrue(np.all(np.isfinite(np.asarray(out_with_res))))
+      self.assertTrue(np.all(np.isfinite(np.asarray(lse))))
+      np.testing.assert_array_equal(out_with_res[:, :128, :], 0.0)
+      np.testing.assert_array_equal(
+          lse[:, :128], np.float32(splash.DEFAULT_MASK_VALUE)
+      )
+
+      # Verify ring-attention style logsumexp chunk merging produces no NaNs
+      # both when merging two pruned chunks and when merging pruned + active.
+      lse_empty = lse[:, :128]
+      lse_active = lse[:, 128:256]
+      for lse_a, lse_b in ((lse_empty, lse_empty), (lse_empty, lse_active)):
+        lse_max = jnp.maximum(lse_a, lse_b)
+        scale_a = jnp.exp(lse_a - lse_max)
+        scale_b = jnp.exp(lse_b - lse_max)
+        self.assertTrue(np.all(np.isfinite(np.asarray(scale_a))))
+        self.assertTrue(np.all(np.isfinite(np.asarray(scale_b))))
+
+      kernel_vjp = splash.make_splash_mha_single_device(
+          mask, block_sizes=block_sizes, interpret=self.INTERPRET
+      )
+      out, vjp_fn = jax.vjp(
+          lambda q_in, k_in, v_in, k_fn=kernel_vjp: k_fn(
+              q_in, k_in, v_in, segment_ids
+          ),
+          q,
+          k,
+          v,
+      )
+      dq, dk, dv = vjp_fn(do)
+      for arr in (out, dq, dk, dv):
+        self.assertTrue(np.all(np.isfinite(np.asarray(arr))))
+      np.testing.assert_array_equal(dq[:, :128, :], 0.0)
+      np.testing.assert_array_equal(dk[:, 384:, :], 0.0)
+      np.testing.assert_array_equal(dv[:, 384:, :], 0.0)
+
+      ref_o, ref_dq, ref_dk, ref_dv, _ = self._segmented_vjp_reference(
+          active_mask,
+          q[:, 128:],
+          k[:, :384],
+          v[:, :384],
+          active_seg,
+          do[:, 128:],
+          out[:, 128:],
+      )
+      self._assert_allclose(out[:, 128:], ref_o, atol=3e-3, rtol=3e-3)
+      self._assert_allclose(dv[:, :384], ref_dv, atol=2e-2, rtol=3e-2)
+      self._assert_allclose(dq[:, 128:], ref_dq, atol=2e-2, rtol=3e-2)
+      self._assert_allclose(dk[:, :384], ref_dk, atol=2e-2, rtol=3e-2)
+
+  def test_segmented_attention_partial_mask_blocks_and_heterogeneous_vmap(self):
+    seq_len, bq, bkv, head_dim, soft_cap = 512, 128, 128, 128, 30.0
+    k1, k2, k3, k4, k5 = random.split(random.key(2), 5)
+    q = random.uniform(k1, (2, 4, seq_len, head_dim), dtype=jnp.bfloat16)
+    k = random.uniform(k2, (2, 2, seq_len, head_dim), dtype=jnp.bfloat16)
+    v = random.uniform(k3, (2, 2, seq_len, head_dim), dtype=jnp.bfloat16)
+    do = random.uniform(k4, (2, 4, seq_len, head_dim), dtype=jnp.bfloat16)
+    sinks = random.normal(k5, (2, 4), dtype=jnp.bfloat16)
+
+    seg_b0 = jnp.concatenate([
+        jnp.zeros((100,), dtype=jnp.int32),
+        jnp.ones((156,), dtype=jnp.int32),
+        jnp.full((128,), 2, dtype=jnp.int32),
+        jnp.full((128,), 3, dtype=jnp.int32),
+    ])
+    seg_b1 = jnp.concatenate([
+        jnp.full((128,), 3, dtype=jnp.int32),
+        jnp.full((128,), 1, dtype=jnp.int32),
+        jnp.full((128,), 3, dtype=jnp.int32),
+        jnp.full((128,), 0, dtype=jnp.int32),
+    ])
+    seg_batch = jnp.stack([seg_b0, seg_b1], axis=0)
+    segment_ids = splash.SegmentIds(seg_batch, seg_batch)
+
+    np_causal = np.tril(np.ones((seq_len, seq_len), dtype=np.bool_))
+    block_sizes = splash.BlockSizes(
+        block_q=bq,
+        block_kv=bkv,
+        block_kv_compute=bkv,
+        block_q_dkv=bq,
+        block_kv_dkv=bkv,
+        block_kv_dkv_compute=bkv,
+        block_q_dq=bq,
+        block_kv_dq=bkv,
+    )
+    for mask in (
+        mask_lib.MultiHeadMask([mask_lib.NumpyMask(np_causal) for _ in range(4)]),
+        mask_lib.MultiHeadMask(
+            [mask_lib.CausalMask((seq_len, seq_len)) for _ in range(4)]
+        ),
+        jnp.broadcast_to(jnp.array(np_causal)[None, :, :], (4, seq_len, seq_len)),
+    ):
+      kernel = splash.make_splash_mha_single_device(
+          mask,
+          block_sizes=block_sizes,
+          attn_logits_soft_cap=soft_cap,
+          interpret=self.INTERPRET,
+      )
+      step_fn = jax.checkpoint(
+          lambda q_b, k_b, v_b, seg_b, s_b, k_fn=kernel: k_fn(
+              q_b, k_b, v_b, seg_b, sinks=s_b
+          )
+      )
+      out, vjp_fn = jax.vjp(
+          lambda q_in, k_in, v_in, s_in, f=step_fn: jax.vmap(f)(
+              q_in, k_in, v_in, segment_ids, s_in
+          ),
+          q,
+          k,
+          v,
+          sinks,
+      )
+      dq, dk, dv, dsinks = vjp_fn(do)
+      for b in range(2):
+        seg_b = splash.SegmentIds(seg_batch[b], seg_batch[b])
+        ref_o, ref_dq, ref_dk, ref_dv, ref_dsinks = (
+            self._segmented_vjp_reference(
+                mask,
+                q[b],
+                k[b],
+                v[b],
+                seg_b,
+                do[b],
+                out[b],
+                sinks=sinks[b],
+                soft_cap=soft_cap,
+            )
+        )
+        self._assert_allclose(out[b], ref_o, atol=3e-3, rtol=3e-3)
+        self._assert_allclose(dv[b], ref_dv, atol=2e-2, rtol=3e-2)
+        self._assert_allclose(dq[b], ref_dq, atol=2e-2, rtol=3e-2)
+        self._assert_allclose(dk[b], ref_dk, atol=2e-2, rtol=3e-2)
+        self._assert_allclose(dsinks[b], ref_dsinks, atol=5e-3, rtol=3e-2)
+
+  def test_segmented_attention_mqa_and_seq_minor_layout(self):
+    seq_len, bq, bkv, head_dim = 512, 128, 128, 128
+    k1, k2, k3, k4 = random.split(random.key(3), 4)
+    q = random.uniform(k1, (4, seq_len, head_dim), dtype=jnp.bfloat16)
+    k = random.uniform(k2, (seq_len, head_dim), dtype=jnp.bfloat16)
+    v = random.uniform(k3, (seq_len, head_dim), dtype=jnp.bfloat16)
+    do = random.uniform(k4, (4, seq_len, head_dim), dtype=jnp.bfloat16)
+
+    seg = jnp.repeat(jnp.arange(4, dtype=jnp.int32), seq_len // 4)
+    segment_ids = splash.SegmentIds(seg, seg)
+    mask = mask_lib.MultiHeadMask(
+        [mask_lib.CausalMask((seq_len, seq_len)) for _ in range(4)]
+    )
+    block_sizes = splash.BlockSizes(
+        block_q=bq,
+        block_kv=bkv,
+        block_kv_compute=bkv,
+        block_q_dkv=bq,
+        block_kv_dkv=bkv,
+        block_kv_dkv_compute=bkv,
+        block_q_dq=bq,
+        block_kv_dq=bkv,
+        q_layout=splash.QKVLayout.SEQ_MINOR,
+        k_layout=splash.QKVLayout.SEQ_MINOR,
+        v_layout=splash.QKVLayout.SEQ_MINOR,
+    )
+    kernel = splash.make_splash_mqa_single_device(
+        mask, block_sizes=block_sizes, interpret=self.INTERPRET
+    )
+    out, vjp_fn = jax.vjp(
+        lambda q_in, k_in, v_in: kernel(q_in, k_in, v_in, segment_ids),
+        q,
+        k,
+        v,
+    )
+    dq, dk, dv = vjp_fn(do)
+    ref_o, ref_dq, ref_dk, ref_dv, _ = self._segmented_vjp_reference(
+        mask, q, k, v, segment_ids, do, out
+    )
+    self._assert_allclose(out, ref_o, atol=3e-3, rtol=3e-3)
+    self._assert_allclose(dv, ref_dv, atol=2e-2, rtol=3e-2)
+    self._assert_allclose(dq, ref_dq, atol=2e-2, rtol=3e-2)
+    self._assert_allclose(dk, ref_dk, atol=2e-2, rtol=3e-2)
+
+    # Rectangular cross-attention (q_seq_len != kv_seq_len) with fused bwd
+    # and bkv_dkv == bkv_dkv_compute (`dq_scratch_ref is None`).
+    kv_len_rect = 256
+    k_rect = k[:kv_len_rect]
+    v_rect = v[:kv_len_rect]
+    seg_kv_rect = jnp.repeat(jnp.arange(4, dtype=jnp.int32), kv_len_rect // 4)
+    seg_rect = splash.SegmentIds(seg, seg_kv_rect)
+    rect_mask = mask_lib.MultiHeadMask(
+        [mask_lib.FullMask((seq_len, kv_len_rect)) for _ in range(4)]
+    )
+    rect_block_sizes = dataclasses.replace(
+        block_sizes, use_fused_bwd_kernel=True, block_q_dq=None, block_kv_dq=None
+    )
+    rect_kernel = splash.make_splash_mqa_single_device(
+        rect_mask, block_sizes=rect_block_sizes, interpret=self.INTERPRET
+    )
+    out_r, vjp_r = jax.vjp(
+        lambda q_in, k_in, v_in: rect_kernel(q_in, k_in, v_in, seg_rect),
+        q,
+        k_rect,
+        v_rect,
+    )
+    dq_r, dk_r, dv_r = vjp_r(do)
+    ref_o_r, ref_dq_r, ref_dk_r, ref_dv_r, _ = self._segmented_vjp_reference(
+        rect_mask, q, k_rect, v_rect, seg_rect, do, out_r
+    )
+    self._assert_allclose(out_r, ref_o_r, atol=3e-3, rtol=3e-3)
+    self._assert_allclose(dv_r, ref_dv_r, atol=2e-2, rtol=3e-2)
+    self._assert_allclose(dq_r, ref_dq_r, atol=2e-2, rtol=3e-2)
+    self._assert_allclose(dk_r, ref_dk_r, atol=2e-2, rtol=3e-2)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
