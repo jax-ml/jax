@@ -1166,32 +1166,7 @@ def register_default_eval_rule(prim: core.Primitive):
   register_eval_rule(prim)(default_rule)
 
 
-def register_binop_rule(prim: core.Primitive):
-  register_pull_block_spec_rule(prim)(_binop_pull_rule)
-  register_usage_rule(prim)(_binop_usage_rule)
-  register_eval_rule(prim)(_binop_eval_rule)
-
-
 register_default_eval_rule(lax.axis_index_p)
-
-register_binop_rule(lax.mul_p)
-register_binop_rule(lax.add_p)
-register_binop_rule(lax.sub_p)
-register_binop_rule(lax.div_p)
-register_binop_rule(lax.max_p)
-register_binop_rule(lax.min_p)
-register_binop_rule(lax.lt_p)
-register_binop_rule(lax.le_p)
-register_binop_rule(lax.eq_p)
-register_binop_rule(lax.gt_p)
-register_binop_rule(lax.ge_p)
-register_binop_rule(lax.or_p)
-register_binop_rule(lax.xor_p)
-register_binop_rule(lax.and_p)
-register_binop_rule(lax.ne_p)
-register_binop_rule(lax.shift_right_logical_p)
-register_binop_rule(ad_util.add_any_p)
-register_binop_rule(lax.pow_p)
 
 
 @register_eval_rule(lax.select_n_p)
@@ -3090,29 +3065,34 @@ def _binop_push_rule(
       raise ValueError('Cannot propagate block spec through RHS broadcast.')
   if left_block_spec is pallas_core.no_block_spec:
     return right_block_spec
-  if right_block_spec is pallas_core.no_block_spec:
-    return left_block_spec
-  if right_block_spec != left_block_spec:
-    raise ValueError('Invalid block spec')
   return left_block_spec
 
 
-register_binop_push_rule = lambda prim: register_push_block_spec_rule(prim)(
-    _binop_push_rule
-)
-register_binop_push_rule(lax.mul_p)
-register_binop_push_rule(lax.add_p)
-register_binop_push_rule(lax.sub_p)
-register_binop_push_rule(lax.div_p)
-register_binop_push_rule(lax.max_p)
-register_binop_push_rule(lax.min_p)
-register_binop_push_rule(lax.lt_p)
-register_binop_push_rule(lax.eq_p)
-register_binop_push_rule(lax.gt_p)
-register_binop_push_rule(lax.and_p)
-register_binop_push_rule(lax.ne_p)
-register_binop_push_rule(lax.pow_p)
-register_binop_push_rule(ad_util.add_any_p)
+def register_binop_rule(prim: core.Primitive):
+  register_pull_block_spec_rule(prim)(_binop_pull_rule)
+  register_usage_rule(prim)(_binop_usage_rule)
+  register_eval_rule(prim)(_binop_eval_rule)
+  register_push_block_spec_rule(prim)(_binop_push_rule)
+
+
+register_binop_rule(lax.mul_p)
+register_binop_rule(lax.add_p)
+register_binop_rule(lax.sub_p)
+register_binop_rule(lax.div_p)
+register_binop_rule(lax.max_p)
+register_binop_rule(lax.min_p)
+register_binop_rule(lax.lt_p)
+register_binop_rule(lax.le_p)
+register_binop_rule(lax.eq_p)
+register_binop_rule(lax.gt_p)
+register_binop_rule(lax.ge_p)
+register_binop_rule(lax.or_p)
+register_binop_rule(lax.xor_p)
+register_binop_rule(lax.and_p)
+register_binop_rule(lax.ne_p)
+register_binop_rule(lax.shift_right_logical_p)
+register_binop_rule(ad_util.add_any_p)
+register_binop_rule(lax.pow_p)
 
 
 def _eltwise_push_rule(
