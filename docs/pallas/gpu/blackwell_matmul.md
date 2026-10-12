@@ -168,7 +168,7 @@ def matmul0(a, b, config):
       out_type=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(m_iters, n_iters),
       grid_names=("m", "n"),
-      scratch_shapes=dict(
+      scratch_types=dict(
         acc_tmem=plgpu.TMEM((tile_m, tile_n), jnp.float32),
         acc_smem=plgpu.SMEM((tile_m, tile_n), dtype, transforms=transforms),
         consumed_barriers=plgpu.Barrier(
@@ -308,7 +308,7 @@ def matmul1(a, b, config: TuningConfig):
   f = plgpu.kernel(
       kernel,
       ...,  # Other parameters remain unchanged
-      scratch_shapes=dict(
+      scratch_types=dict(
         a_smem=plgpu.SMEM(
             (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms
         ),
@@ -341,7 +341,7 @@ getting us up to almost 70% of cuBLAS performance.
 This time, we turn our attention away from the compute portion of the kernel and
 instead focus on its epilogue. We can improve its efficiency by pipelining
 the copy from TMEM to SMEM together with a transfer from SMEM to GMEM. To do this,
-we change our `scratch_shapes` to allocate two smaller buffers instead of an
+we change our `scratch_types` to allocate two smaller buffers instead of an
 SMEM window that can hold the entire output (which also decreases our SMEM usage):
 
 ```python
@@ -349,7 +349,7 @@ def matmul2(a, b, config):
   ... # Setup and kernel code
   f = plgpu.kernel(
       ...
-      scratch_shapes=dict(
+      scratch_types=dict(
         ...
         # Previously: plgpu.SMEM((tile_m, tile_n), dtype, transforms=transforms),
         acc_smem=plgpu.SMEM(
@@ -414,7 +414,7 @@ def matmul3(a, b, config):
       ...
       cluster=(2,),
       cluster_names=("cluster",),
-      scratch_shapes=dict(
+      scratch_types=dict(
           ...
           # Previously: plgpu.TMEM((tile_m, tile_n), jnp.float32),
           acc_tmem=plgpu.TMEM(
@@ -624,7 +624,7 @@ def matmul5(a, b, config):
       ...,
       num_threads=2,
       thread_name="wg",
-      scratch_shapes=dict(
+      scratch_types=dict(
           ...
           # Previously: plgpu.TMEM((tile_m, cluster_tile_n), jnp.float32, collective=True),
           acc_tmem=plgpu.TMEM(
@@ -907,7 +907,7 @@ def matmul6(a, b, config: TuningConfig):
       cluster_names=("cluster",),
       num_threads=2,
       thread_name="wg",
-      scratch_shapes=dict(
+      scratch_types=dict(
           a_smem=plgpu.SMEM(
               (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms
           ),
