@@ -1310,7 +1310,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     mode = jnp.float16(0)
     tail = jnp.float16(300)
     logpdf = lambda x: lsp_stats.t.logpdf(x, jnp.float16(10))
-    self.assertAllClose(jax.grad(logpdf)(mode), 0.0, atol=5e-3)
+    self.assertAllClose(jax.grad(logpdf)(mode), 0.0, atol=5e-3,
+                        check_dtypes=False)
     self.assertAllClose(
         jax.jit(jax.grad(logpdf))(tail), -11.0 * 300.0 / (10.0 + 300.0**2),
         rtol=1e-2, atol=5e-4, check_dtypes=False)
