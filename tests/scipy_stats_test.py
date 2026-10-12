@@ -789,6 +789,14 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol={np.float32: 1e-5, np.float64: 1e-6})
       self._CompileAndCheck(lax_fun, args_maker)
 
+  def testLaplaceCdfGradInTails(self):
+    # https://github.com/jax-ml/jax/issues/40966
+    x = jnp.array([-1000., -1., 0., 1., 1000.])
+    self.assertAllClose(lsp_stats.laplace.cdf(x), osp_stats.laplace.cdf(x),
+                        check_dtypes=False)
+    grad = jax.vmap(jax.grad(lsp_stats.laplace.cdf))(x)
+    self.assertAllClose(grad, lsp_stats.laplace.pdf(x))
+
   @genNamedParametersNArgs(3)
   def testLogisticCdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
