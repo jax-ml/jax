@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -27,12 +28,14 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/literal.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
@@ -42,6 +45,7 @@ limitations under the License.
 namespace {
 
 using ::absl_testing::IsOk;
+using ::absl_testing::IsOkAndHolds;
 using ::testing::_;
 using ::testing::HasSubstr;
 using ::testing::SizeIs;
@@ -51,6 +55,22 @@ absl::Status ExecuteSync(xla::PjRtLoadedExecutable* executable) {
   ASSIGN_OR_RETURN(auto result,
                    executable->Execute({no_buffers}, /*options=*/{}));
   return result[0][0]->GetReadyFuture().Await();
+}
+
+// Returns the value of a scalar s32 result buffer.
+absl::StatusOr<int32_t> GetS32(xla::PjRtBuffer* buffer) {
+  ASSIGN_OR_RETURN(std::shared_ptr<xla::Literal> literal,
+                   buffer->ToLiteralSync());
+  return literal->Get<int32_t>({});
+}
+
+// Executes `executable` (no inputs) and returns its scalar s32 result.
+absl::StatusOr<int32_t> ExecuteAndGetS32(
+    xla::PjRtLoadedExecutable* executable) {
+  std::vector<xla::PjRtBuffer*> no_buffers;
+  ASSIGN_OR_RETURN(auto result,
+                   executable->Execute({no_buffers}, /*options=*/{}));
+  return GetS32(result[0][0].get());
 }
 
 extern "C" void MosaicGpuClearKernelCache();
@@ -651,6 +671,96 @@ TEST_F(CustomCallTest, MosaicGpuCollectiveFallsBackToStreamCapture) {
         .Times(1);
     log.StartCapturingLogs();
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  }
+}
+
+// Without the multi-GPU barrier, `MosaicGpuExecute` launches a single kernel,
+// so a collective-metadata kernel is recorded as a kernel node (which can be
+// the source of a PDL edge) instead of falling back to stream capture.
+TEST_F(CustomCallTest, MosaicGpuCollectiveWithoutBarrierRecordsKernelNode) {
+  std::string module_str = TestMGPUHloModule(
+      "uses_xla_collective_metadata = true, skip_device_barrier = true, "
+      "xla_replica_ids = \"0\"");
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       xla::ParseAndReturnUnverifiedModule(module_str));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+  xla::CompileOptions compile_options;
+  compile_options.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_graph_min_graph_size(1);
+  absl::SetVLogLevel("custom_call", 5);
+  absl::SetVLogLevel("record_ffi", 3);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                             std::move(compile_options)));
+  // Warmup.
+  EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  // Create.
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    HasSubstr("MosaicGpuRecord called for "
+                              "kernel_mosaic_gpu_kernel with action=Create")))
+        .Times(1);
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         HasSubstr("FfiCreateLaunch for kernel: "
+                                   "kernel_mosaic_gpu_kernel")))
+        .Times(1);
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         HasSubstr("MosaicGpuRecord falling back to stream "
+                                   "capture")))
+        .Times(0);
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    HasSubstr("MosaicGpuExecute launching kernel with name: "
+                              "kernel_mosaic_gpu_kernel")))
+        .Times(0);
+    log.StartCapturingLogs();
+    // The recorded kernel node writes the kernel's output (42).
+    EXPECT_THAT(ExecuteAndGetS32(executable.get()), IsOkAndHolds(42));
+  }
+  // Launch graph. XLA only. No mosaic gpu logs expected.
+  // Keep `held_result` alive so the next execution allocates a new output
+  // buffer address and triggers `action=Update`.
+  std::vector<std::vector<std::unique_ptr<xla::PjRtBuffer>>> held_result;
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _, HasSubstr("MosaicGpuRecord")))
+        .Times(0);
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _, HasSubstr("MosaicGpuExecute")))
+        .Times(0);
+    log.StartCapturingLogs();
+    std::vector<xla::PjRtBuffer*> no_buffers;
+    ASSERT_OK_AND_ASSIGN(held_result,
+                         executable->Execute({no_buffers}, /*options=*/{}));
+    ASSERT_THAT(held_result, SizeIs(1));
+    ASSERT_THAT(held_result[0], SizeIs(1));
+    EXPECT_THAT(GetS32(held_result[0][0].get()), IsOkAndHolds(42));
+  }
+  // Update.
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    HasSubstr("MosaicGpuRecord called for "
+                              "kernel_mosaic_gpu_kernel with action=Update")))
+        .Times(1);
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         HasSubstr("MosaicGpuRecord falling back to stream "
+                                   "capture")))
+        .Times(0);
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kInfo, _,
+                    HasSubstr("MosaicGpuExecute launching kernel with name: "
+                              "kernel_mosaic_gpu_kernel")))
+        .Times(0);
+    log.StartCapturingLogs();
+    // The updated node writes into the newly allocated output buffer.
+    EXPECT_THAT(ExecuteAndGetS32(executable.get()), IsOkAndHolds(42));
   }
 }
 

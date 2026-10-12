@@ -1698,10 +1698,14 @@ absl::Status MosaicGpuRecord(se::Stream* stream, ffi::RecordContext record_ctx,
   };
 
   // Fall back to stream capture for paths the record API can't express as a
-  // single graph node: namely multimem kernels, because they have barriers.
-  // Execute then runs under stream capture.
-  if (ModuleUsesCollectiveMetadata(attributes) || kernel->is_nvshmem_used ||
-      kernel->is_multimem_used) {
+  // single kernel node: NVSHMEM/multimem kernels, and collective-metadata
+  // kernels that launch a multi-GPU barrier before the kernel. Execute then
+  // runs under stream capture. (A captured kernel becomes a child-graph node,
+  // which can't be the source of a programmatic (PDL) edge.)
+  const bool uses_collective_metadata = ModuleUsesCollectiveMetadata(
+      attributes);
+  if (kernel->is_nvshmem_used || kernel->is_multimem_used ||
+      (uses_collective_metadata && !ModuleSkipsDeviceBarrier(attributes))) {
     XLA_VLOG_DEVICE(5, device_ordinal)
         << "MosaicGpuRecord falling back to stream capture for "
         << kernel->kernel_name;
@@ -1711,9 +1715,30 @@ absl::Status MosaicGpuRecord(se::Stream* stream, ffi::RecordContext record_ctx,
   ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
                    GetBuffers(inputs, results));
   std::vector<void*> buffer_ptrs;
-  buffer_ptrs.reserve(buffers.size());
+  buffer_ptrs.reserve(buffers.size() + (uses_collective_metadata ? 2 : 0));
   for (const ffi::AnyBuffer& buffer : buffers) {
     buffer_ptrs.push_back(buffer.untyped_data());
+  }
+  DeviceState& device_state = GetDeviceState(resources, device_ordinal);
+  if (uses_collective_metadata) {
+    // Same extra arguments as `MosaicGpuExecute`: the device copy of the
+    // collective metadata (written by `MosaicGpuInitialize` before every
+    // execution, at a fixed address) and its host copy (for host-side TMA
+    // descriptor setup).
+    //
+    // The kernel reads the device copy at run time, so it always sees the
+    // current peer addresses. Anything `host_func` derives from the host copy
+    // (e.g. a TMA descriptor for a peer buffer) is baked into the recorded
+    // node and only refreshed when XLA re-records, which it does when this
+    // device's buffer allocations change. Stream capture has the same
+    // limitation (its trace cache is keyed by the local allocations too).
+    TF_RET_CHECK(!device_state.metadata_handle.is_null() &&
+                 !device_state.metadata_bytes.empty())
+        << "InternalError: collective metadata is uninitialized; "
+           "MosaicGpuPrepare and MosaicGpuInitialize must run before "
+           "MosaicGpuRecord";
+    buffer_ptrs.push_back(device_state.metadata_handle.cref().opaque());
+    buffer_ptrs.push_back(device_state.metadata_bytes.data());
   }
 
   TF_RET_CHECK(kernel->host_func != nullptr)
@@ -1746,7 +1771,6 @@ absl::Status MosaicGpuRecord(se::Stream* stream, ffi::RecordContext record_ctx,
        static_cast<int32_t>(cfg.cluster.z)}};
 
   if (record_ctx.action() == ffi::RecordAction::kCreate) {
-    const DeviceState& device_state = GetDeviceState(resources, device_ordinal);
     TF_RET_CHECK(device_state.kernel_handle != nullptr)
         << "InternalError: kernel_handle is null; MosaicGpuPrepare must run "
            "before MosaicGpuRecord";
@@ -1782,7 +1806,7 @@ absl::Status MosaicGpuExecute(
   ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
                    GetBuffers(inputs, results));
   bool uses_collective_metadata = ModuleUsesCollectiveMetadata(attributes);
-  buffer_ptrs.reserve(buffers.size() + (uses_collective_metadata ? 1 : 0));
+  buffer_ptrs.reserve(buffers.size() + (uses_collective_metadata ? 2 : 0));
   for (const xla::ffi::AnyBuffer& buffer : buffers) {
     buffer_ptrs.push_back(buffer.untyped_data());
   }
