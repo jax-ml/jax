@@ -174,6 +174,7 @@ def _apply_block_transform(
 
 @dataclasses.dataclass
 class PullRuleContext:
+  prim: core.Primitive
   avals_in: tuple[ShapedAbstractValue, ...]
   avals_out: tuple[ShapedAbstractValue, ...]
   out_usages: tuple[set[Usage], ...]
@@ -186,6 +187,7 @@ class PullRuleContext:
 
 @dataclasses.dataclass
 class PushRuleContext:
+  prim: core.Primitive
   avals_in: tuple[ShapedAbstractValue, ...]
   avals_out: tuple[ShapedAbstractValue, ...]
   invars: tuple[core.Atom, ...] | None = None
@@ -222,6 +224,7 @@ def _block_size(dim: pallas_core.Element | int | None) -> int | None:
 
 @dataclasses.dataclass
 class UsageRuleContext:
+  prim: core.Primitive
   avals_in: tuple[ShapedAbstractValue, ...]
   avals_out: tuple[ShapedAbstractValue, ...]
 
@@ -249,6 +252,7 @@ def compute_usage(jaxpr: core.Jaxpr, jaxpr_out_usages):
     rule = usage_rules.get(eqn.primitive, None)
     if rule:
       usage_rule_ctx = UsageRuleContext(
+          prim=eqn.primitive,
           avals_in=tuple(v.aval for v in eqn.invars),
           avals_out=tuple(v.aval for v in eqn.outvars),
       )
@@ -266,6 +270,7 @@ def compute_usage(jaxpr: core.Jaxpr, jaxpr_out_usages):
 
 @dataclasses.dataclass(frozen=True)
 class KernelEvalContext:
+  prim: core.Primitive
   scalar_prefetch: Any | None
   program_ids: tuple[int | jax.Array, ...] | None
   avals_in: tuple[ShapedAbstractValue, ...] | None
@@ -614,6 +619,7 @@ def _pull_block_transform(
     if not rule:
       raise NotImplementedError(eqn.primitive, eqn_out_block_transforms)
     ctx = PullRuleContext(
+        prim=eqn.primitive,
         avals_in=tuple(v.aval for v in eqn.invars),
         avals_out=tuple(v.aval for v in eqn.outvars),
         out_usages=tuple(read_usage_env(v) for v in jaxpr.outvars),
@@ -831,6 +837,7 @@ def make_kernel_function(
               if not isinstance(eqn.invars[i], core.Literal):
                 in_vals[i] = next(sp_iter)
         eval_ctx = KernelEvalContext(
+            prim=eqn.primitive,
             avals_in=tuple(v.aval for v in eqn.invars),
             avals_out=tuple(v.aval for v in eqn.outvars),
             scalar_prefetch=scalar_prefetch,
@@ -1053,25 +1060,23 @@ def register_pull_block_spec_rule(
 # Primitive rule implementations
 
 
-def _eltwise_eval_rule(prim, ctx, x, **params):
-  del ctx
-  return prim.bind(x, **params)
+def _eltwise_eval_rule(ctx: KernelEvalContext, x, **params):
+  return ctx.prim.bind(x, **params)
 
 
 def _eltwise_pull_rule(
-    prim: core.Primitive,
     ctx: PullRuleContext,
     block_transform: BlockIndexTransform,
     **params,
 ) -> Sequence[BlockIndexTransform | NoBlockIndexTransform]:
-  del prim, ctx, params
+  del ctx, params
   return [block_transform]
 
 
 def _eltwise_usage_rule(
-    prim: core.Primitive, ctx: UsageRuleContext, used_out: set[Usage], **params
+    ctx: UsageRuleContext, used_out: set[Usage], **params
 ) -> Sequence[set[Usage]]:
-  del ctx, prim, params
+  del ctx, params
   return [used_out]
 
 
@@ -1117,8 +1122,7 @@ def _push_bcast_block_spec(
   return block_spec.replace(block_shape=new_block_shape)
 
 
-def _binop_usage_rule(prim, ctx, used_out: set[Usage], **params):
-  del prim
+def _binop_usage_rule(ctx: UsageRuleContext, used_out: set[Usage], **params):
   del params  # unused
   if used_out == {Usage.SCALAR_PREFETCH}:
     return [{Usage.SCALAR_PREFETCH}, {Usage.SCALAR_PREFETCH}]
@@ -1129,13 +1133,11 @@ def _binop_usage_rule(prim, ctx, used_out: set[Usage], **params):
     return [set()] * len(ctx.avals_in)
 
 
-def _binop_eval_rule(prim, ctx, x, y, **params):
-  del ctx
-  return prim.bind(x, y, **params)
+def _binop_eval_rule(ctx: KernelEvalContext, x, y, **params):
+  return ctx.prim.bind(x, y, **params)
 
 
-def _binop_pull_rule(prim, ctx: PullRuleContext, block_transform, **params):
-  del prim
+def _binop_pull_rule(ctx: PullRuleContext, block_transform, **params):
   del params  # unused
   l_block_transform = block_transform
   r_block_transform = block_transform
@@ -1157,17 +1159,17 @@ def _binop_pull_rule(prim, ctx: PullRuleContext, block_transform, **params):
 
 
 def register_default_eval_rule(prim: core.Primitive):
-  def default_rule(ctx, *args, **params):
+  def default_rule(ctx: KernelEvalContext, *args, **params):
     assert all(bs is pallas_core.no_block_spec for bs in ctx.out_block_specs)
-    return prim.bind(*args, **params)
+    return ctx.prim.bind(*args, **params)
 
   register_eval_rule(prim)(default_rule)
 
 
 def register_binop_rule(prim: core.Primitive):
-  register_pull_block_spec_rule(prim)(functools.partial(_binop_pull_rule, prim))
-  register_usage_rule(prim)(functools.partial(_binop_usage_rule, prim))
-  register_eval_rule(prim)(functools.partial(_binop_eval_rule, prim))
+  register_pull_block_spec_rule(prim)(_binop_pull_rule)
+  register_usage_rule(prim)(_binop_usage_rule)
+  register_eval_rule(prim)(_binop_eval_rule)
 
 
 register_default_eval_rule(lax.axis_index_p)
@@ -2716,8 +2718,8 @@ def _custom_derivative_usage_rule(
   return _call_jaxpr_usage_rule(ctx, used_out, jaxpr=call_jaxpr)
 
 
+@register_eval_rule(pjit.jit_p)
 def _call_jaxpr_eval_rule(
-    prim: core.Primitive,
     ctx: KernelEvalContext,
     *args,
     jaxpr: core.Jaxpr,
@@ -2725,7 +2727,7 @@ def _call_jaxpr_eval_rule(
 ):
   del kwargs
   if jaxpr.consts:
-    raise NotImplementedError(f'{prim.name} with consts not supported yet')
+    raise NotImplementedError(f'{ctx.prim.name} with consts not supported yet')
   out_tree = tree_util.tree_structure(tuple(jaxpr.outvars))
   in_tree = tree_util.tree_structure((tuple(jaxpr.invars), {}))
 
@@ -2752,30 +2754,19 @@ def _call_jaxpr_eval_rule(
   return kernel_fn(ctx.get_program_ids(), ctx.scalar_prefetch, *args)
 
 
+@register_eval_rule(custom_derivatives.custom_jvp_call_p)
+@register_eval_rule(custom_derivatives.custom_vjp_call_p)
 def _custom_derivative_eval_rule(
-    prim: core.Primitive,
     ctx: KernelEvalContext,
     *args,
     call_jaxpr: core.Jaxpr,
     **kwargs,
 ):
-  return _call_jaxpr_eval_rule(prim, ctx, *args, jaxpr=call_jaxpr, **kwargs)
+  return _call_jaxpr_eval_rule(ctx, *args, jaxpr=call_jaxpr, **kwargs)
 
 
-register_eval_rule(pjit.jit_p)(
-    functools.partial(_call_jaxpr_eval_rule, pjit.jit_p)
-)
-for _prim in (
-    custom_derivatives.custom_jvp_call_p,
-    custom_derivatives.custom_vjp_call_p,
-):
-  register_eval_rule(_prim)(
-      functools.partial(_custom_derivative_eval_rule, _prim)
-  )
-
-
+@register_pull_block_spec_rule(pjit.jit_p)
 def _call_jaxpr_pull_block_spec_rule(
-    prim: core.Primitive,
     ctx: PullRuleContext,
     out_block_specs,
     *,
@@ -2784,7 +2775,7 @@ def _call_jaxpr_pull_block_spec_rule(
 ):
   del kwargs
   if jaxpr.consts:
-    raise NotImplementedError(f'{prim.name} with consts not supported yet')
+    raise NotImplementedError(f'{ctx.prim.name} with consts not supported yet')
 
   def read_usage_env(_: core.Var):
     return {Usage.REGULAR}
@@ -2800,8 +2791,9 @@ def _call_jaxpr_pull_block_spec_rule(
   return in_block_specs
 
 
+@register_pull_block_spec_rule(custom_derivatives.custom_jvp_call_p)
+@register_pull_block_spec_rule(custom_derivatives.custom_vjp_call_p)
 def _custom_derivative_pull_block_spec_rule(
-    prim: core.Primitive,
     ctx: PullRuleContext,
     out_block_specs,
     *,
@@ -2809,19 +2801,7 @@ def _custom_derivative_pull_block_spec_rule(
     **kwargs,
 ):
   return _call_jaxpr_pull_block_spec_rule(
-      prim, ctx, out_block_specs, jaxpr=call_jaxpr, **kwargs
-  )
-
-
-register_pull_block_spec_rule(pjit.jit_p)(
-    functools.partial(_call_jaxpr_pull_block_spec_rule, pjit.jit_p)
-)
-for _prim in (
-    custom_derivatives.custom_jvp_call_p,
-    custom_derivatives.custom_vjp_call_p,
-):
-  register_pull_block_spec_rule(_prim)(
-      functools.partial(_custom_derivative_pull_block_spec_rule, _prim)
+      ctx, out_block_specs, jaxpr=call_jaxpr, **kwargs
   )
 
 
@@ -2831,10 +2811,7 @@ def _custom_call_hi_primitive_pull_block_spec_rule(
 ):
   if isinstance(_prim, (hijax.CustomVJPTraced, hijax.CustomJVPTraced)):
     return _call_jaxpr_pull_block_spec_rule(
-        hijax.call_hi_primitive_p,
-        ctx,
-        out_block_specs,
-        jaxpr=_prim.traced.jaxpr,
+        ctx, out_block_specs, jaxpr=_prim.traced.jaxpr
     )
   return _prim.pull_block_spec_rule(ctx, out_block_specs)
 
@@ -2844,9 +2821,7 @@ def _custom_call_hi_primitive_eval_rule(
     ctx: KernelEvalContext, *args, _prim
 ):
   if isinstance(_prim, (hijax.CustomVJPTraced, hijax.CustomJVPTraced)):
-    return _call_jaxpr_eval_rule(
-        hijax.call_hi_primitive_p, ctx, *args, jaxpr=_prim.traced.jaxpr
-    )
+    return _call_jaxpr_eval_rule(ctx, *args, jaxpr=_prim.traced.jaxpr)
   return jax.tree.leaves(_prim.block_eval_rule(ctx, *args))
 
 
@@ -2988,6 +2963,7 @@ def _push_block_spec_jaxpr(
     if not rule:
       raise NotImplementedError(eqn.primitive)
     ctx = PushRuleContext(
+        prim=eqn.primitive,
         avals_in=tuple(v.aval for v in eqn.invars),
         avals_out=tuple(v.aval for v in eqn.outvars),
         invars=tuple(eqn.invars),
@@ -3088,13 +3064,12 @@ def register_push_block_spec_rule(
 
 
 def _binop_push_rule(
-    prim: core.Primitive,
     ctx: PullRuleContext,
     left_block_spec: pallas_core.BlockSpec,
     right_block_spec: pallas_core.BlockSpec,
     **params: Any,
 ) -> pallas_core.BlockSpec | tuple[pallas_core.BlockSpec, ...]:
-  del prim, params
+  del params
   left_aval, right_aval = ctx.avals_in
   if not right_aval.shape:
     return left_block_spec
@@ -3123,7 +3098,7 @@ def _binop_push_rule(
 
 
 register_binop_push_rule = lambda prim: register_push_block_spec_rule(prim)(
-    functools.partial(_binop_push_rule, prim)
+    _binop_push_rule
 )
 register_binop_push_rule(lax.mul_p)
 register_binop_push_rule(lax.add_p)
@@ -3141,12 +3116,11 @@ register_binop_push_rule(ad_util.add_any_p)
 
 
 def _eltwise_push_rule(
-    prim: core.Primitive,
     ctx: PullRuleContext,
     block_spec: pallas_core.BlockSpec,
     **params,
 ) -> pallas_core.BlockSpec:
-  del prim, ctx, params
+  del ctx, params
   return block_spec
 
 
@@ -3270,14 +3244,10 @@ def _custom_call_hi_primitive_push_block_spec_rule(
 
 
 def register_eltwise_rule(prim: core.Primitive):
-  register_pull_block_spec_rule(prim)(
-      functools.partial(_eltwise_pull_rule, prim)
-  )
-  register_usage_rule(prim)(functools.partial(_eltwise_usage_rule, prim))
-  register_eval_rule(prim)(functools.partial(_eltwise_eval_rule, prim))
-  register_push_block_spec_rule(prim)(
-      functools.partial(_eltwise_push_rule, prim)
-  )
+  register_pull_block_spec_rule(prim)(_eltwise_pull_rule)
+  register_usage_rule(prim)(_eltwise_usage_rule)
+  register_eval_rule(prim)(_eltwise_eval_rule)
+  register_push_block_spec_rule(prim)(_eltwise_push_rule)
 
 
 register_eltwise_rule(lax.exp_p)
