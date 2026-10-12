@@ -29,14 +29,29 @@ export TF_CPP_MIN_LOG_LEVEL=0
 export JAX_ENABLE_X64="$JAXCI_ENABLE_X64"
 
 # ==============================================================================
-# Number of parallel processes for pytest: 4 test workers per GPU.
+# Pytest workers: 2 per device in DPX, 4 otherwise. amd-smi reports the
+# partition mode.
 # ==============================================================================
 
 export gpu_count=$(rocminfo | egrep -c "Device Type:\s+GPU")
 echo "Number of GPUs detected: $gpu_count"
 
-export num_processes=$((gpu_count * 4))
-echo "Number of processes to run: $num_processes"
+# accelerator_type is SPX/DPX/TPX/QPX/CPX; all devices share one mode.
+partition_mode="UNKNOWN"
+if command -v amd-smi >/dev/null 2>&1; then
+  detected_mode=$(amd-smi partition -c --csv 2>/dev/null \
+    | awk -F, 'NR==2 {print toupper($3); exit}')
+  [[ -n "$detected_mode" ]] && partition_mode="$detected_mode"
+fi
+
+if [[ "$partition_mode" == "DPX" ]]; then
+  workers_per_gpu=2
+else
+  workers_per_gpu=4
+fi
+
+export num_processes=$((gpu_count * workers_per_gpu))
+echo "Partition mode: $partition_mode, processes: $num_processes"
 
 export JAX_ENABLE_ROCM_XDIST="$gpu_count"
 export XLA_PYTHON_CLIENT_ALLOCATOR=address
