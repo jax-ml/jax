@@ -5265,6 +5265,158 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     )(x)
     np.testing.assert_array_equal(y, expected)
 
+  def _test_cp_async_padded(
+      self,
+      slice_shape: tuple[int, int],
+      padded_slice_shape: tuple[int, int],
+      dtype,
+      tiled: bool = False,
+      swizzle: int | None = None,
+      row_offset: int | None = None,
+      col_offset: int | None = None,
+  ):
+    bw = bitwidth(dtype_to_ir_type(dtype))
+    if (slice_shape[-1] * bw) % 32 != 0:
+      self.skipTest("Minor dimension must be a multiple of 4 bytes")
+    tiling = (8, 8 * swizzle // bw) if tiled else None
+    use_dyn_slice = row_offset is not None or col_offset is not None
+    if use_dyn_slice:
+      assert row_offset is not None and col_offset is not None
+      gmem_shape = (2, slice_shape[0], 4, slice_shape[1])
+    else:
+      row_offset = col_offset = 0
+      gmem_shape = (2, 4, *slice_shape)
+    out_shape = (2, 4, *padded_slice_shape)
+
+    def kernel(ctx, src, dst, smem):
+      index = ir.IndexType.get()
+      if use_dyn_slice:
+        dyn_row = arith.constant(index, ir.IntegerAttr.get(index, row_offset))
+        dyn_col = arith.constant(index, ir.IntegerAttr.get(index, col_offset))
+      for b in range(2):
+        for h in range(4):
+          if use_dyn_slice:
+            gmem_slice = (
+                b,
+                utils.ds(dyn_row, padded_slice_shape[0]),
+                h,
+                utils.ds(dyn_col, padded_slice_shape[1]),
+            )
+          else:
+            gmem_slice = (
+                b,
+                h,
+                slice(0, padded_slice_shape[0]),
+                slice(0, padded_slice_shape[1]),
+            )
+          ctx.async_copy(
+              src_ref=src,
+              dst_ref=smem,
+              gmem_slice=gmem_slice,
+              swizzle=swizzle,
+              gmem_transform=mgpu.TileTransform(tiling) if tiling else (),
+              implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
+              oob_mode=mgpu.OOBFillMode.UNDEFINED,
+          )
+          ctx.await_cp_async_copy(0)
+          dst_slice = memref_slice(dst, (b, h))
+          if tiling:
+            mgpu.copy_tiled(smem, dst_slice, swizzle=swizzle)
+          else:
+            copy(smem, dst_slice)
+
+    x = (
+        (np.arange(math.prod(gmem_shape), dtype=np.int32) % 1000 + 1)
+        .astype(dtype)
+        .reshape(gmem_shape)
+    )
+    smem_shape = (
+        mgpu.tile_shape(padded_slice_shape, tiling)
+        if tiling
+        else padded_slice_shape
+    )
+    smem = jax.ShapeDtypeStruct(smem_shape, dtype)
+    out = jax.ShapeDtypeStruct(out_shape, dtype)
+    y = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        x,
+        out,
+        smem,
+    )(x)
+    valid_rows = max(0, min(padded_slice_shape[0], slice_shape[0] - row_offset))
+    valid_cols = max(0, min(padded_slice_shape[1], slice_shape[1] - col_offset))
+    expected = (np.swapaxes(x, 1, 2) if use_dyn_slice else x)[
+        :,
+        :,
+        row_offset : row_offset + valid_rows,
+        col_offset : col_offset + valid_cols,
+    ]
+    np.testing.assert_array_equal(y[:, :, :valid_rows, :valid_cols], expected)
+
+  @parameterized.product(
+      slice_shape=[
+          (156, 156),  # Both dims padded (156 -> 160)
+          (64, 156),  # Inner dim padded
+          (58, 160),  # Outer dim padded
+          (58, 156),  # Both dims padded
+          (64, 160),  # Neither dim padded
+      ],
+      dtype=[jnp.int8, jnp.float16, jnp.int4],
+  )
+  def test_cp_async_padded_untiled(self, slice_shape, dtype):
+    padded_slice_shape = (math.ceil(slice_shape[0] / 32) * 32, 160)
+    self._test_cp_async_padded(slice_shape, padded_slice_shape, dtype)
+
+  @parameterized.product(
+      dtype=[jnp.float16, jnp.int8, jnp.int4],
+      slice_shape=[
+          (60, 128),  # Row padded
+          (64, 124),  # Col padded
+          (60, 120),  # Both row and col padded
+          (64, 128),  # Neither padded
+      ],
+      swizzle=[64, 128],
+  )
+  def test_cp_async_padded_tiled(self, dtype, slice_shape, swizzle):
+    bw = bitwidth(dtype_to_ir_type(dtype))
+    padded_slice_shape = (64, max(128, 8 * swizzle // bw))
+    self._test_cp_async_padded(
+        slice_shape, padded_slice_shape, dtype, tiled=True, swizzle=swizzle
+    )
+
+  @parameterized.product(
+      row_offset=[0, 20, 50],
+      col_offset=[0, 32, 56],
+  )
+  def test_cp_async_dynamic_slice_padded_untiled(self, row_offset, col_offset):
+    self._test_cp_async_padded(
+        (80, 104),
+        (64, 64),
+        jnp.float16,
+        row_offset=row_offset,
+        col_offset=col_offset,
+    )
+
+  @parameterized.product(
+      row_offset=[0, 20, 50],
+      col_offset=[0, 48, 50, 52],
+      swizzle=[64, 128],
+  )
+  def test_cp_async_dynamic_slice_padded_tiled(
+      self, row_offset, col_offset, swizzle
+  ):
+    self._test_cp_async_padded(
+        (80, 96),
+        (64, 64),
+        jnp.float16,
+        tiled=True,
+        swizzle=swizzle,
+        row_offset=row_offset,
+        col_offset=col_offset,
+    )
+
 
   def test_tma_collective_async_cp_with_no_swizzle(self):
     def body(ctx, src, dst, scratch):

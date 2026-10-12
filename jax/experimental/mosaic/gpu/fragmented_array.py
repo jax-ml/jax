@@ -5762,8 +5762,16 @@ def optimization_barrier(*arrays):
 
 
 def tiled_copy_smem_gmem_layout(
-    row_tiles: int, col_tiles: int, swizzle: int, bitwidth: int
+    row_tiles: int,
+    col_tiles: int,
+    swizzle: int,
+    bitwidth: int,
+    max_transfer_bytes: int = 16,
 ) -> TiledLayout:
+  if max_transfer_bytes not in (4, 8, 16):
+    raise ValueError(
+        f"max_transfer_bytes must be 4, 8, or 16, got {max_transfer_bytes}"
+    )
   swizzle_elems = 8 * swizzle // bitwidth
   if row_tiles % 4 == 0:
     warp_row_tiles, warp_col_tiles = 4, 1
@@ -5777,10 +5785,10 @@ def tiled_copy_smem_gmem_layout(
     warp_row_tiles, warp_col_tiles = 1, 4
   row_tiles //= warp_row_tiles
   col_tiles //= warp_col_tiles
-  bytes_per_thread = min(16, 8 * swizzle // WARP_SIZE)
+  bytes_per_thread = min(max_transfer_bytes, 8 * swizzle // WARP_SIZE)
   lane_row_tiles = lane_col_tiles = 1
-  if bytes_per_thread < 16:  # Try to splread multiple tiles over a warp.
-    max_scale_up = 16 // bytes_per_thread
+  if bytes_per_thread < max_transfer_bytes:  # Try to spread multiple tiles over a warp.
+    max_scale_up = max_transfer_bytes // bytes_per_thread
     while max_scale_up > 1 and col_tiles % 2 == 0:
       max_scale_up //= 2
       lane_col_tiles *= 2

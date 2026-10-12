@@ -1014,6 +1014,7 @@ class LaunchContext:
       collective: tuple[gpu.Dimension, ...],
       leader_tracked: CopyPartition | None,
       implementation: AsyncCopyImplementation,
+      oob_mode: OOBFillMode,
   ):
     """Performs setup common to TMA and CP_ASYNC implementations."""
     index = ir.IndexType.get()
@@ -1054,7 +1055,8 @@ class LaunchContext:
         gmem_slice,
         ir.MemRefType(gmem_ref.type).shape,
         # NOTE: TMA supports OOB indices, so we skip the check.
-        check_oob=implementation != AsyncCopyImplementation.TMA,
+        check_oob=implementation != AsyncCopyImplementation.TMA
+        and oob_mode != OOBFillMode.UNDEFINED,
     )
     if gather_indices is not None:
       slice_shape = [gather_indices.shape[0], *slice_shape[1:]]
@@ -1316,7 +1318,7 @@ class LaunchContext:
       predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
       reduction_op: TMAReductionOp | None = None,
       implementation: AsyncCopyImplementation = AsyncCopyImplementation.TMA,
-      oob_mode: OOBFillMode = OOBFillMode.ZEROS,
+      oob_mode: OOBFillMode | None = None,
   ):
     """Initiates an async copy between GMEM and SMEM.
 
@@ -1371,6 +1373,11 @@ class LaunchContext:
       gmem_transform = (gmem_transform,)
     if not isinstance(gmem_slice, tuple):
       gmem_slice = (gmem_slice,)
+    if oob_mode is None:
+      if implementation == AsyncCopyImplementation.TMA:
+        oob_mode = OOBFillMode.ZEROS
+      else:
+        oob_mode = OOBFillMode.PROMISE_IN_BOUNDS
 
     if reduction_op is not None:
       if implementation != AsyncCopyImplementation.TMA:
@@ -1413,6 +1420,7 @@ class LaunchContext:
         collective,
         leader_tracked,
         implementation,
+        oob_mode,
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
 
@@ -1430,6 +1438,10 @@ class LaunchContext:
     if implementation == AsyncCopyImplementation.CP_ASYNC:
       assert not collective
       assert leader_tracked is None
+      if oob_mode not in (OOBFillMode.PROMISE_IN_BOUNDS, OOBFillMode.UNDEFINED):
+        raise NotImplementedError(
+            f"CP_ASYNC implementation does not support {oob_mode=}"
+        )
       if not isinstance(predicate, _DefaultPredicate):
         raise NotImplementedError(
             "CP_ASYNC needs to be performed by the whole warpgroup and does not"
@@ -1457,12 +1469,14 @@ class LaunchContext:
       transformed_strides = gmem_strides
       for t in gmem_transform:
         transformed_strides = t.transform_strides(transformed_strides)
-      gmem_offset = utils.dyn_dot(
+      gmem_offset_elems = utils.dyn_dot(
           dyn_base_indices, [c(s, index) for s in transformed_strides]
       )
+      gmem_offset = gmem_offset_elems
       if offset_scale > 1:
         gmem_offset = arith.divui(gmem_offset, c(offset_scale, index))
       gmem_offset = arith.index_castui(i64, gmem_offset)
+      gmem_size = math.prod(gmem_ref_ty.shape)
 
       if squeezed_dims:
         sliced_dims = [
@@ -1488,6 +1502,7 @@ class LaunchContext:
         gmem_ref_ty = gmem_ref.type
         gmem_strides = [gmem_strides[i] for i in sliced_dims]
 
+      smem_shape = tuple(smem_ref_ty.shape)
       if not gmem_transform:
         if (
             swizzle is not None
@@ -1502,9 +1517,26 @@ class LaunchContext:
               "CP_ASYNC requires the number of elements to be a multiple of"
               f" {fa.WARPGROUP_SIZE}"
           )
+        is_offset_aligned = lambda vec_size: utils.is_known_divisible(
+            gmem_offset_elems, vec_size
+        )
+        # In order to satisfy the PTX alignment requirements for LDGs, we need to
+        # align the following.
+        # 1. Minor-most dim of SMEM must pack transfers contiguously.
+        # 2. GMEM strides must be transfer-size aligned.
+        # 3. Dynamic offsets must be aligned similarly. I.e. the transfer size
+        # and the gmem_ptr must be aligned with each other.
+        while layout.vec_size > 1 and (
+            smem_shape[-1] % layout.vec_size
+            or (len(gmem_strides) == 1 and gmem_ref_ty.shape[0] % layout.vec_size) # Cover 1-D transfers.
+            or any(s % layout.vec_size for s in gmem_strides[:-1])
+            or not is_offset_aligned(layout.vec_size)
+        ):
+          layout = dataclasses.replace(layout, vec_size=layout.vec_size // 2)
         if layout.vec_size * element_bitwidth < 32:
           raise ValueError(
-              "CP_ASYNC requires at least 4 bytes per transfer"
+              "CP_ASYNC requires GMEM strides and minor offset to be a multiple"
+              " of 4 bytes"
           )
         gmem_base_ptr = utils.memref_ptr(gmem_ref)
         gmem_base_ptr = llvm.addrspacecast(
@@ -1520,14 +1552,59 @@ class LaunchContext:
             if bytes_per_transfer == 16
             else nvvm.LoadCacheModifierKind.CA
         )
-        for linear_idx in layout.linear_thread_idxs():
+        rem_gmem_size = arith.subi(c(gmem_size, index), gmem_offset_elems)
+        # Delinearize the 1D SMEM element index into N-D coordinates and
+        # re-linearize using GMEM strides (which differ from SMEM strides when
+        # inner dimensions are sliced or padded).
+        if list(gmem_strides) == utils.get_contiguous_strides(smem_shape):
+          gmem_and_smem_idxs = (
+              (idx, idx) for idx in layout.linear_thread_idxs()
+          )
+        else:
+          gmem_and_smem_idxs = (
+              (
+                  utils.dyn_dot(smem_idxs, [c(s, index) for s in gmem_strides]),
+                  linear_idx,
+              )
+              for linear_idx, smem_idxs in zip(
+                  layout.linear_thread_idxs(),
+                  layout.thread_idxs(smem_shape),
+                  strict=True,
+              )
+          )
+        for gmem_idx, linear_idx in gmem_and_smem_idxs:
           idx = arith.index_castui(i32, linear_idx)
           if offset_scale > 1:
             idx = arith.divui(idx, c(offset_scale, i32))
+
+          if oob_mode == OOBFillMode.UNDEFINED:
+            in_bounds = arith.cmpi(
+                arith.CmpIPredicate.slt, gmem_idx, rem_gmem_size
+            )
+            # Because we aligned `vec_size` earlier, we either transfer all the
+            # bytes or none. A single arith.cmpi is sufficient.
+            cp_size = arith.select(
+                in_bounds, c(bytes_per_transfer, i32), c(0, i32)
+            )
+          else:
+            assert oob_mode == OOBFillMode.PROMISE_IN_BOUNDS
+            cp_size = None
+
           smem_ptr = utils.getelementptr(smem_base_ptr, [idx], gep_type)
-          gmem_ptr = utils.getelementptr(gmem_base_ptr, [idx], gep_type)
+          if offset_scale > 1:
+            gmem_offset_idx = arith.divui(gmem_idx, c(offset_scale, index))
+          else:
+            gmem_offset_idx = gmem_idx
+          gmem_idx_i64 = arith.index_castui(i64, gmem_offset_idx)
+          gmem_ptr = utils.getelementptr(
+              gmem_base_ptr, [gmem_idx_i64], gep_type
+          )
           nvvm.cp_async_shared_global(
-              smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier
+              smem_ptr,
+              gmem_ptr,
+              bytes_per_transfer,
+              cache_modifier,
+              cp_size=cp_size,
           )
       else:
         assert swizzle is not None
@@ -1535,8 +1612,40 @@ class LaunchContext:
         tiling = (8, swizzle_elems)
         if gmem_transform != (TileTransform(tiling),):
           raise NotImplementedError(gmem_transform)
+        if gmem_ref_ty.rank != 2:
+          raise NotImplementedError("Only 2D copies implemented")
+        max_transfer_bytes = 16
+        is_stride_aligned = (
+            lambda stride, transfer_bytes: (stride * element_bitwidth)
+            % (8 * transfer_bytes)
+            == 0
+        )
+        is_offset_aligned = lambda transfer_bytes: utils.is_known_divisible(
+            gmem_offset_elems, (8 * transfer_bytes) // element_bitwidth
+        )
+        # In order to satisfy the PTX alignment requirements for LDGs, we need to
+        # align the following.
+        # 1. GMEM strides must be transfer-size aligned.
+        # 2. Dynamic offsets must be aligned similarly. I.e. the transfer size
+        # and the gmem_ptr must be aligned with each other.
+        while max_transfer_bytes > max(4, element_bitwidth // 8) and (
+            not is_stride_aligned(gmem_strides[0], max_transfer_bytes)
+            or not is_offset_aligned(max_transfer_bytes)
+        ):
+          max_transfer_bytes //= 2
+        if not is_stride_aligned(
+            gmem_strides[0], max_transfer_bytes
+        ) or not is_offset_aligned(max_transfer_bytes):
+          raise ValueError(
+              "CP_ASYNC requires GMEM strides and minor offset to be a multiple"
+              " of 4 bytes"
+          )
         layout = fa.tiled_copy_smem_gmem_layout(
-            *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth  # pyrefly: ignore[bad-argument-count]
+            row_tiles=smem_ref_ty.shape[-4],
+            col_tiles=smem_ref_ty.shape[-3],
+            swizzle=swizzle,
+            bitwidth=element_bitwidth,
+            max_transfer_bytes=max_transfer_bytes,
         )
         dst_tiled_strides = [
             arith.constant(i32, s)
@@ -1548,8 +1657,6 @@ class LaunchContext:
         dyn_offset = arith.divui(dyn_offset, c(offset_scale, i32))
         dyn_offset = arith.extui(i64, dyn_offset)
         dyn_offset = arith.addi(dyn_offset, gmem_offset)
-        if gmem_ref_ty.rank != 2:
-          raise NotImplementedError("Only 2D copies implemented")
         gmem_slice_shape = tuple(
             s
             for i, s in enumerate(untransformed_slice_shape)
@@ -1569,10 +1676,43 @@ class LaunchContext:
             if bytes_per_transfer == 16
             else nvvm.LoadCacheModifierKind.CA
         )
+        gmem_shape = gmem_ref_ty.shape
         for _get, _update, get_base_idx, smem_ptr in transfers:
-          constant_offset = sum(i * s for i, s in zip(get_base_idx(), gmem_strides, strict=True))
-          gmem_ptr = utils.getelementptr(gmem_base_ptr, [constant_offset // offset_scale], gep_type)
-          nvvm.cp_async_shared_global(smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier)
+          if oob_mode == OOBFillMode.UNDEFINED and any(
+              idx >= dim_size
+              for idx, dim_size in zip(get_base_idx(), gmem_shape, strict=True)
+          ):
+            continue
+
+          constant_offset = sum(
+              i * s for i, s in zip(get_base_idx(), gmem_strides, strict=True)
+          )
+          gmem_ptr = utils.getelementptr(
+              gmem_base_ptr, [constant_offset // offset_scale], gep_type
+          )
+          if oob_mode == OOBFillMode.UNDEFINED:
+            gmem_idx = arith.addi(
+                dyn_offset, c(constant_offset // offset_scale, i64)
+            )
+            in_bounds = arith.cmpi(
+                arith.CmpIPredicate.ult,
+                gmem_idx,
+                c(gmem_size // offset_scale, i64),
+            )
+            cp_size = arith.select(
+                in_bounds, c(bytes_per_transfer, i32), c(0, i32)
+            )
+          else:
+            assert oob_mode == OOBFillMode.PROMISE_IN_BOUNDS
+            cp_size = None
+
+          nvvm.cp_async_shared_global(
+              smem_ptr,
+              gmem_ptr,
+              bytes_per_transfer,
+              cache_modifier,
+              cp_size=cp_size,
+          )
       if barrier is None:
         nvvm.cp_async_commit_group()
       else:
@@ -2299,7 +2439,13 @@ class LaunchContext:
         gather_indices,
         gmem_transform,
     ) = self._prepare_async_copy(
-        gmem_ref, gmem_slice, gmem_transform, collective, leader_tracked, impl
+        gmem_ref,
+        gmem_slice,
+        gmem_transform,
+        collective,
+        leader_tracked,
+        impl,
+        OOBFillMode.ZEROS,
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
 
