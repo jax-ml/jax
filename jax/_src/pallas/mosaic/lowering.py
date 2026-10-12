@@ -4867,16 +4867,38 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
         ctx.lowering_context.replace(block_shapes=ctx.block_shapes[1:]), branches[constant_index], *args
     )
   out_types = map(ctx.aval_to_ir_type, ctx.avals_out)
+  lowering_context = ctx.lowering_context.replace(
+      block_shapes=ctx.block_shapes[1:],
+  )
+  # Two way branches, like lax.cond and pl.when, stay scf.if. Mosaic in libtpu
+  # 0.0.50 and older cannot lower scf.index_switch; this requires 0.1.0, the
+  # version the conv lowering also requires.
+  # TODO(b/502722198): Remove the forward_compatible check after 20.11.2026.
+  if (
+      len(branches) > 2
+      and ctx.lowering_context.kernel_type == tpu_core.CoreType.TC
+      and not ctx.forward_compatible
+      and ctx.is_libtpu_at_least("0.1.0")
+  ):
+    # The default region holds the last branch, so an index out of range runs
+    # it, as in the scf.if cascade below. Mosaic picks a jump table or a branch
+    # chain.
+    switch_op = scf.IndexSwitchOp(
+        out_types,
+        arith.index_cast(ir.IndexType.get(), index),
+        range(len(branches) - 1),
+    )
+    for branch, block in zip(
+        branches, [*switch_op.case_blocks, switch_op.default_block]
+    ):
+      with ir.InsertionPoint(block):
+        scf.yield_(jaxpr_subcomp(lowering_context, branch, *args))
+    return switch_op.results
   pred = arith.cmpi(
       arith.CmpIPredicate.ne, index, ir_constant(0, index.type)
   )
   if_op = scf.IfOp(pred, out_types, has_else=True)
-  lowering_context = ctx.lowering_context.replace(
-      block_shapes=ctx.block_shapes[1:],
-  )
   with ir.InsertionPoint(if_op.then_block):
-    # TODO(b/300272065): Use `scf.IndexSwitchOp` instead of a cascade of
-    # if/else.
     if len(branches) > 2:
       out = _cond_lowering_rule(
           ctx,
