@@ -165,7 +165,7 @@ def matmul0(a, b, config):
 
   f = plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(m_iters, n_iters),
       grid_names=("m", "n"),
       scratch_shapes=dict(
@@ -207,9 +207,9 @@ simpler. Since both the async copy (TMA) as well as the `tcgen05` MMA instructio
 we don't even need to use multiple _warpgroups_. We can simply break up a single
 warpgroup into _four warps_ and specialize those!
 
-In Pallas, this can be achieved using `pl.core_map` with a `plgpu.WarpMesh`.
-For each Pallas thread that calls such a `core_map`, the body will be invoked
-exactly four times. The `core_map` synchronizes all warps both at entry at exit.
+In Mosaic GPU, this can be achieved using `plgpu.warp_map`.
+For each Pallas thread that calls `plgpu.warp_map`, the body will be invoked
+exactly four times. `plgpu.warp_map` synchronizes all warps both at entry and at exit.
 Note that only scalar operations are allowed in the body.
 
 This will be the biggest rewrite to this kernel we'll perform in this whole
@@ -227,9 +227,8 @@ def matmul1(a, b, config: TuningConfig):
     m_slice = pl.ds(m_index * tile_m, tile_m)
     n_slice = pl.ds(n_index * tile_n, tile_n)
 
-    @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-    def _per_warp():
-      warp_id = lax.axis_index("warp")
+    @plgpu.warp_map
+    def _per_warp(warp_id):
 
       @pl.when(warp_id == 0)
       def _memory():
@@ -275,7 +274,7 @@ which is followed by the epilogue. The epilogue remains the same (we only use a
 different barrier to await the completion), so we will not discuss it further.
 
 The `plgpu.emit_pipeline` call and the `do_mma` function has been replaced by
-a single `pl.core_map` invocation. You can see that immediately after entering
+a single `plgpu.warp_map` invocation. You can see that immediately after entering
 its body, each Pallas thread (now representing a warp!) finds out which of the
 four threads it is. We then use thread with index 0 to _only_ issue async
 copies that fetch the MMA operands in a loop, while thread with index 1 enters
@@ -452,9 +451,8 @@ in the cluster. This is important, because _only the leader block is supposed to
 issue MMA instructions_:
 
 ```python
-    @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-    def _per_warp():
-      warp_id = lax.axis_index("warp")
+    @plgpu.warp_map
+    def _per_warp(warp_id):
 
       @pl.when(warp_id == 0)
       def _memory():
@@ -578,9 +576,8 @@ def matmul4(a, b, config):
     def _mn_loop(...):
       ...
 
-      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-      def _per_warp():
-        warp_id = lax.axis_index("warp")
+      @plgpu.warp_map
+      def _per_warp(warp_id):
 
         @pl.when(warp_id == 0)
         def _memory():
@@ -697,9 +694,8 @@ def matmul(a, b, config):
 
       @pl.when(wg_idx == 0)
       def _compute_wg():
-        @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-        def _per_warp():
-          warp_id = lax.axis_index("warp")
+        @plgpu.warp_map
+        def _per_warp(warp_id):
 
           @pl.when(warp_id == 0)
           def _memory():
@@ -836,9 +832,8 @@ def matmul6(a, b, config: TuningConfig):
 
       @pl.when(wg_idx == 0)
       def _compute_wg():
-        @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-        def _per_warp():
-          warp_id = lax.axis_index("warp")
+        @plgpu.warp_map
+        def _per_warp(warp_id):
 
           @pl.when(warp_id == 0)
           def _memory():
@@ -905,7 +900,7 @@ def matmul6(a, b, config: TuningConfig):
   num_sms = backend.get_default_device().core_count
   f = plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(num_sms // 2,),
       grid_names=("cluster_grid",),
       cluster=(2,),
@@ -919,23 +914,15 @@ def matmul6(a, b, config: TuningConfig):
           b_smem=plgpu.SMEM(
               (max_concurrent_steps, tile_k, tile_n), dtype, transforms=transforms
           ),
-          acc_tmem=plgpu.TMEM(
-              (tile_m, 2 * cluster_tile_n), jnp.float32, collective=True
-          ),
-          acc_smem=plgpu.SMEM(
-              (2, tile_m, config.epilogue_tile_n), dtype, transforms=transforms
-          ),
-          load_barriers=plgpu.Barrier(
-              num_arrivals=2, num_barriers=max_concurrent_steps
-          ),
+          acc_tmem=plgpu.TMEM((tile_m, 2 * cluster_tile_n), jnp.float32, collective=True),
+          acc_smem=plgpu.SMEM((2, tile_m, config.epilogue_tile_n), dtype, transforms=transforms),
+          load_barriers=plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
           consumed_barriers=plgpu.Barrier(
               num_arrivals=1,
               num_barriers=max_concurrent_steps,
               orders_tensor_core=True,
           ),
-          mma_done_barrier=plgpu.Barrier(
-              num_arrivals=1, num_barriers=2, orders_tensor_core=True
-          ),
+          mma_done_barrier=plgpu.Barrier(num_arrivals=1, num_barriers=2, orders_tensor_core=True),
           store_done_barrier=plgpu.ClusterBarrier(
               collective_axes=("cluster",),
               num_arrivals=1,
