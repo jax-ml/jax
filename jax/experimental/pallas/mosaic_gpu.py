@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Experimental GPU backend for Pallas targeting H100.
+"""Experimental GPU backend for Pallas targeting Ampere, Hopper and Blackwell architectures.
 
 These APIs are highly unstable and can change weekly. Use at your own risk.
 """

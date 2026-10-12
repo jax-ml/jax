@@ -30,6 +30,7 @@ Functions
    layout_cast
    set_max_registers
    planar_snake
+   warp_map
 
 Loop-like functions
 -------------------
@@ -64,6 +65,17 @@ Asynchronous copies
    copy_gmem_to_smem
    copy_smem_to_gmem
    wait_smem_to_gmem
+
+Ampere-specific functions
+-------------------------
+
+.. autosummary::
+   :toctree: _autosummary
+
+   mma
+   Layout.MMA_LHS
+   Layout.MMA_RHS
+   Layout.MMA_ACC
 
 Hopper-specific functions
 -------------------------
@@ -107,3 +119,5 @@ Aliases
    ACC
    GMEM
    SMEM
+   TMEM
+   REGS
