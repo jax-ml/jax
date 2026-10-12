@@ -67,7 +67,20 @@ def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
   def stable_quadratic(_):
     abs_delta = lax.abs(delta)
     safe_abs_delta = jnp.where(abs_delta == 0, 1, abs_delta)
-    log_abs_scaled = lax.sub(lax.log(safe_abs_delta), lax.log(lax.abs(scale)))
+    # A subtraction of finite, opposite-signed inputs can overflow even when
+    # (x - loc) / scale and the final log-density are finite. In this case
+    # |x - loc| = |x| + |loc|, so recover its log magnitude with logaddexp.
+    overflowed_subtraction = (
+        jnp.isinf(delta) & jnp.isfinite(x) & jnp.isfinite(loc)
+    )
+    safe_abs_x = jnp.where(x == 0, 1, lax.abs(x))
+    safe_abs_loc = jnp.where(loc == 0, 1, lax.abs(loc))
+    log_abs_delta = jnp.where(
+        overflowed_subtraction,
+        jnp.logaddexp(lax.log(safe_abs_x), lax.log(safe_abs_loc)),
+        lax.log(safe_abs_delta),
+    )
+    log_abs_scaled = lax.sub(log_abs_delta, lax.log(lax.abs(scale)))
     log_quadratic = lax.sub(
         lax.mul(_lax_const(x, 2), log_abs_scaled), lax.log(df)
     )
@@ -85,7 +98,8 @@ def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
     use_stable = jnp.asarray(True)
   else:
     use_stable = jnp.any(
-        (lax.abs(scale) < _lax_const(x, 1e-16))
+        (jnp.isinf(delta) & jnp.isfinite(x) & jnp.isfinite(loc))
+        | (lax.abs(scale) < _lax_const(x, 1e-16))
         | (lax.abs(delta) > lax.mul(lax.abs(scale), _lax_const(x, 1e12)))
         | (df < _lax_const(x, 1e-5))
     )
