@@ -69,6 +69,7 @@ cc_library(
         "@xla//xla/backends/gpu/runtime:thunk_proto_cc",
         "@xla//xla/core/collectives:reduction_kind_proto_cc",
         "@xla//xla/ffi:attribute_map",
+        "@xla//xla/ffi:attribute_map_proto_cc",
         "@xla//xla/ffi:execution_state_proto_cc",
         "@xla//xla/mlir/utils:type_util",
         "@xla//xla/pjrt/proto:compile_options_proto_cc",
@@ -138,6 +139,7 @@ cc_library(
     deps = [
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
+        "@xla//xla:xla_data_proto_cc",
         "@xla//xla/backends/gpu:ffi",
         "@xla//xla/ffi",
         "@xla//xla/stream_executor:device_memory",
@@ -166,6 +168,7 @@ cc_test(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@xla//xla:shape_util",
+        "@xla//xla:xla_data_proto_cc",
         "@xla//xla/backends/gpu/codegen/kernels:custom_kernel",
         "@xla//xla/backends/gpu/runtime:async_thunk",
         "@xla//xla/backends/gpu/runtime:collective_group_thunk",

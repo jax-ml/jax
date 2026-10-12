@@ -60,6 +60,21 @@ py_library(
 )
 
 jax_multiplatform_test(
+    name = "arithmetic_test",
+    srcs = ["arithmetic_test.py"],
+    disable_configs = DISABLED_CONFIGS,
+    shard_count = 1,
+    tags = ["cpu:4"],
+    deps = [
+        ":numerics_test_util",
+    ] + py_deps([
+        "absl/testing",
+        "mpmath",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "bessel_test",
     srcs = ["bessel_test.py"],
     disable_configs = DISABLED_CONFIGS,
@@ -79,7 +94,7 @@ jax_multiplatform_test(
     name = "erf_test",
     srcs = ["erf_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 5,
+    shard_count = 7,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",

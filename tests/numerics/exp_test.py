@@ -17,6 +17,7 @@
 import math
 
 from absl.testing import parameterized
+import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
@@ -40,10 +41,12 @@ DTYPE_PARAMS = [(f"_{d.__name__}", d) for d in [bf16, f16, f32, f64]]
 TPU_EUPV1 = ["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"]
 
 
+@jax.jit
 def _exp_highest(x):
   return lax.exp(x, accuracy=lax.AccuracyMode.HIGHEST)
 
 
+@jax.jit
 def _expm1_highest(x):
   return lax.expm1(x, accuracy=lax.AccuracyMode.HIGHEST)
 

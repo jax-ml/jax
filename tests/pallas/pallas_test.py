@@ -2916,5 +2916,111 @@ class PallasHiJaxTest(ptu.PallasTest):
     self.assertArraysEqual(os.s, xs.s)
 
 
+class PallasDeviceIdTest(jtu.JaxTestCase):
+
+  def test_mixed_str_and_tuple_keys_in_device_id(self):
+    from jax._src.pallas import primitives as pallas_primitives
+    from jax._src.pallas import utils as pallas_utils
+    from jax._src.pallas.mosaic.interpret import utils as interpret_utils
+
+    raw_device_id = {("x", "y"): 3, "core": 1}
+    canonical = pallas_primitives.canonicalize_device_id(raw_device_id)
+    self.assertEqual(canonical, {("x", "y"): 3, ("core",): 1})
+    leaves, treedef = jax.tree.flatten(canonical)
+    reconstructed = jax.tree.unflatten(treedef, leaves)
+
+    mesh_info = pallas_utils.MeshInfo(
+        mesh_shape=(2, 2), axis_names=("x", "y"), mesh_strides=(2, 1)
+    )
+    mesh_coords, non_mesh_axes = pallas_primitives._device_id_dict_to_mesh(
+        mesh_info,
+        reconstructed,
+        lambda axis: 0,
+    )
+    self.assertEqual(mesh_coords, (1, 1))
+    self.assertEqual(non_mesh_axes, {"core": 1})
+
+    interpret_coords, interpret_non_mesh = (
+        interpret_utils._device_id_dict_to_mesh(
+            reconstructed,
+            {"x": 2, "y": 2},
+            {"x": 0, "y": 0},
+        )
+    )
+    self.assertEqual(interpret_coords, (1, 1))
+    self.assertEqual(interpret_non_mesh, {"core": 1})
+
+  def test_core_barrier_x64(self):
+    if not pltpu:
+      self.skipTest("Pallas TPU is not available")
+    if not jtu.test_device_matches(["cpu"]):
+      self.skipTest("TPU interpret mode for pl.kernel only runs on CPU")
+    with jax.enable_x64(True):
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name="core", num_cores=2),
+          scratch_types=[pltpu.SemaphoreType.REGULAR],
+          interpret=pltpu.InterpretParams(),
+      )
+      def kernel(sem):
+        pltpu.core_barrier(sem, core_axis_name="core")
+
+      kernel()
+
+  def test_core_barrier_multi_axis_grid_lowering(self):
+    if not pltpu:
+      self.skipTest("Pallas TPU is not available")
+    with jax.enable_x64(False):
+      def kernel(o_ref, sem):
+        pltpu.core_barrier(sem, core_axis_name="core")
+        o_ref[...] = jnp.zeros_like(o_ref)
+
+      f = jax.jit(pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=0,
+              grid=(("core", 2), ("i", 2)),
+              scratch_shapes=[pltpu.SemaphoreType.REGULAR],
+          ),
+          compiler_params=pltpu.CompilerParams(
+              dimension_semantics=("parallel", "arbitrary")
+          ),
+      ))
+      abstract_mesh = jax.sharding.AbstractMesh(
+          (1,), ("x",), (jax.sharding.AxisType.Explicit,),
+          abstract_device=jax.sharding.AbstractDevice("TPU v5p", 2, "tpu"),
+      )
+      with jax.sharding.use_abstract_mesh(abstract_mesh):
+        f.trace().lower()
+
+  def test_interpret_non_core_grid_axis_in_device_id_rejected(self):
+    if not pltpu:
+      self.skipTest("Pallas TPU is not available")
+
+    def kernel(o_ref, sem):
+      pl.semaphore_signal(sem, 1, device_id={"i": jnp.int32(0)})
+      pl.semaphore_wait(sem, 1)
+      o_ref[...] = jnp.zeros_like(o_ref)
+
+    call = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            grid=(("i", 1),),
+            scratch_shapes=[pltpu.SemaphoreType.REGULAR],
+        ),
+        interpret=pltpu.InterpretParams(),
+    )
+    with self.assertRaises((ValueError, NotImplementedError)):
+      call()
+
+  def test_canonicalize_device_id_duplicate_axis_key(self):
+    from jax._src.pallas import primitives as pallas_primitives
+
+    with self.assertRaises(ValueError):
+      pallas_primitives.canonicalize_device_id({"x": 0, ("x",): 1})
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

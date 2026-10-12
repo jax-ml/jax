@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from types import ModuleType
 from typing import Any, Protocol, Self, runtime_checkable
 import numpy as np
@@ -74,8 +74,8 @@ class Array:
   def __getitem__(self, key, /) -> Self: ...
   def __setitem__(self, key, value, /) -> None: ...
   def __len__(self) -> int: ...
-  def __iter__(self) -> Any: ...  # TODO(jakevdp) make this Iterator[Self]
-  def __reversed__(self) -> Any: ...  # TODO(jakevdp) make this Iterator[Self]
+  def __iter__(self) -> Iterator[Self]: ...
+  def __reversed__(self) -> Iterator[Self]: ...
   def __round__(self, ndigits=None) -> Self: ...
 
   # Comparisons

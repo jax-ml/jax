@@ -66,24 +66,29 @@ def _tanh_interesting_points(dtype):
 # which are already covered by CoshTest and SinhTest.
 
 
+@jax.jit
 def tanh_grad(x):
   return jax.vmap(jax.grad(jnp.tanh))(x)
 
 
+@jax.jit
 def tanh_grad_highest(x):
   return jax.vmap(
       jax.grad(lambda x: lax.tanh(x, accuracy=lax.AccuracyMode.HIGHEST))
   )(x)
 
 
+@jax.jit
 def acosh_grad(x):
   return jax.vmap(jax.grad(jnp.acosh))(x)
 
 
+@jax.jit
 def asinh_grad(x):
   return jax.vmap(jax.grad(jnp.asinh))(x)
 
 
+@jax.jit
 def atanh_grad(x):
   return jax.vmap(jax.grad(jnp.atanh))(x)
 

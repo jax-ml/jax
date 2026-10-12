@@ -156,8 +156,12 @@ def _load_lowering_rule(
   [out_aval] = ctx.avals_out
   assert isinstance(out_aval, jax_core.ShapedArray)
 
+  transforms = list(tree_util.tree_unflatten(tree, flat_transforms))
+  tref_aval = state.transform_type(transforms, ref_aval)
+  assert isinstance(tref_aval, state.AbstractRef)
+
   ref_memory_space = tpu_core.memory_space_to_tpu_memory_space(
-      ref_aval.memory_space, ctx.lowering_context.kernel_type
+      tref_aval.memory_space, ctx.lowering_context.kernel_type
   )
   if (
       ref_memory_space is MemorySpace.HBM
@@ -169,15 +173,16 @@ def _load_lowering_rule(
         " via `pltpu.async_copy`."
     )
 
-  transforms = list(tree_util.tree_unflatten(tree, flat_transforms))
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
-    tref_aval = state.transform_type(transforms, ref_aval)
-    assert isinstance(tref_aval, state.AbstractRef)
     transforms.append(indexing.NDIndexer.make_trivial_indexer(tref_aval.shape))
   *prev_transforms, indexer = transforms
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
-      ref, ref_aval, ref_block_shape, prev_transforms
+      ref,
+      ref_aval,
+      ref_block_shape,
+      prev_transforms,
+      kernel_type=ctx.lowering_context.kernel_type,
   )
   starts, sizes, strides, squeeze_dims, _ = tc_lowering._indexer_to_start_size_stride(
       indexer, ref_block_shape, cast_to_index=True
@@ -271,8 +276,12 @@ def _store_lowering_rule(
   [out_aval] = ctx.avals_out
   assert isinstance(out_aval, jax_core.ShapedArray)
 
+  transforms = list(tree_util.tree_unflatten(tree, flat_transforms))
+  tref_aval = state.transform_type(transforms, ref_aval)
+  assert isinstance(tref_aval, state.AbstractRef)
+
   ref_memory_space = tpu_core.memory_space_to_tpu_memory_space(
-      ref_aval.memory_space, ctx.lowering_context.kernel_type
+      tref_aval.memory_space, ctx.lowering_context.kernel_type
   )
   if (
       ref_memory_space is MemorySpace.HBM
@@ -284,15 +293,16 @@ def _store_lowering_rule(
         " via `pltpu.async_copy`."
     )
 
-  transforms = list(tree_util.tree_unflatten(tree, flat_transforms))
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
-    tref_aval = state.transform_type(transforms, ref_aval)
-    assert isinstance(tref_aval, state.AbstractRef)
     transforms.append(indexing.NDIndexer.make_trivial_indexer(tref_aval.shape))
   *prev_transforms, indexer = transforms
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
-      ref, ref_aval, ref_block_shape, prev_transforms
+      ref,
+      ref_aval,
+      ref_block_shape,
+      prev_transforms,
+      kernel_type=ctx.lowering_context.kernel_type,
   )
   starts, sizes, strides, squeeze_dims, _ = tc_lowering._indexer_to_start_size_stride(
       indexer, ref_block_shape, cast_to_index=True
@@ -477,7 +487,13 @@ def _debug_print_lowering_rule(
       ref, transforms = _get_ref_and_transforms(tref)
       ref_aval, _ = _get_ref_and_transforms(avals[0])
       assert isinstance(ref_aval, state.AbstractRef)
-      ref, _ = _transform_ref(ref, ref_aval, ref_aval.shape, transforms)
+      ref, _ = _transform_ref(
+          ref,
+          ref_aval,
+          ref_aval.shape,
+          transforms,
+          kernel_type=ctx.lowering_context.kernel_type,
+      )
       tpu.log_buffer(ref, avals[0].shape, fmt)
     case [arg] if isinstance(arg.type, ir.MemRefType):
       tpu.log_buffer(arg, avals[0].shape, fmt)
@@ -516,14 +532,22 @@ def _prepare_dma_refs(
             " `pltpu.async_copy`"
         )
       dst_ref, _ = _transform_ref(
-          dst_ref, dst_aval, dst_aval.shape, dst_transforms
+          dst_ref,
+          dst_aval,
+          dst_aval.shape,
+          dst_transforms,
+          kernel_type=core_type,
       )
       dst_ref_shape = tuple(ir.MemRefType(dst_ref.type).shape)
       indirect_offsets, src_transforms = _extract_indirect_offsets(
           src_transforms, dst_ref_shape, src_transforms_aval, core_type
       )
       src_ref, _ = _transform_ref(
-          src_ref, src_aval, src_aval.shape, src_transforms
+          src_ref,
+          src_aval,
+          src_aval.shape,
+          src_transforms,
+          kernel_type=core_type,
       )
       indirect_offsets_ref_str = "src_ref"
     case MemorySpace.VMEM, MemorySpace.HBM | MemorySpace.VMEM_SHARED:
@@ -539,14 +563,22 @@ def _prepare_dma_refs(
             " `pltpu.async_copy`"
         )
       src_ref, _ = _transform_ref(
-          src_ref, src_aval, src_aval.shape, src_transforms
+          src_ref,
+          src_aval,
+          src_aval.shape,
+          src_transforms,
+          kernel_type=core_type,
       )
       src_ref_shape = tuple(ir.MemRefType(src_ref.type).shape)
       indirect_offsets, dst_transforms = _extract_indirect_offsets(
           dst_transforms, src_ref_shape, dst_transforms_aval, core_type
       )
       dst_ref, _ = _transform_ref(
-          dst_ref, dst_aval, dst_aval.shape, dst_transforms
+          dst_ref,
+          dst_aval,
+          dst_aval.shape,
+          dst_transforms,
+          kernel_type=core_type,
       )
       indirect_offsets_ref_str = "dst_ref"
     case _:  # Indirect DMA is not supported.
@@ -687,6 +719,7 @@ def _dma_start_lowering_rule(
         _dma_start,
         [src_ref, dst_ref, sem, src_sem],
         [src_aval, dst_aval, sem_aval, src_sem_aval],
+        kernel_type=ctx.lowering_context.kernel_type,
     )
 
   if device_id is not None:
@@ -707,7 +740,9 @@ def _dma_start_lowering_rule(
     )
 
   sem_aval, _ = _get_ref_and_transforms(sem_aval)
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape)
+  sem, _ = _transform_ref(
+      sem, sem_aval, sem_aval.shape, kernel_type=ctx.lowering_context.kernel_type
+  )
   tpu.enqueue_indirect_dma(
       src_ref,
       dst_ref,
@@ -792,6 +827,7 @@ def _dma_wait_lowering_rule(
         _dma_wait,
         [src_ref, dst_ref, sem, src_sem],
         [src_aval, dst_aval, sem_aval, src_sem_aval],
+        kernel_type=ctx.lowering_context.kernel_type,
     )
 
   if device_id is not None:
@@ -814,7 +850,9 @@ def _dma_wait_lowering_rule(
         " to await the write into the local destination."
     )
   sem_aval, _ = _get_ref_and_transforms(sem_aval)
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape)
+  sem, _ = _transform_ref(
+      sem, sem_aval, sem_aval.shape, kernel_type=ctx.lowering_context.kernel_type
+  )
   tpu.wait_indirect_dma(sem, src_ref, dst_ref)
   return []
 
@@ -881,6 +919,7 @@ def _extract_indirect_offsets_from_indices(
           offsets_aval.ref,
           offsets_aval.ref.shape,  # The shape before the indexing.
           offsets_ref.transforms,
+          kernel_type=core_type,
       )
       assert isinstance(offsets, ir.Value)
     case _:

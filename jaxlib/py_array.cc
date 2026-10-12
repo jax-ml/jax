@@ -1990,10 +1990,10 @@ bool IsZeroCopyableCpuBuffer(const xla::PjRtBuffer* buf) {
 // multi-dimensional strided copies.
 //
 // REQUIRES: Python GIL is held.
-absl::Status SetSlice(nanobind::handle dst_array, xla::nb_dtype dtype,
-                      const xla::ifrt::IndexDomain& index_domain,
-                      std::optional<absl::Span<const int64_t>> byte_strides,
-                      const void* src_data) {
+void SetSlice(nanobind::handle dst_array, xla::nb_dtype dtype,
+              const xla::ifrt::IndexDomain& index_domain,
+              std::optional<absl::Span<const int64_t>> byte_strides,
+              const void* src_data) {
   const absl::Span<const int64_t>& dims = index_domain.shape().dims();
   const int ndim = dims.size();
   nanobind::tuple_builder index_tuple_builder(ndim);
@@ -2004,22 +2004,7 @@ absl::Status SetSlice(nanobind::handle dst_array, xla::nb_dtype dtype,
   }
   nanobind::tuple index_tuple = index_tuple_builder.commit();
   xla::nb_numpy_ndarray shard_array(dtype, dims, byte_strides, src_data);
-  if (PyObject_SetItem(dst_array.ptr(), index_tuple.ptr(), shard_array.ptr()) <
-      0) {
-    PyObject *ptype, *pvalue, *ptraceback;
-    PyErr_Fetch(&ptype, &pvalue, &ptraceback);
-    std::string err_msg = "Failed to copy shard slice to host array";
-    if (pvalue != nullptr) {
-      nanobind::str err_str =
-          nanobind::steal<nanobind::str>(PyObject_Str(pvalue));
-      absl::StrAppend(&err_msg, ": ", err_str.c_str());
-    }
-    Py_XDECREF(ptype);
-    Py_XDECREF(pvalue);
-    Py_XDECREF(ptraceback);
-    return absl::InternalError(err_msg);
-  }
-  return absl::OkStatus();
+  dst_array[index_tuple] = shard_array;
 }
 
 // Copies a single dense slice of string cords into a sub-region of the
@@ -2701,9 +2686,8 @@ absl::Status PyArray::BatchedCopyToHostAsyncHelper(
                     slice_byte_strides =
                         absl::MakeConstSpan(*shard_byte_strides);
                   }
-                  ABSL_RETURN_IF_ERROR(
-                      SetSlice(result, dtype, slice.index_domain,
-                               slice_byte_strides, slice.temp_buffer.get()));
+                  SetSlice(result, dtype, slice.index_domain,
+                           slice_byte_strides, slice.temp_buffer.get());
                 }
                 result.attr("flags").attr("writeable") = nanobind::bool_(false);
                 return result;

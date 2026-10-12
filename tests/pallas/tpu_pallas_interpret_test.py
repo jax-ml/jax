@@ -545,6 +545,40 @@ class InterpretTest(jtu.JaxTestCase):
       self.assertTrue(np.isnan(out[2:, :]).all())
       self.assertTrue(np.isnan(out[:, 22:]).all())
 
+  def test_padded_buffer_bounds_do_not_depend_on_the_callers_mesh(self):
+    # The padding depends on the TPU that the lowering context targets, not on
+    # the context that runs the compiled kernel.
+    def kernel(i_ref, j_ref, x_ref, o_ref, s_ref):
+      # On TPU v6e, the padded shape of the (10, 150) scratch is (16, 256).
+      rows = pl.ds(pl.multiple_of(i_ref[0], 8), 8)
+      lanes = pl.ds(pl.multiple_of(j_ref[0], 128), 128)
+      s_ref[rows, lanes] = x_ref[...]
+      o_ref[...] = s_ref[rows, lanes]
+
+    @jax.jit
+    def f(i, j, x):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          scratch_shapes=[pltpu.VMEM((10, 150), jnp.float32)],
+          interpret=pltpu.InterpretParams(
+              buffer_bounds='padded', out_of_bounds_reads='uninitialized'
+          ),
+      )(i, j, x)
+
+    i = jnp.array([8], jnp.int32)
+    j = jnp.array([128], jnp.int32)
+    x = jnp.ones((8, 128), dtype=jnp.float32)
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (), abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu')
+    )
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+      compiled = f.lower(i, j, x).compile()
+    out = compiled(i, j, x)
+    np.testing.assert_array_equal(out[:2, :22], 1.0)
+    self.assertTrue(np.isnan(out[2:, :]).all())
+    self.assertTrue(np.isnan(out[:, 22:]).all())
+
   def test_scalar_prefetch_example(self):
     def dynamic_slice_kernel(indices, x_ref, o_ref):
       del indices
@@ -723,6 +757,24 @@ class InterpretTest(jtu.JaxTestCase):
 
     lowered = jax.jit(matmul).lower(x, y).as_text(dialect='stablehlo')
     self.assertNotIn('dot_general', lowered)
+
+  def test_trace_value(self):
+    def kernel(s_ref, x_ref, o_ref):
+      pltpu.trace_value('s', s_ref[0])
+      o_ref[...] = x_ref[...] + s_ref[0]
+
+    s = jnp.array([3], jnp.int32)
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+    y = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ],
+        interpret=pltpu.InterpretParams(),
+    )(s, x)
+    np.testing.assert_array_equal(y, x + 3)
 
   @parameterized.parameters('nan', 'zero')
   def test_uninitialized_memory(self, uninitialized_memory):

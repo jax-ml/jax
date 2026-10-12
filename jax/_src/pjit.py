@@ -2555,13 +2555,7 @@ batching.fancy_primitive_batchers[layout_constraint_p] = _layout_constraint_batc
 
 # ----------------------------- explicit layout --------------------------------
 
-def get_layout_mode_from_args(args):
-  layouts = [core.typeof(a).layout for a in args]
-  if not all(type(l) is type(layouts[0]) for l in layouts):
-    raise TypeError(
-        'All args passed to `explicit_layout` must have the same type of'
-        f' layout. Got {layouts=}')
-  l = layouts[0]
+def get_layout_mode_from_layout(l):
   if isinstance(l, Layout):
     return LayoutMode.JAX
   # TODO(yashkatariya): Replace this with `isinstance(l, ArrayLayout)`.
@@ -2571,6 +2565,14 @@ def get_layout_mode_from_args(args):
     return LayoutMode.PALLAS_GPU
   else:
     return LayoutMode.AUTO
+
+def get_layout_mode_from_args(args):
+  layouts = [core.typeof(a).layout for a in args]
+  if not all(type(l) is type(layouts[0]) for l in layouts):
+    raise TypeError(
+        'All args passed to `explicit_layout` must have the same type of'
+        f' layout. Got {layouts=}')
+  return get_layout_mode_from_layout(layouts[0])
 
 
 def explicit_layout(f=None, /, *, in_layouts=None):
@@ -2619,6 +2621,38 @@ def _relayout_hlo_lowering(ctx, x_node, *, dst_layout):
   aval_out, = ctx.avals_out
   return [mlir.lower_with_explicit_types(ctx, x_node, aval_out)]
 mlir.register_lowering(relayout_p, _relayout_hlo_lowering)
+
+def _relayout_jvp_rule(primals, tangents, *, dst_layout):
+  (p,), (t,) = primals, tangents
+  primal_out = relayout_p.bind(p, dst_layout=dst_layout)
+  if type(t) is ad.Zero:
+    return primal_out, ad.p2tz(primal_out)
+  else:
+    tangent_out = relayout_p.bind(t, dst_layout=dst_layout)
+    return primal_out, tangent_out
+ad.primitive_jvps[relayout_p] = _relayout_jvp_rule
+
+def _relayout_linearize(_, nzs, x, *, dst_layout):
+  (nz,) = nzs
+  primal_out = relayout_p.bind(x, dst_layout=dst_layout)
+
+  def linearized(residuals, _, tangent):
+    assert not residuals
+    return (relayout_p.bind(tangent, dst_layout=dst_layout)
+            if nz else ad.p2tz(tangent))
+  return primal_out, nz, (), None, linearized
+ad.primitive_linearizations[relayout_p] = _relayout_linearize
+
+def _relayout_transpose_fancy(ct, x, *, dst_layout):
+  assert isinstance(x, ad.GradAccum)
+  if type(ct) is ad.Zero or isinstance(x, ad.NullAccum):
+    return
+  out_layout = x.aval.layout  # type: ignore
+  mode = get_layout_mode_from_layout(out_layout)
+  with use_layout_mode(mode):
+    x_bar = relayout_p.bind(ct, dst_layout=out_layout)
+    x.accum(x_bar)
+ad.fancy_transposes[relayout_p] = _relayout_transpose_fancy
 
 # ------------------------------- helpers --------------------------------------
 

@@ -7462,6 +7462,22 @@ class RematTest(jtu.JaxTestCase):
 
     _ = jax.grad(f)(3.)  # doesn't crash
 
+  @parameterized.named_parameters(("remat", False), ("remat3", True))
+  def test_dce_keeps_effectful_remat_with_no_used_outputs(self, remat3):
+    x_ref = jax.new_ref(jnp.zeros(3, jnp.float32))
+    def f():
+      def body():
+        x_ref[...] = jnp.ones(3, jnp.float32)
+      jax.checkpoint(body)()
+
+    with config.remat3(remat3):
+      jaxpr = jax.make_jaxpr(f)()
+      dced, _ = pe.dce_jaxpr(jaxpr, [])
+      self.assertLen(dced.eqns, 1)
+
+      jax.jit(f)()
+    self.assertAllClose(x_ref[...], jnp.ones(3, jnp.float32))
+
   def test_linearize_caching(self):
     # https://github.com/jax-ml/jax/issues/9661
     identity = jax.checkpoint(jax.jit(lambda x: 2 * x))
@@ -7623,6 +7639,19 @@ class RematTest(jtu.JaxTestCase):
                                                  jnp.ones((2, 4, 4))))
     self.assertEqual(jaxpr_text.count('MemorySpace.Host'), 1)
     self.assertEqual(jaxpr_text.count('MemorySpace.Device'), 1)
+
+  def test_remat_dce_unused_output(self):
+    @jax.remat
+    def f(x):
+      return jnp.sin(x), jnp.exp(x)
+
+    jaxpr = jax.jit(lambda x: f(x)[0]).trace(0.5).jaxpr
+    jaxpr_dce, _ = pe.dce_jaxpr(jaxpr.jaxpr, [True])
+    self.assertIn(' sin ', str(jaxpr_dce))
+    self.assertNotIn(' exp ', str(jaxpr_dce))
+
+    ans = api.grad(lambda x: f(x)[0])(0.5)
+    self.assertAllClose(ans, np.cos(0.5), check_dtypes=False)
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}

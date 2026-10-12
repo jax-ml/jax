@@ -137,6 +137,16 @@ def call_shape_dtype_sharding_rule(
 
 mosaic_tpu_layout_rule = None
 
+def _shard_aval(aval):
+  mesh = aval.sharding.mesh
+  if mesh.are_all_axes_manual or mesh.empty:
+    shard_shape = aval.shape
+  else:
+    assert mesh.are_all_axes_explicit
+    shard_shape = aval.sharding.shard_shape(aval.shape)
+  return aval.update(shape=shard_shape, sharding=None,
+                     manual_axis_type=core.empty_mat)
+
 def call_layout_rule(prim, layout_rule, in_avals, out_avals, **kwargs):
   cur_layout_mode = get_layout_mode()
   if cur_layout_mode is LayoutMode.AUTO:
@@ -157,7 +167,10 @@ def call_layout_rule(prim, layout_rule, in_avals, out_avals, **kwargs):
     raise NotImplementedError(
         f'Missing layout rule for {prim}. Please file an issue at'
         ' https://github.com/jax-ml/jax/issues')
-  return layout_rule(*in_avals, **kwargs)
+  in_avals = [_shard_aval(a) for a in in_avals]
+  out_avals = [_shard_aval(a) for a in out_avals]
+  return layout_rule(out_avals if prim.multiple_results else out_avals[0],
+                     *in_avals, **kwargs)
 
 
 def _default_memory_space_rule(prim, *avals, **kwargs):

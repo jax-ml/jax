@@ -2938,34 +2938,40 @@ def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any, pin: bool):
   from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   # If no memory space is specified, use the memory space of the initial value
   # but we make sure to reset it to Device because the Ref owns the memory space
-  if (memory_space is None
-      and isinstance(init_aval, ShapedArray)):
-    if init_aval.memory_space is not MemorySpace.Device:
+  if isinstance(init_aval, ShapedArray):
+    if (
+        memory_space is None
+        and init_aval.memory_space is not MemorySpace.Device
+    ):
       memory_space = init_aval.memory_space
-    init_aval = init_aval.update(memory_space=MemorySpace.Device)
-  if isinstance(init_aval, ShapedArray) and init_aval.weak_type:
-    init_aval = init_aval.update(weak_type=False)
+    init_aval = init_aval.update(
+        memory_space=MemorySpace.Device, weak_type=False
+    )
   return (AbstractRef(init_aval, memory_space=memory_space, kind=kind),
           {internal_mutable_array_effect})
 
 @ref_p.def_impl
 def _ref_impl(init_val, *, memory_space: Any, kind: Any, pin: bool):
-  if memory_space is not None:
+  if memory_space not in (None, MemorySpace.Device, MemorySpace.Host):
     raise NotImplementedError(
         "array ref with memory space only works inside of a `jit`.")
   if pin:
     raise NotImplementedError(
         "pinned array ref only works inside of a `jit`.")
   from jax._src.api import device_put  # pyrefly: ignore[missing-import]
-  from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   from jax._src.lax.lax import _array_copy, _convert_element_type  # pyrefly: ignore[missing-import]
+
+  if memory_space is not None:
+    init_val = device_put(init_val, memory_space)
   if dtypes.is_weakly_typed(init_val):
     buf = _convert_element_type(
         init_val, dtypes.dtype(init_val), weak_type=False
     )
   else:
     buf = _array_copy(init_val)
-  aval = AbstractRef(typeof(buf), kind=kind)
+  aval, _ = _ref_abstract_eval(
+      typeof(buf), memory_space=memory_space, kind=kind, pin=pin
+  )
   if not buf.committed:
     buf = device_put(buf, buf.sharding)
   return Ref(aval, ArrayRefImpl(aval, buf))
@@ -3063,7 +3069,7 @@ def freeze_abstract_eval(ref_aval):
 
 @freeze_p.def_impl
 def _freeze_impl(ref):
-  return ref[()]
+  return ref._refs._buf
 
 def accum_grad_in_ref(x):
   return accum_grad_in_ref_p.bind(x)

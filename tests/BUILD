@@ -64,10 +64,7 @@ jax_multiplatform_test(
         ],  # Times out.
     },
     shard_count = {
-        "cpu": select({
-            "//tests/config:tsan_freethreading_rbe": 2,
-            "//conditions:default": 1,
-        }),
+        "cpu": 2,
         "gpu": 4,
     },
     deps = [

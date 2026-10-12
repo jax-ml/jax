@@ -27,6 +27,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import ffi
+from jax._src import mesh as mesh_lib
 from jax._src import pickle_util
 from jax._src import sharding_impls
 from jax._src import tree_util
@@ -38,8 +39,8 @@ from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.sharding_impls import SdyArray, SdyArrayList, SdyDim, SingleDeviceSharding
 from jax._src.sharding import Sharding
+from jax._src.sharding_impls import SdyArray, SdyArrayList, SdyDim, SingleDeviceSharding
 from jax._src.typing import Array
 import numpy as np
 
@@ -88,7 +89,12 @@ def pure_callback_impl(
         " JAX_PLATFORMS environment variable."
     ) from e
   args = api.device_put(args, cpu_device)
-  with config.default_device(cpu_device):
+  # The callback may run on the dispatching thread; ignore that thread's mesh.
+  with (
+      config.default_device(cpu_device),
+      sharding_impls._internal_use_concrete_mesh(mesh_lib.empty_concrete_mesh),
+      mesh_lib.use_abstract_mesh(mesh_lib.empty_abstract_mesh),
+  ):
     try:
       return tree_util.tree_map(np.asarray, callback(*args))
     except BaseException:
@@ -434,7 +440,12 @@ def io_callback_impl(
         " JAX_PLATFORMS environment variable."
     ) from e
   args = api.device_put(args, cpu_device)
-  with config.default_device(cpu_device):
+  # The callback may run on the dispatching thread; ignore that thread's mesh.
+  with (
+      config.default_device(cpu_device),
+      sharding_impls._internal_use_concrete_mesh(mesh_lib.empty_concrete_mesh),
+      mesh_lib.use_abstract_mesh(mesh_lib.empty_abstract_mesh),
+  ):
     try:
       return tree_util.tree_map(np.asarray, callback(*args))
     except BaseException:

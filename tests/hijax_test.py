@@ -49,10 +49,11 @@ from jax._src.state.discharge import run_state
 
 from jax._src.hijax import (
     HiType, register_hitype, ShapedArray, Ty, MappingSpec,
-    HiPspec, vmap_rule)
+    HiPspec)
 from jax.experimental.hijax import (
-    HiPrim, Zero, instantiate_zeros, jvp_from_lin, linearize_from_jvp,
-    vjp_from_jvp, vjp_from_lin)
+    HiPrim, Zero, instantiate_zeros, bdims_at_front,
+    jvp_from_lin, linearize_from_jvp, vjp_from_jvp, vjp_from_lin,
+    vmap_rule)
 
 jtu.request_cpu_devices(8)
 
@@ -1416,8 +1417,7 @@ class HijaxTest(jtu.JaxTestCase):
         return x * y
 
       def batch(self, axis_data, args, dims):
-        x, y = (batching.bdim_at_front(a, d, axis_data.size)
-                for a, d in zip(args, dims))
+        x, y = bdims_at_front(axis_data, args, dims)
         return mul(x, y), 0
 
     def mul(x, y):
@@ -1472,8 +1472,7 @@ class HijaxTest(jtu.JaxTestCase):
         return x + y, y
 
       def batch(self, axis_data, args, dims):
-        x, y = (batching.bdim_at_front(a, d, axis_data.size)
-                for a, d in zip(args, dims))
+        x, y = bdims_at_front(axis_data, args, dims)
         return addsnd(x, y), (0, 0)
 
     def addsnd(x, y):
@@ -1519,8 +1518,7 @@ class HijaxTest(jtu.JaxTestCase):
         return mul(x, y), mul(x_dot, y) + mul(x, y_dot)
 
       def batch(self, axis_data, args, dims):
-        x, y = (batching.bdim_at_front(a, d, axis_data.size)
-                for a, d in zip(args, dims))
+        x, y = bdims_at_front(axis_data, args, dims)
         return mul(x, y), 0
 
     def mul(x, y):
@@ -3029,6 +3027,40 @@ class HijaxTest(jtu.JaxTestCase):
     clean_jaxpr = clean_fn.trace(jnp.float32(2.0)).jaxpr
     dced_jaxpr, _ = pe.dce_jaxpr(clean_jaxpr, True, instantiate=True)
     self.assertIs(dced_jaxpr, clean_jaxpr)
+
+  def test_lower_jaxpr_dce_keeps_effectful_remat(self):
+    with config.remat3(True):
+      @jax.jit
+      def f():
+        x_ref = jax.new_ref(jnp.zeros(3, dtype=jnp.float32))
+        def body(r):
+          r[...] = jnp.ones_like(r)  # no outputs, only an effect
+        jax.remat(body)(x_ref)
+        return x_ref[...]
+
+      self.assertAllClose(f(), jnp.ones(3, dtype=jnp.float32))
+
+  def test_lower_jaxpr_dce_keeps_effectful_custom_vjp_optimize_remat(self):
+    with config.custom_vjp3(True):
+      @jax.custom_vjp
+      def f(x, x_ref):
+        x_ref[...] = x
+        return jnp.sin(x)
+      def f_fwd(x, x_ref):
+        x_ref[...] = x
+        return jnp.sin(x), jnp.cos(x)
+      def f_bwd(cos_x, g):
+        return (cos_x * g, None)
+      f.defvjp(f_fwd, f_bwd, optimize_remat=True)
+
+      @jax.jit
+      def g(x):
+        x_ref = jax.new_ref(jnp.zeros((), jnp.float32))
+        # outputs unused, only an effect
+        jax.jvp(lambda x: f(x, x_ref), (x,), (jnp.float32(1.0),))
+        return x_ref[...]
+
+      self.assertAllClose(g(jnp.float32(2.0)), jnp.float32(2.0))
 
 
 class RefTest(jtu.JaxTestCase):

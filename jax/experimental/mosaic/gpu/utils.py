@@ -1289,12 +1289,6 @@ class BarrierRef:
       return "cluster"
     return "cta"
 
-  @property
-  def _nvvm_scope(self) -> nvvm.MemScopeKind:
-    if self.base_address.type == ir.Type.parse("!llvm.ptr<7>"):
-      return nvvm.MemScopeKind.CLUSTER
-    return nvvm.MemScopeKind.CTA
-
   def test_parity(
       self,
       parity,
@@ -1410,18 +1404,32 @@ class BarrierRef:
       nvvm.mbarrier_arrive_nocomplete(self.get_ptr(), count)
 
   def arrive_expect_tx(
-      self, tx_count: int | ir.Value, predicate: ir.Value | None = None
+      self,
+      tx_count: int | ir.Value,
+      predicate: ir.Value | None = None,
+      tensor_core_order_scope: ThreadSubset | None = None,
   ):
     if get_arch().major < 9:
       raise NotImplementedError("arrive_expect_tx is only supported on Hopper+ hardware")
+
+    if tensor_core_order_scope is not None:
+      before_thread_sync(
+          sync_threads=predicate is not None, scope=tensor_core_order_scope
+      )
 
     i32 = ir.IntegerType.get_signless(32)
     if isinstance(tx_count, int):
       tx_count = c(tx_count, i32)
     elif isinstance(tx_count.type, ir.IndexType):
       tx_count = arith.index_cast(i32, tx_count)
-    nvvm.mbarrier_arrive_expect_tx(
-        self.get_ptr(), tx_count, predicate=predicate, scope=self._nvvm_scope
+    ptx_scope = self._ptx_scope
+    inline_ptx(
+        f"mbarrier.arrive.expect_tx.release.{ptx_scope}.shared::{ptx_scope}.b64 _, [$0], $1;",
+        self.get_ptr(),
+        tx_count,
+        predicate=predicate,
+        has_side_effects=True,
+        convergent=True
     )
 
   def complete_tx(
@@ -2551,7 +2559,12 @@ def get_cluster_ptr(
   i32 = ir.IntegerType.get_signless(32)
   assert cluster_block.type == i32, cluster_block.type
   assert ptr.type == llvm.PointerType.get(3), ptr.type
-  mapped_smem_ptr = nvvm.mapa(llvm.PointerType.get(7), ptr, cluster_block)
+  mapped_smem_ptr = inline_ptx(
+      "mapa.shared::cluster.u32 $0, $1, $2;",
+      ptr,
+      cluster_block,
+      result_types=llvm.PointerType.get(7),
+  )
   if not generic:
     return mapped_smem_ptr
   return llvm.addrspacecast(llvm.PointerType.get(), mapped_smem_ptr)

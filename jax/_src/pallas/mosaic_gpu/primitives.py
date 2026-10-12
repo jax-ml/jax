@@ -690,7 +690,23 @@ def _async_store_smem_lowering(
     raise NotImplementedError(f"Transfer is not a multiple of {WARPGROUP_SIZE} bytes")
 
   peer_barrier = barrier.remap_to_cluster(gpu_cluster_dim, cluster_idx_val)
-  peer_barrier.arrive_expect_tx(total_bytes // WARPGROUP_SIZE)
+  orders_tensor_core = getattr(
+      barrier_ref_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
+  )
+  if orders_tensor_core:
+    tx_bytes = total_bytes
+    predicate = ctx.module_ctx.single_lane_predicate
+    if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+      scope = mgpu_utils.ThreadSubset.WARP
+    else:
+      scope = mgpu_utils.ThreadSubset.WARPGROUP
+  else:
+    tx_bytes = total_bytes // WARPGROUP_SIZE
+    predicate = None
+    scope = None
+  peer_barrier.arrive_expect_tx(
+      tx_bytes, predicate=predicate, tensor_core_order_scope=scope
+  )
 
   lowering._ensure_fa(src, dtype).store_tiled_async(
       ref_smem,
@@ -957,9 +973,13 @@ def _copy_gmem_to_smem_lowering(
       **_extract_smem_copy_params(dst_ref_aval, dst_transforms),
       **_extract_gmem_copy_params(ctx, src_transforms, src_transform_avals),
   }
+  orders_tensor_core = False
   if barrier is not None:
     barrier_ref_aval = ctx.avals_in[2]
     assert isinstance(barrier_ref_aval, state_types.AbstractRef)
+    orders_tensor_core = getattr(
+        barrier_ref_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
+    )
     base_index = _get_barrier_base_index(
         barrier_ref_aval,
         barrier_transforms_treedef.unflatten(flat_barrier_transforms),
@@ -1038,6 +1058,15 @@ def _copy_gmem_to_smem_lowering(
       )
 
   i32 = ir.IntegerType.get_signless(32)
+  arrive_predicate = predicate
+  if is_leader_tracked_copy:
+    first_block = arith_dialect.cmpi(
+        arith_dialect.CmpIPredicate.eq,
+        mgpu.utils.cluster_idx(collective[0]),
+        mgpu.c(0, ir.IndexType.get()),
+    )
+    arrive_predicate = _andi_maybe_none(arrive_predicate, first_block)
+
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     if (
         ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup
@@ -1047,30 +1076,34 @@ def _copy_gmem_to_smem_lowering(
 
     if not is_cp_async:
       assert barrier is not None
-      if bytes % WARPGROUP_SIZE:
+      if not orders_tensor_core and bytes % WARPGROUP_SIZE:
         raise NotImplementedError(
             "Only copies transferring a number of bytes divisible by the"
             f" warpgroup size are supported. Got {bytes=} but warpgroup size is"
             f" {WARPGROUP_SIZE}"
         )
-      if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup:
-        # We arrive uniformly from each thread in the WG, so we need to divide the
-        # number of bytes by the number of threads in the WG.
-        # TODO: apaszke - Relax this. We can just select the WG leader and have it
-        # arrive with the whole transfer size, while everyone else arrives with 0.
-        # But we should continue using this scheme as it's likely to be faster.
-        bytes //= WARPGROUP_SIZE
-        if predicate is not None:
-          bytes = arith_dialect.select(predicate, mgpu.c(bytes, i32), mgpu.c(0, i32))
-        if is_leader_tracked_copy:
-          first_block = arith_dialect.cmpi(
-              arith_dialect.CmpIPredicate.eq,
-              mgpu.utils.cluster_idx(collective[0]),
-              mgpu.c(0, ir.IndexType.get()),
-          )
-          barrier.arrive_expect_tx(bytes, predicate=first_block)
+      if orders_tensor_core:
+        if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+          scope = mgpu_utils.ThreadSubset.WARP
         else:
-          barrier.arrive_expect_tx(bytes)
+          scope = mgpu_utils.ThreadSubset.WARPGROUP
+        barrier.arrive_expect_tx(
+            bytes,
+            predicate=_andi_maybe_none(
+                arrive_predicate, ctx.module_ctx.single_lane_predicate
+            ),
+            tensor_core_order_scope=scope,
+        )
+      elif ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup:
+        # We arrive uniformly from each thread in the WG, so we need to divide
+        # the number of bytes by the number of threads in the WG.
+        # TODO: apaszke - Relax this. We can just select the WG leader and
+        # have it arrive with the whole transfer size, while everyone else
+        # arrives with 0.
+        # But we should continue using this scheme as it's likely to be
+        # faster.
+        bytes //= WARPGROUP_SIZE
+        barrier.arrive_expect_tx(bytes, predicate=arrive_predicate)
       else:
         # In Warp-level lowering, we arrive on each CUDA thread in a warp, but
         # the barrier still expects a full 128 arrivals so we arrive 4 times
@@ -1078,18 +1111,11 @@ def _copy_gmem_to_smem_lowering(
         # TODO(justinfu): The arrival counts are wrong if called outside of a
         # single warp. Figure out how to guard against this in user code.
         bytes = bytes // WARP_SIZE
-        if predicate is not None:
-          bytes = arith_dialect.select(predicate, mgpu.c(bytes, i32), mgpu.c(0, i32))
-        if is_leader_tracked_copy:
-          first_block = arith_dialect.cmpi(
-              arith_dialect.CmpIPredicate.eq,
-              mgpu.utils.cluster_idx(collective[0]),
-              mgpu.c(0, ir.IndexType.get()),
-          )
-          with mgpu.when(first_block):
-            barrier.arrive(arrival_count=3, can_complete=False)
-            barrier.arrive_expect_tx(bytes)
+        if arrive_predicate is not None:
+          arrive_ctx = mgpu.when(arrive_predicate)
         else:
+          arrive_ctx = contextlib.nullcontext()
+        with arrive_ctx:
           barrier.arrive(arrival_count=3, can_complete=False)
           barrier.arrive_expect_tx(bytes)
 
@@ -1156,22 +1182,13 @@ def _copy_gmem_to_smem_lowering(
   assert barrier is not None
   barrier_ref = barrier.as_barrier_memref()
 
-  if is_leader_tracked_copy:
-    first_block = arith_dialect.cmpi(
-        arith_dialect.CmpIPredicate.eq,
-        mgpu.utils.cluster_idx(collective[0]),
-        mgpu.c(0, ir.IndexType.get()),
-    )
-    arrive_ctx = mgpu.when(first_block)
+  if arrive_predicate is not None:
+    arrive_ctx = mgpu.when(arrive_predicate)
   else:
     arrive_ctx = contextlib.nullcontext()
 
-  bytes = mgpu.c(bytes, ir.IntegerType.get_signless(32))
-  if predicate is not None:
-    bytes = arith_dialect.select(predicate, bytes, mgpu.c(0, i32))
-
   with arrive_ctx:
-    mgpu.dialect.arrive_expect_tx(barrier_ref, bytes)
+    mgpu.dialect.arrive_expect_tx(barrier_ref, mgpu.c(bytes, i32))
 
   mgpu.dialect.async_load(
       src,
@@ -1248,7 +1265,8 @@ def copy_gmem_to_smem(
       ``OOBFillMode.ZEROS`` for the TMA implementation, and only
       ``OOBFillMode.PROMISE_IN_BOUNDS`` for the ``cp.async`` one.
     predicate: A boolean indicating whether the copy should be performed. If
-      ``None``, the copy is always performed.
+      ``None``, the copy is always performed. If ``False``, neither the copy nor
+      the barrier arrival is performed.
 
   See also:
     :func:`jax.experimental.pallas.mosaic_gpu.barrier_arrive`
@@ -4933,7 +4951,9 @@ def semaphore_signal_parallel(*signals: SemaphoreSignal):
   of an expensive fence for each signal).
   """
   semaphores = [s.ref for s in signals]
-  device_ids = [s.device_id for s in signals]
+  device_ids = [
+      pallas_primitives.canonicalize_device_id(s.device_id) for s in signals
+  ]
   incs = [jnp.asarray(s.inc, dtype=jnp.int32) for s in signals]
   refs, transforms = util.unzip2(
       map(pallas_primitives._get_ref_and_transforms, semaphores)
@@ -5920,6 +5940,7 @@ def semaphore_signal(
   """
   ref, transforms = pallas_primitives._get_ref_and_transforms(semaphore)
   value = jnp.asarray(inc, dtype=jnp.int32)
+  device_id = pallas_primitives.canonicalize_device_id(device_id)
   core_index = None
   args = [ref, transforms, value, device_id, core_index]
   flat_args, args_tree = tree_util.tree_flatten(args)

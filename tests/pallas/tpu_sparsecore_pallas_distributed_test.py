@@ -66,10 +66,10 @@ class RemoteDMATest(parameterized.TestCase):
         neighbor = lax.rem(my_id + 1, axis_size)
       else:
         neighbor = lax.rem(my_id + axis_size - 1, axis_size)
-      pl.semaphore_signal(ready_sem, device_id=neighbor)
+      pl.semaphore_signal(ready_sem, device_id={'x': neighbor})
       pl.semaphore_wait(ready_sem)
       pltpu.async_remote_copy(
-          x_ref, y_ref, send_sem, recv_sem, device_id=neighbor
+          x_ref, y_ref, send_sem, recv_sem, device_id={'x': neighbor}
       ).wait()
 
     num_devices = num_devices or jax.device_count()
@@ -116,11 +116,17 @@ class RemoteDMATest(parameterized.TestCase):
         neighbor = lax.rem(my_id + 1, axis_size)
       else:
         neighbor = lax.rem(my_id + axis_size - 1, axis_size)
-      pl.semaphore_signal(ready_sem, device_id=(my_other_id, neighbor))
+      pl.semaphore_signal(
+          ready_sem, device_id={'y': my_other_id, 'x': neighbor}
+      )
       pl.semaphore_wait(ready_sem)
       pltpu.async_remote_copy(
-            x_ref, y_ref, send_sem, recv_sem, device_id=(my_other_id, neighbor)
-        ).wait()
+          x_ref,
+          y_ref,
+          send_sem,
+          recv_sem,
+          device_id={'y': my_other_id, 'x': neighbor},
+      ).wait()
 
     axis_size = jax.device_count() // 2
     x = jnp.arange(axis_size * 8 * 128).reshape((axis_size * 8, 128))
