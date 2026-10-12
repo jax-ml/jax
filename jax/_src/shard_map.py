@@ -1954,7 +1954,7 @@ def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr, which: Sequence[bool]):
   res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for v, w in zip(it.chain(jaxpr.constvars, jaxpr.invars), which)]
   in_avals = ft.flatten(((*res_avals,), {}))
-  closed_jaxpr, _ = pe.trace_to_jaxpr(fun, in_avals, debug_info=jaxpr.debug_info)
+  closed_jaxpr, _ = pe.trace_to_jaxpr(fun, in_avals, jaxpr.debug_info)
   closed_jaxpr, _ = pe.separate_consts(closed_jaxpr)
   return closed_jaxpr
 

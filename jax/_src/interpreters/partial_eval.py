@@ -2045,13 +2045,27 @@ def diff_tracing_cache_keys(new_key, old_key) -> tuple[int, int, str]:
     A tuple of (severity, num_diffs, explanation) for the diff between the two
     keys. Severity is an int, where lower is better.
   """
-  new_ctx, (new_tree, new_dbg, *_), () = new_key
-  old_ctx, (old_tree, old_dbg, *_), () = old_key
-  return (diff_tracing_ctx(new_ctx, old_ctx) or
-          diff_trees(new_tree.tree, old_tree.tree) or
-          diff_debug(new_dbg, old_dbg) or
-          diff_types(new_dbg, new_tree.vals, old_tree.vals) or
-          (4, 0, 'cache miss explanation unavailable'))
+  try:
+    new_ctx, new_args, new_kwargs = new_key
+    old_ctx, old_args, old_kwargs = old_key
+    new_tree = new_args[0] if len(new_args) > 0 else None
+    new_dbg = (new_args[1] if len(new_args) > 1 else
+               (new_kwargs.get('debug_info') if isinstance(new_kwargs, dict) else None))
+    old_tree = old_args[0] if len(old_args) > 0 else None
+    old_dbg = (old_args[1] if len(old_args) > 1 else
+               (old_kwargs.get('debug_info') if isinstance(old_kwargs, dict) else None))
+    return (diff_tracing_ctx(new_ctx, old_ctx) or
+            (diff_trees(new_tree.tree, old_tree.tree)
+             if new_tree is not None and old_tree is not None and hasattr(new_tree, 'tree') and hasattr(old_tree, 'tree')
+             else None) or
+            (diff_debug(new_dbg, old_dbg)
+             if new_dbg is not None and old_dbg is not None else None) or
+            (diff_types(new_dbg, new_tree.vals, old_tree.vals)
+             if new_dbg is not None and new_tree is not None and old_tree is not None and hasattr(new_tree, 'vals') and hasattr(old_tree, 'vals')
+             else None) or
+            (4, 0, 'cache miss explanation unavailable'))
+  except Exception:
+    return (4, 0, 'cache miss explanation unavailable')
 
 def diff_tracing_ctx(new_ctx, old_ctx) -> tuple[int, int, str] | None:
   if new_ctx == old_ctx: return None
