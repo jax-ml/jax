@@ -2407,6 +2407,29 @@ class RefTransformTest(jtu.JaxTestCase):
     self.assertEqual(f().shape, (1,))
     self.assertAllClose(f(), jnp.array([5.0]))
 
+  def test_new_ref_host_memory_space_outside_jit(self):
+    ref1 = jax.new_ref(
+        jnp.ones((4,), dtype=jnp.int32), memory_space=core.MemorySpace.Host
+    )
+    self.assertEqual(core.typeof(ref1).memory_space, core.MemorySpace.Host)
+    self.assertEqual(
+        core.typeof(ref1).inner_aval.memory_space, core.MemorySpace.Device
+    )
+    self.assertEqual(ref1.sharding.memory_kind, "pinned_host")
+
+    host_arr = jax.device_put(
+        jnp.arange(4, dtype=jnp.int32), core.MemorySpace.Host
+    )
+    ref2 = jax.new_ref(host_arr)
+    self.assertEqual(core.typeof(ref2).memory_space, core.MemorySpace.Host)
+    self.assertEqual(
+        core.typeof(ref2).inner_aval.memory_space, core.MemorySpace.Device
+    )
+    self.assertEqual(ref2.sharding.memory_kind, "pinned_host")
+    np.testing.assert_array_equal(
+        np.asarray(jax.freeze(ref2)), np.arange(4, dtype=np.int32)
+    )
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
