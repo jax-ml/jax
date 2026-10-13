@@ -1509,7 +1509,16 @@ def _lower_call_jax(
         check_vma=False,
     )
 
-  compiled = jax.jit(_wrapped_fn).lower(*unique_avals).compile()
+  compiled = (
+      jax.jit(_wrapped_fn)
+      .trace(*unique_avals)
+      .lower(
+          _private_parameters=mlir.LoweringParameters(
+              hoist_constants_as_args=False
+          )
+      )
+      .compile()
+  )
   callee_module = jax_executable_to_mlir(compiled, ctx=ctx)
 
   out_ir_vals: list[ir.Value] = []
