@@ -1991,15 +1991,18 @@ class MeshExecutable(stages.Executable):
         JitGlobalCppCacheKeys(), tree_util.dispatch_registry, cc_shard_arg)
 
   def shard_const_args(self, const_args: Sequence[ArrayLike]):
+    if not const_args:
+      return []
     num_const_args = len(const_args)
     xla_const_layouts = self._xla_in_layouts[:num_const_args]
     in_const_shardings = self._in_shardings[:num_const_args]
     const_avals = [core.typeof(c) for c in const_args]
     dispatch_layouts = get_dispatch_layouts(
         xla_const_layouts, in_const_shardings, const_avals)
-    return shard_args(in_const_shardings, dispatch_layouts,
-                      [xc.ArrayCopySemantics.REUSE_INPUT] * num_const_args,
-                      const_args)
+    with config.transfer_guard_host_to_device("allow"):
+      return shard_args(in_const_shardings, dispatch_layouts,
+                        [xc.ArrayCopySemantics.REUSE_INPUT] * num_const_args,
+                        const_args)
 
 def cc_shard_arg(x, sharding, layout):
   return shard_args([sharding], [layout], [xc.ArrayCopySemantics.REUSE_INPUT],
