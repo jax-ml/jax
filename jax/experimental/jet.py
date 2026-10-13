@@ -54,7 +54,7 @@ r"""Jet is an experimental module for higher-order automatic differentiation
 
 from collections.abc import Callable
 from typing import Any
-
+import operator
 from functools import partial
 
 import numpy as np
@@ -133,10 +133,13 @@ def jet(fun, primals, series, factorial_scaled=True, **_):
   2.9064636 2.9064634
   """
   try:
-    order, = set(map(len, series))
+    (order,) = set(map(len, series))
   except ValueError:
-    msg = "jet terms have inconsistent lengths for different arguments"
-    raise ValueError(msg) from None
+    if not series:
+      order = 0
+    else:
+      msg = "jet terms have inconsistent lengths for different arguments"
+      raise ValueError(msg) from None
 
   # TODO(mattjj): consider supporting pytree inputs
   for i, (x, terms) in enumerate(zip(primals, series)):
@@ -159,15 +162,22 @@ def jet(fun, primals, series, factorial_scaled=True, **_):
       lu.wrap_init(fun,
                    debug_info=api_util.debug_info("jet", fun, primals, {})))
   if factorial_scaled:
-    series = [[(term / fact(order + 1)) for order, term in enumerate(terms)]
-      for terms in series]
+    series = [
+      scale_leaf(p, s, operator.truediv) for p, s in zip(primals, series)
+    ]
   out_primals, out_terms = jet_fun(jet_subtrace(f), order).call_wrapped(primals, series)
   if factorial_scaled:
-    out_terms = [[term * fact(order + 1) for order, term in enumerate(terms)]
-      for terms in out_terms]
+    out_terms = [scale_leaf(p, s) for p, s in zip(out_primals, out_terms)]
   return tree_unflatten(out_tree(), out_primals), tree_unflatten(out_tree(), out_terms)
 
 jet2 = partial(jet, factorial_scaled=False)
+
+def scale_leaf(primals, series, op=operator.mul):
+  if series is zero_series or not jnp.issubdtype(
+    jnp.result_type(primals), jnp.inexact
+  ):
+    return series
+  return [op(t, fact(order + 1)) for order, t in enumerate(series)]
 
 def fact(n):
   return lax.exp(lax.lgamma(n+1.))
@@ -301,10 +311,13 @@ def zero_prop(prim, primals_in, series_in, **params):
   return primal_out, zero_series
 
 defzero(lax.le_p)
+defzero(lax.le_to_p)
 defzero(lax.lt_p)
+defzero(lax.lt_to_p)
 defzero(lax.gt_p)
 defzero(lax.ge_p)
 defzero(lax.eq_p)
+defzero(lax.eq_to_p)
 defzero(lax.ne_p)
 defzero(lax.not_p)
 defzero(lax.and_p)
@@ -320,7 +333,16 @@ defzero(lax.shift_left_p)
 defzero(lax.shift_right_arithmetic_p)
 defzero(lax.shift_right_logical_p)
 defzero(lax.bitcast_convert_type_p)
-
+defzero(lax.argmin_p)
+defzero(lax.argmax_p)
+defzero(lax.iota_p)
+defzero(lax.sort_p)
+defzero(lax.clz_p)
+defzero(lax.population_count_p)
+defzero(lax.mulhi_p)
+defzero(lax.reduce_and_p)
+defzero(lax.reduce_or_p)
+defzero(lax.reduce_xor_p)
 
 def deflinear(prim):
   jet_rules[prim] = partial(linear_prop, prim)
@@ -358,6 +380,16 @@ deflinear(lax.fft_p)
 deflinear(lax.copy_p)
 deflinear(dispatch.device_put_p)
 deflinear(pjit.reshard_p)
+deflinear(lax.pmax_p)
+deflinear(lax.pmin_p)
+deflinear(lax.psum_p)
+deflinear(lax.tile_p)
+deflinear(lax.all_to_all_p)
+deflinear(lax.all_gather_p)
+deflinear(lax.ppermute_p)
+deflinear(lax.axis_index_p)
+deflinear(lax.ragged_all_to_all_p)
+deflinear(lax.reduce_precision_p)
 
 def _dynamic_slice_jet_rule(primals_in, series_in, **params):
   operand, *start_indices = primals_in
@@ -435,6 +467,7 @@ def_comp(lax.log2_p, lambda x: lax.log(x) / np.log(2))
 def_comp(lax.log1p_p, lambda x: lax.log(1 + x))
 def_comp(lax.sqrt_p, lambda x: x ** 0.5)
 def_comp(lax.square_p, lambda x: x * x)
+def_comp(lax.cbrt_p, lambda x: x ** (1.0 / 3.0))
 
 def _one_minus_square_rule(primals_in, series_in):
   x, = primals_in
@@ -459,7 +492,12 @@ def_comp(lax.atanh_p, lambda x: 0.5 * lax.log(lax.div(1 + x, 1 - x)))
 def_comp(lax.erfc_p, lambda x: 1 - lax.erf(x))
 def_comp(lax.rem_p, lambda x, y: x - y * lax.floor(x / y))
 def_comp(lax.clamp_p, lambda a, x, b: lax.min(lax.max(a, x), b))
-
+def_comp(lax.acos_p, lambda x: lax.sub(jnp.pi / 2.0, lax.asin(x)))
+def_comp(lax.atan_p, lambda x: lax.atan2(x, lax.full_like(x, 1.0)))
+def_comp(lax.tan_p, lambda x: lax.div(lax.sin(x), lax.cos(x)))
+def_comp(
+  lax.asin_p, lambda x: lax.atan2(x, lax.sqrt(lax.sub(1.0, lax.square(x))))
+)
 
 def _erf_inv_rule(primals_in, series_in):
   x, = primals_in
@@ -747,6 +785,87 @@ def _scatter_add_rule(primals_in, series_in, *, update_jaxpr, update_consts,
   return primal_out, series_out
 jet_rules[lax.scatter_add_p] = _scatter_add_rule
 
+def _scatter_rule(primals_in, series_in, *, update_jaxpr, update_consts,
+                  dimension_numbers, indices_are_sorted, unique_indices,
+                  mode):
+  bind = partial(lax.scatter_p.bind, update_jaxpr=update_jaxpr,
+                 update_consts=update_consts, dimension_numbers=dimension_numbers,
+                 indices_are_sorted=indices_are_sorted,
+                 unique_indices=unique_indices, mode=mode)
+  operand, scatter_indices, updates = primals_in
+  primal_out = bind(operand, scatter_indices, updates)
+  series_out = [bind(d1, scatter_indices, d2) for d1, _, d2 in zip(*series_in)]
+  return primal_out, series_out
+
+jet_rules[lax.scatter_p] = _scatter_rule
+
+def _approx_top_k_rule(primals_in, series_in, **params):
+  (primals_in,) = primals_in
+  (series_in,) = series_in
+
+  val_out, idxs_out = lax.approx_top_k_p.bind(primals_in, **params)
+  if series_in is zero_series:
+    val_terms = zero_series
+  else:
+    val_terms = [
+      jnp.take_along_axis(
+        t, idxs_out, axis=params.get("reduction_dimension", -1)
+      )
+      if t is not zero_term
+      else zero_term
+      for t in series_in
+    ]
+
+  return (val_out, idxs_out), (val_terms, zero_series)
+
+jet_rules[lax.approx_top_k_p] = _approx_top_k_rule
+
+def _top_k_rule(primals_in, series_in, **params):
+  (primals_in,) = primals_in
+  (series_in,) = series_in
+
+  val_out, idxs_out = lax.top_k_p.bind(primals_in, **params)
+  if series_in is zero_series:
+    val_terms = zero_series
+  else:
+    val_terms = [
+      jnp.take_along_axis(t, idxs_out, axis=params.get("axis", -1))
+      if t is not zero_term
+      else zero_term
+      for t in series_in
+    ]
+
+  return (val_out, idxs_out), (val_terms, zero_series)
+
+jet_rules[lax.top_k_p] = _top_k_rule
+
+def _sort_rule(primals_in, series_in, *, dimension, is_stable, num_keys):
+  shape = primals_in[0].shape
+  iota = lax.broadcasted_iota(jnp.int32, shape, dimension)
+  *primals_out, perm = lax.sort_p.bind(
+    *primals_in,
+    iota,
+    dimension=dimension,
+    is_stable=is_stable,
+    num_keys=num_keys,
+  )
+  series_out = [
+    [jnp.take_along_axis(t, perm, axis=dimension) for t in terms]
+    for terms in series_in
+  ]
+  return tuple(primals_out), series_out
+
+jet_rules[lax.sort_p] = _sort_rule
+
+
+def _nextafter_rule(primals_in, series_in, **params):
+  x, y = primals_in
+  x_terms, _ = series_in
+  primal_out = lax.nextafter_p.bind(x, y, **params)
+  series_out = [jnp.broadcast_to(t, primal_out.shape) for t in x_terms]
+  return primal_out, series_out
+
+jet_rules[lax.nextafter_p] = _nextafter_rule
 
 @weakref_lru_cache
 def _jet_jaxpr(
