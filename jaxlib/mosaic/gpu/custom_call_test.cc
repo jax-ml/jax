@@ -43,6 +43,7 @@ namespace {
 
 using ::absl_testing::IsOk;
 using ::testing::_;
+using ::testing::AllOf;
 using ::testing::HasSubstr;
 using ::testing::SizeIs;
 
@@ -574,9 +575,18 @@ TEST_F(CustomCallTest, MosaicGpuRecordsIntoCommandBuffer) {
   }
 }
 
-TEST_F(CustomCallTest, MosaicGpuCollectiveFallsBackToStreamCapture) {
-  std::string module_str = TestMGPUHloModule(
-      "uses_xla_collective_metadata = true, xla_replica_ids = \"0\"");
+class CollectiveCommandBufferTest : public CustomCallTest,
+                                    public ::testing::WithParamInterface<bool> {
+};
+
+TEST_P(CollectiveCommandBufferTest,
+       MosaicGpuCollectiveRecordsIntoCommandBuffer) {
+  const bool skip_device_barrier = GetParam();
+  const int expected_barrier_calls = skip_device_barrier ? 0 : 1;
+  std::string module_str = TestMGPUHloModule(absl::StrCat(
+      "uses_xla_collective_metadata = true, xla_replica_ids = \"0\", "
+      "skip_device_barrier = ",
+      skip_device_barrier ? "true" : "false"));
   ASSERT_OK_AND_ASSIGN(auto module,
                        xla::ParseAndReturnUnverifiedModule(module_str));
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
@@ -584,14 +594,16 @@ TEST_F(CustomCallTest, MosaicGpuCollectiveFallsBackToStreamCapture) {
   xla::CompileOptions compile_options;
   compile_options.executable_build_options.mutable_debug_options()
       ->set_xla_gpu_graph_min_graph_size(1);
-  absl::SetVLogLevel("custom_call", 5);
+  absl::SetVLogLevel("custom_call", 6);
+  absl::SetVLogLevel("record_ffi", 3);
+  absl::SetVLogLevel("cuda_command_buffer", 2);
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<xla::PjRtLoadedExecutable> executable,
       client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
                              std::move(compile_options)));
   // Warmup.
   EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
-  // Create
+  // Create.
   {
     absl::ScopedMockLog log;
     EXPECT_CALL(log,
@@ -601,15 +613,21 @@ TEST_F(CustomCallTest, MosaicGpuCollectiveFallsBackToStreamCapture) {
         .Times(1);
     EXPECT_CALL(
         log, Log(absl::LogSeverity::kInfo, _,
-                 HasSubstr("MosaicGpuRecord falling back to stream capture for "
-                           "kernel_mosaic_gpu_kernel")))
+                 HasSubstr("Using collective metadata address:")))
         .Times(1);
-    // Execute called because we are tracing.
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         HasSubstr("FfiCreateLaunch for kernel: "
+                                   "multi_gpu_barrier_nccl_kernel")))
+        .Times(expected_barrier_calls);
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         HasSubstr("FfiCreateLaunch for kernel: "
+                                   "kernel_mosaic_gpu_kernel")))
+        .Times(1);
     EXPECT_CALL(log,
                 Log(absl::LogSeverity::kInfo, _,
                     HasSubstr("MosaicGpuExecute launching kernel with name: "
                               "kernel_mosaic_gpu_kernel")))
-        .Times(1);
+        .Times(0);
     log.StartCapturingLogs();
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
   }
@@ -631,7 +649,7 @@ TEST_F(CustomCallTest, MosaicGpuCollectiveFallsBackToStreamCapture) {
     ASSERT_THAT(held_result[0], SizeIs(1));
     EXPECT_THAT(held_result[0][0]->GetReadyFuture().Await(), IsOk());
   }
-  // Update
+  // Update.
   {
     absl::ScopedMockLog log;
     EXPECT_CALL(log,
@@ -641,17 +659,29 @@ TEST_F(CustomCallTest, MosaicGpuCollectiveFallsBackToStreamCapture) {
         .Times(1);
     EXPECT_CALL(
         log, Log(absl::LogSeverity::kInfo, _,
-                 HasSubstr("MosaicGpuRecord falling back to stream capture for "
-                           "kernel_mosaic_gpu_kernel")))
+                 HasSubstr("Using collective metadata address:")))
+        .Times(1);
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         AllOf(HasSubstr("Set kernel node params"),
+                               HasSubstr("kernel: "
+                                         "multi_gpu_barrier_nccl_kernel"))))
+        .Times(expected_barrier_calls);
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         AllOf(HasSubstr("Set kernel node params"),
+                               HasSubstr("kernel: "
+                                         "kernel_mosaic_gpu_kernel"))))
         .Times(1);
     EXPECT_CALL(log,
                 Log(absl::LogSeverity::kInfo, _,
                     HasSubstr("MosaicGpuExecute launching kernel with name: "
                               "kernel_mosaic_gpu_kernel")))
-        .Times(1);
+        .Times(0);
     log.StartCapturingLogs();
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
   }
 }
+
+INSTANTIATE_TEST_SUITE_P(CollectiveCommandBufferTests,
+                         CollectiveCommandBufferTest, ::testing::Bool());
 
 }  // namespace
