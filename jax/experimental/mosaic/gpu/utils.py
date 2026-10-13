@@ -279,21 +279,15 @@ def ptr_as_memref(ptr, memref_ty: ir.MemRefType):
   i64 = ir.IntegerType.get_signless(64)
   rank = len(memref_ty.shape)
   desc_ty = memref_descriptor_type(memref_ty)
-  desc = llvm.UndefOp(desc_ty).result
-  desc = llvm.InsertValueOp(desc, ptr, [0]).result  # Allocation
-  desc = llvm.InsertValueOp(desc, ptr, [1]).result  # Aligned Base
-  desc = llvm.InsertValueOp(
-      desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, 0)).result, [2]
-  ).result
+  desc = llvm.mlir_undef(desc_ty)
+  desc = llvm.insertvalue(desc, ptr, [0])  # Allocation
+  desc = llvm.insertvalue(desc, ptr, [1])  # Aligned Base
+  desc = llvm.insertvalue(desc, c(0, i64), [2])
   if rank > 0:
     for i, s in enumerate(memref_ty.shape):
-      desc = llvm.InsertValueOp(
-          desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)).result, [3, i]
-      ).result
+      desc = llvm.insertvalue(desc, c(s, i64), [3, i])
     for i, s in enumerate(strides):
-      desc = llvm.InsertValueOp(
-          desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)).result, [4, i]
-      ).result
+      desc = llvm.insertvalue(desc, c(s, i64), [4, i])
   result = builtin.unrealized_conversion_cast([memref_ty], [desc])
   assert isinstance(result, ir.Value)
   return result
