@@ -44,6 +44,7 @@ from jax._src.lib.mlir import ir
 from jax._src.pallas import pallas_test_util as ptu
 from jax._src.pallas.mosaic import error_handling
 from jax._src.pallas.mosaic import lowering as mosaic_lowering
+from jax._src.pallas.mosaic import pallas_call_registration
 from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import discharge as state_discharge
 from jax._src.state import utils as state_utils
@@ -1634,6 +1635,119 @@ class PallasCallDMATest(ptu.PallasTPUTest):
           out_specs=pl.BlockSpec(memory_space=pl.ANY),
           out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
       )(x)
+
+  def _dma_granule_bytes(self):
+    """Bytes per DMA semaphore increment (the DMA length granule)."""
+    if self.INTERPRET:
+      self.skipTest('wait_threshold is a Mosaic lowering feature')
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('TPU generation too old')
+    return 512 if jtu.get_tpu_version() == 4 else 32
+
+  @parameterized.product(priority=[0, 1], strict_ordering=[False, True])
+  def test_dma_wait_threshold_full_block(self, priority, strict_ordering):
+    granule = self._dma_granule_bytes()
+    shape = (32, 128)
+    threshold = math.prod(shape) * 4 // granule  # The whole f32 block.
+
+    def kernel(x_hbm_ref, y_hbm_ref):
+      def body(x_ref, sem_in, sem_out):
+        copy = pltpu.make_async_copy(
+            x_hbm_ref,
+            x_ref,
+            sem_in,
+            priority=priority,
+            strict_ordering=strict_ordering,
+            wait_threshold=threshold,
+        )
+        copy.start()
+        copy.wait()
+        x_ref[...] += 1.0
+        pltpu.async_copy(
+            x_ref, y_hbm_ref, sem_out,
+            priority=priority, strict_ordering=strict_ordering,
+        ).wait()
+
+      pl.run_scoped(
+          body,
+          pltpu.VMEM(shape, jnp.float32),
+          pltpu.SemaphoreType.DMA,
+          pltpu.SemaphoreType.DMA,
+      )
+
+    x = jnp.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
+    y = self.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+    )(x)
+    np.testing.assert_array_equal(y, x + 1.0)
+
+  def test_dma_wait_threshold_split_waits(self):
+    granule = self._dma_granule_bytes()
+    shape = (32, 128)
+    total = math.prod(shape) * 4 // granule
+    # Two partial barriers consume the whole semaphore count, so the semaphore
+    # is balanced for the next copy and the data is complete afterwards.
+    first, second = total // 4, total - total // 4
+
+    def kernel(x_hbm_ref, y_hbm_ref):
+      def body(x_ref, sem):
+        copy = pltpu.make_async_copy(x_hbm_ref, x_ref, sem)
+        copy.start()
+        copy.wait(wait_threshold=first)
+        copy.wait(wait_threshold=second)
+        x_ref[...] *= 2.0
+        pltpu.async_copy(x_ref, y_hbm_ref, sem).wait()
+
+      pl.run_scoped(
+          body, pltpu.VMEM(shape, jnp.float32), pltpu.SemaphoreType.DMA
+      )
+
+    x = jnp.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
+    y = self.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+    )(x)
+    np.testing.assert_array_equal(y, x * 2.0)
+
+  @parameterized.parameters(2, 3, 4)
+  def test_emit_pipeline_buffer_count_with_wait_threshold(self, buffer_count):
+    granule = self._dma_granule_bytes()
+    block = (32, 128)
+    rows = block[0] * 8
+    threshold = math.prod(block) * 4 // granule  # One full f32 block.
+
+    def kernel(x_hbm_ref, y_hbm_ref):
+      def body(x_ref, y_ref):
+        y_ref[...] = x_ref[...] * 2.0
+
+      pltpu.emit_pipeline(
+          body,
+          grid=(rows // block[0],),
+          in_specs=[
+              pl.BlockSpec(
+                  block,
+                  lambda i: (i, 0),
+                  pipeline_mode=pl.Buffered(buffer_count),
+              )
+          ],
+          out_specs=[pl.BlockSpec(block, lambda i: (i, 0))],
+          priority=1,
+          wait_threshold=threshold,
+      )(x_hbm_ref, y_hbm_ref)
+
+    x = jnp.arange(rows * block[1], dtype=jnp.float32).reshape(rows, block[1])
+    y = self.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
+    )(x)
+    np.testing.assert_array_equal(y, x * 2.0)
 
   def test_unrolled_dma_with_regular_semaphore_raises(self):
     if not jtu.is_device_tpu_at_least(6):
@@ -6184,6 +6298,167 @@ class MosaicLoweringForLoopTest(jtu.JaxTestCase):
       )
 
     self.assertEqual(get_output().count('scf.for'), 1)
+
+
+@jtu.thread_unsafe_test_class()  # Patches the Mosaic custom-call lowering.
+class MosaicDmaKnobsLoweringTest(jtu.JaxTestCase):
+  """Lowering-level checks for the DMA ``priority`` / ``strict_ordering`` /
+  ``wait_threshold`` knobs and the power-of-two slot indexing.
+
+  These only need the Mosaic lowering, so they run on any backend by targeting
+  an abstract TPU device.
+  """
+
+  _BLOCK = (32, 128)
+
+  def _mosaic_module(self, f, *args, device_kind='TPU v6 lite'):
+    device = jax.sharding.AbstractDevice(
+        device_kind=device_kind, num_cores=1, platform='tpu'
+    )
+    mesh = jax.sharding.AbstractMesh((), (), abstract_device=device)
+    captured = []
+    original = pallas_call_registration._lower_to_custom_call
+
+    def wrapper(ctx, *in_nodes, mosaic_module, **kwargs):
+      captured.append(mosaic_module.operation.get_asm(enable_debug_info=False))
+      return original(ctx, *in_nodes, mosaic_module=mosaic_module, **kwargs)
+
+    with mock.patch.object(
+        pallas_call_registration, '_lower_to_custom_call', wrapper
+    ):
+      with jax.sharding.use_abstract_mesh(mesh):
+        jax.jit(f).trace(*args).lower(lowering_platforms=('tpu',))
+    self.assertLen(captured, 1)
+    return captured[0]
+
+  def _round_trip_call(self, kernel):
+    x = jax.ShapeDtypeStruct(self._BLOCK, jnp.float32)
+    return pl.pallas_call(
+        kernel,
+        out_shape=x,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        scratch_shapes=[
+            pltpu.VMEM(self._BLOCK, jnp.float32),
+            pltpu.SemaphoreType.DMA,
+            pltpu.SemaphoreType.DMA,
+        ],
+    ), x
+
+  @parameterized.product(priority=[0, 1], strict_ordering=[False, True])
+  def test_tensorcore_strict_ordering_pins_primary_dma_thread(
+      self, priority, strict_ordering
+  ):
+    def kernel(x_hbm_ref, o_hbm_ref, scratch_ref, sem_in, sem_out):
+      pltpu.async_copy(
+          x_hbm_ref, scratch_ref, sem_in,
+          priority=priority, strict_ordering=strict_ordering,
+      ).wait()
+      pltpu.async_copy(
+          scratch_ref, o_hbm_ref, sem_out,
+          priority=priority, strict_ordering=strict_ordering,
+      ).wait()
+
+    f, x = self._round_trip_call(kernel)
+    module = self._mosaic_module(f, x)
+    # Mosaic rejects strict_ordering outside SparseCore, so it must never be
+    # forwarded on TensorCore; instead the copy is pinned to priority 0.
+    self.assertNotIn('strict_ordering = true', module)
+    expected_priority = 0 if strict_ordering else priority
+    self.assertEqual(module.count('tpu.enqueue_dma'), 2)
+    self.assertEqual(
+        module.count('priority = 1 : i32'), 2 if expected_priority else 0
+    )
+    self.assertEqual(module.count('tpu.wait_dma'), 2)
+    self.assertNotIn('tpu.sem_wait', module)
+
+  @parameterized.parameters('make_async_copy', 'async_copy')
+  def test_wait_threshold_lowers_to_semaphore_wait(self, ctor):
+    threshold = 512
+
+    def kernel(x_hbm_ref, o_hbm_ref, scratch_ref, sem_in, sem_out):
+      if ctor == 'make_async_copy':
+        copy = pltpu.make_async_copy(
+            x_hbm_ref, scratch_ref, sem_in, wait_threshold=threshold
+        )
+        copy.start()
+        copy.wait()
+      else:
+        pltpu.async_copy(
+            x_hbm_ref, scratch_ref, sem_in, wait_threshold=threshold
+        ).wait()
+      pltpu.async_copy(scratch_ref, o_hbm_ref, sem_out).wait()
+
+    f, x = self._round_trip_call(kernel)
+    module = self._mosaic_module(f, x)
+    # The DMA semaphore is reinterpreted as a regular semaphore (same sync
+    # flag) because tpu.sem_wait only accepts !tpu.semaphore operands.
+    self.assertRegex(
+        module,
+        r'tpu\.reinterpret_cast .*!tpu\.dma_semaphore.* -> '
+        r'memref<!tpu\.semaphore, #tpu\.tiled<,\[\]>',
+    )
+    self.assertEqual(module.count('tpu.sem_wait'), 1)
+    self.assertIn(f'arith.constant {threshold} : i32', module)
+    # The copy without a threshold still awaits the full byte count.
+    self.assertEqual(module.count('tpu.wait_dma'), 1)
+
+  def test_wait_threshold_rejected_on_wait_read(self):
+    def kernel(x_hbm_ref, o_hbm_ref, scratch_ref, sem_in, sem_out):
+      pltpu.make_async_copy(
+          x_hbm_ref, scratch_ref, sem_in, wait_threshold=512
+      ).wait_read()
+      pltpu.async_copy(scratch_ref, o_hbm_ref, sem_out).wait()
+
+    f, x = self._round_trip_call(kernel)
+    with self.assertRaisesRegex(ValueError, 'wait_threshold'):
+      self._mosaic_module(f, x)
+
+  @parameterized.product(buffer_count=[2, 3, 4], wait_threshold=[None, 512])
+  def test_emit_pipeline_slot_rem_and_wait_threshold(
+      self, buffer_count, wait_threshold
+  ):
+    rows = self._BLOCK[0] * 4
+    x = jax.ShapeDtypeStruct((rows, self._BLOCK[1]), jnp.float32)
+
+    def kernel(x_hbm_ref, o_hbm_ref):
+      def body(x_ref, o_ref):
+        o_ref[...] = x_ref[...] * 2.0
+
+      pltpu.emit_pipeline(
+          body,
+          grid=(rows // self._BLOCK[0],),
+          in_specs=[
+              pl.BlockSpec(
+                  self._BLOCK,
+                  lambda i: (i, 0),
+                  pipeline_mode=pl.Buffered(buffer_count),
+              )
+          ],
+          out_specs=[pl.BlockSpec(self._BLOCK, lambda i: (i, 0))],
+          priority=1,
+          wait_threshold=wait_threshold,
+      )(x_hbm_ref, o_hbm_ref)
+
+    f = pl.pallas_call(
+        kernel,
+        out_shape=x,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    module = self._mosaic_module(f, x)
+    self.assertIn('priority = 1 : i32', module)
+    if buffer_count & (buffer_count - 1) == 0:
+      # Power-of-two slot counts use a bitwise and instead of a remainder.
+      self.assertIn('arith.andi', module)
+      self.assertNotIn('arith.remui', module)
+    else:
+      self.assertIn('arith.remui', module)
+    if wait_threshold is None:
+      self.assertNotIn('tpu.sem_wait', module)
+    else:
+      self.assertIn('tpu.sem_wait', module)
+      self.assertIn(f'arith.constant {wait_threshold} : i32', module)
 
 
 class PallasKernelMetadataTest(ptu.PallasTPUTest):

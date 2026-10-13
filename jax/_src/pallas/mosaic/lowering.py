@@ -5546,6 +5546,86 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   return []
 
 
+_SC_KERNEL_TYPES = (
+    tpu_core.CoreType.SC_SCALAR_SUBCORE,
+    tpu_core.CoreType.SC_VECTOR_SUBCORE,
+)
+# ``tpu.sem_wait`` only accepts ``!tpu.semaphore`` refs, whereas DMAs signal
+# ``!tpu.dma_semaphore`` refs. Both name the same physical sync flag.
+_REGULAR_SEMAPHORE_TYPE = "!tpu.semaphore"
+# The rank-0 ``TiledLayoutAttr`` (no tiles, no strides) ``infer_memref_layout``
+# assigns to semaphore refs.
+_RANK0_SEMAPHORE_LAYOUT = "#tpu.tiled<,[]>"
+
+
+def _is_sparsecore_kernel(kernel_type: tpu_core.CoreType) -> bool:
+  return kernel_type in _SC_KERNEL_TYPES
+
+
+def _effective_dma_ordering(
+    *, strict_ordering: bool, priority: int, kernel_type: tpu_core.CoreType
+) -> tuple[bool, int]:
+  """Maps the Pallas ``strict_ordering`` knob onto what Mosaic can express.
+
+  Mosaic only models ``strict_ordering`` on SparseCore: ``verifyCommonDmaParams``
+  rejects it on TensorCore and ``lower_to_llo`` has no in-order DMA mode. On
+  TensorCore the DMA issue order is governed by the priority thread instead:
+  ``priority > 0`` dispatches to a secondary thread that may run out of order
+  relative to the primary one, so a strictly ordered copy is pinned to the
+  primary (in-order) thread by clamping its priority to ``0``.
+
+  Returns:
+    ``(mosaic_strict_ordering, mosaic_priority)`` to pass to ``tpu.enqueue_dma``
+    / ``tpu.wait_dma``.
+  """
+  if _is_sparsecore_kernel(kernel_type):
+    return strict_ordering, priority
+  return False, (0 if strict_ordering else priority)
+
+
+def _as_regular_semaphore_ref(sem: ir.Value) -> ir.Value:
+  """Reinterprets a DMA semaphore ref as a regular semaphore ref.
+
+  ``tpu.reinterpret_cast`` keeps the memory space and declares the rank-0
+  ``#tpu.tiled<,[]>`` layout that ``infer_memref_layout`` assigns to semaphore
+  refs, so it lowers to a zero-cost sync-flag address forward.
+  """
+  sem_ty = ir.MemRefType(sem.type)
+  reg_elem_ty = ir.Type.parse(_REGULAR_SEMAPHORE_TYPE)
+  if sem_ty.element_type == reg_elem_ty:
+    return sem
+  reg_sem_ty = ir.MemRefType.get(
+      sem_ty.shape,
+      reg_elem_ty,
+      ir.Attribute.parse(_RANK0_SEMAPHORE_LAYOUT),
+      sem_ty.memory_space,
+  )
+  return tpu.reinterpret_cast(reg_sem_ty, sem)
+
+
+def _wait_threshold_to_ir_value(wait_threshold: int | jax.Array | ir.Value):
+  """Converts a DMA ``wait_threshold`` into the ``i32`` amount of a sem wait."""
+  i32 = _dtype_to_ir_type(jnp.int32)
+  if isinstance(wait_threshold, ir.Value):
+    if wait_threshold.type != i32:
+      raise ValueError(
+          "wait_threshold must be an i32 value, got"
+          f" {wait_threshold.type}"
+      )
+    return wait_threshold
+  if isinstance(wait_threshold, (bool, np.bool_)) or not isinstance(
+      wait_threshold, (int, np.integer)
+  ):
+    return _ensure_mlir_value(
+        wait_threshold, jax_core.ShapedArray((), jnp.int32)
+    )
+  if wait_threshold <= 0:
+    raise ValueError(
+        f"wait_threshold must be a positive integer, got {wait_threshold}"
+    )
+  return ir_constant(int(wait_threshold), mlir_type=i32)
+
+
 @register_lowering_rule(tpu_primitives.dma_start_p)
 def _dma_start_lowering_rule(
     ctx: LoweringRuleContext,
@@ -5554,6 +5634,7 @@ def _dma_start_lowering_rule(
     device_id_type: primitives.DeviceIdType,
     priority: int,
     add: bool,
+    strict_ordering: bool = False,
 ):
   if add:
     raise NotImplementedError("DMA with add=True is not supported.")
@@ -5566,6 +5647,11 @@ def _dma_start_lowering_rule(
   )
   block_shapes = _dma_unflatten(tree, ctx.block_shapes)
   kernel_type = ctx.lowering_context.kernel_type
+  strict_ordering, priority = _effective_dma_ordering(
+      strict_ordering=strict_ordering,
+      priority=priority,
+      kernel_type=kernel_type,
+  )
   if isinstance(sem_aval.memory_space, pallas_core.CoreMemorySpace):
     dest_mesh = sem_aval.memory_space.mesh
     dest_kernel_type = dest_mesh.core_type
@@ -5595,6 +5681,7 @@ def _dma_start_lowering_rule(
         core_id=core_id,
         subcore_id=subcore_id,
         priority=priority,
+        strict_ordering=strict_ordering,
     )
     return []
 
@@ -5610,7 +5697,9 @@ def _dma_start_lowering_rule(
 @register_lowering_rule(tpu_primitives.dma_wait_p)
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                             device_id_type: primitives.DeviceIdType,
-                            is_wait_send: bool = False):
+                            is_wait_send: bool = False,
+                            strict_ordering: bool = False,
+                            wait_threshold: int | None = None):
   src, dst, sem, src_sem, device_id = _dma_unflatten(tree, args)
   if is_wait_send and device_id is None:
     raise NotImplementedError(
@@ -5623,6 +5712,17 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
       tree, ctx.avals_in
   )
   block_shapes = _dma_unflatten(tree, ctx.block_shapes)
+  kernel_type = ctx.lowering_context.kernel_type
+  # ``tpu.wait_dma`` carries no priority, so only the ordering flag matters.
+  strict_ordering, _ = _effective_dma_ordering(
+      strict_ordering=strict_ordering, priority=0, kernel_type=kernel_type
+  )
+  # A threshold wait consumes an explicit amount from the semaphore instead of
+  # the full byte count of ``dst``; it is only defined for the local write
+  # completion that a DMA semaphore tracks.
+  use_threshold_wait = (
+      wait_threshold is not None and not is_wait_send and device_id is None
+  )
 
   if is_wait_send:
     # `wait_send` pre-swaps (src, dst, dst_sem, src_sem); undo it so that the
@@ -5643,6 +5743,14 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
     )
 
   def _dma_wait(src_ref, dst_ref, sem, src_sem) -> list[ir.Value]:
+    if use_threshold_wait:
+      # ``tpu.sem_wait`` lowers to ``vsyncadd(sem, -amount); vwait.ge(sem, 0)``
+      # on the DMA sync flag, i.e. a partial completion barrier.
+      tpu.sem_wait(
+          _as_regular_semaphore_ref(sem),
+          _wait_threshold_to_ir_value(wait_threshold),
+      )
+      return []
     tpu.wait_dma(
         source=src_ref,
         target=dst_ref,
@@ -5652,6 +5760,7 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
         core_id=core_id,
         subcore_id=subcore_id,
         wait_target=not is_wait_send,
+        strict_ordering=strict_ordering,
     )
     return []
 

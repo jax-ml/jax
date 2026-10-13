@@ -644,7 +644,16 @@ def _dma_start_lowering_rule(
     device_id_type: pallas_primitives.DeviceIdType,
     priority: int,
     add: bool,
+    strict_ordering: bool = False,
 ):
+  # SparseCore natively supports strict ordering: ``lower_to_mlo`` forwards it
+  # to ``sparse_core::EnqueueTransferOp``. It has a single DMA thread though,
+  # so ``lower_to_mlo`` rejects any non-zero priority; fail early instead.
+  if priority != 0:
+    raise NotImplementedError(
+        "DMA priority is not supported on SparseCore (it has a single DMA"
+        f" thread), but got priority={priority}; use priority=0."
+    )
   src_ref, dst_ref, sem, src_sem, device_id = _dma_unflatten(
       tree, args
   )
@@ -712,6 +721,7 @@ def _dma_start_lowering_rule(
           priority=priority,
           core_id=core_index,
           subcore_id=subcore_index,
+          strict_ordering=strict_ordering,
       )
       return []
 
@@ -763,10 +773,21 @@ def _dma_wait_lowering_rule(
     tree,
     device_id_type: pallas_primitives.DeviceIdType,
     is_wait_send: bool = False,
+    strict_ordering: bool = False,
+    wait_threshold: int | None = None,
 ):
+  # SparseCore natively supports strict ordering: ``lower_to_mlo`` forwards it
+  # to ``sparse_core::TransferWaitOp`` (and it must match the enqueue, since it
+  # selects the transfer kind).
   src_ref, dst_ref, sem, src_sem, device_id = _dma_unflatten(tree, args)
   src_aval, dst_aval, sem_aval, src_sem_aval, device_id_aval = _dma_unflatten(
       tree, ctx.avals_in
+  )
+  # A threshold wait consumes an explicit amount from the semaphore instead of
+  # the full byte count of ``dst``; it is only defined for the local write
+  # completion that the destination semaphore tracks.
+  use_threshold_wait = (
+      wait_threshold is not None and not is_wait_send and device_id is None
   )
   if is_wait_send:
     # `wait_send` pre-swaps (src, dst, dst_sem, src_sem); undo it so that the
@@ -809,6 +830,20 @@ def _dma_wait_lowering_rule(
       )
 
     def _dma_wait(src_ref, dst_ref, sem, src_sem):
+      if use_threshold_wait and sem is not None:
+        sem_ty = ir.MemRefType(sem.type)
+        # ``lower_to_mlo`` lowers ``tpu.reinterpret_cast`` to
+        # ``memref.reinterpret_cast``, which cannot change the element type of
+        # a rank-0 identity-layout ref, so only regular semaphores can take
+        # the threshold path on SparseCore; DMA semaphores fall back to a full
+        # ``tpu.wait_dma``.
+        if sem_ty.element_type == ir.Type.parse(
+            tc_lowering._REGULAR_SEMAPHORE_TYPE
+        ):
+          tpu.sem_wait(
+              sem, tc_lowering._wait_threshold_to_ir_value(wait_threshold)
+          )
+          return []
       # Mosaic's verifier temporarily requires any source semaphore passed to a
       # wait to live on the issuing core, which only holds for the enqueue.
       # TODO(rdyro): Always pass it once that is relaxed.
@@ -821,6 +856,7 @@ def _dma_wait_lowering_rule(
           core_id=core_id,
           subcore_id=subcore_id,
           wait_target=not is_wait_send,
+          strict_ordering=strict_ordering,
       )
       return []
     return tc_lowering.lower_with_transformed_refs(

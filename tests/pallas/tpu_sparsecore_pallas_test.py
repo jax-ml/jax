@@ -448,6 +448,93 @@ class DebugPrintTest(PallasSCTest):
 
     self.assertEqual(get_output().count("Executing subcore"), num_subcores)
 
+  @parameterized.parameters(False, True)
+  def test_vector_subcore_dma_strict_ordering(self, strict_ordering):
+    nl = self.num_lanes
+    x = jnp.arange(8 * nl, dtype=jnp.int32).reshape(-1, nl)
+
+    @self.vector_subcore_kernel(
+        out_shape=x,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        scratch_shapes=(
+            pltpu.VMEM(x.shape, x.dtype),
+            pltpu.SemaphoreType.DMA,
+            pltpu.SemaphoreType.DMA,
+        ),
+    )
+    def kernel(x_hbm_ref, o_hbm_ref, tmp_ref, sem_in, sem_out):
+      # On SparseCore strict_ordering selects (and asserts) a strictly ordered
+      # stream transfer: HBM -> VMEM is a pull stream and VMEM -> HBM a push
+      # stream when issued by the vector subcore.
+      pltpu.async_copy(
+          x_hbm_ref, tmp_ref, sem_in, strict_ordering=strict_ordering
+      ).wait()
+      pltpu.async_copy(
+          tmp_ref, o_hbm_ref, sem_out, strict_ordering=strict_ordering
+      ).wait()
+
+    np.testing.assert_array_equal(kernel(x), x)
+
+  def test_scalar_subcore_dma_strict_ordering_requires_stream(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("Scalar subcore mesh is not supported on TPU v8i.")
+    nl = self.num_lanes
+    x = jnp.arange(8 * nl, dtype=jnp.int32).reshape(-1, nl)
+
+    @self.kernel(
+        out_type=x,
+        mesh=plsc.ScalarSubcoreMesh(
+            axis_name="x", num_cores=self.sc_info.num_cores
+        ),
+    )
+    def kernel(x_hbm_ref, o_hbm_ref):
+      @functools.partial(
+          pl.run_scoped,
+          tmp_ref=pltpu.VMEM_SHARED(x.shape, x.dtype),
+          sem=pltpu.SemaphoreType.DMA,
+      )
+      def _(tmp_ref, sem):
+        @pl.when(lax.axis_index("x") == 0)
+        def _():
+          # HBM -> VMEM_SHARED from the scalar subcore is a plain DMA, which
+          # has no strictly ordered mode: the backend rejects the request
+          # instead of silently dropping it.
+          pltpu.async_copy(
+              x_hbm_ref, tmp_ref, sem, strict_ordering=True
+          ).wait()
+          pltpu.async_copy(tmp_ref, o_hbm_ref, sem).wait()
+
+    with self.assertRaisesRegex(Exception, "strict ordering"):
+      jax.jit(kernel).lower(x).compile()
+
+  def test_scalar_subcore_dma_priority_rejected(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("Scalar subcore mesh is not supported on TPU v8i.")
+    nl = self.num_lanes
+    x = jnp.arange(8 * nl, dtype=jnp.int32).reshape(-1, nl)
+
+    @self.kernel(
+        out_type=x,
+        mesh=plsc.ScalarSubcoreMesh(
+            axis_name="x", num_cores=self.sc_info.num_cores
+        ),
+    )
+    def kernel(x_hbm_ref, o_hbm_ref):
+      @functools.partial(
+          pl.run_scoped,
+          tmp_ref=pltpu.VMEM_SHARED(x.shape, x.dtype),
+          sem=pltpu.SemaphoreType.DMA,
+      )
+      def _(tmp_ref, sem):
+        pltpu.async_copy(x_hbm_ref, tmp_ref, sem, priority=1).wait()
+        pltpu.async_copy(tmp_ref, o_hbm_ref, sem).wait()
+
+    # SparseCore has a single DMA thread, so lower_to_mlo rejects priorities;
+    # Pallas reports it up front instead.
+    with self.assertRaisesRegex(NotImplementedError, "priority"):
+      jax.jit(kernel).lower(x)
+
 
 class VectorSubcoreTest(PallasSCTest):
 

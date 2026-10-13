@@ -224,6 +224,9 @@ class AsyncCopyDescriptor:
   src_sem: Any | None
   device_id: MultiDimDeviceId | IntDeviceId | None
   device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH
+  priority: int = 0
+  strict_ordering: bool = False
+  wait_threshold: int | None = None
   _used: bool = dataclasses.field(
       default=False, init=False, compare=False, hash=False
   )
@@ -266,8 +269,18 @@ class AsyncCopyDescriptor:
           self.src_ref, self.dst_ref, self.dst_sem, self.src_sem, device_id
       )
 
-  def start(self, priority: int = 0, *, add: bool = False):
+  def start(
+      self,
+      priority: int | None = None,
+      *,
+      add: bool = False,
+      strict_ordering: bool | None = None,
+  ):
     self._used = True
+    if priority is None:
+      priority = self.priority
+    if strict_ordering is None:
+      strict_ordering = self.strict_ordering
     flat_args, tree = self._get_args_and_tree()
     dma_start_p.bind(
         *flat_args,
@@ -275,9 +288,15 @@ class AsyncCopyDescriptor:
         device_id_type=self.device_id_type,
         priority=priority,
         add=add,
+        strict_ordering=strict_ordering,
     )
 
-  def wait(self):
+  def wait(
+      self,
+      *,
+      strict_ordering: bool | None = None,
+      wait_threshold: int | None = None,
+  ):
     """Waits for both the read and write which the copy describes to complete.
 
     Awaits the read from `src_ref` if a source semaphore was given, and always
@@ -285,36 +304,82 @@ class AsyncCopyDescriptor:
     """
     # TODO(rdyro): Consider disallowing calling `.wait()` on remote copies and
     # asking the user to explicitly use `wait_send`/`wait_recv`.
+    if strict_ordering is None:
+      strict_ordering = self.strict_ordering
+    if wait_threshold is None:
+      wait_threshold = self.wait_threshold
     if self.src_sem is not None:
-      self.wait_read()
-    self.wait_write()
-
-  def wait_write(self):
-    """Waits until writing to `dst_ref` has completed."""
-    self._used = True
-    flat_args, tree = self._get_args_and_tree()
-    dma_wait_p.bind(
-        *flat_args, tree=tree, device_id_type=self.device_id_type,
-        is_wait_send=False
+      self.wait_read(
+          strict_ordering=strict_ordering, wait_threshold=wait_threshold
+      )
+    self.wait_write(
+        strict_ordering=strict_ordering, wait_threshold=wait_threshold
     )
 
-  def wait_recv(self):
-    """Waits until writing to `dst_ref` has completed. Alias of `wait_write`."""
-    self.wait_write()
+  def wait_write(
+      self,
+      *,
+      strict_ordering: bool | None = None,
+      wait_threshold: int | None = None,
+  ):
+    """Waits until writing to `dst_ref` has completed."""
+    self._used = True
+    if strict_ordering is None:
+      strict_ordering = self.strict_ordering
+    if wait_threshold is None:
+      wait_threshold = self.wait_threshold
+    flat_args, tree = self._get_args_and_tree()
+    dma_wait_p.bind(
+        *flat_args,
+        tree=tree,
+        device_id_type=self.device_id_type,
+        is_wait_send=False,
+        strict_ordering=strict_ordering,
+        wait_threshold=wait_threshold,
+    )
 
-  def wait_read(self):
+  def wait_recv(
+      self,
+      *,
+      strict_ordering: bool | None = None,
+      wait_threshold: int | None = None,
+  ):
+    """Waits until writing to `dst_ref` has completed. Alias of `wait_write`."""
+    self.wait_write(
+        strict_ordering=strict_ordering, wait_threshold=wait_threshold
+    )
+
+  def wait_read(
+      self,
+      *,
+      strict_ordering: bool | None = None,
+      wait_threshold: int | None = None,
+  ):
     """Waits until reading from `src_ref` has completed."""
     self._used = True
+    if strict_ordering is None:
+      strict_ordering = self.strict_ordering
+    if wait_threshold is None:
+      wait_threshold = self.wait_threshold
     # We swap src and dst since by default dma_wait_p waits on the dst_sem
     # TODO(rdyro): Update the lowering to use `is_wait_send` instead of
     # swapping src and dst.
     flat_args, tree = self._get_args_and_tree(swap_src_and_dst=True)
     dma_wait_p.bind(
-        *flat_args, tree=tree, device_id_type=self.device_id_type,
-        is_wait_send=True
+        *flat_args,
+        tree=tree,
+        device_id_type=self.device_id_type,
+        is_wait_send=True,
+        strict_ordering=strict_ordering,
+        wait_threshold=wait_threshold,
     )
 
-  def wait_send(self):
+  def wait_send(
+      self,
+      *,
+      strict_ordering: bool | None = None,
+      wait_threshold: int | None = None,
+  ):
     """Waits until reading from `src_ref` has completed.
 
     Only valid on a remote copy; use `wait_read` for a local one.
@@ -325,7 +390,9 @@ class AsyncCopyDescriptor:
           "Cannot `wait_send` on a local copy. Use `wait_read()` to await "
           "`src_ref` read, or `wait()` to also await the write to `dst_ref`."
       )
-    self.wait_read()
+    self.wait_read(
+        strict_ordering=strict_ordering, wait_threshold=wait_threshold
+    )
 
 
 def _dma_flatten(*args):
@@ -406,7 +473,10 @@ def _dma_is_high(*avals, **params):
 
 dma_start_p.is_high = _dma_is_high
 
-def _dma_start_to_lojax(*args, tree, device_id_type, priority, add):
+def _dma_start_to_lojax(
+    *args, tree, device_id_type, priority, add, strict_ordering: bool = False
+):
+  del strict_ordering
   src_ref, dst_ref, dst_sem, src_sem, device_id = _dma_unflatten(tree, args)
   src_ref_aval = jax_core.typeof(_get_ref(src_ref))
   dst_ref_aval = jax_core.typeof(_get_ref(dst_ref))
@@ -432,7 +502,10 @@ def _dma_start_to_lojax(*args, tree, device_id_type, priority, add):
 dma_start_p.to_lojax = _dma_start_to_lojax
 
 @dma_start_p.def_effectful_abstract_eval
-def _dma_start_abstract_eval(*args, tree, device_id_type, priority, add):
+def _dma_start_abstract_eval(
+    *args, tree, device_id_type, priority, add, strict_ordering: bool = False
+):
+  del strict_ordering
   if priority < 0:
     raise ValueError(f"DMA start priority must be non-negative: {priority}")
   src_ref_aval, dst_ref_aval, dst_sem_aval, src_sem_aval, device_id_aval = (
@@ -494,10 +567,10 @@ jax_core.pp_eqn_rules[dma_start_p] = _dma_start_pp_eqn
 
 def dma_start_discharge_rule(
     ctx, *args, tree, device_id_type,
-    priority, add
+    priority, add, strict_ordering: bool = False
 ):
-  # Note: we ignore the DMA priority in discharge rules.
-  del priority
+  # Note: we ignore the DMA priority and strict_ordering in discharge rules.
+  del priority, strict_ordering
   if add:
     raise NotImplementedError(
         "DMA partial discharge add=True not yet implemented.")
@@ -641,7 +714,15 @@ dma_wait_p.multiple_results = True
 
 dma_wait_p.is_high = _dma_is_high
 
-def _dma_wait_to_lojax(*args, tree, device_id_type, is_wait_send: bool):
+def _dma_wait_to_lojax(
+    *args,
+    tree,
+    device_id_type,
+    is_wait_send: bool,
+    strict_ordering: bool = False,
+    wait_threshold: int | None = None,
+):
+  del strict_ordering, wait_threshold
   if is_wait_send:
     raise NotImplementedError(
         "wait_read/wait_send not implemented in LoJAX yet.")
@@ -670,19 +751,46 @@ dma_wait_p.to_lojax = _dma_wait_to_lojax
 
 @dma_wait_p.def_effectful_abstract_eval
 def _dma_wait_abstract_eval(
-    *args, tree, device_id_type, is_wait_send: bool
+    *args,
+    tree,
+    device_id_type,
+    is_wait_send: bool,
+    strict_ordering: bool = False,
+    wait_threshold: int | None = None,
 ):
+  del strict_ordering
   src_ref_aval, dst_ref_aval, dst_sem_aval, src_sem_aval, device_id_aval = (
       _dma_unflatten(tree, args)
   )
+  if wait_threshold is not None:
+    if is_wait_send:
+      raise ValueError(
+          "wait_threshold is only supported when awaiting the write to"
+          " `dst_ref` (`wait`/`wait_write`/`wait_recv`), not the read from"
+          " `src_ref`."
+      )
+    if device_id_aval is not None:
+      raise ValueError(
+          "wait_threshold is only supported for local copies, not remote ones."
+      )
+    if isinstance(wait_threshold, bool) or (
+        isinstance(wait_threshold, int) and wait_threshold <= 0
+    ):
+      raise ValueError(
+          f"wait_threshold must be a positive integer, got {wait_threshold}"
+      )
   if dst_sem_aval is not None:
     if not isinstance(dst_sem_aval, (state.AbstractRef, state.TransformedRef)):
       sem_name = "source" if is_wait_send else "destination"
       raise ValueError(f"Expected the {sem_name} semaphore to be a reference")
-    allowed_semaphore_types = {
+    allowed_semaphore_types: set[Any] = {
         tpu_core.dma_semaphore,
         pl_core.SEMAPHORE_INTERPRET_DTYPE,
     }
+    if wait_threshold is not None:
+      # A threshold wait lowers to a semaphore wait on the sync flag, which is
+      # also well-defined for regular semaphores signalled by a DMA.
+      allowed_semaphore_types.add(pl_core.semaphore)
     if not any(
         jnp.issubdtype(dst_sem_aval.dtype, t) for t in allowed_semaphore_types
     ):
@@ -728,9 +836,11 @@ def dma_wait_discharge_rule(
     tree,
     device_id_type,
     is_wait_send: bool = False,
+    strict_ordering: bool = False,
+    wait_threshold: int | None = None,
 ):
   # TODO(b/370563115): perform ref update in dma_wait discharge rule instead of dma_start
-  del device_id_type, is_wait_send
+  del device_id_type, is_wait_send, strict_ordering, wait_threshold
   _, dst_ref, dst_sem, _, _ = _dma_unflatten(tree, args)
   dst_ref, dst_ref_transforms = _get_ref_and_transforms(dst_ref)
   dst_sem, dst_sem_transforms = _get_ref_and_transforms(dst_sem)
@@ -778,7 +888,14 @@ def _get_ref(ref):
 
 
 def make_async_copy(
-    src_ref, dst_ref, sem=None, *, src_sem=None
+    src_ref,
+    dst_ref,
+    sem=None,
+    *,
+    src_sem=None,
+    priority: int = 0,
+    strict_ordering: bool = False,
+    wait_threshold: int | None = None,
 ) -> AsyncCopyDescriptor:
   """Creates a description of an asynchronous copy operation.
 
@@ -787,22 +904,58 @@ def make_async_copy(
     dst_ref: The destination Reference.
     sem: Optional semaphore tracking completion of the write to `dst_ref`.
     src_sem: Optional semaphore tracking completion of the read from `src_ref`.
+    priority: DMA priority queue index (``0`` is the primary, in-order thread).
+    strict_ordering: Whether the copy enforces strict in-order execution. On
+      TensorCore it pins the copy to the in-order primary DMA thread
+      (``priority=0``). On SparseCore it maps onto Mosaic's native
+      strict-ordering transfer mode, which requires a stream-capable transfer
+      (e.g. HBM -> VMEM pull streams and VMEM -> HBM push streams issued by the
+      vector subcore); the SparseCore compiler rejects other transfers instead
+      of silently ignoring the request.
+    wait_threshold: Optional partial completion barrier for ``wait``: instead
+      of awaiting the full byte count of ``dst_ref``, consume exactly this
+      amount from the semaphore (``vsyncadd(sem, -amount); vwait.ge(sem, 0)``).
+      The amount is in the DMA engine's completion-count units, i.e. DMA
+      length granules on TensorCore (32 bytes on v5e/v6e/TPU7x, 512 bytes on
+      v4). Any remainder stays in the semaphore and must be awaited (e.g. by a
+      later threshold wait or a sliced ``wait``) before the semaphore is
+      reused.
 
   Returns:
     An AsyncCopyDescriptor.
   """
   return AsyncCopyDescriptor(
-      src_ref, dst_ref, sem, src_sem, None, primitives.DeviceIdType.MESH
+      src_ref,
+      dst_ref,
+      sem,
+      src_sem,
+      None,
+      primitives.DeviceIdType.MESH,
+      priority=priority,
+      strict_ordering=strict_ordering,
+      wait_threshold=wait_threshold,
   )
 
 
 def async_copy(
     src_ref, dst_ref, sem=None, *,
     src_sem=None, priority: int = 0, add: bool = False,
+    strict_ordering: bool = False,
+    wait_threshold: int | None = None,
 ) -> AsyncCopyDescriptor:
   """Issues a DMA copying from src_ref to dst_ref."""
-  copy_descriptor = make_async_copy(src_ref, dst_ref, sem, src_sem=src_sem)
-  copy_descriptor.start(priority=priority, add=add)
+  copy_descriptor = make_async_copy(
+      src_ref,
+      dst_ref,
+      sem,
+      src_sem=src_sem,
+      priority=priority,
+      strict_ordering=strict_ordering,
+      wait_threshold=wait_threshold,
+  )
+  copy_descriptor.start(
+      priority=priority, add=add, strict_ordering=strict_ordering
+  )
   return copy_descriptor
 
 
@@ -813,6 +966,10 @@ def make_async_remote_copy(
     recv_sem,
     device_id: MultiDimDeviceId | IntDeviceId | None,
     device_id_type: primitives.DeviceIdType | None = None,
+    *,
+    priority: int = 0,
+    strict_ordering: bool = False,
+    wait_threshold: int | None = None,
 ) -> AsyncCopyDescriptor:
   """Creates a description of a remote copy operation.
 
@@ -832,6 +989,13 @@ def make_async_remote_copy(
       is typed as optional only because callers commonly hold it in an optional
       field, but `None` is rejected.
     device_id_type: The type of the device id.
+    priority: DMA priority queue index. Mosaic only supports ``0`` for remote
+      copies.
+    strict_ordering: Whether the copy enforces strict in-order execution (see
+      ``make_async_copy``).
+    wait_threshold: Accepted for API uniformity with ``make_async_copy``, but a
+      threshold wait is only defined for local copies and is rejected when the
+      descriptor is awaited.
 
   Returns:
     An AsyncCopyDescriptor.
@@ -861,6 +1025,9 @@ def make_async_remote_copy(
       send_sem,
       device_id,
       device_id_type=device_id_type,
+      priority=priority,
+      strict_ordering=strict_ordering,
+      wait_threshold=wait_threshold,
   )
 
 
@@ -871,11 +1038,24 @@ def async_remote_copy(
     recv_sem,
     device_id,
     device_id_type: primitives.DeviceIdType | None = None,
+    *,
+    priority: int = 0,
+    strict_ordering: bool = False,
+    wait_threshold: int | None = None,
 ) -> AsyncCopyDescriptor:
   """Issues a remote DMA copying from src_ref to dst_ref."""
-  copy_descriptor = make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem,
-                                           device_id, device_id_type)
-  copy_descriptor.start()
+  copy_descriptor = make_async_remote_copy(
+      src_ref,
+      dst_ref,
+      send_sem,
+      recv_sem,
+      device_id,
+      device_id_type,
+      priority=priority,
+      strict_ordering=strict_ordering,
+      wait_threshold=wait_threshold,
+  )
+  copy_descriptor.start(priority=priority, strict_ordering=strict_ordering)
   return copy_descriptor
 
 
