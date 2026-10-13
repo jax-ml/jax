@@ -3957,6 +3957,28 @@ def _mul_lowering_rule(ctx: LoweringRuleContext, x, y, *, out_dtype):
 
 
 @register_lowering_rule(
+    lax.mulhi_p,
+    kernel_types=[*tpu_core.CoreType],
+    ensure_mlir_values=False,
+)
+def _mulhi_lowering_rule(ctx: LoweringRuleContext, x, y):
+  (aval_out,) = ctx.avals_out
+  x, y = _bcast(
+      x,
+      y,
+      ctx.avals_in[0],
+      ctx.avals_in[1],
+      aval_out,
+      ctx.lowering_context.dynamic_shape_replacement_fn,
+  )
+  if aval_out.dtype == jnp.uint32:
+    return arith.MulUIExtendedOp(x, y).high
+  if aval_out.dtype == jnp.int32:
+    return arith.MulSIExtendedOp(x, y).high
+  raise NotImplementedError(f"Unsupported dtype for mulhi: {aval_out.dtype}")
+
+
+@register_lowering_rule(
     lax.div_p, kernel_types=[*tpu_core.CoreType], ensure_mlir_values=False
 )
 def _div_lowering_rule(ctx: LoweringRuleContext, x, y):

@@ -2178,6 +2178,43 @@ class ConvTest(ptu.PallasTPUTest):
     result = self.pallas_call(kernel, out_shape=out)(lhs, rhs)
     np.testing.assert_array_equal(result, expected)
 
+  @parameterized.parameters(jnp.uint32, jnp.int32)
+  def test_mulhi(self, dtype):
+    if not jtu.is_libtpu_at_least("0.0.51"):
+      self.skipTest("Requires libtpu >= 0.0.51")
+    shape = (8, 128)
+    rng = np.random.default_rng(42)
+    if dtype == jnp.uint32:
+      x_np = rng.integers(0, 2**32 - 1, size=shape, dtype=np.uint32, endpoint=True)
+      y_np = rng.integers(0, 2**32 - 1, size=shape, dtype=np.uint32, endpoint=True)
+      x_np.ravel()[:4] = [0, 1, 2**32 - 1, 2**31]
+      y_np.ravel()[:4] = [2**32 - 1, 2**32 - 1, 2**32 - 1, 2]
+    else:
+      x_np = rng.integers(-(2**31), 2**31 - 1, size=shape, dtype=np.int32, endpoint=True)
+      y_np = rng.integers(-(2**31), 2**31 - 1, size=shape, dtype=np.int32, endpoint=True)
+      x_np.ravel()[:4] = [0, 1, -1, -(2**31)]
+      y_np.ravel()[:4] = [-(2**31), 2**31 - 1, -1, -(2**31)]
+    x = jnp.asarray(x_np)
+    y = jnp.asarray(y_np)
+
+    def hi_kernel(x_ref, y_ref, hi_ref):
+      hi_ref[...] = jax.lax.mulhi(x_ref[...], y_ref[...])
+
+    out_spec = jax.ShapeDtypeStruct(shape, dtype)
+    hi_got = self.pallas_call(hi_kernel, out_shape=out_spec)(x, y)
+    np.testing.assert_array_equal(hi_got, jax.lax.mulhi(x, y))
+
+    def hilo_kernel(x_ref, y_ref, lo_ref, hi_ref):
+      a, b = x_ref[...], y_ref[...]
+      lo_ref[...] = a * b
+      hi_ref[...] = jax.lax.mulhi(a, b)
+
+    lo_got, hi_got = self.pallas_call(
+        hilo_kernel, out_shape=(out_spec, out_spec)
+    )(x, y)
+    np.testing.assert_array_equal(lo_got, x * y)
+    np.testing.assert_array_equal(hi_got, jax.lax.mulhi(x, y))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
