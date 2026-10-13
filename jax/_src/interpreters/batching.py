@@ -299,7 +299,8 @@ class BatchTrace(Trace):
       full_dims = [next(pruned_dims) if f is None else in_dims[f] for f in input_fwds]
       return [*full_dims, *pruned_dims]
 
-    bwd = batch_custom_vjp_bwd(bwd, self.tag, self.axis_data, bwd_in_dims, in_dims)
+    bwd = batch_custom_vjp_bwd(bwd, self.tag, self.axis_data, bwd_in_dims, in_dims,
+                               lambda: len(out_trees()[2]), fun.debug_info.func_name)
     avals = tuple(core.typeof(x) for x in in_vals)
     out_vals = prim.bind_with_trace(self.parent_trace,
                                     tuple(in_vals), avals,
@@ -526,9 +527,12 @@ def batch_custom_jvp_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
 def batch_custom_vjp_bwd(bwd: lu.WrappedFun, tag: core.TraceTag,
                          axis_data: AxisData,
                          in_dims: Callable[[], Sequence[int | None]],
-                         out_dim_dests: Sequence[int | None]) -> lu.WrappedFun:
+                         out_dim_dests: Sequence[int | None],
+                         num_res: Callable[[], int], name: str) -> lu.WrappedFun:
   def new_bwd(*args):
     in_dims_ = in_dims() if callable(in_dims) else in_dims
+    shared = any(d is None and type(x) is not SymbolicZero
+                 for x, d in list(zip(args, in_dims_))[num_res():])
     args = [SymbolicZero(core.mapped_aval(axis_data.size, dim, x.aval))
             if type(x) is SymbolicZero else x
             for x, dim in zip(args, in_dims_)]
@@ -537,7 +541,8 @@ def batch_custom_vjp_bwd(bwd: lu.WrappedFun, tag: core.TraceTag,
     bwd_pair, pair_info_thunk = _flatten_cts_logs_pair(bwd)
     bwd_, out_dims_thunk = batch_subtrace(bwd_pair, tag, axis_data, in_dims_)
     all_dests = lambda: (*out_dim_dests, *(0,) * pair_info_thunk()[1].num_leaves)
-    bwd_ = _match_axes_and_sum(bwd_, axis_data, out_dims_thunk, all_dests)
+    bwd_ = _match_axes_and_sum(bwd_, axis_data, out_dims_thunk, all_dests,
+                               name if shared else None)
     outs = bwd_.call_wrapped(*args)
     num_cts, log_tree = pair_info_thunk()
     cts, log_leaves = split_list(outs, [num_cts])
@@ -553,11 +558,32 @@ def _flatten_cts_logs_pair(f, store, *args):
 
 @lu.transformation2
 def _match_axes_and_sum(f, axis_data, out_dims_thunk, out_dim_dests_thunk,
-                        *in_vals):
+                        shared_name, *in_vals):
   # this is like _match_axes, but we do reduce-sums as needed
   out_vals = f(*in_vals)
+  srcs, dsts = out_dims_thunk(), out_dim_dests_thunk()
+  if shared_name and any(s is not None and d is None and
+                         not isinstance(x, (Zero, SymbolicZero))
+                         for s, d, x in zip(srcs, dsts, out_vals)):
+    raise shared_cotangent_error(shared_name)
   return map(partial(_matchaxis_symzeros, axis_data, sum_match=True),
-             out_dims_thunk(), out_dim_dests_thunk(), out_vals)
+             srcs, dsts, out_vals)
+
+SHARED_OUTPUTS_DOCS = ("https://docs.jax.dev/en/latest/301/custom-derivatives.html"
+                       "#jax-301-vmap-shared-outputs")
+
+def shared_cotangent_error(name):
+  return ValueError(
+      f"under vmap, the custom_vjp function {name} has a primal output that is "
+      "shared across the batch (unbatched) with a nonzero right cotangent, and "
+      "its bwd rule produced a batched left cotangent for an unbatched primal "
+      "input. Summing that left cotangent over the batch would count the "
+      "shared primal output's right cotangent once per example. To resolve "
+      "this, pass generic_batching=True to defvjp, which gives that whole "
+      "right cotangent to the first example before summing (right for a "
+      "correct bwd rule, but bwd's work on it then happens once per example), "
+      "or define the operation as a jax.experimental.hijax.HiPrim with an "
+      f"explicit `batch` rule. See {SHARED_OUTPUTS_DOCS}")
 
 def _matchaxis_symzeros(axis_data, src, dst, x, sum_match=False):
   # Just like `matchaxis`, but handles symbolic zeros using ad_util.py

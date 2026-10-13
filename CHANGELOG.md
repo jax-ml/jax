@@ -29,6 +29,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.custom_vjp.defremat` rules with closures.
   * `arr.at[...].get()` now accepts a `strategy` argument that allows choosing
     whether the operation lowers to `gather`, `dynamic_slice`, or `slice`.
+  * Added a `generic_batching` option to {func}`jax.custom_vjp.defvjp`, for
+    batching under {func}`jax.vmap` when a primal output is shared across the
+    batch. See {ref}`jax-301-vmap-shared-outputs`.
 
 * Breaking changes
   * Removed `jax.custom_remat`. Use {func}`jax.custom_vjp.defremat` instead:
@@ -45,6 +48,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     shape, as documented and as in NumPy: the result has shape
     `(*shape, p.shape[-1])`. Previously `shape` had to include the outcome
     axis. Code that passed the full output shape should drop its last entry.
+  * Under {func}`jax.vmap`, a {func}`jax.custom_vjp` function with a primal
+    output that doesn't depend on any batched input could get gradients that
+    counted that output's cotangent once per example. That case now raises an
+    error explaining how to resolve it, for example with the new
+    `generic_batching` option. See {ref}`jax-301-vmap-shared-outputs`.
 
 * Deprecations
   * {func}`jax.lax.psend` and {func}`jax.lax.precv` are deprecated.

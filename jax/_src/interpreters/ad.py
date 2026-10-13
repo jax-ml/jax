@@ -1141,10 +1141,7 @@ def _custom_lin_transpose_fancy(cts_out, *invals, num_res,
                                 bwd: lu.WrappedFun, out_avals,
                                 symbolic_zeros, in_zeros):
   res, accums = split_list(invals, [num_res])
-  if symbolic_zeros:
-    cts_out = map(replace_internal_symbolic_zeros, cts_out)
-  else:
-    cts_out = map(instantiate_zeros, cts_out)
+  cts_out = map(replace_internal_symbolic_zeros, cts_out)
   if not bwd.transforms and isinstance(bwd.f, CustomBwdWithAccums):
     accums_ = iter(accums)
     all_accums = [None if z else next(accums_) for z in in_zeros]
