@@ -14,6 +14,8 @@
 """Pallas primitives for SparseCore."""
 
 from collections.abc import Callable, Sequence
+from jax._src.lib import ifrt_version
+
 import enum
 import functools
 import inspect
@@ -1277,7 +1279,7 @@ def _mask_all_reduce_lowering_rule(
           ir.IntegerType.get_signless(32),
       ),
       x,
-      0,
+      0 if ifrt_version < 80 else [0],  # pyrefly: ignore[bad-argument-type]
       ir.Attribute.parse(f"#tpu.reduction_kind<{kind}>"),
   )
 
