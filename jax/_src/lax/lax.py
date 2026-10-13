@@ -2560,6 +2560,8 @@ class DotAlgorithmPreset(enum.Enum):
             np.dtype(dtypes.float8_e4m3),
             np.dtype(dtypes.float8_e8m0fnu),
         ]
+        if dtypes.float8_e5m3fnu is not None:
+          fp8_dtypes.append(np.dtype(dtypes.float8_e5m3fnu))
         if lhs_dtype not in fp8_dtypes or rhs_dtype not in fp8_dtypes:
           raise ValueError(
               f"The dot algorithm '{self}' requires both inputs to have float8 "
@@ -6926,10 +6928,12 @@ def accuracy_attr(accuracy) -> hlo.ResultAccuracyAttr | None:
 
 def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
   def _is_fp8_mixed_precision_matmul(_lhs_dtypes, _rhs_dtypes):
-    fp8_dtypes = (dtypes.float8_e4m3fn, dtypes.float8_e5m2,
+    fp8_dtypes = [dtypes.float8_e4m3fn, dtypes.float8_e5m2,
                   dtypes.float8_e5m2fnuz, dtypes.float8_e4m3fnuz,
                   dtypes.float8_e3m4, dtypes.float8_e4m3,
-                  dtypes.float8_e8m0fnu)
+                  dtypes.float8_e8m0fnu]
+    if dtypes.float8_e5m3fnu is not None:
+      fp8_dtypes.append(dtypes.float8_e5m3fnu)
     return _lhs_dtypes in fp8_dtypes and _rhs_dtypes in fp8_dtypes
 
   # The *_ lets us reuse this for ragged_dot_general, which has group_sizes.

@@ -687,6 +687,8 @@ def _tma_dma_type(
     tma_dtype = 1
   elif isinstance(element_type, ir.Float8E8M0FNUType):
     tma_dtype = 1
+  elif isinstance(element_type, ir.Float8E5M3FNUType):
+    tma_dtype = 1
   elif isinstance(element_type, ir.Float4E2M1FNType):
     tma_dtype = 0
   else:

@@ -483,6 +483,7 @@ float8_e4m3fn: _ScalarType
 float8_e4m3fnuz: _ScalarType
 float8_e5m2: _ScalarType
 float8_e5m2fnuz: _ScalarType
+float8_e5m3fnu: _ScalarType
 float8_e8m0fnu: _ScalarType
 float_: _ScalarType
 def float_power(x: ArrayLike, y: ArrayLike, /) -> Array: ...
