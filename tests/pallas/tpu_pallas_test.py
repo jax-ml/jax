@@ -7394,7 +7394,6 @@ class TPUPallasCacheKeyTest(ptu.PallasTPUTest):
       self.skipTest('Compilation-only test')
     if not jtu.is_libtpu_at_least('0.0.50'):
       self.skipTest('Separating debug locations requires libtpu >= 0.0.50')
-    self.enter_context(config.jax_mosaic_unzip_debug_locations(True))
 
   def test_cache_key_collision_with_fingerprint_matching(self):
     x = jnp.array([1.0], jnp.float32)
