@@ -249,6 +249,7 @@ wheel_sources(
     ]) + if_sycl([
         "//jax_plugins/oneapi:plugin_pyproject.toml",
         "//jax_plugins/oneapi:plugin_setup.py",
+        "//jax_plugins/oneapi:README.md",
     ]),
 )
 
@@ -388,6 +389,7 @@ wheel_sources(
     ]) + if_sycl([
         "//jax_plugins/oneapi:pyproject.toml",
         "//jax_plugins/oneapi:setup.py",
+        "//jax_plugins/oneapi:README-pjrt.md",
         "//jax_plugins/oneapi:__init__.py",
     ]),
 )
