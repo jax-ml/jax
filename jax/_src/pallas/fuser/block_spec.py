@@ -1672,18 +1672,21 @@ def _swap_eval_rule(ctx: KernelEvalContext, ref, val, *idx, tree):
   block_idx = ctx.get_out_block_indices()[0]
 
   def _slice(i, b, start, size, dim):
-    if _is_squeezed(b):
-      return start + i
-    if not isinstance(b, (int, pallas_core.Blocked)):
-      raise NotImplementedError('swap not supported yet')
-    b = pallas_core.get_block_size(b)
-    _maybe_static_check(
-        start % b == 0,
-        'slice_start={slice_start} is not a multiple of'
-        ' block_size={block_size}',
-        slice_start=start,
-        block_size=b,
-    )
+    match b:
+      case int() | pallas_core.Blocked():
+        block_size = pallas_core.get_block_size(b)
+        _maybe_static_check(
+            start % block_size == 0,
+            'slice_start={slice_start} is not a multiple of'
+            ' block_size={block_size}',
+            slice_start=start,
+            block_size=block_size,
+        )
+        res = indexing.ds(start + i * block_size, block_size)
+      case pallas_core.Squeezed() | None:
+        res = start + i
+      case _:
+        raise NotImplementedError(f'swap not supported yet for block shape {b}')
     _maybe_static_check(
         start + size <= dim,
         'slice_start={slice_start} + slice_size={slice_size} exceeds'
@@ -1692,7 +1695,7 @@ def _swap_eval_rule(ctx: KernelEvalContext, ref, val, *idx, tree):
         slice_size=size,
         dim=dim,
     )
-    return indexing.ds(start + i * b, b)
+    return res
 
   block_idx_iter = iter(block_idx)
   block_shape_iter = iter(block_spec.block_shape)

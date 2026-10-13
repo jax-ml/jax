@@ -2002,6 +2002,22 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(value_out[1, 128:256, 512:1024], update)
     np.testing.assert_array_equal(value_out[0], jnp.zeros((640, 1024), jnp.int32))
 
+  @parameterized.parameters(None, pl.Squeezed())
+  def test_swap_with_squeezed_block_spec(self, squeezed_dim):
+    ref = jax.new_ref(jnp.zeros((4, 8), dtype=jnp.int32))
+    update = jnp.arange(4, dtype=jnp.int32)
+
+    @jax.jit
+    def run(ref):
+      block_spec = pl.BlockSpec((squeezed_dim, 4), lambda *ij: ij)
+      kernel_fn, _, _ = block_spec_lib.pull_block_spec(
+          lambda val: ref.at[1:4].swap(val), block_spec, grid_len=2
+      )(jax.ShapeDtypeStruct((3, 8), jnp.int32))
+      kernel_fn((2, 1), (), update)
+
+    run(ref)
+    np.testing.assert_array_equal(ref[3, 4:8], update)
+
   def test_get_key_ref(self):
     """Tests get_p on a key ref (block_shape=None, MemorySpace.KEY).
 
