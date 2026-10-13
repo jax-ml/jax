@@ -1226,6 +1226,22 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     y = rng(update_shape, dtype)
     check_grads(scatter_min, (x, y), 2, ["fwd", "rev"], 1e-2, 1e-2)
 
+  @parameterized.parameters(
+      (lax.scatter_max, [2., 5.]), (lax.scatter_min, [0., 3.]))
+  def testScatterExtremalClipMode(self, scatter_op, updates):
+    # https://github.com/jax-ml/jax/issues/40626
+    dnums = lax.ScatterDimensionNumbers(
+        update_window_dims=(), inserted_window_dims=(0,),
+        scatter_dims_to_operand_dims=(0,))
+    idxs = np.array([[-3], [8]])  # clipped to [[0], [2]]
+    f = lambda x, y: scatter_op(x, idxs, y, dnums, mode="clip")
+    x = np.array([1., 3., 4.], np.float32)
+    y = np.array(updates, np.float32)
+    gx, gy = jax.grad(lambda x, y: f(x, y).sum(), argnums=(0, 1))(x, y)
+    self.assertAllClose(gx, np.array([0., 1., 0.], np.float32))
+    self.assertAllClose(gy, np.array([1., 1.], np.float32))
+    check_grads(f, (x, y), 2, ["fwd", "rev"], 1e-2, 1e-2)
+
   def testStopGradient(self):
     def f(x):
       return lax.sin(x) * lax.cos(lax.stop_gradient(x))
