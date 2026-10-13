@@ -841,6 +841,36 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     x = np.zeros((128, 128), dtype=np.float32)
     np.testing.assert_array_equal(kernel_fn((0, 0), staged, (x,)), x + 7)
 
+  def test_scalar_prefetch_derived_by_binop_used_in_body(self):
+    x = jnp.zeros(8, dtype=jnp.int32)
+    a = jnp.int32(1)
+
+    def f():
+      i = a + 1
+      return jax.lax.dynamic_slice(x, (i,), (1,)) + i
+
+    _, _, scalar_prefetch_values = block_spec_lib.get_fusion_values(f)
+    self.assertLen(scalar_prefetch_values, 1)
+
+  @parameterized.named_parameters(
+      ('broadcast_in_dim', lambda x, i: jax.lax.broadcast_in_dim(i, (1,), ())),
+      ('dynamic_slice', lambda x, i: jax.lax.dynamic_slice(x, (i,), (1,))),
+      (
+          'dynamic_update_slice',
+          lambda x, i: jax.lax.dynamic_update_slice(x, x, (i,)),
+      ),
+  )
+  def test_scalar_prefetch_derived_by_unsupported_op_used_in_body(self, op):
+    x = jnp.zeros(1, dtype=jnp.int32)
+    i = jnp.int32(0)
+
+    def f():
+      j = op(x, i)
+      return jax.lax.dynamic_slice(x, (j[0],), (1,)) + j
+
+    with self.assertRaisesRegex(NotImplementedError, 'scalar prefetch'):
+      block_spec_lib.get_stateful_input_fusion_values(f)
+
   @parameterized.parameters(True, False)
   def test_scalar_prefetch_mixed_operands(self, use_literal):
     i = jnp.array(3.0, dtype=jnp.float32)

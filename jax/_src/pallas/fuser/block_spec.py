@@ -1123,13 +1123,7 @@ def _push_bcast_block_spec(
 
 def _binop_usage_rule(ctx: UsageRuleContext, used_out: set[Usage], **params):
   del params  # unused
-  if used_out == {Usage.SCALAR_PREFETCH}:
-    return [{Usage.SCALAR_PREFETCH}, {Usage.SCALAR_PREFETCH}]
-  elif used_out == {Usage.REGULAR}:
-    usage = [{Usage.REGULAR} for _ in ctx.avals_in]
-    return usage
-  else:
-    return [set()] * len(ctx.avals_in)
+  return [used_out] * len(ctx.avals_in)
 
 
 def _binop_eval_rule(ctx: KernelEvalContext, x, y, **params):
@@ -1430,9 +1424,9 @@ def _get_clamped_slice_starts(
 @register_usage_rule(lax.dynamic_slice_p)
 def _dynamic_slice_usage_rule(ctx, used_out: set[Usage], **params):
   del params
-  if used_out == {Usage.SCALAR_PREFETCH}:
+  if Usage.SCALAR_PREFETCH in used_out:
     raise NotImplementedError('scalar prefetch not supported yet')
-  elif used_out == {Usage.REGULAR}:
+  elif Usage.REGULAR in used_out:
     usage = [used_out] + [{Usage.SCALAR_PREFETCH}] * (len(ctx.avals_in) - 1)
     return usage
   else:
@@ -1505,9 +1499,9 @@ def _dynamic_update_slice_usage_rule(ctx, used_out: set[Usage], **params):
     raise NotImplementedError(
         f'dynamic_update_slice with params={params} not supported yet.'
     )
-  if used_out == {Usage.SCALAR_PREFETCH}:
+  if Usage.SCALAR_PREFETCH in used_out:
     raise NotImplementedError('scalar prefetch not supported yet')
-  elif used_out == {Usage.REGULAR}:
+  elif Usage.REGULAR in used_out:
     usage = [set(), used_out] + [{Usage.SCALAR_PREFETCH}] * (
         len(ctx.avals_in) - 2
     )
@@ -2107,9 +2101,9 @@ def _split_pull_rule(
 @register_usage_rule(lax.broadcast_in_dim_p)
 def _broadcast_in_dim_usage_rule(ctx, used_out: set[Usage], **params):
   del params
-  if used_out == {Usage.SCALAR_PREFETCH}:
+  if Usage.SCALAR_PREFETCH in used_out:
     raise NotImplementedError('scalar prefetch not supported yet')
-  elif used_out == {Usage.REGULAR}:
+  elif Usage.REGULAR in used_out:
     return [
         {Usage.SCALAR_PREFETCH}
         if not ctx.avals_in[0].shape
