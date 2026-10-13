@@ -54,8 +54,8 @@ def _custom_evaluate_jaxpr(
     env[v] = val
 
   env: dict[core.Var, Any] = {}
-  util.safe_map(write, jaxpr.constvars, consts)
-  util.safe_map(write, jaxpr.invars, args)
+  util.foreach(write, jaxpr.constvars, consts)
+  util.foreach(write, jaxpr.invars, args)
   lu = core.last_used(jaxpr)
   for eqn in jaxpr.eqns:
     bind_params = eqn.primitive.get_bind_params(eqn.params)
@@ -75,7 +75,7 @@ def _custom_evaluate_jaxpr(
           *util.safe_map(read, eqn.invars), **bind_params
       )
     if eqn.primitive.multiple_results:
-      util.safe_map(write, eqn.outvars, ans)
+      util.foreach(write, eqn.outvars, ans)
     else:
       write(eqn.outvars[0], ans)
     core.clean_up_dead_vars(eqn, env, lu)

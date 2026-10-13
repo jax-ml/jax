@@ -250,7 +250,7 @@ def compute_usage(jaxpr: core.Jaxpr, jaxpr_out_usages):
       usage_env[atom] = set()
     usage_env[atom] |= usage
 
-  util.safe_map(write_usage_env, jaxpr.outvars, jaxpr_out_usages)
+  util.foreach(write_usage_env, jaxpr.outvars, jaxpr_out_usages)
 
   for eqn in reversed(jaxpr.eqns):
     out_usages = util.safe_map(read_usage_env, eqn.outvars)
@@ -269,7 +269,7 @@ def compute_usage(jaxpr: core.Jaxpr, jaxpr_out_usages):
       # Usages are forwarded
       all_usages = set.union(*out_usages)
       in_usages = [all_usages] * len(eqn.invars)
-    util.safe_map(write_usage_env, eqn.invars, in_usages)
+    util.foreach(write_usage_env, eqn.invars, in_usages)
   return read_usage_env
 
 
@@ -864,7 +864,7 @@ def make_kernel_function(
         outs = eval_rule(eval_ctx, *in_vals, **eqn.params)
         if not eqn.primitive.multiple_results:
           outs = [outs]
-        util.safe_map(write_env, eqn.outvars, outs)
+        util.foreach(write_env, eqn.outvars, outs)
     out = util.safe_map(read_env, jaxpr.outvars)
     return tree_util.tree_unflatten(out_tree, out)
 
@@ -3008,7 +3008,7 @@ def _push_block_spec_jaxpr(
     else:
       out_block_specs = [rule(ctx, *in_block_specs, **eqn.params)]
 
-    util.safe_map(_write_block_spec, eqn.outvars, out_block_specs)
+    util.foreach(_write_block_spec, eqn.outvars, out_block_specs)
   out_block_specs = tuple(util.safe_map(_read_block_spec, jaxpr.outvars))
   if any(bs is pallas_core.no_block_spec for bs in out_block_specs):
     raise ValueError('No block spec found for output')
