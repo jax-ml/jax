@@ -23,6 +23,7 @@ Experimental Modules
     jax.experimental.multihost_utils
     jax.experimental.pallas
     jax.experimental.random
+    jax.experimental.rebindable
     jax.experimental.serialize_executable
     jax.experimental.sparse
     jax.experimental.xla_metadata

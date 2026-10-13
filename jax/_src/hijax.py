@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from contextlib import contextmanager
 from functools import partial, reduce, update_wrapper
+import copy
 import inspect
 from typing import Any, NoReturn, NamedTuple
 from collections.abc import Hashable, Callable
@@ -154,6 +155,14 @@ class HiPrim:
     self.out_avals_flat, self.out_tree = tracing_registry.flatten(self.out_aval)
     self.__dict__.update(self.params)
     self.check(*self.in_avals)
+
+  def replace(self, **params) -> HiPrim:
+    # Generic code can't re-run a subclass's `__init__`; this copy swaps params
+    # (and their attribute mirrors) for type-preserving rewrites only.
+    new = copy.copy(self)
+    new.params = {**self.params, **params}
+    new.__dict__.update(params)
+    return new
 
   # Operation implementation in terms of lojax primitives
   def expand(self, *args):

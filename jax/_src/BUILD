@@ -1209,6 +1209,25 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "rebindable",
+    srcs = ["rebindable.py"],
+    deps = [
+        ":api",
+        ":api_util",
+        ":batching",
+        ":config",
+        ":core",
+        ":flattree",
+        ":hijax",
+        ":partial_eval",
+        ":stages",
+        ":traceback_util",
+        ":tree_util",
+        ":util",
+    ],
+)
+
+pytype_strict_library(
     name = "hijax",
     srcs = ["hijax.py"],
     deps = [
