@@ -523,12 +523,11 @@ class ErfinvTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfinv_accurate_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 2.5, f64: 2.0}),
-        ("gpu", {f16: 1.0, f32: 3.5, f64: 2.0}),
+        ("cpu", {f16: 1.0, f32: 2.0, f64: 2.0}),
+        ("gpu", {f16: 1.0, f32: 2.5, f64: 2.0}),
         (TPU_EUPV1, {f16: 1.0, f32: 427.0}),
         ("tpu_v5p", {f16: 1.0, f32: 5.5}),
-        ("tpu_v6e", {f16: 1.0, f32: 3.0}),
-        ("tpu_7x", {f16: 1.0, f32: 4.0}),
+        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 2.5}),
     ]
     with jtu.global_config_context(jax_accurate_erf_inv=True):
       util.check_unary_precision(
@@ -544,10 +543,11 @@ class ErfinvTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfinv_grad_accuracy(self, dtype):
     bounds = [
-        (["cpu", "gpu"], {bf16: 6.5, f16: 9.5, f32: 38.5, f64: 68.0}),
+        ("cpu", {bf16: 6.5, f16: 9.5, f32: 29.0, f64: 68.0}),
+        ("gpu", {bf16: 6.5, f16: 9.5, f32: 27.0, f64: 68.0}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 1595.5}),
-        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 88.5}),
-        (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 52.0}),
+        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 67.0}),
+        (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 34.5}),
     ]
     with jtu.global_config_context(jax_accurate_erf_inv=True):
       util.check_unary_precision(
@@ -631,12 +631,12 @@ class ErfcInvTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfcinv_accuracy(self, dtype):
     bounds = [
-        ("cpu", {bf16: 1.0, f16: 1.0, f32: 3.0, f64: 3.0}),
-        ("gpu", {bf16: 1.0, f16: 1.0, f32: 3.5, f64: 3.0}),
+        ("cpu", {bf16: 1.0, f16: 1.0, f32: 2.5, f64: 3.0}),
+        ("gpu", {bf16: 1.0, f16: 1.0, f32: 3.0, f64: 3.0}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 427.0}),
         ("tpu_v5p", {f16: 1.0, f32: 6.0}),
-        ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 4.0}),
-        ("tpu_7x", {f16: 1.0, f32: 4.0}),
+        ("tpu_v6e", {bf16: 0.5, f16: 1.0, f32: 3.0}),
+        ("tpu_7x", {f16: 1.0, f32: 3.0}),
     ]
     input_ftz = [
         ("gpu", False),
@@ -658,11 +658,12 @@ class ErfcInvTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfcinv_grad_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 6.0, f64: 4.0}),
-        ("gpu", {f16: 1.0, f32: 7.5, f64: 4.5}),
+        ("cpu", {f16: 1.0, f32: (5.0, 6.0), f64: 4.0}),
+        ("gpu", {f16: 1.0, f32: 6.5, f64: 4.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 608.5}),
         ("tpu_v5p", {f16: 1.0, f32: 9.0}),
-        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 8.0}),
+        ("tpu_v6e", {f16: 1.0, f32: 7.5}),
+        ("tpu_7x", {f16: 1.0, f32: 6.5}),
     ]
     input_ftz = [
         ("gpu", False),
@@ -811,7 +812,7 @@ class NdtriTest(jtu.JaxTestCase):
         ("gpu", {f32: 3.0, f64: 2.0}),
         (TPU_EUPV1, {f32: 302.0}),
         ("tpu_v5p", {f32: 5.0}),
-        (["tpu_v6e", "tpu_7x"], {f32: 3.5}),
+        (["tpu_v6e", "tpu_7x"], {f32: 3.0}),
     ]
     input_ftz = [
         ("gpu", False),
@@ -833,11 +834,12 @@ class NdtriTest(jtu.JaxTestCase):
   )
   def test_ndtri_grad_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f32: 6.5, f64: 5.0}),
-        ("gpu", {f32: 7.5, f64: 5.0}),
+        ("cpu", {f32: 5.5, f64: 5.0}),
+        ("gpu", {f32: 6.5, f64: 5.0}),
         (TPU_EUPV1, {f32: 430.0}),
-        ("tpu_v5p", {f32: 9.5}),
-        (["tpu_v6e", "tpu_7x"], {f32: 8.0}),
+        ("tpu_v5p", {f32: 8.0}),
+        ("tpu_v6e", {f32: 7.5}),
+        ("tpu_7x", {f32: 6.5}),
     ]
     input_ftz = [
         ("gpu", False),

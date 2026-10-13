@@ -617,21 +617,21 @@ def erfcx_grad_impl(x: Array, ans: Array) -> Array:
 #   float32 (degree 8):
 #     _ERFINV32_P1: `w in [0, 3.5)`,         `out = x * P1(w - 1.75)`
 #                                            (rel err 1.55e-8, ~0.26 ULP)
-#     _ERFINV32_P2: `w in [3.5, 18.0625)`,   `out = sgn(x) * P2(sqrt(w) - 3.0)`
+#     _ERFINV32_P2: `w in [3.5, 18.0625)`,   `out = sgn(x) * (sqrt(w) + P2(sqrt(w) - 3.0))`
 #                                            (rel err 2.64e-8, ~0.44 ULP)
-#     _ERFINV32_P3: `w in [18.0625, 102.6]`, `out = sgn(x) * P3(sqrt(w) - 7.0)`
+#     _ERFINV32_P3: `w in [18.0625, 102.6]`, `out = sgn(x) * (sqrt(w) + P3(sqrt(w) - 7.0))`
 #                                            (rel err 3.37e-8, ~0.56 ULP)
 #
 #   float64 (degree 19):
 #     _ERFINV64_P1: `w in [0, 4.5)`,         `out = x * P1(w - 2.25)`
 #                                            (rel err 5.15e-17, ~0.46 ULP)
-#     _ERFINV64_P2: `w in [4.5, 16.0)`,      `out = sgn(x) * P2(sqrt(w) - 3.0)`
+#     _ERFINV64_P2: `w in [4.5, 16.0)`,      `out = sgn(x) * (sqrt(w) + P2(sqrt(w) - 3.0))`
 #                                            (rel err 1.04e-16, ~0.94 ULP)
-#     _ERFINV64_P3: `w in [16.0, 37.0)`,     `out = sgn(x) * P3(sqrt(w) - 5.0)`
+#     _ERFINV64_P3: `w in [16.0, 37.0)`,     `out = sgn(x) * (sqrt(w) + P3(sqrt(w) - 5.0))`
 #                                            (rel err 5.21e-17, ~0.47 ULP)
-#     _ERFINV64_P4: `w in [37.0, 144.0)`,    `out = sgn(x) * P4(sqrt(w) - 9.0)`
+#     _ERFINV64_P4: `w in [37.0, 144.0)`,    `out = sgn(x) * (sqrt(w) + P4(sqrt(w) - 9.0))`
 #                                            (rel err 3.65e-17, ~0.33 ULP)
-#     _ERFINV64_P5: `w in [144.0, 743.8]`,   `out = sgn(x) * P5(sqrt(w) - 19.5)`
+#     _ERFINV64_P5: `w in [144.0, 743.8]`,   `out = sgn(x) * (sqrt(w) + P5(sqrt(w) - 19.5))`
 #                                            (rel err 4.44e-17, ~0.40 ULP)
 #
 # Every `sqrt(w) - c` shift is exact by Sterbenz's lemma on its piece. For
@@ -699,16 +699,16 @@ def erfcx_grad_impl(x: Array, ans: Array) -> Array:
 #   w32_1 = 3.5; z32_1 = evaluate(sqrt(w32_1), 0); z32_2 = 4.25;
 #   z32_max = evaluate(sqrt(148 * log(2)), 0);
 #   show("_ERFINV32_P1", fpminimax(build_cheb(1b-64 - 1.75, w32_1 - 1.75, false, 1.75, true, 32), 8, [|SG...|], [1b-64 - 1.75; w32_1 - 1.75], relative, floating), 8);
-#   show("_ERFINV32_P2", fpminimax(build_cheb(z32_1 - 3.0, z32_2 - 3.0, true, 3.0, false, 32), 8, [|SG...|], [z32_1 - 3.0; z32_2 - 3.0], relative, floating), 8);
-#   show("_ERFINV32_P3", fpminimax(build_cheb(z32_2 - 7.0, z32_max - 7.0, true, 7.0, false, 32), 8, [|SG...|], [z32_2 - 7.0; z32_max - 7.0], relative, floating), 8);
+#   show("_ERFINV32_P2", fpminimax(build_cheb(z32_1 - 3.0, z32_2 - 3.0, true, 3.0, false, 32), 8, [|SG...|], [z32_1 - 3.0; z32_2 - 3.0], relative, floating, x + 3.0) - (x + 3.0), 8);
+#   show("_ERFINV32_P3", fpminimax(build_cheb(z32_2 - 7.0, z32_max - 7.0, true, 7.0, false, 32), 8, [|SG...|], [z32_2 - 7.0; z32_max - 7.0], relative, floating, x + 7.0) - (x + 7.0), 8);
 #   w64_1 = 4.5; z64_1 = evaluate(sqrt(w64_1), 0); z64_2 = 4.0;
 #   z64_3 = evaluate(sqrt(37.0), 0); z64_4 = 12.0;
 #   z64_max = evaluate(sqrt(1073 * log(2)), 0);
 #   show("_ERFINV64_P1", fpminimax(build_cheb(1b-80 - 2.25, w64_1 - 2.25, false, 2.25, true, 48), 19, [|D...|], [1b-80 - 2.25; w64_1 - 2.25], relative, floating), 19);
-#   show("_ERFINV64_P2", fpminimax(build_cheb(z64_1 - 3.0, z64_2 - 3.0, true, 3.0, false, 48), 19, [|D...|], [z64_1 - 3.0; z64_2 - 3.0], relative, floating), 19);
-#   show("_ERFINV64_P3", fpminimax(build_cheb(z64_2 - 5.0, z64_3 - 5.0, true, 5.0, false, 48), 19, [|D...|], [z64_2 - 5.0; z64_3 - 5.0], relative, floating), 19);
-#   show("_ERFINV64_P4", fpminimax(build_cheb(z64_3 - 9.0, z64_4 - 9.0, true, 9.0, false, 48), 19, [|D...|], [z64_3 - 9.0; z64_4 - 9.0], relative, floating), 19);
-#   show("_ERFINV64_P5", fpminimax(build_cheb(z64_4 - 19.5, z64_max - 19.5, true, 19.5, false, 48), 19, [|D...|], [z64_4 - 19.5; z64_max - 19.5], relative, floating), 19);
+#   show("_ERFINV64_P2", fpminimax(build_cheb(z64_1 - 3.0, z64_2 - 3.0, true, 3.0, false, 48), 19, [|D...|], [z64_1 - 3.0; z64_2 - 3.0], relative, floating, x + 3.0) - (x + 3.0), 19);
+#   show("_ERFINV64_P3", fpminimax(build_cheb(z64_2 - 5.0, z64_3 - 5.0, true, 5.0, false, 48), 19, [|D...|], [z64_2 - 5.0; z64_3 - 5.0], relative, floating, x + 5.0) - (x + 5.0), 19);
+#   show("_ERFINV64_P4", fpminimax(build_cheb(z64_3 - 9.0, z64_4 - 9.0, true, 9.0, false, 48), 19, [|D...|], [z64_3 - 9.0; z64_4 - 9.0], relative, floating, x + 9.0) - (x + 9.0), 19);
+#   show("_ERFINV64_P5", fpminimax(build_cheb(z64_4 - 19.5, z64_max - 19.5, true, 19.5, false, 48), 19, [|D...|], [z64_4 - 19.5; z64_max - 19.5], relative, floating, x + 19.5) - (x + 19.5), 19);
 _ERFINV32_P1 = (
     float.fromhex("0x1.508eb4p0"),
     float.fromhex("0x1.006e84p-2"),
@@ -722,27 +722,27 @@ _ERFINV32_P1 = (
 )
 
 _ERFINV32_P2 = (
-    float.fromhex("0x1.6a9942p1"),
-    float.fromhex("0x1.00ae7ep0"),
-    float.fromhex("0x1.c06244p-8"),
-    float.fromhex("-0x1.c3ca62p-9"),
-    float.fromhex("0x1.2ddd24p-10"),
-    float.fromhex("-0x1.c68208p-13"),
-    float.fromhex("-0x1.babfe6p-15"),
-    float.fromhex("0x1.c38e14p-15"),
-    float.fromhex("-0x1.8aa606p-17"),
+    float.fromhex("-0x1.566be2p-3"),
+    float.fromhex("0x1.5cfceap-9"),
+    float.fromhex("0x1.c06574p-8"),
+    float.fromhex("-0x1.c3ce24p-9"),
+    float.fromhex("0x1.2db682p-10"),
+    float.fromhex("-0x1.c6429ep-13"),
+    float.fromhex("-0x1.b5b046p-15"),
+    float.fromhex("0x1.c345ap-15"),
+    float.fromhex("-0x1.917454p-17"),
 )
 
 _ERFINV32_P3 = (
-    float.fromhex("0x1.b79e04p2"),
-    float.fromhex("0x1.023358p0"),
-    float.fromhex("-0x1.0cb328p-11"),
-    float.fromhex("0x1.82beb6p-18"),
-    float.fromhex("0x1.94666ep-18"),
-    float.fromhex("-0x1.77decap-20"),
-    float.fromhex("0x1.4737bep-22"),
-    float.fromhex("-0x1.737b74p-24"),
-    float.fromhex("0x1.973b66p-27"),
+    float.fromhex("-0x1.0c3f68p-3"),
+    float.fromhex("0x1.19ac7p-7"),
+    float.fromhex("-0x1.0cd7bcp-11"),
+    float.fromhex("0x1.7f5974p-18"),
+    float.fromhex("0x1.9bff7cp-18"),
+    float.fromhex("-0x1.7464bp-20"),
+    float.fromhex("0x1.344676p-22"),
+    float.fromhex("-0x1.7798f2p-24"),
+    float.fromhex("0x1.b7293cp-27"),
 )
 
 _ERFINV64_P1 = (
@@ -769,102 +769,104 @@ _ERFINV64_P1 = (
 )
 
 _ERFINV64_P2 = (
-    float.fromhex("0x1.6a994164559dbp1"),
-    float.fromhex("0x1.00ae7b5e136a6p0"),
-    float.fromhex("0x1.c0820afc71cbcp-8"),
-    float.fromhex("-0x1.c38c06b7f58ep-9"),
-    float.fromhex("0x1.2b7b99b3fcd7p-10"),
-    float.fromhex("-0x1.cfecefc617d64p-13"),
-    float.fromhex("-0x1.32cc7dfda27bbp-15"),
-    float.fromhex("0x1.d490532764077p-15"),
-    float.fromhex("-0x1.9420d0f1a9927p-16"),
-    float.fromhex("0x1.5677dfd97500fp-19"),
-    float.fromhex("0x1.a67e3ff2d392p-19"),
-    float.fromhex("-0x1.0e36189f90fcfp-19"),
-    float.fromhex("0x1.987b8b81bd1d6p-22"),
-    float.fromhex("0x1.9d4dc39670786p-23"),
-    float.fromhex("-0x1.57d37264bde27p-23"),
-    float.fromhex("0x1.3122e39478abep-25"),
-    float.fromhex("0x1.ff128dd678c0fp-27"),
-    float.fromhex("-0x1.6a3c84433f552p-27"),
-    float.fromhex("0x1.5a02cbdf4b48cp-31"),
-    float.fromhex("0x1.5ca0ddbb0bdbap-31"),
+    float.fromhex("-0x1.566be9baa624ep-3"),
+    float.fromhex("0x1.5cf6bc26d4b0dp-9"),
+    float.fromhex("0x1.c0820afc709fep-8"),
+    float.fromhex("-0x1.c38c06b7f2ac1p-9"),
+    float.fromhex("0x1.2b7b99b463d5ep-10"),
+    float.fromhex("-0x1.cfecefc93c5cfp-13"),
+    float.fromhex("-0x1.32cc7e7e51e7bp-15"),
+    float.fromhex("0x1.d490539604ecbp-15"),
+    float.fromhex("-0x1.9420cb7edb35ap-16"),
+    float.fromhex("0x1.5677bcc9afc2ap-19"),
+    float.fromhex("0x1.a67db4feb28e9p-19"),
+    float.fromhex("-0x1.0e35ac15520b9p-19"),
+    float.fromhex("0x1.9883ecf6aa351p-22"),
+    float.fromhex("0x1.9d40c1d9402a5p-23"),
+    float.fromhex("-0x1.57e6b5295de64p-23"),
+    float.fromhex("0x1.315f1ab1eab22p-25"),
+    float.fromhex("0x1.ffd498b130146p-27"),
+    float.fromhex("-0x1.6ad67e67ce1c9p-27"),
+    float.fromhex("0x1.56ca0f8fc7bebp-31"),
+    float.fromhex("0x1.5f3c32a44f21dp-31"),
 )
 
 _ERFINV64_P3 = (
-    float.fromhex("0x1.3664ddd1a43ddp2"),
-    float.fromhex("0x1.02a30d2124a41p0"),
-    float.fromhex("-0x1.22eb371a3d682p-13"),
-    float.fromhex("-0x1.c2f0c4ba44267p-13"),
-    float.fromhex("0x1.3eb33616c8bc5p-14"),
-    float.fromhex("-0x1.49de7965da262p-16"),
-    float.fromhex("0x1.2dcd1b3093445p-18"),
-    float.fromhex("-0x1.014c9df55f3e1p-20"),
-    float.fromhex("0x1.a10b8bf5e3b46p-23"),
-    float.fromhex("-0x1.4265aa3a17789p-25"),
-    float.fromhex("0x1.d250ba76acd7fp-28"),
-    float.fromhex("-0x1.19b011fb11975p-30"),
-    float.fromhex("0x1.4cfbb3d4c10d2p-36"),
-    float.fromhex("0x1.473759d38265cp-34"),
-    float.fromhex("-0x1.075bc185b637fp-36"),
-    float.fromhex("0x1.4d9ddec9c19e6p-38"),
-    float.fromhex("-0x1.52321dbeeb261p-36"),
-    float.fromhex("0x1.373b52e58e1d5p-37"),
-    float.fromhex("0x1.5fd58c708e6cap-39"),
-    float.fromhex("-0x1.cc174a14aa63bp-40"),
+    float.fromhex("-0x1.336445cb78457p-3"),
+    float.fromhex("0x1.5186909252081p-7"),
+    float.fromhex("-0x1.22eb371abdb35p-13"),
+    float.fromhex("-0x1.c2f0c4ba317f3p-13"),
+    float.fromhex("0x1.3eb336279e7cbp-14"),
+    float.fromhex("-0x1.49de79761feacp-16"),
+    float.fromhex("0x1.2dcd131fc6114p-18"),
+    float.fromhex("-0x1.014c93b9c770ap-20"),
+    float.fromhex("0x1.a10fbfbd8714bp-23"),
+    float.fromhex("-0x1.426c13d3d9282p-25"),
+    float.fromhex("0x1.d1064f3f365e7p-28"),
+    float.fromhex("-0x1.176ce2d17ac0dp-30"),
+    float.fromhex("0x1.9ca8e696af3dap-35"),
+    float.fromhex("0x1.0b05814447eebp-34"),
+    float.fromhex("-0x1.5e5575ec8c5f6p-35"),
+    float.fromhex("0x1.3d5558cee1095p-36"),
+    float.fromhex("-0x1.f4afbb5188accp-38"),
+    float.fromhex("0x1.068d714fd68e8p-39"),
+    float.fromhex("0x1.64aead41961a4p-47"),
+    float.fromhex("-0x1.db803224318bap-44"),
 )
 
 _ERFINV64_P4 = (
-    float.fromhex("0x1.1c4bf1ab3c8b6p3"),
-    float.fromhex("0x1.01b8e2742818dp0"),
-    float.fromhex("-0x1.accd56c8e1171p-12"),
-    float.fromhex("0x1.58dc927bbdb75p-16"),
-    float.fromhex("-0x1.fc7f59320264bp-23"),
-    float.fromhex("-0x1.461c7a6b835e1p-23"),
-    float.fromhex("0x1.1a16817d7b4ep-25"),
-    float.fromhex("-0x1.5e5f5c029a8aap-28"),
-    float.fromhex("0x1.7fef15d18ed5p-31"),
-    float.fromhex("-0x1.89986a9a0ddfbp-34"),
-    float.fromhex("0x1.82faec13ed16bp-37"),
-    float.fromhex("-0x1.7162ab7a72655p-40"),
-    float.fromhex("0x1.5809613053732p-43"),
-    float.fromhex("-0x1.3bbc7714f1f5bp-46"),
-    float.fromhex("0x1.24ebd9b51fb9dp-49"),
-    float.fromhex("-0x1.0395fa36f345bp-52"),
-    float.fromhex("0x1.70f480bafd2e7p-56"),
-    float.fromhex("-0x1.4dabd8b40ca32p-59"),
-    float.fromhex("0x1.1e842937a8505p-61"),
-    float.fromhex("-0x1.d4b1af05f93b1p-65"),
+    float.fromhex("-0x1.da072a61ba4eap-4"),
+    float.fromhex("0x1.b8e2742818d39p-8"),
+    float.fromhex("-0x1.accd56c8ea75fp-12"),
+    float.fromhex("0x1.58dc927ba7941p-16"),
+    float.fromhex("-0x1.fc7f589c31317p-23"),
+    float.fromhex("-0x1.461c7a571177p-23"),
+    float.fromhex("0x1.1a167f5d1e39ep-25"),
+    float.fromhex("-0x1.5e5f5e288cc6cp-28"),
+    float.fromhex("0x1.7fef58ca557e1p-31"),
+    float.fromhex("-0x1.89982c2ca9eeep-34"),
+    float.fromhex("0x1.82f614b7d99ebp-37"),
+    float.fromhex("-0x1.7166cfcfa4668p-40"),
+    float.fromhex("0x1.583f8c4c2d1d8p-43"),
+    float.fromhex("-0x1.3b923c3a99e19p-46"),
+    float.fromhex("0x1.23838035a7f2ap-49"),
+    float.fromhex("-0x1.04939cf5158e2p-52"),
+    float.fromhex("0x1.7b33c11940dc3p-56"),
+    float.fromhex("-0x1.473c3d074aaf5p-59"),
+    float.fromhex("0x1.16a8e1e7620a6p-61"),
+    float.fromhex("-0x1.dd5eb07dcdc59p-65"),
 )
 
 _ERFINV64_P5 = (
-    float.fromhex("0x1.36d468e0bf1a2p4"),
-    float.fromhex("0x1.009fef778869p0"),
-    float.fromhex("-0x1.8070a7ed4d5fbp-14"),
-    float.fromhex("0x1.dd995aa75e412p-19"),
-    float.fromhex("-0x1.29c10b4c8d11dp-23"),
-    float.fromhex("0x1.6d4bc75d07c9p-28"),
-    float.fromhex("-0x1.af2908acefcaep-33"),
-    float.fromhex("0x1.d76e92b67772ep-38"),
-    float.fromhex("-0x1.b3d7d7d039143p-43"),
-    float.fromhex("0x1.c1c575f34ddbbp-49"),
-    float.fromhex("0x1.6279cbab21257p-53"),
-    float.fromhex("-0x1.9cd718ba69226p-56"),
-    float.fromhex("0x1.02dc10cef5a55p-59"),
-    float.fromhex("-0x1.1abf7bdfa9bf5p-63"),
-    float.fromhex("0x1.5b3cdde0737bap-67"),
-    float.fromhex("-0x1.53fab47405d21p-71"),
-    float.fromhex("0x1.575890258c8bcp-77"),
-    float.fromhex("-0x1.094443f37f338p-81"),
-    float.fromhex("0x1.0c31e0d7936eep-82"),
-    float.fromhex("-0x1.e106299253ebfp-87"),
+    float.fromhex("-0x1.2b971f40e5e38p-4"),
+    float.fromhex("0x1.3fdeef10d1f97p-9"),
+    float.fromhex("-0x1.8070a7ed3f146p-14"),
+    float.fromhex("0x1.dd995aa777e37p-19"),
+    float.fromhex("-0x1.29c10b551c6b3p-23"),
+    float.fromhex("0x1.6d4bc74ea8be4p-28"),
+    float.fromhex("-0x1.af290403d711cp-33"),
+    float.fromhex("0x1.d76e99f341a57p-38"),
+    float.fromhex("-0x1.b3d937cccea3dp-43"),
+    float.fromhex("0x1.c1c18da7dae7ep-49"),
+    float.fromhex("0x1.62b6d3c46a513p-53"),
+    float.fromhex("-0x1.9cc37db7a34aap-56"),
+    float.fromhex("0x1.0275a925b8617p-59"),
+    float.fromhex("-0x1.1afa28919d34bp-63"),
+    float.fromhex("0x1.5cd5a45f9f345p-67"),
+    float.fromhex("-0x1.532d6710bbc58p-71"),
+    float.fromhex("0x1.4964074ec7ae3p-77"),
+    float.fromhex("-0x1.0f4635900acefp-81"),
+    float.fromhex("0x1.0dcd16a13181bp-82"),
+    float.fromhex("-0x1.dfdfd0a3f5a5cp-87"),
 )
 
 
 # Sollya `fpminimax` polynomial coefficients for `ndtri(p) = sqrt(2) * erfinv(2p - 1)`
 # on the same `w` intervals and degree/shift structure as `_ERFINV*` (generated
-# by scaling `solve_y(w)` by `sqrt(2)` in the Sollya script above, with
-# `z32_max = sqrt(147 * log(2))` and `z64_max = sqrt(1072 * log(2))` for
+# by scaling `solve_y(w)` by `sqrt(2)` in the Sollya script above, with tail
+# pieces fitted against fixed part `g = k_h * (x + shift_c)` using
+# `k_h = 0x1.6a0000p0` in float32 and `k_h = 0x1.6a09e68000000p0` in float64,
+# `z32_max = sqrt(147 * log(2))`, and `z64_max = sqrt(1072 * log(2))` for
 # `q = 2 * min(p, 1 - p)`):
 _NDTRI32_P1 = (
     float.fromhex("0x1.dbf6cep0"),
@@ -879,27 +881,27 @@ _NDTRI32_P1 = (
 )
 
 _NDTRI32_P2 = (
-    float.fromhex("0x1.00655ep2"),
-    float.fromhex("0x1.6b00acp0"),
-    float.fromhex("0x1.3d1a28p-7"),
-    float.fromhex("-0x1.3f78e2p-8"),
-    float.fromhex("0x1.a9d0ecp-10"),
-    float.fromhex("-0x1.415faep-12"),
-    float.fromhex("-0x1.27390ep-14"),
-    float.fromhex("0x1.3f92bep-14"),
-    float.fromhex("-0x1.2efb12p-16"),
+    float.fromhex("-0x1.e35432p-3"),
+    float.fromhex("0x1.00abfap-8"),
+    float.fromhex("0x1.3d1088p-7"),
+    float.fromhex("-0x1.3f797ep-8"),
+    float.fromhex("0x1.aaacbep-10"),
+    float.fromhex("-0x1.413624p-12"),
+    float.fromhex("-0x1.354cacp-14"),
+    float.fromhex("0x1.3f1a2ap-14"),
+    float.fromhex("-0x1.1c2152p-16"),
 )
 
 _NDTRI32_P3 = (
-    float.fromhex("0x1.36db3ap3"),
-    float.fromhex("0x1.6d2698p0"),
-    float.fromhex("-0x1.7c6b96p-11"),
-    float.fromhex("0x1.0e771ep-17"),
-    float.fromhex("0x1.298f2p-17"),
-    float.fromhex("-0x1.066fb2p-19"),
-    float.fromhex("0x1.93419ep-22"),
-    float.fromhex("-0x1.0ae602p-23"),
-    float.fromhex("0x1.531c8ap-26"),
+    float.fromhex("-0x1.7931ap-3"),
+    float.fromhex("0x1.934bc8p-7"),
+    float.fromhex("-0x1.7c3996p-11"),
+    float.fromhex("0x1.0fafbep-17"),
+    float.fromhex("0x1.244c8cp-17"),
+    float.fromhex("-0x1.07e81p-19"),
+    float.fromhex("0x1.ad9bd8p-22"),
+    float.fromhex("-0x1.08fd02p-23"),
+    float.fromhex("0x1.3cee08p-26"),
 )
 
 _NDTRI64_P1 = (
@@ -926,95 +928,95 @@ _NDTRI64_P1 = (
 )
 
 _NDTRI64_P2 = (
-    float.fromhex("0x1.00655e1a0d9e3p2"),
-    float.fromhex("0x1.6b00a79a5b302p0"),
-    float.fromhex("0x1.3d249de323ec8p-7"),
-    float.fromhex("-0x1.3f4abbe9c018bp-8"),
-    float.fromhex("0x1.a7885c3eacec5p-10"),
-    float.fromhex("-0x1.480b7dfbffd77p-12"),
-    float.fromhex("-0x1.b1e10b4f73276p-15"),
-    float.fromhex("0x1.4b531b11e4527p-14"),
-    float.fromhex("-0x1.1dc2ef879344p-15"),
-    float.fromhex("0x1.e4521897d9d84p-19"),
-    float.fromhex("0x1.2abd62bc91995p-18"),
-    float.fromhex("-0x1.7e20a7c069684p-19"),
-    float.fromhex("0x1.20f6bf7b630ddp-21"),
-    float.fromhex("0x1.2419bc0c41c0fp-22"),
-    float.fromhex("-0x1.e6cedd8e96fb6p-23"),
-    float.fromhex("0x1.b0fff74f5a469p-25"),
-    float.fromhex("0x1.6c39f95683c35p-26"),
-    float.fromhex("-0x1.021c69ced2777p-26"),
-    float.fromhex("0x1.d12604b91f684p-31"),
-    float.fromhex("0x1.feb9e7943bb81p-31"),
+    float.fromhex("-0x1.e441d8be4c3adp-3"),
+    float.fromhex("0x1.ed8234b66041ap-9"),
+    float.fromhex("0x1.3d249de327a56p-7"),
+    float.fromhex("-0x1.3f4abbe9c170dp-8"),
+    float.fromhex("0x1.a7885c3c296ffp-10"),
+    float.fromhex("-0x1.480b7df92653ep-12"),
+    float.fromhex("-0x1.b1e108357f884p-15"),
+    float.fromhex("0x1.4b531a7fc52ffp-14"),
+    float.fromhex("-0x1.1dc3003028c2fp-15"),
+    float.fromhex("0x1.e4528e6b26637p-19"),
+    float.fromhex("0x1.2abf090c0722bp-18"),
+    float.fromhex("-0x1.7e2254f12d186p-19"),
+    float.fromhex("0x1.20dd5ed0a343cp-21"),
+    float.fromhex("0x1.24368bd08457fp-22"),
+    float.fromhex("-0x1.e65a6ebcfc888p-23"),
+    float.fromhex("0x1.afde942fab73cp-25"),
+    float.fromhex("0x1.69efbb197c7aep-26"),
+    float.fromhex("-0x1.0093c0225e999p-26"),
+    float.fromhex("0x1.e4a0876288ad6p-31"),
+    float.fromhex("0x1.f0d47baf6bcb8p-31"),
 )
 
 _NDTRI64_P3 = (
-    float.fromhex("0x1.b6f6a292e8047p2"),
-    float.fromhex("0x1.6dc49113d79fep0"),
-    float.fromhex("-0x1.9b6bdc05fd258p-13"),
-    float.fromhex("-0x1.3edcf340e67c6p-12"),
-    float.fromhex("0x1.c2b5bdafe78dbp-14"),
-    float.fromhex("-0x1.d281596260491p-16"),
-    float.fromhex("0x1.aacfac7ae9a26p-18"),
-    float.fromhex("-0x1.6be045d2d3c7dp-20"),
-    float.fromhex("0x1.26e7410c3dafap-22"),
-    float.fromhex("-0x1.c7f44075c7e63p-25"),
-    float.fromhex("0x1.491d4b3c0ce24p-27"),
-    float.fromhex("-0x1.8cbe50826d2cp-30"),
-    float.fromhex("0x1.d7663b4f99c14p-35"),
-    float.fromhex("0x1.a01f049d28d7fp-34"),
-    float.fromhex("-0x1.8b47eacfa2636p-35"),
-    float.fromhex("0x1.344981c4e6dd3p-36"),
-    float.fromhex("-0x1.130894745e012p-36"),
-    float.fromhex("0x1.d2f79c32f529ep-38"),
-    float.fromhex("0x1.479af2cf22a5ap-40"),
-    float.fromhex("-0x1.17a24669e564ap-40"),
+    float.fromhex("-0x1.b2b7b1a2ff71cp-3"),
+    float.fromhex("0x1.dd5549ebcfecp-7"),
+    float.fromhex("-0x1.9b6bdc0636cep-13"),
+    float.fromhex("-0x1.3edcf340d0579p-12"),
+    float.fromhex("0x1.c2b5bdb78bfcep-14"),
+    float.fromhex("-0x1.d28159778d37ap-16"),
+    float.fromhex("0x1.aacfa8c92a2f4p-18"),
+    float.fromhex("-0x1.6be03bf46678dp-20"),
+    float.fromhex("0x1.26e8395f1f627p-22"),
+    float.fromhex("-0x1.c7f968bb2147fp-25"),
+    float.fromhex("0x1.48d07eb481d54p-27"),
+    float.fromhex("-0x1.8b2187adf74bfp-30"),
+    float.fromhex("0x1.254242c3809eep-34"),
+    float.fromhex("0x1.78b8f4cdb8771p-34"),
+    float.fromhex("-0x1.f20e8edb60dcp-35"),
+    float.fromhex("0x1.c421e187080b9p-36"),
+    float.fromhex("-0x1.5cf04feb50101p-37"),
+    float.fromhex("0x1.65ad647afa4f8p-39"),
+    float.fromhex("-0x1.1e0712564e325p-46"),
+    float.fromhex("-0x1.21aaa0ee852d4p-43"),
 )
 
 _NDTRI64_P4 = (
-    float.fromhex("0x1.920e62474efe1p3"),
-    float.fromhex("0x1.6c7967acf9009p0"),
-    float.fromhex("-0x1.2f3578ef681bap-11"),
-    float.fromhex("0x1.e7b53d4612444p-16"),
-    float.fromhex("-0x1.678fde51fb2d6p-22"),
-    float.fromhex("-0x1.cd30e1613630ep-23"),
-    float.fromhex("0x1.8eeeb5e25db18p-25"),
-    float.fromhex("-0x1.ef806b3024f96p-28"),
-    float.fromhex("0x1.0f7bd3ca4fe23p-30"),
-    float.fromhex("-0x1.16500329d75d8p-33"),
-    float.fromhex("0x1.119c2dfc34afdp-36"),
-    float.fromhex("-0x1.05380a358b875p-39"),
-    float.fromhex("0x1.e720bf6ed34abp-43"),
-    float.fromhex("-0x1.be0776abe311p-46"),
-    float.fromhex("0x1.9a5a0abefdfa4p-49"),
-    float.fromhex("-0x1.720e722b96f3fp-52"),
-    float.fromhex("0x1.131684e29e979p-55"),
-    float.fromhex("-0x1.c4a80fffa4c38p-59"),
-    float.fromhex("0x1.7f6e3333659e1p-61"),
-    float.fromhex("-0x1.5875844830fcep-64"),
+    float.fromhex("-0x1.4f30422c407cfp-3"),
+    float.fromhex("0x1.37c0967c8044fp-7"),
+    float.fromhex("-0x1.2f3578ef61b8dp-11"),
+    float.fromhex("0x1.e7b53d46362c8p-16"),
+    float.fromhex("-0x1.678fdeb8075acp-22"),
+    float.fromhex("-0x1.cd30e1818fe2dp-23"),
+    float.fromhex("0x1.8eeeb8c790b52p-25"),
+    float.fromhex("-0x1.ef8067d440c86p-28"),
+    float.fromhex("0x1.0f7ba63868244p-30"),
+    float.fromhex("-0x1.165033b6c620dp-33"),
+    float.fromhex("0x1.119f78d647a46p-36"),
+    float.fromhex("-0x1.0534d25c884dap-39"),
+    float.fromhex("0x1.e6d71c7211099p-43"),
+    float.fromhex("-0x1.be493db6c5e64p-46"),
+    float.fromhex("0x1.9c43a232d9c07p-49"),
+    float.fromhex("-0x1.70813fb19231ap-52"),
+    float.fromhex("0x1.0c2174a0c8ce1p-55"),
+    float.fromhex("-0x1.ced2868e22e89p-59"),
+    float.fromhex("0x1.8a17cd7e962p-61"),
+    float.fromhex("-0x1.518570c182bf7p-64"),
 )
 
 _NDTRI64_P5 = (
-    float.fromhex("0x1.b79461868bc2ap4"),
-    float.fromhex("0x1.6aec153657ec1p0"),
-    float.fromhex("-0x1.0fd715b666ff5p-13"),
-    float.fromhex("0x1.51b6a9374afddp-18"),
-    float.fromhex("-0x1.a5167dbca36eap-23"),
-    float.fromhex("0x1.024da42e6ee9cp-27"),
-    float.fromhex("-0x1.30e05a62ac553p-32"),
-    float.fromhex("0x1.4d5a499822ff1p-37"),
-    float.fromhex("-0x1.342fb6bfdec89p-42"),
-    float.fromhex("0x1.3e0abf1a8b47cp-48"),
-    float.fromhex("0x1.f52f45581ea06p-53"),
-    float.fromhex("-0x1.23f5eaf33a0bcp-55"),
-    float.fromhex("0x1.6e4c03928470fp-59"),
-    float.fromhex("-0x1.8f9104481a5fcp-63"),
-    float.fromhex("0x1.ea2a26c2fc2bbp-67"),
-    float.fromhex("-0x1.e223e46008c83p-71"),
-    float.fromhex("0x1.eddbc1d229b4dp-77"),
-    float.fromhex("-0x1.6a6402a032db5p-81"),
-    float.fromhex("0x1.7a49cd2335fcfp-82"),
-    float.fromhex("-0x1.55b5e4226e665p-86"),
+    float.fromhex("-0x1.a7af65743d66p-4"),
+    float.fromhex("0x1.c45d6cafd81f2p-9"),
+    float.fromhex("-0x1.0fd715b65ab27p-13"),
+    float.fromhex("0x1.51b6a937534b5p-18"),
+    float.fromhex("-0x1.a5167dcb6d5p-23"),
+    float.fromhex("0x1.024da42857645p-27"),
+    float.fromhex("-0x1.30e0565828cb7p-32"),
+    float.fromhex("0x1.4d5a4d0326a65p-37"),
+    float.fromhex("-0x1.3430e913d10b6p-42"),
+    float.fromhex("0x1.3e08cf0897759p-48"),
+    float.fromhex("0x1.f599e21836bc3p-53"),
+    float.fromhex("-0x1.23ec07f0c81c5p-55"),
+    float.fromhex("0x1.6d98804f9ac97p-59"),
+    float.fromhex("-0x1.8fcbc70762358p-63"),
+    float.fromhex("0x1.ecf92b25a9dabp-67"),
+    float.fromhex("-0x1.e15c809d29bf6p-71"),
+    float.fromhex("0x1.d53b0574b4157p-77"),
+    float.fromhex("-0x1.6fe0b0aeaa851p-81"),
+    float.fromhex("0x1.7d21d290ddc3fp-82"),
+    float.fromhex("-0x1.553dbd7f1f0afp-86"),
 )
 
 
@@ -1039,6 +1041,25 @@ def _select_piece(w: Array, idx: Array, vals: tuple[float, ...]) -> Array:
   return select_n(idx, *(full_like(w, v) for v in vals))
 
 
+def _half_mantissa(x: Array) -> Array:
+  """Zeros the bottom half of the fraction bits of `x`.
+
+  Because each value uses at most half the available precision (12 of 24 bits
+  in float32, 26 of 53 bits in float64), multiplying two such numbers fits in a
+  standard float with zero rounding error, without needing hardware FMA.
+  """
+  if x.dtype == np.float32:
+    x_u = bitcast_convert_type(x, np.uint32)
+    return bitcast_convert_type(x_u & np.uint32(0xFFFFF000), np.float32)
+  elif x.dtype == np.float64:
+    x_u = bitcast_convert_type(x, np.uint64)
+    return bitcast_convert_type(
+        x_u & _const(x_u, 0xFFFFFFFFF8000000), np.float64
+    )
+  else:
+    raise TypeError(f"Unsupported dtype for _half_mantissa: {x.dtype}")
+
+
 def erf_inv_core(
     x: Array,
     q: Array,
@@ -1058,13 +1079,18 @@ def erf_inv_core(
   When `has_far_tail=False` (`erfinv`), only the pieces needed for `q >= 2^-24`
   (`float32`, 2 pieces) or `q >= 2^-53` (`float64`, 3 pieces) are selected.
   """
-  w = -log(q * (1.0 + abs(x)))
+  ax = abs(x)
+  w = -log(q * (1.0 + ax))
   if x.dtype == np.float32:
     ps = _NDTRI32_P if is_ndtri else _ERFINV32_P
     conds = (w < 3.5, w < 18.0625) if has_far_tail else (w < 3.5,)
     shifts = (3.0, 7.0) if has_far_tail else (3.0,)
     c1 = 1.75
     unroll = 9
+    # Near |x| = 1 (large w), erfinv(x) grows like sqrt(w) and ndtri(p) grows
+    # like sqrt(2) * sqrt(w). For ndtri, truncate sqrt(2) to half its fraction
+    # bits so multiplying `k_h * z_h` below has zero rounding error.
+    k_h = float.fromhex("0x1.6a0000p0") if is_ndtri else 1.0
   elif x.dtype == np.float64:
     ps = _NDTRI64_P if is_ndtri else _ERFINV64_P
     conds = (
@@ -1075,19 +1101,41 @@ def erf_inv_core(
     shifts = (3.0, 5.0, 9.0, 19.5) if has_far_tail else (3.0, 5.0)
     c1 = 2.25
     unroll = 20
+    k_h = float.fromhex("0x1.6a09e68000000p0") if is_ndtri else 1.0
   else:
     raise TypeError(f"Unsupported dtype for erf_inv_core: {x.dtype}")
 
   ps = ps[: len(conds) + 1]
   idx = _piece_index(conds)
-  z = sqrt(select(conds[0], full_like(w, 1.0), w))
+
+  # In the tail pieces, the polynomial tables `P(t)` store only the small
+  # remainder `f(z) - k_h * z` around `t = z - shift`, leaving `k_h * sqrt(w)`
+  # to be evaluated separately:
+  # - Because `k_h * z` has already been subtracted from `P(t)`, the linear
+  #   coefficient `p[1]` is near zero (e.g. ~0.003 for erfinv), so rounding
+  #   error in `z` inside `t = z - shift` barely affects `poly`.
+  # - To compute `k_h * sqrt(w)` in extra precision without needing FMA or wider
+  #   floats, split `sqrt(w)` into `z_h + z_l`:
+  #   * `z_h` zeros the low fraction bits of `z`, so `z_h * z_h` is exact.
+  #   * Since `w - z_h^2 = (sqrt(w) - z_h) * (sqrt(w) + z_h)`, we can compute
+  #     `sqrt(w) - z_h = (w - z_h^2) / (sqrt(w) + z_h)`. Because `z_h * z_h` is
+  #     close to `w_safe`, the subtraction `w_safe - z_h * z_h` is exact.
+  w_safe = select(conds[0], full_like(w, 1.0), w)
+  z = sqrt(w_safe)
+  z_h = _half_mantissa(z)
+  z_l = (w_safe - z_h * z_h) / (z + z_h)
   shift = (
       full_like(w, shifts[0])
       if len(shifts) == 1
       else _select_piece(w, idx, (0.0, *shifts))
   )
   t = select(conds[0], w - c1, z - shift)
+
   coeffs = [_select_piece(w, idx, cs) for cs in zip(*ps)]
   poly = polynomial(t, coeffs, unroll=unroll)
+  # Add the two small parts (`k_h * z_l` and `poly`) before adding them to the
+  # exact main term `k_h * z_h`. Use `optimization_barrier` so XLA does not
+  # regroup the sum into `(k_h * z_h + k_h * z_l) + poly` and round away `z_l`.
+  tail_mag = k_h * z_h + optimization_barrier(k_h * z_l + poly)
   sign_x = select(x < 0.0, full_like(x, -1.0), full_like(x, 1.0))
-  return select(conds[0], x, sign_x) * poly
+  return select(conds[0], x * poly, sign_x * tail_mag)
