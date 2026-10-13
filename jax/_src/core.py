@@ -1892,6 +1892,9 @@ class AbstractValue:
   def unshard(self, mesh, check_vma, spec):
     return unshard_aval(mesh, check_vma, spec, self)
 
+  def reshard(self, sharding):
+    return reshard_aval(self, sharding)
+
   def vspace_add(self, x, y):
     from jax._src.ad_util import add_jaxvals  # pyrefly: ignore[missing-import]
     return add_jaxvals(x, y)
@@ -4393,9 +4396,10 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
       # Delete ref to variable when it is no longer needed by next equations.
       del env[v]
 
-# Used in shard_map for converting avals
+# Used in shard_map and reshard for converting avals
 shard_aval_handlers = {}
 unshard_aval_handlers = {}
+reshard_aval_handlers = {}
 
 def shard_aval(mesh, manual_axes, check_vma, spec, aval: AbstractValue
                ) -> AbstractValue:
@@ -4413,6 +4417,14 @@ def unshard_aval(mesh, check_vma, spec, aval: AbstractValue
     return aval.unshard(mesh, check_vma, spec)
   if (handler := unshard_aval_handlers.get(type(aval))):
     return handler(mesh, check_vma, spec, aval)
+  raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
+
+def reshard_aval(aval: AbstractValue, dst_sharding) -> AbstractValue:
+  from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
+  if isinstance(aval, HiType):
+    return aval.reshard(dst_sharding)
+  if (handler := reshard_aval_handlers.get(type(aval))):
+    return handler(aval, dst_sharding)
   raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
 
 

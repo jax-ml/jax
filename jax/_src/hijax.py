@@ -126,6 +126,10 @@ class HiType(core.AbstractValue):
              ) -> HiPspec:
     _must_override(self, "nospec", "autodiff through shard_map")
 
+  # reshard / explicit_axes interface
+  def reshard(self, sharding) -> HiType:
+    _must_override(self, "reshard", "reshard")
+
 
 def register_hitype(val_cls, typeof_fn) -> None:
   core.pytype_aval_mappings[val_cls] = typeof_fn

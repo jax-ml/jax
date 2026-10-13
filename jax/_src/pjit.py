@@ -2271,19 +2271,26 @@ batching.fancy_primitive_batchers[sharding_constraint_p] = _sharding_constraint_
 
 # -------------------- reshard ------------------------------------
 
+def _canonicalize_reshard_sharding(s, aval):
+  ds = canonicalize_sharding(s, 'reshard', check_mesh_consistency=False)
+  if ds is None:
+    raise ValueError(
+        'Reshard should only be used with out_shardings which are non-None '
+        f'and have a non-empty mesh. Got sharding {s}.')
+  if hasattr(aval, 'ndim'):
+    ds = ds.update(spec=ds.spec._normalized_spec_for_aval(aval.ndim))
+  return ds
+
 def reshard(xs, out_shardings):
+  from jax._src.hijax import HiPspec  # type: ignore
   x_flat, treedef = tree_flatten(xs)
   shardings_flat = flatten_axis_resources(
       "reshard out_shardings", treedef, out_shardings, tupled_args=True)
   x_avals_flat = [core.shaped_abstractify(x) for x in x_flat]
   out_flat = []
   for x, x_aval, s in safe_zip(x_flat, x_avals_flat, shardings_flat):
-    ds = canonicalize_sharding(s, 'reshard', check_mesh_consistency=False)
-    if ds is None:
-      raise ValueError(
-          'Reshard should only be used with out_shardings which are non-None '
-          f'and have a non-empty mesh. Got sharding {s}.')
-    ds = ds.update(spec=ds.spec._normalized_spec_for_aval(x_aval.ndim))
+    ds = (s if isinstance(s, HiPspec) else
+          _canonicalize_reshard_sharding(s, x_aval))
     cmesh = (s.mesh if (isinstance(s, NamedSharding) and
                         isinstance(s.mesh, mesh_lib.Mesh))
              else None)
@@ -2292,6 +2299,18 @@ def reshard(xs, out_shardings):
 
 reshard_p = core.Primitive('reshard')
 reshard_p.skip_canonicalization = True
+reshard_p.is_high = lambda aval, **_: aval.is_high
+
+def _reshard_to_lojax(hi_val, *, dst_sharding, concrete_mesh):
+  in_aval = core.typeof(hi_val)
+  out_aval = core.reshard_aval(in_aval, dst_sharding)
+  lo_vals = in_aval.lower_val(hi_val)
+  lo_out_avals = out_aval.lo_ty()
+  lo_outs = [reshard_p.bind(lo_val, dst_sharding=lo_out_aval.sharding,  # type: ignore
+                            concrete_mesh=concrete_mesh)
+             for lo_val, lo_out_aval in safe_zip(lo_vals, lo_out_avals)]
+  return out_aval.raise_val(*lo_outs)
+reshard_p.to_lojax = _reshard_to_lojax
 
 def _check_unreduced_reshard(aval, dst_sharding):
   # dst_sharding can't be more unreduced than src_sharding in case of
@@ -2311,12 +2330,17 @@ def _check_unreduced_reshard(aval, dst_sharding):
           ' `jax.reshard` should be the same. Got input spec:'
           f' {aval.sharding.spec} and output spec: {dst_sharding.spec}')
 
-def _reshard_abstract_eval(aval, *, dst_sharding, concrete_mesh):
+def _reshard_shaped_array(aval: core.ShapedArray, dst_sharding) -> core.ShapedArray:
   assert isinstance(aval, core.ShapedArray)
+  dst_sharding = _canonicalize_reshard_sharding(dst_sharding, aval)
   _check_unreduced_reshard(aval, dst_sharding)
   if aval.sharding == dst_sharding:
     return aval
   return aval.update(sharding=dst_sharding)
+core.reshard_aval_handlers[core.ShapedArray] = _reshard_shaped_array
+
+def _reshard_abstract_eval(aval, *, dst_sharding, concrete_mesh):
+  return core.reshard_aval(aval, dst_sharding)
 reshard_p.def_abstract_eval(_reshard_abstract_eval)
 
 def _reshard_impl(x, *, dst_sharding, concrete_mesh):
@@ -2358,8 +2382,11 @@ def _reshard_transpose_fancy(ct, x, *, dst_sharding, concrete_mesh):
   assert isinstance(x, ad.GradAccum)
   if type(ct) is ad.Zero or isinstance(x, ad.NullAccum):
     return
-  out_sharding = x.aval.sharding  # pyrefly: ignore[missing-attribute]
-  with mesh_lib.use_abstract_mesh(out_sharding.mesh):
+  out_sharding = x.aval.sharding  # type: ignore
+  ctx = (mesh_lib.use_abstract_mesh(out_sharding.mesh)  # type: ignore
+         if isinstance(out_sharding, NamedSharding)
+         else contextlib.nullcontext())
+  with ctx:
     x_bar = reshard_p.bind(ct, dst_sharding=out_sharding,
                            concrete_mesh=concrete_mesh)
     x.accum(x_bar)

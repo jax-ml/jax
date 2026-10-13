@@ -246,6 +246,13 @@ class TupTy(HiType):
     return TupTy(tuple(ty.unshard(mesh, check_vma, s)
                        for ty, s in zip(self.tys, spec.val)))
 
+  @property
+  def sharding(self):
+    return TupP(tuple(ty.sharding.spec for ty in self.tys))
+
+  def reshard(self, sharding):
+    return TupTy(tuple(ty.reshard(s) for ty, s in zip(self.tys, sharding.val)))
+
   def vspace_add(self, x_tup, y_tup):
     n = len(self.tys)
     x_elts = [get_tuple_element(x_tup, i) for i in range(n)]
@@ -410,6 +417,9 @@ class ImmutBoxTy(HiType):
     y_leaves = jax.tree.leaves(immutbox_get(y))
     add_leaves = [a.vspace_add(i, j) for a, i, j in zip(self.leaf_avals, x_leaves, y_leaves)]
     return immutbox_new(jax.tree.unflatten(self.treedef, add_leaves))
+
+  def reshard(self, sharding):
+    return ImmutBoxTy(tuple(a.reshard(sharding) for a in self.leaf_avals), self.treedef)
 
 def _map_immutbox_ty(size: int, axis: int | None, aval: ImmutBoxTy) -> ImmutBoxTy:
   if axis is None:
@@ -3314,6 +3324,198 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     hlo = jax.jit(f).lower(x).compile().as_text()
     self.assertIn("dce_sink", hlo)
     self.assertIn("custom_call", hlo)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reshard_hitype(self, mesh):
+    a = jax.device_put(jnp.arange(8, dtype=jnp.float32).reshape(4, 2), jax.P('x', None))
+    box = immutbox_new(a)
+
+    # Eager reshard
+    out_eager = jax.sharding.reshard(box, jax.P(None, 'y'))
+    self.assertEqual(jax.typeof(out_eager).sharding.spec, jax.P(None, 'y'))
+    self.assertAllClose(immutbox_get(out_eager), a)
+
+    # Jit + AD through reshard
+    @jax.jit
+    def f(b):
+      b2 = jax.sharding.reshard(b, jax.P(None, 'y'))
+      return immutbox_new(immutbox_get(b2) * 2.0)
+
+    lowered_text = f.lower(box).as_text()
+    self.assertIn(
+        'sdy.sharding_constraint' if config.use_shardy_partitioner.value else '@Sharding',
+        lowered_text)
+
+    out, f_vjp = jax.vjp(f, box)
+    self.assertEqual(jax.typeof(out).sharding.spec, jax.P(None, 'y'))
+    self.assertAllClose(immutbox_get(out), a * 2.0)
+
+    ct_in, = f_vjp(out)
+    self.assertEqual(jax.typeof(ct_in).sharding.spec, jax.P('x', None))
+    self.assertAllClose(immutbox_get(ct_in), a * 4.0)
+
+  def test_explicit_and_auto_axes_hitype(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'),
+                           axis_types=(jax.sharding.AxisType.Auto,
+                                       jax.sharding.AxisType.Auto))
+    with jax.set_mesh(mesh):
+      a = jax.device_put(jnp.arange(8, dtype=jnp.float32).reshape(4, 2), jax.P('x', None))
+      box = immutbox_new(a)
+
+      @jax.sharding.explicit_axes(in_sharding=jax.P('x', None))
+      def g(b):
+        self.assertEqual(jax.typeof(b).sharding.spec, jax.P('x', None))
+        b_out = immutbox_new(immutbox_get(b) + 1.0)
+        b_resharded = jax.sharding.reshard(b_out, jax.P(None, 'y'))
+        self.assertEqual(jax.typeof(b_resharded).sharding.spec, jax.P(None, 'y'))
+        return b_resharded
+
+      lowered_g = jax.jit(g).lower(box).as_text()
+      self.assertIn(
+          'sdy.sharding_constraint' if config.use_shardy_partitioner.value else '@Sharding',
+          lowered_g)
+
+      out = jax.jit(g)(box)
+      self.assertEqual(jax.typeof(out).sharding.spec, jax.P(None, None))
+      self.assertAllClose(immutbox_get(out), a + 1.0)
+
+      _, g_vjp = jax.vjp(jax.jit(g), box)
+      ct_in, = g_vjp(out)
+      self.assertAllClose(immutbox_get(ct_in), a + 1.0)
+
+    explicit_mesh = jtu.create_mesh((2, 2), ('x', 'y'),
+                                    axis_types=(jax.sharding.AxisType.Explicit,
+                                                jax.sharding.AxisType.Explicit))
+    with jax.set_mesh(explicit_mesh):
+      a = jax.device_put(jnp.arange(8, dtype=jnp.float32).reshape(4, 2), jax.P('x', None))
+      box = immutbox_new(a)
+
+      @jax.sharding.auto_axes(out_sharding=jax.P(None, 'y'))
+      def h(b):
+        self.assertEqual(jax.typeof(b).sharding.spec, jax.P(None, None))
+        return immutbox_new(immutbox_get(b) * 2.0)
+
+      lowered_h = jax.jit(h).lower(box).as_text()
+      self.assertIn(
+          'sdy.sharding_constraint' if config.use_shardy_partitioner.value else '@Sharding',
+          lowered_h)
+
+      out = jax.jit(h)(box)
+      self.assertEqual(jax.typeof(out).sharding.spec, jax.P(None, 'y'))
+      self.assertAllClose(immutbox_get(out), a * 2.0)
+
+  def test_reshard_qarray_hitype(self):
+    @dataclass(frozen=True)
+    class ScaledArray:
+      arr: jax.Array    # f32[m, k]
+      scale: jax.Array  # f32[m]
+
+    @dataclass(frozen=True)
+    class ScaledArrayTy(HiType):
+      arr_aval: ShapedArray
+      scale_aval: ShapedArray
+
+      @property
+      def sharding(self):
+        return self.arr_aval.sharding
+
+      def lo_ty(self):
+        return [self.arr_aval, self.scale_aval]
+
+      def lower_val(self, hi_val: ScaledArray):
+        return [hi_val.arr, hi_val.scale]
+
+      def raise_val(self, arr, scale):
+        return ScaledArray(arr, scale)
+
+      def reshard(self, sharding):
+        scale_sharding = sharding.update(spec=jax.P(sharding.spec[0]))
+        return ScaledArrayTy(
+            self.arr_aval.reshard(sharding),
+            self.scale_aval.reshard(scale_sharding),
+        )
+
+    register_hitype(
+        ScaledArray,
+        lambda q: ScaledArrayTy(jax.typeof(q.arr), jax.typeof(q.scale)),
+    )
+
+    mesh = jtu.create_mesh(
+        (2, 2),
+        ('x', 'y'),
+        axis_types=(jax.sharding.AxisType.Auto, jax.sharding.AxisType.Auto),
+    )
+    with jax.set_mesh(mesh):
+      arr = jax.device_put(
+          jnp.arange(8, dtype=jnp.float32).reshape(4, 2), jax.P('x', None)
+      )
+      scale = jax.device_put(jnp.ones((4,), dtype=jnp.float32), jax.P('x'))
+      q = ScaledArray(arr, scale)
+
+      @jax.sharding.explicit_axes(in_sharding=jax.P('x', None))
+      def f(q_in):
+        self.assertEqual(jax.typeof(q_in).arr_aval.sharding.spec, jax.P('x', None))
+        self.assertEqual(jax.typeof(q_in).scale_aval.sharding.spec, jax.P('x'))
+        q_resharded = jax.sharding.reshard(q_in, jax.P('y', 'x'))
+        self.assertEqual(
+            jax.typeof(q_resharded).arr_aval.sharding.spec, jax.P('y', 'x')
+        )
+        self.assertEqual(
+            jax.typeof(q_resharded).scale_aval.sharding.spec, jax.P('y')
+        )
+        return q_resharded
+
+      lowered = jax.jit(f).lower(q).as_text()
+      self.assertIn(
+          'sdy.sharding_constraint'
+          if config.use_shardy_partitioner.value
+          else '@Sharding',
+          lowered,
+      )
+
+      out = jax.jit(f)(q)
+      self.assertEqual(jax.typeof(out).arr_aval.sharding.spec, jax.P(None, None))
+      self.assertEqual(jax.typeof(out).scale_aval.sharding.spec, jax.P(None))
+      self.assertAllClose(out.arr, arr)
+      self.assertAllClose(out.scale, scale)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reshard_tuple_hitype(self, mesh):
+    x = jax.device_put(
+        jnp.arange(8, dtype=jnp.float32).reshape(4, 2), jax.P('x', None)
+    )
+    y = jax.device_put(jnp.ones((4,), dtype=jnp.float32), jax.P(None))
+    tup = make_tup(x, y)
+
+    # Eager reshard
+    out_eager = jax.sharding.reshard(tup, TupP((jax.P(None, 'y'), jax.P('x'))))
+    self.assertEqual(jax.typeof(out_eager).sharding,
+                     TupP((jax.P(None, 'y'), jax.P('x'))))
+    self.assertAllClose(get_tuple_element(out_eager, 0), x)
+    self.assertAllClose(get_tuple_element(out_eager, 1), y)
+
+    # Jit + AD through reshard
+    @jax.jit
+    def f(t):
+      t2 = jax.sharding.reshard(t, TupP((jax.P(None, 'y'), jax.P('x'))))
+      a = get_tuple_element(t2, 0) * 2.0
+      b = get_tuple_element(t2, 1) * 3.0
+      return make_tup(a, b)
+
+    lowered_text = f.lower(tup).as_text()
+    self.assertIn('sdy.sharding_constraint', lowered_text)
+
+    out, f_vjp = jax.vjp(f, tup)
+    self.assertEqual(jax.typeof(out).sharding,
+                     TupP((jax.P(None, 'y'), jax.P('x'))))
+    self.assertAllClose(get_tuple_element(out, 0), x * 2.0)
+    self.assertAllClose(get_tuple_element(out, 1), y * 3.0)
+
+    ct_in, = f_vjp(out)
+    self.assertEqual(jax.typeof(ct_in).sharding,
+                     TupP((jax.P('x', None), jax.P(None))))
+    self.assertAllClose(get_tuple_element(ct_in, 0), x * 4.0)
+    self.assertAllClose(get_tuple_element(ct_in, 1), y * 9.0)
 
 
 @jtu.with_config(jax_remat3=True, jax_custom_vjp3=True)
