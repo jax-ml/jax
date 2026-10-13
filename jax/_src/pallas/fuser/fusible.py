@@ -142,7 +142,7 @@ class Fusible(hijax.HiPrim):
 
 def _make_trivial_fusion(x: jax.Array) -> fusion_lib.Fusion:
   return fusion_lib.Fusion(
-      func=lambda: x,
+      func=tree_util.Partial(jax_core.identity, x),
       in_type=((), {}),
       out_type=jax.typeof(x),
   )

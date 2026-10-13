@@ -21,6 +21,7 @@ from typing import Any
 from collections.abc import Callable
 
 import jax
+from jax._src import tree_util
 from jax._src import util
 
 safe_map = util.safe_map
@@ -56,3 +57,25 @@ class Fusion[**A, K]:
   @property
   def in_dtype(self):
     return jax.tree.map(lambda x: x.dtype, self.in_type)
+
+
+# Under tracing (jit, eval_shape, or as `jax.experimental.rebindable`
+# operands) a Fusion flattens to the values its `func` closes over, which
+# requires `func` to be a `tree_util.Partial`; any other `func` keeps its
+# captured values hidden, so capturing a tracer that way fails when the tracing
+# boundary is crossed. User code calling `jax.tree.map` on fusions still sees
+# them as leaves.
+def _flatten_fusion(f: Fusion):
+  func = f.func
+  if not isinstance(func, tree_util.Partial):
+    func = tree_util.Partial(func)  # captured values stay hidden in `func`
+  type_leaves, type_tree = tree_util.tree_flatten((f.in_type, f.out_type))
+  return (func,), (tuple(type_leaves), type_tree, f.strict_mode)
+
+def _unflatten_fusion(aux, children):
+  type_leaves, type_tree, strict_mode = aux
+  in_type, out_type = type_tree.unflatten(type_leaves)
+  return Fusion(children[0], in_type, out_type, strict_mode)
+
+tree_util.tracing_registry.register_node(
+    Fusion, _flatten_fusion, _unflatten_fusion)

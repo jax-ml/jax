@@ -1437,6 +1437,7 @@ jax_multiplatform_test(
     deps = [
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_fuser",
+        "//jax/experimental:rebindable",
     ] + py_deps([
         "absl/testing",
         "numpy",
