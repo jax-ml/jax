@@ -252,7 +252,7 @@ def compute_usage(jaxpr: core.Jaxpr, jaxpr_out_usages):
 
   util.safe_map(write_usage_env, jaxpr.outvars, jaxpr_out_usages)
 
-  for eqn in jaxpr.eqns[::-1]:
+  for eqn in reversed(jaxpr.eqns):
     out_usages = util.safe_map(read_usage_env, eqn.outvars)
     rule = usage_rules.get(eqn.primitive, None)
     if rule:
