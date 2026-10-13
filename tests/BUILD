@@ -714,7 +714,10 @@ jax_multiplatform_test(
     srcs = ["lax_numpy_test.py"],
     backend_tags = {
         "tpu": ["notsan"],  # Test times out.
-        "cpu": ["notsan"],  # Test times out.
+        "cpu": [
+            "nomsan",  # Test times out.
+            "notsan",  # Test times out.
+        ],
     },
     shard_count = {
         "cpu": 45,
@@ -812,7 +815,10 @@ jax_multiplatform_test(
     srcs = ["lax_numpy_setops_test.py"],
     backend_tags = {
         "tpu": ["notsan"],  # Test times out.
-        "cpu": ["notsan"],  # Test times out.
+        "cpu": [
+            "nomsan",  # Test times out.
+            "notsan",  # Test times out.
+        ],
     },
     shard_count = {
         "cpu": 5,
