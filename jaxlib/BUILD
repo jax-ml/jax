@@ -450,6 +450,7 @@ nanobind_pywrap_extension(
         "@xla//xla/backends/cpu/collectives:cpu_collectives",
         "@xla//xla/hlo/builder/lib:approx_topk_shape",
         "@xla//xla/pjrt:exceptions",
+        "@xla//xla/pjrt:host_callback",
         "@xla//xla/pjrt:mlir_to_hlo",
         "@xla//xla/pjrt:pjrt_api",
         "@xla//xla/pjrt:pjrt_client",

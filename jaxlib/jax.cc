@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/pjrt/distributed/mtls.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/distributed/service.h"
+#include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_topology_description_registry.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
@@ -686,6 +687,13 @@ NB_MODULE(_jax, m) {
   m.def("get_execution_stream_id", []() { return GetExecutionStreamId(); });
   m.def("set_execution_stream_id",
         [](int64_t id) { GetExecutionStreamId() = id; });
+  // Calls `fn` as if this thread ran a host callback. Threads that work for a
+  // callback (e.g. Pallas interpret mode's thread_map) use it, so that their
+  // CPU dispatches do not wait for computations that wait for the callback.
+  m.def("call_in_host_callback_scope", [](const nb::callable& fn) {
+    xla::HostCallbackScope host_callback_scope;
+    return fn();
+  });
 
   PyLoadedExecutable::Register(m);
   PyExecuteResults::Register(m);
