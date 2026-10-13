@@ -78,6 +78,8 @@ Remember to align the itemized text with the first line of an item within a list
   * The `device_id_type` parameter of
     {func}`jax.experimental.pallas.tpu.async_remote_copy` and
     {func}`jax.experimental.pallas.tpu.make_async_remote_copy` is deprecated.
+  * {class}`jax.experimental.pallas.tpu.BufferedRefBase` and
+    {data}`jax.experimental.pallas.tpu.BufferType.MANUAL` are deprecated.
 
 ## Released with JAX 0.11.2 (September 17, 2026)
 

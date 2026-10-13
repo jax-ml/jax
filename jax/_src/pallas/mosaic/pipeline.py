@@ -28,33 +28,38 @@ from typing import Any, Literal
 import jax
 from jax import lax
 from jax import tree_util
-from jax._src import core as jax_core
+from jax._src import api_util
 from jax._src import config
+from jax._src import core as jax_core
+from jax._src import deprecations
+from jax._src import effects
 from jax._src import flattree as ft
 from jax._src import state
 from jax._src import util as jax_util
+from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
-from jax._src import api_util
-from jax._src.tree_util import tracing_registry
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import helpers
 from jax._src.pallas import hlo_interpreter
 from jax._src.pallas import primitives
 from jax._src.pallas import utils
+from jax._src.pallas.fuser import fusible_dtype
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import helpers as tpu_helpers
-from jax._src.pallas.mosaic.lowering import (
-    register_lowering_rule, jaxpr_subcomp, _transform_ref, ir_constant,
-    _uncacheable_primitives)
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import tpu_info
-from jax._src import effects
-from jax._src.state import WriteEffect, ReadEffect
+from jax._src.pallas.mosaic.lowering import (
+    _transform_ref,
+    _uncacheable_primitives,
+    ir_constant,
+    jaxpr_subcomp,
+    register_lowering_rule,
+)
+from jax._src.pallas.pallas_call import _batch_block_mapping
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
-from jax._src.interpreters import batching
-from jax._src.pallas.pallas_call import _batch_block_mapping
-from jax._src.pallas.fuser import fusible_dtype
+from jax._src.state import ReadEffect, WriteEffect
+from jax._src.tree_util import tracing_registry
 import jax.numpy as jnp
 import numpy as np
 
@@ -262,7 +267,20 @@ def _spec_has_trivial_windowing(spec, grid, full_shape):
   return True
 
 
-class BufferType(enum.Enum):
+class _BufferTypeMeta(enum.EnumMeta):
+
+  def __getattribute__(cls, name: str):
+    if name == "MANUAL":
+      deprecations.warn(
+          "jax-pallas-buffertype-manual",
+          "BufferType.MANUAL is deprecated and will be removed in a future"
+          " release.",
+          stacklevel=2,
+      )
+    return super().__getattribute__(name)
+
+
+class BufferType(enum.Enum, metaclass=_BufferTypeMeta):
   """Buffer type for the arguments to an emitted pipeline."""
   INPUT = 1
   OUTPUT = 2
