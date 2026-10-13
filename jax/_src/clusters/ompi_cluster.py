@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import re
-from jax._src import clusters
+from jax._src.clusters import cluster
 
 # OMPI_MCA_orte_hnp_uri exists only when processes are launched via mpirun or mpiexec
 # in ORTE-based Open MPI (<5). PRRTE-based Open MPI 5 programs are routed to
@@ -27,7 +27,7 @@ _PROCESS_COUNT = 'OMPI_COMM_WORLD_SIZE'
 _PROCESS_ID = 'OMPI_COMM_WORLD_RANK'
 _LOCAL_PROCESS_ID = 'OMPI_COMM_WORLD_LOCAL_RANK'
 
-class OmpiCluster(clusters.ClusterEnv):
+class OmpiCluster(cluster.ClusterEnv):
 
   name: str = "ompi"
 
@@ -52,7 +52,7 @@ class OmpiCluster(clusters.ClusterEnv):
     return major_version >= 5
 
   @classmethod
-  def _mpi4py_cluster(cls) -> type[clusters.ClusterEnv]:
+  def _mpi4py_cluster(cls) -> type[cluster.ClusterEnv]:
     from jax._src.clusters.mpi4py_cluster import Mpi4pyCluster
     if not Mpi4pyCluster.is_env_present():
       raise RuntimeError(

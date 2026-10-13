@@ -24,7 +24,7 @@ import socket
 import time
 import textwrap
 import warnings
-from jax._src import clusters
+from jax._src.clusters import cluster
 
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ def retry(
     return retry_decorator(func)
 
 
-class K8sCluster(clusters.ClusterEnv):
+class K8sCluster(cluster.ClusterEnv):
 
   # Use an arbitrarily chosen port for the coordinator since we cannot
   # rely on communication to choose one in real time.
