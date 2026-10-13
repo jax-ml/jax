@@ -1286,7 +1286,7 @@ def _mask_all_reduce_lowering_rule(
           ir.IntegerType.get_signless(32),
       ),
       x,
-      0,
+      0 if ifrt_version < 78 else [0],  # pyrefly: ignore[bad-argument-type]
       ir.Attribute.parse(f"#tpu.reduction_kind<{kind}>"),
   )
 
