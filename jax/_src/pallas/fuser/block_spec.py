@@ -213,20 +213,6 @@ def _ref_block_axis(
   return axis - sum(map(_is_squeezed, block_shape[:axis]))
 
 
-def _block_size(dim: pallas_core.Element | int | None) -> int | None:
-  match dim:
-    case (
-        pallas_core.Element()
-        | pallas_core.BoundedSlice()
-        | pallas_core.Blocked()
-    ):
-      return dim.block_size
-    case pallas_core.Squeezed() | None:
-      return None
-    case _:
-      return dim
-
-
 @dataclasses.dataclass
 class UsageRuleContext:
   prim: core.Primitive
@@ -1305,7 +1291,7 @@ def _check_slice_alignment(
         | pallas_core.Element()
         | pallas_core.BoundedSlice()
     ):
-      block_size = _block_size(bs)
+      block_size = pallas_core.get_block_size(bs)
       if slice_start is not None:
         _maybe_static_check(
             slice_start % block_size == 0,
@@ -1346,7 +1332,7 @@ def _offset_indexer(
     case None | pallas_core.Squeezed() | pallas_core.Element():
       return indexer + slice_start
     case int() | pallas_core.Blocked():
-      block_size = _block_size(bs)
+      block_size = pallas_core.get_block_size(bs)
       # indexer is a block index so we need to offset it by the block offset.
       return indexer + slice_start // block_size
     case pallas_core.BoundedSlice():
@@ -1686,8 +1672,11 @@ def _swap_eval_rule(ctx: KernelEvalContext, ref, val, *idx, tree):
   block_idx = ctx.get_out_block_indices()[0]
 
   def _slice(i, b, start, size, dim):
-    if not isinstance(b, int):
+    if _is_squeezed(b):
+      return start + i
+    if not isinstance(b, (int, pallas_core.Blocked)):
       raise NotImplementedError('swap not supported yet')
+    b = pallas_core.get_block_size(b)
     _maybe_static_check(
         start % b == 0,
         'slice_start={slice_start} is not a multiple of'
@@ -1703,7 +1692,7 @@ def _swap_eval_rule(ctx: KernelEvalContext, ref, val, *idx, tree):
         slice_size=size,
         dim=dim,
     )
-    return i if b is None else indexing.ds(start + i * b, b)
+    return indexing.ds(start + i * b, b)
 
   block_idx_iter = iter(block_idx)
   block_shape_iter = iter(block_spec.block_shape)
@@ -1766,25 +1755,24 @@ def _get_pull_rule(
     if idx_aval.stride != 1:
       raise NotImplementedError('get not supported yet')
     bd = next(block_shape_iter)
-    block_size = _block_size(bd)
-    if block_size is not None:
-      if isinstance(idx_aval.start, int):
-        _maybe_static_check(
-            idx_aval.start % block_size == 0,
-            'slice_start={slice_start} is not a multiple of'
-            ' block_size={block_size}',
-            slice_start=idx_aval.start,
-            block_size=block_size,
-        )
-        _maybe_static_check(
-            idx_aval.start + idx_aval.size <= size,
-            'slice_start={slice_start} + slice_size={slice_size} exceeds'
-            ' ref dimension={dim}',
-            slice_start=idx_aval.start,
-            slice_size=idx_aval.size,
-            dim=size,
-        )
-    block_shape.append(block_size)
+    if not _is_squeezed(bd) and isinstance(idx_aval.start, int):
+      block_size = pallas_core.get_block_size(bd)
+      _maybe_static_check(
+          idx_aval.start % block_size == 0,
+          'slice_start={slice_start} is not a multiple of'
+          ' block_size={block_size}',
+          slice_start=idx_aval.start,
+          block_size=block_size,
+      )
+      _maybe_static_check(
+          idx_aval.start + idx_aval.size <= size,
+          'slice_start={slice_start} + slice_size={slice_size} exceeds'
+          ' ref dimension={dim}',
+          slice_start=idx_aval.start,
+          slice_size=idx_aval.size,
+          dim=size,
+      )
+    block_shape.append(bd)
   assert next(block_shape_iter, None) is None
 
   def new_block_index_transform(*idxs):
@@ -1857,8 +1845,8 @@ def _get_eval_rule(ctx: KernelEvalContext, ref, *idx, tree):
       raise NotImplementedError('get not supported yet')
     if idx_aval.stride != 1:
       raise NotImplementedError('get not supported yet')
-    block_size = _block_size(bd)
-    if block_size is not None:
+    if not _is_squeezed(bd):
+      block_size = pallas_core.get_block_size(bd)
       _maybe_static_check(
           idx.start % block_size == 0,
           'slice_start={slice_start} is not a multiple of'
@@ -1950,9 +1938,7 @@ def _concatenate_rule(
         'Concatenation with Element indexing is not yet supported.'
     )
   num_blocks = []
-  block_dim = block_shape[dimension]
-  if block_dim is None or isinstance(block_dim, pallas_core.Squeezed):
-    block_dim = 1
+  block_dim = pallas_core.get_block_size(block_shape[dimension])
   if (
       not _is_squeezed(block_shape[dimension])
       and block_dim == sum(aval.shape[dimension] for aval in ctx.avals_in)
@@ -2017,9 +2003,7 @@ def _stack_pull_rule(
     raise NotImplementedError(
         'Stack with Element indexing is not yet supported.'
     )
-  block_dim = block_shape[axis]
-  if block_dim is None or isinstance(block_dim, pallas_core.Squeezed):
-    block_dim = 1
+  block_dim = pallas_core.get_block_size(block_shape[axis])
 
   n = len(ctx.avals_in)
   if block_dim != n:
@@ -2246,12 +2230,14 @@ def _tile_eval_rule(
     eval_ctx: KernelEvalContext, x, reps: tuple[int, ...]
 ):
   block_spec = eval_ctx.out_block_specs[0]
-  block_shape = tuple(d for d in block_spec.block_shape
-                      if not isinstance(d, pallas_core.Squeezed))
-  if not all(isinstance(dim, int) for dim in block_shape):
+  if not all(
+      _is_squeezed(dim) or isinstance(dim, (int, pallas_core.Blocked))
+      for dim in block_spec.block_shape
+  ):
     raise NotImplementedError(
         'tile with non-int block dimensions not supported yet'
     )
+  block_shape = _ref_block_shape(block_spec.block_shape)
   if not all(
       out_dim % in_dim == 0 for out_dim, in_dim in zip(block_shape, x.shape)
   ):
@@ -2277,8 +2263,10 @@ def _tile_pull_rule(
   block_shape = block_transform.block_shape
   aval_in = ctx.avals_in[0]
   assert len(block_shape) == len(aval_in.shape)
-  if not all(isinstance(dim, (int, pallas_core.Squeezed))
-             for dim in block_shape):
+  if not all(
+      _is_squeezed(dim) or isinstance(dim, (int, pallas_core.Blocked))
+      for dim in block_shape
+  ):
     raise NotImplementedError(
         'tile with non-int block dimensions not supported yet'
     )
@@ -2294,8 +2282,8 @@ def _tile_pull_rule(
     )
 
   new_shape = tuple(
-      block_dim if isinstance(block_dim, pallas_core.Squeezed)
-      else min(block_dim, in_dim)
+      block_dim if _is_squeezed(block_dim)
+      else min(pallas_core.get_block_size(block_dim), in_dim)
       for block_dim, in_dim in zip(block_shape, aval_in.shape)
   )
 
@@ -2427,7 +2415,7 @@ def _iota_eval_rule(
   iota_shape = _ref_block_shape(block_spec.block_shape)
   dim_ = _ref_block_axis(block_spec.block_shape, dimension)
   local_iota = jax.lax.broadcasted_iota(dtype, iota_shape, dim_)
-  return local_iota + block_idx[dimension] * _block_size(
+  return local_iota + block_idx[dimension] * pallas_core.get_block_size(
       block_spec.block_shape[dimension]
   )
 
@@ -2579,8 +2567,8 @@ def _reshape_pull_rule(
       )
     last_dim = aval_out.shape[-1]
     block_sublane_dim, block_lane_dim = (
-        _block_size(block_shape[-2]),
-        _block_size(block_shape[-1]),
+        pallas_core.get_block_size(block_shape[-2]),
+        pallas_core.get_block_size(block_shape[-1]),
     )
     total_block_size = block_sublane_dim * block_lane_dim
     if total_block_size % 128 != 0:
@@ -2672,7 +2660,7 @@ def _reduce_sum_eval_rule(
   aval_in = ctx.avals_in[0]
   block_shape = tuple(ctx.in_block_specs[0].block_shape)
   for i in axes:
-    if _block_size(block_shape[i]) != aval_in.shape[i]:
+    if pallas_core.get_block_size(block_shape[i]) != aval_in.shape[i]:
       raise NotImplementedError(
           f'reduce_sum on partial blocks not supported: {aval_in=},'
           f' {block_shape=}'
@@ -3272,7 +3260,7 @@ def _reshape_push_rule(
           f'reshape must use Blocked block size on lanes: {block_shape}'
       )
     last_dim = aval_out.shape[-1]
-    last_block_dim = _block_size(block_shape[-1])
+    last_block_dim = pallas_core.get_block_size(block_shape[-1])
     if last_block_dim % 128 != 0:
       raise NotImplementedError(
           'reshape with non-128 aligned block size on lanes not supported yet'
