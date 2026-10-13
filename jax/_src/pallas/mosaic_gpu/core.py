@@ -1938,8 +1938,11 @@ class Layout(SomeLayout, enum.Enum):
   # TODO(b/435159109): Remove this once LLVM regression is addressed.
   _WGMMA_ACC_32BIT = enum.auto()  # Temporarily exposed to work around LLVM bugs
 
+  #: LHS operand layout for SM8x ``mma.sync``
   MMA_LHS = enum.auto()
+  #: RHS operand layout for SM8x ``mma.sync``
   MMA_RHS = enum.auto()
+  #: Accumulator's layout for SM8x ``mma.sync``
   MMA_ACC = enum.auto()
 
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
