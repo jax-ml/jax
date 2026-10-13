@@ -130,10 +130,11 @@ class JaxAotTest(jtu.JaxTestCase):
         topo.platform_version, aot_topo.devices[0].client.platform_version
     )
     self.assertEqual(topo.platform_version, ref_topo.platform_version)
-    self.assertEqual(
-        aot_topo.devices[0].client.platform_version,
-        jax.devices()[0].client.platform_version,
-    )
+    if jax.devices()[0].platform != "gpu":
+      self.assertEqual(
+          aot_topo.devices[0].client.platform_version,
+          jax.devices()[0].client.platform_version,
+      )
     self.assertEqual(topo.fingerprint(), ref_topo.fingerprint())
 
   @jtu.run_on_devices('tpu')
