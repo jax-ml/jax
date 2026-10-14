@@ -2946,6 +2946,15 @@ class PushBlockSpecTest(parameterized.TestCase):
     self.assertEqual(out_block_spec.block_shape, (128, 128))
     self.assertEqual(out_block_spec.index_map(0, 3), (0, 3))
 
+    block_spec = pl.BlockSpec(
+        (pl.Element(1), pl.Element(128)), lambda i, j: (i, j)
+    )
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
+    self.assertEqual(
+        out_block_spec.block_shape, (pl.Element(128), pl.Element(128))
+    )
+    self.assertEqual(out_block_spec.index_map(0, 3), (0, 3))
+
     def f(x):
       x = jnp.expand_dims(x, axis=1)
       return jnp.broadcast_to(x, (128, 512))

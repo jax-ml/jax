@@ -3334,11 +3334,11 @@ def _broadcast_in_dim_push_rule(
   for i, s in enumerate(shape):
     if i in dim_map:
       in_dim = dim_map[i]
+      bd = block_spec.block_shape[in_dim]
       if in_shape[in_dim] != s:
-        assert pallas_core.get_block_size(block_spec.block_shape[in_dim]) == 1
-        new_block_shape.append(s)
-      else:
-        new_block_shape.append(block_spec.block_shape[in_dim])
+        assert pallas_core.get_block_size(bd) == 1
+        bd = pallas_core.Element(s) if isinstance(bd, pallas_core.Element) else s
+      new_block_shape.append(bd)
     else:
       new_block_shape.append(s)
 
