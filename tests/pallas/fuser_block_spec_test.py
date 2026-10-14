@@ -1262,6 +1262,61 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         kernel_fn((row, 1), (), *x_blocks), x_blocks[idx]
     )
 
+  @parameterized.product(
+      op=['concat', 'stack', 'unstack', 'split', 'reduce_sum'],
+      squeezed=[None, pl.Squeezed()],
+      squeeze_axis=[0, 1],
+  )
+  def test_axis_ops_squeezed_dim(self, op, squeezed, squeeze_axis):
+    fn, in_shapes = {
+        'concat': (
+            lambda *xs: lax.concatenate(xs, 2),
+            [(4, 2, 4, 256), (4, 2, 2, 256)],
+        ),
+        'stack': (
+            lambda *xs: lax.stack(xs, axis=2),
+            [(4, 2, 256), (4, 2, 256)],
+        ),
+        'unstack': (lambda x: lax.unstack(x, axis=2)[1], [(4, 2, 2, 256)]),
+        'split': (
+            lambda x: lax.split(x, (4, 4, 4), axis=2)[1],
+            [(4, 2, 12, 256)],
+        ),
+        'reduce_sum': (lambda x: x.sum(axis=2), [(4, 2, 8, 256)]),
+    }[op]
+    xs = [
+        jnp.arange(np.prod(s), dtype=jnp.float32).reshape(s) for s in in_shapes
+    ]
+    out = fn(*xs)
+    block_shape = list(out.shape)
+    block_shape[squeeze_axis] = squeezed
+    block_shape[-1] = 128
+
+    def index_map(i, j):
+      idx = [0] * out.ndim
+      idx[squeeze_axis] = i
+      idx[-1] = j
+      return tuple(idx)
+
+    block_spec = pl.BlockSpec(tuple(block_shape), index_map)
+    kernel_fn, _, _ = block_spec_lib.pull_block_spec(
+        fn,
+        block_spec,
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(*xs)
+    squeeze_idx = out.shape[squeeze_axis] - 1
+    slc = (
+        (squeeze_idx, slice(None))
+        if squeeze_axis == 0
+        else (slice(None), squeeze_idx)
+    )
+    x_blocks = [x[(*slc, ..., slice(128, 256))] for x in xs]
+    expected = out[(*slc, ..., slice(128, 256))]
+    np.testing.assert_array_equal(
+        kernel_fn((squeeze_idx, 1), (), *x_blocks), expected
+    )
+
   def test_transpose_minor(self):
     x = jax.random.normal(jax.random.key(0), (512, 256), dtype=np.float32)
 
@@ -2126,6 +2181,20 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         out_ref = gen((i, j))
         np.testing.assert_array_equal(out, out_ref)
 
+  @parameterized.parameters((None, 128), (pl.Squeezed(), pl.Blocked(128)))
+  def test_random_noise_with_squeezed_block_dim(self, squeezed, blocked):
+    key = jax.random.key(0, impl='threefry2x32')
+    kernel_fn, _, _ = block_spec_lib.pull_block_spec(
+        lambda key: jax.random.uniform(key, (4, 512, 256)),
+        pl.BlockSpec((squeezed, blocked, 256), lambda i, j: (i, j, 0)),
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(key)
+    block_key = functools.reduce(jax.random.fold_in, (2, 1, 0), key)
+    np.testing.assert_array_equal(
+        kernel_fn((2, 1), (), key), jax.random.uniform(block_key, (128, 256))
+    )
+
   def test_random_fold_in(self):
     key = jax.random.key(0, impl='threefry2x32')
     msg = jnp.array(42, dtype=jnp.int32)
@@ -2486,6 +2555,31 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     out = kernel_fn((1,), scalar_prefetch_values, new_values, y)
     np.testing.assert_array_equal(out, jax.lax.split(y, axis=0, sizes=sizes)[1])
 
+  @parameterized.product(
+      block_size=[1, pl.Blocked(1), None, pl.Squeezed()],
+      axis=[0, 1],
+  )
+  def test_split_pull_size_one_output(self, block_size, axis):
+    shape = (4, 256) if axis == 0 else (256, 4)
+    x = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
+    out_block_shape = (block_size, 128) if axis == 0 else (128, block_size)
+    out_idx_map = (lambda i: (0, i)) if axis == 0 else (lambda i: (i, 0))
+    kernel_fn, (in_block_spec,), _ = block_spec_lib.pull_block_spec(
+        lambda x: lax.split(x, sizes=(1, 3), axis=axis)[0],
+        pl.BlockSpec(out_block_shape, out_idx_map),
+        grid_len=1,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(x)
+    expected_in_bs = (
+        (pl.Blocked(4), 128) if axis == 0 else (128, pl.Blocked(4))
+    )
+    self.assertEqual(in_block_spec.block_shape, expected_in_bs)
+    x_block = x[:, 128:] if axis == 0 else x[128:, :]
+    expected = lax.split(x_block, sizes=(1, 3), axis=axis)[0]
+    if block_size in (None, pl.Squeezed()):
+      expected = jnp.squeeze(expected, axis=axis)
+    np.testing.assert_array_equal(kernel_fn((1,), (), x_block), expected)
+
   @parameterized.parameters(2, pl.Blocked(2))
   def test_stack_pull(self, block_size):
     x = jnp.arange(2 * 256, dtype=jnp.float32).reshape((2, 256))
@@ -2499,6 +2593,30 @@ class PullBlockSpecTest(jtu.JaxTestCase):
       self.assertEqual(bs.block_shape, (128,))
       self.assertEqual(bs.index_map(1), (1,))
     np.testing.assert_array_equal(kernel_fn((1,), (), *x[:, 128:]), x[:, 128:])
+
+  @parameterized.product(
+      block_size=[1, pl.Blocked(1), None, pl.Squeezed()],
+      axis=[0, 1],
+  )
+  def test_stack_pull_single_input(self, block_size, axis):
+    x = jnp.arange(256, dtype=jnp.float32)
+    out_block_shape = (block_size, 128) if axis == 0 else (128, block_size)
+    out_idx_map = (lambda i: (0, i)) if axis == 0 else (lambda i: (i, 0))
+    kernel_fn, (in_block_spec,), _ = block_spec_lib.pull_block_spec(
+        lambda x: lax.stack([x], axis=axis),
+        pl.BlockSpec(out_block_shape, out_idx_map),
+        grid_len=1,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(x)
+    self.assertEqual(in_block_spec.block_shape, (128,))
+    self.assertEqual(in_block_spec.index_map(1), (1,))
+    x_block = x[128:]
+    expected = (
+        x_block
+        if block_size in (None, pl.Squeezed())
+        else jnp.expand_dims(x_block, axis)
+    )
+    np.testing.assert_array_equal(kernel_fn((1,), (), x_block), expected)
 
   def test_pull_dag_with_none_and_squeezed_block_dims(self):
     x_type = jax.ShapeDtypeStruct((4, 512, 512), jnp.float32)

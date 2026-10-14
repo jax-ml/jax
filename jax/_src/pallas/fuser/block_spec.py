@@ -1884,7 +1884,9 @@ def _concatenate_eval_rule(ctx: KernelEvalContext, *args, dimension):
   ):
     # Handle special case if the block contains all of the concatenated
     # array.
-    return jax.lax.concatenate(args, dimension=dimension)
+    return jax.lax.concatenate(
+        args, dimension=_ref_block_axis(block_shape, dimension)
+    )
 
   num_blocks = []
   for aval in ctx.avals_in:
@@ -1913,12 +1915,18 @@ def _concatenate_eval_rule(ctx: KernelEvalContext, *args, dimension):
 
 @register_eval_rule(lax.stack_p)
 def _stack_eval_rule(ctx: KernelEvalContext, *args, axis):
-  return jax.lax.stack(args, axis=axis)
+  block_shape = ctx.out_block_specs[0].block_shape
+  if _is_squeezed(block_shape[axis]):
+    assert len(args) == 1, len(args)
+    return args[0]
+  return jax.lax.stack(args, axis=_ref_block_axis(block_shape, axis))
 
 
 @register_eval_rule(lax.unstack_p)
 def _unstack_eval_rule(ctx: KernelEvalContext, x, *, axis):
-  return jax.lax.unstack(x, axis=axis)
+  return jax.lax.unstack(
+      x, axis=_ref_block_axis(ctx.in_block_specs[0].block_shape, axis)
+  )
 
 
 @register_pull_block_spec_rule(lax.concatenate_p)
@@ -2075,6 +2083,14 @@ def _split_pull_rule(
         f'Sum of sizes {n} must be equal to dimension {axis} of the operand '
         f'shape {list(aval_in.shape)}.'
     )
+  for size, bt in zip(sizes, out_block_transforms, strict=True):
+    if bt is no_block_index_transform:
+      continue
+    if pallas_core.get_block_size(bt.block_shape[axis]) != size:
+      raise NotImplementedError(
+          f'split over partial blocks not supported yet: {aval_in.shape=},'
+          f' {bt.block_shape=}, {sizes=}, {axis=}'
+      )
   valid_transforms = [
       bt for bt in out_block_transforms if bt is not no_block_index_transform
   ]
@@ -2218,8 +2234,15 @@ def _transpose_pull_rule(
 def _split_eval_rule(
     eval_ctx: KernelEvalContext, x, sizes: Sequence[int], axis: int
 ):
-  del eval_ctx
-  return lax.split(x, sizes=sizes, axis=axis)
+  ref_axis = _ref_block_axis(eval_ctx.in_block_specs[0].block_shape, axis)
+  outs = lax.split(x, sizes=sizes, axis=ref_axis)
+  return [
+      lax.squeeze(out, (ref_axis,))
+      if bs is not pallas_core.no_block_spec
+      and _is_squeezed(bs.block_shape[axis])
+      else out
+      for out, bs in zip(outs, eval_ctx.out_block_specs, strict=True)
+  ]
 
 
 @register_eval_rule(lax.tile_p)
@@ -2347,7 +2370,7 @@ def _random_bits_eval_rule(eval_ctx: KernelEvalContext, key, bit_width, shape):
   del shape
   block_spec = eval_ctx.out_block_specs[0]
   indices = eval_ctx.get_out_block_indices()[0]
-  block_shape = block_spec.block_shape
+  block_shape = _ref_block_shape(block_spec.block_shape)
   # This is the important part here: we fold in block indices into the key so
   # each block gets different random numbers.
   for idx in indices:
@@ -2662,7 +2685,8 @@ def _reduce_sum_eval_rule(
           f'reduce_sum on partial blocks not supported: {aval_in=},'
           f' {block_shape=}'
       )
-  return jax.lax.reduce_sum(x, axes=axes)
+  ref_block_axes = tuple(_ref_block_axis(block_shape, i) for i in axes)
+  return jax.lax.reduce_sum(x, axes=ref_block_axes)
 
 
 # Higher order primitives
