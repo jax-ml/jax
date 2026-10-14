@@ -1077,10 +1077,11 @@ def _while_constraint_system(
   return cs.ConstraintSystem(), value_sites_for_variable
 
 
+@_add_constraint_system_derivation_rule(scf.IfOp)
 @_add_constraint_system_derivation_rule(scf.IndexSwitchOp)
-def _index_switch_constraint_system(
+def _branching_op_constraint_system(
     ctx: DerivationContext,
-    op: scf.IndexSwitchOp,
+    op: scf.IfOp | scf.IndexSwitchOp,
 ) -> ConstraintSystemDerivationRuleResult:
   del ctx
   value_sites_for_variable: ValueSitesForVariable = {
