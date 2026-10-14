@@ -83,6 +83,24 @@ def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   return None
 
 
+# TensorCore kernels' scoped VMEM starts at a multiple of this many bytes, the
+# period of the 32 VMEM banks of 512 B. The LLO bundle packer pairs loads from
+# different VMEM buffers as if each buffer started on a bank boundary.
+_SCOPED_VMEM_ALIGNMENT_BYTES = 16 * 1024
+
+
+def _scoped_vmem_alignment_bytes(ctx: mlir.LoweringRuleContext) -> int | None:
+  # Older runtimes reject the backend config field.
+  backend = ctx.module_context.get_backend(optional=True)
+  if (
+      ctx.is_forward_compat()
+      or backend is None
+      or not cloud_tpu_init.is_libtpu_at_least("0.0.52")
+  ):
+    return None
+  return _SCOPED_VMEM_ALIGNMENT_BYTES
+
+
 tpu_custom_call_p = core.Primitive("tpu_custom_call")
 tpu_custom_call_p.multiple_results = True
 dispatch.simple_impl(tpu_custom_call_p)
@@ -200,6 +218,7 @@ class CustomCallBackendConfig:
   tiling: Tiling | None = None  # Only used for SparseCore.
   opt_level: OptLevel | None = None  # Only used for SparseCore.
   debug_locations: bytes | None = None
+  vmem_alignment_bytes: int | None = None
 
   def __post_init__(self):
     if self.allow_input_fusion is not None:
@@ -365,8 +384,14 @@ class CustomCallBackendConfig:
           b', "scoped_memory_configs": [{"memory_space":1, "offset": 0,'
           b' "size": '
       )
-      config.write(str(self.vmem_limit_bytes).encode("ascii"))
+      # XLA aligns the scoped VMEM inside this reservation, so it keeps room
+      # for the alignment padding on top of the kernel's limit.
+      size = self.vmem_limit_bytes + (self.vmem_alignment_bytes or 0)
+      config.write(str(size).encode("ascii"))
       config.write(b'}]')
+    if self.vmem_alignment_bytes is not None:
+      config.write(b', "scoped_vmem_alignment_bytes": ')
+      config.write(str(self.vmem_alignment_bytes).encode("ascii"))
     if self.flags is not None:
       config.write(b', "flag_configs": [')
       for i, (flag, value) in enumerate(self.flags.items()):
@@ -460,6 +485,10 @@ def _tpu_custom_call_lowering(
       ir_version != config.lowered_module_asm_version
   ):
     config = config.downgrade_lowered_module_asm(ir_version)
+  if config.device_type != "sparsecore":
+    config = dataclasses.replace(
+        config, vmem_alignment_bytes=_scoped_vmem_alignment_bytes(ctx)
+    )
   call = mlir.custom_call(
       "tpu_custom_call",
       result_types=result_types,

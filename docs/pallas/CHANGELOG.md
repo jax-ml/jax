@@ -68,6 +68,13 @@ Remember to align the itemized text with the first line of an item within a list
 
 ### TPU
 
+* Changes
+
+  * TensorCore kernels' scoped VMEM now starts on a 16 KiB boundary, which
+    avoids VMEM bank conflicts between scratch and operand loads. A kernel
+    uses up to 16 KiB more VMEM, and a `vmem_limit_bytes` reservation grows by
+    16 KiB. Requires libtpu >= 0.0.52; exported modules are unchanged.
+
 * New features
 
   * Added {func}`jax.experimental.pallas.tpu.has_memory_space` to dynamically
