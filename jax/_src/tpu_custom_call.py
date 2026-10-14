@@ -244,7 +244,7 @@ class CustomCallBackendConfig:
         lowered_module_asm_version=version,
     )
 
-  def to_json(self) -> bytes:
+  def to_json(self, use_core_ids: bool = False) -> bytes:
     """Serializes the backend config into JSON."""
     # We format the JSON ourselves, because json.dumps seems to be overly slow.
     config = io.BytesIO()
@@ -348,6 +348,8 @@ class CustomCallBackendConfig:
     if self.device_type == "sparsecore":
       config.write(b', "sparse_core_config": ')
       sparse_core_config: dict[str, Any] = {}
+      if use_core_ids and self.active_core_count == 1:
+        sparse_core_config["core_ids"] = ["0"]
       tiling = self.tiling if self.tiling is not None else Tiling.COMPACT
       sparse_core_config["tiling"] = tiling.value
       if self.opt_level is not None:
@@ -388,7 +390,11 @@ class CustomCallBackendConfig:
         if i + 1 != len(self.flags):
           config.write(b",")
       config.write(b"]")
-    if self.device_type == "sparsecore" and self.active_core_count == 1:
+    if (
+        not use_core_ids
+        and self.device_type == "sparsecore"
+        and self.active_core_count == 1
+    ):
       config.write(b', "megachip_parallelism_config": {"cores": ["0"]}')
     config.write(b"}")
     return config.getvalue()
@@ -460,11 +466,17 @@ def _tpu_custom_call_lowering(
       ir_version != config.lowered_module_asm_version
   ):
     config = config.downgrade_lowered_module_asm(ir_version)
+  # Compilers before libtpu 0.0.50 only read megachip_parallelism_config.
+  # TODO(b/536052236): Always use core_ids after 2026-11-06.
+  use_core_ids = (
+      not ctx.is_forward_compat()
+      and cloud_tpu_init.is_libtpu_at_least("0.0.50")
+  )
   call = mlir.custom_call(
       "tpu_custom_call",
       result_types=result_types,
       operands=in_nodes,
-      backend_config=config.to_json(),
+      backend_config=config.to_json(use_core_ids=use_core_ids),
       api_version=1,
       has_side_effect=has_side_effects != TpuSideEffectType.PURE,
       operand_output_aliases=dict(input_output_aliases),
