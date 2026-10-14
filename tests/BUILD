@@ -911,7 +911,11 @@ jax_multiplatform_test(
         "gpu": 30,
         "tpu": 20,
     },
-    tags = ["noasan"],  # Times out under asan.
+    tags = [
+        "noasan",  # Times out under asan.
+        "noassert",  # Times out.
+        "nodebug",  # Times out.
+    ],
     deps = py_deps([
         "numpy",
         "scipy",
