@@ -20,6 +20,7 @@ from absl.testing import absltest
 from jax import version
 from jax._src import compiler
 from jax._src import config
+from jax._src import pathways_profiler
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import _profiler
@@ -497,6 +498,20 @@ class GetBackendTest(jtu.JaxTestCase):
       self.assertIs(xb.get_backend("proxy"), proxy_backend)
     mock_get_client.assert_called_once()
     self.assertEqual(mock_get_client.call_args.args[0], "grpc://localhost:1234")
+
+  def test_proxy_backend_registers_pathways_profiler(self):
+    mock_register = self.enter_context(
+        mock.patch.object(pathways_profiler, "register", create=True)
+    )
+    proxy_backend = self._DummyBackend("tpu", device_count=8)
+    xb.register_backend_factory(
+        "proxy", lambda: proxy_backend, priority=-1, fail_quietly=False
+    )
+
+    with config.jax_platforms("cpu,proxy"):
+      xb.backends()
+
+    mock_register.assert_called_once_with(proxy_backend)
 
 
 if __name__ == "__main__":

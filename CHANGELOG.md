@@ -41,6 +41,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.numpy.logical_xor`, {func}`jax.numpy.maximum` and
     {func}`jax.numpy.minimum` now uses a parallel prefix scan for integer and
     boolean outputs, which is much faster for long axes ({jax-issue}`#28097`).
+  * Profiler sessions now also trace the Pathways backend when JAX connects to
+    Pathways on Cloud through the `proxy` backend. The new private module
+    `jax._src.pathways_profiler` implements this. Profiler sessions now choose
+    their session ID, the directory under `<log_dir>/plugins/profile`, when they
+    start, so that the Pathways hosts write their traces next to the JAX trace.
+    {class}`jax.profiler.ProfileOptions` now supports {func}`copy.copy`.
 
 * Bug fixes
   * {func}`jax.scipy.linalg.polar` with `method="qdwh"` now honors
