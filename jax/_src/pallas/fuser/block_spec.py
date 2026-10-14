@@ -35,6 +35,7 @@ from typing import Any, Protocol, cast
 import jax
 from jax import lax
 from jax._src import ad_util
+from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import hijax
@@ -665,7 +666,16 @@ def _pull_block_transform(
             len(jaxpr.invars), jaxpr.debug_info.func_name)
         # Load from SMEM
         args = [_load_scalar_prefetch(a) for a in args]
-        return core.eval_jaxpr(jaxpr, [], *args)
+        cur_ctx = core.current_jaxpr_eqn_context()
+        if any(
+            eqn.ctx.cur_abstract_mesh != cur_ctx.cur_abstract_mesh
+            for eqn in jaxpr.eqns
+        ):
+          jaxpr = jaxpr.replace(
+              eqns=[eqn.replace(ctx=cur_ctx) for eqn in jaxpr.eqns]
+          )
+        with config.enable_checks(False):
+          return core.eval_jaxpr(jaxpr, [], *args)
 
       scalar_prefetch_fn = functools.partial(
           _scalar_prefetch_fn, scalar_prefetch_jaxpr
@@ -839,6 +849,20 @@ def make_kernel_function(
             grid_len=grid_len,
             out_usages=out_usages,
         )
+        if config._check_vma.value and len(in_vals) > 1:
+          vma = frozenset().union(*(
+              a.mat.varying
+              for v in in_vals
+              if isinstance(a := core.typeof(v), core.ShapedArray)
+          ))
+          if vma:
+            in_vals = [
+                core.pvary(v, tuple(vma - a.mat.varying))
+                if isinstance(a := core.typeof(v), core.ShapedArray)
+                and (vma - a.mat.varying)
+                else v
+                for v in in_vals
+            ]
         outs = eval_rule(eval_ctx, *in_vals, **eqn.params)
         if not eqn.primitive.multiple_results:
           outs = [outs]
@@ -935,6 +959,15 @@ def _get_fusion_values(
         is_scalar_prefetch, values, scalar_prefetch_values
     )
     flat_args, _ = tree_util.tree_flatten((args, kwargs))
+    if config._check_vma.value:
+      flat_args = [
+          core.pvary(a, tuple(v.aval.mat.varying - a_aval.mat.varying))
+          if isinstance(v.aval, core.ShapedArray)
+          and isinstance(a_aval := core.typeof(a), core.ShapedArray)
+          and (v.aval.mat.varying - a_aval.mat.varying)
+          else a
+          for v, a in zip(jaxpr.invars, flat_args, strict=True)
+      ]
     out_flat = core.eval_jaxpr(jaxpr, values, *flat_args)
     if discharge_refs and len(out_flat) > out_tree.num_leaves:
       out_flat, extra_out = util.split_list(out_flat, [out_tree.num_leaves])
