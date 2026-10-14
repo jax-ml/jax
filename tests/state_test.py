@@ -2430,6 +2430,11 @@ class RefTransformTest(jtu.JaxTestCase):
         np.asarray(jax.freeze(ref2)), np.arange(4, dtype=np.int32)
     )
 
+  def test_concrete_ref_at(self):
+    ref = jax.new_ref(jnp.arange(4, dtype=jnp.int32))
+    ref.at[1:3][...] += 10
+    self.assertArraysEqual(ref[...], jnp.array([0, 11, 12, 3], dtype=jnp.int32))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
