@@ -8298,11 +8298,15 @@ def _squeeze_batch_rule(batched_args, batch_dims, *, dimensions):
   bdim_out = canonicalize_axis(0, len(result_shape))
   return squeeze(operand, dimensions=dimensions), bdim_out
 
+def _squeeze_layout_rule(out_aval, operand, *, dimensions):
+  return _reshape_layout_rule(out_aval, operand, new_sizes=out_aval.shape,
+                              dimensions=None, sharding=None)
+
 squeeze_p = standard_primitive(
     _squeeze_shape_rule, _squeeze_dtype_rule, 'squeeze',
     sharding_rule=_squeeze_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'squeeze'),
-    ur_rule=_squeeze_ur_rule)
+    ur_rule=_squeeze_ur_rule, layout_rule=_squeeze_layout_rule)
 ad.deflinear2(squeeze_p, _squeeze_transpose_rule)
 batching.primitive_batchers[squeeze_p] = _squeeze_batch_rule
 
@@ -8310,7 +8314,7 @@ def _squeeze_lower(ctx, operand, *, dimensions):
   del dimensions  # Implied by the output aval.
   aval_out, = ctx.avals_out
   out = mlir.reshape(ctx, operand, aval_out)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 mlir.register_lowering(squeeze_p, _squeeze_lower)
 

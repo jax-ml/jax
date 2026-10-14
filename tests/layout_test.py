@@ -1454,6 +1454,51 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.format.layout.major_to_minor, (0, 1, 2, 3))
     self.assertArraysEqual(out, np_inp.reshape(dst_shape))
 
+  @parameterized.parameters(
+      # Single major singleton dim squeezed
+      ((1, 4, 8, 128), (0,), (0, 1, 2, 3), (0, 1, 2), None),
+      ((10, 4, 8, 1), (3,), (3, 0, 1, 2), (0, 1, 2), None),
+      ((10, 8, 128, 1), (3,), (3, 0, 1, 2), (0, 1, 2), None),
+      ((4, 1, 8, 128), (1,), (1, 2, 0, 3), (1, 0, 2), None),
+      # Multiple major singleton dims (squeezing all or a subset)
+      ((1, 4, 1, 8, 128), (0, 2), (0, 2, 1, 3, 4), (0, 1, 2), None),
+      ((1, 4, 1, 8, 128), (0,), (0, 1, 2, 3, 4), (1, 0, 2, 3), None),
+      ((1, 4, 1, 8, 16, 1), (2, 5), (0, 2, 5, 3, 1, 4), (0, 2, 1, 3), None),
+      # Singleton in the 2 minor-most dimensions (errors on TPU, succeeds on CPU/GPU)
+      ((10, 4, 8, 1), (3,), (0, 1, 2, 3), (0, 1, 2),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((10, 8, 128, 1), (3,), (0, 1, 2, 3), (0, 1, 2),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((10, 3, 1, 128), (2,), (0, 1, 2, 3), (0, 1, 2),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((1, 4, 8, 1), (0,), (0, 1, 2, 3), (2, 0, 1),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+  )
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_squeeze_layout(
+      self, src_shape, dims, src_m2m, dst_m2m, error_msg, mesh):
+    np_inp = np.arange(math.prod(src_shape), dtype=np.float32).reshape(src_shape)
+    arr = jax.device_put(np_inp, Format(Layout(src_m2m), NamedSharding(mesh, P())))
+    should_error = (error_msg is not None and jtu.test_device_matches(['tpu']))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      y = jax.lax.squeeze(x, dimensions=dims)
+      if not should_error:
+        self.assertEqual(y.aval.layout.major_to_minor, dst_m2m)
+      return y
+
+    if should_error:
+      with self.assertRaisesRegex(ValueError, error_msg):
+        f(arr)
+    else:
+      out = f(arr)
+      self.assertEqual(out.format.layout.major_to_minor, dst_m2m)
+      self.assertArraysEqual(out, np.squeeze(np_inp, axis=dims))
+      lowered_text = f.lower(arr).as_text()
+      self.assertIn('LayoutConstraint', lowered_text)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
