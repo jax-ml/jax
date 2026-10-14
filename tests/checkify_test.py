@@ -1644,6 +1644,27 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     self.assertIsNotNone(err_out.get())
     self.assertStartsWith(err_out.get(), "post-while check")
 
+  @parameterized.parameters(False, True)
+  @config.explicit_x64_dtypes("allow")
+  def test_enable_x64_inner_scope(self, outer_x64):
+    def f(x):
+      checkify.check(x < 10, "must be < 10")
+      with jax.enable_x64(not outer_x64):
+        checkify.check(x > 0, "must be positive")
+        return jnp.log(x)
+
+    with jax.enable_x64(outer_x64):
+      checked_f = jax.jit(checkify.checkify(f, errors=checkify.all_checks))
+      err, out = checked_f(jnp.ones((), dtype=jnp.float64))
+      self.assertIsNone(err.get())
+      self.assertEqual(out, 0)
+
+      err, _ = checked_f(-jnp.ones((), dtype=jnp.float64))
+      self.assertStartsWith(err.get(), "must be positive")
+
+      err, _ = checked_f(jnp.full((), 20.0, dtype=jnp.float64))
+      self.assertStartsWith(err.get(), "must be < 10")
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

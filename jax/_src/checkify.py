@@ -64,7 +64,7 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 Bool = bool | Array
-Int = int | Array
+Int = int | np.int32 | Array
 ErrorCategory = type['JaxException']
 Payload = list[np.ndarray | Array]
 PyTreeDef = jtu.PyTreeDef
@@ -191,7 +191,7 @@ class BatchedError(JaxException):
 
 # Error Value
 
-_INACTIVE_CODE = -2
+_INACTIVE_CODE = np.int32(-2)
 
 @jtu.register_pytree_node_class
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -322,7 +322,7 @@ def assert_func(ctx: CheckifyContext, error: Error, pred: Bool,
   code = ctx.next_code()
   effect_type = new_error.get_effect_type()
   new_payload, new_metadata = tree_flatten(new_error)
-  return update_error(error, pred, code, {code: new_metadata}, new_payload, effect_type)
+  return update_error(error, pred, np.int32(code), {code: new_metadata}, new_payload, effect_type)
 
 def update_error(error, pred, code, metadata, payload, effect_type):
   err_of_type = error._pred.get(effect_type, False)
@@ -1374,7 +1374,7 @@ def _check(pred, msg, debug, *fmt_args, **fmt_kwargs):
   new_payload, new_metadata = tree_flatten(new_error)
   effect_type = new_error.get_effect_type()
   error = Error({effect_type: jnp.logical_not(pred)},
-                {effect_type: 0},
+                {effect_type: np.int32(0)},
                 {0: new_metadata},
                 {effect_type: new_payload})
   _check_error(error, debug=debug)
