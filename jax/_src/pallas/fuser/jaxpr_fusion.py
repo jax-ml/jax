@@ -124,16 +124,13 @@ def fuse(
         print("Jaxpr before fusion:")
         print(jaxpr)
       out_tree = out_avals_ft.tree
-      out_flat = fuse_jaxpr(jaxpr, out_tree, consts, *flat_args,
-                            strict_mode=strict_mode)
-      return tree_util.tree_unflatten(out_tree, out_flat)
-
-    if resolve_fusion_dtypes:
-      wrapper = fusible_dtype.physicalize(
-          wrapper,
-          static_argnums=static_argnums_,
-          static_argnames=static_argnames_,
+      fuse_fn = functools.partial(
+          fuse_jaxpr, jaxpr, out_tree, consts, strict_mode=strict_mode
       )
+      if resolve_fusion_dtypes and fusible_dtype.has_fusion_dtypes(jaxpr):
+        fuse_fn = fusible_dtype.physicalize(fuse_fn)
+      out_flat = fuse_fn(*flat_args)
+      return tree_util.tree_unflatten(out_tree, out_flat)
 
     @functools.wraps(f)
     def outer_wrapper(*args, **kwargs):

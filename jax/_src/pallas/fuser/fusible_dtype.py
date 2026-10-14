@@ -183,6 +183,8 @@ def physicalize(
 @util.weakref_lru_cache
 def physicalize_closed_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
   """Replaces all extended dtypes with physical types in a jaxpr."""
+  if not has_fusion_dtypes(jaxpr):
+    return jaxpr
   fun = functools.partial(physicalize_interp, jaxpr, jaxpr.consts)
   in_avals = [_physical_aval(aval) for aval in jaxpr.in_avals]
   in_avals_ft = ft.flatten_args(*in_avals)
@@ -209,6 +211,8 @@ def _physical_aval(aval):
 
 def physicalize_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
   """Replaces all extended dtypes with physical types in a jaxpr."""
+  if not has_fusion_dtypes(jaxpr):
+    return jaxpr.with_consts(())
 
   def _flat_jaxpr_eval(consts, args):
     return physicalize_interp(jaxpr, consts, *args)
@@ -299,6 +303,35 @@ def _is_fusion_type(aval: core.AbstractValue):
       and hasattr(aval, 'dtype')
       and isinstance(aval.dtype, FusionDType)
   )
+
+
+def _iter_hi_prim_jaxprs(prim: hijax.HiPrim):
+  for v in tree_util.tree_leaves(prim.params):
+    if isinstance(v, core.Jaxpr):
+      yield v
+    elif isinstance(v, hijax.HiPrim):
+      yield from _iter_hi_prim_jaxprs(v)
+    elif isinstance(jaxpr := getattr(v, 'jaxpr', None), core.Jaxpr):
+      yield jaxpr
+
+
+@util.weakref_lru_cache
+def has_fusion_dtypes(jaxpr: core.Jaxpr) -> bool:
+  """Returns whether jaxpr or any of its subjaxprs contains a ``FusionDType``."""
+  if any(_is_fusion_type(v.aval) for v in jaxpr.all_invars):
+    return True
+  for eqn in jaxpr.eqns:
+    if any(_is_fusion_type(v.aval) for v in eqn.outvars):
+      return True
+    if any(map(has_fusion_dtypes, core.jaxprs_in_params(eqn.params))):
+      return True
+    if eqn.primitive is hijax.call_hi_primitive_p:
+      prim = eqn.params.get('_prim')
+      if isinstance(prim, hijax.HiPrim) and any(
+          map(has_fusion_dtypes, _iter_hi_prim_jaxprs(prim))
+      ):
+        return True
+  return False
 
 
 def _phys_find_rule(primitive, avals: Sequence[core.AbstractValue]):

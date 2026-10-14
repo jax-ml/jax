@@ -13,6 +13,7 @@
 # limitations under the License.
 import dataclasses
 import functools
+from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -467,7 +468,10 @@ class FusionTest(jtu.JaxTestCase):
       return out_fn(x + 1.0)
 
     x = jnp.array(1.0)
-    y = fusible_dtype.physicalize(f)(x)
+    with mock.patch.object(
+        fusible_dtype, 'has_fusion_dtypes', return_value=True
+    ):
+      y = fusible_dtype.physicalize(f)(x)
     np.testing.assert_allclose(y, 2.0)
 
   @parameterized.named_parameters(
@@ -476,7 +480,13 @@ class FusionTest(jtu.JaxTestCase):
       for remat3 in (False, True)
   )
   def test_fusible_physicalize_custom_vjp_and_remat(self, cvjp3, remat3):
-    with config.custom_vjp3(cvjp3), config.remat3(remat3):
+    with (
+        config.custom_vjp3(cvjp3),
+        config.remat3(remat3),
+        mock.patch.object(
+            fusible_dtype, 'has_fusion_dtypes', return_value=True
+        ),
+    ):
       @jax.custom_vjp
       def custom_fn(x):
         return x * 2.0
@@ -498,7 +508,12 @@ class FusionTest(jtu.JaxTestCase):
       for cvjp3 in (False, True)
   )
   def test_fusible_physicalize_custom_vjp_grad(self, cvjp3):
-    with config.custom_vjp3(cvjp3):
+    with (
+        config.custom_vjp3(cvjp3),
+        mock.patch.object(
+            fusible_dtype, 'has_fusion_dtypes', return_value=True
+        ),
+    ):
       @functools.partial(jax.custom_vjp, nondiff_argnums=(1,))
       def custom_fn(x, scale):
         return x * scale
@@ -517,7 +532,12 @@ class FusionTest(jtu.JaxTestCase):
 
   @parameterized.parameters([False, True])
   def test_fusible_physicalize_custom_vjp_grad_with_consts(self, cvjp3):
-    with config.custom_vjp3(cvjp3):
+    with (
+        config.custom_vjp3(cvjp3),
+        mock.patch.object(
+            fusible_dtype, 'has_fusion_dtypes', return_value=True
+        ),
+    ):
       scale = jnp.array(2.0)  # Closed over, so a const of the call_jaxpr.
 
       @jax.custom_vjp
@@ -1049,6 +1069,67 @@ class FusionTest(jtu.JaxTestCase):
     expected = jnp.squeeze(x, axis=in_axis)[None] * 2.0
     np.testing.assert_allclose(y, expected)
 
+  def test_fuse_and_physicalize_fusion_dtype_fastpath(self):
+    @dataclasses.dataclass(frozen=True)
+    class PairDType(fusible_dtype.FusionDType):
+      pull_block_spec_one_step = None
+      unpack_push_block_spec = None
+      unpack_pull_block_spec = None
+      abstract_pack = lambda self, x, y: x.update(dtype=self)
+      abstract_unpack = lambda self, x: (
+          x.update(dtype=jnp.float32),
+          x.update(dtype=jnp.float32),
+      )
+
+    @fuser.fusible
+    def kernel(x_fn, out_fn):
+      x = x_fn()
+      if isinstance(x.dtype, PairDType):
+        a, b = fusible_dtype.unpack(x)
+        x = a + b
+      return (out_fn or (lambda v: v))(x + 1.0)
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    with mock.patch.object(
+        fusible_dtype,
+        "physicalize_closed_jaxpr",
+        wraps=fusible_dtype.physicalize_closed_jaxpr,
+    ) as mock_phys:
+      y = jax.jit(fuser.fuse(lambda x: kernel(x * 2.0) * 3.0))(x)
+      np.testing.assert_allclose(y, (x * 2.0 + 1.0) * 3.0)
+      mock_phys.assert_not_called()
+
+      fused_pair = jax.jit(
+          fuser.fuse(
+              lambda x, y: kernel(fusible_dtype.pack(x, y, dtype=PairDType()))
+          )
+      )
+      np.testing.assert_allclose(fused_pair(x, x), 2.0 * x + 1.0)
+      mock_phys.assert_called_once()
+
+    no_fusion_fn = lambda x: lax.scan(
+        lambda c, _: (c + 1.0, None), x, None, length=2
+    )[0]
+    no_fusion_jaxpr = jax.make_jaxpr(no_fusion_fn)(x)
+    self.assertIs(
+        fusible_dtype.physicalize_closed_jaxpr(no_fusion_jaxpr), no_fusion_jaxpr
+    )
+
+    mixed_jaxpr = jax.make_jaxpr(
+        lambda x, y: no_fusion_fn(
+            sum(
+                fusible_dtype.unpack(
+                    fusible_dtype.pack(x, y, dtype=PairDType())
+                )
+            )
+        )
+    )(x, x)
+    phys_jaxpr = fusible_dtype.physicalize_closed_jaxpr(mixed_jaxpr)
+    self.assertFalse(fusible_dtype.has_fusion_dtypes(phys_jaxpr))
+    self.assertIs(
+        phys_jaxpr.eqns[-1].params["jaxpr"],
+        mixed_jaxpr.eqns[-1].params["jaxpr"],
+    )
 
 @dataclasses.dataclass(frozen=True)
 class ArrayTuple:
