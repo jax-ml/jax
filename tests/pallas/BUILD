@@ -1401,6 +1401,29 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "fuser_shard_map_test",
+    srcs = [
+        "fuser_shard_map_test.py",
+    ],
+    disable_configs = [
+        "cpu",
+    ],
+    enable_backends = ["cpu"],
+    tags = [
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],
+    deps = [
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_fuser",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "fuser_utils_test",
     srcs = [
         "fuser_utils_test.py",
