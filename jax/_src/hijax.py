@@ -1108,9 +1108,11 @@ def _vjp_bwd_aval_mismatch_err(primal_sourceinfo, path, primal_aval, ct):
       not _temporary_dtype_exception(expected, ct_aval) and
       getattr(expected, 'dtype', None) is not dtypes.float0):
     result = f"at output{keystr(path)} " if path else ""
-    msg = (f"{result}the bwd rule attached to {primal_sourceinfo} produced an"
-           f" output of type {ct_aval.str_short()} which doesn't match expected"
-           f" type {expected.str_short()}")
+    msg = (f"Custom VJP bwd rule attached to {primal_sourceinfo} must produce an "
+           "output with the same type as the args tuple of the primal function, "
+           f"but {result}the bwd rule produced an output of type "
+           f"{ct_aval.str_short()} corresponding to an input of type "
+           f"{expected.str_short()}{core.aval_mismatch_extra(expected, ct_aval)}")
     if isinstance(ct, ad_util.SymbolicZero):
       msg += (". Consider just returning a None here instead of a SymbolicZero"
               " object.")
