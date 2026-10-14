@@ -31,6 +31,7 @@ if jtu.is_running_under_pytest():
 
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
+import numpy as np
 import scipy.special
 
 config.parse_flags_with_absl()
@@ -96,14 +97,21 @@ class LgammaTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_lgamma_accuracy(self, dtype):
-    # Large errors occur near zero-crossings (where |gamma(x)| = 1, e.g.
-    # x ~= -3.14358) where small approximation errors cause sign flips across
-    # zero, and at x = -inf due to inf/NaN handling differences.
+    # TODO(phawkins): In float64, chlo.lgamma has large errors near negative
+    # zero-crossings (where |gamma(x)| = 1, e.g. x ~= -3.14358).
     bounds = [
-        ("cpu", {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
-        ("gpu", {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
-        ("tpu", {bf16: math.inf, f16: math.inf, f32: math.inf}),
+        ("cpu", {f16: 1.0, f32: 4.0, f64: math.inf}),
+        ("gpu", {f16: 1.0, f32: 4.0, f64: math.inf}),
+        ("tpu", {f16: 1.0, f32: 4.0}),
     ]
+    input_ftz = [
+        (
+            ["cpu", "gpu", "tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i"],
+            {bf16: False, f16: False, f32: False},
+        ),
+        ("tpu", {f16: False, f32: False}),
+    ]
+    ref_fn = lambda x: np.where(x == -np.inf, np.inf, scipy.special.gammaln(x))
     interesting_points = [
         # Non-positive integer poles of gamma(x):
         *(float(-k) for k in range(21)),
@@ -134,10 +142,11 @@ class LgammaTest(jtu.JaxTestCase):
     util.check_unary_precision(
         self,
         lax.lgamma,
-        scipy.special.gammaln,
+        ref_fn,
         _mpmath_lgamma,
         dtype,
         bounds=bounds,
+        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
 

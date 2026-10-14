@@ -33,6 +33,7 @@ from jax._src.lax.lax import (AccuracyMode, Tolerance, add, bitwise_and,
                               _const, _dtype, _float, _nary_lower_hlo, _ones,
                               _isnan, _unary_with_accuracy_pp_rule)
 from jax._src.lax.control_flow.loops import while_loop
+from jax._src.lax.lgamma import lgamma_impl
 
 from jax._src import dtypes
 from jax._src.interpreters import ad
@@ -756,9 +757,22 @@ ad.defjvp(regularized_incomplete_beta_p,
   betainc_grad_not_implemented,
   betainc_gradx)
 
+def _lgamma_lowering(ctx, x):
+  aval = ctx.avals_in[0]
+  if aval.dtype == np.float64:
+    return _nary_lower_hlo(chlo.lgamma, ctx, x)
+  def _impl(v):
+    if aval.dtype != np.float32:
+      return convert_element_type(
+          lgamma_impl(convert_element_type(v, np.float32)), aval.dtype
+      )
+    return lgamma_impl(v)
+  return mlir.lower_fun(_impl, multiple_results=False)(ctx, x)
+
+
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
-mlir.register_lowering(lgamma_p, partial(_nary_lower_hlo, chlo.lgamma))
+mlir.register_lowering(lgamma_p, _lgamma_lowering)
 
 digamma_p = standard_unop(_float, 'digamma')
 mlir.register_lowering(digamma_p, partial(_nary_lower_hlo, chlo.digamma))

@@ -161,9 +161,9 @@ def entropy(mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   Examples:
     >>> from jax.scipy.stats import poisson
     >>> poisson.entropy(5.0)
-    Array(2.204394, dtype=float32)
+    Array(2.2043955, dtype=float32)
     >>> poisson.entropy(jax.numpy.array([1, 10, 100]))
-    Array([1.3048419, 2.561407 , 3.7206903], dtype=float32)
+    Array([1.304842 , 2.5614107, 3.7206903], dtype=float32)
 
   See Also:
     - :func:`jax.scipy.stats.poisson.cdf`
