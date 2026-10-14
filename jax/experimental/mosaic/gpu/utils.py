@@ -2082,48 +2082,24 @@ def get_memref_llvm_address_space(memref_ty: ir.MemRefType) -> int | None:
   return gpu_address_space_to_nvptx(_MEMORY_SPACES[str(memory_space)])
 
 
-def memref_ptr(memref_arg) -> ir.Value:
+def memref_ptr(ref: ir.Value[ir.MemRefType]) -> ir.Value:
   i64 = ir.IntegerType.get_signless(64)
-  memref_ty = ir.MemRefType(memref_arg.type)
-  address_space = get_memref_llvm_address_space(memref_ty)
-  ptr_ty = llvm.PointerType.get(address_space)
-  desc = to_memref_descriptor(memref_arg)
-  aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
-  offset_elems = llvm.extractvalue(i64, desc, [2])
-
-  elem_bitwidth = bitwidth(memref_ty.element_type)
+  ptr_ty = llvm.PointerType.get(get_memref_llvm_address_space(ref.type))
+  elem_bitwidth = bitwidth(ref.type.element_type)
   if elem_bitwidth < 8:
-    *_, static_offset = memref_ty.get_strides_and_offset()
+    *_, static_offset = ref.type.get_strides_and_offset()
     if static_offset != ir.ShapedType.get_dynamic_stride_or_offset():
       assert elem_bitwidth.bit_count() == 1
       packing = 8 // elem_bitwidth
       if static_offset % packing != 0:
         raise ValueError(
-            f"{memref_ty} {static_offset=} is not divisible by {packing=}`"
+            f"{ref.type} {static_offset=} is not divisible by {packing=}"
         )
-      offset_bytes = c(static_offset // packing, i64)
-    else:
-      offset_bits = llvm.mul(
-          offset_elems,
-          c(elem_bitwidth, i64),
-          overflow_flags=llvm.IntegerOverflowFlags.none,
-      )
-      offset_bytes = llvm.udiv(offset_bits, c(8, i64))
-  else:
-    assert elem_bitwidth % 8 == 0
-    offset_bytes = llvm.mul(
-        offset_elems,
-        c(elem_bitwidth // 8, i64),
-        overflow_flags=llvm.IntegerOverflowFlags.none,
-    )
-  return llvm.inttoptr(
-      ptr_ty,
-      llvm.add(
-          llvm.ptrtoint(i64, aligned_ptr),
-          offset_bytes,
-          overflow_flags=llvm.IntegerOverflowFlags.none,
-      ),
-  )
+  base_ptr = memref.extract_aligned_pointer_as_index(ref)
+  _, offset_elems, *_ = memref.extract_strided_metadata(ref)  # pyrefly: ignore[not-iterable]
+  offset_bytes = elements_to_bytes(offset_elems, elem_bitwidth)
+  ptr = arith.index_castui(i64, arith.addi(base_ptr, offset_bytes))
+  return llvm.inttoptr(ptr_ty, ptr)
 
 
 def cluster_collective_mask(
