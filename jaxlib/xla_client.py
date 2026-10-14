@@ -45,7 +45,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 518  # Handle empty DeviceList in is_fully_addressable
+_version = 519  # Pathways profiler for IFRT proxy clients
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.

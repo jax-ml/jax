@@ -35,6 +35,7 @@
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "jaxlib/nb_class_ptr.h"
+#include "jaxlib/pathways_profiler.h"
 #include "jaxlib/py_client.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/attribute_map.h"
@@ -130,7 +131,12 @@ absl::StatusOr<jax::nb_class_ptr<jax::PyClient>> GetClient(
   }
 
   // Constructing `jax::PyClient` requires GIL as it may dec-ref Python objects.
-  return jax::PyClient::Make(std::move(client));
+  jax::nb_class_ptr<jax::PyClient> py_client =
+      jax::PyClient::Make(std::move(client));
+  // Profiler sessions also trace the Pathways backend of the most recently
+  // created proxy client.
+  jax::RegisterPathwaysProfiler(py_client->shared_ptr_ifrt_client());
+  return py_client;
 }
 
 }  // namespace
