@@ -850,6 +850,17 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # do not check it functionality here
     jsp.linalg.svd(np.ones((2, 2), dtype=np.float32))
 
+  @jtu.sample_product(dtype=float_types + complex_types)
+  def testSVDHermitianZeroSingularValue(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41547
+    a = jnp.array([[1, 0, 0], [0, 0, 0], [0, 0, -2]], dtype=dtype)
+    u, s, vh = jnp.linalg.svd(a, hermitian=True)
+    eye = jnp.eye(3, dtype=dtype)
+    self.assertAllClose(s, jnp.array([2, 1, 0], dtype=s.dtype))
+    self.assertAllClose(u @ jnp.diag(s.astype(dtype)) @ vh, a)
+    self.assertAllClose(u.conj().T @ u, eye)
+    self.assertAllClose(vh @ vh.conj().T, eye)
+
   @jtu.sample_product(
       shape=[(1, 1), (4, 4), (2, 5), (5, 2), (5, 5), (2, 5, 5)],
       dtype=float_types + complex_types,
