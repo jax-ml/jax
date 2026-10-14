@@ -24,9 +24,9 @@ bazel_dep(name = "zlib", version = "1.3.2")
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-9+4rpwQMv77PxA+AGMWpwcjioakWHi4nJ7UQ0iPHrJo=",
-    strip_prefix = "rules_ml_toolchain-3a4df0c8e9e51687ac4c62c793a00a27286e5e83",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/3a4df0c8e9e51687ac4c62c793a00a27286e5e83.tar.gz"],
+    integrity = "sha256-Zz+1C14E36DttOPA3VzwzgG/lmIY74t0osFbvb1zdIU=",
+    strip_prefix = "rules_ml_toolchain-c2d87cea35e22b169713b15869b006cc907d353e",
+    urls = ["https://github.com/yuriivcs/rules_ml_toolchain/archive/c2d87cea35e22b169713b15869b006cc907d353e.tar.gz"],
 )
 
 # TODO: use a released version when available
@@ -34,6 +34,8 @@ bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
     integrity = "sha256-gPs8nqohcj5tQNjk1UfIDDjNSbj5ecu8bWoPSuhJr3c=",
+    patch_strip = 1,
+    patches = ["//third_party/xla:cccl.patch"],
     strip_prefix = "xla-b9a174b3b0e8e13f88d9146a956ffe7bfbc20b0a",
     urls = ["https://github.com/openxla/xla/archive/b9a174b3b0e8e13f88d9146a956ffe7bfbc20b0a.tar.gz"],
 )
