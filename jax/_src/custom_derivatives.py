@@ -429,6 +429,7 @@ custom_jvp_call_p = CustomJVPCallPrimitive('custom_jvp_call')
 def _custom_jvp_call_typecheck(_, *in_avals, call_jaxpr, jvp_jaxpr_fun,
                                num_consts, symbolic_zeros):
   # TODO(mattjj): could do more checking here...
+  core.check_distinct_refs(custom_jvp_call_p, in_avals)
   del in_avals, jvp_jaxpr_fun, num_consts
   disallowed_effects = effects.custom_derivatives_allowed_effects.filter_not_in(call_jaxpr.effects)
   if disallowed_effects:
@@ -1220,6 +1221,7 @@ mlir.register_lowering(custom_vjp_call_p, _custom_jvp_vjp_call_lowering,
                        cacheable=False)
 
 def _custom_vjp_call_typecheck(_, *in_avals, call_jaxpr, **kwargs):
+  core.check_distinct_refs(custom_vjp_call_p, in_avals)
   del in_avals, kwargs
   disallowed_effects = effects.custom_derivatives_allowed_effects.filter_not_in(
       call_jaxpr.effects)

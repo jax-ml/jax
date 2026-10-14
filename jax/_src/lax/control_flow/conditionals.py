@@ -989,6 +989,7 @@ def _cond_typecheck(bind_time, *in_atoms, branches, **params):
   del params
   if not bind_time:
     _, *in_atoms = in_atoms
+  core.check_distinct_refs(cond_p, in_atoms)
   avals = [x.aval for x in in_atoms]
   tc = partial(_typecheck_param, 'cond')
   tc(

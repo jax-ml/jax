@@ -1454,6 +1454,7 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, ft_in, ft_out,
                     jaxpr, unroll):
   if not bind_time:
     _, *in_atoms = in_atoms
+  core.check_distinct_refs(scan_p, in_atoms)
   avals = [x.aval for x in in_atoms]
   tc = partial(_typecheck_param, 'scan')
   tc(reverse, 'reverse', 'bool', type(reverse) is bool)
@@ -2335,6 +2336,10 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
 def _while_typecheck(_, *in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
                      body_nconsts):
   # TODO(frostig,mattjj): check cond_jaxpr, body_jaxpr types
+  cond_consts, body_consts, init = split_list(
+      in_atoms, [cond_nconsts, body_nconsts])
+  core.check_distinct_refs(while_p, [*cond_consts, *init])
+  core.check_distinct_refs(while_p, [*body_consts, *init])
   joined_effects = _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts,
                                        cond_nconsts)
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
