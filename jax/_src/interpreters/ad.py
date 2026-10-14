@@ -471,13 +471,18 @@ class NullAccum(GradAccum):
 fancy_transposes: dict[core.Primitive, Callable] = {}
 
 def project_accums(args):
-  result, specs = [], []
+  result, specs, ref_idx = [], [], {}
   for x in args:
     if isinstance(x, ValAccum):
       specs.append((ValAccum, x.aval))
     elif isinstance(x, RefAccum):
-      result.append(x.inst().ref)
-      specs.append((RefAccum, x.aval))
+      ref = x.inst().ref
+      if (i := ref_idx.get(id(core.get_referent(ref)))) is None:
+        ref_idx[id(core.get_referent(ref))] = len(result)
+        result.append(ref)
+        specs.append((RefAccum, x.aval))
+      else:
+        specs.append((i, x.aval))
     elif isinstance(x, NullAccum):
       specs.append((NullAccum, x.aval))
     else:
@@ -492,6 +497,8 @@ def unproject_accums(specs, result):
       args.append(ValAccum(aval))
     elif k is RefAccum:
       args.append(RefAccum(aval, next(result_)))
+    elif type(k) is int:
+      args.append(RefAccum(aval, result[k]))
     elif k is NullAccum:
       args.append(NullAccum(aval))
     elif k is None:

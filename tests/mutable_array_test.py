@@ -30,7 +30,7 @@ from jax.sharding import NamedSharding, PartitionSpec as P, AxisType
 import jax.numpy as jnp
 
 from jax._src.state import discharge as state_discharge
-from jax._src.state.types import (RefEffect)
+from jax._src.state.types import (AbstractRef, RefEffect)
 
 config.parse_flags_with_absl()
 
@@ -1201,6 +1201,71 @@ class MutableArrayTest(jtu.JaxTestCase):
       self.assertAllClose(w_bar_, w_bar)
     self.assertAllClose(v_ref[...], v_bar)
     self.assertAllClose(x_bar_, x_bar)
+
+  @parameterized.parameters(['jit', 'scan', 'cond'])
+  def test_vjp3_with_refs_aliased_args(self, hop):
+    if hop == 'jit':
+      f = lambda w: jax.jit(lambda a, b: (a * b).sum())(w, w)
+    elif hop == 'scan':
+      f = lambda w: jax.lax.scan(
+          lambda c, ab: (c + ab[0] * ab[1], None), 0., (w, w))[0]
+    else:
+      f = lambda w: jax.lax.cond(
+          w[0] > 0, lambda a, b: (a * b).sum(), lambda a, b: 0., w, w)
+    w = jnp.arange(1., 4.)
+
+    @jax.jit
+    def run(w):
+      _, f_vjp = jax.vjp(f, w)
+      w_ref = jax.new_ref(jnp.zeros_like(w))
+      f_vjp.with_refs(w_ref)(1.)
+      return jax.freeze(w_ref)
+
+    self.assertAllClose(run(w), 2 * w)
+
+  def test_vjp3_with_refs_aliased_sparse_reads(self):
+    f = jax.jit(lambda x, y: jnp.sin(x[0]) + jnp.cos(y[0]))
+    z = jnp.arange(1., 11.)
+
+    def run(z):
+      _, f_vjp = jax.vjp(lambda z: f(z, z), z)
+      z_ref = jax.new_ref(jnp.zeros_like(z))
+      f_vjp.with_refs(z_ref)(1.)
+      return jax.freeze(z_ref)
+
+    expected = jnp.zeros_like(z).at[0].set(jnp.cos(z[0]) - jnp.sin(z[0]))
+    self.assertAllClose(jax.jit(run)(z), expected)
+    self.assertAllClose(run(z), expected)
+    jaxpr = jax.make_jaxpr(run)(z).jaxpr
+    transposed_jit, = [e for e in jaxpr.eqns if e.primitive.name == 'jit' and
+                       any(isinstance(v.aval, AbstractRef) for v in e.invars)]
+    self.assertEmpty(transposed_jit.outvars)
+
+  def test_vjp3_with_refs_same_ref_for_two_inputs(self):
+    f = lambda a, b: jax.jit(lambda a, b: (a * b).sum())(a, b)
+    a = jnp.arange(1., 4.)
+
+    @jax.jit
+    def run(a, b):
+      _, f_vjp = jax.vjp(f, a, b)
+      r = jax.new_ref(jnp.zeros_like(a))
+      f_vjp.with_refs(r, r)(1.)
+      return jax.freeze(r)
+
+    self.assertAllClose(run(a, 2 * a), 3 * a)
+
+  def test_vjp3_with_refs_scan_const_and_xs_error(self):
+    f = lambda w: jax.lax.scan(lambda c, x: (c + w[0] * x, None), 0., w)[0]
+
+    @jax.jit
+    def run(w):
+      _, f_vjp = jax.vjp(f, w)
+      w_ref = jax.new_ref(jnp.zeros_like(w))
+      f_vjp.with_refs(w_ref)(1.)
+      return jax.freeze(w_ref)
+
+    with self.assertRaisesRegex(NotImplementedError, "both a constant and a scanned-over"):
+      run(jnp.arange(1., 4.))
 
   @jtu.sample_product(
       seed=range(20),

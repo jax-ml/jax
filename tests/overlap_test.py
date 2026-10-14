@@ -1089,6 +1089,20 @@ class OverlapTest(jtu.JaxTestCase):
     x = jnp.arange(3.)
     self.assertAllClose(f(x, x), jnp.sin(x) * x)
 
+  def test_program_order_vjp_with_refs_aliased_args(self):
+    f = lambda w: program_order(
+        lambda a, b: (a * b).sum(), enforce=False)(w, w)
+    w = jnp.arange(1., 4.)
+
+    @jax.jit
+    def run(w):
+      _, f_vjp = jax.vjp(f, w)
+      w_ref = jax.new_ref(jnp.zeros_like(w))
+      f_vjp.with_refs(w_ref)(1.)
+      return jax.freeze(w_ref)
+
+    self.assertAllClose(run(w), 2 * w)
+
 
 class AsyncCollectivesTest(jtu.JaxTestCase):
 
