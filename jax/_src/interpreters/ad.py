@@ -327,7 +327,8 @@ def backward_pass3(
         env[v] = RefAccum(v.aval.to_ct_aval())
       else:
         assert False
-    elif any(isinstance(read(x), GradAccum) for x in eqn.invars):
+    elif (isinstance(eqn.primitive, VJPNode) or
+          any(isinstance(read(x), GradAccum) for x in eqn.invars)):
       for v in eqn.outvars:
         env[v] = ValAccum(v.aval.to_ct_aval())
       lin_eqns.append(eqn)
@@ -1114,6 +1115,37 @@ def _interleave(xs, ys):
   assert len(xs) == len(ys)
   return [e for pair in zip(xs, ys) for l in pair for e in l]
 
+
+class VJPNode(core.Primitive):
+  def __init__(self, prim):
+    super().__init__(f'vjp_node[{prim}]')
+    self.prim, self.multiple_results = prim, prim.multiple_results
+
+  def bind_with_trace(self, trace, args, avals, params, /):
+    if isinstance(trace, pe.DynamicJaxprTrace):
+      return trace.process_primitive(self, args, params)
+    prim = self.prim
+    return prim.bind_with_trace(trace, args, avals, prim.get_bind_params(params))
+
+  def abstract_eval(self, *avals, **params):
+    return self.prim.abstract_eval(*avals, **params)
+
+  def is_high(self, *avals, **params):
+    return self.prim.is_high(*avals, **params)
+
+@functools.cache
+def vjp_node(prim):
+  node = VJPNode(prim)
+  for rules in (fancy_transposes, primitive_transposes, core.custom_typechecks):
+    if prim in rules:
+      rules[node] = rules[prim]
+  pe.dce_rules[node] = partial(_vjp_node_dce, prim)
+  return node
+
+def _vjp_node_dce(prim, used_outs, live_ins, eqn):
+  rule = pe.dce_rules.get(prim, pe._default_dce_rule)
+  used_ins, new_eqn = rule(used_outs, live_ins, eqn.replace(primitive=prim))
+  return used_ins, new_eqn and new_eqn.replace(primitive=eqn.primitive)
 
 custom_lin_p: core.Primitive = core.Primitive('custom_lin')
 custom_lin_p.def_abstract_eval(lambda *_, out_avals, **__: out_avals)

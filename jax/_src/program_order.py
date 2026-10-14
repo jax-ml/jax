@@ -267,7 +267,8 @@ def _program_order_linearize(is_vjp, nzs, *primals_in, call_jaxpr,
   def tangent_fun(res, sres, *tangents):
     sres_flat = tree_leaves(sres)
     nz_tangents = [ad.instantiate_zeros(x) for nz, x in zip(nzs, tangents) if nz]
-    nz_tangents_out = program_order_p.bind(
+    prim = ad.vjp_node(program_order_p) if is_vjp else program_order_p
+    nz_tangents_out = prim.bind(
         *res, *nz_tangents, *sres_flat, call_jaxpr=tangent_jaxpr,
         exclude_mask=((False,) * len(res) + tangents_mask
                       + (False,) * len(sres_flat)),

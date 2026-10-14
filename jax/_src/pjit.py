@@ -1612,7 +1612,8 @@ def _pjit_linearize(is_vjp, nzs, *primals_in, jaxpr, in_shardings, out_shardings
   def tangent_fun(residuals, structured_residuals, *tangents):
     tangents_nz = _filter_zeros(nzs, tangents)
     sres_flat = tree_leaves(structured_residuals)
-    nz_tangents_out = jit_p.bind(
+    prim = ad.vjp_node(jit_p) if is_vjp else jit_p
+    nz_tangents_out = prim.bind(
         *residuals, *tangents_nz, *sres_flat, jaxpr=tangent_jaxpr,
         in_shardings=_pad(nzs, in_shardings, UNSPECIFIED),
         in_layouts=_pad(nzs, in_layouts, None),
