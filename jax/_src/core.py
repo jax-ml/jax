@@ -3620,7 +3620,14 @@ class JaxprTypeError(TypeError):
 
 custom_typechecks: dict[Primitive, Callable] = {}
 
+def check_distinct_refs(prim, atoms) -> None:
+  from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
+  refs = [id(x) for x in atoms if isinstance(x.aval, AbstractRef)]
+  if len(set(refs)) < len(refs):
+    raise JaxprTypeError(f"{prim} passes the same Ref as more than one operand")
+
 def _check_closed_call(_, *in_atoms, call_jaxpr, **__):
+  check_distinct_refs(eval_jaxpr_p, in_atoms)
   in_avals = [x.aval for x in in_atoms]
   if not all(map(typecompat, call_jaxpr.in_avals, in_avals)):
     raise JaxprTypeError("Closed call in_avals mismatch")
@@ -3838,6 +3845,7 @@ def _check_call(ctx_factory, prim, in_atoms, params):
                            f"{x.aval} to jaxpr expecting type "
                            f"{v.aval}")
     env[v] = x.val if type(x) is Literal else x
+  check_distinct_refs(prim, in_atoms)
 
   check_jaxpr(call_jaxpr)
 

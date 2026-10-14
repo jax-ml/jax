@@ -1918,6 +1918,44 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
         ValueError, "closed over and passed as the argument y_ref"):
       jax.jit(lambda y_ref: x_ref[...] + y_ref[...])(x_ref)
 
+  @parameterized.parameters(
+      ['jit', 'scan', 'cond', 'while', 'custom_jvp', 'custom_vjp'])
+  def test_argument_aliases_typecheck(self, hop):
+    read = lambda x_ref, y_ref: x_ref[...] + y_ref[...]
+    custom_jvp = jax.custom_jvp(read)
+    custom_jvp.defjvp(lambda primals, tangents: (read(*primals), 0.))
+    custom_vjp = jax.custom_vjp(read)
+    custom_vjp.defvjp(lambda *args: (read(*args), None),
+                      lambda _, g: (None, None))
+    fs = dict(
+        jit=lambda p, x_ref, y_ref: jax.jit(read)(x_ref, y_ref),
+        scan=lambda p, x_ref, y_ref: jax.lax.scan(
+            lambda c, _: (c + read(x_ref, y_ref), None), 0., None,
+            length=1)[0],
+        cond=lambda p, x_ref, y_ref: jax.lax.cond(
+            p, lambda: read(x_ref, y_ref), lambda: 0.),
+        while_=lambda p, x_ref, y_ref: jax.lax.while_loop(
+            lambda c: c < 1., lambda c: c + read(x_ref, y_ref), 0.),
+        custom_jvp=lambda p, x_ref, y_ref: custom_jvp(x_ref, y_ref),
+        custom_vjp=lambda p, x_ref, y_ref: custom_vjp(x_ref, y_ref))
+    f = fs['while_' if hop == 'while' else hop]
+    with config.custom_jvp3(False), config.custom_vjp3(False):
+      jaxpr = jax.make_jaxpr(f)(True, core.new_ref(0.), core.new_ref(0.)).jaxpr
+    core.check_jaxpr(jaxpr)
+    _, x_var, y_var = jaxpr.invars
+    alias = lambda e: e.replace(
+        invars=[x_var if v is y_var else v for v in e.invars])
+    jaxpr = jaxpr.replace(eqns=map(alias, jaxpr.eqns))
+    with self.assertRaisesRegex(
+        core.JaxprTypeError, "passes the same Ref as more than one operand"):
+      core.check_jaxpr(jaxpr)
+
+  def test_while_same_ref_in_cond_and_body_typechecks(self):
+    def f(x_ref):
+      return jax.lax.while_loop(lambda c: c < x_ref[...],
+                                lambda c: c + x_ref[...], 0.)
+    core.check_jaxpr(jax.make_jaxpr(f)(core.new_ref(1.)).jaxpr)
+
   def test_return_from_scan(self):
     with self.assertRaisesRegex(
         ValueError, "traced for scan returned a mutable array reference of type"):
