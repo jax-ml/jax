@@ -98,7 +98,7 @@ class Fusible(hijax.HiPrim):
     def unbatch_leaf(a, d):
       if d is None:
         return a
-      return a[d]
+      return jax.lax.squeeze(a, (d,))
 
     unbatched_args = tree_util.tree_map(unbatch_leaf, args, dims)
     out_unbatched = self(*unbatched_args)  # pyrefly: ignore[not-callable]

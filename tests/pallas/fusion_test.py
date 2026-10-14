@@ -1033,6 +1033,22 @@ class FusionTest(jtu.JaxTestCase):
     ):
       jax.jit(fusible_dtype.unpack)(x)
 
+  @parameterized.parameters(0, 1, 2)
+  def test_fusible_vmap_batch_axis(self, in_axis):
+    @fuser.fusible
+    def scale(x_fn, out_fn):
+      x = x_fn()
+      if out_fn is None:
+        out_fn = lambda v: v
+      return out_fn(x * 2.0)
+
+    shape = [1, 4, 8]
+    shape.insert(in_axis, 1)
+    x = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
+    y = jax.vmap(scale, in_axes=in_axis)(x)
+    expected = jnp.squeeze(x, axis=in_axis)[None] * 2.0
+    np.testing.assert_allclose(y, expected)
+
 
 @dataclasses.dataclass(frozen=True)
 class ArrayTuple:
