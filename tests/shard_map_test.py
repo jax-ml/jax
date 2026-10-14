@@ -5742,8 +5742,6 @@ class ShardMapTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   @jax.default_matmul_precision('float32')
   def test_reduced_shmap_inside_partially_manual_shmap(self, mesh):
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
     if jaxlib_extension_version < 500:
       self.skipTest('Requires jaxlib_extension_version >= 500')
     if ifrt_version < 72:
@@ -5776,8 +5774,6 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_partial_manual_basic(self, mesh):
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
     if jaxlib_extension_version < 500:
       self.skipTest('Requires jaxlib_extension_version >= 500')
     if ifrt_version < 72:

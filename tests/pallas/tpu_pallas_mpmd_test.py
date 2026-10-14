@@ -1644,8 +1644,6 @@ class MpmdTest(PallasSCTest):
     self.assertEmpty(push_warnings)
 
   def test_cross_subcore_handover_race(self):
-    if not jtu.is_libtpu_at_least("0.0.46"):
-      self.skipTest("Test requires libtpu 0.0.46 or newer.")
     # Stress-test SparseCore producer-consumer handoffs between vector
     # subcores and the scalar subcore. Waiting on a push stream without a
     # destination semaphore waits for all HBM writes to retire, so the data is

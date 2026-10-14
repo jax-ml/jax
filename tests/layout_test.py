@@ -844,8 +844,6 @@ class LayoutTest(jtu.JaxTestCase):
     if jtu.test_device_matches(['cpu', 'gpu']):
       self.skipTest('This test does not work on CPU or GPU backends.')
 
-    if not jtu.is_libtpu_at_least('0.0.49'):
-      self.skipTest('Needs a newer libtpu')
 
     mesh = jtu.create_mesh((jax.device_count(),), ('data',))
     shape = (5, 2, 1004, 512, 36)
@@ -895,8 +893,6 @@ class LayoutTest(jtu.JaxTestCase):
 class LayoutInTypesTest(jtu.JaxTestCase):
 
   def test_unop_layout(self):
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
 
     arr = jnp.arange(16.).reshape(2, 8)
     l = Layout.for_array(arr)
@@ -917,8 +913,6 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, jnp.sin(arr))
 
   def test_naryop_layout(self):
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
 
     arr1 = jnp.arange(16., dtype=np.float32).reshape(2, 8)
     arr2 = jnp.arange(16., dtype=np.float32).reshape(2, 8)

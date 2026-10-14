@@ -847,8 +847,6 @@ class LaxVmapTest(jtu.JaxTestCase):
 
   def test_vmap_scatter_sorted_indices_regression(self):
     # Regression test for https://github.com/jax-ml/jax/issues/38005
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Test requires libtpu >= 0.0.50')
     batch, n = 1024, 8224
     indices = jnp.full(batch, n - 1, dtype=jnp.int32).at[-1].set(0)
 

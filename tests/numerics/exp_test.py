@@ -141,25 +141,14 @@ class Expm1Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_expm1_accuracy(self, dtype):
-    if jtu.is_libtpu_at_least("0.0.50"):
-      tpu_bounds = [
-          (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 1772.0}),
-          ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 1357.5}),
-          (["tpu_v6e", "tpu_7x"], {f32: 3.5}),
-      ]
-      check_signed_zeros = [
-          ([*TPU_EUPV1, "tpu_v5p"], False),
-      ]
-    else:
-      tpu_bounds = [
-          (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 1772.0}),
-          ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 1357.5}),
-          ("tpu_v6e", {bf16: 1.0, f32: 64.0}),
-          ("tpu_7x", {bf16: 1.0, f32: 63.5}),
-      ]
-      check_signed_zeros = [
-          ("tpu", False),
-      ]
+    tpu_bounds = [
+        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 1772.0}),
+        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 1357.5}),
+        (["tpu_v6e", "tpu_7x"], {f32: 3.5}),
+    ]
+    check_signed_zeros = [
+        ([*TPU_EUPV1, "tpu_v5p"], False),
+    ]
     if jaxlib_extension_version >= 505:
       cpu_bounds = ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0})
     else:
@@ -182,8 +171,6 @@ class Expm1Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_expm1_highest_accuracy(self, dtype):
-    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.50"):
-      self.skipTest("Requires libtpu >= 0.0.50")
     if jaxlib_extension_version >= 505:
       cpu_bounds = ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0})
     else:

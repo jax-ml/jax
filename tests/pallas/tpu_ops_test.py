@@ -1283,10 +1283,6 @@ class OpsTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(jnp.int16, jnp.uint16, jnp.bfloat16)
   def test_concatenate_16bit_slices(self, dtype):
-    if jtu.is_device_tpu_at_least(version=5) and not jtu.is_libtpu_at_least(
-        "0.0.50"
-    ):
-      self.skipTest("Requires libtpu >= 0.0.50")
     if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(version=4):
       self.skipTest(
           "v4- does not have native vpackc support, so subnormals will be"

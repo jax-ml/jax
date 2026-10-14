@@ -262,8 +262,6 @@ class AcoshTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_acosh_accuracy(self, dtype):
-    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.50"):
-      self.skipTest("Requires libtpu >= 0.0.50")
     bounds = [
         ("cpu", {bf16: 2.0, f16: 2.0, f32: 4.5, f64: 3.5}),
         ("gpu", {f16: 1.0, f32: 2.5, f64: 2.5}),
@@ -315,8 +313,6 @@ class AsinhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_asinh_accuracy(self, dtype):
-    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.50"):
-      self.skipTest("Requires libtpu >= 0.0.50")
     bounds = [
         ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.5, f64: 2.5}),
         ("gpu", {f16: 1.0, f32: 2.0, f64: 2.5}),
@@ -363,8 +359,6 @@ class AtanhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_atanh_accuracy(self, dtype):
-    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.50"):
-      self.skipTest("Requires libtpu >= 0.0.50")
     bounds = [
         ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.0, f64: 2.5}),
         ("gpu", {f32: 3.5, f64: 3.5}),

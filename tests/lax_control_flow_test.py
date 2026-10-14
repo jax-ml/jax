@@ -3509,8 +3509,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_scan_counter_where(self):
     # https://github.com/jax-ml/jax/issues/41027
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
     if ifrt_version < 75:
       self.skipTest('Requires ifrt_version >= 75')
 

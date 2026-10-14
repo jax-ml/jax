@@ -87,7 +87,7 @@ def _load_vreg(
     # TODO(naumsmogers): once we support non-expand masked loads, differentiate
     # ops here.
     assert expand
-    if not ctx.forward_compatible and ctx.is_libtpu_at_least("0.0.49"):
+    if not ctx.forward_compatible:
       return tpu.expand_load_vreg(out_vec_type, ref, indices=starts, mask=mask)  # pyrefly: ignore[missing-attribute]
     # TODO: b/481866110 - Remove tpu.vector_load in favor of
     # tpu.expand_load_vreg above after 10/20/2026.
@@ -119,7 +119,7 @@ def _vector_load(
         memref_vec_type.shape, ir.IntegerType.get_signless(1)
     )
     mask_memref_rank = vector.shape_cast(mask_memref_type, mask)
-    if not ctx.forward_compatible and ctx.is_libtpu_at_least("0.0.49"):
+    if not ctx.forward_compatible:
       return tpu.vector_expand_load(  # pyrefly: ignore[missing-attribute]
           result=memref_vec_type,
           base=ref,
@@ -352,7 +352,7 @@ def _store_lowering_rule(
       # TODO(naumsmogers): once we support non-compress masked stores,
       # differentiate ops here.
       assert compress
-      if not ctx.forward_compatible and ctx.is_libtpu_at_least("0.0.49"):
+      if not ctx.forward_compatible:
         tpu.compress_store_vreg(val, ref, indices=starts, mask=mask, add=add)  # pyrefly: ignore[missing-attribute]
       else:
         # TODO: b/481866110 - Remove tpu.vector_store in favor of
@@ -391,7 +391,7 @@ def _store_lowering_rule(
         memref_vec_shape, ir.IntegerType.get_signless(1)
     )
     mask_memref_rank = vector.shape_cast(mask_memref_type, mask)
-    if not ctx.forward_compatible and ctx.is_libtpu_at_least("0.0.49"):
+    if not ctx.forward_compatible:
       # TODO(naumsmogers): once we support non-compress masked stores,
       # differentiate ops here.
       tpu.vector_compress_store(  # pyrefly: ignore[missing-attribute]

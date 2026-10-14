@@ -2420,8 +2420,6 @@ class PallasCallTest(ptu.PallasTPUTest):
       ('case_c_i32', jnp.int32, (1, 4, 1), (64, 4, 4), (256, 4, 1)),
   )
   def test_broadcast_then_reshape(self, dtype, src, mid, dst):
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
     if src == (1, 8, 1) and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Requires TPU v5+ for sublane gather')
 
@@ -2562,8 +2560,6 @@ class PallasCallTest(ptu.PallasTPUTest):
   ):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Large second minor layout requires TPU v4+')
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Test requires libtpu >= 0.0.50')
 
     sublane_count = pltpu.get_tpu_info().num_sublanes
     lane_count = pltpu.get_tpu_info().num_lanes
@@ -2827,9 +2823,6 @@ class PallasCallTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(jnp.float32, jnp.bfloat16, jnp.int32)
   def test_load_vmem_before_aliasing_store(self, dtype):
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
-
     rows, lanes = 32, 256
 
     def kernel(i_ref, a_ref, b_ref, v_ref, o_ref, t):
@@ -4043,9 +4036,6 @@ class PallasCallRefTransformTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(y, x[8:16, :128])
 
   def test_column_sliced_ref_unaligned_sublane_slice(self):
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
-
     x = jnp.arange(16 * 256, dtype=jnp.float32).reshape((16, 256))
 
     def load_kernel(x_ref, o_ref):
@@ -5224,8 +5214,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
         (output_shape, input_shape),
     ]:
       if len(input_shape) == 1 or len(output_shape) == 1:
-        if not jtu.is_libtpu_at_least('0.0.50'):
-          self.skipTest('Requires libtpu >= 0.0.50')
         if dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5):
           self.skipTest('8-bit subelement masking requires TPU v5+')
         if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4):
@@ -5934,11 +5922,7 @@ class EmitPipelineTest(ptu.PallasTPUTest):
   )
   def test_emit_pipeline_small_window(self, tile_major, dtype):
     if not jtu.is_device_tpu_at_least(4) and tile_major == 1:
-      expected_error = (
-          jax.errors.JaxRuntimeError
-          if jtu.is_libtpu_at_least('0.0.48')
-          else error_handling.MosaicError
-      )
+      expected_error = jax.errors.JaxRuntimeError
       expect_ctx = self.assertRaisesRegex(
           expected_error,
           'The contiguous inner slice in the DMA transfer',
@@ -7392,8 +7376,6 @@ class TPUPallasCacheKeyTest(ptu.PallasTPUTest):
     super().setUp()
     if self.INTERPRET:
       self.skipTest('Compilation-only test')
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Separating debug locations requires libtpu >= 0.0.50')
 
   def test_cache_key_collision_with_fingerprint_matching(self):
     x = jnp.array([1.0], jnp.float32)
