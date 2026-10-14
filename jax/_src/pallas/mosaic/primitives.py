@@ -29,6 +29,7 @@ from jax._src import flattree as ft
 from jax._src import pretty_printer as pp
 from jax._src import random as jax_random
 from jax._src import state
+from jax._src import tpu_info
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import batching
@@ -1793,3 +1794,36 @@ def has_memory_space(
 def _has_memory_space_abstract_eval(ref_aval, *, memory_space):
   del ref_aval, memory_space
   return jax_core.ShapedArray((), jnp.bool_)
+
+
+def pad_ref(ref: jax.Ref) -> jax.Ref | state.TransformedRef:
+  """Pads an untransformed reference to its tile-aligned bounds."""
+  if isinstance(ref, state_types.TransformedRef):
+    raise ValueError(
+        "pad_ref must be called on an untransformed Ref before slicing or"
+        " transforming."
+    )
+  aval = jax_core.typeof(ref)
+  if not isinstance(aval, state.AbstractRef):
+    raise TypeError(f"ref must be a reference, got {ref}")
+  if aval.memory_space not in (
+      None,
+      pl_core.MemorySpace.DEFAULT,
+      pl_core.MemorySpace.ANY,
+      tpu_core.MemorySpace.VMEM,
+      tpu_core.MemorySpace.HBM,
+  ):
+    raise ValueError(
+        "pad_ref only supports VMEM and HBM references, got"
+        f" {aval.memory_space}"
+    )
+  if not ref.shape:
+    return ref
+  inferred_tiling = tpu_info.infer_tiling(aval)
+  padded_shape = tuple(
+      orig_d if t is None else pallas_utils.align_to(orig_d, t)
+      for orig_d, t in zip(ref.shape, inferred_tiling)
+  )
+  if padded_shape == tuple(ref.shape):
+    return ref
+  return state_types.TransformedRef(ref, (tpu_core.PadRef(padded_shape),))

@@ -23,6 +23,7 @@ from jax import lax
 from jax._src import core as jax_core
 from jax._src import source_info_util
 from jax._src.pallas import primitives
+from jax._src.pallas.mosaic import core as mosaic_core
 from jax._src.state import indexing
 from jax._src.state import types as state_types
 from jax._src.util import safe_map
@@ -436,6 +437,9 @@ def to_access(transforms, shape: Sequence[int]) -> Access:
 def to_range(transforms) -> tuple[slice | int, ...]:
   ret = ()
   for transform in transforms:
+    if isinstance(transform, mosaic_core.PadRef):
+      ret = tuple(slice(0, s, 1) for s in transform.shape)
+      continue
     # For now, assume only NDIndexer transforms.
     ret = _compose_slice_or_index(
         ret, tuple(_transform_slice_or_index(i) for i in transform.indices)

@@ -29,6 +29,7 @@ import jax
 from jax import lax
 from jax import tree_util
 from jax._src import api_util
+from jax._src import cloud_tpu_init
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import deprecations
@@ -166,7 +167,9 @@ def _make_block_slice(
   # that contains the block.
   match block_size:
     case Blocked():
-      return _create_blocked_slice(block_index, block_size.block_size, size, tiling)
+      return _create_blocked_slice(
+          block_index, block_size.block_size, size, tiling
+      )
     case int():
       return _create_blocked_slice(block_index, block_size, size, tiling)
     case Element(block_size):
@@ -186,6 +189,22 @@ def _make_block_slice(
       )
     case None | Squeezed() | Indirect():
       return block_index
+    case _:
+      raise ValueError(f"Unsupported block dimension type: {block_size}")
+
+
+def _dim_needs_padding(
+    block_size: BlockDim | int | None, size: int, tiling: int | None
+) -> bool:
+  if tiling is None or size % tiling == 0:
+    return False
+  match block_size:
+    case Blocked(bs) | int(bs):
+      return size % bs != 0
+    case Element() | BoundedSlice():
+      return True
+    case None | Squeezed() | Indirect():
+      return False
     case _:
       raise ValueError(f"Unsupported block dimension type: {block_size}")
 
@@ -520,6 +539,27 @@ class BufferedRefBase:
         for s, bd in zip(dma_slice, self.block_shape)  # pyrefly: ignore[bad-argument-type]
         if not (bd is None or isinstance(bd, Squeezed))
     )
+
+  def _pad_dma_ref(self, ref):
+    if (
+        not ref.shape
+        or self.block_shape is None
+        or isinstance(ref, state.TransformedRef)
+        or getattr(self, "tiling", None) not in (None, Tiling.COMPACT)
+        or not cloud_tpu_init.is_libtpu_at_least("0.0.51")
+    ):
+      return ref
+    src_ty = _ref_to_value_aval(ref)
+    tiling = tpu_info.infer_tiling(src_ty, getattr(self, "tiling", None))
+    padded_shape = tuple(
+        align_to(ss, t)
+        if t is not None and _dim_needs_padding(bs, ss, t)
+        else ss
+        for bs, ss, t in zip(self.block_shape, ref.shape, tiling, strict=True)
+    )
+    if padded_shape == tuple(ref.shape):
+      return ref
+    return state.TransformedRef(ref, (tpu_core.PadRef(padded_shape),))
 
   def bind_existing_ref(self, window_ref, indices):
     """For handling VMEM references, the pipeline aliases the existing ref."""
@@ -1022,7 +1062,7 @@ class BufferedRef(BufferedRefBase):
     if not self.is_trivial_windowing:
       src_slice = self.get_dma_slice(_ref_to_value_aval(src_ref), grid_indices)
       dst_slice = self._to_window_slice(src_slice)
-      src_ref = src_ref.at[src_slice]
+      src_ref = self._pad_dma_ref(src_ref).at[src_slice]
     tpu_primitives.make_async_copy(
         src_ref,
         self._window_ref_at(slot, dst_slice),
@@ -1034,7 +1074,8 @@ class BufferedRef(BufferedRefBase):
     assert self.sem_sends is not None
     dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
     src_ref = self._window_ref_at(slot, self._to_window_slice(dst_slice))
-    dst_ref, sem = dst_ref.at[dst_slice], self.sem_sends.at[slot]
+    dst_ref = self._pad_dma_ref(dst_ref).at[dst_slice]
+    sem = self.sem_sends.at[slot]
     if self.output_wait_read_only:  # The semaphore tracks the source read.
       return tpu_primitives.make_async_copy(src_ref, dst_ref, src_sem=sem)
     return tpu_primitives.make_async_copy(src_ref, dst_ref, sem)
@@ -1063,7 +1104,7 @@ class BufferedRef(BufferedRefBase):
     if not self.is_trivial_windowing:
       src_slice = self.get_dma_slice(_ref_to_value_aval(src_ref), grid_indices)
       dst_slice = self._to_window_slice(src_slice)
-      src_ref = src_ref.at[src_slice]
+      src_ref = self._pad_dma_ref(src_ref).at[src_slice]
     wait_slot = self.current_wait_in_slot
     tpu_primitives.make_async_copy(
         src_ref,  # nb: doesn't matter
@@ -1822,7 +1863,7 @@ def sync_copy(src: jax.Ref | BufferedRef, dst: jax.Ref | BufferedRef, indices):
   if not bref.is_trivial_windowing:
     hbm_slice = bref.get_dma_slice(_ref_to_value_aval(hbm_ref), indices)
     bref_slice = bref._to_window_slice(hbm_slice)
-    hbm_ref = hbm_ref.at[hbm_slice]
+    hbm_ref = bref._pad_dma_ref(hbm_ref).at[hbm_slice]
     window_ref = window_ref.at[bref_slice]
   if copy_in:
     tpu_helpers.sync_copy(hbm_ref, window_ref)
