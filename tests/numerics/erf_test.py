@@ -495,6 +495,22 @@ _ERFINV_INTERESTING_POINTS = [
         for w in (3.5, 4.5, 16.0)
         for sign in (-1, 1)
     ),
+    # Worst-case float64 points on CPU and GPU across central (w < 4.5) and
+    # tail (w >= 4.5) pieces near output power-of-two boundaries:
+    *(
+        sign * float.fromhex(h)
+        for h in (
+            "0x1.20dbf3de5abd3p-7",  # GPU max (-2.42 ULP) below y = 2^-7 on P1
+            "0x1.20dd14b80c993p-8",  # CPU/GPU max (-2.42 ULP) below y = 2^-8 on P1
+            "0x1.20c5645cbedf4p-5",  # CPU/GPU peak (-2.39 ULP) below y = 2^-5 on P1
+            "0x1.0a7ef5c0d4391p-1",  # GPU peak (+2.19 ULP) below y = 0.5 on P1
+            "0x1.fd9ae1404cd85p-1",  # GPU peak (+2.08 ULP) below y = 2 on P2
+            "0x1.fd25ed74aaa21p-1",  # CPU/GPU peak (+2.06 ULP) near w = 4.5^+ on P2
+            "0x1.fd477fea47e83p-1",  # CPU/GPU peak (-2.05 ULP) near w = 4.547 on P2
+            "0x1.fffffe1c8b959p-1",  # CPU/GPU peak (+1.64 ULP) below w = 16 switch
+        )
+        for sign in (-1, 1)
+    ),
 ]
 
 
@@ -523,8 +539,8 @@ class ErfinvTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfinv_accurate_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 2.0, f64: 2.0}),
-        ("gpu", {f16: 1.0, f32: 2.5, f64: 2.0}),
+        ("cpu", {f16: 1.0, f32: 2.0, f64: 2.5}),
+        ("gpu", {f16: 1.0, f32: 2.5, f64: 2.5}),
         (TPU_EUPV1, {f16: 1.0, f32: 427.0}),
         ("tpu_v5p", {f16: 1.0, f32: 5.5}),
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 2.5}),
@@ -622,6 +638,7 @@ _ERFCINV_INTERESTING_POINTS = [
         for w in (3.5, 4.5, 16.0, 18.0625, 37.0, 144.0)
         for sign in (-1, 1)
     ),
+    *(1.0 - x for x in _ERFINV_INTERESTING_POINTS),
 ]
 
 
@@ -631,8 +648,8 @@ class ErfcInvTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfcinv_accuracy(self, dtype):
     bounds = [
-        ("cpu", {bf16: 1.0, f16: 1.0, f32: 2.5, f64: 3.0}),
-        ("gpu", {bf16: 1.0, f16: 1.0, f32: 3.0, f64: 3.0}),
+        ("cpu", {bf16: 1.0, f16: 1.0, f32: 2.5, f64: 2.5}),
+        ("gpu", {bf16: 1.0, f16: 1.0, f32: 3.0, f64: 2.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 427.0}),
         ("tpu_v5p", {f16: 1.0, f32: 6.0}),
         ("tpu_v6e", {bf16: 0.5, f16: 1.0, f32: 3.0}),

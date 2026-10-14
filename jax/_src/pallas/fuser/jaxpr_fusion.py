@@ -217,9 +217,11 @@ def _construct_output_permutation(
 ) -> list[int]:
   order = []
   for u in used:
-    true_vals = [i for i in range(len(u)) if u[i]]
-    order.extend(true_vals)
-  return [order.index(i) for i in range(len(order))]
+    order.extend(i for i in range(len(u)) if u[i])
+  inv = [0] * len(order)
+  for i, j in enumerate(order):
+    inv[j] = i
+  return inv
 
 
 def _construct_output_fusions(

@@ -171,6 +171,7 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.cosh` | 25.0 | 2.5 | 93.5 | 99.0 | 59.0 | 59.5 | |
 | {func}`~jax.lax.erf` | 7.0 | 6.5 | 7.5 | 8.5 | 1.5 | 1.5 | |
 | {func}`~jax.lax.erf_inv` | 65.0 | 65.0 | 427.0 | 65.5 | 65.0 | 65.5 | |
+| {func}`~jax.lax.erf_inv` (`jax_accurate_erf_inv`) | 2.0 | 2.5 | 427.0 | 5.5 | 2.5 | 2.5 | `jax.config.update('jax_accurate_erf_inv', True)` |
 | {func}`~jax.lax.erfc` | 66.0 | 66.5 | 145.0 | 157.0 | 124.5 | 125.0 | |
 | {func}`~jax.lax.erfc` (`highest`) | 4.0 | 5.0 | 5.5 | 5.0 | 5.0 | 5.0 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.exp` | 1.5 | 2.0 | 116.0 | 109.5 | 64.5 | 65.0 | |
@@ -196,9 +197,9 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.numpy.log10` | 3.0 | 2.5 | 6213.0 | 57.0 | 3.0 | 3.0 | |
 | {func}`~jax.numpy.rad2deg` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.numpy.sinc` | 2.5 | 3.5 | 4.0 | 4.0 | 4.0 | 3.5 | |
-| {func}`~jax.scipy.special.erfcinv` | 3.0 | 3.5 | 427.0 | 6.0 | 4.0 | 4.0 | |
+| {func}`~jax.scipy.special.erfcinv` | 2.5 | 3.0 | 427.0 | 6.0 | 3.0 | 3.0 | |
 | {func}`~jax.scipy.special.erfcx` | 3.5 | 4.0 | 4.0 | 4.0 | 4.5 | 4.5 | |
-| {func}`~jax.scipy.special.ndtri` | 2.5 | 3.0 | 302.0 | 5.0 | 3.5 | 3.5 | |
+| {func}`~jax.scipy.special.ndtri` | 2.5 | 3.0 | 302.0 | 5.0 | 3.0 | 3.0 | |
 
 ---
 
@@ -228,6 +229,7 @@ these are empirical bounds.
 | {func}`~jax.lax.cosh` | 496.0 | 2.5 |
 | {func}`~jax.lax.erf` | 2.5 | 2.5 |
 | {func}`~jax.lax.erf_inv` | 500000.0 | 500000.0 |
+| {func}`~jax.lax.erf_inv` (`jax_accurate_erf_inv`) | 2.5 | 2.5 |
 | {func}`~jax.lax.erfc` | 350.0 | 350.0 |
 | {func}`~jax.lax.erfc` (`highest`) | 2.5 | 2.5 |
 | {func}`~jax.lax.exp` | 2.0 | 1.5 |
@@ -250,6 +252,6 @@ these are empirical bounds.
 | {func}`~jax.numpy.log10` | 2.0 | 2.5 |
 | {func}`~jax.numpy.rad2deg` | 1.0 | 1.0 |
 | {func}`~jax.numpy.sinc` | 2.0 | 2.0 |
-| {func}`~jax.scipy.special.erfcinv` | 3.0 | 3.0 |
+| {func}`~jax.scipy.special.erfcinv` | 2.5 | 2.5 |
 | {func}`~jax.scipy.special.erfcx` | 3.0 | 3.0 |
 | {func}`~jax.scipy.special.ndtri` | 2.0 | 2.0 |
