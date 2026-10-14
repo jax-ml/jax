@@ -5105,15 +5105,7 @@ class CustomJVP3Test(CustomJVPTest):
   def test_ensure_compile_time_eval(self): pass
   def test_dce(self): pass
 
-  # custom_jvp3 functions can't close over Tracers (they raise a good error
-  # instead; see test_closed_over_tracer_error below)
-  def test_closure_with_vmap(self): pass
   def test_closure_with_vmap2(self): pass
-  def test_fun_with_nested_calls_2(self): pass
-
-  # custom_jvp3 nondiff_argnums must be static, not Tracers
-  def test_nondiff_arg_vmap_tracer(self): pass
-  def test_nondiff_argnums_vmap_tracer(self): pass
 
   def test_hard_stuff2(self):
     # Like the base test, except the differentiated cases: the batchedness of
@@ -5214,7 +5206,10 @@ class CustomJVP3Test(CustomJVPTest):
         return g(z)
       return jax.vmap(f)(jnp.arange(3., dtype='float32')).sum()
 
-    with self.assertRaisesRegex(UnexpectedTracerError, "can't close over"):
+    # Closing over a vmap tracer in the jvp rule, with vmap inside jvp, isn't
+    # supported: the jvp rule closes over the tracer, which is out of scope by
+    # the time the jvp rule runs.
+    with self.assertRaisesRegex(UnexpectedTracerError, "unexpected tracer"):
       jax.jvp(h, (jnp.float32(3.14),), (jnp.float32(1.),))
 
   @parameterized.named_parameters(
@@ -5337,6 +5332,20 @@ class CustomJVP3Test(CustomJVPTest):
 
     eqn, = jax.make_jaxpr(jax.vmap(jax.vmap(f)))(jnp.ones((2, 3))).eqns
     self.assertIsInstance(eqn.params['_prim'], hijax.CustomJVPTraced)
+
+  def test_skip_linearization_on_zero_tangents(self):
+    @jax.custom_jvp
+    def f(x):
+      return x
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      raise RuntimeError("jvp rule should not be called on zero tangents")
+
+    def g(x, y):
+      return x * f(y)
+
+    self.assertAllClose(jax.grad(g)(2., 3.), 3.)
+    self.assertAllClose(jax.jit(jax.grad(g))(2., 3.), 3.)
 
 
 @jtu.with_config(jax_remat3=True)

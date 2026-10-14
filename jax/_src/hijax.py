@@ -41,7 +41,7 @@ from jax._src.interpreters import remat
 from jax._src.partition_spec import PartitionSpec
 from jax._src.custom_derivatives import (
     CustomVJPPrimal, _temporary_dtype_exception, _check_for_returned_refs,
-    _check_for_aliased_refs)
+    _check_for_aliased_refs, _stop_gradient)
 from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src import ad_util
@@ -1278,12 +1278,7 @@ class Static:
 
 
 class CustomJVPTraced(HiPrim):
-  """``jvp_rule`` is called like the ``jvp`` method, with primals and tangents
-  structured like the application's arguments: ``Static`` leaves for nondiff
-  arguments, and internal symbolic zeros. ``custom_jvp3`` builds it from the
-  user's rule with ``_custom_jvp_rule``, and ``batch`` builds it by vmapping
-  another application's rule.
-  """
+  skip_linearization_on_zero_tangents = True  # run the primal, not the jvp rule
   traced: Any
   jvp_rule: Any  # named to avoid shadowing the jvp method via params
   symbolic_zeros: Any
@@ -1353,15 +1348,16 @@ class CustomJVPTraced(HiPrim):
   def check(self, *_):
     check_custom_effects(self.traced.jaxpr.effects, 'custom_jvp')
 
-def _custom_jvp_rule(traced, jvp_fun, symbolic_zeros):
+def _custom_jvp_rule(traced, jvp_fun, symbolic_zeros, static_argnums):
   """A user's custom_jvp rule, called like ``CustomJVPTraced.jvp_rule``."""
   out_avals_flat, out_tree = tracing_registry.flatten(traced.out_avals)
   primal_name, jvp_name = traced.fun_name, getattr(jvp_fun, '__name__', str(jvp_fun))
   def rule(primals, tangents):
-    static_args = tuple(x.val for x in primals if isinstance(x, Static))
-    primals_ = tuple(x for x in primals if not isinstance(x, Static))
-    tangents_ = tuple(t for x, t in zip(primals, tangents)
-                      if not isinstance(x, Static))
+    primals, tangents = primals[1:], tangents[1:]
+    unwrap = lambda x: x.val if isinstance(x, Static) else x
+    static_args = tuple(unwrap(x) for i, x in enumerate(primals) if i in static_argnums)
+    primals_ = tuple(x for i, x in enumerate(primals) if i not in static_argnums)
+    tangents_ = tuple(t for i, t in enumerate(tangents) if i not in static_argnums)
     zero = lambda x: isinstance(x, ad_util.Zero)
     if symbolic_zeros:
       tangents_ = tree_map(ad_util.replace_internal_symbolic_zeros, tangents_,
@@ -1503,30 +1499,27 @@ class custom_jvp3:
           "The input arguments to the custom_jvp-decorated function "
           f"{self.f.__name__} could not be resolved to positional-only "
           f"arguments. Binding failed with the error:\n{e}") from e
-    if any(isinstance(args[i], core.Tracer) for i in self.static_argnums):
-      raise UnexpectedTracerError("custom_jvp inputs marked with nondiff_argnums "
-                                  "must be static, not Tracers")
-    if all(is_hashable(args[i]) for i in self.static_argnums):
-      traced = api.jit(self.f, static_argnums=(*self.static_argnums,)).trace(*args)
+    if self.static_argnums:
+      args = tuple(_stop_gradient(x) if i in self.static_argnums else x
+                   for i, x in enumerate(args))
+    static_argnums = frozenset(
+        i for i in self.static_argnums if not isinstance(args[i], core.Tracer))
+    if all(is_hashable(args[i]) for i in static_argnums):
+      traced = api.jit(self.f, static_argnums=(*static_argnums,)).trace(*args)
     else:
       # jit requires hashable static_argnums values, but classic custom_jvp
       # accepted unhashable nondiff_argnums values, so close over them instead
-      which_static = [i in self.static_argnums for i in range(len(args))]
+      which_static = [i in static_argnums for i in range(len(args))]
       dyn_args, static_args = partition_list(which_static, args)
-      f = dyn_args_fun(self.f, self.static_argnums,
+      f = dyn_args_fun(self.f, static_argnums,
                        tuple(map(WrapHashably, static_args)), len(args))
       traced = api.jit(f).trace(*dyn_args)
-    if any(isinstance(x, core.Tracer) for x in traced._consts):
-      t = next(x for x in traced._consts if isinstance(x, core.Tracer))
-      raise UnexpectedTracerError(
-          f"custom_jvp-decorated function {self.f} closed over a {type(t).__name__} "
-          f"of type {t.aval.str_short()}, but custom_jvp functions can't close "
-          f"over Tracers. Rewrite {self.f} to take it as an explicit input.")
-    args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
-    in_avals = tree_map(typeof, args)
-    prim = CustomJVPTraced(traced, _custom_jvp_rule(traced, self.jvp_fun, self.symz),
-                           in_avals, self.symz)
-    return prim(*args)
+    args = tuple(Static(x) if i in static_argnums else x for i, x in enumerate(args))
+    consts, traced = traced.with_consts_as_arg()
+    in_avals = tree_map(typeof, (consts, *args))
+    jvp_rule = _custom_jvp_rule(traced, self.jvp_fun, self.symz, self.static_argnums)
+    prim = CustomJVPTraced(traced, jvp_rule, in_avals, self.symz)
+    return prim(consts, *args)
 
 
 class MappingSpec: pass
